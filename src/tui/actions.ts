@@ -148,7 +148,10 @@ export class ActionHandler {
       try {
         const report = this.deps.reportingEngine.generateDailySummary(id);
         this.deps.reportingEngine.saveReport(report);
-        messages.push(report.content);
+        const sections = report.content.split(/\n(?=## )/).filter(s => s.trim());
+        for (const section of sections) {
+          messages.push(section.trim());
+        }
       } catch (err) {
         messages.push(
           `Failed to generate report for goal ${id}: ${err instanceof Error ? err.message : String(err)}`

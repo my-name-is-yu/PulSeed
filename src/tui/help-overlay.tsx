@@ -16,7 +16,8 @@ export function HelpOverlay({ onDismiss }: HelpOverlayProps) {
     if (key.escape) onDismiss();
   });
 
-  const separator = "─".repeat(44);
+  const cols = process.stdout.columns || 60;
+  const separator = "─".repeat(Math.min(cols, 60) - 4);
 
   return (
     <Box
