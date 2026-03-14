@@ -54,7 +54,7 @@ function sleep(ms: number): Promise<void> {
  * Extract JSON from a string that may contain markdown code blocks.
  * Tries ```json ... ``` first, then ``` ... ```, then bare JSON.
  */
-function extractJSON(text: string): string {
+export function extractJSON(text: string): string {
   // Try ```json ... ``` block
   const jsonBlock = text.match(/```json\s*([\s\S]*?)```/);
   if (jsonBlock) {
