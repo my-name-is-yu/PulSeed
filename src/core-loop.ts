@@ -245,6 +245,12 @@ export class CoreLoop {
       };
     }
 
+    // Reset stall state at the beginning of each run so prior run's escalation
+    // does not immediately poison a fresh start.
+    for (const dim of goal.dimensions) {
+      this.deps.stallDetector.resetEscalation(goalId, dim.name);
+    }
+
     const iterations: LoopIterationResult[] = [];
     let consecutiveErrors = 0;
     let consecutiveDenied = 0;
