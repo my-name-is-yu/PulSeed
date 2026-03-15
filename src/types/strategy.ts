@@ -42,6 +42,10 @@ export const StrategySchema = z.object({
   tasks_generated: z.array(z.string()).default([]),
   effectiveness_score: z.number().nullable().default(null),
   consecutive_stall_count: z.number().default(0),
+
+  // Stage 14: Cross-goal strategy fields
+  source_template_id: z.string().nullable().default(null),
+  cross_goal_context: z.string().nullable().default(null),
 });
 export type Strategy = z.infer<typeof StrategySchema>;
 

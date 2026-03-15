@@ -1,4 +1,10 @@
 import { CuriosityEngine } from "./curiosity-engine.js";
+import type { KnowledgeTransfer } from "./knowledge-transfer.js";
+import type { TransferCandidate } from "./types/cross-portfolio.js";
+import type { CrossGoalPortfolio } from "./cross-goal-portfolio.js";
+import type { GoalTreeManager } from "./goal-tree-manager.js";
+import type { StateAggregator } from "./state-aggregator.js";
+import type { TreeLoopOrchestrator } from "./tree-loop-orchestrator.js";
 import type { StateManager } from "./state-manager.js";
 import type { ObservationEngine } from "./observation-engine.js";
 import type { TaskLifecycle, TaskCycleResult } from "./task-lifecycle.js";
@@ -11,6 +17,7 @@ import type { KnowledgeManager } from "./knowledge-manager.js";
 import type { CapabilityDetector } from "./capability-detector.js";
 import type { PortfolioManager } from "./portfolio-manager.js";
 import type { GoalDependencyGraph } from "./goal-dependency-graph.js";
+import type { LearningPipeline } from "./learning-pipeline.js";
 import type { Goal } from "./types/goal.js";
 import type { GapVector } from "./types/gap.js";
 import type { DriveContext, DriveScore } from "./types/drive.js";
@@ -68,6 +75,9 @@ export interface LoopConfig {
   maxConsecutiveErrors?: number;
   delayBetweenLoopsMs?: number;
   adapterType?: string;
+  treeMode?: boolean;  // Enable tree mode (iterate across all tree nodes)
+  multiGoalMode?: boolean;  // Enable multi-goal mode (iterate across multiple goals)
+  goalIds?: string[];       // List of goal IDs to manage in multi-goal mode
 }
 
 const DEFAULT_CONFIG: Required<LoopConfig> = {
@@ -75,6 +85,9 @@ const DEFAULT_CONFIG: Required<LoopConfig> = {
   maxConsecutiveErrors: 3,
   delayBetweenLoopsMs: 1000,
   adapterType: "claude_api",
+  treeMode: false,
+  multiGoalMode: false,
+  goalIds: [],
 };
 
 // ─── Result types ───
@@ -93,6 +106,8 @@ export interface LoopIterationResult {
   error: string | null;
   /** Alerts for milestones that are at_risk or behind (optional) */
   milestoneAlerts?: Array<{ goalId: string; status: string; pace_ratio: number }>;
+  /** Transfer candidates detected from cross-goal knowledge (suggestion-only, Phase 1) */
+  transfer_candidates?: TransferCandidate[];
 }
 
 export interface LoopResult {
@@ -123,6 +138,12 @@ export interface CoreLoopDeps {
   portfolioManager?: PortfolioManager;
   curiosityEngine?: CuriosityEngine;
   goalDependencyGraph?: GoalDependencyGraph;
+  goalTreeManager?: GoalTreeManager;
+  stateAggregator?: StateAggregator;
+  treeLoopOrchestrator?: TreeLoopOrchestrator;
+  crossGoalPortfolio?: CrossGoalPortfolio;
+  learningPipeline?: LearningPipeline;
+  knowledgeTransfer?: KnowledgeTransfer;
 }
 
 // ─── Helpers ───
@@ -183,6 +204,8 @@ export class CoreLoop {
   private readonly deps: CoreLoopDeps;
   private readonly config: Required<LoopConfig>;
   private stopped = false;
+  private lastLearningReviewAt: number = Date.now();
+  private transferCheckCounter: number = 0;
 
   constructor(deps: CoreLoopDeps, config?: LoopConfig) {
     this.deps = deps;
@@ -234,7 +257,9 @@ export class CoreLoop {
         break;
       }
 
-      const iterationResult = await this.runOneIteration(goalId, loopIndex);
+      const iterationResult = this.config.treeMode && this.deps.treeLoopOrchestrator
+        ? await this.runTreeIteration(goalId, loopIndex)
+        : await this.runOneIteration(goalId, loopIndex);
       iterations.push(iterationResult);
 
       // Check completion
@@ -293,6 +318,20 @@ export class CoreLoop {
         break;
       }
 
+      // Periodic learning review
+      if (this.deps.learningPipeline) {
+        const now = Date.now();
+        const intervalMs = this.getPeriodicReviewInterval(goalId);
+        if (now - this.lastLearningReviewAt >= intervalMs) {
+          try {
+            await this.deps.learningPipeline.onPeriodicReview(goalId);
+            this.lastLearningReviewAt = now;
+          } catch {
+            // non-fatal: learning pipeline failure should not block main loop
+          }
+        }
+      }
+
       // Delay between loops (skip on last iteration)
       if (loopIndex < this.config.maxIterations - 1 && this.config.delayBetweenLoopsMs > 0) {
         await sleep(this.config.delayBetweenLoopsMs);
@@ -320,6 +359,15 @@ export class CoreLoop {
       } catch (err) {
         // Curiosity failures should never break the main loop
         console.warn("CoreLoop: curiosity evaluation failed:", err);
+      }
+    }
+
+    // After loop completes, trigger learning pipeline for goal completion
+    if (this.deps.learningPipeline && finalStatus === "completed") {
+      try {
+        await this.deps.learningPipeline.onGoalCompleted(goalId);
+      } catch {
+        // non-fatal: learning pipeline failure should not block main loop
       }
     }
 
@@ -377,6 +425,20 @@ export class CoreLoop {
       result.error = `Failed to load goal: ${err instanceof Error ? err.message : String(err)}`;
       result.elapsedMs = Date.now() - startTime;
       return result;
+    }
+
+    // ─── 1b. Tree aggregation ───
+    if (this.deps.stateAggregator && goal.children_ids.length > 0) {
+      try {
+        this.deps.stateAggregator.aggregateChildStates(goalId);
+        // Reload goal to pick up aggregated state
+        const reloaded = this.deps.stateManager.loadGoal(goalId);
+        if (reloaded) {
+          goal = reloaded;
+        }
+      } catch {
+        // Tree aggregation failure is non-fatal
+      }
     }
 
     // ─── 2. Observe ───
@@ -515,7 +577,9 @@ export class CoreLoop {
 
     // ─── 5. Completion Check ───
     try {
-      const judgment = this.deps.satisficingJudge.isGoalComplete(goal);
+      const judgment = goal.children_ids.length > 0
+        ? this.deps.satisficingJudge.judgeTreeCompletion(goalId)
+        : this.deps.satisficingJudge.isGoalComplete(goal);
       result.completionJudgment = judgment;
 
       if (judgment.is_complete) {
@@ -562,6 +626,18 @@ export class CoreLoop {
               status: snapshot.status,
               pace_ratio: snapshot.pace_ratio,
             });
+          } else {
+            // Milestone is on track or ahead — trigger learning
+            if (this.deps.learningPipeline) {
+              try {
+                await this.deps.learningPipeline.onMilestoneReached(
+                  goalId,
+                  `Milestone ${milestone.title}: pace ${snapshot.status}`
+                );
+              } catch {
+                // non-fatal
+              }
+            }
           }
         }
         if (milestoneAlerts.length > 0) {
@@ -598,6 +674,15 @@ export class CoreLoop {
           result.stallDetected = true;
           result.stallReport = stallReport;
 
+          // Trigger learning pipeline on stall detection
+          if (this.deps.learningPipeline) {
+            try {
+              await this.deps.learningPipeline.onStallDetected(goalId, stallReport);
+            } catch {
+              // non-fatal: learning pipeline failure should not block main loop
+            }
+          }
+
           // Attempt pivot via StrategyManager
           const escalationLevel = this.deps.stallDetector.getEscalationLevel(goalId, dim.name);
           const newStrategy = await this.deps.strategyManager.onStallDetected(
@@ -633,6 +718,15 @@ export class CoreLoop {
         if (globalStall) {
           result.stallDetected = true;
           result.stallReport = globalStall;
+
+          // Trigger learning pipeline on global stall detection
+          if (this.deps.learningPipeline) {
+            try {
+              await this.deps.learningPipeline.onStallDetected(goalId, globalStall);
+            } catch {
+              // non-fatal: learning pipeline failure should not block main loop
+            }
+          }
 
           const newStrategy = await this.deps.strategyManager.onStallDetected(goalId, 2);
           if (newStrategy) {
@@ -765,7 +859,9 @@ export class CoreLoop {
       // Re-check completion after task execution
       const updatedGoal = this.deps.stateManager.loadGoal(goalId);
       if (updatedGoal) {
-        const postTaskJudgment = this.deps.satisficingJudge.isGoalComplete(updatedGoal);
+        const postTaskJudgment = updatedGoal.children_ids.length > 0
+          ? this.deps.satisficingJudge.judgeTreeCompletion(updatedGoal.id)
+          : this.deps.satisficingJudge.isGoalComplete(updatedGoal);
         result.completionJudgment = postTaskJudgment;
       }
     } catch (err) {
@@ -783,10 +879,141 @@ export class CoreLoop {
       }
     }
 
+    // ─── 7c. Transfer Detection (every 5 iterations, suggestion-only) ───
+    this.transferCheckCounter++;
+    if (this.deps.knowledgeTransfer && this.transferCheckCounter % 5 === 0) {
+      try {
+        const candidates = await this.deps.knowledgeTransfer.detectTransferOpportunities(goalId);
+        if (candidates.length > 0) {
+          result.transfer_candidates = candidates;
+        }
+      } catch {
+        // non-fatal: transfer detection failure should not block main loop
+      }
+    }
+
     // ─── 8. Report ───
     this.tryGenerateReport(goalId, loopIndex, result, goal);
 
     result.elapsedMs = Date.now() - startTime;
+    return result;
+  }
+
+  /**
+   * Tree-mode iteration: select one node via TreeLoopOrchestrator, run a
+   * normal observe→gap→score→task cycle on that node, then aggregate upward.
+   *
+   * Called by run() when treeMode=true.
+   */
+  async runTreeIteration(rootId: string, loopIndex: number): Promise<LoopIterationResult> {
+    const orchestrator = this.deps.treeLoopOrchestrator!;
+
+    // 1. Select next node to iterate
+    const selectedNodeId = orchestrator.selectNextNode(rootId);
+
+    // 2. If null, all nodes are completed/paused — check root completion
+    if (selectedNodeId === null) {
+      const rootGoal = this.deps.stateManager.loadGoal(rootId);
+      const isComplete = rootGoal
+        ? (rootGoal.children_ids.length > 0
+            ? this.deps.satisficingJudge.judgeTreeCompletion(rootId)
+            : this.deps.satisficingJudge.isGoalComplete(rootGoal))
+        : { is_complete: false, blocking_dimensions: [], low_confidence_dimensions: [], needs_verification_task: false, checked_at: new Date().toISOString() };
+
+      return {
+        loopIndex,
+        goalId: rootId,
+        gapAggregate: 0,
+        driveScores: [],
+        taskResult: null,
+        stallDetected: false,
+        stallReport: null,
+        pivotOccurred: false,
+        completionJudgment: isComplete,
+        elapsedMs: 0,
+        error: null,
+      };
+    }
+
+    // 3. Run normal iteration on selected node
+    const result = await this.runOneIteration(selectedNodeId, loopIndex);
+
+    // 3b. After each iteration, propagate state upward through parent chain
+    if (this.deps.stateAggregator) {
+      const selectedGoal = this.deps.stateManager.loadGoal(selectedNodeId);
+      let parentId = selectedGoal?.parent_id ?? null;
+      while (parentId !== null) {
+        try {
+          this.deps.stateAggregator.aggregateChildStates(parentId);
+        } catch { break; }
+        const parent = this.deps.stateManager.loadGoal(parentId);
+        parentId = parent?.parent_id ?? null;
+      }
+    }
+
+    // 4. If the node's goal is now completed, call onNodeCompleted
+    if (result.completionJudgment.is_complete) {
+      orchestrator.onNodeCompleted(selectedNodeId);
+    }
+
+    return result;
+  }
+
+  /**
+   * Run one iteration of the multi-goal loop.
+   *
+   * Uses CrossGoalPortfolio (if available) to determine goal allocations,
+   * then calls portfolioManager.selectNextStrategyAcrossGoals() to pick
+   * which goal gets the next iteration. Falls back to equal allocation if
+   * CrossGoalPortfolio is not injected.
+   *
+   * Requires config.multiGoalMode=true and config.goalIds to be set.
+   * Throws if CrossGoalPortfolio is not injected and multiGoalMode is enabled.
+   */
+  async runMultiGoalIteration(loopIndex: number): Promise<LoopIterationResult> {
+    if (!this.config.multiGoalMode || !this.config.goalIds || this.config.goalIds.length === 0) {
+      throw new Error(
+        "runMultiGoalIteration requires config.multiGoalMode=true and config.goalIds to be non-empty"
+      );
+    }
+
+    const goalIds = this.config.goalIds;
+
+    // Build allocation map
+    let allocationMap: Map<string, number>;
+
+    if (this.deps.crossGoalPortfolio) {
+      allocationMap = this.deps.crossGoalPortfolio.getAllocationMap(goalIds);
+    } else {
+      // Fall back to equal allocation when CrossGoalPortfolio is not provided
+      const equalShare = 1.0 / goalIds.length;
+      allocationMap = new Map(goalIds.map((id) => [id, equalShare]));
+    }
+
+    // Select next goal + strategy using PortfolioManager
+    if (!this.deps.portfolioManager) {
+      // Without a portfolio manager, round-robin by loopIndex
+      const selectedGoalId = goalIds[loopIndex % goalIds.length]!;
+      return this.runOneIteration(selectedGoalId, loopIndex);
+    }
+
+    const selection = await this.deps.portfolioManager.selectNextStrategyAcrossGoals(
+      goalIds,
+      allocationMap
+    );
+
+    if (selection === null) {
+      // No strategies available — return a no-op result for the first goal
+      const fallbackGoalId = goalIds[0]!;
+      return this.runOneIteration(fallbackGoalId, loopIndex);
+    }
+
+    // Record that a task was dispatched for this goal
+    this.deps.portfolioManager.recordGoalTaskDispatched(selection.goal_id);
+
+    // Run normal iteration for the selected goal
+    const result = await this.runOneIteration(selection.goal_id, loopIndex);
+
     return result;
   }
 
@@ -805,6 +1032,17 @@ export class CoreLoop {
   }
 
   // ─── Private Helpers ───
+
+  private getPeriodicReviewInterval(goalId: string): number {
+    const goal = this.deps.stateManager.loadGoal(goalId);
+    if (!goal?.target_date) {
+      return 72 * 3600 * 1000; // default: 72 hours
+    }
+    const remainingDays = (new Date(goal.target_date).getTime() - Date.now()) / (1000 * 60 * 60 * 24);
+    if (remainingDays <= 30) return 72 * 3600 * 1000;     // 短期: 72h
+    if (remainingDays <= 180) return 168 * 3600 * 1000;   // 中期: 1week
+    return 336 * 3600 * 1000;                              // 長期: 2weeks
+  }
 
   private tryGenerateReport(
     goalId: string,

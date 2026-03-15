@@ -95,6 +95,9 @@ function makeGoal(overrides: Partial<Goal> = {}): Goal {
     user_override: false,
     feasibility_note: null,
     uncertainty_weight: 1.0,
+    decomposition_depth: 0,
+    specificity_score: null,
+    loop_status: "idle",
     created_at: now,
     updated_at: now,
     ...overrides,
@@ -2127,5 +2130,429 @@ describe("CoreLoop", () => {
       expect(mocks.taskLifecycle.runTaskCycle).toHaveBeenCalledOnce();
       expect(result.error).toBeNull();
     });
+  });
+});
+
+// ─── Tree Mode Tests (14B) ───
+describe("CoreLoop tree mode (14B)", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = makeTempDir();
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  const mockStateAggregator = {
+    aggregateChildStates: vi.fn(),
+    propagateStateDown: vi.fn(),
+    checkCompletionCascade: vi.fn().mockReturnValue([]),
+  };
+
+  function createTreeDeps(tmpDir: string) {
+    const { deps, mocks } = createMockDeps(tmpDir);
+
+    // Add judgeTreeCompletion to satisficingJudge mock
+    (mocks.satisficingJudge as Record<string, unknown>).judgeTreeCompletion = vi
+      .fn()
+      .mockReturnValue(makeCompletionJudgment());
+
+    const mockGoalTreeManager = {
+      decomposeGoal: vi.fn(),
+      validateDecomposition: vi.fn(),
+      pruneGoal: vi.fn(),
+      addSubgoal: vi.fn(),
+      restructureTree: vi.fn(),
+      getTreeState: vi.fn(),
+    };
+
+    const treeDeps = {
+      ...deps,
+      stateAggregator: mockStateAggregator as any,
+      goalTreeManager: mockGoalTreeManager as any,
+    };
+
+    return { deps: treeDeps, mocks, mockStateAggregator, mockGoalTreeManager };
+  }
+
+  beforeEach(() => {
+    mockStateAggregator.aggregateChildStates.mockReset();
+    mockStateAggregator.aggregateChildStates.mockReturnValue({
+      parent_id: "goal-1",
+      aggregated_gap: 0.5,
+      aggregated_confidence: 0.7,
+      child_gaps: {},
+      child_completions: {},
+      aggregation_method: "min",
+      timestamp: new Date().toISOString(),
+    });
+    mockStateAggregator.propagateStateDown.mockReset();
+    mockStateAggregator.checkCompletionCascade.mockReset().mockReturnValue([]);
+  });
+
+  it("calls aggregateChildStates when goal has children", async () => {
+    const { deps, mocks } = createTreeDeps(tmpDir);
+    const childId = "child-goal-1";
+    const goal = makeGoal({ id: "goal-1", children_ids: [childId] });
+    mocks.stateManager.saveGoal(goal);
+
+    const loop = new CoreLoop(deps, { delayBetweenLoopsMs: 0 });
+    await loop.runOneIteration("goal-1", 0);
+
+    expect(mockStateAggregator.aggregateChildStates).toHaveBeenCalledWith("goal-1");
+  });
+
+  it("reloads goal after tree aggregation", async () => {
+    const { deps, mocks } = createTreeDeps(tmpDir);
+    const childId = "child-goal-1";
+    const goal = makeGoal({ id: "goal-1", children_ids: [childId] });
+    mocks.stateManager.saveGoal(goal);
+
+    // aggregateChildStates updates the goal in state (simulate via saveGoal side-effect)
+    mockStateAggregator.aggregateChildStates.mockImplementation(() => {
+      // The goal is reloaded after this call — just verify the call happens
+    });
+
+    const loop = new CoreLoop(deps, { delayBetweenLoopsMs: 0 });
+    const result = await loop.runOneIteration("goal-1", 0);
+
+    expect(mockStateAggregator.aggregateChildStates).toHaveBeenCalledWith("goal-1");
+    // After aggregation the loop continued without error
+    expect(result.error).toBeNull();
+  });
+
+  it("skips aggregation when goal has no children", async () => {
+    const { deps, mocks } = createTreeDeps(tmpDir);
+    const goal = makeGoal({ id: "goal-1", children_ids: [] });
+    mocks.stateManager.saveGoal(goal);
+
+    const loop = new CoreLoop(deps, { delayBetweenLoopsMs: 0 });
+    await loop.runOneIteration("goal-1", 0);
+
+    expect(mockStateAggregator.aggregateChildStates).not.toHaveBeenCalled();
+  });
+
+  it("uses judgeTreeCompletion for goals with children", async () => {
+    const { deps, mocks } = createTreeDeps(tmpDir);
+    const childId = "child-goal-1";
+    const goal = makeGoal({ id: "goal-1", children_ids: [childId] });
+    mocks.stateManager.saveGoal(goal);
+
+    const loop = new CoreLoop(deps, { delayBetweenLoopsMs: 0 });
+    await loop.runOneIteration("goal-1", 0);
+
+    const judgeTreeCompletion = (mocks.satisficingJudge as Record<string, unknown>)
+      .judgeTreeCompletion as ReturnType<typeof vi.fn>;
+    expect(judgeTreeCompletion).toHaveBeenCalledWith("goal-1");
+    expect(mocks.satisficingJudge.isGoalComplete).not.toHaveBeenCalled();
+  });
+
+  it("uses isGoalComplete for leaf goals", async () => {
+    const { deps, mocks } = createTreeDeps(tmpDir);
+    const goal = makeGoal({ id: "goal-1", children_ids: [] });
+    mocks.stateManager.saveGoal(goal);
+
+    const loop = new CoreLoop(deps, { delayBetweenLoopsMs: 0 });
+    await loop.runOneIteration("goal-1", 0);
+
+    expect(mocks.satisficingJudge.isGoalComplete).toHaveBeenCalledWith(goal);
+    const judgeTreeCompletion = (mocks.satisficingJudge as Record<string, unknown>)
+      .judgeTreeCompletion as ReturnType<typeof vi.fn>;
+    expect(judgeTreeCompletion).not.toHaveBeenCalled();
+  });
+
+  it("tree aggregation failure is non-fatal", async () => {
+    const { deps, mocks } = createTreeDeps(tmpDir);
+    const childId = "child-goal-1";
+    const goal = makeGoal({ id: "goal-1", children_ids: [childId] });
+    mocks.stateManager.saveGoal(goal);
+
+    mockStateAggregator.aggregateChildStates.mockImplementation(() => {
+      throw new Error("aggregation failed");
+    });
+
+    const loop = new CoreLoop(deps, { delayBetweenLoopsMs: 0 });
+    const result = await loop.runOneIteration("goal-1", 0);
+
+    // Loop continues despite aggregation failure
+    expect(result.error).toBeNull();
+    expect(mocks.taskLifecycle.runTaskCycle).toHaveBeenCalled();
+  });
+
+  it("backward compatible without stateAggregator", async () => {
+    const { deps, mocks } = createMockDeps(tmpDir);
+    // stateAggregator intentionally omitted
+    const goal = makeGoal({ id: "goal-1", children_ids: [] });
+    mocks.stateManager.saveGoal(goal);
+
+    const loop = new CoreLoop(deps, { delayBetweenLoopsMs: 0 });
+    const result = await loop.runOneIteration("goal-1", 0);
+
+    expect(result.error).toBeNull();
+    expect(mocks.taskLifecycle.runTaskCycle).toHaveBeenCalled();
+  });
+
+  it("backward compatible without goalTreeManager", async () => {
+    const { deps, mocks } = createMockDeps(tmpDir);
+    // goalTreeManager intentionally omitted
+    const goal = makeGoal({ id: "goal-1", children_ids: [] });
+    mocks.stateManager.saveGoal(goal);
+
+    const loop = new CoreLoop(deps, { delayBetweenLoopsMs: 0 });
+    const result = await loop.runOneIteration("goal-1", 0);
+
+    expect(result.error).toBeNull();
+    expect(mocks.satisficingJudge.isGoalComplete).toHaveBeenCalled();
+  });
+
+  it("post-task re-check uses judgeTreeCompletion for tree goals", async () => {
+    const { deps, mocks } = createTreeDeps(tmpDir);
+    const childId = "child-goal-1";
+    const goal = makeGoal({ id: "goal-1", children_ids: [childId] });
+    mocks.stateManager.saveGoal(goal);
+
+    const loop = new CoreLoop(deps, { delayBetweenLoopsMs: 0 });
+    await loop.runOneIteration("goal-1", 0);
+
+    const judgeTreeCompletion = (mocks.satisficingJudge as Record<string, unknown>)
+      .judgeTreeCompletion as ReturnType<typeof vi.fn>;
+    // Called at least twice: once in step 5 and once post-task
+    expect(judgeTreeCompletion.mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("post-task re-check uses isGoalComplete for non-tree goals", async () => {
+    const { deps, mocks } = createTreeDeps(tmpDir);
+    const goal = makeGoal({ id: "goal-1", children_ids: [] });
+    mocks.stateManager.saveGoal(goal);
+
+    const loop = new CoreLoop(deps, { delayBetweenLoopsMs: 0 });
+    await loop.runOneIteration("goal-1", 0);
+
+    // Called at least twice: once in step 5 and once post-task
+    expect(mocks.satisficingJudge.isGoalComplete.mock.calls.length).toBeGreaterThanOrEqual(2);
+    const judgeTreeCompletion = (mocks.satisficingJudge as Record<string, unknown>)
+      .judgeTreeCompletion as ReturnType<typeof vi.fn>;
+    expect(judgeTreeCompletion).not.toHaveBeenCalled();
+  });
+});
+
+// ─── Tree Mode Tests (14C) ───
+import type { TreeLoopOrchestrator } from "../src/tree-loop-orchestrator.js";
+
+describe("CoreLoop tree mode (14C)", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = makeTempDir();
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function createTreeLoopOrchestratorMock(nodeId = "node-id-1") {
+    return {
+      selectNextNode: vi.fn().mockReturnValue(nodeId),
+      pauseNodeLoop: vi.fn(),
+      resumeNodeLoop: vi.fn(),
+      onNodeCompleted: vi.fn(),
+      startTreeExecution: vi.fn(),
+    };
+  }
+
+  function createTreeModeDeps(tmpDir: string, orchestratorMock?: ReturnType<typeof createTreeLoopOrchestratorMock>) {
+    const { deps, mocks } = createMockDeps(tmpDir);
+
+    // Add judgeTreeCompletion to satisficingJudge mock
+    (mocks.satisficingJudge as Record<string, unknown>).judgeTreeCompletion = vi
+      .fn()
+      .mockReturnValue(makeCompletionJudgment());
+
+    const treeDeps = {
+      ...deps,
+      treeLoopOrchestrator: orchestratorMock as unknown as TreeLoopOrchestrator,
+    };
+
+    return { deps: treeDeps, mocks };
+  }
+
+  it("treeMode=true with treeLoopOrchestrator → runTreeIteration is used", async () => {
+    const orchestratorMock = createTreeLoopOrchestratorMock("node-id-1");
+    const { deps, mocks } = createTreeModeDeps(tmpDir, orchestratorMock);
+
+    // Save both root and node goals
+    const rootGoal = makeGoal({ id: "root-1", children_ids: ["node-id-1"] });
+    const nodeGoal = makeGoal({ id: "node-id-1", parent_id: "root-1" });
+    mocks.stateManager.saveGoal(rootGoal);
+    mocks.stateManager.saveGoal(nodeGoal);
+
+    const loop = new CoreLoop(deps, { treeMode: true, maxIterations: 1, delayBetweenLoopsMs: 0 });
+    const result = await loop.run("root-1");
+
+    // selectNextNode should have been called with the root ID
+    expect(orchestratorMock.selectNextNode).toHaveBeenCalledWith("root-1");
+    // The task cycle should have been run on the selected node
+    expect(mocks.taskLifecycle.runTaskCycle).toHaveBeenCalled();
+    expect(result.totalIterations).toBeGreaterThanOrEqual(1);
+  });
+
+  it("selectNextNode returns null → loop ends", async () => {
+    const orchestratorMock = createTreeLoopOrchestratorMock();
+    orchestratorMock.selectNextNode.mockReturnValue(null);
+
+    const { deps, mocks } = createTreeModeDeps(tmpDir, orchestratorMock);
+
+    const rootGoal = makeGoal({ id: "root-1", children_ids: [] });
+    mocks.stateManager.saveGoal(rootGoal);
+
+    const loop = new CoreLoop(deps, { treeMode: true, maxIterations: 10, delayBetweenLoopsMs: 0 });
+    const result = await loop.run("root-1");
+
+    // With selectNextNode returning null immediately, loop terminates after first iteration
+    expect(orchestratorMock.selectNextNode).toHaveBeenCalledWith("root-1");
+    // Task cycle should NOT have been called (null node means no work)
+    expect(mocks.taskLifecycle.runTaskCycle).not.toHaveBeenCalled();
+    expect(["completed", "stopped", "max_iterations"]).toContain(result.finalStatus);
+  });
+
+  it("treeMode=true without treeLoopOrchestrator → falls back to normal mode", async () => {
+    const { deps, mocks } = createMockDeps(tmpDir);
+    // No treeLoopOrchestrator in deps
+
+    const goal = makeGoal({ id: "goal-1" });
+    mocks.stateManager.saveGoal(goal);
+
+    const loop = new CoreLoop(deps, { treeMode: true, maxIterations: 1, delayBetweenLoopsMs: 0 });
+    await loop.run("goal-1");
+
+    // Falls back to normal runOneIteration — task cycle should be called
+    expect(mocks.taskLifecycle.runTaskCycle).toHaveBeenCalled();
+  });
+
+  it("LoopConfig.treeMode defaults to false", () => {
+    const { deps } = createMockDeps(tmpDir);
+    // Create loop without specifying treeMode
+    const loop = new CoreLoop(deps);
+    // The loop is created successfully with default config
+    expect(loop).toBeDefined();
+  });
+
+  it("runTreeIteration calls onNodeCompleted when goal is completed", async () => {
+    const orchestratorMock = createTreeLoopOrchestratorMock("node-id-1");
+    const { deps, mocks } = createTreeModeDeps(tmpDir, orchestratorMock);
+
+    const rootGoal = makeGoal({ id: "root-1", children_ids: ["node-id-1"] });
+    const nodeGoal = makeGoal({ id: "node-id-1", parent_id: "root-1" });
+    mocks.stateManager.saveGoal(rootGoal);
+    mocks.stateManager.saveGoal(nodeGoal);
+
+    // Make the node goal appear completed after task cycle
+    mocks.satisficingJudge.isGoalComplete.mockReturnValue(
+      makeCompletionJudgment({ is_complete: true })
+    );
+
+    const loop = new CoreLoop(deps, { treeMode: true, maxIterations: 1, delayBetweenLoopsMs: 0 });
+    await loop.runTreeIteration("root-1", 0);
+
+    // onNodeCompleted should be called since the goal completed
+    expect(orchestratorMock.onNodeCompleted).toHaveBeenCalledWith("node-id-1");
+  });
+
+  it("runTreeIteration does NOT call onNodeCompleted when goal is not completed", async () => {
+    const orchestratorMock = createTreeLoopOrchestratorMock("node-id-1");
+    const { deps, mocks } = createTreeModeDeps(tmpDir, orchestratorMock);
+
+    const rootGoal = makeGoal({ id: "root-1", children_ids: ["node-id-1"] });
+    const nodeGoal = makeGoal({ id: "node-id-1", parent_id: "root-1" });
+    mocks.stateManager.saveGoal(rootGoal);
+    mocks.stateManager.saveGoal(nodeGoal);
+
+    // Goal is not completed
+    mocks.satisficingJudge.isGoalComplete.mockReturnValue(
+      makeCompletionJudgment({ is_complete: false })
+    );
+
+    const loop = new CoreLoop(deps, { treeMode: true, maxIterations: 1, delayBetweenLoopsMs: 0 });
+    await loop.runTreeIteration("root-1", 0);
+
+    // onNodeCompleted should NOT be called
+    expect(orchestratorMock.onNodeCompleted).not.toHaveBeenCalled();
+  });
+
+  it("multiple iterations select different nodes via selectNextNode", async () => {
+    const orchestratorMock = createTreeLoopOrchestratorMock("node-id-1");
+    // Return different nodes on subsequent calls, then null to stop
+    orchestratorMock.selectNextNode
+      .mockReturnValueOnce("node-id-1")
+      .mockReturnValueOnce("node-id-2")
+      .mockReturnValue(null);
+
+    const { deps, mocks } = createTreeModeDeps(tmpDir, orchestratorMock);
+
+    const rootGoal = makeGoal({ id: "root-1", children_ids: ["node-id-1", "node-id-2"] });
+    const nodeGoal1 = makeGoal({ id: "node-id-1", parent_id: "root-1" });
+    const nodeGoal2 = makeGoal({ id: "node-id-2", parent_id: "root-1" });
+    mocks.stateManager.saveGoal(rootGoal);
+    mocks.stateManager.saveGoal(nodeGoal1);
+    mocks.stateManager.saveGoal(nodeGoal2);
+
+    const loop = new CoreLoop(deps, { treeMode: true, maxIterations: 5, delayBetweenLoopsMs: 0 });
+    const result = await loop.run("root-1");
+
+    // selectNextNode called multiple times
+    expect(orchestratorMock.selectNextNode.mock.calls.length).toBeGreaterThanOrEqual(2);
+    // Task cycle called for each selected node
+    expect(mocks.taskLifecycle.runTaskCycle.mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(result.totalIterations).toBeGreaterThanOrEqual(2);
+  });
+
+  it("runTreeIteration returns goalId of selected node (not root)", async () => {
+    const orchestratorMock = createTreeLoopOrchestratorMock("node-id-1");
+    const { deps, mocks } = createTreeModeDeps(tmpDir, orchestratorMock);
+
+    const rootGoal = makeGoal({ id: "root-1", children_ids: ["node-id-1"] });
+    const nodeGoal = makeGoal({ id: "node-id-1", parent_id: "root-1" });
+    mocks.stateManager.saveGoal(rootGoal);
+    mocks.stateManager.saveGoal(nodeGoal);
+
+    const loop = new CoreLoop(deps, { treeMode: true, delayBetweenLoopsMs: 0 });
+    const iterResult = await loop.runTreeIteration("root-1", 0);
+
+    // The iteration result goalId should be the selected node, not root
+    expect(iterResult.goalId).toBe("node-id-1");
+  });
+
+  it("runTreeIteration with null node returns rootId and no task", async () => {
+    const orchestratorMock = createTreeLoopOrchestratorMock();
+    orchestratorMock.selectNextNode.mockReturnValue(null);
+    const { deps, mocks } = createTreeModeDeps(tmpDir, orchestratorMock);
+
+    const rootGoal = makeGoal({ id: "root-1", children_ids: [] });
+    mocks.stateManager.saveGoal(rootGoal);
+
+    const loop = new CoreLoop(deps, { treeMode: true, delayBetweenLoopsMs: 0 });
+    const iterResult = await loop.runTreeIteration("root-1", 0);
+
+    expect(iterResult.goalId).toBe("root-1");
+    expect(iterResult.taskResult).toBeNull();
+    expect(mocks.taskLifecycle.runTaskCycle).not.toHaveBeenCalled();
+  });
+
+  it("treeMode=false ignores treeLoopOrchestrator and runs normally", async () => {
+    const orchestratorMock = createTreeLoopOrchestratorMock("node-id-1");
+    const { deps, mocks } = createTreeModeDeps(tmpDir, orchestratorMock);
+
+    const goal = makeGoal({ id: "goal-1" });
+    mocks.stateManager.saveGoal(goal);
+
+    const loop = new CoreLoop(deps, { treeMode: false, maxIterations: 1, delayBetweenLoopsMs: 0 });
+    await loop.run("goal-1");
+
+    // selectNextNode should NOT be called — normal mode
+    expect(orchestratorMock.selectNextNode).not.toHaveBeenCalled();
+    // Normal task cycle is called
+    expect(mocks.taskLifecycle.runTaskCycle).toHaveBeenCalled();
   });
 });

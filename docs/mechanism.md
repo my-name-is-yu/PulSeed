@@ -343,9 +343,11 @@ analyze_experience_log(goal, log_entries):
 | **ゴール完了時** | そのゴールの全経験ログ | ゴール全体を通じたパターンの抽出。最も包括的な学習機会 |
 | **マイルストーン到達時** | マイルストーン期間の経験ログ | 中間振り返り。戦略の有効性を早期に評価する |
 | **停滞検知時** | 停滞に関連する直近の経験ログ | 停滞の原因パターンを特定し、対策を立てる |
-| **定期レビュー（MVP: 手動トリガー）** | 指定期間の経験ログ | 定期的な振り返り。緩やかな変化の検知 |
+| **定期レビュー** | 指定期間の経験ログ | 定期的な振り返り。緩やかな変化の検知 |
 
-#### Stage 8以降の実装状況
+> **Stage 14E実装状況**: 上記4トリガーすべて `src/learning-pipeline.ts` の `LearningPipeline` クラスに実装済み。クロスゴールパターン共有は `VectorIndex` による意味的類似度マッチングで実現し、あるゴールで有効だった戦略パターンを類似ゴールへ自動転送する。
+
+#### Stage 8以降・Stage 14の実装状況
 
 | 項目 | 実装状況 |
 |------|---------|
@@ -359,7 +361,9 @@ analyze_experience_log(goal, log_entries):
 
 分析トリガーの拡張とフィードバック先の拡大により、学習パイプラインはもはや「ゴール完了後の振り返り」に留まらない。知識の調達と活用がコアループ内に織り込まれ、ループを回すほど発見精度が上がる構造になっている。
 
-> **Stage 12（2026-03-15完了）**: 意味的埋め込み基盤を追加。`EmbeddingClient`（OpenAI/Ollama抽象化）、`VectorIndex`（cosine similarity検索）、`KnowledgeGraph`（概念ノード・関係エッジ管理）、`GoalDependencyGraph`（DAG依存関係・LLM自動検出）。KnowledgeManager・CuriosityEngine・MemoryLifecycleManager のセマンティック検索を支える横断インフラ。
+> **Stage 12（完了）**: 意味的埋め込み基盤を追加。`EmbeddingClient`（OpenAI/Ollama抽象化）、`VectorIndex`（cosine similarity検索）、`KnowledgeGraph`（概念ノード・関係エッジ管理）、`GoalDependencyGraph`（DAG依存関係・LLM自動検出）。KnowledgeManager・CuriosityEngine・MemoryLifecycleManager のセマンティック検索を支える横断インフラ。
+
+> **Stage 14（完了）**: Goal横断ポートフォリオと学習を実装。`GoalTreeManager`（再帰的N層ゴールツリー分解・集約・剪定）、`StateAggregator`（子ノード状態集約・完了カスケード）、`TreeLoopOrchestrator`（各ノード独立ループ・並列実行制御）、`CrossGoalPortfolio`（複数ゴール横断の優先度計算・リソース配分・リバランス）、`StrategyTemplateRegistry`（戦略テンプレート管理・類似状況への適用）、`LearningPipeline`（4トリガー学習・クロスゴールパターン共有）、`KnowledgeTransfer`（ゴール間知識転移・メタパターン抽出）。2663テスト通過（53テストファイル）。
 
 ---
 

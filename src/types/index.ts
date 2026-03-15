@@ -20,3 +20,6 @@ export * from "./notification.js";
 export * from "./memory-lifecycle.js";
 export * from "./dependency.js";
 export * from "./data-source.js";
+export * from "./goal-tree.js";
+export * from "./cross-portfolio.js";
+export * from "./learning.js";

@@ -204,6 +204,7 @@ export const DependencyTypeEnum = z.enum([
   "resource_conflict",
   "synergy",
   "conflict",
+  "strategy_dependency",
 ]);
 export type DependencyType = z.infer<typeof DependencyTypeEnum>;
 

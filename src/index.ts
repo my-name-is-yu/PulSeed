@@ -96,3 +96,17 @@ export type { EmbeddingConfig, EmbeddingEntry, VectorSearchResult } from "./type
 // --- Data source ---
 export { DataSourceRegistry, FileDataSourceAdapter, HttpApiDataSourceAdapter, getNestedValue } from "./data-source-adapter.js";
 export type { IDataSourceAdapter } from "./data-source-adapter.js";
+
+// --- Stage 14 types ---
+export * from "./types/goal-tree.js";
+export * from "./types/cross-portfolio.js";
+export * from "./types/learning.js";
+
+// --- Stage 14 modules ---
+export { GoalTreeManager } from "./goal-tree-manager.js";
+export { StateAggregator, type AggregatedState } from "./state-aggregator.js";
+export { TreeLoopOrchestrator } from "./tree-loop-orchestrator.js";
+export { CrossGoalPortfolio } from "./cross-goal-portfolio.js";
+export { StrategyTemplateRegistry } from "./strategy-template-registry.js";
+export { LearningPipeline } from "./learning-pipeline.js";
+export { KnowledgeTransfer } from "./knowledge-transfer.js";

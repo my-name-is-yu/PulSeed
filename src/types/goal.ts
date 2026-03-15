@@ -88,7 +88,7 @@ export type PaceSnapshot = z.infer<typeof PaceSnapshotSchema>;
 
 // --- Goal Node Type ---
 
-export const GoalNodeTypeEnum = z.enum(["goal", "subgoal", "milestone"]);
+export const GoalNodeTypeEnum = z.enum(["goal", "subgoal", "milestone", "leaf"]);
 export type GoalNodeType = z.infer<typeof GoalNodeTypeEnum>;
 
 // --- Goal Status ---
@@ -139,6 +139,11 @@ export const GoalSchema = z.object({
 
   // Global uncertainty_weight for gap calculation (default: 1.0)
   uncertainty_weight: z.number().default(1.0),
+
+  // Stage 14: Goal tree decomposition fields
+  decomposition_depth: z.number().int().min(0).default(0),
+  specificity_score: z.number().min(0).max(1).nullable().default(null),
+  loop_status: z.enum(["idle", "running", "paused"]).default("idle"),
 
   // Timing
   created_at: z.string(),

@@ -341,6 +341,82 @@ export class SatisficingJudge {
   }
 
   /**
+   * Judge completion of an entire goal tree by checking all children recursively.
+   * Non-leaf nodes are complete when all children are completed or cancelled(merged).
+   *
+   * @param rootId The ID of the root goal of the tree.
+   * @returns CompletionJudgment for the root node.
+   */
+  judgeTreeCompletion(rootId: string): CompletionJudgment {
+    const goal = this.stateManager.loadGoal(rootId);
+    if (goal === null) {
+      return {
+        is_complete: false,
+        blocking_dimensions: [],
+        low_confidence_dimensions: [],
+        needs_verification_task: false,
+        checked_at: new Date().toISOString(),
+      };
+    }
+
+    // Leaf node (no children): delegate to existing isGoalComplete
+    if (!goal.children_ids || goal.children_ids.length === 0) {
+      return this.isGoalComplete(goal);
+    }
+
+    // Non-leaf node: check all children recursively
+    const blockingDimensions: string[] = [];
+    const lowConfidenceDimensions: string[] = [];
+    let needsVerification = false;
+
+    for (const childId of goal.children_ids) {
+      const child = this.stateManager.loadGoal(childId);
+
+      // Missing child is treated as blocking
+      if (child === null) {
+        blockingDimensions.push(childId);
+        continue;
+      }
+
+      // Cancelled children count as complete (covers "merged" prune reason)
+      if (child.status === "cancelled") {
+        continue;
+      }
+
+      // Recurse into child
+      const childJudgment = this.judgeTreeCompletion(childId);
+
+      if (!childJudgment.is_complete) {
+        // Aggregate child's blocking and low-confidence dimensions
+        for (const dim of childJudgment.blocking_dimensions) {
+          if (!blockingDimensions.includes(dim)) {
+            blockingDimensions.push(dim);
+          }
+        }
+        for (const dim of childJudgment.low_confidence_dimensions) {
+          if (!lowConfidenceDimensions.includes(dim)) {
+            lowConfidenceDimensions.push(dim);
+          }
+        }
+      }
+
+      if (childJudgment.needs_verification_task) {
+        needsVerification = true;
+      }
+    }
+
+    const isComplete = blockingDimensions.length === 0 && lowConfidenceDimensions.length === 0;
+
+    return {
+      is_complete: isComplete,
+      blocking_dimensions: blockingDimensions,
+      low_confidence_dimensions: lowConfidenceDimensions,
+      needs_verification_task: needsVerification,
+      checked_at: new Date().toISOString(),
+    };
+  }
+
+  /**
    * Propagate subgoal completion to the parent goal's matching dimension.
    *
    * Phase 2: supports dimension_mapping for aggregation-based propagation.

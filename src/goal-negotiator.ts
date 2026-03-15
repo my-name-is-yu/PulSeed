@@ -21,6 +21,11 @@ import type {
 import type { CharacterConfig } from "./types/character.js";
 import { DEFAULT_CHARACTER_CONFIG } from "./types/character.js";
 import type { SatisficingJudge } from "./satisficing-judge.js";
+import type { GoalTreeManager } from "./goal-tree-manager.js";
+import type {
+  GoalDecompositionConfig,
+  DecompositionResult,
+} from "./types/goal-tree.js";
 
 // ─── Constants ───
 
@@ -250,6 +255,7 @@ export class GoalNegotiator {
   private readonly observationEngine: ObservationEngine;
   private readonly characterConfig: CharacterConfig;
   private readonly satisficingJudge?: SatisficingJudge;
+  private readonly goalTreeManager?: GoalTreeManager;
 
   constructor(
     stateManager: StateManager,
@@ -257,7 +263,8 @@ export class GoalNegotiator {
     ethicsGate: EthicsGate,
     observationEngine: ObservationEngine,
     characterConfig?: CharacterConfig,
-    satisficingJudge?: SatisficingJudge  // Phase 2: auto-mapping proposals
+    satisficingJudge?: SatisficingJudge,  // Phase 2: auto-mapping proposals
+    goalTreeManager?: GoalTreeManager
   ) {
     this.stateManager = stateManager;
     this.llmClient = llmClient;
@@ -265,6 +272,7 @@ export class GoalNegotiator {
     this.observationEngine = observationEngine;
     this.characterConfig = characterConfig ?? DEFAULT_CHARACTER_CONFIG;
     this.satisficingJudge = satisficingJudge;
+    this.goalTreeManager = goalTreeManager;
   }
 
   /**
@@ -768,6 +776,36 @@ export class GoalNegotiator {
     this.saveNegotiationLog(goalId, log);
 
     return { goal: updatedGoal, response: negotiationResponse, log };
+  }
+
+  // ─── decomposeIntoSubgoals() ───
+
+  /**
+   * Decompose a negotiated goal into subgoals using GoalTreeManager.
+   * For depth >= 2, skip negotiation and auto-accept.
+   * Returns null if goalTreeManager is not injected.
+   */
+  async decomposeIntoSubgoals(
+    goalId: string,
+    config?: GoalDecompositionConfig
+  ): Promise<DecompositionResult | null> {
+    if (this.goalTreeManager === undefined) {
+      return null;
+    }
+
+    const goal = this.stateManager.loadGoal(goalId);
+    if (!goal) {
+      return null;
+    }
+
+    const resolvedConfig: GoalDecompositionConfig = config ?? {
+      max_depth: 5,
+      min_specificity: 0.7,
+      auto_prune_threshold: 0.3,
+      parallel_loop_limit: 3,
+    };
+
+    return this.goalTreeManager.decomposeGoal(goalId, resolvedConfig);
   }
 
   // ─── getNegotiationLog() ───

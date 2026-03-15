@@ -480,6 +480,76 @@ export class PortfolioManager {
     return this.rebalanceHistory.get(goalId) ?? [];
   }
 
+  /**
+   * Select the next strategy to execute across multiple goals.
+   *
+   * Uses CrossGoalPortfolio's allocation to determine which goal gets the
+   * next turn (most underserved relative to its allocation), then selects
+   * a strategy within that goal using selectNextStrategyForTask().
+   *
+   * Returns null if no strategies are available across all goals.
+   */
+  async selectNextStrategyAcrossGoals(
+    goalIds: string[],
+    goalAllocations: Map<string, number>
+  ): Promise<{
+    goal_id: string;
+    strategy_id: string | null;
+    selection_reason: string;
+  } | null> {
+    if (goalIds.length === 0) return null;
+
+    const now = Date.now();
+
+    // Sort goals by "most underserved": fewest tasks relative to their allocation
+    const goalTaskCounts = this.goalTaskCounts;
+    const scored = goalIds.map((goalId) => {
+      const allocation = goalAllocations.get(goalId) ?? (1 / goalIds.length);
+      const taskCount = goalTaskCounts.get(goalId) ?? 0;
+      // Goals with allocation > 0 and fewest tasks relative to allocation are most underserved
+      // Use (taskCount / allocation) as the "saturation ratio" — lower = more underserved
+      const saturation = allocation > 0 ? taskCount / allocation : Infinity;
+      return { goalId, saturation, allocation };
+    });
+
+    // Sort ascending by saturation (most underserved first)
+    scored.sort((a, b) => a.saturation - b.saturation);
+
+    // Try each goal in order until one has an available strategy
+    for (const { goalId, saturation } of scored) {
+      const allocation = goalAllocations.get(goalId) ?? 0;
+      if (allocation <= 0) {
+        // Skip goals with zero allocation (waiting state)
+        continue;
+      }
+
+      const selectionResult = this.selectNextStrategyForTask(goalId);
+      if (selectionResult !== null) {
+        return {
+          goal_id: goalId,
+          strategy_id: selectionResult.strategy_id,
+          selection_reason: `Goal selected (saturation=${saturation.toFixed(2)}, allocation=${allocation.toFixed(2)}): ${selectionResult.reason}`,
+        };
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Track how many tasks have been dispatched per goal.
+   * Updated via recordGoalTaskDispatched().
+   */
+  readonly goalTaskCounts: Map<string, number> = new Map();
+
+  /**
+   * Record that a task was dispatched for the given goal.
+   * Used by selectNextStrategyAcrossGoals() to track saturation.
+   */
+  recordGoalTaskDispatched(goalId: string): void {
+    this.goalTaskCounts.set(goalId, (this.goalTaskCounts.get(goalId) ?? 0) + 1);
+  }
+
   // ─── Private Helpers ───
 
   /**

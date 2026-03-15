@@ -1,4 +1,4 @@
-import { SessionSchema } from "./types/session.js";
+import { SessionSchema, ContextSlotSchema } from "./types/session.js";
 import type { Session, SessionType, ContextSlot } from "./types/session.js";
 import type { StateManager } from "./state-manager.js";
 import type { KnowledgeEntry } from "./types/knowledge.js";
@@ -350,6 +350,30 @@ export class SessionManager {
     } catch {
       return slots;  // Non-critical failure
     }
+  }
+
+  /**
+   * Inject learning feedback into context slots.
+   * Adds a single "learning_feedback" slot containing all feedback strings.
+   */
+  injectLearningFeedback(slots: ContextSlot[], feedback: string[]): ContextSlot[] {
+    if (feedback.length === 0) {
+      return slots;
+    }
+
+    const maxPriority = slots.reduce(
+      (max, s) => Math.max(max, s.priority),
+      0
+    );
+
+    const feedbackSlot: ContextSlot = ContextSlotSchema.parse({
+      label: "learning_feedback",
+      content: feedback.join("\n---\n"),
+      token_estimate: feedback.join("\n---\n").length / 4,
+      priority: maxPriority + 1,
+    });
+
+    return [...slots, feedbackSlot];
   }
 
   // ─── Dynamic Budget Filtering ───

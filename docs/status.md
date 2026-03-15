@@ -1,6 +1,6 @@
 # Implementation Status
 
-Implementation Phase — Stage 1-11 complete (1749 tests, 35 test files).
+Implementation Phase — Stage 1-14 complete (2663 tests, 53 files).
 
 ## Stage 1 (complete)
 - Type definitions: 14 Zod schema files in `src/types/`
@@ -115,3 +115,50 @@ Implementation Phase — Stage 1-11 complete (1749 tests, 35 test files).
 ### 12.7 記憶ライフサイクル Phase 2 (Part E)
 - `src/types/memory-lifecycle.ts` — RelevanceScore, CompressionPolicy 型追加、embedding_id フィールド
 - `src/memory-lifecycle.ts` — Drive-based管理（getCompressionDelay, getDeadlineBonus, markForEarlyCompression）、selectForWorkingMemorySemantic()
+
+## Stage 13 (complete)
+
+**Status**: 完了（CapabilityDetector拡張・DataSourceAdapter）
+
+- `src/capability-detector.ts` — 能動的欠如検知、ユーザーエスカレーション自動発行
+- `src/types/data-source.ts` — DataSourceAdapter Zodスキーマ
+- 外部データソース（センサー/DB/API/IoT）との接続基盤
+- Layer 13: CapabilityDetector（能力自律調達）、DataSourceAdapter（外部世界接続）
+
+## Stage 14 (complete)
+
+**Status**: 完了（2663テスト、53テストファイル、+744テスト、+13テストファイル）
+
+Goal横断ポートフォリオと学習 — 再帰的ゴールツリー、ノード独立ループ、クロスゴールポートフォリオ、学習パイプライン Phase 2、ゴール間知識転移。
+
+### 14A: 型定義・設計ドキュメント基盤
+- `src/types/goal-tree.ts` — GoalTree, GoalTreeNode, TreeNodeStatus Zodスキーマ
+- `src/types/cross-portfolio.ts` — CrossGoalPortfolio, PortfolioPriority, ResourceAllocation Zodスキーマ
+- `src/types/learning.ts` — LearningLog, LearningFeedback, CrossGoalPattern Zodスキーマ
+- `src/types/goal.ts` 拡張 — decomposition_depth, specificity_score, loop_status, "leaf" ノード型追加
+- `src/types/strategy.ts` 拡張 — source_template_id, cross_goal_context フィールド追加
+- 設計ドキュメント: `docs/design/goal-tree.md`, `docs/design/learning-pipeline.md`, `docs/design/knowledge-transfer.md`, `docs/design/portfolio-management.md` Phase 3
+
+### 14B: 再帰的Goal Tree（分解・集約・剪定）
+- `src/goal-tree-manager.ts` (~400行) — GoalTreeManager: N層分解、バリデーション、剪定、再構成
+- `src/state-aggregator.ts` (~200行) — StateAggregator: 子ノード状態集約、伝播、完了カスケード
+- 変更: goal-negotiator.ts, satisficing-judge.ts, state-manager.ts, core-loop.ts
+
+### 14C: 各ノードの独立ループ実行
+- `src/tree-loop-orchestrator.ts` (~300行) — TreeLoopOrchestrator: ノード選択、並列ループ制御、完了コールバック
+- 変更: core-loop.ts（ツリーモード追加）、cli-runner.ts（--treeオプション追加）、reporting-engine.ts（ツリーレポート追加）
+
+### 14D: ゴール横断ポートフォリオ
+- `src/cross-goal-portfolio.ts` (~450行) — CrossGoalPortfolio: 優先度計算、リソース配分、リバランス、テンプレート推薦
+- `src/strategy-template-registry.ts` (~200行) — StrategyTemplateRegistry: テンプレート登録・検索・適用
+- 変更: goal-dependency-graph.ts, portfolio-manager.ts, core-loop.ts
+
+### 14E: 学習パイプライン Phase 2
+- `src/learning-pipeline.ts` (~400行) — LearningPipeline: ログ分析、フィードバック生成、クロスゴール共有
+- 4種トリガー実装済み: milestone到達時・停滞検知時・定期レビュー・goal_completed時
+- クロスゴールパターン共有: VectorIndexを利用した意味的類似度マッチング
+- 変更: core-loop.ts, session-manager.ts, stall-detector.ts
+
+### 14F: ゴール間の知識・戦略転移
+- `src/knowledge-transfer.ts` (~310行) — KnowledgeTransfer: 転移検出、適用、効果評価、メタパターン抽出
+- 変更: core-loop.ts, curiosity-engine.ts, index.ts

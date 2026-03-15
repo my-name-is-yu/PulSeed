@@ -510,6 +510,67 @@ export class ReportingEngine {
     return report;
   }
 
+  // ─── generateTreeReport ───
+
+  /**
+   * Generate a tree visualization report for the given root goal.
+   * Recursively traverses children_ids to build an indented text tree.
+   * Each node shows: title, status, loop_status, specificity_score.
+   */
+  generateTreeReport(rootId: string): Report {
+    const now = new Date().toISOString();
+    const root = this.stateManager.loadGoal(rootId);
+
+    let content: string;
+
+    if (!root) {
+      content = `Goal Tree Report: (root goal "${rootId}" not found)`;
+    } else {
+      const lines: string[] = [`Goal Tree Report: ${root.title}`];
+
+      const renderNode = (goalId: string, prefix: string, isLast: boolean): void => {
+        const goal = this.stateManager.loadGoal(goalId);
+        if (!goal) return;
+
+        const connector = isLast ? "└── " : "├── ";
+        const specificity =
+          goal.specificity_score !== null && goal.specificity_score !== undefined
+            ? ` (specificity: ${goal.specificity_score.toFixed(2)})`
+            : "";
+        lines.push(
+          `${prefix}${connector}${goal.title} [${goal.status}] [loop: ${goal.loop_status}]${specificity}`
+        );
+
+        const childPrefix = prefix + (isLast ? "    " : "│   ");
+        const children = goal.children_ids;
+        for (let i = 0; i < children.length; i++) {
+          renderNode(children[i], childPrefix, i === children.length - 1);
+        }
+      };
+
+      const children = root.children_ids;
+      for (let i = 0; i < children.length; i++) {
+        renderNode(children[i], "", i === children.length - 1);
+      }
+
+      content = lines.join("\n");
+    }
+
+    const report = ReportSchema.parse({
+      id: crypto.randomUUID(),
+      report_type: "execution_summary",
+      goal_id: rootId,
+      title: `Goal Tree Report — ${rootId}`,
+      content,
+      verbosity: "standard",
+      generated_at: now,
+      delivered_at: null,
+      read: false,
+    });
+
+    return report;
+  }
+
   // ─── deliverReport ───
 
   /** Deliver a report through push channels (if dispatcher configured) */

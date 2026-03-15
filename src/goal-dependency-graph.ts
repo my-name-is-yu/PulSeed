@@ -278,6 +278,77 @@ Return empty array [] if no dependencies found.`;
     }
   }
 
+  // ─── Strategy Dependencies ───
+
+  /**
+   * Add a strategy-level dependency between two strategies.
+   * Uses DependencyType "strategy_dependency" for the underlying edge.
+   * The sourceStrategyId is stored in from_goal_id and targetStrategyId in to_goal_id.
+   */
+  addStrategyDependency(
+    sourceStrategyId: string,
+    targetStrategyId: string,
+    dependencyType: "prerequisite" | "enhances",
+    goalId: string
+  ): void {
+    this.addEdge({
+      from_goal_id: sourceStrategyId,
+      to_goal_id: targetStrategyId,
+      type: "strategy_dependency",
+      status: "active",
+      condition: null,
+      affected_dimensions: [],
+      mitigation: null,
+      detection_confidence: 1.0,
+      reasoning: `strategy_dependency_type:${dependencyType};goal_id:${goalId}`,
+    });
+  }
+
+  /**
+   * Get all strategy dependencies for a given strategy.
+   * Returns edges where this strategy is either source or target.
+   */
+  getStrategyDependencies(strategyId: string): Array<{
+    source_strategy_id: string;
+    target_strategy_id: string;
+    dependency_type: "prerequisite" | "enhances";
+    goal_id: string;
+  }> {
+    return this.graph.edges
+      .filter(
+        (e) =>
+          e.type === "strategy_dependency" &&
+          (e.from_goal_id === strategyId || e.to_goal_id === strategyId)
+      )
+      .map((e) => {
+        // Extract dependency_type and goal_id from the reasoning field
+        const reasoning = e.reasoning ?? "";
+        const dtMatch = reasoning.match(/strategy_dependency_type:(prerequisite|enhances)/);
+        const giMatch = reasoning.match(/goal_id:([^;]+)/);
+        return {
+          source_strategy_id: e.from_goal_id,
+          target_strategy_id: e.to_goal_id,
+          dependency_type: (dtMatch?.[1] ?? "prerequisite") as "prerequisite" | "enhances",
+          goal_id: giMatch?.[1] ?? "",
+        };
+      });
+  }
+
+  /**
+   * Check if a strategy is blocked by a prerequisite dependency.
+   * Returns true if the strategy has a prerequisite dependency where
+   * the source strategy is NOT in completedStrategyIds.
+   */
+  isStrategyBlocked(strategyId: string, completedStrategyIds: string[]): boolean {
+    const deps = this.getStrategyDependencies(strategyId);
+    return deps.some(
+      (d) =>
+        d.dependency_type === "prerequisite" &&
+        d.target_strategy_id === strategyId &&
+        !completedStrategyIds.includes(d.source_strategy_id)
+    );
+  }
+
   // ─── Persistence ───
 
   /**

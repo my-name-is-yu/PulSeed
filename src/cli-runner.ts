@@ -36,6 +36,10 @@ import { ClaudeAPIAdapter } from "./adapters/claude-api.js";
 import { TaskLifecycle } from "./task-lifecycle.js";
 import { ReportingEngine } from "./reporting-engine.js";
 import { CoreLoop } from "./core-loop.js";
+import { TreeLoopOrchestrator } from "./tree-loop-orchestrator.js";
+import { GoalTreeManager } from "./goal-tree-manager.js";
+import { StateAggregator } from "./state-aggregator.js";
+import { GoalDependencyGraph } from "./goal-dependency-graph.js";
 import { DaemonRunner } from "./daemon-runner.js";
 import { PIDManager } from "./pid-manager.js";
 import { Logger } from "./logger.js";
@@ -133,6 +137,16 @@ export class CLIRunner {
 
     const reportingEngine = new ReportingEngine(stateManager, undefined, characterConfig);
 
+    // Stage 14 — tree mode dependencies
+    const goalDependencyGraph = new GoalDependencyGraph(stateManager, llmClient);
+    const goalTreeManager = new GoalTreeManager(
+      stateManager, llmClient, ethicsGate, goalDependencyGraph
+    );
+    const stateAggregator = new StateAggregator(stateManager, satisficingJudge);
+    const treeLoopOrchestrator = new TreeLoopOrchestrator(
+      stateManager, goalTreeManager, stateAggregator, satisficingJudge
+    );
+
     // Wrap pure-function modules to satisfy the CoreLoopDeps interface
     const gapCalculator: GapCalculatorModule = {
       calculateGapVector: GapCalculator.calculateGapVector,
@@ -157,6 +171,9 @@ export class CLIRunner {
       reportingEngine,
       driveSystem,
       adapterRegistry,
+      goalTreeManager,
+      stateAggregator,
+      treeLoopOrchestrator,
     }, config);
 
     const goalNegotiator = new GoalNegotiator(
@@ -215,6 +232,9 @@ export class CLIRunner {
 
     console.log(`Running Motiva loop for goal: ${goalId}`);
     console.log(`Goal: ${goal.title}`);
+    if (loopConfig?.treeMode) {
+      console.log("Tree mode enabled — iterating across all tree nodes");
+    }
     console.log("Press Ctrl+C to stop.\n");
 
     // Graceful shutdown on OS signals
@@ -824,7 +844,7 @@ Options:
     const subcommand = argv[0];
 
     if (subcommand === "run") {
-      let values: { goal?: string; "max-iterations"?: string; adapter?: string };
+      let values: { goal?: string; "max-iterations"?: string; adapter?: string; tree?: boolean };
       try {
         ({ values } = parseArgs({
           args: argv.slice(1),
@@ -832,9 +852,10 @@ Options:
             goal: { type: "string" },
             "max-iterations": { type: "string" },
             adapter: { type: "string" },
+            tree: { type: "boolean" },
           },
           strict: false,
-        }) as { values: { goal?: string; "max-iterations"?: string; adapter?: string } });
+        }) as { values: { goal?: string; "max-iterations"?: string; adapter?: string; tree?: boolean } });
       } catch {
         values = {};
       }
@@ -854,6 +875,9 @@ Options:
       }
       if (values.adapter !== undefined) {
         loopConfig.adapterType = values.adapter;
+      }
+      if (values.tree) {
+        loopConfig.treeMode = true;
       }
 
       return await this.cmdRun(goalId, loopConfig);
@@ -1049,6 +1073,7 @@ Options (motiva run):
   --goal <id>                         Goal ID to run (required)
   --max-iterations <n>               Override max iterations (default: 100)
   --adapter <type>                    Adapter: claude_api | claude_code_cli (default: claude_api)
+  --tree                              Enable tree mode (iterate across all tree nodes)
 
 Options (motiva goal add):
   --deadline <ISO-date>               Optional deadline (e.g. 2026-06-01)

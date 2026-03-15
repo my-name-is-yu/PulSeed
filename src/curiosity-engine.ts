@@ -8,6 +8,8 @@ import type { StallDetector } from "./stall-detector.js";
 import type { ObservationEngine } from "./observation-engine.js";
 import type { DriveSystem } from "./drive-system.js";
 import type { VectorIndex } from "./vector-index.js";
+import type { KnowledgeTransfer } from "./knowledge-transfer.js";
+import type { TransferCandidate } from "./types/cross-portfolio.js";
 import type { Goal } from "./types/goal.js";
 import {
   CuriosityStateSchema,
@@ -39,6 +41,7 @@ export interface CuriosityEngineDeps {
   observationEngine: ObservationEngine;
   driveSystem: DriveSystem;
   vectorIndex?: VectorIndex;  // Phase 2: embedding-based detection
+  knowledgeTransfer?: KnowledgeTransfer;  // Stage 14F: cross-goal transfer detection
   config?: Partial<CuriosityConfig>;
 }
 
@@ -96,6 +99,7 @@ export class CuriosityEngine {
   private readonly observationEngine: ObservationEngine;
   private readonly driveSystem: DriveSystem;
   private readonly vectorIndex?: VectorIndex;
+  private readonly knowledgeTransfer?: KnowledgeTransfer;
   private readonly config: CuriosityConfig;
   private state: CuriosityState;
 
@@ -108,6 +112,7 @@ export class CuriosityEngine {
     this.observationEngine = deps.observationEngine;
     this.driveSystem = deps.driveSystem;
     this.vectorIndex = deps.vectorIndex;
+    this.knowledgeTransfer = deps.knowledgeTransfer;
 
     // Merge user config with defaults
     this.config = CuriosityConfigSchema.parse(deps.config ?? {});
@@ -573,6 +578,78 @@ Return only valid JSON array, no markdown, no explanation outside the JSON.`;
       }
     }
 
+    // ─── Stage 14F: Transfer-based curiosity proposals ───
+    // If knowledgeTransfer is available, detect cross-goal transfer opportunities
+    // and add them as curiosity proposals (suggestion-only, Phase 1).
+    if (this.knowledgeTransfer && goals.length > 0) {
+      const activeGoals = goals.filter((g) => g.status === "active");
+      for (const goal of activeGoals) {
+        if (
+          activeProposals.length + newProposals.length >=
+          this.config.max_active_proposals
+        ) {
+          break;
+        }
+
+        try {
+          const transferCandidates =
+            await this.knowledgeTransfer.detectTransferOpportunities(goal.id);
+
+          for (const candidate of transferCandidates) {
+            if (
+              activeProposals.length + newProposals.length >=
+              this.config.max_active_proposals
+            ) {
+              break;
+            }
+
+            const description = `Apply pattern from goal ${candidate.source_goal_id} to goal ${candidate.target_goal_id}: ${candidate.estimated_benefit}`;
+
+            // Skip if in rejection cooldown
+            if (this.isInRejectionCooldown(description)) {
+              continue;
+            }
+
+            // Create a synthetic trigger for the transfer-based proposal.
+            // Uses "periodic_exploration" type as the closest match for
+            // cross-goal opportunity discovery (no dedicated transfer type exists).
+            const transferTrigger = CuriosityTriggerSchema.parse({
+              type: "periodic_exploration",
+              detected_at: now.toISOString(),
+              source_goal_id: candidate.source_goal_id,
+              details: `Cross-goal transfer candidate (similarity=${candidate.similarity_score.toFixed(2)}): ${candidate.estimated_benefit}`,
+              severity: candidate.similarity_score,
+            });
+
+            const proposalId = randomUUID();
+            const proposal = CuriosityProposalSchema.parse({
+              id: proposalId,
+              trigger: transferTrigger,
+              proposed_goal: {
+                description,
+                rationale: `Cross-goal knowledge transfer opportunity detected (similarity=${candidate.similarity_score.toFixed(2)}). ${candidate.estimated_benefit}`,
+                suggested_dimensions: [],
+                scope_domain: goal.id,
+                detection_method: "cross_goal_transfer",
+              },
+              status: "pending",
+              created_at: now.toISOString(),
+              expires_at: expiresAt.toISOString(),
+              reviewed_at: null,
+              rejection_cooldown_until: null,
+              loop_count: 0,
+              goal_id: null,
+            });
+
+            newProposals.push(proposal);
+            this.state.proposals.push(proposal);
+          }
+        } catch {
+          // Non-fatal: transfer detection failure should not block curiosity generation
+        }
+      }
+    }
+
     this.saveState();
     return newProposals;
   }
@@ -821,6 +898,36 @@ Return only valid JSON array, no markdown, no explanation outside the JSON.`;
     }
 
     return transfers;
+  }
+
+  // ─── Stage 14F: KnowledgeTransfer Integration ───
+
+  /**
+   * Detect cross-goal knowledge transfer opportunities for all active goals.
+   * Requires knowledgeTransfer to be injected — returns [] otherwise.
+   *
+   * For each active goal, calls KnowledgeTransfer.detectTransferOpportunities()
+   * and converts the resulting TransferCandidates into a flat list.
+   * Results are suggestion-only (Phase 1); no transfers are applied automatically.
+   */
+  async detectKnowledgeTransferOpportunities(
+    goals: Goal[]
+  ): Promise<TransferCandidate[]> {
+    if (!this.knowledgeTransfer) return [];
+
+    const activeGoals = goals.filter((g) => g.status === "active");
+    const allCandidates: TransferCandidate[] = [];
+
+    for (const goal of activeGoals) {
+      try {
+        const candidates = await this.knowledgeTransfer.detectTransferOpportunities(goal.id);
+        allCandidates.push(...candidates);
+      } catch {
+        // non-fatal: transfer detection failure should not block curiosity loop
+      }
+    }
+
+    return allCandidates;
   }
 
   /**

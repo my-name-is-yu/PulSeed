@@ -354,6 +354,105 @@ export class StateManager {
     };
   }
 
+  // ─── Goal Tree Traversal ───
+
+  /**
+   * Get the full goal tree rooted at rootId.
+   * Returns null if the root goal doesn't exist.
+   * Returns goals in BFS order: root first, then children level by level.
+   */
+  getGoalTree(rootId: string): Goal[] | null {
+    const root = this.loadGoal(rootId);
+    if (root === null) return null;
+
+    const result: Goal[] = [];
+    const queue: string[] = [rootId];
+    const visited = new Set<string>();
+
+    while (queue.length > 0) {
+      const currentId = queue.shift()!;
+      if (visited.has(currentId)) continue;
+      visited.add(currentId);
+
+      const goal = this.loadGoal(currentId);
+      if (goal === null) continue;
+
+      result.push(goal);
+
+      for (const childId of goal.children_ids) {
+        if (!visited.has(childId)) {
+          queue.push(childId);
+        }
+      }
+    }
+
+    return result;
+  }
+
+  /**
+   * Get all goals in the subtree of goalId (including goalId itself).
+   * Returns [] if goal not found.
+   */
+  getSubtree(goalId: string): Goal[] {
+    const root = this.loadGoal(goalId);
+    if (root === null) return [];
+
+    const result: Goal[] = [];
+    const queue: string[] = [goalId];
+    const visited = new Set<string>();
+
+    while (queue.length > 0) {
+      const currentId = queue.shift()!;
+      if (visited.has(currentId)) continue;
+      visited.add(currentId);
+
+      const goal = this.loadGoal(currentId);
+      if (goal === null) continue;
+
+      result.push(goal);
+
+      for (const childId of goal.children_ids) {
+        if (!visited.has(childId)) {
+          queue.push(childId);
+        }
+      }
+    }
+
+    return result;
+  }
+
+  /**
+   * Update a goal that belongs to a tree, handling both goal and tree consistency.
+   * Merges updates into the existing goal, preserving its id.
+   * If the goal has a parent_id, ensures the parent's children_ids still includes this goal.
+   */
+  updateGoalInTree(goalId: string, updates: Partial<Goal>): void {
+    const existingGoal = this.loadGoal(goalId);
+    if (existingGoal === null) {
+      throw new Error(`updateGoalInTree: goal "${goalId}" not found`);
+    }
+
+    const updatedGoal: Goal = {
+      ...existingGoal,
+      ...updates,
+      id: existingGoal.id,  // id is immutable
+    };
+
+    this.saveGoal(updatedGoal);
+
+    // Ensure parent's children_ids still includes this goal
+    if (existingGoal.parent_id !== null) {
+      const parent = this.loadGoal(existingGoal.parent_id);
+      if (parent !== null && !parent.children_ids.includes(goalId)) {
+        this.saveGoal({
+          ...parent,
+          children_ids: [...parent.children_ids, goalId],
+          updated_at: new Date().toISOString(),
+        });
+      }
+    }
+  }
+
   // ─── Utility ───
 
   /** Check whether a goal directory exists */
