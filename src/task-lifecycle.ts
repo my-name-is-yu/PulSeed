@@ -281,10 +281,18 @@ export class TaskLifecycle {
       const issuePayload = JSON.stringify({ title, body: task.work_description });
       prompt = `\`\`\`github-issue\n${issuePayload}\n\`\`\``;
     } else {
-      prompt = contextSlots
+      // Build prompt with task description as primary content
+      const taskDescription = `You are an AI agent executing a task.\n\nTask: ${task.work_description}\n\nApproach: ${task.approach}\n\nSuccess Criteria:\n${task.success_criteria.map((c) => `- ${c.description}`).join("\n")}`;
+
+      const contextContent = contextSlots
+        .filter((slot) => slot.content.trim().length > 0) // Skip empty slots
         .sort((a, b) => a.priority - b.priority)
         .map((slot) => `[${slot.label}]\n${slot.content}`)
         .join("\n\n");
+
+      prompt = contextContent
+        ? `${taskDescription}\n\n--- Context ---\n${contextContent}`
+        : taskDescription;
     }
 
     const timeoutMs = task.estimated_duration
