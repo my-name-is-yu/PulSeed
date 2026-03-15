@@ -227,11 +227,20 @@ export class ObservationEngine {
 
     const dim = goal.dimensions[dimIndex]!;
 
+    // Determine if the incoming observation should update the dimension's confidence.
+    // Only allow confidence updates from an equal or higher-priority layer.
+    // This prevents a low-layer self_report from downgrading confidence that was
+    // established by a mechanical or independent_review observation.
+    const existingTier = dim.observation_method.confidence_tier as ObservationLayer;
+    const existingPriority = LAYER_PRIORITY[existingTier] ?? 0;
+    const incomingPriority = LAYER_PRIORITY[entry.layer] ?? 0;
+    const shouldUpdateConfidence = incomingPriority >= existingPriority;
+
     // Update dimension values
     const updatedDim = {
       ...dim,
       current_value: entry.extracted_value,
-      confidence: entry.confidence,
+      confidence: shouldUpdateConfidence ? entry.confidence : dim.confidence,
       last_updated: entry.timestamp,
       history: [
         ...dim.history,
@@ -307,7 +316,9 @@ export class ObservationEngine {
       throw new Error(`observe: goal "${goalId}" not found`);
     }
 
-    for (let idx = 0; idx < goal.dimensions.length; idx++) {
+    const observeCount = methods.length > 0 ? Math.min(goal.dimensions.length, methods.length) : goal.dimensions.length;
+
+    for (let idx = 0; idx < observeCount; idx++) {
       const dim = goal.dimensions[idx]!;
       const method: ObservationMethod = methods[idx] ?? dim.observation_method;
 
