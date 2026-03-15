@@ -220,6 +220,7 @@ afterEach(() => {
   } else {
     process.env.ANTHROPIC_API_KEY = origApiKey;
   }
+  delete process.env.MOTIVA_LLM_PROVIDER;
 
   fs.rmSync(tmpDir, { recursive: true, force: true });
   vi.clearAllMocks();
@@ -876,6 +877,7 @@ describe("report subcommand", () => {
 describe("ANTHROPIC_API_KEY", () => {
   it("exits with code 1 and prints error when key is missing for run", async () => {
     delete process.env.ANTHROPIC_API_KEY;
+    process.env.MOTIVA_LLM_PROVIDER = "anthropic";
     stateManager.saveGoal(makeGoal({ id: "g-nokey2" }));
 
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -889,6 +891,7 @@ describe("ANTHROPIC_API_KEY", () => {
 
   it("exits with code 1 and prints error when key is missing for goal add", async () => {
     delete process.env.ANTHROPIC_API_KEY;
+    process.env.MOTIVA_LLM_PROVIDER = "anthropic";
 
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const code = await runCLI("goal", "add", "Some goal");

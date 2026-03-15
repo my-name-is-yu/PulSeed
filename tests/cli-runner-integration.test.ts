@@ -132,6 +132,7 @@ beforeEach(() => {
   stateManager = new StateManager(tmpDir);
   origApiKey = process.env.ANTHROPIC_API_KEY;
   process.env.ANTHROPIC_API_KEY = "test-api-key-for-integration";
+  process.env.MOTIVA_LLM_PROVIDER = "anthropic";
 });
 
 afterEach(() => {
@@ -140,6 +141,7 @@ afterEach(() => {
   } else {
     process.env.ANTHROPIC_API_KEY = origApiKey;
   }
+  delete process.env.MOTIVA_LLM_PROVIDER;
   fs.rmSync(tmpDir, { recursive: true, force: true });
   vi.clearAllMocks();
 });

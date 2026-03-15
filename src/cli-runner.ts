@@ -200,7 +200,8 @@ export class CLIRunner {
 
   private async cmdRun(
     goalId: string,
-    loopConfig?: LoopConfig
+    loopConfig?: LoopConfig,
+    autoApprove?: boolean
   ): Promise<number> {
     const apiKey = this.getApiKey();
     const providerConfig = loadProviderConfig();
@@ -218,16 +219,26 @@ export class CLIRunner {
 
     // Create a single readline interface for the entire loop run.
     // It is reused across all approval prompts and closed when the loop ends.
-    const rl = readline.createInterface({
-      input: process.stdin,
-      output: process.stdout,
-    });
+    const rl = autoApprove
+      ? null
+      : readline.createInterface({
+          input: process.stdin,
+          output: process.stdout,
+        });
+
+    const approvalFn = autoApprove
+      ? async (task: Task) => {
+          console.log(`\n--- Auto-approved (--yes) ---`);
+          console.log(`Task: ${task.work_description.split("\n")[0]}`);
+          return true;
+        }
+      : this.buildApprovalFn(rl!);
 
     let deps: ReturnType<typeof this.buildDeps>;
     try {
-      deps = this.buildDeps(apiKey, loopConfig, this.buildApprovalFn(rl));
+      deps = this.buildDeps(apiKey, loopConfig, approvalFn);
     } catch (err) {
-      rl.close();
+      rl?.close();
       const message = err instanceof Error ? err.message : String(err);
       console.error(`Error: Failed to initialise dependencies: ${message}`);
       return 1;
@@ -238,7 +249,7 @@ export class CLIRunner {
     // Validate goal exists before starting
     const goal = this.stateManager.loadGoal(goalId);
     if (!goal) {
-      rl.close();
+      rl?.close();
       console.error(`Error: Goal "${goalId}" not found.`);
       return 1;
     }
@@ -270,14 +281,14 @@ export class CLIRunner {
       process.off("SIGINT", shutdown);
       process.off("SIGTERM", shutdown);
       this.activeCoreLoop = null;
-      rl.close();
+      rl?.close();
       return 1;
     }
 
     process.off("SIGINT", shutdown);
     process.off("SIGTERM", shutdown);
     this.activeCoreLoop = null;
-    rl.close();
+    rl?.close();
 
     console.log(`\n--- Loop Result ---`);
     console.log(`Goal ID:          ${result.goalId}`);
@@ -359,7 +370,7 @@ export class CLIRunner {
           });
           process.stdout.write("\nAccept this counter-proposal and register the goal? [y/N] ");
           rl.once("line", (answer) => {
-            rl.close();
+            rl?.close();
             resolve(answer.trim().toLowerCase() === "y");
           });
         });
@@ -989,6 +1000,18 @@ Options:
     }
   }
 
+  /** Mask API keys in a config object for safe display. */
+  private maskSecrets(config: ProviderConfig): ProviderConfig {
+    const mask = (val: string | undefined): string | undefined =>
+      val && val.length > 8 ? val.slice(0, 4) + "..." + val.slice(-4) : val ? "****" : undefined;
+    return JSON.parse(JSON.stringify(config), (key, value) => {
+      if (typeof value === "string" && (key === "api_key" || key === "apiKey")) {
+        return mask(value);
+      }
+      return value as unknown;
+    }) as ProviderConfig;
+  }
+
   // ─── Provider Subcommands ───
 
   private cmdProvider(argv: string[]): number {
@@ -996,7 +1019,7 @@ Options:
 
     if (!providerSubcommand || providerSubcommand === "show") {
       const config = loadProviderConfig();
-      console.log(JSON.stringify(config, null, 2));
+      console.log(JSON.stringify(this.maskSecrets(config), null, 2));
       return 0;
     }
 
@@ -1042,7 +1065,7 @@ Options:
 
       saveProviderConfig(updated);
       console.log("Provider config updated:");
-      console.log(JSON.stringify(updated, null, 2));
+      console.log(JSON.stringify(this.maskSecrets(updated), null, 2));
       return 0;
     }
 
@@ -1069,7 +1092,7 @@ Options:
     const subcommand = argv[0];
 
     if (subcommand === "run") {
-      let values: { goal?: string; "max-iterations"?: string; adapter?: string; tree?: boolean };
+      let values: { goal?: string; "max-iterations"?: string; adapter?: string; tree?: boolean; yes?: boolean };
       try {
         ({ values } = parseArgs({
           args: argv.slice(1),
@@ -1078,9 +1101,10 @@ Options:
             "max-iterations": { type: "string" },
             adapter: { type: "string" },
             tree: { type: "boolean" },
+            yes: { type: "boolean", short: "y" },
           },
           strict: false,
-        }) as { values: { goal?: string; "max-iterations"?: string; adapter?: string; tree?: boolean } });
+        }) as { values: { goal?: string; "max-iterations"?: string; adapter?: string; tree?: boolean; yes?: boolean } });
       } catch {
         values = {};
       }
@@ -1105,7 +1129,7 @@ Options:
         loopConfig.treeMode = true;
       }
 
-      return await this.cmdRun(goalId, loopConfig);
+      return await this.cmdRun(goalId, loopConfig, values.yes);
     }
 
     if (subcommand === "goal") {
@@ -1366,6 +1390,7 @@ Options (motiva run):
   --max-iterations <n>               Override max iterations (default: 100)
   --adapter <type>                    Adapter: claude_api | claude_code_cli | github_issue (default: claude_api)
   --tree                              Enable tree mode (iterate across all tree nodes)
+  --yes, -y                           Auto-approve all tasks (skip approval prompts)
 
 Options (motiva goal add):
   --deadline <ISO-date>               Optional deadline (e.g. 2026-06-01)
