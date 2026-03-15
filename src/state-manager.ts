@@ -87,10 +87,16 @@ export class StateManager {
   }
 
   loadGoal(goalId: string): Goal | null {
+    // Primary path: active goals
     const filePath = path.join(this.baseDir, "goals", goalId, "goal.json");
     const raw = this.readJsonFile<unknown>(filePath);
-    if (raw === null) return null;
-    return GoalSchema.parse(raw);
+    if (raw !== null) return GoalSchema.parse(raw);
+
+    // Fallback: archived goals (archiveGoal() copies goal dir to archive/<goalId>/goal/)
+    const archivePath = path.join(this.baseDir, "archive", goalId, "goal", "goal.json");
+    const archiveRaw = this.readJsonFile<unknown>(archivePath);
+    if (archiveRaw === null) return null;
+    return GoalSchema.parse(archiveRaw);
   }
 
   deleteGoal(goalId: string): boolean {

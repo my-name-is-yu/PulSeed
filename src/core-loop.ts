@@ -80,6 +80,18 @@ export interface LoopConfig {
   treeMode?: boolean;  // Enable tree mode (iterate across all tree nodes)
   multiGoalMode?: boolean;  // Enable multi-goal mode (iterate across multiple goals)
   goalIds?: string[];       // List of goal IDs to manage in multi-goal mode
+  /**
+   * Minimum number of iterations to run before the loop can exit on completion.
+   * Default: 1 (at least one full task cycle always runs before declaring complete).
+   * Setting to 2 forces two full iterations even if the goal is already satisfied after iteration 1.
+   */
+  minIterations?: number;
+  /**
+   * Whether to automatically archive a completed goal at the end of run().
+   * Default: false — archiving is an irreversible action and should be triggered explicitly
+   * (e.g. via `motiva goal archive <id>` CLI command or by setting this flag intentionally).
+   */
+  autoArchive?: boolean;
 }
 
 const DEFAULT_CONFIG: Required<LoopConfig> = {
@@ -90,6 +102,8 @@ const DEFAULT_CONFIG: Required<LoopConfig> = {
   treeMode: false,
   multiGoalMode: false,
   goalIds: [],
+  minIterations: 1,
+  autoArchive: false,
 };
 
 // ─── Result types ───
@@ -275,8 +289,9 @@ export class CoreLoop {
         : await this.runOneIteration(goalId, loopIndex);
       iterations.push(iterationResult);
 
-      // Check completion
-      if (iterationResult.completionJudgment.is_complete) {
+      // Check completion (R1-2: must complete at least minIterations before exiting)
+      if (iterationResult.completionJudgment.is_complete &&
+          loopIndex >= (this.config.minIterations ?? 1) - 1) {
         finalStatus = "completed";
         break;
       }
@@ -393,8 +408,8 @@ export class CoreLoop {
       }
     }
 
-    // Archive goal state on completion
-    if (finalStatus === "completed") {
+    // Archive goal state on completion (only when autoArchive is explicitly enabled)
+    if (finalStatus === "completed" && this.config.autoArchive) {
       try {
         this.deps.stateManager.archiveGoal(goalId);
       } catch {
@@ -618,18 +633,15 @@ export class CoreLoop {
     }
 
     // ─── 5. Completion Check ───
+    // R1-1: We record the pre-task judgment for reporting, but do NOT early-return here.
+    // The task cycle always runs within an iteration. Completion is re-evaluated after the
+    // task cycle (Step 7 post-task re-check) and the loop exits via the minIterations guard
+    // in run() rather than short-circuiting here.
     try {
       const judgment = goal.children_ids.length > 0
         ? this.deps.satisficingJudge.judgeTreeCompletion(goalId)
         : this.deps.satisficingJudge.isGoalComplete(goal);
       result.completionJudgment = judgment;
-
-      if (judgment.is_complete) {
-        // Generate report for completion
-        this.tryGenerateReport(goalId, loopIndex, result, goal);
-        result.elapsedMs = Date.now() - startTime;
-        return result;
-      }
     } catch (err) {
       result.error = `Completion check failed: ${err instanceof Error ? err.message : String(err)}`;
       this.logger?.error(`CoreLoop: ${result.error}`, { goalId });

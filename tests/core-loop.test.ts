@@ -643,8 +643,9 @@ describe("CoreLoop", () => {
       const result = await loop.runOneIteration("goal-1", 0);
 
       expect(result.completionJudgment.is_complete).toBe(true);
-      // Task cycle should NOT be called when goal is already complete
-      expect(mocks.taskLifecycle.runTaskCycle).not.toHaveBeenCalled();
+      // R1-1: Task cycle ALWAYS runs within an iteration — the pre-task completion check
+      // no longer causes an early-return. The post-task re-check sets completionJudgment.
+      expect(mocks.taskLifecycle.runTaskCycle).toHaveBeenCalledOnce();
     });
 
     it("stops the loop when goal is complete", async () => {
@@ -2590,7 +2591,7 @@ describe("CoreLoop tree mode (14C)", () => {
 
       const archiveSpy = vi.spyOn(mocks.stateManager, "archiveGoal");
 
-      const loop = new CoreLoop(deps, { maxIterations: 10, delayBetweenLoopsMs: 0 });
+      const loop = new CoreLoop(deps, { maxIterations: 10, delayBetweenLoopsMs: 0, autoArchive: true });
       const result = await loop.run("goal-1");
 
       expect(result.finalStatus).toBe("completed");

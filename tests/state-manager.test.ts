@@ -665,5 +665,31 @@ describe("StateManager", () => {
       const archived = manager.listArchivedGoals().sort();
       expect(archived).toEqual(["arc-1", "arc-2"]);
     });
+
+    it("loadGoal falls back to archive after archiveGoal()", () => {
+      // Create and save a goal
+      const goal = makeGoal({ id: "fallback-test", title: "Archived Goal" });
+      manager.saveGoal(goal);
+
+      // Verify it's loadable from active path
+      expect(manager.loadGoal("fallback-test")).not.toBeNull();
+
+      // Archive it — this removes the active-path directory
+      manager.archiveGoal("fallback-test");
+
+      // Active path should no longer exist
+      const activePath = path.join(tmpDir, "goals", "fallback-test");
+      expect(fs.existsSync(activePath)).toBe(false);
+
+      // loadGoal should still return the goal via archive fallback
+      const loaded = manager.loadGoal("fallback-test");
+      expect(loaded).not.toBeNull();
+      expect(loaded!.id).toBe("fallback-test");
+      expect(loaded!.title).toBe("Archived Goal");
+    });
+
+    it("loadGoal returns null for a goal that was never saved nor archived", () => {
+      expect(manager.loadGoal("never-existed")).toBeNull();
+    });
   });
 });
