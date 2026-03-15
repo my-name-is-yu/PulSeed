@@ -474,52 +474,27 @@ export class CoreLoop {
     }
 
     // ─── 2. Observe ───
-    // First, try to observe from registered data sources (mechanical layer).
-    // If a data source is available for a dimension, use it for higher-quality
-    // observation. Fall back to self_report for dimensions without data sources.
+    // Delegate the full 3-fallback chain to ObservationEngine.observe():
+    //   1. DataSource (mechanical) — if a registered source covers the dimension
+    //   2. LLM (independent_review) — if llmClient is available and no DataSource
+    //   3. self_report — last resort
+    // Passing an empty methods array tells observe() to iterate ALL dimensions.
     try {
       const engine = this.deps.observationEngine as unknown as {
         observe?: (goalId: string, methods: unknown[]) => Promise<void> | void;
-        observeFromDataSource?: (goalId: string, dimensionName: string, sourceId: string) => Promise<unknown>;
         getDataSources?: () => Array<{ sourceId: string }>;
       };
 
-      // Build a set of data source IDs available on the observation engine
       this.logger?.debug("CoreLoop: engine.getDataSources exists", { exists: typeof engine.getDataSources === "function" });
       const dataSources = typeof engine.getDataSources === "function"
         ? engine.getDataSources()
         : [];
+      this.logger?.debug("CoreLoop: observation setup", { dataSourceCount: dataSources.length });
 
-      const observedDimensions = new Set<string>();
-
-      this.logger?.debug("CoreLoop: observation setup", { dataSourceCount: dataSources.length, observeFromDataSourceExists: typeof engine.observeFromDataSource === "function" });
-      if (dataSources.length > 0 && typeof engine.observeFromDataSource === "function") {
-        // Try each dimension against available data sources
-        for (const dim of goal.dimensions) {
-          for (const ds of dataSources) {
-            try {
-              await engine.observeFromDataSource(goalId, dim.name, ds.sourceId);
-              observedDimensions.add(dim.name);
-              break; // This dimension is covered — move on to the next
-            } catch (dsErr) {
-              // This data source cannot observe this dimension — try next source
-              this.logger?.warn("CoreLoop: DataSource observation failed", { dim: dim.name, sourceId: ds.sourceId, error: dsErr instanceof Error ? dsErr.message : String(dsErr) });
-            }
-          }
-        }
-      }
-
-      // Fall back to self_report only for dimensions not covered by a data source
-      const unobservedDims = goal.dimensions.filter((dim) => !observedDimensions.has(dim.name));
-      if (unobservedDims.length > 0 && typeof engine.observe === "function") {
-        const methods = unobservedDims.map((dim) => ({
-          type: "manual" as const,
-          source: `self_report:${dim.name}`,
-          schedule: null,
-          endpoint: null,
-          confidence_tier: "self_report" as const,
-        }));
-        await engine.observe(goalId, methods);
+      if (typeof engine.observe === "function") {
+        // Empty methods array → observe() iterates all goal.dimensions using
+        // its internal priority: DataSource → LLM → self_report
+        await engine.observe(goalId, []);
       }
 
       // Reload goal after observation to pick up any updates
