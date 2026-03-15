@@ -4,7 +4,8 @@ MotivaをOpenAI APIおよびOpenAI Codex CLIで動かすためのガイドです
 
 ## 前提条件
 
-- ChatGPT有料プラン（API利用可能なプラン）または OpenAI API 別途契約
+- ChatGPT Plus（$20/月）または OpenAI API 別途契約
+  - **重要**: ChatGPT PlusサブスクリプションとOpenAI APIは完全に別課金です。APIキーを使った呼び出しは従量課金になります。Codex CLIはChatGPT Plusのサブスク枠内で利用可能です。
 - Node.js 18+
 - Motivaビルド済み（`npm run build`）
 - OpenAI Codex CLI インストール済み（タスクをCodexで実行する場合のみ）
@@ -24,6 +25,14 @@ npm install -g @openai/codex
 codex --version
 ```
 
+### Codex CLI の OAuth 認証
+
+初回起動時にブラウザでOAuth認証が必要です。
+
+1. `codex` を初回実行するとブラウザが開き、OpenAI/ChatGPTのOAuth認証画面が表示されます
+2. ChatGPTアカウント（ChatGPT Plusプラン）でログインして認証を完了します
+3. 認証後は `codex exec --full-auto` が非対話モードで動作します（追加の認証不要）
+
 ---
 
 ## 1. 環境変数の設定
@@ -40,7 +49,7 @@ export OPENAI_API_KEY=sk-...
 ```bash
 # 使用モデル（デフォルト: gpt-4o）
 export OPENAI_MODEL=gpt-4o          # デフォルト
-export OPENAI_MODEL=gpt-4o-mini     # コスト削減
+export OPENAI_MODEL=gpt-4o-mini     # コスト削減（ChatGPT Plus $20プランにおすすめ）
 export OPENAI_MODEL=o3              # 高性能reasoning model
 export OPENAI_MODEL=o4-mini         # reasoning model（軽量）
 
@@ -266,3 +275,28 @@ OPENAI_MODEL=gpt-4o
 ```bash
 rm -rf ~/.motiva
 ```
+
+---
+
+## 8. 自動E2Eテスト
+
+MotivaにはOpenAI/Codex向けのE2Eテストが含まれています。APIキーやCodex CLIが未設定の場合は自動的にスキップされます。
+
+### テストファイル
+
+| ファイル | 内容 | テスト数 |
+|----------|------|----------|
+| `tests/e2e/openai-e2e.test.ts` | OpenAI API直接呼び出しテスト | 3テスト |
+| `tests/e2e/codex-cli-e2e.test.ts` | Codex CLIアダプターテスト | 3テスト |
+
+### 実行方法
+
+```bash
+# E2Eテストのみ実行
+OPENAI_API_KEY=sk-... npx vitest run tests/e2e/
+```
+
+### スキップ条件
+
+- `OPENAI_API_KEY` が未設定の場合 → `openai-e2e.test.ts` が自動スキップ
+- Codex CLIが未インストールの場合 → `codex-cli-e2e.test.ts` が自動スキップ
