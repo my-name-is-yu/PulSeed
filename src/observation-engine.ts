@@ -272,6 +272,51 @@ export class ObservationEngine {
     this.stateManager.saveObservationLog(parsed);
   }
 
+  // ─── Observe ───
+
+  /**
+   * Perform a self-report observation pass for all dimensions of a goal.
+   *
+   * For each dimension the current_value and confidence are re-recorded as a
+   * self_report observation entry so that downstream gap-calculation always
+   * has up-to-date entries in the observation log.
+   *
+   * @param goalId   The goal to observe.
+   * @param methods  Array of ObservationMethod descriptors (one per dimension,
+   *                 in the same order as goal.dimensions).  Extra entries are
+   *                 ignored; missing entries fall back to the dimension's own
+   *                 observation_method.
+   */
+  observe(goalId: string, methods: ObservationMethod[]): void {
+    const goal = this.stateManager.loadGoal(goalId);
+    if (goal === null) {
+      throw new Error(`observe: goal "${goalId}" not found`);
+    }
+
+    goal.dimensions.forEach((dim, idx) => {
+      const method: ObservationMethod = methods[idx] ?? dim.observation_method;
+
+      const entry = this.createObservationEntry({
+        goalId,
+        dimensionName: dim.name,
+        layer: "self_report",
+        method,
+        trigger: "periodic",
+        rawResult: dim.current_value,
+        extractedValue:
+          typeof dim.current_value === "number" ||
+          typeof dim.current_value === "string" ||
+          typeof dim.current_value === "boolean" ||
+          dim.current_value === null
+            ? (dim.current_value as number | string | boolean | null)
+            : null,
+        confidence: dim.confidence,
+      });
+
+      this.applyObservation(goalId, entry);
+    });
+  }
+
   // ─── Data Source Observation ───
 
   /**

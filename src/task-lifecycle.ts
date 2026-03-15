@@ -176,7 +176,16 @@ export class TaskLifecycle {
       }
     );
 
-    const generated = this.llmClient.parseJSON(response.content, LLMGeneratedTaskSchema);
+    let generated: ReturnType<typeof LLMGeneratedTaskSchema.parse>;
+    try {
+      generated = this.llmClient.parseJSON(response.content, LLMGeneratedTaskSchema);
+    } catch (err) {
+      console.error(
+        "Task generation failed: LLM response did not match expected schema.\n" +
+        `Raw LLM response: ${response.content}`
+      );
+      throw err;
+    }
 
     // Resolve strategy_id
     const activeStrategy = this.strategyManager.getActiveStrategy(goalId);

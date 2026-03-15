@@ -423,6 +423,7 @@ export class CoreLoop {
       goal = loaded;
     } catch (err) {
       result.error = `Failed to load goal: ${err instanceof Error ? err.message : String(err)}`;
+      console.error(`CoreLoop: ${result.error}`);
       result.elapsedMs = Date.now() - startTime;
       return result;
     }
@@ -465,6 +466,7 @@ export class CoreLoop {
       }
     } catch (err) {
       // Observation failure is non-fatal — continue with current goal state
+      console.warn(`CoreLoop: observation failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
     }
 
     // ─── 3. Gap Calculate ───
@@ -498,6 +500,7 @@ export class CoreLoop {
       });
     } catch (err) {
       result.error = `Gap calculation failed: ${err instanceof Error ? err.message : String(err)}`;
+      console.error(`CoreLoop: ${result.error}`);
       result.elapsedMs = Date.now() - startTime;
       return result;
     }
@@ -512,6 +515,7 @@ export class CoreLoop {
       driveScores = rankedScores;
     } catch (err) {
       result.error = `Drive scoring failed: ${err instanceof Error ? err.message : String(err)}`;
+      console.error(`CoreLoop: ${result.error}`);
       result.elapsedMs = Date.now() - startTime;
       return result;
     }
@@ -590,6 +594,7 @@ export class CoreLoop {
       }
     } catch (err) {
       result.error = `Completion check failed: ${err instanceof Error ? err.message : String(err)}`;
+      console.error(`CoreLoop: ${result.error}`);
       result.elapsedMs = Date.now() - startTime;
       return result;
     }
@@ -773,6 +778,7 @@ export class CoreLoop {
     } catch (err) {
       // Stall detection errors are non-fatal — log and continue
       // (we still want to run the task cycle)
+      console.warn(`CoreLoop: stall detection failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
     }
 
     // ─── 6b. Dependency Graph Scheduling Control ───
@@ -866,6 +872,7 @@ export class CoreLoop {
       }
     } catch (err) {
       result.error = `Task cycle failed: ${err instanceof Error ? err.message : String(err)}`;
+      console.error(`CoreLoop: ${result.error}`);
       result.elapsedMs = Date.now() - startTime;
       this.tryGenerateReport(goalId, loopIndex, result, goal);
       return result;

@@ -530,6 +530,24 @@ describe("TaskLifecycle", () => {
       ).rejects.toThrow();
     });
 
+    it("logs console.error with raw response when parseJSON fails", async () => {
+      const rawResponse = "This is not JSON at all";
+      const llm = createMockLLMClient([rawResponse]);
+      const lifecycle = createLifecycle(llm);
+
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        await lifecycle.generateTask("goal-1", "dim").catch(() => {});
+      } finally {
+        expect(errorSpy).toHaveBeenCalledTimes(1);
+        const loggedMessage: string = errorSpy.mock.calls[0]![0] as string;
+        expect(loggedMessage).toContain("Task generation failed");
+        expect(loggedMessage).toContain("LLM response did not match expected schema");
+        expect(loggedMessage).toContain(rawResponse);
+        errorSpy.mockRestore();
+      }
+    });
+
     it("handles null estimated_duration from LLM", async () => {
       const llm = createMockLLMClient([UNKNOWN_REVERSIBILITY_RESPONSE]);
       const lifecycle = createLifecycle(llm);
