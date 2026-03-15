@@ -77,6 +77,12 @@ For each dimension, provide:
 - threshold_value: the target value (number, string, or boolean), or null if not yet determined
 - observation_method_hint: how to measure this dimension
 
+IMPORTANT — Dimension quality rules:
+1. Do NOT create only "present" type dimensions. Goals about quality, correctness, or completeness MUST have quality-scoring dimensions with "min" type thresholds (0.0-1.0 scale).
+2. "present" type is ONLY appropriate for pure existence checks (e.g., "does the file exist at all?"). If the goal mentions quality, content, correctness, completeness, or any qualitative attribute, use "min" type with a 0.0-1.0 score instead.
+3. For every existence dimension you create, ask: "Does the goal also care about the QUALITY of this thing?" If yes, add a separate quality dimension with "min" type.
+4. Quality dimensions should evaluate specific aspects mentioned in the goal (e.g., correctness of fields, quality of documentation sections, completeness of configuration).
+
 Return a JSON array of dimension objects. Example:
 [
   {
@@ -85,6 +91,27 @@ Return a JSON array of dimension objects. Example:
     "threshold_type": "min",
     "threshold_value": 80,
     "observation_method_hint": "Run test suite and check coverage report"
+  },
+  {
+    "name": "readme_installation_quality",
+    "label": "README Installation Section Quality",
+    "threshold_type": "min",
+    "threshold_value": 0.7,
+    "observation_method_hint": "Evaluate if README has clear installation instructions with code examples, covering npm install, basic setup, and common configurations. Score 0.0-1.0."
+  },
+  {
+    "name": "package_json_exports_valid",
+    "label": "package.json exports/main/types Correctness",
+    "threshold_type": "min",
+    "threshold_value": 0.8,
+    "observation_method_hint": "Check that package.json has correct bin, main, exports, and types fields pointing to valid paths. Score 0.0-1.0."
+  },
+  {
+    "name": "license_file_exists",
+    "label": "License File Exists",
+    "threshold_type": "present",
+    "threshold_value": true,
+    "observation_method_hint": "Check if LICENSE or LICENSE.md file exists in the project root"
   }
 ]
 
