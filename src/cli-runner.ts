@@ -24,6 +24,7 @@ import { StateManager } from "./state-manager.js";
 import type { IDataSourceAdapter } from "./data-source-adapter.js";
 import { FileDataSourceAdapter, HttpApiDataSourceAdapter } from "./data-source-adapter.js";
 import { GitHubIssueDataSourceAdapter } from "./adapters/github-issue-datasource.js";
+import { FileExistenceDataSourceAdapter } from "./adapters/file-existence-datasource.js";
 import type { ILLMClient } from "./llm-client.js";
 import { buildLLMClient, buildAdapterRegistry } from "./provider-factory.js";
 import { loadProviderConfig, saveProviderConfig } from "./provider-config.js";
@@ -118,6 +119,8 @@ export class CLIRunner {
             dataSources.push(new HttpApiDataSourceAdapter(config));
           } else if (config.type === 'github_issue' || config.type === 'custom' || config.type === 'database') {
             dataSources.push(new GitHubIssueDataSourceAdapter(config));
+          } else if (config.type === 'file_existence') {
+            dataSources.push(new FileExistenceDataSourceAdapter(config));
           }
         }
       }
