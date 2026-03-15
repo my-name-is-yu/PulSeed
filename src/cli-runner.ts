@@ -840,7 +840,7 @@ Options:
       }
 
       const validLlmProviders = ["anthropic", "openai", "ollama", "codex"];
-      const validAdapters = ["claude_code_cli", "claude_api", "openai_codex_cli", "openai_api"];
+      const validAdapters = ["claude_code_cli", "claude_api", "openai_codex_cli", "openai_api", "github_issue"];
 
       if (values.llm && !validLlmProviders.includes(values.llm)) {
         console.error(
@@ -1127,7 +1127,7 @@ Usage:
 Options (motiva run):
   --goal <id>                         Goal ID to run (required)
   --max-iterations <n>               Override max iterations (default: 100)
-  --adapter <type>                    Adapter: claude_api | claude_code_cli (default: claude_api)
+  --adapter <type>                    Adapter: claude_api | claude_code_cli | github_issue (default: claude_api)
   --tree                              Enable tree mode (iterate across all tree nodes)
 
 Options (motiva goal add):
@@ -1149,7 +1149,7 @@ Options (motiva datasource add):
 
 Options (motiva provider set):
   --llm <provider>                    LLM provider: anthropic | openai | ollama | codex
-  --adapter <type>                    Default adapter: claude_code_cli | claude_api | openai_codex_cli | openai_api
+  --adapter <type>                    Default adapter: claude_code_cli | claude_api | openai_codex_cli | openai_api | github_issue
 
 Environment:
   ANTHROPIC_API_KEY                   Required for LLM-powered commands
