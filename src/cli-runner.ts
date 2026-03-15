@@ -85,8 +85,9 @@ export class CLIRunner {
         console.log(`Task: ${task.work_description}`);
         console.log(`Rationale: ${task.rationale}`);
         console.log(`Reversibility: ${task.reversibility}`);
+        process.stdout.write("Approve this task? [y/N] ");
 
-        rl.question("Approve this task? [y/N] ", (answer) => {
+        rl.once("line", (answer) => {
           resolve(answer.trim().toLowerCase() === "y");
         });
       });
