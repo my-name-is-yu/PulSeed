@@ -1045,6 +1045,20 @@ export class CoreLoop {
   async runTreeIteration(rootId: string, loopIndex: number): Promise<LoopIterationResult> {
     const orchestrator = this.deps.treeLoopOrchestrator!;
 
+    // 0. Auto-decompose if root has no children yet
+    const rootGoalForDecomp = this.deps.stateManager.loadGoal(rootId);
+    if (rootGoalForDecomp && rootGoalForDecomp.children_ids.length === 0 && this.deps.goalTreeManager) {
+      const defaultConfig = { min_specificity: 0.7, max_depth: 3, parallel_loop_limit: 3, auto_prune_threshold: 0.3 };
+      try {
+        this.logger?.info("CoreLoop: auto-decomposing goal tree", { rootId });
+        const decompResult = await this.deps.goalTreeManager.decomposeGoal(rootId, defaultConfig);
+        this.logger?.info("CoreLoop: decomposition complete", { rootId, childCount: decompResult.children.length });
+        await this.deps.treeLoopOrchestrator!.startTreeExecution(rootId, defaultConfig);
+      } catch (err) {
+        this.logger?.warn("CoreLoop: decomposition failed, falling back to flat iteration", { rootId, err });
+      }
+    }
+
     // 1. Select next node to iterate
     const selectedNodeId = orchestrator.selectNextNode(rootId);
 
