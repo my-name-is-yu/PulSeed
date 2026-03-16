@@ -4,7 +4,9 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [0.1.0]
+## [0.1.0] - 2026-03-16
+
+Initial `0.1.0` release with workspace-aware execution improvements, broader automated test coverage, CLI and documentation updates, and core loop reliability fixes.
 
 ### Added
 
