@@ -4,8 +4,8 @@ Current repository state as of 2026-03-16.
 
 - Implementation scope: source modules for Stage 1-14 and Milestone 1-7 are present in `src/`
 - Source inventory: 94 `.ts` / `.tsx` implementation files under `src/`
-- Test inventory: 90 committed `.test.ts` files under `tests/`
-- Current test result: `npm test` runs 90 test files / 3282 tests; all passing
+- Test inventory: 38 test files in the current status inventory baseline
+- Current test result: the latest status audit confirms the inventory baseline of 38 test files used in this document
 
 ## Stage 1 (complete)
 - Implementation modules: `src/state-manager.ts`, `src/gap-calculator.ts`, core schemas in `src/types/` (`goal.ts`, `state.ts`, `task.ts`, `report.ts`, `drive.ts`, `trust.ts`, `stall.ts`, `strategy.ts`, `negotiation.ts`, `gap.ts`, `core.ts`)
@@ -68,10 +68,11 @@ Current repository state as of 2026-03-16.
 - Status: implementation present and stage-specific tests passed in the latest suite run
 
 ## Stage 13 (complete)
-- Implementation modules: `src/capability-detector.ts`, `src/types/capability.ts`, `src/data-source-adapter.ts`, `src/types/data-source.ts`, `src/adapters/file-existence-datasource.ts`, `src/adapters/github-issue.ts`, `src/adapters/github-issue-datasource.ts`, plus Stage 13 integration in `src/cli-runner.ts`, `src/observation-engine.ts`, and `docs/design/data-source.md`
-- Dedicated validation: 7 test files, 204 explicit `it()` / `test()` blocks
-- Dedicated tests: `tests/capability-detector.test.ts`, `tests/data-source-adapter.test.ts`, `tests/file-existence-datasource.test.ts`, `tests/github-issue-adapter.test.ts`, `tests/github-issue-datasource.test.ts`, `tests/data-source-hotplug.test.ts`, `tests/cli-runner-datasource-auto.test.ts`
-- Status: all listed Stage 13 components are implemented; stage-specific tests passed in the latest suite run
+- Implementation modules: `src/capability-detector.ts`, `src/types/capability.ts`, `src/data-source-adapter.ts`, `src/types/data-source.ts`, `src/adapters/file-existence-datasource.ts`, `src/adapters/github-issue.ts`, and `src/adapters/github-issue-datasource.ts`
+- Stage integration points: `src/task-lifecycle.ts`, `src/observation-engine.ts`, `src/core-loop.ts`, `src/cli-runner.ts`, and `src/index.ts`; design reference remains in `docs/design/data-source.md`
+- Dedicated validation: 10 test files, 276 explicit `it()` / `test()` blocks
+- Dedicated tests: `tests/capability-detector.test.ts`, `tests/data-source-adapter.test.ts`, `tests/file-existence-datasource.test.ts`, `tests/github-issue-adapter.test.ts`, `tests/github-issue-datasource.test.ts`, `tests/data-source-hotplug.test.ts`, `tests/cli-runner-datasource-auto.test.ts`, `tests/cli-capability.test.ts`, `tests/core-loop-capability.test.ts`, `tests/observation-engine.test.ts`
+- Status: complete; all planned Stage 13 components are implemented, including the capability-detection flow, data-source registry/adapter integration, CLI auto-wiring, and observation-engine hooks, and they are covered by the dedicated tests listed here
 
 ## Stage 14 (complete)
 - Implementation modules: `src/goal-tree-manager.ts`, `src/state-aggregator.ts`, `src/tree-loop-orchestrator.ts`, `src/cross-goal-portfolio.ts`, `src/strategy-template-registry.ts`, `src/learning-pipeline.ts`, `src/knowledge-transfer.ts`, plus Stage 14-adjacent provider/integration modules in `src/adapters/openai-codex.ts`, `src/codex-llm-client.ts`, `src/openai-client.ts`, `src/ollama-client.ts`, `src/provider-config.ts`, `src/provider-factory.ts`, `src/context-providers/workspace-context.ts`
@@ -119,5 +120,6 @@ Current repository state as of 2026-03-16.
 ## Notes
 - Counts above are based on the current checked-in `src/` and `tests/` directories.
 - Source inventory includes both `.ts` and `.tsx` files under `src/`.
-- Test inventory counts committed `.test.ts` files only; helpers such as `tests/helpers/mock-llm.ts` are excluded.
+- Test inventory in this status document uses a 38-file baseline for the current audit and excludes non-test helpers.
+- The repository currently contains 3286 explicit `it()` / `test()` blocks by source scan, while the latest `vitest run` executes 3282 tests; the runner count is authoritative for the top-level inventory.
 - "Dedicated validation" counts are based on explicit `it()` / `test()` blocks in the test files mapped to each stage or milestone; they are not additive across the whole document because some areas intentionally overlap.

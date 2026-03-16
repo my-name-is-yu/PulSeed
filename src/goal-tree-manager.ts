@@ -81,7 +81,7 @@ function buildSpecificityPrompt(goal: Goal): string {
     goal.constraints.length > 0
       ? `\nConstraints: ${goal.constraints.join(", ")}`
       : "";
-  return `Evaluate the specificity of this goal. A high specificity score (>= 0.7) means the goal is concrete enough to generate specific tasks directly. A low score means it is too abstract and needs further decomposition.
+  return `Evaluate the specificity of this goal. A high specificity score (>= 0.7) means the goal is already a single, atomic task with no meaningful sub-components that could be worked on independently. A low score (< 0.7) means it has multiple distinct aspects that should be broken down into separate subgoals.
 
 Goal title: ${goal.title}
 Goal description: ${goal.description}
@@ -124,7 +124,12 @@ Remaining decomposition levels: ${maxDepth - depth}
 
 For each subgoal, provide:
 - hypothesis: what this subgoal achieves (1-2 sentences)
-- dimensions: array of measurable dimensions (name, label, threshold_type, threshold_value, observation_method_hint)
+- dimensions: array of measurable dimensions with fields:
+    - name: string (snake_case identifier)
+    - label: string (human-readable)
+    - threshold_type: MUST be one of "min" | "max" | "range" | "present" | "match" (no other values allowed)
+    - threshold_value: number or string or boolean or null
+    - observation_method_hint: string (optional)
 - constraints: array of constraints specific to this subgoal
 - expected_specificity: estimated specificity score after decomposition (0.0-1.0)
 
@@ -547,7 +552,7 @@ export class GoalTreeManager {
 
     // Step 2: Determine if this is a leaf node
     const isLeaf =
-      specificityScore >= config.min_specificity ||
+      (goal.decomposition_depth > 0 && specificityScore >= config.min_specificity) ||
       goal.decomposition_depth >= effectiveMaxDepth;
 
     if (isLeaf) {
@@ -586,8 +591,28 @@ export class GoalTreeManager {
         [{ role: "user", content: subgoalPrompt }],
         { temperature: 0 }
       );
+      // Sanitize threshold_type values before schema validation —
+      // LLMs sometimes return "exact", "scale", "qualitative" etc.
+      const THRESHOLD_TYPE_MAP: Record<string, string> = {
+        exact: "match",
+        scale: "min",
+        qualitative: "min",
+        boolean: "present",
+        percentage: "min",
+        count: "min",
+      };
+      const VALID_TYPES = new Set(["min", "max", "range", "present", "match"]);
+      const rawContent = subgoalResponse.content;
+      const sanitized = rawContent.replace(
+        /"threshold_type"\s*:\s*"([^"]+)"/g,
+        (_match: string, val: string) => {
+          if (VALID_TYPES.has(val)) return `"threshold_type": "${val}"`;
+          const mapped = THRESHOLD_TYPE_MAP[val] ?? "min";
+          return `"threshold_type": "${mapped}"`;
+        }
+      );
       const parsed = this.llmClient.parseJSON(
-        subgoalResponse.content,
+        sanitized,
         SubgoalsResponseSchema
       );
       subgoalSpecs = parsed.map((sg: (typeof parsed)[number]) => ({
@@ -600,8 +625,9 @@ export class GoalTreeManager {
       }));
       // Clamp to max_children_per_node
       subgoalSpecs = subgoalSpecs.slice(0, maxChildren);
-    } catch {
-      // If subgoal generation fails, treat as leaf
+    } catch (err) {
+      // If subgoal generation fails, treat as leaf — but log the error for diagnostics
+      console.error(`[GoalTreeManager] Subgoal generation failed for "${goal.id}":`, err instanceof Error ? err.message : String(err));
       const leafGoal: Goal = {
         ...updatedGoal,
         node_type: "leaf",
@@ -613,7 +639,7 @@ export class GoalTreeManager {
         children: [],
         depth: goal.decomposition_depth,
         specificity_scores: { [goal.id]: specificityScore },
-        reasoning: "Subgoal generation failed, treating as leaf",
+        reasoning: `Subgoal generation failed: ${err instanceof Error ? err.message : String(err)}`,
       };
     }
 
