@@ -10,16 +10,27 @@ import {
   DomainKnowledgeSchema,
   KnowledgeGapSignalSchema,
   ContradictionResultSchema,
+  SharedKnowledgeEntrySchema,
+  DomainStabilitySchema,
+  REVALIDATION_SCHEDULE,
 } from "./types/knowledge.js";
 import type {
   KnowledgeEntry,
   DomainKnowledge,
   KnowledgeGapSignal,
   ContradictionResult,
+  SharedKnowledgeEntry,
+  DomainStability,
 } from "./types/knowledge.js";
 import type { VectorIndex } from "./vector-index.js";
+import type { IEmbeddingClient } from "./embedding-client.js";
 
 // ─── LLM response schemas ───
+
+const DomainStabilityResponseSchema = z.object({
+  stability: DomainStabilitySchema,
+  rationale: z.string().optional(),
+});
 
 const GapDetectionResponseSchema = z.object({
   has_gap: z.boolean(),
@@ -53,26 +64,33 @@ const ContradictionCheckResponseSchema = z.object({
 
 // ─── KnowledgeManager ───
 
+/** Key used to store all SharedKnowledgeEntries as a flat array. */
+const SHARED_KB_PATH = "memory/shared-knowledge/entries.json";
+
 /**
  * KnowledgeManager detects knowledge gaps, generates research tasks,
  * and persists/retrieves domain knowledge entries.
  *
  * File layout:
  *   <base>/goals/<goal_id>/domain_knowledge.json
+ *   <base>/memory/shared-knowledge/entries.json  (Phase 2 shared KB)
  */
 export class KnowledgeManager {
   private readonly stateManager: StateManager;
   private readonly llmClient: ILLMClient;
   private readonly vectorIndex?: VectorIndex;
+  private readonly embeddingClient?: IEmbeddingClient;
 
   constructor(
     stateManager: StateManager,
     llmClient: ILLMClient,
-    vectorIndex?: VectorIndex
+    vectorIndex?: VectorIndex,
+    embeddingClient?: IEmbeddingClient
   ) {
     this.stateManager = stateManager;
     this.llmClient = llmClient;
     this.vectorIndex = vectorIndex;
+    this.embeddingClient = embeddingClient;
   }
 
   // ─── detectKnowledgeGap ───
@@ -450,7 +468,261 @@ Determine if there is a factual contradiction. Respond with JSON:
     return this.searchKnowledge(query, topK);
   }
 
+  // ─── 5.1a: Shared Knowledge Base ───
+
+  /**
+   * Save a KnowledgeEntry into the shared knowledge base, associating it with
+   * the given goalId. If VectorIndex is available the entry is also embedded
+   * and the embedding_id is stored on the returned SharedKnowledgeEntry.
+   */
+  async saveToSharedKnowledgeBase(
+    entry: KnowledgeEntry,
+    goalId: string
+  ): Promise<SharedKnowledgeEntry> {
+    const now = new Date();
+
+    // Build shared entry (default stability: moderate)
+    const shared = SharedKnowledgeEntrySchema.parse({
+      ...entry,
+      source_goal_ids: [goalId],
+      domain_stability: "moderate" as DomainStability,
+      revalidation_due_at: this._computeRevalidationDue(now, "moderate"),
+      embedding_id: null,
+    });
+
+    // Load existing entries and merge / append
+    const all = this._loadSharedEntries();
+    const existingIdx = all.findIndex((e) => e.entry_id === entry.entry_id);
+
+    let merged: SharedKnowledgeEntry;
+    if (existingIdx >= 0) {
+      const existing = all[existingIdx]!;
+      const mergedGoalIds = Array.from(
+        new Set([...existing.source_goal_ids, goalId])
+      );
+      merged = SharedKnowledgeEntrySchema.parse({
+        ...existing,
+        source_goal_ids: mergedGoalIds,
+      });
+      all[existingIdx] = merged;
+    } else {
+      merged = shared;
+      all.push(merged);
+    }
+
+    // Auto-register in VectorIndex if available
+    if (this.vectorIndex) {
+      const text = `${entry.question} ${entry.answer} ${entry.tags.join(" ")}`;
+      const vectorEntry = await this.vectorIndex.add(entry.entry_id, text, {
+        goal_id: goalId,
+        tags: entry.tags,
+        shared: true,
+      });
+      // Attach the embedding id (same as entry_id in our VectorIndex)
+      merged = SharedKnowledgeEntrySchema.parse({
+        ...merged,
+        embedding_id: vectorEntry.id,
+      });
+      // Update stored copy with embedding_id (use already-known index to avoid double scan)
+      const targetIdx = existingIdx >= 0 ? existingIdx : all.length - 1;
+      all[targetIdx] = merged;
+    }
+
+    this.stateManager.writeRaw(SHARED_KB_PATH, all);
+    return merged;
+  }
+
+  /**
+   * Query the shared knowledge base by tags (AND logic).
+   * Optionally filter to entries contributed by a specific goal.
+   */
+  querySharedKnowledge(
+    tags: string[],
+    goalId?: string
+  ): SharedKnowledgeEntry[] {
+    const all = this._loadSharedEntries();
+
+    return all.filter((entry) => {
+      const tagsMatch =
+        tags.length === 0 || tags.every((t) => entry.tags.includes(t));
+      const goalMatch =
+        goalId === undefined || entry.source_goal_ids.includes(goalId);
+      return tagsMatch && goalMatch;
+    });
+  }
+
+  // ─── 5.1b: Vector Search for Knowledge Sharing ───
+
+  /**
+   * Semantic search across the shared knowledge base using VectorIndex.
+   * Falls back to an empty array when no VectorIndex is configured.
+   */
+  async searchByEmbedding(
+    query: string,
+    topK: number = 5
+  ): Promise<{ entry: SharedKnowledgeEntry; similarity: number }[]> {
+    if (!this.vectorIndex) {
+      return [];
+    }
+
+    const results = await this.vectorIndex.search(query, topK);
+    const all = this._loadSharedEntries();
+    const output: { entry: SharedKnowledgeEntry; similarity: number }[] = [];
+
+    for (const result of results) {
+      const entry = all.find((e) => e.entry_id === result.id);
+      if (entry) {
+        output.push({ entry, similarity: result.similarity });
+      }
+    }
+
+    return output;
+  }
+
+  // ─── 5.1c: Domain Stability Auto-Revalidation ───
+
+  /**
+   * Classify the domain stability of a set of knowledge entries via LLM.
+   * Returns "stable", "moderate", or "volatile".
+   */
+  async classifyDomainStability(
+    domain: string,
+    entries: KnowledgeEntry[]
+  ): Promise<DomainStability> {
+    const sampleAnswers = entries
+      .slice(0, 5)
+      .map((e) => `Q: ${e.question}\nA: ${e.answer}`)
+      .join("\n\n");
+
+    const prompt = `You are classifying how quickly knowledge in a domain becomes outdated.
+
+Domain: ${domain}
+Sample knowledge entries:
+${sampleAnswers || "(no entries yet)"}
+
+Classify the domain stability:
+- "stable"   — knowledge rarely changes (math, history, established science)
+- "moderate" — knowledge changes every few months to a year (best practices, frameworks)
+- "volatile" — knowledge changes frequently (current events, fast-moving tech, prices)
+
+Respond with JSON:
+{ "stability": "stable" | "moderate" | "volatile", "rationale": "brief explanation" }`;
+
+    const response = await this.llmClient.sendMessage(
+      [{ role: "user", content: prompt }],
+      {
+        system:
+          "You classify knowledge domain stability. Respond with JSON only.",
+        max_tokens: 256,
+      }
+    );
+
+    try {
+      const parsed = this.llmClient.parseJSON(
+        response.content,
+        DomainStabilityResponseSchema
+      );
+      return parsed.stability;
+    } catch {
+      return "moderate";
+    }
+  }
+
+  /**
+   * Return shared knowledge entries whose revalidation_due_at is in the past.
+   */
+  getStaleEntries(): SharedKnowledgeEntry[] {
+    const all = this._loadSharedEntries();
+    const now = new Date();
+
+    return all.filter((entry) => {
+      if (!entry.revalidation_due_at) {
+        // No due date — consider stale based on stability interval from acquired_at
+        const acquiredAt = new Date(entry.acquired_at);
+        const intervalDays =
+          REVALIDATION_SCHEDULE[entry.domain_stability];
+        const dueAt = new Date(
+          acquiredAt.getTime() + intervalDays * 24 * 60 * 60 * 1000
+        );
+        return now > dueAt;
+      }
+      return now > new Date(entry.revalidation_due_at);
+    });
+  }
+
+  /**
+   * Generate KnowledgeAcquisitionTask-style Task objects for each stale entry,
+   * re-asking the original question.
+   */
+  async generateRevalidationTasks(staleEntries: SharedKnowledgeEntry[]): Promise<Task[]> {
+    const tasks: Task[] = [];
+
+    for (const entry of staleEntries) {
+      const goalId = entry.source_goal_ids[0] ?? "shared";
+      const taskId = randomUUID();
+      const now = new Date().toISOString();
+
+      const task = TaskSchema.parse({
+        id: taskId,
+        goal_id: goalId,
+        strategy_id: null,
+        target_dimensions: entry.tags,
+        primary_dimension: entry.tags[0] ?? "knowledge",
+        work_description: `Revalidate knowledge: ${entry.question}`,
+        rationale: `Entry ${entry.entry_id} is stale (domain_stability: ${entry.domain_stability}, due: ${entry.revalidation_due_at ?? "overdue"})`,
+        approach: `Re-research the following question and verify whether the answer has changed:\n${entry.question}\n\nPrevious answer: ${entry.answer}`,
+        success_criteria: [
+          {
+            description: `Confirm or update answer to: "${entry.question}"`,
+            verification_method: "Compare new answer to existing answer with cited sources",
+            is_blocking: true,
+          },
+        ],
+        scope_boundary: {
+          in_scope: ["Information collection", "Web search", "Document reading"],
+          out_of_scope: ["System modifications", "Code changes", "Data mutations"],
+          blast_radius: "None — read-only revalidation task",
+        },
+        constraints: [
+          "No system modifications allowed",
+          `Original entry_id: ${entry.entry_id}`,
+        ],
+        reversibility: "reversible",
+        estimated_duration: { value: 2, unit: "hours" },
+        task_category: "knowledge_acquisition",
+        status: "pending",
+        created_at: now,
+      });
+
+      tasks.push(task);
+    }
+
+    return tasks;
+  }
+
   // ─── Private Helpers ───
+
+  /** Load all SharedKnowledgeEntries from the shared KB file. */
+  private _loadSharedEntries(): SharedKnowledgeEntry[] {
+    const raw = this.stateManager.readRaw(SHARED_KB_PATH);
+    if (!raw || !Array.isArray(raw)) {
+      return [];
+    }
+    try {
+      return (raw as unknown[]).map((item) =>
+        SharedKnowledgeEntrySchema.parse(item)
+      );
+    } catch {
+      return [];
+    }
+  }
+
+  /** Compute revalidation due date based on stability and a base date. */
+  private _computeRevalidationDue(base: Date, stability: DomainStability): string {
+    const days = REVALIDATION_SCHEDULE[stability];
+    const due = new Date(base.getTime() + days * 24 * 60 * 60 * 1000);
+    return due.toISOString();
+  }
 
   private async loadDomainKnowledge(goalId: string): Promise<DomainKnowledge> {
     const raw = this.stateManager.readRaw(

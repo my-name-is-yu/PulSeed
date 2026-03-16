@@ -90,3 +90,37 @@ export const KnowledgeEdgeSchema = z.object({
   created_at: z.string(),
 });
 export type KnowledgeEdge = z.infer<typeof KnowledgeEdgeSchema>;
+
+// --- Milestone 5.1 — Shared Knowledge Base ---
+
+export const DomainStabilitySchema = z.enum(["stable", "moderate", "volatile"]);
+export type DomainStability = z.infer<typeof DomainStabilitySchema>;
+
+/**
+ * RevalidationSchedule maps domain stability to re-check interval in days.
+ *   stable   → 365 days (12 months)
+ *   moderate → 180 days (6 months)
+ *   volatile → 90 days  (3 months)
+ */
+export const RevalidationScheduleSchema = z.object({
+  stable: z.literal(365),
+  moderate: z.literal(180),
+  volatile: z.literal(90),
+});
+export type RevalidationSchedule = z.infer<typeof RevalidationScheduleSchema>;
+
+export const REVALIDATION_SCHEDULE: RevalidationSchedule = {
+  stable: 365,
+  moderate: 180,
+  volatile: 90,
+};
+
+/**
+ * SharedKnowledgeEntry extends KnowledgeEntry with cross-goal sharing metadata.
+ */
+export const SharedKnowledgeEntrySchema = KnowledgeEntrySchema.extend({
+  source_goal_ids: z.array(z.string()),
+  domain_stability: DomainStabilitySchema,
+  revalidation_due_at: z.string().nullable().default(null),
+});
+export type SharedKnowledgeEntry = z.infer<typeof SharedKnowledgeEntrySchema>;

@@ -3,10 +3,19 @@ import type { Session, SessionType, ContextSlot } from "./types/session.js";
 import type { StateManager } from "./state-manager.js";
 import type { KnowledgeEntry } from "./types/knowledge.js";
 import type { VectorIndex } from "./vector-index.js";
+import type { GoalDependencyGraph } from "./goal-dependency-graph.js";
 
 // ─── Constants ───
 
 export const DEFAULT_CONTEXT_BUDGET = 50_000;
+
+// ─── Types ───
+
+export interface ContextBudget {
+  totalTokens: number;
+  usedTokens: number;
+  remaining: number;
+}
 
 // ─── SessionManager ───
 
@@ -24,9 +33,46 @@ export const DEFAULT_CONTEXT_BUDGET = 50_000;
  */
 export class SessionManager {
   private readonly stateManager: StateManager;
+  private readonly dependencyGraph?: GoalDependencyGraph;
 
-  constructor(stateManager: StateManager) {
+  constructor(stateManager: StateManager, dependencyGraph?: GoalDependencyGraph) {
     this.stateManager = stateManager;
+    this.dependencyGraph = dependencyGraph;
+  }
+
+  // ─── Token Estimation ───
+
+  /**
+   * Estimates token count for a string.
+   * Simple heuristic: Math.ceil(text.length / 4)
+   */
+  estimateTokens(text: string): number {
+    return Math.ceil(text.length / 4);
+  }
+
+  /**
+   * Compresses a context slot to fit within maxTokens.
+   * Uses head + tail strategy: keeps first 60% and last 40% of allowed chars.
+   */
+  compressSlot(slot: ContextSlot, maxTokens: number): ContextSlot {
+    const maxChars = maxTokens * 4;
+    if (slot.content.length <= maxChars) {
+      return { ...slot, token_estimate: this.estimateTokens(slot.content) };
+    }
+
+    // Head: 60%, tail: 40%
+    const headChars = Math.floor(maxChars * 0.6);
+    const tailChars = maxChars - headChars;
+    const compressed =
+      slot.content.slice(0, headChars) +
+      "\n...[truncated]...\n" +
+      slot.content.slice(slot.content.length - tailChars);
+
+    return {
+      ...slot,
+      content: compressed,
+      token_estimate: this.estimateTokens(compressed),
+    };
   }
 
   // ─── Session Lifecycle ───
@@ -47,7 +93,8 @@ export class SessionManager {
     const contextSlots = this.buildContextForType(
       sessionType,
       goalId,
-      taskId
+      taskId,
+      contextBudget
     );
 
     const session: Session = SessionSchema.parse({
@@ -411,23 +458,106 @@ export class SessionManager {
     return slots.filter((s) => keptSet.has(s));
   }
 
+  // ─── Resource Conflict Awareness ───
+
+  /**
+   * Reads resource_conflict edges from the dependency graph for goalId.
+   * Returns list of conflicting goals and their shared resources (affected_dimensions).
+   */
+  checkResourceConflicts(goalId: string): { conflictingGoalId: string; sharedResources: string[] }[] {
+    if (!this.dependencyGraph) return [];
+
+    const conflictEdges = this.dependencyGraph.getResourceConflicts(goalId);
+    return conflictEdges.map((edge) => ({
+      conflictingGoalId:
+        edge.from_goal_id === goalId ? edge.to_goal_id : edge.from_goal_id,
+      sharedResources: edge.affected_dimensions,
+    }));
+  }
+
+  /**
+   * Builds context slots for a given goalId/sessionType, then if a dependency graph
+   * is available, inserts a conflict-awareness slot (priority 4.5) describing
+   * active resource conflicts and instructing the session to avoid concurrent
+   * operations on shared resources.
+   *
+   * The conflict-awareness slot sits between constraints (p4) and previous session
+   * results (p5).
+   */
+  buildContextWithConflictAwareness(
+    goalId: string,
+    sessionType: SessionType,
+    options?: { tokenBudget?: number }
+  ): ContextSlot[] {
+    const slots = this.buildContextForType(sessionType, goalId, null);
+    const conflicts = this.checkResourceConflicts(goalId);
+
+    if (conflicts.length > 0) {
+      const conflictLines = conflicts.map((c) => {
+        const resources =
+          c.sharedResources.length > 0
+            ? c.sharedResources.join(", ")
+            : "(unspecified resources)";
+        return `- Conflicting goal: ${c.conflictingGoalId} | Shared resources: ${resources}`;
+      });
+
+      const conflictContent = [
+        "RESOURCE CONFLICT AWARENESS:",
+        "The following goals are competing for shared resources with this goal.",
+        "Avoid concurrent operations on these shared resources.",
+        "",
+        ...conflictLines,
+      ].join("\n");
+
+      const conflictSlot: ContextSlot = {
+        priority: 4.5,
+        label: "resource_conflict_awareness",
+        content: conflictContent,
+        token_estimate: this.estimateTokens(conflictContent),
+      };
+
+      const withConflict = [...slots, conflictSlot];
+
+      if (options?.tokenBudget !== undefined) {
+        return this.filterSlotsByBudget(withConflict, options.tokenBudget);
+      }
+      return withConflict;
+    }
+
+    if (options?.tokenBudget !== undefined) {
+      return this.filterSlotsByBudget(slots, options.tokenBudget);
+    }
+    return slots;
+  }
+
   // ─── Private Helpers ───
 
   private buildContextForType(
     sessionType: SessionType,
     goalId: string,
-    taskId: string | null
+    taskId: string | null,
+    tokenBudget?: number
   ): ContextSlot[] {
+    let slots: ContextSlot[];
     switch (sessionType) {
       case "task_execution":
-        return this.buildTaskExecutionContext(goalId, taskId ?? "");
+        slots = this.buildTaskExecutionContext(goalId, taskId ?? "");
+        break;
       case "observation":
-        return this.buildObservationContext(goalId, []);
+        slots = this.buildObservationContext(goalId, []);
+        break;
       case "task_review":
-        return this.buildTaskReviewContext(goalId, taskId ?? "");
+        slots = this.buildTaskReviewContext(goalId, taskId ?? "");
+        break;
       case "goal_review":
-        return this.buildGoalReviewContext(goalId);
+        slots = this.buildGoalReviewContext(goalId);
+        break;
     }
+
+    if (tokenBudget !== undefined) {
+      return this.filterSlotsByBudget(slots, tokenBudget);
+    }
+    return slots;
   }
 
   private persistSession(session: Session): void {
