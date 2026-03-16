@@ -2,7 +2,7 @@
 
 ## 現在地
 
-Stage 1-14 完了。Milestone 1-7 完了（3268テスト、89テストファイル）。Dogfooding Phase A/B 完了。GitHub Issueアダプタ・FileExistenceDataSourceAdapter・能力自律調達フルサイクル・ホットプラグ・Goal Tree Phase 2・横断ポートフォリオ Phase 2・学習パイプライン Phase 2 実装済み。詳細は `docs/status.md` 参照。
+Stage 1-14 完了。Milestone 1-7 完了（3282テスト、90テストファイル）。Dogfooding Phase A/B 完了。GitHub Issueアダプタ・FileExistenceDataSourceAdapter・能力自律調達フルサイクル・ホットプラグ・Goal Tree Phase 2・横断ポートフォリオ Phase 2・学習パイプライン Phase 2 実装済み。詳細は `docs/status.md` 参照。
 
 ---
 
@@ -275,9 +275,13 @@ Stage 14でGoalTreeManager・StateAggregator・TreeLoopOrchestrator・CrossGoalP
 - `storePattern()` / `retrievePatterns()` — KnowledgeTransferでの永続化
 - 13テスト追加（learning-cross-goal.test.ts）
 
-**実装結果**: 163テスト追加（3268テスト合計、89テストファイル）。
+**実装結果**: 163テスト追加（3282テスト合計、90テストファイル）。
 
-**Dogfooding検証**: Motivaに大規模・曖昧なゴール（「Motivaのコード品質を改善する」）を与え、ゴール木として自動分解し、並列ノードループが干渉なく動作することを確認する。
+**Dogfooding検証** (2026-03-16 完了):
+- gpt-5.3-codexで2イテレーション実行
+- Goal Tree自動分解成功（親ゴールから子ゴールが正確に生成され、個別実行）
+- バグ修正4件: auto-decompose（runTreeIterationで自動呼び出し）、specificity skip（scoreConcreteness部分適用修正）、prompt改善（decompose次元の値明示）、threshold_type sanitize
+- 3282テスト全パス確認
 
 ---
 
