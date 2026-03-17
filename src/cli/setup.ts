@@ -11,6 +11,7 @@ import type { IDataSourceAdapter } from "../observation/data-source-adapter.js";
 import { FileDataSourceAdapter, HttpApiDataSourceAdapter } from "../observation/data-source-adapter.js";
 import { GitHubIssueDataSourceAdapter } from "../adapters/github-issue-datasource.js";
 import { FileExistenceDataSourceAdapter } from "../adapters/file-existence-datasource.js";
+import { ShellDataSourceAdapter } from "../adapters/shell-datasource.js";
 import { createWorkspaceContextProvider } from "../observation/workspace-context.js";
 import { buildLLMClient, buildAdapterRegistry } from "../llm/provider-factory.js";
 import { TrustManager } from "../traits/trust-manager.js";
@@ -69,6 +70,13 @@ export function buildDeps(
           dataSources.push(new GitHubIssueDataSourceAdapter(cfg));
         } else if (cfg.type === 'file_existence') {
           dataSources.push(new FileExistenceDataSourceAdapter(cfg));
+        } else if (cfg.type === 'shell') {
+          const adapter = new ShellDataSourceAdapter(
+            cfg.id,
+            cfg.commands ?? {},
+            cfg.connection?.path ?? process.cwd()
+          );
+          dataSources.push(adapter);
         }
       }
     }

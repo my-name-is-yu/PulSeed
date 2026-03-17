@@ -92,6 +92,7 @@ export async function cmdGoalAdd(
     }
 
     autoRegisterFileExistenceDataSources(stateManager, goal.dimensions, goal.description, goal.id);
+    autoRegisterShellDataSources(stateManager, goal.dimensions, goal.id);
 
     console.log(`Goal registered successfully!`);
     console.log(`Goal ID:    ${goal.id}`);
@@ -444,6 +445,24 @@ export function cmdCleanup(stateManager: StateManager): number {
   return 0;
 }
 
+// ─── Shell Dimension Patterns ───
+//
+// Maps known count-based dimension names to grep commands that can mechanically
+// observe them. argv uses pre-split arrays (passed to execFile, not shell).
+// output_type "number" sums trailing integers across multi-line grep -rc output.
+
+export interface ShellCommandConfig {
+  argv: string[];
+  output_type: "number" | "boolean" | "raw";
+}
+
+export const SHELL_DIMENSION_PATTERNS: Record<string, ShellCommandConfig> = {
+  todo_count:   { argv: ["grep", "-rc", "TODO",  "src/"], output_type: "number" },
+  fixme_count:  { argv: ["grep", "-rc", "FIXME", "src/"], output_type: "number" },
+  test_count:   { argv: ["grep", "-rEc", "it\\(|test\\(|describe\\(", "tests/"], output_type: "number" },
+  lint_errors:  { argv: ["npx", "eslint", "src/", "--format", "compact", "--max-warnings", "9999"], output_type: "number" },
+};
+
 // ─── Auto DataSource Registration ───
 
 export function autoRegisterFileExistenceDataSources(
@@ -543,5 +562,58 @@ export function autoRegisterFileExistenceDataSources(
     );
   } catch (err) {
     console.error(formatOperationError("auto-register file existence data sources", err));
+  }
+}
+
+export function autoRegisterShellDataSources(
+  stateManager: StateManager,
+  dimensions: Array<{ name: string }>,
+  goalId: string
+): void {
+  try {
+    // Collect dimensions that match known shell patterns
+    const matchedCommands: Record<string, ShellCommandConfig> = {};
+    for (const dim of dimensions) {
+      const pattern = SHELL_DIMENSION_PATTERNS[dim.name];
+      if (pattern) {
+        matchedCommands[dim.name] = pattern;
+      }
+    }
+
+    if (Object.keys(matchedCommands).length === 0) return;
+
+    const datasourcesDir = path.join(stateManager.getBaseDir(), "datasources");
+    if (!fs.existsSync(datasourcesDir)) {
+      fs.mkdirSync(datasourcesDir, { recursive: true });
+    }
+
+    const id = `ds_auto_shell_${Date.now()}`;
+
+    // Serialize commands in the format ShellDataSourceAdapter expects:
+    // Record<dimensionName, ShellCommandSpec>
+    const commandsConfig: Record<string, { argv: string[]; output_type: string }> = {};
+    for (const [dimName, spec] of Object.entries(matchedCommands)) {
+      commandsConfig[dimName] = { argv: spec.argv, output_type: spec.output_type };
+    }
+
+    const config = {
+      id,
+      name: `auto:shell (${Object.keys(matchedCommands).join(", ")})`,
+      type: "shell",
+      connection: { path: process.cwd() },
+      commands: commandsConfig,
+      scope_goal_id: goalId,
+      enabled: true,
+      created_at: new Date().toISOString(),
+    };
+
+    const configPath = path.join(datasourcesDir, `${id}.json`);
+    fs.writeFileSync(configPath, JSON.stringify(config, null, 2), "utf-8");
+
+    console.log(
+      `[auto] Registered ShellDataSource for: ${Object.keys(matchedCommands).join(", ")}`
+    );
+  } catch (err) {
+    console.error(formatOperationError("auto-register shell data sources", err));
   }
 }
