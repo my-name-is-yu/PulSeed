@@ -17,7 +17,21 @@ import type {
   DecompositionQualityMetrics,
   PruneRecord,
 } from "../types/goal-tree.js";
-import { ConcretenessScoreSchema, DecompositionQualityMetricsSchema } from "../types/goal-tree.js";
+import { DecompositionQualityMetricsSchema } from "../types/goal-tree.js";
+import {
+  pruneGoal as _pruneGoal,
+  pruneSubgoal as _pruneSubgoal,
+  getPruneHistory as _getPruneHistory,
+  cancelGoalAndDescendants,
+} from "./goal-tree-pruner.js";
+import {
+  scoreConcreteness as _scoreConcreteness,
+  evaluateDecompositionQuality as _evaluateDecompositionQuality,
+} from "./goal-tree-quality.js";
+
+// Re-export for backward compatibility
+export type { GoalTreePrunerDeps } from "./goal-tree-pruner.js";
+export type { GoalTreeQualityDeps } from "./goal-tree-quality.js";
 
 // ─── LLM Response Schemas ───
 
@@ -57,21 +71,6 @@ const RestructureSuggestionSchema = z.object({
   reasoning: z.string(),
 });
 const RestructureResponseSchema = z.array(RestructureSuggestionSchema);
-
-const ConcretenessLLMResponseSchema = z.object({
-  hasQuantitativeThreshold: z.boolean(),
-  hasObservableOutcome: z.boolean(),
-  hasTimebound: z.boolean(),
-  hasClearScope: z.boolean(),
-  reason: z.string(),
-});
-
-const QualityEvaluationResponseSchema = z.object({
-  coverage: z.number().min(0).max(1),
-  overlap: z.number().min(0).max(1),
-  actionability: z.number().min(0).max(1),
-  reasoning: z.string(),
-});
 
 // ─── Prompt Builders ───
 
@@ -155,57 +154,6 @@ Output JSON:
 {
   "covers_parent": <true|false>,
   "missing_dimensions": ["<dim1>", ...],
-  "reasoning": "<brief explanation>"
-}
-
-Return ONLY the JSON object, no other text.`;
-}
-
-function buildConcretenessPrompt(description: string): string {
-  return `Evaluate the concreteness of this goal description on four dimensions.
-
-Goal description: "${description}"
-
-Answer each question:
-1. hasQuantitativeThreshold: Does the goal specify quantitative/measurable success criteria or thresholds? (e.g., "achieve 80% coverage", "response time < 200ms")
-2. hasObservableOutcome: Does the goal describe an observable, verifiable outcome? (e.g., "a working API endpoint", "passing CI build")
-3. hasTimebound: Does the goal have a time constraint or deadline? (e.g., "by end of sprint", "within 2 weeks")
-4. hasClearScope: Does the goal have a clearly defined scope with no ambiguity about what is included or excluded?
-
-Output JSON:
-{
-  "hasQuantitativeThreshold": <true|false>,
-  "hasObservableOutcome": <true|false>,
-  "hasTimebound": <true|false>,
-  "hasClearScope": <true|false>,
-  "reason": "<brief explanation covering all four dimensions>"
-}
-
-Return ONLY the JSON object, no other text.`;
-}
-
-function buildQualityEvaluationPrompt(parentDescription: string, subgoalDescriptions: string[]): string {
-  const subgoalList = subgoalDescriptions
-    .map((desc, i) => `  ${i + 1}. "${desc}"`)
-    .join("\n");
-
-  return `Evaluate the quality of this goal decomposition.
-
-Parent goal: "${parentDescription}"
-
-Subgoals:
-${subgoalList}
-
-Evaluate:
-1. coverage (0.0-1.0): How well do the subgoals collectively cover all aspects of the parent goal? 1.0 = complete coverage, 0.0 = no coverage.
-2. overlap (0.0-1.0): How much redundancy/overlap exists between subgoals? 0.0 = no overlap (ideal), 1.0 = all subgoals are identical.
-3. actionability (0.0-1.0): Average concreteness/actionability of the subgoals. 1.0 = all are immediately actionable, 0.0 = all are too abstract.
-
-Output JSON:
-{
-  "coverage": <number 0.0 to 1.0>,
-  "overlap": <number 0.0 to 1.0>,
-  "actionability": <number 0.0 to 1.0>,
   "reasoning": "<brief explanation>"
 }
 
@@ -308,7 +256,8 @@ function buildGoalFromSubgoalSpec(
  *   - Specificity evaluation (LLM)
  *   - N-layer recursive decomposition
  *   - Decomposition validation (coverage + cycle check)
- *   - Pruning (cancel goal + all descendants)
+ *   - Pruning (cancel goal + all descendants) — delegates to goal-tree-pruner.ts
+ *   - Quality scoring — delegates to goal-tree-quality.ts
  *   - Dynamic subgoal addition
  *   - Tree state queries
  */
@@ -335,7 +284,7 @@ export class GoalTreeManager {
     this.maxDepth = options?.maxDepth ?? 5;
   }
 
-  // ─── Concreteness Scoring ───
+  // ─── Concreteness Scoring (thin wrapper) ───
 
   /**
    * Scores the concreteness of a goal description on four dimensions using an LLM.
@@ -343,54 +292,10 @@ export class GoalTreeManager {
    * Falls back to zero score on LLM/parse failures.
    */
   async scoreConcreteness(description: string): Promise<ConcretenessScore> {
-    if (!description || description.trim() === "") {
-      return ConcretenessScoreSchema.parse({
-        score: 0,
-        dimensions: {
-          hasQuantitativeThreshold: false,
-          hasObservableOutcome: false,
-          hasTimebound: false,
-          hasClearScope: false,
-        },
-        reason: "Empty description provided",
-      });
-    }
-
-    const prompt = buildConcretenessPrompt(description);
-    try {
-      const response = await this.llmClient.sendMessage(
-        [{ role: "user", content: prompt }],
-        { temperature: 0 }
-      );
-      const parsed = this.llmClient.parseJSON(response.content, ConcretenessLLMResponseSchema);
-      const dims = {
-        hasQuantitativeThreshold: parsed.hasQuantitativeThreshold,
-        hasObservableOutcome: parsed.hasObservableOutcome,
-        hasTimebound: parsed.hasTimebound,
-        hasClearScope: parsed.hasClearScope,
-      };
-      const trueCount = Object.values(dims).filter(Boolean).length;
-      const score = trueCount * 0.25;
-      return ConcretenessScoreSchema.parse({
-        score,
-        dimensions: dims,
-        reason: parsed.reason,
-      });
-    } catch {
-      return ConcretenessScoreSchema.parse({
-        score: 0,
-        dimensions: {
-          hasQuantitativeThreshold: false,
-          hasObservableOutcome: false,
-          hasTimebound: false,
-          hasClearScope: false,
-        },
-        reason: "LLM evaluation failed, defaulting to zero score",
-      });
-    }
+    return _scoreConcreteness(description, { llmClient: this.llmClient });
   }
 
-  // ─── Decomposition Quality ───
+  // ─── Decomposition Quality (thin wrapper) ───
 
   /**
    * Evaluates the quality of a decomposition using an LLM.
@@ -401,56 +306,9 @@ export class GoalTreeManager {
     parentDescription: string,
     subgoalDescriptions: string[]
   ): Promise<DecompositionQualityMetrics> {
-    if (subgoalDescriptions.length === 0) {
-      const metrics = DecompositionQualityMetricsSchema.parse({
-        coverage: 0,
-        overlap: 0,
-        actionability: 0,
-        depthEfficiency: 1,
-      });
-      console.warn(
-        "GoalTreeManager.evaluateDecompositionQuality: no subgoals provided — coverage=0"
-      );
-      return metrics;
-    }
-
-    const prompt = buildQualityEvaluationPrompt(parentDescription, subgoalDescriptions);
-    let coverage = 0;
-    let overlap = 0;
-    let actionability = 0;
-
-    try {
-      const response = await this.llmClient.sendMessage(
-        [{ role: "user", content: prompt }],
-        { temperature: 0 }
-      );
-      const parsed = this.llmClient.parseJSON(response.content, QualityEvaluationResponseSchema);
-      coverage = parsed.coverage;
-      overlap = parsed.overlap;
-      actionability = parsed.actionability;
-    } catch {
-      // On failure return conservative metrics
-      coverage = 0;
-      overlap = 0;
-      actionability = 0;
-    }
-
-    const depthEfficiency = Math.max(0, Math.min(1, 1 - overlap * 0.5));
-
-    const metrics = DecompositionQualityMetricsSchema.parse({
-      coverage,
-      overlap,
-      actionability,
-      depthEfficiency,
+    return _evaluateDecompositionQuality(parentDescription, subgoalDescriptions, {
+      llmClient: this.llmClient,
     });
-
-    if (coverage < 0.5 || overlap > 0.7) {
-      console.warn(
-        `GoalTreeManager.evaluateDecompositionQuality: poor quality detected — coverage=${coverage.toFixed(2)}, overlap=${overlap.toFixed(2)}`
-      );
-    }
-
-    return metrics;
   }
 
   // ─── Specificity Evaluation ───
@@ -794,7 +652,7 @@ export class GoalTreeManager {
     return true;
   }
 
-  // ─── Pruning ───
+  // ─── Pruning (thin wrappers) ───
 
   /**
    * Prunes a goal and all its descendants by setting status = "cancelled".
@@ -802,34 +660,7 @@ export class GoalTreeManager {
    * Returns a PruneDecision.
    */
   pruneGoal(goalId: string, reason: PruneReason): PruneDecision {
-    const goal = this.stateManager.loadGoal(goalId);
-    if (!goal) {
-      throw new Error(`GoalTreeManager.pruneGoal: goal "${goalId}" not found`);
-    }
-
-    const now = new Date().toISOString();
-
-    // Cancel the goal and all descendants
-    this._cancelGoalAndDescendants(goal, now);
-
-    // Remove from parent's children_ids
-    if (goal.parent_id) {
-      const parent = this.stateManager.loadGoal(goal.parent_id);
-      if (parent) {
-        const updatedParent: Goal = {
-          ...parent,
-          children_ids: parent.children_ids.filter((id) => id !== goalId),
-          updated_at: now,
-        };
-        this.stateManager.saveGoal(updatedParent);
-      }
-    }
-
-    return {
-      goal_id: goalId,
-      reason,
-      replacement_id: null,
-    };
+    return _pruneGoal(goalId, reason, { stateManager: this.stateManager });
   }
 
   /**
@@ -842,40 +673,7 @@ export class GoalTreeManager {
     reason: string,
     parentGoalId?: string
   ): PruneDecision {
-    const goal = this.stateManager.loadGoal(subgoalId);
-    if (!goal) {
-      throw new Error(`GoalTreeManager.pruneSubgoal: goal "${subgoalId}" not found`);
-    }
-
-    const now = new Date().toISOString();
-
-    // Cancel the goal and all descendants
-    this._cancelGoalAndDescendants(goal, now);
-
-    // Remove from parent's children_ids
-    if (goal.parent_id) {
-      const parent = this.stateManager.loadGoal(goal.parent_id);
-      if (parent) {
-        const updatedParent: Goal = {
-          ...parent,
-          children_ids: parent.children_ids.filter((id) => id !== subgoalId),
-          updated_at: now,
-        };
-        this.stateManager.saveGoal(updatedParent);
-      }
-    }
-
-    // Record prune history keyed by parentGoalId or the goal's own parent_id
-    const trackingKey = parentGoalId ?? goal.parent_id ?? subgoalId;
-    const record: PruneRecord = { subgoalId, reason, timestamp: now };
-    const existing = this.pruneHistory.get(trackingKey) ?? [];
-    this.pruneHistory.set(trackingKey, [...existing, record]);
-
-    return {
-      goal_id: subgoalId,
-      reason: "user_requested",
-      replacement_id: null,
-    };
+    return _pruneSubgoal(subgoalId, reason, this.pruneHistory, { stateManager: this.stateManager }, parentGoalId);
   }
 
   /**
@@ -883,25 +681,7 @@ export class GoalTreeManager {
    * Returns an empty array if no prunes have been recorded.
    */
   getPruneHistory(goalId: string): PruneRecord[] {
-    return this.pruneHistory.get(goalId) ?? [];
-  }
-
-  private _cancelGoalAndDescendants(goal: Goal, now: string): void {
-    // Recursively cancel all children first
-    for (const childId of goal.children_ids) {
-      const child = this.stateManager.loadGoal(childId);
-      if (child) {
-        this._cancelGoalAndDescendants(child, now);
-      }
-    }
-
-    // Cancel this goal
-    const cancelled: Goal = {
-      ...goal,
-      status: "cancelled",
-      updated_at: now,
-    };
-    this.stateManager.saveGoal(cancelled);
+    return _getPruneHistory(goalId, this.pruneHistory);
   }
 
   // ─── Dynamic Subgoal Addition ───
@@ -1033,7 +813,7 @@ export class GoalTreeManager {
             for (const mergeId of mergeIds) {
               const mergeGoal = this.stateManager.loadGoal(mergeId);
               if (mergeGoal && mergeGoal.status !== "cancelled") {
-                this._cancelGoalAndDescendants(mergeGoal, now);
+                cancelGoalAndDescendants(mergeGoal, now, this.stateManager);
                 restructuringApplied = true;
                 // Remove from parent
                 if (mergeGoal.parent_id) {
