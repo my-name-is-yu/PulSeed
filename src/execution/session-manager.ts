@@ -90,12 +90,12 @@ export class SessionManager {
     const sessionId = globalThis.crypto.randomUUID();
     const now = new Date().toISOString();
 
-    const contextSlots = this.buildContextForType(
-      sessionType,
-      goalId,
-      taskId,
-      contextBudget
-    );
+    const contextSlots = this.dependencyGraph
+      ? this.buildContextWithConflictAwareness(goalId, sessionType, {
+          tokenBudget: contextBudget,
+          taskId,
+        })
+      : this.buildContextForType(sessionType, goalId, taskId, contextBudget);
 
     const session: Session = SessionSchema.parse({
       id: sessionId,
@@ -487,9 +487,9 @@ export class SessionManager {
   buildContextWithConflictAwareness(
     goalId: string,
     sessionType: SessionType,
-    options?: { tokenBudget?: number }
+    options?: { tokenBudget?: number; taskId?: string | null }
   ): ContextSlot[] {
-    const slots = this.buildContextForType(sessionType, goalId, null);
+    const slots = this.buildContextForType(sessionType, goalId, options?.taskId ?? null);
     const conflicts = this.checkResourceConflicts(goalId);
 
     if (conflicts.length > 0) {

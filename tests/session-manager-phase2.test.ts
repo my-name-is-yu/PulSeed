@@ -418,4 +418,36 @@ describe("SessionManager Phase 2", () => {
       expect(conflictSlot.content.toLowerCase()).toContain("concurrent");
     });
   });
+
+  // ─── createSession dynamic budget wiring ───
+
+  describe("createSession conflict-aware context wiring", () => {
+    it("uses conflict-aware context when dependencyGraph is available", () => {
+      const depGraph = new GoalDependencyGraph(stateManager);
+      const managerWithGraph = new SessionManager(stateManager, depGraph);
+
+      depGraph.addEdge({
+        from_goal_id: "goal-A",
+        to_goal_id: "goal-B",
+        type: "resource_conflict",
+        status: "active",
+        condition: null,
+        affected_dimensions: ["filesystem"],
+        mitigation: null,
+        detection_confidence: 1.0,
+        reasoning: null,
+      });
+
+      const session = managerWithGraph.createSession("goal_review", "goal-A", null);
+      const labels = session.context_slots.map((s) => s.label);
+      expect(labels).toContain("resource_conflict_awareness");
+    });
+
+    it("falls back to basic context when no dependencyGraph is configured", () => {
+      const session = manager.createSession("goal_review", "goal-A", null);
+      const labels = session.context_slots.map((s) => s.label);
+      expect(labels).not.toContain("resource_conflict_awareness");
+      expect(labels).toContain("goal_definition");
+    });
+  });
 });
