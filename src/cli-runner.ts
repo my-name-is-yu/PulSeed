@@ -31,6 +31,7 @@ import type { LoopConfig } from "./core-loop.js";
 import { cmdRun } from "./cli/commands/run.js";
 import {
   cmdGoalAdd,
+  cmdGoalAddRaw,
   cmdGoalList,
   cmdStatus,
   cmdGoalShow,
@@ -39,6 +40,7 @@ import {
   cmdGoalArchive,
   cmdCleanup,
 } from "./cli/commands/goal.js";
+import { cmdPluginList, cmdPluginInstall, cmdPluginRemove } from "./cli/commands/plugin.js";
 import { cmdReport } from "./cli/commands/report.js";
 import {
   cmdProvider,
@@ -173,32 +175,59 @@ export class CLIRunner {
       }
 
       if (goalSubcommand === "add") {
-        const description = argv[2];
-        if (!description) {
-          console.error('Error: description is required. Usage: motiva goal add "<description>"');
-          return 1;
-        }
-
-        let values: { deadline?: string | undefined; constraint?: string[] | undefined; yes?: boolean | undefined };
+        // Parse all goal add flags from argv.slice(2) with allowPositionals
+        let positionals: string[] = [];
+        let addValues: {
+          negotiate?: boolean;
+          dim?: string[];
+          title?: string;
+          deadline?: string;
+          constraint?: string[];
+          yes?: boolean;
+        } = {};
         try {
-          ({ values } = parseArgs({
-            args: argv.slice(3),
+          const parsed = parseArgs({
+            args: argv.slice(2),
             options: {
+              negotiate: { type: "boolean" },
+              dim: { type: "string", multiple: true },
+              title: { type: "string" },
               deadline: { type: "string" },
               constraint: { type: "string", multiple: true },
               yes: { type: "boolean", short: "y" },
             },
+            allowPositionals: true,
             strict: false,
-          }) as { values: { deadline?: string; constraint?: string[]; yes?: boolean } });
+          }) as { values: typeof addValues; positionals: string[] };
+          addValues = parsed.values;
+          positionals = parsed.positionals;
         } catch (err) {
           console.error(formatOperationError("parse goal add arguments", err));
-          values = {};
+          return 1;
         }
 
-        const deadline = values.deadline;
-        const constraints = values.constraint ?? [];
-        const yes = globalYes || (values.yes ?? false);
+        const description = positionals[0];
+        const yes = globalYes || (addValues.yes ?? false);
+        const rawDimensions = addValues.dim ?? [];
 
+        // Raw mode: --dim provided and --negotiate not set
+        if (rawDimensions.length > 0 && !addValues.negotiate) {
+          const title = addValues.title || description;
+          if (!title) {
+            console.error("Error: --title or description is required. Usage: motiva goal add --title \"tsc zero\" --dim \"tsc_error_count:min:0\"");
+            return 1;
+          }
+          return await cmdGoalAddRaw(this.stateManager, { title, description, rawDimensions });
+        }
+
+        // Negotiate mode: requires description
+        if (!description) {
+          console.error('Error: description is required. Usage: motiva goal add "<description>" [--negotiate]');
+          return 1;
+        }
+
+        const deadline = addValues.deadline;
+        const constraints = addValues.constraint ?? [];
         return await cmdGoalAdd(this.stateManager, this.characterConfigManager, description, { deadline, constraints, yes });
       }
 
@@ -409,6 +438,31 @@ export class CLIRunner {
 
       console.error(`Unknown capability subcommand: "${capSubcommand}"`);
       console.error("Available: capability list, capability remove");
+      return 1;
+    }
+
+    if (subcommand === "plugin") {
+      const pluginSubcommand = argv[1];
+
+      if (!pluginSubcommand) {
+        console.error("Error: plugin subcommand required. Available: plugin list, plugin install, plugin remove");
+        return 1;
+      }
+
+      if (pluginSubcommand === "list") {
+        return await cmdPluginList();
+      }
+
+      if (pluginSubcommand === "install") {
+        return await cmdPluginInstall(undefined, argv.slice(2));
+      }
+
+      if (pluginSubcommand === "remove") {
+        return cmdPluginRemove(undefined, argv.slice(2));
+      }
+
+      console.error(`Unknown plugin subcommand: "${pluginSubcommand}"`);
+      console.error("Available: plugin list, plugin install, plugin remove");
       return 1;
     }
 

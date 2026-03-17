@@ -166,6 +166,20 @@ describe("SHELL_DIMENSION_PATTERNS", () => {
     expect(SHELL_DIMENSION_PATTERNS).toHaveProperty("fixme_count");
   });
 
+  it("contains entry for tsc_error_count", () => {
+    expect(SHELL_DIMENSION_PATTERNS).toHaveProperty("tsc_error_count");
+    const spec = SHELL_DIMENSION_PATTERNS.tsc_error_count;
+    expect(spec.output_type).toBe("number");
+    expect(spec.argv).toContain("tsc");
+  });
+
+  it("contains entry for test_coverage", () => {
+    expect(SHELL_DIMENSION_PATTERNS).toHaveProperty("test_coverage");
+    const spec = SHELL_DIMENSION_PATTERNS.test_coverage;
+    expect(spec.output_type).toBe("number");
+    expect(spec.argv.some((a: string) => a.includes("vitest") || a.includes("coverage"))).toBe(true);
+  });
+
   it("all entries have an argv array and valid output_type", () => {
     for (const [name, spec] of Object.entries(SHELL_DIMENSION_PATTERNS)) {
       expect(Array.isArray(spec.argv), `${name}.argv should be array`).toBe(true);

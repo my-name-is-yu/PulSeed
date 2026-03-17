@@ -15,7 +15,8 @@ Usage:
   motiva run --goal <id>              Run CoreLoop for a goal
   motiva improve [path]               Analyze path, suggest goals, and optionally run improvement loop
   motiva suggest "<context>"          Suggest improvement goals for a project context
-  motiva goal add "<description>"     Register a new goal (interactive)
+  motiva goal add --title "<t>" --dim "name:type:val"  Register a goal (raw mode, no LLM)
+  motiva goal add "<description>" --negotiate          Register a goal via LLM negotiation
   motiva goal list                    List all registered goals
   motiva goal list --archived         Also list archived goals
   motiva goal archive <id>            Archive a completed goal (moves state to ~/.motiva/archive/)
@@ -36,6 +37,9 @@ Usage:
   motiva datasource remove <id>       Remove a data source by ID
   motiva capability list              List all registered capabilities
   motiva capability remove <name>     Remove a capability by name
+  motiva plugin list                  List installed plugins
+  motiva plugin install <path>        Install a plugin from a local directory
+  motiva plugin remove <name>         Remove an installed plugin
   motiva provider show                Show current provider config
   motiva provider set                 Set LLM provider and/or default adapter
 
@@ -56,6 +60,9 @@ Options (motiva suggest):
   --path, -p <dir>                    Repo path to scan for additional context
 
 Options (motiva goal add):
+  --title <title>                     Goal title (raw mode)
+  --dim <name:type:value>             Dimension spec, repeatable (raw mode, e.g. "tsc_error_count:min:0")
+  --negotiate                         Use LLM negotiation instead of raw mode
   --deadline <ISO-date>               Optional deadline (e.g. 2026-06-01)
   --constraint <text>                 Optional constraint (repeatable)
 
@@ -81,7 +88,9 @@ Environment:
   MOTIVA_LLM_PROVIDER                 Override LLM provider (anthropic|openai|ollama|codex)
 
 Examples:
-  motiva goal add "Increase test coverage to 90%"
+  motiva goal add --title "tsc zero" --dim "tsc_error_count:min:0"
+  motiva goal add --title "clean code" --dim "todo_count:max:0" --dim "fixme_count:max:0"
+  motiva goal add "Increase test coverage to 90%" --negotiate
   motiva goal list
   motiva goal show <id>
   motiva goal reset <id>

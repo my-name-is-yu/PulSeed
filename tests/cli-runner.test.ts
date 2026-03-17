@@ -626,6 +626,68 @@ describe("goal add subcommand", () => {
   });
 });
 
+// ─── `goal add` raw mode ─────────────────────────────────────────────────────
+
+describe("goal add raw mode", () => {
+  it("exits with code 0 for a single --dim flag", async () => {
+    const code = await runCLI("goal", "add", "--title", "tsc zero", "--dim", "tsc_error_count:min:0");
+    expect(code).toBe(0);
+  });
+
+  it("exits with code 0 for multiple --dim flags", async () => {
+    const code = await runCLI("goal", "add", "--title", "clean code", "--dim", "todo_count:max:0", "--dim", "fixme_count:max:0");
+    expect(code).toBe(0);
+  });
+
+  it("outputs Goal ID and title after successful raw add", async () => {
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    await runCLI("goal", "add", "--title", "my raw goal", "--dim", "todo_count:max:0");
+
+    const output = consoleSpy.mock.calls.map((c) => c.join(" ")).join("\n");
+    expect(output).toContain("my raw goal");
+    expect(output).toContain("Goal ID:");
+    consoleSpy.mockRestore();
+  });
+
+  it("exits with code 1 when --dim is provided but neither --title nor description is given", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const code = await runCLI("goal", "add", "--dim", "todo_count:max:0");
+    expect(code).toBe(1);
+    errorSpy.mockRestore();
+  });
+
+  it("exits with code 1 for an invalid --dim format", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const code = await runCLI("goal", "add", "--title", "bad dim", "--dim", "badformat");
+    expect(code).toBe(1);
+    const output = errorSpy.mock.calls.map((c) => c.join(" ")).join("\n");
+    expect(output.toLowerCase()).toContain("invalid");
+    errorSpy.mockRestore();
+  });
+
+  it("does NOT call GoalNegotiator in raw mode", async () => {
+    const mockNegotiate = vi.fn().mockResolvedValue({ goal: makeGoal(), response: { type: "accept", message: "ok", counter_target: null }, log: {} });
+    vi.mocked(GoalNegotiator).mockImplementation(() => ({ negotiate: mockNegotiate } as unknown as GoalNegotiator));
+
+    await runCLI("goal", "add", "--title", "raw no llm", "--dim", "todo_count:max:0");
+
+    expect(mockNegotiate).not.toHaveBeenCalled();
+  });
+
+  it("calls GoalNegotiator when --negotiate flag is present", async () => {
+    const goal = makeGoal();
+    const mockNegotiate = vi.fn().mockResolvedValue(makeNegotiationResult(goal));
+    vi.mocked(GoalNegotiator).mockImplementation(() => ({ negotiate: mockNegotiate } as unknown as GoalNegotiator));
+
+    await runCLI("goal", "add", "TypeScriptエラーを0にする", "--negotiate");
+
+    expect(mockNegotiate).toHaveBeenCalledWith(
+      "TypeScriptエラーを0にする",
+      expect.objectContaining({ deadline: undefined, constraints: [] })
+    );
+  });
+});
+
 // ─── `goal list` subcommand ───────────────────────────────────────────────────
 
 describe("goal list subcommand", () => {

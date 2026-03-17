@@ -457,11 +457,174 @@ export interface ShellCommandConfig {
 }
 
 export const SHELL_DIMENSION_PATTERNS: Record<string, ShellCommandConfig> = {
-  todo_count:   { argv: ["grep", "-rEc", "//\\s*TODO|#\\s*TODO", "src/"], output_type: "number" },
-  fixme_count:  { argv: ["grep", "-rEc", "//\\s*FIXME|#\\s*FIXME", "src/"], output_type: "number" },
-  test_count:   { argv: ["grep", "-rEc", "it\\(|test\\(|describe\\(", "tests/"], output_type: "number" },
-  lint_errors:  { argv: ["npx", "eslint", "src/", "--format", "compact", "--max-warnings", "9999"], output_type: "number" },
+  todo_count:        { argv: ["grep", "-rEc", "//\\s*TODO|#\\s*TODO", "src/"], output_type: "number" },
+  fixme_count:       { argv: ["grep", "-rEc", "//\\s*FIXME|#\\s*FIXME", "src/"], output_type: "number" },
+  test_count:        { argv: ["grep", "-rEc", "it\\(|test\\(|describe\\(", "tests/"], output_type: "number" },
+  lint_errors:       { argv: ["npx", "eslint", "src/", "--format", "compact", "--max-warnings", "9999"], output_type: "number" },
+  tsc_error_count:   { argv: ["npx", "tsc", "--noEmit", "--pretty", "false"], output_type: "number" },
+  test_coverage:     { argv: ["npx", "vitest", "run", "--coverage", "--reporter=json"], output_type: "number" },
 };
+
+// ─── Raw Goal Add (no LLM) ───
+
+export interface RawDimensionSpec {
+  name: string;
+  type: "min" | "max" | "range" | "present" | "match";
+  value?: string;
+}
+
+/** Parse a "name:type:value" string into a RawDimensionSpec. Returns null on error. */
+export function parseRawDim(raw: string): RawDimensionSpec | null {
+  const parts = raw.split(":");
+  if (parts.length < 2) return null;
+  const name = parts[0].trim();
+  const type = parts[1].trim() as RawDimensionSpec["type"];
+  if (!["min", "max", "range", "present", "match"].includes(type)) return null;
+  if (!name) return null;
+  const value = parts.slice(2).join(":").trim() || undefined;
+  return { name, type, value };
+}
+
+type Threshold =
+  | { type: "min"; value: number }
+  | { type: "max"; value: number }
+  | { type: "range"; low: number; high: number }
+  | { type: "present" }
+  | { type: "match"; value: string | number | boolean };
+
+/** Build a Threshold object from a RawDimensionSpec. Returns null if value is invalid. */
+export function buildThreshold(spec: RawDimensionSpec): Threshold | null {
+  if (spec.type === "present") return { type: "present" };
+
+  if (spec.type === "range") {
+    if (!spec.value) return null;
+    const [lowStr, highStr] = spec.value.split(",");
+    const low = parseFloat(lowStr ?? "");
+    const high = parseFloat(highStr ?? "");
+    if (isNaN(low) || isNaN(high)) return null;
+    return { type: "range", low, high };
+  }
+
+  if (spec.type === "min" || spec.type === "max") {
+    if (!spec.value) return null;
+    const num = parseFloat(spec.value);
+    if (isNaN(num)) return null;
+    return { type: spec.type, value: num };
+  }
+
+  if (spec.type === "match") {
+    if (spec.value === undefined) return null;
+    const num = parseFloat(spec.value);
+    if (!isNaN(num)) return { type: "match", value: num };
+    if (spec.value === "true") return { type: "match", value: true };
+    if (spec.value === "false") return { type: "match", value: false };
+    return { type: "match", value: spec.value };
+  }
+
+  return null;
+}
+
+export async function cmdGoalAddRaw(
+  stateManager: StateManager,
+  opts: { title?: string; description?: string; rawDimensions: string[] }
+): Promise<number> {
+  const title = opts.title || opts.description;
+  if (!title) {
+    console.error("Error: --title or description is required for raw goal add.");
+    return 1;
+  }
+
+  // Parse and validate all dim specs upfront
+  const dimSpecs: RawDimensionSpec[] = [];
+  for (const raw of opts.rawDimensions) {
+    const spec = parseRawDim(raw);
+    if (!spec) {
+      console.error(`Error: invalid --dim format "${raw}". Expected "name:type:value" (e.g. "tsc_error_count:min:0")`);
+      return 1;
+    }
+    const threshold = buildThreshold(spec);
+    if (!threshold) {
+      console.error(`Error: invalid value in --dim "${raw}". Check type/value combination.`);
+      return 1;
+    }
+    dimSpecs.push(spec);
+  }
+
+  const now = new Date().toISOString();
+  const goalId = `goal_${Date.now()}`;
+
+  const dimensions = dimSpecs.map((spec) => {
+    const threshold = buildThreshold(spec)!;
+    return {
+      name: spec.name,
+      label: spec.name.replace(/_/g, " "),
+      current_value: null,
+      threshold,
+      confidence: 0,
+      observation_method: {
+        type: "mechanical" as const,
+        source: "auto",
+        schedule: null,
+        endpoint: null,
+        confidence_tier: "mechanical" as const,
+      },
+      last_updated: null,
+      history: [],
+      weight: 1.0,
+      uncertainty_weight: null,
+      state_integrity: "ok" as const,
+      dimension_mapping: null,
+    };
+  });
+
+  const goal = {
+    id: goalId,
+    parent_id: null,
+    node_type: "goal" as const,
+    title,
+    description: opts.description || title,
+    status: "active" as const,
+    loop_status: "idle" as const,
+    dimensions,
+    gap_aggregation: "max" as const,
+    dimension_mapping: null,
+    constraints: [],
+    children_ids: [],
+    target_date: null,
+    origin: "manual" as const,
+    pace_snapshot: null,
+    deadline: null,
+    confidence_flag: null,
+    user_override: false,
+    feasibility_note: null,
+    uncertainty_weight: 1.0,
+    decomposition_depth: 0,
+    specificity_score: null,
+    created_at: now,
+    updated_at: now,
+  };
+
+  stateManager.saveGoal(goal);
+
+  autoRegisterFileExistenceDataSources(stateManager, dimensions, title, goalId);
+  autoRegisterShellDataSources(stateManager, dimensions, goalId);
+
+  console.log(`Goal registered successfully!`);
+  console.log(`Goal ID:    ${goalId}`);
+  console.log(`Title:      ${title}`);
+  console.log(`Status:     active`);
+  console.log(`Dimensions: ${dimensions.length}`);
+
+  if (dimensions.length > 0) {
+    console.log(`\nDimensions:`);
+    for (const dim of dimensions) {
+      console.log(`  - ${dim.label} (${dim.name}): ${JSON.stringify(dim.threshold)}`);
+    }
+  }
+
+  console.log(`\nTo run the loop: motiva run --goal ${goalId}`);
+  return 0;
+}
 
 // ─── Auto DataSource Registration ───
 
