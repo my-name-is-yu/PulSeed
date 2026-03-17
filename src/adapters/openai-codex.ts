@@ -63,14 +63,14 @@ export class OpenAICodexCLIAdapter implements IAdapter {
         spawnArgs.push("-m", this.model);
       }
 
-      spawnArgs.push("--path", this.repoPath);
-
       // Prompt is passed as a positional argument to the exec subcommand.
       // codex exec [-s <policy>] [-m <model>] "<prompt>"
+      // NOTE: --path is NOT supported by codex-cli 0.114.0; use cwd instead
       spawnArgs.push(task.prompt);
 
       const child = spawn(this.cliPath, spawnArgs, {
         stdio: ["pipe", "pipe", "pipe"],
+        cwd: this.repoPath,
         env: process.env,
       });
 
