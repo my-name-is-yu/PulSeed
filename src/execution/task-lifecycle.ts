@@ -337,7 +337,14 @@ export class TaskLifecycle {
       prompt = `\`\`\`github-issue\n${issuePayload}\n\`\`\``;
     } else {
       // Build prompt with task description as primary content
-      const taskDescription = `You are an AI agent executing a task.\n\nTask: ${task.work_description}\n\nApproach: ${task.approach}\n\nSuccess Criteria:\n${task.success_criteria.map((c) => `- ${c.description}`).join("\n")}`;
+      const scopeConstraints =
+        `\n\nSCOPE CONSTRAINTS (CRITICAL — violations will cause task failure):\n` +
+        `- ONLY modify source files directly related to the task\n` +
+        `- Do NOT modify: test files (*test*, *spec*), config files (*.config.*, package.json, tsconfig.json), CI/CD files\n` +
+        `- Do NOT change function visibility (private→export), file structure, or imports in unrelated files\n` +
+        `- Do NOT modify build configuration or dependency files\n` +
+        `- If a file contains the target pattern inside a string literal or template, leave it as-is`;
+      const taskDescription = `You are an AI agent executing a task.\n\nTask: ${task.work_description}\n\nApproach: ${task.approach}\n\nSuccess Criteria:\n${task.success_criteria.map((c) => `- ${c.description}`).join("\n")}${scopeConstraints}`;
 
       const contextContent = contextSlots
         .filter((slot) => slot.content.trim().length > 0) // Skip empty slots
@@ -401,6 +408,45 @@ export class TaskLifecycle {
         elapsed_ms: 0,
         stopped_reason: "error",
       };
+    }
+
+    // Post-execution scope check: revert changes to protected files
+    if (result.success) {
+      try {
+        const diffOutput = this.execFileSyncFn("git", ["diff", "--name-only"], {
+          cwd: process.cwd(),
+          encoding: "utf-8",
+        }).trim();
+
+        if (diffOutput) {
+          const changedFiles = diffOutput.split("\n");
+          const protectedPatterns = [
+            /\.test\./,
+            /\.spec\./,
+            /vitest\.config/,
+            /jest\.config/,
+            /tsconfig/,
+            /package\.json$/,
+            /package-lock\.json$/,
+            /\.config\.(ts|js|mjs)$/,
+          ];
+
+          const protectedChanges = changedFiles.filter((f) =>
+            protectedPatterns.some((p) => p.test(f))
+          );
+
+          if (protectedChanges.length > 0) {
+            this.execFileSyncFn("git", ["checkout", "--", ...protectedChanges], {
+              cwd: process.cwd(),
+              encoding: "utf-8",
+            });
+            result.output = (result.output || "") +
+              `\n[Scope Check] Reverted ${protectedChanges.length} protected file(s): ${protectedChanges.join(", ")}`;
+          }
+        }
+      } catch {
+        // Non-fatal: scope check failure should not break execution
+      }
     }
 
     // Post-execution: check whether any files were actually modified via git diff --stat.
