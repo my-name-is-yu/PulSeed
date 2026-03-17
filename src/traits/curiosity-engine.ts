@@ -601,6 +601,34 @@ export class CuriosityEngine {
   // ─── Phase 2: Embedding-based Detection ───
 
   /**
+   * Index a dimension name into the VectorIndex for semantic search.
+   * Silently skips if no vectorIndex is configured.
+   */
+  async indexDimensionToVector(goalId: string, dimensionName: string): Promise<void> {
+    if (!this.vectorIndex) return;
+    await this.vectorIndex.add(
+      `dim:${goalId}:${dimensionName}`,
+      dimensionName,
+      { goal_id: goalId, type: "dimension" }
+    );
+  }
+
+  /**
+   * Find semantically similar dimensions across other goals using VectorIndex.
+   * Returns up to 3 results with similarity > 0.7. Returns [] if no vectorIndex.
+   */
+  async findSimilarDimensions(
+    goalId: string,
+    dimName: string
+  ): Promise<Array<{ id: string; similarity: number; goal_id: string }>> {
+    if (!this.vectorIndex) return [];
+    const results = await this.vectorIndex.search(dimName, 3, 0.7);
+    return results
+      .filter((r) => (r.metadata.goal_id as string) !== goalId)
+      .map((r) => ({ id: r.id, similarity: r.similarity, goal_id: r.metadata.goal_id as string }));
+  }
+
+  /**
    * Detect semantically similar dimensions across goals using VectorIndex.
    * Returns cross-goal transfers with similarity > 0.7.
    */

@@ -1951,3 +1951,64 @@ describe("CuriosityEngine — learning feedback", () => {
     expect(proposals[0]!.trigger.source_goal_id).toBe("g-source");
   });
 });
+
+// ─── Phase 2: Embedding-based Detection ───
+
+describe("CuriosityEngine — indexDimensionToVector", () => {
+  it("adds dimension to vectorIndex when available", async () => {
+    const mockVectorIndex = {
+      add: vi.fn().mockResolvedValue({}),
+      search: vi.fn().mockResolvedValue([]),
+    } as any;
+
+    const deps = createMockDeps({ vectorIndex: mockVectorIndex });
+    const engine = new CuriosityEngine(deps);
+
+    await engine.indexDimensionToVector("goal-1", "test_coverage");
+
+    expect(mockVectorIndex.add).toHaveBeenCalledWith(
+      "dim:goal-1:test_coverage",
+      "test_coverage",
+      { goal_id: "goal-1", type: "dimension" }
+    );
+  });
+
+  it("skips silently when no vectorIndex is configured", async () => {
+    const deps = createMockDeps(); // no vectorIndex
+    const engine = new CuriosityEngine(deps);
+
+    // Should not throw
+    await expect(engine.indexDimensionToVector("goal-1", "test_coverage")).resolves.toBeUndefined();
+  });
+});
+
+describe("CuriosityEngine — findSimilarDimensions", () => {
+  it("returns similar dimensions from other goals via embedding search", async () => {
+    const mockVectorIndex = {
+      add: vi.fn().mockResolvedValue({}),
+      search: vi.fn().mockResolvedValue([
+        { id: "dim:goal-2:test_count", similarity: 0.85, metadata: { goal_id: "goal-2", type: "dimension" } },
+        { id: "dim:goal-1:test_coverage", similarity: 0.92, metadata: { goal_id: "goal-1", type: "dimension" } },
+      ]),
+    } as any;
+
+    const deps = createMockDeps({ vectorIndex: mockVectorIndex });
+    const engine = new CuriosityEngine(deps);
+
+    const results = await engine.findSimilarDimensions("goal-1", "test_coverage");
+
+    // Should filter out the same goal's dimension
+    expect(results).toHaveLength(1);
+    expect(results[0]!.goal_id).toBe("goal-2");
+    expect(results[0]!.similarity).toBe(0.85);
+    expect(mockVectorIndex.search).toHaveBeenCalledWith("test_coverage", 3, 0.7);
+  });
+
+  it("returns empty array when no vectorIndex is configured", async () => {
+    const deps = createMockDeps();
+    const engine = new CuriosityEngine(deps);
+
+    const results = await engine.findSimilarDimensions("goal-1", "test_coverage");
+    expect(results).toEqual([]);
+  });
+});

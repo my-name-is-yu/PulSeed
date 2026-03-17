@@ -9,6 +9,7 @@ import type { KnowledgeGapSignal } from "../types/knowledge.js";
 import type { IDataSourceAdapter } from "./data-source-adapter.js";
 import type { DataSourceQuery } from "../types/data-source.js";
 import type { ILLMClient } from "../llm/llm-client.js";
+import type { VectorIndex } from "../knowledge/vector-index.js";
 
 // ─── Options ───
 
@@ -17,6 +18,8 @@ export interface ObservationEngineOptions {
   divergenceThreshold?: number;     // default: 0.20
   /** Injectable override for git diff context (used in tests). */
   gitContextFetcher?: (maxChars: number) => string;
+  /** Optional VectorIndex for indexing dimension names after observation. */
+  vectorIndex?: VectorIndex;
 }
 
 // ─── Cross-Validation Result ───
@@ -364,6 +367,15 @@ export class ObservationEngine {
 
     // Persist updated goal
     this.stateManager.saveGoal(updatedGoal);
+
+    // Index dimension name for semantic search (fire-and-forget, non-blocking)
+    if (this.options.vectorIndex) {
+      const vi = this.options.vectorIndex;
+      vi.add(`dim:${goalId}:${entry.dimension_name}`, entry.dimension_name, {
+        goal_id: goalId,
+        type: "dimension",
+      }).catch(() => { /* non-fatal */ });
+    }
   }
 
   // ─── Observation Log Persistence ───
