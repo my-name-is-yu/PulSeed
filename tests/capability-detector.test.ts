@@ -1422,4 +1422,37 @@ describe("matchPluginsForGoal", () => {
     expect(trusted?.autoSelectable).toBe(true);
     expect(lowTrust?.autoSelectable).toBe(false);
   });
+
+  it("excludes plugins with status other than loaded", async () => {
+    const mockPluginLoader = makePluginLoader([
+      {
+        name: "disabled-plugin",
+        dimensions: ["test_coverage", "lint_errors"],
+        trustScore: 50,
+        status: "disabled",
+      },
+      {
+        name: "error-plugin",
+        dimensions: ["test_coverage"],
+        trustScore: 30,
+        status: "error",
+      },
+    ]);
+    const detector = new CapabilityDetector(stateManager, createMockLLMClient([]), reportingEngine, mockPluginLoader);
+    const results = await detector.matchPluginsForGoal("improve quality", ["test_coverage", "lint_errors"]);
+    expect(results).toEqual([]);
+  });
+
+  it("returns empty array when goalDimensions is empty", async () => {
+    const mockPluginLoader = makePluginLoader([
+      {
+        name: "some-plugin",
+        dimensions: ["test_coverage"],
+        trustScore: 10,
+      },
+    ]);
+    const detector = new CapabilityDetector(stateManager, createMockLLMClient([]), reportingEngine, mockPluginLoader);
+    const results = await detector.matchPluginsForGoal("improve quality", []);
+    expect(results).toEqual([]);
+  });
 });

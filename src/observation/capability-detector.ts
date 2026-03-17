@@ -260,6 +260,7 @@ export class CapabilityDetector {
    * Returns plugins with matchScore >= 0.5, sorted by score then trust.
    */
   async matchPluginsForGoal(
+    // TODO: _goalDescription reserved for future LLM-based semantic matching (M13.5)
     _goalDescription: string,
     goalDimensions: string[]
   ): Promise<PluginMatchResult[]> {
