@@ -163,7 +163,8 @@ describe("example unit coverage", () => {
     expect(normalizeGap(0, { type: "match", value: true }, true)).toBe(0);
     expect(normalizeGap(99, { type: "match", value: "x" }, null)).toBe(1);
 
-    expect(applyConfidenceWeight(0.5, 0.25, 2, false)).toBe(1.25);
+    // 0.5 * (1 + 0.75 * 2) = 1.25, clamped to 1.0 by [0,1] invariant
+    expect(applyConfidenceWeight(0.5, 0.25, 2, false)).toBe(1.0);
     expect(applyConfidenceWeight(1, 0.1, 5, true)).toBe(1);
 
     expect(

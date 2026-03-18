@@ -139,7 +139,8 @@ describe("core functionality", () => {
 
     expect(result.raw_gap).toBe(7);
     expect(result.normalized_gap).toBe(0.7);
-    expect(result.normalized_weighted_gap).toBeCloseTo(1.05, 10);
+    // 0.7 * (1 + 0.5 * 1.0) = 1.05, clamped to 1.0 by [0,1] invariant
+    expect(result.normalized_weighted_gap).toBeCloseTo(1.0, 10);
   });
 
   it("score returns the expected drive score for a simple gap vector", () => {

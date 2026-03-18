@@ -152,7 +152,8 @@ export function applyConfidenceWeight(
     return normalizedGap; // Do not apply confidence weighting for null values
   }
 
-  return normalizedGap * (1 + (1 - confidence) * uncertaintyWeight);
+  const weighted = normalizedGap * (1 + (1 - confidence) * uncertaintyWeight);
+  return Math.min(1.0, weighted);
 }
 
 // ─── Full Pipeline for a Single Dimension ───

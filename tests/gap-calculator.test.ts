@@ -356,8 +356,8 @@ describe("calculateDimensionGap", () => {
     });
     expect(unmatched.raw_gap).toBe(1);
     expect(unmatched.normalized_gap).toBe(1);
-    // weighted: 1.0 * (1 + 0.3 * 1.0) = 1.3
-    expect(unmatched.normalized_weighted_gap).toBeCloseTo(1.3);
+    // weighted: 1.0 * (1 + 0.3 * 1.0) = 1.3, clamped to 1.0
+    expect(unmatched.normalized_weighted_gap).toBeCloseTo(1.0);
   });
 });
 
@@ -487,6 +487,43 @@ describe("aggregateGaps", () => {
     it("returns 0 for empty array", () => {
       expect(aggregateGaps([], "sum")).toBe(0);
     });
+  });
+});
+
+// ─── Regression: gap never exceeds 1.0 ───
+
+describe("gap normalization invariant: result always in [0,1]", () => {
+  it("regression #65: current=0, threshold=60 (min), confidence=0 must not return 2.0", () => {
+    // Before fix: normalizedGap=1.0, multiplier=2.0 => 2.0 (violated invariant)
+    const result = calculateDimensionGap({
+      name: "test_coverage",
+      current_value: 0,
+      threshold: { type: "min", value: 60 },
+      confidence: 0.0,
+      uncertainty_weight: null,
+    });
+
+    expect(result.normalized_gap).toBeCloseTo(1.0);
+    expect(result.normalized_weighted_gap).toBeLessThanOrEqual(1.0);
+    expect(result.normalized_weighted_gap).toBeCloseTo(1.0);
+  });
+
+  it("confidence weighting never pushes weighted gap above 1.0", () => {
+    const cases = [
+      { current: 0, threshold: 100, confidence: 0.0 },
+      { current: 0, threshold: 60, confidence: 0.0 },
+      { current: 10, threshold: 100, confidence: 0.1 },
+    ];
+    for (const c of cases) {
+      const result = calculateDimensionGap({
+        name: "dim",
+        current_value: c.current,
+        threshold: { type: "min", value: c.threshold },
+        confidence: c.confidence,
+        uncertainty_weight: null,
+      });
+      expect(result.normalized_weighted_gap).toBeLessThanOrEqual(1.0);
+    }
   });
 });
 
