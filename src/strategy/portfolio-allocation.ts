@@ -202,7 +202,8 @@ export function rebalanceOnStall(
 
   for (const alloc of currentAllocations) {
     const mom = momentumMap.get(alloc.goal_id);
-    if (!mom || mom.trend === "stalled") {
+    if (!mom) continue; // unknown momentum — keep current allocation
+    if (mom.trend === "stalled") {
       stalled.push(alloc);
     } else {
       progressing.push(alloc);

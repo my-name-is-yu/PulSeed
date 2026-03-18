@@ -75,6 +75,9 @@ export class PluginLoader {
 
     // 2. Dynamically import the entry point
     const entryPath = path.resolve(pluginDir, manifest.entry_point);
+    if (!entryPath.startsWith(pluginDir + path.sep) && entryPath !== pluginDir) {
+      throw new Error(`Plugin entry point escapes plugin directory: ${manifest.entry_point}`);
+    }
     let module: { default?: unknown };
     try {
       // Use pathToFileURL for cross-platform compatibility in ESM

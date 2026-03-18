@@ -322,7 +322,11 @@ export class ObservationEngine {
     if (typeof effectiveValue === 'number' && typeof dim.current_value === 'number') {
       // NOTE: range thresholds intentionally not clamped — progress direction is ambiguous.
       // Assumes earlier observations are reliable; no mechanism to override a false-high floor.
-      if (dim.threshold.type === 'min' && effectiveValue < dim.current_value) {
+      if (
+        dim.threshold.type === 'min' &&
+        effectiveValue < dim.current_value &&
+        entry.confidence < (dim.confidence ?? 0)
+      ) {
         effectiveValue = dim.current_value;
       }
     }

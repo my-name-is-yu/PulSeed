@@ -132,8 +132,17 @@ export class EventServer {
       return;
     }
 
+    const MAX_BODY_SIZE = 1_048_576; // 1 MB
     let body = "";
-    req.on("data", (chunk) => {
+    let bytesReceived = 0;
+    req.on("data", (chunk: Buffer) => {
+      bytesReceived += chunk.length;
+      if (bytesReceived > MAX_BODY_SIZE) {
+        res.writeHead(413, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Payload too large" }));
+        req.destroy();
+        return;
+      }
       body += chunk;
     });
     req.on("end", () => {
