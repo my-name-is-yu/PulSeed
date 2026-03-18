@@ -1,20 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import * as os from "node:os";
 import { StateManager } from "../src/state-manager.js";
 import { SatisficingJudge } from "../src/drive/satisficing-judge.js";
 import { StateAggregator } from "../src/goal/state-aggregator.js";
 import type { Goal, Dimension } from "../src/types/goal.js";
 import type { StateAggregationRule } from "../src/types/goal-tree.js";
-
-// ─── Fixtures ───
-
-function makeTempDir(): string {
-  return fs.mkdtempSync(
-    path.join(os.tmpdir(), "motiva-state-aggregator-test-")
-  );
-}
+import { makeTempDir } from "./helpers/temp-dir.js";
 
 function makeDimension(overrides: Partial<Dimension> = {}): Dimension {
   return {

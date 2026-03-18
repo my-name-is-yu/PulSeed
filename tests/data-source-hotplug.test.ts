@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import * as os from "node:os";
 import { DataSourceRegistry } from "../src/observation/data-source-adapter.js";
 import type { IDataSourceAdapter } from "../src/observation/data-source-adapter.js";
 import { ObservationEngine } from "../src/observation/observation-engine.js";
@@ -9,12 +8,9 @@ import { StateManager } from "../src/state-manager.js";
 import type { DataSourceConfig } from "../src/types/data-source.js";
 import type { Goal } from "../src/types/goal.js";
 import type { ObservationMethod } from "../src/types/core.js";
+import { makeTempDir } from "./helpers/temp-dir.js";
 
 // ─── Helpers ───
-
-function makeTempDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "motiva-hotplug-test-"));
-}
 
 function makeConfig(id: string): DataSourceConfig {
   return {

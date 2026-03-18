@@ -27,7 +27,6 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import * as os from "node:os";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
@@ -126,12 +125,7 @@ import { CoreLoop } from "../src/core-loop.js";
 import { GoalNegotiator, EthicsRejectedError } from "../src/goal/goal-negotiator.js";
 import type { LoopResult } from "../src/core-loop.js";
 import type { Goal } from "../src/types/goal.js";
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-function makeTempDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "motiva-cli-test-"));
-}
+import { makeTempDir } from "./helpers/temp-dir.js";
 
 /** Build a minimal valid Goal object */
 function makeGoal(overrides: Partial<Goal> = {}): Goal {

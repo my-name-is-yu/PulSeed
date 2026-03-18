@@ -1,12 +1,12 @@
 import { describe, it, expect } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import * as os from "node:os";
 import { ObservationEngine } from "../src/observation/observation-engine.js";
 import { StateManager } from "../src/state-manager.js";
 import type { Goal } from "../src/types/goal.js";
 import type { ILLMClient } from "../src/llm/llm-client.js";
 import { z } from "zod";
+import { makeTempDir } from "./helpers/temp-dir.js";
 
 // ─── Prompt Capture Mock ───
 
@@ -31,10 +31,6 @@ class PromptCaptureMockLLM implements ILLMClient {
 }
 
 // ─── Helpers ───
-
-function makeTempDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "motiva-obs-prompt-test-"));
-}
 
 function makeGoal(overrides: Partial<Goal> = {}): Goal {
   const now = new Date().toISOString();

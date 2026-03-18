@@ -8,9 +8,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import * as os from "node:os";
 import * as fs from "node:fs";
-import * as path from "node:path";
 import { StateManager } from "../src/state-manager.js";
 import { EthicsGate } from "../src/traits/ethics-gate.js";
 import { StallDetector } from "../src/drive/stall-detector.js";
@@ -18,12 +16,7 @@ import { ReportingEngine } from "../src/reporting-engine.js";
 import type { CharacterConfig } from "../src/types/character.js";
 import { DEFAULT_CHARACTER_CONFIG } from "../src/types/character.js";
 import { createMockLLMClient } from "./helpers/mock-llm.js";
-
-// ─── Test helpers ───
-
-function makeTempDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "motiva-char-sep-test-"));
-}
+import { makeTempDir } from "./helpers/temp-dir.js";
 
 function removeDir(dir: string): void {
   fs.rmSync(dir, { recursive: true, force: true });

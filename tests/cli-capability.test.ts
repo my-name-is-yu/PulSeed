@@ -7,8 +7,6 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
-import * as path from "node:path";
-import * as os from "node:os";
 
 // ─── Module mocks (must precede imports of mocked modules) ───────────────────
 
@@ -103,12 +101,7 @@ vi.mock("../src/llm/provider-factory.js", async (importOriginal) => {
 import { CLIRunner } from "../src/cli-runner.js";
 import { StateManager } from "../src/state-manager.js";
 import type { Capability } from "../src/types/capability.js";
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-function makeTempDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "motiva-capability-test-"));
-}
+import { makeTempDir } from "./helpers/temp-dir.js";
 
 function makeCapability(overrides: Partial<Capability> = {}): Capability {
   return {

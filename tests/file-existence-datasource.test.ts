@@ -1,15 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import * as os from "node:os";
 import { FileExistenceDataSourceAdapter } from "../src/adapters/file-existence-datasource.js";
 import type { DataSourceConfig } from "../src/types/data-source.js";
+import { makeTempDir } from "./helpers/temp-dir.js";
 
 // ─── Helpers ───
-
-function makeTempDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "motiva-file-existence-test-"));
-}
 
 function makeConfig(overrides: Partial<DataSourceConfig> = {}): DataSourceConfig {
   return {

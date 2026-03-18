@@ -1,11 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import * as os from "node:os";
 import {
   autoRegisterShellDataSources,
   SHELL_DIMENSION_PATTERNS,
 } from "../src/cli/commands/goal.js";
+import { makeTempDir } from "./helpers/temp-dir.js";
 
 // ─── Minimal StateManager stub ───
 
@@ -16,10 +16,6 @@ function makeFakeStateManager(baseDir: string) {
 }
 
 // ─── Helpers ───
-
-function makeTempDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "motiva-shell-auto-test-"));
-}
 
 function readDsConfigs(datasourcesDir: string): Array<Record<string, unknown>> {
   if (!fs.existsSync(datasourcesDir)) return [];

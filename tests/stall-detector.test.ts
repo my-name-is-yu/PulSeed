@@ -1,18 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import * as os from "node:os";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { StateManager } from "../src/state-manager.js";
 import { StallDetector } from "../src/drive/stall-detector.js";
 import type { StallState } from "../src/types/stall.js";
-
-// ─── Test helpers ───
-
-function makeTempDir(): string {
-  const dir = path.join(os.tmpdir(), `motiva-stall-test-${Math.random().toString(36).slice(2)}`);
-  fs.mkdirSync(dir, { recursive: true });
-  return dir;
-}
+import { makeTempDir } from "./helpers/temp-dir.js";
 
 function makeGapHistory(values: number[]): Array<{ normalized_gap: number }> {
   return values.map((v) => ({ normalized_gap: v }));

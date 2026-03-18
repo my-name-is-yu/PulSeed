@@ -1,15 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
-import * as path from "node:path";
-import * as os from "node:os";
 import { DriveScoreAdapter, MemoryLifecycleManager } from "../src/knowledge/memory-lifecycle.js";
 import { createMockLLMClient } from "./helpers/mock-llm.js";
-
-// ─── Helpers ───
-
-function makeTempDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "motiva-dsa-test-"));
-}
+import { makeTempDir } from "./helpers/temp-dir.js";
 
 let tmpDir: string;
 

@@ -6,12 +6,9 @@ import { StateManager } from "../src/state-manager.js";
 import { DriveSystem } from "../src/drive/drive-system.js";
 import type { MotivaEvent, GoalSchedule } from "../src/types/drive.js";
 import type { Goal } from "../src/types/goal.js";
+import { makeTempDir } from "./helpers/temp-dir.js";
 
 // ─── Helpers ───
-
-function makeTempDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "motiva-drive-test-"));
-}
 
 function makeGoal(overrides: Partial<Goal> = {}): Goal {
   const now = new Date().toISOString();

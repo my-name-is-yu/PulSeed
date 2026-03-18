@@ -9,7 +9,6 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import * as os from "node:os";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import {
@@ -23,12 +22,9 @@ import type { CompletionJudgment } from "../src/types/satisficing.js";
 import type { GapVector } from "../src/types/gap.js";
 import type { DriveScore } from "../src/types/drive.js";
 import type { TaskCycleResult } from "../src/execution/task-lifecycle.js";
+import { makeTempDir } from "./helpers/temp-dir.js";
 
 // ─── Helpers ───
-
-function makeTempDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "motiva-r1-test-"));
-}
 
 function makeGoal(overrides: Partial<Goal> = {}): Goal {
   const now = new Date().toISOString();

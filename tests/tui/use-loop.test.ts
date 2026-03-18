@@ -1,5 +1,4 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import * as os from "node:os";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { LoopController, calcDimensionProgress } from "../../src/tui/use-loop.js";
@@ -8,12 +7,7 @@ import type { CoreLoop, LoopResult } from "../../src/core-loop.js";
 import type { TrustManager } from "../../src/traits/trust-manager.js";
 import type { Goal } from "../../src/types/goal.js";
 import type { Threshold } from "../../src/types/core.js";
-
-// ─── Helpers ───
-
-function makeTempDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "motiva-tui-test-"));
-}
+import { makeTempDir } from "../helpers/temp-dir.js";
 
 const OBS_METHOD = {
   type: "mechanical" as const,

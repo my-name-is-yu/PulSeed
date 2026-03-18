@@ -10,7 +10,6 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import * as os from "node:os";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
@@ -24,12 +23,9 @@ import type { DaemonDeps } from "../../src/runtime/daemon-runner.js";
 import type { DaemonState } from "../../src/types/daemon.js";
 import { DaemonStateSchema } from "../../src/types/daemon.js";
 import type { LoopResult } from "../../src/core-loop.js";
+import { makeTempDir } from "../helpers/temp-dir.js";
 
 // ─── Helpers ───
-
-function makeTempDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "motiva-m4-daemon-test-"));
-}
 
 function removeTempDir(dir: string): void {
   fs.rmSync(dir, { recursive: true, force: true });

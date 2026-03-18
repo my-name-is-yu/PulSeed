@@ -1,13 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as fs from "fs";
-import * as os from "os";
 import * as path from "path";
 import { MockEmbeddingClient } from "../src/knowledge/embedding-client.js";
 import { VectorIndex } from "../src/knowledge/vector-index.js";
-
-function makeTempDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "vector-index-test-"));
-}
+import { makeTempDir } from "./helpers/temp-dir.js";
 
 describe("VectorIndex", () => {
   let tmpDir: string;

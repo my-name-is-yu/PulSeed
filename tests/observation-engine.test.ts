@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import * as os from "node:os";
 import { ObservationEngine } from "../src/observation/observation-engine.js";
 import { StateManager } from "../src/state-manager.js";
 import type { Goal } from "../src/types/goal.js";
@@ -10,12 +9,9 @@ import type { ObservationLayer, ObservationMethod, ObservationTrigger } from "..
 import type { KnowledgeGapSignal } from "../src/types/knowledge.js";
 import type { IDataSourceAdapter } from "../src/observation/data-source-adapter.js";
 import type { DataSourceConfig } from "../src/types/data-source.js";
+import { makeTempDir } from "./helpers/temp-dir.js";
 
 // ─── Helpers ───
-
-function makeTempDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "motiva-obs-test-"));
-}
 
 const defaultMethod: ObservationMethod = {
   type: "mechanical",

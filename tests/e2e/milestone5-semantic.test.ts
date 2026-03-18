@@ -11,7 +11,6 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import * as os from "node:os";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
@@ -43,12 +42,9 @@ import type { Goal } from "../../src/types/goal.js";
 import type { KnowledgeEntry } from "../../src/types/knowledge.js";
 import type { ILLMClient, LLMMessage, LLMRequestOptions, LLMResponse } from "../../src/llm/llm-client.js";
 import type { ZodSchema } from "zod";
+import { makeTempDir } from "../helpers/temp-dir.js";
 
 // ─── Helpers ───
-
-function makeTempDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "motiva-m5-semantic-test-"));
-}
 
 function removeTempDir(dir: string): void {
   fs.rmSync(dir, { recursive: true, force: true });

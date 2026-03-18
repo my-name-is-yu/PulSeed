@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import * as os from "node:os";
 import { StateManager } from "../src/state-manager.js";
 import { GoalDependencyGraph } from "../src/goal/goal-dependency-graph.js";
 import { VectorIndex } from "../src/knowledge/vector-index.js";
@@ -16,11 +15,9 @@ import type {
   CrossGoalRebalanceTrigger,
 } from "../src/types/cross-portfolio.js";
 
-// ─── Test Helpers ───
+import { makeTempDir } from "./helpers/temp-dir.js";
 
-function makeTempDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "motiva-cgp-test-"));
-}
+// ─── Test Helpers ───
 
 function makeGoal(
   overrides: Partial<Goal> & { id: string }

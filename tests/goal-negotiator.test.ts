@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import * as os from "node:os";
 import { z } from "zod";
 import { StateManager } from "../src/state-manager.js";
 import { EthicsGate } from "../src/traits/ethics-gate.js";
@@ -10,7 +9,9 @@ import { GoalNegotiator, EthicsRejectedError } from "../src/goal/goal-negotiator
 import { GoalSchema } from "../src/types/goal.js";
 import type { Goal } from "../src/types/goal.js";
 import type { ILLMClient, LLMMessage, LLMRequestOptions, LLMResponse } from "../src/llm/llm-client.js";
+import * as os from "node:os";
 import { createMockLLMClient } from "./helpers/mock-llm.js";
+import { makeTempDir } from "./helpers/temp-dir.js";
 
 // ─── Fixtures ───
 
@@ -121,10 +122,6 @@ const SUBGOALS_RESPONSE = JSON.stringify([
     ],
   },
 ]);
-
-function makeTempDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "motiva-negotiator-test-"));
-}
 
 function makeTestGoal(overrides: Partial<Goal> = {}): Goal {
   const now = new Date().toISOString();
@@ -268,6 +265,27 @@ describe("GoalNegotiator", () => {
       expect(result.log).toBeDefined();
     });
 
+    it("falls back to ambitious low-confidence feasibility when feasibility JSON cannot be parsed", async () => {
+      const mockLLM = createMockLLMClient([
+        PASS_VERDICT,
+        SINGLE_DIMENSION_RESPONSE,
+        "not-json",
+        RESPONSE_MESSAGE_FLAG,
+      ]);
+
+      const ethicsGate = new EthicsGate(stateManager, mockLLM);
+      const negotiator = new GoalNegotiator(stateManager, mockLLM, ethicsGate, observationEngine);
+
+      const result = await negotiator.negotiate("Goal with malformed feasibility response");
+      const feasibility = result.log.step4_evaluation!.dimensions[0]!;
+
+      expect(feasibility.assessment).toBe("ambitious");
+      expect(feasibility.confidence).toBe("low");
+      expect(feasibility.reasoning).toContain("Failed to parse feasibility assessment");
+      expect(feasibility.main_risks).toContain("Unable to assess feasibility");
+      expect(result.response.type).toBe("flag_as_ambitious");
+    });
+
     it("generates a unique goal ID", async () => {
       const mockLLM = createMockLLMClient([
         PASS_VERDICT,
@@ -399,6 +417,83 @@ describe("GoalNegotiator", () => {
       const loaded = stateManager.loadGoal(result.goal.id);
       expect(loaded).not.toBeNull();
       expect(loaded!.id).toBe(result.goal.id);
+    });
+  });
+
+  describe("goal lifecycle operations", () => {
+    it("adds a goal by persisting the negotiated result", async () => {
+      const mockLLM = createMockLLMClient([
+        PASS_VERDICT,
+        SINGLE_DIMENSION_RESPONSE,
+        FEASIBILITY_REALISTIC,
+        RESPONSE_MESSAGE_ACCEPT,
+      ]);
+
+      const ethicsGate = new EthicsGate(stateManager, mockLLM);
+      const negotiator = new GoalNegotiator(stateManager, mockLLM, ethicsGate, observationEngine);
+
+      const result = await negotiator.negotiate("Launch a beta program");
+
+      const goalIds = stateManager.listGoalIds();
+      const storedGoal = stateManager.loadGoal(result.goal.id);
+
+      expect(goalIds).toContain(result.goal.id);
+      expect(storedGoal).not.toBeNull();
+      expect(storedGoal!.title).toBe("Launch a beta program");
+      expect(storedGoal!.dimensions).toHaveLength(1);
+    });
+
+    it("removes an existing negotiated goal from state", async () => {
+      const mockLLM = createMockLLMClient([
+        PASS_VERDICT,
+        SINGLE_DIMENSION_RESPONSE,
+        FEASIBILITY_REALISTIC,
+        RESPONSE_MESSAGE_ACCEPT,
+      ]);
+
+      const ethicsGate = new EthicsGate(stateManager, mockLLM);
+      const negotiator = new GoalNegotiator(stateManager, mockLLM, ethicsGate, observationEngine);
+
+      const result = await negotiator.negotiate("Retire stale feature flags");
+
+      expect(stateManager.deleteGoal(result.goal.id)).toBe(true);
+      expect(stateManager.loadGoal(result.goal.id)).toBeNull();
+      expect(stateManager.listGoalIds()).not.toContain(result.goal.id);
+    });
+
+    it("gets all negotiated goals currently stored in state", async () => {
+      const mockLLM = createMockLLMClient([
+        PASS_VERDICT,
+        SINGLE_DIMENSION_RESPONSE,
+        FEASIBILITY_REALISTIC,
+        RESPONSE_MESSAGE_ACCEPT,
+        PASS_VERDICT,
+        SINGLE_DIMENSION_RESPONSE,
+        FEASIBILITY_REALISTIC,
+        RESPONSE_MESSAGE_ACCEPT,
+      ]);
+
+      const ethicsGate = new EthicsGate(stateManager, mockLLM);
+      const negotiator = new GoalNegotiator(stateManager, mockLLM, ethicsGate, observationEngine);
+
+      const first = await negotiator.negotiate("Improve onboarding completion");
+      const second = await negotiator.negotiate("Reduce support response time");
+
+      const goals = stateManager
+        .listGoalIds()
+        .map((goalId) => stateManager.loadGoal(goalId))
+        .filter((goal): goal is Goal => goal !== null);
+
+      expect(goals).toHaveLength(2);
+      expect(goals.map((goal) => goal.id)).toEqual(
+        expect.arrayContaining([first.goal.id, second.goal.id])
+      );
+      expect(goals.map((goal) => goal.title)).toEqual(
+        expect.arrayContaining([
+          "Improve onboarding completion",
+          "Reduce support response time",
+        ])
+      );
     });
   });
 
@@ -1058,6 +1153,136 @@ describe("GoalNegotiator", () => {
 
       expect(result.subgoals).toHaveLength(0);
       expect(result.rejectedSubgoals).toHaveLength(2);
+    });
+  });
+
+  describe("decomposeIntoSubgoals()", () => {
+    it("returns null when GoalTreeManager is not provided", async () => {
+      const mockLLM = createMockLLMClient([]);
+      const ethicsGate = new EthicsGate(stateManager, mockLLM);
+      const negotiator = new GoalNegotiator(stateManager, mockLLM, ethicsGate, observationEngine);
+
+      await expect(negotiator.decomposeIntoSubgoals("missing-goal")).resolves.toBeNull();
+    });
+
+    it("returns null when the goal does not exist", async () => {
+      const mockLLM = createMockLLMClient([]);
+      const ethicsGate = new EthicsGate(stateManager, mockLLM);
+      const goalTreeManager = {
+        decomposeGoal: vi.fn(),
+      };
+      const negotiator = new GoalNegotiator(
+        stateManager,
+        mockLLM,
+        ethicsGate,
+        observationEngine,
+        undefined,
+        undefined,
+        goalTreeManager as never,
+      );
+
+      await expect(negotiator.decomposeIntoSubgoals("missing-goal")).resolves.toBeNull();
+      expect(goalTreeManager.decomposeGoal).not.toHaveBeenCalled();
+    });
+
+    it("uses default decomposition config when none is provided", async () => {
+      const parentGoal = makeTestGoal({ id: "goal-for-default-decompose" });
+      stateManager.saveGoal(parentGoal);
+
+      const mockLLM = createMockLLMClient([]);
+      const ethicsGate = new EthicsGate(stateManager, mockLLM);
+      const decomposeGoal = vi.fn().mockResolvedValue({
+        created: [],
+        reused: [],
+        pruned: [],
+        depth_reached: 0,
+      });
+      const negotiator = new GoalNegotiator(
+        stateManager,
+        mockLLM,
+        ethicsGate,
+        observationEngine,
+        undefined,
+        undefined,
+        { decomposeGoal } as never,
+      );
+
+      await negotiator.decomposeIntoSubgoals(parentGoal.id);
+
+      expect(decomposeGoal).toHaveBeenCalledWith(parentGoal.id, {
+        max_depth: 5,
+        min_specificity: 0.7,
+        auto_prune_threshold: 0.3,
+        parallel_loop_limit: 3,
+      });
+    });
+
+    it("passes through an explicit decomposition config", async () => {
+      const parentGoal = makeTestGoal({ id: "goal-for-custom-decompose" });
+      stateManager.saveGoal(parentGoal);
+
+      const mockLLM = createMockLLMClient([]);
+      const ethicsGate = new EthicsGate(stateManager, mockLLM);
+      const decomposeGoal = vi.fn().mockResolvedValue({
+        created: [],
+        reused: [],
+        pruned: [],
+        depth_reached: 1,
+      });
+      const negotiator = new GoalNegotiator(
+        stateManager,
+        mockLLM,
+        ethicsGate,
+        observationEngine,
+        undefined,
+        undefined,
+        { decomposeGoal } as never,
+      );
+      const config = {
+        max_depth: 2,
+        min_specificity: 0.9,
+        auto_prune_threshold: 0.2,
+        parallel_loop_limit: 1,
+      };
+
+      await negotiator.decomposeIntoSubgoals(parentGoal.id, config);
+
+      expect(decomposeGoal).toHaveBeenCalledWith(parentGoal.id, config);
+    });
+  });
+
+  describe("suggestGoals()", () => {
+    it("returns an empty array for blank context", async () => {
+      const mockLLM = createMockLLMClient([]);
+      const ethicsGate = new EthicsGate(stateManager, mockLLM);
+      const negotiator = new GoalNegotiator(stateManager, mockLLM, ethicsGate, observationEngine);
+
+      await expect(negotiator.suggestGoals("   ")).resolves.toEqual([]);
+    });
+
+    it("returns parsed suggestions without persisting any goal", async () => {
+      const suggestionsResponse = JSON.stringify([
+        {
+          title: "Increase Test Coverage",
+          description: "Raise unit test coverage to 80 percent",
+          rationale: "Coverage is below the team standard",
+          dimensions_hint: ["test_coverage", "failing_tests"],
+        },
+      ]);
+      const mockLLM = createMockLLMClient([
+        suggestionsResponse,
+        PASS_VERDICT,
+      ]);
+      const ethicsGate = new EthicsGate(stateManager, mockLLM);
+      const negotiator = new GoalNegotiator(stateManager, mockLLM, ethicsGate, observationEngine);
+
+      const suggestions = await negotiator.suggestGoals("The test suite lacks coverage", {
+        maxSuggestions: 1,
+      });
+
+      expect(suggestions).toHaveLength(1);
+      expect(suggestions[0]?.title).toBe("Increase Test Coverage");
+      expect(stateManager.listGoalIds()).toEqual([]);
     });
   });
 
@@ -2339,6 +2564,65 @@ describe("GoalNegotiator CharacterConfig integration", () => {
       if (dims[1].threshold.type === "min") {
         expect(dims[1].threshold.value).toBe(0.7);
       }
+    });
+  });
+
+  describe("goal persistence lifecycle", () => {
+    function makePersistenceTestNegotiator() {
+      const mockLLM = createMockLLMClient([
+        PASS_VERDICT,
+        SINGLE_DIMENSION_RESPONSE,
+        FEASIBILITY_REALISTIC,
+        RESPONSE_MESSAGE_ACCEPT,
+      ]);
+
+      const ethicsGate = new EthicsGate(stateManager, mockLLM);
+      return new GoalNegotiator(stateManager, mockLLM, ethicsGate, observationEngine);
+    }
+
+    it("adds a goal by persisting the negotiated result", async () => {
+      const negotiator = makePersistenceTestNegotiator();
+
+      const result = await negotiator.negotiate("Ship the onboarding checklist");
+      const savedGoal = stateManager.loadGoal(result.goal.id);
+
+      expect(savedGoal).not.toBeNull();
+      expect(savedGoal?.id).toBe(result.goal.id);
+      expect(savedGoal?.title).toBe("Ship the onboarding checklist");
+      expect(savedGoal?.dimensions).toHaveLength(1);
+      expect(savedGoal?.dimensions[0]?.name).toBe("completion_rate");
+    });
+
+    it("removes a persisted goal and makes subsequent lookup return null", async () => {
+      const negotiator = makePersistenceTestNegotiator();
+
+      const result = await negotiator.negotiate("Archive outdated project notes");
+      const deleted = stateManager.deleteGoal(result.goal.id);
+
+      expect(deleted).toBe(true);
+      expect(stateManager.loadGoal(result.goal.id)).toBeNull();
+    });
+
+    it("gets persisted goals after multiple negotiations", async () => {
+      const firstNegotiator = makePersistenceTestNegotiator();
+      const secondNegotiator = makePersistenceTestNegotiator();
+
+      const first = await firstNegotiator.negotiate("Prepare sprint retrospective");
+      const second = await secondNegotiator.negotiate("Write API migration notes");
+
+      const goalIds = stateManager.listGoalIds();
+      const goals = goalIds
+        .map((goalId) => stateManager.loadGoal(goalId))
+        .filter((goal): goal is Goal => goal !== null);
+
+      expect(goalIds).toEqual(expect.arrayContaining([first.goal.id, second.goal.id]));
+      expect(goals).toHaveLength(2);
+      expect(goals.map((goal) => goal.title)).toEqual(
+        expect.arrayContaining([
+          "Prepare sprint retrospective",
+          "Write API migration notes",
+        ])
+      );
     });
   });
 });

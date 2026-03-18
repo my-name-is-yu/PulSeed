@@ -15,7 +15,6 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import * as os from "node:os";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
@@ -41,6 +40,7 @@ import * as DriveScorer from "../../src/drive/drive-scorer.js";
 
 // ─── Helpers ───
 import { createMockLLMClient } from "../helpers/mock-llm.js";
+import { makeTempDir } from "../helpers/temp-dir.js";
 
 // ─── Types ───
 import type { Goal, Dimension } from "../../src/types/goal.js";
@@ -67,10 +67,6 @@ class MockAdapter implements IAdapter {
 }
 
 // ─── Helpers ───
-
-function makeTempDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "motiva-d3-npm-publish-"));
-}
 
 function removeTempDir(dir: string): void {
   fs.rmSync(dir, { recursive: true, force: true });

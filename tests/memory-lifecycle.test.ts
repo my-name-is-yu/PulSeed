@@ -1,17 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import * as os from "node:os";
 import { MemoryLifecycleManager } from "../src/knowledge/memory-lifecycle.js";
 import type { ILLMClient, LLMMessage, LLMRequestOptions, LLMResponse } from "../src/llm/llm-client.js";
 import type { ZodSchema } from "zod";
 import { createMockLLMClient } from "./helpers/mock-llm.js";
+import { makeTempDir } from "./helpers/temp-dir.js";
 
 // ─── Helpers ───
-
-function makeTempDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "motiva-memory-test-"));
-}
 
 /** Build a two-call LLM response for compressToLongTerm (patterns + lessons). */
 function makeLLMCompressionResponses(lessonCount = 1) {

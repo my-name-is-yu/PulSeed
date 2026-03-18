@@ -11,10 +11,9 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import * as os from "node:os";
 import * as fs from "node:fs";
-import * as path from "node:path";
 import { createMockLLMClient } from "./helpers/mock-llm.js";
+import { makeTempDir } from "./helpers/temp-dir.js";
 
 // ─── Module mocks ─────────────────────────────────────────────────────────────
 // Only mock modules that would make real network/process calls.
@@ -61,12 +60,6 @@ vi.mock("../src/adapters/claude-api.js", () => ({
 import { CLIRunner } from "../src/cli-runner.js";
 import { StateManager } from "../src/state-manager.js";
 import type { Goal } from "../src/types/goal.js";
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function makeTempDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "motiva-cli-integ-test-"));
-}
 
 function makeGoal(overrides: Partial<Goal> = {}): Goal {
   const now = new Date().toISOString();

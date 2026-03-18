@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import * as os from "node:os";
 import { StateManager } from "../src/state-manager.js";
 import { EthicsGate } from "../src/traits/ethics-gate.js";
 import { GoalDependencyGraph } from "../src/goal/goal-dependency-graph.js";
@@ -9,6 +8,7 @@ import { GoalTreeManager } from "../src/goal/goal-tree-manager.js";
 import { GoalSchema } from "../src/types/goal.js";
 import type { Goal } from "../src/types/goal.js";
 import { createMockLLMClient } from "./helpers/mock-llm.js";
+import { makeTempDir } from "./helpers/temp-dir.js";
 
 // ─── Fixtures ───
 
@@ -78,10 +78,6 @@ const LOW_CONCRETENESS = JSON.stringify({
 });
 
 // ─── Helpers ───
-
-function makeTempDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "motiva-goal-quality-test-"));
-}
 
 function makeGoal(overrides: Partial<Goal> = {}): Goal {
   const now = new Date().toISOString();

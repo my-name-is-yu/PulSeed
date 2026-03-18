@@ -9,7 +9,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import * as os from "node:os";
 
 // ─── Module mocks (must precede imports of mocked modules) ───────────────────
 
@@ -93,12 +92,7 @@ import { CLIRunner } from "../src/cli-runner.js";
 import { StateManager } from "../src/state-manager.js";
 import { GoalNegotiator } from "../src/goal/goal-negotiator.js";
 import type { Goal } from "../src/types/goal.js";
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-function makeTempDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "motiva-ds-auto-test-"));
-}
+import { makeTempDir } from "./helpers/temp-dir.js";
 
 function makeGoal(overrides: Partial<Goal> = {}): Goal {
   const now = new Date().toISOString();

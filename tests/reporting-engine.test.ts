@@ -1,17 +1,13 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import * as os from "node:os";
 import { StateManager } from "../src/state-manager.js";
 import { ReportingEngine } from "../src/reporting-engine.js";
 import type { Report } from "../src/types/report.js";
 import type { CharacterConfig } from "../src/types/character.js";
+import { makeTempDir } from "./helpers/temp-dir.js";
 
 // ─── Test helpers ───
-
-function makeTempDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "motiva-reporting-test-"));
-}
 
 function makeBaseParams(overrides: Partial<Parameters<ReportingEngine["generateExecutionSummary"]>[0]> = {}) {
   return {

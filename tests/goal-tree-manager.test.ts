@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import * as os from "node:os";
 import { StateManager } from "../src/state-manager.js";
 import { EthicsGate } from "../src/traits/ethics-gate.js";
 import { GoalDependencyGraph } from "../src/goal/goal-dependency-graph.js";
@@ -10,6 +9,7 @@ import { GoalSchema } from "../src/types/goal.js";
 import type { Goal } from "../src/types/goal.js";
 import type { GoalDecompositionConfig } from "../src/types/goal-tree.js";
 import { createMockLLMClient } from "./helpers/mock-llm.js";
+import { makeTempDir } from "./helpers/temp-dir.js";
 
 // ─── Fixtures ───
 
@@ -119,10 +119,6 @@ const SHALLOW_CONFIG: GoalDecompositionConfig = {
 };
 
 // ─── Helpers ───
-
-function makeTempDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "motiva-goal-tree-test-"));
-}
 
 function makeGoal(overrides: Partial<Goal> = {}): Goal {
   const now = new Date().toISOString();

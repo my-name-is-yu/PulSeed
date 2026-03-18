@@ -1,14 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import * as os from "node:os";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { KnowledgeGraph } from "../src/knowledge/knowledge-graph.js";
+import { makeTempDir } from "./helpers/temp-dir.js";
 
 // ─── Helpers ───
-
-function makeTempDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "motiva-graph-test-"));
-}
 
 function makeGraph(dir: string): KnowledgeGraph {
   return new KnowledgeGraph(path.join(dir, "graph.json"));

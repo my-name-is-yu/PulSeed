@@ -1,5 +1,4 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import * as os from "node:os";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { z } from "zod";
@@ -20,6 +19,7 @@ import type {
 } from "../src/llm/llm-client.js";
 import { createMockLLMClient } from "./helpers/mock-llm.js";
 import type { Dimension } from "../src/types/goal.js";
+import { makeTempDir } from "./helpers/temp-dir.js";
 
 // ─── Spy LLM Client (tracks messages sent) ───
 
@@ -50,10 +50,6 @@ function createSpyLLMClient(responses: string[]): ILLMClient & { calls: Array<{ 
 }
 
 // ─── Fixtures ───
-
-function makeTempDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "motiva-task-lifecycle-test-"));
-}
 
 function makeGapVector(
   goalId: string,

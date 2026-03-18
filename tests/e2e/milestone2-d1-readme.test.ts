@@ -11,7 +11,6 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import * as os from "node:os";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
@@ -41,10 +40,7 @@ import type { ILLMClient, LLMMessage, LLMRequestOptions, LLMResponse } from "../
 import type { ZodSchema } from "zod";
 
 // ─── Helpers ───
-
-function makeTempDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "motiva-d1-readme-test-"));
-}
+import { makeTempDir } from "../helpers/temp-dir.js";
 
 function removeTempDir(dir: string): void {
   fs.rmSync(dir, { recursive: true, force: true });

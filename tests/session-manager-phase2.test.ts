@@ -1,17 +1,13 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import * as os from "node:os";
 import { StateManager } from "../src/state-manager.js";
 import { SessionManager } from "../src/execution/session-manager.js";
 import { GoalDependencyGraph } from "../src/goal/goal-dependency-graph.js";
 import type { ContextSlot } from "../src/types/session.js";
+import { makeTempDir } from "./helpers/temp-dir.js";
 
 // ─── Helpers ───
-
-function makeTempDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "motiva-session-phase2-test-"));
-}
 
 function makeSlot(priority: number, label: string, content: string, tokenEstimate = 0): ContextSlot {
   return { priority, label, content, token_estimate: tokenEstimate };

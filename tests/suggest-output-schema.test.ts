@@ -1,5 +1,4 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import * as os from "node:os";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
@@ -95,10 +94,7 @@ vi.mock("../src/reporting-engine.js", async (importOriginal) => {
 import { CLIRunner } from "../src/cli-runner.js";
 import { GoalNegotiator } from "../src/goal/goal-negotiator.js";
 import { SuggestOutputSchema } from "../src/types/suggest.js";
-
-function makeTempDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "motiva-suggest-schema-"));
-}
+import { makeTempDir } from "./helpers/temp-dir.js";
 
 let tmpDir: string;
 let origApiKey: string | undefined;

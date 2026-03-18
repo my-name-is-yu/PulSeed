@@ -2,15 +2,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import * as http from "node:http";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import * as os from "node:os";
 import { EventServer } from "../src/runtime/event-server.js";
 import type { MotivaEvent } from "../src/types/drive.js";
+import { makeTempDir } from "./helpers/temp-dir.js";
 
 // ─── Helpers ───
-
-function makeTempDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "motiva-event-server-test-"));
-}
 
 const createMockDriveSystem = (tmpDir: string) => ({
   writeEvent: vi.fn().mockImplementation((event: MotivaEvent) => {

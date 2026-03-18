@@ -1,17 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import * as os from "node:os";
 import { StateManager } from "../src/state-manager.js";
 import { SessionManager, DEFAULT_CONTEXT_BUDGET } from "../src/execution/session-manager.js";
 import type { Session } from "../src/types/session.js";
 import type { KnowledgeEntry } from "../src/types/knowledge.js";
-
-// ─── Helpers ───
-
-function makeTempDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "motiva-session-test-"));
-}
+import { makeTempDir } from "./helpers/temp-dir.js";
 
 // ─── Tests ───
 

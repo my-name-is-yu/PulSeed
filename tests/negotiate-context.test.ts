@@ -1,19 +1,15 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import * as os from "node:os";
 import { gatherNegotiationContext } from "../src/goal/goal-negotiator.js";
 import { GoalNegotiator } from "../src/goal/goal-negotiator.js";
 import { StateManager } from "../src/state-manager.js";
 import { EthicsGate } from "../src/traits/ethics-gate.js";
 import { ObservationEngine } from "../src/observation/observation-engine.js";
 import { createMockLLMClient } from "./helpers/mock-llm.js";
+import { makeTempDir } from "./helpers/temp-dir.js";
 
 // ─── Helpers ───
-
-function makeTempDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "motiva-neg-ctx-test-"));
-}
 
 function makeSrcWithTodos(dir: string): void {
   const srcDir = path.join(dir, "src");

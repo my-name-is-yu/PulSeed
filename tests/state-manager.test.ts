@@ -1,15 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import * as os from "node:os";
 import { StateManager } from "../src/state-manager.js";
 import type { Goal, GoalTree } from "../src/types/goal.js";
 import type { ObservationLogEntry } from "../src/types/state.js";
 import type { GapHistoryEntry } from "../src/types/gap.js";
-
-function makeTempDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "motiva-test-"));
-}
+import { makeTempDir } from "./helpers/temp-dir.js";
 
 function makeGoal(overrides: Partial<Goal> = {}): Goal {
   const now = new Date().toISOString();

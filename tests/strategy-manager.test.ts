@@ -1,5 +1,4 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import * as os from "node:os";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { z } from "zod";
@@ -8,6 +7,7 @@ import { StrategyManager } from "../src/strategy/strategy-manager.js";
 import type { ILLMClient, LLMMessage, LLMRequestOptions, LLMResponse } from "../src/llm/llm-client.js";
 import type { Strategy } from "../src/types/strategy.js";
 import { createMockLLMClient } from "./helpers/mock-llm.js";
+import { makeTempDir } from "./helpers/temp-dir.js";
 
 // ─── Fixtures ───
 
@@ -65,15 +65,6 @@ const EMPTY_CANDIDATES_RESPONSE = `\`\`\`json
 
 let tempDir: string;
 let stateManager: StateManager;
-
-function makeTempDir(): string {
-  const dir = path.join(
-    os.tmpdir(),
-    `motiva-strategy-test-${Math.random().toString(36).slice(2)}`
-  );
-  fs.mkdirSync(dir, { recursive: true });
-  return dir;
-}
 
 beforeEach(() => {
   tempDir = makeTempDir();

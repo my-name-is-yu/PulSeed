@@ -9,9 +9,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import * as os from "node:os";
 import * as fs from "node:fs";
-import * as path from "node:path";
 
 // ─── Module mocks ────────────────────────────────────────────────────────────
 
@@ -103,12 +101,7 @@ import { CoreLoop } from "../src/core-loop.js";
 import { GoalNegotiator } from "../src/goal/goal-negotiator.js";
 import type { Goal } from "../src/types/goal.js";
 import type { LoopResult } from "../src/core-loop.js";
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-function makeTempDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "motiva-improve-test-"));
-}
+import { makeTempDir } from "./helpers/temp-dir.js";
 
 function makeGoal(overrides: Partial<Goal> = {}): Goal {
   const now = new Date().toISOString();

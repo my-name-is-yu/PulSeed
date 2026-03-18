@@ -1,14 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import * as os from "node:os";
 import { Logger } from "../src/runtime/logger.js";
+import { makeTempDir } from "./helpers/temp-dir.js";
 
 // ─── Helpers ───
-
-function makeTempDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "motiva-logger-test-"));
-}
 
 function readLogFile(dir: string, filename = "motiva.log"): string {
   const filePath = path.join(dir, filename);

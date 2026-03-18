@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import * as os from "node:os";
 import { StateManager } from "../src/state-manager.js";
 import { GoalDependencyGraph } from "../src/goal/goal-dependency-graph.js";
 import { VectorIndex } from "../src/knowledge/vector-index.js";
@@ -17,11 +16,9 @@ import type {
   DependencySchedule,
 } from "../src/types/cross-portfolio.js";
 
-// ─── Helpers ───
+import { makeTempDir } from "./helpers/temp-dir.js";
 
-function makeTempDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "motiva-cgp2-test-"));
-}
+// ─── Helpers ───
 
 function makeGoal(overrides: Partial<Goal> & { id: string }): Goal {
   const now = new Date().toISOString();
@@ -491,19 +488,19 @@ describe("CrossGoalPortfolio Phase 2", () => {
       expect(result).toHaveLength(0);
     });
 
-    it("goals without momentum info are treated as stalled", () => {
+    it("goals without momentum info keep their allocation", () => {
       const allocations = [
         makeAllocation("g1", 0.5),
         makeAllocation("g2", 0.5),
       ];
-      // g1 has no momentum info → treated as stalled
+      // g1 has no momentum info → skipped (neutral), not treated as stalled
       const momentumMap = new Map<string, MomentumInfo>([
         ["g2", { goalId: "g2", recentProgress: 0.2, velocity: 0.2, trend: "steady" }],
       ]);
       const actions = portfolio.rebalanceOnStall(allocations, momentumMap);
 
-      const g1Action = actions.find((a) => a.goalId === "g1")!;
-      expect(g1Action.action).toBe("reduce");
+      const g1Action = actions.find((a) => a.goalId === "g1");
+      expect(g1Action).toBeUndefined();
     });
 
     it("previousShare is recorded correctly in actions", () => {

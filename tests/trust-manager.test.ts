@@ -13,10 +13,7 @@ import {
 import { PluginManifestSchema, PluginStateSchema } from "../src/types/plugin.js";
 import type { PluginState, PluginMatchResult } from "../src/types/plugin.js";
 import type { PluginLoader } from "../src/runtime/plugin-loader.js";
-
-function makeTempDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "motiva-trust-test-"));
-}
+import { makeTempDir } from "./helpers/temp-dir.js";
 
 describe("TrustManager", () => {
   let tmpDir: string;

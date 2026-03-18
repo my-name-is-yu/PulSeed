@@ -1,7 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import * as os from "node:os";
 import * as fs from "node:fs";
-import * as path from "node:path";
 import {
   CoreLoop,
   buildDriveContext,
@@ -25,12 +23,7 @@ import type { GapVector } from "../src/types/gap.js";
 import type { CompletionJudgment } from "../src/types/satisficing.js";
 import type { StallReport } from "../src/types/stall.js";
 import type { DriveScore } from "../src/types/drive.js";
-
-// ─── Test Helpers ───
-
-function makeTempDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "motiva-core-loop-test-"));
-}
+import { makeTempDir } from "./helpers/temp-dir.js";
 
 function makeGoal(overrides: Partial<Goal> = {}): Goal {
   const now = new Date().toISOString();

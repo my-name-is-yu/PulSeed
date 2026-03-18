@@ -10,7 +10,6 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import * as os from "node:os";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
@@ -29,12 +28,9 @@ import type { DriveScore } from "../../src/types/drive.js";
 import type { CompletionJudgment } from "../../src/types/satisficing.js";
 import type { TaskCycleResult } from "../../src/execution/task-lifecycle.js";
 import type { ILLMClient } from "../../src/llm/llm-client.js";
+import { makeTempDir } from "../helpers/temp-dir.js";
 
 // ─── Helpers ───
-
-function makeTempDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "motiva-r3-feedback-"));
-}
 
 const BASE_NOW = new Date().toISOString();
 

@@ -1,19 +1,15 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import * as os from "node:os";
 import { MemoryLifecycleManager, type IDriveScorer } from "../src/knowledge/memory-lifecycle.js";
 import type { IEmbeddingClient } from "../src/knowledge/embedding-client.js";
 import type { VectorIndex } from "../src/knowledge/vector-index.js";
 import type { VectorSearchResult } from "../src/types/embedding.js";
 import type { ShortTermEntry, LessonEntry } from "../src/types/memory-lifecycle.js";
 import { createMockLLMClient } from "./helpers/mock-llm.js";
+import { makeTempDir } from "./helpers/temp-dir.js";
 
 // ─── Helpers ───
-
-function makeTempDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "motiva-memory-phase2-test-"));
-}
 
 /** Build a two-call LLM response for compressToLongTerm (patterns + lessons). */
 function makeLLMCompressionResponses(
