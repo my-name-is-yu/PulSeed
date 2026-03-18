@@ -190,7 +190,7 @@ describe("LearningPipeline", () => {
     it("should return empty array when LLM call fails (extraction stage)", async () => {
       const llm = createMockLLMClient([]); // no responses → throws on first call
       const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
-      writeLogs(stateManager, "goal-1");
+      await writeLogs(stateManager, "goal-1");
 
       const trigger = {
         type: "milestone_reached" as const,
@@ -205,7 +205,7 @@ describe("LearningPipeline", () => {
     it("should return empty array when LLM returns invalid JSON (extraction stage)", async () => {
       const llm = createMockLLMClient(["not-valid-json"]);
       const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
-      writeLogs(stateManager, "goal-1");
+      await writeLogs(stateManager, "goal-1");
 
       const trigger = {
         type: "milestone_reached" as const,
@@ -220,7 +220,7 @@ describe("LearningPipeline", () => {
     it("should return empty array when LLM returns JSON missing required fields (extraction stage)", async () => {
       const llm = createMockLLMClient([JSON.stringify({ wrong_field: [] })]);
       const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
-      writeLogs(stateManager, "goal-1");
+      await writeLogs(stateManager, "goal-1");
 
       const trigger = {
         type: "milestone_reached" as const,
@@ -235,7 +235,7 @@ describe("LearningPipeline", () => {
     it("should return empty array when triplets are empty", async () => {
       const llm = createMockLLMClient([EMPTY_TRIPLETS_RESPONSE]);
       const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
-      writeLogs(stateManager, "goal-1");
+      await writeLogs(stateManager, "goal-1");
 
       const trigger = {
         type: "milestone_reached" as const,
@@ -251,7 +251,7 @@ describe("LearningPipeline", () => {
       // first call OK, second call fails
       const llm = createMockLLMClient([TRIPLETS_RESPONSE]);
       const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
-      writeLogs(stateManager, "goal-1");
+      await writeLogs(stateManager, "goal-1");
 
       const trigger = {
         type: "milestone_reached" as const,
@@ -266,7 +266,7 @@ describe("LearningPipeline", () => {
     it("should return empty array when patternization LLM returns invalid JSON", async () => {
       const llm = createMockLLMClient([TRIPLETS_RESPONSE, "not-valid-json"]);
       const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
-      writeLogs(stateManager, "goal-1");
+      await writeLogs(stateManager, "goal-1");
 
       const trigger = {
         type: "milestone_reached" as const,
@@ -281,7 +281,7 @@ describe("LearningPipeline", () => {
     it("should return empty array when all patterns have is_specific=false", async () => {
       const llm = createMockLLMClient([TRIPLETS_RESPONSE, NON_SPECIFIC_PATTERNS_RESPONSE]);
       const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
-      writeLogs(stateManager, "goal-1");
+      await writeLogs(stateManager, "goal-1");
 
       const trigger = {
         type: "milestone_reached" as const,
@@ -297,7 +297,7 @@ describe("LearningPipeline", () => {
       // LOW_CONFIDENCE_PATTERNS_RESPONSE: occurrence=1, total=10, consistent=1 → confidence=0.1*1.0=0.1
       const llm = createMockLLMClient([TRIPLETS_RESPONSE, LOW_CONFIDENCE_PATTERNS_RESPONSE]);
       const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
-      writeLogs(stateManager, "goal-1");
+      await writeLogs(stateManager, "goal-1");
 
       const trigger = {
         type: "milestone_reached" as const,
@@ -327,7 +327,7 @@ describe("LearningPipeline", () => {
       });
       const llm = createMockLLMClient([TRIPLETS_RESPONSE, borderlinePatterns]);
       const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
-      writeLogs(stateManager, "goal-1");
+      await writeLogs(stateManager, "goal-1");
 
       const trigger = {
         type: "milestone_reached" as const,
@@ -342,7 +342,7 @@ describe("LearningPipeline", () => {
     it("should return patterns when confidence meets threshold", async () => {
       const llm = createMockLLMClient([TRIPLETS_RESPONSE, PATTERNS_RESPONSE]);
       const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
-      writeLogs(stateManager, "goal-1");
+      await writeLogs(stateManager, "goal-1");
 
       const trigger = {
         type: "milestone_reached" as const,
@@ -359,7 +359,7 @@ describe("LearningPipeline", () => {
     it("should set source_goal_ids from trigger goal_id", async () => {
       const llm = createMockLLMClient([TRIPLETS_RESPONSE, PATTERNS_RESPONSE]);
       const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
-      writeLogs(stateManager, "goal-abc");
+      await writeLogs(stateManager, "goal-abc");
 
       const trigger = {
         type: "milestone_reached" as const,
@@ -398,7 +398,7 @@ describe("LearningPipeline", () => {
       });
       const llm = createMockLLMClient([TRIPLETS_RESPONSE, multiPatterns]);
       const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
-      writeLogs(stateManager, "goal-1");
+      await writeLogs(stateManager, "goal-1");
 
       const trigger = {
         type: "milestone_reached" as const,
@@ -415,7 +415,7 @@ describe("LearningPipeline", () => {
     it("should persist patterns to state manager after analysis", async () => {
       const llm = createMockLLMClient([TRIPLETS_RESPONSE, PATTERNS_RESPONSE]);
       const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
-      writeLogs(stateManager, "goal-1");
+      await writeLogs(stateManager, "goal-1");
 
       const trigger = {
         type: "milestone_reached" as const,
@@ -474,7 +474,7 @@ describe("LearningPipeline", () => {
 
       const llm = createMockLLMClient([TRIPLETS_RESPONSE, manyPatterns]);
       const pipeline = new LearningPipeline(llm, vectorIndex, stateManager, config);
-      writeLogs(stateManager, "goal-1");
+      await writeLogs(stateManager, "goal-1");
 
       const trigger = {
         type: "milestone_reached" as const,
@@ -524,7 +524,7 @@ describe("LearningPipeline", () => {
 
       const llm = createMockLLMClient([TRIPLETS_RESPONSE, twoPatterns]);
       const pipeline = new LearningPipeline(llm, vectorIndex, stateManager, config);
-      writeLogs(stateManager, "goal-1");
+      await writeLogs(stateManager, "goal-1");
 
       const trigger = {
         type: "milestone_reached" as const,
@@ -542,7 +542,7 @@ describe("LearningPipeline", () => {
     it("should register embeddings in VectorIndex when available", async () => {
       const llm = createMockLLMClient([TRIPLETS_RESPONSE, PATTERNS_RESPONSE]);
       const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
-      writeLogs(stateManager, "goal-1");
+      await writeLogs(stateManager, "goal-1");
 
       const trigger = {
         type: "milestone_reached" as const,
@@ -558,7 +558,7 @@ describe("LearningPipeline", () => {
     it("should set embedding_id on pattern after VectorIndex registration", async () => {
       const llm = createMockLLMClient([TRIPLETS_RESPONSE, PATTERNS_RESPONSE]);
       const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
-      writeLogs(stateManager, "goal-1");
+      await writeLogs(stateManager, "goal-1");
 
       const trigger = {
         type: "milestone_reached" as const,
@@ -575,7 +575,7 @@ describe("LearningPipeline", () => {
     it("should skip embedding registration when vectorIndex is null", async () => {
       const llm = createMockLLMClient([TRIPLETS_RESPONSE, PATTERNS_RESPONSE]);
       const pipeline = new LearningPipeline(llm, null, stateManager);
-      writeLogs(stateManager, "goal-1");
+      await writeLogs(stateManager, "goal-1");
 
       const trigger = {
         type: "milestone_reached" as const,
@@ -597,7 +597,7 @@ describe("LearningPipeline", () => {
         PATTERNS_RESPONSE_OBSERVATION,
       ]);
       const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
-      writeLogs(stateManager, "goal-1");
+      await writeLogs(stateManager, "goal-1");
 
       const trigger = {
         type: "milestone_reached" as const,
@@ -631,7 +631,7 @@ describe("LearningPipeline", () => {
       });
       const llm = createMockLLMClient([TRIPLETS_RESPONSE, lowPatterns]);
       const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
-      writeLogs(stateManager, "goal-1");
+      await writeLogs(stateManager, "goal-1");
 
       const trigger = {
         type: "milestone_reached" as const,
@@ -652,7 +652,7 @@ describe("LearningPipeline", () => {
       };
       const llm = createMockLLMClient([TRIPLETS_RESPONSE, LOW_CONFIDENCE_PATTERNS_RESPONSE]);
       const pipeline = new LearningPipeline(llm, vectorIndex, stateManager, config);
-      writeLogs(stateManager, "goal-1");
+      await writeLogs(stateManager, "goal-1");
 
       const trigger = {
         type: "milestone_reached" as const,
@@ -679,7 +679,7 @@ describe("LearningPipeline", () => {
 
       const llm = createMockLLMClient([TRIPLETS_RESPONSE, PATTERNS_RESPONSE]);
       const pipeline = new LearningPipeline(llm, failingVectorIndex, stateManager);
-      writeLogs(stateManager, "goal-1");
+      await writeLogs(stateManager, "goal-1");
 
       const trigger = {
         type: "milestone_reached" as const,
@@ -697,7 +697,7 @@ describe("LearningPipeline", () => {
       const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
 
       // Default min_confidence_threshold = 0.6, PATTERNS_RESPONSE has confidence=1.0 → passes
-      writeLogs(stateManager, "goal-1");
+      await writeLogs(stateManager, "goal-1");
       const trigger = {
         type: "milestone_reached" as const,
         goal_id: "goal-1",
@@ -714,7 +714,7 @@ describe("LearningPipeline", () => {
         result: "success",
         gap_delta: -0.01,
       }));
-      writeLogs(stateManager, "goal-large", largeLogData);
+      await writeLogs(stateManager, "goal-large", largeLogData);
 
       const llm = createMockLLMClient([TRIPLETS_RESPONSE, PATTERNS_RESPONSE]);
       const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
@@ -744,7 +744,7 @@ describe("LearningPipeline", () => {
     it("should map observation_accuracy pattern to target_step=observation", async () => {
       const llm = createMockLLMClient([TRIPLETS_RESPONSE, PATTERNS_RESPONSE_OBSERVATION]);
       const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
-      writeLogs(stateManager, "goal-1");
+      await writeLogs(stateManager, "goal-1");
 
       const trigger = {
         type: "milestone_reached" as const,
@@ -761,7 +761,7 @@ describe("LearningPipeline", () => {
     it("should map strategy_selection pattern to target_step=strategy", async () => {
       const llm = createMockLLMClient([TRIPLETS_RESPONSE, PATTERNS_RESPONSE_STRATEGY]);
       const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
-      writeLogs(stateManager, "goal-1");
+      await writeLogs(stateManager, "goal-1");
 
       const trigger = {
         type: "milestone_reached" as const,
@@ -778,7 +778,7 @@ describe("LearningPipeline", () => {
     it("should map scope_sizing pattern to target_step=task", async () => {
       const llm = createMockLLMClient([TRIPLETS_RESPONSE, PATTERNS_RESPONSE]);
       const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
-      writeLogs(stateManager, "goal-1");
+      await writeLogs(stateManager, "goal-1");
 
       const trigger = {
         type: "milestone_reached" as const,
@@ -795,7 +795,7 @@ describe("LearningPipeline", () => {
     it("should map task_generation pattern to target_step=task", async () => {
       const llm = createMockLLMClient([TRIPLETS_RESPONSE, PATTERNS_RESPONSE_TASK_GEN]);
       const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
-      writeLogs(stateManager, "goal-1");
+      await writeLogs(stateManager, "goal-1");
 
       const trigger = {
         type: "milestone_reached" as const,
@@ -812,7 +812,7 @@ describe("LearningPipeline", () => {
     it("should set adjustment to pattern description", async () => {
       const llm = createMockLLMClient([TRIPLETS_RESPONSE, PATTERNS_RESPONSE]);
       const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
-      writeLogs(stateManager, "goal-1");
+      await writeLogs(stateManager, "goal-1");
 
       const trigger = {
         type: "milestone_reached" as const,
@@ -826,7 +826,7 @@ describe("LearningPipeline", () => {
       expect(feedback[0]!.adjustment).toBe(patterns[0]!.description);
     });
 
-    it("should produce unique feedback_ids for multiple patterns", () => {
+    it("should produce unique feedback_ids for multiple patterns", async () => {
       const llm = createMockLLMClient([]);
       const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
 
@@ -867,7 +867,7 @@ describe("LearningPipeline", () => {
     it("should persist feedback entries to state manager", async () => {
       const llm = createMockLLMClient([TRIPLETS_RESPONSE, PATTERNS_RESPONSE]);
       const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
-      writeLogs(stateManager, "goal-1");
+      await writeLogs(stateManager, "goal-1");
 
       const trigger = {
         type: "milestone_reached" as const,
@@ -882,7 +882,7 @@ describe("LearningPipeline", () => {
       expect(saved.length).toBeGreaterThan(0);
     });
 
-    it("should set effect_observed to null on creation", () => {
+    it("should set effect_observed to null on creation", async () => {
       const llm = createMockLLMClient([]);
       const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
 
@@ -906,7 +906,7 @@ describe("LearningPipeline", () => {
       expect(feedback[0]!.effect_observed).toBeNull();
     });
 
-    it("should handle patterns from multiple source goals correctly", () => {
+    it("should handle patterns from multiple source goals correctly", async () => {
       const llm = createMockLLMClient([]);
       const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
 
@@ -946,7 +946,7 @@ describe("LearningPipeline", () => {
       expect(goal2Feedback).toHaveLength(1);
     });
 
-    it("should skip patterns with empty source_goal_ids", () => {
+    it("should skip patterns with empty source_goal_ids", async () => {
       const llm = createMockLLMClient([]);
       const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
 
@@ -975,13 +975,13 @@ describe("LearningPipeline", () => {
   // ─── 3. フィードバック適用（applyFeedback）───
 
   describe("applyFeedback", () => {
-    function makePatternAndFeedback(
+    async function makePatternAndFeedback(
       pipeline: LearningPipeline,
       goalId: string,
       step: "observation" | "strategy" | "task",
       description: string,
       confidence: number
-    ): void {
+    ): Promise<void> {
       const now = new Date().toISOString();
       const patternId = `pat-${Math.random().toString(36).slice(2)}`;
       const pattern: LearnedPattern = {
@@ -1001,7 +1001,7 @@ describe("LearningPipeline", () => {
       await pipeline.generateFeedback([pattern]);
     }
 
-    it("should return empty array for goal with no feedback entries", () => {
+    it("should return empty array for goal with no feedback entries", async () => {
       const llm = createMockLLMClient([]);
       const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
 
@@ -1009,32 +1009,32 @@ describe("LearningPipeline", () => {
       expect(result).toEqual([]);
     });
 
-    it("should return empty array when no feedback entries match the step", () => {
+    it("should return empty array when no feedback entries match the step", async () => {
       const llm = createMockLLMClient([]);
       const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
-      makePatternAndFeedback(pipeline, "goal-1", "strategy", "Use incremental approach", 0.9);
+      await makePatternAndFeedback(pipeline, "goal-1", "strategy", "Use incremental approach", 0.9);
 
       const result = await pipeline.applyFeedback("goal-1", "observation"); // different step
       expect(result).toEqual([]);
     });
 
-    it("should return only feedback entries matching the requested step", () => {
+    it("should return only feedback entries matching the requested step", async () => {
       const llm = createMockLLMClient([]);
       const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
-      makePatternAndFeedback(pipeline, "goal-1", "observation", "Observation feedback", 0.9);
-      makePatternAndFeedback(pipeline, "goal-1", "strategy", "Strategy feedback", 0.8);
+      await makePatternAndFeedback(pipeline, "goal-1", "observation", "Observation feedback", 0.9);
+      await makePatternAndFeedback(pipeline, "goal-1", "strategy", "Strategy feedback", 0.8);
 
       const result = await pipeline.applyFeedback("goal-1", "observation");
       expect(result).toHaveLength(1);
       expect(result[0]).toBe("Observation feedback");
     });
 
-    it("should sort feedback by pattern confidence descending", () => {
+    it("should sort feedback by pattern confidence descending", async () => {
       const llm = createMockLLMClient([]);
       const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
-      makePatternAndFeedback(pipeline, "goal-1", "task", "Low confidence pattern", 0.65);
-      makePatternAndFeedback(pipeline, "goal-1", "task", "High confidence pattern", 0.95);
-      makePatternAndFeedback(pipeline, "goal-1", "task", "Medium confidence pattern", 0.8);
+      await makePatternAndFeedback(pipeline, "goal-1", "task", "Low confidence pattern", 0.65);
+      await makePatternAndFeedback(pipeline, "goal-1", "task", "High confidence pattern", 0.95);
+      await makePatternAndFeedback(pipeline, "goal-1", "task", "Medium confidence pattern", 0.8);
 
       const result = await pipeline.applyFeedback("goal-1", "task");
       expect(result[0]).toBe("High confidence pattern");
@@ -1042,51 +1042,51 @@ describe("LearningPipeline", () => {
       expect(result[2]).toBe("Low confidence pattern");
     });
 
-    it("should return at most 3 feedback entries", () => {
+    it("should return at most 3 feedback entries", async () => {
       const llm = createMockLLMClient([]);
       const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
       // Add 5 feedback entries for the same step
       for (let i = 0; i < 5; i++) {
-        makePatternAndFeedback(pipeline, "goal-1", "task", `Pattern ${i}`, 0.7 + i * 0.01);
+        await makePatternAndFeedback(pipeline, "goal-1", "task", `Pattern ${i}`, 0.7 + i * 0.01);
       }
 
       const result = await pipeline.applyFeedback("goal-1", "task");
       expect(result).toHaveLength(3);
     });
 
-    it("should return adjustment strings (not FeedbackEntry objects)", () => {
+    it("should return adjustment strings (not FeedbackEntry objects)", async () => {
       const llm = createMockLLMClient([]);
       const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
-      makePatternAndFeedback(pipeline, "goal-1", "strategy", "Use incremental approach", 0.9);
+      await makePatternAndFeedback(pipeline, "goal-1", "strategy", "Use incremental approach", 0.9);
 
       const result = await pipeline.applyFeedback("goal-1", "strategy");
       expect(typeof result[0]).toBe("string");
       expect(result[0]).toBe("Use incremental approach");
     });
 
-    it("should use pattern confidence for sorting (not feedback order)", () => {
+    it("should use pattern confidence for sorting (not feedback order)", async () => {
       const llm = createMockLLMClient([]);
       const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
       // Add patterns with known confidences in reverse order
-      makePatternAndFeedback(pipeline, "goal-1", "task", "Third", 0.7);
-      makePatternAndFeedback(pipeline, "goal-1", "task", "First", 0.95);
-      makePatternAndFeedback(pipeline, "goal-1", "task", "Second", 0.85);
+      await makePatternAndFeedback(pipeline, "goal-1", "task", "Third", 0.7);
+      await makePatternAndFeedback(pipeline, "goal-1", "task", "First", 0.95);
+      await makePatternAndFeedback(pipeline, "goal-1", "task", "Second", 0.85);
 
       const result = await pipeline.applyFeedback("goal-1", "task");
       expect(result).toEqual(["First", "Second", "Third"]);
     });
 
-    it("should return all entries if 3 or fewer exist", () => {
+    it("should return all entries if 3 or fewer exist", async () => {
       const llm = createMockLLMClient([]);
       const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
-      makePatternAndFeedback(pipeline, "goal-1", "observation", "Feedback A", 0.9);
-      makePatternAndFeedback(pipeline, "goal-1", "observation", "Feedback B", 0.8);
+      await makePatternAndFeedback(pipeline, "goal-1", "observation", "Feedback A", 0.9);
+      await makePatternAndFeedback(pipeline, "goal-1", "observation", "Feedback B", 0.8);
 
       const result = await pipeline.applyFeedback("goal-1", "observation");
       expect(result).toHaveLength(2);
     });
 
-    it("should use 0 confidence for patterns not found in pattern list", () => {
+    it("should use 0 confidence for patterns not found in pattern list", async () => {
       const llm = createMockLLMClient([]);
       const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
 
@@ -1143,7 +1143,7 @@ describe("LearningPipeline", () => {
       const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
 
       // Set up source goal with a pattern
-      writeLogs(stateManager, "goal-source");
+      await writeLogs(stateManager, "goal-source");
       const trigger = {
         type: "goal_completed" as const,
         goal_id: "goal-source",
@@ -1164,7 +1164,7 @@ describe("LearningPipeline", () => {
 
       await pipeline.sharePatternAcrossGoals(sourcePattern.pattern_id);
 
-      const targetPatterns = pipeline.getPatterns("goal-target");
+      const targetPatterns = await pipeline.getPatterns("goal-target");
       if (targetPatterns.length > 0) {
         expect(targetPatterns[0]!.confidence).toBeCloseTo(originalConfidence * 0.7, 5);
       }
@@ -1175,7 +1175,7 @@ describe("LearningPipeline", () => {
       const llm = createMockLLMClient([TRIPLETS_RESPONSE, PATTERNS_RESPONSE]);
       const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
 
-      writeLogs(stateManager, "goal-source");
+      await writeLogs(stateManager, "goal-source");
       const trigger = {
         type: "goal_completed" as const,
         goal_id: "goal-source",
@@ -1203,7 +1203,7 @@ describe("LearningPipeline", () => {
 
       await pipeline.sharePatternAcrossGoals(sourcePattern.pattern_id);
 
-      const targetPatterns = pipeline.getPatterns("goal-target");
+      const targetPatterns = await pipeline.getPatterns("goal-target");
       // Should still have exactly 1 (no duplicate)
       const matchingIds = targetPatterns.filter(
         (p) => p.pattern_id === sourcePattern.pattern_id
@@ -1237,7 +1237,7 @@ describe("LearningPipeline", () => {
 
       const llm = createMockLLMClient([TRIPLETS_RESPONSE, highConfPatterns]);
       const pipeline = new LearningPipeline(llm, vectorIndex, stateManager, config);
-      writeLogs(stateManager, "goal-source");
+      await writeLogs(stateManager, "goal-source");
 
       const trigger = {
         type: "goal_completed" as const,
@@ -1257,7 +1257,7 @@ describe("LearningPipeline", () => {
 
       await pipeline.sharePatternAcrossGoals(patterns[0]!.pattern_id);
 
-      const targetPatterns = pipeline.getPatterns("goal-target");
+      const targetPatterns = await pipeline.getPatterns("goal-target");
       // transferred confidence = 1.0 * 0.7 = 0.7 < 0.9 → not shared
       expect(targetPatterns).toHaveLength(0);
     });
@@ -1272,7 +1272,7 @@ describe("LearningPipeline", () => {
 
       const llm = createMockLLMClient([TRIPLETS_RESPONSE, PATTERNS_RESPONSE]);
       const pipeline = new LearningPipeline(llm, vectorIndex, stateManager, config);
-      writeLogs(stateManager, "goal-source");
+      await writeLogs(stateManager, "goal-source");
 
       const trigger = {
         type: "goal_completed" as const,
@@ -1308,14 +1308,14 @@ describe("LearningPipeline", () => {
 
       await pipeline.sharePatternAcrossGoals(sourcePattern.pattern_id);
 
-      const targetPatterns = pipeline.getPatterns("goal-target");
+      const targetPatterns = await pipeline.getPatterns("goal-target");
       expect(targetPatterns.length).toBeLessThanOrEqual(1);
     });
 
     it("should not share to source goal itself", async () => {
       const llm = createMockLLMClient([TRIPLETS_RESPONSE, PATTERNS_RESPONSE]);
       const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
-      writeLogs(stateManager, "goal-source");
+      await writeLogs(stateManager, "goal-source");
 
       const trigger = {
         type: "goal_completed" as const,
@@ -1325,7 +1325,7 @@ describe("LearningPipeline", () => {
       };
       const patterns = await pipeline.analyzeLogs(trigger);
       const sourcePattern = patterns[0]!;
-      const initialPatternCount = pipeline.getPatterns("goal-source").length;
+      const initialPatternCount = (await pipeline.getPatterns("goal-source")).length;
 
       // Add vector entries to simulate source goal entries
       await vectorIndex.add(
@@ -1337,7 +1337,7 @@ describe("LearningPipeline", () => {
       await pipeline.sharePatternAcrossGoals(sourcePattern.pattern_id);
 
       // Source goal should not gain extra patterns from self-sharing
-      const afterPatternCount = pipeline.getPatterns("goal-source").length;
+      const afterPatternCount = (await pipeline.getPatterns("goal-source")).length;
       expect(afterPatternCount).toBe(initialPatternCount);
     });
   });
@@ -1349,7 +1349,7 @@ describe("LearningPipeline", () => {
       it("should call analyzeLogs and return patterns", async () => {
         const llm = createMockLLMClient([TRIPLETS_RESPONSE, PATTERNS_RESPONSE]);
         const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
-        writeLogs(stateManager, "goal-1");
+        await writeLogs(stateManager, "goal-1");
 
         const result = await pipeline.onMilestoneReached("goal-1", "test_coverage dimension reached 80%");
         expect(result).toHaveLength(1);
@@ -1367,29 +1367,29 @@ describe("LearningPipeline", () => {
       it("should call generateFeedback when patterns are found", async () => {
         const llm = createMockLLMClient([TRIPLETS_RESPONSE, PATTERNS_RESPONSE]);
         const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
-        writeLogs(stateManager, "goal-1");
+        await writeLogs(stateManager, "goal-1");
 
         await pipeline.onMilestoneReached("goal-1", "milestone context");
 
-        const feedbackEntries = pipeline.getFeedbackEntries("goal-1");
+        const feedbackEntries = await pipeline.getFeedbackEntries("goal-1");
         expect(feedbackEntries.length).toBeGreaterThan(0);
       });
 
       it("should not call generateFeedback when no patterns found", async () => {
         const llm = createMockLLMClient([TRIPLETS_RESPONSE, EMPTY_PATTERNS_RESPONSE]);
         const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
-        writeLogs(stateManager, "goal-1");
+        await writeLogs(stateManager, "goal-1");
 
         await pipeline.onMilestoneReached("goal-1", "milestone context");
 
-        const feedbackEntries = pipeline.getFeedbackEntries("goal-1");
+        const feedbackEntries = await pipeline.getFeedbackEntries("goal-1");
         expect(feedbackEntries).toHaveLength(0);
       });
 
       it("should not throw on error", async () => {
         const llm = createMockLLMClient([]); // will throw on first LLM call
         const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
-        writeLogs(stateManager, "goal-1");
+        await writeLogs(stateManager, "goal-1");
 
         await expect(pipeline.onMilestoneReached("goal-1", "context")).resolves.toEqual([]);
       });
@@ -1399,7 +1399,7 @@ describe("LearningPipeline", () => {
       it("should call analyzeLogs with stall context and return patterns", async () => {
         const llm = createMockLLMClient([TRIPLETS_RESPONSE, PATTERNS_RESPONSE]);
         const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
-        writeLogs(stateManager, "goal-1");
+        await writeLogs(stateManager, "goal-1");
         const stallReport = makeStallReport("goal-1");
 
         const result = await pipeline.onStallDetected("goal-1", stallReport);
@@ -1418,19 +1418,19 @@ describe("LearningPipeline", () => {
       it("should call generateFeedback when patterns are found", async () => {
         const llm = createMockLLMClient([TRIPLETS_RESPONSE, PATTERNS_RESPONSE]);
         const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
-        writeLogs(stateManager, "goal-1");
+        await writeLogs(stateManager, "goal-1");
         const stallReport = makeStallReport("goal-1");
 
         await pipeline.onStallDetected("goal-1", stallReport);
 
-        const feedbackEntries = pipeline.getFeedbackEntries("goal-1");
+        const feedbackEntries = await pipeline.getFeedbackEntries("goal-1");
         expect(feedbackEntries.length).toBeGreaterThan(0);
       });
 
       it("should not throw on LLM error", async () => {
         const llm = createMockLLMClient([]);
         const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
-        writeLogs(stateManager, "goal-1");
+        await writeLogs(stateManager, "goal-1");
         const stallReport = makeStallReport("goal-1");
 
         await expect(pipeline.onStallDetected("goal-1", stallReport)).resolves.toEqual([]);
@@ -1441,7 +1441,7 @@ describe("LearningPipeline", () => {
       it("should call analyzeLogs and return patterns", async () => {
         const llm = createMockLLMClient([TRIPLETS_RESPONSE, PATTERNS_RESPONSE]);
         const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
-        writeLogs(stateManager, "goal-1");
+        await writeLogs(stateManager, "goal-1");
 
         const result = await pipeline.onPeriodicReview("goal-1");
         expect(result).toHaveLength(1);
@@ -1458,18 +1458,18 @@ describe("LearningPipeline", () => {
       it("should call generateFeedback when patterns are found", async () => {
         const llm = createMockLLMClient([TRIPLETS_RESPONSE, PATTERNS_RESPONSE]);
         const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
-        writeLogs(stateManager, "goal-1");
+        await writeLogs(stateManager, "goal-1");
 
         await pipeline.onPeriodicReview("goal-1");
 
-        const feedbackEntries = pipeline.getFeedbackEntries("goal-1");
+        const feedbackEntries = await pipeline.getFeedbackEntries("goal-1");
         expect(feedbackEntries.length).toBeGreaterThan(0);
       });
 
       it("should not throw on LLM error", async () => {
         const llm = createMockLLMClient([]);
         const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
-        writeLogs(stateManager, "goal-1");
+        await writeLogs(stateManager, "goal-1");
 
         await expect(pipeline.onPeriodicReview("goal-1")).resolves.toEqual([]);
       });
@@ -1479,7 +1479,7 @@ describe("LearningPipeline", () => {
       it("should call analyzeLogs and return patterns", async () => {
         const llm = createMockLLMClient([TRIPLETS_RESPONSE, PATTERNS_RESPONSE]);
         const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
-        writeLogs(stateManager, "goal-1");
+        await writeLogs(stateManager, "goal-1");
 
         const result = await pipeline.onGoalCompleted("goal-1");
         expect(result).toHaveLength(1);
@@ -1496,18 +1496,18 @@ describe("LearningPipeline", () => {
       it("should call generateFeedback when patterns are found", async () => {
         const llm = createMockLLMClient([TRIPLETS_RESPONSE, PATTERNS_RESPONSE]);
         const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
-        writeLogs(stateManager, "goal-1");
+        await writeLogs(stateManager, "goal-1");
 
         await pipeline.onGoalCompleted("goal-1");
 
-        const feedbackEntries = pipeline.getFeedbackEntries("goal-1");
+        const feedbackEntries = await pipeline.getFeedbackEntries("goal-1");
         expect(feedbackEntries.length).toBeGreaterThan(0);
       });
 
       it("should attempt cross-goal sharing when cross_goal_sharing_enabled is true", async () => {
         const llm = createMockLLMClient([TRIPLETS_RESPONSE, PATTERNS_RESPONSE]);
         const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
-        writeLogs(stateManager, "goal-1");
+        await writeLogs(stateManager, "goal-1");
 
         // Should not throw even though there are no similar goals
         await expect(pipeline.onGoalCompleted("goal-1")).resolves.not.toThrow();
@@ -1522,7 +1522,7 @@ describe("LearningPipeline", () => {
         };
         const llm = createMockLLMClient([TRIPLETS_RESPONSE, PATTERNS_RESPONSE]);
         const pipeline = new LearningPipeline(llm, vectorIndex, stateManager, config);
-        writeLogs(stateManager, "goal-1");
+        await writeLogs(stateManager, "goal-1");
 
         const result = await pipeline.onGoalCompleted("goal-1");
         expect(result).toHaveLength(1);
@@ -1531,7 +1531,7 @@ describe("LearningPipeline", () => {
       it("should not throw on LLM error", async () => {
         const llm = createMockLLMClient([]);
         const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
-        writeLogs(stateManager, "goal-1");
+        await writeLogs(stateManager, "goal-1");
 
         await expect(pipeline.onGoalCompleted("goal-1")).resolves.toEqual([]);
       });
@@ -1542,14 +1542,14 @@ describe("LearningPipeline", () => {
 
   describe("persistence", () => {
     describe("getPatterns / savePatterns", () => {
-      it("should return empty array for unknown goal", () => {
+      it("should return empty array for unknown goal", async () => {
         const llm = createMockLLMClient([]);
         const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
 
-        expect(pipeline.getPatterns("goal-nonexistent")).toEqual([]);
+        expect(await pipeline.getPatterns("goal-nonexistent")).toEqual([]);
       });
 
-      it("should persist and retrieve patterns", () => {
+      it("should persist and retrieve patterns", async () => {
         const llm = createMockLLMClient([]);
         const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
         const now = new Date().toISOString();
@@ -1570,7 +1570,7 @@ describe("LearningPipeline", () => {
         ];
 
         await pipeline.savePatterns("goal-persist", patterns);
-        const loaded = pipeline.getPatterns("goal-persist");
+        const loaded = await pipeline.getPatterns("goal-persist");
 
         expect(loaded).toHaveLength(1);
         expect(loaded[0]!.pattern_id).toBe("pat-persist-1");
@@ -1578,7 +1578,7 @@ describe("LearningPipeline", () => {
         expect(loaded[0]!.description).toBe("Persisted pattern");
       });
 
-      it("should overwrite existing patterns on save", () => {
+      it("should overwrite existing patterns on save", async () => {
         const llm = createMockLLMClient([]);
         const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
         const now = new Date().toISOString();
@@ -1614,23 +1614,23 @@ describe("LearningPipeline", () => {
 
         await pipeline.savePatterns("goal-x", patterns1);
         await pipeline.savePatterns("goal-x", patterns2);
-        const loaded = pipeline.getPatterns("goal-x");
+        const loaded = await pipeline.getPatterns("goal-x");
 
         expect(loaded).toHaveLength(1);
         expect(loaded[0]!.pattern_id).toBe("pat-v2");
       });
 
-      it("should save empty array and return empty array", () => {
+      it("should save empty array and return empty array", async () => {
         const llm = createMockLLMClient([]);
         const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
 
         await pipeline.savePatterns("goal-empty", []);
         // readRaw returns [] (an array), which is truthy but isArray check passes
-        const loaded = pipeline.getPatterns("goal-empty");
+        const loaded = await pipeline.getPatterns("goal-empty");
         expect(loaded).toEqual([]);
       });
 
-      it("should survive StateManager re-instantiation (disk persistence)", () => {
+      it("should survive StateManager re-instantiation (disk persistence)", async () => {
         const llm = createMockLLMClient([]);
         const pipeline1 = new LearningPipeline(llm, vectorIndex, stateManager);
         const now = new Date().toISOString();
@@ -1649,7 +1649,7 @@ describe("LearningPipeline", () => {
             last_applied_at: null,
           },
         ];
-        pipeline1.savePatterns("goal-disk", patterns);
+        await pipeline1.savePatterns("goal-disk", patterns);
 
         // New StateManager instance pointing to same tmpDir
         const stateManager2 = new StateManager(tmpDir);
@@ -1659,21 +1659,21 @@ describe("LearningPipeline", () => {
           stateManager2
         );
 
-        const loaded = pipeline2.getPatterns("goal-disk");
+        const loaded = await pipeline2.getPatterns("goal-disk");
         expect(loaded).toHaveLength(1);
         expect(loaded[0]!.pattern_id).toBe("pat-disk");
       });
     });
 
     describe("getFeedbackEntries / saveFeedbackEntries", () => {
-      it("should return empty array for unknown goal", () => {
+      it("should return empty array for unknown goal", async () => {
         const llm = createMockLLMClient([]);
         const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
 
-        expect(pipeline.getFeedbackEntries("goal-nonexistent")).toEqual([]);
+        expect(await pipeline.getFeedbackEntries("goal-nonexistent")).toEqual([]);
       });
 
-      it("should persist and retrieve feedback entries", () => {
+      it("should persist and retrieve feedback entries", async () => {
         const llm = createMockLLMClient([]);
         const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
         const now = new Date().toISOString();
@@ -1690,7 +1690,7 @@ describe("LearningPipeline", () => {
         ];
 
         await pipeline.saveFeedbackEntries("goal-persist", entries);
-        const loaded = pipeline.getFeedbackEntries("goal-persist");
+        const loaded = await pipeline.getFeedbackEntries("goal-persist");
 
         expect(loaded).toHaveLength(1);
         expect(loaded[0]!.feedback_id).toBe("fb-persist-1");
@@ -1698,7 +1698,7 @@ describe("LearningPipeline", () => {
         expect(loaded[0]!.adjustment).toBe("Increase confidence for deterministic results");
       });
 
-      it("should overwrite existing feedback entries on save", () => {
+      it("should overwrite existing feedback entries on save", async () => {
         const llm = createMockLLMClient([]);
         const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
         const now = new Date().toISOString();
@@ -1726,22 +1726,22 @@ describe("LearningPipeline", () => {
 
         await pipeline.saveFeedbackEntries("goal-x", entries1);
         await pipeline.saveFeedbackEntries("goal-x", entries2);
-        const loaded = pipeline.getFeedbackEntries("goal-x");
+        const loaded = await pipeline.getFeedbackEntries("goal-x");
 
         expect(loaded).toHaveLength(1);
         expect(loaded[0]!.feedback_id).toBe("fb-v2");
       });
 
-      it("should save empty array and return empty array", () => {
+      it("should save empty array and return empty array", async () => {
         const llm = createMockLLMClient([]);
         const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
 
         await pipeline.saveFeedbackEntries("goal-empty", []);
-        const loaded = pipeline.getFeedbackEntries("goal-empty");
+        const loaded = await pipeline.getFeedbackEntries("goal-empty");
         expect(loaded).toEqual([]);
       });
 
-      it("should survive StateManager re-instantiation (disk persistence)", () => {
+      it("should survive StateManager re-instantiation (disk persistence)", async () => {
         const llm = createMockLLMClient([]);
         const pipeline1 = new LearningPipeline(llm, vectorIndex, stateManager);
         const now = new Date().toISOString();
@@ -1756,7 +1756,7 @@ describe("LearningPipeline", () => {
             effect_observed: null,
           },
         ];
-        pipeline1.saveFeedbackEntries("goal-disk", entries);
+        await pipeline1.saveFeedbackEntries("goal-disk", entries);
 
         const stateManager2 = new StateManager(tmpDir);
         const pipeline2 = new LearningPipeline(
@@ -1765,7 +1765,7 @@ describe("LearningPipeline", () => {
           stateManager2
         );
 
-        const loaded = pipeline2.getFeedbackEntries("goal-disk");
+        const loaded = await pipeline2.getFeedbackEntries("goal-disk");
         expect(loaded).toHaveLength(1);
         expect(loaded[0]!.feedback_id).toBe("fb-disk");
       });
@@ -1778,7 +1778,7 @@ describe("LearningPipeline", () => {
     it("should use default config values when no config provided", async () => {
       const llm = createMockLLMClient([TRIPLETS_RESPONSE, PATTERNS_RESPONSE]);
       const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
-      writeLogs(stateManager, "goal-1");
+      await writeLogs(stateManager, "goal-1");
 
       // Default min_confidence_threshold=0.6, PATTERNS_RESPONSE confidence=1.0 → passes
       const trigger = {
@@ -1818,7 +1818,7 @@ describe("LearningPipeline", () => {
       });
       const llm = createMockLLMClient([TRIPLETS_RESPONSE, allLowConfPatterns]);
       const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
-      writeLogs(stateManager, "goal-1");
+      await writeLogs(stateManager, "goal-1");
 
       const trigger = {
         type: "periodic_review" as const,
@@ -1833,7 +1833,7 @@ describe("LearningPipeline", () => {
     it("should handle LLM returning malformed JSON in extraction stage", async () => {
       const llm = createMockLLMClient(["{malformed json!}"]);
       const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
-      writeLogs(stateManager, "goal-1");
+      await writeLogs(stateManager, "goal-1");
 
       const trigger = {
         type: "milestone_reached" as const,
@@ -1847,7 +1847,7 @@ describe("LearningPipeline", () => {
     it("should handle LLM returning malformed JSON in patternization stage", async () => {
       const llm = createMockLLMClient([TRIPLETS_RESPONSE, "{malformed json!}"]);
       const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
-      writeLogs(stateManager, "goal-1");
+      await writeLogs(stateManager, "goal-1");
 
       const trigger = {
         type: "milestone_reached" as const,
@@ -1865,7 +1865,7 @@ describe("LearningPipeline", () => {
         TRIPLETS_RESPONSE, PATTERNS_RESPONSE_OBSERVATION,
       ]);
       const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
-      writeLogs(stateManager, "goal-1");
+      await writeLogs(stateManager, "goal-1");
 
       const triggerBase = {
         type: "milestone_reached" as const,
@@ -1882,7 +1882,7 @@ describe("LearningPipeline", () => {
       expect(saved.length).toBeGreaterThanOrEqual(3);
     });
 
-    it("should handle goal IDs with special characters", () => {
+    it("should handle goal IDs with special characters", async () => {
       const llm = createMockLLMClient([]);
       const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
       const now = new Date().toISOString();
@@ -1903,7 +1903,7 @@ describe("LearningPipeline", () => {
       ];
 
       await pipeline.savePatterns("goal-2026-q1-sprint-3", patterns);
-      const loaded = pipeline.getPatterns("goal-2026-q1-sprint-3");
+      const loaded = await pipeline.getPatterns("goal-2026-q1-sprint-3");
       expect(loaded).toHaveLength(1);
     });
 
@@ -1931,8 +1931,8 @@ describe("LearningPipeline", () => {
       const pipeline1 = new LearningPipeline(llm1, vectorIndex, stateManager);
       const pipeline2 = new LearningPipeline(llm2, vectorIndex, stateManager);
 
-      writeLogs(stateManager, "goal-concurrent-1");
-      writeLogs(stateManager, "goal-concurrent-2");
+      await writeLogs(stateManager, "goal-concurrent-1");
+      await writeLogs(stateManager, "goal-concurrent-2");
 
       const [result1, result2] = await Promise.all([
         pipeline1.analyzeLogs({
@@ -1958,7 +1958,7 @@ describe("LearningPipeline", () => {
     it("should produce valid pattern_ids with pat_ prefix", async () => {
       const llm = createMockLLMClient([TRIPLETS_RESPONSE, PATTERNS_RESPONSE]);
       const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
-      writeLogs(stateManager, "goal-1");
+      await writeLogs(stateManager, "goal-1");
 
       const trigger = {
         type: "milestone_reached" as const,
@@ -1973,7 +1973,7 @@ describe("LearningPipeline", () => {
     it("should set created_at as valid ISO datetime", async () => {
       const llm = createMockLLMClient([TRIPLETS_RESPONSE, PATTERNS_RESPONSE]);
       const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
-      writeLogs(stateManager, "goal-1");
+      await writeLogs(stateManager, "goal-1");
 
       const trigger = {
         type: "milestone_reached" as const,
@@ -1990,7 +1990,7 @@ describe("LearningPipeline", () => {
     it("should set last_applied_at to null on creation", async () => {
       const llm = createMockLLMClient([TRIPLETS_RESPONSE, PATTERNS_RESPONSE]);
       const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
-      writeLogs(stateManager, "goal-1");
+      await writeLogs(stateManager, "goal-1");
 
       const trigger = {
         type: "milestone_reached" as const,
@@ -2005,7 +2005,7 @@ describe("LearningPipeline", () => {
     it("should return patterns with evidence_count equal to occurrence_count from LLM", async () => {
       const llm = createMockLLMClient([TRIPLETS_RESPONSE, PATTERNS_RESPONSE]);
       const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
-      writeLogs(stateManager, "goal-1");
+      await writeLogs(stateManager, "goal-1");
 
       const trigger = {
         type: "milestone_reached" as const,
@@ -2021,7 +2021,7 @@ describe("LearningPipeline", () => {
     it("should handle applicable_domains from LLM response", async () => {
       const llm = createMockLLMClient([TRIPLETS_RESPONSE, PATTERNS_RESPONSE]);
       const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
-      writeLogs(stateManager, "goal-1");
+      await writeLogs(stateManager, "goal-1");
 
       const trigger = {
         type: "milestone_reached" as const,
@@ -2038,7 +2038,7 @@ describe("LearningPipeline", () => {
     it("should return patterns with embedding_id null when vectorIndex is null", async () => {
       const llm = createMockLLMClient([TRIPLETS_RESPONSE, PATTERNS_RESPONSE]);
       const pipeline = new LearningPipeline(llm, null, stateManager);
-      writeLogs(stateManager, "goal-1");
+      await writeLogs(stateManager, "goal-1");
 
       const trigger = {
         type: "periodic_review" as const,
@@ -2053,7 +2053,7 @@ describe("LearningPipeline", () => {
     it("should handle stall_detected trigger type in analyzeLogs", async () => {
       const llm = createMockLLMClient([TRIPLETS_RESPONSE, PATTERNS_RESPONSE]);
       const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
-      writeLogs(stateManager, "goal-stall");
+      await writeLogs(stateManager, "goal-stall");
 
       const trigger = {
         type: "stall_detected" as const,
@@ -2069,7 +2069,7 @@ describe("LearningPipeline", () => {
     it("should handle goal_completed trigger type in analyzeLogs", async () => {
       const llm = createMockLLMClient([TRIPLETS_RESPONSE, PATTERNS_RESPONSE]);
       const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
-      writeLogs(stateManager, "goal-done");
+      await writeLogs(stateManager, "goal-done");
 
       const trigger = {
         type: "goal_completed" as const,
@@ -2087,7 +2087,7 @@ describe("LearningPipeline", () => {
         TRIPLETS_RESPONSE, PATTERNS_RESPONSE_STRATEGY,
       ]);
       const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
-      writeLogs(stateManager, "goal-1");
+      await writeLogs(stateManager, "goal-1");
 
       const trigger = {
         type: "milestone_reached" as const,
@@ -2098,16 +2098,16 @@ describe("LearningPipeline", () => {
 
       const patterns1 = await pipeline.analyzeLogs(trigger);
       await pipeline.generateFeedback(patterns1);
-      const countAfterFirst = pipeline.getFeedbackEntries("goal-1").length;
+      const countAfterFirst = (await pipeline.getFeedbackEntries("goal-1")).length;
 
       const patterns2 = await pipeline.analyzeLogs({ ...trigger, context: "run 2" });
       await pipeline.generateFeedback(patterns2);
-      const countAfterSecond = pipeline.getFeedbackEntries("goal-1").length;
+      const countAfterSecond = (await pipeline.getFeedbackEntries("goal-1")).length;
 
       expect(countAfterSecond).toBeGreaterThan(countAfterFirst);
     });
 
-    it("applyFeedback returns empty array when step is gap (no gap patterns)", () => {
+    it("applyFeedback returns empty array when step is gap (no gap patterns)", async () => {
       const llm = createMockLLMClient([]);
       const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
       const now = new Date().toISOString();
@@ -2129,7 +2129,7 @@ describe("LearningPipeline", () => {
       expect(result).toEqual([]);
     });
 
-    it("generateFeedback returns FeedbackEntry[] with correct schema fields", () => {
+    it("generateFeedback returns FeedbackEntry[] with correct schema fields", async () => {
       const llm = createMockLLMClient([]);
       const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
       const now = new Date().toISOString();
@@ -2166,7 +2166,7 @@ describe("LearningPipeline", () => {
       // Write corrupt data (not an array)
       await stateManager.writeRaw("learning/goal-corrupt_patterns.json", { not: "an array" });
 
-      const result = pipeline.getPatterns("goal-corrupt");
+      const result = await pipeline.getPatterns("goal-corrupt");
       expect(result).toEqual([]);
     });
 
@@ -2177,14 +2177,14 @@ describe("LearningPipeline", () => {
       // Write corrupt data (not an array)
       await stateManager.writeRaw("learning/goal-corrupt_feedback.json", { not: "an array" });
 
-      const result = pipeline.getFeedbackEntries("goal-corrupt");
+      const result = await pipeline.getFeedbackEntries("goal-corrupt");
       expect(result).toEqual([]);
     });
 
     it("should handle trigger with long context string", async () => {
       const llm = createMockLLMClient([TRIPLETS_RESPONSE, PATTERNS_RESPONSE]);
       const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
-      writeLogs(stateManager, "goal-1");
+      await writeLogs(stateManager, "goal-1");
 
       const longContext = "A".repeat(10000);
       const trigger = {
@@ -2201,7 +2201,7 @@ describe("LearningPipeline", () => {
       const markdownWrapped = "```json\n" + TRIPLETS_RESPONSE + "\n```";
       const llm = createMockLLMClient([markdownWrapped, PATTERNS_RESPONSE]);
       const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
-      writeLogs(stateManager, "goal-1");
+      await writeLogs(stateManager, "goal-1");
 
       const trigger = {
         type: "milestone_reached" as const,
@@ -2217,7 +2217,7 @@ describe("LearningPipeline", () => {
       const codeWrapped = "```\n" + TRIPLETS_RESPONSE + "\n```";
       const llm = createMockLLMClient([codeWrapped, PATTERNS_RESPONSE]);
       const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
-      writeLogs(stateManager, "goal-1");
+      await writeLogs(stateManager, "goal-1");
 
       const trigger = {
         type: "milestone_reached" as const,
@@ -2233,7 +2233,7 @@ describe("LearningPipeline", () => {
       const markdownWrapped = "```json\n" + PATTERNS_RESPONSE + "\n```";
       const llm = createMockLLMClient([TRIPLETS_RESPONSE, markdownWrapped]);
       const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
-      writeLogs(stateManager, "goal-1");
+      await writeLogs(stateManager, "goal-1");
 
       const trigger = {
         type: "milestone_reached" as const,
@@ -2248,7 +2248,7 @@ describe("LearningPipeline", () => {
     it("analyzeLogs calls LLM exactly twice per successful run (extraction + patternization)", async () => {
       const llm = createMockLLMClient([TRIPLETS_RESPONSE, PATTERNS_RESPONSE]);
       const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
-      writeLogs(stateManager, "goal-1");
+      await writeLogs(stateManager, "goal-1");
 
       const trigger = {
         type: "milestone_reached" as const,
@@ -2263,7 +2263,7 @@ describe("LearningPipeline", () => {
     it("analyzeLogs calls LLM exactly once when triplets extraction returns empty (aborts early)", async () => {
       const llm = createMockLLMClient([EMPTY_TRIPLETS_RESPONSE]);
       const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
-      writeLogs(stateManager, "goal-1");
+      await writeLogs(stateManager, "goal-1");
 
       const trigger = {
         type: "milestone_reached" as const,
@@ -2278,7 +2278,7 @@ describe("LearningPipeline", () => {
     it("should not persist patterns when all are filtered by confidence", async () => {
       const llm = createMockLLMClient([TRIPLETS_RESPONSE, LOW_CONFIDENCE_PATTERNS_RESPONSE]);
       const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
-      writeLogs(stateManager, "goal-1");
+      await writeLogs(stateManager, "goal-1");
 
       const trigger = {
         type: "milestone_reached" as const,
@@ -2293,7 +2293,7 @@ describe("LearningPipeline", () => {
       expect(saved).toEqual([]);
     });
 
-    it("applyFeedback returns strings for all valid target_step values", () => {
+    it("applyFeedback returns strings for all valid target_step values", async () => {
       const llm = createMockLLMClient([]);
       const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
       const now = new Date().toISOString();
@@ -2350,7 +2350,7 @@ describe("LearningPipeline", () => {
 
       const llm = createMockLLMClient([TRIPLETS_RESPONSE, PATTERNS_RESPONSE]);
       const pipeline = new LearningPipeline(llm, failingVI, stateManager);
-      writeLogs(stateManager, "goal-1");
+      await writeLogs(stateManager, "goal-1");
 
       await expect(pipeline.onGoalCompleted("goal-1")).resolves.toHaveLength(1);
     });
@@ -2372,7 +2372,7 @@ describe("LearningPipeline", () => {
       });
       const llm = createMockLLMClient([TRIPLETS_RESPONSE, emptyDomainsPatterns]);
       const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
-      writeLogs(stateManager, "goal-1");
+      await writeLogs(stateManager, "goal-1");
 
       const trigger = {
         type: "milestone_reached" as const,
@@ -2384,7 +2384,7 @@ describe("LearningPipeline", () => {
       expect(result[0]!.applicable_domains).toEqual([]);
     });
 
-    it("savePatterns and getPatterns round-trip preserves all LearnedPattern fields", () => {
+    it("savePatterns and getPatterns round-trip preserves all LearnedPattern fields", async () => {
       const llm = createMockLLMClient([]);
       const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
       const now = new Date().toISOString();
@@ -2403,7 +2403,7 @@ describe("LearningPipeline", () => {
       };
 
       await pipeline.savePatterns("goal-full", [pattern]);
-      const loaded = pipeline.getPatterns("goal-full");
+      const loaded = await pipeline.getPatterns("goal-full");
 
       expect(loaded[0]!.pattern_id).toBe(pattern.pattern_id);
       expect(loaded[0]!.type).toBe(pattern.type);
@@ -2415,7 +2415,7 @@ describe("LearningPipeline", () => {
       expect(loaded[0]!.last_applied_at).toBe(pattern.last_applied_at);
     });
 
-    it("saveFeedbackEntries and getFeedbackEntries round-trip preserves all FeedbackEntry fields", () => {
+    it("saveFeedbackEntries and getFeedbackEntries round-trip preserves all FeedbackEntry fields", async () => {
       const llm = createMockLLMClient([]);
       const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
       const now = new Date().toISOString();
@@ -2430,7 +2430,7 @@ describe("LearningPipeline", () => {
       };
 
       await pipeline.saveFeedbackEntries("goal-full", [entry]);
-      const loaded = pipeline.getFeedbackEntries("goal-full");
+      const loaded = await pipeline.getFeedbackEntries("goal-full");
 
       expect(loaded[0]!.feedback_id).toBe(entry.feedback_id);
       expect(loaded[0]!.pattern_id).toBe(entry.pattern_id);
@@ -2443,7 +2443,7 @@ describe("LearningPipeline", () => {
       // Verify the trigger type by checking it doesn't break anything
       const llm = createMockLLMClient([TRIPLETS_RESPONSE, PATTERNS_RESPONSE]);
       const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
-      writeLogs(stateManager, "goal-periodic");
+      await writeLogs(stateManager, "goal-periodic");
 
       const result = await pipeline.onPeriodicReview("goal-periodic");
       expect(result).toHaveLength(1);
@@ -2453,7 +2453,7 @@ describe("LearningPipeline", () => {
     it("onStallDetected serializes stallInfo as JSON in trigger context", async () => {
       const llm = createMockLLMClient([TRIPLETS_RESPONSE, PATTERNS_RESPONSE]);
       const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
-      writeLogs(stateManager, "goal-stall-context");
+      await writeLogs(stateManager, "goal-stall-context");
       const stallReport = makeStallReport("goal-stall-context");
 
       // If serialization fails, the trigger would fail Zod validation (context must be string)
@@ -2464,7 +2464,7 @@ describe("LearningPipeline", () => {
     it("onMilestoneReached passes milestoneContext as trigger context", async () => {
       const llm = createMockLLMClient([TRIPLETS_RESPONSE, PATTERNS_RESPONSE]);
       const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
-      writeLogs(stateManager, "goal-milestone");
+      await writeLogs(stateManager, "goal-milestone");
 
       const milestoneCtx = "test_coverage dimension exceeded 80% threshold";
       const result = await pipeline.onMilestoneReached("goal-milestone", milestoneCtx);
@@ -2474,13 +2474,13 @@ describe("LearningPipeline", () => {
     it("should not share patterns to same source goal via onGoalCompleted", async () => {
       const llm = createMockLLMClient([TRIPLETS_RESPONSE, PATTERNS_RESPONSE]);
       const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
-      writeLogs(stateManager, "goal-complete");
+      await writeLogs(stateManager, "goal-complete");
 
       const result = await pipeline.onGoalCompleted("goal-complete");
-      const patternsBefore = pipeline.getPatterns("goal-complete").length;
+      const patternsBefore = await pipeline.getPatterns("goal-complete").length;
 
       // No additional patterns should appear because sharing to self is blocked
-      expect(pipeline.getPatterns("goal-complete").length).toBe(patternsBefore);
+      expect(await pipeline.getPatterns("goal-complete").length).toBe(patternsBefore);
       expect(result).toHaveLength(1);
     });
   });

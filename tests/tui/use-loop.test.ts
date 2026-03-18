@@ -16,6 +16,14 @@ async function flushAsync(rounds = 50): Promise<void> {
   }
 }
 
+/** Drain real I/O callbacks (fs/promises) by yielding via setImmediate,
+ *  which is NOT faked by our fake-timer config. */
+async function flushIO(rounds = 10): Promise<void> {
+  for (let i = 0; i < rounds; i++) {
+    await new Promise<void>((r) => setImmediate(r));
+  }
+}
+
 const OBS_METHOD = {
   type: "mechanical" as const,
   source: "test",
@@ -145,7 +153,9 @@ describe("LoopController", async () => {
     tmpDir = makeTempDir();
     stateManager = new StateManager(tmpDir);
     trustManager = makeMockTrustManager();
-    vi.useFakeTimers();
+    // Only fake setTimeout/setInterval/Date — leave setImmediate/nextTick real
+    // so that fs/promises I/O callbacks can still drain between await rounds.
+    vi.useFakeTimers({ toFake: ["setTimeout", "setInterval", "Date"] });
   });
 
   afterEach(() => {
@@ -205,8 +215,7 @@ describe("LoopController", async () => {
     } as unknown as CoreLoop;
 
     const ctrl = new LoopController(loop, stateManager, trustManager);
-    void ctrl.start("goal-1");
-    await flushAsync();
+    await ctrl.start("goal-1");
 
     const state = ctrl.getState();
     expect(state.dimensions).toHaveLength(1);
@@ -269,12 +278,11 @@ describe("LoopController", async () => {
     const loop = makeMockCoreLoop({ finalStatus: "completed", totalIterations: 5 });
     const ctrl = new LoopController(loop, stateManager, trustManager);
 
-    void ctrl.start("goal-1");
+    await ctrl.start("goal-1");
 
-    // Let the run promise settle
-    await vi.runAllTimersAsync();
-    await Promise.resolve();
-    await Promise.resolve();
+    // The .then() handler from coreLoop.run fires asynchronously after start() returns.
+    // Flush microtasks so the .then() callback (which calls refreshState) can settle.
+    await flushAsync(100);
 
     const state = ctrl.getState();
     expect(state.running).toBe(false);
@@ -299,13 +307,15 @@ describe("LoopController", async () => {
     const updates: string[] = [];
     ctrl.setOnUpdate((s) => updates.push(s.status));
 
-    void ctrl.start("goal-1");
-    await Promise.resolve();
+    await ctrl.start("goal-1");
 
     const countAfterStart = updates.length;
 
     // Advance 2 seconds to trigger one poll
     vi.advanceTimersByTime(2000);
+    // The interval callback fires refreshState which does real async fs I/O.
+    // Drain I/O callbacks via setImmediate (not faked) + microtask rounds.
+    await flushIO();
     await flushAsync();
 
     expect(updates.length).toBeGreaterThan(countAfterStart);
@@ -331,8 +341,7 @@ describe("LoopController", async () => {
     } as unknown as CoreLoop;
 
     const ctrl = new LoopController(loop, stateManager, trustManager);
-    void ctrl.start("goal-1");
-    await Promise.resolve();
+    await ctrl.start("goal-1");
 
     void ctrl.start("goal-1");
     await Promise.resolve();

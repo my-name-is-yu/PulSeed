@@ -864,10 +864,8 @@ describe("Phase 2 methods", () => {
       await manager.activateMultiple("goal-1", [candidate!.id]);
 
       // Should not throw even with no remaining strategies
-      expect(async () => await manager.terminateStrategy("goal-1", candidate!.id, "last strategy")
-      ).not.toThrow();
+      await expect(manager.terminateStrategy("goal-1", candidate!.id, "last strategy")).resolves.toBeDefined();
 
-      const terminated = manager.terminateStrategy === undefined ? null : await manager.getPortfolio("goal-1");
       const history = await manager.getStrategyHistory("goal-1");
       expect(history.some((s) => s.state === "terminated")).toBe(true);
     });

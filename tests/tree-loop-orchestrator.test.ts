@@ -785,7 +785,7 @@ describe("resumeNodeLoop", async () => {
     await saveGoal({ id: "c1", node_type: "leaf", parent_id: "root", loop_status: "paused" });
     await saveGoal({ id: "c2", node_type: "leaf", parent_id: "root", loop_status: "idle" });
 
-    orchestrator.resumeNodeLoop("c1"); // c1 now running
+    await orchestrator.resumeNodeLoop("c1"); // c1 now running
 
     // With limit=1, c1 is running → c2 cannot be selected
     orchestrator["config"] = { ...DEFAULT_CONFIG, parallel_loop_limit: 1 };
