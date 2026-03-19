@@ -48,15 +48,18 @@ async function buildDeps() {
 
   // TUI approval: routed through ApprovalOverlay in the Ink render loop.
   // requestApproval is set once the App component mounts and calls onApprovalReady.
+  // pendingApprovals holds requests that arrive before the UI is ready; they are
+  // drained in FIFO order the moment the handler is registered.
   let requestApproval: ((req: ApprovalRequest) => void) | null = null;
+  const pendingApprovals: ApprovalRequest[] = [];
 
   const approvalFn = (task: Task): Promise<boolean> => {
     return new Promise((resolve) => {
       if (requestApproval) {
         requestApproval({ task, resolve });
       } else {
-        // Fallback: UI not ready — reject to be safe
-        resolve(false);
+        // UI not ready yet — queue and dispatch once the handler is registered
+        pendingApprovals.push({ task, resolve });
       }
     });
   };
@@ -112,6 +115,11 @@ async function buildDeps() {
 
   const setRequestApproval = (fn: (req: ApprovalRequest) => void) => {
     requestApproval = fn;
+    // Drain any requests that arrived before the UI was ready
+    while (pendingApprovals.length > 0) {
+      const pending = pendingApprovals.shift()!;
+      requestApproval(pending);
+    }
   };
 
   return { stateManager, llmClient, trustManager, coreLoop, goalNegotiator, reportingEngine, setRequestApproval };

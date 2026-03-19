@@ -109,47 +109,59 @@ export function App({
       setMessages((prev) => [...prev, { role: "user" as const, text: input, timestamp: new Date() }].slice(-MAX_MESSAGES));
       setIsProcessing(true);
 
-      // Recognize intent
-      const intent = await intentRecognizer.recognize(input);
+      try {
+        // Recognize intent
+        const intent = await intentRecognizer.recognize(input);
 
-      // Execute action
-      const result = await actionHandler.handle(intent);
+        // Execute action
+        const result = await actionHandler.handle(intent);
 
-      // Handle help overlay signal — do not add messages to chat
-      if (result.showHelp) {
-        setShowHelp(true);
-        setIsProcessing(false);
-        return;
-      }
-
-      // Add response messages
-      setMessages((prev) => [
-        ...prev,
-        ...result.messages.map((text) => ({
-          role: "motiva" as const,
-          text,
-          timestamp: new Date(),
-          messageType: (text.startsWith("Failed") || text.startsWith("Error"))
-            ? ("error" as const)
-            : ("info" as const),
-        })),
-      ].slice(-MAX_MESSAGES));
-
-      // Handle loop signals
-      if (result.startLoop) {
-        start(result.startLoop.goalId);
-      }
-      if (result.stopLoop) {
-        // Reject any pending approval before stopping
-        if (approvalRequestRef.current) {
-          approvalRequestRef.current.resolve(false);
-          approvalRequestRef.current = null;
-          setApprovalRequest(null);
+        // Handle help overlay signal — do not add messages to chat
+        if (result.showHelp) {
+          setShowHelp(true);
+          return;
         }
-        stop();
-      }
 
-      setIsProcessing(false);
+        // Add response messages
+        setMessages((prev) => [
+          ...prev,
+          ...result.messages.map((text) => ({
+            role: "motiva" as const,
+            text,
+            timestamp: new Date(),
+            messageType: (text.startsWith("Failed") || text.startsWith("Error"))
+              ? ("error" as const)
+              : ("info" as const),
+          })),
+        ].slice(-MAX_MESSAGES));
+
+        // Handle loop signals
+        if (result.startLoop) {
+          start(result.startLoop.goalId);
+        }
+        if (result.stopLoop) {
+          // Reject any pending approval before stopping
+          if (approvalRequestRef.current) {
+            approvalRequestRef.current.resolve(false);
+            approvalRequestRef.current = null;
+            setApprovalRequest(null);
+          }
+          stop();
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: "motiva" as const,
+            text: `Error: ${message}`,
+            timestamp: new Date(),
+            messageType: "error" as const,
+          },
+        ].slice(-MAX_MESSAGES));
+      } finally {
+        setIsProcessing(false);
+      }
     },
     [intentRecognizer, actionHandler, start, stop]
   );

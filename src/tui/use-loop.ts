@@ -238,6 +238,7 @@ export function useLoop(
     controller.setOnUpdate(setLoopState);
     return () => {
       controller.setOnUpdate(null);
+      controller.stop();
     };
   }, [controller]);
 
