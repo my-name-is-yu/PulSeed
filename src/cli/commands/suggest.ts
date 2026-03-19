@@ -607,7 +607,7 @@ export async function cmdImprove(
       console.log(`[--yes] Auto-selecting: ${suggestions[0]?.title ?? ""}\n`);
     } else {
       selectedIndex = 0;
-      console.log(`Selected: ${suggestions[0]!.title}\n`);
+      console.log(`Selected: ${suggestions[0]?.title ?? ""}\n`);
     }
   }
 

@@ -189,7 +189,7 @@ export class KnowledgeTransfer {
               0.0
             );
             if (goalSearchResults.length > 0) {
-              similarityScore = goalSearchResults[0]!.similarity;
+              similarityScore = goalSearchResults[0]?.similarity ?? similarityScore;
             }
           }
         } catch {

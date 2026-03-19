@@ -212,8 +212,8 @@ export class CrossGoalPortfolio {
           seenPairs.add(pairKey);
           const idxA = indexMap.get(edge.from_goal_id);
           const idxB = indexMap.get(edge.to_goal_id);
-          if (idxA !== undefined) adjustments[idxA]! += synergyBonus;
-          if (idxB !== undefined) adjustments[idxB]! += synergyBonus;
+          if (idxA !== undefined && adjustments[idxA] !== undefined) adjustments[idxA] += synergyBonus;
+          if (idxB !== undefined && adjustments[idxB] !== undefined) adjustments[idxB] += synergyBonus;
         }
       } else if (edge.type === "conflict") {
         if (!seenPairs.has(pairKey)) {
@@ -222,12 +222,12 @@ export class CrossGoalPortfolio {
           const idxA = indexMap.get(edge.from_goal_id);
           const idxB = indexMap.get(edge.to_goal_id);
           if (idxA !== undefined && idxB !== undefined) {
-            const scoreA = withBase[idxA]!.basePriority;
-            const scoreB = withBase[idxB]!.basePriority;
+            const scoreA = withBase[idxA]?.basePriority ?? 0;
+            const scoreB = withBase[idxB]?.basePriority ?? 0;
             if (scoreA <= scoreB) {
-              adjustments[idxA]! -= CONFLICT_PENALTY;
+              if (adjustments[idxA] !== undefined) adjustments[idxA] -= CONFLICT_PENALTY;
             } else {
-              adjustments[idxB]! -= CONFLICT_PENALTY;
+              if (adjustments[idxB] !== undefined) adjustments[idxB] -= CONFLICT_PENALTY;
             }
           }
         }
@@ -494,7 +494,7 @@ export class CrossGoalPortfolio {
     for (const constraint of goal.constraints) {
       const match = constraint.match(/^(?:domain|tag)[:\s]+(.+)$/i);
       if (match) {
-        tags.push(match[1]!.trim().toLowerCase());
+        tags.push(match[1]?.trim().toLowerCase() ?? "");
       }
     }
     return tags;

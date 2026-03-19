@@ -41,7 +41,7 @@ export function buildDependencySchedule(
   for (const id of goalIds) {
     const blockers = graph.getBlockingGoals(id).filter((b) => goalSet.has(b));
     for (const blocker of blockers) {
-      prereqMap.get(id)!.add(blocker);
+      prereqMap.get(id)?.add(blocker);
     }
   }
 

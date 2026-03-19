@@ -67,8 +67,8 @@ export function allocateResources(
   if (activePriorities.length === 1) {
     return [
       {
-        goal_id: activePriorities[0]!.goal_id,
-        priority: activePriorities[0]!.computed_priority,
+        goal_id: activePriorities[0]?.goal_id ?? "",
+        priority: activePriorities[0]?.computed_priority ?? 0,
         resource_share: 1.0,
         adjustment_reason: "sole active goal",
       },
@@ -163,7 +163,7 @@ export function allocateResources(
     if (raw < min_goal_share) {
       reason = `min_goal_share floor applied (raw=${raw.toFixed(3)}, strategy=${strategyReason})`;
     } else {
-      reason = `${strategyReason}: weight=${weights[i]!.toFixed(3)}`;
+      reason = `${strategyReason}: weight=${(weights[i] ?? 0).toFixed(3)}`;
     }
     return {
       goal_id: p.goal_id,
