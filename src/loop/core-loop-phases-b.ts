@@ -246,6 +246,10 @@ export async function detectStallsAndRebalance(
           }
         }
 
+        // Capture active strategy id for decision recording
+        const globalActiveStrategyForRecord = await Promise.resolve(ctx.deps.strategyManager.getActiveStrategy(goalId)).catch(() => null);
+        const globalStrategyIdForRecord = globalActiveStrategyForRecord?.id ?? "unknown";
+
         // M14-S2: for global stall, use the first dimension's history for cause analysis
         // Falls back to PIVOT behavior when analyzeStallCause is unavailable
         const firstDimHistory = allDimGaps.values().next().value ?? [];
@@ -265,8 +269,64 @@ export async function detectStallsAndRebalance(
           await ctx.deps.strategyManager.onStallDetected(goalId, 3);
           result.pivotOccurred = true;
         } else {
-          const newStrategy = await ctx.deps.strategyManager.onStallDetected(goalId, 2);
-          if (newStrategy) result.pivotOccurred = true;
+          // PIVOT: switch strategy, but check pivot count limit first
+          const globalPortfolio = await ctx.deps.strategyManager.getPortfolio(goalId);
+          const globalActiveStrategy = globalPortfolio?.strategies.find((s) => s.state === "active");
+          const globalPivotCount = globalActiveStrategy?.pivot_count ?? 0;
+          const globalMaxPivotCount = globalActiveStrategy?.max_pivot_count ?? 2;
+
+          if (globalPivotCount >= globalMaxPivotCount) {
+            // Auto-escalate when pivot limit reached
+            ctx.logger?.warn("CoreLoop: global stall auto-ESCALATE — pivot_count limit reached", {
+              goalId,
+              pivotCount: globalPivotCount,
+              maxPivotCount: globalMaxPivotCount,
+            });
+            await ctx.deps.strategyManager.onStallDetected(goalId, 3);
+            result.pivotOccurred = true;
+          } else {
+            const newStrategy = await ctx.deps.strategyManager.onStallDetected(goalId, 2);
+            if (newStrategy) {
+              result.pivotOccurred = true;
+              if (globalActiveStrategy?.id) {
+                try {
+                  await ctx.deps.strategyManager.incrementPivotCount(goalId, globalActiveStrategy.id);
+                } catch {
+                  // non-fatal
+                }
+              }
+            }
+          }
+        }
+
+        // M14-S3: Record decision (non-fatal)
+        if (ctx.deps.knowledgeManager) {
+          try {
+            const goalType = goal.origin ?? "general";
+            const latestGap = firstDimHistory[firstDimHistory.length - 1]?.normalized_gap ?? 1;
+            await ctx.deps.knowledgeManager.recordDecision({
+              id: randomUUID(),
+              goal_id: goalId,
+              goal_type: goalType,
+              strategy_id: globalStrategyIdForRecord,
+              decision: globalAnalysis?.recommended_action ?? "pivot",
+              context: {
+                gap_value: latestGap,
+                stall_count: globalStall.escalation_level,
+                cycle_count: firstDimHistory.length,
+                trust_score: 0,
+              },
+              outcome: "pending",
+              timestamp: new Date().toISOString(),
+            });
+          } catch {
+            // non-fatal: never block the loop for decision recording
+          }
+        }
+
+        const firstDimName = goal.dimensions[0]?.name;
+        if (firstDimName) {
+          await ctx.deps.stallDetector.incrementEscalation(goalId, firstDimName);
         }
       }
     }

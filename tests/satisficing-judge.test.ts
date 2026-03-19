@@ -424,6 +424,102 @@ describe("isGoalComplete", () => {
     const result = judge.isGoalComplete(goal);
     expect(() => new Date(result.checked_at)).not.toThrow();
   });
+
+  it("converged_satisficed status treats unsatisfied dimension as complete", () => {
+    // Dimension has current_value=85 vs threshold=100 → isSatisfiedRaw returns false
+    // But convergence status says converged_satisficed → should be treated as satisfied
+    const goal = makeGoal({
+      id: "goal-cs-1",
+      dimensions: [
+        makeDimension({
+          name: "test_dim",
+          current_value: 85,
+          threshold: { type: "min", value: 100 },
+          confidence: 0.9,
+        }),
+      ],
+    });
+    // Without convergence statuses → not complete
+    const withoutConvergence = judge.isGoalComplete(goal);
+    expect(withoutConvergence.is_complete).toBe(false);
+    expect(withoutConvergence.blocking_dimensions).toContain("test_dim");
+
+    // With converged_satisficed status → complete
+    const convergenceStatuses = new Map([["goal-cs-1:test_dim", "converged_satisficed" as const]]);
+    const withConvergence = judge.isGoalComplete(goal, convergenceStatuses);
+    expect(withConvergence.is_complete).toBe(true);
+    expect(withConvergence.blocking_dimensions).toHaveLength(0);
+  });
+
+  it("converged_satisficed only applies to matching dimension key, not others", () => {
+    const goal = makeGoal({
+      id: "goal-cs-2",
+      dimensions: [
+        makeDimension({
+          name: "dim1",
+          current_value: 85,
+          threshold: { type: "min", value: 100 },
+          confidence: 0.9,
+        }),
+        makeDimension({
+          name: "dim2",
+          current_value: 40,
+          threshold: { type: "min", value: 100 },
+          confidence: 0.9,
+        }),
+      ],
+    });
+    // Only dim1 has converged_satisficed
+    const convergenceStatuses = new Map([["goal-cs-2:dim1", "converged_satisficed" as const]]);
+    const result = judge.isGoalComplete(goal, convergenceStatuses);
+    expect(result.is_complete).toBe(false);
+    expect(result.blocking_dimensions).toContain("dim2");
+    expect(result.blocking_dimensions).not.toContain("dim1");
+  });
+
+  it("other convergence statuses (stalled, in_progress) do not override unsatisfied", () => {
+    const goal = makeGoal({
+      id: "goal-cs-3",
+      dimensions: [
+        makeDimension({
+          name: "dim1",
+          current_value: 40,
+          threshold: { type: "min", value: 100 },
+          confidence: 0.9,
+        }),
+      ],
+    });
+    const stalledStatuses = new Map([["goal-cs-3:dim1", "stalled" as const]]);
+    const result = judge.isGoalComplete(goal, stalledStatuses);
+    expect(result.is_complete).toBe(false);
+    expect(result.blocking_dimensions).toContain("dim1");
+
+    const inProgressStatuses = new Map([["goal-cs-3:dim1", "in_progress" as const]]);
+    const result2 = judge.isGoalComplete(goal, inProgressStatuses);
+    expect(result2.is_complete).toBe(false);
+  });
+
+  it("converged_satisficed with low confidence dimension still results in goal completion", () => {
+    // Dimension has confidence < 0.5 → confidence_tier is "low"
+    // Without convergence it would block completion via low_confidence_dimensions
+    // With converged_satisficed the convergence itself IS the statistical evidence
+    const goal = makeGoal({
+      id: "goal-cs-low-conf",
+      dimensions: [
+        makeDimension({
+          name: "test_dim",
+          current_value: 85,
+          threshold: { type: "min", value: 100 },
+          confidence: 0.3, // low confidence → confidence_tier "low"
+        }),
+      ],
+    });
+    const convergenceStatuses = new Map([["goal-cs-low-conf:test_dim", "converged_satisficed" as const]]);
+    const result = judge.isGoalComplete(goal, convergenceStatuses);
+    expect(result.is_complete).toBe(true);
+    expect(result.blocking_dimensions).toHaveLength(0);
+    expect(result.low_confidence_dimensions).toHaveLength(0);
+  });
 });
 
 // ─── applyProgressCeiling ───

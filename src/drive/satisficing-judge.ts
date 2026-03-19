@@ -271,8 +271,17 @@ export class SatisficingJudge {
   /**
    * Determine if a goal is fully complete.
    * Complete iff all dimensions are satisfied AND no dimension has low confidence.
+   *
+   * @param goal The goal to check.
+   * @param convergenceStatuses Optional map of dimension key → SatisficingStatus from judgeConvergence().
+   *   When a dimension's convergence status is "converged_satisficed", it is treated as satisfied
+   *   (gap has stabilized within acceptable range — good enough).
+   *   Keys should match the format used with judgeConvergence(): `${goalId}:${dimensionName}`.
    */
-  isGoalComplete(goal: Goal): CompletionJudgment {
+  isGoalComplete(
+    goal: Goal,
+    convergenceStatuses?: Map<string, SatisficingStatus>
+  ): CompletionJudgment {
     const dims = goal.dimensions;
 
     if (dims.length === 0) {
@@ -285,7 +294,18 @@ export class SatisficingJudge {
       };
     }
 
-    const satisfactions = dims.map((d) => this.isDimensionSatisfied(d));
+    const satisfactions = dims.map((d) => {
+      const base = this.isDimensionSatisfied(d);
+      // If not already satisfied, check if convergence status marks it as converged_satisficed
+      if (!base.is_satisfied && convergenceStatuses) {
+        const key = `${goal.id}:${d.name}`;
+        const status = convergenceStatuses.get(key);
+        if (status === "converged_satisficed") {
+          return { ...base, is_satisfied: true, confidence_tier: base.confidence_tier === "low" ? "medium" : base.confidence_tier };
+        }
+      }
+      return base;
+    });
 
     const blockingDimensions = satisfactions
       .filter((s) => !s.is_satisfied)
@@ -304,9 +324,9 @@ export class SatisficingJudge {
       blockingDimensions.length === 0 && lowConfidenceDimensions.length === 0;
 
     if (this.onSatisficingJudgment) {
-      const satisfiedDims = dims
-        .filter(d => this.isDimensionSatisfied(d).is_satisfied)
-        .map(d => d.name);
+      const satisfiedDims = satisfactions
+        .filter(s => s.is_satisfied)
+        .map(s => s.dimension_name);
       if (satisfiedDims.length > 0) {
         this.onSatisficingJudgment(goal.id, satisfiedDims);
       }
