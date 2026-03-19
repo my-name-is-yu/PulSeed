@@ -21,7 +21,9 @@ import {
   handleFailure as _handleFailure,
   type VerdictResult,
   type FailureResult,
+  type CompletionJudgerConfig,
 } from "./task-verifier.js";
+export type { CompletionJudgerConfig } from "./task-verifier.js";
 export type {
   ExecutorReport,
   VerdictResult,
@@ -71,6 +73,7 @@ export class TaskLifecycle {
   private readonly adapterRegistry?: AdapterRegistry;
   private readonly healthCheckEnabled: boolean;
   private readonly execFileSyncFn: (cmd: string, args: string[], opts: { cwd: string; encoding: "utf-8" }) => string;
+  private readonly completionJudgerConfig?: CompletionJudgerConfig;
   private onTaskComplete?: (strategyId: string) => void;
 
   constructor(
@@ -91,6 +94,8 @@ export class TaskLifecycle {
       healthCheckEnabled?: boolean;
       /** Injectable execFileSync for testing (defaults to node:child_process execFileSync) */
       execFileSyncFn?: (cmd: string, args: string[], opts: { cwd: string; encoding: "utf-8" }) => string;
+      /** Timeout + retry config for the completion judgment LLM call */
+      completionJudgerConfig?: CompletionJudgerConfig;
     }
   ) {
     this.stateManager = stateManager;
@@ -106,6 +111,7 @@ export class TaskLifecycle {
     this.adapterRegistry = options?.adapterRegistry;
     this.healthCheckEnabled = options?.healthCheckEnabled ?? false;
     this.execFileSyncFn = options?.execFileSyncFn ?? _execFileSync;
+    this.completionJudgerConfig = options?.completionJudgerConfig;
   }
 
   // ─── setOnTaskComplete ───
@@ -394,6 +400,7 @@ export class TaskLifecycle {
       logger: this.logger,
       onTaskComplete: this.onTaskComplete,
       durationToMs: durationToMs,
+      completionJudgerConfig: this.completionJudgerConfig,
     };
   }
 

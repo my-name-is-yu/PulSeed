@@ -42,6 +42,17 @@ export interface FailureResult {
   task: Task;
 }
 
+// ─── CompletionJudgerConfig: timeout + retry for the LLM completion judgment step ───
+
+export interface CompletionJudgerConfig {
+  /** Timeout for each LLM call in ms (default: 30000) */
+  timeoutMs?: number;
+  /** Maximum number of retries after the first attempt (default: 2) */
+  maxRetries?: number;
+  /** Base backoff delay in ms — doubles each retry (default: 1000) */
+  retryBackoffMs?: number;
+}
+
 // ─── VerifierDeps: all dependencies needed by the verification functions ───
 
 export interface VerifierDeps {
@@ -54,6 +65,7 @@ export interface VerifierDeps {
   logger?: Logger;
   onTaskComplete?: (strategyId: string) => void;
   durationToMs: (duration: { value: number; unit: string }) => number;
+  completionJudgerConfig?: CompletionJudgerConfig;
 }
 
 // ─── verifyTask ───
@@ -178,7 +190,7 @@ export async function verifyTask(
           {
             layer: "mechanical" as const,
             description: l1Result.description,
-            confidence: l1Result.passed ? 0.9 : 0.9,
+            confidence: 0.9,
           },
         ]
       : []),
@@ -412,6 +424,51 @@ export async function handleFailure(
 
 // ─── Private helpers (module-local) ───
 
+/**
+ * Wrap a promise with a timeout. Rejects with a TimeoutError if the promise
+ * does not resolve within `ms` milliseconds.
+ */
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`completion_judger timeout after ${ms}ms`));
+    }, ms);
+    promise.then(
+      (value) => { clearTimeout(timer); resolve(value); },
+      (err) => { clearTimeout(timer); reject(err); }
+    );
+  });
+}
+
+/**
+ * Call an async function with retry + exponential backoff.
+ * On each failure (including timeout), wait `backoffMs * 2^attempt` before retrying.
+ * After `maxRetries` retries, the last error is re-thrown.
+ */
+async function withRetry<T>(
+  fn: () => Promise<T>,
+  maxRetries: number,
+  backoffMs: number,
+  logger?: Logger,
+  label?: string
+): Promise<T> {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      if (attempt < maxRetries) {
+        const delay = backoffMs * Math.pow(2, attempt);
+        const msg = err instanceof Error ? err.message : String(err);
+        logger?.warn(`[completion_judger] ${label ?? "LLM call"} failed (attempt ${attempt + 1}/${maxRetries + 1}): ${msg} — retrying in ${delay}ms`);
+        await new Promise((res) => setTimeout(res, delay));
+      }
+    }
+  }
+  throw lastErr;
+}
+
 async function runMechanicalVerification(
   deps: VerifierDeps,
   task: Task
@@ -508,6 +565,10 @@ async function runLLMReview(
   task: Task,
   executionResult: AgentResult
 ): Promise<{ passed: boolean; partial: boolean; description: string; confidence: number }> {
+  const timeoutMs = deps.completionJudgerConfig?.timeoutMs ?? 30_000;
+  const maxRetries = deps.completionJudgerConfig?.maxRetries ?? 2;
+  const retryBackoffMs = deps.completionJudgerConfig?.retryBackoffMs ?? 1_000;
+
   // Create review session
   const reviewSession = await deps.sessionManager.createSession(
     "task_review",
@@ -545,13 +606,35 @@ Context: ${reviewContext.map((s) => s.content).join(" ")}
 Return JSON:
 {"verdict": "pass"|"partial"|"fail", "reasoning": "...", "criteria_met": #, "criteria_total": #}`;
 
-  const response = await deps.llmClient.sendMessage(
-    [{ role: "user", content: prompt }],
-    {
-      system: "Review task results objectively against criteria. Ignore executor self-assessment.",
-      max_tokens: 1024,
-    }
-  );
+  let response: import("../llm/llm-client.js").LLMResponse;
+  try {
+    response = await withRetry(
+      () => withTimeout(
+        deps.llmClient.sendMessage(
+          [{ role: "user", content: prompt }],
+          {
+            system: "Review task results objectively against criteria. Ignore executor self-assessment.",
+            max_tokens: 1024,
+          }
+        ),
+        timeoutMs
+      ),
+      maxRetries,
+      retryBackoffMs,
+      deps.logger,
+      `completion_judger for task ${task.id}`
+    );
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    deps.logger?.error(`[completion_judger] All retries exhausted for task ${task.id}: ${msg}`);
+    await deps.sessionManager.endSession(reviewSession.id, `completion_judger failed: ${msg}`);
+    return {
+      passed: false,
+      partial: false,
+      description: `completion_judger failed after ${maxRetries + 1} attempt(s): ${msg}`,
+      confidence: 0.0,
+    };
+  }
 
   try {
     const parsed = JSON.parse(
