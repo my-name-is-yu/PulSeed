@@ -208,6 +208,9 @@ export async function detectStallsAndRebalance(
               },
               outcome: "pending",
               timestamp: new Date().toISOString(),
+              what_worked: [],
+              what_failed: [],
+              suggested_next: [],
             });
           } catch {
             // non-fatal: never block the loop for decision recording
@@ -319,6 +322,9 @@ export async function detectStallsAndRebalance(
               },
               outcome: "pending",
               timestamp: new Date().toISOString(),
+              what_worked: [],
+              what_failed: [],
+              suggested_next: [],
             });
           } catch {
             // non-fatal: never block the loop for decision recording

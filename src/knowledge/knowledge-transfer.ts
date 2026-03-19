@@ -681,7 +681,7 @@ export class KnowledgeTransfer {
         const description = `Auto-apply transfer of pattern "${candidate.source_item_id}" to goal "${goalId}". ${candidate.estimated_benefit}`;
         let verdict: Awaited<ReturnType<EthicsGate["check"]>>;
         try {
-          verdict = await this.deps.ethicsGate.check("transfer", candidate.candidate_id, description);
+          verdict = await this.deps.ethicsGate.check("task", candidate.candidate_id, description);
         } catch {
           const rejected = TransferCandidateSchema.parse({ ...candidate, state: "rejected" });
           this.candidates.set(candidate.candidate_id, rejected);
