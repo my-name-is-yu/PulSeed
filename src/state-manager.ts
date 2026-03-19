@@ -599,13 +599,20 @@ export class StateManager {
 
   /** Read raw JSON from any path relative to base dir */
   async readRaw(relativePath: string): Promise<unknown | null> {
-    const filePath = path.join(this.baseDir, relativePath);
-    return this.atomicRead<unknown>(filePath);
+    const resolved = path.resolve(this.baseDir, relativePath);
+    if (!resolved.startsWith(path.resolve(this.baseDir) + path.sep)) {
+      throw new Error(`Path traversal detected: ${relativePath}`);
+    }
+    return this.atomicRead<unknown>(resolved);
   }
 
   /** Write raw JSON to any path relative to base dir (atomic) */
   async writeRaw(relativePath: string, data: unknown): Promise<void> {
-    const filePath = path.join(this.baseDir, relativePath);
+    const resolved = path.resolve(this.baseDir, relativePath);
+    if (!resolved.startsWith(path.resolve(this.baseDir) + path.sep)) {
+      throw new Error(`Path traversal detected: ${relativePath}`);
+    }
+    const filePath = resolved;
     const dir = path.dirname(filePath);
     try {
       await fsp.mkdir(dir, { recursive: true });

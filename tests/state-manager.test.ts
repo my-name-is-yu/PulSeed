@@ -525,6 +525,18 @@ describe("StateManager", async () => {
     it("returns null for non-existent raw path", async () => {
       expect(await manager.readRaw("does/not/exist.json")).toBeNull();
     });
+
+    it("throws on path traversal in readRaw", async () => {
+      await expect(manager.readRaw("../outside.json")).rejects.toThrow(
+        "Path traversal detected"
+      );
+    });
+
+    it("throws on path traversal in writeRaw", async () => {
+      await expect(
+        manager.writeRaw("../../outside.json", { evil: true })
+      ).rejects.toThrow("Path traversal detected");
+    });
   });
 
   describe("archiveGoal", async () => {
