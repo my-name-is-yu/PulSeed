@@ -2,6 +2,7 @@ import { StateManager } from "../state-manager.js";
 import type { Goal } from "../types/goal.js";
 import type {
   CompletionJudgment,
+  SatisficingStatus,
 } from "../types/satisficing.js";
 import { aggregateValues, getSatisfiedValue } from "./satisficing-helpers.js";
 import type { Logger } from "../runtime/logger.js";
@@ -18,7 +19,8 @@ import type { Logger } from "../runtime/logger.js";
 export async function judgeTreeCompletion(
   rootId: string,
   stateManager: StateManager,
-  isGoalComplete: (goal: Goal) => CompletionJudgment
+  isGoalComplete: (goal: Goal, convergenceStatuses?: Map<string, SatisficingStatus>) => CompletionJudgment,
+  convergenceStatuses?: Map<string, SatisficingStatus>
 ): Promise<CompletionJudgment> {
   const goal = await stateManager.loadGoal(rootId);
   if (goal === null) {
@@ -33,7 +35,7 @@ export async function judgeTreeCompletion(
 
   // Leaf node (no children): delegate to existing isGoalComplete
   if (!goal.children_ids || goal.children_ids.length === 0) {
-    return isGoalComplete(goal);
+    return isGoalComplete(goal, convergenceStatuses);
   }
 
   // Non-leaf node: check all children recursively
@@ -56,7 +58,7 @@ export async function judgeTreeCompletion(
     }
 
     // Recurse into child
-    const childJudgment = await judgeTreeCompletion(childId, stateManager, isGoalComplete);
+    const childJudgment = await judgeTreeCompletion(childId, stateManager, isGoalComplete, convergenceStatuses);
 
     if (!childJudgment.is_complete) {
       // Aggregate child's blocking and low-confidence dimensions

@@ -498,8 +498,16 @@ export class SatisficingJudge {
    * @param rootId The ID of the root goal of the tree.
    * @returns CompletionJudgment for the root node.
    */
-  async judgeTreeCompletion(rootId: string): Promise<CompletionJudgment> {
-    return await judgeTreeCompletionFn(rootId, this.stateManager, (goal) => this.isGoalComplete(goal));
+  async judgeTreeCompletion(
+    rootId: string,
+    convergenceStatuses?: Map<string, SatisficingStatus>
+  ): Promise<CompletionJudgment> {
+    return await judgeTreeCompletionFn(
+      rootId,
+      this.stateManager,
+      (goal, cs) => this.isGoalComplete(goal, cs),
+      convergenceStatuses
+    );
   }
 
   /**
