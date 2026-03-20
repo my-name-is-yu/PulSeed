@@ -268,6 +268,7 @@
 |---|---|---|---|
 | core-loop-types.ts | コアループの型定義・インタフェース・DI依存型・`buildDriveContext` | `GapCalculatorModule`, `DriveScorerModule`, `LoopConfig`, `LoopIterationResult`, `LoopResult`, `CoreLoopDeps`, `ProgressEvent`, `buildDriveContext` | types/goal, types/drive, types/core |
 | tree-loop-runner.ts | マルチゴール/ツリーループのイテレーション実行ヘルパー | `runTreeIteration`, `runMultiGoalIteration` | state-manager, goal/goal-tree-manager, goal/state-aggregator, execution/task-lifecycle, drive/satisficing-judge, types/goal-tree |
+| core-loop-learning.ts | 学習パイプライン・知識転送・capability取得失敗追跡 | `CoreLoopLearning` | core-loop-types (CoreLoopDeps), runtime/logger |
 
 ### src/cli/ — CLIコマンド実装
 
@@ -345,4 +346,4 @@
 - **types/ はゼロ依存** — 他のsrcモジュールを import しない。型変更は最も影響範囲が広い
 - **memory-phases.ts は後方互換バレル** — 既存コードとの互換性維持のみ。新規コードは memory-index/stats/query/distill を直接インポートすること
 - **Phase 3 分割パターン** — 大ファイルは「統合エントリポイント（元ファイル名）+ 責務別サブモジュール」に分割。元ファイルはオーケストレーションのみ担当し実装は委譲先にある
-- **loop/ は core-loop.ts の補助モジュール** — CoreLoop クラス本体は src/core-loop.ts、型定義・DI型は loop/core-loop-types.ts、ツリー実行ヘルパーは loop/tree-loop-runner.ts
+- **loop/ は core-loop.ts の補助モジュール** — CoreLoop クラス本体は src/core-loop.ts、型定義・DI型は loop/core-loop-types.ts、ツリー実行ヘルパーは loop/tree-loop-runner.ts、学習/転送責務は loop/core-loop-learning.ts

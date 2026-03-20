@@ -35,6 +35,7 @@ import {
   runTaskCycleWithContext,
 } from "./loop/core-loop-phases-b.js";
 import { handleCapabilityAcquisition } from "./loop/core-loop-capability.js";
+import { CoreLoopLearning } from "./loop/core-loop-learning.js";
 
 // Re-export types for backward compatibility
 export type {
@@ -76,10 +77,7 @@ export class CoreLoop {
   private readonly config: Required<LoopConfig>;
   private readonly logger?: Logger;
   private stopped = false;
-  private lastLearningReviewAt: number = Date.now();
-  private transferCheckCounter: number = 0;
-  /** Tracks consecutive capability acquisition failures per capability name */
-  private capabilityAcquisitionFailures: Map<string, number> = new Map();
+  private readonly learning: CoreLoopLearning = new CoreLoopLearning();
 
   constructor(deps: CoreLoopDeps, config?: LoopConfig) {
     this.deps = deps;
@@ -202,19 +200,7 @@ export class CoreLoop {
       }
 
       // Periodic learning review
-      if (this.deps.learningPipeline) {
-        const now = Date.now();
-        const intervalMs = await this.getPeriodicReviewInterval(goalId);
-        if (now - this.lastLearningReviewAt >= intervalMs) {
-          try {
-            await this.deps.learningPipeline.onPeriodicReview(goalId);
-            this.lastLearningReviewAt = now;
-          } catch (err) {
-            // non-fatal: learning pipeline failure should not block main loop
-            this.logger?.warn("CoreLoop: learningPipeline.onPeriodicReview failed", { goalId, error: err instanceof Error ? err.message : String(err) });
-          }
-        }
-      }
+      await this.learning.checkPeriodicReview(goalId, this.deps, this.logger);
 
       // Delay between loops (skip on last iteration)
       if (loopIndex < this.config.maxIterations - 1 && this.config.delayBetweenLoopsMs > 0) {
@@ -243,13 +229,8 @@ export class CoreLoop {
     }
 
     // After loop completes, trigger learning pipeline for goal completion
-    if (this.deps.learningPipeline && finalStatus === "completed") {
-      try {
-        await this.deps.learningPipeline.onGoalCompleted(goalId);
-      } catch (err) {
-        // non-fatal
-        this.logger?.warn("CoreLoop: learningPipeline.onGoalCompleted failed", { goalId, error: err instanceof Error ? err.message : String(err) });
-      }
+    if (finalStatus === "completed") {
+      await this.learning.onGoalCompleted(goalId, this.deps, this.logger);
     }
 
     // Trigger memory lifecycle close on completion
@@ -368,10 +349,10 @@ export class CoreLoop {
         gId,
         adapter as Parameters<typeof handleCapabilityAcquisition>[2],
         this.deps.capabilityDetector,
-        this.capabilityAcquisitionFailures,
+        this.learning.getCapabilityFailures(),
         this.logger
       ),
-      () => ++this.transferCheckCounter,
+      () => this.learning.incrementTransferCounter(),
       (id, idx, r, g) => this.tryGenerateReport(id, idx, r, g)
     );
     if (!taskCycleOk) return result;
@@ -532,17 +513,6 @@ export class CoreLoop {
 
     result.elapsedMs = Date.now() - startTime;
     return parallelResult;
-  }
-
-  private async getPeriodicReviewInterval(goalId: string): Promise<number> {
-    const goal = await this.deps.stateManager.loadGoal(goalId);
-    if (!goal?.target_date) {
-      return 72 * 3600 * 1000; // default: 72 hours
-    }
-    const remainingDays = (new Date(goal.target_date).getTime() - Date.now()) / (1000 * 60 * 60 * 24);
-    if (remainingDays <= 30) return 72 * 3600 * 1000;     // 短期: 72h
-    if (remainingDays <= 180) return 168 * 3600 * 1000;   // 中期: 1week
-    return 336 * 3600 * 1000;                              // 長期: 2weeks
   }
 
   private async tryGenerateReport(
