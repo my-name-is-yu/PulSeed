@@ -18,6 +18,7 @@ import {
   queryCrossGoalLessons,
   touchIndexEntry,
 } from "./memory-phases.js";
+import { classifyTier, sortByTier } from "./memory-tier.js";
 
 // ─── Deps interface ───
 
@@ -78,54 +79,88 @@ export function relevanceScore(
  * Phase 1: tag exact-match + recency sort.
  * Phase 2 (5.2b): semantic search fallback via VectorIndex if tag results are insufficient.
  * Phase 2 (5.2c): includes cross-goal lessons (up to 25% of budget).
+ *
+ * Tier-aware mode (optional): when activeGoalIds / completedGoalIds are provided,
+ * classify entries into tiers and guarantee core-tier entries are included first.
  */
 export async function selectForWorkingMemory(
   deps: MemorySelectionDeps,
   goalId: string,
   dimensions: string[],
   tags: string[],
-  maxEntries: number = 10
+  maxEntries: number = 10,
+  activeGoalIds?: string[],
+  completedGoalIds?: string[]
 ): Promise<{ shortTerm: ShortTermEntry[]; lessons: LessonEntry[] }> {
   // 1. Tag-based query: short-term entries for this goal matching dimensions/tags
   const stIndex = await loadIndex(deps.memoryDir, "short-term");
-  const matchingIndexEntries = stIndex.entries.filter(
+  let matchingIndexEntries = stIndex.entries.filter(
     (ie) =>
       ie.goal_id === goalId &&
       (dimensions.some((d) => ie.dimensions.includes(d)) ||
         tags.some((t) => ie.tags.includes(t)))
   );
 
-  // Sort by last_accessed descending
+  // Sort by last_accessed descending (base sort before tier re-ordering)
   matchingIndexEntries.sort(
     (a, b) =>
       new Date(b.last_accessed).getTime() -
       new Date(a.last_accessed).getTime()
   );
 
-  // Load the actual entries
+  // Tier-aware mode: classify, update memory_tier, then sort by tier
+  if (activeGoalIds !== undefined) {
+    const resolvedCompleted = completedGoalIds ?? [];
+    for (const ie of matchingIndexEntries) {
+      ie.memory_tier = classifyTier(ie, activeGoalIds, resolvedCompleted);
+    }
+    matchingIndexEntries = sortByTier(matchingIndexEntries);
+  }
+
+  // Load the actual entries — core gets guaranteed inclusion (up to half of budget)
+  const coreGuarantee = activeGoalIds !== undefined
+    ? Math.ceil(maxEntries / 2)
+    : maxEntries;
+
   const shortTermEntries: ShortTermEntry[] = [];
   const seenEntryIds = new Set<string>();
 
-  for (const idxEntry of matchingIndexEntries) {
+  // Pass 1: fill core-guaranteed slots
+  if (activeGoalIds !== undefined) {
+    const coreEntries = matchingIndexEntries.filter(
+      (ie) => ie.memory_tier === "core"
+    );
+    for (const idxEntry of coreEntries) {
+      if (shortTermEntries.length >= coreGuarantee) break;
+      if (seenEntryIds.has(idxEntry.entry_id)) continue;
+
+      const found = await loadShortTermEntry(deps, idxEntry);
+      if (found) {
+        shortTermEntries.push(found);
+        seenEntryIds.add(idxEntry.entry_id);
+        void touchIndexEntry(deps.memoryDir, "short-term", idxEntry.id);
+      }
+    }
+  }
+
+  // Pass 2: fill remaining budget (recall first, then archival if space)
+  const nonCoreOrder: Array<"recall" | "archival"> = ["recall", "archival"];
+  const tierCandidates = activeGoalIds !== undefined
+    ? [
+        ...matchingIndexEntries.filter((ie) => ie.memory_tier === "recall"),
+        ...matchingIndexEntries.filter((ie) => ie.memory_tier === "archival"),
+      ]
+    : matchingIndexEntries;
+
+  void nonCoreOrder; // used implicitly via tierCandidates ordering
+  for (const idxEntry of tierCandidates) {
     if (shortTermEntries.length >= maxEntries) break;
     if (seenEntryIds.has(idxEntry.entry_id)) continue;
 
-    const dataFilePath = path.join(
-      deps.memoryDir,
-      "short-term",
-      idxEntry.data_file
-    );
-    const allEntries =
-      (await readJsonFileAsync<ShortTermEntry[]>(
-        dataFilePath,
-        z.array(ShortTermEntrySchema)
-      )) ?? [];
-    const found = allEntries.find((e) => e.id === idxEntry.entry_id);
+    const found = await loadShortTermEntry(deps, idxEntry);
     if (found) {
       shortTermEntries.push(found);
       seenEntryIds.add(idxEntry.entry_id);
-
-      // Update access metadata in index
       void touchIndexEntry(deps.memoryDir, "short-term", idxEntry.id);
     }
   }
@@ -150,17 +185,7 @@ export async function selectForWorkingMemory(
       if (shortTermEntries.length >= maxEntries) break;
       if (seenEntryIds.has(idxEntry.entry_id)) continue;
 
-      const dataFilePath = path.join(
-        deps.memoryDir,
-        "short-term",
-        idxEntry.data_file
-      );
-      const allEntries =
-        (await readJsonFileAsync<ShortTermEntry[]>(
-          dataFilePath,
-          z.array(ShortTermEntrySchema)
-        )) ?? [];
-      const found = allEntries.find((e) => e.id === idxEntry.entry_id);
+      const found = await loadShortTermEntry(deps, idxEntry);
       if (found) {
         shortTermEntries.push(found);
         seenEntryIds.add(idxEntry.entry_id);
@@ -199,6 +224,25 @@ export async function selectForWorkingMemory(
   const lessons = [...goalLessons, ...dedupedCrossGoal];
 
   return { shortTerm: shortTermEntries, lessons };
+}
+
+// ─── Internal helper ───
+
+async function loadShortTermEntry(
+  deps: Pick<MemorySelectionDeps, "memoryDir">,
+  idxEntry: import("../types/memory-lifecycle.js").MemoryIndexEntry
+): Promise<ShortTermEntry | undefined> {
+  const dataFilePath = path.join(
+    deps.memoryDir,
+    "short-term",
+    idxEntry.data_file
+  );
+  const allEntries =
+    (await readJsonFileAsync<ShortTermEntry[]>(
+      dataFilePath,
+      z.array(ShortTermEntrySchema)
+    )) ?? [];
+  return allEntries.find((e) => e.id === idxEntry.entry_id);
 }
 
 // ─── searchCrossGoalLessons ───

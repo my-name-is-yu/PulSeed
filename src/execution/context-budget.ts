@@ -1,3 +1,20 @@
+import type { TierBudget } from "../types/memory-lifecycle.js";
+
+// ─── Tier Budget Allocation ───
+
+/**
+ * Distributes a total token budget across memory tiers.
+ * - core: 50% (always included items)
+ * - recall: 35% (recent observations, strategy history)
+ * - archival: remaining (completed-goal knowledge)
+ */
+export function allocateTierBudget(totalTokens: number): TierBudget {
+  const core = Math.floor(totalTokens * 0.50);
+  const recall = Math.floor(totalTokens * 0.35);
+  const archival = totalTokens - core - recall;
+  return { core, recall, archival };
+}
+
 // ─── Budget Allocation ───
 
 export interface BudgetAllocation {

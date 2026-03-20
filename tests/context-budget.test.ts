@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import {
   allocateBudget,
+  allocateTierBudget,
   estimateTokens,
   selectWithinBudget,
   trimToBudget,
@@ -21,6 +22,39 @@ function makeEmbeddingClient(vectorSize = 4): IEmbeddingClient {
 function makeTempIndexPath() {
   return `/tmp/vi-test-${Math.random().toString(36).slice(2)}.json`;
 }
+
+// ─── allocateTierBudget ───
+
+describe("allocateTierBudget", () => {
+  it("distributes 1000 tokens: core=500, recall=350, archival=150", () => {
+    const budget = allocateTierBudget(1000);
+    expect(budget.core).toBe(500);
+    expect(budget.recall).toBe(350);
+    expect(budget.archival).toBe(150);
+  });
+
+  it("returns all zeros for 0 total tokens", () => {
+    const budget = allocateTierBudget(0);
+    expect(budget.core).toBe(0);
+    expect(budget.recall).toBe(0);
+    expect(budget.archival).toBe(0);
+  });
+
+  it("handles edge case of 1 token: core=0, recall=0, archival=1", () => {
+    const budget = allocateTierBudget(1);
+    // core = floor(0.5) = 0, recall = floor(0.35) = 0, archival = 1 - 0 - 0 = 1
+    expect(budget.core).toBe(0);
+    expect(budget.recall).toBe(0);
+    expect(budget.archival).toBe(1);
+  });
+
+  it("sums to totalTokens for any input", () => {
+    for (const n of [7, 100, 999, 10000]) {
+      const budget = allocateTierBudget(n);
+      expect(budget.core + budget.recall + budget.archival).toBe(n);
+    }
+  });
+});
 
 // ─── allocateBudget ───
 

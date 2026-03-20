@@ -204,6 +204,7 @@ export async function storeLessonsLongTerm(
       last_accessed: now,
       access_count: 0,
       embedding_id: null,
+      memory_tier: "recall" as const,
     });
   }
 }

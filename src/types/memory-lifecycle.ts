@@ -1,5 +1,17 @@
 import { z } from "zod";
 
+// Memory tier (hierarchical memory: core/recall/archival)
+export const MemoryTierSchema = z.enum(["core", "recall", "archival"]);
+export type MemoryTier = z.infer<typeof MemoryTierSchema>;
+
+// Tier budget allocation (fraction of context budget per tier)
+export const TierBudgetSchema = z.object({
+  core: z.number().min(0).max(1),
+  recall: z.number().min(0).max(1),
+  archival: z.number().min(0).max(1),
+});
+export type TierBudget = z.infer<typeof TierBudgetSchema>;
+
 // Retention configuration
 export const RetentionConfigSchema = z.object({
   default_retention_loops: z.number().int().positive().default(100),
@@ -36,6 +48,7 @@ export const ShortTermEntrySchema = z.object({
   tags: z.array(z.string()).default([]),
   data: z.record(z.string(), z.unknown()),
   embedding_id: z.string().nullable().default(null),
+  memory_tier: MemoryTierSchema.default("recall"),
 });
 export type ShortTermEntry = z.infer<typeof ShortTermEntrySchema>;
 
@@ -125,6 +138,7 @@ export const MemoryIndexEntrySchema = z.object({
   last_accessed: z.string().datetime(),
   access_count: z.number().int().nonnegative().default(0),
   embedding_id: z.string().nullable().default(null),
+  memory_tier: MemoryTierSchema.default("recall"),
 });
 export type MemoryIndexEntry = z.infer<typeof MemoryIndexEntrySchema>;
 

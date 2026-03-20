@@ -225,6 +225,7 @@ export class MemoryLifecycleManager {
       last_accessed: now,
       access_count: 0,
       embedding_id: null,
+      memory_tier: entry.memory_tier,
     });
 
     // Phase 2: fire-and-forget embedding indexing

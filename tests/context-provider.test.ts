@@ -30,7 +30,10 @@ vi.mock("child_process", () => ({
 // promisify(execFileMock) will use the default callback wrapper.
 import {
   buildWorkspaceContext,
+  buildWorkspaceContextItems,
+  selectByTier,
   dimensionNameToSearchTerms,
+  type ContextItem,
 } from "../src/observation/context-provider.js";
 
 // Build a callback-style mock compatible with util.promisify.
@@ -247,5 +250,135 @@ describe("buildWorkspaceContext (integration)", () => {
     });
     expect(typeof result).toBe("string");
     expect(result).toBe("(No workspace context available)");
+  });
+});
+
+// ─── Tier-aware context ───
+
+describe("selectByTier", () => {
+  const makeItem = (label: string, tier: ContextItem["memory_tier"]): ContextItem => ({
+    label,
+    content: `content of ${label}`,
+    memory_tier: tier,
+  });
+
+  it("always includes core items", () => {
+    const items: ContextItem[] = [
+      makeItem("recall-1", "recall"),
+      makeItem("core-1", "core"),
+      makeItem("archival-1", "archival"),
+    ];
+    const selected = selectByTier(items, 1);
+    // core is always included even with maxItems=1
+    expect(selected.some((i) => i.memory_tier === "core")).toBe(true);
+  });
+
+  it("fills remaining slots with recall after core", () => {
+    const items: ContextItem[] = [
+      makeItem("core-1", "core"),
+      makeItem("recall-1", "recall"),
+      makeItem("recall-2", "recall"),
+      makeItem("archival-1", "archival"),
+    ];
+    const selected = selectByTier(items, 2);
+    expect(selected).toHaveLength(2);
+    expect(selected[0].memory_tier).toBe("core");
+    expect(selected[1].memory_tier).toBe("recall");
+  });
+
+  it("includes archival only when slots remain after core and recall", () => {
+    const items: ContextItem[] = [
+      makeItem("core-1", "core"),
+      makeItem("archival-1", "archival"),
+    ];
+    const selected = selectByTier(items, 10); // plenty of slots
+    const tiers = selected.map((i) => i.memory_tier);
+    expect(tiers).toContain("core");
+    expect(tiers).toContain("archival");
+  });
+
+  it("excludes archival when no slots remain after core and recall", () => {
+    const items: ContextItem[] = [
+      makeItem("core-1", "core"),
+      makeItem("recall-1", "recall"),
+      makeItem("archival-1", "archival"),
+    ];
+    const selected = selectByTier(items, 2);
+    expect(selected.some((i) => i.memory_tier === "archival")).toBe(false);
+  });
+
+  it("treats items with no tier as recall (backward compat)", () => {
+    // Simulate an item where memory_tier might be undefined (backward compat)
+    const item = { label: "legacy", content: "data" } as unknown as ContextItem;
+    const selected = selectByTier([item], 5);
+    // Should be included (treated as recall)
+    expect(selected).toHaveLength(1);
+  });
+});
+
+describe("buildWorkspaceContextItems", () => {
+  const projectRoot = path.resolve(__dirname, "..");
+
+  beforeEach(() => {
+    execFileMock.mockReset();
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns ContextItem array with memory_tier fields", async () => {
+    execFileMock.mockImplementation(
+      makeExecFileMock((file) => {
+        if (file === "grep") return { stdout: "" };
+        if (file === "git") return { stdout: "src/foo.ts | 3 +++\n1 file changed" };
+        if (file === "npx") return { stdout: "Tests  10 passed (10)\n" };
+        return { stdout: "" };
+      })
+    );
+
+    const items = await buildWorkspaceContextItems("goal-tier-1", "todo_count", {
+      cwd: projectRoot,
+    });
+    expect(Array.isArray(items)).toBe(true);
+    for (const item of items) {
+      expect(item).toHaveProperty("memory_tier");
+      expect(["core", "recall", "archival"]).toContain(item.memory_tier);
+    }
+  });
+
+  it("respects maxItems cap via tier-priority selection", async () => {
+    execFileMock.mockImplementation(
+      makeExecFileMock((file) => {
+        if (file === "grep") return { stdout: `${projectRoot}/src/observation/context-provider.ts\n` };
+        if (file === "git") return { stdout: "src/foo.ts | 3 +++\n1 file changed" };
+        if (file === "npx") return { stdout: "Tests  10 passed (10)\n" };
+        return { stdout: "" };
+      })
+    );
+
+    const items = await buildWorkspaceContextItems("goal-tier-2", "todo_count", {
+      cwd: projectRoot,
+      maxItems: 1,
+    });
+    expect(items.length).toBeLessThanOrEqual(1);
+  });
+
+  it("labels recent-changes items as recall tier", async () => {
+    execFileMock.mockImplementation(
+      makeExecFileMock((file) => {
+        if (file === "grep") return new Error("no matches");
+        if (file === "git") return { stdout: "src/foo.ts | 3 +++\n1 file changed" };
+        if (file === "npx") return { stdout: "Tests  5 passed (5)\n" };
+        return { stdout: "" };
+      })
+    );
+
+    const items = await buildWorkspaceContextItems("goal-tier-3", "unknown_xyz", {
+      cwd: projectRoot,
+    });
+    const gitItem = items.find((i) => i.label.includes("Recent changes"));
+    expect(gitItem).toBeDefined();
+    expect(gitItem?.memory_tier).toBe("recall");
   });
 });
