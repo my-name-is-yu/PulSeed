@@ -4,7 +4,7 @@ A Motiva notifier plugin that sends events to a Slack channel via Incoming Webho
 
 ## Requirements
 
-- Node.js 18+ (uses built-in `fetch`)
+- Node.js 20+ (uses built-in `fetch`)
 - A Slack Incoming Webhook URL
 
 ## Installation

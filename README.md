@@ -46,7 +46,7 @@ Motiva knows when to stop. Rather than pursuing perfection, it applies *satisfic
 
 ## Quick Start
 
-**Requirements:** Node.js 18+, an OpenAI or Anthropic API key.
+**Requirements:** Node.js 20+, an OpenAI or Anthropic API key.
 
 ### Installation
 
@@ -85,8 +85,8 @@ On first run, Motiva initializes its state directory at `~/.motiva/`.
 ### Development Installation
 
 ```bash
-git clone https://github.com/yuyoshimuta/motiva.git
-cd motiva
+git clone https://github.com/my-name-is-yu/Motiva.git
+cd Motiva
 npm install
 npm run build
 export OPENAI_API_KEY=sk-...

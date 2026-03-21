@@ -26,7 +26,7 @@ Use the following process to prepare a working local environment and verify it b
 
 ### Prerequisites
 
-- Use Node.js 18 or newer. The repository declares `>=18` in `package.json`.
+- Use Node.js 20 or newer. The repository declares `>=20` in `package.json`.
 - Use the npm version that ships with your installed Node.js unless you have a project-specific reason not to.
 - Confirm your environment before continuing:
 
@@ -38,8 +38,8 @@ npm --version
 ### Clone and Install
 
 ```bash
-git clone https://github.com/yuyoshimuta/motiva.git
-cd motiva
+git clone https://github.com/my-name-is-yu/Motiva.git
+cd Motiva
 npm install
 ```
 

@@ -4,7 +4,7 @@
 
 - Intel MacBook (8GB RAM / 256GB Storage)
 - macOS
-- Node.js 18+
+- Node.js 20+
 - Ollama インストール済み
 - モデル: `qwen3:4b`
 

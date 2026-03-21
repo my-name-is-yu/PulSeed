@@ -6,7 +6,7 @@ MotivaをOpenAI APIおよびOpenAI Codex CLIで動かすためのガイドです
 
 - ChatGPT Plus（$20/月）または OpenAI API 別途契約
   - **重要**: ChatGPT PlusサブスクリプションとOpenAI APIは完全に別課金です。APIキーを使った呼び出しは従量課金になります。Codex CLIはChatGPT Plusのサブスク枠内で利用可能です。
-- Node.js 18+
+- Node.js 20+
 - Motivaビルド済み（`npm run build`）
 - OpenAI Codex CLI インストール済み（タスクをCodexで実行する場合のみ）
 

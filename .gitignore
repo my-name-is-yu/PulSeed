@@ -1,6 +1,9 @@
 node_modules/
 dist/
-.motive/
+coverage-c8/
+.motiva/
+.claire/
 *.tmp
 web/.next/
 web/node_modules/
+web/tsconfig.tsbuildinfo

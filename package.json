@@ -13,7 +13,7 @@
   },
   "license": "MIT",
   "author": "yuyoshimuta",
-  "homepage": "https://github.com/yuyoshimuta/motiva#readme",
+  "homepage": "https://github.com/my-name-is-yu/Motiva#readme",
   "bin": {
     "motiva": "dist/cli-runner.js"
   },
@@ -27,7 +27,7 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/yuyoshimuta/motiva.git"
+    "url": "https://github.com/my-name-is-yu/Motiva.git"
   },
   "files": [
     "dist",
