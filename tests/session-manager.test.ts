@@ -6,6 +6,7 @@ import { SessionManager, DEFAULT_CONTEXT_BUDGET } from "../src/execution/session
 import type { Session } from "../src/types/session.js";
 import type { KnowledgeEntry } from "../src/types/knowledge.js";
 import { makeTempDir } from "./helpers/temp-dir.js";
+import { randomUUID } from "node:crypto";
 
 // ─── Tests ───
 
@@ -446,7 +447,7 @@ describe("SessionManager", () => {
     function makeKnowledgeEntry(overrides: Partial<KnowledgeEntry> = {}): KnowledgeEntry {
       const now = new Date().toISOString();
       return {
-        entry_id: crypto.randomUUID(),
+        entry_id: randomUUID(),
         question: "What is the test framework?",
         answer: "Vitest",
         sources: [],

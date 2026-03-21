@@ -10,6 +10,7 @@ import type { ILLMClient, LLMMessage, LLMRequestOptions, LLMResponse } from "../
 import type { KnowledgeEntry } from "../src/types/knowledge.js";
 import type { ZodSchema } from "zod";
 import { createMockLLMClient } from "./helpers/mock-llm.js";
+import { randomUUID } from "node:crypto";
 
 // ─── Helpers ───
 
@@ -24,7 +25,7 @@ function makeTempDir(): string {
 
 function makeKnowledgeEntry(overrides: Partial<KnowledgeEntry> = {}): KnowledgeEntry {
   return {
-    entry_id: overrides.entry_id ?? crypto.randomUUID(),
+    entry_id: overrides.entry_id ?? randomUUID(),
     question: overrides.question ?? "What is the normal breathing rate for a dog?",
     answer: overrides.answer ?? "15-30 breaths per minute for an adult dog at rest.",
     sources: overrides.sources ?? [
@@ -32,7 +33,7 @@ function makeKnowledgeEntry(overrides: Partial<KnowledgeEntry> = {}): KnowledgeE
     ],
     confidence: overrides.confidence ?? 0.7,
     acquired_at: overrides.acquired_at ?? new Date().toISOString(),
-    acquisition_task_id: overrides.acquisition_task_id ?? crypto.randomUUID(),
+    acquisition_task_id: overrides.acquisition_task_id ?? randomUUID(),
     superseded_by: overrides.superseded_by ?? null,
     tags: overrides.tags ?? ["breathing_rate", "normal_range", "dog"],
     ...overrides,

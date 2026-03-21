@@ -8,6 +8,7 @@ import type { MotivaEvent, GoalSchedule } from "../src/types/drive.js";
 import type { Goal } from "../src/types/goal.js";
 import { makeTempDir } from "./helpers/temp-dir.js";
 import { makeGoal } from "./helpers/fixtures.js";
+import { randomUUID } from "node:crypto";
 
 function makeEvent(overrides: Partial<MotivaEvent> = {}): MotivaEvent {
   return {
@@ -64,14 +65,14 @@ describe("DriveSystem", () => {
 
   describe("shouldActivate", () => {
     it("returns true when schedule is due (no schedule stored => always due)", async () => {
-      const goalId = crypto.randomUUID();
+      const goalId = randomUUID();
       const goal = makeGoal({ id: goalId, status: "active" });
       await stateManager.saveGoal(goal);
       expect(await driveSystem.shouldActivate(goalId)).toBe(true);
     });
 
     it("returns false when schedule is not yet due and no events", async () => {
-      const goalId = crypto.randomUUID();
+      const goalId = randomUUID();
       const goal = makeGoal({ id: goalId, status: "active" });
       await stateManager.saveGoal(goal);
 
@@ -84,7 +85,7 @@ describe("DriveSystem", () => {
     });
 
     it("returns true when schedule is overdue", async () => {
-      const goalId = crypto.randomUUID();
+      const goalId = randomUUID();
       const goal = makeGoal({ id: goalId, status: "active" });
       await stateManager.saveGoal(goal);
 
@@ -96,7 +97,7 @@ describe("DriveSystem", () => {
     });
 
     it("returns false when goal status is completed", async () => {
-      const goalId = crypto.randomUUID();
+      const goalId = randomUUID();
       const goal = makeGoal({ id: goalId, status: "completed" });
       await stateManager.saveGoal(goal);
 
@@ -105,21 +106,21 @@ describe("DriveSystem", () => {
     });
 
     it("returns false when goal status is cancelled", async () => {
-      const goalId = crypto.randomUUID();
+      const goalId = randomUUID();
       const goal = makeGoal({ id: goalId, status: "cancelled" });
       await stateManager.saveGoal(goal);
       expect(await driveSystem.shouldActivate(goalId)).toBe(false);
     });
 
     it("returns false when goal status is archived", async () => {
-      const goalId = crypto.randomUUID();
+      const goalId = randomUUID();
       const goal = makeGoal({ id: goalId, status: "archived" });
       await stateManager.saveGoal(goal);
       expect(await driveSystem.shouldActivate(goalId)).toBe(false);
     });
 
     it("returns true when event queue has an event targeting this goal (even if schedule not due)", async () => {
-      const goalId = crypto.randomUUID();
+      const goalId = randomUUID();
       const goal = makeGoal({ id: goalId, status: "active" });
       await stateManager.saveGoal(goal);
 
@@ -136,8 +137,8 @@ describe("DriveSystem", () => {
     });
 
     it("returns false when event queue has events for a different goal (schedule not due)", async () => {
-      const goalId = crypto.randomUUID();
-      const otherGoalId = crypto.randomUUID();
+      const goalId = randomUUID();
+      const otherGoalId = randomUUID();
       const goal = makeGoal({ id: goalId, status: "active" });
       await stateManager.saveGoal(goal);
 
@@ -324,7 +325,7 @@ describe("DriveSystem", () => {
     });
 
     it("returns true when next_check_at is in the past", async () => {
-      const goalId = crypto.randomUUID();
+      const goalId = randomUUID();
       const schedule = driveSystem.createDefaultSchedule(goalId, 1);
       const pastTime = new Date(Date.now() - 5000).toISOString();
       await driveSystem.updateSchedule(goalId, { ...schedule, next_check_at: pastTime });
@@ -333,7 +334,7 @@ describe("DriveSystem", () => {
     });
 
     it("returns true when next_check_at equals now (boundary — due)", async () => {
-      const goalId = crypto.randomUUID();
+      const goalId = randomUUID();
       const schedule = driveSystem.createDefaultSchedule(goalId, 1);
       // Use a time slightly in the past to ensure <= comparison passes
       const justNow = new Date(Date.now() - 1).toISOString();
@@ -343,7 +344,7 @@ describe("DriveSystem", () => {
     });
 
     it("returns false when next_check_at is in the future", async () => {
-      const goalId = crypto.randomUUID();
+      const goalId = randomUUID();
       const schedule = driveSystem.createDefaultSchedule(goalId, 1);
       const futureTime = new Date(Date.now() + 10 * 60 * 60 * 1000).toISOString();
       await driveSystem.updateSchedule(goalId, { ...schedule, next_check_at: futureTime });
@@ -360,7 +361,7 @@ describe("DriveSystem", () => {
     });
 
     it("round-trips schedule persistence correctly", async () => {
-      const goalId = crypto.randomUUID();
+      const goalId = randomUUID();
       const schedule: GoalSchedule = {
         goal_id: goalId,
         next_check_at: "2025-06-01T12:00:00.000Z",
@@ -384,7 +385,7 @@ describe("DriveSystem", () => {
     });
 
     it("updates an existing schedule", async () => {
-      const goalId = crypto.randomUUID();
+      const goalId = randomUUID();
       const schedule = driveSystem.createDefaultSchedule(goalId, 2);
       await driveSystem.updateSchedule(goalId, schedule);
 
@@ -399,7 +400,7 @@ describe("DriveSystem", () => {
       const scheduleDir = path.join(tmpDir, "schedule");
       fs.rmSync(scheduleDir, { recursive: true, force: true });
 
-      const goalId = crypto.randomUUID();
+      const goalId = randomUUID();
       const schedule = driveSystem.createDefaultSchedule(goalId, 1);
       await driveSystem.updateSchedule(goalId, schedule);
 
@@ -548,7 +549,7 @@ describe("DriveSystem", () => {
     });
 
     it("atomic write creates .tmp then renames (file is not corrupt after write)", async () => {
-      const goalId = crypto.randomUUID();
+      const goalId = randomUUID();
       const schedule = driveSystem.createDefaultSchedule(goalId, 1);
       await driveSystem.updateSchedule(goalId, schedule);
 

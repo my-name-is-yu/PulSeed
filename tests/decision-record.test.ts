@@ -6,6 +6,7 @@ import { StateManager } from "../src/state-manager.js";
 import { KnowledgeManager } from "../src/knowledge/knowledge-manager.js";
 import type { DecisionRecord } from "../src/types/knowledge.js";
 import { createMockLLMClient } from "./helpers/mock-llm.js";
+import { randomUUID } from "node:crypto";
 
 // ─── Helpers ───
 
@@ -20,7 +21,7 @@ function makeTempDir(): string {
 
 function makeDecisionRecord(overrides: Partial<DecisionRecord> = {}): DecisionRecord {
   return {
-    id: crypto.randomUUID(),
+    id: randomUUID(),
     goal_id: "goal-1",
     goal_type: "coding",
     strategy_id: "strategy-1",

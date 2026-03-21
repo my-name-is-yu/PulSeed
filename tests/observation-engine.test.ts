@@ -11,6 +11,7 @@ import type { IDataSourceAdapter } from "../src/observation/data-source-adapter.
 import type { DataSourceConfig } from "../src/types/data-source.js";
 import { makeTempDir } from "./helpers/temp-dir.js";
 import { makeGoal } from "./helpers/fixtures.js";
+import { randomUUID } from "node:crypto";
 
 // ─── Helpers ───
 
@@ -39,7 +40,7 @@ const testDimension = {
 
 function makeEntry(overrides: Partial<ObservationLogEntry> = {}): ObservationLogEntry {
   return {
-    observation_id: crypto.randomUUID(),
+    observation_id: randomUUID(),
     timestamp: new Date().toISOString(),
     trigger: "post_task",
     goal_id: "goal-1",

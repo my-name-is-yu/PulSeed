@@ -10,6 +10,7 @@ import { createMockLLMClient } from "./helpers/mock-llm.js";
 import { makeTempDir } from "./helpers/temp-dir.js";
 import { makeGoal as _makeGoal, makeDimension } from "./helpers/fixtures.js";
 import { PASS_VERDICT_SIMPLE_JSON as PASS_VERDICT } from "./helpers/ethics-fixtures.js";
+import { randomUUID } from "node:crypto";
 
 // ─── Local defaults matching the original local makeGoal ───
 
@@ -31,7 +32,7 @@ const metricADim = () =>
 
 function makeGoal(overrides: Parameters<typeof _makeGoal>[0] = {}) {
   return _makeGoal({
-    id: overrides?.id ?? crypto.randomUUID(),
+    id: overrides?.id ?? randomUUID(),
     description: overrides?.description ?? "A goal for testing decomposition",
     dimensions: overrides?.dimensions ?? [metricADim()],
     ...overrides,

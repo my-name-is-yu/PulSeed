@@ -8,10 +8,11 @@ import { MockEmbeddingClient } from "../src/knowledge/embedding-client.js";
 import { createMockLLMClient } from "./helpers/mock-llm.js";
 import type { KnowledgeEntry, SharedKnowledgeEntry } from "../src/types/knowledge.js";
 import { makeTempDir } from "./helpers/temp-dir.js";
+import { randomUUID } from "node:crypto";
 
 function makeKnowledgeEntry(overrides: Partial<KnowledgeEntry> = {}): KnowledgeEntry {
   return {
-    entry_id: overrides.entry_id ?? crypto.randomUUID(),
+    entry_id: overrides.entry_id ?? randomUUID(),
     question: overrides.question ?? "What is the SaaS churn rate benchmark?",
     answer: overrides.answer ?? "Industry average SaaS churn is 5-7% annually.",
     sources: overrides.sources ?? [
@@ -19,7 +20,7 @@ function makeKnowledgeEntry(overrides: Partial<KnowledgeEntry> = {}): KnowledgeE
     ],
     confidence: overrides.confidence ?? 0.75,
     acquired_at: overrides.acquired_at ?? new Date().toISOString(),
-    acquisition_task_id: overrides.acquisition_task_id ?? crypto.randomUUID(),
+    acquisition_task_id: overrides.acquisition_task_id ?? randomUUID(),
     superseded_by: overrides.superseded_by ?? null,
     tags: overrides.tags ?? ["churn_rate", "saas", "benchmark"],
     embedding_id: overrides.embedding_id ?? null,

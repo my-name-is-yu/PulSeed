@@ -7,6 +7,7 @@ import type { Goal } from "../src/types/goal.js";
 import type { ILLMClient } from "../src/llm/llm-client.js";
 import { z } from "zod";
 import { makeTempDir } from "./helpers/temp-dir.js";
+import { randomUUID } from "node:crypto";
 
 // ─── Prompt Capture Mock ───
 
@@ -35,7 +36,7 @@ class PromptCaptureMockLLM implements ILLMClient {
 function makeGoal(overrides: Partial<Goal> = {}): Goal {
   const now = new Date().toISOString();
   return {
-    id: overrides.id ?? crypto.randomUUID(),
+    id: overrides.id ?? randomUUID(),
     parent_id: null,
     node_type: "goal",
     title: "Test Goal",
@@ -295,7 +296,7 @@ describe("observeWithLLM prompt quality", () => {
 
     const now = new Date().toISOString();
     const goal: Goal = {
-      id: crypto.randomUUID(),
+      id: randomUUID(),
       parent_id: null,
       node_type: "goal",
       title: "Test Goal",
