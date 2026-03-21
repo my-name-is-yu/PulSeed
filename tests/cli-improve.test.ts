@@ -13,6 +13,17 @@ import * as fs from "node:fs";
 
 // ─── Module mocks ────────────────────────────────────────────────────────────
 
+vi.mock("../src/llm/provider-factory.js", () => ({
+  buildLLMClient: vi.fn().mockResolvedValue({
+    sendMessage: vi.fn(),
+    parseJSON: vi.fn(),
+  }),
+  buildAdapterRegistry: vi.fn().mockResolvedValue({
+    register: vi.fn(),
+    getAdapterCapabilities: vi.fn().mockReturnValue([]),
+  }),
+}));
+
 vi.mock("../src/core-loop.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/core-loop.js")>();
   return {
@@ -164,6 +175,7 @@ beforeEach(() => {
 
   origApiKey = process.env.ANTHROPIC_API_KEY;
   process.env.ANTHROPIC_API_KEY = "test-api-key";
+  process.env.MOTIVA_LLM_PROVIDER = "anthropic";
 });
 
 afterEach(() => {

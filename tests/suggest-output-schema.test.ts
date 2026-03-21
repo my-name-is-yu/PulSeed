@@ -2,6 +2,17 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
+vi.mock("../src/llm/provider-factory.js", () => ({
+  buildLLMClient: vi.fn().mockResolvedValue({
+    sendMessage: vi.fn(),
+    parseJSON: vi.fn(),
+  }),
+  buildAdapterRegistry: vi.fn().mockResolvedValue({
+    register: vi.fn(),
+    getAdapterCapabilities: vi.fn().mockReturnValue([]),
+  }),
+}));
+
 vi.mock("../src/core/suggest/repo-context.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/core/suggest/repo-context.js")>();
   return {
@@ -103,6 +114,7 @@ beforeEach(() => {
   tmpDir = makeTempDir();
   origApiKey = process.env.ANTHROPIC_API_KEY;
   process.env.ANTHROPIC_API_KEY = "test-api-key";
+  process.env.MOTIVA_LLM_PROVIDER = "anthropic";
 });
 
 afterEach(() => {

@@ -189,6 +189,7 @@ beforeEach(() => {
   // Provide a dummy API key so requireApiKey() passes by default.
   origApiKey = process.env.ANTHROPIC_API_KEY;
   process.env.ANTHROPIC_API_KEY = "test-api-key";
+  process.env.MOTIVA_LLM_PROVIDER = "anthropic";
 });
 
 afterEach(() => {
