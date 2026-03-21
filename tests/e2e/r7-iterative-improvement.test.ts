@@ -49,6 +49,9 @@ import { makeTempDir } from "../helpers/temp-dir.js";
 
 // ─── Helpers ───
 
+/** Fake workspace context so the no-evidence guard does not zero out LLM scores */
+const fakeGitContextFetcher = () => "File: src/main.ts\nconst quality = 0.85; // measured";
+
 function removeTempDir(dir: string): void {
   fs.rmSync(dir, { recursive: true, force: true });
 }
@@ -278,7 +281,7 @@ function buildCoreLoop(
   maxIterations: number,
   observationEngine?: ObservationEngine
 ): CoreLoop {
-  const obsEngine = observationEngine ?? new ObservationEngine(stateManager, [], llmClient);
+  const obsEngine = observationEngine ?? new ObservationEngine(stateManager, [], llmClient, undefined, { gitContextFetcher: fakeGitContextFetcher });
   const sessionManager = new SessionManager(stateManager);
   const trustManager = new TrustManager(stateManager);
   const stallDetector = new StallDetector(stateManager);
@@ -741,7 +744,7 @@ describe("R7-3: LLM observation min-type scaling accuracy", () => {
       makeLLMReviewResponse(),
     ]);
 
-    const obsEngine = new ObservationEngine(stateManager, [], llmClient);
+    const obsEngine = new ObservationEngine(stateManager, [], llmClient, undefined, { gitContextFetcher: fakeGitContextFetcher });
     const coreLoop = buildCoreLoop(stateManager, llmClient, 3, obsEngine);
 
     const goal = makeOneDimGoal(goalId, "code_quality", 0.8);

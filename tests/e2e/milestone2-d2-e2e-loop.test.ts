@@ -61,6 +61,9 @@ class MockAdapter implements IAdapter {
 
 // ─── Helpers ───
 
+/** Fake workspace context so the no-evidence guard does not zero out LLM scores */
+const fakeGitContextFetcher = () => "File: tests/e2e-test.ts\n// e2e test passing with full coverage";
+
 function removeTempDir(dir: string): void {
   fs.rmSync(dir, { recursive: true, force: true });
 }
@@ -288,7 +291,7 @@ describe("Milestone 2 D-2: E2E loop test automation goal", () => {
     ]);
 
     // No DataSource for e2e_test_passing — should fall back to LLM
-    const engine = new ObservationEngine(stateManager, [], mockLLMClient);
+    const engine = new ObservationEngine(stateManager, [], mockLLMClient, undefined, { gitContextFetcher: fakeGitContextFetcher });
 
     const goalId = "d2-test2-goal";
     const fullGoal = makeE2EGoal(goalId, tempDir);
@@ -342,7 +345,7 @@ describe("Milestone 2 D-2: E2E loop test automation goal", () => {
       makeLLMReviewResponse(),
     ]);
 
-    const observationEngine = new ObservationEngine(stateManager, [fileExistenceDs], mockLLMClient);
+    const observationEngine = new ObservationEngine(stateManager, [fileExistenceDs], mockLLMClient, undefined, { gitContextFetcher: fakeGitContextFetcher });
     const sessionManager = new SessionManager(stateManager);
     const trustManager = new TrustManager(stateManager);
     const stallDetector = new StallDetector(stateManager);

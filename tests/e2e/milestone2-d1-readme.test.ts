@@ -314,7 +314,7 @@ describe("Milestone 2 D-1: README quality goal", () => {
       makeLLMObservationPresent(0.0, "No usage examples found"),
     ]);
 
-    const observationEngine = new ObservationEngine(stateManager, [], llmClient);
+    const observationEngine = new ObservationEngine(stateManager, [], llmClient, undefined, { gitContextFetcher: fakeGitContextFetcher });
 
     const goalId = "readme-goal-tier-test";
     const goal = makeReadmeGoal(goalId);
