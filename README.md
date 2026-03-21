@@ -30,6 +30,20 @@ Motiva knows when to stop. Rather than pursuing perfection, it applies *satisfic
 
 ---
 
+## How Motiva Compares
+
+| | AutoGen | LangGraph | CrewAI | **Motiva** |
+|---|---|---|---|---|
+| **Approach** | Conversation-driven multi-agent dialogue | Graph-based workflow engine | Role-based agent crews | Orchestration-only loop: observe → gap → score → task → verify |
+| **Executes tasks?** | Yes — runs generated code locally/Docker | Yes — nodes execute LLM and tool calls | Yes — agents execute tasks directly | **No** — always delegates to external agents |
+| **Goal model** | Prompt-driven; no measurable thresholds | Workflow-driven; developer-defined graph | Text-based role goals (not measurable) | Quantitative thresholds (min/max/range); gap drives every decision |
+| **When to stop** | 11 termination conditions (keyword, timeout, token limit) | Developer-defined edge predicates | Guardrail validation + retry | Satisficing: stops at "good enough," not perfect |
+| **Trust & safety** | Opt-in human gateway; Docker sandbox | Graph interrupts for human review | Task guardrails (fn/LLM-judge) | Asymmetric trust (failure −10 vs success +3); irreversible actions always need approval |
+| **Verification** | None — results are chat messages | None — developer-built | Output-only guardrail check | 3-layer: mechanical checks → LLM review → self-report |
+| **Agent support** | OpenAI-compatible LLMs | LLMs with tool-calling | Any provider via LiteLLM | Any agent: CLI, API, Browser Use, A2A, custom adapters |
+
+---
+
 ## Quick Start
 
 **Requirements:** Node.js 18+, an OpenAI or Anthropic API key.
