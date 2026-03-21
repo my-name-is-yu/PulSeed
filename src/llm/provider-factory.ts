@@ -15,6 +15,7 @@ import { ClaudeAPIAdapter } from "../adapters/claude-api.js";
 import { OpenAICodexCLIAdapter } from "../adapters/openai-codex.js";
 import { GitHubIssueAdapter } from "../adapters/github-issue.js";
 import { A2AAdapter } from "../adapters/a2a-adapter.js";
+import { BrowserUseCLIAdapter } from "../adapters/browser-use-cli.js";
 import type { ProviderConfig } from "./provider-config.js";
 
 /**
@@ -101,6 +102,7 @@ export async function buildAdapterRegistry(
   registry.register(new ClaudeAPIAdapter(llmClient));
   registry.register(new OpenAICodexCLIAdapter());
   registry.register(new GitHubIssueAdapter());
+  registry.register(new BrowserUseCLIAdapter());
 
   // Register A2A agents from config
   const config = providerConfig ?? await loadProviderConfig();
