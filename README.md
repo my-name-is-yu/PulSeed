@@ -230,35 +230,14 @@ Exit codes: `0` normal completion, `1` error, `2` stall escalation requiring hum
 ```bash
 npm install
 npm run build           # TypeScript → dist/
-npm test                # Run all tests (4332 tests, 197 files)
+npm test                # Run all tests
 npm run typecheck       # Type check without emit
 npm run test:watch      # Watch mode
 ```
 
 State files: `~/.motiva/`. Reports: `~/.motiva/reports/`. Ethics logs: `~/.motiva/ethics/`.
 
----
-
-## Project Status
-
-**Stage 1-14 + Milestone 1-18 complete. 4332 tests passing across 197 test files.**
-
-| Stage / Milestone | What was built |
-|---|---|
-| Stage 1-2 | Type system, state persistence, gap calculation, drive scoring, observation, stall detection, satisficing |
-| Stage 3 | LLM client, ethics gate, session management, strategy management, goal negotiation |
-| Stage 4 | Adapter layer (CLI agents, LLM APIs, Browser Use, A2A Protocol, custom adapters), task lifecycle |
-| Stage 5-6 | Core loop, reporting engine, CLI runner |
-| Stage 7 | TUI — Ink/React terminal dashboard, approval UI, chat interface |
-| Stage 8-10 | Knowledge manager, portfolio manager, daemon runtime, event server, notifications, memory lifecycle |
-| Stage 11 | Curiosity engine, character configuration, enhanced ethics enforcement |
-| Stage 12 | Semantic embedding (OpenAI/Ollama/Mock), vector index (cosine similarity), knowledge graph, goal dependency graph |
-| Stage 13 | Autonomous capability detection and acquisition, external data source adapters (file, HTTP, GitHub Issues) |
-| Stage 14 | Goal tree (recursive decomposition), cross-goal portfolio, strategy templates, learning pipeline, knowledge transfer |
-| Milestone 1 | LLM-powered 3-layer observation with 3-stage fallback (mechanical → LLM → self-report) |
-| Milestone 2-3 | Dogfooding verification — README quality, E2E loop automation, npm publish readiness |
-| Milestone 4-7 | Persistent runtime Phase 2, semantic knowledge base, observation accuracy, task selection |
-| Milestone 8-18 | Safety (EthicsGate L1), observation accuracy (ShellDataSource), goal suggestion, autonomous strategy, plugin architecture, semantic knowledge, capability detection, goal tree, TUI, Web UI, external plugins, hierarchical memory, Browser Use CLI adapter |
+For detailed implementation status, see [`docs/status.md`](docs/status.md).
 
 ---
 
