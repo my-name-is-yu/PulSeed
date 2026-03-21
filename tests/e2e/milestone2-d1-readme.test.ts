@@ -42,6 +42,9 @@ import type { ZodSchema } from "zod";
 // ─── Helpers ───
 import { makeTempDir } from "../helpers/temp-dir.js";
 
+/** Fake workspace context so the no-evidence guard does not zero out LLM scores */
+const fakeGitContextFetcher = () => "File: README.md\n# Project\nInstallation guide and usage examples.";
+
 function removeTempDir(dir: string): void {
   fs.rmSync(dir, { recursive: true, force: true });
 }
@@ -246,7 +249,7 @@ function buildCoreLoop(
   maxIterations: number,
   observationEngine?: ObservationEngine
 ): CoreLoop {
-  const obsEngine = observationEngine ?? new ObservationEngine(stateManager, [], llmClient);
+  const obsEngine = observationEngine ?? new ObservationEngine(stateManager, [], llmClient, undefined, { gitContextFetcher: fakeGitContextFetcher });
   const sessionManager = new SessionManager(stateManager);
   const trustManager = new TrustManager(stateManager);
   const stallDetector = new StallDetector(stateManager);
