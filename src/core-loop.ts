@@ -529,6 +529,10 @@ export class CoreLoop {
     const currentState = String(goal.dimensions[0]?.current_value ?? "unknown");
     const availableAdapters = adapterRegistry?.listAdapters() ?? ["default"];
 
+    const contextBlock = this.deps.contextProvider
+      ? await this.deps.contextProvider(goalId, topDimension).catch(() => undefined)
+      : undefined;
+
     let group: TaskGroup | null = null;
     try {
       group = await generateTaskGroupFn({
@@ -537,6 +541,7 @@ export class CoreLoop {
         currentState,
         gap: gapAggregate,
         availableAdapters,
+        contextBlock,
       });
     } catch (err) {
       this.logger?.warn("CoreLoop: generateTaskGroupFn threw, falling back to single-task", {

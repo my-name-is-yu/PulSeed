@@ -392,10 +392,11 @@ export async function generateTaskGroup(
     currentState: string;
     gap: number;
     availableAdapters: string[];
+    contextBlock?: string;
   },
   logger?: Logger
 ): Promise<TaskGroup | null> {
-  const prompt = [
+  const promptParts = [
     `You are a task decomposition assistant. Decompose the following complex task into 2-5 focused subtasks that can be assigned to separate agents.`,
     ``,
     `Goal: ${context.goalDescription}`,
@@ -403,6 +404,13 @@ export async function generateTaskGroup(
     `Current state: ${context.currentState}`,
     `Gap to close: ${context.gap}`,
     `Available adapters: ${context.availableAdapters.join(", ")}`,
+  ];
+
+  if (context.contextBlock) {
+    promptParts.push(``, `Relevant context from past experience:`, context.contextBlock);
+  }
+
+  promptParts.push(
     ``,
     `Respond with a JSON object inside a markdown code block with this structure:`,
     `{`,
@@ -412,8 +420,10 @@ export async function generateTaskGroup(
     `  "shared_context": "<optional shared context for all subtasks>"`,
     `}`,
     ``,
-    `Use subtask array index (as string) for dependency/ownership keys. Ensure at least 2 subtasks.`,
-  ].join("\n");
+    `Use subtask array index (as string) for dependency/ownership keys. Ensure at least 2 subtasks.`
+  );
+
+  const prompt = promptParts.join("\n");
 
   let response: { content: string };
   try {

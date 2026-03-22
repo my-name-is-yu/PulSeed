@@ -225,6 +225,167 @@ describe("ContextAssembler", () => {
     });
   });
 
+  describe("context rot prevention — lesson stale filtering", () => {
+    const makeLesson = (overrides: Record<string, any> = {}) => ({
+      lesson: "Some lesson",
+      relevance_tags: ["MEDIUM"],
+      last_accessed: new Date().toISOString(),
+      access_count: 5,
+      ...overrides,
+    });
+
+    it("filters out stale lessons (older than 14 days AND access_count < 2) when there are more than budgeted entries", async () => {
+      const oldDate = new Date(Date.now() - 20 * 24 * 60 * 60 * 1000).toISOString(); // 20 days ago
+      const deps: ContextAssemblerDeps = {
+        stateManager: {
+          loadGoalState: vi.fn().mockResolvedValue(makeGoalState()),
+        },
+        memoryLifecycle: {
+          selectForWorkingMemory: vi.fn().mockResolvedValue({
+            shortTerm: [],
+            lessons: [
+              makeLesson({ lesson: "Fresh lesson A", last_accessed: new Date().toISOString(), access_count: 3 }),
+              makeLesson({ lesson: "Fresh lesson B", last_accessed: new Date().toISOString(), access_count: 1 }),
+              makeLesson({ lesson: "Fresh lesson C", last_accessed: new Date().toISOString(), access_count: 4 }),
+              makeLesson({ lesson: "Fresh lesson D", last_accessed: new Date().toISOString(), access_count: 2 }),
+              makeLesson({ lesson: "Fresh lesson E", last_accessed: new Date().toISOString(), access_count: 5 }),
+              makeLesson({ lesson: "Stale and rarely used", last_accessed: oldDate, access_count: 1 }),
+            ],
+          }),
+        },
+      };
+      const assembler = new ContextAssembler(deps);
+      const result = await assembler.build("task_generation", "goal-1");
+      expect(result.contextBlock).not.toContain("Stale and rarely used");
+      expect(result.contextBlock).toContain("Fresh lesson A");
+    });
+
+    it("keeps stale lessons if they have high access_count (>= 2)", async () => {
+      const oldDate = new Date(Date.now() - 20 * 24 * 60 * 60 * 1000).toISOString();
+      const deps: ContextAssemblerDeps = {
+        stateManager: {
+          loadGoalState: vi.fn().mockResolvedValue(makeGoalState()),
+        },
+        memoryLifecycle: {
+          selectForWorkingMemory: vi.fn().mockResolvedValue({
+            shortTerm: [],
+            lessons: [
+              makeLesson({ lesson: "Fresh A" }),
+              makeLesson({ lesson: "Fresh B" }),
+              makeLesson({ lesson: "Fresh C" }),
+              makeLesson({ lesson: "Fresh D" }),
+              makeLesson({ lesson: "Fresh E" }),
+              makeLesson({ lesson: "Old but used frequently", last_accessed: oldDate, access_count: 5 }),
+            ],
+          }),
+        },
+      };
+      const assembler = new ContextAssembler(deps);
+      const result = await assembler.build("task_generation", "goal-1");
+      expect(result.contextBlock).toContain("Old but used frequently");
+    });
+
+    it("keeps entries within the freshness window regardless of access_count", async () => {
+      const recentDate = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(); // 3 days ago
+      const deps: ContextAssemblerDeps = {
+        stateManager: {
+          loadGoalState: vi.fn().mockResolvedValue(makeGoalState()),
+        },
+        memoryLifecycle: {
+          selectForWorkingMemory: vi.fn().mockResolvedValue({
+            shortTerm: [],
+            lessons: [
+              makeLesson({ lesson: "A" }),
+              makeLesson({ lesson: "B" }),
+              makeLesson({ lesson: "C" }),
+              makeLesson({ lesson: "D" }),
+              makeLesson({ lesson: "E" }),
+              makeLesson({ lesson: "Recent but rarely accessed", last_accessed: recentDate, access_count: 0 }),
+            ],
+          }),
+        },
+      };
+      const assembler = new ContextAssembler(deps);
+      const result = await assembler.build("task_generation", "goal-1");
+      expect(result.contextBlock).toContain("Recent but rarely accessed");
+    });
+
+    it("does not filter when lessons count is at or below budget threshold", async () => {
+      const oldDate = new Date(Date.now() - 20 * 24 * 60 * 60 * 1000).toISOString();
+      const deps: ContextAssemblerDeps = {
+        stateManager: {
+          loadGoalState: vi.fn().mockResolvedValue(makeGoalState()),
+        },
+        memoryLifecycle: {
+          selectForWorkingMemory: vi.fn().mockResolvedValue({
+            shortTerm: [],
+            lessons: [
+              makeLesson({ lesson: "Stale rarely used", last_accessed: oldDate, access_count: 0 }),
+            ],
+          }),
+        },
+      };
+      const assembler = new ContextAssembler(deps);
+      const result = await assembler.build("task_generation", "goal-1");
+      // Only 1 lesson, within budget of 5, so no filtering applied
+      expect(result.contextBlock).toContain("Stale rarely used");
+    });
+  });
+
+  describe("context rot prevention — knowledge similarity threshold", () => {
+    it("uses a 0.6 similarity threshold for vector knowledge search", async () => {
+      const mockSearch = vi.fn().mockResolvedValue([]);
+      const deps: ContextAssemblerDeps = {
+        stateManager: {
+          loadGoalState: vi.fn().mockResolvedValue(makeGoalState()),
+        },
+        vectorIndex: {
+          search: mockSearch,
+        },
+      };
+      const assembler = new ContextAssembler(deps);
+      await assembler.build("task_generation", "goal-1");
+      expect(mockSearch).toHaveBeenCalledWith(expect.anything(), 5, 0.6);
+    });
+  });
+
+  describe("context rot prevention — strategy template recency", () => {
+    it("deprioritizes strategy templates older than 30 days when no vector index", async () => {
+      const oldDate = new Date(Date.now() - 45 * 24 * 60 * 60 * 1000).toISOString();
+      const deps: ContextAssemblerDeps = {
+        stateManager: {
+          loadGoalState: vi.fn().mockResolvedValue(makeGoalState()),
+        },
+        strategyTemplateSearch: vi.fn().mockResolvedValue([
+          { hypothesis_pattern: "fresh-pattern", effectiveness_score: 0.9, created_at: new Date().toISOString() },
+          { hypothesis_pattern: "old-pattern", effectiveness_score: 0.8, created_at: oldDate },
+        ]),
+      };
+      const assembler = new ContextAssembler(deps);
+      const result = await assembler.build("strategy_generation", "goal-1");
+      // Fresh template should appear, old should be filtered
+      expect(result.contextBlock).toContain("fresh-pattern");
+      expect(result.contextBlock).not.toContain("old-pattern");
+    });
+
+    it("falls back to all templates if all are old (no fresh ones)", async () => {
+      const oldDate = new Date(Date.now() - 45 * 24 * 60 * 60 * 1000).toISOString();
+      const deps: ContextAssemblerDeps = {
+        stateManager: {
+          loadGoalState: vi.fn().mockResolvedValue(makeGoalState()),
+        },
+        strategyTemplateSearch: vi.fn().mockResolvedValue([
+          { hypothesis_pattern: "old-pattern-1", effectiveness_score: 0.8, created_at: oldDate },
+          { hypothesis_pattern: "old-pattern-2", effectiveness_score: 0.7, created_at: oldDate },
+        ]),
+      };
+      const assembler = new ContextAssembler(deps);
+      const result = await assembler.build("strategy_generation", "goal-1");
+      // Both are old, but fallback keeps them
+      expect(result.contextBlock).toContain("old-pattern-1");
+    });
+  });
+
   describe("additionalContext usage", () => {
     it("uses existingTasks from additionalContext for recent_task_results", async () => {
       const tasks = [

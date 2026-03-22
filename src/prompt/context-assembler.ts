@@ -28,6 +28,17 @@ import {
 } from "./formatters.js";
 import { allocateBudget, type BudgetAllocation } from "../execution/context-budget.js";
 
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+/** Lessons older than this many days AND with low access_count are considered stale. */
+const CONTEXT_FRESHNESS_DAYS = 14;
+
+/** Minimum cosine similarity threshold for vector knowledge search. */
+const KNOWLEDGE_SIMILARITY_THRESHOLD = 0.6;
+
+/** Strategy templates older than this many days are deprioritized when no vector search is available. */
+const STRATEGY_TEMPLATE_FRESHNESS_DAYS = 30;
+
 // ─── Public Types ─────────────────────────────────────────────────────────────
 
 export interface AssembledContext {
@@ -285,8 +296,28 @@ export class ContextAssembler {
     if (!this.deps.memoryLifecycle) return "";
     const result = await this.deps.memoryLifecycle.selectForWorkingMemory(goalId, dims, []);
     if (!result?.lessons?.length) return "";
+
+    let lessons = result.lessons;
+
+    // Apply stale filtering only when we have more entries than needed
+    const budgetedMax = 5; // default lesson slot max
+    if (lessons.length > budgetedMax) {
+      const cutoffMs = CONTEXT_FRESHNESS_DAYS * 24 * 60 * 60 * 1000;
+      const now = Date.now();
+      const fresh = lessons.filter((l: any) => {
+        const lastAccessed = l.last_accessed ? new Date(l.last_accessed).getTime() : 0;
+        const accessCount = l.access_count ?? 0;
+        const isStale = (now - lastAccessed) > cutoffMs && accessCount < 2;
+        return !isStale;
+      });
+      // Only apply filter if it doesn't eliminate everything
+      if (fresh.length > 0) {
+        lessons = fresh;
+      }
+    }
+
     return formatLessons(
-      result.lessons.map((l: any) => ({
+      lessons.map((l: any) => ({
         importance: l.relevance_tags?.includes("HIGH")
           ? "HIGH"
           : l.relevance_tags?.includes("LOW")
@@ -307,7 +338,7 @@ export class ContextAssembler {
     } else if (this.deps.knowledgeManager?.loadKnowledge) {
       entries = await this.deps.knowledgeManager.loadKnowledge(goalId);
     } else if (this.deps.vectorIndex) {
-      const results = await this.deps.vectorIndex.search(goalId, 5, 0.5);
+      const results = await this.deps.vectorIndex.search(goalId, 5, KNOWLEDGE_SIMILARITY_THRESHOLD);
       entries = results.map((r) => ({ content: r.text, confidence: r.similarity }));
     }
 
@@ -319,7 +350,30 @@ export class ContextAssembler {
     if (!this.deps.strategyTemplateSearch) return "";
     const query = goalState?.active_strategy?.hypothesis ?? goalState?.title ?? "";
     if (!query) return "";
-    const templates = await this.deps.strategyTemplateSearch(query, 3);
+    let templates = await this.deps.strategyTemplateSearch(query, 3);
+    if (!templates?.length) return "";
+
+    if (this.deps.vectorIndex) {
+      // Vector search: apply cosine similarity threshold
+      templates = templates.filter((t: any) => {
+        const sim = t.similarity ?? t.score ?? 1;
+        return sim >= KNOWLEDGE_SIMILARITY_THRESHOLD;
+      });
+    } else {
+      // No vector search: deprioritize templates older than 30 days
+      const cutoffMs = STRATEGY_TEMPLATE_FRESHNESS_DAYS * 24 * 60 * 60 * 1000;
+      const now = Date.now();
+      const fresh = templates.filter((t: any) => {
+        const created = t.created_at ?? t.createdAt;
+        if (!created) return true; // no date means keep
+        return (now - new Date(created).getTime()) <= cutoffMs;
+      });
+      // Use fresh templates if any exist; otherwise fall back to all templates
+      if (fresh.length > 0) {
+        templates = fresh;
+      }
+    }
+
     if (!templates?.length) return "";
     return formatStrategyTemplates(templates);
   }

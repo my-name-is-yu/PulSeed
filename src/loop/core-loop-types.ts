@@ -191,6 +191,7 @@ export interface CoreLoopDeps {
     currentState: string;
     gap: number;
     availableAdapters: string[];
+    contextBlock?: string;
   }) => Promise<import("../types/index.js").TaskGroup | null>;
   logger?: Logger;
   /** Optional context provider for workspace-aware task generation */

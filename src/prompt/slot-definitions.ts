@@ -134,6 +134,13 @@ const PURPOSE_SLOT_CONFIGS: PurposeSlotConfig[] = [
       "knowledge",
       "strategy_templates",
     ],
+    budgetOverrides: {
+      knowledge: 40,
+      transferKnowledge: 20,
+      observations: 15,
+      goalDefinition: 20,
+      meta: 5,
+    },
   },
   {
     purpose: "goal_decomposition",
@@ -141,6 +148,13 @@ const PURPOSE_SLOT_CONFIGS: PurposeSlotConfig[] = [
       "goal_definition",
       "knowledge",
     ],
+    budgetOverrides: {
+      goalDefinition: 30,
+      knowledge: 35,
+      observations: 15,
+      transferKnowledge: 15,
+      meta: 5,
+    },
   },
 ];
 

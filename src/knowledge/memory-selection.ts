@@ -33,16 +33,19 @@ export interface MemorySelectionDeps {
 /**
  * Compute a relevance score for a short-term entry given a context.
  *
- * Score = tag_match_ratio * drive_weight * freshness_factor
- *   - tag_match_ratio  = matching tags / total unique tags (0 if no tags)
- *   - drive_weight     = DriveScorer dissatisfaction score for first matching
- *                        dimension (1.0 if no DriveScorer or no dimensions)
- *   - freshness_factor = Math.exp(-daysSinceCreation / 30)
+ * Score = tag_match_ratio * drive_weight * freshness_factor * (0.7 + 0.3 * importance_factor)
+ *   - tag_match_ratio     = matching tags / total unique tags (0 if no tags)
+ *   - drive_weight        = DriveScorer dissatisfaction score for first matching
+ *                           dimension (1.0 if no DriveScorer or no dimensions)
+ *   - freshness_factor    = Math.exp(-daysSinceCreation / 30)
+ *   - importance_factor   = Math.log2(1 + accessCount) / Math.log2(11)
+ *                           (0 accesses → 0, 10 accesses → 1.0; undefined → multiplier=1.0 for backward compat)
  */
 export function relevanceScore(
   deps: Pick<MemorySelectionDeps, "driveScorer">,
   entry: ShortTermEntry,
-  context: { goalId: string; dimensions: string[]; tags: string[] }
+  context: { goalId: string; dimensions: string[]; tags: string[] },
+  accessCount?: number
 ): number {
   // 1. Tag match ratio
   const allTags = new Set([...entry.tags, ...context.tags]);
@@ -69,7 +72,15 @@ export function relevanceScore(
   const daysSinceCreation = (Date.now() - createdAt) / (1000 * 60 * 60 * 24);
   const freshnessFactor = Math.exp(-daysSinceCreation / 30);
 
-  return tagMatchRatio * driveWeight * freshnessFactor;
+  // 4. Importance factor based on access_count (proxy for usage importance)
+  //    0 accesses → 0, 10 accesses → 1.0; undefined → multiplier = 1.0 (backward compat)
+  //    When accessCount is provided: multiplier = 0.7 + 0.3 * importanceFactor
+  //    When accessCount is undefined: multiplier = 1.0 (preserves old formula exactly)
+  const importanceMultiplier = accessCount === undefined
+    ? 1.0
+    : 0.7 + 0.3 * (Math.log2(1 + accessCount) / Math.log2(11));
+
+  return tagMatchRatio * driveWeight * freshnessFactor * importanceMultiplier;
 }
 
 // ─── selectForWorkingMemory ───
@@ -106,12 +117,18 @@ export async function selectForWorkingMemory(
         tags.some((t) => ie.tags.includes(t)))
   );
 
-  // Sort by last_accessed descending (base sort before tier re-ordering)
-  matchingIndexEntries.sort(
-    (a, b) =>
-      new Date(b.last_accessed).getTime() -
-      new Date(a.last_accessed).getTime()
-  );
+  // Sort by composite score (recency + importance + relevance) descending
+  // before tier re-ordering. Entries without driveScorer fall back to freshness * importance.
+  const context = { goalId, dimensions, tags };
+  matchingIndexEntries.sort((a, b) => {
+    // Build a minimal ShortTermEntry-like object from the index entry for scoring
+    const entryA = { tags: a.tags, dimensions: a.dimensions, timestamp: a.last_accessed } as ShortTermEntry;
+    const entryB = { tags: b.tags, dimensions: b.dimensions, timestamp: b.last_accessed } as ShortTermEntry;
+    return (
+      relevanceScore(deps, entryB, context, b.access_count) -
+      relevanceScore(deps, entryA, context, a.access_count)
+    );
+  });
 
   // Tier-aware mode: classify, update memory_tier, then sort by tier
   if (activeGoalIds !== undefined) {

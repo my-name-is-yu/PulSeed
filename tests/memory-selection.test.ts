@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { selectForWorkingMemory } from "../src/knowledge/memory-selection.js";
+import { selectForWorkingMemory, relevanceScore } from "../src/knowledge/memory-selection.js";
 import { makeTempDir } from "./helpers/temp-dir.js";
 import type { MemoryIndexEntry, ShortTermEntry } from "../src/types/memory-lifecycle.js";
 import type { VectorIndex } from "../src/knowledge/vector-index.js";
@@ -15,7 +15,8 @@ function makeTimestamp(hoursAgo: number): string {
 /** Write a short-term index.json and accompanying data file. */
 async function setupShortTermData(
   memoryDir: string,
-  entries: ShortTermEntry[]
+  entries: ShortTermEntry[],
+  accessCounts?: number[]
 ): Promise<void> {
   const goalId = entries[0]?.goal_id ?? "goal-test";
   const stDir = path.join(memoryDir, "short-term");
@@ -37,7 +38,7 @@ async function setupShortTermData(
     data_file: dataFile,
     entry_id: e.id,
     last_accessed: e.timestamp,
-    access_count: 0,
+    access_count: accessCounts?.[i] ?? 0,
     embedding_id: null,
     memory_tier: e.memory_tier,
   }));
@@ -439,5 +440,113 @@ describe("archival semantic search", () => {
 
     const ids = result.shortTerm.map((e) => e.id);
     expect(ids).toContain("e-arch-err");
+  });
+});
+
+// ─── relevanceScore: composite scoring with access_count ───
+
+describe("relevanceScore — composite scoring", () => {
+  it("entry with higher access_count ranks higher when other factors are equal", () => {
+    const deps = {};
+    const now = new Date().toISOString();
+
+    const baseEntry = {
+      id: "base",
+      goal_id: "goal-test",
+      data_type: "observation" as const,
+      loop_number: 1,
+      timestamp: now,
+      dimensions: ["dim-x"],
+      tags: ["tag-a"],
+      data: {},
+      embedding_id: null,
+      memory_tier: "recall" as const,
+    };
+
+    const context = { goalId: "goal-test", dimensions: ["dim-x"], tags: ["tag-a"] };
+
+    // Same entry, same timestamp — only access_count differs
+    const scoreWithoutAccess = relevanceScore(deps, baseEntry, context, 0);
+    const scoreWithAccess = relevanceScore(deps, baseEntry, context, 10);
+
+    expect(scoreWithAccess).toBeGreaterThan(scoreWithoutAccess);
+  });
+
+  it("backward compat: entries without access_count (undefined) still work and score correctly", () => {
+    const deps = {};
+    const now = new Date().toISOString();
+
+    const entry = {
+      id: "e-nocount",
+      goal_id: "goal-test",
+      data_type: "observation" as const,
+      loop_number: 1,
+      timestamp: now,
+      dimensions: ["dim-x"],
+      tags: ["tag-a"],
+      data: {},
+      embedding_id: null,
+      memory_tier: "recall" as const,
+    };
+
+    const context = { goalId: "goal-test", dimensions: ["dim-x"], tags: ["tag-a"] };
+
+    // Should not throw and should return a finite number
+    const score = relevanceScore(deps, entry, context);
+    expect(typeof score).toBe("number");
+    expect(isFinite(score)).toBe(true);
+    expect(score).toBeGreaterThanOrEqual(0);
+
+    // undefined uses multiplier=1.0 (backward compat: same result as old formula)
+    // access_count=0 uses multiplier=0.7 (new formula), so undefined score > explicit-zero score
+    const scoreExplicitZero = relevanceScore(deps, entry, context, 0);
+    expect(score).toBeGreaterThan(scoreExplicitZero);
+  });
+});
+
+// ─── Primary sort uses composite score (access_count as importance proxy) ───
+
+describe("selectForWorkingMemory — composite score primary sort", () => {
+  it("entry with higher access_count ranks higher than a newer entry with access_count=0", async () => {
+    const goalId = "goal-sort-test";
+
+    // e-frequent: older (2h ago) but high access count
+    // e-new: newer (1h ago) but never accessed
+    const entries: ShortTermEntry[] = [
+      {
+        id: "e-frequent",
+        goal_id: goalId,
+        data_type: "observation",
+        loop_number: 1,
+        timestamp: makeTimestamp(2),
+        dimensions: ["dim-x"],
+        tags: ["tag-a"],
+        data: {},
+        embedding_id: null,
+        memory_tier: "recall",
+      },
+      {
+        id: "e-new",
+        goal_id: goalId,
+        data_type: "observation",
+        loop_number: 2,
+        timestamp: makeTimestamp(1),
+        dimensions: ["dim-x"],
+        tags: ["tag-a"],
+        data: {},
+        embedding_id: null,
+        memory_tier: "recall",
+      },
+    ];
+
+    // e-frequent gets access_count=10, e-new gets 0
+    await setupShortTermData(memoryDir, entries, [10, 0]);
+
+    const deps = { memoryDir };
+    const result = await selectForWorkingMemory(deps, goalId, ["dim-x"], ["tag-a"]);
+
+    expect(result.shortTerm).toHaveLength(2);
+    // e-frequent (high access_count) should outrank e-new (pure recency)
+    expect(result.shortTerm[0]!.id).toBe("e-frequent");
   });
 });

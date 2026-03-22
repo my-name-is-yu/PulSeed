@@ -90,6 +90,40 @@ describe("getSlotConfig", () => {
     expect(config.activeSlots).toEqual(["goal_definition", "knowledge"]);
   });
 
+  it("strategy_generation has budgetOverrides", () => {
+    const config = getSlotConfig("strategy_generation");
+    expect(config.budgetOverrides).toBeDefined();
+    expect(config.budgetOverrides).toHaveProperty("knowledge", 40);
+    expect(config.budgetOverrides).toHaveProperty("transferKnowledge", 20);
+    expect(config.budgetOverrides).toHaveProperty("observations", 15);
+    expect(config.budgetOverrides).toHaveProperty("goalDefinition", 20);
+    expect(config.budgetOverrides).toHaveProperty("meta", 5);
+  });
+
+  it("strategy_generation budgetOverrides sum to 100", () => {
+    const config = getSlotConfig("strategy_generation");
+    const overrides = config.budgetOverrides || {};
+    const sum = Object.values(overrides).reduce((acc, val) => acc + val, 0);
+    expect(sum).toBe(100);
+  });
+
+  it("goal_decomposition has budgetOverrides", () => {
+    const config = getSlotConfig("goal_decomposition");
+    expect(config.budgetOverrides).toBeDefined();
+    expect(config.budgetOverrides).toHaveProperty("goalDefinition", 30);
+    expect(config.budgetOverrides).toHaveProperty("knowledge", 35);
+    expect(config.budgetOverrides).toHaveProperty("observations", 15);
+    expect(config.budgetOverrides).toHaveProperty("transferKnowledge", 15);
+    expect(config.budgetOverrides).toHaveProperty("meta", 5);
+  });
+
+  it("goal_decomposition budgetOverrides sum to 100", () => {
+    const config = getSlotConfig("goal_decomposition");
+    const overrides = config.budgetOverrides || {};
+    const sum = Object.values(overrides).reduce((acc, val) => acc + val, 0);
+    expect(sum).toBe(100);
+  });
+
   it("throws for unknown purpose", () => {
     expect(() => getSlotConfig("unknown" as ContextPurpose)).toThrow();
   });
