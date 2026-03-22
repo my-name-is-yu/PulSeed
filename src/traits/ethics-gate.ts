@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { StateManager } from "../state-manager.js";
 import type { ILLMClient } from "../llm/llm-client.js";
+import type { IPromptGateway } from "../prompt/gateway.js";
 import {
   EthicsVerdictSchema,
   EthicsLogSchema,
@@ -402,15 +403,18 @@ export class EthicsGate {
   private readonly stateManager: StateManager;
   private readonly llmClient: ILLMClient;
   private readonly customConstraints?: CustomConstraintsConfig;
+  private readonly gateway?: IPromptGateway;
 
   constructor(
     stateManager: StateManager,
     llmClient: ILLMClient,
-    customConstraints?: CustomConstraintsConfig
+    customConstraints?: CustomConstraintsConfig,
+    gateway?: IPromptGateway
   ) {
     this.stateManager = stateManager;
     this.llmClient = llmClient;
     this.customConstraints = customConstraints;
+    this.gateway = gateway;
   }
 
   // ─── Private: Log I/O ───
@@ -575,12 +579,21 @@ export class EthicsGate {
     // Layer 2: LLM evaluation
     const userMessage = this.buildUserMessage(subjectType, description, context, true);
 
-    const response = await this.llmClient.sendMessage(
-      [{ role: "user", content: userMessage }],
-      { system: ETHICS_SYSTEM_PROMPT, temperature: 0 }
-    );
-
-    const rawVerdict = this.parseVerdictSafe(response.content);
+    let rawVerdict: EthicsVerdict;
+    if (this.gateway) {
+      rawVerdict = await this.gateway.execute({
+        purpose: "ethics_evaluate",
+        additionalContext: { ethics_prompt: userMessage },
+        responseSchema: EthicsVerdictSchema,
+        temperature: 0,
+      });
+    } else {
+      const response = await this.llmClient.sendMessage(
+        [{ role: "user", content: userMessage }],
+        { system: ETHICS_SYSTEM_PROMPT, temperature: 0 }
+      );
+      rawVerdict = this.parseVerdictSafe(response.content);
+    }
     const verdict = this.applyConfidenceOverride(rawVerdict);
 
     const logEntry: EthicsLog = EthicsLogSchema.parse({
@@ -633,12 +646,21 @@ export class EthicsGate {
     // Layer 2: LLM evaluation
     const userMessage = this.buildMeansUserMessage(taskDescription, means, true);
 
-    const response = await this.llmClient.sendMessage(
-      [{ role: "user", content: userMessage }],
-      { system: ETHICS_SYSTEM_PROMPT, temperature: 0 }
-    );
-
-    const rawVerdict = this.parseVerdictSafe(response.content);
+    let rawVerdict: EthicsVerdict;
+    if (this.gateway) {
+      rawVerdict = await this.gateway.execute({
+        purpose: "ethics_evaluate",
+        additionalContext: { ethics_prompt: userMessage },
+        responseSchema: EthicsVerdictSchema,
+        temperature: 0,
+      });
+    } else {
+      const response = await this.llmClient.sendMessage(
+        [{ role: "user", content: userMessage }],
+        { system: ETHICS_SYSTEM_PROMPT, temperature: 0 }
+      );
+      rawVerdict = this.parseVerdictSafe(response.content);
+    }
     const verdict = this.applyConfidenceOverride(rawVerdict);
 
     const logEntry: EthicsLog = EthicsLogSchema.parse({

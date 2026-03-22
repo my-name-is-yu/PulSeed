@@ -2,6 +2,7 @@ import { z } from "zod";
 import { StateManager } from "../state-manager.js";
 import { ReportingEngine } from "../reporting-engine.js";
 import type { ILLMClient } from "../llm/llm-client.js";
+import type { IPromptGateway } from "../prompt/gateway.js";
 import type { Task } from "../types/task.js";
 import type { PluginMatchResult } from "../types/plugin.js";
 import type { PluginLoader } from "../runtime/plugin-loader.js";
@@ -88,17 +89,20 @@ export class CapabilityDetector {
   private readonly llmClient: ILLMClient;
   private readonly reportingEngine: ReportingEngine;
   private readonly pluginLoader?: PluginLoader;
+  private readonly gateway?: IPromptGateway;
 
   constructor(
     stateManager: StateManager,
     llmClient: ILLMClient,
     reportingEngine: ReportingEngine,
-    pluginLoader?: PluginLoader
+    pluginLoader?: PluginLoader,
+    gateway?: IPromptGateway
   ) {
     this.stateManager = stateManager;
     this.llmClient = llmClient;
     this.reportingEngine = reportingEngine;
     this.pluginLoader = pluginLoader;
+    this.gateway = gateway;
   }
 
   // ─── detectDeficiency ───
@@ -139,12 +143,20 @@ export class CapabilityDetector {
       `  "impact_description": "<impact if capability remains unavailable>"\n` +
       `}`;
 
-    const response = await this.llmClient.sendMessage(
-      [{ role: "user", content: userMessage }],
-      { system: systemPrompt }
-    );
-
-    const parsed = this.llmClient.parseJSON(response.content, DeficiencyResponseSchema);
+    let parsed: z.infer<typeof DeficiencyResponseSchema>;
+    if (this.gateway) {
+      parsed = await this.gateway.execute({
+        purpose: "capability_detect",
+        additionalContext: { deficiency_prompt: userMessage },
+        responseSchema: DeficiencyResponseSchema,
+      });
+    } else {
+      const response = await this.llmClient.sendMessage(
+        [{ role: "user", content: userMessage }],
+        { system: systemPrompt }
+      );
+      parsed = this.llmClient.parseJSON(response.content, DeficiencyResponseSchema);
+    }
 
     if (!parsed.has_deficiency) {
       return null;
@@ -214,16 +226,23 @@ export class CapabilityDetector {
         `  "acquirable": true|false\n` +
         `}`;
 
-      const response = await this.llmClient.sendMessage(
-        [{ role: "user", content: userMessage }],
-        { system: systemPrompt }
-      );
-
       let parsed: z.infer<typeof GoalCapabilityGapResponseSchema>;
-      try {
-        parsed = this.llmClient.parseJSON(response.content, GoalCapabilityGapResponseSchema);
-      } catch {
-        return null;
+      if (this.gateway) {
+        parsed = await this.gateway.execute({
+          purpose: "capability_goal_gap",
+          additionalContext: { goal_gap_prompt: userMessage },
+          responseSchema: GoalCapabilityGapResponseSchema,
+        });
+      } else {
+        const response = await this.llmClient.sendMessage(
+          [{ role: "user", content: userMessage }],
+          { system: systemPrompt }
+        );
+        try {
+          parsed = this.llmClient.parseJSON(response.content, GoalCapabilityGapResponseSchema);
+        } catch {
+          return null;
+        }
       }
 
       if (!parsed.has_gap) {
@@ -440,12 +459,20 @@ export class CapabilityDetector {
       reason: z.string(),
     });
 
-    const response = await this.llmClient.sendMessage(
-      [{ role: "user", content: userMessage }],
-      { system: systemPrompt }
-    );
-
-    const parsed = this.llmClient.parseJSON(response.content, VerificationResponseSchema);
+    let parsed: z.infer<typeof VerificationResponseSchema>;
+    if (this.gateway) {
+      parsed = await this.gateway.execute({
+        purpose: "capability_verify",
+        additionalContext: { verify_prompt: userMessage },
+        responseSchema: VerificationResponseSchema,
+      });
+    } else {
+      const response = await this.llmClient.sendMessage(
+        [{ role: "user", content: userMessage }],
+        { system: systemPrompt }
+      );
+      parsed = this.llmClient.parseJSON(response.content, VerificationResponseSchema);
+    }
 
     if (parsed.verdict === "fail") {
       acquisitionTask.verification_attempts += 1;

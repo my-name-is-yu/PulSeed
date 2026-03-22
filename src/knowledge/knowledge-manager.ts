@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { StateManager } from "../state-manager.js";
 import type { ILLMClient } from "../llm/llm-client.js";
+import type { IPromptGateway } from "../prompt/gateway.js";
 import { TaskSchema } from "../types/task.js";
 import type { Task } from "../types/task.js";
 import {
@@ -107,17 +108,20 @@ export class KnowledgeManager {
   private readonly llmClient: ILLMClient;
   private readonly vectorIndex?: VectorIndex;
   private readonly embeddingClient?: IEmbeddingClient;
+  private readonly gateway?: IPromptGateway;
 
   constructor(
     stateManager: StateManager,
     llmClient: ILLMClient,
     vectorIndex?: VectorIndex,
-    embeddingClient?: IEmbeddingClient
+    embeddingClient?: IEmbeddingClient,
+    gateway?: IPromptGateway
   ) {
     this.stateManager = stateManager;
     this.llmClient = llmClient;
     this.vectorIndex = vectorIndex;
     this.embeddingClient = embeddingClient;
+    this.gateway = gateway;
   }
 
   // ─── detectKnowledgeGap ───
@@ -175,35 +179,49 @@ Determine if there is a knowledge gap. Respond with JSON:
   "related_dimension": "dimension name" | null
 }`;
 
-    const response = await this.llmClient.sendMessage(
-      [{ role: "user", content: prompt }],
-      {
-        system:
-          "You are a knowledge gap detector. Analyze contexts to identify missing domain knowledge. Respond with JSON only.",
-        max_tokens: 512,
-      }
-    );
-
-    try {
-      const parsed = this.llmClient.parseJSON(
-        response.content,
-        GapDetectionResponseSchema
-      );
-
-      if (!parsed.has_gap) {
+    let parsed: z.infer<typeof GapDetectionResponseSchema>;
+    if (this.gateway) {
+      try {
+        parsed = await this.gateway.execute({
+          purpose: "knowledge_gap_detection",
+          additionalContext: { gap_detection_prompt: prompt },
+          responseSchema: GapDetectionResponseSchema,
+          maxTokens: 512,
+        });
+      } catch {
         return null;
       }
+    } else {
+      const response = await this.llmClient.sendMessage(
+        [{ role: "user", content: prompt }],
+        {
+          system:
+            "You are a knowledge gap detector. Analyze contexts to identify missing domain knowledge. Respond with JSON only.",
+          max_tokens: 512,
+        }
+      );
 
-      return KnowledgeGapSignalSchema.parse({
-        signal_type: parsed.signal_type ?? "interpretation_difficulty",
-        missing_knowledge:
-          parsed.missing_knowledge ?? "Unspecified knowledge gap detected",
-        source_step: parsed.source_step ?? "gap_recognition",
-        related_dimension: parsed.related_dimension ?? null,
-      });
-    } catch {
+      try {
+        parsed = this.llmClient.parseJSON(
+          response.content,
+          GapDetectionResponseSchema
+        );
+      } catch {
+        return null;
+      }
+    }
+
+    if (!parsed.has_gap) {
       return null;
     }
+
+    return KnowledgeGapSignalSchema.parse({
+      signal_type: parsed.signal_type ?? "interpretation_difficulty",
+      missing_knowledge:
+        parsed.missing_knowledge ?? "Unspecified knowledge gap detected",
+      source_step: parsed.source_step ?? "gap_recognition",
+      related_dimension: parsed.related_dimension ?? null,
+    });
   }
 
   // ─── generateAcquisitionTask ───
@@ -237,19 +255,30 @@ Respond with JSON:
   "out_of_scope": ["item 1", "item 2"]
 }`;
 
-    const response = await this.llmClient.sendMessage(
-      [{ role: "user", content: prompt }],
-      {
-        system:
-          "You generate knowledge acquisition tasks. Produce 3-5 specific research questions. Respond with JSON only.",
-        max_tokens: 1024,
-      }
-    );
+    let fields: z.infer<typeof AcquisitionTaskFieldsSchema>;
+    if (this.gateway) {
+      fields = await this.gateway.execute({
+        purpose: "knowledge_acquisition",
+        goalId,
+        additionalContext: { acquisition_prompt: prompt },
+        responseSchema: AcquisitionTaskFieldsSchema,
+        maxTokens: 1024,
+      });
+    } else {
+      const response = await this.llmClient.sendMessage(
+        [{ role: "user", content: prompt }],
+        {
+          system:
+            "You generate knowledge acquisition tasks. Produce 3-5 specific research questions. Respond with JSON only.",
+          max_tokens: 1024,
+        }
+      );
 
-    const fields = this.llmClient.parseJSON(
-      response.content,
-      AcquisitionTaskFieldsSchema
-    );
+      fields = this.llmClient.parseJSON(
+        response.content,
+        AcquisitionTaskFieldsSchema
+      );
+    }
 
     // Clamp questions to 3-5
     const questions = fields.knowledge_questions.slice(0, 5);
@@ -408,27 +437,46 @@ Determine if there is a factual contradiction. Respond with JSON:
   "resolution": "explanation of the contradiction and suggested resolution" | null
 }`;
 
-    const response = await this.llmClient.sendMessage(
-      [{ role: "user", content: prompt }],
-      {
-        system:
-          "You are a knowledge consistency checker. Detect factual contradictions between knowledge entries. Respond with JSON only.",
-        max_tokens: 512,
+    if (this.gateway) {
+      try {
+        const parsed = await this.gateway.execute({
+          purpose: "knowledge_contradiction",
+          goalId,
+          additionalContext: { contradiction_prompt: prompt },
+          responseSchema: ContradictionCheckResponseSchema,
+          maxTokens: 512,
+        });
+        return ContradictionResultSchema.parse(parsed);
+      } catch {
+        return ContradictionResultSchema.parse({
+          has_contradiction: false,
+          conflicting_entry_id: null,
+          resolution: null,
+        });
       }
-    );
-
-    try {
-      const parsed = this.llmClient.parseJSON(
-        response.content,
-        ContradictionCheckResponseSchema
+    } else {
+      const response = await this.llmClient.sendMessage(
+        [{ role: "user", content: prompt }],
+        {
+          system:
+            "You are a knowledge consistency checker. Detect factual contradictions between knowledge entries. Respond with JSON only.",
+          max_tokens: 512,
+        }
       );
-      return ContradictionResultSchema.parse(parsed);
-    } catch {
-      return ContradictionResultSchema.parse({
-        has_contradiction: false,
-        conflicting_entry_id: null,
-        resolution: null,
-      });
+
+      try {
+        const parsed = this.llmClient.parseJSON(
+          response.content,
+          ContradictionCheckResponseSchema
+        );
+        return ContradictionResultSchema.parse(parsed);
+      } catch {
+        return ContradictionResultSchema.parse({
+          has_contradiction: false,
+          conflicting_entry_id: null,
+          resolution: null,
+        });
+      }
     }
   }
 

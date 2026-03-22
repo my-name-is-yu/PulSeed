@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { ILLMClient } from "../llm/llm-client.js";
 import { extractJSON } from "../llm/llm-client.js";
+import type { IPromptGateway } from "../prompt/gateway.js";
 import type { KnowledgeManager } from "./knowledge-manager.js";
 import type { VectorIndex } from "./vector-index.js";
 import type { LearningPipeline } from "./learning-pipeline.js";
@@ -60,6 +61,7 @@ export class KnowledgeTransfer {
     learningPipeline: LearningPipeline;
     ethicsGate: EthicsGate;
     stateManager: StateManager;
+    gateway?: IPromptGateway;
   };
 
   private readonly transferTrust: TransferTrustManager;
@@ -99,6 +101,7 @@ export class KnowledgeTransfer {
     ethicsGate: EthicsGate;
     stateManager: StateManager;
     transferTrust?: TransferTrustManager;
+    gateway?: IPromptGateway;
   }) {
     this.deps = deps;
     this.transferTrust =
@@ -359,13 +362,24 @@ export class KnowledgeTransfer {
           sourceGoalId,
           targetGoalId
         );
-        const adaptationResponse = await this.deps.llmClient.sendMessage(
-          [{ role: "user", content: adaptationPrompt }],
-          { max_tokens: 1024 }
-        );
-        const adaptationJson = extractJSON(adaptationResponse.content);
-        const adaptationRaw = JSON.parse(adaptationJson) as unknown;
-        const adaptationParsed = AdaptationResponseSchema.parse(adaptationRaw);
+        let adaptationParsed: { adaptation_description: string; success: boolean };
+        if (this.deps.gateway) {
+          adaptationParsed = await this.deps.gateway.execute({
+            purpose: "knowledge_transfer_adapt",
+            goalId: targetGoalId,
+            additionalContext: { adaptation_prompt: adaptationPrompt },
+            responseSchema: AdaptationResponseSchema,
+            maxTokens: 1024,
+          });
+        } else {
+          const adaptationResponse = await this.deps.llmClient.sendMessage(
+            [{ role: "user", content: adaptationPrompt }],
+            { max_tokens: 1024 }
+          );
+          const adaptationJson = extractJSON(adaptationResponse.content);
+          const adaptationRaw = JSON.parse(adaptationJson) as unknown;
+          adaptationParsed = AdaptationResponseSchema.parse(adaptationRaw);
+        }
         adaptationDescription = adaptationParsed.adaptation_description;
         adaptationSuccess = adaptationParsed.success;
       } catch {
@@ -526,13 +540,23 @@ export class KnowledgeTransfer {
     // Use LLM to extract cross-domain meta-patterns
     try {
       const metaPrompt = buildMetaPatternPrompt(highConfidencePatterns);
-      const metaResponse = await this.deps.llmClient.sendMessage(
-        [{ role: "user", content: metaPrompt }],
-        { max_tokens: 2048 }
-      );
-      const metaJson = extractJSON(metaResponse.content);
-      const metaRaw = JSON.parse(metaJson) as unknown;
-      const metaParsed = MetaPatternsResponseSchema.parse(metaRaw);
+      let metaParsed: { meta_patterns: Array<{ description: string; applicable_domains: string[]; source_pattern_ids: string[] }> };
+      if (this.deps.gateway) {
+        metaParsed = await this.deps.gateway.execute({
+          purpose: "knowledge_transfer_meta_patterns",
+          additionalContext: { meta_pattern_prompt: metaPrompt },
+          responseSchema: MetaPatternsResponseSchema,
+          maxTokens: 2048,
+        });
+      } else {
+        const metaResponse = await this.deps.llmClient.sendMessage(
+          [{ role: "user", content: metaPrompt }],
+          { max_tokens: 2048 }
+        );
+        const metaJson = extractJSON(metaResponse.content);
+        const metaRaw = JSON.parse(metaJson) as unknown;
+        metaParsed = MetaPatternsResponseSchema.parse(metaRaw);
+      }
 
       // Store meta-patterns in VectorIndex for future retrieval
       if (this.deps.vectorIndex === null) return;
@@ -595,13 +619,23 @@ export class KnowledgeTransfer {
     const prompt = `Given these newly learned patterns, extract 1-3 cross-domain meta-patterns that could apply to other goals:\n\n${patternDescriptions}\n\nReturn JSON object: { "meta_patterns": [{ "description": string, "applicable_domains": string[], "source_pattern_ids": string[] }] }`;
 
     try {
-      const response = await this.deps.llmClient.sendMessage(
-        [{ role: 'user', content: prompt }],
-        { max_tokens: 1024 }
-      );
-      const metaJson = extractJSON(response.content);
-      const metaRaw = JSON.parse(metaJson) as unknown;
-      const metaParsed = MetaPatternsResponseSchema.parse(metaRaw);
+      let metaParsed: { meta_patterns: Array<{ description: string; applicable_domains: string[]; source_pattern_ids: string[] }> };
+      if (this.deps.gateway) {
+        metaParsed = await this.deps.gateway.execute({
+          purpose: "knowledge_transfer_incremental",
+          additionalContext: { incremental_prompt: prompt },
+          responseSchema: MetaPatternsResponseSchema,
+          maxTokens: 1024,
+        });
+      } else {
+        const response = await this.deps.llmClient.sendMessage(
+          [{ role: 'user', content: prompt }],
+          { max_tokens: 1024 }
+        );
+        const metaJson = extractJSON(response.content);
+        const metaRaw = JSON.parse(metaJson) as unknown;
+        metaParsed = MetaPatternsResponseSchema.parse(metaRaw);
+      }
 
       // Register in VectorIndex (if available)
       let registered = 0;

@@ -9,6 +9,7 @@ import type {
 } from "../types/dependency.js";
 import { DependencyGraphSchema } from "../types/dependency.js";
 import type { DependencyType } from "../types/core.js";
+import type { IPromptGateway } from "../prompt/gateway.js";
 
 const AutoDetectItemSchema = z.object({
   from_goal_id: z.string(),
@@ -36,11 +37,13 @@ const AutoDetectResponseSchema = z.array(AutoDetectItemSchema);
 export class GoalDependencyGraph {
   private stateManager: StateManager;
   private llmClient?: ILLMClient;
+  private promptGateway?: IPromptGateway;
   private graph: DependencyGraph;
 
-  constructor(stateManager: StateManager, llmClient?: ILLMClient) {
+  constructor(stateManager: StateManager, llmClient?: ILLMClient, promptGateway?: IPromptGateway) {
     this.stateManager = stateManager;
     this.llmClient = llmClient;
+    this.promptGateway = promptGateway;
     this.graph = { nodes: [], edges: [], updated_at: new Date().toISOString() };
   }
 
@@ -245,7 +248,7 @@ export class GoalDependencyGraph {
     newGoalId: string,
     existingGoalIds: string[]
   ): Promise<DependencyEdge[]> {
-    if (!this.llmClient || existingGoalIds.length === 0) return [];
+    if ((!this.llmClient && !this.promptGateway) || existingGoalIds.length === 0) return [];
 
     const prompt = `Analyze dependencies between a new goal and existing goals.
 
@@ -263,13 +266,21 @@ For each relationship found, return a JSON array of objects with:
 
 Return empty array [] if no dependencies found.`;
 
-    const messages: LLMMessage[] = [{ role: "user", content: prompt }];
-
     try {
-      const response = await this.llmClient.sendMessage(messages);
-      const parsed = AutoDetectResponseSchema.safeParse(
-        JSON.parse(response.content)
-      );
+      let rawData: unknown;
+      if (this.promptGateway) {
+        rawData = await this.promptGateway.execute({
+          purpose: "goal_decomposition",
+          goalId: newGoalId,
+          additionalContext: { dependency_prompt: prompt },
+          responseSchema: AutoDetectResponseSchema,
+        });
+      } else {
+        const messages: LLMMessage[] = [{ role: "user", content: prompt }];
+        const response = await this.llmClient!.sendMessage(messages);
+        rawData = JSON.parse(response.content);
+      }
+      const parsed = AutoDetectResponseSchema.safeParse(rawData);
       if (!parsed.success) {
         console.warn(
           `autoDetectDependencies: LLM response failed Zod validation — ${parsed.error.message}`

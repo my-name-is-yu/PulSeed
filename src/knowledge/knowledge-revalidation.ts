@@ -12,6 +12,7 @@ import type {
   DomainStability,
 } from "../types/knowledge.js";
 import type { ILLMClient } from "../llm/llm-client.js";
+import type { IPromptGateway } from "../prompt/gateway.js";
 import { loadSharedEntries } from "./knowledge-search.js";
 import type { StateManager } from "../state-manager.js";
 
@@ -27,6 +28,7 @@ const DomainStabilityResponseSchema = z.object({
 export interface RevalidationDeps {
   stateManager: StateManager;
   llmClient: ILLMClient;
+  gateway?: IPromptGateway;
 }
 
 // ─── Revalidation functions ───
@@ -59,23 +61,37 @@ Classify the domain stability:
 Respond with JSON:
 { "stability": "stable" | "moderate" | "volatile", "rationale": "brief explanation" }`;
 
-  const response = await deps.llmClient.sendMessage(
-    [{ role: "user", content: prompt }],
-    {
-      system:
-        "You classify knowledge domain stability. Respond with JSON only.",
-      max_tokens: 256,
+  if (deps.gateway) {
+    try {
+      const parsed = await deps.gateway.execute({
+        purpose: "knowledge_stability",
+        additionalContext: { stability_prompt: prompt },
+        responseSchema: DomainStabilityResponseSchema,
+        maxTokens: 256,
+      });
+      return parsed.stability;
+    } catch {
+      return "moderate";
     }
-  );
-
-  try {
-    const parsed = deps.llmClient.parseJSON(
-      response.content,
-      DomainStabilityResponseSchema
+  } else {
+    const response = await deps.llmClient.sendMessage(
+      [{ role: "user", content: prompt }],
+      {
+        system:
+          "You classify knowledge domain stability. Respond with JSON only.",
+        max_tokens: 256,
+      }
     );
-    return parsed.stability;
-  } catch {
-    return "moderate";
+
+    try {
+      const parsed = deps.llmClient.parseJSON(
+        response.content,
+        DomainStabilityResponseSchema
+      );
+      return parsed.stability;
+    } catch {
+      return "moderate";
+    }
   }
 }
 

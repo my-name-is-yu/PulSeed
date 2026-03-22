@@ -3,6 +3,7 @@ import type { ILLMClient } from "../llm/llm-client.js";
 import type { Logger } from "../runtime/logger.js";
 import type { ConcretenessScore, DecompositionQualityMetrics } from "../types/goal-tree.js";
 import { ConcretenessScoreSchema, DecompositionQualityMetricsSchema } from "../types/goal-tree.js";
+import type { IPromptGateway } from "../prompt/gateway.js";
 
 // ─── LLM Response Schemas ───
 
@@ -79,6 +80,7 @@ Return ONLY the JSON object, no other text.`;
 export interface GoalTreeQualityDeps {
   llmClient: ILLMClient;
   logger?: Logger;
+  promptGateway?: IPromptGateway;
 }
 
 // ─── Quality Functions ───
@@ -107,11 +109,21 @@ export async function scoreConcreteness(
 
   const prompt = buildConcretenessPrompt(description);
   try {
-    const response = await deps.llmClient.sendMessage(
-      [{ role: "user", content: prompt }],
-      { temperature: 0 }
-    );
-    const parsed = deps.llmClient.parseJSON(response.content, ConcretenessLLMResponseSchema);
+    let parsed: z.infer<typeof ConcretenessLLMResponseSchema>;
+    if (deps.promptGateway) {
+      parsed = await deps.promptGateway.execute({
+        purpose: "goal_decomposition",
+        additionalContext: { concreteness_prompt: prompt },
+        responseSchema: ConcretenessLLMResponseSchema,
+        temperature: 0,
+      });
+    } else {
+      const response = await deps.llmClient.sendMessage(
+        [{ role: "user", content: prompt }],
+        { temperature: 0 }
+      );
+      parsed = deps.llmClient.parseJSON(response.content, ConcretenessLLMResponseSchema);
+    }
     const dims = {
       hasQuantitativeThreshold: parsed.hasQuantitativeThreshold,
       hasObservableOutcome: parsed.hasObservableOutcome,
@@ -168,11 +180,21 @@ export async function evaluateDecompositionQuality(
   let actionability = 0;
 
   try {
-    const response = await deps.llmClient.sendMessage(
-      [{ role: "user", content: prompt }],
-      { temperature: 0 }
-    );
-    const parsed = deps.llmClient.parseJSON(response.content, QualityEvaluationResponseSchema);
+    let parsed: z.infer<typeof QualityEvaluationResponseSchema>;
+    if (deps.promptGateway) {
+      parsed = await deps.promptGateway.execute({
+        purpose: "goal_decomposition",
+        additionalContext: { quality_prompt: prompt },
+        responseSchema: QualityEvaluationResponseSchema,
+        temperature: 0,
+      });
+    } else {
+      const response = await deps.llmClient.sendMessage(
+        [{ role: "user", content: prompt }],
+        { temperature: 0 }
+      );
+      parsed = deps.llmClient.parseJSON(response.content, QualityEvaluationResponseSchema);
+    }
     coverage = parsed.coverage;
     overlap = parsed.overlap;
     actionability = parsed.actionability;

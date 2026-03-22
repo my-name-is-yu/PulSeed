@@ -11,7 +11,50 @@ export type ContextPurpose =
   | "task_generation"
   | "verification"
   | "strategy_generation"
-  | "goal_decomposition";
+  | "goal_decomposition"
+  | "learning_extraction"
+  | "learning_patternize"
+  | "capability_detect"
+  | "capability_goal_gap"
+  | "capability_verify"
+  | "ethics_evaluate"
+  | "curiosity_propose"
+  | "checkpoint_adapt"
+  | "knowledge_gap_detection"
+  | "knowledge_acquisition"
+  | "knowledge_contradiction"
+  | "knowledge_enrichment"
+  | "knowledge_stability"
+  | "memory_distill_extract_patterns"
+  | "memory_distill_lessons"
+  | "knowledge_transfer_adapt"
+  | "knowledge_transfer_meta_patterns"
+  | "knowledge_transfer_incremental"
+  // Batch C: Goal + Strategy (Phase D step 2)
+  | "goal_quality_assessment"
+  | "goal_quality_improvement"
+  | "goal_quality_validation"
+  | "dependency_analysis"
+  | "strategy_template_match"
+  | "strategy_template_adapt"
+  // Batch D: Knowledge (Phase D step 2)
+  | "knowledge_extraction"
+  | "knowledge_consolidation"
+  | "knowledge_query"
+  | "knowledge_decision"
+  | "knowledge_revalidation"
+  | "memory_distill_summarize"
+  | "memory_distill_prioritize"
+  | "knowledge_transfer_extract"
+  | "knowledge_transfer_apply"
+  | "knowledge_transfer_validate"
+  // Batch E: Learning + Traits (Phase D step 2)
+  | "learning_pattern_extract"
+  | "learning_insight_generate"
+  | "capability_assess"
+  | "capability_plan"
+  | "ethics_explain"
+  | "checkpoint_analyze";
 
 export type ContextSlot =
   | "goal_definition"
@@ -155,6 +198,209 @@ const PURPOSE_SLOT_CONFIGS: PurposeSlotConfig[] = [
       transferKnowledge: 15,
       meta: 5,
     },
+  },
+  {
+    purpose: "learning_extraction",
+    activeSlots: ["goal_definition"],
+    budgetOverrides: { goalDefinition: 20, observations: 60, knowledge: 10, transferKnowledge: 5, meta: 5 },
+  },
+  {
+    purpose: "learning_patternize",
+    activeSlots: ["goal_definition"],
+    budgetOverrides: { goalDefinition: 10, observations: 70, knowledge: 10, transferKnowledge: 5, meta: 5 },
+  },
+  {
+    purpose: "capability_detect",
+    activeSlots: ["goal_definition", "current_state"],
+    budgetOverrides: { goalDefinition: 30, observations: 40, knowledge: 20, transferKnowledge: 5, meta: 5 },
+  },
+  {
+    purpose: "capability_goal_gap",
+    activeSlots: ["goal_definition", "current_state"],
+    budgetOverrides: { goalDefinition: 30, observations: 40, knowledge: 20, transferKnowledge: 5, meta: 5 },
+  },
+  {
+    purpose: "capability_verify",
+    activeSlots: ["goal_definition", "current_state"],
+    budgetOverrides: { goalDefinition: 20, observations: 50, knowledge: 20, transferKnowledge: 5, meta: 5 },
+  },
+  {
+    purpose: "ethics_evaluate",
+    activeSlots: ["goal_definition"],
+    budgetOverrides: { goalDefinition: 40, observations: 30, knowledge: 20, transferKnowledge: 5, meta: 5 },
+  },
+  {
+    purpose: "curiosity_propose",
+    activeSlots: ["goal_definition", "current_state", "lessons"],
+    budgetOverrides: { goalDefinition: 25, observations: 35, knowledge: 25, transferKnowledge: 10, meta: 5 },
+  },
+  {
+    purpose: "checkpoint_adapt",
+    activeSlots: ["goal_definition", "current_state"],
+    budgetOverrides: { goalDefinition: 20, observations: 50, knowledge: 20, transferKnowledge: 5, meta: 5 },
+  },
+  {
+    purpose: "knowledge_gap_detection",
+    activeSlots: ["recent_task_results"],
+    budgetOverrides: { goalDefinition: 5, observations: 80, knowledge: 10, transferKnowledge: 0, meta: 5 },
+  },
+  {
+    purpose: "knowledge_acquisition",
+    activeSlots: ["recent_task_results"],
+    budgetOverrides: { goalDefinition: 5, observations: 80, knowledge: 10, transferKnowledge: 0, meta: 5 },
+  },
+  {
+    purpose: "knowledge_contradiction",
+    activeSlots: ["recent_task_results"],
+    budgetOverrides: { goalDefinition: 5, observations: 80, knowledge: 10, transferKnowledge: 0, meta: 5 },
+  },
+  {
+    purpose: "knowledge_enrichment",
+    activeSlots: ["recent_task_results"],
+    budgetOverrides: { goalDefinition: 5, observations: 80, knowledge: 10, transferKnowledge: 0, meta: 5 },
+  },
+  {
+    purpose: "knowledge_stability",
+    activeSlots: ["recent_task_results"],
+    budgetOverrides: { goalDefinition: 5, observations: 80, knowledge: 10, transferKnowledge: 0, meta: 5 },
+  },
+  {
+    purpose: "memory_distill_extract_patterns",
+    activeSlots: ["recent_task_results"],
+    budgetOverrides: { goalDefinition: 5, observations: 80, knowledge: 10, transferKnowledge: 0, meta: 5 },
+  },
+  {
+    purpose: "memory_distill_lessons",
+    activeSlots: ["recent_task_results"],
+    budgetOverrides: { goalDefinition: 5, observations: 80, knowledge: 10, transferKnowledge: 0, meta: 5 },
+  },
+  {
+    purpose: "knowledge_transfer_adapt",
+    activeSlots: ["recent_task_results"],
+    budgetOverrides: { goalDefinition: 5, observations: 80, knowledge: 10, transferKnowledge: 0, meta: 5 },
+  },
+  {
+    purpose: "knowledge_transfer_meta_patterns",
+    activeSlots: ["recent_task_results"],
+    budgetOverrides: { goalDefinition: 5, observations: 80, knowledge: 10, transferKnowledge: 0, meta: 5 },
+  },
+  {
+    purpose: "knowledge_transfer_incremental",
+    activeSlots: ["recent_task_results"],
+    budgetOverrides: { goalDefinition: 5, observations: 80, knowledge: 10, transferKnowledge: 0, meta: 5 },
+  },
+  // Batch C: Goal + Strategy (Phase D step 2)
+  {
+    purpose: "goal_quality_assessment",
+    activeSlots: ["goal_definition"],
+    budgetOverrides: { goalDefinition: 40, observations: 30, knowledge: 20, transferKnowledge: 5, meta: 5 },
+  },
+  {
+    purpose: "goal_quality_improvement",
+    activeSlots: ["goal_definition"],
+    budgetOverrides: { goalDefinition: 40, observations: 30, knowledge: 20, transferKnowledge: 5, meta: 5 },
+  },
+  {
+    purpose: "goal_quality_validation",
+    activeSlots: ["goal_definition"],
+    budgetOverrides: { goalDefinition: 40, observations: 30, knowledge: 20, transferKnowledge: 5, meta: 5 },
+  },
+  {
+    purpose: "dependency_analysis",
+    activeSlots: ["goal_definition", "current_state"],
+    budgetOverrides: { goalDefinition: 30, observations: 40, knowledge: 20, transferKnowledge: 5, meta: 5 },
+  },
+  {
+    purpose: "strategy_template_match",
+    activeSlots: ["goal_definition", "current_state", "strategy_templates"],
+    budgetOverrides: { goalDefinition: 20, observations: 30, knowledge: 30, transferKnowledge: 15, meta: 5 },
+  },
+  {
+    purpose: "strategy_template_adapt",
+    activeSlots: ["goal_definition", "current_state", "strategy_templates"],
+    budgetOverrides: { goalDefinition: 20, observations: 30, knowledge: 30, transferKnowledge: 15, meta: 5 },
+  },
+  // Batch D: Knowledge (Phase D step 2)
+  {
+    purpose: "knowledge_extraction",
+    activeSlots: ["recent_task_results"],
+    budgetOverrides: { goalDefinition: 5, observations: 80, knowledge: 10, transferKnowledge: 0, meta: 5 },
+  },
+  {
+    purpose: "knowledge_consolidation",
+    activeSlots: ["recent_task_results", "knowledge"],
+    budgetOverrides: { goalDefinition: 5, observations: 40, knowledge: 50, transferKnowledge: 0, meta: 5 },
+  },
+  {
+    purpose: "knowledge_query",
+    activeSlots: ["knowledge"],
+    budgetOverrides: { goalDefinition: 5, observations: 20, knowledge: 70, transferKnowledge: 0, meta: 5 },
+  },
+  {
+    purpose: "knowledge_decision",
+    activeSlots: ["recent_task_results", "knowledge"],
+    budgetOverrides: { goalDefinition: 5, observations: 60, knowledge: 30, transferKnowledge: 0, meta: 5 },
+  },
+  {
+    purpose: "knowledge_revalidation",
+    activeSlots: ["knowledge"],
+    budgetOverrides: { goalDefinition: 5, observations: 30, knowledge: 60, transferKnowledge: 0, meta: 5 },
+  },
+  {
+    purpose: "memory_distill_summarize",
+    activeSlots: ["recent_task_results"],
+    budgetOverrides: { goalDefinition: 5, observations: 80, knowledge: 10, transferKnowledge: 0, meta: 5 },
+  },
+  {
+    purpose: "memory_distill_prioritize",
+    activeSlots: ["recent_task_results"],
+    budgetOverrides: { goalDefinition: 5, observations: 80, knowledge: 10, transferKnowledge: 0, meta: 5 },
+  },
+  {
+    purpose: "knowledge_transfer_extract",
+    activeSlots: ["recent_task_results"],
+    budgetOverrides: { goalDefinition: 5, observations: 80, knowledge: 10, transferKnowledge: 0, meta: 5 },
+  },
+  {
+    purpose: "knowledge_transfer_apply",
+    activeSlots: ["recent_task_results"],
+    budgetOverrides: { goalDefinition: 5, observations: 60, knowledge: 20, transferKnowledge: 15, meta: 5 },
+  },
+  {
+    purpose: "knowledge_transfer_validate",
+    activeSlots: ["recent_task_results"],
+    budgetOverrides: { goalDefinition: 5, observations: 60, knowledge: 20, transferKnowledge: 10, meta: 5 },
+  },
+  // Batch E: Learning + Traits (Phase D step 2)
+  {
+    purpose: "learning_pattern_extract",
+    activeSlots: ["goal_definition"],
+    budgetOverrides: { goalDefinition: 20, observations: 60, knowledge: 10, transferKnowledge: 5, meta: 5 },
+  },
+  {
+    purpose: "learning_insight_generate",
+    activeSlots: ["goal_definition"],
+    budgetOverrides: { goalDefinition: 10, observations: 70, knowledge: 10, transferKnowledge: 5, meta: 5 },
+  },
+  {
+    purpose: "capability_assess",
+    activeSlots: ["goal_definition", "current_state"],
+    budgetOverrides: { goalDefinition: 30, observations: 40, knowledge: 20, transferKnowledge: 5, meta: 5 },
+  },
+  {
+    purpose: "capability_plan",
+    activeSlots: ["goal_definition", "current_state"],
+    budgetOverrides: { goalDefinition: 20, observations: 50, knowledge: 20, transferKnowledge: 5, meta: 5 },
+  },
+  {
+    purpose: "ethics_explain",
+    activeSlots: ["goal_definition"],
+    budgetOverrides: { goalDefinition: 40, observations: 30, knowledge: 20, transferKnowledge: 5, meta: 5 },
+  },
+  {
+    purpose: "checkpoint_analyze",
+    activeSlots: ["goal_definition", "current_state"],
+    budgetOverrides: { goalDefinition: 20, observations: 50, knowledge: 20, transferKnowledge: 5, meta: 5 },
   },
 ];
 

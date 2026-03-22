@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { promises as fsp } from 'node:fs';
 import path from 'node:path';
+import { z } from 'zod';
 import { StateManager } from '../state-manager.js';
 import {
   Checkpoint,
@@ -8,6 +9,7 @@ import {
   CheckpointIndex,
   CheckpointIndexSchema,
 } from '../types/checkpoint.js';
+import type { IPromptGateway } from '../prompt/gateway.js';
 
 interface LLMClient {
   chat(messages: Array<{ role: string; content: string }>): Promise<{ content: string }>;
@@ -19,10 +21,15 @@ interface Logger {
   error(msg: string, meta?: Record<string, unknown>): void;
 }
 
+const CheckpointAdaptResponseSchema = z.object({
+  adapted_context: z.string(),
+});
+
 interface CheckpointManagerDeps {
   stateManager: StateManager;
   llmClient?: LLMClient;
   logger?: Logger;
+  gateway?: IPromptGateway;
 }
 
 export class CheckpointManager {
@@ -122,7 +129,7 @@ export class CheckpointManager {
       return { checkpoint, adaptedContext: checkpoint.session_context_snapshot, wasAdapted: false };
     }
 
-    if (!this.deps.llmClient) {
+    if (!this.deps.llmClient && !this.deps.gateway) {
       return { checkpoint, adaptedContext: checkpoint.session_context_snapshot, wasAdapted: false };
     }
 
@@ -133,8 +140,18 @@ export class CheckpointManager {
       `Intermediate Results:\n${checkpoint.intermediate_results.join('\n')}`;
 
     try {
-      const response = await this.deps.llmClient.chat([{ role: 'user', content: prompt }]);
-      return { checkpoint, adaptedContext: response.content, wasAdapted: true };
+      if (this.deps.gateway) {
+        const result = await this.deps.gateway.execute({
+          purpose: "checkpoint_adapt",
+          goalId,
+          additionalContext: { adapt_prompt: prompt },
+          responseSchema: CheckpointAdaptResponseSchema,
+        });
+        return { checkpoint, adaptedContext: result.adapted_context, wasAdapted: true };
+      } else {
+        const response = await this.deps.llmClient!.chat([{ role: 'user', content: prompt }]);
+        return { checkpoint, adaptedContext: response.content, wasAdapted: true };
+      }
     } catch (err) {
       this.deps.logger?.error('context adaptation failed', { error: String(err) });
       return { checkpoint, adaptedContext: checkpoint.session_context_snapshot, wasAdapted: false };

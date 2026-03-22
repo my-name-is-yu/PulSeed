@@ -4,6 +4,7 @@ import type { ILLMClient } from "../llm/llm-client.js";
 import { extractJSON } from "../llm/llm-client.js";
 import type { VectorIndex } from "./vector-index.js";
 import type { StateManager } from "../state-manager.js";
+import type { IPromptGateway } from "../prompt/gateway.js";
 import {
   LearningTriggerSchema,
   LearnedPatternSchema,
@@ -60,14 +61,17 @@ import type { Triplet } from "./learning-pipeline-prompts.js";
 export class LearningPipeline {
   private readonly config: LearningPipelineConfig;
   private knowledgeTransfer?: { updateMetaPatternsIncremental(): Promise<number> };
+  private readonly gateway?: IPromptGateway;
 
   constructor(
     private readonly llmClient: ILLMClient,
     private readonly vectorIndex: VectorIndex | null,
     private readonly stateManager: StateManager,
-    config?: LearningPipelineConfig
+    config?: LearningPipelineConfig,
+    gateway?: IPromptGateway
   ) {
     this.config = config ?? LearningPipelineConfigSchema.parse({});
+    this.gateway = gateway;
   }
 
   setKnowledgeTransfer(kt: { updateMetaPatternsIncremental(): Promise<number> }): void {
@@ -179,14 +183,25 @@ export class LearningPipeline {
     let triplets: Triplet[];
     try {
       const extractionPrompt = buildExtractionPrompt(trigger, rawLogs);
-      const extractionResponse = await this.llmClient.sendMessage(
-        [{ role: "user", content: extractionPrompt }],
-        { max_tokens: 2048 }
-      );
-      const extractionJson = extractJSON(extractionResponse.content);
-      const extractionRaw = JSON.parse(extractionJson) as unknown;
-      const extractionParsed = TripletsResponseSchema.parse(extractionRaw);
-      triplets = extractionParsed.triplets;
+      if (this.gateway) {
+        const extractionParsed = await this.gateway.execute({
+          purpose: "learning_extraction",
+          goalId: trigger.goal_id,
+          additionalContext: { extraction_prompt: extractionPrompt },
+          responseSchema: TripletsResponseSchema,
+          maxTokens: 2048,
+        });
+        triplets = extractionParsed.triplets;
+      } else {
+        const extractionResponse = await this.llmClient.sendMessage(
+          [{ role: "user", content: extractionPrompt }],
+          { max_tokens: 2048 }
+        );
+        const extractionJson = extractJSON(extractionResponse.content);
+        const extractionRaw = JSON.parse(extractionJson) as unknown;
+        const extractionParsed = TripletsResponseSchema.parse(extractionRaw);
+        triplets = extractionParsed.triplets;
+      }
     } catch {
       // LLM failure or parse failure — return empty (non-fatal)
       return [];
@@ -200,14 +215,29 @@ export class LearningPipeline {
     let patternItems: z.infer<typeof PatternItemSchema>[];
     try {
       const patternizationPrompt = buildPatternizationPrompt(triplets);
-      const patternizationResponse = await this.llmClient.sendMessage(
-        [{ role: "user", content: patternizationPrompt }],
-        { max_tokens: 2048 }
-      );
-      const patternizationJson = extractJSON(patternizationResponse.content);
-      const patternizationRaw = JSON.parse(patternizationJson) as unknown;
-      const patternizationParsed = PatternsResponseSchema.parse(patternizationRaw);
-      patternItems = patternizationParsed.patterns.filter((p) => p.is_specific);
+      if (this.gateway) {
+        const patternizationParsed = await this.gateway.execute({
+          purpose: "learning_patternize",
+          goalId: trigger.goal_id,
+          additionalContext: { patternize_prompt: patternizationPrompt },
+          responseSchema: PatternsResponseSchema,
+          maxTokens: 2048,
+        });
+        patternItems = patternizationParsed.patterns
+          .filter((p) => p.is_specific)
+          .map((p) => ({ ...p, applicable_domains: p.applicable_domains ?? [] }));
+      } else {
+        const patternizationResponse = await this.llmClient.sendMessage(
+          [{ role: "user", content: patternizationPrompt }],
+          { max_tokens: 2048 }
+        );
+        const patternizationJson = extractJSON(patternizationResponse.content);
+        const patternizationRaw = JSON.parse(patternizationJson) as unknown;
+        const patternizationParsed = PatternsResponseSchema.parse(patternizationRaw);
+        patternItems = patternizationParsed.patterns
+          .filter((p) => p.is_specific)
+          .map((p) => ({ ...p, applicable_domains: p.applicable_domains ?? [] }));
+      }
     } catch {
       // LLM failure or parse failure — return empty (non-fatal)
       return [];

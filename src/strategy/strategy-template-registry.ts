@@ -6,6 +6,7 @@ import { ValidationError } from "../utils/errors.js";
 import type { ILLMClient } from "../llm/llm-client.js";
 import type { Logger } from "../runtime/logger.js";
 import type { IEmbeddingClient } from "../knowledge/embedding-client.js";
+import type { IPromptGateway } from "../prompt/gateway.js";
 import { VectorIndex } from "../knowledge/vector-index.js";
 import { StrategyTemplateSchema } from "../types/cross-portfolio.js";
 import type {
@@ -56,7 +57,8 @@ export class StrategyTemplateRegistry {
     private readonly vectorIndex: VectorIndex,
     private readonly embeddingClient: IEmbeddingClient,
     private readonly basePath: string,
-    logger?: Logger
+    logger?: Logger,
+    private readonly promptGateway?: IPromptGateway
   ) {
     this.persistPath = path.join(basePath, "strategy-templates.json");
     this.logger = logger;
@@ -96,14 +98,23 @@ export class StrategyTemplateRegistry {
       'Output JSON: { "hypothesis_pattern": string, "domain_tags": string[], "applicable_dimensions": string[] }',
     ].join("\n");
 
-    const llmResponse = await this.llmClient.sendMessage([
-      { role: "user", content: generalizePrompt },
-    ]);
-
-    const generalized = this.llmClient.parseJSON(
-      llmResponse.content,
-      GeneralizeHypothesisResponseSchema
-    );
+    let generalized: z.infer<typeof GeneralizeHypothesisResponseSchema>;
+    if (this.promptGateway) {
+      generalized = await this.promptGateway.execute({
+        purpose: "strategy_generation",
+        goalId,
+        additionalContext: { generalize_prompt: generalizePrompt },
+        responseSchema: GeneralizeHypothesisResponseSchema,
+      });
+    } else {
+      const llmResponse = await this.llmClient.sendMessage([
+        { role: "user", content: generalizePrompt },
+      ]);
+      generalized = this.llmClient.parseJSON(
+        llmResponse.content,
+        GeneralizeHypothesisResponseSchema
+      );
+    }
 
     // Create a VectorIndex entry for semantic search
     const embeddingId = `tmpl-emb-${randomUUID()}`;
@@ -207,14 +218,23 @@ export class StrategyTemplateRegistry {
       'Output JSON: { "hypothesis": string, "target_dimensions": string[], "expected_effect": Array<{ "dimension": string, "direction": "increase"|"decrease", "magnitude": "small"|"medium"|"large" }> }',
     ].join("\n");
 
-    const llmResponse = await this.llmClient.sendMessage([
-      { role: "user", content: adaptPrompt },
-    ]);
-
-    const adapted = this.llmClient.parseJSON(
-      llmResponse.content,
-      AdaptTemplateResponseSchema
-    );
+    let adapted: z.infer<typeof AdaptTemplateResponseSchema>;
+    if (this.promptGateway) {
+      adapted = await this.promptGateway.execute({
+        purpose: "strategy_generation",
+        goalId,
+        additionalContext: { adapt_prompt: adaptPrompt },
+        responseSchema: AdaptTemplateResponseSchema,
+      });
+    } else {
+      const llmResponse = await this.llmClient.sendMessage([
+        { role: "user", content: adaptPrompt },
+      ]);
+      adapted = this.llmClient.parseJSON(
+        llmResponse.content,
+        AdaptTemplateResponseSchema
+      );
+    }
 
     // Create a new Strategy object
     const now = new Date().toISOString();

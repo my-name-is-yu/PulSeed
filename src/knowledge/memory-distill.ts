@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { ILLMClient } from "../llm/llm-client.js";
+import type { IPromptGateway } from "../prompt/gateway.js";
 import type { ShortTermEntry, LessonEntry } from "../types/memory-lifecycle.js";
 
 // ─── LLM response schemas ───
@@ -31,7 +32,8 @@ const LessonDistillationResponseSchema = z.object({
  */
 export async function extractPatterns(
   llmClient: ILLMClient,
-  entries: ShortTermEntry[]
+  entries: ShortTermEntry[],
+  gateway?: IPromptGateway
 ): Promise<string[]> {
   const prompt = `Analyze the following experience log entries and extract recurring patterns, key insights, and lessons learned. Focus on what worked, what failed, and why.
 
@@ -53,23 +55,37 @@ ${JSON.stringify(
   2
 )}`;
 
-  const response = await llmClient.sendMessage(
-    [{ role: "user", content: prompt }],
-    {
-      system:
-        "You are a pattern extraction engine. Analyze experience logs and identify recurring patterns, successes, and failures. Respond with JSON only.",
-      max_tokens: 2048,
+  if (gateway) {
+    try {
+      const parsed = await gateway.execute({
+        purpose: "memory_distill_extract_patterns",
+        additionalContext: { extract_patterns_prompt: prompt },
+        responseSchema: PatternExtractionResponseSchema,
+        maxTokens: 2048,
+      });
+      return parsed.patterns;
+    } catch {
+      return [];
     }
-  );
-
-  try {
-    const parsed = llmClient.parseJSON(
-      response.content,
-      PatternExtractionResponseSchema
+  } else {
+    const response = await llmClient.sendMessage(
+      [{ role: "user", content: prompt }],
+      {
+        system:
+          "You are a pattern extraction engine. Analyze experience logs and identify recurring patterns, successes, and failures. Respond with JSON only.",
+        max_tokens: 2048,
+      }
     );
-    return parsed.patterns;
-  } catch {
-    return [];
+
+    try {
+      const parsed = llmClient.parseJSON(
+        response.content,
+        PatternExtractionResponseSchema
+      );
+      return parsed.patterns;
+    } catch {
+      return [];
+    }
   }
 }
 
@@ -79,7 +95,8 @@ ${JSON.stringify(
 export async function distillLessons(
   llmClient: ILLMClient,
   patterns: string[],
-  entries: ShortTermEntry[]
+  entries: ShortTermEntry[],
+  gateway?: IPromptGateway
 ): Promise<Array<{
   type: "strategy_outcome" | "success_pattern" | "failure_pattern";
   context: string;
@@ -129,27 +146,44 @@ Return a JSON object with a "lessons" array:
   ]
 }`;
 
-  const response = await llmClient.sendMessage(
-    [{ role: "user", content: prompt }],
-    {
-      system:
-        "You are a lesson distillation engine. Convert experience patterns into structured, actionable lessons. Respond with JSON only.",
-      max_tokens: 4096,
+  if (gateway) {
+    try {
+      const parsed = await gateway.execute({
+        purpose: "memory_distill_lessons",
+        additionalContext: { distill_lessons_prompt: prompt },
+        responseSchema: LessonDistillationResponseSchema,
+        maxTokens: 4096,
+      });
+      return parsed.lessons.map((l) => ({
+        ...l,
+        relevance_tags: l.relevance_tags ?? [],
+      }));
+    } catch {
+      return [];
     }
-  );
-
-  try {
-    const parsed = llmClient.parseJSON(
-      response.content,
-      LessonDistillationResponseSchema
+  } else {
+    const response = await llmClient.sendMessage(
+      [{ role: "user", content: prompt }],
+      {
+        system:
+          "You are a lesson distillation engine. Convert experience patterns into structured, actionable lessons. Respond with JSON only.",
+        max_tokens: 4096,
+      }
     );
-    // Normalize: ensure relevance_tags is always a string[]
-    return parsed.lessons.map((l) => ({
-      ...l,
-      relevance_tags: l.relevance_tags ?? [],
-    }));
-  } catch {
-    return [];
+
+    try {
+      const parsed = llmClient.parseJSON(
+        response.content,
+        LessonDistillationResponseSchema
+      );
+      // Normalize: ensure relevance_tags is always a string[]
+      return parsed.lessons.map((l) => ({
+        ...l,
+        relevance_tags: l.relevance_tags ?? [],
+      }));
+    } catch {
+      return [];
+    }
   }
 }
 

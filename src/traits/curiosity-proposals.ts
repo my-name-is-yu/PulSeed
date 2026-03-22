@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { ILLMClient } from "../llm/llm-client.js";
+import type { IPromptGateway } from "../prompt/gateway.js";
 import type { EthicsGate } from "./ethics-gate.js";
 import type { Logger } from "../runtime/logger.js";
 import type { VectorIndex } from "../knowledge/vector-index.js";
@@ -64,6 +65,7 @@ export interface ProposalGenerationDeps {
   knowledgeTransfer?: KnowledgeTransfer;
   config: CuriosityConfig;
   logger?: Logger;
+  gateway?: IPromptGateway;
 }
 
 // ─── Prompt Builder ───
@@ -196,14 +198,23 @@ export async function generateProposals(
 
     try {
       const prompt = buildProposalPrompt(trigger, goals, state.learning_records);
-      const response = await deps.llmClient.sendMessage(
-        [{ role: "user", content: prompt }],
-        { temperature: 0.3 }
-      );
-      llmItems = deps.llmClient.parseJSON(
-        response.content,
-        LLMProposalsResponseSchema
-      ) as LLMProposalItem[];
+      if (deps.gateway) {
+        llmItems = await deps.gateway.execute({
+          purpose: "curiosity_propose",
+          additionalContext: { proposal_prompt: prompt },
+          responseSchema: LLMProposalsResponseSchema,
+          temperature: 0.3,
+        }) as LLMProposalItem[];
+      } else {
+        const response = await deps.llmClient.sendMessage(
+          [{ role: "user", content: prompt }],
+          { temperature: 0.3 }
+        );
+        llmItems = deps.llmClient.parseJSON(
+          response.content,
+          LLMProposalsResponseSchema
+        ) as LLMProposalItem[];
+      }
     } catch (err) {
       // Don't throw on LLM failure — return what we have so far
       deps.logger?.warn(

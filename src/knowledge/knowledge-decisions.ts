@@ -4,6 +4,7 @@ import { z } from "zod";
 import { DecisionRecordSchema } from "../types/knowledge.js";
 import type { DecisionRecord } from "../types/knowledge.js";
 import type { ILLMClient } from "../llm/llm-client.js";
+import type { IPromptGateway } from "../prompt/gateway.js";
 import type { StateManager } from "../state-manager.js";
 import { writeJsonFileAtomic } from "../utils/json-io.js";
 
@@ -20,6 +21,7 @@ const EnrichmentSchema = z.object({
 export interface DecisionDeps {
   stateManager: StateManager;
   llmClient: ILLMClient;
+  gateway?: IPromptGateway;
 }
 
 // ─── Decision History functions ───
@@ -63,11 +65,26 @@ Context: ${JSON.stringify(record.context).slice(0, 500)}
 Respond with JSON only: { "what_worked": [...], "what_failed": [...], "suggested_next": [...] }`;
 
   try {
-    const response = await deps.llmClient.sendMessage(
-      [{ role: "user", content: prompt }],
-      { max_tokens: 512 }
-    );
-    const enriched = deps.llmClient.parseJSON(response.content, EnrichmentSchema);
+    let enrichedRaw: { what_worked?: string[]; what_failed?: string[]; suggested_next?: string[] };
+    if (deps.gateway) {
+      enrichedRaw = await deps.gateway.execute({
+        purpose: "knowledge_enrichment",
+        additionalContext: { enrichment_prompt: prompt },
+        responseSchema: EnrichmentSchema,
+        maxTokens: 512,
+      });
+    } else {
+      const response = await deps.llmClient.sendMessage(
+        [{ role: "user", content: prompt }],
+        { max_tokens: 512 }
+      );
+      enrichedRaw = deps.llmClient.parseJSON(response.content, EnrichmentSchema);
+    }
+    const enriched = {
+      what_worked: enrichedRaw.what_worked ?? [],
+      what_failed: enrichedRaw.what_failed ?? [],
+      suggested_next: enrichedRaw.suggested_next ?? [],
+    };
     return DecisionRecordSchema.parse({ ...record, ...enriched });
   } catch (err) {
     console.error("[KnowledgeManager] enrichDecisionRecord LLM failed:", err);
