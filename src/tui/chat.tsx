@@ -116,6 +116,7 @@ const COMMANDS: Suggestion[] = [
   { name: '/report', aliases: [], description: 'Generate a summary report', type: 'command' },
   { name: '/goals', aliases: [], description: 'List all goals', type: 'command' },
   { name: '/help', aliases: ['?'], description: 'Show help overlay', type: 'command' },
+  { name: '/dashboard', aliases: [], description: 'Toggle dashboard sidebar', type: 'command' as const },
 ];
 
 /** Commands that accept a goal name as argument */
@@ -140,6 +141,12 @@ function getMatchingSuggestions(input: string, goalNames: string[]): Suggestion[
 
   // Fuzzy match against command names and aliases
   const query = input.slice(1); // strip leading '/'
+
+  // Show all commands when query is empty (just "/")
+  if (!query) {
+    return COMMANDS.map(cmd => ({ ...cmd }));
+  }
+
   const scored: Array<{ cmd: Suggestion; score: number }> = [];
 
   for (const cmd of COMMANDS) {
@@ -186,17 +193,13 @@ export function Chat({ messages, onSubmit, isProcessing, goalNames = [] }: ChatP
     } else if (key.tab || key.return) {
       const selected = matches[selectedIdx];
       if (selected) {
-        if (selected.type === 'goal') {
-          // Auto-submit the completed command so the user is not trapped
-          const value = `${selected.name} ${selected.description}`;
-          setInput("");
-          setSelectedIdx(0);
-          onSubmit(value.trim());
-        } else {
-          justSelected.current = true;
-          setInput(selected.name + " ");
-          setSelectedIdx(0);
-        }
+        // Auto-submit on selection (no extra Enter needed)
+        const value = selected.type === 'goal'
+          ? `${selected.name} ${selected.description}`
+          : selected.name;
+        setInput("");
+        setSelectedIdx(0);
+        onSubmit(value.trim());
       }
     } else if (key.escape) {
       setSelectedIdx(0);

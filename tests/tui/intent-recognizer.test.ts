@@ -108,6 +108,16 @@ describe("IntentRecognizer — keyword matching", () => {
     const result = await recognizer.recognize("how do I run this?");
     expect(result.intent).toBe("unknown");
   });
+
+  it("recognizes dashboard: '/dashboard'", async () => {
+    const result = await recognizer.recognize("/dashboard");
+    expect(result.intent).toBe("dashboard");
+  });
+
+  it("recognizes dashboard case-insensitively: '/Dashboard'", async () => {
+    const result = await recognizer.recognize("/Dashboard");
+    expect(result.intent).toBe("dashboard");
+  });
 });
 
 // ─── LLM fallback ───

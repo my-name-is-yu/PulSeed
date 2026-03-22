@@ -19,6 +19,7 @@ export interface ActionResult {
   stopLoop?: boolean; // signal to stop the loop
   showHelp?: boolean; // signal to open the help overlay
   showReport?: Report; // signal to open the report overlay
+  toggleDashboard?: "toggle"; // signal to toggle the dashboard overlay
 }
 
 // ─── ActionHandler ───
@@ -46,6 +47,8 @@ export class ActionHandler {
         return this.handleGoalCreate(intent);
       case "help":
         return this.handleHelp();
+      case "dashboard":
+        return { messages: ["Dashboard toggled."], toggleDashboard: "toggle" };
       case "chat":
         return this.handleChat(intent);
       case "unknown":

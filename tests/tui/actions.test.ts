@@ -246,6 +246,15 @@ describe("ActionHandler — handle()", () => {
     });
   });
 
+  describe("dashboard intent", () => {
+    it("returns output with toggleDashboard: 'toggle'", async () => {
+      const handler = new ActionHandler(makeDeps());
+      const result = await handler.handle({ intent: "dashboard", raw: "/dashboard" });
+      expect(result.toggleDashboard).toBe("toggle");
+      expect(result.messages.join("\n")).toContain("Dashboard toggled");
+    });
+  });
+
   describe("goal_create intent", () => {
     it("calls goalNegotiator.negotiate with description from params", async () => {
       const goal = makeGoal();

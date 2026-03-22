@@ -56,7 +56,7 @@ const StatusBar: React.FC<{
       Active: {goalCount}  Trust: {trustScore >= 0 ? "+" : ""}
       {trustScore}  Status: {statusLabel(status)}  Iter: {iteration}
     </Text>
-    <Text dimColor>?:help  Ctrl-C:quit</Text>
+    <Text dimColor>d:dashboard  ?:help  Ctrl-C:quit</Text>
   </Box>
 );
 
@@ -75,7 +75,7 @@ export function App({
   const { stdout } = useStdout();
   const termCols = stdout?.columns ?? 80;
   const termRows = stdout?.rows ?? 24;
-  const showSidebar = termCols >= 80;
+  const [showSidebar, setShowSidebar] = useState(false);
 
   // ── Loop state via hook ──
   const { loopState, start, stop, getController } = useLoop(coreLoop, stateManager, trustManager);
@@ -178,6 +178,11 @@ export function App({
             messageType: result.messageType ?? ("info" as const),
           })),
         ].slice(-MAX_MESSAGES));
+
+        // Handle dashboard toggle signal
+        if (result.toggleDashboard === "toggle") {
+          setShowSidebar(prev => !prev);
+        }
 
         // Handle loop signals
         if (result.startLoop) {

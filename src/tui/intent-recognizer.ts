@@ -11,6 +11,7 @@ export type IntentType =
   | "goal_list"
   | "goal_create"
   | "help"
+  | "dashboard"
   | "chat"
   | "unknown";
 
@@ -56,6 +57,10 @@ const KEYWORD_RULES: KeywordRule[] = [
   {
     pattern: /^\/help$/i,
     intent: "help",
+  },
+  {
+    pattern: /^\/dashboard$/i,
+    intent: "dashboard",
   },
 ];
 
