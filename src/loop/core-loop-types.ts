@@ -128,6 +128,8 @@ export interface LoopResult {
   iterations: LoopIterationResult[];
   startedAt: string;
   completedAt: string;
+  /** Human-readable explanation when finalStatus is "error" */
+  errorMessage?: string;
 }
 
 // ─── Dependencies ───

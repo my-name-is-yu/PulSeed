@@ -354,7 +354,7 @@ describe("improve subcommand — negotiation", () => {
           title: "Add baseline tests",
           rationale: "No test coverage detected",
           steps: ["Update tests/baseline.test.ts to add coverage for core modules."],
-          success_criteria: ["Verify measurable progress for test_coverage."],
+          success_criteria: ["test_coverage reaches target threshold."],
           repo_context: { path: "tests/baseline.test.ts" },
         },
       ],

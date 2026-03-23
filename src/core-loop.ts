@@ -36,6 +36,7 @@ import {
 } from "./loop/core-loop-phases-b.js";
 import { handleCapabilityAcquisition } from "./loop/core-loop-capability.js";
 import { CoreLoopLearning } from "./loop/core-loop-learning.js";
+import { computeRawGap, normalizeGap } from "./drive/gap-calculator.js";
 
 // Re-export types for backward compatibility
 export type {
@@ -108,10 +109,13 @@ export class CoreLoop {
     }
 
     if (goal.status !== "active" && goal.status !== "waiting") {
+      const msg = `Goal "${goalId}" cannot be run: status is "${goal.status}" (expected "active" or "waiting")`;
+      this.logger?.error(msg);
       return {
         goalId,
         totalIterations: 0,
         finalStatus: "error",
+        errorMessage: msg,
         iterations: [],
         startedAt,
         completedAt: new Date().toISOString(),
@@ -675,11 +679,21 @@ export class CoreLoop {
     goal: Goal
   ): Promise<void> {
     try {
-      const observation = goal.dimensions.map((d) => ({
-        dimensionName: d.name,
-        progress: typeof d.current_value === "number" ? d.current_value : 0,
-        confidence: d.confidence,
-      }));
+      const observation = goal.dimensions.map((d) => {
+        let progress = 0;
+        if (typeof d.current_value === "number" && d.threshold) {
+          const rawGap = computeRawGap(d.current_value, d.threshold);
+          const normalizedGap = normalizeGap(rawGap, d.threshold, d.current_value);
+          progress = 1 - Math.max(0, Math.min(1, normalizedGap));
+        } else if (typeof d.current_value === "number") {
+          progress = d.current_value;
+        }
+        return {
+          dimensionName: d.name,
+          progress,
+          confidence: d.confidence,
+        };
+      });
 
       const taskResult =
         iterationResult.taskResult !== null

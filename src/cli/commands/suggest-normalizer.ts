@@ -247,7 +247,7 @@ function normalizeLegacySuggestion(
   const steps = pickStringArray(record.steps, record.actions, record.tasks, record.checklist);
   const normalizedSteps = steps.length > 0 ? steps : [actionable.description];
   const successCriteria = dimensions.length > 0
-    ? dimensions.map((dimension) => `Verify measurable progress for ${dimension}.`)
+    ? dimensions.map((dimension) => `${dimension} reaches target threshold.`)
     : [`Complete the change in ${pathHint || displayPath} and confirm the improvement is verifiable.`];
 
   return {

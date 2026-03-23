@@ -168,7 +168,7 @@ export async function cmdRun(
       logger.error("Goal stalled — escalation level reached maximum.");
       return 2;
     case "error":
-      logger.error("Loop ended with error.");
+      console.error(`Error: ${result.errorMessage || "Loop ended with error. Check ~/.tavori/logs/ for details."}`);
       return 1;
     default:
       return 0;

@@ -10,6 +10,7 @@ import type { ILLMClient } from "../llm/llm-client.js";
 import type { IPromptGateway } from "../prompt/gateway.js";
 import type { ObservationEngine } from "../observation/observation-engine.js";
 import type { Logger } from "../runtime/logger.js";
+import { sanitizeThresholdTypes, sanitizeThresholdValues } from "./refiner-prompts.js";
 import {
   DimensionDecompositionSchema,
   FeasibilityResultSchema,
@@ -86,8 +87,9 @@ export async function runDecompositionStep(
       [{ role: "user", content: decompositionPrompt }],
       { temperature: 0 }
     );
+    const sanitized = sanitizeThresholdValues(sanitizeThresholdTypes(decompositionResponse.content));
     dimensions = llmClient.parseJSON(
-      decompositionResponse.content,
+      sanitized,
       z.array(DimensionDecompositionSchema)
     );
   }
