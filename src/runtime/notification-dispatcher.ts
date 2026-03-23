@@ -344,11 +344,6 @@ export class NotificationDispatcher implements INotificationDispatcher {
     this.logger = logger;
   }
 
-  /** Replace or set the NotifierRegistry after construction. */
-  setNotifierRegistry(registry: NotifierRegistry): void {
-    this.notifierRegistry = registry;
-  }
-
   /** Dispatch report to all configured channels */
   async dispatch(report: Report): Promise<NotificationResult[]> {
     const results: NotificationResult[] = [];

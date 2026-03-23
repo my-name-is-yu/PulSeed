@@ -16,7 +16,7 @@ import { CapabilityDetector } from "../../observation/capability-detector.js";
 import { formatOperationError, printCharacterConfig } from "../utils.js";
 import { getCliLogger } from "../cli-logger.js";
 
-export function maskSecrets(config: ProviderConfig): ProviderConfig {
+function maskSecrets(config: ProviderConfig): ProviderConfig {
   const mask = (val: string | undefined): string | undefined =>
     val && val.length > 8 ? val.slice(0, 4) + "..." + val.slice(-4) : val ? "****" : undefined;
   return JSON.parse(JSON.stringify(config), (key, value) => {
@@ -88,7 +88,6 @@ export async function cmdProvider(argv: string[]): Promise<number> {
 }
 
 export async function cmdConfigCharacter(
-  _stateManager: StateManager,
   characterConfigManager: CharacterConfigManager,
   argv: string[]
 ): Promise<number> {

@@ -20,14 +20,18 @@ export const LearningTriggerSchema = z.object({
 });
 export type LearningTrigger = z.infer<typeof LearningTriggerSchema>;
 
-// --- Learned Pattern Type ---
+// --- Feedback Category (shared by LearnedPatternType and StructuralFeedbackType) ---
 
-export const LearnedPatternTypeEnum = z.enum([
+const FeedbackCategoryEnum = z.enum([
   "observation_accuracy",
   "strategy_selection",
   "scope_sizing",
   "task_generation",
 ]);
+
+// --- Learned Pattern Type ---
+
+export const LearnedPatternTypeEnum = FeedbackCategoryEnum;
 export type LearnedPatternType = z.infer<typeof LearnedPatternTypeEnum>;
 
 // --- Learned Pattern ---
@@ -86,12 +90,7 @@ export type LearningPipelineConfig = z.infer<typeof LearningPipelineConfigSchema
 
 // --- Structural Feedback Type ---
 
-export const StructuralFeedbackTypeEnum = z.enum([
-  "observation_accuracy",
-  "strategy_selection",
-  "scope_sizing",
-  "task_generation",
-]);
+export const StructuralFeedbackTypeEnum = FeedbackCategoryEnum;
 export type StructuralFeedbackType = z.infer<typeof StructuralFeedbackTypeEnum>;
 
 // --- Structural Feedback ---

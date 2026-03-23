@@ -8,6 +8,7 @@ import { PluginManifestSchema } from "../../types/plugin.js";
 import { formatOperationError } from "../utils.js";
 import { getCliLogger } from "../cli-logger.js";
 import { getPluginsDir } from "../../utils/paths.js";
+import { parseSemver, compareSemver, satisfiesRange } from "../../runtime/plugin-loader.js";
 
 const execFile = promisify(cp.execFile);
 
@@ -116,31 +117,6 @@ async function readNpmManifest(pluginDir: string, packageName: string) {
     : packageName.split("/")[0];
   const nodeModulesDir = path.join(pluginDir, "node_modules", pkgName);
   return readManifest(nodeModulesDir);
-}
-
-// ─── Semver utilities (no external deps, mirrors plugin-loader.ts) ───────────
-
-function parseSemver(v: string): { major: number; minor: number; patch: number } {
-  const m = v.match(/^(\d+)\.(\d+)\.(\d+)/);
-  if (!m) throw new Error(`Invalid semver: ${v}`);
-  return { major: Number(m[1]), minor: Number(m[2]), patch: Number(m[3]) };
-}
-
-function compareSemver(
-  a: { major: number; minor: number; patch: number },
-  b: { major: number; minor: number; patch: number }
-): -1 | 0 | 1 {
-  if (a.major !== b.major) return a.major > b.major ? 1 : -1;
-  if (a.minor !== b.minor) return a.minor > b.minor ? 1 : -1;
-  if (a.patch !== b.patch) return a.patch > b.patch ? 1 : -1;
-  return 0;
-}
-
-function satisfiesRange(version: string, min?: string, max?: string): boolean {
-  const v = parseSemver(version);
-  if (min !== undefined && compareSemver(v, parseSemver(min)) < 0) return false;
-  if (max !== undefined && compareSemver(v, parseSemver(max)) > 0) return false;
-  return true;
 }
 
 /** Check Tavori version compatibility, log a warning if incompatible, return false to abort. */

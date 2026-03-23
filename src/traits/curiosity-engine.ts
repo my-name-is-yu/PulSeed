@@ -34,19 +34,6 @@ import {
   detectKnowledgeTransferOpportunities as detectKnowledgeTransferOpportunitiesImpl,
 } from "./curiosity-transfer.js";
 
-// ─── Re-exports for backward compatibility ───
-
-export {
-  buildProposalPrompt,
-  computeProposalHash,
-  isInRejectionCooldown,
-} from "./curiosity-proposals.js";
-
-export {
-  detectSemanticTransfer as detectSemanticTransferFn,
-  detectKnowledgeTransferOpportunities as detectKnowledgeTransferOpportunitiesFn,
-} from "./curiosity-transfer.js";
-
 // ─── Constants ───
 
 const CURIOSITY_STATE_PATH = "curiosity/state.json";

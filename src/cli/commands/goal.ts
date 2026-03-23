@@ -19,18 +19,6 @@ import {
   autoRegisterShellDataSources,
 } from "./goal-utils.js";
 
-// Re-export everything from split modules for backward compatibility
-export {
-  ShellCommandConfig,
-  SHELL_DIMENSION_PATTERNS,
-  RawDimensionSpec,
-  parseRawDim,
-  buildThreshold,
-  autoRegisterFileExistenceDataSources,
-  autoRegisterShellDataSources,
-} from "./goal-utils.js";
-export { cmdGoalAddRaw } from "./goal-raw.js";
-
 export async function cmdGoalAdd(
   stateManager: StateManager,
   characterConfigManager: CharacterConfigManager,

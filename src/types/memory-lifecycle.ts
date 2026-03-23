@@ -53,12 +53,12 @@ export const ShortTermEntrySchema = z.object({
 export type ShortTermEntry = z.infer<typeof ShortTermEntrySchema>;
 
 // Lesson entry (Long-term)
-export const LessonTypeSchema = z.enum([
+const LessonTypeSchema = z.enum([
   "strategy_outcome",
   "success_pattern",
   "failure_pattern",
 ]);
-export type LessonType = z.infer<typeof LessonTypeSchema>;
+type LessonType = z.infer<typeof LessonTypeSchema>;
 
 export const LessonEntrySchema = z.object({
   lesson_id: z.string(),

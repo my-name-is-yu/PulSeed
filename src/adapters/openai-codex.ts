@@ -14,8 +14,8 @@
 //   - When [PROMPT] arg is omitted (or `-` is given), prompt is read from stdin
 //   - NOTE: --full-auto does NOT exist in this version; use sandbox policy instead
 
-import { spawn } from "node:child_process";
 import type { IAdapter, AgentTask, AgentResult } from "../execution/adapter-layer.js";
+import { spawnWithTimeout } from "./spawn-helper.js";
 
 export interface OpenAICodexCLIAdapterConfig {
   /** The executable name / path for the codex CLI. Default: "codex" */
@@ -52,95 +52,58 @@ export class OpenAICodexCLIAdapter implements IAdapter {
   async execute(task: AgentTask): Promise<AgentResult> {
     const startedAt = Date.now();
 
-    return new Promise<AgentResult>((resolve) => {
-      // Build argument list: exec [-s <policy>] [-m <model>]
-      // Prompt is written to stdin (not included in args) to prevent ps aux exposure.
-      const spawnArgs: string[] = ["exec"];
+    // Build argument list: exec [-s <policy>] [-m <model>]
+    // Prompt is written to stdin (not included in args) to prevent ps aux exposure.
+    const spawnArgs: string[] = ["exec"];
 
-      if (this.sandboxPolicy) {
-        spawnArgs.push("-s", this.sandboxPolicy);
-      }
+    if (this.sandboxPolicy) {
+      spawnArgs.push("-s", this.sandboxPolicy);
+    }
 
-      if (this.model) {
-        spawnArgs.push("-m", this.model);
-      }
+    if (this.model) {
+      spawnArgs.push("-m", this.model);
+    }
 
-      // NOTE: --path is NOT supported by codex-cli 0.114.0; use cwd instead
+    // NOTE: --path is NOT supported by codex-cli 0.114.0; use cwd instead
+    const result = await spawnWithTimeout(
+      this.cliPath,
+      spawnArgs,
+      { cwd: this.repoPath, env: process.env, stdinData: task.prompt },
+      task.timeout_ms
+    );
 
-      const child = spawn(this.cliPath, spawnArgs, {
-        stdio: ["pipe", "pipe", "pipe"],
-        cwd: this.repoPath,
-        env: process.env,
-      });
+    const elapsed = Date.now() - startedAt;
 
-      let stdout = "";
-      let stderr = "";
-      let timedOut = false;
+    if (result.timedOut) {
+      return {
+        success: false,
+        output: result.stdout,
+        error: `Timed out after ${task.timeout_ms}ms`,
+        exit_code: result.exitCode,
+        elapsed_ms: elapsed,
+        stopped_reason: "timeout",
+      };
+    }
 
-      // Timeout: send SIGTERM, then record timeout result.
-      const timeoutHandle = setTimeout(() => {
-        timedOut = true;
-        child.kill("SIGTERM");
-      }, task.timeout_ms);
+    if (result.exitCode === null) {
+      return {
+        success: false,
+        output: result.stdout,
+        error: result.stderr,
+        exit_code: null,
+        elapsed_ms: elapsed,
+        stopped_reason: "error",
+      };
+    }
 
-      // Suppress EPIPE errors on stdin: the spawned process may exit and close
-      // its stdin pipe before we finish writing (race condition in tests).
-      child.stdin.on("error", (err: NodeJS.ErrnoException) => {
-        if (err.code !== "EPIPE") throw err;
-        // EPIPE = process already closed stdin; safe to ignore
-      });
-
-      // Write the prompt to stdin and close so the CLI knows input is done.
-      // This avoids exposing the prompt in `ps aux` output.
-      child.stdin.write(task.prompt, "utf8");
-      child.stdin.end();
-
-      child.stdout.on("data", (chunk: Buffer) => {
-        stdout += chunk.toString("utf8");
-      });
-
-      child.stderr.on("data", (chunk: Buffer) => {
-        stderr += chunk.toString("utf8");
-      });
-
-      child.on("error", (err: Error) => {
-        clearTimeout(timeoutHandle);
-        resolve({
-          success: false,
-          output: stdout,
-          error: err.message,
-          exit_code: null,
-          elapsed_ms: Date.now() - startedAt,
-          stopped_reason: "error",
-        });
-      });
-
-      child.on("close", (code: number | null) => {
-        clearTimeout(timeoutHandle);
-        const elapsed = Date.now() - startedAt;
-
-        if (timedOut) {
-          resolve({
-            success: false,
-            output: stdout,
-            error: `Timed out after ${task.timeout_ms}ms`,
-            exit_code: code,
-            elapsed_ms: elapsed,
-            stopped_reason: "timeout",
-          });
-          return;
-        }
-
-        const success = code === 0;
-        resolve({
-          success,
-          output: stdout,
-          error: success ? null : stderr || `Process exited with code ${code}`,
-          exit_code: code,
-          elapsed_ms: elapsed,
-          stopped_reason: success ? "completed" : "error",
-        });
-      });
-    });
+    const success = result.exitCode === 0;
+    return {
+      success,
+      output: result.stdout,
+      error: success ? null : result.stderr || `Process exited with code ${result.exitCode}`,
+      exit_code: result.exitCode,
+      elapsed_ms: elapsed,
+      stopped_reason: success ? "completed" : "error",
+    };
   }
 }

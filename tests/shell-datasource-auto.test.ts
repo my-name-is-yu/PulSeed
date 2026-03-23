@@ -4,7 +4,7 @@ import * as path from "node:path";
 import {
   autoRegisterShellDataSources,
   SHELL_DIMENSION_PATTERNS,
-} from "../src/cli/commands/goal.js";
+} from "../src/cli/commands/goal-utils.js";
 import { makeTempDir } from "./helpers/temp-dir.js";
 
 // ─── Minimal StateManager stub ───

@@ -100,17 +100,6 @@ describe("NotificationDispatcher — NotifierRegistry integration", () => {
     ).resolves.toBeDefined();
   });
 
-  it("supports setNotifierRegistry after construction", async () => {
-    const dispatcherLate = new NotificationDispatcher({});
-    const notifier = makeNotifier("late-notifier", ["goal_complete"]);
-    registry.register("late-notifier", notifier);
-    dispatcherLate.setNotifierRegistry(registry);
-
-    await dispatcherLate.dispatch(makeReport({ report_type: "goal_completion" }));
-
-    expect(notifier.notify).toHaveBeenCalledOnce();
-  });
-
   it("maps stall_escalation report type to stall_detected event", async () => {
     const notifier = makeNotifier("stall-watcher", ["stall_detected"]);
     registry.register("stall-watcher", notifier);

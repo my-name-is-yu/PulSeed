@@ -326,7 +326,7 @@ export class TaskLifecycle {
 
     // 4b. Post-execution health check (opt-in)
     if (executionResult.success && this.healthCheckEnabled) {
-      const healthCheck = await this.runPostExecutionHealthCheck(adapter, task);
+      const healthCheck = await this.runPostExecutionHealthCheck();
       if (!healthCheck.healthy) {
         this.logger?.warn(`[TaskLifecycle] Post-execution health check FAILED: ${healthCheck.output}`);
         executionResult.success = false;
@@ -453,13 +453,8 @@ export class TaskLifecycle {
   }
 
   /** Run build and test checks after successful task execution. Opt-in via healthCheckEnabled. */
-  async runPostExecutionHealthCheck(
-    adapter: IAdapter,
-    task: Task,
-  ): Promise<{ healthy: boolean; output: string }> {
+  async runPostExecutionHealthCheck(): Promise<{ healthy: boolean; output: string }> {
     return _runPostExecutionHealthCheck(
-      adapter,
-      task,
       this.runShellCommand.bind(this),
     );
   }

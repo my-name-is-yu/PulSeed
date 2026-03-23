@@ -24,6 +24,8 @@ import type { AgentTask, AgentResult, IAdapter } from "./adapter-layer.js";
 import { AdapterRegistry } from "./adapter-layer.js";
 import { wrapXmlTag, formatKnowledge } from "../prompt/formatters.js";
 import type { IPromptGateway } from "../prompt/gateway.js";
+import { analyzeImpact } from "./impact-analyzer.js";
+import type { ImpactAnalysis } from "../types/pipeline.js";
 
 // ─── Re-exported types used by consumers ───
 
@@ -85,6 +87,9 @@ export interface VerifierDeps {
   };
   /** Optional PromptGateway — when provided, LLM review calls are routed through it */
   gateway?: IPromptGateway;
+  /** Enable post-verification impact analysis (default: false). Disabled by default to avoid
+   *  consuming extra LLM calls in contexts that only care about verification. */
+  enableImpactAnalysis?: boolean;
 }
 
 // ─── verifyTask ───
@@ -308,6 +313,30 @@ export async function verifyTask(
     timestamp: now,
   });
 
+  // Post-verification: analyze impact for unintended side effects (opt-in)
+  let impactAnalysis: ImpactAnalysis | undefined;
+  if (deps.enableImpactAnalysis) try {
+    impactAnalysis = await analyzeImpact(
+      { llmClient: deps.llmClient, logger: deps.logger! },
+      {
+        taskDescription: task.work_description,
+        taskOutput: executionResult.output,
+        verificationVerdict: verdict,
+        targetScope: task.scope_boundary.in_scope,
+      }
+    );
+    if (impactAnalysis.side_effects.length > 0) {
+      deps.logger?.warn("[task-verifier] Impact analysis detected side effects", {
+        verdict: impactAnalysis.verdict,
+        side_effects: impactAnalysis.side_effects,
+        confidence: impactAnalysis.confidence,
+      });
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    deps.logger?.warn("[task-verifier] Impact analysis failed (non-fatal)", { error: msg });
+  }
+
   // Persist verification result — include criteria fields from LLM review for failure context
   await deps.stateManager.writeRaw(
     `verification/${task.id}/verification-result.json`,
@@ -315,6 +344,7 @@ export async function verifyTask(
       ...verificationResult,
       criteria_met: effectiveL2.criteria_met,
       criteria_total: effectiveL2.criteria_total,
+      impact_analysis: impactAnalysis,
     }
   );
 

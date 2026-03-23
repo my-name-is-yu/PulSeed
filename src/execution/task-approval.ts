@@ -26,7 +26,7 @@ export type PreExecutionCheckResult =
  * Run ethics gate check on a task.
  * Returns null if passed, or a TaskCycleResult to return early.
  */
-export async function runEthicsCheck(
+async function runEthicsCheck(
   ethicsGate: EthicsGate,
   approvalFn: (task: Task) => Promise<boolean>,
   task: Task
@@ -87,7 +87,7 @@ export async function runEthicsCheck(
  * Run capability deficiency check on a task.
  * Returns null if passed, or a TaskCycleResult to return early.
  */
-export async function runCapabilityCheck(
+async function runCapabilityCheck(
   capabilityDetector: CapabilityDetector,
   task: Task
 ): Promise<TaskCycleResult | null> {
@@ -145,7 +145,7 @@ export async function runCapabilityCheck(
  * Run irreversible approval check on a task.
  * Returns null if approved, or a TaskCycleResult to return early.
  */
-export async function runIrreversibleApprovalCheck(
+async function runIrreversibleApprovalCheck(
   checkIrreversibleApproval: (task: Task) => Promise<boolean>,
   task: Task
 ): Promise<TaskCycleResult | null> {

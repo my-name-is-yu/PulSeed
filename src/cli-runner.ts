@@ -32,7 +32,6 @@ import type { LoopConfig } from "./core-loop.js";
 import { cmdRun } from "./cli/commands/run.js";
 import {
   cmdGoalAdd,
-  cmdGoalAddRaw,
   cmdGoalList,
   cmdStatus,
   cmdGoalShow,
@@ -41,7 +40,8 @@ import {
   cmdGoalArchive,
   cmdCleanup,
 } from "./cli/commands/goal.js";
-import { cmdPluginList, cmdPluginInstall, cmdPluginRemove } from "./cli/commands/plugin.js";
+import { cmdGoalAddRaw } from "./cli/commands/goal-raw.js";
+import { cmdPluginList, cmdPluginInstall, cmdPluginRemove, cmdPluginUpdate, cmdPluginSearch } from "./cli/commands/plugin.js";
 import { cmdReport } from "./cli/commands/report.js";
 import {
   cmdProvider,
@@ -474,8 +474,16 @@ export class CLIRunner {
         return await cmdPluginRemove(undefined, argv.slice(2));
       }
 
+      if (pluginSubcommand === "update") {
+        return await cmdPluginUpdate(undefined, argv.slice(2));
+      }
+
+      if (pluginSubcommand === "search") {
+        return await cmdPluginSearch(undefined, argv.slice(2));
+      }
+
       logger.error(`Unknown plugin subcommand: "${pluginSubcommand}"`);
-      logger.error("Available: plugin list, plugin install, plugin remove");
+      logger.error("Available: plugin list, plugin install, plugin remove, plugin update, plugin search");
       return 1;
     }
 
@@ -496,7 +504,7 @@ export class CLIRunner {
       }
 
       if (configSubcommand === "character") {
-        return cmdConfigCharacter(this.stateManager, this.characterConfigManager, argv.slice(2));
+        return cmdConfigCharacter(this.characterConfigManager, argv.slice(2));
       }
 
       logger.error(`Unknown config subcommand: "${configSubcommand}"`);

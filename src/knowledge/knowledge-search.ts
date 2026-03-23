@@ -93,23 +93,6 @@ export async function searchKnowledge(
 }
 
 /**
- * Lightweight variant: returns id + similarity + metadata only (no full text).
- * Useful for Progressive Disclosure — fetch metadata first, then load full text
- * only for budget-selected candidates via `vectorIndex.getEntryById()`.
- * Falls back to an empty array when no VectorIndex is configured.
- */
-export async function searchKnowledgeMetadata(
-  deps: SearchDeps,
-  query: string,
-  topK: number = 20
-): Promise<MetadataSearchResult[]> {
-  if (!deps.vectorIndex) {
-    return [];
-  }
-  return deps.vectorIndex.searchMetadata(query, topK);
-}
-
-/**
  * Cross-goal semantic search. Leverages the VectorIndex which is global
  * across all goals. Returns entries from any goal ordered by similarity.
  * Falls back to an empty array when no VectorIndex is configured.

@@ -14,7 +14,7 @@ import { buildDeps } from "../setup.js";
 import { formatOperationError } from "../utils.js";
 import { getCliLogger } from "../cli-logger.js";
 
-export function buildApprovalFn(rl: readline.Interface): (task: Task) => Promise<boolean> {
+function buildApprovalFn(rl: readline.Interface): (task: Task) => Promise<boolean> {
   return (task: Task): Promise<boolean> => {
     return new Promise((resolve) => {
       rl.pause();
@@ -68,7 +68,6 @@ export async function cmdRun(
     consoleOutput: false,
   });
 
-  const maxIterations = loopConfig?.maxIterations ?? 100;
   let lastIterationLogged = -1;
   const onProgress = (event: ProgressEvent): void => {
     const prefix = `[${event.iteration}/${event.maxIterations}]`;
@@ -95,8 +94,6 @@ export async function cmdRun(
       }
     }
   };
-  void maxIterations;
-
   let deps: Awaited<ReturnType<typeof buildDeps>>;
   try {
     deps = await buildDeps(stateManager, characterConfigManager, loopConfig, approvalFn, logger, onProgress);

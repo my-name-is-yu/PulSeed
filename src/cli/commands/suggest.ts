@@ -72,7 +72,6 @@ function synthesizeFallbackSuggestions(targetPath: string, context: string, maxS
   const suggestionLimit = Math.max(1, Math.min(3, maxSuggestions));
   const suggestions: GoalSuggestion[] = [];
   const contextLower = context.toLowerCase();
-  const hasReadme = candidatePaths.some((p) => /README(?:\.[a-z0-9]+)?$/i.test(p));
   const hasPackageJson = candidatePaths.some((p) => /package\.json$/i.test(p));
   const hasDocs = candidatePaths.some((p) => /^docs\//i.test(p) || /\/docs\//i.test(p));
   const hasDesign = candidatePaths.some((p) => /^design\//i.test(p) || /\/design\//i.test(p));
@@ -91,8 +90,6 @@ function synthesizeFallbackSuggestions(targetPath: string, context: string, maxS
       dimensions_hint: dimensions,
     });
   };
-
-  void hasReadme;
 
   const readmeTarget = candidatePaths.find((p) => /README(?:\.[a-z0-9]+)?$/i.test(p)) ?? (targetPath === "." ? "README.md" : `${targetPath}/README.md`);
   const packageTarget = candidatePaths.find((p) => /package\.json$/i.test(p)) ?? (targetPath === "." ? "package.json" : `${targetPath}/package.json`);
@@ -315,7 +312,7 @@ function normalizeLegacySuggestPayload(
   return buildFallbackSuggestPayload(targetPath, displayPath, context, maxSuggestions, repoFiles);
 }
 
-export function normalizeSuggestPayload(
+function normalizeSuggestPayload(
   rawOutput: unknown,
   targetPath: string,
   displayPath: string,

@@ -9,6 +9,7 @@
 
 import { spawn } from "node:child_process";
 import type { IAdapter, AgentTask, AgentResult } from "../execution/adapter-layer.js";
+import { spawnWithTimeout } from "./spawn-helper.js";
 import type { Logger } from "../runtime/logger.js";
 
 // ─── Config ───
@@ -94,7 +95,7 @@ export class GitHubIssueAdapter implements IAdapter {
 
       if (knownRepo) {
         // ── Repo already known — spawn gh issue create directly ─────────────
-        this.spawnCreate(parsed, knownRepo, task.timeout_ms, startedAt, resolve);
+        void this.spawnCreate(parsed, knownRepo, task.timeout_ms, startedAt, resolve);
       } else {
         // ── Auto-detect: spawn gh repo view, then spawn gh issue create ─────
         // This uses nested callbacks (not await) so that the second spawn() call
@@ -112,7 +113,7 @@ export class GitHubIssueAdapter implements IAdapter {
             });
             return;
           }
-          this.spawnCreate(parsed, repo, task.timeout_ms, startedAt, resolve);
+          void this.spawnCreate(parsed, repo, task.timeout_ms, startedAt, resolve);
         });
       }
     });
@@ -491,76 +492,60 @@ export class GitHubIssueAdapter implements IAdapter {
   }
 
   /**
-   * Spawn `gh issue create` and resolve the outer Promise. Uses raw callbacks
-   * for the same reason as spawnDetect — synchronous close-handler chaining.
+   * Spawn `gh issue create` and resolve the outer Promise.
    */
-  private spawnCreate(
+  private async spawnCreate(
     parsed: ParsedIssue,
     repo: string,
     timeoutMs: number,
     startedAt: number,
     resolve: (result: AgentResult) => void
-  ): void {
+  ): Promise<void> {
     const args = this.buildGhArgs(parsed, repo);
 
-    let stdout = "";
-    let stderr = "";
-    let timedOut = false;
+    const result = await spawnWithTimeout(
+      this.ghPath,
+      args,
+      {},
+      timeoutMs
+    );
 
-    const child = spawn(this.ghPath, args, { stdio: ["ignore", "pipe", "pipe"] });
+    const elapsed = Date.now() - startedAt;
 
-    const timeoutHandle = setTimeout(() => {
-      timedOut = true;
-      child.kill("SIGTERM");
-    }, timeoutMs);
-
-    child.stdout.on("data", (chunk: Buffer) => {
-      stdout += chunk.toString("utf8");
-    });
-
-    child.stderr.on("data", (chunk: Buffer) => {
-      stderr += chunk.toString("utf8");
-    });
-
-    child.on("error", (err: Error) => {
-      clearTimeout(timeoutHandle);
+    if (result.timedOut) {
       resolve({
         success: false,
-        output: stdout,
-        error: this.classifyGhError(err.message),
+        output: result.stdout,
+        error: `Timed out after ${timeoutMs}ms`,
+        exit_code: result.exitCode,
+        elapsed_ms: elapsed,
+        stopped_reason: "timeout",
+      });
+      return;
+    }
+
+    if (result.exitCode === null) {
+      resolve({
+        success: false,
+        output: result.stdout,
+        error: this.classifyGhError(result.stderr),
         exit_code: null,
-        elapsed_ms: Date.now() - startedAt,
+        elapsed_ms: elapsed,
         stopped_reason: "error",
       });
-    });
+      return;
+    }
 
-    child.on("close", (code: number | null) => {
-      clearTimeout(timeoutHandle);
-      const elapsed = Date.now() - startedAt;
-
-      if (timedOut) {
-        resolve({
-          success: false,
-          output: stdout,
-          error: `Timed out after ${timeoutMs}ms`,
-          exit_code: code,
-          elapsed_ms: elapsed,
-          stopped_reason: "timeout",
-        });
-        return;
-      }
-
-      const success = code === 0;
-      resolve({
-        success,
-        output: stdout,
-        error: success
-          ? null
-          : this.classifyGhError(stderr) || `gh exited with code ${code}`,
-        exit_code: code,
-        elapsed_ms: elapsed,
-        stopped_reason: success ? "completed" : "error",
-      });
+    const success = result.exitCode === 0;
+    resolve({
+      success,
+      output: result.stdout,
+      error: success
+        ? null
+        : this.classifyGhError(result.stderr) || `gh exited with code ${result.exitCode}`,
+      exit_code: result.exitCode,
+      elapsed_ms: elapsed,
+      stopped_reason: success ? "completed" : "error",
     });
   }
 

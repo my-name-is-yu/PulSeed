@@ -12,8 +12,8 @@
 // The CLI takes a natural language task, controls a browser with AI,
 // and returns the result (JSON when --json is used).
 
-import { spawn } from "node:child_process";
 import type { IAdapter, AgentTask, AgentResult } from "../execution/adapter-layer.js";
+import { spawnWithTimeout } from "./spawn-helper.js";
 
 export interface BrowserUseCLIAdapterConfig {
   /** The executable name / path for the browser-use CLI. Default: "browser-use" */
@@ -41,99 +41,57 @@ export class BrowserUseCLIAdapter implements IAdapter {
   async execute(task: AgentTask): Promise<AgentResult> {
     const startedAt = Date.now();
 
-    return new Promise<AgentResult>((resolve) => {
-      // Build argument list: run [--headless] [--json]
-      // Prompt is written to stdin to avoid exposure in `ps aux`.
-      const spawnArgs: string[] = ["run"];
+    // Build argument list: run [--headless] [--json]
+    // Prompt is written to stdin to avoid exposure in `ps aux`.
+    const spawnArgs: string[] = ["run"];
 
-      if (this.headless) {
-        spawnArgs.push("--headless");
-      }
+    if (this.headless) {
+      spawnArgs.push("--headless");
+    }
 
-      if (this.jsonOutput) {
-        spawnArgs.push("--json");
-      }
+    if (this.jsonOutput) {
+      spawnArgs.push("--json");
+    }
 
-      const child = spawn(this.cliPath, spawnArgs, {
-        stdio: ["pipe", "pipe", "pipe"],
-        env: process.env,
-      });
+    const result = await spawnWithTimeout(
+      this.cliPath,
+      spawnArgs,
+      { env: process.env, stdinData: task.prompt },
+      task.timeout_ms
+    );
 
-      let stdout = "";
-      let stderr = "";
-      let timedOut = false;
+    const elapsed = Date.now() - startedAt;
 
-      // Guard against double-resolve: Node.js emits both `error` and `close`
-      // on spawn failure (ENOENT). Only the first settle call takes effect.
-      let settled = false;
-      const settle = (result: AgentResult): void => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timeoutHandle);
-        resolve(result);
+    if (result.timedOut) {
+      return {
+        success: false,
+        output: result.stdout,
+        error: `Timed out after ${task.timeout_ms}ms`,
+        exit_code: result.exitCode,
+        elapsed_ms: elapsed,
+        stopped_reason: "timeout",
       };
+    }
 
-      // Timeout: send SIGTERM, then record timeout result.
-      const timeoutHandle = setTimeout(() => {
-        timedOut = true;
-        child.kill("SIGTERM");
-      }, task.timeout_ms);
+    if (result.exitCode === null) {
+      return {
+        success: false,
+        output: result.stdout,
+        error: result.stderr,
+        exit_code: null,
+        elapsed_ms: elapsed,
+        stopped_reason: "error",
+      };
+    }
 
-      // Suppress EPIPE errors on stdin: the spawned process may exit and close
-      // its stdin pipe before we finish writing (race condition in tests).
-      child.stdin.on("error", (err: NodeJS.ErrnoException) => {
-        if (err.code !== "EPIPE") throw err;
-        // EPIPE = process already closed stdin; safe to ignore
-      });
-
-      // Write the prompt to stdin and close it so the CLI knows input is done.
-      child.stdin.write(task.prompt, "utf8");
-      child.stdin.end();
-
-      child.stdout.on("data", (chunk: Buffer) => {
-        stdout += chunk.toString("utf8");
-      });
-
-      child.stderr.on("data", (chunk: Buffer) => {
-        stderr += chunk.toString("utf8");
-      });
-
-      child.on("error", (err: Error) => {
-        settle({
-          success: false,
-          output: stdout,
-          error: err.message,
-          exit_code: null,
-          elapsed_ms: Date.now() - startedAt,
-          stopped_reason: "error",
-        });
-      });
-
-      child.on("close", (code: number | null) => {
-        const elapsed = Date.now() - startedAt;
-
-        if (timedOut) {
-          settle({
-            success: false,
-            output: stdout,
-            error: `Timed out after ${task.timeout_ms}ms`,
-            exit_code: code,
-            elapsed_ms: elapsed,
-            stopped_reason: "timeout",
-          });
-          return;
-        }
-
-        const success = code === 0;
-        settle({
-          success,
-          output: stdout,
-          error: success ? null : stderr || `Process exited with code ${code}`,
-          exit_code: code,
-          elapsed_ms: elapsed,
-          stopped_reason: success ? "completed" : "error",
-        });
-      });
-    });
+    const success = result.exitCode === 0;
+    return {
+      success,
+      output: result.stdout,
+      error: success ? null : result.stderr || `Process exited with code ${result.exitCode}`,
+      exit_code: result.exitCode,
+      elapsed_ms: elapsed,
+      stopped_reason: success ? "completed" : "error",
+    };
   }
 }

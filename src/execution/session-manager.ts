@@ -6,7 +6,7 @@ import type { StateManager } from "../state-manager.js";
 import type { KnowledgeEntry } from "../types/knowledge.js";
 import type { VectorIndex } from "../knowledge/vector-index.js";
 import type { GoalDependencyGraph } from "../goal/goal-dependency-graph.js";
-import { allocateBudget, selectWithinBudget } from "./context-budget.js";
+import { allocateBudget, selectWithinBudget, estimateTokens as _estimateTokens } from "./context-budget.js";
 import { CheckpointManager } from './checkpoint-manager.js';
 import type { Checkpoint } from '../types/checkpoint.js';
 
@@ -54,10 +54,10 @@ export class SessionManager {
 
   /**
    * Estimates token count for a string.
-   * Simple heuristic: Math.ceil(text.length / 4)
+   * Delegates to the canonical implementation in context-budget.ts.
    */
   estimateTokens(text: string): number {
-    return Math.ceil(text.length / 4);
+    return _estimateTokens(text);
   }
 
   /**

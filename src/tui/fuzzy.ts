@@ -3,7 +3,7 @@
 // Pure functions for fuzzy/subsequence matching with scoring.
 // No external dependencies.
 
-export interface FuzzyMatch {
+interface FuzzyMatch {
   item: string;
   score: number;
   label?: string;

@@ -704,6 +704,8 @@ describe("DaemonRunner", () => {
         isRunning: vi.fn().mockReturnValue(true),
         getHost: vi.fn().mockReturnValue("127.0.0.1"),
         getPort: vi.fn().mockReturnValue(41700),
+        startFileWatcher: vi.fn(),
+        stopFileWatcher: vi.fn(),
       };
     }
 

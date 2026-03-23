@@ -195,8 +195,8 @@ export class EventServer {
     return this.server !== null && this.server.listening;
   }
 
-  /** Check if file watcher is active */
-  isWatching(): boolean {
+  /** Check if file watcher is active (internal use) */
+  private isWatching(): boolean {
     return this.fileWatcher !== null;
   }
 
@@ -208,7 +208,7 @@ export class EventServer {
     return this.host;
   }
 
-  getEventsDir(): string {
+  private getEventsDir(): string {
     return this.eventsDir;
   }
 }

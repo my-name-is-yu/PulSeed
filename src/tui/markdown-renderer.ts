@@ -250,12 +250,3 @@ export function highlightCodeLine(line: string, language: string): MarkdownSegme
   return segments;
 }
 
-/**
- * Legacy single-string renderer for backward compatibility.
- * Joins lines with newline. Prefer renderMarkdownLines() for Ink rendering.
- */
-export function renderMarkdown(text: string): string {
-  return renderMarkdownLines(text)
-    .map((l) => l.text)
-    .join('\n');
-}

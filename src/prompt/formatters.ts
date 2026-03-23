@@ -11,9 +11,8 @@ export function wrapXmlTag(tag: string, content: string): string {
   return `<${tag}>\n${content}\n</${tag}>`;
 }
 
-export function estimateTokens(text: string): number {
-  return Math.ceil(text.length / 4);
-}
+import { estimateTokens } from "../execution/context-budget.js";
+export { estimateTokens };
 
 export function trimToTokenBudget(text: string, maxTokens: number): string {
   if (estimateTokens(text) <= maxTokens) return text;

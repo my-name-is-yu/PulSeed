@@ -6,9 +6,6 @@
  * `this.runShellCommand.bind(this)` so vi.spyOn(lifecycle, "runShellCommand") still works.
  */
 
-import type { IAdapter } from "./adapter-layer.js";
-import type { Task } from "../types/task.js";
-
 type ShellCommandFn = (
   argv: string[],
   options: { timeout: number; cwd: string }
@@ -19,8 +16,6 @@ type ShellCommandFn = (
  * the codebase remains healthy. Opt-in via healthCheckEnabled constructor option.
  */
 export async function runPostExecutionHealthCheck(
-  _adapter: IAdapter,
-  _task: Task,
   runShellCommandFn: ShellCommandFn,
 ): Promise<{ healthy: boolean; output: string }> {
   // Run build check

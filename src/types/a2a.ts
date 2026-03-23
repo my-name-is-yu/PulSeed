@@ -7,12 +7,12 @@ import { z } from "zod";
 
 // ─── Part variants ───
 
-export const A2ATextPartSchema = z.object({
+const A2ATextPartSchema = z.object({
   kind: z.literal("text"),
   text: z.string(),
 });
 
-export const A2AFilePartSchema = z.object({
+const A2AFilePartSchema = z.object({
   kind: z.literal("file"),
   file: z.object({
     name: z.string().optional(),
@@ -22,7 +22,7 @@ export const A2AFilePartSchema = z.object({
   }),
 });
 
-export const A2ADataPartSchema = z.object({
+const A2ADataPartSchema = z.object({
   kind: z.literal("data"),
   data: z.record(z.unknown()),
 });
@@ -142,30 +142,6 @@ export const A2AJsonRpcResponseSchema = z.object({
 });
 
 export type A2AJsonRpcResponse = z.infer<typeof A2AJsonRpcResponseSchema>;
-
-// ─── SSE streaming events ───
-
-export const A2AStatusUpdateEventSchema = z.object({
-  taskId: z.string(),
-  contextId: z.string().optional(),
-  status: A2ATaskStatusSchema,
-  final: z.boolean().optional(),
-  kind: z.literal("status-update"),
-});
-
-export const A2AArtifactUpdateEventSchema = z.object({
-  taskId: z.string(),
-  contextId: z.string().optional(),
-  artifact: A2AArtifactSchema,
-  append: z.boolean().optional(),
-  lastChunk: z.boolean().optional(),
-  kind: z.literal("artifact-update"),
-});
-
-export type A2AStatusUpdateEvent = z.infer<typeof A2AStatusUpdateEventSchema>;
-export type A2AArtifactUpdateEvent = z.infer<
-  typeof A2AArtifactUpdateEventSchema
->;
 
 // ─── Terminal states (for polling/streaming exit condition) ───
 

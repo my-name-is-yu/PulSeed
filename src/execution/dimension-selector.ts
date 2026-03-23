@@ -7,14 +7,14 @@ import type { Dimension } from "../types/goal.js";
  * Confidence-tier weights for dimension selection.
  * Mechanically-observable dimensions are prioritized over LLM-only ones.
  */
-export const CONFIDENCE_WEIGHTS: Record<string, number> = {
+const CONFIDENCE_WEIGHTS: Record<string, number> = {
   mechanical: 1.0,
   verified: 0.9,
   independent_review: 0.7,
   self_report: 0.3,
 };
 
-export function getConfidenceWeight(dim: Dimension): number {
+function getConfidenceWeight(dim: Dimension): number {
   const tier = dim.observation_method.confidence_tier;
   return CONFIDENCE_WEIGHTS[tier] ?? 0.3;
 }

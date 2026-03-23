@@ -2,7 +2,7 @@ import { z } from "zod";
 
 // --- Raw Gap (per dimension) ---
 
-export const RawGapSchema = z.object({
+const RawGapSchema = z.object({
   dimension_name: z.string(),
   raw_gap: z.number(),
 });
@@ -10,7 +10,7 @@ export type RawGap = z.infer<typeof RawGapSchema>;
 
 // --- Normalized Gap (per dimension, [0, 1]) ---
 
-export const NormalizedGapSchema = z.object({
+const NormalizedGapSchema = z.object({
   dimension_name: z.string(),
   raw_gap: z.number(),
   normalized_gap: z.number().min(0).max(1),

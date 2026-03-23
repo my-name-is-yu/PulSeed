@@ -19,7 +19,7 @@ import { DaemonConfigSchema, DaemonStateSchema } from "../types/daemon.js";
 // state: "running"        — daemon is active; if found on startup, previous instance crashed
 // state: "clean_shutdown" — daemon exited gracefully via SIGTERM/SIGINT or stop()
 
-export interface ShutdownMarker {
+interface ShutdownMarker {
   goal_ids: string[];
   loop_index: number;
   timestamp: string;   // ISO 8601
@@ -122,6 +122,7 @@ export class DaemonRunner {
     // 2c. Start EventServer (if provided) and file watcher
     if (this.eventServer) {
       await this.eventServer.start();
+      this.eventServer.startFileWatcher();
       this.logger.info("EventServer started", {
         host: this.eventServer.getHost(),
         port: this.eventServer.getPort(),
@@ -205,6 +206,7 @@ export class DaemonRunner {
       // Stop file watcher and EventServer
       this.driveSystem.stopWatcher();
       if (this.eventServer) {
+        this.eventServer.stopFileWatcher();
         await this.eventServer.stop();
         this.logger.info("EventServer stopped");
       }

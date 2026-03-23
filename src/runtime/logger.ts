@@ -82,7 +82,7 @@ export class Logger {
     this.log("error", message, context);
   }
 
-  setLevel(level: LogLevel): void {
+  private setLevel(level: LogLevel): void {
     this.level = LOG_LEVELS[level];
   }
 
