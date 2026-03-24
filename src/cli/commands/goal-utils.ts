@@ -22,8 +22,8 @@ export interface ShellCommandConfig {
 
 export interface TodoLikeMarkerInventory {
   grouped_counts: {
-    todo: number;
-    fixme: number;
+    TODO: number;
+    FIXME: number;
   };
   raw_total_count: number;
 }
@@ -34,8 +34,8 @@ export function buildTodoLikeMarkerInventory(todoCount: number, fixmeCount: numb
 
   return {
     grouped_counts: {
-      todo: normalizedTodoCount,
-      fixme: normalizedFixmeCount,
+      TODO: normalizedTodoCount,
+      FIXME: normalizedFixmeCount,
     },
     raw_total_count: normalizedTodoCount + normalizedFixmeCount,
   };
