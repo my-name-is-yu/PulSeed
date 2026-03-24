@@ -38,6 +38,9 @@ Usage:
   tavori datasource remove <id>       Remove a data source by ID
   tavori capability list              List all registered capabilities
   tavori capability remove <name>     Remove a capability by name
+  tavori knowledge list               List all shared knowledge entries
+  tavori knowledge search <query>     Search knowledge entries by keyword
+  tavori knowledge stats              Show knowledge base statistics
   tavori plugin list                  List installed plugins
   tavori plugin install <path>        Install a plugin from a local directory
   tavori plugin remove <name>         Remove an installed plugin

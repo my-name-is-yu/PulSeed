@@ -94,11 +94,16 @@ export class ObservationEngine {
     const ratio = Math.abs(mechanicalValue - llmValue) / denominator;
     const diverged = ratio > threshold;
 
+    // Apply confidence penalty proportional to divergence when LLM hallucinated.
+    // Penalty = min(0.30, divergenceRatio * 0.5) — caps at 0.30.
+    const confidencePenalty = diverged ? Math.min(0.30, ratio * 0.5) : 0;
+
     if (diverged) {
       this.logger?.warn(
         `[CrossValidation] DIVERGED goal="${goalId}" dim="${dimensionName}" ` +
         `mechanical=${mechanicalValue} llm=${llmValue} ` +
-        `ratio=${ratio.toFixed(3)} threshold=${threshold} resolution=mechanical_wins`
+        `ratio=${ratio.toFixed(3)} threshold=${threshold} ` +
+        `confidencePenalty=${confidencePenalty.toFixed(3)} resolution=mechanical_wins`
       );
     }
 
@@ -109,6 +114,7 @@ export class ObservationEngine {
       diverged,
       divergenceRatio: ratio,
       resolution: "mechanical_wins",
+      confidencePenalty,
     };
   }
 
@@ -263,7 +269,9 @@ export class ObservationEngine {
         try {
           await this.observeFromDataSource(goalId, dim.name, dataSource.sourceId);
 
-          // Cross-validation: also run LLM and compare (for logging/diagnostics only)
+          // Cross-validation: also run LLM and compare.
+          // When divergence is detected, apply a confidence penalty to the dimension
+          // so downstream scoring treats the observation with appropriate skepticism.
           if (this.options.crossValidationEnabled && this.llmClient) {
             try {
               const updatedGoal = await this.stateManager.loadGoal(goalId);
@@ -278,11 +286,35 @@ export class ObservationEngine {
                 dim.label ?? dim.name,
                 JSON.stringify(dim.threshold),
                 ctx,
-                mechanicalValue,
+                null, // no previousScore — bypass jump suppression for cross-validation
                 true // dryRun — do NOT write to state
               );
               const llmValue = typeof llmEntry.extracted_value === "number" ? llmEntry.extracted_value : 0;
-              this.crossValidate(goalId, dim.name, mechanicalValue, llmValue);
+              const result = this.crossValidate(goalId, dim.name, mechanicalValue, llmValue);
+
+              // Apply confidence penalty when LLM observation diverges from mechanical truth
+              if (result.diverged && result.confidencePenalty > 0) {
+                const currentGoal = await this.stateManager.loadGoal(goalId);
+                if (currentGoal) {
+                  const dimIdx = currentGoal.dimensions.findIndex((d) => d.name === dim.name);
+                  if (dimIdx !== -1) {
+                    const currentDim = currentGoal.dimensions[dimIdx]!;
+                    const penalizedConfidence = Math.max(0.10, (currentDim.confidence ?? 0.5) - result.confidencePenalty);
+                    const updatedDims = [...currentGoal.dimensions];
+                    updatedDims[dimIdx] = { ...currentDim, confidence: penalizedConfidence };
+                    await this.stateManager.saveGoal({
+                      ...currentGoal,
+                      dimensions: updatedDims,
+                      updated_at: new Date().toISOString(),
+                    });
+                    this.logger?.warn(
+                      `[CrossValidation] Confidence penalized for "${dim.name}": ` +
+                      `${(currentDim.confidence ?? 0.5).toFixed(3)} → ${penalizedConfidence.toFixed(3)} ` +
+                      `(penalty=${result.confidencePenalty.toFixed(3)}, LLM hallucination detected)`
+                    );
+                  }
+                }
+              }
             } catch (err) {
               this.logger?.warn(`[CrossValidation] LLM comparison failed for "${dim.name}": ${err}`);
             }

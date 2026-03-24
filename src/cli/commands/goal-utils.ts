@@ -120,6 +120,65 @@ export function buildThreshold(spec: RawDimensionSpec): Threshold | null {
 
 // ─── Auto DataSource Registration ───
 
+// ─── Dedup helpers ───
+
+interface DatasourceConfig {
+  type?: string;
+  connection?: { commands?: Record<string, unknown> };
+  dimension_mapping?: Record<string, unknown>;
+}
+
+/**
+ * Load all existing datasource configs from the datasources directory.
+ * Returns an empty array if the directory does not exist or cannot be read.
+ */
+async function loadExistingDatasources(datasourcesDir: string): Promise<DatasourceConfig[]> {
+  let entries: string[];
+  try {
+    entries = await fsp.readdir(datasourcesDir);
+  } catch {
+    return [];
+  }
+  const results: DatasourceConfig[] = [];
+  for (const file of entries.filter((f) => f.endsWith(".json"))) {
+    try {
+      const raw = await fsp.readFile(path.join(datasourcesDir, file), "utf-8");
+      results.push(JSON.parse(raw) as DatasourceConfig);
+    } catch {
+      // Skip unreadable files
+    }
+  }
+  return results;
+}
+
+/**
+ * Returns true if an existing shell datasource already covers the exact same
+ * set of dimension names.
+ */
+function shellDatasourceExists(existing: DatasourceConfig[], dimensionNames: string[]): boolean {
+  const sorted = [...dimensionNames].sort().join(",");
+  return existing.some((cfg) => {
+    if (cfg.type !== "shell") return false;
+    const commands = cfg.connection?.commands ?? {};
+    const existingDims = Object.keys(commands).sort().join(",");
+    return existingDims === sorted;
+  });
+}
+
+/**
+ * Returns true if an existing file_existence datasource already covers the
+ * exact same set of dimension names.
+ */
+function fileExistenceDatasourceExists(existing: DatasourceConfig[], dimensionNames: string[]): boolean {
+  const sorted = [...dimensionNames].sort().join(",");
+  return existing.some((cfg) => {
+    if (cfg.type !== "file_existence") return false;
+    const dimMapping = cfg.dimension_mapping ?? {};
+    const existingDims = Object.keys(dimMapping).sort().join(",");
+    return existingDims === sorted;
+  });
+}
+
 export async function autoRegisterFileExistenceDataSources(
   stateManager: StateManager,
   dimensions: Array<{ name: string; label?: string }>,
@@ -195,6 +254,14 @@ export async function autoRegisterFileExistenceDataSources(
     const datasourcesDir = getDatasourcesDir(stateManager.getBaseDir());
     await fsp.mkdir(datasourcesDir, { recursive: true });
 
+    const existing = await loadExistingDatasources(datasourcesDir);
+    if (fileExistenceDatasourceExists(existing, Object.keys(dimensionMapping))) {
+      getCliLogger().info(
+        `[auto] Skipping FileExistenceDataSource registration — duplicate already exists for: ${Object.keys(dimensionMapping).join(", ")}`
+      );
+      return;
+    }
+
     const dimKeys = Object.keys(dimensionMapping).sort().join("_");
     const id = `ds_auto_${goalId}_${dimKeys}`;
     const config = {
@@ -238,6 +305,14 @@ export async function autoRegisterShellDataSources(
 
     const datasourcesDir = getDatasourcesDir(stateManager.getBaseDir());
     await fsp.mkdir(datasourcesDir, { recursive: true });
+
+    const existing = await loadExistingDatasources(datasourcesDir);
+    if (shellDatasourceExists(existing, Object.keys(matchedCommands))) {
+      getCliLogger().info(
+        `[auto] Skipping ShellDataSource registration — duplicate already exists for: ${Object.keys(matchedCommands).join(", ")}`
+      );
+      return;
+    }
 
     const id = `ds_auto_shell_${goalId}_${Object.keys(matchedCommands).sort().join("_")}`;
 

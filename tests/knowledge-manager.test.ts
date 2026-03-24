@@ -416,6 +416,31 @@ describe("saveKnowledge / loadKnowledge", () => {
     expect(loaded[0]!.sources[0]!.type).toBe("expert");
   });
 
+  it("rolls back vectorIndex entry when writeRaw fails", async () => {
+    const vectorIndex = new VectorIndex(
+      path.join(tempDir, "vector-index.json"),
+      new MockEmbeddingClient(8)
+    );
+    const manager = new KnowledgeManager(
+      stateManager,
+      createMockLLMClient([]),
+      vectorIndex
+    );
+
+    // Make writeRaw throw
+    vi.spyOn(stateManager, "writeRaw").mockRejectedValueOnce(
+      new Error("disk full")
+    );
+
+    const entry = makeKnowledgeEntry({ entry_id: "rollback-entry" });
+    await expect(manager.saveKnowledge("goal-1", entry)).rejects.toThrow(
+      "disk full"
+    );
+
+    // The vector index entry must have been removed as compensation
+    expect(vectorIndex.getEntry("rollback-entry")).toBeUndefined();
+  });
+
   it("entries from different goals do not interfere", async () => {
     const manager = new KnowledgeManager(stateManager, createMockLLMClient([]));
     const e1 = makeKnowledgeEntry({ entry_id: "e1", tags: ["x"] });
