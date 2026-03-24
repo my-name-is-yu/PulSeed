@@ -91,7 +91,9 @@ export async function applyObservation(
   const existingTier = (dim.last_observed_layer ?? dim.observation_method.confidence_tier ?? "self_report") as ObservationLayer;
   const existingPriority = LAYER_PRIORITY[existingTier] ?? 0;
   const incomingPriority = LAYER_PRIORITY[entry.layer] ?? 0;
-  const shouldUpdateConfidence = incomingPriority >= existingPriority;
+  // If confidence is 0 (never observed), always allow the first observation to write confidence.
+  // Otherwise, enforce the priority guard to prevent lower-quality layers from downgrading.
+  const shouldUpdateConfidence = dim.confidence === 0 || incomingPriority >= existingPriority;
 
   // Update dimension values
   const updatedDim = {
