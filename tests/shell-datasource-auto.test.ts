@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import {
   autoRegisterShellDataSources,
+  autoRegisterFileExistenceDataSources,
   SHELL_DIMENSION_PATTERNS,
 } from "../src/cli/commands/goal-utils.js";
 import { makeTempDir } from "./helpers/temp-dir.js";
@@ -154,6 +155,110 @@ describe("autoRegisterShellDataSources", () => {
     );
 
     expect(fs.existsSync(datasourcesDir)).toBe(true);
+  });
+
+  it("does not create a duplicate shell datasource for the same dimensions across runs", async () => {
+    const sm = makeFakeStateManager(tmpDir);
+
+    // First registration
+    await autoRegisterShellDataSources(
+      sm as never,
+      [{ name: "todo_count" }],
+      "goal_first"
+    );
+
+    // Second registration with same dimension but different goalId
+    await autoRegisterShellDataSources(
+      sm as never,
+      [{ name: "todo_count" }],
+      "goal_second"
+    );
+
+    const configs = readDsConfigs(datasourcesDir);
+    // Should still be exactly 1 — the second call was a no-op
+    expect(configs).toHaveLength(1);
+  });
+
+  it("does not create a duplicate when dimensions are same but in different order", async () => {
+    const sm = makeFakeStateManager(tmpDir);
+
+    await autoRegisterShellDataSources(
+      sm as never,
+      [{ name: "todo_count" }, { name: "fixme_count" }],
+      "goal_order_a"
+    );
+
+    // Same dimensions, reversed order, different goalId
+    await autoRegisterShellDataSources(
+      sm as never,
+      [{ name: "fixme_count" }, { name: "todo_count" }],
+      "goal_order_b"
+    );
+
+    const configs = readDsConfigs(datasourcesDir);
+    expect(configs).toHaveLength(1);
+  });
+
+  it("creates a new datasource when the dimension set differs from existing ones", async () => {
+    const sm = makeFakeStateManager(tmpDir);
+
+    await autoRegisterShellDataSources(
+      sm as never,
+      [{ name: "todo_count" }],
+      "goal_a"
+    );
+
+    // Different dimension set — should create a second entry
+    await autoRegisterShellDataSources(
+      sm as never,
+      [{ name: "fixme_count" }],
+      "goal_b"
+    );
+
+    const configs = readDsConfigs(datasourcesDir);
+    expect(configs).toHaveLength(2);
+  });
+});
+
+// ─── Dedup: autoRegisterFileExistenceDataSources ───
+
+describe("autoRegisterFileExistenceDataSources — dedup", () => {
+  let tmpDir: string;
+  let datasourcesDir: string;
+
+  beforeEach(() => {
+    tmpDir = makeTempDir();
+    datasourcesDir = path.join(tmpDir, "datasources");
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("does not create a duplicate file_existence datasource for the same dimension across runs", async () => {
+    const sm = makeFakeStateManager(tmpDir);
+    const dims = [{ name: "readme_md_exists", label: "README.md Exists" }];
+
+    // First registration
+    await autoRegisterFileExistenceDataSources(
+      sm as never,
+      dims,
+      "Ensure README.md exists",
+      "goal_first"
+    );
+
+    // Second registration — same dimension, different goalId
+    await autoRegisterFileExistenceDataSources(
+      sm as never,
+      dims,
+      "Ensure README.md exists",
+      "goal_second"
+    );
+
+    const configs = readDsConfigs(datasourcesDir);
+    const feConfigs = configs.filter((c) => c["type"] === "file_existence");
+    // Only one file_existence datasource should exist
+    expect(feConfigs).toHaveLength(1);
   });
 });
 

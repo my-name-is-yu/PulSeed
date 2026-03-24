@@ -37,11 +37,41 @@ export async function applyObservation(
 
   const dim = goal.dimensions[dimIndex]!;
 
+  // ─── Value bounds validation ───
+  // Clamp numeric observation values to reasonable bounds based on threshold type.
+  // This prevents LLM hallucinations (e.g., reporting 1.0 for a normalized dimension
+  // when the actual value is 0) from persisting unchecked.
+  let effectiveValue = entry.extracted_value;
+  if (typeof effectiveValue === "number") {
+    const thresholdType = dim.threshold.type;
+    if (thresholdType === "present" || thresholdType === "match") {
+      // present/match dimensions use 0-1 normalized values
+      if (effectiveValue < 0 || effectiveValue > 1) {
+        const clamped = Math.max(0, Math.min(1, effectiveValue));
+        // Log is intentionally omitted here — callers handle warnings
+        effectiveValue = clamped;
+      }
+    } else if (thresholdType === "min" && "value" in dim.threshold) {
+      // min thresholds: value should not exceed 2x the target (sanity bound)
+      const maxBound = (dim.threshold as { value: number }).value * 2;
+      if (maxBound > 0 && effectiveValue > maxBound) {
+        effectiveValue = maxBound;
+      }
+      if (effectiveValue < 0) {
+        effectiveValue = 0;
+      }
+    } else if (thresholdType === "max" && "value" in dim.threshold) {
+      // max thresholds: value should not be negative
+      if (effectiveValue < 0) {
+        effectiveValue = 0;
+      }
+    }
+  }
+
   // Monotonic floor for min thresholds: never decrease an observed value below the
   // current floor. This prevents noise from hiding real progress on "higher is better"
   // dimensions. Max thresholds are NOT clamped — regressions (e.g. bug count going up)
   // must remain visible.
-  let effectiveValue = entry.extracted_value;
   if (typeof effectiveValue === 'number' && typeof dim.current_value === 'number') {
     // NOTE: range thresholds intentionally not clamped — progress direction is ambiguous.
     // Assumes earlier observations are reliable; no mechanism to override a false-high floor.

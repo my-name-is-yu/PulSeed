@@ -348,18 +348,27 @@ Respond with JSON:
     domainKnowledge.last_updated = new Date().toISOString();
 
     const validated = DomainKnowledgeSchema.parse(domainKnowledge);
-    await this.stateManager.writeRaw(
-      `goals/${goalId}/domain_knowledge.json`,
-      validated
-    );
 
-    // Phase 2: also index in VectorIndex when available
+    // Phase 2: index in VectorIndex first so writeRaw is the commit point.
+    // If writeRaw fails, roll back the vector index entry to keep consistency.
     if (this.vectorIndex) {
       await this.vectorIndex.add(
         parsed.entry_id,
         `${parsed.question} ${parsed.answer}`,
         { goal_id: goalId, tags: parsed.tags }
       );
+    }
+
+    try {
+      await this.stateManager.writeRaw(
+        `goals/${goalId}/domain_knowledge.json`,
+        validated
+      );
+    } catch (err) {
+      if (this.vectorIndex) {
+        await this.vectorIndex.remove(parsed.entry_id);
+      }
+      throw err;
     }
   }
 

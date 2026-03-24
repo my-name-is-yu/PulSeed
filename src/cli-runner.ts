@@ -19,6 +19,9 @@
 //   tavori suggest "<context>"        Suggest improvement goals for a project
 //   tavori capability list            List all registered capabilities
 //   tavori capability remove <name>   Remove a capability by name
+//   tavori knowledge list             List all shared knowledge entries
+//   tavori knowledge search <query>   Search knowledge entries by keyword
+//   tavori knowledge stats            Show knowledge base statistics
 
 import { parseArgs } from "node:util";
 
@@ -46,6 +49,7 @@ import {
 import { cmdStart, cmdStop, cmdCron } from "./cli/commands/daemon.js";
 import { cmdSuggest, cmdImprove } from "./cli/commands/suggest.js";
 import { cmdSetup } from "./cli/commands/setup.js";
+import { cmdKnowledgeList, cmdKnowledgeSearch, cmdKnowledgeStats } from "./cli/commands/knowledge.js";
 import { printUsage, formatOperationError } from "./cli/utils.js";
 
 const logger = getCliLogger();
@@ -383,6 +387,31 @@ export class CLIRunner {
 
     if (subcommand === "setup") {
       return await cmdSetup(argv.slice(1));
+    }
+
+    if (subcommand === "knowledge") {
+      const knowledgeSubcommand = argv[1];
+
+      if (!knowledgeSubcommand) {
+        logger.error("Error: knowledge subcommand required. Available: knowledge list, knowledge search, knowledge stats");
+        return 1;
+      }
+
+      if (knowledgeSubcommand === "list") {
+        return await cmdKnowledgeList(this.stateManager);
+      }
+
+      if (knowledgeSubcommand === "search") {
+        return await cmdKnowledgeSearch(this.stateManager, argv.slice(2));
+      }
+
+      if (knowledgeSubcommand === "stats") {
+        return await cmdKnowledgeStats(this.stateManager);
+      }
+
+      logger.error(`Unknown knowledge subcommand: "${knowledgeSubcommand}"`);
+      logger.error("Available: knowledge list, knowledge search, knowledge stats");
+      return 1;
     }
 
     if (subcommand === "tui") {

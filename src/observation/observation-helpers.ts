@@ -28,6 +28,8 @@ export interface CrossValidationResult {
   diverged: boolean;
   divergenceRatio: number;
   resolution: "mechanical_wins";
+  /** Confidence penalty applied when mechanical and LLM diverge (0 = no penalty). */
+  confidencePenalty: number;
 }
 
 // ─── Layer Configuration ───
