@@ -140,7 +140,10 @@ export async function observeWithLLM(
   // worst-case guess.  For max thresholds, score=0.0 produces
   // extractedValue = 2×threshold, which is maximally pessimistic and corrupts
   // mechanically-observed progress (bug #282 Issue B).
-  if (!hasContext && currentValue !== null && currentValue !== undefined && !dryRun) {
+  // Exception: when previousScore is provided, the dimension has real observation
+  // history — call the LLM so jump-suppression (§3.3) can preserve the prior
+  // score and include it in the prompt for trend context.
+  if (!hasContext && currentValue !== null && currentValue !== undefined && !dryRun && (previousScore === null || previousScore === undefined)) {
     logger?.info(
       `[ObservationEngine] Skipping LLM observation for "${dimensionLabel}": no context and existing value=${currentValue} is preserved (no_context_existing_value).`
     );
