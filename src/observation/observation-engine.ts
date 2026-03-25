@@ -30,6 +30,7 @@ import {
   applyObservation as applyObservationFn,
   observeFromDataSource as observeFromDataSourceFn,
 } from "./observation-apply.js";
+import { findDataSourceForDimension as findDataSourceForDimensionFn } from "./observation-datasource.js";
 
 // Re-export types and helpers for backward compatibility
 export type { ObservationEngineOptions, CrossValidationResult } from "./observation-helpers.js";
@@ -530,26 +531,7 @@ export class ObservationEngine {
    * Find the first DataSource adapter that can serve the given dimension name.
    */
   private findDataSourceForDimension(dimensionName: string, goalId?: string): IDataSourceAdapter | null {
-    const matches = (ds: IDataSourceAdapter): boolean => {
-      const dims = ds.getSupportedDimensions?.() ?? [];
-      if (dims.includes(dimensionName)) return true;
-      if (ds.config?.dimension_mapping && dimensionName in ds.config.dimension_mapping) return true;
-      return false;
-    };
-
-    // First pass: prefer a datasource explicitly scoped to this goalId
-    for (const ds of this.dataSources) {
-      const scopeGoalId = ds.config?.scope_goal_id as string | undefined;
-      if (scopeGoalId === goalId && goalId !== undefined && matches(ds)) return ds;
-    }
-
-    // Second pass: fall back to an unscoped datasource
-    for (const ds of this.dataSources) {
-      const scopeGoalId = ds.config?.scope_goal_id as string | undefined;
-      if (scopeGoalId === undefined && matches(ds)) return ds;
-    }
-
-    return null;
+    return findDataSourceForDimensionFn(this.dataSources, dimensionName, goalId);
   }
 
   // ─── LLM Observation ───
