@@ -1,47 +1,47 @@
-// ─── Tavori Path Utilities ───
+// ─── SeedPulse Path Utilities ───
 //
-// Centralizes ~/.tavori path construction.
-// TAVORI_HOME env var overrides the default ~/.tavori location.
+// Centralizes ~/.seedpulse path construction.
+// SEEDPULSE_HOME env var overrides the default ~/.seedpulse location.
 
 import * as os from "node:os";
 import * as path from "node:path";
 
 /**
- * Returns the Tavori base directory.
- * Defaults to ~/.tavori; can be overridden via TAVORI_HOME env var.
+ * Returns the SeedPulse base directory.
+ * Defaults to ~/.seedpulse; can be overridden via SEEDPULSE_HOME env var.
  */
-export function getTavoriDirPath(): string {
-  return process.env["TAVORI_HOME"] ?? path.join(os.homedir(), ".tavori");
+export function getSeedPulseDirPath(): string {
+  return process.env["SEEDPULSE_HOME"] ?? path.join(os.homedir(), ".seedpulse");
 }
 
 export function getGoalsDir(base?: string): string {
-  return path.join(base ?? getTavoriDirPath(), "goals");
+  return path.join(base ?? getSeedPulseDirPath(), "goals");
 }
 
 export function getEventsDir(base?: string): string {
-  return path.join(base ?? getTavoriDirPath(), "events");
+  return path.join(base ?? getSeedPulseDirPath(), "events");
 }
 
 export function getArchiveDir(base?: string): string {
-  return path.join(base ?? getTavoriDirPath(), "archive");
+  return path.join(base ?? getSeedPulseDirPath(), "archive");
 }
 
 export function getPluginsDir(base?: string): string {
-  return path.join(base ?? getTavoriDirPath(), "plugins");
+  return path.join(base ?? getSeedPulseDirPath(), "plugins");
 }
 
 export function getLogsDir(base?: string): string {
-  return path.join(base ?? getTavoriDirPath(), "logs");
+  return path.join(base ?? getSeedPulseDirPath(), "logs");
 }
 
 export function getDatasourcesDir(base?: string): string {
-  return path.join(base ?? getTavoriDirPath(), "datasources");
+  return path.join(base ?? getSeedPulseDirPath(), "datasources");
 }
 
 export function getScheduleDir(base?: string): string {
-  return path.join(base ?? getTavoriDirPath(), "schedule");
+  return path.join(base ?? getSeedPulseDirPath(), "schedule");
 }
 
 export function getReportsDir(base?: string): string {
-  return path.join(base ?? getTavoriDirPath(), "reports");
+  return path.join(base ?? getSeedPulseDirPath(), "reports");
 }

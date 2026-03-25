@@ -18,7 +18,7 @@
     "url": "https://github.com/my-name-is-yu/Tavori/issues"
   },
   "bin": {
-    "tavori": "dist/cli-runner.js"
+    "seedpulse": "dist/cli-runner.js"
   },
   "keywords": [
     "ai",
