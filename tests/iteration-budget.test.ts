@@ -248,7 +248,7 @@ function makeMockDeps(): CoreLoopDeps {
       readRaw: vi.fn().mockResolvedValue(null),
       writeRaw: vi.fn().mockResolvedValue(undefined),
       archiveGoal: vi.fn().mockResolvedValue(undefined),
-      restoreFromCheckpoint: vi.fn().mockResolvedValue(undefined),
+      restoreFromCheckpoint: vi.fn().mockResolvedValue(0),
     } as unknown as CoreLoopDeps["stateManager"],
     observationEngine: {
       observe: vi.fn().mockResolvedValue({

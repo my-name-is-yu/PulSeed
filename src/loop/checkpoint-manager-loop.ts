@@ -67,6 +67,8 @@ export async function saveLoopCheckpoint(
 /**
  * Restore dimension values and trust balance from a checkpoint if one exists.
  * Delegates to StateManager.restoreFromCheckpoint which uses Zod validation.
+ * Returns the saved cycle_number so the caller can resume iteration counting,
+ * or 0 if no checkpoint exists or restore fails.
  * Non-fatal: restore failures do not abort the run.
  */
 export async function restoreLoopCheckpoint(
@@ -74,6 +76,6 @@ export async function restoreLoopCheckpoint(
   goalId: string,
   adapterType: string,
   trustManager: TrustManager | undefined
-): Promise<void> {
-  await stateManager.restoreFromCheckpoint(goalId, adapterType, trustManager);
+): Promise<number> {
+  return stateManager.restoreFromCheckpoint(goalId, adapterType, trustManager);
 }

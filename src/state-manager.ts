@@ -497,23 +497,24 @@ export class StateManager {
   /**
    * Restore dimension values and trust balance from a loop crash-recovery checkpoint.
    * Uses Zod validation on both the checkpoint and the goal.
-   * Non-fatal: returns false if no checkpoint exists or restoration fails.
+   * Returns the saved cycle_number so the caller can resume iteration counting,
+   * or 0 if no checkpoint exists or restoration fails (non-fatal).
    */
   async restoreFromCheckpoint(
     goalId: string,
     adapterType: string,
     trustManager?: TrustManager
-  ): Promise<boolean> {
+  ): Promise<number> {
     try {
       const raw = await this.atomicRead<unknown>(
         path.join(this.baseDir, "goals", goalId, "checkpoint.json")
       );
-      if (raw === null) return false;
+      if (raw === null) return 0;
 
       const parseResult = LoopCheckpointSchema.safeParse(raw);
       if (!parseResult.success) {
         this.logger?.warn(`[StateManager] Invalid checkpoint for "${goalId}": ${parseResult.error.message}`);
-        return false;
+        return 0;
       }
       const cp = parseResult.data;
 
@@ -540,10 +541,10 @@ export class StateManager {
         }
       }
 
-      return true;
+      return cp.cycle_number;
     } catch {
       // Checkpoint restore failure is non-fatal — caller starts from beginning
-      return false;
+      return 0;
     }
   }
 
