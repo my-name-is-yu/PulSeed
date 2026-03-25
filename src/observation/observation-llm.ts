@@ -108,7 +108,8 @@ export async function observeWithLLM(
   dryRun?: boolean,
   logger?: Logger,
   dimensionHistory?: Array<{ value: number; timestamp?: string; date?: string }>,
-  gateway?: IPromptGateway
+  gateway?: IPromptGateway,
+  currentValue?: number | null
 ): Promise<ObservationLogEntry> {
   logger?.info(
     `[ObservationEngine] LLM observation for dimension "${dimensionLabel}" (goal: ${goalId})`
@@ -133,6 +134,40 @@ export async function observeWithLLM(
   }
 
   const hasContext = !!resolvedContext && resolvedContext.trim().length > 0;
+
+  // When no context is available and the dimension already has a valid
+  // current_value, skip the LLM observation rather than overwriting with a
+  // worst-case guess.  For max thresholds, score=0.0 produces
+  // extractedValue = 2×threshold, which is maximally pessimistic and corrupts
+  // mechanically-observed progress (bug #282 Issue B).
+  // Exception: when previousScore is provided, the dimension has real observation
+  // history — call the LLM so jump-suppression (§3.3) can preserve the prior
+  // score and include it in the prompt for trend context.
+  if (!hasContext && currentValue !== null && currentValue !== undefined && !dryRun && (previousScore === null || previousScore === undefined)) {
+    logger?.info(
+      `[ObservationEngine] Skipping LLM observation for "${dimensionLabel}": no context and existing value=${currentValue} is preserved (no_context_existing_value).`
+    );
+    const skipEntry = ObservationLogEntrySchema.parse({
+      observation_id: randomUUID(),
+      timestamp: new Date().toISOString(),
+      trigger: "periodic",
+      goal_id: goalId,
+      dimension_name: dimensionName,
+      layer: "independent_review",
+      method: {
+        type: "llm_review",
+        source: "llm",
+        schedule: null,
+        endpoint: null,
+        confidence_tier: "independent_review",
+      },
+      raw_result: { score: null, reason: "no_context_existing_value" },
+      extracted_value: currentValue,
+      confidence: 0.1,
+      notes: "Skipped: no context available, existing value preserved.",
+    });
+    return skipEntry;
+  }
 
   const previousScoreText =
     previousScore !== undefined && previousScore !== null

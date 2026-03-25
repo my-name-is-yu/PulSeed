@@ -440,7 +440,9 @@ export class ObservationEngine {
             dim.label ?? dim.name,
             JSON.stringify(dim.threshold),
             ctx,
-            previousScore
+            previousScore,
+            undefined, // dryRun
+            typeof dim.current_value === "number" ? dim.current_value : null
           );
           continue;
         } catch (err) {
@@ -572,7 +574,8 @@ export class ObservationEngine {
     thresholdDescription: string,
     workspaceContext?: string,
     previousScore?: number | null,
-    dryRun?: boolean
+    dryRun?: boolean,
+    currentValue?: number | null
   ): Promise<ObservationLogEntry> {
     if (!this.llmClient) {
       throw new Error("observeWithLLM: llmClient is not configured");
@@ -589,7 +592,10 @@ export class ObservationEngine {
       workspaceContext,
       previousScore,
       dryRun,
-      this.logger
+      this.logger,
+      undefined, // dimensionHistory
+      undefined, // gateway
+      currentValue
     );
   }
 

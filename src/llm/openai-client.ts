@@ -132,12 +132,20 @@ export class OpenAILLMClient extends BaseLLMClient implements ILLMClient {
           // The TypeScript types for the Responses API are not yet in the openai
           // package typings, so we cast through unknown to access this endpoint.
           const responsesApi = (this.client as unknown as { responses: { create: (params: Record<string, unknown>) => Promise<unknown> } }).responses;
-          const resp = await responsesApi.create({
-            model,
-            input,
-            max_output_tokens: max_tokens,
-            ...(isReasoningModel(model) ? {} : { temperature }),
-          }) as Record<string, unknown>;
+          const resp = await Promise.race([
+            responsesApi.create({
+              model,
+              input,
+              max_output_tokens: max_tokens,
+              ...(isReasoningModel(model) ? {} : { temperature }),
+            }),
+            new Promise<never>((_, reject) =>
+              setTimeout(
+                () => reject(new LLMError(`OpenAILLMClient: Responses API timed out after ${DEFAULT_LLM_TIMEOUT_MS}ms`)),
+                DEFAULT_LLM_TIMEOUT_MS
+              )
+            ),
+          ]) as Record<string, unknown>;
 
           const content =
             typeof resp["output_text"] === "string"

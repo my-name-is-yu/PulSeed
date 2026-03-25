@@ -142,8 +142,9 @@ export class StateAggregator {
           if (t.type === "min") {
             syntheticValue = t.value * (1 - clampedGap);
           } else if (t.type === "max") {
-            // For max threshold: gap=0 means at/below cap (best=0), gap=1 means far above cap (worst)
-            syntheticValue = t.value * clampedGap;
+            // For max threshold: gap=0 means at/below cap (best), gap=1 means far above cap (worst).
+            // syntheticValue must be ABOVE threshold when gap > 0, so use (1 + clampedGap).
+            syntheticValue = t.value * (1 + clampedGap);
           } else {
             // range: use midpoint as reference
             const mid = (t.low + t.high) / 2;
