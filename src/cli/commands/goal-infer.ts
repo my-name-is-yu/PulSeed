@@ -31,7 +31,7 @@ function buildInferPrompt(title: string): string {
 Threshold types:
 - min: value must be >= X (e.g. test coverage >= 80%)
 - max: value must be <= X (e.g. bug count <= 5)
-- range: value must be between low-high (e.g. "10-20")
+- range: value must be between low,high (e.g. "10,20")
 - present: boolean check — something must exist (value: "true" or "false")
 - match: exact match required (e.g. status must equal "published")
 

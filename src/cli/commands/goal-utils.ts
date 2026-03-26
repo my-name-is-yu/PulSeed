@@ -92,7 +92,9 @@ export function buildThreshold(spec: RawDimensionSpec): Threshold | null {
 
   if (spec.type === "range") {
     if (!spec.value) return null;
-    const [lowStr, highStr] = spec.value.split(",");
+    let parts = spec.value.split(",");
+    if (parts.length < 2) parts = spec.value.split("-");
+    const [lowStr, highStr] = parts;
     const low = parseFloat(lowStr ?? "");
     const high = parseFloat(highStr ?? "");
     if (isNaN(low) || isNaN(high)) return null;
