@@ -33,7 +33,7 @@ const DEFAULT_DURATION_HOURS_FALLBACK = 3;
 // When gap stays near-maximum (>=0.95) with negligible variance for this many loops,
 // detect stall immediately without waiting for the full adjusted-N window.
 const ZERO_PROGRESS_WINDOW = 3;
-const ZERO_PROGRESS_GAP_FLOOR = 0.95;
+const ZERO_PROGRESS_GAP_FLOOR = 0.90;
 const ZERO_PROGRESS_MAX_VARIANCE = 0.01;
 
 // ─── Stall thresholds ───
@@ -102,6 +102,13 @@ export class StallDetector {
   ): StallReport | null {
     const n = this.getAdjustedN(feedbackCategory);
 
+    if (gapHistory.length < n + 1) {
+      // Not enough history to determine a stall
+      return null;
+    }
+
+    // Zero-progress detection: after confirming sufficient history,
+    // check if recent entries show no progress at all
     if (this.isZeroProgress(gapHistory)) {
       return StallReportSchema.parse({
         stall_type: "dimension_stall",
@@ -113,11 +120,6 @@ export class StallDetector {
         suggested_cause: "approach_failure",
         decay_factor: DECAY_FACTOR_STALLED,
       });
-    }
-
-    if (gapHistory.length < n + 1) {
-      // Not enough history to determine a stall
-      return null;
     }
 
     const recent = gapHistory.slice(-n - 1);
@@ -216,17 +218,17 @@ export class StallDetector {
       return null;
     }
 
-    let zeroProgressDetected = false;
+    let zeroProgressCount = 0;
 
     for (const [, gapHistory] of allDimensionGaps) {
-      if (this.isZeroProgress(gapHistory)) {
-        zeroProgressDetected = true;
-        break;
-      }
-
       if (gapHistory.length < loopThreshold + 1) {
         // Not enough data for this dimension — treat as not stalled (insufficient evidence)
         return null;
+      }
+
+      if (this.isZeroProgress(gapHistory)) {
+        zeroProgressCount++;
+        continue;
       }
 
       const recent = gapHistory.slice(-loopThreshold - 1);
@@ -239,7 +241,8 @@ export class StallDetector {
       }
     }
 
-    if (zeroProgressDetected) {
+    // Only trigger zero-progress global stall if ALL dimensions are zero-progress
+    if (zeroProgressCount === allDimensionGaps.size) {
       return StallReportSchema.parse({
         stall_type: "global_stall",
         goal_id: goalId,
@@ -252,7 +255,7 @@ export class StallDetector {
       });
     }
 
-    // All dimensions are non-improving
+    // All dimensions are non-improving (normal stall path)
     return StallReportSchema.parse({
       stall_type: "global_stall",
       goal_id: goalId,

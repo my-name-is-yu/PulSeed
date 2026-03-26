@@ -751,8 +751,8 @@ describe("StallDetector CharacterConfig integration", () => {
 // ─── Zero-progress early detection ───
 
 describe("zero-progress early detection", () => {
-  it("detects zero-progress stall with only 3 iterations at gap=1.00", () => {
-    const history = makeGapHistory([1.0, 1.0, 1.0]);
+  it("detects zero-progress stall with sufficient history at gap=1.00", () => {
+    const history = makeGapHistory([1.0, 1.0, 1.0, 1.0, 1.0, 1.0]);
     const result = detector.checkDimensionStall("goal-1", "dim-a", history);
     expect(result).not.toBeNull();
     expect(result!.stall_type).toBe("dimension_stall");
@@ -761,9 +761,9 @@ describe("zero-progress early detection", () => {
     expect(result!.decay_factor).toBe(0.6);
   });
 
-  it("detects zero-progress in checkGlobalStall with 3 iterations", () => {
+  it("detects zero-progress in checkGlobalStall with sufficient history", () => {
     const dims = new Map([
-      ["dim-a", makeGapHistory([1.0, 1.0, 1.0])],
+      ["dim-a", makeGapHistory([1.0, 1.0, 1.0, 1.0, 1.0, 1.0])],
     ]);
     const result = detector.checkGlobalStall("goal-1", dims);
     expect(result).not.toBeNull();
@@ -771,21 +771,48 @@ describe("zero-progress early detection", () => {
     expect(result!.goal_id).toBe("goal-1");
   });
 
-  it("does NOT trigger zero-progress when gap is below 0.95", () => {
-    const history = makeGapHistory([0.80, 0.80, 0.80]);
+  it("does NOT trigger zero-progress when gap is below floor with insufficient history", () => {
+    const history = makeGapHistory([0.89, 0.89, 0.89]);
     const result = detector.checkDimensionStall("goal-1", "dim-a", history);
-    expect(result).toBeNull();
+    expect(result).toBeNull(); // insufficient history (3 < 6) and below GAP_FLOOR
   });
 
   it("does NOT trigger zero-progress when gap values vary too much", () => {
-    // [1.00, 0.90, 1.00]: maxGap - minGap = 0.10 >= 0.01 → no zero-progress
-    const history = makeGapHistory([1.0, 0.9, 1.0]);
+    // oldest=1.0, latest=0.9, diff=0.1 >= 0.05 → improvement detected → null
+    const history = makeGapHistory([1.0, 0.9, 1.0, 0.9, 1.0, 0.9]);
     const result = detector.checkDimensionStall("goal-1", "dim-a", history);
     expect(result).toBeNull();
   });
 
   it("detects zero-progress at gap=0.98 (near but not exactly 1.00)", () => {
-    const history = makeGapHistory([0.98, 0.98, 0.98]);
+    const history = makeGapHistory([0.98, 0.98, 0.98, 0.98, 0.98, 0.98]);
+    const result = detector.checkDimensionStall("goal-1", "dim-a", history);
+    expect(result).not.toBeNull();
+    expect(result!.stall_type).toBe("dimension_stall");
+  });
+
+  it("does NOT trigger global stall when one dimension is zero-progress but another is improving", () => {
+    // dim-a: stuck at 1.0, dim-b: improving from 1.0 to 0.5
+    const dims = new Map([
+      ["dim-a", makeGapHistory([1.0, 1.0, 1.0, 1.0, 1.0, 1.0])],
+      ["dim-b", makeGapHistory([1.0, 0.9, 0.8, 0.7, 0.6, 0.5])],
+    ]);
+    const result = detector.checkGlobalStall("goal-1", dims);
+    expect(result).toBeNull(); // dim-b improved, so no global stall
+  });
+
+  it("triggers global stall when ALL dimensions are zero-progress", () => {
+    const dims = new Map([
+      ["dim-a", makeGapHistory([1.0, 1.0, 1.0, 1.0, 1.0, 1.0])],
+      ["dim-b", makeGapHistory([0.95, 0.95, 0.95, 0.95, 0.95, 0.95])],
+    ]);
+    const result = detector.checkGlobalStall("goal-1", dims);
+    expect(result).not.toBeNull();
+    expect(result!.stall_type).toBe("global_stall");
+  });
+
+  it("detects zero-progress at gap=0.90 after GAP_FLOOR lowered", () => {
+    const history = makeGapHistory([0.90, 0.90, 0.90, 0.90, 0.90, 0.90]);
     const result = detector.checkDimensionStall("goal-1", "dim-a", history);
     expect(result).not.toBeNull();
     expect(result!.stall_type).toBe("dimension_stall");
