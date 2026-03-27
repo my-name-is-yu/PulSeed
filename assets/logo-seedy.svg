@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <defs>
+    <!-- Body gradient: warm cream with subtle shading darker at bottom -->
+    <radialGradient id="bodyGrad" cx="40%" cy="35%" r="65%" fx="38%" fy="32%">
+      <stop offset="0%" stop-color="#F5F2E8"/>
+      <stop offset="55%" stop-color="#EDE7D4"/>
+      <stop offset="100%" stop-color="#D6CEBC"/>
+    </radialGradient>
+    <!-- Shadow under body -->
+    <radialGradient id="shadowGrad" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#A89880" stop-opacity="0.5"/>
+      <stop offset="100%" stop-color="#A89880" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- Ground shadow -->
+  <ellipse cx="64" cy="112" rx="34" ry="7" fill="url(#shadowGrad)"/>
+
+  <!-- Body: slightly wider than tall, sits on the ground -->
+  <ellipse cx="64" cy="84" rx="42" ry="39" fill="url(#bodyGrad)"/>
+
+  <!-- Subtle inner highlight top-left for 3D roundness -->
+  <ellipse cx="50" cy="68" rx="18" ry="14" fill="#FFFFFF" opacity="0.25"/>
+
+  <!-- Sprout stem: rises from top-center of body -->
+  <path d="M64 46 C64 38 63 30 62 22" stroke="#7DB87A" stroke-width="3.5" stroke-linecap="round" fill="none"/>
+
+  <!-- Left leaf: large organic, sweeps left and upward -->
+  <path d="M62 28 C56 20 42 14 28 18 C22 20 20 26 26 30 C36 36 52 34 62 28 Z" fill="#6BAF5C"/>
+  <!-- Left leaf underside/vein hint -->
+  <path d="M62 28 C54 26 40 24 30 24" stroke="#5A9A4A" stroke-width="1.2" stroke-linecap="round" fill="none" opacity="0.6"/>
+
+  <!-- Right leaf: large organic, sweeps right and upward -->
+  <path d="M62 24 C66 14 78 8 94 10 C102 11 106 17 100 22 C90 30 72 30 62 24 Z" fill="#7CC66A"/>
+  <!-- Right leaf underside/vein hint -->
+  <path d="M62 24 C72 22 86 18 96 16" stroke="#6AB85A" stroke-width="1.2" stroke-linecap="round" fill="none" opacity="0.5"/>
+
+  <!-- Eyes: vertical ovals, positioned lower-center, slightly apart -->
+  <!-- Left eye -->
+  <rect x="47" y="82" width="10" height="13" rx="5" ry="6.5" fill="#1C1C1C"/>
+  <!-- Right eye -->
+  <rect x="71" y="82" width="10" height="13" rx="5" ry="6.5" fill="#1C1C1C"/>
+
+  <!-- Eye highlights (glossy) -->
+  <circle cx="50" cy="85" r="2" fill="#FFFFFF" opacity="0.75"/>
+  <circle cx="74" cy="85" r="2" fill="#FFFFFF" opacity="0.75"/>
+</svg>

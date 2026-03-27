@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 100">
+  <defs>
+    <radialGradient id="bodyGradD" cx="38%" cy="32%" r="65%" fx="36%" fy="30%">
+      <stop offset="0%" stop-color="#F5F2E8"/>
+      <stop offset="55%" stop-color="#EDE7D4"/>
+      <stop offset="100%" stop-color="#D6CEBC"/>
+    </radialGradient>
+    <radialGradient id="shadowGradD" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#4CAF50" stop-opacity="0.2"/>
+      <stop offset="100%" stop-color="#4CAF50" stop-opacity="0"/>
+    </radialGradient>
+    <!-- Subtle green glow for dark backgrounds -->
+    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="3.5" result="blur"/>
+      <feFlood flood-color="#4CAF50" flood-opacity="0.12" result="color"/>
+      <feComposite in="color" in2="blur" operator="in" result="glow"/>
+      <feMerge>
+        <feMergeNode in="glow"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Seedy with glow -->
+  <g filter="url(#glow)">
+    <!-- Ground shadow (green tint for dark bg) -->
+    <ellipse cx="50" cy="96" rx="26" ry="5" fill="url(#shadowGradD)"/>
+
+    <!-- Body -->
+    <ellipse cx="50" cy="70" rx="33" ry="30" fill="url(#bodyGradD)"/>
+
+    <!-- Inner highlight -->
+    <ellipse cx="39" cy="57" rx="13" ry="10" fill="#FFFFFF" opacity="0.25"/>
+
+    <!-- Sprout stem -->
+    <path d="M50 41 C50 34 49 27 48 20" stroke="#7DB87A" stroke-width="2.8" stroke-linecap="round" fill="none"/>
+
+    <!-- Left leaf -->
+    <path d="M48 25 C43 18 32 13 21 16 C16 18 15 23 20 26 C28 31 41 29 48 25 Z" fill="#6BAF5C"/>
+    <path d="M48 25 C42 23 32 21 23 21" stroke="#5A9A4A" stroke-width="1" stroke-linecap="round" fill="none" opacity="0.6"/>
+
+    <!-- Right leaf -->
+    <path d="M48 21 C51 13 61 8 74 10 C80 11 83 16 78 20 C70 26 56 25 48 21 Z" fill="#7CC66A"/>
+    <path d="M48 21 C56 19 67 16 75 14" stroke="#6AB85A" stroke-width="1" stroke-linecap="round" fill="none" opacity="0.5"/>
+
+    <!-- Left eye -->
+    <rect x="37" y="68" width="8" height="10" rx="4" ry="5" fill="#1C1C1C"/>
+    <!-- Right eye -->
+    <rect x="55" y="68" width="8" height="10" rx="4" ry="5" fill="#1C1C1C"/>
+
+    <!-- Eye highlights -->
+    <circle cx="39.5" cy="71" r="1.6" fill="#FFFFFF" opacity="0.75"/>
+    <circle cx="57.5" cy="71" r="1.6" fill="#FFFFFF" opacity="0.75"/>
+  </g>
+
+  <!-- Text: "Seed" — light for dark bg -->
+  <text x="96" y="72" font-family="sans-serif" font-weight="700" font-size="40" fill="#E6EDF3" letter-spacing="-0.5">Seed</text>
+  <!-- Text: "Pulse" — green accent -->
+  <text x="196" y="72" font-family="sans-serif" font-weight="700" font-size="40" fill="#4CAF50" letter-spacing="-0.5">Pulse</text>
+</svg>

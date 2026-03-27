@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="assets/seedy.png" alt="Seedy — SeedPulse mascot" width="120" />
+
 # SeedPulse
 
 ### Give your AI agents the drive to persist.

@@ -8,6 +8,7 @@ import { StoreProvider } from '../components/providers/store-provider';
 export const metadata: Metadata = {
   title: 'SeedPulse',
   description: 'AI Agent Orchestrator Dashboard',
+  icons: { icon: '/icon.svg' },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
