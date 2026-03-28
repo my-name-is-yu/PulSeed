@@ -64,7 +64,7 @@ export const TaskSchema = z.object({
 
   // Persisted execution/verification results
   execution_output: z.string().optional(),
-  verification_verdict: z.enum(["pass", "partial", "fail"]).optional(),
+  verification_verdict: VerdictEnum.optional(),
   verification_evidence: z.array(z.string()).optional(),
 });
 export type Task = z.infer<typeof TaskSchema>;

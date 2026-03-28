@@ -461,7 +461,7 @@ export async function handleVerdict(
         status: "completed" as const,
         completed_at: now,
         verification_verdict: verificationResult.verdict,
-        verification_evidence: verificationResult.evidence.map((e) => e.description),
+        verification_evidence: verificationResult.evidence?.map((e) => e.description ?? String(e)) ?? [],
       };
       await deps.stateManager.writeRaw(
         `tasks/${task.goal_id}/${task.id}.json`,

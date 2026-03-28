@@ -1,5 +1,6 @@
 // ─── pulseed task read commands (read-only) ───
 
+import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { parseArgs } from "node:util";
 
@@ -37,7 +38,6 @@ async function readAllTasksForGoal(stateManager: StateManager, goalId: string): 
   const baseDir = stateManager.getBaseDir();
   const tasksDir = path.join(baseDir, "tasks", goalId);
 
-  const fsp = await import("node:fs/promises");
   let entries: string[] = [];
   try {
     entries = await fsp.readdir(tasksDir);
@@ -47,7 +47,7 @@ async function readAllTasksForGoal(stateManager: StateManager, goalId: string): 
 
   const tasks: Task[] = [];
   for (const entry of entries) {
-    if (!entry.endsWith(".json") || entry === "task-history.json") continue;
+    if (!entry.endsWith(".json") || entry === "task-history.json" || entry === "last-failure-context.json") continue;
     const raw = await stateManager.readRaw(`tasks/${goalId}/${entry}`);
     if (!raw) continue;
     const parsed = TaskSchema.safeParse(raw);
