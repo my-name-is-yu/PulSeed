@@ -1,7 +1,7 @@
 {
-  "name": "@seedpulse/slack-notifier",
+  "name": "@pulseed/slack-notifier",
   "version": "1.0.0",
-  "description": "Send SeedPulse events to a Slack channel via webhook",
+  "description": "Send PulSeed events to a Slack channel via webhook",
   "type": "module",
   "main": "dist/index.js",
   "exports": {
@@ -10,10 +10,10 @@
   "scripts": {
     "build": "tsc --project tsconfig.json"
   },
-  "keywords": ["seedpulse", "plugin", "slack", "notifier"],
+  "keywords": ["pulseed", "plugin", "slack", "notifier"],
   "license": "MIT",
   "peerDependencies": {
-    "seedpulse": ">=0.1.0"
+    "pulseed": ">=0.1.0"
   },
   "devDependencies": {
     "typescript": "^5.3.0"

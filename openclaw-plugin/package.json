@@ -1,14 +1,14 @@
 {
-  "name": "@seedpulse/openclaw-plugin",
+  "name": "@pulseed/openclaw-plugin",
   "version": "0.1.0",
-  "description": "SeedPulse goal-driven orchestration — OpenClaw Gateway plugin",
+  "description": "PulSeed goal-driven orchestration — OpenClaw Gateway plugin",
   "openclaw": {
     "extensions": ["src/index.ts"]
   },
-  "keywords": ["openclaw", "plugin", "seedpulse", "orchestration", "goal-driven", "ai-agent", "autonomous", "llm", "gateway"],
-  "author": "SeedPulse",
+  "keywords": ["openclaw", "plugin", "pulseed", "orchestration", "goal-driven", "ai-agent", "autonomous", "llm", "gateway"],
+  "author": "PulSeed",
   "license": "MIT",
   "peerDependencies": {
-    "seedpulse": ">=0.1.0"
+    "pulseed": ">=0.1.0"
   }
 }
