@@ -273,12 +273,23 @@ describe("looksLikeSoftwareGoal", () => {
     expect(looksLikeSoftwareGoal(softwareContext, "Increase test coverage in src/")).toBe(true);
   });
 
-  it("returns false for software context when goal description is clearly non-software", () => {
-    expect(looksLikeSoftwareGoal(softwareContext, "Improve team communication")).toBe(false);
+  it("returns false for software context when goal description is clearly non-software and context is non-software", () => {
+    // When a purely non-software context is passed as context (no software keywords)
+    expect(looksLikeSoftwareGoal("Personal journal about cooking recipes and travel", "Improve team communication")).toBe(false);
   });
 
-  it("returns false for software context when goal is about health/fitness", () => {
-    expect(looksLikeSoftwareGoal(softwareContext, "Build a daily fitness routine")).toBe(false);
+  it("returns true for software context when goal description has a non-software keyword (context wins)", () => {
+    // "communication" is a non-software keyword, but the project context is clearly software — software wins
+    expect(looksLikeSoftwareGoal(softwareContext, "Improve team communication")).toBe(true);
+  });
+
+  it("returns false when goal is about health/fitness and context is non-software", () => {
+    // "fitness" is a non-software keyword; no software kw in desc or context
+    expect(looksLikeSoftwareGoal("Personal health journal", "Start a daily fitness and exercise routine")).toBe(false);
+  });
+
+  it("returns false when goal is about health/fitness and no software keywords appear anywhere", () => {
+    expect(looksLikeSoftwareGoal("Personal health journal with diet and exercise tips", "Follow a sleep and meditation schedule")).toBe(false);
   });
 
   it("returns false for non-software context with no goal description", () => {
@@ -291,5 +302,16 @@ describe("looksLikeSoftwareGoal", () => {
 
   it("falls back to context check when goalDescription has no non-software keywords", () => {
     expect(looksLikeSoftwareGoal(softwareContext, "Improve API response times")).toBe(true);
+  });
+
+  it("returns true for mixed-signal goal: non-software keyword but also software keyword in description (software wins)", () => {
+    // "sales" is a non-software keyword, but "api" is a software keyword in the description — software wins
+    expect(looksLikeSoftwareGoal(softwareContext, "Add sales analytics API endpoint")).toBe(true);
+  });
+
+  it("returns true for 'Improve inter-process communication' with software context (context wins)", () => {
+    // "communication" is a non-software keyword; no software keyword in the goal description itself,
+    // but the project context is clearly software — software wins
+    expect(looksLikeSoftwareGoal(softwareContext, "Improve inter-process communication")).toBe(true);
   });
 });

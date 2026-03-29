@@ -45,15 +45,21 @@ const NON_SOFTWARE_KEYWORDS = [
 ];
 
 export function looksLikeSoftwareGoal(context: string, goalDescription?: string): boolean {
+  const SOFTWARE_KEYWORDS = ['package.json', 'src/', 'tests/', 'node_modules', '.git', 'npm', 'build', 'deploy', 'api', 'repository', 'code', 'function', 'class', 'module'];
+  const contextLower = context.toLowerCase();
+  const contextIsSoftware = SOFTWARE_KEYWORDS.some(kw => contextLower.includes(kw));
+
   if (goalDescription) {
     const descLower = goalDescription.toLowerCase();
-    if (NON_SOFTWARE_KEYWORDS.some(kw => descLower.includes(kw))) {
-      return false;
+    const hasNonSoftware = NON_SOFTWARE_KEYWORDS.some(kw => descLower.includes(kw));
+    if (hasNonSoftware) {
+      // Software wins when either the description or the context has software keywords
+      const descHasSoftware = SOFTWARE_KEYWORDS.some(kw => descLower.includes(kw));
+      return descHasSoftware || contextIsSoftware;
     }
   }
-  const keywords = ['package.json', 'src/', 'tests/', 'node_modules', '.git', 'npm', 'build', 'deploy', 'api', 'repository', 'code', 'function', 'class', 'module'];
-  const lower = context.toLowerCase();
-  return keywords.some(kw => lower.includes(kw));
+
+  return contextIsSoftware;
 }
 
 export function buildSuggestGoalsPrompt(
