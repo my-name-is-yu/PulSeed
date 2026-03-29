@@ -155,11 +155,26 @@ If all dimensions can be achieved with the available capabilities, return { "gap
 Return ONLY a JSON object, no other text.`;
 }
 
+// ─── Timeout constants ───
+
+export const DEFAULT_SUGGEST_TIMEOUT_MS = 30_000;
+
+// ─── Custom timeout error ───
+
+export class SuggestTimeoutError extends Error {
+  constructor(timeoutMs: number) {
+    super(`LLM request timed out after ${timeoutMs / 1000}s`);
+    this.name = 'SuggestTimeoutError';
+  }
+}
+
 // ─── suggestGoals (standalone) ───
 
 /**
  * Suggest measurable improvement goals based on the given context.
  * Does NOT save goals — it only suggests. Use GoalNegotiator.negotiate() to register a suggestion.
+ *
+ * Throws a SuggestTimeoutError if the LLM call exceeds timeoutMs.
  */
 export async function suggestGoals(
   context: string,
@@ -172,10 +187,12 @@ export async function suggestGoals(
     capabilityDetector?: CapabilityDetector;
     logger?: Logger;
     gateway?: IPromptGateway;
+    timeoutMs?: number;
   }
 ): Promise<GoalSuggestion[]> {
   const maxSuggestions = options?.maxSuggestions ?? 5;
   const existingGoals = options?.existingGoals ?? [];
+  const timeoutMs = options?.timeoutMs ?? DEFAULT_SUGGEST_TIMEOUT_MS;
 
   if (!context || context.trim().length === 0) {
     return [];
@@ -185,27 +202,51 @@ export async function suggestGoals(
 
   let suggestions: GoalSuggestion[];
   if (options?.gateway) {
+    let timerId: ReturnType<typeof setTimeout> | undefined;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timerId = setTimeout(() => {
+        reject(new SuggestTimeoutError(timeoutMs));
+      }, timeoutMs);
+    });
     try {
-      suggestions = await options.gateway.execute({
-        purpose: "goal_suggestion",
-        additionalContext: { prompt },
-        responseSchema: GoalSuggestionListSchema,
-        temperature: 0.3,
-      });
-    } catch {
+      suggestions = await Promise.race([
+        options.gateway.execute({
+          purpose: "goal_suggestion",
+          additionalContext: { prompt },
+          responseSchema: GoalSuggestionListSchema,
+          temperature: 0.3,
+        }),
+        timeoutPromise,
+      ]);
+    } catch (err) {
+      if (err instanceof SuggestTimeoutError) throw err;
       return [];
+    } finally {
+      clearTimeout(timerId);
     }
   } else {
+    let timerId: ReturnType<typeof setTimeout> | undefined;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timerId = setTimeout(() => {
+        reject(new SuggestTimeoutError(timeoutMs));
+      }, timeoutMs);
+    });
     let rawContent: string;
     try {
-      const response = await llmClient.sendMessage(
-        [{ role: "user", content: prompt }],
-        { temperature: 0.3 }
-      );
+      const response = await Promise.race([
+        llmClient.sendMessage(
+          [{ role: "user", content: prompt }],
+          { temperature: 0.3 }
+        ),
+        timeoutPromise,
+      ]);
       rawContent = response.content;
     } catch (err) {
+      if (err instanceof SuggestTimeoutError) throw err;
       options?.logger?.warn(`[suggestGoals] LLM call failed: ${String(err)}`);
       return [];
+    } finally {
+      clearTimeout(timerId);
     }
 
     try {

@@ -16,7 +16,7 @@ import {
   generateSuggestOutput,
   gatherProjectContext,
 } from "./suggest-normalizer.js";
-import { looksLikeSoftwareGoal } from "../../goal/goal-suggest.js";
+import { looksLikeSoftwareGoal, SuggestTimeoutError } from "../../goal/goal-suggest.js";
 import {
   buildAutoApprovalFn,
   buildLoopLogger,
@@ -114,7 +114,11 @@ export async function cmdSuggest(
       { maxSuggestions, existingGoals: existingTitles, repoPath: targetPath, capabilityDetector }
     );
   } catch (err) {
-    logger.error(formatOperationError("generate goal suggestions", err));
+    if (err instanceof SuggestTimeoutError) {
+      logger.error(`[PulSeed Suggest] Error: ${(err as Error).message}. The model may be slow or unreachable — try again or increase the timeout.`);
+    } else {
+      logger.error(formatOperationError("generate goal suggestions", err));
+    }
     return 1;
   }
 
@@ -182,7 +186,11 @@ export async function cmdImprove(
       { maxSuggestions, existingGoals: existingTitles, repoPath: targetPath, capabilityDetector }
     );
   } catch (err) {
-    logger.error(formatOperationError("generate improvement suggestions", err));
+    if (err instanceof SuggestTimeoutError) {
+      logger.error(`[PulSeed Improve] Error: ${(err as Error).message}. The model may be slow or unreachable — try again or increase the timeout.`);
+    } else {
+      logger.error(formatOperationError("generate improvement suggestions", err));
+    }
     return 1;
   }
 

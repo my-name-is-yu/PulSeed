@@ -124,6 +124,7 @@ import type { Goal } from "../src/types/goal.js";
 import type { LoopResult } from "../src/core-loop.js";
 import { makeTempDir } from "./helpers/temp-dir.js";
 import { makeGoal } from "./helpers/fixtures.js";
+import { SuggestTimeoutError } from "../src/goal/goal-suggest.js";
 
 function makeLoopResult(overrides: Partial<LoopResult> = {}): LoopResult {
   const now = new Date().toISOString();
@@ -598,5 +599,64 @@ describe("improve subcommand — gatherProjectContext", () => {
     const context = mockSuggest.mock.calls[0]![0] as string;
     // Context should be a string (even if some shell commands fail, at minimum an empty string)
     expect(typeof context).toBe("string");
+  });
+});
+
+describe("improve subcommand — timeout and LLM failure handling", () => {
+  it("exits with code 1 and prints a timeout message when suggestGoals times out", async () => {
+    // Simulate a timeout by having suggestGoals reject with a SuggestTimeoutError
+    const mockSuggest = vi.fn().mockRejectedValue(
+      new SuggestTimeoutError(30_000)
+    );
+
+    vi.mocked(GoalNegotiator).mockImplementation(() => ({
+      suggestGoals: mockSuggest,
+      negotiate: vi.fn(),
+    } as unknown as GoalNegotiator));
+
+    vi.mocked(CoreLoop).mockImplementation(() => ({
+      run: vi.fn(),
+      stop: vi.fn(),
+    } as unknown as CoreLoop));
+
+    const logLines: string[] = [];
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation((...args) => {
+      logLines.push(args.join(" "));
+    });
+    const code = await runCLI("improve", ".");
+    consoleSpy.mockRestore();
+    errorSpy.mockRestore();
+
+    expect(code).toBe(1);
+    // Verify the timeout message was output via the logger (which uses console.error)
+    const errorOutput = logLines.join("\n");
+    expect(errorOutput).toMatch(/timed out/i);
+    expect(errorOutput).toMatch(/30s/);
+  });
+
+  it("exits with code 1 gracefully when suggestGoals throws a non-timeout LLM error", async () => {
+    const mockSuggest = vi.fn().mockRejectedValue(
+      new Error("Connection refused: API unreachable")
+    );
+
+    vi.mocked(GoalNegotiator).mockImplementation(() => ({
+      suggestGoals: mockSuggest,
+      negotiate: vi.fn(),
+    } as unknown as GoalNegotiator));
+
+    vi.mocked(CoreLoop).mockImplementation(() => ({
+      run: vi.fn(),
+      stop: vi.fn(),
+    } as unknown as CoreLoop));
+
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const code = await runCLI("improve", ".");
+    consoleSpy.mockRestore();
+    errorSpy.mockRestore();
+
+    expect(code).toBe(1);
+    // Should not re-throw; process exits cleanly
   });
 });
