@@ -1,4 +1,5 @@
 import { StateManager } from "../state-manager.js";
+import { ProgressPredictor } from "./progress-predictor.js";
 import { StallReportSchema, StallStateSchema, StallAnalysisSchema } from "../types/stall.js";
 import type { StallReport, StallState, StallAnalysis } from "../types/stall.js";
 import type { CharacterConfig } from "../types/character.js";
@@ -65,10 +66,12 @@ const RECOVERY_SCHEDULE: Array<{ loops: number; factor: number }> = [
 export class StallDetector {
   private readonly stateManager: StateManager;
   private readonly characterConfig: CharacterConfig;
+  private readonly predictor?: ProgressPredictor;
 
-  constructor(stateManager: StateManager, characterConfig?: CharacterConfig) {
+  constructor(stateManager: StateManager, characterConfig?: CharacterConfig, predictor?: ProgressPredictor) {
     this.stateManager = stateManager;
     this.characterConfig = characterConfig ?? DEFAULT_CHARACTER_CONFIG;
+    this.predictor = predictor;
   }
 
   /**
@@ -142,7 +145,8 @@ export class StallDetector {
     // "No improvement" = latest gap has not decreased by at least MIN_IMPROVEMENT_DELTA
     // Trivial improvements (< 0.05) are treated as noise and do not reset stall detection.
     if (oldest - latest >= MIN_IMPROVEMENT_DELTA) {
-      return null; // meaningful improvement
+      // Meaningful improvement — check predictor for early warning before returning null
+      return this.checkPredictedStall(goalId, dimensionName, recent) ?? null;
     }
 
     return StallReportSchema.parse({
@@ -515,6 +519,50 @@ export class StallDetector {
   }
 
   // ─── Private Helpers ───
+
+  /**
+   * Run ProgressPredictor on gap history and return a predicted stall report if warranted.
+   * Returns null if no predictor, insufficient confidence, or no predicted stall.
+   */
+  private checkPredictedStall(
+    goalId: string,
+    dimensionName: string,
+    gapHistory: Array<{ normalized_gap: number }>
+  ): StallReport | null {
+    if (!this.predictor) return null;
+
+    const scores = gapHistory.map(e => e.normalized_gap);
+    const prediction = this.predictor.predict(scores);
+    if (!prediction || prediction.confidence <= 0.6) return null;
+
+    if (prediction.trend === "stable") {
+      return StallReportSchema.parse({
+        stall_type: "predicted_plateau",
+        goal_id: goalId,
+        dimension_name: dimensionName,
+        task_id: null,
+        detected_at: new Date().toISOString(),
+        escalation_level: 0,
+        suggested_cause: "approach_failure",
+        decay_factor: 0.3,
+      });
+    }
+
+    if (prediction.trend === "worsening") {
+      return StallReportSchema.parse({
+        stall_type: "predicted_regression",
+        goal_id: goalId,
+        dimension_name: dimensionName,
+        task_id: null,
+        detected_at: new Date().toISOString(),
+        escalation_level: 0,
+        suggested_cause: "approach_failure",
+        decay_factor: 0.5,
+      });
+    }
+
+    return null;
+  }
 
   /**
    * Compute the time threshold in hours for a task.

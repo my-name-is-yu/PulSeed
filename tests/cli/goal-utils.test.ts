@@ -19,6 +19,30 @@ describe("buildThreshold", () => {
       });
     });
 
+    it("parses negative range with hyphen fallback", () => {
+      expect(buildThreshold({ name: "x", type: "range", value: "-5-5" })).toEqual({
+        type: "range",
+        low: -5,
+        high: 5,
+      });
+    });
+
+    it("parses both-negative range with hyphen fallback", () => {
+      expect(buildThreshold({ name: "x", type: "range", value: "-10--5" })).toEqual({
+        type: "range",
+        low: -10,
+        high: -5,
+      });
+    });
+
+    it("parses negative decimal range with hyphen fallback", () => {
+      expect(buildThreshold({ name: "x", type: "range", value: "-5.5-10.5" })).toEqual({
+        type: "range",
+        low: -5.5,
+        high: 10.5,
+      });
+    });
+
     it("parses decimal comma-separated range", () => {
       expect(buildThreshold({ name: "x", type: "range", value: "10.5,20.5" })).toEqual({
         type: "range",

@@ -155,6 +155,8 @@ export const StallTypeEnum = z.enum([
   "time_exceeded",
   "consecutive_failure",
   "global_stall",
+  "predicted_plateau",
+  "predicted_regression",
 ]);
 export type StallType = z.infer<typeof StallTypeEnum>;
 

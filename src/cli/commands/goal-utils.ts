@@ -92,11 +92,22 @@ export function buildThreshold(spec: RawDimensionSpec): Threshold | null {
 
   if (spec.type === "range") {
     if (!spec.value) return null;
-    let parts = spec.value.split(",");
-    if (parts.length < 2) parts = spec.value.split("-");
-    const [lowStr, highStr] = parts;
-    const low = parseFloat(lowStr ?? "");
-    const high = parseFloat(highStr ?? "");
+    let low: number;
+    let high: number;
+    const commaParts = spec.value.split(",");
+    if (commaParts.length === 2) {
+      low = parseFloat(commaParts[0] ?? "");
+      high = parseFloat(commaParts[1] ?? "");
+    } else {
+      // Hyphen fallback: "10-20", "-5-5", "-10--5"
+      const rangeMatch = spec.value.match(/^(-?\d+(?:\.\d+)?)\s*-\s*(-?\d+(?:\.\d+)?)$/);
+      if (rangeMatch) {
+        low = parseFloat(rangeMatch[1]);
+        high = parseFloat(rangeMatch[2]);
+      } else {
+        return null;
+      }
+    }
     if (isNaN(low) || isNaN(high)) return null;
     return { type: "range", low, high };
   }

@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { StateManager } from "../src/state-manager.js";
 import { StallDetector } from "../src/drive/stall-detector.js";
+import { ProgressPredictor } from "../src/drive/progress-predictor.js";
 import type { StallState } from "../src/types/stall.js";
 import { makeTempDir } from "./helpers/temp-dir.js";
 
@@ -896,5 +897,87 @@ describe("achieved-dimension guard", () => {
     expect(result).not.toBeNull();
     expect(result!.stall_type).toBe("global_stall");
     expect(result!.suggested_cause).toBe("goal_infeasible");
+  });
+});
+
+// ─── ProgressPredictor integration ───
+
+describe("StallDetector with ProgressPredictor", () => {
+  let sm: StateManager;
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = makeTempDir();
+    sm = new StateManager(tmpDir);
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("works as before (no predictor) — no regression for normal stall detection", () => {
+    const det = new StallDetector(sm);
+    // Flat history → normal stall
+    const history = makeGapHistory([0.5, 0.5, 0.5, 0.5, 0.5, 0.5]);
+    const result = det.checkDimensionStall("g1", "d1", history);
+    expect(result).not.toBeNull();
+    expect(result!.stall_type).toBe("dimension_stall");
+  });
+
+  it("works as before (no predictor) — no false predicted stall on improving series", () => {
+    const det = new StallDetector(sm);
+    const history = makeGapHistory([0.8, 0.7, 0.6, 0.5, 0.4, 0.3]);
+    const result = det.checkDimensionStall("g1", "d1", history);
+    expect(result).toBeNull();
+  });
+
+  it("detects predicted_plateau when predictor says stable and confidence > 0.6", () => {
+    const predictor = new ProgressPredictor();
+    const det = new StallDetector(sm, undefined, predictor);
+    // History: early improvement (oldest=0.8, latest=0.4 → diff=0.4 >= 0.05) so it
+    // passes the improvement check and goes to the predictor.
+    // Last 5 entries: [0.4, 0.4, 0.4, 0.4, 0.4] → slope=0, stable, R²=1.0 (confidence=1.0)
+    const history = makeGapHistory([0.8, 0.4, 0.4, 0.4, 0.4, 0.4]);
+    const result = det.checkDimensionStall("g1", "d1", history);
+    expect(result).not.toBeNull();
+    expect(result!.stall_type).toBe("predicted_plateau");
+    expect(result!.goal_id).toBe("g1");
+    expect(result!.dimension_name).toBe("d1");
+  });
+
+  it("detects predicted_regression when predictor says worsening and confidence > 0.6", () => {
+    const predictor = new ProgressPredictor();
+    const det = new StallDetector(sm, undefined, predictor);
+    // History starts improving (oldest-latest >= 0.05) but recent tail is increasing
+    // History: 0.8, 0.3, 0.4, 0.5, 0.6, 0.7 — oldest=0.8, latest=0.7, diff=0.1 >= 0.05
+    // Last 5: [0.3, 0.4, 0.5, 0.6, 0.7] — slope = +0.1 (worsening), R² = 1.0
+    const history = makeGapHistory([0.8, 0.3, 0.4, 0.5, 0.6, 0.7]);
+    const result = det.checkDimensionStall("g1", "d1", history);
+    expect(result).not.toBeNull();
+    expect(result!.stall_type).toBe("predicted_regression");
+    expect(result!.goal_id).toBe("g1");
+    expect(result!.dimension_name).toBe("d1");
+  });
+
+  it("does NOT trigger predicted stall when confidence <= 0.6 (noisy data)", () => {
+    const predictor = new ProgressPredictor();
+    const det = new StallDetector(sm, undefined, predictor);
+    // Improving overall (oldest-latest >= 0.05) but noisy trend — R² will be low
+    // Use large but noisy improvement so predictor confidence is low
+    const history = makeGapHistory([0.9, 0.2, 0.9, 0.2, 0.9, 0.3]);
+    const result = det.checkDimensionStall("g1", "d1", history);
+    // oldest=0.9, latest=0.3 → improvement=0.6 >= 0.05 → goes to predictor
+    // noisy last 5: [0.2, 0.9, 0.2, 0.9, 0.3] → R² ≈ 0 → no predicted stall
+    expect(result).toBeNull();
+  });
+
+  it("normal stall (dimension_stall) takes priority over predictor check", () => {
+    const predictor = new ProgressPredictor();
+    const det = new StallDetector(sm, undefined, predictor);
+    // Flat history → falls through to normal dimension_stall, predictor never fires
+    const history = makeGapHistory([0.5, 0.5, 0.5, 0.5, 0.5, 0.5]);
+    const result = det.checkDimensionStall("g1", "d1", history);
+    expect(result).not.toBeNull();
+    expect(result!.stall_type).toBe("dimension_stall"); // not predicted_plateau
   });
 });
