@@ -241,7 +241,7 @@ export class CapabilityDetector {
         try {
           parsed = this.llmClient.parseJSON(response.content, GoalCapabilityGapResponseSchema);
         } catch (err) {
-          this.logger?.warn(`[CapabilityDetector] Failed to parse LLM response as GoalCapabilityGapResponse: ${String(err)}`);
+          console.warn(`[CapabilityDetector] Failed to parse LLM response as GoalCapabilityGapResponse: ${String(err)}`);
           return null;
         }
       }
