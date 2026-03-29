@@ -114,7 +114,12 @@ export async function cmdSuggest(
       { maxSuggestions, existingGoals: existingTitles, repoPath: targetPath, capabilityDetector }
     );
   } catch (err) {
-    logger.error(formatOperationError("generate goal suggestions", err));
+    const isTimeout = err instanceof Error && err.message.includes("timed out");
+    if (isTimeout) {
+      logger.error(`[PulSeed Suggest] Error: ${(err as Error).message}. Check your API key and network connection.`);
+    } else {
+      logger.error(formatOperationError("generate goal suggestions", err));
+    }
     return 1;
   }
 
@@ -182,7 +187,12 @@ export async function cmdImprove(
       { maxSuggestions, existingGoals: existingTitles, repoPath: targetPath, capabilityDetector }
     );
   } catch (err) {
-    logger.error(formatOperationError("generate improvement suggestions", err));
+    const isTimeout = err instanceof Error && err.message.includes("timed out");
+    if (isTimeout) {
+      logger.error(`[PulSeed Improve] Error: ${(err as Error).message}. Check your API key and network connection.`);
+    } else {
+      logger.error(formatOperationError("generate improvement suggestions", err));
+    }
     return 1;
   }
 
