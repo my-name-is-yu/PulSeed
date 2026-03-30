@@ -10,6 +10,29 @@ import { makeTempDir } from "./helpers/temp-dir.js";
 
 // ─── Helpers ───
 
+/**
+ * Poll until the given file path exists and contains valid JSON, or throw after timeout.
+ * Avoids relying on fixed setTimeout delays that are inherently flaky on loaded CI runners.
+ */
+async function pollForFile(
+  filePath: string,
+  timeoutMs = 2000,
+  intervalMs = 20
+): Promise<unknown> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      if (fs.existsSync(filePath)) {
+        return JSON.parse(fs.readFileSync(filePath, "utf-8"));
+      }
+    } catch {
+      // file not yet fully written — retry
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+  throw new Error(`Timed out waiting for file: ${filePath}`);
+}
+
 function makeLoopResult(overrides: Partial<LoopResult> = {}): LoopResult {
   return {
     goalId: "test-goal",
@@ -150,13 +173,10 @@ describe("DaemonRunner", () => {
 
       const startPromise = daemon.start(["goal-1"]);
       currentStartPromise = startPromise;
-      // Allow one tick for initial state write
-      await new Promise((resolve) => setTimeout(resolve, 10));
 
       const statePath = path.join(tmpDir, "daemon-state.json");
-      expect(fs.existsSync(statePath)).toBe(true);
-      const state = JSON.parse(fs.readFileSync(statePath, "utf-8"));
-      expect(state.status).toBe("running");
+      const state = await pollForFile(statePath);
+      expect((state as { status: string }).status).toBe("running");
 
       daemon.stop();
       await startPromise;
@@ -198,11 +218,10 @@ describe("DaemonRunner", () => {
 
       const startPromise = daemon.start(["goal-a", "goal-b"]);
       currentStartPromise = startPromise;
-      await new Promise((resolve) => setTimeout(resolve, 10));
 
       const statePath = path.join(tmpDir, "daemon-state.json");
-      const state = JSON.parse(fs.readFileSync(statePath, "utf-8"));
-      expect(state.active_goals).toEqual(["goal-a", "goal-b"]);
+      const state = await pollForFile(statePath);
+      expect((state as { active_goals: string[] }).active_goals).toEqual(["goal-a", "goal-b"]);
 
       daemon.stop();
       await startPromise;
