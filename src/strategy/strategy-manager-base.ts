@@ -343,14 +343,16 @@ export class StrategyManagerBase {
           });
           await this.savePortfolio(goalId, portfolio);
         }
-      } catch {
+      } catch (err) {
+        this.logger?.warn(`[StrategyManager] reorderByDecisionHistory failed: ${String(err)}`);
         // non-fatal: fall through to default selection
       }
     }
 
     try {
       return await this.activateBestCandidate(goalId);
-    } catch {
+    } catch (err) {
+      this.logger?.warn(`[StrategyManager] activateBestCandidate failed: ${String(err)}`);
       return null;
     }
   }
