@@ -467,6 +467,31 @@ describe("§3.3: Jump suppression bypass for present/match threshold types", () 
       expect.stringContaining("score jump suppressed")
     );
   });
+
+  it("match threshold: 0→1 jump IS suppressed when no workspace evidence", async () => {
+    const gitContextFetcher = vi.fn().mockReturnValue("");
+    const mockLLM = createMockLLMClient(1.0, "Target found");
+    const logger = makeLogger();
+    const entry = await observeWithLLM(
+      "goal1",
+      "greet_exported",
+      "Create hello.ts",
+      "greet exported",
+      JSON.stringify({ type: "match", value: "export function greet" }),
+      mockLLM,
+      { gitContextFetcher },
+      noopApply,
+      undefined, // contextOutput — no evidence
+      0.0,       // previousScore
+      true,
+      logger
+    );
+    // With no evidence, binary bypass should NOT apply — jump suppression fires
+    expect(entry.extracted_value).toBe(0.0);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining("score jump suppressed")
+    );
+  });
 });
 
 // ─── readWorkspaceFiles helper ─────────────────────────────────────────────

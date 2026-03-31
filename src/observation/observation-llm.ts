@@ -351,7 +351,9 @@ export async function observeWithLLM(
   try {
     const th = JSON.parse(thresholdDescription);
     isBinaryThreshold = th.type === "present" || th.type === "match";
-  } catch { /* keep false */ }
+  } catch (err) {
+    logger?.warn(`[ObservationEngine] Failed to parse thresholdDescription for binary check: ${String(err)}`);
+  }
 
   let resolvedLayer: "self_report" | "independent_review";
   let resolvedConfidence: number;
@@ -370,7 +372,7 @@ export async function observeWithLLM(
     resolvedConfidence = hasContext ? 0.70 : (scorePreservedFromPrevious ? 0.30 : 0.10);
   }
   if (
-    !isBinaryThreshold &&
+    !(isBinaryThreshold && hasContext) &&
     typeof previousScore === "number" &&
     previousScore !== null &&
     Math.abs(score - previousScore) > MAX_SCORE_DELTA
