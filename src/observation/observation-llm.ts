@@ -259,6 +259,9 @@ export async function observeWithLLM(
   // RC-1: When no context but a previousScore is known from observation history,
   // preserve the previous score with degraded confidence rather than forcing 0.0.
   // "No context" means "can't verify", not "definitely zero".
+  // Fix Root Cause A: When no context and no previousScore, keep the LLM score
+  // but cap confidence at self_report level (0.10) rather than zeroing the score.
+  // A non-zero LLM score with reasoning is more informative than a forced 0.0.
   let score = parsed.score;
   let scorePreservedFromPrevious = false;
   if (!hasContext && score > 0.0 && !dryRun) {
@@ -269,10 +272,10 @@ export async function observeWithLLM(
         `score preserved from previous observation (no context): ${previousScore.toFixed(3)}`
       );
     } else {
+      // Keep LLM score but log a warning — confidence will be capped at self_report level
       logger?.warn(
-        `score overridden to 0.0 (no evidence available, LLM returned ${score})`
+        `score kept from LLM (no evidence available, confidence capped at self_report): ${score}`
       );
-      score = 0.0;
     }
   }
 
@@ -282,9 +285,16 @@ export async function observeWithLLM(
   const MAX_SCORE_DELTA = 0.4;
   let resolvedLayer: "self_report" | "independent_review";
   let resolvedConfidence: number;
-  if (sourceAvailable === false) {
+  // Fix Root Cause B: When sourceAvailable=false but context IS available,
+  // use independent_review tier (workspace context provides real evidence).
+  // self_report tier only applies when BOTH sourceAvailable=false AND no context.
+  if (sourceAvailable === false && !hasContext) {
     resolvedLayer = "self_report";
-    resolvedConfidence = hasContext ? 0.30 : (scorePreservedFromPrevious ? 0.30 : 0.10);
+    resolvedConfidence = scorePreservedFromPrevious ? 0.30 : 0.10;
+  } else if (sourceAvailable === false && hasContext) {
+    // No dataSource but workspace context provides real evidence → independent_review
+    resolvedLayer = "independent_review";
+    resolvedConfidence = 0.70;
   } else {
     resolvedLayer = "independent_review";
     resolvedConfidence = hasContext ? 0.70 : (scorePreservedFromPrevious ? 0.30 : 0.10);

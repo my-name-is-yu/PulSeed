@@ -313,9 +313,10 @@ describe("Milestone 2 D-2: E2E loop test automation goal", () => {
     // Find the entry for e2e_test_passing specifically
     const testPassingEntry = log.entries.find((e) => e.dimension_name === "e2e_test_passing");
     expect(testPassingEntry).toBeDefined();
-    expect(testPassingEntry!.layer).toBe("self_report");
-    expect(testPassingEntry!.confidence).toBeGreaterThanOrEqual(0.10);
-    expect(testPassingEntry!.confidence).toBeLessThanOrEqual(0.30);
+    // fakeGitContextFetcher provides workspace context, so even without a DataSource
+    // the tier is upgraded to independent_review (not self_report).
+    expect(testPassingEntry!.layer).toBe("independent_review");
+    expect(testPassingEntry!.confidence).toBeGreaterThanOrEqual(0.5);
     expect(testPassingEntry!.method.type).toBe("llm_review");
   });
 

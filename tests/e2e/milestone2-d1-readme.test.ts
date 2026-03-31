@@ -331,15 +331,16 @@ describe("Milestone 2 D-1: README quality goal", () => {
     const log = await observationEngine.getObservationLog(goalId);
     expect(log.entries.length).toBeGreaterThanOrEqual(3);
 
-    const llmEntries = log.entries.filter((e) => e.layer === "self_report");
+    // fakeGitContextFetcher provides workspace context, so even without a DataSource
+    // the tier is upgraded to independent_review (not self_report).
+    const llmEntries = log.entries.filter((e) => e.layer === "independent_review");
     expect(llmEntries.length).toBeGreaterThanOrEqual(3);
 
-    // Each entry should have the correct tier (self_report when no DataSource)
+    // Each entry should have independent_review tier (context available via gitContextFetcher)
     for (const entry of llmEntries) {
-      expect(entry.method.confidence_tier).toBe("self_report");
+      expect(entry.method.confidence_tier).toBe("independent_review");
       expect(entry.method.type).toBe("llm_review");
-      expect(entry.confidence).toBeGreaterThanOrEqual(0.1);
-      expect(entry.confidence).toBeLessThanOrEqual(0.49);
+      expect(entry.confidence).toBeGreaterThanOrEqual(0.5);
     }
   });
 

@@ -166,7 +166,7 @@ describe("ObservationEngine LLM observation", () => {
   // ─── Test 2: observe() uses LLM fallback when no DataSource ───
 
   describe("observe() with LLM fallback (no DataSource)", () => {
-    it("uses LLM observation (self_report) when no DataSource and llmClient available", async () => {
+    it("uses LLM observation (independent_review) when no DataSource but git context is available", async () => {
       const mockLLMClient = createMockLLMClient(0.72, "LLM observed value");
       const engine = new ObservationEngine(stateManager, [], mockLLMClient, undefined, { gitContextFetcher: fakeGitContextFetcher });
 
@@ -179,12 +179,13 @@ describe("ObservationEngine LLM observation", () => {
       expect(updatedGoal).not.toBeNull();
 
       // Check the observation log for the layer used.
-      // When no DataSource is available, sourceAvailable=false so layer is self_report (confidence ≤ 0.30).
+      // When no DataSource but git context IS available, layer upgrades to independent_review.
+      // self_report is only used when BOTH sourceAvailable=false AND no context.
       const log = await engine.getObservationLog("goal-llm-fallback");
       expect(log.entries.length).toBeGreaterThan(0);
 
       const lastEntry = log.entries[log.entries.length - 1]!;
-      expect(lastEntry.layer).toBe("self_report");
+      expect(lastEntry.layer).toBe("independent_review");
       expect(lastEntry.goal_id).toBe("goal-llm-fallback");
     });
 
@@ -627,7 +628,7 @@ describe("ObservationEngine LLM observation", () => {
   // ─── Test: sourceAvailable flag controls layer and confidence ───
 
   describe("observeWithLLM sourceAvailable flag", () => {
-    it("uses self_report layer and confidence=0.30 when sourceAvailable=false with context", async () => {
+    it("uses independent_review layer and confidence=0.70 when sourceAvailable=false but context is available", async () => {
       const mockLLMClient = createMockLLMClient(0.75, "Good progress");
       const engine = new ObservationEngine(stateManager, [], mockLLMClient);
 
@@ -644,12 +645,13 @@ describe("ObservationEngine LLM observation", () => {
         null,
         undefined,
         null,
-        false // sourceAvailable
+        false // sourceAvailable=false, but fakeWorkspaceContext IS provided
       );
 
-      expect(entry.layer).toBe("self_report");
-      expect(entry.confidence).toBe(0.30);
-      expect(entry.method.confidence_tier).toBe("self_report");
+      // Context is available — even without a dataSource, workspace evidence justifies independent_review
+      expect(entry.layer).toBe("independent_review");
+      expect(entry.confidence).toBe(0.70);
+      expect(entry.method.confidence_tier).toBe("independent_review");
     });
 
     it("uses independent_review layer and confidence=0.70 when sourceAvailable=true with context", async () => {

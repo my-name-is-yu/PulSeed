@@ -292,10 +292,34 @@ export async function verifyTask(
             dim !== undefined && typeof dim.current_value === "number"
               ? (dim.current_value as number)
               : null;
+          // Scale the normalized delta to raw threshold-scale space.
+          // gap-calculator operates in raw values, so +0.2 normalized must be
+          // multiplied by the threshold scale to produce a meaningful update.
+          const threshold =
+            dim !== undefined &&
+            typeof dim.threshold === "object" &&
+            dim.threshold !== null
+              ? (dim.threshold as Record<string, unknown>)
+              : null;
+          let scaledDelta = progressDelta;
+          if (threshold) {
+            const thresholdType = threshold.type as string | undefined;
+            if (
+              (thresholdType === "min" || thresholdType === "max") &&
+              typeof threshold.value === "number" &&
+              threshold.value !== 0
+            ) {
+              scaledDelta = progressDelta * threshold.value;
+            } else if (
+              thresholdType === "range" &&
+              typeof threshold.low === "number" &&
+              typeof threshold.high === "number"
+            ) {
+              scaledDelta = progressDelta * (threshold.high - threshold.low);
+            }
+          }
           const newVal =
-            prevVal !== null
-              ? Math.min(1, Math.max(0, prevVal + progressDelta))
-              : progressDelta;
+            prevVal !== null ? prevVal + scaledDelta : scaledDelta;
           return {
             dimension_name: dimName,
             previous_value: prevVal,

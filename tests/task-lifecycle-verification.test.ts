@@ -599,8 +599,9 @@ describe("TaskLifecycle", async () => {
 
       const verification = await lifecycle.verifyTask(task, result);
       expect(verification.verdict).toBe("pass");
-      // 0.9 + 0.4 = 1.3 → clamped to 1.0
-      expect(verification.dimension_updates[0]!.new_value).toBe(1);
+      // No threshold on dimension → scaledDelta = progressDelta = 0.2 (no scaling)
+      // new_value = 0.9 + 0.2 = 1.1 (no [0,1] clamp at verifier level; raw scale)
+      expect(verification.dimension_updates[0]!.new_value).toBeCloseTo(1.1, 5);
     });
 
     it("dimension_updates new_value is previous_value + partial_delta on partial verdict", async () => {

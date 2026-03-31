@@ -722,3 +722,157 @@ describe("RC-3: handleVerdict updates confidence and last_observed_layer on dime
     expect(dim.last_observed_layer as string).toBe("self_report");
   });
 });
+
+// ─── Root Cause C: dimension_updates scaling to raw threshold-scale space ───
+
+describe("Root Cause C: dimension_updates scaling", () => {
+  let tmpDir: string;
+  let stateManager: StateManager;
+  let sessionManager: SessionManager;
+  let trustManager: TrustManager;
+  let stallDetector: StallDetector;
+
+  beforeEach(() => {
+    tmpDir = makeTempDir();
+    stateManager = new StateManager(tmpDir);
+    sessionManager = new SessionManager(stateManager);
+    trustManager = new TrustManager(stateManager);
+    stallDetector = new StallDetector(stateManager);
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("min threshold: delta is scaled by threshold.value — pass verdict adds 0.2 * value", async () => {
+    const { verifyTask } = await import("../src/execution/task-verifier.js");
+    // threshold value=5, current_value=2 → pass delta = 0.2 * 5 = 1.0 → new_value = 3.0
+    await stateManager.writeRaw("goals/goal-1/goal.json", {
+      id: "goal-1", title: "Test", status: "active",
+      dimensions: [{ name: "dim", label: "dim", current_value: 2, threshold: { type: "min", value: 5 }, last_updated: null }],
+      created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+    });
+
+    const llmClient = createMockLLMClient([
+      JSON.stringify({ verdict: "pass", reasoning: "All criteria met", criteria_met: 1, criteria_total: 1 }),
+    ]);
+    const deps: VerifierDeps = {
+      stateManager, llmClient, sessionManager, trustManager, stallDetector,
+      durationToMs: (d) => d.value * 3600000,
+    };
+    const task = makeTask({
+      success_criteria: [{ description: "Manual check", verification_method: "Manual review", is_blocking: true }],
+    });
+
+    const result = await verifyTask(deps, task, {
+      success: true, output: "done", error: null, exit_code: 0, stopped_reason: "end_turn",
+      session_id: "s1", started_at: new Date().toISOString(), completed_at: new Date().toISOString(), tokens_used: 0,
+    });
+
+    expect(result.verdict).toBe("pass");
+    const update = result.dimension_updates.find((u) => u.dimension_name === "dim");
+    expect(update).toBeDefined();
+    // Scaled delta: 0.2 * 5 = 1.0, so new_value = 2 + 1.0 = 3.0
+    expect(update!.new_value).toBeCloseTo(3.0, 5);
+  });
+
+  it("max threshold: delta is scaled by threshold.value — pass verdict adds 0.2 * value", async () => {
+    const { verifyTask } = await import("../src/execution/task-verifier.js");
+    // threshold value=10, current_value=8 → pass delta = 0.2 * 10 = 2.0 → new_value = 6.0
+    // For max-type (reduce bug count), delta is subtracted implicitly by being negative direction
+    // but the scaling logic just multiplies by value: 0.2 * 10 = 2.0 → new_value = 8 + 2.0 = 10
+    // (direction check handled separately; scaling correctness is the concern here)
+    await stateManager.writeRaw("goals/goal-1/goal.json", {
+      id: "goal-1", title: "Test", status: "active",
+      dimensions: [{ name: "count", label: "count", current_value: 8, threshold: { type: "max", value: 10 }, last_updated: null }],
+      created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+    });
+
+    const llmClient = createMockLLMClient([
+      JSON.stringify({ verdict: "pass", reasoning: "Done", criteria_met: 1, criteria_total: 1 }),
+    ]);
+    const deps: VerifierDeps = {
+      stateManager, llmClient, sessionManager, trustManager, stallDetector,
+      durationToMs: (d) => d.value * 3600000,
+    };
+    const task = makeTask({
+      target_dimensions: ["count"],
+      primary_dimension: "count",
+      success_criteria: [{ description: "Manual check", verification_method: "Manual review", is_blocking: true }],
+    });
+
+    const result = await verifyTask(deps, task, {
+      success: true, output: "done", error: null, exit_code: 0, stopped_reason: "end_turn",
+      session_id: "s1", started_at: new Date().toISOString(), completed_at: new Date().toISOString(), tokens_used: 0,
+    });
+
+    const update = result.dimension_updates.find((u) => u.dimension_name === "count");
+    expect(update).toBeDefined();
+    // Scaled delta: 0.2 * 10 = 2.0, so new_value = 8 + 2.0 = 10.0
+    expect(update!.new_value).toBeCloseTo(10.0, 5);
+  });
+
+  it("range threshold: delta is scaled by (high - low)", async () => {
+    const { verifyTask } = await import("../src/execution/task-verifier.js");
+    // range low=0, high=100, current_value=20 → pass delta = 0.2 * (100 - 0) = 20 → new_value = 40
+    await stateManager.writeRaw("goals/goal-1/goal.json", {
+      id: "goal-1", title: "Test", status: "active",
+      dimensions: [{ name: "score", label: "score", current_value: 20, threshold: { type: "range", low: 0, high: 100 }, last_updated: null }],
+      created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+    });
+
+    const llmClient = createMockLLMClient([
+      JSON.stringify({ verdict: "pass", reasoning: "Done", criteria_met: 1, criteria_total: 1 }),
+    ]);
+    const deps: VerifierDeps = {
+      stateManager, llmClient, sessionManager, trustManager, stallDetector,
+      durationToMs: (d) => d.value * 3600000,
+    };
+    const task = makeTask({
+      target_dimensions: ["score"],
+      primary_dimension: "score",
+      success_criteria: [{ description: "Manual check", verification_method: "Manual review", is_blocking: true }],
+    });
+
+    const result = await verifyTask(deps, task, {
+      success: true, output: "done", error: null, exit_code: 0, stopped_reason: "end_turn",
+      session_id: "s1", started_at: new Date().toISOString(), completed_at: new Date().toISOString(), tokens_used: 0,
+    });
+
+    const update = result.dimension_updates.find((u) => u.dimension_name === "score");
+    expect(update).toBeDefined();
+    // Scaled delta: 0.2 * (100 - 0) = 20, so new_value = 20 + 20 = 40
+    expect(update!.new_value).toBeCloseTo(40.0, 5);
+  });
+
+  it("partial verdict: delta is 0.15 scaled by threshold value", async () => {
+    const { verifyTask } = await import("../src/execution/task-verifier.js");
+    // threshold value=10, current_value=3 → partial delta = 0.15 * 10 = 1.5 → new_value = 4.5
+    await stateManager.writeRaw("goals/goal-1/goal.json", {
+      id: "goal-1", title: "Test", status: "active",
+      dimensions: [{ name: "dim", label: "dim", current_value: 3, threshold: { type: "min", value: 10 }, last_updated: null }],
+      created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+    });
+
+    const llmClient = createMockLLMClient([
+      JSON.stringify({ verdict: "partial", reasoning: "Partially done", criteria_met: 0, criteria_total: 1 }),
+    ]);
+    const deps: VerifierDeps = {
+      stateManager, llmClient, sessionManager, trustManager, stallDetector,
+      durationToMs: (d) => d.value * 3600000,
+    };
+    const task = makeTask({
+      success_criteria: [{ description: "Manual check", verification_method: "Manual review", is_blocking: true }],
+    });
+
+    const result = await verifyTask(deps, task, {
+      success: true, output: "partial done", error: null, exit_code: 0, stopped_reason: "end_turn",
+      session_id: "s1", started_at: new Date().toISOString(), completed_at: new Date().toISOString(), tokens_used: 0,
+    });
+
+    const update = result.dimension_updates.find((u) => u.dimension_name === "dim");
+    expect(update).toBeDefined();
+    // Scaled delta: 0.15 * 10 = 1.5, so new_value = 3 + 1.5 = 4.5
+    expect(update!.new_value).toBeCloseTo(4.5, 5);
+  });
+});
