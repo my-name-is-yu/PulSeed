@@ -356,6 +356,16 @@ export class GoalRefiner {
         results.push(result);
       } catch (err) {
         console.error(`[GoalRefiner] feasibility check failed for dimension "${ld.name}":`, err);
+        results.push({
+          dimension: ld.name,
+          path: "qualitative",
+          feasibility_ratio: null,
+          assessment: "ambitious",
+          confidence: "low",
+          reasoning: `Feasibility check failed: ${String(err)}`,
+          key_assumptions: [],
+          main_risks: ["Unable to assess feasibility"],
+        });
       }
     }
     return { results, tokenCost };

@@ -243,7 +243,7 @@ export class StrategyManagerBase {
           const outcome = newState === "completed" ? "success" : "failure";
           await this.knowledgeManager.updateDecisionOutcome(strategyId, outcome);
         } catch (e) {
-          console.warn(`[StrategyManager] updateDecisionOutcome failed for ${strategyId}:`, e);
+          this.logger?.warn(`[StrategyManager] updateDecisionOutcome failed for ${strategyId}: ${e instanceof Error ? e.message : String(e)}`);
         }
       }
 
@@ -343,14 +343,16 @@ export class StrategyManagerBase {
           });
           await this.savePortfolio(goalId, portfolio);
         }
-      } catch {
+      } catch (err) {
+        this.logger?.warn(`[StrategyManager] reorderByDecisionHistory failed: ${String(err)}`);
         // non-fatal: fall through to default selection
       }
     }
 
     try {
       return await this.activateBestCandidate(goalId);
-    } catch {
+    } catch (err) {
+      this.logger?.warn(`[StrategyManager] activateBestCandidate failed: ${String(err)}`);
       return null;
     }
   }
