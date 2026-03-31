@@ -115,11 +115,16 @@ export async function dispatchGoalCommand(
 
           if (accepted) {
             const rawDims = inferred.map((d) => `${d.name}:${d.type}:${d.value}`);
+            const inferConstraints = addValues.constraint ?? [];
+            if (addValues.workspace) {
+              inferConstraints.push(`workspace_path:${addValues.workspace}`);
+            }
             return await cmdGoalAddRaw(stateManager, {
               title: inferTitle,
               description: description || inferTitle,
               rawDimensions: rawDims,
               parent_id: addValues.parent,
+              constraints: inferConstraints,
             });
           }
           // If rejected, fall through to refine mode
@@ -136,7 +141,11 @@ export async function dispatchGoalCommand(
         );
         return 1;
       }
-      return await cmdGoalAddRaw(stateManager, { title, description, rawDimensions, parent_id: addValues.parent });
+      const rawConstraints = addValues.constraint ?? [];
+      if (addValues.workspace) {
+        rawConstraints.push(`workspace_path:${addValues.workspace}`);
+      }
+      return await cmdGoalAddRaw(stateManager, { title, description, rawDimensions, parent_id: addValues.parent, constraints: rawConstraints });
     }
 
     // Refine/negotiate mode: requires description
