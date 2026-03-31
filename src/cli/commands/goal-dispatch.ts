@@ -54,6 +54,7 @@ export async function dispatchGoalCommand(
       constraint?: string[];
       yes?: boolean;
       parent?: string;
+      workspace?: string;
     } = {};
     try {
       const parsed = parseArgs({
@@ -67,6 +68,7 @@ export async function dispatchGoalCommand(
           constraint: { type: "string", multiple: true },
           yes: { type: "boolean", short: "y" },
           parent: { type: "string" },
+          workspace: { type: "string" },
         },
         allowPositionals: true,
         strict: false,
@@ -145,6 +147,10 @@ export async function dispatchGoalCommand(
 
     const deadline = addValues.deadline;
     const constraints = addValues.constraint ?? [];
+    // Add workspace_path constraint when --workspace is provided
+    if (addValues.workspace) {
+      constraints.push(`workspace_path:${addValues.workspace}`);
+    }
     const noRefine = addValues["no-refine"] ?? false;
     return await cmdGoalAdd(stateManager, characterConfigManager, description, {
       deadline,

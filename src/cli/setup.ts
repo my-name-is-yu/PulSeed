@@ -55,7 +55,8 @@ export async function buildDeps(
   config?: LoopConfig,
   approvalFn?: (task: Task) => Promise<boolean>,
   logger?: Logger,
-  onProgress?: (event: ProgressEvent) => void
+  onProgress?: (event: ProgressEvent) => void,
+  workspacePath?: string,
 ) {
   const characterConfig = await characterConfigManager.load();
   const llmClient = await buildLLMClient();
@@ -99,7 +100,7 @@ export async function buildDeps(
   }
 
   const contextProvider = createWorkspaceContextProvider(
-    { workDir: process.cwd() },
+    { workDir: workspacePath ?? process.cwd() },
     async (goalId: string) => {
       try {
         const goal = await stateManager.loadGoal(goalId);

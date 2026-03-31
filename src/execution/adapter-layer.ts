@@ -18,6 +18,8 @@ export interface AgentTask {
   adapter_type: string;
   /** Tool/capability allowlist — locked at task creation, immutable during execution */
   allowed_tools?: readonly string[];
+  /** Working directory override for the agent process (e.g., target workspace path) */
+  cwd?: string;
 }
 
 export interface AgentResult {

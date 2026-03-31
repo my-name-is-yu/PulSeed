@@ -128,7 +128,7 @@ export class CLIRunner {
     const subcommand = argv[0];
 
     if (subcommand === "run") {
-      let values: { goal?: string[]; "max-iterations"?: string; adapter?: string; tree?: boolean; yes?: boolean; verbose?: boolean };
+      let values: { goal?: string[]; "max-iterations"?: string; adapter?: string; tree?: boolean; yes?: boolean; verbose?: boolean; workspace?: string };
       try {
         ({ values } = parseArgs({
           args: argv.slice(1),
@@ -139,9 +139,10 @@ export class CLIRunner {
             tree: { type: "boolean" },
             yes: { type: "boolean", short: "y" },
             verbose: { type: "boolean" },
+            workspace: { type: "string" },
           },
           strict: false,
-        }) as { values: { goal?: string[]; "max-iterations"?: string; adapter?: string; tree?: boolean; yes?: boolean; verbose?: boolean } });
+        }) as { values: { goal?: string[]; "max-iterations"?: string; adapter?: string; tree?: boolean; yes?: boolean; verbose?: boolean; workspace?: string } });
       } catch (err) {
         logger.error(formatOperationError("parse run command arguments", err));
         values = {};
@@ -157,6 +158,21 @@ export class CLIRunner {
         return 1;
       }
       const goalId = goalIds[0];
+
+      // Add workspace_path constraint to goal if --workspace is provided
+      if (values.workspace) {
+        const goal = await this.stateManager.loadGoal(goalId);
+        if (goal) {
+          const wpPrefix = "workspace_path:";
+          const existingIdx = goal.constraints.findIndex((c) => c.startsWith(wpPrefix));
+          if (existingIdx >= 0) {
+            goal.constraints[existingIdx] = `${wpPrefix}${values.workspace}`;
+          } else {
+            goal.constraints.push(`${wpPrefix}${values.workspace}`);
+          }
+          await this.stateManager.saveGoal(goal);
+        }
+      }
 
       const loopConfig: LoopConfig = {};
       if (values["max-iterations"] !== undefined) {
@@ -180,7 +196,8 @@ export class CLIRunner {
         loopConfig,
         globalYes || values.yes,
         values.verbose,
-        activeCoreLoopRef
+        activeCoreLoopRef,
+        values.workspace,
       );
       this.activeCoreLoop = activeCoreLoopRef.value;
       return result;

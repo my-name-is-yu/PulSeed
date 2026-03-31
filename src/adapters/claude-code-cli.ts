@@ -44,10 +44,12 @@ export class ClaudeCodeCLIAdapter implements IAdapter {
       spawnArgs.push("--allowedTools", task.allowed_tools.join(","));
     }
 
+    // Per-task cwd override (from workspace_path: constraint) takes priority over constructor workDir.
+    const cwd = task.cwd ?? this.workDir;
     const result = await spawnWithTimeout(
       this.cliPath,
       spawnArgs,
-      { cwd: this.workDir, stdinData: task.prompt },
+      { cwd, stdinData: task.prompt },
       task.timeout_ms
     );
 

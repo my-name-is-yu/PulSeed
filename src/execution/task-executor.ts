@@ -45,6 +45,18 @@ export async function executeTask(
 ): Promise<AgentResult> {
   const { stateManager, sessionManager, logger, execFileSyncFn } = deps;
 
+  // Resolve workspace path from goal constraints (workspace_path:<path>)
+  let workspaceCwd: string | undefined;
+  try {
+    const goal = await stateManager.loadGoal(task.goal_id);
+    const wpConstraint = goal?.constraints.find((c) => c.startsWith("workspace_path:"));
+    if (wpConstraint) {
+      workspaceCwd = wpConstraint.slice("workspace_path:".length);
+    }
+  } catch {
+    // Non-fatal: fall back to process.cwd()
+  }
+
   // Create execution session
   const session = await sessionManager.createSession(
     "task_execution",
@@ -106,6 +118,7 @@ export async function executeTask(
     timeout_ms: timeoutMs,
     adapter_type: adapter.adapterType,
     ...(allowedTools !== undefined ? { allowed_tools: allowedTools } : {}),
+    ...(workspaceCwd !== undefined ? { cwd: workspaceCwd } : {}),
   };
 
   // Update task status to running
@@ -155,8 +168,9 @@ export async function executeTask(
   // and annotate result.filesChanged from the same git diff --name-only call.
   if (result.success) {
     try {
+      const gitCwd = workspaceCwd ?? process.cwd();
       const diffOutput = execFileSyncFn("git", ["diff", "--name-only"], {
-        cwd: process.cwd(),
+        cwd: gitCwd,
         encoding: "utf-8",
       }).trim();
 
@@ -164,7 +178,7 @@ export async function executeTask(
       let untrackedOutput = "";
       try {
         untrackedOutput = execFileSyncFn("git", ["ls-files", "--others", "--exclude-standard"], {
-          cwd: process.cwd(),
+          cwd: gitCwd,
           encoding: "utf-8",
         }).trim();
       } catch {
@@ -202,7 +216,7 @@ export async function executeTask(
 
         if (protectedChanges.length > 0) {
           execFileSyncFn("git", ["checkout", "--", ...protectedChanges], {
-            cwd: process.cwd(),
+            cwd: gitCwd,
             encoding: "utf-8",
           });
           result.output = (result.output || "") +

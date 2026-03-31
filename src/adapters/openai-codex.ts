@@ -79,10 +79,12 @@ export class OpenAICodexCLIAdapter implements IAdapter {
     }
 
     // NOTE: --path is NOT supported by codex-cli 0.114.0; use cwd instead
+    // Per-task cwd override (from workspace_path: constraint) takes priority over constructor repoPath.
+    const cwd = task.cwd ?? this.repoPath;
     const result = await spawnWithTimeout(
       this.cliPath,
       spawnArgs,
-      { cwd: this.repoPath, env: process.env, stdinData: task.prompt },
+      { cwd, env: process.env, stdinData: task.prompt },
       task.timeout_ms
     );
 

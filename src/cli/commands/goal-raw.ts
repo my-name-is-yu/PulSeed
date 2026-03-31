@@ -12,7 +12,7 @@ import {
 
 export async function cmdGoalAddRaw(
   stateManager: StateManager,
-  opts: { title?: string; description?: string; rawDimensions: string[]; parent_id?: string }
+  opts: { title?: string; description?: string; rawDimensions: string[]; parent_id?: string; constraints?: string[] }
 ): Promise<number> {
   const title = opts.title || opts.description;
   if (!title) {
@@ -74,7 +74,7 @@ export async function cmdGoalAddRaw(
     dimensions,
     gap_aggregation: "max" as const,
     dimension_mapping: null,
-    constraints: [],
+    constraints: opts.constraints ?? [],
     children_ids: [],
     target_date: null,
     origin: "manual" as const,

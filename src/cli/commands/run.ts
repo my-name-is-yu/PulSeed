@@ -41,7 +41,8 @@ export async function cmdRun(
   loopConfig?: LoopConfig,
   autoApprove?: boolean,
   verbose?: boolean,
-  activeCoreLoopRef?: { value: import("../../core-loop.js").CoreLoop | null }
+  activeCoreLoopRef?: { value: import("../../core-loop.js").CoreLoop | null },
+  workspacePath?: string,
 ): Promise<number> {
   try {
     await ensureProviderConfig();
@@ -63,7 +64,7 @@ export async function cmdRun(
 
   let deps: Awaited<ReturnType<typeof buildDeps>>;
   try {
-    deps = await buildDeps(stateManager, characterConfigManager, loopConfig, approvalFn, logger, onProgress);
+    deps = await buildDeps(stateManager, characterConfigManager, loopConfig, approvalFn, logger, onProgress, workspacePath);
   } catch (err) {
     rl?.close();
     logger.error(formatOperationError("initialise dependencies", err));
