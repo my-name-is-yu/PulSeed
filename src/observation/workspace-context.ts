@@ -146,7 +146,8 @@ async function readFileSection(filePath: string, maxChars: number): Promise<stri
 
 export function createWorkspaceContextProvider(
   options: WorkspaceContextOptions,
-  getGoalDescription: (goalId: string) => string | undefined | Promise<string | undefined>
+  getGoalDescription: (goalId: string) => string | undefined | Promise<string | undefined>,
+  getGoalConstraints?: (goalId: string) => string[] | undefined | Promise<string[] | undefined>
 ): (goalId: string, dimensionName: string) => Promise<string> {
   const { workDir, maxFiles = 5, maxCharsPerFile = 4000, externalFileMaxBytes = 10240 } = options;
 
@@ -154,7 +155,17 @@ export function createWorkspaceContextProvider(
     const goalDescription = (await getGoalDescription(goalId)) ?? "";
     const keywords = extractKeywords(goalDescription + " " + dimensionName);
 
-    const parts: string[] = [`# Workspace: ${workDir}`];
+    // Resolve effective workDir: use workspace_path constraint from goal if available
+    let effectiveWorkDir = workDir;
+    if (getGoalConstraints) {
+      const constraints = (await getGoalConstraints(goalId)) ?? [];
+      const workspaceConstraint = constraints.find((c) => c.startsWith("workspace_path:"));
+      if (workspaceConstraint) {
+        effectiveWorkDir = workspaceConstraint.slice("workspace_path:".length);
+      }
+    }
+
+    const parts: string[] = [`# Workspace: ${effectiveWorkDir}`];
 
     // Read external absolute-path files mentioned in goal description
     const externalPaths = extractAbsolutePaths(goalDescription);
@@ -167,7 +178,7 @@ export function createWorkspaceContextProvider(
 
     // Directory listing
     try {
-      const entries = await fsp.readdir(workDir);
+      const entries = await fsp.readdir(effectiveWorkDir);
       parts.push(`## Directory listing\n${entries.join(", ")}`);
     } catch {
       /* skip */
@@ -177,7 +188,7 @@ export function createWorkspaceContextProvider(
     const alwaysInclude = ["README.md", "package.json"];
     const alwaysIncludePaths: string[] = [];
     for (const rel of alwaysInclude) {
-      const fp = path.join(workDir, rel);
+      const fp = path.join(effectiveWorkDir, rel);
       try {
         await fsp.access(fp);
         alwaysIncludePaths.push(fp);
@@ -190,7 +201,7 @@ export function createWorkspaceContextProvider(
     const relativePathsInGoal = extractRelativePaths(goalDescription);
     const pathMatchedPaths: string[] = [];
     for (const rel of relativePathsInGoal) {
-      const fp = path.join(workDir, rel);
+      const fp = path.join(effectiveWorkDir, rel);
       try {
         await fsp.access(fp);
         pathMatchedPaths.push(fp);
@@ -201,12 +212,12 @@ export function createWorkspaceContextProvider(
 
     // Collect all files (depth 3)
     const allFiles: string[] = [];
-    await collectFiles(workDir, workDir, 0, allFiles);
+    await collectFiles(effectiveWorkDir, effectiveWorkDir, 0, allFiles);
 
     // Small workspace fast path: include ALL files when total count is small
     if (allFiles.length <= SMALL_WORKSPACE_FILE_LIMIT) {
       for (const fp of allFiles) {
-        const rel = path.relative(workDir, fp);
+        const rel = path.relative(effectiveWorkDir, fp);
         const content = await readFileSection(fp, maxCharsPerFile);
         if (content) {
           parts.push(`## ${rel}\n\`\`\`\n${content}\n\`\`\``);
@@ -243,7 +254,7 @@ export function createWorkspaceContextProvider(
 
     // Read always-include files first
     for (const fp of alwaysIncludePaths) {
-      const rel = path.relative(workDir, fp);
+      const rel = path.relative(effectiveWorkDir, fp);
       const content = await readFileSection(fp, maxCharsPerFile);
       if (content) {
         parts.push(`## ${rel}\n\`\`\`\n${content}\n\`\`\``);
@@ -252,7 +263,7 @@ export function createWorkspaceContextProvider(
 
     // Read explicit path-matched files (priority, same as alwaysInclude)
     for (const fp of pathMatchedPaths) {
-      const rel = path.relative(workDir, fp);
+      const rel = path.relative(effectiveWorkDir, fp);
       const content = await readFileSection(fp, maxCharsPerFile);
       if (content) {
         parts.push(`## ${rel}\n\`\`\`\n${content}\n\`\`\``);
@@ -261,7 +272,7 @@ export function createWorkspaceContextProvider(
 
     // Read selected keyword-matched files
     for (const fp of selected) {
-      const rel = path.relative(workDir, fp);
+      const rel = path.relative(effectiveWorkDir, fp);
       const content = await readFileSection(fp, maxCharsPerFile);
       if (content) {
         parts.push(`## ${rel}\n\`\`\`\n${content}\n\`\`\``);

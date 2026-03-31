@@ -137,8 +137,9 @@ export function buildThreshold(spec: RawDimensionSpec): Threshold | null {
 
 interface DatasourceConfig {
   type?: string;
-  connection?: { commands?: Record<string, unknown> };
+  connection?: { commands?: Record<string, unknown>; path?: string };
   dimension_mapping?: Record<string, unknown>;
+  scope_goal_id?: string;
 }
 
 /**
@@ -180,15 +181,25 @@ function shellDatasourceExists(existing: DatasourceConfig[], dimensionNames: str
 
 /**
  * Returns true if an existing file_existence datasource already covers the
- * exact same set of dimension names.
+ * exact same set of dimension names, path, and scope_goal_id.
+ * Dedup requires all three to match to avoid reusing a datasource from a
+ * different goal or workspace path.
  */
-function fileExistenceDatasourceExists(existing: DatasourceConfig[], dimensionNames: string[]): boolean {
+function fileExistenceDatasourceExists(
+  existing: DatasourceConfig[],
+  dimensionNames: string[],
+  workspacePath: string,
+  goalId: string
+): boolean {
   const sorted = [...dimensionNames].sort().join(",");
   return existing.some((cfg) => {
     if (cfg.type !== "file_existence") return false;
     const dimMapping = cfg.dimension_mapping ?? {};
     const existingDims = Object.keys(dimMapping).sort().join(",");
-    return existingDims === sorted;
+    if (existingDims !== sorted) return false;
+    if (cfg.connection?.path !== workspacePath) return false;
+    if (cfg.scope_goal_id !== goalId) return false;
+    return true;
   });
 }
 
@@ -258,17 +269,17 @@ export async function autoRegisterFileExistenceDataSources(
     const datasourcesDir = getDatasourcesDir(stateManager.getBaseDir());
     await fsp.mkdir(datasourcesDir, { recursive: true });
 
+    const workspacePath = constraints
+      ?.find((c) => c.startsWith("workspace_path:"))
+      ?.slice("workspace_path:".length) ?? process.cwd();
+
     const existing = await loadExistingDatasources(datasourcesDir);
-    if (fileExistenceDatasourceExists(existing, Object.keys(dimensionMapping))) {
+    if (fileExistenceDatasourceExists(existing, Object.keys(dimensionMapping), workspacePath, goalId)) {
       getCliLogger().info(
         `[auto] Skipping FileExistenceDataSource registration — duplicate already exists for: ${Object.keys(dimensionMapping).join(", ")}`
       );
       return;
     }
-
-    const workspacePath = constraints
-      ?.find((c) => c.startsWith("workspace_path:"))
-      ?.slice("workspace_path:".length) ?? process.cwd();
 
     const dimKeys = Object.keys(dimensionMapping).sort().join("_");
     const id = `ds_auto_${goalId}_${dimKeys}`;

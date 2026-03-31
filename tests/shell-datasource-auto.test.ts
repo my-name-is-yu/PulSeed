@@ -235,7 +235,7 @@ describe("autoRegisterFileExistenceDataSources — dedup", () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("does not create a duplicate file_existence datasource for the same dimension across runs", async () => {
+  it("does not create a duplicate file_existence datasource for the same dimension, path, and goalId", async () => {
     const sm = makeFakeStateManager(tmpDir);
     const dims = [{ name: "readme_md_exists", label: "README.md Exists" }];
 
@@ -247,7 +247,33 @@ describe("autoRegisterFileExistenceDataSources — dedup", () => {
       "goal_first"
     );
 
-    // Second registration — same dimension, different goalId
+    // Second registration — same dimension, same goalId, same path (process.cwd() default)
+    await autoRegisterFileExistenceDataSources(
+      sm as never,
+      dims,
+      "Ensure README.md exists",
+      "goal_first"
+    );
+
+    const configs = readDsConfigs(datasourcesDir);
+    const feConfigs = configs.filter((c) => c["type"] === "file_existence");
+    // Only one file_existence datasource should exist (exact duplicate)
+    expect(feConfigs).toHaveLength(1);
+  });
+
+  it("creates separate file_existence datasources for different goalIds", async () => {
+    const sm = makeFakeStateManager(tmpDir);
+    const dims = [{ name: "readme_md_exists", label: "README.md Exists" }];
+
+    // First registration for goal_first
+    await autoRegisterFileExistenceDataSources(
+      sm as never,
+      dims,
+      "Ensure README.md exists",
+      "goal_first"
+    );
+
+    // Second registration for goal_second — different goalId should produce a new entry
     await autoRegisterFileExistenceDataSources(
       sm as never,
       dims,
@@ -257,8 +283,8 @@ describe("autoRegisterFileExistenceDataSources — dedup", () => {
 
     const configs = readDsConfigs(datasourcesDir);
     const feConfigs = configs.filter((c) => c["type"] === "file_existence");
-    // Only one file_existence datasource should exist
-    expect(feConfigs).toHaveLength(1);
+    // Two separate datasources — one per goal
+    expect(feConfigs).toHaveLength(2);
   });
 });
 

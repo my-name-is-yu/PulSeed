@@ -1,5 +1,99 @@
-import { describe, it, expect } from "vitest";
-import { buildThreshold } from "../../src/cli/commands/goal-utils.js";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import * as fs from "node:fs";
+import * as path from "node:path";
+import * as os from "node:os";
+import { buildThreshold, autoRegisterFileExistenceDataSources, loadExistingDatasources } from "../../src/cli/commands/goal-utils.js";
+
+// ─── fileExistenceDatasourceExists dedup tests ───
+// Tested indirectly via autoRegisterFileExistenceDataSources
+
+describe("autoRegisterFileExistenceDataSources — dedup by path and scope_goal_id", () => {
+  let tmpDir: string;
+  let datasourcesDir: string;
+  let fakeStateManager: { getBaseDir: () => string };
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-goal-utils-test-"));
+    datasourcesDir = path.join(tmpDir, "datasources");
+    fs.mkdirSync(datasourcesDir, { recursive: true });
+    fakeStateManager = { getBaseDir: () => tmpDir };
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function writeDatasource(filename: string, cfg: Record<string, unknown>): void {
+    fs.writeFileSync(path.join(datasourcesDir, filename), JSON.stringify(cfg));
+  }
+
+  it("skips registration when identical datasource (same dims, same path, same goalId) already exists", async () => {
+    writeDatasource("existing.json", {
+      id: "existing",
+      type: "file_existence",
+      connection: { path: "/workspace/proj" },
+      dimension_mapping: { readme_exists: "README.md" },
+      scope_goal_id: "goal-1",
+    });
+
+    await autoRegisterFileExistenceDataSources(
+      fakeStateManager as never,
+      [{ name: "readme_exists", label: "README.md must exist" }],
+      "Ensure README.md is present",
+      "goal-1",
+      ["workspace_path:/workspace/proj"]
+    );
+
+    const files = fs.readdirSync(datasourcesDir).filter((f) => f.endsWith(".json"));
+    expect(files).toHaveLength(1); // no new file added
+  });
+
+  it("registers new datasource when same dims but different workspace path", async () => {
+    writeDatasource("existing.json", {
+      id: "existing",
+      type: "file_existence",
+      connection: { path: "/workspace/old-proj" },
+      dimension_mapping: { readme_exists: "README.md" },
+      scope_goal_id: "goal-1",
+    });
+
+    await autoRegisterFileExistenceDataSources(
+      fakeStateManager as never,
+      [{ name: "readme_exists", label: "README.md must exist" }],
+      "Ensure README.md is present",
+      "goal-1",
+      ["workspace_path:/workspace/new-proj"]
+    );
+
+    const configs = await loadExistingDatasources(datasourcesDir);
+    const newEntry = configs.find(
+      (c) => c.connection?.path === "/workspace/new-proj"
+    );
+    expect(newEntry).toBeDefined();
+  });
+
+  it("registers new datasource when same dims and path but different goalId", async () => {
+    writeDatasource("existing.json", {
+      id: "existing",
+      type: "file_existence",
+      connection: { path: "/workspace/proj" },
+      dimension_mapping: { readme_exists: "README.md" },
+      scope_goal_id: "goal-1",
+    });
+
+    await autoRegisterFileExistenceDataSources(
+      fakeStateManager as never,
+      [{ name: "readme_exists", label: "README.md must exist" }],
+      "Ensure README.md is present",
+      "goal-2",
+      ["workspace_path:/workspace/proj"]
+    );
+
+    const configs = await loadExistingDatasources(datasourcesDir);
+    const newEntry = configs.find((c) => c.scope_goal_id === "goal-2");
+    expect(newEntry).toBeDefined();
+  });
+});
 
 describe("buildThreshold", () => {
   describe("range type", () => {

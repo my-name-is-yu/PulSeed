@@ -299,6 +299,89 @@ describe("createWorkspaceContextProvider — small workspace fast path", () => {
   });
 });
 
+describe("createWorkspaceContextProvider — dynamic workDir from goal constraints", () => {
+  let defaultWorkDir: string;
+  let goalWorkDir: string;
+
+  beforeEach(() => {
+    defaultWorkDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-ws-default-"));
+    goalWorkDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-ws-goal-"));
+    // Default dir has one file
+    fs.writeFileSync(path.join(defaultWorkDir, "default.ts"), "const d = 'default';", "utf-8");
+    // Goal dir has a different file
+    fs.writeFileSync(path.join(goalWorkDir, "goal.ts"), "const g = 'goal workspace';", "utf-8");
+  });
+
+  afterEach(() => {
+    fs.rmSync(defaultWorkDir, { recursive: true, force: true });
+    fs.rmSync(goalWorkDir, { recursive: true, force: true });
+  });
+
+  it("uses default workDir when no getGoalConstraints is provided", async () => {
+    const provider = createWorkspaceContextProvider(
+      { workDir: defaultWorkDir },
+      () => "Check quality"
+    );
+
+    const result = await provider("goal-dyn-1", "quality");
+    expect(result).toContain(`# Workspace: ${defaultWorkDir}`);
+    expect(result).toContain("default.ts");
+    expect(result).not.toContain("goal.ts");
+  });
+
+  it("uses workspace_path constraint from goal when getGoalConstraints is provided", async () => {
+    const provider = createWorkspaceContextProvider(
+      { workDir: defaultWorkDir },
+      () => "Check quality",
+      () => [`workspace_path:${goalWorkDir}`]
+    );
+
+    const result = await provider("goal-dyn-2", "quality");
+    expect(result).toContain(`# Workspace: ${goalWorkDir}`);
+    expect(result).toContain("goal.ts");
+    expect(result).not.toContain("default.ts");
+  });
+
+  it("falls back to default workDir when goal has no workspace_path constraint", async () => {
+    const provider = createWorkspaceContextProvider(
+      { workDir: defaultWorkDir },
+      () => "Check quality",
+      () => ["some_other_constraint:value"]
+    );
+
+    const result = await provider("goal-dyn-3", "quality");
+    expect(result).toContain(`# Workspace: ${defaultWorkDir}`);
+    expect(result).toContain("default.ts");
+  });
+
+  it("falls back to default workDir when getGoalConstraints returns undefined", async () => {
+    const provider = createWorkspaceContextProvider(
+      { workDir: defaultWorkDir },
+      () => "Check quality",
+      () => undefined
+    );
+
+    const result = await provider("goal-dyn-4", "quality");
+    expect(result).toContain(`# Workspace: ${defaultWorkDir}`);
+    expect(result).toContain("default.ts");
+  });
+
+  it("uses workspace_path constraint resolved asynchronously", async () => {
+    const provider = createWorkspaceContextProvider(
+      { workDir: defaultWorkDir },
+      () => "Check quality",
+      async () => {
+        // Simulates async goal load
+        return [`workspace_path:${goalWorkDir}`];
+      }
+    );
+
+    const result = await provider("goal-dyn-5", "quality");
+    expect(result).toContain(`# Workspace: ${goalWorkDir}`);
+    expect(result).toContain("goal.ts");
+  });
+});
+
 describe("createWorkspaceContextProvider — existing workspace behavior unchanged", () => {
   let tmpWorkDir: string;
 

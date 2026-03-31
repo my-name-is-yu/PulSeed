@@ -109,6 +109,15 @@ export async function buildDeps(
         getCliLogger().error(formatOperationError(`resolve workspace context goal description for "${goalId}"`, err));
         return undefined;
       }
+    },
+    async (goalId: string) => {
+      try {
+        const goal = await stateManager.loadGoal(goalId);
+        return goal?.constraints;
+      } catch (err) {
+        getCliLogger().error(formatOperationError(`resolve workspace context goal constraints for "${goalId}"`, err));
+        return undefined;
+      }
     }
   );
 
