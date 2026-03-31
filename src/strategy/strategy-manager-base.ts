@@ -243,7 +243,7 @@ export class StrategyManagerBase {
           const outcome = newState === "completed" ? "success" : "failure";
           await this.knowledgeManager.updateDecisionOutcome(strategyId, outcome);
         } catch (e) {
-          console.warn(`[StrategyManager] updateDecisionOutcome failed for ${strategyId}:`, e);
+          this.logger?.warn(`[StrategyManager] updateDecisionOutcome failed for ${strategyId}: ${e instanceof Error ? e.message : String(e)}`);
         }
       }
 
