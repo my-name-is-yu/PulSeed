@@ -312,13 +312,28 @@ export class CLIRunner {
     if (subcommand === "daemon") {
       const daemonSubcommand = argv[1];
 
+      if (daemonSubcommand === "start") {
+        await cmdStart(this.stateManager, this.characterConfigManager, argv.slice(2));
+        return 0;
+      }
+
+      if (daemonSubcommand === "stop") {
+        await cmdStop(argv.slice(2));
+        return 0;
+      }
+
       if (daemonSubcommand === "status") {
         await cmdDaemonStatus(argv.slice(2));
         return 0;
       }
 
+      if (daemonSubcommand === "cron") {
+        await cmdCron(argv.slice(2));
+        return 0;
+      }
+
       logger.error(`Unknown daemon subcommand: "${daemonSubcommand ?? ""}"`);
-      logger.error("Available: daemon status");
+      logger.error("Available: daemon start, daemon stop, daemon status, daemon cron");
       return 1;
     }
 
