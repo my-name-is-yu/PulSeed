@@ -193,7 +193,7 @@ describe("DaemonRunner", () => {
       daemon.stop();
       await startPromise;
 
-      expect((deps.coreLoop as { run: ReturnType<typeof vi.fn> }).run).toHaveBeenCalledWith("goal-1");
+      expect((deps.coreLoop as { run: ReturnType<typeof vi.fn> }).run).toHaveBeenCalledWith("goal-1", { maxIterations: 1 });
     });
 
     it("should skip goals that shouldActivate returns false for", async () => {
@@ -543,7 +543,8 @@ describe("DaemonRunner", () => {
       await startPromise;
 
       expect((deps.coreLoop as { run: ReturnType<typeof vi.fn> }).run).toHaveBeenCalledWith(
-        "goal-fast"
+        "goal-fast",
+        { maxIterations: 1 }
       );
     });
   });
@@ -1014,7 +1015,9 @@ describe("DaemonRunner", () => {
       expect(llmClient.sendMessage).not.toHaveBeenCalled();
     });
 
-    it("should NOT fire proactive tick when goals were activated", async () => {
+    it("should fire proactive tick even when goals were activated", async () => {
+      // After Change 4: proactiveTick runs every cycle regardless of activeGoals.length
+      // so long-running goals do not block proactive actions indefinitely.
       const llmClient = makeLLMClientMock("sleep");
       const deps = makeDeps(tmpDir, {
         config: {
@@ -1035,7 +1038,8 @@ describe("DaemonRunner", () => {
       daemon.stop();
       await startPromise;
 
-      expect(llmClient.sendMessage).not.toHaveBeenCalled();
+      // proactiveTick now fires unconditionally when running=true
+      expect(llmClient.sendMessage).toHaveBeenCalled();
     });
 
     it("should catch LLM error in proactive tick and not crash the daemon", async () => {
@@ -1362,6 +1366,77 @@ describe("DaemonRunner", () => {
       } finally {
         globalThis.Date = realDate;
       }
+    });
+  });
+
+  // ─── iterations_per_cycle / per-cycle budget ───
+
+  describe("iterations_per_cycle", () => {
+    it("should call CoreLoop.run with { maxIterations: 1 } by default", async () => {
+      const deps = makeDeps(tmpDir, { config: { check_interval_ms: 50 } });
+      const daemon = new DaemonRunner(deps);
+      currentDaemon = daemon;
+
+      const startPromise = daemon.start(["goal-1"]);
+      currentStartPromise = startPromise;
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      daemon.stop();
+      await startPromise;
+
+      const runMock = (deps.coreLoop as { run: ReturnType<typeof vi.fn> }).run;
+      expect(runMock).toHaveBeenCalledWith("goal-1", { maxIterations: 1 });
+    });
+
+    it("should call CoreLoop.run with { maxIterations: N } when iterations_per_cycle is configured", async () => {
+      const iterationsPerCycle = 5;
+      const deps = makeDeps(tmpDir, {
+        config: { check_interval_ms: 50, iterations_per_cycle: iterationsPerCycle },
+      });
+      const daemon = new DaemonRunner(deps);
+      currentDaemon = daemon;
+
+      const startPromise = daemon.start(["goal-1"]);
+      currentStartPromise = startPromise;
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      daemon.stop();
+      await startPromise;
+
+      const runMock = (deps.coreLoop as { run: ReturnType<typeof vi.fn> }).run;
+      expect(runMock).toHaveBeenCalledWith("goal-1", { maxIterations: iterationsPerCycle });
+    });
+
+    it("should fire proactiveTick even when activeGoals.length > 0", async () => {
+      // Verify that proactiveTick is not gated behind activeGoals.length === 0.
+      // We use a mock LLM client and confirm sendMessage is called while goals are active.
+      const llmClient = {
+        sendMessage: vi.fn().mockResolvedValue({
+          content: JSON.stringify({ action: "sleep" }),
+          usage: { input_tokens: 5, output_tokens: 5 },
+          stop_reason: "end_turn",
+        }),
+        parseJSON: vi.fn().mockReturnValue({ action: "sleep" }),
+      };
+      const deps = makeDeps(tmpDir, {
+        config: {
+          check_interval_ms: 50,
+          proactive_mode: true,
+          proactive_interval_ms: 0,
+        },
+        llmClient: llmClient as unknown as DaemonDeps["llmClient"],
+      });
+      // Goals activate — this is the condition that used to block proactiveTick
+      (deps.driveSystem as { shouldActivate: ReturnType<typeof vi.fn> }).shouldActivate.mockReturnValue(true);
+
+      const daemon = new DaemonRunner(deps);
+      currentDaemon = daemon;
+      const startPromise = daemon.start(["goal-1"]);
+      currentStartPromise = startPromise;
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      daemon.stop();
+      await startPromise;
+
+      // LLM should have been called even though goals were active
+      expect(llmClient.sendMessage).toHaveBeenCalled();
     });
   });
 });

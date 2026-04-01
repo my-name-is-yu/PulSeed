@@ -260,7 +260,8 @@ export class DaemonRunner {
           this.logger.info(`Running loop for goal: ${goalId}`);
 
           try {
-            const result: LoopResult = await this.coreLoop.run(goalId);
+            const iterationsPerCycle = this.config.iterations_per_cycle ?? 1;
+            const result: LoopResult = await this.coreLoop.run(goalId, { maxIterations: iterationsPerCycle });
             this.state.loop_count++;
             this.currentLoopIndex = this.state.loop_count;
             this.state.last_loop_at = new Date().toISOString();
@@ -279,8 +280,9 @@ export class DaemonRunner {
         // 3. Save state
         await this.saveDaemonState();
 
-        // 4. Proactive tick: fire when no goals activated and proactive_mode is enabled
-        if (this.running && activeGoals.length === 0) {
+        // 4. Proactive tick: fire every cycle (not only when idle) so long-running goals
+        // do not block proactive actions indefinitely.
+        if (this.running) {
           await this.proactiveTick();
         }
 

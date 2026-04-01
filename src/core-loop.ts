@@ -107,8 +107,9 @@ export class CoreLoop {
 
   /**
    * Run the full loop until completion or stop condition.
+   * @param options.maxIterations - Override config.maxIterations for this run only (e.g. per-cycle budget from DaemonRunner).
    */
-  async run(goalId: string): Promise<LoopResult> {
+  async run(goalId: string, options?: { maxIterations?: number }): Promise<LoopResult> {
     const startedAt = new Date().toISOString();
     this.stopped = false;
     // Reset state diff tracking for each run (snapshots are in-memory only)
@@ -169,16 +170,19 @@ export class CoreLoop {
     let consecutiveEscalations = 0;
     let finalStatus: LoopResult["finalStatus"] = "max_iterations";
 
+    // Effective maxIterations: runtime override takes precedence over config.
+    const effectiveMaxIterations = options?.maxIterations ?? this.config.maxIterations;
+
     // Use the provided iterationBudget if set; otherwise create a local one from maxIterations.
     // A provided budget is shared (e.g. with parent/child agents); a local budget is loop-private.
     const budget: IterationBudget = this.config.iterationBudget
-      ?? new IterationBudget(this.config.maxIterations);
+      ?? new IterationBudget(effectiveMaxIterations);
 
     // Per-node iteration tracking for tree mode — persists across loop iterations so
     // per-node limits accumulate correctly (not reset each call).
     const nodeConsumedMap = new Map<string, number>();
 
-    for (let loopIndex = startLoopIndex; loopIndex < startLoopIndex + this.config.maxIterations; loopIndex++) {
+    for (let loopIndex = startLoopIndex; loopIndex < startLoopIndex + effectiveMaxIterations; loopIndex++) {
       if (this.stopped) {
         finalStatus = "stopped";
         break;
@@ -291,7 +295,7 @@ export class CoreLoop {
       await this.learning.checkPeriodicReview(goalId, this.deps, this.logger);
 
       // Delay between loops (skip on last iteration)
-      if (loopIndex < startLoopIndex + this.config.maxIterations - 1 && this.config.delayBetweenLoopsMs > 0) {
+      if (loopIndex < startLoopIndex + effectiveMaxIterations - 1 && this.config.delayBetweenLoopsMs > 0) {
         await sleep(this.config.delayBetweenLoopsMs);
       }
     }
