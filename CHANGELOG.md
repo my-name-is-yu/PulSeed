@@ -4,6 +4,46 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.1.3] - 2026-04-01
+
+### Added
+
+- Added Phase A-C proactive AI orchestration: CronScheduler, MCP client/server, HookManager, TriggerMapper, request batching, and agent profiles (#399, #400).
+- Added trigger API (`POST /triggers`) with configurable trigger-to-goal mappings and 4 actions (observe, create_task, notify, wake).
+- Added `GET /goals` and `GET /goals/:id` REST endpoints to EventServer.
+- Added adaptive sleep with time-of-day, urgency, and activity factors for daemon interval tuning.
+- Added proactive tick with LLM-powered idle-time actions (suggest_goal, investigate, preemptive_check).
+- Added 115 E2E tests covering Phase A-C features.
+- Added dogfooding scripts: `dogfood-hooks.sh`, `dogfood-daemon-proactive.sh`, `dogfood-cron.sh`, `dogfood-30min-integrated.sh`.
+
+### Fixed
+
+- Fixed daemon blocking cron/proactive/sleep during long-running `CoreLoop.run()` — changed to interleaved 1-iteration-per-goal-per-cycle execution with configurable `iterations_per_cycle` (#401).
+- Fixed cron scheduler `isDue()` bidirectional jitter pushing `adjustedPrev` into the future, causing missed and phantom firings — changed to one-sided negative jitter.
+- Fixed `EventServer.isWatching()` and `getEventsDir()` incorrectly marked as `private`.
+- Fixed CI build failure: added missing `@modelcontextprotocol/sdk` and `cron-parser` to package.json dependencies.
+- Fixed `test_count` DataSource to search all `.ts/.js` files from workspace root (#389, #390, #391).
+- Fixed shell DataSource to use `workspace_path` as cwd (#387).
+- Fixed jump suppression for present/match binary dimensions (#386).
+- Fixed match type gap calculation for numeric observation values (#385).
+- Fixed dynamic workspace context resolution for LLM observation (#384).
+- Fixed LLM observation to read workspace files when git diff is empty (#383).
+- Fixed constraints inheritance in decomposed subgoals and raw goal creation paths.
+- Fixed workspace path wiring through CLI, observation engine, and datasource registration.
+- Fixed gap=1.00 stuck after successful task execution (#375).
+- Fixed knowledge gap detection limited to first iteration only (#375).
+- Fixed fallback to exact dimension name when normalization fails (#374).
+- Fixed untracked file detection in post-execution change check (#373).
+- Fixed Codex adapter to produce file-modifying tasks (#371).
+
+### Added (Infrastructure)
+
+- Added `GET /health` endpoint to EventServer.
+- Added `daemon status` command and `--detach` flag (#369).
+- Added `GoalLoop` guard for bounded goal execution (#368).
+- Added OpenAI OAuth token support from `~/.codex/auth.json` (#370).
+- Added gradual gap decrease and continuous value gap dogfooding scripts.
+
 ## [0.1.2] - 2026-03-30
 
 ### Added
