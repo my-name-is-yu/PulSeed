@@ -20,6 +20,43 @@ export const MAX_RETRY_ATTEMPTS = 3;
 /** Exponential backoff delays in milliseconds: 1s, 2s, 4s */
 export const RETRY_DELAYS_MS = [1000, 2000, 4000];
 
+/** Extended backoff delays for HTTP 429 rate-limit responses (up to 5 retries) */
+export const RATE_LIMIT_RETRY_DELAYS_MS = [2000, 8000, 16000, 32000, 60000];
+
+/**
+ * Returns true if the error represents an HTTP 429 rate-limit response.
+ */
+export function isRateLimitError(err: unknown): boolean {
+  if (err != null && typeof err === "object" && "status" in err) {
+    if ((err as { status: unknown }).status === 429) return true;
+  }
+  const msg = err instanceof Error ? err.message : String(err);
+  return msg.includes("429") || /rate.?limit/i.test(msg);
+}
+
+/**
+ * Returns the retry delay in milliseconds for a rate-limit error.
+ * Respects the Retry-After header when present, otherwise falls back to
+ * RATE_LIMIT_RETRY_DELAYS_MS[attemptIndex].
+ * Adds jitter (±50%) to avoid thundering-herd.
+ */
+export function getRateLimitRetryDelay(err: unknown, attemptIndex: number): number {
+  // Check for Retry-After header
+  if (err != null && typeof err === "object" && "headers" in err) {
+    const headers = (err as { headers: unknown }).headers;
+    if (headers != null && typeof headers === "object" && "retry-after" in headers) {
+      const retryAfter = (headers as Record<string, unknown>)["retry-after"];
+      const seconds = typeof retryAfter === "string" ? parseFloat(retryAfter) : Number(retryAfter);
+      if (!isNaN(seconds) && seconds > 0) {
+        const delay = seconds * 1000;
+        return delay * (0.5 + Math.random());
+      }
+    }
+  }
+  const base = RATE_LIMIT_RETRY_DELAYS_MS[attemptIndex] ?? RATE_LIMIT_RETRY_DELAYS_MS[RATE_LIMIT_RETRY_DELAYS_MS.length - 1]!;
+  return base * (0.5 + Math.random());
+}
+
 // ─── JSON extraction utility ───
 
 /**

@@ -163,4 +163,39 @@ describe("LLMClient.sendMessage", () => {
     await expectation;
     expect(createMock).toHaveBeenCalledTimes(3);
   });
+
+  it("retries on HTTP 429 with extended backoff and eventually succeeds", async () => {
+    const { LLMClient } = await import("../src/llm/llm-client.js");
+    const rateLimitErr = Object.assign(new Error("Too Many Requests"), { status: 429 });
+    createMock
+      .mockRejectedValueOnce(rateLimitErr)
+      .mockRejectedValueOnce(rateLimitErr)
+      .mockResolvedValueOnce({
+        content: [{ type: "text", text: "success after rate limit" }],
+        usage: { input_tokens: 1, output_tokens: 1 },
+        stop_reason: "end_turn",
+      });
+
+    const client = new LLMClient("sk-ant-test");
+    const responsePromise = client.sendMessage([{ role: "user", content: "rate limited" }]);
+
+    await vi.runAllTimersAsync();
+    const response = await responsePromise;
+
+    expect(createMock).toHaveBeenCalledTimes(3);
+    expect(response.content).toBe("success after rate limit");
+  });
+
+  it("does not retry on HTTP 400 or 403", async () => {
+    const { LLMClient } = await import("../src/llm/llm-client.js");
+    for (const status of [400, 403]) {
+      createMock.mockReset();
+      const clientErr = Object.assign(new Error(`HTTP ${status}`), { status });
+      createMock.mockRejectedValueOnce(clientErr);
+
+      const client = new LLMClient("sk-ant-test");
+      await expect(client.sendMessage([{ role: "user", content: "bad" }])).rejects.toThrow();
+      expect(createMock).toHaveBeenCalledTimes(1);
+    }
+  });
 });

@@ -1,5 +1,5 @@
 import OpenAI from "openai";
-import { BaseLLMClient, DEFAULT_MAX_TOKENS, DEFAULT_LLM_TIMEOUT_MS, MAX_RETRY_ATTEMPTS, RETRY_DELAYS_MS } from "./base-llm-client.js";
+import { BaseLLMClient, DEFAULT_MAX_TOKENS, DEFAULT_LLM_TIMEOUT_MS, MAX_RETRY_ATTEMPTS, RETRY_DELAYS_MS, RATE_LIMIT_RETRY_DELAYS_MS, isRateLimitError, getRateLimitRetryDelay } from "./base-llm-client.js";
 import { type ILLMClient, type LLMMessage, type LLMRequestOptions, type LLMResponse } from "./llm-client.js";
 import { sleep } from "../utils/sleep.js";
 import { LLMError } from "../utils/errors.js";
@@ -61,6 +61,7 @@ export class OpenAILLMClient extends BaseLLMClient implements ILLMClient {
   /**
    * Send a message to the OpenAI chat completions API with retry logic.
    * Retries up to MAX_RETRY_ATTEMPTS times with exponential backoff on network errors.
+   * Retries up to RATE_LIMIT_RETRY_DELAYS_MS.length times on HTTP 429 with extended backoff.
    *
    * For reasoning models (o1, o3, o4), temperature is omitted as it is not supported.
    * System prompt is sent as a "developer" role message, prepended to the messages array.
@@ -92,8 +93,10 @@ export class OpenAILLMClient extends BaseLLMClient implements ILLMClient {
     };
 
     let lastError: unknown;
+    let normalAttempts = 0;
+    let rateLimitAttempts = 0;
 
-    for (let attempt = 0; attempt < MAX_RETRY_ATTEMPTS; attempt++) {
+    while (normalAttempts < MAX_RETRY_ATTEMPTS) {
       try {
         try {
           const response = await this.client.chat.completions.create(createParams, { timeout: DEFAULT_LLM_TIMEOUT_MS });
@@ -167,14 +170,21 @@ export class OpenAILLMClient extends BaseLLMClient implements ILLMClient {
         }
       } catch (err) {
         lastError = err;
-        // Only retry on network/transient errors, not on HTTP 4xx client errors
+        // Rate limit: retry with extended backoff (does not count against normalAttempts)
+        if (isRateLimitError(err) && rateLimitAttempts < RATE_LIMIT_RETRY_DELAYS_MS.length) {
+          await sleep(getRateLimitRetryDelay(err, rateLimitAttempts));
+          rateLimitAttempts++;
+          continue;
+        }
+        // Only retry on network/transient errors, not on HTTP 4xx client errors (excluding 429)
         const isNetworkError =
           err instanceof TypeError ||
           (err instanceof Error &&
             !err.message.startsWith("OpenAILLMClient: HTTP 4"));
 
-        if (attempt < MAX_RETRY_ATTEMPTS - 1 && isNetworkError) {
-          await sleep(RETRY_DELAYS_MS[attempt] ?? 1000);
+        normalAttempts++;
+        if (normalAttempts < MAX_RETRY_ATTEMPTS && isNetworkError) {
+          await sleep(RETRY_DELAYS_MS[normalAttempts - 1] ?? 1000);
         } else if (!isNetworkError) {
           throw err;
         }

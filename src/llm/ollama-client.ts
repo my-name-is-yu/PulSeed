@@ -1,4 +1,4 @@
-import { BaseLLMClient, DEFAULT_MAX_TOKENS, DEFAULT_LLM_TIMEOUT_MS, MAX_RETRY_ATTEMPTS, RETRY_DELAYS_MS } from "./base-llm-client.js";
+import { BaseLLMClient, DEFAULT_MAX_TOKENS, DEFAULT_LLM_TIMEOUT_MS, MAX_RETRY_ATTEMPTS, RETRY_DELAYS_MS, RATE_LIMIT_RETRY_DELAYS_MS, isRateLimitError, getRateLimitRetryDelay } from "./base-llm-client.js";
 import { type ILLMClient, type LLMMessage, type LLMRequestOptions, type LLMResponse } from "./llm-client.js";
 import { sleep } from "../utils/sleep.js";
 import { LLMError } from "../utils/errors.js";
@@ -38,6 +38,7 @@ export class OllamaLLMClient extends BaseLLMClient implements ILLMClient {
   /**
    * Send a message to Ollama's OpenAI-compatible chat completions endpoint.
    * Retries up to MAX_RETRY_ATTEMPTS times with exponential backoff on network errors.
+   * Retries up to RATE_LIMIT_RETRY_DELAYS_MS.length times on HTTP 429 with extended backoff.
    */
   async sendMessage(
     messages: LLMMessage[],
@@ -67,8 +68,10 @@ export class OllamaLLMClient extends BaseLLMClient implements ILLMClient {
 
     const url = `${this.baseUrl}/v1/chat/completions`;
     let lastError: unknown;
+    let normalAttempts = 0;
+    let rateLimitAttempts = 0;
 
-    for (let attempt = 0; attempt < MAX_RETRY_ATTEMPTS; attempt++) {
+    while (normalAttempts < MAX_RETRY_ATTEMPTS) {
       try {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), DEFAULT_LLM_TIMEOUT_MS);
@@ -118,14 +121,21 @@ export class OllamaLLMClient extends BaseLLMClient implements ILLMClient {
         };
       } catch (err) {
         lastError = err;
-        // Only retry on network/fetch errors, not on HTTP 4xx client errors
+        // Rate limit: retry with extended backoff (does not count against normalAttempts)
+        if (isRateLimitError(err) && rateLimitAttempts < RATE_LIMIT_RETRY_DELAYS_MS.length) {
+          await sleep(getRateLimitRetryDelay(err, rateLimitAttempts));
+          rateLimitAttempts++;
+          continue;
+        }
+        // Only retry on network/fetch errors, not on HTTP 4xx client errors (excluding 429)
         const isNetworkError =
           err instanceof TypeError ||
           (err instanceof Error &&
             !err.message.startsWith("OllamaLLMClient: HTTP 4"));
 
-        if (attempt < MAX_RETRY_ATTEMPTS - 1 && isNetworkError) {
-          await sleep(RETRY_DELAYS_MS[attempt] ?? 1000);
+        normalAttempts++;
+        if (normalAttempts < MAX_RETRY_ATTEMPTS && isNetworkError) {
+          await sleep(RETRY_DELAYS_MS[normalAttempts - 1] ?? 1000);
         } else if (!isNetworkError) {
           throw err;
         }

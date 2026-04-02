@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { ZodSchema } from "zod";
 import { sleep } from "../utils/sleep.js";
-import { BaseLLMClient, DEFAULT_MAX_TOKENS, DEFAULT_LLM_TIMEOUT_MS, MAX_RETRY_ATTEMPTS, RETRY_DELAYS_MS, extractJSON } from "./base-llm-client.js";
+import { BaseLLMClient, DEFAULT_MAX_TOKENS, DEFAULT_LLM_TIMEOUT_MS, MAX_RETRY_ATTEMPTS, RETRY_DELAYS_MS, RATE_LIMIT_RETRY_DELAYS_MS, isRateLimitError, getRateLimitRetryDelay, extractJSON } from "./base-llm-client.js";
 import type { ModelTier, ParseJSONMessage, ParseJSONOptions } from "./base-llm-client.js";
 import { LLMError } from "../utils/errors.js";
 import { GuardrailRunner } from "../guardrail-runner.js";
@@ -81,6 +81,7 @@ export class LLMClient extends BaseLLMClient implements ILLMClient {
   /**
    * Send a message to the Anthropic API with retry logic.
    * Retries up to MAX_RETRY_ATTEMPTS times with exponential backoff.
+   * Retries up to RATE_LIMIT_RETRY_DELAYS_MS.length times on HTTP 429 with extended backoff.
    */
   async sendMessage(
     messages: LLMMessage[],
@@ -113,8 +114,10 @@ export class LLMClient extends BaseLLMClient implements ILLMClient {
 
     let lastError: unknown;
     let result: LLMResponse | undefined;
+    let normalAttempts = 0;
+    let rateLimitAttempts = 0;
 
-    for (let attempt = 0; attempt < MAX_RETRY_ATTEMPTS; attempt++) {
+    while (normalAttempts < MAX_RETRY_ATTEMPTS) {
       try {
         const response = await this.client.messages.create(
           {
@@ -143,6 +146,14 @@ export class LLMClient extends BaseLLMClient implements ILLMClient {
         };
         break;
       } catch (err) {
+        lastError = err;
+        // Rate limit: retry with extended backoff (does not count against normalAttempts)
+        if (isRateLimitError(err) && rateLimitAttempts < RATE_LIMIT_RETRY_DELAYS_MS.length) {
+          await sleep(getRateLimitRetryDelay(err, rateLimitAttempts));
+          rateLimitAttempts++;
+          continue;
+        }
+        // Other 4xx client errors: throw immediately
         if (
           err instanceof Error &&
           "status" in err &&
@@ -150,11 +161,11 @@ export class LLMClient extends BaseLLMClient implements ILLMClient {
           err.status >= 400 &&
           err.status < 500
         ) {
-          throw err; // client error, no retry
+          throw err;
         }
-        lastError = err;
-        if (attempt < MAX_RETRY_ATTEMPTS - 1) {
-          await sleep(RETRY_DELAYS_MS[attempt] ?? 1000);
+        normalAttempts++;
+        if (normalAttempts < MAX_RETRY_ATTEMPTS) {
+          await sleep(RETRY_DELAYS_MS[normalAttempts - 1] ?? 1000);
         }
       }
     }

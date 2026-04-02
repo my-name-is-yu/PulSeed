@@ -1,8 +1,8 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import { z } from "zod";
 import { MockLLMClient, LLMClient } from "../src/llm/llm-client.js";
 import type { ILLMClient } from "../src/llm/llm-client.js";
-import { extractJSON } from "../src/llm/base-llm-client.js";
+import { extractJSON, isRateLimitError, getRateLimitRetryDelay, RATE_LIMIT_RETRY_DELAYS_MS } from "../src/llm/base-llm-client.js";
 
 // ─── MockLLMClient ───
 
@@ -392,6 +392,72 @@ describe("MockLLMClient", () => {
         warnSpy.mockRestore();
       }
     });
+  });
+});
+
+// ─── isRateLimitError / getRateLimitRetryDelay ───
+
+describe("isRateLimitError", () => {
+  it("returns true for error with status 429", () => {
+    const err = Object.assign(new Error("Too Many Requests"), { status: 429 });
+    expect(isRateLimitError(err)).toBe(true);
+  });
+
+  it("returns true for error message containing '429'", () => {
+    expect(isRateLimitError(new Error("HTTP 429 Too Many Requests"))).toBe(true);
+  });
+
+  it("returns true for error message containing 'rate limit' (case-insensitive)", () => {
+    expect(isRateLimitError(new Error("Rate Limit exceeded"))).toBe(true);
+    expect(isRateLimitError(new Error("rate limit hit"))).toBe(true);
+  });
+
+  it("returns false for other 4xx errors", () => {
+    expect(isRateLimitError(Object.assign(new Error("Unauthorized"), { status: 401 }))).toBe(false);
+    expect(isRateLimitError(Object.assign(new Error("Forbidden"), { status: 403 }))).toBe(false);
+    expect(isRateLimitError(new Error("Bad Request"))).toBe(false);
+  });
+
+  it("returns false for non-error values", () => {
+    expect(isRateLimitError(null)).toBe(false);
+    expect(isRateLimitError(undefined)).toBe(false);
+    expect(isRateLimitError("string error")).toBe(false);
+  });
+});
+
+describe("getRateLimitRetryDelay", () => {
+  it("adds jitter so delay is not exactly the base value", () => {
+    // Run multiple times to statistically verify jitter is applied
+    const base = RATE_LIMIT_RETRY_DELAYS_MS[0]!;
+    const err = Object.assign(new Error("429"), { status: 429 });
+    const delays = Array.from({ length: 10 }, () => getRateLimitRetryDelay(err, 0));
+    // With jitter factor of (0.5 + Math.random()), delay is in [base*0.5, base*1.5]
+    for (const d of delays) {
+      expect(d).toBeGreaterThanOrEqual(base * 0.5);
+      expect(d).toBeLessThanOrEqual(base * 1.5);
+    }
+    // At least one delay should differ (probability of all being equal is astronomically low)
+    const allSame = delays.every((d) => d === delays[0]);
+    expect(allSame).toBe(false);
+  });
+
+  it("respects Retry-After header when present", () => {
+    const err = Object.assign(new Error("429"), {
+      status: 429,
+      headers: { "retry-after": "10" },
+    });
+    const delay = getRateLimitRetryDelay(err, 0);
+    // 10 seconds * jitter factor (0.5..1.5)
+    expect(delay).toBeGreaterThanOrEqual(5000);
+    expect(delay).toBeLessThanOrEqual(15000);
+  });
+
+  it("falls back to RATE_LIMIT_RETRY_DELAYS_MS when no Retry-After header", () => {
+    const err = Object.assign(new Error("429"), { status: 429 });
+    const delay = getRateLimitRetryDelay(err, 2);
+    const base = RATE_LIMIT_RETRY_DELAYS_MS[2]!;
+    expect(delay).toBeGreaterThanOrEqual(base * 0.5);
+    expect(delay).toBeLessThanOrEqual(base * 1.5);
   });
 });
 
