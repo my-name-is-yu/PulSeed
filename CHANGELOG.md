@@ -8,15 +8,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Added `pulseed chat` — unified agent entry point for interactive chat mode (Phase 1) (#419).
 - Added `pulseed logs` command with `--follow` (real-time tail with rotation handling), `--lines N`, and `--level` filtering (ERROR > WARN > INFO > DEBUG) (#420).
 - Added `pulseed install` / `pulseed uninstall` commands for macOS launchd integration — generates plist, registers with `launchctl`, enables auto-start on boot with KeepAlive (#420).
 - Added `pulseed doctor` command with 10-point health check: Node.js version, PulSeed directory, provider config, API key, goals, log directory, build artifact, daemon status, notifications, disk usage (#420).
 - Added `pulseed notify add/list/remove/test` commands for notification channel management (Slack webhook, generic webhook, email) with persistent config at `~/.pulseed/notification.json` (#420).
 - Enriched `pulseed daemon status` with uptime display, relative cycle times, config section (interval, adaptive sleep, iterations, proactive mode, crash recovery counter), and box-drawing formatting (#420).
+- Added grep-based content matching to observation context selection for more relevant file selection (#418).
+- Added structured monitoring logs to core execution path for better daemon observability (#407).
+- Added forced goal decomposition on first daemon iteration for immediate tree structure (#408).
+- Enriched task prompts with parent goal context, issue content, and purpose statement (#409).
 
 ### Fixed
 
 - Fixed TS2454 build error in `session-manager.ts` by adding default case to session context switch.
+- Fixed `force` flag not propagating to `goalRefiner.refine()`, breaking tree decomposition (#417).
+- Fixed missing `goal.title` in observation context and added tree decomposition debug logs (#414).
+- Fixed dimension-aware file selection for observation — forced tree decomposition + smarter context (#413).
+- Fixed `goalRefiner` not wired to `TreeLoopOrchestrator` + widened observation context limits (MAX_CONTEXT_CHARS=16000) (#412).
+- Fixed dogfood reliability issues: goalRefiner wiring, workspace auto-detection, LLM progress logging (#411).
+- Fixed leaf test prompt hardening and LLM call progress logs for dogfooding (#410).
+- Fixed `--check-interval-ms` and `--iterations-per-cycle` CLI flags not wired for daemon start (#405).
+- Fixed daemon `start`/`stop`/`cron` subcommands not registered in cli-runner.
 
 ## [0.1.3] - 2026-04-01
 
