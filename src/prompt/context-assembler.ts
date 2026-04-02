@@ -245,7 +245,7 @@ export class ContextAssembler {
 
   private buildCurrentState(goalState: any): string {
     if (!goalState?.dimensions?.length) return "";
-    const dims = ((goalState.dimensions as Dimension[]) ?? []).map((d: Dimension) => ({
+    const dims = (goalState.dimensions as Array<Dimension & { gap?: number }>).map((d) => ({
       name: d.name,
       current: d.current_value,
       target: d.threshold?.value,
