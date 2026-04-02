@@ -1,0 +1,221 @@
+import { describe, it, expect, beforeEach, vi } from "vitest";
+import { ChatRunner } from "../../src/chat/chat-runner.js";
+import type { ChatRunnerDeps } from "../../src/chat/chat-runner.js";
+import type { StateManager } from "../../src/state-manager.js";
+import type { IAdapter, AgentResult } from "../../src/execution/adapter-layer.js";
+
+// Mock context-provider so tests don't walk the real filesystem
+vi.mock("../../src/observation/context-provider.js", () => ({
+  resolveGitRoot: (cwd: string) => cwd,
+  buildChatContext: (_task: string, cwd: string) => `Working directory: ${cwd}`,
+}));
+
+const CANNED_RESULT: AgentResult = {
+  success: true,
+  output: "Task completed successfully.",
+  error: null,
+  exit_code: 0,
+  elapsed_ms: 50,
+  stopped_reason: "completed",
+};
+
+function makeMockAdapter(result: AgentResult = CANNED_RESULT): IAdapter {
+  return {
+    adapterType: "mock",
+    execute: vi.fn().mockResolvedValue(result),
+  } as unknown as IAdapter;
+}
+
+function makeMockStateManager(): StateManager {
+  return {
+    writeRaw: vi.fn().mockResolvedValue(undefined),
+    readRaw: vi.fn().mockResolvedValue(null),
+  } as unknown as StateManager;
+}
+
+function makeDeps(overrides: Partial<ChatRunnerDeps> = {}): ChatRunnerDeps {
+  return {
+    stateManager: makeMockStateManager(),
+    adapter: makeMockAdapter(),
+    ...overrides,
+  };
+}
+
+describe("ChatRunner", () => {
+  describe("normal execution", () => {
+    it("calls adapter.execute with correct AgentTask shape", async () => {
+      const adapter = makeMockAdapter();
+      const runner = new ChatRunner(makeDeps({ adapter }));
+
+      await runner.execute("Fix the tests", "/repo", 30_000);
+
+      expect(adapter.execute).toHaveBeenCalledOnce();
+      const task = (adapter.execute as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(task).toMatchObject({
+        adapter_type: "mock",
+        cwd: "/repo",
+        timeout_ms: 30_000,
+      });
+      expect(typeof task.prompt).toBe("string");
+      expect(task.prompt.length).toBeGreaterThan(0);
+    });
+
+    it("returns ChatRunResult with success, output, and elapsed_ms", async () => {
+      const runner = new ChatRunner(makeDeps());
+      const result = await runner.execute("Do something", "/repo");
+
+      expect(result.success).toBe(true);
+      expect(result.output).toBe("Task completed successfully.");
+      expect(typeof result.elapsed_ms).toBe("number");
+      expect(result.elapsed_ms).toBeGreaterThanOrEqual(0);
+    });
+
+    it("propagates adapter failure to ChatRunResult", async () => {
+      const failResult: AgentResult = { ...CANNED_RESULT, success: false, output: "Agent failed", error: "boom", exit_code: 1 };
+      const runner = new ChatRunner(makeDeps({ adapter: makeMockAdapter(failResult) }));
+
+      const result = await runner.execute("Do something risky", "/repo");
+
+      expect(result.success).toBe(false);
+      expect(result.output).toBe("Agent failed");
+    });
+  });
+
+  describe("slash commands", () => {
+    it("/help returns help text without calling adapter", async () => {
+      const adapter = makeMockAdapter();
+      const runner = new ChatRunner(makeDeps({ adapter }));
+
+      const result = await runner.execute("/help", "/repo");
+
+      expect(result.success).toBe(true);
+      expect(result.output).toContain("/help");
+      expect(result.output).toContain("/clear");
+      expect(result.output).toContain("/exit");
+      expect(result.output).toContain("/track");
+      expect(adapter.execute).not.toHaveBeenCalled();
+    });
+
+    it("/clear returns cleared message without calling adapter", async () => {
+      const adapter = makeMockAdapter();
+      const runner = new ChatRunner(makeDeps({ adapter }));
+
+      const result = await runner.execute("/clear", "/repo");
+
+      expect(result.success).toBe(true);
+      expect(result.output).toContain("cleared");
+      expect(adapter.execute).not.toHaveBeenCalled();
+    });
+
+    it("/track returns 'not yet implemented' with success: false", async () => {
+      const adapter = makeMockAdapter();
+      const runner = new ChatRunner(makeDeps({ adapter }));
+
+      const result = await runner.execute("/track", "/repo");
+
+      expect(result.success).toBe(false);
+      expect(result.output).toContain("not yet implemented");
+      expect(adapter.execute).not.toHaveBeenCalled();
+    });
+
+    it("/exit returns exit message without calling adapter", async () => {
+      const adapter = makeMockAdapter();
+      const runner = new ChatRunner(makeDeps({ adapter }));
+
+      const result = await runner.execute("/exit", "/repo");
+
+      expect(result.success).toBe(true);
+      expect(result.output).toContain("Exiting");
+      expect(adapter.execute).not.toHaveBeenCalled();
+    });
+
+    it("unknown /command returns error message without calling adapter", async () => {
+      const adapter = makeMockAdapter();
+      const runner = new ChatRunner(makeDeps({ adapter }));
+
+      const result = await runner.execute("/unknown-cmd", "/repo");
+
+      expect(result.success).toBe(false);
+      expect(result.output).toContain("Unknown command");
+      expect(result.output).toContain("/unknown-cmd");
+      expect(adapter.execute).not.toHaveBeenCalled();
+    });
+
+    it("slash command comparison is case-insensitive", async () => {
+      const adapter = makeMockAdapter();
+      const runner = new ChatRunner(makeDeps({ adapter }));
+
+      const result = await runner.execute("/HELP", "/repo");
+
+      expect(result.success).toBe(true);
+      expect(result.output).toContain("/help");
+      expect(adapter.execute).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("history population", () => {
+    it("populates history with user and assistant messages after execution", async () => {
+      const stateManager = makeMockStateManager();
+      const runner = new ChatRunner(makeDeps({ stateManager }));
+
+      await runner.execute("What is 2+2?", "/repo");
+
+      // writeRaw should have been called at least twice:
+      // once for the user message (persist-before-execute) and
+      // once for the assistant message (fire-and-forget)
+      const writeRawMock = stateManager.writeRaw as ReturnType<typeof vi.fn>;
+      expect(writeRawMock.mock.calls.length).toBeGreaterThanOrEqual(2);
+
+      // Both writes use the same session path
+      const paths = writeRawMock.mock.calls.map((c: unknown[]) => c[0] as string);
+      const sessionPaths = paths.filter((p: string) => p.startsWith("chat/sessions/"));
+      expect(sessionPaths.length).toBeGreaterThanOrEqual(2);
+    });
+
+    it("user message is included in the session data written to stateManager", async () => {
+      const stateManager = makeMockStateManager();
+      const runner = new ChatRunner(makeDeps({ stateManager }));
+
+      const userInput = "Hello from test";
+      await runner.execute(userInput, "/repo");
+
+      const writeRawMock = stateManager.writeRaw as ReturnType<typeof vi.fn>;
+      // The first call contains the user message (persist-before-execute)
+      const firstWriteData = writeRawMock.mock.calls[0][1] as { messages: Array<{ role: string; content: string }> };
+      const userMsg = firstWriteData.messages.find((m) => m.role === "user");
+      expect(userMsg).toBeDefined();
+      // The prompt passed to adapter may include context prefix, so check the session content
+      expect(userMsg?.content).toBe(userInput);
+    });
+  });
+
+  describe("persist-before-execute ordering", () => {
+    it("stateManager.writeRaw is called before adapter.execute", async () => {
+      const callOrder: string[] = [];
+
+      const stateManager = {
+        writeRaw: vi.fn().mockImplementation(async () => {
+          callOrder.push("writeRaw");
+        }),
+        readRaw: vi.fn().mockResolvedValue(null),
+      } as unknown as StateManager;
+
+      const adapter = {
+        adapterType: "mock",
+        execute: vi.fn().mockImplementation(async () => {
+          callOrder.push("adapter.execute");
+          return CANNED_RESULT;
+        }),
+      } as unknown as IAdapter;
+
+      const runner = new ChatRunner({ stateManager, adapter });
+      await runner.execute("persist ordering check", "/repo");
+
+      const writeIndex = callOrder.indexOf("writeRaw");
+      const executeIndex = callOrder.indexOf("adapter.execute");
+      expect(writeIndex).toBeGreaterThanOrEqual(0);
+      expect(executeIndex).toBeGreaterThanOrEqual(0);
+      expect(writeIndex).toBeLessThan(executeIndex);
+    });
+  });
+});
