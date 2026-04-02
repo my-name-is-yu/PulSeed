@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.1.4] - 2026-04-02
+
+### Added
+
+- Added `pulseed logs` command with `--follow` (real-time tail with rotation handling), `--lines N`, and `--level` filtering (ERROR > WARN > INFO > DEBUG) (#420).
+- Added `pulseed install` / `pulseed uninstall` commands for macOS launchd integration — generates plist, registers with `launchctl`, enables auto-start on boot with KeepAlive (#420).
+- Added `pulseed doctor` command with 10-point health check: Node.js version, PulSeed directory, provider config, API key, goals, log directory, build artifact, daemon status, notifications, disk usage (#420).
+- Added `pulseed notify add/list/remove/test` commands for notification channel management (Slack webhook, generic webhook, email) with persistent config at `~/.pulseed/notification.json` (#420).
+- Enriched `pulseed daemon status` with uptime display, relative cycle times, config section (interval, adaptive sleep, iterations, proactive mode, crash recovery counter), and box-drawing formatting (#420).
+
+### Fixed
+
+- Fixed TS2454 build error in `session-manager.ts` by adding default case to session context switch.
+
 ## [0.1.3] - 2026-04-01
 
 ### Added
