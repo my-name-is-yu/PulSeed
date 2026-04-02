@@ -56,7 +56,11 @@ export class BrowserUseCLIAdapter implements IAdapter {
     const result = await spawnWithTimeout(
       this.cliPath,
       spawnArgs,
-      { env: process.env, stdinData: task.prompt },
+      { env: process.env, stdinData: task.system_prompt ? `[System Context]
+${task.system_prompt}
+
+[User Request]
+${task.prompt}` : task.prompt },
       task.timeout_ms
     );
 

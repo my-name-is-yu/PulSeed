@@ -20,6 +20,8 @@ export interface AgentTask {
   allowed_tools?: readonly string[];
   /** Working directory override for the agent process (e.g., target workspace path) */
   cwd?: string;
+  /** System prompt to inject identity/context (used by chat grounding) */
+  system_prompt?: string;
 }
 
 export interface AgentResult {

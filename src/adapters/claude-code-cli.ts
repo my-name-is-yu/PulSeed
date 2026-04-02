@@ -49,7 +49,11 @@ export class ClaudeCodeCLIAdapter implements IAdapter {
     const result = await spawnWithTimeout(
       this.cliPath,
       spawnArgs,
-      { cwd, stdinData: task.prompt },
+      { cwd, stdinData: task.system_prompt ? `[System Context]
+${task.system_prompt}
+
+[User Request]
+${task.prompt}` : task.prompt },
       task.timeout_ms
     );
 

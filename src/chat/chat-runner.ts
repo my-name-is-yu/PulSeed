@@ -9,6 +9,7 @@ import type { ILLMClient } from "../llm/llm-client.js";
 import { ChatHistory } from "./chat-history.js";
 import { buildChatContext, resolveGitRoot } from "../observation/context-provider.js";
 import type { EscalationHandler } from "./escalation.js";
+import { buildSystemPrompt } from "./grounding.js";
 
 // ─── Types ───
 
@@ -45,6 +46,8 @@ export class ChatRunner {
   private sessionCwd: string | null = null;
   /** True when startSession() has been called — enables session persistence across execute() calls. */
   private sessionActive = false;
+  /** Cached system prompt — built once per session, reused across turns. */
+  private cachedSystemPrompt: string | null = null;
 
   constructor(deps: ChatRunnerDeps) {
     this.deps = deps;
@@ -155,16 +158,37 @@ export class ChatRunner {
     // Persist-before-execute: user message written to disk first
     await history.appendUserMessage(input);
 
+    // Build grounding system prompt on first turn, cache for session
+    if (this.cachedSystemPrompt === null) {
+      try {
+        this.cachedSystemPrompt = await buildSystemPrompt({ stateManager: this.deps.stateManager });
+      } catch {
+        this.cachedSystemPrompt = "";
+      }
+    }
+
+    // Build conversation history from prior turns (last 10)
+    const messages = history.getMessages();
+    const priorTurns = messages.slice(0, -1).slice(-10);
+    let historyBlock = "";
+    if (priorTurns.length > 0) {
+      const lines = priorTurns.map((m: { role: string; content: string }) =>
+        `${m.role === "user" ? "User" : "Assistant"}: ${m.content}`
+      ).join("\n");
+      historyBlock = `Previous conversation:\n${lines}\n\nCurrent message:\n`;
+    }
+
     const context = buildChatContext(input, gitRoot);
-    const prompt = context ? `${context}\n\n${input}` : input;
+    const basePrompt = context ? `${context}\n\n${input}` : input;
+    const prompt = historyBlock ? `${historyBlock}${basePrompt}` : basePrompt;
 
     const task: AgentTask = {
       prompt,
       timeout_ms: timeoutMs,
       adapter_type: this.deps.adapter.adapterType,
       cwd,
+      ...(this.cachedSystemPrompt ? { system_prompt: this.cachedSystemPrompt } : {}),
     };
-
     const start = Date.now();
     const result = await this.deps.adapter.execute(task);
     const elapsed_ms = Date.now() - start;

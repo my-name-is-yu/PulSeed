@@ -38,9 +38,10 @@ export class ClaudeAPIAdapter implements IAdapter {
     // The actual LLM call.
     const llmPromise: Promise<AgentResult> = (async () => {
       try {
-        const response = await this.llmClient.sendMessage([
+        const systemOpts = task.system_prompt ? { system: task.system_prompt } : undefined;
+    const response = await this.llmClient.sendMessage([
           { role: "user", content: task.prompt },
-        ]);
+        ], systemOpts);
         return {
           success: true,
           output: response.content,
