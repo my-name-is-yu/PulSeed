@@ -226,22 +226,33 @@ export function createWorkspaceContextProvider(
       return parts.join("\n\n");
     }
 
-    // Small workspace fast path: include ALL files when total count is small
-    if (allFiles.length <= SMALL_WORKSPACE_FILE_LIMIT) {
-      for (const fp of allFiles) {
-        const rel = path.relative(workDir, fp);
-        const content = await readFileSection(fp, maxCharsPerFile);
-        if (content) {
-          parts.push(`## ${rel}\n\`\`\`\n${content}\n\`\`\``);
-        }
+    // Dimension-name derived file hints: extract segments and match kebab-case filenames
+    // e.g. "try_catch_added_in_drive_system_event_watcher" → find "drive-system.ts"
+    const dimSegments = dimensionName
+      .toLowerCase()
+      .split("_")
+      .filter((w) => w.length >= 4 && !STOPWORDS.has(w));
+    const dimHintPaths: string[] = [];
+    if (dimSegments.length >= 2) {
+      for (let i = 0; i < dimSegments.length - 1; i++) {
+        const pattern = `${dimSegments[i]}-${dimSegments[i + 1]}`;
+        const matched = allFiles.filter((fp) => path.basename(fp).toLowerCase().includes(pattern));
+        dimHintPaths.push(...matched);
       }
-      return parts.join("\n\n");
+    }
+    // Also try single segments for direct matches (e.g. "verifier" → "task-verifier.ts")
+    for (const seg of dimSegments) {
+      if (seg.length >= 5) {
+        const matched = allFiles.filter((fp) => path.basename(fp).toLowerCase().includes(seg) && !dimHintPaths.includes(fp));
+        dimHintPaths.push(...matched);
+      }
     }
 
     // Separate already-included from candidates
     const alwaysSet = new Set(alwaysIncludePaths);
     const pathMatchSet = new Set(pathMatchedPaths);
-    const candidates = allFiles.filter((fp) => !alwaysSet.has(fp) && !pathMatchSet.has(fp));
+    const dimHintSet = new Set(dimHintPaths);
+    const candidates = allFiles.filter((fp) => !alwaysSet.has(fp) && !pathMatchSet.has(fp) && !dimHintSet.has(fp));
 
     // Phase 1: filename match
     const nameMatched = candidates.filter((fp) => fileMatchesKeywords(fp, keywords));
@@ -249,7 +260,7 @@ export function createWorkspaceContextProvider(
     // Phase 2: content match (only if we still need more)
     // alwaysInclude and pathMatch are treated as priority (outside maxFiles cap),
     // so keyword-match fills remaining slots up to maxFiles
-    const neededFromCandidates = Math.max(0, maxFiles - alwaysIncludePaths.length - pathMatchedPaths.length);
+    const neededFromCandidates = Math.max(0, maxFiles - alwaysIncludePaths.length - pathMatchedPaths.length - dimHintPaths.length);
     let selected = nameMatched.slice(0, neededFromCandidates);
 
     if (selected.length < neededFromCandidates) {
@@ -275,6 +286,15 @@ export function createWorkspaceContextProvider(
 
     // Read explicit path-matched files (priority, same as alwaysInclude)
     for (const fp of pathMatchedPaths) {
+      const rel = path.relative(effectiveWorkDir, fp);
+      const content = await readFileSection(fp, maxCharsPerFile);
+      if (content) {
+        parts.push(`## ${rel}\n\`\`\`\n${content}\n\`\`\``);
+      }
+    }
+
+    // Read dimension-hint matched files (priority)
+    for (const fp of dimHintPaths) {
       const rel = path.relative(effectiveWorkDir, fp);
       const content = await readFileSection(fp, maxCharsPerFile);
       if (content) {
