@@ -248,10 +248,12 @@ export class GoalTreeManager {
           },
         });
       } else {
+        this.logger?.info(`[LLM] ${new Date().toISOString()} calling goal_specificity_evaluation goalId=${goal.id}`);
         const response = await this.llmClient.sendMessage(
           [{ role: "user", content: prompt }],
           { temperature: 0 }
         );
+        this.logger?.info(`[LLM] ${new Date().toISOString()} done goal_specificity_evaluation goalId=${goal.id}`);
         parsed = this.llmClient.parseJSON(
           response.content,
           SpecificityResponseSchema
@@ -404,10 +406,12 @@ export class GoalTreeManager {
         });
         subgoalSpecs = subgoalSpecs.slice(0, maxChildren);
       } else {
+        this.logger?.info(`[LLM] ${new Date().toISOString()} calling goal_decomposition goalId=${goal.id}`);
         const subgoalResponse = await this.llmClient.sendMessage(
           [{ role: "user", content: subgoalPrompt }],
           { temperature: 0 }
         );
+        this.logger?.info(`[LLM] ${new Date().toISOString()} done goal_decomposition goalId=${goal.id}`);
         // Normalize hypothesis field: LLMs may use "title", "description", "goal", etc.
         // Pre-parse to fix missing hypothesis keys before passing to parseJSON.
         let contentToPass = subgoalResponse.content;
@@ -601,10 +605,12 @@ export class GoalTreeManager {
           });
           coverage = { covers_parent: raw.covers_parent, missing_dimensions: raw.missing_dimensions ?? [], reasoning: raw.reasoning };
         } else {
+          this.logger?.info(`[LLM] ${new Date().toISOString()} calling goal_coverage_validation goalId=${parent.id}`);
           const coverageResponse = await this.llmClient.sendMessage(
             [{ role: "user", content: coveragePrompt }],
             { temperature: 0 }
           );
+          this.logger?.info(`[LLM] ${new Date().toISOString()} done goal_coverage_validation goalId=${parent.id}`);
           const raw = this.llmClient.parseJSON(
             coverageResponse.content,
             CoverageResponseSchema

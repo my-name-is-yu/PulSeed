@@ -59,5 +59,7 @@ Return JSON:
 }
 
 When is_measurable is false, set "dimensions" to null.
-For "present" threshold_type, always set "threshold_value" to null.`;
+For "present" threshold_type, always set "threshold_value" to null.
+
+IMPORTANT: Respond with ONLY the JSON object above. Do not return an array, do not wrap in markdown, do not include any other text.`;
 }
