@@ -57,7 +57,7 @@ describe("buildPlist", () => {
     });
 
     expect(xml).toContain("<string>/usr/local/bin/node</string>");
-    expect(xml).toContain("<string>/app/dist/cli-runner.js</string>");
+    expect(xml).toContain("<string>/app/dist/cli/cli-runner.js</string>");
   });
 
   it("includes RunAtLoad and KeepAlive true", () => {
