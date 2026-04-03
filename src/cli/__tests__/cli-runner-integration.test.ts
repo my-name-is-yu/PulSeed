@@ -18,12 +18,12 @@ import { makeTempDir } from "../../../tests/helpers/temp-dir.js";
 // ─── Module mocks ─────────────────────────────────────────────────────────────
 // Only mock modules that would make real network/process calls.
 
-vi.mock("../src/llm/llm-client.js", () => ({
+vi.mock("../../llm/llm-client.js", () => ({
   LLMClient: vi.fn().mockImplementation(function() { return {}; }),
   MockLLMClient: vi.fn(),
 }));
 
-vi.mock("../src/adapters/agents/claude-code-cli.js", () => ({
+vi.mock("../../adapters/agents/claude-code-cli.js", () => ({
   ClaudeCodeCLIAdapter: vi.fn().mockImplementation(function() { return {
     adapterType: "claude-code-cli",
     async execute() {
@@ -39,7 +39,7 @@ vi.mock("../src/adapters/agents/claude-code-cli.js", () => ({
   }; }),
 }));
 
-vi.mock("../src/adapters/agents/claude-api.js", () => ({
+vi.mock("../../adapters/agents/claude-api.js", () => ({
   ClaudeAPIAdapter: vi.fn().mockImplementation(function() { return {
     adapterType: "claude-api",
     async execute() {

@@ -8,7 +8,7 @@ import { makeTempDir, cleanupTempDir } from "../../../tests/helpers/temp-dir.js"
 // We test the command by importing it and mocking paths.getPulseedDirPath
 // so it points to a temp directory we control.
 
-vi.mock("../src/utils/paths.js", async (importOriginal) => {
+vi.mock("../../utils/paths.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../utils/paths.js")>();
   return {
     ...actual,

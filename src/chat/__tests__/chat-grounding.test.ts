@@ -5,14 +5,14 @@ import * as os from "node:os";
 
 // Mock context-provider so tests don't walk the real filesystem.
 // Must appear before any ChatRunner import.
-vi.mock("../../src/observation/context-provider.js", () => ({
+vi.mock("../../observation/context-provider.js", () => ({
   resolveGitRoot: (cwd: string) => cwd,
   buildChatContext: (_task: string, cwd: string) => `Working directory: ${cwd}`,
 }));
 
 // Mock spawn-helper used by CLI adapters.
 // Vitest hoists vi.mock() calls, so this runs before adapter imports.
-vi.mock("../../src/adapters/spawn-helper.js", () => ({
+vi.mock("../../adapters/spawn-helper.js", () => ({
   spawnWithTimeout: vi.fn().mockResolvedValue({
     stdout: "output",
     stderr: "",

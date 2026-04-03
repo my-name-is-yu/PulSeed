@@ -8,7 +8,7 @@ import { makeTempDir, cleanupTempDir } from "../../../tests/helpers/temp-dir.js"
 // We test individual check functions directly, controlling the base directory
 // so all file-system checks operate on a temp directory we own.
 
-vi.mock("../src/utils/paths.js", async (importOriginal) => {
+vi.mock("../../utils/paths.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../utils/paths.js")>();
   return {
     ...actual,

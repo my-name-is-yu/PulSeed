@@ -5,7 +5,7 @@ import { makeTempDir, cleanupTempDir } from "../../../tests/helpers/temp-dir.js"
 
 // ─── cmdLogs tests ───
 
-vi.mock("../src/utils/paths.js", async (importOriginal) => {
+vi.mock("../../utils/paths.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../utils/paths.js")>();
   return {
     ...actual,

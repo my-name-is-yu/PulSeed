@@ -11,7 +11,7 @@ import type { MutationToolDeps } from "../self-knowledge-mutation-tools.js";
 
 // ─── Module mocks for update_config ───
 
-vi.mock("../../src/llm/provider-config.js", () => ({
+vi.mock("../../llm/provider-config.js", () => ({
   loadProviderConfig: vi.fn().mockResolvedValue({ provider: "openai", model: "gpt-4o", api_key: "sk-test" }),
   saveProviderConfig: vi.fn().mockResolvedValue(undefined),
 }));

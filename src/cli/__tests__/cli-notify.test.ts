@@ -3,7 +3,7 @@ import * as path from "node:path";
 import * as fs from "node:fs";
 import { makeTempDir, cleanupTempDir } from "../../../tests/helpers/temp-dir.js";
 
-vi.mock("../src/utils/paths.js", async (importOriginal) => {
+vi.mock("../../utils/paths.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../utils/paths.js")>();
   return {
     ...actual,

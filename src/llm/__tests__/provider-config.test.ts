@@ -280,7 +280,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 });
 
 // Mock writeJsonFileAtomic to prevent actual file writes
-vi.mock("../src/utils/json-io.js", () => ({
+vi.mock("../../utils/json-io.js", () => ({
   writeJsonFileAtomic: vi.fn().mockResolvedValue(undefined),
 }));
 

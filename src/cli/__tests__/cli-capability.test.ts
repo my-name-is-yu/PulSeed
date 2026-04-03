@@ -10,17 +10,17 @@ import * as fs from "node:fs";
 
 // ─── Module mocks (must precede imports of mocked modules) ───────────────────
 
-vi.mock("../src/loop/core-loop.js", async (importOriginal) => {
+vi.mock("../../loop/core-loop.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../loop/core-loop.js")>();
   return { ...actual, CoreLoop: vi.fn() };
 });
 
-vi.mock("../src/goal/goal-negotiator.js", async (importOriginal) => {
+vi.mock("../../goal/goal-negotiator.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../goal/goal-negotiator.js")>();
   return { ...actual, GoalNegotiator: vi.fn() };
 });
 
-vi.mock("../src/llm/llm-client.js", () => ({
+vi.mock("../../llm/llm-client.js", () => ({
   LLMClient: vi.fn().mockImplementation(function() { return {}; }),
   MockLLMClient: vi.fn(),
 }));
@@ -33,7 +33,7 @@ vi.mock("../src/drive-system.js", () => ({
   DriveSystem: vi.fn().mockImplementation(function() { return {}; }),
 }));
 
-vi.mock("../src/observation/observation-engine.js", () => ({
+vi.mock("../../observation/observation-engine.js", () => ({
   ObservationEngine: vi.fn().mockImplementation(function() { return {}; }),
 }));
 
@@ -49,34 +49,34 @@ vi.mock("../src/ethics-gate.js", () => ({
   EthicsGate: vi.fn().mockImplementation(function() { return {}; }),
 }));
 
-vi.mock("../src/execution/session-manager.js", () => ({
+vi.mock("../../execution/session-manager.js", () => ({
   SessionManager: vi.fn().mockImplementation(function() { return {}; }),
 }));
 
-vi.mock("../src/strategy/strategy-manager.js", () => ({
+vi.mock("../../strategy/strategy-manager.js", () => ({
   StrategyManager: vi.fn().mockImplementation(function() { return {}; }),
 }));
 
-vi.mock("../src/execution/adapter-layer.js", () => ({
+vi.mock("../../execution/adapter-layer.js", () => ({
   AdapterRegistry: vi.fn().mockImplementation(function() { return {
     register: vi.fn(),
     getAdapterCapabilities: vi.fn().mockReturnValue([]),
   }; }),
 }));
 
-vi.mock("../src/adapters/agents/claude-code-cli.js", () => ({
+vi.mock("../../adapters/agents/claude-code-cli.js", () => ({
   ClaudeCodeCLIAdapter: vi.fn().mockImplementation(function() { return {}; }),
 }));
 
-vi.mock("../src/adapters/agents/claude-api.js", () => ({
+vi.mock("../../adapters/agents/claude-api.js", () => ({
   ClaudeAPIAdapter: vi.fn().mockImplementation(function() { return {}; }),
 }));
 
-vi.mock("../src/execution/task/task-lifecycle.js", () => ({
+vi.mock("../../execution/task/task-lifecycle.js", () => ({
   TaskLifecycle: vi.fn().mockImplementation(function() { return {}; }),
 }));
 
-vi.mock("../src/reporting/reporting-engine.js", async (importOriginal) => {
+vi.mock("../../reporting/reporting-engine.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../reporting/reporting-engine.js")>();
   return {
     ...actual,
@@ -84,7 +84,7 @@ vi.mock("../src/reporting/reporting-engine.js", async (importOriginal) => {
   };
 });
 
-vi.mock("../src/llm/provider-factory.js", async (importOriginal) => {
+vi.mock("../../llm/provider-factory.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../llm/provider-factory.js")>();
   return {
     ...actual,

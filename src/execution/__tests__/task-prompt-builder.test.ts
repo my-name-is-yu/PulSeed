@@ -3,7 +3,7 @@ import { buildTaskGenerationPrompt } from "../task/task-prompt-builder.js";
 import type { StateManager } from "../../state/state-manager.js";
 
 // Mock issue-context-fetcher so dynamic import in buildTaskGenerationPrompt is controlled
-vi.mock("../src/execution/context/issue-context-fetcher.js", () => ({
+vi.mock("../context/issue-context-fetcher.js", () => ({
   fetchIssueContext: vi.fn(async () => ""),
 }));
 

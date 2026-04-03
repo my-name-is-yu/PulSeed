@@ -2,39 +2,39 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // ─── Mock heavy dependencies so no real clients are constructed ───
 
-vi.mock("../src/llm/llm-client.js", () => ({
+vi.mock("../llm-client.js", () => ({
   LLMClient: vi.fn().mockImplementation(function() { return { _tag: "LLMClient" }; }),
 }));
 
-vi.mock("../src/llm/ollama-client.js", () => ({
+vi.mock("../ollama-client.js", () => ({
   OllamaLLMClient: vi.fn().mockImplementation(function() { return { _tag: "OllamaLLMClient" }; }),
 }));
 
-vi.mock("../src/llm/openai-client.js", () => ({
+vi.mock("../openai-client.js", () => ({
   OpenAILLMClient: vi.fn().mockImplementation(function() { return { _tag: "OpenAILLMClient" }; }),
 }));
 
-vi.mock("../src/llm/codex-llm-client.js", () => ({
+vi.mock("../codex-llm-client.js", () => ({
   CodexLLMClient: vi.fn().mockImplementation(function() { return { _tag: "CodexLLMClient" }; }),
 }));
 
-vi.mock("../src/execution/adapter-layer.js", () => ({
+vi.mock("../../execution/adapter-layer.js", () => ({
   AdapterRegistry: vi.fn().mockImplementation(function() { return { register: vi.fn() }; }),
 }));
 
-vi.mock("../src/adapters/agents/claude-code-cli.js", () => ({
+vi.mock("../../adapters/agents/claude-code-cli.js", () => ({
   ClaudeCodeCLIAdapter: vi.fn().mockImplementation(function() { return {}; }),
 }));
 
-vi.mock("../src/adapters/agents/claude-api.js", () => ({
+vi.mock("../../adapters/agents/claude-api.js", () => ({
   ClaudeAPIAdapter: vi.fn().mockImplementation(function() { return {}; }),
 }));
 
-vi.mock("../src/adapters/agents/openai-codex.js", () => ({
+vi.mock("../../adapters/agents/openai-codex.js", () => ({
   OpenAICodexCLIAdapter: vi.fn().mockImplementation(function() { return {}; }),
 }));
 
-vi.mock("../src/adapters/github-issue.js", () => ({
+vi.mock("../../adapters/github-issue.js", () => ({
   GitHubIssueAdapter: vi.fn().mockImplementation(function() { return {}; }),
 }));
 
@@ -42,7 +42,7 @@ vi.mock("../src/adapters/github-issue.js", () => ({
 
 const mockLoadProviderConfig = vi.fn();
 
-vi.mock("../src/llm/provider-config.js", () => ({
+vi.mock("../provider-config.js", () => ({
   loadProviderConfig: () => mockLoadProviderConfig(),
 }));
 

@@ -96,7 +96,7 @@ describe("cmdGoalAdd — GoalRefiner integration", () => {
     // Mock dynamic imports inside cmdGoalAdd
     const mockGoalRefiner = { refine: mockRefine };
 
-    vi.doMock("../src/cli/setup.js", () => ({
+    vi.doMock("../../cli/setup.js", () => ({
       buildDeps: vi.fn(async () => ({
         goalNegotiator: { negotiate: vi.fn() },
         goalRefiner: mockGoalRefiner,
@@ -107,36 +107,36 @@ describe("cmdGoalAdd — GoalRefiner integration", () => {
       })),
     }));
 
-    vi.doMock("../src/goal/goal-refiner.js", () => ({
+    vi.doMock("../goal-refiner.js", () => ({
       GoalRefiner: vi.fn().mockImplementation(() => mockGoalRefiner),
       collectLeafGoalIds: vi.fn((result: { goal: { id: string }; leaf: boolean; children: null }) => [result.goal.id]),
     }));
 
-    vi.doMock("../src/cli/ensure-api-key.js", () => ({
+    vi.doMock("../../cli/ensure-api-key.js", () => ({
       ensureProviderConfig: vi.fn(async () => {}),
     }));
 
-    vi.doMock("../src/llm/provider-factory.js", () => ({
+    vi.doMock("../../llm/provider-factory.js", () => ({
       buildLLMClient: vi.fn(async () => ({})),
     }));
 
-    vi.doMock("../src/observation/observation-engine.js", () => ({
+    vi.doMock("../../observation/observation-engine.js", () => ({
       ObservationEngine: vi.fn().mockImplementation(() => ({})),
     }));
 
-    vi.doMock("../src/traits/ethics-gate.js", () => ({
+    vi.doMock("../../traits/ethics-gate.js", () => ({
       EthicsGate: vi.fn().mockImplementation(() => ({})),
     }));
 
-    vi.doMock("../src/goal/goal-tree-manager.js", () => ({
+    vi.doMock("../goal-tree-manager.js", () => ({
       GoalTreeManager: vi.fn().mockImplementation(() => ({})),
     }));
 
-    vi.doMock("../src/goal/goal-dependency-graph.js", () => ({
+    vi.doMock("../goal-dependency-graph.js", () => ({
       GoalDependencyGraph: vi.fn().mockImplementation(() => ({})),
     }));
 
-    vi.doMock("../src/observation/workspace-context.js", () => ({
+    vi.doMock("../../observation/workspace-context.js", () => ({
       createWorkspaceContextProvider: vi.fn(() => ({})),
     }));
 
@@ -169,7 +169,7 @@ describe("cmdGoalAdd — GoalRefiner integration", () => {
     }));
     const mockRefine = vi.fn();
 
-    vi.doMock("../src/cli/setup.js", () => ({
+    vi.doMock("../../cli/setup.js", () => ({
       buildDeps: vi.fn(async () => ({
         goalNegotiator: { negotiate: mockNegotiate },
         goalRefiner: { refine: mockRefine },
@@ -180,16 +180,16 @@ describe("cmdGoalAdd — GoalRefiner integration", () => {
       })),
     }));
 
-    vi.doMock("../src/goal/goal-refiner.js", () => ({
+    vi.doMock("../goal-refiner.js", () => ({
       GoalRefiner: vi.fn().mockImplementation(() => ({ refine: mockRefine })),
       collectLeafGoalIds: vi.fn((result: { goal: { id: string }; leaf: boolean; children: null }) => [result.goal.id]),
     }));
 
-    vi.doMock("../src/cli/ensure-api-key.js", () => ({
+    vi.doMock("../../cli/ensure-api-key.js", () => ({
       ensureProviderConfig: vi.fn(async () => {}),
     }));
 
-    vi.doMock("../src/goal/goal-negotiator.js", () => ({
+    vi.doMock("../goal-negotiator.js", () => ({
       EthicsRejectedError: class extends Error {},
       gatherNegotiationContext: vi.fn(async () => null),
     }));
@@ -220,7 +220,7 @@ describe("cmdGoalAdd — GoalRefiner integration", () => {
 
     const mockGoalRefiner2 = { refine: mockRefine };
 
-    vi.doMock("../src/cli/setup.js", () => ({
+    vi.doMock("../../cli/setup.js", () => ({
       buildDeps: vi.fn(async () => ({
         goalNegotiator: { negotiate: vi.fn() },
         goalRefiner: mockGoalRefiner2,
@@ -231,36 +231,36 @@ describe("cmdGoalAdd — GoalRefiner integration", () => {
       })),
     }));
 
-    vi.doMock("../src/goal/goal-refiner.js", () => ({
+    vi.doMock("../goal-refiner.js", () => ({
       GoalRefiner: vi.fn().mockImplementation(() => mockGoalRefiner2),
       collectLeafGoalIds: vi.fn((result: { goal: { id: string }; leaf: boolean; children: null }) => [result.goal.id]),
     }));
 
-    vi.doMock("../src/cli/ensure-api-key.js", () => ({
+    vi.doMock("../../cli/ensure-api-key.js", () => ({
       ensureProviderConfig: vi.fn(async () => {}),
     }));
 
-    vi.doMock("../src/llm/provider-factory.js", () => ({
+    vi.doMock("../../llm/provider-factory.js", () => ({
       buildLLMClient: vi.fn(async () => ({})),
     }));
 
-    vi.doMock("../src/observation/observation-engine.js", () => ({
+    vi.doMock("../../observation/observation-engine.js", () => ({
       ObservationEngine: vi.fn().mockImplementation(() => ({})),
     }));
 
-    vi.doMock("../src/traits/ethics-gate.js", () => ({
+    vi.doMock("../../traits/ethics-gate.js", () => ({
       EthicsGate: vi.fn().mockImplementation(() => ({})),
     }));
 
-    vi.doMock("../src/goal/goal-tree-manager.js", () => ({
+    vi.doMock("../goal-tree-manager.js", () => ({
       GoalTreeManager: vi.fn().mockImplementation(() => ({})),
     }));
 
-    vi.doMock("../src/goal/goal-dependency-graph.js", () => ({
+    vi.doMock("../goal-dependency-graph.js", () => ({
       GoalDependencyGraph: vi.fn().mockImplementation(() => ({})),
     }));
 
-    vi.doMock("../src/observation/workspace-context.js", () => ({
+    vi.doMock("../../observation/workspace-context.js", () => ({
       createWorkspaceContextProvider: vi.fn(() => ({})),
     }));
 

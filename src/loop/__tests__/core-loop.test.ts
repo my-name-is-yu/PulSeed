@@ -89,11 +89,11 @@ const mocks = vi.hoisted(() => {
   };
 });
 
-vi.mock("../src/utils/sleep.js", () => ({
+vi.mock("../../utils/sleep.js", () => ({
   sleep: vi.fn().mockResolvedValue(undefined),
 }));
 
-vi.mock("../src/loop/core-loop-phases.js", () => ({
+vi.mock("../core-loop-phases.js", () => ({
   loadGoalWithAggregation: vi.fn(async (_ctx: unknown, _goalId: string, result: any) => {
     result.gapAggregate = 1;
     return mocks.goal;
@@ -104,24 +104,24 @@ vi.mock("../src/loop/core-loop-phases.js", () => ({
   phaseAutoDecompose: vi.fn().mockResolvedValue(undefined),
 }));
 
-vi.mock("../src/loop/core-loop-phases-b.js", () => ({
+vi.mock("../core-loop-phases-b.js", () => ({
   checkCompletionAndMilestones: vi.fn().mockResolvedValue(undefined),
   detectStallsAndRebalance: vi.fn().mockResolvedValue(undefined),
   checkDependencyBlock: vi.fn().mockReturnValue(false),
   runTaskCycleWithContext: vi.fn().mockResolvedValue(true),
 }));
 
-vi.mock("../src/loop/tree-loop-runner.js", () => ({
+vi.mock("../tree-loop-runner.js", () => ({
   runTreeIteration: vi.fn(),
   runMultiGoalIteration: vi.fn(),
 }));
 
-vi.mock("../src/execution/task/task-generation.js", () => ({
+vi.mock("../../execution/task/task-generation.js", () => ({
   evaluateTaskComplexity: vi.fn(),
   generateTaskGroup: vi.fn(),
 }));
 
-vi.mock("../src/loop/core-loop-learning.js", () => ({
+vi.mock("../core-loop-learning.js", () => ({
   CoreLoopLearning: vi.fn().mockImplementation(function() { return {
     checkPeriodicReview: vi.fn().mockResolvedValue(undefined),
     onGoalCompleted: vi.fn().mockResolvedValue(undefined),

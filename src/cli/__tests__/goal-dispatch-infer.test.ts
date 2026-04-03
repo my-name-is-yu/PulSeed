@@ -15,11 +15,11 @@ import type { CharacterConfigManager } from "../../traits/character-config.js";
 // ─── Module-level mocks ───
 // Note: vi.mock factories are hoisted — DO NOT reference outer variables inside them.
 
-vi.mock("../../src/cli/commands/goal-raw.js", () => ({
+vi.mock("../commands/goal-raw.js", () => ({
   cmdGoalAddRaw: vi.fn().mockResolvedValue(0),
 }));
 
-vi.mock("../../src/cli/commands/goal.js", () => ({
+vi.mock("../commands/goal.js", () => ({
   cmdGoalAdd: vi.fn().mockResolvedValue(0),
   cmdGoalList: vi.fn().mockResolvedValue(0),
   cmdGoalShow: vi.fn().mockResolvedValue(0),
@@ -27,16 +27,16 @@ vi.mock("../../src/cli/commands/goal.js", () => ({
   cmdGoalArchive: vi.fn().mockResolvedValue(0),
 }));
 
-vi.mock("../../src/llm/provider-factory.js", () => ({
+vi.mock("../../llm/provider-factory.js", () => ({
   buildLLMClient: vi.fn().mockResolvedValue({ sendMessage: vi.fn(), parseJSON: vi.fn() }),
 }));
 
-vi.mock("../../src/cli/commands/goal-infer.js", () => ({
+vi.mock("../commands/goal-infer.js", () => ({
   inferDimensionsFromTitle: vi.fn().mockResolvedValue([]),
   formatInferredDimensions: vi.fn().mockReturnValue("  1. fluency_score  [min]  threshold: 80"),
 }));
 
-vi.mock("../../src/cli/utils.js", () => ({
+vi.mock("../utils.js", () => ({
   promptYesNo: vi.fn().mockResolvedValue(false),
   formatOperationError: vi.fn().mockReturnValue("operation failed"),
 }));

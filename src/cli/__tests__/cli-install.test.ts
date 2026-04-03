@@ -13,7 +13,7 @@ vi.mock("node:fs", async (importOriginal) => {
   };
 });
 
-vi.mock("../src/utils/execFileNoThrow.js", () => ({
+vi.mock("../../utils/execFileNoThrow.js", () => ({
   execFileNoThrow: vi.fn(async () => ({ stdout: "", stderr: "", exitCode: 0 })),
 }));
 

@@ -7,7 +7,7 @@ import type { A2ATask, A2AAgentCard } from "../../types/a2a.js";
 
 // ─── Mock A2AClient ───
 
-vi.mock("../src/adapters/agents/a2a-client.js", () => {
+vi.mock("../agents/a2a-client.js", () => {
   const A2AClient = vi.fn();
   A2AClient.prototype.fetchAgentCard = vi.fn();
   A2AClient.prototype.sendMessage = vi.fn();
