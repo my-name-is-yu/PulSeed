@@ -12,6 +12,9 @@ import { buildChatContext, resolveGitRoot } from "../observation/context-provide
 import type { EscalationHandler } from "./escalation.js";
 import { buildSystemPrompt } from "./grounding.js";
 import { verifyChatAction } from "./chat-verifier.js";
+import { getSelfKnowledgeToolDefinitions, handleSelfKnowledgeToolCall } from "./self-knowledge-tools.js";
+import type { SelfKnowledgeDeps } from "./self-knowledge-tools.js";
+import type { LLMMessage, LLMResponse } from "../llm/llm-client.js";
 
 // ─── Types ───
 
@@ -22,6 +25,10 @@ export interface ChatRunnerDeps {
   llmClient?: ILLMClient;
   /** Optional: escalation handler for /track command (Phase 1c). */
   escalationHandler?: EscalationHandler;
+  /** Optional: trust manager for self-knowledge tools. */
+  trustManager?: { getBalance(domain: string): Promise<{ balance: number }> };
+  /** Optional: plugin loader for self-knowledge tools. */
+  pluginLoader?: { loadAll(): Promise<Array<{ name: string; type?: string; enabled?: boolean }>> };
 }
 
 export interface ChatRunResult {
@@ -32,6 +39,7 @@ export interface ChatRunResult {
 
 const DEFAULT_TIMEOUT_MS = 120_000;
 const MAX_VERIFY_RETRIES = 2;
+const MAX_TOOL_LOOPS = 3;
 
 // ─── Command help text ───
 
@@ -196,6 +204,16 @@ export class ChatRunner {
     const basePrompt = context ? `${context}\n\n${input}` : input;
     const prompt = historyBlock ? `${historyBlock}${basePrompt}` : basePrompt;
 
+    const start = Date.now();
+
+    // Use llmClient with self-knowledge tools when available (function calling path)
+    if (this.deps.llmClient) {
+      const toolResult = await this.executeWithTools(prompt, this.cachedSystemPrompt ?? undefined);
+      const elapsed_ms = Date.now() - start;
+      await history.appendAssistantMessage(toolResult);
+      return { success: true, output: toolResult, elapsed_ms };
+    }
+
     const task: AgentTask = {
       prompt,
       timeout_ms: timeoutMs,
@@ -203,7 +221,6 @@ export class ChatRunner {
       cwd,
       ...(this.cachedSystemPrompt ? { system_prompt: this.cachedSystemPrompt } : {}),
     };
-    const start = Date.now();
     let result = await this.deps.adapter.execute(task);
     const elapsed_ms = Date.now() - start;
 
@@ -239,6 +256,62 @@ export class ChatRunner {
       success: result.success,
       output: result.output,
       elapsed_ms,
+    };
+  }
+
+  /**
+   * Execute a chat turn using llmClient with self-knowledge tools (function calling).
+   * Loops up to MAX_TOOL_LOOPS times to resolve tool calls, then returns final text.
+   */
+  private async executeWithTools(prompt: string, systemPrompt?: string): Promise<string> {
+    const llmClient = this.deps.llmClient!;
+    const tools = getSelfKnowledgeToolDefinitions();
+    const skDeps = this.buildSelfKnowledgeDeps();
+    const messages: LLMMessage[] = [{ role: "user", content: prompt }];
+
+    for (let loop = 0; loop < MAX_TOOL_LOOPS; loop++) {
+      let response: LLMResponse;
+      try {
+        response = await llmClient.sendMessage(messages, {
+          tools,
+          ...(systemPrompt ? { system: systemPrompt } : {}),
+        });
+      } catch {
+        return "Sorry, I encountered an error processing your request.";
+      }
+
+      // No tool calls — return the text content
+      if (!response.tool_calls || response.tool_calls.length === 0) {
+        return response.content || "(no response)";
+      }
+
+      // Append assistant message, then process tool calls
+      messages.push({ role: "assistant", content: response.content || "" });
+
+      for (const tc of response.tool_calls) {
+        let args: Record<string, unknown> = {};
+        try {
+          args = JSON.parse(tc.function.arguments || "{}") as Record<string, unknown>;
+        } catch {
+          // ignore parse errors, use empty args
+        }
+        const toolResult = await handleSelfKnowledgeToolCall(tc.function.name, args, skDeps);
+        messages.push({ role: "user", content: `Tool result for ${tc.function.name}:\n${toolResult}` });
+      }
+    }
+
+    // Max loops reached — return last assistant content or fallback
+    const lastAssistant = [...messages].reverse().find(m => m.role === "assistant");
+    return lastAssistant?.content || "I was unable to complete the request within the allowed tool call limit.";
+  }
+
+  /** Build SelfKnowledgeDeps from ChatRunnerDeps. */
+  private buildSelfKnowledgeDeps(): SelfKnowledgeDeps {
+    return {
+      stateManager: this.deps.stateManager,
+      trustManager: this.deps.trustManager,
+      pluginLoader: this.deps.pluginLoader,
+      homeDir: process.env.HOME ?? process.env.USERPROFILE ?? "/tmp",
     };
   }
 }
