@@ -235,8 +235,7 @@ Respond with JSON:
     work_description: `Research task: ${fields.knowledge_target}`,
     rationale: `Knowledge gap detected (${signal.signal_type}): ${signal.missing_knowledge}`,
     approach: `Research the following questions using web search and document analysis:
-${questions.map((q, i) => `${i + 1}. ${q}`).join("
-")}`,
+${questions.map((q, i) => `${i + 1}. ${q}`).join("\n")}`,
     success_criteria: [
       {
         description: criteriaDescription,
