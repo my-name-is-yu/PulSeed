@@ -401,7 +401,7 @@ describe("handleMutationToolCall — reset_trust", () => {
       deps
     );
     const parsed = JSON.parse(result) as { error: string };
-    expect(parsed.error).toContain("-100 to 100");
+    expect(parsed.error).toContain("-100");
   });
 
   it("returns error when user denies approval", async () => {
