@@ -3,7 +3,7 @@ import { z } from "zod";
 import { StateManager } from "../state/state-manager.js";
 import type { ILLMClient } from "../llm/llm-client.js";
 import type { IPromptGateway } from "../prompt/gateway.js";
-import type { Logger } from "../logger.js";
+import type { Logger } from "../runtime/logger.js";
 import { TaskSchema } from "../types/task.js";
 import type { Task } from "../types/task.js";
 import {
