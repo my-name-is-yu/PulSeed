@@ -6,7 +6,7 @@
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import yaml from "js-yaml";
-import { AgentProfileSchema, type AgentProfileWithPrompt } from "../types/agent-profile.js";
+import { AgentProfileSchema, type AgentProfileWithPrompt } from "../../types/agent-profile.js";
 
 // ─── AgentProfileLoader ───
 

@@ -1,15 +1,15 @@
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { z } from "zod";
-import type { ILLMClient } from "../llm/llm-client.js";
-import type { IEmbeddingClient } from "./embedding-client.js";
-import type { VectorIndex } from "./vector-index.js";
+import type { ILLMClient } from "../../llm/llm-client.js";
+import type { IEmbeddingClient } from "../embedding-client.js";
+import type { VectorIndex } from "../vector-index.js";
 import {
   ShortTermEntrySchema,
   LessonEntrySchema,
   RetentionConfigSchema,
   StatisticalSummarySchema,
-} from "../types/memory-lifecycle.js";
+} from "../../types/memory-lifecycle.js";
 import type {
   ShortTermEntry,
   LessonEntry,
@@ -18,10 +18,10 @@ import type {
   CompressionResult,
   RetentionConfig,
   MemoryDataType,
-} from "../types/memory-lifecycle.js";
-import type { IDriveScorer } from "./drive-score-adapter.js";
-export type { IDriveScorer } from "./drive-score-adapter.js";
-export { DriveScoreAdapter } from "./drive-score-adapter.js";
+} from "../../types/memory-lifecycle.js";
+import type { IDriveScorer } from "../drive-score-adapter.js";
+export type { IDriveScorer } from "../drive-score-adapter.js";
+export { DriveScoreAdapter } from "../drive-score-adapter.js";
 import {
   atomicWriteAsync,
   readJsonFileAsync,

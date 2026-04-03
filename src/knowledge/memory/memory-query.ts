@@ -1,7 +1,7 @@
 import * as path from "node:path";
 import { z } from "zod";
-import { LessonEntrySchema } from "../types/memory-lifecycle.js";
-import type { LessonEntry } from "../types/memory-lifecycle.js";
+import { LessonEntrySchema } from "../../types/memory-lifecycle.js";
+import type { LessonEntry } from "../../types/memory-lifecycle.js";
 import { readJsonFileAsync } from "./memory-persistence.js";
 
 // ─── Lesson query ───

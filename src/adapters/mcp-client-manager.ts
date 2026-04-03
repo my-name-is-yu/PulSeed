@@ -8,7 +8,7 @@ import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { MCPServersConfigSchema } from "../types/mcp.js";
 import type { MCPServerConfig, IMCPConnection } from "../types/mcp.js";
-import { MCPDataSourceAdapter } from "./mcp-datasource.js";
+import { MCPDataSourceAdapter } from "./datasources/mcp-datasource.js";
 
 const CONFIG_FILE = "mcp-servers.json";
 

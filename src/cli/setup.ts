@@ -11,9 +11,9 @@ import { StateManager } from "../state-manager.js";
 import type { DataSourceConfig } from "../types/data-source.js";
 import type { IDataSourceAdapter } from "../observation/data-source-adapter.js";
 import { FileDataSourceAdapter, HttpApiDataSourceAdapter } from "../observation/data-source-adapter.js";
-import { GitHubIssueDataSourceAdapter } from "../adapters/github-issue-datasource.js";
-import { FileExistenceDataSourceAdapter } from "../adapters/file-existence-datasource.js";
-import { ShellDataSourceAdapter } from "../adapters/shell-datasource.js";
+import { GitHubIssueDataSourceAdapter } from "../adapters/datasources/github-issue-datasource.js";
+import { FileExistenceDataSourceAdapter } from "../adapters/datasources/file-existence-datasource.js";
+import { ShellDataSourceAdapter } from "../adapters/datasources/shell-datasource.js";
 import { createWorkspaceContextProvider } from "../observation/workspace-context.js";
 import { buildLLMClient, buildAdapterRegistry } from "../llm/provider-factory.js";
 import { TrustManager } from "../traits/trust-manager.js";
@@ -34,7 +34,7 @@ import { GoalTreeManager } from "../goal/goal-tree-manager.js";
 import { StateAggregator } from "../goal/state-aggregator.js";
 import { GoalDependencyGraph } from "../goal/goal-dependency-graph.js";
 import { GoalRefiner } from "../goal/goal-refiner.js";
-import { MemoryLifecycleManager, DriveScoreAdapter } from "../knowledge/memory-lifecycle.js";
+import { MemoryLifecycleManager, DriveScoreAdapter } from "../knowledge/memory/memory-lifecycle.js";
 import { KnowledgeManager } from "../knowledge/knowledge-manager.js";
 import { VectorIndex } from "../knowledge/vector-index.js";
 import { OpenAIEmbeddingClient, MockEmbeddingClient } from "../knowledge/embedding-client.js";
@@ -85,7 +85,7 @@ export async function buildDeps(
         } else if (cfg.type === 'shell') {
           const adapter = new ShellDataSourceAdapter(
             cfg.id,
-            (cfg.connection.commands ?? {}) as Record<string, import("../adapters/shell-datasource.js").ShellCommandSpec>,
+            (cfg.connection.commands ?? {}) as Record<string, import("../adapters/datasources/shell-datasource.js").ShellCommandSpec>,
             cfg.connection?.path ?? process.cwd()
           );
           // Propagate scope_goal_id from datasource config for dimension matching

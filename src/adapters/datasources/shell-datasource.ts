@@ -16,14 +16,14 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import * as path from "node:path";
-import type { IDataSourceAdapter } from "../observation/data-source-adapter.js";
+import type { IDataSourceAdapter } from "../../observation/data-source-adapter.js";
 import type {
   DataSourceType,
   DataSourceConfig,
   DataSourceQuery,
   DataSourceResult,
-} from "../types/data-source.js";
-import type { Logger } from "../runtime/logger.js";
+} from "../../types/data-source.js";
+import type { Logger } from "../../runtime/logger.js";
 
 const execFileAsync = promisify(execFile);
 

@@ -4,13 +4,13 @@ import { z } from "zod";
 import {
   LessonEntrySchema,
   MemoryIndexSchema,
-} from "../types/memory-lifecycle.js";
+} from "../../types/memory-lifecycle.js";
 import type {
   ShortTermEntry,
   LessonEntry,
   MemoryIndex,
   MemoryIndexEntry,
-} from "../types/memory-lifecycle.js";
+} from "../../types/memory-lifecycle.js";
 import { atomicWriteAsync, readJsonFileAsync, generateId } from "./memory-persistence.js";
 
 // ─── Index management ───

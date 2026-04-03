@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { z } from "zod";
-import type { MemoryDataType, RetentionConfig } from "../types/memory-lifecycle.js";
+import type { MemoryDataType, RetentionConfig } from "../../types/memory-lifecycle.js";
 
 // ─── Data file path resolution ───
 

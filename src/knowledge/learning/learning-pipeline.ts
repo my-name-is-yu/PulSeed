@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import type { ILLMClient } from "../llm/llm-client.js";
-import { extractJSON } from "../llm/llm-client.js";
-import type { VectorIndex } from "./vector-index.js";
-import type { StateManager } from "../state-manager.js";
-import type { IPromptGateway } from "../prompt/gateway.js";
+import type { ILLMClient } from "../../llm/llm-client.js";
+import { extractJSON } from "../../llm/llm-client.js";
+import type { VectorIndex } from "../vector-index.js";
+import type { StateManager } from "../../state-manager.js";
+import type { IPromptGateway } from "../../prompt/gateway.js";
 import {
   LearningTriggerSchema,
   LearnedPatternSchema,
@@ -12,7 +12,7 @@ import {
   FeedbackTargetStepEnum,
   LearningPipelineConfigSchema,
   LearnedPatternTypeEnum,
-} from "../types/learning.js";
+} from "../../types/learning.js";
 import type {
   LearningTrigger,
   LearnedPattern,
@@ -25,8 +25,8 @@ import type {
   FeedbackAggregation,
   CrossGoalPattern,
   PatternSharingResult,
-} from "../types/learning.js";
-import type { StallReport } from "../types/stall.js";
+} from "../../types/learning.js";
+import type { StallReport } from "../../types/stall.js";
 import {
   getStructuralFeedback,
   recordStructuralFeedback,

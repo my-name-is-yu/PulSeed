@@ -9,11 +9,11 @@ import type {
   IAdapter,
   AgentTask,
   AgentResult,
-} from "../execution/adapter-layer.js";
+} from "../../execution/adapter-layer.js";
 import { A2AClient } from "./a2a-client.js";
 import type { A2AClientConfig } from "./a2a-client.js";
-import type { A2AAgentCard, A2ATask, A2AMessage } from "../types/a2a.js";
-import { A2A_TERMINAL_STATES } from "../types/a2a.js";
+import type { A2AAgentCard, A2ATask, A2AMessage } from "../../types/a2a.js";
+import { A2A_TERMINAL_STATES } from "../../types/a2a.js";
 
 // ─── Config ───
 

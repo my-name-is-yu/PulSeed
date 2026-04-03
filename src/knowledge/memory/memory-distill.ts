@@ -1,7 +1,7 @@
 import { z } from "zod";
-import type { ILLMClient } from "../llm/llm-client.js";
-import type { IPromptGateway } from "../prompt/gateway.js";
-import type { ShortTermEntry, LessonEntry } from "../types/memory-lifecycle.js";
+import type { ILLMClient } from "../../llm/llm-client.js";
+import type { IPromptGateway } from "../../prompt/gateway.js";
+import type { ShortTermEntry, LessonEntry } from "../../types/memory-lifecycle.js";
 
 // ─── LLM response schemas ───
 

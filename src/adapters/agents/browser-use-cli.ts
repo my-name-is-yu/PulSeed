@@ -12,8 +12,8 @@
 // The CLI takes a natural language task, controls a browser with AI,
 // and returns the result (JSON when --json is used).
 
-import type { IAdapter, AgentTask, AgentResult } from "../execution/adapter-layer.js";
-import { spawnWithTimeout } from "./spawn-helper.js";
+import type { IAdapter, AgentTask, AgentResult } from "../../execution/adapter-layer.js";
+import { spawnWithTimeout } from "../spawn-helper.js";
 
 export interface BrowserUseCLIAdapterConfig {
   /** The executable name / path for the browser-use CLI. Default: "browser-use" */

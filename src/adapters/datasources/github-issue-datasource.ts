@@ -13,13 +13,13 @@
 //   dimension_mapping — optional map; key "_label" overrides the default label filter
 
 import { spawn } from "node:child_process";
-import type { IDataSourceAdapter } from "../observation/data-source-adapter.js";
+import type { IDataSourceAdapter } from "../../observation/data-source-adapter.js";
 import type {
   DataSourceType,
   DataSourceConfig,
   DataSourceQuery,
   DataSourceResult,
-} from "../types/data-source.js";
+} from "../../types/data-source.js";
 
 // ─── Extended DataSourceResult to include optional error ───
 

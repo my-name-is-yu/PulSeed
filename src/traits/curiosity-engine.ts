@@ -4,7 +4,7 @@ import type { EthicsGate } from "./ethics-gate.js";
 import type { StallDetector } from "../drive/stall-detector.js";
 import type { DriveSystem } from "../drive/drive-system.js";
 import type { VectorIndex } from "../knowledge/vector-index.js";
-import type { KnowledgeTransfer } from "../knowledge/knowledge-transfer.js";
+import type { KnowledgeTransfer } from "../knowledge/transfer/knowledge-transfer.js";
 import type { TransferCandidate } from "../types/cross-portfolio.js";
 import type { Goal } from "../types/goal.js";
 import {

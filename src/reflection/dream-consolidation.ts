@@ -2,7 +2,7 @@ import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { writeJsonFileAtomic } from "../utils/json-io.js";
 import type { StateManager } from "../state-manager.js";
-import type { MemoryLifecycleManager } from "../knowledge/memory-lifecycle.js";
+import type { MemoryLifecycleManager } from "../knowledge/memory/memory-lifecycle.js";
 import type { KnowledgeManager } from "../knowledge/knowledge-manager.js";
 import type { ConsolidationReport } from "./types.js";
 import { ConsolidationReportSchema } from "./types.js";

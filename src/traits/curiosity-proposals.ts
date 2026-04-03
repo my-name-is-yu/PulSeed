@@ -5,7 +5,7 @@ import type { IPromptGateway } from "../prompt/gateway.js";
 import type { EthicsGate } from "./ethics-gate.js";
 import type { Logger } from "../runtime/logger.js";
 import type { VectorIndex } from "../knowledge/vector-index.js";
-import type { KnowledgeTransfer } from "../knowledge/knowledge-transfer.js";
+import type { KnowledgeTransfer } from "../knowledge/transfer/knowledge-transfer.js";
 import {
   CuriosityTriggerSchema,
   CuriosityProposalSchema,

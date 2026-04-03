@@ -1,6 +1,6 @@
 import { z } from "zod";
-import { LearnedPatternTypeEnum } from "../types/learning.js";
-import type { LearningTrigger } from "../types/learning.js";
+import { LearnedPatternTypeEnum } from "../../types/learning.js";
+import type { LearningTrigger } from "../../types/learning.js";
 
 // ─── LLM Response Schemas ───
 

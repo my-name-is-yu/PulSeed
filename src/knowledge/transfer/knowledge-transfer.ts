@@ -1,16 +1,16 @@
-import type { ILLMClient } from "../llm/llm-client.js";
-import type { IPromptGateway } from "../prompt/gateway.js";
-import type { KnowledgeManager } from "./knowledge-manager.js";
-import type { VectorIndex } from "./vector-index.js";
-import type { LearningPipeline } from "./learning-pipeline.js";
-import type { EthicsGate } from "../traits/ethics-gate.js";
-import type { StateManager } from "../state-manager.js";
+import type { ILLMClient } from "../../llm/llm-client.js";
+import type { IPromptGateway } from "../../prompt/gateway.js";
+import type { KnowledgeManager } from "../knowledge-manager.js";
+import type { VectorIndex } from "../vector-index.js";
+import type { LearningPipeline } from "../learning/learning-pipeline.js";
+import type { EthicsGate } from "../../traits/ethics-gate.js";
+import type { StateManager } from "../../state-manager.js";
 import type {
   TransferCandidate,
   TransferResult,
   TransferEffectivenessRecord,
-} from "../types/cross-portfolio.js";
-import type { CrossGoalPattern, StructuralFeedbackType } from "../types/learning.js";
+} from "../../types/cross-portfolio.js";
+import type { CrossGoalPattern, StructuralFeedbackType } from "../../types/learning.js";
 import { TransferTrustManager } from "./transfer-trust.js";
 import type { TransferContext, PatternEffectivenessTracker } from "./knowledge-transfer-types.js";
 

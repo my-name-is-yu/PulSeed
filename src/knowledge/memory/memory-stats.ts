@@ -1,9 +1,9 @@
 import * as path from "node:path";
-import { StatisticalSummarySchema } from "../types/memory-lifecycle.js";
+import { StatisticalSummarySchema } from "../../types/memory-lifecycle.js";
 import type {
   ShortTermEntry,
   StatisticalSummary,
-} from "../types/memory-lifecycle.js";
+} from "../../types/memory-lifecycle.js";
 import { atomicWriteAsync, readJsonFileAsync } from "./memory-persistence.js";
 
 // ─── Statistics ───

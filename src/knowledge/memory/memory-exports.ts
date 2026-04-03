@@ -7,7 +7,7 @@ export type {
   CompressionResult,
   RetentionConfig,
   MemoryDataType,
-} from "../types/memory-lifecycle.js";
+} from "../../types/memory-lifecycle.js";
 
 export {
   extractPatterns,

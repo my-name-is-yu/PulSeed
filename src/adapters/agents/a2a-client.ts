@@ -10,13 +10,13 @@ import type {
   A2ATaskState,
   A2AMessage,
   A2AJsonRpcResponse,
-} from "../types/a2a.js";
+} from "../../types/a2a.js";
 import {
   A2AAgentCardSchema,
   A2ATaskSchema,
   A2AJsonRpcResponseSchema,
   A2A_TERMINAL_STATES,
-} from "../types/a2a.js";
+} from "../../types/a2a.js";
 
 // ─── Config ───
 

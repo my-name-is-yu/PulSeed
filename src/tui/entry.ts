@@ -30,7 +30,7 @@ import { GoalTreeManager } from "../goal/goal-tree-manager.js";
 import { StateAggregator } from "../goal/state-aggregator.js";
 import { GoalDependencyGraph } from "../goal/goal-dependency-graph.js";
 import { TreeLoopOrchestrator } from "../goal/tree-loop-orchestrator.js";
-import { MemoryLifecycleManager, DriveScoreAdapter } from "../knowledge/memory-lifecycle.js";
+import { MemoryLifecycleManager, DriveScoreAdapter } from "../knowledge/memory/memory-lifecycle.js";
 import { CharacterConfigManager } from "../traits/character-config.js";
 import { getPulseedDirPath } from "../utils/paths.js";
 import * as GapCalculator from "../drive/gap-calculator.js";

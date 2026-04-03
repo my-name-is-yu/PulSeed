@@ -6,7 +6,7 @@
 
 import { spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
-import type { IAdapter, AgentTask, AgentResult } from "../execution/adapter-layer.js";
+import type { IAdapter, AgentTask, AgentResult } from "../../execution/adapter-layer.js";
 
 // ─── ACP types ───
 

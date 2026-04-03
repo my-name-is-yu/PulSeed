@@ -13,13 +13,13 @@
 
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
-import type { IDataSourceAdapter } from "../observation/data-source-adapter.js";
+import type { IDataSourceAdapter } from "../../observation/data-source-adapter.js";
 import type {
   DataSourceType,
   DataSourceConfig,
   DataSourceQuery,
   DataSourceResult,
-} from "../types/data-source.js";
+} from "../../types/data-source.js";
 
 export class FileExistenceDataSourceAdapter implements IDataSourceAdapter {
   readonly sourceType: DataSourceType = "file_existence";

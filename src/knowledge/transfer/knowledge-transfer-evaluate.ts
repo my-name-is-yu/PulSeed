@@ -1,11 +1,11 @@
-import type { StateManager } from "../state-manager.js";
-import { TransferCandidateSchema, TransferEffectivenessSchema } from "../types/cross-portfolio.js";
+import type { StateManager } from "../../state-manager.js";
+import { TransferCandidateSchema, TransferEffectivenessSchema } from "../../types/cross-portfolio.js";
 import type {
   TransferCandidate,
   TransferResult,
   TransferEffectivenessRecord,
   TransferEffectiveness,
-} from "../types/cross-portfolio.js";
+} from "../../types/cross-portfolio.js";
 import type { TransferTrustManager } from "./transfer-trust.js";
 import type { TransferContext, PatternEffectivenessTracker } from "./knowledge-transfer-types.js";
 import { estimateCurrentGap } from "./knowledge-transfer-types.js";

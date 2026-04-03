@@ -11,8 +11,8 @@
 //   --dangerously-skip-permissions — bypasses all permission checks (use in sandboxes only)
 // If the CLI signature changes, update the spawnArgs array below.
 
-import type { IAdapter, AgentTask, AgentResult } from "../execution/adapter-layer.js";
-import { spawnWithTimeout, spawnResultToAgentResult } from "./spawn-helper.js";
+import type { IAdapter, AgentTask, AgentResult } from "../../execution/adapter-layer.js";
+import { spawnWithTimeout, spawnResultToAgentResult } from "../spawn-helper.js";
 
 export class ClaudeCodeCLIAdapter implements IAdapter {
   readonly adapterType = "claude_code_cli";

@@ -42,13 +42,13 @@ export { StrategyManager } from "./strategy/strategy-manager.js";
 export { GoalNegotiator, EthicsRejectedError } from "./goal/goal-negotiator.js";
 export { AdapterRegistry } from "./execution/adapter-layer.js";
 export type { IAdapter, AgentTask, AgentResult } from "./execution/adapter-layer.js";
-export { ClaudeCodeCLIAdapter } from "./adapters/claude-code-cli.js";
-export { ClaudeAPIAdapter } from "./adapters/claude-api.js";
-export { OpenAICodexCLIAdapter } from "./adapters/openai-codex.js";
-export type { OpenAICodexCLIAdapterConfig } from "./adapters/openai-codex.js";
+export { ClaudeCodeCLIAdapter } from "./adapters/agents/claude-code-cli.js";
+export { ClaudeAPIAdapter } from "./adapters/agents/claude-api.js";
+export { OpenAICodexCLIAdapter } from "./adapters/agents/openai-codex.js";
+export type { OpenAICodexCLIAdapterConfig } from "./adapters/agents/openai-codex.js";
 export { GitHubIssueAdapter } from "./adapters/github-issue.js";
 export type { GitHubIssueAdapterConfig } from "./adapters/github-issue.js";
-export { GitHubIssueDataSourceAdapter } from "./adapters/github-issue-datasource.js";
+export { GitHubIssueDataSourceAdapter } from "./adapters/datasources/github-issue-datasource.js";
 export { buildLLMClient, buildAdapterRegistry } from "./llm/provider-factory.js";
 export { CodexLLMClient } from "./llm/codex-llm-client.js";
 export type { CodexLLMClientConfig } from "./llm/codex-llm-client.js";
@@ -78,7 +78,7 @@ export { EventServer } from "./runtime/event-server.js";
 export type { EventServerConfig } from "./runtime/event-server.js";
 export { NotificationDispatcher } from "./runtime/notification-dispatcher.js";
 export type { INotificationDispatcher } from "./runtime/notification-dispatcher.js";
-export { MemoryLifecycleManager } from "./knowledge/memory-lifecycle.js";
+export { MemoryLifecycleManager } from "./knowledge/memory/memory-lifecycle.js";
 export { CharacterConfigManager } from "./traits/character-config.js";
 export { CharacterConfigSchema, DEFAULT_CHARACTER_CONFIG } from "./types/character.js";
 export type { CharacterConfig } from "./types/character.js";
@@ -120,14 +120,14 @@ export { StateAggregator, type AggregatedState } from "./goal/state-aggregator.j
 export { TreeLoopOrchestrator } from "./goal/tree-loop-orchestrator.js";
 export { CrossGoalPortfolio } from "./strategy/cross-goal-portfolio.js";
 export { StrategyTemplateRegistry } from "./strategy/strategy-template-registry.js";
-export { LearningPipeline } from "./knowledge/learning-pipeline.js";
-export { KnowledgeTransfer } from "./knowledge/knowledge-transfer.js";
+export { LearningPipeline } from "./knowledge/learning/learning-pipeline.js";
+export { KnowledgeTransfer } from "./knowledge/transfer/knowledge-transfer.js";
 
 // --- A2A Protocol adapter ---
-export { A2AAdapter } from "./adapters/a2a-adapter.js";
-export type { A2AAdapterConfig } from "./adapters/a2a-adapter.js";
-export { A2AClient } from "./adapters/a2a-client.js";
-export type { A2AClientConfig } from "./adapters/a2a-client.js";
+export { A2AAdapter } from "./adapters/agents/a2a-adapter.js";
+export type { A2AAdapterConfig } from "./adapters/agents/a2a-adapter.js";
+export { A2AClient } from "./adapters/agents/a2a-client.js";
+export type { A2AClientConfig } from "./adapters/agents/a2a-client.js";
 export {
   A2AAgentCardSchema,
   A2ATaskSchema,
