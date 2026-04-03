@@ -1,5 +1,5 @@
 import type { ZodSchema } from "zod";
-import type { ILLMClient, LLMMessage, LLMRequestOptions, LLMResponse } from "../../src/llm/llm-client.js";
+import type { ILLMClient, LLMMessage, LLMRequestOptions, LLMResponse } from "../../src/base/llm/llm-client.js";
 declare class MockLLMClient implements ILLMClient {
     private readonly responses;
     private _callCount;
