@@ -7,5 +7,12 @@ export function makeTempDir(prefix = "pulseed-test-"): string {
 }
 
 export function cleanupTempDir(dir: string): void {
-  fs.rmSync(dir, { recursive: true, force: true });
+  for (let i = 0; i < 3; i++) {
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+      return;
+    } catch (e: unknown) {
+      if (i === 2 || (e as NodeJS.ErrnoException).code !== "ENOTEMPTY") throw e;
+    }
+  }
 }
