@@ -14,6 +14,10 @@ import { buildSystemPrompt } from "./grounding.js";
 import { verifyChatAction } from "./chat-verifier.js";
 import { getSelfKnowledgeToolDefinitions, handleSelfKnowledgeToolCall } from "./self-knowledge-tools.js";
 import type { SelfKnowledgeDeps } from "./self-knowledge-tools.js";
+import { getMutationToolDefinitions, handleMutationToolCall } from "./self-knowledge-mutation-tools.js";
+import type { MutationToolDeps, ApprovalLevel } from "./self-knowledge-mutation-tools.js";
+import type { TrustManager } from "../traits/trust-manager.js";
+import type { PluginLoader } from "../runtime/plugin-loader.js";
 import type { LLMMessage, LLMResponse } from "../llm/llm-client.js";
 
 // ─── Types ───
@@ -25,10 +29,14 @@ export interface ChatRunnerDeps {
   llmClient?: ILLMClient;
   /** Optional: escalation handler for /track command (Phase 1c). */
   escalationHandler?: EscalationHandler;
-  /** Optional: trust manager for self-knowledge tools. */
-  trustManager?: { getBalance(domain: string): Promise<{ balance: number }> };
-  /** Optional: plugin loader for self-knowledge tools. */
-  pluginLoader?: { loadAll(): Promise<Array<{ name: string; type?: string; enabled?: boolean }>> };
+  /** Optional: trust manager for self-knowledge tools and mutations. */
+  trustManager?: TrustManager | { getBalance(domain: string): Promise<{ balance: number }> };
+  /** Optional: plugin loader for self-knowledge tools and mutations. */
+  pluginLoader?: PluginLoader | { loadAll(): Promise<Array<{ name: string; type?: string; enabled?: boolean }>> };
+  /** Optional: approval handler for mutation tools. */
+  approvalFn?: (description: string) => Promise<boolean>;
+  /** Optional: per-tool approval level overrides. */
+  approvalConfig?: Record<string, ApprovalLevel>;
 }
 
 export interface ChatRunResult {
@@ -39,7 +47,7 @@ export interface ChatRunResult {
 
 const DEFAULT_TIMEOUT_MS = 120_000;
 const MAX_VERIFY_RETRIES = 2;
-const MAX_TOOL_LOOPS = 3;
+const MAX_TOOL_LOOPS = 5;
 
 // ─── Command help text ───
 
@@ -265,9 +273,14 @@ export class ChatRunner {
    */
   private async executeWithTools(prompt: string, systemPrompt?: string): Promise<string> {
     const llmClient = this.deps.llmClient!;
-    const tools = getSelfKnowledgeToolDefinitions();
+    const tools = [...getSelfKnowledgeToolDefinitions(), ...getMutationToolDefinitions()];
     const skDeps = this.buildSelfKnowledgeDeps();
+    const mutDeps = this.buildMutationToolDeps();
     const messages: LLMMessage[] = [{ role: "user", content: prompt }];
+    const mutationToolNames = new Set([
+      "set_goal", "update_goal", "archive_goal", "delete_goal",
+      "toggle_plugin", "update_config", "reset_trust",
+    ]);
 
     for (let loop = 0; loop < MAX_TOOL_LOOPS; loop++) {
       let response: LLMResponse;
@@ -295,7 +308,9 @@ export class ChatRunner {
         } catch {
           // ignore parse errors, use empty args
         }
-        const toolResult = await handleSelfKnowledgeToolCall(tc.function.name, args, skDeps);
+        const toolResult = mutationToolNames.has(tc.function.name)
+          ? await handleMutationToolCall(tc.function.name, args, mutDeps)
+          : await handleSelfKnowledgeToolCall(tc.function.name, args, skDeps);
         messages.push({ role: "user", content: `Tool result for ${tc.function.name}:\n${toolResult}` });
       }
     }
@@ -310,8 +325,23 @@ export class ChatRunner {
     return {
       stateManager: this.deps.stateManager,
       trustManager: this.deps.trustManager,
-      pluginLoader: this.deps.pluginLoader,
+      pluginLoader: this.deps.pluginLoader as SelfKnowledgeDeps["pluginLoader"],
       homeDir: process.env.HOME ?? process.env.USERPROFILE ?? "/tmp",
+    };
+  }
+
+  /** Build MutationToolDeps from ChatRunnerDeps. */
+  private buildMutationToolDeps(): MutationToolDeps {
+    const tm = this.deps.trustManager;
+    const pl = this.deps.pluginLoader;
+    return {
+      stateManager: this.deps.stateManager,
+      trustManager: tm && "setOverride" in tm ? (tm as TrustManager) : undefined,
+      pluginLoader: pl && "getPluginState" in pl && "updatePluginState" in pl
+        ? (pl as PluginLoader)
+        : undefined,
+      approvalFn: this.deps.approvalFn,
+      approvalConfig: this.deps.approvalConfig,
     };
   }
 }

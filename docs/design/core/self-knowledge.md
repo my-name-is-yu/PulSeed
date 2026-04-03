@@ -32,7 +32,7 @@ Four approaches were evaluated. Tool use was selected for its simplicity and tok
 
 ## 3. Tool Definitions
 
-Six tools cover the full range of self-knowledge queries. Each tool maps to a specific data source within PulSeed.
+Phase 1 provides six read-only self-knowledge tools. Phase 2 adds seven write/mutation tools (see Phase 2 section below). Each tool maps to a specific data source within PulSeed.
 
 ### 3.1 get_goals
 
@@ -246,3 +246,60 @@ The tool definitions add a small fixed cost per turn. This is comparable to a si
 **No caching**: Self-knowledge queries read live state. Caching would add complexity and risk stale data. The queries are cheap (in-memory reads or single file reads), so caching is unnecessary.
 
 **Error handling**: If a data source is unavailable (e.g., StateManager not initialized), the handler returns a human-readable error string rather than throwing. The LLM can then tell the user "that information is not available right now" instead of crashing the chat.
+
+---
+
+## Phase 2: Mutation Tools
+
+Phase 2 adds 7 write/mutation tools that allow the LLM to modify PulSeed state on behalf of the user.
+
+### Tool Summary
+
+| Tool | Operation | Default Approval | Calls |
+|------|-----------|-----------------|-------|
+| `set_goal` | Create new goal | `none` | `StateManager.saveGoal()` |
+| `update_goal` | Update existing goal fields | `none` | `StateManager.saveGoal()` |
+| `archive_goal` | Archive a goal | `required` | `StateManager.archiveGoal()` |
+| `delete_goal` | Delete a goal permanently | `required` | `StateManager.deleteGoal()` |
+| `toggle_plugin` | Enable/disable a plugin | `required` | `PluginLoader.getPluginState()` + `updatePluginState()` |
+| `update_config` | Update provider config | `required` | `saveProviderConfig()` |
+| `reset_trust` | Override trust balance | `required` | `TrustManager.setOverride()` |
+
+### Approval Flow
+
+Each mutation tool has a default approval level: `"none"` or `"required"`.
+
+- `"none"`: The operation proceeds immediately without user confirmation.
+- `"required"`: The operation calls `approvalFn(description)` before executing. If `approvalFn` returns `false`, the tool returns `{ error: "User denied the operation" }`. If no `approvalFn` is configured, it returns `{ error: "This operation requires approval but no approval handler is configured" }`.
+
+### Config Override
+
+Users can override the default approval level per tool via `approvalConfig` in `ChatRunnerDeps`:
+
+```typescript
+approvalConfig: {
+  set_goal: "required",   // Elevate read-only default to require approval
+  delete_goal: "none",    // Remove requirement (use with caution)
+}
+```
+
+The effective level resolves as: `approvalConfig?.[toolName] ?? DEFAULT_APPROVAL[toolName]`.
+
+### Implementation
+
+- **New file**: `src/chat/self-knowledge-mutation-tools.ts` — Tool definitions, handlers, dispatcher
+- **Changed file**: `src/chat/chat-runner.ts` — Imports mutation tools, merges tool arrays, dispatches mutation calls, adds `trustManager`, `pluginLoader`, `approvalFn`, `approvalConfig` to `ChatRunnerDeps`
+
+### MutationToolDeps Interface
+
+```typescript
+interface MutationToolDeps {
+  stateManager: StateManager;
+  trustManager?: TrustManager;
+  pluginLoader?: PluginLoader;
+  approvalFn?: (description: string) => Promise<boolean>;
+  approvalConfig?: Record<string, ApprovalLevel>;
+}
+```
+
+All deps except `stateManager` are optional. When a required dep is missing (e.g., `trustManager` for `reset_trust`), the handler returns a descriptive error.
