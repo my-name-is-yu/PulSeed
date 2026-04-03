@@ -87,11 +87,9 @@ export async function runLLMReview(
       (c, i) =>
         `${i + 1}. ${c.description} (blocking: ${c.is_blocking}, method: ${c.verification_method})`
     )
-    .join("
-");
+    .join("\n");
 
-  const enrichmentBlocks = [knowledgeBlock, stateBlock].filter(Boolean).join("
-");
+  const enrichmentBlocks = [knowledgeBlock, stateBlock].filter(Boolean).join("\n");
 
   const prompt = `Evaluate task execution against success criteria.
 
@@ -100,9 +98,7 @@ Approach: ${task.approach}
 
 Criteria:
 ${criteriaList}
-${enrichmentBlocks ? `
-${enrichmentBlocks}
-` : ""}
+${enrichmentBlocks ? `\n${enrichmentBlocks}\n` : ""}
 Output (first 2000 chars):
 ${executionResult.output.slice(0, 2000)}
 
@@ -189,8 +185,7 @@ Return JSON:
   }
 
   try {
-    const rawJson = response.content.replace(/```json
-?/g, "").replace(/```/g, "").trim();
+    const rawJson = response.content.replace(/```json\n?/g, "").replace(/```/g, "").trim();
     const parseResult = CompletionJudgerResponseSchema.safeParse(JSON.parse(rawJson));
     if (!parseResult.success) {
       deps.logger?.warn(`[completion_judger] Zod parse failed for task ${task.id}: ${parseResult.error.message}`);
