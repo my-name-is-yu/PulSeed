@@ -1,5 +1,4 @@
 import * as fsp from "node:fs/promises";
-import type { Stats } from "node:fs";
 import * as path from "node:path";
 import { CoreLoop } from "../loop/core-loop.js";
 import { writeJsonFileAtomic, readJsonFileOrNull } from "../utils/json-io.js";
@@ -15,6 +14,12 @@ import { DaemonConfigSchema, DaemonStateSchema } from "../types/daemon.js";
 import type { ILLMClient } from "../llm/llm-client.js";
 import { CronScheduler } from "./cron-scheduler.js";
 import { z } from "zod";
+import { generateCronEntry } from "./daemon-signals.js";
+import { rotateDaemonLog, calculateAdaptiveInterval as calcAdaptiveInterval } from "./daemon-health.js";
+
+// Re-exports for callers that imported these from daemon-runner
+export { generateCronEntry } from "./daemon-signals.js";
+export { rotateDaemonLog, calculateAdaptiveInterval } from "./daemon-health.js";
 
 // ─── ShutdownMarker ───
 //
@@ -68,6 +73,8 @@ export class DaemonRunner {
   private shuttingDown = false;
   private state: DaemonState;
   private baseDir: string;
+  private logDir: string;
+  private logPath: string;
   private shutdownHandler: (() => void) | null = null;
   private eventServer: EventServer | undefined;
   private sleepAbortController: AbortController | null = null;
@@ -94,6 +101,10 @@ export class DaemonRunner {
 
     // Resolve base directory from stateManager
     this.baseDir = this.stateManager.getBaseDir();
+
+    // Pre-compute log paths used by rotateLog
+    this.logDir = path.join(this.baseDir, this.config.log_dir);
+    this.logPath = path.join(this.logDir, "pulseed.log");
 
     // Initialize daemon state
     this.state = DaemonStateSchema.parse({
@@ -687,8 +698,9 @@ export class DaemonRunner {
   }
 
   /**
-   * Calculate the adaptive sleep interval based on time-of-day, urgency, and activity.
-   * Returns baseInterval unchanged if adaptive_sleep is disabled.
+   * Thin wrapper delegating to the standalone calculateAdaptiveInterval function.
+   * Passes this.config.adaptive_sleep as the config parameter.
+   * Kept as a class method so tests can call daemon.calculateAdaptiveInterval(...).
    */
   calculateAdaptiveInterval(
     baseInterval: number,
@@ -696,45 +708,13 @@ export class DaemonRunner {
     maxGapScore: number,
     consecutiveIdleCycles: number
   ): number {
-    const cfg = this.config.adaptive_sleep;
-    if (!cfg.enabled) return baseInterval;
-
-    // 1. Time-of-day factor
-    const hour = new Date().getHours();
-    const { night_start_hour, night_end_hour, night_multiplier } = cfg;
-    let timeOfDayFactor: number;
-    if (night_start_hour > night_end_hour) {
-      // Spans midnight: night is [night_start_hour, 24) ∪ [0, night_end_hour)
-      timeOfDayFactor = (hour >= night_start_hour || hour < night_end_hour) ? night_multiplier : 1.0;
-    } else {
-      // Same-day range
-      timeOfDayFactor = (hour >= night_start_hour && hour < night_end_hour) ? night_multiplier : 1.0;
-    }
-
-    // 2. Urgency factor
-    let urgencyFactor: number;
-    if (maxGapScore >= 0.8) {
-      urgencyFactor = 0.5;
-    } else if (maxGapScore >= 0.5) {
-      urgencyFactor = 0.75;
-    } else {
-      urgencyFactor = 1.0;
-    }
-
-    // 3. Activity factor
-    let activityFactor: number;
-    if (goalsActivatedThisCycle > 0) {
-      activityFactor = 0.75;
-    } else if (consecutiveIdleCycles >= 5) {
-      activityFactor = 1.5;
-    } else {
-      activityFactor = 1.0;
-    }
-
-    // 4. Apply factors and clamp
-    const effective = baseInterval * timeOfDayFactor * urgencyFactor * activityFactor;
-    const clamped = Math.max(cfg.min_interval_ms, Math.min(cfg.max_interval_ms, effective));
-    return Math.round(clamped);
+    return calcAdaptiveInterval(
+      baseInterval,
+      goalsActivatedThisCycle,
+      maxGapScore,
+      consecutiveIdleCycles,
+      this.config.adaptive_sleep
+    );
   }
 
   // ─── Private: Shutdown Marker ───
@@ -804,98 +784,26 @@ export class DaemonRunner {
     await this.deleteShutdownMarker();
   }
 
-  // ─── Private: Log Rotation ───
+  // ─── Log Rotation (delegates to daemon-health) ───
 
   /**
    * Rotate the main log file if it exceeds the configured size limit.
-   * Renames pulseed.log to pulseed.<timestamp>.log and keeps at most maxFiles rotated files.
+   * Delegates to rotateDaemonLog() with explicit config params.
    * Called at daemon startup.
    */
   async rotateLog(): Promise<void> {
-    const logDir = path.join(this.baseDir, this.config.log_dir);
-    const logPath = path.join(logDir, "pulseed.log");
     const maxSizeBytes = this.config.log_rotation.max_size_mb * 1024 * 1024;
     const maxFiles = this.config.log_rotation.max_files;
-
-    try {
-      // Check if log file exists and exceeds size limit
-      let stat: Stats;
-      try {
-        stat = await fsp.stat(logPath);
-      } catch {
-        // File doesn't exist — nothing to rotate
-        return;
-      }
-
-      if (stat.size < maxSizeBytes) return;
-
-      // Rotate: rename current log with timestamp suffix
-      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-      const rotatedName = `pulseed.${timestamp}.log`;
-      const rotatedPath = path.join(logDir, rotatedName);
-      await fsp.rename(logPath, rotatedPath);
-
-      this.logger.info("Log file rotated", {
-        rotated_to: rotatedName,
-        size_bytes: stat.size,
-      });
-
-      // Prune old rotated files: keep only the most recent maxFiles
-      await this.pruneRotatedLogs(logDir, maxFiles);
-    } catch {
-      // Non-fatal — rotation failures should not prevent daemon startup
-    }
+    await rotateDaemonLog(this.logPath, this.logDir, maxSizeBytes, maxFiles, this.logger);
   }
 
-  /**
-   * Remove oldest rotated log files, keeping at most maxFiles.
-   */
-  private async pruneRotatedLogs(logDir: string, maxFiles: number): Promise<void> {
-    try {
-      const entries = await fsp.readdir(logDir);
-      // Rotated files match: pulseed.<timestamp>.log (not pulseed.log itself)
-      const rotated = entries
-        .filter((f) => /^pulseed\..+\.log$/.test(f) && f !== "pulseed.log")
-        .sort(); // ISO timestamps sort lexicographically = chronologically
-
-      // Remove oldest files beyond maxFiles
-      const excess = rotated.length - maxFiles;
-      if (excess <= 0) return;
-
-      for (let i = 0; i < excess; i++) {
-        await fsp.unlink(path.join(logDir, rotated[i]!));
-      }
-    } catch {
-      // Non-fatal
-    }
-  }
-
-  // ─── Static Utilities ───
+  // ─── Static Utilities (delegates to daemon-signals) ───
 
   /**
    * Generate a crontab entry that runs `pulseed run --goal <goalId>` on a schedule.
-   *
-   * Rules:
-   *   intervalMinutes <= 0 → treated as 60
-   *   intervalMinutes < 60 → every N minutes:   *\/N * * * *
-   *   intervalMinutes < 1440 (1 day) → every N hours: 0 *\/N * * *
-   *   intervalMinutes >= 1440 → once per day:   0 0 * * *
+   * Delegates to the standalone generateCronEntry() function in daemon-signals.ts.
    */
   static generateCronEntry(goalId: string, intervalMinutes: number = 60): string {
-    if (!/^[a-zA-Z0-9_-]+$/.test(goalId)) {
-      throw new Error(`Invalid goalId for cron entry: "${goalId}" (only alphanumeric, underscore, hyphen allowed)`);
-    }
-    if (intervalMinutes <= 0) intervalMinutes = 60;
-
-    if (intervalMinutes < 60) {
-      return `*/${intervalMinutes} * * * * /usr/bin/env pulseed run --goal ${goalId}`;
-    }
-
-    const hours = Math.floor(intervalMinutes / 60);
-    if (hours < 24) {
-      return `0 */${hours} * * * /usr/bin/env pulseed run --goal ${goalId}`;
-    }
-
-    return `0 0 * * * /usr/bin/env pulseed run --goal ${goalId}`;
+    return generateCronEntry(goalId, intervalMinutes);
   }
 }
