@@ -20,6 +20,10 @@ import {
   getCurrentGapForDimension as _getCurrentGapForDimension,
   calculateGapDeltaForStrategy as _calculateGapDeltaForStrategy,
 } from "./portfolio-rebalance.js";
+import {
+  isWaitStrategy,
+  checkStrategyTermination,
+} from "./portfolio-allocation.js";
 
 /**
  * PortfolioManager provides portfolio-level orchestration on top of StrategyManager.
@@ -326,51 +330,13 @@ export class PortfolioManager {
     strategy: Strategy,
     records: EffectivenessRecord[]
   ): boolean {
-    if (strategy.consecutive_stall_count >= this.config.termination_stall_count) {
-      return true;
-    }
-
-    const sessionsConsumed = strategy.tasks_generated.length;
-    const estimatedSessions = strategy.resource_estimate.sessions;
-    if (
-      estimatedSessions > 0 &&
-      sessionsConsumed >
-        estimatedSessions * this.config.termination_resource_multiplier
-    ) {
-      return true;
-    }
-
-    if (strategy.allocation <= this.config.min_allocation) {
-      const record = records.find((r) => r.strategy_id === strategy.id);
-      if (record?.effectiveness_score !== null && record !== undefined) {
-        const otherScores = records
-          .filter(
-            (r) =>
-              r.strategy_id !== strategy.id &&
-              r.effectiveness_score !== null
-          )
-          .map((r) => r.effectiveness_score!);
-
-        if (otherScores.length > 0) {
-          const isLowest = otherScores.every(
-            (s) => s >= record.effectiveness_score!
-          );
-          if (isLowest) {
-            const history = this.rebalanceHistory.get(strategy.goal_id) ?? [];
-            const recentCount = countConsecutiveLowestRebalances(
-              strategy.id,
-              history,
-              this.config.min_allocation
-            );
-            if (recentCount >= this.config.termination_min_rebalances) {
-              return true;
-            }
-          }
-        }
-      }
-    }
-
-    return false;
+    return checkStrategyTermination(
+      strategy,
+      records,
+      this.config,
+      this.rebalanceHistory,
+      countConsecutiveLowestRebalances
+    );
   }
 
   /**
@@ -398,12 +364,7 @@ export class PortfolioManager {
    * Check if a strategy is a WaitStrategy (has wait-specific fields).
    */
   isWaitStrategy(strategy: Strategy): boolean {
-    const waitFields = strategy as Record<string, unknown>;
-    return (
-      typeof waitFields["wait_reason"] === "string" &&
-      typeof waitFields["wait_until"] === "string" &&
-      typeof waitFields["measurement_plan"] === "string"
-    );
+    return isWaitStrategy(strategy as Record<string, unknown>);
   }
 
   /**
