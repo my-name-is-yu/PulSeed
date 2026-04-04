@@ -5,7 +5,7 @@ import {
   computeRawGap,
   normalizeGap,
 } from "../../src/platform/drive/gap-calculator.js";
-import { formatOperationError } from "../../src/cli/utils.js";
+import { formatOperationError } from "../../src/interface/cli/utils.js";
 import {
   buildThreshold,
   deduplicateDimensionKeys,
