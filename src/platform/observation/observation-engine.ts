@@ -33,6 +33,12 @@ import {
 } from "./observation-apply.js";
 import { findDataSourceForDimension as findDataSourceForDimensionFn } from "./observation-datasource.js";
 
+import type { ToolExecutor } from "../../tools/executor.js";
+import type { ToolCallContext } from "../../tools/types.js";
+import type { Dimension } from "../../orchestrator/goal/types/goal.js";
+import { observeWithTools } from "./observation-tools.js";
+import type { ToolObservationResult } from "./observation-tools.js";
+
 // Re-export types and helpers for backward compatibility
 export type { ObservationEngineOptions, CrossValidationResult } from "./observation-helpers.js";
 export {
@@ -43,6 +49,13 @@ export {
   resolveContradiction,
   detectKnowledgeGap,
 } from "./observation-helpers.js";
+
+
+export {
+  observeWithTools,
+  registerObservationAllowRules,
+  type ToolObservationResult,
+} from "./observation-tools.js";
 
 /**
  * ObservationEngine handles the 3-layer observation architecture.
@@ -64,6 +77,7 @@ export class ObservationEngine {
   private readonly logger?: Logger;
   private readonly preChecker?: IDimensionPreChecker;
   private readonly hookManager?: HookManager;
+  private toolExecutor?: ToolExecutor;
 
   constructor(
     stateManager: StateManager,
@@ -73,7 +87,8 @@ export class ObservationEngine {
     options: ObservationEngineOptions = {},
     logger?: Logger,
     preChecker?: IDimensionPreChecker,
-    hookManager?: HookManager
+    hookManager?: HookManager,
+    toolExecutor?: ToolExecutor
   ) {
     this.stateManager = stateManager;
     this.dataSources = dataSources;
@@ -83,6 +98,7 @@ export class ObservationEngine {
     this.logger = logger;
     this.preChecker = preChecker;
     this.hookManager = hookManager;
+    this.toolExecutor = toolExecutor;
   }
 
   // ─── Cross-Validation ───
@@ -676,4 +692,19 @@ export class ObservationEngine {
       domain
     );
   }
+
+  // ─── Tool-Based Observation ───
+
+  /**
+   * Observe a dimension using the tool executor.
+   * Thin wrapper around the standalone observeWithTools function.
+   */
+  async observeWithTools(
+    dimension: Dimension,
+    context: ToolCallContext,
+  ): Promise<ToolObservationResult | null> {
+    if (!this.toolExecutor) return null;
+    return observeWithTools(this.toolExecutor, dimension, context);
+  }
+
 }
