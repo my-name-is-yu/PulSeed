@@ -15,10 +15,10 @@ import * as path from "node:path";
 
 import { StateManager } from "../../src/base/state/state-manager.js";
 import { TaskLifecycle } from "../../src/execution/task/task-lifecycle.js";
-import { TrustManager } from "../../src/traits/trust-manager.js";
+import { TrustManager } from "../../src/platform/traits/trust-manager.js";
 import { SessionManager } from "../../src/execution/session-manager.js";
 import { StrategyManager } from "../../src/strategy/strategy-manager.js";
-import { StallDetector } from "../../src/drive/stall-detector.js";
+import { StallDetector } from "../../src/platform/drive/stall-detector.js";
 import { CoreLoop, type CoreLoopDeps } from "../../src/loop/core-loop.js";
 import type { Goal } from "../../src/base/types/goal.js";
 import type { Task, VerificationResult } from "../../src/base/types/task.js";

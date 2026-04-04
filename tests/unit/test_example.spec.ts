@@ -4,7 +4,7 @@ import {
   applyConfidenceWeight,
   computeRawGap,
   normalizeGap,
-} from "../../src/drive/gap-calculator.js";
+} from "../../src/platform/drive/gap-calculator.js";
 import { formatOperationError } from "../../src/cli/utils.js";
 import {
   buildThreshold,

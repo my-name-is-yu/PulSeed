@@ -17,7 +17,7 @@ import * as path from "node:path";
 import { CronScheduler } from "../../src/runtime/cron-scheduler.js";
 import { DaemonRunner } from "../../src/runtime/daemon-runner.js";
 import { StateManager } from "../../src/base/state/state-manager.js";
-import { DriveSystem } from "../../src/drive/drive-system.js";
+import { DriveSystem } from "../../src/platform/drive/drive-system.js";
 import { PIDManager } from "../../src/runtime/pid-manager.js";
 import { Logger } from "../../src/runtime/logger.js";
 import type { DaemonDeps } from "../../src/runtime/daemon-runner.js";
