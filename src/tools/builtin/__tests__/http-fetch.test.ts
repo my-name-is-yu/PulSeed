@@ -75,7 +75,7 @@ describe("HttpFetchTool", () => {
         ok: true,
         status: 200,
         headers: { entries: () => [["content-type", "application/json"]] },
-        text: async () => "{"result": "ok"}",
+        text: async () => '{"result": "ok"}',
       });
       vi.stubGlobal("fetch", mockFetch);
 
