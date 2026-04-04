@@ -475,9 +475,17 @@ export class KnowledgeManager {
     let toolCalls: Array<{ toolName: string; input: unknown }>;
     try { toolCalls = JSON.parse(planResponse.content); } catch { return []; }
     if (!Array.isArray(toolCalls) || toolCalls.length === 0) return [];
+    // Sanitize: cap length and validate element shape (CLAUDE.md: sanitize LLM responses)
+    const MAX_TOOL_CALLS = 10;
+    const validCalls = toolCalls
+      .slice(0, MAX_TOOL_CALLS)
+      .filter((tc): tc is { toolName: string; input: unknown } =>
+        typeof tc === "object" && tc !== null && typeof tc.toolName === "string",
+      );
+    if (validCalls.length === 0) return [];
 
     // Step 3: Execute batch
-    const results = await toolExecutor.executeBatch(toolCalls, context);
+    const results = await toolExecutor.executeBatch(validCalls, context);
     const successfulResults = results
       .filter((r) => r.success)
       .map((r) => r.summary + "\n" + String(r.data).slice(0, 2000));
@@ -494,7 +502,7 @@ export class KnowledgeManager {
         entry_id: crypto.randomUUID(),
         question,
         answer: synthesis.answer,
-        sources: toolCalls.map((tc) => ({
+        sources: validCalls.map((tc) => ({
           type: "data_analysis" as const,
           reference: `tool:${tc.toolName}`,
           reliability: "high" as const,
