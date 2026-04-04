@@ -1,6 +1,5 @@
 // src/tools/executor.ts
 
-import * as path from "node:path";
 import type {
   ITool,
   ToolResult,
@@ -189,22 +188,6 @@ export class ToolExecutor {
   // --- Private Helpers ---
 
   private sanitizeInput(tool: ITool, input: unknown): string | null {
-    if (
-      tool.metadata.tags.includes("filesystem") &&
-      typeof input === "object" &&
-      input !== null
-    ) {
-      const obj = input as Record<string, unknown>;
-      for (const key of ["path", "file_path", "filePath", "directory"]) {
-        const val = obj[key];
-        if (typeof val === "string") {
-          if (val.includes("..") && !this.isPathSafe(val)) {
-            return `Path traversal detected in ${key}: "${val}"`;
-          }
-        }
-      }
-    }
-
     if (tool.metadata.name === "shell" && typeof input === "object" && input !== null) {
       const obj = input as Record<string, unknown>;
       const cmd = obj["command"];
@@ -219,11 +202,6 @@ export class ToolExecutor {
     }
 
     return null;
-  }
-
-  private isPathSafe(p: string): boolean {
-    const resolved = path.resolve(p);
-    return !resolved.startsWith("/etc") && !resolved.startsWith("/var");
   }
 
   private async withTimeout(
