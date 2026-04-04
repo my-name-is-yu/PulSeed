@@ -102,13 +102,16 @@ describe("createWebSearchClient", () => {
 
 describe("TavilySearchClient", () => {
   let mockFetch: ReturnType<typeof vi.fn>;
+  let originalFetch: typeof fetch;
 
   beforeEach(() => {
+    originalFetch = global.fetch;
     mockFetch = vi.fn();
     global.fetch = mockFetch;
   });
 
   afterEach(() => {
+    global.fetch = originalFetch;
     vi.restoreAllMocks();
   });
 
@@ -137,7 +140,10 @@ describe("TavilySearchClient", () => {
       "https://api.tavily.com/search",
       expect.objectContaining({
         method: "POST",
-        body: JSON.stringify({ api_key: "test-api-key", query: "test query", max_results: 5, include_answer: false }),
+        headers: expect.objectContaining({
+          "Authorization": "Bearer test-api-key",
+        }),
+        body: JSON.stringify({ query: "test query", max_results: 5, include_answer: false }),
       })
     );
   });
@@ -151,5 +157,18 @@ describe("TavilySearchClient", () => {
 
     const client = new TavilySearchClient("bad-key");
     await expect(client.search("test")).rejects.toThrow("Tavily API error 401");
+  });
+});
+
+describe("WebSearchTool — edge cases", () => {
+  it("handles empty results array", async () => {
+    const mockClient: ISearchClient = {
+      search: vi.fn().mockResolvedValue([]),
+    };
+    const tool = new WebSearchTool(mockClient);
+    const result = await tool.call({ query: "nonexistent obscure query" }, ctx);
+    expect(result.success).toBe(true);
+    expect(result.data).toEqual([]);
+    expect(result.summary).toContain("Found 0 results");
   });
 });
