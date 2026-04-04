@@ -180,6 +180,8 @@ export type {
 
 // --- Builtin tool classes ---
 export { GitLogTool } from "./tools/builtin/git-log.js";
+export { EnvTool } from "./tools/builtin/env.js";
+export { GitDiffTool } from "./tools/builtin/git-diff.js";
 export { ListDirTool } from "./tools/builtin/list-dir.js";
 export { ProcessStatusTool } from "./tools/builtin/process-status.js";
 export { TestRunnerTool } from "./tools/builtin/test-runner.js";
