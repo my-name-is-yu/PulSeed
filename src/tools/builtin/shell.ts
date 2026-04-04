@@ -30,7 +30,7 @@ export class ShellTool implements ITool<ShellInput, ShellOutput> {
     const cwd = input.cwd ?? context.cwd;
     try {
       const shell = process.env.SHELL ?? "/bin/zsh";
-      const result = await execFileNoThrow(shell, ["-c", input.command], { cwd, timeout: input.timeoutMs });
+      const result = await execFileNoThrow(shell, ["-c", input.command], { cwd, timeoutMs: input.timeoutMs });
       const exitCode = result.exitCode ?? -1;
       const output: ShellOutput = { stdout: result.stdout, stderr: result.stderr, exitCode };
       return {
