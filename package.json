@@ -1,7 +1,7 @@
 {
   "name": "pulseed",
   "version": "0.1.5",
-  "description": "AI agent orchestrator that gives existing agents the drive to persist — set a goal, and PulSeed observes, delegates, verifies, and loops until done.",
+  "description": "AI agent orchestrator that gives existing agents the drive to persist \u2014 set a goal, and PulSeed observes, delegates, verifies, and loops until done.",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -65,6 +65,7 @@
     "@anthropic-ai/sdk": "^0.39.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "cron-parser": "^5.5.0",
+    "glob": "^13.0.0",
     "ink": "^5.2.1",
     "ink-spinner": "^5.0.0",
     "ink-text-input": "^6.0.0",
