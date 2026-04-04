@@ -9,7 +9,7 @@ import {
   sortByTier,
   filterByTierBudget,
 } from "../memory/memory-tier.js";
-import { allocateTierBudget } from "../../execution/context/context-budget.js";
+import { allocateTierBudget } from "../../../execution/context/context-budget.js";
 import {
   selectByTier,
   type ContextItem,
@@ -17,8 +17,8 @@ import {
 import {
   ShortTermEntrySchema,
   MemoryIndexEntrySchema,
-} from "../../base/types/memory-lifecycle.js";
-import type { ShortTermEntry, MemoryIndexEntry } from "../../base/types/memory-lifecycle.js";
+} from "../../../base/types/memory-lifecycle.js";
+import type { ShortTermEntry, MemoryIndexEntry } from "../../../base/types/memory-lifecycle.js";
 
 // ─── Helpers ───
 

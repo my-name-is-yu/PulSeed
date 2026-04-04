@@ -9,12 +9,12 @@
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
-import { StateManager } from "../../base/state/state-manager.js";
+import { StateManager } from "../../../base/state/state-manager.js";
 import { EthicsGate } from "../ethics-gate.js";
 import { StallDetector } from "../../drive/stall-detector.js";
-import { ReportingEngine } from "../../reporting/reporting-engine.js";
-import type { CharacterConfig } from "../../base/types/character.js";
-import { DEFAULT_CHARACTER_CONFIG } from "../../base/types/character.js";
+import { ReportingEngine } from "../../../reporting/reporting-engine.js";
+import type { CharacterConfig } from "../../../base/types/character.js";
+import { DEFAULT_CHARACTER_CONFIG } from "../../../base/types/character.js";
 import { createMockLLMClient } from "../../../tests/helpers/mock-llm.js";
 import { makeTempDir } from "../../../tests/helpers/temp-dir.js";
 

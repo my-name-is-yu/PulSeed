@@ -1,12 +1,12 @@
-import { SharedKnowledgeEntrySchema } from "../base/types/knowledge.js";
+import { SharedKnowledgeEntrySchema } from "../../base/types/knowledge.js";
 import type {
   KnowledgeEntry,
   SharedKnowledgeEntry,
-} from "../base/types/knowledge.js";
-import type { StateManager } from "../base/state/state-manager.js";
+} from "../../base/types/knowledge.js";
+import type { StateManager } from "../../base/state/state-manager.js";
 import type { VectorIndex } from "./vector-index.js";
-import type { DomainKnowledge } from "../base/types/knowledge.js";
-import { DomainKnowledgeSchema } from "../base/types/knowledge.js";
+import type { DomainKnowledge } from "../../base/types/knowledge.js";
+import { DomainKnowledgeSchema } from "../../base/types/knowledge.js";
 
 // ─── Shared KB path (mirrored from knowledge-manager) ───
 const SHARED_KB_PATH = "memory/shared-knowledge/entries.json";

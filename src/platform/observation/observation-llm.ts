@@ -3,17 +3,17 @@ import { execFile as execFileCb } from "child_process";
 import { promisify } from "util";
 import * as fsPromises from "node:fs/promises";
 import * as nodePath from "node:path";
-import { ObservationLogEntrySchema } from "../base/types/state.js";
+import { ObservationLogEntrySchema } from "../../base/types/state.js";
 
 const execFile = promisify(execFileCb);
-import type { ObservationLogEntry } from "../base/types/state.js";
-import type { ILLMClient } from "../base/llm/llm-client.js";
+import type { ObservationLogEntry } from "../../base/types/state.js";
+import type { ILLMClient } from "../../base/llm/llm-client.js";
 import { LLMObservationResponseSchema } from "./observation-helpers.js";
 import type { ObservationEngineOptions } from "./observation-helpers.js";
-import type { Logger } from "../runtime/logger.js";
-import { wrapXmlTag, formatObservationHistory } from "../prompt/formatters.js";
-import { OBSERVATION_SYSTEM_PROMPT } from "../prompt/purposes/observation.js";
-import type { IPromptGateway } from "../prompt/gateway.js";
+import type { Logger } from "../../runtime/logger.js";
+import { wrapXmlTag, formatObservationHistory } from "../../prompt/formatters.js";
+import { OBSERVATION_SYSTEM_PROMPT } from "../../prompt/purposes/observation.js";
+import type { IPromptGateway } from "../../prompt/gateway.js";
 
 /**
  * Fetch a concise workspace context via git diff when no contextProvider is available.

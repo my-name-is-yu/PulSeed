@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { ObservationLogEntrySchema } from "../base/types/state.js";
-import type { ObservationLogEntry } from "../base/types/state.js";
+import { ObservationLogEntrySchema } from "../../base/types/state.js";
+import type { ObservationLogEntry } from "../../base/types/state.js";
 import type { IDataSourceAdapter } from "./data-source-adapter.js";
-import type { DataSourceQuery } from "../base/types/data-source.js";
+import type { DataSourceQuery } from "../../base/types/data-source.js";
 
 /**
  * Find the first DataSource adapter that can serve the given dimension name.

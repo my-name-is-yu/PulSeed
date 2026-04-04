@@ -1,6 +1,6 @@
-import { StateManager } from "../base/state/state-manager.js";
+import { StateManager } from "../../base/state/state-manager.js";
 import { dimensionProgress } from "./gap-calculator.js";
-import type { Goal, Dimension } from "../base/types/goal.js";
+import type { Goal, Dimension } from "../../base/types/goal.js";
 import type {
   CompletionJudgment,
   DimensionSatisfaction,
@@ -9,7 +9,7 @@ import type {
   MappingProposal,
   ConvergenceJudgment,
   SatisficingStatus,
-} from "../base/types/satisficing.js";
+} from "../../base/types/satisficing.js";
 import type { IEmbeddingClient } from "../knowledge/embedding-client.js";
 import {
   toNumber,

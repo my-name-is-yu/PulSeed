@@ -7,8 +7,8 @@ import {
   calculateGapVector,
   aggregateGaps,
 } from "../gap-calculator.js";
-import type { Threshold } from "../../base/types/core.js";
-import type { Dimension } from "../../base/types/goal.js";
+import type { Threshold } from "../../../base/types/core.js";
+import type { Dimension } from "../../../base/types/goal.js";
 
 // ─── computeRawGap ───
 

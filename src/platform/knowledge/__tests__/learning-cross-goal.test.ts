@@ -4,12 +4,12 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { LearningPipeline } from "../learning/learning-pipeline.js";
 import { KnowledgeTransfer } from "../transfer/knowledge-transfer.js";
-import { StateManager } from "../../base/state/state-manager.js";
+import { StateManager } from "../../../base/state/state-manager.js";
 import { VectorIndex } from "../vector-index.js";
 import { MockEmbeddingClient } from "../embedding-client.js";
 import { createMockLLMClient } from "../../../tests/helpers/mock-llm.js";
-import type { StructuralFeedback, CrossGoalPattern } from "../../base/types/learning.js";
-import { CrossGoalPatternSchema } from "../../base/types/learning.js";
+import type { StructuralFeedback, CrossGoalPattern } from "../../../base/types/learning.js";
+import { CrossGoalPatternSchema } from "../../../base/types/learning.js";
 
 // ─── Helpers ───
 

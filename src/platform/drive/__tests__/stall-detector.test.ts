@@ -1,10 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { StateManager } from "../../base/state/state-manager.js";
+import { StateManager } from "../../../base/state/state-manager.js";
 import { StallDetector } from "../stall-detector.js";
 import { ProgressPredictor } from "../progress-predictor.js";
-import type { StallState } from "../../base/types/stall.js";
+import type { StallState } from "../../../base/types/stall.js";
 import { makeTempDir } from "../../../tests/helpers/temp-dir.js";
 
 function makeGapHistory(values: number[]): Array<{ normalized_gap: number }> {

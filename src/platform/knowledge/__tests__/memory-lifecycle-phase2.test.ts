@@ -4,8 +4,8 @@ import * as path from "node:path";
 import { MemoryLifecycleManager, type IDriveScorer } from "../memory/memory-lifecycle.js";
 import type { IEmbeddingClient } from "../embedding-client.js";
 import type { VectorIndex } from "../vector-index.js";
-import type { VectorSearchResult } from "../../base/types/embedding.js";
-import type { ShortTermEntry, LessonEntry } from "../../base/types/memory-lifecycle.js";
+import type { VectorSearchResult } from "../../../base/types/embedding.js";
+import type { ShortTermEntry, LessonEntry } from "../../../base/types/memory-lifecycle.js";
 import { createMockLLMClient } from "../../../tests/helpers/mock-llm.js";
 import { makeTempDir } from "../../../tests/helpers/temp-dir.js";
 

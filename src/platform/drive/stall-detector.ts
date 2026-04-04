@@ -1,9 +1,9 @@
-import { StateManager } from "../base/state/state-manager.js";
+import { StateManager } from "../../base/state/state-manager.js";
 import { ProgressPredictor } from "./progress-predictor.js";
-import { StallReportSchema, StallStateSchema, StallAnalysisSchema } from "../base/types/stall.js";
-import type { StallReport, StallState, StallAnalysis } from "../base/types/stall.js";
-import type { CharacterConfig } from "../base/types/character.js";
-import { DEFAULT_CHARACTER_CONFIG } from "../base/types/character.js";
+import { StallReportSchema, StallStateSchema, StallAnalysisSchema } from "../../base/types/stall.js";
+import type { StallReport, StallState, StallAnalysis } from "../../base/types/stall.js";
+import type { CharacterConfig } from "../../base/types/character.js";
+import { DEFAULT_CHARACTER_CONFIG } from "../../base/types/character.js";
 
 // ─── Base feedback category → N loops mapping (at stall_flexibility=1, multiplier=1.0) ───
 

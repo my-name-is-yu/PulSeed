@@ -5,13 +5,13 @@
 // multiple adapter instances.
 
 import * as fsp from "node:fs/promises";
-import { ValidationError } from "../base/utils/errors.js";
+import { ValidationError } from "../../base/utils/errors.js";
 import type {
   DataSourceType,
   DataSourceConfig,
   DataSourceQuery,
   DataSourceResult,
-} from "../base/types/data-source.js";
+} from "../../base/types/data-source.js";
 
 // ─── Helper ───
 

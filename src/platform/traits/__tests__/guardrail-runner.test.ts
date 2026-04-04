@@ -4,7 +4,7 @@ import type {
   IGuardrailHook,
   GuardrailContext,
   GuardrailResult,
-} from "../../base/types/guardrail.js";
+} from "../../../base/types/guardrail.js";
 
 // ─── Helper context ───
 

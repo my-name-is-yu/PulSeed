@@ -2,9 +2,9 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { ObservationEngine } from "../observation-engine.js";
-import { StateManager } from "../../base/state/state-manager.js";
-import type { Goal } from "../../base/types/goal.js";
-import type { ObservationMethod } from "../../base/types/core.js";
+import { StateManager } from "../../../base/state/state-manager.js";
+import type { Goal } from "../../../base/types/goal.js";
+import type { ObservationMethod } from "../../../base/types/core.js";
 import { makeTempDir } from "../../../tests/helpers/temp-dir.js";
 import { makeGoal, makeDimension } from "../../../tests/helpers/fixtures.js";
 

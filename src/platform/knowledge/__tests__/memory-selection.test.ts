@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { selectForWorkingMemory, relevanceScore } from "../memory/memory-selection.js";
 import { makeTempDir } from "../../../tests/helpers/temp-dir.js";
-import type { MemoryIndexEntry, ShortTermEntry } from "../../base/types/memory-lifecycle.js";
+import type { MemoryIndexEntry, ShortTermEntry } from "../../../base/types/memory-lifecycle.js";
 import type { VectorIndex } from "../vector-index.js";
 
 // ─── Helpers ───

@@ -1,8 +1,8 @@
 import { execFile as execFileCb } from "child_process";
 import { stat } from "fs/promises";
 import { promisify } from "util";
-import type { Dimension } from "../base/types/goal.js";
-import type { ObservationLogEntry } from "../base/types/state.js";
+import type { Dimension } from "../../base/types/goal.js";
+import type { ObservationLogEntry } from "../../base/types/state.js";
 
 const execFile = promisify(execFileCb);
 

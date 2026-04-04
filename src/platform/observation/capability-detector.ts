@@ -1,15 +1,15 @@
 import { z } from "zod";
-import { StateManager } from "../base/state/state-manager.js";
-import { ReportingEngine } from "../reporting/reporting-engine.js";
-import type { ILLMClient } from "../base/llm/llm-client.js";
-import type { IPromptGateway } from "../prompt/gateway.js";
-import type { Task } from "../base/types/task.js";
-import type { PluginMatchResult } from "../base/types/plugin.js";
-import type { PluginLoader } from "../runtime/plugin-loader.js";
+import { StateManager } from "../../base/state/state-manager.js";
+import { ReportingEngine } from "../../reporting/reporting-engine.js";
+import type { ILLMClient } from "../../base/llm/llm-client.js";
+import type { IPromptGateway } from "../../prompt/gateway.js";
+import type { Task } from "../../base/types/task.js";
+import type { PluginMatchResult } from "../../base/types/plugin.js";
+import type { PluginLoader } from "../../runtime/plugin-loader.js";
 import {
   CapabilityAcquisitionTaskSchema,
   CapabilityGapSchema,
-} from "../base/types/capability.js";
+} from "../../base/types/capability.js";
 import type {
   Capability,
   CapabilityRegistry,
@@ -19,8 +19,8 @@ import type {
   CapabilityAcquisitionTask,
   CapabilityVerificationResult,
   CapabilityDependency,
-} from "../base/types/capability.js";
-import type { AgentResult } from "../execution/adapter-layer.js";
+} from "../../base/types/capability.js";
+import type { AgentResult } from "../../execution/adapter-layer.js";
 import {
   loadRegistry,
   saveRegistry,

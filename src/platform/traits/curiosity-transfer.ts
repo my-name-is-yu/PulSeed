@@ -1,7 +1,7 @@
 import type { VectorIndex } from "../knowledge/vector-index.js";
 import type { KnowledgeTransfer } from "../knowledge/transfer/knowledge-transfer.js";
-import type { TransferCandidate } from "../base/types/cross-portfolio.js";
-import type { Goal } from "../base/types/goal.js";
+import type { TransferCandidate } from "../../base/types/cross-portfolio.js";
+import type { Goal } from "../../base/types/goal.js";
 
 // ─── Deps for standalone functions ───
 

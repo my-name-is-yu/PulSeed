@@ -1,13 +1,13 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { StateManager } from "../../base/state/state-manager.js";
+import { StateManager } from "../../../base/state/state-manager.js";
 import { CharacterConfigManager } from "../character-config.js";
 import {
   CharacterConfigSchema,
   DEFAULT_CHARACTER_CONFIG,
-} from "../../base/types/character.js";
-import type { CharacterConfig } from "../../base/types/character.js";
+} from "../../../base/types/character.js";
+import type { CharacterConfig } from "../../../base/types/character.js";
 import { makeTempDir } from "../../../tests/helpers/temp-dir.js";
 
 // ─── Test Setup ───

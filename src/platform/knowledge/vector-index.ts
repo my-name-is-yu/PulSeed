@@ -1,8 +1,8 @@
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import type { IEmbeddingClient } from "./embedding-client.js";
-import type { EmbeddingEntry, VectorSearchResult } from "../base/types/embedding.js";
-import { EmbeddingEntrySchema } from "../base/types/embedding.js";
+import type { EmbeddingEntry, VectorSearchResult } from "../../base/types/embedding.js";
+import { EmbeddingEntrySchema } from "../../base/types/embedding.js";
 import { cosineSimilarity } from "./embedding-client.js";
 
 export class VectorIndex {

@@ -1,6 +1,6 @@
-import type { TaskDomain } from "../base/types/pipeline.js";
-import type { AgentTask } from "../execution/adapter-layer.js";
-import type { Logger } from "../runtime/logger.js";
+import type { TaskDomain } from "../../base/types/pipeline.js";
+import type { AgentTask } from "../../execution/adapter-layer.js";
+import type { Logger } from "../../runtime/logger.js";
 
 // ─── TaskObservationContext ───
 

@@ -1,9 +1,9 @@
 import { z } from "zod";
-import { StateManager } from "../base/state/state-manager.js";
-import type { ILLMClient } from "../base/llm/llm-client.js";
-import type { IPromptGateway } from "../prompt/gateway.js";
-import { TaskSchema } from "../base/types/task.js";
-import type { Task } from "../base/types/task.js";
+import { StateManager } from "../../base/state/state-manager.js";
+import type { ILLMClient } from "../../base/llm/llm-client.js";
+import type { IPromptGateway } from "../../prompt/gateway.js";
+import { TaskSchema } from "../../base/types/task.js";
+import type { Task } from "../../base/types/task.js";
 import {
   KnowledgeEntrySchema,
   DomainKnowledgeSchema,
@@ -11,7 +11,7 @@ import {
   ContradictionResultSchema,
   SharedKnowledgeEntrySchema,
   REVALIDATION_SCHEDULE,
-} from "../base/types/knowledge.js";
+} from "../../base/types/knowledge.js";
 import type {
   KnowledgeEntry,
   DomainKnowledge,
@@ -20,7 +20,7 @@ import type {
   SharedKnowledgeEntry,
   DomainStability,
   DecisionRecord,
-} from "../base/types/knowledge.js";
+} from "../../base/types/knowledge.js";
 import type { VectorIndex } from "./vector-index.js";
 import type { IEmbeddingClient } from "./embedding-client.js";
 import {

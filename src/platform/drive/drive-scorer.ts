@@ -5,9 +5,9 @@ import type {
   DriveScore,
   DriveConfig,
   DriveContext,
-} from "../base/types/drive.js";
-import { DriveConfigSchema } from "../base/types/drive.js";
-import type { GapVector } from "../base/types/gap.js";
+} from "../../base/types/drive.js";
+import { DriveConfigSchema } from "../../base/types/drive.js";
+import type { GapVector } from "../../base/types/gap.js";
 
 /**
  * DriveScorer implements the three-drive scoring pipeline defined in drive-scoring.md:

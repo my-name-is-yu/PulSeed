@@ -1,10 +1,10 @@
-import type { Logger } from "../runtime/logger.js";
+import type { Logger } from "../../runtime/logger.js";
 import type {
   IGuardrailHook,
   GuardrailCheckpoint,
   GuardrailContext,
   GuardrailAggregateResult,
-} from "../base/types/guardrail.js";
+} from "../../base/types/guardrail.js";
 
 // ─── GuardrailRunner ───
 

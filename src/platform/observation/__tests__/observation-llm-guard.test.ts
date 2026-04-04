@@ -3,9 +3,9 @@ import * as fs from "node:fs";
 import * as nodePath from "node:path";
 import { observeWithLLM, readWorkspaceFiles } from "../observation-llm.js";
 import { LLMObservationResponseSchema } from "../observation-helpers.js";
-import type { ILLMClient } from "../../base/llm/llm-client.js";
-import type { ObservationLogEntry } from "../../base/types/state.js";
-import type { Logger } from "../../runtime/logger.js";
+import type { ILLMClient } from "../../../base/llm/llm-client.js";
+import type { ObservationLogEntry } from "../../../base/types/state.js";
+import type { Logger } from "../../../runtime/logger.js";
 import { makeTempDir } from "../../../tests/helpers/temp-dir.js";
 
 // ─── Helpers ───────────────────────────────────────────────────────────────

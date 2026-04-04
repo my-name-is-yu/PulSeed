@@ -1,6 +1,6 @@
-import type { Dimension } from "../base/types/goal.js";
-import type { Threshold } from "../base/types/core.js";
-import type { RawGap, NormalizedGap, WeightedGap, GapVector } from "../base/types/gap.js";
+import type { Dimension } from "../../base/types/goal.js";
+import type { Threshold } from "../../base/types/core.js";
+import type { RawGap, NormalizedGap, WeightedGap, GapVector } from "../../base/types/gap.js";
 
 /**
  * GapCalculator implements the gap calculation pipeline defined in gap-calculation.md:

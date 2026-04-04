@@ -1,12 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { ObservationLogEntrySchema, ObservationLogSchema } from "../base/types/state.js";
-import type { ObservationLogEntry, ObservationLog } from "../base/types/state.js";
-import type { ObservationLayer, ObservationMethod, ObservationTrigger, ConfidenceTier } from "../base/types/core.js";
-import { KnowledgeGapSignalSchema } from "../base/types/knowledge.js";
-import type { KnowledgeGapSignal } from "../base/types/knowledge.js";
+import { ObservationLogEntrySchema, ObservationLogSchema } from "../../base/types/state.js";
+import type { ObservationLogEntry, ObservationLog } from "../../base/types/state.js";
+import type { ObservationLayer, ObservationMethod, ObservationTrigger, ConfidenceTier } from "../../base/types/core.js";
+import { KnowledgeGapSignalSchema } from "../../base/types/knowledge.js";
+import type { KnowledgeGapSignal } from "../../base/types/knowledge.js";
 import type { VectorIndex } from "../knowledge/vector-index.js";
-import type { Logger } from "../runtime/logger.js";
+import type { Logger } from "../../runtime/logger.js";
 
 // ─── Options ───
 

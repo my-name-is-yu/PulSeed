@@ -2,21 +2,21 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { StateManager } from "../../base/state/state-manager.js";
+import { StateManager } from "../../../base/state/state-manager.js";
 import { KnowledgeTransfer } from "../transfer/knowledge-transfer.js";
 import { TransferTrustManager } from "../transfer/transfer-trust.js";
 import { VectorIndex } from "../vector-index.js";
 import { MockEmbeddingClient } from "../embedding-client.js";
-import { CheckpointManager } from "../../execution/checkpoint-manager.js";
-import { ReportingEngine } from "../../reporting/reporting-engine.js";
+import { CheckpointManager } from "../../../execution/checkpoint-manager.js";
+import { ReportingEngine } from "../../../reporting/reporting-engine.js";
 import {
   allocateBudget,
   selectWithinBudget,
   trimToBudget,
   type BudgetAllocation,
-} from "../../execution/context/context-budget.js";
+} from "../../../execution/context/context-budget.js";
 import { createMockLLMClient } from "../../../tests/helpers/mock-llm.js";
-import type { LearnedPattern } from "../../base/types/learning.js";
+import type { LearnedPattern } from "../../../base/types/learning.js";
 
 // ─── Helpers ───
 

@@ -2,17 +2,17 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
-import { StateManager } from "../../base/state/state-manager.js";
+import { StateManager } from "../../../base/state/state-manager.js";
 import { TrustManager } from "../trust-manager.js";
 import {
   HIGH_TRUST_THRESHOLD,
   HIGH_CONFIDENCE_THRESHOLD,
   TRUST_SUCCESS_DELTA,
   TRUST_FAILURE_DELTA,
-} from "../../base/types/trust.js";
-import { PluginManifestSchema, PluginStateSchema } from "../../base/types/plugin.js";
-import type { PluginState, PluginMatchResult } from "../../base/types/plugin.js";
-import type { PluginLoader } from "../../runtime/plugin-loader.js";
+} from "../../../base/types/trust.js";
+import { PluginManifestSchema, PluginStateSchema } from "../../../base/types/plugin.js";
+import type { PluginState, PluginMatchResult } from "../../../base/types/plugin.js";
+import type { PluginLoader } from "../../../runtime/plugin-loader.js";
 import { makeTempDir } from "../../../tests/helpers/temp-dir.js";
 
 describe("TrustManager", () => {

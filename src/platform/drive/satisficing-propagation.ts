@@ -1,11 +1,11 @@
-import { StateManager } from "../base/state/state-manager.js";
-import type { Goal } from "../base/types/goal.js";
+import { StateManager } from "../../base/state/state-manager.js";
+import type { Goal } from "../../base/types/goal.js";
 import type {
   CompletionJudgment,
   SatisficingStatus,
-} from "../base/types/satisficing.js";
+} from "../../base/types/satisficing.js";
 import { aggregateValues, getSatisfiedValue } from "./satisficing-helpers.js";
-import type { Logger } from "../runtime/logger.js";
+import type { Logger } from "../../runtime/logger.js";
 
 /**
  * Judge completion of an entire goal tree by checking all children recursively.

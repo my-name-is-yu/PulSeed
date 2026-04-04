@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
-import { StateManager } from "../../base/state/state-manager.js";
+import { StateManager } from "../../../base/state/state-manager.js";
 import { SatisficingJudge, aggregateValues } from "../satisficing-judge.js";
 import { MockEmbeddingClient } from "../../knowledge/embedding-client.js";
-import type { Dimension } from "../../base/types/goal.js";
+import type { Dimension } from "../../../base/types/goal.js";
 import { makeTempDir } from "../../../tests/helpers/temp-dir.js";
 import { makeGoal } from "../../../tests/helpers/fixtures.js";
 

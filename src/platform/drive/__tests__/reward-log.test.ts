@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { isRewardLogEnabled, logRewardComputation } from "../reward-log.js";
-import type { DriveScore } from "../../base/types/drive.js";
-import type { CompletionJudgment } from "../../base/types/satisficing.js";
+import type { DriveScore } from "../../../base/types/drive.js";
+import type { CompletionJudgment } from "../../../base/types/satisficing.js";
 
 // Minimal DriveScore fixture
 function makeScore(dimension: string, score: number): DriveScore {

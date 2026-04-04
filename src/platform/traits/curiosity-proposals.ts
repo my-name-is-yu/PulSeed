@@ -1,24 +1,24 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import type { ILLMClient } from "../base/llm/llm-client.js";
-import type { IPromptGateway } from "../prompt/gateway.js";
+import type { ILLMClient } from "../../base/llm/llm-client.js";
+import type { IPromptGateway } from "../../prompt/gateway.js";
 import type { EthicsGate } from "./ethics-gate.js";
-import type { Logger } from "../runtime/logger.js";
+import type { Logger } from "../../runtime/logger.js";
 import type { VectorIndex } from "../knowledge/vector-index.js";
 import type { KnowledgeTransfer } from "../knowledge/transfer/knowledge-transfer.js";
 import {
   CuriosityTriggerSchema,
   CuriosityProposalSchema,
   CuriosityConfigSchema,
-} from "../base/types/curiosity.js";
+} from "../../base/types/curiosity.js";
 import type {
   CuriosityTrigger,
   CuriosityProposal,
   CuriosityConfig,
   CuriosityState,
   LearningRecord,
-} from "../base/types/curiosity.js";
-import type { Goal } from "../base/types/goal.js";
+} from "../../base/types/curiosity.js";
+import type { Goal } from "../../base/types/goal.js";
 
 // ─── LLM Proposal Schema (for parsing LLM output) ───
 

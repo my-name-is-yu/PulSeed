@@ -5,10 +5,10 @@ import {
   createWorkspaceContextProvider,
 } from "../workspace-context.js";
 import { ObservationEngine } from "../observation-engine.js";
-import { StateManager } from "../../base/state/state-manager.js";
-import type { Goal } from "../../base/types/goal.js";
-import type { ObservationMethod } from "../../base/types/core.js";
-import type { ILLMClient } from "../../base/llm/llm-client.js";
+import { StateManager } from "../../../base/state/state-manager.js";
+import type { Goal } from "../../../base/types/goal.js";
+import type { ObservationMethod } from "../../../base/types/core.js";
+import type { ILLMClient } from "../../../base/llm/llm-client.js";
 import { makeTempDir } from "../../../tests/helpers/temp-dir.js";
 import { makeGoal } from "../../../tests/helpers/fixtures.js";
 

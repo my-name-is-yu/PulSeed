@@ -4,9 +4,9 @@ import * as path from "node:path";
 import { DataSourceRegistry } from "../data-source-adapter.js";
 import type { IDataSourceAdapter } from "../data-source-adapter.js";
 import { ObservationEngine } from "../observation-engine.js";
-import { StateManager } from "../../base/state/state-manager.js";
-import type { DataSourceConfig } from "../../base/types/data-source.js";
-import type { ObservationMethod } from "../../base/types/core.js";
+import { StateManager } from "../../../base/state/state-manager.js";
+import type { DataSourceConfig } from "../../../base/types/data-source.js";
+import type { ObservationMethod } from "../../../base/types/core.js";
 import { makeTempDir } from "../../../tests/helpers/temp-dir.js";
 import { makeGoal, makeDimension } from "../../../tests/helpers/fixtures.js";
 

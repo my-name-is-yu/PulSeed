@@ -3,11 +3,11 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { KnowledgeTransfer } from "../transfer/knowledge-transfer.js";
-import { StateManager } from "../../base/state/state-manager.js";
+import { StateManager } from "../../../base/state/state-manager.js";
 import { VectorIndex } from "../vector-index.js";
 import { MockEmbeddingClient } from "../embedding-client.js";
 import { createMockLLMClient } from "../../../tests/helpers/mock-llm.js";
-import type { LearnedPattern } from "../../base/types/learning.js";
+import type { LearnedPattern } from "../../../base/types/learning.js";
 
 // ─── Helpers ───
 

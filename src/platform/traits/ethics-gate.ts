@@ -1,17 +1,17 @@
 import { randomUUID } from "node:crypto";
-import type { StateManager } from "../base/state/state-manager.js";
-import type { ILLMClient } from "../base/llm/llm-client.js";
-import type { IPromptGateway } from "../prompt/gateway.js";
+import type { StateManager } from "../../base/state/state-manager.js";
+import type { ILLMClient } from "../../base/llm/llm-client.js";
+import type { IPromptGateway } from "../../prompt/gateway.js";
 import {
   EthicsVerdictSchema,
   EthicsLogSchema,
-} from "../base/types/ethics.js";
+} from "../../base/types/ethics.js";
 import type {
   EthicsVerdict,
   EthicsLog,
   EthicsSubjectType,
   CustomConstraintsConfig,
-} from "../base/types/ethics.js";
+} from "../../base/types/ethics.js";
 import { LAYER1_RULES, ETHICS_SYSTEM_PROMPT } from "./ethics-rules.js";
 
 // ─── Constants ───

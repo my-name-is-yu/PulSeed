@@ -3,7 +3,7 @@ import { accessSync } from "fs";
 import { promisify } from "node:util";
 import { readFile } from "fs/promises";
 import { join, dirname } from "path";
-import type { MemoryTier } from "../base/types/memory-lifecycle.js";
+import type { MemoryTier } from "../../base/types/memory-lifecycle.js";
 
 const execFileAsync = promisify(execFile);
 

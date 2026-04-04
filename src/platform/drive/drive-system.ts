@@ -2,11 +2,11 @@ import { watch } from "node:fs";
 import type { FSWatcher } from "node:fs";
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
-import { PulSeedEventSchema, GoalScheduleSchema } from "../base/types/drive.js";
-import type { PulSeedEvent, GoalSchedule } from "../base/types/drive.js";
-import type { StateManager } from "../base/state/state-manager.js";
-import type { Logger } from "../runtime/logger.js";
-import { writeJsonFileAtomic } from "../base/utils/json-io.js";
+import { PulSeedEventSchema, GoalScheduleSchema } from "../../base/types/drive.js";
+import type { PulSeedEvent, GoalSchedule } from "../../base/types/drive.js";
+import type { StateManager } from "../../base/state/state-manager.js";
+import type { Logger } from "../../runtime/logger.js";
+import { writeJsonFileAtomic } from "../../base/utils/json-io.js";
 
 /**
  * DriveSystem handles lightweight activation checks (no LLM calls), event queue

@@ -1,4 +1,4 @@
-import type { Layer1Rule } from "../base/types/ethics.js";
+import type { Layer1Rule } from "../../base/types/ethics.js";
 
 // ─── Layer 1: Category-based blocklist ───
 

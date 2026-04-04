@@ -8,8 +8,8 @@ import {
   scoreAllDimensions,
   rankDimensions,
 } from "../drive-scorer.js";
-import type { DriveConfig, DriveContext } from "../../base/types/drive.js";
-import type { GapVector } from "../../base/types/gap.js";
+import type { DriveConfig, DriveContext } from "../../../base/types/drive.js";
+import type { GapVector } from "../../../base/types/gap.js";
 
 // Shared default config values (mirrors DriveConfigSchema defaults)
 const DEFAULT_CONFIG: DriveConfig = {

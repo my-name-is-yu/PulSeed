@@ -1,18 +1,18 @@
-import { StateManager } from "../base/state/state-manager.js";
-import { ReportingEngine } from "../reporting/reporting-engine.js";
+import { StateManager } from "../../base/state/state-manager.js";
+import { ReportingEngine } from "../../reporting/reporting-engine.js";
 import {
   CapabilitySchema,
   CapabilityRegistrySchema,
   CapabilityGapSchema,
-} from "../base/types/capability.js";
+} from "../../base/types/capability.js";
 import type {
   Capability,
   CapabilityRegistry,
   CapabilityGap,
   CapabilityStatus,
   AcquisitionContext,
-} from "../base/types/capability.js";
-import type { Logger } from "../runtime/logger.js";
+} from "../../base/types/capability.js";
+import type { Logger } from "../../runtime/logger.js";
 
 // ─── Constants ───
 

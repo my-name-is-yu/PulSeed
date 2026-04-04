@@ -11,8 +11,8 @@
  * pollute stdout / TUI output. Default: OFF.
  */
 
-import type { DriveScore } from "../base/types/drive.js";
-import type { CompletionJudgment } from "../base/types/satisficing.js";
+import type { DriveScore } from "../../base/types/drive.js";
+import type { CompletionJudgment } from "../../base/types/satisficing.js";
 
 export interface RewardLogEntry {
   ts: string;

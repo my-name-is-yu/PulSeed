@@ -1,6 +1,6 @@
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
-import { type KnowledgeEdge, KnowledgeEdgeSchema } from "../base/types/knowledge.js";
+import { type KnowledgeEdge, KnowledgeEdgeSchema } from "../../base/types/knowledge.js";
 
 interface KnowledgeGraphNode {
   entry_id: string;
