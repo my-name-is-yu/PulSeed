@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { ITool, ToolResult, ToolCallContext, PermissionCheckResult, ToolMetadata, ToolDescriptionContext } from "../types.js";
-import { glob } from "glob";
+import { glob } from "node:fs/promises";
+import { resolve } from "node:path";
 
 export const GlobInputSchema = z.object({
   pattern: z.string().min(1),
@@ -33,7 +34,11 @@ export class GlobTool implements ITool<GlobInput, string[]> {
     const startTime = Date.now();
     const searchPath = input.path ?? context.cwd;
     try {
-      const matches = await glob(input.pattern, { cwd: searchPath, absolute: true, nodir: false });
+      const matchIter = glob(input.pattern, { cwd: searchPath });
+      const matches: string[] = [];
+      for await (const match of matchIter) {
+        matches.push(resolve(searchPath, match));
+      }
       const limited = matches.slice(0, input.limit);
       return {
         success: true,
