@@ -1,6 +1,6 @@
 import type { Dimension } from "../../base/types/goal.js";
-import type { ToolExecutor, ToolCallContext } from "../../tools/types.js";
-import type { ToolResult } from "../../tools/types.js";
+import type { ToolCallContext, ToolResult } from "../../tools/types.js";
+import type { ToolExecutor } from "../../tools/executor.js";
 
 /**
  * Direct measurement result from a tool call.
