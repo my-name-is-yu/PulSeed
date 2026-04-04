@@ -17,7 +17,7 @@ import type { Report } from "../base/types/report.js";
 import { useLoop } from "./use-loop.js";
 import type { ActionHandler } from "./actions.js";
 import type { IntentRecognizer } from "./intent-recognizer.js";
-import type { CoreLoop } from "../loop/core-loop.js";
+import type { CoreLoop } from "../orchestrator/loop/core-loop.js";
 import type { StateManager } from "../base/state/state-manager.js";
 import type { TrustManager } from "../platform/traits/trust-manager.js";
 import type { Task } from "../base/types/task.js";

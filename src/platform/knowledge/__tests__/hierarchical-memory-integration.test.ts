@@ -9,7 +9,7 @@ import {
   sortByTier,
   filterByTierBudget,
 } from "../memory/memory-tier.js";
-import { allocateTierBudget } from "../../../execution/context/context-budget.js";
+import { allocateTierBudget } from "../../../orchestrator/execution/context/context-budget.js";
 import {
   selectByTier,
   type ContextItem,

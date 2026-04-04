@@ -16,7 +16,7 @@ import {
   generateSuggestOutput,
   gatherProjectContext,
 } from "./suggest-normalizer.js";
-import { looksLikeSoftwareGoal, SuggestTimeoutError } from "../../goal/goal-suggest.js";
+import { looksLikeSoftwareGoal, SuggestTimeoutError } from "../../orchestrator/goal/goal-suggest.js";
 import {
   buildAutoApprovalFn,
   buildLoopLogger,

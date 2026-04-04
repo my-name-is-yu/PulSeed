@@ -1,8 +1,8 @@
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
-import { CoreLoop } from "../loop/core-loop.js";
+import { CoreLoop } from "../orchestrator/loop/core-loop.js";
 import { writeJsonFileAtomic, readJsonFileOrNull } from "../base/utils/json-io.js";
-import type { LoopResult } from "../loop/core-loop.js";
+import type { LoopResult } from "../orchestrator/loop/core-loop.js";
 import { DriveSystem } from "../platform/drive/drive-system.js";
 import { StateManager } from "../base/state/state-manager.js";
 import { PIDManager } from "./pid-manager.js";

@@ -8,7 +8,7 @@
 // both `error` and `close` on a spawn failure (ENOENT).
 
 import { spawn } from "node:child_process";
-import type { AgentResult } from "../execution/adapter-layer.js";
+import type { AgentResult } from "../orchestrator/execution/adapter-layer.js";
 
 export interface SpawnOptions {
   /** Environment variables. Default: process.env */

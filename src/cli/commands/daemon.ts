@@ -18,7 +18,7 @@ import { CronScheduler } from "../../runtime/cron-scheduler.js";
 import { PluginLoader } from "../../runtime/plugin-loader.js";
 import { NotifierRegistry } from "../../runtime/notifier-registry.js";
 import { NotificationDispatcher } from "../../runtime/notification-dispatcher.js";
-import { AdapterRegistry } from "../../execution/adapter-layer.js";
+import { AdapterRegistry } from "../../orchestrator/execution/adapter-layer.js";
 import { DataSourceRegistry } from "../../platform/observation/data-source-adapter.js";
 import { buildDeps } from "../setup.js";
 import { formatOperationError } from "../utils.js";

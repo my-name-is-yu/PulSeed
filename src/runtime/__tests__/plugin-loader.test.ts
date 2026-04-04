@@ -4,7 +4,7 @@ import { PluginLoader, parseSemver, compareSemver, satisfiesRange } from "../plu
 import { NotifierRegistry } from "../notifier-registry.js";
 import { PluginManifestSchema, PluginStateSchema } from "../../base/types/plugin.js";
 import type { INotifier, NotificationEvent, NotificationEventType, PluginManifest } from "../../base/types/plugin.js";
-import type { AdapterRegistry, IAdapter, AgentTask, AgentResult } from "../../execution/adapter-layer.js";
+import type { AdapterRegistry, IAdapter, AgentTask, AgentResult } from "../../orchestrator/execution/adapter-layer.js";
 import type { DataSourceRegistry, IDataSourceAdapter } from "../../platform/observation/data-source-adapter.js";
 
 // ─── Helpers ───

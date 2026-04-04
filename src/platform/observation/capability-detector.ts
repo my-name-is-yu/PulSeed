@@ -20,7 +20,7 @@ import type {
   CapabilityVerificationResult,
   CapabilityDependency,
 } from "../../base/types/capability.js";
-import type { AgentResult } from "../../execution/adapter-layer.js";
+import type { AgentResult } from "../../orchestrator/execution/adapter-layer.js";
 import {
   loadRegistry,
   saveRegistry,

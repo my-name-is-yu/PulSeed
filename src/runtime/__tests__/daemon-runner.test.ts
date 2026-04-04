@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { DaemonRunner } from "../daemon-runner.js";
 import { PIDManager } from "../pid-manager.js";
 import { Logger } from "../logger.js";
-import type { LoopResult } from "../../loop/core-loop.js";
+import type { LoopResult } from "../../orchestrator/loop/core-loop.js";
 import type { DaemonDeps } from "../daemon-runner.js";
 import { makeTempDir } from "../../../tests/helpers/temp-dir.js";
 

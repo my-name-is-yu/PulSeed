@@ -14,7 +14,7 @@
 //   - When [PROMPT] arg is omitted (or `-` is given), prompt is read from stdin
 //   - NOTE: --full-auto does NOT exist in this version; use sandbox policy instead
 
-import type { IAdapter, AgentTask, AgentResult } from "../../execution/adapter-layer.js";
+import type { IAdapter, AgentTask, AgentResult } from "../../orchestrator/execution/adapter-layer.js";
 import type { Logger } from "../../runtime/logger.js";
 import { spawnWithTimeout, spawnResultToAgentResult } from "../spawn-helper.js";
 

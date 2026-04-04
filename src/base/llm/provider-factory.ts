@@ -9,7 +9,7 @@ import { OllamaLLMClient } from "./ollama-client.js";
 import { OpenAILLMClient } from "./openai-client.js";
 import { CodexLLMClient } from "./codex-llm-client.js";
 import { loadProviderConfig } from "./provider-config.js";
-import { AdapterRegistry } from "../../execution/adapter-layer.js";
+import { AdapterRegistry } from "../../orchestrator/execution/adapter-layer.js";
 import { ClaudeCodeCLIAdapter } from "../../adapters/agents/claude-code-cli.js";
 import { ClaudeAPIAdapter } from "../../adapters/agents/claude-api.js";
 import { OpenAICodexCLIAdapter } from "../../adapters/agents/openai-codex.js";

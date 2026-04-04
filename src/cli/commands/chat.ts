@@ -14,7 +14,7 @@ import type { ChatRunner } from "../../chat/chat-runner.js";
 import { Chat, type ChatMessage } from "../../tui/chat.js";
 import { EthicsGate } from "../../platform/traits/ethics-gate.js";
 import { ObservationEngine } from "../../platform/observation/observation-engine.js";
-import { GoalNegotiator } from "../../goal/goal-negotiator.js";
+import { GoalNegotiator } from "../../orchestrator/goal/goal-negotiator.js";
 import { EscalationHandler } from "../../chat/escalation.js";
 
 const logger = getCliLogger();

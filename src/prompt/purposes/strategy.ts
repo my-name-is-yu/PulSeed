@@ -5,7 +5,7 @@
  */
 
 import { z } from "zod";
-import { StrategyArraySchema } from "../../strategy/strategy-helpers.js";
+import { StrategyArraySchema } from "../../orchestrator/strategy/strategy-helpers.js";
 
 export const STRATEGY_SYSTEM_PROMPT = `Generate candidate strategies for achieving the goal.
 Consider past lessons, strategy templates from similar goals, and the current gap.
@@ -30,6 +30,6 @@ Example format:
 ]`;
 
 // Re-export the canonical schema from strategy-helpers to avoid duplication
-export { StrategyArraySchema as StrategyResponseSchema } from "../../strategy/strategy-helpers.js";
+export { StrategyArraySchema as StrategyResponseSchema } from "../../orchestrator/strategy/strategy-helpers.js";
 
 export type StrategyResponse = z.infer<typeof StrategyArraySchema>;

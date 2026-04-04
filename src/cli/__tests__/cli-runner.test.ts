@@ -58,23 +58,23 @@ vi.mock("../ensure-api-key.js", () => ({
   }),
 }));
 
-vi.mock("../../loop/core-loop.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../loop/core-loop.js")>();
+vi.mock("../../orchestrator/loop/core-loop.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../orchestrator/loop/core-loop.js")>();
   return {
     ...actual,
     CoreLoop: vi.fn(),
   };
 });
 
-vi.mock("../../goal/goal-negotiator.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../goal/goal-negotiator.js")>();
+vi.mock("../../orchestrator/goal/goal-negotiator.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../orchestrator/goal/goal-negotiator.js")>();
   return {
     ...actual,
     GoalNegotiator: vi.fn(),
   };
 });
 
-vi.mock("../../goal/goal-refiner.js", () => ({
+vi.mock("../../orchestrator/goal/goal-refiner.js", () => ({
   GoalRefiner: vi.fn().mockImplementation(function() { return {
     refine: vi.fn().mockResolvedValue({
       goal: { id: "goal_refine_default", title: "Refined Goal", status: "active", dimensions: [], description: "" },
@@ -121,7 +121,7 @@ vi.mock("../src/ethics-gate.js", () => ({
   EthicsGate: vi.fn().mockImplementation(function() { return {}; }),
 }));
 
-vi.mock("../../execution/session-manager.js", () => ({
+vi.mock("../../orchestrator/execution/session-manager.js", () => ({
   SessionManager: vi.fn().mockImplementation(function() { return {}; }),
 }));
 
@@ -129,7 +129,7 @@ vi.mock("../src/strategy-manager.js", () => ({
   StrategyManager: vi.fn().mockImplementation(function() { return {}; }),
 }));
 
-vi.mock("../../execution/adapter-layer.js", () => ({
+vi.mock("../../orchestrator/execution/adapter-layer.js", () => ({
   AdapterRegistry: vi.fn().mockImplementation(function() { return {
     register: vi.fn(),
     getAdapterCapabilities: vi.fn().mockReturnValue([]),
@@ -144,7 +144,7 @@ vi.mock("../../adapters/agents/claude-api.js", () => ({
   ClaudeAPIAdapter: vi.fn().mockImplementation(function() { return {}; }),
 }));
 
-vi.mock("../../execution/task/task-lifecycle.js", () => ({
+vi.mock("../../orchestrator/execution/task/task-lifecycle.js", () => ({
   TaskLifecycle: vi.fn().mockImplementation(function() { return {}; }),
 }));
 
@@ -160,11 +160,11 @@ vi.mock("../../reporting/reporting-engine.js", async (importOriginal) => {
 
 import { CLIRunner } from "../cli-runner.js";
 import { StateManager } from "../../base/state/state-manager.js";
-import { CoreLoop } from "../../loop/core-loop.js";
-import { GoalNegotiator, EthicsRejectedError } from "../../goal/goal-negotiator.js";
-import { GoalRefiner } from "../../goal/goal-refiner.js";
+import { CoreLoop } from "../../orchestrator/loop/core-loop.js";
+import { GoalNegotiator, EthicsRejectedError } from "../../orchestrator/goal/goal-negotiator.js";
+import { GoalRefiner } from "../../orchestrator/goal/goal-refiner.js";
 import { ensureProviderConfig } from "../ensure-api-key.js";
-import type { LoopResult } from "../../loop/core-loop.js";
+import type { LoopResult } from "../../orchestrator/loop/core-loop.js";
 import { makeTempDir } from "../../../tests/helpers/temp-dir.js";
 import { makeGoal } from "../../../tests/helpers/fixtures.js";
 

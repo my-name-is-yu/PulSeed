@@ -1,2 +1,2 @@
 // Re-export from new location for backward compatibility
-export * from "../../goal/types/negotiation.js";
+export * from "../../orchestrator/goal/types/negotiation.js";

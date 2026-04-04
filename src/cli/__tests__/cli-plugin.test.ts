@@ -13,13 +13,13 @@ import * as yaml from "js-yaml";
 
 // ─── Module mocks (must precede imports of mocked modules) ───────────────────
 
-vi.mock("../../loop/core-loop.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../loop/core-loop.js")>();
+vi.mock("../../orchestrator/loop/core-loop.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../orchestrator/loop/core-loop.js")>();
   return { ...actual, CoreLoop: vi.fn() };
 });
 
-vi.mock("../../goal/goal-negotiator.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../goal/goal-negotiator.js")>();
+vi.mock("../../orchestrator/goal/goal-negotiator.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../orchestrator/goal/goal-negotiator.js")>();
   return { ...actual, GoalNegotiator: vi.fn() };
 });
 
@@ -52,15 +52,15 @@ vi.mock("../src/ethics-gate.js", () => ({
   EthicsGate: vi.fn().mockImplementation(() => ({})),
 }));
 
-vi.mock("../../execution/session-manager.js", () => ({
+vi.mock("../../orchestrator/execution/session-manager.js", () => ({
   SessionManager: vi.fn().mockImplementation(() => ({})),
 }));
 
-vi.mock("../../strategy/strategy-manager.js", () => ({
+vi.mock("../../orchestrator/strategy/strategy-manager.js", () => ({
   StrategyManager: vi.fn().mockImplementation(() => ({})),
 }));
 
-vi.mock("../../execution/adapter-layer.js", () => ({
+vi.mock("../../orchestrator/execution/adapter-layer.js", () => ({
   AdapterRegistry: vi.fn().mockImplementation(() => ({
     register: vi.fn(),
     getAdapterCapabilities: vi.fn().mockReturnValue([]),
@@ -75,7 +75,7 @@ vi.mock("../../adapters/agents/claude-api.js", () => ({
   ClaudeAPIAdapter: vi.fn().mockImplementation(() => ({})),
 }));
 
-vi.mock("../../execution/task/task-lifecycle.js", () => ({
+vi.mock("../../orchestrator/execution/task/task-lifecycle.js", () => ({
   TaskLifecycle: vi.fn().mockImplementation(() => ({})),
 }));
 

@@ -16,7 +16,7 @@ vi.mock("node:child_process", () => ({
 }));
 
 import { GitHubIssueAdapter } from "../github-issue.js";
-import type { AgentTask } from "../../execution/adapter-layer.js";
+import type { AgentTask } from "../../orchestrator/execution/adapter-layer.js";
 
 // ─── Helpers ───
 

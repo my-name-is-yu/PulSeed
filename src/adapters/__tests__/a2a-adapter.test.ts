@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { A2AAdapter } from "../agents/a2a-adapter.js";
 import { A2AClient } from "../agents/a2a-client.js";
-import { AdapterRegistry } from "../../execution/adapter-layer.js";
-import type { AgentTask } from "../../execution/adapter-layer.js";
+import { AdapterRegistry } from "../../orchestrator/execution/adapter-layer.js";
+import type { AgentTask } from "../../orchestrator/execution/adapter-layer.js";
 import type { A2ATask, A2AAgentCard } from "../../base/types/a2a.js";
 
 // ─── Mock A2AClient ───

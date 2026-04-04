@@ -7,7 +7,7 @@ import {
   getOverdueMilestones,
   evaluatePace,
   generateRescheduleOptions,
-} from "../../../goal/milestone-evaluator.js";
+} from "../../../orchestrator/goal/milestone-evaluator.js";
 import type { Goal, GoalTree } from "../../types/goal.js";
 import type { ObservationLogEntry } from "../../types/state.js";
 import type { GapHistoryEntry } from "../../types/gap.js";

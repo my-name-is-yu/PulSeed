@@ -12,7 +12,7 @@ import {
   observeForTask as _observeForTask,
 } from "./observation-task.js";
 import type { TaskDomain } from "../../base/types/pipeline.js";
-import type { AgentTask } from "../../execution/adapter-layer.js";
+import type { AgentTask } from "../../orchestrator/execution/adapter-layer.js";
 import type { TaskObservationContext } from "./observation-task.js";
 export type { TaskObservationContext } from "./observation-task.js";
 import {

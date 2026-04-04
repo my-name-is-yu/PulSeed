@@ -3,7 +3,7 @@ import { EscalationHandler } from "../escalation.js";
 import type { EscalationDeps } from "../escalation.js";
 import type { StateManager } from "../../base/state/state-manager.js";
 import type { ILLMClient, LLMResponse } from "../../base/llm/llm-client.js";
-import type { GoalNegotiator } from "../../goal/goal-negotiator.js";
+import type { GoalNegotiator } from "../../orchestrator/goal/goal-negotiator.js";
 import { ChatHistory } from "../chat-history.js";
 
 // Mock context-provider so tests don't walk the real filesystem

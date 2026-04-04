@@ -35,13 +35,13 @@ export type { OpenAIClientConfig } from "./base/llm/openai-client.js";
 export { EthicsGate } from "./platform/traits/ethics-gate.js";
 export * from "./base/types/guardrail.js";
 export { GuardrailRunner } from "./platform/traits/guardrail-runner.js";
-export { generateReflection, saveReflectionAsKnowledge, getReflectionsForGoal, formatReflectionsForPrompt } from "./execution/reflection-generator.js";
+export { generateReflection, saveReflectionAsKnowledge, getReflectionsForGoal, formatReflectionsForPrompt } from "./orchestrator/execution/reflection-generator.js";
 export * from "./base/types/reflection.js";
-export { SessionManager } from "./execution/session-manager.js";
-export { StrategyManager } from "./strategy/strategy-manager.js";
-export { GoalNegotiator, EthicsRejectedError } from "./goal/goal-negotiator.js";
-export { AdapterRegistry } from "./execution/adapter-layer.js";
-export type { IAdapter, AgentTask, AgentResult } from "./execution/adapter-layer.js";
+export { SessionManager } from "./orchestrator/execution/session-manager.js";
+export { StrategyManager } from "./orchestrator/strategy/strategy-manager.js";
+export { GoalNegotiator, EthicsRejectedError } from "./orchestrator/goal/goal-negotiator.js";
+export { AdapterRegistry } from "./orchestrator/execution/adapter-layer.js";
+export type { IAdapter, AgentTask, AgentResult } from "./orchestrator/execution/adapter-layer.js";
 export { ClaudeCodeCLIAdapter } from "./adapters/agents/claude-code-cli.js";
 export { ClaudeAPIAdapter } from "./adapters/agents/claude-api.js";
 export { OpenAICodexCLIAdapter } from "./adapters/agents/openai-codex.js";
@@ -54,13 +54,13 @@ export { CodexLLMClient } from "./base/llm/codex-llm-client.js";
 export type { CodexLLMClientConfig } from "./base/llm/codex-llm-client.js";
 export { loadProviderConfig, saveProviderConfig, DEFAULT_PROVIDER_CONFIG, migrateProviderConfig, validateProviderConfig, MODEL_REGISTRY } from "./base/llm/provider-config.js";
 export type { ProviderConfig, ValidationResult } from "./base/llm/provider-config.js";
-export { TaskLifecycle } from "./execution/task/task-lifecycle.js";
+export { TaskLifecycle } from "./orchestrator/execution/task/task-lifecycle.js";
 export { ReportingEngine } from "./reporting/reporting-engine.js";
 export { KnowledgeManager } from "./platform/knowledge/knowledge-manager.js";
 export { CapabilityDetector } from "./platform/observation/capability-detector.js";
-export { PortfolioManager } from "./strategy/portfolio-manager.js";
-export { CoreLoop } from "./loop/core-loop.js";
-export type { CoreLoopDeps, LoopConfig, LoopResult } from "./loop/core-loop.js";
+export { PortfolioManager } from "./orchestrator/strategy/portfolio-manager.js";
+export { CoreLoop } from "./orchestrator/loop/core-loop.js";
+export type { CoreLoopDeps, LoopConfig, LoopResult } from "./orchestrator/loop/core-loop.js";
 export { CLIRunner } from "./cli/cli-runner.js";
 export { IntentRecognizer } from "./tui/intent-recognizer.js";
 export type { IntentType, RecognizedIntent } from "./tui/intent-recognizer.js";
@@ -83,7 +83,7 @@ export { CharacterConfigManager } from "./platform/traits/character-config.js";
 export { CharacterConfigSchema, DEFAULT_CHARACTER_CONFIG } from "./base/types/character.js";
 export type { CharacterConfig } from "./base/types/character.js";
 export { CuriosityEngine } from "./platform/traits/curiosity-engine.js";
-export { GoalDependencyGraph } from "./goal/goal-dependency-graph.js";
+export { GoalDependencyGraph } from "./orchestrator/goal/goal-dependency-graph.js";
 export { KnowledgeGraph } from "./platform/knowledge/knowledge-graph.js";
 export type { CuriosityEngineDeps } from "./platform/traits/curiosity-engine.js";
 export {
@@ -115,11 +115,11 @@ export { DataSourceRegistry, FileDataSourceAdapter, HttpApiDataSourceAdapter, ge
 export type { IDataSourceAdapter } from "./platform/observation/data-source-adapter.js";
 
 // --- Stage 14 modules ---
-export { GoalTreeManager } from "./goal/goal-tree-manager.js";
-export { StateAggregator, type AggregatedState } from "./goal/state-aggregator.js";
-export { TreeLoopOrchestrator } from "./goal/tree-loop-orchestrator.js";
-export { CrossGoalPortfolio } from "./strategy/cross-goal-portfolio.js";
-export { StrategyTemplateRegistry } from "./strategy/strategy-template-registry.js";
+export { GoalTreeManager } from "./orchestrator/goal/goal-tree-manager.js";
+export { StateAggregator, type AggregatedState } from "./orchestrator/goal/state-aggregator.js";
+export { TreeLoopOrchestrator } from "./orchestrator/goal/tree-loop-orchestrator.js";
+export { CrossGoalPortfolio } from "./orchestrator/strategy/cross-goal-portfolio.js";
+export { StrategyTemplateRegistry } from "./orchestrator/strategy/strategy-template-registry.js";
 export { LearningPipeline } from "./platform/knowledge/learning/learning-pipeline.js";
 export { KnowledgeTransfer } from "./platform/knowledge/transfer/knowledge-transfer.js";
 
@@ -157,5 +157,5 @@ export { NotifierRegistry } from "./runtime/notifier-registry.js";
 export { PluginLoader } from "./runtime/plugin-loader.js";
 
 // --- Iteration budget ---
-export { IterationBudget } from "./loop/iteration-budget.js";
-export type { IterationBudgetData } from "./loop/iteration-budget.js";
+export { IterationBudget } from "./orchestrator/loop/iteration-budget.js";
+export type { IterationBudgetData } from "./orchestrator/loop/iteration-budget.js";

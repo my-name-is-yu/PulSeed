@@ -5,7 +5,7 @@ import { spawnSync } from "node:child_process";
 
 import { SuggestOutputSchema } from "../../base/types/suggest.js";
 import type { SuggestOutput, Suggestion } from "../../base/types/suggest.js";
-import type { GoalSuggestion } from "../../goal/goal-negotiator.js";
+import type { GoalSuggestion } from "../../orchestrator/goal/goal-negotiator.js";
 import type { CapabilityDetector } from "../../platform/observation/capability-detector.js";
 import { buildTodoLikeMarkerInventory, formatTodoLikeMarkerInventory } from "./goal-utils.js";
 
