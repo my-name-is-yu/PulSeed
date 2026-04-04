@@ -178,12 +178,12 @@ export class TestRunnerTool implements ITool<TestRunnerInput, TestRunnerOutput> 
   }
 
   async checkPermissions(input: TestRunnerInput): Promise<PermissionCheckResult> {
-    // Only allow safe test runners
-    const ALLOWED_PREFIXES = ["npx vitest", "npx jest", "npm test", "node --test", "mocha", "jest", "vitest"];
-    const cmd = input.command.trim();
-    const allowed = ALLOWED_PREFIXES.some((prefix) => cmd.startsWith(prefix));
+    // Only allow safe test runners — validate first token to prevent bypass (e.g., "jest; rm -rf /")
+    const ALLOWED_BINARIES = ["npx", "npm", "node", "mocha", "jest", "vitest"];
+    const parts = input.command.trim().split(/\s+/);
+    const allowed = ALLOWED_BINARIES.includes(parts[0]);
     if (!allowed) {
-      return { status: "needs_approval", reason: `Custom test command requires approval: ${cmd}` };
+      return { status: "needs_approval", reason: `Custom test command requires approval: ${input.command.trim()}` };
     }
     return { status: "allowed" };
   }
