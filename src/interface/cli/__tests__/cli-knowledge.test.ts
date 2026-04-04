@@ -102,7 +102,7 @@ vi.mock("../../../base/llm/provider-factory.js", async (importOriginal) => {
 import { CLIRunner } from "../cli-runner.js";
 import { StateManager } from "../../../base/state/state-manager.js";
 import type { SharedKnowledgeEntry } from "../../../base/types/knowledge.js";
-import { makeTempDir } from "../../../tests/helpers/temp-dir.js";
+import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 

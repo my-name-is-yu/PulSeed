@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import * as path from "node:path";
 import * as fs from "node:fs";
-import { makeTempDir, cleanupTempDir } from "../../../tests/helpers/temp-dir.js";
+import { makeTempDir, cleanupTempDir } from "../../../../tests/helpers/temp-dir.js";
 
 vi.mock("../../../base/utils/paths.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../../base/utils/paths.js")>();

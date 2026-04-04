@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { inferDimensionsFromTitle, formatInferredDimensions } from "../commands/goal-infer.js";
-import { createMockLLMClient, createSingleMockLLMClient } from "../../../tests/helpers/mock-llm.js";
+import { createMockLLMClient, createSingleMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
 
 describe("inferDimensionsFromTitle", () => {
   it("returns parsed dimensions when LLM returns valid JSON array", async () => {

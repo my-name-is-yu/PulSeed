@@ -165,8 +165,8 @@ import { GoalNegotiator, EthicsRejectedError } from "../../../orchestrator/goal/
 import { GoalRefiner } from "../../../orchestrator/goal/goal-refiner.js";
 import { ensureProviderConfig } from "../ensure-api-key.js";
 import type { LoopResult } from "../../../orchestrator/loop/core-loop.js";
-import { makeTempDir } from "../../../tests/helpers/temp-dir.js";
-import { makeGoal } from "../../../tests/helpers/fixtures.js";
+import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
+import { makeGoal } from "../../../../tests/helpers/fixtures.js";
 
 function makeLoopResult(overrides: Partial<LoopResult> = {}): LoopResult {
   const now = new Date().toISOString();

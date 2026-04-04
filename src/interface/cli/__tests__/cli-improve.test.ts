@@ -122,8 +122,8 @@ import { GoalNegotiator } from "../../../orchestrator/goal/goal-negotiator.js";
 import { ensureProviderConfig } from "../ensure-api-key.js";
 import type { Goal } from "../../../base/types/goal.js";
 import type { LoopResult } from "../../../orchestrator/loop/core-loop.js";
-import { makeTempDir } from "../../../tests/helpers/temp-dir.js";
-import { makeGoal } from "../../../tests/helpers/fixtures.js";
+import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
+import { makeGoal } from "../../../../tests/helpers/fixtures.js";
 import { SuggestTimeoutError } from "../../../orchestrator/goal/goal-suggest.js";
 
 function makeLoopResult(overrides: Partial<LoopResult> = {}): LoopResult {

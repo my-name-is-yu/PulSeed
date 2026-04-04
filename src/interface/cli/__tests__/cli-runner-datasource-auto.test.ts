@@ -114,8 +114,8 @@ import { StateManager } from "../../../base/state/state-manager.js";
 import { GoalNegotiator } from "../../../orchestrator/goal/goal-negotiator.js";
 import { GoalRefiner } from "../../../orchestrator/goal/goal-refiner.js";
 import type { Goal } from "../../../base/types/goal.js";
-import { makeTempDir } from "../../../tests/helpers/temp-dir.js";
-import { makeGoal } from "../../../tests/helpers/fixtures.js";
+import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
+import { makeGoal } from "../../../../tests/helpers/fixtures.js";
 
 function makeNegotiationResult(goal: Goal) {
   return {

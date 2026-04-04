@@ -6,8 +6,8 @@ import { StateManager } from "../../../base/state/state-manager.js";
 import type { CoreLoop, LoopResult } from "../../../orchestrator/loop/core-loop.js";
 import type { TrustManager } from "../../../platform/traits/trust-manager.js";
 import type { Threshold } from "../../../base/types/core.js";
-import { makeTempDir } from "../../../tests/helpers/temp-dir.js";
-import { makeGoal } from "../../../tests/helpers/fixtures.js";
+import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
+import { makeGoal } from "../../../../tests/helpers/fixtures.js";
 
 /** Flush enough microtask/Promise queues for async StateManager I/O to settle */
 async function flushAsync(rounds = 50): Promise<void> {

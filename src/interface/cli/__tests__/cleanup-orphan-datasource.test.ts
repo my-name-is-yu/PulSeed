@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { cmdCleanup } from "../commands/goal-write.js";
-import { makeTempDir, cleanupTempDir } from "../../../tests/helpers/temp-dir.js";
+import { makeTempDir, cleanupTempDir } from "../../../../tests/helpers/temp-dir.js";
 
 // ─── Minimal StateManager stub ───
 

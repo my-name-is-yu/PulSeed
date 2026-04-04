@@ -12,8 +12,8 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
-import { createMockLLMClient } from "../../../tests/helpers/mock-llm.js";
-import { makeTempDir } from "../../../tests/helpers/temp-dir.js";
+import { createMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
+import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 
 // ─── Module mocks ─────────────────────────────────────────────────────────────
 // Only mock modules that would make real network/process calls.
@@ -59,7 +59,7 @@ vi.mock("../../../adapters/agents/claude-api.js", () => ({
 
 import { CLIRunner } from "../cli-runner.js";
 import { StateManager } from "../../../base/state/state-manager.js";
-import { makeGoal } from "../../../tests/helpers/fixtures.js";
+import { makeGoal } from "../../../../tests/helpers/fixtures.js";
 
 async function runCLI(tmpDir: string, ...args: string[]): Promise<number> {
   const runner = new CLIRunner(tmpDir);
