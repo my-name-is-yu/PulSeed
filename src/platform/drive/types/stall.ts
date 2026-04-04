@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { StallTypeEnum, StallCauseEnum } from "../../base/types/core.js";
+import { StallTypeEnum, StallCauseEnum } from "../../../base/types/core.js";
 
 // --- StallAnalysis (M14-S2: cause analysis for PIVOT/REFINE/ESCALATE) ---
 
