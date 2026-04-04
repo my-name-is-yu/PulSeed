@@ -121,11 +121,11 @@ export class ToolExecutor {
           const isSafe = tool.isConcurrencySafe(input);
           if (context.timeoutMs) {
             return this.withTimeout(
-              () => this.callWithRetry(callFn, tool.metadata.name, isSafe),
+              () => this.callWithRetry(callFn, tool.metadata.name, isSafe, context),
               context.timeoutMs,
             );
           }
-          return this.callWithRetry(callFn, tool.metadata.name, isSafe);
+          return this.callWithRetry(callFn, tool.metadata.name, isSafe, context);
         },
       );
     } catch (err) {
@@ -228,6 +228,7 @@ export class ToolExecutor {
     fn: () => Promise<ToolResult>,
     toolName: string,
     isSafe: boolean,
+    context: ToolCallContext,
   ): Promise<ToolResult> {
     const TRANSIENT_PATTERNS = [
       "ECONNRESET",
@@ -251,6 +252,7 @@ export class ToolExecutor {
       } catch (err) {
         if (!isSafe || !isTransient(err) || attempt >= BACKOFFS.length) {
           const errMsg = err instanceof Error ? err.message : String(err);
+          context.logger?.warn("tool.call.failure", { tool: toolName, callId: context.callId, error: errMsg });
           return {
             success: false,
             data: null,
@@ -263,11 +265,13 @@ export class ToolExecutor {
       }
     }
 
+    const exhaustedMsg = `Tool ${toolName} failed after retries`;
+    context.logger?.warn("tool.call.failure", { tool: toolName, callId: context.callId, error: exhaustedMsg });
     return {
       success: false,
       data: null,
-      summary: `Tool ${toolName} failed after retries`,
-      error: `Tool ${toolName} failed after retries`,
+      summary: exhaustedMsg,
+      error: exhaustedMsg,
       durationMs: 0,
     };
   }
