@@ -52,9 +52,6 @@ export class ShellTool implements ITool<ShellInput, ShellOutput> {
   }
 
   async checkPermissions(input: ShellInput, context?: ToolCallContext): Promise<PermissionCheckResult> {
-    if (context?.trusted) {
-      return { status: "allowed" };
-    }
     const cmd = input.command.trim();
     const SAFE_PATTERNS = [
       /^(cat|head|tail|wc|ls|pwd|echo|date|hostname|which|type|file)/,
@@ -73,11 +70,14 @@ export class ShellTool implements ITool<ShellInput, ShellOutput> {
       />/, /\|.*(tee|dd|rm|mv)/,
     ];
     const segments = cmd.split(/\s*(?:&&|\|\||;)\s*/);
-    for (const segment of segments) {
-      const trimmed = segment.trim();
-      if (!trimmed) continue;
-      if (DENY_PATTERNS.some(p => p.test(trimmed))) {
-        return { status: "denied", reason: `Denied command segment: ${trimmed}` };
+    // trusted: skip DENY_PATTERNS only; redirect/pipe/injection checks still apply
+    if (!context?.trusted) {
+      for (const segment of segments) {
+        const trimmed = segment.trim();
+        if (!trimmed) continue;
+        if (DENY_PATTERNS.some(p => p.test(trimmed))) {
+          return { status: "denied", reason: `Denied command segment: ${trimmed}` };
+        }
       }
     }
     for (const segment of segments) {
