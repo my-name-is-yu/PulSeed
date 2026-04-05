@@ -231,16 +231,10 @@ export function App({
           }
         } else if (chatRunner) {
           // Free-form text goes through ChatRunner for live LLM chat
-          setMessages((prev) => [
-            ...prev,
-            { id: randomUUID(), role: "pulseed" as const, text: "Thinking...", timestamp: new Date(), messageType: "info" as const },
-          ].slice(-MAX_MESSAGES));
-
           const result = await chatRunner.execute(input, process.cwd());
 
-          // Replace the "Thinking..." message with the actual response
           setMessages((prev) => [
-            ...prev.slice(0, -1),
+            ...prev,
             {
               id: randomUUID(),
               role: "pulseed" as const,
@@ -267,7 +261,7 @@ export function App({
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         setMessages((prev) => [
-          ...prev.slice(0, -1),
+          ...prev,
           {
             id: randomUUID(),
             role: "pulseed" as const,
