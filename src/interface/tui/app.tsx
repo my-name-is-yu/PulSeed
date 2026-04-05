@@ -60,7 +60,7 @@ const StatusBar: React.FC<{
       Active: {goalCount}  Trust: {trustScore >= 0 ? "+" : ""}
       {trustScore}  Status: {statusLabel(status)}  Iter: {iteration}
     </Text>
-    <Text dimColor>d:dashboard  ?:help  Ctrl-C×2:quit</Text>
+    <Text dimColor>d:dashboard  ?:help  Ctrl-C× 2:quit</Text>
   </Box>
 );
 
@@ -101,6 +101,9 @@ export function App({
   const [approvalRequest, setApprovalRequest] = useState<ApprovalRequest | null>(null);
   const approvalRequestRef = useRef<ApprovalRequest | null>(null);
 
+  // Ctrl-C double-press exit state
+  const [ctrlCPending, setCtrlCPending] = useState(false);
+
   // Expose setApprovalRequest to entry.ts via callback prop
   useEffect(() => {
     if (onApprovalReady) {
@@ -126,7 +129,7 @@ export function App({
         const names: string[] = [];
         for (const id of ids) {
           const goal = await stateManager.loadGoal(id);
-          if (goal && (goal.status === 'active' || goal.status === 'waiting')) {
+          if (goal && (goal.status === "active" || goal.status === "waiting")) {
             names.push(goal.title);
           }
         }
@@ -137,19 +140,36 @@ export function App({
     })();
   }, [stateManager]);
 
-  // F1 key toggles help overlay (in addition to '?' shortcut via chat).
-  // F1 sends escape sequences: "\u001bOP" (xterm) or "\u001b[11~" (vt100).
-  // isActive:false when help is shown — HelpOverlay handles its own ESC key,
-  // and we avoid competing with TextInput for input events during normal chat.
-  useInput((rawInput) => {
+  // Handle Ctrl-C via useInput (raw mode — SIGINT does not fire when Ink holds the terminal)
+  // exitOnCtrlC:false is set on render() in entry.ts, so Ctrl-C reaches useInput as input="c", key.ctrl=true
+  useInput((input, key) => {
+    if (input === "c" && key.ctrl) {
+      if (ctrlCPending) {
+        // Second Ctrl-C — stop loop and exit
+        coreLoop.stop();
+        process.exit(0);
+      }
+      setCtrlCPending(true);
+      // Auto-clear the pending flag after 3 seconds
+      setTimeout(() => setCtrlCPending(false), 3000);
+      return;
+    }
+
+    // Any other input cancels the pending Ctrl-C
+    if (ctrlCPending) {
+      setCtrlCPending(false);
+    }
+
+    // F1 key toggles help overlay (in addition to '?' shortcut via chat).
+    // F1 sends escape sequences: "OP" (xterm) or "[11~" (vt100).
     if (
-      rawInput === "\u001bOP" ||
-      rawInput === "\u001b[11~" ||
-      rawInput === "\u001b[[A"
+      input === "OP" ||
+      input === "[11~" ||
+      input === "[[A"
     ) {
       setShowHelp((prev) => !prev);
     }
-  }, { isActive: !showHelp && reportToShow === null && approvalRequest === null });
+  }, { isActive: reportToShow === null && approvalRequest === null });
 
   const handleInput = useCallback(
     async (input: string) => {
@@ -334,6 +354,11 @@ export function App({
         status={loopState.status}
         iteration={loopState.iteration}
       />
+      {ctrlCPending && (
+        <Box paddingX={1}>
+          <Text color={theme.warning}>(Press Ctrl-C once more to quit)</Text>
+        </Box>
+      )}
     </Box>
   );
 }
