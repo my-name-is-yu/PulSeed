@@ -5,7 +5,7 @@
 // styled user/AI distinction, spinner, timestamps, and color-coded message types.
 
 import React, { useState } from "react";
-import { Box, Text, useInput, useStdout } from "ink";
+import { Box, Text, useInput, useStdout, useCursor } from "ink";
 import TextInput from "ink-text-input";
 import Spinner from "ink-spinner";
 import { renderMarkdownLines, type MarkdownLine, type MarkdownSegment } from "./markdown-renderer.js";
@@ -239,6 +239,14 @@ export function Chat({ messages, onSubmit, isProcessing, goalNames = [] }: ChatP
   React.useEffect(() => {
     setSelectedIdx(0);
   }, [matches.map(m => m.name).join(",")]);
+
+  // IME cursor positioning: report cursor x position so the IME candidate window
+  // appears next to the input caret instead of at the top-left corner.
+  const { setCursorPosition } = useCursor();
+  React.useEffect(() => {
+    // Prompt prefix "❧ " is 2 visible chars; x = 2 + input length
+    setCursorPosition({ x: 2 + input.length, y: 0 });
+  }, [input, setCursorPosition]);
 
   const handleSubmit = (value: string) => {
     if (hasMatches) return; // let useInput handle enter when suggestions are shown
