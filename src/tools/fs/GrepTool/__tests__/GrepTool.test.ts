@@ -50,15 +50,11 @@ describe("GrepTool", () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "grep-test-"));
     await fs.writeFile(
       path.join(tmpDir, "alpha.ts"),
-      'export const hello = "world";
-export const foo = 42;
-'
+      'export const hello = "world";\nexport const foo = 42;\n'
     );
     await fs.writeFile(
       path.join(tmpDir, "beta.ts"),
-      'import { hello } from "./alpha.js";
-console.log(hello);
-'
+      'import { hello } from "./alpha.js";\nconsole.log(hello);\n'
     );
     await fs.writeFile(path.join(tmpDir, "other.json"), '{"key": "value"}');
   });
@@ -74,8 +70,7 @@ console.log(hello);
     );
     expect(result.success).toBe(true);
     const output = result.data as string;
-    const files = output.split("
-").filter(Boolean);
+    const files = output.split("\n").filter(Boolean);
     expect(files.length).toBe(2);
     expect(files.some((f) => f.includes("alpha.ts"))).toBe(true);
     expect(files.some((f) => f.includes("beta.ts"))).toBe(true);
@@ -109,8 +104,7 @@ console.log(hello);
     );
     expect(result.success).toBe(true);
     const output = result.data as string;
-    const files = output.split("
-").filter(Boolean);
+    const files = output.split("\n").filter(Boolean);
     expect(files.length).toBeGreaterThan(0);
   });
 
