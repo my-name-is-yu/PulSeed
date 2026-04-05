@@ -6,6 +6,7 @@
 // Routes chat input through IntentRecognizer → ActionHandler.
 
 import React, { useState, useCallback, useEffect, useRef } from "react";
+import { randomUUID } from "node:crypto";
 import { Box, Text, useInput, useStdout } from "ink";
 import { theme } from "./theme.js";
 import { Dashboard, statusLabel } from "./dashboard.js";
@@ -59,7 +60,7 @@ const StatusBar: React.FC<{
       Active: {goalCount}  Trust: {trustScore >= 0 ? "+" : ""}
       {trustScore}  Status: {statusLabel(status)}  Iter: {iteration}
     </Text>
-    <Text dimColor>d:dashboard  ?:help  Ctrl-C:quit</Text>
+    <Text dimColor>d:dashboard  ?:help  Ctrl-C× 2:quit</Text>
   </Box>
 );
 
@@ -86,6 +87,7 @@ export function App({
 
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
+      id: randomUUID(),
       role: "pulseed",
       text: "What would you like to do? Type '/help' for available commands.",
       timestamp: new Date(),
@@ -98,6 +100,9 @@ export function App({
   const [reportToShow, setReportToShow] = useState<Report | null>(null);
   const [approvalRequest, setApprovalRequest] = useState<ApprovalRequest | null>(null);
   const approvalRequestRef = useRef<ApprovalRequest | null>(null);
+
+  // Ctrl-C double-press exit state
+  const [ctrlCPending, setCtrlCPending] = useState(false);
 
   // Expose setApprovalRequest to entry.ts via callback prop
   useEffect(() => {
@@ -124,7 +129,7 @@ export function App({
         const names: string[] = [];
         for (const id of ids) {
           const goal = await stateManager.loadGoal(id);
-          if (goal && (goal.status === 'active' || goal.status === 'waiting')) {
+          if (goal && (goal.status === "active" || goal.status === "waiting")) {
             names.push(goal.title);
           }
         }
@@ -135,30 +140,42 @@ export function App({
     })();
   }, [stateManager]);
 
-  // F1 key toggles help overlay (in addition to '?' shortcut via chat).
-  // F1 sends escape sequences: "\u001bOP" (xterm) or "\u001b[11~" (vt100).
-  // isActive:false when help is shown — HelpOverlay handles its own ESC key,
-  // and we avoid competing with TextInput for input events during normal chat.
-  useInput((rawInput) => {
+  // Handle Ctrl-C via useInput (raw mode — SIGINT does not fire when Ink holds the terminal)
+  // exitOnCtrlC:false is set on render() in entry.ts, so Ctrl-C reaches useInput as input="c", key.ctrl=true
+  useInput((input, key) => {
+    if (input === "c" && key.ctrl) {
+      if (ctrlCPending) {
+        // Second Ctrl-C — stop loop and exit
+        coreLoop.stop();
+        process.exit(0);
+      }
+      setCtrlCPending(true);
+      // Auto-clear the pending flag after 3 seconds
+      setTimeout(() => setCtrlCPending(false), 3000);
+      return;
+    }
+
+    // Any other input cancels the pending Ctrl-C
+    if (ctrlCPending) {
+      setCtrlCPending(false);
+    }
+
+    // F1 key toggles help overlay (in addition to '?' shortcut via chat).
+    // F1 sends escape sequences: "OP" (xterm) or "[11~" (vt100).
     if (
-      rawInput === "\u001bOP" ||
-      rawInput === "\u001b[11~" ||
-      rawInput === "\u001b[[A"
+      input === "OP" ||
+      input === "[11~" ||
+      input === "[[A"
     ) {
       setShowHelp((prev) => !prev);
     }
-  }, { isActive: !showHelp && reportToShow === null && approvalRequest === null });
+  }, { isActive: reportToShow === null && approvalRequest === null });
 
   const handleInput = useCallback(
     async (input: string) => {
       if (isProcessing) return;
-      // Dismiss report overlay on any input
-      if (reportToShow !== null) {
-        setReportToShow(null);
-        return;
-      }
       // Add user message
-      setMessages((prev) => [...prev, { role: "user" as const, text: input, timestamp: new Date() }].slice(-MAX_MESSAGES));
+      setMessages((prev) => [...prev, { id: randomUUID(), role: "user" as const, text: input, timestamp: new Date() }].slice(-MAX_MESSAGES));
       setIsProcessing(true);
 
       try {
@@ -186,6 +203,7 @@ export function App({
           setMessages((prev) => [
             ...prev,
             ...result.messages.map((text) => ({
+              id: randomUUID(),
               role: "pulseed" as const,
               text,
               timestamp: new Date(),
@@ -213,17 +231,12 @@ export function App({
           }
         } else if (chatRunner) {
           // Free-form text goes through ChatRunner for live LLM chat
-          setMessages((prev) => [
-            ...prev,
-            { role: "pulseed" as const, text: "Thinking...", timestamp: new Date(), messageType: "info" as const },
-          ].slice(-MAX_MESSAGES));
-
           const result = await chatRunner.execute(input, process.cwd());
 
-          // Replace the "Thinking..." message with the actual response
           setMessages((prev) => [
-            ...prev.slice(0, -1),
+            ...prev,
             {
+              id: randomUUID(),
               role: "pulseed" as const,
               text: result.output || "(no response)",
               timestamp: new Date(),
@@ -237,6 +250,7 @@ export function App({
           setMessages((prev) => [
             ...prev,
             ...result.messages.map((text) => ({
+              id: randomUUID(),
               role: "pulseed" as const,
               text,
               timestamp: new Date(),
@@ -247,8 +261,9 @@ export function App({
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         setMessages((prev) => [
-          ...prev.slice(0, -1),
+          ...prev,
           {
+            id: randomUUID(),
             role: "pulseed" as const,
             text: `Error: ${message}`,
             timestamp: new Date(),
@@ -259,7 +274,7 @@ export function App({
         setIsProcessing(false);
       }
     },
-    [intentRecognizer, actionHandler, chatRunner, start, stop]
+    [intentRecognizer, actionHandler, chatRunner, start, stop, isProcessing]
   );
 
   // Expose controller for SIGINT shutdown in entry.ts
@@ -318,7 +333,7 @@ export function App({
               }}
             />
           ) : reportToShow !== null ? (
-            <ReportView report={reportToShow} />
+            <ReportView report={reportToShow} onDismiss={() => setReportToShow(null)} />
           ) : showHelp ? (
             <HelpOverlay onDismiss={() => setShowHelp(false)} />
           ) : (
@@ -333,6 +348,11 @@ export function App({
         status={loopState.status}
         iteration={loopState.iteration}
       />
+      {ctrlCPending && (
+        <Box paddingX={1}>
+          <Text color={theme.warning}>(Press Ctrl-C once more to quit)</Text>
+        </Box>
+      )}
     </Box>
   );
 }

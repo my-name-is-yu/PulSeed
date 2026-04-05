@@ -3,6 +3,7 @@
 import React, { useState, useCallback, useEffect } from "react";
 import { render, useApp } from "ink";
 import { parseArgs } from "node:util";
+import { randomUUID } from "node:crypto";
 
 import { StateManager } from "../../../base/state/state-manager.js";
 import { ensureProviderConfig } from "../ensure-api-key.js";
@@ -31,6 +32,7 @@ function ChatApp({ chatRunner, cwd, timeoutMs }: ChatAppProps) {
   const { exit } = useApp();
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
+      id: randomUUID(),
       role: "pulseed",
       text: "Chat mode — type a task, /help for commands, /exit to quit.",
       timestamp: new Date(),
@@ -54,7 +56,7 @@ function ChatApp({ chatRunner, cwd, timeoutMs }: ChatAppProps) {
 
       setMessages((prev) => [
         ...prev,
-        { role: "user" as const, text: input, timestamp: new Date() },
+        { id: randomUUID(), role: "user" as const, text: input, timestamp: new Date() },
       ]);
       setIsProcessing(true);
 
@@ -63,6 +65,7 @@ function ChatApp({ chatRunner, cwd, timeoutMs }: ChatAppProps) {
         setMessages((prev) => [
           ...prev,
           {
+            id: randomUUID(),
             role: "pulseed" as const,
             text: result.output || "(no output)",
             timestamp: new Date(),
@@ -74,6 +77,7 @@ function ChatApp({ chatRunner, cwd, timeoutMs }: ChatAppProps) {
         setMessages((prev) => [
           ...prev,
           {
+            id: randomUUID(),
             role: "pulseed" as const,
             text: `Error: ${message}`,
             timestamp: new Date(),

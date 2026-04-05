@@ -81,8 +81,8 @@ export function HelpOverlay({ onDismiss }: HelpOverlayProps) {
             <Text>Close this overlay</Text>
           </Box>
           <Box>
-            <Box width={20}><Text color={theme.shortcut} bold>Ctrl-C</Text></Box>
-            <Text>Quit PulSeed</Text>
+            <Box width={20}><Text color={theme.shortcut} bold>Ctrl-C ×2</Text></Box>
+            <Text>Quit PulSeed (press twice)</Text>
           </Box>
         </Box>
       </Box>

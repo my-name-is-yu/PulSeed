@@ -5,7 +5,7 @@
 // styled user/AI distinction, spinner, timestamps, and color-coded message types.
 
 import React, { useState } from "react";
-import { Box, Text, useInput } from "ink";
+import { Box, Text, useInput, useStdout, useCursor } from "ink";
 import TextInput from "ink-text-input";
 import Spinner from "ink-spinner";
 import { renderMarkdownLines, type MarkdownLine, type MarkdownSegment } from "./markdown-renderer.js";
@@ -13,6 +13,7 @@ import { fuzzyMatch, fuzzyFilter } from "./fuzzy.js";
 import { theme, getMessageTypeColor } from "./theme.js";
 
 export interface ChatMessage {
+  id: string;
   role: "user" | "pulseed";
   text: string;
   timestamp: Date;
@@ -87,28 +88,63 @@ function MarkdownLineComponent({
   return <Text {...props}>{line.text}</Text>;
 }
 
+/** Memoized message row — prevents spinner re-renders from flickering messages */
+const MessageRow = React.memo(function MessageRow({ msg }: { msg: ChatMessage }) {
+  const timeStr = formatTime(msg.timestamp ?? new Date());
+  if (msg.role === "user") {
+    return (
+      <Box flexDirection="column" marginBottom={1}>
+        <Box>
+          <Text backgroundColor="#D9D9D9" color="#1A1A1A">
+            {" ❧ "}{msg.text}{" "}
+          </Text>
+          <Text dimColor> {timeStr}</Text>
+        </Box>
+      </Box>
+    );
+  }
+  const typeColor = getMessageTypeColor(msg.messageType);
+  const mdLines = renderMarkdownLines(msg.text);
+  return (
+    <Box flexDirection="column" marginBottom={1} marginLeft={2}>
+      <Box justifyContent="flex-end">
+        <Text dimColor>{timeStr}</Text>
+      </Box>
+      <Box flexDirection="column">
+        {mdLines.map((line, j) => (
+          <MarkdownLineComponent
+            key={j}
+            line={line}
+            color={typeColor}
+          />
+        ))}
+      </Box>
+    </Box>
+  );
+});
+
 type Suggestion = {
   name: string;
   description: string;
   aliases: string[];
-  type: 'command' | 'goal';
+  type: "command" | "goal";
 };
 
 const COMMANDS: Suggestion[] = [
-  { name: '/run', aliases: ['/start'], description: 'Start the goal loop', type: 'command' },
-  { name: '/stop', aliases: ['/quit'], description: 'Stop the running loop', type: 'command' },
-  { name: '/status', aliases: [], description: 'Show current progress', type: 'command' },
-  { name: '/report', aliases: [], description: 'Generate a summary report', type: 'command' },
-  { name: '/goals', aliases: [], description: 'List all goals', type: 'command' },
-  { name: '/help', aliases: ['?'], description: 'Show help overlay', type: 'command' },
-  { name: '/dashboard', aliases: [], description: 'Toggle dashboard sidebar', type: 'command' as const },
+  { name: "/run", aliases: ["/start"], description: "Start the goal loop", type: "command" },
+  { name: "/stop", aliases: ["/quit"], description: "Stop the running loop", type: "command" },
+  { name: "/status", aliases: [], description: "Show current progress", type: "command" },
+  { name: "/report", aliases: [], description: "Generate a summary report", type: "command" },
+  { name: "/goals", aliases: [], description: "List all goals", type: "command" },
+  { name: "/help", aliases: ["?"], description: "Show help overlay", type: "command" },
+  { name: "/dashboard", aliases: [], description: "Toggle dashboard sidebar", type: "command" as const },
 ];
 
 /** Commands that accept a goal name as argument */
-const GOAL_ARG_COMMANDS = ['/run ', '/start '];
+const GOAL_ARG_COMMANDS = ["/run ", "/start "];
 
 function getMatchingSuggestions(input: string, goalNames: string[]): Suggestion[] {
-  if (!input.startsWith('/')) return [];
+  if (!input.startsWith("/")) return [];
 
   // Check if user typed a command that expects a goal name argument
   for (const prefix of GOAL_ARG_COMMANDS) {
@@ -119,13 +155,13 @@ function getMatchingSuggestions(input: string, goalNames: string[]): Suggestion[
         name: prefix.trimEnd(),
         description: g,
         aliases: [],
-        type: 'goal' as const,
+        type: "goal" as const,
       }));
     }
   }
 
   // Fuzzy match against command names and aliases
-  const query = input.slice(1); // strip leading '/'
+  const query = input.slice(1); // strip leading "/"
 
   // Show all commands when query is empty (just "/")
   if (!query) {
@@ -135,11 +171,11 @@ function getMatchingSuggestions(input: string, goalNames: string[]): Suggestion[
   const scored: Array<{ cmd: Suggestion; score: number }> = [];
 
   for (const cmd of COMMANDS) {
-    // Try matching against name (without leading '/')
+    // Try matching against name (without leading "/")
     const nameScore = fuzzyMatch(query, cmd.name.slice(1));
     // Try matching against aliases
     const aliasScores = cmd.aliases.map((a) =>
-      a.startsWith('/') ? fuzzyMatch(query, a.slice(1)) : fuzzyMatch(query, a)
+      a.startsWith("/") ? fuzzyMatch(query, a.slice(1)) : fuzzyMatch(query, a)
     );
     const bestAlias = aliasScores.reduce<number | null>(
       (best, s) => (s !== null && (best === null || s > best) ? s : best),
@@ -168,6 +204,13 @@ export function Chat({ messages, onSubmit, isProcessing, goalNames = [] }: ChatP
   const matches = justSelected.current ? [] : getMatchingSuggestions(input, goalNames);
   const hasMatches = matches.length > 0;
 
+  // Scroll-slicing: clip messages to visible terminal height
+  const { stdout } = useStdout();
+  const termRows = stdout?.rows ?? 24;
+  const maxVisible = Math.max(1, termRows - 8); // reserve rows for header, input, status bar
+  const startIdx = Math.max(0, messages.length - maxVisible);
+  const visibleMessages = messages.slice(startIdx);
+
   useInput((_, key) => {
     if (!hasMatches) return;
 
@@ -179,7 +222,7 @@ export function Chat({ messages, onSubmit, isProcessing, goalNames = [] }: ChatP
       const selected = matches[selectedIdx];
       if (selected) {
         // Auto-submit on selection (no extra Enter needed)
-        const value = selected.type === 'goal'
+        const value = selected.type === "goal"
           ? `${selected.name} ${selected.description}`
           : selected.name;
         setInput("");
@@ -190,12 +233,20 @@ export function Chat({ messages, onSubmit, isProcessing, goalNames = [] }: ChatP
       setSelectedIdx(0);
       setInput("");
     }
-  });
+  }, { isActive: !isProcessing });
 
   // Reset selected index when matches change
   React.useEffect(() => {
     setSelectedIdx(0);
-  }, [matches.map(m => m.name).join(',')]);
+  }, [matches.map(m => m.name).join(",")]);
+
+  // IME cursor positioning: report cursor x position so the IME candidate window
+  // appears next to the input caret instead of at the top-left corner.
+  const { setCursorPosition } = useCursor();
+  React.useEffect(() => {
+    // Prompt prefix "❧ " is 2 visible chars; x = 2 + input length
+    setCursorPosition({ x: 2 + input.length, y: 0 });
+  }, [input, setCursorPosition]);
 
   const handleSubmit = (value: string) => {
     if (hasMatches) return; // let useInput handle enter when suggestions are shown
@@ -204,107 +255,57 @@ export function Chat({ messages, onSubmit, isProcessing, goalNames = [] }: ChatP
     setInput("");
   };
 
-  // Cap visible messages based on terminal height
-  const termRows = process.stdout.rows || 40;
-  const visibleCount = Math.max(termRows - 12, 8);
-  const startIdx = Math.max(messages.length - visibleCount, 0);
-  const visibleMessages = messages.slice(startIdx);
-
   return (
     <Box flexDirection="column" flexGrow={1} overflow="hidden">
-      {/* Scroll indicator */}
-      {startIdx > 0 && (
-        <Text dimColor>{"\u2191"} {startIdx} earlier messages</Text>
-      )}
+      {/* Scroll indicator for older messages */}
+      {startIdx > 0 && <Text dimColor>↑ {startIdx} earlier messages</Text>}
 
-      {/* Message log */}
-      <Box flexDirection="column" flexGrow={1}>
-        {visibleMessages.map((msg, i) => {
-          const timeStr = formatTime(msg.timestamp ?? new Date());
-          const absoluteIdx = startIdx + i;
+      {/* All visible messages rendered with memoized rows to prevent flicker */}
+      <Box flexDirection="column" flexGrow={1} justifyContent="flex-end">
+        {visibleMessages.map((msg) => (
+          <MessageRow key={msg.id} msg={msg} />
+        ))}
 
-          if (msg.role === "user") {
-            return (
-              <Box key={absoluteIdx} flexDirection="column" marginBottom={2}>
-                <Box>
-                  <Text color={theme.userPrefix} bold>
-                    {"\u276F "}
-                  </Text>
-                  <Text>{msg.text}</Text>
-                  <Text dimColor> {timeStr}</Text>
-                </Box>
-              </Box>
-            );
-          }
-
-          // PulSeed message — render markdown lines individually
-          const typeColor = getMessageTypeColor(msg.messageType);
-          const mdLines = renderMarkdownLines(msg.text);
-
-          return (
-            <Box key={absoluteIdx} flexDirection="column" marginBottom={1} marginLeft={2}>
-              <Box justifyContent="space-between">
-                <Text color={theme.brand} bold>
-                  PulSeed
-                </Text>
-                <Text dimColor>{timeStr}</Text>
-              </Box>
-              <Box flexDirection="column">
-                {mdLines.map((line, j) => (
-                  <MarkdownLineComponent
-                    key={j}
-                    line={line}
-                    color={typeColor}
-                  />
-                ))}
-              </Box>
-            </Box>
-          );
-        })}
-
-        {/* Thinking spinner */}
         {isProcessing && (
           <Box>
-            <Text color={theme.warning}>
-              <Spinner type="dots" />
-            </Text>
-            <Text color={theme.warning}> Thinking...</Text>
+            <Spinner type="dots" />
+            <Text color={theme.brandLight}> Thinking...</Text>
           </Box>
         )}
-      </Box>
 
-      {/* Input area with borders */}
-      <Box flexDirection="column">
-        <Box borderStyle="single" borderColor={theme.border} borderBottom={false} borderLeft={false} borderRight={false} />
-        <Box>
-          <Text color={theme.userPrompt} bold>
-            {"\u276F "}
-          </Text>
-          <TextInput
-            value={input}
-            onChange={(val) => { justSelected.current = false; setInput(val); }}
-            onSubmit={handleSubmit}
-            placeholder="/ for commands"
-          />
-        </Box>
-        <Box borderStyle="single" borderColor={theme.border} borderTop={false} borderLeft={false} borderRight={false} />
-        {hasMatches && (
-          <Box flexDirection="column">
-            {matches.map((suggestion, idx) => {
-              const isSelected = idx === selectedIdx;
-              const label = suggestion.type === 'goal'
-                ? `  ${suggestion.name} ${suggestion.description.padEnd(20)}  [goal]`
-                : `  ${suggestion.name.padEnd(20)}${suggestion.description}`;
-              const key = `${suggestion.type}-${suggestion.name}-${suggestion.description}`;
-              return isSelected ? (
-                <Text key={key} bold color={theme.selected}>{label}</Text>
-              ) : (
-                <Text key={key} dimColor>{label}</Text>
-              );
-            })}
-            <Text dimColor>  arrows to navigate, tab/enter to select, esc to dismiss</Text>
+        {/* Input area with borders — always at bottom */}
+        <Box flexDirection="column">
+          <Box borderStyle="single" borderColor={theme.border} borderBottom={false} borderLeft={false} borderRight={false} />
+          <Box>
+            <Text color={theme.userPrompt} bold>
+              {"❧ "}
+            </Text>
+            <TextInput
+              value={input}
+              onChange={(val) => { justSelected.current = false; setInput(val); }}
+              onSubmit={handleSubmit}
+              placeholder="/ for commands"
+            />
           </Box>
-        )}
+          <Box borderStyle="single" borderColor={theme.border} borderTop={false} borderLeft={false} borderRight={false} />
+          {hasMatches && (
+            <Box flexDirection="column">
+              {matches.map((suggestion, idx) => {
+                const isSelected = idx === selectedIdx;
+                const label = suggestion.type === "goal"
+                  ? `  ${suggestion.name} ${suggestion.description.padEnd(20)}  [goal]`
+                  : `  ${suggestion.name.padEnd(20)}${suggestion.description}`;
+                const key = `${suggestion.type}-${suggestion.name}-${suggestion.description}`;
+                return isSelected ? (
+                  <Text key={key} bold color={theme.selected}>{label}</Text>
+                ) : (
+                  <Text key={key} dimColor>{label}</Text>
+                );
+              })}
+              <Text dimColor>  arrows to navigate, tab/enter to select, esc to dismiss</Text>
+            </Box>
+          )}
+        </Box>
       </Box>
     </Box>
   );

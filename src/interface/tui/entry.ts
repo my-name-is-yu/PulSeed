@@ -270,14 +270,10 @@ export async function startTUI(): Promise<void> {
   });
   const intentRecognizer = new IntentRecognizer(llmClient);
 
-  // 4. Handle SIGINT/SIGTERM gracefully before rendering.
-  // Stop the core loop directly (same effect as LoopController.stop()).
-  const shutdown = () => {
-    coreLoop.stop();
-    process.exit(0);
-  };
-  process.on("SIGINT", shutdown);
-  process.on("SIGTERM", shutdown);
+  // 4. Handle SIGTERM gracefully before rendering.
+  // Note: SIGINT (Ctrl-C) is handled via useInput in app.tsx because Ink
+  // holds the terminal in raw mode and SIGINT does not fire.
+  process.on("SIGTERM", () => { coreLoop.stop(); process.exit(0); });
 
   // 5. Compute breadcrumb context for the header
   const providerConfig = await loadProviderConfig();
@@ -298,7 +294,8 @@ export async function startTUI(): Promise<void> {
       chatRunner,
       onApprovalReady: setRequestApproval,
       ...breadcrumb,
-    })
+    }),
+    { exitOnCtrlC: false }
   );
 
   await waitUntilExit();
