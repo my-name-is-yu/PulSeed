@@ -227,6 +227,6 @@ export async function handleSelfKnowledgeToolCall(
     case "get_architecture":
       return handleGetArchitecture();
     default:
-      return JSON.stringify({ error: `Unknown tool: \` });
+      return JSON.stringify({ error: `Unknown tool: ${toolName}` });
   }
 }
