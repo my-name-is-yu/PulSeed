@@ -32,6 +32,15 @@ export { DeleteGoalTool } from "../state/delete-goal-tool.js";
 export { TogglePluginTool } from "../state/toggle-plugin-tool.js";
 export { UpdateConfigTool } from "../state/update-config-tool.js";
 export { ResetTrustTool } from "../state/reset-trust-tool.js";
+export { RunAdapterTool } from "../execution/run-adapter.js";
+export { SpawnSessionTool } from "../execution/spawn-session.js";
+export { WriteKnowledgeTool } from "../knowledge/write-knowledge.js";
+export { QueryDataSourceTool } from "../knowledge/query-data-source.js";
+export { ReadPulseedFileTool } from "../file/read-pulseed-file.js";
+export { WritePulseedFileTool } from "../file/write-pulseed-file.js";
+export { AskHumanTool } from "../interaction/ask-human.js";
+export { CreatePlanTool } from "../interaction/create-plan.js";
+export { ReadPlanTool } from "../interaction/read-plan.js";
 
 import { GlobTool } from "../filesystem/glob.js";
 import { GrepTool } from "../filesystem/grep.js";
@@ -65,6 +74,18 @@ import { DeleteGoalTool } from "../state/delete-goal-tool.js";
 import { TogglePluginTool } from "../state/toggle-plugin-tool.js";
 import { UpdateConfigTool } from "../state/update-config-tool.js";
 import { ResetTrustTool } from "../state/reset-trust-tool.js";
+import { RunAdapterTool } from "../execution/run-adapter.js";
+import { SpawnSessionTool } from "../execution/spawn-session.js";
+import { WriteKnowledgeTool } from "../knowledge/write-knowledge.js";
+import { QueryDataSourceTool } from "../knowledge/query-data-source.js";
+import { ReadPulseedFileTool } from "../file/read-pulseed-file.js";
+import { WritePulseedFileTool } from "../file/write-pulseed-file.js";
+import { AskHumanTool } from "../interaction/ask-human.js";
+import { CreatePlanTool } from "../interaction/create-plan.js";
+import { ReadPlanTool } from "../interaction/read-plan.js";
+import type { AdapterRegistry } from "../../orchestrator/execution/adapter-layer.js";
+import type { SessionManager } from "../../orchestrator/execution/session-manager.js";
+import type { ObservationEngine } from "../../platform/observation/observation-engine.js";
 import type { ITool } from "../types.js";
 import type { StateManager } from "../../base/state/state-manager.js";
 import type { KnowledgeManager } from "../../platform/knowledge/knowledge-manager.js";
@@ -78,6 +99,9 @@ export interface BuiltinToolDeps {
   registry?: ToolRegistry;
   pluginLoader?: PluginLoader;
   trustManager?: TrustManager;
+  adapterRegistry?: AdapterRegistry;
+  sessionManager?: SessionManager;
+  observationEngine?: ObservationEngine;
 }
 
 /** All built-in tools, sorted alphabetically by name. */
@@ -144,6 +168,31 @@ export function createBuiltinTools(deps?: BuiltinToolDeps): ITool[] {
   if (deps?.registry) {
     tools.push(new ToolSearchTool(deps.registry));
   }
+
+  // Execution tools (require deps)
+  if (deps?.adapterRegistry) {
+    tools.push(new RunAdapterTool(deps.adapterRegistry));
+  }
+  if (deps?.sessionManager) {
+    tools.push(new SpawnSessionTool(deps.sessionManager));
+  }
+
+  // Knowledge tools (require deps)
+  if (deps?.knowledgeManager) {
+    tools.push(new WriteKnowledgeTool(deps.knowledgeManager));
+  }
+  if (deps?.observationEngine) {
+    tools.push(new QueryDataSourceTool(deps.observationEngine));
+  }
+
+  // File and interaction tools (no deps)
+  tools.push(
+    new ReadPulseedFileTool(),
+    new WritePulseedFileTool(),
+    new AskHumanTool(),
+    new CreatePlanTool(),
+    new ReadPlanTool(),
+  );
 
   return tools;
 }
