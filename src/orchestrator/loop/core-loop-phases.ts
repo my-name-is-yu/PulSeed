@@ -9,6 +9,7 @@
  */
 
 import type { Logger } from "../../runtime/logger.js";
+import type { ToolExecutor } from "../../tools/executor.js";
 import type { Goal } from "../../base/types/goal.js";
 import type { GapVector } from "../../base/types/gap.js";
 import type { DriveScore } from "../../base/types/drive.js";
@@ -25,6 +26,7 @@ export interface PhaseCtx {
   deps: CoreLoopDeps;
   config: ResolvedLoopConfig;
   logger: Logger | undefined;
+  toolExecutor?: ToolExecutor;
 }
 
 // ─── Phase 1 ───
