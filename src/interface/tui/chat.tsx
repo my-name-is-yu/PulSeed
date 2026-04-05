@@ -200,6 +200,12 @@ const COMMANDS: Suggestion[] = [
     description: "View and toggle config",
     type: "command",
   },
+  {
+    name: "/flicker",
+    aliases: [],
+    description: "Toggle no-flicker mode (next launch)",
+    type: "command",
+  },
 ];
 
 /** Commands that accept a goal name as argument */
