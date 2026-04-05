@@ -61,8 +61,8 @@ function buildDaemonRunner(
     config: {
       check_interval_ms: 50,
       crash_recovery: { enabled: true, max_retries: 3, retry_delay_ms: 10 },
-      event_server_port: 0,
       ...options.configOverride,
+      event_server_port: 0,  // Always port 0 in tests to avoid EADDRINUSE
     },
     llmClient: options.llmClient,
   };
@@ -402,6 +402,7 @@ describe("Phase A — DaemonRunner proactive tick", () => {
         proactive_interval_ms: 0,
         check_interval_ms: 50,
         crash_recovery: { enabled: true, max_retries: 3, retry_delay_ms: 10 },
+        event_server_port: 0,  // Always port 0 in tests to avoid EADDRINUSE
       },
       llmClient: mockLLM,
     };
