@@ -26,30 +26,9 @@ export class TogglePluginTool implements ITool<TogglePluginInput, unknown> {
     return "Enable or disable a plugin by its ID. Requires user confirmation.";
   }
 
-  async call(input: TogglePluginInput, context: ToolCallContext): Promise<ToolResult> {
+  async call(_input: TogglePluginInput, _context: ToolCallContext): Promise<ToolResult> {
     const startTime = Date.now();
     try {
-      if (!context.preApproved) {
-        const action = input.enabled ? "Enable" : "Disable";
-        const approved = await context.approvalFn({
-          toolName: this.metadata.name,
-          input,
-          reason: action + " plugin: " + input.pluginId,
-          permissionLevel: "write_local",
-          isDestructive: false,
-          reversibility: "reversible",
-        });
-        if (!approved) {
-          return {
-            success: false,
-            data: null,
-            summary: "Plugin toggle denied by user",
-            error: "User denied plugin toggle",
-            durationMs: Date.now() - startTime,
-          };
-        }
-      }
-
       return {
         success: false,
         data: null,
