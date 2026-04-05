@@ -53,6 +53,7 @@ interface AppProps {
   cwd?: string;
   gitBranch?: string;
   providerName?: string;
+  noFlicker?: boolean;
 }
 
 const StatusBar: React.FC<{
@@ -102,6 +103,7 @@ export function App({
   cwd,
   gitBranch,
   providerName,
+  noFlicker,
 }: AppProps) {
   const isDaemonMode = daemonClient !== undefined && coreLoop === undefined;
 
@@ -479,7 +481,7 @@ export function App({
           ) : showHelp ? (
             <HelpOverlay onDismiss={() => setShowHelp(false)} />
           ) : (
-            <Chat messages={messages} onSubmit={handleInput} onClear={handleClear} isProcessing={isProcessing} goalNames={goalNames} />
+            <Chat messages={messages} onSubmit={handleInput} onClear={handleClear} isProcessing={isProcessing} goalNames={goalNames} noFlicker={noFlicker} />
           )}
         </Box>
       </Box>
