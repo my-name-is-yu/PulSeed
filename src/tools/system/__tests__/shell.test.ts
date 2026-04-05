@@ -84,7 +84,7 @@ describe("ShellTool", () => {
         trusted: true,
       };
 
-      it("allows denied commands when trusted", async () => {
+      it("allows normally-denied commands when trusted", async () => {
         const result = await tool.checkPermissions(
           { command: "npm run build", timeoutMs: 120_000 },
           trustedCtx,
@@ -100,7 +100,23 @@ describe("ShellTool", () => {
         expect(result.status).toBe("allowed");
       });
 
-      it("still denies without trusted flag", async () => {
+      it("still denies redirect operators even when trusted", async () => {
+        const result = await tool.checkPermissions(
+          { command: "echo hello > file.txt", timeoutMs: 120_000 },
+          trustedCtx,
+        );
+        expect(result.status).toBe("denied");
+      });
+
+      it("still denies pipe injection even when trusted", async () => {
+        const result = await tool.checkPermissions(
+          { command: "cat foo | tee bar", timeoutMs: 120_000 },
+          trustedCtx,
+        );
+        expect(result.status).toBe("denied");
+      });
+
+      it("still denied without trusted flag", async () => {
         const result = await tool.checkPermissions(
           { command: "npm run build", timeoutMs: 120_000 },
         );
