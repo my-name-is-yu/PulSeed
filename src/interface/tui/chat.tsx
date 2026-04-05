@@ -4,7 +4,7 @@
 // Renders visible messages based on terminal height, with scroll indicator,
 // styled user/AI distinction, spinner, timestamps, and color-coded message types.
 
-import React, { useState } from "react";
+import React, { useState, useCallback } from "react";
 import { Box, Text, useInput, useStdout } from "ink";
 import TextInput from "ink-text-input";
 import Spinner from "ink-spinner";
@@ -14,6 +14,7 @@ import {
   type MarkdownSegment,
 } from "./markdown-renderer.js";
 import { fuzzyMatch, fuzzyFilter } from "./fuzzy.js";
+import { copyToClipboard } from "./clipboard.js";
 import { theme, getMessageTypeColor } from "./theme.js";
 import { pickSpinnerVerb } from "./spinner-verbs.js";
 import { ShimmerText } from "./shimmer-text.js";
@@ -287,6 +288,10 @@ export function Chat({
 
   // ── Empty-enter hint ──
   const [emptyHint, setEmptyHint] = React.useState(false);
+
+  // ── Message selection & copy ──
+  const [selectedMsgIndex, setSelectedMsgIndex] = useState<number | null>(null);
+  const [copyToast, setCopyToast] = useState(false);
   const emptyHintTimer = React.useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
@@ -294,6 +299,16 @@ export function Chat({
   // ── Scroll offset for chat scroll ──
   const [scrollOffset, setScrollOffset] = React.useState(0);
   const prevMsgCount = React.useRef(messages.length);
+
+  const selectAndCopy = useCallback((index: number | null) => {
+    setSelectedMsgIndex(index);
+    if (index !== null && messages[index]) {
+      copyToClipboard(messages[index].text).then(() => {
+        setCopyToast(true);
+        setTimeout(() => setCopyToast(false), 1200);
+      });
+    }
+  }, [messages]);
 
   const [spinnerVerb, setSpinnerVerb] = React.useState(() => pickSpinnerVerb());
 
@@ -336,6 +351,50 @@ export function Chat({
 
   useInput(
     (inputChar, key) => {
+      // ── Message selection: ↑/↓ when a message is selected ──
+      if (selectedMsgIndex !== null) {
+        if (key.upArrow || inputChar === "k") {
+          const next = Math.max(0, selectedMsgIndex - 1);
+          selectAndCopy(next);
+          // Adjust scroll to keep selected message visible
+          const fromEnd = messages.length - 1 - next;
+          if (fromEnd >= scrollOffset + maxVisible) {
+            setScrollOffset(fromEnd - maxVisible + 1);
+          } else if (fromEnd < scrollOffset) {
+            setScrollOffset(fromEnd);
+          }
+          return;
+        }
+        if (key.downArrow || inputChar === "j") {
+          if (selectedMsgIndex >= messages.length - 1) {
+            setSelectedMsgIndex(null);
+            setCopyToast(false);
+          } else {
+            const next = selectedMsgIndex + 1;
+            selectAndCopy(next);
+            // Adjust scroll to keep selected message visible
+            const fromEnd = messages.length - 1 - next;
+            if (fromEnd < scrollOffset) {
+              setScrollOffset(fromEnd);
+            } else if (fromEnd >= scrollOffset + maxVisible) {
+              setScrollOffset(fromEnd - maxVisible + 1);
+            }
+          }
+          return;
+        }
+        if (key.escape) {
+          setSelectedMsgIndex(null);
+          setCopyToast(false);
+          return;
+        }
+        // Any other key: deselect
+        if (inputChar && inputChar.length > 0) {
+          setSelectedMsgIndex(null);
+          setCopyToast(false);
+        }
+        return;
+      }
+
       // ── Scroll: Shift+↑/↓ or PageUp/PageDown ──
       if (key.upArrow && key.shift) {
         setScrollOffset((prev) =>
@@ -382,16 +441,26 @@ export function Chat({
         }
       } else {
         // ── Input history: ↑↓ when no suggestions ──
-        if (key.upArrow && history.length > 0) {
-          if (historyIdx === -1) {
-            setDraft(input);
-            const idx = history.length - 1;
-            setHistoryIdx(idx);
-            setInput(history[idx]);
-          } else if (historyIdx > 0) {
-            const idx = historyIdx - 1;
-            setHistoryIdx(idx);
-            setInput(history[idx]);
+        if (key.upArrow) {
+          // Empty input + no history navigation in progress → start message selection
+          if (input === "" && historyIdx === -1 && messages.length > 0) {
+            const idx = messages.length - 1;
+            selectAndCopy(idx);
+            // Scroll to bottom to ensure last message is visible
+            setScrollOffset(0);
+            return;
+          }
+          if (history.length > 0) {
+            if (historyIdx === -1) {
+              setDraft(input);
+              const idx = history.length - 1;
+              setHistoryIdx(idx);
+              setInput(history[idx]);
+            } else if (historyIdx > 0) {
+              const idx = historyIdx - 1;
+              setHistoryIdx(idx);
+              setInput(history[idx]);
+            }
           }
         } else if (key.downArrow && historyIdx !== -1) {
           if (historyIdx < history.length - 1) {
@@ -509,9 +578,21 @@ export function Chat({
         {visibleMessages.map((msg, idx) => {
           // Turn separator: show between last AI message and next user message
           const prevMsg = idx > 0 ? visibleMessages[idx - 1] : null;
+          const absoluteIdx = startIdx + idx;
+          const isSelected = selectedMsgIndex === absoluteIdx;
           return (
             <React.Fragment key={msg.id}>
-              <MessageRow msg={msg} />
+              {isSelected ? (
+                <Box>
+                  <Text bold inverse>{"▶ "}</Text>
+                  <Box flexDirection="column" flexGrow={1}>
+                    <MessageRow msg={msg} />
+                  </Box>
+                  {copyToast && <Text color="green"> Copied!</Text>}
+                </Box>
+              ) : (
+                <MessageRow msg={msg} />
+              )}
             </React.Fragment>
           );
         })}
@@ -548,6 +629,10 @@ export function Chat({
               value={input}
               onChange={(val) => {
                 justSelected.current = false;
+                if (selectedMsgIndex !== null) {
+                  setSelectedMsgIndex(null);
+                  setCopyToast(false);
+                }
                 setInput(val);
               }}
               onSubmit={handleSubmit}
