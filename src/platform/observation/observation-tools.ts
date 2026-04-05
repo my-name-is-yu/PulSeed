@@ -3,6 +3,7 @@ import type { ToolExecutor } from "../../tools/executor.js";
 import type { ToolCallContext } from "../../tools/types.js";
 import type { ToolPermissionManager } from "../../tools/permission.js";
 import type { Dimension } from "../../orchestrator/goal/types/goal.js";
+import { parseToolOutput } from "../../tools/builtin/shared/parse-tool-output.js";
 
 export interface ToolObservationResult {
   rawData: unknown;
@@ -36,12 +37,14 @@ export async function observeWithTools(
       case "mechanical": {
         const result = await toolExecutor.execute("shell", { command: method.endpoint, timeoutMs: 30_000 }, context);
         if (!result.success) return null;
-        return { rawData: result.data, parsedValue: null, confidence: 0.95, toolName: "shell", durationMs: result.durationMs };
+        const parsedMech = parseToolOutput("shell", result.data);
+        return { rawData: result.data, parsedValue: parsedMech.value, confidence: 0.95, toolName: "shell", durationMs: result.durationMs };
       }
       case "api_query": {
         const result = await toolExecutor.execute("http_fetch", { url: method.endpoint, method: "GET" }, context);
         if (!result.success) return null;
-        return { rawData: result.data, parsedValue: null, confidence: 0.90, toolName: "http_fetch", durationMs: result.durationMs };
+        const parsedApi = parseToolOutput("http_fetch", result.data);
+        return { rawData: result.data, parsedValue: parsedApi.value, confidence: 0.90, toolName: "http_fetch", durationMs: result.durationMs };
       }
       default:
         return null;

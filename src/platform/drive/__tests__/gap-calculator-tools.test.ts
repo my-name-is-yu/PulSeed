@@ -191,7 +191,7 @@ describe("measureDirectly", () => {
       });
       const executor = makeExecutor(makeToolResult({ data: ["dist/index.js"] }));
       const result = await measureDirectly(dim, executor, baseContext);
-      expect(result!.value).toBe(true);
+      expect(result!.value).toBe(1);
       expect(result!.confidence).toBe(0.98);
       expect(result!.toolUsed).toBe("glob");
     });
@@ -208,7 +208,7 @@ describe("measureDirectly", () => {
       });
       const executor = makeExecutor(makeToolResult({ data: [] }));
       const result = await measureDirectly(dim, executor, baseContext);
-      expect(result!.value).toBe(false);
+      expect(result!.value).toBe(0);
     });
 
     it("passes pattern as glob input", async () => {

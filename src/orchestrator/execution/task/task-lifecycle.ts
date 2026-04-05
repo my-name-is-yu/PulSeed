@@ -51,6 +51,7 @@ import type { KnowledgeManager } from "../../../platform/knowledge/knowledge-man
 import { generateReflection, saveReflectionAsKnowledge, getReflectionsForGoal, formatReflectionsForPrompt } from "../reflection-generator.js";
 import { GuardrailRunner } from "../../../platform/traits/guardrail-runner.js";
 import type { HookManager } from "../../../runtime/hook-manager.js";
+import type { ToolExecutor } from "../../../tools/executor.js";
 
 export type { TaskCycleResult } from "./task-execution-types.js";
 import type { TaskCycleResult } from "./task-execution-types.js";
@@ -81,6 +82,7 @@ export class TaskLifecycle {
   private readonly knowledgeManager?: KnowledgeManager;
   private readonly guardrailRunner?: GuardrailRunner;
   private readonly hookManager?: HookManager;
+  private readonly toolExecutor?: ToolExecutor;
   private onTaskComplete?: (strategyId: string) => void;
 
   constructor(
@@ -111,6 +113,8 @@ export class TaskLifecycle {
       guardrailRunner?: GuardrailRunner;
       /** Optional HookManager for lifecycle hook events */
       hookManager?: HookManager;
+      /** Optional ToolExecutor for post-execution git diff verification (read-only) */
+      toolExecutor?: ToolExecutor;
     }
   ) {
     this.stateManager = stateManager;
@@ -131,6 +135,7 @@ export class TaskLifecycle {
     this.knowledgeManager = options?.knowledgeManager;
     this.guardrailRunner = options?.guardrailRunner;
     this.hookManager = options?.hookManager;
+    this.toolExecutor = options?.toolExecutor;
   }
 
   /** Register a callback invoked when a task completes successfully (used by PortfolioManager). */
@@ -347,6 +352,21 @@ export class TaskLifecycle {
       }
     }
 
+    // 4c. Post-execution git diff verification (optional, non-blocking)
+    if (executionResult.success && this.toolExecutor) {
+      const diffCheck = await this.verifyWithGitDiff(goalId);
+      this.logger?.info(
+        `[TaskLifecycle] Git diff verification: ${diffCheck.diffSummary || "no changes"}`,
+        { verified: diffCheck.verified }
+      );
+      if (!diffCheck.verified) {
+        this.logger?.warn(
+          "[TaskLifecycle] Git diff found no file changes after successful task execution",
+          { diffSummary: diffCheck.diffSummary }
+        );
+      }
+    }
+
     // Reload task from disk to get accurate status/started_at/completed_at set by executeTask
     const taskForVerification = await reloadTaskFromDisk(this.stateManager, task);
 
@@ -463,6 +483,44 @@ export class TaskLifecycle {
       durationToMs: durationToMs,
       completionJudgerConfig: this.completionJudgerConfig,
     };
+  }
+
+  /**
+   * Run a git diff to verify that file changes occurred after task execution.
+   * Returns verified=true (non-blocking) if toolExecutor is unavailable or diff fails.
+   */
+  private async verifyWithGitDiff(goalId: string): Promise<{ verified: boolean; diffSummary: string }> {
+    if (!this.toolExecutor) return { verified: true, diffSummary: "" };
+
+    try {
+      const result = await this.toolExecutor.execute(
+        "git_diff",
+        { target: "unstaged", maxLines: 200 },
+        {
+          cwd: process.cwd(),
+          goalId,
+          trustBalance: 0,
+          preApproved: true,
+          approvalFn: async () => true,
+        }
+      );
+
+      if (!result.success) return { verified: true, diffSummary: "diff unavailable" };
+
+      const diffText = typeof result.data === "string" ? result.data : "";
+      if (!diffText.trim()) {
+        return { verified: false, diffSummary: "no changes detected" };
+      }
+
+      // Count changed files from diff output (lines starting with "diff --git")
+      const filesChanged = (diffText.match(/^diff --git /gm) ?? []).length;
+      return {
+        verified: filesChanged > 0,
+        diffSummary: `${filesChanged} file${filesChanged !== 1 ? "s" : ""} changed`,
+      };
+    } catch {
+      return { verified: true, diffSummary: "diff check failed" };
+    }
   }
 
   /** Run build and test checks after successful task execution. Opt-in via healthCheckEnabled. */

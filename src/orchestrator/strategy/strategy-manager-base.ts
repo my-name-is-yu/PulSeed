@@ -342,6 +342,19 @@ export class StrategyManagerBase {
     const targetDimensions =
       active?.target_dimensions ?? pastStrategies[0]?.target_dimensions ?? [];
 
+    const toolContext = this.toolExecutor
+      ? {
+          toolCallContext: {
+            cwd: process.cwd(),
+            goalId,
+            trustBalance: 0,
+            preApproved: false,
+            approvalFn: async () => false,
+          },
+          iteration: stallCount,
+        }
+      : undefined;
+
     let candidates: Strategy[];
     try {
       candidates = await this.generateCandidates(
@@ -351,7 +364,9 @@ export class StrategyManagerBase {
         {
           currentGap: active?.gap_snapshot_at_start ?? 1.0,
           pastStrategies,
-        }
+        },
+        undefined,
+        toolContext
       );
     } catch (err) {
       this.logger?.warn(
