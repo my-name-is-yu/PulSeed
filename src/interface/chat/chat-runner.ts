@@ -233,10 +233,10 @@ export class ChatRunner {
       cwd,
       ...(this.cachedSystemPrompt ? { system_prompt: this.cachedSystemPrompt } : {}),
     };
-    const timeoutMs = task.timeout_ms ?? DEFAULT_TIMEOUT_MS;
+    const resolvedTimeoutMs = task.timeout_ms ?? DEFAULT_TIMEOUT_MS;
     const adapterPromise = this.deps.adapter.execute(task);
     const timeoutPromise = new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error(`Chat adapter timed out after ${timeoutMs}ms`)), timeoutMs)
+      setTimeout(() => reject(new Error(`Chat adapter timed out after ${resolvedTimeoutMs}ms`)), resolvedTimeoutMs)
     );
     let result = await Promise.race([adapterPromise, timeoutPromise]);
     // Surface adapter errors into output when output is empty
