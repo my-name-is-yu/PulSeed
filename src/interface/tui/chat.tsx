@@ -12,6 +12,7 @@ import { renderMarkdownLines, type MarkdownLine, type MarkdownSegment } from "./
 import { fuzzyMatch, fuzzyFilter } from "./fuzzy.js";
 import { theme, getMessageTypeColor } from "./theme.js";
 import { pickSpinnerVerb } from "./spinner-verbs.js";
+import { ShimmerText } from "./shimmer-text.js";
 
 export interface ChatMessage {
   id: string;
@@ -344,7 +345,8 @@ export function Chat({ messages, onSubmit, isProcessing, goalNames = [] }: ChatP
         {isProcessing && (
           <Box>
             <Spinner type="dots" />
-            <Text color={theme.brandLight}> {spinnerVerb}...</Text>
+            <Text> </Text>
+            <ShimmerText>{spinnerVerb}...</ShimmerText>
           </Box>
         )}
 
