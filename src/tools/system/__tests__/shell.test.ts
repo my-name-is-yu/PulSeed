@@ -73,6 +73,56 @@ describe("ShellTool", () => {
       const result = await tool.checkPermissions({ command: "echo hello > file.txt", timeoutMs: 120_000 });
       expect(result.status).toBe("denied");
     });
+
+    describe("trusted mode", () => {
+      const trustedCtx = {
+        cwd: process.cwd(),
+        goalId: "test",
+        trustBalance: 0,
+        preApproved: false,
+        approvalFn: async () => false,
+        trusted: true,
+      };
+
+      it("allows normally-denied commands when trusted", async () => {
+        const result = await tool.checkPermissions(
+          { command: "npm run build", timeoutMs: 120_000 },
+          trustedCtx,
+        );
+        expect(result.status).toBe("allowed");
+      });
+
+      it("allows git push when trusted", async () => {
+        const result = await tool.checkPermissions(
+          { command: "git push origin main", timeoutMs: 120_000 },
+          trustedCtx,
+        );
+        expect(result.status).toBe("allowed");
+      });
+
+      it("still denies redirect operators even when trusted", async () => {
+        const result = await tool.checkPermissions(
+          { command: "echo hello > file.txt", timeoutMs: 120_000 },
+          trustedCtx,
+        );
+        expect(result.status).toBe("denied");
+      });
+
+      it("still denies pipe injection even when trusted", async () => {
+        const result = await tool.checkPermissions(
+          { command: "cat foo | tee bar", timeoutMs: 120_000 },
+          trustedCtx,
+        );
+        expect(result.status).toBe("denied");
+      });
+
+      it("still denied without trusted flag", async () => {
+        const result = await tool.checkPermissions(
+          { command: "npm run build", timeoutMs: 120_000 },
+        );
+        expect(result.status).toBe("denied");
+      });
+    });
   });
 
   describe("isConcurrencySafe", () => {

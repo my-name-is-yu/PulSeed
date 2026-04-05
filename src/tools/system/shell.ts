@@ -51,7 +51,7 @@ export class ShellTool implements ITool<ShellInput, ShellOutput> {
     }
   }
 
-  async checkPermissions(input: ShellInput): Promise<PermissionCheckResult> {
+  async checkPermissions(input: ShellInput, context?: ToolCallContext): Promise<PermissionCheckResult> {
     const cmd = input.command.trim();
     const SAFE_PATTERNS = [
       /^(cat|head|tail|wc|ls|pwd|echo|date|hostname|which|type|file)/,
@@ -67,9 +67,21 @@ export class ShellTool implements ITool<ShellInput, ShellOutput> {
       /npm\s+(install|uninstall|publish|run|exec)/,
       /curl\s.*(-X\s*(POST|PUT|DELETE|PATCH)|-d\s)/,
       /wget\s/, /sudo\s/, /mkfs/, /dd\s+if=/, /shutdown/, /reboot/,
-      />/, /\|.*(tee|dd|rm|mv)/,
     ];
     const segments = cmd.split(/\s*(?:&&|\|\||;)\s*/);
+    // Injection patterns always checked regardless of trust level
+    const INJECTION_PATTERNS = [/>/, /\|.*(tee|dd|rm|mv)/];
+    for (const segment of segments) {
+      const trimmed = segment.trim();
+      if (!trimmed) continue;
+      if (INJECTION_PATTERNS.some(p => p.test(trimmed))) {
+        return { status: "denied", reason: `Denied command segment (injection risk): ${trimmed}` };
+      }
+    }
+    // trusted: skip DENY_PATTERNS and SAFE_PATTERNS; only injection checks above apply
+    if (context?.trusted) {
+      return { status: "allowed" };
+    }
     for (const segment of segments) {
       const trimmed = segment.trim();
       if (!trimmed) continue;
