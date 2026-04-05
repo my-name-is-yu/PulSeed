@@ -39,7 +39,7 @@ import {
 } from "../context-provider.js";
 
 // Build a callback-style mock compatible with util.promisify.
-//  receives (file, args) and returns { stdout } on success or an
+// `handler` receives (file, args) and returns { stdout } on success or an
 // Error instance to simulate a non-zero exit / missing command.
 function makeExecFileMock(
   handler: (file: string, args: string[]) => { stdout: string } | Error
@@ -68,13 +68,10 @@ function createMockExecutor(overrides: Record<string, unknown> = {}): ToolExecut
   return {
     execute: vi.fn().mockImplementation((toolName: string, _input: unknown) => {
       const defaults: Record<string, unknown> = {
-        grep: { success: true, data: "src/foo.ts
-src/bar.ts", summary: "2 files", durationMs: 10 },
-        read: { success: true, data: "1	const x = 1;
-2	export default x;", summary: "2 lines", durationMs: 5 },
+        grep: { success: true, data: "src/foo.ts\nsrc/bar.ts", summary: "2 files", durationMs: 10 },
+        read: { success: true, data: "1\tconst x = 1;\n2\texport default x;", summary: "2 lines", durationMs: 5 },
         git_log: { success: true, data: ["abc1234 feat: add feature X", "def5678 fix: resolve bug Y"], summary: "2 commits", durationMs: 8 },
-        "test-runner": { success: true, data: { passed: 10, failed: 0, skipped: 0, total: 10, success: true, rawOutput: "✓ 10 tests passed
-Done in 1.2s", duration: 1200 }, summary: "10 passed", durationMs: 1200 },
+        "test-runner": { success: true, data: { passed: 10, failed: 0, skipped: 0, total: 10, success: true, rawOutput: "✓ 10 tests passed\nDone in 1.2s", duration: 1200 }, summary: "10 passed", durationMs: 1200 },
       };
       return Promise.resolve(overrides[toolName] ?? defaults[toolName] ?? { success: false, data: null, summary: "unknown tool", durationMs: 0 });
     }),
@@ -140,23 +137,16 @@ describe("buildWorkspaceContext (integration)", () => {
       makeExecFileMock((file) => {
         if (file === "grep") {
           return {
-            stdout: `${projectRoot}/src/foo.ts
-${projectRoot}/src/bar.ts
-`,
+            stdout: `${projectRoot}/src/foo.ts\n${projectRoot}/src/bar.ts\n`,
           };
         }
         if (file === "git") {
-          return { stdout: "src/foo.ts | 3 +++
-1 file changed" };
+          return { stdout: "src/foo.ts | 3 +++\n1 file changed" };
         }
         if (file === "npx") {
           return {
             stdout:
-              "........
-
-Test Files  1 passed (1)
-Tests  10 passed (10)
-",
+              "........\n\nTest Files  1 passed (1)\nTests  10 passed (10)\n",
           };
         }
         return { stdout: "" };
@@ -178,19 +168,16 @@ Tests  10 passed (10)
     execFileMock.mockImplementation(
       makeExecFileMock((file) => {
         if (file === "grep") {
-          return { stdout: `${realFile}
-` };
+          return { stdout: `${realFile}\n` };
         }
         if (file === "git") {
           return {
             stdout:
-              "src/observation/context-provider.ts | 5 +++++
-1 file changed",
+              "src/observation/context-provider.ts | 5 +++++\n1 file changed",
           };
         }
         if (file === "npx") {
-          return { stdout: "Tests  100 passed (100)
-" };
+          return { stdout: "Tests  100 passed (100)\n" };
         }
         return { stdout: "" };
       })
@@ -216,8 +203,7 @@ Tests  10 passed (10)
           return { stdout: "" };
         }
         if (file === "npx") {
-          return { stdout: "Tests  10 passed (10)
-" };
+          return { stdout: "Tests  10 passed (10)\n" };
         }
         return { stdout: "" };
       })
@@ -240,18 +226,15 @@ Tests  10 passed (10)
     execFileMock.mockImplementation(
       makeExecFileMock((file) => {
         if (file === "grep") {
-          return { stdout: `${realFile}
-` };
+          return { stdout: `${realFile}\n` };
         }
         if (file === "git") {
           return {
-            stdout: "context-provider.ts | 10 ++++++++++
-1 file changed",
+            stdout: "context-provider.ts | 10 ++++++++++\n1 file changed",
           };
         }
         if (file === "npx") {
-          return { stdout: "Tests  3412 passed (3412)
-" };
+          return { stdout: "Tests  3412 passed (3412)\n" };
         }
         return { stdout: "" };
       })
@@ -263,15 +246,12 @@ Tests  10 passed (10)
     });
     expect(typeof result).toBe("string");
     const fileSectionRegex =
-      /\[File: [^\]]+\]
-([\s\S]*?)(?=
-\[(?:grep|File|Recent|Test)|$)/g;
+      /\[File: [^\]]+\]\n([\s\S]*?)(?=\n\[(?:grep|File|Recent|Test)|$)/g;
     let match: RegExpExecArray | null;
     while ((match = fileSectionRegex.exec(result)) !== null) {
       const fileContent = match[1];
       const nonEmptyLines = fileContent
-        .split("
-")
+        .split("\n")
         .filter((l) => l.trim() !== "");
       expect(nonEmptyLines.length).toBeLessThanOrEqual(20);
     }
@@ -369,10 +349,8 @@ describe("buildWorkspaceContextItems", () => {
     execFileMock.mockImplementation(
       makeExecFileMock((file) => {
         if (file === "grep") return { stdout: "" };
-        if (file === "git") return { stdout: "src/foo.ts | 3 +++
-1 file changed" };
-        if (file === "npx") return { stdout: "Tests  10 passed (10)
-" };
+        if (file === "git") return { stdout: "src/foo.ts | 3 +++\n1 file changed" };
+        if (file === "npx") return { stdout: "Tests  10 passed (10)\n" };
         return { stdout: "" };
       })
     );
@@ -390,12 +368,9 @@ describe("buildWorkspaceContextItems", () => {
   it("respects maxItems cap via tier-priority selection", async () => {
     execFileMock.mockImplementation(
       makeExecFileMock((file) => {
-        if (file === "grep") return { stdout: `${projectRoot}/src/observation/context-provider.ts
-` };
-        if (file === "git") return { stdout: "src/foo.ts | 3 +++
-1 file changed" };
-        if (file === "npx") return { stdout: "Tests  10 passed (10)
-" };
+        if (file === "grep") return { stdout: `${projectRoot}/src/observation/context-provider.ts\n` };
+        if (file === "git") return { stdout: "src/foo.ts | 3 +++\n1 file changed" };
+        if (file === "npx") return { stdout: "Tests  10 passed (10)\n" };
         return { stdout: "" };
       })
     );
@@ -411,10 +386,8 @@ describe("buildWorkspaceContextItems", () => {
     execFileMock.mockImplementation(
       makeExecFileMock((file) => {
         if (file === "grep") return new Error("no matches");
-        if (file === "git") return { stdout: "src/foo.ts | 3 +++
-1 file changed" };
-        if (file === "npx") return { stdout: "Tests  5 passed (5)
-" };
+        if (file === "git") return { stdout: "src/foo.ts | 3 +++\n1 file changed" };
+        if (file === "npx") return { stdout: "Tests  5 passed (5)\n" };
         return { stdout: "" };
       })
     );
