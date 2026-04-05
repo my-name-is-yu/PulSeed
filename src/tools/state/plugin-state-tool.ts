@@ -34,8 +34,8 @@ export class PluginStateTool implements ITool<PluginStateToolInput, unknown> {
       const allStates = await this.pluginLoader.loadAll();
       const plugins = allStates.map((p) => ({
         name: p.name,
-        type: p.type ?? "unknown",
-        enabled: p.enabled ?? true,
+        type: p.manifest.type,
+        enabled: p.status === "loaded",
         status: p.status,
       }));
 
