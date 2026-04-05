@@ -1,4 +1,5 @@
 import type { ToolDefinition } from "../../base/llm/llm-client.js";
+import { buildConfigToolDescription, CONFIG_METADATA } from "../../base/config/config-metadata.js";
 
 // ─── Approval ───
 
@@ -10,7 +11,7 @@ export const DEFAULT_APPROVAL: Record<string, ApprovalLevel> = {
   archive_goal: "required",
   delete_goal: "required",
   toggle_plugin: "required",
-  update_config: "required",
+  update_config: "none",
   reset_trust: "required",
 };
 
@@ -144,17 +145,17 @@ export function getMutationToolDefinitions(): ToolDefinition[] {
       type: "function",
       function: {
         name: "update_config",
-        description: "Update a PulSeed configuration setting. Always requires user confirmation. Available settings: daemon_mode (boolean) - whether to run CoreLoop as a background daemon process.",
+        description: buildConfigToolDescription(),
         parameters: {
           type: "object",
           properties: {
             key: {
               type: "string",
               description: "The config key to update",
-              enum: ["daemon_mode"],
+              enum: Object.keys(CONFIG_METADATA),
             },
             value: {
-              description: "The new value for the config key",
+              description: "The new value for the config key. For boolean keys, use true/false.",
             },
           },
           required: ["key", "value"],

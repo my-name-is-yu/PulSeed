@@ -300,35 +300,28 @@ describe("handleMutationToolCall — toggle_plugin", () => {
 
 describe("handleMutationToolCall — update_config", () => {
   it("returns error when key is missing", async () => {
-    const deps = makeDeps({ approvalFn: vi.fn().mockResolvedValue(true) });
+    const deps = makeDeps();
     const result = await handleMutationToolCall("update_config", {}, deps);
     const parsed = JSON.parse(result) as { error: string };
     expect(parsed.error).toContain("required");
   });
 
   it("returns error when value is missing", async () => {
-    const deps = makeDeps({ approvalFn: vi.fn().mockResolvedValue(true) });
+    const deps = makeDeps();
     const result = await handleMutationToolCall("update_config", { key: "daemon_mode" }, deps);
     const parsed = JSON.parse(result) as { error: string };
     expect(parsed.error).toContain("required");
   });
 
   it("returns error for unknown config key", async () => {
-    const deps = makeDeps({ approvalFn: vi.fn().mockResolvedValue(true) });
+    const deps = makeDeps();
     const result = await handleMutationToolCall("update_config", { key: "unknown_key", value: true }, deps);
     const parsed = JSON.parse(result) as { error: string };
     expect(parsed.error).toContain("Unknown config key");
   });
 
-  it("returns error when user denies approval", async () => {
-    const deps = makeDeps({ approvalFn: vi.fn().mockResolvedValue(false) });
-    const result = await handleMutationToolCall("update_config", { key: "daemon_mode", value: true }, deps);
-    const parsed = JSON.parse(result) as { error: string };
-    expect(parsed.error).toBeDefined();
-  });
-
   it("succeeds and reports updated key/value (daemon_mode)", async () => {
-    const deps = makeDeps({ approvalFn: vi.fn().mockResolvedValue(true) });
+    const deps = makeDeps();
     const result = await handleMutationToolCall("update_config", { key: "daemon_mode", value: true }, deps);
     const parsed = JSON.parse(result) as { success: boolean; key: string; value: unknown; message: string };
     expect(parsed.success).toBe(true);

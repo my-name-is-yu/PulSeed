@@ -192,7 +192,7 @@ async function handleTogglePlugin(
 
 async function handleUpdateConfig(
   args: Record<string, unknown>,
-  deps: MutationToolDeps
+  _deps: MutationToolDeps
 ): Promise<string> {
   const key = args.key;
   const value = args.value;
@@ -212,28 +212,20 @@ async function handleUpdateConfig(
     });
   }
 
-  // Build human-readable description for approval
-  const descriptions: Record<string, string> = {
-    daemon_mode: value
-      ? "daemon_modeをONに変更します。次のセッションからCoreLoopがバックグラウンドdaemonとして動作し、TUIを閉じてもループが継続するようになります。"
-      : "daemon_modeをOFFに変更します。次のセッションからCoreLoopはTUI内で直接実行され、TUIを閉じるとループも停止します。",
-  };
-  const description =
-    descriptions[key] ?? `${key}を${JSON.stringify(value)}に変更します。次のセッションから適用されます。`;
-
-  const approval = await checkApproval("update_config", description, deps);
-  if (!approval.approved) {
-    return JSON.stringify({ error: approval.error ?? "設定変更がキャンセルされました。" });
-  }
-
+  // Apply the change (no checkApproval — LLM handled confirmation conversationally)
   try {
     const updated = await updateGlobalConfig({ [key]: value });
     const newValue = (updated as Record<string, unknown>)[key];
+
+    const { CONFIG_METADATA } = await import("../../base/config/config-metadata.js");
+    const meta = CONFIG_METADATA[key];
+    const timing = meta?.appliesAt === "next_session" ? "次回起動時" : "即座に";
+
     return JSON.stringify({
       success: true,
       key,
       value: newValue,
-      message: `${key}を${JSON.stringify(newValue)}に変更しました。次回起動時から適用されます。`,
+      message: `${key}を${JSON.stringify(newValue)}に変更しました。${timing}から適用されます。`,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
