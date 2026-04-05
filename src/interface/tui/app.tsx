@@ -16,6 +16,7 @@ import { theme } from "./theme.js";
 import { Dashboard, statusLabel } from "./dashboard.js";
 import { Chat, type ChatMessage } from "./chat.js";
 import { HelpOverlay } from "./help-overlay.js";
+import { SettingsOverlay } from "./settings-overlay.js";
 import { ApprovalOverlay } from "./approval-overlay.js";
 import { ReportView } from "./report-view.js";
 import type { Report } from "../../base/types/report.js";
@@ -190,6 +191,7 @@ export function App({
   ]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   const [goalNames, setGoalNames] = useState<string[]>([]);
   const [reportToShow, setReportToShow] = useState<Report | null>(null);
   const [approvalRequest, setApprovalRequest] = useState<ApprovalRequest | null>(null);
@@ -297,6 +299,13 @@ export function App({
             return;
           }
 
+          // Handle /settings command
+          const trimmedInput = input.trim().toLowerCase();
+          if (trimmedInput === "/settings" || trimmedInput === "/config") {
+            setShowSettings(true);
+            return;
+          }
+
           if (result.showReport) {
             setReportToShow(result.showReport);
             return;
@@ -333,6 +342,8 @@ export function App({
           const trimmed = input.trim().toLowerCase();
           if (trimmed === "/help" || trimmed === "/?") {
             setShowHelp(true);
+          } else if (trimmed === "/settings" || trimmed === "/config") {
+            setShowSettings(true);
           } else if (trimmed === "/dashboard" || trimmed === "/d") {
             setShowSidebar(prev => !prev);
           } else if (trimmed.startsWith("/start ")) {
@@ -461,6 +472,8 @@ export function App({
                 setApprovalRequest(null);
               }}
             />
+          ) : showSettings ? (
+            <SettingsOverlay onClose={() => setShowSettings(false)} />
           ) : reportToShow !== null ? (
             <ReportView report={reportToShow} onDismiss={() => setReportToShow(null)} />
           ) : showHelp ? (
