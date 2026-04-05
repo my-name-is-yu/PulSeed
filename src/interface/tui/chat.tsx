@@ -11,6 +11,7 @@ import Spinner from "ink-spinner";
 import { renderMarkdownLines, type MarkdownLine, type MarkdownSegment } from "./markdown-renderer.js";
 import { fuzzyMatch, fuzzyFilter } from "./fuzzy.js";
 import { theme, getMessageTypeColor } from "./theme.js";
+import { pickSpinnerVerb } from "./spinner-verbs.js";
 
 export interface ChatMessage {
   id: string;
@@ -253,6 +254,17 @@ export function Chat({ messages, onSubmit, isProcessing, goalNames = [] }: ChatP
   // returns [] for one render cycle, allowing Enter to submit unblocked.
   const justSelected = React.useRef(false);
 
+  const [spinnerVerb, setSpinnerVerb] = React.useState(() => pickSpinnerVerb());
+
+  React.useEffect(() => {
+    if (!isProcessing) return;
+    setSpinnerVerb(pickSpinnerVerb());
+    const interval = setInterval(() => {
+      setSpinnerVerb(pickSpinnerVerb());
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [isProcessing]);
+
   const matches = justSelected.current ? [] : getMatchingSuggestions(input, goalNames);
   const hasMatches = matches.length > 0;
 
@@ -330,7 +342,7 @@ export function Chat({ messages, onSubmit, isProcessing, goalNames = [] }: ChatP
         {isProcessing && (
           <Box>
             <Spinner type="dots" />
-            <Text color={theme.brandLight}> Thinking...</Text>
+            <Text color={theme.brandLight}> {spinnerVerb}...</Text>
           </Box>
         )}
 
