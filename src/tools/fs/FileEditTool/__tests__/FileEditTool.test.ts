@@ -84,9 +84,7 @@ describe("FileEditTool", () => {
   });
 
   it("returns matchesReplaced count in result data", async () => {
-    vi.mocked(fsMock.readFile).mockResolvedValueOnce("line1
-hello world
-line3" as any);
+    vi.mocked(fsMock.readFile).mockResolvedValueOnce("line1\nhello world\nline3" as any);
     const result = await tool.call(
       { path: "file.txt", oldText: "hello world", newText: "hi", replaceAll: false },
       makeContext(),
