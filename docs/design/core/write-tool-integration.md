@@ -83,18 +83,63 @@ Following Claude Code's pattern, each tool is a directory with 3 files:
 
 ```
 src/tools/
-├── ReadState/
-│   ├── read-state.ts     # ToolDef + call()
-│   ├── prompt.ts         # System prompt fragment for LLM
-│   └── ui.tsx            # renderToolUse + renderToolResult
-├── WriteState/
-│   ├── write-state.ts
-│   ├── prompt.ts
-│   └── ui.tsx
-├── RunAdapter/
-│   ├── run-adapter.ts
-│   ├── prompt.ts
-│   └── ui.tsx
+├── state/
+│   ├── ReadState/
+│   │   ├── read-state.ts     # ToolDef + call()
+│   │   ├── prompt.ts         # System prompt fragment for LLM
+│   │   └── ui.tsx            # renderToolUse + renderToolResult
+│   ├── ListStates/
+│   │   ├── list-states.ts
+│   │   ├── prompt.ts
+│   │   └── ui.tsx
+│   └── WriteState/
+│       ├── write-state.ts
+│       ├── prompt.ts
+│       └── ui.tsx
+├── execution/
+│   ├── RunAdapter/
+│   │   ├── run-adapter.ts
+│   │   ├── prompt.ts
+│   │   └── ui.tsx
+│   └── SpawnSession/
+│       ├── spawn-session.ts
+│       ├── prompt.ts
+│       └── ui.tsx
+├── knowledge/
+│   ├── SearchKnowledge/
+│   │   ├── search-knowledge.ts
+│   │   ├── prompt.ts
+│   │   └── ui.tsx
+│   ├── WriteKnowledge/
+│   │   ├── write-knowledge.ts
+│   │   ├── prompt.ts
+│   │   └── ui.tsx
+│   └── QueryDataSource/
+│       ├── query-data-source.ts
+│       ├── prompt.ts
+│       └── ui.tsx
+├── file/
+│   ├── ReadPulseedFile/
+│   │   ├── read-pulseed-file.ts
+│   │   ├── prompt.ts
+│   │   └── ui.tsx
+│   └── WritePulseedFile/
+│       ├── write-pulseed-file.ts
+│       ├── prompt.ts
+│       └── ui.tsx
+├── interaction/
+│   ├── AskHuman/
+│   │   ├── ask-human.ts
+│   │   ├── prompt.ts
+│   │   └── ui.tsx
+│   ├── CreatePlan/
+│   │   ├── create-plan.ts
+│   │   ├── prompt.ts
+│   │   └── ui.tsx
+│   └── ReadPlan/
+│       ├── read-plan.ts
+│       ├── prompt.ts
+│       └── ui.tsx
 └── index.ts              # getAllTools() — flat array, no registry class
 ```
 
@@ -118,23 +163,23 @@ Tool addition = new directory + one line in `index.ts`. No registry class change
 
 ## 4. Tool Inventory
 
-13 tools across 8 categories. Granularity is CC-level: primitive operations, not domain-composite.
+13 tools across 5 categories. Granularity is CC-level: primitive operations, not domain-composite.
 
 | Tool | Category | readOnly | concurrent | statusVerb |
 |------|----------|----------|-----------|------------|
-| ReadState | State (read) | true | true | Reading |
-| ListStates | State (read) | true | true | Listing |
-| WriteState | State (write) | false | false | Updating |
-| RunAdapter | Execution | false | false | Running |
-| SpawnSession | Execution | false | false | Spawning |
-| QueryDataSource | Data | true | true | Querying |
-| SearchKnowledge | Knowledge | true | true | Searching |
-| WriteKnowledge | Knowledge | false | false | Storing |
-| ReadPulseedFile | File | true | true | Reading |
-| WritePulseedFile | File | false | false | Writing |
-| AskHuman | Interaction | true | false | Asking |
-| CreatePlan | Planning | false | false | Planning |
-| ReadPlan | Planning | true | true | Reading plan |
+| ReadState | state | true | true | Reading |
+| ListStates | state | true | true | Listing |
+| WriteState | state | false | false | Updating |
+| RunAdapter | execution | false | false | Running |
+| SpawnSession | execution | false | false | Spawning |
+| QueryDataSource | knowledge | true | true | Querying |
+| SearchKnowledge | knowledge | true | true | Searching |
+| WriteKnowledge | knowledge | false | false | Storing |
+| ReadPulseedFile | file | true | true | Reading |
+| WritePulseedFile | file | false | false | Writing |
+| AskHuman | interaction | true | false | Asking |
+| CreatePlan | interaction | false | false | Planning |
+| ReadPlan | interaction | true | true | Reading plan |
 
 Note: only irreversible/damaging operations (delete, reset_trust) get rich LLM descriptions with risk warnings.
 
@@ -183,10 +228,10 @@ const ToolStatusLine: FC<{ status: string | null }> = ({ status }) => {
 **Phase 0: Existing Tool Migration**
 Migrate current self-knowledge tools and mutation tools to the new directory structure before adding new tools.
 
-- Create `src/tools/` directory structure
+- Create `src/tools/` directory structure with 5 category subdirectories (state/, execution/, knowledge/, file/, interaction/)
 - Create `src/tools/tool-types.ts` — ToolDef, ToolResult, ToolContext, buildTool (from Phase A, moved here)
-- Migrate `self-knowledge-tools.ts` (5 read tools) → individual tool directories (ReadState, ListStates)
-- Migrate `mutation-tool-defs.ts` + `self-knowledge-mutation-tools.ts` (7 mutation tools) → WriteState directory
+- Migrate `self-knowledge-tools.ts` (5 read tools) → individual tool directories (src/tools/state/ReadState/, src/tools/state/ListStates/)
+- Migrate `mutation-tool-defs.ts` + `self-knowledge-mutation-tools.ts` (7 mutation tools) → src/tools/state/WriteState/ directory
 - Migrate `tool-metadata.ts` → per-tool `prompt.ts` files
 - Old files become re-export shims for backward compatibility
 - Wire `getAllTools()` into ChatRunner
@@ -228,20 +273,20 @@ Performance optimizations, no API changes.
 |------|-------|--------|
 | src/tools/tool-types.ts | 0 | Create |
 | src/tools/index.ts | 0 | Create |
-| src/tools/ReadState/ | 0 | Create (3 files) |
-| src/tools/ListStates/ | 0 | Create (3 files) |
-| src/tools/WriteState/ | 0 | Create (3 files) |
+| src/tools/state/ReadState/ | 0 | Create (3 files) |
+| src/tools/state/ListStates/ | 0 | Create (3 files) |
+| src/tools/state/WriteState/ | 0 | Create (3 files) |
 | src/interface/chat/chat-runner.ts | 0 | Modify (wire tools) |
-| src/tools/RunAdapter/ | A | Create (3 files) |
-| src/tools/SpawnSession/ | A | Create (3 files) |
-| src/tools/QueryDataSource/ | A | Create (3 files) |
-| src/tools/SearchKnowledge/ | A | Create (3 files) |
-| src/tools/WriteKnowledge/ | A | Create (3 files) |
-| src/tools/ReadPulseedFile/ | A | Create (3 files) |
-| src/tools/WritePulseedFile/ | A | Create (3 files) |
-| src/tools/AskHuman/ | A | Create (3 files) |
-| src/tools/CreatePlan/ | A | Create (3 files) |
-| src/tools/ReadPlan/ | A | Create (3 files) |
+| src/tools/execution/RunAdapter/ | A | Create (3 files) |
+| src/tools/execution/SpawnSession/ | A | Create (3 files) |
+| src/tools/knowledge/QueryDataSource/ | A | Create (3 files) |
+| src/tools/knowledge/SearchKnowledge/ | A | Create (3 files) |
+| src/tools/knowledge/WriteKnowledge/ | A | Create (3 files) |
+| src/tools/file/ReadPulseedFile/ | A | Create (3 files) |
+| src/tools/file/WritePulseedFile/ | A | Create (3 files) |
+| src/tools/interaction/AskHuman/ | A | Create (3 files) |
+| src/tools/interaction/CreatePlan/ | A | Create (3 files) |
+| src/tools/interaction/ReadPlan/ | A | Create (3 files) |
 | src/interface/tui/tool-status.tsx | A | Create |
 | src/orchestrator/loop/core-loop.ts | B | Modify |
 | src/platform/observation/observation-engine.ts | B | Modify |
