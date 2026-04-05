@@ -211,6 +211,11 @@ export async function calculateGapOrComplete(
         }
       }
     }
+    // Persist refreshed dimension values to avoid re-measuring on the next iteration
+    if (ctx.toolExecutor && goal.dimensions) {
+      await ctx.deps.stateManager.saveGoal(goal);
+      ctx.logger?.debug('[GapRefresh] Persisted refreshed dimensions for goal ' + goalId);
+    }
     gapVector = ctx.deps.gapCalculator.calculateGapVector(
       goalId,
       goal.dimensions,
