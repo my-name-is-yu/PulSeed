@@ -143,6 +143,8 @@ export interface ToolCallContext {
   preApproved: boolean;
   /** Approval callback for interactive permission requests */
   approvalFn: (request: ApprovalRequest) => Promise<boolean>;
+  /** When true, bypass DENY_PATTERNS in ShellTool (internal use only) */
+  trusted?: boolean;
   /** Abort signal for cancellation */
   abortSignal?: AbortSignal;
   /** Timeout in milliseconds (per-tool-call) */
@@ -159,6 +161,8 @@ export interface ToolCallContext {
   };
   /** When true, gates pass but tool.call() is skipped (for testing pipelines) */
   dryRun?: boolean;
+  /** When true, bypass DENY_PATTERNS in ShellTool (internal use only) */
+  trusted?: boolean;
 }
 
 export interface ApprovalRequest {
