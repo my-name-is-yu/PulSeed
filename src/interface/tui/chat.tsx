@@ -100,7 +100,7 @@ const MessageRow = React.memo(function MessageRow({ msg }: { msg: ChatMessage })
       <Box flexDirection="column" marginBottom={1}>
         <Box>
           <Text backgroundColor="#D9D9D9" color="#1A1A1A">
-            {" ❧ "}{msg.text}{" "}
+            {" ◉ "}{msg.text}{" "}
           </Text>
           <Text dimColor> {timeStr}</Text>
         </Box>
@@ -422,7 +422,7 @@ export function Chat({ messages, onSubmit, onClear, isProcessing, goalNames = []
           <Box borderStyle="single" borderColor={theme.border} borderBottom={false} borderLeft={false} borderRight={false} />
           <Box>
             <Text color={theme.userPrompt} bold>
-              {"​❧ "}
+              {"​◉ "}
             </Text>
             <TextInput
               value={input}

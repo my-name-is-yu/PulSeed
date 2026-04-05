@@ -3,7 +3,7 @@
  * Used for IME candidate window positioning — avoids fragile arithmetic.
  */
 
-// Unique marker: zero-width space + ❧ — won't appear in message history
+// Unique marker: zero-width space + ◉ — won't appear in message history
 const INPUT_MARKER = "\u200B\u2767";
 
 /**
@@ -22,10 +22,10 @@ export function findCursorRow(frame: string): number | null {
 
 /**
  * Compute the cursor x-position from input text.
- * Prompt "❧ " = 2 columns. CJK chars = 2 columns each.
+ * Prompt "◉ " = 2 columns. CJK chars = 2 columns each.
  */
 export function computeCursorX(input: string): number {
-  let width = 2; // "❧ " prefix
+  let width = 2; // "◉ " prefix
   for (const ch of input) {
     const cp = ch.codePointAt(0) ?? 0;
     width += cp > 0x2E7F ? 2 : 1;
