@@ -234,6 +234,10 @@ export class ChatRunner {
       ...(this.cachedSystemPrompt ? { system_prompt: this.cachedSystemPrompt } : {}),
     };
     let result = await this.deps.adapter.execute(task);
+    // Surface adapter errors into output when output is empty
+    if (!result.output && result.error) {
+      result = { ...result, output: `Error: ${result.error}` };
+    }
     const elapsed_ms = Date.now() - start;
 
     // Verification loop: check if git has uncommitted changes; if so, run tests
