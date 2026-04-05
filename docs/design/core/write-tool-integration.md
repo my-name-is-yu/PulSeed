@@ -108,7 +108,7 @@ src/tools/
 
 **Render functions:**
 
-- `renderToolUse(input)` — one-line summary shown when tool is called (e.g., `⚡ Reading goal:improve-coverage`)
+- `renderToolUse(input)` — one-line summary shown when tool is called (e.g., `∿ Reading goal:improve-coverage`)
 - `renderToolResult(result)` — summarized result (e.g., `Read 1 goal (3 dimensions)`, NOT the full state dump)
 - Both accept `{ verbose: boolean }` for detail level control
 
@@ -161,9 +161,9 @@ export function getAllTools(): Tool[] {
 Each tool's `statusVerb` + `statusArgKey` generates a one-line status emitted via `ToolContext.onStatus`:
 
 ```
-⚡ Reading goal:improve-test-coverage
-⚡ Running adapter:claude-code-cli
-⚡ Searching knowledge:test patterns
+∿ Reading goal:improve-test-coverage
+∿ Running adapter:claude-code-cli
+∿ Searching knowledge:test patterns
 ```
 
 Separate from spinner verbs (shown during LLM thinking). New TUI component:
@@ -172,7 +172,7 @@ Separate from spinner verbs (shown during LLM thinking). New TUI component:
 // src/interface/tui/tool-status.tsx
 const ToolStatusLine: FC<{ status: string | null }> = ({ status }) => {
   if (!status) return null;
-  return <Text dimColor>  ⚡ {status}</Text>;
+  return <Text dimColor>  ∿ {status}</Text>;
 };
 ```
 
