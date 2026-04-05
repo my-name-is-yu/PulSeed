@@ -412,7 +412,7 @@ export function Chat({ messages, onSubmit, onClear, isProcessing, goalNames = []
           <Box>
             <Spinner type="dots" />
             <Text> </Text>
-            <ShimmerText>{spinnerVerb}...</ShimmerText>
+            <ShimmerText>{`${spinnerVerb}...`}</ShimmerText>
           </Box>
         )}
 
