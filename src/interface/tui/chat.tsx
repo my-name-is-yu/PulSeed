@@ -251,8 +251,9 @@ export function Chat({ messages, onSubmit, isProcessing, goalNames = [] }: ChatP
         }}
       </Static>
 
-      {/* Dynamic area: active message + spinner */}
-      <Box flexDirection="column">
+      {/* Dynamic area: flexGrow fills remaining space, justifyContent pushes content to bottom */}
+      <Box flexDirection="column" flexGrow={1} justifyContent="flex-end">
+        {/* Active message (last message during processing) */}
         {activeMessage && (() => {
           const timeStr = formatTime(activeMessage.timestamp ?? new Date());
           if (activeMessage.role === "user") {
@@ -288,40 +289,40 @@ export function Chat({ messages, onSubmit, isProcessing, goalNames = [] }: ChatP
             <Text color={theme.warning}> Thinking...</Text>
           </Box>
         )}
-      </Box>
 
-      {/* Input area with borders */}
-      <Box flexDirection="column">
-        <Box borderStyle="single" borderColor={theme.border} borderBottom={false} borderLeft={false} borderRight={false} />
-        <Box>
-          <Text color={theme.userPrompt} bold>
-            {"\u276F "}
-          </Text>
-          <TextInput
-            value={input}
-            onChange={(val) => { justSelected.current = false; setInput(val); }}
-            onSubmit={handleSubmit}
-            placeholder="/ for commands"
-          />
-        </Box>
-        <Box borderStyle="single" borderColor={theme.border} borderTop={false} borderLeft={false} borderRight={false} />
-        {hasMatches && (
-          <Box flexDirection="column">
-            {matches.map((suggestion, idx) => {
-              const isSelected = idx === selectedIdx;
-              const label = suggestion.type === 'goal'
-                ? `  ${suggestion.name} ${suggestion.description.padEnd(20)}  [goal]`
-                : `  ${suggestion.name.padEnd(20)}${suggestion.description}`;
-              const key = `${suggestion.type}-${suggestion.name}-${suggestion.description}`;
-              return isSelected ? (
-                <Text key={key} bold color={theme.selected}>{label}</Text>
-              ) : (
-                <Text key={key} dimColor>{label}</Text>
-              );
-            })}
-            <Text dimColor>  arrows to navigate, tab/enter to select, esc to dismiss</Text>
+        {/* Input area with borders — always at bottom */}
+        <Box flexDirection="column">
+          <Box borderStyle="single" borderColor={theme.border} borderBottom={false} borderLeft={false} borderRight={false} />
+          <Box>
+            <Text color={theme.userPrompt} bold>
+              {"❯ "}
+            </Text>
+            <TextInput
+              value={input}
+              onChange={(val) => { justSelected.current = false; setInput(val); }}
+              onSubmit={handleSubmit}
+              placeholder="/ for commands"
+            />
           </Box>
-        )}
+          <Box borderStyle="single" borderColor={theme.border} borderTop={false} borderLeft={false} borderRight={false} />
+          {hasMatches && (
+            <Box flexDirection="column">
+              {matches.map((suggestion, idx) => {
+                const isSelected = idx === selectedIdx;
+                const label = suggestion.type === 'goal'
+                  ? `  ${suggestion.name} ${suggestion.description.padEnd(20)}  [goal]`
+                  : `  ${suggestion.name.padEnd(20)}${suggestion.description}`;
+                const key = `${suggestion.type}-${suggestion.name}-${suggestion.description}`;
+                return isSelected ? (
+                  <Text key={key} bold color={theme.selected}>{label}</Text>
+                ) : (
+                  <Text key={key} dimColor>{label}</Text>
+                );
+              })}
+              <Text dimColor>  arrows to navigate, tab/enter to select, esc to dismiss</Text>
+            </Box>
+          )}
+        </Box>
       </Box>
     </Box>
   );
