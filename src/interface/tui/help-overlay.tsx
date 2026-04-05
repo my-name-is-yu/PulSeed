@@ -61,8 +61,16 @@ export function HelpOverlay({ onDismiss }: HelpOverlayProps) {
             <Text>List all goals</Text>
           </Box>
           <Box>
+            <Box width={20}><Text color={theme.command} bold>/dashboard</Text></Box>
+            <Text>Toggle dashboard view</Text>
+          </Box>
+          <Box>
             <Box width={20}><Text color={theme.command} bold>/help or ?</Text></Box>
             <Text>Show this help</Text>
+          </Box>
+          <Box>
+            <Box width={20}><Text color={theme.command} bold>/clear</Text></Box>
+            <Text>Clear chat messages</Text>
           </Box>
           <Box>
             <Box width={20}><Text dimColor>{"<anything else>"}</Text></Box>
