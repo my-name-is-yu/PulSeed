@@ -16,6 +16,7 @@ import { App, type ApprovalRequest } from "./app.js";
 import { getCliLogger } from "../cli/cli-logger.js";
 import { ensureProviderConfig } from "../cli/ensure-api-key.js";
 import type { Task } from "../../base/types/task.js";
+import { isNoFlickerEnabled, createFrameWriter, AlternateScreen, type FrameWriter } from "./flicker/index.js";
 
 // ─── Breadcrumb helpers ───
 
@@ -292,21 +293,45 @@ async function startTUIStandaloneMode(): Promise<void> {
   const { render } = await import("ink");
   const React = await import("react");
 
+  const noFlicker = await isNoFlickerEnabled();
+  let frameWriter: FrameWriter | undefined;
+
+  if (noFlicker) {
+    frameWriter = createFrameWriter(process.stdout);
+    process.stdout.on("resize", () => frameWriter?.requestErase());
+
+    // Install stdout intercept BEFORE render() — chat.tsx patches on top
+    const rawWrite = process.stdout.write.bind(process.stdout);
+    process.stdout.write = function (chunk: any, ...args: any[]) {
+      if (typeof chunk === "string" && chunk.length > 50) {
+        frameWriter!.write(chunk);
+        return true;
+      }
+      return (rawWrite as any)(chunk, ...args);
+    } as typeof process.stdout.write;
+  }
+
+  const appElement = React.createElement(App, {
+    coreLoop,
+    stateManager,
+    trustManager,
+    actionHandler,
+    intentRecognizer,
+    chatRunner,
+    onApprovalReady: setRequestApproval,
+    noFlicker,
+    ...breadcrumb,
+  });
+
   const { waitUntilExit } = render(
-    React.createElement(App, {
-      coreLoop,
-      stateManager,
-      trustManager,
-      actionHandler,
-      intentRecognizer,
-      chatRunner,
-      onApprovalReady: setRequestApproval,
-      ...breadcrumb,
-    }),
+    noFlicker
+      ? React.createElement(AlternateScreen, { enabled: true }, appElement)
+      : appElement,
     { exitOnCtrlC: false }
   );
 
   await waitUntilExit();
+  frameWriter?.destroy();
 }
 
 // ─── Daemon mode ───
@@ -351,18 +376,41 @@ async function startTUIDaemonMode(): Promise<void> {
   const { render } = await import("ink");
   const React = await import("react");
 
+  const noFlicker = await isNoFlickerEnabled();
+  let frameWriter: FrameWriter | undefined;
+
+  if (noFlicker) {
+    frameWriter = createFrameWriter(process.stdout);
+    process.stdout.on("resize", () => frameWriter?.requestErase());
+
+    const rawWrite = process.stdout.write.bind(process.stdout);
+    process.stdout.write = function (chunk: any, ...args: any[]) {
+      if (typeof chunk === "string" && chunk.length > 50) {
+        frameWriter!.write(chunk);
+        return true;
+      }
+      return (rawWrite as any)(chunk, ...args);
+    } as typeof process.stdout.write;
+  }
+
+  const appElement = React.createElement(App, {
+    daemonClient,
+    stateManager,
+    cwd,
+    gitBranch,
+    providerName,
+    noFlicker,
+  });
+
   const { waitUntilExit } = render(
-    React.createElement(App, {
-      daemonClient,
-      stateManager,
-      cwd,
-      gitBranch,
-      providerName,
-    }),
+    noFlicker
+      ? React.createElement(AlternateScreen, { enabled: true }, appElement)
+      : appElement,
     { exitOnCtrlC: false }
   );
 
   await waitUntilExit();
+  frameWriter?.destroy();
 }
 
 // ─── Main entry ───
