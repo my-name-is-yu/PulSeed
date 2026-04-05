@@ -191,7 +191,7 @@ export function Chat({ messages, onSubmit, isProcessing, goalNames = [] }: ChatP
       setSelectedIdx(0);
       setInput("");
     }
-  });
+  }, { isActive: !isProcessing });
 
   // Reset selected index when matches change
   React.useEffect(() => {
