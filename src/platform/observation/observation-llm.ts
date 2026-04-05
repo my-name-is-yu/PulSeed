@@ -14,6 +14,8 @@ import type { Logger } from "../../runtime/logger.js";
 import { wrapXmlTag, formatObservationHistory } from "../../prompt/formatters.js";
 import { OBSERVATION_SYSTEM_PROMPT } from "../../prompt/purposes/observation.js";
 import type { IPromptGateway } from "../../prompt/gateway.js";
+import type { ToolExecutor } from "../../tools/executor.js";
+import type { ToolCallContext } from "../../tools/types.js";
 
 /**
  * Fetch a concise workspace context via git diff when no contextProvider is available.
@@ -25,10 +27,37 @@ import type { IPromptGateway } from "../../prompt/gateway.js";
  * @param maxChars  Maximum characters to return (default: 3000).
  * @param cwd       Working directory for git commands (defaults to process.cwd()).
  */
-export async function fetchGitDiffContext(options: ObservationEngineOptions, maxChars = 3000, cwd?: string): Promise<string> {
+export async function fetchGitDiffContext(options: ObservationEngineOptions, maxChars = 3000, cwd?: string, toolExecutor?: ToolExecutor): Promise<string> {
   // Allow test injection via options
   if (options.gitContextFetcher) {
     return options.gitContextFetcher(maxChars);
+  }
+
+  // Use ToolExecutor + GitDiffTool when available (preferred path, falls through to execFile on failure)
+  if (toolExecutor) {
+    const ctx: ToolCallContext = {
+      cwd: cwd ?? process.cwd(),
+      goalId: "observation",
+      trustBalance: 0,
+      preApproved: true,
+      approvalFn: async () => true,
+      sessionId: "observation",
+      callId: "obs-git-context",
+    };
+    try {
+      const result = await toolExecutor.execute(
+        "git_diff",
+        { target: "unstaged", maxLines: 200 },
+        ctx
+      );
+      if (result.success && result.data && typeof result.data === "string" && result.data.trim()) {
+        const diff = result.data;
+        const truncated = diff.length > maxChars ? diff.slice(0, maxChars) + "\n...(truncated)" : diff;
+        return "[git diff]\n\n" + truncated.trim();
+      }
+    } catch {
+      // fall through to execFile fallback below
+    }
   }
 
   const execOptions = { timeout: 10000, encoding: "utf8" as const, ...(cwd ? { cwd } : {}) };
@@ -160,7 +189,8 @@ export async function observeWithLLM(
   gateway?: IPromptGateway,
   currentValue?: number | null,
   sourceAvailable?: boolean,
-  workspacePath?: string
+  workspacePath?: string,
+  toolExecutor?: ToolExecutor
 ): Promise<ObservationLogEntry> {
   logger?.info(
     `[ObservationEngine] LLM observation for dimension "${dimensionLabel}" (goal: ${goalId})`
@@ -169,7 +199,7 @@ export async function observeWithLLM(
   // Resolve workspace context: use provided context, fall back to git diff, or warn.
   let resolvedContext = workspaceContext;
   if (!resolvedContext || resolvedContext.trim().length === 0) {
-    const gitCtx = await fetchGitDiffContext(options, 3000, workspacePath);
+    const gitCtx = await fetchGitDiffContext(options, 3000, workspacePath, toolExecutor);
     if (gitCtx.trim().length > 0) {
       resolvedContext = gitCtx;
       logger?.info(

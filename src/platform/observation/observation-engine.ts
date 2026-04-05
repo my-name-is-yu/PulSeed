@@ -649,7 +649,8 @@ export class ObservationEngine {
       undefined, // gateway
       currentValue,
       sourceAvailable,
-      workspacePath
+      workspacePath,
+      this.toolExecutor
     );
   }
 
