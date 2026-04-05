@@ -4,6 +4,30 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.0] - 2026-04-05
+
+### Added
+- Deep tool system integration: GitDiffTool, GlobTool, GrepTool, TestRunnerTool, and ShellTool routed through ToolExecutor across CoreLoop, ObservationEngine, StrategyManager, TaskLifecycle, and ChatVerifier (#477-#484)
+- Shared `parseToolOutput` utility for consistent tool result handling across modules
+- `required_tools` field in strategy schema for ToolSearch scoring (#486)
+- `supportsToolCalling()` capability flag on ILLMClient interface
+- ShellTool trusted mode for internal commands (#483)
+- GlobTool + GrepTool integration in negotiator-context (#482)
+- Post-execution GitDiff verification in TaskLifecycle
+- Stale dimension refresh via `measureDirectly()` before gap calculation
+
+### Fixed
+- Chat REPL hang: removed vitest execution from `buildChatContext`, added `TERM=dumb` to Codex CLI spawn env, bypassed `executeWithTools` for CodexLLMClient (#488)
+- Logged errors in `executeWithTools` catch block instead of silently swallowing them (#487, #489)
+- Persisted refreshed dimension values after tool-based measurement (#485)
+- Replaced literal null bytes with `String.fromCharCode(0)` in git-diff tool
+- Skipped tool observation when parsedValue is null
+- Removed non-existent `last_observed` field from Dimension refresh
+
+### Refactored
+- Consolidated tool output parsing into shared `parseToolOutput` utility
+- Replaced raw `execFile` calls with builtin tool system across observation, gap-calculation, and chat verification
+
 ## [0.1.5] - 2026-04-03
 
 ### Added
