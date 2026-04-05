@@ -4,7 +4,7 @@
 // Renders visible messages based on terminal height, with scroll indicator,
 // styled user/AI distinction, spinner, timestamps, and color-coded message types.
 
-import React, { useState, useCallback } from "react";
+import React, { useState } from "react";
 import { Box, Text, useInput, useStdout } from "ink";
 import TextInput from "ink-text-input";
 import Spinner from "ink-spinner";
@@ -14,7 +14,7 @@ import {
   type MarkdownSegment,
 } from "./markdown-renderer.js";
 import { fuzzyMatch, fuzzyFilter } from "./fuzzy.js";
-import { copyToClipboard } from "./clipboard.js";
+import { getClipboardContent } from "./clipboard.js";
 import { theme, getMessageTypeColor } from "./theme.js";
 import { pickSpinnerVerb } from "./spinner-verbs.js";
 import { ShimmerText } from "./shimmer-text.js";
@@ -289,12 +289,8 @@ export function Chat({
   // ── Empty-enter hint ──
   const [emptyHint, setEmptyHint] = React.useState(false);
 
-  // ── Message selection & copy ──
-  const [selectedMsgIndex, setSelectedMsgIndex] = useState<number | null>(null);
+  // ── Copy toast (shown when clipboard changes) ──
   const [copyToast, setCopyToast] = useState<string | null>(null);
-  const isMountedRef = React.useRef(true);
-  const copyToastTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-  React.useEffect(() => () => { isMountedRef.current = false; }, []);
   const emptyHintTimer = React.useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
@@ -303,21 +299,33 @@ export function Chat({
   const [scrollOffset, setScrollOffset] = React.useState(0);
   const prevMsgCount = React.useRef(messages.length);
 
-  const selectAndCopy = useCallback((index: number | null) => {
-    setSelectedMsgIndex(index);
-    if (index !== null && messages[index]) {
-      const text = messages[index].text;
-      // Set toast synchronously — don't wait for clipboard promise
-      const toastMsg = `copied ${text.length} chars to clipboard`;
-      process.stderr.write(`[DEBUG] selectAndCopy: index=${index}, textLen=${text.length}, toast="${toastMsg}"\n`);
-      setCopyToast(toastMsg);
-      if (copyToastTimer.current) clearTimeout(copyToastTimer.current);
-      copyToastTimer.current = setTimeout(() => {
-        if (isMountedRef.current) setCopyToast(null);
-      }, 1500);
-      copyToClipboard(text);
-    }
-  }, [messages]);
+  // ── Clipboard change detection — poll every 500ms ──
+  React.useEffect(() => {
+    let lastClipboard = "";
+    let mounted = true;
+
+    // Get initial clipboard content (don't toast on startup)
+    getClipboardContent().then(content => {
+      if (mounted) lastClipboard = content;
+    });
+
+    const interval = setInterval(async () => {
+      if (!mounted) return;
+      const current = await getClipboardContent();
+      if (current !== lastClipboard && current.length > 0) {
+        lastClipboard = current;
+        setCopyToast(`copied ${current.length} chars to clipboard`);
+        setTimeout(() => {
+          if (mounted) setCopyToast(null);
+        }, 2000);
+      }
+    }, 500);
+
+    return () => {
+      mounted = false;
+      clearInterval(interval);
+    };
+  }, []);
 
   const [spinnerVerb, setSpinnerVerb] = React.useState(() => pickSpinnerVerb());
 
@@ -361,48 +369,6 @@ export function Chat({
 
   useInput(
     (inputChar, key) => {
-      process.stderr.write(`[DEBUG useInput] char=${JSON.stringify(inputChar)} upArrow=${key.upArrow} hasMatches=${hasMatches} selIdx=${selectedMsgIndex}\n`);
-      // ── Message selection: ↑/↓ when a message is selected ──
-      if (selectedMsgIndex !== null) {
-        if (key.upArrow || inputChar === "k") {
-          const next = Math.max(0, selectedMsgIndex - 1);
-          selectAndCopy(next);
-          // Adjust scroll to keep selected message visible
-          const fromEnd = messages.length - 1 - next;
-          if (fromEnd >= scrollOffset + maxVisible) {
-            setScrollOffset(fromEnd - maxVisible + 1);
-          } else if (fromEnd < scrollOffset) {
-            setScrollOffset(fromEnd);
-          }
-          return;
-        }
-        if (key.downArrow || inputChar === "j") {
-          if (selectedMsgIndex >= messages.length - 1) {
-            setSelectedMsgIndex(null);
-          } else {
-            const next = selectedMsgIndex + 1;
-            selectAndCopy(next);
-            // Adjust scroll to keep selected message visible
-            const fromEnd = messages.length - 1 - next;
-            if (fromEnd < scrollOffset) {
-              setScrollOffset(fromEnd);
-            } else if (fromEnd >= scrollOffset + maxVisible) {
-              setScrollOffset(fromEnd - maxVisible + 1);
-            }
-          }
-          return;
-        }
-        if (key.escape) {
-          setSelectedMsgIndex(null);
-          return;
-        }
-        // Any other key: deselect
-        if (inputChar && inputChar.length > 0) {
-          setSelectedMsgIndex(null);
-        }
-        return;
-      }
-
       // ── Scroll: Shift+↑/↓ or PageUp/PageDown ──
       if (key.upArrow && key.shift) {
         setScrollOffset((prev) =>
@@ -450,15 +416,6 @@ export function Chat({
       } else {
         // ── Input history: ↑↓ when no suggestions ──
         if (key.upArrow) {
-          process.stderr.write(`[DEBUG ↑] input=${JSON.stringify(input)} historyIdx=${historyIdx} msgLen=${messages.length} hasMatches=${hasMatches}\n`);
-          // Empty input + no history navigation in progress → start message selection
-          if (input === "" && historyIdx === -1 && messages.length > 0) {
-            const idx = messages.length - 1;
-            selectAndCopy(idx);
-            // Scroll to bottom to ensure last message is visible
-            setScrollOffset(0);
-            return;
-          }
           if (history.length > 0) {
             if (historyIdx === -1) {
               setDraft(input);
@@ -589,23 +546,10 @@ export function Chat({
 
       {/* All visible messages rendered with memoized rows to prevent flicker */}
       <Box flexDirection="column" flexGrow={1} justifyContent="flex-end">
-        {visibleMessages.map((msg, idx) => {
-          // Turn separator: show between last AI message and next user message
-          const prevMsg = idx > 0 ? visibleMessages[idx - 1] : null;
-          const absoluteIdx = startIdx + idx;
-          const isSelected = selectedMsgIndex === absoluteIdx;
+        {visibleMessages.map((msg) => {
           return (
             <React.Fragment key={msg.id}>
-              {isSelected ? (
-                <Box>
-                  <Text bold inverse>{"▶ "}</Text>
-                  <Box flexDirection="column" flexGrow={1}>
-                    <MessageRow msg={msg} />
-                  </Box>
-                </Box>
-              ) : (
-                <MessageRow msg={msg} />
-              )}
+              <MessageRow msg={msg} />
             </React.Fragment>
           );
         })}
@@ -627,10 +571,20 @@ export function Chat({
 
         {/* Input area with borders — always at bottom */}
         <Box flexDirection="column">
-          <Box>
-              <Text dimColor>{"─".repeat(Math.max(1, termCols - (copyToast ? copyToast.length + 1 : 0)))}</Text>
-              {copyToast && <Text color="cyan">{copyToast}</Text>}
+          {copyToast ? (
+            <Box>
+              <Text dimColor>{"─".repeat(Math.max(0, termCols - copyToast.length - 1))}</Text>
+              <Text color="cyan">{copyToast}</Text>
             </Box>
+          ) : (
+            <Box
+              borderStyle="single"
+              borderColor={theme.border}
+              borderBottom={false}
+              borderLeft={false}
+              borderRight={false}
+            />
+          )}
           <Box>
             <Text color={theme.userPrompt} bold>
               {"​◉ "}
@@ -639,17 +593,12 @@ export function Chat({
               value={input}
               onChange={(val) => {
                 justSelected.current = false;
-                if (selectedMsgIndex !== null) {
-                  setSelectedMsgIndex(null);
-                  setCopyToast(null);
-                }
                 setInput(val);
               }}
               onSubmit={handleSubmit}
               placeholder="/ for commands"
             />
           </Box>
-          {(() => { process.stderr.write(`[DEBUG render] copyToast=${JSON.stringify(copyToast)}\n`); return null; })()}
           <Box
             borderStyle="single"
             borderColor={theme.border}
