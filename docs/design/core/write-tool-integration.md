@@ -1,227 +1,273 @@
-# Write-Tool Integration Plan
+# Tool Integration Design
 
 ## 1. Overview
 
-PulSeed's chat interface has grown organically — read tools in one file, mutation tools split across two others, and approval logic split between programmatic guards and conversational prompts. This plan unifies the tool system under a single registry, inspired by Claude Code's declarative patterns. The goal is consistency, testability, and a clean path to CoreLoop deep integration.
+PulSeed's tool system unifies interactive (AgentLoop) and autonomous (CoreLoop) execution through shared tool primitives, inspired by Claude Code's architecture.
 
-Problems to solve:
-- Two approval mechanisms (programmatic `checkApproval` + conversational prompt) — inconsistent behavior
-- Tool results use `role: "user"` instead of `role: "tool"` — breaks standard LLM tool-call protocol
-- `toggle_plugin` is a stub returning an error; `update_config` supports only `daemon_mode` key
-- No unified registry — tools scattered across three files
-- Only `delete_goal` has rich LLM-facing descriptions; others are bare
+Two loops, one tool layer:
+
+```
+┌─────────────────────────────────┐
+│       Shared Tool Layer         │
+│  ReadState, WriteState, ...     │
+└──────────┬──────────┬───────────┘
+           │          │
+    ┌──────▼──────┐  ┌▼────────────┐
+    │  AgentLoop  │  │  CoreLoop   │
+    │  LLM-driven │  │  Goal-driven│
+    │  free pick  │  │  fixed seq  │
+    └─────────────┘  └─────────────┘
+```
+
+**AgentLoop** (interactive): LLM freely picks tools, stops at end_turn. Used for single-task, conversational sessions.
+
+**CoreLoop** (autonomous): fixed sequence — ReadState → QueryDataSource → (gap calc in code) → RunAdapter → QueryDataSource (verify). Stops when satisficing judge clears the gap.
+
+**Handoff**: Future `track` command transfers context from AgentLoop to CoreLoop.
 
 ---
 
-## 2. Unified ToolDefinition Type
+## 2. Tool Definition Type
 
-New file: `src/interface/chat/tool-registry.ts`
+Follows Claude Code's `buildTool()` pattern — each tool owns its prompt, UI rendering, and execution:
 
 ```typescript
-import { z } from "zod";
-import type { StateManager } from "../../state-manager.js";
-import type { LLMClient } from "../../llm-client.js";
+// src/tools/tool-types.ts
+import { z } from 'zod';
 
-export interface ToolDefinition {
+interface ToolDef<TInput = unknown, TOutput = unknown> {
   name: string;
-  description: string;              // Rich, LLM-friendly description
-  parameters: z.ZodSchema;          // Converted to JSON Schema for LLM calls
-  isReadOnly: boolean;              // Default: false (safe side)
-  approvalLevel: "none" | "conversational" | "required";
-  statusVerb: string;               // e.g., "Deleting", "Updating", "Archiving"
-  statusArgKey?: string;            // Parameter key to show in status (e.g., "goal_id")
-  execute: (params: unknown, ctx: ToolContext) => Promise<ToolResult>;
+  description: string;
+  parameters: z.ZodSchema<TInput>;
+  isReadOnly?: boolean;          // default: false (safe side)
+  isConcurrencySafe?: boolean;   // default: false (exclusive execution)
+  isDestructive?: boolean;       // default: false
+  statusVerb: string;            // e.g., "Reading state", "Running adapter"
+  statusArgKey?: string;         // param key for status display
+  maxResultSizeChars?: number;   // overflow → disk + preview
+  prompt: () => string;          // system prompt fragment injected per-tool
+  call: (input: TInput, ctx: ToolContext) => Promise<ToolResult<TOutput>>;
+  renderToolUse?: (input: TInput) => string;    // TUI display
+  renderToolResult?: (result: ToolResult<TOutput>) => string;
 }
 
-export interface ToolResult {
+interface ToolResult<T = unknown> {
   success: boolean;
-  data?: unknown;
-  error?: string;                   // Errors returned as data, never thrown
+  data?: T;
+  error?: string;               // errors as data, not exceptions
 }
 
-export interface ToolContext {
+interface ToolContext {
   stateManager: StateManager;
   llmClient: LLMClient;
-  approvalFn?: (description: string) => Promise<boolean>;
+  approvalFn?: (desc: string) => Promise<boolean>;
   onStatus?: (text: string) => void;
 }
 
-export class ToolRegistry {
-  private tools = new Map<string, ToolDefinition>();
-  register(tool: ToolDefinition): void { this.tools.set(tool.name, tool); }
-  get(name: string): ToolDefinition | undefined { return this.tools.get(name); }
-  all(): ToolDefinition[] { return Array.from(this.tools.values()); }
-  readOnly(): ToolDefinition[] { return this.all().filter(t => t.isReadOnly); }
-}
-
-export class ToolDispatcher {
-  constructor(private registry: ToolRegistry) {}
-  private denialCount = 0;
-  private confirmationMode = false;
-
-  async dispatch(name: string, params: unknown, ctx: ToolContext): Promise<ToolResult> {
-    const tool = this.registry.get(name);
-    if (!tool) return { success: false, error: `Unknown tool: ${name}` };
-
-    const parsed = tool.parameters.safeParse(params);
-    if (!parsed.success) return { success: false, error: `Invalid params: ${parsed.error.message}` };
-
-    if (tool.approvalLevel === "required" || this.confirmationMode) {
-      const approved = await ctx.approvalFn?.(`Execute ${name}?`) ?? false;
-      if (!approved) {
-        this.denialCount++;
-        if (this.denialCount >= 3) this.confirmationMode = true;
-        return { success: false, error: "User denied" };
-      }
-      this.denialCount = 0;
-    }
-
-    const statusText = `${tool.statusVerb} ${tool.statusArgKey ? (params as Record<string, unknown>)[tool.statusArgKey] : tool.name}`;
-    ctx.onStatus?.(statusText);
-
-    try {
-      return await tool.execute(parsed.data, ctx);
-    } catch (err) {
-      return { success: false, error: String(err) };
-    }
-  }
+function buildTool<TInput, TOutput>(def: ToolDef<TInput, TOutput>): Tool<TInput, TOutput> {
+  return {
+    isReadOnly: false,
+    isConcurrencySafe: false,
+    isDestructive: false,
+    maxResultSizeChars: 50_000,
+    ...def,
+  };
 }
 ```
 
 ---
 
-## 3. Three-Phase Plan
+## 3. Tool Inventory
 
-### Phase A: Tool Registry Unification
+13 tools across 6 categories. Granularity is CC-level: primitive operations, not domain-composite.
 
-**Goal**: Single registry, fix `role: "tool"`, backward-compatible migration.
+### State (read)
 
-1. Create `src/interface/chat/tool-registry.ts` with types above.
-2. Move read tools from `self-knowledge-tools.ts` into registry; old file re-exports.
-3. Move mutation tools from `mutation-tool-defs.ts` + `self-knowledge-mutation-tools.ts` into registry.
-4. In `chat-runner.ts`: use `ToolDispatcher.dispatch()`, fix role to `"tool"`.
-5. Add `tool-registry.test.ts`.
+| Tool | Description | readOnly | concurrent | statusVerb |
+|------|------------|----------|-----------|------------|
+| ReadState | Read goal, session, trust, config, or plugin state by target+id | true | true | Reading |
+| ListStates | List goals, sessions, or plugins with optional filters | true | true | Listing |
 
-**Approval mapping**:
-| Tool | approvalLevel |
-|------|--------------|
-| get_goals, get_sessions, get_trust_state, get_config, get_plugins | none (read-only) |
-| set_goal, update_goal, delete_goal, update_config | none (conversational) |
-| archive_goal, reset_trust, toggle_plugin | required |
+### State (write)
 
-### Phase B: Mutation Tool Expansion
+| Tool | Description | readOnly | concurrent | statusVerb |
+|------|------------|----------|-----------|------------|
+| WriteState | Create, update, delete, or archive a goal/config/trust | false | false | Updating |
 
-**Goal**: Complete stubs, expand config coverage, add rich descriptions only for irreversible/damaging operations.
+Note: only irreversible/damaging operations (delete, reset_trust) get rich LLM descriptions with risk warnings (MutationToolMeta). Other mutations proceed without extra description to maintain execution speed.
 
-1. **Complete `toggle_plugin`**: implement actual plugin enable/disable via `PluginLoader`.
-2. **Expand `update_config`**: read all supported keys from `CONFIG_METADATA` (defined in `src/base/config/config-metadata.ts`, which re-exports from `tool-metadata.ts`). Validate value type per key before writing.
-3. **Rich descriptions**: add `MutationToolMeta` only for irreversible or potentially damaging operations (`delete_goal`, `reset_trust`). Other mutation tools (`set_goal`, `update_goal`, `update_config`, etc.) proceed without rich descriptions to maintain execution speed.
-4. **Unify approval**: remove old `checkApproval` calls; all approval via `ToolDispatcher`.
-5. **PreToolUse semantic hook**: add semantic validation (e.g., reject `archive_goal` if goal is running).
+### Execution
 
-### Phase C: CoreLoop Deep Integration
+| Tool | Description | readOnly | concurrent | statusVerb |
+|------|------------|----------|-----------|------------|
+| RunAdapter | Execute a command via an adapter (Claude, Codex, etc.) | false | false | Running |
+| SpawnSession | Create a new agent session for a goal | false | false | Spawning |
 
-**Goal**: ObservationEngine and StrategyManager can use tools; results flow back into state.
+### Data
 
-This phase is **additive** — no breaking changes. See also: `docs/design/core/tool-system.md`.
+| Tool | Description | readOnly | concurrent | statusVerb |
+|------|------------|----------|-----------|------------|
+| QueryDataSource | Query a data source (shell command, file check, API) | true | true | Querying |
 
-1. **ObservationEngine**: inject read-only `ToolRegistry`; merge tool results with LLM observation.
-2. **GapCalculator**: optional `verify` tool hook to cross-check gap measurements.
-3. **StrategyManager**: include available tool names in LLM context.
-4. **CoreLoop**: wire `ToolResult` objects into session state for next observation.
+### Knowledge
+
+| Tool | Description | readOnly | concurrent | statusVerb |
+|------|------------|----------|-----------|------------|
+| SearchKnowledge | Semantic search across PulSeed's knowledge base | true | true | Searching |
+| WriteKnowledge | Store or update a knowledge entry | false | false | Storing |
+
+### File
+
+| Tool | Description | readOnly | concurrent | statusVerb |
+|------|------------|----------|-----------|------------|
+| ReadPulseedFile | Read a file from ~/.pulseed/ | true | true | Reading |
+| WritePulseedFile | Write a file to ~/.pulseed/ | false | false | Writing |
+
+### Interaction
+
+| Tool | Description | readOnly | concurrent | statusVerb |
+|------|------------|----------|-----------|------------|
+| AskHuman | Ask the user a question and wait for response | true | false | Asking |
+
+### Planning
+
+| Tool | Description | readOnly | concurrent | statusVerb |
+|------|------------|----------|-----------|------------|
+| CreatePlan | Create or update a task plan | false | false | Planning |
+| ReadPlan | Read current task plan | true | true | Reading plan |
+
+---
+
+## 4. Tool Registration
+
+No registry class — CC pattern uses a plain function returning an array:
 
 ```typescript
-// Injection pattern — no global registry
-class ObservationEngine {
-  constructor(private llmClient: LLMClient, private readOnlyTools: ToolDefinition[]) {}
+// src/tools/index.ts
+export function getAllTools(): Tool[] {
+  return [
+    readStateTool,
+    listStatesTool,
+    writeStateTool,
+    runAdapterTool,
+    spawnSessionTool,
+    queryDataSourceTool,
+    searchKnowledgeTool,
+    writeKnowledgeTool,
+    readPulseedFileTool,
+    writePulseedFileTool,
+    askHumanTool,
+    createPlanTool,
+    readPlanTool,
+  ];
 }
 ```
 
 ---
 
-## 4. Migration Strategy
+## 5. Real-Time Status Display
 
-| Phase | Breaking? | Backward Compat Mechanism |
-|-------|-----------|--------------------------|
-| A | No | Old files re-export from registry; callers unchanged |
-| B | Minimal | `checkApproval` callers need one-line update to use dispatcher |
-| C | No | Additive injection — existing CoreLoop callers unchanged |
+Each tool's `statusVerb` + `statusArgKey` generates a one-line status emitted via `ToolContext.onStatus`:
 
-Recommended order: A → B → C. Each phase is independently shippable.
+```
+⚡ Reading goal:improve-test-coverage
+⚡ Running adapter:claude-code-cli
+⚡ Searching knowledge:test patterns
+```
 
----
-
-## 5. File Impact Summary
-
-| File | Phase | Action |
-|------|-------|--------|
-| `src/interface/chat/tool-registry.ts` | A | Create |
-| `src/interface/chat/self-knowledge-tools.ts` | A | Refactor (re-export) |
-| `src/interface/chat/mutation-tool-defs.ts` | A | Refactor (re-export) |
-| `src/interface/chat/self-knowledge-mutation-tools.ts` | A | Refactor (re-export) |
-| `src/interface/chat/chat-runner.ts` | A | Fix role + use dispatcher; pass onStatus callback |
-| `src/interface/chat/__tests__/tool-registry.test.ts` | A | Create |
-| `src/interface/tui/tool-status.tsx` | A | Create — status display component |
-| `src/interface/chat/tool-metadata.ts` | B | Expand all tool descriptions |
-| toggle_plugin handler | B | Implement |
-| update_config handler | B | Expand keys |
-| `src/observation-engine.ts` | C | Inject read-only tools |
-| `src/gap-calculator.ts` | C | Optional verify hook |
-| `src/strategy/strategy-manager.ts` | C | Tool-aware context |
-| `src/core-loop.ts` | C | Wire tool results to state |
-| `src/__tests__/integration/tool-coreloop.test.ts` | C | Create |
-
-Total: 9 files modified, 4 files created.
-
----
-
-## 6. Real-Time Tool Status Display
-
-`statusVerb` and `statusArgKey` are part of `ToolDefinition` (Section 2). `ToolContext.onStatus` (Section 2) delivers status text to the TUI. The dispatcher emits status before each tool execution.
-
-Tool status display is separate from spinner verbs: spinners = LLM thinking; tool status = specific action in progress.
+Separate from spinner verbs (shown during LLM thinking). New TUI component:
 
 ```typescript
-// src/interface/tui/tool-status.tsx (new, Phase A)
+// src/interface/tui/tool-status.tsx
 const ToolStatusLine: FC<{ status: string | null }> = ({ status }) => {
   if (!status) return null;
   return <Text dimColor>  ⚡ {status}</Text>;
 };
 ```
 
-| Tool | statusVerb | statusArgKey |
-|------|-----------|-------------|
-| get_goals | Fetching goals | — |
-| get_sessions | Fetching sessions | — |
-| get_trust_state | Checking trust | — |
-| get_config | Reading config | — |
-| get_plugins | Listing plugins | — |
-| set_goal | Creating goal | description |
-| update_goal | Updating goal | goal_id |
-| archive_goal | Archiving goal | goal_id |
-| delete_goal | Deleting goal | goal_id |
-| toggle_plugin | Toggling plugin | plugin_name |
-| update_config | Updating config | key |
-| reset_trust | Resetting trust | — |
+---
+
+## 6. Implementation Phases
+
+### Phase A: Tool Foundation
+
+Scope: create tool layer, wire into ChatRunner (AgentLoop foundation).
+
+- Create `src/tools/tool-types.ts` — ToolDef, ToolResult, ToolContext, buildTool
+- Create `src/tools/index.ts` — getAllTools
+- Implement: ReadState, ListStates, WriteState (migrate from self-knowledge-tools + mutation-tool-defs)
+- Wire into ChatRunner's `executeWithTools`
+- Create `src/interface/tui/tool-status.tsx`
+- Files: 5 new, 3 modified | Tests: tool-types.test.ts + per-tool unit tests
+
+Migration: self-knowledge-tools.ts and mutation-tool-defs.ts become shims re-exporting from new tool layer. No breaking changes.
+
+### Phase B: Execution & Data Tools
+
+Scope: remaining 10 tools, AgentLoop fully functional.
+
+- Implement: RunAdapter, SpawnSession, QueryDataSource
+- Implement: SearchKnowledge, WriteKnowledge
+- Implement: ReadPulseedFile, WritePulseedFile, AskHuman, CreatePlan, ReadPlan
+- ChatRunner switches to getAllTools()
+- Files: 10 new, 2 modified | Tests: per-tool unit tests + AgentLoop integration test
+
+Old files deprecated; new tools are source of truth.
+
+### Phase C: CoreLoop Migration
+
+Scope: refactor CoreLoop to call tool primitives instead of modules directly.
+
+- CoreLoop calls ReadState instead of `stateManager.getGoal()` directly
+- CoreLoop calls QueryDataSource instead of `observationEngine.observe()` directly
+- Both loops verified sharing tools correctly
+- Files: 3-5 modified (core-loop.ts, observation-engine.ts, etc.)
+- Tests: CoreLoop integration tests with tool layer
+
+Each module change is independently testable. No API changes to callers.
+
+### Phase D: Concurrency & Polish
+
+Scope: performance optimizations, no API changes.
+
+- Concurrent execution for isConcurrencySafe tools (parallel reads)
+- Result overflow to disk (maxResultSizeChars exceeded → disk + preview)
+- Tool-owned prompt() fragments injected into system prompt
+- Deferred tool loading for scale
+- Files: 2-3 modified | Tests: concurrency tests, overflow tests
 
 ---
 
-## 7. Test Strategy
+## 7. File Impact Summary
 
-**Unit tests** (Phase A — `tool-registry.test.ts`):
-- Register + dispatch valid params → success
-- Unknown tool → `{ success: false, error: "Unknown tool: ..." }`
-- Invalid params fail at Zod parse, before approval or execution
-- `approvalLevel: "required"` calls `approvalFn`; denial returns error, does not throw
-- 3 consecutive denials → `confirmationMode = true`
-- Exception inside `execute` caught, returned as `ToolResult`
+| File | Phase | Action |
+|------|-------|--------|
+| src/tools/tool-types.ts | A | Create |
+| src/tools/index.ts | A | Create |
+| src/tools/read-state.ts | A | Create |
+| src/tools/list-states.ts | A | Create |
+| src/tools/write-state.ts | A | Create |
+| src/interface/chat/chat-runner.ts | A | Modify (wire tools) |
+| src/interface/tui/tool-status.tsx | A | Create |
+| src/tools/run-adapter.ts | B | Create |
+| src/tools/spawn-session.ts | B | Create |
+| src/tools/query-datasource.ts | B | Create |
+| src/tools/search-knowledge.ts | B | Create |
+| src/tools/write-knowledge.ts | B | Create |
+| src/tools/read-pulseed-file.ts | B | Create |
+| src/tools/write-pulseed-file.ts | B | Create |
+| src/tools/ask-human.ts | B | Create |
+| src/tools/create-plan.ts | B | Create |
+| src/tools/read-plan.ts | B | Create |
+| src/orchestrator/loop/core-loop.ts | C | Modify |
+| src/orchestrator/observation/observation-engine.ts | C | Modify |
 
-**Mutation tool tests** (Phase B):
-- `toggle_plugin` — enable/disable round-trip; verify PluginLoader called
-- `update_config` — all CONFIG_METADATA keys accepted; unknown key rejected
-- No tool calls `checkApproval` directly (approval via dispatcher only)
+---
 
-**Integration tests** (Phase C — `tool-coreloop.test.ts`):
-- Chat → tool call → state mutation → next LLM turn sees updated state
-- ObservationEngine with injected read-only tools produces richer observation
-- CoreLoop full round-trip with tool results in session state
+## 8. Test Strategy
+
+- **Unit**: each tool tested independently with mock ToolContext
+- **Integration (AgentLoop)**: user input → tool calls → result, end-to-end
+- **Integration (CoreLoop)**: CoreLoop with tool layer, full round-trip
+- **Concurrency**: parallel read-only tools execute simultaneously; write tools are exclusive
+- **Overflow**: results exceeding maxResultSizeChars persisted to disk, preview returned
