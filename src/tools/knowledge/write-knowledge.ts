@@ -78,6 +78,6 @@ export class WriteKnowledgeTool implements ITool<WriteKnowledgeInput, unknown> {
   }
 
   isConcurrencySafe(_input: WriteKnowledgeInput): boolean {
-    return true;
+    return false;
   }
 }
