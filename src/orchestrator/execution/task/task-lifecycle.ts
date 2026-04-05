@@ -50,7 +50,6 @@ import type { KnowledgeTransfer } from "../../../platform/knowledge/transfer/kno
 import type { KnowledgeManager } from "../../../platform/knowledge/knowledge-manager.js";
 import { generateReflection, saveReflectionAsKnowledge, getReflectionsForGoal, formatReflectionsForPrompt } from "../reflection-generator.js";
 import { GuardrailRunner } from "../../../platform/traits/guardrail-runner.js";
-import type { ToolExecutor } from "../../../tools/executor.js";
 import type { HookManager } from "../../../runtime/hook-manager.js";
 
 export type { TaskCycleResult } from "./task-execution-types.js";
@@ -82,7 +81,6 @@ export class TaskLifecycle {
   private readonly knowledgeManager?: KnowledgeManager;
   private readonly guardrailRunner?: GuardrailRunner;
   private readonly hookManager?: HookManager;
-  private readonly toolExecutor?: ToolExecutor;
   private onTaskComplete?: (strategyId: string) => void;
 
   constructor(
@@ -113,8 +111,6 @@ export class TaskLifecycle {
       guardrailRunner?: GuardrailRunner;
       /** Optional HookManager for lifecycle hook events */
       hookManager?: HookManager;
-      /** Optional ToolExecutor for routing health check commands through the 5-gate security pipeline */
-      toolExecutor?: ToolExecutor;
     }
   ) {
     this.stateManager = stateManager;
@@ -135,7 +131,6 @@ export class TaskLifecycle {
     this.knowledgeManager = options?.knowledgeManager;
     this.guardrailRunner = options?.guardrailRunner;
     this.hookManager = options?.hookManager;
-    this.toolExecutor = options?.toolExecutor;
   }
 
   /** Register a callback invoked when a task completes successfully (used by PortfolioManager). */
@@ -474,7 +469,6 @@ export class TaskLifecycle {
   async runPostExecutionHealthCheck(): Promise<{ healthy: boolean; output: string }> {
     return _runPostExecutionHealthCheck(
       this.runShellCommand.bind(this),
-      this.toolExecutor,
     );
   }
 
