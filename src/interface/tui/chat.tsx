@@ -569,12 +569,10 @@ export function Chat({
           </Text>
         )}
 
-        {/* Copy toast — above input area */}
-        {copyToast && (
-          <Box justifyContent="flex-end">
-            <Text color="cyan">{copyToast}</Text>
-          </Box>
-        )}
+        {/* Copy toast — always reserve 1 row to prevent layout shift */}
+        <Box justifyContent="flex-end" height={1}>
+          {copyToast && <Text color="cyan">{copyToast}</Text>}
+        </Box>
 
         {/* Input area with borders — always at bottom */}
         <Box flexDirection="column">
