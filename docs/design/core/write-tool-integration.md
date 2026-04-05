@@ -172,7 +172,48 @@ const tools = getAllTools().map(toToolDefinition);
 
 ## 6. Real-Time Status Display
 
-Existing tools already emit status through ToolExecutor. Status format follows the existing `∿` symbol pattern used in TUI.
+### Design Decision
+- Callback injection pattern (not EventEmitter)
+- All tools displayed (read-only and mutations)
+- Both start and completion/failure shown
+
+### Callback Interface
+
+```typescript
+// Added to ChatRunnerDeps (or ChatRunner constructor options)
+interface ToolStatusCallbacks {
+  onToolStart?: (toolName: string, args: Record<string, unknown>) => void;
+  onToolEnd?: (toolName: string, result: { success: boolean; summary: string; durationMs: number }) => void;
+}
+```
+
+### Integration Point
+
+`dispatchToolCall()` in `chat-runner.ts` calls `onToolStart` before `tool.call()` and `onToolEnd` after (in both success and catch paths).
+
+### TUI Rendering
+
+The TUI (chat.tsx) pushes synthetic `ChatMessage` entries with `messageType: "info"` when callbacks fire:
+
+- Start: `⏺ {toolName} "{truncated args summary}"...`
+- Success: `  ✓ {summary} ({durationMs}ms)`
+- Failure: `  ✗ {error message}`
+
+No new TUI component needed — existing `MessageRow` handles `messageType: "info"` rendering.
+
+### Example Output
+
+```
+⏺ set-goal "improve test coverage to 80%"...
+  ✓ created goal g-abc123 (42ms)
+
+⏺ shell "npm test"...
+  ✗ exit code 1 — 3 tests failed (1204ms)
+
+⏺ read-pulseed-file "provider.json"...
+  ✓ read 245 bytes (3ms)
+```
+
 
 ---
 
