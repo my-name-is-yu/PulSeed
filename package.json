@@ -18,7 +18,7 @@
     "url": "https://github.com/my-name-is-yu/PulSeed/issues"
   },
   "bin": {
-    "pulseed": "dist/cli/cli-runner.js"
+    "pulseed": "dist/interface/cli/cli-runner.js"
   },
   "keywords": [
     "ai",
