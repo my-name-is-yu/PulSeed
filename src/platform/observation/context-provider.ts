@@ -86,9 +86,7 @@ function truncateTobudget(text: string, maxChars: number): string {
   const tailChars = maxChars - headChars;
   return (
     text.slice(0, headChars) +
-    "
-[... truncated to fit token budget ...]
-" +
+    "\n[... truncated to fit token budget ...]\n" +
     text.slice(text.length - tailChars)
   );
 }
@@ -113,9 +111,7 @@ export async function buildWorkspaceContext(
   const items = await collectContextItems(goalId, dimensionName, { ...options, maxTotalChars });
   const selected = selectByTier(items, items.length); // include all; callers may use selectByTier with a cap
   const parts = selected.flatMap((item) => [item.label, item.content]);
-  const result = parts.join("
-
-") || "(No workspace context available)";
+  const result = parts.join("\n\n") || "(No workspace context available)";
   return truncateTobudget(result, maxTotalChars);
 }
 
@@ -193,8 +189,7 @@ async function collectContextItems(
           ctx
         );
         if (result.success) {
-          files = (result.data as string).split("
-").filter(Boolean).slice(0, 5);
+          files = (result.data as string).split("\n").filter(Boolean).slice(0, 5);
         }
       } else {
         const { stdout } = await execFileAsync(
@@ -202,8 +197,7 @@ async function collectContextItems(
           ["-rn", "--include=*.ts", "--include=*.js", "-l", term, cwd],
           { timeout: 10000 }
         );
-        files = stdout.trim().split("
-").filter(Boolean).slice(0, 5);
+        files = stdout.trim().split("\n").filter(Boolean).slice(0, 5);
       }
 
       if (files.length > 0) {
@@ -224,30 +218,25 @@ async function collectContextItems(
                 ctx
               );
               if (result.success) {
-                const rawContent = (result.data as string).replace(/^\d+	/gm, "");
-                lines = rawContent.split("
-").slice(0, maxLines);
+                const rawContent = (result.data as string).replace(/^\d+\t/gm, "");
+                lines = rawContent.split("\n").slice(0, maxLines);
               }
             } else {
               const content = await readFile(filePath, "utf-8");
-              lines = content.split("
-").slice(0, maxLines);
+              lines = content.split("\n").slice(0, maxLines);
             }
 
             if (lines.length > 0) {
               const relativePath = filePath.replace(cwd + "/", "");
               contentParts.push(`[File: ${relativePath} (${lines.length} lines)]`);
-              contentParts.push(lines.join("
-"));
+              contentParts.push(lines.join("\n"));
             }
           } catch {
             // skip unreadable files
           }
         }
 
-        const itemContent = contentParts.join("
-
-");
+        const itemContent = contentParts.join("\n\n");
         cumulativeChars += label.length + itemContent.length;
         items.push({
           label,
@@ -270,8 +259,7 @@ async function collectContextItems(
           ctx
         );
         if (result.success && result.data) {
-          const logLines = (result.data as string[]).join("
-");
+          const logLines = (result.data as string[]).join("\n");
           if (logLines.trim()) {
             const label = "[Recent changes: git log --oneline]";
             const content = logLines.trim();
@@ -308,9 +296,7 @@ async function collectContextItems(
         );
         if (result.success && result.data) {
           const testData = result.data as { rawOutput: string };
-          const lastLines = testData.rawOutput.split("
-").slice(-10).join("
-");
+          const lastLines = testData.rawOutput.split("\n").slice(-10).join("\n");
           const label = "[Test status]";
           cumulativeChars += label.length + lastLines.length;
           items.push({ label, content: lastLines, memory_tier: classifyTier(label) });
@@ -321,9 +307,7 @@ async function collectContextItems(
           ["vitest", "run", "--reporter=dot"],
           { cwd, timeout: 30000 }
         );
-        const lastLines = stdout.split("
-").slice(-10).join("
-");
+        const lastLines = stdout.split("\n").slice(-10).join("\n");
         const label = "[Test status]";
         cumulativeChars += label.length + lastLines.length;
         items.push({ label, content: lastLines, memory_tier: classifyTier(label) });
@@ -333,11 +317,9 @@ async function collectContextItems(
         const lastLines = (
           (err as { stdout: string }).stdout || ""
         )
-          .split("
-")
+          .split("\n")
           .slice(-10)
-          .join("
-");
+          .join("\n");
         if (lastLines.trim()) {
           const label = "[Test status (failures detected)]";
           cumulativeChars += label.length + lastLines.length;
@@ -393,11 +375,9 @@ export async function buildChatContext(
         ctx
       );
       if (result.success && result.data) {
-        const logLines = (result.data as string[]).join("
-");
+        const logLines = (result.data as string[]).join("\n");
         if (logLines.trim()) {
-          parts.push(`[Recent changes: git log --oneline]
-${logLines.trim()}`);
+          parts.push(`[Recent changes: git log --oneline]\n${logLines.trim()}`);
         }
       }
     } else {
@@ -406,12 +386,9 @@ ${logLines.trim()}`);
         ["diff", "HEAD", "--stat"],
         { cwd: gitRoot, timeout: 10000 }
       );
-      const lines = stdout.trim().split("
-").slice(0, 30).join("
-");
+      const lines = stdout.trim().split("\n").slice(0, 30).join("\n");
       if (lines) {
-        parts.push(`[Recent changes: git diff HEAD --stat]
-${lines}`);
+        parts.push(`[Recent changes: git diff HEAD --stat]\n${lines}`);
       }
     }
   } catch {
@@ -428,12 +405,9 @@ ${lines}`);
       );
       if (result.success && result.data) {
         const testData = result.data as { rawOutput: string };
-        const lastLines = testData.rawOutput.split("
-").slice(-20).join("
-");
+        const lastLines = testData.rawOutput.split("\n").slice(-20).join("\n");
         if (lastLines.trim()) {
-          parts.push(`[Test status]
-${lastLines}`);
+          parts.push(`[Test status]\n${lastLines}`);
         }
       }
     } else {
@@ -442,25 +416,19 @@ ${lastLines}`);
         ["vitest", "run", "--reporter=dot"],
         { cwd: gitRoot, timeout: 5000 }
       );
-      const lastLines = stdout.split("
-").slice(-20).join("
-");
+      const lastLines = stdout.split("\n").slice(-20).join("\n");
       if (lastLines.trim()) {
-        parts.push(`[Test status]
-${lastLines}`);
+        parts.push(`[Test status]\n${lastLines}`);
       }
     }
   } catch (err: unknown) {
     if (!toolExecutor && typeof err === "object" && err !== null && "stdout" in err) {
       const lastLines = ((err as { stdout: string }).stdout || "")
-        .split("
-")
+        .split("\n")
         .slice(-20)
-        .join("
-");
+        .join("\n");
       if (lastLines.trim()) {
-        parts.push(`[Test status (failures detected)]
-${lastLines}`);
+        parts.push(`[Test status (failures detected)]\n${lastLines}`);
       }
     }
     // For toolExecutor path: skip gracefully on failure
@@ -483,8 +451,7 @@ ${lastLines}`);
           ctx
         );
         if (result.success) {
-          files = (result.data as string).split("
-").filter(Boolean).slice(0, 3);
+          files = (result.data as string).split("\n").filter(Boolean).slice(0, 3);
         }
       } else {
         const { stdout } = await execFileAsync(
@@ -492,8 +459,7 @@ ${lastLines}`);
           ["-rn", "--include=*.ts", "--include=*.js", "-l", keyword, gitRoot],
           { timeout: 10000 }
         );
-        files = stdout.trim().split("
-").filter(Boolean).slice(0, 3);
+        files = stdout.trim().split("\n").filter(Boolean).slice(0, 3);
       }
 
       for (const filePath of files) {
@@ -505,22 +471,16 @@ ${lastLines}`);
               ctx
             );
             if (result.success) {
-              const rawContent = (result.data as string).replace(/^\d+	/gm, "");
-              const lines = rawContent.split("
-").slice(0, 50).join("
-");
+              const rawContent = (result.data as string).replace(/^\d+\t/gm, "");
+              const lines = rawContent.split("\n").slice(0, 50).join("\n");
               const relativePath = filePath.replace(gitRoot + "/", "");
-              parts.push(`[File: ${relativePath} (keyword: ${keyword})]
-${lines}`);
+              parts.push(`[File: ${relativePath} (keyword: ${keyword})]\n${lines}`);
             }
           } else {
             const content = await readFile(filePath, "utf-8");
-            const lines = content.split("
-").slice(0, 50).join("
-");
+            const lines = content.split("\n").slice(0, 50).join("\n");
             const relativePath = filePath.replace(gitRoot + "/", "");
-            parts.push(`[File: ${relativePath} (keyword: ${keyword})]
-${lines}`);
+            parts.push(`[File: ${relativePath} (keyword: ${keyword})]\n${lines}`);
           }
         } catch {
           // skip unreadable files
@@ -531,9 +491,7 @@ ${lines}`);
     }
   }
 
-  const combined = parts.join("
-
-");
+  const combined = parts.join("\n\n");
   return truncateTobudget(combined, CHAT_CONTEXT_MAX_CHARS);
 }
 
