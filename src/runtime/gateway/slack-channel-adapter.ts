@@ -111,15 +111,15 @@ export class SlackChannelAdapter implements ChannelAdapter {
       .digest("hex");
     const expected = `v0=${mac}`;
 
-    // Compare using timing-safe comparison (pad to expected length to avoid length leak)
-    try {
-      const expectedBuf = Buffer.from(expected, "utf8");
-      const actualBuf = Buffer.alloc(expectedBuf.length);
-      Buffer.from(signature, "utf8").copy(actualBuf);
-      if (!timingSafeEqual(expectedBuf, actualBuf)) {
-        return { status: 401, body: "invalid signature" };
-      }
-    } catch {
+    // Reject immediately if lengths differ (Slack signatures are always 67 bytes: "v0=" + 64 hex chars).
+    // Length check first means timingSafeEqual won't throw, and reveals no secret information
+    // because the expected length is fixed regardless of the signing secret.
+    if (signature.length !== expected.length) {
+      return { status: 401, body: "invalid signature" };
+    }
+    const expectedBuf = Buffer.from(expected, "utf8");
+    const actualBuf = Buffer.from(signature, "utf8");
+    if (!timingSafeEqual(expectedBuf, actualBuf)) {
       return { status: 401, body: "invalid signature" };
     }
 
