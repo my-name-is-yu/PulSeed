@@ -165,6 +165,8 @@ export interface LoopIterationResult {
   milestoneAlerts?: Array<{ goalId: string; status: string; pace_ratio: number }>;
   /** Transfer candidates detected from cross-goal knowledge (suggestion-only, Phase 1) */
   transfer_candidates?: TransferCandidate[];
+  /** Total tokens consumed by LLM calls during this iteration (task generation + verification). */
+  tokensUsed?: number;
   /**
    * When true, this iteration was skipped because no meaningful state change was
    * detected (Pillar 2: State Diff + Loop Skip). Only observation ran; gap
