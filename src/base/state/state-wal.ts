@@ -37,8 +37,7 @@ export async function appendWALRecord(
 ): Promise<void> {
   const filePath = walPath(goalId, baseDir);
   await fsp.mkdir(path.dirname(filePath), { recursive: true });
-  await fsp.appendFile(filePath, JSON.stringify(record) + "
-", "utf-8");
+  await fsp.appendFile(filePath, JSON.stringify(record) + "\n", "utf-8");
 }
 
 export async function readWAL(
@@ -54,8 +53,7 @@ export async function readWAL(
     throw err;
   }
   return content
-    .split("
-")
+    .split("\n")
     .filter((line) => line.trim() !== "")
     .map((line) => JSON.parse(line) as WALRecord);
 }
@@ -88,53 +86,29 @@ export async function compactWAL(
   baseDir: string
 ): Promise<void> {
   const records = await readWAL(goalId, baseDir);
-
-  // Check for incomplete compaction (compaction_start without compaction_complete)
-  let pendingCompactionTs: string | null = null;
-  for (const r of records) {
-    if (r.op === "compaction_start") {
-      pendingCompactionTs = (r as WALCompactionStart).ts;
-    } else if (r.op === "compaction_complete") {
-      pendingCompactionTs = null;
-    }
-  }
-
   const compactionStartTs = new Date().toISOString();
   await appendWALRecord(goalId, baseDir, {
     op: "compaction_start",
     ts: compactionStartTs,
   });
-
-  // Keep only uncommitted intents (those without matching commits)
   const committed = new Set<string>();
   for (const r of records) {
     if (r.op === "commit") committed.add((r as WALCommit).ref_ts);
   }
   const remaining: WALRecord[] = [];
   for (const r of records) {
-    if (r.op === "compaction_start" || r.op === "compaction_complete") continue;
-    if (r.op === "commit") continue;
+    if (r.op === "compaction_start" || r.op === "compaction_complete" || r.op === "commit") continue;
     const intent = r as WALIntent;
     if (!committed.has(intent.ts)) remaining.push(intent);
   }
-
-  // Rewrite WAL with only uncommitted intents
   const filePath = walPath(goalId, baseDir);
-  await fsp.writeFile(
-    filePath,
-    remaining.map((r) => JSON.stringify(r)).join("
-") + (remaining.length > 0 ? "
-" : ""),
-    "utf-8"
-  );
-
+  const body = remaining.map((r) => JSON.stringify(r)).join("\n");
+  await fsp.writeFile(filePath, remaining.length > 0 ? body + "\n" : "", "utf-8");
   await appendWALRecord(goalId, baseDir, {
     op: "compaction_complete",
     ref_ts: compactionStartTs,
     ts: new Date().toISOString(),
   });
-
-  void pendingCompactionTs; // handled implicitly by re-running compaction
 }
 
 export async function truncateWAL(
