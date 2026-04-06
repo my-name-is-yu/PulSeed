@@ -19,7 +19,7 @@ import { HelpOverlay } from "./help-overlay.js";
 import { SettingsOverlay } from "./settings-overlay.js";
 import { ApprovalOverlay } from "./approval-overlay.js";
 import { ReportView } from "./report-view.js";
-import { FlickerOverlay } from "./flicker-overlay.js";
+import { SEEDY_PIXEL } from "./seedy-art.js";
 import type { Report } from "../../base/types/report.js";
 import { useLoop } from "./use-loop.js";
 import type { LoopState } from "./use-loop.js";
@@ -195,7 +195,7 @@ export function App({
   const [isProcessing, setIsProcessing] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
-  const [showFlicker, setShowFlicker] = useState(false);
+
   const [goalNames, setGoalNames] = useState<string[]>([]);
   const [reportToShow, setReportToShow] = useState<Report | null>(null);
   const [approvalRequest, setApprovalRequest] = useState<ApprovalRequest | null>(null);
@@ -443,17 +443,25 @@ export function App({
   // ─── Sidebar layout ───
   return (
     <Box flexDirection="column" height={termRows}>
-      {/* App header */}
-      <Box>
-        <Text bold color={theme.header}>[ PULSEED ]</Text>
-        {(cwd || gitBranch || providerName) && (
+      {/* App banner — Claude Code style */}
+      <Box flexDirection="row" paddingY={0}>
+        {/* Seedy pixel art (left) */}
+        <Box marginRight={2}>
+          <Text>{SEEDY_PIXEL}</Text>
+        </Box>
+        {/* Info text (right, vertically centered) */}
+        <Box flexDirection="column" justifyContent="center">
+          <Box>
+            <Text bold color={theme.brand}>SeedPulse</Text>
+            <Text dimColor> v0.2.0</Text>
+          </Box>
           <Text dimColor>
-            {"  "}
-            {cwd ?? ""}
-            {gitBranch ? ` (${gitBranch})` : ""}
-            {providerName ? `  ${providerName}` : ""}
+            daemon: {isDaemonMode ? "on" : "off"}{providerName ? ` · ${providerName}` : ""}
           </Text>
-        )}
+          {cwd && (
+            <Text dimColor>{cwd}</Text>
+          )}
+        </Box>
       </Box>
 
       {/* Main content: sidebar + chat */}
