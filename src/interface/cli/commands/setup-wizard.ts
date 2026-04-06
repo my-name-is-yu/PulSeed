@@ -242,37 +242,58 @@ async function stepDaemon(): Promise<{ start: boolean; port: number }> {
 
   if (!start) return { start: false, port: DEFAULT_PORT };
 
-  // Auto-detect available port
-  let suggestedPort = DEFAULT_PORT;
-  const defaultAvailable = await isPortAvailable(DEFAULT_PORT);
-  if (!defaultAvailable) {
-    try {
-      suggestedPort = await findAvailablePort(DEFAULT_PORT);
-      p.log.warn(
-        `Port ${DEFAULT_PORT} is in use. Suggested available port: ${suggestedPort}`
-      );
-    } catch {
-      p.log.warn("Could not auto-detect an available port. You can set one manually.");
-    }
+  // If default port is free, use it silently — no need to bother the user.
+  if (await isPortAvailable(DEFAULT_PORT)) {
+    return { start: true, port: DEFAULT_PORT };
   }
 
+  // Default port is occupied — find the next available one and ask.
+  let suggestedPort: number;
+  try {
+    suggestedPort = await findAvailablePort(DEFAULT_PORT + 1);
+  } catch {
+    // All ports in the scan range are busy; fall through to manual entry only.
+    suggestedPort = DEFAULT_PORT + 1;
+  }
+
+  const portChoice = guardCancel(
+    await p.select({
+      message: `Port ${DEFAULT_PORT} is already in use. What would you like to do?`,
+      options: [
+        {
+          value: "suggested" as const,
+          label: `Use port ${suggestedPort} instead`,
+          hint: "auto-detected available port",
+        },
+        {
+          value: "custom" as const,
+          label: "Enter a custom port",
+        },
+      ],
+    })
+  );
+
+  if (portChoice === "suggested") {
+    return { start: true, port: suggestedPort };
+  }
+
+  // Custom port entry with range + availability validation.
   const portInput = guardCancel(
     await p.text({
-      message: "EventServer port for the daemon:",
+      message: "Enter a port number:",
       placeholder: String(suggestedPort),
-      defaultValue: String(suggestedPort),
-      validate: (v) => {
+      validate: async (v) => {
         if (!v) return "Port is required.";
         const n = parseInt(v, 10);
         if (isNaN(n) || !Number.isInteger(n)) return "Port must be a whole number.";
         if (n < 1024 || n > 65535) return "Port must be between 1024 and 65535.";
+        if (!(await isPortAvailable(n))) return `Port ${n} is already in use.`;
         return undefined;
       },
     })
   );
 
-  const port = parseInt(portInput, 10);
-  return { start: true, port };
+  return { start: true, port: parseInt(portInput, 10) };
 }
 
 // ─── Config writers ───
