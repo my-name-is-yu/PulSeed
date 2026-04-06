@@ -16,7 +16,7 @@ export const PROVIDER_LABELS: Record<Provider, string> = {
   ollama: "Ollama (local)",
 };
 
-export const ENV_KEY_NAMES: Record<string, string> = {
+export const ENV_KEY_NAMES: Partial<Record<Provider, string>> = {
   openai: "OPENAI_API_KEY",
   anthropic: "ANTHROPIC_API_KEY",
 };
@@ -27,9 +27,10 @@ export const RECOMMENDED_MODELS: Record<string, string> = {
   ollama: "qwen3:4b",
 };
 
-export const RECOMMENDED_ADAPTERS: Record<string, string> = {
+export const RECOMMENDED_ADAPTERS: Partial<Record<Provider, string>> = {
   openai: "openai_codex_cli",
   anthropic: "claude_code_cli",
+  ollama: "openai_api",
 };
 
 // ─── Shared helper functions ───
