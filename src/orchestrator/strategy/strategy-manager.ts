@@ -84,7 +84,53 @@ export class StrategyManager extends StrategyManagerBase {
     portfolio.strategies = updatedStrategies;
 
     await this.savePortfolio(goalId, portfolio);
+
+    // Gap 2: For any activated WaitStrategy, write wait_until to the active task plateau_until
+    await this._applyWaitStrategyPlateauUntil(goalId, activated);
+
     return activated;
+  }
+
+  /**
+   * For each newly activated WaitStrategy, read its wait_until from the sidecar
+   * and write it to the goal current active task plateau_until field.
+   * Non-fatal: errors are silently ignored to avoid blocking strategy activation.
+   */
+  private async _applyWaitStrategyPlateauUntil(
+    goalId: string,
+    activated: Strategy[]
+  ): Promise<void> {
+    for (const strategy of activated) {
+      try {
+        const meta = await this.stateManager.readRaw(
+          `strategies/${goalId}/wait-meta/${strategy.id}.json`
+        ) as { wait_until?: string } | null;
+        if (!meta?.wait_until) continue;
+
+        const waitUntil = meta.wait_until;
+
+        // Find the most recent task for this goal and strategy, update plateau_until
+        // Tasks are stored as tasks/<goalId>/<taskId>.json
+        // Scan tasks for this goal (strategy.tasks_generated holds the task IDs)
+        const taskIds = strategy.tasks_generated;
+        if (taskIds.length === 0) continue;
+
+        // Update the last task in tasks_generated (most recent)
+        const lastTaskId = taskIds[taskIds.length - 1]!;
+        const taskRaw = await this.stateManager.readRaw(
+          `tasks/${goalId}/${lastTaskId}.json`
+        ) as Record<string, unknown> | null;
+        if (!taskRaw) continue;
+
+        taskRaw["plateau_until"] = waitUntil;
+        await this.stateManager.writeRaw(
+          `tasks/${goalId}/${lastTaskId}.json`,
+          taskRaw
+        );
+      } catch {
+        // Non-fatal: plateau_until write failure does not block activation
+      }
+    }
   }
 
   /**
@@ -170,6 +216,12 @@ export class StrategyManager extends StrategyManagerBase {
     // WaitStrategy is a superset of Strategy; store as Strategy (base fields) in portfolio
     portfolio.strategies.push(StrategySchema.parse(waitStrategy));
     await this.savePortfolio(goalId, portfolio);
+
+    // Persist wait-specific fields in a sidecar so activateMultiple can read wait_until
+    await this.stateManager.writeRaw(
+      `strategies/${goalId}/wait-meta/${waitStrategy.id}.json`,
+      { wait_until: params.wait_until }
+    );
 
     this.strategyIndex.set(waitStrategy.id, goalId);
     return StrategySchema.parse(waitStrategy);
