@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
+import * as path from "node:path";
 import { KnowledgeManager } from "../knowledge-manager.js";
 import { StateManager } from "../../../base/state/state-manager.js";
 import type { IEmbeddingClient } from "../embedding-client.js";
@@ -43,13 +44,12 @@ function makeEntry(overrides: Partial<AgentMemoryEntry> = {}): AgentMemoryEntry 
 
 async function seedMemory(km: KnowledgeManager, entries: AgentMemoryEntry[]): Promise<void> {
   for (const e of entries) {
-    await km.saveAgentMemory(e.key, e.value, {
-      id: e.id,
+    await km.saveAgentMemory({
+      key: e.key,
+      value: e.value,
       tags: e.tags,
       category: e.category,
       memory_type: e.memory_type,
-      status: e.status,
-      summary: e.summary,
     });
   }
 }
@@ -236,8 +236,12 @@ describe("recallAgentMemory — semantic mode", () => {
     };
 
     const km = makeKM(mockEmbeddingClient);
-    const entry = makeEntry({ key: "my.key", value: "my value", summary: "my summary" });
-    await seedMemory(km, [entry]);
+    // Save entry first, then patch the stored JSON to add summary
+    await km.saveAgentMemory({ key: "my.key", value: "my value" });
+    const storePath = path.join(tmpDir, "memory", "agent-memory", "entries.json");
+    const stored = JSON.parse(fs.readFileSync(storePath, "utf8")) as { entries: AgentMemoryEntry[] };
+    stored.entries[0] = { ...stored.entries[0]!, summary: "my summary" };
+    fs.writeFileSync(storePath, JSON.stringify(stored));
 
     await km.recallAgentMemory("query", { semantic: true });
 
