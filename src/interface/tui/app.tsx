@@ -455,13 +455,11 @@ export function App({
             <Text bold color={theme.brand}>SeedPulse</Text>
             <Text dimColor> v0.2.0</Text>
           </Box>
-          {providerName && (
-            <Text dimColor>{providerName}</Text>
-          )}
+          <Text dimColor>
+            daemon: {isDaemonMode ? "on" : "off"}{providerName ? ` · ${providerName}` : ""}
+          </Text>
           {cwd && (
-            <Text dimColor>
-              {cwd}{gitBranch ? ` (${gitBranch})` : ""}
-            </Text>
+            <Text dimColor>{cwd}</Text>
           )}
         </Box>
       </Box>
