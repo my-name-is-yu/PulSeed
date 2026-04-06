@@ -664,21 +664,36 @@ export class DaemonRunner {
           type: task.type,
         });
 
-        try {
-          // Log the task prompt and type for observability; actual execution
-          // varies by type but all are currently handled as fire-and-log.
-          this.logger.info(`Executing cron task: ${task.type}`, {
-            prompt: task.prompt,
+        if (this.eventBus) {
+          // Push to eventBus — markFired happens when the envelope is consumed, not at push time
+          const envelope = createEnvelope({
+            type: "event",
+            name: "cron_task_due",
+            source: "cron-scheduler",
+            priority: "normal",
+            payload: task,
+            dedupe_key: `cron-${task.id}`,
           });
+          this.eventBus.push(envelope);
+          this.logger.info(`Cron task enqueued to eventBus: ${task.id}`);
+        } else {
+          // Fallback: no eventBus — execute and markFired directly (legacy behavior)
+          try {
+            // Log the task prompt and type for observability; actual execution
+            // varies by type but all are currently handled as fire-and-log.
+            this.logger.info(`Executing cron task: ${task.type}`, {
+              prompt: task.prompt,
+            });
 
-          await this.cronScheduler.markFired(task.id);
-          this.logger.info(`Cron task fired: ${task.id}`);
-        } catch (err) {
-          this.logger.warn(`Cron task ${task.id} failed`, {
-            error: err instanceof Error ? err.message : String(err),
-          });
-          // Still mark as fired to avoid retry-storms
-          await this.cronScheduler.markFired(task.id);
+            await this.cronScheduler.markFired(task.id);
+            this.logger.info(`Cron task fired: ${task.id}`);
+          } catch (err) {
+            this.logger.warn(`Cron task ${task.id} failed`, {
+              error: err instanceof Error ? err.message : String(err),
+            });
+            // Still mark as fired to avoid retry-storms
+            await this.cronScheduler.markFired(task.id);
+          }
         }
       }
     } catch (err) {
