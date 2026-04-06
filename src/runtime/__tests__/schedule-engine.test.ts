@@ -171,7 +171,7 @@ describe("Heartbeat execution", () => {
     const results = await engine.tick();
     const result = results.find((r) => r.entry_id === entry.id);
     expect(result).toBeDefined();
-    expect(result!.status).toBe("success");
+    expect(result!.status).toBe("ok");
 
     // Verify counters updated
     const updated = engine.getEntries().find((e) => e.id === entry.id)!;
@@ -202,7 +202,7 @@ describe("Heartbeat execution", () => {
     const results = await engine.tick();
     const result = results.find((r) => r.entry_id === entry.id);
     expect(result).toBeDefined();
-    expect(result!.status).toBe("failure");
+    expect(result!.status).toBe("down");
 
     // Verify consecutive_failures incremented
     const updated = engine.getEntries().find((e) => e.id === entry.id)!;
@@ -233,7 +233,7 @@ describe("Heartbeat execution", () => {
     const results = await engine.tick();
     const result = results.find((r) => r.entry_id === entry.id);
     expect(result).toBeDefined();
-    expect(result!.status).toBe("success");
+    expect(result!.status).toBe("ok");
 
     const updated = engine.getEntries().find((e) => e.id === entry.id)!;
     expect(updated.consecutive_failures).toBe(0);
@@ -486,7 +486,7 @@ describe("Probe execution", () => {
     const mockLlm = {
       sendMessage: vi.fn().mockResolvedValue({
         content: "Significant change detected.",
-        usage: { total_tokens: 42 },
+        usage: { input_tokens: 20, output_tokens: 22 },
       }),
       parseJSON: vi.fn(),
     };

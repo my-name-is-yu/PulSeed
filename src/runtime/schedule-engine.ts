@@ -21,9 +21,9 @@ const SCHEDULES_FILE = "schedules.json";
 interface ScheduleEngineDeps {
   baseDir: string;
   logger?: {
-    info: (...args: unknown[]) => void;
-    warn: (...args: unknown[]) => void;
-    error: (...args: unknown[]) => void;
+    info: (message: string, context?: Record<string, unknown>) => void;
+    warn: (message: string, context?: Record<string, unknown>) => void;
+    error: (message: string, context?: Record<string, unknown>) => void;
   };
   dataSourceRegistry?: Map<string, IDataSourceAdapter> | DataSourceRegistry;
   llmClient?: ILLMClient;
@@ -31,9 +31,9 @@ interface ScheduleEngineDeps {
 }
 
 const noopLogger = {
-  info: () => {},
-  warn: () => {},
-  error: () => {},
+  info: (_msg: string, _ctx?: Record<string, unknown>) => {},
+  warn: (_msg: string, _ctx?: Record<string, unknown>) => {},
+  error: (_msg: string, _ctx?: Record<string, unknown>) => {},
 };
 
 export class ScheduleEngine {
@@ -152,7 +152,7 @@ export class ScheduleEngine {
       if (idx !== -1) {
         const e = this.entries[idx];
         const newFailures =
-          result.status === "error" || result.status === "failure"
+          result.status === "error" || result.status === "down"
             ? e.consecutive_failures + 1
             : 0;
 
@@ -179,7 +179,7 @@ export class ScheduleEngine {
 
         // Heartbeat failure threshold warning
         if (
-          result.status === "failure" &&
+          result.status === "down" &&
           e.heartbeat &&
           newFailures >= e.heartbeat.failure_threshold
         ) {
@@ -251,6 +251,7 @@ export class ScheduleEngine {
       // Execute probe query
       const queryResult = await adapter.query({
         dimension_name: cfg.data_source_id,
+        timeout_ms: 10000,
         ...cfg.query_params,
       });
 
@@ -280,7 +281,7 @@ export class ScheduleEngine {
             [{ role: "user", content: prompt }],
             { model_tier: "light" }
           );
-          tokensUsed = llmResponse.usage?.total_tokens ?? 0;
+          tokensUsed = (llmResponse.usage?.input_tokens ?? 0) + (llmResponse.usage?.output_tokens ?? 0);
           outputSummary = llmResponse.content;
         } catch (err) {
           this.logger.warn(`Probe "${entry.name}" LLM analysis failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -340,7 +341,7 @@ export class ScheduleEngine {
     const esc = entry.escalation;
     if (!esc?.enabled) return null;
 
-    const isFailure = result.status === "error" || result.status === "failure";
+    const isFailure = result.status === "error" || result.status === "down";
     if (!isFailure) return null;
 
     const now = Date.now();
@@ -432,7 +433,7 @@ export class ScheduleEngine {
     if (!cfg) {
       return ScheduleResultSchema.parse({
         entry_id: entry.id,
-        status: "failure",
+        status: "error",
         duration_ms: 0,
         error_message: "No heartbeat config",
         fired_at: firedAt,
@@ -467,7 +468,7 @@ export class ScheduleEngine {
 
       return ScheduleResultSchema.parse({
         entry_id: entry.id,
-        status: "success",
+        status: "ok",
         duration_ms: Date.now() - start,
         fired_at: firedAt,
       });
@@ -476,7 +477,7 @@ export class ScheduleEngine {
       this.logger.error(`Heartbeat "${entry.name}" failed: ${msg}`);
       return ScheduleResultSchema.parse({
         entry_id: entry.id,
-        status: "failure",
+        status: "down",
         duration_ms: Date.now() - start,
         error_message: msg,
         fired_at: firedAt,
