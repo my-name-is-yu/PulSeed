@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import { KnowledgeManager } from "../knowledge-manager.js";
-import { StateManager } from "../../base/state/state-manager.js";
+import { StateManager } from "../../../base/state/state-manager.js";
 import type { IEmbeddingClient } from "../embedding-client.js";
 import { cosineSimilarity } from "../embedding-client.js";
 import { createMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
