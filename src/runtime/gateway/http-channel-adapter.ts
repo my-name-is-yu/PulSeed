@@ -43,7 +43,10 @@ export class HttpChannelAdapter implements ChannelAdapter {
   }
 
   private emitEnvelope(eventData: Record<string, unknown>): void {
-    if (!this.handler) return;
+    if (!this.handler) {
+      console.warn("HttpChannelAdapter: no handler registered, dropping event");
+      return;
+    }
     const envelope: Envelope = createEnvelope({
       type: "event",
       name: String(eventData["type"] ?? "external_event"),
