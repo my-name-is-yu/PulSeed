@@ -35,6 +35,9 @@ export { ResetTrustTool } from "../mutation/ResetTrustTool/ResetTrustTool.js";
 export { RunAdapterTool } from "../execution/RunAdapterTool/RunAdapterTool.js";
 export { SpawnSessionTool } from "../execution/SpawnSessionTool/SpawnSessionTool.js";
 export { WriteKnowledgeTool } from "../execution/WriteKnowledgeTool/WriteKnowledgeTool.js";
+export { MemorySaveTool } from "../execution/MemorySaveTool/MemorySaveTool.js";
+export { MemoryConsolidateTool } from "../execution/MemoryConsolidateTool/MemoryConsolidateTool.js";
+export { MemoryRecallTool } from "../query/MemoryRecallTool/MemoryRecallTool.js";
 export { QueryDataSourceTool } from "../execution/QueryDataSourceTool/QueryDataSourceTool.js";
 export { ObserveGoalTool } from "../execution/ObserveGoalTool/ObserveGoalTool.js";
 export { ReadPulseedFileTool } from "../fs/ReadPulseedFileTool/ReadPulseedFileTool.js";
@@ -78,6 +81,9 @@ import { ResetTrustTool } from "../mutation/ResetTrustTool/ResetTrustTool.js";
 import { RunAdapterTool } from "../execution/RunAdapterTool/RunAdapterTool.js";
 import { SpawnSessionTool } from "../execution/SpawnSessionTool/SpawnSessionTool.js";
 import { WriteKnowledgeTool } from "../execution/WriteKnowledgeTool/WriteKnowledgeTool.js";
+import { MemorySaveTool } from "../execution/MemorySaveTool/MemorySaveTool.js";
+import { MemoryConsolidateTool } from "../execution/MemoryConsolidateTool/MemoryConsolidateTool.js";
+import { MemoryRecallTool } from "../query/MemoryRecallTool/MemoryRecallTool.js";
 import { QueryDataSourceTool } from "../execution/QueryDataSourceTool/QueryDataSourceTool.js";
 import { ObserveGoalTool } from "../execution/ObserveGoalTool/ObserveGoalTool.js";
 import { ReadPulseedFileTool } from "../fs/ReadPulseedFileTool/ReadPulseedFileTool.js";
@@ -104,6 +110,7 @@ export interface BuiltinToolDeps {
   adapterRegistry?: AdapterRegistry;
   sessionManager?: SessionManager;
   observationEngine?: ObservationEngine;
+  llmCall?: (prompt: string) => Promise<string>;
 }
 
 /** All built-in tools, sorted alphabetically by name. */
@@ -137,6 +144,7 @@ export function createBuiltinTools(deps?: BuiltinToolDeps): ITool[] {
 
   if (deps?.knowledgeManager) {
     tools.push(new KnowledgeQueryTool(deps.knowledgeManager));
+    tools.push(new MemoryRecallTool(deps.knowledgeManager));
   }
 
   tools.push(new ConfigTool(), new ArchitectureTool());
@@ -182,6 +190,9 @@ export function createBuiltinTools(deps?: BuiltinToolDeps): ITool[] {
   // Knowledge tools (require deps)
   if (deps?.knowledgeManager) {
     tools.push(new WriteKnowledgeTool(deps.knowledgeManager));
+    tools.push(new MemorySaveTool(deps.knowledgeManager));
+    const llmCall = deps.llmCall ?? ((_: string) => Promise.reject(new Error("LLM not configured")));
+    tools.push(new MemoryConsolidateTool(deps.knowledgeManager, llmCall));
   }
   if (deps?.observationEngine) {
     tools.push(new QueryDataSourceTool(deps.observationEngine));
