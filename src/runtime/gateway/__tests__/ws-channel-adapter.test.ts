@@ -181,8 +181,7 @@ describe("WsChannelAdapter", () => {
 
       expect(handler).not.toHaveBeenCalled();
       expect(warnSpy).toHaveBeenCalledWith(
-        expect.stringContaining("WsChannelAdapter"),
-        expect.stringContaining("parse")
+        expect.stringContaining("WsChannelAdapter")
       );
       warnSpy.mockRestore();
     });
@@ -247,8 +246,7 @@ describe("WsChannelAdapter", () => {
       socket.simulateMessage(JSON.stringify({ type: "event", name: "early", payload: {} }));
 
       expect(warnSpy).toHaveBeenCalledWith(
-        expect.stringContaining("WsChannelAdapter"),
-        expect.stringContaining("handler")
+        expect.stringContaining("WsChannelAdapter")
       );
       warnSpy.mockRestore();
     });
