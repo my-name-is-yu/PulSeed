@@ -699,6 +699,18 @@ export class DaemonRunner {
       for (const result of results) {
         if (result.status === "error") {
           this.logger?.warn?.(`Schedule entry ${result.entry_id} failed: ${result.error_message}`);
+        } else if (this.eventBus) {
+          // Push activated schedule entries to eventBus as envelopes
+          const envelope = createEnvelope({
+            type: "event",
+            name: "schedule_activated",
+            source: "schedule-engine",
+            goal_id: (result as Record<string, unknown>)["goal_id"] as string | undefined,
+            priority: "normal",
+            payload: result,
+            dedupe_key: result.entry_id,
+          });
+          this.eventBus.push(envelope);
         }
       }
     } catch (error) {
