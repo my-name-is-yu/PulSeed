@@ -88,6 +88,27 @@ export async function runPostLoopHooks(params: PostLoopHooksParams): Promise<voi
     }
   }
 
+  // Auto-consolidate agent memory on goal completion
+  if (deps.knowledgeManager && finalStatus === "completed" && (config.autoConsolidateOnComplete !== false)) {
+    try {
+      const result = await deps.knowledgeManager.autoConsolidate({
+        rawThreshold: config.consolidationRawThreshold ?? 20,
+      });
+      if (result.consolidated) {
+        logger?.info("CoreLoop: auto-consolidated agent memory", {
+          goalId,
+          compiled: result.compiled,
+          archived: result.archived,
+        });
+      }
+    } catch (err) {
+      logger?.warn("CoreLoop: autoConsolidate failed (non-fatal)", {
+        goalId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
   // Archive goal state on completion (only when autoArchive is explicitly enabled)
   if (finalStatus === "completed" && config.autoArchive && !config.dryRun) {
     try {
