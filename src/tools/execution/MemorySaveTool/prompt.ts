@@ -1,0 +1,1 @@
+export const DESCRIPTION = `Save an entry to agent memory. Stores key/value pairs with optional category, memory_type, and tags. If an entry with the same key already exists, it is updated in place. Use this to persist facts, procedures, preferences, or observations that the agent should remember across sessions.`;
