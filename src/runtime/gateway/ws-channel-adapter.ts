@@ -54,6 +54,10 @@ export class WsChannelAdapter implements ChannelAdapter {
       this.handleMessage(data, socket);
     });
 
+    socket.on("close", () => {
+      // no-op: socket lifecycle is managed externally
+    });
+
     socket.on("error", (err) => {
       console.warn("WsChannelAdapter: socket error:", err.message);
     });
@@ -93,6 +97,6 @@ export class WsChannelAdapter implements ChannelAdapter {
       },
     };
 
-    void this.handler(envelope, reply as any);
+    void this.handler(envelope, reply);
   }
 }
