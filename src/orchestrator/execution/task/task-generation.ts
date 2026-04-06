@@ -213,7 +213,7 @@ export async function generateTask(
   adapterType?: string,
   existingTasks?: string[],
   workspaceContext?: string
-): Promise<Task | null> {
+): Promise<{ task: Task | null; tokensUsed: number }> {
   // Build optional reflections and lessons XML blocks
   let reflectionsBlock = "";
   let lessonsBlock = "";
@@ -281,6 +281,7 @@ export async function generateTask(
   );
 
   let generated: ReturnType<typeof LLMGeneratedTaskSchema.parse>;
+  let generationTokens = 0;
   if (deps.gateway) {
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -301,6 +302,8 @@ export async function generateTask(
       );
       throw err;
     }
+    // PromptGateway does not expose usage data — tokens tracked as 0.
+    generationTokens = 0;
   } else {
     console.log(`  [LLM] Calling LLM for task generation (${targetDimension})...`);
     const response = await deps.llmClient.sendMessage(
@@ -313,6 +316,7 @@ export async function generateTask(
       }
     );
     console.log(`  [LLM] Task generation complete (${targetDimension}).`);
+    generationTokens = response.usage ? (response.usage.input_tokens + response.usage.output_tokens) : 0;
     try {
       generated = deps.llmClient.parseJSON(response.content, LLMGeneratedTaskSchema) as ReturnType<typeof LLMGeneratedTaskSchema.parse>;
     } catch (err) {
@@ -332,7 +336,7 @@ export async function generateTask(
     deps.logger
   );
   if (duplicate !== null) {
-    return null;
+    return { task: null, tokensUsed: generationTokens };
   }
 
   // Resolve strategy_id
@@ -371,7 +375,7 @@ export async function generateTask(
   // Persist
   await deps.stateManager.writeRaw(`tasks/${goalId}/${taskId}.json`, task);
 
-  return task;
+  return { task, tokensUsed: generationTokens };
 }
 
 // ─── generateTaskGroup ───
