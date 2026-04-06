@@ -478,9 +478,17 @@ describe("insufficient observations", () => {
     expect(result.projectedCompletionDate).toBeNull();
   });
 
-  it("projectedCompletionDate provided when at/above min observations threshold", () => {
+  it("projectedCompletionDate is null for perpetual goals regardless of observation count", () => {
+    // §6.2: perpetual goals (deadline=null) never get a burn-down projection
     const history = makeHistory([0.5, 0.4, 0.3, 0.2], 1); // 4 obs >= 3
     const result = engine.evaluatePacing("g1", 0.2, null, history);
+    expect(result.projectedCompletionDate).toBeNull();
+  });
+
+  it("projectedCompletionDate provided for deadline goals at/above min observations", () => {
+    const history = makeHistory([0.5, 0.4, 0.3, 0.2], 1); // 4 obs >= 3
+    const deadline = deadlineInHours(10);
+    const result = engine.evaluatePacing("g1", 0.2, deadline, history);
     expect(result.projectedCompletionDate).not.toBeNull();
   });
 });
