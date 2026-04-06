@@ -44,17 +44,7 @@ export class EventBus {
       return;
     }
 
-    // Dedupe: if dedupe_key matches, remove old entry and replace
-    if (envelope.dedupe_key) {
-      const existingId = this.dedupeIndex.get(envelope.dedupe_key);
-      if (existingId) {
-        // Mark old entry for removal by draining and re-enqueuing without it
-        this.removeById(existingId);
-      }
-      this.dedupeIndex.set(envelope.dedupe_key, envelope.id);
-    }
-
-    // Backpressure
+    // Backpressure (checked BEFORE dedupe to avoid priority inversion)
     if (this.queue.size() >= this.highWaterMark) {
       if (envelope.priority === 'low') {
         this.writeToDlq(envelope, 'backpressure: queue full, LOW dropped');
@@ -66,6 +56,16 @@ export class EventBus {
         return;
       }
       // HIGH and CRITICAL always accepted (may exceed high-water mark briefly)
+    }
+
+    // Dedupe: if dedupe_key matches, remove old entry and replace
+    if (envelope.dedupe_key) {
+      const existingId = this.dedupeIndex.get(envelope.dedupe_key);
+      if (existingId) {
+        // Mark old entry for removal by draining and re-enqueuing without it
+        this.removeById(existingId);
+      }
+      this.dedupeIndex.set(envelope.dedupe_key, envelope.id);
     }
 
     this.queue.enqueue(envelope, envelope.priority);
