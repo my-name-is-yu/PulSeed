@@ -277,23 +277,32 @@ async function stepDaemon(): Promise<{ start: boolean; port: number }> {
     return { start: true, port: suggestedPort };
   }
 
-  // Custom port entry with range + availability validation.
-  const portInput = guardCancel(
-    await p.text({
-      message: "Enter a port number:",
-      placeholder: String(suggestedPort),
-      validate: async (v) => {
-        if (!v) return "Port is required.";
-        const n = parseInt(v, 10);
-        if (isNaN(n) || !Number.isInteger(n)) return "Port must be a whole number.";
-        if (n < 1024 || n > 65535) return "Port must be between 1024 and 65535.";
-        if (!(await isPortAvailable(n))) return `Port ${n} is already in use.`;
-        return undefined;
-      },
-    })
-  );
+  // Custom port entry: validate range synchronously, then check availability after.
+  // p.text validate must be synchronous, so availability is checked in a retry loop.
+  let finalPort: number;
+  for (;;) {
+    const portInput = guardCancel(
+      await p.text({
+        message: "Enter a port number:",
+        placeholder: String(suggestedPort),
+        validate: (v) => {
+          if (!v) return "Port is required.";
+          const n = parseInt(v, 10);
+          if (isNaN(n) || !Number.isInteger(n)) return "Port must be a whole number.";
+          if (n < 1024 || n > 65535) return "Port must be between 1024 and 65535.";
+          return undefined;
+        },
+      })
+    );
+    const candidate = parseInt(portInput, 10);
+    if (await isPortAvailable(candidate)) {
+      finalPort = candidate;
+      break;
+    }
+    p.log.warn(`Port ${candidate} is already in use. Please try another.`);
+  }
 
-  return { start: true, port: parseInt(portInput, 10) };
+  return { start: true, port: finalPort };
 }
 
 // ─── Config writers ───
