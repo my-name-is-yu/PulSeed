@@ -205,10 +205,14 @@ describe('CommandBus', () => {
   });
 
   it('backpressure: LOW dropped at high-water mark', () => {
-    const bus = new CommandBus({ highWaterMark: 1 });
+    const onDropped = vi.fn();
+    const bus = new CommandBus({ highWaterMark: 1, onDropped });
     bus.push(createEnvelope({ type: 'command', name: 'a', source: 's', payload: {}, priority: 'normal' }));
-    bus.push(createEnvelope({ type: 'command', name: 'b', source: 's', payload: {}, priority: 'low' }));
+    const low = createEnvelope({ type: 'command', name: 'b', source: 's', payload: {}, priority: 'low' });
+    bus.push(low);
     expect(bus.size()).toBe(1);
+    expect(onDropped).toHaveBeenCalledOnce();
+    expect(onDropped).toHaveBeenCalledWith(low);
   });
 
   it('HIGH and CRITICAL bypass backpressure', () => {

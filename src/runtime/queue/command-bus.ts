@@ -4,6 +4,7 @@ import { PriorityQueue } from './priority-queue.js';
 export interface CommandBusOptions {
   highWaterMark?: number;
   onHighPriority?: () => void;
+  onDropped?: (envelope: Envelope) => void;
 }
 
 const DEFAULT_TTL_MS = 300_000;
@@ -17,11 +18,13 @@ export class CommandBus {
   private queue: PriorityQueue<Envelope>;
   private highWaterMark: number;
   private onHighPriority?: () => void;
+  private onDropped?: (envelope: Envelope) => void;
 
   constructor(options?: CommandBusOptions) {
     this.queue = new PriorityQueue<Envelope>();
     this.highWaterMark = options?.highWaterMark ?? 1000;
     this.onHighPriority = options?.onHighPriority;
+    this.onDropped = options?.onDropped;
   }
 
   push(envelope: Envelope): void {
@@ -38,6 +41,7 @@ export class CommandBus {
     if (this.queue.size() >= this.highWaterMark) {
       if (envelope.priority === 'low') {
         console.warn(`[CommandBus] Backpressure: LOW command dropped, queue full`);
+        this.onDropped?.(envelope);
         return;
       }
       if (envelope.priority === 'normal') {
