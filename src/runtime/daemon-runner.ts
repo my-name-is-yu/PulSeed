@@ -104,6 +104,7 @@ export class DaemonRunner {
   private eventBus: EventBus | undefined;
   private commandBus: CommandBus | undefined;
   private supervisor: LoopSupervisor | null = null;
+  private supervisorInjected: boolean = false;
 
   constructor(deps: DaemonDeps) {
     this.coreLoop = deps.coreLoop;
@@ -119,6 +120,7 @@ export class DaemonRunner {
     this.eventBus = deps.eventBus;
     this.commandBus = deps.commandBus;
     this.supervisor = deps.supervisor ?? null;
+    this.supervisorInjected = deps.supervisor !== undefined;
     this.lastProactiveTickAt = Date.now();
 
     // Parse config with defaults via DaemonConfigSchema.parse()
@@ -301,12 +303,12 @@ export class DaemonRunner {
       check_interval_ms: this.config.check_interval_ms,
     });
 
-    // 7. Create supervisor if not injected via deps
+    // 7. Create supervisor if not already provided and eventBus is configured
     if (!this.supervisor && this.eventBus) {
       this.supervisor = new LoopSupervisor(
         {
           coreLoop: this.coreLoop,
-          eventBus: this.eventBus!,
+          eventBus: this.eventBus,
           driveSystem: this.driveSystem,
           stateManager: this.stateManager,
           logger: this.logger,
@@ -318,12 +320,14 @@ export class DaemonRunner {
       );
     }
 
-    // 8. Run main loop (supervisor mode if eventBus available, else fallback)
+    // 8. Run main loop — supervisor mode when supervisor is injected via deps,
+    //    fallback to sequential runLoop otherwise (preserves backward compat for
+    //    tests that provide eventBus without a supervisor)
     try {
-      if (this.supervisor && this.eventBus) {
+      if (this.supervisorInjected && this.supervisor && this.eventBus) {
         await this.supervisor.start(mergedGoalIds);
       } else {
-        // Fallback: sequential mode (no eventBus configured)
+        // Fallback: sequential mode
         await this.runLoop(mergedGoalIds);
       }
     } finally {
