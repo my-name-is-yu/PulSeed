@@ -108,7 +108,9 @@ export async function compactWAL(
   }
   const filePath = walPath(goalId, baseDir);
   const body = remaining.map((r) => JSON.stringify(r)).join("\n");
-  await fsp.writeFile(filePath, remaining.length > 0 ? body + "\n" : "", "utf-8");
+  const tmpPath = filePath + ".tmp";
+  await fsp.writeFile(tmpPath, remaining.length > 0 ? body + "\n" : "", "utf-8");
+  await fsp.rename(tmpPath, filePath);
   await appendWALRecord(goalId, baseDir, {
     op: "compaction_complete",
     ref_ts: compactionStartTs,
