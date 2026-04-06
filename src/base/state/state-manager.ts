@@ -55,9 +55,18 @@ export class StateManager {
     }
   }
 
-  /** Scan all goals for uncommitted WAL entries and replay them. */
+  /**
+   * Scan all goals for uncommitted WAL entries and replay them.
+   * Depends on initDirs() having been called first (to ensure goals/ exists).
+   */
   private async recoverWAL(): Promise<void> {
-    const goalIds = await this.listGoalIds();
+    let goalIds: string[];
+    try {
+      goalIds = await this.listGoalIds();
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return;
+      throw err;
+    }
     for (const goalId of goalIds) {
       const replayed = await replayWAL(goalId, this.baseDir, async (intent) => {
         await this.replayIntent(intent);
