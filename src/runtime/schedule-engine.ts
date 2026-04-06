@@ -1,6 +1,6 @@
 import { CronExpressionParser } from "cron-parser";
-import path from "node:path";
-import net from "node:net";
+import * as path from "node:path";
+import * as net from "node:net";
 import { randomUUID } from "node:crypto";
 import { exec } from "node:child_process";
 import { writeJsonFileAtomic, readJsonFileOrNull } from "../base/utils/json-io.js";
