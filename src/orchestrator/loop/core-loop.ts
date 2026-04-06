@@ -70,6 +70,8 @@ const DEFAULT_CONFIG: Required<Omit<LoopConfig, "iterationBudget">> = {
   dryRun: false,
   maxConsecutiveSkips: 5,
   autoDecompose: true,
+  autoConsolidateOnComplete: true,
+  consolidationRawThreshold: 20,
 };
 
 // ─── CoreLoop ───
