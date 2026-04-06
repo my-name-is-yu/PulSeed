@@ -19,6 +19,7 @@ import {
   getMilestones,
   evaluatePace,
 } from "../goal/milestone-evaluator.js";
+import { gatherStallEvidence } from "./stall-evidence.js";
 import { verifyWithTools } from "./verification-layer1.js";
 import { buildLoopToolContext } from "./core-loop-phases.js";
 
@@ -116,6 +117,26 @@ export async function detectStallsAndRebalance(
 ): Promise<void> {
   try {
     const gapHistory = await ctx.deps.stateManager.loadGapHistory(goalId);
+
+    // Gather tool-based workspace evidence for stall detection (Phase 6)
+    if (ctx.toolExecutor) {
+      try {
+        const toolContext = {
+          cwd: process.cwd(),
+          goalId,
+          trustBalance: 0,
+          preApproved: true,
+          approvalFn: async () => false,
+        };
+        const evidence = await gatherStallEvidence(ctx.toolExecutor, toolContext);
+        result.toolStallEvidence = evidence;
+        if (!evidence.hasWorkspaceChanges) {
+          ctx.logger?.info("CoreLoop: stall evidence — no workspace changes detected", { goalId, toolErrors: evidence.toolErrors });
+        }
+      } catch {
+        // Non-fatal: evidence gathering failure does not block stall detection
+      }
+    }
 
     // Per-dimension stall check
     for (const dim of goal.dimensions) {
