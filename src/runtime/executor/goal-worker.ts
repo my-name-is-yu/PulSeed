@@ -42,18 +42,20 @@ export class GoalWorker {
 
     try {
       let lastResult: LoopResult | undefined;
+      let cumulativeIterations = 0;
       do {
         this.extendRequested = false;
         lastResult = await this.coreLoop.run(goalId, {
           maxIterations: this.config.iterationsPerCycle,
         });
+        cumulativeIterations += lastResult.totalIterations;
       } while (this.extendRequested);
 
       this.status = 'idle';
       return {
         goalId,
         status: toWorkerStatus(lastResult.finalStatus),
-        totalIterations: lastResult.totalIterations,
+        totalIterations: cumulativeIterations,
         durationMs: Date.now() - this.startedAt,
         error: lastResult.errorMessage,
       };
