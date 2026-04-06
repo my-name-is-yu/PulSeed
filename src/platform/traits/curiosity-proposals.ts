@@ -92,7 +92,7 @@ export function buildProposalPrompt(
     )
     .join("\n");
 
-  return `${getInternalIdentityPrefix("curiosity analyzer")} Analyzing curiosity triggers to propose new exploration goals.
+  return `Analyzing curiosity triggers to propose new exploration goals.
 
 ## Current Trigger
 Type: ${trigger.type}
