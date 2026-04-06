@@ -71,6 +71,8 @@ export class ScheduleEngine {
       | "last_fired_at"
       | "next_fire_at"
       | "consecutive_failures"
+      | "last_escalation_at"
+      | "baseline_results"
       | "total_executions"
       | "total_tokens_used"
     >
@@ -84,6 +86,8 @@ export class ScheduleEngine {
       last_fired_at: null,
       next_fire_at: this.computeNextFireAt(input.trigger),
       consecutive_failures: 0,
+      last_escalation_at: null,
+      baseline_results: [],
       total_executions: 0,
       total_tokens_used: 0,
     });
@@ -139,11 +143,11 @@ export class ScheduleEngine {
           updated_at: new Date().toISOString(),
           total_executions: e.total_executions + 1,
           consecutive_failures:
-            result.status === "failure" ? e.consecutive_failures + 1 : 0,
+            result.status === "error" ? e.consecutive_failures + 1 : 0,
         };
 
         if (
-          result.status === "failure" &&
+          result.status === "error" &&
           e.heartbeat &&
           this.entries[idx].consecutive_failures >= e.heartbeat.failure_threshold
         ) {
