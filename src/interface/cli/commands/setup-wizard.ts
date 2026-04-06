@@ -227,6 +227,32 @@ async function stepApiKey(
     return process.env[envKeyName];
   }
 
+  // OAuth auto-detection for OpenAI (Codex CLI login)
+  if (provider === "openai") {
+    const oauthToken = await readCodexOAuthToken();
+    if (oauthToken) {
+      const oauthChoice = guardCancel(
+        await p.select({
+          message: "OpenAI OAuth token detected from Codex CLI login:",
+          options: [
+            {
+              value: "oauth" as const,
+              label: "Use existing OAuth token (from Codex CLI login)",
+              hint: "no API key needed",
+            },
+            {
+              value: "manual" as const,
+              label: "Enter API key manually",
+            },
+          ],
+        })
+      );
+      if (oauthChoice === "oauth") {
+        return oauthToken;
+      }
+    }
+  }
+
   const key = guardCancel(
     await p.password({
       message: `Enter ${envKeyName}:`,
