@@ -18,6 +18,9 @@ import { getInternalIdentityPrefix } from "../base/config/identity-loader.js";
 import { z } from "zod";
 import { generateCronEntry } from "./daemon-signals.js";
 import { rotateDaemonLog, calculateAdaptiveInterval as calcAdaptiveInterval } from "./daemon-health.js";
+import { IngressGateway, HttpChannelAdapter } from "./gateway/index.js";
+import type { Envelope } from "./types/envelope.js";
+import { PulSeedEventSchema } from "../base/types/drive.js";
 
 // Re-exports for callers that imported these from daemon-runner
 export { generateCronEntry } from "./daemon-signals.js";
@@ -63,6 +66,7 @@ export interface DaemonDeps {
   llmClient?: ILLMClient;
   cronScheduler?: CronScheduler;
   scheduleEngine?: ScheduleEngine;
+  gateway?: IngressGateway;
 }
 
 export class DaemonRunner {
@@ -89,6 +93,7 @@ export class DaemonRunner {
   private cronScheduler: CronScheduler | undefined;
   private scheduleEngine: ScheduleEngine | undefined;
   private consecutiveIdleCycles: number = 0;
+  private gateway: IngressGateway | undefined;
 
   constructor(deps: DaemonDeps) {
     this.coreLoop = deps.coreLoop;
@@ -100,6 +105,7 @@ export class DaemonRunner {
     this.llmClient = deps.llmClient;
     this.cronScheduler = deps.cronScheduler;
     this.scheduleEngine = deps.scheduleEngine;
+    this.gateway = deps.gateway;
     this.lastProactiveTickAt = Date.now();
 
     // Parse config with defaults via DaemonConfigSchema.parse()
@@ -156,9 +162,31 @@ export class DaemonRunner {
         stateManager: this.stateManager,
       }, this.logger);
     }
-    await this.eventServer.start();
-    this.eventServer.startFileWatcher();
-    this.logger.info("EventServer started", { port: this.eventServer.getPort() });
+
+    if (this.gateway) {
+      // Phase A: Route through Gateway → Envelope → writeEvent
+      const httpAdapter = new HttpChannelAdapter(this.eventServer);
+      this.gateway.registerAdapter(httpAdapter);
+      this.gateway.onEnvelope(async (envelope: Envelope) => {
+        const payload = envelope.payload as Record<string, unknown>;
+        try {
+          const event = PulSeedEventSchema.parse(payload);
+          await this.driveSystem.writeEvent(event);
+        } catch (err) {
+          this.logger.error("Gateway: failed to process envelope", {
+            id: envelope.id,
+            error: String(err),
+          });
+        }
+      });
+      await this.gateway.start();
+      this.logger.info("Gateway started with HTTP adapter", { port: this.eventServer.getPort() });
+    } else {
+      // Legacy path: direct EventServer (no Gateway)
+      await this.eventServer.start();
+      this.eventServer.startFileWatcher();
+      this.logger.info("EventServer started", { port: this.eventServer.getPort() });
+    }
 
     // Wire approval bridge if not already provided
     if (!this.approvalFn && this.eventServer) {
@@ -265,7 +293,10 @@ export class DaemonRunner {
       // Stop file watcher and EventServer
       clearInterval(heartbeatInterval);
       this.driveSystem.stopWatcher();
-      if (this.eventServer) {
+      if (this.gateway) {
+        await this.gateway.stop();
+        this.logger.info("Gateway stopped");
+      } else if (this.eventServer) {
         this.eventServer.stopFileWatcher();
         await this.eventServer.stop();
         this.logger.info("EventServer stopped");

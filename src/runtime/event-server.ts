@@ -35,6 +35,7 @@ export class EventServer {
   private sseClients: Set<http.ServerResponse> = new Set();
   private eventIdCounter = 0;
   private approvalQueue: Map<string, { resolve: (approved: boolean) => void; timer: ReturnType<typeof setTimeout> }> = new Map();
+  private envelopeHook?: (eventData: Record<string, unknown>) => void;
 
   constructor(driveSystem: DriveSystem, config?: EventServerConfig, logger?: Logger) {
     this.driveSystem = driveSystem;
@@ -49,6 +50,9 @@ export class EventServer {
 
   /** Start HTTP server, auto-retrying on EADDRINUSE up to MAX_PORT_ATTEMPTS times */
   async start(): Promise<void> {
+    if (this.server) {
+      return; // Already running
+    }
     await fsp.mkdir(this.eventsDir, { recursive: true });
     // If a specific non-zero port was requested, find the first available port
     // starting from it. Port 0 means OS-assigned — skip auto-detection.
@@ -185,8 +189,12 @@ export class EventServer {
       const raw = JSON.parse(content) as unknown;
       const event = PulSeedEventSchema.parse(raw);
 
-      // Dispatch to DriveSystem
-      await this.driveSystem.writeEvent(event);
+      // Dispatch through Gateway Envelope path or direct
+      if (this.envelopeHook) {
+        this.envelopeHook(event as unknown as Record<string, unknown>);
+      } else {
+        await this.driveSystem.writeEvent(event);
+      }
 
       // Move to processed/
       const processedDir = path.join(this.eventsDir, "processed");
@@ -241,6 +249,11 @@ export class EventServer {
   }
 
   /** Handle incoming HTTP request */
+  /** Set a hook to intercept incoming events as Envelopes (used by HttpChannelAdapter). */
+  setEnvelopeHook(hook: (eventData: Record<string, unknown>) => void): void {
+    this.envelopeHook = hook;
+  }
+
   private handleRequest(req: http.IncomingMessage, res: http.ServerResponse): void {
     const urlPath = req.url?.split("?")[0] ?? "/";
 
@@ -366,9 +379,15 @@ export class EventServer {
       try {
         const data = JSON.parse(body) as unknown;
         const event = PulSeedEventSchema.parse(data);
-        void this.driveSystem.writeEvent(event).catch((err) => {
-          this.logger?.error(`EventServer: writeEvent failed: ${String(err)}`);
-        });
+        if (this.envelopeHook) {
+          // Route through Gateway Envelope path
+          this.envelopeHook(event as unknown as Record<string, unknown>);
+        } else {
+          // Direct path (no Gateway configured)
+          void this.driveSystem.writeEvent(event).catch((err) => {
+            this.logger?.error(`EventServer: writeEvent failed: ${String(err)}`);
+          });
+        }
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ status: "accepted", event_type: event.type }));
       } catch (err) {
