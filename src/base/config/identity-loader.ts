@@ -89,9 +89,13 @@ export function getAgentName(): string {
   return loadIdentity().name;
 }
 
+function getCoreIdentity(name: string): string {
+  return `${name} runs PulSeed — an AI agent orchestrator that pursues your goals.`;
+}
+
 export function getInternalIdentityPrefix(role: string): string {
   const { name } = loadIdentity();
-  return `You are ${name}, PulSeed's ${role}.`;
+  return `You are ${name}, PulSeed's ${role}. ${getCoreIdentity(name)}`;
 }
 
 function isUserContentMeaningful(user: string): boolean {
@@ -100,8 +104,8 @@ function isUserContentMeaningful(user: string): boolean {
 }
 
 export function getUserFacingIdentity(): string {
-  const { seed, root, user } = loadIdentity();
-  const parts = [seed.trim(), root.trim()];
+  const { name, seed, root, user } = loadIdentity();
+  const parts = [getCoreIdentity(name), seed.trim(), root.trim()];
   if (isUserContentMeaningful(user)) {
     parts.push(user.trim());
   }
