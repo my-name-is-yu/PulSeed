@@ -154,6 +154,8 @@ export const DreamLogCollectionConfigSchema = z.object({
 });
 
 export type DreamLogCollectionConfig = z.infer<typeof DreamLogCollectionConfigSchema>;
+export type DreamRotationMode = DreamLogCollectionConfig["rotationMode"];
+export type DreamWatermarkBehavior = DreamLogCollectionConfig["watermarkBehavior"];
 
 export const DreamLogConfigSchema = z.object({
   logCollection: DreamLogCollectionConfigSchema.default({}),

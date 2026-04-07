@@ -11,6 +11,8 @@ import {
   IterationLogSchema,
   SessionLogSchema,
   WatermarkStateSchema,
+  type DreamLogCollectionConfig,
+  type DreamRotationMode,
   type EventLog,
   type ImportanceEntry,
   type IterationLog,
@@ -25,7 +27,8 @@ export interface DreamCollectorConfig {
   eventPersistenceEnabled?: boolean;
   maxFileSizeBytes?: number;
   pruneTargetRatio?: number;
-  rotateByDate?: boolean;
+  rotationMode?: DreamRotationMode;
+  watermarkBehavior?: DreamLogCollectionConfig["watermarkBehavior"];
   importanceThreshold?: number;
 }
 
@@ -57,7 +60,8 @@ export class DreamLogCollector {
       eventPersistenceEnabled: config.eventPersistenceEnabled ?? true,
       maxFileSizeBytes: config.maxFileSizeBytes ?? DEFAULT_MAX_FILE_SIZE_BYTES,
       pruneTargetRatio: config.pruneTargetRatio ?? DEFAULT_PRUNE_TARGET_RATIO,
-      rotateByDate: config.rotateByDate ?? false,
+      rotationMode: config.rotationMode ?? "size",
+      watermarkBehavior: config.watermarkBehavior ?? "readwrite",
       importanceThreshold: config.importanceThreshold ?? DEFAULT_IMPORTANCE_THRESHOLD,
     };
   }
@@ -98,6 +102,9 @@ export class DreamLogCollector {
   }
 
   async saveWatermarks(state: WatermarkState): Promise<void> {
+    if (this.config.watermarkBehavior === "readonly") {
+      return;
+    }
     const parsed = WatermarkStateSchema.parse(state);
     await this.withQueue("watermarks", async () => {
       await this.ensureDreamDir();
@@ -254,10 +261,21 @@ export class DreamLogCollector {
   private async appendJsonl(filePath: string, entry: unknown): Promise<void> {
     const line = JSON.stringify(entry);
     await this.withQueue(filePath, async () => {
-      await this.ensureDirFor(filePath);
-      await this.rotateIfNeeded(filePath, line);
-      await fsp.appendFile(filePath, `${line}\n`, "utf8");
+      const targetPath = this.resolveJsonlPath(filePath);
+      await this.ensureDirFor(targetPath);
+      await this.rotateIfNeeded(targetPath, line);
+      await fsp.appendFile(targetPath, `${line}\n`, "utf8");
     });
+  }
+
+  private resolveJsonlPath(filePath: string): string {
+    if (this.config.rotationMode !== "date") {
+      return filePath;
+    }
+    const ext = path.extname(filePath);
+    const stem = path.basename(filePath, ext);
+    const today = new Date().toISOString().slice(0, 10);
+    return path.join(path.dirname(filePath), `${stem}.${today}${ext || ".jsonl"}`);
   }
 
   private async rotateIfNeeded(filePath: string, nextLine: string): Promise<void> {

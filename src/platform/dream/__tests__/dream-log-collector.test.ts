@@ -107,4 +107,58 @@ describe("DreamLogCollector", () => {
       cleanupTempDir(tempDir);
     }
   });
+
+  it("uses date-based rotation paths when rotationMode is date", async () => {
+    const tempDir = makeTempDir("dream-log-date-rotate-");
+    try {
+      const collector = new DreamLogCollector(tempDir, undefined, {
+        rotationMode: "date",
+      });
+      const goalId = "goal-date";
+      const sessionId = collector.buildSessionId(goalId, "2026-04-07T00:00:00.000Z");
+
+      await collector.appendIterationResult({
+        goalId,
+        sessionId,
+        iterationResult: makeIterationResult(goalId),
+      });
+
+      const dateSuffix = new Date().toISOString().slice(0, 10);
+      const rotatedPath = path.join(
+        tempDir,
+        "goals",
+        goalId,
+        `iteration-logs.${dateSuffix}.jsonl`
+      );
+      expect(fs.existsSync(rotatedPath)).toBe(true);
+    } finally {
+      cleanupTempDir(tempDir);
+    }
+  });
+
+  it("does not write watermarks when watermarkBehavior is readonly", async () => {
+    const tempDir = makeTempDir("dream-log-watermarks-");
+    try {
+      const collector = new DreamLogCollector(tempDir, undefined, {
+        watermarkBehavior: "readonly",
+      });
+
+      await collector.markGoalProcessed("goal-1", 12, "2026-04-07T00:00:00.000Z");
+      await collector.markImportanceCursorProcessed({
+        lastProcessedLine: 4,
+        lastProcessedTimestamp: "2026-04-07T00:01:00.000Z",
+        lastProcessedId: "importance-1",
+      });
+
+      expect(fs.existsSync(path.join(tempDir, "dream", "watermarks.json"))).toBe(false);
+      await expect(collector.loadWatermarks()).resolves.toEqual({
+        goals: {},
+        importanceBuffer: {
+          lastProcessedLine: 0,
+        },
+      });
+    } finally {
+      cleanupTempDir(tempDir);
+    }
+  });
 });

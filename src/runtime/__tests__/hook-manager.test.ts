@@ -113,6 +113,24 @@ describe("HookManager", () => {
       expect(fs.existsSync(path.join(tempDir, "dream", "events", "g1.jsonl"))).toBe(false);
     });
 
+    it("uses date-based dream event paths when configured", async () => {
+      await fs.promises.mkdir(path.join(tempDir, "dream"), { recursive: true });
+      await fs.promises.writeFile(
+        path.join(tempDir, "dream", "config.json"),
+        JSON.stringify({ logCollection: { enabled: true, rotationMode: "date" } }),
+        "utf8"
+      );
+
+      const manager = new HookManager(tempDir);
+      await manager.emit("LoopCycleStart", { goal_id: "g1" });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      const dateSuffix = new Date().toISOString().slice(0, 10);
+      expect(
+        fs.existsSync(path.join(tempDir, "dream", "events", `g1.${dateSuffix}.jsonl`))
+      ).toBe(true);
+    });
+
     it("only fires hooks matching the event type", async () => {
       const spawnedCommands: string[] = [];
 
