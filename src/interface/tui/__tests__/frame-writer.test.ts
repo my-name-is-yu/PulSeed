@@ -85,6 +85,16 @@ describe("frame-writer", () => {
     expect(output).toContain("[40;1H");
   });
 
+  it("uses the provided cursor escape instead of parking the cursor", () => {
+    const stream = createMockStream(24);
+    const fw = createFrameWriter(stream);
+
+    fw.write("hello", "\u001b[3;5H\u001b[?25h");
+
+    const output = (stream.write as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(output).toBe(BSU + CURSOR_HOME + "hello" + "\u001b[3;5H\u001b[?25h" + ESU);
+  });
+
   it("does nothing after destroy()", () => {
     const stream = createMockStream(24);
     const fw = createFrameWriter(stream);

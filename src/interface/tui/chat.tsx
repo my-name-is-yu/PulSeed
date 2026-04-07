@@ -20,6 +20,7 @@ import { pickSpinnerVerb } from "./spinner-verbs.js";
 import { ShimmerText } from "./shimmer-text.js";
 import { positionCursorInFrame, buildCursorEscape } from "./cursor-tracker.js";
 import { isBashModeInput } from "./bash-mode.js";
+import { isRenderableFrameChunk } from "./render-output.js";
 
 export interface ChatMessage {
   id: string;
@@ -69,6 +70,8 @@ export interface ScrollRequest {
   direction: "up" | "down";
   kind: "page" | "line";
 }
+
+const SGR_MOUSE_SEQUENCE = /(?:\u001b)?\[<(\d+);(\d+);(\d+)([mM])/g;
 
 function getRowWidth(termCols: number): number {
   return Math.max(MIN_MESSAGE_WIDTH, termCols - DEFAULT_MESSAGE_WIDTH_PADDING - MESSAGE_INNER_PADDING);
@@ -169,6 +172,20 @@ export function getScrollRequest(
     pageDown?: boolean;
   }
 ): ScrollRequest | null {
+  const sgrMouseMatch = SGR_MOUSE_SEQUENCE.exec(inputChar);
+  SGR_MOUSE_SEQUENCE.lastIndex = 0;
+  if (sgrMouseMatch) {
+    const buttonCode = Number.parseInt(sgrMouseMatch[1] ?? "", 10);
+    if (Number.isFinite(buttonCode) && buttonCode >= 64) {
+      const wheelButton = buttonCode & 0b11;
+      if (wheelButton === 0) {
+        return { direction: "up", kind: "line" };
+      }
+      if (wheelButton === 1) {
+        return { direction: "down", kind: "line" };
+      }
+    }
+  }
   if (key.pageUp || inputChar === "[5~") {
     return { direction: "up", kind: "page" };
   }
@@ -194,6 +211,10 @@ export function getScrollRequest(
     return { direction: "down", kind: "line" };
   }
   return null;
+}
+
+export function stripMouseEscapeSequences(input: string): string {
+  return input.replace(SGR_MOUSE_SEQUENCE, "");
 }
 
 type Suggestion = {
@@ -512,18 +533,16 @@ export function Chat({
       // Only process full Ink frames (not small escape sequences)
       if (
         typeof chunk === "string" &&
-        chunk.length > 50 &&
+        isRenderableFrameChunk(chunk) &&
         !isProcessingRef.current
       ) {
         if (noFlicker) {
-          // No-flicker mode: write frame first (goes through frame-writer BSU/ESU),
-          // then write cursor escape AFTER — parkCursor in frame-writer would
-          // overwrite cursor position if we concatenated it into the frame.
-          const result = (original as any)(chunk, ...args);
-          const cursorEsc = buildCursorEscape(chunk, inputRef.current);
-          if (cursorEsc) {
-            (original as any)(cursorEsc);
-          }
+          const cursorEsc = buildCursorEscape(chunk, inputRef.current) ?? undefined;
+          const result = (original as any)(
+            chunk,
+            cursorEsc ? { cursorEscape: cursorEsc } : undefined,
+            ...args,
+          );
           return result;
         }
         // Standard mode: write frame, then position cursor separately
@@ -655,7 +674,7 @@ export function Chat({
               value={input}
               onChange={(val) => {
                 justSelected.current = false;
-                setInput(val);
+                setInput(stripMouseEscapeSequences(val));
               }}
               onSubmit={handleSubmit}
               placeholder={bashMode ? "! for bash mode" : "/ for commands"}
