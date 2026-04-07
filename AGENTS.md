@@ -1,7 +1,3 @@
-# CLAUDE.md
-
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
 ## Project
 
 PulSeed — AI agent orchestrator that gives existing agents the drive to persist. PulSeed sits above agents and drives them: selecting goals, spawning agent sessions, observing results, and judging completion. PulSeed doesn't think — it makes agents think.
