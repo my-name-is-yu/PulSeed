@@ -12,6 +12,7 @@ import { detectApiKeys, maskKey } from "./setup-shared.js";
 import { getBanner, stepExistingConfig, stepUserName, stepSeedyName } from "./setup/steps-identity.js";
 import { stepRootPreset, stepProvider, stepModel, stepApiKey } from "./setup/steps-provider.js";
 import { stepAdapter } from "./setup/steps-adapter.js";
+import { stepNotification } from "./setup/steps-notification.js";
 import { stepDaemon, ensurePulseedDir, writeSeedMd, writeRootMd, writeUserMd } from "./setup/steps-runtime.js";
 import { guardCancel } from "./setup/utils.js";
 
@@ -51,6 +52,7 @@ export async function runSetupWizard(): Promise<number> {
   const apiKey = await stepApiKey(provider, detectedKeys);
 
   const { start: startDaemon, port: daemonPort } = await stepDaemon();
+  const notificationConfig = await stepNotification();
 
   const summaryLines = [
     `User:      ${userName}`,
@@ -61,7 +63,15 @@ export async function runSetupWizard(): Promise<number> {
     `Adapter:   ${adapter}`,
     `API Key:   ${maskKey(apiKey)}`,
     `Daemon:    ${startDaemon ? `yes (port ${daemonPort})` : "no"}`,
+    `Notify:    ${notificationConfig ? "yes" : "no"}`,
   ];
+  if (notificationConfig) {
+    const channels =
+      notificationConfig.channels.length === 0
+        ? "console only"
+        : notificationConfig.channels.map((channel) => channel.type).join(", ");
+    summaryLines.push(`Notify:    ${channels}`);
+  }
   p.note(summaryLines.join("\n"), "Configuration Summary");
 
   const confirmed = guardCancel(
@@ -108,6 +118,16 @@ export async function runSetupWizard(): Promise<number> {
       p.log.warn("Could not save daemon port to daemon.json");
     }
     p.log.info("Daemon port " + daemonPort + " saved. Run pulseed to start.");
+  }
+
+  if (notificationConfig) {
+    const notifPath = path.join(dir, "notification.json");
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(notifPath, JSON.stringify(notificationConfig, null, 2));
+    } catch (err) {
+      p.log.warn(`Could not save notification config: ${err}`);
+    }
   }
 
   p.outro("\ud83c\udf31 Seeds planted. Time to grow.");
