@@ -6,10 +6,13 @@
  */
 
 import { randomUUID } from "node:crypto";
+import * as path from "node:path";
 import type { Goal } from "../../base/types/goal.js";
 import type { GapVector, GapHistoryEntry } from "../../base/types/gap.js";
 import type { StallReport } from "../../base/types/stall.js";
 import type { DriveScore } from "../../base/types/drive.js";
+import { KnowledgeGraph } from "../../platform/knowledge/knowledge-graph.js";
+import { loadDreamActivationState, mergeUniqueKnowledgeEntries } from "../../platform/dream/dream-activation.js";
 import {
   buildDriveContext,
   type LoopIterationResult,
@@ -22,6 +25,10 @@ import {
 import { gatherStallEvidence } from "./stall-evidence.js";
 import { verifyWithTools } from "./verification-layer1.js";
 import { buildLoopToolContext } from "./core-loop-phases.js";
+import {
+  expandKnowledgeEntriesWithGraph,
+  mergeWorkingMemorySelections,
+} from "../execution/context/context-builder.js";
 
 // ─── Phase 5 ───
 
@@ -524,6 +531,9 @@ export async function runTaskCycleWithContext(
     const taskStartTime = Date.now();
     const driveContext = buildDriveContext(goal);
     const adapter = ctx.deps.adapterRegistry.getAdapter(ctx.config.adapterType);
+    const dreamActivation = await loadDreamActivationState(ctx.deps.stateManager.getBaseDir())
+      .catch(() => null);
+    const activationFlags = dreamActivation?.flags;
 
     // Portfolio: select strategy for next task
     if (ctx.deps.portfolioManager) {
@@ -545,15 +555,61 @@ export async function runTaskCycleWithContext(
       try {
         const topDimension = driveScores[0]?.dimension_name ?? goal.dimensions[0]?.name;
         if (topDimension) {
-          const entries = await ctx.deps.knowledgeManager.getRelevantKnowledge(goalId, topDimension);
+          let entries = await ctx.deps.knowledgeManager.getRelevantKnowledge(goalId, topDimension);
+
+          if (activationFlags?.semanticContext) {
+            const semanticEntries = await ctx.deps.knowledgeManager.searchKnowledge(
+              `${goal.title} ${goal.description} ${topDimension}`,
+              5
+            ).catch(() => []);
+            entries = mergeUniqueKnowledgeEntries(entries, semanticEntries, 8);
+          }
+
+          let contradictionWarnings: string[] = [];
+          if (activationFlags?.graphTraversal && entries.length > 0) {
+            const graph = await KnowledgeGraph.create(
+              path.join(ctx.deps.stateManager.getBaseDir(), "knowledge", "graph.json")
+            ).catch(() => null);
+            if (graph) {
+              const allEntries = await ctx.deps.knowledgeManager.loadKnowledge(goalId).catch(() => []);
+              const expanded = expandKnowledgeEntriesWithGraph(entries, allEntries, graph);
+              entries = mergeUniqueKnowledgeEntries(entries, expanded.relatedEntries, 10);
+              contradictionWarnings = expanded.contradictionWarnings;
+            }
+          }
+
           if (entries.length > 0) {
             knowledgeContext = entries
               .map((e) => `Q: ${e.question}\nA: ${e.answer}`)
               .join("\n\n");
+            if (contradictionWarnings.length > 0) {
+              knowledgeContext += `\n\nContradiction warnings:\n${contradictionWarnings
+                .map((warning) => `- ${warning}`)
+                .join("\n")}`;
+            }
           }
         }
       } catch {
         // Knowledge retrieval failure is non-fatal
+      }
+    }
+
+    if (activationFlags?.crossGoalLessons && ctx.deps.memoryLifecycleManager) {
+      try {
+        const topDimension = driveScores[0]?.dimension_name ?? goal.dimensions[0]?.name ?? "";
+        const lessons = await ctx.deps.memoryLifecycleManager.searchCrossGoalLessons(
+          `${goal.title} ${goal.description} ${topDimension}`,
+          3
+        );
+        if (lessons.length > 0) {
+          const lessonsBlock = [
+            "Cross-goal lessons:",
+            ...lessons.map((lesson, index) => `${index + 1}. ${lesson.lesson}`),
+          ].join("\n");
+          knowledgeContext = knowledgeContext ? `${knowledgeContext}\n\n${lessonsBlock}` : lessonsBlock;
+        }
+      } catch {
+        // Non-fatal: proceed without cross-goal lessons.
       }
     }
 
@@ -567,7 +623,7 @@ export async function runTaskCycleWithContext(
         const satisfiedDimensions = goal.dimensions
           .filter((d) => !result.completionJudgment?.blocking_dimensions.includes(d.name))
           .map((d) => d.name);
-        await ctx.deps.memoryLifecycleManager.selectForWorkingMemoryTierAware(
+        const tierAwareMemory = await ctx.deps.memoryLifecycleManager.selectForWorkingMemoryTierAware(
           goalId,
           dimensions,
           [],
@@ -578,6 +634,37 @@ export async function runTaskCycleWithContext(
           highDissatisfactionDimensions,
           maxDissatisfaction
         );
+
+        if (activationFlags?.semanticWorkingMemory) {
+          const topDimension = driveScores[0]?.dimension_name ?? goal.dimensions[0]?.name ?? "";
+          const semanticMemory = await ctx.deps.memoryLifecycleManager.selectForWorkingMemorySemantic(
+            goalId,
+            `${goal.title} ${goal.description} ${topDimension}`,
+            dimensions,
+            [],
+            5,
+            driveScores.map((score) => ({
+              dimension: score.dimension_name,
+              dissatisfaction: score.dissatisfaction,
+              deadline: score.deadline,
+            }))
+          );
+          const mergedEntries = mergeWorkingMemorySelections(
+            tierAwareMemory.shortTerm,
+            semanticMemory.shortTerm,
+            5
+          );
+          if (mergedEntries.length > 0) {
+            const memoryBlock = [
+              "Working memory:",
+              ...mergedEntries.map(
+                (entry, index) =>
+                  `${index + 1}. [${entry.data_type}] ${JSON.stringify(entry.data)}`
+              ),
+            ].join("\n");
+            knowledgeContext = knowledgeContext ? `${knowledgeContext}\n\n${memoryBlock}` : memoryBlock;
+          }
+        }
       } catch {
         // Memory selection failure is non-fatal
       }

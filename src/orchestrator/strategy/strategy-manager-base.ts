@@ -16,6 +16,14 @@ import type { ToolRegistry } from "../../tools/registry.js";
 import { WorkspaceContextCache, formatWorkspaceContext } from "./strategy-workspace.js";
 import type { WorkspaceContext } from "./strategy-workspace.js";
 import {
+  applyDecisionHeuristicsToCandidates,
+  loadDecisionHeuristics,
+  loadDreamActivationState,
+  loadStrategyTemplates,
+  materializeTemplateCandidate,
+  selectTemplateCandidates,
+} from "../../platform/dream/dream-activation.js";
+import {
   VALID_TRANSITIONS,
   StrategyArraySchema,
   buildGenerationPrompt,
@@ -183,7 +191,7 @@ export class StrategyManagerBase {
     }
 
     const now = new Date().toISOString();
-    const candidates: Strategy[] = strategiesRaw.map((raw) =>
+    let candidates: Strategy[] = strategiesRaw.map((raw) =>
       StrategySchema.parse({
         ...raw,
         id: raw.id ?? randomUUID(),
@@ -200,6 +208,50 @@ export class StrategyManagerBase {
         consecutive_stall_count: 0,
       })
     );
+
+    try {
+      const activation = await loadDreamActivationState(this.stateManager.getBaseDir());
+      if (activation.flags.strategyTemplates) {
+        const goal = await this.stateManager.loadGoal(goalId);
+        const templates = await loadStrategyTemplates(this.stateManager.getBaseDir());
+        const matchedTemplates = selectTemplateCandidates(
+          templates,
+          [
+            goal?.title ?? "",
+            goal?.description ?? "",
+            primaryDimension,
+            targetDimensions.join(" "),
+          ].join(" "),
+          targetDimensions,
+          1
+        );
+
+        if (matchedTemplates.length > 0) {
+          const templateCandidates = matchedTemplates.map((template) =>
+            materializeTemplateCandidate(template, goalId, primaryDimension, targetDimensions)
+          );
+          candidates = [
+            ...templateCandidates,
+            ...candidates.filter(
+              (candidate) =>
+                !templateCandidates.some(
+                  (templateCandidate) => templateCandidate.hypothesis === candidate.hypothesis
+                )
+            ),
+          ];
+        }
+      }
+
+      if (activation.flags.decisionHeuristics) {
+        const heuristics = await loadDecisionHeuristics(this.stateManager.getBaseDir());
+        candidates = applyDecisionHeuristicsToCandidates(candidates, heuristics, {
+          stallCount: Math.max(0, context.pastStrategies.length),
+          activeStrategyId: context.pastStrategies[0]?.id ?? null,
+        });
+      }
+    } catch {
+      // Non-fatal: dream activation enrichment must not block candidate generation.
+    }
 
     // Store candidates in portfolio
     const portfolio = await this.loadOrCreatePortfolio(goalId);

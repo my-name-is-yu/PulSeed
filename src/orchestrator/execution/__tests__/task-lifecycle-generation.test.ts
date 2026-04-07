@@ -14,6 +14,7 @@ import type {
   LLMRequestOptions,
   LLMResponse,
 } from "../../../base/llm/llm-client.js";
+import { saveDreamConfig } from "../../../platform/dream/dream-config.js";
 import { createMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
 import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 
@@ -151,6 +152,45 @@ describe("TaskLifecycle", async () => {
       const userMessage = spy.calls[0]!.messages[0]!.content;
       expect(userMessage).toContain("test_coverage");
       expect(userMessage).toContain("goal-42");
+    });
+
+    it("injects learned pattern hints into task generation when dream activation is enabled", async () => {
+      const spy = createSpyLLMClient([VALID_TASK_RESPONSE]);
+      const lifecycle = createLifecycle(spy);
+
+      await stateManager.saveGoal({
+        id: "goal-42",
+        title: "Improve onboarding completion",
+        description: "Reduce user drop-off during signup",
+        status: "active",
+        dimensions: [],
+        parent_id: null,
+        child_goal_ids: [],
+        success_criteria: [],
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      } as any);
+      await stateManager.writeRaw("learning/goal-42_patterns.json", [
+        {
+          pattern_id: "pat-1",
+          type: "task_generation",
+          description: "Use step-by-step signup hints before proposing new UI changes",
+          confidence: 0.82,
+          evidence_count: 4,
+          source_goal_ids: ["goal-42"],
+          applicable_domains: ["signup", "onboarding"],
+          embedding_id: null,
+          created_at: new Date().toISOString(),
+          last_applied_at: null,
+        },
+      ]);
+      await saveDreamConfig({ activation: { learnedPatternHints: true } }, stateManager.getBaseDir());
+
+      await lifecycle.generateTask("goal-42", "completion_rate");
+
+      const userMessage = spy.calls[0]!.messages[0]!.content;
+      expect(userMessage).toContain("Learned pattern hints");
+      expect(userMessage).toContain("step-by-step signup hints");
     });
 
     it("sends a system prompt for task generation", async () => {

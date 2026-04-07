@@ -5,6 +5,7 @@ import { StateManager } from "../../../base/state/state-manager.js";
 import { StrategyManager } from "../strategy-manager.js";
 import type { ILLMClient } from "../../../base/llm/llm-client.js";
 import type { Strategy } from "../../../base/types/strategy.js";
+import { saveDreamConfig } from "../../../platform/dream/dream-config.js";
 import { createMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
 import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 
@@ -176,6 +177,75 @@ describe("generateCandidates", () => {
         pastStrategies: [pastStrategy],
       })
     ).resolves.not.toThrow();
+  });
+
+  it("prepends a template-backed candidate when strategyTemplates is enabled", async () => {
+    const mock = createMockLLMClient([CANDIDATE_RESPONSE_ONE]);
+    const manager = new StrategyManager(stateManager, mock);
+    await saveDreamConfig({ activation: { strategyTemplates: true } }, stateManager.getBaseDir());
+    await stateManager.saveGoal({
+      id: "goal-1",
+      title: "Improve research throughput",
+      description: "Need a reusable research plan",
+      status: "active",
+      dimensions: [],
+      parent_id: null,
+      child_goal_ids: [],
+      success_criteria: [],
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    } as any);
+    fs.writeFileSync(
+      `${tempDir}/strategy-templates.json`,
+      JSON.stringify([
+        {
+          template_id: "tmpl-1",
+          source_goal_id: "goal-src",
+          source_strategy_id: "strat-src",
+          hypothesis_pattern: "Start with a structured research checklist",
+          domain_tags: ["research"],
+          effectiveness_score: 0.9,
+          applicable_dimensions: ["research_depth"],
+          embedding_id: null,
+          created_at: new Date().toISOString(),
+        },
+      ], null, 2)
+    );
+
+    const candidates = await manager.generateCandidates("goal-1", "research_depth", ["research_depth"], {
+      currentGap: 0.5,
+      pastStrategies: [],
+    });
+
+    expect(candidates[0]!.source_template_id).toBe("tmpl-1");
+    expect(candidates[0]!.hypothesis).toContain("structured research checklist");
+  });
+
+  it("reorders candidates with decision heuristics when enabled", async () => {
+    const mock = createMockLLMClient([CANDIDATE_RESPONSE_TWO]);
+    const manager = new StrategyManager(stateManager, mock);
+    await saveDreamConfig({ activation: { decisionHeuristics: true } }, stateManager.getBaseDir());
+    fs.mkdirSync(`${tempDir}/dream`, { recursive: true });
+    fs.writeFileSync(
+      `${tempDir}/dream/decision-heuristics.json`,
+      JSON.stringify({
+        heuristics: [
+          {
+            id: "heur-1",
+            prefer_strategy_hypothesis_includes: "outline",
+            score_delta: 0.4,
+            reason: "outline-first has worked before",
+          },
+        ],
+      }, null, 2)
+    );
+
+    const candidates = await manager.generateCandidates("goal-1", "research_depth", ["research_depth", "word_count"], {
+      currentGap: 0.5,
+      pastStrategies: [],
+    });
+
+    expect(candidates[0]!.hypothesis).toContain("structured outline");
   });
 });
 

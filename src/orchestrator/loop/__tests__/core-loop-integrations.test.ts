@@ -19,6 +19,7 @@ import type { GapVector } from "../../../base/types/gap.js";
 import type { CompletionJudgment } from "../../../base/types/satisficing.js";
 import type { StallReport } from "../../../base/types/stall.js";
 import type { DriveScore } from "../../../base/types/drive.js";
+import { saveDreamConfig } from "../../../platform/dream/dream-config.js";
 import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 import { makeGoal } from "../../../../tests/helpers/fixtures.js";
 
@@ -459,6 +460,41 @@ describe("CoreLoop", async () => {
       expect(callArgs![4]).toContain("JWT tokens");
     });
 
+    it("adds cross-goal lessons when activation flag is enabled", async () => {
+      const { deps, mocks } = createMockDeps(tmpDir);
+      await mocks.stateManager.saveGoal(makeGoal());
+      await saveDreamConfig({ activation: { crossGoalLessons: true } }, mocks.stateManager.getBaseDir());
+
+      const knowledgeManager = {
+        detectKnowledgeGap: vi.fn().mockResolvedValue(null),
+        generateAcquisitionTask: vi.fn(),
+        getRelevantKnowledge: vi.fn().mockResolvedValue([]),
+        searchKnowledge: vi.fn().mockResolvedValue([]),
+        saveKnowledge: vi.fn(),
+        loadKnowledge: vi.fn().mockResolvedValue([]),
+        checkContradiction: vi.fn(),
+      };
+      const memoryLifecycleManager = {
+        searchCrossGoalLessons: vi.fn().mockResolvedValue([
+          { lesson: "Reuse the migration checklist before touching schemas" },
+        ]),
+        selectForWorkingMemoryTierAware: vi.fn().mockResolvedValue({ shortTerm: [], lessons: [] }),
+        onSatisficingJudgment: vi.fn(),
+      };
+
+      const loop = new CoreLoop(
+        { ...deps, knowledgeManager: knowledgeManager as any, memoryLifecycleManager: memoryLifecycleManager as any },
+        { delayBetweenLoopsMs: 0 }
+      );
+      const result = await loop.runOneIteration("goal-1", 1);
+
+      expect(result.error).toBeNull();
+      expect(mocks.taskLifecycle.runTaskCycle).toHaveBeenCalledOnce();
+      const callArgs = mocks.taskLifecycle.runTaskCycle.mock.calls[0];
+      expect(callArgs![4]).toContain("Cross-goal lessons");
+      expect(callArgs![4]).toContain("migration checklist");
+    });
+
     it("skips knowledge injection gracefully when getRelevantKnowledge returns empty", async () => {
       const { deps, mocks } = createMockDeps(tmpDir);
       await mocks.stateManager.saveGoal(makeGoal());
@@ -513,6 +549,61 @@ describe("CoreLoop", async () => {
       // Should fall through to normal task cycle
       expect(result.error).toBeNull();
       expect(mocks.taskLifecycle.runTaskCycle).toHaveBeenCalledOnce();
+    });
+
+    it("auto-acquires knowledge and skips execution when enabled and stalled", async () => {
+      const { deps, mocks } = createMockDeps(tmpDir);
+      await mocks.stateManager.saveGoal(makeGoal());
+      await saveDreamConfig({ activation: { autoAcquireKnowledge: true } }, mocks.stateManager.getBaseDir());
+      mocks.stallDetector.checkDimensionStall.mockReturnValue({
+        stall_type: "plateau",
+        confidence: 0.9,
+        escalation_level: 1,
+        suggested_cause: "information_deficit",
+      });
+
+      const knowledgeManager = {
+        detectKnowledgeGap: vi.fn().mockResolvedValue({
+          signal_type: "stall_information_deficit",
+          missing_knowledge: "Need database migration constraints",
+          source_step: "stall_detection",
+          related_dimension: "dim1",
+        }),
+        generateAcquisitionTask: vi.fn(),
+        acquireWithTools: vi.fn().mockResolvedValue([
+          {
+            entry_id: "k-1",
+            question: "Need database migration constraints",
+            answer: "Run schema diff before applying migrations",
+            sources: [],
+            confidence: 0.8,
+            acquired_at: new Date().toISOString(),
+            acquisition_task_id: "tool_direct",
+            superseded_by: null,
+            tags: ["db"],
+            embedding_id: null,
+          },
+        ]),
+        getRelevantKnowledge: vi.fn().mockResolvedValue([]),
+        searchKnowledge: vi.fn().mockResolvedValue([]),
+        saveKnowledge: vi.fn(),
+        loadKnowledge: vi.fn().mockResolvedValue([]),
+        checkContradiction: vi.fn(),
+      };
+      const toolExecutor = { executeBatch: vi.fn() };
+
+      const loop = new CoreLoop(
+        { ...deps, knowledgeManager: knowledgeManager as any, toolExecutor: toolExecutor as any },
+        { delayBetweenLoopsMs: 0 }
+      );
+      const result = await loop.runOneIteration("goal-1", 1);
+
+      expect(result.error).toBeNull();
+      expect(result.stallDetected).toBe(true);
+      expect(knowledgeManager.acquireWithTools).toHaveBeenCalledOnce();
+      expect(knowledgeManager.saveKnowledge).toHaveBeenCalledOnce();
+      expect(mocks.taskLifecycle.runTaskCycle).not.toHaveBeenCalled();
+      expect(result.error).toBeNull();
     });
   });
 

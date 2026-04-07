@@ -42,6 +42,7 @@ import { handleCapabilityAcquisition } from "./core-loop-capability.js";
 import type { ITimeHorizonEngine } from "../../platform/time/time-horizon-engine.js";
 import type { PacingResult } from "../../base/types/time-horizon.js";
 import { CoreLoopLearning } from "./core-loop-learning.js";
+import { loadDreamActivationState } from "../../platform/dream/dream-activation.js";
 
 // Re-export types for backward compatibility
 export type {
@@ -465,6 +466,64 @@ export class CoreLoop {
 
     if (result.stallDetected && result.stallReport) {
       this.logger?.warn(`[iter ${loopIndex}] stall detected: ${result.stallReport.stall_type}`, { escalation: result.stallReport.escalation_level });
+    }
+
+    if (
+      result.stallDetected &&
+      this.deps.knowledgeManager &&
+      this.deps.toolExecutor
+    ) {
+      try {
+        const activation = await loadDreamActivationState(this.deps.stateManager.getBaseDir());
+        if (activation.flags.autoAcquireKnowledge) {
+          const portfolio = await Promise.resolve(
+            this.deps.strategyManager.getPortfolio(goalId)
+          ).catch(() => null);
+          const observationContext = {
+            observations: goal.dimensions.map((dimension) => ({
+              name: dimension.name,
+              current_value: dimension.current_value,
+              confidence: dimension.confidence,
+            })),
+            strategies: portfolio?.strategies ?? null,
+            confidence:
+              gapVector.gaps.reduce((sum, gap) => sum + gap.confidence, 0) /
+              Math.max(gapVector.gaps.length, 1),
+          };
+          const gapSignal = await this.deps.knowledgeManager.detectKnowledgeGap(observationContext);
+          if (gapSignal) {
+            const acquired = await this.deps.knowledgeManager.acquireWithTools(
+              gapSignal.missing_knowledge,
+              goalId,
+              this.deps.toolExecutor,
+              {
+                cwd: process.cwd(),
+                goalId,
+                trustBalance: 0,
+                preApproved: true,
+                approvalFn: async () => false,
+              }
+            );
+            for (const entry of acquired) {
+              await this.deps.knowledgeManager.saveKnowledge(goalId, entry);
+            }
+            if (acquired.length > 0) {
+              this.logger?.info("CoreLoop: dream auto-acquired knowledge and skipped execution for context refresh", {
+                goalId,
+                acquiredCount: acquired.length,
+              });
+              await generateLoopReport(goalId, loopIndex, result, goal, this.deps.reportingEngine, this.logger);
+              result.elapsedMs = Date.now() - startTime;
+              return result;
+            }
+          }
+        }
+      } catch (err) {
+        this.logger?.warn("CoreLoop: autoAcquireKnowledge failed (non-fatal)", {
+          goalId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
     }
 
     if (skipTaskGeneration) {
