@@ -99,6 +99,7 @@ export class DreamAnalyzer {
     let remainingBudget = options.tokenBudget;
     let partial = false;
     let patterns: LearnedPattern[] = [];
+    let patternsPersisted = 0;
     let suggestions: ScheduleSuggestion[] = [];
     const completedPhases: DreamPhase[] = [];
 
@@ -111,9 +112,10 @@ export class DreamAnalyzer {
       patterns = analysis.patterns;
       remainingBudget = analysis.remainingBudget;
       partial = analysis.partial;
-      if (!options.dryRun) {
+      if (!options.dryRun && !partial) {
         await this.persistPatterns(patterns);
         await this.advanceWatermarks(ingestion);
+        patternsPersisted = patterns.length;
       }
       completedPhases.push("B");
     }
@@ -130,7 +132,7 @@ export class DreamAnalyzer {
       tier: options.tier,
       phasesCompleted: completedPhases,
       goalsProcessed: selectedGoalIds,
-      patternsPersisted: patterns.length,
+      patternsPersisted,
       scheduleSuggestions: suggestions.length,
       tokensEstimated: options.tokenBudget - remainingBudget,
       partial,
@@ -141,58 +143,80 @@ export class DreamAnalyzer {
   }
 
   private async resolveGoalIds(requested?: string[]): Promise<string[]> {
-    if (requested && requested.length > 0) {
-      return Array.from(new Set(requested));
-    }
-    const goalsDir = path.join(this.deps.baseDir, "goals");
-    const entries = await fsp.readdir(goalsDir, { withFileTypes: true }).catch(() => []);
-    return entries
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => entry.name)
-      .sort();
+    const goalIds = requested && requested.length > 0
+      ? Array.from(new Set(requested))
+      : (await fsp.readdir(path.join(this.deps.baseDir, "goals"), { withFileTypes: true }).catch(() => []))
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => entry.name)
+        .sort();
+    if (goalIds.length === 0) return [];
+
+    const watermarks = await this.collector.loadWatermarks();
+    const pendingCounts = await Promise.all(
+      goalIds.map(async (goalId) => {
+        const lineCount = await this.countNonEmptyLines(path.join(this.deps.baseDir, "goals", goalId, "iteration-logs.jsonl"));
+        const lastProcessedLine = watermarks.goals[goalId]?.lastProcessedLine ?? 0;
+        return {
+          goalId,
+          pendingLines: Math.max(0, lineCount - lastProcessedLine),
+        };
+      })
+    );
+
+    return pendingCounts
+      .sort((left, right) => right.pendingLines - left.pendingLines || left.goalId.localeCompare(right.goalId))
+      .map((entry) => entry.goalId);
   }
 
   private async ingest(goalIds: string[], options: DreamRunOptions): Promise<IngestionOutput> {
     const watermarks = await this.collector.loadWatermarks();
-    const importanceEntries = await this.readImportanceEntries(watermarks.importanceBuffer.lastProcessedLine);
+    const importanceResult = await this.readImportanceEntries(watermarks.importanceBuffer.lastProcessedLine);
     const sessionLogs = await this.readSessionLogs();
     const goalIterations = new Map<string, IterationLog[]>();
+    const goalWatermarkTargets: Record<string, number> = {};
     let malformedLines = 0;
     let linesRead = 0;
 
     for (const goalId of goalIds) {
       const goalWatermark = watermarks.goals[goalId]?.lastProcessedLine ?? 0;
-      const { entries, malformedCount, lineCount } = await this.readIterationLogs(goalId, goalWatermark);
+      const { entries, malformedCount, lineCount, totalLineCount } = await this.readIterationLogs(goalId, goalWatermark);
       goalIterations.set(goalId, entries);
+      goalWatermarkTargets[goalId] = totalLineCount;
       malformedLines += malformedCount;
       linesRead += lineCount;
     }
 
-    const prioritizedBatches = this.buildImportanceWindows(goalIterations, importanceEntries);
+    const prioritizedBatches = this.buildImportanceWindows(goalIterations, importanceResult.entries);
     const regularBatches = this.buildRegularWindows(goalIterations, options);
 
     return {
       prioritizedBatches,
       regularBatches,
-      importanceEntries,
+      importanceEntries: importanceResult.entries,
       sessionLogs,
       stats: {
         linesRead,
-        malformedLines,
+        malformedLines: malformedLines + importanceResult.malformedCount,
         batchesBuilt: prioritizedBatches.length + regularBatches.length,
+      },
+      watermarkTargets: {
+        goals: goalWatermarkTargets,
+        importanceBufferLine: importanceResult.totalLineCount,
       },
     };
   }
 
-  private async readIterationLogs(goalId: string, startLine: number): Promise<{ entries: IterationLog[]; malformedCount: number; lineCount: number }> {
+  private async readIterationLogs(
+    goalId: string,
+    startLine: number
+  ): Promise<{ entries: IterationLog[]; malformedCount: number; lineCount: number; totalLineCount: number }> {
     const filePath = path.join(this.deps.baseDir, "goals", goalId, "iteration-logs.jsonl");
     const raw = await fsp.readFile(filePath, "utf8").catch(() => "");
-    const lines = raw.split(/\r?\n/);
+    const lines = raw.split(/\r?\n/).filter((line) => line.trim().length > 0);
     let malformedCount = 0;
     const entries: IterationLog[] = [];
     for (let index = startLine; index < lines.length; index += 1) {
-      const line = lines[index];
-      if (!line || line.trim().length === 0) continue;
+      const line = lines[index]!;
       try {
         entries.push(IterationLogSchema.parse(JSON.parse(line)));
       } catch (error) {
@@ -204,26 +228,39 @@ export class DreamAnalyzer {
         });
       }
     }
-    return { entries, malformedCount, lineCount: Math.max(lines.length - 1, 0) };
+    return {
+      entries,
+      malformedCount,
+      lineCount: Math.max(0, lines.length - startLine),
+      totalLineCount: lines.length,
+    };
   }
 
-  private async readImportanceEntries(startLine: number): Promise<ImportanceEntry[]> {
+  private async readImportanceEntries(
+    startLine: number
+  ): Promise<{ entries: ImportanceEntry[]; malformedCount: number; totalLineCount: number }> {
     const filePath = path.join(this.deps.baseDir, "dream", "importance-buffer.jsonl");
     const raw = await fsp.readFile(filePath, "utf8").catch(() => "");
-    return raw
-      .split(/\r?\n/)
+    const lines = raw.split(/\r?\n/).filter((line) => line.trim().length > 0);
+    let malformedCount = 0;
+    const entries = lines
       .slice(startLine)
-      .filter((line) => line.trim().length > 0)
       .flatMap((line) => {
         try {
           return [ImportanceEntrySchema.parse(JSON.parse(line))];
         } catch (error) {
+          malformedCount += 1;
           this.logger?.warn("Dream ingestion skipped malformed importance line", {
             error: error instanceof Error ? error.message : String(error),
           });
           return [];
         }
       });
+    return {
+      entries,
+      malformedCount,
+      totalLineCount: lines.length,
+    };
   }
 
   private async readSessionLogs(): Promise<SessionLog[]> {
@@ -322,26 +359,33 @@ export class DreamAnalyzer {
         break;
       }
 
-      const response = await this.llmClient.sendMessage(
-        [{ role: "user", content: prompt }],
-        {
-          system: DREAM_PATTERN_ANALYSIS_SYSTEM_PROMPT,
-          max_tokens: tier === "light" ? 1200 : 2400,
-          temperature: 0,
-        }
-      );
-      remainingBudget -= estimatedCost + response.usage.output_tokens;
-      const parsed = this.llmClient.parseJSON(response.content, DreamPatternResponseSchema);
-      const mapped = (parsed.patterns ?? [])
-        .filter((pattern) => pattern.confidence >= this.config.patternConfidenceThreshold)
-        .map((pattern) =>
-          this.toLearnedPattern(goalId, {
-            ...pattern,
-            metadata: pattern.metadata ?? {},
-            evidence_refs: pattern.evidence_refs ?? [],
-          })
+      try {
+        const response = await this.llmClient.sendMessage(
+          [{ role: "user", content: prompt }],
+          {
+            system: DREAM_PATTERN_ANALYSIS_SYSTEM_PROMPT,
+            max_tokens: tier === "light" ? 1200 : 2400,
+            temperature: 0,
+          }
         );
-      learnedPatterns.push(...mapped);
+        remainingBudget -= estimatedCost + response.usage.output_tokens;
+        const parsed = this.llmClient.parseJSON(response.content, DreamPatternResponseSchema);
+        const mapped = (parsed.patterns ?? [])
+          .filter((pattern) => pattern.confidence >= this.config.patternConfidenceThreshold)
+          .map((pattern) =>
+            this.toLearnedPattern(goalId, {
+              ...pattern,
+              metadata: pattern.metadata ?? {},
+              evidence_refs: pattern.evidence_refs ?? [],
+            })
+          );
+        learnedPatterns.push(...mapped);
+      } catch (error) {
+        this.logger?.warn("Dream analysis skipped goal after LLM or parse failure", {
+          goalId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
 
     return { patterns: learnedPatterns, remainingBudget, partial };
@@ -403,14 +447,10 @@ export class DreamAnalyzer {
   }
 
   private async advanceWatermarks(ingestion: IngestionOutput): Promise<void> {
-    const grouped = new Map<string, number>();
-    for (const batch of [...ingestion.prioritizedBatches, ...ingestion.regularBatches]) {
-      grouped.set(batch.goalId, Math.max(grouped.get(batch.goalId) ?? 0, batch.endIteration + 1));
-    }
-    for (const [goalId, lastProcessedLine] of grouped.entries()) {
+    for (const [goalId, lastProcessedLine] of Object.entries(ingestion.watermarkTargets.goals)) {
       await this.collector.markGoalProcessed(goalId, lastProcessedLine);
     }
-    await this.collector.markImportanceProcessed(ingestion.importanceEntries.length);
+    await this.collector.markImportanceProcessed(ingestion.watermarkTargets.importanceBufferLine);
   }
 
   private buildScheduleSuggestions(sessionLogs: SessionLog[]): ScheduleSuggestion[] {
@@ -454,5 +494,10 @@ export class DreamAnalyzer {
   private extractIterationRef(dataRef: string): number | null {
     const match = /:(\d+)$/.exec(dataRef) ?? /#L(\d+)$/.exec(dataRef);
     return match ? Number.parseInt(match[1], 10) : null;
+  }
+
+  private async countNonEmptyLines(filePath: string): Promise<number> {
+    const raw = await fsp.readFile(filePath, "utf8").catch(() => "");
+    return raw.split(/\r?\n/).filter((line) => line.trim().length > 0).length;
   }
 }

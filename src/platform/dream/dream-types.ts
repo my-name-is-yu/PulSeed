@@ -164,6 +164,16 @@ export const DreamLogConfigSchema = z.object({
     lightTokenBudget: z.number().int().positive().default(15_000),
     deepTokenBudget: z.number().int().positive().default(200_000),
   }).default({}),
+  activation: z.object({
+    semanticWorkingMemory: z.boolean().default(false),
+    crossGoalLessons: z.boolean().default(false),
+    semanticContext: z.boolean().default(false),
+    autoAcquireKnowledge: z.boolean().default(false),
+    learnedPatternHints: z.boolean().default(false),
+    strategyTemplates: z.boolean().default(false),
+    decisionHeuristics: z.boolean().default(false),
+    graphTraversal: z.boolean().default(false),
+  }).default({}),
 });
 
 export type DreamLogConfig = z.infer<typeof DreamLogConfigSchema>;
@@ -200,6 +210,10 @@ export const IngestionOutputSchema = z.object({
   importanceEntries: z.array(ImportanceEntrySchema),
   sessionLogs: z.array(SessionLogSchema),
   stats: IngestionStatsSchema,
+  watermarkTargets: z.object({
+    goals: z.record(z.string(), z.number().int().nonnegative()).default({}),
+    importanceBufferLine: z.number().int().nonnegative().default(0),
+  }),
 });
 
 export type IngestionOutput = z.infer<typeof IngestionOutputSchema>;

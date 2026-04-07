@@ -1,187 +1,243 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import * as fs from "node:fs/promises";
+import * as fs from "node:fs";
 import * as path from "node:path";
-import { z } from "zod";
-import { makeTempDir, cleanupTempDir } from "../../../../tests/helpers/temp-dir.js";
-import { DreamAnalyzer } from "../dream-analyzer.js";
+import { describe, expect, it } from "vitest";
+import type { ZodSchema } from "zod";
 import type { ILLMClient, LLMMessage, LLMRequestOptions, LLMResponse } from "../../../base/llm/llm-client.js";
-import type { LearnedPattern } from "../../knowledge/types/learning.js";
+import { StateManager } from "../../../base/state/state-manager.js";
+import { LearningPipeline } from "../../knowledge/learning/learning-pipeline.js";
+import { DreamAnalyzer } from "../dream-analyzer.js";
+import { cleanupTempDir, makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 
-class MockLLMClient implements ILLMClient {
-  constructor(private readonly content: string) {}
+function makeMockLLM(patternBatches: unknown[][]): ILLMClient {
+  let callIndex = 0;
+  return {
+    async sendMessage(_messages: LLMMessage[], _options?: LLMRequestOptions): Promise<LLMResponse> {
+      const content = JSON.stringify({ patterns: patternBatches[callIndex] ?? [] });
+      callIndex += 1;
+      return {
+        content,
+        usage: { input_tokens: 100, output_tokens: 150 },
+        stop_reason: "end_turn",
+      };
+    },
+    parseJSON<T>(content: string, schema: ZodSchema<T>): T {
+      return schema.parse(JSON.parse(content));
+    },
+  };
+}
 
-  async sendMessage(_messages: LLMMessage[], _options?: LLMRequestOptions): Promise<LLMResponse> {
-    return {
-      content: this.content,
-      usage: { input_tokens: 400, output_tokens: 120 },
-      stop_reason: "stop",
-    };
-  }
+async function writeJsonl(filePath: string, records: unknown[]): Promise<void> {
+  await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
+  await fs.promises.writeFile(filePath, `${records.map((record) => JSON.stringify(record)).join("\n")}\n`, "utf8");
+}
 
-  parseJSON<T>(content: string, schema: z.ZodSchema<T>): T {
-    return schema.parse(JSON.parse(content));
-  }
+function makeIteration(goalId: string, iteration: number) {
+  return {
+    timestamp: `2026-04-07T00:${iteration.toString().padStart(2, "0")}:00.000Z`,
+    goalId,
+    iteration,
+    sessionId: `${goalId}:session-1`,
+    gapAggregate: Math.max(0, 1 - iteration * 0.05),
+    taskId: `task-${iteration}`,
+    taskAction: iteration % 2 === 0 ? "rerun_verification" : "collect_signal",
+    strategyId: iteration < 12 ? "baseline" : "tight-loop",
+    verificationResult: {
+      verdict: iteration % 3 === 0 ? "pass" : "retry",
+      confidence: 0.8,
+      timestamp: `2026-04-07T00:${iteration.toString().padStart(2, "0")}:30.000Z`,
+    },
+    stallDetected: iteration % 7 === 0,
+    stallSeverity: iteration % 7 === 0 ? 1 : null,
+    tokensUsed: 40,
+    elapsedMs: 500,
+    completionJudgment: {
+      is_complete: false,
+      checked_at: `2026-04-07T00:${iteration.toString().padStart(2, "0")}:59.000Z`,
+    },
+  };
 }
 
 describe("DreamAnalyzer", () => {
-  let tmpDir = "";
+  it("runs phase 2 analysis, persists patterns and schedule suggestions, and advances line-based watermarks", async () => {
+    const tempDir = makeTempDir("dream-analyzer-");
+    try {
+      const goalA = "goal-a";
+      const goalB = "goal-b";
+      await writeJsonl(
+        path.join(tempDir, "goals", goalA, "iteration-logs.jsonl"),
+        Array.from({ length: 12 }, (_, index) => makeIteration(goalA, index))
+      );
+      await writeJsonl(
+        path.join(tempDir, "goals", goalB, "iteration-logs.jsonl"),
+        Array.from({ length: 15 }, (_, index) => makeIteration(goalB, index))
+      );
+      await writeJsonl(path.join(tempDir, "dream", "importance-buffer.jsonl"), [
+        {
+          id: "imp-1",
+          timestamp: "2026-04-07T01:00:00.000Z",
+          goalId: goalA,
+          source: "verification",
+          importance: 0.9,
+          reason: "Repeated verification recovery",
+          data_ref: `iter:${goalA}:5`,
+          tags: ["verification"],
+          processed: false,
+        },
+        "not-json",
+        {
+          id: "imp-2",
+          timestamp: "2026-04-07T01:05:00.000Z",
+          goalId: goalB,
+          source: "stall",
+          importance: 0.75,
+          reason: "Recurring stall precursor",
+          data_ref: `iter:${goalB}:7`,
+          tags: ["stall"],
+          processed: false,
+        },
+      ]);
+      await writeJsonl(path.join(tempDir, "dream", "session-logs.jsonl"), [
+        {
+          timestamp: "2026-04-07T03:00:00.000Z",
+          goalId: goalB,
+          sessionId: "goal-b:1",
+          iterationCount: 15,
+          finalGapAggregate: 0.25,
+          initialGapAggregate: 0.95,
+          totalTokensUsed: 600,
+          totalElapsedMs: 12000,
+          stallCount: 1,
+          outcome: "max_iterations",
+          strategiesUsed: ["baseline", "tight-loop"],
+        },
+        {
+          timestamp: "2026-04-08T03:20:00.000Z",
+          goalId: goalB,
+          sessionId: "goal-b:2",
+          iterationCount: 14,
+          finalGapAggregate: 0.2,
+          initialGapAggregate: 0.9,
+          totalTokensUsed: 550,
+          totalElapsedMs: 11000,
+          stallCount: 0,
+          outcome: "max_iterations",
+          strategiesUsed: ["tight-loop"],
+        },
+        {
+          timestamp: "2026-04-09T03:40:00.000Z",
+          goalId: goalB,
+          sessionId: "goal-b:3",
+          iterationCount: 16,
+          finalGapAggregate: 0.1,
+          initialGapAggregate: 0.88,
+          totalTokensUsed: 530,
+          totalElapsedMs: 10500,
+          stallCount: 0,
+          outcome: "goal_complete",
+          strategiesUsed: ["tight-loop"],
+        },
+      ]);
 
-  afterEach(() => {
-    if (tmpDir) cleanupTempDir(tmpDir);
-    tmpDir = "";
+      const stateManager = new StateManager(tempDir, undefined, { walEnabled: false });
+      await stateManager.init();
+      const learningPipeline = new LearningPipeline(makeMockLLM([[]]), null, stateManager);
+      const analyzer = new DreamAnalyzer({
+        baseDir: tempDir,
+        llmClient: makeMockLLM([
+          [],
+          [
+            {
+              pattern_type: "recurring_task",
+              confidence: 0.88,
+              summary: "Retry verification after drift to recover progress.",
+              evidence_refs: [`iter:${goalA}:5`, `iter:${goalA}:6`],
+              metadata: { taskAction: "rerun_verification", applicable_domains: ["verification"] },
+            },
+          ],
+        ]),
+        learningPipeline,
+        config: {
+          minIterationsForAnalysis: 5,
+          patternConfidenceThreshold: 0.7,
+        },
+      });
+
+      const report = await analyzer.runDeep();
+
+      expect(report.phasesCompleted).toEqual(["A", "B", "C"]);
+      expect(report.patternsPersisted).toBeGreaterThan(0);
+      expect(report.scheduleSuggestions).toBe(1);
+      expect(report.goalsProcessed[0]).toBe(goalB);
+
+      const patternsA = await learningPipeline.getPatterns(goalA);
+      const patternsB = await learningPipeline.getPatterns(goalB);
+      expect(patternsA).toHaveLength(1);
+      expect(patternsB).toEqual([]);
+      expect(patternsA[0]?.description).toContain("Retry verification");
+
+      const scheduleSuggestions = JSON.parse(
+        await fs.promises.readFile(path.join(tempDir, "dream", "schedule-suggestions.json"), "utf8")
+      ) as { suggestions: Array<{ goalId?: string; proposal: string }> };
+      expect(scheduleSuggestions.suggestions).toEqual([
+        expect.objectContaining({ goalId: goalB, proposal: "0 3 * * *" }),
+      ]);
+
+      const watermarks = JSON.parse(
+        await fs.promises.readFile(path.join(tempDir, "dream", "watermarks.json"), "utf8")
+      ) as {
+        goals: Record<string, { lastProcessedLine: number }>;
+        importanceBuffer: { lastProcessedLine: number };
+      };
+      expect(watermarks.goals[goalA]?.lastProcessedLine).toBe(12);
+      expect(watermarks.goals[goalB]?.lastProcessedLine).toBe(15);
+      expect(watermarks.importanceBuffer.lastProcessedLine).toBe(3);
+    } finally {
+      cleanupTempDir(tempDir);
+    }
   });
 
-  it("runs light analysis and persists learned patterns through the learning pipeline", async () => {
-    tmpDir = makeTempDir("dream-analyzer-light-");
-    await seedDreamLogs(tmpDir, "goal-1", 24);
-    const saved = new Map<string, LearnedPattern[]>();
-    const learningPipeline = {
-      getPatterns: vi.fn(async (goalId: string) => saved.get(goalId) ?? []),
-      savePatterns: vi.fn(async (goalId: string, patterns: LearnedPattern[]) => {
-        saved.set(goalId, patterns);
-      }),
-    };
-    const analyzer = new DreamAnalyzer({
-      baseDir: tmpDir,
-      llmClient: new MockLLMClient(JSON.stringify({
-        patterns: [
-          {
-            pattern_type: "recurring_task",
-            confidence: 0.88,
-            summary: "Retry verification after medium-confidence observation drift.",
-            evidence_refs: ["iter:goal-1:21", "iter:goal-1:22"],
-            metadata: { taskAction: "rerun_verification" },
-          },
-        ],
-      })),
-      learningPipeline: learningPipeline as never,
-    });
+  it("marks the run partial and skips persistence when the token budget is exhausted before analysis", async () => {
+    const tempDir = makeTempDir("dream-analyzer-budget-");
+    try {
+      const goalId = "goal-budget";
+      await writeJsonl(
+        path.join(tempDir, "goals", goalId, "iteration-logs.jsonl"),
+        Array.from({ length: 25 }, (_, index) => makeIteration(goalId, index))
+      );
 
-    const report = await analyzer.runLight({ goalIds: ["goal-1"] });
+      const stateManager = new StateManager(tempDir, undefined, { walEnabled: false });
+      await stateManager.init();
+      const learningPipeline = new LearningPipeline(makeMockLLM([[]]), null, stateManager);
+      const analyzer = new DreamAnalyzer({
+        baseDir: tempDir,
+        llmClient: makeMockLLM([
+          [
+            {
+              pattern_type: "strategy_effectiveness",
+              confidence: 0.91,
+              summary: "Tight loops outperform baseline strategy.",
+              evidence_refs: [`iter:${goalId}:10`],
+              metadata: { applicable_domains: ["strategy"] },
+            },
+          ],
+        ]),
+        learningPipeline,
+        config: {
+          minIterationsForAnalysis: 5,
+        },
+      });
 
-    expect(report.tier).toBe("light");
-    expect(report.phasesCompleted).toEqual(["A", "B"]);
-    expect(report.patternsPersisted).toBe(1);
-    expect(learningPipeline.savePatterns).toHaveBeenCalledTimes(1);
-    expect(saved.get("goal-1")).toHaveLength(1);
-  });
+      const report = await analyzer.runDeep({ tokenBudget: 10 });
 
-  it("runs deep analysis, writes schedule suggestions, and advances watermarks", async () => {
-    tmpDir = makeTempDir("dream-analyzer-deep-");
-    await seedDreamLogs(tmpDir, "goal-2", 30, {
-      sessionHours: [9, 9, 9, 11],
-      importanceLine: true,
-    });
-    const learningPipeline = {
-      getPatterns: vi.fn(async () => []),
-      savePatterns: vi.fn(async () => undefined),
-    };
-    const analyzer = new DreamAnalyzer({
-      baseDir: tmpDir,
-      llmClient: new MockLLMClient(JSON.stringify({
-        patterns: [
-          {
-            pattern_type: "strategy_effectiveness",
-            confidence: 0.82,
-            summary: "Pivoting after repeated stalls improves convergence.",
-            evidence_refs: ["iter:goal-2:10", "iter:goal-2:11"],
-            metadata: { applicable_domains: ["strategy"] },
-          },
-        ],
-      })),
-      learningPipeline: learningPipeline as never,
-    });
-
-    const report = await analyzer.runDeep({ goalIds: ["goal-2"] });
-    const suggestions = JSON.parse(
-      await fs.readFile(path.join(tmpDir, "dream", "schedule-suggestions.json"), "utf8")
-    ) as { suggestions: Array<{ goalId?: string; proposal: string }> };
-    const watermarks = JSON.parse(
-      await fs.readFile(path.join(tmpDir, "dream", "watermarks.json"), "utf8")
-    ) as { goals: Record<string, { lastProcessedLine: number }> };
-
-    expect(report.phasesCompleted).toEqual(["A", "B", "C"]);
-    expect(report.scheduleSuggestions).toBe(1);
-    expect(suggestions.suggestions[0]).toMatchObject({
-      goalId: "goal-2",
-      proposal: "0 9 * * *",
-    });
-    expect(watermarks.goals["goal-2"]?.lastProcessedLine).toBeGreaterThan(0);
+      expect(report.partial).toBe(true);
+      expect(report.phasesCompleted).toEqual(["A", "B"]);
+      expect(report.patternsPersisted).toBe(0);
+      expect(report.scheduleSuggestions).toBe(0);
+      expect(await learningPipeline.getPatterns(goalId)).toEqual([]);
+      expect(fs.existsSync(path.join(tempDir, "dream", "watermarks.json"))).toBe(false);
+      expect(fs.existsSync(path.join(tempDir, "dream", "schedule-suggestions.json"))).toBe(false);
+    } finally {
+      cleanupTempDir(tempDir);
+    }
   });
 });
-
-async function seedDreamLogs(
-  baseDir: string,
-  goalId: string,
-  count: number,
-  options: { sessionHours?: number[]; importanceLine?: boolean } = {}
-): Promise<void> {
-  const goalDir = path.join(baseDir, "goals", goalId);
-  const dreamDir = path.join(baseDir, "dream");
-  await fs.mkdir(goalDir, { recursive: true });
-  await fs.mkdir(dreamDir, { recursive: true });
-
-  const iterationLines = Array.from({ length: count }, (_, index) =>
-    JSON.stringify({
-      timestamp: new Date(Date.UTC(2026, 3, 7, 0, index, 0)).toISOString(),
-      goalId,
-      iteration: index,
-      sessionId: `${goalId}:session-1`,
-      gapAggregate: Math.max(0, 1 - index * 0.02),
-      driveScores: [{ dimensionName: "progress", score: 0.4 + index * 0.01 }],
-      taskId: `task-${index}`,
-      taskAction: "rerun_verification",
-      strategyId: "strategy-a",
-      verificationResult: {
-        verdict: index % 2 === 0 ? "pass" : "warn",
-        confidence: 0.7,
-        timestamp: new Date(Date.UTC(2026, 3, 7, 0, index, 0)).toISOString(),
-      },
-      stallDetected: index % 7 === 0,
-      stallSeverity: index % 7 === 0 ? 2 : null,
-      tokensUsed: 50,
-      elapsedMs: 1000,
-      skipped: false,
-      skipReason: null,
-      completionJudgment: {},
-      waitSuppressed: false,
-    })
-  ).join("\n");
-  await fs.writeFile(path.join(goalDir, "iteration-logs.jsonl"), `${iterationLines}\n`, "utf8");
-
-  const hours = options.sessionHours ?? [8, 9, 10];
-  const sessionLines = hours.map((hour, index) =>
-    JSON.stringify({
-      timestamp: new Date(Date.UTC(2026, 3, 7 + index, hour, 0, 0)).toISOString(),
-      goalId,
-      sessionId: `${goalId}:session-${index + 1}`,
-      iterationCount: 10,
-      finalGapAggregate: 0.2,
-      initialGapAggregate: 0.9,
-      totalTokensUsed: 500,
-      totalElapsedMs: 10_000,
-      stallCount: 1,
-      outcome: "completed",
-      strategiesUsed: ["strategy-a"],
-    })
-  ).join("\n");
-  await fs.writeFile(path.join(dreamDir, "session-logs.jsonl"), `${sessionLines}\n`, "utf8");
-
-  if (options.importanceLine) {
-    await fs.writeFile(
-      path.join(dreamDir, "importance-buffer.jsonl"),
-      `${JSON.stringify({
-        id: "imp-1",
-        timestamp: new Date(Date.UTC(2026, 3, 7, 0, 5, 0)).toISOString(),
-        goalId,
-        source: "verification",
-        importance: 0.9,
-        reason: "Repeated warning",
-        data_ref: `iter:${goalId}:5`,
-        tags: ["warning"],
-        processed: false,
-      })}\n`,
-      "utf8"
-    );
-  }
-}
