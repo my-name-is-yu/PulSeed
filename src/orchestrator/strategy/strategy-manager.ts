@@ -110,19 +110,19 @@ export class StrategyManager extends StrategyManagerBase {
         // WaitStrategy has allocation=0 and generates no tasks, so tasks_generated is always
         // empty. Instead, find the goal's current active task from the task-history log.
         // task-history.json holds an array ordered oldest→newest; scan from the end for the
-        // most recent in-progress or pending entry, falling back to the last entry overall.
+        // most recent running, in-progress, or pending entry, falling back to the last entry overall.
         const rawHistory = await this.stateManager.readRaw(
           `tasks/${goalId}/task-history.json`
         );
         if (!Array.isArray(rawHistory) || rawHistory.length === 0) continue;
 
         const history = rawHistory as Array<Record<string, unknown>>;
-        // Prefer the most recent in_progress task; fall back to the very last entry
+        // Prefer the most recent running/in_progress task; fall back to the very last entry
         let targetTask: Record<string, unknown> | undefined;
         for (let i = history.length - 1; i >= 0; i--) {
           const entry = history[i];
           if (!entry) continue;
-          if (entry["status"] === "in_progress" || entry["status"] === "pending") {
+          if (entry["status"] === "running" || entry["status"] === "in_progress" || entry["status"] === "pending") {
             targetTask = entry;
             break;
           }
