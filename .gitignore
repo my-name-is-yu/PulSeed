@@ -14,3 +14,10 @@ memory/
 web/.next/
 web/node_modules/
 web/tsconfig.tsbuildinfo
+
+# Non-public: stale, will revisit later
+web/
+src/adapters/datasources/openclaw-datasource.ts
+src/adapters/agents/openclaw-acp.ts
+src/adapters/__tests__/openclaw-acp.test.ts
+src/adapters/__tests__/openclaw-datasource.test.ts
