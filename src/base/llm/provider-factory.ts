@@ -30,7 +30,8 @@ let openClawAdapterCtorPromise: Promise<OpenClawACPAdapterCtor | undefined> | un
 
 async function loadOpenClawAdapterCtor(): Promise<OpenClawACPAdapterCtor | undefined> {
   if (!openClawAdapterCtorPromise) {
-    openClawAdapterCtorPromise = import("../../adapters/agents/openclaw-acp.js")
+    const openclawPath = "../../adapters/agents/openclaw-acp.js";
+    openClawAdapterCtorPromise = import(/* @vite-ignore */ openclawPath)
       .then((module) => module.OpenClawACPAdapter as OpenClawACPAdapterCtor)
       .catch((error: unknown) => {
         const code = typeof error === "object" && error !== null && "code" in error
