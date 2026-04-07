@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildChatViewport, getMatchingSuggestions, getScrollRequest } from "../chat.js";
+import { buildChatViewport, getMatchingSuggestions, getScrollRequest, stripMouseEscapeSequences } from "../chat.js";
 import { estimateMarkdownHeight, estimateWrappedLineCount, wrapTextToRows } from "../markdown-renderer.js";
 import { extractBashCommand, isBashModeInput, isSafeBashCommand, createShellApprovalTask, formatShellOutput } from "../bash-mode.js";
 
@@ -128,5 +128,14 @@ describe("chat scroll keys", () => {
     expect(getScrollRequest("d", { ctrl: true })).toMatchObject({ direction: "down", kind: "page" });
     expect(getScrollRequest("", { upArrow: true })).toBeNull();
     expect(getScrollRequest("", { downArrow: true })).toBeNull();
+  });
+
+  it("maps sgr mouse wheel sequences to line scroll requests", () => {
+    expect(getScrollRequest("\u001b[<64;40;12M", {})).toMatchObject({ direction: "up", kind: "line" });
+    expect(getScrollRequest("[<65;40;12M", {})).toMatchObject({ direction: "down", kind: "line" });
+  });
+
+  it("strips sgr mouse sequences from input text", () => {
+    expect(stripMouseEscapeSequences("hello\u001b[<64;40;12Mworld")).toBe("helloworld");
   });
 });

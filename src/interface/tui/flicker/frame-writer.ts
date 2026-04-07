@@ -3,7 +3,7 @@ import { isSynchronizedOutputSupported } from "./terminal-detect.js";
 
 export interface FrameWriter {
   /** Write a frame to the terminal, wrapped in BSU/ESU with cursor-home */
-  write(frame: string): void;
+  write(frame: string, cursorEscape?: string): void;
   /** Request an erase-screen on the next write (deferred into BSU/ESU block) */
   requestErase(): void;
   /** Clean up resources */
@@ -30,17 +30,17 @@ export function createFrameWriter(stream: NodeJS.WriteStream): FrameWriter {
   }
 
   return {
-    write(frame: string): void {
+    write(frame: string, cursorEscape?: string): void {
       if (destroyed) return;
 
       const rows = getTermRows();
       const prefix = syncSupported ? BSU : "";
       const suffix = syncSupported ? ESU : "";
       const erase = needsErase ? ERASE_SCREEN : "";
-      const park = parkCursor(rows);
+      const finalCursor = cursorEscape ?? parkCursor(rows);
 
       // Single rawWrite() call for atomicity — bypasses any stdout patches
-      rawWrite(prefix + erase + CURSOR_HOME + frame + park + suffix);
+      rawWrite(prefix + erase + CURSOR_HOME + frame + finalCursor + suffix);
 
       needsErase = false;
     },
