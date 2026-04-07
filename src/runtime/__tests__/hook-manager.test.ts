@@ -288,5 +288,22 @@ describe("HookManager", () => {
 
       await expect(manager.emit("LoopCycleStart", { goal_id: "g1" })).resolves.toBeUndefined();
     });
+
+    it("persists dream event logs for supported hook events", async () => {
+      const manager = new HookManager(tempDir);
+
+      await manager.emit("PostTaskCreate", { goal_id: "goal-1", data: { task_id: "task-42", status: "ok" } });
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      const eventPath = path.join(tempDir, "dream", "events", "goal-1.jsonl");
+      expect(fs.existsSync(eventPath)).toBe(true);
+
+      const [firstLine] = fs.readFileSync(eventPath, "utf-8").trim().split("\n");
+      const record = JSON.parse(firstLine!);
+      expect(record.eventType).toBe("PostTaskCreate");
+      expect(record.goalId).toBe("goal-1");
+      expect(record.taskId).toBe("task-42");
+      expect(record.data.status).toBe("ok");
+    });
   });
 });

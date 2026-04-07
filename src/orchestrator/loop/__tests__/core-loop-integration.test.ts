@@ -25,6 +25,7 @@ import { TrustManager } from "../../../platform/traits/trust-manager.js";
 import { CoreLoop } from "../core-loop.js";
 import { AdapterRegistry } from "../../execution/adapter-layer.js";
 import type { IAdapter, AgentTask, AgentResult } from "../../execution/adapter-layer.js";
+import { HookManager } from "../../../runtime/hook-manager.js";
 
 // ─── Pure function modules ───
 import * as GapCalculator from "../../../platform/drive/gap-calculator.js";
@@ -304,7 +305,8 @@ describe("CoreLoop integration — single iteration with real deps", () => {
 
   it("writes task record to StateManager after successful task cycle", async () => {
     const stateManager = new StateManager(tempDir);
-    const observationEngine = new ObservationEngine(stateManager);
+    const hookManager = new HookManager(tempDir);
+    const observationEngine = new ObservationEngine(stateManager, [], undefined, undefined, {}, undefined, undefined, hookManager);
     const sessionManager = new SessionManager(stateManager);
     const trustManager = new TrustManager(stateManager);
     const stallDetector = new StallDetector(stateManager);
@@ -325,7 +327,7 @@ describe("CoreLoop integration — single iteration with real deps", () => {
       trustManager,
       strategyManager,
       stallDetector,
-      { approvalFn: async (_task) => true, healthCheckEnabled: false }
+      { approvalFn: async (_task) => true, healthCheckEnabled: false, hookManager }
     );
 
     const adapterRegistry = new AdapterRegistry();
@@ -344,6 +346,7 @@ describe("CoreLoop integration — single iteration with real deps", () => {
         reportingEngine,
         driveSystem,
         adapterRegistry,
+        hookManager,
       },
       { maxIterations: 1, delayBetweenLoopsMs: 0 }
     );
@@ -352,6 +355,7 @@ describe("CoreLoop integration — single iteration with real deps", () => {
     await stateManager.saveGoal(goal);
 
     const result = await coreLoop.run(goalId);
+    await new Promise((resolve) => setTimeout(resolve, 100));
 
     // The iteration result should have a taskResult (unless task cycle failed)
     const iteration = result.iterations[0];
@@ -369,5 +373,13 @@ describe("CoreLoop integration — single iteration with real deps", () => {
       const taskOnDisk = await stateManager.readRaw(`tasks/${goalId}/${taskId}.json`);
       expect(taskOnDisk).toBeDefined();
     }
+
+    const iterationLogPath = `${tempDir}/goals/${goalId}/iteration-logs.jsonl`;
+    const sessionLogPath = `${tempDir}/dream/session-logs.jsonl`;
+    const eventLogPath = `${tempDir}/dream/events/${goalId}.jsonl`;
+
+    expect(fs.existsSync(iterationLogPath)).toBe(true);
+    expect(fs.existsSync(sessionLogPath)).toBe(true);
+    expect(fs.existsSync(eventLogPath)).toBe(true);
   });
 });

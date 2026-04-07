@@ -13,6 +13,7 @@ export const HookEventTypeSchema = z.enum([
   "LoopCycleStart",
   "LoopCycleEnd",
   "ReflectionComplete",
+  "StallDetected",
 ]);
 
 export type HookEventType = z.infer<typeof HookEventTypeSchema>;

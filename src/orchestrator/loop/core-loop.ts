@@ -122,6 +122,8 @@ export class CoreLoop {
    */
   async run(goalId: string, options?: { maxIterations?: number }): Promise<LoopResult> {
     const startedAt = new Date().toISOString();
+    const dreamCollector = this.deps.hookManager?.getDreamCollector();
+    const sessionId = dreamCollector?.buildSessionId(goalId, startedAt) ?? `${goalId}:${startedAt}`;
     this.stopped = false;
     // Reset state diff tracking for each run (snapshots are in-memory only)
     this.stateDiffState.clear();
@@ -235,6 +237,22 @@ export class CoreLoop {
       // Accumulate token usage from iteration.
       totalTokens += iterationResult.tokensUsed ?? 0;
 
+      if (!this.config.dryRun && dreamCollector) {
+        try {
+          await dreamCollector.appendIterationResult({
+            goalId,
+            sessionId,
+            iterationResult,
+          });
+        } catch (err) {
+          this.logger?.warn("CoreLoop: failed to persist dream iteration log", {
+            goalId,
+            loopIndex,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+
       // Save checkpoint after each successful verify step (§4.8)
       if (!this.config.dryRun && iterationResult.error === null && iterationResult.taskResult !== null) {
         await saveLoopCheckpoint(
@@ -342,8 +360,12 @@ export class CoreLoop {
     }
 
     // Run post-loop hooks (curiosity, memory lifecycle, archive, final report)
+    const completedAt = new Date().toISOString();
     await runPostLoopHooks({
       goalId,
+      sessionId,
+      completedAt,
+      totalTokensUsed: totalTokens,
       finalStatus,
       iterations,
       deps: this.deps,
@@ -362,7 +384,7 @@ export class CoreLoop {
       finalStatus,
       iterations,
       startedAt,
-      completedAt: new Date().toISOString(),
+      completedAt,
       tokensUsed: totalTokens,
     };
   }

@@ -15,6 +15,9 @@ import type { Logger } from "../../runtime/logger.js";
 
 export interface PostLoopHooksParams {
   goalId: string;
+  sessionId: string;
+  completedAt: string;
+  totalTokensUsed: number;
   finalStatus: LoopResult["finalStatus"];
   iterations: LoopIterationResult[];
   deps: CoreLoopDeps;
@@ -32,7 +35,18 @@ export interface PostLoopHooksParams {
  * Run all post-loop hooks in sequence. Each hook is non-fatal.
  */
 export async function runPostLoopHooks(params: PostLoopHooksParams): Promise<void> {
-  const { goalId, finalStatus, iterations, deps, config, logger, tryGenerateReport } = params;
+  const {
+    goalId,
+    sessionId,
+    completedAt,
+    totalTokensUsed,
+    finalStatus,
+    iterations,
+    deps,
+    config,
+    logger,
+    tryGenerateReport,
+  } = params;
 
   // Persist final status to disk before post-loop hooks
   if (finalStatus === "completed" && !config.dryRun) {
@@ -46,6 +60,24 @@ export async function runPostLoopHooks(params: PostLoopHooksParams): Promise<voi
       logger?.warn("CoreLoop: failed to persist final status", {
         goalId,
         finalStatus,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  if (!config.dryRun && iterations.length > 0) {
+    try {
+      await deps.hookManager?.getDreamCollector().appendSessionSummary({
+        goalId,
+        sessionId,
+        completedAt,
+        finalStatus,
+        iterations,
+        totalTokensUsed,
+      });
+    } catch (err) {
+      logger?.warn("CoreLoop: failed to persist dream session summary", {
+        goalId,
         error: err instanceof Error ? err.message : String(err),
       });
     }
