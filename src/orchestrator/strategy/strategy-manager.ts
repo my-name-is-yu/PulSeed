@@ -235,6 +235,12 @@ export class StrategyManager extends StrategyManagerBase {
     portfolio.strategies.push(waitStrategy);
     await this.savePortfolio(goalId, portfolio);
 
+    // Persist wait-specific fields in a sidecar so activateMultiple can read wait_until
+    await this.stateManager.writeRaw(
+      `strategies/${goalId}/wait-meta/${waitStrategy.id}.json`,
+      { wait_until: params.wait_until }
+    );
+
     this.strategyIndex.set(waitStrategy.id, goalId);
     return waitStrategy;
   }
