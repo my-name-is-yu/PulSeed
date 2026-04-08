@@ -141,6 +141,8 @@ describe("ChatRunner tool filtering integration", () => {
         const toolNames = (opts?.tools ?? []).map((t: { function: { name: string } }) => t.function.name);
         return {
           content: JSON.stringify({ seenTools: toolNames, call: callCount }),
+          usage: { input_tokens: 1, output_tokens: 1 },
+          stop_reason: "completed",
           tool_calls: [],
         } satisfies LLMResponse;
       }),
@@ -195,6 +197,8 @@ describe("ChatRunner tool filtering integration", () => {
           // First call: request tool_search
           return {
             content: "",
+            usage: { input_tokens: 1, output_tokens: 1 },
+            stop_reason: "tool_calls",
             tool_calls: [{
               id: "tc-1",
               type: "function",
@@ -205,6 +209,8 @@ describe("ChatRunner tool filtering integration", () => {
         // Second call: report which tools are now available
         return {
           content: JSON.stringify({ seenTools: toolNames }),
+          usage: { input_tokens: 1, output_tokens: 1 },
+          stop_reason: "completed",
           tool_calls: [],
         } satisfies LLMResponse;
       }),

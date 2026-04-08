@@ -134,11 +134,11 @@ export class EnvTool implements ITool<EnvInput, EnvOutput> {
     }
   }
 
-  async checkPermissions(): Promise<PermissionCheckResult> {
+  async checkPermissions(_input: EnvInput, _context?: ToolCallContext): Promise<PermissionCheckResult> {
     return { status: "allowed" };
   }
 
-  isConcurrencySafe(): boolean {
+  isConcurrencySafe(_input?: EnvInput): boolean {
     return true;
   }
 }

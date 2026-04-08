@@ -37,8 +37,13 @@ export class JsonQueryTool implements ITool<JsonQueryInput, unknown> {
     }
   }
 
-  async checkPermissions(): Promise<PermissionCheckResult> { return { status: "allowed" }; }
-  isConcurrencySafe(): boolean { return true; }
+  async checkPermissions(_input: JsonQueryInput, _context?: ToolCallContext): Promise<PermissionCheckResult> {
+    return { status: "allowed" };
+  }
+
+  isConcurrencySafe(_input?: JsonQueryInput): boolean {
+    return true;
+  }
 
   private queryPath(obj: unknown, query: string): unknown {
     const parts = query.split(".").flatMap((part) => {

@@ -17,7 +17,6 @@ function makeSupervisor(coreLoopImpl?: () => Promise<LoopResult> | never, extra:
   const eventBus = new EventBus();
   const mockCoreLoop = { run: vi.fn().mockImplementation(coreLoopImpl ?? (() => Promise.resolve(makeLoopResult()))), stop: vi.fn() };
   const deps = {
-    coreLoop: mockCoreLoop as any,
     coreLoopFactory: () => mockCoreLoop as any,
     eventBus,
     driveSystem: { shouldActivate: vi.fn(), prioritizeGoals: vi.fn(), startWatcher: vi.fn(), stopWatcher: vi.fn(), writeEvent: vi.fn() } as any,
@@ -49,7 +48,7 @@ describe("LoopSupervisor", () => {
   it("coalesces duplicate goal_activated via requestExtend (re-runs)", async () => {
     let callCount = 0;
     const eventBus = new EventBus();
-    const { supervisor, mockCoreLoop } = makeSupervisor(async (goalId: string) => {
+    const { supervisor, mockCoreLoop } = makeSupervisor((async (goalId: string) => {
       callCount++;
       if (callCount === 1) {
         eventBus.push(createEnvelope({ type: "event", name: "goal_activated",
@@ -57,7 +56,7 @@ describe("LoopSupervisor", () => {
         await new Promise((r) => setTimeout(r, 30));
       }
       return makeLoopResult({ goalId });
-    }, { eventBus } as any);
+    }) as unknown as () => Promise<LoopResult>, { eventBus } as any);
     await supervisor.start(["g1"]);
     await new Promise((r) => setTimeout(r, 200));
     await supervisor.shutdown();
@@ -82,7 +81,6 @@ describe("LoopSupervisor", () => {
     const eventBus = new EventBus();
     const sv = new LoopSupervisor(
       {
-        coreLoop: crashingLoop as any,
         coreLoopFactory: () => crashingLoop as any,
         eventBus,
         driveSystem: { shouldActivate: vi.fn(), prioritizeGoals: vi.fn(), startWatcher: vi.fn(), stopWatcher: vi.fn(), writeEvent: vi.fn() } as any,
@@ -124,7 +122,6 @@ describe("LoopSupervisor", () => {
     });
     const sv = new LoopSupervisor(
       {
-        coreLoop: { run: wrappedRun, stop: vi.fn() } as any,
         coreLoopFactory: () => ({ run: wrappedRun, stop: vi.fn() }) as any,
         eventBus,
         driveSystem: { shouldActivate: vi.fn(), prioritizeGoals: vi.fn(), startWatcher: vi.fn(), stopWatcher: vi.fn(), writeEvent: vi.fn() } as any,
@@ -225,10 +222,10 @@ describe("LoopSupervisor", () => {
 
   it('non-goal events do not consume idle worker slots', async () => {
     let goalRunCount = 0;
-    const { supervisor, eventBus } = makeSupervisor(async (goalId: string) => {
+    const { supervisor, eventBus } = makeSupervisor((async (goalId: string) => {
       goalRunCount++;
       return makeLoopResult({ goalId });
-    });
+    }) as unknown as () => Promise<LoopResult>);
 
     await supervisor.start([]);
 

@@ -26,7 +26,7 @@ export const MemoryConsolidateInputSchema = z.object({
     .default(50)
     .describe("Maximum raw entries to process"),
 });
-export type MemoryConsolidateInput = z.infer<typeof MemoryConsolidateInputSchema>;
+export type MemoryConsolidateInput = z.input<typeof MemoryConsolidateInputSchema>;
 
 export interface MemoryConsolidateOutput {
   compiledCount: number;
@@ -68,10 +68,11 @@ export class MemoryConsolidateTool implements ITool<MemoryConsolidateInput, Memo
     _context: ToolCallContext
   ): Promise<ToolResult> {
     const startTime = Date.now();
+    const parsedInput = this.inputSchema.parse(input);
     try {
       const result = await this.knowledgeManager.consolidateAgentMemory({
-        category: input.category,
-        memory_type: input.memory_type,
+        category: parsedInput.category,
+        memory_type: parsedInput.memory_type,
         llmCall: this.llmCall,
       });
 
@@ -79,9 +80,9 @@ export class MemoryConsolidateTool implements ITool<MemoryConsolidateInput, Memo
         compiledCount: result.compiled.length,
         archivedCount: result.archived,
         stats: {
-          category: input.category,
-          memory_type: input.memory_type,
-          max_entries: input.max_entries ?? 50,
+          category: parsedInput.category,
+          memory_type: parsedInput.memory_type,
+          max_entries: parsedInput.max_entries,
         },
       };
 

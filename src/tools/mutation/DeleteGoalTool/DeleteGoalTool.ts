@@ -88,7 +88,7 @@ export class DeleteGoalTool implements ITool<DeleteGoalInput, unknown> {
     };
   }
 
-  isConcurrencySafe(): boolean {
+  isConcurrencySafe(_input?: DeleteGoalInput): boolean {
     return false;
   }
 }

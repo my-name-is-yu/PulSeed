@@ -13,20 +13,24 @@ vi.mock("../../base/llm/provider-factory.js", () => ({
   }),
 }));
 
-vi.mock("../src/core/suggest/repo-context.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../core/suggest/repo-context.js")>();
+vi.mock("../src/core/suggest/repo-context.js", () => {
   return {
-    ...actual,
-    listSuggestRepoFiles: vi.fn(actual.listSuggestRepoFiles),
-    buildSuggestRepoContext: vi.fn(actual.buildSuggestRepoContext),
+    listSuggestRepoFiles: vi.fn().mockResolvedValue([]),
+    buildSuggestRepoContext: vi.fn().mockResolvedValue(""),
   };
 });
 
-vi.mock("../../loop/core-loop.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../loop/core-loop.js")>();
+vi.mock("../../../orchestrator/loop/core-loop.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../../orchestrator/loop/core-loop.js")>();
   return {
     ...actual,
-    CoreLoop: vi.fn(),
+    CoreLoop: vi.fn().mockImplementation(function() {
+      return {
+        run: vi.fn(),
+        stop: vi.fn(),
+        setTimeHorizonEngine: vi.fn(),
+      };
+    }),
   };
 });
 
@@ -94,8 +98,8 @@ vi.mock("../../execution/task/task-lifecycle.js", () => ({
   TaskLifecycle: vi.fn().mockImplementation(function() { return {}; }),
 }));
 
-vi.mock("../../reporting/reporting-engine.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../reporting/reporting-engine.js")>();
+vi.mock("../../../reporting/reporting-engine.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../../reporting/reporting-engine.js")>();
   return {
     ...actual,
     ReportingEngine: vi.fn().mockImplementation(function(...args: ConstructorParameters<typeof actual.ReportingEngine>) { return new actual.ReportingEngine(...args); }),

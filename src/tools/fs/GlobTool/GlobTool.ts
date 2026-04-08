@@ -55,11 +55,11 @@ export class GlobTool implements ITool<GlobInput, string[]> {
     }
   }
 
-  async checkPermissions(): Promise<PermissionCheckResult> {
+  async checkPermissions(_input: GlobInput, _context?: ToolCallContext): Promise<PermissionCheckResult> {
     return { status: "allowed" };
   }
 
-  isConcurrencySafe(): boolean {
+  isConcurrencySafe(_input?: GlobInput): boolean {
     return true;
   }
 }

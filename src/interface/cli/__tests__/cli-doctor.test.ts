@@ -348,7 +348,7 @@ describe("cmdDoctor summary counts", () => {
       delete process.env["PULSEED_HOME"];
     }
 
-    const allOutput = consoleSpy.mock.calls.map((c) => c[0] as string).join("\n");
+    const allOutput = consoleSpy.mock.calls.map((c: unknown[]) => c[0] as string).join("\n");
     expect(allOutput).toMatch(/Summary: \d+ passed, \d+ failed, \d+ warnings/);
   });
 
@@ -382,7 +382,7 @@ describe("cmdDoctor summary counts", () => {
 
     // Build check may fail (no dist/ in test env), but provider/dir/key/goals/logs should pass.
     // We only require no failures in the checks we control.
-    const allOutput = consoleSpy.mock.calls.map((c) => c[0] as string).join("\n");
+    const allOutput = consoleSpy.mock.calls.map((c: unknown[]) => c[0] as string).join("\n");
     expect(allOutput).toContain("Summary:");
     // Exit code depends on build check — just ensure it's 0 or 1 (a number).
     expect([0, 1]).toContain(exitCode);

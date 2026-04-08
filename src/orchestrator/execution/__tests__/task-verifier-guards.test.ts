@@ -434,8 +434,7 @@ describe("§4.6: runLLMReview Zod validation", () => {
 
     const task = makeTask({ success_criteria: [{ description: "Manual check", verification_method: "Manual review", is_blocking: true }] });
     const result = await verifyTask(deps, task, {
-      success: true, output: "done", error: null, exit_code: 0, stopped_reason: "end_turn",
-      session_id: "s1", started_at: new Date().toISOString(), completed_at: new Date().toISOString(), tokens_used: 0,
+      success: true, output: "done", error: null, exit_code: 0, elapsed_ms: 0, stopped_reason: "completed",
     });
     expect(result.verdict).toBe("pass");
   });
@@ -460,8 +459,7 @@ describe("§4.6: runLLMReview Zod validation", () => {
 
     const task = makeTask({ success_criteria: [{ description: "Manual check", verification_method: "Manual review", is_blocking: true }] });
     const result = await verifyTask(deps, task, {
-      success: false, output: "", error: null, exit_code: 1, stopped_reason: "end_turn",
-      session_id: "s1", started_at: new Date().toISOString(), completed_at: new Date().toISOString(), tokens_used: 0,
+      success: false, output: "", error: null, exit_code: 1, elapsed_ms: 0, stopped_reason: "completed",
     });
     // Invalid enum value triggers parse failure → fallback to fail
     expect(result.verdict).toBe("fail");
@@ -486,8 +484,7 @@ describe("§4.6: runLLMReview Zod validation", () => {
 
     const task = makeTask({ success_criteria: [{ description: "Manual check", verification_method: "Manual review", is_blocking: true }] });
     const result = await verifyTask(deps, task, {
-      success: false, output: "", error: null, exit_code: 1, stopped_reason: "end_turn",
-      session_id: "s1", started_at: new Date().toISOString(), completed_at: new Date().toISOString(), tokens_used: 0,
+      success: false, output: "", error: null, exit_code: 1, elapsed_ms: 0, stopped_reason: "completed",
     });
     expect(result.verdict).toBe("fail");
     expect(mockLogger.warn).toHaveBeenCalledWith(expect.stringContaining("JSON.parse failed"));
@@ -765,8 +762,7 @@ describe("Root Cause C: dimension_updates scaling", () => {
     });
 
     const result = await verifyTask(deps, task, {
-      success: true, output: "done", error: null, exit_code: 0, stopped_reason: "end_turn",
-      session_id: "s1", started_at: new Date().toISOString(), completed_at: new Date().toISOString(), tokens_used: 0,
+      success: true, output: "done", error: null, exit_code: 0, elapsed_ms: 0, stopped_reason: "completed",
     });
 
     expect(result.verdict).toBe("pass");
@@ -802,8 +798,7 @@ describe("Root Cause C: dimension_updates scaling", () => {
     });
 
     const result = await verifyTask(deps, task, {
-      success: true, output: "done", error: null, exit_code: 0, stopped_reason: "end_turn",
-      session_id: "s1", started_at: new Date().toISOString(), completed_at: new Date().toISOString(), tokens_used: 0,
+      success: true, output: "done", error: null, exit_code: 0, elapsed_ms: 0, stopped_reason: "completed",
     });
 
     const update = result.dimension_updates.find((u) => u.dimension_name === "count");
@@ -835,8 +830,7 @@ describe("Root Cause C: dimension_updates scaling", () => {
     });
 
     const result = await verifyTask(deps, task, {
-      success: true, output: "done", error: null, exit_code: 0, stopped_reason: "end_turn",
-      session_id: "s1", started_at: new Date().toISOString(), completed_at: new Date().toISOString(), tokens_used: 0,
+      success: true, output: "done", error: null, exit_code: 0, elapsed_ms: 0, stopped_reason: "completed",
     });
 
     const update = result.dimension_updates.find((u) => u.dimension_name === "score");
@@ -866,8 +860,7 @@ describe("Root Cause C: dimension_updates scaling", () => {
     });
 
     const result = await verifyTask(deps, task, {
-      success: true, output: "partial done", error: null, exit_code: 0, stopped_reason: "end_turn",
-      session_id: "s1", started_at: new Date().toISOString(), completed_at: new Date().toISOString(), tokens_used: 0,
+      success: true, output: "partial done", error: null, exit_code: 0, elapsed_ms: 0, stopped_reason: "completed",
     });
 
     const update = result.dimension_updates.find((u) => u.dimension_name === "dim");

@@ -77,11 +77,11 @@ export class PluginStateTool implements ITool<PluginStateToolInput, unknown> {
     }
   }
 
-  async checkPermissions(): Promise<PermissionCheckResult> {
+  async checkPermissions(_input: PluginStateToolInput, _context?: ToolCallContext): Promise<PermissionCheckResult> {
     return { status: "allowed" };
   }
 
-  isConcurrencySafe(): boolean {
+  isConcurrencySafe(_input?: PluginStateToolInput): boolean {
     return true;
   }
 }

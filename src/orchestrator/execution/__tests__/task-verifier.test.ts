@@ -98,11 +98,8 @@ describe("Task verifier malformed JSON regression", () => {
       output: "",
       error: null,
       exit_code: 1,
-      stopped_reason: "end_turn",
-      session_id: "s1",
-      started_at: new Date().toISOString(),
-      completed_at: new Date().toISOString(),
-      tokens_used: 0,
+      elapsed_ms: 10,
+      stopped_reason: "error",
     });
 
     expect(failedResult.verdict).toBe("fail");
@@ -114,11 +111,8 @@ describe("Task verifier malformed JSON regression", () => {
       output: "done",
       error: null,
       exit_code: 0,
-      stopped_reason: "end_turn",
-      session_id: "s2",
-      started_at: new Date().toISOString(),
-      completed_at: new Date().toISOString(),
-      tokens_used: 0,
+      elapsed_ms: 10,
+      stopped_reason: "completed",
     });
 
     expect(passedResult.verdict).toBe("pass");

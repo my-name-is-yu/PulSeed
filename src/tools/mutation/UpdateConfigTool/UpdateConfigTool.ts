@@ -79,7 +79,7 @@ export class UpdateConfigTool implements ITool<UpdateConfigInput, unknown> {
     return { status: "allowed" };
   }
 
-  isConcurrencySafe(): boolean {
+  isConcurrencySafe(_input?: UpdateConfigInput): boolean {
     return false;
   }
 }

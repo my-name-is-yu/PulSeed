@@ -47,7 +47,7 @@ describe("cmdLogs", () => {
   it("returns 1 and prints message when log file does not exist", async () => {
     const code = await cmdLogs([]);
     expect(code).toBe(1);
-    const output = stdoutSpy.mock.calls.map((c) => c[0]).join("");
+    const output = stdoutSpy.mock.calls.map((c: [string | Uint8Array]) => String(c[0])).join("");
     expect(output).toContain("No log file found at");
     expect(output).toContain("pulseed.log");
   });
@@ -64,7 +64,7 @@ describe("cmdLogs", () => {
     const code = await cmdLogs([]);
     expect(code).toBe(0);
 
-    const output = stdoutSpy.mock.calls.map((c) => c[0]).join("");
+    const output = stdoutSpy.mock.calls.map((c: [string | Uint8Array]) => String(c[0])).join("");
     // Should contain line 51-100 (last 50)
     expect(output).toContain("message 51");
     expect(output).toContain("message 100");
@@ -81,7 +81,7 @@ describe("cmdLogs", () => {
     const code = await cmdLogs(["--lines", "5"]);
     expect(code).toBe(0);
 
-    const output = stdoutSpy.mock.calls.map((c) => c[0]).join("");
+    const output = stdoutSpy.mock.calls.map((c: [string | Uint8Array]) => String(c[0])).join("");
     expect(output).toContain("msg 16");
     expect(output).toContain("msg 20");
     expect(output).not.toContain("msg 15\n");
@@ -97,7 +97,7 @@ describe("cmdLogs", () => {
     const code = await cmdLogs(["-n", "3"]);
     expect(code).toBe(0);
 
-    const output = stdoutSpy.mock.calls.map((c) => c[0]).join("");
+    const output = stdoutSpy.mock.calls.map((c: [string | Uint8Array]) => String(c[0])).join("");
     expect(output).toContain("dbg 8");
     expect(output).toContain("dbg 10");
     expect(output).not.toContain("dbg 7\n");
@@ -109,7 +109,7 @@ describe("cmdLogs", () => {
     const code = await cmdLogs([]);
     expect(code).toBe(0);
     // No lines printed — stdout should have no calls or empty calls
-    const output = stdoutSpy.mock.calls.map((c) => c[0]).join("");
+    const output = stdoutSpy.mock.calls.map((c: [string | Uint8Array]) => String(c[0])).join("");
     expect(output).toBe("");
   });
 
@@ -120,7 +120,7 @@ describe("cmdLogs", () => {
     const code = await cmdLogs(["--lines", "100"]);
     expect(code).toBe(0);
 
-    const output = stdoutSpy.mock.calls.map((c) => c[0]).join("");
+    const output = stdoutSpy.mock.calls.map((c: [string | Uint8Array]) => String(c[0])).join("");
     expect(output).toContain("only line");
   });
 
@@ -138,7 +138,7 @@ describe("cmdLogs", () => {
     const code = await cmdLogs(["--level", "ERROR"]);
     expect(code).toBe(0);
 
-    const output = stdoutSpy.mock.calls.map((c) => c[0]).join("");
+    const output = stdoutSpy.mock.calls.map((c: [string | Uint8Array]) => String(c[0])).join("");
     expect(output).toContain("error msg");
     expect(output).not.toContain("warn msg");
     expect(output).not.toContain("info msg");
@@ -157,7 +157,7 @@ describe("cmdLogs", () => {
     const code = await cmdLogs(["--level", "WARN"]);
     expect(code).toBe(0);
 
-    const output = stdoutSpy.mock.calls.map((c) => c[0]).join("");
+    const output = stdoutSpy.mock.calls.map((c: [string | Uint8Array]) => String(c[0])).join("");
     expect(output).toContain("warn msg");
     expect(output).toContain("error msg");
     expect(output).not.toContain("info msg");
@@ -175,7 +175,7 @@ describe("cmdLogs", () => {
     const code = await cmdLogs(["--level", "INFO"]);
     expect(code).toBe(0);
 
-    const output = stdoutSpy.mock.calls.map((c) => c[0]).join("");
+    const output = stdoutSpy.mock.calls.map((c: [string | Uint8Array]) => String(c[0])).join("");
     expect(output).toContain("info msg");
     expect(output).toContain("warn msg");
     expect(output).not.toContain("debug msg");
@@ -188,7 +188,7 @@ describe("cmdLogs", () => {
     const code = await cmdLogs(["--level", "error"]);
     expect(code).toBe(0);
 
-    const output = stdoutSpy.mock.calls.map((c) => c[0]).join("");
+    const output = stdoutSpy.mock.calls.map((c: [string | Uint8Array]) => String(c[0])).join("");
     expect(output).toContain("err");
     expect(output).not.toContain("dbg");
   });
@@ -199,7 +199,7 @@ describe("cmdLogs", () => {
     const code = await cmdLogs(["--level", "VERBOSE"]);
     expect(code).toBe(1);
 
-    const errOutput = stderrSpy.mock.calls.map((c) => c[0]).join("");
+    const errOutput = stderrSpy.mock.calls.map((c: [string | Uint8Array]) => String(c[0])).join("");
     expect(errOutput).toContain("Unknown log level");
     expect(errOutput).toContain("VERBOSE");
   });
@@ -221,7 +221,7 @@ describe("cmdLogs", () => {
 
     expect(code).toBe(0);
 
-    const output = stdoutSpy.mock.calls.map((c) => c[0]).join("");
+    const output = stdoutSpy.mock.calls.map((c: [string | Uint8Array]) => String(c[0])).join("");
     expect(output).toContain("existing line 1");
     expect(output).toContain("existing line 2");
   });
@@ -240,7 +240,7 @@ describe("cmdLogs", () => {
 
     expect(code).toBe(0);
 
-    const output = stdoutSpy.mock.calls.map((c) => c[0]).join("");
+    const output = stdoutSpy.mock.calls.map((c: [string | Uint8Array]) => String(c[0])).join("");
     expect(output).toContain("error existing");
     expect(output).not.toContain("debug existing");
   });

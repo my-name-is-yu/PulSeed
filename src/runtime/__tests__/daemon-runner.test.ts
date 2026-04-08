@@ -193,12 +193,12 @@ describe("DaemonRunner", () => {
       daemon.stop();
       await startPromise;
 
-      expect((deps.coreLoop as { run: ReturnType<typeof vi.fn> }).run).toHaveBeenCalledWith("goal-1", { maxIterations: 10 });
+      expect((deps.coreLoop as unknown as { run: ReturnType<typeof vi.fn> }).run).toHaveBeenCalledWith("goal-1", { maxIterations: 10 });
     });
 
     it("should skip goals that shouldActivate returns false for", async () => {
       const deps = makeDeps(tmpDir, { config: { check_interval_ms: 50 } });
-      (deps.driveSystem as { shouldActivate: ReturnType<typeof vi.fn> }).shouldActivate.mockReturnValue(false);
+      (deps.driveSystem as unknown as { shouldActivate: ReturnType<typeof vi.fn> }).shouldActivate.mockReturnValue(false);
 
       const daemon = new DaemonRunner(deps);
       currentDaemon = daemon;
@@ -208,7 +208,7 @@ describe("DaemonRunner", () => {
       daemon.stop();
       await startPromise;
 
-      expect((deps.coreLoop as { run: ReturnType<typeof vi.fn> }).run).not.toHaveBeenCalled();
+      expect((deps.coreLoop as unknown as { run: ReturnType<typeof vi.fn> }).run).not.toHaveBeenCalled();
     });
 
     it("should pass active_goals to daemon state from start() argument", async () => {
@@ -302,7 +302,7 @@ describe("DaemonRunner", () => {
           crash_recovery: { enabled: true, max_retries: 5, retry_delay_ms: 10 },
         },
       });
-      (deps.coreLoop as { run: ReturnType<typeof vi.fn> }).run.mockRejectedValueOnce(
+      (deps.coreLoop as unknown as { run: ReturnType<typeof vi.fn> }).run.mockRejectedValueOnce(
         new Error("simulated failure")
       );
 
@@ -326,7 +326,7 @@ describe("DaemonRunner", () => {
           crash_recovery: { enabled: true, max_retries: 5, retry_delay_ms: 10 },
         },
       });
-      (deps.coreLoop as { run: ReturnType<typeof vi.fn> }).run.mockRejectedValueOnce(
+      (deps.coreLoop as unknown as { run: ReturnType<typeof vi.fn> }).run.mockRejectedValueOnce(
         new Error("boom!")
       );
 
@@ -354,7 +354,7 @@ describe("DaemonRunner", () => {
         },
       });
       // Always fail
-      (deps.coreLoop as { run: ReturnType<typeof vi.fn> }).run.mockRejectedValue(
+      (deps.coreLoop as unknown as { run: ReturnType<typeof vi.fn> }).run.mockRejectedValue(
         new Error("always fails")
       );
 
@@ -374,7 +374,7 @@ describe("DaemonRunner", () => {
           crash_recovery: { enabled: true, max_retries: 2, retry_delay_ms: 5 },
         },
       });
-      (deps.coreLoop as { run: ReturnType<typeof vi.fn> }).run.mockRejectedValue(
+      (deps.coreLoop as unknown as { run: ReturnType<typeof vi.fn> }).run.mockRejectedValue(
         new Error("always fails")
       );
 
@@ -486,7 +486,7 @@ describe("DaemonRunner", () => {
     it("should record loop_count increments for each successful run", async () => {
       const deps = makeDeps(tmpDir, { config: { check_interval_ms: 20 } });
       // Always resolve quickly so loop runs multiple times
-      (deps.coreLoop as { run: ReturnType<typeof vi.fn> }).run.mockResolvedValue(makeLoopResult());
+      (deps.coreLoop as unknown as { run: ReturnType<typeof vi.fn> }).run.mockResolvedValue(makeLoopResult());
 
       const daemon = new DaemonRunner(deps);
       currentDaemon = daemon;
@@ -542,7 +542,7 @@ describe("DaemonRunner", () => {
       daemon.stop();
       await startPromise;
 
-      expect((deps.coreLoop as { run: ReturnType<typeof vi.fn> }).run).toHaveBeenCalledWith(
+      expect((deps.coreLoop as unknown as { run: ReturnType<typeof vi.fn> }).run).toHaveBeenCalledWith(
         "goal-fast",
         { maxIterations: 10 }
       );
@@ -575,7 +575,7 @@ describe("DaemonRunner", () => {
     it("should complete current loop before stopping", async () => {
       let loopRunCount = 0;
       const deps = makeDeps(tmpDir, { config: { check_interval_ms: 50 } });
-      (deps.coreLoop as { run: ReturnType<typeof vi.fn> }).run.mockImplementation(async () => {
+      (deps.coreLoop as unknown as { run: ReturnType<typeof vi.fn> }).run.mockImplementation(async () => {
         loopRunCount++;
         // Simulate a loop that takes some time
         await new Promise((resolve) => setTimeout(resolve, 10));
@@ -631,7 +631,7 @@ describe("DaemonRunner", () => {
 
       // Make the loop hang indefinitely so graceful shutdown times out
       let resolveLoop: (() => void) | null = null;
-      (deps.coreLoop as { run: ReturnType<typeof vi.fn> }).run.mockImplementation(() => {
+      (deps.coreLoop as unknown as { run: ReturnType<typeof vi.fn> }).run.mockImplementation(() => {
         return new Promise<LoopResult>((resolve) => {
           resolveLoop = () => resolve(makeLoopResult());
         });
@@ -652,7 +652,7 @@ describe("DaemonRunner", () => {
       // which exits the loop even though the current iteration is stuck
       // We also need to resolve the hanging loop for the test to complete
       await new Promise((resolve) => setTimeout(resolve, 80));
-      if (resolveLoop) resolveLoop();
+      (resolveLoop as (() => void) | null)?.();
 
       await expect(startPromise).resolves.toBeUndefined();
     });
@@ -877,7 +877,7 @@ describe("DaemonRunner", () => {
         deps.driveSystem as unknown as { stopWatcher: () => void }
       ).stopWatcher = vi.fn();
 
-      const runSpy = deps.coreLoop as { run: ReturnType<typeof vi.fn> };
+      const runSpy = deps.coreLoop as unknown as { run: ReturnType<typeof vi.fn> };
 
       const daemon = new DaemonRunner(deps);
       currentDaemon = daemon;
@@ -956,7 +956,7 @@ describe("DaemonRunner", () => {
         llmClient: llmClient as unknown as DaemonDeps["llmClient"],
       });
       // No goals should activate
-      (deps.driveSystem as { shouldActivate: ReturnType<typeof vi.fn> }).shouldActivate.mockReturnValue(false);
+      (deps.driveSystem as unknown as { shouldActivate: ReturnType<typeof vi.fn> }).shouldActivate.mockReturnValue(false);
 
       const daemon = new DaemonRunner(deps);
       currentDaemon = daemon;
@@ -979,7 +979,7 @@ describe("DaemonRunner", () => {
         },
         llmClient: llmClient as unknown as DaemonDeps["llmClient"],
       });
-      (deps.driveSystem as { shouldActivate: ReturnType<typeof vi.fn> }).shouldActivate.mockReturnValue(false);
+      (deps.driveSystem as unknown as { shouldActivate: ReturnType<typeof vi.fn> }).shouldActivate.mockReturnValue(false);
 
       const daemon = new DaemonRunner(deps);
       currentDaemon = daemon;
@@ -1002,7 +1002,7 @@ describe("DaemonRunner", () => {
         },
         llmClient: llmClient as unknown as DaemonDeps["llmClient"],
       });
-      (deps.driveSystem as { shouldActivate: ReturnType<typeof vi.fn> }).shouldActivate.mockReturnValue(false);
+      (deps.driveSystem as unknown as { shouldActivate: ReturnType<typeof vi.fn> }).shouldActivate.mockReturnValue(false);
 
       const daemon = new DaemonRunner(deps);
       currentDaemon = daemon;
@@ -1028,7 +1028,7 @@ describe("DaemonRunner", () => {
         llmClient: llmClient as unknown as DaemonDeps["llmClient"],
       });
       // Goals DO activate
-      (deps.driveSystem as { shouldActivate: ReturnType<typeof vi.fn> }).shouldActivate.mockReturnValue(true);
+      (deps.driveSystem as unknown as { shouldActivate: ReturnType<typeof vi.fn> }).shouldActivate.mockReturnValue(true);
 
       const daemon = new DaemonRunner(deps);
       currentDaemon = daemon;
@@ -1055,7 +1055,7 @@ describe("DaemonRunner", () => {
         },
         llmClient: llmClient as unknown as DaemonDeps["llmClient"],
       });
-      (deps.driveSystem as { shouldActivate: ReturnType<typeof vi.fn> }).shouldActivate.mockReturnValue(false);
+      (deps.driveSystem as unknown as { shouldActivate: ReturnType<typeof vi.fn> }).shouldActivate.mockReturnValue(false);
 
       const daemon = new DaemonRunner(deps);
       currentDaemon = daemon;
@@ -1078,7 +1078,7 @@ describe("DaemonRunner", () => {
         },
         llmClient: llmClient as unknown as DaemonDeps["llmClient"],
       });
-      (deps.driveSystem as { shouldActivate: ReturnType<typeof vi.fn> }).shouldActivate.mockReturnValue(false);
+      (deps.driveSystem as unknown as { shouldActivate: ReturnType<typeof vi.fn> }).shouldActivate.mockReturnValue(false);
 
       const daemon = new DaemonRunner(deps);
       currentDaemon = daemon;
@@ -1101,7 +1101,7 @@ describe("DaemonRunner", () => {
         },
         llmClient: llmClient as unknown as DaemonDeps["llmClient"],
       });
-      (deps.driveSystem as { shouldActivate: ReturnType<typeof vi.fn> }).shouldActivate.mockReturnValue(false);
+      (deps.driveSystem as unknown as { shouldActivate: ReturnType<typeof vi.fn> }).shouldActivate.mockReturnValue(false);
 
       const daemon = new DaemonRunner(deps);
       currentDaemon = daemon;
@@ -1123,7 +1123,7 @@ describe("DaemonRunner", () => {
         },
         llmClient: llmClient as unknown as DaemonDeps["llmClient"],
       });
-      (deps.driveSystem as { shouldActivate: ReturnType<typeof vi.fn> }).shouldActivate.mockReturnValue(false);
+      (deps.driveSystem as unknown as { shouldActivate: ReturnType<typeof vi.fn> }).shouldActivate.mockReturnValue(false);
 
       const daemon = new DaemonRunner(deps);
       currentDaemon = daemon;
@@ -1383,7 +1383,7 @@ describe("DaemonRunner", () => {
       daemon.stop();
       await startPromise;
 
-      const runMock = (deps.coreLoop as { run: ReturnType<typeof vi.fn> }).run;
+      const runMock = (deps.coreLoop as unknown as { run: ReturnType<typeof vi.fn> }).run;
       expect(runMock).toHaveBeenCalledWith("goal-1", { maxIterations: 10 });
     });
 
@@ -1401,7 +1401,7 @@ describe("DaemonRunner", () => {
       daemon.stop();
       await startPromise;
 
-      const runMock = (deps.coreLoop as { run: ReturnType<typeof vi.fn> }).run;
+      const runMock = (deps.coreLoop as unknown as { run: ReturnType<typeof vi.fn> }).run;
       expect(runMock).toHaveBeenCalledWith("goal-1", { maxIterations: iterationsPerCycle });
     });
 
@@ -1425,7 +1425,7 @@ describe("DaemonRunner", () => {
         llmClient: llmClient as unknown as DaemonDeps["llmClient"],
       });
       // Goals activate — this is the condition that used to block proactiveTick
-      (deps.driveSystem as { shouldActivate: ReturnType<typeof vi.fn> }).shouldActivate.mockReturnValue(true);
+      (deps.driveSystem as unknown as { shouldActivate: ReturnType<typeof vi.fn> }).shouldActivate.mockReturnValue(true);
 
       const daemon = new DaemonRunner(deps);
       currentDaemon = daemon;

@@ -125,7 +125,7 @@ function makeCapabilityAcquiringResult(
     },
     verificationResult: {
       task_id: "task-1",
-      verdict: "inconclusive",
+      verdict: "partial",
       confidence: 0.5,
       evidence: [],
       dimension_updates: [],

@@ -5,6 +5,7 @@ import { StateManager } from "../../../base/state/state-manager.js";
 import { EthicsGate } from "../../../platform/traits/ethics-gate.js";
 import { GoalDependencyGraph } from "../goal-dependency-graph.js";
 import { GoalTreeManager } from "../goal-tree-manager.js";
+import type { Goal } from "../../../base/types/goal.js";
 import type { GoalDecompositionConfig } from "../../../base/types/goal-tree.js";
 import { createMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
 import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
@@ -583,7 +584,9 @@ describe("N-layer decomposition (depth 3-5)", async () => {
     const manager = new GoalTreeManager(stateManager, mockLLM, ethicsGate, dependencyGraph);
 
     await manager.decomposeGoal(root.id, SHALLOW_CONFIG);
-    const child = (await stateManager.loadGoal((await stateManager.loadGoal(root.id))?.children_ids[0])!);
+    const savedRoot = await stateManager.loadGoal(root.id);
+    const childId = savedRoot?.children_ids[0];
+    const child = childId ? await stateManager.loadGoal(childId) : null;
     // At max_depth, forced leaf
     expect(child?.node_type).toBe("leaf");
   });
@@ -940,7 +943,7 @@ describe("GoalDependencyGraph integration", async () => {
       dimensions: [
         { name: "d1", label: "D1", current_value: 0, threshold: { type: "min", value: 10 }, confidence: 0.8, observation_method: { type: "manual" as const, source: "t", schedule: null, endpoint: null, confidence_tier: "self_report" as const }, last_updated: new Date().toISOString(), history: [], weight: 1, uncertainty_weight: null, state_integrity: "ok", dimension_mapping: null },
         { name: "d2", label: "D2", current_value: 0, threshold: { type: "min", value: 20 }, confidence: 0.8, observation_method: { type: "manual" as const, source: "t", schedule: null, endpoint: null, confidence_tier: "self_report" as const }, last_updated: new Date().toISOString(), history: [], weight: 1, uncertainty_weight: null, state_integrity: "ok", dimension_mapping: null },
-        { name: "d3", label: "D3", current_value: 0, threshold: { type: "present", value: null }, confidence: 0.8, observation_method: { type: "manual" as const, source: "t", schedule: null, endpoint: null, confidence_tier: "self_report" as const }, last_updated: new Date().toISOString(), history: [], weight: 1, uncertainty_weight: null, state_integrity: "ok", dimension_mapping: null },
+        { name: "d3", label: "D3", current_value: 0, threshold: { type: "present" }, confidence: 0.8, observation_method: { type: "manual" as const, source: "t", schedule: null, endpoint: null, confidence_tier: "self_report" as const }, last_updated: new Date().toISOString(), history: [], weight: 1, uncertainty_weight: null, state_integrity: "ok", dimension_mapping: null },
       ],
     });
     await stateManager.saveGoal(goal);

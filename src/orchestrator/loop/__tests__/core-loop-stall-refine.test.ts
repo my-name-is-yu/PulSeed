@@ -112,6 +112,11 @@ function buildPhaseCtx(
       goalIds: [],
       minIterations: 1,
       autoArchive: false,
+      dryRun: false,
+      maxConsecutiveSkips: 5,
+      autoDecompose: true,
+      autoConsolidateOnComplete: true,
+      consolidationRawThreshold: 20,
     },
     logger: undefined,
   };

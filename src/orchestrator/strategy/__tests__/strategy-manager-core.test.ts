@@ -58,6 +58,47 @@ const CANDIDATE_RESPONSE_TWO = `\`\`\`json
 ]
 \`\`\``;
 
+function makeStrategy(overrides: Partial<Strategy> = {}): Strategy {
+  return {
+    id: "strategy-1",
+    goal_id: "goal-1",
+    primary_dimension: "word_count",
+    target_dimensions: ["word_count"],
+    hypothesis: "Test strategy",
+    expected_effect: [],
+    resource_estimate: { sessions: 1, duration: { value: 1, unit: "days" }, llm_calls: null },
+    state: "candidate",
+    allocation: 0,
+    created_at: new Date().toISOString(),
+    started_at: null,
+    completed_at: null,
+    gap_snapshot_at_start: null,
+    tasks_generated: [],
+    effectiveness_score: null,
+    consecutive_stall_count: 0,
+    source_template_id: null,
+    cross_goal_context: null,
+    rollback_target_id: null,
+    max_pivot_count: 2,
+    pivot_count: 0,
+    toolset_locked: false,
+    allowed_tools: [],
+    required_tools: [],
+    ...overrides,
+  };
+}
+
+const STRATEGY_TEMPLATES_ACTIVATION = {
+  semanticWorkingMemory: false,
+  crossGoalLessons: false,
+  semanticContext: false,
+  autoAcquireKnowledge: false,
+  learnedPatternHints: false,
+  strategyTemplates: true,
+  decisionHeuristics: false,
+  graphTraversal: false,
+} as const;
+
 // ─── Test Setup ───
 
 let tempDir: string;
@@ -150,24 +191,13 @@ describe("generateCandidates", () => {
   });
 
   it("includes past strategies in the prompt (does not throw)", async () => {
-    const pastStrategy: Strategy = {
+    const pastStrategy: Strategy = makeStrategy({
       id: "old-strategy-1",
-      goal_id: "goal-1",
-      primary_dimension: "word_count",
-      target_dimensions: ["word_count"],
       hypothesis: "Old approach that failed",
-      expected_effect: [],
       resource_estimate: { sessions: 5, duration: { value: 7, unit: "days" }, llm_calls: null },
       state: "terminated",
-      allocation: 0,
-      created_at: new Date().toISOString(),
-      started_at: null,
-      completed_at: null,
-      gap_snapshot_at_start: null,
-      tasks_generated: [],
-      effectiveness_score: null,
       consecutive_stall_count: 1,
-    };
+    });
 
     const mock = createMockLLMClient([CANDIDATE_RESPONSE_ONE]);
     const manager = new StrategyManager(stateManager, mock);
@@ -183,7 +213,10 @@ describe("generateCandidates", () => {
   it("prepends a template-backed candidate when strategyTemplates is enabled", async () => {
     const mock = createMockLLMClient([CANDIDATE_RESPONSE_ONE]);
     const manager = new StrategyManager(stateManager, mock);
-    await saveDreamConfig({ activation: { strategyTemplates: true } }, stateManager.getBaseDir());
+    await saveDreamConfig(
+      { activation: STRATEGY_TEMPLATES_ACTIVATION },
+      stateManager.getBaseDir()
+    );
     await stateManager.saveGoal({
       id: "goal-1",
       title: "Improve research throughput",
@@ -225,7 +258,10 @@ describe("generateCandidates", () => {
   it("assigns unique ids to repeated template-backed candidates", async () => {
     const mock = createMockLLMClient([CANDIDATE_RESPONSE_ONE, CANDIDATE_RESPONSE_ONE]);
     const manager = new StrategyManager(stateManager, mock);
-    await saveDreamConfig({ activation: { strategyTemplates: true } }, stateManager.getBaseDir());
+    await saveDreamConfig(
+      { activation: STRATEGY_TEMPLATES_ACTIVATION },
+      stateManager.getBaseDir()
+    );
     await stateManager.saveGoal({
       id: "goal-1",
       title: "Improve research throughput",
@@ -269,42 +305,20 @@ describe("generateCandidates", () => {
 
   it("applies decision heuristics without double-counting prefer/avoid deltas", async () => {
     const candidates = [
-      {
+      makeStrategy({
         id: "cand-1",
-        goal_id: "goal-1",
         primary_dimension: "research_depth",
         target_dimensions: ["research_depth"],
         hypothesis: "Use the Pomodoro technique for focused research sessions",
-        expected_effect: [],
-        resource_estimate: { sessions: 1, duration: { value: 1, unit: "days" }, llm_calls: null },
-        state: "candidate",
         allocation: 0.6,
-        created_at: new Date().toISOString(),
-        started_at: null,
-        completed_at: null,
-        gap_snapshot_at_start: null,
-        tasks_generated: [],
-        effectiveness_score: null,
-        consecutive_stall_count: 0,
-      },
-      {
+      }),
+      makeStrategy({
         id: "cand-2",
-        goal_id: "goal-1",
         primary_dimension: "research_depth",
         target_dimensions: ["research_depth"],
         hypothesis: "Create a structured outline before each writing session",
-        expected_effect: [],
-        resource_estimate: { sessions: 1, duration: { value: 1, unit: "days" }, llm_calls: null },
-        state: "candidate",
         allocation: 0.4,
-        created_at: new Date().toISOString(),
-        started_at: null,
-        completed_at: null,
-        gap_snapshot_at_start: null,
-        tasks_generated: [],
-        effectiveness_score: null,
-        consecutive_stall_count: 0,
-      },
+      }),
     ] satisfies Strategy[];
 
     const reordered = applyDecisionHeuristicsToCandidates(

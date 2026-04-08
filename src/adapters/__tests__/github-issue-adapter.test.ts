@@ -259,9 +259,10 @@ describe("GitHubIssueAdapter.execute", () => {
     expect(result.success).toBe(true);
     // Verify the repo was passed to gh (check spawn args — find the issue create call)
     const spawnCalls = mockSpawn.mock.calls;
-    const createCall = spawnCalls.find(
-      ([cmd, args]: [string, string[]]) => cmd === "gh" && args.includes("create")
-    );
+    const createCall = spawnCalls.find((call) => {
+      const [cmd, args] = call as [string, unknown];
+      return cmd === "gh" && Array.isArray(args) && args.includes("create");
+    });
     expect(createCall).toBeDefined();
     const args: string[] = createCall![1] as string[];
     expect(args.join(" ")).toContain("env-owner/env-repo");
@@ -280,9 +281,10 @@ describe("GitHubIssueAdapter.execute", () => {
     await executePromise;
 
     const spawnCalls = mockSpawn.mock.calls;
-    const createCall = spawnCalls.find(
-      ([cmd, args]: [string, string[]]) => cmd === "gh" && args.includes("create")
-    );
+    const createCall = spawnCalls.find((call) => {
+      const [cmd, args] = call as [string, unknown];
+      return cmd === "gh" && Array.isArray(args) && args.includes("create");
+    });
     expect(createCall).toBeDefined();
     const args: string[] = createCall![1] as string[];
     expect(args.join(" ")).toContain("config-owner/config-repo");
@@ -308,9 +310,10 @@ describe("GitHubIssueAdapter.execute", () => {
     await executePromise;
 
     const spawnCalls = mockSpawn.mock.calls;
-    const createCall = spawnCalls.find(
-      ([cmd, args]: [string, string[]]) => cmd === "gh" && args.includes("create")
-    );
+    const createCall = spawnCalls.find((call) => {
+      const [cmd, args] = call as [string, unknown];
+      return cmd === "gh" && Array.isArray(args) && args.includes("create");
+    });
     expect(createCall).toBeDefined();
     const args: string[] = createCall![1] as string[];
 
@@ -441,9 +444,10 @@ describe("GitHubIssueAdapter.checkOpenIssueExists", () => {
     await promise;
 
     const spawnCalls = mockSpawn.mock.calls;
-    const listCall = spawnCalls.find(
-      ([cmd, args]: [string, string[]]) => cmd === "gh" && args.includes("list")
-    );
+    const listCall = spawnCalls.find((call) => {
+      const [cmd, args] = call as [string, unknown];
+      return cmd === "gh" && Array.isArray(args) && args.includes("list");
+    });
     expect(listCall).toBeDefined();
     const args: string[] = listCall![1] as string[];
     expect(args.join(" ")).toContain("owner/repo");
@@ -636,9 +640,10 @@ describe("GitHubIssueAdapter.listExistingTasks", () => {
     await promise;
 
     const spawnCalls = mockSpawn.mock.calls;
-    const listCall = spawnCalls.find(
-      ([cmd, args]: [string, string[]]) => cmd === "gh" && args.includes("list")
-    );
+    const listCall = spawnCalls.find((call) => {
+      const [cmd, args] = call as [string, unknown];
+      return cmd === "gh" && Array.isArray(args) && args.includes("list");
+    });
     expect(listCall).toBeDefined();
     const args: string[] = listCall![1] as string[];
     expect(args.join(" ")).toContain("custom-label");

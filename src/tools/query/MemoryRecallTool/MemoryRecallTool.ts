@@ -49,7 +49,7 @@ export const MemoryRecallInputSchema = z.object({
     .default("keyword")
     .describe("Search mode: keyword (substring match) or semantic (embedding-based similarity)"),
 });
-export type MemoryRecallInput = z.infer<typeof MemoryRecallInputSchema>;
+export type MemoryRecallInput = z.input<typeof MemoryRecallInputSchema>;
 
 export interface MemoryRecallOutput {
   entries: AgentMemoryEntry[];
@@ -85,17 +85,18 @@ export class MemoryRecallTool
     _context: ToolCallContext
   ): Promise<ToolResult> {
     const startTime = Date.now();
+    const parsedInput = this.inputSchema.parse(input);
 
     try {
       const entries = await this.knowledgeManager.recallAgentMemory(
-        input.query,
+        parsedInput.query,
         {
-          exact: input.exact,
-          category: input.category,
-          memory_type: input.memory_type,
-          limit: input.limit,
-          include_archived: input.include_archived,
-          semantic: input.mode === "semantic",
+          exact: parsedInput.exact,
+          category: parsedInput.category,
+          memory_type: parsedInput.memory_type,
+          limit: parsedInput.limit,
+          include_archived: parsedInput.include_archived,
+          semantic: parsedInput.mode === "semantic",
         }
       );
 
@@ -107,7 +108,7 @@ export class MemoryRecallTool
       return {
         success: true,
         data: output,
-        summary: `Found ${entries.length} memory entries for query "${input.query}"`,
+        summary: `Found ${entries.length} memory entries for query "${parsedInput.query}"`,
         durationMs: Date.now() - startTime,
       };
     } catch (err) {
@@ -121,11 +122,11 @@ export class MemoryRecallTool
     }
   }
 
-  async checkPermissions(): Promise<PermissionCheckResult> {
+  async checkPermissions(_input?: MemoryRecallInput, _context?: ToolCallContext): Promise<PermissionCheckResult> {
     return { status: "allowed" };
   }
 
-  isConcurrencySafe(): boolean {
+  isConcurrencySafe(_input?: MemoryRecallInput): boolean {
     return true;
   }
 }

@@ -86,17 +86,17 @@ describe("ReadTool", () => {
   });
 
   it("checkPermissions flags .env files", async () => {
-    const result = await tool.checkPermissions({ file_path: ".env", limit: 2000 }, makeContext(tmpDir));
+    const result = await tool.checkPermissions({ file_path: ".env", limit: 2000 });
     expect(result.status).toBe("needs_approval");
   });
 
   it("checkPermissions flags credentials files", async () => {
-    const result = await tool.checkPermissions({ file_path: "/path/to/credentials.json", limit: 2000 }, makeContext(tmpDir));
+    const result = await tool.checkPermissions({ file_path: "/path/to/credentials.json", limit: 2000 });
     expect(result.status).toBe("needs_approval");
   });
 
   it("checkPermissions allows normal files", async () => {
-    const result = await tool.checkPermissions({ file_path: "config.json", limit: 2000 }, makeContext(tmpDir));
+    const result = await tool.checkPermissions({ file_path: "config.json", limit: 2000 });
     expect(result.status).toBe("allowed");
   });
 

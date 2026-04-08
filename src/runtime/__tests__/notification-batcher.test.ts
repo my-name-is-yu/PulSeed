@@ -76,7 +76,7 @@ describe("NotificationBatcher.add()", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     flushCb = vi.fn().mockResolvedValue(undefined);
-    batcher = new NotificationBatcher(makeConfig(), flushCb);
+    batcher = new NotificationBatcher(makeConfig(), flushCb as unknown as (digest: Report) => Promise<void>);
   });
 
   afterEach(async () => {
@@ -133,7 +133,7 @@ describe("NotificationBatcher.flush()", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     flushCb = vi.fn().mockResolvedValue(undefined);
-    batcher = new NotificationBatcher(makeConfig(), flushCb);
+    batcher = new NotificationBatcher(makeConfig(), flushCb as unknown as (digest: Report) => Promise<void>);
   });
 
   afterEach(() => {
@@ -188,7 +188,7 @@ describe("NotificationBatcher.flush()", () => {
   it("flush() uses detailed format when configured", async () => {
     const detailedBatcher = new NotificationBatcher(
       makeConfig({ digest_format: "detailed" }),
-      flushCb
+      flushCb as unknown as (digest: Report) => Promise<void>
     );
     detailedBatcher.add(
       makeReport({ report_type: "execution_summary", goal_id: "goal-1", title: "My Title", content: "My Content" })
@@ -211,7 +211,10 @@ describe("NotificationBatcher — timer", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     flushCb = vi.fn().mockResolvedValue(undefined);
-    batcher = new NotificationBatcher(makeConfig({ window_minutes: 1 }), flushCb);
+    batcher = new NotificationBatcher(
+      makeConfig({ window_minutes: 1 }),
+      flushCb as unknown as (digest: Report) => Promise<void>
+    );
   });
 
   afterEach(() => {
@@ -245,7 +248,7 @@ describe("NotificationBatcher.stop()", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     flushCb = vi.fn().mockResolvedValue(undefined);
-    batcher = new NotificationBatcher(makeConfig(), flushCb);
+    batcher = new NotificationBatcher(makeConfig(), flushCb as unknown as (digest: Report) => Promise<void>);
   });
 
   afterEach(() => {

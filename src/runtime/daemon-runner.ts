@@ -36,7 +36,7 @@ export { rotateDaemonLog, calculateAdaptiveInterval } from "./daemon-health.js";
 // state: "running"        — daemon is active; if found on startup, previous instance crashed
 // state: "clean_shutdown" — daemon exited gracefully via SIGTERM/SIGINT or stop()
 
-interface ShutdownMarker {
+export interface ShutdownMarker {
   goal_ids: string[];
   loop_index: number;
   timestamp: string;   // ISO 8601

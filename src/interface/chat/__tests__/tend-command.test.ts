@@ -73,8 +73,8 @@ function makeMockStateManager(goal: Goal | null = null): StateManager {
 
 function makeChatHistory(): ChatMessage[] {
   return [
-    { role: "user", content: "The login is broken", timestamp: new Date().toISOString() },
-    { role: "assistant", content: "I can help fix that", timestamp: new Date().toISOString() },
+    { role: "user", content: "The login is broken", timestamp: new Date().toISOString(), turnIndex: 0 },
+    { role: "assistant", content: "I can help fix that", timestamp: new Date().toISOString(), turnIndex: 1 },
   ];
 }
 
@@ -102,8 +102,8 @@ describe("TendCommand", () => {
   describe("summarizeChat", () => {
     it("returns LLM summary from chat history", async () => {
       const history: ChatMessage[] = [
-        { role: "user", content: "Fix the login bug", timestamp: new Date().toISOString() },
-        { role: "assistant", content: "Sure, I'll look into it", timestamp: new Date().toISOString() },
+        { role: "user", content: "Fix the login bug", timestamp: new Date().toISOString(), turnIndex: 0 },
+        { role: "assistant", content: "Sure, I'll look into it", timestamp: new Date().toISOString(), turnIndex: 1 },
       ];
       const llmClient = makeMockLLMClient("Fix the login authentication bug");
       const result = await cmd.summarizeChat(history, llmClient);
@@ -123,7 +123,7 @@ describe("TendCommand", () => {
         sendMessage: vi.fn().mockRejectedValue(new Error("Network timeout")),
       } as unknown as ILLMClient;
       const history: ChatMessage[] = [
-        { role: "user", content: "Fix the bug", timestamp: new Date().toISOString() },
+        { role: "user", content: "Fix the bug", timestamp: new Date().toISOString(), turnIndex: 0 },
       ];
       await expect(cmd.summarizeChat(history, llmClient)).rejects.toThrow("Failed to summarize chat");
     });

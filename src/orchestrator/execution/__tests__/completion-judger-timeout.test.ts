@@ -67,8 +67,7 @@ function makeExecutionResult(): AgentResult {
     error: null,
     exit_code: 0,
     stopped_reason: "completed",
-    adapter_type: "mock",
-    execution_time_ms: 100,
+    elapsed_ms: 100,
   };
 }
 

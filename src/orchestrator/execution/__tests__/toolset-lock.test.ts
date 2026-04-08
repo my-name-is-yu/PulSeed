@@ -222,6 +222,7 @@ describe("executeTask toolset_locked warning", () => {
       max_pivot_count: 2,
       pivot_count: 0,
       toolset_locked: true,
+      required_tools: [],
       allowed_tools: [], // empty — should trigger warning
     };
 

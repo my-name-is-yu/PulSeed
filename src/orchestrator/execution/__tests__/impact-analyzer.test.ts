@@ -8,15 +8,19 @@ import { ImpactAnalysisSchema } from "../../../base/types/pipeline.js";
 function makeDeps(responseContent: string): ImpactAnalyzerDeps {
   return {
     llmClient: {
-      sendMessage: vi.fn(async () => ({ content: responseContent, usage: { input_tokens: 10, output_tokens: 50 } })),
+      sendMessage: vi.fn(async () => ({
+        content: responseContent,
+        usage: { input_tokens: 10, output_tokens: 50 },
+        stop_reason: "completed",
+      })),
       parseJSON: vi.fn(),
-    },
+    } as unknown as ImpactAnalyzerDeps["llmClient"],
     logger: {
       info: vi.fn(),
       error: vi.fn(),
       warn: vi.fn(),
       debug: vi.fn(),
-    },
+    } as unknown as ImpactAnalyzerDeps["logger"],
   };
 }
 
@@ -83,13 +87,13 @@ describe("analyzeImpact", () => {
       llmClient: {
         sendMessage: vi.fn(async () => { throw new Error("network error"); }),
         parseJSON: vi.fn(),
-      },
+      } as unknown as ImpactAnalyzerDeps["llmClient"],
       logger: {
         info: vi.fn(),
         error: vi.fn(),
         warn: vi.fn(),
         debug: vi.fn(),
-      },
+      } as unknown as ImpactAnalyzerDeps["logger"],
     };
     const result = await analyzeImpact(deps, makeContext());
 

@@ -90,6 +90,12 @@ async function saveGoal(overrides: Partial<Goal> = {}): Promise<Goal> {
   return g;
 }
 
+async function loadGoalOrThrow(id: string): Promise<Goal> {
+  const goal = await stateManager.loadGoal(id);
+  expect(goal).not.toBeNull();
+  return goal!;
+}
+
 // ─── Helper: build a simple parent–children tree ───
 async function buildSimpleTree(
   numChildren: number,
@@ -551,7 +557,8 @@ describe("onNodeCompleted — loop_status reset", async () => {
     const node = await saveGoal({ id: "n1", loop_status: "running" });
     await orchestrator.onNodeCompleted(node.id);
     const updated = await stateManager.loadGoal("n1");
-    expect(updated?.updated_at >= before).toBe(true);
+    expect(updated?.updated_at).toBeDefined();
+    expect(updated!.updated_at >= before).toBe(true);
   });
 });
 
@@ -610,10 +617,7 @@ describe("onNodeCompleted — completion cascade", async () => {
     await saveGoal({ id: "c2", node_type: "leaf", parent_id: "parent", status: "active", loop_status: "running" });
 
     // Complete c2 — now all children are done
-    await stateManager.saveGoal({
-      ...await stateManager.loadGoal("c2")!,
-      status: "completed",
-    });
+    await stateManager.saveGoal({ ...(await loadGoalOrThrow("c2")), status: "completed" });
     await orchestrator.onNodeCompleted("c2");
 
     const parent = await stateManager.loadGoal("parent");
@@ -647,7 +651,7 @@ describe("onNodeCompleted — completion cascade", async () => {
     await saveGoal({ id: "c1", node_type: "leaf", parent_id: "parent", status: "cancelled" });
     await saveGoal({ id: "c2", node_type: "leaf", parent_id: "parent", status: "active", loop_status: "running" });
 
-    await stateManager.saveGoal({ ...await stateManager.loadGoal("c2")!, status: "completed" });
+    await stateManager.saveGoal({ ...(await loadGoalOrThrow("c2")), status: "completed" });
     await orchestrator.onNodeCompleted("c2");
 
     const parent = await stateManager.loadGoal("parent");
@@ -660,7 +664,7 @@ describe("onNodeCompleted — completion cascade", async () => {
     await saveGoal({ id: "mid", node_type: "subgoal", parent_id: "root", status: "active", children_ids: ["leaf1"] });
     await saveGoal({ id: "leaf1", node_type: "leaf", parent_id: "mid", status: "active", loop_status: "running" });
 
-    await stateManager.saveGoal({ ...await stateManager.loadGoal("leaf1")!, status: "completed" });
+    await stateManager.saveGoal({ ...(await loadGoalOrThrow("leaf1")), status: "completed" });
     await orchestrator.onNodeCompleted("leaf1");
 
     const mid = await stateManager.loadGoal("mid");
@@ -675,7 +679,7 @@ describe("onNodeCompleted — completion cascade", async () => {
     await saveGoal({ id: "mid2", node_type: "subgoal", parent_id: "root", status: "active", children_ids: [] });
     await saveGoal({ id: "leaf1", node_type: "leaf", parent_id: "mid1", status: "active", loop_status: "running" });
 
-    await stateManager.saveGoal({ ...await stateManager.loadGoal("leaf1")!, status: "completed" });
+    await stateManager.saveGoal({ ...(await loadGoalOrThrow("leaf1")), status: "completed" });
     await orchestrator.onNodeCompleted("leaf1");
 
     // mid1 should complete (all its children done), but root should not (mid2 still active)
@@ -689,7 +693,7 @@ describe("onNodeCompleted — completion cascade", async () => {
     await saveGoal({ id: "root", node_type: "goal", status: "completed", children_ids: ["c1"] });
     await saveGoal({ id: "c1", node_type: "leaf", parent_id: "root", status: "active", loop_status: "running" });
 
-    await stateManager.saveGoal({ ...await stateManager.loadGoal("c1")!, status: "completed" });
+    await stateManager.saveGoal({ ...(await loadGoalOrThrow("c1")), status: "completed" });
     await orchestrator.onNodeCompleted("c1");
 
     const root = await stateManager.loadGoal("root");
@@ -700,7 +704,7 @@ describe("onNodeCompleted — completion cascade", async () => {
     await saveGoal({ id: "root", node_type: "goal", status: "active", children_ids: ["c1"] });
     await saveGoal({ id: "c1", node_type: "leaf", parent_id: "root", loop_status: "running", status: "active" });
 
-    await stateManager.saveGoal({ ...await stateManager.loadGoal("c1")!, status: "completed" });
+    await stateManager.saveGoal({ ...(await loadGoalOrThrow("c1")), status: "completed" });
     await orchestrator.onNodeCompleted("c1");
 
     const c1 = await stateManager.loadGoal("c1");
@@ -711,7 +715,7 @@ describe("onNodeCompleted — completion cascade", async () => {
     await saveGoal({ id: "parent", status: "active", children_ids: ["c1"] });
     await saveGoal({ id: "c1", node_type: "leaf", parent_id: "parent", status: "active", loop_status: "running" });
 
-    await stateManager.saveGoal({ ...await stateManager.loadGoal("c1")!, status: "completed" });
+    await stateManager.saveGoal({ ...(await loadGoalOrThrow("c1")), status: "completed" });
     await orchestrator.onNodeCompleted("c1");
 
     expect((await stateManager.loadGoal("parent"))?.status).toBe("completed");
@@ -723,7 +727,7 @@ describe("onNodeCompleted — completion cascade", async () => {
     await saveGoal({ id: "l3", parent_id: "l2", status: "active", children_ids: ["leaf"] });
     await saveGoal({ id: "leaf", node_type: "leaf", parent_id: "l3", status: "active", loop_status: "running" });
 
-    await stateManager.saveGoal({ ...await stateManager.loadGoal("leaf")!, status: "completed" });
+    await stateManager.saveGoal({ ...(await loadGoalOrThrow("leaf")), status: "completed" });
     await orchestrator.onNodeCompleted("leaf");
 
     expect((await stateManager.loadGoal("l3"))?.status).toBe("completed");
@@ -736,7 +740,7 @@ describe("onNodeCompleted — completion cascade", async () => {
     await saveGoal({ id: "mid", node_type: "subgoal", parent_id: "root", status: "active", children_ids: ["leaf"] });
     await saveGoal({ id: "leaf", node_type: "leaf", parent_id: "mid", status: "active", loop_status: "running" });
 
-    await stateManager.saveGoal({ ...await stateManager.loadGoal("leaf")!, status: "completed" });
+    await stateManager.saveGoal({ ...(await loadGoalOrThrow("leaf")), status: "completed" });
     await orchestrator.onNodeCompleted("leaf");
 
     expect((await stateManager.loadGoal("mid"))?.status).toBe("completed");
@@ -765,7 +769,8 @@ describe("pauseNodeLoop", async () => {
     await saveGoal({ id: "g1", loop_status: "running" });
     await orchestrator.pauseNodeLoop("g1");
     const updated = await stateManager.loadGoal("g1");
-    expect(updated?.updated_at >= before).toBe(true);
+    expect(updated?.updated_at).toBeDefined();
+    expect(updated!.updated_at >= before).toBe(true);
   });
 
   it("can pause an idle node too", async () => {
@@ -809,7 +814,8 @@ describe("resumeNodeLoop", async () => {
     await saveGoal({ id: "g1", loop_status: "paused" });
     await orchestrator.resumeNodeLoop("g1");
     const updated = await stateManager.loadGoal("g1");
-    expect(updated?.updated_at >= before).toBe(true);
+    expect(updated?.updated_at).toBeDefined();
+    expect(updated!.updated_at >= before).toBe(true);
   });
 
   it("resumed node is counted toward active_loops", async () => {
@@ -963,7 +969,7 @@ describe("edge cases", async () => {
     await saveGoal({ id: "leaf1", node_type: "leaf", parent_id: "branch1", status: "active", loop_status: "running" });
     await saveGoal({ id: "leaf2", node_type: "leaf", parent_id: "branch2", status: "active" });
 
-    await stateManager.saveGoal({ ...await stateManager.loadGoal("leaf1")!, status: "completed" });
+    await stateManager.saveGoal({ ...(await loadGoalOrThrow("leaf1")), status: "completed" });
     await orchestrator.onNodeCompleted("leaf1");
 
     // branch1 completed, but branch2 and root should not be

@@ -76,6 +76,7 @@ function makeShortTermEntry(
     tags: ["tag1"],
     data: { key: "value" },
     embedding_id: null,
+    memory_tier: "core",
     ...overrides,
   };
 }

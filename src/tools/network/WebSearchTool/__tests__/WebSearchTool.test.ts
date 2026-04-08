@@ -107,7 +107,7 @@ describe("TavilySearchClient", () => {
   beforeEach(() => {
     originalFetch = global.fetch;
     mockFetch = vi.fn();
-    global.fetch = mockFetch;
+    global.fetch = mockFetch as typeof fetch;
   });
 
   afterEach(() => {

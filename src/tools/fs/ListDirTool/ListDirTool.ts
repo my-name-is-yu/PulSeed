@@ -62,11 +62,11 @@ export class ListDirTool implements ITool<ListDirInput, DirEntry[]> {
     }
   }
 
-  async checkPermissions(): Promise<PermissionCheckResult> {
+  async checkPermissions(_input: ListDirInput, _context?: ToolCallContext): Promise<PermissionCheckResult> {
     return { status: "allowed" };
   }
 
-  isConcurrencySafe(): boolean {
+  isConcurrencySafe(_input?: ListDirInput): boolean {
     return true;
   }
 }

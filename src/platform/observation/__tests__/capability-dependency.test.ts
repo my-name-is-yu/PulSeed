@@ -37,7 +37,7 @@ beforeEach(() => {
   tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-dep-test-"));
   stateManager = new StateManager(tempDir);
   reportingEngine = new ReportingEngine(stateManager);
-  detector = new CapabilityDetector(stateManager, createMockLLMClient("{}"), reportingEngine);
+  detector = new CapabilityDetector(stateManager, createMockLLMClient(["{}"]), reportingEngine);
 });
 
 afterEach(() => {
@@ -176,7 +176,7 @@ describe("addDependency / getDependencies", () => {
     // Create a new detector pointing at the same tempDir
     const detector2 = new CapabilityDetector(
       stateManager,
-      createMockLLMClient("{}"),
+      createMockLLMClient(["{}"]),
       reportingEngine
     );
     expect(await detector2.getDependencies("cap-X")).toEqual(["cap-Y"]);

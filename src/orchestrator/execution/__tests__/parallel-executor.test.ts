@@ -105,8 +105,10 @@ describe("ParallelExecutor", () => {
     const executor = new ParallelExecutor(deps);
     await executor.execute(group, { goalId: "g1" });
 
-    const calls = pipelineExecutor.run.mock.calls;
-    const prompts = calls.map((c) => (c[1] as { prompt: string }).prompt);
+    const calls = (pipelineExecutor.run as ReturnType<typeof vi.fn>).mock.calls as Array<
+      [string, { prompt: string }]
+    >;
+    const prompts = calls.map((c) => c[1].prompt);
     expect(prompts).toContain("Do work for t1");
     expect(prompts).toContain("Do work for t2");
   });
@@ -160,7 +162,7 @@ describe("ParallelExecutor", () => {
 
   it("respects dependency ordering — t2 runs after t1", async () => {
     const callOrder: string[] = [];
-    pipelineExecutor.run.mockImplementation(async (taskId: string) => {
+    (pipelineExecutor.run as ReturnType<typeof vi.fn>).mockImplementation(async (taskId: string) => {
       callOrder.push(taskId);
       return makePipelineResult("pass");
     });
@@ -211,7 +213,7 @@ describe("ParallelExecutor", () => {
 
   it("continues executing other tasks when one fails (no fail_fast at group level)", async () => {
     let callCount = 0;
-    pipelineExecutor.run.mockImplementation(async (taskId: string) => {
+    (pipelineExecutor.run as ReturnType<typeof vi.fn>).mockImplementation(async (taskId: string) => {
       callCount++;
       if (taskId === "t1") return makePipelineResult("fail", "t1 failed");
       return makePipelineResult("pass", "t2 ok");
@@ -336,7 +338,7 @@ describe("ParallelExecutor", () => {
   it("maintains correct result order when semaphore reorders execution", async () => {
     const callOrder: string[] = [];
 
-    pipelineExecutor.run.mockImplementation(async (taskId: string) => {
+    (pipelineExecutor.run as ReturnType<typeof vi.fn>).mockImplementation(async (taskId: string) => {
       callOrder.push(taskId);
       await new Promise((resolve) => setTimeout(resolve, 5));
       return makePipelineResult("pass", `output-${taskId}`);

@@ -89,6 +89,7 @@ function makeGoal(id: string): Goal {
         weight: 1.0,
         uncertainty_weight: null,
         state_integrity: "ok",
+        dimension_mapping: null,
       },
     ],
     gap_aggregation: "max",
@@ -103,6 +104,9 @@ function makeGoal(id: string): Goal {
     user_override: false,
     feasibility_note: null,
     uncertainty_weight: 1.0,
+    decomposition_depth: 0,
+    specificity_score: null,
+    loop_status: "idle",
     created_at: now,
     updated_at: now,
   };
@@ -208,7 +212,11 @@ describe("CoreLoop integration — single iteration with real deps", () => {
         stateManager,
         observationEngine,
         gapCalculator: GapCalculator,
-        driveScorer: DriveScorer,
+        driveScorer: {
+          scoreAllDimensions: (gapVector, context, config) =>
+            DriveScorer.scoreAllDimensions(gapVector, context, config as never),
+          rankDimensions: DriveScorer.rankDimensions,
+        },
         taskLifecycle,
         satisficingJudge,
         stallDetector,
@@ -286,7 +294,11 @@ describe("CoreLoop integration — single iteration with real deps", () => {
         stateManager,
         observationEngine,
         gapCalculator: GapCalculator,
-        driveScorer: DriveScorer,
+        driveScorer: {
+          scoreAllDimensions: (gapVector, context, config) =>
+            DriveScorer.scoreAllDimensions(gapVector, context, config as never),
+          rankDimensions: DriveScorer.rankDimensions,
+        },
         taskLifecycle,
         satisficingJudge,
         stallDetector,
@@ -338,7 +350,11 @@ describe("CoreLoop integration — single iteration with real deps", () => {
         stateManager,
         observationEngine,
         gapCalculator: GapCalculator,
-        driveScorer: DriveScorer,
+        driveScorer: {
+          scoreAllDimensions: (gapVector, context, config) =>
+            DriveScorer.scoreAllDimensions(gapVector, context, config as never),
+          rankDimensions: DriveScorer.rankDimensions,
+        },
         taskLifecycle,
         satisficingJudge,
         stallDetector,

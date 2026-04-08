@@ -177,11 +177,11 @@ export class KnowledgeQueryTool
     return this._keywordSearch(input);
   }
 
-  async checkPermissions(): Promise<PermissionCheckResult> {
+  async checkPermissions(_input: KnowledgeQueryInput, _context?: ToolCallContext): Promise<PermissionCheckResult> {
     return { status: "allowed" };
   }
 
-  isConcurrencySafe(): boolean {
+  isConcurrencySafe(_input?: KnowledgeQueryInput): boolean {
     return true;
   }
 }

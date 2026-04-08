@@ -3,11 +3,13 @@ import { ShellTool } from "../ShellTool.js";
 import type { ToolCallContext } from "../../../types.js";
 
 const makeContext = (cwd = "/tmp"): ToolCallContext => ({
-  goalId: "goal-1",
-  sessionId: "session-1",
   cwd,
+  goalId: "goal-1",
+  trustBalance: 50,
+  preApproved: false,
+  approvalFn: async () => false,
+  sessionId: "session-1",
   dryRun: false,
-  permissionLevel: "read_metrics",
 });
 
 describe("ShellTool", () => {
@@ -46,7 +48,9 @@ describe("ShellTool", () => {
     it("denies rm command", async () => {
       const result = await tool.checkPermissions({ command: "rm foo.txt", timeoutMs: 120_000 });
       expect(result.status).toBe("denied");
-      expect(result.reason).toContain("Denied");
+      if (result.status === "denied") {
+        expect(result.reason).toContain("Denied");
+      }
     });
 
     it("denies git push", async () => {

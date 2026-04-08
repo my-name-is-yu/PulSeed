@@ -55,7 +55,6 @@ describe("readCodexOAuthToken", () => {
       tokens: { access_token: token, refresh_token: "rt_abc" },
       last_refresh: "2026-01-01T00:00:00Z",
     });
-    // @ts-expect-error — overloaded signature; we only need utf-8 read
     mockReadFile.mockResolvedValueOnce(authJson);
 
     const result = await readCodexOAuthToken();
@@ -74,7 +73,6 @@ describe("readCodexOAuthToken", () => {
     const authJson = JSON.stringify({
       tokens: { access_token: token },
     });
-    // @ts-expect-error — overloaded signature
     mockReadFile.mockResolvedValueOnce(authJson);
 
     const result = await readCodexOAuthToken();
@@ -83,7 +81,6 @@ describe("readCodexOAuthToken", () => {
 
   it("returns undefined when tokens.access_token is missing", async () => {
     const authJson = JSON.stringify({ auth_mode: "chatgpt", tokens: {} });
-    // @ts-expect-error — overloaded signature
     mockReadFile.mockResolvedValueOnce(authJson);
 
     const result = await readCodexOAuthToken();
@@ -124,7 +121,6 @@ describe("loadProviderConfig OAuth fallback", () => {
       tokens: { access_token: validToken },
     });
 
-    // @ts-expect-error — overloaded signature; we only need utf-8 read
     mockReadFile.mockImplementation(async (filePath: unknown) => {
       if (filePath === providerJsonPath) return providerJson;
       if (filePath === authJsonPath) return authJson;

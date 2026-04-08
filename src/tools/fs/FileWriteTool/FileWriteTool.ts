@@ -92,7 +92,7 @@ export class FileWriteTool implements ITool<FileWriteInput, FileWriteOutput> {
     return { status: "allowed" };
   }
 
-  isConcurrencySafe(): boolean {
+  isConcurrencySafe(_input?: FileWriteInput): boolean {
     return false;
   }
 }

@@ -57,6 +57,18 @@ describe("TaskCreateTool", () => {
         targetDimensions: ["coverage"],
         primaryDimension: "coverage",
         work_description: "Delegate test improvement to sub-agent",
+        rationale: "Improve coverage",
+        approach: "Delegate and verify",
+        success_criteria: [],
+        scope_boundary: {
+          in_scope: ["src"],
+          out_of_scope: [],
+          blast_radius: "low",
+        },
+        constraints: [],
+        reversibility: "reversible",
+        estimated_duration: null,
+        task_category: "normal",
       },
       makeContext()
     );
@@ -79,7 +91,16 @@ describe("TaskCreateTool", () => {
         work_description: "Run implementation in a sub-agent",
         rationale: "Keep parent loop clean",
         approach: "Spawn sub-agent and verify output",
+        success_criteria: [],
+        scope_boundary: {
+          in_scope: ["src"],
+          out_of_scope: [],
+          blast_radius: "low",
+        },
         constraints: ["Do not change package.json"],
+        reversibility: "reversible",
+        estimated_duration: null,
+        task_category: "normal",
       },
       makeContext()
     );

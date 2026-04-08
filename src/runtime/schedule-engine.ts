@@ -9,7 +9,9 @@ import {
   ScheduleEntryListSchema,
   ScheduleResultSchema,
   type ScheduleEntry,
+  type ScheduleEntryInput,
   type ScheduleResult,
+  type ScheduleTriggerInput,
 } from "./types/schedule.js";
 import { executeCron, executeGoalTrigger, executeProbe } from "./schedule-engine-layers.js";
 import type { IDataSourceAdapter } from "../platform/observation/data-source-adapter.js";
@@ -90,7 +92,7 @@ export class ScheduleEngine {
 
   async addEntry(
     input: Omit<
-      ScheduleEntry,
+      ScheduleEntryInput,
       | "id"
       | "created_at"
       | "updated_at"
@@ -492,7 +494,7 @@ export class ScheduleEngine {
 
   // ─── Schedule computation ───
 
-  private computeNextFireAt(trigger: ScheduleEntry["trigger"]): string {
+  private computeNextFireAt(trigger: ScheduleTriggerInput): string {
     if (trigger.type === "cron") {
       const next = CronExpressionParser.parse(trigger.expression, { tz: trigger.timezone || "UTC" }).next();
       return next.toISOString() ?? new Date().toISOString();

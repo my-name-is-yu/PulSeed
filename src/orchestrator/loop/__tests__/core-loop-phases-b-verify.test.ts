@@ -19,24 +19,38 @@ function makeGoal(overrides: Partial<Goal> = {}): Goal {
     dimensions: [
       {
         name: "coverage",
+        label: "Coverage",
         threshold: { type: "min" as const, value: 80 },
         current_value: 50,
         confidence: 0.7,
         weight: 1.0,
         last_updated: new Date().toISOString(),
-        observation_method: { type: "llm" as const },
+        observation_method: {
+          type: "llm_review" as const,
+          source: "test",
+          schedule: null,
+          endpoint: null,
+          confidence_tier: "independent_review" as const,
+        },
+        history: [],
+        uncertainty_weight: null,
+        state_integrity: "ok" as const,
+        dimension_mapping: null,
       },
     ],
     gap_aggregation: "max",
     uncertainty_weight: 1.0,
     status: "active",
-    origin: "general",
+    origin: "manual",
     children_ids: [],
     deadline: null,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
     ...overrides,
-  };
+    parent_id: overrides.parent_id ?? null,
+    node_type: overrides.node_type ?? "goal",
+    dimension_mapping: overrides.dimension_mapping ?? null,
+  } as Goal;
 }
 
 function makeCriteria(overrides: Partial<Criterion> = {}): Criterion[] {
@@ -102,7 +116,9 @@ function makeToolResult(success: boolean, error?: string) {
 
 function makeToolExecutor(resultOverride?: { success: boolean; error?: string }) {
   const result = resultOverride ?? { success: true };
-  return { execute: vi.fn().mockResolvedValue(makeToolResult(result.success, result.error)) };
+  return {
+    execute: vi.fn().mockResolvedValue(makeToolResult(result.success, result.error)),
+  } as unknown as PhaseCtx["toolExecutor"];
 }
 
 function makeStateManager(goal: Goal | null = null) {
@@ -181,7 +197,7 @@ function makeBasePhaseCtx(toolExecutor?: PhaseCtx["toolExecutor"]): PhaseCtx {
       dryRun: false,
       maxConsecutiveSkips: 5,
       autoDecompose: false,
-    },
+    } as unknown as PhaseCtx["config"],
     logger: undefined,
     toolExecutor,
   };

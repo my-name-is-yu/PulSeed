@@ -64,6 +64,8 @@ function makeLLMClientWithToolCall(toolName: string, toolArgs: Record<string, un
         // First call: return a tool_call response
         return {
           content: "",
+          usage: { input_tokens: 1, output_tokens: 1 },
+          stop_reason: "tool_calls",
           tool_calls: [
             {
               id: "tc-001",
@@ -79,6 +81,8 @@ function makeLLMClientWithToolCall(toolName: string, toolArgs: Record<string, un
       // Second call: return final text (after tool result)
       return {
         content: "Tool executed, here is the result.",
+        usage: { input_tokens: 1, output_tokens: 1 },
+        stop_reason: "completed",
         tool_calls: [],
       } satisfies LLMResponse;
     }),
@@ -309,6 +313,8 @@ describe("ChatRunner — tool status callbacks", () => {
         supportsToolCalling: () => true,
         sendMessage: vi.fn().mockResolvedValue({
           content: "Just a text response, no tools needed.",
+          usage: { input_tokens: 1, output_tokens: 1 },
+          stop_reason: "completed",
           tool_calls: [],
         } satisfies LLMResponse),
       } as unknown as ILLMClient;

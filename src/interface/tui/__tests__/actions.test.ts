@@ -23,8 +23,8 @@ function makeReport() {
 
 function makeDeps(overrides: Partial<ActionDeps> = {}): ActionDeps {
   const stateManager = {
-    listGoalIds: vi.fn(() => []),
-    loadGoal: vi.fn(() => null),
+    listGoalIds: vi.fn().mockResolvedValue([]),
+    loadGoal: vi.fn().mockResolvedValue(null),
   } as unknown as ActionDeps["stateManager"];
 
   const goalNegotiator = {
@@ -32,8 +32,8 @@ function makeDeps(overrides: Partial<ActionDeps> = {}): ActionDeps {
   } as unknown as ActionDeps["goalNegotiator"];
 
   const reportingEngine = {
-    generateDailySummary: vi.fn(() => makeReport()),
-    saveReport: vi.fn(),
+    generateDailySummary: vi.fn().mockResolvedValue(makeReport()),
+    saveReport: vi.fn().mockResolvedValue(undefined),
   } as unknown as ActionDeps["reportingEngine"];
 
   return {
@@ -147,8 +147,8 @@ describe("ActionHandler — handle()", () => {
     it("returns startLoop signal with first active goal id", async () => {
       const goal = makeGoal({ id: "goal-abc", status: "active" });
       const deps = makeDeps();
-      vi.mocked(deps.stateManager.listGoalIds).mockReturnValue(["goal-abc"]);
-      vi.mocked(deps.stateManager.loadGoal).mockReturnValue(goal);
+      vi.mocked(deps.stateManager.listGoalIds).mockResolvedValue(["goal-abc"]);
+      vi.mocked(deps.stateManager.loadGoal).mockResolvedValue(goal);
 
       const handler = new ActionHandler(deps);
       const result = await handler.handle({ intent: "loop_start", raw: "run" });
@@ -158,7 +158,7 @@ describe("ActionHandler — handle()", () => {
     it("uses goalId from params if provided", async () => {
       const goal = makeGoal({ id: "explicit-id", status: "active" });
       const deps = makeDeps();
-      vi.mocked(deps.stateManager.loadGoal).mockReturnValue(goal);
+      vi.mocked(deps.stateManager.loadGoal).mockResolvedValue(goal);
 
       const handler = new ActionHandler(deps);
       const intent: RecognizedIntent = {
@@ -181,8 +181,8 @@ describe("ActionHandler — handle()", () => {
     it("shows goal title and dimension info", async () => {
       const goal = makeGoal({ dimensions: [{ name: "coverage", label: "Coverage", current_value: 0.5, threshold: { type: "min", value: 0.8 }, confidence: 0.9, observation_method: { type: "mechanical", source: "test", schedule: null, endpoint: null, confidence_tier: "mechanical" }, last_updated: new Date().toISOString(), history: [], weight: 1.0, uncertainty_weight: null, state_integrity: "ok", dimension_mapping: null }] });
       const deps = makeDeps();
-      vi.mocked(deps.stateManager.listGoalIds).mockReturnValue(["goal-1"]);
-      vi.mocked(deps.stateManager.loadGoal).mockReturnValue(goal);
+      vi.mocked(deps.stateManager.listGoalIds).mockResolvedValue(["goal-1"]);
+      vi.mocked(deps.stateManager.loadGoal).mockResolvedValue(goal);
 
       const handler = new ActionHandler(deps);
       const result = await handler.handle({ intent: "status", raw: "status" });
@@ -202,8 +202,8 @@ describe("ActionHandler — handle()", () => {
     it("lists all goals with status and title", async () => {
       const goal = makeGoal();
       const deps = makeDeps();
-      vi.mocked(deps.stateManager.listGoalIds).mockReturnValue(["goal-1"]);
-      vi.mocked(deps.stateManager.loadGoal).mockReturnValue(goal);
+      vi.mocked(deps.stateManager.listGoalIds).mockResolvedValue(["goal-1"]);
+      vi.mocked(deps.stateManager.loadGoal).mockResolvedValue(goal);
 
       const handler = new ActionHandler(deps);
       const result = await handler.handle({ intent: "goal_list", raw: "goals" });
@@ -223,8 +223,8 @@ describe("ActionHandler — handle()", () => {
     it("calls generateDailySummary and saveReport", async () => {
       const goal = makeGoal();
       const deps = makeDeps();
-      vi.mocked(deps.stateManager.listGoalIds).mockReturnValue(["goal-1"]);
-      vi.mocked(deps.stateManager.loadGoal).mockReturnValue(goal);
+      vi.mocked(deps.stateManager.listGoalIds).mockResolvedValue(["goal-1"]);
+      vi.mocked(deps.stateManager.loadGoal).mockResolvedValue(goal);
 
       const handler = new ActionHandler(deps);
       await handler.handle({ intent: "report", raw: "report" });
@@ -236,8 +236,8 @@ describe("ActionHandler — handle()", () => {
     it("returns showReport with the generated report", async () => {
       const goal = makeGoal();
       const deps = makeDeps();
-      vi.mocked(deps.stateManager.listGoalIds).mockReturnValue(["goal-1"]);
-      vi.mocked(deps.stateManager.loadGoal).mockReturnValue(goal);
+      vi.mocked(deps.stateManager.listGoalIds).mockResolvedValue(["goal-1"]);
+      vi.mocked(deps.stateManager.loadGoal).mockResolvedValue(goal);
 
       const handler = new ActionHandler(deps);
       const result = await handler.handle({ intent: "report", raw: "report" });

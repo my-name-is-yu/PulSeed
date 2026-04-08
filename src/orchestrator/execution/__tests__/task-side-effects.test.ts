@@ -49,6 +49,8 @@ describe("persistTaskCycleSideEffects", () => {
     };
     const task = makeTask({ strategy_id: "strategy-1" });
     const verificationResult: VerificationResult = {
+      timestamp: new Date().toISOString(),
+      task_id: task.id,
       verdict: "pass",
       confidence: 0.9,
       evidence: [],

@@ -35,9 +35,11 @@ function makeAdapter(
 }
 
 function makeStateManager() {
+  const readRaw = vi.fn(async (_path: string): Promise<unknown | null> => null);
+  const writeRaw = vi.fn(async (_path: string, _data: unknown) => undefined);
   return {
-    readRaw: vi.fn(async (_path: string) => null),
-    writeRaw: vi.fn(async (_path: string, _data: unknown) => undefined),
+    readRaw,
+    writeRaw,
   };
 }
 

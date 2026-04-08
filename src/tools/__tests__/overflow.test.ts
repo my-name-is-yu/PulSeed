@@ -22,25 +22,27 @@ const defaultInputSchema = z.object({ value: z.string() });
 type DefaultInput = z.infer<typeof defaultInputSchema>;
 
 function createMockTool(
-  overrides: Partial<ITool> & { name?: string; maxOutputChars?: number } = {},
+  overrides: Partial<ITool<DefaultInput>> & { name?: string; maxOutputChars?: number } = {},
 ): ITool<DefaultInput> {
   const name = overrides.name ?? "mock-tool";
   const maxOutputChars = overrides.maxOutputChars ?? 8000;
+  const metadataOverrides: Partial<ITool<DefaultInput>["metadata"]> = overrides.metadata ?? {};
+  const metadata: ITool<DefaultInput>["metadata"] = {
+    ...metadataOverrides,
+    name,
+    aliases: metadataOverrides.aliases ?? [],
+    permissionLevel: metadataOverrides.permissionLevel ?? "read_only",
+    isReadOnly: metadataOverrides.isReadOnly ?? true,
+    isDestructive: metadataOverrides.isDestructive ?? false,
+    shouldDefer: metadataOverrides.shouldDefer ?? false,
+    alwaysLoad: metadataOverrides.alwaysLoad ?? false,
+    maxConcurrency: metadataOverrides.maxConcurrency ?? 0,
+    maxOutputChars: metadataOverrides.maxOutputChars ?? maxOutputChars,
+    tags: metadataOverrides.tags ?? [],
+  };
   const base: ITool<DefaultInput> = {
-    metadata: {
-      name,
-      aliases: [],
-      permissionLevel: "read_only",
-      isReadOnly: true,
-      isDestructive: false,
-      shouldDefer: false,
-      alwaysLoad: false,
-      maxConcurrency: 0,
-      maxOutputChars,
-      tags: [],
-      ...((overrides as ITool).metadata ?? {}),
-    },
-    inputSchema: defaultInputSchema as z.ZodType<DefaultInput>,
+    metadata,
+    inputSchema: overrides.inputSchema ?? defaultInputSchema,
     description: () => `Mock tool: ${name}`,
     call: vi.fn().mockResolvedValue({
       success: true,

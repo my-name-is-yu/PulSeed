@@ -6,11 +6,13 @@ import { JsonQueryTool } from "../JsonQueryTool.js";
 import type { ToolCallContext } from "../../../types.js";
 
 const makeContext = (cwd: string): ToolCallContext => ({
-  goalId: "goal-1",
-  sessionId: "session-1",
   cwd,
+  goalId: "goal-1",
+  trustBalance: 50,
+  preApproved: false,
+  approvalFn: async () => false,
+  sessionId: "session-1",
   dryRun: false,
-  permissionLevel: "read_only",
 });
 
 describe("JsonQueryTool", () => {

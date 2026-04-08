@@ -130,11 +130,11 @@ export class SessionHistoryTool implements ITool<SessionHistoryInput, unknown> {
     return summary;
   }
 
-  async checkPermissions(): Promise<PermissionCheckResult> {
+  async checkPermissions(_input: SessionHistoryInput, _context?: ToolCallContext): Promise<PermissionCheckResult> {
     return { status: "allowed" };
   }
 
-  isConcurrencySafe(): boolean {
+  isConcurrencySafe(_input?: SessionHistoryInput): boolean {
     return true;
   }
 }

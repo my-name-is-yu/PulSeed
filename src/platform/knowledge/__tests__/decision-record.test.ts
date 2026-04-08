@@ -34,6 +34,9 @@ function makeDecisionRecord(overrides: Partial<DecisionRecord> = {}): DecisionRe
     },
     outcome: "pending",
     timestamp: new Date().toISOString(),
+    what_worked: [],
+    what_failed: [],
+    suggested_next: [],
     ...overrides,
   };
 }

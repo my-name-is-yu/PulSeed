@@ -414,6 +414,7 @@ describe("CoreLoop", async () => {
 
       // Make the gap calculator return aggregate gap=0 (goal already achieved)
       const zeroGapVector: GapVector = {
+        timestamp: new Date().toISOString(),
         goal_id: "goal-1",
         gaps: [
           {

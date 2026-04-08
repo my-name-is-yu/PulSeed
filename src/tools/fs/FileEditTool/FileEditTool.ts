@@ -137,7 +137,7 @@ export class FileEditTool implements ITool<FileEditInput, FileEditOutput> {
     return { status: "allowed" };
   }
 
-  isConcurrencySafe(): boolean {
+  isConcurrencySafe(_input?: FileEditInput): boolean {
     return false;
   }
 }

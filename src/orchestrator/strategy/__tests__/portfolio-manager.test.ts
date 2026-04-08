@@ -31,6 +31,14 @@ function makeStrategy(overrides: Partial<Strategy> = {}): Strategy {
     tasks_generated: overrides.tasks_generated ?? [],
     effectiveness_score: overrides.effectiveness_score ?? null,
     consecutive_stall_count: overrides.consecutive_stall_count ?? 0,
+    source_template_id: overrides.source_template_id ?? null,
+    cross_goal_context: overrides.cross_goal_context ?? null,
+    rollback_target_id: overrides.rollback_target_id ?? null,
+    max_pivot_count: overrides.max_pivot_count ?? 2,
+    pivot_count: overrides.pivot_count ?? 0,
+    toolset_locked: overrides.toolset_locked ?? false,
+    allowed_tools: overrides.allowed_tools ?? [],
+    required_tools: overrides.required_tools ?? [],
   };
 }
 

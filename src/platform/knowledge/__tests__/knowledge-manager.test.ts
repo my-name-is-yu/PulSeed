@@ -36,6 +36,7 @@ function makeKnowledgeEntry(overrides: Partial<KnowledgeEntry> = {}): KnowledgeE
     acquisition_task_id: overrides.acquisition_task_id ?? randomUUID(),
     superseded_by: overrides.superseded_by ?? null,
     tags: overrides.tags ?? ["breathing_rate", "normal_range", "dog"],
+    embedding_id: overrides.embedding_id ?? null,
     ...overrides,
   };
 }
