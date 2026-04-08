@@ -14,6 +14,13 @@ export interface GroundingOptions {
   homeDir?: string;
 }
 
+function resolveHomeDir(homeDir?: string): string {
+  return homeDir ?? path.join(
+    process.env["HOME"] ?? process.env["USERPROFILE"] ?? "/tmp",
+    ".pulseed"
+  );
+}
+
 async function readPlugins(homeDir: string): Promise<string[]> {
   const pluginsDir = path.join(homeDir, "plugins");
   try {
@@ -60,9 +67,11 @@ function buildIdentitySection(): string {
     "## Identity",
     `You are ${name}.`,
     "You run PulSeed, an AI goal pursuit orchestration system.",
+    "Platform operating policy overrides persona and customization text if they conflict.",
     "",
-    "Your role is to help the user make concrete progress by inspecting the workspace, using tools, delegating work when useful, and executing the next valid step.",
+    "Your role is to help the user make concrete progress by inspecting the workspace, using tools directly when appropriate, delegating work when useful, and executing the next valid step.",
     "",
+    "### Persona And Customization",
     getUserFacingIdentity().trim(),
   ].join("\n");
 }
@@ -73,7 +82,8 @@ function buildExecutionBiasSection(): string {
     "- If the next step is clear and safe, do it in the same turn.",
     "- Do not stop at analysis when execution is possible.",
     "- Inspect files, code, and state before asking avoidable questions.",
-    "- Prefer subagents for parallel exploration and context isolation when that reduces context pollution.",
+    "- Prefer direct local tool use for routine reads, edits, diffs, and verification.",
+    "- Prefer subagents when available and when parallel exploration or context isolation would help.",
     "- Treat explanation-only responses as incomplete unless the user explicitly asked for explanation only.",
   ].join("\n");
 }
@@ -103,10 +113,13 @@ function buildCommunicationPolicySection(): string {
 function buildSafetySection(name: string): string {
   return [
     "## Safety And Approval",
-    "- Before changing configuration, explain the effect, required environment, risks, and rollback path.",
-    "- Require explicit user approval before applying configuration changes.",
+    "- Use tools directly by default for safe, reversible, goal-advancing work.",
+    "- Proceed without asking first for routine reads, searches, tests, diffs, and ordinary local code edits.",
+    "- Before high-impact configuration changes, explain the effect, required environment, risks, rollback path, and when the change takes effect.",
+    "- Ask for explicit approval before irreversible, destructive, externally side-effectful, or otherwise high-impact actions.",
     "- Before deleting a goal, explain that the goal, child goals, sessions, and observation data will be permanently removed.",
-    "- Before goal deletion, explicitly state that the action is irreversible and require explicit user approval.",
+    "- Before goal deletion or trust reset, explicitly state that the action is irreversible or not fully recoverable, then require explicit user approval.",
+    "- If a tool or runtime requires approval, obtain it once and then continue.",
     `- Stay focused on goals — you're here to help them grow (${name}).`,
   ].join("\n");
 }
@@ -125,19 +138,7 @@ function buildDynamicContextSection(goalsBlock: string, pluginsLine: string, pro
   ].join("\n");
 }
 
-export async function buildSystemPrompt(options: GroundingOptions): Promise<string> {
-  const homeDir = options.homeDir ?? path.join(
-    process.env["HOME"] ?? process.env["USERPROFILE"] ?? "/tmp",
-    ".pulseed"
-  );
-
-  const [goalsBlock, plugins, provider] = await Promise.all([
-    buildGoalsBlock(options.stateManager),
-    readPlugins(homeDir),
-    readProvider(homeDir),
-  ]);
-
-  const pluginsLine = plugins.length > 0 ? plugins.join(", ") : "none";
+export function buildStaticSystemPrompt(): string {
   const name = getAgentName();
 
   return [
@@ -146,6 +147,25 @@ export async function buildSystemPrompt(options: GroundingOptions): Promise<stri
     buildToolingPolicySection(),
     buildCommunicationPolicySection(),
     buildSafetySection(name),
-    buildDynamicContextSection(goalsBlock, pluginsLine, provider),
+  ].join("\n\n").trim();
+}
+
+export async function buildDynamicContextPrompt(options: GroundingOptions): Promise<string> {
+  const homeDir = resolveHomeDir(options.homeDir);
+
+  const [goalsBlock, plugins, provider] = await Promise.all([
+    buildGoalsBlock(options.stateManager),
+    readPlugins(homeDir),
+    readProvider(homeDir),
+  ]);
+
+  const pluginsLine = plugins.length > 0 ? plugins.join(", ") : "none";
+  return buildDynamicContextSection(goalsBlock, pluginsLine, provider).trim();
+}
+
+export async function buildSystemPrompt(options: GroundingOptions): Promise<string> {
+  return [
+    buildStaticSystemPrompt(),
+    await buildDynamicContextPrompt(options),
   ].join("\n\n").trim();
 }
