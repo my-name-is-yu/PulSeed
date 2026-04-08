@@ -33,19 +33,21 @@ import { EthicsRejectedError } from "./negotiator-context.js";
 export { gatherNegotiationContext, EthicsRejectedError } from "./negotiator-context.js";
 export type { GoalSuggestion } from "./goal-suggest.js";
 import {
-  DEFAULT_TIME_HORIZON_DAYS,
-  REALISTIC_TARGET_ACCELERATION_FACTOR,
-  FEASIBILITY_RATIO_THRESHOLD_REALISTIC,
-  getFeasibilityThreshold,
   runDecompositionStep,
   buildInitialBaseline,
   buildRenegotiationBaseline,
-  evaluateQualitatively,
   runCapabilityCheckStep,
   determineResponseType,
   buildNegotiationResponse,
   estimateChangeRate,
 } from "./negotiator-steps.js";
+import {
+  DEFAULT_TIME_HORIZON_DAYS,
+  REALISTIC_TARGET_ACCELERATION_FACTOR,
+  FEASIBILITY_RATIO_THRESHOLD_REALISTIC,
+  getFeasibilityThreshold,
+  evaluateQualitatively,
+} from "./negotiator-feasibility.js";
 
 // ─── GoalNegotiator ───
 

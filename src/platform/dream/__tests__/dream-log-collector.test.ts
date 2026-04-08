@@ -3,7 +3,7 @@ import * as path from "node:path";
 import { describe, expect, it } from "vitest";
 import { DreamLogCollector } from "../dream-log-collector.js";
 import { makeTempDir, cleanupTempDir } from "../../../../tests/helpers/temp-dir.js";
-import type { LoopIterationResult } from "../../../orchestrator/loop/core-loop-types.js";
+import type { LoopIterationResult } from "../../../orchestrator/loop/loop-result-types.js";
 
 function makeIterationResult(goalId: string): LoopIterationResult {
   return {

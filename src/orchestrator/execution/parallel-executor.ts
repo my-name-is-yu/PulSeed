@@ -10,16 +10,11 @@ import type { TaskGroup } from "../../base/types/index.js";
 import type { AgentTask } from "./adapter-layer.js";
 import type { PipelineExecutor } from "./pipeline-executor.js";
 import { reconcileResults } from "./result-reconciler.js";
+import type { SubtaskResult } from "./parallel-execution-types.js";
 import { durationToMs } from "./task/task-executor.js";
 
 // ─── Result Types ───
-
-export interface SubtaskResult {
-  task_id: string;
-  verdict: "pass" | "partial" | "fail";
-  output: string;
-  error?: string;
-}
+export type { SubtaskResult } from "./parallel-execution-types.js";
 
 export interface ParallelExecutionResult {
   results: SubtaskResult[];

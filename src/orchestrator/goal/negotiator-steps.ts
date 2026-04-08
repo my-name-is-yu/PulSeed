@@ -22,12 +22,9 @@ import type {
   NegotiationResponse,
 } from "../../base/types/negotiation.js";
 import type { Dimension } from "../../base/types/goal.js";
-import type { CharacterConfig } from "../../base/types/character.js";
 import {
   buildDecompositionPrompt,
-  buildFeasibilityPrompt,
   buildResponsePrompt,
-  QualitativeFeasibilitySchema,
 } from "./negotiator-prompts.js";
 import {
   buildCapabilityCheckPrompt,
@@ -37,18 +34,16 @@ import {
   deduplicateDimensionKeys,
   findBestDimensionMatch,
 } from "./goal-validation.js";
-
-// ─── Constants ───
-
-export const FEASIBILITY_RATIO_THRESHOLD_REALISTIC = 1.5;
-export const REALISTIC_TARGET_ACCELERATION_FACTOR = 1.3;
-export const DEFAULT_TIME_HORIZON_DAYS = 90;
+import { REALISTIC_TARGET_ACCELERATION_FACTOR } from "./negotiator-feasibility.js";
+export {
+  DEFAULT_TIME_HORIZON_DAYS,
+  FEASIBILITY_RATIO_THRESHOLD_REALISTIC,
+  getFeasibilityThreshold,
+  evaluateQualitatively,
+  REALISTIC_TARGET_ACCELERATION_FACTOR,
+} from "./negotiator-feasibility.js";
 
 // ─── getFeasibilityThreshold ───
-
-export function getFeasibilityThreshold(characterConfig: CharacterConfig): number {
-  return 1.5 + characterConfig.caution_level * 0.5;
-}
 
 // ─── Step 2: Dimension Decomposition ───
 
@@ -158,71 +153,6 @@ export function buildRenegotiationBaseline(
       method: "existing_observation",
     };
   });
-}
-
-// ─── Step 4: Qualitative Feasibility Evaluation ───
-
-export async function evaluateQualitatively(
-  llmClient: ILLMClient,
-  dimensionName: string,
-  goalDescription: string,
-  baselineValue: number | string | boolean | null,
-  thresholdValue: number | string | boolean | (number | string)[] | null,
-  timeHorizonDays: number,
-  gateway?: IPromptGateway
-): Promise<FeasibilityResult> {
-  const prompt = buildFeasibilityPrompt(
-    dimensionName,
-    goalDescription,
-    baselineValue,
-    thresholdValue,
-    timeHorizonDays
-  );
-
-  try {
-    let parsed: { assessment: string; confidence: string; reasoning: string; key_assumptions: string[]; main_risks: string[] };
-    if (gateway) {
-      parsed = await gateway.execute({
-        purpose: "negotiation_feasibility",
-        responseSchema: QualitativeFeasibilitySchema,
-        additionalContext: {
-          prompt,
-          dimensionName,
-          goalDescription,
-          baselineValue: String(baselineValue),
-          thresholdValue: String(thresholdValue),
-          timeHorizonDays: String(timeHorizonDays),
-        },
-      });
-    } else {
-      const response = await llmClient.sendMessage(
-        [{ role: "user", content: prompt }],
-        { temperature: 0, model_tier: 'main' }
-      );
-      parsed = llmClient.parseJSON(response.content, QualitativeFeasibilitySchema);
-    }
-    return FeasibilityResultSchema.parse({
-      dimension: dimensionName,
-      path: "qualitative",
-      feasibility_ratio: null,
-      assessment: parsed.assessment,
-      confidence: parsed.confidence,
-      reasoning: parsed.reasoning,
-      key_assumptions: parsed.key_assumptions,
-      main_risks: parsed.main_risks,
-    });
-  } catch {
-    return FeasibilityResultSchema.parse({
-      dimension: dimensionName,
-      path: "qualitative",
-      feasibility_ratio: null,
-      assessment: "ambitious",
-      confidence: "low",
-      reasoning: "Failed to parse feasibility assessment, defaulting to ambitious.",
-      key_assumptions: [],
-      main_risks: ["Unable to assess feasibility"],
-    });
-  }
 }
 
 // ─── Step 4b: Capability Check ───

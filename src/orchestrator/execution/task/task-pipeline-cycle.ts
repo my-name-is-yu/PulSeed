@@ -1,49 +1,28 @@
-import type { Logger } from "../../../runtime/logger.js";
-import type { StateManager } from "../../../base/state/state-manager.js";
-import type { SessionManager } from "../session-manager.js";
-import type { ILLMClient } from "../../../base/llm/llm-client.js";
-import type { KnowledgeManager } from "../../../platform/knowledge/knowledge-manager.js";
-import type { EthicsGate } from "../../../platform/traits/ethics-gate.js";
-import type { CapabilityDetector } from "../../../platform/observation/capability-detector.js";
-import type { Task, VerificationResult } from "../../../base/types/task.js";
+import type { VerificationResult } from "../../../base/types/task.js";
 import type { GapVector } from "../../../base/types/gap.js";
 import type { DriveContext } from "../../../base/types/drive.js";
 import type { Dimension } from "../../../base/types/goal.js";
-import type { TaskPipeline, TaskDomain } from "../../../base/types/pipeline.js";
+import type { TaskPipeline } from "../../../base/types/pipeline.js";
 import type { AgentTask, IAdapter } from "../adapter-layer.js";
 import { AdapterRegistry } from "../adapter-layer.js";
-import type { ObservationEngine, TaskObservationContext } from "../../../platform/observation/observation-engine.js";
-import type { TaskCycleResult } from "./task-lifecycle.js";
+import type { TaskObservationContext } from "../../../platform/observation/observation-engine.js";
+import type { TaskCycleResult } from "./task-execution-types.js";
 import { createSkippedTaskResult } from "./task-execution-types.js";
 import { PipelineExecutor } from "../pipeline-executor.js";
 import { runPreExecutionChecks } from "./task-approval.js";
 import { durationToMs } from "./task-executor.js";
 import { generateReflection, saveReflectionAsKnowledge } from "../reflection-generator.js";
+import type {
+  PipelineCycleDeps,
+  PipelineCycleOptions,
+} from "./task-pipeline-types.js";
 
-// ─── PipelineCycleDeps ───
-
-export interface PipelineCycleDeps {
-  stateManager: StateManager;
-  sessionManager: SessionManager;
-  llmClient: ILLMClient;
-  ethicsGate?: EthicsGate;
-  capabilityDetector?: CapabilityDetector;
-  approvalFn: (task: Task) => Promise<boolean>;
-  adapterRegistry?: AdapterRegistry;
-  logger?: Logger;
-  knowledgeManager?: KnowledgeManager;
-  checkIrreversibleApproval: (task: Task) => Promise<boolean>;
-  selectTargetDimension: (gapVector: GapVector, driveContext: DriveContext, dimensions?: Dimension[]) => string;
-  generateTask: (
-    goalId: string,
-    targetDimension: string,
-    strategyId: string | undefined,
-    knowledgeContext?: string,
-    adapterType?: string,
-    existingTasks?: string[],
-    workspaceContext?: string
-  ) => Promise<Task | null>;
-}
+export type {
+  PipelineCycleDeps,
+  PipelineCycleOptions,
+  SelectTargetDimensionFn,
+  GenerateTaskFn,
+} from "./task-pipeline-types.js";
 
 // ─── runPipelineTaskCycle ───
 
@@ -60,14 +39,7 @@ export async function runPipelineTaskCycle(
   driveContext: DriveContext,
   adapter: IAdapter,
   pipeline: TaskPipeline,
-  options?: {
-    knowledgeContext?: string;
-    existingTasks?: string[];
-    workspaceContext?: string;
-    observationEngine?: ObservationEngine;
-    domain?: TaskDomain;
-    adapterRegistry?: AdapterRegistry;
-  }
+  options?: PipelineCycleOptions
 ): Promise<TaskCycleResult> {
   // 1. Select target dimension
   let goalDimensions: Dimension[] | undefined;

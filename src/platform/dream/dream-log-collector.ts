@@ -3,7 +3,7 @@ import * as path from "node:path";
 import { randomUUID } from "node:crypto";
 import { writeJsonFileAtomic } from "../../base/utils/json-io.js";
 import type { Logger } from "../../runtime/logger.js";
-import type { LoopIterationResult, LoopResult } from "../../orchestrator/loop/core-loop-types.js";
+import type { LoopIterationResult, LoopResult } from "../../orchestrator/loop/loop-result-types.js";
 import type { DriveScore } from "../../base/types/drive.js";
 import {
   EventLogSchema,

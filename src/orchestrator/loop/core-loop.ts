@@ -6,12 +6,11 @@ import { saveLoopCheckpoint, restoreLoopCheckpoint } from "./checkpoint-manager-
 import { runPostLoopHooks } from "./post-loop-hooks.js";
 import { generateLoopReport } from "./loop-report-helper.js";
 
-import { makeEmptyIterationResult } from "./core-loop-types.js";
+import { makeEmptyIterationResult } from "./loop-result-types.js";
+import type { LoopIterationResult, LoopResult } from "./loop-result-types.js";
 import type {
   LoopConfig,
   ResolvedLoopConfig,
-  LoopIterationResult,
-  LoopResult,
   CoreLoopDeps,
 } from "./core-loop-types.js";
 import {
@@ -52,13 +51,16 @@ export type {
   ReportingEngine,
   LoopConfig,
   ResolvedLoopConfig,
-  LoopIterationResult,
-  LoopResult,
   CoreLoopDeps,
   ProgressEvent,
   ProgressPhase,
 } from "./core-loop-types.js";
-export { buildDriveContext, makeEmptyIterationResult } from "./core-loop-types.js";
+export type {
+  LoopIterationResult,
+  LoopResult,
+} from "./loop-result-types.js";
+export { buildDriveContext } from "./core-loop-types.js";
+export { makeEmptyIterationResult } from "./loop-result-types.js";
 
 const DEFAULT_CONFIG: Required<Omit<LoopConfig, "iterationBudget">> = {
   maxIterations: 100,
