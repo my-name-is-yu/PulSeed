@@ -4,6 +4,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { getPulseedDirPath, getLogsDir, getGoalsDir } from "../../../base/utils/paths.js";
 import { execFileNoThrow } from "../../../base/utils/execFileNoThrow.js";
+import { getCliRunnerBuildPath } from "../../../base/utils/pulseed-meta.js";
 
 // ─── Types ───
 
@@ -130,16 +131,13 @@ export function checkLogDirectory(baseDir?: string): CheckResult {
   }
 }
 
-export function checkBuild(): CheckResult {
-  // This file lives at src/cli/commands/doctor.ts (or dist/cli/commands/doctor.js).
-  // Walk up four levels to reach the package root.
-  const packageRoot = path.resolve(new URL(import.meta.url).pathname, "..", "..", "..", "..");
-  const buildPath = path.join(packageRoot, "dist", "cli", "cli-runner.js");
+export function checkBuild(buildPath = getCliRunnerBuildPath(import.meta.url)): CheckResult {
+  const displayPath = path.relative(process.cwd(), buildPath) || buildPath;
 
   if (fs.existsSync(buildPath)) {
-    return { name: "Build", status: "pass", detail: "dist/cli/cli-runner.js exists" };
+    return { name: "Build", status: "pass", detail: `${displayPath} exists` };
   }
-  return { name: "Build", status: "fail", detail: "dist/cli/cli-runner.js not found (run: npm run build)" };
+  return { name: "Build", status: "fail", detail: `${displayPath} not found (run: npm run build)` };
 }
 
 export function checkDaemon(baseDir?: string): CheckResult {

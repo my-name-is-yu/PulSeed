@@ -34,8 +34,10 @@ import type { Task } from "../../base/types/task.js";
 import type { ChatRunner } from "../../interface/chat/chat-runner.js";
 import type { DaemonClient } from "../../runtime/daemon-client.js";
 import { ShellTool } from "../../tools/system/ShellTool/ShellTool.js";
+import { getPulseedVersion } from "../../base/utils/pulseed-meta.js";
 
 const MAX_MESSAGES = 200;
+const PULSEED_VERSION = getPulseedVersion(import.meta.url);
 
 export interface ApprovalRequest {
   task: Task;
@@ -501,7 +503,7 @@ export function App({
         <Box flexDirection="column" justifyContent="center">
           <Box>
             <Text bold color={theme.brand}>PulSeed</Text>
-            <Text dimColor> v0.2.0</Text>
+            <Text dimColor> v{PULSEED_VERSION}</Text>
           </Box>
           <Text dimColor>
             daemon: {isDaemonMode ? "on" : "off"}{providerName ? ` · ${providerName}` : ""}

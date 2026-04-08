@@ -23,6 +23,7 @@ import {
   checkApiKey,
   checkGoals,
   checkLogDirectory,
+  checkBuild,
   checkDaemon,
   checkNotifications,
   cmdDoctor,
@@ -206,6 +207,36 @@ describe("checkLogDirectory", () => {
     const result = checkLogDirectory(tmpDir);
     expect(result.status).toBe("pass");
     expect(result.detail).toContain("writable");
+  });
+});
+
+describe("checkBuild", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = makeTempDir("pulseed-doctor-build-");
+  });
+
+  afterEach(() => {
+    cleanupTempDir(tmpDir);
+  });
+
+  it("passes when the built CLI runner exists", () => {
+    const buildPath = path.join(tmpDir, "dist", "interface", "cli", "cli-runner.js");
+    fs.mkdirSync(path.dirname(buildPath), { recursive: true });
+    fs.writeFileSync(buildPath, "");
+
+    const result = checkBuild(buildPath);
+    expect(result.status).toBe("pass");
+    expect(result.detail).toContain("dist/interface/cli/cli-runner.js exists");
+  });
+
+  it("fails when the built CLI runner is missing", () => {
+    const buildPath = path.join(tmpDir, "dist", "interface", "cli", "cli-runner.js");
+
+    const result = checkBuild(buildPath);
+    expect(result.status).toBe("fail");
+    expect(result.detail).toContain("dist/interface/cli/cli-runner.js not found");
   });
 });
 
