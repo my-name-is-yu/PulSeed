@@ -4,7 +4,7 @@ import {
   buildReconciliationPrompt,
 } from "../result-reconciler.js";
 import type { ReconcilerDeps } from "../result-reconciler.js";
-import type { SubtaskResult } from "../parallel-executor.js";
+import type { SubtaskResult } from "../parallel-execution-types.js";
 
 // ─── Helpers ───
 

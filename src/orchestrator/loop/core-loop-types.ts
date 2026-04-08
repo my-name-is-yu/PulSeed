@@ -1,17 +1,16 @@
-import { CuriosityEngine } from "../../platform/traits/curiosity-engine.js";
+import type { CuriosityEngine } from "../../platform/traits/curiosity-engine.js";
 import type { IterationBudget } from "./iteration-budget.js";
 import type { Logger } from "../../runtime/logger.js";
 import type { StrategyTemplateRegistry } from "../strategy/strategy-template-registry.js";
 import type { TrustManager } from "../../platform/traits/trust-manager.js";
 import type { KnowledgeTransfer } from "../../platform/knowledge/transfer/knowledge-transfer.js";
-import type { TransferCandidate } from "../../base/types/cross-portfolio.js";
 import type { CrossGoalPortfolio } from "../strategy/cross-goal-portfolio.js";
 import type { GoalTreeManager } from "../goal/goal-tree-manager.js";
 import type { StateAggregator } from "../goal/state-aggregator.js";
 import type { TreeLoopOrchestrator } from "../goal/tree-loop-orchestrator.js";
 import type { StateManager } from "../../base/state/state-manager.js";
 import type { ObservationEngine } from "../../platform/observation/observation-engine.js";
-import type { TaskLifecycle, TaskCycleResult } from "../execution/task/task-lifecycle.js";
+import type { TaskLifecycle } from "../execution/task/task-lifecycle.js";
 import type { SatisficingJudge } from "../../platform/drive/satisficing-judge.js";
 import type { StallDetector } from "../../platform/drive/stall-detector.js";
 import type { StrategyManager } from "../strategy/strategy-manager.js";
@@ -19,22 +18,22 @@ import type { DriveSystem } from "../../platform/drive/drive-system.js";
 import type { AdapterRegistry, IAdapter } from "../execution/adapter-layer.js";
 import type { KnowledgeManager } from "../../platform/knowledge/knowledge-manager.js";
 import type { CapabilityDetector } from "../../platform/observation/capability-detector.js";
-import type { CapabilityAcquisitionTask } from "../../base/types/capability.js";
 import type { PortfolioManager } from "../strategy/portfolio-manager.js";
 import type { GoalDependencyGraph } from "../goal/goal-dependency-graph.js";
 import type { LearningPipeline } from "../../platform/knowledge/learning/learning-pipeline.js";
-import { DriveScoreAdapter } from "../../platform/knowledge/memory/memory-lifecycle.js";
-import type { MemoryLifecycleManager } from "../../platform/knowledge/memory/memory-lifecycle.js";
+import type { DriveScoreAdapter, MemoryLifecycleManager } from "../../platform/knowledge/memory/memory-lifecycle.js";
 import type { ParallelExecutor } from "../execution/parallel-executor.js";
 import type { GoalRefiner } from "../goal/goal-refiner.js";
 import type { Goal } from "../../base/types/goal.js";
 import type { GapVector } from "../../base/types/gap.js";
 import type { DriveContext, DriveScore } from "../../base/types/drive.js";
-import type { CompletionJudgment } from "../../base/types/satisficing.js";
-import type { StallReport, StallAnalysis } from "../../base/types/stall.js";
 import type { ToolExecutor } from "../../tools/executor.js";
 import type { ToolRegistry } from "../../tools/registry.js";
-import type { VerificationLayer1Result } from "./verification-layer1.js";
+export type {
+  LoopIterationResult,
+  LoopResult,
+} from "./loop-result-types.js";
+export { makeEmptyIterationResult } from "./loop-result-types.js";
 
 
 // ─── GapCalculator module interface (pure functions) ───
@@ -143,92 +142,6 @@ export interface LoopConfig {
    * Default: 20.
    */
   consolidationRawThreshold?: number;
-}
-
-// ─── Result types ───
-
-export interface LoopIterationResult {
-  loopIndex: number;
-  goalId: string;
-  gapAggregate: number;
-  driveScores: DriveScore[];
-  taskResult: TaskCycleResult | null;
-  stallDetected: boolean;
-  stallReport: StallReport | null;
-  /** M14-S2: cause analysis result when a stall is detected */
-  stallAnalysis?: StallAnalysis;
-  pivotOccurred: boolean;
-  completionJudgment: CompletionJudgment;
-  elapsedMs: number;
-  error: string | null;
-  /** Alerts for milestones that are at_risk or behind (optional) */
-  milestoneAlerts?: Array<{ goalId: string; status: string; pace_ratio: number }>;
-  /** Transfer candidates detected from cross-goal knowledge (suggestion-only, Phase 1) */
-  transfer_candidates?: TransferCandidate[];
-  /** Total tokens consumed by LLM calls during this iteration (task generation + verification). */
-  tokensUsed?: number;
-  /**
-   * When true, this iteration was skipped because no meaningful state change was
-   * detected (Pillar 2: State Diff + Loop Skip). Only observation ran; gap
-   * calculation, task generation, execution, and verification were bypassed.
-   */
-  skipped?: boolean;
-  /** Reason for the skip, when skipped=true. */
-  skipReason?: string;
-  /** Result from Phase 7 tool-based verification (Layer 1). Present when toolExecutor is set and task has success_criteria. */
-  toolVerification?: VerificationLayer1Result;
-  /** Tool-based workspace evidence gathered during stall detection (Phase 6). */
-  toolStallEvidence?: import("./stall-evidence.js").StallEvidence;
-  /** True when stall detection was suppressed by an active WaitStrategy plateau_until. */
-  waitSuppressed?: boolean;
-  /** True when a WaitStrategy reached its wait_until expiry this iteration. */
-  waitExpired?: boolean;
-  /** Strategy ID of the active WaitStrategy, if any. */
-  waitStrategyId?: string;
-}
-
-/**
- * Factory that returns a zeroed-out LoopIterationResult for the given goalId
- * and loopIndex. Accepts optional overrides for fields that vary per call-site.
- */
-export function makeEmptyIterationResult(
-  goalId: string,
-  loopIndex: number,
-  overrides?: Partial<LoopIterationResult>
-): LoopIterationResult {
-  return {
-    loopIndex,
-    goalId,
-    gapAggregate: 0,
-    driveScores: [],
-    taskResult: null,
-    stallDetected: false,
-    stallReport: null,
-    pivotOccurred: false,
-    completionJudgment: {
-      is_complete: false,
-      blocking_dimensions: [],
-      low_confidence_dimensions: [],
-      needs_verification_task: false,
-      checked_at: new Date().toISOString(),
-    },
-    elapsedMs: 0,
-    error: null,
-    ...overrides,
-  };
-}
-
-export interface LoopResult {
-  goalId: string;
-  totalIterations: number;
-  finalStatus: "completed" | "stalled" | "max_iterations" | "error" | "stopped";
-  iterations: LoopIterationResult[];
-  startedAt: string;
-  completedAt: string;
-  /** Human-readable explanation when finalStatus is "error" */
-  errorMessage?: string;
-  /** Total tokens consumed across all iterations */
-  tokensUsed?: number;
 }
 
 // ─── Dependencies ───

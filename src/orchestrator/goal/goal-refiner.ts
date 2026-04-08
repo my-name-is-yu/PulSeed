@@ -27,7 +27,10 @@ import type {
   RefineResult,
 } from "../../base/types/goal-refiner.js";
 import { buildLeafTestPrompt } from "./refiner-prompts.js";
-import { evaluateQualitatively, DEFAULT_TIME_HORIZON_DAYS } from "./negotiator-steps.js";
+import {
+  DEFAULT_TIME_HORIZON_DAYS,
+  evaluateQualitatively,
+} from "./negotiator-feasibility.js";
 
 // ─── Conversion helpers ───
 

@@ -1,6 +1,6 @@
 import type { Report } from "../base/types/report.js";
 import type { CharacterConfig } from "../base/types/character.js";
-import type { ExecutionSummaryParams, NotificationType, NotificationContext } from "./reporting-engine.js";
+import type { ExecutionSummaryParams, NotificationType, NotificationContext } from "./reporting-types.js";
 
 // ─── getVerbosityLevel ───
 

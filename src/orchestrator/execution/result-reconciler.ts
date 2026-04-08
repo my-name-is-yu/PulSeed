@@ -7,7 +7,7 @@ import { z } from "zod";
 import type { ILLMClient } from "../../base/llm/llm-client.js";
 import type { IPromptGateway } from "../../prompt/gateway.js";
 import type { Logger } from "../../runtime/logger.js";
-import type { SubtaskResult } from "./parallel-executor.js";
+import type { SubtaskResult } from "./parallel-execution-types.js";
 
 // ─── Types ───
 

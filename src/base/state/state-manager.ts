@@ -11,7 +11,7 @@ import type { ObservationLog, ObservationLogEntry } from "../types/state.js";
 import type { GapHistoryEntry } from "../types/gap.js";
 import type { PaceSnapshot } from "../types/goal.js";
 import { LoopCheckpointSchema } from "../types/checkpoint.js";
-import type { TrustManager } from "../../platform/traits/trust-manager.js";
+import type { CheckpointTrustPort } from "./checkpoint-trust-port.js";
 import { initDirs, atomicWrite, atomicRead } from "./state-persistence.js";
 import { acquireLock, releaseLock } from "./state-lock.js";
 import { appendWALRecord, replayWAL, compactWAL } from "./state-wal.js";
@@ -617,7 +617,7 @@ export class StateManager {
   async restoreFromCheckpoint(
     goalId: string,
     adapterType: string,
-    trustManager?: TrustManager
+    trustManager?: CheckpointTrustPort
   ): Promise<number> {
     try {
       const raw = await this.atomicRead<unknown>(

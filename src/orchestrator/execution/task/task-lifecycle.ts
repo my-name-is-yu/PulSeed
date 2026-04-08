@@ -37,8 +37,7 @@ import { AdapterRegistry } from "../adapter-layer.js";
 export type { AgentTask, AgentResult, IAdapter };
 export { AdapterRegistry };
 
-import type { TaskPipeline, TaskDomain } from "../../../base/types/pipeline.js";
-import type { ObservationEngine } from "../../../platform/observation/observation-engine.js";
+import type { TaskPipeline } from "../../../base/types/pipeline.js";
 
 export { LLMGeneratedTaskSchema } from "./task-generation.js";
 import { generateTask as _generateTask } from "./task-generation.js";
@@ -47,6 +46,7 @@ import { executeTaskWithGuards, verifyExecutionWithGitDiff } from "./task-execut
 import { runPreExecutionChecks } from "./task-approval.js";
 import { checkIrreversibleApproval as _checkIrreversibleApproval } from "./task-approval-check.js";
 import { runPipelineTaskCycle as runPipelineTaskCycleFn } from "./task-pipeline-cycle.js";
+import type { PipelineCycleOptions } from "./task-pipeline-types.js";
 import type { KnowledgeTransfer } from "../../../platform/knowledge/transfer/knowledge-transfer.js";
 import type { KnowledgeManager } from "../../../platform/knowledge/knowledge-manager.js";
 import { buildEnrichedKnowledgeContext } from "./task-context-enricher.js";
@@ -63,6 +63,12 @@ import {
 } from "../../../platform/dream/dream-activation.js";
 
 export type { TaskCycleResult } from "./task-execution-types.js";
+export type {
+  PipelineCycleDeps,
+  PipelineCycleOptions,
+  SelectTargetDimensionFn,
+  GenerateTaskFn,
+} from "./task-pipeline-types.js";
 import type { TaskCycleResult } from "./task-execution-types.js";
 import { createSkippedTaskResult } from "./task-execution-types.js";
 
@@ -402,14 +408,7 @@ export class TaskLifecycle {
     driveContext: DriveContext,
     adapter: IAdapter,
     pipeline: TaskPipeline,
-    options?: {
-      knowledgeContext?: string;
-      existingTasks?: string[];
-      workspaceContext?: string;
-      observationEngine?: ObservationEngine;
-      domain?: TaskDomain;
-      adapterRegistry?: AdapterRegistry;
-    }
+    options?: PipelineCycleOptions
   ): Promise<TaskCycleResult> {
     return runPipelineTaskCycleFn(
       {
