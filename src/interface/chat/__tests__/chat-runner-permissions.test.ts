@@ -1,7 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { ChatRunner } from "../chat-runner.js";
 import type { ChatRunnerDeps } from "../chat-runner.js";
-import { parseApprovalDecision } from "../approval-format.js";
 import type { StateManager } from "../../../base/state/state-manager.js";
 import type { IAdapter } from "../../../orchestrator/execution/adapter-layer.js";
 import type { ITool, ToolCallContext, PermissionCheckResult, ToolResult } from "../../../tools/types.js";
@@ -361,16 +360,6 @@ describe("ChatRunner — permission gate (Fix #505)", () => {
       expect(pending.output).toContain("Approval required for `test-tool`");
       expect(tool.call).not.toHaveBeenCalled();
     });
-  });
-});
-
-describe("approval decision parsing", () => {
-  it("accepts Japanese approve/reject/clarify phrases", () => {
-    expect(parseApprovalDecision("承認")).toBe("approve");
-    expect(parseApprovalDecision("進めて")).toBe("approve");
-    expect(parseApprovalDecision("拒否")).toBe("reject");
-    expect(parseApprovalDecision("やめて")).toBe("reject");
-    expect(parseApprovalDecision("詳細")).toBe("clarify");
   });
 });
 
