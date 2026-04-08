@@ -1,6 +1,6 @@
 import OpenAI from "openai";
 import { BaseLLMClient, DEFAULT_MAX_TOKENS, DEFAULT_LLM_TIMEOUT_MS, MAX_RETRY_ATTEMPTS, RETRY_DELAYS_MS, RATE_LIMIT_RETRY_DELAYS_MS, isRateLimitError, getRateLimitRetryDelay } from "./base-llm-client.js";
-import { type ILLMClient, type LLMMessage, type LLMRequestOptions, type LLMResponse } from "./llm-client.js";
+import { type ILLMClient, type LLMMessage, type LLMRequestOptions, type LLMResponse, type LLMStreamHandlers, type ToolCallResult } from "./llm-client.js";
 import { sleep } from "../utils/sleep.js";
 import { LLMError } from "../utils/errors.js";
 
@@ -89,6 +89,18 @@ export class OpenAILLMClient extends BaseLLMClient implements ILLMClient {
       model,
       messages: openAiMessages,
       max_completion_tokens: max_tokens,
+      ...(options?.tools?.length
+        ? {
+            tools: options.tools.map((tool) => ({
+              type: "function" as const,
+              function: {
+                name: tool.function.name,
+                description: tool.function.description,
+                parameters: tool.function.parameters as OpenAI.FunctionParameters,
+              },
+            })),
+          }
+        : {}),
       ...(isReasoningModel(model) ? {} : { temperature }),
     };
 
@@ -104,6 +116,7 @@ export class OpenAILLMClient extends BaseLLMClient implements ILLMClient {
           const choice = response.choices[0];
           const content = choice?.message.content ?? "";
           const stop_reason = choice?.finish_reason ?? "unknown";
+          const tool_calls = mapOpenAIToolCalls(choice?.message.tool_calls);
 
           return {
             content,
@@ -112,6 +125,7 @@ export class OpenAILLMClient extends BaseLLMClient implements ILLMClient {
               output_tokens: response.usage?.completion_tokens ?? 0,
             },
             stop_reason,
+            ...(tool_calls && tool_calls.length > 0 ? { tool_calls } : {}),
           };
         } catch (err) {
           // Some models (notably Codex-style) are not compatible with the
@@ -193,4 +207,83 @@ export class OpenAILLMClient extends BaseLLMClient implements ILLMClient {
 
     throw lastError;
   }
+
+  async sendMessageStream(
+    messages: LLMMessage[],
+    options: LLMRequestOptions | undefined,
+    handlers: LLMStreamHandlers
+  ): Promise<LLMResponse> {
+    const model = this.resolveEffectiveModel(options?.model ?? this.model, options?.model_tier);
+    const max_tokens = options?.max_tokens ?? DEFAULT_MAX_TOKENS;
+    const temperature = options?.temperature ?? DEFAULT_TEMPERATURE;
+    const system = options?.system;
+
+    const openAiMessages: OpenAI.Chat.ChatCompletionMessageParam[] = [];
+    if (system) {
+      openAiMessages.push({ role: "developer" as const, content: system });
+    }
+    for (const msg of messages) {
+      openAiMessages.push({ role: msg.role, content: msg.content });
+    }
+
+    const createParams: OpenAI.Chat.ChatCompletionCreateParamsStreaming = {
+      model,
+      messages: openAiMessages,
+      max_completion_tokens: max_tokens,
+      stream: true,
+      ...(options?.tools?.length
+        ? {
+            tools: options.tools.map((tool) => ({
+              type: "function" as const,
+              function: {
+                name: tool.function.name,
+                description: tool.function.description,
+                parameters: tool.function.parameters as OpenAI.FunctionParameters,
+              },
+            })),
+          }
+        : {}),
+      ...(isReasoningModel(model) ? {} : { temperature }),
+    };
+
+    const stream = this.client.chat.completions.stream(createParams, { timeout: DEFAULT_LLM_TIMEOUT_MS });
+    stream.on("content", (delta: string) => {
+      handlers.onTextDelta?.(delta);
+    });
+
+    const [completion, message] = await Promise.all([
+      stream.finalChatCompletion(),
+      stream.finalMessage(),
+    ]);
+
+    const tool_calls = mapOpenAIToolCalls(message.tool_calls);
+
+    return {
+      content: message.content ?? "",
+      usage: {
+        input_tokens: completion.usage?.prompt_tokens ?? 0,
+        output_tokens: completion.usage?.completion_tokens ?? 0,
+      },
+      stop_reason: completion.choices[0]?.finish_reason ?? "unknown",
+      ...(tool_calls.length > 0 ? { tool_calls } : {}),
+    };
+  }
+}
+
+function mapOpenAIToolCalls(
+  toolCalls: OpenAI.Chat.ChatCompletionMessageToolCall[] | undefined
+): ToolCallResult[] {
+  if (!toolCalls?.length) return [];
+  return toolCalls
+    .filter((call): call is OpenAI.Chat.ChatCompletionMessageFunctionToolCall =>
+      !("type" in call) || call.type === "function"
+    )
+    .map((call) => ({
+      id: call.id,
+      type: "function" as const,
+      function: {
+        name: call.function.name,
+        arguments: call.function.arguments,
+      },
+    }));
 }
