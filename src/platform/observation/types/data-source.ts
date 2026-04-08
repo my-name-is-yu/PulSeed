@@ -21,6 +21,7 @@ export const DataSourceConfigSchema = z.object({
   type: DataSourceTypeEnum,
   connection: z.object({
     path: z.string().optional(),
+    repo: z.string().optional(),
     url: z.string().optional(),
     method: z.enum(["GET", "POST"]).optional(),
     headers: z.record(z.string(), z.string()).optional(),

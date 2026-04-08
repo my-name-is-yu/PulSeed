@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { ScheduleEngine } from "../schedule-engine.js";
 import { detectChange } from "../change-detector.js";
-import type { ScheduleEntry } from "../types/schedule.js";
+import type { ScheduleEntry, ScheduleEntryInput } from "../types/schedule.js";
 import type { IDataSourceAdapter } from "../../platform/observation/data-source-adapter.js";
 import { makeTempDir, cleanupTempDir } from "../../../tests/helpers/temp-dir.js";
 
@@ -29,7 +29,7 @@ describe("ScheduleEngine", () => {
     const entry = await engine.addEntry({
       name: "http-check",
       layer: "heartbeat",
-      trigger: { type: "interval", seconds: 30 },
+      trigger: { type: "interval", seconds: 30, jitter_factor: 0 },
       enabled: true,
       heartbeat: {
         check_type: "http",
@@ -58,7 +58,7 @@ describe("ScheduleEngine", () => {
     const entry = await engine.addEntry({
       name: "to-remove",
       layer: "heartbeat",
-      trigger: { type: "interval", seconds: 60 },
+      trigger: { type: "interval", seconds: 60, jitter_factor: 0 },
       enabled: true,
       heartbeat: {
         check_type: "custom",
@@ -357,7 +357,15 @@ function makeMockAdapter(value: unknown): IDataSourceAdapter {
   return {
     sourceId: "test-source",
     sourceType: "file",
-    config: { id: "test-source", type: "file", connection: {}, enabled: true, refresh_interval_seconds: 60 },
+    config: {
+      id: "test-source",
+      name: "test-source",
+      type: "file",
+      connection: {},
+      polling: { interval_ms: 60_000 },
+      enabled: true,
+      created_at: new Date().toISOString(),
+    },
     connect: vi.fn().mockResolvedValue(undefined),
     disconnect: vi.fn().mockResolvedValue(undefined),
     healthCheck: vi.fn().mockResolvedValue(true),
@@ -370,8 +378,8 @@ function makeMockAdapter(value: unknown): IDataSourceAdapter {
   };
 }
 
-function makeProbeEntry(overrides: Partial<ScheduleEntry> = {}): Omit<
-  ScheduleEntry,
+function makeProbeEntry(overrides: Partial<ScheduleEntryInput> = {}): Omit<
+  ScheduleEntryInput,
   "id" | "created_at" | "updated_at" | "last_fired_at" | "next_fire_at" |
   "consecutive_failures" | "last_escalation_at" | "baseline_results" |
   "total_executions" | "total_tokens_used"
@@ -379,7 +387,7 @@ function makeProbeEntry(overrides: Partial<ScheduleEntry> = {}): Omit<
   return {
     name: "test-probe",
     layer: "probe",
-    trigger: { type: "interval", seconds: 60 },
+    trigger: { type: "interval", seconds: 60, jitter_factor: 0 },
     enabled: true,
     probe: {
       data_source_id: "test-source",
@@ -952,8 +960,8 @@ describe('Probe execution edge cases', () => {
 
 // ─── Phase 3: Cron execution ───
 
-function makeCronEntry(overrides: Partial<ScheduleEntry> = {}): Omit<
-  ScheduleEntry,
+function makeCronEntry(overrides: Partial<ScheduleEntryInput> = {}): Omit<
+  ScheduleEntryInput,
   "id" | "created_at" | "updated_at" | "last_fired_at" | "next_fire_at" |
   "consecutive_failures" | "last_escalation_at" | "baseline_results" |
   "total_executions" | "total_tokens_used" | "max_tokens_per_day" | "tokens_used_today" | "budget_reset_at"
@@ -961,7 +969,7 @@ function makeCronEntry(overrides: Partial<ScheduleEntry> = {}): Omit<
   return {
     name: "test-cron",
     layer: "cron",
-    trigger: { type: "interval", seconds: 3600 },
+    trigger: { type: "interval", seconds: 3600, jitter_factor: 0 },
     enabled: true,
     cron: {
       prompt_template: "Summarize current status: {{test-source}}",
@@ -973,8 +981,8 @@ function makeCronEntry(overrides: Partial<ScheduleEntry> = {}): Omit<
   };
 }
 
-function makeGoalTriggerEntry(overrides: Partial<ScheduleEntry> = {}): Omit<
-  ScheduleEntry,
+function makeGoalTriggerEntry(overrides: Partial<ScheduleEntryInput> = {}): Omit<
+  ScheduleEntryInput,
   "id" | "created_at" | "updated_at" | "last_fired_at" | "next_fire_at" |
   "consecutive_failures" | "last_escalation_at" | "baseline_results" |
   "total_executions" | "total_tokens_used" | "max_tokens_per_day" | "tokens_used_today" | "budget_reset_at"
@@ -982,7 +990,7 @@ function makeGoalTriggerEntry(overrides: Partial<ScheduleEntry> = {}): Omit<
   return {
     name: "test-goal-trigger",
     layer: "goal_trigger",
-    trigger: { type: "interval", seconds: 3600 },
+    trigger: { type: "interval", seconds: 3600, jitter_factor: 0 },
     enabled: true,
     goal_trigger: {
       goal_id: "test-goal-id",

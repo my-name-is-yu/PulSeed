@@ -3,11 +3,13 @@ import { HttpFetchTool } from "../HttpFetchTool.js";
 import type { ToolCallContext } from "../../../types.js";
 
 const makeContext = (): ToolCallContext => ({
-  goalId: "goal-1",
-  sessionId: "session-1",
   cwd: "/tmp",
+  goalId: "goal-1",
+  trustBalance: 50,
+  preApproved: false,
+  approvalFn: async () => false,
+  sessionId: "session-1",
   dryRun: false,
-  permissionLevel: "read_only",
 });
 
 describe("HttpFetchTool", () => {
@@ -36,7 +38,9 @@ describe("HttpFetchTool", () => {
     it("needs_approval for localhost", async () => {
       const result = await tool.checkPermissions({ url: "http://localhost:3000/api", method: "GET", timeoutMs: 30_000, maxResponseBytes: 1_048_576 });
       expect(result.status).toBe("needs_approval");
-      expect(result.reason).toContain("internal address");
+      if (result.status === "needs_approval") {
+        expect(result.reason).toContain("internal address");
+      }
     });
 
     it("needs_approval for 127.0.0.1", async () => {

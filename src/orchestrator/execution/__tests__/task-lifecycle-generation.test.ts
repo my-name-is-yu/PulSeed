@@ -96,6 +96,13 @@ const UNKNOWN_REVERSIBILITY_RESPONSE = `\`\`\`json
 
 // ─── Test Suite ───
 
+function expectTask(task: Task | null): Task {
+  if (!task) {
+    throw new Error("Expected generateTask() to return a task");
+  }
+  return task;
+}
+
 describe("TaskLifecycle", async () => {
   let tmpDir: string;
   let stateManager: StateManager;
@@ -184,7 +191,18 @@ describe("TaskLifecycle", async () => {
           last_applied_at: null,
         },
       ]);
-      await saveDreamConfig({ activation: { learnedPatternHints: true } }, stateManager.getBaseDir());
+      await saveDreamConfig({
+        activation: {
+          semanticWorkingMemory: false,
+          crossGoalLessons: false,
+          semanticContext: false,
+          autoAcquireKnowledge: false,
+          learnedPatternHints: true,
+          strategyTemplates: false,
+          decisionHeuristics: false,
+          graphTraversal: false,
+        },
+      }, stateManager.getBaseDir());
 
       await lifecycle.generateTask("goal-42", "completion_rate");
 
@@ -207,7 +225,7 @@ describe("TaskLifecycle", async () => {
       const llm = createMockLLMClient([VALID_TASK_RESPONSE]);
       const lifecycle = createLifecycle(llm);
 
-      const task = await lifecycle.generateTask("goal-1", "test_coverage");
+      const task = expectTask(await lifecycle.generateTask("goal-1", "test_coverage"));
 
       expect(task.work_description).toBe(
         "Write unit tests for the authentication module"
@@ -240,7 +258,7 @@ describe("TaskLifecycle", async () => {
       });
       const activeStrategy = await strategyManager.activateBestCandidate("goal-1");
 
-      const task = await lifecycle.generateTask("goal-1", "test_coverage");
+      const task = expectTask(await lifecycle.generateTask("goal-1", "test_coverage"));
       expect(task.strategy_id).toBe(activeStrategy.id);
     });
 
@@ -248,7 +266,7 @@ describe("TaskLifecycle", async () => {
       const llm = createMockLLMClient([VALID_TASK_RESPONSE]);
       const lifecycle = createLifecycle(llm);
 
-      const task = await lifecycle.generateTask("goal-1", "dim", "manual-strategy-id");
+      const task = expectTask(await lifecycle.generateTask("goal-1", "dim", "manual-strategy-id"));
       expect(task.strategy_id).toBe("manual-strategy-id");
     });
 
@@ -256,7 +274,7 @@ describe("TaskLifecycle", async () => {
       const llm = createMockLLMClient([VALID_TASK_RESPONSE]);
       const lifecycle = createLifecycle(llm);
 
-      const task = await lifecycle.generateTask("goal-1", "dim");
+      const task = expectTask(await lifecycle.generateTask("goal-1", "dim"));
       expect(task.strategy_id).toBeNull();
     });
 
@@ -264,7 +282,7 @@ describe("TaskLifecycle", async () => {
       const llm = createMockLLMClient([VALID_TASK_RESPONSE]);
       const lifecycle = createLifecycle(llm);
 
-      const task = await lifecycle.generateTask("goal-1", "dim");
+      const task = expectTask(await lifecycle.generateTask("goal-1", "dim"));
 
       const persisted = await stateManager.readRaw(`tasks/goal-1/${task.id}.json`);
       expect(persisted).not.toBeNull();
@@ -275,7 +293,7 @@ describe("TaskLifecycle", async () => {
       const llm = createMockLLMClient([VALID_TASK_RESPONSE]);
       const lifecycle = createLifecycle(llm);
 
-      const task = await lifecycle.generateTask("goal-1", "dim");
+      const task = expectTask(await lifecycle.generateTask("goal-1", "dim"));
       expect(task.status).toBe("pending");
     });
 
@@ -284,7 +302,7 @@ describe("TaskLifecycle", async () => {
       const lifecycle = createLifecycle(llm);
 
       const before = new Date().toISOString();
-      const task = await lifecycle.generateTask("goal-1", "dim");
+      const task = expectTask(await lifecycle.generateTask("goal-1", "dim"));
       const after = new Date().toISOString();
 
       expect(task.created_at).toBeDefined();
@@ -296,8 +314,8 @@ describe("TaskLifecycle", async () => {
       const llm = createMockLLMClient([VALID_TASK_RESPONSE, VALID_TASK_RESPONSE]);
       const lifecycle = createLifecycle(llm);
 
-      const task1 = await lifecycle.generateTask("goal-1", "dim");
-      const task2 = await lifecycle.generateTask("goal-1", "dim");
+      const task1 = expectTask(await lifecycle.generateTask("goal-1", "dim"));
+      const task2 = expectTask(await lifecycle.generateTask("goal-1", "dim"));
 
       expect(task1.id).not.toBe(task2.id);
       // UUID format check
@@ -310,7 +328,7 @@ describe("TaskLifecycle", async () => {
       const llm = createMockLLMClient([VALID_TASK_RESPONSE]);
       const lifecycle = createLifecycle(llm);
 
-      const task = await lifecycle.generateTask("my-goal", "dim");
+      const task = expectTask(await lifecycle.generateTask("my-goal", "dim"));
       expect(task.goal_id).toBe("my-goal");
     });
 
@@ -318,7 +336,7 @@ describe("TaskLifecycle", async () => {
       const llm = createMockLLMClient([VALID_TASK_RESPONSE]);
       const lifecycle = createLifecycle(llm);
 
-      const task = await lifecycle.generateTask("goal-1", "coverage");
+      const task = expectTask(await lifecycle.generateTask("goal-1", "coverage"));
       expect(task.target_dimensions).toEqual(["coverage"]);
       expect(task.primary_dimension).toBe("coverage");
     });
@@ -327,7 +345,7 @@ describe("TaskLifecycle", async () => {
       const llm = createMockLLMClient([VALID_TASK_RESPONSE]);
       const lifecycle = createLifecycle(llm);
 
-      const task = await lifecycle.generateTask("goal-1", "dim");
+      const task = expectTask(await lifecycle.generateTask("goal-1", "dim"));
       expect(task.consecutive_failure_count).toBe(0);
     });
 
@@ -368,7 +386,7 @@ describe("TaskLifecycle", async () => {
       const llm = createMockLLMClient([UNKNOWN_REVERSIBILITY_RESPONSE]);
       const lifecycle = createLifecycle(llm);
 
-      const task = await lifecycle.generateTask("goal-1", "dim");
+      const task = expectTask(await lifecycle.generateTask("goal-1", "dim"));
       expect(task.estimated_duration).toBeNull();
     });
 
@@ -376,7 +394,7 @@ describe("TaskLifecycle", async () => {
       const llm = createMockLLMClient([UNKNOWN_REVERSIBILITY_RESPONSE]);
       const lifecycle = createLifecycle(llm);
 
-      const task = await lifecycle.generateTask("goal-1", "dim");
+      const task = expectTask(await lifecycle.generateTask("goal-1", "dim"));
       expect(task.constraints).toEqual([]);
     });
 
@@ -384,7 +402,7 @@ describe("TaskLifecycle", async () => {
       const llm = createMockLLMClient([VALID_TASK_RESPONSE]);
       const lifecycle = createLifecycle(llm);
 
-      const task = await lifecycle.generateTask("goal-1", "dim");
+      const task = expectTask(await lifecycle.generateTask("goal-1", "dim"));
       const raw = await stateManager.readRaw(`tasks/goal-1/${task.id}.json`) as Record<string, unknown>;
 
       expect(raw.work_description).toBe(task.work_description);

@@ -35,7 +35,7 @@ function makeDeps(llmResponse: string | Error): ReconcilerDeps {
       warn: vi.fn(),
       error: vi.fn(),
       debug: vi.fn(),
-    } as ReconcilerDeps["logger"],
+    } as unknown as ReconcilerDeps["logger"],
   };
 }
 

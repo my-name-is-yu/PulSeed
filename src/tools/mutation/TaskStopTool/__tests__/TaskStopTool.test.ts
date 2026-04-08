@@ -106,7 +106,10 @@ describe("TaskStopTool", () => {
     fs.mkdirSync(tasksDir, { recursive: true });
     fs.writeFileSync(path.join(tasksDir, "task-1.json"), JSON.stringify(makeTaskJson("task-1", "goal-1")));
 
-    const result = await tool.call({ goalId: "goal-1", taskId: "task-1" }, makeContext());
+    const result = await tool.call(
+      { goalId: "goal-1", taskId: "task-1", reason: "Stopped manually" },
+      makeContext()
+    );
     expect(result.success).toBe(true);
 
     const history = await fakeReadRaw(tmpDir, "tasks/goal-1/task-history.json") as Array<Record<string, unknown>>;

@@ -98,11 +98,11 @@ export class TrustStateTool implements ITool<TrustStateInput, unknown> {
     };
   }
 
-  async checkPermissions(): Promise<PermissionCheckResult> {
+  async checkPermissions(_input: TrustStateInput, _context?: ToolCallContext): Promise<PermissionCheckResult> {
     return { status: "allowed" };
   }
 
-  isConcurrencySafe(): boolean {
+  isConcurrencySafe(_input?: TrustStateInput): boolean {
     return true;
   }
 }

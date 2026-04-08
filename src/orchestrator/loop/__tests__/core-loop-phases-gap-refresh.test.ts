@@ -24,12 +24,23 @@ vi.mock("../../../platform/drive/gap-calculator-tools.js", () => ({
 function makeStaleDimension() {
   return {
     name: "coverage",
+    label: "Coverage",
     threshold: { type: "min" as const, value: 80 },
     current_value: 50,
     confidence: 0.3, // below 0.6 staleness threshold
     weight: 1.0,
     last_updated: new Date().toISOString(),
-    observation_method: { type: "mechanical" as const, endpoint: "npx vitest run --coverage" },
+    observation_method: {
+      type: "mechanical" as const,
+      source: "npx vitest run --coverage",
+      schedule: null,
+      endpoint: null,
+      confidence_tier: "mechanical" as const,
+    },
+    history: [],
+    uncertainty_weight: null,
+    state_integrity: "ok" as const,
+    dimension_mapping: null,
   };
 }
 
@@ -42,13 +53,16 @@ function makeGoal(overrides: Partial<Goal> = {}): Goal {
     gap_aggregation: "max",
     uncertainty_weight: 1.0,
     status: "active",
-    origin: "general",
+    origin: "manual",
     children_ids: [],
     deadline: null,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
     ...overrides,
-  };
+    parent_id: overrides.parent_id ?? null,
+    node_type: overrides.node_type ?? "goal",
+    dimension_mapping: overrides.dimension_mapping ?? null,
+  } as Goal;
 }
 
 function makeResult(): LoopIterationResult {
@@ -61,7 +75,13 @@ function makeResult(): LoopIterationResult {
     stallDetected: false,
     stallReport: null,
     pivotOccurred: false,
-    completionJudgment: null,
+    completionJudgment: {
+      is_complete: false,
+      blocking_dimensions: [],
+      low_confidence_dimensions: [],
+      needs_verification_task: false,
+      checked_at: new Date().toISOString(),
+    },
     elapsedMs: 0,
     error: null,
   };

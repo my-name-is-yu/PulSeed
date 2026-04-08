@@ -93,7 +93,7 @@ describe("TaskOutputTool", () => {
     await fakeWriteRaw(tmpDir, "tasks/goal-1/task-1.json", makeTaskJson("task-1", "goal-1"));
 
     const result = await tool.call(
-      { goalId: "goal-1", taskId: "task-1", content: "Sub-agent result" },
+      { goalId: "goal-1", taskId: "task-1", content: "Sub-agent result", mode: "append" },
       makeContext()
     );
 
@@ -117,7 +117,7 @@ describe("TaskOutputTool", () => {
 
   it("returns failure when task does not exist", async () => {
     const result = await tool.call(
-      { goalId: "goal-1", taskId: "missing", content: "hello" },
+      { goalId: "goal-1", taskId: "missing", content: "hello", mode: "append" },
       makeContext()
     );
 

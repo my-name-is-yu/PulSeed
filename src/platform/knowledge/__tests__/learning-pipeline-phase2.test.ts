@@ -19,17 +19,18 @@ function makeFeedback(
     feedbackType: StructuralFeedbackType;
   }
 ): StructuralFeedback {
+  const { feedbackType, ...rest } = overrides;
   return {
     id: `fb_${Math.random().toString(36).slice(2)}`,
     goalId: "goal-1",
     iterationId: "iter-1",
-    feedbackType: overrides.feedbackType,
+    feedbackType,
     expected: { score: 0.8 },
     actual: { score: 0.6 },
     delta: -0.2,
     timestamp: new Date().toISOString(),
     context: { dimension: "test_coverage" },
-    ...overrides,
+    ...rest,
   };
 }
 

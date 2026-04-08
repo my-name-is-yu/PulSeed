@@ -622,7 +622,7 @@ describe("CoreLoop tree mode (14C)", async () => {
     );
 
     const loop = new CoreLoop(deps, { treeMode: true, maxIterations: 1, delayBetweenLoopsMs: 0 });
-    await loop.runTreeIteration("root-1", 0);
+    await loop.runTreeIteration("root-1", 0, new Map());
 
     // onNodeCompleted should be called since the goal completed
     expect(orchestratorMock.onNodeCompleted).toHaveBeenCalledWith("node-id-1");
@@ -643,7 +643,7 @@ describe("CoreLoop tree mode (14C)", async () => {
     );
 
     const loop = new CoreLoop(deps, { treeMode: true, maxIterations: 1, delayBetweenLoopsMs: 0 });
-    await loop.runTreeIteration("root-1", 0);
+    await loop.runTreeIteration("root-1", 0, new Map());
 
     // onNodeCompleted should NOT be called
     expect(orchestratorMock.onNodeCompleted).not.toHaveBeenCalled();
@@ -686,7 +686,7 @@ describe("CoreLoop tree mode (14C)", async () => {
     await mocks.stateManager.saveGoal(nodeGoal);
 
     const loop = new CoreLoop(deps, { treeMode: true, delayBetweenLoopsMs: 0 });
-    const iterResult = await loop.runTreeIteration("root-1", 0);
+    const iterResult = await loop.runTreeIteration("root-1", 0, new Map());
 
     // The iteration result goalId should be the selected node, not root
     expect(iterResult.goalId).toBe("node-id-1");
@@ -705,7 +705,7 @@ describe("CoreLoop tree mode (14C)", async () => {
     await mocks.stateManager.saveGoal(nodeGoal);
 
     const loop = new CoreLoop(deps, { treeMode: true, delayBetweenLoopsMs: 0 });
-    const iterResult = await loop.runTreeIteration("root-1", 0);
+    const iterResult = await loop.runTreeIteration("root-1", 0, new Map());
 
     expect(iterResult.goalId).toBe("root-1");
     expect(iterResult.taskResult).toBeNull();

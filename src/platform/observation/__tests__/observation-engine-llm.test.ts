@@ -3,7 +3,6 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { ObservationEngine } from "../observation-engine.js";
 import { StateManager } from "../../../base/state/state-manager.js";
-import { GapCalculator } from "../../drive/gap-calculator.js";
 import type { Goal } from "../../../base/types/goal.js";
 import type { ObservationMethod } from "../../../base/types/core.js";
 import type { ILLMClient } from "../../../base/llm/llm-client.js";
@@ -288,6 +287,7 @@ describe("ObservationEngine LLM observation", () => {
             weight: 1.0,
             uncertainty_weight: null,
             state_integrity: "ok",
+            dimension_mapping: null,
           },
         ],
       });
@@ -326,6 +326,7 @@ describe("ObservationEngine LLM observation", () => {
             weight: 1.0,
             uncertainty_weight: null,
             state_integrity: "ok",
+            dimension_mapping: null,
           },
         ],
       });
@@ -379,6 +380,7 @@ describe("ObservationEngine LLM observation", () => {
             weight: 1.0,
             uncertainty_weight: null,
             state_integrity: "ok",
+            dimension_mapping: null,
           },
         ],
       });
@@ -430,6 +432,7 @@ describe("ObservationEngine LLM observation", () => {
             weight: 1.0,
             uncertainty_weight: null,
             state_integrity: "ok",
+            dimension_mapping: null,
           },
         ],
       });
@@ -473,6 +476,7 @@ describe("ObservationEngine LLM observation", () => {
             weight: 1.0,
             uncertainty_weight: null,
             state_integrity: "ok",
+            dimension_mapping: null,
           },
         ],
       });

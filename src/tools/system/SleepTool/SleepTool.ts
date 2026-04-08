@@ -60,11 +60,11 @@ export class SleepTool implements ITool<SleepInput, SleepOutput> {
     };
   }
 
-  async checkPermissions(): Promise<PermissionCheckResult> {
+  async checkPermissions(_input: SleepInput, _context?: ToolCallContext): Promise<PermissionCheckResult> {
     return { status: "allowed" };
   }
 
-  isConcurrencySafe(): boolean {
+  isConcurrencySafe(_input?: SleepInput): boolean {
     return true;
   }
 }

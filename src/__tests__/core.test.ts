@@ -74,9 +74,19 @@ function makeGoal(goalId = "goal-core"): Goal {
     user_override: false,
     feasibility_note: null,
     uncertainty_weight: 1,
+    decomposition_depth: 0,
+    specificity_score: null,
+    loop_status: "idle",
     created_at: now,
     updated_at: now,
   };
+}
+
+function expectTask<T>(value: T | null): T {
+  if (value === null) {
+    throw new Error("Expected task to be present");
+  }
+  return value;
 }
 
 function createMockLLMClient(responseContent: string): ILLMClient {
@@ -150,6 +160,7 @@ describe("core functionality", () => {
       deadline_horizon_hours: 168,
       urgency_steepness: 3,
       urgency_override_threshold: 10,
+      pacing_urgency_weight: 1,
       half_life_hours: 12,
     };
 
@@ -224,7 +235,7 @@ describe("core functionality", () => {
         new StallDetector(stateManager)
       );
 
-      const task = await lifecycle.generateTask(goal.id, "coverage");
+      const task = expectTask(await lifecycle.generateTask(goal.id, "coverage"));
       const persisted = await stateManager.readRaw(`tasks/${goal.id}/${task.id}.json`) as
         | { primary_dimension?: string; work_description?: string; status?: string }
         | null;
@@ -321,6 +332,7 @@ After`;
         deadline_horizon_hours: 168,
         urgency_steepness: 3,
         urgency_override_threshold: 10,
+        pacing_urgency_weight: 1,
         half_life_hours: 12,
       }
     );

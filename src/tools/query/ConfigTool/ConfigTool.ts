@@ -92,11 +92,11 @@ export class ConfigTool implements ITool<ConfigToolInput, unknown> {
     }
   }
 
-  async checkPermissions(): Promise<PermissionCheckResult> {
+  async checkPermissions(_input: ConfigToolInput, _context?: ToolCallContext): Promise<PermissionCheckResult> {
     return { status: "allowed" };
   }
 
-  isConcurrencySafe(): boolean {
+  isConcurrencySafe(_input?: ConfigToolInput): boolean {
     return true;
   }
 }

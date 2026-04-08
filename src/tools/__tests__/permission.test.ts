@@ -7,18 +7,22 @@ import type { EthicsGateInterface, PermissionManagerDeps } from "../permission.j
 
 function makeTool(overrides: Partial<ToolMetadata> = {}): ITool {
   const metadata: ToolMetadata = {
+    ...overrides,
     name: "test-tool",
-    description: "A test tool",
+    aliases: overrides.aliases ?? [],
     permissionLevel: "write_local",
     isReadOnly: false,
-    tags: [],
-    version: "1.0.0",
-    ...overrides,
+    isDestructive: overrides.isDestructive ?? false,
+    shouldDefer: overrides.shouldDefer ?? false,
+    alwaysLoad: overrides.alwaysLoad ?? false,
+    maxConcurrency: overrides.maxConcurrency ?? 0,
+    maxOutputChars: overrides.maxOutputChars ?? 8000,
+    tags: overrides.tags ?? [],
   };
   return {
     metadata,
     inputSchema: { parse: (x: unknown) => x } as never,
-    description: () => metadata.description,
+    description: () => metadata.name,
     call: vi.fn(),
     checkPermissions: vi.fn(),
     isConcurrencySafe: () => true,

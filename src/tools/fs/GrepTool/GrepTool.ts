@@ -84,11 +84,11 @@ export class GrepTool implements ITool<GrepInput, string> {
     }
   }
 
-  async checkPermissions(): Promise<PermissionCheckResult> {
+  async checkPermissions(_input: GrepInput, _context?: ToolCallContext): Promise<PermissionCheckResult> {
     return { status: "allowed" };
   }
 
-  isConcurrencySafe(): boolean {
+  isConcurrencySafe(_input?: GrepInput): boolean {
     return true;
   }
 }

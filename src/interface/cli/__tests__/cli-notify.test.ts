@@ -156,7 +156,7 @@ describe("cmdNotify", () => {
 
     expect(code).toBe(0);
 
-    const output = consoleSpy.mock.calls.map((c) => c[0] as string).join("\n");
+    const output = consoleSpy.mock.calls.map((c: unknown[]) => c[0] as string).join("\n");
     expect(output).toContain("[0]");
     expect(output).toContain("slack");
     expect(output).toContain("https://hooks.slack.com/services/AAA");
@@ -231,7 +231,7 @@ describe("cmdNotify", () => {
 
     expect(code).toBe(0);
 
-    const output = consoleSpy.mock.calls.map((c) => c[0] as string).join("\n");
+    const output = consoleSpy.mock.calls.map((c: unknown[]) => c[0] as string).join("\n");
     expect(output).toContain("dry-run");
     expect(output).toContain("PulSeed notification test");
     expect(output).toContain("https://hooks.slack.com/services/AAA");
@@ -251,7 +251,7 @@ describe("cmdNotify", () => {
 
     expect(code).toBe(0);
 
-    const output = consoleSpy.mock.calls.map((c) => c[0] as string).join("\n");
+    const output = consoleSpy.mock.calls.map((c: unknown[]) => c[0] as string).join("\n");
     expect(output).toContain("https://my-server.com/hook");
     expect(output).not.toContain("https://hooks.slack.com/services/AAA");
   });

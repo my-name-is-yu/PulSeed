@@ -5,7 +5,7 @@ import * as os from "node:os";
 import type { ToolCallContext } from "../../../types.js";
 
 // vi.hoisted ensures mockHomedir is available at module-level before vi.mock() runs
-const mockHomedir = vi.hoisted(() => vi.fn<[], string>());
+const mockHomedir = vi.hoisted(() => vi.fn(() => ""));
 
 vi.mock("node:os", async (importOriginal) => {
   const orig = await importOriginal<typeof import("node:os")>();

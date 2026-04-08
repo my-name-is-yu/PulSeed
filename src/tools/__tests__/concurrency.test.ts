@@ -1,15 +1,36 @@
 import { describe, it, expect, vi } from "vitest";
 import { ConcurrencyController } from "../concurrency.js";
 import type { ITool, ToolMetadata, ToolResult } from "../types.js";
+import { z } from "zod";
 
 function makeTool(name: string): ITool<Record<string, unknown>> {
   return {
-    metadata: { name, description: "test", inputSchema: {} } as ToolMetadata,
-    execute: vi.fn(),
+    metadata: {
+      name,
+      aliases: [],
+      permissionLevel: "read_only",
+      isReadOnly: true,
+      isDestructive: false,
+      shouldDefer: false,
+      alwaysLoad: false,
+      maxConcurrency: 0,
+      maxOutputChars: 4000,
+      tags: [],
+    } as ToolMetadata,
+    inputSchema: z.record(z.string(), z.unknown()),
+    description: () => "test tool",
+    call: vi.fn(),
+    checkPermissions: vi.fn().mockResolvedValue({ status: "allowed" }),
+    isConcurrencySafe: () => true,
   };
 }
 
-const okResult: ToolResult = { ok: true, output: "done" };
+const okResult: ToolResult = {
+  success: true,
+  data: "done",
+  summary: "done",
+  durationMs: 1,
+};
 
 describe("ConcurrencyController", () => {
   it("basic execution: passes through to fn and returns result", async () => {

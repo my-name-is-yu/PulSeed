@@ -29,12 +29,13 @@ function makeCompletionResponse(
   content: string,
   finishReason = "stop",
   promptTokens = 10,
-  completionTokens = 5
+  completionTokens = 5,
+  toolCalls?: Array<{ id: string; function: { name: string; arguments: string } }>
 ) {
   return {
     choices: [
       {
-        message: { content },
+        message: { content, ...(toolCalls ? { tool_calls: toolCalls } : {}) },
         finish_reason: finishReason,
       },
     ],
@@ -235,6 +236,37 @@ describe("OpenAILLMClient", () => {
 
       const callArgs = mockCreate.mock.calls[0][0];
       expect(callArgs.max_completion_tokens).toBe(128);
+    });
+
+    it("passes tools through and maps returned tool calls", async () => {
+      const client = new OpenAILLMClient({ apiKey: "sk-test" });
+      mockCreate.mockResolvedValueOnce(makeCompletionResponse(
+        "",
+        "tool_calls",
+        10,
+        5,
+        [{ id: "call-1", function: { name: "read_file", arguments: "{\"path\":\"README.md\"}" } }]
+      ));
+
+      const result = await client.sendMessage([{ role: "user", content: "inspect the repo" }], {
+        tools: [
+          {
+            type: "function",
+            function: {
+              name: "read_file",
+              description: "Read a file",
+              parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"] },
+            },
+          },
+        ],
+      });
+
+      const callArgs = mockCreate.mock.calls[0][0];
+      expect(callArgs.tools).toHaveLength(1);
+      expect(result.tool_calls?.[0]).toMatchObject({
+        id: "call-1",
+        function: { name: "read_file", arguments: "{\"path\":\"README.md\"}" },
+      });
     });
   });
 

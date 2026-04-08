@@ -70,10 +70,10 @@ function makeMinimalTask(goalId: string, overrides: Partial<Task> = {}): Task {
     estimated_duration: null,
     status: "pending",
     created_at: new Date().toISOString(),
-    task_category: "code",
+    task_category: "normal",
     consecutive_failure_count: 0,
     ...overrides,
-  };
+  } as Task;
 }
 
 function makeMockAdapter(): import("../task/task-lifecycle.js").IAdapter {
@@ -294,10 +294,7 @@ describe("TaskLifecycle — post-execution health check", () => {
       stderr: "",
     });
 
-    const result = await lifecycle.runPostExecutionHealthCheck(
-      makeMockAdapter(),
-      makeMinimalTask("goal-3")
-    );
+    const result = await lifecycle.runPostExecutionHealthCheck();
 
     expect(result.healthy).toBe(false);
     expect(result.output).toContain("Build failed");
@@ -320,10 +317,7 @@ describe("TaskLifecycle — post-execution health check", () => {
         stderr: "FAIL src/gap-calculator.test.ts — 2 tests failed",
       });
 
-    const result = await lifecycle.runPostExecutionHealthCheck(
-      makeMockAdapter(),
-      makeMinimalTask("goal-4")
-    );
+    const result = await lifecycle.runPostExecutionHealthCheck();
 
     expect(result.healthy).toBe(false);
     expect(result.output).toContain("Tests failed");
@@ -387,10 +381,7 @@ describe("TaskLifecycle — post-execution health check", () => {
       new Error("ETIMEDOUT: command timed out")
     );
 
-    const result = await lifecycle.runPostExecutionHealthCheck(
-      makeMockAdapter(),
-      makeMinimalTask("goal-6")
-    );
+    const result = await lifecycle.runPostExecutionHealthCheck();
 
     expect(result.healthy).toBe(false);
     expect(result.output).toContain("Build check error");

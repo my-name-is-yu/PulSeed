@@ -1077,10 +1077,10 @@ describe("LearningPipeline", () => {
       await writeLogs(stateManager, "goal-complete");
 
       const result = await pipeline.onGoalCompleted("goal-complete");
-      const patternsBefore = await pipeline.getPatterns("goal-complete").length;
+      const patternsBefore = (await pipeline.getPatterns("goal-complete")).length;
 
       // No additional patterns should appear because sharing to self is blocked
-      expect(await pipeline.getPatterns("goal-complete").length).toBe(patternsBefore);
+      expect((await pipeline.getPatterns("goal-complete")).length).toBe(patternsBefore);
       expect(result).toHaveLength(1);
     });
   });

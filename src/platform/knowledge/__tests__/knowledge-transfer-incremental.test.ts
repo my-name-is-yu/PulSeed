@@ -33,7 +33,7 @@ function makePattern(overrides: Partial<LearnedPattern> = {}): LearnedPattern {
 }
 
 function makeMockKnowledgeManager() {
-  return {} as unknown as ReturnType<typeof import("../knowledge-manager.js").KnowledgeManager.prototype.constructor>;
+  return {} as unknown as import("../knowledge-manager.js").KnowledgeManager;
 }
 
 function makeMockEthicsGate() {

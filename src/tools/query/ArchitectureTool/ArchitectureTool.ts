@@ -102,11 +102,11 @@ export class ArchitectureTool implements ITool<ArchitectureToolInput, unknown> {
     };
   }
 
-  async checkPermissions(): Promise<PermissionCheckResult> {
+  async checkPermissions(_input: ArchitectureToolInput, _context?: ToolCallContext): Promise<PermissionCheckResult> {
     return { status: "allowed" };
   }
 
-  isConcurrencySafe(): boolean {
+  isConcurrencySafe(_input?: ArchitectureToolInput): boolean {
     return true;
   }
 }

@@ -29,7 +29,7 @@ function makeGoal(overrides: Partial<Goal> = {}): Goal {
     constraints: [],
     children_ids: [],
     target_date: null,
-    origin: "negotiate",
+    origin: "negotiation",
     pace_snapshot: null,
     deadline: null,
     confidence_flag: null,

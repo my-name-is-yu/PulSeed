@@ -245,6 +245,7 @@ describe("ObservationEngine contextProvider integration", () => {
           weight: 1.0,
           uncertainty_weight: null,
           state_integrity: "ok",
+          dimension_mapping: null,
         },
       ],
     });
@@ -282,6 +283,7 @@ describe("ObservationEngine contextProvider integration", () => {
           weight: 1.0,
           uncertainty_weight: null,
           state_integrity: "ok",
+          dimension_mapping: null,
         },
         {
           name: "code_quality",
@@ -295,6 +297,7 @@ describe("ObservationEngine contextProvider integration", () => {
           weight: 1.0,
           uncertainty_weight: null,
           state_integrity: "ok",
+          dimension_mapping: null,
         },
       ],
       gap_aggregation: "max",
@@ -309,6 +312,9 @@ describe("ObservationEngine contextProvider integration", () => {
       user_override: false,
       feasibility_note: null,
       uncertainty_weight: 1.0,
+      decomposition_depth: 0,
+      specificity_score: null,
+      loop_status: "idle",
       created_at: now,
       updated_at: now,
     };

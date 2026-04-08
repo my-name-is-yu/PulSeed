@@ -206,11 +206,11 @@ export class ProgressHistoryTool
     }
   }
 
-  async checkPermissions(): Promise<PermissionCheckResult> {
+  async checkPermissions(_input: ProgressHistoryInput, _context?: ToolCallContext): Promise<PermissionCheckResult> {
     return { status: "allowed" };
   }
 
-  isConcurrencySafe(): boolean {
+  isConcurrencySafe(_input?: ProgressHistoryInput): boolean {
     return true;
   }
 }

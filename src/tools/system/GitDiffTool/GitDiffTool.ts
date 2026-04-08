@@ -111,11 +111,11 @@ export class GitDiffTool implements ITool<GitDiffInput, string> {
     };
   }
 
-  async checkPermissions(): Promise<PermissionCheckResult> {
+  async checkPermissions(_input: GitDiffInput, _context?: ToolCallContext): Promise<PermissionCheckResult> {
     return { status: "allowed" };
   }
 
-  isConcurrencySafe(): boolean {
+  isConcurrencySafe(_input?: GitDiffInput): boolean {
     return true;
   }
 }

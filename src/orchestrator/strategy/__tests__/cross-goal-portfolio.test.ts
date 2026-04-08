@@ -23,18 +23,19 @@ function makeGoal(
   overrides: Partial<Goal> & { id: string }
 ): Goal {
   const now = new Date().toISOString();
+  const { id, ...rest } = overrides;
   return GoalSchema.parse({
-    id: overrides.id,
-    title: overrides.title ?? `Goal ${overrides.id}`,
-    description: overrides.description ?? "",
-    status: overrides.status ?? "active",
-    dimensions: overrides.dimensions ?? [],
-    constraints: overrides.constraints ?? [],
-    created_at: overrides.created_at ?? now,
-    updated_at: overrides.updated_at ?? now,
-    deadline: overrides.deadline ?? null,
-    children_ids: overrides.children_ids ?? [],
-    ...overrides,
+    id,
+    title: rest.title ?? `Goal ${id}`,
+    description: rest.description ?? "",
+    status: rest.status ?? "active",
+    dimensions: rest.dimensions ?? [],
+    constraints: rest.constraints ?? [],
+    created_at: rest.created_at ?? now,
+    updated_at: rest.updated_at ?? now,
+    deadline: rest.deadline ?? null,
+    children_ids: rest.children_ids ?? [],
+    ...rest,
   });
 }
 

@@ -79,11 +79,11 @@ export class SetGoalTool implements ITool<SetGoalInput, unknown> {
     }
   }
 
-  async checkPermissions(): Promise<PermissionCheckResult> {
+  async checkPermissions(_input: SetGoalInput, _context?: ToolCallContext): Promise<PermissionCheckResult> {
     return { status: "allowed" };
   }
 
-  isConcurrencySafe(): boolean {
+  isConcurrencySafe(_input?: SetGoalInput): boolean {
     return false;
   }
 }

@@ -188,7 +188,6 @@ describe("buildLLMClient — early API key validation", () => {
   describe("provider: default fallback", () => {
     it("throws when api_key is absent in default fallback path", async () => {
       mockLoadProviderConfig.mockResolvedValue({
-        // @ts-expect-error intentionally unknown provider to exercise default branch
         provider: "unknown-provider",
         model: "gpt-5.4-mini",
         adapter: "openai_api",
@@ -199,7 +198,6 @@ describe("buildLLMClient — early API key validation", () => {
 
     it("succeeds when api_key is present in default fallback path", async () => {
       mockLoadProviderConfig.mockResolvedValue({
-        // @ts-expect-error intentionally unknown provider to exercise default branch
         provider: "unknown-provider",
         model: "gpt-5.4-mini",
         adapter: "openai_api",

@@ -165,6 +165,7 @@ import { GoalNegotiator, EthicsRejectedError } from "../../../orchestrator/goal/
 import { GoalRefiner } from "../../../orchestrator/goal/goal-refiner.js";
 import { ensureProviderConfig } from "../ensure-api-key.js";
 import type { LoopResult } from "../../../orchestrator/loop/core-loop.js";
+import type { Goal } from "../../../base/types/goal.js";
 import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 import { makeGoal } from "../../../../tests/helpers/fixtures.js";
 
@@ -589,7 +590,13 @@ describe("goal add subcommand", async () => {
   it("exits with code 1 when EthicsRejectedError is thrown via --no-refine path", async () => {
     vi.mocked(GoalNegotiator).mockImplementation(function() { return {
       negotiate: vi.fn().mockRejectedValue(
-        new EthicsRejectedError({ verdict: "reject", reasoning: "Harmful content" })
+        new EthicsRejectedError({
+          verdict: "reject",
+          reasoning: "Harmful content",
+          confidence: 1,
+          category: "harmful_content",
+          risks: [],
+        })
       ),
     } as unknown as GoalNegotiator; });
 
@@ -670,7 +677,13 @@ describe("goal add subcommand", async () => {
   it("prints an error message when EthicsRejectedError is thrown via --no-refine", async () => {
     vi.mocked(GoalNegotiator).mockImplementation(function() { return {
       negotiate: vi.fn().mockRejectedValue(
-        new EthicsRejectedError({ verdict: "reject", reasoning: "Dangerous activity" })
+        new EthicsRejectedError({
+          verdict: "reject",
+          reasoning: "Dangerous activity",
+          confidence: 1,
+          category: "dangerous_activity",
+          risks: [],
+        })
       ),
     } as unknown as GoalNegotiator; });
 

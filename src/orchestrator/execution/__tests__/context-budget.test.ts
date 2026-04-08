@@ -15,7 +15,8 @@ import type { IEmbeddingClient } from "../../../platform/knowledge/embedding-cli
 function makeEmbeddingClient(vectorSize = 4): IEmbeddingClient {
   return {
     embed: vi.fn(async (_text: string) => Array(vectorSize).fill(0.5) as number[]),
-    embedBatch: vi.fn(async (texts: string[]) => texts.map(() => Array(vectorSize).fill(0.5) as number[])),
+    batchEmbed: vi.fn(async (texts: string[]) => texts.map(() => Array(vectorSize).fill(0.5) as number[])),
+    cosineSimilarity: vi.fn(() => 1),
   };
 }
 

@@ -54,7 +54,7 @@ export class TogglePluginTool implements ITool<TogglePluginInput, unknown> {
     return { status: "needs_approval", reason: "Toggling a plugin requires user confirmation" };
   }
 
-  isConcurrencySafe(): boolean {
+  isConcurrencySafe(_input?: TogglePluginInput): boolean {
     return false;
   }
 }

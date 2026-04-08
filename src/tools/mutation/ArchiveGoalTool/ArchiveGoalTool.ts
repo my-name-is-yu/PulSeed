@@ -86,7 +86,7 @@ export class ArchiveGoalTool implements ITool<ArchiveGoalInput, unknown> {
     return { status: "needs_approval", reason: "Archiving a goal requires user confirmation" };
   }
 
-  isConcurrencySafe(): boolean {
+  isConcurrencySafe(_input?: ArchiveGoalInput): boolean {
     return false;
   }
 }

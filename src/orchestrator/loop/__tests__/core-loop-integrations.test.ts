@@ -463,7 +463,18 @@ describe("CoreLoop", async () => {
     it("adds cross-goal lessons when activation flag is enabled", async () => {
       const { deps, mocks } = createMockDeps(tmpDir);
       await mocks.stateManager.saveGoal(makeGoal());
-      await saveDreamConfig({ activation: { crossGoalLessons: true } }, mocks.stateManager.getBaseDir());
+      await saveDreamConfig({
+        activation: {
+          semanticWorkingMemory: false,
+          crossGoalLessons: true,
+          semanticContext: false,
+          autoAcquireKnowledge: false,
+          learnedPatternHints: false,
+          strategyTemplates: false,
+          decisionHeuristics: false,
+          graphTraversal: false,
+        },
+      }, mocks.stateManager.getBaseDir());
 
       const knowledgeManager = {
         detectKnowledgeGap: vi.fn().mockResolvedValue(null),
@@ -554,7 +565,18 @@ describe("CoreLoop", async () => {
     it("auto-acquires knowledge and skips execution when enabled and stalled", async () => {
       const { deps, mocks } = createMockDeps(tmpDir);
       await mocks.stateManager.saveGoal(makeGoal());
-      await saveDreamConfig({ activation: { autoAcquireKnowledge: true } }, mocks.stateManager.getBaseDir());
+      await saveDreamConfig({
+        activation: {
+          semanticWorkingMemory: false,
+          crossGoalLessons: false,
+          semanticContext: false,
+          autoAcquireKnowledge: true,
+          learnedPatternHints: false,
+          strategyTemplates: false,
+          decisionHeuristics: false,
+          graphTraversal: false,
+        },
+      }, mocks.stateManager.getBaseDir());
       mocks.stallDetector.checkDimensionStall.mockReturnValue({
         stall_type: "plateau",
         confidence: 0.9,

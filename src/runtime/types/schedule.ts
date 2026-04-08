@@ -62,6 +62,7 @@ export const ScheduleTriggerSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("cron"), expression: z.string(), timezone: z.string().default("UTC") }),
   z.object({ type: z.literal("interval"), seconds: z.number().int().min(1), jitter_factor: z.number().min(0).max(1).default(0) }),
 ]);
+export type ScheduleTriggerInput = z.input<typeof ScheduleTriggerSchema>;
 
 export const ScheduleEntrySchema = z.object({
   id: z.string().uuid(),
@@ -90,6 +91,7 @@ export const ScheduleEntrySchema = z.object({
 });
 
 export type ScheduleEntry = z.infer<typeof ScheduleEntrySchema>;
+export type ScheduleEntryInput = z.input<typeof ScheduleEntrySchema>;
 
 export const ScheduleEntryListSchema = z.array(ScheduleEntrySchema);
 

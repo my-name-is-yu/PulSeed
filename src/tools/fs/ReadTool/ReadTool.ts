@@ -70,7 +70,7 @@ export class ReadTool implements ITool<ReadInput, string> {
     return { status: "allowed" };
   }
 
-  isConcurrencySafe(): boolean {
+  isConcurrencySafe(_input?: ReadInput): boolean {
     return true;
   }
 }

@@ -8,7 +8,14 @@ function makeAdapter(type: string, capabilities?: string[]): IAdapter {
   return {
     adapterType: type,
     capabilities,
-    execute: vi.fn<[AgentTask], Promise<AgentResult>>(),
+    execute: vi.fn(async (_task: AgentTask) => ({
+      success: true,
+      output: "",
+      error: null,
+      exit_code: 0,
+      elapsed_ms: 0,
+      stopped_reason: "completed" as const,
+    })) as IAdapter["execute"],
   };
 }
 

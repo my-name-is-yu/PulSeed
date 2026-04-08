@@ -140,6 +140,15 @@ export class TaskLifecycle {
 
   constructor(deps: TaskLifecycleDeps);
   constructor(
+    stateManager: StateManager,
+    llmClient: ILLMClient,
+    sessionManager: SessionManager,
+    trustManager: TrustManager,
+    strategyManager: StrategyManager,
+    stallDetector: StallDetector,
+    options?: TaskLifecycleOptions
+  );
+  constructor(
     stateManagerOrDeps: StateManager | TaskLifecycleDeps,
     llmClient?: ILLMClient,
     sessionManager?: SessionManager,

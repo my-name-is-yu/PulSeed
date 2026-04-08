@@ -89,11 +89,11 @@ export class GitLogTool implements ITool<GitLogInput, string[] | GitLogEntryFull
     };
   }
 
-  async checkPermissions(): Promise<PermissionCheckResult> {
+  async checkPermissions(_input: GitLogInput, _context?: ToolCallContext): Promise<PermissionCheckResult> {
     return { status: "allowed" };
   }
 
-  isConcurrencySafe(): boolean {
+  isConcurrencySafe(_input?: GitLogInput): boolean {
     return true;
   }
 }

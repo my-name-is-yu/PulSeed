@@ -457,6 +457,7 @@ describe("SessionManager", () => {
         acquisition_task_id: "task-k1",
         superseded_by: null,
         tags: ["testing"],
+        embedding_id: null,
         ...overrides,
       };
     }

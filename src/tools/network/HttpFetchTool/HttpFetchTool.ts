@@ -58,5 +58,5 @@ export class HttpFetchTool implements ITool<HttpFetchInput, HttpFetchOutput> {
     return { status: "allowed" };
   }
 
-  isConcurrencySafe(): boolean { return true; }
+  isConcurrencySafe(_input?: HttpFetchInput): boolean { return true; }
 }

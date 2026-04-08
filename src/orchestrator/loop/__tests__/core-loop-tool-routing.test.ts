@@ -13,36 +13,60 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { observeAndReload, buildLoopToolContext } from "../core-loop-phases.js";
 import type { PhaseCtx } from "../core-loop-phases.js";
+import { GoalSchema } from "../../../base/types/goal.js";
 import type { Goal } from "../../../base/types/goal.js";
 
 // ─── Helpers ───
 
 function makeGoal(overrides: Partial<Goal> = {}): Goal {
-  return {
+  return GoalSchema.parse({
     id: "goal-routing-1",
+    parent_id: null,
+    node_type: "goal",
     title: "Routing Test Goal",
     description: "Test goal for tool routing",
     dimensions: [
       {
         name: "coverage",
+        label: "Coverage",
         threshold: { type: "min" as const, value: 80 },
         current_value: 50,
         confidence: 0.7,
         weight: 1.0,
         last_updated: new Date().toISOString(),
-        observation_method: { type: "llm" as const },
+        observation_method: {
+          type: "llm_review" as const,
+          source: "test",
+          schedule: null,
+          endpoint: null,
+          confidence_tier: "independent_review" as const,
+        },
+        history: [],
+        uncertainty_weight: null,
+        state_integrity: "ok" as const,
+        dimension_mapping: null,
       },
     ],
     gap_aggregation: "max",
+    dimension_mapping: null,
+    constraints: [],
     uncertainty_weight: 1.0,
     status: "active",
-    origin: "general",
+    origin: null,
     children_ids: [],
+    target_date: null,
+    pace_snapshot: null,
     deadline: null,
+    confidence_flag: null,
+    user_override: false,
+    feasibility_note: null,
+    decomposition_depth: 0,
+    specificity_score: null,
+    loop_status: "idle",
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
     ...overrides,
-  };
+  });
 }
 
 function makeSuccessToolResult() {

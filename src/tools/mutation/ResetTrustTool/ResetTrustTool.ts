@@ -83,7 +83,7 @@ export class ResetTrustTool implements ITool<ResetTrustInput, unknown> {
     };
   }
 
-  isConcurrencySafe(): boolean {
+  isConcurrencySafe(_input?: ResetTrustInput): boolean {
     return false;
   }
 }

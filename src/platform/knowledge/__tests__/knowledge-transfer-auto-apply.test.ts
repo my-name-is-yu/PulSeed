@@ -326,7 +326,7 @@ describe("KnowledgeManager.enrichDecisionRecord", () => {
 
   it("recordDecision does NOT enrich pending records", async () => {
     const enrichSpy = vi.fn().mockResolvedValue(makeDecisionRecord("pending"));
-    const llmClient = createMockLLMClient("{}");
+    const llmClient = createMockLLMClient(["{}"]);
     const km = new KnowledgeManager(stateManager, llmClient);
     // Spy on enrichDecisionRecord
     (km as any).enrichDecisionRecord = enrichSpy;

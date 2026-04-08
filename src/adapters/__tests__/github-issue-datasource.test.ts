@@ -34,7 +34,7 @@ function makeConfig(overrides: Partial<DataSourceConfig> = {}): DataSourceConfig
   return {
     id: "github-issues",
     name: "GitHub Issues",
-    type: "github_issues",
+    type: "github_issue",
     connection: { repo: "owner/repo" },
     enabled: true,
     created_at: new Date().toISOString(),
@@ -335,9 +335,10 @@ describe("GitHubIssueDataSourceAdapter.query edge cases", () => {
     await queryPromise;
 
     const spawnCalls = mockSpawn.mock.calls;
-    const listCall = spawnCalls.find(
-      ([cmd, args]: [string, string[]]) => cmd === "gh" && args.includes("list")
-    );
+    const listCall = spawnCalls.find((call) => {
+      const [cmd, args] = call as [string, unknown];
+      return cmd === "gh" && Array.isArray(args) && args.includes("list");
+    });
     expect(listCall).toBeDefined();
     const args: string[] = listCall![1] as string[];
     expect(args.join(" ")).toContain("my-team");

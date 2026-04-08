@@ -98,6 +98,7 @@ describe("Cross-validation confidence penalty on LLM hallucination", () => {
           weight: 1.0,
           uncertainty_weight: null,
           state_integrity: "ok",
+          dimension_mapping: null,
         },
       ],
     });
@@ -160,6 +161,7 @@ describe("Cross-validation confidence penalty on LLM hallucination", () => {
           weight: 1.0,
           uncertainty_weight: null,
           state_integrity: "ok",
+          dimension_mapping: null,
         },
       ],
     });
@@ -211,6 +213,7 @@ describe("Cross-validation confidence penalty on LLM hallucination", () => {
           weight: 1.0,
           uncertainty_weight: null,
           state_integrity: "ok",
+          dimension_mapping: null,
         },
       ],
     });
@@ -274,6 +277,7 @@ describe("observation-apply value bounds validation", () => {
           weight: 1.0,
           uncertainty_weight: null,
           state_integrity: "ok",
+          dimension_mapping: null,
         },
       ],
     });
@@ -331,6 +335,7 @@ describe("observation-apply value bounds validation", () => {
           weight: 1.0,
           uncertainty_weight: null,
           state_integrity: "ok",
+          dimension_mapping: null,
         },
       ],
     });
@@ -387,6 +392,7 @@ describe("observation-apply value bounds validation", () => {
           weight: 1.0,
           uncertainty_weight: null,
           state_integrity: "ok",
+          dimension_mapping: null,
         },
       ],
     });

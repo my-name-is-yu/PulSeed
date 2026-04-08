@@ -219,7 +219,7 @@ export class GoalTreeManager {
 
   // ─── Concreteness Scoring (private) ───
 
-  private async scoreConcreteness(description: string): Promise<ConcretenessScore> {
+  async scoreConcreteness(description: string): Promise<ConcretenessScore> {
     return _scoreConcreteness(description, { llmClient: this.llmClient });
   }
 
