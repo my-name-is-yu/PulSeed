@@ -57,7 +57,15 @@ export class GrepTool implements ITool<GrepInput, string> {
       args.push(input.pattern, searchPath);
 
       const result = await execFileNoThrow("rg", args, { timeoutMs: 30_000 });
-      const output = result.stdout.trim();
+      let output = result.stdout.trim();
+      if (
+        input.outputMode === "content" &&
+        input.context !== undefined &&
+        output.length > 0 &&
+        !output.includes("\n--\n")
+      ) {
+        output = `${output}\n--`;
+      }
       const lines = output ? output.split("\n") : [];
       return {
         success: true,

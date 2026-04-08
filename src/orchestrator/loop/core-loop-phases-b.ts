@@ -531,8 +531,12 @@ export async function runTaskCycleWithContext(
     const taskStartTime = Date.now();
     const driveContext = buildDriveContext(goal);
     const adapter = ctx.deps.adapterRegistry.getAdapter(ctx.config.adapterType);
-    const dreamActivation = await loadDreamActivationState(ctx.deps.stateManager.getBaseDir())
-      .catch(() => null);
+    const baseDir = typeof ctx.deps.stateManager.getBaseDir === "function"
+      ? ctx.deps.stateManager.getBaseDir()
+      : null;
+    const dreamActivation = baseDir
+      ? await loadDreamActivationState(baseDir).catch(() => null)
+      : null;
     const activationFlags = dreamActivation?.flags;
 
     // Portfolio: select strategy for next task
@@ -567,9 +571,11 @@ export async function runTaskCycleWithContext(
 
           let contradictionWarnings: string[] = [];
           if (activationFlags?.graphTraversal && entries.length > 0) {
-            const graph = await KnowledgeGraph.create(
-              path.join(ctx.deps.stateManager.getBaseDir(), "knowledge", "graph.json")
-            ).catch(() => null);
+            const graph = baseDir
+              ? await KnowledgeGraph.create(
+                  path.join(baseDir, "knowledge", "graph.json")
+                ).catch(() => null)
+              : null;
             if (graph) {
               const allEntries = await ctx.deps.knowledgeManager.loadKnowledge(goalId).catch(() => []);
               const expanded = expandKnowledgeEntriesWithGraph(entries, allEntries, graph);
