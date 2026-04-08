@@ -182,12 +182,11 @@ describe("ChatRunner schedule integration", () => {
     expect(toolResultMessage?.content).toContain(entry.name);
   });
 
-  it("routes create_schedule through approvalFn before executing", async () => {
+  it("routes create_schedule through pending approval before executing", async () => {
     const createdEntry = makeScheduleEntry({ id: "22222222-2222-4222-8222-222222222222", name: "heartbeat check" });
     const scheduleEngine = makeScheduleEngine();
     vi.mocked(scheduleEngine.addEntry).mockResolvedValue(createdEntry);
     const registry = buildRegistry(scheduleEngine);
-    const approvalFn = vi.fn().mockResolvedValue(true);
     const llmClient = {
       supportsToolCalling: () => true,
       sendMessage: vi.fn()
@@ -224,15 +223,14 @@ describe("ChatRunner schedule integration", () => {
     const runner = new ChatRunner(makeDeps({
       registry,
       llmClient: llmClient as never,
-      approvalFn,
     }));
 
-    await runner.execute("create a schedule", "/tmp");
+    const pending = await runner.execute("create a schedule", "/tmp");
+    expect(pending.output).toContain("Approval required for `create_schedule`");
+    expect(vi.mocked(scheduleEngine.addEntry)).not.toHaveBeenCalled();
 
-    expect(approvalFn).toHaveBeenCalledOnce();
-    expect(approvalFn).toHaveBeenCalledWith(
-      "Creating a persistent schedule changes background automation and requires approval",
-    );
+    const approved = await runner.execute("approve", "/tmp");
+    expect(approved.output).toBe("Created schedule");
     expect(vi.mocked(scheduleEngine.addEntry)).toHaveBeenCalledOnce();
   });
 });

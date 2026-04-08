@@ -8,12 +8,12 @@
 import os from "os";
 import path from "path";
 import { execFileSync } from "child_process";
-import { randomUUID } from "node:crypto";
 
 import { StateManager } from "../../base/state/state-manager.js";
 import { loadProviderConfig } from "../../base/llm/provider-config.js";
 import { getPulseedDirPath } from "../../base/utils/paths.js";
 import { App, type ApprovalRequest } from "./app.js";
+import { type ApprovalDecision } from "../chat/approval-format.js";
 import { isSafeBashCommand } from "./bash-mode.js";
 import { getCliLogger } from "../cli/cli-logger.js";
 import { ensureProviderConfig } from "../cli/ensure-api-key.js";
@@ -176,7 +176,7 @@ async function buildDeps() {
   let requestApproval: ((req: ApprovalRequest) => void) | null = null;
   const pendingApprovals: ApprovalRequest[] = [];
 
-  const enqueueApproval = (task: Task): Promise<boolean> => {
+  const enqueueApproval = (task: Task): Promise<ApprovalDecision> => {
     return new Promise((resolve) => {
       const request = { task, resolve };
       if (requestApproval) {
@@ -187,38 +187,7 @@ async function buildDeps() {
     });
   };
 
-  const approvalFn = (task: Task): Promise<boolean> => enqueueApproval(task);
-
-  const chatToolApprovalFn = async (description: string): Promise<boolean> => {
-    return enqueueApproval({
-      id: randomUUID(),
-      goal_id: "chat-tool-approval",
-      strategy_id: null,
-      target_dimensions: ["approval"],
-      primary_dimension: "approval",
-      work_description: description,
-      rationale: "Requested by chat tool execution",
-      approach: "Wait for explicit approval before continuing the chat tool call.",
-      success_criteria: [],
-      scope_boundary: {
-        in_scope: ["Approve or reject the pending chat tool action."],
-        out_of_scope: ["Execute any work beyond the requested chat tool action."],
-        blast_radius: "Limited to whether the pending chat tool call proceeds.",
-      },
-      constraints: [],
-      plateau_until: null,
-      estimated_duration: null,
-      consecutive_failure_count: 0,
-      reversibility: "unknown",
-      task_category: "normal",
-      status: "pending",
-      started_at: null,
-      completed_at: null,
-      timeout_at: null,
-      heartbeat_at: null,
-      created_at: new Date().toISOString(),
-    });
-  };
+  const approvalFn = (task: Task): Promise<boolean> => enqueueApproval(task).then((decision) => decision === "approve");
 
   const taskLifecycle = new TaskLifecycle({
     stateManager,
@@ -323,7 +292,6 @@ async function buildDeps() {
       trustManager,
       registry: toolRegistry,
       toolExecutor,
-      approvalFn: chatToolApprovalFn,
     });
   } catch (err) {
     getCliLogger().warn(`[pulseed] ChatRunner init failed — free-form chat disabled: ${err instanceof Error ? err.message : String(err)}`);

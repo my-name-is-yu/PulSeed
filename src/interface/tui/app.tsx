@@ -32,6 +32,7 @@ import type { StateManager } from "../../base/state/state-manager.js";
 import type { TrustManager } from "../../platform/traits/trust-manager.js";
 import type { Task } from "../../base/types/task.js";
 import type { ChatRunner } from "../../interface/chat/chat-runner.js";
+import { type ApprovalDecision } from "../../interface/chat/approval-format.js";
 import type { DaemonClient } from "../../runtime/daemon-client.js";
 import { ShellTool } from "../../tools/system/ShellTool/ShellTool.js";
 import { getPulseedVersion } from "../../base/utils/pulseed-meta.js";
@@ -42,7 +43,7 @@ const PULSEED_VERSION = getPulseedVersion(import.meta.url);
 
 export interface ApprovalRequest {
   task: Task;
-  resolve: (approved: boolean) => void;
+  resolve: (decision: ApprovalDecision) => void;
 }
 
 interface AppProps {
@@ -169,8 +170,8 @@ export function App({
 
       approvalRequestRef.current = {
         task,
-        resolve: (approved: boolean) => {
-          daemonClient.approve(goalId, requestId, approved).catch(() => {});
+        resolve: (decision: ApprovalDecision) => {
+          daemonClient.approve(goalId, requestId, decision === "approve").catch(() => {});
         },
       };
       setApprovalRequest(approvalRequestRef.current);
@@ -198,7 +199,6 @@ export function App({
       messageType: "info",
     },
   ]);
-  const [isProcessing, setIsProcessing] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
 
@@ -207,6 +207,7 @@ export function App({
   const [reportToShow, setReportToShow] = useState<Report | null>(null);
   const [approvalRequest, setApprovalRequest] = useState<ApprovalRequest | null>(null);
   const approvalRequestRef = useRef<ApprovalRequest | null>(null);
+  const [inFlightCount, setInFlightCount] = useState(0);
 
   // Ctrl-C double-press exit state
   const [ctrlCPending, setCtrlCPending] = useState(false);
@@ -296,12 +297,24 @@ export function App({
     ]);
   }, []);
 
+  const chatApprovalPending = chatRunner?.hasPendingApproval() ?? false;
+  const canAcceptInput = inFlightCount === 0 || chatApprovalPending;
+  const showSpinner = inFlightCount > 0 && !chatApprovalPending;
+
   const handleInput = useCallback(
     async (input: string) => {
-      if (isProcessing) return;
+      if (!input.trim() || !canAcceptInput) return;
+
+      let flightStarted = false;
+      const beginFlight = () => {
+        if (!flightStarted) {
+          flightStarted = true;
+          setInFlightCount((prev) => prev + 1);
+        }
+      };
+
       // Add user message
       setMessages((prev) => [...prev, { id: randomUUID(), role: "user" as const, text: input, timestamp: new Date() }].slice(-MAX_MESSAGES));
-      setIsProcessing(true);
 
       try {
         // Local-only commands — no LLM round-trip needed
@@ -313,6 +326,7 @@ export function App({
 
         const bashCommand = extractBashCommand(input);
         if (bashCommand !== null) {
+          beginFlight();
           if (!bashCommand) {
             setMessages((prev) => [...prev, {
               id: randomUUID(),
@@ -356,6 +370,7 @@ export function App({
         // Slash commands go through IntentRecognizer -> ActionHandler (standalone)
         // or through daemon REST API (daemon mode)
         if (input.startsWith("/") && intentRecognizer && actionHandler) {
+          beginFlight();
           const intent = await intentRecognizer.recognize(input);
           const result = await actionHandler.handle(intent);
 
@@ -394,13 +409,14 @@ export function App({
           }
           if (result.stopLoop) {
             if (approvalRequestRef.current) {
-              approvalRequestRef.current.resolve(false);
+              approvalRequestRef.current.resolve("reject");
               approvalRequestRef.current = null;
               setApprovalRequest(null);
             }
             stopLoop();
           }
         } else if (input.startsWith("/") && isDaemonMode) {
+          beginFlight();
           // Daemon mode: handle basic slash commands locally
           const trimmed = input.trim().toLowerCase();
           if (trimmed === "/help" || trimmed === "/?") {
@@ -434,6 +450,7 @@ export function App({
             }].slice(-MAX_MESSAGES));
           }
         } else if (isDaemonMode && daemonClient && daemonLoopState.goalId) {
+          beginFlight();
           // Daemon mode: free-form text → daemon chat endpoint
           try {
             await daemonClient.chat(daemonLoopState.goalId, input);
@@ -449,6 +466,7 @@ export function App({
             }].slice(-MAX_MESSAGES));
           }
         } else if (chatRunner) {
+          beginFlight();
           // Standalone mode: free-form text goes through ChatRunner
           await chatRunner.execute(input, process.cwd());
         } else {
@@ -474,10 +492,12 @@ export function App({
           },
         ].slice(-MAX_MESSAGES));
       } finally {
-        setIsProcessing(false);
+        if (flightStarted) {
+          setInFlightCount((prev) => Math.max(0, prev - 1));
+        }
       }
     },
-    [intentRecognizer, actionHandler, chatRunner, daemonClient, isDaemonMode, daemonLoopState.goalId, startLoop, stopLoop, isProcessing]
+    [actionHandler, approvalRequestRef, canAcceptInput, chatRunner, daemonClient, daemonLoopState.goalId, intentRecognizer, isDaemonMode, startLoop, stopLoop]
   );
 
   // goalCount: 1 when there is an active goal in the loop, 0 otherwise
@@ -529,7 +549,7 @@ export function App({
             <ApprovalOverlay
               task={approvalRequest.task}
               onDecision={(approved) => {
-                approvalRequest.resolve(approved);
+                approvalRequest.resolve(approved ? "approve" : "reject");
                 approvalRequestRef.current = null;
                 setApprovalRequest(null);
               }}
@@ -543,7 +563,15 @@ export function App({
           ) : showHelp ? (
             <HelpOverlay onDismiss={() => setShowHelp(false)} />
           ) : (
-            <Chat messages={messages} onSubmit={handleInput} onClear={handleClear} isProcessing={isProcessing} goalNames={goalNames} noFlicker={noFlicker} />
+            <Chat
+              messages={messages}
+              onSubmit={handleInput}
+              onClear={handleClear}
+              isProcessing={showSpinner}
+              inputEnabled={canAcceptInput}
+              goalNames={goalNames}
+              noFlicker={noFlicker}
+            />
           )}
         </Box>
       </Box>

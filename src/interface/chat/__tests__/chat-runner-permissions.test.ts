@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { ChatRunner } from "../chat-runner.js";
 import type { ChatRunnerDeps } from "../chat-runner.js";
 import type { StateManager } from "../../../base/state/state-manager.js";
@@ -148,32 +148,35 @@ describe("ChatRunner — permission gate (Fix #505)", () => {
   });
 
   describe("needs_approval — approved", () => {
-    it("calls approvalFn and then tool.call when approved", async () => {
+    it("returns a pending approval request, then continues after approve", async () => {
       const tool = makeMockTool("test-tool", { status: "needs_approval", reason: "requires confirmation" });
       const registry = makeMockRegistry(tool);
-      const approvalFn = vi.fn().mockResolvedValue(true);
       const llmClient = makeLLMClientWithToolCall("test-tool");
 
-      const runner = new ChatRunner(makeDeps({ registry, llmClient: llmClient as never, approvalFn }));
-      await runner.execute("do something", "/repo");
+      const runner = new ChatRunner(makeDeps({ registry, llmClient: llmClient as never }));
+      const pending = await runner.execute("do something", "/repo");
 
-      expect(approvalFn).toHaveBeenCalledOnce();
-      expect(approvalFn).toHaveBeenCalledWith("requires confirmation");
+      expect(pending.success).toBe(true);
+      expect(pending.output).toContain("Approval required for `test-tool`");
+      expect(tool.call).not.toHaveBeenCalled();
+
+      const approved = await runner.execute("approve", "/repo");
+      expect(approved.success).toBe(true);
+      expect(approved.output).toBe("Final answer");
       expect(tool.call).toHaveBeenCalledOnce();
     });
   });
 
   describe("needs_approval — rejected", () => {
-    it("does NOT call tool.call when approvalFn returns false", async () => {
+    it("rejects the pending request and does NOT call tool.call", async () => {
       const tool = makeMockTool("test-tool", { status: "needs_approval", reason: "risky action" });
       const registry = makeMockRegistry(tool);
-      const approvalFn = vi.fn().mockResolvedValue(false);
       const llmClient = makeLLMClientWithToolCall("test-tool");
 
-      const runner = new ChatRunner(makeDeps({ registry, llmClient: llmClient as never, approvalFn }));
-      const result = await runner.execute("do something", "/repo");
+      const runner = new ChatRunner(makeDeps({ registry, llmClient: llmClient as never }));
+      await runner.execute("do something", "/repo");
+      const result = await runner.execute("reject", "/repo");
 
-      expect(approvalFn).toHaveBeenCalledOnce();
       expect(tool.call).not.toHaveBeenCalled();
 
       // The tool result message sent to LLM should indicate "not approved"
@@ -185,31 +188,49 @@ describe("ChatRunner — permission gate (Fix #505)", () => {
     });
   });
 
+  describe("needs_approval — clarify", () => {
+    it("keeps the request pending and emits clarification details", async () => {
+      const tool = makeMockTool("test-tool", { status: "needs_approval", reason: "risky action" });
+      const registry = makeMockRegistry(tool);
+      const llmClient = makeLLMClientWithToolCall("test-tool");
+
+      const runner = new ChatRunner(makeDeps({ registry, llmClient: llmClient as never }));
+      const pending = await runner.execute("do something", "/repo");
+      expect(pending.output).toContain("Approval required for `test-tool`");
+
+      const clarification = await runner.execute("clarify", "/repo");
+      expect(clarification.output).toContain("More detail for `test-tool`");
+      expect(tool.call).not.toHaveBeenCalled();
+
+      const approved = await runner.execute("approve", "/repo");
+      expect(approved.output).toBe("Final answer");
+      expect(tool.call).toHaveBeenCalledOnce();
+    });
+  });
+
   describe("allowed permission", () => {
     it("calls tool.call directly without invoking approvalFn", async () => {
       const tool = makeMockTool("test-tool", { status: "allowed" });
       const registry = makeMockRegistry(tool);
-      const approvalFn = vi.fn().mockResolvedValue(false);
       const llmClient = makeLLMClientWithToolCall("test-tool");
 
-      const runner = new ChatRunner(makeDeps({ registry, llmClient: llmClient as never, approvalFn }));
+      const runner = new ChatRunner(makeDeps({ registry, llmClient: llmClient as never }));
       await runner.execute("do something", "/repo");
 
       expect(tool.call).toHaveBeenCalledOnce();
-      expect(approvalFn).not.toHaveBeenCalled();
     });
   });
 
   describe("needs_approval without approvalFn dep", () => {
-    it("denies when no approvalFn provided in deps (defaults to false)", async () => {
+    it("uses the internal pending approval state even without approvalFn", async () => {
       const tool = makeMockTool("test-tool", { status: "needs_approval", reason: "needs ok" });
       const registry = makeMockRegistry(tool);
       const llmClient = makeLLMClientWithToolCall("test-tool");
 
-      // No approvalFn in deps — context.approvalFn returns false by default
       const runner = new ChatRunner(makeDeps({ registry, llmClient: llmClient as never }));
-      await runner.execute("do something", "/repo");
+      const pending = await runner.execute("do something", "/repo");
 
+      expect(pending.output).toContain("Approval required for `test-tool`");
       expect(tool.call).not.toHaveBeenCalled();
     });
   });

@@ -78,12 +78,36 @@ export function applyChatEventToMessages(
   }
 
   if (event.type === "tool_update") {
+    if (event.status === "awaiting_approval") {
+      return messages;
+    }
     return upsertMessage(messages, {
       id: `tool:${event.toolCallId}`,
       role: "pulseed",
       text: `[tool:${event.toolName}] ${event.status}: ${event.message}`,
       timestamp,
-      messageType: event.status === "awaiting_approval" ? "warning" : "info",
+      messageType: "info",
+    }, maxMessages);
+  }
+
+  if (event.type === "approval_required") {
+    return upsertMessage(messages, {
+      id: `approval:${event.toolCallId}`,
+      role: "pulseed",
+      text: event.message,
+      timestamp,
+      messageType: "warning",
+    }, maxMessages);
+  }
+
+  if (event.type === "approval_resolved") {
+    const status = event.decision === "approve" ? "approved" : "rejected";
+    return upsertMessage(messages, {
+      id: `approval:${event.toolCallId}`,
+      role: "pulseed",
+      text: `[tool:${event.request.toolName}] ${status}`,
+      timestamp,
+      messageType: event.decision === "approve" ? "success" : "warning",
     }, maxMessages);
   }
 

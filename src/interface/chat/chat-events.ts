@@ -1,3 +1,5 @@
+import type { ApprovalRequest as ToolApprovalRequest } from "../../tools/types.js";
+
 export interface ChatEventBase {
   runId: string;
   turnId: string;
@@ -36,6 +38,20 @@ export interface ToolUpdateEvent extends ChatEventBase {
   message: string;
 }
 
+export interface ApprovalRequiredEvent extends ChatEventBase {
+  type: "approval_required";
+  toolCallId: string;
+  request: ToolApprovalRequest;
+  message: string;
+}
+
+export interface ApprovalResolvedEvent extends ChatEventBase {
+  type: "approval_resolved";
+  toolCallId: string;
+  request: ToolApprovalRequest;
+  decision: "approve" | "reject" | "clarify";
+}
+
 export interface ToolEndEvent extends ChatEventBase {
   type: "tool_end";
   toolCallId: string;
@@ -65,6 +81,8 @@ export type ChatEvent =
   | AssistantFinalEvent
   | ToolStartEvent
   | ToolUpdateEvent
+  | ApprovalRequiredEvent
+  | ApprovalResolvedEvent
   | ToolEndEvent
   | LifecycleEndEvent
   | LifecycleErrorEvent;

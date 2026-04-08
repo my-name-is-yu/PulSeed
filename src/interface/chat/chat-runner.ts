@@ -24,8 +24,13 @@ import { EventSubscriber } from "./event-subscriber.js";
 import type { DaemonClient } from "../../runtime/daemon-client.js";
 import type { GoalNegotiator } from "../../orchestrator/goal/goal-negotiator.js";
 import type { ChatEvent, ChatEventContext } from "./chat-events.js";
+import type { ApprovalRequest as ToolApprovalRequest } from "../../tools/types.js";
+import { buildToolApprovalView, type ApprovalDecision } from "./approval-format.js";
 
 // ─── Types ───
+
+export type ApprovalRequest = ToolApprovalRequest;
+export type { ApprovalDecision } from "./approval-format.js";
 
 export interface ChatRunnerDeps {
   stateManager: StateManager;
@@ -38,8 +43,8 @@ export interface ChatRunnerDeps {
   trustManager?: { getBalance(domain: string): Promise<{ balance: number }>; setOverride?(domain: string, balance: number, reason: string): Promise<void> };
   /** Optional: plugin loader for self-knowledge tools and mutations. */
   pluginLoader?: { loadAll(): Promise<Array<{ name: string; type?: string; enabled?: boolean }>> };
-  /** Optional: approval handler for mutation tools. */
-  approvalFn?: (description: string) => Promise<boolean>;
+  /** Optional: approval handler for structured approval requests. */
+  approvalFn?: (request: ApprovalRequest) => Promise<ApprovalDecision | boolean>;
   /** Optional: goal ID to associate with tool calls made in this session. */
   goalId?: string;
   /** Optional: per-tool approval level overrides. */
@@ -74,9 +79,23 @@ interface AssistantBuffer {
   text: string;
 }
 
+interface PendingApprovalState {
+  request: ApprovalRequest;
+  toolCallId: string;
+  eventContext: ChatEventContext;
+  decisionResolver: (approved: boolean) => void;
+}
+
+interface ActiveTurnState {
+  completion: Promise<ChatRunResult>;
+  approvalRequested: Promise<ApprovalRequest>;
+  approvalRequestedResolver: (request: ApprovalRequest) => void;
+}
+
 const DEFAULT_TIMEOUT_MS = 120_000;
 const MAX_VERIFY_RETRIES = 2;
 const MAX_TOOL_LOOPS = 5;
+const PENDING_APPROVAL_MARKER = Symbol("pending-approval");
 
 // ─── Command help text ───
 
@@ -113,6 +132,10 @@ export class ChatRunner {
   private pendingTend: { goalId: string; maxIterations?: number } | null = null;
   /** Active EventSubscriber instances keyed by goalId. */
   private activeSubscribers: Map<string, EventSubscriber> = new Map();
+  /** Chat-native approval request currently awaiting a user decision. */
+  private pendingApproval: PendingApprovalState | null = null;
+  /** The current execution turn, if one is running. */
+  private activeTurn: ActiveTurnState | null = null;
   /**
    * Callback invoked when a /tend daemon notification arrives.
    * Can be set after construction (e.g. from a React component via useEffect).
@@ -122,6 +145,10 @@ export class ChatRunner {
 
   constructor(deps: ChatRunnerDeps) {
     this.deps = deps;
+  }
+
+  hasPendingApproval(): boolean {
+    return this.pendingApproval !== null;
   }
 
   /**
@@ -320,56 +347,219 @@ export class ChatRunner {
     };
   }
 
-  /**
-   * Execute a single chat turn.
-   *
-   * Flow:
-   *  1. Intercept slash commands before adapter dispatch
-   *  2. Resolve git root → create ChatHistory
-   *  3. Build chat context and assemble prompt
-   *  4. Persist user message BEFORE calling adapter (crash-safe)
-   *  5. Execute via adapter
-   *  6. Verify changes (git diff + tests); retry up to MAX_VERIFY_RETRIES if tests fail
-   *  7. Persist assistant response only after the final assistant text is complete
-   */
-  async execute(input: string, cwd: string, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<ChatRunResult> {
-    const eventContext = this.createEventContext();
+  private createActiveTurn(): ActiveTurnState {
+    let approvalRequestedResolver: (request: ApprovalRequest) => void = () => {};
+    const approvalRequested = new Promise<ApprovalRequest>((resolve) => {
+      approvalRequestedResolver = resolve;
+    });
 
-    // Intercept commands before any adapter call
-    const commandResult = await this.handleCommand(input);
-    if (commandResult !== null) {
-      if (commandResult.output) {
-        this.emitEvent({
-          type: "assistant_final",
-          text: commandResult.output,
-          persisted: false,
-          ...this.eventBase(eventContext),
-        });
-      }
-      this.emitLifecycleEndEvent(commandResult.success ? "completed" : "error", commandResult.elapsed_ms, eventContext, false);
-      return commandResult;
+    return {
+      completion: Promise.resolve({
+        success: false,
+        output: "",
+        elapsed_ms: 0,
+      }),
+      approvalRequested,
+      approvalRequestedResolver,
+    };
+  }
+
+  private buildApprovalRequestMessage(request: ApprovalRequest): string {
+    const view = buildToolApprovalView(request);
+    return [
+      `Approval required for \`${request.toolName}\``,
+      view.summary,
+      ...view.details.map((detail) => `${detail.label}: ${detail.value}`),
+      "Reply with approve, reject, or clarify.",
+    ].join("\n");
+  }
+
+  private buildApprovalClarification(request: ApprovalRequest): string {
+    const view = buildToolApprovalView(request);
+    return [
+      `More detail for \`${request.toolName}\`:`,
+      ...view.details.map((detail) => `${detail.label}: ${detail.value}`),
+      "Reply approve to continue or reject to stop this tool call.",
+    ].join("\n");
+  }
+
+  private parseApprovalDecision(input: string): ApprovalDecision {
+    const normalized = input.trim().toLowerCase();
+
+    if (
+      normalized === "approve" ||
+      normalized === "approved" ||
+      normalized === "yes" ||
+      normalized === "y" ||
+      normalized === "ok" ||
+      normalized === "okay" ||
+      normalized === "confirm" ||
+      normalized === "proceed" ||
+      normalized === "do it" ||
+      normalized === "go ahead" ||
+      normalized === "承認" ||
+      normalized === "はい" ||
+      normalized === "進めて" ||
+      normalized === "実行" ||
+      normalized === "実行して"
+    ) {
+      return "approve";
     }
 
-    // Intercept plain Y/n responses (and any other input) when a /tend confirmation is pending
-    if (this.pendingTend !== null) {
-      const confirmationResult = await this.handleTendConfirmation(input.trim(), Date.now());
-      if (confirmationResult.output) {
-        this.emitEvent({
-          type: "assistant_final",
-          text: confirmationResult.output,
-          persisted: false,
-          ...this.eventBase(eventContext),
-        });
-      }
-      this.emitLifecycleEndEvent(
-        confirmationResult.success ? "completed" : "error",
-        confirmationResult.elapsed_ms,
-        eventContext,
-        false
-      );
-      return confirmationResult;
+    if (
+      normalized === "reject" ||
+      normalized === "rejected" ||
+      normalized === "no" ||
+      normalized === "n" ||
+      normalized === "cancel" ||
+      normalized === "deny" ||
+      normalized === "stop" ||
+      normalized === "abort" ||
+      normalized === "don't" ||
+      normalized === "dont" ||
+      normalized === "拒否" ||
+      normalized === "却下" ||
+      normalized === "いいえ" ||
+      normalized === "やめて" ||
+      normalized === "中止"
+    ) {
+      return "reject";
     }
 
+    if (
+      normalized === "clarify" ||
+      normalized === "details" ||
+      normalized === "more details" ||
+      normalized === "more info" ||
+      normalized === "info" ||
+      normalized === "why" ||
+      normalized === "what" ||
+      normalized === "?" ||
+      normalized.startsWith("clarify ") ||
+      normalized === "clarify?" ||
+      normalized === "詳細" ||
+      normalized === "詳しく" ||
+      normalized === "なぜ" ||
+      normalized === "何をする"
+    ) {
+      return "clarify";
+    }
+
+    return "clarify";
+  }
+
+  private async requestApproval(
+    request: ApprovalRequest,
+    toolCallId: string,
+    eventContext: ChatEventContext
+  ): Promise<boolean> {
+    if (this.pendingApproval !== null) {
+      throw new Error("Nested approval requests are not supported");
+    }
+
+    this.pendingApproval = {
+      request,
+      toolCallId,
+      eventContext,
+      decisionResolver: () => {},
+    };
+
+    const approvalPromise = new Promise<boolean>((resolve) => {
+      if (this.pendingApproval) {
+        this.pendingApproval.decisionResolver = resolve;
+      }
+    });
+
+    const message = this.buildApprovalRequestMessage(request);
+    this.emitEvent({
+      type: "approval_required",
+      toolCallId,
+      request,
+      message,
+      ...this.eventBase(eventContext),
+    });
+
+    this.activeTurn?.approvalRequestedResolver(request);
+
+    return approvalPromise;
+  }
+
+  private resolvePendingApproval(decision: ApprovalDecision): boolean {
+    const pending = this.pendingApproval;
+    if (!pending) return false;
+
+    if (decision === "clarify") {
+      return false;
+    }
+
+    this.pendingApproval = null;
+    this.emitEvent({
+      type: "approval_resolved",
+      toolCallId: pending.toolCallId,
+      request: pending.request,
+      decision,
+      ...this.eventBase(pending.eventContext),
+    });
+    pending.decisionResolver(decision === "approve");
+    return true;
+  }
+
+  private async handlePendingApproval(input: string, start: number): Promise<ChatRunResult> {
+    const pending = this.pendingApproval;
+    if (!pending) {
+      return {
+        success: false,
+        output: "No pending approval request.",
+        elapsed_ms: Date.now() - start,
+      };
+    }
+
+    const decision = this.parseApprovalDecision(input);
+    if (decision === "clarify") {
+      const clarification = this.buildApprovalClarification(pending.request);
+      this.emitEvent({
+        type: "assistant_final",
+        text: clarification,
+        persisted: false,
+        ...this.eventBase(this.createEventContext()),
+      });
+      return {
+        success: true,
+        output: clarification,
+        elapsed_ms: Date.now() - start,
+      };
+    }
+
+    this.resolvePendingApproval(decision);
+    if (decision === "reject") {
+      const currentTurn = this.activeTurn?.completion;
+      if (currentTurn) {
+        return await currentTurn;
+      }
+      return {
+        success: true,
+        output: "Approval rejected.",
+        elapsed_ms: Date.now() - start,
+      };
+    }
+
+    const currentTurn = this.activeTurn?.completion;
+    if (currentTurn) {
+      return await currentTurn;
+    }
+    return {
+      success: true,
+      output: "Approval accepted.",
+      elapsed_ms: Date.now() - start,
+    };
+  }
+
+  private async executeTurn(
+    input: string,
+    cwd: string,
+    timeoutMs: number,
+    eventContext: ChatEventContext
+  ): Promise<ChatRunResult> {
     // Reuse session (interactive mode) or create a fresh one per call (1-shot mode)
     if (!this.sessionActive) {
       const gitRoot = resolveGitRoot(cwd);
@@ -428,10 +618,8 @@ export class ChatRunner {
     const start = Date.now();
     const assistantBuffer: AssistantBuffer = { text: "" };
 
-    // Use llmClient with self-knowledge tools when available (function calling path)
-    // Skip executeWithTools for clients that don't support tool calling (e.g. CodexLLMClient)
-    if (this.deps.llmClient && this.deps.llmClient.supportsToolCalling?.() !== false) {
-      try {
+    try {
+      if (this.deps.llmClient && this.deps.llmClient.supportsToolCalling?.() !== false) {
         const toolResult = await this.executeWithTools(prompt, eventContext, assistantBuffer, systemPrompt || undefined);
         const elapsed_ms = Date.now() - start;
         await history.appendAssistantMessage(toolResult);
@@ -443,97 +631,164 @@ export class ChatRunner {
         });
         this.emitLifecycleEndEvent("completed", elapsed_ms, eventContext, true);
         return { success: true, output: toolResult, elapsed_ms };
-      } catch (err) {
+      }
+
+      const task: AgentTask = {
+        prompt,
+        timeout_ms: timeoutMs,
+        adapter_type: this.deps.adapter.adapterType,
+        cwd,
+        ...(systemPrompt ? { system_prompt: systemPrompt } : {}),
+      };
+      const resolvedTimeoutMs = task.timeout_ms ?? DEFAULT_TIMEOUT_MS;
+      const adapterPromise = this.deps.adapter.execute(task);
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error(`Chat adapter timed out after ${resolvedTimeoutMs}ms`)), resolvedTimeoutMs)
+      );
+      let result = await Promise.race([adapterPromise, timeoutPromise]);
+      // Surface adapter errors into output when output is empty
+      if (!result.output && result.error) {
+        result = { ...result, output: `Error: ${result.error}` };
+      }
+      const elapsed_ms = Date.now() - start;
+      if (result.output) {
+        this.pushAssistantDelta(result.output, assistantBuffer, eventContext);
+      }
+
+      // Verification loop: check if git has uncommitted changes; if so, run tests
+      const gitChanges = await checkGitChanges(gitRoot);
+      if (gitChanges !== null && gitChanges !== "") {
+        let retries = 0;
+        const VERIFY_TIMEOUT_MS = 30_000;
+        let verification = await Promise.race([
+          verifyChatAction(gitRoot, this.deps.toolExecutor),
+          new Promise<{ passed: true }>((resolve) =>
+            setTimeout(() => resolve({ passed: true }), VERIFY_TIMEOUT_MS)
+          ),
+        ]);
+
+        while (!verification.passed && retries < MAX_VERIFY_RETRIES) {
+          retries++;
+          const retryPrompt = `The previous changes caused test failures. Please fix them.\n\nTest output:\n${verification.testOutput ?? verification.errors.join("\n")}`;
+          const retryTask: AgentTask = { ...task, prompt: retryPrompt };
+          result = await this.deps.adapter.execute(retryTask);
+          verification = await verifyChatAction(gitRoot, this.deps.toolExecutor);
+        }
+
+        if (!verification.passed) {
+          this.emitLifecycleErrorEvent(
+            `Changes applied but tests are still failing after ${MAX_VERIFY_RETRIES} retries.`,
+            assistantBuffer.text,
+            eventContext
+          );
+          this.emitLifecycleEndEvent("error", Date.now() - start, eventContext, false);
+          return {
+            success: false,
+            output: `${assistantBuffer.text}\n\n[interrupted: tests are still failing after ${MAX_VERIFY_RETRIES} retries]\n\nTest output:\n${verification.testOutput ?? verification.errors.join("\n")}`.trim(),
+            elapsed_ms: Date.now() - start,
+          };
+        }
+      }
+
+      if (result.success) {
+        await history.appendAssistantMessage(result.output);
+        this.emitEvent({
+          type: "assistant_final",
+          text: result.output,
+          persisted: true,
+          ...this.eventBase(eventContext),
+        });
+        this.emitLifecycleEndEvent("completed", elapsed_ms, eventContext, true);
+      } else {
+        const partialText = assistantBuffer.text !== result.output ? assistantBuffer.text : "";
+        this.emitLifecycleErrorEvent(result.output || result.error || "Unknown error", partialText, eventContext);
+        this.emitLifecycleEndEvent("error", elapsed_ms, eventContext, false);
+      }
+
+      return {
+        success: result.success,
+        output: result.output,
+        elapsed_ms,
+      };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.emitLifecycleErrorEvent(message, assistantBuffer.text, eventContext);
+      this.emitLifecycleEndEvent("error", Date.now() - start, eventContext, false);
+      return {
+        success: false,
+        output: assistantBuffer.text
+          ? `${assistantBuffer.text}\n\n[interrupted: ${message}]`
+          : `Error: ${message}`,
+        elapsed_ms: Date.now() - start,
+      };
+    }
+  }
+
+  /**
+   * Execute a single chat turn.
+   *
+   * Flow:
+   *  1. Intercept slash commands before adapter dispatch
+   *  2. Resolve git root → create ChatHistory
+   *  3. Build chat context and assemble prompt
+   *  4. Persist user message BEFORE calling adapter (crash-safe)
+   *  5. Execute via adapter
+   *  6. Verify changes (git diff + tests); retry up to MAX_VERIFY_RETRIES if tests fail
+   *  7. Persist assistant response only after the final assistant text is complete
+   */
+  async execute(input: string, cwd: string, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<ChatRunResult> {
+    const eventContext = this.createEventContext();
+    const start = Date.now();
+    if (this.pendingApproval !== null) {
+      const approvalResult = await this.handlePendingApproval(input, start);
+      return approvalResult;
+    }
+
+    // Intercept commands before any adapter call
+    const commandResult = await this.handleCommand(input);
+    if (commandResult !== null) {
+      if (commandResult.output) {
+        this.emitEvent({
+          type: "assistant_final",
+          text: commandResult.output,
+          persisted: false,
+          ...this.eventBase(eventContext),
+        });
+      }
+      this.emitLifecycleEndEvent(commandResult.success ? "completed" : "error", commandResult.elapsed_ms, eventContext, false);
+      return commandResult;
+    }
+
+    const turnDeferred = this.createActiveTurn();
+    this.activeTurn = turnDeferred;
+    const turnPromise = this.executeTurn(input, cwd, timeoutMs, eventContext)
+      .catch((err) => {
         const message = err instanceof Error ? err.message : String(err);
-        this.emitLifecycleErrorEvent(message, assistantBuffer.text, eventContext);
-        this.emitLifecycleEndEvent("error", Date.now() - start, eventContext, false);
         return {
           success: false,
-          output: assistantBuffer.text
-            ? `${assistantBuffer.text}\n\n[interrupted: ${message}]`
-            : `Error: ${message}`,
+          output: message,
           elapsed_ms: Date.now() - start,
-        };
-      }
-    }
-
-    const task: AgentTask = {
-      prompt,
-      timeout_ms: timeoutMs,
-      adapter_type: this.deps.adapter.adapterType,
-      cwd,
-      ...(systemPrompt ? { system_prompt: systemPrompt } : {}),
-    };
-    const resolvedTimeoutMs = task.timeout_ms ?? DEFAULT_TIMEOUT_MS;
-    const adapterPromise = this.deps.adapter.execute(task);
-    const timeoutPromise = new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error(`Chat adapter timed out after ${resolvedTimeoutMs}ms`)), resolvedTimeoutMs)
-    );
-    let result = await Promise.race([adapterPromise, timeoutPromise]);
-    // Surface adapter errors into output when output is empty
-    if (!result.output && result.error) {
-      result = { ...result, output: `Error: ${result.error}` };
-    }
-    const elapsed_ms = Date.now() - start;
-    if (result.output) {
-      this.pushAssistantDelta(result.output, assistantBuffer, eventContext);
-    }
-
-    // Verification loop: check if git has uncommitted changes; if so, run tests
-    const gitChanges = await checkGitChanges(gitRoot);
-    if (gitChanges !== null && gitChanges !== "") {
-      let retries = 0;
-      const VERIFY_TIMEOUT_MS = 30_000;
-      let verification = await Promise.race([
-        verifyChatAction(gitRoot, this.deps.toolExecutor),
-        new Promise<{ passed: true }>((resolve) =>
-          setTimeout(() => resolve({ passed: true }), VERIFY_TIMEOUT_MS)
-        ),
-      ]);
-
-      while (!verification.passed && retries < MAX_VERIFY_RETRIES) {
-        retries++;
-        const retryPrompt = `The previous changes caused test failures. Please fix them.\n\nTest output:\n${verification.testOutput ?? verification.errors.join("\n")}`;
-        const retryTask: AgentTask = { ...task, prompt: retryPrompt };
-        result = await this.deps.adapter.execute(retryTask);
-        verification = await verifyChatAction(gitRoot, this.deps.toolExecutor);
-      }
-
-      if (!verification.passed) {
-        this.emitLifecycleErrorEvent(
-          `Changes applied but tests are still failing after ${MAX_VERIFY_RETRIES} retries.`,
-          assistantBuffer.text,
-          eventContext
-        );
-        this.emitLifecycleEndEvent("error", Date.now() - start, eventContext, false);
-        return {
-          success: false,
-          output: `${assistantBuffer.text}\n\n[interrupted: tests are still failing after ${MAX_VERIFY_RETRIES} retries]\n\nTest output:\n${verification.testOutput ?? verification.errors.join("\n")}`.trim(),
-          elapsed_ms: Date.now() - start,
-        };
-      }
-    }
-
-    if (result.success) {
-      await history.appendAssistantMessage(result.output);
-      this.emitEvent({
-        type: "assistant_final",
-        text: result.output,
-        persisted: true,
-        ...this.eventBase(eventContext),
+        } satisfies ChatRunResult;
+      })
+      .finally(() => {
+        if (this.activeTurn === turnDeferred) {
+          this.activeTurn = null;
+        }
       });
-      this.emitLifecycleEndEvent("completed", elapsed_ms, eventContext, true);
-    } else {
-      const partialText = assistantBuffer.text !== result.output ? assistantBuffer.text : "";
-      this.emitLifecycleErrorEvent(result.output || result.error || "Unknown error", partialText, eventContext);
-      this.emitLifecycleEndEvent("error", elapsed_ms, eventContext, false);
+    this.activeTurn.completion = turnPromise;
+
+    const pendingPromise = turnDeferred.approvalRequested.then(() => PENDING_APPROVAL_MARKER);
+    const outcome = await Promise.race([turnPromise, pendingPromise]);
+    if (outcome === PENDING_APPROVAL_MARKER) {
+      const pending = this.pendingApproval as PendingApprovalState | null;
+      return {
+        success: true,
+        output: pending ? this.buildApprovalRequestMessage(pending.request) : "Approval required.",
+        elapsed_ms: Date.now() - start,
+      };
     }
 
-    return {
-      success: result.success,
-      output: result.output,
-      elapsed_ms,
-    };
+    return outcome as ChatRunResult;
   }
 
   /**
@@ -548,7 +803,7 @@ export class ChatRunner {
   ): Promise<string> {
     const llmClient = this.deps.llmClient!;
     const messages: LLMMessage[] = [{ role: "user", content: prompt }];
-    const toolCallContext = this.buildToolCallContext();
+    const toolCallContext = this.buildToolCallContext(eventContext);
 
     for (let loop = 0; loop < MAX_TOOL_LOOPS; loop++) {
       // Recompute tools each iteration so newly activated deferred tools are included
@@ -676,22 +931,18 @@ export class ChatRunner {
         return `Tool ${name} denied: ${permResult.reason}`;
       }
       if (permResult.status === "needs_approval") {
-        this.emitEvent({
-          type: "tool_update",
+        const approved = await this.requestApproval(
+          {
+            toolName: name,
+            input: parsed.data,
+            reason: permResult.reason,
+            permissionLevel: tool.metadata.permissionLevel,
+            isDestructive: tool.metadata.isDestructive,
+            reversibility: "unknown",
+          },
           toolCallId,
-          toolName: name,
-          status: "awaiting_approval",
-          message: permResult.reason,
-          ...this.eventBase(eventContext),
-        });
-        const approved = await context.approvalFn({
-          toolName: name,
-          input: parsed.data,
-          reason: permResult.reason,
-          permissionLevel: tool.metadata.permissionLevel,
-          isDestructive: tool.metadata.isDestructive,
-          reversibility: "unknown",
-        });
+          eventContext
+        );
         if (!approved) {
           this.emitEvent({
             type: "tool_end",
@@ -843,18 +1094,13 @@ export class ChatRunner {
   }
 
   /** Build a ToolCallContext from ChatRunnerDeps for tool dispatch. */
-  private buildToolCallContext(): ToolCallContext {
+  private buildToolCallContext(eventContext: ChatEventContext): ToolCallContext {
     return {
       cwd: this.sessionCwd ?? process.cwd(),
       goalId: this.deps.goalId ?? "",
       trustBalance: 0,
       preApproved: false,
-      approvalFn: async (req) => {
-        if (this.deps.approvalFn) {
-          return this.deps.approvalFn(req.reason);
-        }
-        return false;
-      },
+      approvalFn: async (req) => this.requestApproval(req, crypto.randomUUID(), eventContext),
     };
   }
 }

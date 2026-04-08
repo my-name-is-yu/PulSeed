@@ -35,6 +35,7 @@ interface ChatProps {
   onSubmit: (input: string) => void;
   onClear?: () => void;
   isProcessing: boolean; // show "thinking..." indicator
+  inputEnabled: boolean;
   goalNames?: string[];
   noFlicker?: boolean;
 }
@@ -359,6 +360,7 @@ export function Chat({
   onSubmit,
   onClear,
   isProcessing,
+  inputEnabled,
   goalNames = [],
   noFlicker,
 }: ChatProps) {
@@ -500,7 +502,7 @@ export function Chat({
         }
       }
     },
-    { isActive: !isProcessing },
+    { isActive: inputEnabled },
   );
 
   // Reset selected index when matches change
@@ -568,7 +570,7 @@ export function Chat({
 
   const handleSubmit = (value: string) => {
     if (hasMatches) return; // let useInput handle enter when suggestions are shown
-    if (isProcessing) return;
+    if (!inputEnabled) return;
     if (!value.trim()) {
       // Show empty-enter hint
       setEmptyHint(true);

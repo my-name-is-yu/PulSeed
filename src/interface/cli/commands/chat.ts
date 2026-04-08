@@ -14,6 +14,7 @@ import { formatOperationError } from "../utils.js";
 import { getCliLogger } from "../cli-logger.js";
 import type { ChatRunner } from "../../chat/chat-runner.js";
 import { Chat, type ChatMessage } from "../../tui/chat.js";
+import { buildToolApprovalView, formatApprovalView, type ApprovalDecision, type ApprovalView } from "../../chat/approval-format.js";
 import { EthicsGate } from "../../../platform/traits/ethics-gate.js";
 import { ObservationEngine } from "../../../platform/observation/observation-engine.js";
 import { GoalNegotiator } from "../../../orchestrator/goal/goal-negotiator.js";
@@ -27,26 +28,61 @@ import { applyChatEventToMessages } from "../../chat/chat-event-state.js";
 
 const logger = getCliLogger();
 
-async function promptChatApproval(reason: string): Promise<boolean> {
-  if (!process.stdin.isTTY) return false;
+function parseApprovalDecision(input: string): ApprovalDecision {
+  const normalized = input.trim().toLowerCase();
+
+  if (
+    normalized === "approve" ||
+    normalized === "approved" ||
+    normalized === "yes" ||
+    normalized === "y" ||
+    normalized === "ok" ||
+    normalized === "okay" ||
+    normalized === "confirm" ||
+    normalized === "proceed" ||
+    normalized === "do it" ||
+    normalized === "go ahead"
+  ) {
+    return "approve";
+  }
+
+  if (
+    normalized === "reject" ||
+    normalized === "rejected" ||
+    normalized === "no" ||
+    normalized === "n" ||
+    normalized === "cancel" ||
+    normalized === "deny" ||
+    normalized === "stop" ||
+    normalized === "abort" ||
+    normalized === "don't" ||
+    normalized === "dont"
+  ) {
+    return "reject";
+  }
+
+  return "clarify";
+}
+
+async function promptChatApproval(view: ApprovalView): Promise<ApprovalDecision> {
+  if (!process.stdin.isTTY) return "reject";
 
   const rl = createInterface({ input: process.stdin, output: process.stdout });
 
   return new Promise((resolve) => {
     let settled = false;
-    const finish = (approved: boolean) => {
+    const finish = (decision: ApprovalDecision) => {
       if (settled) return;
       settled = true;
-      resolve(approved);
+      resolve(decision);
     };
 
-    rl.question(`\n⚠ Approval required: ${reason}\nProceed? [y/N] `, (answer) => {
-      const normalized = answer.trim().toLowerCase();
-      finish(normalized === "y" || normalized === "yes");
+    rl.question(`\n${formatApprovalView(view)}\nDecision [approve/reject/clarify]: `, (answer) => {
+      finish(parseApprovalDecision(answer));
       rl.close();
     });
 
-    rl.once("close", () => finish(false));
+    rl.once("close", () => finish("reject"));
   });
 }
 
@@ -69,7 +105,7 @@ function ChatApp({ chatRunner, cwd, timeoutMs }: ChatAppProps) {
       messageType: "info",
     },
   ]);
-  const [isProcessing, setIsProcessing] = useState(false);
+  const [inFlightCount, setInFlightCount] = useState(0);
 
   const pushNotification = useCallback(
     (text: string) => {
@@ -96,9 +132,13 @@ function ChatApp({ chatRunner, cwd, timeoutMs }: ChatAppProps) {
     };
   }, []);
 
+  const chatApprovalPending = chatRunner.hasPendingApproval();
+  const canAcceptInput = inFlightCount === 0 || chatApprovalPending;
+  const showSpinner = inFlightCount > 0 && !chatApprovalPending;
+
   const onSubmit = useCallback(
     async (input: string) => {
-      if (!input.trim() || isProcessing) return;
+      if (!input.trim() || !canAcceptInput) return;
 
       if (input.trim().toLowerCase() === "/exit") {
         exit();
@@ -109,9 +149,16 @@ function ChatApp({ chatRunner, cwd, timeoutMs }: ChatAppProps) {
         ...prev,
         { id: randomUUID(), role: "user" as const, text: input, timestamp: new Date() },
       ]);
-      setIsProcessing(true);
+      let flightStarted = false;
+      const beginFlight = () => {
+        if (!flightStarted) {
+          flightStarted = true;
+          setInFlightCount((prev) => prev + 1);
+        }
+      };
 
       try {
+        beginFlight();
         await chatRunner.execute(input, cwd, timeoutMs);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
@@ -126,13 +173,15 @@ function ChatApp({ chatRunner, cwd, timeoutMs }: ChatAppProps) {
           },
         ]);
       } finally {
-        setIsProcessing(false);
+        if (flightStarted) {
+          setInFlightCount((prev) => Math.max(0, prev - 1));
+        }
       }
     },
-    [chatRunner, cwd, timeoutMs, isProcessing, exit]
+    [chatRunner, cwd, timeoutMs, canAcceptInput, exit]
   );
 
-  return React.createElement(Chat, { messages, onSubmit, isProcessing });
+  return React.createElement(Chat, { messages, onSubmit, isProcessing: showSpinner, inputEnabled: canAcceptInput });
 }
 
 // ─── Command handler ───
@@ -236,14 +285,33 @@ export async function cmdChat(
       daemonClient,
       daemonBaseUrl,
       registry,
-      approvalFn: promptChatApproval,
     });
+
+    let pendingApprovalView: ApprovalView | null = null;
+    chatRunner.onEvent = (event) => {
+      if (event.type === "approval_required") {
+        pendingApprovalView = buildToolApprovalView(event.request);
+      } else if (event.type === "approval_resolved") {
+        pendingApprovalView = null;
+      }
+    };
 
     // Non-interactive: single turn
     if (task) {
-      const result = await chatRunner.execute(task, process.cwd(), timeoutMs);
+      let result = await chatRunner.execute(task, process.cwd(), timeoutMs);
       if (result.output) {
         process.stdout.write(result.output + "\n");
+      }
+      while (chatRunner.hasPendingApproval()) {
+        const view = pendingApprovalView;
+        if (!view) {
+          break;
+        }
+        const decision = await promptChatApproval(view);
+        result = await chatRunner.execute(decision, process.cwd(), timeoutMs);
+        if (result.output) {
+          process.stdout.write(result.output + "\n");
+        }
       }
       return result.success ? 0 : 1;
     }
