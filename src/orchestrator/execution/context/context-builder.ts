@@ -1,6 +1,7 @@
 import { ContextSlotSchema } from "../../../base/types/session.js";
 import type { ContextSlot } from "../../../base/types/session.js";
 import type { KnowledgeEntry } from "../../../base/types/knowledge.js";
+import type { KnowledgeGraph } from "../../../platform/knowledge/knowledge-graph.js";
 import type { VectorIndex } from "../../../platform/knowledge/vector-index.js";
 import { allocateBudget, selectWithinBudget, estimateTokens } from "./context-budget.js";
 
@@ -102,6 +103,59 @@ export function injectKnowledgeContext(
   };
 
   return [...slots, knowledgeSlot];
+}
+
+export function mergeWorkingMemorySelections<T extends { id: string }>(
+  tagSelected: T[],
+  semanticSelected: T[],
+  budget: number
+): T[] {
+  const merged: T[] = [];
+  const seen = new Set<string>();
+
+  for (const item of [...tagSelected, ...semanticSelected]) {
+    if (seen.has(item.id)) continue;
+    seen.add(item.id);
+    merged.push(item);
+    if (merged.length >= budget) break;
+  }
+
+  return merged;
+}
+
+export function expandKnowledgeEntriesWithGraph(
+  entries: KnowledgeEntry[],
+  allEntries: KnowledgeEntry[],
+  graph: KnowledgeGraph
+): { relatedEntries: KnowledgeEntry[]; contradictionWarnings: string[] } {
+  const entryMap = new Map(allEntries.map((entry) => [entry.entry_id, entry]));
+  const relatedEntries: KnowledgeEntry[] = [];
+  const contradictionWarnings: string[] = [];
+  const seen = new Set(entries.map((entry) => entry.entry_id));
+
+  for (const entry of entries) {
+    for (const related of graph.getRelated(entry.entry_id)) {
+      const targetEntry = entryMap.get(related.node.entry_id);
+      if (!targetEntry) continue;
+
+      if (related.edge.relation === "contradicts") {
+        contradictionWarnings.push(
+          `${entry.question} contradicts ${targetEntry.question}`
+        );
+        continue;
+      }
+
+      if (related.edge.relation !== "supports" && related.edge.relation !== "refines") {
+        continue;
+      }
+
+      if (seen.has(targetEntry.entry_id)) continue;
+      seen.add(targetEntry.entry_id);
+      relatedEntries.push(targetEntry);
+    }
+  }
+
+  return { relatedEntries, contradictionWarnings };
 }
 
 /**

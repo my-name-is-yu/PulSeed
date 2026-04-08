@@ -42,6 +42,7 @@ import { handleCapabilityAcquisition } from "./core-loop-capability.js";
 import type { ITimeHorizonEngine } from "../../platform/time/time-horizon-engine.js";
 import type { PacingResult } from "../../base/types/time-horizon.js";
 import { CoreLoopLearning } from "./core-loop-learning.js";
+import { loadDreamActivationState } from "../../platform/dream/dream-activation.js";
 
 // Re-export types for backward compatibility
 export type {
@@ -122,6 +123,8 @@ export class CoreLoop {
    */
   async run(goalId: string, options?: { maxIterations?: number }): Promise<LoopResult> {
     const startedAt = new Date().toISOString();
+    const dreamCollector = this.deps.hookManager?.getDreamCollector();
+    const sessionId = dreamCollector?.buildSessionId(goalId, startedAt) ?? `${goalId}:${startedAt}`;
     this.stopped = false;
     // Reset state diff tracking for each run (snapshots are in-memory only)
     this.stateDiffState.clear();
@@ -235,6 +238,22 @@ export class CoreLoop {
       // Accumulate token usage from iteration.
       totalTokens += iterationResult.tokensUsed ?? 0;
 
+      if (!this.config.dryRun && dreamCollector) {
+        try {
+          await dreamCollector.appendIterationResult({
+            goalId,
+            sessionId,
+            iterationResult,
+          });
+        } catch (err) {
+          this.logger?.warn("CoreLoop: failed to persist dream iteration log", {
+            goalId,
+            loopIndex,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+
       // Save checkpoint after each successful verify step (§4.8)
       if (!this.config.dryRun && iterationResult.error === null && iterationResult.taskResult !== null) {
         await saveLoopCheckpoint(
@@ -342,8 +361,12 @@ export class CoreLoop {
     }
 
     // Run post-loop hooks (curiosity, memory lifecycle, archive, final report)
+    const completedAt = new Date().toISOString();
     await runPostLoopHooks({
       goalId,
+      sessionId,
+      completedAt,
+      totalTokensUsed: totalTokens,
       finalStatus,
       iterations,
       deps: this.deps,
@@ -362,7 +385,7 @@ export class CoreLoop {
       finalStatus,
       iterations,
       startedAt,
-      completedAt: new Date().toISOString(),
+      completedAt,
       tokensUsed: totalTokens,
     };
   }
@@ -443,6 +466,76 @@ export class CoreLoop {
 
     if (result.stallDetected && result.stallReport) {
       this.logger?.warn(`[iter ${loopIndex}] stall detected: ${result.stallReport.stall_type}`, { escalation: result.stallReport.escalation_level });
+      void this.deps.hookManager?.emit("StallDetected", {
+        goal_id: goalId,
+        dimension: result.stallReport.dimension_name ?? undefined,
+        data: {
+          stall_type: result.stallReport.stall_type,
+          escalation_level: result.stallReport.escalation_level,
+          suggested_cause: result.stallReport.suggested_cause,
+          task_id: result.stallReport.task_id ?? undefined,
+        },
+      });
+    }
+
+    if (
+      result.stallDetected &&
+      this.deps.knowledgeManager &&
+      this.deps.toolExecutor
+    ) {
+      try {
+        const activation = await loadDreamActivationState(this.deps.stateManager.getBaseDir());
+        if (activation.flags.autoAcquireKnowledge) {
+          const portfolio = await Promise.resolve(
+            this.deps.strategyManager.getPortfolio(goalId)
+          ).catch(() => null);
+          const observationContext = {
+            observations: goal.dimensions.map((dimension) => ({
+              name: dimension.name,
+              current_value: dimension.current_value,
+              confidence: dimension.confidence,
+            })),
+            strategies: portfolio?.strategies ?? null,
+            confidence:
+              gapVector.gaps.reduce((sum, gap) => sum + gap.confidence, 0) /
+              Math.max(gapVector.gaps.length, 1),
+          };
+          const gapSignal = await this.deps.knowledgeManager.detectKnowledgeGap(observationContext);
+          if (gapSignal) {
+            const acquired = await this.deps.knowledgeManager.acquireWithTools(
+              gapSignal.missing_knowledge,
+              goalId,
+              this.deps.toolExecutor,
+              {
+                cwd: process.cwd(),
+                goalId,
+                trustBalance: 0,
+                preApproved: true,
+                approvalFn: async () => false,
+              }
+            );
+            for (const entry of acquired) {
+              await this.deps.knowledgeManager.saveKnowledge(goalId, entry);
+            }
+            if (acquired.length > 0) {
+              this.logger?.info("CoreLoop: dream auto-acquired knowledge and skipped execution for context refresh", {
+                goalId,
+                acquiredCount: acquired.length,
+              });
+              await generateLoopReport(goalId, loopIndex, result, goal, this.deps.reportingEngine, this.logger);
+              result.skipped = true;
+              result.skipReason = "dream_auto_acquire_knowledge";
+              result.elapsedMs = Date.now() - startTime;
+              return result;
+            }
+          }
+        }
+      } catch (err) {
+        this.logger?.warn("CoreLoop: autoAcquireKnowledge failed (non-fatal)", {
+          goalId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
     }
 
     if (skipTaskGeneration) {

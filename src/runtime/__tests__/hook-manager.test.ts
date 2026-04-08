@@ -98,6 +98,39 @@ describe("HookManager", () => {
   // ─── emit ───
 
   describe("emit", () => {
+    it("respects dream logCollection config when persisting events", async () => {
+      await fs.promises.mkdir(path.join(tempDir, "dream"), { recursive: true });
+      await fs.promises.writeFile(
+        path.join(tempDir, "dream", "config.json"),
+        JSON.stringify({ logCollection: { enabled: true, eventPersistenceEnabled: false } }),
+        "utf8"
+      );
+
+      const manager = new HookManager(tempDir);
+      await manager.emit("LoopCycleStart", { goal_id: "g1" });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(fs.existsSync(path.join(tempDir, "dream", "events", "g1.jsonl"))).toBe(false);
+    });
+
+    it("uses date-based dream event paths when configured", async () => {
+      await fs.promises.mkdir(path.join(tempDir, "dream"), { recursive: true });
+      await fs.promises.writeFile(
+        path.join(tempDir, "dream", "config.json"),
+        JSON.stringify({ logCollection: { enabled: true, rotationMode: "date" } }),
+        "utf8"
+      );
+
+      const manager = new HookManager(tempDir);
+      await manager.emit("LoopCycleStart", { goal_id: "g1" });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      const dateSuffix = new Date().toISOString().slice(0, 10);
+      expect(
+        fs.existsSync(path.join(tempDir, "dream", "events", `g1.${dateSuffix}.jsonl`))
+      ).toBe(true);
+    });
+
     it("only fires hooks matching the event type", async () => {
       const spawnedCommands: string[] = [];
 
@@ -287,6 +320,23 @@ describe("HookManager", () => {
       // No loadHooks() call — hooks is empty
 
       await expect(manager.emit("LoopCycleStart", { goal_id: "g1" })).resolves.toBeUndefined();
+    });
+
+    it("persists dream event logs for supported hook events", async () => {
+      const manager = new HookManager(tempDir);
+
+      await manager.emit("PostTaskCreate", { goal_id: "goal-1", data: { task_id: "task-42", status: "ok" } });
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      const eventPath = path.join(tempDir, "dream", "events", "goal-1.jsonl");
+      expect(fs.existsSync(eventPath)).toBe(true);
+
+      const [firstLine] = fs.readFileSync(eventPath, "utf-8").trim().split("\n");
+      const record = JSON.parse(firstLine!);
+      expect(record.eventType).toBe("PostTaskCreate");
+      expect(record.goalId).toBe("goal-1");
+      expect(record.taskId).toBe("task-42");
+      expect(record.data.status).toBe("ok");
     });
   });
 });

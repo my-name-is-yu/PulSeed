@@ -16,6 +16,14 @@ import type { ToolRegistry } from "../../tools/registry.js";
 import { WorkspaceContextCache, formatWorkspaceContext } from "./strategy-workspace.js";
 import type { WorkspaceContext } from "./strategy-workspace.js";
 import {
+  applyDecisionHeuristicsToCandidates,
+  loadDecisionHeuristics,
+  loadDreamActivationState,
+  loadStrategyTemplates,
+  materializeTemplateCandidate,
+  selectTemplateCandidates,
+} from "../../platform/dream/dream-activation.js";
+import {
   VALID_TRANSITIONS,
   StrategyArraySchema,
   buildGenerationPrompt,
@@ -64,6 +72,17 @@ export class StrategyManagerBase {
 
   /** Execution feedback buffer for strategy scoring (bounded, max 50). */
   protected executionHistory: ExecutionFeedback[] = [];
+
+  private dedupeCandidatesById(candidates: Strategy[]): Strategy[] {
+    const seen = new Set<string>();
+    return candidates.filter((candidate) => {
+      if (seen.has(candidate.id)) {
+        return false;
+      }
+      seen.add(candidate.id);
+      return true;
+    });
+  }
 
   constructor(stateManager: StateManager, llmClient: ILLMClient, knowledgeManager?: KnowledgeManager, promptGateway?: IPromptGateway, logger?: Logger) {
     this.stateManager = stateManager;
@@ -183,7 +202,7 @@ export class StrategyManagerBase {
     }
 
     const now = new Date().toISOString();
-    const candidates: Strategy[] = strategiesRaw.map((raw) =>
+    let candidates: Strategy[] = strategiesRaw.map((raw) =>
       StrategySchema.parse({
         ...raw,
         id: raw.id ?? randomUUID(),
@@ -201,17 +220,68 @@ export class StrategyManagerBase {
       })
     );
 
+    try {
+      const activation = await loadDreamActivationState(this.stateManager.getBaseDir());
+      if (activation.flags.strategyTemplates) {
+        const goal = await this.stateManager.loadGoal(goalId);
+        const templates = await loadStrategyTemplates(this.stateManager.getBaseDir());
+        const matchedTemplates = selectTemplateCandidates(
+          templates,
+          [
+            goal?.title ?? "",
+            goal?.description ?? "",
+            primaryDimension,
+            targetDimensions.join(" "),
+          ].join(" "),
+          targetDimensions,
+          1
+        );
+
+        if (matchedTemplates.length > 0) {
+          const templateCandidates = matchedTemplates.map((template) =>
+            materializeTemplateCandidate(template, goalId, primaryDimension, targetDimensions)
+          );
+          candidates = [
+            ...templateCandidates,
+            ...candidates.filter(
+              (candidate) =>
+                !templateCandidates.some(
+                  (templateCandidate) => templateCandidate.hypothesis === candidate.hypothesis
+                )
+            ),
+          ];
+        }
+      }
+
+      if (activation.flags.decisionHeuristics) {
+        const heuristics = await loadDecisionHeuristics(this.stateManager.getBaseDir());
+        candidates = applyDecisionHeuristicsToCandidates(candidates, heuristics, {
+          stallCount: Math.max(
+            0,
+            ...context.pastStrategies.map((strategy) => strategy.consecutive_stall_count ?? 0)
+          ),
+          activeStrategyId: context.pastStrategies.find((strategy) => strategy.state === "active")?.id ?? null,
+        });
+      }
+    } catch {
+      // Non-fatal: dream activation enrichment must not block candidate generation.
+    }
+
+    candidates = this.dedupeCandidatesById(candidates);
+
     // Store candidates in portfolio
     const portfolio = await this.loadOrCreatePortfolio(goalId);
-    portfolio.strategies.push(...candidates);
+    const existingIds = new Set(portfolio.strategies.map((strategy) => strategy.id));
+    const freshCandidates = candidates.filter((candidate) => !existingIds.has(candidate.id));
+    portfolio.strategies.push(...freshCandidates);
     await this.savePortfolio(goalId, portfolio);
 
     // Update in-memory index
-    for (const c of candidates) {
+    for (const c of freshCandidates) {
       this.strategyIndex.set(c.id, goalId);
     }
 
-    return candidates;
+    return freshCandidates;
   }
 
   /**

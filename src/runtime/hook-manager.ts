@@ -1,3 +1,4 @@
+import * as fs from "node:fs";
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { spawn } from "node:child_process";
@@ -8,6 +9,9 @@ import {
   type HookEventType,
   type HookPayload,
 } from "../base/types/hook.js";
+import { DreamLogCollector } from "../platform/dream/dream-log-collector.js";
+import type { DreamCollectorConfig } from "../platform/dream/dream-log-collector.js";
+import { DreamLogConfigSchema } from "../platform/dream/dream-types.js";
 
 // ─── HookManager ───
 
@@ -19,9 +23,25 @@ import {
 export class HookManager {
   private hooks: HookConfig[] = [];
   private readonly logger?: Logger;
+  private readonly dreamCollector: DreamLogCollector;
 
   constructor(private readonly baseDir: string, logger?: Logger) {
     this.logger = logger;
+    this.dreamCollector = new DreamLogCollector(baseDir, logger, this.loadDreamCollectorConfig());
+  }
+
+  getDreamCollector(): DreamLogCollector {
+    return this.dreamCollector;
+  }
+
+  private loadDreamCollectorConfig(): DreamCollectorConfig {
+    const configPath = path.join(this.baseDir, "dream", "config.json");
+    try {
+      const raw = JSON.parse(fs.readFileSync(configPath, "utf8")) as unknown;
+      return DreamLogConfigSchema.parse(raw).logCollection;
+    } catch {
+      return {};
+    }
   }
 
   /**
@@ -55,6 +75,23 @@ export class HookManager {
    * Never throws — errors are logged only.
    */
   async emit(event: HookEventType, partial: Partial<HookPayload>): Promise<void> {
+    const goalId = partial.goal_id ?? "global";
+    const taskId = typeof partial.data?.["task_id"] === "string"
+      ? String(partial.data["task_id"])
+      : typeof partial.data?.["taskId"] === "string"
+        ? String(partial.data["taskId"])
+        : undefined;
+
+    void this.dreamCollector.appendEventLog({
+      timestamp: new Date().toISOString(),
+      eventType: event,
+      goalId,
+      ...(taskId ? { taskId } : {}),
+      data: partial.data ?? {},
+    }).catch((err) => {
+      this.logger?.warn(`[HookManager] Failed to persist dream event ${event}: ${err instanceof Error ? err.message : String(err)}`);
+    });
+
     const matching = this.hooks.filter((h) => {
       if (!h.enabled) return false;
       if (h.event !== event) return false;

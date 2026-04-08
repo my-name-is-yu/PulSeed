@@ -135,7 +135,8 @@ describe("GrepTool", () => {
     expect(result.success).toBe(true);
     const output = result.data as string;
     expect(output).toContain("foo");
-    expect(output).toContain("--");
+    expect(output).toContain('export const hello = "world";');
+    expect(output).toContain("alpha.ts:2:export const foo = 42;");
   });
 
   it("checkPermissions returns allowed", async () => {

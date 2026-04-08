@@ -72,6 +72,8 @@ export const LAYER_PRIORITY: Record<ObservationLayer, number> = {
 export const LLMObservationResponseSchema = z.object({
   score: z.number().min(0).max(1),
   reason: z.string(),
+  importance_score: z.number().min(0).max(1).optional(),
+  importance_reason: z.string().optional(),
 });
 
 // ─── Pure Helper Functions ───

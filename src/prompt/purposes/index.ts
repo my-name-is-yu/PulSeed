@@ -20,6 +20,7 @@ export * from "./goal-quality.js";
 export * from "./dependency.js";
 export * from "./strategy-template.js";
 export * from "./final-migration.js";
+export * from "./dream.js";
 
 import type { ContextPurpose } from "../slot-definitions.js";
 import { OBSERVATION_SYSTEM_PROMPT } from "./observation.js";

@@ -55,6 +55,12 @@ import { finalizeSuccessfulExecution } from "./task-post-execution.js";
 import { GuardrailRunner } from "../../../platform/traits/guardrail-runner.js";
 import type { HookManager } from "../../../runtime/hook-manager.js";
 import type { ToolExecutor } from "../../../tools/executor.js";
+import {
+  formatPatternHints,
+  loadDreamActivationState,
+  loadLearnedPatterns,
+  selectPatternHints,
+} from "../../../platform/dream/dream-activation.js";
 
 export type { TaskCycleResult } from "./task-execution-types.js";
 import type { TaskCycleResult } from "./task-execution-types.js";
@@ -204,6 +210,32 @@ export class TaskLifecycle {
     existingTasks?: string[],
     workspaceContext?: string
   ): Promise<{ task: Task | null; tokensUsed: number }> {
+    let resolvedKnowledgeContext = knowledgeContext;
+    try {
+      const dreamActivation = await loadDreamActivationState(this.stateManager.getBaseDir());
+      if (dreamActivation.flags.learnedPatternHints) {
+        const goal = await this.stateManager.loadGoal(goalId);
+        const patterns = await loadLearnedPatterns(this.stateManager.getBaseDir(), goalId);
+        const hints = selectPatternHints(
+          patterns,
+          [
+            goal?.title ?? "",
+            goal?.description ?? "",
+            targetDimension,
+            knowledgeContext ?? "",
+          ].join(" ")
+        );
+        const formattedHints = formatPatternHints(hints);
+        if (formattedHints) {
+          resolvedKnowledgeContext = resolvedKnowledgeContext
+            ? `${resolvedKnowledgeContext}\n\n${formattedHints}`
+            : formattedHints;
+        }
+      }
+    } catch {
+      // Non-fatal: proceed without learned pattern hints.
+    }
+
     return _generateTask(
       {
         stateManager: this.stateManager,
@@ -214,7 +246,7 @@ export class TaskLifecycle {
       goalId,
       targetDimension,
       strategyId,
-      knowledgeContext,
+      resolvedKnowledgeContext,
       adapterType,
       existingTasks,
       workspaceContext
