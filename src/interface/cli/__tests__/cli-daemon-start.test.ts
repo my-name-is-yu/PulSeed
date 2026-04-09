@@ -40,7 +40,7 @@ vi.mock("../setup.js", () => ({
   buildDeps: buildDepsMock,
 }));
 
-vi.mock("../../../runtime/daemon-runner.js", () => ({
+vi.mock("../../../runtime/daemon/runner.js", () => ({
   DaemonRunner: vi.fn().mockImplementation(function (deps: unknown) {
     daemonRunnerArgs.push(deps);
     return {
@@ -77,7 +77,7 @@ vi.mock("../../../runtime/logger.js", () => ({
   }),
 }));
 
-vi.mock("../../../runtime/event-server.js", () => ({
+vi.mock("../../../runtime/event/server.js", () => ({
   EventServer: vi.fn().mockImplementation(function () {
     const instance = {
       broadcast: eventServerBroadcastMock,
@@ -93,7 +93,7 @@ vi.mock("../../../runtime/cron-scheduler.js", () => ({
   }),
 }));
 
-vi.mock("../../../runtime/schedule-engine.js", () => ({
+vi.mock("../../../runtime/schedule/engine.js", () => ({
   ScheduleEngine: vi.fn().mockImplementation(function (args: unknown) {
     scheduleEngineArgs.push(args);
     return {
