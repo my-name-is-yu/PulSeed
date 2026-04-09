@@ -9,6 +9,31 @@ import type { LearnedPattern } from "../../../base/types/learning.js";
 import type { TransferTrustManager } from "./transfer-trust.js";
 import type { PatternEffectivenessTracker } from "./knowledge-transfer-types.js";
 
+function buildCandidateDedupKey(candidate: Pick<
+  TransferCandidate,
+  "type" | "source_goal_id" | "target_goal_id" | "source_item_id"
+>): string {
+  return [
+    candidate.type,
+    candidate.source_goal_id,
+    candidate.target_goal_id,
+    candidate.source_item_id,
+  ].join("::");
+}
+
+function findExistingCandidate(
+  candidates: Map<string, TransferCandidate>,
+  candidate: Pick<TransferCandidate, "type" | "source_goal_id" | "target_goal_id" | "source_item_id">
+): TransferCandidate | null {
+  const key = buildCandidateDedupKey(candidate);
+  for (const existing of candidates.values()) {
+    if (buildCandidateDedupKey(existing) === key) {
+      return existing;
+    }
+  }
+  return null;
+}
+
 // ─── Deps ───
 
 export interface DetectDeps {
@@ -165,6 +190,16 @@ export async function detectTransferOpportunities(
       continue;
     }
     seenPatternIds.add(pattern.pattern_id);
+    const existingCandidate = findExistingCandidate(candidates, {
+      type: "pattern",
+      source_goal_id: sourceGoalId,
+      target_goal_id: goalId,
+      source_item_id: pattern.pattern_id,
+    });
+    if (existingCandidate) {
+      newCandidates.push(existingCandidate);
+      continue;
+    }
     const candidate = TransferCandidateSchema.parse({
       candidate_id: `tc_${randomUUID()}`,
       source_goal_id: sourceGoalId,
