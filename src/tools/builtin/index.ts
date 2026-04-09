@@ -127,7 +127,7 @@ import type { StateManager } from "../../base/state/state-manager.js";
 import type { KnowledgeManager } from "../../platform/knowledge/knowledge-manager.js";
 import type { ToolRegistry } from "../registry.js";
 import type { PluginLoader } from "../../runtime/plugin-loader.js";
-import type { ScheduleEngine } from "../../runtime/schedule-engine.js";
+import type { ScheduleEngine } from "../../runtime/schedule/engine.js";
 import type { TrustManager } from "../../platform/traits/trust-manager.js";
 
 export interface BuiltinToolDeps {

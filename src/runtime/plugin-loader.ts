@@ -18,7 +18,7 @@ import {
 import type { AdapterRegistry, IAdapter } from "../orchestrator/execution/adapter-layer.js";
 import type { DataSourceRegistry, IDataSourceAdapter } from "../platform/observation/data-source-adapter.js";
 import type { NotifierRegistry } from "./notifier-registry.js";
-import type { IScheduleSource } from "./schedule-source.js";
+import type { IScheduleSource } from "./schedule/source.js";
 
 // ─── PluginLoader ───
 

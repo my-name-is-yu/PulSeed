@@ -7,21 +7,21 @@ import {
   type ScheduleEntry,
   type ScheduleResult,
   type ReflectionJobKind,
-} from "./types/schedule.js";
-import type { IDataSourceAdapter } from "../platform/observation/data-source-adapter.js";
-import type { DataSourceRegistry } from "../platform/observation/data-source-adapter.js";
-import type { ILLMClient } from "../base/llm/llm-client.js";
-import type { StateManager } from "../base/state/state-manager.js";
-import type { HookManager } from "./hook-manager.js";
-import type { MemoryLifecycleManager } from "../platform/knowledge/memory/memory-lifecycle.js";
-import type { KnowledgeManager } from "../platform/knowledge/knowledge-manager.js";
-import { detectChange } from "./change-detector.js";
+} from "../types/schedule.js";
+import type { IDataSourceAdapter } from "../../platform/observation/data-source-adapter.js";
+import type { DataSourceRegistry } from "../../platform/observation/data-source-adapter.js";
+import type { ILLMClient } from "../../base/llm/llm-client.js";
+import type { StateManager } from "../../base/state/state-manager.js";
+import type { HookManager } from "../hook-manager.js";
+import type { MemoryLifecycleManager } from "../../platform/knowledge/memory/memory-lifecycle.js";
+import type { KnowledgeManager } from "../../platform/knowledge/knowledge-manager.js";
+import { detectChange } from "../change-detector.js";
 import {
   runDreamConsolidation,
   runEveningCatchup,
   runMorningPlanning,
   runWeeklyReview,
-} from "../reflection/index.js";
+} from "../../reflection/index.js";
 
 interface LayerDeps {
   baseDir?: string;

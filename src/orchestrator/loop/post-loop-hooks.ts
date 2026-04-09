@@ -9,7 +9,7 @@
  *   - Final run report generation
  */
 
-import type { CoreLoopDeps, ResolvedLoopConfig, LoopResult, LoopIterationResult } from "./core-loop-types.js";
+import type { CoreLoopDeps, ResolvedLoopConfig, LoopResult, LoopIterationResult } from "./core-loop/contracts.js";
 import type { Goal } from "../../base/types/goal.js";
 import type { Logger } from "../../runtime/logger.js";
 

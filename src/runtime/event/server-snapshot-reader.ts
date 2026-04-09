@@ -1,7 +1,7 @@
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
-import type { ApprovalRequiredEvent } from "./approval-broker.js";
-import type { OutboxStore } from "./store/index.js";
+import type { ApprovalRequiredEvent } from "../approval-broker.js";
+import type { OutboxStore } from "../store/index.js";
 
 type ActiveWorkersProvider = () =>
   | Array<Record<string, unknown>>

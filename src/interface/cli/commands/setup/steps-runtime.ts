@@ -5,7 +5,7 @@ import { homedir } from "node:os";
 import { getPulseedDirPath } from "../../../../base/utils/paths.js";
 import { DEFAULT_SEED, DEFAULT_USER } from "../../../../base/config/identity-loader.js";
 import { findAvailablePort, isPortAvailable, DEFAULT_PORT, getProcessOnPort } from "../../../../runtime/port-utils.js";
-import { isDaemonRunning } from "../../../../runtime/daemon-client.js";
+import { isDaemonRunning } from "../../../../runtime/daemon/client.js";
 import { PIDManager } from "../../../../runtime/pid-manager.js";
 import { DaemonStateSchema } from "../../../../runtime/types/daemon.js";
 import { ROOT_PRESETS } from "../presets/root-presets.js";

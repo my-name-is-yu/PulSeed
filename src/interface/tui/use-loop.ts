@@ -3,7 +3,7 @@ import type { CoreLoop, LoopResult } from "../../orchestrator/loop/core-loop.js"
 import type { StateManager } from "../../base/state/state-manager.js";
 import type { TrustManager } from "../../platform/traits/trust-manager.js";
 import type { Threshold } from "../../base/types/core.js";
-import type { DaemonClient } from "../../runtime/daemon-client.js";
+import type { DaemonClient } from "../../runtime/daemon/client.js";
 
 export interface LoopState {
   running: boolean;

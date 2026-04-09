@@ -12,7 +12,7 @@ import type {
   LoopConfig,
   ResolvedLoopConfig,
   CoreLoopDeps,
-} from "./core-loop-types.js";
+} from "./core-loop/contracts.js";
 import {
   runTreeIteration as runTreeIterationImpl,
   runMultiGoalIteration as runMultiGoalIterationImpl,
@@ -24,23 +24,23 @@ import {
   scoreDrivesAndCheckKnowledge,
   phaseAutoDecompose,
   type PhaseCtx,
-} from "./core-loop-phases.js";
+} from "./core-loop/preparation.js";
 import {
   checkCompletionAndMilestones,
   detectStallsAndRebalance,
   checkDependencyBlock,
   runTaskCycleWithContext,
   type LoopCallbacks,
-} from "./core-loop-phases-b.js";
+} from "./core-loop/task-cycle.js";
 import {
   runStateDiffCheck,
   tryParallelExecution,
   type StateDiffState,
-} from "./core-loop-phases-c.js";
-import { handleCapabilityAcquisition } from "./core-loop-capability.js";
+} from "./core-loop/control.js";
+import { handleCapabilityAcquisition } from "./core-loop/capability.js";
 import type { ITimeHorizonEngine } from "../../platform/time/time-horizon-engine.js";
 import type { PacingResult } from "../../base/types/time-horizon.js";
-import { CoreLoopLearning } from "./core-loop-learning.js";
+import { CoreLoopLearning } from "./core-loop/learning.js";
 import { loadDreamActivationState } from "../../platform/dream/dream-activation.js";
 
 // Re-export types for backward compatibility
@@ -54,12 +54,12 @@ export type {
   CoreLoopDeps,
   ProgressEvent,
   ProgressPhase,
-} from "./core-loop-types.js";
+} from "./core-loop/contracts.js";
 export type {
   LoopIterationResult,
   LoopResult,
 } from "./loop-result-types.js";
-export { buildDriveContext } from "./core-loop-types.js";
+export { buildDriveContext } from "./core-loop/contracts.js";
 export { makeEmptyIterationResult } from "./loop-result-types.js";
 
 const DEFAULT_CONFIG: Required<Omit<LoopConfig, "iterationBudget">> = {

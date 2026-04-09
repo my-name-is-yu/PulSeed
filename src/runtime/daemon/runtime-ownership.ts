@@ -1,7 +1,7 @@
 import * as path from "node:path";
-import type { Logger } from "./logger.js";
-import type { ApprovalStore, OutboxStore, RuntimeHealthStore } from "./store/index.js";
-import type { LeaderLockManager } from "./leader-lock-manager.js";
+import type { Logger } from "../logger.js";
+import type { ApprovalStore, OutboxStore, RuntimeHealthStore } from "../store/index.js";
+import type { LeaderLockManager } from "../leader-lock-manager.js";
 
 export type RuntimeHealthComponents = Record<
   "gateway" | "queue" | "leases" | "approval" | "outbox" | "supervisor",

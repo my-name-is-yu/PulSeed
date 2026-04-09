@@ -1,5 +1,5 @@
 import type { ChannelAdapter, EnvelopeHandler } from "./channel-adapter.js";
-import type { EventServer } from "../event-server.js";
+import type { EventServer } from "../event/server.js";
 import { createEnvelope } from "../types/envelope.js";
 import type { Envelope } from "../types/envelope.js";
 

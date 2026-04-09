@@ -7,7 +7,7 @@ import type {
   ToolMetadata,
   ToolResult,
 } from "../../types.js";
-import type { ScheduleEngine } from "../../../runtime/schedule-engine.js";
+import type { ScheduleEngine } from "../../../runtime/schedule/engine.js";
 import type { ScheduleEntry } from "../../../runtime/types/schedule.js";
 import { DESCRIPTION } from "./prompt.js";
 import { TAGS, CATEGORY as _CATEGORY, READ_ONLY, PERMISSION_LEVEL } from "./constants.js";

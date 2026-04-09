@@ -57,7 +57,7 @@ async function startDaemonDetached(baseDir: string): Promise<void> {
 }
 
 async function waitForDaemon(baseDir: string, timeoutMs: number): Promise<number> {
-  const { isDaemonRunning } = await import("../../runtime/daemon-client.js");
+  const { isDaemonRunning } = await import("../../runtime/daemon/client.js");
   const deadline = Date.now() + timeoutMs;
 
   while (Date.now() < deadline) {
@@ -90,7 +90,7 @@ async function buildDeps() {
   const { StateAggregator } = await import("../../orchestrator/goal/state-aggregator.js");
   const { GoalDependencyGraph } = await import("../../orchestrator/goal/goal-dependency-graph.js");
   const { TreeLoopOrchestrator } = await import("../../orchestrator/goal/tree-loop-orchestrator.js");
-  const { ScheduleEngine } = await import("../../runtime/schedule-engine.js");
+  const { ScheduleEngine } = await import("../../runtime/schedule/engine.js");
   const { MemoryLifecycleManager, DriveScoreAdapter } = await import("../../platform/knowledge/memory/memory-lifecycle.js");
   const { CharacterConfigManager } = await import("../../platform/traits/character-config.js");
   const { ChatRunner } = await import("../../interface/chat/chat-runner.js");
@@ -420,7 +420,7 @@ async function startTUIStandaloneMode(): Promise<void> {
 // ─── Daemon mode ───
 
 async function startTUIDaemonMode(): Promise<void> {
-  const { DaemonClient, isDaemonRunning } = await import("../../runtime/daemon-client.js");
+  const { DaemonClient, isDaemonRunning } = await import("../../runtime/daemon/client.js");
   const baseDir = process.env.PULSEED_HOME ?? getPulseedDirPath();
 
   let daemonClient: InstanceType<typeof DaemonClient>;

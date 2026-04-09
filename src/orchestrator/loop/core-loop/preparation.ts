@@ -1,25 +1,19 @@
 /**
- * core-loop-phases.ts
- *
- * Phases 1–4 of CoreLoop.runOneIteration() as standalone functions.
- * Each function accepts a PhaseCtx (deps + config + logger) plus phase-specific
- * parameters. They mutate `result` by reference and return values as documented.
- *
- * Phases 5–7 are in core-loop-phases-b.ts.
+ * Preparation and scoring steps for a single CoreLoop iteration.
  */
 
-import type { Logger } from "../../runtime/logger.js";
-import type { ToolExecutor } from "../../tools/executor.js";
-import type { Goal } from "../../base/types/goal.js";
-import type { GapVector } from "../../base/types/gap.js";
-import type { DriveScore } from "../../base/types/drive.js";
+import type { Logger } from "../../../runtime/logger.js";
+import type { ToolExecutor } from "../../../tools/executor.js";
+import type { Goal } from "../../../base/types/goal.js";
+import type { GapVector } from "../../../base/types/gap.js";
+import type { DriveScore } from "../../../base/types/drive.js";
 import {
   buildDriveContext,
   type CoreLoopDeps,
   type ResolvedLoopConfig,
   type LoopIterationResult,
-} from "./core-loop-types.js";
-import { logRewardComputation } from "../../platform/drive/reward-log.js";
+} from "./contracts.js";
+import { logRewardComputation } from "../../../platform/drive/reward-log.js";
 
 /** Minimal context passed to every phase function. */
 export interface PhaseCtx {
@@ -32,7 +26,7 @@ export interface PhaseCtx {
    * When present, WaitStrategy processing is skipped if the engine reports the goal
    * cannot afford to wait given the remaining time budget.
    */
-  timeHorizonEngine?: import('../../platform/time/time-horizon-engine.js').ITimeHorizonEngine;
+  timeHorizonEngine?: import("../../../platform/time/time-horizon-engine.js").ITimeHorizonEngine;
 }
 
 // ─── Phase 1 ───
@@ -149,7 +143,7 @@ export async function phaseAutoDecompose(
 export async function buildLoopToolContext(
   ctx: PhaseCtx,
   goalId: string
-): Promise<import("../../tools/types.js").ToolCallContext> {
+): Promise<import("../../../tools/types.js").ToolCallContext> {
   let trustBalance = 0;
   if (ctx.deps.trustManager) {
     try {
@@ -240,7 +234,7 @@ export async function calculateGapOrComplete(
   try {
     // Refresh stale dimensions via tool measurement before gap calculation
     if (ctx.toolExecutor && goal.dimensions) {
-      const { needsDirectMeasurement, measureDirectly } = await import("../../platform/drive/gap-calculator-tools.js");
+      const { needsDirectMeasurement, measureDirectly } = await import("../../../platform/drive/gap-calculator-tools.js");
       let anyRefreshed = false;
       for (const dim of goal.dimensions) {
         if (needsDirectMeasurement(dim)) {

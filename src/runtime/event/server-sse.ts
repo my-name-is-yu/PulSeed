@@ -1,7 +1,7 @@
 import * as http from "node:http";
-import type { ApprovalBroker } from "./approval-broker.js";
-import type { Logger } from "./logger.js";
-import type { OutboxRecord, OutboxStore } from "./store/index.js";
+import type { ApprovalBroker } from "../approval-broker.js";
+import type { Logger } from "../logger.js";
+import type { OutboxRecord, OutboxStore } from "../store/index.js";
 
 export class EventServerSseManager {
   private readonly sseClients = new Set<http.ServerResponse>();

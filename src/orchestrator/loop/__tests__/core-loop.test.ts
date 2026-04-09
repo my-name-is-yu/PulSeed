@@ -93,7 +93,7 @@ vi.mock("../../../base/utils/sleep.js", () => ({
   sleep: vi.fn().mockResolvedValue(undefined),
 }));
 
-vi.mock("../core-loop-phases.js", () => ({
+vi.mock("../core-loop/preparation.js", () => ({
   loadGoalWithAggregation: vi.fn(async (_ctx: unknown, _goalId: string, result: any) => {
     result.gapAggregate = 1;
     return mocks.goal;
@@ -104,7 +104,7 @@ vi.mock("../core-loop-phases.js", () => ({
   phaseAutoDecompose: vi.fn().mockResolvedValue(undefined),
 }));
 
-vi.mock("../core-loop-phases-b.js", () => ({
+vi.mock("../core-loop/task-cycle.js", () => ({
   checkCompletionAndMilestones: vi.fn().mockResolvedValue(undefined),
   detectStallsAndRebalance: vi.fn().mockResolvedValue(undefined),
   checkDependencyBlock: vi.fn().mockReturnValue(false),
@@ -121,7 +121,7 @@ vi.mock("../../execution/task/task-generation.js", () => ({
   generateTaskGroup: vi.fn(),
 }));
 
-vi.mock("../core-loop-learning.js", () => ({
+vi.mock("../core-loop/learning.js", () => ({
   CoreLoopLearning: vi.fn().mockImplementation(function() { return {
     checkPeriodicReview: vi.fn().mockResolvedValue(undefined),
     onGoalCompleted: vi.fn().mockResolvedValue(undefined),
@@ -201,8 +201,8 @@ describe("CoreLoop", () => {
 
   it("returns early from runOneIteration when the goal is already satisfied (gap=0 + SatisficingJudge)", async () => {
     const { CoreLoop } = await import("../core-loop.js");
-    const calculateGapOrComplete = (await import("../core-loop-phases.js")).calculateGapOrComplete as unknown as ReturnType<typeof vi.fn>;
-    const checkCompletionAndMilestones = (await import("../core-loop-phases-b.js")).checkCompletionAndMilestones as unknown as ReturnType<typeof vi.fn>;
+    const calculateGapOrComplete = (await import("../core-loop/preparation.js")).calculateGapOrComplete as unknown as ReturnType<typeof vi.fn>;
+    const checkCompletionAndMilestones = (await import("../core-loop/task-cycle.js")).checkCompletionAndMilestones as unknown as ReturnType<typeof vi.fn>;
 
     // gap=0 path: return skipTaskGeneration=true (no early completion — SatisficingJudge decides)
     calculateGapOrComplete.mockImplementationOnce(async (_ctx: unknown, _goalId: string, _goal: any, _loopIndex: number, result: any) => {
@@ -265,11 +265,11 @@ describe("CoreLoop", () => {
       logger: { warn: vi.fn(), info: vi.fn(), error: vi.fn() } as any,
     });
 
-    const runTaskCycle = (await import("../core-loop-phases-b.js")).runTaskCycleWithContext as unknown as ReturnType<typeof vi.fn>;
+    const runTaskCycle = (await import("../core-loop/task-cycle.js")).runTaskCycleWithContext as unknown as ReturnType<typeof vi.fn>;
     runTaskCycle.mockResolvedValue(true);
-    const loadGoalWithAggregation = (await import("../core-loop-phases.js")).loadGoalWithAggregation as unknown as ReturnType<typeof vi.fn>;
+    const loadGoalWithAggregation = (await import("../core-loop/preparation.js")).loadGoalWithAggregation as unknown as ReturnType<typeof vi.fn>;
     loadGoalWithAggregation.mockResolvedValueOnce(mocks.multiGoal);
-    const calculateGapOrComplete = (await import("../core-loop-phases.js")).calculateGapOrComplete as unknown as ReturnType<typeof vi.fn>;
+    const calculateGapOrComplete = (await import("../core-loop/preparation.js")).calculateGapOrComplete as unknown as ReturnType<typeof vi.fn>;
     calculateGapOrComplete.mockImplementationOnce(async (_ctx: unknown, _goalId: string, _goal: any, _loopIndex: number, result: any) => {
       result.gapAggregate = 2;
       return { gapVector: {}, gapAggregate: 2 };
@@ -433,7 +433,7 @@ describe("CoreLoop", () => {
 
   it("runOneIteration returns early when loadGoalWithAggregation returns null", async () => {
     const { CoreLoop } = await import("../core-loop.js");
-    const { loadGoalWithAggregation } = await import("../core-loop-phases.js") as any;
+    const { loadGoalWithAggregation } = await import("../core-loop/preparation.js") as any;
     loadGoalWithAggregation.mockResolvedValueOnce(null);
 
     const loop = new CoreLoop({
@@ -458,7 +458,7 @@ describe("CoreLoop", () => {
 
   it("runOneIteration returns early when calculateGapOrComplete returns null (hard error)", async () => {
     const { CoreLoop } = await import("../core-loop.js");
-    const { calculateGapOrComplete } = await import("../core-loop-phases.js") as any;
+    const { calculateGapOrComplete } = await import("../core-loop/preparation.js") as any;
     calculateGapOrComplete.mockImplementationOnce(async (_ctx: unknown, _goalId: string, _goal: any, _loopIndex: number, result: any, _startTime: number) => {
       result.error = "gap calculation failed";
       return null; // null signals hard error
@@ -485,8 +485,8 @@ describe("CoreLoop", () => {
 
   it("runOneIteration returns early when checkDependencyBlock returns true", async () => {
     const { CoreLoop } = await import("../core-loop.js");
-    const { checkDependencyBlock } = await import("../core-loop-phases-b.js") as any;
-    const { calculateGapOrComplete } = await import("../core-loop-phases.js") as any;
+    const { checkDependencyBlock } = await import("../core-loop/task-cycle.js") as any;
+    const { calculateGapOrComplete } = await import("../core-loop/preparation.js") as any;
 
     calculateGapOrComplete.mockImplementationOnce(async (_ctx: unknown, _goalId: string, _goal: any, _loopIndex: number, result: any) => {
       result.gapAggregate = 0.5;
@@ -516,8 +516,8 @@ describe("CoreLoop", () => {
 
   it("runOneIteration falls through to normal task cycle when tryRunParallel returns null", async () => {
     const { CoreLoop } = await import("../core-loop.js");
-    const { calculateGapOrComplete } = await import("../core-loop-phases.js") as any;
-    const { runTaskCycleWithContext } = await import("../core-loop-phases-b.js") as any;
+    const { calculateGapOrComplete } = await import("../core-loop/preparation.js") as any;
+    const { runTaskCycleWithContext } = await import("../core-loop/task-cycle.js") as any;
 
     calculateGapOrComplete.mockImplementationOnce(async (_ctx: unknown, _goalId: string, _goal: any, _loopIndex: number, result: any) => {
       result.gapAggregate = 0.5;
@@ -588,7 +588,7 @@ describe("CoreLoop", () => {
 
   it("runOneIteration with stateDiff: forces full iteration when maxConsecutiveSkips reached", async () => {
     const { CoreLoop } = await import("../core-loop.js");
-    const { calculateGapOrComplete } = await import("../core-loop-phases.js") as any;
+    const { calculateGapOrComplete } = await import("../core-loop/preparation.js") as any;
 
     calculateGapOrComplete.mockImplementation(async (_ctx: unknown, _goalId: string, _goal: any, _loopIndex: number, result: any) => {
       result.gapAggregate = 0.5;

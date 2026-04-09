@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import * as path from "node:path";
 import { readJsonFileOrNull, writeJsonFileAtomic } from "../../base/utils/json-io.js";
-import { ScheduleEngine } from "../../runtime/schedule-engine.js";
+import { ScheduleEngine } from "../../runtime/schedule/engine.js";
 import {
   ScheduleTriggerSchema,
   type ScheduleEntry,

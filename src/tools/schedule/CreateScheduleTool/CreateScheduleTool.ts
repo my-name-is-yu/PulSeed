@@ -7,7 +7,7 @@ import type {
   ToolMetadata,
   ToolDescriptionContext,
 } from "../../types.js";
-import type { ScheduleEngine } from "../../../runtime/schedule-engine.js";
+import type { ScheduleEngine } from "../../../runtime/schedule/engine.js";
 import {
   CronConfigSchema,
   EscalationConfigSchema,
@@ -20,7 +20,7 @@ import {
 import {
   SchedulePresetInputSchema,
   buildSchedulePresetEntry,
-} from "../../../runtime/schedule-presets.js";
+} from "../../../runtime/schedule/presets.js";
 import { DESCRIPTION } from "./prompt.js";
 import { TAGS, CATEGORY as _CATEGORY, READ_ONLY, PERMISSION_LEVEL } from "./constants.js";
 

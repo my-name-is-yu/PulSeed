@@ -1,5 +1,5 @@
-import type { EventServer } from "./event-server.js";
-import type { Logger } from "./logger.js";
+import type { EventServer } from "../event/server.js";
+import type { Logger } from "../logger.js";
 
 interface DaemonStatusSnapshot {
   status: string;

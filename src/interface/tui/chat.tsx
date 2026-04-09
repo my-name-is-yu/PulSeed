@@ -8,27 +8,24 @@ import React, { useCallback, useState } from "react";
 import { Box, Text, useInput, useStdout } from "ink";
 import TextInput from "ink-text-input";
 import { CheckerboardSpinner } from "./checkerboard-spinner.js";
-import {
-  renderMarkdownLines,
-  splitMarkdownLineToRows,
-  wrapTextToRows,
-} from "./markdown-renderer.js";
-import { fuzzyMatch, fuzzyFilter } from "./fuzzy.js";
 import { getClipboardContent } from "./clipboard.js";
-import { theme, getMessageTypeColor } from "./theme.js";
+import { theme } from "./theme.js";
 import { pickSpinnerVerb } from "./spinner-verbs.js";
 import { ShimmerText } from "./shimmer-text.js";
 import { positionCursorInFrame, buildCursorEscape } from "./cursor-tracker.js";
 import { isBashModeInput } from "./bash-mode.js";
 import { isRenderableFrameChunk } from "./render-output.js";
+import { buildChatViewport } from "./chat/viewport.js";
+import { getScrollRequest, stripMouseEscapeSequences } from "./chat/scroll.js";
+import { getMatchingSuggestions } from "./chat/suggestions.js";
+import type { ChatMessage } from "./chat/types.js";
 
-export interface ChatMessage {
-  id: string;
-  role: "user" | "pulseed";
-  text: string;
-  timestamp: Date;
-  messageType?: "info" | "error" | "warning" | "success";
-}
+export type {
+  ChatDisplayRow,
+  ChatMessage,
+  ChatViewport,
+  ScrollRequest,
+} from "./chat/types.js";
 
 interface ChatProps {
   messages: ChatMessage[];
@@ -39,320 +36,11 @@ interface ChatProps {
   noFlicker?: boolean;
 }
 
-const CHAT_UI_RESERVED_ROWS = 8;
-const DEFAULT_MESSAGE_WIDTH_PADDING = 4;
-const MESSAGE_INNER_PADDING = 2;
-const MIN_MESSAGE_WIDTH = 10;
 const SCROLL_LINE_STEP = 3;
 
-interface ChatDisplayRow {
-  key: string;
-  kind: "user" | "pulseed" | "spacer";
-  text: string;
-  color?: string;
-  backgroundColor?: string;
-  bold?: boolean;
-  dim?: boolean;
-  italic?: boolean;
-  marginLeft?: number;
-  paddingX?: number;
-}
-
-export interface ChatViewport {
-  rows: ChatDisplayRow[];
-  hiddenAboveRows: number;
-  hiddenBelowRows: number;
-  totalRows: number;
-  maxVisibleRows: number;
-}
-
-export interface ScrollRequest {
-  direction: "up" | "down";
-  kind: "page" | "line";
-}
-
-const SGR_MOUSE_SEQUENCE = /(?:\u001b)?\[<(\d+);(\d+);(\d+)([mM])/g;
-
-function getRowWidth(termCols: number): number {
-  return Math.max(MIN_MESSAGE_WIDTH, termCols - DEFAULT_MESSAGE_WIDTH_PADDING - MESSAGE_INNER_PADDING);
-}
-
-function wrapUserMessageRows(text: string, width: number): string[] {
-  const wrapped = wrapTextToRows(text, width);
-  return wrapped.map((line, index) => (index === 0 ? `◉ ${line}` : `  ${line}`));
-}
-
-function buildMessageRows(msg: ChatMessage, width: number): ChatDisplayRow[] {
-  if (msg.role === "user") {
-    const rows = wrapUserMessageRows(msg.text, width);
-    return rows.map((text, index) => ({
-      key: `${msg.id}:user:${index}`,
-      kind: "user",
-      text,
-      backgroundColor: "#D9D9D9",
-      color: "#1A1A1A",
-      paddingX: 1,
-    }));
-  }
-
-  const typeColor = getMessageTypeColor(msg.messageType);
-  const rendered = renderMarkdownLines(msg.text);
-  const rows: ChatDisplayRow[] = [];
-
-  rendered.forEach((line, lineIndex) => {
-    const wrappedLines = splitMarkdownLineToRows(line, width);
-      wrappedLines.forEach((wrappedLine, rowIndex) => {
-        rows.push({
-          key: `${msg.id}:pulseed:${lineIndex}:${rowIndex}`,
-          kind: "pulseed",
-          text: wrappedLine.text,
-        color: typeColor,
-          bold: wrappedLine.bold,
-          dim: wrappedLine.dim,
-          italic: wrappedLine.italic,
-          marginLeft: 2,
-        });
-    });
-  });
-
-  if (rows.length === 0) {
-    rows.push({
-      key: `${msg.id}:pulseed:empty`,
-      kind: "pulseed",
-      text: "",
-      color: typeColor,
-      marginLeft: 2,
-    });
-  }
-
-  return rows;
-}
-
-export function buildChatViewport(
-  messages: ChatMessage[],
-  termCols: number,
-  termRows: number,
-  scrollOffsetRows: number,
-): ChatViewport {
-  const maxVisibleRows = Math.max(1, termRows - CHAT_UI_RESERVED_ROWS);
-  const rowWidth = getRowWidth(termCols);
-  const flatRows: ChatDisplayRow[] = [];
-
-  for (const msg of messages) {
-    flatRows.push(...buildMessageRows(msg, rowWidth));
-    flatRows.push({
-      key: `${msg.id}:spacer`,
-      kind: "spacer",
-      text: "",
-    });
-  }
-
-  const totalRows = flatRows.length;
-  const visibleEndIdx = Math.max(0, totalRows - scrollOffsetRows);
-  const visibleStartIdx = Math.max(0, visibleEndIdx - maxVisibleRows);
-
-  return {
-    rows: flatRows.slice(visibleStartIdx, visibleEndIdx),
-    hiddenAboveRows: visibleStartIdx,
-    hiddenBelowRows: totalRows - visibleEndIdx,
-    totalRows,
-    maxVisibleRows,
-  };
-}
-
-export function getScrollRequest(
-  inputChar: string,
-  key: {
-    upArrow?: boolean;
-    downArrow?: boolean;
-    shift?: boolean;
-    meta?: boolean;
-    ctrl?: boolean;
-    pageUp?: boolean;
-    pageDown?: boolean;
-  }
-): ScrollRequest | null {
-  const sgrMouseMatch = SGR_MOUSE_SEQUENCE.exec(inputChar);
-  SGR_MOUSE_SEQUENCE.lastIndex = 0;
-  if (sgrMouseMatch) {
-    const buttonCode = Number.parseInt(sgrMouseMatch[1] ?? "", 10);
-    if (Number.isFinite(buttonCode) && buttonCode >= 64) {
-      const wheelButton = buttonCode & 0b11;
-      if (wheelButton === 0) {
-        return { direction: "up", kind: "line" };
-      }
-      if (wheelButton === 1) {
-        return { direction: "down", kind: "line" };
-      }
-    }
-  }
-  if (key.pageUp || inputChar === "[5~") {
-    return { direction: "up", kind: "page" };
-  }
-  if (key.pageDown || inputChar === "[6~") {
-    return { direction: "down", kind: "page" };
-  }
-  if (key.ctrl && (inputChar === "u" || inputChar === "U")) {
-    return { direction: "up", kind: "page" };
-  }
-  if (key.ctrl && (inputChar === "d" || inputChar === "D")) {
-    return { direction: "down", kind: "page" };
-  }
-  if (key.meta && key.upArrow) {
-    return { direction: "up", kind: "line" };
-  }
-  if (key.meta && key.downArrow) {
-    return { direction: "down", kind: "line" };
-  }
-  if (key.shift && key.upArrow) {
-    return { direction: "up", kind: "line" };
-  }
-  if (key.shift && key.downArrow) {
-    return { direction: "down", kind: "line" };
-  }
-  return null;
-}
-
-export function stripMouseEscapeSequences(input: string): string {
-  return input.replace(SGR_MOUSE_SEQUENCE, "");
-}
-
-type Suggestion = {
-  name: string;
-  description: string;
-  aliases: string[];
-  type: "command" | "goal";
-};
-
-const COMMANDS: Suggestion[] = [
-  {
-    name: "/run",
-    aliases: ["/start"],
-    description: "Start the goal loop",
-    type: "command",
-  },
-  {
-    name: "/stop",
-    aliases: ["/quit"],
-    description: "Stop the running loop",
-    type: "command",
-  },
-  {
-    name: "/status",
-    aliases: [],
-    description: "Show current progress",
-    type: "command",
-  },
-  {
-    name: "/report",
-    aliases: [],
-    description: "Generate a summary report",
-    type: "command",
-  },
-  {
-    name: "/goals",
-    aliases: [],
-    description: "List all goals",
-    type: "command",
-  },
-  {
-    name: "/help",
-    aliases: ["?"],
-    description: "Show help overlay",
-    type: "command",
-  },
-  {
-    name: "/dashboard",
-    aliases: [],
-    description: "Toggle dashboard sidebar",
-    type: "command" as const,
-  },
-  {
-    name: "/settings",
-    aliases: ["/config"],
-    description: "View and toggle config",
-    type: "command",
-  },
-  {
-    name: "/flicker",
-    aliases: [],
-    description: "Toggle no-flicker mode (next launch)",
-    type: "command",
-  },
-];
-
-/** Commands that accept a goal name as argument */
-const GOAL_ARG_COMMANDS = ["/run ", "/start "];
-
-function isExactCommandMatch(input: string): boolean {
-  const normalized = input.trim().toLowerCase();
-  return COMMANDS.some((cmd) => {
-    if (cmd.name.toLowerCase() === normalized) return true;
-    return cmd.aliases.some((alias) => {
-      const normalizedAlias = alias.startsWith("/") ? alias : `/${alias}`;
-      return normalizedAlias.toLowerCase() === normalized;
-    });
-  });
-}
-
-export function getMatchingSuggestions(
-  input: string,
-  goalNames: string[],
-): Suggestion[] {
-  if (!input.startsWith("/")) return [];
-  if (isExactCommandMatch(input)) return [];
-
-  // Check if user typed a command that expects a goal name argument
-  for (const prefix of GOAL_ARG_COMMANDS) {
-    if (input.startsWith(prefix)) {
-      const goalQuery = input.slice(prefix.length);
-      if (goalNames.some((goal) => goal.toLowerCase() === goalQuery.toLowerCase())) {
-        return [];
-      }
-      const matchedGoals = fuzzyFilter(goalQuery, goalNames, (g) => g, 6);
-      return matchedGoals.map((g) => ({
-        name: prefix.trimEnd(),
-        description: g,
-        aliases: [],
-        type: "goal" as const,
-      }));
-    }
-  }
-
-  // Fuzzy match against command names and aliases
-  const query = input.slice(1); // strip leading "/"
-
-  // Show all commands when query is empty (just "/")
-  if (!query) {
-    return COMMANDS.map((cmd) => ({ ...cmd }));
-  }
-
-  const scored: Array<{ cmd: Suggestion; score: number }> = [];
-
-  for (const cmd of COMMANDS) {
-    // Try matching against name (without leading "/")
-    const nameScore = fuzzyMatch(query, cmd.name.slice(1));
-    // Try matching against aliases
-    const aliasScores = cmd.aliases.map((a) =>
-      a.startsWith("/") ? fuzzyMatch(query, a.slice(1)) : fuzzyMatch(query, a),
-    );
-    const bestAlias = aliasScores.reduce<number | null>(
-      (best, s) => (s !== null && (best === null || s > best) ? s : best),
-      null,
-    );
-    const best =
-      nameScore !== null && (bestAlias === null || nameScore >= bestAlias)
-        ? nameScore
-        : bestAlias;
-
-    if (best !== null) {
-      scored.push({ cmd, score: best });
-    }
-  }
-
-  scored.sort((a, b) => b.score - a.score);
-  return scored.slice(0, 6).map((s) => s.cmd);
-}
+export { buildChatViewport } from "./chat/viewport.js";
+export { getScrollRequest, stripMouseEscapeSequences } from "./chat/scroll.js";
+export { getMatchingSuggestions } from "./chat/suggestions.js";
 
 export function Chat({
   messages,

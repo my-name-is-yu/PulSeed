@@ -8,7 +8,7 @@
 import * as fsp from "node:fs/promises";
 import type { Stats } from "node:fs";
 import * as path from "node:path";
-import type { Logger } from "./logger.js";
+import type { Logger } from "../logger.js";
 
 // ─── AdaptiveSleepConfig ───
 // Mirrors the adaptive_sleep shape from DaemonConfigSchema.

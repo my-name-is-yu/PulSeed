@@ -1,8 +1,8 @@
-import { JournalBackedQueue, type JournalBackedQueueClaim } from "./queue/journal-backed-queue.js";
-import type { Envelope } from "./types/envelope.js";
-import type { Logger } from "./logger.js";
-import { PulSeedEventSchema } from "../base/types/drive.js";
-import type { CronTask } from "./types/cron.js";
+import { JournalBackedQueue, type JournalBackedQueueClaim } from "../queue/journal-backed-queue.js";
+import type { Envelope } from "../types/envelope.js";
+import type { Logger } from "../logger.js";
+import { PulSeedEventSchema } from "../../base/types/drive.js";
+import type { CronTask } from "../types/cron.js";
 
 export interface EventDispatcherDeps {
   journalQueue: JournalBackedQueue;

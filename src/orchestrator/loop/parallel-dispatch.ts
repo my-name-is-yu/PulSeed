@@ -9,8 +9,8 @@
  */
 
 import type { Goal } from "../../base/types/goal.js";
-import type { CoreLoopDeps } from "./core-loop-types.js";
-import type { LoopIterationResult } from "./core-loop-types.js";
+import type { CoreLoopDeps } from "./core-loop/contracts.js";
+import type { LoopIterationResult } from "./core-loop/contracts.js";
 import type { ParallelExecutionResult } from "../execution/parallel-executor.js";
 import type { Logger } from "../../runtime/logger.js";
 

@@ -20,7 +20,7 @@ import {
   type DriveScorerModule,
   type ReportingEngine,
 } from "../core-loop.js";
-import { detectStallsAndRebalance } from "../core-loop-phases-b.js";
+import { detectStallsAndRebalance } from "../core-loop/task-cycle.js";
 import { StateManager } from "../../../base/state/state-manager.js";
 import type { ObservationEngine } from "../../../platform/observation/observation-engine.js";
 import type { TaskLifecycle } from "../../execution/task/task-lifecycle.js";
@@ -32,8 +32,8 @@ import type { AdapterRegistry } from "../../execution/adapter-layer.js";
 import type { GoalRefiner } from "../../goal/goal-refiner.js";
 import type { Goal } from "../../../base/types/goal.js";
 import type { StallReport } from "../../../base/types/stall.js";
-import type { LoopIterationResult } from "../core-loop-types.js";
-import type { PhaseCtx } from "../core-loop-phases.js";
+import type { LoopIterationResult } from "../core-loop/contracts.js";
+import type { PhaseCtx } from "../core-loop/preparation.js";
 import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 import { makeGoal } from "../../../../tests/helpers/fixtures.js";
 

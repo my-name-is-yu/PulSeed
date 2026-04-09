@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { PhaseCtx } from "../core-loop-phases.js";
+import type { PhaseCtx } from "../core-loop/preparation.js";
 import type { Goal } from "../../../base/types/goal.js";
 import type { Criterion } from "../../execution/types/task.js";
 
@@ -209,8 +209,8 @@ vi.mock("../verification-layer1.js", () => ({
   verifyWithTools: vi.fn(),
 }));
 
-vi.mock("../core-loop-phases.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../core-loop-phases.js")>();
+vi.mock("../core-loop/preparation.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../core-loop/preparation.js")>();
   return {
     ...actual,
     buildLoopToolContext: vi.fn().mockResolvedValue({
@@ -223,10 +223,10 @@ vi.mock("../core-loop-phases.js", async (importOriginal) => {
   };
 });
 
-import { runTaskCycleWithContext } from "../core-loop-phases-b.js";
+import { runTaskCycleWithContext } from "../core-loop/task-cycle.js";
 import { verifyWithTools } from "../verification-layer1.js";
-import { buildLoopToolContext } from "../core-loop-phases.js";
-import { makeEmptyIterationResult } from "../core-loop-types.js";
+import { buildLoopToolContext } from "../core-loop/preparation.js";
+import { makeEmptyIterationResult } from "../core-loop/contracts.js";
 
 // ─── Tests ───
 

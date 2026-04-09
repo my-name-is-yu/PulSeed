@@ -8,7 +8,7 @@ import type {
   ToolResult,
 } from "../../types.js";
 import type { ScheduleEntry } from "../../../runtime/types/schedule.js";
-import type { ScheduleEngine } from "../../../runtime/schedule-engine.js";
+import type { ScheduleEngine } from "../../../runtime/schedule/engine.js";
 import { DESCRIPTION } from "./prompt.js";
 import { TAGS, PERMISSION_LEVEL, MAX_OUTPUT_CHARS } from "./constants.js";
 

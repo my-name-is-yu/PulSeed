@@ -21,7 +21,7 @@ import type { LLMMessage, LLMRequestOptions, LLMResponse } from "../../base/llm/
 import { TendCommand } from "./tend-command.js";
 import type { TendDeps } from "./tend-command.js";
 import { EventSubscriber } from "./event-subscriber.js";
-import type { DaemonClient } from "../../runtime/daemon-client.js";
+import type { DaemonClient } from "../../runtime/daemon/client.js";
 import type { GoalNegotiator } from "../../orchestrator/goal/goal-negotiator.js";
 import type { ChatEvent, ChatEventContext } from "./chat-events.js";
 

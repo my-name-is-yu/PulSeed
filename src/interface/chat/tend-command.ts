@@ -6,7 +6,7 @@
 
 import type { ILLMClient } from "../../base/llm/llm-client.js";
 import type { GoalNegotiator } from "../../orchestrator/goal/goal-negotiator.js";
-import type { DaemonClient } from "../../runtime/daemon-client.js";
+import type { DaemonClient } from "../../runtime/daemon/client.js";
 import type { StateManager } from "../../base/state/state-manager.js";
 import type { Goal } from "../../base/types/goal.js";
 import type { ChatMessage } from "./chat-history.js";

@@ -26,12 +26,18 @@ import {
   loadOrEmptyObservationLog,
 } from "./observation-helpers.js";
 import type { ObservationEngineOptions, CrossValidationResult } from "./observation-helpers.js";
-import { observeWithLLM as llmObserve, ObservationPersistenceError } from "./observation-llm.js";
+import { observeWithLLM as llmObserve } from "./observation-llm.js";
 import {
   applyObservation as applyObservationFn,
   observeFromDataSource as observeFromDataSourceFn,
 } from "./observation-apply.js";
 import { findDataSourceForDimension as findDataSourceForDimensionFn } from "./observation-datasource.js";
+import { createWorkspaceContextFetcher } from "./engine/observe-context.js";
+import { runPreCheckStage } from "./engine/observe-precheck.js";
+import { runToolObservationStage } from "./engine/observe-tool-stage.js";
+import { runDataSourceObservationStage } from "./engine/observe-datasource-stage.js";
+import { runLlmObservationStage } from "./engine/observe-llm-stage.js";
+import { runSelfReportStage } from "./engine/observe-self-report.js";
 
 import type { ToolExecutor } from "../../tools/executor.js";
 import type { ToolCallContext } from "../../tools/types.js";
@@ -254,35 +260,7 @@ export class ObservationEngine {
     // the provided methods (the caller is explicitly selecting which dimensions to observe).
     // When methods is empty (e.g. CoreLoop passes []), observe all dimensions.
     const observeCount = methods.length > 0 ? methods.length : goal.dimensions.length;
-
-    // Workspace context for LLM observations — fetched lazily per dimension, cached within
-    // this observe() call to avoid re-reading the same files for multiple dimensions.
-    const contextCache = new Map<string, string>();
-    let warnedNoProvider = false;
-
-    const fetchWorkspaceContext = async (gId: string, dimensionName: string): Promise<string | undefined> => {
-      const cacheKey = `${gId}::${dimensionName}`;
-      if (contextCache.has(cacheKey)) return contextCache.get(cacheKey);
-      if (this.contextProvider) {
-        try {
-          const ctx = await this.contextProvider(gId, dimensionName);
-          contextCache.set(cacheKey, ctx);
-          return ctx;
-        } catch (err) {
-          this.logger?.warn(
-            `[ObservationEngine] contextProvider failed: ${err instanceof Error ? err.message : String(err)}. LLM observation will proceed without workspace context.`
-          );
-        }
-      } else {
-        if (!warnedNoProvider) {
-          warnedNoProvider = true;
-          this.logger?.warn(
-            `[ObservationEngine] No contextProvider configured. LLM observation will proceed without workspace context (scores may be unreliable).`
-          );
-        }
-      }
-      return undefined;
-    };
+    const fetchWorkspaceContext = createWorkspaceContextFetcher(this.contextProvider, this.logger);
 
     // Workspace path for pre-checker (extracted from contextProvider key heuristic)
     const workspacePath = goal.constraints.find((c) => c.startsWith("workspace_path:"))?.slice("workspace_path:".length);
@@ -293,255 +271,69 @@ export class ObservationEngine {
 
       void this.hookManager?.emit("PreObserve", { goal_id: goalId, dimension: dim.name });
 
-      // Stage 0: Deterministic pre-check (skip LLM if nothing changed)
-      // Respect goal-level opt-out: skip_on_no_change=false disables the pre-check entirely.
-      if (this.preChecker && goal.observation_optimization?.skip_on_no_change !== false) {
-        const lastObs = Array.isArray(dim.history) && dim.history.length > 0
-          ? (() => {
-              // Reconstruct a minimal ObservationLogEntry from the last history entry
-              const h = dim.history[dim.history.length - 1]!;
-              return {
-                observation_id: h.source_observation_id,
-                goal_id: goalId,
-                dimension_name: dim.name,
-                layer: (dim.last_observed_layer ?? "self_report") as ObservationLayer,
-                method,
-                trigger: "periodic" as const,
-                raw_result: h.value,
-                extracted_value: h.value as number | string | boolean | null,
-                confidence: h.confidence,
-                timestamp: h.timestamp,
-                notes: null,
-              } satisfies ObservationLogEntry;
-            })()
-          : null;
-
-        try {
-          const preCheck = await this.preChecker.check(dim, lastObs, { workspace_path: workspacePath });
-          if (!preCheck.changed && lastObs !== null) {
-            const cachedEntry = createObservationEntry({
-              goalId,
-              dimensionName: dim.name,
-              layer: lastObs.layer ?? "self_report",  // preserve original observation layer
-              method,
-              trigger: "periodic",
-              rawResult: `cached: ${String(lastObs.extracted_value)}`,
-              extractedValue: lastObs.extracted_value,
-              confidence: Math.max(0.10, lastObs.confidence * 0.95),
-            });
-            await this.applyObservation(goalId, cachedEntry);
-            this.logger?.debug(
-              `[ObservationEngine] Pre-check: skipping LLM for dimension "${dim.name}" (no change detected, confidence decayed to ${cachedEntry.confidence.toFixed(3)})`
-            );
-            void this.hookManager?.emit("PostObserve", { goal_id: goalId, dimension: dim.name, data: { value: cachedEntry.extracted_value, confidence: cachedEntry.confidence } });
-            continue;
-          }
-        } catch (err) {
-          this.logger?.warn(
-            `[ObservationEngine] Pre-check failed for dimension "${dim.name}": ${err instanceof Error ? err.message : String(err)}. Proceeding with normal observation.`
-          );
-        }
+      if (await runPreCheckStage({
+        goalId,
+        dimension: dim,
+        method,
+        workspacePath,
+        enabled: goal.observation_optimization?.skip_on_no_change !== false,
+        preChecker: this.preChecker,
+        applyObservation: (gId, entry) => this.applyObservation(gId, entry),
+        logger: this.logger,
+        hookManager: this.hookManager,
+      })) {
+        continue;
       }
 
-      // Step 0.5: Tool-based observation (highest confidence, when available)
-      if (this.toolExecutor) {
-        const methodType = dim.observation_method?.type;
-        if (methodType === 'file_check' || methodType === 'mechanical' || methodType === 'api_query' || methodType === 'git_diff' || methodType === 'grep_check' || methodType === 'test_run') {
-          try {
-            const toolContext: import('../../tools/types.js').ToolCallContext = {
-              cwd: process.cwd(),
-              goalId,
-              trustBalance: 0,
-              preApproved: false,
-              approvalFn: async () => false,
-            };
-            const toolResult = await this.observeWithTools(dim, toolContext);
-            if (toolResult !== null && toolResult.parsedValue !== null && toolResult.parsedValue !== undefined) {
-              const toolEntry = createObservationEntry({
-                goalId,
-                dimensionName: dim.name,
-                layer: 'mechanical',
-                method: { ...method, source: toolResult.toolName },
-                trigger: 'periodic',
-                rawResult: toolResult.rawData,
-                extractedValue: toolResult.parsedValue,
-                confidence: toolResult.confidence,
-              });
-              await this.applyObservation(goalId, toolEntry);
-              this.logger?.debug(`[ObservationEngine] Tool observation succeeded for ${dim.name}: confidence=${toolResult.confidence}`);
-              void this.hookManager?.emit('PostObserve', { goal_id: goalId, dimension: dim.name, data: { value: toolEntry.extracted_value, confidence: toolEntry.confidence } });
-              continue;
-            }
-          } catch (err) {
-            this.logger?.warn(`[ObservationEngine] Tool observation failed for ${dim.name}, falling through: ${err instanceof Error ? err.message : String(err)}`);
-          }
-        }
+      if (this.toolExecutor && await runToolObservationStage({
+        goalId,
+        dimension: dim,
+        method,
+        applyObservation: (gId, entry) => this.applyObservation(gId, entry),
+        observeWithTools: (dimension, context) => this.observeWithTools(dimension, context),
+        logger: this.logger,
+        hookManager: this.hookManager,
+      })) {
+        continue;
       }
 
-      // 1. Try DataSource first
       const dataSource = this.findDataSourceForDimension(dim.name, goalId);
-      if (dataSource) {
-        try {
-          await this.observeFromDataSource(goalId, dim.name, dataSource.sourceId);
-
-          // Cross-validation: also run LLM and compare.
-          // When divergence is detected, apply a confidence penalty to the dimension
-          // so downstream scoring treats the observation with appropriate skepticism.
-          if (this.options.crossValidationEnabled && this.llmClient) {
-            try {
-              const updatedGoal = await this.stateManager.loadGoal(goalId);
-              const dimState = updatedGoal?.dimensions.find((d) => d.name === dim.name);
-              const mechanicalValue = typeof dimState?.current_value === "number" ? dimState.current_value : 0;
-
-              const ctx = await fetchWorkspaceContext(goalId, dim.name);
-              const llmEntry = await this.observeWithLLM(
-                goalId,
-                dim.name,
-                goal.description,
-                dim.label ?? dim.name,
-                JSON.stringify(dim.threshold),
-                ctx,
-                null, // no previousScore — bypass jump suppression for cross-validation
-                true, // dryRun — do NOT write to state
-                undefined,
-                undefined,
-                workspacePath
-              );
-              const llmValue = typeof llmEntry.extracted_value === "number" ? llmEntry.extracted_value : 0;
-              const result = this.crossValidate(goalId, dim.name, mechanicalValue, llmValue);
-
-              // Apply confidence penalty when LLM observation diverges from mechanical truth
-              if (result.diverged && result.confidencePenalty > 0) {
-                const currentGoal = await this.stateManager.loadGoal(goalId);
-                if (currentGoal) {
-                  const dimIdx = currentGoal.dimensions.findIndex((d) => d.name === dim.name);
-                  if (dimIdx !== -1) {
-                    const currentDim = currentGoal.dimensions[dimIdx]!;
-                    const penalizedConfidence = Math.max(0.10, (currentDim.confidence ?? 0.5) - result.confidencePenalty);
-                    const updatedDims = [...currentGoal.dimensions];
-                    updatedDims[dimIdx] = { ...currentDim, confidence: penalizedConfidence };
-                    await this.stateManager.saveGoal({
-                      ...currentGoal,
-                      dimensions: updatedDims,
-                      updated_at: new Date().toISOString(),
-                    });
-                    this.logger?.warn(
-                      `[CrossValidation] Confidence penalized for "${dim.name}": ` +
-                      `${(currentDim.confidence ?? 0.5).toFixed(3)} → ${penalizedConfidence.toFixed(3)} ` +
-                      `(penalty=${result.confidencePenalty.toFixed(3)}, LLM hallucination detected)`
-                    );
-                  }
-                }
-              }
-            } catch (err) {
-              this.logger?.warn(`[CrossValidation] LLM comparison failed for "${dim.name}": ${err}`);
-            }
-          }
-
-          void this.hookManager?.emit("PostObserve", { goal_id: goalId, dimension: dim.name, data: { value: null, confidence: null } });
-          continue;
-        } catch (err) {
-          this.logger?.warn(
-            `[ObservationEngine] DataSource observation failed for dimension "${dim.name}" (source: ${dataSource.sourceId}): ${err instanceof Error ? err.message : String(err)}. Falling through to LLM fallback.`
-          );
-        }
+      if (dataSource && await runDataSourceObservationStage({
+        goalId,
+        goal,
+        dimension: dim,
+        method,
+        dataSource,
+        workspacePath,
+        crossValidationEnabled: !!this.options.crossValidationEnabled,
+        llmAvailable: !!this.llmClient,
+        stateManager: this.stateManager,
+        fetchWorkspaceContext,
+        observeFromDataSource: (gId, dimensionName, sourceId) => this.observeFromDataSource(gId, dimensionName, sourceId),
+        observeWithLLM: (...args) => this.observeWithLLM(...args),
+        crossValidate: (gId, dimensionName, mechanicalValue, llmValue) =>
+          this.crossValidate(gId, dimensionName, mechanicalValue, llmValue),
+        logger: this.logger,
+        hookManager: this.hookManager,
+      })) {
+        continue;
       }
 
-      // 2. Try LLM if available
       if (this.llmClient) {
-        const ctx = await fetchWorkspaceContext(goalId, dim.name);
-        try {
-          // Only pass previousScore when there's actual observation history.
-          // The seed current_value in a new goal is not a real observation and
-          // should not trigger the §3.3 score-jump suppression guard.
-          // current_value may have been written by the verifier (not by an observation).
-          // Use the last history entry so jump-suppression (§3.3) only compares genuine observations.
-          const hasPriorObs = Array.isArray(dim.history) && dim.history.length > 0;
-          const lastObsEntry =
-            hasPriorObs ? dim.history[dim.history.length - 1] : null;
-          // Normalize the stored history value (which is threshold-scaled) back to
-          // the 0-1 range that observeWithLLM's jump-suppression (§3.3) expects.
-          // min threshold: extractedValue = score * threshold.value → score = rawVal / threshold.value
-          // max threshold: extractedValue = threshold.value * (2 - score) → score = 2 - rawVal / threshold.value
-          // range: normalize via (rawVal - low) / (high - low); present/match: already 0-1, pass as-is.
-          let previousScore: number | null = null;
-          if (lastObsEntry && typeof lastObsEntry.value === "number") {
-            const rawVal = lastObsEntry.value;
-            try {
-              const threshold = JSON.parse(JSON.stringify(dim.threshold));
-              if (
-                threshold.type === "min" &&
-                typeof threshold.value === "number" &&
-                threshold.value > 1
-              ) {
-                previousScore = Math.min(1, Math.max(0, rawVal / threshold.value));
-              } else if (
-                threshold.type === "max" &&
-                typeof threshold.value === "number" &&
-                threshold.value > 1
-              ) {
-                previousScore = Math.min(1, Math.max(0, 2 - rawVal / threshold.value));
-              } else if (
-                threshold.type === "range" &&
-                typeof threshold.low === "number" &&
-                typeof threshold.high === "number" &&
-                threshold.high > threshold.low
-              ) {
-                const span = threshold.high - threshold.low;
-                previousScore = Math.min(1, Math.max(0, (rawVal - threshold.low) / span));
-              } else {
-                previousScore = Math.min(1, Math.max(0, rawVal));
-              }
-            } catch {
-              previousScore = Math.min(1, Math.max(0, rawVal));
-            }
-          }
-          await this.observeWithLLM(
-            goalId,
-            dim.name,
-            goal.description,
-            dim.label ?? dim.name,
-            JSON.stringify(dim.threshold),
-            ctx,
-            previousScore,
-            undefined, // dryRun
-            typeof dim.current_value === "number" ? dim.current_value : null,
-            !!dataSource,
-            workspacePath
-          );
-          void this.hookManager?.emit("PostObserve", { goal_id: goalId, dimension: dim.name, data: { value: null, confidence: null } });
+        if (await runLlmObservationStage({
+          goalId,
+          goal,
+          dimension: dim,
+          method,
+          workspacePath,
+          dataSourceAvailable: !!dataSource,
+          fetchWorkspaceContext,
+          observeWithLLM: (...args) => this.observeWithLLM(...args),
+          applyObservation: (gId, entry) => this.applyObservation(gId, entry),
+          logger: this.logger,
+          hookManager: this.hookManager,
+        })) {
           continue;
-        } catch (err) {
-          this.logger?.warn(
-            `[ObservationEngine] LLM observation failed for dimension "${dim.name}": ${err instanceof Error ? err.message : String(err)}. Falling back to self_report.`
-          );
-          // If persistence failed but LLM succeeded, recover the observed value
-          // so the self_report fallback uses the real score instead of null.
-          if (err instanceof ObservationPersistenceError) {
-            const recoveredValue = err.entry.extracted_value;
-            this.logger?.warn(
-              `[ObservationEngine] Recovering LLM-observed value=${recoveredValue} for dimension "${dim.name}" via self_report fallback.`
-            );
-            const recoveryEntry = createObservationEntry({
-              goalId,
-              dimensionName: dim.name,
-              layer: "self_report",
-              method,
-              trigger: "periodic",
-              rawResult: recoveredValue,
-              extractedValue:
-                typeof recoveredValue === "number" ||
-                typeof recoveredValue === "string" ||
-                typeof recoveredValue === "boolean" ||
-                recoveredValue === null
-                  ? (recoveredValue as number | string | boolean | null)
-                  : null,
-              confidence: err.entry.confidence,
-            });
-            await this.applyObservation(goalId, recoveryEntry);
-            void this.hookManager?.emit("PostObserve", { goal_id: goalId, dimension: dim.name, data: { value: recoveryEntry.extracted_value, confidence: recoveryEntry.confidence } });
-            continue;
-          }
         }
       } else if (this.dataSources.length > 0) {
         // DataSources exist but none match this dimension and no LLM client
@@ -550,27 +342,15 @@ export class ObservationEngine {
         );
       }
 
-      // 3. Fall back to self_report (no LLM result available)
-      const entry = createObservationEntry({
+      await runSelfReportStage({
         goalId,
-        dimensionName: dim.name,
-        layer: "self_report",
+        dimension: dim,
         method,
-        trigger: "periodic",
-        rawResult: dim.current_value,
-        extractedValue:
-          typeof dim.current_value === "number" ||
-          typeof dim.current_value === "string" ||
-          typeof dim.current_value === "boolean" ||
-          dim.current_value === null
-            ? (dim.current_value as number | string | boolean | null)
-            : null,
-        confidence: dataSource ? dim.confidence : Math.min(dim.confidence, 0.30),
+        dataSourceAvailable: !!dataSource,
+        applyObservation: (gId, entry) => this.applyObservation(gId, entry),
+        logger: this.logger,
+        hookManager: this.hookManager,
       });
-
-      await this.applyObservation(goalId, entry);
-      this.logger?.info(`[observe] ${dim.name}=${entry.extracted_value} (confidence=${entry.confidence})`);
-      void this.hookManager?.emit("PostObserve", { goal_id: goalId, dimension: dim.name, data: { value: entry.extracted_value, confidence: entry.confidence } });
     }
   }
 

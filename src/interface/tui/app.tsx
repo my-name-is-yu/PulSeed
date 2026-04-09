@@ -32,7 +32,7 @@ import type { StateManager } from "../../base/state/state-manager.js";
 import type { TrustManager } from "../../platform/traits/trust-manager.js";
 import type { Task } from "../../base/types/task.js";
 import type { ChatRunner } from "../../interface/chat/chat-runner.js";
-import type { DaemonClient } from "../../runtime/daemon-client.js";
+import type { DaemonClient } from "../../runtime/daemon/client.js";
 import { ShellTool } from "../../tools/system/ShellTool/ShellTool.js";
 import { getPulseedVersion } from "../../base/utils/pulseed-meta.js";
 import { applyChatEventToMessages } from "../chat/chat-event-state.js";

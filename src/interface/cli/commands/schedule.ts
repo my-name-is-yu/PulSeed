@@ -1,11 +1,11 @@
 import { parseArgs } from "node:util";
-import { ScheduleEngine } from "../../../runtime/schedule-engine.js";
+import { ScheduleEngine } from "../../../runtime/schedule/engine.js";
 import type { StateManager } from "../../../base/state/state-manager.js";
 import {
   buildSchedulePresetEntry,
   listSchedulePresetDefinitions,
   type SchedulePresetInput,
-} from "../../../runtime/schedule-presets.js";
+} from "../../../runtime/schedule/presets.js";
 import { DreamScheduleSuggestionStore } from "../../../platform/dream/dream-schedule-suggestions.js";
 import type { ScheduleTriggerInput } from "../../../runtime/types/schedule.js";
 

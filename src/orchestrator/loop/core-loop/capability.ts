@@ -1,14 +1,11 @@
 /**
- * core-loop-capability.ts
- *
- * Standalone capability acquisition functions extracted from CoreLoop.
- * These functions accept deps explicitly instead of using `this`.
+ * Capability acquisition helpers used from the CoreLoop task cycle.
  */
 
-import type { Logger } from "../../runtime/logger.js";
-import type { IAdapter } from "../execution/adapter-layer.js";
-import type { CapabilityDetector } from "../../platform/observation/capability-detector.js";
-import type { CapabilityAcquisitionTask } from "../../base/types/capability.js";
+import type { Logger } from "../../../runtime/logger.js";
+import type { IAdapter } from "../../execution/adapter-layer.js";
+import type { CapabilityDetector } from "../../../platform/observation/capability-detector.js";
+import type { CapabilityAcquisitionTask } from "../../../base/types/capability.js";
 
 export interface CapabilityAcquisitionOutcome {
   capabilityName: string;

@@ -1,35 +1,32 @@
 /**
- * core-loop-phases-b.ts
- *
- * Phases 5–7 of CoreLoop.runOneIteration() as standalone functions.
- * Phases 1–4 are in core-loop-phases.ts.
+ * Completion checks, stall handling, and task execution for a CoreLoop iteration.
  */
 
 import { randomUUID } from "node:crypto";
 import * as path from "node:path";
-import type { Goal } from "../../base/types/goal.js";
-import type { GapVector, GapHistoryEntry } from "../../base/types/gap.js";
-import type { StallReport } from "../../base/types/stall.js";
-import type { DriveScore } from "../../base/types/drive.js";
-import { KnowledgeGraph } from "../../platform/knowledge/knowledge-graph.js";
-import { loadDreamActivationState, mergeUniqueKnowledgeEntries } from "../../platform/dream/dream-activation.js";
+import type { Goal } from "../../../base/types/goal.js";
+import type { GapVector, GapHistoryEntry } from "../../../base/types/gap.js";
+import type { StallReport } from "../../../base/types/stall.js";
+import type { DriveScore } from "../../../base/types/drive.js";
+import { KnowledgeGraph } from "../../../platform/knowledge/knowledge-graph.js";
+import { loadDreamActivationState, mergeUniqueKnowledgeEntries } from "../../../platform/dream/dream-activation.js";
 import {
   buildDriveContext,
   type LoopIterationResult,
-} from "./core-loop-types.js";
-import type { PhaseCtx } from "./core-loop-phases.js";
+} from "./contracts.js";
+import type { PhaseCtx } from "./preparation.js";
 import {
   getMilestones,
   evaluatePace,
-} from "../goal/milestone-evaluator.js";
-import { gatherStallEvidence } from "./stall-evidence.js";
-import { verifyWithTools } from "./verification-layer1.js";
-import { buildLoopToolContext } from "./core-loop-phases.js";
+} from "../../goal/milestone-evaluator.js";
+import { gatherStallEvidence } from "../stall-evidence.js";
+import { verifyWithTools } from "../verification-layer1.js";
+import { buildLoopToolContext } from "./preparation.js";
 import {
   expandKnowledgeEntriesWithGraph,
   mergeWorkingMemorySelections,
-} from "../execution/context/context-builder.js";
-import type { CapabilityAcquisitionOutcome } from "./core-loop-capability.js";
+} from "../../execution/context/context-builder.js";
+import type { CapabilityAcquisitionOutcome } from "./capability.js";
 
 // ─── Phase 5 ───
 

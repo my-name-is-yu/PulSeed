@@ -10,7 +10,7 @@ import type {
 import {
   ScheduleEngine,
   type ScheduleEntryUpdateInput,
-} from "../../../runtime/schedule-engine.js";
+} from "../../../runtime/schedule/engine.js";
 import {
   CronConfigSchema,
   EscalationConfigSchema,

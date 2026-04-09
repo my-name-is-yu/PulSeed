@@ -1,15 +1,11 @@
 /**
- * core-loop-learning.ts
- *
- * Encapsulates learning/transfer/capability-acquisition state and logic
- * extracted from CoreLoop. Holds three fields that were previously inline on
- * CoreLoop and exposes methods used in run() and runOneIteration().
+ * Learning and transfer state that spans CoreLoop iterations.
  */
 
-import type { Logger } from "../../runtime/logger.js";
-import type { CoreLoopDeps } from "./core-loop-types.js";
-import type { ToolExecutor } from "../../tools/executor.js";
-import { gatherLearningEvidence } from "./learning-evidence.js";
+import type { Logger } from "../../../runtime/logger.js";
+import type { CoreLoopDeps } from "./contracts.js";
+import type { ToolExecutor } from "../../../tools/executor.js";
+import { gatherLearningEvidence } from "../learning-evidence.js";
 
 export class CoreLoopLearning {
   private lastLearningReviewAt: number = Date.now();
