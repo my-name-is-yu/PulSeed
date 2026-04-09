@@ -129,9 +129,11 @@ function acquireJournalLock(lockPath: string): JournalLockHandle {
   const ownerPath = path.join(lockPath, 'owner.json');
   const ownerId = randomUUID();
   const startedAt = Date.now();
+  const lockParentDir = path.dirname(lockPath);
 
   for (;;) {
     try {
+      fs.mkdirSync(lockParentDir, { recursive: true });
       fs.mkdirSync(lockPath);
       atomicWriteJson(ownerPath, {
         ownerId,
