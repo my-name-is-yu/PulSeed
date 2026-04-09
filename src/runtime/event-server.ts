@@ -717,8 +717,10 @@ export class EventServer {
     res.write(`event: connected\ndata: ${JSON.stringify({ timestamp: new Date().toISOString() })}\n\n`);
 
     await this.enqueueBroadcast(async () => {
-      const replayedApprovals = await this.replayOutbox(res, afterSeq);
-      for (const pending of this.approvalBroker?.getPendingApprovalEvents() ?? []) {
+      const pendingApprovals = this.approvalBroker?.getPendingApprovalEvents() ?? [];
+      const pendingApprovalIds = new Set(pendingApprovals.map((pending) => pending.requestId));
+      const replayedApprovals = await this.replayOutbox(res, afterSeq, pendingApprovalIds);
+      for (const pending of pendingApprovals) {
         if (replayedApprovals.has(pending.requestId)) continue;
         this.writeSseEvent(res, "approval_required", pending);
       }
@@ -836,17 +838,26 @@ export class EventServer {
     return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
   }
 
-  private async replayOutbox(res: http.ServerResponse, afterSeq: number): Promise<Set<string>> {
+  private async replayOutbox(
+    res: http.ServerResponse,
+    afterSeq: number,
+    pendingApprovalIds: ReadonlySet<string>
+  ): Promise<Set<string>> {
     const replayedApprovals = new Set<string>();
     if (!this.outboxStore) return replayedApprovals;
 
     const records = await this.outboxStore.list(afterSeq);
     for (const record of records) {
-      this.writeSseEvent(res, record.event_type, record.payload, String(record.seq));
       if (record.event_type === "approval_required" && isRecord(record.payload)) {
         const requestId = record.payload["requestId"];
-        if (typeof requestId === "string") replayedApprovals.add(requestId);
+        if (typeof requestId === "string") {
+          if (pendingApprovalIds.has(requestId)) {
+            continue;
+          }
+          replayedApprovals.add(requestId);
+        }
       }
+      this.writeSseEvent(res, record.event_type, record.payload, String(record.seq));
     }
     return replayedApprovals;
   }
