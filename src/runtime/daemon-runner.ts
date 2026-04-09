@@ -25,6 +25,10 @@ import { EventBus } from "./queue/event-bus.js";
 import { CommandBus } from "./queue/command-bus.js";
 import { LoopSupervisor } from "./executor/index.js";
 import { PulSeedEventSchema } from "../base/types/drive.js";
+import { ApprovalStore, OutboxStore, RuntimeHealthStore, createRuntimeStorePaths } from "./store/index.js";
+import { LeaderLockManager } from "./leader-lock-manager.js";
+import { GoalLeaseManager } from "./goal-lease-manager.js";
+import { JournalBackedQueue } from "./queue/journal-backed-queue.js";
 
 // Re-exports for callers that imported these from daemon-runner
 export { generateCronEntry } from "./daemon-signals.js";
@@ -76,9 +80,6 @@ export interface DaemonDeps {
   supervisor?: LoopSupervisor;
   /** Factory to create fresh CoreLoop instances for LoopSupervisor workers. */
   coreLoopFactory?: () => CoreLoop;
-  reportingEngine?: {
-    generateNotification(type: string, context: { goalId: string; message: string; details?: string }): Promise<unknown>;
-  };
 }
 
 export class DaemonRunner {
@@ -112,7 +113,13 @@ export class DaemonRunner {
   private cronScheduleInterval: ReturnType<typeof setInterval> | null = null;
   private shutdownResolve: (() => void) | null = null;
   private readonly deps: DaemonDeps;
-  private reportingEngine: DaemonDeps["reportingEngine"];
+  private runtimeRoot: string | null = null;
+  private approvalStore: ApprovalStore | null = null;
+  private outboxStore: OutboxStore | null = null;
+  private runtimeHealthStore: RuntimeHealthStore | null = null;
+  private leaderLockManager: LeaderLockManager | null = null;
+  private goalLeaseManager: GoalLeaseManager | null = null;
+  private journalQueue: JournalBackedQueue | null = null;
 
   constructor(deps: DaemonDeps) {
     this.deps = deps;
@@ -130,7 +137,6 @@ export class DaemonRunner {
     this.commandBus = deps.commandBus;
     this.supervisor = deps.supervisor ?? null;
     this.lastProactiveTickAt = Date.now();
-    this.reportingEngine = deps.reportingEngine;
 
     // Parse config with defaults via DaemonConfigSchema.parse()
     this.config = DaemonConfigSchema.parse(deps.config ?? {});
@@ -141,6 +147,19 @@ export class DaemonRunner {
     // Pre-compute log paths used by rotateLog
     this.logDir = path.join(this.baseDir, this.config.log_dir);
     this.logPath = path.join(this.logDir, "pulseed.log");
+
+    if (this.config.runtime_journal_v2) {
+      this.runtimeRoot = this.resolveRuntimeRoot();
+      const runtimePaths = createRuntimeStorePaths(this.runtimeRoot);
+      this.approvalStore = new ApprovalStore(runtimePaths);
+      this.outboxStore = new OutboxStore(runtimePaths);
+      this.runtimeHealthStore = new RuntimeHealthStore(runtimePaths);
+      this.leaderLockManager = new LeaderLockManager(this.runtimeRoot);
+      this.goalLeaseManager = new GoalLeaseManager(this.runtimeRoot);
+      this.journalQueue = new JournalBackedQueue({
+        journalPath: path.join(this.runtimeRoot, "queue.json"),
+      });
+    }
 
     // Initialize daemon state
     this.state = DaemonStateSchema.parse({
@@ -153,6 +172,16 @@ export class DaemonRunner {
       crash_count: 0,
       last_error: null,
     });
+  }
+
+  private resolveRuntimeRoot(): string {
+    const configuredRoot = this.config.runtime_root;
+    if (!configuredRoot || configuredRoot.trim() === "") {
+      return path.join(this.baseDir, "runtime");
+    }
+    return path.isAbsolute(configuredRoot)
+      ? configuredRoot
+      : path.resolve(this.baseDir, configuredRoot);
   }
 
   // ─── Public API ───
@@ -171,12 +200,13 @@ export class DaemonRunner {
       );
     }
 
-    // 2. Write PID file
-    await this.pidManager.writePID();
-
-    // 2b. Rotate log if needed, then check for crash recovery marker
+    // 2. Rotate log if needed, then check for crash recovery marker
     await this.rotateLog();
     await this.checkCrashRecovery();
+    await this.initializeRuntimeFoundation();
+
+    // 2b. Publish PID only after startup prerequisites succeed.
+    await this.pidManager.writePID();
 
     // 2c. Start EventServer (always-on) and file watcher
     if (!this.eventServer) {
@@ -229,20 +259,12 @@ export class DaemonRunner {
     if (!this.approvalFn && this.eventServer) {
       const es = this.eventServer;
       this.approvalFn = async (task: Record<string, unknown>): Promise<boolean> => {
-        const goalId = String(task["goal_id"] ?? "unknown");
-        const description = String(task["description"] ?? "");
-        const action = String(task["action"] ?? "");
-        void this.reportingEngine?.generateNotification("approval_required", {
-          goalId,
-          message: description || "A task requires approval",
-          details: action ? `Requested action: ${action}` : undefined,
-        });
         return es.requestApproval(
-          goalId,
+          String(task["goal_id"] ?? "unknown"),
           {
             id: String(task["id"] ?? ""),
-            description,
-            action,
+            description: String(task["description"] ?? ""),
+            action: String(task["action"] ?? ""),
           }
         );
       };
@@ -395,6 +417,40 @@ export class DaemonRunner {
         this.logger.info("EventServer stopped");
       }
     }
+  }
+
+  private async initializeRuntimeFoundation(): Promise<void> {
+    if (!this.config.runtime_journal_v2) return;
+
+    await Promise.all([
+      this.approvalStore?.ensureReady(),
+      this.outboxStore?.ensureReady(),
+      this.runtimeHealthStore?.ensureReady(),
+    ]);
+
+    await this.runtimeHealthStore?.saveSnapshot({
+      status: "degraded",
+      leader: false,
+      checked_at: Date.now(),
+      components: {
+        gateway: "degraded",
+        queue: "degraded",
+        leases: "ok",
+        approval: "ok",
+        outbox: "ok",
+        supervisor: "degraded",
+      },
+      details: {
+        runtime_journal_v2: true,
+        runtime_root: this.runtimeRoot,
+        phase: "foundation_only",
+      },
+    });
+
+    this.logger.info("Runtime journal foundation initialized", {
+      runtime_root: this.runtimeRoot,
+      queue_path: this.runtimeRoot ? path.join(this.runtimeRoot, "queue.json") : undefined,
+    });
   }
 
   /** Expose approvalFn for callers (e.g. cmdStart) to wire into TaskLifecycle */

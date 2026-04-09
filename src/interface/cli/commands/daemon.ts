@@ -162,24 +162,15 @@ export async function cmdStart(
     process.exit(1);
   }
 
-  const configuredPort = daemonConfig && typeof (daemonConfig as Record<string, unknown>).event_server_port === "number"
-    ? (daemonConfig as Record<string, unknown>).event_server_port as number
-    : undefined;
-  const eventServer = new EventServer(
-    deps.driveSystem,
-    configuredPort !== undefined ? { port: configuredPort } : undefined,
-    logger
-  );
-  notificationDispatcher.setRealtimeSink(async (report) => {
-    eventServer.broadcast("notification_report", {
-      id: report.id,
-      report_type: report.report_type,
-      goal_id: report.goal_id,
-      title: report.title,
-      content: report.content,
-      generated_at: report.generated_at,
-    });
-  });
+  // Gap 2: Create EventServer for event-driven wake-ups (only if config specifies a port)
+  let eventServer: EventServer | undefined;
+  if (daemonConfig && typeof (daemonConfig as Record<string, unknown>).event_server_port === "number") {
+    eventServer = new EventServer(
+      deps.driveSystem,
+      { port: (daemonConfig as Record<string, unknown>).event_server_port as number },
+      logger
+    );
+  }
 
   // Gap 4: Create CronScheduler for scheduled tasks
   const cronScheduler = new CronScheduler(baseDir);
@@ -193,9 +184,6 @@ export async function cmdStart(
     coreLoop: deps.coreLoop,
     stateManager: deps.stateManager,
     notificationDispatcher,
-    hookManager: deps.hookManager,
-    memoryLifecycle: deps.memoryLifecycleManager,
-    knowledgeManager: deps.knowledgeManager,
   });
   await scheduleEngine.loadEntries();
 
@@ -206,11 +194,10 @@ export async function cmdStart(
     pidManager,
     logger,
     config: daemonConfig,
-    eventServer,
+    ...(eventServer ? { eventServer } : {}),
     llmClient: deps.llmClient,
     cronScheduler,
     scheduleEngine,
-    reportingEngine: deps.reportingEngine,
   });
 
   logger.info(`Starting PulSeed daemon for goals: ${goalIds.join(", ")}`);
@@ -263,8 +250,11 @@ export async function cmdDaemonStatus(_args: string[]): Promise<void> {
   }
 
   // Load daemon config for config section display
-  const configPath = path.join(baseDir, "daemon-config.json");
-  const configRaw = await readJsonFileOrNull(configPath);
+  const configPath = path.join(baseDir, "daemon.json");
+  const legacyConfigPath = path.join(baseDir, "daemon-config.json");
+  const configRaw =
+    (await readJsonFileOrNull(configPath)) ??
+    (await readJsonFileOrNull(legacyConfigPath));
   const configParsed = configRaw !== null ? DaemonConfigSchema.safeParse(configRaw) : null;
   const cfg = configParsed?.success ? configParsed.data : DaemonConfigSchema.parse({});
 
@@ -303,6 +293,10 @@ export async function cmdDaemonStatus(_args: string[]): Promise<void> {
   lines.push(`  Interval:      ${intervalMin}m (adaptive sleep: ${adaptiveSleep})`);
   lines.push(`  Iterations:    ${cfg.iterations_per_cycle} per cycle`);
   lines.push(`  Proactive:     ${proactive}`);
+  lines.push(`  Runtime journal: ${cfg.runtime_journal_v2 ? "on" : "off"}`);
+  if (cfg.runtime_journal_v2 && cfg.runtime_root) {
+    lines.push(`  Runtime root:  ${cfg.runtime_root}`);
+  }
   lines.push(`  Crash recovery: ${crashEnabled} (${data.crash_count}/${maxRetries} retries used)`);
 
   lines.push("");

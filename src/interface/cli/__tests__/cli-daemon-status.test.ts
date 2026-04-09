@@ -165,6 +165,7 @@ describe("cmdDaemonStatus", () => {
     expect(output).toContain("5m (adaptive sleep: off)");
     expect(output).toContain("10 per cycle");
     expect(output).toContain("Proactive:     off");
+    expect(output).toContain("Runtime journal: off");
     expect(output).toContain("enabled");
   });
 
@@ -183,6 +184,8 @@ describe("cmdDaemonStatus", () => {
       check_interval_ms: 120_000, // 2 min
       iterations_per_cycle: 5,
       proactive_mode: true,
+      runtime_journal_v2: true,
+      runtime_root: "/tmp/pulseed-runtime",
       adaptive_sleep: { enabled: true },
       crash_recovery: { enabled: true, max_retries: 5 },
     };
@@ -195,7 +198,64 @@ describe("cmdDaemonStatus", () => {
     expect(output).toContain("2m (adaptive sleep: on)");
     expect(output).toContain("5 per cycle");
     expect(output).toContain("Proactive:     on");
+    expect(output).toContain("Runtime journal: on");
+    expect(output).toContain("/tmp/pulseed-runtime");
     expect(output).toContain("0/5 retries used");
+  });
+
+  it("falls back to daemon.json when daemon-config.json is absent", async () => {
+    const state = {
+      pid: 999999999,
+      started_at: "2026-01-01T00:00:00.000Z",
+      last_loop_at: null,
+      loop_count: 0,
+      active_goals: [],
+      status: "stopped",
+      crash_count: 0,
+      last_error: null,
+    };
+    const config = {
+      check_interval_ms: 180_000,
+      iterations_per_cycle: 3,
+      runtime_journal_v2: true,
+    };
+    fs.writeFileSync(path.join(tmpDir, "daemon-state.json"), JSON.stringify(state));
+    fs.writeFileSync(path.join(tmpDir, "daemon.json"), JSON.stringify(config));
+
+    await cmdDaemonStatus([]);
+
+    const output = consoleSpy.mock.calls[0]?.[0] as string;
+    expect(output).toContain("3m (adaptive sleep: off)");
+    expect(output).toContain("3 per cycle");
+    expect(output).toContain("Runtime journal: on");
+  });
+
+  it("prefers daemon.json over daemon-config.json when both exist", async () => {
+    const state = {
+      pid: 999999999,
+      started_at: "2026-01-01T00:00:00.000Z",
+      last_loop_at: null,
+      loop_count: 0,
+      active_goals: [],
+      status: "stopped",
+      crash_count: 0,
+      last_error: null,
+    };
+    fs.writeFileSync(path.join(tmpDir, "daemon-state.json"), JSON.stringify(state));
+    fs.writeFileSync(
+      path.join(tmpDir, "daemon.json"),
+      JSON.stringify({ iterations_per_cycle: 7, runtime_journal_v2: true })
+    );
+    fs.writeFileSync(
+      path.join(tmpDir, "daemon-config.json"),
+      JSON.stringify({ iterations_per_cycle: 2, runtime_journal_v2: false })
+    );
+
+    await cmdDaemonStatus([]);
+
+    const output = consoleSpy.mock.calls[0]?.[0] as string;
+    expect(output).toContain("7 per cycle");
+    expect(output).toContain("Runtime journal: on");
   });
 
   it("shows last cycle relative time when last_loop_at is present", async () => {

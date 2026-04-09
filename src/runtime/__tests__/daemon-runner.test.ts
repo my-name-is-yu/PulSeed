@@ -807,6 +807,83 @@ describe("DaemonRunner", () => {
       expect(eventServer.start).toHaveBeenCalledOnce();
     });
 
+    it("initializes runtime journal foundation when enabled", async () => {
+      const eventServer = makeEventServerMock();
+      const deps = makeDeps(tmpDir, {
+        config: { check_interval_ms: 50, runtime_journal_v2: true },
+        eventServer: eventServer as unknown as DaemonDeps["eventServer"],
+      });
+      const daemon = new DaemonRunner(deps);
+      currentDaemon = daemon;
+
+      const startPromise = daemon.start(["goal-1"]);
+      currentStartPromise = startPromise;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      daemon.stop();
+      await startPromise;
+
+      const runtimeDir = path.join(tmpDir, "runtime");
+      expect(fs.existsSync(path.join(runtimeDir, "approvals", "pending"))).toBe(true);
+      expect(fs.existsSync(path.join(runtimeDir, "outbox"))).toBe(true);
+      expect(fs.existsSync(path.join(runtimeDir, "health", "daemon.json"))).toBe(true);
+
+      const daemonHealth = JSON.parse(
+        fs.readFileSync(path.join(runtimeDir, "health", "daemon.json"), "utf-8")
+      );
+      expect(daemonHealth.details.runtime_journal_v2).toBe(true);
+      expect(daemonHealth.details.phase).toBe("foundation_only");
+    });
+
+    it("anchors a relative runtime_root to the daemon base dir instead of process cwd", async () => {
+      const eventServer = makeEventServerMock();
+      const otherCwd = makeTempDir();
+      const originalCwd = process.cwd();
+      process.chdir(otherCwd);
+      try {
+        const deps = makeDeps(tmpDir, {
+          config: {
+            check_interval_ms: 50,
+            runtime_journal_v2: true,
+            runtime_root: "runtime-v2",
+          },
+          eventServer: eventServer as unknown as DaemonDeps["eventServer"],
+        });
+        const daemon = new DaemonRunner(deps);
+        currentDaemon = daemon;
+
+        const startPromise = daemon.start(["goal-1"]);
+        currentStartPromise = startPromise;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        daemon.stop();
+        await startPromise;
+
+        expect(fs.existsSync(path.join(tmpDir, "runtime-v2", "health", "daemon.json"))).toBe(true);
+        expect(fs.existsSync(path.join(otherCwd, "runtime-v2", "health", "daemon.json"))).toBe(false);
+      } finally {
+        process.chdir(originalCwd);
+        fs.rmSync(otherCwd, { recursive: true, force: true });
+      }
+    });
+
+    it("does not leave a stale PID file when runtime journal initialization fails", async () => {
+      const eventServer = makeEventServerMock();
+      const blockedPath = path.join(tmpDir, "not-a-directory");
+      fs.writeFileSync(blockedPath, "block");
+
+      const deps = makeDeps(tmpDir, {
+        config: {
+          check_interval_ms: 50,
+          runtime_journal_v2: true,
+          runtime_root: path.join("not-a-directory", "child"),
+        },
+        eventServer: eventServer as unknown as DaemonDeps["eventServer"],
+      });
+      const daemon = new DaemonRunner(deps);
+
+      await expect(daemon.start(["goal-1"])).rejects.toThrow();
+      expect(fs.existsSync(path.join(tmpDir, "pulseed.pid"))).toBe(false);
+    });
+
     it("should stop EventServer on daemon stop", async () => {
       const eventServer = makeEventServerMock();
       const deps = makeDeps(tmpDir, {
