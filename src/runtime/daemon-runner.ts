@@ -69,6 +69,12 @@ export interface DaemonDeps {
   stateManager: StateManager;
   pidManager: PIDManager;
   logger: Logger;
+  reportingEngine?: {
+    generateNotification(
+      type: "approval_required",
+      context: { goalId: string; message: string; details?: string }
+    ): Promise<unknown>;
+  };
   config?: Partial<DaemonConfig>;
   eventServer?: EventServer;
   llmClient?: ILLMClient;
@@ -103,6 +109,14 @@ export class DaemonRunner {
   private currentLoopIndex = 0;
   private lastProactiveTickAt: number = 0;
   private llmClient: ILLMClient | undefined;
+  private reportingEngine:
+    | {
+        generateNotification(
+          type: "approval_required",
+          context: { goalId: string; message: string; details?: string }
+        ): Promise<unknown>;
+      }
+    | undefined;
   private cronScheduler: CronScheduler | undefined;
   private scheduleEngine: ScheduleEngine | undefined;
   private consecutiveIdleCycles: number = 0;
@@ -130,6 +144,7 @@ export class DaemonRunner {
     this.logger = deps.logger;
     this.eventServer = deps.eventServer;
     this.llmClient = deps.llmClient;
+    this.reportingEngine = deps.reportingEngine;
     this.cronScheduler = deps.cronScheduler;
     this.scheduleEngine = deps.scheduleEngine;
     this.gateway = deps.gateway;
@@ -240,12 +255,32 @@ export class DaemonRunner {
     if (!this.approvalFn && this.eventServer) {
       const es = this.eventServer;
       this.approvalFn = async (task: Record<string, unknown>): Promise<boolean> => {
+        const goalId = String(task["goal_id"] ?? "unknown");
+        const description = String(task["description"] ?? "");
+        const action = String(task["action"] ?? "");
+        const taskId = String(task["id"] ?? "");
+
+        if (this.reportingEngine) {
+          try {
+            await this.reportingEngine.generateNotification("approval_required", {
+              goalId,
+              message: description || action || taskId || "Task approval required",
+              details: [`task_id: ${taskId || "(none)"}`, `action: ${action || "(none)"}`].join("\n"),
+            });
+          } catch (err) {
+            this.logger.warn("Approval notification dispatch failed", {
+              goalId,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+        }
+
         return es.requestApproval(
-          String(task["goal_id"] ?? "unknown"),
+          goalId,
           {
-            id: String(task["id"] ?? ""),
-            description: String(task["description"] ?? ""),
-            action: String(task["action"] ?? ""),
+            id: taskId,
+            description,
+            action,
           }
         );
       };

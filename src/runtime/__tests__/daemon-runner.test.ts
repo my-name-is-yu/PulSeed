@@ -786,6 +786,7 @@ describe("DaemonRunner", () => {
         getPort: vi.fn().mockReturnValue(41700),
         startFileWatcher: vi.fn(),
         stopFileWatcher: vi.fn(),
+        requestApproval: vi.fn().mockResolvedValue(true),
       };
     }
 
@@ -900,6 +901,51 @@ describe("DaemonRunner", () => {
       await startPromise;
 
       expect(eventServer.stop).toHaveBeenCalledOnce();
+    });
+
+    it("approval bridge emits approval notifications before awaiting EventServer approval", async () => {
+      const eventServer = makeEventServerMock();
+      const reportingEngine = {
+        generateNotification: vi.fn().mockResolvedValue({ id: "report-1" }),
+      };
+      const deps = makeDeps(tmpDir, {
+        config: { check_interval_ms: 50 },
+        eventServer: eventServer as unknown as DaemonDeps["eventServer"],
+        reportingEngine,
+      });
+      (deps.driveSystem as unknown as { shouldActivate: ReturnType<typeof vi.fn> }).shouldActivate.mockReturnValue(false);
+      const daemon = new DaemonRunner(deps);
+      currentDaemon = daemon;
+
+      const startPromise = daemon.start(["goal-1"]);
+      currentStartPromise = startPromise;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      const approvalFn = daemon.getApprovalFn();
+      expect(approvalFn).toBeDefined();
+      await approvalFn?.({
+        goal_id: "goal-1",
+        id: "task-1",
+        description: "Ship release notes",
+        action: "notify_team",
+      });
+
+      daemon.stop();
+      await startPromise;
+
+      expect(reportingEngine.generateNotification).toHaveBeenCalledWith("approval_required", {
+        goalId: "goal-1",
+        message: "Ship release notes",
+        details: "task_id: task-1\naction: notify_team",
+      });
+      expect(eventServer.requestApproval).toHaveBeenCalledWith("goal-1", {
+        id: "task-1",
+        description: "Ship release notes",
+        action: "notify_team",
+      });
+      expect(
+        reportingEngine.generateNotification.mock.invocationCallOrder[0]
+      ).toBeLessThan(eventServer.requestApproval.mock.invocationCallOrder[0]);
     });
 
     it("should start file watcher on daemon start", async () => {
