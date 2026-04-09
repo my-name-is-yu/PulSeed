@@ -141,6 +141,9 @@ export class LoopSupervisor {
   }
 
   private schedulePoll(): void {
+    if (this.currentPoll !== null) {
+      return;
+    }
     const poll = this.pollAndAssign();
     this.currentPoll = poll;
     void poll.finally(() => {

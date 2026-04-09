@@ -305,7 +305,16 @@ describe("LoopSupervisor", () => {
         priority: 'normal',
       }));
 
-      await new Promise((r) => setTimeout(r, 150));
+      await waitFor(() => {
+        const snapshot = journalQueue.snapshot();
+        const queueState = JSON.parse(fs.readFileSync(path.join(runtimeRoot, "queue.json"), "utf8"));
+        return (
+          goalRunCount >= 1 &&
+          snapshot.pending.normal
+            .map((messageId) => queueState.records[messageId].envelope.name)
+            .includes("schedule_activated")
+        );
+      });
       await supervisor.shutdown();
 
       expect(goalRunCount).toBeGreaterThanOrEqual(1);
@@ -366,7 +375,10 @@ describe("LoopSupervisor", () => {
 
     try {
       await supervisor.start(["g-durable"]);
-      await new Promise((resolve) => setTimeout(resolve, 220));
+      await waitFor(() => {
+        const snapshot = journalQueue.snapshot();
+        return mockCoreLoop.run.mock.calls.length >= 2 && snapshot.completed.length >= 2;
+      });
       await supervisor.shutdown();
 
       expect(mockCoreLoop.run).toHaveBeenCalledTimes(2);
@@ -378,24 +390,28 @@ describe("LoopSupervisor", () => {
 
   it("applies crash backoff before retrying durable activations", async () => {
     let runCount = 0;
-    const { supervisor, journalQueue, runtimeRoot } = makeSupervisor(async () => {
-      runCount += 1;
-      if (runCount === 1) {
-        throw new Error("boom");
-      }
-      return makeLoopResult({ goalId: "g-backoff" });
-    });
+    const { supervisor, journalQueue, runtimeRoot } = makeSupervisor(
+      async () => {
+        runCount += 1;
+        if (runCount === 1) {
+          throw new Error("boom");
+        }
+        return makeLoopResult({ goalId: "g-backoff" });
+      },
+      {},
+      { crashBackoffBaseMs: 1_000 }
+    );
 
     try {
       await supervisor.start(["g-backoff"]);
-      await new Promise((resolve) => setTimeout(resolve, 80));
+      await new Promise((resolve) => setTimeout(resolve, 200));
       expect(runCount).toBe(1);
       const snapshotDuringBackoff = journalQueue.snapshot();
       expect(
         snapshotDuringBackoff.pending.normal.length + Object.keys(snapshotDuringBackoff.inflight).length
       ).toBe(1);
 
-      await new Promise((resolve) => setTimeout(resolve, 1200));
+      await waitFor(() => runCount >= 2, 3_000);
       await supervisor.shutdown();
 
       expect(runCount).toBeGreaterThanOrEqual(2);
@@ -418,7 +434,14 @@ describe("LoopSupervisor", () => {
 
     try {
       await supervisor.start(["g-dedupe"]);
-      await new Promise((resolve) => setTimeout(resolve, 120));
+      await waitFor(() => {
+        const snapshot = journalQueue.snapshot();
+        return (
+          snapshot.completed.length === 1 &&
+          snapshot.pending.normal.length === 0 &&
+          Object.keys(snapshot.inflight).length === 0
+        );
+      });
       await supervisor.shutdown();
 
       const snapshot = journalQueue.snapshot();
