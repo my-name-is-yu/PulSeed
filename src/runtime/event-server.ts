@@ -11,6 +11,7 @@ import type { Logger } from "./logger.js";
 import type { StateManager } from "../base/state/state-manager.js";
 import type { TriggerMapper } from "./trigger-mapper.js";
 import { findAvailablePort, DEFAULT_PORT, MAX_PORT_ATTEMPTS } from "./port-utils.js";
+import { createEnvelope, type Envelope } from "./types/envelope.js";
 
 export interface EventServerConfig {
   host?: string; // default: "127.0.0.1" (localhost only!)
@@ -35,7 +36,8 @@ export class EventServer {
   private sseClients: Set<http.ServerResponse> = new Set();
   private eventIdCounter = 0;
   private approvalQueue: Map<string, { resolve: (approved: boolean) => void; timer: ReturnType<typeof setTimeout> }> = new Map();
-  private envelopeHook?: (eventData: Record<string, unknown>) => void;
+  private envelopeHook?: (eventData: Record<string, unknown>) => void | Promise<void>;
+  private commandEnvelopeHook?: (envelope: Envelope) => void | Promise<void>;
 
   constructor(driveSystem: DriveSystem, config?: EventServerConfig, logger?: Logger) {
     this.driveSystem = driveSystem;
@@ -191,7 +193,7 @@ export class EventServer {
 
       // Dispatch through Gateway Envelope path or direct
       if (this.envelopeHook) {
-        this.envelopeHook(event as unknown as Record<string, unknown>);
+        await this.envelopeHook(event as unknown as Record<string, unknown>);
       } else {
         await this.driveSystem.writeEvent(event);
       }
@@ -250,8 +252,13 @@ export class EventServer {
 
   /** Handle incoming HTTP request */
   /** Set a hook to intercept incoming events as Envelopes (used by HttpChannelAdapter). */
-  setEnvelopeHook(hook: (eventData: Record<string, unknown>) => void): void {
+  setEnvelopeHook(hook: (eventData: Record<string, unknown>) => void | Promise<void>): void {
     this.envelopeHook = hook;
+  }
+
+  /** Set a hook to intercept command-style HTTP actions as Envelopes. */
+  setCommandEnvelopeHook(hook: (envelope: Envelope) => void | Promise<void>): void {
+    this.commandEnvelopeHook = hook;
   }
 
   private handleRequest(req: http.IncomingMessage, res: http.ServerResponse): void {
@@ -330,25 +337,72 @@ export class EventServer {
       const action = goalActionMatch[2]!;
       void (async () => {
         if (action === "start") {
-          this.broadcast("goal_start_requested", { goalId });
-          res.writeHead(200, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ ok: true, goalId }));
+          try {
+            await this.dispatchCommandEnvelope({
+              name: "goal_start",
+              goalId,
+              payload: { goalId },
+            });
+            this.broadcast("goal_start_requested", { goalId });
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ ok: true, goalId }));
+          } catch (err) {
+            res.writeHead(500, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ error: "Command accept failed", details: String(err) }));
+          }
         } else if (action === "stop") {
-          this.broadcast("goal_stop_requested", { goalId });
-          res.writeHead(200, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ ok: true, goalId }));
+          try {
+            await this.dispatchCommandEnvelope({
+              name: "goal_stop",
+              goalId,
+              payload: { goalId },
+            });
+            this.broadcast("goal_stop_requested", { goalId });
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ ok: true, goalId }));
+          } catch (err) {
+            res.writeHead(500, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ error: "Command accept failed", details: String(err) }));
+          }
         } else if (action === "approve") {
-          const body = await readBody(req);
-          const { requestId, approved } = JSON.parse(body) as { requestId: string; approved: boolean };
-          const resolved = this.resolveApproval(requestId, approved);
-          res.writeHead(resolved ? 200 : 404, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ ok: resolved }));
+          try {
+            const body = await readBody(req);
+            const { requestId, approved } = JSON.parse(body) as { requestId: string; approved: boolean };
+            if (!this.approvalQueue.has(requestId)) {
+              res.writeHead(404, { "Content-Type": "application/json" });
+              res.end(JSON.stringify({ ok: false }));
+              return;
+            }
+            await this.dispatchCommandEnvelope({
+              name: "approval_response",
+              goalId,
+              priority: "high",
+              dedupeKey: `approval_response:${requestId}`,
+              payload: { goalId, requestId, approved },
+            });
+            const resolved = this.resolveApproval(requestId, approved);
+            res.writeHead(resolved ? 200 : 404, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ ok: resolved }));
+          } catch (err) {
+            res.writeHead(400, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ error: "Invalid approval response", details: String(err) }));
+          }
         } else if (action === "chat") {
-          const body = await readBody(req);
-          const { message } = JSON.parse(body) as { message: string };
-          this.broadcast("chat_message_received", { goalId, message });
-          res.writeHead(200, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ ok: true }));
+          try {
+            const body = await readBody(req);
+            const { message } = JSON.parse(body) as { message: string };
+            await this.dispatchCommandEnvelope({
+              name: "chat_message",
+              goalId,
+              payload: { goalId, message },
+            });
+            this.broadcast("chat_message_received", { goalId, message });
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ ok: true }));
+          } catch (err) {
+            res.writeHead(400, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ error: "Invalid chat message", details: String(err) }));
+          }
         } else {
           res.writeHead(404, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ error: "Not found" }));
@@ -376,24 +430,23 @@ export class EventServer {
       body += chunk;
     });
     req.on("end", () => {
-      try {
-        const data = JSON.parse(body) as unknown;
-        const event = PulSeedEventSchema.parse(data);
-        if (this.envelopeHook) {
-          // Route through Gateway Envelope path
-          this.envelopeHook(event as unknown as Record<string, unknown>);
-        } else {
-          // Direct path (no Gateway configured)
-          void this.driveSystem.writeEvent(event).catch((err) => {
-            this.logger?.error(`EventServer: writeEvent failed: ${String(err)}`);
-          });
+      void (async () => {
+        try {
+          const data = JSON.parse(body) as unknown;
+          const event = PulSeedEventSchema.parse(data);
+          if (this.envelopeHook) {
+            // Route through Gateway Envelope path and wait for durable accept.
+            await this.envelopeHook(event as unknown as Record<string, unknown>);
+          } else {
+            await this.driveSystem.writeEvent(event);
+          }
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ status: "accepted", event_type: event.type }));
+        } catch (err) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "Invalid event", details: String(err) }));
         }
-        res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ status: "accepted", event_type: event.type }));
-      } catch (err) {
-        res.writeHead(400, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "Invalid event", details: String(err) }));
-      }
+      })();
     });
   }
 
@@ -473,9 +526,16 @@ export class EventServer {
         timestamp: new Date().toISOString(),
         data: { ...trigger.data, event_type: trigger.event_type, goal_id: goalId },
       });
-      void this.driveSystem.writeEvent(event).catch((err) => {
+      try {
+        if (this.envelopeHook) {
+          await this.envelopeHook(event as unknown as Record<string, unknown>);
+        } else {
+          await this.driveSystem.writeEvent(event);
+        }
+      } catch (err) {
         this.logger?.error(`EventServer: trigger observe failed: ${String(err)}`);
-      });
+        throw err;
+      }
     } else if (action === "create_task") {
       const filename = `trigger_${Date.now()}_${Math.random().toString(36).slice(2)}.json`;
       const filePath = path.join(this.eventsDir, filename);
@@ -608,6 +668,27 @@ export class EventServer {
 
   getEventsDir(): string {
     return this.eventsDir;
+  }
+
+  private async dispatchCommandEnvelope(input: {
+    name: string;
+    goalId: string;
+    payload: Record<string, unknown>;
+    priority?: Envelope["priority"];
+    dedupeKey?: string;
+  }): Promise<void> {
+    if (!this.commandEnvelopeHook) return;
+    await this.commandEnvelopeHook(
+      createEnvelope({
+        type: "command",
+        name: input.name,
+        source: "http",
+        goal_id: input.goalId,
+        priority: input.priority,
+        dedupe_key: input.dedupeKey,
+        payload: input.payload,
+      })
+    );
   }
 }
 

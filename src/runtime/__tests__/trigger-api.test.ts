@@ -114,6 +114,39 @@ describe("POST /triggers — with matching mapping", () => {
     await new Promise((r) => setTimeout(r, 50));
     expect(mockDriveSystem.writeEvent).toHaveBeenCalled();
   });
+
+  it("waits for observe ingress hook acceptance before returning success", async () => {
+    let releaseHook: (() => void) | null = null;
+    const hookStarted = vi.fn();
+    server.setEnvelopeHook(
+      () =>
+        new Promise<void>((resolve) => {
+          hookStarted();
+          releaseHook = resolve;
+        })
+    );
+
+    let settled = false;
+    const request = makeRequest(port, "POST", "/triggers", {
+      source: "github",
+      event_type: "push",
+      data: {},
+    }).then((result) => {
+      settled = true;
+      return result;
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(hookStarted).toHaveBeenCalledOnce();
+    expect(settled).toBe(false);
+
+    expect(releaseHook).not.toBeNull();
+    releaseHook!();
+    const res = await request;
+
+    expect(res.status).toBe(200);
+    expect(mockDriveSystem.writeEvent).not.toHaveBeenCalled();
+  });
 });
 
 describe("POST /triggers — no matching mapping", () => {

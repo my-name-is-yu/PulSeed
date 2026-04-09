@@ -57,7 +57,7 @@ export class IngressGateway {
     return Array.from(this.adapters.keys());
   }
 
-  private routeEnvelope(envelope: Envelope, reply?: ReplyChannel): void {
+  private routeEnvelope(envelope: Envelope, reply?: ReplyChannel): void | Promise<void> {
     if (!this.handler) {
       this.logger?.warn("Gateway: no handler registered, dropping envelope", {
         id: envelope.id,
@@ -68,7 +68,7 @@ export class IngressGateway {
     try {
       const result = this.handler(envelope, reply);
       if (result instanceof Promise) {
-        result.catch((err: unknown) => {
+        return result.catch((err: unknown) => {
           this.logger?.error("Gateway: handler error", {
             id: envelope.id,
             error: String(err),

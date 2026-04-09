@@ -230,6 +230,36 @@ describe("POST /events — valid event", () => {
     }
     expect(mockDriveSystem.writeEvent).toHaveBeenCalledTimes(3);
   });
+
+  it("waits for an async envelopeHook before sending the accepted response", async () => {
+    let releaseHook: (() => void) | null = null;
+    const hookStarted = vi.fn();
+    server.setEnvelopeHook(
+      () =>
+        new Promise<void>((resolve) => {
+          hookStarted();
+          releaseHook = resolve;
+        })
+    );
+
+    let settled = false;
+    const request = postEvent(port, validEvent).then((result) => {
+      settled = true;
+      return result;
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(hookStarted).toHaveBeenCalledOnce();
+    expect(settled).toBe(false);
+
+    expect(releaseHook).not.toBeNull();
+    releaseHook!();
+    const result = await request;
+
+    expect(result.status).toBe(200);
+    expect(settled).toBe(true);
+    expect(mockDriveSystem.writeEvent).not.toHaveBeenCalled();
+  });
 });
 
 // ─── POST /events — invalid data ───
@@ -344,5 +374,77 @@ describe("routing — wrong method or path", () => {
     await makeRequest(port, "GET", "/events");
     await makeRequest(port, "POST", "/wrong", validEvent);
     expect(mockDriveSystem.writeEvent).not.toHaveBeenCalled();
+  });
+});
+
+describe("goal action commands", () => {
+  beforeEach(async () => {
+    await server.start();
+    port = server.getPort();
+  });
+
+  it("waits for command hook accept before returning startGoal success", async () => {
+    let releaseHook: (() => void) | null = null;
+    const hookStarted = vi.fn();
+    server.setCommandEnvelopeHook(
+      () =>
+        new Promise<void>((resolve) => {
+          hookStarted();
+          releaseHook = resolve;
+        })
+    );
+
+    let settled = false;
+    const request = makeRequest(port, "POST", "/goals/g-1/start", {}).then((result) => {
+      settled = true;
+      return result;
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(hookStarted).toHaveBeenCalledOnce();
+    expect(settled).toBe(false);
+
+    expect(releaseHook).not.toBeNull();
+    releaseHook!();
+    const result = await request;
+
+    expect(result.status).toBe(200);
+    expect(JSON.parse(result.body)).toEqual({ ok: true, goalId: "g-1" });
+  });
+
+  it("sends chat messages through the command hook as command envelopes", async () => {
+    const seen: Array<Record<string, unknown>> = [];
+    server.setCommandEnvelopeHook((envelope) => {
+      seen.push(envelope as unknown as Record<string, unknown>);
+    });
+
+    const result = await makeRequest(port, "POST", "/goals/g-1/chat", {
+      message: "hello runtime",
+    });
+
+    expect(result.status).toBe(200);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toEqual(
+      expect.objectContaining({
+        type: "command",
+        name: "chat_message",
+        source: "http",
+        goal_id: "g-1",
+        payload: { goalId: "g-1", message: "hello runtime" },
+      })
+    );
+  });
+
+  it("rejects approval responses for unknown requests before command accept", async () => {
+    const hook = vi.fn();
+    server.setCommandEnvelopeHook(hook);
+
+    const result = await makeRequest(port, "POST", "/goals/g-1/approve", {
+      requestId: "missing-request",
+      approved: true,
+    });
+
+    expect(result.status).toBe(404);
+    expect(hook).not.toHaveBeenCalled();
   });
 });

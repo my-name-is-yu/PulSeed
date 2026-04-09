@@ -28,7 +28,7 @@ import { PulSeedEventSchema } from "../base/types/drive.js";
 import { ApprovalStore, OutboxStore, RuntimeHealthStore, createRuntimeStorePaths } from "./store/index.js";
 import { LeaderLockManager } from "./leader-lock-manager.js";
 import { GoalLeaseManager } from "./goal-lease-manager.js";
-import { JournalBackedQueue } from "./queue/journal-backed-queue.js";
+import { JournalBackedQueue, type JournalBackedQueueAcceptResult } from "./queue/journal-backed-queue.js";
 
 // Re-exports for callers that imported these from daemon-runner
 export { generateCronEntry } from "./daemon-signals.js";
@@ -217,32 +217,13 @@ export class DaemonRunner {
       }, this.logger);
     }
 
+    this.eventServer.setCommandEnvelopeHook?.(async (envelope: Envelope) => this.handleInboundEnvelope(envelope));
+
     if (this.gateway) {
       // Phase A: Route through Gateway → Envelope → writeEvent
       const httpAdapter = new HttpChannelAdapter(this.eventServer);
       this.gateway.registerAdapter(httpAdapter);
-      this.gateway.onEnvelope(async (envelope: Envelope) => {
-        // Route by envelope type when buses are configured
-        if (envelope.type === "command" && this.commandBus) {
-          this.commandBus.push(envelope);
-          return;
-        }
-        if (envelope.type === "event" && this.eventBus) {
-          this.eventBus.push(envelope);
-          return;
-        }
-        // Fallback: no bus configured — keep legacy driveSystem.writeEvent() behavior
-        const payload = envelope.payload as Record<string, unknown>;
-        try {
-          const event = PulSeedEventSchema.parse(payload);
-          await this.driveSystem.writeEvent(event);
-        } catch (err) {
-          this.logger.error("Gateway: failed to process envelope", {
-            id: envelope.id,
-            error: String(err),
-          });
-        }
-      });
+      this.gateway.onEnvelope(async (envelope: Envelope) => this.handleInboundEnvelope(envelope));
       // Wire onHighPriority to abort sleep — done via the abortSleep() public method.
       // Callers who construct buses should pass: onHighPriority: () => daemon.abortSleep()
       // The daemon provides abortSleep() below for this purpose.
@@ -792,16 +773,20 @@ export class DaemonRunner {
           type: task.type,
         });
 
+        const envelope = createEnvelope({
+          type: "event",
+          name: "cron_task_due",
+          source: "cron-scheduler",
+          priority: "normal",
+          payload: task,
+          dedupe_key: `cron-${task.id}`,
+        });
+        if (!this.acceptRuntimeEnvelope(envelope)) {
+          continue;
+        }
+
         if (this.eventBus) {
           // Push to eventBus — markFired happens when the envelope is consumed, not at push time
-          const envelope = createEnvelope({
-            type: "event",
-            name: "cron_task_due",
-            source: "cron-scheduler",
-            priority: "normal",
-            payload: task,
-            dedupe_key: `cron-${task.id}`,
-          });
           this.eventBus.push(envelope);
           this.logger.info(`Cron task enqueued to eventBus: ${task.id}`);
         } else {
@@ -842,8 +827,8 @@ export class DaemonRunner {
       for (const result of results) {
         if (result.status === "error") {
           this.logger?.warn?.(`Schedule entry ${result.entry_id} failed: ${result.error_message}`);
-        } else if (this.eventBus) {
-          // Push activated schedule entries to eventBus as envelopes
+        } else {
+          // Record schedule activation in the runtime journal before any in-memory fanout.
           const goalId = (result as Record<string, unknown>)["goal_id"] as string | undefined;
           if (!goalId) {
             this.logger.warn("schedule_activated envelope missing goal_id", { entry_id: (result as Record<string, unknown>)["entry_id"] });
@@ -857,7 +842,12 @@ export class DaemonRunner {
             payload: result,
             dedupe_key: result.entry_id,
           });
-          this.eventBus.push(envelope);
+          if (!this.acceptRuntimeEnvelope(envelope)) {
+            continue;
+          }
+          if (this.eventBus) {
+            this.eventBus.push(envelope);
+          }
         }
       }
     } catch (error) {
@@ -912,6 +902,54 @@ export class DaemonRunner {
       event_type: event.type,
     });
     this.sleepAbortController?.abort();
+  }
+
+  private acceptRuntimeEnvelope(envelope: Envelope): boolean {
+    if (!this.journalQueue) return true;
+
+    const result: JournalBackedQueueAcceptResult = this.journalQueue.accept(envelope);
+    if (result.accepted) {
+      return true;
+    }
+
+    this.logger.info("Runtime journal skipped envelope", {
+      id: envelope.id,
+      name: envelope.name,
+      type: envelope.type,
+      duplicate: result.duplicate,
+      runtime_root: this.runtimeRoot,
+    });
+    return false;
+  }
+
+  private async handleInboundEnvelope(envelope: Envelope): Promise<void> {
+    if (!this.acceptRuntimeEnvelope(envelope)) {
+      return;
+    }
+
+    if (envelope.type === "command") {
+      if (this.commandBus) {
+        this.commandBus.push(envelope);
+      }
+      return;
+    }
+
+    if (envelope.type === "event" && this.eventBus) {
+      this.eventBus.push(envelope);
+      return;
+    }
+
+    // Fallback: no bus configured — keep legacy driveSystem.writeEvent() behavior
+    const payload = envelope.payload as Record<string, unknown>;
+    try {
+      const event = PulSeedEventSchema.parse(payload);
+      await this.driveSystem.writeEvent(event);
+    } catch (err) {
+      this.logger.error("Gateway: failed to process envelope", {
+        id: envelope.id,
+        error: String(err),
+      });
+    }
   }
 
   // ─── Private: Proactive Tick ───

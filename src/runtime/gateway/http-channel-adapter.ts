@@ -42,7 +42,7 @@ export class HttpChannelAdapter implements ChannelAdapter {
     return this.eventServer;
   }
 
-  private emitEnvelope(eventData: Record<string, unknown>): void {
+  private emitEnvelope(eventData: Record<string, unknown>): void | Promise<void> {
     if (!this.handler) {
       console.warn("HttpChannelAdapter: no handler registered, dropping event");
       return;
@@ -55,6 +55,6 @@ export class HttpChannelAdapter implements ChannelAdapter {
       priority: "normal",
       payload: eventData,
     });
-    this.handler(envelope);
+    return this.handler(envelope);
   }
 }

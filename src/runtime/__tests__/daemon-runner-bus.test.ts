@@ -83,6 +83,11 @@ function makeDeps(tmpDir: string, overrides: Partial<DaemonDeps> = {}): DaemonDe
   };
 }
 
+function readRuntimeQueue(tmpDir: string): Record<string, any> {
+  const queuePath = path.join(tmpDir, "runtime", "queue.json");
+  return JSON.parse(fs.readFileSync(queuePath, "utf-8")) as Record<string, any>;
+}
+
 // ─── Test Suite ───
 
 describe("DaemonRunner — Bus Wiring", () => {
@@ -120,6 +125,7 @@ describe("DaemonRunner — Bus Wiring", () => {
       // Simulate the wiring that DaemonRunner.start() performs in the gateway handler
       const mockEventServer = {
         setEnvelopeHook: vi.fn(),
+        setCommandEnvelopeHook: vi.fn(),
         start: vi.fn().mockResolvedValue(undefined),
         stop: vi.fn().mockResolvedValue(undefined),
         startFileWatcher: vi.fn(),
@@ -199,6 +205,126 @@ describe("DaemonRunner — Bus Wiring", () => {
       expect(mockCommandBus.push).toHaveBeenCalledOnce();
       expect(mockCommandBus.push).toHaveBeenCalledWith(commandEnvelope);
       expect(mockEventBus.push).not.toHaveBeenCalled();
+    });
+
+    it("accepts gateway ingress into the runtime journal before eventBus fanout", async () => {
+      const mockEventBus = makeMockEventBus();
+      const mockEventServer = {
+        setEnvelopeHook: vi.fn(),
+        setCommandEnvelopeHook: vi.fn(),
+        start: vi.fn().mockResolvedValue(undefined),
+        stop: vi.fn().mockResolvedValue(undefined),
+        startFileWatcher: vi.fn(),
+        stopFileWatcher: vi.fn(),
+        getPort: vi.fn().mockReturnValue(41700),
+      };
+
+      let capturedHook: ((data: Record<string, unknown>) => void | Promise<void>) | undefined;
+      mockEventServer.setEnvelopeHook.mockImplementation(
+        (hook: (data: Record<string, unknown>) => void | Promise<void>) => {
+          capturedHook = hook;
+        }
+      );
+
+      const gateway = new IngressGateway();
+      const deps = makeDeps(tmpDir, {
+        gateway,
+        eventServer: mockEventServer as any,
+        eventBus: mockEventBus as any,
+        config: { check_interval_ms: 50_000, runtime_journal_v2: true },
+      });
+
+      const daemon = new DaemonRunner(deps);
+      currentDaemon = daemon;
+      currentStartPromise = daemon.start(["g-1"]);
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(capturedHook).toBeDefined();
+
+      await capturedHook?.({
+        type: "external",
+        source: "test-producer",
+        timestamp: new Date().toISOString(),
+        data: { goal_id: "g-1" },
+      });
+
+      const queue = readRuntimeQueue(tmpDir);
+      const record = Object.values(queue.records).find(
+        (entry: any) =>
+          entry.envelope?.source === "http" && entry.envelope?.name === "external"
+      );
+
+      expect(record).toBeDefined();
+      expect(mockEventBus.push).toHaveBeenCalledWith(
+        expect.objectContaining({
+          source: "http",
+          name: "external",
+          type: "event",
+        })
+      );
+    });
+
+    it("accepts HTTP command envelopes into the runtime journal and commandBus", async () => {
+      const mockCommandBus = makeMockCommandBus();
+      const mockEventServer = {
+        setEnvelopeHook: vi.fn(),
+        setCommandEnvelopeHook: vi.fn(),
+        start: vi.fn().mockResolvedValue(undefined),
+        stop: vi.fn().mockResolvedValue(undefined),
+        startFileWatcher: vi.fn(),
+        stopFileWatcher: vi.fn(),
+        getPort: vi.fn().mockReturnValue(41700),
+      };
+
+      let capturedCommandHook:
+        | ((envelope: import("../types/envelope.js").Envelope) => void | Promise<void>)
+        | undefined;
+      mockEventServer.setCommandEnvelopeHook.mockImplementation(
+        (hook: (envelope: import("../types/envelope.js").Envelope) => void | Promise<void>) => {
+          capturedCommandHook = hook;
+        }
+      );
+
+      const gateway = new IngressGateway();
+      const deps = makeDeps(tmpDir, {
+        gateway,
+        eventServer: mockEventServer as any,
+        commandBus: mockCommandBus as any,
+        config: { check_interval_ms: 50_000, runtime_journal_v2: true },
+      });
+
+      const daemon = new DaemonRunner(deps);
+      currentDaemon = daemon;
+      currentStartPromise = daemon.start(["g-1"]);
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(capturedCommandHook).toBeDefined();
+
+      const commandEnvelope = createEnvelope({
+        type: "command",
+        name: "goal_start",
+        source: "http",
+        goal_id: "g-1",
+        payload: { goalId: "g-1" },
+      });
+      await capturedCommandHook?.(commandEnvelope);
+
+      const queue = readRuntimeQueue(tmpDir);
+      const record = Object.values(queue.records).find(
+        (entry: any) =>
+          entry.envelope?.type === "command" &&
+          entry.envelope?.name === "goal_start" &&
+          entry.envelope?.goal_id === "g-1"
+      );
+
+      expect(record).toBeDefined();
+      expect(mockCommandBus.push).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "command",
+          name: "goal_start",
+          goal_id: "g-1",
+        })
+      );
     });
   });
 
@@ -343,6 +469,44 @@ describe("DaemonRunner — Bus Wiring", () => {
       const scheduleEnvelope = allPushed.find((e: any) => e.name === "schedule_activated");
       expect(scheduleEnvelope).toBeUndefined();
     });
+
+    it("records schedule activations in the runtime journal even without eventBus", async () => {
+      const scheduleResult = {
+        entry_id: "entry-journal",
+        status: "activated",
+        goal_id: "g-42",
+        activated_at: new Date().toISOString(),
+      };
+
+      const mockScheduleEngine = {
+        tick: vi.fn().mockResolvedValue([scheduleResult]),
+      };
+
+      const deps = makeDeps(tmpDir, {
+        scheduleEngine: mockScheduleEngine as any,
+        config: { check_interval_ms: 50_000, runtime_journal_v2: true },
+      });
+
+      const daemon = new DaemonRunner(deps);
+      currentDaemon = daemon;
+      currentStartPromise = daemon.start(["g-1"]);
+
+      await new Promise((r) => setTimeout(r, 100));
+      daemon.stop();
+      await currentStartPromise.catch(() => {});
+      currentDaemon = null;
+      currentStartPromise = null;
+
+      const queue = readRuntimeQueue(tmpDir);
+      const record = Object.values(queue.records).find(
+        (entry: any) =>
+          entry.envelope?.source === "schedule-engine" &&
+          entry.envelope?.name === "schedule_activated" &&
+          entry.envelope?.dedupe_key === "entry-journal"
+      );
+
+      expect(record).toBeDefined();
+    });
   });
 
   // ─── 4. Cron tasks → EventBus ───
@@ -468,6 +632,49 @@ describe("DaemonRunner — Bus Wiring", () => {
 
       // Legacy: markFired should have been called
       expect(mockCronScheduler.markFired).toHaveBeenCalledWith("task-legacy");
+    });
+
+    it("records cron receipts in the runtime journal before legacy markFired", async () => {
+      const dueTask = {
+        id: "task-journal",
+        type: "check",
+        cron: "* * * * *",
+        prompt: "Journal me",
+        created_at: new Date().toISOString(),
+        last_fired_at: null,
+      };
+
+      const mockCronScheduler = {
+        getDueTasks: vi.fn().mockResolvedValue([dueTask]),
+        markFired: vi.fn().mockResolvedValue(undefined),
+        expireOldTasks: vi.fn().mockResolvedValue(undefined),
+      };
+
+      const deps = makeDeps(tmpDir, {
+        cronScheduler: mockCronScheduler as any,
+        config: { check_interval_ms: 50_000, runtime_journal_v2: true },
+      });
+
+      const daemon = new DaemonRunner(deps);
+      currentDaemon = daemon;
+      currentStartPromise = daemon.start(["g-1"]);
+
+      await new Promise((r) => setTimeout(r, 100));
+      daemon.stop();
+      await currentStartPromise.catch(() => {});
+      currentDaemon = null;
+      currentStartPromise = null;
+
+      const queue = readRuntimeQueue(tmpDir);
+      const record = Object.values(queue.records).find(
+        (entry: any) =>
+          entry.envelope?.source === "cron-scheduler" &&
+          entry.envelope?.name === "cron_task_due" &&
+          entry.envelope?.dedupe_key === "cron-task-journal"
+      );
+
+      expect(record).toBeDefined();
+      expect(mockCronScheduler.markFired).toHaveBeenCalledWith("task-journal");
     });
   });
 
