@@ -3,8 +3,6 @@ import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 import { GoalWorker, type GoalWorkerConfig, type WorkerResult } from './goal-worker.js';
 import { createEnvelope } from '../types/envelope.js';
-import type { Envelope } from '../types/envelope.js';
-import type { EventBus } from '../queue/event-bus.js';
 import type { CoreLoop } from '../../orchestrator/loop/core-loop.js';
 import type { DriveSystem } from '../../platform/drive/drive-system.js';
 import type { StateManager } from '../../base/state/state-manager.js';
@@ -26,9 +24,8 @@ export interface SupervisorConfig {
 
 export interface SupervisorDeps {
   coreLoopFactory: () => CoreLoop;
-  eventBus?: EventBus;
-  journalQueue?: JournalBackedQueue;
-  goalLeaseManager?: GoalLeaseManager;
+  journalQueue: JournalBackedQueue;
+  goalLeaseManager: GoalLeaseManager;
   driveSystem: DriveSystem;
   stateManager: StateManager;
   logger?: Logger;
@@ -48,25 +45,13 @@ export interface SupervisorState {
 }
 
 interface DurableGoalActivation {
-  mode: 'journal';
   goalId: string;
   claim: JournalBackedQueueClaim;
   ownerToken: string;
   attemptId: string;
 }
 
-interface LegacyGoalActivation {
-  mode: 'eventBus';
-  goalId: string;
-}
-
-interface LegacyNonGoalEnvelope {
-  mode: 'legacy_non_goal';
-  envelope: Envelope;
-}
-
-type GoalActivation = DurableGoalActivation | LegacyGoalActivation;
-type ClaimedDispatch = GoalActivation | LegacyNonGoalEnvelope;
+type GoalActivation = DurableGoalActivation;
 
 const DEFAULT_CONFIG: SupervisorConfig = {
   concurrency: 4,
@@ -84,26 +69,22 @@ export class LoopSupervisor {
   private activeGoals: Map<string, GoalWorker> = new Map();
   private crashCounts: Map<string, number> = new Map();
   private suspendedGoals: Set<string> = new Set();
+  private stoppedGoals: Set<string> = new Set();
   private running: boolean = false;
   private pollTimer: ReturnType<typeof setInterval> | null = null;
   private readonly config: SupervisorConfig;
   private readonly deps: SupervisorDeps;
-  private readonly durableExecutionEnabled: boolean;
   private polling: boolean = false;
+  private currentPoll: Promise<void> | null = null;
   private runningExecutions: Promise<void>[] = [];
   private pendingTimers: Set<ReturnType<typeof setTimeout>> = new Set();
 
   constructor(deps: SupervisorDeps, config?: Partial<SupervisorConfig>) {
     this.deps = deps;
     this.config = { ...DEFAULT_CONFIG, ...config };
-    this.durableExecutionEnabled = Boolean(this.deps.journalQueue && this.deps.goalLeaseManager);
   }
 
   async start(initialGoalIds: string[]): Promise<void> {
-    if (!this.deps.eventBus && !this.durableExecutionEnabled) {
-      throw new Error('LoopSupervisor requires eventBus or durable runtime queue dependencies');
-    }
-
     const workerCfg: GoalWorkerConfig = { iterationsPerCycle: this.config.iterationsPerCycle };
     for (let i = 0; i < this.config.concurrency; i++) {
       this.workers.push(new GoalWorker(this.deps.coreLoopFactory(), workerCfg));
@@ -117,7 +98,13 @@ export class LoopSupervisor {
     }
 
     this.pollTimer = setInterval(() => {
-      void this.pollAndAssign();
+      const poll = this.pollAndAssign();
+      this.currentPoll = poll;
+      void poll.finally(() => {
+        if (this.currentPoll === poll) {
+          this.currentPoll = null;
+        }
+      });
     }, this.config.pollIntervalMs);
   }
 
@@ -129,6 +116,7 @@ export class LoopSupervisor {
     }
     for (const timer of this.pendingTimers) clearTimeout(timer);
     this.pendingTimers.clear();
+    await this.currentPoll;
     await Promise.allSettled(this.runningExecutions);
     this.persistState();
   }
@@ -147,7 +135,20 @@ export class LoopSupervisor {
     };
   }
 
+  activateGoal(goalId: string): void {
+    this.stoppedGoals.delete(goalId);
+    this.enqueueGoalActivation(goalId);
+  }
+
+  deactivateGoal(goalId: string): void {
+    this.stoppedGoals.add(goalId);
+  }
+
   private enqueueGoalActivation(goalId: string): void {
+    if (this.stoppedGoals.has(goalId)) {
+      return;
+    }
+
     const envelope = createEnvelope({
       type: 'event',
       name: 'goal_activated',
@@ -158,18 +159,13 @@ export class LoopSupervisor {
       dedupe_key: `goal_activated:${goalId}`,
     });
 
-    if (this.durableExecutionEnabled) {
-      const accepted = this.deps.journalQueue!.accept(envelope);
-      if (!accepted.accepted && !accepted.duplicate) {
-        this.deps.logger?.warn('Failed to enqueue durable goal activation', {
-          goalId,
-          envelopeId: envelope.id,
-        });
-      }
-      return;
+    const accepted = this.deps.journalQueue.accept(envelope);
+    if (!accepted.accepted && !accepted.duplicate) {
+      this.deps.logger?.warn('Failed to enqueue durable goal activation', {
+        goalId,
+        envelopeId: envelope.id,
+      });
     }
-
-    this.deps.eventBus!.push(envelope);
   }
 
   private async pollAndAssign(): Promise<void> {
@@ -177,21 +173,20 @@ export class LoopSupervisor {
     this.polling = true;
 
     const idleWorkers = this.workers.filter(w => w.isIdle());
-    const requeue: Envelope[] = [];
 
     try {
       for (const worker of idleWorkers) {
         const dispatch = await this.claimNextDispatch(worker.id);
         if (!dispatch) break;
 
-        if (dispatch.mode === 'legacy_non_goal') {
-          requeue.push(dispatch.envelope);
-          continue;
-        }
-
         const goalId = dispatch.goalId;
         if (this.activeGoals.has(goalId)) {
           this.activeGoals.get(goalId)!.requestExtend();
+          await this.completeClaim(dispatch);
+          continue;
+        }
+
+        if (this.stoppedGoals.has(goalId)) {
           await this.completeClaim(dispatch);
           continue;
         }
@@ -215,51 +210,29 @@ export class LoopSupervisor {
         });
       }
     } finally {
-      for (const env of requeue) {
-        this.deps.eventBus?.push(env);
-      }
       this.polling = false;
     }
   }
 
-  private async claimNextDispatch(workerId: string): Promise<ClaimedDispatch | null> {
-    if (this.durableExecutionEnabled) {
-      const claim = this.deps.journalQueue!.claim(
-        workerId,
-        this.config.claimLeaseMs,
-        (envelope) => envelope.type === 'event' && envelope.name === 'goal_activated' && Boolean(envelope.goal_id)
-      );
-      if (!claim || !claim.envelope.goal_id) {
-        return null;
-      }
-      return {
-        mode: 'journal',
-        goalId: claim.envelope.goal_id,
-        claim,
-        ownerToken: claim.claimToken,
-        attemptId: claim.claimToken,
-      };
-    }
-
-    const envelope = this.deps.eventBus?.pull();
-    if (envelope === undefined) {
+  private async claimNextDispatch(workerId: string): Promise<GoalActivation | null> {
+    const claim = this.deps.journalQueue.claim(
+      workerId,
+      this.config.claimLeaseMs,
+      (envelope) => envelope.type === 'event' && envelope.name === 'goal_activated' && Boolean(envelope.goal_id)
+    );
+    if (!claim || !claim.envelope.goal_id) {
       return null;
     }
-    if (envelope.name !== 'goal_activated' || !envelope.goal_id) {
-      return { mode: 'legacy_non_goal', envelope };
-    }
     return {
-      mode: 'eventBus',
-      goalId: envelope.goal_id,
+      goalId: claim.envelope.goal_id,
+      claim,
+      ownerToken: claim.claimToken,
+      attemptId: claim.claimToken,
     };
   }
 
   private async acquireExecutionLease(worker: GoalWorker, activation: GoalActivation): Promise<boolean> {
-    if (activation.mode !== 'journal') {
-      return true;
-    }
-
-    const lease = await this.deps.goalLeaseManager!.acquire(activation.goalId, {
+    const lease = await this.deps.goalLeaseManager.acquire(activation.goalId, {
       workerId: worker.id,
       ownerToken: activation.ownerToken,
       attemptId: activation.attemptId,
@@ -269,10 +242,6 @@ export class LoopSupervisor {
   }
 
   private startLeaseRenewLoop(activation: GoalActivation, onLeaseLost: () => void): () => void {
-    if (activation.mode !== 'journal') {
-      return () => {};
-    }
-
     let stopped = false;
     let renewing = false;
     const timer = setInterval(() => {
@@ -281,11 +250,11 @@ export class LoopSupervisor {
       renewing = true;
       void (async () => {
         try {
-          const renewedClaim = this.deps.journalQueue!.renew(
+          const renewedClaim = this.deps.journalQueue.renew(
             activation.claim.claimToken,
             this.config.claimLeaseMs
           );
-          const renewedLease = await this.deps.goalLeaseManager!.renew(
+          const renewedLease = await this.deps.goalLeaseManager.renew(
             activation.goalId,
             activation.ownerToken,
             { leaseMs: this.config.claimLeaseMs }
@@ -349,21 +318,12 @@ export class LoopSupervisor {
           );
         } else {
           const backoffMs = this.calculateCrashBackoff(count);
-          if (activation.mode === 'journal') {
-            await this.deferDurableRetry(
-              activation,
-              result.error ?? 'goal execution failed',
-              backoffMs,
-              ownershipLost
-            );
-          } else {
-            const timer = setTimeout(() => {
-              this.pendingTimers.delete(timer);
-              if (!this.running) return;
-              this.enqueueGoalActivation(goalId);
-            }, backoffMs);
-            this.pendingTimers.add(timer);
-          }
+          await this.deferDurableRetry(
+            activation,
+            result.error ?? 'goal execution failed',
+            backoffMs,
+            ownershipLost
+          );
         }
 
         return;
@@ -380,17 +340,15 @@ export class LoopSupervisor {
   }
 
   private async completeClaim(activation: GoalActivation, ownershipLost = false): Promise<void> {
-    if (activation.mode !== 'journal' || ownershipLost) {
-      if (activation.mode === 'journal' && ownershipLost) {
-        this.deps.logger?.warn('Skipping ack because durable execution ownership was lost', {
-          goalId: activation.goalId,
-          claimToken: activation.claim.claimToken,
-        });
-      }
+    if (ownershipLost) {
+      this.deps.logger?.warn('Skipping ack because durable execution ownership was lost', {
+        goalId: activation.goalId,
+        claimToken: activation.claim.claimToken,
+      });
       return;
     }
 
-    const acked = this.deps.journalQueue!.ack(activation.claim.claimToken);
+    const acked = this.deps.journalQueue.ack(activation.claim.claimToken);
     if (!acked) {
       this.deps.logger?.warn('Failed to ack durable goal activation claim', {
         goalId: activation.goalId,
@@ -405,11 +363,11 @@ export class LoopSupervisor {
     requeue: boolean,
     ownershipLost = false
   ): Promise<void> {
-    if (activation.mode !== 'journal' || ownershipLost) {
+    if (ownershipLost) {
       return;
     }
 
-    const settled = this.deps.journalQueue!.nack(activation.claim.claimToken, reason, requeue);
+    const settled = this.deps.journalQueue.nack(activation.claim.claimToken, reason, requeue);
     if (!settled) {
       this.deps.logger?.warn('Failed to nack durable goal activation claim', {
         goalId: activation.goalId,
@@ -421,12 +379,8 @@ export class LoopSupervisor {
   }
 
   private async releaseExecutionLease(activation: GoalActivation): Promise<void> {
-    if (activation.mode !== 'journal') {
-      return;
-    }
-
     try {
-      await this.deps.goalLeaseManager!.release(activation.goalId, activation.ownerToken);
+      await this.deps.goalLeaseManager.release(activation.goalId, activation.ownerToken);
     } catch (err) {
       this.deps.logger?.warn('Failed to release goal execution lease', {
         goalId: activation.goalId,
@@ -444,7 +398,7 @@ export class LoopSupervisor {
   }
 
   private async deferDurableRetry(
-    activation: DurableGoalActivation,
+    activation: GoalActivation,
     reason: string,
     backoffMs: number,
     ownershipLost: boolean
@@ -454,7 +408,7 @@ export class LoopSupervisor {
     }
 
     const leaseMs = backoffMs + Math.max(this.config.pollIntervalMs, 100);
-    const renewedClaim = this.deps.journalQueue!.renew(activation.claim.claimToken, leaseMs);
+    const renewedClaim = this.deps.journalQueue.renew(activation.claim.claimToken, leaseMs);
     if (!renewedClaim) {
       return;
     }
@@ -468,12 +422,8 @@ export class LoopSupervisor {
   }
 
   private installWriteFence(activation: GoalActivation): void {
-    if (activation.mode !== 'journal') {
-      return;
-    }
-
     this.deps.stateManager.setWriteFence?.(activation.goalId, async () => {
-      const current = await this.deps.goalLeaseManager!.read(activation.goalId);
+      const current = await this.deps.goalLeaseManager.read(activation.goalId);
       if (
         !current ||
         current.owner_token !== activation.ownerToken ||

@@ -9,29 +9,6 @@ import type { DaemonDeps } from "../daemon-runner.js";
 import { createEnvelope } from "../types/envelope.js";
 import { makeTempDir } from "../../../tests/helpers/temp-dir.js";
 import { IngressGateway } from "../gateway/ingress-gateway.js";
-import { HttpChannelAdapter } from "../gateway/http-channel-adapter.js";
-
-// ─── Mock buses ───
-
-function makeMockEventBus() {
-  return {
-    push: vi.fn(),
-    pull: vi.fn().mockReturnValue(undefined),
-    size: vi.fn().mockReturnValue(0),
-    pendingCount: vi.fn().mockReturnValue({ critical: 0, high: 0, normal: 0, low: 0 }),
-  };
-}
-
-function makeMockCommandBus() {
-  return {
-    push: vi.fn(),
-    pull: vi.fn().mockReturnValue(undefined),
-    size: vi.fn().mockReturnValue(0),
-    pendingCount: vi.fn().mockReturnValue({ critical: 0, high: 0, normal: 0, low: 0 }),
-  };
-}
-
-// ─── Helpers ───
 
 function makeLoopResult(overrides: Partial<LoopResult> = {}): LoopResult {
   return {
@@ -52,7 +29,7 @@ function makeDeps(tmpDir: string, overrides: Partial<DaemonDeps> = {}): DaemonDe
   };
 
   const mockDriveSystem = {
-    shouldActivate: vi.fn().mockReturnValue(false), // default: no active goals
+    shouldActivate: vi.fn().mockReturnValue(false),
     getSchedule: vi.fn().mockResolvedValue(null),
     prioritizeGoals: vi.fn().mockImplementation((ids: string[]) => ids),
     startWatcher: vi.fn(),
@@ -66,7 +43,6 @@ function makeDeps(tmpDir: string, overrides: Partial<DaemonDeps> = {}): DaemonDe
   };
 
   const pidManager = new PIDManager(tmpDir);
-
   const logger = new Logger({
     dir: path.join(tmpDir, "logs"),
     consoleOutput: false,
@@ -88,9 +64,22 @@ function readRuntimeQueue(tmpDir: string): Record<string, any> {
   return JSON.parse(fs.readFileSync(queuePath, "utf-8")) as Record<string, any>;
 }
 
-// ─── Test Suite ───
+async function waitFor(
+  predicate: () => boolean,
+  timeoutMs = 2_000,
+  intervalMs = 20
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+  throw new Error("Timed out waiting for condition");
+}
 
-describe("DaemonRunner — Bus Wiring", () => {
+describe("DaemonRunner durable runtime wiring", () => {
   let tmpDir: string;
   let currentDaemon: DaemonRunner | null = null;
   let currentStartPromise: Promise<void> | null = null;
@@ -115,625 +104,306 @@ describe("DaemonRunner — Bus Wiring", () => {
     process.removeAllListeners("SIGTERM");
   });
 
-  // ─── 1. Bus routing via gateway ───
+  it("accepts gateway ingress into the runtime journal and dispatches external events", async () => {
+    const mockEventServer = {
+      setEnvelopeHook: vi.fn(),
+      setCommandEnvelopeHook: vi.fn(),
+      start: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn().mockResolvedValue(undefined),
+      startFileWatcher: vi.fn(),
+      stopFileWatcher: vi.fn(),
+      getPort: vi.fn().mockReturnValue(41700),
+      setActiveWorkersProvider: vi.fn(),
+    };
 
-  describe("gateway envelope routing with buses", () => {
-    it("routes 'event' envelopes to eventBus when configured", () => {
-      const mockEventBus = makeMockEventBus();
-      const mockCommandBus = makeMockCommandBus();
+    let capturedHook: ((data: Record<string, unknown>) => void | Promise<void>) | undefined;
+    mockEventServer.setEnvelopeHook.mockImplementation(
+      (hook: (data: Record<string, unknown>) => void | Promise<void>) => {
+        capturedHook = hook;
+      }
+    );
 
-      // Simulate the wiring that DaemonRunner.start() performs in the gateway handler
-      const mockEventServer = {
-        setEnvelopeHook: vi.fn(),
-        setCommandEnvelopeHook: vi.fn(),
-        start: vi.fn().mockResolvedValue(undefined),
-        stop: vi.fn().mockResolvedValue(undefined),
-        startFileWatcher: vi.fn(),
-        stopFileWatcher: vi.fn(),
-        getPort: vi.fn().mockReturnValue(41700),
-      };
-
-      let capturedHook: ((data: Record<string, unknown>) => void) | undefined;
-      mockEventServer.setEnvelopeHook.mockImplementation(
-        (hook: (data: Record<string, unknown>) => void) => {
-          capturedHook = hook;
-        }
-      );
-
-      // Set up a gateway + adapter to capture the onEnvelope handler
-      const gateway = new IngressGateway();
-      const httpAdapter = new HttpChannelAdapter(mockEventServer as any);
-      gateway.registerAdapter(httpAdapter);
-
-      // Replicate the DaemonRunner gateway handler logic
-      gateway.onEnvelope(async (envelope: import("../types/envelope.js").Envelope) => {
-        if (envelope.type === "command" && mockCommandBus) {
-          mockCommandBus.push(envelope);
-          return;
-        }
-        if (envelope.type === "event" && mockEventBus) {
-          mockEventBus.push(envelope);
-          return;
-        }
-        // Fallback — driveSystem.writeEvent (not reached in this test since buses present)
-      });
-
-      // Fire an "event"-type envelope through the hook
-      const incomingData = {
-        type: "event_payload",
-        source: "test-producer",
-        timestamp: new Date().toISOString(),
-        data: { goal_id: "g1" },
-      };
-
-      expect(capturedHook).toBeDefined();
-      capturedHook!(incomingData);
-
-      // The resulting envelope type is always "event" since HttpChannelAdapter sets type="event"
-      // (see http-channel-adapter: createEnvelope({ type: "event", ... }))
-      expect(mockEventBus.push).toHaveBeenCalledOnce();
-      expect(mockCommandBus.push).not.toHaveBeenCalled();
+    const gateway = new IngressGateway();
+    const deps = makeDeps(tmpDir, {
+      gateway,
+      eventServer: mockEventServer as any,
+      config: { check_interval_ms: 50_000 },
     });
 
-    it("routes 'command' envelopes to commandBus when configured", () => {
-      const mockEventBus = makeMockEventBus();
-      const mockCommandBus = makeMockCommandBus();
+    const daemon = new DaemonRunner(deps);
+    currentDaemon = daemon;
+    currentStartPromise = daemon.start(["g-1"]);
 
-      // Directly simulate the routing logic from daemon-runner's gateway handler
-      const commandEnvelope = createEnvelope({
-        type: "command",
-        name: "run_goal",
-        source: "cli",
-        priority: "high",
-        payload: { goal_id: "g1" },
-      });
+    await waitFor(() => capturedHook !== undefined);
 
-      // Replicate the routing logic
-      const route = (envelope: import("../types/envelope.js").Envelope) => {
-        if (envelope.type === "command" && mockCommandBus) {
-          mockCommandBus.push(envelope);
-          return;
-        }
-        if (envelope.type === "event" && mockEventBus) {
-          mockEventBus.push(envelope);
-          return;
-        }
-      };
-
-      route(commandEnvelope);
-
-      expect(mockCommandBus.push).toHaveBeenCalledOnce();
-      expect(mockCommandBus.push).toHaveBeenCalledWith(commandEnvelope);
-      expect(mockEventBus.push).not.toHaveBeenCalled();
+    await capturedHook?.({
+      type: "external",
+      source: "test-producer",
+      timestamp: new Date().toISOString(),
+      data: { goal_id: "g-1", kind: "external_ping" },
     });
 
-    it("accepts gateway ingress into the runtime journal before eventBus fanout", async () => {
-      const mockEventBus = makeMockEventBus();
-      const mockEventServer = {
-        setEnvelopeHook: vi.fn(),
-        setCommandEnvelopeHook: vi.fn(),
-        start: vi.fn().mockResolvedValue(undefined),
-        stop: vi.fn().mockResolvedValue(undefined),
-        startFileWatcher: vi.fn(),
-        stopFileWatcher: vi.fn(),
-        getPort: vi.fn().mockReturnValue(41700),
-      };
-
-      let capturedHook: ((data: Record<string, unknown>) => void | Promise<void>) | undefined;
-      mockEventServer.setEnvelopeHook.mockImplementation(
-        (hook: (data: Record<string, unknown>) => void | Promise<void>) => {
-          capturedHook = hook;
-        }
-      );
-
-      const gateway = new IngressGateway();
-      const deps = makeDeps(tmpDir, {
-        gateway,
-        eventServer: mockEventServer as any,
-        eventBus: mockEventBus as any,
-        config: { check_interval_ms: 50_000, runtime_journal_v2: true },
-      });
-
-      const daemon = new DaemonRunner(deps);
-      currentDaemon = daemon;
-      currentStartPromise = daemon.start(["g-1"]);
-
-      await new Promise((resolve) => setTimeout(resolve, 50));
-      expect(capturedHook).toBeDefined();
-
-      await capturedHook?.({
-        type: "external",
-        source: "test-producer",
-        timestamp: new Date().toISOString(),
-        data: { goal_id: "g-1" },
-      });
-
+    const writeEventMock = (deps.driveSystem as unknown as {
+      writeEvent: ReturnType<typeof vi.fn>;
+    }).writeEvent;
+    await waitFor(() => writeEventMock.mock.calls.length > 0);
+    await waitFor(() => {
       const queue = readRuntimeQueue(tmpDir);
-      const record = Object.values(queue.records).find(
+      return Object.values(queue.records).some(
         (entry: any) =>
-          entry.envelope?.source === "http" && entry.envelope?.name === "external"
-      );
-
-      expect(record).toBeDefined();
-      expect(mockEventBus.push).toHaveBeenCalledWith(
-        expect.objectContaining({
-          source: "http",
-          name: "external",
-          type: "event",
-        })
+          entry.status === "completed" &&
+          entry.envelope?.type === "event" &&
+          entry.envelope?.name === "external"
       );
     });
 
-    it("accepts HTTP command envelopes into the runtime journal and commandBus", async () => {
-      const mockCommandBus = makeMockCommandBus();
-      const mockEventServer = {
-        setEnvelopeHook: vi.fn(),
-        setCommandEnvelopeHook: vi.fn(),
-        start: vi.fn().mockResolvedValue(undefined),
-        stop: vi.fn().mockResolvedValue(undefined),
-        startFileWatcher: vi.fn(),
-        stopFileWatcher: vi.fn(),
-        getPort: vi.fn().mockReturnValue(41700),
-      };
+    const queue = readRuntimeQueue(tmpDir);
+    expect(Object.values(queue.records)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          status: "completed",
+          envelope: expect.objectContaining({
+            type: "event",
+            name: "external",
+            source: "http",
+          }),
+        }),
+      ])
+    );
+  });
 
-      let capturedCommandHook:
-        | ((envelope: import("../types/envelope.js").Envelope) => void | Promise<void>)
-        | undefined;
-      mockEventServer.setCommandEnvelopeHook.mockImplementation(
-        (hook: (envelope: import("../types/envelope.js").Envelope) => void | Promise<void>) => {
-          capturedCommandHook = hook;
-        }
-      );
+  it("accepts HTTP command envelopes into the runtime journal and dispatches goal_start", async () => {
+    const mockEventServer = {
+      setEnvelopeHook: vi.fn(),
+      setCommandEnvelopeHook: vi.fn(),
+      start: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn().mockResolvedValue(undefined),
+      startFileWatcher: vi.fn(),
+      stopFileWatcher: vi.fn(),
+      getPort: vi.fn().mockReturnValue(41700),
+      setActiveWorkersProvider: vi.fn(),
+    };
 
-      const gateway = new IngressGateway();
-      const deps = makeDeps(tmpDir, {
-        gateway,
-        eventServer: mockEventServer as any,
-        commandBus: mockCommandBus as any,
-        config: { check_interval_ms: 50_000, runtime_journal_v2: true },
-      });
+    let capturedCommandHook:
+      | ((envelope: import("../types/envelope.js").Envelope) => void | Promise<void>)
+      | undefined;
+    mockEventServer.setCommandEnvelopeHook.mockImplementation(
+      (hook: (envelope: import("../types/envelope.js").Envelope) => void | Promise<void>) => {
+        capturedCommandHook = hook;
+      }
+    );
 
-      const daemon = new DaemonRunner(deps);
-      currentDaemon = daemon;
-      currentStartPromise = daemon.start(["g-1"]);
+    const deps = makeDeps(tmpDir, {
+      eventServer: mockEventServer as any,
+      config: { check_interval_ms: 50 },
+    });
 
-      await new Promise((resolve) => setTimeout(resolve, 50));
-      expect(capturedCommandHook).toBeDefined();
+    const daemon = new DaemonRunner(deps);
+    currentDaemon = daemon;
+    currentStartPromise = daemon.start([]);
 
-      const commandEnvelope = createEnvelope({
+    await waitFor(() => capturedCommandHook !== undefined);
+
+    await capturedCommandHook?.(
+      createEnvelope({
         type: "command",
         name: "goal_start",
         source: "http",
-        goal_id: "g-1",
-        payload: { goalId: "g-1" },
-      });
-      await capturedCommandHook?.(commandEnvelope);
+        goal_id: "g-start",
+        payload: { goalId: "g-start" },
+      })
+    );
 
-      const queue = readRuntimeQueue(tmpDir);
-      const record = Object.values(queue.records).find(
-        (entry: any) =>
-          entry.envelope?.type === "command" &&
-          entry.envelope?.name === "goal_start" &&
-          entry.envelope?.goal_id === "g-1"
-      );
+    const runMock = (deps.coreLoop as unknown as { run: ReturnType<typeof vi.fn> }).run;
+    await waitFor(() =>
+      runMock.mock.calls.some((call: unknown[]) => call[0] === "g-start")
+    );
 
-      expect(record).toBeDefined();
-      expect(mockCommandBus.push).toHaveBeenCalledWith(
+    const queue = readRuntimeQueue(tmpDir);
+    expect(Object.values(queue.records)).toEqual(
+      expect.arrayContaining([
         expect.objectContaining({
-          type: "command",
-          name: "goal_start",
-          goal_id: "g-1",
-        })
-      );
-    });
+          status: "completed",
+          envelope: expect.objectContaining({
+            type: "command",
+            name: "goal_start",
+            goal_id: "g-start",
+          }),
+        }),
+        expect.objectContaining({
+          status: "completed",
+          envelope: expect.objectContaining({
+            type: "event",
+            name: "goal_activated",
+            goal_id: "g-start",
+          }),
+        }),
+      ])
+    );
   });
 
-  // ─── 2. Fallback: no buses → driveSystem.writeEvent() ───
+  it("dispatches durable chat_message commands into DriveSystem events", async () => {
+    const mockEventServer = {
+      setEnvelopeHook: vi.fn(),
+      setCommandEnvelopeHook: vi.fn(),
+      start: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn().mockResolvedValue(undefined),
+      startFileWatcher: vi.fn(),
+      stopFileWatcher: vi.fn(),
+      getPort: vi.fn().mockReturnValue(41700),
+      setActiveWorkersProvider: vi.fn(),
+    };
 
-  describe("fallback when no buses configured", () => {
-    it("calls driveSystem.writeEvent() when no eventBus/commandBus in deps", async () => {
-      const writeEvent = vi.fn().mockResolvedValue(undefined);
+    let capturedCommandHook:
+      | ((envelope: import("../types/envelope.js").Envelope) => void | Promise<void>)
+      | undefined;
+    mockEventServer.setCommandEnvelopeHook.mockImplementation(
+      (hook: (envelope: import("../types/envelope.js").Envelope) => void | Promise<void>) => {
+        capturedCommandHook = hook;
+      }
+    );
 
-      // Build the handler that DaemonRunner uses (without buses)
-      const eventBus = undefined;
-      const commandBus = undefined;
+    const deps = makeDeps(tmpDir, {
+      eventServer: mockEventServer as any,
+      config: { check_interval_ms: 50 },
+    });
 
-      const { PulSeedEventSchema } = await import("../../base/types/drive.js");
-      const mockLogger = { error: vi.fn(), info: vi.fn(), warn: vi.fn() };
+    const daemon = new DaemonRunner(deps);
+    currentDaemon = daemon;
+    currentStartPromise = daemon.start([]);
 
-      const handler = async (envelope: import("../types/envelope.js").Envelope) => {
-        if (envelope.type === "command" && commandBus) {
-          (commandBus as any).push(envelope);
-          return;
-        }
-        if (envelope.type === "event" && eventBus) {
-          (eventBus as any).push(envelope);
-          return;
-        }
-        // Fallback
-        const payload = envelope.payload as Record<string, unknown>;
-        try {
-          const event = PulSeedEventSchema.parse(payload);
-          await writeEvent(event);
-        } catch (err) {
-          mockLogger.error("Gateway: failed to process envelope", {
-            id: envelope.id,
-            error: String(err),
-          });
-        }
-      };
+    await waitFor(() => capturedCommandHook !== undefined);
 
-      const validEvent = {
-        type: "external",
-        source: "test-producer",
-        data: {},
-        timestamp: new Date().toISOString(),
-      };
-
-      const envelope = createEnvelope({
-        type: "event",
-        name: "incoming",
+    await capturedCommandHook?.(
+      createEnvelope({
+        type: "command",
+        name: "chat_message",
         source: "http",
-        payload: validEvent,
-      });
+        goal_id: "g-chat",
+        payload: { goalId: "g-chat", message: "hello durable runtime" },
+      })
+    );
 
-      await handler(envelope);
+    const writeEventMock = (deps.driveSystem as unknown as {
+      writeEvent: ReturnType<typeof vi.fn>;
+    }).writeEvent;
+    await waitFor(() => writeEventMock.mock.calls.length > 0);
 
-      // writeEvent should have been called (fallback behavior)
-      expect(writeEvent).toHaveBeenCalledOnce();
-    });
+    expect(writeEventMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "internal",
+        source: "command-dispatcher",
+        data: expect.objectContaining({
+          goal_id: "g-chat",
+          kind: "chat_message",
+          message: "hello durable runtime",
+        }),
+      })
+    );
   });
 
-  // ─── 3. Schedule entries → EventBus ───
+  it("records schedule activations in the runtime journal and dispatches goal activation", async () => {
+    const mockEventServer = {
+      setEnvelopeHook: vi.fn(),
+      setCommandEnvelopeHook: vi.fn(),
+      start: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn().mockResolvedValue(undefined),
+      startFileWatcher: vi.fn(),
+      stopFileWatcher: vi.fn(),
+      getPort: vi.fn().mockReturnValue(41700),
+      setActiveWorkersProvider: vi.fn(),
+    };
+    const mockScheduleEngine = {
+      tick: vi.fn().mockResolvedValue([
+        {
+          entry_id: "entry-1",
+          status: "activated",
+          goal_id: "g-42",
+          activated_at: new Date().toISOString(),
+        },
+      ]),
+    };
 
-  describe("processScheduleEntries → eventBus", () => {
-    it("pushes schedule_activated envelopes to eventBus when available", async () => {
-      const mockEventBus = makeMockEventBus();
-      const mockCommandBus = makeMockCommandBus();
-
-      const scheduleResult = {
-        entry_id: "entry-1",
-        status: "activated",
-        goal_id: "g-42",
-        activated_at: new Date().toISOString(),
-      };
-
-      const mockScheduleEngine = {
-        tick: vi.fn().mockResolvedValue([scheduleResult]),
-      };
-
-      const deps = makeDeps(tmpDir, {
-        scheduleEngine: mockScheduleEngine as any,
-        eventBus: mockEventBus as any,
-        commandBus: mockCommandBus as any,
-        config: { check_interval_ms: 50000 }, // long sleep so daemon doesn't loop
-      });
-
-      const daemon = new DaemonRunner(deps);
-      currentDaemon = daemon;
-
-      // start() and stop immediately after first cycle
-      let resolveStop: () => void;
-      const stopDone = new Promise<void>((r) => { resolveStop = r; });
-
-      currentStartPromise = daemon.start(["g-1"]).then(() => { resolveStop!(); });
-
-      // Give the daemon one loop cycle to run processScheduleEntries
-      await new Promise((r) => setTimeout(r, 100));
-      daemon.stop();
-      await currentStartPromise.catch(() => {});
-      currentDaemon = null;
-      currentStartPromise = null;
-
-      // eventBus.push should have been called with a schedule_activated envelope
-      const allPushed = mockEventBus.push.mock.calls.map((c: any[]) => c[0]);
-      const pushedEnvelope = allPushed.find((e: any) => e.name === "schedule_activated");
-      expect(pushedEnvelope).toBeDefined();
-      expect(pushedEnvelope.source).toBe("schedule-engine");
-      expect(pushedEnvelope.type).toBe("event");
-      expect(pushedEnvelope.goal_id).toBe("g-42");
-      expect(pushedEnvelope.dedupe_key).toBe("entry-1");
+    const deps = makeDeps(tmpDir, {
+      eventServer: mockEventServer as any,
+      scheduleEngine: mockScheduleEngine as any,
+      config: { check_interval_ms: 50 },
     });
 
-    it("does NOT push to eventBus when scheduleEngine returns error status entries", async () => {
-      const mockEventBus = makeMockEventBus();
+    const daemon = new DaemonRunner(deps);
+    currentDaemon = daemon;
+    currentStartPromise = daemon.start([]);
 
-      const scheduleResult = {
-        entry_id: "entry-err",
-        status: "error",
-        error_message: "Something failed",
-      };
+    const runMock = (deps.coreLoop as unknown as { run: ReturnType<typeof vi.fn> }).run;
+    await waitFor(() =>
+      runMock.mock.calls.some((call: unknown[]) => call[0] === "g-42")
+    );
 
-      const mockScheduleEngine = {
-        tick: vi.fn().mockResolvedValue([scheduleResult]),
-      };
-
-      const deps = makeDeps(tmpDir, {
-        scheduleEngine: mockScheduleEngine as any,
-        eventBus: mockEventBus as any,
-        config: { check_interval_ms: 50000 },
-      });
-
-      const daemon = new DaemonRunner(deps);
-      currentDaemon = daemon;
-      currentStartPromise = daemon.start(["g-1"]);
-
-      await new Promise((r) => setTimeout(r, 100));
-      daemon.stop();
-      await currentStartPromise.catch(() => {});
-      currentDaemon = null;
-      currentStartPromise = null;
-
-      // No schedule_activated envelope pushed for error entries (supervisor may push goal_activated)
-      const allPushed = mockEventBus.push.mock.calls.map((c: any[]) => c[0]);
-      const scheduleEnvelope = allPushed.find((e: any) => e.name === "schedule_activated");
-      expect(scheduleEnvelope).toBeUndefined();
-    });
-
-    it("records schedule activations in the runtime journal even without eventBus", async () => {
-      const scheduleResult = {
-        entry_id: "entry-journal",
-        status: "activated",
-        goal_id: "g-42",
-        activated_at: new Date().toISOString(),
-      };
-
-      const mockScheduleEngine = {
-        tick: vi.fn().mockResolvedValue([scheduleResult]),
-      };
-
-      const deps = makeDeps(tmpDir, {
-        scheduleEngine: mockScheduleEngine as any,
-        config: { check_interval_ms: 50_000, runtime_journal_v2: true },
-      });
-
-      const daemon = new DaemonRunner(deps);
-      currentDaemon = daemon;
-      currentStartPromise = daemon.start(["g-1"]);
-
-      await new Promise((r) => setTimeout(r, 100));
-      daemon.stop();
-      await currentStartPromise.catch(() => {});
-      currentDaemon = null;
-      currentStartPromise = null;
-
-      const queue = readRuntimeQueue(tmpDir);
-      const record = Object.values(queue.records).find(
-        (entry: any) =>
-          entry.envelope?.source === "schedule-engine" &&
-          entry.envelope?.name === "schedule_activated" &&
-          entry.envelope?.dedupe_key === "entry-journal"
-      );
-
-      expect(record).toBeDefined();
-    });
+    const queue = readRuntimeQueue(tmpDir);
+    expect(Object.values(queue.records)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          status: "completed",
+          envelope: expect.objectContaining({
+            type: "event",
+            name: "schedule_activated",
+            goal_id: "g-42",
+            dedupe_key: "entry-1",
+          }),
+        }),
+      ])
+    );
   });
 
-  // ─── 4. Cron tasks → EventBus ───
+  it("records cron receipts in the runtime journal and marks the task fired after dispatch", async () => {
+    const mockEventServer = {
+      setEnvelopeHook: vi.fn(),
+      setCommandEnvelopeHook: vi.fn(),
+      start: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn().mockResolvedValue(undefined),
+      startFileWatcher: vi.fn(),
+      stopFileWatcher: vi.fn(),
+      getPort: vi.fn().mockReturnValue(41700),
+      setActiveWorkersProvider: vi.fn(),
+    };
+    const mockCronScheduler = {
+      getDueTasks: vi.fn().mockResolvedValue([
+        {
+          id: "task-1",
+          cron: "*/5 * * * *",
+          type: "goal",
+          goal_id: "g-1",
+        },
+      ]),
+      markFired: vi.fn().mockResolvedValue(undefined),
+      expireOldTasks: vi.fn().mockResolvedValue(undefined),
+    };
 
-  describe("processCronTasks → eventBus", () => {
-    it("pushes cron_task_due envelopes to eventBus when available", async () => {
-      const mockEventBus = makeMockEventBus();
-
-      const dueTask = {
-        id: "task-1",
-        type: "check",
-        cron: "* * * * *",
-        prompt: "Check the status",
-        created_at: new Date().toISOString(),
-        last_fired_at: null,
-      };
-
-      const mockCronScheduler = {
-        getDueTasks: vi.fn().mockResolvedValue([dueTask]),
-        markFired: vi.fn().mockResolvedValue(undefined),
-        expireOldTasks: vi.fn().mockResolvedValue(undefined),
-      };
-
-      const deps = makeDeps(tmpDir, {
-        cronScheduler: mockCronScheduler as any,
-        eventBus: mockEventBus as any,
-        config: { check_interval_ms: 50000 },
-      });
-
-      const daemon = new DaemonRunner(deps);
-      currentDaemon = daemon;
-      currentStartPromise = daemon.start(["g-1"]);
-
-      await new Promise((r) => setTimeout(r, 100));
-      daemon.stop();
-      await currentStartPromise.catch(() => {});
-      currentDaemon = null;
-      currentStartPromise = null;
-
-      // eventBus should receive a cron_task_due envelope
-      const allPushed = mockEventBus.push.mock.calls.map((c: any[]) => c[0]);
-      const pushedEnvelope = allPushed.find((e: any) => e.name === "cron_task_due");
-      expect(pushedEnvelope).toBeDefined();
-      expect(pushedEnvelope.source).toBe("cron-scheduler");
-      expect(pushedEnvelope.type).toBe("event");
-      expect(pushedEnvelope.dedupe_key).toBe("cron-task-1");
-      expect(pushedEnvelope.payload).toEqual(dueTask);
+    const deps = makeDeps(tmpDir, {
+      eventServer: mockEventServer as any,
+      cronScheduler: mockCronScheduler as any,
+      config: { check_interval_ms: 50 },
     });
 
-    it("does NOT call markFired when pushing cron tasks to eventBus", async () => {
-      const mockEventBus = makeMockEventBus();
+    const daemon = new DaemonRunner(deps);
+    currentDaemon = daemon;
+    currentStartPromise = daemon.start([]);
 
-      const dueTask = {
-        id: "task-no-fire",
-        type: "check",
-        cron: "* * * * *",
-        prompt: "Do not fire me",
-        created_at: new Date().toISOString(),
-        last_fired_at: null,
-      };
+    await waitFor(() => mockCronScheduler.markFired.mock.calls.length > 0);
 
-      const mockCronScheduler = {
-        getDueTasks: vi.fn().mockResolvedValue([dueTask]),
-        markFired: vi.fn().mockResolvedValue(undefined),
-        expireOldTasks: vi.fn().mockResolvedValue(undefined),
-      };
-
-      const deps = makeDeps(tmpDir, {
-        cronScheduler: mockCronScheduler as any,
-        eventBus: mockEventBus as any,
-        config: { check_interval_ms: 50000 },
-      });
-
-      const daemon = new DaemonRunner(deps);
-      currentDaemon = daemon;
-      currentStartPromise = daemon.start(["g-1"]);
-
-      await new Promise((r) => setTimeout(r, 100));
-      daemon.stop();
-      await currentStartPromise.catch(() => {});
-      currentDaemon = null;
-      currentStartPromise = null;
-
-      // markFired MUST NOT be called — it happens at consume time, not push time
-      expect(mockCronScheduler.markFired).not.toHaveBeenCalled();
-      // A cron_task_due envelope must be pushed (supervisor may also push goal_activated)
-      const allPushed = mockEventBus.push.mock.calls.map((c: any[]) => c[0]);
-      const cronEnvelope = allPushed.find((e: any) => e.name === "cron_task_due");
-      expect(cronEnvelope).toBeDefined();
-    });
-
-    it("calls markFired directly (legacy) when no eventBus configured", async () => {
-      const dueTask = {
-        id: "task-legacy",
-        type: "check",
-        cron: "* * * * *",
-        prompt: "Legacy fire",
-        created_at: new Date().toISOString(),
-        last_fired_at: null,
-      };
-
-      const mockCronScheduler = {
-        getDueTasks: vi.fn().mockResolvedValue([dueTask]),
-        markFired: vi.fn().mockResolvedValue(undefined),
-        expireOldTasks: vi.fn().mockResolvedValue(undefined),
-      };
-
-      const deps = makeDeps(tmpDir, {
-        cronScheduler: mockCronScheduler as any,
-        // No eventBus — legacy path
-        config: { check_interval_ms: 50000 },
-      });
-
-      const daemon = new DaemonRunner(deps);
-      currentDaemon = daemon;
-      currentStartPromise = daemon.start(["g-1"]);
-
-      await new Promise((r) => setTimeout(r, 100));
-      daemon.stop();
-      await currentStartPromise.catch(() => {});
-      currentDaemon = null;
-      currentStartPromise = null;
-
-      // Legacy: markFired should have been called
-      expect(mockCronScheduler.markFired).toHaveBeenCalledWith("task-legacy");
-    });
-
-    it("records cron receipts in the runtime journal before legacy markFired", async () => {
-      const dueTask = {
-        id: "task-journal",
-        type: "check",
-        cron: "* * * * *",
-        prompt: "Journal me",
-        created_at: new Date().toISOString(),
-        last_fired_at: null,
-      };
-
-      const mockCronScheduler = {
-        getDueTasks: vi.fn().mockResolvedValue([dueTask]),
-        markFired: vi.fn().mockResolvedValue(undefined),
-        expireOldTasks: vi.fn().mockResolvedValue(undefined),
-      };
-
-      const deps = makeDeps(tmpDir, {
-        cronScheduler: mockCronScheduler as any,
-        config: { check_interval_ms: 50_000, runtime_journal_v2: true },
-      });
-
-      const daemon = new DaemonRunner(deps);
-      currentDaemon = daemon;
-      currentStartPromise = daemon.start(["g-1"]);
-
-      await new Promise((r) => setTimeout(r, 100));
-      daemon.stop();
-      await currentStartPromise.catch(() => {});
-      currentDaemon = null;
-      currentStartPromise = null;
-
-      const queue = readRuntimeQueue(tmpDir);
-      const record = Object.values(queue.records).find(
-        (entry: any) =>
-          entry.envelope?.source === "cron-scheduler" &&
-          entry.envelope?.name === "cron_task_due" &&
-          entry.envelope?.dedupe_key === "cron-task-journal"
-      );
-
-      expect(record).toBeDefined();
-      expect(mockCronScheduler.markFired).toHaveBeenCalledWith("task-journal");
-    });
-  });
-
-  // ─── 5. abortSleep() / onHighPriority ───
-
-  describe("abortSleep()", () => {
-    it("exposes abortSleep() method that aborts the sleep controller", async () => {
-      const deps = makeDeps(tmpDir, {
-        config: { check_interval_ms: 60000 }, // long sleep
-      });
-
-      const daemon = new DaemonRunner(deps);
-      currentDaemon = daemon;
-
-      let startResolved = false;
-      currentStartPromise = daemon.start(["g-1"]).then(() => { startResolved = true; });
-
-      // Wait for daemon to enter sleep phase
-      await new Promise((r) => setTimeout(r, 80));
-
-      // abortSleep() should not throw and should wake the daemon
-      expect(() => daemon.abortSleep()).not.toThrow();
-
-      daemon.stop();
-      await currentStartPromise.catch(() => {});
-      currentDaemon = null;
-      currentStartPromise = null;
-
-      expect(startResolved).toBe(true);
-    });
-
-    it("abortSleep() is safe to call when daemon is not sleeping", () => {
-      const deps = makeDeps(tmpDir);
-      const daemon = new DaemonRunner(deps);
-      // Not started — sleepAbortController is null; should not throw
-      expect(() => daemon.abortSleep()).not.toThrow();
-    });
-  });
-
-  // ─── 6. Constructor stores buses from deps ───
-
-  describe("constructor wiring", () => {
-    it("stores eventBus and commandBus from deps", () => {
-      const mockEventBus = makeMockEventBus();
-      const mockCommandBus = makeMockCommandBus();
-
-      const deps = makeDeps(tmpDir, {
-        eventBus: mockEventBus as any,
-        commandBus: mockCommandBus as any,
-      });
-
-      // Should not throw on construction
-      expect(() => new DaemonRunner(deps)).not.toThrow();
-    });
-
-    it("works without buses (backward compat)", () => {
-      const deps = makeDeps(tmpDir);
-      // No eventBus, no commandBus in deps
-      expect(() => new DaemonRunner(deps)).not.toThrow();
-    });
+    const queue = readRuntimeQueue(tmpDir);
+    expect(Object.values(queue.records)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          status: "completed",
+          envelope: expect.objectContaining({
+            type: "event",
+            name: "cron_task_due",
+            dedupe_key: "cron-task-1",
+          }),
+        }),
+      ])
+    );
+    expect(mockCronScheduler.markFired).toHaveBeenCalledWith("task-1");
   });
 });

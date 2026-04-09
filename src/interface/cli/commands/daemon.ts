@@ -30,35 +30,15 @@ import { formatOperationError } from "../utils.js";
 import { getCliLogger } from "../cli-logger.js";
 import { getPulseedDirPath, getLogsDir } from "../../../base/utils/paths.js";
 
-interface StartCommandValues {
-  "api-key"?: string;
-  config?: string;
-  goal?: string[];
-  detach?: boolean;
-  watchdog?: boolean;
-  "watchdog-child"?: boolean;
-  "check-interval-ms"?: string;
-  "iterations-per-cycle"?: string;
-}
+const WATCHDOG_CHILD_ENV = "PULSEED_WATCHDOG_CHILD";
 
-function buildStartArgs(goalIds: string[], values: StartCommandValues, extraFlags: string[] = []): string[] {
-  const childArgs = ["start"];
-  for (const g of goalIds) childArgs.push("--goal", g);
-  if (values.config) childArgs.push("--config", values.config);
-  if (values["check-interval-ms"]) childArgs.push("--check-interval-ms", values["check-interval-ms"]);
-  if (values["iterations-per-cycle"]) childArgs.push("--iterations-per-cycle", values["iterations-per-cycle"]);
-  if (values.watchdog) childArgs.push("--watchdog");
-  childArgs.push(...extraFlags);
-  return childArgs;
-}
-
-function resolveRuntimeRoot(baseDir: string, runtimeRoot?: string): string {
-  if (!runtimeRoot || runtimeRoot.trim() === "") {
+function resolveDaemonRuntimeRoot(baseDir: string, configuredRoot?: string): string {
+  if (!configuredRoot || configuredRoot.trim() === "") {
     return path.join(baseDir, "runtime");
   }
-  return path.isAbsolute(runtimeRoot)
-    ? runtimeRoot
-    : path.resolve(baseDir, runtimeRoot);
+  return path.isAbsolute(configuredRoot)
+    ? configuredRoot
+    : path.resolve(baseDir, configuredRoot);
 }
 
 export async function cmdStart(
@@ -66,7 +46,7 @@ export async function cmdStart(
   characterConfigManager: CharacterConfigManager,
   args: string[]
 ): Promise<void> {
-  let values: StartCommandValues;
+  let values: { "api-key"?: string; config?: string; goal?: string[]; detach?: boolean; "check-interval-ms"?: string; "iterations-per-cycle"?: string };
   try {
     ({ values } = parseArgs({
       args,
@@ -75,46 +55,21 @@ export async function cmdStart(
         config: { type: "string" },
         goal: { type: "string", multiple: true },
         detach: { type: "boolean", short: "d" },
-        watchdog: { type: "boolean" },
-        "watchdog-child": { type: "boolean" },
         "check-interval-ms": { type: "string" },
         "iterations-per-cycle": { type: "string" },
       },
       strict: false,
-    }) as { values: StartCommandValues });
+    }) as { values: { "api-key"?: string; config?: string; goal?: string[]; detach?: boolean; "check-interval-ms"?: string; "iterations-per-cycle"?: string } });
   } catch (err) {
     getCliLogger().error(formatOperationError("parse start command arguments", err));
     values = {};
   }
 
   const goalIds = (values.goal as string[]) || [];
-  const isWatchdogChild = values["watchdog-child"] === true;
 
   if (goalIds.length === 0) {
     getCliLogger().error("Error: at least one --goal is required for daemon mode");
     process.exit(1);
-  }
-
-  // --detach: spawn a detached child and exit immediately
-  if (values.detach) {
-    const scriptPath = process.argv[1]!;
-    const childArgs = buildStartArgs(goalIds, values);
-
-    const child = spawn(process.execPath, [scriptPath, ...childArgs], {
-      detached: true,
-      stdio: "ignore",
-    });
-    child.on("error", (err) => {
-      console.error(`Failed to start daemon: ${err.message}`);
-      process.exit(1);
-    });
-    child.unref();
-    if (child.pid == null) {
-      console.error("Failed to start daemon: no PID assigned");
-      process.exit(1);
-    }
-    console.log(`Daemon started in background (PID: ${child.pid})`);
-    process.exit(0);
   }
 
   // Gap 1: Load DaemonConfig from --config path (if provided)
@@ -166,57 +121,73 @@ export async function cmdStart(
     daemonConfig = daemonConfig ?? {};
     daemonConfig.iterations_per_cycle = parsed;
   }
-  if (values.watchdog) {
-    daemonConfig = daemonConfig ?? {};
-    const defaultWatchdog = DaemonConfigSchema.parse({}).watchdog;
-    daemonConfig.watchdog = {
-      ...(daemonConfig.watchdog ?? defaultWatchdog),
-      enabled: true,
-    };
-  }
 
   const resolvedDaemonConfig = DaemonConfigSchema.parse(daemonConfig ?? {});
-  if (resolvedDaemonConfig.watchdog.enabled && !resolvedDaemonConfig.runtime_journal_v2) {
-    getCliLogger().error("Watchdog mode requires runtime_journal_v2 to be enabled");
+  const isWatchdogChild = process.env[WATCHDOG_CHILD_ENV] === "1";
+  const shouldUseWatchdog = !isWatchdogChild;
+  const baseDir = stateManager.getBaseDir();
+  const pidManager = new PIDManager(baseDir);
+  const logger = new Logger({
+    dir: getLogsDir(baseDir),
+  });
+
+  // --detach: spawn a detached process and exit immediately.
+  // The detached process becomes the watchdog parent.
+  if (values.detach) {
+    const scriptPath = process.argv[1]!;
+    const childArgs = process.argv
+      .slice(2)
+      .filter((arg) => arg !== "--detach" && arg !== "-d");
+
+    const child = spawn(process.execPath, [scriptPath, ...childArgs], {
+      detached: true,
+      stdio: "ignore",
+    });
+    child.on("error", (err) => {
+      console.error(`Failed to start daemon: ${err.message}`);
+      process.exit(1);
+    });
+    child.unref();
+    if (child.pid == null) {
+      console.error("Failed to start daemon: no PID assigned");
+      process.exit(1);
+    }
+    console.log(`Daemon started in background (PID: ${child.pid})`);
+    process.exit(0);
+  }
+
+  if (!isWatchdogChild && await pidManager.isRunning()) {
+    const info = await pidManager.readPID();
+    logger.error(`Daemon already running (PID: ${info?.pid})`);
     process.exit(1);
   }
 
-  if (resolvedDaemonConfig.watchdog.enabled && !isWatchdogChild) {
-    const baseDir = stateManager.getBaseDir();
-    const pidManager = new PIDManager(baseDir);
-    const logger = new Logger({
-      dir: getLogsDir(baseDir),
-    });
-    const runtimeRoot = resolveRuntimeRoot(baseDir, resolvedDaemonConfig.runtime_root);
+  if (shouldUseWatchdog) {
+    const runtimeRoot = resolveDaemonRuntimeRoot(baseDir, resolvedDaemonConfig.runtime_root);
+    const healthStore = new RuntimeHealthStore(runtimeRoot);
+    const leaderLockManager = new LeaderLockManager(runtimeRoot);
+    const scriptPath = process.argv[1]!;
+    const childArgs = process.argv.slice(2);
     const watchdog = new RuntimeWatchdog({
       pidManager,
-      healthStore: new RuntimeHealthStore(runtimeRoot),
-      leaderLockManager: new LeaderLockManager(runtimeRoot, resolvedDaemonConfig.watchdog.lease_ms),
+      healthStore,
+      leaderLockManager,
       logger,
-      pollIntervalMs: resolvedDaemonConfig.watchdog.heartbeat_interval_ms,
-      heartbeatTimeoutMs: resolvedDaemonConfig.watchdog.heartbeat_timeout_ms,
-      startupGraceMs: resolvedDaemonConfig.watchdog.startup_grace_ms,
-      restartBackoffMs: resolvedDaemonConfig.watchdog.restart_backoff_ms,
-      maxRestartBackoffMs: resolvedDaemonConfig.watchdog.max_restart_backoff_ms,
-      childShutdownGraceMs: resolvedDaemonConfig.watchdog.child_shutdown_grace_ms,
-      startChild: () => {
-        const scriptPath = process.argv[1]!;
-        return spawn(
-          process.execPath,
-          [scriptPath, ...buildStartArgs(goalIds, values, ["--watchdog-child"])],
-          {
-            detached: false,
-            stdio: "ignore",
-          }
-        );
-      },
+      startChild: () =>
+        spawn(process.execPath, [scriptPath, ...childArgs], {
+          stdio: "inherit",
+          env: {
+            ...process.env,
+            [WATCHDOG_CHILD_ENV]: "1",
+          },
+        }),
     });
 
     const shutdown = (): void => watchdog.stop();
     process.on("SIGTERM", shutdown);
     process.on("SIGINT", shutdown);
     try {
-      logger.info(`Starting PulSeed watchdog for goals: ${goalIds.join(", ")}`);
+      logger.info(`Starting runtime watchdog for goals: ${goalIds.join(", ")}`);
       await watchdog.start();
     } finally {
       process.removeListener("SIGTERM", shutdown);
@@ -241,17 +212,7 @@ export async function cmdStart(
   const notificationDispatcher = new NotificationDispatcher(undefined, notifierRegistry);
   deps.reportingEngine.setNotificationDispatcher(notificationDispatcher);
 
-  const baseDir = deps.stateManager.getBaseDir();
-  const pidManager = new PIDManager(baseDir);
-  const logger = new Logger({
-    dir: getLogsDir(baseDir),
-  });
-
-  if (!isWatchdogChild && await pidManager.isRunning()) {
-    const info = await pidManager.readPID();
-    logger.error(`Daemon already running (PID: ${info?.pid})`);
-    process.exit(1);
-  }
+  const daemonBaseDir = deps.stateManager.getBaseDir();
 
   // Create EventServer for event-driven wake-ups and SSE clients.
   const eventServer = new EventServer(
@@ -264,11 +225,11 @@ export async function cmdStart(
   });
 
   // Gap 4: Create CronScheduler for scheduled tasks
-  const cronScheduler = new CronScheduler(baseDir);
+  const cronScheduler = new CronScheduler(daemonBaseDir);
 
   // Create ScheduleEngine with data source registry and LLM client
   const scheduleEngine = new ScheduleEngine({
-    baseDir,
+    baseDir: daemonBaseDir,
     logger,
     dataSourceRegistry,
     llmClient: deps.llmClient,
@@ -294,7 +255,6 @@ export async function cmdStart(
     llmClient: deps.llmClient,
     cronScheduler,
     scheduleEngine,
-    managePidFile: !isWatchdogChild,
   });
 
   logger.info(`Starting PulSeed daemon for goals: ${goalIds.join(", ")}`);
@@ -390,8 +350,8 @@ export async function cmdDaemonStatus(_args: string[]): Promise<void> {
   lines.push(`  Interval:      ${intervalMin}m (adaptive sleep: ${adaptiveSleep})`);
   lines.push(`  Iterations:    ${cfg.iterations_per_cycle} per cycle`);
   lines.push(`  Proactive:     ${proactive}`);
-  lines.push(`  Runtime journal: ${cfg.runtime_journal_v2 ? "on" : "off"}`);
-  if (cfg.runtime_journal_v2 && cfg.runtime_root) {
+  lines.push("  Runtime:       durable auto-recovery");
+  if (cfg.runtime_root) {
     lines.push(`  Runtime root:  ${cfg.runtime_root}`);
   }
   lines.push(`  Crash recovery: ${crashEnabled} (${data.crash_count}/${maxRetries} retries used)`);

@@ -1,5 +1,7 @@
 # PulSeed --- Multi-Channel Runtime
 
+> Historical architecture draft. For the current production recovery design, see [Runtime Auto-Recovery](./runtime-auto-recovery.md).
+
 > Evolves docs/runtime.md § "Process Model" from daemon-only to a 4-layer architecture:
 > Gateway → Queue → Executor → Eternal State.
 

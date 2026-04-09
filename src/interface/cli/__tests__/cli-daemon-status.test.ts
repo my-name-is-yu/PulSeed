@@ -165,7 +165,7 @@ describe("cmdDaemonStatus", () => {
     expect(output).toContain("5m (adaptive sleep: off)");
     expect(output).toContain("10 per cycle");
     expect(output).toContain("Proactive:     off");
-    expect(output).toContain("Runtime journal: off");
+    expect(output).toContain("Runtime:       durable auto-recovery");
     expect(output).toContain("enabled");
   });
 
@@ -198,7 +198,7 @@ describe("cmdDaemonStatus", () => {
     expect(output).toContain("2m (adaptive sleep: on)");
     expect(output).toContain("5 per cycle");
     expect(output).toContain("Proactive:     on");
-    expect(output).toContain("Runtime journal: on");
+    expect(output).toContain("Runtime:       durable auto-recovery");
     expect(output).toContain("/tmp/pulseed-runtime");
     expect(output).toContain("0/5 retries used");
   });
@@ -227,7 +227,7 @@ describe("cmdDaemonStatus", () => {
     const output = consoleSpy.mock.calls[0]?.[0] as string;
     expect(output).toContain("3m (adaptive sleep: off)");
     expect(output).toContain("3 per cycle");
-    expect(output).toContain("Runtime journal: on");
+    expect(output).toContain("Runtime:       durable auto-recovery");
   });
 
   it("prefers daemon.json over daemon-config.json when both exist", async () => {
@@ -255,7 +255,7 @@ describe("cmdDaemonStatus", () => {
 
     const output = consoleSpy.mock.calls[0]?.[0] as string;
     expect(output).toContain("7 per cycle");
-    expect(output).toContain("Runtime journal: on");
+    expect(output).toContain("Runtime:       durable auto-recovery");
   });
 
   it("shows last cycle relative time when last_loop_at is present", async () => {

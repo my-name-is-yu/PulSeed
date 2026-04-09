@@ -3,7 +3,6 @@ import * as os from "node:os";
 import * as path from "node:path";
 import * as fs from "node:fs";
 import { LoopSupervisor } from "../executor/loop-supervisor.js";
-import { EventBus } from "../queue/event-bus.js";
 import { JournalBackedQueue } from "../queue/journal-backed-queue.js";
 import { createEnvelope } from "../types/envelope.js";
 import type { LoopResult } from "../../orchestrator/loop/core-loop.js";
@@ -16,27 +15,11 @@ function makeLoopResult(o: Partial<LoopResult> = {}): LoopResult {
     startedAt: new Date().toISOString(), completedAt: new Date().toISOString(), ...o };
 }
 
-function makeSupervisor(coreLoopImpl?: (...args: any[]) => Promise<LoopResult> | never, extra: Record<string, unknown> = {}) {
-  const stateFile = path.join(os.tmpdir(), `sv-${Date.now()}-${Math.random()}.json`);
-  const eventBus = new EventBus();
-  const mockCoreLoop = { run: vi.fn().mockImplementation(coreLoopImpl ?? (() => Promise.resolve(makeLoopResult()))), stop: vi.fn() };
-  const deps = {
-    coreLoopFactory: () => mockCoreLoop as any,
-    eventBus,
-    driveSystem: { shouldActivate: vi.fn(), prioritizeGoals: vi.fn(), startWatcher: vi.fn(), stopWatcher: vi.fn(), writeEvent: vi.fn() } as any,
-    stateManager: { getBaseDir: vi.fn().mockReturnValue(os.tmpdir()) } as any,
-    logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } as any,
-    onEscalation: vi.fn(),
-    ...extra,
-  };
-  const supervisor = new LoopSupervisor(deps, {
-    concurrency: 2, pollIntervalMs: 20, maxCrashCount: 3,
-    crashBackoffBaseMs: 50, stateFilePath: stateFile,
-  });
-  return { supervisor, deps, eventBus: deps.eventBus as EventBus, mockCoreLoop, stateFile, onEscalation: deps.onEscalation };
-}
-
-function makeDurableSupervisor(coreLoopImpl?: (...args: any[]) => Promise<LoopResult> | never, extra: Record<string, unknown> = {}) {
+function makeSupervisor(
+  coreLoopImpl?: (...args: any[]) => Promise<LoopResult> | never,
+  extra: Record<string, unknown> = {},
+  config: Record<string, unknown> = {}
+) {
   const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "sv-durable-"));
   const stateFile = path.join(runtimeRoot, "supervisor-state.json");
   const journalQueue = new JournalBackedQueue({
@@ -62,10 +45,12 @@ function makeDurableSupervisor(coreLoopImpl?: (...args: any[]) => Promise<LoopRe
     stateFilePath: stateFile,
     claimLeaseMs: 200,
     leaseRenewIntervalMs: 50,
+    ...config,
   });
   return {
     supervisor,
     deps,
+    stateFile,
     journalQueue,
     goalLeaseManager,
     mockCoreLoop,
@@ -77,31 +62,38 @@ describe("LoopSupervisor", () => {
   // ─── 1. start() pushes goal_activated and workers pick them up ───
 
   it("start() calls coreLoop.run for initial goals", async () => {
-    const { supervisor, mockCoreLoop } = makeSupervisor();
-    await supervisor.start(["g1"]);
-    await new Promise((r) => setTimeout(r, 80));
-    await supervisor.shutdown();
-    expect(mockCoreLoop.run).toHaveBeenCalledWith("g1", expect.anything());
+    const { supervisor, mockCoreLoop, runtimeRoot } = makeSupervisor();
+    try {
+      await supervisor.start(["g1"]);
+      await new Promise((r) => setTimeout(r, 80));
+      await supervisor.shutdown();
+      expect(mockCoreLoop.run).toHaveBeenCalledWith("g1", expect.anything());
+    } finally {
+      fs.rmSync(runtimeRoot, { recursive: true, force: true });
+    }
   });
 
   // ─── 2. Goal Exclusivity: coalescing ───
 
   it("coalesces duplicate goal_activated via requestExtend (re-runs)", async () => {
     let callCount = 0;
-    const eventBus = new EventBus();
-    const { supervisor, mockCoreLoop } = makeSupervisor((async (goalId: string) => {
+    const { supervisor, mockCoreLoop, journalQueue, runtimeRoot } = makeSupervisor((async (goalId: string) => {
       callCount++;
       if (callCount === 1) {
-        eventBus.push(createEnvelope({ type: "event", name: "goal_activated",
+        journalQueue.accept(createEnvelope({ type: "event", name: "goal_activated",
           source: "test", goal_id: "g1", payload: {}, priority: "normal" }));
         await new Promise((r) => setTimeout(r, 30));
       }
       return makeLoopResult({ goalId });
-    }) as unknown as () => Promise<LoopResult>, { eventBus } as any);
-    await supervisor.start(["g1"]);
-    await new Promise((r) => setTimeout(r, 200));
-    await supervisor.shutdown();
-    expect(mockCoreLoop.run).toHaveBeenCalledTimes(2);
+    }) as unknown as () => Promise<LoopResult>);
+    try {
+      await supervisor.start(["g1"]);
+      await new Promise((r) => setTimeout(r, 200));
+      await supervisor.shutdown();
+      expect(mockCoreLoop.run).toHaveBeenCalledTimes(2);
+    } finally {
+      fs.rmSync(runtimeRoot, { recursive: true, force: true });
+    }
   });
 
   // ─── 3. Suspended goals are skipped ───
@@ -118,29 +110,27 @@ describe("LoopSupervisor", () => {
       }),
       stop: vi.fn(),
     };
-    const stateFile = path.join(os.tmpdir(), `sv-susp-${Date.now()}.json`);
-    const eventBus = new EventBus();
-    const sv = new LoopSupervisor(
+    const { supervisor, runtimeRoot } = makeSupervisor(
+      crashingLoop.run as unknown as (...args: any[]) => Promise<LoopResult>,
       {
         coreLoopFactory: () => crashingLoop as any,
-        eventBus,
-        driveSystem: { shouldActivate: vi.fn(), prioritizeGoals: vi.fn(), startWatcher: vi.fn(), stopWatcher: vi.fn(), writeEvent: vi.fn() } as any,
-        stateManager: { getBaseDir: vi.fn().mockReturnValue(os.tmpdir()) } as any,
-        logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } as any,
         onEscalation,
       },
-      { concurrency: 1, pollIntervalMs: 10, maxCrashCount: 1, crashBackoffBaseMs: 9999, stateFilePath: stateFile }
+      { concurrency: 1, pollIntervalMs: 10, maxCrashCount: 1, crashBackoffBaseMs: 9999 }
     );
-    await sv.start(["g-susp"]);
-    // Wait for first run to complete (crash → immediate suspend since maxCrashCount=1)
-    const deadline = Date.now() + 1000;
-    while (runCallCount === 0 && Date.now() < deadline) {
-      await new Promise((r) => setTimeout(r, 10));
+    try {
+      await supervisor.start(["g-susp"]);
+      const deadline = Date.now() + 1000;
+      while (runCallCount === 0 && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 10));
+      }
+      await new Promise((r) => setTimeout(r, 50));
+      await supervisor.shutdown();
+      expect(onEscalation).toHaveBeenCalledWith("g-susp", 1, "crash");
+      expect(supervisor.getState().suspendedGoals).toContain("g-susp");
+    } finally {
+      fs.rmSync(runtimeRoot, { recursive: true, force: true });
     }
-    await new Promise((r) => setTimeout(r, 50)); // let executeWorker finish
-    await sv.shutdown();
-    expect(onEscalation).toHaveBeenCalledWith("g-susp", 1, "crash");
-    expect(sv.getState().suspendedGoals).toContain("g-susp");
   });
 
   // ─── 4. Crash recovery re-queues under threshold ───
@@ -154,161 +144,168 @@ describe("LoopSupervisor", () => {
       run: vi.fn().mockRejectedValue(new Error("transient")),
       stop: vi.fn(),
     };
-    const stateFile = path.join(os.tmpdir(), `sv-retry-${Date.now()}.json`);
-    const eventBus = new EventBus();
     let runCallCount = 0;
     const wrappedRun = vi.fn().mockImplementation(async (...args: unknown[]) => {
       runCallCount++;
       return retryLoop.run(...args);
     });
-    const sv = new LoopSupervisor(
-      {
-        coreLoopFactory: () => ({ run: wrappedRun, stop: vi.fn() }) as any,
-        eventBus,
-        driveSystem: { shouldActivate: vi.fn(), prioritizeGoals: vi.fn(), startWatcher: vi.fn(), stopWatcher: vi.fn(), writeEvent: vi.fn() } as any,
-        stateManager: { getBaseDir: vi.fn().mockReturnValue(os.tmpdir()) } as any,
-        logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } as any,
-      },
-      { concurrency: 1, pollIntervalMs: 10, maxCrashCount: 3, crashBackoffBaseMs: 9999, stateFilePath: stateFile }
+    const { supervisor, runtimeRoot } = makeSupervisor(
+      wrappedRun as unknown as (...args: any[]) => Promise<LoopResult>,
+      { coreLoopFactory: () => ({ run: wrappedRun, stop: vi.fn() }) as any },
+      { concurrency: 1, pollIntervalMs: 10, maxCrashCount: 3, crashBackoffBaseMs: 9999 }
     );
-    await sv.start(["g-retry"]);
-    // Wait for first run to crash
-    const deadline = Date.now() + 1000;
-    while (runCallCount === 0 && Date.now() < deadline) {
-      await new Promise((r) => setTimeout(r, 10));
+    try {
+      await supervisor.start(["g-retry"]);
+      const deadline = Date.now() + 1000;
+      while (runCallCount === 0 && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 10));
+      }
+      await new Promise((r) => setTimeout(r, 50));
+      await supervisor.shutdown();
+      const state = supervisor.getState();
+      expect(state.crashCounts["g-retry"]).toBe(1);
+      expect(state.suspendedGoals).not.toContain("g-retry");
+    } finally {
+      fs.rmSync(runtimeRoot, { recursive: true, force: true });
     }
-    await new Promise((r) => setTimeout(r, 50));
-    await sv.shutdown();
-    const state = sv.getState();
-    expect(state.crashCounts["g-retry"]).toBe(1);
-    expect(state.suspendedGoals).not.toContain("g-retry");
   });
 
   // ─── 5. shutdown() ───
 
   it("shutdown() resolves after workers complete", async () => {
-    const { supervisor } = makeSupervisor();
-    await supervisor.start(["g1"]);
-    await new Promise((r) => setTimeout(r, 40));
-    await expect(supervisor.shutdown()).resolves.toBeUndefined();
+    const { supervisor, runtimeRoot } = makeSupervisor();
+    try {
+      await supervisor.start(["g1"]);
+      await new Promise((r) => setTimeout(r, 40));
+      await expect(supervisor.shutdown()).resolves.toBeUndefined();
+    } finally {
+      fs.rmSync(runtimeRoot, { recursive: true, force: true });
+    }
   });
 
   it("shutdown() is safe without start()", async () => {
-    const { supervisor } = makeSupervisor();
-    await expect(supervisor.shutdown()).resolves.toBeUndefined();
+    const { supervisor, runtimeRoot } = makeSupervisor();
+    try {
+      await expect(supervisor.shutdown()).resolves.toBeUndefined();
+    } finally {
+      fs.rmSync(runtimeRoot, { recursive: true, force: true });
+    }
   });
 
   // ─── 6. State persistence ───
 
   it("writes supervisor-state.json after execution", async () => {
-    const { supervisor, stateFile } = makeSupervisor();
-    await supervisor.start(["g1"]);
-    await new Promise((r) => setTimeout(r, 100));
-    await supervisor.shutdown();
-    expect(fs.existsSync(stateFile)).toBe(true);
-    const state = JSON.parse(fs.readFileSync(stateFile, "utf8"));
-    expect(state).toHaveProperty("workers");
-    expect(state).toHaveProperty("crashCounts");
-    fs.rmSync(stateFile, { force: true });
+    const { supervisor, stateFile, runtimeRoot } = makeSupervisor();
+    try {
+      await supervisor.start(["g1"]);
+      await new Promise((r) => setTimeout(r, 100));
+      await supervisor.shutdown();
+      expect(fs.existsSync(stateFile)).toBe(true);
+      const state = JSON.parse(fs.readFileSync(stateFile, "utf8"));
+      expect(state).toHaveProperty("workers");
+      expect(state).toHaveProperty("crashCounts");
+    } finally {
+      fs.rmSync(runtimeRoot, { recursive: true, force: true });
+    }
   });
 
   // ─── 7. Concurrency limit ───
 
   it("runs at most N workers simultaneously", async () => {
     let concurrent = 0; let max = 0;
-    const { supervisor } = makeSupervisor(async () => {
+    const { deps, runtimeRoot } = makeSupervisor(async () => {
       concurrent++; max = Math.max(max, concurrent);
       await new Promise((r) => setTimeout(r, 30));
       concurrent--;
       return makeLoopResult();
     });
-    const sv = new LoopSupervisor((supervisor as any).deps, {
+    const sv = new LoopSupervisor(deps, {
       concurrency: 2, pollIntervalMs: 20, maxCrashCount: 3,
-      crashBackoffBaseMs: 50, stateFilePath: path.join(os.tmpdir(), `sv-conc-${Date.now()}.json`),
+      crashBackoffBaseMs: 50, stateFilePath: path.join(runtimeRoot, "sv-conc.json"),
+      claimLeaseMs: 200,
+      leaseRenewIntervalMs: 50,
     });
-    await sv.start(["g1", "g2", "g3"]);
-    await new Promise((r) => setTimeout(r, 200));
-    await sv.shutdown();
-    expect(max).toBeLessThanOrEqual(2);
+    try {
+      await sv.start(["g1", "g2", "g3"]);
+      await new Promise((r) => setTimeout(r, 200));
+      await sv.shutdown();
+      expect(max).toBeLessThanOrEqual(2);
+    } finally {
+      fs.rmSync(runtimeRoot, { recursive: true, force: true });
+    }
   });
 
   // ─── 8. Non-goal events are re-enqueued, not dropped ───
 
-  it('non-goal events are re-enqueued after pollAndAssign', async () => {
-    const { supervisor, eventBus } = makeSupervisor();
-    // Do not start the supervisor (no poll timer), just call start then immediately push
-    // a non-goal event and let the poll cycle run once via the timer
-    await supervisor.start([]);
+  it('non-goal events remain pending because the supervisor only claims goal activations', async () => {
+    const { supervisor, journalQueue, runtimeRoot } = makeSupervisor();
+    try {
+      await supervisor.start([]);
 
-    // Push a non-goal event
-    const nonGoalEnvelope = createEnvelope({
-      type: 'event',
-      name: 'cron_task_due',
-      source: 'test',
-      goal_id: undefined,
-      payload: { taskId: 'task-1' },
-      priority: 'normal',
-    });
-    eventBus.push(nonGoalEnvelope);
+      journalQueue.accept(createEnvelope({
+        type: 'event',
+        name: 'cron_task_due',
+        source: 'test',
+        goal_id: undefined,
+        payload: { taskId: 'task-1' },
+        priority: 'normal',
+      }));
 
-    // Wait for at least one poll cycle (pollIntervalMs=20)
-    await new Promise((r) => setTimeout(r, 60));
-    await supervisor.shutdown();
+      await new Promise((r) => setTimeout(r, 60));
+      await supervisor.shutdown();
 
-    // The non-goal event should still be in the bus (re-enqueued)
-    const remaining = eventBus.pull();
-    expect(remaining).toBeDefined();
-    expect(remaining?.name).toBe('cron_task_due');
+      const snapshot = journalQueue.snapshot();
+      expect(snapshot.pending.normal).toHaveLength(1);
+      expect(snapshot.pending.normal[0]).toBeDefined();
+      const queueState = JSON.parse(fs.readFileSync(path.join(runtimeRoot, "queue.json"), "utf8"));
+      expect(queueState.records[snapshot.pending.normal[0]].envelope.name).toBe('cron_task_due');
+    } finally {
+      fs.rmSync(runtimeRoot, { recursive: true, force: true });
+    }
   });
 
   it('non-goal events do not consume idle worker slots', async () => {
     let goalRunCount = 0;
-    const { supervisor, eventBus } = makeSupervisor((async (goalId: string) => {
+    const { supervisor, journalQueue, runtimeRoot } = makeSupervisor((async (goalId: string) => {
       goalRunCount++;
       return makeLoopResult({ goalId });
     }) as unknown as () => Promise<LoopResult>);
+    try {
+      await supervisor.start([]);
 
-    await supervisor.start([]);
+      journalQueue.accept(createEnvelope({
+        type: 'event',
+        name: 'schedule_activated',
+        source: 'test',
+        goal_id: undefined,
+        payload: {},
+        priority: 'normal',
+      }));
+      journalQueue.accept(createEnvelope({
+        type: 'event',
+        name: 'goal_activated',
+        source: 'test',
+        goal_id: 'g-mix',
+        payload: {},
+        priority: 'normal',
+      }));
 
-    // Push a mix: non-goal event first, then a goal event
-    eventBus.push(createEnvelope({
-      type: 'event',
-      name: 'schedule_activated',
-      source: 'test',
-      goal_id: undefined,
-      payload: {},
-      priority: 'normal',
-    }));
-    eventBus.push(createEnvelope({
-      type: 'event',
-      name: 'goal_activated',
-      source: 'test',
-      goal_id: 'g-mix',
-      payload: {},
-      priority: 'normal',
-    }));
+      await new Promise((r) => setTimeout(r, 150));
+      await supervisor.shutdown();
 
-    // Wait for processing
-    await new Promise((r) => setTimeout(r, 150));
-    await supervisor.shutdown();
-
-    // The goal should have been executed
-    expect(goalRunCount).toBeGreaterThanOrEqual(1);
-
-    // The schedule_activated event should have been re-enqueued and remain in the bus
-    // (no consumer for it in this test, so it stays)
-    // Drain bus to check
-    const remaining: string[] = [];
-    let env;
-    while ((env = eventBus.pull()) !== undefined) {
-      remaining.push(env.name);
+      expect(goalRunCount).toBeGreaterThanOrEqual(1);
+      const snapshot = journalQueue.snapshot();
+      const queueState = JSON.parse(fs.readFileSync(path.join(runtimeRoot, "queue.json"), "utf8"));
+      expect(
+        snapshot.pending.normal.map((messageId) => queueState.records[messageId].envelope.name)
+      ).toContain('schedule_activated');
+    } finally {
+      fs.rmSync(runtimeRoot, { recursive: true, force: true });
     }
-    // schedule_activated should appear among remaining events
-    expect(remaining).toContain('schedule_activated');
   });
 
   it("claims durable goal activations and completes the queue record", async () => {
-    const { supervisor, journalQueue, goalLeaseManager, mockCoreLoop, runtimeRoot } = makeDurableSupervisor(async (goalId: string) => {
+    const { supervisor, journalQueue, goalLeaseManager, mockCoreLoop, runtimeRoot } = makeSupervisor(async (goalId: string) => {
       await new Promise((resolve) => setTimeout(resolve, 80));
       return makeLoopResult({ goalId });
     });
@@ -329,7 +326,7 @@ describe("LoopSupervisor", () => {
 
   it("coalesces duplicate durable goal activations via requestExtend", async () => {
     let runCount = 0;
-    const { supervisor, journalQueue, mockCoreLoop, runtimeRoot } = makeDurableSupervisor(async (goalId: string) => {
+    const { supervisor, journalQueue, mockCoreLoop, runtimeRoot } = makeSupervisor(async (goalId: string) => {
       runCount += 1;
       if (runCount === 1) {
         journalQueue.accept(createEnvelope({
@@ -359,7 +356,7 @@ describe("LoopSupervisor", () => {
 
   it("applies crash backoff before retrying durable activations", async () => {
     let runCount = 0;
-    const { supervisor, journalQueue, runtimeRoot } = makeDurableSupervisor(async () => {
+    const { supervisor, journalQueue, runtimeRoot } = makeSupervisor(async () => {
       runCount += 1;
       if (runCount === 1) {
         throw new Error("boom");
@@ -386,7 +383,7 @@ describe("LoopSupervisor", () => {
   });
 
   it("does not append a duplicate durable activation when startup finds a recovered pending goal", async () => {
-    const { supervisor, journalQueue, runtimeRoot } = makeDurableSupervisor();
+    const { supervisor, journalQueue, runtimeRoot } = makeSupervisor();
     journalQueue.accept(createEnvelope({
       type: "event",
       name: "goal_activated",

@@ -1,8 +1,11 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
+import * as fs from "node:fs";
+import * as path from "node:path";
 
 const {
   buildDepsMock,
   daemonStartMock,
+  watchdogStartMock,
   scheduleLoadEntriesMock,
   pluginLoadAllMock,
   setRealtimeSinkMock,
@@ -10,9 +13,11 @@ const {
   eventServerInstances,
   scheduleEngineArgs,
   daemonRunnerArgs,
+  watchdogArgs,
 } = vi.hoisted(() => ({
   buildDepsMock: vi.fn(),
   daemonStartMock: vi.fn().mockResolvedValue(undefined),
+  watchdogStartMock: vi.fn().mockResolvedValue(undefined),
   scheduleLoadEntriesMock: vi.fn().mockResolvedValue(undefined),
   pluginLoadAllMock: vi.fn().mockResolvedValue(undefined),
   setRealtimeSinkMock: vi.fn(),
@@ -20,6 +25,7 @@ const {
   eventServerInstances: [] as Array<{ broadcast: ReturnType<typeof vi.fn> }>,
   scheduleEngineArgs: [] as unknown[],
   daemonRunnerArgs: [] as unknown[],
+  watchdogArgs: [] as unknown[],
 }));
 
 vi.mock("node:os", async (importOriginal) => {
@@ -39,6 +45,15 @@ vi.mock("../../../runtime/daemon-runner.js", () => ({
     daemonRunnerArgs.push(deps);
     return {
       start: daemonStartMock,
+    };
+  }),
+}));
+
+vi.mock("../../../runtime/watchdog.js", () => ({
+  RuntimeWatchdog: vi.fn().mockImplementation(function (args: unknown) {
+    watchdogArgs.push(args);
+    return {
+      start: watchdogStartMock,
     };
   }),
 }));
@@ -124,9 +139,12 @@ vi.mock("../../../platform/observation/data-source-adapter.js", () => ({
 import { cmdStart } from "../commands/daemon.js";
 
 describe("cmdStart", () => {
+  const mockedHome = "/tmp/pulseed-daemon-start-test-home";
+
   beforeEach(() => {
     buildDepsMock.mockReset();
     daemonStartMock.mockClear();
+    watchdogStartMock.mockClear();
     scheduleLoadEntriesMock.mockClear();
     pluginLoadAllMock.mockClear();
     setRealtimeSinkMock.mockClear();
@@ -134,6 +152,9 @@ describe("cmdStart", () => {
     eventServerInstances.length = 0;
     scheduleEngineArgs.length = 0;
     daemonRunnerArgs.length = 0;
+    watchdogArgs.length = 0;
+    delete process.env.PULSEED_WATCHDOG_CHILD;
+    fs.rmSync(mockedHome, { recursive: true, force: true });
 
     buildDepsMock.mockResolvedValue({
       coreLoop: {},
@@ -147,9 +168,16 @@ describe("cmdStart", () => {
     });
   });
 
-  it("wires EventServer realtime sink and full ScheduleEngine deps on normal daemon start", async () => {
+  afterEach(() => {
+    fs.rmSync(mockedHome, { recursive: true, force: true });
+    delete process.env.PULSEED_WATCHDOG_CHILD;
+  });
+
+  it("wires EventServer realtime sink and full ScheduleEngine deps in the watchdog child process", async () => {
+    process.env.PULSEED_WATCHDOG_CHILD = "1";
+
     await cmdStart(
-      {} as never,
+      { getBaseDir: vi.fn().mockReturnValue("/tmp/pulseed-daemon-start-base") } as never,
       {} as never,
       ["--goal", "goal-1"]
     );
@@ -179,5 +207,24 @@ describe("cmdStart", () => {
       })
     );
     expect(daemonStartMock).toHaveBeenCalledWith(["goal-1"]);
+    expect(watchdogStartMock).not.toHaveBeenCalled();
+  });
+
+  it("launches RuntimeWatchdog on the top-level daemon start path", async () => {
+    await cmdStart(
+      { getBaseDir: vi.fn().mockReturnValue("/tmp/pulseed-daemon-start-base") } as never,
+      {} as never,
+      ["--goal", "goal-1"]
+    );
+
+    expect(watchdogStartMock).toHaveBeenCalledOnce();
+    expect(watchdogArgs).toHaveLength(1);
+    expect(daemonRunnerArgs).toHaveLength(0);
+    expect(buildDepsMock).not.toHaveBeenCalled();
+    expect(watchdogArgs[0]).toEqual(
+      expect.objectContaining({
+        startChild: expect.any(Function),
+      })
+    );
   });
 });

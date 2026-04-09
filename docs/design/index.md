@@ -50,6 +50,7 @@ Overview of PulSeed's design documentation, organized by subsystem.
 
 | Document | Description |
 |----------|-------------|
+| [Runtime Auto-Recovery](infrastructure/runtime-auto-recovery.md) | Durable single-node runtime with watchdog restart, journal-backed queueing, and lease-based execution recovery |
 | [LLM Fault Tolerance](infrastructure/llm-fault-tolerance.md) | Resilience patterns for LLM API calls |
 | [Token Optimization](infrastructure/token-optimization.md) | Strategies for reducing LLM token usage |
 | [Prompt Context Architecture](infrastructure/prompt-context-architecture.md) | How hierarchical memory feeds into LLM prompts |
