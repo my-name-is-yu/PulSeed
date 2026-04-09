@@ -4,6 +4,27 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.4.0] - 2026-04-09
+
+### Features
+- **Durable Auto-Recovery Runtime**: completed the public auto-recovery runtime with watchdog-managed daemon startup, leader-lock ownership, heartbeat health snapshots, durable approval/outbox/runtime stores, and supervisor-managed goal execution that survives daemon restarts
+- **Durable Command & Event Dispatch**: added journal-backed command and event dispatch so `goal_start`, `goal_stop`, chat messages, approval responses, cron activations, and schedule activations are accepted durably and replayed after recovery instead of being lost in memory
+- **Execution Ownership Model**: introduced durable queue claims, goal leases, claim sweeping, and execution fencing to prevent duplicate workers and stale writers during crash recovery or takeover scenarios
+
+### Changed
+- **Runtime Cutover**: removed the legacy in-memory `EventBus` / `CommandBus` execution path and made the durable runtime the primary daemon path, including watchdog-first CLI daemon startup and durable health/status reporting
+- **LoopSupervisor**: moved supervisor startup and maintenance onto explicit durable polling and completion callbacks so loop counts, daemon status, proactive ticks, cron processing, and schedule processing stay correct in supervisor mode
+- **Release Packaging**: bumped the npm package version to `0.4.0`
+
+### Fixed
+- Restored daemon auto-recovery CI stability by hardening shutdown signaling, supervisor maintenance timing, queue completion accounting, approval persistence checks, and runtime tests that previously relied on fixed sleeps
+- Fixed `LoopSupervisor` polling races where overlapping polls could hide the active poll from shutdown and leave durable claims or retries in inconsistent states under Node 22
+- Fixed a Node 22-only `DriveSystem` test cleanup race by waiting for async directory initialization before teardown, eliminating intermittent `ENOTEMPTY` failures in the publish CI matrix
+
+### Docs
+- Added the public runtime auto-recovery design document under `docs/design/infrastructure/runtime-auto-recovery.md` and linked it from the design index
+- Marked the older multi-channel runtime design as historical context now that the durable runtime cutover is complete
+
 ## [0.3.0] - 2026-04-07
 
 ### Features
