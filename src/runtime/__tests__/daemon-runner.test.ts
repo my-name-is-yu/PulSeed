@@ -6,6 +6,7 @@ import { PIDManager } from "../pid-manager.js";
 import { Logger } from "../logger.js";
 import type { LoopResult } from "../../orchestrator/loop/core-loop.js";
 import type { DaemonDeps } from "../daemon-runner.js";
+import type { GoalActivationSnapshot } from "../../platform/drive/drive-system.js";
 import { makeTempDir } from "../../../tests/helpers/temp-dir.js";
 import { JournalBackedQueue } from "../queue/journal-backed-queue.js";
 import { GoalLeaseManager } from "../goal-lease-manager.js";
@@ -89,6 +90,11 @@ function makeDeps(tmpDir: string, overrides: Partial<DaemonDeps> = {}): DaemonDe
   };
 
   const mockDriveSystem = {
+    getGoalActivationSnapshot: vi.fn(async (goalId: string): Promise<GoalActivationSnapshot> => ({
+      goalId,
+      shouldActivate: false,
+      schedule: null,
+    })),
     shouldActivate: vi.fn().mockReturnValue(false),
     getSchedule: vi.fn().mockResolvedValue(null),
     prioritizeGoals: vi.fn().mockImplementation((ids: string[]) => ids),
@@ -456,6 +462,73 @@ describe("DaemonRunner durable runtime", () => {
 
     await expect(daemon.start(["goal-1"])).rejects.toThrow();
     expect(fs.existsSync(path.join(tmpDir, "pulseed.pid"))).toBe(false);
+  });
+
+  it("reuses a cycle-local schedule snapshot for activation ordering and adaptive sleep", async () => {
+    const getGoalActivationSnapshot = vi.fn(async (goalId: string): Promise<GoalActivationSnapshot> => {
+      if (goalId === "goal-soon") {
+        return {
+          goalId,
+          shouldActivate: true,
+          schedule: {
+            goal_id: goalId,
+            next_check_at: new Date("2026-01-01T00:00:00.000Z").toISOString(),
+            check_interval_hours: 1,
+            last_triggered_at: null,
+            consecutive_actions: 0,
+            cooldown_until: null,
+            current_interval_hours: 1,
+            last_gap_score: 2,
+          } as GoalActivationSnapshot["schedule"],
+        };
+      }
+
+      return {
+        goalId,
+        shouldActivate: true,
+        schedule: {
+          goal_id: goalId,
+          next_check_at: new Date("2026-01-02T00:00:00.000Z").toISOString(),
+          check_interval_hours: 1,
+          last_triggered_at: null,
+          consecutive_actions: 0,
+          cooldown_until: null,
+          current_interval_hours: 1,
+          last_gap_score: 7,
+        } as GoalActivationSnapshot["schedule"],
+      };
+    });
+    const prioritizeGoals = vi.fn((goalIds: string[], scores: Map<string, number>) =>
+      [...goalIds].sort((left, right) => (scores.get(right) ?? 0) - (scores.get(left) ?? 0))
+    );
+    const deps = makeDeps(tmpDir, {
+      driveSystem: {
+        getGoalActivationSnapshot,
+        shouldActivate: vi.fn().mockResolvedValue(true),
+        getSchedule: vi.fn(() => {
+          throw new Error("getSchedule should not be called when cycle snapshots are provided");
+        }),
+        prioritizeGoals,
+        startWatcher: vi.fn(),
+        stopWatcher: vi.fn(),
+        writeEvent: vi.fn().mockResolvedValue(undefined),
+      } as unknown as DaemonDeps["driveSystem"],
+      config: {
+        check_interval_ms: 50,
+      },
+    });
+    const daemon = new DaemonRunner(deps);
+
+    const snapshot = await (daemon as any).collectGoalCycleSnapshot(["goal-later", "goal-soon"]);
+    const activeGoals = await (daemon as any).determineActiveGoals(["goal-later", "goal-soon"], snapshot);
+    const maxGapScore = await (daemon as any).getMaxGapScore(["goal-later", "goal-soon"], snapshot);
+
+    expect(activeGoals).toEqual(["goal-soon", "goal-later"]);
+    expect(maxGapScore).toBe(7);
+    expect(getGoalActivationSnapshot).toHaveBeenCalledTimes(2);
+    expect(getGoalActivationSnapshot).toHaveBeenNthCalledWith(1, "goal-later");
+    expect(getGoalActivationSnapshot).toHaveBeenNthCalledWith(2, "goal-soon");
+    expect(prioritizeGoals).toHaveBeenCalledTimes(1);
   });
 
   it("generates cron entries for daemon scheduling", () => {

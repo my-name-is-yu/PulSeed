@@ -15,6 +15,7 @@ export {
   writeShutdownMarkerFile,
 } from "./persistence.js";
 export {
+  collectGoalCycleScheduleSnapshot,
   determineActiveGoalsForCycle,
   expireOldCronTasks,
   getMaxGapScoreForGoals,

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
@@ -161,6 +161,26 @@ describe("DriveSystem", () => {
       const goalId = "nonexistent-goal";
       // No goal stored, no schedule => schedule is due => true
       expect(await driveSystem.shouldActivate(goalId)).toBe(true);
+    });
+
+    it("builds an activation snapshot with a single schedule read", async () => {
+      const goalId = randomUUID();
+      const goal = makeGoal({ id: goalId, status: "active" });
+      await stateManager.saveGoal(goal);
+
+      const futureTime = new Date(Date.now() + 10 * 60 * 60 * 1000).toISOString();
+      const schedule = driveSystem.createDefaultSchedule(goalId, 10);
+      await driveSystem.updateSchedule(goalId, { ...schedule, next_check_at: futureTime });
+
+      const getScheduleSpy = vi.spyOn(driveSystem, "getSchedule");
+
+      const snapshot = await driveSystem.getGoalActivationSnapshot(goalId);
+
+      expect(snapshot.goalId).toBe(goalId);
+      expect(snapshot.shouldActivate).toBe(false);
+      expect(snapshot.schedule?.goal_id).toBe(goalId);
+      expect(getScheduleSpy).toHaveBeenCalledTimes(1);
+      expect(getScheduleSpy).toHaveBeenCalledWith(goalId);
     });
   });
 

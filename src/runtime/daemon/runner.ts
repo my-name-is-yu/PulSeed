@@ -38,6 +38,7 @@ import type { ShutdownMarker } from "./index.js";
 import {
   checkCrashRecoveryMarker,
   cleanupDaemonRun,
+  collectGoalCycleScheduleSnapshot,
   deleteShutdownMarkerFile,
   determineActiveGoalsForCycle,
   expireOldCronTasks,
@@ -53,6 +54,7 @@ import {
   writeChatMessageEvent,
   writeShutdownMarkerFile,
 } from "./index.js";
+import type { GoalCycleScheduleSnapshotEntry } from "./maintenance.js";
 
 // Re-exports for callers that imported these from daemon-runner
 export { generateCronEntry } from "./signals.js";
@@ -589,8 +591,9 @@ export class DaemonRunner {
     while (this.running && !this.shuttingDown) {
       try {
         const goalIds = [...this.currentGoalIds];
+        const cycleSnapshot = await this.collectGoalCycleSnapshot(goalIds);
         // 1. Determine which goals need activation
-        const activeGoals = await this.determineActiveGoals(goalIds);
+        const activeGoals = await this.determineActiveGoals(goalIds, cycleSnapshot);
 
         if (activeGoals.length === 0) {
           this.logger.info("No goals need activation this cycle", {
@@ -668,7 +671,7 @@ export class DaemonRunner {
         // 6. Wait for next check interval
         if (this.running) {
           const baseIntervalMs = this.getNextInterval(goalIds);
-          const maxGapScore = await this.getMaxGapScore(goalIds);
+          const maxGapScore = await this.getMaxGapScore(goalIds, cycleSnapshot);
           const intervalMs = this.calculateAdaptiveInterval(
             baseIntervalMs,
             activeGoals.length,
@@ -693,8 +696,15 @@ export class DaemonRunner {
    * Determine which goals should be activated this cycle.
    * Uses DriveSystem.shouldActivate() for each goal, then sorts by priority.
    */
-  private async determineActiveGoals(goalIds: string[]): Promise<string[]> {
-    return determineActiveGoalsForCycle(this.driveSystem, goalIds);
+  private async determineActiveGoals(
+    goalIds: string[],
+    snapshot: GoalCycleScheduleSnapshotEntry[]
+  ): Promise<string[]> {
+    return determineActiveGoalsForCycle(this.driveSystem, goalIds, snapshot);
+  }
+
+  private async collectGoalCycleSnapshot(goalIds: string[]): Promise<GoalCycleScheduleSnapshotEntry[]> {
+    return collectGoalCycleScheduleSnapshot(this.driveSystem, goalIds);
   }
 
   // ─── Private: Interval Calculation ───
@@ -1000,8 +1010,11 @@ export class DaemonRunner {
    * Get the highest gap score across all active goals.
    * Falls back to 0 if no gap data is available.
    */
-  private async getMaxGapScore(goalIds: string[]): Promise<number> {
-    return getMaxGapScoreForGoals(this.driveSystem, goalIds);
+  private async getMaxGapScore(
+    goalIds: string[],
+    snapshot: GoalCycleScheduleSnapshotEntry[]
+  ): Promise<number> {
+    return getMaxGapScoreForGoals(this.driveSystem, goalIds, snapshot);
   }
 
   /**
