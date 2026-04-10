@@ -227,4 +227,15 @@ describe("cmdStart", () => {
       })
     );
   });
+
+  it("allows idle watchdog startup with zero initial goals", async () => {
+    await cmdStart(
+      { getBaseDir: vi.fn().mockReturnValue("/tmp/pulseed-daemon-start-base") } as never,
+      {} as never,
+      []
+    );
+
+    expect(watchdogStartMock).toHaveBeenCalledOnce();
+    expect(daemonStartMock).not.toHaveBeenCalled();
+  });
 });

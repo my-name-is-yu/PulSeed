@@ -469,6 +469,97 @@ describe("Heartbeat execution", () => {
     expect(updated.consecutive_failures).toBe(0);
   });
 
+  it("schedules transient failures with retry/backoff and records durable history", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-08T00:00:00.000Z"));
+
+    const entry = await engine.addEntry({
+      name: "retry-check",
+      layer: "heartbeat",
+      trigger: { type: "interval", seconds: 60 },
+      enabled: true,
+      heartbeat: {
+        check_type: "custom",
+        check_config: { command: "exit 1" },
+        failure_threshold: 3,
+        timeout_ms: 5000,
+      },
+      retry_policy: {
+        enabled: true,
+        initial_delay_ms: 10_000,
+        max_delay_ms: 60_000,
+        multiplier: 2,
+        jitter_factor: 0,
+        max_attempts: 3,
+        max_retry_window_ms: 120_000,
+        retryable_failure_kinds: ["transient"],
+      },
+    });
+
+    const entries = engine.getEntries();
+    entries[0]!.next_fire_at = new Date("2026-04-07T23:59:00.000Z").toISOString();
+    await engine.saveEntries();
+    await engine.loadEntries();
+
+    const firstResults = await engine.tick();
+    expect(firstResults[0]!.status).toBe("down");
+
+    const updatedAfterFirst = engine.getEntries().find((e) => e.id === entry.id)!;
+    expect(updatedAfterFirst.retry_state).not.toBeNull();
+    expect(updatedAfterFirst.retry_state!.attempts).toBe(1);
+    expect(updatedAfterFirst.retry_state!.next_retry_at).toBe("2026-04-08T00:00:10.000Z");
+
+    const firstHistory = await engine.getRecentHistory(10, entry.id);
+    expect(firstHistory).toHaveLength(1);
+    expect(firstHistory[0]!.reason).toBe("cadence");
+    expect(firstHistory[0]!.failure_kind).toBe("transient");
+
+    vi.setSystemTime(new Date("2026-04-08T00:00:05.000Z"));
+    const pausedResults = await engine.tick();
+    expect(pausedResults).toHaveLength(0);
+
+    vi.setSystemTime(new Date("2026-04-08T00:00:10.000Z"));
+    const secondResults = await engine.tick();
+    expect(secondResults[0]!.status).toBe("down");
+
+    const updatedAfterSecond = engine.getEntries().find((e) => e.id === entry.id)!;
+    expect(updatedAfterSecond.retry_state).not.toBeNull();
+    expect(updatedAfterSecond.retry_state!.attempts).toBe(2);
+    expect(updatedAfterSecond.retry_state!.next_retry_at).toBe("2026-04-08T00:00:30.000Z");
+
+    const secondHistory = await engine.getRecentHistory(10, entry.id);
+    expect(secondHistory).toHaveLength(2);
+    expect(secondHistory.map((record) => record.reason)).toEqual(["cadence", "retry"]);
+
+    const engine2 = new ScheduleEngine({ baseDir: tempDir });
+    const persistedHistory = await engine2.getRecentHistory(10, entry.id);
+    expect(persistedHistory).toHaveLength(2);
+  });
+
+  it("does not create retry state for permanent cron failures", async () => {
+    const entry = await engine.addEntry({
+      name: "bad-cron",
+      layer: "cron",
+      trigger: { type: "interval", seconds: 60 },
+      enabled: true,
+    });
+
+    const entries = engine.getEntries();
+    entries[0]!.next_fire_at = new Date(Date.now() - 1000).toISOString();
+    await engine.saveEntries();
+    await engine.loadEntries();
+
+    const results = await engine.tick();
+    expect(results[0]!.status).toBe("error");
+
+    const updated = engine.getEntries().find((candidate) => candidate.id === entry.id)!;
+    expect(updated.retry_state).toBeNull();
+
+    const history = await engine.getRecentHistory(10, entry.id);
+    expect(history).toHaveLength(1);
+    expect(history[0]!.failure_kind).toBe("permanent");
+  });
+
   it("tick routes cron entry without config to error (Phase 3)", async () => {
     const entry = await engine.addEntry({
       name: "cron-entry",
@@ -1076,6 +1167,98 @@ describe("Escalation", () => {
     const updatedTarget = eng.getEntries().find((e) => e.id === targetEntry.id)!;
     expect(updatedTarget.enabled).toBe(true);
   });
+
+  it("escalation executes target entry in the same tick", async () => {
+    const coreLoop = {
+      run: vi.fn().mockResolvedValue({ finalStatus: "completed", totalIterations: 1 }),
+    };
+    const eng = new ScheduleEngine({ baseDir: tempDir, coreLoop: coreLoop as any });
+
+    const targetEntry = await eng.addEntry({
+      name: "goal-trigger-target",
+      layer: "goal_trigger",
+      trigger: { type: "interval", seconds: 3600 },
+      enabled: false,
+      goal_trigger: {
+        goal_id: "goal-target",
+        max_iterations: 2,
+        skip_if_active: false,
+      },
+    });
+
+    const escalatingEntry = await eng.addEntry({
+      name: "escalating-entry",
+      layer: "probe",
+      trigger: { type: "interval", seconds: 60 },
+      enabled: true,
+      probe: {
+        data_source_id: "missing-source",
+        query_params: {},
+        change_detector: { mode: "diff", baseline_window: 5 },
+        llm_on_change: false,
+      },
+      escalation: {
+        enabled: true,
+        circuit_breaker_threshold: 100,
+        cooldown_minutes: 0,
+        max_per_hour: 100,
+        target_entry_id: targetEntry.id,
+        target_layer: "goal_trigger",
+      },
+    });
+
+    const entries = eng.getEntries();
+    const idx = entries.findIndex((e) => e.id === escalatingEntry.id);
+    entries[idx]!.next_fire_at = new Date(Date.now() - 1000).toISOString();
+    await eng.saveEntries();
+    await eng.loadEntries();
+
+    await eng.tick();
+
+    expect(coreLoop.run).toHaveBeenCalledWith("goal-target", { maxIterations: 2 });
+    const updatedTarget = eng.getEntries().find((e) => e.id === targetEntry.id)!;
+    expect(updatedTarget.last_fired_at).not.toBeNull();
+  });
+
+  it("escalation can run a direct goal target immediately", async () => {
+    const coreLoop = {
+      run: vi.fn().mockResolvedValue({ finalStatus: "completed", totalIterations: 1 }),
+    };
+    const eng = new ScheduleEngine({ baseDir: tempDir, coreLoop: coreLoop as any });
+
+    const escalatingEntry = await eng.addEntry({
+      name: "direct-goal-escalation",
+      layer: "probe",
+      trigger: { type: "interval", seconds: 60 },
+      enabled: true,
+      probe: {
+        data_source_id: "missing-source",
+        query_params: {},
+        change_detector: { mode: "diff", baseline_window: 5 },
+        llm_on_change: false,
+      },
+      escalation: {
+        enabled: true,
+        circuit_breaker_threshold: 100,
+        cooldown_minutes: 0,
+        max_per_hour: 100,
+        target_layer: "goal_trigger",
+        target_goal_id: "goal-direct",
+      },
+    });
+
+    const entries = eng.getEntries();
+    const idx = entries.findIndex((e) => e.id === escalatingEntry.id);
+    entries[idx]!.next_fire_at = new Date(Date.now() - 1000).toISOString();
+    await eng.saveEntries();
+    await eng.loadEntries();
+
+    const results = await eng.tick();
+
+    expect(results[0]!.status).toBe("escalated");
+    expect(results[0]!.escalated_to).toBe("goal-direct");
+    expect(coreLoop.run).toHaveBeenCalledWith("goal-direct");
+  });
 });
 
 // ─── Additional Phase 2 tests ───
@@ -1164,7 +1347,7 @@ describe('Probe execution edge cases', () => {
     expect(result.error_message).toContain('No probe config');
   });
 
-  it('escalation sets target entry next_fire_at for immediate firing', async () => {
+  it('escalation executes the target entry immediately and advances its schedule', async () => {
     const eng = new ScheduleEngine({ baseDir: tempDir });
 
     const targetEntry = await eng.addEntry({
@@ -1207,13 +1390,51 @@ describe('Probe execution edge cases', () => {
     await eng.saveEntries();
     await eng.loadEntries();
 
-    const beforeTick = Date.now();
     await eng.tick();
 
     const updatedTarget = eng.getEntries().find((e) => e.id === targetEntry.id)!;
     expect(updatedTarget.enabled).toBe(true);
-    // next_fire_at should have been set to a time <= now (i.e., immediate firing)
-    expect(new Date(updatedTarget.next_fire_at).getTime()).toBeLessThanOrEqual(beforeTick + 5000);
+    expect(updatedTarget.last_fired_at).not.toBeNull();
+    expect(new Date(updatedTarget.next_fire_at).getTime()).toBeGreaterThan(Date.now() - 5000);
+  });
+
+  it("dispatches a heartbeat failure notification when the failure threshold is reached", async () => {
+    const notifications: Record<string, unknown>[] = [];
+    const eng = new ScheduleEngine({
+      baseDir: tempDir,
+      notificationDispatcher: {
+        dispatch: async (report) => { notifications.push(report); },
+      },
+    });
+
+    const entry = await eng.addEntry({
+      name: "heartbeat-failure",
+      layer: "heartbeat",
+      trigger: { type: "interval", seconds: 60 },
+      enabled: true,
+      heartbeat: {
+        check_type: "custom",
+        check_config: { command: "exit 1" },
+        failure_threshold: 1,
+        timeout_ms: 1000,
+      },
+    });
+
+    const entries = eng.getEntries();
+    const idx = entries.findIndex((candidate) => candidate.id === entry.id);
+    entries[idx]!.next_fire_at = new Date(Date.now() - 1000).toISOString();
+    await eng.saveEntries();
+    await eng.loadEntries();
+
+    const results = await eng.tick();
+
+    expect(results[0]!.status).toBe("down");
+    expect(notifications).toEqual([
+      expect.objectContaining({
+        report_type: "schedule_heartbeat_failure",
+        entry_id: entry.id,
+      }),
+    ]);
   });
 });
 

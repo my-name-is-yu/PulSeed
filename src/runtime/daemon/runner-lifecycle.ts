@@ -26,7 +26,10 @@ export function startDaemonStatusHeartbeat(
   const timer = setInterval(() => {
     const { eventServer } = options;
     const snapshot = options.getSnapshot();
-    if (!eventServer || snapshot.status !== "running") {
+    if (
+      !eventServer ||
+      (snapshot.status !== "running" && snapshot.status !== "idle")
+    ) {
       return;
     }
 

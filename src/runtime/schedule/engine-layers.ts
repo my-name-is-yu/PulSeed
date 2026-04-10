@@ -13,6 +13,7 @@ import type { DataSourceRegistry } from "../../platform/observation/data-source-
 import type { ILLMClient } from "../../base/llm/llm-client.js";
 import type { StateManager } from "../../base/state/state-manager.js";
 import type { HookManager } from "../hook-manager.js";
+import type { Logger } from "../logger.js";
 import type { MemoryLifecycleManager } from "../../platform/knowledge/memory/memory-lifecycle.js";
 import type { KnowledgeManager } from "../../platform/knowledge/knowledge-manager.js";
 import { detectChange } from "../change-detector.js";
@@ -22,6 +23,7 @@ import {
   runMorningPlanning,
   runWeeklyReview,
 } from "../../reflection/index.js";
+import { DreamAnalyzer } from "../../platform/dream/dream-analyzer.js";
 
 interface LayerDeps {
   baseDir?: string;
@@ -113,6 +115,7 @@ async function executeReflectionCron(
       duration_ms: 0,
       error_message: "Reflection cron requires baseDir and stateManager",
       fired_at: firedAt,
+      failure_kind: "permanent",
     });
   }
 
@@ -154,6 +157,14 @@ async function executeReflectionCron(
         }) as unknown as Record<string, unknown>;
         break;
       case "dream_consolidation":
+        {
+          const analyzer = new DreamAnalyzer({
+            baseDir: deps.baseDir,
+            llmClient: deps.llmClient,
+            logger: deps.logger as Logger,
+          });
+          await analyzer.runDeep();
+        }
         report = await runDreamConsolidation({
           stateManager: deps.stateManager,
           memoryLifecycle: deps.memoryLifecycle,
@@ -180,6 +191,7 @@ async function executeReflectionCron(
       duration_ms: Date.now() - start,
       error_message: msg,
       fired_at: firedAt,
+      failure_kind: "transient",
     });
   }
 }
@@ -196,6 +208,7 @@ export async function executeCron(entry: ScheduleEntry, deps: LayerDeps): Promis
       duration_ms: 0,
       error_message: "No cron config",
       fired_at: firedAt,
+      failure_kind: "permanent",
     });
   }
 
@@ -220,6 +233,7 @@ export async function executeCron(entry: ScheduleEntry, deps: LayerDeps): Promis
           duration_ms: 0,
           error_message: "Reflection cron is missing reflection_kind",
           fired_at: firedAt,
+          failure_kind: "permanent",
         });
       }
       return executeReflectionCron(entry, deps, firedAt, start, cfg.reflection_kind);
@@ -312,6 +326,7 @@ export async function executeCron(entry: ScheduleEntry, deps: LayerDeps): Promis
       duration_ms: Date.now() - start,
       error_message: msg,
       fired_at: firedAt,
+      failure_kind: "transient",
     });
   }
 }
@@ -328,6 +343,7 @@ export async function executeGoalTrigger(entry: ScheduleEntry, deps: LayerDeps):
       duration_ms: 0,
       error_message: "No goal_trigger config",
       fired_at: firedAt,
+      failure_kind: "permanent",
     });
   }
 
@@ -369,6 +385,7 @@ export async function executeGoalTrigger(entry: ScheduleEntry, deps: LayerDeps):
       duration_ms: 0,
       error_message: "No coreLoop provided",
       fired_at: firedAt,
+      failure_kind: "permanent",
     });
   }
 
@@ -384,6 +401,7 @@ export async function executeGoalTrigger(entry: ScheduleEntry, deps: LayerDeps):
       status: "ok",
       duration_ms: Date.now() - start,
       fired_at: firedAt,
+      goal_id: cfg.goal_id,
       tokens_used: tokensUsed,
     });
   } catch (err) {
@@ -395,6 +413,7 @@ export async function executeGoalTrigger(entry: ScheduleEntry, deps: LayerDeps):
       duration_ms: Date.now() - start,
       error_message: msg,
       fired_at: firedAt,
+      failure_kind: "transient",
     });
   }
 }
@@ -411,6 +430,7 @@ export async function executeProbe(entry: ScheduleEntry, deps: LayerDeps): Promi
       duration_ms: 0,
       error_message: "No probe config",
       fired_at: firedAt,
+      failure_kind: "permanent",
     });
   }
 
@@ -423,6 +443,7 @@ export async function executeProbe(entry: ScheduleEntry, deps: LayerDeps): Promi
       duration_ms: 0,
       error_message: `Data source not found: ${cfg.data_source_id}`,
       fired_at: firedAt,
+      failure_kind: "permanent",
     });
   }
 
@@ -509,6 +530,7 @@ export async function executeProbe(entry: ScheduleEntry, deps: LayerDeps): Promi
       duration_ms: Date.now() - start,
       error_message: msg,
       fired_at: firedAt,
+      failure_kind: "transient",
     });
   }
 }

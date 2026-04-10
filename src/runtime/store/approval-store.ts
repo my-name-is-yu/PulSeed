@@ -103,6 +103,14 @@ export class ApprovalStore {
     return this.journal.list(this.paths.approvalsResolvedDir, ApprovalRecordSchema);
   }
 
+  async removePending(approvalId: string): Promise<void> {
+    await this.journal.remove(this.paths.approvalPendingPath(approvalId));
+  }
+
+  async removeResolved(approvalId: string): Promise<void> {
+    await this.journal.remove(this.paths.approvalResolvedPath(approvalId));
+  }
+
   async savePending(record: ApprovalRecord): Promise<ApprovalRecord> {
     const parsed = ApprovalRecordSchema.parse({ ...record, state: "pending" });
     return this.withApprovalLock(parsed.approval_id, async () => {
@@ -136,8 +144,58 @@ export class ApprovalStore {
         resolved_at: update.resolved_at ?? Date.now(),
       });
       await this.saveResolved(resolved);
-      await this.journal.remove(this.paths.approvalPendingPath(approvalId));
+      await this.removePending(approvalId);
       return resolved;
     });
+  }
+
+  async reconcile(now = Date.now()): Promise<{
+    removedPending: number;
+    expiredPending: number;
+  }> {
+    const pending = await this.journal.list(this.paths.approvalsPendingDir, ApprovalRecordSchema);
+    let removedPending = 0;
+    let expiredPending = 0;
+
+    for (const record of pending) {
+      const resolved = await this.loadResolved(record.approval_id);
+      if (resolved !== null) {
+        await this.removePending(record.approval_id);
+        removedPending += 1;
+        continue;
+      }
+
+      if (record.expires_at > now) {
+        continue;
+      }
+
+      await this.resolvePending(record.approval_id, {
+        state: "expired",
+        resolved_at: now,
+        response_channel: record.response_channel,
+        payload: record.payload,
+      });
+      expiredPending += 1;
+    }
+
+    return { removedPending, expiredPending };
+  }
+
+  async pruneResolved(olderThanMs: number, now = Date.now()): Promise<number> {
+    const threshold = now - olderThanMs;
+    const resolved = await this.listResolved();
+    let pruned = 0;
+
+    for (const record of resolved) {
+      const resolvedAt = record.resolved_at ?? record.created_at;
+      if (resolvedAt >= threshold) {
+        continue;
+      }
+
+      await this.removeResolved(record.approval_id);
+      pruned += 1;
+    }
+
+    return pruned;
   }
 }

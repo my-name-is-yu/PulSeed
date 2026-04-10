@@ -46,6 +46,20 @@ describe("buildPlist", () => {
     expect(xml).toContain("<string>--goal</string>");
   });
 
+  it("supports idle mode with no goal arguments", () => {
+    const xml = buildPlist({
+      nodePath: "/usr/local/bin/node",
+      cliRunnerPath: "/app/dist/cli/cli-runner.js",
+      goalIds: [],
+      stdoutLog: "/logs/out.log",
+      stderrLog: "/logs/err.log",
+      workingDir: "/home/user",
+    });
+
+    expect(xml).toContain("<string>start</string>");
+    expect(xml).not.toContain("<string>--goal</string>");
+  });
+
   it("includes the correct node path and cli-runner path", () => {
     const xml = buildPlist({
       nodePath: "/usr/local/bin/node",
@@ -243,15 +257,24 @@ describe("cmdInstall", () => {
     errSpy.mockRestore();
   });
 
-  it("returns 1 when no --goal is provided", async () => {
+  it("supports idle install with no initial goals", async () => {
     Object.defineProperty(process, "platform", { value: "darwin", writable: true });
-    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
     const code = await cmdInstall([]);
 
-    expect(code).toBe(1);
-    expect(errSpy).toHaveBeenCalledWith("Error: at least one --goal is required");
-    errSpy.mockRestore();
+    expect(code).toBe(0);
+    expect(fs.writeFileSync).toHaveBeenCalledWith(
+      PLIST_PATH,
+      expect.not.stringContaining("<string>--goal</string>"),
+      "utf8"
+    );
+    expect(fs.writeFileSync).toHaveBeenCalledWith(
+      PLIST_PATH,
+      expect.stringContaining(`<string>${process.cwd()}</string>`),
+      "utf8"
+    );
+    logSpy.mockRestore();
   });
 
   it("writes the plist file and calls launchctl load on success", async () => {

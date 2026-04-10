@@ -4,6 +4,7 @@ import {
   RuntimeDaemonHealthSchema,
   RuntimeHealthSnapshotSchema,
   summarizeRuntimeHealthStatus,
+  RuntimeHealthStatusSchema,
   type RuntimeComponentsHealth,
   type RuntimeDaemonHealth,
   type RuntimeHealthSnapshot,
@@ -79,6 +80,99 @@ export class RuntimeHealthStore {
       }),
     ]);
     return parsed;
+  }
+
+  async reconcile(now = Date.now()): Promise<RuntimeHealthSnapshot> {
+    const [daemon, components] = await Promise.all([
+      this.loadDaemonHealth(),
+      this.loadComponentsHealth(),
+    ]);
+
+    if (daemon !== null && components !== null) {
+      const snapshot = await this.loadSnapshot();
+      if (snapshot !== null) {
+        return snapshot;
+      }
+      return RuntimeHealthSnapshotSchema.parse({
+        status: daemon.status,
+        leader: daemon.leader,
+        checked_at: Math.max(daemon.checked_at, components.checked_at),
+        components: components.components,
+        details: daemon.details,
+      });
+    }
+
+    const degradedComponents: RuntimeComponentsHealth = {
+      checked_at: now,
+      components: {
+        gateway: "degraded",
+        queue: "degraded",
+        leases: "degraded",
+        approval: "degraded",
+        outbox: "degraded",
+        supervisor: "degraded",
+      },
+    };
+
+    if (daemon !== null && components === null) {
+      const degradedSnapshot = RuntimeHealthSnapshotSchema.parse({
+        status: "degraded",
+        leader: daemon.leader,
+        checked_at: now,
+        components: degradedComponents.components,
+        details: {
+          ...daemon.details,
+          repaired: true,
+          recovered_from: "missing_components_health",
+          previous_status: daemon.status,
+        },
+      });
+      await Promise.all([
+        this.saveComponentsHealth(degradedComponents),
+        this.saveDaemonHealth({
+          status: "degraded",
+          leader: daemon.leader,
+          checked_at: now,
+          details: degradedSnapshot.details,
+        }),
+      ]);
+      return degradedSnapshot;
+    }
+
+    if (daemon === null && components !== null) {
+      const status = summarizeRuntimeHealthStatus(components.components);
+      const repairedDaemon: RuntimeDaemonHealth = {
+        status,
+        leader: false,
+        checked_at: now,
+        details: {
+          repaired: true,
+          recovered_from: "missing_daemon_health",
+        },
+      };
+      await this.saveDaemonHealth(repairedDaemon);
+      return RuntimeHealthSnapshotSchema.parse({
+        status,
+        leader: repairedDaemon.leader,
+        checked_at: Math.max(now, components.checked_at),
+        components: components.components,
+        details: repairedDaemon.details,
+      });
+    }
+
+    const repairedSnapshot = RuntimeHealthSnapshotSchema.parse({
+      status: "degraded",
+      leader: false,
+      checked_at: now,
+      components: degradedComponents.components,
+      details: {
+        repaired: true,
+        recovered_from: "missing_health_snapshot",
+        previous_status: RuntimeHealthStatusSchema.parse("degraded"),
+      },
+    });
+    await this.saveSnapshot(repairedSnapshot);
+    return repairedSnapshot;
   }
 
   summarizeStatus(components: Record<string, RuntimeHealthSnapshot["status"]>): RuntimeHealthSnapshot["status"] {

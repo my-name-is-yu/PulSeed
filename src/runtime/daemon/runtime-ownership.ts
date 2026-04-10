@@ -33,15 +33,6 @@ export class RuntimeOwnershipCoordinator {
       this.deps.runtimeHealthStore?.ensureReady(),
     ]);
 
-    await this.saveRuntimeHealthSnapshot("foundation_only", {
-      gateway: "degraded",
-      queue: "degraded",
-      leases: "ok",
-      approval: "ok",
-      outbox: "ok",
-      supervisor: "degraded",
-    });
-
     this.deps.logger.info("Runtime journal foundation initialized", {
       runtime_root: this.deps.runtimeRoot,
       queue_path: this.deps.runtimeRoot ? path.join(this.deps.runtimeRoot, "queue.json") : undefined,

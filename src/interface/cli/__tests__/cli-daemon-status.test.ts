@@ -18,6 +18,29 @@ vi.mock("../../../base/utils/paths.js", async (importOriginal) => {
 
 import { getPulseedDirPath } from "../../../base/utils/paths.js";
 import { cmdDaemonStatus } from "../commands/daemon.js";
+import { PIDManager } from "../../../runtime/pid-manager.js";
+
+function mockPidInspectRunning(runtimePid: number, ownerPid = runtimePid) {
+  return vi.spyOn(PIDManager.prototype, "inspect").mockResolvedValue({
+    info: {
+      pid: runtimePid,
+      runtime_pid: runtimePid,
+      owner_pid: ownerPid,
+      watchdog_pid: ownerPid !== runtimePid ? ownerPid : undefined,
+      started_at: new Date().toISOString(),
+      runtime_started_at: new Date().toISOString(),
+      owner_started_at: new Date().toISOString(),
+      watchdog_started_at: ownerPid !== runtimePid ? new Date().toISOString() : undefined,
+    },
+    running: true,
+    runtimePid,
+    ownerPid,
+    alivePids: ownerPid === runtimePid ? [runtimePid] : [runtimePid, ownerPid],
+    stalePids: [],
+    verifiedPids: ownerPid === runtimePid ? [runtimePid] : [runtimePid, ownerPid],
+    unverifiedLegacyPids: [],
+  });
+}
 
 describe("cmdDaemonStatus", () => {
   let tmpDir: string;
@@ -31,6 +54,7 @@ describe("cmdDaemonStatus", () => {
 
   afterEach(() => {
     consoleSpy.mockRestore();
+    vi.restoreAllMocks();
     cleanupTempDir(tmpDir);
   });
 
@@ -77,14 +101,192 @@ describe("cmdDaemonStatus", () => {
       last_error: null,
     };
     fs.writeFileSync(path.join(tmpDir, "daemon-state.json"), JSON.stringify(state));
+    fs.writeFileSync(
+      path.join(tmpDir, "pulseed.pid"),
+      JSON.stringify({
+        pid: process.pid,
+        runtime_pid: process.pid,
+        owner_pid: process.pid,
+        started_at: new Date().toISOString(),
+      })
+    );
+    const inspectSpy = mockPidInspectRunning(process.pid);
 
     await cmdDaemonStatus([]);
+    inspectSpy.mockRestore();
 
     const output = consoleSpy.mock.calls[0]?.[0] as string;
     expect(output).toContain(`running (PID: ${process.pid})`);
     expect(output).toContain("Uptime:");
     expect(output).toContain("10 cycles completed");
     expect(output).toContain("0/3 retries used");
+  });
+
+  it("shows idle status and watchdog PID when the daemon is running without goals", async () => {
+    const runtimePid = process.pid;
+    const watchdogPid = 424242;
+    const state = {
+      pid: runtimePid,
+      started_at: new Date(Date.now() - 30_000).toISOString(),
+      last_loop_at: null,
+      loop_count: 0,
+      active_goals: [],
+      status: "idle",
+      crash_count: 0,
+      last_error: null,
+    };
+    fs.writeFileSync(path.join(tmpDir, "daemon-state.json"), JSON.stringify(state));
+    fs.writeFileSync(
+      path.join(tmpDir, "pulseed.pid"),
+      JSON.stringify({
+        pid: runtimePid,
+        runtime_pid: runtimePid,
+        owner_pid: watchdogPid,
+        watchdog_pid: watchdogPid,
+        started_at: new Date().toISOString(),
+      })
+    );
+    const inspectSpy = mockPidInspectRunning(runtimePid, watchdogPid);
+
+    await cmdDaemonStatus([]);
+    inspectSpy.mockRestore();
+
+    const output = consoleSpy.mock.calls[0]?.[0] as string;
+    expect(output).toContain(`idle (PID: ${runtimePid})`);
+    expect(output).toContain(`Watchdog PID:    ${watchdogPid}`);
+    expect(output).toContain("Active goals:    (none)");
+  });
+
+  it("shows restarting status when the watchdog is alive but the runtime child is dead", async () => {
+    const runtimePid = 999999999;
+    const watchdogPid = process.pid;
+    const state = {
+      pid: runtimePid,
+      started_at: new Date(Date.now() - 30_000).toISOString(),
+      last_loop_at: null,
+      loop_count: 0,
+      active_goals: [],
+      status: "running",
+      crash_count: 0,
+      last_error: null,
+    };
+    fs.writeFileSync(path.join(tmpDir, "daemon-state.json"), JSON.stringify(state));
+    fs.writeFileSync(
+      path.join(tmpDir, "pulseed.pid"),
+      JSON.stringify({
+        pid: runtimePid,
+        runtime_pid: runtimePid,
+        owner_pid: watchdogPid,
+        watchdog_pid: watchdogPid,
+        started_at: new Date().toISOString(),
+      })
+    );
+    const inspectSpy = vi.spyOn(PIDManager.prototype, "inspect").mockResolvedValue({
+      info: {
+        pid: runtimePid,
+        runtime_pid: runtimePid,
+        owner_pid: watchdogPid,
+        watchdog_pid: watchdogPid,
+        started_at: new Date().toISOString(),
+        runtime_started_at: new Date().toISOString(),
+        owner_started_at: new Date().toISOString(),
+        watchdog_started_at: new Date().toISOString(),
+      },
+      running: true,
+      runtimePid,
+      ownerPid: watchdogPid,
+      alivePids: [watchdogPid],
+      stalePids: [runtimePid],
+      verifiedPids: [watchdogPid],
+      unverifiedLegacyPids: [],
+    });
+
+    await cmdDaemonStatus([]);
+    inspectSpy.mockRestore();
+
+    const output = consoleSpy.mock.calls[0]?.[0] as string;
+    expect(output).toContain(`restarting (PID: ${runtimePid})`);
+    expect(output).toContain(`Watchdog PID:    ${watchdogPid}`);
+  });
+
+  it("shows resident activity when the daemon has autonomous work history", async () => {
+    const state = {
+      pid: process.pid,
+      started_at: new Date(Date.now() - 60_000).toISOString(),
+      last_loop_at: null,
+      loop_count: 1,
+      active_goals: ["resident-goal"],
+      status: "running",
+      crash_count: 0,
+      last_error: null,
+      last_resident_at: new Date(Date.now() - 5_000).toISOString(),
+      resident_activity: {
+        kind: "negotiation",
+        trigger: "proactive_tick",
+        summary: "Resident discovery negotiated a new goal: Add resident daemon coverage",
+        recorded_at: new Date(Date.now() - 5_000).toISOString(),
+        suggestion_title: "Add resident daemon coverage",
+        goal_id: "resident-goal",
+      },
+    };
+    fs.writeFileSync(path.join(tmpDir, "daemon-state.json"), JSON.stringify(state));
+    fs.writeFileSync(
+      path.join(tmpDir, "pulseed.pid"),
+      JSON.stringify({
+        pid: process.pid,
+        runtime_pid: process.pid,
+        owner_pid: process.pid,
+        started_at: new Date().toISOString(),
+      })
+    );
+    const inspectSpy = mockPidInspectRunning(process.pid);
+
+    await cmdDaemonStatus([]);
+    inspectSpy.mockRestore();
+
+    const output = consoleSpy.mock.calls[0]?.[0] as string;
+    expect(output).toContain("Resident:        negotiation");
+    expect(output).toContain("Resident note:   Resident discovery negotiated a new goal");
+    expect(output).toContain("Resident goal:   resident-goal");
+  });
+
+  it("shows dream resident activity without requiring a goal id", async () => {
+    const state = {
+      pid: process.pid,
+      started_at: new Date(Date.now() - 60_000).toISOString(),
+      last_loop_at: null,
+      loop_count: 1,
+      active_goals: [],
+      status: "idle",
+      crash_count: 0,
+      last_error: null,
+      last_resident_at: new Date(Date.now() - 5_000).toISOString(),
+      resident_activity: {
+        kind: "dream",
+        trigger: "proactive_tick",
+        summary: "Resident dream applied pending suggestion \"Dream resident schedule\" into schedule schedule-entry-1.",
+        recorded_at: new Date(Date.now() - 5_000).toISOString(),
+      },
+    };
+    fs.writeFileSync(path.join(tmpDir, "daemon-state.json"), JSON.stringify(state));
+    fs.writeFileSync(
+      path.join(tmpDir, "pulseed.pid"),
+      JSON.stringify({
+        pid: process.pid,
+        runtime_pid: process.pid,
+        owner_pid: process.pid,
+        started_at: new Date().toISOString(),
+      })
+    );
+    const inspectSpy = mockPidInspectRunning(process.pid);
+
+    await cmdDaemonStatus([]);
+    inspectSpy.mockRestore();
+
+    const output = consoleSpy.mock.calls[0]?.[0] as string;
+    expect(output).toContain("Resident:        dream");
+    expect(output).toContain("Resident note:   Resident dream applied pending suggestion");
+    expect(output).not.toContain("Resident goal:");
   });
 
   it("shows last_error when present", async () => {

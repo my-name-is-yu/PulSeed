@@ -26,13 +26,13 @@ class FakeChildProcess extends EventEmitter {
 }
 
 async function waitFor(
-  predicate: () => boolean,
+  predicate: () => boolean | Promise<boolean>,
   timeoutMs = 2_000,
   intervalMs = 20
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (predicate()) {
+    if (await predicate()) {
       return;
     }
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
@@ -123,5 +123,76 @@ describe("RuntimeWatchdog", () => {
 
     expect(fs.existsSync(pidManager.getPath())).toBe(false);
     expect(children[1]!.kills).toContain("SIGTERM");
+  });
+
+  it("updates the pid file to the current runtime child across restarts", async () => {
+    tmpDir = makeTempDir();
+    const runtimeRoot = path.join(tmpDir, "runtime");
+    const pidManager = new PIDManager(tmpDir);
+    const healthStore = new RuntimeHealthStore(runtimeRoot);
+    const leaderLockManager = new LeaderLockManager(runtimeRoot, 60);
+    await healthStore.ensureReady();
+
+    const children: FakeChildProcess[] = [];
+    const watchdog = new RuntimeWatchdog({
+      pidManager,
+      healthStore,
+      leaderLockManager,
+      logger: {
+        info: vi.fn(),
+        warn: vi.fn(),
+        error: vi.fn(),
+      },
+      startChild: () => {
+        const child = new FakeChildProcess(20_000 + children.length);
+        children.push(child);
+        return child;
+      },
+      pollIntervalMs: 20,
+      heartbeatTimeoutMs: 50,
+      startupGraceMs: 40,
+      restartBackoffMs: 10,
+      maxRestartBackoffMs: 20,
+      childShutdownGraceMs: 10,
+    });
+
+    const startPromise = watchdog.start();
+
+    await waitFor(() => children.length === 1);
+    await waitFor(async () => {
+      const info = await pidManager.readPID();
+      return info?.pid === children[0]!.pid;
+    }, 2_000, 20);
+    const firstInfo = await pidManager.readPID();
+    expect(firstInfo).toMatchObject({
+      pid: children[0]!.pid,
+      runtime_pid: children[0]!.pid,
+      owner_pid: process.pid,
+      watchdog_pid: process.pid,
+    });
+
+    await writeLeaderRecord(runtimeRoot, children[0]!.pid, Date.now() + 100);
+    await healthStore.saveDaemonHealth({
+      status: "ok",
+      leader: true,
+      checked_at: Date.now(),
+      details: { pid: children[0]!.pid },
+    });
+
+    await waitFor(() => children.length === 2, 2_000, 20);
+    await waitFor(async () => {
+      const info = await pidManager.readPID();
+      return info?.pid === children[1]!.pid;
+    }, 2_000, 20);
+    const secondInfo = await pidManager.readPID();
+    expect(secondInfo).toMatchObject({
+      pid: children[1]!.pid,
+      runtime_pid: children[1]!.pid,
+      owner_pid: process.pid,
+      watchdog_pid: process.pid,
+    });
+
+    watchdog.stop();
+    await startPromise;
   });
 });

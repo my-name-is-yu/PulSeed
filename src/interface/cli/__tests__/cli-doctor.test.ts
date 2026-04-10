@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { makeTempDir, cleanupTempDir } from "../../../../tests/helpers/temp-dir.js";
+import { PIDManager } from "../../../runtime/pid-manager.js";
 
 // ─── cmdDoctor tests ───
 //
@@ -251,31 +252,170 @@ describe("checkDaemon", () => {
     cleanupTempDir(tmpDir);
   });
 
-  it("passes with clean state when no PID file exists", () => {
-    const result = checkDaemon(tmpDir);
+  it("passes with clean state when no PID file exists", async () => {
+    const result = await checkDaemon(tmpDir);
     expect(result.status).toBe("pass");
-    expect(result.detail).toContain("not running");
+    expect(result.detail).toContain("stopped");
   });
 
-  it("warns when PID file references a non-running process", () => {
+  it("warns when PID file references a non-running process", async () => {
     fs.writeFileSync(path.join(tmpDir, "pulseed.pid"), "999999999");
-    const result = checkDaemon(tmpDir);
+    const result = await checkDaemon(tmpDir);
     expect(result.status).toBe("warn");
     expect(result.detail).toContain("stale PID");
   });
 
-  it("passes when PID file references a running process (current process)", () => {
+  it("passes when PID file references a running process (current process)", async () => {
     fs.writeFileSync(path.join(tmpDir, "pulseed.pid"), String(process.pid));
-    const result = checkDaemon(tmpDir);
+    const inspectSpy = vi.spyOn(PIDManager.prototype, "inspect").mockResolvedValue({
+      info: {
+        pid: process.pid,
+        started_at: new Date().toISOString(),
+        owner_pid: process.pid,
+        runtime_pid: process.pid,
+      },
+      running: true,
+      runtimePid: process.pid,
+      ownerPid: process.pid,
+      alivePids: [process.pid],
+      stalePids: [],
+      verifiedPids: [process.pid],
+      unverifiedLegacyPids: [],
+    });
+    const result = await checkDaemon(tmpDir);
+    inspectSpy.mockRestore();
     expect(result.status).toBe("pass");
     expect(result.detail).toContain("running");
   });
 
-  it("passes when PID file is JSON format and references running process", () => {
+  it("passes when PID file is JSON format and references running process", async () => {
     fs.writeFileSync(path.join(tmpDir, "pulseed.pid"), JSON.stringify({ pid: process.pid }));
-    const result = checkDaemon(tmpDir);
+    const inspectSpy = vi.spyOn(PIDManager.prototype, "inspect").mockResolvedValue({
+      info: {
+        pid: process.pid,
+        started_at: new Date().toISOString(),
+        owner_pid: process.pid,
+        runtime_pid: process.pid,
+      },
+      running: true,
+      runtimePid: process.pid,
+      ownerPid: process.pid,
+      alivePids: [process.pid],
+      stalePids: [],
+      verifiedPids: [process.pid],
+      unverifiedLegacyPids: [],
+    });
+    const result = await checkDaemon(tmpDir);
+    inspectSpy.mockRestore();
     expect(result.status).toBe("pass");
     expect(result.detail).toContain("running");
+  });
+
+  it("fails when the watchdog is alive but the runtime child is dead", async () => {
+    fs.writeFileSync(
+      path.join(tmpDir, "pulseed.pid"),
+      JSON.stringify({
+        pid: 999999999,
+        runtime_pid: 999999999,
+        owner_pid: process.pid,
+        watchdog_pid: process.pid,
+        started_at: new Date().toISOString(),
+      })
+    );
+    fs.writeFileSync(
+      path.join(tmpDir, "daemon-state.json"),
+      JSON.stringify({
+        pid: 999999999,
+        started_at: new Date().toISOString(),
+        last_loop_at: null,
+        loop_count: 0,
+        active_goals: [],
+        status: "running",
+        crash_count: 0,
+        last_error: null,
+      })
+    );
+
+    const result = await checkDaemon(tmpDir);
+    expect(result.status).toBe("fail");
+    expect(result.detail).toContain("restarting");
+  });
+
+  it("fails when daemon-state.json reports crashed", async () => {
+    fs.writeFileSync(
+      path.join(tmpDir, "pulseed.pid"),
+      JSON.stringify({
+        pid: process.pid,
+        runtime_pid: process.pid,
+        owner_pid: process.pid,
+        started_at: new Date().toISOString(),
+      })
+    );
+    fs.writeFileSync(
+      path.join(tmpDir, "daemon-state.json"),
+      JSON.stringify({
+        pid: process.pid,
+        started_at: new Date().toISOString(),
+        last_loop_at: null,
+        loop_count: 0,
+        active_goals: [],
+        status: "crashed",
+        crash_count: 1,
+        last_error: "boom",
+      })
+    );
+
+    const result = await checkDaemon(tmpDir);
+    expect(result.status).toBe("fail");
+    expect(result.detail).toContain("crashed");
+  });
+
+  it("reports idle daemon mode distinctly", async () => {
+    fs.writeFileSync(
+      path.join(tmpDir, "pulseed.pid"),
+      JSON.stringify({
+        pid: process.pid,
+        runtime_pid: process.pid,
+        owner_pid: 424242,
+        watchdog_pid: 424242,
+        started_at: new Date().toISOString(),
+      })
+    );
+    fs.writeFileSync(
+      path.join(tmpDir, "daemon-state.json"),
+      JSON.stringify({
+        pid: process.pid,
+        started_at: new Date().toISOString(),
+        last_loop_at: null,
+        loop_count: 0,
+        active_goals: [],
+        status: "idle",
+        crash_count: 0,
+        last_error: null,
+      })
+    );
+    const inspectSpy = vi.spyOn(PIDManager.prototype, "inspect").mockResolvedValue({
+      info: {
+        pid: process.pid,
+        started_at: new Date().toISOString(),
+        owner_pid: 424242,
+        watchdog_pid: 424242,
+        runtime_pid: process.pid,
+      },
+      running: true,
+      runtimePid: process.pid,
+      ownerPid: 424242,
+      alivePids: [process.pid, 424242],
+      stalePids: [],
+      verifiedPids: [process.pid, 424242],
+      unverifiedLegacyPids: [],
+    });
+
+    const result = await checkDaemon(tmpDir);
+    inspectSpy.mockRestore();
+    expect(result.status).toBe("pass");
+    expect(result.detail).toContain("idle daemon running");
+    expect(result.detail).toContain(`PID: ${process.pid}`);
   });
 });
 
@@ -386,5 +526,22 @@ describe("cmdDoctor summary counts", () => {
     expect(allOutput).toContain("Summary:");
     // Exit code depends on build check — just ensure it's 0 or 1 (a number).
     expect([0, 1]).toContain(exitCode);
+  });
+
+  it("runs runtime store repair when requested", async () => {
+    const origHome = process.env["PULSEED_HOME"];
+    process.env["PULSEED_HOME"] = tmpDir;
+
+    const exitCode = await cmdDoctor(["--repair"]);
+
+    if (origHome !== undefined) {
+      process.env["PULSEED_HOME"] = origHome;
+    } else {
+      delete process.env["PULSEED_HOME"];
+    }
+
+    expect([0, 1]).toContain(exitCode);
+    const allOutput = consoleSpy.mock.calls.map((c: unknown[]) => c[0] as string).join("\n");
+    expect(allOutput).toContain("Repair:");
   });
 });

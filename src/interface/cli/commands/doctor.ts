@@ -5,6 +5,11 @@ import * as path from "node:path";
 import { getPulseedDirPath, getLogsDir, getGoalsDir } from "../../../base/utils/paths.js";
 import { execFileNoThrow } from "../../../base/utils/execFileNoThrow.js";
 import { getCliRunnerBuildPath } from "../../../base/utils/pulseed-meta.js";
+import { readJsonFileOrNull } from "../../../base/utils/json-io.js";
+import { PIDManager } from "../../../runtime/pid-manager.js";
+import { ApprovalStore, OutboxStore, RuntimeHealthStore, createRuntimeStorePaths } from "../../../runtime/store/index.js";
+import { runRuntimeStoreMaintenanceCycle, type RuntimeMaintenanceLogger } from "../../../runtime/daemon/maintenance.js";
+import { DaemonStateSchema } from "../../../runtime/types/daemon.js";
 
 // ─── Types ───
 
@@ -140,35 +145,78 @@ export function checkBuild(buildPath = getCliRunnerBuildPath(import.meta.url)): 
   return { name: "Build", status: "fail", detail: `${displayPath} not found (run: npm run build)` };
 }
 
-export function checkDaemon(baseDir?: string): CheckResult {
+export async function checkDaemon(baseDir?: string): Promise<CheckResult> {
   const dir = baseDir ?? getPulseedDirPath();
-  const pidFile = path.join(dir, "pulseed.pid");
+  const pidManager = new PIDManager(dir);
+  const pidFileExists = fs.existsSync(pidManager.getPath());
+  const pidStatus = await pidManager.inspect();
+  const daemonStateRaw = await readJsonFileOrNull(path.join(dir, "daemon-state.json"));
+  const daemonState = daemonStateRaw !== null
+    ? DaemonStateSchema.safeParse(daemonStateRaw)
+    : null;
 
-  if (!fs.existsSync(pidFile)) {
-    return { name: "Daemon", status: "pass", detail: "not running (clean state)" };
+  if (!pidFileExists && !pidStatus.running) {
+    return { name: "Daemon", status: "pass", detail: "stopped (clean state)" };
   }
 
-  let pid: number;
-  try {
-    const content = fs.readFileSync(pidFile, "utf-8").trim();
-    // PID files may contain JSON (e.g. {"pid": 1234}) or plain integers
-    if (content.startsWith("{")) {
-      const parsed = JSON.parse(content) as Record<string, unknown>;
-      pid = Number(parsed["pid"]);
-    } else {
-      pid = parseInt(content, 10);
-    }
-    if (isNaN(pid)) throw new Error("invalid pid");
-  } catch {
+  const pidInfo = pidStatus.info ?? await pidManager.readPID();
+  if (pidInfo === null && pidFileExists) {
     return { name: "Daemon", status: "warn", detail: "PID file exists but is unreadable" };
   }
 
-  try {
-    process.kill(pid, 0);
-    return { name: "Daemon", status: "pass", detail: `running (PID: ${pid})` };
-  } catch {
-    return { name: "Daemon", status: "warn", detail: `stale PID file (PID: ${pid} not running)` };
+  const runtimePid = pidStatus.runtimePid ?? pidInfo?.runtime_pid ?? pidInfo?.pid ?? null;
+  const watchdogPid = pidInfo?.watchdog_pid ?? pidStatus.ownerPid ?? null;
+  const runtimeAlive = typeof runtimePid === "number" && pidStatus.alivePids.includes(runtimePid);
+  const watchdogAlive = typeof watchdogPid === "number" && pidStatus.alivePids.includes(watchdogPid);
+  const runtimeState = daemonState?.success ? daemonState.data.status : null;
+
+  if (runtimeState === "crashed" || runtimeState === "stopping") {
+    return {
+      name: "Daemon",
+      status: "fail",
+      detail:
+        runtimeState === "crashed"
+          ? "daemon state reports crashed"
+          : "daemon state reports stopping",
+    };
   }
+
+  if (!runtimeAlive) {
+    if (watchdogAlive) {
+      return {
+        name: "Daemon",
+        status: "fail",
+        detail: runtimePid !== null
+          ? `daemon restarting (runtime PID: ${runtimePid}, watchdog PID: ${watchdogPid})`
+          : `daemon restarting (watchdog PID: ${watchdogPid})`,
+      };
+    }
+    return {
+      name: "Daemon",
+      status: pidFileExists ? "warn" : "pass",
+      detail: runtimePid !== null
+        ? `stale PID file (PID: ${runtimePid} not running)`
+        : "stopped (clean state)",
+    };
+  }
+
+  if (watchdogPid && watchdogPid !== runtimePid && !watchdogAlive) {
+    return {
+      name: "Daemon",
+      status: "warn",
+      detail: `running (PID: ${runtimePid}), watchdog PID: ${watchdogPid} missing`,
+    };
+  }
+
+  const detailPrefix =
+    runtimeState === "idle"
+      ? `idle daemon running (PID: ${runtimePid})`
+      : `running (PID: ${runtimePid})`;
+  const detail =
+    watchdogPid && watchdogPid !== runtimePid
+      ? `${detailPrefix}, watchdog PID: ${watchdogPid}`
+      : detailPrefix;
+  return { name: "Daemon", status: "pass", detail };
 }
 
 export function checkNotifications(baseDir?: string): CheckResult {
@@ -213,6 +261,38 @@ function formatRow(result: CheckResult): string {
 
 export async function cmdDoctor(_args: string[]): Promise<number> {
   const baseDir = getPulseedDirPath();
+  const repair = _args.includes("--repair");
+
+  if (repair) {
+    const runtimeRoot = path.join(baseDir, "runtime");
+    const runtimePaths = createRuntimeStorePaths(runtimeRoot);
+    const repairLogger: RuntimeMaintenanceLogger = {
+      debug: (message: string, context?: Record<string, unknown>) => {
+        console.log(`[repair][debug] ${message}${context ? ` ${JSON.stringify(context)}` : ""}`);
+      },
+      info: (message: string, context?: Record<string, unknown>) => {
+        console.log(`[repair][info] ${message}${context ? ` ${JSON.stringify(context)}` : ""}`);
+      },
+      warn: (message: string, context?: Record<string, unknown>) => {
+        console.log(`[repair][warn] ${message}${context ? ` ${JSON.stringify(context)}` : ""}`);
+      },
+      error: (message: string, context?: Record<string, unknown>) => {
+        console.log(`[repair][error] ${message}${context ? ` ${JSON.stringify(context)}` : ""}`);
+      },
+    };
+
+    const maintenanceReport = await runRuntimeStoreMaintenanceCycle({
+      runtimeRoot,
+      approvalStore: new ApprovalStore(runtimePaths),
+      outboxStore: new OutboxStore(runtimePaths),
+      runtimeHealthStore: new RuntimeHealthStore(runtimePaths),
+      logger: repairLogger,
+    });
+
+    console.log(
+      `Repair: approvals pruned=${maintenanceReport.approvals.prunedResolved}, outbox pruned=${maintenanceReport.outbox.pruned}, claims pruned=${maintenanceReport.claims.pruned}, health=${maintenanceReport.health.status ?? "unknown"}`
+    );
+  }
 
   const checks: CheckResult[] = [
     checkNodeVersion(),
@@ -222,7 +302,7 @@ export async function cmdDoctor(_args: string[]): Promise<number> {
     checkGoals(baseDir),
     checkLogDirectory(baseDir),
     checkBuild(),
-    checkDaemon(baseDir),
+    await checkDaemon(baseDir),
     checkNotifications(baseDir),
     await checkDiskUsage(baseDir),
   ];

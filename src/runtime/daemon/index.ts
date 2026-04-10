@@ -22,6 +22,7 @@ export {
   getNextIntervalForGoals,
   processCronTasksForDaemon,
   processScheduleEntriesForDaemon,
+  runRuntimeStoreMaintenanceCycle,
   runProactiveMaintenance,
   runSupervisorMaintenanceCycleForDaemon,
   writeChatMessageEvent,

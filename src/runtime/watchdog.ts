@@ -91,12 +91,23 @@ export class RuntimeWatchdog {
     this.stopping = false;
     let restartDelayMs = this.restartBackoffMs;
 
-    await this.pidManager.writePID();
+    await this.pidManager.writePID({
+      pid: process.pid,
+      owner_pid: process.pid,
+      watchdog_pid: process.pid,
+      runtime_pid: process.pid,
+    });
 
     try {
       while (!this.stopping) {
         const child = this.startChild();
         this.currentChild = child;
+        await this.pidManager.writePID({
+          pid: child.pid ?? process.pid,
+          owner_pid: process.pid,
+          watchdog_pid: process.pid,
+          runtime_pid: child.pid ?? process.pid,
+        });
         this.logger.info("Watchdog spawned daemon child", { pid: child.pid });
 
         const result = await this.monitorChild(child);

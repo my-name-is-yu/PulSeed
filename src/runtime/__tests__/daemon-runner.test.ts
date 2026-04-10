@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import type { Goal } from "../../base/types/goal.js";
 import { DaemonRunner } from "../daemon-runner.js";
 import { PIDManager } from "../pid-manager.js";
 import { Logger } from "../logger.js";
@@ -106,6 +107,7 @@ function makeDeps(tmpDir: string, overrides: Partial<DaemonDeps> = {}): DaemonDe
   const mockStateManager = {
     getBaseDir: vi.fn().mockReturnValue(tmpDir),
     loadGoal: vi.fn().mockResolvedValue(null),
+    listGoalIds: vi.fn().mockResolvedValue([]),
   };
 
   const pidManager = new PIDManager(tmpDir);
@@ -205,6 +207,598 @@ describe("DaemonRunner durable runtime", () => {
     };
     expect(state.status).toBe("running");
     expect(state.active_goals).toEqual(["goal-a", "goal-b"]);
+
+    daemon.stop();
+    await startPromise;
+  });
+
+  it("starts in idle status when launched without initial goals", async () => {
+    const deps = makeDeps(tmpDir, { config: { check_interval_ms: 50 } });
+    const daemon = new DaemonRunner(deps);
+    currentDaemon = daemon;
+
+    const startPromise = daemon.start([]);
+    currentStartPromise = startPromise;
+
+    const state = await pollForFile(path.join(tmpDir, "daemon-state.json")) as {
+      status: string;
+      active_goals: string[];
+    };
+    expect(state.status).toBe("idle");
+    expect(state.active_goals).toEqual([]);
+
+    daemon.stop();
+    await startPromise;
+  });
+
+  it("refreshes resident deps when provider fingerprint changes while idle", async () => {
+    const refreshedCoreLoop = {
+      run: vi.fn().mockResolvedValue(makeLoopResult({ goalId: "goal-after-refresh" })),
+      stop: vi.fn(),
+    };
+    const getProviderRuntimeFingerprint = vi
+      .fn<() => Promise<string>>()
+      .mockResolvedValueOnce("fingerprint-a")
+      .mockResolvedValueOnce("fingerprint-b")
+      .mockResolvedValue("fingerprint-b");
+    const refreshResidentDeps = vi.fn().mockResolvedValue({
+      coreLoop: refreshedCoreLoop,
+      llmClient: {
+        sendMessage: vi.fn(),
+        parseJSON: vi.fn(),
+      },
+    });
+
+    const deps = makeDeps(tmpDir, {
+      config: { check_interval_ms: 20 },
+      getProviderRuntimeFingerprint,
+      refreshResidentDeps,
+    });
+    const daemon = new DaemonRunner(deps);
+    currentDaemon = daemon;
+
+    const startPromise = daemon.start([]);
+    currentStartPromise = startPromise;
+
+    await waitFor(() => refreshResidentDeps.mock.calls.length === 1, 2_000, 20);
+    expect(refreshResidentDeps).toHaveBeenCalledOnce();
+    await (daemon as unknown as { handleGoalStartCommand(goalId: string): Promise<void> })
+      .handleGoalStartCommand("goal-after-refresh");
+    await waitFor(
+      () => refreshedCoreLoop.run.mock.calls.some((call: unknown[]) => call[0] === "goal-after-refresh"),
+      2_000,
+      20
+    );
+
+    daemon.stop();
+    await startPromise;
+  });
+
+  it("does not refresh resident deps while a goal is actively running", async () => {
+    let releaseRun!: () => void;
+    const runPromise = new Promise<LoopResult>((resolve) => {
+      releaseRun = () => resolve(makeLoopResult({ goalId: "goal-active" }));
+    });
+
+    const deps = makeDeps(tmpDir, {
+      config: { check_interval_ms: 20 },
+      coreLoop: {
+        run: vi.fn().mockReturnValue(runPromise),
+        stop: vi.fn(),
+      } as unknown as DaemonDeps["coreLoop"],
+      driveSystem: {
+        getGoalActivationSnapshot: vi.fn(async (goalId: string): Promise<GoalActivationSnapshot> => ({
+          goalId,
+          shouldActivate: true,
+          schedule: null,
+        })),
+        shouldActivate: vi.fn().mockReturnValue(true),
+        getSchedule: vi.fn().mockResolvedValue(null),
+        prioritizeGoals: vi.fn().mockImplementation((ids: string[]) => ids),
+        startWatcher: vi.fn(),
+        stopWatcher: vi.fn(),
+        writeEvent: vi.fn().mockResolvedValue(undefined),
+      } as unknown as DaemonDeps["driveSystem"],
+      getProviderRuntimeFingerprint: vi
+        .fn<() => Promise<string>>()
+        .mockResolvedValueOnce("fingerprint-a")
+        .mockResolvedValueOnce("fingerprint-b")
+        .mockResolvedValue("fingerprint-b"),
+      refreshResidentDeps: vi.fn().mockResolvedValue({
+        coreLoop: {
+          run: vi.fn().mockResolvedValue(makeLoopResult({ goalId: "unused" })),
+          stop: vi.fn(),
+        },
+      }),
+    });
+    const daemon = new DaemonRunner(deps);
+    currentDaemon = daemon;
+
+    const startPromise = daemon.start(["goal-active"]);
+    currentStartPromise = startPromise;
+
+    const runMock = (deps.coreLoop as unknown as { run: ReturnType<typeof vi.fn> }).run;
+    await waitFor(() => runMock.mock.calls.length > 0, 2_000, 20);
+    vi.mocked(deps.refreshResidentDeps!).mockClear();
+
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    expect(deps.refreshResidentDeps).not.toHaveBeenCalled();
+
+    daemon.stop();
+    releaseRun();
+    await startPromise;
+  });
+
+  it("negotiates a resident goal from idle proactive discovery and activates it", async () => {
+    const residentGoal = {
+      id: "resident-goal",
+      title: "Add resident daemon coverage",
+    } as Goal;
+    const goalNegotiator = {
+      suggestGoals: vi.fn().mockResolvedValue([
+        {
+          title: "Add resident daemon coverage",
+          description: "Add regression coverage for idle daemon resident discovery.",
+          rationale: "Resident mode should create work from idle.",
+          dimensions_hint: ["test_coverage"],
+        },
+      ]),
+      negotiate: vi.fn().mockResolvedValue({
+        goal: residentGoal,
+        response: {},
+        log: {},
+      }),
+    };
+    const llmClient = {
+      sendMessage: vi.fn().mockResolvedValue({
+        content: JSON.stringify({
+          action: "suggest_goal",
+          details: {
+            title: "Find one resident improvement",
+            description: "Look for a concrete always-on improvement in the current workspace.",
+          },
+        }),
+      }),
+      parseJSON: vi.fn((content: string) => JSON.parse(content)),
+    };
+
+    const deps = makeDeps(tmpDir, {
+      config: {
+        check_interval_ms: 50,
+        proactive_mode: true,
+        proactive_interval_ms: 0,
+      },
+      llmClient: llmClient as unknown as DaemonDeps["llmClient"],
+      goalNegotiator: goalNegotiator as unknown as DaemonDeps["goalNegotiator"],
+    });
+    const daemon = new DaemonRunner(deps);
+    currentDaemon = daemon;
+
+    const startPromise = daemon.start([]);
+    currentStartPromise = startPromise;
+
+    const state = await pollForJsonMatch<{
+      status: string;
+      active_goals: string[];
+      resident_activity: { kind: string; goal_id?: string; summary: string } | null;
+    }>(
+      path.join(tmpDir, "daemon-state.json"),
+      (value) =>
+        value.active_goals.includes("resident-goal")
+        && value.resident_activity?.kind === "negotiation"
+    );
+
+    expect(state.status).toBe("running");
+    expect(state.active_goals).toContain("resident-goal");
+    expect(state.resident_activity).toEqual(expect.objectContaining({
+      kind: "negotiation",
+      goal_id: "resident-goal",
+    }));
+
+    const runMock = (deps.coreLoop as unknown as { run: ReturnType<typeof vi.fn> }).run;
+    await waitFor(() => runMock.mock.calls.some((call: unknown[]) => call[0] === "resident-goal"));
+
+    expect(goalNegotiator.suggestGoals).toHaveBeenCalledOnce();
+    expect(goalNegotiator.negotiate).toHaveBeenCalledWith(
+      "Add regression coverage for idle daemon resident discovery.",
+      expect.objectContaining({
+        timeoutMs: 30_000,
+      })
+    );
+
+    daemon.stop();
+    await startPromise;
+  });
+
+  it("runs resident curiosity investigation from idle proactive ticks", async () => {
+    const curiosityEngine = {
+      evaluateTriggers: vi.fn().mockResolvedValue([
+        {
+          type: "periodic_exploration",
+          detected_at: new Date().toISOString(),
+          source_goal_id: null,
+          details: "Resident investigation found room for periodic exploration.",
+          severity: 0.3,
+        },
+      ]),
+      generateProposals: vi.fn().mockResolvedValue([
+        {
+          id: "curiosity-1",
+          trigger: {
+            type: "periodic_exploration",
+            detected_at: new Date().toISOString(),
+            source_goal_id: null,
+            details: "Resident investigation found room for periodic exploration.",
+            severity: 0.3,
+          },
+          proposed_goal: {
+            description: "Explore weak spots in idle daemon resident behavior.",
+            rationale: "Periodic exploration should turn idle time into useful investigation.",
+            suggested_dimensions: [
+              {
+                name: "resident_autonomy",
+                threshold_type: "min",
+                target: 0.7,
+              },
+            ],
+            scope_domain: "engineering",
+            detection_method: "periodic_review",
+          },
+          status: "pending",
+          created_at: new Date().toISOString(),
+          expires_at: new Date(Date.now() + 3_600_000).toISOString(),
+          reviewed_at: null,
+          rejection_cooldown_until: null,
+          loop_count: 0,
+          goal_id: null,
+        },
+      ]),
+    };
+    const llmClient = {
+      sendMessage: vi.fn().mockResolvedValue({
+        content: JSON.stringify({
+          action: "investigate",
+          details: {
+            what: "idle daemon autonomy",
+            why: "Look for the next resident behavior to wire.",
+          },
+        }),
+      }),
+      parseJSON: vi.fn((content: string) => JSON.parse(content)),
+    };
+
+    const deps = makeDeps(tmpDir, {
+      config: {
+        check_interval_ms: 50,
+        proactive_mode: true,
+        proactive_interval_ms: 0,
+      },
+      llmClient: llmClient as unknown as DaemonDeps["llmClient"],
+      curiosityEngine: curiosityEngine as unknown as DaemonDeps["curiosityEngine"],
+    });
+    const daemon = new DaemonRunner(deps);
+    currentDaemon = daemon;
+
+    const startPromise = daemon.start([]);
+    currentStartPromise = startPromise;
+
+    const state = await pollForJsonMatch<{
+      status: string;
+      resident_activity: { kind: string; summary: string; suggestion_title?: string } | null;
+    }>(
+      path.join(tmpDir, "daemon-state.json"),
+      (value) => value.resident_activity?.kind === "curiosity"
+    );
+
+    expect(state.status).toBe("idle");
+    expect(state.resident_activity).toEqual(expect.objectContaining({
+      kind: "curiosity",
+      suggestion_title: "Explore weak spots in idle daemon resident behavior.",
+    }));
+    expect(curiosityEngine.evaluateTriggers).toHaveBeenCalledOnce();
+    expect(curiosityEngine.generateProposals).toHaveBeenCalledOnce();
+    expect(llmClient.sendMessage).not.toHaveBeenCalled();
+
+    daemon.stop();
+    await startPromise;
+  });
+
+  it("runs scheduled goal review before proactive LLM decisions", async () => {
+    const curiosityEngine = {
+      evaluateTriggers: vi.fn().mockResolvedValue([]),
+      generateProposals: vi.fn(),
+    };
+    const llmClient = {
+      sendMessage: vi.fn(),
+      parseJSON: vi.fn(),
+    };
+
+    const deps = makeDeps(tmpDir, {
+      config: {
+        check_interval_ms: 50,
+        proactive_mode: true,
+        proactive_interval_ms: 60_000,
+        goal_review_interval_ms: 0,
+      },
+      llmClient: llmClient as unknown as DaemonDeps["llmClient"],
+      curiosityEngine: curiosityEngine as unknown as DaemonDeps["curiosityEngine"],
+    });
+    const daemon = new DaemonRunner(deps);
+    currentDaemon = daemon;
+
+    const startPromise = daemon.start([]);
+    currentStartPromise = startPromise;
+
+    const state = await pollForJsonMatch<{
+      resident_activity: { kind: string; trigger: string; summary: string } | null;
+    }>(
+      path.join(tmpDir, "daemon-state.json"),
+      (value) => value.resident_activity?.trigger === "schedule"
+    );
+
+    expect(state.resident_activity).toEqual(expect.objectContaining({
+      kind: "curiosity",
+      trigger: "schedule",
+    }));
+    expect(state.resident_activity?.summary).toContain("goal review");
+    expect(curiosityEngine.evaluateTriggers).toHaveBeenCalledOnce();
+    expect(llmClient.sendMessage).not.toHaveBeenCalled();
+
+    daemon.stop();
+    await startPromise;
+  });
+
+  it("runs resident dream maintenance from idle proactive ticks", async () => {
+    const scheduleEngine = {
+      tick: vi.fn().mockResolvedValue([]),
+      getEntries: vi.fn().mockReturnValue([]),
+      addEntry: vi.fn().mockResolvedValue({
+        id: "schedule-entry-1",
+        name: "Dream resident schedule",
+      }),
+    };
+    const llmClient = {
+      sendMessage: vi.fn().mockResolvedValue({
+        content: JSON.stringify({
+          action: "sleep",
+        }),
+      }),
+      parseJSON: vi.fn((content: string) => JSON.parse(content)),
+    };
+
+    fs.mkdirSync(path.join(tmpDir, "dream"), { recursive: true });
+    fs.writeFileSync(
+      path.join(tmpDir, "dream", "schedule-suggestions.json"),
+      JSON.stringify({
+        generated_at: new Date().toISOString(),
+        suggestions: [
+          {
+            id: "dream-1",
+            type: "cron",
+            name: "Dream resident schedule",
+            confidence: 0.9,
+            reason: "Follow up on resident daemon maintenance during idle time.",
+            proposal: "0 * * * *",
+            status: "pending",
+          },
+        ],
+      })
+    );
+
+    const deps = makeDeps(tmpDir, {
+      config: {
+        check_interval_ms: 50,
+        proactive_mode: true,
+        proactive_interval_ms: 0,
+      },
+      llmClient: llmClient as unknown as DaemonDeps["llmClient"],
+      scheduleEngine: scheduleEngine as unknown as DaemonDeps["scheduleEngine"],
+    });
+    const daemon = new DaemonRunner(deps);
+    currentDaemon = daemon;
+
+    const startPromise = daemon.start([]);
+    currentStartPromise = startPromise;
+
+    const state = await pollForJsonMatch<{
+      status: string;
+      resident_activity: { kind: string; summary: string } | null;
+    }>(
+      path.join(tmpDir, "daemon-state.json"),
+      (value) => value.resident_activity?.kind === "dream"
+    );
+
+    const suggestionFile = JSON.parse(
+      fs.readFileSync(path.join(tmpDir, "dream", "schedule-suggestions.json"), "utf-8")
+    ) as {
+      suggestions: Array<{ status: string; applied_entry_id?: string }>;
+    };
+
+    expect(state.status).toBe("idle");
+    expect(state.resident_activity?.summary).toContain("applied pending suggestion");
+    expect(scheduleEngine.addEntry).toHaveBeenCalledOnce();
+    expect(suggestionFile.suggestions[0]).toEqual(expect.objectContaining({
+      status: "applied",
+      applied_entry_id: "schedule-entry-1",
+    }));
+
+    daemon.stop();
+    await startPromise;
+  });
+
+  it("runs resident dream light analysis during idle sleep cycles", async () => {
+    const llmClient = {
+      sendMessage: vi.fn().mockResolvedValue({
+        content: JSON.stringify({
+          action: "sleep",
+        }),
+      }),
+      parseJSON: vi.fn((content: string) => JSON.parse(content)),
+    };
+
+    const deps = makeDeps(tmpDir, {
+      config: {
+        check_interval_ms: 50,
+        proactive_mode: true,
+        proactive_interval_ms: 0,
+      },
+      llmClient: llmClient as unknown as DaemonDeps["llmClient"],
+    });
+    const daemon = new DaemonRunner(deps);
+    currentDaemon = daemon;
+
+    const startPromise = daemon.start([]);
+    currentStartPromise = startPromise;
+
+    const state = await pollForJsonMatch<{
+      resident_activity: { kind: string; summary: string } | null;
+    }>(
+      path.join(tmpDir, "daemon-state.json"),
+      (value) => value.resident_activity?.summary.includes("light analysis") ?? false
+    );
+
+    expect(state.resident_activity).toEqual(expect.objectContaining({
+      kind: "dream",
+    }));
+
+    daemon.stop();
+    await startPromise;
+  });
+
+  it("queues an observation wake-up for resident preemptive checks", async () => {
+    const llmClient = {
+      sendMessage: vi.fn().mockResolvedValue({
+        content: JSON.stringify({
+          action: "preemptive_check",
+          details: {
+            goal_id: "resident-goal",
+          },
+        }),
+      }),
+      parseJSON: vi.fn((content: string) => JSON.parse(content)),
+    };
+    const residentGoal = {
+      id: "resident-goal",
+      title: "Resident observation target",
+      description: "Target goal for preemptive observation.",
+      status: "active",
+      dimensions: [],
+      gap_aggregation: "max",
+      dimension_mapping: null,
+      constraints: [],
+      children_ids: [],
+      target_date: null,
+      origin: "manual",
+      pace_snapshot: null,
+      deadline: null,
+      confidence_flag: null,
+      user_override: false,
+      feasibility_note: null,
+      uncertainty_weight: 1,
+      decomposition_depth: 0,
+      specificity_score: null,
+      loop_status: "idle",
+      parent_id: null,
+      node_type: "goal",
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    } as Goal;
+
+    const stateManager = {
+      getBaseDir: vi.fn().mockReturnValue(tmpDir),
+      loadGoal: vi.fn(async (goalId: string) => (goalId === "resident-goal" ? residentGoal : null)),
+      listGoalIds: vi.fn().mockResolvedValue(["resident-goal"]),
+    };
+
+    const deps = makeDeps(tmpDir, {
+      config: {
+        check_interval_ms: 50,
+        proactive_mode: true,
+        proactive_interval_ms: 0,
+      },
+      llmClient: llmClient as unknown as DaemonDeps["llmClient"],
+      stateManager: stateManager as unknown as DaemonDeps["stateManager"],
+    });
+    const daemon = new DaemonRunner(deps);
+    currentDaemon = daemon;
+
+    const startPromise = daemon.start([]);
+    currentStartPromise = startPromise;
+
+    const state = await pollForJsonMatch<{
+      status: string;
+      active_goals: string[];
+      resident_activity: { kind: string; summary: string; goal_id?: string } | null;
+    }>(
+      path.join(tmpDir, "daemon-state.json"),
+      (value) => value.resident_activity?.kind === "observation",
+    );
+
+    expect(state.status).toBe("running");
+    expect(state.active_goals).toContain("resident-goal");
+    expect(state.resident_activity).toEqual(expect.objectContaining({
+      kind: "observation",
+      goal_id: "resident-goal",
+    }));
+    expect(
+      (deps.driveSystem as unknown as { writeEvent: ReturnType<typeof vi.fn> }).writeEvent
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: "resident-proactive",
+        data: expect.objectContaining({
+          event_type: "preemptive_check",
+          goal_id: "resident-goal",
+        }),
+      }),
+    );
+
+    daemon.stop();
+    await startPromise;
+  });
+
+  it("degrades to resident error when dream suggestion storage is malformed", async () => {
+    const llmClient = {
+      sendMessage: vi.fn().mockResolvedValue({
+        content: JSON.stringify({
+          action: "sleep",
+        }),
+      }),
+      parseJSON: vi.fn((content: string) => JSON.parse(content)),
+    };
+
+    fs.mkdirSync(path.join(tmpDir, "dream"), { recursive: true });
+    fs.writeFileSync(
+      path.join(tmpDir, "dream", "schedule-suggestions.json"),
+      JSON.stringify({ generated_at: 42, suggestions: {} }),
+      "utf-8",
+    );
+
+    const deps = makeDeps(tmpDir, {
+      config: {
+        check_interval_ms: 50,
+        proactive_mode: true,
+        proactive_interval_ms: 0,
+      },
+      llmClient: llmClient as unknown as DaemonDeps["llmClient"],
+      memoryLifecycle: {} as DaemonDeps["memoryLifecycle"],
+      knowledgeManager: {} as DaemonDeps["knowledgeManager"],
+    });
+    const daemon = new DaemonRunner(deps);
+    currentDaemon = daemon;
+
+    const startPromise = daemon.start([]);
+    currentStartPromise = startPromise;
+
+    const state = await pollForJsonMatch<{
+      status: string;
+      resident_activity: { kind: string; summary: string } | null;
+    }>(
+      path.join(tmpDir, "daemon-state.json"),
+      (value) => value.resident_activity?.summary.includes("Resident dream maintenance failed") ?? false,
+    );
+
+    expect(state.status).toBe("idle");
+    expect(state.resident_activity?.summary).toContain("Resident dream maintenance failed");
 
     daemon.stop();
     await startPromise;
@@ -547,10 +1141,17 @@ describe("DaemonRunner durable runtime", () => {
       status: "running",
       crash_count: 0,
       last_error: null,
+      last_resident_at: null,
+      resident_activity: null,
     };
     const { filePath, saveDaemonState } = createPersistedStateFile(tmpDir, state);
     const saveSpy = vi.fn(saveDaemonState);
     const driveSystem = {
+      getGoalActivationSnapshot: vi.fn(async (goalId: string) => ({
+        goalId,
+        shouldActivate: false,
+        schedule: null,
+      })),
       shouldActivate: vi.fn().mockResolvedValue(false),
       getSchedule: vi.fn().mockResolvedValue(null),
       prioritizeGoals: vi.fn().mockImplementation((ids: string[]) => ids),
@@ -583,10 +1184,17 @@ describe("DaemonRunner durable runtime", () => {
       status: "running",
       crash_count: 0,
       last_error: null,
+      last_resident_at: null,
+      resident_activity: null,
     };
     const { filePath, saveDaemonState } = createPersistedStateFile(tmpDir, state);
     const saveSpy = vi.fn(saveDaemonState);
     const driveSystem = {
+      getGoalActivationSnapshot: vi.fn(async (goalId: string) => ({
+        goalId,
+        shouldActivate: true,
+        schedule: null,
+      })),
       shouldActivate: vi.fn().mockResolvedValue(true),
       getSchedule: vi.fn().mockResolvedValue(null),
       prioritizeGoals: vi.fn().mockImplementation((ids: string[]) => ids),

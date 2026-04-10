@@ -120,10 +120,6 @@ export async function cmdInstall(args: string[]): Promise<number> {
   }
 
   const goalIds = values.goal ?? [];
-  if (goalIds.length === 0) {
-    console.error("Error: at least one --goal is required");
-    return 1;
-  }
 
   const intervalMs =
     values.interval !== undefined ? parseInt(values.interval, 10) : undefined;
@@ -143,6 +139,7 @@ export async function cmdInstall(args: string[]): Promise<number> {
   const logsDir = path.join(home, ".pulseed", "logs");
   const stdoutLog = path.join(logsDir, "launchd-stdout.log");
   const stderrLog = path.join(logsDir, "launchd-stderr.log");
+  const workingDir = process.cwd();
 
   const plistContent = buildPlist({
     nodePath,
@@ -152,7 +149,7 @@ export async function cmdInstall(args: string[]): Promise<number> {
     intervalMs,
     stdoutLog,
     stderrLog,
-    workingDir: home,
+    workingDir,
     envPath: process.env["PATH"],
     pulseedHome: process.env["PULSEED_HOME"],
   });
