@@ -1,3 +1,5 @@
+import * as fsp from "node:fs/promises";
+import * as path from "node:path";
 import { z } from "zod";
 import { getInternalIdentityPrefix } from "../../base/config/identity-loader.js";
 import { PulSeedEventSchema } from "../../base/types/drive.js";
@@ -9,11 +11,51 @@ import type { Envelope } from "../types/envelope.js";
 import type { CronScheduler } from "../cron-scheduler.js";
 import type { ScheduleEngine } from "../schedule/engine.js";
 import type { Logger } from "../logger.js";
+import { ApprovalStore, OutboxStore, RuntimeHealthStore, createRuntimeStorePaths } from "../store/index.js";
+
+export interface RuntimeMaintenanceLogger {
+  debug(message: string, context?: Record<string, unknown>): void;
+  info(message: string, context?: Record<string, unknown>): void;
+  warn(message: string, context?: Record<string, unknown>): void;
+  error(message: string, context?: Record<string, unknown>): void;
+}
+
+export interface RuntimeStoreMaintenanceOptions {
+  approvalRetentionMs?: number;
+  outboxRetentionMs?: number;
+  outboxMaxRecords?: number;
+  claimRetentionMs?: number;
+}
+
+export interface RuntimeStoreMaintenanceReport {
+  approvals: {
+    removedPending: number;
+    expiredPending: number;
+    prunedResolved: number;
+  };
+  outbox: {
+    pruned: number;
+    retained: number;
+  };
+  health: {
+    repaired: boolean;
+    status: string | null;
+  };
+  claims: {
+    pruned: number;
+  };
+}
 
 const ProactiveResponseSchema = z.object({
   action: z.enum(["suggest_goal", "investigate", "preemptive_check", "sleep"]),
   details: z.record(z.string(), z.unknown()).optional(),
 });
+export type ProactiveDecision = z.infer<typeof ProactiveResponseSchema>;
+
+export interface ProactiveMaintenanceResult {
+  lastProactiveTickAt: number;
+  decision: ProactiveDecision | null;
+}
 
 export type GoalCycleScheduleSnapshotEntry = GoalActivationSnapshot;
 
@@ -166,19 +208,124 @@ export async function expireOldCronTasks(
   }
 }
 
+async function pruneStaleFiles(
+  dirPath: string,
+  olderThanMs: number,
+  now: number,
+): Promise<number> {
+  let entries: string[];
+  try {
+    entries = await fsp.readdir(dirPath);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+      return 0;
+    }
+    throw err;
+  }
+
+  const threshold = now - olderThanMs;
+  let pruned = 0;
+
+  for (const entry of entries) {
+    const fullPath = path.join(dirPath, entry);
+    let stat: Awaited<ReturnType<typeof fsp.stat>>;
+    try {
+      stat = await fsp.stat(fullPath);
+    } catch {
+      continue;
+    }
+
+    if (!stat.isFile()) {
+      continue;
+    }
+    if (stat.mtimeMs >= threshold) {
+      continue;
+    }
+
+    try {
+      await fsp.unlink(fullPath);
+      pruned += 1;
+    } catch {
+      // Best-effort cleanup.
+    }
+  }
+
+  return pruned;
+}
+
+export async function runRuntimeStoreMaintenanceCycle(params: {
+  runtimeRoot: string;
+  approvalStore?: ApprovalStore;
+  outboxStore?: OutboxStore;
+  runtimeHealthStore?: RuntimeHealthStore;
+  logger: RuntimeMaintenanceLogger;
+  now?: number;
+  options?: RuntimeStoreMaintenanceOptions;
+}): Promise<RuntimeStoreMaintenanceReport> {
+  const now = params.now ?? Date.now();
+  const options = params.options ?? {};
+  const runtimePaths = createRuntimeStorePaths(params.runtimeRoot);
+  const approvalStore = params.approvalStore ?? new ApprovalStore(runtimePaths);
+  const outboxStore = params.outboxStore ?? new OutboxStore(runtimePaths);
+  const runtimeHealthStore =
+    params.runtimeHealthStore ?? new RuntimeHealthStore(runtimePaths);
+
+  const approvals = await approvalStore.reconcile(now);
+  const prunedResolved = await approvalStore.pruneResolved(
+    options.approvalRetentionMs ?? 30 * 24 * 60 * 60 * 1000,
+    now,
+  );
+  const outbox = await outboxStore.prune({
+    olderThanMs: options.outboxRetentionMs ?? 30 * 24 * 60 * 60 * 1000,
+    maxRecords: options.outboxMaxRecords ?? 5_000,
+    now,
+  });
+  const health = await runtimeHealthStore.reconcile(now);
+  const claims = await pruneStaleFiles(
+    runtimePaths.claimsDir,
+    options.claimRetentionMs ?? 7 * 24 * 60 * 60 * 1000,
+    now,
+  );
+
+  params.logger.info("Runtime store maintenance cycle completed", {
+    approvals_removed_pending: approvals.removedPending,
+    approvals_expired_pending: approvals.expiredPending,
+    approvals_pruned_resolved: prunedResolved,
+    outbox_pruned: outbox.pruned,
+    outbox_retained: outbox.retained,
+    claims_pruned: claims,
+    health_status: health.status,
+  });
+
+  return {
+    approvals: {
+      ...approvals,
+      prunedResolved,
+    },
+    outbox,
+    health: {
+      repaired: health.details?.["repaired"] === true,
+      status: health.status,
+    },
+    claims: {
+      pruned: claims,
+    },
+  };
+}
+
 export async function runProactiveMaintenance(params: {
   config: DaemonConfig;
   llmClient?: ILLMClient;
   state: DaemonState;
   lastProactiveTickAt: number;
   logger: Logger;
-}): Promise<number> {
+}): Promise<ProactiveMaintenanceResult> {
   const { config, llmClient, state, lastProactiveTickAt, logger } = params;
   if (!config.proactive_mode || !llmClient) {
-    return lastProactiveTickAt;
+    return { lastProactiveTickAt, decision: null };
   }
   if (Date.now() - lastProactiveTickAt < config.proactive_interval_ms) {
-    return lastProactiveTickAt;
+    return { lastProactiveTickAt, decision: null };
   }
 
   try {
@@ -201,7 +348,7 @@ export async function runProactiveMaintenance(params: {
         raw: response.content,
         error: parsed.error.message,
       });
-      return Date.now();
+      return { lastProactiveTickAt: Date.now(), decision: null };
     }
 
     const { action, details } = parsed.data;
@@ -210,13 +357,19 @@ export async function runProactiveMaintenance(params: {
     } else {
       logger.info(`Proactive tick: action=${action}`, { details });
     }
+    return {
+      lastProactiveTickAt: Date.now(),
+      decision: parsed.data,
+    };
   } catch (err) {
     logger.warn("Proactive tick: LLM error (ignored)", {
       error: err instanceof Error ? err.message : String(err),
     });
+    return {
+      lastProactiveTickAt: Date.now(),
+      decision: null,
+    };
   }
-
-  return Date.now();
 }
 
 export async function getMaxGapScoreForGoals(
@@ -259,6 +412,8 @@ function getPersistedDaemonStateSnapshot(state: DaemonState): string {
     loop_count: state.loop_count,
     last_loop_at: state.last_loop_at,
     interrupted_goals: state.interrupted_goals ? [...state.interrupted_goals] : undefined,
+    last_resident_at: state.last_resident_at,
+    resident_activity: state.resident_activity,
   });
 }
 
@@ -269,6 +424,7 @@ export async function runSupervisorMaintenanceCycleForDaemon(params: {
   processCronTasks: () => Promise<void>;
   processScheduleEntries: () => Promise<void>;
   proactiveTick: () => Promise<void>;
+  runRuntimeStoreMaintenance?: () => Promise<void>;
   saveDaemonState: () => Promise<void>;
   eventServer?: { broadcast?(event: string, payload: Record<string, unknown>): void | Promise<void> };
   state: DaemonState;
@@ -290,6 +446,7 @@ export async function runSupervisorMaintenanceCycleForDaemon(params: {
   await params.processCronTasks();
   await params.processScheduleEntries();
   await params.proactiveTick();
+  await params.runRuntimeStoreMaintenance?.();
   if (getPersistedDaemonStateSnapshot(params.state) !== stateBeforeMaintenance) {
     await params.saveDaemonState();
   }

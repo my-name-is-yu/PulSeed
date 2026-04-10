@@ -1,7 +1,12 @@
 import * as path from "node:path";
 import * as os from "node:os";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { isJwtExpired, readCodexOAuthToken, loadProviderConfig } from "../provider-config.js";
+import {
+  getProviderRuntimeFingerprint,
+  isJwtExpired,
+  loadProviderConfig,
+  readCodexOAuthToken,
+} from "../provider-config.js";
 
 // ─── isJwtExpired ───
 
@@ -133,6 +138,43 @@ describe("loadProviderConfig OAuth fallback", () => {
 
     const config = await loadProviderConfig();
     expect(config.api_key).toBe(validToken);
+
+    accessSpy.mockRestore();
+  });
+
+  it("changes fingerprint when the resolved OAuth token changes without exposing the raw token", async () => {
+    const futureExp = Math.floor(Date.now() / 1000) + 3600;
+    const tokenA = makeJwt({ exp: futureExp, sub: "user-a" });
+    const tokenB = makeJwt({ exp: futureExp, sub: "user-b" });
+    const providerJsonPath = path.join(os.homedir(), ".pulseed", "provider.json");
+    const authJsonPath = path.join(os.homedir(), ".codex", "auth.json");
+    const providerJson = JSON.stringify({
+      provider: "openai",
+      model: "gpt-5.4-mini",
+      adapter: "openai_codex_cli",
+    });
+
+    let authReadCount = 0;
+    mockReadFile.mockImplementation(async (filePath: unknown) => {
+      if (filePath === providerJsonPath) return providerJson;
+      if (filePath === authJsonPath) {
+        authReadCount += 1;
+        return JSON.stringify({
+          tokens: { access_token: authReadCount === 1 ? tokenA : tokenB },
+        });
+      }
+      throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+    });
+
+    const fspModule = await import("node:fs/promises");
+    const accessSpy = vi.spyOn(fspModule, "access").mockResolvedValue(undefined);
+
+    const fingerprintA = await getProviderRuntimeFingerprint();
+    const fingerprintB = await getProviderRuntimeFingerprint();
+
+    expect(fingerprintA).not.toContain(tokenA);
+    expect(fingerprintB).not.toContain(tokenB);
+    expect(fingerprintA).not.toBe(fingerprintB);
 
     accessSpy.mockRestore();
   });

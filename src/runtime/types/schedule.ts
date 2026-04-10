@@ -73,10 +73,38 @@ export const ScheduleEntryMetadataSchema = z.object({
 
 export type ScheduleEntryMetadata = z.infer<typeof ScheduleEntryMetadataSchema>;
 
+export const ScheduleFailureKindSchema = z.enum(["transient", "permanent"]);
+export type ScheduleFailureKind = z.infer<typeof ScheduleFailureKindSchema>;
+
+export const ScheduleRetryPolicySchema = z.object({
+  enabled: z.boolean().default(true),
+  initial_delay_ms: z.number().int().min(0).default(30_000),
+  max_delay_ms: z.number().int().positive().default(15 * 60 * 1000),
+  multiplier: z.number().min(1).default(2),
+  jitter_factor: z.number().min(0).max(1).default(0.2),
+  max_attempts: z.number().int().min(1).default(3),
+  max_retry_window_ms: z.number().int().positive().default(24 * 60 * 60 * 1000),
+  retryable_failure_kinds: z.array(ScheduleFailureKindSchema).default(["transient"]),
+});
+
+export type ScheduleRetryPolicy = z.infer<typeof ScheduleRetryPolicySchema>;
+
+export const ScheduleRetryStateSchema = z.object({
+  attempts: z.number().int().nonnegative().default(0),
+  next_retry_at: z.string().datetime().nullable().default(null),
+  last_attempt_at: z.string().datetime().nullable().default(null),
+  first_failure_at: z.string().datetime().nullable().default(null),
+  last_failure_kind: ScheduleFailureKindSchema.nullable().default(null),
+  last_error_message: z.string().nullable().default(null),
+});
+
+export type ScheduleRetryState = z.infer<typeof ScheduleRetryStateSchema>;
+
 export const EscalationConfigSchema = z.object({
   enabled: z.boolean().default(false),
   target_layer: z.enum(["probe", "cron", "goal_trigger"]).optional(),
   target_entry_id: z.string().optional(),
+  target_goal_id: z.string().optional(),
   cooldown_minutes: z.number().default(15),
   max_per_hour: z.number().default(4),
   circuit_breaker_threshold: z.number().default(10),
@@ -102,6 +130,8 @@ export const ScheduleEntrySchema = z.object({
   heartbeat: HeartbeatConfigSchema.optional(),
   probe: ProbeConfigSchema.optional(),
   escalation: EscalationConfigSchema.optional(),
+  retry_policy: ScheduleRetryPolicySchema.optional(),
+  retry_state: ScheduleRetryStateSchema.nullable().optional(),
   baseline_results: z.array(z.unknown()).default([]),
   created_at: z.string().datetime(),
   updated_at: z.string().datetime(),
@@ -131,6 +161,8 @@ export const ScheduleResultSchema = z.object({
   error_message: z.string().optional(),
   fired_at: z.string().datetime(),
   layer: z.enum(["heartbeat", "probe", "cron", "goal_trigger"]).optional(),
+  goal_id: z.string().optional(),
+  failure_kind: ScheduleFailureKindSchema.optional(),
   tokens_used: z.number().default(0),
   escalated_to: z.string().nullable().default(null),
   output_summary: z.string().optional(),

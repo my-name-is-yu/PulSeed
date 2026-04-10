@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { PIDManager } from "../pid-manager.js";
@@ -75,9 +75,9 @@ describe("PIDManager", () => {
 
     it("should overwrite an existing PID file without error", async () => {
       await pidManager.writePID();
-      // Write a second time — should not throw
-      await expect(pidManager.writePID()).resolves.toBeUndefined();
+      const written = await pidManager.writePID();
       const info = await pidManager.readPID();
+      expect(written.pid).toBe(process.pid);
       expect(info!.pid).toBe(process.pid);
     });
   });
@@ -131,6 +131,8 @@ describe("PIDManager", () => {
       const result = await pidManager.readPID();
       expect(result!.pid).toBe(12345);
       expect(result!.started_at).toBe("2026-01-01T00:00:00.000Z");
+      expect(result!.runtime_pid).toBe(12345);
+      expect(result!.owner_pid).toBe(12345);
     });
   });
 
@@ -222,6 +224,68 @@ describe("PIDManager", () => {
       expect(await pidManager.isRunning()).toBe(true);
       await pidManager.cleanup();
       expect(await pidManager.isRunning()).toBe(false);
+    });
+  });
+
+  describe("runtime tree ownership", () => {
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it("stores watchdog and runtime child ownership in the pid file", async () => {
+      await pidManager.writePID({
+        pid: 2202,
+        runtime_pid: 2202,
+        owner_pid: 1101,
+        watchdog_pid: 1101,
+        started_at: "2026-04-10T00:00:00.000Z",
+      });
+
+      const info = await pidManager.readPID();
+      expect(info).toMatchObject({
+        pid: 2202,
+        runtime_pid: 2202,
+        owner_pid: 1101,
+        watchdog_pid: 1101,
+        started_at: "2026-04-10T00:00:00.000Z",
+      });
+    });
+
+    it("stopRuntime terminates the watchdog and runtime child together", async () => {
+      const alive = new Set([4101, 4202]);
+      const killSpy = vi.spyOn(process, "kill").mockImplementation(((pid: number, signal?: NodeJS.Signals | number) => {
+        if (signal === 0) {
+          if (!alive.has(pid)) {
+            const err = new Error("ESRCH") as NodeJS.ErrnoException;
+            err.code = "ESRCH";
+            throw err;
+          }
+          return true;
+        }
+
+        if (signal === "SIGTERM" || signal === "SIGKILL") {
+          alive.delete(pid);
+          return true;
+        }
+
+        return true;
+      }) as typeof process.kill);
+
+      await pidManager.writePID({
+        pid: 4202,
+        runtime_pid: 4202,
+        owner_pid: 4101,
+        watchdog_pid: 4101,
+        started_at: "2026-04-10T00:00:00.000Z",
+      });
+
+      const result = await pidManager.stopRuntime({ timeoutMs: 50, pollIntervalMs: 1 });
+
+      expect(killSpy).toHaveBeenCalledWith(4101, "SIGTERM");
+      expect(killSpy).toHaveBeenCalledWith(4202, "SIGTERM");
+      expect(result.stopped).toBe(true);
+      expect(result.forced).toBe(false);
+      expect(fs.existsSync(pidManager.getPath())).toBe(false);
     });
   });
 });

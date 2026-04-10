@@ -1,17 +1,29 @@
+import * as fs from "node:fs";
 import * as path from "node:path";
+import { spawnSync } from "node:child_process";
 import { CoreLoop } from "../../orchestrator/loop/core-loop.js";
 import type { LoopResult } from "../../orchestrator/loop/core-loop.js";
+import type { GoalNegotiator } from "../../orchestrator/goal/goal-negotiator.js";
+import type { Goal } from "../../base/types/goal.js";
 import { DriveSystem } from "../../platform/drive/drive-system.js";
 import { StateManager } from "../../base/state/state-manager.js";
+import { getProviderRuntimeFingerprint } from "../../base/llm/provider-config.js";
+import type { CuriosityEngine } from "../../platform/traits/curiosity-engine.js";
 import { PIDManager } from "../pid-manager.js";
 import { Logger } from "../logger.js";
 import { EventServer } from "../event/server.js";
 import type { PulSeedEvent } from "../../base/types/drive.js";
-import type { DaemonConfig, DaemonState } from "../../base/types/daemon.js";
-import { DaemonConfigSchema, DaemonStateSchema } from "../../base/types/daemon.js";
+import type { DaemonConfig, DaemonState, ResidentActivity } from "../../base/types/daemon.js";
+import { DaemonConfigSchema, DaemonStateSchema, ResidentActivitySchema } from "../../base/types/daemon.js";
 import type { ILLMClient } from "../../base/llm/llm-client.js";
 import { CronScheduler } from "../cron-scheduler.js";
 import { ScheduleEngine } from "../schedule/engine.js";
+import type { MemoryLifecycleManager } from "../../platform/knowledge/memory/memory-lifecycle.js";
+import type { KnowledgeManager } from "../../platform/knowledge/knowledge-manager.js";
+import { DreamAnalyzer } from "../../platform/dream/dream-analyzer.js";
+import { DreamScheduleSuggestionStore } from "../../platform/dream/dream-schedule-suggestions.js";
+import type { DreamRunReport, DreamTier } from "../../platform/dream/dream-types.js";
+import { runDreamConsolidation } from "../../reflection/dream-consolidation.js";
 import { generateCronEntry } from "./signals.js";
 import { rotateDaemonLog, calculateAdaptiveInterval as calcAdaptiveInterval } from "./health.js";
 import { IngressGateway, HttpChannelAdapter } from "../gateway/index.js";
@@ -46,6 +58,7 @@ import {
   getNextIntervalForGoals,
   processCronTasksForDaemon,
   processScheduleEntriesForDaemon,
+  runRuntimeStoreMaintenanceCycle,
   readShutdownMarkerFile,
   restoreInterruptedGoals,
   runProactiveMaintenance,
@@ -55,6 +68,68 @@ import {
   writeShutdownMarkerFile,
 } from "./index.js";
 import type { GoalCycleScheduleSnapshotEntry } from "./maintenance.js";
+
+function gatherResidentWorkspaceContext(workspaceDir: string, seedDescription?: string): string {
+  const parts: string[] = [`Workspace: ${workspaceDir}`];
+  const seed = seedDescription?.trim();
+  if (seed) {
+    parts.push(`Resident trigger hint: ${seed}`);
+  }
+
+  try {
+    const pkgPath = path.join(workspaceDir, "package.json");
+    const pkgRaw = fs.readFileSync(pkgPath, "utf-8");
+    const pkg = JSON.parse(pkgRaw) as Record<string, unknown>;
+    const name = typeof pkg.name === "string" ? pkg.name : "";
+    const description = typeof pkg.description === "string" ? pkg.description : "";
+    const scripts = pkg.scripts && typeof pkg.scripts === "object"
+      ? Object.keys(pkg.scripts as Record<string, unknown>).join(", ")
+      : "";
+    const prefix = name ? `Node.js project '${name}'` : "Node.js project";
+    const descPart = description ? `. ${description}` : "";
+    const scriptsPart = scripts ? `. Scripts: ${scripts}` : "";
+    parts.push(`${prefix}${descPart}${scriptsPart}`);
+  } catch {
+    // No package metadata available.
+  }
+
+  try {
+    const entries = fs.readdirSync(workspaceDir);
+    const dirs = entries.filter((entry) => {
+      try {
+        return fs.statSync(path.join(workspaceDir, entry)).isDirectory();
+      } catch {
+        return false;
+      }
+    });
+    const files = entries.filter((entry) => {
+      try {
+        return fs.statSync(path.join(workspaceDir, entry)).isFile();
+      } catch {
+        return false;
+      }
+    });
+    const visibleEntries = [
+      dirs.slice(0, 10).map((entry) => `${entry}/`).join(", "),
+      files.slice(0, 5).join(", "),
+    ].filter(Boolean).join(", ");
+    if (visibleEntries) {
+      parts.push(`Files: ${visibleEntries}`);
+    }
+  } catch {
+    // Workspace listing is best-effort.
+  }
+
+  const gitResult = spawnSync("git", ["log", "--oneline", "-5", "--format=%s"], {
+    cwd: workspaceDir,
+    encoding: "utf-8",
+  });
+  if (gitResult.status === 0 && gitResult.stdout.trim().length > 0) {
+    parts.push(`Recent changes: ${gitResult.stdout.trim().split("\n").join("; ")}`);
+  }
+
+  return parts.join(". ");
+}
 
 // Re-exports for callers that imported these from daemon-runner
 export { generateCronEntry } from "./signals.js";
@@ -81,6 +156,8 @@ const RUNTIME_LEADER_HEARTBEAT_MS = 10_000;
 
 export interface DaemonDeps {
   coreLoop: CoreLoop;
+  curiosityEngine?: CuriosityEngine;
+  goalNegotiator?: GoalNegotiator;
   driveSystem: DriveSystem;
   stateManager: StateManager;
   pidManager: PIDManager;
@@ -96,14 +173,34 @@ export interface DaemonDeps {
   llmClient?: ILLMClient;
   cronScheduler?: CronScheduler;
   scheduleEngine?: ScheduleEngine;
+  memoryLifecycle?: MemoryLifecycleManager;
+  knowledgeManager?: KnowledgeManager;
   gateway?: IngressGateway;
   supervisor?: LoopSupervisor;
+  getProviderRuntimeFingerprint?: () => Promise<string>;
+  refreshResidentDeps?: () => Promise<{
+    coreLoop: CoreLoop;
+    curiosityEngine?: CuriosityEngine;
+    goalNegotiator?: GoalNegotiator;
+    llmClient?: ILLMClient;
+    reportingEngine?: {
+      generateNotification(
+        type: "approval_required",
+        context: { goalId: string; message: string; details?: string }
+      ): Promise<unknown>;
+    };
+    scheduleEngine?: ScheduleEngine;
+    memoryLifecycle?: MemoryLifecycleManager;
+    knowledgeManager?: KnowledgeManager;
+  }>;
   /** Factory to create fresh CoreLoop instances for LoopSupervisor workers. */
   coreLoopFactory?: () => CoreLoop;
 }
 
 export class DaemonRunner {
   private coreLoop: CoreLoop;
+  private curiosityEngine: CuriosityEngine | undefined;
+  private goalNegotiator: GoalNegotiator | undefined;
   private driveSystem: DriveSystem;
   private stateManager: StateManager;
   private pidManager: PIDManager;
@@ -132,13 +229,17 @@ export class DaemonRunner {
     | undefined;
   private cronScheduler: CronScheduler | undefined;
   private scheduleEngine: ScheduleEngine | undefined;
+  private memoryLifecycle: MemoryLifecycleManager | undefined;
+  private knowledgeManager: KnowledgeManager | undefined;
   private consecutiveIdleCycles: number = 0;
   private gateway: IngressGateway | undefined;
   private supervisor: LoopSupervisor | null = null;
+  private lastGoalReviewAt: number = Date.now();
   private cronScheduleInterval: ReturnType<typeof setInterval> | null = null;
   private shutdownResolve: (() => void) | null = null;
   private shutdownCoordinator: ProcessShutdownCoordinator | null = null;
   private stopStatusHeartbeat: (() => void) | null = null;
+  private lastRuntimeStoreMaintenanceAt = 0;
   private readonly deps: DaemonDeps;
   private runtimeRoot: string | null = null;
   private approvalStore: ApprovalStore | null = null;
@@ -152,10 +253,15 @@ export class DaemonRunner {
   private commandDispatcher: CommandDispatcher | null = null;
   private eventDispatcher: EventDispatcher | null = null;
   private runtimeOwnership: RuntimeOwnershipCoordinator;
+  private readonly getProviderRuntimeFingerprintFn: () => Promise<string>;
+  private readonly refreshResidentDeps: DaemonDeps["refreshResidentDeps"];
+  private providerRuntimeFingerprint: string | null = null;
 
   constructor(deps: DaemonDeps) {
     this.deps = deps;
     this.coreLoop = deps.coreLoop;
+    this.curiosityEngine = deps.curiosityEngine;
+    this.goalNegotiator = deps.goalNegotiator;
     this.driveSystem = deps.driveSystem;
     this.stateManager = deps.stateManager;
     this.pidManager = deps.pidManager;
@@ -165,6 +271,8 @@ export class DaemonRunner {
     this.reportingEngine = deps.reportingEngine;
     this.cronScheduler = deps.cronScheduler;
     this.scheduleEngine = deps.scheduleEngine;
+    this.memoryLifecycle = deps.memoryLifecycle;
+    this.knowledgeManager = deps.knowledgeManager;
     this.gateway = deps.gateway;
     this.supervisor = deps.supervisor ?? null;
     this.lastProactiveTickAt = Date.now();
@@ -205,6 +313,9 @@ export class DaemonRunner {
       leaderLockManager: this.leaderLockManager,
       onLeadershipLost: (reason) => this.failRuntimeLeadership(reason),
     });
+    this.getProviderRuntimeFingerprintFn =
+      deps.getProviderRuntimeFingerprint ?? getProviderRuntimeFingerprint;
+    this.refreshResidentDeps = deps.refreshResidentDeps;
 
     // Initialize daemon state
     this.state = DaemonStateSchema.parse({
@@ -216,7 +327,17 @@ export class DaemonRunner {
       status: "stopped",
       crash_count: 0,
       last_error: null,
+      last_resident_at: null,
+      resident_activity: null,
     });
+  }
+
+  private refreshOperationalState(): void {
+    this.state.active_goals = [...this.currentGoalIds];
+    if (this.state.status === "crashed" || this.state.status === "stopping") {
+      return;
+    }
+    this.state.status = this.currentGoalIds.length === 0 ? "idle" : "running";
   }
 
   private resolveRuntimeRoot(): string {
@@ -243,6 +364,7 @@ export class DaemonRunner {
       await this.checkCrashRecovery();
       await this.initializeRuntimeFoundation();
       await this.acquireRuntimeLeadership();
+      await this.runRuntimeStoreMaintenance(true);
 
       // 2c. Start EventServer (always-on) and file watcher
       if (!this.eventServer) {
@@ -364,10 +486,13 @@ export class DaemonRunner {
         last_loop_at: null,
         loop_count: 0,
         active_goals: mergedGoalIds,
-        status: "running",
+        status: mergedGoalIds.length === 0 ? "idle" : "running",
         crash_count: 0,
         last_error: null,
+        last_resident_at: null,
+        resident_activity: null,
       });
+      this.providerRuntimeFingerprint = await this.captureProviderRuntimeFingerprint();
       await this.saveDaemonState();
 
       // 5b. Write "running" shutdown marker (crash detection on next startup)
@@ -591,9 +716,11 @@ export class DaemonRunner {
     while (this.running && !this.shuttingDown) {
       try {
         const goalIds = [...this.currentGoalIds];
+        this.refreshOperationalState();
         const cycleSnapshot = await this.collectGoalCycleSnapshot(goalIds);
         // 1. Determine which goals need activation
         const activeGoals = await this.determineActiveGoals(goalIds, cycleSnapshot);
+        await this.maybeRefreshProviderRuntime(activeGoals.length);
 
         if (activeGoals.length === 0) {
           this.logger.info("No goals need activation this cycle", {
@@ -625,6 +752,7 @@ export class DaemonRunner {
                 status: goal?.status ?? "unknown",
               });
             }
+            await this.broadcastGoalUpdated(goalId, result.finalStatus);
           } catch (err) {
             this.handleLoopError(goalId, err);
           }
@@ -634,6 +762,7 @@ export class DaemonRunner {
         }
 
         // 3. Save state
+        this.refreshOperationalState();
         await this.saveDaemonState();
         if (this.eventServer) {
           void this.eventServer.broadcast?.("daemon_status", {
@@ -659,6 +788,10 @@ export class DaemonRunner {
         // do not block proactive actions indefinitely.
         if (this.running) {
           await this.proactiveTick();
+        }
+
+        if (this.running) {
+          await this.runRuntimeStoreMaintenance();
         }
 
         // 5. Track idle cycles for adaptive sleep
@@ -831,6 +964,32 @@ export class DaemonRunner {
     });
   }
 
+  private async broadcastGoalUpdated(goalId: string, fallbackStatus?: string): Promise<void> {
+    if (!this.eventServer) {
+      return;
+    }
+
+    const goal = await this.stateManager.loadGoal(goalId).catch(() => null);
+    await this.eventServer.broadcast?.("goal_updated", {
+      goalId,
+      status: goal?.status ?? fallbackStatus ?? "unknown",
+      loopStatus: goal?.loop_status ?? null,
+      progress: null,
+    });
+  }
+
+  private async broadcastChatResponse(goalId: string, message: string): Promise<void> {
+    if (!this.eventServer) {
+      return;
+    }
+
+    await this.eventServer.broadcast?.("chat_response", {
+      goalId,
+      message,
+      status: "queued",
+    });
+  }
+
   /**
    * Expire old non-permanent cron tasks.
    */
@@ -899,21 +1058,23 @@ export class DaemonRunner {
     if (!this.currentGoalIds.includes(goalId)) {
       this.currentGoalIds.push(goalId);
     }
-    this.state.active_goals = [...this.currentGoalIds];
+    this.refreshOperationalState();
     await this.saveDaemonState();
     this.supervisor?.activateGoal(goalId);
     this.abortSleep();
+    await this.broadcastGoalUpdated(goalId, "active");
   }
 
   private async handleGoalStopCommand(goalId: string): Promise<void> {
     this.currentGoalIds = this.currentGoalIds.filter((id) => id !== goalId);
-    this.state.active_goals = [...this.currentGoalIds];
+    this.refreshOperationalState();
     if (this.state.interrupted_goals) {
       this.state.interrupted_goals = this.state.interrupted_goals.filter((id) => id !== goalId);
     }
     await this.saveDaemonState();
     this.supervisor?.deactivateGoal(goalId);
     this.abortSleep();
+    await this.broadcastGoalUpdated(goalId, "stopped");
   }
 
   private async handleGoalCompletion(goalId: string, result: { status: string; totalIterations: number }): Promise<void> {
@@ -937,9 +1098,366 @@ export class DaemonRunner {
         lastLoopAt: this.state.last_loop_at,
       });
     }
+    await this.broadcastGoalUpdated(goalId, result.status);
+  }
+
+  private async loadExistingGoalTitles(): Promise<string[]> {
+    const goalIds = await this.stateManager.listGoalIds().catch(() => []);
+    const titles: string[] = [];
+    for (const goalId of goalIds) {
+      const goal = await this.stateManager.loadGoal(goalId).catch(() => null);
+      if (goal?.title) {
+        titles.push(goal.title);
+      }
+    }
+    return titles;
+  }
+
+  private async loadKnownGoals(): Promise<Goal[]> {
+    const goalIds = await this.stateManager.listGoalIds().catch(() => []);
+    const goals: Goal[] = [];
+    for (const goalId of goalIds) {
+      const goal = await this.stateManager.loadGoal(goalId).catch(() => null);
+      if (goal) {
+        goals.push(goal);
+      }
+    }
+    return goals;
+  }
+
+  private async persistResidentActivity(
+    activity: Omit<ResidentActivity, "recorded_at"> & { recorded_at?: string }
+  ): Promise<void> {
+    const residentActivity = ResidentActivitySchema.parse({
+      ...activity,
+      recorded_at: activity.recorded_at ?? new Date().toISOString(),
+    });
+    this.state.last_resident_at = residentActivity.recorded_at;
+    this.state.resident_activity = residentActivity;
+    await this.saveDaemonState();
+  }
+
+  private async triggerResidentGoalDiscovery(details?: Record<string, unknown>): Promise<void> {
+    if (!this.goalNegotiator) {
+      await this.persistResidentActivity({
+        kind: "skipped",
+        trigger: "proactive_tick",
+        summary: "Resident discovery skipped because goal negotiation is unavailable.",
+      });
+      return;
+    }
+
+    if (this.currentGoalIds.length > 0) {
+      await this.persistResidentActivity({
+        kind: "skipped",
+        trigger: "proactive_tick",
+        summary: "Resident discovery skipped because active goals are already running.",
+      });
+      return;
+    }
+
+    const hintedDescription =
+      typeof details?.["description"] === "string" ? details["description"].trim() : "";
+    const hintedTitle =
+      typeof details?.["title"] === "string" ? details["title"].trim() : "";
+
+    try {
+      const workspaceDir = process.cwd();
+      const workspaceContext = gatherResidentWorkspaceContext(workspaceDir, hintedDescription);
+      const existingTitles = await this.loadExistingGoalTitles();
+      const suggestions = await this.goalNegotiator.suggestGoals(workspaceContext, {
+        maxSuggestions: 1,
+        existingGoals: existingTitles,
+        repoPath: workspaceDir,
+      });
+      const suggestion = suggestions[0];
+      const suggestionTitle = suggestion?.title ?? hintedTitle;
+      const negotiationDescription = suggestion?.description ?? hintedDescription;
+
+      if (!negotiationDescription) {
+        await this.persistResidentActivity({
+          kind: "suggestion",
+          trigger: "proactive_tick",
+          summary: "Resident discovery ran but found no actionable goal to negotiate.",
+          suggestion_title: suggestionTitle || undefined,
+        });
+        return;
+      }
+
+      const { goal } = await this.goalNegotiator.negotiate(negotiationDescription, {
+        workspaceContext,
+        timeoutMs: 30_000,
+      });
+      if (!this.currentGoalIds.includes(goal.id)) {
+        this.currentGoalIds.push(goal.id);
+      }
+      this.refreshOperationalState();
+      await this.persistResidentActivity({
+        kind: "negotiation",
+        trigger: "proactive_tick",
+        summary: `Resident discovery negotiated a new goal: ${suggestionTitle || goal.title}`,
+        suggestion_title: suggestionTitle || goal.title,
+        goal_id: goal.id,
+      });
+      this.supervisor?.activateGoal(goal.id);
+      this.abortSleep();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.warn("Resident discovery failed", { error: message });
+      await this.persistResidentActivity({
+        kind: "error",
+        trigger: "proactive_tick",
+        summary: `Resident discovery failed: ${message}`,
+      });
+    }
+  }
+
+  private async runResidentCuriosityCycle(options?: {
+    activityTrigger?: ResidentActivity["trigger"];
+    focus?: string;
+    reviewLabel?: string;
+    skipWhenNoTriggers?: boolean;
+  }): Promise<boolean> {
+    if (!this.curiosityEngine) {
+      if (options?.skipWhenNoTriggers) {
+        return false;
+      }
+      await this.persistResidentActivity({
+        kind: "skipped",
+        trigger: options?.activityTrigger ?? "proactive_tick",
+        summary: "Resident investigation skipped because curiosity wiring is unavailable.",
+      });
+      return true;
+    }
+
+    try {
+      const goals = await this.loadKnownGoals();
+      const triggers = await this.curiosityEngine.evaluateTriggers(goals);
+      const focus = options?.focus?.trim() ?? "";
+
+      if (triggers.length === 0) {
+        if (options?.skipWhenNoTriggers) {
+          return false;
+        }
+        await this.persistResidentActivity({
+          kind: "curiosity",
+          trigger: options?.activityTrigger ?? "proactive_tick",
+          summary: options?.reviewLabel
+            ? `Resident ${options.reviewLabel} ran and found no curiosity triggers.`
+            : `Resident investigation ran${focus ? ` for ${focus}` : ""} and found nothing actionable.`,
+        });
+        return true;
+      }
+
+      const proposals = await this.curiosityEngine.generateProposals(triggers, goals);
+      if (proposals.length === 0) {
+        await this.persistResidentActivity({
+          kind: "curiosity",
+          trigger: options?.activityTrigger ?? "proactive_tick",
+          summary: options?.reviewLabel
+            ? `Resident ${options.reviewLabel} ran but produced no curiosity proposals.`
+            : `Resident investigation ran${focus ? ` for ${focus}` : ""} but produced no curiosity proposals.`,
+        });
+        return true;
+      }
+
+      const proposal = proposals[0]!;
+      await this.persistResidentActivity({
+        kind: "curiosity",
+        trigger: options?.activityTrigger ?? "proactive_tick",
+        summary: options?.reviewLabel
+          ? `Resident ${options.reviewLabel} created ${proposals.length} curiosity proposal(s); next focus: ${proposal.proposed_goal.description}`
+          : `Resident investigation created ${proposals.length} curiosity proposal(s); next focus: ${proposal.proposed_goal.description}`,
+        suggestion_title: proposal.proposed_goal.description,
+      });
+      return true;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.warn("Resident investigation failed", { error: message });
+      await this.persistResidentActivity({
+        kind: "error",
+        trigger: options?.activityTrigger ?? "proactive_tick",
+        summary: `Resident investigation failed: ${message}`,
+      });
+      return true;
+    }
+  }
+
+  private async triggerResidentInvestigation(details?: Record<string, unknown>): Promise<void> {
+    const focus = typeof details?.["what"] === "string" ? details["what"].trim() : "";
+    await this.runResidentCuriosityCycle({
+      activityTrigger: "proactive_tick",
+      focus,
+      skipWhenNoTriggers: false,
+    });
+  }
+
+  private async runScheduledGoalReview(): Promise<boolean> {
+    if (!this.curiosityEngine || !this.config.proactive_mode) {
+      return false;
+    }
+    const now = Date.now();
+    if (now - this.lastGoalReviewAt < this.config.goal_review_interval_ms) {
+      return false;
+    }
+    this.lastGoalReviewAt = now;
+    return this.runResidentCuriosityCycle({
+      activityTrigger: "schedule",
+      reviewLabel: "goal review",
+      skipWhenNoTriggers: false,
+    });
+  }
+
+  private async tryApplyPendingDreamSuggestion(): Promise<{
+    suggestion: { id: string; name?: string; reason?: string };
+    entry: { id: string };
+    duplicate: boolean;
+  } | null> {
+    const dreamStore = new DreamScheduleSuggestionStore(this.baseDir);
+    const pendingSuggestion = (await dreamStore.list()).find((suggestion) => suggestion.status === "pending");
+    if (!pendingSuggestion || !this.scheduleEngine) {
+      return null;
+    }
+
+    return dreamStore.applySuggestion(pendingSuggestion.id, this.scheduleEngine);
+  }
+
+  private async runDreamAnalysis(tier: DreamTier): Promise<DreamRunReport> {
+    const analyzer = new DreamAnalyzer({
+      baseDir: this.baseDir,
+      llmClient: this.llmClient,
+      logger: this.logger,
+    });
+    return analyzer.run({ tier });
+  }
+
+  private async triggerResidentDreamMaintenance(details?: Record<string, unknown>, tier: DreamTier = "deep"): Promise<void> {
+    try {
+      const appliedBeforeAnalysis = await this.tryApplyPendingDreamSuggestion();
+      if (appliedBeforeAnalysis) {
+        await this.persistResidentActivity({
+          kind: "dream",
+          trigger: "proactive_tick",
+          summary: appliedBeforeAnalysis.duplicate
+            ? `Resident dream linked pending suggestion "${appliedBeforeAnalysis.suggestion.name ?? appliedBeforeAnalysis.suggestion.id}" to existing schedule ${appliedBeforeAnalysis.entry.id}.`
+            : `Resident dream applied pending suggestion "${appliedBeforeAnalysis.suggestion.name ?? appliedBeforeAnalysis.suggestion.id}" into schedule ${appliedBeforeAnalysis.entry.id}.`,
+          suggestion_title: appliedBeforeAnalysis.suggestion.name ?? appliedBeforeAnalysis.suggestion.reason,
+        });
+        return;
+      }
+
+      const analysisReport = await this.runDreamAnalysis(tier);
+      const appliedAfterAnalysis = tier === "deep" ? await this.tryApplyPendingDreamSuggestion() : null;
+      const consolidationReport = tier === "deep"
+        ? await runDreamConsolidation({
+          stateManager: this.stateManager,
+          memoryLifecycle: this.memoryLifecycle,
+          knowledgeManager: this.knowledgeManager,
+          baseDir: this.baseDir,
+        })
+        : null;
+      const requestedGoalId =
+        typeof details?.["goal_id"] === "string" ? details["goal_id"].trim() : "";
+      const goalHint = requestedGoalId ? ` for ${requestedGoalId}` : "";
+
+      await this.persistResidentActivity({
+        kind: "dream",
+        trigger: "proactive_tick",
+        summary: tier === "light"
+          ? `Resident dream light analysis ran${goalHint}; processed ${analysisReport.goalsProcessed.length} goals, persisted ${analysisReport.patternsPersisted} patterns, and generated ${analysisReport.scheduleSuggestions} schedule suggestion(s).`
+          : `Resident dream deep analysis ran${goalHint}; processed ${analysisReport.goalsProcessed.length} goals, persisted ${analysisReport.patternsPersisted} patterns, generated ${analysisReport.scheduleSuggestions} schedule suggestion(s), compressed ${consolidationReport?.entries_compressed ?? 0} entries, and created ${consolidationReport?.revalidation_tasks_created ?? 0} revalidation tasks${appliedAfterAnalysis ? ` while applying "${appliedAfterAnalysis.suggestion.name ?? appliedAfterAnalysis.suggestion.id}"` : ""}.`,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.warn("Resident dream maintenance failed", { error: message });
+      await this.persistResidentActivity({
+        kind: "error",
+        trigger: "proactive_tick",
+        summary: `Resident dream maintenance failed: ${message}`,
+      });
+    }
+  }
+
+  private async triggerResidentPreemptiveCheck(details?: Record<string, unknown>): Promise<void> {
+    const goalId =
+      typeof details?.["goal_id"] === "string" ? details["goal_id"].trim() : "";
+
+    if (!goalId) {
+      await this.persistResidentActivity({
+        kind: "skipped",
+        trigger: "proactive_tick",
+        summary: "Resident preemptive check skipped because no goal_id was provided.",
+      });
+      return;
+    }
+
+    try {
+      const goal = await this.stateManager.loadGoal(goalId).catch(() => null);
+      if (!goal) {
+        await this.persistResidentActivity({
+          kind: "skipped",
+          trigger: "proactive_tick",
+          summary: `Resident preemptive check skipped because goal "${goalId}" was not found.`,
+          goal_id: goalId,
+        });
+        return;
+      }
+
+      await this.driveSystem.writeEvent(
+        PulSeedEventSchema.parse({
+          type: "external",
+          source: "resident-proactive",
+          timestamp: new Date().toISOString(),
+          data: {
+            event_type: "preemptive_check",
+            goal_id: goalId,
+            requested_by: "resident-daemon",
+          },
+        }),
+      );
+      if (!this.currentGoalIds.includes(goalId)) {
+        this.currentGoalIds.push(goalId);
+      }
+      this.refreshOperationalState();
+      this.supervisor?.activateGoal(goalId);
+      this.abortSleep();
+      await this.persistResidentActivity({
+        kind: "observation",
+        trigger: "proactive_tick",
+        summary: `Resident preemptive check queued an observation wake-up for goal "${goalId}".`,
+        goal_id: goalId,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.warn("Resident preemptive check failed", { error: message, goal_id: goalId });
+      await this.persistResidentActivity({
+        kind: "error",
+        trigger: "proactive_tick",
+        summary: `Resident preemptive check failed: ${message}`,
+        goal_id: goalId || undefined,
+      });
+    }
+  }
+
+  private async triggerIdleResidentMaintenance(): Promise<void> {
+    if (this.currentGoalIds.length > 0) {
+      return;
+    }
+
+    const dreamSuggestionPath = path.join(this.baseDir, "dream", "schedule-suggestions.json");
+    const hasDreamSuggestionFile = fs.existsSync(dreamSuggestionPath);
+    if (!hasDreamSuggestionFile && !this.memoryLifecycle && !this.knowledgeManager && !this.llmClient) {
+      return;
+    }
+
+    await this.triggerResidentDreamMaintenance(undefined, "light");
   }
 
   private async runSupervisorMaintenanceCycle(): Promise<void> {
+    this.refreshOperationalState();
+    await this.maybeRefreshProviderRuntime(
+      (this.supervisor?.getState().workers ?? []).filter((worker) => worker.goalId !== null).length
+    );
     await runSupervisorMaintenanceCycleForDaemon({
       currentGoalIds: this.currentGoalIds,
       driveSystem: this.driveSystem,
@@ -950,11 +1468,56 @@ export class DaemonRunner {
       saveDaemonState: () => this.saveDaemonState(),
       eventServer: this.eventServer,
       state: this.state,
+      runRuntimeStoreMaintenance: () => this.runRuntimeStoreMaintenance(),
     });
+  }
+
+  private async captureProviderRuntimeFingerprint(): Promise<string | null> {
+    try {
+      return await this.getProviderRuntimeFingerprintFn();
+    } catch (error) {
+      this.logger.warn("Failed to capture provider runtime fingerprint", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return null;
+    }
+  }
+
+  private async maybeRefreshProviderRuntime(activeGoalCount: number): Promise<void> {
+    if (!this.refreshResidentDeps || activeGoalCount > 0) {
+      return;
+    }
+
+    const currentFingerprint = await this.captureProviderRuntimeFingerprint();
+    if (!currentFingerprint || currentFingerprint === this.providerRuntimeFingerprint) {
+      return;
+    }
+
+    try {
+      const freshDeps = await this.refreshResidentDeps();
+      this.coreLoop = freshDeps.coreLoop;
+      this.curiosityEngine = freshDeps.curiosityEngine;
+      this.goalNegotiator = freshDeps.goalNegotiator;
+      this.llmClient = freshDeps.llmClient;
+      this.reportingEngine = freshDeps.reportingEngine;
+      this.scheduleEngine = freshDeps.scheduleEngine;
+      this.memoryLifecycle = freshDeps.memoryLifecycle;
+      this.knowledgeManager = freshDeps.knowledgeManager;
+      this.supervisor?.replaceIdleWorkers(() => this.coreLoop);
+      this.providerRuntimeFingerprint = currentFingerprint;
+      this.logger.info("Refreshed resident daemon dependencies after provider drift", {
+        fingerprint_changed: true,
+      });
+    } catch (error) {
+      this.logger.warn("Failed to refresh resident daemon dependencies after provider drift", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   private async handleChatMessageCommand(goalId: string, message: string): Promise<void> {
     await writeChatMessageEvent(this.driveSystem, goalId, message);
+    await this.broadcastChatResponse(goalId, message);
     this.abortSleep();
   }
 
@@ -987,6 +1550,27 @@ export class DaemonRunner {
     }
   }
 
+  private async runRuntimeStoreMaintenance(force = false): Promise<void> {
+    if (!this.runtimeRoot) {
+      return;
+    }
+
+    const now = Date.now();
+    if (!force && now - this.lastRuntimeStoreMaintenanceAt < this.config.check_interval_ms) {
+      return;
+    }
+
+    this.lastRuntimeStoreMaintenanceAt = now;
+    await runRuntimeStoreMaintenanceCycle({
+      runtimeRoot: this.runtimeRoot,
+      approvalStore: this.approvalStore ?? undefined,
+      outboxStore: this.outboxStore ?? undefined,
+      runtimeHealthStore: this.runtimeHealthStore ?? undefined,
+      logger: this.logger,
+      now,
+    });
+  }
+
   // ─── Private: Proactive Tick ───
 
   /**
@@ -995,12 +1579,63 @@ export class DaemonRunner {
    * Errors are caught and logged — they never affect the daemon loop.
    */
   private async proactiveTick(): Promise<void> {
-    this.lastProactiveTickAt = await runProactiveMaintenance({
+    if (!this.config.proactive_mode) {
+      return;
+    }
+
+    if (await this.runScheduledGoalReview()) {
+      return;
+    }
+
+    const curiosityTriggered = await this.runResidentCuriosityCycle({
+      activityTrigger: "proactive_tick",
+      skipWhenNoTriggers: true,
+    });
+    if (curiosityTriggered) {
+      return;
+    }
+
+    const result = await runProactiveMaintenance({
       config: this.config,
       llmClient: this.llmClient,
       state: this.state,
       lastProactiveTickAt: this.lastProactiveTickAt,
       logger: this.logger,
+    });
+    this.lastProactiveTickAt = result.lastProactiveTickAt;
+    if (!result.decision) {
+      return;
+    }
+
+    if (result.decision.action === "sleep") {
+      await this.persistResidentActivity({
+        kind: "sleep",
+        trigger: "proactive_tick",
+        summary: "Resident proactive tick stayed idle.",
+      });
+      await this.triggerIdleResidentMaintenance();
+      return;
+    }
+
+    if (result.decision.action === "suggest_goal") {
+      await this.triggerResidentGoalDiscovery(result.decision.details);
+      return;
+    }
+
+    if (result.decision.action === "investigate") {
+      await this.triggerResidentInvestigation(result.decision.details);
+      return;
+    }
+
+    if (result.decision.action === "preemptive_check") {
+      await this.triggerResidentPreemptiveCheck(result.decision.details);
+      return;
+    }
+
+    await this.persistResidentActivity({
+      kind: "skipped",
+      trigger: "proactive_tick",
+      summary: `Resident proactive tick requested ${result.decision.action}, but no resident executor is wired for it yet.`,
     });
   }
 

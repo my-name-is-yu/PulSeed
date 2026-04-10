@@ -59,17 +59,11 @@ export async function stepDaemon(): Promise<{ start: boolean; port: number }> {
     }
 
     const pidManager = new PIDManager(baseDir);
-    const pidInfo = await pidManager.readPID();
-    if (pidInfo !== null) {
-      try {
-        process.kill(pidInfo.pid, "SIGTERM");
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-        await pidManager.cleanup();
-        p.log.success("Daemon stopped.");
-      } catch {
-        p.log.warn("Could not stop daemon. It may have already exited.");
-        await pidManager.cleanup();
-      }
+    const stopResult = await pidManager.stopRuntime({ timeoutMs: 10_000 });
+    if (stopResult.stopped) {
+      p.log.success("Daemon stopped.");
+    } else {
+      p.log.warn("Could not stop daemon cleanly. Some runtime processes may still be alive.");
     }
   }
 

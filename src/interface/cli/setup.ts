@@ -17,6 +17,7 @@ import { ShellDataSourceAdapter } from "../../adapters/datasources/shell-datasou
 import { createWorkspaceContextProvider } from "../../platform/observation/workspace-context.js";
 import { buildLLMClient, buildAdapterRegistry } from "../../base/llm/provider-factory.js";
 import { TrustManager } from "../../platform/traits/trust-manager.js";
+import { CuriosityEngine } from "../../platform/traits/curiosity-engine.js";
 import { DriveSystem } from "../../platform/drive/drive-system.js";
 import { ObservationEngine } from "../../platform/observation/observation-engine.js";
 import { StallDetector } from "../../platform/drive/stall-detector.js";
@@ -288,8 +289,18 @@ export async function buildDeps(
 
   coreLoop.setTimeHorizonEngine(new TimeHorizonEngine());
 
+  const curiosityEngine = new CuriosityEngine({
+    stateManager,
+    llmClient,
+    ethicsGate,
+    stallDetector,
+    driveSystem,
+    vectorIndex,
+  });
+
   return {
     coreLoop,
+    curiosityEngine,
     goalNegotiator,
     goalRefiner,
     reportingEngine,

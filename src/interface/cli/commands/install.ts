@@ -120,10 +120,6 @@ export async function cmdInstall(args: string[]): Promise<number> {
   }
 
   const goalIds = values.goal ?? [];
-  if (goalIds.length === 0) {
-    console.error("Error: at least one --goal is required");
-    return 1;
-  }
 
   const intervalMs =
     values.interval !== undefined ? parseInt(values.interval, 10) : undefined;

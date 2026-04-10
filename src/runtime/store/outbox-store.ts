@@ -57,6 +57,10 @@ export class OutboxStore {
     return parsed;
   }
 
+  async remove(seq: number): Promise<void> {
+    await this.journal.remove(this.paths.outboxRecordPath(seq));
+  }
+
   private async acquireAppendLock(): Promise<AppendLock> {
     const lockPath = path.join(this.paths.outboxDir, ".append.lock");
     const staleAfterMs = 30_000;
@@ -104,5 +108,34 @@ export class OutboxStore {
     } finally {
       await lock.release();
     }
+  }
+
+  async prune(options: {
+    olderThanMs?: number;
+    maxRecords?: number;
+    now?: number;
+  } = {}): Promise<{ pruned: number; retained: number }> {
+    const now = options.now ?? Date.now();
+    const olderThanMs = options.olderThanMs ?? 30 * 24 * 60 * 60 * 1000;
+    const maxRecords = options.maxRecords ?? 5_000;
+    const threshold = now - olderThanMs;
+    const records = await this.list();
+    const protectedSeq = records.length > maxRecords
+      ? records[records.length - maxRecords]?.seq ?? null
+      : null;
+
+    let pruned = 0;
+    for (const record of records) {
+      const overAge = record.created_at < threshold;
+      const overCount = protectedSeq !== null && record.seq < protectedSeq;
+      if (!overAge && !overCount) {
+        continue;
+      }
+
+      await this.remove(record.seq);
+      pruned += 1;
+    }
+
+    return { pruned, retained: Math.max(records.length - pruned, 0) };
   }
 }

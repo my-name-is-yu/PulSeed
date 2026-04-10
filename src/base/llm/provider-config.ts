@@ -7,6 +7,7 @@
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import * as os from "node:os";
+import { createHash } from "node:crypto";
 import { getPulseedDirPath } from "../utils/paths.js";
 import { writeJsonFileAtomic } from "../utils/json-io.js";
 
@@ -410,6 +411,25 @@ export async function loadProviderConfig(): Promise<ProviderConfig> {
   }
 
   return config;
+}
+
+export async function getProviderRuntimeFingerprint(): Promise<string> {
+  const config = await loadProviderConfig();
+  const fingerprintSource = {
+    provider: config.provider,
+    model: config.model,
+    adapter: config.adapter,
+    light_model: config.light_model ?? null,
+    base_url: config.base_url ?? null,
+    codex_cli_path: config.codex_cli_path ?? null,
+    api_key_hash: config.api_key
+      ? createHash("sha256").update(config.api_key).digest("hex")
+      : null,
+    a2a: config.a2a ?? null,
+    openclaw: config.openclaw ?? null,
+  };
+
+  return JSON.stringify(fingerprintSource);
 }
 
 /**

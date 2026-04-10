@@ -131,6 +131,18 @@ export class LoopSupervisor {
     };
   }
 
+  replaceIdleWorkers(coreLoopFactory: () => CoreLoop): void {
+    if (this.activeGoals.size > 0 || this.workers.some((worker) => !worker.isIdle())) {
+      return;
+    }
+
+    const workerCfg: GoalWorkerConfig = { iterationsPerCycle: this.config.iterationsPerCycle };
+    this.workers = [];
+    for (let i = 0; i < this.config.concurrency; i++) {
+      this.workers.push(new GoalWorker(coreLoopFactory(), workerCfg));
+    }
+  }
+
   activateGoal(goalId: string): void {
     this.stoppedGoals.delete(goalId);
     this.enqueueGoalActivation(goalId);

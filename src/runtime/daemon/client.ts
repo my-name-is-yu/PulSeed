@@ -351,7 +351,7 @@ export async function isDaemonRunning(baseDir: string): Promise<{ running: boole
     const raw = await fs.readFile(statePath, "utf-8");
     const state = JSON.parse(raw);
 
-    if (state.status !== "running" || !state.pid) {
+    if ((state.status !== "running" && state.status !== "idle") || !state.pid) {
       return { running: false, port: DEFAULT_PORT };
     }
 

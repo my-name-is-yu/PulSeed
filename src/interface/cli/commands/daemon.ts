@@ -25,6 +25,7 @@ import { NotifierRegistry } from "../../../runtime/notifier-registry.js";
 import { NotificationDispatcher } from "../../../runtime/notification-dispatcher.js";
 import { AdapterRegistry } from "../../../orchestrator/execution/adapter-layer.js";
 import { DataSourceRegistry } from "../../../platform/observation/data-source-adapter.js";
+import { getProviderRuntimeFingerprint } from "../../../base/llm/provider-config.js";
 import { buildDeps } from "../setup.js";
 import { formatOperationError } from "../utils.js";
 import { getCliLogger } from "../cli-logger.js";
@@ -39,6 +40,10 @@ function resolveDaemonRuntimeRoot(baseDir: string, configuredRoot?: string): str
   return path.isAbsolute(configuredRoot)
     ? configuredRoot
     : path.resolve(baseDir, configuredRoot);
+}
+
+function formatGoalMode(goalIds: string[]): string {
+  return goalIds.length > 0 ? goalIds.join(", ") : "(idle mode)";
 }
 
 export async function cmdStart(
@@ -66,11 +71,6 @@ export async function cmdStart(
   }
 
   const goalIds = (values.goal as string[]) || [];
-
-  if (goalIds.length === 0) {
-    getCliLogger().error("Error: at least one --goal is required for daemon mode");
-    process.exit(1);
-  }
 
   // Gap 1: Load DaemonConfig from --config path (if provided)
   let daemonConfig: Partial<DaemonConfig> | undefined;
@@ -187,7 +187,7 @@ export async function cmdStart(
     process.on("SIGTERM", shutdown);
     process.on("SIGINT", shutdown);
     try {
-      logger.info(`Starting runtime watchdog for goals: ${goalIds.join(", ")}`);
+      logger.info(`Starting runtime watchdog for goals: ${formatGoalMode(goalIds)}`);
       await watchdog.start();
     } finally {
       process.removeListener("SIGTERM", shutdown);
@@ -243,8 +243,41 @@ export async function cmdStart(
   });
   await scheduleEngine.loadEntries();
 
+  const refreshResidentDeps = async () => {
+    const freshDeps = await buildDeps(stateManager, characterConfigManager);
+    freshDeps.reportingEngine.setNotificationDispatcher(notificationDispatcher);
+
+    const freshScheduleEngine = new ScheduleEngine({
+      baseDir: daemonBaseDir,
+      logger,
+      dataSourceRegistry,
+      llmClient: freshDeps.llmClient,
+      coreLoop: freshDeps.coreLoop,
+      stateManager: freshDeps.stateManager,
+      notificationDispatcher,
+      reportingEngine: freshDeps.reportingEngine,
+      hookManager: freshDeps.hookManager,
+      memoryLifecycle: freshDeps.memoryLifecycleManager,
+      knowledgeManager: freshDeps.knowledgeManager,
+    });
+    await freshScheduleEngine.loadEntries();
+
+    return {
+      coreLoop: freshDeps.coreLoop,
+      curiosityEngine: freshDeps.curiosityEngine,
+      goalNegotiator: freshDeps.goalNegotiator,
+      llmClient: freshDeps.llmClient,
+      reportingEngine: freshDeps.reportingEngine,
+      scheduleEngine: freshScheduleEngine,
+      memoryLifecycle: freshDeps.memoryLifecycleManager,
+      knowledgeManager: freshDeps.knowledgeManager,
+    };
+  };
+
   const daemon = new DaemonRunner({
     coreLoop: deps.coreLoop,
+    curiosityEngine: deps.curiosityEngine,
+    goalNegotiator: deps.goalNegotiator,
     driveSystem: deps.driveSystem,
     stateManager: deps.stateManager,
     pidManager,
@@ -255,9 +288,13 @@ export async function cmdStart(
     llmClient: deps.llmClient,
     cronScheduler,
     scheduleEngine,
+    memoryLifecycle: deps.memoryLifecycleManager,
+    knowledgeManager: deps.knowledgeManager,
+    getProviderRuntimeFingerprint,
+    refreshResidentDeps,
   });
 
-  logger.info(`Starting PulSeed daemon for goals: ${goalIds.join(", ")}`);
+  logger.info(`Starting PulSeed daemon for goals: ${formatGoalMode(goalIds)}`);
   await daemon.start(goalIds);
 }
 
@@ -284,10 +321,16 @@ function formatRelativeTime(isoDate: string): string {
 export async function cmdDaemonStatus(_args: string[]): Promise<void> {
   const baseDir = getPulseedDirPath();
   const statePath = path.join(baseDir, "daemon-state.json");
+  const pidManager = new PIDManager(baseDir);
+  const pidStatus = await pidManager.inspect();
 
   const raw = await readJsonFileOrNull(statePath);
   if (raw === null) {
-    console.log("No daemon state found");
+    if (!pidStatus.running) {
+      console.log("No daemon state found");
+      return;
+    }
+    console.log("Daemon process is running, but daemon-state.json is missing");
     return;
   }
   const parsed = DaemonStateSchema.safeParse(raw);
@@ -297,14 +340,9 @@ export async function cmdDaemonStatus(_args: string[]): Promise<void> {
   }
   const data: DaemonState = parsed.data;
 
-  // Check if the PID is actually running
-  let alive = false;
-  try {
-    process.kill(data.pid, 0);
-    alive = true;
-  } catch {
-    alive = false;
-  }
+  const alive = pidStatus.running;
+  const runtimePid = pidStatus.runtimePid ?? data.pid;
+  const watchdogPid = pidStatus.info?.watchdog_pid ?? pidStatus.ownerPid;
 
   // Load daemon config for config section display
   const configPath = path.join(baseDir, "daemon.json");
@@ -315,12 +353,23 @@ export async function cmdDaemonStatus(_args: string[]): Promise<void> {
   const configParsed = configRaw !== null ? DaemonConfigSchema.safeParse(configRaw) : null;
   const cfg = configParsed?.success ? configParsed.data : DaemonConfigSchema.parse({});
 
-  const status = alive ? "running" : "stopped";
+  const status =
+    !alive
+      ? "stopped"
+      : data.status === "crashed" || data.status === "stopping"
+        ? data.status
+        : data.status === "idle"
+          ? "idle"
+          : "running";
   const lines: string[] = [
     "PulSeed Daemon Status",
     "\u2500".repeat(21),
-    `Status:          ${status} (PID: ${data.pid})`,
+    `Status:          ${status} (PID: ${runtimePid})`,
   ];
+
+  if (watchdogPid && watchdogPid !== runtimePid) {
+    lines.push(`Watchdog PID:    ${watchdogPid}`);
+  }
 
   if (data.started_at) {
     if (alive) {
@@ -337,6 +386,14 @@ export async function cmdDaemonStatus(_args: string[]): Promise<void> {
   }
 
   lines.push(`Active goals:    ${data.active_goals.join(", ") || "(none)"}`);
+  if (data.resident_activity) {
+    const residentAgo = formatRelativeTime(data.resident_activity.recorded_at);
+    lines.push(`Resident:        ${data.resident_activity.kind} (${residentAgo})`);
+    lines.push(`Resident note:   ${data.resident_activity.summary}`);
+    if (data.resident_activity.goal_id) {
+      lines.push(`Resident goal:   ${data.resident_activity.goal_id}`);
+    }
+  }
 
   // Config section
   const intervalMin = Math.round(cfg.check_interval_ms / 60000);
@@ -364,30 +421,22 @@ export async function cmdDaemonStatus(_args: string[]): Promise<void> {
 
 export async function cmdStop(_args: string[]): Promise<void> {
   const pidManager = new PIDManager(getPulseedDirPath());
-
-  if (!(await pidManager.isRunning())) {
+  const stopResult = await pidManager.stopRuntime();
+  if (!stopResult.info || stopResult.sentSignalsTo.length === 0) {
     console.log("No running daemon found");
     return;
   }
-
-  const info = await pidManager.readPID();
-  if (info) {
-    console.log(`Stopping daemon (PID: ${info.pid})...`);
-    try {
-      process.kill(info.pid, "SIGTERM");
-      console.log("Stop signal sent");
-    } catch (err) {
-      // ESRCH means the process no longer exists (died between isRunning check and kill)
-      const code = (err as NodeJS.ErrnoException).code;
-      if (code === "ESRCH") {
-        await pidManager.cleanup();
-        console.log("No running daemon found");
-      } else {
-        getCliLogger().error(formatOperationError(`stop daemon process ${info.pid}`, err));
-        await pidManager.cleanup();
-      }
-    }
+  const displayPid = stopResult.runtimePid ?? stopResult.ownerPid ?? stopResult.info.pid;
+  console.log(`Stopping daemon (PID: ${displayPid})...`);
+  if (!stopResult.stopped) {
+    console.log(`Daemon still running (PIDs: ${stopResult.alivePids.join(", ")})`);
+    return;
   }
+  if (stopResult.forced) {
+    console.log("Daemon stopped after forcing remaining runtime processes");
+    return;
+  }
+  console.log("Daemon stopped");
 }
 
 export async function cmdCron(args: string[]): Promise<void> {
