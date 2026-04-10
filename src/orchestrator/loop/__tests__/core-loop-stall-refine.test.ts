@@ -499,3 +499,173 @@ describe("detectStallsAndRebalance — global stall reRefineLeaf", () => {
     expect(mockRefiner.reRefineLeaf).not.toHaveBeenCalled();
   });
 });
+
+describe("detectStallsAndRebalance — gap history indexing reuse", () => {
+  it("reuses the same per-dimension history for dimension and global stall checks", async () => {
+    const deps = createBaseDeps(tmpDir);
+    const goal = makeGoal({
+      id: "goal-1",
+      dimensions: [
+        {
+          name: "dim1",
+          label: "Dim 1",
+          current_value: 0.2,
+          threshold: { type: "min", value: 1.0 },
+          confidence: 0.5,
+          observation_method: {
+            type: "manual",
+            source: "manual",
+            schedule: null,
+            endpoint: null,
+            confidence_tier: "self_report",
+          },
+          last_updated: new Date().toISOString(),
+          history: [],
+          weight: 1.0,
+          uncertainty_weight: null,
+          state_integrity: "ok",
+          dimension_mapping: null,
+        },
+        {
+          name: "dim2",
+          label: "Dim 2",
+          current_value: 0.4,
+          threshold: { type: "min", value: 1.0 },
+          confidence: 0.5,
+          observation_method: {
+            type: "manual",
+            source: "manual",
+            schedule: null,
+            endpoint: null,
+            confidence_tier: "self_report",
+          },
+          last_updated: new Date().toISOString(),
+          history: [],
+          weight: 1.0,
+          uncertainty_weight: null,
+          state_integrity: "ok",
+          dimension_mapping: null,
+        },
+      ],
+    });
+    await deps.stateManager.saveGoal(goal);
+
+    await deps.stateManager.saveGapHistory("goal-1", [
+      {
+        iteration: 0,
+        timestamp: new Date().toISOString(),
+        gap_vector: [
+          { dimension_name: "dim1", normalized_weighted_gap: 0.8 },
+          { dimension_name: "dim2", normalized_weighted_gap: 0.4 },
+        ],
+        confidence_vector: [],
+      },
+      {
+        iteration: 1,
+        timestamp: new Date().toISOString(),
+        gap_vector: [
+          { dimension_name: "dim2", normalized_weighted_gap: 0.3 },
+        ],
+        confidence_vector: [],
+      },
+      {
+        iteration: 2,
+        timestamp: new Date().toISOString(),
+        gap_vector: [
+          { dimension_name: "dim1", normalized_weighted_gap: 0.6 },
+        ],
+        confidence_vector: [],
+      },
+    ]);
+
+    const dimensionHistories = new Map<string, Array<{ normalized_gap: number }>>();
+    (deps.stallDetector.checkDimensionStall as ReturnType<typeof vi.fn>).mockImplementation(
+      (_goalId: string, dimName: string, dimGapHistory: Array<{ normalized_gap: number }>) => {
+        dimensionHistories.set(dimName, dimGapHistory);
+        return null;
+      }
+    );
+
+    const globalHistories: Array<Map<string, Array<{ normalized_gap: number }>>> = [];
+    (deps.stallDetector.checkGlobalStall as ReturnType<typeof vi.fn>).mockImplementation(
+      (_goalId: string, allDimGaps: Map<string, Array<{ normalized_gap: number }>>) => {
+        globalHistories.push(allDimGaps);
+        return null;
+      }
+    );
+
+    const ctx = buildPhaseCtx(deps, { maxIterations: 10, adapterType: "openai_codex_cli" });
+    const result = makeIterationResult();
+
+    await detectStallsAndRebalance(ctx, "goal-1", goal, result);
+
+    expect(dimensionHistories.get("dim1")).toEqual([
+      { normalized_gap: 0.8 },
+      { normalized_gap: 0.6 },
+    ]);
+    expect(dimensionHistories.get("dim2")).toEqual([
+      { normalized_gap: 0.4 },
+      { normalized_gap: 0.3 },
+    ]);
+
+    const globalHistory = globalHistories[0];
+    expect(globalHistory).toBeDefined();
+    expect(globalHistory?.get("dim1")).toBe(dimensionHistories.get("dim1"));
+    expect(globalHistory?.get("dim2")).toBe(dimensionHistories.get("dim2"));
+  });
+
+  it("ignores stale dimensions that are no longer present on the goal", async () => {
+    const deps = createBaseDeps(tmpDir);
+    const goal = makeGoal({
+      id: "goal-1",
+      dimensions: [
+        {
+          name: "dim1",
+          label: "Dim 1",
+          current_value: 0.2,
+          threshold: { type: "min", value: 1.0 },
+          confidence: 0.5,
+          observation_method: {
+            type: "manual",
+            source: "manual",
+            schedule: null,
+            endpoint: null,
+            confidence_tier: "self_report",
+          },
+          last_updated: new Date().toISOString(),
+          history: [],
+          weight: 1.0,
+          uncertainty_weight: null,
+          state_integrity: "ok",
+          dimension_mapping: null,
+        },
+      ],
+    });
+    await deps.stateManager.saveGoal(goal);
+
+    await deps.stateManager.saveGapHistory("goal-1", [
+      {
+        iteration: 0,
+        timestamp: new Date().toISOString(),
+        gap_vector: [
+          { dimension_name: "dim1", normalized_weighted_gap: 0.8 },
+          { dimension_name: "stale-dim", normalized_weighted_gap: 0.1 },
+        ],
+        confidence_vector: [],
+      },
+    ]);
+
+    (deps.stallDetector.checkDimensionStall as ReturnType<typeof vi.fn>).mockReturnValue(null);
+    const globalCheck = deps.stallDetector.checkGlobalStall as ReturnType<typeof vi.fn>;
+    globalCheck.mockReturnValue(null);
+
+    const ctx = buildPhaseCtx(deps, { maxIterations: 10, adapterType: "openai_codex_cli" });
+    const result = makeIterationResult();
+
+    await detectStallsAndRebalance(ctx, "goal-1", goal, result);
+
+    const globalHistory = globalCheck.mock.calls[0]?.[1] as Map<string, Array<{ normalized_gap: number }>>;
+    expect(globalHistory.has("dim1")).toBe(true);
+    expect(globalHistory.has("stale-dim")).toBe(false);
+  });
+});

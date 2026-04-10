@@ -122,6 +122,7 @@ export async function detectStallsAndRebalance(
 ): Promise<void> {
   try {
     const gapHistory = await ctx.deps.stateManager.loadGapHistory(goalId);
+    const gapHistoryByDimension = indexGapHistoryByDimension(goal, gapHistory);
 
     // Gather tool-based workspace evidence for stall detection (Phase 6)
     if (ctx.toolExecutor) {
@@ -176,14 +177,7 @@ export async function detectStallsAndRebalance(
     // Per-dimension stall check (skip dimensions suppressed by active WaitStrategies)
     for (const dim of goal.dimensions) {
       if (suppressedDimensions.has(dim.name)) continue;
-      const dimGapHistory = gapHistory
-        .filter((entry) =>
-          entry.gap_vector.some((g) => g.dimension_name === dim.name)
-        )
-        .map((entry) => {
-          const g = entry.gap_vector.find((g) => g.dimension_name === dim.name);
-          return { normalized_gap: g?.normalized_weighted_gap ?? 1 };
-        });
+      const dimGapHistory = gapHistoryByDimension.get(dim.name) ?? [];
 
       const stallReport = ctx.deps.stallDetector.checkDimensionStall(
         goalId,
@@ -215,7 +209,7 @@ export async function detectStallsAndRebalance(
 
     // Global stall check
     if (!result.stallDetected) {
-      await checkGlobalStall(ctx, goalId, goal, result, gapHistory);
+      await checkGlobalStall(ctx, goalId, goal, result, gapHistoryByDimension);
     }
 
     // Portfolio: check rebalance after stall detection
@@ -225,6 +219,35 @@ export async function detectStallsAndRebalance(
   } catch (err) {
     ctx.logger?.warn("CoreLoop: stall detection failed (non-fatal)", { error: err instanceof Error ? err.message : String(err) });
   }
+}
+
+function indexGapHistoryByDimension(
+  goal: Goal,
+  gapHistory: GapHistoryEntry[]
+): Map<string, Array<{ normalized_gap: number }>> {
+  const indexedHistory = new Map<string, Array<{ normalized_gap: number }>>();
+
+  for (const dim of goal.dimensions) {
+    indexedHistory.set(dim.name, []);
+  }
+
+  for (const entry of gapHistory) {
+    const seenDimensions = new Set<string>();
+    for (const gap of entry.gap_vector) {
+      if (seenDimensions.has(gap.dimension_name)) continue;
+      seenDimensions.add(gap.dimension_name);
+
+      const dimHistory = indexedHistory.get(gap.dimension_name);
+      if (!dimHistory) {
+        continue;
+      }
+
+      const normalizedGap = { normalized_gap: gap.normalized_weighted_gap ?? 1 };
+      dimHistory.push(normalizedGap);
+    }
+  }
+
+  return indexedHistory;
 }
 
 // ─── Shared stall-action helper ───
@@ -362,28 +385,15 @@ async function checkGlobalStall(
   goalId: string,
   goal: Goal,
   result: LoopIterationResult,
-  gapHistory: GapHistoryEntry[]
+  gapHistoryByDimension: Map<string, Array<{ normalized_gap: number }>>
 ): Promise<void> {
-  const allDimGaps = new Map<string, Array<{ normalized_gap: number }>>();
-  for (const dim of goal.dimensions) {
-    const dimGapHistory = gapHistory
-      .filter((entry) =>
-        entry.gap_vector.some((g) => g.dimension_name === dim.name)
-      )
-      .map((entry) => {
-        const g = entry.gap_vector.find((g) => g.dimension_name === dim.name);
-        return { normalized_gap: g?.normalized_weighted_gap ?? 1 };
-      });
-    allDimGaps.set(dim.name, dimGapHistory);
-  }
-
-  const globalStall = ctx.deps.stallDetector.checkGlobalStall(goalId, allDimGaps);
+  const globalStall = ctx.deps.stallDetector.checkGlobalStall(goalId, gapHistoryByDimension);
   if (!globalStall) return;
 
   result.stallDetected = true;
   result.stallReport = globalStall;
 
-  const firstDimHistory = allDimGaps.values().next().value ?? [];
+  const firstDimHistory = gapHistoryByDimension.get(goal.dimensions[0]?.name ?? "") ?? [];
   const firstDimName = goal.dimensions[0]?.name ?? "";
 
   // Pass escalationLevel=1 so that escalationLevel+1=2, preserving the original global PIVOT level
