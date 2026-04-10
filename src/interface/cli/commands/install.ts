@@ -139,6 +139,7 @@ export async function cmdInstall(args: string[]): Promise<number> {
   const logsDir = path.join(home, ".pulseed", "logs");
   const stdoutLog = path.join(logsDir, "launchd-stdout.log");
   const stderrLog = path.join(logsDir, "launchd-stderr.log");
+  const workingDir = process.cwd();
 
   const plistContent = buildPlist({
     nodePath,
@@ -148,7 +149,7 @@ export async function cmdInstall(args: string[]): Promise<number> {
     intervalMs,
     stdoutLog,
     stderrLog,
-    workingDir: home,
+    workingDir,
     envPath: process.env["PATH"],
     pulseedHome: process.env["PULSEED_HOME"],
   });

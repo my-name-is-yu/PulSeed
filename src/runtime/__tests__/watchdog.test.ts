@@ -159,6 +159,10 @@ describe("RuntimeWatchdog", () => {
     const startPromise = watchdog.start();
 
     await waitFor(() => children.length === 1);
+    await waitFor(async () => {
+      const info = await pidManager.readPID();
+      return info?.pid === children[0]!.pid;
+    }, 2_000, 20);
     const firstInfo = await pidManager.readPID();
     expect(firstInfo).toMatchObject({
       pid: children[0]!.pid,

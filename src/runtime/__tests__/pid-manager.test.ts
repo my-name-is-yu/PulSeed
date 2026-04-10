@@ -16,6 +16,7 @@ describe("PIDManager", () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     fs.rmSync(tmpDir, { recursive: true, force: true , maxRetries: 3, retryDelay: 100 });
   });
 
@@ -165,6 +166,15 @@ describe("PIDManager", () => {
       await pidManager.cleanup();
       expect(await pidManager.isRunning()).toBe(false);
     });
+
+    it("treats legacy numeric pidfiles as running when the process is still alive", async () => {
+      const legacyPidManager = new PIDManager(tmpDir, "legacy.pid", {
+        processCommandResolver: async (pid: number) =>
+          pid === process.pid ? "node dist/cli/cli-runner.js daemon start" : null,
+      });
+      fs.writeFileSync(legacyPidManager.getPath(), String(process.pid), "utf-8");
+      expect(await legacyPidManager.isRunning()).toBe(true);
+    });
   });
 
   // ─── cleanup ───
@@ -228,10 +238,6 @@ describe("PIDManager", () => {
   });
 
   describe("runtime tree ownership", () => {
-    afterEach(() => {
-      vi.restoreAllMocks();
-    });
-
     it("stores watchdog and runtime child ownership in the pid file", async () => {
       await pidManager.writePID({
         pid: 2202,
@@ -253,6 +259,15 @@ describe("PIDManager", () => {
 
     it("stopRuntime terminates the watchdog and runtime child together", async () => {
       const alive = new Set([4101, 4202]);
+      const matchingStartedAt = new Date("2026-04-10T00:00:00.000Z").toString();
+      const testPidManager = new PIDManager(tmpDir, "stable.pid", {
+        processStartedAtResolver: async (pid: number) => {
+          if (pid === 4101 || pid === 4202) {
+            return matchingStartedAt;
+          }
+          return null;
+        },
+      });
       const killSpy = vi.spyOn(process, "kill").mockImplementation(((pid: number, signal?: NodeJS.Signals | number) => {
         if (signal === 0) {
           if (!alive.has(pid)) {
@@ -271,7 +286,7 @@ describe("PIDManager", () => {
         return true;
       }) as typeof process.kill);
 
-      await pidManager.writePID({
+      await testPidManager.writePID({
         pid: 4202,
         runtime_pid: 4202,
         owner_pid: 4101,
@@ -279,13 +294,115 @@ describe("PIDManager", () => {
         started_at: "2026-04-10T00:00:00.000Z",
       });
 
-      const result = await pidManager.stopRuntime({ timeoutMs: 50, pollIntervalMs: 1 });
+      const result = await testPidManager.stopRuntime({ timeoutMs: 50, pollIntervalMs: 1 });
 
       expect(killSpy).toHaveBeenCalledWith(4101, "SIGTERM");
       expect(killSpy).toHaveBeenCalledWith(4202, "SIGTERM");
       expect(result.stopped).toBe(true);
       expect(result.forced).toBe(false);
-      expect(fs.existsSync(pidManager.getPath())).toBe(false);
+      expect(fs.existsSync(testPidManager.getPath())).toBe(false);
+    });
+
+    it("treats a live recycled PID as stale when started_at does not match", async () => {
+      const recycledPid = 5101;
+      const pidfileStartedAt = "2026-04-10T00:00:00.000Z";
+      const recycledProcessStartedAt = new Date(Date.parse(pidfileStartedAt) + 60_000).toString();
+      const testPidManager = new PIDManager(tmpDir, "recycled.pid", {
+        processStartedAtResolver: async (pid: number) => {
+          if (pid === recycledPid) {
+            return recycledProcessStartedAt;
+          }
+          return null;
+        },
+      });
+      const killSpy = vi.spyOn(process, "kill").mockImplementation(((pid: number, signal?: NodeJS.Signals | number) => {
+        if (signal === 0 && pid === recycledPid) {
+          return true;
+        }
+        return true;
+      }) as typeof process.kill);
+
+      fs.writeFileSync(
+        testPidManager.getPath(),
+        JSON.stringify({
+          pid: recycledPid,
+          started_at: pidfileStartedAt,
+        }),
+        "utf-8"
+      );
+
+      const status = await testPidManager.inspect();
+
+      expect(status.running).toBe(false);
+      expect(status.alivePids).toEqual([]);
+      expect(status.stalePids).toEqual([recycledPid]);
+      expect(fs.existsSync(testPidManager.getPath())).toBe(false);
+      expect(killSpy).toHaveBeenCalledWith(recycledPid, 0);
+
+      const stopResult = await testPidManager.stopRuntime({ timeoutMs: 10, pollIntervalMs: 1 });
+      expect(stopResult.stopped).toBe(false);
+      expect(stopResult.sentSignalsTo).toEqual([]);
+      expect(stopResult.alivePids).toEqual([]);
+    });
+
+    it("signals only verified alive PIDs during stopRuntime", async () => {
+      const killSpy = vi.spyOn(process, "kill").mockImplementation(((pid: number, signal?: NodeJS.Signals | number) => {
+        if (signal === 0) return true;
+        return true;
+      }) as typeof process.kill);
+
+      const testPidManager = new PIDManager(tmpDir, "partial.pid", {
+        processStartedAtResolver: async (pid: number) => {
+          if (pid === 6101) {
+            return new Date("2026-04-10T00:00:00.000Z").toString();
+          }
+          if (pid === 6202) {
+            return new Date("2026-04-10T00:02:00.000Z").toString();
+          }
+          return null;
+        },
+      });
+
+      await testPidManager.writePID({
+        pid: 6202,
+        runtime_pid: 6202,
+        owner_pid: 6101,
+        watchdog_pid: 6101,
+        started_at: "2026-04-10T00:00:00.000Z",
+        owner_started_at: "2026-04-10T00:00:00.000Z",
+        watchdog_started_at: "2026-04-10T00:00:00.000Z",
+        runtime_started_at: "2026-04-10T00:00:00.000Z",
+      });
+
+      const result = await testPidManager.stopRuntime({ timeoutMs: 10, pollIntervalMs: 1 });
+
+      expect(result.sentSignalsTo).toEqual([6101]);
+      expect(killSpy).toHaveBeenCalledWith(6101, "SIGTERM");
+      expect(killSpy).not.toHaveBeenCalledWith(6202, "SIGTERM");
+    });
+
+    it("treats legacy numeric pidfiles as stale when the live process command does not match PulSeed", async () => {
+      const legacyPid = 7101;
+      const legacyPidManager = new PIDManager(tmpDir, "legacy-stale.pid", {
+        processCommandResolver: async (pid: number) =>
+          pid === legacyPid ? "python unrelated_script.py" : null,
+      });
+      vi.spyOn(process, "kill").mockImplementation(((pid: number, signal?: NodeJS.Signals | number) => {
+        if (signal === 0 && pid === legacyPid) {
+          return true;
+        }
+        return true;
+      }) as typeof process.kill);
+
+      fs.writeFileSync(legacyPidManager.getPath(), String(legacyPid), "utf-8");
+
+      const status = await legacyPidManager.inspect();
+
+      expect(status.running).toBe(false);
+      expect(status.alivePids).toEqual([]);
+      expect(status.unverifiedLegacyPids).toEqual([]);
+      expect(status.stalePids).toEqual([legacyPid]);
+      expect(fs.existsSync(legacyPidManager.getPath())).toBe(false);
     });
   });
 });

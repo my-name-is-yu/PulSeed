@@ -164,28 +164,54 @@ export async function checkDaemon(baseDir?: string): Promise<CheckResult> {
     return { name: "Daemon", status: "warn", detail: "PID file exists but is unreadable" };
   }
 
-  if (!pidStatus.running) {
-    const runtimePid = pidInfo?.runtime_pid ?? pidInfo?.pid;
+  const runtimePid = pidStatus.runtimePid ?? pidInfo?.runtime_pid ?? pidInfo?.pid ?? null;
+  const watchdogPid = pidInfo?.watchdog_pid ?? pidStatus.ownerPid ?? null;
+  const runtimeAlive = typeof runtimePid === "number" && pidStatus.alivePids.includes(runtimePid);
+  const watchdogAlive = typeof watchdogPid === "number" && pidStatus.alivePids.includes(watchdogPid);
+  const runtimeState = daemonState?.success ? daemonState.data.status : null;
+
+  if (runtimeState === "crashed" || runtimeState === "stopping") {
+    return {
+      name: "Daemon",
+      status: "fail",
+      detail:
+        runtimeState === "crashed"
+          ? "daemon state reports crashed"
+          : "daemon state reports stopping",
+    };
+  }
+
+  if (!runtimeAlive) {
+    if (watchdogAlive) {
+      return {
+        name: "Daemon",
+        status: "fail",
+        detail: runtimePid !== null
+          ? `daemon restarting (runtime PID: ${runtimePid}, watchdog PID: ${watchdogPid})`
+          : `daemon restarting (watchdog PID: ${watchdogPid})`,
+      };
+    }
     return {
       name: "Daemon",
       status: pidFileExists ? "warn" : "pass",
-      detail: runtimePid
+      detail: runtimePid !== null
         ? `stale PID file (PID: ${runtimePid} not running)`
         : "stopped (clean state)",
     };
   }
 
-  const runtimePid = pidStatus.runtimePid ?? pidInfo?.pid ?? "unknown";
-  const watchdogPid = pidInfo?.watchdog_pid ?? pidStatus.ownerPid;
-  const runtimeState = daemonState?.success ? daemonState.data.status : null;
+  if (watchdogPid && watchdogPid !== runtimePid && !watchdogAlive) {
+    return {
+      name: "Daemon",
+      status: "warn",
+      detail: `running (PID: ${runtimePid}), watchdog PID: ${watchdogPid} missing`,
+    };
+  }
+
   const detailPrefix =
     runtimeState === "idle"
       ? `idle daemon running (PID: ${runtimePid})`
-      : runtimeState === "stopping"
-        ? `daemon stopping (PID: ${runtimePid})`
-        : runtimeState === "crashed"
-          ? `daemon running with crash state (PID: ${runtimePid})`
-          : `running (PID: ${runtimePid})`;
+      : `running (PID: ${runtimePid})`;
   const detail =
     watchdogPid && watchdogPid !== runtimePid
       ? `${detailPrefix}, watchdog PID: ${watchdogPid}`

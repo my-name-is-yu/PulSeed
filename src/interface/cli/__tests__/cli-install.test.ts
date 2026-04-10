@@ -269,6 +269,11 @@ describe("cmdInstall", () => {
       expect.not.stringContaining("<string>--goal</string>"),
       "utf8"
     );
+    expect(fs.writeFileSync).toHaveBeenCalledWith(
+      PLIST_PATH,
+      expect.stringContaining(`<string>${process.cwd()}</string>`),
+      "utf8"
+    );
     logSpy.mockRestore();
   });
 

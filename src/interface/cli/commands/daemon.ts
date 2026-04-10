@@ -318,16 +318,30 @@ function formatRelativeTime(isoDate: string): string {
   return `${Math.floor(ms / 86400000)}d ago`;
 }
 
+function isPidAlive(pidStatus: Awaited<ReturnType<PIDManager["inspect"]>>, pid?: number | null): boolean {
+  return typeof pid === "number" && pidStatus.alivePids.includes(pid);
+}
+
 export async function cmdDaemonStatus(_args: string[]): Promise<void> {
   const baseDir = getPulseedDirPath();
   const statePath = path.join(baseDir, "daemon-state.json");
   const pidManager = new PIDManager(baseDir);
   const pidStatus = await pidManager.inspect();
+  const runtimePid = pidStatus.runtimePid ?? pidStatus.info?.pid ?? null;
+  const watchdogPid = pidStatus.info?.watchdog_pid ?? pidStatus.ownerPid ?? null;
+  const runtimeAlive = isPidAlive(pidStatus, runtimePid);
+  const watchdogAlive = isPidAlive(pidStatus, watchdogPid);
 
   const raw = await readJsonFileOrNull(statePath);
   if (raw === null) {
-    if (!pidStatus.running) {
+    if (!runtimeAlive && !watchdogAlive) {
       console.log("No daemon state found");
+      return;
+    }
+    if (!runtimeAlive && watchdogAlive) {
+      console.log(
+        `Daemon watchdog is running, but runtime child is restarting (PID: ${runtimePid ?? "unknown"})`
+      );
       return;
     }
     console.log("Daemon process is running, but daemon-state.json is missing");
@@ -340,9 +354,8 @@ export async function cmdDaemonStatus(_args: string[]): Promise<void> {
   }
   const data: DaemonState = parsed.data;
 
-  const alive = pidStatus.running;
-  const runtimePid = pidStatus.runtimePid ?? data.pid;
-  const watchdogPid = pidStatus.info?.watchdog_pid ?? pidStatus.ownerPid;
+  const resolvedRuntimePid = runtimePid ?? data.pid;
+  const resolvedRuntimeAlive = isPidAlive(pidStatus, resolvedRuntimePid);
 
   // Load daemon config for config section display
   const configPath = path.join(baseDir, "daemon.json");
@@ -354,8 +367,14 @@ export async function cmdDaemonStatus(_args: string[]): Promise<void> {
   const cfg = configParsed?.success ? configParsed.data : DaemonConfigSchema.parse({});
 
   const status =
-    !alive
-      ? "stopped"
+    !resolvedRuntimeAlive
+      ? watchdogAlive
+        ? "restarting"
+        : data.status === "crashed"
+          ? "crashed"
+          : data.status === "stopping"
+            ? "stopping"
+            : "stopped"
       : data.status === "crashed" || data.status === "stopping"
         ? data.status
         : data.status === "idle"
@@ -364,15 +383,15 @@ export async function cmdDaemonStatus(_args: string[]): Promise<void> {
   const lines: string[] = [
     "PulSeed Daemon Status",
     "\u2500".repeat(21),
-    `Status:          ${status} (PID: ${runtimePid})`,
+    `Status:          ${status} (PID: ${resolvedRuntimePid})`,
   ];
 
-  if (watchdogPid && watchdogPid !== runtimePid) {
-    lines.push(`Watchdog PID:    ${watchdogPid}`);
+  if (watchdogPid && watchdogPid !== resolvedRuntimePid) {
+    lines.push(`Watchdog PID:    ${watchdogPid}${watchdogAlive ? "" : " (missing)"}`);
   }
 
   if (data.started_at) {
-    if (alive) {
+    if (resolvedRuntimeAlive) {
       lines.push(`Uptime:          ${formatUptime(data.started_at)}`);
     }
     lines.push(`Started:         ${data.started_at}`);
