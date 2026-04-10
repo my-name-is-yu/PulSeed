@@ -8,6 +8,12 @@ import type { StateManager } from "../../base/state/state-manager.js";
 import type { Logger } from "../../runtime/logger.js";
 import { writeJsonFileAtomic } from "../../base/utils/json-io.js";
 
+export interface GoalActivationSnapshot {
+  goalId: string;
+  shouldActivate: boolean;
+  schedule: GoalSchedule | null;
+}
+
 /**
  * DriveSystem handles lightweight activation checks (no LLM calls), event queue
  * processing, and goal schedule management.
@@ -56,6 +62,53 @@ export class DriveSystem {
 
   // ─── Activation Check ───
 
+  private isTerminalGoalStatus(status: string | null | undefined): boolean {
+    return status === "completed"
+      || status === "cancelled"
+      || status === "archived"
+      || status === "abandoned";
+  }
+
+  private isScheduleDueForSnapshot(schedule: GoalSchedule | null): boolean {
+    if (schedule === null) {
+      return true;
+    }
+    return new Date(schedule.next_check_at).getTime() <= Date.now();
+  }
+
+  async getGoalActivationSnapshot(goalId: string): Promise<GoalActivationSnapshot> {
+    const goal = await this.stateManager.loadGoal(goalId);
+    const schedule = await this.getSchedule(goalId);
+
+    if (this.isTerminalGoalStatus(goal?.status)) {
+      return {
+        goalId,
+        shouldActivate: false,
+        schedule,
+      };
+    }
+
+    const events = await this.readEventQueue();
+    if (events.length > 0) {
+      const hasGoalEvent = events.some(
+        (e) => e.data["goal_id"] === goalId || e.data["target_goal_id"] === goalId
+      );
+      if (hasGoalEvent) {
+        return {
+          goalId,
+          shouldActivate: true,
+          schedule,
+        };
+      }
+    }
+
+    return {
+      goalId,
+      shouldActivate: this.isScheduleDueForSnapshot(schedule),
+      schedule,
+    };
+  }
+
   /**
    * Lightweight check (no LLM). Returns true if any condition is met:
    * 1. Event queue has unprocessed events for this goal
@@ -63,36 +116,7 @@ export class DriveSystem {
    * 3. Goal is not in a terminal status ("completed", "cancelled", "archived")
    */
   async shouldActivate(goalId: string): Promise<boolean> {
-    // Check goal status — terminal statuses suppress activation
-    const goal = await this.stateManager.loadGoal(goalId);
-    if (goal !== null) {
-      if (
-        goal.status === "completed" ||
-        goal.status === "cancelled" ||
-        goal.status === "archived" ||
-        goal.status === "abandoned"
-      ) {
-        return false;
-      }
-    }
-
-    // Check event queue for events targeting this goal
-    const events = await this.readEventQueue();
-    if (events.length > 0) {
-      const hasGoalEvent = events.some(
-        (e) => e.data["goal_id"] === goalId || e.data["target_goal_id"] === goalId
-      );
-      if (hasGoalEvent) {
-        return true;
-      }
-    }
-
-    // Check if schedule is due
-    if (await this.isScheduleDue(goalId)) {
-      return true;
-    }
-
-    return false;
+    return (await this.getGoalActivationSnapshot(goalId)).shouldActivate;
   }
 
   // ─── Event Queue ───

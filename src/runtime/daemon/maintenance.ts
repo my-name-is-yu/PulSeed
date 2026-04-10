@@ -3,7 +3,7 @@ import { getInternalIdentityPrefix } from "../../base/config/identity-loader.js"
 import { PulSeedEventSchema } from "../../base/types/drive.js";
 import type { DaemonConfig, DaemonState } from "../../base/types/daemon.js";
 import type { ILLMClient } from "../../base/llm/llm-client.js";
-import type { DriveSystem } from "../../platform/drive/drive-system.js";
+import type { DriveSystem, GoalActivationSnapshot } from "../../platform/drive/drive-system.js";
 import { createEnvelope } from "../types/envelope.js";
 import type { Envelope } from "../types/envelope.js";
 import type { CronScheduler } from "../cron-scheduler.js";
@@ -15,18 +15,38 @@ const ProactiveResponseSchema = z.object({
   details: z.record(z.string(), z.unknown()).optional(),
 });
 
+export type GoalCycleScheduleSnapshotEntry = GoalActivationSnapshot;
+
+export async function collectGoalCycleScheduleSnapshot(
+  driveSystem: DriveSystem,
+  goalIds: string[],
+): Promise<GoalCycleScheduleSnapshotEntry[]> {
+  const snapshot: GoalCycleScheduleSnapshotEntry[] = [];
+
+  for (const goalId of goalIds) {
+    snapshot.push(await driveSystem.getGoalActivationSnapshot(goalId));
+  }
+
+  return snapshot;
+}
+
 export async function determineActiveGoalsForCycle(
   driveSystem: DriveSystem,
   goalIds: string[],
+  snapshot: GoalCycleScheduleSnapshotEntry[] = [],
 ): Promise<string[]> {
   const eligibleIds: string[] = [];
   const scores = new Map<string, number>();
+  const snapshotByGoalId = new Map(snapshot.map((entry) => [entry.goalId, entry]));
 
   for (const goalId of goalIds) {
-    if (await driveSystem.shouldActivate(goalId)) {
+    const entry =
+      snapshotByGoalId.get(goalId)
+      ?? await driveSystem.getGoalActivationSnapshot(goalId);
+
+    if (entry.shouldActivate) {
       eligibleIds.push(goalId);
-      const schedule = await driveSystem.getSchedule(goalId);
-      const nextCheckAt = schedule ? new Date(schedule.next_check_at).getTime() : 0;
+      const nextCheckAt = entry.schedule ? new Date(entry.schedule.next_check_at).getTime() : 0;
       scores.set(goalId, -nextCheckAt);
     }
   }
@@ -202,11 +222,25 @@ export async function runProactiveMaintenance(params: {
 export async function getMaxGapScoreForGoals(
   driveSystem: DriveSystem,
   goalIds: string[],
+  snapshot: GoalCycleScheduleSnapshotEntry[] = [],
 ): Promise<number> {
+  const snapshotByGoalId = new Map(snapshot.map((entry) => [entry.goalId, entry]));
   let max = 0;
+
   for (const goalId of goalIds) {
+    const entry = snapshotByGoalId.get(goalId);
+
+    if (entry) {
+      const score = (entry.schedule as Record<string, unknown> | null)?.["last_gap_score"];
+      if (typeof score === "number" && score > max) {
+        max = score;
+      }
+      continue;
+    }
+
     try {
-      const schedule = await driveSystem.getSchedule(goalId);
+      const fallbackEntry = await driveSystem.getGoalActivationSnapshot(goalId);
+      const schedule = fallbackEntry.schedule;
       const score = (schedule as Record<string, unknown>)["last_gap_score"];
       if (typeof score === "number" && score > max) {
         max = score;
@@ -229,9 +263,14 @@ export async function runSupervisorMaintenanceCycleForDaemon(params: {
   eventServer?: { broadcast?(event: string, payload: Record<string, unknown>): void | Promise<void> };
   state: DaemonState;
 }): Promise<void> {
+  const snapshot = await collectGoalCycleScheduleSnapshot(
+    params.driveSystem,
+    [...params.currentGoalIds],
+  );
   const activeGoals = await determineActiveGoalsForCycle(
     params.driveSystem,
     [...params.currentGoalIds],
+    snapshot,
   );
   for (const goalId of activeGoals) {
     params.supervisor?.activateGoal(goalId);
