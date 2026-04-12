@@ -83,8 +83,6 @@ Historical testing notes belong in the ignored local archive.
 It may mix current, proposal, and historical material.
 Use the public docs first, then the design notes when you need subsystem detail or background.
 
-The implementation-facing baseline lives in [docs/design/current-baseline.md](design/current-baseline.md).
-
 ### Archive
 
 `docs/archive/` is an ignored local holding area for legacy notes.

@@ -13,11 +13,6 @@ Use the public docs first:
 6. [Architecture Map](../architecture-map.md)
 7. [Module Map](../module-map.md)
 
-## Current baseline
-
-For the implementation-facing baseline, start with [current-baseline.md](current-baseline.md).
-That file should be treated as the current design anchor when you need a lower-level view of the system.
-
 ## Reading model
 
 The files under `docs/design/` may mix:
@@ -37,5 +32,5 @@ Do not treat it as current guidance.
 
 ## Organizing rule
 
-Prefer the public docs and the current baseline before reading subsystem-specific design notes.
+Prefer the public docs before reading subsystem-specific design notes.
 The design index is a pointer into background material, not a replacement for the public documentation map.
