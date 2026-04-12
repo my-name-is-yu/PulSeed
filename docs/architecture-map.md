@@ -26,7 +26,8 @@ agentic core phases      task lifecycle
               tools
                 |
                 v
-   state / memory / Soil / external world```
+   state / memory / Soil / external world
+```
 
 ## 2. Directory-level map
 

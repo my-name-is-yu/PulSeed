@@ -4,13 +4,14 @@ This document reflects the current public configuration surface.
 
 ## 1. First-run recommendation
 
-Use:
+Use the main entry point:
 
 ```bash
-pulseed setup
+pulseed
 ```
 
-The setup flow is the recommended way to configure:
+PulSeed guides configuration from the interactive flow when needed.
+The configuration flow chooses:
 
 - provider
 - model
@@ -79,7 +80,7 @@ Environment variables override file config.
 
 - Native `agent_loop` is supported by both OpenAI-backed and Anthropic-backed tool-calling models in the current implementation
 - Some models are usable through API adapters but not a CLI adapter, or vice versa
-- `pulseed setup` is safer than editing config by hand because it validates provider and adapter combinations
+- interactive configuration through `pulseed` is safer than editing config by hand because it validates provider and adapter combinations
 
 ## 5. Adapter choices
 
@@ -138,28 +139,19 @@ Depending on the features in use, you may also see:
 - Soil projections and indexes
 - schedule suggestions and approval state
 
-## 8. Common commands
+## 8. Main command
 
 ```bash
-pulseed setup
-pulseed config
-pulseed run --goal <id>
-pulseed chat
-pulseed tui
-pulseed start --goal <id>
+pulseed
 ```
 
-Useful config-related commands:
+The default workflow is natural language. Ask PulSeed to configure providers, show current settings, create goals, check progress, or keep work running.
 
-- `pulseed setup`
-- `pulseed provider`
-- `pulseed config`
-- `pulseed schedule ...`
-- `pulseed plugin ...`
+## 9. Scriptable CLI surface
 
-## 9. Current CLI surface
+Lower-level commands exist for automation, diagnostics, and compatibility. They are not the primary user path.
 
-Common public commands:
+Common scriptable commands:
 
 | Command | Purpose |
 |---|---|
@@ -178,5 +170,5 @@ Common public commands:
 ## 10. Practical guidance
 
 - Start with `agent_loop` unless you specifically want an external agent CLI
-- Use `pulseed setup` after pulling new versions, because provider defaults may evolve
+- Start from `pulseed` after pulling new versions, because provider defaults may evolve
 - Treat `src/` and `provider.json` as the implementation truth when deeper docs disagree

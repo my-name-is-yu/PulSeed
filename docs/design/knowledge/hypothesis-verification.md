@@ -230,7 +230,7 @@ type SatisficingResult =
 ## References
 
 - [AutoResearchClaw](https://github.com/aiming-lab/AutoResearchClaw)
-- [docs/module-map.md](../module-map.md) — Related module boundary map
-- [docs/design/stall-detector.md](stall-detector.md) — StallDetector design
-- [docs/design/satisficing.md](satisficing.md) — SatisficingJudge design
+- [docs/module-map.md](../../module-map.md) — Related module boundary map
+- [docs/design/core/stall-detection.md](../core/stall-detection.md) — StallDetector design
+- [docs/design/core/satisficing.md](../core/satisficing.md) — SatisficingJudge design
 - [docs/design/knowledge-acquisition.md](knowledge-acquisition.md) — KnowledgeManager design

@@ -1,144 +1,46 @@
 # Getting Started
 
-This guide reflects the current public surface of PulSeed as of the `CoreLoop + AgentLoop` architecture.
+This is the shortest path from install to a first goal run.
 
 ## 1. Install
 
-Node.js 20+ is required.
+PulSeed requires Node.js 20 or newer.
 
 ```bash
 npm install -g pulseed
 ```
 
-## 2. Run setup
+## 2. Start PulSeed
 
-Use the setup wizard first.
+Run:
 
 ```bash
-pulseed setup
+pulseed
 ```
 
-What setup does:
+PulSeed will guide setup when needed. It writes local state under `~/.pulseed/`, including provider selection, goals, tasks, reports, runtime data, schedules, memory, and Soil projections.
 
-- chooses provider and model
-- selects the default adapter
-- writes `~/.pulseed/provider.json`
-- can enable the native `agent_loop` path, which is now the recommended default when your model supports tool calling
+## 3. Work in natural language
 
-## 3. Create a goal
+Describe what you want PulSeed to do:
 
-```bash
-pulseed goal add "Increase test coverage to 90%"```
+- "Increase test coverage to 90%."
+- "Show me the current progress."
+- "Run the next useful step."
+- "Keep this goal moving in the background."
 
-This stores a goal with measurable dimensions and enough state for the CoreLoop to continue later.
+The default public path is `pulseed` plus natural language. Lower-level subcommands exist for automation, debugging, and compatibility, but they are not the main getting-started flow.
 
-Useful follow-ups:
+## 4. What runs where
 
-```bash
-pulseed goal list
-pulseed goal show <goal-id>
-```
+- `CoreLoop` handles goal-level control, including continuation, refinement, verification, and completion checks
+- `AgentLoop` handles bounded tool use for tasks, chat, and runtime phases that need a short-lived executor
+- Local state lives under `~/.pulseed/`
 
-## 4. Run one iteration
+## Next Docs
 
-```bash
-pulseed run --goal <goal-id>
-```
-
-`pulseed run` executes one CoreLoop run for the goal. Inside that run, PulSeed may:
-
-1. observe evidence
-2. calculate gaps and drive scores
-3. decide whether to continue, refine, pivot, or verify
-4. run bounded agentic core phases such as knowledge refresh or stall investigation
-5. generate and execute a task
-6. verify the result and persist the outcome
-
-If the selected adapter is `agent_loop`, task execution is performed by PulSeed's native AgentLoop rather than an external CLI agent wrapper.
-
-## 5. Check progress
-
-```bash
-pulseed status --goal <goal-id>
-pulseed report --goal <goal-id>
-pulseed task list --goal <goal-id>
-```
-
-Use these to inspect the current goal state, latest report, and task history.
-
-## 6. Use chat mode
-
-```bash
-pulseed chat
-```
-
-Chat mode is no longer just a command router. It can run through the native AgentLoop with tools when the configured provider supports it.
-Current chat characteristics:
-
-- tool-using bounded turns
-- context compaction when history grows
-- approval flow for restricted actions
-- ability to operate PulSeed through tools instead of direct internal calls
-
-## 7. Use the TUI
-
-```bash
-pulseed tui
-```
-
-The TUI sits on the same runtime and orchestration stack as the CLI. It is the main interactive view for:
-
-- goal progress
-- reports
-- approvals
-- chat
-- loop control
-
-## 8. Run continuously
-
-Start the resident runtime:
-
-```bash
-pulseed start --goal <goal-id>
-pulseed stop
-```
-
-Or print a cron entry:
-
-```bash
-pulseed cron --goal <goal-id>
-```
-
-The daemon and cron paths still feed the same CoreLoop and TaskLifecycle.
-
-## 9. Recommended adapter choices
-
-Default recommendation:
-
-- OpenAI or Anthropic with `agent_loop`
-
-When to use external adapters instead:
-
-- `openai_codex_cli` or `claude_code_cli` when you want the provider's own CLI behavior
-- `github_issue` when execution should be an issue handoff rather than a local agent session
-
-## 10. What PulSeed stores locally
-
-PulSeed writes local state under `~/.pulseed/`, including:
-
-- goals
-- tasks
-- reports
-- runtime state
-- schedules
-- memory
-- Soil projections
-
-## 11. Next docs
-
-- [README](../README.md)
+- [Docs Index](index.md)
 - [Mechanism](mechanism.md)
 - [Runtime](runtime.md)
 - [Configuration](configuration.md)
 - [Architecture Map](architecture-map.md)
-- [Module Map](module-map.md)

@@ -1,65 +1,92 @@
-# PulSeed Mechanism
+# Mechanism
 
-This document explains the current public mechanism of PulSeed.
+This page is the canonical conceptual explanation of how PulSeed works.
+For runtime surfaces and commands, see [Runtime](runtime.md). For the public map, see [docs/index.md](index.md).
 
-The short version:
+## CoreLoop and AgentLoop
 
-- `CoreLoop` is the long-lived controller
-- `AgentLoop` is the bounded tool-using executor
-- tools and Soil are first-class inputs to both
-
-## 1. The Two Loops
-
-PulSeed no longer fits the old "one loop does everything" explanation.
-
-It now has two distinct loops with different jobs.
+PulSeed is easiest to understand as two cooperating loops.
 
 ### CoreLoop
 
-`CoreLoop` owns long-horizon control:
+`CoreLoop` is the long-lived controller.
+It owns durable decisions about goal progress, scheduling, stall handling, reprioritization, verification, and completion.
 
-- is this goal complete?
-- what is the next best target dimension?
-- are we stalled?
-- should we continue, refine, pivot, or verify?
-- which goal or tree node should get the next iteration?
+CoreLoop answers questions such as:
 
-`CoreLoop` is persistent and stateful across many runs. It works over goals, tasks, memory, schedules, and runtime state.
+- Is the goal still viable?
+- What should be worked on next?
+- Is the system stalled?
+- Should the next step continue, refine, pivot, or verify?
+
+It works across goals, tasks, memory, schedules, and runtime state.
 
 ### AgentLoop
 
-`AgentLoop` owns bounded execution:
+`AgentLoop` is the bounded executor.
+It handles short-lived work where the system needs to choose tools, inspect results, and stop with a bounded outcome.
 
-- choose a tool
-- inspect the tool result
-- decide the next action
-- stop with a schema-valid result or a bounded failure reason
+AgentLoop is used for:
 
-`AgentLoop` is used for:
-
-- task execution via the native `agent_loop` adapter
+- task execution through the native `agent_loop` path
 - chat turns
 - selected CoreLoop phases that need targeted evidence gathering
 
-## 2. CoreLoop Flow
+## Tools
 
-At a high level, a CoreLoop run looks like this:
+Tools are the execution substrate for both loops.
+They are not an add-on layer.
 
-```text
-observe state
--> calculate gaps
--> score dimensions
--> decide task / refinement / pivot / verification
--> run execution
--> verify outcome
--> persist state
-```
+PulSeed uses tools for:
 
-That is still true, but the implementation now contains an agentic phase layer inside the loop.
+- filesystem and git inspection
+- shell and test execution
+- goal, task, and session state queries
+- knowledge and memory access
+- schedule management
+- Soil queries and maintenance
 
-### Agentic core phases
+The practical rule is simple: when PulSeed inspects, verifies, or updates state, it usually does so through tools rather than by relying on narration alone.
 
-PulSeed can run bounded AgentLoop phases inside CoreLoop:
+## Soil
+
+Soil is PulSeed's long-lived, human-readable memory surface.
+It makes durable knowledge available to bounded runs through memory recall, knowledge queries, session history, and `soil_query`.
+
+That is how a short AgentLoop run can still make use of state accumulated over a much longer horizon.
+
+## Verification
+
+Verification is a separate step from execution.
+PulSeed treats direct evidence as the strongest signal available.
+
+Current verification sources include:
+
+- direct tool evidence
+- task-level structured verification
+- execution command results
+- optional model-based verification passes
+
+The important point is that verification is not just self-report. It is grounded in observed results.
+
+## Completion
+
+PulSeed uses satisficing rather than endless execution.
+Completion is decided from a combination of:
+
+- goal thresholds
+- confidence
+- verification state
+- stall and error boundaries
+
+AgentLoop stops when the bounded task or chat turn is done.
+CoreLoop stops when the longer-running goal or iteration plan is done.
+
+## Bounded phases inside CoreLoop
+
+CoreLoop can invoke bounded AgentLoop phases for targeted evidence and planning support.
+
+The current public phases are:
 
 - `observe_evidence`
 - `knowledge_refresh`
@@ -67,176 +94,14 @@ PulSeed can run bounded AgentLoop phases inside CoreLoop:
 - `stall_investigation`
 - `verification_evidence`
 
-These phases do not replace deterministic control. They are bounded evidence-gathering and decision-support steps inside deterministic orchestration.
+These phases provide input to deterministic control.
+They do not replace it.
 
-Each phase has:
+## Why the split matters
 
-- its own tool allowlist
-- required tools
-- turn and time budgets
-- a fail policy
+The split keeps two concerns separate:
 
-## 3. Why split the loops?
+- CoreLoop manages durable control over a goal over time
+- AgentLoop manages local tool use over a bounded window
 
-The split solves two different problems cleanly.
-
-### CoreLoop is about control
-
-Long-running goals need durable control over:
-
-- completion
-- confidence
-- priority
-- stall behavior
-- scheduling
-- recovery
-
-This part should not depend on a single long prompt.
-
-### AgentLoop is about local execution
-
-A task, a chat turn, or a bounded investigation needs:
-
-- direct tool selection
-- short feedback cycles
-- stop detection
-- context compaction
-
-This part should feel closer to Codex / Claude Code style execution.
-
-## 4. Tool-first operation
-
-Tools are not an add-on. They are the default execution substrate for bounded agent work.
-
-PulSeed ships built-in tools across several groups:
-
-- filesystem: read, grep, glob, json query, edit, apply patch
-- system: shell command, shell, git diff, git log, test runner, env, sleep
-- query: goal state, task state, session history, progress history, memory recall, knowledge query, architecture
-- network: HTTP fetch, web search
-- mutation: update goal/task/config state
-- schedule: create, list, pause, resume, remove schedules
-- Soil: query, open, doctor, publish, rebuild
-
-The public implication is simple: when PulSeed says it can "inspect" or "verify," that often means direct tools, not a delegated narrative.
-
-## 5. Soil in the loop
-
-Soil is PulSeed's readable memory surface.
-
-It matters because the short-lived AgentLoop can still access long-lived state through:
-
-- `soil_query`
-- memory recall
-- knowledge query
-- session and progress history
-
-That is how long-term resident knowledge becomes usable inside bounded task execution and chat turns.
-
-## 6. Knowledge refresh and replanning
-
-CoreLoop now has a more explicit path for "we need to think again before acting."
-
-### Knowledge refresh
-
-Triggered when the loop needs missing knowledge before a good task can be generated.
-
-Current behavior:
-
-- can gather evidence with bounded tools
-- can auto-trigger deterministic knowledge acquisition when confidence is high enough
-- can pass a next-iteration directive forward
-
-### Replanning
-
-Triggered when the loop needs better task framing, a different dimension focus, or a different action recommendation.
-
-Current behavior:
-
-- can recommend `continue`, `refine`, or `pivot`
-- can emit a next-iteration directive
-- can bias the next tree-node or multi-goal selection
-
-## 7. Stall handling
-
-PulSeed still treats stalls as a first-class control problem.
-
-The updated behavior is:
-
-- deterministic stall detection remains the backbone
-- `stall_investigation` can gather bounded evidence before choosing the next action
-- a stall can now resolve to:
-  - continue
-  - refine
-  - pivot
-  - escalate
-
-## 8. Verification
-
-PulSeed still separates execution from verification as a design rule.
-
-Current verification sources include:
-
-- direct tool evidence
-- task-level structured verification
-- execution command results
-- optional LLM verification passes
-
-The important change is that verification is no longer explained as "agent self-report plus review only." Direct tool evidence is now central.
-
-## 9. Context compaction
-
-AgentLoop supports built-in compaction for long conversations and task sessions.
-
-Current behavior:
-
-- pre-turn or mid-turn compaction
-- summary replacement of older context
-- bounded number of compactions per run
-
-This matters most in:
-
-- `pulseed chat`
-- long-running task execution
-- agentic CoreLoop phases
-
-## 10. Tree mode and multi-goal mode
-
-CoreLoop can operate over:
-
-- one goal
-- a goal tree
-- multiple goals
-
-The current scheduler is not purely static:
-
-- tree mode can prefer a node that carries a next-iteration directive
-- multi-goal mode can prefer a goal that carries a next-iteration directive
-
-So bounded agentic evidence can influence the next deterministic scheduling choice.
-
-## 11. Completion
-
-PulSeed still uses satisficing rather than "never stop" execution.
-
-Completion is decided from:
-
-- dimension thresholds
-- confidence
-- verification state
-- stall and error boundaries
-
-The important distinction is:
-
-- AgentLoop detects local stop for a task or chat turn
-- CoreLoop detects durable stop for a goal or iteration plan
-
-## 12. Practical reading order
-
-If you want the public picture of the current system, read these in order:
-
-1. [README](../README.md)
-2. [Getting Started](getting-started.md)
-3. [Runtime](runtime.md)
-4. [Architecture Map](architecture-map.md)
-5. [Module Map](module-map.md)
+That separation is what lets PulSeed keep running across sessions while still doing short, tool-driven work inside a single turn or task.

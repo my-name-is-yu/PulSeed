@@ -2,108 +2,39 @@
 
 Current public status as of 2026-04-12.
 
-This page is intentionally capability-focused rather than milestone-count focused.
+This page stays intentionally short.
+For the conceptual model, see [Mechanism](mechanism.md).
+For runtime surfaces, see [Runtime](runtime.md).
+For broader navigation, see [Architecture Map](architecture-map.md).
 
-## Implemented and in active use
+## In active use
 
-### CoreLoop
+- long-lived `CoreLoop` control
+- bounded `AgentLoop` execution
+- shared tool substrate
+- Soil as a long-lived memory surface
+- CLI, chat, TUI, daemon, and cron runtime surfaces
 
-Implemented:
+## Publicly supported direction
 
-- goal-state driven loop execution
-- gap calculation and drive scoring
-- task lifecycle integration
-- completion and stall handling
-- goal-tree execution
-- multi-goal scheduling
-- iteration budgeting
-- next-iteration directives
-
-### AgentLoop
-
-Implemented:
-
-- native `agent_loop` adapter path
-- task-oriented bounded execution
-- chat-oriented bounded execution
-- tool routing and tool policy
-- completion schema
-- repeated tool loop protection
-- context compaction
-- command result capture
-- optional worktree execution
-
-### Agentic CoreLoop phases
-
-Implemented:
-
-- `observe_evidence`
-- `knowledge_refresh`
-- `replanning_options`
-- `stall_investigation`
-- `verification_evidence`
-
-These phases are bounded and tool-policy driven. They do not replace deterministic loop control.
-
-### Tools
-
-Implemented categories:
-
-- filesystem
-- shell and system
-- git and test runner
-- query and runtime state
-- network
-- schedule
-- mutation
-- Soil
-
-### Runtime surfaces
-
-Implemented:
-
-- CLI
-- chat mode
-- TUI
-- daemon / cron
-
-## Recommended current path
-
-For most users:
-
-- configure with `pulseed setup`
-- use `agent_loop` as the default adapter
-- use chat and TUI on top of the same native AgentLoop runtime
-- use daemon mode for resident operation
-
-## Important architectural reality
-
-PulSeed is no longer best described as a single flat "observe -> gap -> score -> task -> execute -> verify" loop.
-
-The current implementation is:
-
-- a long-lived `CoreLoop`
-- plus a bounded `AgentLoop`
-- plus a shared tool and Soil substrate
+- use `pulseed` as the main entry point
+- perform the normal workflow in natural language
+- keep lower-level subcommands for scripting, diagnostics, and compatibility
 
 ## Still evolving
 
-These areas are active and expected to keep changing:
-
 - scheduler heuristics
-- public documentation in lower-level historical design docs
-- provider-specific defaults
-- native AgentLoop quality and prompt/model policy
+- provider defaults
+- native AgentLoop quality and policy
+- design notes under `docs/design/`
 
 ## Source of truth
 
-When docs disagree, prefer:
+When public docs disagree, prefer the more specific page:
 
-1. `src/`
-2. tests under `src/**/__tests__/`
-3. the top-level public docs:
-   - [README](../README.md)
-   - [Getting Started](getting-started.md)
-   - [Mechanism](mechanism.md)
-   - [Runtime](runtime.md)
-   - [Architecture Map](architecture-map.md)
+1. [README](../README.md)
+2. [docs/index.md](index.md)
+3. [Getting Started](getting-started.md)
+4. [Mechanism](mechanism.md)
+5. [Runtime](runtime.md)
+6. [Architecture Map](architecture-map.md)

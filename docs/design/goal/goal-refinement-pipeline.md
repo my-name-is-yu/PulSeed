@@ -133,7 +133,8 @@ The prompt includes available data sources from ObservationEngine so the LLM can
 ```
 src/orchestrator/goal/goal-refiner.ts     # GoalRefiner class
 src/orchestrator/goal/refiner-prompts.ts  # leaf test prompt builder
-src/base/types/goal-refiner.ts            # RefineConfig, LeafTestResult, RefineResult schemas```
+src/base/types/goal-refiner.ts            # RefineConfig, LeafTestResult, RefineResult schemas
+```
 
 **GoalRefiner** composes:
 - `GoalNegotiator` — reuses `evaluateQualitatively()` and `runCapabilityCheckStep()` for feasibility validation on leaf dimensions

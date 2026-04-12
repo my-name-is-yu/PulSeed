@@ -15,7 +15,9 @@ memory/
 web/.next/
 web/node_modules/
 web/tsconfig.tsbuildinfo
-scripts/
+docs/archive/
+scripts/*
+!scripts/check-docs.mjs
 
 # Non-public: stale, will revisit later
 web/
