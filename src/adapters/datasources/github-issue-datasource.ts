@@ -37,6 +37,10 @@ interface GhIssue {
   createdAt?: string;
 }
 
+type QueryPlan =
+  | { kind: "single"; state: "open" | "closed" }
+  | { kind: "aggregate"; dimension: "total_issue_count" | "completion_ratio" };
+
 // ─── Adapter ───
 
 export class GitHubIssueDataSourceAdapter implements IDataSourceAdapter {
@@ -63,119 +67,29 @@ export class GitHubIssueDataSourceAdapter implements IDataSourceAdapter {
   }
 
   query(params: DataSourceQuery): Promise<GhDataSourceResult> {
-    const config = this.config;
-    const repo = this.resolveRepo(config);
-    const label = this.resolveLabel(config);
-    const timeoutMs = params.timeout_ms ?? 10_000;
-    const sourceId = this.sourceId;
+    const { repo, label, timeoutMs, resolvedDimension, sourceId } = this.resolveQueryContext(params);
 
-    // Check dimension_mapping for redirect
-    const dimMapping: Record<string, string> = config.dimension_mapping ?? {};
-    const dimension = params.expression ?? params.dimension_name;
-    const resolvedDimension = dimMapping[dimension] ?? dimension;
-
-    // Unknown dimension — return immediately without spawning
-    const knownDimensions = new Set([
-      "open_issue_count",
-      "closed_issue_count",
-      "total_issue_count",
-      "completion_ratio",
-    ]);
-
-    if (!knownDimensions.has(resolvedDimension)) {
-      return Promise.resolve({
-        value: null,
-        raw: [],
-        timestamp: new Date().toISOString(),
-        source_id: sourceId,
-      });
+    const queryPlan = this.resolveQueryPlan(resolvedDimension);
+    if (queryPlan === null) {
+      return Promise.resolve(this.buildUnknownDimensionResult(sourceId));
     }
 
-    // ── Dimensions that require only open issues ──────────────────────────
-    if (resolvedDimension === "open_issue_count") {
-      return this.queryOneState("open", repo, label, timeoutMs, (openIssues, err) => {
-        if (err !== null) {
-          return {
-            value: null,
-            raw: [],
-            timestamp: new Date().toISOString(),
-            source_id: sourceId,
-            error: err,
-          };
-        }
-        return {
-          value: openIssues.length,
-          raw: openIssues,
-          timestamp: new Date().toISOString(),
-          source_id: sourceId,
-        };
-      });
+    if (queryPlan.kind === "single") {
+      return this.queryOneState(
+        queryPlan.state,
+        repo,
+        label,
+        timeoutMs,
+        this.createSingleStateResultBuilder(sourceId)
+      );
     }
 
-    if (resolvedDimension === "closed_issue_count") {
-      return this.queryOneState("closed", repo, label, timeoutMs, (closedIssues, err) => {
-        if (err !== null) {
-          return {
-            value: null,
-            raw: [],
-            timestamp: new Date().toISOString(),
-            source_id: sourceId,
-            error: err,
-          };
-        }
-        return {
-          value: closedIssues.length,
-          raw: closedIssues,
-          timestamp: new Date().toISOString(),
-          source_id: sourceId,
-        };
-      });
-    }
-
-    // ── Dimensions that require both open and closed issues ───────────────
-    // (completion_ratio, total_issue_count)
-    return this.queryBothStates(repo, label, timeoutMs, (openIssues, closedIssues, err) => {
-      if (err !== null) {
-        return {
-          value: null,
-          raw: [],
-          timestamp: new Date().toISOString(),
-          source_id: sourceId,
-          error: err,
-        };
-      }
-
-      const openCount = openIssues.length;
-      const closedCount = closedIssues.length;
-      const totalCount = openCount + closedCount;
-      const completionRatio = totalCount === 0 ? 0 : closedCount / totalCount;
-      const allIssues = [...openIssues, ...closedIssues];
-
-      let value: number;
-      switch (resolvedDimension) {
-        case "total_issue_count":
-          value = totalCount;
-          break;
-        case "completion_ratio":
-          value = completionRatio;
-          break;
-        default:
-          value = 0;
-      }
-
-      return {
-        value,
-        raw: allIssues,
-        timestamp: new Date().toISOString(),
-        source_id: sourceId,
-        metadata: {
-          open_count: openCount,
-          closed_count: closedCount,
-          total_count: totalCount,
-          completion_ratio: completionRatio,
-        },
-      };
-    });
+    return this.queryBothStates(
+      repo,
+      label,
+      timeoutMs,
+      this.createAggregateResultBuilder(sourceId, queryPlan.dimension)
+    );
   }
 
   getSupportedDimensions(): string[] {
@@ -238,6 +152,45 @@ export class GitHubIssueDataSourceAdapter implements IDataSourceAdapter {
     return mapping["_label"] ?? "pulseed";
   }
 
+  private resolveQueryContext(params: DataSourceQuery): {
+    repo: string | undefined;
+    label: string | undefined;
+    timeoutMs: number;
+    resolvedDimension: string;
+    sourceId: string;
+  } {
+    const config = this.config;
+    const repo = this.resolveRepo(config);
+    const label = this.resolveLabel(config);
+    const timeoutMs = params.timeout_ms ?? 10_000;
+    const sourceId = this.sourceId;
+    const dimMapping: Record<string, string> = config.dimension_mapping ?? {};
+    const dimension = params.expression ?? params.dimension_name;
+    const resolvedDimension = dimMapping[dimension] ?? dimension;
+
+    return {
+      repo,
+      label,
+      timeoutMs,
+      resolvedDimension,
+      sourceId,
+    };
+  }
+
+  private resolveQueryPlan(resolvedDimension: string): QueryPlan | null {
+    switch (resolvedDimension) {
+      case "open_issue_count":
+        return { kind: "single", state: "open" };
+      case "closed_issue_count":
+        return { kind: "single", state: "closed" };
+      case "total_issue_count":
+      case "completion_ratio":
+        return { kind: "aggregate", dimension: resolvedDimension };
+      default:
+        return null;
+    }
+  }
+
   /**
    * Spawn `gh issue list` for a single state and call back with results.
    * Uses a callback so the result can be returned synchronously inside
@@ -251,42 +204,8 @@ export class GitHubIssueDataSourceAdapter implements IDataSourceAdapter {
     cb: (issues: GhIssue[], err: string | null) => GhDataSourceResult
   ): Promise<GhDataSourceResult> {
     return new Promise<GhDataSourceResult>((resolve) => {
-      let stdout = "";
-      let stderr = "";
-      let timedOut = false;
-
-      const args = this.buildListArgs(state, repo, label);
-      const child = spawn(this.ghPath, args, { stdio: ["ignore", "pipe", "pipe"] });
-
-      const timeoutHandle = setTimeout(() => {
-        timedOut = true;
-        child.kill("SIGTERM");
-      }, timeoutMs);
-
-      child.stdout.on("data", (chunk: Buffer) => {
-        stdout += chunk.toString("utf8");
-      });
-
-      child.stderr.on("data", (chunk: Buffer) => {
-        stderr += chunk.toString("utf8");
-      });
-
-      child.on("error", (err: Error) => {
-        clearTimeout(timeoutHandle);
-        resolve(cb([], err.message));
-      });
-
-      child.on("close", (code: number | null) => {
-        clearTimeout(timeoutHandle);
-        if (timedOut) {
-          resolve(cb([], `gh issue list timed out after ${timeoutMs}ms`));
-          return;
-        }
-        if (code !== 0) {
-          resolve(cb([], stderr.trim() || `gh issue list exited with code ${code}`));
-          return;
-        }
-        resolve(cb(this.parseIssueList(stdout), null));
+      this.spawnList(state, repo, label, timeoutMs, (issues, err) => {
+        resolve(cb(issues, err));
       });
     });
   }
@@ -337,12 +256,10 @@ export class GitHubIssueDataSourceAdapter implements IDataSourceAdapter {
     timeoutMs: number,
     cb: (issues: GhIssue[], err: string | null) => void
   ): void {
+    const child = this.createListProcess(state, repo, label);
     let stdout = "";
     let stderr = "";
     let timedOut = false;
-
-    const args = this.buildListArgs(state, repo, label);
-    const child = spawn(this.ghPath, args, { stdio: ["ignore", "pipe", "pipe"] });
 
     const timeoutHandle = setTimeout(() => {
       timedOut = true;
@@ -374,6 +291,130 @@ export class GitHubIssueDataSourceAdapter implements IDataSourceAdapter {
       }
       cb(this.parseIssueList(stdout), null);
     });
+  }
+
+  private createListProcess(
+    state: "open" | "closed",
+    repo: string | undefined,
+    label: string | undefined
+  ) {
+    const args = this.buildListArgs(state, repo, label);
+    return spawn(this.ghPath, args, { stdio: ["ignore", "pipe", "pipe"] });
+  }
+
+  private buildCountResult(sourceId: string, issues: GhIssue[]): GhDataSourceResult {
+    return this.buildMetricResult(sourceId, issues.length, issues);
+  }
+
+  private createSingleStateResultBuilder(
+    sourceId: string
+  ): (issues: GhIssue[], err: string | null) => GhDataSourceResult {
+    return (issues, err) => this.buildSingleStateResult(sourceId, issues, err);
+  }
+
+  private createAggregateResultBuilder(
+    sourceId: string,
+    dimension: "total_issue_count" | "completion_ratio"
+  ): (openIssues: GhIssue[], closedIssues: GhIssue[], err: string | null) => GhDataSourceResult {
+    return (openIssues, closedIssues, err) =>
+      this.buildAggregateResult(sourceId, dimension, openIssues, closedIssues, err);
+  }
+
+  private buildSingleStateResult(
+    sourceId: string,
+    issues: GhIssue[],
+    err: string | null
+  ): GhDataSourceResult {
+    return err !== null ? this.buildErrorResult(sourceId, err) : this.buildCountResult(sourceId, issues);
+  }
+
+  private buildAggregateResult(
+    sourceId: string,
+    dimension: "total_issue_count" | "completion_ratio",
+    openIssues: GhIssue[],
+    closedIssues: GhIssue[],
+    err: string | null
+  ): GhDataSourceResult {
+    if (err !== null) {
+      return this.buildErrorResult(sourceId, err);
+    }
+
+    const aggregate = this.buildAggregateMetrics(openIssues, closedIssues);
+    const value = dimension === "total_issue_count" ? aggregate.totalCount : aggregate.completionRatio;
+
+    return {
+      ...this.buildMetricResult(sourceId, value, aggregate.allIssues),
+      metadata: this.buildCompletionMetadata(
+        aggregate.openCount,
+        aggregate.closedCount,
+        aggregate.totalCount,
+        aggregate.completionRatio
+      ),
+    };
+  }
+
+  private buildErrorResult(sourceId: string, error: string): GhDataSourceResult {
+    return {
+      value: null,
+      raw: [],
+      timestamp: new Date().toISOString(),
+      source_id: sourceId,
+      error,
+    };
+  }
+
+  private buildMetricResult(sourceId: string, value: number, raw: GhIssue[]): GhDataSourceResult {
+    return {
+      value,
+      raw,
+      timestamp: new Date().toISOString(),
+      source_id: sourceId,
+    };
+  }
+
+  private buildUnknownDimensionResult(sourceId: string): GhDataSourceResult {
+    return {
+      value: null,
+      raw: [],
+      timestamp: new Date().toISOString(),
+      source_id: sourceId,
+    };
+  }
+
+  private buildCompletionMetadata(
+    openCount: number,
+    closedCount: number,
+    totalCount: number,
+    completionRatio: number
+  ): NonNullable<GhDataSourceResult["metadata"]> {
+    return {
+      open_count: openCount,
+      closed_count: closedCount,
+      total_count: totalCount,
+      completion_ratio: completionRatio,
+    };
+  }
+
+  private buildAggregateMetrics(openIssues: GhIssue[], closedIssues: GhIssue[]): {
+    openCount: number;
+    closedCount: number;
+    totalCount: number;
+    completionRatio: number;
+    allIssues: GhIssue[];
+  } {
+    const openCount = openIssues.length;
+    const closedCount = closedIssues.length;
+    const totalCount = openCount + closedCount;
+    const completionRatio = totalCount === 0 ? 0 : closedCount / totalCount;
+    const allIssues = [...openIssues, ...closedIssues];
+
+    return {
+      openCount,
+      closedCount,
+      totalCount,
+      completionRatio,
+      allIssues,
+    };
   }
 
   private buildListArgs(

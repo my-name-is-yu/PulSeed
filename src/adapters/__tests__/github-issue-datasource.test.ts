@@ -91,6 +91,9 @@ describe("GitHubIssueDataSourceAdapter.query", () => {
 
     expect(result.value).toBe(3);
     expect(typeof result.timestamp).toBe("string");
+    expect(result.raw).toHaveLength(3);
+    expect(result.source_id).toBe("github-issues");
+    expect(result.error).toBeUndefined();
   });
 
   it("closed_issue_count returns the count of closed issues", async () => {
@@ -117,6 +120,12 @@ describe("GitHubIssueDataSourceAdapter.query", () => {
 
     // 3 / (2 + 3) = 0.6
     expect(result.value).toBeCloseTo(0.6, 5);
+    expect(result.metadata).toEqual({
+      open_count: 2,
+      closed_count: 3,
+      total_count: 5,
+      completion_ratio: 0.6,
+    });
   });
 
   it("total_issue_count returns open + closed", async () => {
@@ -157,6 +166,8 @@ describe("GitHubIssueDataSourceAdapter.query", () => {
 
     expect(result.value).toBeNull();
     expect(result.error).toContain("gh: authentication required");
+    expect(result.raw).toEqual([]);
+    expect(result.source_id).toBe("github-issues");
   });
 });
 
@@ -273,6 +284,24 @@ describe("GitHubIssueDataSourceAdapter.healthCheck edge cases", () => {
     expect(child.kill).toHaveBeenCalledWith("SIGTERM");
     expect(result).toBe(false);
   });
+
+  it("ignores duplicate healthCheck process events after resolving", async () => {
+    const adapter = new GitHubIssueDataSourceAdapter(makeConfig());
+    const child = makeFakeChild();
+
+    const healthPromise = adapter.healthCheck();
+    child.emit("error", new Error("spawn gh ENOENT"));
+    child.emit("close", 0);
+    const result = await healthPromise;
+
+    expect(result).toBe(false);
+
+    const nextChild = makeFakeChild();
+    const nextHealthPromise = adapter.healthCheck();
+    nextChild.emit("close", 0);
+    nextChild.emit("error", new Error("late error"));
+    await expect(nextHealthPromise).resolves.toBe(true);
+  });
 });
 
 // ─── query edge cases ───
@@ -310,6 +339,39 @@ describe("GitHubIssueDataSourceAdapter.query edge cases", () => {
     expect(result.value).toBe(0);
   });
 
+  it("treats null stdout as an empty issue list", async () => {
+    const child = makeFakeChild();
+    const queryPromise = adapter.query(makeQuery({ dimension_name: "open_issue_count" }));
+    child.stdout.emit("data", Buffer.from("null"));
+    child.emit("close", 0);
+    const result = await queryPromise;
+
+    expect(result.value).toBe(0);
+    expect(result.raw).toEqual([]);
+  });
+
+  it("treats non-array JSON stdout as an empty issue list", async () => {
+    const child = makeFakeChild();
+    const queryPromise = adapter.query(makeQuery({ dimension_name: "open_issue_count" }));
+    child.stdout.emit("data", Buffer.from(JSON.stringify({ total_count: 3 })));
+    child.emit("close", 0);
+    const result = await queryPromise;
+
+    expect(result.value).toBe(0);
+    expect(result.raw).toEqual([]);
+  });
+
+  it("uses the exit-code fallback when gh exits non-zero without stderr", async () => {
+    const child = makeFakeChild();
+    const queryPromise = adapter.query(makeQuery({ dimension_name: "open_issue_count" }));
+    child.emit("close", 2);
+    const result = await queryPromise;
+
+    expect(result.value).toBeNull();
+    expect(result.error).toBe("gh issue list exited with code 2");
+    expect(result.raw).toEqual([]);
+  });
+
   it("completion_ratio is 0 when there are no issues at all", async () => {
     const openChild = makeFakeChild();
     const closedChild = makeFakeChild();
@@ -320,6 +382,31 @@ describe("GitHubIssueDataSourceAdapter.query edge cases", () => {
     const result = await queryPromise;
 
     expect(result.value).toBe(0);
+  });
+
+  it("returns the open-query error when aggregate metrics cannot load open issues", async () => {
+    const openChild = makeFakeChild();
+    const queryPromise = adapter.query(makeQuery({ dimension_name: "completion_ratio" }));
+    rejectChild(openChild, "open query failed", 1);
+    const result = await queryPromise;
+
+    expect(result.value).toBeNull();
+    expect(result.error).toBe("open query failed");
+    expect(result.raw).toEqual([]);
+  });
+
+  it("returns the closed-query error when aggregate metrics cannot load closed issues", async () => {
+    const openChild = makeFakeChild();
+    const closedChild = makeFakeChild();
+
+    const queryPromise = adapter.query(makeQuery({ dimension_name: "completion_ratio" }));
+    resolveChild(openChild, [{ number: 1 }]);
+    rejectChild(closedChild, "closed query failed", 1);
+    const result = await queryPromise;
+
+    expect(result.value).toBeNull();
+    expect(result.error).toBe("closed query failed");
+    expect(result.raw).toEqual([]);
   });
 
   it("uses custom _label from dimension_mapping", async () => {
@@ -360,6 +447,22 @@ describe("GitHubIssueDataSourceAdapter.query edge cases", () => {
     const listCall = spawnCalls[0];
     const args: string[] = listCall[1] as string[];
     expect(args.join(" ")).toContain("fallback-org/fallback-repo");
+  });
+
+  it("omits --repo when neither connection.repo nor connection.url is configured", async () => {
+    const config = makeConfig({
+      connection: {},
+    });
+    const noRepoAdapter = new GitHubIssueDataSourceAdapter(config);
+    const child = makeFakeChild();
+
+    const queryPromise = noRepoAdapter.query(makeQuery({ dimension_name: "open_issue_count" }));
+    resolveChild(child, [{ number: 1 }]);
+    await queryPromise;
+
+    const listCall = mockSpawn.mock.calls[0];
+    const args: string[] = listCall[1] as string[];
+    expect(args).not.toContain("--repo");
   });
 
   it("dimension_mapping redirect resolves a mapped dimension name", async () => {
