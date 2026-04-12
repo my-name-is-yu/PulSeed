@@ -217,8 +217,8 @@ After 5 consecutive skips, the full loop runs regardless of state diff. This int
 
 **Files to change:**
 - `src/loop/state-diff.ts` -- NEW file, implements `StateDiffCalculator`
-- `src/core-loop.ts` -- add diff check after observation phase, before gap calculation
-- `src/types/loop.ts` -- add `IterationSnapshot` and `StateDiffThresholds` schemas
+- `src/orchestrator/loop/core-loop.ts` -- add diff check after observation phase, before gap calculation
+- `src/base/types/loop.ts` -- add `IterationSnapshot` and `StateDiffThresholds` schemas
 
 **Integration point in `runOneIteration`:**
 
@@ -349,12 +349,12 @@ This is optional (phase 2). The default static classification is sufficient for 
 ### Implementation
 
 **Files to change:**
-- `src/llm/provider-config.ts` -- add `light_model` field to provider config schema
-- `src/llm/base-llm-client.ts` -- add model selection logic based on `model_tier`
-- `src/types/llm.ts` -- add `ModelTier` type and `model_tier` to `LLMRequestOptions`
-- `src/observation/observation-llm.ts` -- pass `model_tier: 'light'`
-- `src/execution/task-generation.ts` -- pass `model_tier: 'main'` (default, explicit)
-- `src/execution/task-verifier.ts` -- pass `model_tier: 'light'` for L2, `model_tier: 'main'` for re-review
+- `src/base/llm/provider-config.ts` -- add `light_model` field to provider config schema
+- `src/base/llm/base-llm-client.ts` -- add model selection logic based on `model_tier`
+- `src/base/types/llm.ts` -- add `ModelTier` type and `model_tier` to `LLMRequestOptions`
+- `src/platform/observation/observation-llm.ts` -- pass `model_tier: 'light'`
+- `src/orchestrator/execution/task/task-generation.ts` -- pass `model_tier: 'main'` (default, explicit)
+- `src/orchestrator/execution/task/task-verifier.ts` -- pass `model_tier: 'light'` for L2, `model_tier: 'main'` for re-review
 
 ### Expected savings
 

@@ -86,7 +86,7 @@ source .env  # or: set -a; source .env; set +a
 
 ```bash
 # Run the built binary directly
-node dist/cli-runner.js <subcommand>
+node dist/interface/cli/cli-runner.js <subcommand>
 
 # Or via npx
 npx pulseed <subcommand>
@@ -101,7 +101,7 @@ npx pulseed <subcommand>
 ```bash
 PULSEED_LLM_PROVIDER=openai \
 OPENAI_API_KEY=sk-... \
-node dist/cli-runner.js status
+node dist/interface/cli/cli-runner.js status
 ```
 
 If the command starts without errors and displays the goal list (even if empty), the connection is working.
@@ -111,14 +111,14 @@ If the command starts without errors and displays the goal list (even if empty),
 ```bash
 PULSEED_LLM_PROVIDER=openai \
 OPENAI_API_KEY=sk-... \
-node dist/cli-runner.js goal add "Create a file hello.txt and write 'Hello, PulSeed!' in it"
+node dist/interface/cli/cli-runner.js goal add "Create a file hello.txt and write 'Hello, PulSeed!' in it"
 ```
 
 GoalNegotiator will call the LLM to evaluate the goal's dimensions, thresholds, and feasibility.
 Confirm registration:
 
 ```bash
-node dist/cli-runner.js goal list
+node dist/interface/cli/cli-runner.js goal list
 ```
 
 ### Step 3: Run One Core Loop Cycle
@@ -126,7 +126,7 @@ node dist/cli-runner.js goal list
 ```bash
 PULSEED_LLM_PROVIDER=openai \
 OPENAI_API_KEY=sk-... \
-node dist/cli-runner.js run
+node dist/interface/cli/cli-runner.js run
 ```
 
 This executes one full cycle: observe → gap → score → task → verify.
@@ -155,7 +155,7 @@ Run:
 ```bash
 PULSEED_LLM_PROVIDER=openai \
 OPENAI_API_KEY=sk-... \
-node dist/cli-runner.js run
+node dist/interface/cli/cli-runner.js run
 ```
 
 The Codex adapter internally executes:
@@ -173,19 +173,19 @@ To specify `--model`, pass it to the `OpenAICodexCLIAdapter` constructor (requir
 ### A. Simple File Creation Task (easy to run with Codex)
 
 ```bash
-node dist/cli-runner.js goal add "Create hello.txt in the current directory and write 'Hello from PulSeed!'"
+node dist/interface/cli/cli-runner.js goal add "Create hello.txt in the current directory and write 'Hello from PulSeed!'"
 ```
 
 ### B. Run Tests Task
 
 ```bash
-node dist/cli-runner.js goal add "Run npx vitest run and confirm all tests pass"
+node dist/interface/cli/cli-runner.js goal add "Run npx vitest run and confirm all tests pass"
 ```
 
 ### C. Documentation Generation Task
 
 ```bash
-node dist/cli-runner.js goal add "Create README.md and describe the project in 3 lines"
+node dist/interface/cli/cli-runner.js goal add "Create README.md and describe the project in 3 lines"
 ```
 
 ---

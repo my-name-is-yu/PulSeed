@@ -22,7 +22,7 @@ Claude Code's KAIROS subsystem is a proactive "assistant mode" that transforms a
 - `sleep_progress` is ephemeral (not sent to API) to avoid context pollution
 
 **What PulSeed should do:**
-- PulSeed already has CoreLoop's observe→gap→score→task→execute→verify cycle
+- PulSeed already has a structured `CoreLoop` plus a bounded `AgentLoop` for tool-using execution
 - **Add idle-tick injection** between CoreLoop cycles: when no active tasks exist, inject a `<tick>` to the LLM asking "given current goals and state, what should I proactively work on?"
 - This bridges the gap between PulSeed's structured loop and CC's freeform initiative
 - Implement `SleepScheduler` — adaptive sleep duration based on:
@@ -173,7 +173,7 @@ Claude Code's KAIROS subsystem is a proactive "assistant mode" that transforms a
 
 | Capability | Claude Code | PulSeed | Comparison |
 |-----------|-------------|---------|------------|
-| Core loop | Reactive (user→response) + KAIROS tick | Observe→gap→score→task→execute→verify | **PulSeed stronger** — structured, goal-driven |
+| Core loop | Reactive (user→response) + KAIROS tick | CoreLoop + AgentLoop + bounded core phases | **PulSeed stronger** — structured, goal-driven |
 | Multi-agent | Coordinator/Swarm/Fork patterns | AdapterLayer + multi-strategy portfolio | **Comparable** — different abstraction level |
 | Session persistence | `~/.claude/sessions/` | `~/.pulseed/` state files | **Comparable** |
 | Knowledge/Memory | Auto-memory + MEMORY.md + dream | KnowledgeManager + VectorIndex + hierarchical memory | **PulSeed stronger** — semantic, hierarchical |

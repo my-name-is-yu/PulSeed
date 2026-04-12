@@ -18,7 +18,7 @@
 
 ### PulSeedtion for Applying This to PulSeed
 
-PulSeed's core loop (observe → gap → score → task → execute → verify) is structurally sound, but has the following issues:
+PulSeed's current `CoreLoop` plus bounded `AgentLoop` execution model is structurally sound, but has the following issues:
 
 1. **No defined action after stall detection** — Even when StallDetector determines "it has stalled," CoreLoop has only limited branching
 2. **Zero meta-knowledge for strategy decisions** — There is no record of which strategies were effective for similar goals in the past, and no way to look that up

@@ -34,7 +34,7 @@ git clone https://github.com/my-name-is-yu/PulSeed.git
 cd PulSeed
 npm install
 npm run build
-node dist/cli-runner.js --help
+node dist/interface/cli/cli-runner.js --help
 ```
 
 ---
@@ -169,18 +169,20 @@ pulseed report --goal <goal-id>
 
 ## 5. What Happens Next
 
-Each time you call `pulseed run`, PulSeed executes one full iteration of its core loop:
+`pulseed run` starts PulSeed's core loop for the selected goal and keeps iterating until completion, stall, explicit stop, or the active iteration budget is exhausted:
 
-```
-Observe → Gap → Score → Task → Execute → Verify
-```
+The current runtime combines:
 
-1. **Observe** — collects evidence from mechanical checks, an independent LLM review, and the executor's self-report
-2. **Gap** — quantifies how far each dimension is from its threshold
-3. **Score** — ranks gaps by dissatisfaction, deadline urgency, and opportunity
-4. **Task** — generates a concrete, verifiable task targeting the largest gap
-5. **Execute** — delegates the task to the selected adapter (Codex CLI, Claude Code, GitHub Issues, etc.)
-6. **Verify** — runs 3-layer verification; self-report alone caps progress at 70%
+- **CoreLoop** — long-lived control for observation, prioritization, completion checks, stall handling, and re-planning
+- **AgentLoop** — bounded execution where the model chooses tools, reads results, and works toward a final answer or task outcome
+
+The exact step shape varies by goal and execution path, but the common flow is:
+
+1. **Observe and refresh evidence**
+2. **Calculate gaps and priorities**
+3. **Choose the next task or bounded execution step**
+4. **Execute with adapters or tools**
+5. **Verify outcomes and update persisted state**
 
 State is written to `~/.pulseed/` after every loop, so you can stop and resume at any time. Running `pulseed run` again picks up exactly where the last run left off.
 

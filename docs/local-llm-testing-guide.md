@@ -60,49 +60,49 @@ Use `npx pulseed` or run directly:
 ```bash
 npx pulseed <subcommand>
 # or
-node dist/cli-runner.js <subcommand>
+node dist/interface/cli/cli-runner.js <subcommand>
 ```
 
 ### Help
 
 ```bash
-node dist/cli-runner.js --help
+node dist/interface/cli/cli-runner.js --help
 ```
 
 ### Add a Goal
 
 ```bash
-node dist/cli-runner.js goal add "Create a readme for PulSeed"
+node dist/interface/cli/cli-runner.js goal add "Create a readme for PulSeed"
 ```
 
 ### List Goals
 
 ```bash
-node dist/cli-runner.js goal list
+node dist/interface/cli/cli-runner.js goal list
 ```
 
 ### Run the Core Loop
 
 ```bash
-node dist/cli-runner.js run
+node dist/interface/cli/cli-runner.js run
 ```
 
 ### Check Status
 
 ```bash
-node dist/cli-runner.js status
+node dist/interface/cli/cli-runner.js status
 ```
 
 ### Report
 
 ```bash
-node dist/cli-runner.js report
+node dist/interface/cli/cli-runner.js report
 ```
 
 ### TUI (Interactive UI)
 
 ```bash
-node dist/cli-runner.js tui
+node dist/interface/cli/cli-runner.js tui
 ```
 
 TUI controls:
@@ -113,7 +113,7 @@ TUI controls:
 > **TUI notes**:
 > - Display may be garbled over SSH + tmux due to insufficient terminal width → use `Ctrl-b z` to zoom the pane and gain more width
 > - Chat is command-based, not free-form input
-> - If frozen, press `Ctrl-C` or run `pkill -f "node dist/cli-runner.js"` from another terminal pane
+> - If frozen, press `Ctrl-C` or run `pkill -f "node dist/interface/cli/cli-runner.js"` from another terminal pane
 
 ## 4. Connecting to Ollama from Another Machine
 
@@ -129,7 +129,7 @@ curl http://<older-mac-ip>:11434/v1/models
 # Run PulSeed from your development machine
 PULSEED_LLM_PROVIDER=ollama \
 OLLAMA_BASE_URL=http://<older-mac-ip>:11434 \
-node dist/cli-runner.js run
+node dist/interface/cli/cli-runner.js run
 ```
 
 ## 5. Test Scenarios
@@ -138,25 +138,25 @@ node dist/cli-runner.js run
 
 ```bash
 # 1. Add a goal
-node dist/cli-runner.js goal add "A simple goal for testing"
+node dist/interface/cli/cli-runner.js goal add "A simple goal for testing"
 
 # 2. Confirm registration with goal list
-node dist/cli-runner.js goal list
+node dist/interface/cli/cli-runner.js goal list
 
 # 3. Run the core loop
-node dist/cli-runner.js run
+node dist/interface/cli/cli-runner.js run
 
 # 4. Check status
-node dist/cli-runner.js status
+node dist/interface/cli/cli-runner.js status
 
 # 5. Generate a report
-node dist/cli-runner.js report
+node dist/interface/cli/cli-runner.js report
 ```
 
 ### B. TUI Operation Check
 
 ```bash
-node dist/cli-runner.js tui
+node dist/interface/cli/cli-runner.js tui
 # → Run /help to see available commands
 # → Try adding and running a goal
 # → Press Ctrl-C to exit
@@ -167,17 +167,17 @@ node dist/cli-runner.js tui
 ```bash
 # Run PulSeed while Ollama is stopped → verify retry and error output
 # (stop ollama in another terminal first, then run)
-node dist/cli-runner.js run
+node dist/interface/cli/cli-runner.js run
 ```
 
 ## 6. Known Issues
 
 | Issue | Cause | Workaround |
 |-------|-------|------------|
-| ~~`npx pulseed` produces no output~~ | ~~Fixed~~ Updated to use `import.meta.url` + `realpathSync` check | Both `npx pulseed` and `node dist/cli-runner.js` work |
+| ~~`npx pulseed` produces no output~~ | ~~Fixed~~ Updated to use `import.meta.url` + `realpathSync` check | Both `npx pulseed` and `node dist/interface/cli/cli-runner.js` work |
 | TUI display garbled | Insufficient terminal width over SSH + tmux | Zoom the pane with `Ctrl-b z` |
 | TUI chat says "I didn't understand" | Chat is command-based (free-form input not supported) | Check available commands with `/help` |
-| TUI frozen | Ink rendering issue | `Ctrl-C` or `pkill -f "node dist/cli-runner.js"` |
+| TUI frozen | Ink rendering issue | `Ctrl-C` or `pkill -f "node dist/interface/cli/cli-runner.js"` |
 | `ANTHROPIC_API_KEY` required | Hard-coded check at TUI startup | Set `ANTHROPIC_API_KEY=dummy` |
 
 ## 7. Resetting State

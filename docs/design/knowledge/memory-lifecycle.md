@@ -15,7 +15,7 @@ Under long-term operation, PulSeed continuously accumulates the following data:
 
 | Data type | Source | Growth rate |
 |-----------|--------|------------|
-| Experience log | Each step of the core loop (observe→gap→score→task→execute→verify) | 1 entry per loop |
+| Experience log | Each CoreLoop iteration plus bounded AgentLoop execution summaries | 1 entry per loop / run |
 | Observation history | ObservationEngine periodic and event-driven observations | dimensions × observation frequency |
 | Knowledge base | Results of KnowledgeManager research tasks | Multiple entries per research task |
 | Strategy history | Strategy execution results from StrategyManager/PortfolioManager | 1 entry per strategy change |
@@ -114,7 +114,7 @@ Long-term Memory
 
 ### 3.1 Experience Log
 
-Records of the result of each step of the core loop (observe→gap→score→task→execute→verify). The data source for the learning pipeline in `mechanism.md` §4.
+Records of CoreLoop iteration results and bounded AgentLoop execution outcomes. The data source for the learning pipeline in `mechanism.md` §4.
 
 | Layer | What is retained | Format |
 |-------|----------------|--------|

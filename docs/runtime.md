@@ -1,5 +1,7 @@
 # PulSeed --- Runtime Infrastructure
 
+Implementation-facing baseline: [docs/design/current-baseline.md](design/current-baseline.md)
+
 > The foundational design for "running" the task discovery engine (mechanism.md).
 > While mechanism.md defines "what PulSeed thinks about," this document defines "how PulSeed runs."
 
@@ -117,7 +119,7 @@ In MVP, "scheduling" is the user's (or system cron's) responsibility. PulSeed do
 
 **`pulseed tui`** launches an Ink-based terminal UI, allowing interactive control of the core loop while viewing a dashboard.
 
-- Entry point is `src/tui/entry.ts` (`startTUI()`)
+- Entry point is `src/interface/tui/entry.ts` (`startTUI()`)
 - Dependencies chain: `entry.ts` → `App` (`app.tsx`) → `useLoop` hook (`use-loop.ts`) → `CoreLoop`
 - Loop startup, stop, and configuration changes are all managed internally by the `useLoop` hook, tied to the React component lifecycle
 - The core loop itself requires no changes. TUI uses the same `CoreLoop` instance as the CLI

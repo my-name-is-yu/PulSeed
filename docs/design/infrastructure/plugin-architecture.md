@@ -14,7 +14,7 @@
 
 In Claude Code and OpenClaw, plugins are "tools the user explicitly calls." The user runs a command and the tool responds. The user is the active agent.
 
-PulSeed plugins are different. PulSeed's core loop (observe → gap → score → task → execute → verify) runs autonomously without user instructions. Therefore, plugins must also be things **PulSeed autonomously selects and integrates into the core loop**. Not requiring user instructions like "please call this plugin" is the starting point of PulSeed's plugin design.
+PulSeed plugins are different. PulSeed's runtime is driven by an autonomous `CoreLoop` and bounded `AgentLoop` executions, not only by direct user instructions. Therefore, plugins must also be things **PulSeed autonomously selects and integrates into the runtime**. Not requiring user instructions like "please call this plugin" is the starting point of PulSeed's plugin design.
 
 ```
 Claude Code / OpenClaw:

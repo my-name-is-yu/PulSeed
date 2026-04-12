@@ -212,12 +212,12 @@ The `confidence` label uses the same criteria as the observation engine (`>=0.50
 ### Phase 1 (MVP): Sequential pipeline + domain-specific observation + persistence + idempotency
 
 **New files:**
-- `src/types/pipeline.ts` — TaskDomain, TaskRole, PipelineStage, TaskPipeline, StageResult, PipelineState, ImpactAnalysis (~100 lines)
-- `src/execution/pipeline-executor.ts` — sequential stage execution + error escalation + persistence + idempotency check (~200 lines)
+- `src/base/types/pipeline.ts` — TaskDomain, TaskRole, PipelineStage, TaskPipeline, StageResult, PipelineState, ImpactAnalysis (~100 lines)
+- `src/orchestrator/execution/pipeline-executor.ts` — sequential stage execution + error escalation + persistence + idempotency check (~200 lines)
 
 **Modified files:**
-- `src/observation/observation-engine.ts` — add `domain: TaskDomain` parameter to `observeForTask()`, domain-specific collection strategies
-- `src/execution/task-lifecycle.ts` — add `runPipelineTaskCycle()` alongside `runTaskCycle()`. Existing `runTaskCycle()` is unchanged.
+- `src/platform/observation/observation-engine.ts` — add `domain: TaskDomain` parameter to `observeForTask()`, domain-specific collection strategies
+- `src/orchestrator/execution/task/task-lifecycle.ts` — add `runPipelineTaskCycle()` alongside `runTaskCycle()`. Existing `runTaskCycle()` is unchanged.
 
 **Tests:** `tests/execution/pipeline-executor.test.ts`
 
@@ -237,26 +237,26 @@ Flow of `runPipelineTaskCycle()`:
 ### Phase 2: Task decomposition + parallel execution + Plan Gate + strategy feedback
 
 **New files:**
-- `src/types/task-group.ts` — TaskGroup schema (~30 lines)
-- `src/execution/parallel-executor.ts` — `Promise.all` + file ownership check (~150 lines)
+- `src/base/types/task-group.ts` — TaskGroup schema (~30 lines)
+- `src/orchestrator/execution/parallel-executor.ts` — `Promise.all` + file ownership check (~150 lines)
 
 **Modified files:**
-- `src/execution/task-generation.ts` — TaskGroup + plan generation. LLM evaluates task complexity and decides between single task vs TaskGroup.
-- `src/core-loop.ts` — `runOneIteration()` detects TaskGroup and hands it to `ParallelExecutor`
-- `src/execution/pipeline-executor.ts` — Plan Approval Gate + three-strike escalation + `strategy_id` feedback
+- `src/orchestrator/execution/task/task-generation.ts` — TaskGroup + plan generation. LLM evaluates task complexity and decides between single task vs TaskGroup.
+- `src/orchestrator/loop/core-loop.ts` — `runOneIteration()` detects TaskGroup and hands it to `ParallelExecutor`
+- `src/orchestrator/execution/pipeline-executor.ts` — Plan Approval Gate + three-strike escalation + `strategy_id` feedback
 
 **Tests:** `tests/execution/parallel-executor.test.ts`
 
 ### Phase 3: Auto pipeline + side-effect detection + contradiction detection + fault tolerance
 
 **New files:**
-- `src/execution/result-reconciler.ts` — contradiction detection in parallel results (~120 lines)
+- `src/orchestrator/execution/result-reconciler.ts` — contradiction detection in parallel results (~120 lines)
 
 **Modified files:**
-- `src/execution/task-verifier.ts` — `ImpactAnalysis` generation + sycophancy mitigation (uses a different model instance)
-- `src/execution/task-generation.ts` — auto-configure pipeline based on task size evaluation
-- `src/execution/adapter-layer.ts` — capability matching + circuit breaker
-- `src/execution/parallel-executor.ts` — concurrency semaphore
+- `src/orchestrator/execution/task/task-verifier.ts` — `ImpactAnalysis` generation + sycophancy mitigation (uses a different model instance)
+- `src/orchestrator/execution/task/task-generation.ts` — auto-configure pipeline based on task size evaluation
+- `src/orchestrator/execution/adapter-layer.ts` — capability matching + circuit breaker
+- `src/orchestrator/execution/parallel-executor.ts` — concurrency semaphore
 
 **Tests:** `tests/execution/result-reconciler.test.ts`
 
@@ -265,20 +265,21 @@ Flow of `runPipelineTaskCycle()`:
 ## 6. File Structure
 
 ```
-src/types/
+src/base/types/
   pipeline.ts                    <- new (~100 lines)
   task-group.ts                  <- new (~30 lines)
 
-src/execution/
+src/orchestrator/execution/
   pipeline-executor.ts           <- new (~200 lines)
   parallel-executor.ts           <- new (~150 lines)
   result-reconciler.ts           <- new (~120 lines)
-  task-lifecycle.ts              <- modified (add runPipelineTaskCycle)
-  task-generation.ts             <- modified (pipeline generation + TaskGroup decomposition)
-  task-verifier.ts               <- modified (ImpactAnalysis + sycophancy mitigation, Phase 3)
+  task/
+    task-lifecycle.ts            <- modified (add runPipelineTaskCycle)
+    task-generation.ts           <- modified (pipeline generation + TaskGroup decomposition)
+    task-verifier.ts             <- modified (ImpactAnalysis + sycophancy mitigation, Phase 3)
   adapter-layer.ts               <- modified (capability matching + circuit breaker, Phase 3)
 
-src/observation/
+src/platform/observation/
   observation-engine.ts          <- modified (domain-specific observeForTask)
 
 tests/execution/

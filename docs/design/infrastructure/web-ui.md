@@ -8,7 +8,7 @@
 
 ## 1. Overview
 
-- The TUI (`src/tui/`) is designed for a single terminal. The Web UI enables browser access and multi-screen display.
+- The TUI (`src/interface/tui/`) is designed for a single terminal. The Web UI enables browser access and multi-screen display.
 - The TUI is kept. The Web UI shares the same data layer as the TUI (StateManager, CoreLoop, etc.) and operates concurrently.
 
 **In scope**: 4 Web UI screens, REST API layer, SSE real-time updates
@@ -97,7 +97,7 @@ Common layout: left sidebar (nav, 120px fixed) + main area
 
 **Top — Goal list table**: Goal name (link), Gap % (progress bar, background `#1a1a1a`), Trust score (number + color: red <0, gray 0-20, green >20), strategy status badge, last updated
 
-**Middle — Active sessions**: Adapter name + role + stage (observe→gap→score→task→execute→verify), elapsed time
+**Middle — Active sessions**: Adapter name + runtime type (`core_loop` / `agent_loop`) + phase or step label, elapsed time
 
 **Bottom — Decision timeline (last 10 items)**: Timestamp + goal name + decision type (PIVOT/REFINE/ESCALATE) + one-line summary
 

@@ -75,7 +75,7 @@ Allowed change magnitude: max(±0.3 absolute, ±30% of current value)
 If the proposed change exceeds the range: clamp to the limit and emit a warning log
 ```
 
-**Implementation location**: Add a `clampDimensionUpdate()` helper function inside the `dimension_updates` application loop near L316 in `src/execution/task-verifier.ts`
+**Implementation location**: Add a `clampDimensionUpdate()` helper function inside the `dimension_updates` application loop in `src/orchestrator/execution/task/task-verifier.ts`
 
 ```typescript
 function clampDimensionUpdate(current: number, proposed: number): number {
@@ -146,7 +146,7 @@ Contradiction condition: curr_gap > prev_gap + 0.05 AND verdict == "pass"
   → WARN log: `WARN: progress-verdict contradiction: gap increased (${prev_gap}→${curr_gap}) but verdict was pass. Overriding to partial.`
 ```
 
-**Implementation location**: Inside `handleVerdict()` in `src/execution/task-verifier.ts`, before the trust update
+**Implementation location**: Inside `handleVerdict()` in `src/orchestrator/execution/task/task-verifier.ts`, before the trust update
 
 **Behavior when guard fires**:
 - Rewrites `verdict` to `partial` (prevents `recordSuccess` from being triggered by a `pass`)
@@ -171,7 +171,7 @@ Against the N most recent tasks (N=10):
 Future: replace with semantic embedding similarity (once VectorIndex is available)
 ```
 
-**Implementation location**: In `src/execution/task-generation.ts`, after task generation and before returning to `TaskLifecycle`
+**Implementation location**: In `src/orchestrator/execution/task/task-generation.ts`, after task generation and before returning to `TaskLifecycle`
 
 **Behavior when guard fires**:
 - Returns `null` instead of a task (treated as generation failure)
@@ -258,9 +258,9 @@ task.intended_direction is assigned by task-generation.ts (not yet implemented �
 **Current limitation**: The `task.intended_direction` field does not exist in the current task schema. Enabling this guard requires a schema addition.
 
 **Implementation locations**:
-- Add `intended_direction?: "increase" | "decrease" | "neutral"` to `src/types/tasks.ts`
-- Add assignment instructions to the prompt in `src/execution/task-generation.ts`
-- Add the check inside the application loop near L316 in `src/execution/task-verifier.ts`
+- Add `intended_direction?: "increase" | "decrease" | "neutral"` to `src/base/types/tasks.ts`
+- Add assignment instructions to the prompt in `src/orchestrator/execution/task/task-generation.ts`
+- Add the check inside the application loop in `src/orchestrator/execution/task/task-verifier.ts`
 
 **Behavior when guard fires**:
 - Ignores `dimension_updates` (does not change any values)
@@ -285,7 +285,7 @@ const CompletionJudgerResponseSchema = z.object({
 });
 ```
 
-**Implementation location**: Inside the `completion_judger` function at L613–653 in `src/execution/task-verifier.ts`, switching to `llmClient.parseJSON()`
+**Implementation location**: Inside the `completion_judger` function in `src/orchestrator/execution/task/task-verifier.ts`, switching to `llmClient.parseJSON()`
 
 **Behavior when guard fires**:
 - On parse failure, retain the existing `{passed: false, confidence: 0.3}` fallback
@@ -316,8 +316,8 @@ On task verification failure (verdict = "fail" or "partial"):
 ```
 
 **Implementation locations**:
-- Save failure reason: write `last_failure_context` to `StateManager` inside `handleVerdict()` in `src/execution/task-verifier.ts`
-- Prompt injection: read `last_failure_context` and inject it during prompt construction in `src/execution/task-generation.ts`
+- Save failure reason: write `last_failure_context` to `StateManager` inside `handleVerdict()` in `src/orchestrator/execution/task/task-verifier.ts`
+- Prompt injection: read `last_failure_context` and inject it during prompt construction in `src/orchestrator/execution/task/task-generation.ts`
 
 **Behavior when guard fires**: Normal operation (this is information injection, not a guard). Skipped if no failure context exists.
 

@@ -1,5 +1,7 @@
 # PulSeed -- Architecture Map
 
+Implementation-facing baseline: [docs/design/current-baseline.md](design/current-baseline.md)
+
 ---
 
 ## 1. In a Nutshell
@@ -100,7 +102,7 @@ PulSeed is a **task discovery engine**. It takes on the user's long-term goals (
 │  │  Persistence (JSON)                                             │  │
 │  └──────────────────────────────────────────────────────────────┘     │
 │                                                                       │
-│  ┌─────────── TUI Layer (src/tui/) ───────────────────────────────┐   │
+│  ┌─────────── TUI Layer (src/interface/tui/) ─────────────────────┐   │
 │  │  App │ Dashboard │ Chat │ ApprovalOverlay │ HelpOverlay │       │   │
 │  │  ReportView │ IntentRecognizer                                  │   │
 │  └──────────────────────────────────────────────────────────────┘     │

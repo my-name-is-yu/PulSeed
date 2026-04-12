@@ -11,7 +11,7 @@
 [![npm version](https://img.shields.io/npm/v/pulseed.svg)](https://www.npmjs.com/package/pulseed)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Set a goal. Seedy takes it from there — observing, planning, delegating to AI agents, and tracking progress until it's done.
+Set a goal. Seedy takes it from there with a long-lived `CoreLoop` for goal control and a bounded `AgentLoop` for tool-using task execution.
 
 <br/>
 </div>
@@ -49,7 +49,7 @@ pulseed run
 pulseed status
 ```
 
-Seedy assesses feasibility, breaks the goal down, delegates tasks to agents, and tracks progress automatically.
+Seedy assesses feasibility, breaks the goal down, runs the core loop, and uses bounded agent execution where it needs tool-driven work.
 
 > **Using OpenClaw?** Install the official plugin for seamless integration — see [`@pulseed/openclaw-plugin`](openclaw-plugin/README.md).
 
@@ -65,6 +65,7 @@ More examples in [docs/usecase.md](docs/usecase.md).
 
 ## Features
 
+- **Dual-loop runtime** — `CoreLoop` for long-lived control, `AgentLoop` for bounded execution
 - **Goal-driven orchestration** — Set a destination, not step-by-step instructions
 - **Agent-agnostic** — Swap agents without changing goals
 - **Satisficing** — Knows when "good enough" is enough
@@ -74,7 +75,7 @@ More examples in [docs/usecase.md](docs/usecase.md).
 - **Goal trees** — Decompose large goals into sub-goals, each tracked independently
 - **TUI dashboard** — Real-time terminal UI with progress, logs, and approval flow
 
-Deep dive: [Architecture Map](docs/architecture-map.md) | [How it works](docs/mechanism.md)
+Deep dive: [Architecture Map](docs/architecture-map.md) | [How it works](docs/mechanism.md) | [Current Design Baseline](docs/design/current-baseline.md)
 
 ## Adapters
 
@@ -104,8 +105,8 @@ Custom adapters: [Plugin Development Guide](docs/design/infrastructure/plugin-de
 import { CoreLoop, StateManager } from "pulseed";
 
 const stateManager = new StateManager("~/.pulseed");
-const loop = new CoreLoop({ stateManager, /* ...adapters */ });
-await loop.runOnce();
+const loop = new CoreLoop({ stateManager, /* ...deps */ });
+await loop.run("goal_abc123", { maxIterations: 1 });
 ```
 
 **CLI reference:** See [docs/getting-started.md](docs/getting-started.md) for the full command list.
