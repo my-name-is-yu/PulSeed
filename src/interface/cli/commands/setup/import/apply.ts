@@ -1,7 +1,7 @@
-import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { readJsonFileOrNull, writeJsonFileAtomic } from "../../../../../base/utils/json-io.js";
 import type { MCPServerConfig, MCPServersConfig } from "../../../../../base/types/mcp.js";
+import { copyDirectoryNoSymlinks, safeImportName, uniqueImportPath } from "./fs-utils.js";
 import type {
   SetupImportAppliedItem,
   SetupImportItem,
@@ -9,59 +9,8 @@ import type {
   SetupImportSelection,
 } from "./types.js";
 
-function safeName(value: string): string {
-  return value
-    .toLowerCase()
-    .replace(/[^a-z0-9._-]+/g, "-")
-    .replace(/^-+|-+$/g, "") || "imported";
-}
-
-async function pathExists(filePath: string): Promise<boolean> {
-  try {
-    await fsp.access(filePath);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function uniquePath(parentDir: string, name: string): Promise<string> {
-  const baseName = safeName(name);
-  let candidate = path.join(parentDir, baseName);
-  let suffix = 2;
-  while (await pathExists(candidate)) {
-    candidate = path.join(parentDir, `${baseName}-${suffix}`);
-    suffix += 1;
-  }
-  return candidate;
-}
-
-async function copyDirectoryNoSymlinks(sourceDir: string, targetDir: string): Promise<void> {
-  const stat = await fsp.lstat(sourceDir);
-  if (stat.isSymbolicLink()) {
-    throw new Error("refusing to copy symlink");
-  }
-  if (!stat.isDirectory()) {
-    throw new Error("source is not a directory");
-  }
-
-  await fsp.mkdir(targetDir, { recursive: true });
-  const entries = await fsp.readdir(sourceDir, { withFileTypes: true });
-  for (const entry of entries) {
-    const sourcePath = path.join(sourceDir, entry.name);
-    const targetPath = path.join(targetDir, entry.name);
-    const entryStat = await fsp.lstat(sourcePath);
-    if (entryStat.isSymbolicLink()) continue;
-    if (entryStat.isDirectory()) {
-      await copyDirectoryNoSymlinks(sourcePath, targetPath);
-    } else if (entryStat.isFile()) {
-      await fsp.copyFile(sourcePath, targetPath);
-    }
-  }
-}
-
 function nextMcpId(existing: Set<string>, requested: string): string {
-  const base = safeName(requested);
+  const base = safeImportName(requested);
   if (!existing.has(base)) return base;
   let suffix = 2;
   for (;;) {
@@ -76,7 +25,7 @@ async function mergeMcpServers(baseDir: string, servers: MCPServerConfig[]): Pro
   const configPath = path.join(baseDir, "mcp-servers.json");
   const current = await readJsonFileOrNull<MCPServersConfig>(configPath);
   const existingServers = Array.isArray(current?.servers) ? current.servers : [];
-  const existingIds = new Set(existingServers.map((server) => server.id));
+  const existingIds = new Set<string>(existingServers.map((server) => server.id));
   const imported = servers.map((server) => {
     const id = nextMcpId(existingIds, server.id);
     existingIds.add(id);
@@ -102,7 +51,7 @@ async function applyFileItem(baseDir: string, item: SetupImportItem): Promise<Se
 
   if (item.kind === "skill") {
     const parentDir = path.join(baseDir, "skills", "imported", item.source);
-    const targetPath = await uniquePath(parentDir, item.label);
+    const targetPath = await uniqueImportPath(parentDir, item.label);
     await copyDirectoryNoSymlinks(item.sourcePath, targetPath);
     return {
       id: item.id,
@@ -117,7 +66,7 @@ async function applyFileItem(baseDir: string, item: SetupImportItem): Promise<Se
 
   if (item.kind === "plugin") {
     const parentDir = path.join(baseDir, "plugins-imported-disabled", item.source);
-    const targetPath = await uniquePath(parentDir, item.label);
+    const targetPath = await uniqueImportPath(parentDir, item.label);
     await copyDirectoryNoSymlinks(item.sourcePath, targetPath);
     return {
       id: item.id,
