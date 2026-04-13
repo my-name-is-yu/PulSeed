@@ -214,6 +214,15 @@ export { GitDiffTool } from "./tools/system/GitDiffTool/GitDiffTool.js";
 export { EnvTool } from "./tools/system/EnvTool/EnvTool.js";
 export { SleepTool } from "./tools/system/SleepTool/SleepTool.js";
 export { ProcessStatusTool } from "./tools/system/ProcessStatusTool/ProcessStatusTool.js";
+export {
+  ProcessSessionManager,
+  ProcessSessionStartTool,
+  ProcessSessionReadTool,
+  ProcessSessionWriteTool,
+  ProcessSessionStopTool,
+  ProcessSessionListTool,
+  defaultProcessSessionManager,
+} from "./tools/system/ProcessSessionTool/ProcessSessionTool.js";
 export { TestRunnerTool } from "./tools/system/TestRunnerTool/TestRunnerTool.js";
 export { ListDirTool } from "./tools/fs/ListDirTool/ListDirTool.js";
 export { FileWriteTool } from "./tools/fs/FileWriteTool/FileWriteTool.js";
@@ -226,5 +235,7 @@ export { KnowledgeQueryTool } from "./tools/query/KnowledgeQueryTool/KnowledgeQu
 export { ProgressHistoryTool } from "./tools/query/ProgressHistoryTool/ProgressHistoryTool.js";
 export { WebSearchTool, createWebSearchClient } from "./tools/network/WebSearchTool/WebSearchTool.js";
 export type { ISearchClient, SearchResult } from "./tools/network/WebSearchTool/WebSearchTool.js";
+export { GitHubReadTool, GitHubPrCreateTool } from "./tools/network/GitHubCliTool/GitHubCliTool.js";
+export { McpListToolsTool, McpCallToolTool } from "./tools/network/McpStdioTool/McpStdioTool.js";
 export { ToolSearchTool } from "./tools/query/ToolSearchTool/ToolSearchTool.js";
 export type { BuiltinToolDeps } from "./tools/builtin/index.js";

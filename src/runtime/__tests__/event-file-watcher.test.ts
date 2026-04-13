@@ -130,6 +130,7 @@ describe("file watcher — detects new JSON files", () => {
 
     await waitFor(() => mockDriveSystem.writeEvent.mock.calls.length > 0, 8000);
     expect(mockDriveSystem.writeEvent).toHaveBeenCalledOnce();
+    await waitFor(() => fs.existsSync(path.join(eventsDir, "processed", "existing.json")), 8000);
     expect(fs.existsSync(path.join(eventsDir, "processed", "existing.json"))).toBe(true);
   });
 

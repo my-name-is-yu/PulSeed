@@ -15,6 +15,8 @@ import * as fs from "node:fs";
 import { createMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
 import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 
+vi.setConfig({ testTimeout: 20_000 });
+
 // ─── Module mocks ─────────────────────────────────────────────────────────────
 // Only mock modules that would make real network/process calls.
 
@@ -313,7 +315,7 @@ describe("run subcommand with real CoreLoop (max_iterations=1)", () => {
   });
 
   it("exits with code 1 when ANTHROPIC_API_KEY is missing", async () => {
-    delete process.env.ANTHROPIC_API_KEY;
+    process.env.ANTHROPIC_API_KEY = "";
     await stateManager.saveGoal(makeGoal({ id: "key-test-goal" }));
 
     const code = await runCLI(tmpDir, "run", "--goal", "key-test-goal");

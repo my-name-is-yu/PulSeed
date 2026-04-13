@@ -28,6 +28,7 @@ import {
   checkBuild,
   checkDaemon,
   checkNotifications,
+  checkNativeTaskAgentLoopTools,
   cmdDoctor,
 } from "../commands/doctor.js";
 
@@ -616,6 +617,17 @@ describe("checkNotifications", () => {
   });
 });
 
+describe("checkNativeTaskAgentLoopTools", () => {
+  it("passes when builtin tools cover the native task AgentLoop profile", () => {
+    const result = checkNativeTaskAgentLoopTools();
+
+    expect(result.status).toBe("pass");
+    expect(result.detail).toContain("required");
+    expect(result.detail).toContain("recommended");
+    expect(result.detail).toContain("profile ready");
+  });
+});
+
 describe("cmdDoctor summary counts", () => {
   let tmpDir: string;
   let consoleSpy: ReturnType<typeof vi.spyOn>;
@@ -663,6 +675,7 @@ describe("cmdDoctor summary counts", () => {
 
     const allOutput = consoleSpy.mock.calls.map((c: unknown[]) => c[0] as string).join("\n");
     expect(allOutput).toMatch(/Summary: \d+ passed, \d+ failed, \d+ warnings/);
+    expect(allOutput).toContain("Native AgentLoop tools");
   });
 
   it("returns exit code 0 when all critical checks pass", async () => {

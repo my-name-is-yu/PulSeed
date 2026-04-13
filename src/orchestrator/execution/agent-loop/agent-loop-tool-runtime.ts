@@ -59,7 +59,7 @@ export class ToolExecutorAgentLoopToolRuntime implements AgentLoopToolRuntime {
         abortSignal: turn.abortSignal,
       });
       const disposition = this.resolveDisposition(result.error, turn.abortSignal?.aborted === true);
-      const command = this.extractCommand(call.input);
+      const command = this.extractCommand(call.name, call.input);
       const resolvedCwd = this.extractCwd(call.input) ?? turn.cwd;
       return {
         callId: call.id,
@@ -118,10 +118,19 @@ export class ToolExecutorAgentLoopToolRuntime implements AgentLoopToolRuntime {
     return "respond_to_model";
   }
 
-  private extractCommand(input: unknown): string | undefined {
-    return input && typeof input === "object" && typeof (input as Record<string, unknown>)["command"] === "string"
-      ? (input as Record<string, string>)["command"]
-      : undefined;
+  private extractCommand(toolName: string, input: unknown): string | undefined {
+    if (!input || typeof input !== "object") return undefined;
+    const obj = input as Record<string, unknown>;
+    if (typeof obj["command"] === "string") return obj["command"];
+    if (toolName === "grep" && typeof obj["pattern"] === "string") {
+      const target = typeof obj["glob"] === "string"
+        ? obj["glob"]
+        : typeof obj["path"] === "string"
+          ? obj["path"]
+          : ".";
+      return `grep ${obj["pattern"]} ${target}`;
+    }
+    return undefined;
   }
 
   private extractCwd(input: unknown): string | undefined {

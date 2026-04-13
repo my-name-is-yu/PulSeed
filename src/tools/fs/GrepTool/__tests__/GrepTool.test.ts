@@ -87,6 +87,15 @@ describe("GrepTool", () => {
     expect(output).toContain("foo");
   });
 
+  it.skipIf(!HAS_RG)("uses context cwd when path is relative", async () => {
+    const result = await tool.call(
+      { pattern: "foo", path: ".", glob: "alpha.ts", outputMode: "content", limit: 250, caseInsensitive: false },
+      makeContext(tmpDir)
+    );
+    expect(result.success).toBe(true);
+    expect(result.data).toContain("foo");
+  });
+
   it.skipIf(!HAS_RG)("count mode returns match counts per file", async () => {
     const result = await tool.call(
       { pattern: "hello", outputMode: "count", limit: 250, caseInsensitive: false },

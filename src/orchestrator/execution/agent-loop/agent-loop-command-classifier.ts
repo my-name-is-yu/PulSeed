@@ -10,7 +10,7 @@ export function classifyAgentLoopCommandResult(input: {
   const toolName = input.toolName.trim();
   const command = input.command.trim();
 
-  if (toolName === "verify") {
+  if (toolName === "verify" || toolName === "grep") {
     return { category: "verification", evidenceEligible: true };
   }
 

@@ -37,7 +37,7 @@ export class GrepTool implements ITool<GrepInput, string> {
 
   async call(input: GrepInput, context: ToolCallContext): Promise<ToolResult> {
     const startTime = Date.now();
-    const searchPath = input.path ?? context.cwd;
+    const searchPath = input.path ?? ".";
     try {
       const args: string[] = ["--no-heading"];
       if (input.caseInsensitive) args.push("-i");
@@ -57,7 +57,7 @@ export class GrepTool implements ITool<GrepInput, string> {
       args.push("--max-count", String(input.limit));
       args.push(input.pattern, searchPath);
 
-      const result = await execFileNoThrow("rg", args, { timeoutMs: 30_000 });
+      const result = await execFileNoThrow("rg", args, { cwd: context.cwd, timeoutMs: 30_000 });
       let output = result.stdout.trim();
       if (
         input.outputMode === "content" &&

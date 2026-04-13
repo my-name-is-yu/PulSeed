@@ -61,7 +61,7 @@ describe("A2AClient", () => {
     client = new A2AClient({
       baseUrl: "https://agent.example.com",
       pollIntervalMs: 10,
-      maxWaitMs: 100,
+      maxWaitMs: 1_000,
     });
   });
 
@@ -201,9 +201,14 @@ describe("A2AClient", () => {
       mockFetch.mockImplementation(() =>
         Promise.resolve(jsonRpcOk(a2aTask("working")))
       );
+      const shortClient = new A2AClient({
+        baseUrl: "https://agent.example.com",
+        pollIntervalMs: 10,
+        maxWaitMs: 100,
+      });
 
       await expect(
-        client.waitForCompletion("task-1")
+        shortClient.waitForCompletion("task-1")
       ).rejects.toThrow(/did not complete within 100ms/);
     });
 
@@ -211,9 +216,14 @@ describe("A2AClient", () => {
       mockFetch.mockImplementation(() =>
         Promise.resolve(jsonRpcOk(a2aTask("working")))
       );
+      const shortClient = new A2AClient({
+        baseUrl: "https://agent.example.com",
+        pollIntervalMs: 10,
+        maxWaitMs: 100,
+      });
 
       try {
-        await client.waitForCompletion("task-1");
+        await shortClient.waitForCompletion("task-1");
       } catch {
         // expected
       }

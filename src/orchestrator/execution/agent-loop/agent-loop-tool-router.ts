@@ -17,7 +17,11 @@ export class ToolRegistryAgentLoopToolRouter implements AgentLoopToolRouter {
   modelVisibleTools(turn: AgentLoopTurnContext<unknown>): ToolDefinition[] {
     return this.registry.listAll()
       .filter((tool) => this.isToolAllowed(tool.metadata.name, turn))
-      .filter((tool) => turn.toolPolicy.includeDeferred || !tool.metadata.shouldDefer)
+      .filter((tool) =>
+        turn.toolPolicy.includeDeferred
+        || !tool.metadata.shouldDefer
+        || turn.toolPolicy.requiredTools?.includes(tool.metadata.name) === true
+      )
       .map((tool) => {
         const definition = toToolDefinition(tool);
         definition.function.description = tool.description({ cwd: turn.cwd, goalId: turn.goalId });

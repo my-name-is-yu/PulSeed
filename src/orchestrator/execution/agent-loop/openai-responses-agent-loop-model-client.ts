@@ -119,7 +119,8 @@ export class OpenAIResponsesAgentLoopModelClient implements AgentLoopModelClient
   }
 
   private toInputItems(messages: AgentLoopMessage[]): ResponseInput {
-    return messages.map((message) => {
+    const items: ResponseInputItem[] = [];
+    for (const message of messages) {
       if (message.role === "tool") {
         if (!message.toolCallId) {
           throw new Error("Agent loop tool messages require toolCallId for Responses API replay.");
@@ -129,17 +130,29 @@ export class OpenAIResponsesAgentLoopModelClient implements AgentLoopModelClient
           call_id: message.toolCallId,
           output: message.content,
         };
-        return item;
+        items.push(item);
+        continue;
       }
 
-      const item: EasyInputMessage = {
-        type: "message",
-        role: message.role === "system" ? "developer" : message.role,
-        content: message.content,
-        phase: message.role === "assistant" ? message.phase ?? null : null,
-      };
-      return item;
-    });
+      if (message.content.trim()) {
+        const item: EasyInputMessage = {
+          type: "message",
+          role: message.role === "system" ? "developer" : message.role,
+          content: message.content,
+        };
+        items.push(item);
+      }
+
+      for (const toolCall of message.toolCalls ?? []) {
+        items.push({
+          type: "function_call",
+          call_id: toolCall.id,
+          name: toolCall.name,
+          arguments: this.stringifyArguments(toolCall.input),
+        });
+      }
+    }
+    return items;
   }
 
   private toFunctionTool(tool: ToolDefinition): FunctionTool {
@@ -148,7 +161,7 @@ export class OpenAIResponsesAgentLoopModelClient implements AgentLoopModelClient
       name: tool.function.name,
       description: tool.function.description,
       parameters: tool.function.parameters,
-      strict: true,
+      strict: false,
     };
   }
 
@@ -158,6 +171,16 @@ export class OpenAIResponsesAgentLoopModelClient implements AgentLoopModelClient
       return JSON.parse(value);
     } catch {
       return value;
+    }
+  }
+
+  private stringifyArguments(value: unknown): string {
+    if (typeof value === "string") return value;
+    if (value === undefined) return "{}";
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return "{}";
     }
   }
 }

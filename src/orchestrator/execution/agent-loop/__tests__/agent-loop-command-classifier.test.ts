@@ -14,6 +14,10 @@ describe("classifyAgentLoopCommandResult", () => {
       category: "verification",
       evidenceEligible: true,
     });
+    expect(classifyAgentLoopCommandResult({ toolName: "grep", command: "grep marker README.md" })).toMatchObject({
+      category: "verification",
+      evidenceEligible: true,
+    });
   });
 
   it("does not treat generic observation commands as completion evidence", () => {

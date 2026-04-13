@@ -51,6 +51,8 @@
     "test": "vitest run --exclude tests/e2e",
     "test:all": "vitest run",
     "test:e2e": "vitest run tests/e2e",
+    "test:dogfood": "vitest run src/orchestrator/execution/agent-loop/__tests__/agent-loop-dogfood-benchmark.test.ts",
+    "dogfood:agentloop:real": "npm run build && node dist/orchestrator/execution/agent-loop/agent-loop-real-dogfood.js",
     "test:changed": "vitest run --changed",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",

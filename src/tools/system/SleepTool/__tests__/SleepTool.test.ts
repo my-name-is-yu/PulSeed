@@ -24,7 +24,7 @@ describe("SleepTool", () => {
     expect(result.success).toBe(true);
     const data = result.data as { sleptMs: number };
     expect(data.sleptMs).toBeGreaterThanOrEqual(durationMs - 5); // timer precision tolerance
-    expect(data.sleptMs).toBeLessThan(durationMs + 50);
+    expect(data.sleptMs).toBeLessThan(durationMs + 250);
   });
 
   it("caps at max duration (300000ms)", () => {

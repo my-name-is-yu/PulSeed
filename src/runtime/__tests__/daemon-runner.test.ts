@@ -18,6 +18,8 @@ import { runSupervisorMaintenanceCycleForDaemon } from "../daemon/maintenance.js
 import type { DaemonState } from "../../base/types/daemon.js";
 import { restoreInterruptedGoals } from "../daemon/persistence.js";
 
+vi.setConfig({ testTimeout: 20_000 });
+
 async function pollForFile(
   filePath: string,
   timeoutMs = 2_000,

@@ -256,16 +256,20 @@ describe("StateManager", async () => {
         notes: null,
       };
 
-      // Append 510 entries
-      for (let i = 0; i < 510; i++) {
-        await manager.appendObservation("cap-obs", { ...baseEntry, observation_id: `obs-${i}` });
-      }
+      await manager.saveObservationLog({
+        goal_id: "cap-obs",
+        entries: Array.from({ length: 510 }, (_, i) => ({
+          ...baseEntry,
+          observation_id: `obs-${i}`,
+        })),
+      });
+      await manager.appendObservation("cap-obs", { ...baseEntry, observation_id: "obs-510" });
 
       const loaded = await manager.loadObservationLog("cap-obs");
       expect(loaded!.entries).toHaveLength(500);
-      // Should keep the last 500 (obs-10 through obs-509)
-      expect(loaded!.entries[0].observation_id).toBe("obs-10");
-      expect(loaded!.entries[499].observation_id).toBe("obs-509");
+      // Should keep the last 500 (obs-11 through obs-510)
+      expect(loaded!.entries[0].observation_id).toBe("obs-11");
+      expect(loaded!.entries[499].observation_id).toBe("obs-510");
     }, 30_000);
 
     it("appendGapHistoryEntry caps entries at 500", async () => {
@@ -278,16 +282,17 @@ describe("StateManager", async () => {
         confidence_vector: [{ dimension_name: "d", confidence: 0.9 }],
       };
 
-      // Append 510 entries
-      for (let i = 0; i < 510; i++) {
-        await manager.appendGapHistoryEntry("cap-gap", { ...baseEntry, iteration: i });
-      }
+      await manager.saveGapHistory(
+        "cap-gap",
+        Array.from({ length: 510 }, (_, i) => ({ ...baseEntry, iteration: i })),
+      );
+      await manager.appendGapHistoryEntry("cap-gap", { ...baseEntry, iteration: 510 });
 
       const loaded = await manager.loadGapHistory("cap-gap");
       expect(loaded).toHaveLength(500);
-      // Should keep the last 500 (iteration 10 through 509)
-      expect(loaded[0].iteration).toBe(10);
-      expect(loaded[499].iteration).toBe(509);
+      // Should keep the last 500 (iteration 11 through 510)
+      expect(loaded[0].iteration).toBe(11);
+      expect(loaded[499].iteration).toBe(510);
     }, 30_000);
   });
 
@@ -1080,21 +1085,26 @@ describe("StateManager", async () => {
         notes: null,
       };
 
-      // Append 510 entries
-      for (let i = 0; i < 510; i++) {
-        await manager.appendObservation("cap-test", {
+      await manager.saveObservationLog({
+        goal_id: "cap-test",
+        entries: Array.from({ length: 510 }, (_, i) => ({
           ...baseEntry,
           observation_id: `obs-${i}`,
           extracted_value: i,
-        });
-      }
+        })),
+      });
+      await manager.appendObservation("cap-test", {
+        ...baseEntry,
+        observation_id: "obs-510",
+        extracted_value: 510,
+      });
 
       const loaded = await manager.loadObservationLog("cap-test");
       expect(loaded).not.toBeNull();
       expect(loaded!.entries.length).toBe(500);
-      // Should have the last 500 entries (obs-10 through obs-509)
-      expect(loaded!.entries[0].observation_id).toBe("obs-10");
-      expect(loaded!.entries[499].observation_id).toBe("obs-509");
+      // Should have the last 500 entries (obs-11 through obs-510)
+      expect(loaded!.entries[0].observation_id).toBe("obs-11");
+      expect(loaded!.entries[499].observation_id).toBe("obs-510");
     }, 30_000);
 
     it("listGoalIds propagates non-ENOENT errors", async () => {

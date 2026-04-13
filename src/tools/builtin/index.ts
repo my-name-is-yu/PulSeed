@@ -28,10 +28,21 @@ export { SoilPublishTool } from "../execution/SoilPublishTool/SoilPublishTool.js
 export { SoilRebuildTool } from "../execution/SoilRebuildTool/SoilRebuildTool.js";
 export { WebSearchTool, createWebSearchClient } from "../network/WebSearchTool/WebSearchTool.js";
 export type { ISearchClient, SearchResult } from "../network/WebSearchTool/WebSearchTool.js";
+export { GitHubReadTool, GitHubPrCreateTool } from "../network/GitHubCliTool/GitHubCliTool.js";
+export { McpListToolsTool, McpCallToolTool } from "../network/McpStdioTool/McpStdioTool.js";
 export { ToolSearchTool } from "../query/ToolSearchTool/ToolSearchTool.js";
 export { EnvTool } from "../system/EnvTool/EnvTool.js";
 export { SleepTool } from "../system/SleepTool/SleepTool.js";
 export { GitDiffTool } from "../system/GitDiffTool/GitDiffTool.js";
+export {
+  ProcessSessionManager,
+  ProcessSessionStartTool,
+  ProcessSessionReadTool,
+  ProcessSessionWriteTool,
+  ProcessSessionStopTool,
+  ProcessSessionListTool,
+  defaultProcessSessionManager,
+} from "../system/ProcessSessionTool/ProcessSessionTool.js";
 export { FileWriteTool } from "../fs/FileWriteTool/FileWriteTool.js";
 export { FileEditTool } from "../fs/FileEditTool/FileEditTool.js";
 export { ApplyPatchTool } from "../fs/ApplyPatchTool/ApplyPatchTool.js";
@@ -100,10 +111,20 @@ import { SoilOpenTool } from "../execution/SoilOpenTool/SoilOpenTool.js";
 import { SoilPublishTool } from "../execution/SoilPublishTool/SoilPublishTool.js";
 import { SoilRebuildTool } from "../execution/SoilRebuildTool/SoilRebuildTool.js";
 import { WebSearchTool, createWebSearchClient } from "../network/WebSearchTool/WebSearchTool.js";
+import { GitHubReadTool, GitHubPrCreateTool } from "../network/GitHubCliTool/GitHubCliTool.js";
+import { McpListToolsTool, McpCallToolTool } from "../network/McpStdioTool/McpStdioTool.js";
 import { ToolSearchTool } from "../query/ToolSearchTool/ToolSearchTool.js";
 import { EnvTool } from "../system/EnvTool/EnvTool.js";
 import { SleepTool } from "../system/SleepTool/SleepTool.js";
 import { GitDiffTool } from "../system/GitDiffTool/GitDiffTool.js";
+import {
+  ProcessSessionStartTool,
+  ProcessSessionReadTool,
+  ProcessSessionWriteTool,
+  ProcessSessionStopTool,
+  ProcessSessionListTool,
+  defaultProcessSessionManager,
+} from "../system/ProcessSessionTool/ProcessSessionTool.js";
 import { FileWriteTool } from "../fs/FileWriteTool/FileWriteTool.js";
 import { FileEditTool } from "../fs/FileEditTool/FileEditTool.js";
 import { ApplyPatchTool } from "../fs/ApplyPatchTool/ApplyPatchTool.js";
@@ -177,12 +198,21 @@ export function createBuiltinTools(deps?: BuiltinToolDeps): ITool[] {
     new FileWriteTool(),
     new GitDiffTool(),
     new GitLogTool(),
+    new GitHubPrCreateTool(),
+    new GitHubReadTool(),
     new GlobTool(),
     new GrepTool(),
     new HttpFetchTool(),
     new JsonQueryTool(),
     new ListDirTool(),
     new ProcessStatusTool(),
+    new ProcessSessionListTool(defaultProcessSessionManager),
+    new ProcessSessionReadTool(defaultProcessSessionManager),
+    new ProcessSessionStartTool(defaultProcessSessionManager),
+    new ProcessSessionStopTool(defaultProcessSessionManager),
+    new ProcessSessionWriteTool(defaultProcessSessionManager),
+    new McpCallToolTool(),
+    new McpListToolsTool(),
     new ReadTool(),
     new ShellCommandTool(),
     new ShellTool(),

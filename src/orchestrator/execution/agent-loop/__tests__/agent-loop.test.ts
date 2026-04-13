@@ -108,6 +108,14 @@ class VerifyTool implements ITool<{ command: string; cwd?: string }> {
   }
 }
 
+class DeferredTool extends EchoTool {
+  readonly metadata = {
+    ...new EchoTool().metadata,
+    name: "deferred_echo",
+    shouldDefer: true,
+  };
+}
+
 class ScriptedModelClient implements AgentLoopModelClient {
   calls: AgentLoopModelRequest[] = [];
   private index = 0;
@@ -246,6 +254,36 @@ describe("agentloop phase 1", () => {
       },
       required: ["value"],
     });
+  });
+
+  it("exposes required deferred tools to the model without enabling all deferred tools", () => {
+    const registry = new ToolRegistry();
+    registry.register(new EchoTool());
+    registry.register(new DeferredTool());
+    const router = new ToolRegistryAgentLoopToolRouter(registry);
+
+    const tools = router.modelVisibleTools({
+      session: createAgentLoopSession(),
+      turnId: "turn-1",
+      goalId: "goal-1",
+      taskId: "task-1",
+      cwd: process.cwd(),
+      model: { providerId: "test", modelId: "model" },
+      modelInfo: makeModelInfo(),
+      messages: [{ role: "user", content: "schema" }],
+      outputSchema: z.object({ ok: z.boolean() }),
+      budget: withDefaultBudget({}),
+      toolPolicy: { requiredTools: ["deferred_echo"] },
+      toolCallContext: {
+        cwd: process.cwd(),
+        goalId: "goal-1",
+        trustBalance: 0,
+        preApproved: true,
+        approvalFn: async () => false,
+      },
+    });
+
+    expect(tools.map((tool) => tool.function.name)).toEqual(["echo", "deferred_echo"]);
   });
 
   it("executes model-selected tools and returns schema-valid final output", async () => {

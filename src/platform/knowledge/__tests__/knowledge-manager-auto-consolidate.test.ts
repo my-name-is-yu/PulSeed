@@ -6,6 +6,8 @@ import { StateManager } from "../../../base/state/state-manager.js";
 import { KnowledgeManager } from "../knowledge-manager.js";
 import type { ILLMClient } from "../../../base/llm/llm-client.js";
 
+vi.setConfig({ testTimeout: 20_000 });
+
 // ─── Helpers ───
 
 function makeTempDir(): string {

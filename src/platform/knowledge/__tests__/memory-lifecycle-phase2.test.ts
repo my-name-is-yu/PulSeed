@@ -307,21 +307,20 @@ describe("onSatisficingJudgment", () => {
 
 describe("applyRetentionPolicy with drive-based delays", () => {
   it("skips compression when loop span < compressionDelay with high dissatisfaction", async () => {
-    // High dissatisfaction → delay = 200
+    // High dissatisfaction doubles retention: base 4 -> delay 8.
     const driveScorer = makeMockDriveScorer({ dim1: 0.9 });
     const mgr = new MemoryLifecycleManager(
       tmpDir,
       createMockLLMClient([]),
-      { default_retention_loops: 100 },
+      { default_retention_loops: 4 },
       undefined,
       undefined,
       driveScorer
     );
     await mgr.initializeDirectories();
 
-    // Record 150 entries (loop 0..149) — this would trigger without drive delay (>100),
-    // but with drive delay (>200) it should NOT trigger.
-    for (let i = 0; i < 150; i++) {
+    // Span 5 would trigger with base retention 4, but not with drive-delayed retention 8.
+    for (let i = 0; i <= 5; i++) {
       await mgr.recordToShortTerm("goal-a", "experience_log", { test: i }, {
         loopNumber: i,
         dimensions: ["dim1"],
@@ -329,7 +328,6 @@ describe("applyRetentionPolicy with drive-based delays", () => {
     }
 
     const results = await mgr.applyRetentionPolicy("goal-a");
-    // span = 149 - 0 = 149, effective limit = 200 → no compression
     expect(results).toHaveLength(0);
   });
 
@@ -338,11 +336,11 @@ describe("applyRetentionPolicy with drive-based delays", () => {
     const mgr = new MemoryLifecycleManager(
       tmpDir,
       createMockLLMClient(llmResponses),
-      { default_retention_loops: 50 }
+      { default_retention_loops: 4 }
     );
     await mgr.initializeDirectories();
 
-    for (let i = 0; i <= 50; i++) {
+    for (let i = 0; i <= 4; i++) {
       await mgr.recordToShortTerm("goal-a", "experience_log", { test: i }, {
         loopNumber: i,
       });

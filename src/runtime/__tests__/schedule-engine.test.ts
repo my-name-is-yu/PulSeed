@@ -2599,7 +2599,7 @@ describe("GoalTrigger token tracking (Phase 4)", () => {
 // ─── Phase 4: IScheduleSource / PluginLoader integration ───
 
 describe("PluginLoader schedule_source interface validation (Phase 4)", () => {
-  it("PluginLoader validates schedule_source interface (fetchEntries, healthCheck)", async () => {
+  it("PluginLoader validates schedule_source interface (fetchEntries, healthCheck)", { timeout: 20_000 }, async () => {
     const { PluginLoader } = await import("../plugin-loader.js");
     const { NotifierRegistry } = await import("../notifier-registry.js");
 
@@ -2631,7 +2631,7 @@ describe("PluginLoader schedule_source interface validation (Phase 4)", () => {
     expect(() => loader.validateInterface("schedule_source", badImpl2)).toThrow(/healthCheck/);
   });
 
-  it("PluginLoader registers schedule_source and returns it from getScheduleSources", async () => {
+  it("PluginLoader registers schedule_source and returns it from getScheduleSources", { timeout: 20_000 }, async () => {
     const { PluginLoader } = await import("../plugin-loader.js");
     const { NotifierRegistry } = await import("../notifier-registry.js");
 

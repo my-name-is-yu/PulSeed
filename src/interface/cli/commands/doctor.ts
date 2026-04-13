@@ -20,6 +20,9 @@ import {
 import { runRuntimeStoreMaintenanceCycle, type RuntimeMaintenanceLogger } from "../../../runtime/daemon/maintenance.js";
 import { DaemonStateSchema } from "../../../runtime/types/daemon.js";
 import { summarizeTaskOutcomeLedgers } from "../../../orchestrator/execution/task/task-outcome-ledger.js";
+import { assessTaskAgentLoopToolProfileFromTools, nativeTaskAgentLoopToolProfile } from "../../../orchestrator/execution/agent-loop/agent-loop-dogfood-benchmark.js";
+import { ToolRegistry } from "../../../tools/registry.js";
+import { createBuiltinTools } from "../../../tools/builtin/index.js";
 
 // ─── Types ───
 
@@ -354,6 +357,41 @@ export async function checkDiskUsage(baseDir?: string): Promise<CheckResult> {
   return { name: "Disk space", status: "warn", detail: `${displayDir} (could not determine size)` };
 }
 
+export function checkNativeTaskAgentLoopTools(): CheckResult {
+  const registry = new ToolRegistry();
+  const tools = createBuiltinTools({ registry });
+  for (const tool of tools) {
+    registry.register(tool);
+  }
+
+  const assessment = assessTaskAgentLoopToolProfileFromTools(registry.listAll());
+  const requiredTotal = nativeTaskAgentLoopToolProfile.requiredToolNames.length;
+  const recommendedTotal = nativeTaskAgentLoopToolProfile.recommendedToolNames.length;
+  const requiredAvailable = requiredTotal - assessment.missingRequiredToolNames.length;
+  const recommendedAvailable = recommendedTotal - assessment.missingRecommendedToolNames.length;
+  const coverage = `required ${requiredAvailable}/${requiredTotal}, recommended ${recommendedAvailable}/${recommendedTotal}`;
+
+  if (!assessment.ready) {
+    return {
+      name: "Native AgentLoop tools",
+      status: "fail",
+      detail: `${coverage}; missing required: ${assessment.missingRequiredToolNames.join(", ")}`,
+    };
+  }
+  if (assessment.missingRecommendedToolNames.length > 0) {
+    return {
+      name: "Native AgentLoop tools",
+      status: "warn",
+      detail: `${coverage}; missing recommended: ${assessment.missingRecommendedToolNames.join(", ")}`,
+    };
+  }
+  return {
+    name: "Native AgentLoop tools",
+    status: "pass",
+    detail: `${coverage}; ${assessment.profileName} profile ready`,
+  };
+}
+
 // ─── Output helpers ───
 
 function statusIcon(status: CheckStatus): string {
@@ -415,6 +453,7 @@ export async function cmdDoctor(_args: string[]): Promise<number> {
     checkGoals(baseDir),
     checkLogDirectory(baseDir),
     checkBuild(),
+    checkNativeTaskAgentLoopTools(),
     await checkDaemon(baseDir),
     checkNotifications(baseDir),
     await checkDiskUsage(baseDir),
