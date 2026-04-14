@@ -7,32 +7,31 @@ import type {
   ToolMetadata,
   ToolResult,
 } from "../../types.js";
-import type { ScheduleEngine } from "../../../runtime/schedule/engine.js";
+import type { ScheduleEngine, RunScheduleNowResult } from "../../../runtime/schedule/engine.js";
 import type { ScheduleEntry } from "../../../runtime/types/schedule.js";
 import { resolveScheduleEntry } from "../../../runtime/schedule/entry-resolver.js";
 import { DESCRIPTION } from "./prompt.js";
 import { TAGS, CATEGORY as _CATEGORY, READ_ONLY, PERMISSION_LEVEL } from "./constants.js";
 
-export const RemoveScheduleInputSchema = z.object({
+export const RunScheduleInputSchema = z.object({
   schedule_id: z.string().min(1),
+  allow_escalation: z.boolean().default(false),
 });
-export type RemoveScheduleInput = z.infer<typeof RemoveScheduleInputSchema>;
+export type RunScheduleInput = z.infer<typeof RunScheduleInputSchema>;
 
-export interface RemoveScheduleOutput {
-  removed: true;
-  entry: {
-    id: string;
-    name: string;
-  };
+export interface RunScheduleOutput {
+  entry: ScheduleEntry | null;
+  result: RunScheduleNowResult["result"];
+  reason: RunScheduleNowResult["reason"];
 }
 
-export class RemoveScheduleTool implements ITool<RemoveScheduleInput, RemoveScheduleOutput> {
+export class RunScheduleTool implements ITool<RunScheduleInput, RunScheduleOutput> {
   readonly metadata: ToolMetadata = {
-    name: "remove_schedule",
-    aliases: ["delete_schedule"],
+    name: "run_schedule",
+    aliases: ["run_schedule_now"],
     permissionLevel: PERMISSION_LEVEL,
     isReadOnly: READ_ONLY,
-    isDestructive: true,
+    isDestructive: false,
     shouldDefer: false,
     alwaysLoad: false,
     maxConcurrency: 1,
@@ -40,7 +39,7 @@ export class RemoveScheduleTool implements ITool<RemoveScheduleInput, RemoveSche
     tags: [...TAGS],
   };
 
-  readonly inputSchema = RemoveScheduleInputSchema;
+  readonly inputSchema = RunScheduleInputSchema;
 
   constructor(private readonly scheduleEngine: ScheduleEngine) {}
 
@@ -48,7 +47,7 @@ export class RemoveScheduleTool implements ITool<RemoveScheduleInput, RemoveSche
     return DESCRIPTION;
   }
 
-  async call(input: RemoveScheduleInput, _context: ToolCallContext): Promise<ToolResult> {
+  async call(input: RunScheduleInput, _context: ToolCallContext): Promise<ToolResult> {
     const startTime = Date.now();
 
     try {
@@ -63,8 +62,11 @@ export class RemoveScheduleTool implements ITool<RemoveScheduleInput, RemoveSche
         };
       }
 
-      const removed = await this.scheduleEngine.removeEntry(existingEntry.id);
-      if (!removed) {
+      const run = await this.scheduleEngine.runEntryNow(existingEntry.id, {
+        allowEscalation: input.allow_escalation,
+        preserveEnabled: true,
+      });
+      if (!run) {
         return {
           success: false,
           data: null,
@@ -74,23 +76,22 @@ export class RemoveScheduleTool implements ITool<RemoveScheduleInput, RemoveSche
         };
       }
 
+      const summary = run.result.output_summary ? `: ${run.result.output_summary}` : "";
       return {
         success: true,
         data: {
-          removed: true,
-          entry: {
-            id: existingEntry.id,
-            name: existingEntry.name,
-          },
+          entry: run.entry,
+          result: run.result,
+          reason: run.reason,
         },
-        summary: `Removed schedule: ${existingEntry.name}`,
+        summary: `Ran schedule: ${existingEntry.name} -> ${run.result.status}${summary}`,
         durationMs: Date.now() - startTime,
       };
     } catch (err) {
       return {
         success: false,
         data: null,
-        summary: `RemoveScheduleTool failed: ${(err as Error).message}`,
+        summary: `RunScheduleTool failed: ${(err as Error).message}`,
         error: (err as Error).message,
         durationMs: Date.now() - startTime,
       };
@@ -98,17 +99,17 @@ export class RemoveScheduleTool implements ITool<RemoveScheduleInput, RemoveSche
   }
 
   async checkPermissions(
-    _input: RemoveScheduleInput,
+    _input: RunScheduleInput,
     context: ToolCallContext,
   ): Promise<PermissionCheckResult> {
     if (context.preApproved) return { status: "allowed" };
     return {
       status: "needs_approval",
-      reason: "Removing a persistent schedule is irreversible and requires approval",
+      reason: "Running a persistent schedule may execute background automation and requires approval",
     };
   }
 
-  isConcurrencySafe(_input: RemoveScheduleInput): boolean {
+  isConcurrencySafe(_input: RunScheduleInput): boolean {
     return false;
   }
 }
