@@ -304,14 +304,26 @@ export class StateManager {
   }
 
   async loadGoal(goalId: string): Promise<Goal | null> {
+    const archiveBase = this.archiveGoalDir(goalId);
+    const archiveCompleteMarkerExists = await this.pathExists(this.archiveCompleteMarkerPath(archiveBase));
+    const archiveGoalPath = this.goalStorageLocation(goalId, "archive").goalJsonPath;
+    const archiveGoalExists = await this.pathExists(archiveGoalPath);
+
+    // Committed archive wins over stale active state after crash cleanup.
+    if (archiveCompleteMarkerExists && archiveGoalExists) {
+      const archiveRaw = await this.atomicRead<unknown>(archiveGoalPath);
+      if (archiveRaw !== null) return GoalSchema.parse(archiveRaw);
+    }
+
     // Primary path: active goals
     const filePath = path.join(this.baseDir, "goals", goalId, "goal.json");
     const raw = await this.atomicRead<unknown>(filePath);
     if (raw !== null) return GoalSchema.parse(raw);
 
     // Fallback: archived goals (archiveGoal() copies goal dir to archive/<goalId>/goal/)
-    const archivePath = path.join(this.baseDir, "archive", goalId, "goal", "goal.json");
-    const archiveRaw = await this.atomicRead<unknown>(archivePath);
+    if (!archiveGoalExists) return null;
+
+    const archiveRaw = await this.atomicRead<unknown>(archiveGoalPath);
     if (archiveRaw === null) return null;
     return GoalSchema.parse(archiveRaw);
   }

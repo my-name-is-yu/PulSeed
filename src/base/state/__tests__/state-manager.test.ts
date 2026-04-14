@@ -1296,6 +1296,27 @@ describe("StateManager", async () => {
       expect(loaded!.title).toBe("Archived Goal");
     });
 
+    it("loadGoal prefers a committed archive over stale active state", async () => {
+      const goalId = "committed-archive-wins";
+      const activeGoal = makeGoal({ id: goalId, title: "Active Goal" });
+      const archivedGoal = makeGoal({ id: goalId, title: "Archived Goal", status: "archived" });
+
+      await manager.saveGoal(activeGoal);
+
+      const archiveBase = path.join(tmpDir, "archive", goalId);
+      fs.mkdirSync(path.join(archiveBase, "goal"), { recursive: true });
+      fs.writeFileSync(path.join(archiveBase, "goal", "goal.json"), JSON.stringify(archivedGoal));
+      fs.writeFileSync(path.join(archiveBase, ".archive-complete.json"), JSON.stringify({
+        goalId,
+        completed_at: new Date().toISOString(),
+      }));
+
+      const loaded = await manager.loadGoal(goalId);
+      expect(loaded).not.toBeNull();
+      expect(loaded!.title).toBe("Archived Goal");
+      expect(loaded!.status).toBe("archived");
+    });
+
     it("loadGoal returns null for a goal that was never saved nor archived", async () => {
       expect(await manager.loadGoal("never-existed")).toBeNull();
     });
