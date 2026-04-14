@@ -1,6 +1,26 @@
 import type { ChannelAdapter, EnvelopeHandler, ReplyChannel } from "./channel-adapter.js";
 import type { Envelope } from "../types/envelope.js";
 import type { Logger } from "../logger.js";
+import {
+  evaluateChannelAccess,
+  resolveChannelRoute,
+  type ChannelAccessPolicy,
+  type ChannelRoutingPolicy,
+} from "./channel-policy.js";
+
+export interface IngressGatewayPolicy {
+  security?: ChannelAccessPolicy;
+  routing?: ChannelRoutingPolicy;
+}
+
+export interface IngressGatewayOptions {
+  logger?: Logger;
+  policies?: Record<string, IngressGatewayPolicy>;
+}
+
+function isGatewayOptions(value: Logger | IngressGatewayOptions | undefined): value is IngressGatewayOptions {
+  return typeof value === "object" && value !== null && ("policies" in value || "logger" in value);
+}
 
 /**
  * IngressGateway collects Envelopes from all registered ChannelAdapters
@@ -11,9 +31,17 @@ export class IngressGateway {
   private adapters: Map<string, ChannelAdapter> = new Map();
   private handler: EnvelopeHandler | null = null;
   private logger?: Logger;
+  private policies: Map<string, IngressGatewayPolicy> = new Map();
 
-  constructor(logger?: Logger) {
-    this.logger = logger;
+  constructor(loggerOrOptions?: Logger | IngressGatewayOptions) {
+    if (isGatewayOptions(loggerOrOptions)) {
+      this.logger = loggerOrOptions.logger;
+      for (const [source, policy] of Object.entries(loggerOrOptions.policies ?? {})) {
+        this.policies.set(source, policy);
+      }
+    } else {
+      this.logger = loggerOrOptions;
+    }
   }
 
   /** Register an adapter. Throws if name is already registered. */
@@ -57,7 +85,61 @@ export class IngressGateway {
     return Array.from(this.adapters.keys());
   }
 
+  setPolicy(source: string, policy: IngressGatewayPolicy): void {
+    this.policies.set(source, policy);
+  }
+
   private routeEnvelope(envelope: Envelope, reply?: ReplyChannel): void | Promise<void> {
+    const policy = this.policies.get(envelope.source);
+    if (policy) {
+      const payload = typeof envelope.payload === "object" && envelope.payload !== null
+        ? envelope.payload as Record<string, unknown>
+        : {};
+      const senderId = String(
+        envelope.auth?.principal ??
+        payload["sender_id"] ??
+        payload["user"] ??
+        payload["from"] ??
+        ""
+      ) || undefined;
+      const channelId = String(payload["channel_id"] ?? payload["channel"] ?? "") || undefined;
+      const conversationId = String(
+        payload["conversation_id"] ??
+        payload["conversationId"] ??
+        channelId ??
+        ""
+      ) || undefined;
+      const access = evaluateChannelAccess(policy.security, {
+        platform: envelope.source,
+        senderId,
+        conversationId,
+        channelId,
+      });
+      if (!access.allowed) {
+        this.logger?.warn("Gateway: security policy rejected envelope", {
+          id: envelope.id,
+          source: envelope.source,
+          reason: access.reason,
+        });
+        return;
+      }
+
+      const route = resolveChannelRoute(policy.routing, {
+        platform: envelope.source,
+        senderId,
+        conversationId,
+        channelId,
+      });
+      if (!envelope.goal_id && route.goalId) {
+        envelope.goal_id = route.goalId;
+      }
+      (envelope as Envelope & { metadata?: Record<string, unknown> }).metadata = {
+        ...((envelope as Envelope & { metadata?: Record<string, unknown> }).metadata ?? {}),
+        ...route.metadata,
+        ...(access.runtimeControlApproved ? { runtime_control_approved: true } : {}),
+      };
+    }
+
     if (!this.handler) {
       this.logger?.warn("Gateway: no handler registered, dropping envelope", {
         id: envelope.id,
