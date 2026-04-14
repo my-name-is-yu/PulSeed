@@ -7,7 +7,12 @@ import { execFile } from "node:child_process";
 import type { StateManager } from "../../base/state/state-manager.js";
 import type { IAdapter, AgentTask } from "../../orchestrator/execution/adapter-layer.js";
 import type { ILLMClient } from "../../base/llm/llm-client.js";
-import { ChatHistory } from "./chat-history.js";
+import { ChatHistory, type ChatSession } from "./chat-history.js";
+import {
+  ChatSessionCatalog,
+  ChatSessionSelectorError,
+  type LoadedChatSession,
+} from "./chat-session-store.js";
 import { buildChatContext, resolveGitRoot } from "../../platform/observation/context-provider.js";
 import type { EscalationHandler } from "./escalation.js";
 import { buildDynamicContextPrompt, buildStaticSystemPrompt } from "./grounding.js";
@@ -102,6 +107,10 @@ interface AssistantBuffer {
   text: string;
 }
 
+interface ResumeCommand {
+  selector?: string;
+}
+
 const DEFAULT_TIMEOUT_MS = 120_000;
 const MAX_VERIFY_RETRIES = 2;
 const MAX_TOOL_LOOPS = 5;
@@ -110,12 +119,16 @@ const ACTIVITY_PREVIEW_CHARS = 40;
 // ─── Command help text ───
 
 const COMMAND_HELP = `Available commands:
-  /help    Show this help message
-  /clear   Clear conversation history
-  /resume  Resume the last native agentloop turn when resumable state exists
-  /exit    Exit chat mode
-  /track   Promote session to Tier 2 goal pursuit (not yet implemented)
-  /tend    Generate a goal from chat history and start autonomous daemon execution`;
+  /help                 Show this help message
+  /clear                Clear conversation history
+  /sessions             List prior chat sessions
+  /history [id|title]   Show saved chat history
+  /title <title>        Rename the current session
+  /resume [id|title]    Resume native agentloop state for the current or selected session
+  /cleanup [--dry-run]  Clean up stale chat sessions
+  /exit                 Exit chat mode
+  /track                Promote session to Tier 2 goal pursuit (not yet implemented)
+  /tend                 Generate a goal from chat history and start autonomous daemon execution`;
 
 // ─── Helpers ───
 
@@ -178,10 +191,69 @@ export class ChatRunner {
     this.sessionCwd = gitRoot;
     this.sessionActive = true;
     this.nativeAgentLoopStatePath = `chat/agentloop/${sessionId}.state.json`;
+    this.history.setAgentLoopStatePath(this.nativeAgentLoopStatePath);
+  }
+
+  startSessionFromLoadedSession(session: LoadedChatSession): void {
+    const chatSession = this.loadedSessionToChatSession(session);
+    this.history = ChatHistory.fromSession(this.deps.stateManager, chatSession);
+    this.sessionCwd = session.cwd;
+    this.sessionActive = true;
+    this.nativeAgentLoopStatePath = session.agentLoopStatePath ?? `chat/agentloop/${session.id}.state.json`;
+    this.history.setAgentLoopStatePath(this.nativeAgentLoopStatePath);
+  }
+
+  getSessionId(): string | null {
+    return this.history?.getSessionId() ?? null;
+  }
+
+  getCurrentSessionMessages(): ChatSession["messages"] {
+    return this.history?.getMessages() ?? [];
   }
 
   setRuntimeControlContext(context: RuntimeControlChatContext | null): void {
     this.runtimeControlContext = context;
+  }
+
+  private loadedSessionToChatSession(session: LoadedChatSession): ChatSession {
+    return {
+      id: session.id,
+      cwd: session.cwd,
+      createdAt: session.createdAt,
+      updatedAt: session.updatedAt,
+      messages: [...session.messages],
+      ...(session.compactionSummary ? { compactionSummary: session.compactionSummary } : {}),
+      ...(session.title ? { title: session.title } : {}),
+      ...(session.agentLoopStatePath ? { agentLoopStatePath: session.agentLoopStatePath } : {}),
+      ...(session.agentLoopStatus === "running" || session.agentLoopStatus === "completed" || session.agentLoopStatus === "failed"
+        ? { agentLoopStatus: session.agentLoopStatus }
+        : {}),
+      ...(session.agentLoopResumable ? { agentLoopResumable: true } : {}),
+      ...(session.agentLoopUpdatedAt ? { agentLoopUpdatedAt: session.agentLoopUpdatedAt } : {}),
+      ...(session.agentLoop ? { agentLoop: session.agentLoop } : {}),
+    };
+  }
+
+  private formatSessionsList(entries: Array<{ id: string; title: string | null; cwd: string; updatedAt: string; messageCount: number; agentLoopResumable: boolean }>): string {
+    if (entries.length === 0) return "No chat sessions found.";
+    const lines = entries.map((entry) => {
+      const title = entry.title ? ` "${entry.title}"` : "";
+      const resumable = entry.agentLoopResumable ? " resumable" : "";
+      return `${entry.id}${title} - ${entry.messageCount} message(s), updated ${entry.updatedAt}, cwd ${entry.cwd}${resumable}`;
+    });
+    return `Chat sessions:\n${lines.join("\n")}`;
+  }
+
+  private formatHistory(session: LoadedChatSession): string {
+    const title = session.title ? ` "${session.title}"` : "";
+    if (session.messages.length === 0) {
+      return `Session ${session.id}${title} has no messages.`;
+    }
+    const lines = session.messages.map((message) => {
+      const role = message.role === "assistant" ? "Assistant" : "User";
+      return `${role}: ${message.content}`;
+    });
+    return `Session ${session.id}${title} (${session.cwd})\n${lines.join("\n")}`;
   }
 
   private async handleCommand(input: string): Promise<ChatRunResult | null> {
@@ -197,6 +269,52 @@ export class ChatRunner {
     if (cmd === "/clear") {
       this.history?.clear();
       return { success: true, output: "Conversation history cleared.", elapsed_ms: Date.now() - start };
+    }
+    if (cmd === "/sessions") {
+      const catalog = new ChatSessionCatalog(this.deps.stateManager);
+      const sessions = await catalog.listSessions();
+      return { success: true, output: this.formatSessionsList(sessions), elapsed_ms: Date.now() - start };
+    }
+    if (cmd === "/history") {
+      const catalog = new ChatSessionCatalog(this.deps.stateManager);
+      const selector = trimmed.slice("/history".length).trim();
+      const session = selector
+        ? await catalog.loadSessionBySelector(selector)
+        : this.history
+          ? await catalog.loadSession(this.history.getSessionId())
+          : null;
+      if (!session) {
+        return { success: false, output: "No chat session history found.", elapsed_ms: Date.now() - start };
+      }
+      return { success: true, output: this.formatHistory(session), elapsed_ms: Date.now() - start };
+    }
+    if (cmd === "/title") {
+      const title = trimmed.slice("/title".length).trim();
+      if (!title) {
+        return { success: false, output: "Usage: /title <title>", elapsed_ms: Date.now() - start };
+      }
+      if (!this.history) {
+        return { success: false, output: "No active chat session to rename.", elapsed_ms: Date.now() - start };
+      }
+      const catalog = new ChatSessionCatalog(this.deps.stateManager);
+      this.history.setTitle(title);
+      await this.history.persist();
+      await catalog.renameSession(this.history.getSessionId(), title);
+      return { success: true, output: `Renamed chat session to "${title}".`, elapsed_ms: Date.now() - start };
+    }
+    if (cmd === "/cleanup") {
+      const catalog = new ChatSessionCatalog(this.deps.stateManager);
+      const dryRun = trimmed.includes("--dry-run");
+      const report = await catalog.cleanupSessions({
+        dryRun,
+        activeSessionId: this.history?.getSessionId(),
+      });
+      const verb = dryRun ? "would remove" : "removed";
+      return {
+        success: true,
+        output: `Chat session cleanup ${verb} ${report.removedSessionIds.length} session(s).`,
+        elapsed_ms: Date.now() - start,
+      };
     }
     if (cmd === "/exit") {
       return { success: true, output: "Exiting chat mode.", elapsed_ms: Date.now() - start };
@@ -381,7 +499,8 @@ export class ChatRunner {
    */
   async execute(input: string, cwd: string, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<ChatRunResult> {
     const eventContext = this.createEventContext();
-    const resumeOnly = this.isResumeCommand(input);
+    const resumeCommand = this.parseResumeCommand(input);
+    const resumeOnly = resumeCommand !== null;
 
     // Intercept commands before any adapter call
     const commandResult = resumeOnly ? null : await this.handleCommand(input);
@@ -439,12 +558,44 @@ export class ChatRunner {
       return runtimeControlResult;
     }
 
+    if (resumeOnly && resumeCommand.selector) {
+      try {
+        const catalog = new ChatSessionCatalog(this.deps.stateManager);
+        const session = await catalog.loadSessionBySelector(resumeCommand.selector);
+        if (!session) {
+          const elapsed_ms = 0;
+          const output = `No chat session matched selector "${resumeCommand.selector}".`;
+          this.emitEvent({
+            type: "assistant_final",
+            text: output,
+            persisted: false,
+            ...this.eventBase(eventContext),
+          });
+          this.emitLifecycleEndEvent("error", elapsed_ms, eventContext, false);
+          return { success: false, output, elapsed_ms };
+        }
+        this.startSessionFromLoadedSession(session);
+      } catch (err) {
+        const elapsed_ms = 0;
+        const output = err instanceof ChatSessionSelectorError ? err.message : `Failed to load chat session: ${err instanceof Error ? err.message : String(err)}`;
+        this.emitEvent({
+          type: "assistant_final",
+          text: output,
+          persisted: false,
+          ...this.eventBase(eventContext),
+        });
+        this.emitLifecycleEndEvent("error", elapsed_ms, eventContext, false);
+        return { success: false, output, elapsed_ms };
+      }
+    }
+
     // Reuse session (interactive mode) or create a fresh one per call (1-shot mode)
     if (!this.sessionActive) {
       const gitRoot = resolveGitRoot(cwd);
       const sessionId = crypto.randomUUID();
       this.history = new ChatHistory(this.deps.stateManager, sessionId, gitRoot);
       this.nativeAgentLoopStatePath = `chat/agentloop/${sessionId}.state.json`;
+      this.history.setAgentLoopStatePath(this.nativeAgentLoopStatePath);
     }
     const gitRoot = this.sessionCwd ?? resolveGitRoot(cwd);
 
@@ -961,8 +1112,12 @@ export class ChatRunner {
     return preview ? { preview } : {};
   }
 
-  private isResumeCommand(input: string): boolean {
-    return input.trim().toLowerCase() === "/resume";
+  private parseResumeCommand(input: string): ResumeCommand | null {
+    const trimmed = input.trim();
+    const match = /^\/resume(?:\s+(.+))?$/i.exec(trimmed);
+    if (!match) return null;
+    const selector = match[1]?.trim();
+    return selector ? { selector } : {};
   }
 
   private async loadResumableAgentLoopState(): Promise<AgentLoopSessionState | null> {

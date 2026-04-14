@@ -13,16 +13,31 @@ export const ChatMessageSchema = z.object({
   content: z.string(),
   timestamp: z.string(), // ISO 8601
   turnIndex: z.number().int().min(0),
-});
+}).passthrough();
 export type ChatMessage = z.infer<typeof ChatMessageSchema>;
+
+export const ChatSessionAgentLoopMetadataSchema = z.object({
+  statePath: z.string().nullable().optional(),
+  status: z.enum(["running", "completed", "failed"]).nullable().optional(),
+  resumable: z.boolean().nullable().optional(),
+  updatedAt: z.string().nullable().optional(),
+}).passthrough();
+export type ChatSessionAgentLoopMetadata = z.infer<typeof ChatSessionAgentLoopMetadataSchema>;
 
 export const ChatSessionSchema = z.object({
   id: z.string(),
   cwd: z.string(), // git root at session start
   createdAt: z.string(),
+  updatedAt: z.string().optional(),
+  title: z.string().trim().min(1).max(200).nullable().optional(),
   messages: z.array(ChatMessageSchema),
   compactionSummary: z.string().optional(),
-});
+  agentLoopStatePath: z.string().nullable().optional(),
+  agentLoopStatus: z.enum(["running", "completed", "failed"]).nullable().optional(),
+  agentLoopResumable: z.boolean().nullable().optional(),
+  agentLoopUpdatedAt: z.string().nullable().optional(),
+  agentLoop: ChatSessionAgentLoopMetadataSchema.optional(),
+}).passthrough();
 export type ChatSession = z.infer<typeof ChatSessionSchema>;
 
 // ─── ChatHistory ───
@@ -32,15 +47,31 @@ export class ChatHistory {
   private readonly sessionId: string;
   private readonly session: ChatSession;
 
-  constructor(stateManager: StateManager, sessionId: string, cwd: string) {
+  constructor(stateManager: StateManager, sessionId: string, cwd: string, existingSession?: ChatSession) {
     this.stateManager = stateManager;
     this.sessionId = sessionId;
-    this.session = {
-      id: sessionId,
-      cwd,
-      createdAt: new Date().toISOString(),
-      messages: [],
-    };
+    if (existingSession) {
+      this.session = {
+        ...existingSession,
+        id: existingSession.id,
+        cwd: existingSession.cwd,
+        updatedAt: existingSession.updatedAt ?? existingSession.createdAt,
+        messages: [...existingSession.messages],
+      };
+    } else {
+      const createdAt = new Date().toISOString();
+      this.session = {
+        id: sessionId,
+        cwd,
+        createdAt,
+        updatedAt: createdAt,
+        messages: [],
+      };
+    }
+  }
+
+  static fromSession(stateManager: StateManager, session: ChatSession): ChatHistory {
+    return new ChatHistory(stateManager, session.id, session.cwd, session);
   }
 
   /** Append a user message and persist to disk BEFORE adapter execution. */
@@ -83,7 +114,24 @@ export class ChatHistory {
     return this.sessionId;
   }
 
+  setTitle(title: string | null): void {
+    if (title && title.trim().length > 0) {
+      this.session.title = title.trim();
+    } else {
+      delete this.session.title;
+    }
+  }
+
+  setAgentLoopStatePath(statePath: string | null): void {
+    if (statePath) {
+      this.session.agentLoopStatePath = statePath;
+    } else {
+      delete this.session.agentLoopStatePath;
+    }
+  }
+
   async persist(): Promise<void> {
+    this.session.updatedAt = new Date().toISOString();
     await this.stateManager.writeRaw(
       `chat/sessions/${this.sessionId}.json`,
       this.session
