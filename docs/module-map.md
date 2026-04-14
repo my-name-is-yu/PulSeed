@@ -31,6 +31,7 @@ Main exported surfaces include:
 ### Chat runtime
 
 - `src/interface/chat/chat-runner.ts`
+- `src/interface/chat/chat-session-store.ts`
 
 ## 2. Directory guide
 
@@ -218,6 +219,7 @@ Start with:
 
 - `src/interface/chat/chat-runner.ts`
 - `src/interface/chat/chat-history.ts`
+- `src/interface/chat/chat-session-store.ts`
 - `src/interface/chat/cross-platform-session.ts`
 
 ### CLI setup and provider wiring
