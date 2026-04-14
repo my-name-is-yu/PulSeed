@@ -112,7 +112,9 @@ async function stepExecutionConfig(
 
   const detectedKeys = detectApiKeys();
   const apiKey =
-    current?.provider === provider ? await stepApiKey(provider, detectedKeys, current.apiKey) : await stepApiKey(provider, detectedKeys);
+    current?.provider === provider
+      ? await stepApiKey(provider, detectedKeys, current.apiKey, adapter)
+      : await stepApiKey(provider, detectedKeys, undefined, adapter);
   return { provider, model, adapter, apiKey };
 }
 
@@ -165,8 +167,44 @@ async function validateAndSaveProviderConfig(config: ProviderConfig): Promise<nu
     return 1;
   }
 
-  await saveProviderConfig(config);
+  const fileConfig: ProviderConfig = { ...config };
+  const apiKey = fileConfig.api_key;
+  delete fileConfig.api_key;
+  await saveProviderConfig(fileConfig);
+  if (apiKey) {
+    saveProviderApiKeyToEnv(config.provider, apiKey);
+  }
   return undefined;
+}
+
+function saveProviderApiKeyToEnv(provider: ProviderConfig["provider"], apiKey: string): void {
+  const envKey = provider === "openai"
+    ? "OPENAI_API_KEY"
+    : provider === "anthropic"
+      ? "ANTHROPIC_API_KEY"
+      : undefined;
+  if (!envKey) return;
+
+  const dir = ensurePulseedDir();
+  const envPath = path.join(dir, ".env");
+  let lines: string[] = [];
+  try {
+    lines = fs.readFileSync(envPath, "utf-8").split(/\r?\n/);
+  } catch {
+    lines = [];
+  }
+
+  const replacement = `${envKey}=${apiKey}`;
+  let replaced = false;
+  lines = lines.map((line) => {
+    if (line.startsWith(`${envKey}=`)) {
+      replaced = true;
+      return replacement;
+    }
+    return line;
+  }).filter((line, index, all) => line || index < all.length - 1);
+  if (!replaced) lines.push(replacement);
+  fs.writeFileSync(envPath, `${lines.join("\n")}\n`, "utf-8");
 }
 
 async function startDaemonDetached(baseDir: string): Promise<number | undefined> {
@@ -401,7 +439,7 @@ export async function runSetupWizard(): Promise<number> {
       existing["event_server_port"] = finalAnswers.daemonPort;
       fs.writeFileSync(daemonConfigPath, JSON.stringify(existing, null, 2), "utf-8");
     } catch {
-      p.log.warn("Could not save daemon port to daemon.json");
+      p.log.warn("Setup saved, but could not save daemon port to daemon.json");
     }
     p.log.info("Daemon port " + finalAnswers.daemonPort + " saved. Start it later with pulseed daemon start or pulseed start --goal <goal-id>.");
   }
@@ -412,7 +450,7 @@ export async function runSetupWizard(): Promise<number> {
       fs.mkdirSync(dir, { recursive: true });
       fs.writeFileSync(notifPath, JSON.stringify(finalAnswers.notificationConfig, null, 2));
     } catch (err) {
-      p.log.warn(`Could not save notification config: ${err}`);
+      p.log.warn(`Setup saved, but could not save notification config: ${err}`);
     }
   }
 
@@ -426,7 +464,7 @@ export async function runSetupWizard(): Promise<number> {
           (failedCount > 0 ? ` (${failedCount} failed; see import report).` : ".")
       );
     } catch (err) {
-      p.log.warn(`Configuration saved, but import side effects failed: ${err instanceof Error ? err.message : String(err)}`);
+      p.log.warn(`Setup saved, but import side effects failed: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
@@ -436,7 +474,7 @@ export async function runSetupWizard(): Promise<number> {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       p.log.warn(
-        `Configuration saved, but daemon/gateway did not start: ${message}. ` +
+        `Setup saved, but daemon/gateway did not start: ${message}. ` +
           "Run `pulseed daemon start --detach` to try again."
       );
     }
