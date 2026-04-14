@@ -72,6 +72,13 @@ export type { CoreLoopDeps, LoopConfig, LoopResult } from "./orchestrator/loop/c
 export { CLIRunner } from "./interface/cli/cli-runner.js";
 export { ChatRunner } from "./interface/chat/chat-runner.js";
 export type { ChatRunnerDeps, ChatRunResult } from "./interface/chat/chat-runner.js";
+export { ChatSessionCatalog, ChatSessionSelectorError } from "./interface/chat/chat-session-store.js";
+export type {
+  ChatSessionCatalogEntry,
+  LoadedChatSession,
+  ChatSessionCleanupOptions,
+  ChatSessionCleanupReport,
+} from "./interface/chat/chat-session-store.js";
 export { CrossPlatformChatSessionManager, getGlobalCrossPlatformChatSessionManager } from "./interface/chat/cross-platform-session.js";
 export type {
   CrossPlatformChatSessionOptions,

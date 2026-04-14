@@ -172,12 +172,19 @@ Handles `/track`, which promotes the session to Tier 2.
 
 The command passes conversation history to the LLM as the primary source for goal generation. The user's own words become the goal description — no separate re-statement required.
 
-### 5.4 CLI Entry Point (`src/cli/commands/chat.ts`)
+### 5.4 CLI Entry Point (`src/interface/cli/commands/chat.ts`)
 
-Parses `pulseed chat [task]` and delegates to ChatRunner.
+Parses the chat command surface and dispatches to the appropriate flow.
 
-- If `task` argument is present: non-interactive, single turn
-- If `task` is absent: open interactive REPL backed by the TUI chat component (`src/interface/tui/chat.tsx`)- Flags: `--adapter <name>`, `--resume [id]` (Phase 2), `--timeout <ms>`
+- `pulseed chat [task]` starts a single-turn execution
+- `pulseed chat --continue` / `pulseed chat -c [id-or-title]` reopens the latest session or a selected session
+- `pulseed chat --resume <id-or-title>` targets a specific session selector
+- `pulseed chat --sessions` lists the session catalog
+- `pulseed chat --history <id-or-title>` prints a stored history view
+- `pulseed chat --title <title>` renames the selected/current session
+- `pulseed chat --cleanup-sessions [--dry-run]` cleans up stale sessions from the chat session store
+
+The session catalog lives in `src/interface/chat/chat-session-store.ts` and keeps chat history separate from unrelated memory search internals.
 
 ### 5.5 Context Provider Extension (`src/observation/context-provider.ts`)
 
@@ -280,13 +287,22 @@ The compaction is invisible to the user during normal flow. It is logged at debu
 
 ### Session Persistence and Resume (from OpenClaw + Codex CLI)
 
-Chat sessions are written to disk after every turn. If the process crashes or the user closes the terminal, the session can be resumed.
+Chat sessions are written to disk after every turn. If the process crashes or the user closes the terminal, the session can be resumed through the chat session catalog.
 
 Storage path: `~/.pulseed/chat/sessions/<id>.json`
 
-Resume: `pulseed chat --resume` loads the most recent session for the current git root. `pulseed chat --resume <id>` loads a specific session.
+Resume contract:
 
-Auto-expiry: sessions not accessed in 7 days (configurable via `chat_session_ttl_days`) are deleted on the next `pulseed chat` invocation. This is a simple mtime check on the session file.
+- `pulseed chat --continue` loads the most recent session for the current git root
+- `pulseed chat --continue <id-or-title>` uses the provided selector
+- `pulseed chat --resume <id-or-title>` loads a specific session selector
+
+Cleanup contract:
+
+- `pulseed chat --cleanup-sessions` scans `~/.pulseed/chat/sessions/` and removes eligible sessions
+- `--dry-run` previews deletions without removing files
+- sessions not accessed in 7 days are eligible for cleanup on the next cleanup pass
+- the active session is protected when cleanup runs from inside chat
 
 ### Timeout and Output Caps (from Codex CLI)
 
@@ -348,14 +364,15 @@ Verify: `/track` creates a Goal and starts CoreLoop; GoalRefiner determines tree
 
 ### Phase 2 — Session Persistence and Resume
 
-Deliverable: sessions survive process exit; `--resume` reloads them.
+Deliverable: sessions survive process exit; the CLI contract above resolves against a session catalog.
 
 Files:
-- `src/chat/chat-history.ts` — add `persist()`, `load()`, auto-expiry
-- `src/cli/commands/chat.ts` — add `--resume [id]` flag handling
-- `src/chat/chat-runner.ts` — add compaction logic
+- `src/interface/cli/commands/chat.ts` — parse `--continue`, `--resume`, `--sessions`, `--history`, `--title`, and `--cleanup-sessions`
+- `src/interface/chat/chat-history.ts` — persist updated metadata and restore loaded sessions
+- `src/interface/chat/chat-session-store.ts` — list, load, resolve selectors, rename, and cleanup chat sessions
+- `src/interface/chat/chat-runner.ts` — slash-command session list/history/title/cleanup and selected native agentloop resume
 
-Verify: kill process mid-session, resume, conversation history intact.
+Verify: kill process mid-session, resume, conversation history intact, cleanup respects dry-run.
 
 ### Phase 3 — Auto-escalation Proposals
 

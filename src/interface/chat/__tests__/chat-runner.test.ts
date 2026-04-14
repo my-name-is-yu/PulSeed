@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { ChatRunner } from "../chat-runner.js";
 import type { ChatRunnerDeps } from "../chat-runner.js";
-import type { StateManager } from "../../../base/state/state-manager.js";
+import { StateManager } from "../../../base/state/state-manager.js";
 import type { IAdapter, AgentResult } from "../../../orchestrator/execution/adapter-layer.js";
 import type { EscalationHandler, EscalationResult } from "../escalation.js";
 import type { ILLMClient } from "../../../base/llm/llm-client.js";
@@ -272,6 +272,96 @@ describe("ChatRunner", () => {
       const writeRawMock = stateManager.writeRaw as ReturnType<typeof vi.fn>;
       expect(writeRawMock).toHaveBeenCalledTimes(1);
       expect(stateManager.readRaw).toHaveBeenCalledTimes(1);
+    });
+
+    it("/resume <selector> loads the selected session before resuming native agentloop state", async () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-resume-selector-"));
+      try {
+        const stateManager = new StateManager(tmpDir);
+        await stateManager.init();
+        await stateManager.writeRaw("chat/sessions/saved-session.json", {
+          id: "saved-session",
+          cwd: "/repo",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:01.000Z",
+          title: "Work Session",
+          messages: [
+            { role: "user", content: "continue this", timestamp: "2026-01-01T00:00:00.000Z", turnIndex: 0 },
+          ],
+        });
+        await stateManager.writeRaw("chat/agentloop/saved-session.state.json", {
+          sessionId: "saved-session",
+          traceId: "trace-1",
+          turnId: "turn-1",
+          goalId: "chat",
+          cwd: "/repo",
+          modelRef: "openai/gpt-5.4-mini",
+          messages: [{ role: "assistant", content: "continuing..." }],
+          modelTurns: 1,
+          toolCalls: 0,
+          compactions: 0,
+          completionValidationAttempts: 0,
+          calledTools: [],
+          lastToolLoopSignature: null,
+          repeatedToolLoopCount: 0,
+          finalText: "continuing...",
+          status: "failed",
+          stopReason: "timeout",
+          updatedAt: "2026-01-01T00:00:02.000Z",
+        });
+        const chatAgentLoopRunner = {
+          execute: vi.fn().mockResolvedValue({
+            success: true,
+            output: "Resumed selected session",
+            error: null,
+            exit_code: null,
+            elapsed_ms: 30,
+            stopped_reason: "completed",
+          }),
+        } as unknown as ChatAgentLoopRunner;
+        const runner = new ChatRunner(makeDeps({ stateManager, chatAgentLoopRunner }));
+
+        const result = await runner.execute("/resume Work Session", "/repo");
+
+        expect(result.success).toBe(true);
+        expect(result.output).toBe("Resumed selected session");
+        expect(runner.getSessionId()).toBe("saved-session");
+        const input = (chatAgentLoopRunner.execute as ReturnType<typeof vi.fn>).mock.calls[0][0] as {
+          resumeOnly?: boolean;
+          resumeState?: { sessionId: string };
+          resumeStatePath?: string;
+        };
+        expect(input.resumeOnly).toBe(true);
+        expect(input.resumeState?.sessionId).toBe("saved-session");
+        expect(input.resumeStatePath).toBe("chat/agentloop/saved-session.state.json");
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+
+    it("/sessions lists prior chat sessions", async () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-sessions-"));
+      try {
+        const stateManager = new StateManager(tmpDir);
+        await stateManager.init();
+        await stateManager.writeRaw("chat/sessions/prior-session.json", {
+          id: "prior-session",
+          cwd: "/repo",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:01.000Z",
+          title: "Prior",
+          messages: [],
+        });
+        const runner = new ChatRunner(makeDeps({ stateManager }));
+
+        const result = await runner.execute("/sessions", "/repo");
+
+        expect(result.success).toBe(true);
+        expect(result.output).toContain("prior-session");
+        expect(result.output).toContain("Prior");
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
     });
   });
 
