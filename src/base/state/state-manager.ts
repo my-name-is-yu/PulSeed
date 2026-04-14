@@ -148,6 +148,66 @@ export class StateManager {
     return { kind, dir, goalJsonPath: path.join(dir, "goal", "goal.json") };
   }
 
+  private archiveGoalDir(goalId: string): string {
+    return path.join(this.baseDir, "archive", goalId);
+  }
+
+  private archiveGoalStagingDir(goalId: string): string {
+    return path.join(this.baseDir, "archive", ".staging", goalId);
+  }
+
+  private archiveCompleteMarkerPath(archiveBase: string): string {
+    return path.join(archiveBase, ".archive-complete.json");
+  }
+
+  private async cleanupActiveGoalState(goalId: string): Promise<void> {
+    await fsp.rm(path.join(this.baseDir, "goals", goalId), { recursive: true, force: true });
+    await fsp.rm(path.join(this.baseDir, "tasks", goalId), { recursive: true, force: true });
+    await fsp.rm(path.join(this.baseDir, "strategies", goalId), { recursive: true, force: true });
+    await fsp.rm(path.join(this.baseDir, "stalls", `${goalId}.json`), { force: true });
+    await fsp.rm(path.join(this.baseDir, "reports", goalId), { recursive: true, force: true });
+  }
+
+  private async hasActiveGoalState(goalId: string): Promise<boolean> {
+    const activePaths = [
+      path.join(this.baseDir, "goals", goalId),
+      path.join(this.baseDir, "tasks", goalId),
+      path.join(this.baseDir, "strategies", goalId),
+      path.join(this.baseDir, "stalls", `${goalId}.json`),
+      path.join(this.baseDir, "reports", goalId),
+    ];
+    for (const activePath of activePaths) {
+      if (await this.pathExists(activePath)) return true;
+    }
+    return false;
+  }
+
+  private async copyActiveArchiveRemnants(goalId: string, archiveBase: string): Promise<void> {
+    const tasksDir = path.join(this.baseDir, "tasks", goalId);
+    if (await this.pathExists(tasksDir)) {
+      await fsp.cp(tasksDir, path.join(archiveBase, "tasks"), { recursive: true });
+    }
+
+    const strategiesDir = path.join(this.baseDir, "strategies", goalId);
+    if (await this.pathExists(strategiesDir)) {
+      await fsp.cp(strategiesDir, path.join(archiveBase, "strategies"), { recursive: true });
+    }
+
+    const stallsFile = path.join(this.baseDir, "stalls", `${goalId}.json`);
+    if (await this.pathExists(stallsFile)) {
+      await fsp.cp(stallsFile, path.join(archiveBase, "stalls.json"));
+    }
+
+    const reportsDir = path.join(this.baseDir, "reports", goalId);
+    if (await this.pathExists(reportsDir)) {
+      await fsp.cp(reportsDir, path.join(archiveBase, "reports"), { recursive: true });
+    }
+  }
+
+  private async commitArchiveGoal(stagingBase: string, archiveBase: string): Promise<void> {
+    await fsp.rename(stagingBase, archiveBase);
+  }
+
   private async resolveGoalLocation(goalId: string, includeArchive: boolean): Promise<GoalStorageLocation | null> {
     const activeLocation = this.goalStorageLocation(goalId, "active");
     if (await this.pathExists(activeLocation.dir)) return activeLocation;
@@ -244,14 +304,26 @@ export class StateManager {
   }
 
   async loadGoal(goalId: string): Promise<Goal | null> {
+    const archiveBase = this.archiveGoalDir(goalId);
+    const archiveCompleteMarkerExists = await this.pathExists(this.archiveCompleteMarkerPath(archiveBase));
+    const archiveGoalPath = this.goalStorageLocation(goalId, "archive").goalJsonPath;
+    const archiveGoalExists = await this.pathExists(archiveGoalPath);
+
+    // Committed archive wins over stale active state after crash cleanup.
+    if (archiveCompleteMarkerExists && archiveGoalExists) {
+      const archiveRaw = await this.atomicRead<unknown>(archiveGoalPath);
+      if (archiveRaw !== null) return GoalSchema.parse(archiveRaw);
+    }
+
     // Primary path: active goals
     const filePath = path.join(this.baseDir, "goals", goalId, "goal.json");
     const raw = await this.atomicRead<unknown>(filePath);
     if (raw !== null) return GoalSchema.parse(raw);
 
     // Fallback: archived goals (archiveGoal() copies goal dir to archive/<goalId>/goal/)
-    const archivePath = path.join(this.baseDir, "archive", goalId, "goal", "goal.json");
-    const archiveRaw = await this.atomicRead<unknown>(archivePath);
+    if (!archiveGoalExists) return null;
+
+    const archiveRaw = await this.atomicRead<unknown>(archiveGoalPath);
     if (archiveRaw === null) return null;
     return GoalSchema.parse(archiveRaw);
   }
@@ -285,17 +357,56 @@ export class StateManager {
     if (!this.markGoalVisited(goalId, _visited)) return false;
     let archived = false;
     await this.goalWriteCoordinator.protectedOperation(goalId, "archive_goal", { goalId }, async () => {
-      const location = await this.resolveGoalLocation(goalId, false);
-      if (location === null) return;
+      const archiveBase = this.archiveGoalDir(goalId);
+      const stagingBase = this.archiveGoalStagingDir(goalId);
+      const archiveLocation = this.goalStorageLocation(goalId, "archive");
+      const archiveExists = await this.pathExists(archiveBase);
+      const archiveCompleteMarkerExists = await this.pathExists(this.archiveCompleteMarkerPath(archiveBase));
+      const archiveGoalJsonExists = await this.pathExists(archiveLocation.goalJsonPath);
+      const activeLocation = await this.resolveGoalLocation(goalId, false);
+      const location = archiveCompleteMarkerExists
+        ? archiveLocation
+        : activeLocation ?? (archiveGoalJsonExists ? archiveLocation : null);
+      if (location === null) {
+        await fsp.rm(stagingBase, { recursive: true, force: true });
+        return;
+      }
 
       // Recursively archive children first (depth-first)
       await this.visitChildGoals(goalId, location, _visited, (childId, visited) => this.archiveGoal(childId, visited));
 
-      const archiveBase = path.join(this.baseDir, "archive", goalId);
-      await fsp.mkdir(archiveBase, { recursive: true });
+      if (archiveCompleteMarkerExists) {
+        await fsp.rm(stagingBase, { recursive: true, force: true });
+        await this.cleanupActiveGoalState(goalId);
+        archived = true;
+        return;
+      }
+
+      if (archiveExists && activeLocation === null) {
+        await fsp.rm(stagingBase, { recursive: true, force: true });
+        await this.copyActiveArchiveRemnants(goalId, archiveBase);
+        await this.atomicWrite(this.archiveCompleteMarkerPath(archiveBase), {
+          goalId,
+          completed_at: new Date().toISOString(),
+        });
+        await this.cleanupActiveGoalState(goalId);
+        archived = true;
+        return;
+      }
+
+      if (activeLocation === null) {
+        await fsp.rm(stagingBase, { recursive: true, force: true });
+        return;
+      }
+
+      await fsp.rm(stagingBase, { recursive: true, force: true });
+      await fsp.mkdir(path.dirname(stagingBase), { recursive: true });
+      if (archiveExists) {
+        await fsp.rm(archiveBase, { recursive: true, force: true });
+      }
 
       // Move goals/<goalId>/ → archive/<goalId>/goal/
-      const archiveGoalDir = path.join(archiveBase, "goal");
+      const archiveGoalDir = path.join(stagingBase, "goal");
       await fsp.cp(location.dir, archiveGoalDir, {
         recursive: true,
         filter: (source) => path.basename(source) !== ".lock",
@@ -320,38 +431,40 @@ export class StateManager {
       const tasksDir = path.join(this.baseDir, "tasks", goalId);
       try {
         await fsp.access(tasksDir);
-        const archiveTasksDir = path.join(archiveBase, "tasks");
+        const archiveTasksDir = path.join(stagingBase, "tasks");
         await fsp.cp(tasksDir, archiveTasksDir, { recursive: true });
-        await fsp.rm(tasksDir, { recursive: true, force: true });
       } catch (e: unknown) { if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e; }
 
       // Move strategies/<goalId>/ → archive/<goalId>/strategies/ (if exists)
       const strategiesDir = path.join(this.baseDir, "strategies", goalId);
       try {
         await fsp.access(strategiesDir);
-        const archiveStrategiesDir = path.join(archiveBase, "strategies");
+        const archiveStrategiesDir = path.join(stagingBase, "strategies");
         await fsp.cp(strategiesDir, archiveStrategiesDir, { recursive: true });
-        await fsp.rm(strategiesDir, { recursive: true, force: true });
       } catch (e: unknown) { if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e; }
 
       // Move stalls/<goalId>.json → archive/<goalId>/stalls.json (if exists)
       const stallsFile = path.join(this.baseDir, "stalls", `${goalId}.json`);
       try {
         await fsp.access(stallsFile);
-        const archiveStallsFile = path.join(archiveBase, "stalls.json");
+        const archiveStallsFile = path.join(stagingBase, "stalls.json");
         await fsp.cp(stallsFile, archiveStallsFile);
-        await fsp.rm(stallsFile, { force: true });
       } catch (e: unknown) { if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e; }
 
       // Move reports/<goalId>/ → archive/<goalId>/reports/ (if exists)
       const reportsDir = path.join(this.baseDir, "reports", goalId);
       try {
         await fsp.access(reportsDir);
-        const archiveReportsDir = path.join(archiveBase, "reports");
+        const archiveReportsDir = path.join(stagingBase, "reports");
         await fsp.cp(reportsDir, archiveReportsDir, { recursive: true });
-        await fsp.rm(reportsDir, { recursive: true, force: true });
       } catch (e: unknown) { if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e; }
-      await fsp.rm(location.dir, { recursive: true, force: true });
+
+      await this.atomicWrite(this.archiveCompleteMarkerPath(stagingBase), {
+        goalId,
+        completed_at: new Date().toISOString(),
+      });
+      await this.commitArchiveGoal(stagingBase, archiveBase);
+      await this.cleanupActiveGoalState(goalId);
       archived = true;
     });
     return archived;
@@ -364,7 +477,20 @@ export class StateManager {
     const archiveDir = path.join(this.baseDir, "archive");
     try {
       const entries = await fsp.readdir(archiveDir, { withFileTypes: true });
-      return entries.filter((d) => d.isDirectory()).map((d) => d.name);
+      const archived: string[] = [];
+      for (const entry of entries) {
+        if (!entry.isDirectory() || entry.name === ".staging") continue;
+        const archiveBase = this.archiveGoalDir(entry.name);
+        const hasCompleteMarker = await this.pathExists(this.archiveCompleteMarkerPath(archiveBase));
+        const hasGoalJson = await this.pathExists(this.goalStorageLocation(entry.name, "archive").goalJsonPath);
+        if (
+          hasGoalJson &&
+          hasCompleteMarker
+        ) {
+          archived.push(entry.name);
+        }
+      }
+      return archived;
     } catch (e: unknown) {
       if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
       return [];

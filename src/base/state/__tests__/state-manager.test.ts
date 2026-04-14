@@ -26,6 +26,7 @@ describe("StateManager", async () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     fs.rmSync(tmpDir, { recursive: true, force: true , maxRetries: 3, retryDelay: 100 });
   });
 
@@ -960,6 +961,12 @@ describe("StateManager", async () => {
   });
 
   describe("archiveGoal", async () => {
+    const createFreshManager = async () => {
+      const freshManager = new StateManager(tmpDir);
+      await freshManager.init();
+      return freshManager;
+    };
+
     it("archives a completed goal — moves all state files", async () => {
       const goalId = "archive-full";
       const goal = makeGoal({ id: goalId });
@@ -1012,6 +1019,186 @@ describe("StateManager", async () => {
       expect(fs.existsSync(reportsDir)).toBe(false);
     });
 
+    it("retries cleanly when the final rename fails before commit", async () => {
+      const goalId = "archive-retry-rename";
+      const goal = makeGoal({ id: goalId });
+      await manager.saveGoal(goal);
+
+      const tasksDir = path.join(tmpDir, "tasks", goalId);
+      fs.mkdirSync(tasksDir, { recursive: true });
+      fs.writeFileSync(path.join(tasksDir, "task.json"), JSON.stringify({ id: "t1" }));
+
+      const strategiesDir = path.join(tmpDir, "strategies", goalId);
+      fs.mkdirSync(strategiesDir, { recursive: true });
+      fs.writeFileSync(path.join(strategiesDir, "strategy.json"), JSON.stringify({ id: "s1" }));
+
+      const stallsDir = path.join(tmpDir, "stalls");
+      fs.mkdirSync(stallsDir, { recursive: true });
+      fs.writeFileSync(path.join(stallsDir, `${goalId}.json`), JSON.stringify({ stall: true }));
+
+      const reportsDir = path.join(tmpDir, "reports", goalId);
+      fs.mkdirSync(reportsDir, { recursive: true });
+      fs.writeFileSync(path.join(reportsDir, "report.json"), JSON.stringify({ report: 1 }));
+
+      const archiveBase = path.join(tmpDir, "archive", goalId);
+      const stagingBase = path.join(tmpDir, "archive", ".staging", goalId);
+      const commitArchiveGoal = manager as unknown as { commitArchiveGoal: (staging: string, archive: string) => Promise<void> };
+      const originalCommit = commitArchiveGoal.commitArchiveGoal.bind(manager);
+      commitArchiveGoal.commitArchiveGoal = async (staging, archive) => {
+        if (staging === stagingBase && archive === archiveBase) {
+          throw new Error("commit failed before final rename");
+        }
+        return originalCommit(staging, archive);
+      };
+
+      await expect(manager.archiveGoal(goalId)).rejects.toThrow("commit failed before final rename");
+
+      expect(fs.existsSync(archiveBase)).toBe(false);
+      expect(fs.existsSync(stagingBase)).toBe(true);
+      expect(fs.existsSync(path.join(tmpDir, "goals", goalId))).toBe(true);
+
+      commitArchiveGoal.commitArchiveGoal = originalCommit;
+
+      const retryManager = await createFreshManager();
+      await expect(retryManager.archiveGoal(goalId)).resolves.toBe(true);
+
+      expect(fs.existsSync(path.join(archiveBase, "goal", "goal.json"))).toBe(true);
+      expect(fs.existsSync(path.join(archiveBase, "tasks", "task.json"))).toBe(true);
+      expect(fs.existsSync(path.join(archiveBase, "strategies", "strategy.json"))).toBe(true);
+      expect(fs.existsSync(path.join(archiveBase, "stalls.json"))).toBe(true);
+      expect(fs.existsSync(path.join(archiveBase, "reports", "report.json"))).toBe(true);
+      expect(fs.existsSync(path.join(tmpDir, "archive", ".staging", goalId))).toBe(false);
+      expect(fs.existsSync(path.join(tmpDir, "goals", goalId))).toBe(false);
+      expect(fs.existsSync(tasksDir)).toBe(false);
+      expect(fs.existsSync(strategiesDir)).toBe(false);
+      expect(fs.existsSync(path.join(stallsDir, `${goalId}.json`))).toBe(false);
+      expect(fs.existsSync(reportsDir)).toBe(false);
+      expect(await retryManager.loadGoal(goalId)).not.toBeNull();
+      expect((await retryManager.loadGoal(goalId))?.status).toBe("archived");
+    });
+
+    it("retries cleanly when active cleanup fails after commit", async () => {
+      const goalId = "archive-retry-cleanup";
+      const goal = makeGoal({ id: goalId });
+      await manager.saveGoal(goal);
+
+      const tasksDir = path.join(tmpDir, "tasks", goalId);
+      fs.mkdirSync(tasksDir, { recursive: true });
+      fs.writeFileSync(path.join(tasksDir, "task.json"), JSON.stringify({ id: "t1" }));
+
+      const archiveBase = path.join(tmpDir, "archive", goalId);
+      const stagingBase = path.join(tmpDir, "archive", ".staging", goalId);
+      const activeGoalDir = path.join(tmpDir, "goals", goalId);
+      const cleanupActiveGoalState = manager as unknown as { cleanupActiveGoalState: (goal: string) => Promise<void> };
+      const originalCleanup = cleanupActiveGoalState.cleanupActiveGoalState.bind(manager);
+      cleanupActiveGoalState.cleanupActiveGoalState = async (goal) => {
+        if (goal === goalId) {
+          throw new Error("cleanup failed after commit");
+        }
+        return originalCleanup(goal);
+      };
+
+      await expect(manager.archiveGoal(goalId)).rejects.toThrow("cleanup failed after commit");
+
+      expect(fs.existsSync(archiveBase)).toBe(true);
+      expect(fs.existsSync(path.join(archiveBase, "goal", "goal.json"))).toBe(true);
+      expect(fs.existsSync(stagingBase)).toBe(false);
+      expect(fs.existsSync(activeGoalDir)).toBe(true);
+      expect(fs.existsSync(tasksDir)).toBe(true);
+
+      cleanupActiveGoalState.cleanupActiveGoalState = originalCleanup;
+
+      const retryManager = await createFreshManager();
+      await expect(retryManager.archiveGoal(goalId)).resolves.toBe(true);
+
+      expect(fs.existsSync(path.join(archiveBase, "goal", "goal.json"))).toBe(true);
+      expect(fs.existsSync(stagingBase)).toBe(false);
+      expect(fs.existsSync(activeGoalDir)).toBe(false);
+      expect(fs.existsSync(tasksDir)).toBe(false);
+      expect(await retryManager.loadGoal(goalId)).not.toBeNull();
+      expect((await retryManager.loadGoal(goalId))?.status).toBe("archived");
+    });
+
+    it("does not rebuild a committed archive from partial active remnants", async () => {
+      const goalId = "archive-committed-source-of-truth";
+      const archiveBase = path.join(tmpDir, "archive", goalId);
+      fs.mkdirSync(path.join(archiveBase, "goal"), { recursive: true });
+      fs.mkdirSync(path.join(archiveBase, "tasks"), { recursive: true });
+      fs.writeFileSync(path.join(archiveBase, "goal", "goal.json"), JSON.stringify({ ...makeGoal({ id: goalId }), status: "archived" }));
+      fs.writeFileSync(path.join(archiveBase, "tasks", "task.json"), JSON.stringify({ id: "archived-task" }));
+      fs.writeFileSync(path.join(archiveBase, ".archive-complete.json"), JSON.stringify({ goalId, completed_at: new Date().toISOString() }));
+
+      await manager.saveGoal(makeGoal({ id: goalId, title: "leftover active goal" }));
+
+      expect(await manager.listArchivedGoals()).toContain(goalId);
+
+      const retryManager = await createFreshManager();
+      await expect(retryManager.archiveGoal(goalId)).resolves.toBe(true);
+
+      expect(fs.existsSync(path.join(archiveBase, "tasks", "task.json"))).toBe(true);
+      expect(JSON.parse(fs.readFileSync(path.join(archiveBase, "tasks", "task.json"), "utf-8"))).toEqual({ id: "archived-task" });
+      expect(fs.existsSync(path.join(tmpDir, "goals", goalId))).toBe(false);
+      expect(await retryManager.listArchivedGoals()).toContain(goalId);
+    });
+
+    it("rebuilds an incomplete visible archive from active state before cleanup", async () => {
+      const goalId = "archive-rebuild-visible-partial";
+      await manager.saveGoal(makeGoal({ id: goalId }));
+
+      const tasksDir = path.join(tmpDir, "tasks", goalId);
+      fs.mkdirSync(tasksDir, { recursive: true });
+      fs.writeFileSync(path.join(tasksDir, "task.json"), JSON.stringify({ id: "t1" }));
+
+      const archiveBase = path.join(tmpDir, "archive", goalId);
+      fs.mkdirSync(archiveBase, { recursive: true });
+      fs.writeFileSync(path.join(archiveBase, "partial.json"), JSON.stringify({ incomplete: true }));
+
+      expect(await manager.listArchivedGoals()).not.toContain(goalId);
+
+      const retryManager = await createFreshManager();
+      await expect(retryManager.archiveGoal(goalId)).resolves.toBe(true);
+
+      expect(fs.existsSync(path.join(archiveBase, "partial.json"))).toBe(false);
+      expect(fs.existsSync(path.join(archiveBase, "goal", "goal.json"))).toBe(true);
+      expect(fs.existsSync(path.join(archiveBase, "tasks", "task.json"))).toBe(true);
+      expect(fs.existsSync(path.join(tmpDir, "archive", ".staging", goalId))).toBe(false);
+      expect(fs.existsSync(path.join(tmpDir, "goals", goalId))).toBe(false);
+      expect(fs.existsSync(tasksDir)).toBe(false);
+      expect(await retryManager.listArchivedGoals()).toContain(goalId);
+    });
+
+    it("does not list committed archives until active remnants are cleaned up", async () => {
+      const goalId = "archive-remnants-hidden";
+      const archiveBase = path.join(tmpDir, "archive", goalId);
+      fs.mkdirSync(path.join(archiveBase, "goal"), { recursive: true });
+      fs.writeFileSync(path.join(archiveBase, "goal", "goal.json"), JSON.stringify({ ...makeGoal({ id: goalId }), status: "archived" }));
+
+      const tasksDir = path.join(tmpDir, "tasks", goalId);
+      fs.mkdirSync(tasksDir, { recursive: true });
+      fs.writeFileSync(path.join(tasksDir, "task.json"), JSON.stringify({ id: "t1" }));
+
+      expect(await manager.listArchivedGoals()).not.toContain(goalId);
+
+      const retryManager = await createFreshManager();
+      await expect(retryManager.archiveGoal(goalId)).resolves.toBe(true);
+
+      expect(fs.existsSync(path.join(archiveBase, "tasks", "task.json"))).toBe(true);
+      expect(fs.existsSync(tasksDir)).toBe(false);
+      expect(await retryManager.listArchivedGoals()).toContain(goalId);
+    });
+
+    it("finalizes an unmarked legacy archive when no active state remains", async () => {
+      const goalId = "archive-unmarked-legacy";
+      const archiveBase = path.join(tmpDir, "archive", goalId);
+      fs.mkdirSync(path.join(archiveBase, "goal"), { recursive: true });
+      fs.writeFileSync(path.join(archiveBase, "goal", "goal.json"), JSON.stringify({ ...makeGoal({ id: goalId }), status: "archived" }));
+
+      expect(await manager.listArchivedGoals()).not.toContain(goalId);
+      await expect(manager.archiveGoal(goalId)).resolves.toBe(true);
+      expect(fs.existsSync(path.join(archiveBase, ".archive-complete.json"))).toBe(true);
+      expect(await manager.listArchivedGoals()).toContain(goalId);
+    });
+
     it("serializes concurrent archiveGoal calls on the same goal", async () => {
       const goalId = "archive-locked";
       await manager.saveGoal(makeGoal({ id: goalId }));
@@ -1042,7 +1229,8 @@ describe("StateManager", async () => {
       releaseFence();
 
       await expect(first).resolves.toBe(true);
-      await expect(second).resolves.toBe(false);
+      await expect(second).resolves.toBe(true);
+      expect(fenceCalls).toBe(2);
 
       const archiveBase = path.join(tmpDir, "archive", goalId);
       expect(fs.existsSync(path.join(archiveBase, "goal", "goal.json"))).toBe(true);
@@ -1106,6 +1294,27 @@ describe("StateManager", async () => {
       expect(loaded).not.toBeNull();
       expect(loaded!.id).toBe("fallback-test");
       expect(loaded!.title).toBe("Archived Goal");
+    });
+
+    it("loadGoal prefers a committed archive over stale active state", async () => {
+      const goalId = "committed-archive-wins";
+      const activeGoal = makeGoal({ id: goalId, title: "Active Goal" });
+      const archivedGoal = makeGoal({ id: goalId, title: "Archived Goal", status: "archived" });
+
+      await manager.saveGoal(activeGoal);
+
+      const archiveBase = path.join(tmpDir, "archive", goalId);
+      fs.mkdirSync(path.join(archiveBase, "goal"), { recursive: true });
+      fs.writeFileSync(path.join(archiveBase, "goal", "goal.json"), JSON.stringify(archivedGoal));
+      fs.writeFileSync(path.join(archiveBase, ".archive-complete.json"), JSON.stringify({
+        goalId,
+        completed_at: new Date().toISOString(),
+      }));
+
+      const loaded = await manager.loadGoal(goalId);
+      expect(loaded).not.toBeNull();
+      expect(loaded!.title).toBe("Archived Goal");
+      expect(loaded!.status).toBe("archived");
     });
 
     it("loadGoal returns null for a goal that was never saved nor archived", async () => {
