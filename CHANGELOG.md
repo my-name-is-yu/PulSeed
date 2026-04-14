@@ -4,6 +4,27 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.4.7] - 2026-04-14
+
+### Added
+- Added setup wizard import flows for existing provider, MCP, and adapter configuration, with expanded setup and doctor coverage (#657)
+- Added Soil context compilation, health evaluation, SQLite repository coverage, and Dream memory feedback/sync support (#658)
+- Added runtime control service wiring for daemon control intents and operations (#665)
+- Added chat activity progress events and cross-platform chat session state handling (#665)
+
+### Changed
+- Hardened resident agent reliability, state transaction boundaries, WAL behavior, and goal write locking (#661, #663)
+- Refactored algorithm hotspots across goal dependency, portfolio, strategy, observation, and result reconciliation paths (#659)
+- Improved setup wizard daemon flow and notification/plugin configuration for Telegram, Discord, Signal, and WhatsApp plugins (#657)
+- Sped up slow export and Codex E2E tests and stabilized watchdog heartbeat coverage (#666, #667)
+- Removed the unused `GoalNegotiator` constructor dependency from `GoalRefiner` without changing goal creation behavior (#668)
+- Bumped the package version to `0.4.7`
+
+### Fixed
+- Fixed state-manager and WAL edge cases around transaction boundaries and persisted goal writes (#663)
+- Fixed resident runtime recovery and operation-store handling for daemon control flows (#661, #665)
+- Fixed Soil projection and context evaluation regressions with broader unit coverage (#658)
+
 ## [0.4.6] - 2026-04-13
 
 ### Added

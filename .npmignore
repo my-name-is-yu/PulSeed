@@ -3,6 +3,7 @@ tests/
 docs/
 memory/
 .claude/
+web/
 *.test.ts
 *.test.js
 tsconfig.json
@@ -16,3 +17,4 @@ moxen-workspace/
 node_modules/
 .env*
 coverage/
+coverage-c8/
