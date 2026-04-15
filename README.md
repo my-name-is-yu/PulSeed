@@ -4,72 +4,120 @@
 
 # PulSeed
 
-Goal-driven orchestration for long-running work.
+Keep a goal moving until it is actually done.
 
-[![Website](https://img.shields.io/badge/Website-pulseed.dev-blue?style=flat-square)](https://pulseed.dev)
-[![CI](https://img.shields.io/github/actions/workflow/status/my-name-is-yu/PulSeed/ci.yml?branch=main&label=CI&style=flat-square)](https://github.com/my-name-is-yu/PulSeed/actions/workflows/ci.yml)
-[![Publish](https://img.shields.io/github/actions/workflow/status/my-name-is-yu/PulSeed/publish.yml?label=Publish&style=flat-square)](https://github.com/my-name-is-yu/PulSeed/actions/workflows/publish.yml)
-[![npm version](https://img.shields.io/npm/v/pulseed.svg?style=flat-square)](https://www.npmjs.com/package/pulseed)
-[![npm downloads](https://img.shields.io/npm/dm/pulseed.svg?style=flat-square)](https://www.npmjs.com/package/pulseed)
-[![Node.js >=20](https://img.shields.io/badge/node-%3E%3D20-339933?style=flat-square&logo=node.js&logoColor=white)](https://nodejs.org/)
-[![Security Policy](https://img.shields.io/badge/security-policy-brightgreen.svg?style=flat-square)](SECURITY.md)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](https://opensource.org/licenses/MIT)
+[![Forks](https://img.shields.io/github/forks/my-name-is-yu/PulSeed.svg?style=for-the-badge)](https://github.com/my-name-is-yu/PulSeed/network/members)
+[![Stargazers](https://img.shields.io/github/stars/my-name-is-yu/PulSeed.svg?style=for-the-badge)](https://github.com/my-name-is-yu/PulSeed/stargazers)
+[![Issues](https://img.shields.io/github/issues/my-name-is-yu/PulSeed.svg?style=for-the-badge)](https://github.com/my-name-is-yu/PulSeed/issues)
+[![npm](https://img.shields.io/npm/v/pulseed.svg?style=for-the-badge)](https://www.npmjs.com/package/pulseed)
+[![Downloads](https://img.shields.io/npm/dm/pulseed.svg?style=for-the-badge)](https://www.npmjs.com/package/pulseed)
+[![CI](https://img.shields.io/github/actions/workflow/status/my-name-is-yu/PulSeed/ci.yml?branch=main&style=for-the-badge&label=CI)](https://github.com/my-name-is-yu/PulSeed/actions/workflows/ci.yml)
+[![Publish](https://img.shields.io/github/actions/workflow/status/my-name-is-yu/PulSeed/publish.yml?style=for-the-badge&label=Publish)](https://github.com/my-name-is-yu/PulSeed/actions/workflows/publish.yml)
+[![Node.js >=20](https://img.shields.io/badge/node-%3E%3D20-339933?style=for-the-badge&logo=node.js&logoColor=white)](https://nodejs.org/)
+[![Security Policy](https://img.shields.io/badge/Security-Policy-brightgreen.svg?style=for-the-badge)](SECURITY.md)
+[![MIT License](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](LICENSE)
+[![Website](https://img.shields.io/badge/Website-pulseed.dev-blue?style=for-the-badge)](https://pulseed.dev)
 
 </div>
 
-PulSeed is an AI agent orchestrator for goals that need more than one chat turn.
+PulSeed is an AI orchestrator for work that does not finish in one chat turn.
+Tell it the outcome you want, and it keeps observing, delegating, verifying, and
+looping until the goal is reached or the plan needs to change.
 
-Naming note: `PulSeed` is the product name, and `pulseed` is the CLI and npm package name.
+The primary entry point is `pulseed`. The normal flow is natural language, not a
+menu of subcommands.
 
-## Quick Start
+## Quick Links
 
-1. Install Node.js 20 or newer.
-2. Install the CLI:
+- [Get Started](docs/getting-started.md)
+- [Docs Index](docs/index.md)
+- [Use Cases](docs/usecase.md)
+- [Runtime](docs/runtime.md)
+- [Configuration](docs/configuration.md)
+- [Status](docs/status.md)
+- [Contributing](CONTRIBUTING.md)
+- [Security](SECURITY.md)
+
+## Why PulSeed
+
+- Goal-first orchestration for long-running work
+- Honest goal negotiation when a target is not realistic as stated
+- Bounded agent execution with verification around delegated work
+- Local persistent state under `~/.pulseed/`
+- Multiple runtime surfaces: CLI, chat, TUI, daemon, and cron
+- Support for OpenAI, Anthropic, Ollama, and adapter-based execution paths
+
+## Start Here
+
+PulSeed requires Node.js 20 or newer.
 
 ```bash
 npm install -g pulseed
-```
-
-3. Start PulSeed:
-
-```bash
 pulseed
 ```
 
-Then describe what you want in natural language, such as "Increase test coverage to 90%."
+Then describe the goal in natural language:
 
-## Current Architecture
+- `Increase test coverage to 90%.`
+- `Show me the current progress.`
+- `Keep this goal moving in the background.`
 
-PulSeed uses two layers:
+PulSeed will guide provider and adapter setup when needed. The recommended
+default for most users is `agent_loop` with OpenAI or Anthropic.
 
-- `CoreLoop` keeps a goal moving, checks progress, and decides whether to continue, refine, verify, or stop
-- `AgentLoop` handles bounded tool-using work such as task execution, chat turns, and selected runtime phases
+## What It Does
 
-State, reports, schedules, and local memory live under `~/.pulseed/`.
+- `CoreLoop` keeps a goal moving and decides whether to continue, refine,
+  verify, or stop
+- `AgentLoop` handles bounded tool-using work for task execution, chat, and
+  selected runtime phases
+- State, reports, schedules, and local memory live under `~/.pulseed/`
+- Software-level approval and verification gates protect delegated work
 
-Security boundary: PulSeed uses approval gates and verification around delegated work.
-Native `agent_loop` task execution can use isolated git worktrees, and supported
-CLI adapters can be wrapped with a Docker terminal backend. These reduce blast
-radius, but local backends and plugins still run with the user's privileges. See
-[Security](SECURITY.md).
+## Common Surfaces
 
-## Main Command
+- `pulseed` for the primary interactive workflow
+- `pulseed tui` for the terminal UI
+- `pulseed start` and `pulseed stop` for daemon control
+- `pulseed schedule ...` for schedule management
+- Lower-level commands for scripting, diagnostics, and compatibility
 
-```bash
-pulseed
-```
+## Use Cases
 
-PulSeed is designed so the primary workflow can happen through natural language.
-Use the lower-level CLI commands only when you need scriptable or diagnostic control.
+PulSeed is a fit when the work is bigger than one prompt and needs follow-through:
 
-## Docs
+- keep a codebase moving toward a maintenance goal
+- track a business KPI and adjust strategy as results change
+- coordinate recurring reports, reminders, and external actions
+- observe external data sources and ask for confirmation when a human decision
+  is required
+
+More detailed examples live in [Use Cases](docs/usecase.md).
+
+## Docs and Community
+
+Start with the public doc map:
 
 - [Getting Started](docs/getting-started.md)
-- [Docs Index](docs/index.md)
-- [Mechanism](docs/mechanism.md)
 - [Runtime](docs/runtime.md)
+- [Mechanism](docs/mechanism.md)
 - [Configuration](docs/configuration.md)
 - [Architecture Map](docs/architecture-map.md)
+
+For project participation:
+
+- read [Contributing](CONTRIBUTING.md) before opening a pull request
+- use [Issues](https://github.com/my-name-is-yu/PulSeed/issues) for bugs and
+  feature proposals
+- follow the [Code of Conduct](CODE_OF_CONDUCT.md)
+
+## Safety Boundary
+
+PulSeed uses approval gates and verification around delegated work. Native
+`agent_loop` task execution can use isolated git worktrees, and supported CLI
+adapters can be wrapped with a Docker terminal backend. These reduce blast
+radius, but local backends and plugins still run with the user's privileges. See
+[Security](SECURITY.md).
 
 ## Release
 
