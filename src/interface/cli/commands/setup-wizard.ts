@@ -9,6 +9,7 @@ import {
 } from "../../../base/llm/provider-config.js";
 import type { ProviderConfig } from "../../../base/llm/provider-config.js";
 import { clearIdentityCache } from "../../../base/config/identity-loader.js";
+import { readCodexOAuthToken } from "../../../base/llm/provider-config.js";
 import { isDaemonRunning } from "../../../runtime/daemon/client.js";
 import { ROOT_PRESETS } from "./presets/root-presets.js";
 import { MODEL_REGISTRY, detectApiKeys, getAdaptersForModel, maskKey } from "./setup-shared.js";
@@ -148,18 +149,16 @@ function canUseImportedApiKey(provider: Provider, adapter: string, apiKey: strin
   return !(provider === "openai" && adapter !== "openai_codex_cli" && isLikelyCodexOAuthToken(apiKey));
 }
 
-function importedExecutionIsComplete(
+async function importedExecutionIsComplete(
   execution: Pick<SetupAnswers, "provider" | "model" | "adapter" | "apiKey">,
   base?: Partial<ProviderConfig>
-): boolean {
+): Promise<boolean> {
   if (!execution.provider || !execution.model || !execution.adapter) return false;
   if (!canUseImportedModel(execution.provider, execution.model)) return false;
   if (!getAdaptersForModel(execution.model, execution.provider).includes(execution.adapter)) return false;
-  if (
-    execution.provider === "openai" &&
-    execution.adapter === "openai_codex_cli"
-  ) {
-    return false;
+  if (execution.provider === "openai" && execution.adapter === "openai_codex_cli") {
+    const token = await readCodexOAuthToken();
+    if (!token) return false;
   }
   if (execution.provider === "openai" && execution.adapter !== "openai_codex_cli") {
     if (!execution.apiKey) return false;
@@ -521,8 +520,8 @@ export async function runSetupWizard(): Promise<number> {
     daemonPort: 0,
     notificationConfig: null,
   };
-  const skipImportedExecution = Boolean(importSelection) &&
-    importedExecutionIsComplete(answers, importedProviderPatch);
+  const skipImportedExecution =
+    Boolean(importSelection) && (await importedExecutionIsComplete(answers, importedProviderPatch));
   let section: FullSetupSection = "identity";
   let finalAnswers: SetupAnswers | undefined;
 

@@ -10,6 +10,7 @@ import {
   unique,
 } from "./fs-utils.js";
 import { extractMcpServers } from "./mcp.js";
+import { collectRecords, firstString, nestedRecord } from "./parse.js";
 import { buildProviderItem, extractProviderSettings } from "./provider.js";
 import { buildTelegramItem, extractTelegramSettings, telegramCredentialItems } from "./telegram.js";
 import type {
@@ -93,19 +94,39 @@ function sourceRoots(source: SetupImportSourceId): string[] {
 }
 
 function providerItems(source: SetupImportSourceId, rootDir: string): SetupImportItem[] {
-  const env = {
+  const baseEnv = {
     ...readEnvFile(path.join(rootDir, ".env")),
     ...readEnvFile(path.join(rootDir, ".env.local")),
     ...readEnvFile(path.join(rootDir, "config", ".env")),
     ...readEnvFile(path.join(rootDir, "config", ".env.local")),
-    ...workspaceRoots(rootDir).reduce<Record<string, string>>((acc, workspaceRoot) => ({
-      ...acc,
-      ...readEnvFile(path.join(workspaceRoot, ".env")),
-      ...readEnvFile(path.join(workspaceRoot, ".env.local")),
-    }), {}),
   };
   return candidateFiles(rootDir, CONFIG_FILENAMES).flatMap((configPath) => {
-    const settings = extractProviderSettings(readJson(configPath), source, { env });
+    const raw = readJson(configPath);
+    const records = collectRecords(raw);
+    const workspaceHint = records
+      .map((record) => {
+        const direct =
+          firstString([record], ["work_dir", "workDir", "workspacePath"]) ??
+          firstString([record], ["workspace"]);
+        if (direct) return direct;
+        const workspace = nestedRecord(record, "workspace");
+        if (!workspace) return undefined;
+        return firstString([workspace], ["path", "dir", "root", "work_dir", "workDir", "workspacePath", "name"]);
+      })
+      .find(Boolean);
+
+    const env = { ...baseEnv };
+    if (workspaceHint) {
+      const workspaceRoot = path.isAbsolute(workspaceHint)
+        ? workspaceHint
+        : path.join(rootDir, workspaceHint);
+      if (pathExists(workspaceRoot)) {
+        Object.assign(env, readEnvFile(path.join(workspaceRoot, ".env")));
+        Object.assign(env, readEnvFile(path.join(workspaceRoot, ".env.local")));
+      }
+    }
+
+    const settings = extractProviderSettings(raw, source, { env });
     return settings ? [buildProviderItem(source, configPath, settings)] : [];
   });
 }
