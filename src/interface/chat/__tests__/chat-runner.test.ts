@@ -611,6 +611,37 @@ describe("ChatRunner", () => {
       }
     });
 
+    it("/model keeps explicit provider.json model ahead of PULSEED_MODEL", async () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-file-model-"));
+      const oldModel = process.env["PULSEED_MODEL"];
+      try {
+        process.env["PULSEED_MODEL"] = "gpt-4o-mini-tts";
+        const stateManager = new StateManager(tmpDir);
+        await stateManager.init();
+        await stateManager.writeRaw("provider.json", {
+          provider: "openai",
+          model: "gpt-5.4",
+          adapter: "openai_codex_cli",
+        });
+        const adapter = makeMockAdapter();
+        const runner = new ChatRunner(makeDeps({ stateManager, adapter }));
+
+        const result = await runner.execute("/model", "/repo");
+
+        expect(result.success).toBe(true);
+        expect(result.output).toContain("Model: gpt-5.4");
+        expect(result.output).not.toContain("gpt-4o-mini-tts");
+        expect(adapter.execute).not.toHaveBeenCalled();
+      } finally {
+        if (oldModel === undefined) {
+          delete process.env["PULSEED_MODEL"];
+        } else {
+          process.env["PULSEED_MODEL"] = oldModel;
+        }
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+
     it("/plugins handles missing pluginLoader gracefully", async () => {
       const runner = new ChatRunner(makeDeps());
 

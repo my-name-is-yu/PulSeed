@@ -519,8 +519,8 @@ export class ChatRunner {
     const provider = envProvider === "codex"
       ? "openai"
       : envProvider ?? fileConfig.provider ?? "openai";
-    const model = process.env["PULSEED_MODEL"]
-      ?? fileConfig.model
+    const model = fileConfig.model
+      ?? process.env["PULSEED_MODEL"]
       ?? (provider === "anthropic"
         ? process.env["ANTHROPIC_MODEL"] ?? "claude-sonnet-4-6"
         : provider === "ollama"
