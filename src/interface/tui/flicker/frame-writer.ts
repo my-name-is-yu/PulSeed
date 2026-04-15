@@ -1,4 +1,12 @@
-import { BSU, ESU, CURSOR_HOME, ERASE_SCREEN, parkCursor } from "./dec.js";
+import {
+  BSU,
+  ESU,
+  CURSOR_HOME,
+  ERASE_LINE,
+  ERASE_SCREEN,
+  cursorTo,
+  parkCursor,
+} from "./dec.js";
 import { isSynchronizedOutputSupported } from "./terminal-detect.js";
 
 export interface FrameWriter {
@@ -24,9 +32,51 @@ export function createFrameWriter(stream: NodeJS.WriteStream): FrameWriter {
   const rawWrite = stream.write.bind(stream) as (s: string) => boolean;
   let needsErase = false;
   let destroyed = false;
+  let lastLines: string[] | null = null;
+  let lastCursorEscape: string | null = null;
 
   function getTermRows(): number {
     return stream.rows ?? 24;
+  }
+
+  function buildFullFrame(frame: string, finalCursor: string): string {
+    const prefix = syncSupported ? BSU : "";
+    const suffix = syncSupported ? ESU : "";
+    const erase = needsErase ? ERASE_SCREEN : "";
+    return prefix + erase + CURSOR_HOME + frame + finalCursor + suffix;
+  }
+
+  function splitFrame(frame: string): string[] {
+    return frame.split("\n");
+  }
+
+  function buildDiffFrame(nextLines: string[], finalCursor: string): string {
+    const prefix = syncSupported ? BSU : "";
+    const suffix = syncSupported ? ESU : "";
+    const previousLines = lastLines ?? [];
+    const maxLines = Math.max(previousLines.length, nextLines.length);
+    let output = "";
+
+    for (let index = 0; index < maxLines; index += 1) {
+      const row = index + 1;
+      const previousLine = previousLines[index] ?? "";
+      const nextLine = nextLines[index] ?? "";
+
+      if (previousLine === nextLine) {
+        continue;
+      }
+
+      output += cursorTo(row) + ERASE_LINE;
+      if (nextLine.length > 0) {
+        output += nextLine;
+      }
+    }
+
+    if (output.length === 0 && lastCursorEscape === finalCursor) {
+      return "";
+    }
+
+    return prefix + output + finalCursor + suffix;
   }
 
   return {
@@ -34,23 +84,33 @@ export function createFrameWriter(stream: NodeJS.WriteStream): FrameWriter {
       if (destroyed) return;
 
       const rows = getTermRows();
-      const prefix = syncSupported ? BSU : "";
-      const suffix = syncSupported ? ESU : "";
-      const erase = needsErase ? ERASE_SCREEN : "";
       const finalCursor = cursorEscape ?? parkCursor(rows);
+      const nextLines = splitFrame(frame);
+      const shouldRenderFullFrame = needsErase || lastLines === null;
+      const output = shouldRenderFullFrame
+        ? buildFullFrame(frame, finalCursor)
+        : buildDiffFrame(nextLines, finalCursor);
 
-      // Single rawWrite() call for atomicity — bypasses any stdout patches
-      rawWrite(prefix + erase + CURSOR_HOME + frame + finalCursor + suffix);
+      if (output.length > 0) {
+        // Single rawWrite() call for atomicity — bypasses any stdout patches
+        rawWrite(output);
+      }
 
       needsErase = false;
+      lastLines = nextLines;
+      lastCursorEscape = finalCursor;
     },
 
     requestErase(): void {
       needsErase = true;
+      lastLines = null;
+      lastCursorEscape = null;
     },
 
     destroy(): void {
       destroyed = true;
+      lastLines = null;
+      lastCursorEscape = null;
     },
   };
 }
