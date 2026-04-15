@@ -191,8 +191,29 @@ export async function stepApiKey(
       })
     );
 
-    if (authChoice === "login") {
-      await runCodexOAuthLogin();
+    let nextAuthChoice = authChoice;
+    while (nextAuthChoice === "login") {
+      const token = await runCodexOAuthLogin();
+      if (token) return undefined;
+
+      p.log.warn("Codex OAuth login did not produce a usable token.");
+      nextAuthChoice = guardCancel(
+        await p.select({
+          message: "Codex CLI authentication is not ready. What should setup do?",
+          options: [
+            {
+              value: "login" as const,
+              label: "Try OAuth login again",
+            },
+            {
+              value: "skip" as const,
+              label: "Skip for now",
+              hint: "run `codex login` before using this adapter",
+            },
+          ],
+          initialValue: "login" as const,
+        })
+      );
     }
     return undefined;
   }

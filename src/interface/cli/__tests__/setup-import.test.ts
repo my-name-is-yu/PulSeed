@@ -160,6 +160,79 @@ describe("setup import discovery", () => {
       enabled: false,
     });
   });
+
+  it("imports provider API keys from the workspace env file selected by the config", async () => {
+    const hermesHome = path.join(tmpDir, "hermes");
+    process.env["PULSEED_IMPORT_HERMES_HOME"] = hermesHome;
+
+    await fsp.mkdir(path.join(hermesHome, "workspace-main"), { recursive: true });
+    await fsp.writeFile(
+      path.join(hermesHome, "workspace-main", ".env"),
+      "OPENAI_API_KEY=sk-workspace-openai\n",
+      "utf-8"
+    );
+    await writeJson(path.join(hermesHome, "settings.json"), {
+      provider: "openai",
+      model: "gpt-5.4",
+      adapter: "agent_loop",
+      workspace: "workspace-main",
+      openai: {
+        apiKey: "OPENAI_API_KEY",
+      },
+    });
+
+    const { detectSetupImportSources } = await import("../commands/setup/import/discovery.js");
+    const sources = detectSetupImportSources();
+    const hermes = sources.find((source) => source.id === "hermes");
+    const provider = hermes?.items.find((item) => item.kind === "provider");
+
+    expect(provider?.providerSettings).toMatchObject({
+      provider: "openai",
+      model: "gpt-5.4",
+      adapter: "agent_loop",
+      apiKey: "sk-workspace-openai",
+    });
+  });
+
+  it("does not pull an api key from an unrelated Hermes workspace", async () => {
+    const hermesHome = path.join(tmpDir, "hermes");
+    process.env["PULSEED_IMPORT_HERMES_HOME"] = hermesHome;
+
+    await fsp.mkdir(path.join(hermesHome, "workspace-main"), { recursive: true });
+    await fsp.mkdir(path.join(hermesHome, "workspace-secondary"), { recursive: true });
+    await fsp.writeFile(
+      path.join(hermesHome, "workspace-main", ".env"),
+      "OPENAI_API_KEY=sk-workspace-main\n",
+      "utf-8"
+    );
+    await fsp.writeFile(
+      path.join(hermesHome, "workspace-secondary", ".env"),
+      "OPENAI_API_KEY=sk-workspace-secondary\n",
+      "utf-8"
+    );
+    await writeJson(path.join(hermesHome, "settings.json"), {
+      provider: "openai",
+      model: "gpt-5.4",
+      adapter: "agent_loop",
+      workspace: "workspace-main",
+      openai: {
+        apiKey: "OPENAI_API_KEY",
+      },
+    });
+
+    const { detectSetupImportSources } = await import("../commands/setup/import/discovery.js");
+    const sources = detectSetupImportSources();
+    const hermes = sources.find((source) => source.id === "hermes");
+    const provider = hermes?.items.find((item) => item.kind === "provider");
+
+    expect(provider?.providerSettings).toMatchObject({
+      provider: "openai",
+      model: "gpt-5.4",
+      adapter: "agent_loop",
+      apiKey: "sk-workspace-main",
+    });
+    expect(provider?.providerSettings?.apiKey).not.toBe("sk-workspace-secondary");
+  });
 });
 
 describe("setup import apply", () => {

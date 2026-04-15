@@ -23,6 +23,17 @@ const PROVIDER_KEYS = [
 const MODEL_KEYS = ["model", "default_model", "defaultModel", "modelName"];
 const ADAPTER_KEYS = ["adapter", "default_adapter", "defaultAdapter", "backend", "terminalBackend"];
 const API_KEY_KEYS = ["api_key", "apiKey", "openai_api_key", "anthropic_api_key", "OPENAI_API_KEY", "ANTHROPIC_API_KEY"];
+const SECTION_API_KEY_KEYS = [
+  ...API_KEY_KEYS,
+  "key",
+  "token",
+  "auth_token",
+  "authToken",
+  "access_token",
+  "accessToken",
+  "secret_key",
+  "secretKey",
+];
 const BASE_URL_KEYS = ["base_url", "baseUrl", "baseURL", "endpoint", "api_base"];
 const CLI_PATH_KEYS = ["codex_cli_path", "codexCliPath", "cli_path", "cliPath"];
 const PROVIDER_ENV_KEYS: Record<Provider, string[]> = {
@@ -116,9 +127,11 @@ function providerSection(
 
 function stringFromSecretRef(value: unknown, env: Record<string, string>): string | undefined {
   if (typeof value === "string" && value.trim()) {
-    const match = /^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$/.exec(value.trim());
+    const trimmed = value.trim();
+    const match = /^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$/.exec(trimmed);
     if (match) return env[match[1]!];
-    return value.trim();
+    if (/^[A-Z_][A-Z0-9_]*$/.test(trimmed)) return env[trimmed];
+    return trimmed;
   }
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const record = value as Record<string, unknown>;
@@ -164,7 +177,7 @@ function providerApiKey(
 ): string | undefined {
   if (!provider) return undefined;
   const section = providerSection(records, provider);
-  const sectionKey = section ? firstSecretString([section], API_KEY_KEYS, env) : undefined;
+  const sectionKey = section ? firstSecretString([section], SECTION_API_KEY_KEYS, env) : undefined;
   if (sectionKey) return sectionKey;
   for (const key of PROVIDER_ENV_KEYS[provider]) {
     if (env[key]) return env[key];
