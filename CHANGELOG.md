@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.4.10] - 2026-04-15
+
+### Added
+- Added schedule lifecycle controls and runtime integrations so schedules can be listed, triggered, enabled, disabled, and removed through the daemon-backed runtime paths (#679, #680)
+- Added channel security policy and routing support for gateway ingress, including policy wiring for Discord, WhatsApp, Signal, Telegram, Slack, and WebSocket channel adapters (#681)
+- Added the skills registry, `pulseed skills` CLI commands, and the `skill_search` builtin tool for discovering home and workspace skills (#681)
+- Added configurable terminal backends for local and Docker-backed agent CLI execution (#681)
+
+### Changed
+- Refactored gateway policy application, skills parsing, and Docker terminal command assembly into smaller helper boundaries without changing public behavior (#681)
+- Bumped the package version to `0.4.10`
+
+### Fixed
+- Hardened skill installation path handling, frontmatter description parsing, and Docker backend environment propagation (#681)
+
 ## [0.4.9] - 2026-04-14
 
 ### Added
