@@ -586,6 +586,7 @@ describe("setup notification step", () => {
     const stepModelMock = vi.fn(async (_provider: string, initial?: string) => initial ?? "gpt-5.4-mini");
     const stepApiKeyMock = vi.fn(async (_provider: string, _detected: Record<string, boolean>, initial?: string) => initial ?? "sk-test");
     const stepAdapterMock = vi.fn(async (_model: string, _provider: string, initial?: string) => initial ?? "agent_loop");
+    const stepRootPresetMock = vi.fn(async () => "default");
     const saveProviderConfigMock = vi.fn(async () => {});
     const applySetupImportSelectionMock = vi.fn(async () => ({
       created_at: "2026-04-13T00:00:00.000Z",
@@ -639,7 +640,7 @@ describe("setup notification step", () => {
       stepSeedyName: stepSeedyNameMock,
     }));
     vi.doMock("../commands/setup/steps-provider.js", () => ({
-      stepRootPreset: vi.fn(async () => "default"),
+      stepRootPreset: stepRootPresetMock,
       stepProvider: stepProviderMock,
       stepModel: stepModelMock,
       stepApiKey: stepApiKeyMock,
@@ -691,6 +692,7 @@ describe("setup notification step", () => {
     expect(code).toBe(0);
     expect(stepExistingConfigMock).not.toHaveBeenCalled();
     expect(stepSeedyNameMock).toHaveBeenCalledTimes(1);
+    expect(stepRootPresetMock).not.toHaveBeenCalled();
     expect(stepProviderMock).not.toHaveBeenCalled();
     expect(stepModelMock).not.toHaveBeenCalled();
     expect(stepAdapterMock).not.toHaveBeenCalled();

@@ -160,6 +160,38 @@ describe("setup import discovery", () => {
       enabled: false,
     });
   });
+
+  it("imports provider API keys from workspace env files", async () => {
+    const hermesHome = path.join(tmpDir, "hermes");
+    process.env["PULSEED_IMPORT_HERMES_HOME"] = hermesHome;
+
+    await fsp.mkdir(path.join(hermesHome, "workspace-main"), { recursive: true });
+    await fsp.writeFile(
+      path.join(hermesHome, "workspace-main", ".env"),
+      "OPENAI_API_KEY=sk-workspace-openai\n",
+      "utf-8"
+    );
+    await writeJson(path.join(hermesHome, "settings.json"), {
+      provider: "openai",
+      model: "gpt-5.4",
+      adapter: "agent_loop",
+      openai: {
+        apiKey: "OPENAI_API_KEY",
+      },
+    });
+
+    const { detectSetupImportSources } = await import("../commands/setup/import/discovery.js");
+    const sources = detectSetupImportSources();
+    const hermes = sources.find((source) => source.id === "hermes");
+    const provider = hermes?.items.find((item) => item.kind === "provider");
+
+    expect(provider?.providerSettings).toMatchObject({
+      provider: "openai",
+      model: "gpt-5.4",
+      adapter: "agent_loop",
+      apiKey: "sk-workspace-openai",
+    });
+  });
 });
 
 describe("setup import apply", () => {

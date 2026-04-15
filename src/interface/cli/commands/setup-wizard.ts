@@ -39,6 +39,9 @@ type IdentityAnswers = Pick<SetupAnswers, "userName" | "agentName" | "rootPreset
 type ExecutionAnswers = Pick<SetupAnswers, "provider" | "model" | "adapter" | "apiKey">;
 type RuntimeAnswers = Pick<SetupAnswers, "startDaemon" | "daemonPort" | "notificationConfig">;
 type FullSetupSection = "identity" | "execution" | "runtime" | "review";
+type IdentityConfigOptions = {
+  skipRootPreset?: boolean;
+};
 
 function formatSummary(answers: SetupAnswers): string {
   const notificationChannels = answers.notificationConfig
@@ -149,11 +152,16 @@ async function stepExecutionConfig(
   return { provider, model, adapter, apiKey };
 }
 
-async function stepIdentityConfig(current?: Partial<IdentityAnswers>): Promise<IdentityAnswers> {
+async function stepIdentityConfig(
+  current?: Partial<IdentityAnswers>,
+  options: IdentityConfigOptions = {}
+): Promise<IdentityAnswers> {
   return {
     userName: await stepUserName(current?.userName),
     agentName: await stepSeedyName(current?.agentName),
-    rootPreset: await stepRootPreset(current?.rootPreset),
+    rootPreset: options.skipRootPreset
+      ? current?.rootPreset ?? "default"
+      : await stepRootPreset(current?.rootPreset),
   };
 }
 
@@ -371,7 +379,12 @@ export async function runSetupWizard(): Promise<number> {
 
   while (!finalAnswers) {
     if (section === "identity") {
-      Object.assign(answers, await stepIdentityConfig(answers.userName ? answers : undefined));
+      Object.assign(
+        answers,
+        await stepIdentityConfig(answers.userName ? answers : undefined, {
+          skipRootPreset: Boolean(importSelection),
+        })
+      );
       const next = await stepSectionNavigation("Identity settings complete.");
       if (next === "cancel") {
         p.cancel("Setup cancelled.");

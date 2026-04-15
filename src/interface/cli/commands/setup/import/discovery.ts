@@ -95,7 +95,14 @@ function sourceRoots(source: SetupImportSourceId): string[] {
 function providerItems(source: SetupImportSourceId, rootDir: string): SetupImportItem[] {
   const env = {
     ...readEnvFile(path.join(rootDir, ".env")),
+    ...readEnvFile(path.join(rootDir, ".env.local")),
     ...readEnvFile(path.join(rootDir, "config", ".env")),
+    ...readEnvFile(path.join(rootDir, "config", ".env.local")),
+    ...workspaceRoots(rootDir).reduce<Record<string, string>>((acc, workspaceRoot) => ({
+      ...acc,
+      ...readEnvFile(path.join(workspaceRoot, ".env")),
+      ...readEnvFile(path.join(workspaceRoot, ".env.local")),
+    }), {}),
   };
   return candidateFiles(rootDir, CONFIG_FILENAMES).flatMap((configPath) => {
     const settings = extractProviderSettings(readJson(configPath), source, { env });
