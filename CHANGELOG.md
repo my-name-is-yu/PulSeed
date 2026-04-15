@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.4.13] - 2026-04-15
+
+### Added
+- Added a dedicated TUI test entrypoint for exercising shell-only input, scrollback, cursor rendering, and IME behavior without requiring the daemon (#687)
+
+### Changed
+- Made no-flicker TUI rendering the default public path, including a dedicated fullscreen chat surface with fixed input rows, diff-safe protected rows, mouse scrolling, drag selection, Shift+Enter multiline input, and a PulSeed-owned block cursor (#686, #687)
+- Improved setup import parity for Hermes-style configurations, provider defaults, API key detection, and notification setup flows (#685)
+- Changed release builds to clean stale `dist` output before compiling, with `clean` moving existing `dist` trees aside so recursive deletion cannot block the build path (#687)
+- Bumped the package version to `0.4.13`
+
+### Fixed
+- Fixed TUI input-box drift during scrollback and multiline input by separating the fixed composer area from the scrollable message viewport (#686, #687)
+- Fixed Ghostty/macOS TUI input issues around hidden native cursor anchoring, Japanese IME composition placement, backspace handling, and bash-mode prompt rendering (#687)
+- Fixed stale or duplicated `dist` output causing `npm run build` to appear hung during recursive cleanup (#687)
+
 ## [0.4.12] - 2026-04-15
 
 ### Added
