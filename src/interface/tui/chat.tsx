@@ -12,13 +12,14 @@ import { getClipboardContent } from "./clipboard.js";
 import { theme } from "./theme.js";
 import { pickSpinnerVerb } from "./spinner-verbs.js";
 import { ShimmerText } from "./shimmer-text.js";
-import { INPUT_MARKER, positionCursorInFrame, buildCursorEscape } from "./cursor-tracker.js";
+import { CARET_MARKER, INPUT_MARKER, positionCursorInFrame, buildCursorEscape } from "./cursor-tracker.js";
 import { HIDE_CURSOR, SHOW_CURSOR } from "./flicker/dec.js";
 import { isBashModeInput } from "./bash-mode.js";
 import { isRenderableFrameChunk } from "./render-output.js";
+import { estimateWrappedLineCount } from "./markdown-renderer.js";
 import { buildChatViewport } from "./chat/viewport.js";
 import { getScrollRequest, stripMouseEscapeSequences } from "./chat/scroll.js";
-import { getMatchingSuggestions } from "./chat/suggestions.js";
+import { getMatchingSuggestions, type Suggestion } from "./chat/suggestions.js";
 import type { ChatMessage } from "./chat/types.js";
 
 export type {
@@ -35,18 +36,192 @@ interface ChatProps {
   isProcessing: boolean; // show "thinking..." indicator
   goalNames?: string[];
   noFlicker?: boolean;
+  availableRows?: number;
+  availableCols?: number;
 }
 
 const SCROLL_LINE_STEP = 3;
 const DEFAULT_PROMPT = "◉";
 const BASH_PROMPT = "!";
+const CHAT_CHROME_RESERVED_ROWS = 4;
+const SCROLL_INDICATOR_ROWS = 2;
+const INPUT_BOX_HORIZONTAL_CHROME = 4;
+const SUGGESTION_HINT = " arrows to navigate, tab/enter to select, esc to dismiss";
+const ZERO_WIDTH_CHARS = new Set(["\u200B", "\u2060", "\u2061"]);
 
 export { buildChatViewport } from "./chat/viewport.js";
-export { getScrollRequest, stripMouseEscapeSequences } from "./chat/scroll.js";
+export { getScrollRequest, parseMouseEvent, stripMouseEscapeSequences } from "./chat/scroll.js";
 export { getMatchingSuggestions } from "./chat/suggestions.js";
 
 export function getInputPromptLabel(bashMode: boolean): string {
   return bashMode ? BASH_PROMPT : DEFAULT_PROMPT;
+}
+
+function getInputPlaceholder(bashMode: boolean): string {
+  return bashMode ? "! for bash mode" : "/ for commands";
+}
+
+export function formatSuggestionLabel(suggestion: Suggestion): string {
+  return suggestion.type === "goal"
+    ? `  ${suggestion.name} ${suggestion.description.padEnd(20)}  [goal]`
+    : `  ${suggestion.name.padEnd(20)}${suggestion.description}`;
+}
+
+type InputCell = {
+  text: string;
+  width: number;
+};
+
+type InputRow = {
+  cells: InputCell[];
+};
+
+function charWidth(ch: string): number {
+  if (ZERO_WIDTH_CHARS.has(ch)) return 0;
+  const cp = ch.codePointAt(0) ?? 0;
+  return cp > 0x2e7f ? 2 : 1;
+}
+
+function stringWidth(text: string): number {
+  let width = 0;
+  for (const ch of text) {
+    width += charWidth(ch);
+  }
+  return width;
+}
+
+function trimToWidth(text: string, width: number): string {
+  if (width <= 0) return "";
+  let out = "";
+  let used = 0;
+  for (const ch of text) {
+    const next = charWidth(ch);
+    if (used + next > width) break;
+    out += ch;
+    used += next;
+  }
+  return out;
+}
+
+function pushInputRow(rows: InputRow[], cells: InputCell[]): void {
+  rows.push({ cells: [...cells] });
+}
+
+function buildInputRows(
+  input: string,
+  cursorOffset: number,
+  contentWidth: number,
+  placeholder: string,
+): InputRow[] {
+  if (contentWidth <= 0) {
+    return [{ cells: [{ text: CARET_MARKER, width: 0 }] }];
+  }
+
+  if (input.length === 0) {
+    return [{
+      cells: [
+        { text: CARET_MARKER, width: 0 },
+        { text: " ", width: 1 },
+        ...Array.from(trimToWidth(placeholder, Math.max(0, contentWidth - 1))).map((ch) => ({
+          text: ch,
+          width: charWidth(ch),
+        })),
+      ],
+    }];
+  }
+
+  const rows: InputRow[] = [];
+  let currentCells: InputCell[] = [];
+  let currentWidth = 0;
+  let offset = 0;
+
+  while (offset <= input.length) {
+    if (offset === cursorOffset) {
+      currentCells.push({ text: CARET_MARKER, width: 0 });
+    }
+
+    if (offset === input.length) {
+      break;
+    }
+
+    const codePoint = input.codePointAt(offset) ?? 0;
+    const ch = String.fromCodePoint(codePoint);
+    const nextOffset = offset + ch.length;
+
+    if (ch === "\n") {
+      currentCells.push({ text: " ", width: 1 });
+      pushInputRow(rows, currentCells);
+      currentCells = [];
+      currentWidth = 0;
+      offset = nextOffset;
+      continue;
+    }
+
+    const width = charWidth(ch);
+    if (currentWidth + width > contentWidth && currentCells.length > 0) {
+      pushInputRow(rows, currentCells);
+      currentCells = [];
+      currentWidth = 0;
+    }
+
+    currentCells.push({ text: ch, width });
+    currentWidth += width;
+    offset = nextOffset;
+  }
+
+  pushInputRow(rows, currentCells);
+  return rows;
+}
+
+function getInputBoxContentWidth(termCols: number, bashMode: boolean): number {
+  const innerWidth = Math.max(1, termCols - INPUT_BOX_HORIZONTAL_CHROME);
+  const promptWidth = getInputPromptLabel(bashMode).length + 1;
+  return Math.max(1, innerWidth - promptWidth);
+}
+
+function estimateInputBoxHeight(
+  input: string,
+  termCols: number,
+  bashMode: boolean,
+): number {
+  const contentWidth = getInputBoxContentWidth(termCols, bashMode);
+  const displayText =
+    input.length > 0 ? `${input}x` : getInputPlaceholder(bashMode);
+  return estimateWrappedLineCount(displayText, contentWidth) + 2;
+}
+
+export function estimateComposerHeight({
+  termCols,
+  input,
+  bashMode,
+  emptyHint,
+  matches,
+}: {
+  termCols: number;
+  input: string;
+  bashMode: boolean;
+  emptyHint: boolean;
+  matches: Suggestion[];
+}): number {
+  let height = 1 + estimateInputBoxHeight(input, termCols, bashMode);
+
+  if (bashMode) {
+    height += estimateWrappedLineCount("! for bash mode", termCols);
+  }
+
+  if (emptyHint) {
+    height += estimateWrappedLineCount(" Type a message or /help for commands", termCols);
+  }
+
+  if (matches.length > 0) {
+    height += matches.reduce(
+      (total, suggestion) => total + estimateWrappedLineCount(formatSuggestionLabel(suggestion), termCols),
+      0,
+    );
+    height += estimateWrappedLineCount(SUGGESTION_HINT, termCols);
+  }
+
+  return height;
 }
 
 export function Chat({
@@ -56,6 +231,8 @@ export function Chat({
   isProcessing,
   goalNames = [],
   noFlicker,
+  availableRows,
+  availableCols,
 }: ChatProps) {
   const [input, setInput] = useState("");
   const [selectedIdx, setSelectedIdx] = useState(0);
@@ -126,9 +303,31 @@ export function Chat({
 
   // Scroll-slicing: clip messages to visible terminal height
   const { stdout } = useStdout();
-  const termRows = stdout?.rows ?? 24;
-  const termCols = stdout?.columns ?? 80;
-  const viewport = buildChatViewport(messages, termCols, termRows, scrollOffset);
+  const termRows = availableRows ?? stdout?.rows ?? 24;
+  const termCols = availableCols ?? stdout?.columns ?? 80;
+  const composerHeight = estimateComposerHeight({
+    termCols,
+    input,
+    bashMode,
+    emptyHint,
+    matches,
+  });
+  const processingRows = isProcessing ? 1 : 0;
+  const messageRows = Math.max(
+    1,
+    termRows -
+      CHAT_CHROME_RESERVED_ROWS -
+      composerHeight -
+      processingRows -
+      SCROLL_INDICATOR_ROWS,
+  );
+  const viewport = buildChatViewport(
+    messages,
+    termCols,
+    messageRows,
+    scrollOffset,
+  );
+  const logPaneHeight = viewport.maxVisibleRows + processingRows + SCROLL_INDICATOR_ROWS;
 
   const applyScroll = useCallback((direction: "up" | "down", kind: "page" | "line") => {
     setScrollOffset((prev) => {
@@ -292,70 +491,95 @@ export function Chat({
 
   return (
     <Box flexDirection="column" flexGrow={1} overflow="hidden">
-      {/* Scroll indicator for older messages */}
-      {viewport.hiddenAboveRows > 0 && (
-        <Text dimColor>
-          {"↑"} {viewport.hiddenAboveRows} earlier lines
-        </Text>
-      )}
-
-      {/* All visible messages rendered with memoized rows to prevent flicker */}
-      <Box flexDirection="column" flexGrow={1} justifyContent="flex-end">
-        {viewport.rows.map((row) => {
-          if (row.kind === "spacer") {
-            return (
-              <Box key={row.key} height={1}>
-                <Text> </Text>
-              </Box>
-            );
-          }
-
-          const text = row.text;
-          const textProps: Record<string, unknown> = {};
-          if (row.color) textProps.color = row.color;
-          if (row.bold) textProps.bold = true;
-          if (row.dim) textProps.dimColor = true;
-          if (row.italic) textProps.italic = true;
-
-          if (row.kind === "user") {
-            return (
-              <Box key={row.key} paddingX={row.paddingX ?? 0}>
-                <Text {...textProps} backgroundColor={row.backgroundColor}>
-                  {text}
-                </Text>
-              </Box>
-            );
-          }
-
-          return (
-            <Box key={row.key} marginLeft={row.marginLeft ?? 0}>
-              <Text {...textProps}>{text}</Text>
-            </Box>
-          );
-        })}
-
-        {isProcessing && (
-          <Box>
-            <CheckerboardSpinner />
+      <Box
+        flexDirection="column"
+        flexGrow={1}
+        flexShrink={1}
+        height={logPaneHeight}
+        overflow="hidden"
+      >
+        {/* Scroll indicator for older messages */}
+        <Box height={1} overflow="hidden">
+          {viewport.hiddenAboveRows > 0 ? (
+            <Text dimColor>
+              {"↑"} {viewport.hiddenAboveRows} earlier lines
+            </Text>
+          ) : (
             <Text> </Text>
-            <ShimmerText>{`${spinnerVerb}...`}</ShimmerText>
-          </Box>
-        )}
+          )}
+        </Box>
+
+        {/* All visible messages rendered with memoized rows to prevent flicker */}
+        <Box
+          flexDirection="column"
+          flexGrow={1}
+          flexShrink={1}
+          height={viewport.maxVisibleRows}
+          justifyContent="flex-end"
+          overflow="hidden"
+        >
+          {viewport.rows.map((row) => {
+            if (row.kind === "spacer") {
+              return (
+                <Box key={row.key} height={1}>
+                  <Text> </Text>
+                </Box>
+              );
+            }
+
+            const text = row.text;
+            const textProps: Record<string, unknown> = {};
+            if (row.color) textProps.color = row.color;
+            if (row.bold) textProps.bold = true;
+            if (row.dim) textProps.dimColor = true;
+            if (row.italic) textProps.italic = true;
+
+            if (row.kind === "user") {
+              return (
+                <Box key={row.key} paddingX={row.paddingX ?? 0}>
+                  <Text {...textProps} backgroundColor={row.backgroundColor}>
+                    {text}
+                  </Text>
+                </Box>
+              );
+            }
+
+            return (
+              <Box key={row.key} marginLeft={row.marginLeft ?? 0}>
+                <Text {...textProps}>{text}</Text>
+              </Box>
+            );
+          })}
+
+          {isProcessing && (
+            <Box height={1} overflow="hidden">
+              <CheckerboardSpinner />
+              <Text> </Text>
+              <ShimmerText>{`${spinnerVerb}...`}</ShimmerText>
+            </Box>
+          )}
+        </Box>
 
         {/* Scroll-down indicator */}
-        {viewport.hiddenBelowRows > 0 && (
-          <Text dimColor>
-            {"↓"} {viewport.hiddenBelowRows} newer lines
-          </Text>
-        )}
+        <Box height={1} overflow="hidden">
+          {viewport.hiddenBelowRows > 0 ? (
+            <Text dimColor>
+              {"↓"} {viewport.hiddenBelowRows} newer lines
+            </Text>
+          ) : (
+            <Text> </Text>
+          )}
+        </Box>
+      </Box>
 
+      <Box flexDirection="column" flexShrink={0} height={composerHeight}>
         {/* Copy toast — always reserve 1 row to prevent layout shift */}
         <Box justifyContent="flex-end" height={1}>
           {copyToast && <Text color="cyan">{copyToast}</Text>}
         </Box>
 
         {/* Input area with borders — always at bottom */}
-        <Box flexDirection="column">
+        <Box flexDirection="column" flexShrink={0}>
           <Box
             borderStyle="single"
             borderColor={bashMode ? theme.command : theme.border}
@@ -372,7 +596,7 @@ export function Chat({
                 setInput(stripMouseEscapeSequences(val));
               }}
               onSubmit={handleSubmit}
-              placeholder={bashMode ? "! for bash mode" : "/ for commands"}
+              placeholder={getInputPlaceholder(bashMode)}
             />
           </Box>
           {bashMode && <Text color={theme.command}>! for bash mode</Text>}
@@ -383,10 +607,7 @@ export function Chat({
             <Box flexDirection="column">
               {matches.map((suggestion, idx) => {
                 const isSelected = idx === selectedIdx;
-                const label =
-                  suggestion.type === "goal"
-                    ? `  ${suggestion.name} ${suggestion.description.padEnd(20)}  [goal]`
-                    : `  ${suggestion.name.padEnd(20)}${suggestion.description}`;
+                const label = formatSuggestionLabel(suggestion);
                 const key = `${suggestion.type}-${suggestion.name}-${suggestion.description}`;
                 return isSelected ? (
                   <Text key={key} bold color={theme.selected}>
@@ -398,10 +619,7 @@ export function Chat({
                   </Text>
                 );
               })}
-              <Text dimColor>
-                {" "}
-                arrows to navigate, tab/enter to select, esc to dismiss
-              </Text>
+              <Text dimColor>{SUGGESTION_HINT}</Text>
             </Box>
           )}
         </Box>

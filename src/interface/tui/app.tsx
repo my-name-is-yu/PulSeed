@@ -15,12 +15,12 @@ import { Box, Text, useInput, useStdout } from "ink";
 import { theme } from "./theme.js";
 import { Dashboard, statusLabel } from "./dashboard.js";
 import { Chat, type ChatMessage } from "./chat.js";
+import { FullscreenChat } from "./fullscreen-chat.js";
 import { HelpOverlay } from "./help-overlay.js";
 import { SettingsOverlay } from "./settings-overlay.js";
 import { ApprovalOverlay } from "./approval-overlay.js";
 import { ReportView } from "./report-view.js";
 import { SEEDY_PIXEL } from "./seedy-art.js";
-import { FlickerOverlay } from "./flicker-overlay.js";
 import { extractBashCommand, formatShellOutput } from "./bash-mode.js";
 import type { Report } from "../../base/types/report.js";
 import { useLoop } from "./use-loop.js";
@@ -39,6 +39,8 @@ import { applyChatEventToMessages } from "../chat/chat-event-state.js";
 
 const MAX_MESSAGES = 200;
 const PULSEED_VERSION = getPulseedVersion(import.meta.url);
+const APP_HEADER_ROWS = SEEDY_PIXEL.split("\n").length;
+const STATUS_BAR_ROWS = 3;
 
 export interface ApprovalRequest {
   task: Task;
@@ -213,7 +215,6 @@ export function App({
   const [showHelp, setShowHelp] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
 
-  const [showFlicker, setShowFlicker] = useState(false);
   const [goalNames, setGoalNames] = useState<string[]>([]);
   const [reportToShow, setReportToShow] = useState<Report | null>(null);
   const [approvalRequest, setApprovalRequest] = useState<ApprovalRequest | null>(null);
@@ -317,11 +318,6 @@ export function App({
       try {
         // Local-only commands — no LLM round-trip needed
         const trimmedInput = input.trim().toLowerCase();
-        if (trimmedInput === "/flicker") {
-          setShowFlicker(true);
-          return;
-        }
-
         const bashCommand = extractBashCommand(input);
         if (bashCommand !== null) {
           if (!bashCommand) {
@@ -420,8 +416,6 @@ export function App({
             setShowSettings(true);
           } else if (trimmed === "/dashboard" || trimmed === "/d") {
             setShowSidebar(prev => !prev);
-          } else if (trimmed === "/flicker") {
-            setShowFlicker(true);
           } else if (trimmed.startsWith("/start ")) {
             const goalId = input.slice(7).trim();
             if (goalId) {
@@ -493,6 +487,12 @@ export function App({
 
   // goalCount: 1 when there is an active goal in the loop, 0 otherwise
   const goalCount = loopState.goalId !== null ? 1 : 0;
+  const chatAvailableRows = Math.max(
+    1,
+    termRows - APP_HEADER_ROWS - STATUS_BAR_ROWS - (ctrlCPending ? 1 : 0),
+  );
+  const sidebarCols = showSidebar ? Math.floor(termCols * 0.3) : 0;
+  const chatAvailableCols = Math.max(20, termCols - sidebarCols);
 
   // ─── Sidebar layout ───
   return (
@@ -547,14 +547,33 @@ export function App({
             />
           ) : showSettings ? (
             <SettingsOverlay onClose={() => setShowSettings(false)} />
-          ) : showFlicker ? (
-            <FlickerOverlay onClose={() => setShowFlicker(false)} />
           ) : reportToShow !== null ? (
             <ReportView report={reportToShow} onDismiss={() => setReportToShow(null)} />
           ) : showHelp ? (
             <HelpOverlay onDismiss={() => setShowHelp(false)} />
           ) : (
-            <Chat messages={messages} onSubmit={handleInput} onClear={handleClear} isProcessing={isProcessing} goalNames={goalNames} noFlicker={noFlicker} />
+            noFlicker ? (
+              <FullscreenChat
+                messages={messages}
+                onSubmit={handleInput}
+                onClear={handleClear}
+                isProcessing={isProcessing}
+                goalNames={goalNames}
+                availableRows={chatAvailableRows}
+                availableCols={chatAvailableCols}
+              />
+            ) : (
+              <Chat
+                messages={messages}
+                onSubmit={handleInput}
+                onClear={handleClear}
+                isProcessing={isProcessing}
+                goalNames={goalNames}
+                noFlicker={false}
+                availableRows={chatAvailableRows}
+                availableCols={chatAvailableCols}
+              />
+            )
           )}
         </Box>
       </Box>

@@ -56,7 +56,7 @@ export const CONFIG_METADATA: Record<string, ConfigKeyMeta> = {
     risks: [
       "端末によっては体感差がない場合がある",
     ],
-    revert: "pulseed config set no_flicker false、または TUI内で設定を戻す",
+    revert: "pulseed config set no_flicker false",
     appliesAt: "immediate",
     requiresExplicitApproval: false,
   },

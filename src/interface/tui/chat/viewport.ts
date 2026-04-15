@@ -5,8 +5,6 @@ import {
 } from "../markdown-renderer.js";
 import { getMessageTypeColor } from "../theme.js";
 import type { ChatDisplayRow, ChatMessage, ChatViewport } from "./types.js";
-
-const CHAT_UI_RESERVED_ROWS = 8;
 const DEFAULT_MESSAGE_WIDTH_PADDING = 4;
 const MESSAGE_INNER_PADDING = 2;
 const MIN_MESSAGE_WIDTH = 10;
@@ -72,10 +70,10 @@ function buildMessageRows(msg: ChatMessage, width: number): ChatDisplayRow[] {
 export function buildChatViewport(
   messages: ChatMessage[],
   termCols: number,
-  termRows: number,
+  availableRows: number,
   scrollOffsetRows: number,
 ): ChatViewport {
-  const maxVisibleRows = Math.max(1, termRows - CHAT_UI_RESERVED_ROWS);
+  const maxVisibleRows = Math.max(1, Math.floor(availableRows));
   const rowWidth = getRowWidth(termCols);
   const flatRows: ChatDisplayRow[] = [];
 

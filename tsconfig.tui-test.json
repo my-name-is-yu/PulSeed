@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "outDir": "dist-tui-test",
+    "rootDir": "src",
+    "jsx": "react-jsx"
+  },
+  "include": ["src/interface/tui/test-entry.ts", "src/interface/tui/test-app.tsx"]
+}

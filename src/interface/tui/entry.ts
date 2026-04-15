@@ -16,10 +16,12 @@ import { loadProviderConfig } from "../../base/llm/provider-config.js";
 import { getPulseedDirPath } from "../../base/utils/paths.js";
 import { App, type ApprovalRequest } from "./app.js";
 import { isSafeBashCommand } from "./bash-mode.js";
+import { buildCursorEscapeFromPromptAnchor, buildHiddenCursorEscapeFromCaretMarker, getActiveCursorEscape } from "./cursor-tracker.js";
 import { getCliLogger } from "../cli/cli-logger.js";
 import { ensureProviderConfig } from "../cli/ensure-api-key.js";
 import type { Task } from "../../base/types/task.js";
-import { isNoFlickerEnabled, createFrameWriter, AlternateScreen, MouseTracking, type FrameWriter } from "./flicker/index.js";
+import { isNoFlickerEnabled, createFrameWriter, MouseTracking, type FrameWriter } from "./flicker/index.js";
+import { DEFAULT_CURSOR_STYLE, HIDE_CURSOR, SHOW_CURSOR, STEADY_BAR_CURSOR } from "./flicker/dec.js";
 import { isRenderableFrameChunk } from "./render-output.js";
 import { PIDManager } from "../../runtime/pid-manager.js";
 import { probeDaemonHealth, readDaemonAuthToken } from "../../runtime/daemon/client.js";
@@ -505,24 +507,20 @@ async function startTUIStandaloneMode(): Promise<void> {
 
   if (noFlicker) {
     frameWriter = createFrameWriter(process.stdout);
+    frameWriter.requestErase();
+    process.stdout.write(STEADY_BAR_CURSOR + HIDE_CURSOR);
     process.stdout.on("resize", () => frameWriter?.requestErase());
 
     // Install stdout intercept BEFORE render() — chat.tsx patches on top
     const rawWrite = process.stdout.write.bind(process.stdout);
     process.stdout.write = function (chunk: any, ...args: any[]) {
       if (typeof chunk === "string" && isRenderableFrameChunk(chunk)) {
-        const [renderOptions] = args;
         const cursorEscape =
-          renderOptions &&
-          typeof renderOptions === "object" &&
-          "cursorEscape" in renderOptions &&
-          typeof (renderOptions as { cursorEscape?: unknown }).cursorEscape === "string"
-            ? (renderOptions as { cursorEscape: string }).cursorEscape
-            : undefined;
-        frameWriter!.write(
-          chunk,
-          cursorEscape,
-        );
+          buildHiddenCursorEscapeFromCaretMarker(chunk) ??
+          buildCursorEscapeFromPromptAnchor(chunk) ??
+          getActiveCursorEscape() ??
+          HIDE_CURSOR;
+        frameWriter!.write(chunk, cursorEscape);
         return true;
       }
       return (rawWrite as any)(chunk, ...args);
@@ -545,14 +543,15 @@ async function startTUIStandaloneMode(): Promise<void> {
     React.createElement(
       MouseTracking,
       null,
-      noFlicker
-        ? React.createElement(AlternateScreen, { enabled: true }, appElement)
-        : appElement,
+      appElement,
     ),
     { exitOnCtrlC: false }
   );
 
   await waitUntilExit();
+  if (noFlicker) {
+    process.stdout.write(DEFAULT_CURSOR_STYLE + SHOW_CURSOR);
+  }
   frameWriter?.destroy();
 }
 
@@ -634,23 +633,19 @@ async function startTUIDaemonMode(): Promise<void> {
 
   if (noFlicker) {
     frameWriter = createFrameWriter(process.stdout);
+    frameWriter.requestErase();
+    process.stdout.write(STEADY_BAR_CURSOR + HIDE_CURSOR);
     process.stdout.on("resize", () => frameWriter?.requestErase());
 
     const rawWrite = process.stdout.write.bind(process.stdout);
     process.stdout.write = function (chunk: any, ...args: any[]) {
       if (typeof chunk === "string" && isRenderableFrameChunk(chunk)) {
-        const [renderOptions] = args;
         const cursorEscape =
-          renderOptions &&
-          typeof renderOptions === "object" &&
-          "cursorEscape" in renderOptions &&
-          typeof (renderOptions as { cursorEscape?: unknown }).cursorEscape === "string"
-            ? (renderOptions as { cursorEscape: string }).cursorEscape
-            : undefined;
-        frameWriter!.write(
-          chunk,
-          cursorEscape,
-        );
+          buildHiddenCursorEscapeFromCaretMarker(chunk) ??
+          buildCursorEscapeFromPromptAnchor(chunk) ??
+          getActiveCursorEscape() ??
+          HIDE_CURSOR;
+        frameWriter!.write(chunk, cursorEscape);
         return true;
       }
       return (rawWrite as any)(chunk, ...args);
@@ -670,14 +665,15 @@ async function startTUIDaemonMode(): Promise<void> {
     React.createElement(
       MouseTracking,
       null,
-      noFlicker
-        ? React.createElement(AlternateScreen, { enabled: true }, appElement)
-        : appElement,
+      appElement,
     ),
     { exitOnCtrlC: false }
   );
 
   await waitUntilExit();
+  if (noFlicker) {
+    process.stdout.write(DEFAULT_CURSOR_STYLE + SHOW_CURSOR);
+  }
   frameWriter?.destroy();
 }
 

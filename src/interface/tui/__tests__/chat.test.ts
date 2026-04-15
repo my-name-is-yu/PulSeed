@@ -1,8 +1,23 @@
 import { describe, expect, it } from "vitest";
-import { buildChatViewport, getInputPromptLabel, getMatchingSuggestions, getScrollRequest, stripMouseEscapeSequences } from "../chat.js";
+import {
+  buildChatViewport,
+  estimateComposerHeight,
+  formatSuggestionLabel,
+  getInputPromptLabel,
+  getMatchingSuggestions,
+  parseMouseEvent,
+  getScrollRequest,
+  stripMouseEscapeSequences,
+} from "../chat.js";
 import { estimateMarkdownHeight, estimateWrappedLineCount, wrapTextToRows } from "../markdown-renderer.js";
 import { extractBashCommand, isBashModeInput, isSafeBashCommand, createShellApprovalTask, formatShellOutput } from "../bash-mode.js";
-import { INPUT_MARKER, buildCursorEscape } from "../cursor-tracker.js";
+import {
+  CARET_MARKER,
+  INPUT_MARKER,
+  buildCursorEscape,
+  buildCursorEscapeFromCaretMarker,
+  buildCursorEscapeFromInputMarker,
+} from "../cursor-tracker.js";
 
 describe("getMatchingSuggestions", () => {
   it("hides suggestions for an exact slash command so enter can submit", () => {
@@ -110,14 +125,69 @@ describe("chat viewport", () => {
       },
     ];
 
-    const bottom = buildChatViewport(messages, 40, 16, 0);
+    const bottom = buildChatViewport(messages, 40, 8, 0);
     expect(bottom.totalRows).toBeGreaterThan(bottom.maxVisibleRows);
     expect(bottom.rows.some((row) => row.text.trim() === "line 10")).toBe(true);
     expect(bottom.rows.some((row) => row.text.trim() === "line 1")).toBe(false);
 
-    const scrolled = buildChatViewport(messages, 40, 16, 3);
+    const scrolled = buildChatViewport(messages, 40, 8, 3);
     expect(scrolled.hiddenAboveRows).toBe(0);
     expect(scrolled.rows.some((row) => row.text.trim() === "line 1")).toBe(true);
+  });
+});
+
+describe("composer sizing", () => {
+  it("reserves extra height when input wraps inside the composer", () => {
+    const singleLine = estimateComposerHeight({
+      termCols: 40,
+      input: "",
+      bashMode: false,
+      emptyHint: false,
+      matches: [],
+    });
+    const wrappedInput = estimateComposerHeight({
+      termCols: 20,
+      input: "this is a deliberately long line that must wrap",
+      bashMode: false,
+      emptyHint: false,
+      matches: [],
+    });
+
+    expect(wrappedInput).toBeGreaterThan(singleLine);
+  });
+
+  it("counts the trailing cursor cell when input exactly fills a line", () => {
+    const exactFit = estimateComposerHeight({
+      termCols: 10,
+      input: "abcd",
+      bashMode: false,
+      emptyHint: false,
+      matches: [],
+    });
+
+    expect(exactFit).toBe(5);
+  });
+
+  it("accounts for suggestions and helper text in composer height", () => {
+    const base = estimateComposerHeight({
+      termCols: 40,
+      input: "/",
+      bashMode: false,
+      emptyHint: false,
+      matches: [],
+    });
+    const matches = getMatchingSuggestions("/", []);
+    const withMatches = estimateComposerHeight({
+      termCols: 40,
+      input: "/",
+      bashMode: false,
+      emptyHint: false,
+      matches,
+    });
+
+    expect(matches.length).toBeGreaterThan(0);
+    expect(formatSuggestionLabel(matches[0]!).length).toBeGreaterThan(0);
+    expect(withMatches).toBeGreaterThan(base);
   });
 });
 
@@ -134,6 +204,27 @@ describe("chat scroll keys", () => {
   it("maps sgr mouse wheel sequences to line scroll requests", () => {
     expect(getScrollRequest("\u001b[<64;40;12M", {})).toMatchObject({ direction: "up", kind: "line" });
     expect(getScrollRequest("[<65;40;12M", {})).toMatchObject({ direction: "down", kind: "line" });
+  });
+
+  it("parses press, drag, and release mouse events for composer selection", () => {
+    expect(parseMouseEvent("\u001b[<0;12;8M")).toEqual({
+      kind: "press",
+      button: "left",
+      x: 12,
+      y: 8,
+    });
+    expect(parseMouseEvent("\u001b[<32;16;8M")).toEqual({
+      kind: "drag",
+      button: "left",
+      x: 16,
+      y: 8,
+    });
+    expect(parseMouseEvent("\u001b[<0;16;8m")).toEqual({
+      kind: "release",
+      button: "left",
+      x: 16,
+      y: 8,
+    });
   });
 
   it("strips sgr mouse sequences from input text", () => {
@@ -155,5 +246,25 @@ describe("cursor tracker", () => {
   it("keeps the bash prompt label separate from the internal marker", () => {
     expect(getInputPromptLabel(true)).toBe("!");
     expect(getInputPromptLabel(false)).toBe("◉");
+  });
+
+  it("builds a cursor escape directly from the caret marker", () => {
+    const frame = [
+      "header",
+      `│ ! abc${CARET_MARKER}def │`,
+      "footer",
+    ].join("\n");
+
+    expect(buildCursorEscapeFromCaretMarker(frame)).toBe("\u001b[2;8H\u001b[?25h");
+  });
+
+  it("builds a cursor escape from the input marker and cursor column", () => {
+    const frame = [
+      "header",
+      `│ ! ${INPUT_MARKER}abcdef │`,
+      "footer",
+    ].join("\n");
+
+    expect(buildCursorEscapeFromInputMarker(frame, 3)).toBe("\u001b[2;8H\u001b[?25h");
   });
 });

@@ -4,6 +4,8 @@ Thumbs.db
 
 node_modules/
 dist/
+/.dist-delete-*/
+dist-tui-test/
 coverage/
 coverage-c8/
 .pulseed/
@@ -17,6 +19,7 @@ scripts/*
 !scripts/check-docs.mjs
 !scripts/clean-dist.mjs
 !scripts/release.mjs
+!scripts/run-tui-test.mjs
 
 # Non-public: stale, will revisit later
 src/adapters/datasources/openclaw-datasource.ts

@@ -56,12 +56,6 @@ const COMMANDS: Suggestion[] = [
     description: "View and toggle config",
     type: "command",
   },
-  {
-    name: "/flicker",
-    aliases: [],
-    description: "Toggle no-flicker mode (next launch)",
-    type: "command",
-  },
 ];
 
 const GOAL_ARG_COMMANDS = ["/run ", "/start "];
