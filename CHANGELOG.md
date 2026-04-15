@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.4.11] - 2026-04-15
+
+### Added
+- Added a lightweight direct-answer route for simple chat questions so PulSeed can answer without entering native AgentLoop or tool-call loops when project or external evidence is not needed (#683)
+
+### Changed
+- Updated README badges and links for clearer package and project status
+- Bumped the package version to `0.4.11`
+
+### Fixed
+- Fixed setup imports and hardened release package validation so release packaging catches missing runtime files before publish (#682)
+- Stabilized daemon dream analysis timing coverage under slower CI runtimes (#683)
+
 ## [0.4.10] - 2026-04-15
 
 ### Added
