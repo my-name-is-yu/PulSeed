@@ -31,7 +31,6 @@ export type AgentLoopStopReason =
   | "consecutive_tool_errors"
   | "stalled_tool_loop"
   | "schema_error"
-  | "model_without_tool_calling"
   | "cancelled"
   | "protocol_incomplete"
   | "completion_gate_failed"

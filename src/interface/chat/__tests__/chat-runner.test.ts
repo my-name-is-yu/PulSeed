@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import { z } from "zod";
 import { ChatRunner } from "../chat-runner.js";
 import type { ChatRunnerDeps } from "../chat-runner.js";
 import { StateManager } from "../../../base/state/state-manager.js";
@@ -800,7 +801,7 @@ describe("ChatRunner", () => {
     });
   });
 
-  describe("supportsToolCalling routing", () => {
+  describe("agent loop and native tool protocol routing", () => {
     it("routes to chatAgentLoopRunner when configured", async () => {
       const seenEvents: string[] = [];
       const approvalFn = vi.fn().mockResolvedValue(true);
@@ -878,18 +879,21 @@ describe("ChatRunner", () => {
       expect(seenEvents).toContain("tool_update");
     });
 
-    it("routes simple questions directly through llmClient even when chatAgentLoopRunner is configured", async () => {
+    it("routes simple questions through chatAgentLoopRunner when configured", async () => {
       const adapter = makeMockAdapter();
       const chatAgentLoopRunner = {
-        execute: vi.fn().mockRejectedValue(new Error("chatAgentLoopRunner must not be called")),
+        execute: vi.fn().mockResolvedValue({
+          success: true,
+          output: "Agentloop direct answer",
+          error: null,
+          exit_code: null,
+          elapsed_ms: 42,
+          stopped_reason: "completed",
+        }),
       } as unknown as ChatAgentLoopRunner;
       const llmClient = {
         supportsToolCalling: () => true,
-        sendMessage: vi.fn().mockResolvedValue({
-          content: "Direct answer",
-          usage: { input_tokens: 4, output_tokens: 6 },
-          stop_reason: "end_turn",
-        }),
+        sendMessage: vi.fn().mockRejectedValue(new Error("direct llm path must not be called")),
         parseJSON: vi.fn(),
       };
 
@@ -900,29 +904,12 @@ describe("ChatRunner", () => {
       }));
       const result = await runner.execute("What is a lightweight direct-answer route?", "/repo");
 
-      expect(llmClient.sendMessage).toHaveBeenCalledOnce();
-      const [messages, options] = (llmClient.sendMessage as ReturnType<typeof vi.fn>).mock.calls[0] as [
-        Array<{ role: string; content: string }>,
-        Record<string, unknown> | undefined,
-      ];
-      expect(messages).toHaveLength(1);
-      expect(messages[0].role).toBe("user");
-      expect(messages[0].content).toContain("What is a lightweight direct-answer route?");
-      expect(options).toMatchObject({
-        model_tier: "light",
-        max_tokens: 256,
-      });
-      expect(options?.tools).toBeUndefined();
-      expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
+      expect(chatAgentLoopRunner.execute).toHaveBeenCalledOnce();
+      expect(llmClient.sendMessage).not.toHaveBeenCalled();
       expect(adapter.execute).not.toHaveBeenCalled();
       expect(result.success).toBe(true);
-      expect(result.output).toBe("Direct answer");
-      expect(result.diagnostics).toEqual({
-        route: "direct",
-        reason: "simple_question",
-        modelTier: "light",
-        maxTokens: 256,
-      });
+      expect(result.output).toBe("Agentloop direct answer");
+      expect(result.diagnostics).toBeUndefined();
     });
 
     it("keeps diagnostics out of the user-facing output", async () => {
@@ -1015,20 +1002,55 @@ describe("ChatRunner", () => {
       expect(result.diagnostics).toBeUndefined();
     });
 
-    it("routes to adapter.execute when supportsToolCalling() returns false", async () => {
+    it("keeps non-native-tool clients on the local LLM/tool loop instead of the adapter fallback", async () => {
       const adapter = makeMockAdapter();
+      const echoTool = {
+        metadata: {
+          name: "echo",
+          aliases: [],
+          permissionLevel: "read_only" as const,
+          isReadOnly: true,
+          isDestructive: false,
+          shouldDefer: false,
+          alwaysLoad: false,
+          maxConcurrency: 0,
+          maxOutputChars: 1000,
+          tags: ["test"],
+        },
+        inputSchema: z.object({ value: z.string() }),
+        description: () => "Echo a value.",
+        checkPermissions: vi.fn().mockResolvedValue({ status: "allowed" }),
+        call: vi.fn().mockResolvedValue({ success: true, summary: "echoed hello", data: { echoed: "hello" } }),
+        isConcurrencySafe: () => true,
+      };
+      const registry = {
+        listAll: () => [echoTool],
+        get: (name: string) => name === "echo" ? echoTool : undefined,
+      };
       const llmClient = {
         supportsToolCalling: () => false,
-        sendMessage: vi.fn().mockRejectedValue(new Error("sendMessage must not be called")),
+        sendMessage: vi.fn()
+          .mockResolvedValueOnce({
+            content: '{ "tool_calls": [{ "name": "echo", "input": { "value": "hello", }, }] }',
+            usage: { input_tokens: 5, output_tokens: 5 },
+            stop_reason: "end_turn",
+          })
+          .mockResolvedValueOnce({
+            content: "Prompted loop response",
+            usage: { input_tokens: 5, output_tokens: 5 },
+            stop_reason: "end_turn",
+          }),
         parseJSON: vi.fn(),
       };
 
-      const runner = new ChatRunner(makeDeps({ adapter, llmClient: llmClient as never }));
+      const runner = new ChatRunner(makeDeps({ adapter, llmClient: llmClient as never, registry: registry as never }));
       const result = await runner.execute("Do something", "/repo");
 
-      expect(adapter.execute).toHaveBeenCalledOnce();
-      expect(llmClient.sendMessage).not.toHaveBeenCalled();
+      expect(llmClient.sendMessage).toHaveBeenCalledTimes(2);
+      expect(echoTool.call).toHaveBeenCalledOnce();
+      expect(adapter.execute).not.toHaveBeenCalled();
       expect(result.success).toBe(true);
+      expect(result.output).toBe("Prompted loop response");
     });
 
     it("routes to executeWithTools (calls sendMessage) when supportsToolCalling is absent", async () => {

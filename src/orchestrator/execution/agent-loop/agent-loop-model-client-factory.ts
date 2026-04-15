@@ -10,6 +10,10 @@ export function createProviderNativeAgentLoopModelClient(input: {
   llmClient: ILLMClient;
   modelRegistry: AgentLoopModelRegistry;
 }): AgentLoopModelClient {
+  if (input.llmClient.supportsToolCalling?.() === false) {
+    return new ILLMClientAgentLoopModelClient(input.llmClient, input.modelRegistry);
+  }
+
   if (input.providerConfig.provider === "openai" && input.providerConfig.api_key) {
     return new OpenAIResponsesAgentLoopModelClient(
       {

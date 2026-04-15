@@ -24,8 +24,11 @@ import {
   ToolExecutorAgentLoopToolRuntime,
   ToolRegistryAgentLoopToolRouter,
   createAgentLoopSession,
+  createProviderNativeAgentLoopModelClient,
   defaultAgentLoopCapabilities,
+  extractPromptedToolCalls,
   parseAgentLoopModelRef,
+  shouldUseNativeTaskAgentLoop,
   withDefaultBudget,
   type AgentLoopModelClient,
   type AgentLoopModelInfo,
@@ -202,6 +205,105 @@ function finalJson(status = "done") {
 }
 
 describe("agentloop phase 0", () => {
+  it("enables native task agentloop regardless of legacy adapter or native tool support", () => {
+    const parseJSON = <T,>(content: string, schema: z.ZodSchema<T>): T => schema.parse(JSON.parse(content));
+    const toolCallingClient: ILLMClient = {
+      async sendMessage(): Promise<LLMResponse> {
+        return { content: "{}", usage: { input_tokens: 0, output_tokens: 0 }, stop_reason: "end_turn" };
+      },
+      parseJSON,
+      supportsToolCalling: () => true,
+    };
+    const noToolCallingClient: ILLMClient = {
+      async sendMessage(): Promise<LLMResponse> {
+        return { content: "{}", usage: { input_tokens: 0, output_tokens: 0 }, stop_reason: "end_turn" };
+      },
+      parseJSON,
+      supportsToolCalling: () => false,
+    };
+
+    expect(shouldUseNativeTaskAgentLoop({
+      provider: "openai",
+      model: "gpt-5.4-mini",
+      adapter: "openai_api",
+    }, toolCallingClient)).toBe(true);
+    expect(shouldUseNativeTaskAgentLoop({
+      provider: "anthropic",
+      model: "claude-sonnet-4-6",
+      adapter: "claude_code_cli",
+      api_key: "sk-ant-test",
+    }, toolCallingClient)).toBe(true);
+    expect(shouldUseNativeTaskAgentLoop({
+      provider: "openai",
+      model: "gpt-5.4-mini",
+      adapter: "openai_codex_cli",
+    }, noToolCallingClient)).toBe(true);
+    expect(shouldUseNativeTaskAgentLoop({
+      provider: "ollama",
+      model: "qwen3:4b",
+      adapter: "openai_api",
+    }, noToolCallingClient)).toBe(true);
+  });
+
+  it("keeps non-tool-calling clients on the prompted protocol even when provider config has an API key", () => {
+    const modelInfo = makeModelInfo({ ref: { providerId: "openai", modelId: "gpt-5.4-mini" } });
+    const noToolCallingClient: ILLMClient = {
+      async sendMessage(): Promise<LLMResponse> {
+        return { content: "{}", usage: { input_tokens: 0, output_tokens: 0 }, stop_reason: "end_turn" };
+      },
+      parseJSON<T>(content: string, schema: z.ZodSchema<T>): T {
+        return schema.parse(JSON.parse(content));
+      },
+      supportsToolCalling: () => false,
+    };
+
+    const modelClient = createProviderNativeAgentLoopModelClient({
+      providerConfig: {
+        provider: "openai",
+        model: "gpt-5.4-mini",
+        adapter: "openai_codex_cli",
+        api_key: "codex-oauth-token",
+      },
+      llmClient: noToolCallingClient,
+      modelRegistry: new StaticAgentLoopModelRegistry([modelInfo]),
+    });
+
+    expect(modelClient).toBeInstanceOf(ILLMClientAgentLoopModelClient);
+  });
+
+  it("parses explicit prompted tool-call JSON and preserves unknown tools for runtime feedback", () => {
+    let id = 0;
+    const calls = extractPromptedToolCalls({
+      content: `\`\`\`json
+      {
+        "tool_calls": [
+          { "name": "echo", "arguments": "{ \\"value\\": \\"hello\\", }" },
+          { "name": "unknown_tool", "input": {} }
+        ],
+      }
+      \`\`\``,
+      tools: [{
+        type: "function",
+        function: {
+          name: "echo",
+          description: "Echo a value.",
+          parameters: { type: "object" },
+        },
+      }],
+      createId: () => `call-test-${++id}`,
+    });
+
+    expect(calls).toEqual([{
+      id: "call-test-1",
+      name: "echo",
+      input: { value: "hello" },
+    }, {
+      id: "call-test-2",
+      name: "unknown_tool",
+      input: {},
+    }]);
+  });
+
   it("stores trace events and parses provider/model refs", async () => {
     const ref = parseAgentLoopModelRef("openai/gpt-test");
     expect(ref).toEqual({ providerId: "openai", modelId: "gpt-test" });
@@ -331,6 +433,67 @@ describe("agentloop phase 1", () => {
     expect(assistantMessages).toHaveLength(2);
     expect(assistantMessages[0]).toMatchObject({ phase: "commentary" });
     expect(assistantMessages[1]).toMatchObject({ phase: "final_candidate" });
+  });
+
+  it("falls back to a text protocol when the LLM client cannot use native tools", async () => {
+    const modelInfo = makeModelInfo({ capabilities: { ...defaultAgentLoopCapabilities, toolCalling: false } });
+    const llmCalls: Array<{ messages: LLMMessage[]; options?: LLMRequestOptions }> = [];
+    let callIndex = 0;
+    const llmClient: ILLMClient = {
+      async sendMessage(messages: LLMMessage[], options?: LLMRequestOptions): Promise<LLMResponse> {
+        llmCalls.push({ messages, options });
+        callIndex++;
+        if (callIndex === 1) {
+          return {
+            content: '{ "tool_calls": [{ "name": "echo", "input": { "value": "hello", }, }, { "name": "echo", "input": { "value": "again" } }] }',
+            usage: { input_tokens: 1, output_tokens: 1 },
+            stop_reason: "end_turn",
+          };
+        }
+        return {
+          content: finalJson(),
+          usage: { input_tokens: 1, output_tokens: 1 },
+          stop_reason: "end_turn",
+        };
+      },
+      parseJSON<T>(content: string, schema: z.ZodSchema<T>): T {
+        return schema.parse(JSON.parse(content));
+      },
+      supportsToolCalling: () => false,
+    };
+    const { router, runtime } = makeToolRuntime();
+    const modelClient = new ILLMClientAgentLoopModelClient(llmClient, new StaticAgentLoopModelRegistry([modelInfo]));
+    const runner = new BoundedAgentLoopRunner({ modelClient, toolRouter: router, toolRuntime: runtime });
+
+    const result = await runner.run({
+      session: createAgentLoopSession(),
+      turnId: "turn-1",
+      goalId: "goal-1",
+      taskId: "task-1",
+      cwd: process.cwd(),
+      model: modelInfo.ref,
+      modelInfo,
+      messages: [{ role: "user", content: "do it" }],
+      outputSchema: z.object({ status: z.literal("done"), finalAnswer: z.string() }),
+      budget: withDefaultBudget({ maxModelTurns: 4 }),
+      toolPolicy: {},
+      toolCallContext: {
+        cwd: process.cwd(),
+        goalId: "goal-1",
+        trustBalance: 0,
+        preApproved: true,
+        approvalFn: async () => false,
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.output?.finalAnswer).toBe("finished");
+    expect(result.toolCalls).toBe(2);
+    expect(llmCalls).toHaveLength(2);
+    expect(llmCalls[0]?.options?.tools).toBeUndefined();
+    expect(llmCalls[0]?.options?.system).toContain("You do not have native function/tool calling");
+    expect(llmCalls[0]?.options?.system).toContain("Available tools:");
+    expect(llmCalls[1]?.messages.some((message) => message.role === "user" && message.content.startsWith("Tool result"))).toBe(true);
   });
 
   it("stops after the schema repair budget is exhausted", async () => {

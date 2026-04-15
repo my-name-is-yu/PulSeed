@@ -75,10 +75,11 @@ export interface ILLMClient {
   parseJSON<T>(content: string, schema: ZodSchema<T>): T;
   parseJSON<T>(content: string, schema: ZodSchema<T>, options: ParseJSONOptions): Promise<T>;
   /**
-   * Whether this client supports function/tool calling in sendMessage().
+   * Whether this client supports native provider function/tool calling in sendMessage().
+   * This does not decide whether PulSeed can run an agent loop; non-native clients
+   * can still use the prompted JSON/text tool protocol.
    * CLI-wrapping clients (e.g., CodexLLMClient) that cannot handle tool
    * definitions should override this to return false.
-   * When absent or returning true, the chat runner routes through executeWithTools.
    */
   supportsToolCalling?(): boolean;
 }

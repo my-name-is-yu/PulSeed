@@ -58,10 +58,6 @@ export class BoundedAgentLoopRunner {
       });
     }
 
-    if (!turn.modelInfo.capabilities.toolCalling) {
-      return this.stop(turn, "model_without_tool_calling", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, [], commandResults);
-    }
-
     let messages: AgentLoopMessage[] = resumed?.messages ? [...resumed.messages] : [...turn.messages];
     const preTurnCompaction = await this.compactIfNeeded(turn, messages, "pre_turn", "context_limit", undefined, compactions);
     if (preTurnCompaction.error) {

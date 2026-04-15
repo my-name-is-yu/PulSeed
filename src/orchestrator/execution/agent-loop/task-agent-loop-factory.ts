@@ -36,10 +36,11 @@ export interface NativeTaskAgentLoopRuntimeDeps {
 }
 
 export function shouldUseNativeTaskAgentLoop(
-  providerConfig: ProviderConfig,
-  llmClient: ILLMClient,
+  _providerConfig: ProviderConfig,
+  _llmClient: ILLMClient,
 ): boolean {
-  return providerConfig.adapter === "agent_loop" && llmClient.supportsToolCalling?.() !== false;
+  // Agent loop eligibility is independent of provider/auth and native tool-call support.
+  return true;
 }
 
 export function createNativeTaskAgentLoopRunner(

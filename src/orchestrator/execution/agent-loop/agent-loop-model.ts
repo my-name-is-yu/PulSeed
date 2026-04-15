@@ -7,6 +7,7 @@ export interface AgentLoopModelRef {
 }
 
 export interface AgentLoopModelCapabilities {
+  /** Native provider function/tool calling support; prompted text protocols can still run the loop. */
   toolCalling: boolean;
   parallelToolCalls: boolean;
   streaming: boolean;

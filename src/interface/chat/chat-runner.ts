@@ -22,7 +22,7 @@ import type { ToolRegistry } from "../../tools/registry.js";
 import { toToolDefinitionsFiltered } from "../../tools/tool-definition-adapter.js";
 import type { ToolCallContext } from "../../tools/types.js";
 import type { ToolExecutor } from "../../tools/executor.js";
-import type { LLMMessage, LLMRequestOptions, LLMResponse } from "../../base/llm/llm-client.js";
+import type { LLMMessage, LLMRequestOptions, LLMResponse, ToolCallResult } from "../../base/llm/llm-client.js";
 import { TendCommand } from "./tend-command.js";
 import type { TendDeps } from "./tend-command.js";
 import { EventSubscriber } from "./event-subscriber.js";
@@ -35,6 +35,10 @@ import type {
   AgentLoopEventSink,
 } from "../../orchestrator/execution/agent-loop/agent-loop-events.js";
 import type { AgentLoopSessionState } from "../../orchestrator/execution/agent-loop/agent-loop-session-state.js";
+import {
+  buildPromptedToolProtocolSystemPrompt,
+  extractPromptedToolCalls,
+} from "../../orchestrator/execution/agent-loop/prompted-tool-protocol.js";
 import { recognizeRuntimeControlIntent } from "../../runtime/control/index.js";
 import type { RuntimeControlService } from "../../runtime/control/index.js";
 import type {
@@ -667,7 +671,7 @@ export class ChatRunner {
       historyBlock = `Previous conversation:\n${lines}\n\nCurrent message:\n`;
     }
 
-    const directAnswerRoute = !resumeOnly && this.deps.llmClient !== undefined && shouldUseDirectAnswerRoute(input);
+    const directAnswerRoute = !resumeOnly && !this.deps.chatAgentLoopRunner && this.deps.llmClient !== undefined && shouldUseDirectAnswerRoute(input);
     const directPrompt = historyBlock ? `${historyBlock}${input}` : input;
 
     const start = Date.now();
@@ -840,9 +844,8 @@ export class ChatRunner {
       }
     }
 
-    // Use llmClient with self-knowledge tools when available (function calling path)
-    // Skip executeWithTools for clients that don't support tool calling (e.g. CodexLLMClient)
-    if (this.deps.llmClient && this.deps.llmClient.supportsToolCalling?.() !== false) {
+    // Prefer the local LLM/tool loop over the external adapter fallback whenever a client is available.
+    if (this.deps.llmClient) {
       try {
         const toolResult = await this.executeWithTools(prompt, eventContext, assistantBuffer, systemPrompt || undefined);
         const elapsed_ms = Date.now() - start;
@@ -1012,12 +1015,14 @@ export class ChatRunner {
       const tools = this.deps.registry
         ? toToolDefinitionsFiltered(this.deps.registry.listAll(), { activatedTools: this.activatedTools })
         : [];
+      const supportsNativeToolCalling = llmClient.supportsToolCalling?.() !== false;
       let response: LLMResponse;
       try {
         this.emitActivity("lifecycle", "Calling model...", eventContext, "lifecycle:model");
         response = await this.sendLLMMessage(llmClient, messages, {
-          tools,
-          ...(systemPrompt ? { system: systemPrompt } : {}),
+          ...(supportsNativeToolCalling
+            ? { tools, ...(systemPrompt ? { system: systemPrompt } : {}) }
+            : { system: buildPromptedToolProtocolSystemPrompt({ systemPrompt, tools }) }),
         }, assistantBuffer, eventContext);
       } catch (err) {
         console.error("[chat-runner] executeWithTools error:", err);
@@ -1025,15 +1030,36 @@ export class ChatRunner {
         throw new Error(`Sorry, I encountered an error processing your request${hint}.`);
       }
 
+      const toolCalls = response.tool_calls?.length
+        ? response.tool_calls
+        : supportsNativeToolCalling
+          ? []
+          : extractPromptedToolCalls({
+              content: response.content,
+              tools,
+              createId: () => `prompted-${loop}-${crypto.randomUUID()}`,
+            }).map((call): ToolCallResult => ({
+              id: call.id,
+              type: "function",
+              function: {
+                name: call.name,
+                arguments: JSON.stringify(call.input ?? {}),
+              },
+            }));
+
+      if (!supportsNativeToolCalling && toolCalls.length > 0) {
+        assistantBuffer.text = "";
+      }
+
       // No tool calls — return the text content
-      if (!response.tool_calls || response.tool_calls.length === 0) {
+      if (toolCalls.length === 0) {
         return assistantBuffer.text || response.content || "(no response)";
       }
 
       // Append assistant message, then process tool calls
       messages.push({ role: "assistant", content: response.content || "" });
 
-      for (const tc of response.tool_calls) {
+      for (const tc of toolCalls) {
         let args: Record<string, unknown> = {};
         try {
           args = JSON.parse(tc.function.arguments || "{}") as Record<string, unknown>;

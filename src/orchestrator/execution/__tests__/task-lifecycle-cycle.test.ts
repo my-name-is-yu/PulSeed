@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import * as fs from "node:fs";
 import { z } from "zod";
 import { StateManager } from "../../../base/state/state-manager.js";
@@ -245,6 +245,7 @@ describe("TaskLifecycle", async () => {
       approvalFn?: (task: Task) => Promise<boolean>;
       logger?: import("../../../runtime/logger.js").Logger;
       adapterRegistry?: import("../task/task-lifecycle.js").AdapterRegistry;
+      agentLoopRunner?: import("../agent-loop/task-agent-loop-runner.js").TaskAgentLoopRunner;
       execFileSyncFn?: (cmd: string, args: string[], opts: { cwd: string; encoding: "utf-8" }) => string;
     }
   ): TaskLifecycle {
@@ -333,6 +334,61 @@ describe("TaskLifecycle", async () => {
       const result = await lifecycle.runTaskCycle("goal-1", gapVector, context, adapter);
 
       expect(result.action).toBe("approval_denied");
+    });
+
+    it("native agent loop runs even when the external adapter circuit breaker is closed", async () => {
+      const llm = createMockLLMClient([
+        VALID_TASK_RESPONSE,
+        LLM_REVIEW_PASS,
+      ]);
+      const adapterExecute = vi.fn(async () => {
+        throw new Error("adapter execute should not be called");
+      });
+      const adapter = {
+        adapterType: "external-cli",
+        execute: adapterExecute,
+      } as import("../task/task-lifecycle.js").IAdapter;
+      const agentLoopRunner = {
+        runTask: vi.fn(async () => ({
+          success: true,
+          output: {
+            status: "done" as const,
+            finalAnswer: "native agent loop completed",
+            summary: "done",
+            filesChanged: [],
+            testsRun: [],
+            completionEvidence: ["native loop evidence"],
+            verificationHints: [],
+            blockers: [],
+          },
+          finalText: "native agent loop completed",
+          stopReason: "completed" as const,
+          elapsedMs: 123,
+          modelTurns: 1,
+          toolCalls: 1,
+          compactions: 0,
+          changedFiles: [],
+          commandResults: [],
+          traceId: "trace-1",
+          sessionId: "session-1",
+          turnId: "turn-1",
+        })),
+      } as unknown as import("../agent-loop/task-agent-loop-runner.js").TaskAgentLoopRunner;
+      const lifecycle = createLifecycle(llm, {
+        approvalFn: async () => true,
+        adapterRegistry: {
+          isAvailable: () => false,
+        } as unknown as import("../task/task-lifecycle.js").AdapterRegistry,
+        agentLoopRunner,
+      });
+      const gapVector = makeGapVector("goal-1", [{ name: "coverage", gap: 0.5 }]);
+      const context = makeDriveContext(["coverage"]);
+
+      const result = await lifecycle.runTaskCycle("goal-1", gapVector, context, adapter);
+
+      expect(result.action).toBe("completed");
+      expect(agentLoopRunner.runTask).toHaveBeenCalledTimes(1);
+      expect(adapterExecute).not.toHaveBeenCalled();
     });
 
     it("execution fails -> verify -> handleFailure", async () => {

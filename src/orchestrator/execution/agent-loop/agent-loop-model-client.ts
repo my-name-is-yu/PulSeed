@@ -15,6 +15,10 @@ import type {
   AgentLoopModelTurnProtocol,
   AgentLoopToolCall,
 } from "./agent-loop-model.js";
+import {
+  buildPromptedToolProtocolSystemPrompt,
+  extractPromptedToolCalls,
+} from "./prompted-tool-protocol.js";
 
 export class ILLMClientAgentLoopModelClient implements AgentLoopModelClient {
   constructor(
@@ -39,23 +43,31 @@ export class ILLMClientAgentLoopModelClient implements AgentLoopModelClient {
 
   async createTurnProtocol(input: AgentLoopModelRequest): Promise<AgentLoopModelTurnProtocol> {
     const messages = this.toLLMMessages(input.messages);
+    const supportsNativeToolCalling = this.llmClient.supportsToolCalling?.() !== false;
     const response = await this.llmClient.sendMessage(messages, {
       model: input.model.modelId,
-      system: input.system,
+      ...(supportsNativeToolCalling
+        ? { system: input.system }
+        : { system: buildPromptedToolProtocolSystemPrompt({ systemPrompt: input.system, tools: input.tools }) }),
       max_tokens: input.maxOutputTokens,
-      tools: input.tools,
+      ...(supportsNativeToolCalling ? { tools: input.tools } : {}),
     });
 
-    const toolCalls = response.tool_calls ?? [];
-    const assistant: AgentLoopAssistantOutput[] = response.content || toolCalls.length > 0
+    const toolCalls = supportsNativeToolCalling
+      ? (response.tool_calls ?? []).map((call) => this.toAgentLoopToolCall(call))
+      : extractPromptedToolCalls({ content: response.content, tools: input.tools });
+    const assistantContent = supportsNativeToolCalling
+      ? response.content
+      : (toolCalls.length > 0 ? `Calling ${toolCalls.map((call) => call.name).join(", ")}` : response.content);
+    const assistant: AgentLoopAssistantOutput[] = assistantContent
       ? [{
-          content: response.content || `Calling ${toolCalls.map((call) => call.function.name).join(", ")}`,
+          content: assistantContent,
           phase: toolCalls.length > 0 ? "commentary" : "final_answer",
         }]
       : [];
     return {
       assistant,
-      toolCalls: toolCalls.map((call) => this.toAgentLoopToolCall(call)),
+      toolCalls,
       stopReason: response.stop_reason,
       responseCompleted: true,
       usage: {
@@ -89,4 +101,5 @@ export class ILLMClientAgentLoopModelClient implements AgentLoopModelClient {
       input,
     };
   }
+
 }

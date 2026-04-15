@@ -118,7 +118,7 @@ export class CodexLLMClient extends BaseLLMClient implements ILLMClient {
     throw lastError;
   }
 
-  /** CodexLLMClient does not support function/tool calling. */
+  /** CodexLLMClient does not support native provider function/tool calling. */
   supportsToolCalling(): boolean { return false; }
 
   /**

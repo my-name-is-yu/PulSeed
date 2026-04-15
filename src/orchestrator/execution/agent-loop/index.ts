@@ -26,6 +26,7 @@ export * from "./core-loop-control-tools.js";
 export * from "./core-phase-runner.js";
 export * from "./openai-responses-agent-loop-model-client.js";
 export * from "./agent-loop-prompts.js";
+export * from "./prompted-tool-protocol.js";
 export * from "./task-agent-loop-context.js";
 export * from "./task-agent-loop-factory.js";
 export * from "./task-agent-loop-result.js";

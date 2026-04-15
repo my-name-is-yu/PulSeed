@@ -583,7 +583,7 @@ export class TaskLifecycle {
       attempt: task.consecutive_failure_count + 1,
     });
 
-    if (this.adapterRegistry && !this.adapterRegistry.isAvailable(adapter.adapterType)) {
+    if (!this.agentLoopRunner && this.adapterRegistry && !this.adapterRegistry.isAvailable(adapter.adapterType)) {
       const reason = `Adapter circuit breaker is open for "${adapter.adapterType}"`;
       const now = new Date().toISOString();
       const blockedTask = {
