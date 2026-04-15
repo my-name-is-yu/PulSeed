@@ -305,9 +305,7 @@ describe("setup import flow", () => {
   it("asks which source to import from when Hermes and OpenClaw are both detected", async () => {
     vi.resetModules();
     const confirmMock = vi.fn(async () => true);
-    const selectMock = vi.fn()
-      .mockResolvedValueOnce("openclaw")
-      .mockResolvedValueOnce("recommended");
+    const selectMock = vi.fn().mockResolvedValueOnce("openclaw");
     const logInfoMock = vi.fn();
     const sources: SetupImportSource[] = [
       {
@@ -383,15 +381,28 @@ describe("setup import flow", () => {
     expect(selectMock).toHaveBeenNthCalledWith(
       1,
       expect.objectContaining({
-        message: expect.stringContaining("Which existing agent"),
+        message: "Found existing settings!",
+        options: expect.arrayContaining([
+          expect.objectContaining({ label: "Migrate Hermes Agent settings" }),
+          expect.objectContaining({ label: "Migrate OpenClaw settings" }),
+          expect.objectContaining({ label: "Do not migrate" }),
+        ]),
       })
     );
+    const firstPrompt = selectMock.mock.calls[0]?.[0] as { options: Array<{ label: string }> };
+    expect(firstPrompt.options.map((option) => option.label)).toEqual([
+      "Migrate OpenClaw settings",
+      "Migrate Hermes Agent settings",
+      "Do not migrate",
+    ]);
+    expect(selectMock).toHaveBeenCalledTimes(1);
+    expect(confirmMock).not.toHaveBeenCalled();
   });
 
-  it("respects manual item selection and does not seed skipped provider defaults", async () => {
+  it("imports all items from the selected source without a second item-selection prompt", async () => {
     vi.resetModules();
     const confirmMock = vi.fn(async () => true);
-    const selectMock = vi.fn(async () => "choose");
+    const selectMock = vi.fn().mockResolvedValueOnce("openclaw");
     const multiselectMock = vi.fn(async () => ["openclaw-skill"]);
     const sources: SetupImportSource[] = [
       {
@@ -442,13 +453,15 @@ describe("setup import flow", () => {
     const { stepSetupImport } = await import("../commands/setup/import/flow.js");
     const selection = await stepSetupImport();
 
-    expect(selection?.providerSettings).toBeUndefined();
-    expect(selection?.items.find((item) => item.id === "openclaw-provider")?.decision).toBe("skip");
+    expect(selection?.providerSettings).toMatchObject({
+      provider: "openai",
+      model: "gpt-5.4-mini",
+      adapter: "agent_loop",
+    });
+    expect(selection?.items.find((item) => item.id === "openclaw-provider")?.decision).toBe("import");
     expect(selection?.items.find((item) => item.id === "openclaw-skill")?.decision).toBe("import");
-    expect(multiselectMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        message: "Select items to import:",
-      })
-    );
+    expect(selectMock).toHaveBeenCalledTimes(1);
+    expect(confirmMock).not.toHaveBeenCalled();
+    expect(multiselectMock).not.toHaveBeenCalled();
   });
 });

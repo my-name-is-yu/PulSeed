@@ -124,12 +124,12 @@ describe("setup notification step", () => {
     );
   });
 
-  it("preselects custom model when modifying an unknown current model", async () => {
+  it("preselects custom model for non-OpenAI providers when modifying an unknown current model", async () => {
     selectMock.mockResolvedValueOnce("__custom__");
     textMock.mockResolvedValueOnce("my-custom-model");
 
     const { stepModel } = await import("../commands/setup/steps-provider.js");
-    const result = await stepModel("openai", "my-custom-model");
+    const result = await stepModel("anthropic", "my-custom-model");
 
     expect(result).toBe("my-custom-model");
     expect(selectMock).toHaveBeenCalledWith(
@@ -142,6 +142,42 @@ describe("setup notification step", () => {
         initialValue: "my-custom-model",
       })
     );
+  });
+
+  it("shows the OpenAI model list without recommended hints", async () => {
+    selectMock.mockResolvedValueOnce("gpt-5.4");
+
+    const { stepModel } = await import("../commands/setup/steps-provider.js");
+    const result = await stepModel("openai");
+
+    expect(result).toBe("gpt-5.4");
+    const prompt = selectMock.mock.calls[0]?.[0] as {
+      options: Array<{ label: string; value: string; hint?: string }>;
+    };
+    expect(prompt.options.map((option) => option.label)).toEqual([
+      "GPT-5.4",
+      "GPT-5.2-Codex",
+      "GPT-5.1-Codex-Max",
+      "GPT-5.4-Mini",
+      "GPT-5.3-Codex",
+      "GPT-5.3-Codex-Spark",
+      "GPT-5.2",
+      "GPT-5.1-Codex-Mini",
+    ]);
+    expect(prompt.options.every((option) => option.hint !== "recommended")).toBe(true);
+  });
+
+  it("does not show recommended hints for execution adapters", async () => {
+    selectMock.mockResolvedValueOnce("agent_loop");
+
+    const { stepAdapter } = await import("../commands/setup/steps-adapter.js");
+    const result = await stepAdapter("gpt-5.4", "openai");
+
+    expect(result).toBe("agent_loop");
+    const prompt = selectMock.mock.calls[0]?.[0] as {
+      options: Array<{ hint?: string }>;
+    };
+    expect(prompt.options.some((option) => option.hint?.includes("recommended"))).toBe(false);
   });
 
   it("writes notification.json only after final confirmation", async () => {
@@ -543,7 +579,7 @@ describe("setup notification step", () => {
     );
   });
 
-  it("still asks for Seedy name after importing from OpenClaw", async () => {
+  it("uses imported provider settings without re-asking execution prompts after importing from OpenClaw", async () => {
     const stepExistingConfigMock = vi.fn(async () => "keep");
     const stepSeedyNameMock = vi.fn(async () => "Imported Seedy");
     const stepProviderMock = vi.fn(async (initial?: string) => initial ?? "openai");
@@ -655,10 +691,10 @@ describe("setup notification step", () => {
     expect(code).toBe(0);
     expect(stepExistingConfigMock).not.toHaveBeenCalled();
     expect(stepSeedyNameMock).toHaveBeenCalledTimes(1);
-    expect(stepProviderMock).toHaveBeenCalledWith("anthropic");
-    expect(stepModelMock).toHaveBeenCalledWith("anthropic", "claude-sonnet-4-6");
-    expect(stepAdapterMock).toHaveBeenCalledWith("claude-sonnet-4-6", "anthropic", "agent_loop");
-    expect(stepApiKeyMock).toHaveBeenCalledWith("anthropic", expect.any(Object), "sk-imported", "agent_loop");
+    expect(stepProviderMock).not.toHaveBeenCalled();
+    expect(stepModelMock).not.toHaveBeenCalled();
+    expect(stepAdapterMock).not.toHaveBeenCalled();
+    expect(stepApiKeyMock).not.toHaveBeenCalled();
     expect(saveProviderConfigMock).toHaveBeenCalledWith(
       expect.objectContaining({
         provider: "anthropic",

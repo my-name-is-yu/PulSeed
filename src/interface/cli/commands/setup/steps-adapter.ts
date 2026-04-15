@@ -42,7 +42,6 @@ export async function stepAdapter(
     value: adapter,
     label: ADAPTER_LABELS[adapter] ?? adapter,
     hint: [
-      adapter === recommendedAdapter ? "recommended" : undefined,
       adapter === initialAdapter ? "current" : undefined,
       ADAPTER_HINTS[adapter],
     ].filter(Boolean).join(", ") || undefined,

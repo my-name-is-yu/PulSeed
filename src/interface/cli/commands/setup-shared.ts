@@ -27,6 +27,28 @@ export const RECOMMENDED_MODELS: Record<string, string> = {
   ollama: "qwen3:4b",
 };
 
+const OPENAI_MODEL_ORDER = [
+  "gpt-5.4",
+  "gpt-5.2-codex",
+  "gpt-5.1-codex-max",
+  "gpt-5.4-mini",
+  "gpt-5.3-codex",
+  "gpt-5.3-codex-spark",
+  "gpt-5.2",
+  "gpt-5.1-codex-mini",
+] as const;
+
+const OPENAI_MODEL_LABELS: Record<string, string> = {
+  "gpt-5.4": "GPT-5.4",
+  "gpt-5.2-codex": "GPT-5.2-Codex",
+  "gpt-5.1-codex-max": "GPT-5.1-Codex-Max",
+  "gpt-5.4-mini": "GPT-5.4-Mini",
+  "gpt-5.3-codex": "GPT-5.3-Codex",
+  "gpt-5.3-codex-spark": "GPT-5.3-Codex-Spark",
+  "gpt-5.2": "GPT-5.2",
+  "gpt-5.1-codex-mini": "GPT-5.1-Codex-Mini",
+};
+
 export const RECOMMENDED_ADAPTERS: Partial<Record<Provider, string>> = {
   openai: "agent_loop",
   anthropic: "agent_loop",
@@ -49,9 +71,20 @@ export function detectApiKeys(): Record<string, boolean> {
  * Returns all model names in MODEL_REGISTRY that belong to the given provider.
  */
 export function getModelsForProvider(provider: string): string[] {
+  if (provider === "openai") {
+    return [...OPENAI_MODEL_ORDER].filter((model) => {
+      const entry = MODEL_REGISTRY[model];
+      return !entry || entry.provider === provider;
+    });
+  }
+
   return Object.entries(MODEL_REGISTRY)
     .filter(([, info]) => info.provider === provider)
     .map(([name]) => name);
+}
+
+export function getModelLabel(model: string): string {
+  return OPENAI_MODEL_LABELS[model] ?? model;
 }
 
 /**

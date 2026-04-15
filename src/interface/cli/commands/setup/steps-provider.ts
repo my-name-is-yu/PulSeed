@@ -7,8 +7,8 @@ import {
   PROVIDERS,
   PROVIDER_LABELS,
   ENV_KEY_NAMES,
-  RECOMMENDED_MODELS,
   detectApiKeys,
+  getModelLabel,
   getModelsForProvider,
 } from "../setup-shared.js";
 import type { Provider } from "../setup-shared.js";
@@ -67,26 +67,26 @@ export async function stepProvider(initialProvider?: Provider): Promise<Provider
 
 export async function stepModel(provider: Provider, initialModel?: string): Promise<string> {
   const models = getModelsForProvider(provider);
-  const recommended = RECOMMENDED_MODELS[provider];
 
   const options = models.map((model) => ({
     value: model,
-    label: model,
-    hint: [
-      model === recommended ? "recommended" : undefined,
-      model === initialModel ? "current" : undefined,
-    ].filter(Boolean).join(", ") || undefined,
+    label: getModelLabel(model),
+    hint: model === initialModel ? "current" : undefined,
   }));
-  options.push({
-    value: "__custom__",
-    label: "Custom model name",
-    hint: initialModel && !models.includes(initialModel) ? `current: ${initialModel}` : undefined,
-  });
+  if (provider !== "openai") {
+    options.push({
+      value: "__custom__",
+      label: "Custom model name",
+      hint: initialModel && !models.includes(initialModel) ? `current: ${initialModel}` : undefined,
+    });
+  }
 
   const initialValue = initialModel
     ? models.includes(initialModel)
       ? initialModel
-      : "__custom__"
+      : provider !== "openai"
+        ? "__custom__"
+        : undefined
     : undefined;
 
   const choice = guardCancel(
@@ -179,7 +179,7 @@ export async function stepApiKey(
           {
             value: "login" as const,
             label: "Login with OAuth (opens browser via Codex CLI)",
-            hint: "recommended for OpenAI Codex CLI adapter",
+            hint: "uses Codex CLI OAuth",
           },
           {
             value: "skip" as const,

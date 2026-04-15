@@ -60,11 +60,6 @@ function mergeProviderSettings(items: SetupImportItem[]): SetupImportProviderSet
   return items.find((item) => item.decision !== "skip" && item.providerSettings)?.providerSettings;
 }
 
-function itemOptionLabel(item: SetupImportItem): string {
-  const decision = item.decision === "copy_disabled" ? "copy disabled" : item.decision;
-  return `${item.sourceLabel}: ${item.kind} / ${item.label} (${decision})`;
-}
-
 function defaultProviderConfigFromImport(
   settings: SetupImportProviderSettings | undefined
 ): Partial<ProviderConfig> | undefined {
@@ -90,77 +85,39 @@ export async function stepSetupImport(): Promise<SetupImportSelection | undefine
   const detectedSources = detectSetupImportSources();
   if (detectedSources.length === 0) return undefined;
 
-  p.note(sourceSummary(detectedSources), "Existing agent configs found");
-  const wantsImport = guardCancel(
-    await p.confirm({
-      message: "Import settings from Hermes Agent / OpenClaw into PulSeed?",
-      initialValue: true,
-    })
-  );
-  if (!wantsImport) return undefined;
+  const choiceSources = [...detectedSources].sort((a, b) => {
+    const order: Record<SetupImportSource["id"], number> = { openclaw: 0, hermes: 1 };
+    return order[a.id] - order[b.id];
+  });
 
-  let sources = detectedSources;
-  if (detectedSources.length > 1) {
-    const sourceChoice = guardCancel(
-      await p.select({
-        message: "Which existing agent should PulSeed import from?",
-        options: detectedSources.map((source) => ({
+  p.note(sourceSummary(detectedSources), "Existing agent configs found");
+  const sourceChoice = guardCancel(
+    await p.select({
+      message: "Found existing settings!",
+      options: [
+        ...choiceSources.map((source) => ({
           value: source.id,
-          label: source.label,
+          label: source.id === "hermes"
+            ? "Migrate Hermes Agent settings"
+            : "Migrate OpenClaw settings",
           hint: source.rootDir,
         })),
-        initialValue: detectedSources.find((source) => source.id === "hermes")?.id ?? detectedSources[0]?.id,
-      })
-    );
-    sources = detectedSources.filter((source) => source.id === sourceChoice);
-  }
-
-
-  p.note(preview(sources), "Import preview");
-  const mode = guardCancel(
-    await p.select({
-      message: "How should PulSeed import these settings?",
-      options: [
-        {
-          value: "recommended" as const,
-          label: "Import recommended items",
-          hint: "provider and skills import; MCP/plugins are copied disabled",
-        },
-        {
-          value: "choose" as const,
-          label: "Choose items",
-        },
         {
           value: "skip" as const,
-          label: "Skip import",
+          label: "Do not migrate",
         },
       ],
-      initialValue: "recommended" as const,
+      initialValue: choiceSources[0]?.id,
     })
   );
+  if (sourceChoice === "skip") return undefined;
 
-  if (mode === "skip") return undefined;
+  const sources = detectedSources.filter((source) => source.id === sourceChoice);
+  if (sources.length === 0) return undefined;
 
   const allItems = sources.flatMap((source) => source.items);
   let items = allItems;
-  if (mode === "choose") {
-    const selectedIds = new Set(
-      guardCancel(
-        await p.multiselect({
-          message: "Select items to import:",
-          options: allItems.map((item) => ({
-            value: item.id,
-            label: itemOptionLabel(item),
-            hint: item.reason,
-          })),
-          initialValues: allItems.map((item) => item.id),
-        })
-      )
-    );
-    items = allItems.map((item) =>
-      selectedIds.has(item.id) ? item : { ...item, decision: "skip" as const }
-    );
-  }
+  p.note(preview(sources), "Import preview");
 
   const selectedItems = items.filter((item) => item.decision !== "skip");
   const providerItems = selectedItems.filter((item) => item.providerSettings);

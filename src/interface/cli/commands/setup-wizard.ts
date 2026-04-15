@@ -11,7 +11,7 @@ import type { ProviderConfig } from "../../../base/llm/provider-config.js";
 import { clearIdentityCache } from "../../../base/config/identity-loader.js";
 import { isDaemonRunning } from "../../../runtime/daemon/client.js";
 import { ROOT_PRESETS } from "./presets/root-presets.js";
-import { detectApiKeys, getAdaptersForModel, maskKey } from "./setup-shared.js";
+import { MODEL_REGISTRY, detectApiKeys, getAdaptersForModel, maskKey } from "./setup-shared.js";
 import type { Provider } from "./setup-shared.js";
 import { getBanner, stepExistingConfig, stepUserName, stepSeedyName } from "./setup/steps-identity.js";
 import { stepRootPreset, stepProvider, stepModel, stepApiKey } from "./setup/steps-provider.js";
@@ -96,25 +96,56 @@ function buildProviderConfig(
   return config;
 }
 
+function canUseImportedModel(provider: Provider, model: string | undefined): model is string {
+  if (!model) return false;
+  const registryEntry = MODEL_REGISTRY[model];
+  return !registryEntry || registryEntry.provider === provider;
+}
+
+function isLikelyCodexOAuthToken(value: string | undefined): boolean {
+  if (!value) return false;
+  const trimmed = value.trim();
+  return trimmed.startsWith("eyJ") && trimmed.split(".").length >= 3;
+}
+
+function canUseImportedApiKey(provider: Provider, adapter: string, apiKey: string | undefined): apiKey is string {
+  if (!apiKey) return false;
+  return !(provider === "openai" && adapter !== "openai_codex_cli" && isLikelyCodexOAuthToken(apiKey));
+}
+
 async function stepExecutionConfig(
-  current?: ExecutionAnswers
+  current?: ExecutionAnswers,
+  mode: "interactive" | "imported" = "interactive"
 ): Promise<ExecutionAnswers> {
-  const provider = await stepProvider(current?.provider);
-  const initialModel = current?.provider === provider ? current.model : undefined;
-  const model = await stepModel(provider, initialModel);
+  const provider = mode === "imported" && current?.provider ? current.provider : await stepProvider(current?.provider);
+  const importedModel = mode === "imported" && canUseImportedModel(provider, current?.model);
+  const model =
+    importedModel
+      ? current.model
+      : await stepModel(
+          provider,
+          mode === "interactive" && current?.provider === provider ? current.model : undefined
+        );
   const adaptersForModel = getAdaptersForModel(model, provider);
-  const initialAdapter =
-    current?.provider === provider && adaptersForModel.includes(current.adapter)
+  const adapter =
+    mode === "imported" && current?.adapter && adaptersForModel.includes(current.adapter)
       ? current.adapter
-      : undefined;
-  const adapter = await stepAdapter(model, provider, initialAdapter);
+      : await stepAdapter(
+          model,
+          provider,
+          mode === "interactive" && current?.provider === provider && adaptersForModel.includes(current.adapter)
+            ? current.adapter
+            : undefined
+        );
   if (!adapter) return { provider, model, adapter, apiKey: current?.apiKey };
 
   const detectedKeys = detectApiKeys();
   const apiKey =
-    current?.provider === provider
-      ? await stepApiKey(provider, detectedKeys, current.apiKey, adapter)
-      : await stepApiKey(provider, detectedKeys, undefined, adapter);
+    mode === "imported" && canUseImportedApiKey(provider, adapter, current?.apiKey)
+      ? current.apiKey
+      : current?.provider === provider
+        ? await stepApiKey(provider, detectedKeys, current.apiKey, adapter)
+        : await stepApiKey(provider, detectedKeys, undefined, adapter);
   return { provider, model, adapter, apiKey };
 }
 
@@ -273,6 +304,7 @@ export async function runSetupWizard(): Promise<number> {
 
   const importSelection = await stepSetupImport();
   const importedProviderPatch = providerConfigPatchFromImport(importSelection?.providerSettings);
+  let executionMode: "interactive" | "imported" = importedProviderPatch?.provider ? "imported" : "interactive";
 
   if (!importSelection) {
     const existingChoice = await stepExistingConfig();
@@ -311,7 +343,7 @@ export async function runSetupWizard(): Promise<number> {
           p.cancel("Setup cancelled.");
           return 0;
         }
-        execution = await stepExecutionConfig(execution);
+        execution = await stepExecutionConfig(execution, "interactive");
         if (!execution.adapter) return 1;
       }
 
@@ -352,7 +384,8 @@ export async function runSetupWizard(): Promise<number> {
     }
 
     if (section === "execution") {
-      Object.assign(answers, await stepExecutionConfig(importSelection || answers.adapter ? answers : undefined));
+      Object.assign(answers, await stepExecutionConfig(answers, executionMode));
+      executionMode = "interactive";
       if (!answers.adapter) return 1;
       const next = await stepSectionNavigation(
         "Provider settings complete.",

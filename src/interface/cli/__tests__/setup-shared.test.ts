@@ -57,12 +57,19 @@ describe("detectApiKeys", () => {
 // ─── getModelsForProvider ───
 
 describe("getModelsForProvider", () => {
-  it("returns openai models for openai provider", () => {
+  it("returns openai models for openai provider in the expected order", () => {
     const models = getModelsForProvider("openai");
     expect(models.length).toBeGreaterThan(0);
-    // All returned models should be from openai provider
-    expect(models).toContain("gpt-5.4-mini");
-    expect(models).toContain("gpt-4.1");
+    expect(models).toEqual([
+      "gpt-5.4",
+      "gpt-5.2-codex",
+      "gpt-5.1-codex-max",
+      "gpt-5.4-mini",
+      "gpt-5.3-codex",
+      "gpt-5.3-codex-spark",
+      "gpt-5.2",
+      "gpt-5.1-codex-mini",
+    ]);
   });
 
   it("returns anthropic models for anthropic provider", () => {
