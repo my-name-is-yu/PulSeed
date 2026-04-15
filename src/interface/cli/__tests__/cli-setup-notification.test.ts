@@ -690,6 +690,11 @@ describe("setup notification step", () => {
     const code = await runSetupWizard();
 
     expect(code).toBe(0);
+    expect(noteMock).toHaveBeenCalledWith(
+      expect.stringContaining("API Key:   found in imported settings"),
+      "Imported setup defaults"
+    );
+    expect(logInfoMock).toHaveBeenCalledWith("Provider settings were imported, so provider questions are skipped.");
     expect(stepExistingConfigMock).not.toHaveBeenCalled();
     expect(stepSeedyNameMock).toHaveBeenCalledTimes(1);
     expect(stepRootPresetMock).not.toHaveBeenCalled();
@@ -706,6 +711,232 @@ describe("setup notification step", () => {
     );
     expect((saveProviderConfigMock.mock.calls[0] as unknown[] | undefined)?.[0]).not.toHaveProperty("api_key");
     expect(applySetupImportSelectionMock).toHaveBeenCalledWith("/tmp/pulseed-test", importSelection);
+  });
+
+  it("explains missing imported OpenAI API key and can switch to Codex CLI", async () => {
+    const stepProviderMock = vi.fn(async () => "openai");
+    const stepModelMock = vi.fn(async () => "gpt-5.4");
+    const stepApiKeyMock = vi.fn(async () => "sk-test");
+    const stepAdapterMock = vi.fn(async () => "agent_loop");
+    const saveProviderConfigMock = vi.fn(async () => {});
+
+    const importSelection: SetupImportSelection = {
+      sources: [{ id: "hermes", label: "Hermes Agent", rootDir: "/tmp/hermes", items: [] }],
+      items: [],
+      providerSettings: {
+        provider: "openai",
+        model: "gpt-5.4",
+        adapter: "agent_loop",
+      },
+    };
+
+    vi.doMock("../commands/setup/import/flow.js", () => ({
+      stepSetupImport: vi.fn(async () => importSelection),
+      providerConfigPatchFromImport: vi.fn((settings: NonNullable<SetupImportSelection["providerSettings"]>) => ({
+        provider: settings.provider,
+        model: settings.model,
+        adapter: settings.adapter,
+        api_key: settings.apiKey,
+      })),
+    }));
+    vi.doMock("../commands/setup/import/apply.js", () => ({
+      applySetupImportSelection: vi.fn(async () => ({
+        created_at: "2026-04-13T00:00:00.000Z",
+        sources: [{ id: "hermes", label: "Hermes Agent", rootDir: "/tmp/hermes" }],
+        items: [],
+      })),
+    }));
+    vi.doMock("../commands/setup/steps-identity.js", () => ({
+      getBanner: () => "banner",
+      stepExistingConfig: vi.fn(),
+      stepUserName: vi.fn(async () => "User"),
+      stepSeedyName: vi.fn(async () => "Seedy"),
+    }));
+    vi.doMock("../commands/setup/steps-provider.js", () => ({
+      stepRootPreset: vi.fn(async () => "default"),
+      stepProvider: stepProviderMock,
+      stepModel: stepModelMock,
+      stepApiKey: stepApiKeyMock,
+      runCodexOAuthLogin: vi.fn(),
+    }));
+    vi.doMock("../commands/setup/steps-adapter.js", () => ({
+      stepAdapter: stepAdapterMock,
+    }));
+    vi.doMock("../commands/setup/steps-runtime.js", () => ({
+      ensurePulseedDir: vi.fn(() => "/tmp/pulseed-test"),
+      stepDaemon: vi.fn(async () => ({ start: false, port: 41700 })),
+      writeSeedMd: vi.fn(),
+      writeRootMd: vi.fn(),
+      writeUserMd: vi.fn(),
+    }));
+    vi.doMock("../commands/setup/steps-notification.js", () => ({
+      stepNotification: vi.fn(async () => null),
+    }));
+    vi.doMock("../../../base/llm/provider-config.js", () => ({
+      MODEL_REGISTRY: {
+        "gpt-5.4": {
+          provider: "openai",
+          adapters: ["openai_codex_cli", "openai_api", "agent_loop"],
+        },
+      },
+      loadProviderConfig: vi.fn(),
+      saveProviderConfig: saveProviderConfigMock,
+      validateProviderConfig: vi.fn((config: { api_key?: string; adapter: string }) => ({
+        valid: config.adapter === "openai_codex_cli" || Boolean(config.api_key),
+        errors: config.adapter === "openai_codex_cli" || config.api_key ? [] : ["API key required"],
+      })),
+    }));
+    vi.doMock("../../../base/config/identity-loader.js", () => ({
+      clearIdentityCache: vi.fn(),
+    }));
+    vi.doMock("node:fs", () => ({
+      mkdirSync: vi.fn(),
+      writeFileSync: vi.fn(),
+      existsSync: vi.fn(() => false),
+      readFileSync: vi.fn(),
+    }));
+
+    delete process.env["OPENAI_API_KEY"];
+    confirmMock.mockResolvedValueOnce(true);
+    selectMock
+      .mockResolvedValueOnce("continue")
+      .mockResolvedValueOnce("skip")
+      .mockResolvedValueOnce("continue")
+      .mockResolvedValueOnce("continue")
+      .mockResolvedValueOnce("save");
+
+    const { runSetupWizard } = await import("../commands/setup-wizard.js");
+    const code = await runSetupWizard();
+
+    expect(code).toBe(0);
+    expect(noteMock).toHaveBeenCalledWith(
+      expect.stringContaining("OpenAI API key was not found in the imported settings."),
+      "OpenAI authentication needed"
+    );
+    expect(stepProviderMock).not.toHaveBeenCalled();
+    expect(stepModelMock).not.toHaveBeenCalled();
+    expect(stepAdapterMock).not.toHaveBeenCalled();
+    expect(stepApiKeyMock).not.toHaveBeenCalled();
+    expect(logWarnMock).toHaveBeenCalledWith(
+      "Skipping OpenAI API key. PulSeed will use OpenAI Codex CLI; run `codex login` before using it."
+    );
+    expect(saveProviderConfigMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: "openai",
+        model: "gpt-5.4",
+        adapter: "openai_codex_cli",
+      })
+    );
+  });
+
+  it("does not treat imported Codex OAuth tokens as complete OpenAI API keys", async () => {
+    const stepApiKeyMock = vi.fn(async () => "sk-test");
+    const runCodexOAuthLoginMock = vi.fn(async () => "eyJ.new.token");
+    const saveProviderConfigMock = vi.fn(async () => {});
+
+    const importSelection: SetupImportSelection = {
+      sources: [{ id: "hermes", label: "Hermes Agent", rootDir: "/tmp/hermes", items: [] }],
+      items: [],
+      providerSettings: {
+        provider: "openai",
+        model: "gpt-5.4",
+        adapter: "agent_loop",
+        apiKey: "eyJ.imported.oauth",
+      },
+    };
+
+    vi.doMock("../commands/setup/import/flow.js", () => ({
+      stepSetupImport: vi.fn(async () => importSelection),
+      providerConfigPatchFromImport: vi.fn((settings: NonNullable<SetupImportSelection["providerSettings"]>) => ({
+        provider: settings.provider,
+        model: settings.model,
+        adapter: settings.adapter,
+        api_key: settings.apiKey,
+      })),
+    }));
+    vi.doMock("../commands/setup/import/apply.js", () => ({
+      applySetupImportSelection: vi.fn(async () => ({
+        created_at: "2026-04-13T00:00:00.000Z",
+        sources: [{ id: "hermes", label: "Hermes Agent", rootDir: "/tmp/hermes" }],
+        items: [],
+      })),
+    }));
+    vi.doMock("../commands/setup/steps-identity.js", () => ({
+      getBanner: () => "banner",
+      stepExistingConfig: vi.fn(),
+      stepUserName: vi.fn(async () => "User"),
+      stepSeedyName: vi.fn(async () => "Seedy"),
+    }));
+    vi.doMock("../commands/setup/steps-provider.js", () => ({
+      stepRootPreset: vi.fn(async () => "default"),
+      stepProvider: vi.fn(),
+      stepModel: vi.fn(),
+      stepApiKey: stepApiKeyMock,
+      runCodexOAuthLogin: runCodexOAuthLoginMock,
+    }));
+    vi.doMock("../commands/setup/steps-adapter.js", () => ({
+      stepAdapter: vi.fn(),
+    }));
+    vi.doMock("../commands/setup/steps-runtime.js", () => ({
+      ensurePulseedDir: vi.fn(() => "/tmp/pulseed-test"),
+      stepDaemon: vi.fn(async () => ({ start: false, port: 41700 })),
+      writeSeedMd: vi.fn(),
+      writeRootMd: vi.fn(),
+      writeUserMd: vi.fn(),
+    }));
+    vi.doMock("../commands/setup/steps-notification.js", () => ({
+      stepNotification: vi.fn(async () => null),
+    }));
+    vi.doMock("../../../base/llm/provider-config.js", () => ({
+      MODEL_REGISTRY: {
+        "gpt-5.4": {
+          provider: "openai",
+          adapters: ["openai_codex_cli", "openai_api", "agent_loop"],
+        },
+      },
+      loadProviderConfig: vi.fn(),
+      saveProviderConfig: saveProviderConfigMock,
+      validateProviderConfig: vi.fn((config: { api_key?: string; adapter: string }) => ({
+        valid: config.adapter === "openai_codex_cli" || Boolean(config.api_key),
+        errors: config.adapter === "openai_codex_cli" || config.api_key ? [] : ["API key required"],
+      })),
+    }));
+    vi.doMock("../../../base/config/identity-loader.js", () => ({
+      clearIdentityCache: vi.fn(),
+    }));
+    vi.doMock("node:fs", () => ({
+      mkdirSync: vi.fn(),
+      writeFileSync: vi.fn(),
+      existsSync: vi.fn(() => false),
+      readFileSync: vi.fn(),
+    }));
+
+    delete process.env["OPENAI_API_KEY"];
+    confirmMock.mockResolvedValueOnce(true);
+    selectMock
+      .mockResolvedValueOnce("continue")
+      .mockResolvedValueOnce("oauth")
+      .mockResolvedValueOnce("continue")
+      .mockResolvedValueOnce("continue")
+      .mockResolvedValueOnce("save");
+
+    const { runSetupWizard } = await import("../commands/setup-wizard.js");
+    const code = await runSetupWizard();
+
+    expect(code).toBe(0);
+    expect(noteMock).toHaveBeenCalledWith(
+      expect.stringContaining("looks like a Codex OAuth token"),
+      "OpenAI authentication needed"
+    );
+    expect(runCodexOAuthLoginMock).toHaveBeenCalledTimes(1);
+    expect(stepApiKeyMock).not.toHaveBeenCalled();
+    expect(saveProviderConfigMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: "openai",
+        model: "gpt-5.4",
+        adapter: "openai_codex_cli",
+      })
+    );
   });
 
   it("warns when notification config write fails", async () => {

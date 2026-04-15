@@ -14,13 +14,14 @@ import { ROOT_PRESETS } from "./presets/root-presets.js";
 import { MODEL_REGISTRY, detectApiKeys, getAdaptersForModel, maskKey } from "./setup-shared.js";
 import type { Provider } from "./setup-shared.js";
 import { getBanner, stepExistingConfig, stepUserName, stepSeedyName } from "./setup/steps-identity.js";
-import { stepRootPreset, stepProvider, stepModel, stepApiKey } from "./setup/steps-provider.js";
+import { stepRootPreset, stepProvider, stepModel, stepApiKey, runCodexOAuthLogin } from "./setup/steps-provider.js";
 import { stepAdapter } from "./setup/steps-adapter.js";
 import { stepNotification } from "./setup/steps-notification.js";
 import { stepDaemon, ensurePulseedDir, writeSeedMd, writeRootMd, writeUserMd } from "./setup/steps-runtime.js";
 import { guardCancel } from "./setup/utils.js";
 import { applySetupImportSelection } from "./setup/import/apply.js";
 import { providerConfigPatchFromImport, stepSetupImport } from "./setup/import/flow.js";
+import type { SetupImportSelection } from "./setup/import/types.js";
 
 type SetupAnswers = {
   userName: string;
@@ -74,6 +75,37 @@ function formatExecutionSummary(
   ].join("\n");
 }
 
+function formatImportSetupSummary(
+  selection: SetupImportSelection,
+  providerPatch: Partial<ProviderConfig> | undefined
+): string {
+  const sourceNames = selection.sources.map((source) => source.label).join(", ");
+  if (!providerPatch?.provider) {
+    return [
+      `Source:    ${sourceNames}`,
+      "Provider:  not found",
+      "Style:     Default",
+      "Next:      PulSeed will ask for provider settings.",
+    ].join("\n");
+  }
+
+  const apiKeyStatus =
+    providerPatch.api_key
+      ? "found in imported settings"
+      : providerPatch.provider === "ollama" || providerPatch.adapter === "openai_codex_cli"
+        ? "not required for this adapter"
+        : "not found";
+
+  return [
+    `Source:    ${sourceNames}`,
+    `Provider:  ${providerPatch.provider}`,
+    `Model:     ${providerPatch.model ?? "not found"}`,
+    `Adapter:   ${providerPatch.adapter ?? "not found"}`,
+    `API Key:   ${apiKeyStatus}`,
+    "Style:     Default",
+  ].join("\n");
+}
+
 function buildProviderConfig(
   execution: Pick<SetupAnswers, "provider" | "model" | "adapter" | "apiKey">,
   base?: Partial<ProviderConfig>
@@ -116,6 +148,101 @@ function canUseImportedApiKey(provider: Provider, adapter: string, apiKey: strin
   return !(provider === "openai" && adapter !== "openai_codex_cli" && isLikelyCodexOAuthToken(apiKey));
 }
 
+function importedExecutionIsComplete(
+  execution: Pick<SetupAnswers, "provider" | "model" | "adapter" | "apiKey">,
+  base?: Partial<ProviderConfig>
+): boolean {
+  if (!execution.provider || !execution.model || !execution.adapter) return false;
+  if (!canUseImportedModel(execution.provider, execution.model)) return false;
+  if (!getAdaptersForModel(execution.model, execution.provider).includes(execution.adapter)) return false;
+  if (
+    execution.provider === "openai" &&
+    execution.adapter === "openai_codex_cli"
+  ) {
+    return false;
+  }
+  if (execution.provider === "openai" && execution.adapter !== "openai_codex_cli") {
+    if (!execution.apiKey) return false;
+    if (!canUseImportedApiKey(execution.provider, execution.adapter, execution.apiKey)) return false;
+  }
+  return validateProviderConfig(buildProviderConfig(execution, base)).valid;
+}
+
+async function stepMissingOpenAiAuth(
+  model: string,
+  adapter: string,
+  adaptersForModel: string[],
+  importedApiKey: string | undefined
+): Promise<{ adapter: string; apiKey?: string }> {
+  const details = [
+    "OpenAI API key was not found in the imported settings.",
+    `${adapter} uses the OpenAI API directly, so PulSeed needs an API key unless you switch to Codex CLI OAuth.`,
+  ];
+  if (importedApiKey && isLikelyCodexOAuthToken(importedApiKey)) {
+    details.push("The imported auth value looks like a Codex OAuth token, not an OpenAI API key.");
+  }
+  p.note(details.join("\n"), "OpenAI authentication needed");
+
+  const canUseCodexCli = adaptersForModel.includes("openai_codex_cli");
+  const authChoice = guardCancel(
+    await p.select({
+      message: "How should PulSeed handle OpenAI authentication?",
+      options: [
+        { value: "enter" as const, label: "Enter OpenAI API key" },
+        ...(canUseCodexCli
+          ? [
+              {
+                value: "oauth" as const,
+                label: "Use Codex CLI OAuth instead",
+                hint: `switch adapter for ${model} to OpenAI Codex CLI`,
+              },
+              {
+                value: "skip" as const,
+                label: "Skip for now",
+                hint: "use OpenAI Codex CLI and run codex login later",
+              },
+            ]
+          : []),
+      ],
+      initialValue: "enter" as const,
+    })
+  );
+
+  if (authChoice === "oauth") {
+    const token = await runCodexOAuthLogin();
+    if (token) return { adapter: "openai_codex_cli" };
+
+    p.log.warn("Codex OAuth login did not produce a usable token.");
+    const fallback = guardCancel(
+      await p.select({
+        message: "Codex CLI authentication is not ready. How should setup continue?",
+        options: [
+          { value: "enter" as const, label: "Enter OpenAI API key instead" },
+          {
+            value: "skip" as const,
+            label: "Skip for now",
+            hint: "use OpenAI Codex CLI and run codex login later",
+          },
+        ],
+        initialValue: "enter" as const,
+      })
+    );
+    if (fallback === "skip") {
+      p.log.warn("Skipping Codex OAuth login. Run `codex login` before using OpenAI Codex CLI.");
+      return { adapter: "openai_codex_cli" };
+    }
+    const apiKey = await stepApiKey("openai", detectApiKeys(), undefined, adapter);
+    return { adapter, apiKey };
+  }
+  if (authChoice === "skip") {
+    p.log.warn("Skipping OpenAI API key. PulSeed will use OpenAI Codex CLI; run `codex login` before using it.");
+    return { adapter: "openai_codex_cli" };
+  }
+
+  const apiKey = await stepApiKey("openai", detectApiKeys(), undefined, adapter);
+  return { adapter, apiKey };
+}
+
 async function stepExecutionConfig(
   current?: ExecutionAnswers,
   mode: "interactive" | "imported" = "interactive"
@@ -143,8 +270,25 @@ async function stepExecutionConfig(
   if (!adapter) return { provider, model, adapter, apiKey: current?.apiKey };
 
   const detectedKeys = detectApiKeys();
+  const openAiEnvKey = process.env["OPENAI_API_KEY"];
+  const hasUsableOpenAiEnvKey = Boolean(openAiEnvKey) && !isLikelyCodexOAuthToken(openAiEnvKey);
+  const validImportedApiKey =
+    mode === "imported" &&
+    adapter !== "openai_codex_cli" &&
+    canUseImportedApiKey(provider, adapter, current?.apiKey);
+  if (
+    mode === "imported" &&
+    provider === "openai" &&
+    adapter !== "openai_codex_cli" &&
+    !hasUsableOpenAiEnvKey &&
+    !validImportedApiKey
+  ) {
+    const auth = await stepMissingOpenAiAuth(model, adapter, adaptersForModel, current?.apiKey);
+    return { provider, model, adapter: auth.adapter, apiKey: auth.apiKey };
+  }
+
   const apiKey =
-    mode === "imported" && canUseImportedApiKey(provider, adapter, current?.apiKey)
+    validImportedApiKey
       ? current.apiKey
       : current?.provider === provider
         ? await stepApiKey(provider, detectedKeys, current.apiKey, adapter)
@@ -313,6 +457,9 @@ export async function runSetupWizard(): Promise<number> {
   const importSelection = await stepSetupImport();
   const importedProviderPatch = providerConfigPatchFromImport(importSelection?.providerSettings);
   let executionMode: "interactive" | "imported" = importedProviderPatch?.provider ? "imported" : "interactive";
+  if (importSelection) {
+    p.note(formatImportSetupSummary(importSelection, importedProviderPatch), "Imported setup defaults");
+  }
 
   if (!importSelection) {
     const existingChoice = await stepExistingConfig();
@@ -374,6 +521,8 @@ export async function runSetupWizard(): Promise<number> {
     daemonPort: 0,
     notificationConfig: null,
   };
+  const skipImportedExecution = Boolean(importSelection) &&
+    importedExecutionIsComplete(answers, importedProviderPatch);
   let section: FullSetupSection = "identity";
   let finalAnswers: SetupAnswers | undefined;
 
@@ -391,7 +540,13 @@ export async function runSetupWizard(): Promise<number> {
         return 0;
       }
       if (next === "continue") {
-        section = "execution";
+        if (skipImportedExecution) {
+          p.log.info("Provider settings were imported, so provider questions are skipped.");
+          executionMode = "interactive";
+          section = "runtime";
+        } else {
+          section = "execution";
+        }
       }
       continue;
     }
