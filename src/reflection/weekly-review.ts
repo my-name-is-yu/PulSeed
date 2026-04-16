@@ -1,6 +1,3 @@
-import * as fsp from "node:fs/promises";
-import * as path from "node:path";
-import { writeJsonFileAtomic } from "../base/utils/json-io.js";
 import type { StateManager } from "../base/state/state-manager.js";
 import type { ILLMClient } from "../base/llm/llm-client.js";
 import type { INotificationDispatcher } from "../runtime/notification-dispatcher.js";
@@ -8,6 +5,10 @@ import { z } from "zod";
 import type { WeeklyReviewReport } from "./types.js";
 import { getInternalIdentityPrefix } from "../base/config/identity-loader.js";
 import { WeeklyReviewReportSchema } from "./types.js";
+import {
+  dispatchReflectionNotification,
+  persistReflectionReport,
+} from "./reflection-utils.js";
 
 // ─── LLM response schema ───
 
@@ -122,23 +123,16 @@ Respond with JSON matching this schema:
     summary,
   });
 
-  // Persist report
-  const reflectionsDir = path.join(baseDir, "reflections");
-  await fsp.mkdir(reflectionsDir, { recursive: true });
-  await writeJsonFileAtomic(path.join(reflectionsDir, `weekly-${week}.json`), report);
+  await persistReflectionReport(baseDir, `weekly-${week}.json`, report);
 
   // Notify
   if (notificationDispatcher && goalSummaries.length > 0) {
-    await notificationDispatcher.dispatch({
+    await dispatchReflectionNotification(notificationDispatcher, {
       id: `weekly-review-${week}`,
       report_type: "weekly_report",
-      goal_id: null,
       title: `Weekly Review — ${week}`,
       content: `Reviewed ${goalSummaries.length} goals. ${suggested_removals.length} removal(s) suggested.`,
-      verbosity: "standard",
       generated_at: now,
-      delivered_at: null,
-      read: false,
     });
   }
 

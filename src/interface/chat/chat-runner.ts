@@ -23,7 +23,7 @@ import { buildChatContext, resolveGitRoot } from "../../platform/observation/con
 import type { EscalationHandler } from "./escalation.js";
 import { buildDynamicContextPrompt, buildStaticSystemPrompt } from "./grounding.js";
 import { verifyChatAction } from "./chat-verifier.js";
-import type { ApprovalLevel } from "./self-knowledge-mutation-tools.js";
+import type { ApprovalLevel } from "./mutation-tool-defs.js";
 import type { ToolRegistry } from "../../tools/registry.js";
 import { toToolDefinitionsFiltered } from "../../tools/tool-definition-adapter.js";
 import type { ToolCallContext } from "../../tools/types.js";

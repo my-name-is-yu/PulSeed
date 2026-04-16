@@ -11,64 +11,92 @@ export function getVerbosityLevel(characterConfig: CharacterConfig): "brief" | "
   return "detailed";
 }
 
+export function readMetadataOrContent<T>(
+  metadataValue: T | null | undefined,
+  content: string,
+  pattern: RegExp,
+  parse: (match: RegExpMatchArray) => T
+): T | null {
+  if (metadataValue !== undefined && metadataValue !== null) return metadataValue;
+  const match = content.match(pattern);
+  return match ? parse(match) : null;
+}
+
+export function buildSectionedReportContent(args: {
+  heading: string;
+  goalId: string;
+  body: string;
+  generatedAt: string;
+}): string {
+  return (
+    `## ${args.heading}\n\n` +
+    `**Goal**: ${args.goalId}\n\n` +
+    `${args.body}\n\n` +
+    `_Generated at ${args.generatedAt}_`
+  );
+}
+
 // ─── formatReportForCLI ───
 
 export function formatReportForCLI(report: Report): string {
   if (report.report_type === "execution_summary") {
     const m = report.metadata;
-    const loopNum = m?.loop_index ?? (() => {
-      const match = report.title.match(/Loop (\d+)/);
-      return match ? parseInt(match[1], 10) : null;
-    })();
-    const gap = m?.gap_aggregate !== undefined
-      ? m.gap_aggregate.toFixed(2)
-      : (() => {
-          const match = report.content.match(/\*\*Score\*\*:\s*([\d.]+)/);
-          return match ? parseFloat(match[1]).toFixed(2) : "?.??";
-        })();
-    const taskPart = m
-      ? (m.task_id != null && m.task_action != null
-          ? `task: ${m.task_id} (${m.task_action})`
-          : "no task")
-      : (() => {
-          const taskIdMatch = report.content.match(/\*\*Task ID\*\*:\s*(.+)/);
-          const actionMatch = report.content.match(/\*\*Action\*\*:\s*(.+)/);
-          return taskIdMatch && actionMatch
-            ? `task: ${taskIdMatch[1].trim()} (${actionMatch[1].trim()})`
-            : "no task";
-        })();
-    const elapsed = m?.elapsed_ms !== undefined
-      ? `${(m.elapsed_ms / 1000).toFixed(1)}s`
-      : (() => {
-          const match = report.content.match(/^([\d.]+)s$/m);
-          return match ? `${match[1]}s` : "?s";
-        })();
+    const loopNum = readMetadataOrContent(
+      m?.loop_index,
+      report.content,
+      /Loop (\d+)/,
+      (match) => parseInt(match[1], 10)
+    );
+    const gapValue = readMetadataOrContent(
+      m?.gap_aggregate,
+      report.content,
+      /\*\*Score\*\*:\s*([\d.]+)/,
+      (match) => parseFloat(match[1])
+    );
+    const taskPart =
+      m?.task_id != null && m?.task_action != null
+        ? `task: ${m.task_id} (${m.task_action})`
+        : (() => {
+            const taskIdMatch = report.content.match(/\*\*Task ID\*\*:\s*(.+)/);
+            const actionMatch = report.content.match(/\*\*Action\*\*:\s*(.+)/);
+            return taskIdMatch && actionMatch
+              ? `task: ${taskIdMatch[1].trim()} (${actionMatch[1].trim()})`
+              : "no task";
+          })();
+    const elapsedValue = readMetadataOrContent(
+      m?.elapsed_ms,
+      report.content,
+      /^([\d.]+)s$/m,
+      (match) => parseFloat(match[1]) * 1000
+    );
     const goalId = report.goal_id ?? "(no goal)";
-    return `[Loop ${loopNum ?? "?"}] ${goalId} | gap: ${gap} | ${taskPart} | ${elapsed}`;
+    return `[Loop ${loopNum ?? "?"}] ${goalId} | gap: ${gapValue !== null ? gapValue.toFixed(2) : "?.??"} | ${taskPart} | ${elapsedValue !== null ? `${(elapsedValue / 1000).toFixed(1)}s` : "?s"}`;
   }
 
   if (report.report_type === "daily_summary") {
     const dateMatch = report.title.match(/(\d{4}-\d{2}-\d{2})/);
     const date = dateMatch ? dateMatch[1] : "?";
-    const loops = report.metadata?.loops_run
-      ?? (() => {
-          const m = report.content.match(/\*\*Loops run\*\*:\s*(\d+)/);
-          return m ? m[1] : "?";
-        })();
+    const loops = readMetadataOrContent(
+      report.metadata?.loops_run,
+      report.content,
+      /\*\*Loops run\*\*:\s*(\d+)/,
+      (match) => parseInt(match[1], 10)
+    );
     const goalId = report.goal_id ?? "(no goal)";
-    return `[Daily ${date}] ${goalId} | ${loops} loops`;
+    return `[Daily ${date}] ${goalId} | ${loops ?? "?"} loops`;
   }
 
   if (report.report_type === "weekly_report") {
     const dateMatch = report.title.match(/(\d{4}-\d{2}-\d{2})/);
     const date = dateMatch ? dateMatch[1] : "?";
-    const totalLoops = report.metadata?.total_loops
-      ?? (() => {
-          const m = report.content.match(/\*\*Total loops run\*\*:\s*(\d+)/);
-          return m ? m[1] : "?";
-        })();
+    const totalLoops = readMetadataOrContent(
+      report.metadata?.total_loops,
+      report.content,
+      /\*\*Total loops run\*\*:\s*(\d+)/,
+      (match) => parseInt(match[1], 10)
+    );
     const goalId = report.goal_id ?? "(no goal)";
-    return `[Weekly ${date}] ${goalId} | ${totalLoops} total loops`;
+    return `[Weekly ${date}] ${goalId} | ${totalLoops ?? "?"} total loops`;
   }
 
   // Notification types / fallback

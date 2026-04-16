@@ -27,6 +27,11 @@ export async function observeWithTools(
   if (!method || !method.endpoint) return null;
 
   try {
+    const shellContext =
+      method.type === "mechanical"
+        ? { ...context, trusted: context.trusted ?? true }
+        : context;
+
     switch (method.type) {
       case "file_check": {
         const result = await toolExecutor.execute("glob", { pattern: method.endpoint }, context);
@@ -35,7 +40,7 @@ export async function observeWithTools(
         return { rawData: files, parsedValue: files.length > 0 ? 1 : 0, confidence: 0.98, toolName: "glob", durationMs: result.durationMs };
       }
       case "mechanical": {
-        const result = await toolExecutor.execute("shell", { command: method.endpoint, timeoutMs: 30_000 }, context);
+        const result = await toolExecutor.execute("shell", { command: method.endpoint, timeoutMs: 30_000 }, shellContext);
         if (!result.success) return null;
         const parsedMech = parseToolOutput("shell", result.data);
         return { rawData: result.data, parsedValue: parsedMech.value, confidence: 0.95, toolName: "shell", durationMs: result.durationMs };
