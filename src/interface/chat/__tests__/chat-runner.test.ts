@@ -496,6 +496,28 @@ describe("ChatRunner", () => {
       }
     });
 
+    it("/status <goal-id> reads archived goals without calling adapter", async () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-archived-status-"));
+      try {
+        const stateManager = new StateManager(tmpDir);
+        await stateManager.init();
+        await stateManager.saveGoal(makeGoal("goal-a"));
+        await stateManager.archiveGoal("goal-a");
+        const adapter = makeMockAdapter();
+        const runner = new ChatRunner(makeDeps({ stateManager, adapter }));
+
+        const result = await runner.execute("/status goal-a", "/repo");
+
+        expect(result.success).toBe(true);
+        expect(result.output).toContain("Goal status: Goal goal-a");
+        expect(result.output).toContain("ID: goal-a");
+        expect(result.output).toContain("Status: archived");
+        expect(adapter.execute).not.toHaveBeenCalled();
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+
     it("/tasks and /task read task state without shelling out", async () => {
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-tasks-"));
       try {
@@ -518,6 +540,79 @@ describe("ChatRunner", () => {
         expect(adapter.execute).not.toHaveBeenCalled();
       } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+
+    it("/task <task-id> searches tasks under archived goals when no goal id is provided", async () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-archived-task-"));
+      try {
+        const stateManager = new StateManager(tmpDir);
+        await stateManager.init();
+        await stateManager.saveGoal(makeGoal("goal-a"));
+        await stateManager.writeRaw("tasks/goal-a/task-1.json", makeTask("task-1", "goal-a"));
+        await stateManager.archiveGoal("goal-a");
+        const adapter = makeMockAdapter();
+        const runner = new ChatRunner(makeDeps({ stateManager, adapter }));
+
+        const result = await runner.execute("/task task-1", "/repo");
+
+        expect(result.success).toBe(true);
+        expect(result.output).toContain("Task: task-1");
+        expect(result.output).toContain("Goal: goal-a");
+        expect(result.output).toContain("Success criteria:");
+        expect(adapter.execute).not.toHaveBeenCalled();
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+
+    it("/task <task-id> searches recoverable archived goals without an archive marker", async () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-recoverable-archived-task-"));
+      try {
+        const stateManager = new StateManager(tmpDir);
+        await stateManager.init();
+        const archiveGoalDir = path.join(tmpDir, "archive", "goal-a", "goal");
+        const archiveTasksDir = path.join(tmpDir, "archive", "goal-a", "tasks");
+        fs.mkdirSync(archiveGoalDir, { recursive: true });
+        fs.mkdirSync(archiveTasksDir, { recursive: true });
+        fs.writeFileSync(path.join(archiveGoalDir, "goal.json"), JSON.stringify(makeGoal("goal-a", { status: "archived" })));
+        fs.writeFileSync(path.join(archiveTasksDir, "task-1.json"), JSON.stringify(makeTask("task-1", "goal-a")));
+        const adapter = makeMockAdapter();
+        const runner = new ChatRunner(makeDeps({ stateManager, adapter }));
+
+        const status = await runner.execute("/status goal-a", "/repo");
+        const task = await runner.execute("/task task-1", "/repo");
+
+        expect(status.success).toBe(true);
+        expect(status.output).toContain("Status: archived");
+        expect(task.success).toBe(true);
+        expect(task.output).toContain("Task: task-1");
+        expect(task.output).toContain("Goal: goal-a");
+        expect(adapter.execute).not.toHaveBeenCalled();
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+
+    it("/task with an explicit goal id cannot traverse outside the state directory", async () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-task-traversal-"));
+      const outsideDir = path.join(path.dirname(tmpDir), `${path.basename(tmpDir)}-outside`);
+      try {
+        fs.mkdirSync(outsideDir, { recursive: true });
+        fs.writeFileSync(path.join(outsideDir, "task-1.json"), JSON.stringify(makeTask("task-1", "outside-goal")));
+        const stateManager = new StateManager(tmpDir);
+        await stateManager.init();
+        const adapter = makeMockAdapter();
+        const runner = new ChatRunner(makeDeps({ stateManager, adapter }));
+
+        const result = await runner.execute(`/task task-1 ../../${path.basename(outsideDir)}`, "/repo");
+
+        expect(result.success).toBe(false);
+        expect(result.output).toContain("Task not found: task-1");
+        expect(adapter.execute).not.toHaveBeenCalled();
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+        fs.rmSync(outsideDir, { recursive: true, force: true });
       }
     });
 
@@ -560,6 +655,58 @@ describe("ChatRunner", () => {
       expect(plugins.output).toContain("demo");
       expect(pluginLoader.loadAll).toHaveBeenCalledOnce();
       expect(adapter.execute).not.toHaveBeenCalled();
+    });
+
+    it("/config uses the shared provider resolver including .env values", async () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-config-env-"));
+      const oldEnv = {
+        PULSEED_PROVIDER: process.env["PULSEED_PROVIDER"],
+        PULSEED_LLM_PROVIDER: process.env["PULSEED_LLM_PROVIDER"],
+        PULSEED_MODEL: process.env["PULSEED_MODEL"],
+        PULSEED_LIGHT_MODEL: process.env["PULSEED_LIGHT_MODEL"],
+        PULSEED_ADAPTER: process.env["PULSEED_ADAPTER"],
+        PULSEED_DEFAULT_ADAPTER: process.env["PULSEED_DEFAULT_ADAPTER"],
+        OPENAI_API_KEY: process.env["OPENAI_API_KEY"],
+        OPENAI_BASE_URL: process.env["OPENAI_BASE_URL"],
+      };
+      try {
+        for (const key of Object.keys(oldEnv)) delete process.env[key];
+        const stateManager = new StateManager(tmpDir);
+        await stateManager.init();
+        await stateManager.writeRaw("provider.json", {
+          provider: "openai",
+          model: "gpt-5.4",
+          adapter: "openai_api",
+        });
+        fs.writeFileSync(
+          path.join(tmpDir, ".env"),
+          "OPENAI_API_KEY=sk-from-env\nOPENAI_BASE_URL=https://example.test/v1\nPULSEED_LIGHT_MODEL=gpt-env-light\n"
+        );
+        const adapter = makeMockAdapter();
+        const runner = new ChatRunner(makeDeps({ stateManager, adapter }));
+
+        const result = await runner.execute("/config", "/repo");
+
+        expect(result.success).toBe(true);
+        expect(result.output).toContain("Provider configuration");
+        expect(result.output).toContain("provider: openai");
+        expect(result.output).toContain("model: gpt-5.4");
+        expect(result.output).toContain("light_model: gpt-env-light");
+        expect(result.output).toContain("adapter: openai_api");
+        expect(result.output).toContain("base_url: https://example.test/v1");
+        expect(result.output).toContain("has_api_key: true");
+        expect(result.output).not.toContain("sk-from-env");
+        expect(adapter.execute).not.toHaveBeenCalled();
+      } finally {
+        for (const [key, value] of Object.entries(oldEnv)) {
+          if (value === undefined) {
+            delete process.env[key];
+          } else {
+            process.env[key] = value;
+          }
+        }
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
     });
 
     it("/model reports migrated legacy provider config without saving it", async () => {

@@ -319,7 +319,7 @@ describe("loadProviderConfig", () => {
   const envKeys = [
     "PULSEED_PROVIDER", "PULSEED_LLM_PROVIDER",
     "PULSEED_ADAPTER", "PULSEED_DEFAULT_ADAPTER",
-    "PULSEED_MODEL",
+    "PULSEED_MODEL", "PULSEED_LIGHT_MODEL",
     "OPENAI_API_KEY", "OPENAI_MODEL", "OPENAI_BASE_URL",
     "ANTHROPIC_API_KEY", "ANTHROPIC_MODEL",
     "OLLAMA_BASE_URL", "OLLAMA_MODEL",
@@ -466,5 +466,19 @@ describe("loadProviderConfig", () => {
     expect(config.provider).toBe("ollama");
     expect(config.adapter).toBe("openai_api");
     expect(config.api_key).toBe("sk-env");
+  });
+
+  it("PULSEED_LIGHT_MODEL env var overrides file light_model", async () => {
+    mockAccess.mockResolvedValue(undefined);
+    mockReadFile.mockResolvedValue(JSON.stringify({
+      provider: "openai",
+      model: "gpt-5.4",
+      light_model: "gpt-file-light",
+      adapter: "openai_codex_cli",
+    }));
+    process.env["PULSEED_LIGHT_MODEL"] = "gpt-env-light";
+
+    const config = await loadProviderConfig();
+    expect(config.light_model).toBe("gpt-env-light");
   });
 });
