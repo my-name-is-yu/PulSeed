@@ -1,8 +1,8 @@
 import { z } from "zod";
 import fs from "node:fs/promises";
-import { join, resolve } from "node:path";
-import { homedir } from "node:os";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import type { ITool, ToolResult, ToolCallContext, PermissionCheckResult, ToolMetadata, ToolDescriptionContext } from "../../types.js";
+import { getPulseedDirPath } from "../../../base/utils/paths.js";
 import { DESCRIPTION } from "./prompt.js";
 import { TAGS, CATEGORY as _CATEGORY, MAX_OUTPUT_CHARS, READ_ONLY, PERMISSION_LEVEL } from "./constants.js";
 
@@ -11,14 +11,21 @@ export const ReadPulseedFileInputSchema = z.object({
 });
 export type ReadPulseedFileInput = z.infer<typeof ReadPulseedFileInputSchema>;
 
-const PULSEED_BASE = join(homedir(), ".pulseed");
-
 function resolveSafe(relativePath: string): string | null {
-  const full = resolve(join(PULSEED_BASE, relativePath));
-  if (!full.startsWith(PULSEED_BASE + "/") && full !== PULSEED_BASE) {
+  const base = resolve(getPulseedDirPath());
+  const full = resolve(join(base, relativePath));
+  const rel = relative(base, full);
+  if (rel.startsWith("..") || rel === ".." || isAbsolute(rel)) {
     return null;
   }
   return full;
+}
+
+async function isRealPathInPulseedHome(fullPath: string): Promise<boolean> {
+  const realBase = await fs.realpath(getPulseedDirPath());
+  const realPath = await fs.realpath(fullPath);
+  const rel = relative(realBase, realPath);
+  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
 }
 
 export class ReadPulseedFileTool implements ITool<ReadPulseedFileInput, unknown> {
@@ -53,6 +60,15 @@ export class ReadPulseedFileTool implements ITool<ReadPulseedFileInput, unknown>
       };
     }
     try {
+      if (!(await isRealPathInPulseedHome(fullPath))) {
+        return {
+          success: false,
+          data: null,
+          summary: "Path traversal blocked: " + input.path,
+          error: "Path must be within ~/.pulseed/",
+          durationMs: Date.now() - startTime,
+        };
+      }
       const content = await fs.readFile(fullPath, "utf-8");
       return {
         success: true,

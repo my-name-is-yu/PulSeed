@@ -24,4 +24,22 @@ describe("json-io", () => {
       cleanupTempDir(tmpDir);
     }
   });
+
+  it("applies requested file and parent directory modes", async () => {
+    const tmpDir = makeTempDir("pulseed-json-io-mode-");
+    try {
+      const privateDir = path.join(tmpDir, "private");
+      const filePath = path.join(privateDir, "provider.json");
+
+      await writeJsonFileAtomic(filePath, { api_key: "sk-test" }, {
+        mode: 0o600,
+        directoryMode: 0o700,
+      });
+
+      expect(fs.statSync(privateDir).mode & 0o777).toBe(0o700);
+      expect(fs.statSync(filePath).mode & 0o777).toBe(0o600);
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
+  });
 });

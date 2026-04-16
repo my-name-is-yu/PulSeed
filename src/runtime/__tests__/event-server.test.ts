@@ -239,6 +239,27 @@ describe("start / stop", () => {
     await server2.stop();
     expect(server2.isRunning()).toBe(false);
   });
+
+  it("rejects instead of falling back when an explicit port is already in use", async () => {
+    const occupied = http.createServer((_req, res) => {
+      res.writeHead(200);
+      res.end("occupied");
+    });
+    await new Promise<void>((resolve) => occupied.listen(0, "127.0.0.1", resolve));
+    const address = occupied.address();
+    expect(address).toBeTypeOf("object");
+    const occupiedPort = (address as { port: number }).port;
+
+    const explicitServer = new EventServer(
+      mockDriveSystem as never,
+      { port: occupiedPort, eventsDir: path.join(tmpDir, "explicit-events") }
+    );
+
+    await expect(explicitServer.start()).rejects.toMatchObject({ code: "EADDRINUSE" });
+    expect(explicitServer.isRunning()).toBe(false);
+
+    await new Promise<void>((resolve) => occupied.close(() => resolve()));
+  });
 });
 
 // ─── POST /events — valid event ───

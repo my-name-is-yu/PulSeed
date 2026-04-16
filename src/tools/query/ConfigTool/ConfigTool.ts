@@ -2,6 +2,7 @@ import * as fs from "fs";
 import * as path from "path";
 import { z } from "zod";
 import type { ITool, ToolResult, ToolCallContext, PermissionCheckResult, ToolMetadata, ToolDescriptionContext } from "../../types.js";
+import { getPulseedDirPath } from "../../../base/utils/paths.js";
 import { DESCRIPTION } from "./prompt.js";
 import { TAGS, PERMISSION_LEVEL, MAX_OUTPUT_CHARS } from "./constants.js";
 
@@ -40,13 +41,13 @@ export class ConfigTool implements ITool<ConfigToolInput, unknown> {
   async call(input: ConfigToolInput, _context: ToolCallContext): Promise<ToolResult> {
     const startTime = Date.now();
     try {
-      const homeDir = process.env["HOME"] ?? "/tmp";
-      const providerPath = path.join(homeDir, ".pulseed", "provider.json");
+      const pulseedHome = getPulseedDirPath();
+      const providerPath = path.join(pulseedHome, "provider.json");
       const defaults: ProviderConfig = {
         provider: "unknown",
         model: "unknown",
         default_adapter: "claude-code-cli",
-        pulseed_home_dir: path.join(homeDir, ".pulseed"),
+        pulseed_home_dir: pulseedHome,
       };
       let config: ProviderConfig = { ...defaults };
       if (fs.existsSync(providerPath)) {

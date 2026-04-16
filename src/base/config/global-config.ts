@@ -5,6 +5,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
+import { getPulseedDirPath } from "../utils/paths.js";
 
 const GlobalConfigSchema = z.object({
   daemon_mode: z.boolean().default(false),
@@ -19,8 +20,7 @@ const DEFAULT_CONFIG: GlobalConfig = {
 };
 
 function getConfigPath(): string {
-  const baseDir = process.env.PULSEED_HOME ?? path.join(process.env.HOME ?? "~", ".pulseed");
-  return path.join(baseDir, "config.json");
+  return path.join(getPulseedDirPath(), "config.json");
 }
 
 export async function loadGlobalConfig(): Promise<GlobalConfig> {

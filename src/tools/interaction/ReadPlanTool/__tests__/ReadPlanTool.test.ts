@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, beforeAll, afterAll } from "vitest";
 import { ReadPlanTool, ReadPlanInputSchema } from "../ReadPlanTool.js";
 import type { ToolCallContext } from "../../../types.js";
 import fs from "node:fs/promises";
@@ -16,9 +16,11 @@ function makeContext(): ToolCallContext {
 }
 
 const TEST_PLAN_PREFIX = "vitest-test-";
+const originalPulseedHome = process.env["PULSEED_HOME"];
+let tmpPulseedHome: string;
 
 async function cleanupTestPlans() {
-  const decDir = path.join(os.homedir(), ".pulseed", "decisions");
+  const decDir = path.join(tmpPulseedHome, "decisions");
   try {
     const files = await fs.readdir(decDir);
     for (const f of files) {
@@ -30,6 +32,20 @@ async function cleanupTestPlans() {
     // directory may not exist, ignore
   }
 }
+
+beforeAll(async () => {
+  tmpPulseedHome = await fs.mkdtemp(path.join(os.tmpdir(), "pulseed-read-plan-test-"));
+  process.env["PULSEED_HOME"] = tmpPulseedHome;
+});
+
+afterAll(async () => {
+  if (originalPulseedHome === undefined) {
+    delete process.env["PULSEED_HOME"];
+  } else {
+    process.env["PULSEED_HOME"] = originalPulseedHome;
+  }
+  await fs.rm(tmpPulseedHome, { recursive: true, force: true });
+});
 
 describe("ReadPlanTool", () => {
   const tool = new ReadPlanTool();
@@ -54,7 +70,7 @@ describe("ReadPlanTool", () => {
   });
 
   it("reads existing plan file", async () => {
-    const decDir = path.join(os.homedir(), ".pulseed", "decisions");
+    const decDir = path.join(tmpPulseedHome, "decisions");
     await fs.mkdir(decDir, { recursive: true });
     await fs.writeFile(
       path.join(decDir, `${planId}.md`),

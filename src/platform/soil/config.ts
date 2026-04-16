@@ -1,4 +1,3 @@
-import * as os from "node:os";
 import * as path from "node:path";
 import { getPulseedDirPath } from "../../base/utils/paths.js";
 
@@ -42,5 +41,5 @@ export function getDefaultSoilHomeDir(): string {
 }
 
 export function getDefaultSoilRootFromHome(homeDir?: string): string {
-  return path.join(homeDir ?? os.homedir(), ".pulseed", "soil");
+  return homeDir ? path.join(homeDir, ".pulseed", "soil") : getDefaultSoilRootDir();
 }

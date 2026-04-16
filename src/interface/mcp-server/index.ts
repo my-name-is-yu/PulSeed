@@ -4,6 +4,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { StateManager } from "../../base/state/state-manager.js";
+import { getPulseedDirPath } from "../../base/utils/paths.js";
 import type { MCPServerDeps } from "./tools.js";
 import {
   toolGoalList,
@@ -104,7 +105,7 @@ export async function startMCPServer(deps: MCPServerDeps): Promise<void> {
 // ─── Create deps from environment ───
 
 function createDepsFromEnv(): MCPServerDeps {
-  const baseDir = process.env["PULSEED_DIR"] ?? `${process.env["HOME"]}/.pulseed`;
+  const baseDir = process.env["PULSEED_HOME"] ?? process.env["PULSEED_DIR"] ?? getPulseedDirPath();
   const stateManager = new StateManager(baseDir);
   return { stateManager, baseDir };
 }

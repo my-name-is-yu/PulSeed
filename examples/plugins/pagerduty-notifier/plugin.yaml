@@ -24,7 +24,7 @@ config_schema:
     type: string
     required: false
     description: "Component name to include in the event"
-entry_point: "src/index.ts"
+entry_point: "dist/index.js"
 min_pulseed_version: "0.1.0"
 permissions:
   network: true

@@ -1,7 +1,7 @@
 {
-  "name": "@tavori-plugins/jira-datasource",
+  "name": "@pulseed-plugins/jira-datasource",
   "version": "1.0.0",
-  "description": "Jira REST API issue count observation source for Tavori",
+  "description": "Jira REST API issue count observation source for PulSeed",
   "type": "module",
   "main": "dist/index.js",
   "exports": {
@@ -10,10 +10,10 @@
   "scripts": {
     "build": "tsc --project tsconfig.json"
   },
-  "keywords": ["tavori", "plugin", "jira", "datasource"],
+  "keywords": ["pulseed", "plugin", "jira", "datasource"],
   "license": "MIT",
   "peerDependencies": {
-    "tavori": ">=0.1.0"
+    "pulseed": ">=0.1.0"
   },
   "devDependencies": {
     "typescript": "^5.3.0"

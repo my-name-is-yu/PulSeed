@@ -7,8 +7,8 @@
  *   PULSEED_RUN_CODEX_E2E=1 npx vitest run tests/e2e/codex-cli-e2e.test.ts
  *
  * The suite auto-skips unless PULSEED_RUN_CODEX_E2E=1 is set and `codex` is
- * found on PATH (or at the known absolute path). Keep tasks minimal to
- * conserve ChatGPT Plus quota.
+ * found at PULSEED_CODEX_BIN or on PATH. Keep tasks minimal to conserve
+ * ChatGPT Plus quota.
  *
  * Requirements:
  *   - codex CLI installed (v0.114.0+)
@@ -26,16 +26,13 @@ import type { AgentTask } from "../../src/orchestrator/execution/adapter-layer.j
 // ─── Skip guard ───────────────────────────────────────────────────────────────
 
 /**
- * Detect whether the codex CLI is reachable. Checks both the well-known
- * absolute path and anything on PATH.
+ * Detect whether the codex CLI is reachable. Checks an explicit test override
+ * first, then falls back to PATH.
  */
 function findCodexBin(): string | null {
-  const knownPath =
-    "/Users/yuyoshimuta/.nvm/versions/node/v22.16.0/bin/codex";
-
-  // Try the known absolute path first (fastest, no PATH dependency)
-  if (existsSync(knownPath)) {
-    return knownPath;
+  const configuredPath = process.env["PULSEED_CODEX_BIN"];
+  if (configuredPath && existsSync(configuredPath)) {
+    return configuredPath;
   }
 
   // Fall back to PATH lookup using execFileSync (no shell, no injection risk)

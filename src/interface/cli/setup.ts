@@ -9,7 +9,7 @@ import { getPulseedDirPath } from "../../base/utils/paths.js";
 import { StateManager } from "../../base/state/state-manager.js";
 import { createWorkspaceContextProvider } from "../../platform/observation/workspace-context.js";
 import { buildLLMClient, buildAdapterRegistry } from "../../base/llm/provider-factory.js";
-import { loadProviderConfig } from "../../base/llm/provider-config.js";
+import { loadProviderConfig, resolveOpenAIApiKey } from "../../base/llm/provider-config.js";
 import { TrustManager } from "../../platform/traits/trust-manager.js";
 import { CuriosityEngine } from "../../platform/traits/curiosity-engine.js";
 import { DriveSystem } from "../../platform/drive/drive-system.js";
@@ -193,8 +193,9 @@ export async function buildDeps(
 
   // --- Embedding + Vector infrastructure ---
   const openAiEmbeddingModel = process.env["OPENAI_EMBEDDING_MODEL"] ?? "text-embedding-3-small";
-  const embeddingClient: IEmbeddingClient = process.env["OPENAI_API_KEY"]
-    ? new OpenAIEmbeddingClient(process.env["OPENAI_API_KEY"], openAiEmbeddingModel)
+  const openAiEmbeddingApiKey = await resolveOpenAIApiKey();
+  const embeddingClient: IEmbeddingClient = openAiEmbeddingApiKey
+    ? new OpenAIEmbeddingClient(openAiEmbeddingApiKey, openAiEmbeddingModel)
     : new MockEmbeddingClient();
 
   let vectorIndex: VectorIndex | undefined;
@@ -259,8 +260,8 @@ export async function buildDeps(
 
   registerBuiltinTools({
     adapterRegistry,
-    embeddingClient: process.env["OPENAI_API_KEY"] ? embeddingClient : undefined,
-    embeddingModel: process.env["OPENAI_API_KEY"] ? openAiEmbeddingModel : undefined,
+    embeddingClient: openAiEmbeddingApiKey ? embeddingClient : undefined,
+    embeddingModel: openAiEmbeddingApiKey ? openAiEmbeddingModel : undefined,
     knowledgeManager,
     observationEngine,
     sessionManager,

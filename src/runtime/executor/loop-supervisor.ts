@@ -1,6 +1,5 @@
 import { writeFileSync, mkdirSync, renameSync, existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { homedir } from 'node:os';
 import { GoalWorker, type GoalWorkerConfig, type WorkerResult } from './goal-worker.js';
 import { createEnvelope } from '../types/envelope.js';
 import type { CoreLoop } from '../../orchestrator/loop/core-loop.js';
@@ -10,6 +9,7 @@ import type { Logger } from '../logger.js';
 import { GoalLeaseManager } from '../goal-lease-manager.js';
 import { JournalBackedQueue, type JournalBackedQueueClaim } from '../queue/journal-backed-queue.js';
 import { StateFenceError } from '../../base/utils/errors.js';
+import { getPulseedDirPath } from '../../base/utils/paths.js';
 
 export interface SupervisorConfig {
   concurrency: number;
@@ -60,7 +60,7 @@ const DEFAULT_CONFIG: SupervisorConfig = {
   iterationsPerCycle: 5,
   maxCrashCount: 3,
   crashBackoffBaseMs: 1000,
-  stateFilePath: join(homedir(), '.pulseed', 'supervisor-state.json'),
+  stateFilePath: join(getPulseedDirPath(), 'supervisor-state.json'),
   pollIntervalMs: 100,
   claimLeaseMs: 30_000,
   leaseRenewIntervalMs: 10_000,

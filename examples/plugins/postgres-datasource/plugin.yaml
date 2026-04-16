@@ -2,7 +2,7 @@ name: postgres-datasource
 version: "1.0.0"
 type: data_source
 description: "PostgreSQL database observation source"
-entry_point: src/index.ts
+entry_point: dist/index.js
 min_pulseed_version: "0.1.0"
 capabilities:
   - database_query

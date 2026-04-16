@@ -24,6 +24,7 @@ function makeContext(): ToolCallContext {
 describe("WritePulseedFileTool", () => {
   let tmpHome: string;
   let pulseedDir: string;
+  const originalPulseedHome = process.env["PULSEED_HOME"];
 
   beforeAll(async () => {
     tmpHome = await fs.mkdtemp(path.join(os.tmpdir(), "write-pulseed-test-"));
@@ -33,6 +34,11 @@ describe("WritePulseedFileTool", () => {
   });
 
   afterAll(async () => {
+    if (originalPulseedHome === undefined) {
+      delete process.env["PULSEED_HOME"];
+    } else {
+      process.env["PULSEED_HOME"] = originalPulseedHome;
+    }
     await fs.rm(tmpHome, { recursive: true, force: true });
   });
 
@@ -52,6 +58,40 @@ describe("WritePulseedFileTool", () => {
     expect(result.success).toBe(true);
     const written = await fs.readFile(path.join(pulseedDir, "decisions", "plan-001.md"), "utf-8");
     expect(written).toBe("# Plan");
+  });
+
+  it("honors PULSEED_HOME when writing files", async () => {
+    const customHome = await fs.mkdtemp(path.join(os.tmpdir(), "write-pulseed-home-"));
+    process.env["PULSEED_HOME"] = customHome;
+    try {
+      const { WritePulseedFileTool } = await import("../WritePulseedFileTool.js");
+      const tool = new WritePulseedFileTool();
+      const result = await tool.call({ path: "custom.json", content: "{}" }, makeContext());
+      expect(result.success).toBe(true);
+      await expect(fs.readFile(path.join(customHome, "custom.json"), "utf-8")).resolves.toBe("{}");
+    } finally {
+      delete process.env["PULSEED_HOME"];
+      await fs.rm(customHome, { recursive: true, force: true });
+    }
+  });
+
+  it("blocks writes through symlinks that escape PULSEED_HOME", async () => {
+    const customHome = await fs.mkdtemp(path.join(os.tmpdir(), "write-pulseed-symlink-home-"));
+    const outsideDir = await fs.mkdtemp(path.join(os.tmpdir(), "write-pulseed-symlink-outside-"));
+    process.env["PULSEED_HOME"] = customHome;
+    await fs.symlink(outsideDir, path.join(customHome, "link"), "dir");
+    try {
+      const { WritePulseedFileTool } = await import("../WritePulseedFileTool.js");
+      const tool = new WritePulseedFileTool();
+      const result = await tool.call({ path: "link/nested/pwned.txt", content: "pwned" }, makeContext());
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("~/.pulseed/");
+      await expect(fs.stat(path.join(outsideDir, "nested"))).rejects.toThrow();
+    } finally {
+      delete process.env["PULSEED_HOME"];
+      await fs.rm(customHome, { recursive: true, force: true });
+      await fs.rm(outsideDir, { recursive: true, force: true });
+    }
   });
 
   it("summary includes byte count and path", async () => {

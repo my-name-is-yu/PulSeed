@@ -1,8 +1,8 @@
 import { z } from "zod";
 import fs from "node:fs/promises";
-import { join, resolve, dirname } from "node:path";
-import { homedir } from "node:os";
+import { join, resolve, dirname, relative, isAbsolute, sep } from "node:path";
 import type { ITool, ToolResult, ToolCallContext, PermissionCheckResult, ToolMetadata, ToolDescriptionContext } from "../../types.js";
+import { getPulseedDirPath } from "../../../base/utils/paths.js";
 import { DESCRIPTION } from "./prompt.js";
 import { TAGS, CATEGORY as _CATEGORY, MAX_OUTPUT_CHARS, READ_ONLY, PERMISSION_LEVEL } from "./constants.js";
 
@@ -12,14 +12,62 @@ export const WritePulseedFileInputSchema = z.object({
 });
 export type WritePulseedFileInput = z.infer<typeof WritePulseedFileInputSchema>;
 
-const PULSEED_BASE = join(homedir(), ".pulseed");
-
 function resolveSafe(relativePath: string): string | null {
-  const full = resolve(join(PULSEED_BASE, relativePath));
-  if (!full.startsWith(PULSEED_BASE + "/") && full !== PULSEED_BASE) {
+  const base = resolve(getPulseedDirPath());
+  const full = resolve(join(base, relativePath));
+  const rel = relative(base, full);
+  if (rel.startsWith("..") || rel === ".." || isAbsolute(rel)) {
     return null;
   }
   return full;
+}
+
+async function isRealPathInPulseedHome(fullPath: string): Promise<boolean> {
+  const realBase = await fs.realpath(getPulseedDirPath());
+  const realPath = await fs.realpath(fullPath);
+  const rel = relative(realBase, realPath);
+  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+}
+
+async function ensureSafeParentDir(fullPath: string): Promise<boolean> {
+  const base = resolve(getPulseedDirPath());
+  await fs.mkdir(base, { recursive: true });
+  const realBase = await fs.realpath(base);
+  const parent = dirname(fullPath);
+  const parentRel = relative(base, parent);
+  const parts = parentRel === "" ? [] : parentRel.split(sep).filter(Boolean);
+  let current = base;
+
+  for (const part of parts) {
+    current = join(current, part);
+    try {
+      const stat = await fs.lstat(current);
+      if (!stat.isDirectory() && !stat.isSymbolicLink()) {
+        return false;
+      }
+      if (!(await isRealPathInPulseedHome(current))) {
+        return false;
+      }
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+        throw err;
+      }
+      await fs.mkdir(current);
+      if (!(await isRealPathInPulseedHome(current))) {
+        return false;
+      }
+    }
+  }
+
+  try {
+    await fs.lstat(fullPath);
+    return isRealPathInPulseedHome(fullPath);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+      return true;
+    }
+    throw err;
+  }
 }
 
 export class WritePulseedFileTool implements ITool<WritePulseedFileInput, unknown> {
@@ -54,7 +102,15 @@ export class WritePulseedFileTool implements ITool<WritePulseedFileInput, unknow
       };
     }
     try {
-      await fs.mkdir(dirname(fullPath), { recursive: true });
+      if (!(await ensureSafeParentDir(fullPath))) {
+        return {
+          success: false,
+          data: null,
+          summary: "Path traversal blocked: " + input.path,
+          error: "Path must be within ~/.pulseed/",
+          durationMs: Date.now() - startTime,
+        };
+      }
       await fs.writeFile(fullPath, input.content, "utf-8");
       const byteLength = Buffer.byteLength(input.content, "utf-8");
       return {

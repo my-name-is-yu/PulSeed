@@ -58,6 +58,84 @@ describe("ScheduleEngine", () => {
     expect(loaded[0]!.name).toBe("http-check");
   });
 
+  it("preserves concurrent addEntry mutations from separate engine instances", async () => {
+    const engine2 = new ScheduleEngine({ baseDir: tempDir });
+
+    await Promise.all([
+      engine.addEntry({
+        name: "first-concurrent-check",
+        layer: "heartbeat",
+        trigger: { type: "interval", seconds: 30, jitter_factor: 0 },
+        enabled: true,
+        heartbeat: {
+          check_type: "custom",
+          check_config: { command: "echo first" },
+          failure_threshold: 3,
+          timeout_ms: 5000,
+        },
+      }),
+      engine2.addEntry({
+        name: "second-concurrent-check",
+        layer: "heartbeat",
+        trigger: { type: "interval", seconds: 30, jitter_factor: 0 },
+        enabled: true,
+        heartbeat: {
+          check_type: "custom",
+          check_config: { command: "echo second" },
+          failure_threshold: 3,
+          timeout_ms: 5000,
+        },
+      }),
+    ]);
+
+    const loaded = await new ScheduleEngine({ baseDir: tempDir }).loadEntries();
+    expect(loaded.map((entry) => entry.name).sort()).toEqual([
+      "first-concurrent-check",
+      "second-concurrent-check",
+    ]);
+    expect(fs.existsSync(path.join(tempDir, "schedules.json.lock"))).toBe(false);
+  });
+
+  it("does not hold the schedule file lock while executing a due entry", async () => {
+    const entry = await engine.addEntry({
+      name: "due-entry",
+      layer: "heartbeat",
+      trigger: { type: "interval", seconds: 30, jitter_factor: 0 },
+      enabled: true,
+      heartbeat: {
+        check_type: "custom",
+        check_config: { command: "echo due" },
+        failure_threshold: 3,
+        timeout_ms: 5000,
+      },
+    });
+    const entries = engine.getEntries();
+    entries[0] = {
+      ...entries[0]!,
+      next_fire_at: new Date(Date.now() - 1000).toISOString(),
+    };
+    await engine.saveEntries();
+
+    const editor = new ScheduleEngine({ baseDir: tempDir });
+    vi.spyOn(engine as any, "executeEntry").mockImplementation(async (executingEntry: unknown) => {
+      const runningEntry = executingEntry as ScheduleEntry;
+      const updated = await editor.updateEntry(runningEntry.id, { name: "edited-during-execution" });
+      expect(updated?.name).toBe("edited-during-execution");
+      return {
+        entry_id: runningEntry.id,
+        status: "ok" as const,
+        duration_ms: 1,
+        fired_at: new Date().toISOString(),
+      };
+    });
+
+    const results = await engine.tick();
+
+    expect(results[0]?.status).toBe("ok");
+    const loaded = await new ScheduleEngine({ baseDir: tempDir }).loadEntries();
+    expect(loaded.find((candidate) => candidate.id === entry.id)?.name).toBe("edited-during-execution");
+  });
+
   it("projects current schedules into Soil on save and reload", async () => {
     await engine.addEntry({
       name: "soil-visible-schedule",

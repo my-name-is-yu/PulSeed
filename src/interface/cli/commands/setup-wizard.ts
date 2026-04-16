@@ -414,6 +414,7 @@ function saveProviderApiKeyToEnv(provider: ProviderConfig["provider"], apiKey: s
   if (!envKey) return;
 
   const dir = ensurePulseedDir();
+  chmodSyncBestEffort(dir, 0o700);
   const envPath = path.join(dir, ".env");
   let lines: string[] = [];
   try {
@@ -432,7 +433,18 @@ function saveProviderApiKeyToEnv(provider: ProviderConfig["provider"], apiKey: s
     return line;
   }).filter((line, index, all) => line || index < all.length - 1);
   if (!replaced) lines.push(replacement);
-  fs.writeFileSync(envPath, `${lines.join("\n")}\n`, "utf-8");
+  fs.writeFileSync(envPath, `${lines.join("\n")}\n`, { encoding: "utf-8", mode: 0o600 });
+  chmodSyncBestEffort(envPath, 0o600);
+}
+
+function chmodSyncBestEffort(targetPath: string, mode: number): void {
+  try {
+    const chmodSync = Reflect.get(fs, "chmodSync") as unknown;
+    if (typeof chmodSync !== "function") return;
+    chmodSync(targetPath, mode);
+  } catch {
+    // Best-effort hardening; setup should not fail solely because chmod is unavailable.
+  }
 }
 
 async function startDaemonDetached(baseDir: string): Promise<number | undefined> {

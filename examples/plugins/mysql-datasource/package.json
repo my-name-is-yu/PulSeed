@@ -1,8 +1,21 @@
 {
-  "name": "@tavori-plugins/mysql-datasource",
+  "name": "@pulseed-plugins/mysql-datasource",
   "version": "1.0.0",
   "type": "module",
+  "main": "dist/index.js",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc --project tsconfig.json"
+  },
+  "peerDependencies": {
+    "pulseed": ">=0.1.0"
+  },
   "dependencies": {
     "mysql2": "^3.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.0"
   }
 }
