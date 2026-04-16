@@ -12,6 +12,8 @@ import {
   formatReportForCLI,
   buildExecutionSummaryContent,
   buildNotificationContent,
+  buildSectionedReportContent,
+  readMetadataOrContent,
 } from "./report-formatters.js";
 import type {
   ExecutionSummaryParams,
@@ -119,10 +121,12 @@ export class ReportingEngine {
       progressChange = "Single loop (no change to compute)";
     } else {
       const getGap = (r: (typeof todayReports)[0]): number | null => {
-        if (r.metadata?.gap_aggregate !== undefined) return r.metadata.gap_aggregate;
-        // Fallback: parse from Markdown for reports generated before metadata was added
-        const match = r.content.match(/\*\*Score\*\*:\s*([\d.]+)/);
-        return match ? parseFloat(match[1]) : null;
+        return readMetadataOrContent(
+          r.metadata?.gap_aggregate,
+          r.content,
+          /\*\*Score\*\*:\s*([\d.]+)/,
+          (match) => parseFloat(match[1])
+        );
       };
       const firstGap = getGap(todayReports[0]);
       const lastGap = getGap(todayReports[loopsRun - 1]);
@@ -139,27 +143,37 @@ export class ReportingEngine {
 
     // Count stalls and pivots
     const stallCount = todayReports.filter((r) => {
-      if (r.metadata?.stall_detected !== undefined) return r.metadata.stall_detected;
-      return r.content.includes("**Stall detected**: Yes");
+      return readMetadataOrContent(
+        r.metadata?.stall_detected,
+        r.content,
+        /\*\*Stall detected\*\*:\s*Yes/,
+        () => true
+      ) ?? false;
     }).length;
 
     const pivotCount = todayReports.filter((r) => {
-      if (r.metadata?.pivot_occurred !== undefined) return r.metadata.pivot_occurred;
-      return r.content.includes("**Strategy pivot**: Yes");
+      return readMetadataOrContent(
+        r.metadata?.pivot_occurred,
+        r.content,
+        /\*\*Strategy pivot\*\*:\s*Yes/,
+        () => true
+      ) ?? false;
     }).length;
 
     const reportNow = now.toISOString();
 
-    const content =
-      `## Daily Summary — ${todayPrefix}\n\n` +
-      `**Goal**: ${goalId}\n\n` +
-      `### Activity\n\n` +
-      `- **Loops run**: ${loopsRun}\n` +
-      `- **Stalls detected**: ${stallCount}\n` +
-      `- **Strategy pivots**: ${pivotCount}\n\n` +
-      `### Progress\n\n` +
-      `- **Overall gap change**: ${progressChange}\n\n` +
-      `_Generated at ${reportNow}_`;
+    const content = buildSectionedReportContent({
+      heading: `Daily Summary — ${todayPrefix}`,
+      goalId,
+      generatedAt: reportNow,
+      body:
+        `### Activity\n\n` +
+        `- **Loops run**: ${loopsRun}\n` +
+        `- **Stalls detected**: ${stallCount}\n` +
+        `- **Strategy pivots**: ${pivotCount}\n\n` +
+        `### Progress\n\n` +
+        `- **Overall gap change**: ${progressChange}`,
+    });
 
     const report = ReportSchema.parse({
       id: crypto.randomUUID(),
@@ -203,24 +217,35 @@ export class ReportingEngine {
 
     // Sum up total loops from daily summaries
     const getLoopsFromDaily = (r: (typeof dailySummaries)[0]): number => {
-      if (r.metadata?.loops_run !== undefined) return r.metadata.loops_run;
-      // Fallback for reports without metadata
-      const match = r.content.match(/\*\*Loops run\*\*:\s*(\d+)/);
-      return match ? parseInt(match[1], 10) : 0;
+      const loopsRun = readMetadataOrContent(
+        r.metadata?.loops_run,
+        r.content,
+        /\*\*Loops run\*\*:\s*(\d+)/,
+        (match) => parseInt(match[1], 10)
+      );
+      return loopsRun ?? 0;
     };
 
     const totalLoops = dailySummaries.reduce((acc, r) => acc + getLoopsFromDaily(r), 0);
 
     const totalStalls = dailySummaries.reduce((acc, r) => {
-      if (r.metadata?.stall_count !== undefined) return acc + r.metadata.stall_count;
-      const match = r.content.match(/\*\*Stalls detected\*\*:\s*(\d+)/);
-      return acc + (match ? parseInt(match[1], 10) : 0);
+      const stallCount = readMetadataOrContent(
+        r.metadata?.stall_count,
+        r.content,
+        /\*\*Stalls detected\*\*:\s*(\d+)/,
+        (match) => parseInt(match[1], 10)
+      );
+      return acc + (stallCount ?? 0);
     }, 0);
 
     const totalPivots = dailySummaries.reduce((acc, r) => {
-      if (r.metadata?.pivot_count !== undefined) return acc + r.metadata.pivot_count;
-      const match = r.content.match(/\*\*Strategy pivots\*\*:\s*(\d+)/);
-      return acc + (match ? parseInt(match[1], 10) : 0);
+      const pivotCount = readMetadataOrContent(
+        r.metadata?.pivot_count,
+        r.content,
+        /\*\*Strategy pivots\*\*:\s*(\d+)/,
+        (match) => parseInt(match[1], 10)
+      );
+      return acc + (pivotCount ?? 0);
     }, 0);
 
     // Build trend lines from daily summaries (sorted chronologically)
@@ -233,27 +258,30 @@ export class ReportingEngine {
         const date = r.generated_at.slice(0, 10);
         const loops = getLoopsFromDaily(r);
         const progress =
-          r.metadata?.progress_change ??
-          (() => {
-            const m = r.content.match(/\*\*Overall gap change\*\*:\s*(.+)/);
-            return m ? m[1].trim() : "N/A";
-          })();
+          readMetadataOrContent(
+            r.metadata?.progress_change,
+            r.content,
+            /\*\*Overall gap change\*\*:\s*(.+)/,
+            (match) => match[1].trim()
+          ) ?? "N/A";
         return `- **${date}**: ${loops} loops | Gap change: ${progress}`;
       });
       trendSection = trendLines.join("\n");
     }
 
-    const content =
-      `## Weekly Report\n\n` +
-      `**Goal**: ${goalId}\n` +
-      `**Period**: Last 7 days (ending ${reportNow.slice(0, 10)})\n\n` +
-      `### Summary\n\n` +
-      `- **Days with activity**: ${daysWithActivity}\n` +
-      `- **Total loops run**: ${totalLoops}\n` +
-      `- **Total stalls**: ${totalStalls}\n` +
-      `- **Total pivots**: ${totalPivots}\n\n` +
-      `### Daily Trend\n\n${trendSection}\n\n` +
-      `_Generated at ${reportNow}_`;
+    const content = buildSectionedReportContent({
+      heading: "Weekly Report",
+      goalId,
+      generatedAt: reportNow,
+      body:
+        `**Period**: Last 7 days (ending ${reportNow.slice(0, 10)})\n\n` +
+        `### Summary\n\n` +
+        `- **Days with activity**: ${daysWithActivity}\n` +
+        `- **Total loops run**: ${totalLoops}\n` +
+        `- **Total stalls**: ${totalStalls}\n` +
+        `- **Total pivots**: ${totalPivots}\n\n` +
+        `### Daily Trend\n\n${trendSection}`,
+    });
 
     const report = ReportSchema.parse({
       id: crypto.randomUUID(),

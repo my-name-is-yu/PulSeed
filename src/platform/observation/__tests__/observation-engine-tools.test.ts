@@ -225,7 +225,30 @@ describe("observeWithTools", () => {
     expect(mockExecutor.execute).toHaveBeenCalledWith(
       "shell",
       { command: "echo hello", timeoutMs: 30_000 },
-      ctx,
+      expect.objectContaining({ ...ctx, trusted: true }),
+    );
+  });
+
+  it("marks mechanical shell observations as trusted", async () => {
+    const execute = vi.fn().mockResolvedValue({ success: true, data: "output", durationMs: 20, summary: "ok" });
+    const mockExecutor = { execute } as unknown as ToolExecutor;
+    const dim = makeDimension({
+      observation_method: {
+        type: "mechanical",
+        source: "test",
+        schedule: null,
+        endpoint: "npm test",
+        confidence_tier: "mechanical",
+      },
+    });
+
+    const result = await observeWithTools(mockExecutor, dim, ctx);
+
+    expect(result).not.toBeNull();
+    expect(execute).toHaveBeenCalledWith(
+      "shell",
+      { command: "npm test", timeoutMs: 30_000 },
+      expect.objectContaining({ trusted: true }),
     );
   });
 
