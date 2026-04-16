@@ -147,8 +147,13 @@ interface LegacyProviderConfig {
 
 // ─── Constants ───
 
-const PROVIDER_CONFIG_PATH = path.join(getPulseedDirPath(), "provider.json");
-const PROVIDER_ENV_PATH = path.join(getPulseedDirPath(), ".env");
+function providerConfigPath(baseDir = getPulseedDirPath()): string {
+  return path.join(baseDir, "provider.json");
+}
+
+function providerEnvPath(baseDir = getPulseedDirPath()): string {
+  return path.join(baseDir, ".env");
+}
 
 const DEFAULT_PROVIDER_CONFIG: ProviderConfig = {
   provider: "openai",
@@ -363,6 +368,13 @@ function resolveBaseUrl(
   return fileUrl;
 }
 
+function resolveLightModel(
+  fileLightModel: string | undefined,
+  envFile: Record<string, string>
+): string | undefined {
+  return process.env["PULSEED_LIGHT_MODEL"] ?? envFile["PULSEED_LIGHT_MODEL"] ?? fileLightModel;
+}
+
 function parseEnvFile(raw: string): Record<string, string> {
   const entries = raw
     .split(/\r?\n/)
@@ -377,15 +389,139 @@ function parseEnvFile(raw: string): Record<string, string> {
   return Object.fromEntries(entries);
 }
 
-async function readProviderEnvFile(): Promise<Record<string, string>> {
+async function readProviderEnvFile(baseDir?: string): Promise<Record<string, string>> {
   try {
-    return parseEnvFile(await fsp.readFile(PROVIDER_ENV_PATH, "utf-8"));
+    return parseEnvFile(await fsp.readFile(providerEnvPath(baseDir), "utf-8"));
   } catch {
     return {};
   }
 }
 
 // ─── Public API ───
+
+export interface LoadProviderConfigOptions {
+  baseDir?: string;
+  saveMigration?: boolean;
+}
+
+interface LoadedProviderFileConfig {
+  fileConfig: Partial<ProviderConfig>;
+  needsMigrationSave: boolean;
+}
+
+async function loadProviderFileConfig(configPath: string): Promise<LoadedProviderFileConfig> {
+  try {
+    await fsp.access(configPath);
+  } catch {
+    return { fileConfig: {}, needsMigrationSave: false };
+  }
+
+  try {
+    const raw = await fsp.readFile(configPath, "utf-8");
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    if (isLegacyConfig(parsed)) {
+      return {
+        fileConfig: migrateProviderConfig(parsed as unknown as LegacyProviderConfig),
+        needsMigrationSave: true,
+      };
+    }
+    return { fileConfig: parsed as Partial<ProviderConfig>, needsMigrationSave: false };
+  } catch {
+    return { fileConfig: {}, needsMigrationSave: false };
+  }
+}
+
+function resolveCompatibleModel(
+  resolvedModel: { model: string; source: ModelSource },
+  provider: ProviderConfig["provider"],
+  adapter: ProviderConfig["adapter"]
+): string {
+  const registryEntry = MODEL_REGISTRY[resolvedModel.model];
+  if (!registryEntry || registryEntry.adapters.includes(adapter)) {
+    return resolvedModel.model;
+  }
+
+  if (resolvedModel.source === "file") {
+    console.warn(
+      `[provider-config] Model "${resolvedModel.model}" is not compatible with adapter "${adapter}". Keeping provider.json model and relying on validation to surface the mismatch.`
+    );
+    return resolvedModel.model;
+  }
+
+  const fallback = defaultModelForProvider(provider);
+  console.warn(
+    `[provider-config] Model "${resolvedModel.model}" is not compatible with adapter "${adapter}". Falling back to "${fallback}".`
+  );
+  return fallback;
+}
+
+async function resolveApiKeyWithFallback(
+  fileKey: string | undefined,
+  provider: ProviderConfig["provider"],
+  adapter: ProviderConfig["adapter"],
+  envFile: Record<string, string>
+): Promise<string | undefined> {
+  const apiKey = resolveApiKey(fileKey, provider, adapter, envFile);
+  if (apiKey || provider !== "openai" || adapter !== "openai_codex_cli") {
+    return apiKey;
+  }
+  return readCodexOAuthToken();
+}
+
+async function resolveProviderConfig(
+  fileConfig: Partial<ProviderConfig>,
+  envFile: Record<string, string>
+): Promise<ProviderConfig> {
+  const provider = resolveProvider(fileConfig.provider);
+  const adapter = resolveAdapter(fileConfig.adapter);
+  const model = resolveCompatibleModel(resolveModel(fileConfig.model, provider), provider, adapter);
+  const apiKey = await resolveApiKeyWithFallback(fileConfig.api_key, provider, adapter, envFile);
+  const baseUrl = resolveBaseUrl(fileConfig.base_url, provider, envFile);
+  const lightModel = resolveLightModel(fileConfig.light_model, envFile);
+
+  const config: ProviderConfig = { provider, model, adapter };
+  if (apiKey !== undefined) config.api_key = apiKey;
+  if (baseUrl !== undefined) config.base_url = baseUrl;
+  if (fileConfig.codex_cli_path !== undefined) config.codex_cli_path = fileConfig.codex_cli_path;
+  if (fileConfig.terminal_backend !== undefined) config.terminal_backend = fileConfig.terminal_backend;
+  if (fileConfig.a2a !== undefined) config.a2a = fileConfig.a2a;
+  if (lightModel !== undefined) config.light_model = lightModel;
+  if (fileConfig.openclaw !== undefined) config.openclaw = fileConfig.openclaw;
+  if (fileConfig.agent_loop !== undefined) config.agent_loop = fileConfig.agent_loop;
+  return config;
+}
+
+function warnOnceForInvalidProviderConfig(config: ProviderConfig): void {
+  const validation = validateProviderConfig(config);
+  if (validation.valid || _warnedOnce) return;
+  for (const err of validation.errors) {
+    console.warn(`[provider-config] Warning: ${err}`);
+  }
+  _warnedOnce = true;
+}
+
+function providerFileOnlyConfig(fileConfig: Partial<ProviderConfig>): ProviderConfig {
+  const fileOnly: ProviderConfig = {
+    provider: fileConfig.provider ?? "openai",
+    model: fileConfig.model ?? "gpt-5.4-mini",
+    adapter: fileConfig.adapter ?? "openai_codex_cli",
+  };
+  if (fileConfig.api_key !== undefined) fileOnly.api_key = fileConfig.api_key;
+  if (fileConfig.base_url !== undefined) fileOnly.base_url = fileConfig.base_url;
+  if (fileConfig.codex_cli_path !== undefined) fileOnly.codex_cli_path = fileConfig.codex_cli_path;
+  if (fileConfig.terminal_backend !== undefined) fileOnly.terminal_backend = fileConfig.terminal_backend;
+  if (fileConfig.a2a !== undefined) fileOnly.a2a = fileConfig.a2a;
+  if (fileConfig.agent_loop !== undefined) fileOnly.agent_loop = fileConfig.agent_loop;
+  return fileOnly;
+}
+
+async function saveMigratedProviderConfig(configPath: string, fileConfig: Partial<ProviderConfig>): Promise<void> {
+  try {
+    await writeJsonFileAtomic(configPath, providerFileOnlyConfig(fileConfig));
+  } catch {
+    // Best-effort — don't fail if we can't save
+  }
+}
 
 /**
  * Load provider configuration.
@@ -397,100 +533,15 @@ async function readProviderEnvFile(): Promise<Record<string, string>> {
  *
  * Auto-migrates old nested format to new flat format.
  */
-export async function loadProviderConfig(): Promise<ProviderConfig> {
-  let fileConfig: Partial<ProviderConfig> = {};
-  let needsMigrationSave = false;
-  const envFile = await readProviderEnvFile();
-
-  try {
-    await fsp.access(PROVIDER_CONFIG_PATH);
-    try {
-      const raw = await fsp.readFile(PROVIDER_CONFIG_PATH, "utf-8");
-      const parsed = JSON.parse(raw) as Record<string, unknown>;
-
-      if (isLegacyConfig(parsed)) {
-        fileConfig = migrateProviderConfig(parsed as unknown as LegacyProviderConfig);
-        needsMigrationSave = true;
-      } else {
-        fileConfig = parsed as Partial<ProviderConfig>;
-      }
-    } catch {
-      fileConfig = {};
-    }
-  } catch {
-    // File does not exist
+export async function loadProviderConfig(options: LoadProviderConfigOptions = {}): Promise<ProviderConfig> {
+  const envFile = await readProviderEnvFile(options.baseDir);
+  const configPath = providerConfigPath(options.baseDir);
+  const { fileConfig, needsMigrationSave } = await loadProviderFileConfig(configPath);
+  const config = await resolveProviderConfig(fileConfig, envFile);
+  warnOnceForInvalidProviderConfig(config);
+  if (needsMigrationSave && options.saveMigration !== false) {
+    await saveMigratedProviderConfig(configPath, fileConfig);
   }
-
-  const provider = resolveProvider(fileConfig.provider);
-  const resolvedModel = resolveModel(fileConfig.model, provider);
-  let model = resolvedModel.model;
-  const adapter = resolveAdapter(fileConfig.adapter);
-
-  // Only env/default-selected models are auto-corrected. Explicit provider.json
-  // models are preserved and surfaced as warnings instead of being replaced.
-  const registryEntry = MODEL_REGISTRY[model];
-  if (registryEntry && !registryEntry.adapters.includes(adapter)) {
-    if (resolvedModel.source === "file") {
-      console.warn(
-        `[provider-config] Model "${model}" is not compatible with adapter "${adapter}". Keeping provider.json model and relying on validation to surface the mismatch.`
-      );
-    } else {
-      const fallback = defaultModelForProvider(provider);
-      console.warn(
-        `[provider-config] Model "${model}" is not compatible with adapter "${adapter}". Falling back to "${fallback}".`
-      );
-      model = fallback;
-    }
-  }
-
-  let api_key = resolveApiKey(fileConfig.api_key, provider, adapter, envFile);
-
-  // Fallback: read OAuth token from ~/.codex/auth.json when no API key is configured
-  if (!api_key && provider === "openai" && adapter === "openai_codex_cli") {
-    api_key = await readCodexOAuthToken();
-  }
-
-  const base_url = resolveBaseUrl(fileConfig.base_url, provider, envFile);
-
-  const config: ProviderConfig = { provider, model, adapter };
-  if (api_key !== undefined) config.api_key = api_key;
-  if (base_url !== undefined) config.base_url = base_url;
-  if (fileConfig.codex_cli_path !== undefined) config.codex_cli_path = fileConfig.codex_cli_path;
-  if (fileConfig.terminal_backend !== undefined) config.terminal_backend = fileConfig.terminal_backend;
-  if (fileConfig.a2a !== undefined) config.a2a = fileConfig.a2a;
-  if (fileConfig.light_model !== undefined) config.light_model = fileConfig.light_model;
-  if (fileConfig.openclaw !== undefined) config.openclaw = fileConfig.openclaw;
-  if (fileConfig.agent_loop !== undefined) config.agent_loop = fileConfig.agent_loop;
-
-  // Validate and log warnings (only once per process)
-  const validation = validateProviderConfig(config);
-  if (!validation.valid && !_warnedOnce) {
-    for (const err of validation.errors) {
-      console.warn(`[provider-config] Warning: ${err}`);
-    }
-    _warnedOnce = true;
-  }
-
-  // Auto-save migrated config (save file-only values, not env-var-resolved ones)
-  if (needsMigrationSave) {
-    try {
-      const fileOnly: ProviderConfig = {
-        provider: fileConfig.provider ?? "openai",
-        model: fileConfig.model ?? "gpt-5.4-mini",
-        adapter: fileConfig.adapter ?? "openai_codex_cli",
-      };
-      if (fileConfig.api_key !== undefined) fileOnly.api_key = fileConfig.api_key;
-      if (fileConfig.base_url !== undefined) fileOnly.base_url = fileConfig.base_url;
-      if (fileConfig.codex_cli_path !== undefined) fileOnly.codex_cli_path = fileConfig.codex_cli_path;
-      if (fileConfig.terminal_backend !== undefined) fileOnly.terminal_backend = fileConfig.terminal_backend;
-      if (fileConfig.a2a !== undefined) fileOnly.a2a = fileConfig.a2a;
-      if (fileConfig.agent_loop !== undefined) fileOnly.agent_loop = fileConfig.agent_loop;
-      await saveProviderConfig(fileOnly);
-    } catch {
-      // Best-effort — don't fail if we can't save
-    }
-  }
-
   return config;
 }
 
@@ -520,7 +571,7 @@ export async function getProviderRuntimeFingerprint(): Promise<string> {
  * Creates the ~/.pulseed directory if it does not exist.
  */
 export async function saveProviderConfig(config: ProviderConfig): Promise<void> {
-  await writeJsonFileAtomic(PROVIDER_CONFIG_PATH, config);
+  await writeJsonFileAtomic(providerConfigPath(), config);
 }
 
 // Re-export default for tests that need it

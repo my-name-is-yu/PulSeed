@@ -10,7 +10,7 @@ import type { StateManager } from "../../base/state/state-manager.js";
 import type { IAdapter, AgentTask } from "../../orchestrator/execution/adapter-layer.js";
 import type { ILLMClient } from "../../base/llm/llm-client.js";
 import { getPulseedDirPath } from "../../base/utils/paths.js";
-import { migrateProviderConfig, type ProviderConfig } from "../../base/llm/provider-config.js";
+import { loadProviderConfig } from "../../base/llm/provider-config.js";
 import { TaskSchema, type Task } from "../../base/types/task.js";
 import type { Goal } from "../../base/types/goal.js";
 import { ChatHistory, type ChatSession } from "./chat-history.js";
@@ -127,6 +127,16 @@ interface AssistantBuffer {
 
 interface ResumeCommand {
   selector?: string;
+}
+
+interface ProviderConfigSummary {
+  provider: string;
+  model: string;
+  adapter: string;
+  light_model?: string;
+  base_url?: string;
+  codex_cli_path?: string;
+  has_api_key: boolean;
 }
 
 const DEFAULT_TIMEOUT_MS = 120_000;
@@ -323,6 +333,45 @@ export class ChatRunner {
     return goals.filter((goal): goal is Goal => goal !== null);
   }
 
+  private async listAllGoalIds(): Promise<string[]> {
+    const activeIds = await this.deps.stateManager.listGoalIds();
+    const archivedIds = await this.deps.stateManager.listArchivedGoals();
+    const recoverableArchivedIds = await this.listRecoverableArchivedGoalIds();
+    return [...new Set([...activeIds, ...archivedIds, ...recoverableArchivedIds])];
+  }
+
+  private resolveStatePath(baseDir: string, ...segments: string[]): string | null {
+    const base = path.resolve(baseDir);
+    const resolved = path.resolve(base, ...segments);
+    if (!resolved.startsWith(base + path.sep)) return null;
+    return resolved;
+  }
+
+  private async listRecoverableArchivedGoalIds(): Promise<string[]> {
+    const stateManager = this.deps.stateManager as StateManager & { getBaseDir?: () => string };
+    if (typeof stateManager.getBaseDir !== "function") return [];
+    const archiveDir = this.resolveStatePath(stateManager.getBaseDir(), "archive");
+    if (archiveDir === null) return [];
+    let entries: Array<{ name: string; isDirectory(): boolean }> = [];
+    try {
+      entries = await fsp.readdir(archiveDir, { withFileTypes: true });
+    } catch {
+      return [];
+    }
+
+    const goalIds: string[] = [];
+    for (const entry of entries) {
+      if (!entry.isDirectory() || entry.name === ".staging") continue;
+      try {
+        await fsp.access(path.join(archiveDir, entry.name, "goal", "goal.json"));
+        goalIds.push(entry.name);
+      } catch {
+        continue;
+      }
+    }
+    return goalIds;
+  }
+
   private activeGoals(goals: Goal[]): Goal[] {
     return goals.filter((goal) => goal.status === "active" || goal.status === "waiting" || goal.loop_status === "running");
   }
@@ -338,9 +387,8 @@ export class ChatRunner {
   }
 
   private async handleStatus(args: string, start: number): Promise<ChatRunResult> {
-    const goals = await this.loadGoals();
     if (args) {
-      const goal = goals.find((candidate) => candidate.id === args);
+      const goal = await this.deps.stateManager.loadGoal(args);
       if (!goal) {
         return { success: false, output: `Goal not found: ${args}`, elapsed_ms: Date.now() - start };
       }
@@ -359,6 +407,7 @@ export class ChatRunner {
       return { success: true, output: lines.join("\n"), elapsed_ms: Date.now() - start };
     }
 
+    const goals = await this.loadGoals();
     const active = this.activeGoals(goals);
     if (active.length === 0) {
       return { success: true, output: "No active goals found.", elapsed_ms: Date.now() - start };
@@ -382,10 +431,7 @@ export class ChatRunner {
     };
   }
 
-  private async readTasksForGoal(goalId: string): Promise<Task[]> {
-    const stateManager = this.deps.stateManager as StateManager & { getBaseDir?: () => string };
-    if (typeof stateManager.getBaseDir !== "function") return [];
-    const tasksDir = path.join(stateManager.getBaseDir(), "tasks", goalId);
+  private async readTasksFromDir(tasksDir: string): Promise<Task[]> {
     let entries: string[] = [];
     try {
       entries = await fsp.readdir(tasksDir);
@@ -396,11 +442,28 @@ export class ChatRunner {
     const tasks: Task[] = [];
     for (const entry of entries) {
       if (!entry.endsWith(".json") || entry === "task-history.json" || entry === "last-failure-context.json") continue;
-      const raw = await this.deps.stateManager.readRaw(`tasks/${goalId}/${entry}`);
+      let raw: unknown;
+      try {
+        raw = JSON.parse(await fsp.readFile(path.join(tasksDir, entry), "utf-8"));
+      } catch {
+        continue;
+      }
       const parsed = TaskSchema.safeParse(raw);
       if (parsed.success) tasks.push(parsed.data);
     }
     return tasks.sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
+  }
+
+  private async readTasksForGoal(goalId: string): Promise<Task[]> {
+    const stateManager = this.deps.stateManager as StateManager & { getBaseDir?: () => string };
+    if (typeof stateManager.getBaseDir !== "function") return [];
+    const baseDir = stateManager.getBaseDir();
+    const activeTasksDir = this.resolveStatePath(baseDir, "tasks", goalId);
+    const archiveTasksDir = this.resolveStatePath(baseDir, "archive", goalId, "tasks");
+    if (activeTasksDir === null || archiveTasksDir === null) return [];
+    const activeTasks = await this.readTasksFromDir(activeTasksDir);
+    if (activeTasks.length > 0) return activeTasks;
+    return this.readTasksFromDir(archiveTasksDir);
   }
 
   private async resolveGoalForTasks(selector: string): Promise<{ goalId?: string; error?: string }> {
@@ -444,10 +507,15 @@ export class ChatRunner {
   }
 
   private async findTask(taskId: string, goalId?: string): Promise<{ task?: Task; matches: Array<{ goalId: string; task: Task }> }> {
-    const goalIds = goalId ? [goalId] : (await this.deps.stateManager.listGoalIds());
+    const goalIds = goalId ? [goalId] : await this.listAllGoalIds();
     const matches: Array<{ goalId: string; task: Task }> = [];
     for (const candidateGoalId of goalIds) {
-      let raw = await this.deps.stateManager.readRaw(`tasks/${candidateGoalId}/${taskId}.json`);
+      let raw: unknown | null = null;
+      try {
+        raw = await this.deps.stateManager.readRaw(`tasks/${candidateGoalId}/${taskId}.json`);
+      } catch {
+        raw = null;
+      }
       if (!raw) {
         const tasks = await this.readTasksForGoal(candidateGoalId);
         const matched = tasks.find((task) => task.id === taskId || task.id.startsWith(taskId));
@@ -501,43 +569,28 @@ export class ChatRunner {
     return { success: true, output: this.formatTask(found.task), elapsed_ms: Date.now() - start };
   }
 
-  private async readProviderConfigReadOnly(): Promise<Record<string, unknown>> {
+  private providerConfigBaseDir(): string {
     const stateManager = this.deps.stateManager as StateManager & { getBaseDir?: () => string };
-    const baseDir = typeof stateManager.getBaseDir === "function" ? stateManager.getBaseDir() : getPulseedDirPath();
-    const configPath = path.join(baseDir, "provider.json");
-    let fileConfig: Partial<ProviderConfig> = {};
-    try {
-      const raw = await fsp.readFile(configPath, "utf-8");
-      const parsed = JSON.parse(raw) as Record<string, unknown>;
-      fileConfig = ("llm_provider" in parsed || "default_adapter" in parsed)
-        ? migrateProviderConfig(parsed as never)
-        : parsed as Partial<ProviderConfig>;
-    } catch {
-      fileConfig = {};
-    }
-    const envProvider = process.env["PULSEED_PROVIDER"] ?? process.env["PULSEED_LLM_PROVIDER"];
-    const provider = envProvider === "codex"
-      ? "openai"
-      : envProvider ?? fileConfig.provider ?? "openai";
-    const model = fileConfig.model
-      ?? process.env["PULSEED_MODEL"]
-      ?? (provider === "anthropic"
-        ? process.env["ANTHROPIC_MODEL"] ?? "claude-sonnet-4-6"
-        : provider === "ollama"
-          ? process.env["OLLAMA_MODEL"] ?? "qwen3:4b"
-          : process.env["OPENAI_MODEL"] ?? "gpt-5.4-mini");
+    return typeof stateManager.getBaseDir === "function" ? stateManager.getBaseDir() : getPulseedDirPath();
+  }
+
+  private async readProviderConfigSummary(): Promise<ProviderConfigSummary> {
+    const config = await loadProviderConfig({
+      baseDir: this.providerConfigBaseDir(),
+      saveMigration: false,
+    });
     return {
-      provider,
-      model,
-      adapter: process.env["PULSEED_ADAPTER"] ?? process.env["PULSEED_DEFAULT_ADAPTER"] ?? fileConfig.adapter ?? "openai_codex_cli",
-      light_model: process.env["PULSEED_LIGHT_MODEL"] ?? fileConfig.light_model,
-      base_url: process.env["OPENAI_BASE_URL"] ?? process.env["OLLAMA_BASE_URL"] ?? fileConfig.base_url,
-      codex_cli_path: fileConfig.codex_cli_path,
-      has_api_key: Boolean(process.env["OPENAI_API_KEY"] || process.env["ANTHROPIC_API_KEY"] || fileConfig.api_key),
+      provider: config.provider,
+      model: config.model,
+      adapter: config.adapter,
+      light_model: config.light_model,
+      base_url: config.base_url,
+      codex_cli_path: config.codex_cli_path,
+      has_api_key: Boolean(config.api_key),
     };
   }
 
-  private formatConfig(config: Record<string, unknown>): string {
+  private formatConfig(config: ProviderConfigSummary): string {
     return Object.entries(config)
       .filter(([, value]) => value !== undefined)
       .map(([key, value]) => `${key}: ${typeof value === "string" && /key|token|secret/i.test(key) ? "[masked]" : String(value)}`)
@@ -545,15 +598,15 @@ export class ChatRunner {
   }
 
   private async handleConfig(start: number): Promise<ChatRunResult> {
-    const config = await this.readProviderConfigReadOnly();
+    const config = await this.readProviderConfigSummary();
     return { success: true, output: `Provider configuration:\n${this.formatConfig(config)}`, elapsed_ms: Date.now() - start };
   }
 
   private async handleModel(start: number): Promise<ChatRunResult> {
-    const config = await this.readProviderConfigReadOnly();
+    const config = await this.readProviderConfigSummary();
     return {
       success: true,
-      output: `Model: ${String(config["model"])}\nProvider: ${String(config["provider"])}\nAdapter: ${String(config["adapter"])}`,
+      output: `Model: ${config.model}\nProvider: ${config.provider}\nAdapter: ${config.adapter}`,
       elapsed_ms: Date.now() - start,
     };
   }
