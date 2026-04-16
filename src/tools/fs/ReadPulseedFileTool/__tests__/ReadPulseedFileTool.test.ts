@@ -25,6 +25,7 @@ function makeContext(): ToolCallContext {
 describe("ReadPulseedFileTool", () => {
   let tmpHome: string;
   let pulseedDir: string;
+  const originalPulseedHome = process.env["PULSEED_HOME"];
 
   beforeAll(async () => {
     tmpHome = await fs.mkdtemp(path.join(os.tmpdir(), "read-pulseed-test-"));
@@ -37,6 +38,11 @@ describe("ReadPulseedFileTool", () => {
   });
 
   afterAll(async () => {
+    if (originalPulseedHome === undefined) {
+      delete process.env["PULSEED_HOME"];
+    } else {
+      process.env["PULSEED_HOME"] = originalPulseedHome;
+    }
     await fs.rm(tmpHome, { recursive: true, force: true });
   });
 
@@ -54,6 +60,41 @@ describe("ReadPulseedFileTool", () => {
     const result = await tool.call({ path: "decisions/plan-001.md" }, makeContext());
     expect(result.success).toBe(true);
     expect(result.data).toContain("# Plan");
+  });
+
+  it("honors PULSEED_HOME when resolving files", async () => {
+    const customHome = await fs.mkdtemp(path.join(os.tmpdir(), "read-pulseed-home-"));
+    process.env["PULSEED_HOME"] = customHome;
+    await fs.writeFile(path.join(customHome, "provider.json"), '{"model":"custom"}', "utf-8");
+    try {
+      const { ReadPulseedFileTool } = await import("../ReadPulseedFileTool.js");
+      const tool = new ReadPulseedFileTool();
+      const result = await tool.call({ path: "provider.json" }, makeContext());
+      expect(result.success).toBe(true);
+      expect(result.data).toContain("custom");
+    } finally {
+      delete process.env["PULSEED_HOME"];
+      await fs.rm(customHome, { recursive: true, force: true });
+    }
+  });
+
+  it("blocks reads through symlinks that escape PULSEED_HOME", async () => {
+    const customHome = await fs.mkdtemp(path.join(os.tmpdir(), "read-pulseed-symlink-home-"));
+    const outsideDir = await fs.mkdtemp(path.join(os.tmpdir(), "read-pulseed-symlink-outside-"));
+    process.env["PULSEED_HOME"] = customHome;
+    await fs.writeFile(path.join(outsideDir, "secret.txt"), "secret", "utf-8");
+    await fs.symlink(outsideDir, path.join(customHome, "link"), "dir");
+    try {
+      const { ReadPulseedFileTool } = await import("../ReadPulseedFileTool.js");
+      const tool = new ReadPulseedFileTool();
+      const result = await tool.call({ path: "link/secret.txt" }, makeContext());
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("~/.pulseed/");
+    } finally {
+      delete process.env["PULSEED_HOME"];
+      await fs.rm(customHome, { recursive: true, force: true });
+      await fs.rm(outsideDir, { recursive: true, force: true });
+    }
   });
 
   it("returns error for missing file", async () => {

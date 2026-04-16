@@ -17,6 +17,7 @@ const {
   daemonRunnerArgs,
   watchdogArgs,
   notificationDispatcherArgs,
+  pluginLoaderArgs,
   cliLoggerMock,
 } = vi.hoisted(() => ({
   buildDepsMock: vi.fn(),
@@ -33,6 +34,7 @@ const {
   daemonRunnerArgs: [] as unknown[],
   watchdogArgs: [] as unknown[],
   notificationDispatcherArgs: [] as unknown[],
+  pluginLoaderArgs: [] as unknown[][],
   cliLoggerMock: {
     info: vi.fn(),
     warn: vi.fn(),
@@ -121,7 +123,8 @@ vi.mock("../../../runtime/schedule/engine.js", () => ({
 }));
 
 vi.mock("../../../runtime/plugin-loader.js", () => ({
-  PluginLoader: vi.fn().mockImplementation(function () {
+  PluginLoader: vi.fn().mockImplementation(function (...args: unknown[]) {
+    pluginLoaderArgs.push(args);
     return {
       loadAll: pluginLoadAllMock,
       getScheduleSources: vi.fn().mockReturnValue([]),
@@ -176,6 +179,7 @@ describe("cmdStart", () => {
     daemonRunnerArgs.length = 0;
     watchdogArgs.length = 0;
     notificationDispatcherArgs.length = 0;
+    pluginLoaderArgs.length = 0;
     cliLoggerMock.info.mockClear();
     cliLoggerMock.warn.mockClear();
     cliLoggerMock.error.mockClear();
@@ -322,9 +326,9 @@ describe("cmdStart", () => {
     );
   });
 
-  it("warns and falls back to defaults when ~/.pulseed/daemon.json is invalid", async () => {
-    fs.mkdirSync(path.join(mockedHome, ".pulseed"), { recursive: true });
-    fs.writeFileSync(path.join(mockedHome, ".pulseed", "daemon.json"), "{not-json", "utf-8");
+  it("warns and falls back to defaults when baseDir daemon.json is invalid", async () => {
+    fs.mkdirSync("/tmp/pulseed-daemon-start-base", { recursive: true });
+    fs.writeFileSync(path.join("/tmp/pulseed-daemon-start-base", "daemon.json"), "{not-json", "utf-8");
 
     await cmdStart(
       { getBaseDir: vi.fn().mockReturnValue("/tmp/pulseed-daemon-start-base") } as never,
@@ -336,6 +340,38 @@ describe("cmdStart", () => {
       expect.stringContaining("Ignoring invalid daemon config at")
     );
     expect(watchdogStartMock).toHaveBeenCalledOnce();
+  });
+
+  it("loads daemon config and plugins from the active baseDir in watchdog child process", async () => {
+    process.env.PULSEED_WATCHDOG_CHILD = "1";
+    fs.mkdirSync(path.join("/tmp/pulseed-daemon-start-base", "plugins"), { recursive: true });
+    fs.writeFileSync(
+      path.join("/tmp/pulseed-daemon-start-base", "daemon.json"),
+      JSON.stringify({ event_server_port: 0, check_interval_ms: 1234 }),
+      "utf-8"
+    );
+    fs.mkdirSync(path.join(mockedHome, ".pulseed"), { recursive: true });
+    fs.writeFileSync(
+      path.join(mockedHome, ".pulseed", "daemon.json"),
+      JSON.stringify({ event_server_port: 45678, check_interval_ms: 9999 }),
+      "utf-8"
+    );
+
+    await cmdStart(
+      { getBaseDir: vi.fn().mockReturnValue("/tmp/pulseed-daemon-start-base") } as never,
+      {} as never,
+      []
+    );
+
+    expect(daemonRunnerArgs[0]).toEqual(
+      expect.objectContaining({
+        config: expect.objectContaining({
+          event_server_port: 0,
+          check_interval_ms: 1234,
+        }),
+      })
+    );
+    expect(pluginLoaderArgs[0]?.[3]).toBe(path.join("/tmp/pulseed-daemon-start-base", "plugins"));
   });
 
   it("allows idle watchdog startup with zero initial goals", async () => {

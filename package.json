@@ -41,6 +41,7 @@
   },
   "files": [
     "dist",
+    "assets/seedy.png",
     "README.md",
     "LICENSE"
   ],

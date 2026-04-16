@@ -2,7 +2,6 @@
 
 import { parseArgs } from "node:util";
 import { spawn } from "node:child_process";
-import * as os from "node:os";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { readJsonFileOrNull } from "../../../base/utils/json-io.js";
@@ -125,19 +124,11 @@ export async function cmdStart(
     }
   }
 
-  // Auto-load ~/.pulseed/daemon.json when no --config flag was provided
+  const baseDir = stateManager.getBaseDir();
+
+  // Auto-load daemon.json from the active PulSeed base directory when no --config flag was provided.
   if (!values.config) {
-    const defaultDaemonConfigPath = path.join(os.homedir(), '.pulseed', 'daemon.json');
-    if (fs.existsSync(defaultDaemonConfigPath)) {
-      try {
-        const raw = JSON.parse(fs.readFileSync(defaultDaemonConfigPath, 'utf-8'));
-        daemonConfig = DaemonConfigSchema.parse(raw);
-      } catch (err) {
-        getCliLogger().warn(
-          `Ignoring invalid daemon config at ${defaultDaemonConfigPath}; using defaults. ${err instanceof Error ? err.message : String(err)}`
-        );
-      }
-    }
+    daemonConfig = await loadDaemonConfig(baseDir);
   }
 
   // Merge CLI flag overrides into daemonConfig
@@ -176,7 +167,6 @@ export async function cmdStart(
   const resolvedDaemonConfig = DaemonConfigSchema.parse(daemonConfig ?? {});
   const isWatchdogChild = process.env[WATCHDOG_CHILD_ENV] === "1";
   const shouldUseWatchdog = !isWatchdogChild;
-  const baseDir = stateManager.getBaseDir();
   const pidManager = new PIDManager(baseDir);
   const logger = new Logger({
     dir: getLogsDir(baseDir),
@@ -287,7 +277,7 @@ export async function cmdStart(
 
   // Load plugins into the same registries used by the resident runtime.
   const notifierRegistry = new NotifierRegistry();
-  const pluginsDir = path.join(os.homedir(), ".pulseed", "plugins");
+  const pluginsDir = path.join(baseDir, "plugins");
 
   const loadPluginsIntoDeps = async (runtimeDeps: Awaited<ReturnType<typeof buildDeps>>): Promise<PluginLoader> => {
     const pluginLoader = new PluginLoader(

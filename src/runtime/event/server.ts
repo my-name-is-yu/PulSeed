@@ -11,7 +11,7 @@ import { getEventsDir } from "../../base/utils/paths.js";
 import type { Logger } from "../logger.js";
 import type { StateManager } from "../../base/state/state-manager.js";
 import type { TriggerMapper } from "../trigger-mapper.js";
-import { findAvailablePort, DEFAULT_PORT, MAX_PORT_ATTEMPTS } from "../port-utils.js";
+import { DEFAULT_PORT } from "../port-utils.js";
 import { createEnvelope, type Envelope } from "../types/envelope.js";
 import type { ApprovalBroker, ApprovalRequiredEvent } from "../approval-broker.js";
 import type { OutboxStore, OutboxRecord } from "../store/index.js";
@@ -95,16 +95,14 @@ export class EventServer {
     this.sseManager = new EventServerSseManager(this.logger, this.approvalBroker, this.outboxStore);
   }
 
-  /** Start HTTP server, auto-retrying on EADDRINUSE up to MAX_PORT_ATTEMPTS times */
+  /** Start HTTP server. Port 0 keeps OS-assigned behavior for tests. */
   async start(): Promise<void> {
     if (this.server) {
       return; // Already running
     }
     await fsp.mkdir(this.eventsDir, { recursive: true });
     await this.approvalBroker?.start();
-    // If a specific non-zero port was requested, find the first available port
-    // starting from it. Port 0 means OS-assigned — skip auto-detection.
-    const startPort = this.port === 0 ? 0 : await findAvailablePort(this.port);
+    const startPort = this.port;
     return new Promise((resolve, reject) => {
       this.server = http.createServer((req, res) => this.handleRequest(req, res));
       const server = this.server;
@@ -120,26 +118,8 @@ export class EventServer {
         })();
       });
       this.server.on("error", (err: NodeJS.ErrnoException) => {
-        // EADDRINUSE should not reach here since findAvailablePort pre-checks,
-        // but guard against a race condition.
-        if (err.code === "EADDRINUSE" && startPort !== 0) {
-          const fallbackStart = startPort + MAX_PORT_ATTEMPTS;
-          findAvailablePort(fallbackStart).then((fallback) => {
-            server.listen(fallback, this.host, () => {
-              void (async () => {
-                try {
-                  await this.finishServerStartup(server);
-                  this.logger?.info(`EventServer listening on ${this.host}:${this.port} (fallback)`);
-                  resolve();
-                } catch (err) {
-                  server.close(() => reject(err));
-                }
-              })();
-            });
-          }).catch(reject);
-        } else {
-          reject(err);
-        }
+        this.server = null;
+        reject(err);
       });
     });
   }

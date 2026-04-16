@@ -9,16 +9,38 @@ import { randomUUID } from "node:crypto";
 import { dirname } from "node:path";
 import { z } from "zod";
 
+interface WriteJsonFileAtomicOptions {
+  mode?: number;
+  directoryMode?: number;
+}
+
 /**
  * Write data to a JSON file atomically (write to a unique .tmp, then rename).
  * Creates parent directories as needed.
  */
-export async function writeJsonFileAtomic(filePath: string, data: unknown): Promise<void> {
-  await fsp.mkdir(dirname(filePath), { recursive: true });
+export async function writeJsonFileAtomic(
+  filePath: string,
+  data: unknown,
+  options: WriteJsonFileAtomicOptions = {}
+): Promise<void> {
+  const parentDir = dirname(filePath);
+  await fsp.mkdir(parentDir, { recursive: true, mode: options.directoryMode });
+  if (options.directoryMode !== undefined) {
+    await fsp.chmod(parentDir, options.directoryMode).catch(() => undefined);
+  }
   const tmpPath = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
   try {
-    await fsp.writeFile(tmpPath, JSON.stringify(data, null, 2), "utf-8");
+    await fsp.writeFile(tmpPath, JSON.stringify(data, null, 2), {
+      encoding: "utf-8",
+      mode: options.mode,
+    });
+    if (options.mode !== undefined) {
+      await fsp.chmod(tmpPath, options.mode).catch(() => undefined);
+    }
     await fsp.rename(tmpPath, filePath);
+    if (options.mode !== undefined) {
+      await fsp.chmod(filePath, options.mode).catch(() => undefined);
+    }
   } catch (err) {
     try {
       await fsp.unlink(tmpPath);

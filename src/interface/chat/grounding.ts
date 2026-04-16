@@ -7,6 +7,7 @@ import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import type { StateManager } from "../../base/state/state-manager.js";
 import { getAgentName, getUserFacingIdentity, loadIdentity } from "../../base/config/identity-loader.js";
+import { getPulseedDirPath } from "../../base/utils/paths.js";
 
 export interface GroundingOptions {
   stateManager: StateManager;
@@ -15,10 +16,7 @@ export interface GroundingOptions {
 }
 
 function resolveHomeDir(homeDir?: string): string {
-  return homeDir ?? path.join(
-    process.env["HOME"] ?? process.env["USERPROFILE"] ?? "/tmp",
-    ".pulseed"
-  );
+  return homeDir ?? getPulseedDirPath();
 }
 
 async function readPlugins(homeDir: string): Promise<string[]> {

@@ -1,7 +1,7 @@
 {
-  "name": "@tavori-plugins/pagerduty-notifier",
+  "name": "@pulseed-plugins/pagerduty-notifier",
   "version": "1.0.0",
-  "description": "Send Tavori events to PagerDuty via Events API v2",
+  "description": "Send PulSeed events to PagerDuty via Events API v2",
   "type": "module",
   "main": "dist/index.js",
   "exports": {
@@ -10,10 +10,10 @@
   "scripts": {
     "build": "tsc --project tsconfig.json"
   },
-  "keywords": ["tavori", "plugin", "pagerduty", "notifier"],
+  "keywords": ["pulseed", "plugin", "pagerduty", "notifier"],
   "license": "MIT",
   "peerDependencies": {
-    "tavori": ">=0.1.0"
+    "pulseed": ">=0.1.0"
   },
   "devDependencies": {
     "typescript": "^5.3.0"

@@ -1,6 +1,7 @@
 import { CronExpressionParser } from "cron-parser";
 import * as path from "node:path";
 import * as net from "node:net";
+import * as fsp from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { exec } from "node:child_process";
 import { writeJsonFileAtomic, readJsonFileOrNull } from "../../base/utils/json-io.js";
@@ -46,6 +47,10 @@ import { buildSchedulePresetEntry } from "./presets.js";
 import { ExternalScheduleEntrySchema, type ExternalScheduleEntry, type IScheduleSource } from "./source.js";
 
 const SCHEDULES_FILE = "schedules.json";
+const SCHEDULE_LOCK_DIR = `${SCHEDULES_FILE}.lock`;
+const SCHEDULE_LOCK_TIMEOUT_MS = 5000;
+const SCHEDULE_LOCK_STALE_MS = 30_000;
+const SCHEDULE_LOCK_RETRY_MS = 25;
 const DEFAULT_RETRY_POLICY: ScheduleRetryPolicy = {
   enabled: true,
   initial_delay_ms: 30_000,
@@ -129,10 +134,13 @@ export class ScheduleEngine {
   private memoryLifecycle?: MemoryLifecycleManager;
   private knowledgeManager?: KnowledgeManager;
   private historyStore: ScheduleHistoryStore;
+  private schedulesLockPath: string;
+  private scheduleLockDepth = 0;
 
   constructor(deps: ScheduleEngineDeps) {
     this.baseDir = deps.baseDir;
     this.schedulesPath = path.join(deps.baseDir, SCHEDULES_FILE);
+    this.schedulesLockPath = path.join(deps.baseDir, SCHEDULE_LOCK_DIR);
     this.logger = deps.logger ?? noopLogger;
     this.dataSourceRegistry = deps.dataSourceRegistry;
     this.llmClient = deps.llmClient;
@@ -149,35 +157,154 @@ export class ScheduleEngine {
   // ─── Persistence ───
 
   async loadEntries(): Promise<ScheduleEntry[]> {
-    const raw = await readJsonFileOrNull(this.schedulesPath);
-    if (raw === null) {
-      this.entries = [];
-      return [];
-    }
-    const result = ScheduleEntryListSchema.safeParse(raw);
-    this.entries = result.success ? result.data : [];
+    this.entries = await this.readEntriesFromDisk();
     await this.projectCurrentSchedulesToSoil();
     return this.entries;
   }
 
+  private async readEntriesFromDisk(): Promise<ScheduleEntry[]> {
+    const raw = await readJsonFileOrNull(this.schedulesPath);
+    if (raw === null) {
+      return [];
+    }
+    const result = ScheduleEntryListSchema.safeParse(raw);
+    return result.success ? result.data : [];
+  }
+
   async saveEntries(): Promise<void> {
+    await this.withScheduleFileLock(async () => {
+      await this.writeEntriesAndProject();
+    });
+  }
+
+  private async writeEntriesAndProject(): Promise<void> {
     await writeJsonFileAtomic(this.schedulesPath, this.entries);
     await this.projectCurrentSchedulesToSoil();
   }
 
+  private async refreshEntriesForMutation(): Promise<void> {
+    this.entries = await this.readEntriesFromDisk();
+  }
+
+  private captureExecutionSideEffects(entryId: string): Pick<ScheduleEntry, "baseline_results"> | null {
+    const entry = this.entries.find((candidate) => candidate.id === entryId);
+    return entry ? { baseline_results: entry.baseline_results } : null;
+  }
+
+  private applyExecutionSideEffects(
+    entryId: string,
+    sideEffects: Pick<ScheduleEntry, "baseline_results"> | null
+  ): void {
+    if (!sideEffects) return;
+    const idx = this.entries.findIndex((candidate) => candidate.id === entryId);
+    if (idx === -1) return;
+    this.entries[idx] = {
+      ...this.entries[idx]!,
+      baseline_results: sideEffects.baseline_results,
+    };
+  }
+
+  private async withScheduleMutation<T>(mutate: () => Promise<T>): Promise<T> {
+    return this.withScheduleFileLock(async () => {
+      const previousEntries = this.entries;
+      await this.refreshEntriesForMutation();
+      try {
+        const result = await mutate();
+        await this.saveEntries();
+        return result;
+      } catch (error) {
+        this.entries = previousEntries;
+        throw error;
+      }
+    });
+  }
+
+  private async withScheduleFileLock<T>(work: () => Promise<T>): Promise<T> {
+    if (this.scheduleLockDepth > 0) {
+      return work();
+    }
+
+    const release = await this.acquireScheduleFileLock();
+    this.scheduleLockDepth++;
+    try {
+      return await work();
+    } finally {
+      this.scheduleLockDepth--;
+      await release();
+    }
+  }
+
+  private async acquireScheduleFileLock(): Promise<() => Promise<void>> {
+    await fsp.mkdir(this.baseDir, { recursive: true });
+    const startedAt = Date.now();
+
+    while (true) {
+      try {
+        await fsp.mkdir(this.schedulesLockPath);
+        await fsp.writeFile(
+          path.join(this.schedulesLockPath, "owner.json"),
+          JSON.stringify({ pid: process.pid, created_at: new Date().toISOString() }),
+          "utf-8"
+        );
+        return async () => {
+          await fsp.rm(this.schedulesLockPath, { recursive: true, force: true });
+        };
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code !== "EEXIST") {
+          throw error;
+        }
+
+        await this.removeStaleScheduleLock().catch(() => undefined);
+        if (Date.now() - startedAt >= SCHEDULE_LOCK_TIMEOUT_MS) {
+          throw new Error(`Timed out waiting for schedule file lock at ${this.schedulesLockPath}`);
+        }
+        await new Promise((resolve) => setTimeout(resolve, SCHEDULE_LOCK_RETRY_MS));
+      }
+    }
+  }
+
+  private async removeStaleScheduleLock(): Promise<void> {
+    const stat = await fsp.stat(this.schedulesLockPath);
+    if (Date.now() - stat.mtimeMs <= SCHEDULE_LOCK_STALE_MS) {
+      return;
+    }
+
+    try {
+      const raw = await fsp.readFile(path.join(this.schedulesLockPath, "owner.json"), "utf-8");
+      const owner = JSON.parse(raw) as { pid?: unknown };
+      if (typeof owner.pid === "number") {
+        try {
+          process.kill(owner.pid, 0);
+          return;
+        } catch {
+          // Owner is gone; stale lock can be removed.
+        }
+      }
+    } catch {
+      // Missing or malformed owner data is treated as stale after the age threshold.
+    }
+
+    if (Date.now() - stat.mtimeMs > SCHEDULE_LOCK_STALE_MS) {
+      await fsp.rm(this.schedulesLockPath, { recursive: true, force: true });
+    }
+  }
+
   async ensureSoilPublishSchedule(): Promise<ScheduleEntry | null> {
-    const configured = await hasConfiguredSoilPublishProvider({ baseDir: this.baseDir });
-    if (!configured) {
-      return null;
-    }
-    const existing = this.entries.find((entry) =>
-      entry.layer === "cron" &&
-      (entry.cron?.job_kind === "soil_publish" || entry.metadata?.preset_key === "soil_publish")
-    );
-    if (existing) {
-      return existing;
-    }
-    return this.addEntry(buildSchedulePresetEntry({ preset: "soil_publish" }));
+    return this.withScheduleMutation(async () => {
+      const configured = await hasConfiguredSoilPublishProvider({ baseDir: this.baseDir });
+      if (!configured) {
+        return null;
+      }
+      const existing = this.entries.find((entry) =>
+        entry.layer === "cron" &&
+        (entry.cron?.job_kind === "soil_publish" || entry.metadata?.preset_key === "soil_publish")
+      );
+      if (existing) {
+        return existing;
+      }
+      return this.addEntryInMemory(buildSchedulePresetEntry({ preset: "soil_publish" }));
+    });
   }
 
   private async projectCurrentSchedulesToSoil(): Promise<void> {
@@ -206,6 +333,7 @@ export class ScheduleEngine {
     skipped: number;
     errors: Array<{ source_id: string; message: string }>;
   }> {
+    return this.withScheduleMutation(async () => {
     const seenKeys = new Set<string>();
     const reconciledSourceIds = new Set<string>();
     const errors: Array<{ source_id: string; message: string }> = [];
@@ -329,6 +457,7 @@ export class ScheduleEngine {
     }
 
     return { added, updated, disabled, skipped, errors };
+    });
   }
 
   // ─── Entry management ───
@@ -352,6 +481,28 @@ export class ScheduleEngine {
       | "escalation_timestamps"
     >
   ): Promise<ScheduleEntry> {
+    return this.withScheduleMutation(async () => this.addEntryInMemory(input));
+  }
+
+  private addEntryInMemory(
+    input: Omit<
+      ScheduleEntryInput,
+      | "id"
+      | "created_at"
+      | "updated_at"
+      | "last_fired_at"
+      | "next_fire_at"
+      | "consecutive_failures"
+      | "last_escalation_at"
+      | "baseline_results"
+      | "total_executions"
+      | "total_tokens_used"
+      | "max_tokens_per_day"
+      | "tokens_used_today"
+      | "budget_reset_at"
+      | "escalation_timestamps"
+    >
+  ): ScheduleEntry {
     const now = new Date().toISOString();
     const entry = ScheduleEntrySchema.parse({
       ...input,
@@ -367,22 +518,23 @@ export class ScheduleEngine {
       total_tokens_used: 0,
     });
     this.entries.push(entry);
-    await this.saveEntries();
     return entry;
   }
 
   async removeEntry(id: string): Promise<boolean> {
+    return this.withScheduleMutation(async () => {
     const before = this.entries.length;
     this.entries = this.entries.filter((e) => e.id !== id);
     if (this.entries.length === before) return false;
-    await this.saveEntries();
     return true;
+    });
   }
 
   async updateEntry(
     id: string,
     patch: ScheduleEntryUpdateInput
   ): Promise<ScheduleEntry | null> {
+    return this.withScheduleMutation(async () => {
     const idx = this.entries.findIndex((entry) => entry.id === id);
     if (idx === -1) return null;
 
@@ -443,19 +595,12 @@ export class ScheduleEngine {
     nextEntry.updated_at = new Date().toISOString();
 
     const parsedEntry = ScheduleEntrySchema.parse(nextEntry);
-    const previousEntries = this.entries;
     const nextEntries = [...this.entries];
     nextEntries[idx] = parsedEntry;
     this.entries = nextEntries;
 
-    try {
-      await this.saveEntries();
-    } catch (error) {
-      this.entries = previousEntries;
-      throw error;
-    }
-
     return parsedEntry;
+    });
   }
 
   // ─── Scheduling ───
@@ -474,7 +619,10 @@ export class ScheduleEngine {
     entryId: string,
     options: RunScheduleNowOptions = {}
   ): Promise<RunScheduleNowResult | null> {
-    const entry = this.entries.find((candidate) => candidate.id === entryId);
+    const entry = await this.withScheduleFileLock(async () => {
+      await this.refreshEntriesForMutation();
+      return this.entries.find((candidate) => candidate.id === entryId) ?? null;
+    });
     if (!entry) {
       return null;
     }
@@ -486,13 +634,24 @@ export class ScheduleEngine {
       next_fire_at: scheduledFor,
     };
     const executedResult = await this.executeEntry(immediateEntry);
-    const applied = await this.applyExecutionOutcome(
-      entry.id,
-      executedResult,
-      "manual_run",
-      scheduledFor,
-      { preserveEnabled: options.preserveEnabled ?? true }
-    );
+    const sideEffects = entry.layer === "probe"
+      ? this.captureExecutionSideEffects(entry.id)
+      : null;
+    const applied = await this.withScheduleFileLock(async () => {
+      await this.refreshEntriesForMutation();
+      const outcome = await this.applyExecutionOutcome(
+        entry.id,
+        executedResult,
+        "manual_run",
+        scheduledFor,
+        { preserveEnabled: options.preserveEnabled ?? true }
+      );
+      if (outcome) {
+        this.applyExecutionSideEffects(entry.id, sideEffects);
+        await this.writeEntriesAndProject();
+      }
+      return outcome;
+    });
 
     let finalResult = executedResult;
     if (options.allowEscalation && applied?.entry) {
@@ -503,7 +662,6 @@ export class ScheduleEngine {
     }
 
     if (applied) {
-      await this.saveEntries();
       await this.recordHistory({
         entry_id: applied.entry?.id ?? entry.id,
         entry_name: applied.entry?.name ?? entry.name,
@@ -550,36 +708,52 @@ export class ScheduleEngine {
   }
 
   async tick(): Promise<ScheduleResult[]> {
-    // Reset daily budget for entries whose budget_reset_at is null or in the past
-    const nowMs = Date.now();
-    let budgetReset = false;
-    for (let i = 0; i < this.entries.length; i++) {
-      const e = this.entries[i]!;
-      if (!e.budget_reset_at || new Date(e.budget_reset_at).getTime() <= nowMs) {
-        this.entries[i] = {
-          ...e,
-          tokens_used_today: 0,
-          budget_reset_at: new Date(nowMs + 24 * 60 * 60 * 1000).toISOString(),
-        };
-        budgetReset = true;
+    const due = await this.withScheduleFileLock(async () => {
+      await this.refreshEntriesForMutation();
+      // Reset daily budget for entries whose budget_reset_at is null or in the past
+      const nowMs = Date.now();
+      let budgetReset = false;
+      for (let i = 0; i < this.entries.length; i++) {
+        const e = this.entries[i]!;
+        if (!e.budget_reset_at || new Date(e.budget_reset_at).getTime() <= nowMs) {
+          this.entries[i] = {
+            ...e,
+            tokens_used_today: 0,
+            budget_reset_at: new Date(nowMs + 24 * 60 * 60 * 1000).toISOString(),
+          };
+          budgetReset = true;
+        }
       }
-    }
 
-    if (budgetReset) {
-      await this.saveEntries();
-    }
+      if (budgetReset) {
+        await this.writeEntriesAndProject();
+      }
 
-    const due = await this.getDueEntryDescriptors();
+      return this.getDueEntryDescriptors();
+    });
     const results: ScheduleResult[] = [];
 
     for (const descriptor of due) {
       const executedResult = await this.executeEntry(descriptor.entry);
-      const applied = await this.applyExecutionOutcome(
-        descriptor.entry.id,
-        executedResult,
-        descriptor.reason,
-        descriptor.scheduledFor
-      );
+      const sideEffects = descriptor.entry.layer === "probe"
+        ? this.captureExecutionSideEffects(descriptor.entry.id)
+        : null;
+      const applied = await this.withScheduleFileLock(async () => {
+        await this.refreshEntriesForMutation();
+        const outcome = await this.applyExecutionOutcome(
+          descriptor.entry.id,
+          executedResult,
+          descriptor.reason,
+          descriptor.scheduledFor
+        );
+        if (outcome) {
+          this.applyExecutionSideEffects(descriptor.entry.id, sideEffects);
+          // Persist cadence/retry advancement before history side effects so a crash
+          // cannot replay an already-fired entry from stale schedule state.
+          await this.writeEntriesAndProject();
+        }
+        return outcome;
+      });
 
       let finalResult = executedResult;
       if (applied?.entry) {
@@ -590,9 +764,6 @@ export class ScheduleEngine {
       }
 
       if (applied) {
-        // Persist cadence/retry advancement before history side effects so a crash
-        // cannot replay an already-fired entry from stale schedule state.
-        await this.saveEntries();
         await this.recordHistory({
           entry_id: applied.entry?.id ?? descriptor.entry.id,
           entry_name: applied.entry?.name ?? descriptor.entry.name,
@@ -936,7 +1107,10 @@ export class ScheduleEngine {
   }
 
   private async executeEscalationTargetEntry(targetEntryId: string): Promise<ScheduleResult | null> {
-    const targetEntry = this.entries.find((candidate) => candidate.id === targetEntryId);
+    const targetEntry = await this.withScheduleFileLock(async () => {
+      await this.refreshEntriesForMutation();
+      return this.entries.find((candidate) => candidate.id === targetEntryId) ?? null;
+    });
     if (!targetEntry) {
       this.logger.warn(`Escalation target entry not found: ${targetEntryId}`);
       return null;
@@ -948,14 +1122,24 @@ export class ScheduleEngine {
       next_fire_at: new Date().toISOString(),
     };
     const result = await this.executeEntry(immediateEntry);
-    const applied = await this.applyExecutionOutcome(
-      targetEntryId,
-      result,
-      "escalation_target",
-      immediateEntry.next_fire_at
-    );
+    const sideEffects = targetEntry.layer === "probe"
+      ? this.captureExecutionSideEffects(targetEntry.id)
+      : null;
+    const applied = await this.withScheduleFileLock(async () => {
+      await this.refreshEntriesForMutation();
+      const outcome = await this.applyExecutionOutcome(
+        targetEntryId,
+        result,
+        "escalation_target",
+        immediateEntry.next_fire_at
+      );
+      if (outcome) {
+        this.applyExecutionSideEffects(targetEntryId, sideEffects);
+        await this.writeEntriesAndProject();
+      }
+      return outcome;
+    });
     if (applied) {
-      await this.saveEntries();
       await this.recordHistory({
         entry_id: targetEntry.id,
         entry_name: targetEntry.name,
@@ -1022,65 +1206,75 @@ export class ScheduleEngine {
     entry: ScheduleEntry,
     result: ScheduleResult
   ): Promise<ScheduleResult | null> {
-    const esc = entry.escalation;
-    if (!esc?.enabled) return null;
-
     const isFailure = result.status === "error" || result.status === "down";
     if (!isFailure) return null;
 
-    const now = Date.now();
-
-    // Check cooldown
-    if (entry.last_escalation_at) {
-      const lastEsc = new Date(entry.last_escalation_at).getTime();
-      if (now - lastEsc < esc.cooldown_minutes * 60 * 1000) {
-        this.logger.info(`Escalation for "${entry.name}" suppressed (cooldown)`);
+    const escalationEntry = await this.withScheduleFileLock(async () => {
+      await this.refreshEntriesForMutation();
+      const idx = this.entries.findIndex((e) => e.id === entry.id);
+      if (idx === -1) {
         return null;
       }
-    }
 
-    // Rolling-window rate-limit: check escalation_timestamps within the last hour
-    const hourAgo = now - 60 * 60 * 1000;
-    const recentTimestamps = (entry.escalation_timestamps ?? []).filter(
-      (ts) => new Date(ts).getTime() > hourAgo
-    );
-    if (recentTimestamps.length >= esc.max_per_hour) {
-      this.logger.info(`Escalation for "${entry.name}" suppressed (max_per_hour=${esc.max_per_hour} reached)`);
-      return null;
-    }
+      const current = this.entries[idx]!;
+      const esc = current.escalation;
+      if (!esc?.enabled) return null;
 
-    // Update last_escalation_at and rolling-window escalation_timestamps
-    const nowIso = new Date(now).toISOString();
-    const hourAgoForPrune = now - 60 * 60 * 1000;
-    const idx = this.entries.findIndex((e) => e.id === entry.id);
-    if (idx !== -1) {
+      const now = Date.now();
+
+      // Check cooldown
+      if (current.last_escalation_at) {
+        const lastEsc = new Date(current.last_escalation_at).getTime();
+        if (now - lastEsc < esc.cooldown_minutes * 60 * 1000) {
+          this.logger.info(`Escalation for "${current.name}" suppressed (cooldown)`);
+          return null;
+        }
+      }
+
+      // Rolling-window rate-limit: check escalation_timestamps within the last hour
+      const hourAgo = now - 60 * 60 * 1000;
+      const recentTimestamps = (current.escalation_timestamps ?? []).filter(
+        (ts) => new Date(ts).getTime() > hourAgo
+      );
+      if (recentTimestamps.length >= esc.max_per_hour) {
+        this.logger.info(`Escalation for "${current.name}" suppressed (max_per_hour=${esc.max_per_hour} reached)`);
+        return null;
+      }
+
+      // Update last_escalation_at and rolling-window escalation_timestamps.
+      const nowIso = new Date(now).toISOString();
       const prunedTimestamps = [
-        ...(this.entries[idx].escalation_timestamps ?? []).filter(
-          (ts) => new Date(ts).getTime() > hourAgoForPrune
+        ...(current.escalation_timestamps ?? []).filter(
+          (ts) => new Date(ts).getTime() > hourAgo
         ),
         nowIso,
       ];
       this.entries[idx] = {
-        ...this.entries[idx],
+        ...current,
         last_escalation_at: nowIso,
         escalation_timestamps: prunedTimestamps,
       };
-      await this.saveEntries();
-    }
+      await this.writeEntriesAndProject();
+      return this.entries[idx]!;
+    });
+
+    if (!escalationEntry?.escalation) return null;
+
+    const esc = escalationEntry.escalation;
 
     // Dispatch escalation notification
     await this.dispatchNotification({
       report_type: "schedule_escalation",
-      entry_id: entry.id,
-      entry_name: entry.name,
+      entry_id: escalationEntry.id,
+      entry_name: escalationEntry.name,
       target_layer: esc.target_layer,
       target_entry_id: esc.target_entry_id,
       target_goal_id: esc.target_goal_id,
-      consecutive_failures: entry.consecutive_failures,
+      consecutive_failures: escalationEntry.consecutive_failures,
     });
 
     this.logger.warn(
-      `Escalating "${entry.name}" to ${esc.target_layer ?? "unknown"} (failures=${entry.consecutive_failures})`
+      `Escalating "${escalationEntry.name}" to ${esc.target_layer ?? "unknown"} (failures=${escalationEntry.consecutive_failures})`
     );
 
     // Execute target goal or target entry immediately so escalations take effect in the same tick.

@@ -1,8 +1,8 @@
 // src/tools/__tests__/overflow.test.ts
 
-import { describe, it, expect, vi, afterEach } from "vitest";
-import { existsSync, readFileSync, unlinkSync } from "fs";
-import { homedir } from "os";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { existsSync, mkdtempSync, readFileSync, rmSync, unlinkSync } from "fs";
+import { tmpdir } from "os";
 import { join } from "path";
 import { z } from "zod";
 import { ToolExecutor } from "../executor.js";
@@ -78,6 +78,13 @@ function createExecutor(tool: ITool): ToolExecutor {
 
 // Track overflow files created during tests for cleanup
 const createdOverflowPaths: string[] = [];
+const originalPulseedHome = process.env["PULSEED_HOME"];
+let tmpPulseedHome: string;
+
+beforeEach(() => {
+  tmpPulseedHome = mkdtempSync(join(tmpdir(), "pulseed-overflow-test-"));
+  process.env["PULSEED_HOME"] = tmpPulseedHome;
+});
 
 afterEach(() => {
   for (const p of createdOverflowPaths) {
@@ -88,6 +95,12 @@ afterEach(() => {
     }
   }
   createdOverflowPaths.length = 0;
+  if (originalPulseedHome === undefined) {
+    delete process.env["PULSEED_HOME"];
+  } else {
+    process.env["PULSEED_HOME"] = originalPulseedHome;
+  }
+  rmSync(tmpPulseedHome, { recursive: true, force: true });
 });
 
 describe("ToolExecutor overflow-to-disk", () => {
@@ -138,10 +151,8 @@ describe("ToolExecutor overflow-to-disk", () => {
     // File must exist
     expect(existsSync(overflowPath)).toBe(true);
 
-    // File must be under ~/.pulseed/tmp/
-    const { homedir } = await import("os");
-    const { join } = await import("path");
-    const expectedDir = join(homedir(), ".pulseed", "tmp");
+    // File must be under PULSEED_HOME/tmp/
+    const expectedDir = join(tmpPulseedHome, "tmp");
     expect(overflowPath.startsWith(expectedDir)).toBe(true);
 
     // File must contain valid JSON matching the original full output
@@ -174,7 +185,7 @@ describe("ToolExecutor overflow-to-disk", () => {
     const overflowPath = result.truncated!.overflowPath!;
     createdOverflowPaths.push(overflowPath);
 
-    const expectedDir = join(homedir(), ".pulseed", "tmp");
+    const expectedDir = join(tmpPulseedHome, "tmp");
 
     // Directory must exist (created by executor)
     expect(existsSync(expectedDir)).toBe(true);

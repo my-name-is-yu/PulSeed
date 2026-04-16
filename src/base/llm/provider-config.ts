@@ -397,6 +397,20 @@ async function readProviderEnvFile(baseDir?: string): Promise<Record<string, str
   }
 }
 
+async function readProviderConfigFile(baseDir?: string): Promise<Partial<ProviderConfig>> {
+  const configPath = providerConfigPath(baseDir);
+  try {
+    await fsp.access(configPath);
+    const raw = await fsp.readFile(configPath, "utf-8");
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    return isLegacyConfig(parsed)
+      ? migrateProviderConfig(parsed as unknown as LegacyProviderConfig)
+      : parsed as Partial<ProviderConfig>;
+  } catch {
+    return {};
+  }
+}
+
 // ─── Public API ───
 
 export interface LoadProviderConfigOptions {
@@ -517,7 +531,10 @@ function providerFileOnlyConfig(fileConfig: Partial<ProviderConfig>): ProviderCo
 
 async function saveMigratedProviderConfig(configPath: string, fileConfig: Partial<ProviderConfig>): Promise<void> {
   try {
-    await writeJsonFileAtomic(configPath, providerFileOnlyConfig(fileConfig));
+    await writeJsonFileAtomic(configPath, providerFileOnlyConfig(fileConfig), {
+      mode: 0o600,
+      directoryMode: 0o700,
+    });
   } catch {
     // Best-effort — don't fail if we can't save
   }
@@ -543,6 +560,20 @@ export async function loadProviderConfig(options: LoadProviderConfigOptions = {}
     await saveMigratedProviderConfig(configPath, fileConfig);
   }
   return config;
+}
+
+export async function resolveOpenAIApiKey(): Promise<string | undefined> {
+  const envFile = await readProviderEnvFile();
+  const envKey = process.env["OPENAI_API_KEY"] ?? envFile["OPENAI_API_KEY"];
+  if (envKey) {
+    return envKey;
+  }
+
+  const fileConfig = await readProviderConfigFile();
+  if (fileConfig.provider === "openai" || fileConfig.adapter === "openai_api") {
+    return fileConfig.api_key;
+  }
+  return undefined;
 }
 
 export async function getProviderRuntimeFingerprint(): Promise<string> {
@@ -571,7 +602,10 @@ export async function getProviderRuntimeFingerprint(): Promise<string> {
  * Creates the ~/.pulseed directory if it does not exist.
  */
 export async function saveProviderConfig(config: ProviderConfig): Promise<void> {
-  await writeJsonFileAtomic(providerConfigPath(), config);
+  await writeJsonFileAtomic(providerConfigPath(), config, {
+    mode: 0o600,
+    directoryMode: 0o700,
+  });
 }
 
 // Re-export default for tests that need it

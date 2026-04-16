@@ -2,7 +2,7 @@ name: websocket-datasource
 version: "1.0.0"
 type: data_source
 description: "WebSocket real-time stream observation source"
-entry_point: src/index.ts
+entry_point: dist/index.js
 min_pulseed_version: "0.1.0"
 capabilities:
   - realtime_stream

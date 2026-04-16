@@ -1,11 +1,22 @@
 {
-  "name": "@tavori-plugins/sqlite-datasource",
+  "name": "@pulseed-plugins/sqlite-datasource",
   "version": "1.0.0",
   "type": "module",
+  "main": "dist/index.js",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc --project tsconfig.json"
+  },
+  "peerDependencies": {
+    "pulseed": ">=0.1.0"
+  },
   "dependencies": {
     "better-sqlite3": "^11.0.0"
   },
   "devDependencies": {
+    "typescript": "^5.3.0",
     "@types/better-sqlite3": "^7.0.0"
   }
 }

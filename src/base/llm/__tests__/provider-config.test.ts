@@ -312,7 +312,8 @@ vi.mock("../../utils/json-io.js", () => ({
 }));
 
 // Import loadProviderConfig AFTER mocks are set up (vi.mock is hoisted by vitest)
-const { loadProviderConfig } = await import("../provider-config.js");
+const { loadProviderConfig, resolveOpenAIApiKey, saveProviderConfig } = await import("../provider-config.js");
+const { writeJsonFileAtomic } = await import("../../utils/json-io.js");
 
 describe("loadProviderConfig", () => {
   const savedEnv: Record<string, string | undefined> = {};
@@ -332,6 +333,7 @@ describe("loadProviderConfig", () => {
     }
     mockAccess.mockReset();
     mockReadFile.mockReset();
+    vi.mocked(writeJsonFileAtomic).mockClear();
     // Default: file does not exist
     mockAccess.mockRejectedValue(new Error("ENOENT"));
   });
@@ -480,5 +482,41 @@ describe("loadProviderConfig", () => {
 
     const config = await loadProviderConfig();
     expect(config.light_model).toBe("gpt-env-light");
+  });
+
+  it("resolves OpenAI API key from env file for embeddings", async () => {
+    mockAccess.mockRejectedValue(new Error("ENOENT"));
+    mockReadFile.mockResolvedValue("OPENAI_API_KEY=sk-env-file\n");
+
+    await expect(resolveOpenAIApiKey()).resolves.toBe("sk-env-file");
+  });
+
+  it("resolves OpenAI API key from provider.json for embeddings", async () => {
+    mockAccess.mockResolvedValue(undefined);
+    mockReadFile
+      .mockResolvedValueOnce("")
+      .mockResolvedValueOnce(JSON.stringify({
+        provider: "openai",
+        model: "gpt-5.4-mini",
+        adapter: "openai_codex_cli",
+        api_key: "sk-provider-file",
+      }));
+
+    await expect(resolveOpenAIApiKey()).resolves.toBe("sk-provider-file");
+  });
+
+  it("saves provider config with private file and directory modes", async () => {
+    await saveProviderConfig({
+      provider: "openai",
+      model: "gpt-5.4-mini",
+      adapter: "openai_codex_cli",
+      api_key: "sk-provider-file",
+    });
+
+    expect(writeJsonFileAtomic).toHaveBeenCalledWith(
+      expect.stringContaining("provider.json"),
+      expect.objectContaining({ api_key: "sk-provider-file" }),
+      { mode: 0o600, directoryMode: 0o700 }
+    );
   });
 });
