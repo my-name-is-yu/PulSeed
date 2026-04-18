@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.4.16] - 2026-04-18
+
+### Added
+- Added an interactive automation runtime with desktop, browser, and research providers, including opt-in builtin tools for Codex app-style desktop control, Manus browser workflows, Perplexity-backed research, and future Anthropic-style computer-use routing (#696)
+- Added chat self-knowledge tools and mutation paths so PulSeed can inspect and update selected runtime knowledge directly from chat with dedicated coverage (#695)
+
+### Changed
+- Tightened AgentLoop and task execution policy to better match Codex-style protected path, shell command, approval, and context assembly behavior (#694)
+- Hardened the production TUI with better output control, branch/status helpers, fullscreen chat behavior, and test-entry coverage for real terminal behavior (#695)
+- Bumped the package version to `0.4.16`
+
+### Fixed
+- Fixed provider and Codex adapter handling around model/config wiring and protected execution checks so native and Codex-backed flows stay aligned (#694)
+- Fixed interactive automation defaults and builtin integration reporting so disabled automation stays opt-in, protected apps are denied correctly, and unknown default providers fail safely instead of silently rerouting (#696)
+
 ## [0.4.15] - 2026-04-16
 
 ### Added
