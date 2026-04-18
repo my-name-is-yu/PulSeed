@@ -19,7 +19,7 @@ describe("ReportView", () => {
     vi.restoreAllMocks();
   });
 
-  it("renders structured verification diffs from report metadata", () => {
+  it("renders structured verification diffs from report metadata", async () => {
     const report = ReportSchema.parse({
       id: "report-1",
       report_type: "execution_summary",
@@ -66,6 +66,8 @@ describe("ReportView", () => {
         stderr: process.stderr,
       },
     );
+
+    await new Promise<void>((resolve) => setImmediate(resolve));
 
     expect(output).toContain("File Diff");
     expect(output).toContain("src/example.ts");

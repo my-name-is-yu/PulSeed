@@ -413,9 +413,11 @@ export class TaskLifecycle {
           this.execFileSyncFn,
           agentLoopResult.workspace.executionCwd,
         );
-        result.filesChangedPaths = diffArtifacts.changedPaths;
-        result.fileDiffs = diffArtifacts.fileDiffs;
-        result.filesChanged = diffArtifacts.changedPaths.length > 0;
+        if (diffArtifacts.available) {
+          result.filesChangedPaths = diffArtifacts.changedPaths;
+          result.fileDiffs = diffArtifacts.fileDiffs;
+          result.filesChanged = diffArtifacts.changedPaths.length > 0;
+        }
       }
     } catch (err) {
       result = {

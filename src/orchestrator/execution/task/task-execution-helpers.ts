@@ -86,9 +86,11 @@ export async function executeTaskWithGuards(
         const workspaceCwd = goal?.constraints.find((constraint) => constraint.startsWith("workspace_path:"))
           ?.slice("workspace_path:".length);
         const diffArtifacts = captureExecutionDiffArtifacts(execFileSyncFn, workspaceCwd ?? process.cwd());
-        result.filesChangedPaths = diffArtifacts.changedPaths;
-        result.fileDiffs = diffArtifacts.fileDiffs;
-        result.filesChanged = diffArtifacts.changedPaths.length > 0;
+        if (diffArtifacts.available) {
+          result.filesChangedPaths = diffArtifacts.changedPaths;
+          result.fileDiffs = diffArtifacts.fileDiffs;
+          result.filesChanged = diffArtifacts.changedPaths.length > 0;
+        }
         return result;
       }
       logger?.warn?.(`[TaskLifecycle] run-adapter tool failed, falling back to direct call: ${toolResult.error ?? "unknown"}`);
