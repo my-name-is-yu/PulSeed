@@ -1,6 +1,9 @@
 import React from "react";
 import { render } from "ink";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { DaemonClient } from "../../../runtime/daemon/client.js";
+import type { StateManager } from "../../../base/state/state-manager.js";
+import type { ChatRunner } from "../../chat/chat-runner.js";
 import { App, formatDaemonConnectionState } from "../app.js";
 
 const testState = vi.hoisted(() => ({
@@ -110,9 +113,9 @@ describe("daemon-mode chat routing", () => {
     const chatRunner = createChatRunnerMock();
 
     const screen = render(React.createElement(App, {
-      daemonClient,
-      stateManager,
-      chatRunner,
+      daemonClient: daemonClient as unknown as DaemonClient,
+      stateManager: stateManager as unknown as StateManager,
+      chatRunner: chatRunner as unknown as ChatRunner,
       noFlicker: false,
       controlStream: process.stdout,
       cwd: "~/workspace",
@@ -143,9 +146,9 @@ describe("daemon-mode chat routing", () => {
     const chatRunner = createChatRunnerMock();
 
     const screen = render(React.createElement(App, {
-      daemonClient,
-      stateManager,
-      chatRunner,
+      daemonClient: daemonClient as unknown as DaemonClient,
+      stateManager: stateManager as unknown as StateManager,
+      chatRunner: chatRunner as unknown as ChatRunner,
       noFlicker: false,
       controlStream: process.stdout,
       cwd: "~/workspace",
