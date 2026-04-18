@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   GoalDecompositionConfigSchema,
+  DecompositionChildSchema,
   DecompositionResultSchema,
   GoalTreeStateSchema,
   PruneReasonEnum,
@@ -8,6 +9,7 @@ import {
   AggregationDirectionEnum,
   StateAggregationRuleSchema,
 } from "../goal-tree.js";
+import { makeGoal } from "../../../../tests/helpers/fixtures.js";
 
 // ─── GoalDecompositionConfigSchema ───
 
@@ -83,15 +85,22 @@ describe("GoalDecompositionConfigSchema", () => {
 
 describe("DecompositionResultSchema", () => {
   it("parses valid input with all fields", () => {
+    const grandchild = makeGoal({ id: "grandchild-1", title: "Grandchild 1" });
+    const child = {
+      ...makeGoal({ id: "child-1", title: "Child 1" }),
+      children: [grandchild],
+    };
     const result = DecompositionResultSchema.parse({
       parent_id: "goal-1",
-      children: [{ id: "child-1" }, { id: "child-2" }],
+      children: [child, makeGoal({ id: "child-2", title: "Child 2" })],
       depth: 2,
       specificity_scores: { "child-1": 0.8, "child-2": 0.6 },
       reasoning: "Decomposed for clarity",
     });
     expect(result.parent_id).toBe("goal-1");
     expect(result.children).toHaveLength(2);
+    expect(result.children[0]?.children).toHaveLength(1);
+    expect(result.children[0]?.children?.[0]?.id).toBe("grandchild-1");
     expect(result.depth).toBe(2);
     expect(result.specificity_scores["child-1"]).toBe(0.8);
     expect(result.reasoning).toBe("Decomposed for clarity");
@@ -135,6 +144,20 @@ describe("DecompositionResultSchema", () => {
       reasoning: "bad",
     });
     expect(result.success).toBe(false);
+  });
+});
+
+describe("DecompositionChildSchema", () => {
+  it("parses recursive child goals", () => {
+    const result = DecompositionChildSchema.parse({
+      ...makeGoal({ id: "child-root", title: "Child Root" }),
+      children: [
+        makeGoal({ id: "child-leaf", title: "Child Leaf" }),
+      ],
+    });
+    expect(result.id).toBe("child-root");
+    expect(result.children).toHaveLength(1);
+    expect(result.children?.[0]?.id).toBe("child-leaf");
   });
 });
 

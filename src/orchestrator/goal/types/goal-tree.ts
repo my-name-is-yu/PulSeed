@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { SatisficingAggregationEnum } from "./goal.js";
+import { GoalSchema, SatisficingAggregationEnum } from "./goal.js";
 
 // --- Goal Decomposition Config ---
 
@@ -11,11 +11,31 @@ export const GoalDecompositionConfigSchema = z.object({
 });
 export type GoalDecompositionConfig = z.infer<typeof GoalDecompositionConfigSchema>;
 
+// --- Decomposition Child ---
+
+export interface DecompositionChildInput extends z.input<typeof GoalSchema> {
+  children?: DecompositionChildInput[];
+}
+
+export interface DecompositionChild extends z.infer<typeof GoalSchema> {
+  children?: DecompositionChild[];
+}
+
+export const DecompositionChildSchema: z.ZodType<
+  DecompositionChild,
+  z.ZodTypeDef,
+  DecompositionChildInput
+> = z.lazy(() =>
+  GoalSchema.extend({
+    children: z.array(DecompositionChildSchema).optional(),
+  })
+);
+
 // --- Decomposition Result ---
 
 export const DecompositionResultSchema = z.object({
   parent_id: z.string(),
-  children: z.array(z.any()),
+  children: z.array(DecompositionChildSchema),
   depth: z.number().int().min(0),
   specificity_scores: z.record(z.string(), z.number()),
   reasoning: z.string(),

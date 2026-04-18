@@ -1,7 +1,7 @@
 import * as path from "node:path";
 import { EventServer } from "../event/server.js";
 import { IngressGateway, HttpChannelAdapter } from "../gateway/index.js";
-import type { LoopSupervisor } from "../executor/index.js";
+import type { LoopSupervisor, SupervisorState } from "../executor/index.js";
 import { PulSeedEventSchema } from "../../base/types/drive.js";
 import { RuntimeOperationStore, type RuntimeControlOperationKind } from "../store/index.js";
 import { ProcessShutdownCoordinator, startDaemonStatusHeartbeat, type ProcessSignalTarget } from "./runner-lifecycle.js";
@@ -16,6 +16,30 @@ const RUNTIME_LEADER_LEASE_MS = 30_000;
 const RUNTIME_LEADER_HEARTBEAT_MS = 10_000;
 
 export type StartupRunnerContext = any;
+
+type SupervisorWorkerSnapshot = SupervisorState["workers"][number];
+
+type ActiveWorkerSnapshot = {
+  worker_id: string;
+  goal_id: string;
+  started_at: number;
+  iterations: number;
+};
+
+function isActiveWorkerSnapshot(
+  worker: SupervisorWorkerSnapshot,
+): worker is SupervisorWorkerSnapshot & { goalId: string } {
+  return worker.goalId !== null;
+}
+
+function flattenActiveWorkers(workers: ReadonlyArray<SupervisorWorkerSnapshot>): ActiveWorkerSnapshot[] {
+  return workers.filter(isActiveWorkerSnapshot).map((worker) => ({
+    worker_id: worker.workerId,
+    goal_id: worker.goalId,
+    started_at: worker.startedAt,
+    iterations: worker.iterations,
+  }));
+}
 
 export async function startDaemonRunner(
   context: StartupRunnerContext,
@@ -38,15 +62,8 @@ export async function startDaemonRunner(
       context.eventServer.setOutboxStore?.(context.outboxStore);
     }
     context.eventServer.setActiveWorkersProvider?.(() => {
-      const workers = context.supervisor?.getState().workers ?? [];
-      return workers
-        .filter((worker: any) => worker.goalId !== null)
-        .map((worker: any) => ({
-          worker_id: worker.workerId,
-          goal_id: worker.goalId,
-          started_at: worker.startedAt,
-          iterations: worker.iterations,
-        }));
+      const supervisorState = context.supervisor?.getState() as SupervisorState | undefined;
+      return flattenActiveWorkers(supervisorState?.workers ?? []);
     });
     if (context.approvalBroker) {
       context.approvalBroker.setBroadcast((eventType: string, data: unknown) => {

@@ -31,6 +31,7 @@ import {
   unwrapStrategyResponse,
 } from "./strategy-helpers.js";
 
+type RawStrategyCandidate = z.infer<typeof StrategyArraySchema>[number];
 
 export interface ExecutionFeedback {
   strategyId: string;
@@ -168,8 +169,7 @@ export class StrategyManagerBase {
       }
     );
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let strategiesRaw: any[];
+    let strategiesRaw: RawStrategyCandidate[];
     if (this.promptGateway) {
       // Wrap the schema to unwrap any LLM wrapper object before array validation.
       const unwrappingSchema = z.unknown().transform(unwrapStrategyResponse).pipe(StrategyArraySchema);
