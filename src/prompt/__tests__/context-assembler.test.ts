@@ -1,8 +1,10 @@
 import { describe, it, expect, vi } from "vitest";
 import { ContextAssembler } from "../context-assembler.js";
-import type { ContextAssemblerDeps, ContextAssemblerGoalState } from "../context-assembler.js";
-
-type TestLesson = NonNullable<Awaited<ReturnType<NonNullable<ContextAssemblerDeps["memoryLifecycle"]>["selectForWorkingMemory"]>>["lessons"]>[number];
+import type {
+  ContextAssemblerDeps,
+  ContextAssemblerGoalState,
+  ContextAssemblerLessonEntry,
+} from "../context-assembler.js";
 
 const makeGoalState = (overrides: Partial<ContextAssemblerGoalState> = {}): ContextAssemblerGoalState & { id: string } => ({
   id: "goal-1",
@@ -181,6 +183,30 @@ describe("ContextAssembler", () => {
       expect(result.contextBlock).toContain("How?");
     });
 
+    it("accepts richer vector search results and ignores extra metadata", async () => {
+      const vectorIndex: NonNullable<ContextAssemblerDeps["vectorIndex"]> = {
+        search: vi.fn().mockResolvedValue([
+          {
+            id: "knowledge-1",
+            text: "Vector knowledge entry",
+            similarity: 0.91,
+            metadata: { source: "semantic-index" },
+          },
+        ]),
+      };
+      const deps: ContextAssemblerDeps = {
+        stateManager: {
+          loadGoalState: vi.fn().mockResolvedValue(makeGoalState()),
+        },
+        vectorIndex,
+      };
+      const assembler = new ContextAssembler(deps);
+      const result = await assembler.build("task_generation", "goal-1");
+      expect(result.contextBlock).toContain("knowledge");
+      expect(result.contextBlock).toContain("Vector knowledge entry");
+      expect(vectorIndex.search).toHaveBeenCalledWith("goal-1", 5, 0.6);
+    });
+
     it("includes failure_context from additionalContext", async () => {
       const deps: ContextAssemblerDeps = {
         stateManager: {
@@ -228,7 +254,7 @@ describe("ContextAssembler", () => {
   });
 
   describe("context rot prevention — lesson stale filtering", () => {
-    const makeLesson = (overrides: Partial<TestLesson> = {}): TestLesson => ({
+    const makeLesson = (overrides: Partial<ContextAssemblerLessonEntry> = {}): ContextAssemblerLessonEntry => ({
       lesson: "Some lesson",
       relevance_tags: ["MEDIUM"],
       last_accessed: new Date().toISOString(),
