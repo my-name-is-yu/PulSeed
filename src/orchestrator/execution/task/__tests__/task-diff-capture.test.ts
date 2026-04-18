@@ -62,4 +62,22 @@ describe("captureExecutionDiffArtifacts", () => {
       }),
     ]);
   });
+
+  it("ignores per-path diff read failures after collecting changed paths", () => {
+    const execFileSyncFn = makeExecFileSync(
+      {
+        "git diff --name-only": "src/example.ts\n",
+        "git ls-files --others --exclude-standard": "",
+      },
+      {
+        "git diff -- src/example.ts": "",
+      },
+    );
+
+    const result = captureExecutionDiffArtifacts(execFileSyncFn, "/repo");
+
+    expect(result.available).toBe(true);
+    expect(result.changedPaths).toEqual(["src/example.ts"]);
+    expect(result.fileDiffs).toEqual([]);
+  });
 });

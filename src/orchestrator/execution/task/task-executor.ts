@@ -179,24 +179,26 @@ export async function executeTask(
     try {
       const gitCwd = workspaceCwd ?? process.cwd();
       const diffArtifacts = captureExecutionDiffArtifacts(execFileSyncFn, gitCwd);
-      const changedFiles = diffArtifacts.changedPaths;
-      result.filesChangedPaths = changedFiles;
-      result.fileDiffs = diffArtifacts.fileDiffs;
-      result.filesChanged = changedFiles.length > 0;
-      if (!result.filesChanged) {
-        logger?.warn(
-          "[TaskLifecycle] Adapter reported success but no files were modified",
-          { taskId: task.id }
-        );
-        result.success = false;
-        result.error = "No files were modified";
-        result.stopped_reason = "completed";
+      if (diffArtifacts.available) {
+        const changedFiles = diffArtifacts.changedPaths;
+        result.filesChangedPaths = changedFiles;
+        result.fileDiffs = diffArtifacts.fileDiffs;
+        result.filesChanged = changedFiles.length > 0;
+        if (!result.filesChanged) {
+          logger?.warn(
+            "[TaskLifecycle] Adapter reported success but no files were modified",
+            { taskId: task.id }
+          );
+          result.success = false;
+          result.error = "No files were modified";
+          result.stopped_reason = "completed";
+        }
       }
 
-      if (changedFiles.length > 0) {
+      if (diffArtifacts.available && diffArtifacts.changedPaths.length > 0) {
         const providerConfig = await loadProviderConfig({ saveMigration: false });
         const protectedPaths = providerConfig.agent_loop?.security?.protected_paths;
-        const protectedChanges = changedFiles.filter((changedFile) =>
+        const protectedChanges = diffArtifacts.changedPaths.filter((changedFile) =>
           !validateProtectedPath(changedFile, { cwd: gitCwd, workspaceRoot: gitCwd, protectedPaths }).valid
         );
 
