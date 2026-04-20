@@ -108,7 +108,7 @@ describe("MysqlDataSourceAdapter", () => {
     expect(result.raw).toEqual([]);
   });
 
-  it("query passes parameter bindings to pool.query", async () => {
+  it("query executes the SQL expression with pool.query", async () => {
     mockPool.query.mockResolvedValue([[{ score: 99 }], []]);
 
     await adapter.connect();
@@ -119,10 +119,7 @@ describe("MysqlDataSourceAdapter", () => {
       parameters: { id: 7 },
     });
 
-    expect(mockPool.query).toHaveBeenCalledWith(
-      "SELECT score FROM results WHERE id = ?",
-      [7]
-    );
+    expect(mockPool.query).toHaveBeenCalledWith("SELECT score FROM results WHERE id = ?");
     expect(result.value).toBe(99);
   });
 

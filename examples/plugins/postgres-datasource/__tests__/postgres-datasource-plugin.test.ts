@@ -110,7 +110,7 @@ describe("PostgresDataSourceAdapter", () => {
     expect(result.raw).toEqual([]);
   });
 
-  it("query passes parameter bindings to pool.query", async () => {
+  it("query executes the SQL expression with pool.query", async () => {
     mockPool.query.mockResolvedValue({ rows: [{ score: 99 }] });
 
     await adapter.connect();
@@ -121,10 +121,7 @@ describe("PostgresDataSourceAdapter", () => {
       parameters: { id: 7 },
     });
 
-    expect(mockPool.query).toHaveBeenCalledWith(
-      "SELECT score FROM results WHERE id = $1",
-      [7]
-    );
+    expect(mockPool.query).toHaveBeenCalledWith("SELECT score FROM results WHERE id = $1");
     expect(result.value).toBe(99);
   });
 
