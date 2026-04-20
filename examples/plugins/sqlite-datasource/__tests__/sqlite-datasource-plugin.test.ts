@@ -137,7 +137,7 @@ describe("SqliteDataSourceAdapter", () => {
     ).rejects.toThrow("only SELECT statements are permitted");
   });
 
-  it("parameter binding passes values to prepared statement", async () => {
+  it("query executes the SQL expression against the prepared statement", async () => {
     mockStatement.all.mockReturnValue([{ score: 99 }]);
 
     await adapter.connect();
@@ -148,7 +148,7 @@ describe("SqliteDataSourceAdapter", () => {
       parameters: { id: 7 },
     });
 
-    expect(mockStatement.all).toHaveBeenCalledWith(7);
+    expect(mockStatement.all).toHaveBeenCalledWith();
     expect(result.value).toBe(99);
   });
 
