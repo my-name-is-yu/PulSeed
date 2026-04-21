@@ -25,6 +25,7 @@ import {
 } from "../../tools/index.js";
 import {
   createNativeChatAgentLoopRunner,
+  createNativeReviewAgentLoopRunner,
   shouldUseNativeTaskAgentLoop,
 } from "../../orchestrator/execution/agent-loop/index.js";
 import {
@@ -389,6 +390,15 @@ async function createGlobalCrossPlatformChatSessionManager(): Promise<CrossPlatf
         traceBaseDir: stateManager.getBaseDir(),
       })
     : undefined;
+  const reviewAgentLoopRunner = shouldUseNativeTaskAgentLoop(providerConfig, llmClient)
+    ? createNativeReviewAgentLoopRunner({
+        llmClient,
+        providerConfig,
+        toolRegistry,
+        toolExecutor,
+        traceBaseDir: stateManager.getBaseDir(),
+      })
+    : undefined;
 
   return new CrossPlatformChatSessionManager({
     stateManager,
@@ -397,6 +407,7 @@ async function createGlobalCrossPlatformChatSessionManager(): Promise<CrossPlatf
     registry: toolRegistry,
     toolExecutor,
     chatAgentLoopRunner,
+    reviewAgentLoopRunner,
     runtimeControlService: new RuntimeControlService({
       runtimeRoot: path.join(stateManager.getBaseDir(), "runtime"),
       executor: createDaemonRuntimeControlExecutor({

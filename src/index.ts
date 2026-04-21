@@ -59,8 +59,10 @@ export type { ProviderConfig, ValidationResult } from "./base/llm/provider-confi
 export { TaskLifecycle } from "./orchestrator/execution/task/task-lifecycle.js";
 export {
   ChatAgentLoopRunner,
+  ReviewAgentLoopRunner,
   TaskAgentLoopRunner,
   createNativeChatAgentLoopRunner,
+  createNativeReviewAgentLoopRunner,
   createNativeTaskAgentLoopRunner,
   shouldUseNativeTaskAgentLoop,
 } from "./orchestrator/execution/agent-loop/index.js";

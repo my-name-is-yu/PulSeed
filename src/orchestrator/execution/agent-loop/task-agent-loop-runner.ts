@@ -1,7 +1,12 @@
 import type { Task } from "../../../base/types/task.js";
 import type { AgentResult } from "../adapter-layer.js";
 import type { AgentLoopBudget } from "./agent-loop-budget.js";
-import type { AgentLoopModelClient, AgentLoopModelRef, AgentLoopModelRegistry } from "./agent-loop-model.js";
+import type {
+  AgentLoopModelClient,
+  AgentLoopModelRef,
+  AgentLoopModelRegistry,
+  AgentLoopReasoningEffort,
+} from "./agent-loop-model.js";
 import { BoundedAgentLoopRunner } from "./bounded-agent-loop-runner.js";
 import { createAgentLoopSession, type AgentLoopSession } from "./agent-loop-session.js";
 import type { AgentLoopResult } from "./agent-loop-result.js";
@@ -19,7 +24,7 @@ import {
   type AgentLoopWorktreePolicy,
 } from "./task-agent-loop-worktree.js";
 import type { ToolCallContext } from "../../../tools/types.js";
-import type { SubagentRole } from "./execution-policy.js";
+import type { ExecutionPolicy, SubagentRole } from "./execution-policy.js";
 
 export interface TaskAgentLoopRunnerDeps {
   boundedRunner: BoundedAgentLoopRunner;
@@ -30,6 +35,9 @@ export interface TaskAgentLoopRunnerDeps {
   defaultToolPolicy?: AgentLoopToolPolicy;
   defaultToolCallContext?: Partial<ToolCallContext>;
   defaultWorktreePolicy?: AgentLoopWorktreePolicy;
+  defaultReasoningEffort?: AgentLoopReasoningEffort;
+  defaultProfileName?: string;
+  defaultExecutionPolicy?: ExecutionPolicy;
   contextAssembler?: AgentLoopContextAssembler;
   soilPrefetch?: (query: SoilPrefetchQuery) => Promise<SoilPrefetchResult | null>;
   cwd?: string;
@@ -85,6 +93,9 @@ export class TaskAgentLoopRunner {
       budget: { ...this.deps.defaultBudget, ...input.budget },
       toolPolicy: { ...this.deps.defaultToolPolicy, ...input.toolPolicy },
       toolCallContext: this.deps.defaultToolCallContext,
+      ...(this.deps.defaultProfileName ? { profileName: this.deps.defaultProfileName } : {}),
+      ...(this.deps.defaultReasoningEffort ? { reasoningEffort: this.deps.defaultReasoningEffort } : {}),
+      ...(this.deps.defaultExecutionPolicy ? { executionPolicy: this.deps.defaultExecutionPolicy } : {}),
       ...(input.resumeState ? { resumeState: input.resumeState } : {}),
       abortSignal: input.abortSignal,
       role: input.role,

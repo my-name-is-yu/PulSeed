@@ -1,3 +1,5 @@
+import type { AgentLoopReasoningEffort } from "./agent-loop-model.js";
+import type { ExecutionPolicy } from "./execution-policy.js";
 import type { AgentLoopStopReason } from "./agent-loop-budget.js";
 
 export type AgentLoopCommandResultCategory = "verification" | "observation" | "other";
@@ -38,6 +40,9 @@ export interface AgentLoopResult<TOutput> {
   traceId: string;
   sessionId: string;
   turnId: string;
+  profileName?: string;
+  reasoningEffort?: AgentLoopReasoningEffort;
+  executionPolicy?: ExecutionPolicy;
 }
 
 export interface AgentLoopCompletionValidationResult {

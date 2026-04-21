@@ -2,7 +2,12 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { AgentResult } from "../adapter-layer.js";
 import type { AgentLoopBudget } from "./agent-loop-budget.js";
-import type { AgentLoopModelClient, AgentLoopModelRef, AgentLoopModelRegistry } from "./agent-loop-model.js";
+import type {
+  AgentLoopModelClient,
+  AgentLoopModelRef,
+  AgentLoopModelRegistry,
+  AgentLoopReasoningEffort,
+} from "./agent-loop-model.js";
 import { createAgentLoopSession, type AgentLoopSession } from "./agent-loop-session.js";
 import type { AgentLoopEventSink } from "./agent-loop-events.js";
 import type { AgentLoopToolPolicy } from "./agent-loop-turn-context.js";
@@ -11,7 +16,7 @@ import type { BoundedAgentLoopRunner } from "./bounded-agent-loop-runner.js";
 import type { AgentLoopSessionState } from "./agent-loop-session-state.js";
 import { buildAgentLoopBaseInstructions } from "./agent-loop-prompts.js";
 import type { ApprovalRequest, ToolCallContext } from "../../../tools/types.js";
-import type { SubagentRole } from "./execution-policy.js";
+import type { ExecutionPolicy, SubagentRole } from "./execution-policy.js";
 
 export const ChatAgentLoopOutputSchema = z.object({
   status: z.enum(["done", "blocked", "failed"]).default("done"),
@@ -30,6 +35,9 @@ export interface ChatAgentLoopRunnerDeps {
   defaultBudget?: Partial<AgentLoopBudget>;
   defaultToolPolicy?: AgentLoopToolPolicy;
   defaultToolCallContext?: Partial<ToolCallContext>;
+  defaultReasoningEffort?: AgentLoopReasoningEffort;
+  defaultProfileName?: string;
+  defaultExecutionPolicy?: ExecutionPolicy;
   createSession?: (input: {
     goalId?: string;
     eventSink?: AgentLoopEventSink;
@@ -82,6 +90,8 @@ export class ChatAgentLoopRunner {
       cwd,
       model,
       modelInfo,
+      ...(this.deps.defaultProfileName ? { profileName: this.deps.defaultProfileName } : {}),
+      ...(this.deps.defaultReasoningEffort ? { reasoningEffort: this.deps.defaultReasoningEffort } : {}),
       messages: input.resumeOnly
         ? []
         : [
@@ -106,6 +116,7 @@ export class ChatAgentLoopRunner {
       budget: withDefaultBudget({ ...this.deps.defaultBudget, ...input.budget }),
       toolPolicy: { ...this.deps.defaultToolPolicy, ...input.toolPolicy },
       ...(input.resumeState ? { resumeState: input.resumeState } : {}),
+      ...(this.deps.defaultExecutionPolicy ? { executionPolicy: this.deps.defaultExecutionPolicy } : {}),
       toolCallContext: {
         cwd,
         goalId: input.goalId ?? "chat",
@@ -154,9 +165,18 @@ export class ChatAgentLoopRunner {
         modelTurns: result.modelTurns,
         toolCalls: result.toolCalls,
         compactions: result.compactions,
+        ...(result.profileName ? { profileName: result.profileName } : {}),
+        ...(result.reasoningEffort ? { reasoningEffort: result.reasoningEffort } : {}),
         completionEvidence: result.output?.evidence ?? [],
         verificationHints: result.output?.blockers ?? [],
         filesChangedPaths: result.changedFiles,
+        ...(result.executionPolicy
+          ? {
+              sandboxMode: result.executionPolicy.sandboxMode,
+              approvalPolicy: result.executionPolicy.approvalPolicy,
+              networkAccess: result.executionPolicy.networkAccess,
+            }
+          : {}),
       },
     };
   }

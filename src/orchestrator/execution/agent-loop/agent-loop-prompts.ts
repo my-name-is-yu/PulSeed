@@ -1,14 +1,16 @@
 import type { SubagentRole } from "./execution-policy.js";
 
 export function buildAgentLoopBaseInstructions(options?: {
-  mode?: "task" | "chat";
+  mode?: "task" | "chat" | "review";
   extraRules?: string[];
   role?: SubagentRole;
 }): string {
   const mode = options?.mode ?? "task";
   const header = mode === "task"
     ? "You are PulSeed's task agentloop."
-    : "You are PulSeed's user-facing agentloop.";
+    : mode === "review"
+      ? "You are PulSeed's review agentloop."
+      : "You are PulSeed's user-facing agentloop.";
 
   const rules = [
     header,

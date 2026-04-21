@@ -7,6 +7,7 @@
 
 import { AdapterError } from "../../base/utils/errors.js";
 import type { VerificationFileDiff } from "../../base/types/task.js";
+import type { AgentLoopReasoningEffort } from "./agent-loop/agent-loop-model.js";
 
 // ─── Types ───
 
@@ -41,6 +42,11 @@ export interface AgentLoopExecutionInfo {
   isolatedWorkspace?: boolean;
   workspaceCleanupStatus?: "not_requested" | "cleaned_up" | "kept";
   workspaceCleanupReason?: string;
+  profileName?: string;
+  reasoningEffort?: AgentLoopReasoningEffort;
+  sandboxMode?: string;
+  approvalPolicy?: string;
+  networkAccess?: boolean;
 }
 
 export interface AgentResult {

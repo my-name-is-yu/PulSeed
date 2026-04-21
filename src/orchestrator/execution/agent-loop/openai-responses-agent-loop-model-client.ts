@@ -61,6 +61,7 @@ export class OpenAIResponsesAgentLoopModelClient implements AgentLoopModelClient
       input: this.toInputItems(input.messages),
       tools: input.tools.map((tool) => this.toFunctionTool(tool)),
       max_output_tokens: input.maxOutputTokens,
+      ...(input.reasoningEffort ? { reasoning: { effort: input.reasoningEffort } } : {}),
     }) as Response;
 
     const assistant: AgentLoopAssistantOutput[] = [];

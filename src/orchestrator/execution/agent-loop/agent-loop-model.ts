@@ -31,6 +31,7 @@ export interface AgentLoopModelInfo {
 
 export type AgentLoopMessageRole = "system" | "user" | "assistant" | "tool";
 export type AgentLoopMessagePhase = "commentary" | "final_answer";
+export type AgentLoopReasoningEffort = "none" | "low" | "medium" | "high" | "xhigh";
 
 export interface AgentLoopMessage {
   role: AgentLoopMessageRole;
@@ -53,6 +54,7 @@ export interface AgentLoopModelRequest {
   tools: ToolDefinition[];
   system?: string;
   maxOutputTokens?: number;
+  reasoningEffort?: AgentLoopReasoningEffort;
 }
 
 export interface AgentLoopAssistantOutput {

@@ -380,6 +380,9 @@ export class BoundedAgentLoopRunner {
       traceId: turn.session.traceId,
       sessionId: turn.session.sessionId,
       turnId: turn.turnId,
+      ...(turn.profileName ? { profileName: turn.profileName } : {}),
+      ...(turn.reasoningEffort ? { reasoningEffort: turn.reasoningEffort } : {}),
+      ...(turn.executionPolicy ? { executionPolicy: turn.executionPolicy } : {}),
     };
   }
 
@@ -502,6 +505,7 @@ export class BoundedAgentLoopRunner {
         model: turn.model,
         messages,
         tools,
+        reasoningEffort: turn.reasoningEffort,
       });
     }
 
@@ -509,6 +513,7 @@ export class BoundedAgentLoopRunner {
       model: turn.model,
       messages,
       tools,
+      reasoningEffort: turn.reasoningEffort,
     });
     return {
       assistant: response.content || response.toolCalls.length > 0 ? [{

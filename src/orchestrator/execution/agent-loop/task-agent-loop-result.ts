@@ -49,6 +49,8 @@ export function taskAgentLoopResultToAgentResult(
       modelTurns: result.modelTurns,
       toolCalls: result.toolCalls,
       compactions: result.compactions,
+      ...(result.profileName ? { profileName: result.profileName } : {}),
+      ...(result.reasoningEffort ? { reasoningEffort: result.reasoningEffort } : {}),
       completionEvidence: [
         ...(result.output?.completionEvidence ?? []),
         ...runtimeVerificationCommands.filter((command) => command.success).map((command) => `verified command: ${command.command}`),
@@ -65,6 +67,13 @@ export function taskAgentLoopResultToAgentResult(
             isolatedWorkspace: result.workspace.isolated,
             workspaceCleanupStatus: result.workspace.cleanupStatus,
             workspaceCleanupReason: result.workspace.cleanupReason,
+          }
+        : {}),
+      ...(result.executionPolicy
+        ? {
+            sandboxMode: result.executionPolicy.sandboxMode,
+            approvalPolicy: result.executionPolicy.approvalPolicy,
+            networkAccess: result.executionPolicy.networkAccess,
           }
         : {}),
     },

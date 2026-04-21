@@ -7,7 +7,7 @@ import { JsonAgentLoopSessionStateStore } from "./agent-loop-session-state.js";
 
 export interface PersistentAgentLoopSessionFactoryOptions {
   traceBaseDir: string;
-  kind: "task" | "chat";
+  kind: "task" | "chat" | "review";
 }
 
 export interface PersistentAgentLoopSessionInput {
