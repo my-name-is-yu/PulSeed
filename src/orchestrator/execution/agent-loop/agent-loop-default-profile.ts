@@ -103,7 +103,7 @@ const DEFAULT_CORE_PHASE_BUDGET: Partial<Record<CorePhaseKind, Partial<AgentLoop
 };
 
 const CHAT_ALLOWED_TOOLS = [
-  "read_pulseed_file",
+  "read-pulseed-file",
   "glob",
   "grep",
   "list_dir",
@@ -114,7 +114,7 @@ const CHAT_ALLOWED_TOOLS = [
   "file_edit",
   "file_write",
   "json_query",
-  "test_runner",
+  "test-runner",
   "task_get",
   "goal_state",
   "progress_history",
@@ -127,13 +127,13 @@ const CHAT_ALLOWED_TOOLS = [
 ] as const;
 
 const REVIEW_ALLOWED_TOOLS = [
-  "read_pulseed_file",
+  "read-pulseed-file",
   "glob",
   "grep",
   "git_diff",
   "git_log",
   "shell_command",
-  "test_runner",
+  "test-runner",
   "task_get",
   "goal_state",
   "progress_history",
@@ -149,7 +149,7 @@ const CORE_PHASE_PROFILE_DEFAULTS: Record<CorePhaseKind, CorePhaseProfileDefault
     budget: DEFAULT_CORE_PHASE_BUDGET.observe_evidence ?? {},
     toolPolicy: {
       allowedTools: [
-        "read_pulseed_file",
+        "read-pulseed-file",
         "glob",
         "grep",
         "git_log",
@@ -168,7 +168,7 @@ const CORE_PHASE_PROFILE_DEFAULTS: Record<CorePhaseKind, CorePhaseProfileDefault
       allowedTools: [
         "soil_query",
         "knowledge_query",
-        "read_pulseed_file",
+        "read-pulseed-file",
         "grep",
       ],
       requiredTools: ["soil_query"],
@@ -181,7 +181,7 @@ const CORE_PHASE_PROFILE_DEFAULTS: Record<CorePhaseKind, CorePhaseProfileDefault
     budget: DEFAULT_CORE_PHASE_BUDGET.stall_investigation ?? {},
     toolPolicy: {
       allowedTools: [
-        "read_pulseed_file",
+        "read-pulseed-file",
         "glob",
         "grep",
         "git_log",
@@ -212,12 +212,12 @@ const CORE_PHASE_PROFILE_DEFAULTS: Record<CorePhaseKind, CorePhaseProfileDefault
     budget: DEFAULT_CORE_PHASE_BUDGET.verification_evidence ?? {},
     toolPolicy: {
       allowedTools: [
-        "read_pulseed_file",
+        "read-pulseed-file",
         "glob",
         "grep",
         "git_diff",
         "git_log",
-        "test_runner",
+        "test-runner",
         "shell_command",
       ],
     },

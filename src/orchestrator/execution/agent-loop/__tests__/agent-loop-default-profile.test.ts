@@ -4,7 +4,12 @@ import {
   resolveAgentLoopDefaultProfile,
   summarizeAgentLoopResolvedProfile,
 } from "../agent-loop-default-profile.js";
+import { createAgentLoopSession } from "../agent-loop-session.js";
+import { ToolRegistryAgentLoopToolRouter } from "../agent-loop-tool-router.js";
 import { StaticCorePhasePolicyRegistry } from "../../../loop/core-loop/phase-policy.js";
+import { ToolRegistry } from "../../../../tools/registry.js";
+import { ReadPulseedFileTool } from "../../../../tools/fs/ReadPulseedFileTool/ReadPulseedFileTool.js";
+import { TestRunnerTool } from "../../../../tools/system/TestRunnerTool/TestRunnerTool.js";
 
 describe("resolveAgentLoopDefaultProfile", () => {
   it("preserves current task defaults", () => {
@@ -42,8 +47,8 @@ describe("resolveAgentLoopDefaultProfile", () => {
       workspaceRoot: "/repo",
       budget: { maxModelTurns: 4 },
       toolPolicy: {
-        allowedTools: ["read_pulseed_file"],
-        requiredTools: ["read_pulseed_file"],
+        allowedTools: ["read-pulseed-file"],
+        requiredTools: ["read-pulseed-file"],
       },
     });
 
@@ -52,8 +57,8 @@ describe("resolveAgentLoopDefaultProfile", () => {
     expect(profile.budget.maxToolCalls).toBe(40);
     expect(profile.reasoningEffort).toBe("low");
     expect(profile.toolPolicy).toEqual({
-      allowedTools: ["read_pulseed_file"],
-      requiredTools: ["read_pulseed_file"],
+      allowedTools: ["read-pulseed-file"],
+      requiredTools: ["read-pulseed-file"],
     });
   });
 
@@ -66,7 +71,7 @@ describe("resolveAgentLoopDefaultProfile", () => {
     expect(profile.name).toBe("core_phase:observe_evidence");
     expect(profile.budget.maxModelTurns).toBe(6);
     expect(profile.toolPolicy.allowedTools).toEqual([
-      "read_pulseed_file",
+      "read-pulseed-file",
       "glob",
       "grep",
       "git_log",
@@ -95,7 +100,7 @@ describe("resolveAgentLoopDefaultProfile", () => {
     });
 
     expect(profile.toolPolicy.allowedTools).toContain("git_diff");
-    expect(profile.toolPolicy.allowedTools).toContain("test_runner");
+    expect(profile.toolPolicy.allowedTools).toContain("test-runner");
     expect(profile.executionPolicy).toMatchObject({
       sandboxMode: "read_only",
       approvalPolicy: "never",
@@ -108,6 +113,63 @@ describe("resolveAgentLoopDefaultProfile", () => {
       "profile_id: review",
       "resolved_posture: sandbox=read_only approval=never network=off reasoning=medium",
     ].join("\n"));
+  });
+
+  it("keeps real registry tool names visible through the router", () => {
+    const registry = new ToolRegistry();
+    registry.register(new ReadPulseedFileTool());
+    registry.register(new TestRunnerTool());
+    const router = new ToolRegistryAgentLoopToolRouter(registry);
+    const profile = resolveAgentLoopDefaultProfile({
+      surface: "review",
+      workspaceRoot: "/repo",
+    });
+
+    const visible = router.modelVisibleTools({
+      session: createAgentLoopSession({
+        sessionId: "session-1",
+        traceId: "trace-1",
+        stateStore: { load: async () => null, save: async () => undefined },
+      }),
+      turnId: "turn-1",
+      goalId: "review",
+      profileName: profile.name,
+      cwd: "/repo",
+      model: { providerId: "openai", modelId: "gpt-5.4-mini" },
+      modelInfo: {
+        ref: { providerId: "openai", modelId: "gpt-5.4-mini" },
+        displayName: "openai/gpt-5.4-mini",
+        capabilities: {
+          toolCalling: true,
+          parallelToolCalls: true,
+          streaming: false,
+          structuredOutput: true,
+          reasoning: true,
+          attachments: false,
+          interleavedThinking: false,
+          inputModalities: ["text"],
+          outputModalities: ["text"],
+        },
+      },
+      reasoningEffort: profile.reasoningEffort,
+      messages: [],
+      outputSchema: { parse: (value: unknown) => value } as never,
+      budget: profile.budget,
+      toolPolicy: profile.toolPolicy,
+      toolCallContext: {
+        cwd: "/repo",
+        goalId: "review",
+        trustBalance: 0,
+        preApproved: true,
+        approvalFn: async () => false,
+      },
+      executionPolicy: profile.executionPolicy,
+    });
+
+    expect(visible.map((tool) => tool.function.name)).toEqual([
+      "read-pulseed-file",
+      "test-runner",
+    ]);
   });
 });
 
