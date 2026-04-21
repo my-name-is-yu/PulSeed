@@ -55,6 +55,7 @@ export function createNativeTaskAgentLoopRunner(
     security: deps.providerConfig.agent_loop?.security,
     budget: deps.defaultBudget,
     toolPolicy: deps.defaultToolPolicy,
+    worktreePolicy: deps.defaultWorktreePolicy ?? deps.providerConfig.agent_loop?.worktree,
   });
 
   return new TaskAgentLoopRunner({
@@ -65,7 +66,10 @@ export function createNativeTaskAgentLoopRunner(
     defaultBudget: profile.budget,
     defaultToolPolicy: profile.toolPolicy,
     defaultToolCallContext: profile.executionPolicy ? { executionPolicy: profile.executionPolicy } : undefined,
-    defaultWorktreePolicy: deps.defaultWorktreePolicy,
+    defaultWorktreePolicy: profile.worktreePolicy ?? deps.defaultWorktreePolicy,
+    defaultReasoningEffort: profile.reasoningEffort,
+    defaultProfileName: profile.name,
+    defaultExecutionPolicy: profile.executionPolicy,
     soilPrefetch: deps.soilPrefetch,
     cwd: deps.cwd,
     createSession: deps.traceBaseDir
@@ -97,6 +101,9 @@ export function createNativeChatAgentLoopRunner(
     defaultBudget: profile.budget,
     defaultToolPolicy: profile.toolPolicy,
     defaultToolCallContext: profile.executionPolicy ? { executionPolicy: profile.executionPolicy } : undefined,
+    defaultReasoningEffort: profile.reasoningEffort,
+    defaultProfileName: profile.name,
+    defaultExecutionPolicy: profile.executionPolicy,
     cwd: deps.cwd,
     createSession: deps.traceBaseDir
       ? createPersistentAgentLoopSessionFactory({ traceBaseDir: deps.traceBaseDir, kind: "chat" })
