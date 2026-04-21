@@ -49,7 +49,11 @@ import type {
   RuntimeControlReplyTarget,
 } from "../../runtime/store/runtime-operation-schemas.js";
 import {
-  resolveExecutionPolicy,
+  formatAgentLoopResolvedProfileSummary,
+  resolveAgentLoopDefaultProfile,
+  summarizeAgentLoopResolvedProfile,
+} from "../../orchestrator/execution/agent-loop/agent-loop-default-profile.js";
+import {
   summarizeExecutionPolicy,
   withExecutionPolicyOverrides,
   type ExecutionPolicy,
@@ -735,7 +739,11 @@ export class ChatRunner {
     if (!args) {
       return {
         success: true,
-        output: summarizeExecutionPolicy(policy),
+        output: this.formatExecutionPolicyOutput(
+          summarizeExecutionPolicy(policy),
+          "Profile",
+          await this.getAgentLoopProfileSummary("chat", policy),
+        ),
         elapsed_ms: Date.now() - start,
       };
     }
@@ -779,7 +787,11 @@ export class ChatRunner {
     this.sessionExecutionPolicy = nextPolicy;
     return {
       success: true,
-      output: summarizeExecutionPolicy(nextPolicy),
+      output: this.formatExecutionPolicyOutput(
+        summarizeExecutionPolicy(nextPolicy),
+        "Profile",
+        await this.getAgentLoopProfileSummary("chat", nextPolicy),
+      ),
       elapsed_ms: Date.now() - start,
     };
   }
@@ -794,6 +806,9 @@ export class ChatRunner {
       "",
       "Execution policy",
       summarizeExecutionPolicy(policy),
+      "",
+      "Review profile",
+      await this.getAgentLoopProfileSummary("review"),
     ].join("\n");
     return { success: true, output, elapsed_ms: Date.now() - start };
   }
@@ -1984,12 +1999,37 @@ export class ChatRunner {
   /** Build a ToolCallContext from ChatRunnerDeps for tool dispatch. */
   private async getSessionExecutionPolicy(): Promise<ExecutionPolicy> {
     if (this.sessionExecutionPolicy) return this.sessionExecutionPolicy;
+    this.sessionExecutionPolicy = (await this.getAgentLoopDefaultProfile("chat")).executionPolicy!;
+    return this.sessionExecutionPolicy;
+  }
+
+  private async getAgentLoopDefaultProfile(
+    surface: "chat" | "review",
+  ): Promise<ReturnType<typeof resolveAgentLoopDefaultProfile>> {
     const config = await loadProviderConfig({ saveMigration: false });
-    this.sessionExecutionPolicy = resolveExecutionPolicy({
+    return resolveAgentLoopDefaultProfile({
+      surface,
       workspaceRoot: this.sessionCwd ?? process.cwd(),
       security: config.agent_loop?.security,
     });
-    return this.sessionExecutionPolicy;
+  }
+
+  private async getAgentLoopProfileSummary(
+    surface: "chat" | "review",
+    executionPolicy?: ExecutionPolicy,
+  ): Promise<string> {
+    const profile = await this.getAgentLoopDefaultProfile(surface);
+    return formatAgentLoopResolvedProfileSummary(
+      summarizeAgentLoopResolvedProfile(profile, executionPolicy),
+    );
+  }
+
+  private formatExecutionPolicyOutput(
+    policySummary: string,
+    profileHeading: string,
+    profileSummary: string,
+  ): string {
+    return [policySummary, "", profileHeading, profileSummary].join("\n");
   }
 
   private async buildToolCallContext(): Promise<ToolCallContext> {

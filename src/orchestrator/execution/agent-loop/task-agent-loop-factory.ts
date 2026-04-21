@@ -19,9 +19,9 @@ import { TaskAgentLoopRunner } from "./task-agent-loop-runner.js";
 import type { AgentLoopBudget } from "./agent-loop-budget.js";
 import type { AgentLoopToolPolicy } from "./agent-loop-turn-context.js";
 import type { SoilPrefetchQuery, SoilPrefetchResult } from "./agent-loop-context-assembler.js";
+import { resolveAgentLoopDefaultProfile } from "./agent-loop-default-profile.js";
 import { createPersistentAgentLoopSessionFactory } from "./agent-loop-session-factory.js";
 import type { AgentLoopWorktreePolicy } from "./task-agent-loop-worktree.js";
-import { resolveExecutionPolicy } from "./execution-policy.js";
 
 export interface NativeTaskAgentLoopRuntimeDeps {
   llmClient: ILLMClient;
@@ -48,9 +48,12 @@ export function createNativeTaskAgentLoopRunner(
   deps: NativeTaskAgentLoopRuntimeDeps,
 ): TaskAgentLoopRunner {
   const runtime = createNativeAgentLoopRuntime(deps);
-  const executionPolicy = resolveExecutionPolicy({
+  const profile = resolveAgentLoopDefaultProfile({
+    surface: "task",
     workspaceRoot: deps.cwd ?? process.cwd(),
     security: deps.providerConfig.agent_loop?.security,
+    budget: deps.defaultBudget,
+    toolPolicy: deps.defaultToolPolicy,
   });
 
   return new TaskAgentLoopRunner({
@@ -58,9 +61,9 @@ export function createNativeTaskAgentLoopRunner(
     modelClient: runtime.modelClient,
     modelRegistry: runtime.modelRegistry,
     defaultModel: runtime.modelInfo.ref,
-    defaultBudget: deps.defaultBudget,
-    defaultToolPolicy: deps.defaultToolPolicy,
-    defaultToolCallContext: { executionPolicy },
+    defaultBudget: profile.budget,
+    defaultToolPolicy: profile.toolPolicy,
+    defaultToolCallContext: profile.executionPolicy ? { executionPolicy: profile.executionPolicy } : undefined,
     defaultWorktreePolicy: deps.defaultWorktreePolicy,
     soilPrefetch: deps.soilPrefetch,
     cwd: deps.cwd,
@@ -77,9 +80,12 @@ export function createNativeChatAgentLoopRunner(
   deps: NativeTaskAgentLoopRuntimeDeps,
 ): ChatAgentLoopRunner {
   const runtime = createNativeAgentLoopRuntime(deps);
-  const executionPolicy = resolveExecutionPolicy({
+  const profile = resolveAgentLoopDefaultProfile({
+    surface: "chat",
     workspaceRoot: deps.cwd ?? process.cwd(),
     security: deps.providerConfig.agent_loop?.security,
+    budget: deps.defaultBudget,
+    toolPolicy: deps.defaultToolPolicy,
   });
 
   return new ChatAgentLoopRunner({
@@ -87,9 +93,9 @@ export function createNativeChatAgentLoopRunner(
     modelClient: runtime.modelClient,
     modelRegistry: runtime.modelRegistry,
     defaultModel: runtime.modelInfo.ref,
-    defaultBudget: deps.defaultBudget,
-    defaultToolPolicy: deps.defaultToolPolicy,
-    defaultToolCallContext: { executionPolicy },
+    defaultBudget: profile.budget,
+    defaultToolPolicy: profile.toolPolicy,
+    defaultToolCallContext: profile.executionPolicy ? { executionPolicy: profile.executionPolicy } : undefined,
     cwd: deps.cwd,
     createSession: deps.traceBaseDir
       ? createPersistentAgentLoopSessionFactory({ traceBaseDir: deps.traceBaseDir, kind: "chat" })

@@ -73,6 +73,8 @@ describe("ChatRunner policy commands", () => {
     expect(result.success).toBe(true);
     expect(result.output).toContain("sandbox_mode: workspace_write");
     expect(result.output).toContain("network_access: off");
+    expect(result.output).toContain("profile_id: chat");
+    expect(result.output).toContain("resolved_posture: sandbox=workspace_write approval=on_request network=off");
   });
 
   it("/permissions updates sandbox and network settings for the session", async () => {
@@ -85,6 +87,8 @@ describe("ChatRunner policy commands", () => {
     expect(result.output).toContain("sandbox_mode: read_only");
     expect(result.output).toContain("network_access: on");
     expect(result.output).toContain("approval_policy: never");
+    expect(result.output).toContain("profile_id: chat");
+    expect(result.output).toContain("resolved_posture: sandbox=read_only approval=never network=on");
   });
 
   it("/review returns diff summary and execution policy", async () => {
@@ -96,6 +100,9 @@ describe("ChatRunner policy commands", () => {
     expect(result.success).toBe(true);
     expect(result.output).toContain("Review summary");
     expect(result.output).toContain("Execution policy");
+    expect(result.output).toContain("Review profile");
+    expect(result.output).toContain("profile_id: review");
+    expect(result.output).toContain("resolved_posture: sandbox=workspace_write approval=on_request network=off");
   });
 
   it("/fork creates a new session id", async () => {
