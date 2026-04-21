@@ -2,6 +2,7 @@ import * as path from "node:path";
 import * as fsp from "node:fs/promises";
 import { readJsonFileOrNull, writeJsonFileAtomic } from "../../../../../base/utils/json-io.js";
 import type { MCPServerConfig, MCPServersConfig } from "../../../../../base/types/mcp.js";
+import { getGatewayChannelDir } from "../../../../../base/utils/paths.js";
 import { copyDirectoryNoSymlinks, safeImportName, uniqueImportPath } from "./fs-utils.js";
 import type {
   SetupImportAppliedItem,
@@ -10,7 +11,7 @@ import type {
   SetupImportSelection,
 } from "./types.js";
 
-interface TelegramPluginConfig {
+interface TelegramGatewayConfig {
   bot_token?: string;
   chat_id?: number;
   allowed_user_ids?: number[];
@@ -117,41 +118,12 @@ function reportItem(item: SetupImportItem, status: SetupImportAppliedItem["statu
   };
 }
 
-async function copyTelegramPluginYaml(pluginDir: string): Promise<void> {
-  const destYaml = path.join(pluginDir, "plugin.yaml");
-  const minimal = [
-    "name: telegram-bot",
-    "version: 1.0.0",
-    "type: notifier",
-    "capabilities:",
-    "  - telegram_notification",
-    "  - bidirectional_chat",
-    "description: \"Telegram bot plugin for PulSeed\"",
-    "config_schema:",
-    "  bot_token:",
-    "    type: string",
-    "    required: true",
-    "  chat_id:",
-    "    type: number",
-    "    required: false",
-    "entry_point: \"dist/index.js\"",
-    "permissions:",
-    "  network: true",
-  ].join("\n") + "\n";
-  await fsp.mkdir(pluginDir, { recursive: true });
-  try {
-    await fsp.access(destYaml);
-  } catch {
-    await fsp.writeFile(destYaml, minimal, "utf-8");
-  }
-}
-
 async function applyTelegramConfig(baseDir: string, items: SetupImportItem[]): Promise<string | undefined> {
   const selected = items.filter((item) => item.kind === "telegram" && item.telegramSettings);
   if (selected.length === 0) return undefined;
-  const pluginDir = path.join(baseDir, "plugins", "telegram-bot");
-  const configPath = path.join(pluginDir, "config.json");
-  const current = await readJsonFileOrNull<TelegramPluginConfig>(configPath);
+  const channelDir = getGatewayChannelDir("telegram-bot", baseDir);
+  const configPath = path.join(channelDir, "config.json");
+  const current = await readJsonFileOrNull<TelegramGatewayConfig>(configPath);
   const allowed = new Set<number>(current?.allowed_user_ids ?? []);
   const runtimeAllowed = new Set<number>(current?.runtime_control_allowed_user_ids ?? []);
   let botToken = current?.bot_token;
@@ -164,7 +136,7 @@ async function applyTelegramConfig(baseDir: string, items: SetupImportItem[]): P
     }
   }
 
-  const config: TelegramPluginConfig = {
+  const config: TelegramGatewayConfig = {
     ...(current ?? {}),
     ...(botToken ? { bot_token: botToken } : {}),
     allowed_user_ids: [...allowed],
@@ -172,8 +144,8 @@ async function applyTelegramConfig(baseDir: string, items: SetupImportItem[]): P
     allow_all: current?.allow_all ?? false,
     polling_timeout: current?.polling_timeout ?? 30,
   };
+  await fsp.mkdir(channelDir, { recursive: true });
   await writeJsonFileAtomic(configPath, config);
-  await copyTelegramPluginYaml(pluginDir);
   return configPath;
 }
 
@@ -191,7 +163,7 @@ export async function applySetupImportSelection(
       } else if (item.kind === "user") {
         applied.push(reportItem(item, "applied", "USER.md seeded into setup identity"));
       } else if (item.kind === "telegram") {
-        applied.push(reportItem(item, "applied", "telegram settings seeded into plugin config"));
+        applied.push(reportItem(item, "applied", "telegram settings seeded into gateway channel config"));
       } else if (item.kind === "skill" || item.kind === "plugin") {
         applied.push(await applyFileItem(baseDir, item));
       }

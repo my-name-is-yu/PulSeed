@@ -30,6 +30,22 @@ export function getPluginsDir(base?: string): string {
   return path.join(base ?? getPulseedDirPath(), "plugins");
 }
 
+export function getPromotedPluginsDir(base?: string): string {
+  return path.join(base ?? getPulseedDirPath(), "plugins-promoted-to-core");
+}
+
+export function getGatewayDir(base?: string): string {
+  return path.join(base ?? getPulseedDirPath(), "gateway");
+}
+
+export function getGatewayChannelsDir(base?: string): string {
+  return path.join(getGatewayDir(base), "channels");
+}
+
+export function getGatewayChannelDir(channelName: string, base?: string): string {
+  return path.join(getGatewayChannelsDir(base), channelName);
+}
+
 export function getSkillsDir(base?: string): string {
   return path.join(base ?? getPulseedDirPath(), "skills");
 }

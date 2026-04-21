@@ -1,10 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import * as fsp from "node:fs/promises";
+import * as path from "node:path";
+import * as os from "node:os";
 import type { NotificationConfig } from "../../../runtime/types/notification.js";
 import type { SetupImportSelection } from "../commands/setup/import/types.js";
 
 const confirmMock = vi.fn();
 const textMock = vi.fn();
 const selectMock = vi.fn();
+const multiselectMock = vi.fn();
 const noteMock = vi.fn();
 const introMock = vi.fn();
 const outroMock = vi.fn();
@@ -22,6 +26,7 @@ vi.mock("@clack/prompts", () => ({
   confirm: confirmMock,
   text: textMock,
   select: selectMock,
+  multiselect: multiselectMock,
   note: noteMock,
   intro: introMock,
   outro: outroMock,
@@ -42,9 +47,11 @@ vi.mock("../../../base/config/global-config.js", () => ({
 describe("setup notification step", () => {
   beforeEach(() => {
     vi.resetModules();
+    delete process.env["PULSEED_HOME"];
     confirmMock.mockReset();
     textMock.mockReset();
     selectMock.mockReset();
+    multiselectMock.mockReset();
     noteMock.mockReset();
     introMock.mockReset();
     outroMock.mockReset();
@@ -54,15 +61,19 @@ describe("setup notification step", () => {
     logErrorMock.mockReset();
     logSuccessMock.mockReset();
     updateGlobalConfigMock.mockReset();
+    multiselectMock.mockResolvedValue([]);
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    delete process.env["PULSEED_HOME"];
     vi.doUnmock("../commands/setup/steps-identity.js");
     vi.doUnmock("../commands/setup/steps-provider.js");
     vi.doUnmock("../commands/setup/steps-adapter.js");
     vi.doUnmock("../commands/setup/steps-runtime.js");
     vi.doUnmock("../commands/setup/steps-notification.js");
+    vi.doUnmock("../commands/setup/steps-gateway.js");
     vi.doUnmock("../../../base/llm/provider-config.js");
     vi.doUnmock("../../../base/config/global-config.js");
     vi.doUnmock("../../../base/config/identity-loader.js");
@@ -281,6 +292,93 @@ describe("setup notification step", () => {
       "utf-8"
     );
     expect(mkdirSyncMock).toHaveBeenCalledWith("/tmp/pulseed-test", { recursive: true });
+  });
+
+  it("writes selected gateway channel config during full setup", async () => {
+    const tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), "pulseed-setup-gateway-test-"));
+    process.env["PULSEED_HOME"] = tmpDir;
+
+    vi.doMock("../commands/setup/steps-identity.js", () => ({
+      getBanner: () => "banner",
+      stepExistingConfig: vi.fn(async () => "reset"),
+      stepUserName: vi.fn(async () => "User"),
+      stepSeedyName: vi.fn(async () => "Seedy"),
+    }));
+    vi.doMock("../commands/setup/steps-provider.js", () => ({
+      stepRootPreset: vi.fn(async () => "default"),
+      stepProvider: vi.fn(async () => "openai"),
+      stepModel: vi.fn(async () => "gpt-5.4-mini"),
+      stepApiKey: vi.fn(async () => "sk-test"),
+      stepOpenAIAuthMethod: vi.fn(async () => "api_key"),
+    }));
+    vi.doMock("../commands/setup/steps-runtime.js", () => ({
+      ensurePulseedDir: vi.fn(() => tmpDir),
+      stepDaemon: vi.fn(async () => ({ start: false, port: 41700 })),
+      writeSeedMd: vi.fn(),
+      writeRootMd: vi.fn(),
+      writeUserMd: vi.fn(),
+    }));
+    vi.doMock("../commands/setup/steps-notification.js", () => ({
+      stepNotification: vi.fn(async () => null),
+    }));
+    vi.doMock("../../../base/llm/provider-config.js", () => ({
+      MODEL_REGISTRY: {
+        "gpt-5.4-mini": {
+          provider: "openai",
+          adapters: ["openai_codex_cli", "openai_api", "agent_loop"],
+        },
+      },
+      loadProviderConfig: vi.fn(),
+      saveProviderConfig: vi.fn(async () => {}),
+      validateProviderConfig: vi.fn(() => ({ valid: true, errors: [] })),
+    }));
+    vi.doMock("../../../base/config/identity-loader.js", () => ({
+      clearIdentityCache: vi.fn(),
+    }));
+    vi.doMock("node:fs", () => ({
+      mkdirSync: vi.fn(),
+      writeFileSync: vi.fn(),
+      existsSync: vi.fn(() => false),
+      readFileSync: vi.fn(),
+    }));
+
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      json: vi.fn().mockResolvedValue({
+        ok: true,
+        result: { id: 42, first_name: "PulSeed", username: "pulseed_bot" },
+      }),
+    }));
+
+    confirmMock.mockResolvedValueOnce(true);
+    multiselectMock.mockResolvedValueOnce(["telegram-bot"]);
+    textMock
+      .mockResolvedValueOnce("test-token")
+      .mockResolvedValueOnce("777,888")
+      .mockResolvedValueOnce("")
+      .mockResolvedValueOnce("personal");
+    selectMock
+      .mockResolvedValueOnce("continue")
+      .mockResolvedValueOnce("continue")
+      .mockResolvedValueOnce("continue")
+      .mockResolvedValueOnce("save");
+
+    const { runSetupWizard } = await import("../commands/setup-wizard.js");
+    const code = await runSetupWizard();
+
+    expect(code).toBe(0);
+    const telegramConfig = JSON.parse(
+      await fsp.readFile(path.join(tmpDir, "gateway", "channels", "telegram-bot", "config.json"), "utf-8")
+    ) as Record<string, unknown>;
+    expect(telegramConfig).toMatchObject({
+      bot_token: "test-token",
+      allowed_user_ids: [777, 888],
+      runtime_control_allowed_user_ids: [777, 888],
+      allow_all: false,
+      identity_key: "personal",
+    });
+
+    await fsp.rm(tmpDir, { recursive: true, force: true });
+    delete process.env["PULSEED_HOME"];
   });
 
   it("can go back to a previous setup section before saving", async () => {
@@ -773,7 +871,7 @@ describe("setup notification step", () => {
     );
   });
 
-  it("uses imported provider settings without re-asking execution prompts after importing from Hermes", async () => {
+  it("uses imported provider settings without re-asking execution prompts after importing from OpenClaw", async () => {
     const stepExistingConfigMock = vi.fn(async () => "keep");
     const stepSeedyNameMock = vi.fn(async () => "Imported Seedy");
     const stepProviderMock = vi.fn(async (initial?: string) => initial ?? "openai");
@@ -784,17 +882,17 @@ describe("setup notification step", () => {
     const saveProviderConfigMock = vi.fn(async () => {});
     const applySetupImportSelectionMock = vi.fn(async () => ({
       created_at: "2026-04-13T00:00:00.000Z",
-      sources: [{ id: "hermes", label: "Hermes Agent", rootDir: "/tmp/hermes" }],
+      sources: [{ id: "openclaw", label: "OpenClaw", rootDir: "/tmp/openclaw" }],
       items: [],
     }));
 
     const importSelection: SetupImportSelection = {
-      sources: [{ id: "hermes", label: "Hermes Agent", rootDir: "/tmp/hermes", items: [] }],
+      sources: [{ id: "openclaw", label: "OpenClaw", rootDir: "/tmp/openclaw", items: [] }],
       items: [
         {
-          id: "hermes:provider:config.json",
-          source: "hermes",
-          sourceLabel: "Hermes Agent",
+          id: "openclaw:provider:config.json",
+          source: "openclaw",
+          sourceLabel: "OpenClaw",
           kind: "provider",
           label: "anthropic / claude-sonnet-4-6 / agent_loop",
           decision: "import",

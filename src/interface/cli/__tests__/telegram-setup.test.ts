@@ -55,11 +55,12 @@ describe("cmdTelegramSetup", () => {
     expect(fetchMock).toHaveBeenCalledWith("https://api.telegram.org/bottest-token/getMe");
     expect(readlineState.close).toHaveBeenCalledTimes(1);
 
-    const configPath = path.join(tmpDir, "plugins", "telegram-bot", "config.json");
+    const configPath = path.join(tmpDir, "gateway", "channels", "telegram-bot", "config.json");
     const config = JSON.parse(await fsp.readFile(configPath, "utf-8")) as Record<string, unknown>;
     expect(config).toMatchObject({
       bot_token: "test-token",
       allowed_user_ids: [777, 888],
+      allow_all: false,
       polling_timeout: 30,
       identity_key: "personal",
     });

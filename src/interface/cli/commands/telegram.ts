@@ -1,19 +1,17 @@
-// ─── pulseed telegram setup — Telegram Bot plugin configuration wizard ───
+// ─── pulseed telegram setup — Telegram Bot gateway configuration wizard ───
 //
-// Guides the user through configuring the Telegram Bot plugin:
+// Guides the user through configuring the Telegram Bot gateway channel:
 //   1. Bot token (from @BotFather) — verified via getMe API
 //   2. allowed_user_ids (optional, comma-separated)
 //   3. home chat_id (optional) — can be set later by sending /sethome
 //   4. identity_key (optional) — share one PulSeed session across chat platforms
 //
-// Writes config to ~/.pulseed/plugins/telegram-bot/config.json
-// Copies plugin.yaml from the repo if available.
+// Writes config to ~/.pulseed/gateway/channels/telegram-bot/config.json
 
 import * as readline from "node:readline";
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
-import { fileURLToPath } from "node:url";
-import { getPulseedDirPath } from "../../../base/utils/paths.js";
+import { getGatewayChannelDir } from "../../../base/utils/paths.js";
 
 // ─── Readline helpers ───
 
@@ -57,46 +55,14 @@ async function verifyBotToken(token: string): Promise<TelegramUser | null> {
   }
 }
 
-// ─── Plugin directory helpers ───
+// ─── Gateway channel directory helpers ───
 
-function getPluginDir(): string {
-  return path.join(getPulseedDirPath(), "plugins", "telegram-bot");
+function getChannelDir(): string {
+  return getGatewayChannelDir("telegram-bot");
 }
 
-async function ensurePluginDir(pluginDir: string): Promise<void> {
-  await fsp.mkdir(pluginDir, { recursive: true });
-}
-
-async function copyPluginYaml(pluginDir: string): Promise<void> {
-  // Resolve repo root relative to this compiled file (dist/cli/commands/telegram.js → project root)
-  const thisFile = fileURLToPath(import.meta.url);
-  const repoRoot = path.resolve(path.dirname(thisFile), "..", "..", "..", "..");
-  const repoYaml = path.join(repoRoot, "plugins", "telegram-bot", "plugin.yaml");
-
-  const destYaml = path.join(pluginDir, "plugin.yaml");
-
-  // Skip if already exists
-  try {
-    await fsp.access(destYaml);
-    return;
-  } catch {
-    // does not exist yet — proceed
-  }
-
-  try {
-    await fsp.copyFile(repoYaml, destYaml);
-  } catch {
-    // Write a minimal plugin.yaml as fallback
-    const minimal = [
-      "name: telegram-bot",
-      "version: 1.0.0",
-      'description: "Telegram Bot notifier plugin for PulSeed"',
-      "main: src/index.js",
-      "type: notifier",
-      "notifier_id: telegram",
-    ].join("\n") + "\n";
-    await fsp.writeFile(destYaml, minimal, "utf8");
-  }
+async function ensureChannelDir(channelDir: string): Promise<void> {
+  await fsp.mkdir(channelDir, { recursive: true });
 }
 
 // ─── Public entry point ───
@@ -145,7 +111,7 @@ export async function cmdTelegramSetup(_args: string[]): Promise<number> {
 
     // Step 3: home chat_id (optional)
     console.log("\nStep 3: Home chat (optional)");
-    console.log("  Leave empty now, then send /sethome to the bot from Telegram after the plugin is running.");
+    console.log("  Leave empty now, then send /sethome to the bot from Telegram after the daemon is running.");
     console.log("  Notifications will use that chat.\n");
 
     const chatIdStr = await ask(rl, "Home chat_id (number) or press Enter to set later with /sethome: ");
@@ -168,21 +134,20 @@ export async function cmdTelegramSetup(_args: string[]): Promise<number> {
     const identityKey = await ask(rl, "Identity key (e.g. personal) or press Enter to skip: ");
 
     // Step 5: Write config
-    const pluginDir = getPluginDir();
-    await ensurePluginDir(pluginDir);
+    const channelDir = getChannelDir();
+    await ensureChannelDir(channelDir);
 
     const config = {
       bot_token: token,
       allowed_user_ids: allowedUserIds,
+      allow_all: allowedUserIds.length === 0,
       polling_timeout: 30,
       ...(chatId !== undefined ? { chat_id: chatId } : {}),
       ...(identityKey ? { identity_key: identityKey } : {}),
     };
 
-    const configPath = path.join(pluginDir, "config.json");
+    const configPath = path.join(channelDir, "config.json");
     await fsp.writeFile(configPath, JSON.stringify(config, null, 2), "utf8");
-
-    await copyPluginYaml(pluginDir);
 
     // Summary
     console.log("\nTelegram Bot setup complete!");
@@ -199,7 +164,7 @@ export async function cmdTelegramSetup(_args: string[]): Promise<number> {
     } else {
       console.log("  Identity key: (not set)");
     }
-    console.log("\nRun 'pulseed plugin install' to activate the plugin.");
+    console.log("\nThe daemon will pick this up automatically as a built-in gateway channel.");
 
     return 0;
   } finally {
