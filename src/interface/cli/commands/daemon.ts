@@ -15,7 +15,11 @@ import { Logger } from "../../../runtime/logger.js";
 import { DaemonRunner } from "../../../runtime/daemon/runner.js";
 import { PIDManager } from "../../../runtime/pid-manager.js";
 import { EventServer } from "../../../runtime/event/server.js";
-import { IngressGateway, SlackChannelAdapter } from "../../../runtime/gateway/index.js";
+import {
+  IngressGateway,
+  SlackChannelAdapter,
+  loadBuiltinGatewayIntegrations,
+} from "../../../runtime/gateway/index.js";
 import { CronScheduler } from "../../../runtime/cron-scheduler.js";
 import { ScheduleEngine } from "../../../runtime/schedule/engine.js";
 import { RuntimeWatchdog } from "../../../runtime/watchdog.js";
@@ -322,6 +326,13 @@ export async function cmdStart(
     logger
   );
   const gateway = new IngressGateway(logger);
+  const builtinGatewayIntegrations = await loadBuiltinGatewayIntegrations(daemonBaseDir, logger);
+  for (const adapter of builtinGatewayIntegrations.adapters) {
+    gateway.registerAdapter(adapter);
+  }
+  for (const { name, notifier } of builtinGatewayIntegrations.notifiers) {
+    notifierRegistry.register(name, notifier);
+  }
   const slackGatewayConfig = resolvedDaemonConfig.gateway.slack;
   if (slackGatewayConfig.enabled) {
     if (!slackGatewayConfig.signing_secret) {

@@ -2,6 +2,7 @@ import * as p from "@clack/prompts";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { spawn } from "node:child_process";
+import { getPulseedDirPath } from "../../../base/utils/paths.js";
 import {
   loadProviderConfig,
   saveProviderConfig,
@@ -18,6 +19,12 @@ import type { Provider } from "./setup-shared.js";
 import { getBanner, stepExistingConfig, stepUserName, stepSeedyName } from "./setup/steps-identity.js";
 import { stepRootPreset, stepProvider, stepModel, stepApiKey, runCodexOAuthLogin, stepOpenAIAuthMethod } from "./setup/steps-provider.js";
 import { stepNotification } from "./setup/steps-notification.js";
+import {
+  formatGatewaySetupSummary,
+  saveGatewayChannels,
+  stepGatewayChannels,
+  type GatewaySetupResult,
+} from "./setup/steps-gateway.js";
 import { stepDaemon, ensurePulseedDir, writeSeedMd, writeRootMd, writeUserMd } from "./setup/steps-runtime.js";
 import { guardCancel } from "./setup/utils.js";
 import { applySetupImportSelection } from "./setup/import/apply.js";
@@ -36,11 +43,12 @@ type SetupAnswers = {
   startDaemon: boolean;
   daemonPort: number;
   notificationConfig: Awaited<ReturnType<typeof stepNotification>>;
+  gatewaySetup: GatewaySetupResult | null;
 };
 
 type IdentityAnswers = Pick<SetupAnswers, "userName" | "agentName" | "rootPreset">;
 type ExecutionAnswers = Pick<SetupAnswers, "provider" | "model" | "adapter" | "apiKey">;
-type RuntimeAnswers = Pick<SetupAnswers, "startDaemon" | "daemonPort" | "notificationConfig">;
+type RuntimeAnswers = Pick<SetupAnswers, "startDaemon" | "daemonPort" | "notificationConfig" | "gatewaySetup">;
 type FullSetupSection = "identity" | "execution" | "runtime" | "review";
 type IdentityConfigOptions = {
   skipRootPreset?: boolean;
@@ -63,6 +71,7 @@ function formatSummary(answers: SetupAnswers): string {
     formatAuthSummary(answers),
     formatCredentialSummary(answers),
     `Daemon:    ${answers.startDaemon ? `configured (port ${answers.daemonPort})` : "not configured"}`,
+    `Gateway:   ${formatGatewaySetupSummary(answers.gatewaySetup)}`,
     `Notify:    ${notificationChannels}`,
   ].join("\n");
 }
@@ -153,6 +162,7 @@ function buildProviderConfig(
 
   if (base?.provider && base.provider !== execution.provider) {
     delete config.base_url;
+    delete config.openclaw;
   }
 
   return config;
@@ -355,9 +365,11 @@ async function stepIdentityConfig(
 
 async function stepRuntimeConfig(): Promise<RuntimeAnswers> {
   const daemonConfig = await stepDaemon();
+  const gatewaySetup = await stepGatewayChannels(getPulseedDirPath());
   return {
     startDaemon: daemonConfig.start,
     daemonPort: daemonConfig.port,
+    gatewaySetup,
     notificationConfig: await stepNotification(),
   };
 }
@@ -577,6 +589,7 @@ export async function runSetupWizard(): Promise<number> {
     startDaemon: false,
     daemonPort: 0,
     notificationConfig: null,
+    gatewaySetup: null,
   };
   const skipImportedExecution =
     Boolean(importSelection) && (await importedExecutionIsComplete(answers, importedProviderPatch));
@@ -714,6 +727,14 @@ export async function runSetupWizard(): Promise<number> {
       fs.writeFileSync(notifPath, JSON.stringify(finalAnswers.notificationConfig, null, 2));
     } catch (err) {
       p.log.warn(`Setup saved, but could not save notification config: ${err}`);
+    }
+  }
+
+  if (finalAnswers.gatewaySetup) {
+    try {
+      await saveGatewayChannels(dir, finalAnswers.gatewaySetup);
+    } catch (err) {
+      p.log.warn(`Setup saved, but could not save gateway channel config: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 

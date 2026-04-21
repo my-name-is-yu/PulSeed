@@ -40,6 +40,7 @@ import { cmdDoctor } from "./commands/doctor.js";
 import { cmdLogs } from "./commands/logs.js";
 import { cmdInstall, cmdUninstall } from "./commands/install.js";
 import { cmdNotify } from "./commands/notify.js";
+import { cmdGateway } from "./commands/gateway.js";
 import { cmdTelegramSetup } from "./commands/telegram.js";
 import { cmdSchedule } from "./commands/schedule.js";
 import { cmdSkills } from "./commands/skills.js";
@@ -537,6 +538,10 @@ export async function dispatchCommand(
 
   if (subcommand === "notify") {
     return await cmdNotify(argv.slice(1));
+  }
+
+  if (subcommand === "gateway") {
+    return await cmdGateway(argv.slice(1));
   }
 
   if (subcommand === "telegram") {
