@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.4.17] - 2026-04-21
+
+### Added
+- Added a managed GitHub Actions release workflow and subpackage verification coverage for plugins and example plugins so release and packaging checks can run from repeatable repository automation instead of local one-off setup (#704)
+
+### Changed
+- Split daemon runner and event server internals into smaller runtime modules and tightened prompt and orchestration type boundaries for the resident runtime paths (#698, #699)
+- Raised supported Node.js versions to 22 and 24, improved test-lane segmentation, and reduced the default GitHub CI workflow to one Node 22 lane plus one Node 24 lane (#702, #703, #706)
+- Removed OpenClaw from the supported runtime surface, tightened chat/state and schedule persistence boundaries, and updated setup import and infrastructure docs to match the supported paths (#704, #705)
+- Bumped the package version to `0.4.17`
+
+### Fixed
+- Fixed report and diff-capture regressions in task verification and aligned datasource example tests with the shipped example plugin behavior so CI and release verification stay green (#700, #705)
+- Stabilized watchdog and runtime integration coverage under slower CI timing conditions (#701, #703)
+
 ## [0.4.16] - 2026-04-18
 
 ### Added
