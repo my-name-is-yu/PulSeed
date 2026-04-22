@@ -74,8 +74,6 @@ describe("CodexLLMClient", () => {
   });
 
   afterEach(() => {
-    vi.clearAllTimers();
-    vi.useRealTimers();
     vi.unstubAllEnvs();
   });
 
@@ -422,8 +420,8 @@ describe("CodexLLMClient", () => {
 
       const client = new CodexLLMClient({ timeoutMs: 50, idleTimeoutMs: 1000 });
 
-      const child = makeFakeChild();
-      mockSpawn.mockImplementation(() => child);
+      const child = new FakeChildProcess();
+      mockSpawn.mockReturnValueOnce(child);
       child.kill.mockImplementation(() => {
         setTimeout(() => child.emit("close", null), 5);
         return true;
@@ -431,9 +429,7 @@ describe("CodexLLMClient", () => {
 
       const promise = client.sendMessage([{ role: "user", content: "hi" }]).catch((e) => e);
       await vi.advanceTimersByTimeAsync(0);
-      await vi.advanceTimersByTimeAsync(50);
-      await vi.advanceTimersByTimeAsync(5);
-      await vi.runAllTimersAsync();
+      await vi.advanceTimersByTimeAsync(55);
       const err = await promise;
 
       vi.useRealTimers();
@@ -447,8 +443,8 @@ describe("CodexLLMClient", () => {
       vi.useFakeTimers();
 
       const client = new CodexLLMClient({ timeoutMs: 1000, idleTimeoutMs: 50 });
-      const child = makeFakeChild();
-      mockSpawn.mockImplementation(() => child);
+      const child = new FakeChildProcess();
+      mockSpawn.mockReturnValueOnce(child);
       child.kill.mockImplementation(() => {
         setTimeout(() => child.emit("close", null), 5);
         return true;
@@ -459,16 +455,15 @@ describe("CodexLLMClient", () => {
       child.stderr.emit("data", Buffer.from("working\n"));
       await vi.advanceTimersByTimeAsync(49);
       expect(child.kill).not.toHaveBeenCalled();
-      await vi.advanceTimersByTimeAsync(1);
-      expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+      await vi.advanceTimersByTimeAsync(2);
       await vi.advanceTimersByTimeAsync(5);
-      await vi.runAllTimersAsync();
       const err = await promise;
 
       vi.useRealTimers();
 
+      expect(child.kill).toHaveBeenCalledWith("SIGTERM");
       expect(err).toBeInstanceOf(Error);
-      expect((err as Error).message).toContain("idle timed out");
+      expect((err as Error).message).toContain("idle timeout");
     });
   });
 

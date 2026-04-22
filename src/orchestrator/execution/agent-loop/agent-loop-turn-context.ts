@@ -2,16 +2,10 @@ import type { z } from "zod";
 import type { ToolCallContext } from "../../../tools/types.js";
 import type { AgentLoopBudget } from "./agent-loop-budget.js";
 import { defaultAgentLoopBudget } from "./agent-loop-budget.js";
-import type {
-  AgentLoopModelInfo,
-  AgentLoopMessage,
-  AgentLoopModelRef,
-  AgentLoopReasoningEffort,
-} from "./agent-loop-model.js";
+import type { AgentLoopModelInfo, AgentLoopMessage, AgentLoopModelRef } from "./agent-loop-model.js";
 import type { AgentLoopCommandResult, AgentLoopCompletionValidationResult } from "./agent-loop-result.js";
 import type { AgentLoopSession } from "./agent-loop-session.js";
 import type { AgentLoopSessionState } from "./agent-loop-session-state.js";
-import type { ExecutionPolicy } from "./execution-policy.js";
 
 export interface AgentLoopToolPolicy {
   allowedTools?: readonly string[];
@@ -25,17 +19,14 @@ export interface AgentLoopTurnContext<TOutput> {
   turnId: string;
   goalId: string;
   taskId?: string;
-  profileName?: string;
   cwd: string;
   model: AgentLoopModelRef;
   modelInfo: AgentLoopModelInfo;
-  reasoningEffort?: AgentLoopReasoningEffort;
   messages: AgentLoopMessage[];
   outputSchema: z.ZodType<TOutput, z.ZodTypeDef, unknown>;
   budget: AgentLoopBudget;
   toolPolicy: AgentLoopToolPolicy;
   toolCallContext: ToolCallContext;
-  executionPolicy?: ExecutionPolicy;
   completionValidator?: (input: {
     output: TOutput;
     changedFiles: string[];

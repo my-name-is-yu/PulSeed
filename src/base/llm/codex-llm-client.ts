@@ -20,11 +20,6 @@ const MAX_RETRY_ATTEMPTS = 5;
 const RETRY_DELAYS_MS = [1000, 2000, 4000, 8000];
 const SIGKILL_DELAY_MS = 5000;
 
-function isNonRetryableCodexError(err: unknown): boolean {
-  if (!(err instanceof Error)) return false;
-  return err.message.includes("request timed out") || err.message.includes("idle timed out");
-}
-
 /**
  * Build a single prompt string from messages and system prompt.
  * Format:
@@ -139,9 +134,6 @@ export class CodexLLMClient extends BaseLLMClient implements ILLMClient {
         };
       } catch (err) {
         lastError = err;
-        if (isNonRetryableCodexError(err)) {
-          break;
-        }
         if (attempt < this.retryAttempts - 1) {
           await sleep(RETRY_DELAYS_MS[attempt] ?? RETRY_DELAYS_MS[RETRY_DELAYS_MS.length - 1]!);
         }
