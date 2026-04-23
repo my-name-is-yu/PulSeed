@@ -26,7 +26,6 @@ import type { AgentLoopToolPolicy } from "./agent-loop-turn-context.js";
 import type { SoilPrefetchQuery, SoilPrefetchResult } from "./agent-loop-context-assembler.js";
 import { createPersistentAgentLoopSessionFactory } from "./agent-loop-session-factory.js";
 import type { AgentLoopWorktreePolicy } from "./task-agent-loop-worktree.js";
-import { resolveExecutionPolicy } from "./execution-policy.js";
 
 export interface NativeTaskAgentLoopRuntimeDeps {
   llmClient: ILLMClient;
@@ -54,9 +53,13 @@ export function createNativeTaskAgentLoopRunner(
   deps: NativeTaskAgentLoopRuntimeDeps,
 ): TaskAgentLoopRunner {
   const runtime = createNativeAgentLoopRuntime(deps);
-  const executionPolicy = resolveExecutionPolicy({
+  const profile = resolveAgentLoopDefaultProfile({
+    surface: "task",
     workspaceRoot: deps.cwd ?? process.cwd(),
     security: deps.providerConfig.agent_loop?.security,
+    budget: deps.defaultBudget,
+    toolPolicy: deps.defaultToolPolicy,
+    worktreePolicy: deps.defaultWorktreePolicy ?? deps.providerConfig.agent_loop?.worktree,
   });
 
   return new TaskAgentLoopRunner({
@@ -64,10 +67,13 @@ export function createNativeTaskAgentLoopRunner(
     modelClient: runtime.modelClient,
     modelRegistry: runtime.modelRegistry,
     defaultModel: runtime.modelInfo.ref,
-    defaultBudget: deps.defaultBudget,
-    defaultToolPolicy: deps.defaultToolPolicy,
-    defaultToolCallContext: { executionPolicy },
-    defaultWorktreePolicy: deps.defaultWorktreePolicy,
+    defaultBudget: profile.budget,
+    defaultToolPolicy: profile.toolPolicy,
+    defaultToolCallContext: profile.executionPolicy ? { executionPolicy: profile.executionPolicy } : undefined,
+    defaultWorktreePolicy: profile.worktreePolicy,
+    defaultReasoningEffort: profile.reasoningEffort,
+    defaultProfileName: profile.name,
+    defaultExecutionPolicy: profile.executionPolicy,
     contextAssembler: new AgentLoopContextAssembler(createGroundingGateway({
       ...(deps.stateManager ? { stateManager: deps.stateManager } : {}),
     })),
@@ -86,9 +92,12 @@ export function createNativeChatAgentLoopRunner(
   deps: NativeTaskAgentLoopRuntimeDeps,
 ): ChatAgentLoopRunner {
   const runtime = createNativeAgentLoopRuntime(deps);
-  const executionPolicy = resolveExecutionPolicy({
+  const profile = resolveAgentLoopDefaultProfile({
+    surface: "chat",
     workspaceRoot: deps.cwd ?? process.cwd(),
     security: deps.providerConfig.agent_loop?.security,
+    budget: deps.defaultBudget,
+    toolPolicy: deps.defaultToolPolicy,
   });
 
   return new ChatAgentLoopRunner({
@@ -96,9 +105,12 @@ export function createNativeChatAgentLoopRunner(
     modelClient: runtime.modelClient,
     modelRegistry: runtime.modelRegistry,
     defaultModel: runtime.modelInfo.ref,
-    defaultBudget: deps.defaultBudget,
-    defaultToolPolicy: deps.defaultToolPolicy,
-    defaultToolCallContext: { executionPolicy },
+    defaultBudget: profile.budget,
+    defaultToolPolicy: profile.toolPolicy,
+    defaultToolCallContext: profile.executionPolicy ? { executionPolicy: profile.executionPolicy } : undefined,
+    defaultReasoningEffort: profile.reasoningEffort,
+    defaultProfileName: profile.name,
+    defaultExecutionPolicy: profile.executionPolicy,
     cwd: deps.cwd,
     createSession: deps.traceBaseDir
       ? createPersistentAgentLoopSessionFactory({ traceBaseDir: deps.traceBaseDir, kind: "chat" })
@@ -114,6 +126,8 @@ export function createNativeReviewAgentLoopRunner(
     surface: "review",
     workspaceRoot: deps.cwd ?? process.cwd(),
     security: deps.providerConfig.agent_loop?.security,
+    budget: deps.defaultBudget,
+    toolPolicy: deps.defaultToolPolicy,
   });
 
   return new ReviewAgentLoopRunner({
