@@ -5,9 +5,10 @@ import { ToolRegistry } from "../../../../tools/registry.js";
 import { ToolExecutor } from "../../../../tools/executor.js";
 import { ToolPermissionManager } from "../../../../tools/permission.js";
 import { ConcurrencyController } from "../../../../tools/concurrency.js";
-import { resolveAgentLoopDefaultProfile } from "../agent-loop-default-profile.js";
+import { resolveAgentLoopDefaultProfileFromProviderConfig } from "../agent-loop-default-profile.js";
 import {
   createNativeChatAgentLoopRunner,
+  createNativeReviewAgentLoopRunner,
   createNativeTaskAgentLoopRunner,
 } from "../task-agent-loop-factory.js";
 
@@ -25,9 +26,19 @@ function makeProviderConfig(): ProviderConfig {
       },
       worktree: {
         enabled: true,
-        cleanupPolicy: "always",
+        base_dir: "/tmp/provider-worktrees",
+        keep_for_debug: true,
+        cleanup_policy: "always",
       },
     },
+  } as ProviderConfig;
+}
+
+function makeProviderConfigWithoutAgentLoop(): ProviderConfig {
+  return {
+    provider: "openai",
+    model: "gpt-5.4-mini",
+    adapter: "openai_codex_cli",
   } as ProviderConfig;
 }
 
@@ -58,11 +69,10 @@ describe("createNative*AgentLoopRunner", () => {
     });
 
     const deps = (runner as unknown as { deps: Record<string, unknown> }).deps;
-    const profile = resolveAgentLoopDefaultProfile({
+    const profile = resolveAgentLoopDefaultProfileFromProviderConfig({
       surface: "task",
       workspaceRoot: "/repo",
-      security: providerConfig.agent_loop?.security,
-      worktreePolicy: providerConfig.agent_loop?.worktree,
+      providerConfig,
     });
 
     expect(deps.defaultBudget).toEqual(profile.budget);
@@ -71,6 +81,48 @@ describe("createNative*AgentLoopRunner", () => {
     expect(deps.defaultProfileName).toBe(profile.name);
     expect(deps.defaultExecutionPolicy).toEqual(profile.executionPolicy);
     expect(deps.defaultWorktreePolicy).toEqual(profile.worktreePolicy);
+    expect(profile.worktreePolicy).toEqual({
+      enabled: true,
+      baseDir: "/tmp/provider-worktrees",
+      keepForDebug: true,
+      cleanupPolicy: "always",
+    });
+  });
+
+  it("restores fallback task defaults when provider config omits agent_loop settings", () => {
+    const providerConfig = makeProviderConfigWithoutAgentLoop();
+    const registry = new ToolRegistry();
+    const runner = createNativeTaskAgentLoopRunner({
+      llmClient: makeLlmClient(),
+      providerConfig,
+      toolRegistry: registry,
+      toolExecutor: makeToolExecutor(registry),
+      cwd: "/repo",
+    });
+
+    const deps = (runner as unknown as { deps: Record<string, unknown> }).deps;
+    const profile = resolveAgentLoopDefaultProfileFromProviderConfig({
+      surface: "task",
+      workspaceRoot: "/repo",
+      providerConfig,
+    });
+
+    expect(deps.defaultBudget).toEqual(profile.budget);
+    expect(deps.defaultToolPolicy).toEqual(profile.toolPolicy);
+    expect(deps.defaultReasoningEffort).toBe(profile.reasoningEffort);
+    expect(deps.defaultProfileName).toBe(profile.name);
+    expect(deps.defaultExecutionPolicy).toEqual(profile.executionPolicy);
+    expect(deps.defaultWorktreePolicy).toEqual(profile.worktreePolicy);
+    expect(profile.executionPolicy).toMatchObject({
+      sandboxMode: "workspace_write",
+      approvalPolicy: "never",
+      networkAccess: false,
+      trustProjectInstructions: true,
+    });
+    expect(profile.worktreePolicy).toEqual({
+      enabled: true,
+      cleanupPolicy: "on_success",
+    });
   });
 
   it("keeps chat profile defaults for budget, reasoning, and execution policy", () => {
@@ -85,16 +137,40 @@ describe("createNative*AgentLoopRunner", () => {
     });
 
     const deps = (runner as unknown as { deps: Record<string, unknown> }).deps;
-    const profile = resolveAgentLoopDefaultProfile({
+    const profile = resolveAgentLoopDefaultProfileFromProviderConfig({
       surface: "chat",
       workspaceRoot: "/repo",
-      security: providerConfig.agent_loop?.security,
+      providerConfig,
     });
 
     expect(deps.defaultBudget).toEqual(profile.budget);
     expect(deps.defaultToolPolicy).toEqual(profile.toolPolicy);
     expect(deps.defaultReasoningEffort).toBe(profile.reasoningEffort);
     expect(deps.defaultProfileName).toBe(profile.name);
+    expect(deps.defaultExecutionPolicy).toEqual(profile.executionPolicy);
+  });
+
+  it("keeps review profile defaults for budget, tools, and execution posture", () => {
+    const providerConfig = makeProviderConfig();
+    const registry = new ToolRegistry();
+    const runner = createNativeReviewAgentLoopRunner({
+      llmClient: makeLlmClient(),
+      providerConfig,
+      toolRegistry: registry,
+      toolExecutor: makeToolExecutor(registry),
+      cwd: "/repo",
+    });
+
+    const deps = (runner as unknown as { deps: Record<string, unknown> }).deps;
+    const profile = resolveAgentLoopDefaultProfileFromProviderConfig({
+      surface: "review",
+      workspaceRoot: "/repo",
+      providerConfig,
+    });
+
+    expect(deps.defaultBudget).toEqual(profile.budget);
+    expect(deps.defaultToolPolicy).toEqual(profile.toolPolicy);
+    expect(deps.defaultReasoningEffort).toBe(profile.reasoningEffort);
     expect(deps.defaultExecutionPolicy).toEqual(profile.executionPolicy);
   });
 });

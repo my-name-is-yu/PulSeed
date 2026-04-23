@@ -3,6 +3,7 @@ import {
   migrateProviderConfig,
   validateProviderConfig,
   MODEL_REGISTRY,
+  resolveProviderNativeAgentLoopDefaults,
 } from "../provider-config.js";
 
 // ─── Migration Tests ───
@@ -268,6 +269,51 @@ describe("validateProviderConfig", () => {
   });
 });
 
+describe("resolveProviderNativeAgentLoopDefaults", () => {
+  it("returns explicit native defaults when agent_loop config is absent", () => {
+    expect(resolveProviderNativeAgentLoopDefaults()).toMatchObject({
+      security: {
+        sandbox_mode: "workspace_write",
+        approval_policy: "on_request",
+        network_access: false,
+        trust_project_instructions: true,
+      },
+      worktreePolicy: {
+        enabled: true,
+        cleanupPolicy: "on_success",
+      },
+    });
+  });
+
+  it("merges configured security and worktree overrides over defaults", () => {
+    expect(resolveProviderNativeAgentLoopDefaults({
+      agent_loop: {
+        security: {
+          network_access: true,
+          protected_paths: ["/tmp/secrets"],
+        },
+        worktree: {
+          cleanup_policy: "always",
+          base_dir: "/tmp/worktrees",
+        },
+      },
+    })).toMatchObject({
+      security: {
+        sandbox_mode: "workspace_write",
+        approval_policy: "on_request",
+        network_access: true,
+        trust_project_instructions: true,
+        protected_paths: ["/tmp/secrets"],
+      },
+      worktreePolicy: {
+        enabled: true,
+        cleanupPolicy: "always",
+        baseDir: "/tmp/worktrees",
+      },
+    });
+  });
+});
+
 // ─── MODEL_REGISTRY Tests ───
 
 describe("MODEL_REGISTRY", () => {
@@ -350,10 +396,20 @@ describe("loadProviderConfig", () => {
 
   it("returns defaults when no file exists and no env vars", async () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const config = await loadProviderConfig();
+    const config = await loadProviderConfig({ baseDir: "/tmp/provider-config-defaults", saveMigration: false });
     expect(config.provider).toBe("openai");
     expect(config.model).toBe("gpt-5.4-mini");
     expect(config.adapter).toBe("openai_codex_cli");
+    expect(config.agent_loop?.security).toEqual({
+      sandbox_mode: "workspace_write",
+      approval_policy: "on_request",
+      network_access: false,
+      trust_project_instructions: true,
+    });
+    expect(config.agent_loop?.worktree).toEqual({
+      enabled: true,
+      cleanup_policy: "on_success",
+    });
     warnSpy.mockRestore();
   });
 

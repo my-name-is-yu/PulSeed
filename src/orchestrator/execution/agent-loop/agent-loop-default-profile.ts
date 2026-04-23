@@ -6,6 +6,8 @@ import type { AgentLoopReasoningEffort } from "./agent-loop-model.js";
 import type { AgentLoopToolPolicy } from "./agent-loop-turn-context.js";
 import { withDefaultBudget } from "./agent-loop-turn-context.js";
 import type { AgentLoopWorktreePolicy } from "./task-agent-loop-worktree.js";
+import type { ProviderConfig } from "../../../base/llm/provider-config.js";
+import { resolveProviderNativeAgentLoopDefaults } from "../../../base/llm/provider-config.js";
 
 export type AgentLoopDefaultProfileName =
   | "task"
@@ -63,6 +65,16 @@ interface CorePhaseProfileInput {
 export type ResolveAgentLoopDefaultProfileInput =
   | SurfaceProfileInput
   | CorePhaseProfileInput;
+
+export interface ResolveAgentLoopDefaultProfileFromProviderConfigInput {
+  surface: "task" | "chat" | "review";
+  workspaceRoot: string;
+  providerConfig?: Pick<ProviderConfig, "agent_loop">;
+  budget?: Partial<AgentLoopBudget>;
+  toolPolicy?: AgentLoopToolPolicy;
+  worktreePolicy?: AgentLoopWorktreePolicy;
+  reasoningEffort?: AgentLoopReasoningEffort;
+}
 
 const DEFAULT_SURFACE_PROFILE = {
   budget: withDefaultBudget(),
@@ -300,6 +312,21 @@ export function resolveAgentLoopDefaultProfile(
     ),
     reasoningEffort: input.reasoningEffort ?? "medium",
   };
+}
+
+export function resolveAgentLoopDefaultProfileFromProviderConfig(
+  input: ResolveAgentLoopDefaultProfileFromProviderConfigInput,
+): AgentLoopResolvedProfile {
+  const providerDefaults = resolveProviderNativeAgentLoopDefaults(input.providerConfig);
+  return resolveAgentLoopDefaultProfile({
+    surface: input.surface,
+    workspaceRoot: input.workspaceRoot,
+    security: providerDefaults.security,
+    budget: input.budget,
+    toolPolicy: input.toolPolicy,
+    worktreePolicy: mergeWorktreePolicy(providerDefaults.worktreePolicy, input.worktreePolicy),
+    reasoningEffort: input.reasoningEffort,
+  });
 }
 
 export function summarizeAgentLoopResolvedProfile(

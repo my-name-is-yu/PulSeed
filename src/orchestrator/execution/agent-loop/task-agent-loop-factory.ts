@@ -21,7 +21,7 @@ import { ReviewAgentLoopRunner } from "./review-agent-loop-runner.js";
 import { TaskAgentLoopRunner } from "./task-agent-loop-runner.js";
 import type { AgentLoopBudget } from "./agent-loop-budget.js";
 import { AgentLoopContextAssembler } from "./agent-loop-context-assembler.js";
-import { resolveAgentLoopDefaultProfile } from "./agent-loop-default-profile.js";
+import { resolveAgentLoopDefaultProfileFromProviderConfig } from "./agent-loop-default-profile.js";
 import type { AgentLoopToolPolicy } from "./agent-loop-turn-context.js";
 import type { SoilPrefetchQuery, SoilPrefetchResult } from "./agent-loop-context-assembler.js";
 import { createPersistentAgentLoopSessionFactory } from "./agent-loop-session-factory.js";
@@ -53,13 +53,13 @@ export function createNativeTaskAgentLoopRunner(
   deps: NativeTaskAgentLoopRuntimeDeps,
 ): TaskAgentLoopRunner {
   const runtime = createNativeAgentLoopRuntime(deps);
-  const profile = resolveAgentLoopDefaultProfile({
+  const profile = resolveAgentLoopDefaultProfileFromProviderConfig({
     surface: "task",
     workspaceRoot: deps.cwd ?? process.cwd(),
-    security: deps.providerConfig.agent_loop?.security,
+    providerConfig: deps.providerConfig,
     budget: deps.defaultBudget,
     toolPolicy: deps.defaultToolPolicy,
-    worktreePolicy: deps.defaultWorktreePolicy ?? deps.providerConfig.agent_loop?.worktree,
+    worktreePolicy: deps.defaultWorktreePolicy,
   });
 
   return new TaskAgentLoopRunner({
@@ -92,10 +92,10 @@ export function createNativeChatAgentLoopRunner(
   deps: NativeTaskAgentLoopRuntimeDeps,
 ): ChatAgentLoopRunner {
   const runtime = createNativeAgentLoopRuntime(deps);
-  const profile = resolveAgentLoopDefaultProfile({
+  const profile = resolveAgentLoopDefaultProfileFromProviderConfig({
     surface: "chat",
     workspaceRoot: deps.cwd ?? process.cwd(),
-    security: deps.providerConfig.agent_loop?.security,
+    providerConfig: deps.providerConfig,
     budget: deps.defaultBudget,
     toolPolicy: deps.defaultToolPolicy,
   });
@@ -122,10 +122,10 @@ export function createNativeReviewAgentLoopRunner(
   deps: NativeTaskAgentLoopRuntimeDeps,
 ): ReviewAgentLoopRunner {
   const runtime = createNativeAgentLoopRuntime(deps);
-  const profile = resolveAgentLoopDefaultProfile({
+  const profile = resolveAgentLoopDefaultProfileFromProviderConfig({
     surface: "review",
     workspaceRoot: deps.cwd ?? process.cwd(),
-    security: deps.providerConfig.agent_loop?.security,
+    providerConfig: deps.providerConfig,
     budget: deps.defaultBudget,
     toolPolicy: deps.defaultToolPolicy,
   });

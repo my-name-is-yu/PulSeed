@@ -11,6 +11,7 @@ import { createHash } from "node:crypto";
 import { getPulseedDirPath } from "../utils/paths.js";
 import { writeJsonFileAtomic } from "../utils/json-io.js";
 import type { AgentLoopSecurityConfig } from "../../orchestrator/execution/agent-loop/execution-policy.js";
+import type { AgentLoopWorktreePolicy } from "../../orchestrator/execution/agent-loop/task-agent-loop-worktree.js";
 
 // ─── OAuth Token Helpers ───
 
@@ -145,6 +146,13 @@ export interface ProviderConfig {
   };
 }
 
+export type ProviderNativeAgentLoopConfig = NonNullable<ProviderConfig["agent_loop"]>;
+
+export interface ResolvedProviderNativeAgentLoopDefaults {
+  security?: AgentLoopSecurityConfig;
+  worktreePolicy?: AgentLoopWorktreePolicy;
+}
+
 /** Old nested provider config format (for migration) */
 interface LegacyProviderConfig {
   llm_provider: "anthropic" | "openai" | "ollama" | "codex";
@@ -176,6 +184,10 @@ const DEFAULT_PROVIDER_CONFIG: ProviderConfig = {
       approval_policy: "on_request",
       network_access: false,
       trust_project_instructions: true,
+    },
+    worktree: {
+      enabled: true,
+      cleanup_policy: "on_success",
     },
   },
 };
@@ -523,8 +535,24 @@ async function resolveProviderConfig(
   if (fileConfig.a2a !== undefined) config.a2a = fileConfig.a2a;
   if (lightModel !== undefined) config.light_model = lightModel;
   if (fileConfig.openclaw !== undefined) config.openclaw = fileConfig.openclaw;
-  if (fileConfig.agent_loop !== undefined) config.agent_loop = fileConfig.agent_loop;
+  config.agent_loop = resolveProviderNativeAgentLoopConfigShape(fileConfig);
   return config;
+}
+
+export function resolveProviderNativeAgentLoopDefaults(
+  providerConfig: Pick<ProviderConfig, "agent_loop"> | Partial<ProviderConfig> = {},
+): ResolvedProviderNativeAgentLoopDefaults {
+  const resolved = resolveProviderNativeAgentLoopConfigShape(providerConfig);
+  return {
+    security: resolved.security,
+    worktreePolicy: resolveProviderNativeAgentLoopWorktreePolicy(resolved.worktree),
+  };
+}
+
+export function resolveProviderNativeAgentLoopConfig(
+  providerConfig: Pick<ProviderConfig, "agent_loop"> | Partial<ProviderConfig> = {},
+): ProviderNativeAgentLoopConfig {
+  return resolveProviderNativeAgentLoopConfigShape(providerConfig);
 }
 
 function warnOnceForInvalidProviderConfig(config: ProviderConfig): void {
@@ -638,3 +666,34 @@ export async function saveProviderConfig(config: ProviderConfig): Promise<void> 
 
 // Re-export default for tests that need it
 export { DEFAULT_PROVIDER_CONFIG };
+
+function resolveProviderNativeAgentLoopConfigShape(
+  providerConfig: Pick<ProviderConfig, "agent_loop"> | Partial<ProviderConfig> = {},
+): ProviderNativeAgentLoopConfig {
+  const defaults = DEFAULT_PROVIDER_CONFIG.agent_loop;
+  const configured = providerConfig.agent_loop;
+  return {
+    security: mergeAgentLoopConfig(defaults?.security, configured?.security),
+    worktree: mergeAgentLoopConfig(defaults?.worktree, configured?.worktree),
+  };
+}
+
+function resolveProviderNativeAgentLoopWorktreePolicy(
+  worktree: ProviderNativeAgentLoopConfig["worktree"] | undefined,
+): AgentLoopWorktreePolicy | undefined {
+  if (!worktree) return undefined;
+  return {
+    enabled: worktree.enabled,
+    baseDir: worktree.base_dir,
+    keepForDebug: worktree.keep_for_debug,
+    cleanupPolicy: worktree.cleanup_policy,
+  };
+}
+
+function mergeAgentLoopConfig<T extends object>(defaults: T | undefined, configured: T | undefined): T | undefined {
+  if (!defaults && !configured) return undefined;
+  return {
+    ...(defaults ?? {}),
+    ...(configured ?? {}),
+  } as T;
+}
