@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.1] - 2026-04-23
+
+### Added
+- Added stateful chat boundary contract coverage for shared ChatRunner, TUI, and gateway sessions so stale previous-turn state and reply targets cannot pass tests silently (#731)
+- Added gateway-to-runtime-control and CoreLoop real-collaborator contract coverage to reduce mock-only integration blind spots
+
+### Changed
+- Stabilized the unit test lane timeout for slower full-suite parallel runs and made changed-file testing run subpackage verification for plugin and example-plugin changes
+- Expanded SeedPulse test-design guidance for caller-path, stale-state, integration-boundary, and full-lane flake coverage
+- Bumped the package version to `0.5.1`
+
+### Fixed
+- Fixed chat AgentLoop turns so a persisted state path alone no longer implicitly resumes stale previous interaction state (#730)
+- Fixed test coverage gaps that allowed the stale chat-state regression to pass despite previous targeted tests
+
 ## [0.5.0] - 2026-04-23
 
 ### Added
