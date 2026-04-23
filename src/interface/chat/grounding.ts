@@ -19,6 +19,11 @@ export interface GroundingOptions {
   workspaceContext?: string;
 }
 
+interface ChatGroundingRequestOverrides extends Partial<GroundingRequest> {
+  surface?: GroundingRequest["surface"];
+  purpose?: GroundingRequest["purpose"];
+}
+
 function createChatGateway(options: Pick<GroundingOptions, "stateManager" | "pluginLoader">): GroundingGateway {
   return createGroundingGateway({
     stateManager: options.stateManager,
@@ -51,11 +56,11 @@ const CHAT_DYNAMIC_CONTEXT_INCLUDE: Partial<GroundingRequest["include"]> = {
 
 function buildChatGroundingRequest(
   options: GroundingOptions,
-  overrides: Partial<GroundingRequest> = {},
+  overrides: ChatGroundingRequestOverrides = {},
 ): GroundingRequest {
   return {
-    surface: "chat",
-    purpose: "general_turn",
+    surface: overrides.surface ?? "chat",
+    purpose: overrides.purpose ?? "general_turn",
     homeDir: options.homeDir,
     workspaceRoot: options.workspaceRoot,
     goalId: options.goalId,
@@ -95,9 +100,25 @@ function renderLegacyDynamicPrompt(sections: readonly GroundingSection[]): strin
 
 export async function buildChatGroundingBundle(
   options: GroundingOptions,
-  overrides: Partial<GroundingRequest> = {},
+  overrides: ChatGroundingRequestOverrides = {},
 ): Promise<GroundingBundle> {
   return await createChatGateway(options).build(buildChatGroundingRequest(options, overrides));
+}
+
+export async function buildChatAgentLoopSystemPrompt(options: GroundingOptions): Promise<string> {
+  const bundle = await buildChatGroundingBundle(options, {
+    surface: "agent_loop",
+    purpose: "task_execution",
+    include: {
+      progress_history: false,
+      session_history: false,
+      task_state: false,
+      trust_state: true,
+      provider_state: true,
+      plugins: true,
+    },
+  });
+  return String(bundle.render("prompt"));
 }
 
 export function buildStaticSystemPrompt(): string {

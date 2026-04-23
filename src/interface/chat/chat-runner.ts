@@ -21,7 +21,7 @@ import {
 } from "./chat-session-store.js";
 import { buildChatContext, resolveGitRoot } from "../../platform/observation/context-provider.js";
 import type { EscalationHandler } from "./escalation.js";
-import { buildStaticSystemPrompt, createChatGroundingGateway } from "./grounding.js";
+import { buildChatAgentLoopSystemPrompt, buildStaticSystemPrompt, createChatGroundingGateway } from "./grounding.js";
 import type { GroundingGateway } from "../../grounding/gateway.js";
 import { verifyChatAction } from "./chat-verifier.js";
 import type { ApprovalLevel } from "./mutation-tool-defs.js";
@@ -1612,20 +1612,37 @@ export class ChatRunner {
       }
     }
 
+    const usesNativeAgentLoop = resumeOnly || selectedRoute?.kind === "agent_loop";
+    const groundingWorkspaceContext = !resumeOnly && usesNativeAgentLoop
+      ? await buildChatContext(input, cwd)
+      : undefined;
+
     let systemPrompt = this.cachedStaticSystemPrompt ?? "";
     if (!resumeOnly) {
       try {
         this.emitActivity("lifecycle", "Preparing context...", eventContext, "lifecycle:context");
-        const groundingBundle = await this.groundingGateway.build({
-          surface: "chat",
-          purpose: "general_turn",
-          workspaceRoot: cwd,
-          goalId: this.deps.goalId,
-          userMessage: input,
-          query: input,
-          trustProjectInstructions: this.sessionExecutionPolicy?.trustProjectInstructions ?? true,
-        });
-        systemPrompt = String(groundingBundle.render("prompt"));
+        if (usesNativeAgentLoop) {
+          systemPrompt = await buildChatAgentLoopSystemPrompt({
+            stateManager: this.deps.stateManager,
+            pluginLoader: this.deps.pluginLoader,
+            workspaceRoot: cwd,
+            goalId: this.deps.goalId,
+            userMessage: input,
+            trustProjectInstructions: this.sessionExecutionPolicy?.trustProjectInstructions ?? true,
+            workspaceContext: groundingWorkspaceContext,
+          });
+        } else {
+          const groundingBundle = await this.groundingGateway.build({
+            surface: "chat",
+            purpose: "general_turn",
+            workspaceRoot: cwd,
+            goalId: this.deps.goalId,
+            userMessage: input,
+            query: input,
+            trustProjectInstructions: this.sessionExecutionPolicy?.trustProjectInstructions ?? true,
+          });
+          systemPrompt = String(groundingBundle.render("prompt"));
+        }
       } catch {
         systemPrompt = this.cachedStaticSystemPrompt ?? "";
       }
@@ -1638,7 +1655,7 @@ export class ChatRunner {
       .join("\n\n")
       .trim();
 
-    const context = resumeOnly ? "" : await buildChatContext(input, gitRoot);
+    const context = resumeOnly || usesNativeAgentLoop ? "" : await buildChatContext(input, gitRoot);
     const basePrompt = resumeOnly ? "" : (context ? `${context}\n\n${input}` : input);
     const prompt = historyBlock ? `${historyBlock}${basePrompt}` : basePrompt;
 

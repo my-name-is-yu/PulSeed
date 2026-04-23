@@ -1602,6 +1602,38 @@ describe("ChatRunner", () => {
       expect(result.diagnostics).toBeUndefined();
     });
 
+    it("grounds native chat agentloop through systemPrompt instead of injecting workspace context into the message", async () => {
+      const adapter = makeMockAdapter();
+      const stateManager = {
+        ...makeMockStateManager(),
+        listGoalIds: vi.fn().mockResolvedValue([]),
+        loadGoal: vi.fn().mockResolvedValue(null),
+      } as unknown as StateManager;
+      const chatAgentLoopRunner = {
+        execute: vi.fn().mockResolvedValue({
+          success: true,
+          output: "Agentloop answer",
+          error: null,
+          exit_code: null,
+          elapsed_ms: 42,
+          stopped_reason: "completed",
+        }),
+      } as unknown as ChatAgentLoopRunner;
+
+      const runner = new ChatRunner(makeDeps({ adapter, stateManager, chatAgentLoopRunner }));
+      await runner.execute("Inspect the repo layout", "/repo");
+
+      const input = vi.mocked(chatAgentLoopRunner.execute).mock.calls[0]?.[0] as {
+        message: string;
+        systemPrompt?: string;
+      };
+      expect(input.message).toBe("Inspect the repo layout");
+      expect(input.message).not.toContain("Working directory: /repo");
+      expect(input.systemPrompt).toContain("## Workspace Facts");
+      expect(input.systemPrompt).toContain("Working directory: /repo");
+      expect(adapter.execute).not.toHaveBeenCalled();
+    });
+
     it("surfaces native agentloop failures through the chat path", async () => {
       const adapter = makeMockAdapter();
       const chatAgentLoopRunner = {

@@ -32,7 +32,7 @@ vi.mock("../../../adapters/spawn-helper.js", () => ({
 }));
 
 // ─── Module imports (after mocks) ───
-import { buildChatGroundingBundle, buildSystemPrompt } from "../grounding.js";
+import { buildChatAgentLoopSystemPrompt, buildChatGroundingBundle, buildSystemPrompt } from "../grounding.js";
 import { ClaudeAPIAdapter } from "../../../adapters/agents/claude-api.js";
 import { ClaudeCodeCLIAdapter } from "../../../adapters/agents/claude-code-cli.js";
 import { OpenAICodexCLIAdapter } from "../../../adapters/agents/openai-codex.js";
@@ -259,6 +259,49 @@ describe("buildSystemPrompt (grounding.ts)", () => {
     const bundle = await buildChatGroundingBundle({ stateManager: sm, workspaceRoot: "/repo", userMessage: "Ship feature X" });
 
     expect(bundle.dynamicSections.some((section) => section.key === "goal_state" && section.content.includes("Ship feature X"))).toBe(true);
+  });
+
+  it("builds agentloop-oriented chat grounding with workspace facts in the prompt", async () => {
+    const sm = makeMockStateManager(
+      ["goal-1"],
+      {
+        "goal-1": { title: "Ship feature X", status: "active", loop_status: "running" },
+      }
+    );
+
+    const prompt = await buildChatAgentLoopSystemPrompt({
+      stateManager: sm,
+      workspaceRoot: "/repo",
+      userMessage: "Ship feature X",
+      workspaceContext: "Working directory: /repo",
+    });
+
+    expect(prompt).toContain("## Workspace Facts");
+    expect(prompt).toContain("Workspace root: /repo");
+    expect(prompt).toContain("Working directory: /repo");
+    expect(prompt).toContain("## Provider");
+    expect(prompt).toContain("## Installed Plugins");
+  });
+
+  it("keeps nested workspace instructions when chat grounding runs below the git root", async () => {
+    const repoRoot = path.join(tmpDir, "repo");
+    const nestedWorkspace = path.join(repoRoot, "packages", "app");
+    await fsp.mkdir(path.join(repoRoot, ".git"), { recursive: true });
+    await fsp.mkdir(nestedWorkspace, { recursive: true });
+    await fsp.writeFile(path.join(repoRoot, "AGENTS.md"), "Root instructions", "utf-8");
+    await fsp.writeFile(path.join(nestedWorkspace, "AGENTS.md"), "Nested instructions", "utf-8");
+
+    const sm = makeMockStateManager();
+    const prompt = await buildChatAgentLoopSystemPrompt({
+      stateManager: sm,
+      workspaceRoot: nestedWorkspace,
+      userMessage: "Inspect the package",
+      workspaceContext: `Working directory: ${nestedWorkspace}`,
+    });
+
+    expect(prompt).toContain("Root instructions");
+    expect(prompt).toContain("Nested instructions");
+    expect(prompt).toContain(`Workspace root: ${nestedWorkspace}`);
   });
 });
 

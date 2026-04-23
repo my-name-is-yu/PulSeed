@@ -17,6 +17,7 @@ vi.mock("../../../platform/observation/context-provider.js", () => ({
 
 vi.mock("../grounding.js", () => ({
   buildStaticSystemPrompt: () => "",
+  buildChatAgentLoopSystemPrompt: async () => "",
   buildDynamicContextPrompt: async () => "",
   createChatGroundingGateway: () => ({
     build: async () => ({
