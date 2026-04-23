@@ -3,6 +3,7 @@ import type { Task } from "../../../base/types/task.js";
 import { createGroundingGateway, type GroundingGateway } from "../../../grounding/gateway.js";
 import { discoverAgentInstructionCandidates } from "../../../grounding/providers/agents-provider.js";
 import type { GroundingSection } from "../../../grounding/contracts.js";
+import { renderPromptSections } from "../../../grounding/renderers/prompt-renderer.js";
 
 export interface AgentLoopContextBlock {
   id: string;
@@ -50,13 +51,6 @@ function sectionToBlock(section: GroundingSection): AgentLoopContextBlock {
     content: section.content,
     priority: section.priority,
   };
-}
-
-function renderStaticSections(sections: GroundingSection[]): string {
-  return sections
-    .map((section) => `## ${section.title}\n${section.content}`.trim())
-    .join("\n\n")
-    .trim();
 }
 
 export class AgentLoopContextAssembler {
@@ -126,7 +120,7 @@ export class AgentLoopContextAssembler {
 
     return {
       cwd,
-      systemPrompt: renderStaticSections(bundle.staticSections),
+      systemPrompt: renderPromptSections(bundle.staticSections, { preserveOrder: true }),
       userPrompt,
       contextBlocks: blocks,
     };
