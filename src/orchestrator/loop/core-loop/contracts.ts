@@ -89,6 +89,15 @@ export interface ReportingEngine {
   saveReport(report: unknown): void;
 }
 
+export interface WaitApprovalBroker {
+  requestApproval(
+    goalId: string,
+    task: { id: string; description: string; action: string },
+    timeoutMs?: number,
+    approvalId?: string
+  ): Promise<boolean>;
+}
+
 // ─── Config ───
 
 /**
@@ -258,6 +267,8 @@ export interface CoreLoopDeps extends ObservationDeps, TreeDeps, StallDeps, Task
   toolRegistry?: ToolRegistry;
   /** Optional bounded agentloop runner for core phases. */
   corePhaseRunner?: CorePhaseRunner;
+  /** Optional live approval broker for wait/resume approvals. */
+  waitApprovalBroker?: WaitApprovalBroker;
   /** Optional policy registry for core phase runtime. */
   corePhasePolicyRegistry?: CorePhasePolicyRegistry;
   /** Optional deterministic decision engine for iteration/run control. */

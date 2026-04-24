@@ -30,6 +30,7 @@ export type {
   DriveScorerModule,
   ExecutionSummaryParams,
   ReportingEngine,
+  WaitApprovalBroker,
   LoopConfig,
   ResolvedLoopConfig,
   CoreLoopDeps,
@@ -433,6 +434,10 @@ export class CoreLoop {
    */
   setTimeHorizonEngine(engine: ITimeHorizonEngine): void {
     this.timeHorizonEngine = engine;
+  }
+
+  setWaitApprovalBroker(broker: CoreLoopDeps["waitApprovalBroker"]): void {
+    (this.deps as CoreLoopDeps).waitApprovalBroker = broker;
   }
 
   /**

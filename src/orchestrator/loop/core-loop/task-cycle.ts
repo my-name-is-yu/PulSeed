@@ -8,6 +8,7 @@ import type { Goal } from "../../../base/types/goal.js";
 import type { GapVector, GapHistoryEntry } from "../../../base/types/gap.js";
 import type { StallReport } from "../../../base/types/stall.js";
 import type { DriveScore } from "../../../base/types/drive.js";
+import type { WaitExpiryOutcome } from "../../../base/types/strategy.js";
 import { KnowledgeGraph } from "../../../platform/knowledge/knowledge-graph.js";
 import { loadDreamActivationState, mergeUniqueKnowledgeEntries } from "../../../platform/dream/dream-activation.js";
 import {
@@ -28,8 +29,13 @@ import {
 } from "../../execution/context/context-builder.js";
 import type { CapabilityAcquisitionOutcome } from "./capability.js";
 import type { CoreLoopEvidenceLedger } from "./evidence-ledger.js";
+import { ApprovalStore } from "../../../runtime/store/approval-store.js";
+import { buildWaitApprovalId } from "../../strategy/portfolio-rebalance.js";
 
 // ─── Phase 5 ───
+
+const WAIT_APPROVAL_TIMEOUT_MS = 24 * 60 * 60 * 1000;
+const WAIT_APPROVAL_REMINDER_MS = 15 * 60 * 1000;
 
 function resolveGoalWorkspacePath(goal: Goal): string | undefined {
   const constraint = goal.constraints.find((entry) => entry.startsWith("workspace_path:"));
@@ -224,7 +230,7 @@ export async function detectStallsAndRebalance(
 
     // Portfolio: check rebalance after stall detection
     if (ctx.deps.portfolioManager) {
-      await rebalancePortfolio(ctx, goalId, goal, result);
+      await rebalancePortfolio(ctx, goalId, goal);
     }
   } catch (err) {
     ctx.logger?.warn("CoreLoop: stall detection failed (non-fatal)", { error: err instanceof Error ? err.message : String(err) });
@@ -421,12 +427,11 @@ async function checkGlobalStall(
   await applyStallAction(ctx, goalId, goal, firstDimHistory, globalStall, 1, firstDimName, result, "global ", stallActionHints);
 }
 
-/** Portfolio rebalance: check for rebalance triggers and handle wait strategy expiry. */
+/** Portfolio rebalance: check for normal rebalance triggers after stall detection. */
 async function rebalancePortfolio(
   ctx: PhaseCtx,
   goalId: string,
-  goal: Goal,
-  result?: LoopIterationResult
+  goal: Goal
 ): Promise<void> {
   if (!ctx.deps.portfolioManager) return;
   try {
@@ -439,30 +444,6 @@ async function rebalancePortfolio(
     }
   } catch {
     // Portfolio rebalance errors are non-fatal
-  }
-
-  try {
-    const portfolio = await ctx.deps.strategyManager.getPortfolio(goalId);
-    if (portfolio) {
-      for (const strategy of portfolio.strategies) {
-        if (ctx.deps.portfolioManager.isWaitStrategy(strategy)) {
-          const waitOutcome = await ctx.deps.portfolioManager.handleWaitStrategyExpiry(
-            goalId,
-            strategy.id
-          );
-          const waitTrigger = waitOutcome?.rebalance_trigger ?? null;
-          if (waitOutcome && waitOutcome.status !== "not_due" && result) {
-            result.waitExpired = true;
-            result.waitStrategyId = strategy.id;
-          }
-          if (waitTrigger) {
-            await ctx.deps.portfolioManager.rebalance(goalId, waitTrigger);
-          }
-        }
-      }
-    }
-  } catch {
-    // WaitStrategy expiry errors are non-fatal
   }
 }
 
@@ -505,6 +486,213 @@ export interface TaskGenerationHints {
 
 export interface StallActionHints {
   recommendedAction?: "continue" | "refine" | "pivot";
+}
+
+export interface WaitStrategyObservationDecision {
+  observeOnly: boolean;
+  newGenerationNeeded: boolean;
+  outcome: WaitExpiryOutcome | null;
+}
+
+interface PendingWaitOutcome {
+  strategyId: string;
+  outcome: WaitExpiryOutcome;
+}
+
+/**
+ * Evaluate active WaitStrategies before task generation. A due or pending wait
+ * is an observe-only iteration: the loop records status and returns without
+ * handing work to AgentLoop.
+ */
+export async function evaluateWaitStrategiesForObserveOnly(
+  ctx: PhaseCtx,
+  goalId: string,
+  goal: Goal,
+  result: LoopIterationResult
+): Promise<WaitStrategyObservationDecision> {
+  if (!ctx.deps.portfolioManager) {
+    return { observeOnly: false, newGenerationNeeded: false, outcome: null };
+  }
+
+  try {
+    const portfolio = await ctx.deps.strategyManager.getPortfolio(goalId);
+    if (!portfolio) {
+      return { observeOnly: false, newGenerationNeeded: false, outcome: null };
+    }
+
+    let firstNotDue: PendingWaitOutcome | null = null;
+
+    for (const strategy of portfolio.strategies) {
+      if (strategy.state !== "active" || !ctx.deps.portfolioManager.isWaitStrategy(strategy)) {
+        continue;
+      }
+
+      const waitOutcome = await ctx.deps.portfolioManager.handleWaitStrategyExpiry(
+        goalId,
+        strategy.id
+      );
+      if (!waitOutcome) {
+        continue;
+      }
+
+      if (waitOutcome.status === "not_due") {
+        firstNotDue ??= { strategyId: strategy.id, outcome: waitOutcome };
+        continue;
+      }
+
+      result.waitStrategyId = strategy.id;
+      result.waitExpiryOutcome = waitOutcome;
+      result.waitObserveOnly = true;
+      result.waitExpired = true;
+
+      if (waitOutcome.status === "approval_required") {
+        result.waitApprovalId = await persistWaitApprovalPending(ctx, goalId, strategy, waitOutcome);
+      }
+
+      const waitTrigger = waitOutcome.rebalance_trigger ?? null;
+      if (waitTrigger) {
+        const rebalanceResult = await ctx.deps.portfolioManager.rebalance(goalId, waitTrigger);
+        if (rebalanceResult.new_generation_needed) {
+          await ctx.deps.strategyManager.onStallDetected(goalId, 3, goal.origin ?? "general");
+          result.waitObserveOnly = false;
+          return { observeOnly: false, newGenerationNeeded: true, outcome: waitOutcome };
+        }
+      }
+      return { observeOnly: true, newGenerationNeeded: false, outcome: waitOutcome };
+    }
+
+    if (firstNotDue) {
+      result.waitStrategyId = firstNotDue.strategyId;
+      result.waitExpiryOutcome = firstNotDue.outcome;
+      result.waitObserveOnly = true;
+      result.waitSuppressed = true;
+      return { observeOnly: true, newGenerationNeeded: false, outcome: firstNotDue.outcome };
+    }
+  } catch (err) {
+    ctx.logger?.warn("CoreLoop: wait observation failed (non-fatal)", {
+      goalId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+
+  return { observeOnly: false, newGenerationNeeded: false, outcome: null };
+}
+
+async function persistWaitApprovalPending(
+  ctx: PhaseCtx,
+  goalId: string,
+  strategy: { id: string; wait_until?: unknown },
+  outcome: WaitExpiryOutcome
+): Promise<string | undefined> {
+  const strategyId = strategy.id;
+  try {
+    const now = Date.now();
+    const approvalId = buildWaitApprovalId(goalId, strategyId);
+    const timeoutMs = WAIT_APPROVAL_TIMEOUT_MS;
+    const nextObserveAt = new Date(now + WAIT_APPROVAL_REMINDER_MS).toISOString();
+    const expiresAt = new Date(now + timeoutMs).toISOString();
+    const task = {
+      id: `wait:${strategyId}`,
+      description: outcome.details ?? "WaitStrategy requires approval before continuing",
+      action: "wait_strategy_resume_approval",
+    };
+
+    if (ctx.deps.waitApprovalBroker) {
+      void ctx.deps.waitApprovalBroker.requestApproval(goalId, task, timeoutMs, approvalId).catch((err) => {
+        ctx.logger?.warn("CoreLoop: wait approval broker request failed", {
+          goalId,
+          strategyId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+      await postponeWaitObservationForApproval(ctx, goalId, strategy, approvalId, nextObserveAt, expiresAt);
+      return approvalId;
+    }
+
+    const baseDir = typeof ctx.deps.stateManager.getBaseDir === "function"
+      ? ctx.deps.stateManager.getBaseDir()
+      : null;
+    if (!baseDir) return undefined;
+
+    const approvalStore = new ApprovalStore(path.join(baseDir, "runtime"));
+    await approvalStore.savePending({
+      approval_id: approvalId,
+      goal_id: goalId,
+      request_envelope_id: approvalId,
+      correlation_id: approvalId,
+      state: "pending",
+      created_at: now,
+      expires_at: now + timeoutMs,
+      payload: {
+        task,
+        wait_strategy_id: strategyId,
+        wait_outcome: outcome,
+      },
+    });
+    await postponeWaitObservationForApproval(ctx, goalId, strategy, approvalId, nextObserveAt, expiresAt);
+    return approvalId;
+  } catch (err) {
+    ctx.logger?.warn("CoreLoop: failed to persist wait approval request", {
+      goalId,
+      strategyId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return undefined;
+  }
+}
+
+async function postponeWaitObservationForApproval(
+  ctx: PhaseCtx,
+  goalId: string,
+  strategy: { id: string; wait_until?: unknown },
+  approvalId: string,
+  nextObserveAt: string,
+  expiresAt: string
+): Promise<void> {
+  try {
+    const path = `strategies/${goalId}/wait-meta/${strategy.id}.json`;
+    const raw = await ctx.deps.stateManager.readRaw(path);
+    const metadata = raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
+    const waitUntil = typeof metadata["wait_until"] === "string"
+      ? metadata["wait_until"]
+      : typeof strategy.wait_until === "string"
+        ? strategy.wait_until
+        : nextObserveAt;
+    const conditions = Array.isArray(metadata["conditions"]) && metadata["conditions"].length > 0
+      ? metadata["conditions"]
+      : [{ type: "time_until", until: waitUntil }];
+
+    await ctx.deps.stateManager.writeRaw(path, {
+      ...metadata,
+      schema_version: 1,
+      wait_until: waitUntil,
+      conditions,
+      resume_plan: metadata["resume_plan"] ?? { action: "complete_wait" },
+      next_observe_at: nextObserveAt,
+      latest_observation: {
+        status: "pending",
+        evidence: {
+          approval_pending: true,
+          approval_id: approvalId,
+        },
+        next_observe_at: nextObserveAt,
+        confidence: 1,
+        resume_hint: "waiting_for_approval",
+      },
+      approval_pending: {
+        approval_id: approvalId,
+        requested_at: new Date().toISOString(),
+        next_reminder_at: nextObserveAt,
+        expires_at: expiresAt,
+      },
+    });
+  } catch (err) {
+    ctx.logger?.warn("CoreLoop: failed to postpone wait observation for approval", {
+      goalId,
+      strategyId: strategy.id,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
 }
 
 /** Collect context, run task cycle, handle capability acquisition,

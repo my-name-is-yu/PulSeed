@@ -2,6 +2,7 @@ import type { DriveScore } from "../../base/types/drive.js";
 import type { CompletionJudgment } from "../../base/types/satisficing.js";
 import type { StallAnalysis, StallReport } from "../../base/types/stall.js";
 import type { TransferCandidate } from "../../base/types/cross-portfolio.js";
+import type { WaitExpiryOutcome } from "../../base/types/strategy.js";
 import type { TaskCycleResult } from "../execution/task/task-execution-types.js";
 import type { VerificationLayer1Result } from "./verification-layer1.js";
 import type { CorePhaseKind } from "../execution/agent-loop/core-phase-runner.js";
@@ -64,6 +65,12 @@ export interface LoopIterationResult {
   waitExpired?: boolean;
   /** Strategy ID of the active WaitStrategy, if any. */
   waitStrategyId?: string;
+  /** True when the iteration observed wait state and intentionally skipped task generation. */
+  waitObserveOnly?: boolean;
+  /** Full wait expiry decision used by CoreLoop and portfolio rebalance. */
+  waitExpiryOutcome?: WaitExpiryOutcome;
+  /** Durable approval request id created when wait resume requires approval. */
+  waitApprovalId?: string;
   /** Agentic core phase results collected during the iteration. */
   corePhaseResults?: CorePhaseIterationResult[];
   /** Deterministic scheduler directive for the next iteration of the same goal. */
