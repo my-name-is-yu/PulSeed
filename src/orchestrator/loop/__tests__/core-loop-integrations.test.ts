@@ -36,6 +36,7 @@ import { TrustManager } from "../../../platform/traits/trust-manager.js";
 import { ReportingEngine as RealReportingEngine } from "../../../reporting/reporting-engine.js";
 import { CapabilityDetector } from "../../../platform/observation/capability-detector.js";
 import { ApprovalStore } from "../../../runtime/store/approval-store.js";
+import { WaitDeadlineResolver, getDueWaitGoalIds } from "../../../runtime/daemon/wait-deadline-resolver.js";
 import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 import { makeDimension, makeGoal } from "../../../../tests/helpers/fixtures.js";
 import { createMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
@@ -1232,16 +1233,46 @@ describe("CoreLoop", async () => {
       const { deps, mocks } = createMockDeps(tmpDir);
       await mocks.stateManager.saveGoal(makeGoal());
 
+      const overdueWaitUntil = new Date(Date.now() - 100_000).toISOString();
       const waitStrategy = {
         id: "wait-approval",
         state: "active",
         goal_id: "goal-1",
+        target_dimensions: ["dim1"],
+        primary_dimension: "dim1",
+        hypothesis: "Wait for external approval",
+        expected_effect: [],
+        resource_estimate: { sessions: 0, duration: { value: 0, unit: "hours" }, llm_calls: null },
+        allocation: 1,
+        created_at: new Date(Date.now() - 200_000).toISOString(),
+        started_at: new Date(Date.now() - 200_000).toISOString(),
+        completed_at: null,
+        gap_snapshot_at_start: 0.5,
+        tasks_generated: [],
+        effectiveness_score: null,
+        consecutive_stall_count: 0,
+        wait_reason: "Approval required",
+        wait_until: overdueWaitUntil,
+        measurement_plan: "Resume after approval",
+        fallback_strategy_id: null,
       };
       mocks.strategyManager.getPortfolio.mockReturnValue({
         goal_id: "goal-1",
         strategies: [waitStrategy],
         rebalance_interval: { value: 7, unit: "days" },
         last_rebalanced_at: new Date().toISOString(),
+      });
+      await mocks.stateManager.writeRaw("strategies/goal-1/portfolio.json", {
+        goal_id: "goal-1",
+        strategies: [waitStrategy],
+        rebalance_interval: { value: 7, unit: "days" },
+        last_rebalanced_at: new Date().toISOString(),
+      });
+      await mocks.stateManager.writeRaw(`strategies/goal-1/wait-meta/${waitStrategy.id}.json`, {
+        schema_version: 1,
+        wait_until: overdueWaitUntil,
+        conditions: [{ type: "time_until", until: overdueWaitUntil }],
+        resume_plan: { action: "complete_wait" },
       });
 
       const portfolioManager = createMockPortfolioManager();
@@ -1259,6 +1290,8 @@ describe("CoreLoop", async () => {
 
       const approvalStore = new ApprovalStore(path.join(tmpDir, "runtime"));
       const pending = await approvalStore.listPending();
+      const metadata = await mocks.stateManager.readRaw(`strategies/goal-1/wait-meta/${waitStrategy.id}.json`) as Record<string, unknown>;
+      const resolution = await new WaitDeadlineResolver(mocks.stateManager).resolve(["goal-1"]);
 
       expect(result.waitExpired).toBe(true);
       expect(result.waitApprovalId).toBe(`wait-goal-1-${waitStrategy.id}`);
@@ -1276,6 +1309,19 @@ describe("CoreLoop", async () => {
         },
         wait_strategy_id: waitStrategy.id,
       });
+      expect(Date.parse(metadata["next_observe_at"] as string)).toBeGreaterThan(Date.now());
+      expect(metadata["approval_pending"]).toMatchObject({
+        approval_id: result.waitApprovalId,
+      });
+      expect(metadata["latest_observation"]).toMatchObject({
+        status: "pending",
+        evidence: {
+          approval_pending: true,
+          approval_id: result.waitApprovalId,
+        },
+        resume_hint: "waiting_for_approval",
+      });
+      expect(getDueWaitGoalIds(resolution)).toEqual([]);
       expect(mocks.taskLifecycle.runTaskCycle).not.toHaveBeenCalled();
     });
 

@@ -34,6 +34,9 @@ import { buildWaitApprovalId } from "../../strategy/portfolio-rebalance.js";
 
 // ─── Phase 5 ───
 
+const WAIT_APPROVAL_TIMEOUT_MS = 24 * 60 * 60 * 1000;
+const WAIT_APPROVAL_REMINDER_MS = 15 * 60 * 1000;
+
 function resolveGoalWorkspacePath(goal: Goal): string | undefined {
   const constraint = goal.constraints.find((entry) => entry.startsWith("workspace_path:"));
   const workspacePath = constraint?.slice("workspace_path:".length).trim();
@@ -543,7 +546,7 @@ export async function evaluateWaitStrategiesForObserveOnly(
       result.waitExpired = true;
 
       if (waitOutcome.status === "approval_required") {
-        result.waitApprovalId = await persistWaitApprovalPending(ctx, goalId, strategy.id, waitOutcome);
+        result.waitApprovalId = await persistWaitApprovalPending(ctx, goalId, strategy, waitOutcome);
       }
 
       const waitTrigger = waitOutcome.rebalance_trigger ?? null;
@@ -578,13 +581,16 @@ export async function evaluateWaitStrategiesForObserveOnly(
 async function persistWaitApprovalPending(
   ctx: PhaseCtx,
   goalId: string,
-  strategyId: string,
+  strategy: { id: string; wait_until?: unknown },
   outcome: WaitExpiryOutcome
 ): Promise<string | undefined> {
+  const strategyId = strategy.id;
   try {
     const now = Date.now();
     const approvalId = buildWaitApprovalId(goalId, strategyId);
-    const timeoutMs = 24 * 60 * 60 * 1000;
+    const timeoutMs = WAIT_APPROVAL_TIMEOUT_MS;
+    const nextObserveAt = new Date(now + WAIT_APPROVAL_REMINDER_MS).toISOString();
+    const expiresAt = new Date(now + timeoutMs).toISOString();
     const task = {
       id: `wait:${strategyId}`,
       description: outcome.details ?? "WaitStrategy requires approval before continuing",
@@ -599,6 +605,7 @@ async function persistWaitApprovalPending(
           error: err instanceof Error ? err.message : String(err),
         });
       });
+      await postponeWaitObservationForApproval(ctx, goalId, strategy, approvalId, nextObserveAt, expiresAt);
       return approvalId;
     }
 
@@ -622,6 +629,7 @@ async function persistWaitApprovalPending(
         wait_outcome: outcome,
       },
     });
+    await postponeWaitObservationForApproval(ctx, goalId, strategy, approvalId, nextObserveAt, expiresAt);
     return approvalId;
   } catch (err) {
     ctx.logger?.warn("CoreLoop: failed to persist wait approval request", {
@@ -630,6 +638,60 @@ async function persistWaitApprovalPending(
       error: err instanceof Error ? err.message : String(err),
     });
     return undefined;
+  }
+}
+
+async function postponeWaitObservationForApproval(
+  ctx: PhaseCtx,
+  goalId: string,
+  strategy: { id: string; wait_until?: unknown },
+  approvalId: string,
+  nextObserveAt: string,
+  expiresAt: string
+): Promise<void> {
+  try {
+    const path = `strategies/${goalId}/wait-meta/${strategy.id}.json`;
+    const raw = await ctx.deps.stateManager.readRaw(path);
+    const metadata = raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
+    const waitUntil = typeof metadata["wait_until"] === "string"
+      ? metadata["wait_until"]
+      : typeof strategy.wait_until === "string"
+        ? strategy.wait_until
+        : nextObserveAt;
+    const conditions = Array.isArray(metadata["conditions"]) && metadata["conditions"].length > 0
+      ? metadata["conditions"]
+      : [{ type: "time_until", until: waitUntil }];
+
+    await ctx.deps.stateManager.writeRaw(path, {
+      ...metadata,
+      schema_version: 1,
+      wait_until: waitUntil,
+      conditions,
+      resume_plan: metadata["resume_plan"] ?? { action: "complete_wait" },
+      next_observe_at: nextObserveAt,
+      latest_observation: {
+        status: "pending",
+        evidence: {
+          approval_pending: true,
+          approval_id: approvalId,
+        },
+        next_observe_at: nextObserveAt,
+        confidence: 1,
+        resume_hint: "waiting_for_approval",
+      },
+      approval_pending: {
+        approval_id: approvalId,
+        requested_at: new Date().toISOString(),
+        next_reminder_at: nextObserveAt,
+        expires_at: expiresAt,
+      },
+    });
+  } catch (err) {
+    ctx.logger?.warn("CoreLoop: failed to postpone wait observation for approval", {
+      goalId,
+      strategyId: strategy.id,
+      error: err instanceof Error ? err.message : String(err),
+    });
   }
 }
 
