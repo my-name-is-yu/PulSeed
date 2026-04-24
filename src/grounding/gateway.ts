@@ -21,7 +21,7 @@ import { knowledgeQueryProvider } from "./providers/knowledge-provider.js";
 import { lessonsProvider } from "./providers/lessons-provider.js";
 import { repoInstructionsProvider } from "./providers/agents-provider.js";
 import { workspaceFactsProvider } from "./providers/workspace-facts-provider.js";
-import { sortSections } from "./providers/helpers.js";
+import { resolveStateManagerBaseDir, sortSections } from "./providers/helpers.js";
 
 const PROVIDERS: GroundingProvider[] = [
   identityProvider,
@@ -63,6 +63,7 @@ export class DefaultGroundingGateway implements GroundingGateway {
 
     const staticCacheKey = JSON.stringify({
       profile: profile.id,
+      identityBaseDir: request.homeDir ?? resolveStateManagerBaseDir(this.deps.stateManager) ?? null,
       include: {
         identity: profile.include.identity,
         execution_policy: profile.include.execution_policy,

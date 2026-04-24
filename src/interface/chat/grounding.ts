@@ -121,9 +121,9 @@ export async function buildChatAgentLoopSystemPrompt(options: GroundingOptions):
   return String(bundle.render("prompt"));
 }
 
-export function buildStaticSystemPrompt(): string {
+export function buildStaticSystemPrompt(baseDir?: string): string {
   return [
-    `## Identity\n${buildIdentitySectionContent()}`,
+    `## Identity\n${buildIdentitySectionContent(baseDir)}`,
     buildExecutionPolicySectionContent(),
     `## Safety And Approval\n${buildApprovalPolicySectionContent()}`,
   ].join("\n\n").trim();

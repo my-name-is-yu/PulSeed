@@ -24,6 +24,9 @@ const {
   clearIdentityCache,
   getAgentName,
   getInternalIdentityPrefix,
+  getRuntimeIdentitySlotContent,
+  getSelfIdentityResponse,
+  getSelfIdentityResponseForBaseDir,
   getUserFacingIdentity,
   DEFAULT_SEED,
   DEFAULT_ROOT,
@@ -180,7 +183,7 @@ describe("getInternalIdentityPrefix()", () => {
 
   it("returns expected default prefix", () => {
     const result = getInternalIdentityPrefix("morning planner");
-    expect(result).toBe("You are Seedy, PulSeed's morning planner. Seedy runs PulSeed, an AI agent orchestration system.");
+    expect(result).toBe("You are Seedy, PulSeed's morning planner. Seedy is the configured agent identity running PulSeed, an AI agent orchestration system.");
   });
 
   it("uses custom agent name when SEED.md sets one", () => {
@@ -189,6 +192,54 @@ Content here.`);
     clearIdentityCache();
     const result = getInternalIdentityPrefix("planner");
     expect(result).toContain("Pebble");
+  });
+});
+
+describe("runtime identity slot", () => {
+  beforeEach(() => {
+    clearIdentityCache();
+    mockReadFileSync.mockReset();
+    mockExistsSync.mockReset();
+  });
+
+  it("states that runtime identity files own self-identity", () => {
+    noFiles();
+    const result = getRuntimeIdentitySlotContent();
+    expect(result).toContain("SEED.md, ROOT.md, and USER.md");
+    expect(result).toContain("Active agent name: Seedy");
+    expect(result).toContain("configured agent running PulSeed");
+    expect(result).toContain("Do not identify as Codex, Claude, ChatGPT");
+  });
+
+  it("answers self-identity from the configured SEED.md agent name", () => {
+    withFile("SEED.md", "# Sprout\n\nCustom identity.");
+    const result = getSelfIdentityResponse();
+    expect(result).toContain("Sprout");
+    expect(result).toContain("SEED.md/ROOT.md/USER.md");
+    expect(result).toContain("runtime identity");
+    expect(result).not.toContain("私はCodex");
+    expect(result).not.toContain("私はClaude");
+    expect(result).not.toContain("私はChatGPT");
+  });
+
+  it("answers English self-identity questions from the same runtime slot", () => {
+    withFile("SEED.md", "# Sprout\n\nCustom identity.");
+    const result = getSelfIdentityResponse("en");
+    expect(result).toContain("I am Sprout");
+    expect(result).toContain("SEED.md/ROOT.md/USER.md");
+    expect(result).toContain("runtime identity");
+    expect(result).not.toContain("I am Codex");
+    expect(result).not.toContain("I am Claude");
+    expect(result).not.toContain("I am ChatGPT");
+  });
+
+  it("can answer self-identity from an explicit runtime base dir without using global cache", () => {
+    noFiles();
+    loadIdentity();
+    const result = getSelfIdentityResponseForBaseDir("/isolated/runtime-home", "en");
+
+    expect(result).toContain("I am Seedy");
+    expect(mockReadFileSync).toHaveBeenCalledWith("/isolated/runtime-home/SEED.md", "utf-8");
   });
 });
 
@@ -204,6 +255,7 @@ describe("getUserFacingIdentity()", () => {
     const result = getUserFacingIdentity();
     expect(result).toContain(DEFAULT_SEED);
     expect(result).toContain(DEFAULT_ROOT);
+    expect(result).toContain("Runtime Identity Slot");
   });
 
   it("includes user content when USER.md has real content", () => {

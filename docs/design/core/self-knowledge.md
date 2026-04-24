@@ -6,7 +6,7 @@
 
 PulSeed has a chat interface. Users naturally ask questions about PulSeed itself -- "What goals do you have?", "What's your trust score?", "What model are you using?" PulSeed should answer these questions accurately, drawing from its actual runtime state rather than hallucinating.
 
-The current grounding mechanism (`src/chat/grounding.ts`) injects a minimal summary (goal titles, provider name, plugin names) into every system prompt. This covers the basics but falls short in two ways:
+The current grounding mechanism (`src/interface/chat/grounding.ts`) injects a minimal summary (goal titles, provider name, plugin names) into every system prompt. This covers the basics but falls short in two ways:
 
 - **Shallow**: It provides names and summaries, not details. "What's the gap score on goal X?" cannot be answered from a title alone.
 - **Static**: Injecting everything "just in case" wastes tokens on every turn, even when the user is asking about something unrelated.
@@ -85,7 +85,7 @@ Returns the current trust state and its governing rules.
 | delta_failure | -10 per failed verification |
 | high_trust_threshold | +20 (above this, some approvals are skipped) |
 | ethics_gate_level | Current ethics gate level (e.g., L1) |
-| execution_boundary | "PulSeed orchestrates goal pursuit. It perceives the world directly through read-only tools (Glob, Grep, Read, Shell, HttpFetch, JsonQuery) and delegates all mutations and complex multi-step work to agents." |
+| execution_boundary | "PulSeed orchestrates goal pursuit. It uses available tools directly for safe local work and delegates when specialization, parallelism, or context isolation helps." |
 
 **Data source**: TrustManager + static definitions
 
@@ -127,7 +127,7 @@ Returns a static description of PulSeed's architecture and capabilities.
 **Content** (hardcoded string):
 - Layer structure (Layer 0-15) with module names
 - Module responsibilities summary
-- Execution boundary: "PulSeed orchestrates goal pursuit. It perceives the world directly through read-only tools (Glob, Grep, Read, Shell, HttpFetch, JsonQuery) and delegates all mutations and complex multi-step work to agents."
+- Execution boundary: "PulSeed orchestrates goal pursuit. It uses available tools directly for safe local work and delegates when specialization, parallelism, or context isolation helps."
 - Runtime shape: CoreLoop for long-lived control plus AgentLoop for bounded tool-using execution- 4-element model: Goal -> Current State -> Gap -> Constraints
 
 **Data source**: Hardcoded text

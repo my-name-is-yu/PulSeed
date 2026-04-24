@@ -104,4 +104,38 @@ describe("GroundingGateway", () => {
     expect(bundle.dynamicSections.some((section) => section.key === "knowledge_query")).toBe(false);
     expect(knowledgeQuery).not.toHaveBeenCalled();
   });
+
+  it("does not reuse cached identity sections across runtime homes", async () => {
+    const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-grounding-identity-"));
+    const homeA = path.join(tmpRoot, "a");
+    const homeB = path.join(tmpRoot, "b");
+    fs.mkdirSync(homeA, { recursive: true });
+    fs.mkdirSync(homeB, { recursive: true });
+    fs.writeFileSync(path.join(homeA, "SEED.md"), "# SeedA\n\nA identity.", "utf-8");
+    fs.writeFileSync(path.join(homeB, "SEED.md"), "# SeedB\n\nB identity.", "utf-8");
+
+    try {
+      const gateway = createGroundingGateway({ stateManager: makeStateManager() });
+      const first = await gateway.build({
+        surface: "chat",
+        purpose: "general_turn",
+        homeDir: homeA,
+      });
+      const second = await gateway.build({
+        surface: "chat",
+        purpose: "general_turn",
+        homeDir: homeB,
+      });
+
+      const firstIdentity = first.staticSections.find((section) => section.key === "identity")?.content ?? "";
+      const secondIdentity = second.staticSections.find((section) => section.key === "identity")?.content ?? "";
+      expect(firstIdentity).toContain("SeedA");
+      expect(firstIdentity).not.toContain("SeedB");
+      expect(secondIdentity).toContain("SeedB");
+      expect(secondIdentity).not.toContain("SeedA");
+      expect(second.metrics.cacheHits).toBe(0);
+    } finally {
+      fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+  });
 });

@@ -155,9 +155,20 @@ export function ensurePulseedDir(): string {
   return dir;
 }
 
+export function normalizeSetupAgentName(agentName: string): string {
+  const normalized = agentName.replace(/\s+/g, " ").trim();
+  return normalized.length > 0 ? normalized : "Seedy";
+}
+
+export function renderSeedMd(agentName: string): string {
+  const normalizedName = normalizeSetupAgentName(agentName);
+  return DEFAULT_SEED
+    .replace(/^#\s+.+$/m, () => `# ${normalizedName}`)
+    .replace(/\bI'm Seedy\b/g, () => `I'm ${normalizedName}`);
+}
+
 export function writeSeedMd(dir: string, agentName: string): void {
-  const content = DEFAULT_SEED.replace(/^#\s+.+$/m, `# ${agentName}`);
-  fs.writeFileSync(path.join(dir, "SEED.md"), content, "utf-8");
+  fs.writeFileSync(path.join(dir, "SEED.md"), renderSeedMd(agentName), "utf-8");
 }
 
 export function writeRootMd(dir: string, presetKey: RootPresetKey): void {

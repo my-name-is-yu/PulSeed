@@ -10,6 +10,7 @@ import type { StateManager } from "../../base/state/state-manager.js";
 import type { IAdapter, AgentTask } from "../../orchestrator/execution/adapter-layer.js";
 import type { ILLMClient } from "../../base/llm/llm-client.js";
 import { getPulseedDirPath } from "../../base/utils/paths.js";
+import { getSelfIdentityResponseForBaseDir } from "../../base/config/identity-loader.js";
 import { loadProviderConfig } from "../../base/llm/provider-config.js";
 import { TaskSchema, type Task } from "../../base/types/task.js";
 import type { Goal } from "../../base/types/goal.js";
@@ -223,6 +224,22 @@ function previewActivityText(value: string, maxChars = ACTIVITY_PREVIEW_CHARS): 
 function formatToolActivity(action: "Running" | "Finished" | "Failed", toolName: string, detail?: string): string {
   const preview = detail ? previewActivityText(detail) : "";
   return preview ? `${action} tool: ${toolName} - ${preview}` : `${action} tool: ${toolName}`;
+}
+
+function resolveSelfIdentityResponse(input: string, baseDir: string): string | null {
+  const normalized = input.trim().toLowerCase().replace(/\s+/g, "");
+  if (!normalized) return null;
+
+  const isEnglishIdentityQuestion = /^(whoareyou|whatisyourname|what'syourname)[?]?$/.test(normalized);
+  const isIdentityQuestion = [
+    /^(あなた|君|きみ|お前|おまえ)(は|って)?(誰|だれ|何者|なにもの)(ですか|なの|です)?[？?]?$/,
+    /^(あなた|君|きみ|お前|おまえ)の名前(は|って)?(何|なに)(ですか|なの|です)?[？?]?$/,
+    /^名前(は|って)?(何|なに)(ですか|なの|です)?[？?]?$/,
+  ].some((pattern) => pattern.test(normalized));
+
+  if (!isIdentityQuestion && !isEnglishIdentityQuestion) return null;
+
+  return getSelfIdentityResponseForBaseDir(baseDir, isEnglishIdentityQuestion ? "en" : "ja");
 }
 
 // ─── ChatRunner ───
@@ -1531,7 +1548,7 @@ export class ChatRunner {
     // Build static grounding once per session; dynamic context is rebuilt each turn.
     if (this.cachedStaticSystemPrompt === null) {
       try {
-        this.cachedStaticSystemPrompt = buildStaticSystemPrompt();
+        this.cachedStaticSystemPrompt = buildStaticSystemPrompt(this.providerConfigBaseDir());
       } catch {
         this.cachedStaticSystemPrompt = "";
       }
@@ -1564,6 +1581,25 @@ export class ChatRunner {
     const start = Date.now();
     const assistantBuffer: AssistantBuffer = { text: "" };
     const turnUsage = this.zeroUsageCounter();
+    const identityResponse = resumeOnly ? null : resolveSelfIdentityResponse(input, this.providerConfigBaseDir());
+
+    if (identityResponse !== null) {
+      const elapsed_ms = Date.now() - start;
+      await history.appendAssistantMessage(identityResponse);
+      this.emitActivity("lifecycle", "Finalizing response...", eventContext, "lifecycle:finalizing");
+      this.emitEvent({
+        type: "assistant_final",
+        text: identityResponse,
+        persisted: true,
+        ...this.eventBase(eventContext),
+      });
+      this.emitLifecycleEndEvent("completed", elapsed_ms, eventContext, true);
+      return {
+        success: true,
+        output: identityResponse,
+        elapsed_ms,
+      };
+    }
 
     if (selectedRoute?.kind === "runtime_control") {
       const runtimeControlResult = await this.executeRuntimeControlRoute(

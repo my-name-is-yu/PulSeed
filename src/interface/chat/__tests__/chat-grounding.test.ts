@@ -43,6 +43,7 @@ import type { StateManager } from "../../../base/state/state-manager.js";
 import type { ILLMClient } from "../../../base/llm/llm-client.js";
 import { spawnWithTimeout } from "../../../adapters/spawn-helper.js";
 import { clearIdentityCache } from "../../../base/config/identity-loader.js";
+import { writeSeedMd } from "../../cli/commands/setup/steps-runtime.js";
 
 // ─── Shared helpers ───
 
@@ -110,7 +111,32 @@ describe("buildSystemPrompt (grounding.ts)", () => {
     const prompt = await buildSystemPrompt({ stateManager: sm, homeDir: tmpDir });
 
     expect(prompt).toContain("Seedy");
-    expect(prompt).toContain("You run PulSeed");
+    expect(prompt).toContain("configured agent identity running PulSeed");
+    expect(prompt).toContain("SEED.md, ROOT.md, USER.md");
+  });
+
+  it("grounds self-description in runtime identity files instead of provider identity", async () => {
+    await fsp.writeFile(path.join(tmpDir, "SEED.md"), "# Sprout\n\nCustom identity.", "utf-8");
+    clearIdentityCache();
+    const sm = makeMockStateManager();
+    const prompt = await buildSystemPrompt({ stateManager: sm, homeDir: tmpDir });
+
+    expect(prompt).toContain("When asked who you are or what your name is, answer as Sprout");
+    expect(prompt).toContain("PulSeed runtime identity files (SEED.md, ROOT.md, USER.md) own self-identity");
+    expect(prompt).toContain("not as Codex, Claude, ChatGPT");
+  });
+
+  it("grounds setup-chosen agent name written to SEED.md", async () => {
+    writeSeedMd(tmpDir, "Sprout");
+    clearIdentityCache();
+    const sm = makeMockStateManager();
+    const prompt = await buildSystemPrompt({ stateManager: sm, homeDir: tmpDir });
+
+    expect(prompt).toContain("Active agent name: Sprout");
+    expect(prompt).toContain("When asked who you are or what your name is, answer as Sprout");
+    expect(prompt).toContain("I'm Sprout");
+    expect(prompt).not.toContain("Active agent name: Seedy");
+    expect(prompt).not.toContain("I'm Seedy");
   });
 
   it("includes fixed policy sections", async () => {
