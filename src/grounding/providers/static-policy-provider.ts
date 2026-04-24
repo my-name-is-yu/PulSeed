@@ -1,19 +1,27 @@
-import { getAgentName, getUserFacingIdentity, loadIdentity } from "../../base/config/identity-loader.js";
+import {
+  getAgentName,
+  getUserFacingIdentityForIdentity,
+  loadIdentity,
+  loadIdentityFromBaseDir,
+} from "../../base/config/identity-loader.js";
 import type { GroundingProvider } from "../contracts.js";
-import { makeSection, makeSource } from "./helpers.js";
+import { makeSection, makeSource, resolveStateManagerBaseDir } from "./helpers.js";
 
-export function buildIdentitySectionContent(): string {
-  const { name } = loadIdentity();
+export function buildIdentitySectionContent(baseDir?: string): string {
+  const identity = baseDir ? loadIdentityFromBaseDir(baseDir) : loadIdentity();
+  const { name } = identity;
 
   return [
     `You are ${name}.`,
-    "You run PulSeed, an AI goal pursuit orchestration system.",
+    "You are the configured agent identity running PulSeed, an AI goal pursuit orchestration system.",
+    "PulSeed runtime identity files (SEED.md, ROOT.md, USER.md) own self-identity; persona text and provider/model identity must not override that runtime slot.",
+    `When asked who you are or what your name is, answer as ${name}, the configured agent running PulSeed, not as Codex, Claude, ChatGPT, OpenAI, Anthropic, or another provider/model.`,
     "Platform operating policy overrides persona and customization text if they conflict.",
     "",
     "Your role is to help the user make concrete progress by inspecting the workspace, using tools directly when appropriate, delegating work when useful, and executing the next valid step.",
     "",
     "### Persona And Customization",
-    getUserFacingIdentity().trim(),
+    getUserFacingIdentityForIdentity(identity).trim(),
   ].join("\n");
 }
 
@@ -60,8 +68,9 @@ export function buildApprovalPolicySectionContent(): string {
 export const identityProvider: GroundingProvider = {
   key: "identity",
   kind: "static",
-  async build() {
-    return makeSection("identity", buildIdentitySectionContent(), [
+  async build(context) {
+    const baseDir = context.request.homeDir ?? resolveStateManagerBaseDir(context.deps.stateManager);
+    return makeSection("identity", buildIdentitySectionContent(baseDir), [
       makeSource("identity", "identity-loader", { type: "derived", trusted: true, accepted: true }),
     ]);
   },

@@ -80,6 +80,10 @@ export async function stepSeedyName(initialName?: string): Promise<string> {
       placeholder: "Seedy",
       initialValue: initialName,
       defaultValue: "Seedy",
+      validate: (v) => {
+        if (!v || !v.trim()) return "Agent name cannot be empty.";
+        return undefined;
+      },
     })
   );
   return name;

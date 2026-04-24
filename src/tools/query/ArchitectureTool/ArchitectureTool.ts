@@ -88,7 +88,7 @@ export class ArchitectureTool implements ITool<ArchitectureToolInput, unknown> {
       core_concept: {
         model: "4-element: Goal (with thresholds) -> Current State (observation + confidence) -> Gap -> Constraints",
         core_loop: "observe -> gap -> score -> task -> execute -> verify (NEVER STOP)",
-        execution_boundary: "PulSeed always delegates. Direct actions: LLM calls (thinking) + state read/write only.",
+        execution_boundary: "PulSeed uses available tools directly for safe local work and delegates when specialization, parallelism, or context isolation helps.",
       },
       layers: LAYERS,
       modules: MODULE_DESCRIPTIONS,

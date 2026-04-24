@@ -14,6 +14,8 @@ export interface Identity {
   user: string;
 }
 
+export type SelfIdentityLanguage = "ja" | "en";
+
 export const DEFAULT_SEED = `# Seedy
 
 I'm Seedy — a small seed with big ambitions.
@@ -70,15 +72,18 @@ function parseAgentName(seedContent: string): string {
   return match?.[1]?.trim() ?? "Seedy";
 }
 
-export function loadIdentity(): Identity {
-  if (_cache) return _cache;
-
-  const base = getPulseedDirPath();
+export function loadIdentityFromBaseDir(base: string): Identity {
   const seed = readFileSafe(path.join(base, "SEED.md"), DEFAULT_SEED);
   const root = readFileSafe(path.join(base, "ROOT.md"), DEFAULT_ROOT);
   const user = readFileSafe(path.join(base, "USER.md"), DEFAULT_USER);
 
-  _cache = { name: parseAgentName(seed), seed, root, user };
+  return { name: parseAgentName(seed), seed, root, user };
+}
+
+export function loadIdentity(): Identity {
+  if (_cache) return _cache;
+
+  _cache = loadIdentityFromBaseDir(getPulseedDirPath());
   return _cache;
 }
 
@@ -91,7 +96,27 @@ export function getAgentName(): string {
 }
 
 function getCoreIdentity(name: string): string {
-  return `${name} runs PulSeed, an AI agent orchestration system.`;
+  return `${name} is the configured agent identity running PulSeed, an AI agent orchestration system.`;
+}
+
+export function getRuntimeIdentitySlotContent(identity: Identity = loadIdentity()): string {
+  const { name } = identity;
+  return [
+    "Runtime Identity Slot",
+    "- PulSeed owns self-identity through the runtime identity files: SEED.md, ROOT.md, and USER.md.",
+    "- SEED.md is the canonical local setup file for the active agent name; its first Markdown heading is the name.",
+    `- Active agent name: ${name}.`,
+    `- When asked who you are or what your name is, answer as ${name}, the configured agent running PulSeed.`,
+    "- Do not identify as Codex, Claude, ChatGPT, OpenAI, Anthropic, or any provider/model unless explicitly discussing the backend provider.",
+  ].join("\n");
+}
+
+export function getSelfIdentityResponse(language: SelfIdentityLanguage = "ja", identity: Identity = loadIdentity()): string {
+  const { name } = identity;
+  if (language === "en") {
+    return `I am ${name}, the configured agent identity running PulSeed. My self-identity is owned by the PulSeed runtime SEED.md/ROOT.md/USER.md files, so I follow that runtime identity rather than a provider or model name.`;
+  }
+  return `私は${name}です。PulSeedを動かす設定済みエージェントとして応答しています。自己認識はPulSeed runtimeのSEED.md/ROOT.md/USER.mdで管理され、プロバイダーやモデル名ではなく、このruntime identityに従います。`;
 }
 
 export function getInternalIdentityPrefix(role: string): string {
@@ -105,10 +130,18 @@ function isUserContentMeaningful(user: string): boolean {
 }
 
 export function getUserFacingIdentity(): string {
-  const { name, seed, root, user } = loadIdentity();
-  const parts = [getCoreIdentity(name), seed.trim(), root.trim()];
+  return getUserFacingIdentityForIdentity(loadIdentity());
+}
+
+export function getUserFacingIdentityForIdentity(identity: Identity): string {
+  const { name, seed, root, user } = identity;
+  const parts = [getCoreIdentity(name), getRuntimeIdentitySlotContent(identity), seed.trim(), root.trim()];
   if (isUserContentMeaningful(user)) {
     parts.push(user.trim());
   }
   return parts.join("\n\n---\n\n");
+}
+
+export function getSelfIdentityResponseForBaseDir(baseDir: string, language: SelfIdentityLanguage = "ja"): string {
+  return getSelfIdentityResponse(language, loadIdentityFromBaseDir(baseDir));
 }
