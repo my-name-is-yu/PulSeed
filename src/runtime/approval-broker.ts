@@ -90,12 +90,12 @@ export class ApprovalBroker {
   async requestApproval(
     goalId: string,
     task: ApprovalTaskRequest,
-    timeoutMs = this.defaultTimeoutMs
+    timeoutMs = this.defaultTimeoutMs,
+    approvalId = this.createId()
   ): Promise<boolean> {
     await this.start();
 
     const createdAt = this.now();
-    const approvalId = this.createId();
     const record: ApprovalRecord = {
       approval_id: approvalId,
       goal_id: goalId,

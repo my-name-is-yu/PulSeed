@@ -1,3 +1,4 @@
+import * as path from "node:path";
 import { StrategyManager } from "./strategy-manager.js";
 import { StateManager } from "../../base/state/state-manager.js";
 import { StrategySchema, parseStrategy } from "../../base/types/strategy.js";
@@ -21,6 +22,7 @@ import {
   getCurrentGapForDimension as _getCurrentGapForDimension,
   calculateGapDeltaForStrategy as _calculateGapDeltaForStrategy,
 } from "./portfolio-rebalance.js";
+import { ApprovalStore } from "../../runtime/store/approval-store.js";
 import {
   isWaitStrategy,
   checkStrategyTermination,
@@ -397,7 +399,13 @@ export class PortfolioManager {
       (gId, dim) => this.getCurrentGapForDimension(gId, dim),
       (sId, state) => this.strategyManager.updateState(sId, state as StrategyState),
       async (gId) => (await this.strategyManager.getPortfolio(gId))?.strategies ?? [],
-      (gId, sId) => this.stateManager.readRaw(`strategies/${gId}/wait-meta/${sId}.json`)
+      (gId, sId) => this.stateManager.readRaw(`strategies/${gId}/wait-meta/${sId}.json`),
+      () => this.stateManager.readRaw("capability_registry.json"),
+      (approvalId) => {
+        const getBaseDir = this.stateManager.getBaseDir;
+        if (typeof getBaseDir !== "function") return null;
+        return new ApprovalStore(path.join(getBaseDir.call(this.stateManager), "runtime")).load(approvalId);
+      }
     );
   }
 

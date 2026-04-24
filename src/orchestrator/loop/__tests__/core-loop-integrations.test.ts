@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
+import * as path from "node:path";
 import {
   CoreLoop,
   type CoreLoopDeps,
@@ -34,6 +35,7 @@ import { SessionManager } from "../../execution/session-manager.js";
 import { TrustManager } from "../../../platform/traits/trust-manager.js";
 import { ReportingEngine as RealReportingEngine } from "../../../reporting/reporting-engine.js";
 import { CapabilityDetector } from "../../../platform/observation/capability-detector.js";
+import { ApprovalStore } from "../../../runtime/store/approval-store.js";
 import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 import { makeDimension, makeGoal } from "../../../../tests/helpers/fixtures.js";
 import { createMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
@@ -1047,6 +1049,53 @@ describe("CoreLoop", async () => {
       expect(portfolioManager.rebalance).toHaveBeenCalledWith("goal-1", waitTrigger);
     });
 
+    it("continues to task generation when wait rebalance requests a new strategy generation", async () => {
+      const { deps, mocks } = createMockDeps(tmpDir);
+      await mocks.stateManager.saveGoal(makeGoal());
+
+      const waitStrategy = {
+        id: "wait-strategy-1",
+        state: "active",
+        goal_id: "goal-1",
+      };
+      mocks.strategyManager.getPortfolio.mockReturnValue({
+        goal_id: "goal-1",
+        strategies: [waitStrategy],
+        rebalance_interval: { value: 7, unit: "days" },
+        last_rebalanced_at: new Date().toISOString(),
+      });
+
+      const waitTrigger = {
+        type: "stall_detected" as const,
+        strategy_id: waitStrategy.id,
+        details: "observation capability missing",
+      };
+      const portfolioManager = createMockPortfolioManager();
+      portfolioManager.isWaitStrategy.mockReturnValue(true);
+      portfolioManager.handleWaitStrategyExpiry.mockReturnValue({
+        status: "unknown",
+        goal_id: "goal-1",
+        strategy_id: waitStrategy.id,
+        rebalance_trigger: waitTrigger,
+      });
+      portfolioManager.rebalance.mockReturnValue({
+        triggered_by: "stall_detected",
+        adjustments: [],
+        terminated_strategies: [waitStrategy.id],
+        new_generation_needed: true,
+        timestamp: new Date().toISOString(),
+      });
+
+      const depsWithPM = { ...deps, portfolioManager: portfolioManager as any };
+      const loop = new CoreLoop(depsWithPM, { delayBetweenLoopsMs: 0 });
+      const result = await loop.runOneIteration("goal-1", 0);
+
+      expect(result.waitExpired).toBe(true);
+      expect(result.waitObserveOnly).toBe(false);
+      expect(mocks.strategyManager.onStallDetected).toHaveBeenCalledWith("goal-1", 3, expect.any(String));
+      expect(mocks.taskLifecycle.runTaskCycle).toHaveBeenCalledOnce();
+    });
+
     it("marks waitExpired when WaitStrategy expiry does not require rebalance", async () => {
       const { deps, mocks } = createMockDeps(tmpDir);
       await mocks.stateManager.saveGoal(makeGoal());
@@ -1077,10 +1126,14 @@ describe("CoreLoop", async () => {
 
       expect(result.waitExpired).toBe(true);
       expect(result.waitStrategyId).toBe(waitStrategy.id);
+      expect(result.waitExpiryOutcome).toMatchObject({ status: "improved" });
+      expect(result.skipped).toBe(true);
+      expect(result.skipReason).toBe("wait_observe_only");
+      expect(mocks.taskLifecycle.runTaskCycle).not.toHaveBeenCalled();
       expect(portfolioManager.rebalance).not.toHaveBeenCalled();
     });
 
-    it("uses WaitStrategy.wait_until to suppress stall checks for its primary dimension", async () => {
+    it("keeps a not-due WaitStrategy observe-only and does not generate a task", async () => {
       const { deps, mocks } = createMockDeps(tmpDir);
       await mocks.stateManager.saveGoal(makeGoal({
         dimensions: [makeDimension({ name: "dim1" })],
@@ -1104,14 +1157,213 @@ describe("CoreLoop", async () => {
 
       const portfolioManager = createMockPortfolioManager();
       portfolioManager.isWaitStrategy.mockReturnValue(true);
+      portfolioManager.handleWaitStrategyExpiry.mockReturnValue({
+        status: "not_due",
+        goal_id: "goal-1",
+        strategy_id: waitStrategy.id,
+      });
 
       const depsWithPM = { ...deps, portfolioManager: portfolioManager as any };
       const loop = new CoreLoop(depsWithPM, { delayBetweenLoopsMs: 0 });
       const result = await loop.runOneIteration("goal-1", 0);
 
-      expect(mocks.stallDetector.isSuppressed).toHaveBeenCalledWith(waitUntil);
+      expect(result.waitSuppressed).toBe(true);
+      expect(result.waitStrategyId).toBe(waitStrategy.id);
+      expect(result.waitExpiryOutcome).toMatchObject({ status: "not_due" });
+      expect(result.skipped).toBe(true);
+      expect(result.skipReason).toBe("wait_not_due");
+      expect(mocks.taskLifecycle.runTaskCycle).not.toHaveBeenCalled();
+    });
+
+    it("observes a due WaitStrategy even when an earlier active wait is not due", async () => {
+      const { deps, mocks } = createMockDeps(tmpDir);
+      await mocks.stateManager.saveGoal(makeGoal());
+
+      const notDueWait = {
+        id: "wait-not-due",
+        state: "active",
+        goal_id: "goal-1",
+      };
+      const dueWait = {
+        id: "wait-due",
+        state: "active",
+        goal_id: "goal-1",
+      };
+      mocks.strategyManager.getPortfolio.mockReturnValue({
+        goal_id: "goal-1",
+        strategies: [notDueWait, dueWait],
+        rebalance_interval: { value: 7, unit: "days" },
+        last_rebalanced_at: new Date().toISOString(),
+      });
+
+      const waitTrigger = {
+        type: "stall_detected" as const,
+        strategy_id: dueWait.id,
+        details: "due wait worsened",
+      };
+      const portfolioManager = createMockPortfolioManager();
+      portfolioManager.isWaitStrategy.mockReturnValue(true);
+      portfolioManager.handleWaitStrategyExpiry
+        .mockReturnValueOnce({
+          status: "not_due",
+          goal_id: "goal-1",
+          strategy_id: notDueWait.id,
+        })
+        .mockReturnValueOnce({
+          status: "worsened",
+          goal_id: "goal-1",
+          strategy_id: dueWait.id,
+          rebalance_trigger: waitTrigger,
+        });
+
+      const depsWithPM = { ...deps, portfolioManager: portfolioManager as any };
+      const loop = new CoreLoop(depsWithPM, { delayBetweenLoopsMs: 0 });
+      const result = await loop.runOneIteration("goal-1", 0);
+
+      expect(portfolioManager.handleWaitStrategyExpiry).toHaveBeenCalledTimes(2);
+      expect(result.waitExpired).toBe(true);
+      expect(result.waitStrategyId).toBe(dueWait.id);
+      expect(result.waitExpiryOutcome).toMatchObject({ status: "worsened" });
+      expect(portfolioManager.rebalance).toHaveBeenCalledWith("goal-1", waitTrigger);
+      expect(mocks.taskLifecycle.runTaskCycle).not.toHaveBeenCalled();
+    });
+
+    it("persists approval_required wait outcomes as pending runtime approvals", async () => {
+      const { deps, mocks } = createMockDeps(tmpDir);
+      await mocks.stateManager.saveGoal(makeGoal());
+
+      const waitStrategy = {
+        id: "wait-approval",
+        state: "active",
+        goal_id: "goal-1",
+      };
+      mocks.strategyManager.getPortfolio.mockReturnValue({
+        goal_id: "goal-1",
+        strategies: [waitStrategy],
+        rebalance_interval: { value: 7, unit: "days" },
+        last_rebalanced_at: new Date().toISOString(),
+      });
+
+      const portfolioManager = createMockPortfolioManager();
+      portfolioManager.isWaitStrategy.mockReturnValue(true);
+      portfolioManager.handleWaitStrategyExpiry.mockReturnValue({
+        status: "approval_required",
+        goal_id: "goal-1",
+        strategy_id: waitStrategy.id,
+        details: "Approve external submission",
+      });
+
+      const depsWithPM = { ...deps, portfolioManager: portfolioManager as any };
+      const loop = new CoreLoop(depsWithPM, { delayBetweenLoopsMs: 0 });
+      const result = await loop.runOneIteration("goal-1", 0);
+
+      const approvalStore = new ApprovalStore(path.join(tmpDir, "runtime"));
+      const pending = await approvalStore.listPending();
+
+      expect(result.waitExpired).toBe(true);
+      expect(result.waitApprovalId).toBe(`wait-goal-1-${waitStrategy.id}`);
+      expect(pending).toHaveLength(1);
+      expect(pending[0]).toMatchObject({
+        approval_id: result.waitApprovalId,
+        goal_id: "goal-1",
+        state: "pending",
+      });
+      expect(pending[0]!.payload).toMatchObject({
+        task: {
+          id: `wait:${waitStrategy.id}`,
+          action: "wait_strategy_resume_approval",
+          description: "Approve external submission",
+        },
+        wait_strategy_id: waitStrategy.id,
+      });
+      expect(mocks.taskLifecycle.runTaskCycle).not.toHaveBeenCalled();
+    });
+
+    it("routes approval_required wait outcomes through the live approval broker when available", async () => {
+      const { deps, mocks } = createMockDeps(tmpDir);
+      await mocks.stateManager.saveGoal(makeGoal());
+
+      const waitStrategy = {
+        id: "wait-live-approval",
+        state: "active",
+        goal_id: "goal-1",
+      };
+      mocks.strategyManager.getPortfolio.mockReturnValue({
+        goal_id: "goal-1",
+        strategies: [waitStrategy],
+        rebalance_interval: { value: 7, unit: "days" },
+        last_rebalanced_at: new Date().toISOString(),
+      });
+
+      const portfolioManager = createMockPortfolioManager();
+      portfolioManager.isWaitStrategy.mockReturnValue(true);
+      portfolioManager.handleWaitStrategyExpiry.mockReturnValue({
+        status: "approval_required",
+        goal_id: "goal-1",
+        strategy_id: waitStrategy.id,
+        details: "Approve external submission",
+      });
+      const waitApprovalBroker = {
+        requestApproval: vi.fn().mockResolvedValue(false),
+      };
+
+      const depsWithPM = { ...deps, portfolioManager: portfolioManager as any, waitApprovalBroker };
+      const loop = new CoreLoop(depsWithPM, { delayBetweenLoopsMs: 0 });
+      const result = await loop.runOneIteration("goal-1", 0);
+
+      expect(result.waitApprovalId).toBe(`wait-goal-1-${waitStrategy.id}`);
+      expect(waitApprovalBroker.requestApproval).toHaveBeenCalledWith(
+        "goal-1",
+        {
+          id: `wait:${waitStrategy.id}`,
+          description: "Approve external submission",
+          action: "wait_strategy_resume_approval",
+        },
+        24 * 60 * 60 * 1000,
+        result.waitApprovalId
+      );
+      expect(mocks.taskLifecycle.runTaskCycle).not.toHaveBeenCalled();
+    });
+
+    it("handles active WaitStrategy before stall checks", async () => {
+      const { deps, mocks } = createMockDeps(tmpDir);
+      await mocks.stateManager.saveGoal(makeGoal({
+        dimensions: [makeDimension({ name: "dim1" })],
+      }));
+
+      const waitUntil = new Date(Date.now() + 100_000).toISOString();
+      const waitStrategy = {
+        id: "wait-strategy-1",
+        state: "active",
+        goal_id: "goal-1",
+        primary_dimension: "dim1",
+        wait_until: waitUntil,
+      };
+      mocks.strategyManager.getPortfolio.mockReturnValue({
+        goal_id: "goal-1",
+        strategies: [waitStrategy],
+        rebalance_interval: { value: 7, unit: "days" },
+        last_rebalanced_at: new Date().toISOString(),
+      });
+      mocks.stallDetector.isSuppressed.mockReturnValue(true);
+
+      const portfolioManager = createMockPortfolioManager();
+      portfolioManager.isWaitStrategy.mockReturnValue(true);
+      portfolioManager.handleWaitStrategyExpiry.mockReturnValue({
+        status: "not_due",
+        goal_id: "goal-1",
+        strategy_id: waitStrategy.id,
+      });
+
+      const depsWithPM = { ...deps, portfolioManager: portfolioManager as any };
+      const loop = new CoreLoop(depsWithPM, { delayBetweenLoopsMs: 0 });
+      const result = await loop.runOneIteration("goal-1", 0);
+
+      expect(portfolioManager.handleWaitStrategyExpiry).toHaveBeenCalledWith("goal-1", waitStrategy.id);
+      expect(mocks.stallDetector.isSuppressed).not.toHaveBeenCalled();
       expect(mocks.stallDetector.checkDimensionStall).not.toHaveBeenCalled();
       expect(result.waitSuppressed).toBe(true);
+      expect(mocks.taskLifecycle.runTaskCycle).not.toHaveBeenCalled();
     });
 
     it("portfolio rebalance errors are non-fatal", async () => {

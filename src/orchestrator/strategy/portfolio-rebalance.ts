@@ -19,9 +19,11 @@ import {
   normalizeWaitMetadata,
   resolveWaitNextObserveAt,
   type Strategy,
+  type WaitMetadata,
   type WaitExpiryOutcome,
   type WaitStrategy,
 } from "../../base/types/strategy.js";
+import { CapabilityRegistrySchema } from "../../base/types/capability.js";
 
 /**
  * Get the current gap value for a specific dimension of a goal.
@@ -297,7 +299,9 @@ export async function handleWaitStrategyExpiry(
   getGap: (goalId: string, dimension: string) => number | null | Promise<number | null>,
   updateState: (strategyId: string, state: string) => void | Promise<void>,
   getPortfolioStrategies: (goalId: string) => Strategy[] | Promise<Strategy[]>,
-  getWaitMetadata?: (goalId: string, strategyId: string) => unknown | null | Promise<unknown | null>
+  getWaitMetadata?: (goalId: string, strategyId: string) => unknown | null | Promise<unknown | null>,
+  getCapabilityRegistry?: () => unknown | null | Promise<unknown | null>,
+  getWaitApprovalRecord?: (approvalId: string) => unknown | null | Promise<unknown | null>
 ): Promise<WaitExpiryOutcome> {
   if (!isWaitStrategy(strategy)) {
     return {
@@ -323,6 +327,25 @@ export async function handleWaitStrategyExpiry(
       goal_id: goalId,
       strategy_id: strategyId,
       details: `WaitStrategy is not due until ${nextObserveAt ?? waitStrategy.wait_until}`,
+    };
+  }
+
+  const approvalOutcome = await approvalOutcomeFromWaitMetadata(goalId, strategyId, metadata, getCapabilityRegistry, getWaitApprovalRecord);
+  if (approvalOutcome) return approvalOutcome;
+
+  const missingCapabilities = await missingRequiredCapabilities(metadata, getCapabilityRegistry);
+  if (missingCapabilities.length > 0) {
+    const details = `WaitStrategy observation capability missing: ${missingCapabilities.join(", ")}`;
+    return {
+      status: "unknown",
+      goal_id: goalId,
+      strategy_id: strategyId,
+      details,
+      rebalance_trigger: {
+        type: "stall_detected",
+        strategy_id: strategyId,
+        details,
+      },
     };
   }
 
@@ -394,6 +417,105 @@ export async function handleWaitStrategyExpiry(
     details: rebalanceTrigger.details,
     rebalance_trigger: rebalanceTrigger,
   };
+}
+
+async function approvalOutcomeFromWaitMetadata(
+  goalId: string,
+  strategyId: string,
+  metadata: WaitMetadata,
+  getCapabilityRegistry?: () => unknown | null | Promise<unknown | null>,
+  getWaitApprovalRecord?: (approvalId: string) => unknown | null | Promise<unknown | null>
+): Promise<WaitExpiryOutcome | null> {
+  const resumePlan = metadata.resume_plan;
+  if (resumePlan.action === "request_approval") {
+    const existingApproval = await getApprovedWaitApproval(goalId, strategyId, getWaitApprovalRecord);
+    if (existingApproval) return null;
+    return {
+      status: "approval_required",
+      goal_id: goalId,
+      strategy_id: strategyId,
+      details: resumePlan.reason ?? "WaitStrategy requires approval before continuing",
+    };
+  }
+
+  const approvalPolicy = asRecord(metadata.approval_policy);
+  if (!approvalPolicy) return null;
+
+  const required = approvalPolicy["required"] === true || approvalPolicy["requires_approval"] === true;
+  if (!required) return null;
+
+  const existingApproval = await getApprovedWaitApproval(goalId, strategyId, getWaitApprovalRecord);
+  if (existingApproval) return null;
+
+  const capabilityName = typeof approvalPolicy["capability"] === "string"
+    ? approvalPolicy["capability"]
+    : typeof approvalPolicy["approved_capability"] === "string"
+      ? approvalPolicy["approved_capability"]
+      : null;
+  if (capabilityName && await hasAvailableCapability(capabilityName, getCapabilityRegistry)) {
+    return null;
+  }
+
+  return {
+    status: "approval_required",
+    goal_id: goalId,
+    strategy_id: strategyId,
+    details: capabilityName
+      ? `WaitStrategy requires approved capability: ${capabilityName}`
+      : "WaitStrategy requires approval before continuing",
+  };
+}
+
+async function getApprovedWaitApproval(
+  goalId: string,
+  strategyId: string,
+  getWaitApprovalRecord?: (approvalId: string) => unknown | null | Promise<unknown | null>
+): Promise<boolean> {
+  if (!getWaitApprovalRecord) return false;
+  const record = await getWaitApprovalRecord(buildWaitApprovalId(goalId, strategyId));
+  if (!record || typeof record !== "object") return false;
+  return (record as Record<string, unknown>)["state"] === "approved";
+}
+
+async function missingRequiredCapabilities(
+  metadata: WaitMetadata,
+  getCapabilityRegistry?: () => unknown | null | Promise<unknown | null>
+): Promise<string[]> {
+  const raw = (metadata as Record<string, unknown>)["required_capabilities"];
+  if (!Array.isArray(raw) || raw.length === 0) return [];
+
+  const missing: string[] = [];
+  for (const item of raw) {
+    const name = typeof item === "string"
+      ? item
+      : asRecord(item) && typeof asRecord(item)?.["name"] === "string"
+        ? asRecord(item)?.["name"] as string
+        : null;
+    if (!name) continue;
+    if (!await hasAvailableCapability(name, getCapabilityRegistry)) missing.push(name);
+  }
+  return missing;
+}
+
+async function hasAvailableCapability(
+  capabilityName: string,
+  getCapabilityRegistry?: () => unknown | null | Promise<unknown | null>
+): Promise<boolean> {
+  if (!getCapabilityRegistry) return false;
+  const raw = await getCapabilityRegistry();
+  const parsed = CapabilityRegistrySchema.safeParse(raw);
+  if (!parsed.success) return false;
+  return parsed.data.capabilities.some(
+    (capability) => capability.name === capabilityName && capability.status === "available"
+  );
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" ? value as Record<string, unknown> : null;
+}
+
+export function buildWaitApprovalId(goalId: string, strategyId: string): string {
+  return `wait-${encodeURIComponent(goalId)}-${encodeURIComponent(strategyId)}`;
 }
 
 export function rebalanceTriggerFromWaitExpiryOutcome(

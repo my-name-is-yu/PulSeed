@@ -291,6 +291,7 @@ export class DaemonRunner {
       store: this.approvalStore,
       logger: this.logger,
     });
+    this.coreLoop.setWaitApprovalBroker?.(this.approvalBroker);
     this.journalQueue = new JournalBackedQueue({
       journalPath: path.join(this.runtimeRoot, "queue.json"),
       maxAttempts: RUNTIME_JOURNAL_MAX_ATTEMPTS,
@@ -819,6 +820,7 @@ export class DaemonRunner {
     try {
       const freshDeps = await this.refreshResidentDeps();
       this.coreLoop = freshDeps.coreLoop;
+      this.coreLoop.setWaitApprovalBroker?.(this.approvalBroker ?? undefined);
       this.curiosityEngine = freshDeps.curiosityEngine;
       this.goalNegotiator = freshDeps.goalNegotiator;
       this.llmClient = freshDeps.llmClient;

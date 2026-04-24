@@ -107,6 +107,11 @@ vi.mock("../core-loop/preparation.js", () => ({
 vi.mock("../core-loop/task-cycle.js", () => ({
   checkCompletionAndMilestones: vi.fn().mockResolvedValue(undefined),
   detectStallsAndRebalance: vi.fn().mockResolvedValue(undefined),
+  evaluateWaitStrategiesForObserveOnly: vi.fn().mockResolvedValue({
+    observeOnly: false,
+    newGenerationNeeded: false,
+    outcome: null,
+  }),
   checkDependencyBlock: vi.fn().mockReturnValue(false),
   runTaskCycleWithContext: vi.fn().mockResolvedValue(true),
 }));

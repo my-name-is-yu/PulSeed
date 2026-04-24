@@ -1,9 +1,14 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { PortfolioManager } from "../portfolio-manager.js";
 import type { Strategy, WaitStrategy, Portfolio } from "../../../base/types/strategy.js";
 import type { StrategyManager } from "../../strategy-manager.js";
 import type { StateManager } from "../../../base/state/state-manager.js";
 import type { RebalanceTrigger } from "../../../base/types/portfolio.js";
+import { ApprovalStore } from "../../../runtime/store/approval-store.js";
+import { buildWaitApprovalId } from "../portfolio-rebalance.js";
+import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 
 // ─── Helpers ───
 
@@ -79,6 +84,7 @@ function createMockStateManager(): StateManager {
     readRaw: vi.fn().mockResolvedValue(null),
     writeRaw: vi.fn().mockResolvedValue(undefined),
     loadGoalState: vi.fn().mockReturnValue(null),
+    getBaseDir: vi.fn().mockReturnValue(""),
   } as unknown as StateManager;
 }
 
@@ -856,6 +862,140 @@ describe("PortfolioManager", () => {
       expect(result!.rebalance_trigger?.type).toBe("stall_detected");
       expect(result!.rebalance_trigger?.strategy_id).toBe("ws1");
       expect(mockStrategyManager.updateState).toHaveBeenCalledWith("ws1", "terminated");
+    });
+
+    it("returns unknown with a rebalance trigger when required observation capability is missing", async () => {
+      const wait = makeWaitStrategy({
+        id: "ws1",
+        state: "active",
+        wait_until: new Date(Date.now() - 100_000).toISOString(),
+        gap_snapshot_at_start: 0.5,
+        primary_dimension: "quality",
+      });
+      const portfolio = makePortfolio([wait]);
+      (mockStrategyManager.getPortfolio as ReturnType<typeof vi.fn>).mockReturnValue(portfolio);
+      (mockStateManager.readRaw as ReturnType<typeof vi.fn>).mockImplementation((path: string) => {
+        if (path === "strategies/goal-1/wait-meta/ws1.json") {
+          return {
+            schema_version: 1,
+            wait_until: wait.wait_until,
+            conditions: [{ type: "time_until", until: wait.wait_until }],
+            resume_plan: { action: "complete_wait" },
+            required_capabilities: ["kaggle_leaderboard_read"],
+          };
+        }
+        if (path === "capability_registry.json") {
+          return {
+            capabilities: [],
+            last_checked: new Date().toISOString(),
+          };
+        }
+        return { quality: 0.5 };
+      });
+
+      const result = await pm.handleWaitStrategyExpiry("goal-1", "ws1");
+
+      expect(result).toMatchObject({
+        status: "unknown",
+        strategy_id: "ws1",
+        rebalance_trigger: {
+          type: "stall_detected",
+          strategy_id: "ws1",
+        },
+      });
+      expect(result?.details).toContain("kaggle_leaderboard_read");
+      expect(mockStrategyManager.updateState).not.toHaveBeenCalled();
+    });
+
+    it("returns approval_required when wait metadata requires an unapproved capability", async () => {
+      const wait = makeWaitStrategy({
+        id: "ws1",
+        state: "active",
+        wait_until: new Date(Date.now() - 100_000).toISOString(),
+        gap_snapshot_at_start: 0.5,
+        primary_dimension: "quality",
+      });
+      const portfolio = makePortfolio([wait]);
+      (mockStrategyManager.getPortfolio as ReturnType<typeof vi.fn>).mockReturnValue(portfolio);
+      (mockStateManager.readRaw as ReturnType<typeof vi.fn>).mockImplementation((path: string) => {
+        if (path === "strategies/goal-1/wait-meta/ws1.json") {
+          return {
+            schema_version: 1,
+            wait_until: wait.wait_until,
+            conditions: [{ type: "time_until", until: wait.wait_until }],
+            resume_plan: { action: "complete_wait" },
+            approval_policy: { required: true, capability: "kaggle_submit_approved" },
+          };
+        }
+        if (path === "capability_registry.json") {
+          return {
+            capabilities: [],
+            last_checked: new Date().toISOString(),
+          };
+        }
+        return { quality: 0.5 };
+      });
+
+      const result = await pm.handleWaitStrategyExpiry("goal-1", "ws1");
+
+      expect(result).toMatchObject({ status: "approval_required", strategy_id: "ws1" });
+      expect(result?.details).toContain("kaggle_submit_approved");
+      expect(mockStrategyManager.updateState).not.toHaveBeenCalled();
+    });
+
+    it("continues expiry handling when a required wait approval is already approved", async () => {
+      const tmpDir = makeTempDir();
+      try {
+        const wait = makeWaitStrategy({
+          id: "ws1",
+          state: "active",
+          wait_until: new Date(Date.now() - 100_000).toISOString(),
+          gap_snapshot_at_start: 0.8,
+          primary_dimension: "quality",
+        });
+        const portfolio = makePortfolio([wait]);
+        const approvalId = buildWaitApprovalId("goal-1", wait.id);
+        const approvalStore = new ApprovalStore(path.join(tmpDir, "runtime"));
+        await approvalStore.saveResolved({
+          approval_id: approvalId,
+          goal_id: "goal-1",
+          request_envelope_id: approvalId,
+          correlation_id: approvalId,
+          state: "approved",
+          created_at: Date.now() - 10_000,
+          expires_at: Date.now() + 100_000,
+          resolved_at: Date.now(),
+          payload: { task: { id: `wait:${wait.id}`, description: "approved", action: "wait_strategy_resume_approval" } },
+        });
+
+        (mockStrategyManager.getPortfolio as ReturnType<typeof vi.fn>).mockReturnValue(portfolio);
+        (mockStateManager.getBaseDir as ReturnType<typeof vi.fn>).mockReturnValue(tmpDir);
+        (mockStateManager.readRaw as ReturnType<typeof vi.fn>).mockImplementation((rawPath: string) => {
+          if (rawPath === "strategies/goal-1/wait-meta/ws1.json") {
+            return {
+              schema_version: 1,
+              wait_until: wait.wait_until,
+              conditions: [{ type: "time_until", until: wait.wait_until }],
+              resume_plan: { action: "complete_wait" },
+              approval_policy: { required: true, capability: "kaggle_submit_approved" },
+            };
+          }
+          if (rawPath === "capability_registry.json") {
+            return {
+              capabilities: [],
+              last_checked: new Date().toISOString(),
+            };
+          }
+          return { quality: 0.4 };
+        });
+
+        const result = await pm.handleWaitStrategyExpiry("goal-1", "ws1");
+
+        expect(result).toMatchObject({ status: "improved", strategy_id: "ws1" });
+        expect(mockStrategyManager.updateState).toHaveBeenCalledWith("ws1", "completed");
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+      }
     });
 
     it("returns null for non-existent strategy", async () => {

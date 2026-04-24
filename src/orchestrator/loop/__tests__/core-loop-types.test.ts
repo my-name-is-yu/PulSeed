@@ -29,16 +29,29 @@ describe("LoopIterationResult — wait telemetry fields (Gap 6)", () => {
     expect(result.waitSuppressed).toBeUndefined();
     expect(result.waitExpired).toBeUndefined();
     expect(result.waitStrategyId).toBeUndefined();
+    expect(result.waitObserveOnly).toBeUndefined();
+    expect(result.waitExpiryOutcome).toBeUndefined();
+    expect(result.waitApprovalId).toBeUndefined();
   });
 
-  it("combines all three wait telemetry fields", () => {
+  it("combines wait telemetry fields", () => {
     const result: LoopIterationResult = makeEmptyIterationResult("goal-1", 1, {
       waitSuppressed: false,
       waitExpired: true,
       waitStrategyId: "ws-123",
+      waitObserveOnly: true,
+      waitExpiryOutcome: {
+        status: "improved",
+        goal_id: "goal-1",
+        strategy_id: "ws-123",
+      },
+      waitApprovalId: "wait-goal-1-ws-123",
     });
     expect(result.waitSuppressed).toBe(false);
     expect(result.waitExpired).toBe(true);
     expect(result.waitStrategyId).toBe("ws-123");
+    expect(result.waitObserveOnly).toBe(true);
+    expect(result.waitExpiryOutcome?.status).toBe("improved");
+    expect(result.waitApprovalId).toBe("wait-goal-1-ws-123");
   });
 });

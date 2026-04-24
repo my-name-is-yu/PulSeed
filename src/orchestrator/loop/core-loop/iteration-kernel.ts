@@ -15,6 +15,7 @@ import {
 import {
   checkCompletionAndMilestones,
   detectStallsAndRebalance,
+  evaluateWaitStrategiesForObserveOnly,
   checkDependencyBlock,
   runTaskCycleWithContext,
   type LoopCallbacks,
@@ -204,6 +205,20 @@ export class CoreIterationKernel {
         .map((g: any) => `${g.dimension_name}=${g.normalized_weighted_gap.toFixed(2)}`)
         .join(", ")}`
     );
+
+    const waitObservationDecision = await runPhase("wait-observation", () =>
+      evaluateWaitStrategiesForObserveOnly(ctx, goalId, goal, result)
+    );
+    if (waitObservationDecision.observeOnly) {
+      result.skipped = true;
+      result.skipReason =
+        waitObservationDecision.outcome?.status === "not_due"
+          ? "wait_not_due"
+          : "wait_observe_only";
+      await generateLoopReport(goalId, loopIndex, result, goal, this.deps.deps.reportingEngine, this.deps.logger);
+      result.elapsedMs = Date.now() - startTime;
+      return result;
+    }
 
     let driveScores: DriveScore[] = [];
     let highDissatisfactionDimensions: string[] = [];
