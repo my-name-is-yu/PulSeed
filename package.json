@@ -63,6 +63,7 @@
     "test:all": "npm run test:unit && npm run test:smoke && npm run test:integration",
     "test:e2e": "vitest run tests/e2e",
     "test:dogfood": "vitest run src/orchestrator/execution/agent-loop/__tests__/agent-loop-dogfood-benchmark.test.ts",
+    "test:kaggle-training": "vitest run src/orchestrator/execution/agent-loop/__tests__/kaggle-training-benchmark.test.ts",
     "dogfood:agentloop:real": "npm run build && node dist/orchestrator/execution/agent-loop/agent-loop-real-dogfood.js",
     "test:changed": "node scripts/test-changed.mjs",
     "test:watch": "vitest --config vitest.unit.config.ts",

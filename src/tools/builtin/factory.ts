@@ -22,6 +22,19 @@ import { WritePulseedFileTool } from "../fs/WritePulseedFileTool/WritePulseedFil
 import { AskHumanTool } from "../interaction/AskHumanTool/AskHumanTool.js";
 import { CreatePlanTool } from "../interaction/CreatePlanTool/CreatePlanTool.js";
 import { ReadPlanTool } from "../interaction/ReadPlanTool/ReadPlanTool.js";
+import {
+  KaggleCompareExperimentsTool,
+  KaggleExperimentListTool,
+  KaggleExperimentReadTool,
+  KaggleExperimentStartTool,
+  KaggleExperimentStopTool,
+  KaggleLeaderboardSnapshotTool,
+  KaggleListSubmissionsTool,
+  KaggleMetricReportTool,
+  KaggleSubmissionPrepareTool,
+  KaggleSubmitTool,
+  KaggleWorkspacePrepareTool,
+} from "../kaggle/index.js";
 import { ViewImageTool } from "../media/ViewImageTool/ViewImageTool.js";
 import { ArchiveGoalTool } from "../mutation/ArchiveGoalTool/ArchiveGoalTool.js";
 import { ConfigureNotificationRoutingTool } from "../mutation/ConfigureNotificationRoutingTool/ConfigureNotificationRoutingTool.js";
@@ -142,6 +155,17 @@ export function createBuiltinTools(deps?: BuiltinToolDeps): ITool[] {
     new GrepTool(),
     new HttpFetchTool(),
     new JsonQueryTool(),
+    new KaggleCompareExperimentsTool(defaultProcessSessionManager),
+    new KaggleExperimentListTool(defaultProcessSessionManager),
+    new KaggleExperimentReadTool(defaultProcessSessionManager),
+    new KaggleExperimentStartTool(defaultProcessSessionManager),
+    new KaggleExperimentStopTool(defaultProcessSessionManager),
+    new KaggleLeaderboardSnapshotTool(),
+    new KaggleListSubmissionsTool(),
+    new KaggleMetricReportTool(defaultProcessSessionManager),
+    new KaggleSubmissionPrepareTool(),
+    new KaggleSubmitTool(),
+    new KaggleWorkspacePrepareTool(),
     new ListDirTool(),
     new ProcessStatusTool(),
     new ProcessSessionListTool(defaultProcessSessionManager),

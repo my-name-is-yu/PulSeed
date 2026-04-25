@@ -8,6 +8,7 @@ dist/
 dist-tui-test/
 coverage/
 coverage-c8/
+.cache/
 .pulseed/
 .claire/
 .claude/
