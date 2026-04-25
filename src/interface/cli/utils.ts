@@ -43,6 +43,10 @@ Usage:
   pulseed report --goal <id>           Show latest report
   pulseed usage <scope>                Show usage totals for session, goal, daemon, or schedule
   pulseed approval list [--resolved]   List pending durable approvals
+  pulseed runtime sessions [--json] [--active]  List runtime sessions
+  pulseed runtime runs [--json] [--active] [--attention]  List background runs
+  pulseed runtime session <id> [--json]  Show one runtime session
+  pulseed runtime run <id> [--json]   Show one background run
   pulseed log --goal <id>              View observation and gap history log
   pulseed tui                          Launch the interactive TUI
   pulseed start --goal <id>            Start daemon mode for one or more goals

@@ -18,6 +18,7 @@ import { dispatchGoalCommand } from "./commands/goal-dispatch.js";
 import { cmdPluginList, cmdPluginInstall, cmdPluginRemove, cmdPluginUpdate, cmdPluginSearch } from "./commands/plugin.js";
 import { cmdReport } from "./commands/report.js";
 import { cmdApprovalList } from "./commands/approval.js";
+import { cmdRuntime } from "./commands/runtime.js";
 import {
   cmdProvider,
   cmdConfigCharacter,
@@ -251,6 +252,10 @@ export async function dispatchCommand(
     logger.error(`Unknown approval subcommand: "${approvalSubcommand}"`);
     logger.error("Available: approval list");
     return 1;
+  }
+
+  if (subcommand === "runtime") {
+    return await cmdRuntime(stateManager, argv.slice(1));
   }
 
   if (subcommand === "log") {
