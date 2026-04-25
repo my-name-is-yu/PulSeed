@@ -4,6 +4,7 @@ export * from "./agent-loop-compactor.js";
 export * from "./agent-loop-context-assembler.js";
 export * from "./agent-loop-default-profile.js";
 export * from "./agent-loop-dogfood-benchmark.js";
+export * from "./kaggle-training-benchmark.js";
 export * from "./agent-loop-evaluator.js";
 export * from "./agent-loop-events.js";
 export * from "./agent-loop-history.js";

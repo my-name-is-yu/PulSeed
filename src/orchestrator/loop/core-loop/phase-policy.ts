@@ -60,6 +60,9 @@ export const defaultCorePhasePolicies: Record<CorePhaseKind, CorePhasePolicy> = 
     allowedTools: [
       "process_session_read",
       "process_session_list",
+      "kaggle_experiment_read",
+      "kaggle_experiment_list",
+      "kaggle_metric_report",
       "process-status",
       "goal_state",
       "task_get",
