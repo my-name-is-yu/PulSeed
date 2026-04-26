@@ -43,7 +43,7 @@ export class ListDirTool implements ITool<ListDirInput, DirEntry[]> {
 
   async call(input: ListDirInput, context: ToolCallContext): Promise<ToolResult> {
     const startTime = Date.now();
-    const dirPath = path.isAbsolute(input.path) ? input.path : path.resolve(context.cwd, input.path);
+    const dirPath = validateFilePath(input.path, context.cwd, context.executionPolicy?.protectedPaths).resolved;
     try {
       const entries = await listDir(dirPath, input.recursive, input.maxDepth, input.includeHidden, 0);
       return {

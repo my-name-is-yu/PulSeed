@@ -18,6 +18,7 @@ import { buildAgentLoopBaseInstructions, buildChatStructuredOutputInstructions }
 import type { ApprovalRequest, ToolCallContext } from "../../../tools/types.js";
 import type { ExecutionPolicy, SubagentRole } from "./execution-policy.js";
 import { normalizeAssistantDisplayText } from "./chat-display-output.js";
+import { resolveGitRoot } from "../../../platform/observation/context-provider.js";
 
 const ChatAgentLoopFinalAnswerSectionSchema = z.object({
   title: z.string(),
@@ -114,7 +115,7 @@ export class ChatAgentLoopRunner {
     const started = Date.now();
     const model = input.model ?? this.deps.defaultModel ?? await this.deps.modelRegistry.defaultModel();
     const modelInfo = await this.deps.modelClient.getModelInfo(model);
-    const cwd = input.cwd ?? this.deps.cwd ?? process.cwd();
+    const cwd = resolveGitRoot(input.cwd ?? this.deps.cwd ?? process.cwd());
     const turnId = randomUUID();
     const outputMode = input.outputMode ?? { kind: "display_text" as const };
     const outputSchema: z.ZodType<unknown, z.ZodTypeDef, unknown> = outputMode.kind === "structured"

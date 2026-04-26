@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import * as os from "node:os";
 import { validateFilePath } from "../FileValidationTool.js";
 
 describe("validateFilePath", () => {
@@ -50,5 +51,10 @@ describe("validateFilePath", () => {
     const result = validateFilePath("build/output.txt", cwd, ["build"]);
     expect(result.valid).toBe(false);
     expect(result.error).toContain("build");
+  });
+
+  it("expands tilde paths before resolving", () => {
+    const result = validateFilePath("~/pulseed-test-file.txt", os.homedir());
+    expect(result.resolved).toBe(`${os.homedir()}/pulseed-test-file.txt`);
   });
 });

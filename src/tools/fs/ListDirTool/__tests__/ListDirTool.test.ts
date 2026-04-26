@@ -94,6 +94,12 @@ describe("ListDirTool", () => {
       expect(names).not.toContain(".hidden");
     });
 
+    it("expands tilde cwd before listing relative paths", async () => {
+      const result = await tool.call({ path: ".", recursive: false, maxDepth: 1, includeHidden: false }, makeContext("~"));
+      expect(result.success).toBe(true);
+      expect(result.summary).toContain(os.homedir());
+    });
+
     it("includes hidden files when includeHidden is true", async () => {
       const result = await tool.call({ path: tmpDir, recursive: false, maxDepth: 2, includeHidden: true }, makeContext());
       expect(result.success).toBe(true);
@@ -150,7 +156,7 @@ describe("ListDirTool", () => {
 
     it("artifacts contains the queried path", async () => {
       const result = await tool.call({ path: tmpDir, recursive: false, maxDepth: 2, includeHidden: false }, makeContext());
-      expect(result.artifacts).toContain(tmpDir);
+      expect(result.artifacts).toContain(await fs.realpath(tmpDir));
     });
   });
 });

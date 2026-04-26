@@ -429,7 +429,7 @@ export class ChatRunner {
   startSessionFromLoadedSession(session: LoadedChatSession): void {
     const chatSession = this.loadedSessionToChatSession(session);
     this.history = ChatHistory.fromSession(this.deps.stateManager, chatSession);
-    this.sessionCwd = session.cwd;
+    this.sessionCwd = resolveGitRoot(session.cwd);
     this.sessionActive = true;
     this.nativeAgentLoopStatePath = session.agentLoopStatePath ?? `chat/agentloop/${session.id}.state.json`;
     this.history.setAgentLoopStatePath(this.nativeAgentLoopStatePath);
@@ -1676,7 +1676,7 @@ export class ChatRunner {
       title: title || (baseSession.title ? `${baseSession.title} (fork)` : "Forked session"),
     };
     this.history = ChatHistory.fromSession(this.deps.stateManager, forkedSession);
-    this.sessionCwd = cwd;
+    this.sessionCwd = resolveGitRoot(cwd);
     this.sessionActive = true;
     this.nativeAgentLoopStatePath = `chat/agentloop/${sessionId}.state.json`;
     this.history.setAgentLoopStatePath(this.nativeAgentLoopStatePath);
@@ -1873,14 +1873,15 @@ export class ChatRunner {
     options: ChatRunnerExecutionOptions = {}
   ): Promise<ChatRunResult> {
     const eventContext = this.createEventContext();
-    const activeTurn = this.beginActiveTurn(eventContext, resolveGitRoot(cwd));
+    const resolvedCwd = resolveGitRoot(cwd);
+    const activeTurn = this.beginActiveTurn(eventContext, resolvedCwd);
     const resumeCommand = this.parseResumeCommand(input);
     const resumeOnly = resumeCommand !== null;
     const runtimeControlContext = options.runtimeControlContext ?? this.runtimeControlContext;
     const executionGoalId = options.goalId ?? this.deps.goalId;
 
     // Intercept commands before any adapter call
-    const commandResult = resumeOnly ? null : await this.handleCommand(input, cwd);
+    const commandResult = resumeOnly ? null : await this.handleCommand(input, resolvedCwd);
     if (commandResult !== null) {
       if (commandResult.output) {
         this.emitEvent({
@@ -1960,14 +1961,14 @@ export class ChatRunner {
 
     // Reuse session (interactive mode) or create a fresh one per call (1-shot mode)
     if (!this.sessionActive) {
-      const gitRoot = resolveGitRoot(cwd);
+      const gitRoot = resolvedCwd;
       const sessionId = crypto.randomUUID();
       this.history = new ChatHistory(this.deps.stateManager, sessionId, gitRoot);
       this.nativeAgentLoopStatePath = `chat/agentloop/${sessionId}.state.json`;
       this.history.setAgentLoopStatePath(this.nativeAgentLoopStatePath);
     }
-    const executionCwd = this.sessionCwd ?? cwd;
-    const gitRoot = this.sessionCwd ?? resolveGitRoot(cwd);
+    const executionCwd = this.sessionCwd ?? resolvedCwd;
+    const gitRoot = this.sessionCwd ?? resolvedCwd;
     activeTurn.cwd = gitRoot;
 
     // history is always assigned by this point (either by startSession or the block above)

@@ -16,6 +16,7 @@ import { buildAdapterRegistry, buildLLMClient } from "../../base/llm/provider-fa
 import { loadProviderConfig } from "../../base/llm/provider-config.js";
 import { TrustManager } from "../../platform/traits/trust-manager.js";
 import { ObservationEngine } from "../../platform/observation/observation-engine.js";
+import { resolveGitRoot } from "../../platform/observation/context-provider.js";
 import { KnowledgeManager } from "../../platform/knowledge/knowledge-manager.js";
 import { GoalDependencyGraph } from "../../orchestrator/goal/goal-dependency-graph.js";
 import { SessionManager } from "../../orchestrator/execution/session-manager.js";
@@ -469,7 +470,7 @@ export class CrossPlatformChatSessionManager {
       return existing;
     }
 
-    const cwd = cwdOverride?.trim() || process.cwd();
+    const cwd = resolveGitRoot(cwdOverride?.trim() || process.cwd());
     const runner = new ChatRunner(this.deps);
     runner.startSession(cwd);
 

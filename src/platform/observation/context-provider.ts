@@ -1,8 +1,9 @@
 import { execFile } from "node:child_process";
 import { accessSync } from "fs";
+import { homedir } from "node:os";
 import { promisify } from "node:util";
 import { readFile } from "fs/promises";
-import { join, dirname } from "path";
+import { join, dirname, resolve } from "path";
 import type { MemoryTier } from "../../base/types/memory-lifecycle.js";
 import type { ToolExecutor } from "../../tools/executor.js";
 import type { ToolCallContext } from "../../tools/types.js";
@@ -518,17 +519,28 @@ export async function buildChatContext(
  * Returns cwd itself if no git root is found.
  */
 export function resolveGitRoot(cwd: string): string {
-  let dir = cwd;
+  const resolvedCwd = expandWorkspacePath(cwd);
+  let dir = resolvedCwd;
   while (true) {
     try {
       accessSync(join(dir, ".git"));
       return dir;
     } catch {
       const parent = dirname(dir);
-      if (parent === dir) return cwd;
+      if (parent === dir) return resolvedCwd;
       dir = parent;
     }
   }
+}
+
+function expandWorkspacePath(value: string): string {
+  if (value === "~") {
+    return homedir();
+  }
+  if (value.startsWith("~/")) {
+    return resolve(homedir(), value.slice(2));
+  }
+  return resolve(value);
 }
 
 /**

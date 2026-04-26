@@ -69,6 +69,11 @@ export function resolveKaggleWorkspaceInput(workspace: string, competition: stri
   let resolved: string;
   if (path.isAbsolute(requested)) {
     resolved = path.resolve(requested);
+    if (resolved === runsRoot) {
+      resolved = expected;
+    }
+  } else if (requested === KAGGLE_RUNS_DIR) {
+    resolved = expected;
   } else if (requested === competition) {
     resolved = expected;
   } else if (requested === path.join(KAGGLE_RUNS_DIR, competition)) {

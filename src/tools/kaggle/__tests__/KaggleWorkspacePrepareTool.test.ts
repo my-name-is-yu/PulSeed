@@ -122,6 +122,27 @@ describe("KaggleWorkspacePrepareTool", () => {
     expect(data.workspace.state_relative_path).toBe("kaggle-runs/titanic");
   });
 
+  it("accepts the Kaggle runs root when competition identifies the workspace", async () => {
+    const tool = new KaggleWorkspacePrepareTool();
+    const stateRelative = await tool.call({
+      workspace: "kaggle-runs",
+      competition: "titanic",
+      metric_name: "rmse",
+      metric_direction: "minimize",
+    }, makeContext());
+    const absolute = await tool.call({
+      workspace: path.join(pulseedHome, "kaggle-runs"),
+      competition: "titanic",
+      metric_name: "rmse",
+      metric_direction: "minimize",
+    }, makeContext());
+
+    expect(stateRelative.success).toBe(true);
+    expect(absolute.success).toBe(true);
+    expect((stateRelative.data as { workspace: { state_relative_path: string } }).workspace.state_relative_path).toBe("kaggle-runs/titanic");
+    expect((absolute.data as { workspace: { state_relative_path: string } }).workspace.state_relative_path).toBe("kaggle-runs/titanic");
+  });
+
   it("rejects absolute workspace paths outside the fixed competition root", async () => {
     const tool = new KaggleWorkspacePrepareTool();
     const outside = await fs.mkdtemp(path.join(os.tmpdir(), "pulseed-kaggle-outside-"));

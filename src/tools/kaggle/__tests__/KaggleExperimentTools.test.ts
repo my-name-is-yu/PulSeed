@@ -200,6 +200,20 @@ fs.writeFileSync("experiments/exp-restart/metrics.json", JSON.stringify(${JSON.s
     ]));
   });
 
+  it("lists experiments when the model passes the Kaggle runs root instead of the competition workspace", async () => {
+    await writeMetrics(pulseedHome, "exp-files", "maximize", 0.7);
+    const listTool = new KaggleExperimentListTool(manager);
+
+    const listed = await listTool.call({
+      workspace: path.join(pulseedHome, "kaggle-runs"),
+      competition: "titanic",
+      include_exited: true,
+    }, makeContext(pulseedHome));
+
+    expect(listed.success).toBe(true);
+    expect((listed.data as Array<{ experiment_id: string }>).map((item) => item.experiment_id)).toContain("exp-files");
+  });
+
   it("stops the process session linked to an experiment", async () => {
     const startTool = new KaggleExperimentStartTool(manager);
     const stopTool = new KaggleExperimentStopTool(manager);

@@ -1,5 +1,6 @@
 import { realpathSync } from "node:fs";
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import { homedir } from "node:os";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 
 const DEFAULT_PROTECTED_PATH_PATTERNS = [
   ".git",
@@ -34,8 +35,10 @@ export function validateProtectedPath(
   filePath: string,
   input: ProtectedPathPolicyInput,
 ): ProtectedPathValidationResult {
+  const cwd = canonicalPath(input.cwd);
   const workspaceRoot = canonicalPath(input.workspaceRoot ?? input.cwd);
-  const resolved = canonicalPath(resolve(input.cwd, filePath));
+  const requestedPath = expandTildePath(filePath);
+  const resolved = canonicalPath(isAbsolute(requestedPath) ? requestedPath : resolve(cwd, requestedPath));
   const pathFromWorkspace = relative(workspaceRoot, resolved);
 
   if (pathFromWorkspace.startsWith("..") || isAbsolute(pathFromWorkspace)) {
@@ -67,11 +70,22 @@ export function validateProtectedPath(
   return { valid: true, resolved };
 }
 
+export function expandTildePath(value: string): string {
+  if (value === "~") {
+    return homedir();
+  }
+  if (value.startsWith("~/")) {
+    return join(homedir(), value.slice(2));
+  }
+  return value;
+}
+
 function canonicalPath(value: string): string {
+  const expanded = expandTildePath(value);
   try {
-    return realpathSync(value);
+    return realpathSync(expanded);
   } catch {
-    return resolve(value);
+    return resolve(expanded);
   }
 }
 

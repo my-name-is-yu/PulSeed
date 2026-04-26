@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import * as os from "node:os";
 import { z } from "zod";
 import { ChatAgentLoopRunner } from "../chat-agent-loop-runner.js";
 import { buildAgentLoopBaseInstructions, buildChatStructuredOutputInstructions } from "../agent-loop-prompts.js";
@@ -66,6 +67,17 @@ describe("chat agentloop final-answer contract", () => {
     expect(result.structuredOutput).toBeUndefined();
     expect(boundedRunner.run).toHaveBeenCalledWith(expect.objectContaining({
       finalOutputMode: "display_text",
+    }));
+  });
+
+  it("expands tilde cwd before building the turn context", async () => {
+    const { runner, boundedRunner } = makeRunner(null, "ok");
+
+    await runner.execute({ message: "test", cwd: "~" });
+
+    expect(boundedRunner.run).toHaveBeenCalledWith(expect.objectContaining({
+      cwd: os.homedir(),
+      toolCallContext: expect.objectContaining({ cwd: os.homedir() }),
     }));
   });
 

@@ -372,6 +372,23 @@ describe("Kaggle submission tools", () => {
     }]);
   });
 
+  it("lists submissions when the model passes the Kaggle runs root instead of the competition workspace", async () => {
+    const runner = new RecordingRunner({ exitCode: 0, stdout: "date,description,status\n", stderr: "" });
+    const tool = new KaggleListSubmissionsTool(runner);
+    const result = await tool.call({
+      workspace: path.join(pulseedHome, "kaggle-runs"),
+      competition: "titanic",
+      timeoutMs: 10_000,
+    }, makeContext(pulseedHome));
+
+    expect(result.success).toBe(true);
+    expect(runner.calls).toEqual([{
+      command: "kaggle",
+      cwd: workspaceRoot,
+      args: ["competitions", "submissions", "titanic", "-v", "-q"],
+    }]);
+  });
+
   it("stores leaderboard snapshots under the Kaggle workspace", async () => {
     const runner = new RecordingRunner({ exitCode: 0, stdout: "team,score\nA,0.9\n", stderr: "" });
     const tool = new KaggleLeaderboardSnapshotTool(runner);

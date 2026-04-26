@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { ITool, ToolResult, ToolCallContext, PermissionCheckResult, ToolMetadata } from "../../types.js";
 import { execFileNoThrow } from "../../../base/utils/execFileNoThrow.js";
+import { expandTildePath } from "../../fs/FileValidationTool/protected-path-policy.js";
 import { DESCRIPTION } from "./prompt.js";
 import { TAGS, MAX_OUTPUT_CHARS, PERMISSION_LEVEL } from "./constants.js";
 import { assessShellCommand } from "./command-policy.js";
@@ -30,7 +31,7 @@ export class ShellTool implements ITool<ShellInput, ShellOutput> {
 
   async call(input: ShellInput, context: ToolCallContext): Promise<ToolResult> {
     const startTime = Date.now();
-    const cwd = input.cwd ?? context.cwd;
+    const cwd = expandTildePath(input.cwd ?? context.cwd);
     try {
       const shell = process.env.SHELL ?? "/bin/zsh";
       const result = await execFileNoThrow(shell, ["-c", input.command], { cwd, timeoutMs: input.timeoutMs });
