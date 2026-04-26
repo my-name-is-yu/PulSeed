@@ -43,18 +43,19 @@ const schemas = {
 type CoreToolName = keyof typeof schemas;
 
 export function createCoreLoopControlTools(service: CoreLoopControlToolset): ITool[] {
-  return [
+  const tools: ITool[] = [
     new CoreLoopControlTool("core_goal_status", "Read CoreLoop goal status.", "read_only", (input) => service.goalStatus(input), schemas.core_goal_status),
-    new CoreLoopControlTool("core_goal_create", "Create a CoreLoop goal.", "write_local", (input) => requireHandler(service.goalCreate, "goalCreate")(input), schemas.core_goal_create),
-    new CoreLoopControlTool("core_tend_goal", "Create a CoreLoop goal and start it in the daemon for long-running background execution.", "write_local", (input) => requireHandler(service.tendGoal, "tendGoal")(input), schemas.core_tend_goal),
-    new CoreLoopControlTool("core_goal_start", "Start or resume a CoreLoop goal in the daemon.", "write_local", (input) => requireHandler(service.goalStart, "goalStart")(input), schemas.core_goal_start),
-    new CoreLoopControlTool("core_goal_pause", "Pause a CoreLoop goal.", "write_local", (input) => requireHandler(service.goalPause, "goalPause")(input), schemas.core_goal_pause),
-    new CoreLoopControlTool("core_goal_resume", "Start or resume a CoreLoop goal in the daemon.", "write_local", (input) => requireHandler(service.goalResume, "goalResume")(input), schemas.core_goal_resume),
-    new CoreLoopControlTool("core_goal_cancel", "Cancel a CoreLoop goal.", "write_local", (input) => requireHandler(service.goalCancel, "goalCancel")(input), schemas.core_goal_cancel),
-    new CoreLoopControlTool("core_task_status", "Read CoreLoop task status.", "read_only", (input) => requireHandler(service.taskStatus, "taskStatus")(input), schemas.core_task_status),
-    new CoreLoopControlTool("core_task_prioritize", "Set CoreLoop task priority.", "write_local", (input) => requireHandler(service.taskPrioritize, "taskPrioritize")(input), schemas.core_task_prioritize),
-    new CoreLoopControlTool("core_run_cycle", "Run one bounded CoreLoop cycle.", "write_local", (input) => requireHandler(service.runCycle, "runCycle")(input), schemas.core_run_cycle),
   ];
+  if (service.goalCreate) tools.push(new CoreLoopControlTool("core_goal_create", "Create a CoreLoop goal.", "write_local", (input) => service.goalCreate!(input), schemas.core_goal_create));
+  if (service.tendGoal) tools.push(new CoreLoopControlTool("core_tend_goal", "Create a CoreLoop goal and start it in the daemon for long-running background execution.", "write_local", (input) => service.tendGoal!(input), schemas.core_tend_goal));
+  if (service.goalStart) tools.push(new CoreLoopControlTool("core_goal_start", "Start or resume a CoreLoop goal in the daemon.", "write_local", (input) => service.goalStart!(input), schemas.core_goal_start));
+  if (service.goalPause) tools.push(new CoreLoopControlTool("core_goal_pause", "Pause a CoreLoop goal.", "write_local", (input) => service.goalPause!(input), schemas.core_goal_pause));
+  if (service.goalResume) tools.push(new CoreLoopControlTool("core_goal_resume", "Start or resume a CoreLoop goal in the daemon.", "write_local", (input) => service.goalResume!(input), schemas.core_goal_resume));
+  if (service.goalCancel) tools.push(new CoreLoopControlTool("core_goal_cancel", "Cancel a CoreLoop goal.", "write_local", (input) => service.goalCancel!(input), schemas.core_goal_cancel));
+  if (service.taskStatus) tools.push(new CoreLoopControlTool("core_task_status", "Read CoreLoop task status.", "read_only", (input) => service.taskStatus!(input), schemas.core_task_status));
+  if (service.taskPrioritize) tools.push(new CoreLoopControlTool("core_task_prioritize", "Set CoreLoop task priority.", "write_local", (input) => service.taskPrioritize!(input), schemas.core_task_prioritize));
+  if (service.runCycle) tools.push(new CoreLoopControlTool("core_run_cycle", "Run one bounded CoreLoop cycle.", "write_local", (input) => service.runCycle!(input), schemas.core_run_cycle));
+  return tools;
 }
 
 class CoreLoopControlTool<TInput> implements ITool<TInput> {
@@ -116,15 +117,6 @@ class CoreLoopControlTool<TInput> implements ITool<TInput> {
   isConcurrencySafe(_input: TInput): boolean {
     return this.metadata.isReadOnly;
   }
-}
-
-function requireHandler<TInput>(handler: ((input: TInput) => Promise<unknown>) | undefined, name: string): (input: TInput) => Promise<unknown> {
-  if (!handler) {
-    return async () => {
-      throw new Error(`CoreLoop control handler is not configured: ${name}`);
-    };
-  }
-  return handler;
 }
 
 export interface DaemonBackedCoreLoopControlDeps {

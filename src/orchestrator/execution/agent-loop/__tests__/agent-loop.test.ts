@@ -7,6 +7,7 @@ import { ToolRegistry } from "../../../../tools/registry.js";
 import { ToolPermissionManager } from "../../../../tools/permission.js";
 import { ConcurrencyController } from "../../../../tools/concurrency.js";
 import { ToolExecutor } from "../../../../tools/executor.js";
+import { ToolSearchTool } from "../../../../tools/query/ToolSearchTool/ToolSearchTool.js";
 import { StateManager } from "../../../../base/state/state-manager.js";
 import { SessionManager } from "../../session-manager.js";
 import { TrustManager } from "../../../../platform/traits/trust-manager.js";
@@ -367,7 +368,7 @@ describe("agentloop phase 1", () => {
     });
   });
 
-  it("exposes required deferred tools to the model without enabling all deferred tools", () => {
+	  it("exposes required deferred tools to the model without enabling all deferred tools", () => {
     const registry = new ToolRegistry();
     registry.register(new EchoTool());
     registry.register(new DeferredTool());
@@ -394,8 +395,57 @@ describe("agentloop phase 1", () => {
       },
     });
 
-    expect(tools.map((tool) => tool.function.name)).toEqual(["echo", "deferred_echo"]);
-  });
+	    expect(tools.map((tool) => tool.function.name)).toEqual(["echo", "deferred_echo"]);
+	  });
+
+	  it("activates deferred tools returned by tool_search on the next native agent-loop turn", async () => {
+	    const modelInfo = makeModelInfo();
+	    const modelClient = new ScriptedModelClient(modelInfo, [
+	      {
+	        content: "",
+	        toolCalls: [{ id: "search-1", name: "tool_search", input: { query: "deferred" } }],
+	        stopReason: "tool_use",
+	      },
+	      { content: finalJson(), toolCalls: [], stopReason: "end_turn" },
+	    ]);
+	    const registry = new ToolRegistry();
+	    registry.register(new EchoTool());
+	    registry.register(new DeferredTool());
+	    registry.register(new ToolSearchTool(registry));
+	    const router = new ToolRegistryAgentLoopToolRouter(registry);
+	    const executor = new ToolExecutor({
+	      registry,
+	      permissionManager: new ToolPermissionManager({}),
+	      concurrency: new ConcurrencyController(),
+	    });
+
+	    await new BoundedAgentLoopRunner({
+	      modelClient,
+	      toolRouter: router,
+	      toolRuntime: new ToolExecutorAgentLoopToolRuntime(executor, router),
+	    }).run({
+	      session: createAgentLoopSession(),
+	      turnId: "turn-1",
+	      goalId: "goal-1",
+	      cwd: process.cwd(),
+	      model: modelInfo.ref,
+	      modelInfo,
+	      messages: [{ role: "user", content: "Find the deferred tool." }],
+	      outputSchema: z.object({ status: z.string() }).passthrough(),
+	      budget: withDefaultBudget({ maxModelTurns: 3 }),
+	      toolPolicy: { allowedTools: ["echo", "deferred_echo", "tool_search"] },
+	      toolCallContext: {
+	        cwd: process.cwd(),
+	        goalId: "goal-1",
+	        trustBalance: 0,
+	        preApproved: true,
+	        approvalFn: async () => false,
+	      },
+	    });
+
+	    expect(modelClient.calls[0]?.tools.map((tool) => tool.function.name)).not.toContain("deferred_echo");
+	    expect(modelClient.calls[1]?.tools.map((tool) => tool.function.name)).toContain("deferred_echo");
+	  });
 
   it("executes model-selected tools and returns schema-valid final output", async () => {
     const modelInfo = makeModelInfo();

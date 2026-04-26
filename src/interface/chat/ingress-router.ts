@@ -86,12 +86,18 @@ function selectRouteForText(
     eventProjectionPolicy: "latest_active_reply_target" as const,
     concurrencyPolicy: "session_serial" as const,
   };
-  const canUseDurableControl =
+  const canUseRuntimeControlRoute =
     runtimeControl.allowed && runtimeControl.approvalMode !== "disallowed";
 
-  if (canUseDurableControl) {
+  if (canUseRuntimeControlRoute) {
     const intent = recognizeRuntimeControlIntent(text);
-    if (intent !== null) {
+    if (
+      intent !== null
+      && (
+        deps.hasRuntimeControlService === true
+        || (!deps.hasAgentLoop && !deps.hasToolLoop)
+      )
+    ) {
       return {
         kind: "runtime_control",
         reason: "runtime_control_intent",

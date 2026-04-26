@@ -17,6 +17,7 @@ import { makeGoal } from "../../../../tests/helpers/fixtures.js";
 import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 import { StaticCorePhasePolicyRegistry } from "../core-loop/phase-policy.js";
 import { ToolRegistry } from "../../../tools/registry.js";
+import { createBuiltinTools } from "../../../tools/builtin/index.js";
 import { ToolRegistryAgentLoopToolRouter } from "../../execution/agent-loop/agent-loop-tool-router.js";
 import {
   ProcessSessionListTool,
@@ -358,7 +359,7 @@ describe("CoreLoop agentic phase hooks", () => {
     expect(policy.requiredTools).toEqual(expect.arrayContaining(["process_session_read", "process_session_list"]));
   });
 
-  it("makes deferred process observation tools visible to the wait observation phase", () => {
+	  it("makes deferred process observation tools visible to the wait observation phase", () => {
     const policy = new StaticCorePhasePolicyRegistry().get("wait_observation");
     const registry = new ToolRegistry();
     registry.register(new ProcessSessionReadTool());
@@ -375,10 +376,38 @@ describe("CoreLoop agentic phase hooks", () => {
       },
     } as never);
 
-    expect(tools.map((tool) => tool.function.name)).toEqual(
-      expect.arrayContaining(["process_session_read", "process_session_list", "process-status"])
-    );
-  });
+	    expect(tools.map((tool) => tool.function.name)).toEqual(
+	      expect.arrayContaining(["process_session_read", "process_session_list", "process-status"])
+	    );
+	  });
+
+	  it("keeps default core phase policies aligned with production builtin tool names", () => {
+	    const registry = new ToolRegistry();
+	    const stateManager = new StateManager(tmpDir);
+	    for (const tool of createBuiltinTools({
+	      stateManager,
+	      registry,
+	      knowledgeManager: {} as never,
+	    })) {
+	      registry.register(tool);
+	    }
+	    const policyRegistry = new StaticCorePhasePolicyRegistry();
+	    const phases = [
+	      "observe_evidence",
+	      "wait_observation",
+	      "knowledge_refresh",
+	      "stall_investigation",
+	      "replanning_options",
+	      "verification_evidence",
+	    ] as const;
+
+	    for (const phase of phases) {
+	      const policy = policyRegistry.get(phase);
+	      for (const toolName of [...policy.allowedTools, ...policy.requiredTools]) {
+	        expect(registry.get(toolName), `${phase} references missing tool ${toolName}`).toBeDefined();
+	      }
+	    }
+	  });
 
   it("does not run agentic wait observation before the durable next observe time is due", async () => {
     const { deps, mocks } = createDeps(tmpDir);
