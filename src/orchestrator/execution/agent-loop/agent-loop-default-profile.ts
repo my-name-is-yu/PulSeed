@@ -122,9 +122,10 @@ const DEFAULT_CORE_PHASE_BUDGET: Partial<Record<CorePhaseKind, Partial<AgentLoop
 };
 
 const CHAT_ALLOWED_TOOLS = [
+  "code_search",
+  "code_read_context",
+  "code_search_repair",
   "read-pulseed-file",
-  "glob",
-  "grep",
   "list_dir",
   "git_diff",
   "git_log",
@@ -156,9 +157,10 @@ const CHAT_ALLOWED_TOOLS = [
 ] as const;
 
 const REVIEW_ALLOWED_TOOLS = [
+  "code_search",
+  "code_read_context",
+  "code_search_repair",
   "read-pulseed-file",
-  "glob",
-  "grep",
   "git_diff",
   "git_log",
   "shell_command",
@@ -178,9 +180,9 @@ const CORE_PHASE_PROFILE_DEFAULTS: Record<CorePhaseKind, CorePhaseProfileDefault
     budget: DEFAULT_CORE_PHASE_BUDGET.observe_evidence ?? {},
     toolPolicy: {
       allowedTools: [
+        "code_search",
+        "code_read_context",
         "read-pulseed-file",
-        "glob",
-        "grep",
         "git_log",
         "shell_command",
         "soil_query",
@@ -203,7 +205,6 @@ const CORE_PHASE_PROFILE_DEFAULTS: Record<CorePhaseKind, CorePhaseProfileDefault
         "progress_history",
         "read-pulseed-file",
         "json_query",
-        "glob",
       ],
       requiredTools: ["process_session_read", "process_session_list"],
     },
@@ -215,10 +216,10 @@ const CORE_PHASE_PROFILE_DEFAULTS: Record<CorePhaseKind, CorePhaseProfileDefault
     budget: DEFAULT_CORE_PHASE_BUDGET.knowledge_refresh ?? {},
     toolPolicy: {
       allowedTools: [
+        "code_search",
         "soil_query",
         "knowledge_query",
         "read-pulseed-file",
-        "grep",
       ],
       requiredTools: ["soil_query"],
     },
@@ -230,9 +231,9 @@ const CORE_PHASE_PROFILE_DEFAULTS: Record<CorePhaseKind, CorePhaseProfileDefault
     budget: DEFAULT_CORE_PHASE_BUDGET.stall_investigation ?? {},
     toolPolicy: {
       allowedTools: [
+        "code_search",
+        "code_read_context",
         "read-pulseed-file",
-        "glob",
-        "grep",
         "git_log",
         "shell_command",
         "progress_history",
@@ -261,9 +262,9 @@ const CORE_PHASE_PROFILE_DEFAULTS: Record<CorePhaseKind, CorePhaseProfileDefault
     budget: DEFAULT_CORE_PHASE_BUDGET.verification_evidence ?? {},
     toolPolicy: {
       allowedTools: [
+        "code_search",
+        "code_search_repair",
         "read-pulseed-file",
-        "glob",
-        "grep",
         "git_diff",
         "git_log",
         "test-runner",
@@ -339,7 +340,13 @@ export function resolveAgentLoopDefaultProfile(
   return {
     name: "task",
     budget: withDefaultBudget({ ...DEFAULT_SURFACE_PROFILE.budget, ...input.budget }),
-    toolPolicy: mergeToolPolicy(DEFAULT_SURFACE_PROFILE.toolPolicy, input.toolPolicy),
+    toolPolicy: mergeToolPolicy(
+      {
+        ...DEFAULT_SURFACE_PROFILE.toolPolicy,
+        requiredTools: ["code_search", "code_read_context", "code_search_repair"],
+      },
+      input.toolPolicy,
+    ),
     executionPolicy: withExecutionPolicyOverrides(executionPolicy, {
       approvalPolicy: "never",
     }),

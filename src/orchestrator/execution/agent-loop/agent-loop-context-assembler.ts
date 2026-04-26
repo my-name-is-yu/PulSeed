@@ -112,6 +112,7 @@ export class AgentLoopContextAssembler {
       `Task: ${input.task.work_description}`,
       `Approach: ${input.task.approach}`,
       `Success criteria:\n${input.task.success_criteria.map((c) => `- ${c.description}`).join("\n")}`,
+      "Code search policy: for repository inspection, bugfixes, feature work, and verification failures, prefer code_search -> code_read_context -> code_search_repair before falling back to raw grep/read. Keep initial prompt context small; read concrete ranges through tools.",
       blocks.length > 0
         ? `Context:\n${blocks.map((block) => `[${block.source}]\n${block.content}`).join("\n\n")}`
         : "",

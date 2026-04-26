@@ -66,6 +66,9 @@ import { HttpFetchTool } from "../network/HttpFetchTool/HttpFetchTool.js";
 import { McpCallToolTool, McpListToolsTool } from "../network/McpStdioTool/McpStdioTool.js";
 import { WebSearchTool, createWebSearchClient } from "../network/WebSearchTool/WebSearchTool.js";
 import { ArchitectureTool } from "../query/ArchitectureTool/ArchitectureTool.js";
+import { CodeReadContextTool } from "../query/CodeReadContextTool/CodeReadContextTool.js";
+import { CodeSearchRepairTool } from "../query/CodeSearchRepairTool/CodeSearchRepairTool.js";
+import { CodeSearchTool } from "../query/CodeSearchTool/CodeSearchTool.js";
 import { ConfigTool } from "../query/ConfigTool/ConfigTool.js";
 import { GoalStateTool } from "../query/GoalStateTool/GoalStateTool.js";
 import { KnowledgeQueryTool } from "../query/KnowledgeQueryTool/KnowledgeQueryTool.js";
@@ -153,6 +156,9 @@ export function createBuiltinTools(deps?: BuiltinToolDeps): ITool[] {
     new GitHubReadTool(),
     new GlobTool(),
     new GrepTool(),
+    new CodeSearchTool(),
+    new CodeReadContextTool(),
+    new CodeSearchRepairTool(),
     new HttpFetchTool(),
     new JsonQueryTool(),
     new KaggleCompareExperimentsTool(defaultProcessSessionManager),

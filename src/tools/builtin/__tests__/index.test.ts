@@ -3,6 +3,9 @@ import { createBuiltinTools as createBuiltinToolsFromFactory } from "../factory.
 import { GitHubReadTool as GitHubReadToolFromExports } from "../exports.js";
 import {
   createBuiltinTools,
+  CodeReadContextTool,
+  CodeSearchRepairTool,
+  CodeSearchTool,
   GitHubReadTool,
   KaggleCompareExperimentsTool,
   KaggleExperimentListTool,
@@ -21,6 +24,9 @@ describe("tools builtin index", () => {
   it("re-exports the factory and public tool classes", () => {
     expect(createBuiltinTools).toBe(createBuiltinToolsFromFactory);
     expect(GitHubReadTool).toBe(GitHubReadToolFromExports);
+    expect(CodeSearchTool).toBeDefined();
+    expect(CodeReadContextTool).toBeDefined();
+    expect(CodeSearchRepairTool).toBeDefined();
     expect(KaggleWorkspacePrepareTool).toBeDefined();
     expect(KaggleExperimentStartTool).toBeDefined();
     expect(KaggleExperimentReadTool).toBeDefined();

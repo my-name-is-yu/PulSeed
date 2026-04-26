@@ -421,6 +421,7 @@ describe("collectContextItems with toolExecutor", () => {
 
     expect(typeof result).toBe("string");
     const calledTools = executeFn.mock.calls.map((c: unknown[]) => c[0]);
+    expect(calledTools).toContain("code_search");
     expect(calledTools).toContain("grep");
     expect(calledTools).toContain("read");
     expect(calledTools).toContain("git_log");

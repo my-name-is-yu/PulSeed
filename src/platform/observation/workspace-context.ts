@@ -3,6 +3,9 @@ import * as fsp from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
+import { getCodeSearchIndexes } from "../code-search/indexes/index-store.js";
+import { SearchOrchestrator } from "../code-search/orchestrator.js";
+import { ProgressiveReader } from "../code-search/progressive-reader.js";
 import { dimensionNameToSearchTerms } from "./context-provider.js";
 
 const execFileAsync = promisify(execFile);
@@ -203,6 +206,32 @@ export function createWorkspaceContextProvider(
       parts.push(`## Directory listing\n${entries.join(", ")}`);
     } catch {
       /* skip */
+    }
+
+    try {
+      const orchestrator = new SearchOrchestrator(effectiveWorkDir);
+      const candidates = await orchestrator.search({
+        task: `${goalDescription}\n${dimensionName}`,
+        intent: "explain",
+        cwd: effectiveWorkDir,
+        budget: { maxRerankCandidates: Math.min(maxFiles, 10), maxCandidatesPerRetriever: 20 },
+      });
+      const indexes = await getCodeSearchIndexes(effectiveWorkDir);
+      const bundle = await new ProgressiveReader(effectiveWorkDir, indexes).read(candidates, {
+        phase: "locate",
+        maxReadRanges: Math.min(3, maxFiles),
+        maxReadTokens: Math.max(1_000, maxCharsPerFile),
+      });
+      if (bundle.ranges.length > 0) {
+        parts.push(
+          [
+            "## Code search context",
+            ...bundle.ranges.map((range) => `### ${range.file}:${range.startLine}-${range.endLine}\n\`\`\`\n${range.content.replace(/^\d+\t/gm, "")}\n\`\`\``),
+          ].join("\n\n")
+        );
+      }
+    } catch {
+      // Keep legacy workspace-context generation as compatibility fallback.
     }
 
     // Always-include candidates

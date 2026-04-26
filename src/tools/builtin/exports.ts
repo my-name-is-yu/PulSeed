@@ -1,6 +1,9 @@
 export { GlobTool } from "../fs/GlobTool/GlobTool.js";
 export { GrepTool } from "../fs/GrepTool/GrepTool.js";
 export { ReadTool } from "../fs/ReadTool/ReadTool.js";
+export { CodeSearchTool } from "../query/CodeSearchTool/CodeSearchTool.js";
+export { CodeReadContextTool } from "../query/CodeReadContextTool/CodeReadContextTool.js";
+export { CodeSearchRepairTool } from "../query/CodeSearchRepairTool/CodeSearchRepairTool.js";
 export { ShellTool } from "../system/ShellTool/ShellTool.js";
 export { ShellCommandTool } from "../system/ShellCommandTool/ShellCommandTool.js";
 export { UpdatePlanTool } from "../system/UpdatePlanTool/UpdatePlanTool.js";

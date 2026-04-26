@@ -181,8 +181,44 @@ async function collectContextItems(
     if (cumulativeChars >= maxTotalChars) break;
     try {
       let files: string[] = [];
+      const codeSearchContentParts: string[] = [];
 
       if (toolExecutor) {
+        const codeSearchResult = await toolExecutor.execute(
+          "code_search",
+          {
+            task: `${dimensionName}: ${term}`,
+            intent: "explain",
+            queryTerms: [term, dimensionName],
+            budget: { maxRerankCandidates: 8, maxCandidatesPerRetriever: 20 },
+          },
+          ctx
+        ).catch(() => null);
+        const codeSearchData = codeSearchResult?.success && codeSearchResult.data && typeof codeSearchResult.data === "object"
+          ? codeSearchResult.data as { candidates?: Array<{ id: string; file: string; reasons?: string[] }> }
+          : null;
+        const codeSearchCandidates = codeSearchData?.candidates?.slice(0, 3) ?? [];
+        if (codeSearchCandidates.length > 0) {
+          const readResult = await toolExecutor.execute(
+            "code_read_context",
+            {
+              candidates: codeSearchCandidates,
+              candidateIds: codeSearchCandidates.map((candidate) => candidate.id),
+              phase: "locate",
+              maxReadRanges: 3,
+              maxReadTokens: 4000,
+            },
+            ctx
+          ).catch(() => null);
+          const bundle = readResult?.success && readResult.data && typeof readResult.data === "object"
+            ? readResult.data as { ranges?: Array<{ file: string; content: string }> }
+            : null;
+          for (const range of bundle?.ranges ?? []) {
+            codeSearchContentParts.push(`[CodeSearch: ${range.file}]`);
+            codeSearchContentParts.push(range.content.replace(/^\d+\t/gm, ""));
+          }
+        }
+
         const result = await toolExecutor.execute(
           "grep",
           { pattern: term, path: cwd, glob: "*.{ts,js}", outputMode: "files_with_matches", limit: 5 },
@@ -198,6 +234,17 @@ async function collectContextItems(
           { timeout: 10000 }
         );
         files = stdout.trim().split("\n").filter(Boolean).slice(0, 5);
+      }
+
+      if (codeSearchContentParts.length > 0) {
+        const label = `[code_search "${term}" — structured ranges]`;
+        const itemContent = codeSearchContentParts.join("\n\n");
+        cumulativeChars += label.length + itemContent.length;
+        items.push({
+          label,
+          content: itemContent,
+          memory_tier: classifyTier(label),
+        });
       }
 
       if (files.length > 0) {
