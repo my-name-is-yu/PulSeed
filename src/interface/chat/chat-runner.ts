@@ -1751,6 +1751,7 @@ export class ChatRunner {
     }
 
     if (selectedRoute?.kind === "runtime_control") {
+      this.emitCheckpoint("Runtime control selected", `${selectedRoute.intent.kind} request recognized.`, eventContext, "route");
       const runtimeControlResult = await this.executeRuntimeControlRoute(
         selectedRoute,
         runtimeControlContext,
@@ -1759,6 +1760,7 @@ export class ChatRunner {
       );
       if (runtimeControlResult.success) {
         await history.appendAssistantMessage(runtimeControlResult.output);
+        this.emitCheckpoint("Runtime control completed", "The runtime-control operation produced a result.", eventContext, "complete");
         this.emitActivity("lifecycle", "Finalizing response...", eventContext, "lifecycle:finalizing");
         this.emitEvent({
           type: "assistant_final",
@@ -1795,6 +1797,7 @@ export class ChatRunner {
           history.recordUsage("execution", turnUsage);
         }
         await history.appendAssistantMessage(output);
+        this.emitCheckpoint("Response ready", "The direct answer has been persisted for this turn.", eventContext, "complete");
         this.emitActivity("lifecycle", "Finalizing response...", eventContext, "lifecycle:finalizing");
         this.emitEvent({
           type: "assistant_final",
@@ -1868,6 +1871,9 @@ export class ChatRunner {
       } catch {
         systemPrompt = this.cachedStaticSystemPrompt ?? "";
       }
+      this.emitCheckpoint("Context gathered", usesNativeAgentLoop
+        ? "Workspace and agent-loop grounding are ready."
+        : "Workspace grounding is ready.", eventContext, "context");
     }
     const agentLoopSystemPrompt = [
       systemPrompt,
@@ -1918,6 +1924,9 @@ export class ChatRunner {
             elapsed_ms,
           };
         }
+        this.emitCheckpoint(resumeOnly ? "Session resumed" : "Agent loop started", resumeOnly
+          ? "Resumable agent-loop state is loaded."
+          : "The agent loop can now inspect, plan, edit, or verify with visible tool activity.", eventContext, "execution");
         this.emitActivity("lifecycle", "Calling model...", eventContext, "lifecycle:model");
         const result = await chatAgentLoopRunner!.execute({
           message: basePrompt,
@@ -1954,6 +1963,7 @@ export class ChatRunner {
         }
         if (result.success) {
           await history.appendAssistantMessage(result.output);
+          this.emitCheckpoint("Response ready", "The agent-loop response has been persisted for this turn.", eventContext, "complete");
           this.emitActivity("lifecycle", "Finalizing response...", eventContext, "lifecycle:finalizing");
           this.emitEvent({
             type: "assistant_final",
@@ -1988,6 +1998,7 @@ export class ChatRunner {
     // Prefer the local LLM/tool loop over the external adapter fallback whenever a client is available.
     if (selectedRoute?.kind === "tool_loop") {
       try {
+        this.emitCheckpoint("Tool loop started", "The model will choose tools from the active catalog.", eventContext, "execution");
         const toolResult = await this.executeWithTools(
           prompt,
           eventContext,
@@ -2000,6 +2011,7 @@ export class ChatRunner {
           history.recordUsage("execution", toolResult.usage);
         }
         await history.appendAssistantMessage(toolResult.output);
+        this.emitCheckpoint("Response ready", "The tool-loop response has been persisted for this turn.", eventContext, "complete");
         this.emitActivity("lifecycle", "Finalizing response...", eventContext, "lifecycle:finalizing");
         this.emitEvent({
           type: "assistant_final",
@@ -2043,6 +2055,7 @@ export class ChatRunner {
       ...(systemPrompt ? { system_prompt: systemPrompt } : {}),
     };
     const resolvedTimeoutMs = task.timeout_ms ?? DEFAULT_TIMEOUT_MS;
+    this.emitCheckpoint("Adapter started", "The configured adapter has the current prompt and project context.", eventContext, "execution");
     this.emitActivity("lifecycle", "Calling adapter...", eventContext, "lifecycle:adapter");
     const adapterPromise = this.deps.adapter.execute(task);
     const timeoutPromise = new Promise<never>((_, reject) =>
@@ -2063,6 +2076,7 @@ export class ChatRunner {
     if (gitChanges !== null && gitChanges !== "") {
       let retries = 0;
       const VERIFY_TIMEOUT_MS = 30_000;
+      this.emitCheckpoint("Changes detected", "Verification is starting because the turn changed the working tree.", eventContext, "changes");
       this.emitActivity("lifecycle", "Checking result...", eventContext, "lifecycle:checking");
       let verification = await Promise.race([
         verifyChatAction(gitRoot, this.deps.toolExecutor),
@@ -2073,6 +2087,7 @@ export class ChatRunner {
 
       while (!verification.passed && retries < MAX_VERIFY_RETRIES) {
         retries++;
+        this.emitCheckpoint("Verification retry", `Attempt ${retries} of ${MAX_VERIFY_RETRIES} is repairing failed checks.`, eventContext, `verification-retry-${retries}`);
         const retryPrompt = `The previous changes caused test failures. Please fix them.\n\nTest output:\n${verification.testOutput ?? verification.errors.join("\n")}`;
         const retryTask: AgentTask = { ...task, prompt: retryPrompt };
         result = await this.deps.adapter.execute(retryTask);
@@ -2080,6 +2095,7 @@ export class ChatRunner {
       }
 
       if (!verification.passed) {
+        this.emitCheckpoint("Verification failed", `Checks are still failing after ${MAX_VERIFY_RETRIES} retries.`, eventContext, "verification");
         this.emitLifecycleErrorEvent(
           `Changes applied but tests are still failing after ${MAX_VERIFY_RETRIES} retries.`,
           assistantBuffer.text,
@@ -2092,10 +2108,12 @@ export class ChatRunner {
           elapsed_ms: Date.now() - start,
         };
       }
+      this.emitCheckpoint("Verification passed", "Changed files passed the configured chat verification.", eventContext, "verification");
     }
 
     if (result.success) {
       await history.appendAssistantMessage(result.output);
+      this.emitCheckpoint("Response ready", "The assistant response has been persisted for this turn.", eventContext, "complete");
       this.emitActivity("lifecycle", "Finalizing response...", eventContext, "lifecycle:finalizing");
       this.emitEvent({
         type: "assistant_final",
@@ -2325,6 +2343,7 @@ export class ChatRunner {
 
         if (event.type === "plan_update") {
           this.emitActivity("tool", `Updated plan: ${previewActivityText(event.summary)}`, eventContext, `plan:${event.turnId}`);
+          this.emitCheckpoint("Plan updated", previewActivityText(event.summary, 160), eventContext, `plan:${event.eventId}`);
           this.emitEvent({
             type: "tool_update",
             toolCallId: `plan:${event.turnId}:${event.createdAt}`,
@@ -2338,6 +2357,7 @@ export class ChatRunner {
 
         if (event.type === "approval_request") {
           this.emitActivity("tool", formatToolActivity("Running", event.toolName, `awaiting approval: ${event.reason}`), eventContext, event.callId);
+          this.emitCheckpoint("Approval requested", `${event.toolName}: ${event.reason}`, eventContext, `approval:${event.callId}`);
           this.emitEvent({
             type: "tool_update",
             toolCallId: event.callId,
@@ -2722,6 +2742,18 @@ export class ChatRunner {
       `- Why: ${reason}`,
     ].join("\n");
     this.emitActivity("commentary", message, eventContext, "intent:first-step", false);
+  }
+
+  private emitCheckpoint(
+    title: string,
+    detail: string,
+    eventContext: ChatEventContext,
+    sourceKey: string
+  ): void {
+    const message = detail
+      ? `Checkpoint\n- ${title}: ${detail}`
+      : `Checkpoint\n- ${title}`;
+    this.emitActivity("checkpoint", message, eventContext, `checkpoint:${sourceKey}`, false);
   }
 
   private pushAssistantDelta(

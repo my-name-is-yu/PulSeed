@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { execFileSync } from "node:child_process";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { z } from "zod";
 import { ChatRunner } from "../chat-runner.js";
@@ -228,7 +229,62 @@ describe("ChatRunner", () => {
 
       expect(events[0]).toContain("commentary:Intent\n- Confirm: Do something");
       expect(events.indexOf("lifecycle:Preparing context...")).toBeGreaterThan(0);
+      const contextCheckpointIndex = events.findIndex((event) =>
+        event.includes("checkpoint:Checkpoint\n- Context gathered:")
+      );
+      const adapterCheckpointIndex = events.findIndex((event) =>
+        event.includes("checkpoint:Checkpoint\n- Adapter started:")
+      );
+      const adapterActivityIndex = events.indexOf("lifecycle:Calling adapter...");
+      expect(contextCheckpointIndex).toBeGreaterThan(events.indexOf("lifecycle:Preparing context..."));
+      expect(adapterCheckpointIndex).toBeGreaterThan(contextCheckpointIndex);
+      expect(adapterActivityIndex).toBeGreaterThan(adapterCheckpointIndex);
       expect(events).toContain("lifecycle:Calling adapter...");
+    });
+
+    it("emits verification checkpoints when adapter execution changes the working tree", async () => {
+      const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-checkpoints-"));
+      const events: ChatEvent[] = [];
+      try {
+        execFileSync("git", ["init"], { cwd: workspaceDir, stdio: "ignore" });
+        execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: workspaceDir, stdio: "ignore" });
+        execFileSync("git", ["config", "user.name", "Test User"], { cwd: workspaceDir, stdio: "ignore" });
+        fs.writeFileSync(path.join(workspaceDir, "README.md"), "before\n", "utf-8");
+        execFileSync("git", ["add", "README.md"], { cwd: workspaceDir, stdio: "ignore" });
+        execFileSync("git", ["commit", "-m", "init"], { cwd: workspaceDir, stdio: "ignore" });
+
+        const adapter = {
+          adapterType: "mock",
+          execute: vi.fn().mockImplementation(async () => {
+            fs.writeFileSync(path.join(workspaceDir, "README.md"), "after\n", "utf-8");
+            return CANNED_RESULT;
+          }),
+        } as unknown as IAdapter;
+        const runner = new ChatRunner(makeDeps({
+          adapter,
+          onEvent: (event) => { events.push(event); },
+        }));
+
+        const result = await runner.execute("Change the README", workspaceDir);
+
+        expect(result.success).toBe(true);
+        const checkpointMessages = events
+          .filter((event): event is Extract<ChatEvent, { type: "activity" }> =>
+            event.type === "activity" && event.kind === "checkpoint"
+          )
+          .map((event) => event.message);
+        expect(checkpointMessages).toEqual(expect.arrayContaining([
+          expect.stringContaining("Context gathered"),
+          expect.stringContaining("Adapter started"),
+          expect.stringContaining("Changes detected"),
+          expect.stringContaining("Verification passed"),
+          expect.stringContaining("Response ready"),
+        ]));
+        expect(checkpointMessages.findIndex((message) => message.includes("Changes detected")))
+          .toBeLessThan(checkpointMessages.findIndex((message) => message.includes("Verification passed")));
+      } finally {
+        fs.rmSync(workspaceDir, { recursive: true, force: true });
+      }
     });
 
     it("propagates adapter failure to ChatRunResult", async () => {
@@ -1732,6 +1788,13 @@ describe("ChatRunner", () => {
             inputPreview: "{\"command\":\"pwd\"}",
           });
           await input.eventSink?.emit({
+            type: "plan_update",
+            eventId: "plan-event-1",
+            turnId: "agent-turn",
+            createdAt: new Date().toISOString(),
+            summary: "Inspect workspace, apply patch, then verify.",
+          });
+          await input.eventSink?.emit({
             type: "approval_request",
             callId: "call-approval",
             turnId: "agent-turn",
@@ -1802,6 +1865,17 @@ describe("ChatRunner", () => {
         transient: false,
         message: expect.stringContaining("Intent\n- Confirm: Do something"),
       });
+      const checkpointMessages = seenEvents
+        .filter((event): event is Extract<ChatEvent, { type: "activity" }> =>
+          event.type === "activity" && event.kind === "checkpoint"
+        )
+        .map((event) => event.message);
+      expect(checkpointMessages).toEqual(expect.arrayContaining([
+        expect.stringContaining("Agent loop started"),
+        expect.stringContaining("Plan updated"),
+        expect.stringContaining("Approval requested"),
+        expect.stringContaining("Response ready"),
+      ]));
       expect(eventTypes).toContain("tool_start");
       expect(eventTypes).toContain("tool_end");
       expect(eventTypes).toContain("tool_update");

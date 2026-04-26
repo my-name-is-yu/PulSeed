@@ -197,6 +197,47 @@ describe("applyChatEventToMessages", () => {
     });
   });
 
+  it("keeps checkpoint rows visible after transient lifecycle activity ends", () => {
+    const withCheckpoint = applyChatEventToMessages([], {
+      type: "activity",
+      runId: "run-1",
+      turnId: "turn-1",
+      createdAt: "2026-04-08T00:00:00.000Z",
+      kind: "checkpoint",
+      message: "Checkpoint\n- Context gathered: Workspace grounding is ready.",
+      sourceId: "checkpoint:context",
+      transient: false,
+    }, 20);
+
+    const withStatus = applyChatEventToMessages(withCheckpoint, {
+      type: "activity",
+      runId: "run-1",
+      turnId: "turn-1",
+      createdAt: "2026-04-08T00:00:01.000Z",
+      kind: "lifecycle",
+      message: "Calling adapter...",
+      sourceId: "lifecycle:adapter",
+      transient: true,
+    }, 20);
+
+    const afterEnd = applyChatEventToMessages(withStatus, {
+      type: "lifecycle_end",
+      runId: "run-1",
+      turnId: "turn-1",
+      createdAt: "2026-04-08T00:00:02.000Z",
+      status: "completed",
+      elapsedMs: 2000,
+      persisted: true,
+    }, 20);
+
+    expect(afterEnd).toHaveLength(1);
+    expect(afterEnd[0]!).toMatchObject({
+      id: "activity:turn-1:checkpoint:context",
+      text: "Checkpoint\n- Context gathered: Workspace grounding is ready.",
+      transient: false,
+    });
+  });
+
   it("preserves the latest few tool events and keeps tool logs after the turn ends", () => {
     let messages = [] as ReturnType<typeof applyChatEventToMessages>;
     for (let index = 1; index <= 6; index += 1) {
