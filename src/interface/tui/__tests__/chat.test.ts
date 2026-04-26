@@ -14,8 +14,12 @@ import {
   buildCollapsedPasteRange,
   buildComposerLines,
   buildFullscreenChatRenderLines,
+  buildTranscriptRenderLines,
   copySelectedInputText,
+  extractClickableTargetAt,
+  formatTranscript,
   getSelectedInputText,
+  getSelectedBodyText,
   shouldCollapsePastedText,
 } from "../fullscreen-chat.js";
 import { estimateMarkdownHeight, estimateWrappedLineCount, wrapTextToRows } from "../markdown-renderer.js";
@@ -259,6 +263,8 @@ describe("chat scroll keys", () => {
     expect(getScrollRequest("[6~", { pageDown: true })).toMatchObject({ direction: "down", kind: "page" });
     expect(getScrollRequest("u", { ctrl: true })).toMatchObject({ direction: "up", kind: "page" });
     expect(getScrollRequest("d", { ctrl: true })).toMatchObject({ direction: "down", kind: "page" });
+    expect(getScrollRequest("", { ctrl: true, home: true })).toMatchObject({ direction: "up", kind: "top" });
+    expect(getScrollRequest("", { ctrl: true, end: true })).toMatchObject({ direction: "down", kind: "bottom" });
     expect(getScrollRequest("", { upArrow: true })).toBeNull();
     expect(getScrollRequest("", { downArrow: true })).toBeNull();
   });
@@ -323,19 +329,83 @@ describe("composer clipboard selection", () => {
   });
 
   it("copies the selected composer text through the clipboard boundary", async () => {
-    const copy = vi.fn(async () => true);
+    const copy = vi.fn(async () => ({ ok: true as const, method: "osc52" as const }));
 
-    await expect(copySelectedInputText("copy this text", { anchor: 9, focus: 5 }, copy)).resolves.toBe(true);
+    await expect(copySelectedInputText("copy this text", { anchor: 9, focus: 5 }, copy)).resolves.toMatchObject({ ok: true });
 
     expect(copy).toHaveBeenCalledWith("this");
   });
 
   it("does not call the clipboard boundary for empty selections", async () => {
-    const copy = vi.fn(async () => true);
+    const copy = vi.fn(async () => ({ ok: true as const, method: "osc52" as const }));
 
-    await expect(copySelectedInputText("copy", { anchor: 2, focus: 2 }, copy)).resolves.toBe(false);
+    await expect(copySelectedInputText("copy", { anchor: 2, focus: 2 }, copy)).resolves.toMatchObject({ ok: false });
 
     expect(copy).not.toHaveBeenCalled();
+  });
+});
+
+describe("fullscreen body selection and transcript", () => {
+  it("extracts selected visible body rows in display order", () => {
+    const rows = [
+      { key: "a", kind: "pulseed" as const, text: "first row" },
+      { key: "b", kind: "pulseed" as const, text: "second row" },
+    ];
+
+    expect(getSelectedBodyText(rows, {
+      anchor: { rowIndex: 1, offset: 6 },
+      focus: { rowIndex: 0, offset: 0 },
+    })).toBe("first row\nsecond");
+  });
+
+  it("renders selected body text with selection styling", () => {
+    const viewport = buildChatViewport([
+      { id: "m1", role: "pulseed", text: "select this text", timestamp: new Date() },
+    ], 60, 4, 0);
+
+    const lines = buildFullscreenChatRenderLines({
+      availableCols: 60,
+      availableRows: 10,
+      viewport,
+      composerLines: [],
+      isProcessing: false,
+      spinnerGlyph: "",
+      spinnerVerb: "",
+      bodySelection: {
+        start: { rowIndex: 0, offset: 0 },
+        end: { rowIndex: 0, offset: 6 },
+      },
+    });
+
+    expect(lines.flatMap((line) => line.segments ?? []).some((segment) => (
+      segment.text.includes("select") && segment.backgroundColor
+    ))).toBe(true);
+  });
+
+  it("formats and renders transcript content for native search/export paths", () => {
+    const messages = [
+      { id: "u1", role: "user" as const, text: "hello", timestamp: new Date() },
+      { id: "p1", role: "pulseed" as const, text: "world", timestamp: new Date() },
+    ];
+
+    expect(formatTranscript(messages)).toContain("User:\nhello");
+
+    const transcript = buildTranscriptRenderLines({
+      messages,
+      cols: 40,
+      rows: 6,
+      scrollOffset: 0,
+      searchQuery: "world",
+      searchMode: false,
+    });
+
+    expect(transcript.totalRows).toBeGreaterThan(0);
+    expect(transcript.lines.map((line) => line.text ?? "").join("\n")).toContain("transcript");
+  });
+
+  it("detects clickable URLs and file paths under the mouse offset", () => {
+    expect(extractClickableTargetAt("open https://example.com/path now", 10)).toBe("https://example.com/path");
+    expect(extractClickableTargetAt("see ./src/file.ts:12", 8)).toBe("./src/file.ts:12");
   });
 });
 

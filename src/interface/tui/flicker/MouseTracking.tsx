@@ -4,12 +4,18 @@ import { getTrustedTuiControlStream } from "../terminal-output.js";
 
 type MouseTrackingStream = Pick<NodeJS.WriteStream, "write">;
 
-export function isMouseTrackingEnabled(): boolean {
-  const envVal = process.env.PULSEED_MOUSE_TRACKING;
-  if (!envVal) {
+export function isMouseTrackingEnabled(defaultEnabled = true): boolean {
+  const disableVal = process.env.PULSEED_DISABLE_MOUSE;
+  if (disableVal === "1" || disableVal?.toLowerCase() === "true") {
     return false;
   }
-  return envVal === "1" || envVal.toLowerCase() === "true";
+
+  const envVal = process.env.PULSEED_MOUSE_TRACKING;
+  if (envVal) {
+    return envVal === "1" || envVal.toLowerCase() === "true";
+  }
+
+  return defaultEnabled;
 }
 
 export function attachMouseTracking(stream: MouseTrackingStream): () => void {

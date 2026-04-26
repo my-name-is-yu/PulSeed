@@ -14,17 +14,25 @@ function createMockStream(): NodeJS.WriteStream & { _written: string[] } {
 }
 
 describe("mouse tracking", () => {
-  it("leaves mouse tracking disabled by default so terminal text selection works", () => {
+  it("enables mouse tracking by default for no-flicker fullscreen rendering", () => {
     const original = process.env.PULSEED_MOUSE_TRACKING;
+    const originalDisable = process.env.PULSEED_DISABLE_MOUSE;
     delete process.env.PULSEED_MOUSE_TRACKING;
+    delete process.env.PULSEED_DISABLE_MOUSE;
 
     try {
-      expect(isMouseTrackingEnabled()).toBe(false);
+      expect(isMouseTrackingEnabled(true)).toBe(true);
+      expect(isMouseTrackingEnabled(false)).toBe(false);
     } finally {
       if (original === undefined) {
         delete process.env.PULSEED_MOUSE_TRACKING;
       } else {
         process.env.PULSEED_MOUSE_TRACKING = original;
+      }
+      if (originalDisable === undefined) {
+        delete process.env.PULSEED_DISABLE_MOUSE;
+      } else {
+        process.env.PULSEED_DISABLE_MOUSE = originalDisable;
       }
     }
   });
@@ -40,6 +48,28 @@ describe("mouse tracking", () => {
         delete process.env.PULSEED_MOUSE_TRACKING;
       } else {
         process.env.PULSEED_MOUSE_TRACKING = original;
+      }
+    }
+  });
+
+  it("allows mouse capture to be explicitly disabled", () => {
+    const original = process.env.PULSEED_MOUSE_TRACKING;
+    const originalDisable = process.env.PULSEED_DISABLE_MOUSE;
+    process.env.PULSEED_MOUSE_TRACKING = "1";
+    process.env.PULSEED_DISABLE_MOUSE = "1";
+
+    try {
+      expect(isMouseTrackingEnabled(true)).toBe(false);
+    } finally {
+      if (original === undefined) {
+        delete process.env.PULSEED_MOUSE_TRACKING;
+      } else {
+        process.env.PULSEED_MOUSE_TRACKING = original;
+      }
+      if (originalDisable === undefined) {
+        delete process.env.PULSEED_DISABLE_MOUSE;
+      } else {
+        process.env.PULSEED_DISABLE_MOUSE = originalDisable;
       }
     }
   });

@@ -1,6 +1,13 @@
 import { spawn } from "child_process";
 import { writeTrustedTuiControl } from "./terminal-output.js";
 
+export type ClipboardMethod = "pbcopy" | "xclip" | "xsel" | "tmux" | "osc52";
+
+export interface ClipboardResult {
+  ok: boolean;
+  method?: ClipboardMethod;
+}
+
 function spawnWithStdin(cmd: string, args: string[], text: string): Promise<boolean> {
   return new Promise((resolve) => {
     const proc = spawn(cmd, args, { stdio: ["pipe", "ignore", "ignore"] });
@@ -10,24 +17,39 @@ function spawnWithStdin(cmd: string, args: string[], text: string): Promise<bool
   });
 }
 
-function writeOsc52(text: string): boolean {
+function writeOsc52(text: string): ClipboardResult {
   const b64 = Buffer.from(text).toString("base64");
   writeTrustedTuiControl(`\u001b]52;c;${b64}\u0007`);
-  return true;
+  return { ok: true, method: "osc52" };
 }
 
-export async function copyToClipboard(text: string): Promise<boolean> {
+function isInsideTmux(): boolean {
+  return Boolean(process.env.TMUX);
+}
+
+async function copyToTmux(text: string): Promise<ClipboardResult> {
+  if (!isInsideTmux()) {
+    return { ok: false };
+  }
+  const tmuxOk = await spawnWithStdin("tmux", ["load-buffer", "-"], text);
+  return tmuxOk ? { ok: true, method: "tmux" } : { ok: false };
+}
+
+export async function copyToClipboard(text: string): Promise<ClipboardResult> {
+  const tmuxResult = await copyToTmux(text);
+  if (tmuxResult.ok) return tmuxResult;
+
   if (process.platform === "darwin") {
     const pbcopyOk = await spawnWithStdin("pbcopy", [], text);
-    if (pbcopyOk) return true;
+    if (pbcopyOk) return { ok: true, method: "pbcopy" };
     return writeOsc52(text);
   }
 
   if (process.platform === "linux") {
     const xclipOk = await spawnWithStdin("xclip", ["-selection", "clipboard"], text);
-    if (xclipOk) return true;
+    if (xclipOk) return { ok: true, method: "xclip" };
     const xselOk = await spawnWithStdin("xsel", ["--clipboard", "--input"], text);
-    if (xselOk) return true;
+    if (xselOk) return { ok: true, method: "xsel" };
     return writeOsc52(text);
   }
 

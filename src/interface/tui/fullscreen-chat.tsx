@@ -1,6 +1,10 @@
 import React, { useCallback, useState } from "react";
+import { spawnSync } from "child_process";
+import { mkdtempSync, writeFileSync } from "fs";
+import { tmpdir } from "os";
+import path from "path";
 import { Box, Text, useInput } from "ink";
-import { copyToClipboard, getClipboardContent } from "./clipboard.js";
+import { copyToClipboard, getClipboardContent, type ClipboardResult } from "./clipboard.js";
 import { logTuiDebug } from "./debug-log.js";
 import { theme } from "./theme.js";
 import { pickSpinnerVerb } from "./spinner-verbs.js";
@@ -14,12 +18,22 @@ import { measureCharWidth, measureTextWidth } from "./text-width.js";
 import { isBashModeInput } from "./bash-mode.js";
 import { buildChatViewport } from "./chat/viewport.js";
 import {
+  getScrollLineStep,
   getScrollRequest,
   normalizeTerminalInputChunk,
   parseMouseEvent,
 } from "./chat/scroll.js";
 import { getMatchingSuggestions, type Suggestion } from "./chat/suggestions.js";
 import type { ChatMessage, ChatDisplayRow } from "./chat/types.js";
+import { writeTrustedTuiControl } from "./terminal-output.js";
+import {
+  CURSOR_HOME,
+  ENTER_ALT_SCREEN,
+  ERASE_SCREEN,
+  EXIT_ALT_SCREEN,
+  HIDE_CURSOR,
+  SHOW_CURSOR,
+} from "./flicker/dec.js";
 
 interface FullscreenChatProps {
   messages: ChatMessage[];
@@ -74,6 +88,8 @@ export type FullscreenChatRenderLinesInput = {
   isProcessing: boolean;
   spinnerGlyph: string;
   spinnerVerb: string;
+  bodySelection?: BodySelectionRange | null;
+  transcriptStatus?: string | null;
 };
 
 export type SelectionState = {
@@ -90,6 +106,21 @@ export type CollapsedPasteRange = {
   start: number;
   end: number;
   label: string;
+};
+
+export type BodySelectionPoint = {
+  rowIndex: number;
+  offset: number;
+};
+
+export type BodySelectionState = {
+  anchor: BodySelectionPoint;
+  focus: BodySelectionPoint;
+};
+
+export type BodySelectionRange = {
+  start: BodySelectionPoint;
+  end: BodySelectionPoint;
 };
 
 export type InputCell = {
@@ -265,13 +296,18 @@ export function getSelectedInputText(input: string, selection: SelectionState | 
 export async function copySelectedInputText(
   input: string,
   selection: SelectionState | null,
-  copy: (text: string) => Promise<boolean> = copyToClipboard,
-): Promise<boolean> {
+  copy: (text: string) => Promise<ClipboardResult> = copyToClipboard,
+): Promise<ClipboardResult> {
   const selectedText = getSelectedInputText(input, selection);
   if (!selectedText) {
-    return false;
+    return { ok: false };
   }
   return copy(selectedText);
+}
+
+function formatCopyToast(charCount: number, result: ClipboardResult): string {
+  const suffix = result.method ? ` via ${result.method}` : "";
+  return `copied ${charCount} chars${suffix}`;
 }
 
 function pushSegment(
@@ -498,6 +534,267 @@ function buildInputContentSegments(
   return segments;
 }
 
+function compareBodySelectionPoints(a: BodySelectionPoint, b: BodySelectionPoint): number {
+  if (a.rowIndex !== b.rowIndex) {
+    return a.rowIndex - b.rowIndex;
+  }
+  return a.offset - b.offset;
+}
+
+function normalizeBodySelection(selection: BodySelectionState | null): BodySelectionRange | null {
+  if (!selection || compareBodySelectionPoints(selection.anchor, selection.focus) === 0) {
+    return null;
+  }
+
+  return compareBodySelectionPoints(selection.anchor, selection.focus) <= 0
+    ? { start: selection.anchor, end: selection.focus }
+    : { start: selection.focus, end: selection.anchor };
+}
+
+function getBodySelectionForRow(
+  selection: BodySelectionRange | null,
+  rowIndex: number,
+  textLength: number,
+): SelectionRange | null {
+  if (!selection || rowIndex < selection.start.rowIndex || rowIndex > selection.end.rowIndex) {
+    return null;
+  }
+
+  const start = rowIndex === selection.start.rowIndex ? selection.start.offset : 0;
+  const end = rowIndex === selection.end.rowIndex ? selection.end.offset : textLength;
+  if (start === end) return null;
+  return { start: Math.max(0, start), end: Math.min(textLength, end) };
+}
+
+function getDisplayOffsetForText(text: string, col: number): number {
+  if (col <= 0) return 0;
+  let usedWidth = 0;
+  let offset = 0;
+  for (const ch of text) {
+    const width = charWidth(ch);
+    const midpoint = usedWidth + width / 2;
+    if (col <= midpoint) return offset;
+    offset += ch.length;
+    usedWidth += width;
+    if (col <= usedWidth) return offset;
+  }
+  return text.length;
+}
+
+function applySelectionToTextSegments(
+  text: string,
+  selection: SelectionRange | null,
+  style: Omit<RenderSegment, "text">,
+): RenderSegment[] {
+  if (!selection) {
+    return [{ text, ...style }];
+  }
+
+  const segments: RenderSegment[] = [];
+  const before = text.slice(0, selection.start);
+  const selected = text.slice(selection.start, selection.end);
+  const after = text.slice(selection.end);
+  pushSegment(segments, before, style);
+  pushSegment(segments, selected, {
+    ...style,
+    color: SELECTION_FOREGROUND,
+    backgroundColor: SELECTION_BACKGROUND,
+  });
+  pushSegment(segments, after, style);
+  return segments;
+}
+
+export function getSelectedBodyText(
+  rows: ChatDisplayRow[],
+  selection: BodySelectionState | null,
+): string {
+  const range = normalizeBodySelection(selection);
+  if (!range) return "";
+
+  const selectedRows: string[] = [];
+  for (let rowIndex = range.start.rowIndex; rowIndex <= range.end.rowIndex; rowIndex += 1) {
+    const row = rows[rowIndex];
+    if (!row || row.kind === "spacer") continue;
+    const rowRange = getBodySelectionForRow(range, rowIndex, row.text.length);
+    if (!rowRange) continue;
+    selectedRows.push(row.text.slice(rowRange.start, rowRange.end).trimEnd());
+  }
+
+  return selectedRows.join("\n").trim();
+}
+
+export function extractClickableTargetAt(text: string, offset: number): string | null {
+  const patterns = [
+    /https?:\/\/[^\s)>\]}]+/g,
+    /(?:\.{1,2}\/|\/)[^\s:]+(?::\d+)?/g,
+  ];
+
+  for (const pattern of patterns) {
+    for (const match of text.matchAll(pattern)) {
+      const value = match[0];
+      const start = match.index ?? 0;
+      const end = start + value.length;
+      if (offset >= start && offset <= end) {
+        return value;
+      }
+    }
+  }
+
+  return null;
+}
+
+function openClickableTarget(target: string): boolean {
+  if (/^https?:\/\//.test(target)) {
+    if (process.platform === "darwin") {
+      return spawnSync("open", [target], { stdio: "ignore" }).status === 0;
+    }
+    if (process.platform === "linux") {
+      return spawnSync("xdg-open", [target], { stdio: "ignore" }).status === 0;
+    }
+    return false;
+  }
+
+  const [filePart, linePart] = target.split(/:(\d+)$/);
+  const resolvedPath = path.resolve(process.cwd(), filePart || target);
+  const editor = process.env.VISUAL || process.env.EDITOR;
+  if (editor) {
+    const editorTarget = linePart ? `${resolvedPath}:${linePart}` : resolvedPath;
+    return spawnSync(editor, [editorTarget], { stdio: "ignore", shell: true }).status === 0;
+  }
+  if (process.platform === "darwin") {
+    return spawnSync("open", [resolvedPath], { stdio: "ignore" }).status === 0;
+  }
+  if (process.platform === "linux") {
+    return spawnSync("xdg-open", [resolvedPath], { stdio: "ignore" }).status === 0;
+  }
+  return false;
+}
+
+export function formatTranscript(messages: ChatMessage[]): string {
+  return messages
+    .map((message) => {
+      const label = message.role === "user" ? "User" : "PulSeed";
+      return `${label}:\n${message.text.trimEnd()}`;
+    })
+    .join("\n\n");
+}
+
+function wrapPlainTextToRows(text: string, width: number): string[] {
+  const rows: string[] = [];
+  for (const sourceLine of text.split("\n")) {
+    if (sourceLine.length === 0) {
+      rows.push("");
+      continue;
+    }
+    let current = "";
+    let currentWidth = 0;
+    for (const ch of sourceLine) {
+      const widthOfChar = charWidth(ch);
+      if (currentWidth + widthOfChar > width && current.length > 0) {
+        rows.push(current);
+        current = "";
+        currentWidth = 0;
+      }
+      current += ch;
+      currentWidth += widthOfChar;
+    }
+    rows.push(current);
+  }
+  return rows;
+}
+
+function buildTranscriptRows(messages: ChatMessage[], cols: number): string[] {
+  const rows: string[] = [];
+  for (const message of messages) {
+    const label = message.role === "user" ? "User" : "PulSeed";
+    rows.push(...wrapPlainTextToRows(`${label}:`, cols));
+    rows.push(...wrapPlainTextToRows(message.text.trimEnd(), cols));
+    rows.push("");
+  }
+  return rows;
+}
+
+export function buildTranscriptRenderLines(args: {
+  messages: ChatMessage[];
+  cols: number;
+  rows: number;
+  scrollOffset: number;
+  searchQuery: string;
+  searchMode: boolean;
+  status?: string | null;
+}): { lines: RenderLine[]; totalRows: number; maxScrollOffset: number } {
+  const { messages, cols, rows, scrollOffset, searchQuery, searchMode, status } = args;
+  const bodyRows = Math.max(1, rows - 2);
+  const transcriptRows = buildTranscriptRows(messages, cols);
+  const maxScrollOffset = Math.max(0, transcriptRows.length - bodyRows);
+  const clampedOffset = Math.max(0, Math.min(maxScrollOffset, scrollOffset));
+  const visibleRows = transcriptRows.slice(clampedOffset, clampedOffset + bodyRows);
+  const lines: RenderLine[] = [{
+    key: "transcript-header",
+    text: padToWidth("transcript  / search  n/N next  [ write scrollback  v editor  Esc return", cols),
+    color: theme.command,
+  }];
+
+  visibleRows.forEach((row, index) => {
+    lines.push({
+      key: `transcript-${clampedOffset + index}`,
+      text: padToWidth(row, cols),
+      backgroundColor:
+        searchQuery.length > 0 && row.toLowerCase().includes(searchQuery.toLowerCase())
+          ? "#3A3A22"
+          : undefined,
+    });
+  });
+
+  while (lines.length < rows - 1) {
+    lines.push({ key: `transcript-filler-${lines.length}`, text: " ".repeat(cols) });
+  }
+
+  lines.push({
+    key: "transcript-footer",
+    text: padToWidth(
+      searchMode
+        ? `/${searchQuery}`
+        : status
+          ? status
+        : `${clampedOffset + 1}-${Math.min(clampedOffset + bodyRows, transcriptRows.length)} / ${transcriptRows.length}`,
+      cols,
+    ),
+    dim: !searchMode && !status,
+    color: searchMode ? theme.command : undefined,
+  });
+
+  return { lines: lines.slice(0, rows), totalRows: transcriptRows.length, maxScrollOffset };
+}
+
+function writeTranscriptToNativeScrollback(messages: ChatMessage[]): void {
+  const transcript = formatTranscript(messages);
+  writeTrustedTuiControl(
+    SHOW_CURSOR +
+      EXIT_ALT_SCREEN +
+      `\n${transcript}\n` +
+      ENTER_ALT_SCREEN +
+      ERASE_SCREEN +
+      CURSOR_HOME +
+      HIDE_CURSOR,
+  );
+}
+
+function openTranscriptInEditor(messages: ChatMessage[]): ClipboardResult {
+  const editor = process.env.VISUAL || process.env.EDITOR;
+  if (!editor) {
+    return { ok: false };
+  }
+
+  const dir = mkdtempSync(path.join(tmpdir(), "pulseed-transcript-"));
+  const filePath = path.join(dir, "transcript.md");
+  writeFileSync(filePath, formatTranscript(messages), "utf8");
+  writeTrustedTuiControl(SHOW_CURSOR + EXIT_ALT_SCREEN);
+  const result = spawnSync(editor, [filePath], { stdio: "inherit", shell: true });
+  writeTrustedTuiControl(ENTER_ALT_SCREEN + ERASE_SCREEN + CURSOR_HOME + HIDE_CURSOR);
+  return result.status === 0 ? { ok: true, method: "osc52" } : { ok: false };
+}
+
 function getCursorPositionFromComposerLayout(
   layout: ComposerLayout,
 ): { x: number; y: number } | null {
@@ -642,9 +939,28 @@ export function buildComposerLines(args: {
   };
 }
 
-function renderMessageRow(row: ChatDisplayRow, cols: number): RenderLine {
+function renderMessageRow(
+  row: ChatDisplayRow,
+  cols: number,
+  rowIndex: number,
+  bodySelection: BodySelectionRange | null,
+): RenderLine {
   if (row.kind === "spacer") {
     return { key: row.key, text: " ".repeat(cols) };
+  }
+
+  const selection = getBodySelectionForRow(bodySelection, rowIndex, row.text.length);
+  if (selection) {
+    const text = padToWidth(row.text, cols);
+    return {
+      key: row.key,
+      segments: applySelectionToTextSegments(text, selection, {
+        color: row.color,
+        backgroundColor: row.backgroundColor,
+        bold: row.bold,
+        dim: row.dim,
+      }),
+    };
   }
 
   return {
@@ -665,6 +981,8 @@ export function buildFullscreenChatRenderLines({
   isProcessing,
   spinnerGlyph,
   spinnerVerb,
+  bodySelection,
+  transcriptStatus,
 }: FullscreenChatRenderLinesInput): RenderLine[] {
   const lines: RenderLine[] = [];
   lines.push({
@@ -676,7 +994,9 @@ export function buildFullscreenChatRenderLines({
     dim: true,
   });
 
-  const renderedRows = viewport.rows.map((row) => renderMessageRow(row, availableCols));
+  const renderedRows = viewport.rows.map((row, index) => (
+    renderMessageRow(row, availableCols, index, bodySelection ?? null)
+  ));
   const fillerCount = Math.max(0, viewport.maxVisibleRows - renderedRows.length);
   for (let index = 0; index < fillerCount; index += 1) {
     lines.push({ key: `filler-${index}`, text: " ".repeat(availableCols) });
@@ -692,9 +1012,9 @@ export function buildFullscreenChatRenderLines({
   });
   lines.push({
     key: "processing",
-    text: padToWidth(isProcessing ? `${spinnerGlyph} ${spinnerVerb}...` : "", availableCols),
+    text: padToWidth(transcriptStatus ?? (isProcessing ? `${spinnerGlyph} ${spinnerVerb}...` : ""), availableCols),
     color: isProcessing ? theme.command : undefined,
-    dim: !isProcessing,
+    dim: !isProcessing && !transcriptStatus,
   });
   lines.push(...composerLines);
 
@@ -762,6 +1082,28 @@ function getMouseOffsetFromComposer(
   return row.endOffset;
 }
 
+function getMousePositionFromBody(
+  rows: ChatDisplayRow[],
+  x: number,
+  y: number,
+  fillerRows: number,
+): BodySelectionPoint | null {
+  const rowIndex = y - 2 - fillerRows;
+  if (rowIndex < 0 || rowIndex >= rows.length) {
+    return null;
+  }
+
+  const row = rows[rowIndex];
+  if (!row || row.kind === "spacer") {
+    return null;
+  }
+
+  return {
+    rowIndex,
+    offset: getDisplayOffsetForText(row.text, x - 1),
+  };
+}
+
 export function FullscreenChat({
   messages,
   onSubmit,
@@ -790,6 +1132,12 @@ export function FullscreenChat({
   const emptyHintTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const [scrollOffset, setScrollOffset] = React.useState(0);
   const [targetScrollOffset, setTargetScrollOffset] = React.useState(0);
+  const [bodySelection, setBodySelection] = React.useState<BodySelectionState | null>(null);
+  const bodySelectionAnchor = React.useRef<BodySelectionPoint | null>(null);
+  const [transcriptMode, setTranscriptMode] = React.useState(false);
+  const [transcriptScrollOffset, setTranscriptScrollOffset] = React.useState(0);
+  const [transcriptSearchQuery, setTranscriptSearchQuery] = React.useState("");
+  const [transcriptSearchMode, setTranscriptSearchMode] = React.useState(false);
   const [spinnerVerb, setSpinnerVerb] = React.useState(() => pickSpinnerVerb());
   const [spinnerFrameIndex, setSpinnerFrameIndex] = React.useState(0);
 
@@ -844,6 +1192,11 @@ export function FullscreenChat({
     setSelection(null);
   }, []);
 
+  const clearBodySelection = useCallback(() => {
+    bodySelectionAnchor.current = null;
+    setBodySelection(null);
+  }, []);
+
   const replaceInputRange = useCallback((
     start: number,
     end: number,
@@ -892,12 +1245,12 @@ export function FullscreenChat({
       return;
     }
 
-    void copySelectedInputText(input, nextSelection).then((copied) => {
-      if (!copied) {
+    void copySelectedInputText(input, nextSelection).then((result) => {
+      if (!result.ok) {
         return;
       }
 
-      setCopyToast(`copied ${selectedText.length} chars to clipboard`);
+      setCopyToast(formatCopyToast(selectedText.length, result));
       setTimeout(() => setCopyToast(null), 2000);
     });
   }, [input]);
@@ -928,6 +1281,17 @@ export function FullscreenChat({
     0,
     viewport.totalRows - viewport.maxVisibleRows,
   );
+  const bodySelectionRange = normalizeBodySelection(bodySelection);
+  const viewportFillerRows = Math.max(0, viewport.maxVisibleRows - viewport.rows.length);
+  const transcript = buildTranscriptRenderLines({
+    messages,
+    cols: availableCols,
+    rows: availableRows,
+    scrollOffset: transcriptScrollOffset,
+    searchQuery: transcriptSearchQuery,
+    searchMode: transcriptSearchMode,
+    status: copyToast,
+  });
   const composerLayout: ComposerLayout = {
     startLine: viewport.maxVisibleRows + 3 + composer.inputRowStartIndex + 1,
     contentStartCol: composer.contentStartCol,
@@ -958,6 +1322,10 @@ export function FullscreenChat({
   }, [maxScrollOffset]);
 
   React.useEffect(() => {
+    setTranscriptScrollOffset((prev) => Math.min(prev, transcript.maxScrollOffset));
+  }, [transcript.maxScrollOffset]);
+
+  React.useEffect(() => {
     if (scrollOffset === targetScrollOffset) {
       return;
     }
@@ -980,15 +1348,45 @@ export function FullscreenChat({
     return () => clearInterval(interval);
   }, [scrollOffset, targetScrollOffset]);
 
-  const applyScroll = useCallback((direction: "up" | "down", kind: "page" | "line") => {
+  const applyScroll = useCallback((direction: "up" | "down", kind: "page" | "line" | "top" | "bottom") => {
     setTargetScrollOffset((prev) => {
+      if (kind === "top") return maxScrollOffset;
+      if (kind === "bottom") return 0;
       const amount = kind === "page" ? viewport.maxVisibleRows : SCROLL_LINE_STEP;
-      const delta = direction === "up" ? amount : -amount;
+      const effectiveAmount = kind === "line" ? amount * getScrollLineStep() : amount;
+      const delta = direction === "up" ? effectiveAmount : -effectiveAmount;
       return Math.max(0, Math.min(maxScrollOffset, prev + delta));
     });
   }, [maxScrollOffset, viewport.maxVisibleRows]);
 
+  const applyTranscriptScroll = useCallback((direction: "up" | "down", kind: "page" | "line" | "top" | "bottom") => {
+    setTranscriptScrollOffset((prev) => {
+      if (kind === "top") return 0;
+      if (kind === "bottom") return transcript.maxScrollOffset;
+      const pageRows = Math.max(1, availableRows - 2);
+      const amount = kind === "page" ? pageRows : getScrollLineStep();
+      const delta = direction === "up" ? -amount : amount;
+      return Math.max(0, Math.min(transcript.maxScrollOffset, prev + delta));
+    });
+  }, [availableRows, transcript.maxScrollOffset]);
+
+  const jumpToTranscriptMatch = useCallback((direction: "next" | "previous") => {
+    if (!transcriptSearchQuery) return;
+    const rows = buildTranscriptRows(messages, availableCols);
+    const query = transcriptSearchQuery.toLowerCase();
+    const matches = rows
+      .map((row, index) => ({ row, index }))
+      .filter(({ row }) => row.toLowerCase().includes(query))
+      .map(({ index }) => index);
+    if (matches.length === 0) return;
+    const current = direction === "next"
+      ? matches.find((index) => index > transcriptScrollOffset)
+      : [...matches].reverse().find((index) => index < transcriptScrollOffset);
+    setTranscriptScrollOffset(current ?? (direction === "next" ? matches[0]! : matches[matches.length - 1]!));
+  }, [availableCols, messages, transcriptScrollOffset, transcriptSearchQuery]);
+
   useInput((inputChar, key) => {
+    if (transcriptMode) return;
     const scrollRequest = getScrollRequest(inputChar, key);
     if (!scrollRequest) return;
     logTuiDebug("fullscreen-chat", "processing-scroll-request", {
@@ -1038,6 +1436,94 @@ export function FullscreenChat({
   }, [clearSelection, hasMatches, isProcessing, onClear, onSubmit]);
 
   useInput((inputChar, key) => {
+    if (key.ctrl && (inputChar === "o" || inputChar === "O")) {
+      setTranscriptMode((prev) => !prev);
+      setTranscriptSearchMode(false);
+      return;
+    }
+
+    if (transcriptMode) {
+      if (transcriptSearchMode) {
+        if (key.escape) {
+          setTranscriptSearchMode(false);
+          return;
+        }
+        if (key.return) {
+          setTranscriptSearchMode(false);
+          jumpToTranscriptMatch("next");
+          return;
+        }
+        if (isBackspaceInput(inputChar, key)) {
+          setTranscriptSearchQuery((prev) => prev.slice(0, -1));
+          return;
+        }
+        if (inputChar && !key.ctrl && !key.meta) {
+          setTranscriptSearchQuery((prev) => prev + inputChar);
+        }
+        return;
+      }
+
+      if (key.escape || inputChar === "q") {
+        setTranscriptMode(false);
+        return;
+      }
+      if (inputChar === "/") {
+        setTranscriptSearchMode(true);
+        setTranscriptSearchQuery("");
+        return;
+      }
+      if (inputChar === "n") {
+        jumpToTranscriptMatch("next");
+        return;
+      }
+      if (inputChar === "N") {
+        jumpToTranscriptMatch("previous");
+        return;
+      }
+      if (inputChar === "[") {
+        writeTranscriptToNativeScrollback(messages);
+        setCopyToast("wrote transcript to terminal scrollback");
+        setTimeout(() => setCopyToast(null), 2000);
+        return;
+      }
+      if (inputChar === "v") {
+        const result = openTranscriptInEditor(messages);
+        setCopyToast(result.ok ? "opened transcript in editor" : "set VISUAL or EDITOR to open transcript");
+        setTimeout(() => setCopyToast(null), 2000);
+        return;
+      }
+      if (inputChar === "g" || key.home) {
+        applyTranscriptScroll("up", "top");
+        return;
+      }
+      if (inputChar === "G" || key.end) {
+        applyTranscriptScroll("down", "bottom");
+        return;
+      }
+      if (inputChar === "j" || key.downArrow) {
+        applyTranscriptScroll("down", "line");
+        return;
+      }
+      if (inputChar === "k" || key.upArrow) {
+        applyTranscriptScroll("up", "line");
+        return;
+      }
+      const transcriptScrollRequest = getScrollRequest(inputChar, key);
+      if (transcriptScrollRequest) {
+        applyTranscriptScroll(transcriptScrollRequest.direction, transcriptScrollRequest.kind);
+        return;
+      }
+      if (inputChar === " " || (key.ctrl && inputChar === "f")) {
+        applyTranscriptScroll("down", "page");
+        return;
+      }
+      if (inputChar === "b" || (key.ctrl && inputChar === "b")) {
+        applyTranscriptScroll("up", "page");
+        return;
+      }
+      return;
+    }
+
     logTuiDebug("fullscreen-chat", "input-event", {
       inputChar,
       key: summarizeKey(key as Record<string, unknown>),
@@ -1060,10 +1546,12 @@ export function FullscreenChat({
 
     const mouseEvent = parseMouseEvent(inputChar);
     if (mouseEvent && mouseEvent.kind !== "wheel" && mouseEvent.button === "left") {
+      const localMouseX = mouseEvent.x - cursorOriginX;
+      const localMouseY = mouseEvent.y - cursorOriginY;
       const offset = getMouseOffsetFromComposer(
         composerLayout,
-        mouseEvent.x,
-        mouseEvent.y,
+        localMouseX,
+        localMouseY,
         mouseEvent.kind !== "press" && selectionAnchor.current !== null,
       );
 
@@ -1089,10 +1577,52 @@ export function FullscreenChat({
         }
         return;
       }
+
+      const bodyPosition = getMousePositionFromBody(
+        viewport.rows,
+        localMouseX,
+        localMouseY,
+        viewportFillerRows,
+      );
+      if (bodyPosition !== null) {
+        clearSelection();
+        if (mouseEvent.kind === "press") {
+          bodySelectionAnchor.current = bodyPosition;
+          setBodySelection({ anchor: bodyPosition, focus: bodyPosition });
+          return;
+        }
+        if (mouseEvent.kind === "drag" && bodySelectionAnchor.current !== null) {
+          setBodySelection({ anchor: bodySelectionAnchor.current, focus: bodyPosition });
+          return;
+        }
+        if (mouseEvent.kind === "release" && bodySelectionAnchor.current !== null) {
+          const nextSelection = { anchor: bodySelectionAnchor.current, focus: bodyPosition };
+          bodySelectionAnchor.current = null;
+          setBodySelection(nextSelection);
+          const selectedText = getSelectedBodyText(viewport.rows, nextSelection);
+          if (selectedText) {
+            void copyToClipboard(selectedText).then((result) => {
+              if (!result.ok) return;
+              setCopyToast(formatCopyToast(selectedText.length, result));
+              setTimeout(() => setCopyToast(null), 2000);
+            });
+          } else {
+            const row = viewport.rows[bodyPosition.rowIndex];
+            const target = row ? extractClickableTargetAt(row.text, bodyPosition.offset) : null;
+            if (target) {
+              const opened = openClickableTarget(target);
+              setCopyToast(opened ? `opened ${target}` : `could not open ${target}`);
+              setTimeout(() => setCopyToast(null), 2000);
+            }
+          }
+          return;
+        }
+      }
     }
 
     if (key.return && key.shift) {
       logTuiDebug("fullscreen-chat", "insert-newline", { cursorOffset });
+      clearBodySelection();
       insertText("\n");
       return;
     }
@@ -1128,6 +1658,7 @@ export function FullscreenChat({
         setCursorOffset(0);
         setCollapsedPaste(null);
         clearSelection();
+        clearBodySelection();
         return;
       }
     }
@@ -1259,6 +1790,7 @@ export function FullscreenChat({
     if (inputChar && !key.ctrl && !key.meta) {
       const clean = normalizeTerminalInputChunk(inputChar);
       if (clean.length === 0) return;
+      clearBodySelection();
       insertText(clean, {
         collapsePaste: shouldCollapsePastedText(inputChar, clean),
       });
@@ -1276,15 +1808,19 @@ export function FullscreenChat({
   }, []);
 
   const spinnerGlyph = PROCESSING_SPINNER_FRAMES[spinnerFrameIndex] ?? PROCESSING_SPINNER_FRAMES[0];
-  const visibleLines = buildFullscreenChatRenderLines({
-    availableCols,
-    availableRows,
-    viewport,
-    composerLines: composer.lines,
-    isProcessing,
-    spinnerGlyph,
-    spinnerVerb,
-  });
+  const visibleLines = transcriptMode
+    ? transcript.lines
+    : buildFullscreenChatRenderLines({
+        availableCols,
+        availableRows,
+        viewport,
+        composerLines: composer.lines,
+        isProcessing,
+        spinnerGlyph,
+        spinnerVerb,
+        bodySelection: bodySelectionRange,
+        transcriptStatus: copyToast,
+      });
 
   return (
     <Box flexDirection="column" flexGrow={1} overflow="hidden">

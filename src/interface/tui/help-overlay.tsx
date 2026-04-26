@@ -100,12 +100,29 @@ export function HelpOverlay({ onDismiss }: HelpOverlayProps) {
             <Box width={20}><Text color={theme.shortcut} bold>Ctrl-C ×2</Text></Box>
             <Text>Quit PulSeed (press twice)</Text>
           </Box>
+          <Box>
+            <Box width={20}><Text color={theme.shortcut} bold>PgUp / PgDn</Text></Box>
+            <Text>Scroll the chat viewport</Text>
+          </Box>
+          <Box>
+            <Box width={20}><Text color={theme.shortcut} bold>Ctrl-Home/End</Text></Box>
+            <Text>Jump to oldest or newest chat row</Text>
+          </Box>
+          <Box>
+            <Box width={20}><Text color={theme.shortcut} bold>Ctrl-O</Text></Box>
+            <Text>Open transcript mode for search and scrollback export</Text>
+          </Box>
+          <Box>
+            <Box width={20}><Text color={theme.shortcut} bold>Mouse drag</Text></Box>
+            <Text>Select and copy text in fullscreen mode</Text>
+          </Box>
 
         </Box>
       </Box>
 
       <Text dimColor>{separator}</Text>
       <Text dimColor>Type naturally to create goals or ask questions.</Text>
+      <Text dimColor>Set PULSEED_DISABLE_MOUSE=1 to keep native terminal mouse selection.</Text>
       <Text dimColor>Press ESC to close</Text>
     </Box>
   );

@@ -30,7 +30,7 @@ export async function startTUITest(): Promise<void> {
   logTuiDebug("test-entry", "start", { logPath: getTuiDebugLogPath() });
 
   const noFlicker = await isNoFlickerEnabled();
-  const mouseTrackingEnabled = isMouseTrackingEnabled();
+  const mouseTrackingEnabled = isMouseTrackingEnabled(noFlicker);
   const outputController = noFlicker ? createNoFlickerOutputController() : null;
   outputController?.install();
   let cleanedUp = false;

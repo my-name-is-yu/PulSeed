@@ -32,5 +32,5 @@ export interface ChatViewport {
 
 export interface ScrollRequest {
   direction: "up" | "down";
-  kind: "page" | "line";
+  kind: "page" | "line" | "top" | "bottom";
 }

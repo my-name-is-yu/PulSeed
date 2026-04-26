@@ -500,7 +500,7 @@ async function buildDeps() {
 
 async function startTUIStandaloneMode(): Promise<void> {
   const noFlicker = await isNoFlickerEnabled();
-  const mouseTrackingEnabled = isMouseTrackingEnabled();
+  const mouseTrackingEnabled = isMouseTrackingEnabled(noFlicker);
   const outputController = noFlicker ? createNoFlickerOutputController() : null;
   outputController?.install();
   let cleanedUp = false;
@@ -588,7 +588,7 @@ async function startTUIDaemonMode(): Promise<void> {
   const { DaemonClient } = await import("../../runtime/daemon/client.js");
   const baseDir = process.env.PULSEED_HOME ?? getPulseedDirPath();
   const noFlicker = await isNoFlickerEnabled();
-  const mouseTrackingEnabled = isMouseTrackingEnabled();
+  const mouseTrackingEnabled = isMouseTrackingEnabled(noFlicker);
   const outputController = noFlicker ? createNoFlickerOutputController() : null;
   outputController?.install();
   let cleanedUp = false;

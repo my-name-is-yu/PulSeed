@@ -16,6 +16,8 @@ type ScrollKey = {
   ctrl?: boolean;
   pageUp?: boolean;
   pageDown?: boolean;
+  home?: boolean;
+  end?: boolean;
 };
 
 export type ParsedMouseEvent =
@@ -106,6 +108,12 @@ export function getScrollRequest(
   if (key.ctrl && (inputChar === "d" || inputChar === "D")) {
     return { direction: "down", kind: "page" };
   }
+  if (key.ctrl && key.home) {
+    return { direction: "up", kind: "top" };
+  }
+  if (key.ctrl && key.end) {
+    return { direction: "down", kind: "bottom" };
+  }
   if (key.meta && key.upArrow) {
     return { direction: "up", kind: "line" };
   }
@@ -119,6 +127,14 @@ export function getScrollRequest(
     return { direction: "down", kind: "line" };
   }
   return null;
+}
+
+export function getScrollLineStep(): number {
+  const raw = process.env.PULSEED_SCROLL_SPEED;
+  if (!raw) return 1;
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed)) return 1;
+  return Math.max(1, Math.min(20, parsed));
 }
 
 export function stripMouseEscapeSequences(input: string): string {

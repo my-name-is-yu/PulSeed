@@ -18,7 +18,7 @@ import { isBashModeInput } from "./bash-mode.js";
 import { isRenderableFrameChunk } from "./render-output.js";
 import { estimateWrappedLineCount } from "./markdown-renderer.js";
 import { buildChatViewport } from "./chat/viewport.js";
-import { getScrollRequest, stripMouseEscapeSequences } from "./chat/scroll.js";
+import { getScrollLineStep, getScrollRequest, stripMouseEscapeSequences } from "./chat/scroll.js";
 import { getMatchingSuggestions, type Suggestion } from "./chat/suggestions.js";
 import type { ChatMessage } from "./chat/types.js";
 import { getTrustedTuiControlStream } from "./terminal-output.js";
@@ -330,10 +330,12 @@ export function Chat({
   );
   const logPaneHeight = viewport.maxVisibleRows + processingRows + SCROLL_INDICATOR_ROWS;
 
-  const applyScroll = useCallback((direction: "up" | "down", kind: "page" | "line") => {
+  const applyScroll = useCallback((direction: "up" | "down", kind: "page" | "line" | "top" | "bottom") => {
     setScrollOffset((prev) => {
       const maxOffset = Math.max(0, viewport.totalRows - viewport.maxVisibleRows);
-      const amount = kind === "page" ? viewport.maxVisibleRows : SCROLL_LINE_STEP;
+      if (kind === "top") return maxOffset;
+      if (kind === "bottom") return 0;
+      const amount = kind === "page" ? viewport.maxVisibleRows : SCROLL_LINE_STEP * getScrollLineStep();
       const delta = direction === "up" ? amount : -amount;
       return Math.max(0, Math.min(maxOffset, prev + delta));
     });
