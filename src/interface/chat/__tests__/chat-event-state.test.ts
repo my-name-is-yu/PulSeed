@@ -34,18 +34,25 @@ describe("applyChatEventToMessages", () => {
     });
   });
 
-  it("does not add separate chat rows for raw tool events", () => {
+  it("shows raw tool events as a current activity row", () => {
     const messages = applyChatEventToMessages([], {
       type: "tool_start",
       runId: "run-1",
       turnId: "turn-1",
       createdAt: "2026-04-08T00:00:00.000Z",
       toolCallId: "tool-1",
-      toolName: "grep",
-      args: { pattern: "ChatEvent" },
+      toolName: "shell_command",
+      args: { command: "rg ChatEvent src/interface/chat", cwd: "/repo" },
     }, 20);
 
-    expect(messages).toEqual([]);
+    expect(messages).toHaveLength(1);
+    expect(messages[0]!).toMatchObject({
+      id: "tool-log:turn-1",
+      role: "pulseed",
+      messageType: "info",
+    });
+    expect(messages[0]!.text).toContain("Current activity");
+    expect(messages[0]!.text).toContain("Reading shell_command - command=rg ChatEvent src/interface/chat");
   });
 
   it("removes transient activity when assistant final arrives", () => {
@@ -147,5 +154,103 @@ describe("applyChatEventToMessages", () => {
     expect(afterEnd).toHaveLength(1);
     expect(afterEnd[0]!.id).toBe("activity:turn-1");
     expect(afterEnd[0]!.text).toBe("Pinned note");
+  });
+
+  it("preserves the latest few tool events and keeps tool logs after the turn ends", () => {
+    let messages = [] as ReturnType<typeof applyChatEventToMessages>;
+    for (let index = 1; index <= 6; index += 1) {
+      messages = applyChatEventToMessages(messages, {
+        type: "tool_start",
+        runId: "run-1",
+        turnId: "turn-1",
+        createdAt: `2026-04-08T00:00:0${index}.000Z`,
+        toolCallId: `tool-${index}`,
+        toolName: "read_file",
+        args: { path: `src/file-${index}.ts` },
+      }, 20);
+    }
+
+    const toolLog = messages.find((message) => message.id === "tool-log:turn-1");
+    expect(toolLog?.text).not.toContain("file-1.ts");
+    expect(toolLog?.text).toContain("file-2.ts");
+    expect(toolLog?.text).toContain("file-6.ts");
+
+    const afterEnd = applyChatEventToMessages(messages, {
+      type: "lifecycle_end",
+      runId: "run-1",
+      turnId: "turn-1",
+      createdAt: "2026-04-08T00:00:10.000Z",
+      status: "completed",
+      elapsedMs: 10_000,
+      persisted: true,
+    }, 20);
+
+    expect(afterEnd.find((message) => message.id === "tool-log:turn-1")?.text).toContain("Recent activity");
+  });
+
+  it("keeps tool intent categories across updates and distinguishes waiting for approval", () => {
+    const started = applyChatEventToMessages([], {
+      type: "tool_start",
+      runId: "run-1",
+      turnId: "turn-1",
+      createdAt: "2026-04-08T00:00:00.000Z",
+      toolCallId: "tool-1",
+      toolName: "shell_command",
+      args: { command: "npm run test:changed -- --run" },
+    }, 20);
+
+    const running = applyChatEventToMessages(started, {
+      type: "tool_update",
+      runId: "run-1",
+      turnId: "turn-1",
+      createdAt: "2026-04-08T00:00:01.000Z",
+      toolCallId: "tool-1",
+      toolName: "shell_command",
+      status: "running",
+      message: "running",
+    }, 20);
+
+    expect(running[0]!.text).toContain("Verifying shell_command");
+    expect(running[0]!.text).toContain("command=npm run test:changed -- --run");
+
+    const waiting = applyChatEventToMessages(running, {
+      type: "tool_update",
+      runId: "run-1",
+      turnId: "turn-1",
+      createdAt: "2026-04-08T00:00:02.000Z",
+      toolCallId: "tool-2",
+      toolName: "apply_patch",
+      status: "awaiting_approval",
+      message: "write src/example.ts",
+    }, 20);
+
+    expect(waiting[0]!.text).toContain("Waiting for approval apply_patch - write src/example.ts");
+  });
+
+  it("moves a tool out of waiting once execution resumes after approval", () => {
+    const waiting = applyChatEventToMessages([], {
+      type: "tool_update",
+      runId: "run-1",
+      turnId: "turn-1",
+      createdAt: "2026-04-08T00:00:00.000Z",
+      toolCallId: "tool-1",
+      toolName: "apply_patch",
+      status: "awaiting_approval",
+      message: "write src/example.ts",
+    }, 20);
+
+    const running = applyChatEventToMessages(waiting, {
+      type: "tool_update",
+      runId: "run-1",
+      turnId: "turn-1",
+      createdAt: "2026-04-08T00:00:01.000Z",
+      toolCallId: "tool-1",
+      toolName: "apply_patch",
+      status: "running",
+      message: "running",
+    }, 20);
+
+    expect(running[0]!.text).not.toContain("Waiting for approval apply_patch");
+    expect(running[0]!.text).toContain("Editing apply_patch - write src/example.ts");
   });
 });
