@@ -1,4 +1,5 @@
 import { z } from "zod";
+import * as path from "node:path";
 import { getCodeSearchIndexes } from "../../../platform/code-search/indexes/index-store.js";
 import { ProgressiveReader } from "../../../platform/code-search/progressive-reader.js";
 import { getCodeSearchSession, resolveCodeSearchCandidates } from "../../../platform/code-search/session-store.js";
@@ -46,6 +47,24 @@ export const CodeReadContextInputSchema = z.object({
 });
 export type CodeReadContextInput = z.infer<typeof CodeReadContextInputSchema>;
 
+function resolveReadRoot(input: CodeReadContextInput, context: ToolCallContext): { cwd: string; error?: string } {
+  const stored = input.queryId ? getCodeSearchSession(input.queryId) : null;
+  const sessionRoot = stored?.cwd;
+  if (!sessionRoot) {
+    return { cwd: input.path ? validateFilePath(input.path, context.cwd).resolved : context.cwd };
+  }
+  if (!input.path) return { cwd: sessionRoot };
+  const requested = validateFilePath(input.path, context.cwd).resolved;
+  const relative = path.relative(sessionRoot, requested);
+  if (requested !== sessionRoot && (relative.startsWith("..") || path.isAbsolute(relative))) {
+    return {
+      cwd: sessionRoot,
+      error: `Reading path ${requested} is outside code_search session root ${sessionRoot}`,
+    };
+  }
+  return { cwd: requested };
+}
+
 export class CodeReadContextTool implements ITool<CodeReadContextInput, unknown> {
   readonly metadata: ToolMetadata = {
     name: "code_read_context",
@@ -67,7 +86,17 @@ export class CodeReadContextTool implements ITool<CodeReadContextInput, unknown>
 
   async call(input: CodeReadContextInput, context: ToolCallContext): Promise<ToolResult> {
     const startTime = Date.now();
-    const cwd = input.path ? validateFilePath(input.path, context.cwd).resolved : context.cwd;
+    const resolvedRoot = resolveReadRoot(input, context);
+    if (resolvedRoot.error) {
+      return {
+        success: false,
+        data: null,
+        summary: resolvedRoot.error,
+        error: resolvedRoot.error,
+        durationMs: Date.now() - startTime,
+      };
+    }
+    const cwd = resolvedRoot.cwd;
     const indexes = await getCodeSearchIndexes(cwd);
     const reader = new ProgressiveReader(cwd, indexes);
     const candidates = input.queryId
@@ -100,7 +129,11 @@ export class CodeReadContextTool implements ITool<CodeReadContextInput, unknown>
 
   async checkPermissions(input: CodeReadContextInput, context?: ToolCallContext): Promise<PermissionCheckResult> {
     if (!context) return { status: "allowed" };
-    const rootValidation = validateFilePath(input.path ?? ".", context.cwd, context.executionPolicy?.protectedPaths);
+    const resolvedRoot = resolveReadRoot(input, context);
+    if (resolvedRoot.error) {
+      return { status: "denied", reason: resolvedRoot.error };
+    }
+    const rootValidation = validateFilePath(resolvedRoot.cwd, context.cwd, context.executionPolicy?.protectedPaths);
     if (!rootValidation.valid) {
       return { status: "needs_approval", reason: `Reading outside the working directory: ${rootValidation.resolved}` };
     }

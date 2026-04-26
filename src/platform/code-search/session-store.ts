@@ -3,7 +3,7 @@ import type { RankedCandidate, SearchSessionState } from "./contracts.js";
 const MAX_SESSIONS = 50;
 const SESSION_TTL_MS = 30 * 60 * 1000;
 
-interface StoredCodeSearchSession {
+export interface StoredCodeSearchSession {
   session: SearchSessionState;
   cwd: string;
   expiresAt: number;

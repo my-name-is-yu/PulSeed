@@ -94,6 +94,38 @@ describe("code search tools", () => {
     expect(JSON.stringify(read.data)).toContain("alphaValue");
   });
 
+  it("uses the saved search root for queryId reads from scoped paths", async () => {
+    await fsp.mkdir(path.join(root, "pkg", "src"), { recursive: true });
+    await fsp.writeFile(path.join(root, "pkg", "src", "alpha.ts"), "export function scopedAlphaValue() { return 2; }\n");
+    const registry = new ToolRegistry();
+    registry.register(new CodeSearchTool());
+    registry.register(new CodeReadContextTool());
+    const executor = new ToolExecutor({
+      registry,
+      permissionManager: new ToolPermissionManager({}),
+      concurrency: new ConcurrencyController(),
+    });
+
+    const search = await executor.execute("code_search", {
+      task: "find scopedAlphaValue",
+      intent: "explain",
+      path: "pkg",
+    }, context);
+    expect(search.success).toBe(true);
+    const data = search.data as { queryId: string; candidateIds: string[] };
+
+    const read = await executor.execute("code_read_context", {
+      queryId: data.queryId,
+      candidateIds: data.candidateIds.slice(0, 1),
+      phase: "locate",
+      maxReadRanges: 1,
+    }, context);
+
+    expect(read.success).toBe(true);
+    expect(JSON.stringify(read.data)).toContain("scopedAlphaValue");
+    expect((read.data as { ranges: Array<{ file: string }> }).ranges[0].file).toBe("src/alpha.ts");
+  });
+
   it("code_search_repair parses verification output and suggests candidates", async () => {
     const result = await new CodeSearchRepairTool().call({
       priorTask: { task: "fix alphaValue", intent: "bugfix" },
