@@ -48,7 +48,7 @@ function getSessionPaths(stateManager: StateManager): string[] {
 }
 
 describe("SharedManagerTuiChatSurface", () => {
-  it("keeps a stable TUI conversation id when executeIngressMessage omits one", async () => {
+	  it("keeps a stable TUI conversation id when executeIngressMessage omits one", async () => {
     const stateManager = makeMockStateManager();
     const surface = new SharedManagerTuiChatSurface(makeDeps({ stateManager }));
     surface.startSession("/repo");
@@ -76,5 +76,39 @@ describe("SharedManagerTuiChatSurface", () => {
     const sessionPaths = getSessionPaths(stateManager);
     expect(new Set(sessionPaths).size).toBe(1);
     expect(sessionPaths[0]).toMatch(/^chat\/sessions\/.+\.json$/);
-  });
-});
+	  });
+
+	  it("routes runtime-control turns through the injected service", async () => {
+	    const adapter = makeMockAdapter();
+	    const runtimeControlService = {
+	      request: vi.fn().mockResolvedValue({
+	        success: true,
+	        message: "restart queued",
+	        operationId: "op-1",
+	        state: "acknowledged",
+	      }),
+	    };
+	    const surface = new SharedManagerTuiChatSurface(makeDeps({
+	      adapter,
+	      runtimeControlService,
+	      approvalFn: vi.fn().mockResolvedValue(true),
+	    }));
+	    surface.startSession("/repo");
+
+	    const result = await surface.execute("PulSeed を再起動して", "/repo");
+
+	    expect(result.success).toBe(true);
+	    expect(result.output).toBe("restart queued");
+	    expect(adapter.execute).not.toHaveBeenCalled();
+	    expect(runtimeControlService.request).toHaveBeenCalledWith(
+	      expect.objectContaining({
+	        intent: expect.objectContaining({ kind: "restart_daemon" }),
+	        replyTarget: expect.objectContaining({
+	          surface: "tui",
+	          channel: "tui",
+	          platform: "local_tui",
+	        }),
+	      })
+	    );
+	  });
+	});

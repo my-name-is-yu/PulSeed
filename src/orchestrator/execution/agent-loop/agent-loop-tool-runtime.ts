@@ -39,6 +39,9 @@ export class ToolExecutorAgentLoopToolRuntime implements AgentLoopToolRuntime {
     const safeOutputs = await Promise.all(safe.map(({ call }) => this.executeOne(call, turn)));
     for (let i = 0; i < safe.length; i++) outputs[safe[i].index] = safeOutputs[i];
     for (const { call, index } of unsafe) outputs[index] = await this.executeOne(call, turn);
+    for (const output of outputs) {
+      this.activateToolSearchResults(turn, output);
+    }
     return outputs;
   }
 
@@ -137,5 +140,35 @@ export class ToolExecutorAgentLoopToolRuntime implements AgentLoopToolRuntime {
     return input && typeof input === "object" && typeof (input as Record<string, unknown>)["cwd"] === "string"
       ? (input as Record<string, string>)["cwd"]
       : undefined;
+  }
+
+  private activateToolSearchResults(
+    turn: AgentLoopTurnContext<unknown>,
+    output: AgentLoopToolOutput,
+  ): void {
+    if (output.toolName !== "tool_search" || !output.success) return;
+    const data = output.rawResult && typeof output.rawResult === "object"
+      ? (output.rawResult as Record<string, unknown>)["data"]
+      : undefined;
+    const results = Array.isArray(data) ? data : this.parseToolSearchContent(output.content);
+    if (!results || results.length === 0) return;
+
+    turn.toolPolicy.activatedTools ??= new Set<string>();
+    for (const item of results) {
+      if (item && typeof item === "object" && typeof (item as Record<string, unknown>)["name"] === "string") {
+        turn.toolPolicy.activatedTools.add((item as Record<string, unknown>)["name"] as string);
+      }
+    }
+  }
+
+  private parseToolSearchContent(content: string): unknown[] | null {
+    const firstArray = content.indexOf("[");
+    if (firstArray < 0) return null;
+    try {
+      const parsed = JSON.parse(content.slice(firstArray)) as unknown;
+      return Array.isArray(parsed) ? parsed : null;
+    } catch {
+      return null;
+    }
   }
 }

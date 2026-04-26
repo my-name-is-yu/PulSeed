@@ -18,6 +18,7 @@ export interface AgentLoopToolPolicy {
   requiredTools?: readonly string[];
   deniedTools?: readonly string[];
   includeDeferred?: boolean;
+  activatedTools?: Set<string>;
 }
 
 export type AgentLoopFinalOutputMode = "schema" | "display_text";

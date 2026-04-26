@@ -638,7 +638,7 @@ describe("agentloop phase 7 ChatAgentLoopRunner and CoreLoopControlTools", () =>
     expect(modelClient.calls[1].messages.some((m) => m.role === "tool" && m.toolName === "core_goal_status")).toBe(true);
   });
 
-  it("lets chat hand long-running work off to daemon-backed CoreLoop with one tool call", async () => {
+	  it("lets chat hand long-running work off to daemon-backed CoreLoop with one tool call", async () => {
     const modelInfo = makeModelInfo();
     const modelClient = new ScriptedModelClient(modelInfo, [
       {
@@ -695,10 +695,38 @@ describe("agentloop phase 7 ChatAgentLoopRunner and CoreLoopControlTools", () =>
     expect(result.success).toBe(true);
     expect(result.output.startsWith("CoreLoop started")).toBe(true);
     expect(savedGoal).toMatchObject({ title: "Improve Kaggle score beyond 0.98" });
-    expect(modelClient.calls[1].messages.some((m) => m.role === "tool" && m.toolName === "core_tend_goal")).toBe(true);
-  });
+	    expect(modelClient.calls[1].messages.some((m) => m.role === "tool" && m.toolName === "core_tend_goal")).toBe(true);
+	  });
 
-  it("emits approval_request and continues when chat approval is granted", async () => {
+	  it("does not register daemon-backed CoreLoop control tools without real handlers", () => {
+	    const stateManager = {
+	      getBaseDir: () => "/tmp/pulseed-test",
+	    };
+
+	    const toolNames = createCoreLoopControlTools(createDaemonBackedCoreLoopControlToolset({
+	      stateManager: stateManager as never,
+	      daemonClientFactory: async () => ({
+	        startGoal: async () => ({ ok: true }),
+	        stopGoal: async () => ({ ok: true }),
+	        getSnapshot: async () => ({ active_workers: [] }),
+	      }) as never,
+	    })).map((tool) => tool.metadata.name);
+
+	    expect(toolNames).toEqual(expect.arrayContaining([
+	      "core_goal_status",
+	      "core_goal_create",
+	      "core_tend_goal",
+	      "core_goal_start",
+	      "core_goal_pause",
+	      "core_goal_resume",
+	      "core_goal_cancel",
+	      "core_task_status",
+	    ]));
+	    expect(toolNames).not.toContain("core_task_prioritize");
+	    expect(toolNames).not.toContain("core_run_cycle");
+	  });
+
+	  it("emits approval_request and continues when chat approval is granted", async () => {
     const modelInfo = makeModelInfo();
     const modelClient = new ScriptedModelClient(modelInfo, [
       {

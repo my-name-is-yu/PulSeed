@@ -15,11 +15,11 @@ describe("IngressRouter", () => {
           approvalMode: "interactive",
         },
       }),
-      {
-        hasAgentLoop: true,
-        hasToolLoop: true,
-      }
-    );
+	      {
+	        hasAgentLoop: true,
+	        hasToolLoop: true,
+	      }
+	    );
 
     expect(route.kind).toBe("agent_loop");
     expect(route.replyTargetPolicy).toBe("turn_reply_target");
@@ -50,15 +50,37 @@ describe("IngressRouter", () => {
           approvalMode: "interactive",
         },
       }),
-      {
-        hasAgentLoop: true,
-        hasToolLoop: true,
-      }
-    );
+	      {
+	        hasAgentLoop: true,
+	        hasToolLoop: true,
+	        hasRuntimeControlService: true,
+	      }
+	    );
 
-    expect(route.kind).toBe("runtime_control");
-    expect(route.eventProjectionPolicy).toBe("latest_active_reply_target");
-  });
+	    expect(route.kind).toBe("runtime_control");
+	    expect(route.eventProjectionPolicy).toBe("latest_active_reply_target");
+	  });
+
+	  it("does not route runtime-control text to runtime_control when the service is not wired", () => {
+	    const route = router.selectRoute(
+	      buildStandaloneIngressMessage({
+	        text: "PulSeed を再起動して",
+	        channel: "tui",
+	        platform: "local_tui",
+	        runtimeControl: {
+	          allowed: true,
+	          approvalMode: "interactive",
+	        },
+	      }),
+	      {
+	        hasAgentLoop: true,
+	        hasToolLoop: true,
+	        hasRuntimeControlService: false,
+	      }
+	    );
+
+	    expect(route.kind).toBe("agent_loop");
+	  });
 
   it("does not route runtime-control text to runtime_control when ingress policy disallows it", () => {
     const route = router.selectRoute(

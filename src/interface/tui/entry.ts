@@ -451,6 +451,13 @@ async function buildDeps() {
   try {
     const adapterType = providerConfig.adapter ?? "claude_code_cli";
     const adapter = adapterRegistry.getAdapter(adapterType);
+    const { RuntimeControlService, createDaemonRuntimeControlExecutor } = await import("../../runtime/control/index.js");
+    const runtimeControlService = new RuntimeControlService({
+      runtimeRoot: path.join(stateManager.getBaseDir(), "runtime"),
+      executor: createDaemonRuntimeControlExecutor({
+        baseDir: stateManager.getBaseDir(),
+      }),
+    });
     const chatAgentLoopRunner = shouldUseNativeTaskAgentLoop(providerConfig, llmClient)
       ? createNativeChatAgentLoopRunner({
           llmClient,
@@ -480,6 +487,7 @@ async function buildDeps() {
       toolExecutor,
       chatAgentLoopRunner,
       reviewAgentLoopRunner,
+      runtimeControlService,
       approvalFn: chatToolApprovalFn,
     });
   } catch (err) {
@@ -727,6 +735,7 @@ async function startTUIDaemonMode(): Promise<void> {
       const { GoalNegotiator } = await import("../../orchestrator/goal/goal-negotiator.js");
       const { EthicsGate } = await import("../../platform/traits/ethics-gate.js");
       const { ObservationEngine } = await import("../../platform/observation/observation-engine.js");
+      const { RuntimeControlService, createDaemonRuntimeControlExecutor } = await import("../../runtime/control/index.js");
       const llmClient = await buildLLMClient();
       const adapterRegistry = await buildAdapterRegistry(llmClient);
       const observationEngine = new ObservationEngine(stateManager, dataSourceRegistry.getAllSources(), llmClient);
@@ -763,6 +772,12 @@ async function startTUIDaemonMode(): Promise<void> {
             traceBaseDir: stateManager.getBaseDir(),
           })
         : undefined;
+      const runtimeControlService = new RuntimeControlService({
+        runtimeRoot: path.join(stateManager.getBaseDir(), "runtime"),
+        executor: createDaemonRuntimeControlExecutor({
+          baseDir: stateManager.getBaseDir(),
+        }),
+      });
       chatRunner = new SharedManagerTuiChatSurface({
         stateManager,
         adapter,
@@ -772,6 +787,7 @@ async function startTUIDaemonMode(): Promise<void> {
         toolExecutor,
         chatAgentLoopRunner,
         reviewAgentLoopRunner,
+        runtimeControlService,
         goalNegotiator,
         daemonClient,
         daemonBaseUrl: `http://127.0.0.1:${daemonPort}`,

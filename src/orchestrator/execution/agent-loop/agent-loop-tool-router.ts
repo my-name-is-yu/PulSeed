@@ -21,6 +21,7 @@ export class ToolRegistryAgentLoopToolRouter implements AgentLoopToolRouter {
         turn.toolPolicy.includeDeferred
         || !tool.metadata.shouldDefer
         || turn.toolPolicy.requiredTools?.includes(tool.metadata.name) === true
+        || turn.toolPolicy.activatedTools?.has(tool.metadata.name) === true
       )
       .map((tool) => {
         const definition = toToolDefinition(tool);
