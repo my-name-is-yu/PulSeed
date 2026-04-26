@@ -3,6 +3,7 @@ import { SearchOrchestrator } from "../../../platform/code-search/orchestrator.j
 import { parseVerificationSignal } from "../../../platform/code-search/verification-retrieval.js";
 import { validateFilePath } from "../../fs/FileValidationTool/FileValidationTool.js";
 import type { ITool, PermissionCheckResult, ToolCallContext, ToolMetadata, ToolResult } from "../../types.js";
+import { resolveCodeSearchRoot } from "../code-search-root.js";
 import { MAX_OUTPUT_CHARS, PERMISSION_LEVEL, READ_ONLY, TAGS } from "./constants.js";
 import { DESCRIPTION } from "./prompt.js";
 
@@ -44,7 +45,18 @@ export class CodeSearchRepairTool implements ITool<CodeSearchRepairInput, unknow
 
   async call(input: CodeSearchRepairInput, context: ToolCallContext): Promise<ToolResult> {
     const startTime = Date.now();
-    const cwd = input.path ? validateFilePath(input.path, context.cwd).resolved : context.cwd;
+    let cwd: string;
+    try {
+      cwd = resolveCodeSearchRoot(input, context, "code_search_repair");
+    } catch (err) {
+      return {
+        success: false,
+        data: { candidates: [], focusedTestSuggestions: [], warnings: [(err as Error).message] },
+        summary: `Repair code search failed: ${(err as Error).message}`,
+        error: (err as Error).message,
+        durationMs: Date.now() - startTime,
+      };
+    }
     const signal = parseVerificationSignal(input.verificationOutput);
     const orchestrator = new SearchOrchestrator(cwd);
     const prior = {
@@ -89,7 +101,13 @@ export class CodeSearchRepairTool implements ITool<CodeSearchRepairInput, unknow
   }
 
   async checkPermissions(input: CodeSearchRepairInput, context?: ToolCallContext): Promise<PermissionCheckResult> {
-    if (!context || !input.path) return { status: "allowed" };
+    if (!context) return { status: "allowed" };
+    try {
+      resolveCodeSearchRoot(input, context, "code_search_repair");
+    } catch (err) {
+      return { status: "denied", reason: (err as Error).message };
+    }
+    if (!input.path) return { status: "allowed" };
     const validation = validateFilePath(input.path, context.cwd, context.executionPolicy?.protectedPaths);
     if (!validation.valid) {
       return { status: "needs_approval", reason: `Searching outside the working directory: ${validation.resolved}` };

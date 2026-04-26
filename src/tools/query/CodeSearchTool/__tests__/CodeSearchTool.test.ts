@@ -184,4 +184,37 @@ describe("code search tools", () => {
     expect((result.data as { signal: { kind: string }; candidates: unknown[] }).signal.kind).toBe("undefined_symbol");
     expect((result.data as { candidates: unknown[] }).candidates.length).toBeGreaterThan(0);
   });
+
+  it("code_search_repair refuses broad explicit and implicit roots through the executor", async () => {
+    const repair = new CodeSearchRepairTool();
+    const permission = await repair.checkPermissions({
+      priorTask: { task: "fix alphaValue", intent: "bugfix" },
+      verificationOutput: "ReferenceError: alphaValue is not defined\n    at src/alpha.ts:1:1",
+      path: os.homedir(),
+    }, context);
+    expect(permission).toMatchObject({ status: "denied" });
+
+    const registry = new ToolRegistry();
+    registry.register(repair);
+    const executor = new ToolExecutor({
+      registry,
+      permissionManager: new ToolPermissionManager({}),
+      concurrency: new ConcurrencyController(),
+    });
+
+    const explicit = await executor.execute("code_search_repair", {
+      priorTask: { task: "fix alphaValue", intent: "bugfix" },
+      verificationOutput: "ReferenceError: alphaValue is not defined\n    at src/alpha.ts:1:1",
+      path: os.homedir(),
+    }, context);
+    expect(explicit.success).toBe(false);
+    expect(explicit.error).toContain("refused broad explicit path");
+
+    const implicit = await repair.call({
+      priorTask: { task: "fix alphaValue", intent: "bugfix" },
+      verificationOutput: "ReferenceError: alphaValue is not defined\n    at src/alpha.ts:1:1",
+    }, { ...context, cwd: os.homedir() });
+    expect(implicit.success).toBe(false);
+    expect(implicit.error).toContain("refused broad root");
+  });
 });
