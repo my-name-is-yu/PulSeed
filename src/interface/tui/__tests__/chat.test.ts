@@ -10,8 +10,16 @@ import {
   getScrollRequest,
   stripMouseEscapeSequences,
 } from "../chat.js";
-import { buildFullscreenChatRenderLines, copySelectedInputText, getSelectedInputText } from "../fullscreen-chat.js";
+import {
+  buildCollapsedPasteRange,
+  buildComposerLines,
+  buildFullscreenChatRenderLines,
+  copySelectedInputText,
+  getSelectedInputText,
+  shouldCollapsePastedText,
+} from "../fullscreen-chat.js";
 import { estimateMarkdownHeight, estimateWrappedLineCount, wrapTextToRows } from "../markdown-renderer.js";
+import { measureTextWidth } from "../text-width.js";
 import { extractBashCommand, isBashModeInput, isSafeBashCommand, createShellApprovalTask, formatShellOutput } from "../bash-mode.js";
 import {
   CARET_MARKER,
@@ -103,6 +111,13 @@ describe("markdown sizing helpers", () => {
   it("wraps plain text into terminal rows", () => {
     expect(wrapTextToRows("abcdefghij", 5)).toEqual(["abcde", "fghij"]);
   });
+
+  it("wraps full-width unbroken text by terminal display width", () => {
+    const rows = wrapTextToRows("これは改行のない長い日本語文章です".repeat(3), 20);
+
+    expect(rows.length).toBeGreaterThan(1);
+    expect(rows.every((row) => measureTextWidth(row) <= 20)).toBe(true);
+  });
 });
 
 describe("chat viewport", () => {
@@ -164,6 +179,22 @@ describe("chat viewport", () => {
     const keys = lines.map((line) => line.key);
     expect(keys.indexOf("indicator-bottom")).toBeLessThan(keys.indexOf("processing"));
     expect(keys.indexOf("processing")).toBeLessThan(keys.indexOf("composer-helper"));
+  });
+
+  it("keeps wrapped user rows within the terminal display width including the prompt", () => {
+    const viewport = buildChatViewport([
+      {
+        id: "m1",
+        role: "user" as const,
+        text: "これは改行のない長い日本語文章です".repeat(3),
+        timestamp: new Date(),
+      },
+    ], 32, 20, 0);
+
+    const userRows = viewport.rows.filter((row) => row.kind === "user");
+
+    expect(userRows.length).toBeGreaterThan(1);
+    expect(userRows.every((row) => measureTextWidth(row.text) <= 26)).toBe(true);
   });
 });
 
@@ -305,6 +336,38 @@ describe("composer clipboard selection", () => {
     await expect(copySelectedInputText("copy", { anchor: 2, focus: 2 }, copy)).resolves.toBe(false);
 
     expect(copy).not.toHaveBeenCalled();
+  });
+});
+
+describe("collapsed paste composer display", () => {
+  it("detects long pasted chunks without collapsing short typing chunks", () => {
+    expect(shouldCollapsePastedText("hello", "hello")).toBe(false);
+    expect(shouldCollapsePastedText("a".repeat(120), "a".repeat(120))).toBe(true);
+    expect(shouldCollapsePastedText("[200~line 1\nline 2\n".repeat(4) + "[201~", "line 1\nline 2\n".repeat(4))).toBe(true);
+  });
+
+  it("renders a collapsed paste label while preserving the original input range", () => {
+    const pasted = "word ".repeat(40);
+    const collapsedPaste = buildCollapsedPasteRange(pasted, 0);
+    const composer = buildComposerLines({
+      cols: 80,
+      input: pasted,
+      cursorOffset: pasted.length,
+      bashMode: false,
+      emptyHint: false,
+      matches: [],
+      selectedIdx: 0,
+      copyToast: null,
+      selection: null,
+      collapsedPaste,
+    });
+    const rendered = composer.lines
+      .flatMap((line) => line.segments?.map((segment) => segment.text) ?? [line.text ?? ""])
+      .join("");
+
+    expect(collapsedPaste.end).toBe(pasted.length);
+    expect(rendered).toContain("[pasted 200 chars]");
+    expect(rendered).not.toContain(pasted.slice(0, 40));
   });
 });
 

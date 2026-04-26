@@ -10,6 +10,7 @@
 
 import * as os from "node:os";
 import * as path from "node:path";
+import { measureCharWidth, measureTextWidth } from "./text-width.js";
 import { theme } from "./theme.js";
 
 export interface MarkdownSegment {
@@ -34,6 +35,29 @@ const WORD_SEGMENTER =
     ? new Intl.Segmenter("en", { granularity: "word" })
     : null;
 
+function splitTextToWidth(text: string, width: number): string[] {
+  const safeWidth = Math.max(1, Math.floor(width));
+  const rows: string[] = [];
+  let current = "";
+  let currentWidth = 0;
+
+  for (const ch of text) {
+    const charWidth = measureCharWidth(ch);
+    if (current && currentWidth + charWidth > safeWidth) {
+      rows.push(current);
+      current = "";
+      currentWidth = 0;
+    }
+    current += ch;
+    currentWidth += charWidth;
+  }
+
+  if (current) {
+    rows.push(current);
+  }
+  return rows;
+}
+
 /**
  * Wrap plain text to terminal rows at the given width.
  * This is intentionally lightweight and shared by the TUI viewport logic.
@@ -54,23 +78,26 @@ export function wrapTextToRows(text: string, width: number): string[] {
       : paragraph.match(/\S+\s*|\s+/g) ?? [paragraph];
 
     let current = "";
+    let currentWidth = 0;
 
     for (const piece of pieces) {
       if (!piece) continue;
 
-      if (piece.length > safeWidth) {
+      const pieceWidth = measureTextWidth(piece);
+
+      if (pieceWidth > safeWidth) {
         if (current) {
           rows.push(current);
           current = "";
+          currentWidth = 0;
         }
-        for (let i = 0; i < piece.length; i += safeWidth) {
-          rows.push(piece.slice(i, i + safeWidth));
-        }
+        rows.push(...splitTextToWidth(piece, safeWidth));
         continue;
       }
 
-      if (current.length + piece.length <= safeWidth) {
+      if (currentWidth + pieceWidth <= safeWidth) {
         current += piece;
+        currentWidth += pieceWidth;
         continue;
       }
 
@@ -78,6 +105,7 @@ export function wrapTextToRows(text: string, width: number): string[] {
         rows.push(current);
       }
       current = piece.trimStart();
+      currentWidth = measureTextWidth(current);
     }
 
     if (current) {
@@ -150,6 +178,11 @@ export function splitMarkdownLineToRows(line: MarkdownLine, width: number): Mark
     currentText += piece;
   };
 
+  const pushSegmentPiece = (piece: string, segment: MarkdownSegment): void => {
+    appendPiece(piece, segment);
+    currentWidth += measureTextWidth(piece);
+  };
+
   const piecesFor = (text: string): string[] => {
     if (text === "") {
       return [""];
@@ -164,24 +197,26 @@ export function splitMarkdownLineToRows(line: MarkdownLine, width: number): Mark
     for (const piece of pieces) {
       if (!piece) continue;
 
-      if (piece.length > safeWidth) {
+      const pieceWidth = measureTextWidth(piece);
+
+      if (pieceWidth > safeWidth) {
         if (currentWidth > 0) {
           pushRow();
         }
-        for (let index = 0; index < piece.length; index += safeWidth) {
+        for (const wrappedPiece of splitTextToWidth(piece, safeWidth)) {
           rows.push({
-            text: piece.slice(index, index + safeWidth),
+            text: wrappedPiece,
             bold: line.bold,
             dim: line.dim,
             italic: line.italic,
-            segments: [{ ...segment, text: piece.slice(index, index + safeWidth) }],
+            segments: [{ ...segment, text: wrappedPiece }],
             language: line.language,
           });
         }
         continue;
       }
 
-      if (currentWidth + piece.length > safeWidth && currentWidth > 0) {
+      if (currentWidth + pieceWidth > safeWidth && currentWidth > 0) {
         pushRow();
       }
 
@@ -190,8 +225,7 @@ export function splitMarkdownLineToRows(line: MarkdownLine, width: number): Mark
         continue;
       }
 
-      appendPiece(rowPiece, segment);
-      currentWidth += rowPiece.length;
+      pushSegmentPiece(rowPiece, segment);
 
       if (currentWidth >= safeWidth) {
         pushRow();

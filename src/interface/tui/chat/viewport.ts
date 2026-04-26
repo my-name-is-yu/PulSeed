@@ -3,11 +3,14 @@ import {
   splitMarkdownLineToRows,
   wrapTextToRows,
 } from "../markdown-renderer.js";
+import { measureTextWidth } from "../text-width.js";
 import { getMessageTypeColor } from "../theme.js";
 import type { ChatDisplayRow, ChatMessage, ChatViewport } from "./types.js";
 const DEFAULT_MESSAGE_WIDTH_PADDING = 4;
 const MESSAGE_INNER_PADDING = 2;
 const MIN_MESSAGE_WIDTH = 10;
+const USER_PROMPT_PREFIX = "◉ ";
+const USER_CONTINUATION_PREFIX = "  ";
 
 function getRowWidth(termCols: number): number {
   return Math.max(
@@ -17,8 +20,13 @@ function getRowWidth(termCols: number): number {
 }
 
 function wrapUserMessageRows(text: string, width: number): string[] {
-  const wrapped = wrapTextToRows(text, width);
-  return wrapped.map((line, index) => (index === 0 ? `◉ ${line}` : `  ${line}`));
+  const contentWidth = Math.max(1, width - measureTextWidth(USER_PROMPT_PREFIX));
+  const wrapped = wrapTextToRows(text, contentWidth);
+  return wrapped.map((line, index) => (
+    index === 0
+      ? `${USER_PROMPT_PREFIX}${line}`
+      : `${USER_CONTINUATION_PREFIX}${line}`
+  ));
 }
 
 function buildMessageRows(msg: ChatMessage, width: number): ChatDisplayRow[] {

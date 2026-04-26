@@ -342,6 +342,15 @@ export function Chat({
   useInput(
     (inputChar, key) => {
       const scrollRequest = getScrollRequest(inputChar, key);
+      if (!scrollRequest) return;
+      applyScroll(scrollRequest.direction, scrollRequest.kind);
+    },
+    { isActive: isProcessing },
+  );
+
+  useInput(
+    (inputChar, key) => {
+      const scrollRequest = getScrollRequest(inputChar, key);
       if (scrollRequest) {
         applyScroll(scrollRequest.direction, scrollRequest.kind);
         return;
@@ -483,9 +492,9 @@ export function Chat({
       setScrollOffset(0);
       return;
     }
-    onSubmit(trimmed);
+    onSubmit(value);
     setInput("");
-    setHistory((prev) => [...prev, trimmed]);
+    setHistory((prev) => [...prev, value]);
     setHistoryIdx(-1);
     setScrollOffset(0);
   };
@@ -617,6 +626,7 @@ export function Chat({
             <Text>{INPUT_MARKER}</Text>
             <TextInput
               value={input}
+              focus={!isProcessing}
               onChange={(val) => {
                 justSelected.current = false;
                 setInput(stripMouseEscapeSequences(val));

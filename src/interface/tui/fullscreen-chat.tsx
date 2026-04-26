@@ -44,8 +44,10 @@ const SELECTION_FOREGROUND = "#1F2329";
 const FAKE_CURSOR_GLYPH = "▌";
 const PROCESSING_SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"] as const;
 const PROCESSING_SPINNER_INTERVAL_MS = 80;
+const COLLAPSED_PASTE_MIN_CHARS = 120;
+const COLLAPSED_PASTE_MIN_MULTILINE_CHARS = 40;
 
-type RenderSegment = {
+export type RenderSegment = {
   text: string;
   color?: string;
   backgroundColor?: string;
@@ -53,7 +55,7 @@ type RenderSegment = {
   dim?: boolean;
 };
 
-type RenderLine = {
+export type RenderLine = {
   key: string;
   text?: string;
   segments?: RenderSegment[];
@@ -64,7 +66,7 @@ type RenderLine = {
   protected?: boolean;
 };
 
-type FullscreenChatRenderLinesInput = {
+export type FullscreenChatRenderLinesInput = {
   availableCols: number;
   availableRows: number;
   viewport: ReturnType<typeof buildChatViewport>;
@@ -84,22 +86,29 @@ export type SelectionRange = {
   end: number;
 };
 
-type InputCell = {
+export type CollapsedPasteRange = {
+  start: number;
+  end: number;
+  label: string;
+};
+
+export type InputCell = {
   text: string;
   width: number;
   offsetBefore: number;
   offsetAfter: number;
   selected?: boolean;
   placeholder?: boolean;
+  dim?: boolean;
 };
 
-type InputRow = {
+export type InputRow = {
   cells: InputCell[];
   startOffset: number;
   endOffset: number;
 };
 
-type ComposerRender = {
+export type ComposerRender = {
   lines: RenderLine[];
   inputRows: InputRow[];
   inputRowStartIndex: number;
@@ -209,6 +218,34 @@ function formatSuggestionLabel(suggestion: Suggestion): string {
     : `  ${suggestion.name.padEnd(20)}${suggestion.description}`;
 }
 
+function countTextLines(text: string): number {
+  return text.length === 0 ? 0 : text.split("\n").length;
+}
+
+export function shouldCollapsePastedText(rawInput: string, normalizedInput: string): boolean {
+  const isBracketedPaste = rawInput.includes("[200~") || rawInput.includes("\u001b[200~");
+  if (normalizedInput.length >= COLLAPSED_PASTE_MIN_CHARS) {
+    return true;
+  }
+  if (normalizedInput.includes("\n") && normalizedInput.length >= COLLAPSED_PASTE_MIN_MULTILINE_CHARS) {
+    return true;
+  }
+  return isBracketedPaste && normalizedInput.length >= COLLAPSED_PASTE_MIN_MULTILINE_CHARS;
+}
+
+export function buildCollapsedPasteRange(text: string, start: number): CollapsedPasteRange {
+  const lineCount = countTextLines(text);
+  const charCount = Array.from(text).length;
+  const label = lineCount > 1
+    ? `[pasted ${lineCount} lines, ${charCount} chars]`
+    : `[pasted ${charCount} chars]`;
+  return {
+    start,
+    end: start + text.length,
+    label,
+  };
+}
+
 function normalizeSelection(selection: SelectionState | null): SelectionRange | null {
   if (!selection || selection.anchor === selection.focus) {
     return null;
@@ -265,6 +302,7 @@ function buildInputRows(
   contentWidth: number,
   placeholder: string,
   selection: SelectionRange | null,
+  collapsedPaste: CollapsedPasteRange | null,
 ): {
   rows: InputRow[];
 } {
@@ -315,6 +353,11 @@ function buildInputRows(
   let currentWidth = 0;
   let rowStartOffset = 0;
   let rowEndOffset = 0;
+  const activeCollapsedPaste = collapsedPaste
+    && !(cursorOffset > collapsedPaste.start && cursorOffset < collapsedPaste.end)
+    && !(selection && selection.start < collapsedPaste.end && selection.end > collapsedPaste.start)
+    ? collapsedPaste
+    : null;
   const pushRow = () => {
     rows.push({
       cells: currentCells,
@@ -343,6 +386,29 @@ function buildInputRows(
 
     if (offset === input.length) {
       break;
+    }
+
+    if (activeCollapsedPaste && offset === activeCollapsedPaste.start) {
+      const label = stringWidth(activeCollapsedPaste.label) <= contentWidth
+        ? activeCollapsedPaste.label
+        : trimToWidth("[paste]", contentWidth);
+      const labelWidth = stringWidth(label);
+      if (currentWidth + labelWidth > contentWidth && currentCells.length > 0) {
+        pushRow();
+        rowStartOffset = offset;
+        rowEndOffset = offset;
+      }
+      currentCells.push({
+        text: label,
+        width: labelWidth,
+        offsetBefore: activeCollapsedPaste.start,
+        offsetAfter: activeCollapsedPaste.end,
+        dim: true,
+      });
+      currentWidth += labelWidth;
+      rowEndOffset = activeCollapsedPaste.end;
+      offset = activeCollapsedPaste.end;
+      continue;
     }
 
     const codePoint = input.codePointAt(offset) ?? 0;
@@ -419,7 +485,7 @@ function buildInputContentSegments(
 
     pushSegment(segments, cell.text, {
       color: defaultColor,
-      dim: cell.placeholder,
+      dim: cell.placeholder || cell.dim,
     });
   }
 
@@ -454,7 +520,7 @@ function getCursorPositionFromComposerLayout(
   return null;
 }
 
-function buildComposerLines(args: {
+export function buildComposerLines(args: {
   cols: number;
   input: string;
   cursorOffset: number;
@@ -464,6 +530,7 @@ function buildComposerLines(args: {
   selectedIdx: number;
   copyToast: string | null;
   selection: SelectionRange | null;
+  collapsedPaste: CollapsedPasteRange | null;
 }): ComposerRender {
   const {
     cols,
@@ -475,6 +542,7 @@ function buildComposerLines(args: {
     selectedIdx,
     copyToast,
     selection,
+    collapsedPaste,
   } = args;
 
   const lines: RenderLine[] = [];
@@ -495,6 +563,7 @@ function buildComposerLines(args: {
     contentWidth,
     getPlaceholder(bashMode),
     selection,
+    collapsedPaste,
   );
   const inputRows = inputRender.rows;
 
@@ -707,6 +776,7 @@ export function FullscreenChat({
   const [input, setInput] = useState("");
   const [cursorOffset, setCursorOffset] = useState(0);
   const [selection, setSelection] = useState<SelectionState | null>(null);
+  const [collapsedPaste, setCollapsedPaste] = useState<CollapsedPasteRange | null>(null);
   const selectionAnchor = React.useRef<number | null>(null);
   const [selectedIdx, setSelectedIdx] = useState(0);
   const justSelected = React.useRef(false);
@@ -778,24 +848,31 @@ export function FullscreenChat({
     start: number,
     end: number,
     replacement: string,
+    nextCollapsedPaste: CollapsedPasteRange | null = null,
   ) => {
     const next = input.slice(0, start) + replacement + input.slice(end);
     setInput(next);
     setCursorOffset(start + replacement.length);
+    setCollapsedPaste(nextCollapsedPaste);
     clearSelection();
   }, [clearSelection, input]);
 
-  const insertText = useCallback((text: string) => {
+  const insertText = useCallback((text: string, options: { collapsePaste?: boolean } = {}) => {
     justSelected.current = false;
     const selectedRange = normalizeSelection(selection);
+    const start = selectedRange ? selectedRange.start : cursorOffset;
+    const nextCollapsedPaste = options.collapsePaste
+      ? buildCollapsedPasteRange(text, start)
+      : null;
     if (selectedRange) {
-      replaceInputRange(selectedRange.start, selectedRange.end, text);
+      replaceInputRange(selectedRange.start, selectedRange.end, text, nextCollapsedPaste);
       return;
     }
 
     const next = input.slice(0, cursorOffset) + text + input.slice(cursorOffset);
     setInput(next);
     setCursorOffset(cursorOffset + text.length);
+    setCollapsedPaste(nextCollapsedPaste);
     clearSelection();
   }, [clearSelection, cursorOffset, input, replaceInputRange, selection]);
 
@@ -839,6 +916,7 @@ export function FullscreenChat({
     selectedIdx,
     copyToast,
     selection: normalizedSelection,
+    collapsedPaste,
   });
 
   const messageRows = Math.max(
@@ -910,6 +988,16 @@ export function FullscreenChat({
     });
   }, [maxScrollOffset, viewport.maxVisibleRows]);
 
+  useInput((inputChar, key) => {
+    const scrollRequest = getScrollRequest(inputChar, key);
+    if (!scrollRequest) return;
+    logTuiDebug("fullscreen-chat", "processing-scroll-request", {
+      direction: scrollRequest.direction,
+      kind: scrollRequest.kind,
+    });
+    applyScroll(scrollRequest.direction, scrollRequest.kind);
+  }, { isActive: isProcessing });
+
   const handleSubmit = useCallback((value: string) => {
     logTuiDebug("fullscreen-chat", "submit-attempt", {
       value,
@@ -929,6 +1017,7 @@ export function FullscreenChat({
       onClear?.();
       setInput("");
       setCursorOffset(0);
+      setCollapsedPaste(null);
       clearSelection();
       setHistory((prev) => [...prev, trimmed]);
       setHistoryIdx(-1);
@@ -937,11 +1026,12 @@ export function FullscreenChat({
       return;
     }
 
-    onSubmit(trimmed);
+    onSubmit(value);
     setInput("");
     setCursorOffset(0);
+    setCollapsedPaste(null);
     clearSelection();
-    setHistory((prev) => [...prev, trimmed]);
+    setHistory((prev) => [...prev, value]);
     setHistoryIdx(-1);
     setScrollOffset(0);
     setTargetScrollOffset(0);
@@ -1023,6 +1113,7 @@ export function FullscreenChat({
               : selected.name;
           setInput(value);
           setCursorOffset(value.length);
+          setCollapsedPaste(null);
           clearSelection();
           setSelectedIdx(0);
           justSelected.current = true;
@@ -1033,6 +1124,7 @@ export function FullscreenChat({
         setSelectedIdx(0);
         setInput("");
         setCursorOffset(0);
+        setCollapsedPaste(null);
         clearSelection();
         return;
       }
@@ -1088,6 +1180,7 @@ export function FullscreenChat({
         const next = input.slice(0, previousOffset) + input.slice(cursorOffset);
         setInput(next);
         setCursorOffset(previousOffset);
+        setCollapsedPaste(null);
         logTuiDebug("fullscreen-chat", "backspace-applied", {
           previousOffset,
           next,
@@ -1113,6 +1206,7 @@ export function FullscreenChat({
         const nextOffset = getNextOffset(input, cursorOffset);
         const next = input.slice(0, cursorOffset) + input.slice(nextOffset);
         setInput(next);
+        setCollapsedPaste(null);
         logTuiDebug("fullscreen-chat", "delete-applied", {
           nextOffset,
           next,
@@ -1132,11 +1226,13 @@ export function FullscreenChat({
           setHistoryIdx(idx);
           setInput(history[idx]!);
           setCursorOffset(history[idx]!.length);
+          setCollapsedPaste(null);
         } else if (historyIdx > 0) {
           const idx = historyIdx - 1;
           setHistoryIdx(idx);
           setInput(history[idx]!);
           setCursorOffset(history[idx]!.length);
+          setCollapsedPaste(null);
         }
       }
       return;
@@ -1148,10 +1244,12 @@ export function FullscreenChat({
         setHistoryIdx(idx);
         setInput(history[idx]!);
         setCursorOffset(history[idx]!.length);
+        setCollapsedPaste(null);
       } else {
         setHistoryIdx(-1);
         setInput(draft);
         setCursorOffset(draft.length);
+        setCollapsedPaste(null);
       }
       return;
     }
@@ -1159,7 +1257,9 @@ export function FullscreenChat({
     if (inputChar && !key.ctrl && !key.meta) {
       const clean = normalizeTerminalInputChunk(inputChar);
       if (clean.length === 0) return;
-      insertText(clean);
+      insertText(clean, {
+        collapsePaste: shouldCollapsePastedText(inputChar, clean),
+      });
     }
   }, { isActive: !isProcessing });
 
