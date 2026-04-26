@@ -501,6 +501,32 @@ describe("ChatRunner", () => {
       expect(adapter.execute).not.toHaveBeenCalled();
     });
 
+    it("interruptAndRedirect executes normally when no turn is active", async () => {
+      const adapter = makeMockAdapter();
+      const runner = new ChatRunner(makeDeps({ adapter }));
+      runner.startSession("/repo");
+
+      const result = await runner.interruptAndRedirect("next request", "/repo");
+
+      expect(result.success).toBe(true);
+      expect(adapter.execute).toHaveBeenCalledOnce();
+    });
+
+    it("clears the active turn when an adapter turn times out", async () => {
+      const adapter = {
+        adapterType: "mock",
+        execute: vi.fn().mockImplementation(() => new Promise(() => {})),
+      } as unknown as IAdapter;
+      const runner = new ChatRunner(makeDeps({ adapter }));
+      runner.startSession("/repo");
+
+      const result = await runner.execute("Make a small change", "/repo", 1);
+
+      expect(result.success).toBe(false);
+      expect(result.output).toContain("timed out");
+      expect(runner.hasActiveTurn()).toBe(false);
+    });
+
     it("/usage reports session totals and phase breakdown", async () => {
       const stateManager = makeMockStateManager();
       const llmClient = {
@@ -2117,6 +2143,89 @@ describe("ChatRunner", () => {
       expect(result.success).toBe(true);
       expect(result.output).toBe("Agentloop direct answer");
       expect(result.diagnostics).toBeUndefined();
+    });
+
+    it("interruptAndRedirect aborts an active native agent loop and returns a summary", async () => {
+      let capturedSignal: AbortSignal | undefined;
+      const chatAgentLoopRunner = {
+        execute: vi.fn().mockImplementation((input: { abortSignal?: AbortSignal }) => {
+          capturedSignal = input.abortSignal;
+          return new Promise((resolve) => {
+            input.abortSignal?.addEventListener("abort", () => {
+              resolve({
+                success: false,
+                output: "cancelled",
+                error: "cancelled",
+                exit_code: null,
+                elapsed_ms: 10,
+                stopped_reason: "error",
+              });
+            }, { once: true });
+          });
+        }),
+      } as unknown as ChatAgentLoopRunner;
+      const runner = new ChatRunner(makeDeps({
+        stateManager: makeMockStateManager(),
+        chatAgentLoopRunner,
+      }));
+      runner.startSession("/repo");
+
+      const active = runner.execute("Implement a feature", "/repo");
+      await vi.waitFor(() => expect(chatAgentLoopRunner.execute).toHaveBeenCalledOnce());
+
+      const interrupted = await runner.interruptAndRedirect("stop and summarize", "/repo");
+
+      expect(capturedSignal?.aborted).toBe(true);
+      expect(interrupted.success).toBe(true);
+      expect(interrupted.output).toContain("Interrupted the active turn");
+      expect(interrupted.output).toContain("Recent activity");
+      await active;
+    });
+
+    it("does not abort the active turn for unsupported background redirect requests", async () => {
+      let capturedSignal: AbortSignal | undefined;
+      let resolveActive: ((value: {
+        success: boolean;
+        output: string;
+        error: null;
+        exit_code: null;
+        elapsed_ms: number;
+        stopped_reason: string;
+      }) => void) | undefined;
+      const chatAgentLoopRunner = {
+        execute: vi.fn().mockImplementation((input: { abortSignal?: AbortSignal }) => {
+          capturedSignal = input.abortSignal;
+          return new Promise((resolve) => {
+            resolveActive = resolve;
+          });
+        }),
+      } as unknown as ChatAgentLoopRunner;
+      const runner = new ChatRunner(makeDeps({
+        stateManager: makeMockStateManager(),
+        chatAgentLoopRunner,
+      }));
+      runner.startSession("/repo");
+
+      const active = runner.execute("Implement a feature", "/repo");
+      await vi.waitFor(() => expect(chatAgentLoopRunner.execute).toHaveBeenCalledOnce());
+
+      const redirected = await runner.interruptAndRedirect("continue in background", "/repo");
+
+      expect(capturedSignal?.aborted).toBe(false);
+      expect(redirected.success).toBe(true);
+      expect(redirected.output).toContain("background is not available yet");
+      expect(runner.hasActiveTurn()).toBe(true);
+
+      resolveActive?.({
+        success: false,
+        output: "cancelled by test",
+        error: null,
+        exit_code: null,
+        elapsed_ms: 1,
+        stopped_reason: "error",
+      });
+      await active;
+      expect(runner.hasActiveTurn()).toBe(false);
     });
 
     it("grounds native chat agentloop through systemPrompt instead of injecting workspace context into the message", async () => {

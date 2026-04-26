@@ -102,6 +102,7 @@ export interface ChatAgentLoopInput {
   resumeState?: AgentLoopSessionState;
   resumeStatePath?: string;
   resumeOnly?: boolean;
+  abortSignal?: AbortSignal;
   role?: SubagentRole;
   outputMode?: ChatAgentLoopOutputMode;
 }
@@ -165,6 +166,7 @@ export class ChatAgentLoopRunner {
         toolPolicy: { ...this.deps.defaultToolPolicy, ...input.toolPolicy },
         ...(input.resumeState ? { resumeState: input.resumeState } : {}),
         loadPersistedState: input.resumeOnly === true || input.resumeState !== undefined,
+        ...(input.abortSignal ? { abortSignal: input.abortSignal } : {}),
         ...(this.deps.defaultExecutionPolicy ? { executionPolicy: this.deps.defaultExecutionPolicy } : {}),
         toolCallContext: {
           cwd,

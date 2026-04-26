@@ -474,7 +474,6 @@ export function Chat({
 
   const handleSubmit = (value: string) => {
     if (hasMatches) return; // let useInput handle enter when suggestions are shown
-    if (isProcessing) return;
     if (!value.trim()) {
       // Show empty-enter hint
       setEmptyHint(true);
@@ -626,7 +625,7 @@ export function Chat({
             <Text>{INPUT_MARKER}</Text>
             <TextInput
               value={input}
-              focus={!isProcessing}
+              focus={true}
               onChange={(val) => {
                 justSelected.current = false;
                 setInput(stripMouseEscapeSequences(val));

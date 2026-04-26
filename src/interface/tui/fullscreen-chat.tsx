@@ -1004,7 +1004,7 @@ export function FullscreenChat({
       hasMatches,
       isProcessing,
     });
-    if (hasMatches || isProcessing) return;
+    if (hasMatches) return;
     if (!value.trim()) {
       setEmptyHint(true);
       if (emptyHintTimer.current) clearTimeout(emptyHintTimer.current);
@@ -1052,7 +1052,9 @@ export function FullscreenChat({
         direction: scrollRequest.direction,
         kind: scrollRequest.kind,
       });
-      applyScroll(scrollRequest.direction, scrollRequest.kind);
+      if (!isProcessing) {
+        applyScroll(scrollRequest.direction, scrollRequest.kind);
+      }
       return;
     }
 
@@ -1261,7 +1263,7 @@ export function FullscreenChat({
         collapsePaste: shouldCollapsePastedText(inputChar, clean),
       });
     }
-  }, { isActive: !isProcessing });
+  }, { isActive: true });
 
   React.useEffect(() => {
     setSelectedIdx(0);

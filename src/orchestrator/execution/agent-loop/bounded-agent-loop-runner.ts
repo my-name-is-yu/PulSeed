@@ -127,6 +127,9 @@ export class BoundedAgentLoopRunner {
       if (!protocol.responseCompleted) {
         return this.stop(turn, "protocol_incomplete", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount);
       }
+      if (turn.abortSignal?.aborted) {
+        return this.stop(turn, "cancelled", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount);
+      }
 
       const response = this.protocolToResponse(protocol);
       modelTurns++;
@@ -288,6 +291,9 @@ export class BoundedAgentLoopRunner {
 
       if (repeatedToolLoopCount > turn.budget.maxRepeatedToolCalls) {
         return this.stop(turn, "stalled_tool_loop", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount);
+      }
+      if (turn.abortSignal?.aborted) {
+        return this.stop(turn, "cancelled", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount);
       }
 
       for (const call of response.toolCalls) {

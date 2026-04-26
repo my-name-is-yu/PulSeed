@@ -8,6 +8,7 @@ export interface TuiChatSurface {
   onEvent?: ChatEventHandler;
   startSession(cwd: string): void;
   execute(input: string, cwd: string): Promise<ChatRunResult>;
+  interruptAndRedirect(input: string, cwd: string): Promise<ChatRunResult>;
   executeIngressMessage(ingress: CrossPlatformIngressMessage, cwd: string): Promise<ChatRunResult>;
 }
 
@@ -44,6 +45,18 @@ export class SharedManagerTuiChatSurface implements TuiChatSurface {
         platform: "local_tui",
         conversation_id: this.conversationId,
       },
+    });
+  }
+
+  interruptAndRedirect(input: string, cwd: string): Promise<ChatRunResult> {
+    const effectiveCwd = this.sessionCwd ?? cwd;
+    return this.manager.interruptAndRedirect({
+      channel: "tui",
+      platform: "local_tui",
+      conversation_id: this.conversationId,
+      cwd: effectiveCwd,
+      text: input,
+      onEvent: this.onEvent,
     });
   }
 

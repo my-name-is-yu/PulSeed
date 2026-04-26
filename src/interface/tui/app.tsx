@@ -383,7 +383,23 @@ export function App({
 
   const handleInput = useCallback(
     async (input: string) => {
-      if (isProcessing) return;
+      if (isProcessing) {
+        if (!chatRunner) return;
+        setMessages((prev) => [...prev, { id: randomUUID(), role: "user" as const, text: input, timestamp: new Date() }].slice(-MAX_MESSAGES));
+        try {
+          await chatRunner.interruptAndRedirect(input, cwd ?? process.cwd());
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          setMessages((prev) => [...prev, {
+            id: randomUUID(),
+            role: "pulseed" as const,
+            text: `Interrupt error: ${message}`,
+            timestamp: new Date(),
+            messageType: "error" as const,
+          }].slice(-MAX_MESSAGES));
+        }
+        return;
+      }
       // Add user message
       setMessages((prev) => [...prev, { id: randomUUID(), role: "user" as const, text: input, timestamp: new Date() }].slice(-MAX_MESSAGES));
       setIsProcessing(true);

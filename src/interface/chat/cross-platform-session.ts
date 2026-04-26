@@ -342,6 +342,27 @@ export class CrossPlatformChatSessionManager {
     return result.output;
   }
 
+  async interruptAndRedirect(input: CrossPlatformIncomingChatMessage): Promise<ChatRunResult> {
+    const ingress = this.createIngressMessage(input);
+    const session = this.getOrCreateSession(ingress, input.cwd);
+    const previousOnEvent = session.runner.onEvent;
+    if (input.onEvent) {
+      const handler = input.onEvent;
+      const upstream = this.deps.onEvent;
+      session.runner.onEvent = (event: ChatEvent) => {
+        safeInvoke(handler, event);
+        if (upstream && upstream !== handler) {
+          safeInvoke(upstream, event);
+        }
+      };
+    }
+    try {
+      return await session.runner.interruptAndRedirect(input.text, session.info.cwd, input.timeoutMs);
+    } finally {
+      session.runner.onEvent = previousOnEvent;
+    }
+  }
+
   async executeIngress(
     ingress: CrossPlatformIngressMessage,
     options: Pick<CrossPlatformIncomingChatMessage, "cwd" | "timeoutMs" | "onEvent" | "conversation_name" | "user_name"> = {}

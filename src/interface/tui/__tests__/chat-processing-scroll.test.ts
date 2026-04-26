@@ -25,7 +25,7 @@ describe("TUI chat processing scroll input", () => {
     stdoutMock.write = vi.fn(() => true);
   });
 
-  it("keeps normal chat scroll input active while text input is locked during processing", async () => {
+  it("keeps normal chat scroll input active while processing", async () => {
     const { Chat } = await import("../chat.js");
     const messages: ChatMessage[] = Array.from({ length: 30 }, (_, index) => ({
       id: `m-${index}`,
@@ -47,7 +47,7 @@ describe("TUI chat processing scroll input", () => {
     expect(useInputMock).toHaveBeenCalledWith(expect.any(Function), { isActive: false });
   });
 
-  it("keeps fullscreen chat scroll input active during processing", async () => {
+  it("keeps fullscreen chat input active during processing", async () => {
     const { FullscreenChat } = await import("../fullscreen-chat.js");
     const messages: ChatMessage[] = Array.from({ length: 30 }, (_, index) => ({
       id: `m-${index}`,
@@ -65,6 +65,6 @@ describe("TUI chat processing scroll input", () => {
     }), { columns: 60 });
 
     expect(useInputMock).toHaveBeenCalledWith(expect.any(Function), { isActive: true });
-    expect(useInputMock).toHaveBeenCalledWith(expect.any(Function), { isActive: false });
+    expect(useInputMock).not.toHaveBeenCalledWith(expect.any(Function), { isActive: false });
   });
 });

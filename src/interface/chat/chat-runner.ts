@@ -156,6 +156,19 @@ interface AssistantBuffer {
   text: string;
 }
 
+type ChatInterruptRedirectKind = "diff" | "review" | "summary" | "background" | "redirect";
+
+interface ActiveChatTurn {
+  context: ChatEventContext;
+  cwd: string;
+  startedAt: number;
+  abortController: AbortController;
+  finished: Promise<void>;
+  resolveFinished: () => void;
+  recentEvents: string[];
+  interruptRequested: boolean;
+}
+
 interface ResumeCommand {
   selector?: string;
 }
@@ -317,6 +330,23 @@ function previewActivityText(value: string, maxChars = ACTIVITY_PREVIEW_CHARS): 
   return normalized.length > maxChars ? `${normalized.slice(0, maxChars)}...` : normalized;
 }
 
+function classifyInterruptRedirect(input: string): ChatInterruptRedirectKind {
+  const normalized = input.trim().toLowerCase();
+  if (/\b(background|bg)\b|バックグラウンド|裏で|裏側|continue.*background/.test(normalized)) {
+    return "background";
+  }
+  if (/\b(review|read.?only|readonly)\b|レビュー|確認だけ|読むだけ/.test(normalized)) {
+    return "review";
+  }
+  if (/\b(diff|changes?|patch)\b|差分|変更.*見|変更内容/.test(normalized)) {
+    return "diff";
+  }
+  if (/\b(stop|pause|summary|summarize|interrupt)\b|止め|停止|中断|一旦|要約/.test(normalized)) {
+    return "summary";
+  }
+  return "redirect";
+}
+
 function formatToolActivity(action: "Running" | "Finished" | "Failed", toolName: string, detail?: string): string {
   const preview = detail ? previewActivityText(detail) : "";
   return preview ? `${action} tool: ${toolName} - ${preview}` : `${action} tool: ${toolName}`;
@@ -370,6 +400,7 @@ export class ChatRunner {
   private runtimeControlContext: RuntimeControlChatContext | null = null;
   private sessionExecutionPolicy: ExecutionPolicy | null = null;
   private lastSelectedRoute: SelectedChatRoute | null = null;
+  private activeTurn: ActiveChatTurn | null = null;
 
   constructor(deps: ChatRunnerDeps) {
     this.deps = deps;
@@ -411,6 +442,78 @@ export class ChatRunner {
 
   getCurrentSessionMessages(): ChatSession["messages"] {
     return this.history?.getMessages() ?? [];
+  }
+
+  hasActiveTurn(): boolean {
+    return this.activeTurn !== null;
+  }
+
+  async interruptAndRedirect(input: string, cwd: string, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<ChatRunResult> {
+    const activeTurn = this.activeTurn;
+    if (!activeTurn) {
+      return this.execute(input, cwd, timeoutMs);
+    }
+
+    const start = Date.now();
+    const redirect = classifyInterruptRedirect(input);
+    if (redirect === "background") {
+      return this.emitEphemeralAssistantResult(input, [
+        "Continuing this same turn in the background is not available yet.",
+        "",
+        "The active turn is still running in the foreground.",
+        "Use /tend for daemon-backed work, or send a narrower follow-up request.",
+      ].join("\n"), true, start);
+    }
+
+    activeTurn.interruptRequested = true;
+    if (!activeTurn.abortController.signal.aborted) {
+      activeTurn.abortController.abort();
+    }
+    this.emitCheckpoint("Interrupt requested", `Redirect: ${previewActivityText(input, 120)}`, activeTurn.context, "interrupt");
+
+    const stopped = await this.waitForActiveTurn(activeTurn, 2_000);
+    if (!stopped) {
+      return this.emitEphemeralAssistantResult(
+        input,
+        "Interrupt requested. The active turn will stop at the next safe point.",
+        false,
+        start
+      );
+    }
+
+    if (redirect === "redirect") {
+      return this.execute(input, cwd, timeoutMs);
+    }
+
+    let output: string;
+    if (redirect === "diff") {
+      const diff = await collectGitDiffArtifact(activeTurn.cwd);
+      if (diff) {
+        const context = this.createEventContext();
+        this.emitDiffArtifact(diff, context);
+        output = "Interrupted the active turn. Current diff is shown above.";
+      } else {
+        output = "Interrupted the active turn. No working-tree changes were detected.";
+      }
+    } else if (redirect === "review") {
+      const review = await this.handleReview(start);
+      output = `Interrupted the active turn and switched to review-only mode.\n\n${review.output}`;
+    } else {
+      output = [
+        "Interrupted the active turn.",
+        "",
+        "Recent activity",
+        ...(activeTurn.recentEvents.length > 0
+          ? activeTurn.recentEvents.slice(-6).map((event) => `- ${event}`)
+          : ["- No activity was captured before the interrupt."]),
+        "",
+        "Next actions",
+        "- Ask for the exact continuation you want.",
+        "- Ask to show diff or switch to review if files may have changed.",
+      ].join("\n");
+    }
+
+    return this.emitEphemeralAssistantResult(input, output, true, start);
   }
 
   setRuntimeControlContext(context: RuntimeControlChatContext | null): void {
@@ -1766,6 +1869,7 @@ export class ChatRunner {
     options: ChatRunnerExecutionOptions = {}
   ): Promise<ChatRunResult> {
     const eventContext = this.createEventContext();
+    const activeTurn = this.beginActiveTurn(eventContext, resolveGitRoot(cwd));
     const resumeCommand = this.parseResumeCommand(input);
     const resumeOnly = resumeCommand !== null;
     const runtimeControlContext = options.runtimeControlContext ?? this.runtimeControlContext;
@@ -1860,6 +1964,7 @@ export class ChatRunner {
     }
     const executionCwd = this.sessionCwd ?? cwd;
     const gitRoot = this.sessionCwd ?? resolveGitRoot(cwd);
+    activeTurn.cwd = gitRoot;
 
     // history is always assigned by this point (either by startSession or the block above)
     const history = this.history!;
@@ -2135,6 +2240,7 @@ export class ChatRunner {
           ...(resumeState ? { resumeState } : {}),
           ...(resumeOnly ? { resumeOnly: true } : {}),
           ...(agentLoopSystemPrompt ? { systemPrompt: agentLoopSystemPrompt } : {}),
+          abortSignal: activeTurn.abortController.signal,
         });
         const elapsed_ms = Date.now() - start;
         const agentLoopUsage = result.agentLoop?.usage
@@ -2249,7 +2355,20 @@ export class ChatRunner {
     const timeoutPromise = new Promise<never>((_, reject) =>
       setTimeout(() => reject(new Error(`Chat adapter timed out after ${resolvedTimeoutMs}ms`)), resolvedTimeoutMs)
     );
-    let result = await Promise.race([adapterPromise, timeoutPromise]);
+    let result: Awaited<ReturnType<IAdapter["execute"]>>;
+    try {
+      result = await Promise.race([adapterPromise, timeoutPromise]);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const output = this.emitLifecycleErrorEvent(message, assistantBuffer.text, eventContext);
+      const timeoutElapsedMs = Date.now() - start;
+      this.emitLifecycleEndEvent("error", timeoutElapsedMs, eventContext, false);
+      return {
+        success: false,
+        output,
+        elapsed_ms: timeoutElapsedMs,
+      };
+    }
     // Surface adapter errors into output when output is empty
     if (!result.output && result.error) {
       result = { ...result, output: `Error: ${result.error}` };
@@ -2884,7 +3003,76 @@ export class ChatRunner {
     return { ...context, createdAt: new Date().toISOString() };
   }
 
+  private beginActiveTurn(context: ChatEventContext, cwd: string): ActiveChatTurn {
+    let resolveFinished: () => void = () => {};
+    const finished = new Promise<void>((resolve) => {
+      resolveFinished = resolve;
+    });
+    const turn: ActiveChatTurn = {
+      context,
+      cwd,
+      startedAt: Date.now(),
+      abortController: new AbortController(),
+      finished,
+      resolveFinished,
+      recentEvents: [],
+      interruptRequested: false,
+    };
+    this.activeTurn = turn;
+    return turn;
+  }
+
+  private finishActiveTurn(context: ChatEventContext): void {
+    const activeTurn = this.activeTurn;
+    if (!activeTurn || activeTurn.context.runId !== context.runId) return;
+    activeTurn.resolveFinished();
+    this.activeTurn = null;
+  }
+
+  private waitForActiveTurn(turn: ActiveChatTurn, timeoutMs: number): Promise<boolean> {
+    return Promise.race([
+      turn.finished.then(() => true),
+      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), timeoutMs)),
+    ]);
+  }
+
+  private emitEphemeralAssistantResult(input: string, output: string, success: boolean, start: number): ChatRunResult {
+    const context = this.createEventContext();
+    this.emitEvent({
+      type: "lifecycle_start",
+      input,
+      ...this.eventBase(context),
+    });
+    this.emitEvent({
+      type: "assistant_final",
+      text: output,
+      persisted: false,
+      ...this.eventBase(context),
+    });
+    const elapsed_ms = Date.now() - start;
+    this.emitLifecycleEndEvent(success ? "completed" : "error", elapsed_ms, context, false);
+    return { success, output, elapsed_ms };
+  }
+
+  private rememberActiveTurnEvent(event: ChatEvent): void {
+    const activeTurn = this.activeTurn;
+    if (!activeTurn || activeTurn.context.turnId !== event.turnId) return;
+    let summary: string | null = null;
+    if (event.type === "activity") {
+      summary = previewActivityText(event.message, 140);
+    } else if (event.type === "tool_start") {
+      summary = `Started ${event.toolName}`;
+    } else if (event.type === "tool_update") {
+      summary = `${event.toolName}: ${previewActivityText(event.message, 100)}`;
+    } else if (event.type === "tool_end") {
+      summary = `${event.success ? "Finished" : "Failed"} ${event.toolName}: ${previewActivityText(event.summary, 100)}`;
+    }
+    if (!summary) return;
+    activeTurn.recentEvents = [...activeTurn.recentEvents, summary].slice(-12);
+  }
+
   private emitEvent(event: ChatEvent): void {
+    this.rememberActiveTurnEvent(event);
     const handler = this.onEvent ?? this.deps.onEvent;
     handler?.(event);
   }
@@ -3004,6 +3192,7 @@ export class ChatRunner {
       persisted,
       ...this.eventBase(eventContext),
     });
+    this.finishActiveTurn(eventContext);
   }
 
   private emitLifecycleErrorEvent(

@@ -442,6 +442,58 @@ describe("agentloop phase 1", () => {
     expect(assistantMessages[1]).toMatchObject({ phase: "final_candidate" });
   });
 
+  it("stops after an abort that arrives with the model response before running tools", async () => {
+    const modelInfo = makeModelInfo();
+    const abortController = new AbortController();
+    const modelClient: AgentLoopModelClient = {
+      async getModelInfo(): Promise<AgentLoopModelInfo> {
+        return modelInfo;
+      },
+      async createTurn(): Promise<AgentLoopModelResponse> {
+        throw new Error("createTurn should not be used");
+      },
+      async createTurnProtocol() {
+        abortController.abort();
+        return {
+          assistant: [{ content: "Calling echo", phase: "commentary" }],
+          toolCalls: [{ id: "call-1", name: "echo", input: { value: "hello" } }],
+          stopReason: "tool_use",
+          responseCompleted: true,
+        };
+      },
+    };
+    const { router, runtime } = makeToolRuntime();
+    const executeBatch = vi.spyOn(runtime, "executeBatch");
+    const runner = new BoundedAgentLoopRunner({ modelClient, toolRouter: router, toolRuntime: runtime });
+    const session = createAgentLoopSession();
+
+    const result = await runner.run({
+      session,
+      turnId: "turn-1",
+      goalId: "goal-1",
+      taskId: "task-1",
+      cwd: process.cwd(),
+      model: modelInfo.ref,
+      modelInfo,
+      messages: [{ role: "user", content: "do it" }],
+      outputSchema: z.object({ status: z.literal("done"), finalAnswer: z.string() }),
+      budget: withDefaultBudget({ maxModelTurns: 4 }),
+      toolPolicy: {},
+      toolCallContext: {
+        cwd: process.cwd(),
+        goalId: "goal-1",
+        trustBalance: 0,
+        preApproved: true,
+        approvalFn: async () => false,
+      },
+      abortSignal: abortController.signal,
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.stopReason).toBe("cancelled");
+    expect(executeBatch).not.toHaveBeenCalled();
+  });
+
   it("falls back to a text protocol when the LLM client cannot use native tools", async () => {
     const modelInfo = makeModelInfo({ capabilities: { ...defaultAgentLoopCapabilities, toolCalling: false } });
     const llmCalls: Array<{ messages: LLMMessage[]; options?: LLMRequestOptions }> = [];

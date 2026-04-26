@@ -78,6 +78,7 @@ function createChatRunnerMock() {
   return {
     startSession: vi.fn(),
     execute: vi.fn(async () => ({ success: true, output: "", elapsed_ms: 0 })),
+    interruptAndRedirect: vi.fn(async () => ({ success: true, output: "", elapsed_ms: 0 })),
     executeIngressMessage: vi.fn(async () => ({ success: true, output: "", elapsed_ms: 0 })),
     onEvent: undefined,
   };
@@ -181,6 +182,43 @@ describe("standalone slash command routing", () => {
     expect(intentRecognizer.recognize).not.toHaveBeenCalled();
     expect(actionHandler.handle).not.toHaveBeenCalled();
 
+    screen.unmount();
+  });
+
+  it("routes input during processing to ChatRunner interrupt redirect", async () => {
+    const stateManager = createStateManagerMock();
+    const chatRunner = createChatRunnerMock();
+    let resolveExecute: () => void = () => {};
+    chatRunner.execute = vi.fn(() => new Promise((resolve) => {
+      resolveExecute = () => resolve({ success: true, output: "", elapsed_ms: 0 });
+    }));
+
+    const screen = render(React.createElement(App, {
+      stateManager: stateManager as unknown as StateManager,
+      chatRunner: chatRunner as unknown as TuiChatSurface,
+      noFlicker: false,
+      controlStream: process.stdout,
+      cwd: "~/workspace",
+      gitBranch: "main",
+      providerName: "claude",
+    }), {
+      patchConsole: false,
+      stdout: process.stdout,
+      stderr: process.stderr,
+    });
+
+    await flush();
+    expect(testState.lastChatProps).not.toBeNull();
+
+    const firstSubmit = testState.lastChatProps!.onSubmit("long running task");
+    await flush();
+    await testState.lastChatProps!.onSubmit("show me the diff first");
+
+    expect(chatRunner.execute).toHaveBeenCalledWith("long running task", "~/workspace");
+    expect(chatRunner.interruptAndRedirect).toHaveBeenCalledWith("show me the diff first", "~/workspace");
+
+    resolveExecute();
+    await firstSubmit;
     screen.unmount();
   });
 });
