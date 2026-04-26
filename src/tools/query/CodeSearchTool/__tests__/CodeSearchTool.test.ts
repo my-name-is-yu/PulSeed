@@ -136,6 +136,32 @@ describe("code search tools", () => {
     expect(result.error).toContain("refused broad root");
   });
 
+  it("refuses explicit broad paths before permission approval can allow them", async () => {
+    const tool = new CodeSearchTool();
+    const permission = await tool.checkPermissions(
+      { task: "find alphaValue", intent: "explain", path: os.homedir() },
+      context,
+    );
+    expect(permission).toMatchObject({ status: "denied" });
+
+    const registry = new ToolRegistry();
+    registry.register(tool);
+    const executor = new ToolExecutor({
+      registry,
+      permissionManager: new ToolPermissionManager({}),
+      concurrency: new ConcurrencyController(),
+    });
+
+    const result = await executor.execute("code_search", {
+      task: "find alphaValue",
+      intent: "explain",
+      path: os.homedir(),
+    }, context);
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("refused broad explicit path");
+  });
+
   it("defaults nested package searches to the project root", async () => {
     const nested = path.join(root, "src");
     const result = await new CodeSearchTool().call(

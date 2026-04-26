@@ -68,7 +68,11 @@ function findProjectRoot(cwd: string): string | null {
 
 function resolveSearchRoot(input: CodeSearchInput, context: ToolCallContext): string {
   if (input.path) {
-    return validateFilePath(input.path, context.cwd).resolved;
+    const resolvedPath = validateFilePath(input.path, context.cwd).resolved;
+    if (isBroadRoot(resolvedPath)) {
+      throw new Error(`code_search refused broad explicit path "${resolvedPath}".`);
+    }
+    return resolvedPath;
   }
   const projectRoot = findProjectRoot(context.cwd);
   if (projectRoot && !isBroadRoot(projectRoot)) {
@@ -139,12 +143,12 @@ export class CodeSearchTool implements ITool<CodeSearchInput, unknown> {
 
   async checkPermissions(input: CodeSearchInput, context?: ToolCallContext): Promise<PermissionCheckResult> {
     if (!context) return { status: "allowed" };
+    try {
+      resolveSearchRoot(input, context);
+    } catch (err) {
+      return { status: "denied", reason: (err as Error).message };
+    }
     if (!input.path) {
-      try {
-        resolveSearchRoot(input, context);
-      } catch (err) {
-        return { status: "denied", reason: (err as Error).message };
-      }
       return { status: "allowed" };
     }
     const validation = validateFilePath(input.path, context.cwd, context.executionPolicy?.protectedPaths);
