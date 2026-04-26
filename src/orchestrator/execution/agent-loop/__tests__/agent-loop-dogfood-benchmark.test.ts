@@ -159,9 +159,9 @@ describe("scoreTaskAgentLoopDogfoodResult", () => {
 describe("assessTaskAgentLoopToolProfile", () => {
   it("reports missing required tools separately from recommended tools", () => {
     const assessment = assessTaskAgentLoopToolProfile([
-      "read",
-      "grep",
-      "glob",
+      "code_search",
+      "code_read_context",
+      "code_search_repair",
       "list_dir",
       "apply_patch",
       "shell_command",

@@ -188,6 +188,9 @@ describe("createNative*AgentLoopRunner", () => {
 
     expect(visibleTools).toEqual(
       expect.arrayContaining([
+        "code_search",
+        "code_read_context",
+        "code_search_repair",
         "kaggle_workspace_prepare",
         "kaggle_experiment_start",
         "kaggle_experiment_read",
@@ -200,6 +203,9 @@ describe("createNative*AgentLoopRunner", () => {
         "kaggle_leaderboard_snapshot",
       ]),
     );
+    expect(visibleTools).not.toContain("glob");
+    expect(visibleTools).not.toContain("grep");
+    expect(visibleTools).not.toContain("read");
     expect(visibleTools).not.toContain("kaggle_submit");
   });
 
