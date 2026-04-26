@@ -28,6 +28,7 @@ import {
   ToolRegistryAgentLoopToolRouter,
   createAgentLoopHistory,
   createAgentLoopSession,
+  createDaemonBackedCoreLoopControlToolset,
   createCoreLoopControlTools,
   defaultAgentLoopCapabilities,
   type AgentLoopModelClient,
@@ -635,6 +636,66 @@ describe("agentloop phase 7 ChatAgentLoopRunner and CoreLoopControlTools", () =>
     expect(result.output.startsWith("Goal is running")).toBe(true);
     expect(result.output).toContain("### Evidence");
     expect(modelClient.calls[1].messages.some((m) => m.role === "tool" && m.toolName === "core_goal_status")).toBe(true);
+  });
+
+  it("lets chat hand long-running work off to daemon-backed CoreLoop with one tool call", async () => {
+    const modelInfo = makeModelInfo();
+    const modelClient = new ScriptedModelClient(modelInfo, [
+      {
+        content: "",
+        toolCalls: [{ id: "call-1", name: "core_tend_goal", input: { description: "Improve Kaggle score beyond 0.98" } }],
+        stopReason: "tool_use",
+      },
+      {
+        content: JSON.stringify({ status: "done", message: "CoreLoop started", evidence: ["core_tend_goal"], blockers: [] }),
+        toolCalls: [],
+        stopReason: "end_turn",
+      },
+    ]);
+    let savedGoal: { id: string; title: string } | null = null;
+    const startGoal = async (goalId: string, options: unknown) => ({
+      ok: true,
+      goalId,
+      backgroundRunId: (options as { backgroundRun?: { backgroundRunId?: string } }).backgroundRun?.backgroundRunId,
+    });
+    const stateManager = {
+      getBaseDir: () => "/tmp/pulseed-test",
+      saveGoal: async (goal: { id: string; title: string }) => {
+        savedGoal = goal;
+      },
+      loadGoal: async (goalId: string) => savedGoal && savedGoal.id === goalId
+        ? { ...savedGoal, status: "active", loop_status: "idle", dimensions: [], updated_at: "now" }
+        : null,
+      listTasks: async () => [],
+      loadTask: async () => null,
+    };
+    const registry = new ToolRegistry();
+    for (const tool of createCoreLoopControlTools(createDaemonBackedCoreLoopControlToolset({
+      stateManager: stateManager as never,
+      daemonClientFactory: async () => ({
+        startGoal,
+        stopGoal: async () => ({ ok: true }),
+        getSnapshot: async () => ({ active_workers: [] }),
+      }) as never,
+    }))) {
+      registry.register(tool);
+    }
+    const { router, runtime } = makeRuntime(registry);
+    const registryModel = new StaticAgentLoopModelRegistry([modelInfo]);
+    const chat = new ChatAgentLoopRunner({
+      boundedRunner: new BoundedAgentLoopRunner({ modelClient, toolRouter: router, toolRuntime: runtime }),
+      modelClient,
+      modelRegistry: registryModel,
+      defaultModel: modelInfo.ref,
+      defaultToolPolicy: { allowedTools: ["core_tend_goal"] },
+    });
+
+    const result = await chat.execute({ message: "coreloopで0.98を超えるまでやってほしい" });
+
+    expect(result.success).toBe(true);
+    expect(result.output.startsWith("CoreLoop started")).toBe(true);
+    expect(savedGoal).toMatchObject({ title: "Improve Kaggle score beyond 0.98" });
+    expect(modelClient.calls[1].messages.some((m) => m.role === "tool" && m.toolName === "core_tend_goal")).toBe(true);
   });
 
   it("emits approval_request and continues when chat approval is granted", async () => {

@@ -12,7 +12,6 @@ export type IngressApprovalMode = "interactive" | "preapproved" | "disallowed";
 export type ReplyTargetPolicy = "turn_reply_target";
 export type EventProjectionPolicy = "turn_only" | "latest_active_reply_target";
 export type ConcurrencyPolicy = "session_serial";
-export type DaemonChatPolicy = "compatibility_only";
 
 export interface ChatIngressRuntimeControl {
   allowed: boolean;
@@ -51,101 +50,25 @@ export interface ChatIngressMessage {
 
 export type SelectedChatRoute =
   | {
-      lane: "fast";
-      kind: "direct_answer";
-      reason: "simple_question";
-      modelTier: "light";
-      maxTokens: number;
-      replyTargetPolicy: ReplyTargetPolicy;
-      eventProjectionPolicy: EventProjectionPolicy;
-      concurrencyPolicy: ConcurrencyPolicy;
-      daemonChatPolicy: DaemonChatPolicy;
-    }
-  | {
-      lane: "fast";
       kind: "agent_loop" | "tool_loop" | "adapter";
       reason: "agent_loop_available" | "tool_loop_available" | "adapter_fallback";
       replyTargetPolicy: ReplyTargetPolicy;
       eventProjectionPolicy: EventProjectionPolicy;
       concurrencyPolicy: ConcurrencyPolicy;
-      daemonChatPolicy: DaemonChatPolicy;
     }
   | {
-      lane: "durable";
       kind: "runtime_control";
       reason: "runtime_control_intent";
       intent: RuntimeControlIntent;
       replyTargetPolicy: ReplyTargetPolicy;
       eventProjectionPolicy: EventProjectionPolicy;
       concurrencyPolicy: ConcurrencyPolicy;
-      daemonChatPolicy: DaemonChatPolicy;
-    }
-  | {
-      lane: "durable";
-      kind: "daemon_tend";
-      reason: "long_running_goal_intent";
-      replyTargetPolicy: ReplyTargetPolicy;
-      eventProjectionPolicy: EventProjectionPolicy;
-      concurrencyPolicy: ConcurrencyPolicy;
-      daemonChatPolicy: DaemonChatPolicy;
     };
 
 export interface IngressRouterCapabilities {
-  hasLightweightLlm: boolean;
   hasAgentLoop: boolean;
   hasToolLoop: boolean;
   hasRuntimeControlService?: boolean;
-  hasDaemonTend?: boolean;
-}
-
-function shouldUseDirectAnswerRoute(input: string): boolean {
-  const normalized = input.trim();
-  if (!normalized) return false;
-
-  const lowered = normalized.toLowerCase();
-  const questionSignals = [
-    /[?？]/,
-    /\b(what|why|how|when|where|who|which|is|are|can|could|would|should|tell me|explain|describe|help me understand)\b/,
-    /(教えて|説明して|教えてください|説明してください|どう思う|なんで|なぜ|どうして|いつ|どこ|だれ|誰|何|どれ|どっち)/,
-  ];
-  if (!questionSignals.some((pattern) => pattern.test(lowered))) {
-    return false;
-  }
-
-  const workSignals = [
-    /\b(fix|implement|change|changed|add|remove|delete|update|refactor|patch|debug|diagnose|investigate|review|write|create|build|run|execute|test|verify|confirm|check|inspect|search|open|read|edit|modify|commit|push|merge|release|deploy|start|stop|restart|resume|compare|convert|migrate|optimize|improve|configure|setup|set up)\b/,
-    /(修正|実装|変更|追加|削除|更新|リファクタ|デバッグ|調査|確認|レビュー|書いて|作って|作成|実行|走らせ|テスト|検証|調べて|開いて|読んで|編集|コミット|プッシュ|マージ|デプロイ|再起動|再開|設定)/,
-    /\b(git|repo|repository|branch|commit|diff|pull request|pr|issue|ticket|adapter|agentloop|tool|tools|code)\b|コード|src\//,
-    /\b(latest|most recent|current|today|now|recent|news|web|internet|api|docs|github|release|version)\b|最新|最新版|今日|現在|最近|今|外部|ネット/,
-    /\bwhat\s+(files?\s+)?changed\b|\bwhich\s+files?\s+(changed|were\s+(modified|edited))\b/,
-    /(\.(ts|tsx|js|jsx|json|md|yml|yaml|toml|py|go|rs|sh|sql)\b|\/[^/\s]+\.[A-Za-z0-9]+$)/,
-  ];
-  return !workSignals.some((pattern) => pattern.test(lowered));
-}
-
-function shouldUseDaemonTendRoute(input: string): boolean {
-  const normalized = input.trim();
-  if (!normalized || normalized.startsWith("/")) return false;
-
-  const lowered = normalized.toLowerCase();
-  const durableSignals = [
-    /\b(core\s*loop|coreloop|daemon|background|durable|autonomous|long[-\s]?running|overnight)\b/i,
-    /(コア\s*ループ|coreloop|デーモン|daemon|バックグラウンド|長期|常駐|自律|継続実行|数時間|数日|数週間)/,
-  ];
-  const actionSignals = [
-    /\b(work on|keep working|continue|run|start|execute|optimi[sz]e|improve|pursue|tend)\b/i,
-    /\b(until|to completion|in the background|as a background run)\b/i,
-    /(取り組んで|進めて|回して|走らせて|実行して|続けて|改善して|最適化して|任せて|達成して|完了まで|終わるまで|行くまで|到達するまで)/,
-  ];
-  const explanationSignals = [
-    /[?？]/,
-    /\b(why|how|what|explain|describe)\b/i,
-    /(なぜ|なんで|どうして|説明|教えて|どう思う)/,
-  ];
-
-  if (!durableSignals.some((pattern) => pattern.test(lowered))) return false;
-  if (!actionSignals.some((pattern) => pattern.test(lowered))) return false;
-  return !explanationSignals.some((pattern) => pattern.test(lowered));
 }
 
 function selectRouteForText(
@@ -153,17 +76,15 @@ function selectRouteForText(
   runtimeControl: ChatIngressRuntimeControl,
   deps: IngressRouterCapabilities
 ): SelectedChatRoute {
-  const baseFastPolicy = {
+  const baseTurnPolicy = {
     replyTargetPolicy: "turn_reply_target" as const,
     eventProjectionPolicy: "turn_only" as const,
     concurrencyPolicy: "session_serial" as const,
-    daemonChatPolicy: "compatibility_only" as const,
   };
-  const baseDurablePolicy = {
+  const runtimeControlPolicy = {
     replyTargetPolicy: "turn_reply_target" as const,
     eventProjectionPolicy: "latest_active_reply_target" as const,
     concurrencyPolicy: "session_serial" as const,
-    daemonChatPolicy: "compatibility_only" as const,
   };
   const canUseDurableControl =
     runtimeControl.allowed && runtimeControl.approvalMode !== "disallowed";
@@ -172,58 +93,34 @@ function selectRouteForText(
     const intent = recognizeRuntimeControlIntent(text);
     if (intent !== null) {
       return {
-        lane: "durable",
         kind: "runtime_control",
         reason: "runtime_control_intent",
         intent,
-        ...baseDurablePolicy,
+        ...runtimeControlPolicy,
       };
     }
   }
 
-  if (canUseDurableControl && deps.hasDaemonTend && shouldUseDaemonTendRoute(text)) {
-    return {
-      lane: "durable",
-      kind: "daemon_tend",
-      reason: "long_running_goal_intent",
-      ...baseDurablePolicy,
-    };
-  }
-
-  if (!deps.hasAgentLoop && deps.hasLightweightLlm && shouldUseDirectAnswerRoute(text)) {
-    return {
-      lane: "fast",
-      kind: "direct_answer",
-      reason: "simple_question",
-      modelTier: "light",
-      maxTokens: 256,
-      ...baseFastPolicy,
-    };
-  }
-
   if (deps.hasAgentLoop) {
     return {
-      lane: "fast",
       kind: "agent_loop",
       reason: "agent_loop_available",
-      ...baseFastPolicy,
+      ...baseTurnPolicy,
     };
   }
 
   if (deps.hasToolLoop) {
     return {
-      lane: "fast",
       kind: "tool_loop",
       reason: "tool_loop_available",
-      ...baseFastPolicy,
+      ...baseTurnPolicy,
     };
   }
 
   return {
-    lane: "fast",
     kind: "adapter",
     reason: "adapter_fallback",
-    ...baseFastPolicy,
+    ...baseTurnPolicy,
   };
 }
 
@@ -367,10 +264,7 @@ export function createIngressRouter(): IngressRouter {
 }
 
 export function describeSelectedRoute(route: SelectedChatRoute): string {
-  if (route.kind === "direct_answer") {
-    return `${route.lane} ${route.kind} (${route.reason}, ${route.modelTier}, max ${route.maxTokens}, reply=${route.replyTargetPolicy}, events=${route.eventProjectionPolicy}, concurrency=${route.concurrencyPolicy}, daemon=${route.daemonChatPolicy})`;
-  }
-  return `${route.lane} ${route.kind} (${route.reason}, reply=${route.replyTargetPolicy}, events=${route.eventProjectionPolicy}, concurrency=${route.concurrencyPolicy}, daemon=${route.daemonChatPolicy})`;
+  return `${route.kind} (${route.reason}, reply=${route.replyTargetPolicy}, events=${route.eventProjectionPolicy}, concurrency=${route.concurrencyPolicy})`;
 }
 
 export type IngressMessage = ChatIngressMessage;

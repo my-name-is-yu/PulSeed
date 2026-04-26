@@ -124,6 +124,11 @@ import {
 } from "../../runtime/interactive-automation/index.js";
 import type { ScheduleEngine } from "../../runtime/schedule/engine.js";
 import type { ToolRegistry } from "../registry.js";
+import {
+  createCoreLoopControlTools,
+  createDaemonBackedCoreLoopControlToolset,
+  type CoreLoopControlToolset,
+} from "../../orchestrator/execution/agent-loop/core-loop-control-tools.js";
 
 export interface BuiltinToolDeps {
   stateManager?: StateManager;
@@ -141,6 +146,7 @@ export interface BuiltinToolDeps {
   interactiveAutomationRegistry?: InteractiveAutomationRegistry;
   interactiveAutomationPolicy?: InteractiveAutomationToolPolicy;
   codexAppComputerUseBridge?: CodexAppComputerUseBridge;
+  coreLoopControl?: CoreLoopControlToolset;
 }
 
 /** All built-in tools, sorted alphabetically by name. */
@@ -199,6 +205,9 @@ export function createBuiltinTools(deps?: BuiltinToolDeps): ITool[] {
       new TaskListTool(deps.stateManager),
       new TaskGetTool(deps.stateManager),
     );
+    tools.push(...createCoreLoopControlTools(
+      deps.coreLoopControl ?? createDaemonBackedCoreLoopControlToolset({ stateManager: deps.stateManager }),
+    ));
   }
 
   if (deps?.knowledgeManager) {

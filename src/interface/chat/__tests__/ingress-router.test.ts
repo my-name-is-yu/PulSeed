@@ -4,10 +4,10 @@ import { IngressRouter, buildStandaloneIngressMessage } from "../ingress-router.
 describe("IngressRouter", () => {
   const router = new IngressRouter();
 
-  it("selects direct answers for simple questions regardless of ingress channel", () => {
+  it("routes ordinary natural-language input to agent_loop when available", () => {
     const route = router.selectRoute(
       buildStandaloneIngressMessage({
-        text: "What is a lightweight direct-answer route?",
+        text: "What route should answer this?",
         channel: "plugin_gateway",
         platform: "discord",
         runtimeControl: {
@@ -16,25 +16,21 @@ describe("IngressRouter", () => {
         },
       }),
       {
-        hasLightweightLlm: true,
-        hasAgentLoop: false,
+        hasAgentLoop: true,
         hasToolLoop: true,
       }
     );
 
-    expect(route.kind).toBe("direct_answer");
-    expect(route.lane).toBe("fast");
+    expect(route.kind).toBe("agent_loop");
     expect(route.replyTargetPolicy).toBe("turn_reply_target");
-    expect(route.daemonChatPolicy).toBe("compatibility_only");
   });
 
-  it("keeps repository-inspection questions off the direct-answer route", () => {
+  it("falls back to tool_loop when the native agent loop is unavailable", () => {
     const route = router.selectRoute(
       buildStandaloneIngressMessage({
         text: "What files changed?",
       }),
       {
-        hasLightweightLlm: true,
         hasAgentLoop: false,
         hasToolLoop: true,
       }
@@ -43,7 +39,7 @@ describe("IngressRouter", () => {
     expect(route.kind).toBe("tool_loop");
   });
 
-  it("routes explicit runtime-control requests to the durable lane when allowed", () => {
+  it("routes explicit runtime-control requests when allowed", () => {
     const route = router.selectRoute(
       buildStandaloneIngressMessage({
         text: "PulSeed を再起動して",
@@ -55,18 +51,16 @@ describe("IngressRouter", () => {
         },
       }),
       {
-        hasLightweightLlm: true,
         hasAgentLoop: true,
         hasToolLoop: true,
       }
     );
 
     expect(route.kind).toBe("runtime_control");
-    expect(route.lane).toBe("durable");
     expect(route.eventProjectionPolicy).toBe("latest_active_reply_target");
   });
 
-  it("does not route runtime-control text to the durable lane when ingress policy disallows it", () => {
+  it("does not route runtime-control text to runtime_control when ingress policy disallows it", () => {
     const route = router.selectRoute(
       buildStandaloneIngressMessage({
         text: "PulSeed を再起動して",
@@ -78,17 +72,15 @@ describe("IngressRouter", () => {
         },
       }),
       {
-        hasLightweightLlm: true,
         hasAgentLoop: true,
         hasToolLoop: true,
       }
     );
 
     expect(route.kind).toBe("agent_loop");
-    expect(route.lane).toBe("fast");
   });
 
-  it("routes explicit long-running work requests to daemon-backed tend", () => {
+  it("keeps long-running natural-language work on agent_loop so tools can decide handoff", () => {
     const route = router.selectRoute(
       buildStandaloneIngressMessage({
         text: "coreloopの方でscore0.98行くまで取り組んで",
@@ -100,19 +92,36 @@ describe("IngressRouter", () => {
         },
       }),
       {
-        hasLightweightLlm: true,
         hasAgentLoop: true,
         hasToolLoop: true,
-        hasDaemonTend: true,
       }
     );
 
-    expect(route.kind).toBe("daemon_tend");
-    expect(route.lane).toBe("durable");
-    expect(route.eventProjectionPolicy).toBe("latest_active_reply_target");
+    expect(route.kind).toBe("agent_loop");
+    expect(route.eventProjectionPolicy).toBe("turn_only");
   });
 
-  it("does not route long-running work to daemon-backed tend when ingress policy disallows durable control", () => {
+  it("does not classify Japanese threshold phrasing with regex-based daemon routing", () => {
+    const route = router.selectRoute(
+      buildStandaloneIngressMessage({
+        text: "coreloopの方でscore0.98超えるまで色々やってほしい",
+        channel: "tui",
+        platform: "local_tui",
+        runtimeControl: {
+          allowed: true,
+          approvalMode: "interactive",
+        },
+      }),
+      {
+        hasAgentLoop: true,
+        hasToolLoop: true,
+      }
+    );
+
+    expect(route.kind).toBe("agent_loop");
+  });
+
+  it("keeps long-running work on agent_loop when runtime control is disallowed", () => {
     const route = router.selectRoute(
       buildStandaloneIngressMessage({
         text: "coreloopの方でscore0.98行くまで取り組んで",
@@ -124,31 +133,25 @@ describe("IngressRouter", () => {
         },
       }),
       {
-        hasLightweightLlm: true,
         hasAgentLoop: true,
         hasToolLoop: true,
-        hasDaemonTend: true,
       }
     );
 
     expect(route.kind).toBe("agent_loop");
-    expect(route.lane).toBe("fast");
   });
 
-  it("keeps explanatory long-running-task questions on the fast lane", () => {
+  it("keeps explanatory long-running-task questions on agent_loop", () => {
     const route = router.selectRoute(
       buildStandaloneIngressMessage({
         text: "長期タスクだとどうしてエラーになるの？",
       }),
       {
-        hasLightweightLlm: true,
         hasAgentLoop: true,
         hasToolLoop: true,
-        hasDaemonTend: true,
       }
     );
 
     expect(route.kind).toBe("agent_loop");
-    expect(route.lane).toBe("fast");
   });
 });

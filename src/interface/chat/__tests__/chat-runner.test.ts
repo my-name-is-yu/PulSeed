@@ -484,7 +484,7 @@ describe("ChatRunner", () => {
       expect(result.output).toContain("Active constraints");
       expect(result.output).toContain("Included context");
       expect(result.output).toContain("Not included");
-      expect(result.output).toContain("last_selected_route: lane=fast, kind=adapter");
+      expect(result.output).toContain("last_selected_route: kind=adapter");
       expect(result.output).toContain("hidden reasoning");
       expect(adapter.execute).toHaveBeenCalledOnce();
     });
@@ -2135,24 +2135,23 @@ describe("ChatRunner", () => {
         chatAgentLoopRunner,
         llmClient: llmClient as never,
       }));
-      const result = await runner.execute("What is a lightweight direct-answer route?", "/repo");
+      const result = await runner.execute("What route should answer this?", "/repo");
 
       expect(chatAgentLoopRunner.execute).toHaveBeenCalledOnce();
       expect(llmClient.sendMessage).not.toHaveBeenCalled();
       expect(adapter.execute).not.toHaveBeenCalled();
       expect(result.success).toBe(true);
       expect(result.output).toBe("Agentloop direct answer");
-      expect(result.diagnostics).toBeUndefined();
     });
 
-    it("routes explicit long-running work to daemon-backed tend instead of chatAgentLoopRunner", async () => {
-      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-daemon-tend-route-"));
+    it("leaves long-running natural-language handoff to chatAgentLoopRunner tools", async () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-coreloop-tool-route-"));
       try {
         const adapter = makeMockAdapter();
         const chatAgentLoopRunner = {
           execute: vi.fn().mockResolvedValue({
             success: true,
-            output: "Agentloop should not run",
+            output: "Agentloop handles handoff",
             error: null,
             exit_code: null,
             elapsed_ms: 42,
@@ -2192,24 +2191,15 @@ describe("ChatRunner", () => {
         }));
         runner.startSession("/repo");
 
-        const result = await runner.execute("coreloopの方でscore0.98行くまで取り組んで", "/repo");
+        const result = await runner.execute("coreloopの方でscore0.98超えるまで色々やってほしい", "/repo");
 
         expect(result.success).toBe(true);
-        expect(result.output).toContain("Tend to this goal?");
-        expect(result.output).toContain("Reach the long-running score target");
-        expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
+        expect(result.output).toBe("Agentloop handles handoff");
+        expect(chatAgentLoopRunner.execute).toHaveBeenCalledOnce();
         expect(adapter.execute).not.toHaveBeenCalled();
-        expect(llmClient.sendMessage).toHaveBeenCalledOnce();
-        expect(goalNegotiator.negotiate).toHaveBeenCalledWith(
-          "Improve the long-running task until the target metric is reached.",
-          expect.objectContaining({
-            constraints: expect.arrayContaining(["source: tend (auto-generated from chat)"]),
-          })
-        );
+        expect(llmClient.sendMessage).not.toHaveBeenCalled();
+        expect(goalNegotiator.negotiate).not.toHaveBeenCalled();
         expect(daemonClient.startGoal).not.toHaveBeenCalled();
-        expect((runner as unknown as { pendingTend: unknown }).pendingTend).toMatchObject({
-          goalId: "goal-long",
-        });
       } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
       }
@@ -2384,7 +2374,7 @@ describe("ChatRunner", () => {
       expect(adapter.execute).not.toHaveBeenCalled();
     });
 
-    it("keeps diagnostics out of the user-facing output", async () => {
+    it("keeps internal route details out of the user-facing output", async () => {
       const adapter = makeMockAdapter();
       const llmClient = {
         sendMessage: vi.fn().mockResolvedValue({
@@ -2396,16 +2386,10 @@ describe("ChatRunner", () => {
       };
 
       const runner = new ChatRunner(makeDeps({ adapter, llmClient: llmClient as never }));
-      const result = await runner.execute("How should the direct route behave?", "/repo");
+      const result = await runner.execute("How should the tool route behave?", "/repo");
 
       expect(result.output).toBe("Plain answer");
-      expect(result.output).not.toContain("simple_question");
-      expect(result.diagnostics).toEqual({
-        route: "direct",
-        reason: "simple_question",
-        modelTier: "light",
-        maxTokens: 256,
-      });
+      expect(result.output).not.toContain("tool_loop");
     });
 
     it("answers Japanese self-identity questions from PulSeed identity without calling the model", async () => {
@@ -2559,7 +2543,7 @@ describe("ChatRunner", () => {
       }
     });
 
-    it("builds direct-answer static grounding from the ChatRunner stateManager base dir", async () => {
+    it("builds tool-loop static grounding from the ChatRunner stateManager base dir", async () => {
       const pulseedHome = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-identity-"));
       const previousHome = process.env["PULSEED_HOME"];
       delete process.env["PULSEED_HOME"];
@@ -2587,7 +2571,7 @@ describe("ChatRunner", () => {
           llmClient: llmClient as never,
           onEvent: (event) => { events.push(event); },
         }));
-        const result = await runner.execute("What is this lane?", "/repo");
+        const result = await runner.execute("What is this route?", "/repo");
 
         expect(result.success).toBe(true);
         expect(result.output).toBe("Plain answer");
@@ -2605,7 +2589,7 @@ describe("ChatRunner", () => {
           type: "activity",
           kind: "commentary",
           transient: false,
-          message: expect.stringContaining("the router classified this as a simple question"),
+          message: expect.stringContaining("call the model with the tool catalog"),
         });
         const options = llmClient.sendMessage.mock.calls[0]?.[1] as { system?: string } | undefined;
         expect(options?.system).toContain("StaticPromptSeed");
@@ -2641,7 +2625,7 @@ describe("ChatRunner", () => {
       };
 
       const manager = new CrossPlatformChatSessionManager(makeDeps({ adapter, llmClient: llmClient as never }));
-      const result = await manager.execute("What is this lane?", {
+      const result = await manager.execute("What is this route?", {
         channel: "tui",
         platform: "local_tui",
         runtimeControl: {
@@ -2654,8 +2638,6 @@ describe("ChatRunner", () => {
 
       expect(result.success).toBe(true);
       expect(result.output).toBe("TUI answer");
-      expect(result.diagnostics?.route).toBe("direct");
-      expect(result.diagnostics?.reason).toBe("simple_question");
       expect(adapter.execute).not.toHaveBeenCalled();
     });
 
@@ -2717,13 +2699,11 @@ describe("ChatRunner", () => {
         },
         metadata: {},
       }, "/repo", 120_000, {
-        lane: "fast",
         kind: "agent_loop",
         reason: "agent_loop_available",
         replyTargetPolicy: "turn_reply_target",
         eventProjectionPolicy: "turn_only",
         concurrencyPolicy: "session_serial",
-        daemonChatPolicy: "compatibility_only",
       });
 
       expect(result.success).toBe(true);
@@ -2761,7 +2741,6 @@ describe("ChatRunner", () => {
       expect(adapter.execute).not.toHaveBeenCalled();
       expect(result.success).toBe(true);
       expect(result.output).toBe("Agentloop checked it");
-      expect(result.diagnostics).toBeUndefined();
     });
 
     it("does not route explicit confirmation requests through the direct path", async () => {
@@ -2794,7 +2773,6 @@ describe("ChatRunner", () => {
       expect(adapter.execute).not.toHaveBeenCalled();
       expect(result.success).toBe(true);
       expect(result.output).toBe("Confirmed with tools");
-      expect(result.diagnostics).toBeUndefined();
     });
 
     it("keeps non-native-tool clients on the local LLM/tool loop instead of the adapter fallback", async () => {

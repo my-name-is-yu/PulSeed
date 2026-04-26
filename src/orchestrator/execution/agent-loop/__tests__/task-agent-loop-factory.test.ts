@@ -162,6 +162,9 @@ describe("createNative*AgentLoopRunner", () => {
         "kaggle_submission_prepare",
         "kaggle_list_submissions",
         "kaggle_leaderboard_snapshot",
+        "core_goal_status",
+        "core_tend_goal",
+        "core_goal_start",
       ]),
     );
     expect(profile.toolPolicy.allowedTools).not.toContain("kaggle_submit");
@@ -170,7 +173,7 @@ describe("createNative*AgentLoopRunner", () => {
   it("makes registered Kaggle training tools model-visible in chat while hiding submit", () => {
     const providerConfig = makeProviderConfig();
     const registry = new ToolRegistry();
-    for (const tool of createBuiltinTools({ registry })) {
+    for (const tool of createBuiltinTools({ registry, stateManager: { getBaseDir: () => "/tmp/pulseed-test" } as never })) {
       registry.register(tool);
     }
     const profile = resolveAgentLoopDefaultProfileFromProviderConfig({
@@ -201,6 +204,9 @@ describe("createNative*AgentLoopRunner", () => {
         "kaggle_submission_prepare",
         "kaggle_list_submissions",
         "kaggle_leaderboard_snapshot",
+        "core_goal_status",
+        "core_tend_goal",
+        "core_goal_start",
       ]),
     );
     expect(visibleTools).not.toContain("glob");

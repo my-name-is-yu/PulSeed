@@ -130,14 +130,6 @@ export interface ChatRunResult {
   success: boolean;
   output: string;
   elapsed_ms: number;
-  diagnostics?: ChatRunDiagnostics;
-}
-
-export interface ChatRunDiagnostics {
-  route: "direct";
-  reason: "simple_question";
-  modelTier: "light";
-  maxTokens: number;
 }
 
 export interface RuntimeControlChatContext {
@@ -552,20 +544,14 @@ export class ChatRunner {
   }
 
   private getRouteCapabilities(): {
-    hasLightweightLlm: boolean;
     hasAgentLoop: boolean;
     hasToolLoop: boolean;
     hasRuntimeControlService: boolean;
-    hasDaemonTend: boolean;
   } {
     return {
-      hasLightweightLlm: this.deps.llmClient !== undefined,
       hasAgentLoop: this.deps.chatAgentLoopRunner !== undefined,
       hasToolLoop: this.deps.llmClient !== undefined,
       hasRuntimeControlService: this.deps.runtimeControlService !== undefined,
-      hasDaemonTend: this.deps.llmClient !== undefined
-        && this.deps.goalNegotiator !== undefined
-        && this.deps.daemonClient !== undefined,
     };
   }
 
@@ -1331,13 +1317,9 @@ export class ChatRunner {
   private formatRoute(route: SelectedChatRoute | null): string {
     if (!route) return "none selected yet";
     const details = [
-      `lane=${route.lane}`,
       `kind=${route.kind}`,
       `reason=${route.reason}`,
     ];
-    if (route.kind === "direct_answer") {
-      details.push(`model_tier=${route.modelTier}`, `max_tokens=${route.maxTokens}`);
-    }
     if (route.kind === "runtime_control") {
       details.push(`intent=${route.intent.kind}`);
     }
@@ -1373,7 +1355,7 @@ export class ChatRunner {
       "Turn context",
       `- last_selected_route: ${this.formatRoute(this.lastSelectedRoute)}`,
       `- reply_target: ${replyTargetParts.length > 0 ? replyTargetParts.join(":") : "none"}`,
-      `- route_capabilities: light_llm=${routeCapabilities.hasLightweightLlm}, agent_loop=${routeCapabilities.hasAgentLoop}, tool_loop=${routeCapabilities.hasToolLoop}, runtime_control=${routeCapabilities.hasRuntimeControlService}, daemon_tend=${routeCapabilities.hasDaemonTend}`,
+      `- route_capabilities: agent_loop=${routeCapabilities.hasAgentLoop}, tool_loop=${routeCapabilities.hasToolLoop}, runtime_control=${routeCapabilities.hasRuntimeControlService}`,
       "",
       "Working assumptions",
       "- this view exposes operational context, not hidden reasoning",
@@ -2017,7 +1999,6 @@ export class ChatRunner {
       ? null
       : (options.selectedRoute ?? this.resolveRouteFromInput(input, runtimeControlContext));
     this.lastSelectedRoute = selectedRoute;
-    const directPrompt = historyBlock ? `${historyBlock}${input}` : input;
     if (!resumeOnly) {
       this.emitIntent(input, selectedRoute, eventContext);
     } else if (resumeOnly) {
@@ -2026,7 +2007,6 @@ export class ChatRunner {
 
     const start = Date.now();
     const assistantBuffer: AssistantBuffer = { text: "" };
-    const turnUsage = this.zeroUsageCounter();
     const identityResponse = resumeOnly ? null : resolveSelfIdentityResponse(input, this.providerConfigBaseDir());
 
     if (identityResponse !== null) {
@@ -2071,90 +2051,6 @@ export class ChatRunner {
         this.emitLifecycleEndEvent("error", runtimeControlResult.elapsed_ms, eventContext, false);
       }
       return runtimeControlResult;
-    }
-
-    if (selectedRoute?.kind === "daemon_tend") {
-      this.emitCheckpoint("Durable goal selected", "This long-running request is being prepared for daemon-backed CoreLoop execution.", eventContext, "route");
-      const tendResult = await this.handleTend("", start);
-      if (tendResult.success) {
-        await history.appendAssistantMessage(tendResult.output);
-        this.emitCheckpoint("Durable goal prepared", "The daemon-backed goal confirmation is ready.", eventContext, "complete");
-        this.emitActivity("lifecycle", "Finalizing response...", eventContext, "lifecycle:finalizing");
-        this.emitEvent({
-          type: "assistant_final",
-          text: tendResult.output,
-          persisted: true,
-          ...this.eventBase(eventContext),
-        });
-        this.emitLifecycleEndEvent("completed", tendResult.elapsed_ms, eventContext, true);
-      } else {
-        tendResult.output = this.emitLifecycleErrorEvent(tendResult.output, assistantBuffer.text, eventContext);
-        this.emitLifecycleEndEvent("error", tendResult.elapsed_ms, eventContext, false);
-      }
-      return tendResult;
-    }
-
-    if (selectedRoute?.kind === "direct_answer") {
-      try {
-        this.emitActivity("lifecycle", "Calling model...", eventContext, "lifecycle:model");
-        const directResponse = await this.sendLLMMessage(
-          this.deps.llmClient!,
-          [{ role: "user", content: directPrompt }],
-          {
-            ...(this.cachedStaticSystemPrompt ? { system: this.cachedStaticSystemPrompt } : {}),
-            model_tier: selectedRoute.modelTier,
-            max_tokens: selectedRoute.maxTokens,
-          },
-          assistantBuffer,
-          eventContext
-        );
-        this.addUsageCounter(turnUsage, this.usageFromLLMResponse(directResponse));
-        const elapsed_ms = Date.now() - start;
-        const output = assistantBuffer.text || directResponse.content || "(no response)";
-        if (this.hasUsage(turnUsage)) {
-          history.recordUsage("execution", turnUsage);
-        }
-        const diffArtifact = await collectGitDiffArtifact(gitRoot);
-        if (diffArtifact) {
-          this.emitDiffArtifact(diffArtifact, eventContext);
-        }
-        await history.appendAssistantMessage(output);
-        this.emitCheckpoint("Response ready", "The direct answer has been persisted for this turn.", eventContext, "complete");
-        this.emitActivity("lifecycle", "Finalizing response...", eventContext, "lifecycle:finalizing");
-        this.emitEvent({
-          type: "assistant_final",
-          text: output,
-          persisted: true,
-          ...this.eventBase(eventContext),
-        });
-        this.emitLifecycleEndEvent("completed", elapsed_ms, eventContext, true);
-        return {
-          success: true,
-          output,
-          elapsed_ms,
-          diagnostics: {
-            route: "direct",
-            reason: selectedRoute.reason,
-            modelTier: selectedRoute.modelTier,
-            maxTokens: selectedRoute.maxTokens,
-          },
-        };
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        const output = this.emitLifecycleErrorEvent(message, assistantBuffer.text, eventContext);
-        this.emitLifecycleEndEvent("error", Date.now() - start, eventContext, false);
-        return {
-          success: false,
-          output,
-          elapsed_ms: Date.now() - start,
-          diagnostics: {
-            route: "direct",
-            reason: selectedRoute.reason,
-            modelTier: selectedRoute.modelTier,
-            maxTokens: selectedRoute.maxTokens,
-          },
-        };
-      }
     }
 
     const usesNativeAgentLoop = resumeOnly || selectedRoute?.kind === "agent_loop";
@@ -3132,12 +3028,6 @@ export class ChatRunner {
     if (selectedRoute?.kind === "runtime_control") {
       nextStep = `prepare the ${selectedRoute.intent.kind} runtime-control request.`;
       reason = "runtime changes need an explicit operation plan and approval path.";
-    } else if (selectedRoute?.kind === "daemon_tend") {
-      nextStep = "convert the request into a daemon-backed CoreLoop goal confirmation.";
-      reason = "long-running work should survive chat turn timeouts and run through durable runtime state.";
-    } else if (selectedRoute?.kind === "direct_answer") {
-      nextStep = "ask the lightweight model for a concise direct answer.";
-      reason = "the router classified this as a simple question that does not need tools.";
     } else if (selectedRoute?.kind === "agent_loop") {
       nextStep = "gather workspace context, then let the agent loop inspect or change files with visible tool activity.";
       reason = "this request may require multiple tool-backed steps.";
