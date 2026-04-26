@@ -189,6 +189,7 @@ Session
   /resume [id|title]    Resume native agentloop state for the current or selected session
   /cleanup [--dry-run]  Clean up stale chat sessions
   /compact              Summarize older chat turns and keep the latest turns
+  /context              Show active working context and session assumptions
   /exit                 Exit chat mode
 
 Goals and tasks
@@ -368,6 +369,7 @@ export class ChatRunner {
   private nativeAgentLoopStatePath: string | null = null;
   private runtimeControlContext: RuntimeControlChatContext | null = null;
   private sessionExecutionPolicy: ExecutionPolicy | null = null;
+  private lastSelectedRoute: SelectedChatRoute | null = null;
 
   constructor(deps: ChatRunnerDeps) {
     this.deps = deps;
@@ -1219,7 +1221,80 @@ export class ChatRunner {
     };
   }
 
-  private async handleCommand(input: string): Promise<ChatRunResult | null> {
+  private formatRoute(route: SelectedChatRoute | null): string {
+    if (!route) return "none selected yet";
+    const details = [
+      `lane=${route.lane}`,
+      `kind=${route.kind}`,
+      `reason=${route.reason}`,
+    ];
+    if (route.kind === "direct_answer") {
+      details.push(`model_tier=${route.modelTier}`, `max_tokens=${route.maxTokens}`);
+    }
+    if (route.kind === "runtime_control") {
+      details.push(`intent=${route.intent.kind}`);
+    }
+    return details.join(", ");
+  }
+
+  private async handleContext(start: number, cwdOverride?: string): Promise<ChatRunResult> {
+    const cwd = this.sessionCwd ?? (cwdOverride ? resolveGitRoot(cwdOverride) : process.cwd());
+    const session = this.history?.getSessionData() ?? null;
+    const messages = session?.messages ?? [];
+    const policy = await this.getSessionExecutionPolicy();
+    const recentMessages = messages.slice(-6);
+    const userTurns = messages.filter((message) => message.role === "user").length;
+    const assistantTurns = messages.filter((message) => message.role === "assistant").length;
+    const compactionSummary = session?.compactionSummary?.trim() ?? "";
+    const agentLoopPath = this.nativeAgentLoopStatePath ?? session?.agentLoopStatePath ?? null;
+    const replyTarget = this.runtimeControlContext?.replyTarget ?? this.deps.runtimeReplyTarget ?? null;
+    const routeCapabilities = this.getRouteCapabilities();
+    const replyTargetParts = replyTarget
+      ? [replyTarget.surface, replyTarget.platform, replyTarget.conversation_id].filter(Boolean)
+      : [];
+    const contextLines = [
+      "Working context",
+      "",
+      "Session",
+      `- session_id: ${this.history?.getSessionId() ?? "none"}`,
+      `- cwd: ${cwd}`,
+      `- messages: ${messages.length} (${userTurns} user, ${assistantTurns} assistant)`,
+      `- recent_turns_retained: ${recentMessages.length}`,
+      `- compaction_summary: ${compactionSummary ? "present" : "none"}`,
+      `- agentloop_state_path: ${agentLoopPath ?? "none"}`,
+      "",
+      "Turn context",
+      `- last_selected_route: ${this.formatRoute(this.lastSelectedRoute)}`,
+      `- reply_target: ${replyTargetParts.length > 0 ? replyTargetParts.join(":") : "none"}`,
+      `- route_capabilities: light_llm=${routeCapabilities.hasLightweightLlm}, agent_loop=${routeCapabilities.hasAgentLoop}, tool_loop=${routeCapabilities.hasToolLoop}, runtime_control=${routeCapabilities.hasRuntimeControlService}`,
+      "",
+      "Working assumptions",
+      "- this view exposes operational context, not hidden reasoning",
+      "- last_selected_route describes the most recent non-command turn in this ChatRunner",
+      "- future turns may select a different route based on the next input",
+      "",
+      "Active constraints",
+      ...summarizeExecutionPolicy(policy).split("\n").map((line) => `- ${line}`),
+      "",
+      "Included context",
+      "- current session cwd and execution policy because they constrain tool and route behavior",
+      `- ${recentMessages.length} latest persisted message(s)`,
+      `- ${compactionSummary ? "compacted older chat summary because older turns were summarized" : "no compacted older chat summary because none is stored"}`,
+      `- ${agentLoopPath ? "native agent-loop resume path because this session can persist agent-loop state" : "no native agent-loop resume path because none is active"}`,
+      "",
+      "Not included",
+      "- hidden reasoning or private model chain-of-thought",
+      "- raw state files unless a command explicitly reads them",
+      "- older chat turns beyond the retained window unless compacted into the session summary",
+    ];
+    return {
+      success: true,
+      output: contextLines.join("\n"),
+      elapsed_ms: Date.now() - start,
+    };
+  }
+
+  private async handleCommand(input: string, cwd?: string): Promise<ChatRunResult | null> {
     const trimmed = input.trim();
     if (!trimmed.startsWith("/")) return null;
 
@@ -1308,6 +1383,9 @@ export class ChatRunner {
     }
     if (cmd === "/usage") {
       return this.handleUsage(trimmed.slice("/usage".length).trim(), start);
+    }
+    if (cmd === "/context" || cmd === "/working-memory") {
+      return this.handleContext(start, cwd);
     }
     if (cmd === "/review") {
       return this.handleReview(start);
@@ -1694,7 +1772,7 @@ export class ChatRunner {
     const executionGoalId = options.goalId ?? this.deps.goalId;
 
     // Intercept commands before any adapter call
-    const commandResult = resumeOnly ? null : await this.handleCommand(input);
+    const commandResult = resumeOnly ? null : await this.handleCommand(input, cwd);
     if (commandResult !== null) {
       if (commandResult.output) {
         this.emitEvent({
@@ -1828,6 +1906,7 @@ export class ChatRunner {
     const selectedRoute = resumeOnly
       ? null
       : (options.selectedRoute ?? this.resolveRouteFromInput(input, runtimeControlContext));
+    this.lastSelectedRoute = selectedRoute;
     const directPrompt = historyBlock ? `${historyBlock}${input}` : input;
     if (!resumeOnly) {
       this.emitIntent(input, selectedRoute, eventContext);

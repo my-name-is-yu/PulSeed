@@ -81,6 +81,8 @@ const CHAT_RUNNER_OWNED_COMMANDS = new Set([
   "/status",
   "/history",
   "/compact",
+  "/context",
+  "/working-memory",
   "/tend",
   "/permissions",
   "/retry",

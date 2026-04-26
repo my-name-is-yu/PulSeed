@@ -463,7 +463,41 @@ describe("ChatRunner", () => {
       expect(result.output).toContain("Deferred");
       expect(result.output).toContain("/status [goal-id]");
       expect(result.output).toContain("/compact");
-      expect(result.output).not.toContain("/context");
+      expect(result.output).toContain("/context");
+      expect(adapter.execute).not.toHaveBeenCalled();
+    });
+
+    it("/context shows operational working context without calling adapter", async () => {
+      const adapter = makeMockAdapter();
+      const stateManager = makeMockStateManager();
+      const runner = new ChatRunner(makeDeps({ adapter, stateManager }));
+      runner.startSession("/repo");
+
+      await runner.execute("Make a small change", "/repo");
+      const result = await runner.execute("/context", "/repo");
+
+      expect(result.success).toBe(true);
+      expect(result.output).toContain("Working context");
+      expect(result.output).toContain("Session");
+      expect(result.output).toContain("Turn context");
+      expect(result.output).toContain("Working assumptions");
+      expect(result.output).toContain("Active constraints");
+      expect(result.output).toContain("Included context");
+      expect(result.output).toContain("Not included");
+      expect(result.output).toContain("last_selected_route: lane=fast, kind=adapter");
+      expect(result.output).toContain("hidden reasoning");
+      expect(adapter.execute).toHaveBeenCalledOnce();
+    });
+
+    it("/working-memory aliases the context view", async () => {
+      const adapter = makeMockAdapter();
+      const runner = new ChatRunner(makeDeps({ adapter }));
+      runner.startSession("/repo");
+
+      const result = await runner.execute("/working-memory", "/repo");
+
+      expect(result.success).toBe(true);
+      expect(result.output).toContain("Working context");
       expect(adapter.execute).not.toHaveBeenCalled();
     });
 

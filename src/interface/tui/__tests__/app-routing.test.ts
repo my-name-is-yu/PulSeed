@@ -29,6 +29,8 @@ describe("TUI app routing helpers", () => {
     expect(isChatRunnerOwnedSlashCommand("/status goal-1")).toBe(true);
     expect(isChatRunnerOwnedSlashCommand("/history saved")).toBe(true);
     expect(isChatRunnerOwnedSlashCommand("/compact")).toBe(true);
+    expect(isChatRunnerOwnedSlashCommand("/context")).toBe(true);
+    expect(isChatRunnerOwnedSlashCommand("/working-memory")).toBe(true);
     expect(isChatRunnerOwnedSlashCommand("/tend")).toBe(true);
     expect(isChatRunnerOwnedSlashCommand("/permissions read-only")).toBe(true);
     expect(isChatRunnerOwnedSlashCommand("/retry")).toBe(true);
