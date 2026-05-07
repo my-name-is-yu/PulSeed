@@ -10,6 +10,11 @@ export const RuntimeControlOperationKindSchema = z.enum([
   "resume_run",
   "cancel_run",
   "finalize_run",
+  "inspect_permission_boundary",
+  "revoke_permission",
+  "narrow_permission",
+  "extend_permission",
+  "audit_permission_check",
   "automation_control",
 ]);
 export type RuntimeControlOperationKind = z.infer<typeof RuntimeControlOperationKindSchema>;
@@ -65,6 +70,7 @@ export const RuntimeControlOperationSchema = z.object({
     run_id: z.string().min(1).optional(),
     session_id: z.string().min(1).optional(),
     goal_id: z.string().min(1).optional(),
+    grant_id: z.string().min(1).optional(),
     handoff_id: z.string().min(1).optional(),
     provider_id: z.string().min(1).optional(),
     service_key: z.string().min(1).optional(),

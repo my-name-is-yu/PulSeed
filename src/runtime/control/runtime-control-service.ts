@@ -10,6 +10,12 @@ import { RuntimeOperatorHandoffStore } from "../store/operator-handoff-store.js"
 import { BrowserSessionStore, RuntimeAuthHandoffStore } from "../interactive-automation/index.js";
 import { breakerKey, GuardrailStore } from "../guardrails/index.js";
 import type {
+  PermissionGrantCapability,
+  PermissionGrantCreateInput,
+  PermissionGrantRecord,
+  PermissionGrantStore,
+} from "../store/permission-grant-store.js";
+import type {
   RuntimeControlActor,
   RuntimeControlOperation,
   RuntimeControlOperationKind,
@@ -83,6 +89,7 @@ export interface RuntimeControlServiceOptions {
   sessionRegistry?: Pick<ReturnType<typeof createRuntimeSessionRegistry>, "snapshot">;
   evidenceLedger?: RuntimeEvidenceLedgerPort;
   operatorHandoffStore?: Pick<RuntimeOperatorHandoffStore, "create">;
+  permissionGrantStore?: Pick<PermissionGrantStore, "list" | "listActive" | "revoke" | "supersede" | "activate">;
   authHandoffStore?: RuntimeAuthHandoffStore;
   browserSessionStore?: BrowserSessionStore;
   guardrailStore?: GuardrailStore;
@@ -103,6 +110,7 @@ export class RuntimeControlService {
   private readonly sessionRegistry?: Pick<ReturnType<typeof createRuntimeSessionRegistry>, "snapshot">;
   private readonly evidenceLedger?: RuntimeEvidenceLedgerPort;
   private readonly operatorHandoffStore?: Pick<RuntimeOperatorHandoffStore, "create">;
+  private readonly permissionGrantStore?: Pick<PermissionGrantStore, "list" | "listActive" | "revoke" | "supersede" | "activate">;
   private readonly authHandoffStore: RuntimeAuthHandoffStore;
   private readonly browserSessionStore: BrowserSessionStore;
   private readonly guardrailStore: GuardrailStore;
@@ -116,6 +124,7 @@ export class RuntimeControlService {
       : undefined);
     this.evidenceLedger = options.evidenceLedger ?? (options.runtimeRoot ? new RuntimeEvidenceLedger(options.runtimeRoot) : undefined);
     this.operatorHandoffStore = options.operatorHandoffStore ?? (options.runtimeRoot ? new RuntimeOperatorHandoffStore(options.runtimeRoot) : undefined);
+    this.permissionGrantStore = options.permissionGrantStore;
     this.authHandoffStore = options.authHandoffStore ?? new RuntimeAuthHandoffStore(options.runtimeRoot);
     this.browserSessionStore = options.browserSessionStore ?? new BrowserSessionStore(options.runtimeRoot);
     this.guardrailStore = options.guardrailStore ?? new GuardrailStore(options.runtimeRoot);
@@ -124,6 +133,10 @@ export class RuntimeControlService {
   }
 
   async request(request: RuntimeControlRequest): Promise<RuntimeControlResult> {
+    if (isPermissionControlKind(request.intent.kind)) {
+      return this.handlePermissionControl(request);
+    }
+
     if (isRunControlKind(request.intent.kind)) {
       return this.handleRunControl(request);
     }
@@ -194,6 +207,104 @@ export class RuntimeControlService {
     );
   }
 
+  private async handlePermissionControl(request: RuntimeControlRequest): Promise<RuntimeControlResult> {
+    const initial = await this.createInitialOperation(request);
+    if (!this.permissionGrantStore) {
+      const blocked = await this.update(initial, "blocked", {
+        ok: false,
+        message: "PermissionGrant control is unavailable because the permission grant store is not configured.",
+      });
+      return this.toResult(blocked);
+    }
+
+    switch (request.intent.kind) {
+      case "inspect_permission_boundary": {
+        const grants = await this.matchPermissionGrants(request, { activeOnly: true });
+        const inspected = await this.update(initial, "verified", {
+          ok: true,
+          message: formatPermissionGrantSummary(grants),
+        });
+        return this.toResult(inspected);
+      }
+      case "audit_permission_check": {
+        const grants = await this.matchPermissionGrants(request, { activeOnly: false });
+        const audited = await this.update(initial, "verified", {
+          ok: true,
+          message: formatPermissionGrantAudit(grants),
+        });
+        return this.toResult(audited);
+      }
+      case "revoke_permission": {
+        const selected = await this.selectSinglePermissionGrant(request);
+        if (!selected.ok) {
+          const blocked = await this.update(initial, "blocked", { ok: false, message: selected.message });
+          return this.toResult(blocked);
+        }
+        const revoked = await this.permissionGrantStore.revoke(selected.grant.grant_id, {
+          revoked_by: actorKey(request.requestedBy),
+          reason: request.intent.reason,
+          audit_refs: [`runtime-control:${initial.operation_id}`],
+        });
+        const updated = await this.update(initial, revoked ? "verified" : "blocked", {
+          ok: Boolean(revoked),
+          message: revoked
+            ? `Revoked PermissionGrant ${revoked.grant_id}. Future covered actions will ask again or block according to policy.`
+            : `PermissionGrant ${selected.grant.grant_id} could not be revoked.`,
+        });
+        return this.toResult(updated);
+      }
+      case "narrow_permission":
+      case "extend_permission": {
+        const selected = await this.selectSinglePermissionGrant(request);
+        if (!selected.ok) {
+          const blocked = await this.update(initial, "blocked", { ok: false, message: selected.message });
+          return this.toResult(blocked);
+        }
+        if (request.intent.kind === "extend_permission" && (request.intent.permissionCapabilities?.length ?? 0) === 0) {
+          const blocked = await this.update(initial, "blocked", {
+            ok: false,
+            message: "extend_permission requires at least one explicit grant capability.",
+          });
+          return this.toResult(blocked);
+        }
+        const capabilities = nextPermissionCapabilities(selected.grant, request.intent.permissionCapabilities, request.intent.kind);
+        if (capabilities.length === 0) {
+          const blocked = await this.update(initial, "blocked", {
+            ok: false,
+            message: `${request.intent.kind} requires at least one explicit grant capability.`,
+          });
+          return this.toResult(blocked);
+        }
+        const approval = request.intent.kind === "extend_permission"
+          ? await this.approveIfRequired(initial, request.approvalFn)
+          : { ok: true as const, operation: initial };
+        if (!approval.ok) return approval.result;
+
+        const replacementInput = replacementGrantInput(selected.grant, capabilities, request, approval.operation.operation_id);
+        const superseded = await this.permissionGrantStore.supersede(selected.grant.grant_id, replacementInput, {
+          audit_refs: [`runtime-control:${approval.operation.operation_id}`],
+        });
+        const activated = superseded
+          ? await this.permissionGrantStore.activate(superseded.replacement.grant_id, {
+              audit_refs: [`runtime-control:${approval.operation.operation_id}`],
+            })
+          : null;
+        const updated = await this.update(approval.operation, activated ? "verified" : "blocked", {
+          ok: Boolean(activated),
+          message: activated
+            ? `Updated PermissionGrant ${selected.grant.grant_id}; replacement ${activated.grant_id} allows ${activated.capabilities.join(", ")}.`
+            : `PermissionGrant ${selected.grant.grant_id} could not be updated.`,
+        });
+        return this.toResult(updated);
+      }
+    }
+    const blocked = await this.update(initial, "blocked", {
+      ok: false,
+      message: `Unsupported permission control operation: ${request.intent.kind}`,
+    });
+    return this.toResult(blocked);
+  }
+
   private async handleRunControl(request: RuntimeControlRequest): Promise<RuntimeControlResult> {
     const initial = await this.createInitialOperation(request);
     if (initial.state === "blocked") return this.toResult(initial);
@@ -234,6 +345,39 @@ export class RuntimeControlService {
     return result;
   }
 
+  private async matchPermissionGrants(
+    request: RuntimeControlRequest,
+    options: { activeOnly: boolean },
+  ): Promise<PermissionGrantRecord[]> {
+    if (!this.permissionGrantStore) return [];
+    const grants = options.activeOnly
+      ? await this.permissionGrantStore.listActive()
+      : await this.permissionGrantStore.list();
+    const grantId = request.intent.target?.grantId;
+    if (grantId) {
+      return grants.filter((grant) => grant.grant_id === grantId);
+    }
+    const contextual = grants.filter((grant) => permissionGrantMatchesRequest(grant, request));
+    if (contextual.length > 0) return contextual;
+    return hasPermissionGrantSelectionContext(request) ? [] : grants;
+  }
+
+  private async selectSinglePermissionGrant(
+    request: RuntimeControlRequest,
+  ): Promise<{ ok: true; grant: PermissionGrantRecord } | { ok: false; message: string }> {
+    const grants = await this.matchPermissionGrants(request, { activeOnly: true });
+    if (grants.length === 0) {
+      return { ok: false, message: "No active PermissionGrant matches this chat/runtime context." };
+    }
+    if (grants.length > 1 && !request.intent.target?.grantId) {
+      return {
+        ok: false,
+        message: `Multiple active PermissionGrants match this context. Specify one grant id: ${grants.map((grant) => grant.grant_id).join(", ")}`,
+      };
+    }
+    return { ok: true, grant: grants[0]! };
+  }
+
   private async createInitialOperation(request: RuntimeControlRequest): Promise<RuntimeControlOperation> {
     const target = await this.resolveTarget(request);
     if (!target.ok) {
@@ -242,6 +386,7 @@ export class RuntimeControlService {
 
     const requestedAt = this.nowIso();
     const risk = riskForIntent(request.intent);
+    const directTarget = directTargetFromIntent(request.intent);
     const operation: RuntimeControlOperation = {
       operation_id: randomUUID(),
       kind: request.intent.kind,
@@ -260,7 +405,9 @@ export class RuntimeControlService {
               ...(target.goalId ? { goal_id: target.goalId } : {}),
             },
           }
-        : {}),
+        : directTarget
+          ? { target: directTarget }
+          : {}),
       ...(risk ? { risk } : {}),
     };
 
@@ -662,6 +809,16 @@ export function isExecutableRuntimeControlKind(
     || kind === "cancel_run";
 }
 
+function isPermissionControlKind(
+  kind: RuntimeControlOperationKind
+): kind is Extract<RuntimeControlOperationKind, "inspect_permission_boundary" | "revoke_permission" | "narrow_permission" | "extend_permission" | "audit_permission_check"> {
+  return kind === "inspect_permission_boundary"
+    || kind === "revoke_permission"
+    || kind === "narrow_permission"
+    || kind === "extend_permission"
+    || kind === "audit_permission_check";
+}
+
 function isRunControlKind(
   kind: RuntimeControlOperationKind
 ): kind is Extract<RuntimeControlOperationKind, "inspect_run" | "pause_run" | "resume_run" | "cancel_run" | "finalize_run"> {
@@ -676,7 +833,8 @@ function requiresApproval(kind: RuntimeControlOperationKind): boolean {
     || kind === "pause_run"
     || kind === "resume_run"
     || kind === "cancel_run"
-    || kind === "finalize_run";
+    || kind === "finalize_run"
+    || kind === "extend_permission";
 }
 
 function normalizeReplyTarget(target: RuntimeControlReplyTarget): RuntimeControlReplyTarget {
@@ -739,6 +897,16 @@ function ackMessage(kind: RuntimeControlOperationKind): string {
       return "runtime run のキャンセルを要求します。";
     case "finalize_run":
       return "runtime run の最終化 proposal を作成します。";
+    case "inspect_permission_boundary":
+      return "active permission boundary を確認しました。";
+    case "revoke_permission":
+      return "permission grant の revoke を記録しました。";
+    case "narrow_permission":
+      return "permission grant の narrow を記録しました。";
+    case "extend_permission":
+      return "permission grant の extend を記録しました。";
+    case "audit_permission_check":
+      return "permission grant の audit を確認しました。";
     case "automation_control":
       return "runtime automation control を記録しました。";
   }
@@ -749,6 +917,16 @@ function targetFromRunRequest(request: RuntimeRunControlRequestBase): RuntimeCon
   return {
     ...(request.runId ? { runId: request.runId } : {}),
     ...(request.sessionId ? { sessionId: request.sessionId } : {}),
+  };
+}
+
+function directTargetFromIntent(intent: RuntimeControlIntent): RuntimeControlOperation["target"] | undefined {
+  const target = intent.target;
+  if (!target?.runId && !target?.sessionId && !target?.grantId) return undefined;
+  return {
+    ...(target.runId ? { run_id: target.runId } : {}),
+    ...(target.sessionId ? { session_id: target.sessionId } : {}),
+    ...(target.grantId ? { grant_id: target.grantId } : {}),
   };
 }
 
@@ -763,4 +941,130 @@ function riskForIntent(intent: RuntimeControlIntent): RuntimeControlOperation["r
 
 function blocked(message: string): TargetResolution {
   return { ok: false, result: { success: false, message, state: "blocked" } };
+}
+
+function permissionGrantMatchesRequest(grant: PermissionGrantRecord, request: RuntimeControlRequest): boolean {
+  const target = request.intent.target;
+  if (target?.runId && grant.scope.kind === "run" && grant.scope.run_id === target.runId) return true;
+  if (target?.sessionId && (grant.scope.session_id === target.sessionId || grant.origin.session_id === target.sessionId)) return true;
+
+  const conversationId = request.replyTarget?.conversation_id ?? request.requestedBy?.conversation_id;
+  const userId = request.replyTarget?.user_id ?? request.requestedBy?.user_id;
+  if (conversationId && grant.origin.conversation_id === conversationId) {
+    return !userId || !grant.origin.user_id || grant.origin.user_id === userId;
+  }
+  return false;
+}
+
+function hasPermissionGrantSelectionContext(request: RuntimeControlRequest): boolean {
+  const target = request.intent.target;
+  return Boolean(
+    target?.runId
+    || target?.sessionId
+    || request.replyTarget?.conversation_id
+    || request.requestedBy?.conversation_id
+    || request.replyTarget?.user_id
+    || request.requestedBy?.user_id
+  );
+}
+
+function formatPermissionGrantSummary(grants: PermissionGrantRecord[]): string {
+  if (grants.length === 0) {
+    return "No active PermissionGrant matches this chat/runtime context.";
+  }
+  return [
+    "Active permission boundary:",
+    ...grants.map((grant) => [
+      `- ${grant.grant_id}`,
+      `scope=${formatGrantScope(grant)}`,
+      `duration=${grant.duration.kind}`,
+      `capabilities=${grant.capabilities.join(", ")}`,
+      `excluded=${grant.excluded_capabilities.length > 0 ? grant.excluded_capabilities.join(", ") : "none"}`,
+      `uses=${grant.usage_count}`,
+      "source=redacted",
+    ].join("; ")),
+  ].join("\n");
+}
+
+function formatPermissionGrantAudit(grants: PermissionGrantRecord[]): string {
+  if (grants.length === 0) {
+    return "No PermissionGrant audit records match this chat/runtime context.";
+  }
+  return [
+    "PermissionGrant audit:",
+    ...grants.map((grant) => [
+      `- ${grant.grant_id}`,
+      `state=${grant.state}`,
+      `scope=${formatGrantScope(grant)}`,
+      `capabilities=${grant.capabilities.join(", ")}`,
+      `excluded=${grant.excluded_capabilities.length > 0 ? grant.excluded_capabilities.join(", ") : "none"}`,
+      `uses=${grant.usage_count}`,
+      `last_used=${grant.last_used_at ? new Date(grant.last_used_at).toISOString() : "never"}`,
+      `audit_refs=${grant.audit_refs.length > 0 ? grant.audit_refs.join(", ") : "none"}`,
+    ].join("; ")),
+    "Covered local actions may reuse matching active grants. Excluded, stale, revoked, unknown, remote, destructive, or hard-boundary actions still ask again or block.",
+  ].join("\n");
+}
+
+function formatGrantScope(grant: PermissionGrantRecord): string {
+  switch (grant.scope.kind) {
+    case "turn":
+      return `turn:${grant.scope.turn_id}`;
+    case "run":
+      return `run:${grant.scope.run_id}`;
+    case "goal":
+      return `goal:${grant.scope.goal_id}`;
+    case "session":
+      return `session:${grant.scope.session_id}`;
+    case "workspace":
+      return `workspace:${grant.scope.workspace_root}`;
+    case "project":
+      return `project:${grant.scope.project_id}`;
+    case "global":
+      return "global";
+  }
+}
+
+function nextPermissionCapabilities(
+  grant: PermissionGrantRecord,
+  requested: PermissionGrantCapability[] | undefined,
+  kind: Extract<RuntimeControlOperationKind, "narrow_permission" | "extend_permission">,
+): PermissionGrantCapability[] {
+  const requestedUnique = uniqueCapabilities(requested ?? []);
+  if (kind === "narrow_permission") {
+    const allowed = new Set(grant.capabilities);
+    return requestedUnique.filter((capability) => allowed.has(capability));
+  }
+  return uniqueCapabilities([...grant.capabilities, ...requestedUnique]);
+}
+
+function uniqueCapabilities(capabilities: PermissionGrantCapability[]): PermissionGrantCapability[] {
+  return [...new Set(capabilities)];
+}
+
+function replacementGrantInput(
+  grant: PermissionGrantRecord,
+  capabilities: PermissionGrantCapability[],
+  request: RuntimeControlRequest,
+  operationId: string,
+): PermissionGrantCreateInput {
+  const now = Date.now();
+  return {
+    grant_id: `permission-grant:${operationId}:${randomUUID()}`,
+    subject: grant.subject,
+    origin: grant.origin,
+    source: grant.source,
+    scope: grant.scope,
+    duration: grant.duration,
+    capabilities,
+    excluded_capabilities: request.intent.permissionExcludedCapabilities ?? grant.excluded_capabilities,
+    staleness: grant.staleness,
+    audit_refs: [`runtime-control:${operationId}`],
+    supersedes: [grant.grant_id],
+    created_at: now,
+  };
+}
+
+function actorKey(actor: RuntimeControlActor | undefined): string {
+  return actor?.identity_key ?? actor?.user_id ?? actor?.conversation_id ?? actor?.surface ?? "operator";
 }
