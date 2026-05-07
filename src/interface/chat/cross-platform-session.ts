@@ -46,14 +46,33 @@ import {
   createDaemonRuntimeControlExecutor,
 } from "../../runtime/control/index.js";
 import { ApprovalBroker } from "../../runtime/approval-broker.js";
-import { ApprovalStore, createRuntimeStorePaths } from "../../runtime/store/index.js";
+import {
+  ApprovalStore,
+  PermissionGrantCapabilitySchema,
+  PermissionGrantExcludedCapabilitySchema,
+  PermissionGrantStore,
+  createRuntimeStorePaths,
+  type PermissionGrantCapability,
+  type PermissionGrantCreateInput,
+  type PermissionGrantExcludedCapability,
+  type PermissionGrantOrigin,
+  type PermissionGrantScope,
+} from "../../runtime/store/index.js";
 import { classifyConversationalApprovalDecision } from "../../runtime/conversational-approval-decision.js";
+import {
+  classifyConversationalPermissionGrantDecision,
+  type PermissionGrantReplyDecision,
+} from "../../runtime/permission-grant-decision.js";
 import { registerGlobalCrossPlatformChatSessionManager } from "./cross-platform-session-global.js";
 import type { RuntimeControlActor } from "../../runtime/store/runtime-operation-schemas.js";
 import type { ApprovalOrigin, ApprovalRecord } from "../../runtime/store/runtime-schemas.js";
 import {
   createPendingPermissionTask,
+  getPendingPermissionTask,
+  getPendingPermissionGrantProposal,
   isPermissionApprovalStale,
+  PendingPermissionGrantProposalSchema,
+  type PendingPermissionGrantProposal,
 } from "../../runtime/permission-dialogue.js";
 import {
   buildCompanionRuntimeContract,
@@ -227,6 +246,184 @@ function cloneReplyTarget(target: Record<string, unknown> | ChatIngressReplyTarg
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function createPermissionGrantProposalFromApprovalRequest(
+  request: ApprovalRequest,
+): PendingPermissionGrantProposal | undefined {
+  const decision = isRecord(request.permissionGrantDecision) ? request.permissionGrantDecision : null;
+  if (!decision) return undefined;
+
+  const capabilities = parsePermissionGrantCapabilities(decision["requiredCapabilities"]);
+  if (capabilities.length === 0) return undefined;
+  const excludedCapabilities = parsePermissionGrantExcludedCapabilities(decision["excludedCapabilities"]);
+
+  return PendingPermissionGrantProposalSchema.parse({
+    schema_version: "permission-grant-proposal-v1",
+    capabilities,
+    current_request_capabilities: capabilities,
+    excluded_capabilities: excludedCapabilities,
+    default_scope: "run",
+    allowed_scopes: ["once", "run", "goal"],
+    summary: request.reason,
+  });
+}
+
+function parsePermissionGrantCapabilities(value: unknown): PermissionGrantCapability[] {
+  if (!Array.isArray(value)) return [];
+  const capabilities: PermissionGrantCapability[] = [];
+  const seen = new Set<PermissionGrantCapability>();
+  for (const item of value) {
+    const parsed = PermissionGrantCapabilitySchema.safeParse(item);
+    if (!parsed.success || seen.has(parsed.data)) continue;
+    seen.add(parsed.data);
+    capabilities.push(parsed.data);
+  }
+  return capabilities;
+}
+
+function parsePermissionGrantExcludedCapabilities(value: unknown): PermissionGrantExcludedCapability[] {
+  if (!Array.isArray(value)) return [];
+  const capabilities: PermissionGrantExcludedCapability[] = [];
+  const seen = new Set<PermissionGrantExcludedCapability>();
+  for (const item of value) {
+    const parsed = PermissionGrantExcludedCapabilitySchema.safeParse(item);
+    if (!parsed.success || seen.has(parsed.data)) continue;
+    seen.add(parsed.data);
+    capabilities.push(parsed.data);
+  }
+  return capabilities;
+}
+
+type PermissionGrantScopeResolution =
+  | {
+      status: "ok";
+      scope: PermissionGrantScope;
+      duration: PermissionGrantCreateInput["duration"];
+    }
+  | { status: "needs_confirmation" | "unavailable"; message: string };
+
+function resolveGrantScopeFromReply(
+  approval: ApprovalRecord,
+  proposal: PendingPermissionGrantProposal,
+  decision: PermissionGrantReplyDecision,
+): PermissionGrantScopeResolution {
+  const requestedScope = requestedGrantScope(proposal, decision);
+  if (requestedScope === "global" || decision.requested_scope === "standing") {
+    return {
+      status: "needs_confirmation",
+      message: "Standing or global permission requires a second explicit confirmation naming the broader scope. The proposal remains pending.",
+    };
+  }
+  if (!proposal.allowed_scopes.includes(requestedScope)) {
+    return {
+      status: "needs_confirmation",
+      message: `The requested ${requestedScope} permission scope is broader than this proposal. The proposal remains pending.`,
+    };
+  }
+
+  const task = getPendingPermissionTask(approval);
+  switch (requestedScope) {
+    case "once": {
+      const turnId = approval.origin?.turn_id;
+      if (!turnId) {
+        return { status: "unavailable", message: "Permission grant could not be scoped to the current turn. The proposal remains pending." };
+      }
+      return {
+        status: "ok",
+        scope: { kind: "turn", turn_id: turnId },
+        duration: { kind: "once" },
+      };
+    }
+    case "run": {
+      const runId = task?.target.run_id ?? approval.origin?.session_id;
+      if (!runId) {
+        return { status: "unavailable", message: "Permission grant could not be scoped to the current run. The proposal remains pending." };
+      }
+      return {
+        status: "ok",
+        scope: { kind: "run", run_id: runId },
+        duration: { kind: "until_run_done" },
+      };
+    }
+    case "goal": {
+      const goalId = approval.goal_id;
+      if (!goalId) {
+        return { status: "unavailable", message: "Permission grant could not be scoped to the current goal. The proposal remains pending." };
+      }
+      return {
+        status: "ok",
+        scope: { kind: "goal", goal_id: goalId },
+        duration: { kind: "until_goal_done" },
+      };
+    }
+    case "session":
+    case "workspace":
+    case "project":
+      return {
+        status: "needs_confirmation",
+        message: `The requested ${requestedScope} permission scope requires a more specific proposal. The proposal remains pending.`,
+      };
+  }
+}
+
+function requestedGrantScope(
+  proposal: PendingPermissionGrantProposal,
+  decision: PermissionGrantReplyDecision,
+): PendingPermissionGrantProposal["default_scope"] {
+  if (decision.decision === "approve_current_run") return "run";
+  if (decision.decision === "approve_current_goal") return "goal";
+  if (decision.decision === "extend_scope") {
+    switch (decision.requested_scope) {
+      case "current_run":
+        return "run";
+      case "current_goal":
+        return "goal";
+      case "standing":
+        return "global";
+      case "once":
+      case "session":
+      case "workspace":
+      case "project":
+      case "global":
+        return decision.requested_scope;
+      default:
+        return proposal.default_scope;
+    }
+  }
+  return proposal.default_scope;
+}
+
+function resolveGrantCapabilitiesFromReply(
+  proposal: PendingPermissionGrantProposal,
+  decision: PermissionGrantReplyDecision,
+): PermissionGrantCapability[] {
+  if (decision.decision !== "narrow_scope" || !decision.capabilities) {
+    return proposal.capabilities;
+  }
+  const allowed = new Set(proposal.capabilities);
+  return decision.capabilities.filter((capability) => allowed.has(capability));
+}
+
+function createPermissionGrantOrigin(origin: ApprovalOrigin): PermissionGrantOrigin {
+  const replyTarget = isRecord(origin.reply_target) ? origin.reply_target : undefined;
+  const platform = normalizeIdentity(stringField(replyTarget, "platform")) ?? undefined;
+  const messageId = normalizeIdentity(stringField(replyTarget, "message_id")) ?? origin.turn_id;
+  return {
+    channel: origin.channel,
+    ...(platform ? { platform } : {}),
+    conversation_id: origin.conversation_id,
+    ...(origin.user_id ? { user_id: origin.user_id } : {}),
+    ...(origin.session_id ? { session_id: origin.session_id } : {}),
+    ...(origin.turn_id ? { turn_id: origin.turn_id } : {}),
+    ...(messageId ? { message_id: messageId } : {}),
+    ...(replyTarget ? { reply_target: { ...replyTarget } } : {}),
+  };
+}
+
+function stringField(value: Record<string, unknown> | undefined, field: string): string | undefined {
+  const fieldValue = value?.[field];
+  return typeof fieldValue === "string" && fieldValue.trim() ? fieldValue : undefined;
 }
 
 function buildSessionMetadata(options: {
@@ -555,6 +752,27 @@ export class CrossPlatformChatSessionManager {
       return staleReply;
     }
 
+    const grantProposal = getPendingPermissionGrantProposal(approval);
+    if (grantProposal) {
+      const grantDecision = await classifyConversationalPermissionGrantDecision(ingress.text, {
+        approval,
+        proposal: grantProposal,
+        replyOrigin: origin,
+        llmClient: this.deps.llmClient,
+        priorTurnState: this.describeLastRouteForApproval(ingress),
+      });
+      const grantReply = await this.resolveConversationalPermissionGrantReply(
+        ingress,
+        approval,
+        origin,
+        grantProposal,
+        grantDecision,
+      );
+      if (grantReply !== null) {
+        return grantReply;
+      }
+    }
+
     const decision = await classifyConversationalApprovalDecision(ingress.text, {
       approval,
       replyOrigin: origin,
@@ -581,6 +799,113 @@ export class CrossPlatformChatSessionManager {
       return null;
     }
     return decision.clarification ?? "Approval reply was ambiguous. The approval remains pending.";
+  }
+
+  private async resolveConversationalPermissionGrantReply(
+    ingress: CrossPlatformIngressMessage,
+    approval: ApprovalRecord,
+    origin: ApprovalOrigin,
+    proposal: PendingPermissionGrantProposal,
+    decision: PermissionGrantReplyDecision,
+  ): Promise<string | null> {
+    const broker = this.deps.approvalBroker;
+    if (!broker) {
+      return "Approval response could not be recorded because approval handling is unavailable.";
+    }
+
+    switch (decision.decision) {
+      case "side_question":
+      case "new_intent":
+        if (ingress.ingress_id) {
+          this.approvalSideTurnIngressIds.add(ingress.ingress_id);
+        }
+        return null;
+      case "clarify":
+        return decision.clarification ?? "Permission proposal is still pending. Please clarify before approving or rejecting.";
+      case "unknown":
+        return decision.clarification ?? "Permission reply was ambiguous. The permission proposal remains pending.";
+      case "reject":
+      case "revoke": {
+        const resolved = await broker.resolveConversationalApproval(approval.approval_id, false, approval.origin ?? origin);
+        return resolved
+          ? "Approval response recorded."
+          : "Approval response did not match an active approval for this conversation.";
+      }
+      case "approve_once": {
+        const resolved = await broker.resolveConversationalApproval(approval.approval_id, true, approval.origin ?? origin);
+        return resolved
+          ? "Approval response recorded."
+          : "Approval response did not match an active approval for this conversation.";
+      }
+      case "approve_current_run":
+      case "approve_current_goal":
+      case "narrow_scope":
+      case "extend_scope":
+        return this.createPermissionGrantFromReply({
+          ingress,
+          approval,
+          origin,
+          proposal,
+          decision,
+        });
+    }
+  }
+
+  private async createPermissionGrantFromReply(input: {
+    ingress: CrossPlatformIngressMessage;
+    approval: ApprovalRecord;
+    origin: ApprovalOrigin;
+    proposal: PendingPermissionGrantProposal;
+    decision: PermissionGrantReplyDecision;
+  }): Promise<string> {
+    const store = this.deps.permissionGrantStore;
+    if (!store) {
+      return "Permission grant could not be recorded because the grant store is unavailable. The approval remains pending.";
+    }
+    const scope = resolveGrantScopeFromReply(input.approval, input.proposal, input.decision);
+    if (scope.status !== "ok") {
+      return scope.message;
+    }
+
+    const capabilities = resolveGrantCapabilitiesFromReply(input.proposal, input.decision);
+    if (capabilities.length === 0) {
+      return "Permission proposal is still pending. Please name at least one capability to allow.";
+    }
+
+    const createInput: PermissionGrantCreateInput = {
+      grant_id: `permission-grant:${input.approval.approval_id}:${randomUUID()}`,
+      subject: {
+        kind: "operator",
+        id: input.origin.user_id ?? input.origin.session_id ?? input.origin.conversation_id,
+      },
+      origin: createPermissionGrantOrigin(input.origin),
+      source: {
+        kind: "redacted_text",
+        redacted_text: "User replied to a conversational PermissionGrant proposal.",
+        redaction_reason: "chat_permission_reply",
+      },
+      scope: scope.scope,
+      duration: scope.duration,
+      capabilities,
+      excluded_capabilities: input.proposal.excluded_capabilities,
+      audit_refs: [`approval:${input.approval.approval_id}`],
+    };
+
+    await store.createActive(createInput);
+    const currentRequestCapabilities = input.proposal.current_request_capabilities ?? input.proposal.capabilities;
+    const currentRequestCovered = input.proposal.excluded_capabilities.length === 0
+      && currentRequestCapabilities.every((capability) => capabilities.includes(capability));
+    const resolved = await this.deps.approvalBroker?.resolveConversationalApproval(
+      input.approval.approval_id,
+      currentRequestCovered,
+      input.approval.origin ?? input.origin,
+    );
+    if (!resolved) {
+      return "Permission grant was recorded, but the approval response did not match an active approval for this conversation.";
+    }
+    return currentRequestCovered
+      ? "Permission grant recorded. Approval response recorded."
+      : "Permission grant recorded with a narrower boundary; the current approval was not executed.";
   }
 
   private async rejectStalePermissionApprovalIfNeeded(
@@ -853,6 +1178,10 @@ export class CrossPlatformChatSessionManager {
       approvalFn: approvalFn ?? this.deps.approvalFn,
       approvalRequestFn: approvalRequestFn ?? this.deps.approvalRequestFn,
       runtimeControlApprovalFn: approvalFn ?? this.deps.runtimeControlApprovalFn,
+      permissionGrantContext: {
+        ...this.deps.permissionGrantContext,
+        sessionId: info.session_key,
+      },
     });
     if (info.chat_session_id) {
       const loaded = await new ChatSessionCatalog(this.deps.stateManager).loadSession(info.chat_session_id);
@@ -944,12 +1273,14 @@ export class CrossPlatformChatSessionManager {
         ? info.metadata.goal_id.trim()
         : "chat";
       const stateEpoch = currentStateEpochFromSessionInfo(info);
+      const grantProposal = createPermissionGrantProposalFromApprovalRequest(request);
       return broker.requestConversationalApproval(goalId, createPendingPermissionTask({
         id: request.callId ?? info.last_message_id ?? info.session_key,
         description: request.reason,
         action: request.toolName,
         target: {
           session_id: info.session_key,
+          ...(request.runId ? { run_id: request.runId } : {}),
           tool_id: request.toolName,
           ...(request.callId ? { tool_call_id: request.callId } : {}),
         },
@@ -958,6 +1289,7 @@ export class CrossPlatformChatSessionManager {
         permissionLevel: request.permissionLevel,
         isDestructive: request.isDestructive,
         reversibility: request.reversibility,
+        ...(grantProposal ? { grantProposal } : {}),
       }), {
         origin,
         deliverConversationalApproval: async ({ prompt }) => {
@@ -1367,8 +1699,10 @@ async function createGlobalCrossPlatformChatSessionManager(): Promise<CrossPlatf
       })
     : undefined;
 
+  const runtimeStorePaths = createRuntimeStorePaths(runtimeRoot);
+  const permissionGrantStore = new PermissionGrantStore(runtimeStorePaths);
   const approvalBroker = new ApprovalBroker({
-    store: new ApprovalStore(createRuntimeStorePaths(runtimeRoot)),
+    store: new ApprovalStore(runtimeStorePaths),
   });
 
   return new CrossPlatformChatSessionManager({
@@ -1380,6 +1714,7 @@ async function createGlobalCrossPlatformChatSessionManager(): Promise<CrossPlatf
     chatAgentLoopRunner,
     reviewAgentLoopRunner,
     approvalBroker,
+    permissionGrantStore,
     runtimeControlService,
   });
 }

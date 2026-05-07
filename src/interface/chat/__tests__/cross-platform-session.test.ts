@@ -5,6 +5,7 @@ import type { CrossPlatformChatSessionOptions } from "../cross-platform-session.
 import type { ChatRunnerDeps } from "../chat-runner-contracts.js";
 import { ApprovalBroker } from "../../../runtime/approval-broker.js";
 import { ApprovalStore } from "../../../runtime/store/approval-store.js";
+import { PermissionGrantStore } from "../../../runtime/store/permission-grant-store.js";
 import type { StateManager } from "../../../base/state/state-manager.js";
 import type { IAdapter, AgentResult } from "../../../orchestrator/execution/adapter-layer.js";
 import { createMockLLMClient, createSingleMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
@@ -1522,6 +1523,315 @@ describe("CrossPlatformChatSessionManager", () => {
         turn_id: "1700.2",
       });
       await expect(resultPromise).resolves.toBe("write approved");
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
+  });
+
+  it("creates a current-run PermissionGrant from a natural-language grant approval through the chat caller path", async () => {
+    const tmpDir = makeTempDir();
+    try {
+      const store = new ApprovalStore(tmpDir);
+      const permissionGrantStore = new PermissionGrantStore(tmpDir);
+      const approvalBroker = new ApprovalBroker({
+        store,
+        createId: () => "approval-grant-run",
+      });
+      const chatAgentLoopRunner = {
+        execute: vi.fn(async (input: {
+          approvalFn?: (request: ApprovalRequest) => Promise<boolean>;
+          toolCallContext?: ToolCallContext;
+        }) => {
+          const approved = await input.approvalFn?.({
+            toolName: "write_file",
+            input: { path: "notes.md" },
+            reason: "Write notes.md and run tests in the workspace.",
+            permissionLevel: "write_local",
+            isDestructive: false,
+            reversibility: "reversible",
+            callId: "call-grant-run",
+            ...(input.toolCallContext?.sessionId ? { sessionId: input.toolCallContext.sessionId } : {}),
+            ...(input.toolCallContext?.runId ? { runId: input.toolCallContext.runId } : {}),
+            ...(input.toolCallContext?.turnId ? { turnId: input.toolCallContext.turnId } : {}),
+            permissionGrantDecision: {
+              status: "missing_grant",
+              allowed: false,
+              reason: "No active PermissionGrant covers the requested local work.",
+              requiredCapabilities: ["write_workspace", "run_tests"],
+              excludedCapabilities: [],
+              consideredGrantIds: [],
+            },
+          });
+          return {
+            success: approved === true,
+            output: approved === true ? "write approved" : "not approved",
+            error: null,
+            exit_code: null,
+            elapsed_ms: 5,
+            stopped_reason: "completed",
+          };
+        }),
+      };
+      const manager = new CrossPlatformChatSessionManager(makeDeps({
+        chatAgentLoopRunner: chatAgentLoopRunner as never,
+        llmClient: createSingleMockLLMClient(JSON.stringify({
+          decision: "approve_current_run",
+          confidence: 0.94,
+          rationale: "The reply allows the proposed local work for the current run.",
+        })),
+        approvalBroker,
+        permissionGrantStore,
+      }));
+
+      const resultPromise = manager.processIncomingMessage({
+        text: "Write the notes file and run tests",
+        platform: "slack",
+        identity_key: "workspace:U123",
+        conversation_id: "C123:1700.1",
+        sender_id: "U123",
+        message_id: "1700.2",
+        cwd: "/repo",
+        onEvent: () => undefined,
+      });
+      const deadline = Date.now() + 1000;
+      while (Date.now() < deadline && (await store.loadPending("approval-grant-run")) === null) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      await expect(store.loadPending("approval-grant-run")).resolves.toMatchObject({
+        payload: {
+          task: {
+            grant_proposal: {
+              capabilities: ["write_workspace", "run_tests"],
+              default_scope: "run",
+            },
+          },
+        },
+      });
+
+      await expect(manager.processIncomingMessage({
+        text: "この実行中はローカル編集とテストを進めてください",
+        platform: "slack",
+        identity_key: "workspace:U123",
+        conversation_id: "C123:1700.1",
+        sender_id: "U123",
+        message_id: "1700.3",
+        cwd: "/repo",
+      })).resolves.toBe("Permission grant recorded. Approval response recorded.");
+
+      await expect(resultPromise).resolves.toBe("write approved");
+      const grants = await permissionGrantStore.list();
+      expect(grants).toHaveLength(1);
+      expect(grants[0]).toMatchObject({
+        state: "active",
+        scope: {
+          kind: "run",
+        },
+        duration: {
+          kind: "until_run_done",
+        },
+        capabilities: ["write_workspace", "run_tests"],
+        excluded_capabilities: [],
+        origin: {
+          conversation_id: "C123:1700.1",
+          user_id: "U123",
+          session_id: "identity:workspace:U123",
+        },
+      });
+      expect(grants[0]?.scope.kind === "run" ? grants[0].scope.run_id : null).toBeTruthy();
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
+  });
+
+  it("records narrowed grant replies without executing the excluded current request", async () => {
+    const tmpDir = makeTempDir();
+    try {
+      const store = new ApprovalStore(tmpDir);
+      const permissionGrantStore = new PermissionGrantStore(tmpDir);
+      const approvalBroker = new ApprovalBroker({
+        store,
+        createId: () => "approval-grant-narrow",
+      });
+      const chatAgentLoopRunner = {
+        execute: vi.fn(async (input: {
+          approvalFn?: (request: ApprovalRequest) => Promise<boolean>;
+          toolCallContext?: ToolCallContext;
+        }) => {
+          const approved = await input.approvalFn?.({
+            toolName: "write_file",
+            input: { path: "notes.md" },
+            reason: "Write notes.md and run tests in the workspace.",
+            permissionLevel: "write_local",
+            isDestructive: false,
+            reversibility: "reversible",
+            callId: "call-grant-narrow",
+            ...(input.toolCallContext?.sessionId ? { sessionId: input.toolCallContext.sessionId } : {}),
+            ...(input.toolCallContext?.runId ? { runId: input.toolCallContext.runId } : {}),
+            ...(input.toolCallContext?.turnId ? { turnId: input.toolCallContext.turnId } : {}),
+            permissionGrantDecision: {
+              status: "missing_grant",
+              allowed: false,
+              reason: "No active PermissionGrant covers the requested local work.",
+              requiredCapabilities: ["write_workspace", "run_tests"],
+              excludedCapabilities: [],
+              consideredGrantIds: [],
+            },
+          });
+          return {
+            success: approved === true,
+            output: approved === true ? "write approved" : "not approved",
+            error: null,
+            exit_code: null,
+            elapsed_ms: 5,
+            stopped_reason: "completed",
+          };
+        }),
+      };
+      const manager = new CrossPlatformChatSessionManager(makeDeps({
+        chatAgentLoopRunner: chatAgentLoopRunner as never,
+        llmClient: createSingleMockLLMClient(JSON.stringify({
+          decision: "narrow_scope",
+          confidence: 0.92,
+          capabilities: ["run_tests"],
+          rationale: "The reply allows tests but not edits.",
+        })),
+        approvalBroker,
+        permissionGrantStore,
+      }));
+
+      const resultPromise = manager.processIncomingMessage({
+        text: "Write the notes file and run tests",
+        platform: "slack",
+        identity_key: "workspace:U123",
+        conversation_id: "C123:1700.1",
+        sender_id: "U123",
+        message_id: "1700.2",
+        cwd: "/repo",
+        onEvent: () => undefined,
+      });
+      const deadline = Date.now() + 1000;
+      while (Date.now() < deadline && (await store.loadPending("approval-grant-narrow")) === null) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+
+      await expect(manager.processIncomingMessage({
+        text: "Tests are fine, but do not edit files yet.",
+        platform: "slack",
+        identity_key: "workspace:U123",
+        conversation_id: "C123:1700.1",
+        sender_id: "U123",
+        message_id: "1700.3",
+        cwd: "/repo",
+      })).resolves.toBe("Permission grant recorded with a narrower boundary; the current approval was not executed.");
+
+      await expect(resultPromise).resolves.toContain("not approved");
+      const grants = await permissionGrantStore.list();
+      expect(grants).toHaveLength(1);
+      expect(grants[0]).toMatchObject({
+        state: "active",
+        capabilities: ["run_tests"],
+      });
+      await expect(store.loadResolved("approval-grant-narrow")).resolves.toMatchObject({
+        state: "denied",
+      });
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
+  });
+
+  it("keeps ambiguous or standing-scope grant replies pending without creating broad grants", async () => {
+    const tmpDir = makeTempDir();
+    try {
+      const store = new ApprovalStore(tmpDir);
+      const permissionGrantStore = new PermissionGrantStore(tmpDir);
+      const approvalBroker = new ApprovalBroker({
+        store,
+        createId: () => "approval-grant-standing",
+      });
+      const chatAgentLoopRunner = {
+        execute: vi.fn(async (input: {
+          approvalFn?: (request: ApprovalRequest) => Promise<boolean>;
+          toolCallContext?: ToolCallContext;
+        }) => {
+          const approved = await input.approvalFn?.({
+            toolName: "write_file",
+            input: { path: "notes.md" },
+            reason: "Write notes.md in the workspace.",
+            permissionLevel: "write_local",
+            isDestructive: false,
+            reversibility: "reversible",
+            callId: "call-grant-standing",
+            ...(input.toolCallContext?.sessionId ? { sessionId: input.toolCallContext.sessionId } : {}),
+            ...(input.toolCallContext?.runId ? { runId: input.toolCallContext.runId } : {}),
+            ...(input.toolCallContext?.turnId ? { turnId: input.toolCallContext.turnId } : {}),
+            permissionGrantDecision: {
+              status: "missing_grant",
+              allowed: false,
+              reason: "No active PermissionGrant covers the requested local work.",
+              requiredCapabilities: ["write_workspace"],
+              excludedCapabilities: [],
+              consideredGrantIds: [],
+            },
+          });
+          return {
+            success: approved === true,
+            output: approved === true ? "write approved" : "not approved",
+            error: null,
+            exit_code: null,
+            elapsed_ms: 5,
+            stopped_reason: "completed",
+          };
+        }),
+      };
+      const manager = new CrossPlatformChatSessionManager(makeDeps({
+        chatAgentLoopRunner: chatAgentLoopRunner as never,
+        llmClient: createSingleMockLLMClient(JSON.stringify({
+          decision: "extend_scope",
+          confidence: 0.95,
+          requested_scope: "standing",
+          rationale: "The reply asks for standing permission.",
+        })),
+        approvalBroker,
+        permissionGrantStore,
+      }));
+
+      const resultPromise = manager.processIncomingMessage({
+        text: "Write the notes file",
+        platform: "slack",
+        identity_key: "workspace:U123",
+        conversation_id: "C123:1700.1",
+        sender_id: "U123",
+        message_id: "1700.2",
+        cwd: "/repo",
+        onEvent: () => undefined,
+      });
+      const deadline = Date.now() + 1000;
+      while (Date.now() < deadline && (await store.loadPending("approval-grant-standing")) === null) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+
+      await expect(manager.processIncomingMessage({
+        text: "Always allow this from now on.",
+        platform: "slack",
+        identity_key: "workspace:U123",
+        conversation_id: "C123:1700.1",
+        sender_id: "U123",
+        message_id: "1700.3",
+        cwd: "/repo",
+      })).resolves.toContain("requires a second explicit confirmation");
+
+      await expect(permissionGrantStore.list()).resolves.toHaveLength(0);
+      await expect(store.loadPending("approval-grant-standing")).resolves.toMatchObject({
+        state: "pending",
+      });
+      await approvalBroker.resolveConversationalApproval("approval-grant-standing", false, {
+        channel: "slack",
+        conversation_id: "C123:1700.1",
+        user_id: "U123",
+        session_id: "identity:workspace:U123",
+        turn_id: "1700.2",
+      });
+      await expect(resultPromise).resolves.toContain("not approved");
     } finally {
       cleanupTempDir(tmpDir);
     }

@@ -3,6 +3,7 @@ import { ApprovalStore } from "./store/approval-store.js";
 import type { ApprovalOrigin, ApprovalRecord } from "./store/runtime-schemas.js";
 import {
   getPendingPermissionTask,
+  getPendingPermissionGrantProposal,
   withPermissionExpiry,
   type PendingPermissionTarget,
   type PermissionRiskClass,
@@ -444,6 +445,14 @@ function renderConversationalApprovalPrompt(record: ApprovalRecord): string {
     if (permission.target.tool_id) lines.push(`Tool: ${permission.target.tool_id}`);
     if (permission.target.tool_call_id) lines.push(`Tool call: ${permission.target.tool_call_id}`);
     if (permission.expires_at) lines.push(`Expires: ${new Date(permission.expires_at).toISOString()}`);
+  }
+  const grantProposal = getPendingPermissionGrantProposal(record);
+  if (grantProposal) {
+    lines.push(
+      `Reusable permission: ${grantProposal.capabilities.join(", ")}`,
+      `Still excluded: ${grantProposal.excluded_capabilities.length > 0 ? grantProposal.excluded_capabilities.join(", ") : "none"}`,
+      `Default scope: ${grantProposal.default_scope}`,
+    );
   }
   lines.push("Reply in this conversation to approve, reject, or ask for clarification.");
   return lines.join("\n");
