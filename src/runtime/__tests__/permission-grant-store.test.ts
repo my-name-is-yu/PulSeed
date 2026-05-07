@@ -159,6 +159,60 @@ describe("PermissionGrantStore", () => {
     expect((await store.listActive()).map((grant) => grant.grant_id)).toEqual(["active-run"]);
   });
 
+  it("requires review for standing grants and renews them without losing audit history", async () => {
+    await expect(store.createActive(makeGrant({
+      grant_id: "standing-missing-review",
+      scope: {
+        kind: "workspace",
+        workspace_root: "/repo",
+      },
+      duration: {
+        kind: "standing",
+      },
+    }))).rejects.toThrow(/standing permission grants require an explicit review policy/);
+
+    await store.createActive(makeGrant({
+      grant_id: "standing-workspace",
+      scope: {
+        kind: "workspace",
+        workspace_root: "/repo",
+      },
+      duration: {
+        kind: "standing",
+      },
+      review: {
+        kind: "periodic",
+        interval_ms: 500,
+        due_at: 1_200,
+        last_reviewed_at: 700,
+      },
+      audit_refs: ["audit:standing-created"],
+    }));
+
+    now = 1_100;
+    expect((await store.listActive()).map((grant) => grant.grant_id)).toEqual(["standing-workspace"]);
+
+    now = 1_250;
+    expect(await store.listActive()).toEqual([]);
+
+    await store.review("standing-workspace", {
+      reviewed_at: 1_300,
+      next_review_due_at: 2_000,
+      audit_refs: ["audit:standing-reviewed"],
+    });
+
+    expect(await store.load("standing-workspace")).toMatchObject({
+      state: "active",
+      review: {
+        kind: "periodic",
+        due_at: 2_000,
+        last_reviewed_at: 1_300,
+      },
+      audit_refs: ["audit:standing-created", "audit:standing-reviewed"],
+    });
+    expect((await store.listActive()).map((grant) => grant.grant_id)).toEqual(["standing-workspace"]);
+  });
+
   it("persists revocation across restart-like store reload", async () => {
     await store.createActive(makeGrant());
     now = 1_500;
@@ -250,6 +304,9 @@ describe("PermissionGrantStore", () => {
       },
       duration: {
         kind: "until_run_done",
+      },
+      review: {
+        kind: "none",
       },
       capabilities: ["write_workspace"],
       state: "active",

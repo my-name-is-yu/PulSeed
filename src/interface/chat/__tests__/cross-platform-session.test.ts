@@ -1740,7 +1740,7 @@ describe("CrossPlatformChatSessionManager", () => {
     }
   });
 
-  it("keeps ambiguous or standing-scope grant replies pending without creating broad grants", async () => {
+  it("requires explicit second confirmation before creating standing workspace grants", async () => {
     const tmpDir = makeTempDir();
     try {
       const store = new ApprovalStore(tmpDir);
@@ -1786,12 +1786,23 @@ describe("CrossPlatformChatSessionManager", () => {
       };
       const manager = new CrossPlatformChatSessionManager(makeDeps({
         chatAgentLoopRunner: chatAgentLoopRunner as never,
-        llmClient: createSingleMockLLMClient(JSON.stringify({
-          decision: "extend_scope",
-          confidence: 0.95,
-          requested_scope: "standing",
-          rationale: "The reply asks for standing permission.",
-        })),
+        llmClient: createMockLLMClient([
+          JSON.stringify({
+            decision: "extend_scope",
+            confidence: 0.95,
+            requested_scope: "standing",
+            rationale: "The reply asks for standing permission.",
+          }),
+          JSON.stringify({
+            decision: "extend_scope",
+            confidence: 0.99,
+            requested_scope: "standing",
+            standing_confirmation: {
+              scope: "workspace",
+            },
+            rationale: "The reply explicitly confirms the standing workspace boundary.",
+          }),
+        ]),
         approvalBroker,
         permissionGrantStore,
       }));
@@ -1825,14 +1836,36 @@ describe("CrossPlatformChatSessionManager", () => {
       await expect(store.loadPending("approval-grant-standing")).resolves.toMatchObject({
         state: "pending",
       });
-      await approvalBroker.resolveConversationalApproval("approval-grant-standing", false, {
-        channel: "slack",
+
+      await expect(manager.processIncomingMessage({
+        text: "I explicitly confirm standing workspace permission for write_workspace, excluding write_remote and network_send, and I can revoke it later.",
+        platform: "slack",
+        identity_key: "workspace:U123",
         conversation_id: "C123:1700.1",
-        user_id: "U123",
-        session_id: "identity:workspace:U123",
-        turn_id: "1700.2",
+        sender_id: "U123",
+        message_id: "1700.4",
+        cwd: "/repo",
+      })).resolves.toContain("Standing permission grant recorded");
+
+      await expect(resultPromise).resolves.toBe("write approved");
+      const grants = await permissionGrantStore.list();
+      expect(grants).toHaveLength(1);
+      expect(grants[0]).toMatchObject({
+        state: "active",
+        scope: {
+          kind: "workspace",
+          workspace_root: "/repo",
+        },
+        duration: {
+          kind: "standing",
+        },
+        review: {
+          kind: "periodic",
+        },
+        capabilities: ["write_workspace"],
+        excluded_capabilities: expect.arrayContaining(["write_remote", "network_send", "destructive_action", "unknown_capability"]),
       });
-      await expect(resultPromise).resolves.toContain("not approved");
+      expect(grants[0]?.review.kind === "periodic" ? grants[0].review.due_at : 0).toBeGreaterThan(Date.now());
     } finally {
       cleanupTempDir(tmpDir);
     }

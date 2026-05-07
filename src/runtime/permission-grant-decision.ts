@@ -33,6 +33,9 @@ export const PermissionGrantReplyDecisionSchema = z.object({
     "global",
     "standing",
   ]).optional(),
+  standing_confirmation: z.object({
+    scope: z.enum(["workspace", "project", "global"]),
+  }).strict().optional(),
   clarification: z.string().optional(),
   rationale: z.string().optional(),
 });
@@ -114,6 +117,7 @@ Decision meanings:
 - unknown: ambiguous, stale, wrong-context, or too low-confidence.
 
 Standing or global permission must not be granted from one reply. If the reply requests standing/global permission, classify it as extend_scope with requested_scope "standing" or "global"; the caller must require a second explicit confirmation.
+Set standing_confirmation only when the reply is an explicit second confirmation that names the standing scope (workspace/project/global), the allowed capabilities, the excluded capabilities, and the revoke path. Casual replies such as yes, go ahead, sounds good, or always allow this must not set standing_confirmation.
 
 Active approval context:
 ${describeApprovalContext(context.approval)}
@@ -133,6 +137,7 @@ Respond only as JSON:
   "confidence": 0.0-1.0,
   "capabilities": ["write_workspace"],
   "requested_scope": "once" | "current_run" | "current_goal" | "session" | "workspace" | "project" | "global" | "standing",
+  "standing_confirmation": { "scope": "workspace" | "project" | "global" },
   "clarification": "short clarification prompt when clarify or unknown",
   "rationale": "short rationale"
 }`;
