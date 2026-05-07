@@ -15,6 +15,7 @@ export interface RuntimeStorePaths {
   approvalsDir: string;
   approvalsPendingDir: string;
   approvalsResolvedDir: string;
+  permissionGrantsDir: string;
   outboxDir: string;
   backgroundRunsDir: string;
   authHandoffsDir: string;
@@ -43,6 +44,7 @@ export interface RuntimeStorePaths {
   inboxRecordPath(dateKey: string, messageId: string): string;
   approvalPendingPath(approvalId: string): string;
   approvalResolvedPath(approvalId: string): string;
+  permissionGrantPath(grantId: string): string;
   outboxRecordPath(seq: number): string;
   backgroundRunPath(runId: string): string;
   authHandoffPath(handoffId: string): string;
@@ -101,6 +103,7 @@ export function createRuntimeStorePaths(runtimeRoot?: string): RuntimeStorePaths
   const approvalsDir = path.join(rootDir, "approvals");
   const approvalsPendingDir = path.join(approvalsDir, "pending");
   const approvalsResolvedDir = path.join(approvalsDir, "resolved");
+  const permissionGrantsDir = path.join(rootDir, "permission-grants");
   const outboxDir = path.join(rootDir, "outbox");
   const backgroundRunsDir = path.join(rootDir, "background-runs");
   const authHandoffsDir = path.join(rootDir, "auth-handoffs");
@@ -134,6 +137,7 @@ export function createRuntimeStorePaths(runtimeRoot?: string): RuntimeStorePaths
     approvalsDir,
     approvalsPendingDir,
     approvalsResolvedDir,
+    permissionGrantsDir,
     outboxDir,
     backgroundRunsDir,
     authHandoffsDir,
@@ -169,6 +173,9 @@ export function createRuntimeStorePaths(runtimeRoot?: string): RuntimeStorePaths
     },
     approvalResolvedPath(approvalId: string) {
       return path.join(approvalsResolvedDir, recordFileName(approvalId));
+    },
+    permissionGrantPath(grantId: string) {
+      return path.join(permissionGrantsDir, recordFileName(encodeRuntimePathSegment(grantId)));
     },
     outboxRecordPath(seq: number) {
       return path.join(outboxDir, outboxFileName(seq));
@@ -243,6 +250,7 @@ export async function ensureRuntimeStorePaths(paths: RuntimeStorePaths): Promise
       paths.approvalsDir,
       paths.approvalsPendingDir,
       paths.approvalsResolvedDir,
+      paths.permissionGrantsDir,
       paths.outboxDir,
       paths.backgroundRunsDir,
       paths.authHandoffsDir,

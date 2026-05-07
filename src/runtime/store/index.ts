@@ -167,6 +167,23 @@ export {
   RuntimePostmortemReportStore,
   RuntimePostmortemScopeSchema,
 } from "./postmortem-report.js";
+export {
+  isPermissionGrantCurrentlyActive,
+  isPermissionGrantExpired,
+  isPermissionGrantStale,
+  PermissionGrantCapabilitySchema,
+  PermissionGrantDurationSchema,
+  PermissionGrantExcludedCapabilitySchema,
+  PermissionGrantFreshnessBindingSchema,
+  PermissionGrantOriginSchema,
+  PermissionGrantRecordSchema,
+  PermissionGrantScopeSchema,
+  PermissionGrantSourceSchema,
+  PermissionGrantStalenessSchema,
+  PermissionGrantStateSchema,
+  PermissionGrantStore,
+  PermissionGrantSubjectSchema,
+} from "./permission-grant-store.js";
 export type {
   RuntimeBudgetCreateInput,
   RuntimeBudgetDimension,
@@ -194,6 +211,22 @@ export type {
   RuntimePostmortemReport,
   RuntimePostmortemScope,
 } from "./postmortem-report.js";
+export type {
+  PermissionGrantCapability,
+  PermissionGrantCreateInput,
+  PermissionGrantDuration,
+  PermissionGrantExcludedCapability,
+  PermissionGrantFreshnessBinding,
+  PermissionGrantOrigin,
+  PermissionGrantRecord,
+  PermissionGrantRevocationInput,
+  PermissionGrantScope,
+  PermissionGrantSource,
+  PermissionGrantStaleInput,
+  PermissionGrantStaleness,
+  PermissionGrantState,
+  PermissionGrantSubject,
+} from "./permission-grant-store.js";
 export type {
   RuntimeExperimentQueueCreateInput,
   RuntimeExperimentQueueExecutionDirective,
