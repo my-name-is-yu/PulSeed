@@ -121,6 +121,21 @@ function buildVerdictHandlingContext(executionResult: AgentResult): VerdictHandl
   return context;
 }
 
+function buildDaemonShutdownDeferredVerification(task: Task): VerificationResult {
+  return VerificationResultSchema.parse({
+    task_id: task.id,
+    verdict: "partial",
+    confidence: 1,
+    evidence: [{
+      layer: "mechanical",
+      description: "Task execution was interrupted by daemon shutdown and deferred for recovery before terminal verification.",
+      confidence: 1,
+    }],
+    dimension_updates: [],
+    timestamp: new Date().toISOString(),
+  });
+}
+
 export async function runTaskLifecycleCycle(context: TaskLifecycleTaskCycleContext): Promise<TaskCycleResult> {
   const {
     goalId,
@@ -302,6 +317,24 @@ export async function runTaskLifecycleCycle(context: TaskLifecycleTaskCycleConte
   void hookManager?.emit("PostExecute", { goal_id: goalId, data: { task_id: task.id, success: executionResult.success } });
   logger?.info(`[task] executed: ${executionResult.success ? "success" : "failed"}`, { taskId: task.id });
   logger?.debug(`[DEBUG-TL] Execution result: success=${executionResult.success}, stopped=${executionResult.stopped_reason}, error=${executionResult.error}, output=${executionResult.output?.substring(0, 200)}`);
+
+  if (executionResult.interruptedByDaemonShutdown === true) {
+    const interruptedTask = await reloadTaskFromDisk(stateManager, task);
+    const deferredVerification = buildDaemonShutdownDeferredVerification(interruptedTask);
+    await setTaskOutcomeTokens(stateManager, interruptedTask, taskCycleTokens);
+    logger?.info("TaskLifecycle: deferred post-execution verification for daemon shutdown recovery", {
+      goalId,
+      taskId: interruptedTask.id,
+      stoppedReason: executionResult.stopped_reason,
+    });
+    return {
+      task: interruptedTask,
+      verificationResult: deferredVerification,
+      action: "keep",
+      diffEvidenceSource: executionResult.diffEvidenceSource,
+      tokensUsed: taskCycleTokens,
+    };
+  }
 
   await finalizeSuccessfulExecution({
     executionResult,

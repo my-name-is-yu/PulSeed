@@ -11,8 +11,9 @@ interface SuccessVerificationHooks {
   toolExecutor?: ToolExecutor;
   verifyWithGitDiff: (
     toolExecutor: ToolExecutor | undefined,
-    goalId: string
-  ) => Promise<{ verified: boolean; diffSummary: string }>;
+    goalId: string,
+    executionResult: AgentResult,
+  ) => Promise<{ verified: boolean; diffSummary: string; source?: string }>;
 }
 
 interface FinalizeSuccessfulExecutionParams {
@@ -50,16 +51,17 @@ export async function finalizeSuccessfulExecution(
   if (successVerification.toolExecutor) {
     const diffCheck = await successVerification.verifyWithGitDiff(
       successVerification.toolExecutor,
-      goalId
+      goalId,
+      executionResult,
     );
     logger?.info(
-      `[TaskLifecycle] Git diff verification: ${diffCheck.diffSummary || "no changes"}`,
-      { verified: diffCheck.verified }
+      `[TaskLifecycle] Post-execution diff verification: ${diffCheck.diffSummary || "no changes"}`,
+      { verified: diffCheck.verified, source: diffCheck.source }
     );
     if (!diffCheck.verified) {
       logger?.warn(
-        "[TaskLifecycle] Git diff found no file changes after successful task execution",
-        { diffSummary: diffCheck.diffSummary }
+        "[TaskLifecycle] Post-execution diff verification found no file changes after successful task execution",
+        { diffSummary: diffCheck.diffSummary, source: diffCheck.source }
       );
     }
   }

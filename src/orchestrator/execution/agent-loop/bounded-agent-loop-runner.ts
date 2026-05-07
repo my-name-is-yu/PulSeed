@@ -214,7 +214,8 @@ export class BoundedAgentLoopRunner {
 
       let protocol: AgentLoopModelTurnProtocol;
       try {
-        protocol = await this.createTurnProtocol(turn, messages, tools);
+        const requestTimeoutMs = Math.max(1, turn.budget.maxWallClockMs - (Date.now() - startedAt));
+        protocol = await this.createTurnProtocol(turn, messages, tools, requestTimeoutMs);
       } catch (err) {
         if (turn.abortSignal?.aborted) {
           return stop("cancelled", startedAt, modelTurns, toolCalls, "Agent loop stopped: operator stop aborted active model work.", null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount, completionValidationAttempts, err instanceof Error ? err.message : String(err));
@@ -1046,6 +1047,7 @@ export class BoundedAgentLoopRunner {
     turn: AgentLoopTurnContext<TOutput>,
     messages: AgentLoopMessage[],
     tools: ReturnType<AgentLoopToolRouter["modelVisibleTools"]>,
+    requestTimeoutMs: number,
   ): Promise<AgentLoopModelTurnProtocol> {
     if (this.deps.modelClient.createTurnProtocol) {
       return this.deps.modelClient.createTurnProtocol({
@@ -1054,6 +1056,8 @@ export class BoundedAgentLoopRunner {
         tools,
         cwd: turn.cwd,
         sandboxMode: turn.executionPolicy?.sandboxMode,
+        timeoutMs: requestTimeoutMs,
+        idleTimeoutMs: requestTimeoutMs,
         abortSignal: turn.abortSignal,
       });
     }
@@ -1064,6 +1068,8 @@ export class BoundedAgentLoopRunner {
       tools,
       cwd: turn.cwd,
       sandboxMode: turn.executionPolicy?.sandboxMode,
+      timeoutMs: requestTimeoutMs,
+      idleTimeoutMs: requestTimeoutMs,
       abortSignal: turn.abortSignal,
     });
     return {

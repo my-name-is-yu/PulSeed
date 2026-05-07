@@ -21,6 +21,7 @@ import type {
   LLMRequestOptions,
   LLMResponse,
 } from "../../../base/llm/llm-client.js";
+import { createDaemonShutdownAbortReason } from "../../../base/utils/abort-reason.js";
 import { createMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
 import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 
@@ -1134,6 +1135,82 @@ describe("TaskLifecycle", async () => {
       expect(ledger.summary.task_status).toBe("running");
     });
 
+    it("defers external AgentLoop blocked ledger events when artifact evidence was created", async () => {
+      const llm = createMockLLMClient([]);
+      const workspace = path.join(tmpDir, "external-blocked-artifact-deferred");
+      fs.mkdirSync(workspace, { recursive: true });
+      const task = makeTask({
+        id: "task-external-blocked-artifact-deferred",
+        constraints: [`workspace_path:${workspace}`],
+        artifact_contract: {
+          required: true,
+          required_artifacts: [{
+            kind: "metrics_json" as const,
+            path: "reports/judger.json",
+            required_fields: ["scenario", "passed"],
+            field_types: {
+              scenario: "string" as const,
+              passed: "boolean" as const,
+            },
+            fresh_after_task_start: true,
+          }],
+        },
+      });
+      const agentLoopRunner = {
+        runTask: vi.fn().mockImplementation(async (input: { cwd?: string }) => {
+          expect(input.cwd).toBe(workspace);
+          fs.mkdirSync(path.join(workspace, "reports"), { recursive: true });
+          fs.writeFileSync(
+            path.join(workspace, "reports", "judger.json"),
+            JSON.stringify({ scenario: "completion-judger-fallback", passed: true }),
+            "utf-8"
+          );
+          return makeAgentLoopResult("completed", {
+            output: {
+              status: "blocked",
+              finalAnswer: "claimed workspace was read-only",
+              summary: "claimed blocked",
+              filesChanged: [],
+              testsRun: [],
+              completionEvidence: [],
+              verificationHints: [],
+              blockers: [],
+            },
+            changedFiles: ["reports/judger.json"],
+            workspace: {
+              requestedCwd: workspace,
+              executionCwd: workspace,
+              isolated: false,
+              cleanupStatus: "not_requested",
+              dirty: false,
+              disposition: "not_isolated",
+            },
+          });
+        }),
+      } as unknown as TaskAgentLoopRunner;
+      const lifecycle = createLifecycle(llm, {
+        agentLoopRunner,
+        execFileSyncFn: realExecFileSync,
+      });
+      await stateManager.writeRaw(`tasks/${task.goal_id}/${task.id}.json`, task);
+
+      const result = await lifecycle.executeTaskWithAgentLoop(task, "workspace context", "knowledge context");
+
+      const persisted = await stateManager.readRaw(`tasks/${task.goal_id}/${task.id}.json`) as Record<string, unknown>;
+      const ledger = await stateManager.readRaw(`tasks/${task.goal_id}/ledger/${task.id}.json`) as {
+        events: Array<Record<string, unknown>>;
+        summary: Record<string, unknown>;
+      };
+
+      expect(result.success).toBe(false);
+      expect(result.stopped_reason).toBe("blocked");
+      expect(result.filesChangedPaths).toEqual(["reports/judger.json"]);
+      expect(persisted.status).toBe("running");
+      expect(persisted.stopped_at).toBeUndefined();
+      expect(ledger.events.map((event) => event.type)).toEqual(["started"]);
+      expect(ledger.summary.task_status).toBe("running");
+    });
+
     it.each([
       {
         stopReason: "timeout" as const,
@@ -1176,6 +1253,39 @@ describe("TaskLifecycle", async () => {
       expect(ledger.summary.task_status).toBe(expectedTaskStatus);
       expect(ledger.summary.latest_event_type).toBe("failed");
       expect(ledger.summary.stopped_reason).toBe(stopReason);
+    });
+
+    it("keeps daemon-shutdown-interrupted native AgentLoop tasks running for recovery", async () => {
+      const llm = createMockLLMClient([]);
+      const abortController = new AbortController();
+      abortController.abort(createDaemonShutdownAbortReason("test daemon shutdown"));
+      const lifecycle = createLifecycle(llm, {
+        agentLoopRunner: makeAgentLoopRunner(makeAgentLoopResult("cancelled")),
+        execFileSyncFn: () => "",
+      });
+      const task = makeTask();
+      await stateManager.writeRaw(`tasks/${task.goal_id}/${task.id}.json`, task);
+
+      const result = await lifecycle.executeTaskWithAgentLoop(
+        task,
+        "workspace context",
+        "knowledge context",
+        abortController.signal,
+      );
+
+      const persisted = await stateManager.readRaw(`tasks/${task.goal_id}/${task.id}.json`) as Record<string, unknown>;
+      const ledger = await stateManager.readRaw(`tasks/${task.goal_id}/ledger/${task.id}.json`) as {
+        events: Array<Record<string, unknown>>;
+        summary: Record<string, unknown>;
+      };
+
+      expect(result.success).toBe(false);
+      expect(result.stopped_reason).toBe("cancelled");
+      expect(persisted.status).toBe("running");
+      expect(persisted.stopped_at).toBeUndefined();
+      expect(ledger.events.map((event) => event.type)).toEqual(["started"]);
+      expect(ledger.summary.task_status).toBe("running");
+      expect(ledger.summary.latest_event_type).toBe("started");
     });
 
     it("aligns profiled Kaggle native AgentLoop budget with generated task estimate and reports both on timeout", async () => {

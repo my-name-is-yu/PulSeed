@@ -248,7 +248,8 @@ function isRecoverableAgentLoopFinalizationFailure(executionResult: AgentResult)
   const stopReason = executionResult.agentLoop?.stopReason;
   return stopReason === "max_model_turns" ||
     stopReason === "schema_error" ||
-    stopReason === "completion_gate_failed";
+    stopReason === "completion_gate_failed" ||
+    executionResult.stopped_reason === "blocked";
 }
 
 function formatTimeoutBudgetEvidence(executionResult: AgentResult): string {

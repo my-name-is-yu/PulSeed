@@ -165,4 +165,32 @@ describe("task outcome ledger", () => {
       stopped_reason: "timeout",
     });
   });
+
+  it("clamps verification latency at zero when verifier timestamp slightly precedes completed_at", async () => {
+    const task = makeTask({
+      id: "timestamp-race-task",
+      status: "completed",
+      started_at: "2026-05-07T15:26:42.799Z",
+      completed_at: "2026-05-07T15:27:52.796Z",
+    });
+
+    await appendTaskOutcomeEvent(stateManager, {
+      task,
+      type: "succeeded",
+      verificationResult: {
+        task_id: task.id,
+        verdict: "pass",
+        confidence: 0.9,
+        evidence: [{ layer: "mechanical", description: "passed", confidence: 0.9 }],
+        dimension_updates: [],
+        timestamp: "2026-05-07T15:27:52.790Z",
+      },
+    });
+
+    const ledger = await stateManager.readRaw("tasks/goal-1/ledger/timestamp-race-task.json") as {
+      summary: { latencies: { completed_to_verification_ms: number | null } };
+    };
+
+    expect(ledger.summary.latencies.completed_to_verification_ms).toBe(0);
+  });
 });

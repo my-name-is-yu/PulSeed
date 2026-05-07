@@ -4,6 +4,7 @@ import { constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
+import { pathToFileURL } from "node:url";
 
 const DEFAULT_CYCLE_TIMEOUT_MS = 20 * 60 * 1000;
 const DEFAULT_SNAPSHOT_INTERVAL_MS = 5 * 60 * 1000;
@@ -115,14 +116,21 @@ const SCENARIOS = [
       "README.md": [
         "# Daemon stop/restart canary",
         "",
-        "Create `reports/restart.json` with `{ \"scenario\": \"daemon-stop-restart\", \"restart_safe\": true }`.",
-        "Use a focused blocking verification command that reads the JSON file.",
+        "Create `scripts/restart-canary.mjs` and `reports/restart.json` inside this disposable workspace.",
+        "The script must write `{ \"scenario\": \"daemon-stop-restart\", \"restart_safe\": true }` to `reports/restart.json`.",
+        "The generated PulSeed task must set `artifact_contract.required=true`.",
+        "The only required artifact is `reports/restart.json` with kind `metrics_json`.",
+        "The exact required_fields must be `[\"scenario\",\"restart_safe\"]`.",
+        "The exact field_types must be `{ \"scenario\": \"string\", \"restart_safe\": \"boolean\" }`.",
+        "The artifact contract must set `fresh_after_task_start: true`.",
+        "Run `node scripts/restart-canary.mjs --check-contract` as the focused blocking verification command.",
+        "`--check-contract` must read the JSON file and fail when the payload is missing or wrong.",
         "The external supervisor may stop and restart the daemon while observe or verification state is fresh.",
-        "PulSeed must report stale workers as historical after stop and recover safely on restart.",
+        "Do not modify PulSeed source code from this task; the supervisor verifies runtime stale-worker recovery externally.",
         "",
       ].join("\n"),
     },
-    restartAfterFirstTaskSeen: true,
+    restartAfterExpectedArtifactSeen: true,
   },
   {
     slug: "observation-freshness",
@@ -334,6 +342,10 @@ async function runScenario(input) {
   let taskId = null;
   let stopStatus = "not_started";
   let restarted = false;
+  let interruptedTaskId = null;
+  let restartInterruptedRunningTask = false;
+  let restartStartedAt = null;
+  let restartCutoffEventAt = null;
 
   try {
     const goalDescription = buildGoalDescription(scenario, workspace);
@@ -391,15 +403,47 @@ async function runScenario(input) {
       }
 
       const latest = await readLatestTaskAndLedger(pulseedHome, goalId);
+      const workspaceFiles = await listWorkspaceFiles(workspace);
+      latest.workspaceFiles = workspaceFiles.map((entry) => entry.path);
       taskId = latest.task?.id ?? taskId;
-      if (scenario.restartAfterFirstTaskSeen && taskId && !restarted) {
+      const expectedArtifactSeen =
+        Boolean(scenario.restartAfterExpectedArtifactSeen) &&
+        Boolean(scenario.expectedArtifact) &&
+        latest.workspaceFiles.includes(scenario.expectedArtifact);
+      if (expectedArtifactSeen && taskId && !restarted) {
+        if (latest.task?.status !== "running") {
+          finalState = "blocked";
+          classification = `restart_not_exercised_task_${latest.task?.status ?? "unknown"}`;
+          break;
+        }
+        interruptedTaskId = taskId;
+        restartInterruptedRunningTask = true;
+        restartStartedAt = new Date().toISOString();
+        restartCutoffEventAt = getLatestLedgerEvent(latest.ledger)?.ts ?? null;
         await runCli(cliPath, ["daemon", "stop"], { cwd: workspace, env, logFile, timeoutMs: 30_000 });
         await snapshot({ cliPath, env, cwd: workspace, scenarioDir, snapshotsDir, goalId, label: "after-forced-stop", logFile });
         await startDaemon({ cliPath, env, workspace, goalId, logFile });
         restarted = true;
+        continue;
+      } else if (scenario.restartAfterFirstTaskSeen && taskId && !restarted) {
+        interruptedTaskId = taskId;
+        restartInterruptedRunningTask = latest.task?.status === "running";
+        restartStartedAt = new Date().toISOString();
+        restartCutoffEventAt = getLatestLedgerEvent(latest.ledger)?.ts ?? null;
+        await runCli(cliPath, ["daemon", "stop"], { cwd: workspace, env, logFile, timeoutMs: 30_000 });
+        await snapshot({ cliPath, env, cwd: workspace, scenarioDir, snapshotsDir, goalId, label: "after-forced-stop", logFile });
+        await startDaemon({ cliPath, env, workspace, goalId, logFile });
+        restarted = true;
+        continue;
       }
 
-      const classificationNow = classifyScenarioState(scenario, latest);
+      const classificationNow = classifyScenarioState(scenario, latest, {
+        restarted,
+        interruptedTaskId,
+        restartInterruptedRunningTask,
+        restartStartedAt,
+        restartCutoffEventAt,
+      });
       if (classificationNow.done) {
         finalState = "completed";
         classification = classificationNow.classification;
@@ -473,29 +517,135 @@ async function startDaemon({ cliPath, env, workspace, goalId, logFile }) {
   ], { cwd: workspace, env, logFile, timeoutMs: 60_000 });
 }
 
-function classifyScenarioState(scenario, latest) {
+export function classifyScenarioState(scenario, latest, context = {}) {
   const task = latest.task;
   const ledger = latest.ledger;
   if (!task) return { done: false, blocked: false, classification: "waiting_for_task_generation" };
 
-  const latestEvent = ledger?.summary?.latest_event_type ?? ledger?.events?.at?.(-1)?.type ?? null;
+  const latestLedgerEvent = getLatestLedgerEvent(ledger);
+  const latestEvent = latestLedgerEvent?.type ?? null;
+  const restartRecoveryState = classifyRestartRecoveryState(scenario, latest, context, latestLedgerEvent);
+  if (restartRecoveryState) {
+    return restartRecoveryState;
+  }
+
   if (latestEvent === "succeeded" || task.status === "completed") {
     if (task.status === "error" || task.status === "failed") {
       return { done: false, blocked: true, classification: "succeeded_then_terminal_error" };
+    }
+    if (
+      scenario.restartAfterExpectedArtifactSeen &&
+      (context.restarted !== true ||
+        context.restartInterruptedRunningTask !== true ||
+        context.interruptedTaskId !== task.id)
+    ) {
+      return { done: false, blocked: true, classification: "restart_not_exercised_before_success" };
     }
     return { done: true, blocked: false, classification: "task_succeeded" };
   }
 
   const terminalFailureStatuses = new Set(["error", "failed", "timed_out", "blocked", "cancelled", "discarded", "abandoned"]);
   if (terminalFailureStatuses.has(task.status) || latestEvent === "failed" || latestEvent === "abandoned") {
+    if (
+      (scenario.restartAfterFirstTaskSeen || scenario.restartAfterExpectedArtifactSeen) &&
+      context.restarted === true &&
+      context.interruptedTaskId === task.id &&
+      (task.status === "cancelled" || latestEvent === "failed")
+    ) {
+      return { done: false, blocked: false, classification: "awaiting_restart_retry" };
+    }
     return { done: false, blocked: true, classification: `terminal_${task.status || latestEvent}` };
   }
 
   const expected = scenario.expectedArtifact;
   if (expected && latest.workspaceFiles?.includes(expected) && task.verification_verdict === "pass") {
+    if (scenario.restartAfterExpectedArtifactSeen) {
+      return { done: false, blocked: false, classification: "awaiting_restart_recovery_ledger" };
+    }
     return { done: true, blocked: false, classification: "artifact_and_verification_passed" };
   }
   return { done: false, blocked: false, classification: "running" };
+}
+
+function classifyRestartRecoveryState(scenario, latest, context, latestLedgerEvent) {
+  if (!scenario.restartAfterExpectedArtifactSeen) return null;
+  const task = latest.task;
+  if (!task) return null;
+
+  const observedSuccess = latestLedgerEvent?.type === "succeeded" || task.status === "completed";
+  if (!observedSuccess) return null;
+
+  if (
+    context.restarted !== true ||
+    context.restartInterruptedRunningTask !== true ||
+    context.interruptedTaskId !== task.id
+  ) {
+    return { done: false, blocked: true, classification: "restart_not_exercised_before_success" };
+  }
+
+  if (latestLedgerEvent?.type !== "succeeded") {
+    return { done: false, blocked: false, classification: "awaiting_restart_success_ledger" };
+  }
+
+  if (!isIsoAfter(latestLedgerEvent.ts, context.restartCutoffEventAt)) {
+    return { done: false, blocked: true, classification: "stale_restart_success_ledger" };
+  }
+
+  if (!hasFreshRestartRecoveryHistory(latest.taskHistory, task.id, context.restartStartedAt)) {
+    return { done: false, blocked: true, classification: "missing_fresh_restart_recovery_history" };
+  }
+
+  if (task.status !== "completed" || task.verification_verdict !== "pass") {
+    return { done: false, blocked: true, classification: "restart_success_without_completed_pass" };
+  }
+
+  return { done: true, blocked: false, classification: "task_succeeded" };
+}
+
+function getLatestLedgerEvent(ledger) {
+  if (!ledger || typeof ledger !== "object") return null;
+  const summaryType = typeof ledger.summary?.latest_event_type === "string"
+    ? ledger.summary.latest_event_type
+    : null;
+  const summaryTs = typeof ledger.summary?.latest_event_at === "string"
+    ? ledger.summary.latest_event_at
+    : null;
+  if (summaryType) {
+    return { type: summaryType, ts: summaryTs };
+  }
+  const events = Array.isArray(ledger.events) ? ledger.events : [];
+  const event = events.at(-1);
+  if (!event || typeof event !== "object" || typeof event.type !== "string") return null;
+  return {
+    type: event.type,
+    ts: typeof event.ts === "string" ? event.ts : null,
+  };
+}
+
+function hasFreshRestartRecoveryHistory(taskHistory, taskId, restartStartedAt) {
+  if (!Array.isArray(taskHistory)) return false;
+  const daemonRecoverySources = new Set(["daemon_shutdown", "daemon_startup"]);
+  return taskHistory.some((entry) =>
+    entry &&
+    typeof entry === "object" &&
+    entry.task_id === taskId &&
+    daemonRecoverySources.has(entry.recovery_source) &&
+    isIsoAtOrAfter(entry.completed_at, restartStartedAt)
+  );
+}
+
+function isIsoAfter(value, cutoff) {
+  if (!cutoff) return Boolean(value);
+  const valueMs = typeof value === "string" ? Date.parse(value) : NaN;
+  const cutoffMs = typeof cutoff === "string" ? Date.parse(cutoff) : NaN;
+  return Number.isFinite(valueMs) && Number.isFinite(cutoffMs) && valueMs > cutoffMs;
+}
+
+function isIsoAtOrAfter(value, cutoff) {
+  if (!cutoff) return Boolean(value);
+  const valueMs = typeof value === "string" ? Date.parse(value) : NaN;
+  const cutoffMs = typeof cutoff === "string" ? Date.parse(cutoff) : NaN;
+  return Number.isFinite(valueMs) && Number.isFinite(cutoffMs) && valueMs >= cutoffMs;
 }
 
 async function snapshot(input) {
@@ -554,9 +704,12 @@ async function readLatestTaskAndLedger(home, goalId) {
     ? path.join(ledgerDir, `${task.id}.json`)
     : sortedLedgers[0] ?? null;
   const ledger = ledgerPath ? await readJsonOrNull(ledgerPath) : null;
+  const taskHistoryPath = path.join(taskDir, "task-history.json");
+  const rawTaskHistory = await readJsonOrNull(taskHistoryPath);
+  const taskHistory = Array.isArray(rawTaskHistory) ? rawTaskHistory : [];
 
   const workspaceFiles = task?.goal_id ? [] : [];
-  return { task, taskPath, ledger, ledgerPath, workspaceFiles };
+  return { task, taskPath, ledger, ledgerPath, taskHistory, workspaceFiles };
 }
 
 async function writeWorkspace(workspace, files) {
@@ -765,7 +918,13 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-main().catch((error) => {
-  console.error(error instanceof Error ? error.stack ?? error.message : String(error));
-  process.exit(1);
-});
+if (isMainModule()) {
+  main().catch((error) => {
+    console.error(error instanceof Error ? error.stack ?? error.message : String(error));
+    process.exit(1);
+  });
+}
+
+function isMainModule() {
+  return process.argv[1] ? import.meta.url === pathToFileURL(process.argv[1]).href : false;
+}

@@ -19,6 +19,23 @@ const DEFAULT_RETRY_ATTEMPTS = 3;
 const MAX_RETRY_ATTEMPTS = 5;
 const RETRY_DELAYS_MS = [1000, 2000, 4000, 8000];
 const SIGKILL_DELAY_MS = 5000;
+type CodexAgentLoopFailureReason = "model_request_timeout" | "model_request_aborted";
+
+type CodexLLMError = LLMError & {
+  code?: "ETIMEDOUT" | "ABORT_ERR";
+  agentLoopFailureReason?: CodexAgentLoopFailureReason;
+};
+
+function codexLLMError(
+  message: string,
+  code?: CodexLLMError["code"],
+  agentLoopFailureReason?: CodexAgentLoopFailureReason,
+): CodexLLMError {
+  const error = new LLMError(message) as CodexLLMError;
+  if (code) error.code = code;
+  if (agentLoopFailureReason) error.agentLoopFailureReason = agentLoopFailureReason;
+  return error;
+}
 
 /**
  * Build a single prompt string from messages and system prompt.
@@ -133,6 +150,8 @@ export class CodexLLMClient extends BaseLLMClient implements ILLMClient {
           options?.abortSignal,
           options?.sandboxPolicy ?? this.sandboxPolicy,
           options?.cwd,
+          options?.timeoutMs,
+          options?.idleTimeoutMs,
         );
         return {
           content,
@@ -170,9 +189,11 @@ export class CodexLLMClient extends BaseLLMClient implements ILLMClient {
     abortSignal?: AbortSignal,
     sandboxPolicy = this.sandboxPolicy,
     cwd = this.repoPath,
+    timeoutMs = this.totalTimeoutMs,
+    idleTimeoutMs = this.idleTimeoutMs,
   ): Promise<string> {
     if (abortSignal?.aborted) {
-      throw new LLMError("CodexLLMClient: request aborted by operator stop");
+      throw codexLLMError("CodexLLMClient: request aborted by operator stop", "ABORT_ERR", "model_request_aborted");
     }
     // Create a temporary directory asynchronously to avoid blocking the event loop
     const tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), "pulseed-codex-"));
@@ -218,10 +239,10 @@ export class CodexLLMClient extends BaseLLMClient implements ILLMClient {
       let idleTimeoutHandle: ReturnType<typeof setTimeout> | undefined;
       let sigkillHandle: ReturnType<typeof setTimeout> | undefined;
       let stderrData = "";
-      const clearTimers = (): void => {
+      const clearTimers = (options: { keepSigkill?: boolean } = {}): void => {
         if (totalTimeoutHandle) clearTimeout(totalTimeoutHandle);
         if (idleTimeoutHandle) clearTimeout(idleTimeoutHandle);
-        if (sigkillHandle) clearTimeout(sigkillHandle);
+        if (!options.keepSigkill && sigkillHandle) clearTimeout(sigkillHandle);
       };
       const killChild = (signal: NodeJS.Signals): void => {
         if (process.platform !== "win32" && typeof child.pid === "number") {
@@ -234,6 +255,13 @@ export class CodexLLMClient extends BaseLLMClient implements ILLMClient {
         }
         child.kill(signal);
       };
+      const forceKillChild = (): void => {
+        try {
+          killChild("SIGKILL");
+        } catch {
+          // process already exited
+        }
+      };
       const cleanupTmp = (): void => {
         clearTimers();
         abortSignal?.removeEventListener("abort", triggerAbort);
@@ -241,30 +269,22 @@ export class CodexLLMClient extends BaseLLMClient implements ILLMClient {
           console.debug("CodexLLMClient: _cleanupTmp failed (non-critical)", String(cleanupErr));
         });
       };
+      const scheduleForceKill = (): void => {
+        if (sigkillHandle) return;
+        sigkillHandle = setTimeout(forceKillChild, SIGKILL_DELAY_MS);
+      };
       const triggerTimeout = (reason: "total" | "idle"): void => {
         if (timedOut) return;
         timedOut = true;
         timeoutReason = reason;
         killChild("SIGTERM");
-        sigkillHandle = setTimeout(() => {
-          try {
-            killChild("SIGKILL");
-          } catch {
-            // process already exited
-          }
-        }, SIGKILL_DELAY_MS);
+        scheduleForceKill();
       };
       const triggerAbort = (): void => {
         if (aborted || timedOut) return;
         aborted = true;
         killChild("SIGTERM");
-        sigkillHandle = setTimeout(() => {
-          try {
-            killChild("SIGKILL");
-          } catch {
-            // process already exited
-          }
-        }, SIGKILL_DELAY_MS);
+        scheduleForceKill();
       };
       if (abortSignal?.aborted) {
         triggerAbort();
@@ -272,15 +292,17 @@ export class CodexLLMClient extends BaseLLMClient implements ILLMClient {
         abortSignal?.addEventListener("abort", triggerAbort, { once: true });
       }
       const armIdleTimeout = (): void => {
-        if (this.idleTimeoutMs <= 0) return;
+        if (idleTimeoutMs <= 0) return;
         if (idleTimeoutHandle) clearTimeout(idleTimeoutHandle);
-        idleTimeoutHandle = setTimeout(() => triggerTimeout("idle"), this.idleTimeoutMs);
+        idleTimeoutHandle = setTimeout(() => triggerTimeout("idle"), idleTimeoutMs);
       };
       const markActivity = (): void => {
         armIdleTimeout();
       };
 
-      const totalTimeoutHandle = setTimeout(() => triggerTimeout("total"), this.totalTimeoutMs);
+      const totalTimeoutHandle = timeoutMs > 0
+        ? setTimeout(() => triggerTimeout("total"), timeoutMs)
+        : undefined;
 
       child.stdout?.on("data", markActivity);
       child.stderr.on("data", (chunk: Buffer) => {
@@ -303,21 +325,25 @@ export class CodexLLMClient extends BaseLLMClient implements ILLMClient {
       });
 
       child.on("close", (code: number | null) => {
-        clearTimers();
+        clearTimers({ keepSigkill: timedOut || aborted });
 
         if (timedOut) {
+          forceKillChild();
           cleanupTmp();
           const timeoutLabel = timeoutReason === "idle" ? "idle timed out" : "request timed out";
           reject(
-            new LLMError(
-              `CodexLLMClient: ${timeoutLabel} after ${timeoutReason === "idle" ? this.idleTimeoutMs : this.totalTimeoutMs}ms`
+            codexLLMError(
+              `CodexLLMClient: ${timeoutLabel} after ${timeoutReason === "idle" ? idleTimeoutMs : timeoutMs}ms`,
+              "ETIMEDOUT",
+              "model_request_timeout",
             )
           );
           return;
         }
         if (aborted) {
+          forceKillChild();
           cleanupTmp();
-          reject(new LLMError("CodexLLMClient: request aborted by operator stop"));
+          reject(codexLLMError("CodexLLMClient: request aborted by operator stop", "ABORT_ERR", "model_request_aborted"));
           return;
         }
 
@@ -374,11 +400,13 @@ async function _cleanupTmp(tmpDir: string, tmpFile: string): Promise<void> {
 
 function sleepWithAbort(ms: number, abortSignal?: AbortSignal): Promise<void> {
   if (!abortSignal) return sleep(ms);
-  if (abortSignal.aborted) return Promise.reject(new LLMError("CodexLLMClient: request aborted by operator stop"));
+  if (abortSignal.aborted) {
+    return Promise.reject(codexLLMError("CodexLLMClient: request aborted by operator stop", "ABORT_ERR", "model_request_aborted"));
+  }
   return new Promise((resolve, reject) => {
     const onAbort = (): void => {
       clearTimeout(timer);
-      reject(new LLMError("CodexLLMClient: request aborted by operator stop"));
+      reject(codexLLMError("CodexLLMClient: request aborted by operator stop", "ABORT_ERR", "model_request_aborted"));
     };
     const timer = setTimeout(() => {
       abortSignal.removeEventListener("abort", onAbort);

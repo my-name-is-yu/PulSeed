@@ -47,6 +47,10 @@ export interface LLMRequestOptions {
   sandboxPolicy?: "read-only" | "workspace-write" | "danger-full-access";
   /** Optional per-request working directory for CLI-backed clients. */
   cwd?: string;
+  /** Optional per-request total timeout for CLI-backed clients. */
+  timeoutMs?: number;
+  /** Optional per-request idle timeout for CLI-backed clients. */
+  idleTimeoutMs?: number;
   /** Optional cancellation signal for runtime/operator stop. */
   abortSignal?: AbortSignal;
 }

@@ -228,15 +228,29 @@ function recordAdapterCircuitOutcome(
 export async function verifyExecutionWithGitDiff(
   toolExecutor: ToolExecutor | undefined,
   goalId: string,
-): Promise<{ verified: boolean; diffSummary: string }> {
-  if (!toolExecutor) return { verified: true, diffSummary: "" };
+  executionResult?: AgentResult,
+): Promise<{ verified: boolean; diffSummary: string; source: "filesystem_artifact" | "git" | "unavailable" | "skipped" }> {
+  const filesystemChangedPaths = [
+    ...(executionResult?.filesChangedPaths ?? []),
+    ...(executionResult?.agentLoop?.filesChangedPaths ?? []),
+    ...(executionResult?.fileDiffs?.map((diff) => diff.path) ?? []),
+  ].filter((value, index, values) => value.length > 0 && values.indexOf(value) === index);
+  if (executionResult?.diffEvidenceSource === "filesystem_artifact" && filesystemChangedPaths.length > 0) {
+    return {
+      verified: true,
+      diffSummary: `${filesystemChangedPaths.length} file${filesystemChangedPaths.length !== 1 ? "s" : ""} changed via filesystem evidence`,
+      source: "filesystem_artifact",
+    };
+  }
+
+  if (!toolExecutor) return { verified: true, diffSummary: "", source: "skipped" };
 
   try {
     const result = await toolExecutor.execute(
       "git_diff",
       { target: "unstaged", maxLines: 200 },
       {
-        cwd: process.cwd(),
+        cwd: executionResult?.agentLoop?.executionCwd ?? executionResult?.agentLoop?.requestedCwd ?? process.cwd(),
         goalId,
         trustBalance: 0,
         preApproved: true,
@@ -244,19 +258,20 @@ export async function verifyExecutionWithGitDiff(
       }
     );
 
-    if (!result.success) return { verified: true, diffSummary: "diff unavailable" };
+    if (!result.success) return { verified: true, diffSummary: "diff unavailable", source: "unavailable" };
 
     const diffText = typeof result.data === "string" ? result.data : "";
     if (!diffText.trim()) {
-      return { verified: false, diffSummary: "no changes detected" };
+      return { verified: false, diffSummary: "no changes detected", source: "git" };
     }
 
     const filesChanged = (diffText.match(/^diff --git /gm) ?? []).length;
     return {
       verified: filesChanged > 0,
       diffSummary: `${filesChanged} file${filesChanged !== 1 ? "s" : ""} changed`,
+      source: "git",
     };
   } catch {
-    return { verified: true, diffSummary: "diff check failed" };
+    return { verified: true, diffSummary: "diff check failed", source: "unavailable" };
   }
 }

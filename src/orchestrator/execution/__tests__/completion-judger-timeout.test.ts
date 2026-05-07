@@ -264,6 +264,7 @@ describe("completion_judger timeout + retry", () => {
       ...makeTask(),
       created_at: "2020-01-01T00:00:00.000Z",
       started_at: "2020-01-01T00:00:00.000Z",
+      constraints: [`workspace_path:${workspace}`],
       success_criteria: [
         {
           description: "Manual artifact review",
@@ -328,6 +329,82 @@ describe("completion_judger timeout + retry", () => {
       expect.stringContaining("Skipping completion judging"),
       expect.objectContaining({ taskId: task.id, agentLoopStopReason: "max_model_turns" })
     );
+  }, 2_000);
+
+  it("salvages a blocked AgentLoop final answer when artifact evidence passes", async () => {
+    const workspace = `${tmpDir}/blocked-artifact-workspace`;
+    fs.mkdirSync(`${workspace}/reports`, { recursive: true });
+    fs.mkdirSync(`${workspace}/scripts`, { recursive: true });
+    fs.writeFileSync(`${workspace}/reports/judger.json`, JSON.stringify({
+      scenario: "completion-judger-fallback",
+      passed: true,
+    }), "utf8");
+    fs.writeFileSync(`${workspace}/scripts/judger-canary.mjs`, [
+      "import fs from 'node:fs';",
+      "const report = JSON.parse(fs.readFileSync('reports/judger.json', 'utf8'));",
+      "if (report.scenario !== 'completion-judger-fallback' || report.passed !== true) process.exit(1);",
+      "",
+    ].join("\n"), "utf8");
+
+    const failingLLM = makeFailingLLMClient(1);
+    const deps = makeDeps(failingLLM, {
+      completionJudgerConfig: { timeoutMs: 30_000, maxRetries: 0, retryBackoffMs: 0 },
+    });
+    const task = {
+      ...makeTask(),
+      created_at: "2020-01-01T00:00:00.000Z",
+      started_at: "2020-01-01T00:00:00.000Z",
+      constraints: [`workspace_path:${workspace}`],
+      success_criteria: [
+        {
+          description: "Run the canary contract check",
+          verification_method: "node scripts/judger-canary.mjs --check-contract",
+          is_blocking: true,
+        },
+      ],
+      artifact_contract: {
+        required: true,
+        required_artifacts: [{
+          kind: "metrics_json" as const,
+          path: "reports/judger.json",
+          required_fields: ["scenario", "passed"],
+          field_types: {
+            scenario: "string" as const,
+            passed: "boolean" as const,
+          },
+          fresh_after_task_start: true,
+        }],
+      },
+    };
+
+    const result = await verifyTask(deps, task, {
+      ...makeExecutionResult(),
+      success: false,
+      output: "{\"status\":\"blocked\",\"finalAnswer\":\"workspace was read-only\"}",
+      error: "{\"status\":\"blocked\",\"finalAnswer\":\"workspace was read-only\"}",
+      stopped_reason: "blocked",
+      filesChanged: true,
+      filesChangedPaths: ["reports/judger.json"],
+      agentLoop: {
+        traceId: "trace-1",
+        sessionId: "session-1",
+        turnId: "turn-1",
+        stopReason: "completed",
+        modelTurns: 2,
+        toolCalls: 0,
+        compactions: 0,
+        executionCwd: workspace,
+        filesChangedPaths: ["reports/judger.json"],
+      },
+    });
+
+    expect(failingLLM.callCount).toBe(0);
+    expect(result.verdict).toBe("pass");
+    expect(result.artifact_contract_status).toMatchObject({
+      applicable: true,
+      passed: true,
+    });
+    expect(result.evidence.find((e) => e.layer === "independent_review")?.description).toContain("completion judging skipped");
   }, 2_000);
 
   it("uses passing artifact evidence when completion judging is unavailable after successful execution", async () => {

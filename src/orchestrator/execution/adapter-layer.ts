@@ -89,6 +89,8 @@ export interface AgentResult {
   fileDiffs?: VerificationFileDiff[];
   /** Source used to determine changed paths and diffs. */
   diffEvidenceSource?: "git" | "filesystem_artifact" | "unavailable";
+  /** Execution was interrupted by daemon shutdown and should be recovered, not verified as a terminal task result. */
+  interruptedByDaemonShutdown?: boolean;
   /** Native agentloop execution metadata when the task ran through the in-process loop. */
   agentLoop?: AgentLoopExecutionInfo;
 }

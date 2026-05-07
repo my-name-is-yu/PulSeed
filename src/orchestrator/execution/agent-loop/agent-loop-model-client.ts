@@ -64,6 +64,8 @@ export class ILLMClientAgentLoopModelClient implements AgentLoopModelClient {
       abortSignal: input.abortSignal,
       sandboxPolicy: formatCliSandboxPolicy(input.sandboxMode),
       cwd: input.cwd,
+      timeoutMs: input.timeoutMs,
+      idleTimeoutMs: input.idleTimeoutMs,
       ...(supportsNativeToolCalling ? { tools: input.tools } : {}),
     });
 
