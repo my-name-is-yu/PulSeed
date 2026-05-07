@@ -98,6 +98,54 @@ describe("recognizeRuntimeControlIntent", () => {
     });
   });
 
+  it("uses the LLM decision for permission boundary inspection and revocation", async () => {
+    await expect(recognizeRuntimeControlIntent(
+      "今 PulSeed は何を許可されていますか？",
+      createSingleMockLLMClient(JSON.stringify({
+        intent: "inspect_permission_boundary",
+        reason: "inspect active permissions",
+      }))
+    )).resolves.toMatchObject({ kind: "inspect_permission_boundary" });
+
+    await expect(recognizeRuntimeControlIntent(
+      "grant-1 の権限を取り消して",
+      createSingleMockLLMClient(JSON.stringify({
+        intent: "revoke_permission",
+        reason: "revoke named grant",
+        target: { grantId: "grant-1" },
+      }))
+    )).resolves.toMatchObject({
+      kind: "revoke_permission",
+      target: { grantId: "grant-1" },
+    });
+  });
+
+  it("uses typed permission capabilities for narrow and extend controls", async () => {
+    await expect(recognizeRuntimeControlIntent(
+      "テストだけ許可して、編集はまだしないで",
+      createSingleMockLLMClient(JSON.stringify({
+        intent: "narrow_permission",
+        reason: "allow tests only",
+        permissionCapabilities: ["run_tests"],
+      }))
+    )).resolves.toMatchObject({
+      kind: "narrow_permission",
+      permissionCapabilities: ["run_tests"],
+    });
+
+    await expect(recognizeRuntimeControlIntent(
+      "この実行ではローカル編集も許可して",
+      createSingleMockLLMClient(JSON.stringify({
+        intent: "extend_permission",
+        reason: "allow local edits",
+        permissionCapabilities: ["write_workspace"],
+      }))
+    )).resolves.toMatchObject({
+      kind: "extend_permission",
+      permissionCapabilities: ["write_workspace"],
+    });
+  });
+
   it("uses the LLM decision to leave progress questions for evidence Q&A", async () => {
     const llm = createSingleMockLLMClient(JSON.stringify({
       intent: "none",

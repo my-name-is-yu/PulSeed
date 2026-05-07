@@ -2,6 +2,10 @@ import * as path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { cleanupTempDir, makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 import { RuntimeOperationStore } from "../../store/runtime-operation-store.js";
+import {
+  PermissionGrantStore,
+  type PermissionGrantCreateInput,
+} from "../../store/permission-grant-store.js";
 import { RuntimeControlService } from "../runtime-control-service.js";
 import type { RuntimeSessionRegistrySnapshot } from "../../session-registry/types.js";
 import { BrowserSessionStore, RuntimeAuthHandoffStore } from "../../interactive-automation/index.js";
@@ -44,7 +48,249 @@ function makeRun(input: Partial<RuntimeSessionRegistrySnapshot["background_runs"
   };
 }
 
+function makeGrant(input: Partial<PermissionGrantCreateInput> = {}): PermissionGrantCreateInput {
+  return {
+    grant_id: "grant-current-run",
+    subject: { kind: "operator", id: "U123" },
+    origin: {
+      channel: "slack",
+      platform: "slack",
+      conversation_id: "C123:1700.1",
+      user_id: "U123",
+      session_id: "identity:workspace:U123",
+      turn_id: "1700.2",
+    },
+    source: {
+      kind: "redacted_text",
+      redacted_text: "raw approval text with sensitive details",
+      redaction_reason: "test",
+    },
+    scope: { kind: "run", run_id: "run-chat-1" },
+    duration: { kind: "until_run_done" },
+    capabilities: ["write_workspace", "run_tests"],
+    excluded_capabilities: ["write_remote", "network_send"],
+    ...input,
+  };
+}
+
 describe("RuntimeControlService", () => {
+  it("inspects active permission grants with redacted shared state", async () => {
+    const tmpDir = makeTempDir("pulseed-runtime-permission-inspect-");
+    try {
+      const runtimeRoot = path.join(tmpDir, "runtime");
+      const operationStore = new RuntimeOperationStore(runtimeRoot);
+      const permissionGrantStore = new PermissionGrantStore(runtimeRoot);
+      await permissionGrantStore.createActive(makeGrant());
+      const service = new RuntimeControlService({ operationStore, permissionGrantStore });
+
+      const result = await service.request({
+        intent: { kind: "inspect_permission_boundary", reason: "what is allowed" },
+        cwd: "/repo",
+        requestedBy: {
+          surface: "chat",
+          platform: "slack",
+          conversation_id: "C123:1700.1",
+          user_id: "U123",
+        },
+        replyTarget: {
+          surface: "chat",
+          platform: "slack",
+          conversation_id: "C123:1700.1",
+          user_id: "U123",
+        },
+      });
+
+      expect(result).toMatchObject({ success: true, state: "verified" });
+      expect(result.message).toContain("grant-current-run");
+      expect(result.message).toContain("write_workspace, run_tests");
+      expect(result.message).toContain("write_remote, network_send");
+      expect(result.message).toContain("source=redacted");
+      expect(result.message).not.toContain("raw approval text");
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
+  });
+
+  it("revokes active grants and removes them from active reuse", async () => {
+    const tmpDir = makeTempDir("pulseed-runtime-permission-revoke-");
+    try {
+      const runtimeRoot = path.join(tmpDir, "runtime");
+      const operationStore = new RuntimeOperationStore(runtimeRoot);
+      const permissionGrantStore = new PermissionGrantStore(runtimeRoot);
+      await permissionGrantStore.createActive(makeGrant());
+      const service = new RuntimeControlService({ operationStore, permissionGrantStore });
+
+      const result = await service.request({
+        intent: { kind: "revoke_permission", reason: "revoke this permission" },
+        cwd: "/repo",
+        requestedBy: {
+          surface: "chat",
+          platform: "slack",
+          conversation_id: "C123:1700.1",
+          user_id: "U123",
+        },
+        replyTarget: {
+          surface: "chat",
+          platform: "slack",
+          conversation_id: "C123:1700.1",
+          user_id: "U123",
+        },
+      });
+
+      expect(result).toMatchObject({ success: true, state: "verified" });
+      expect(result.message).toContain("Future covered actions will ask again or block");
+      await expect(permissionGrantStore.load("grant-current-run")).resolves.toMatchObject({
+        state: "revoked",
+        revoked_by: "U123",
+      });
+      await expect(permissionGrantStore.listActive()).resolves.toHaveLength(0);
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
+  });
+
+  it("does not fall back to grants from another chat context", async () => {
+    const tmpDir = makeTempDir("pulseed-runtime-permission-context-");
+    try {
+      const runtimeRoot = path.join(tmpDir, "runtime");
+      const operationStore = new RuntimeOperationStore(runtimeRoot);
+      const permissionGrantStore = new PermissionGrantStore(runtimeRoot);
+      await permissionGrantStore.createActive(makeGrant({
+        grant_id: "grant-other-chat",
+        origin: {
+          channel: "slack",
+          platform: "slack",
+          conversation_id: "C999:1700.1",
+          user_id: "U999",
+          session_id: "identity:workspace:U999",
+          turn_id: "1700.2",
+        },
+      }));
+      const service = new RuntimeControlService({ operationStore, permissionGrantStore });
+
+      const inspected = await service.request({
+        intent: { kind: "inspect_permission_boundary", reason: "what is allowed here" },
+        cwd: "/repo",
+        requestedBy: {
+          surface: "chat",
+          platform: "slack",
+          conversation_id: "C123:1700.1",
+          user_id: "U123",
+        },
+      });
+      expect(inspected).toMatchObject({ success: true, state: "verified" });
+      expect(inspected.message).toBe("No active PermissionGrant matches this chat/runtime context.");
+      expect(inspected.message).not.toContain("grant-other-chat");
+
+      const revoked = await service.request({
+        intent: { kind: "revoke_permission", reason: "revoke this permission" },
+        cwd: "/repo",
+        requestedBy: {
+          surface: "chat",
+          platform: "slack",
+          conversation_id: "C123:1700.1",
+          user_id: "U123",
+        },
+      });
+      expect(revoked).toMatchObject({ success: false, state: "blocked" });
+      await expect(permissionGrantStore.load("grant-other-chat")).resolves.toMatchObject({
+        state: "active",
+      });
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
+  });
+
+  it("narrows and extends permission grants through superseding replacements", async () => {
+    const tmpDir = makeTempDir("pulseed-runtime-permission-update-");
+    try {
+      const runtimeRoot = path.join(tmpDir, "runtime");
+      const operationStore = new RuntimeOperationStore(runtimeRoot);
+      const permissionGrantStore = new PermissionGrantStore(runtimeRoot);
+      await permissionGrantStore.createActive(makeGrant());
+      const service = new RuntimeControlService({ operationStore, permissionGrantStore });
+
+      const narrowed = await service.request({
+        intent: {
+          kind: "narrow_permission",
+          reason: "allow tests only",
+          target: { grantId: "grant-current-run" },
+          permissionCapabilities: ["run_tests"],
+        },
+        cwd: "/repo",
+        requestedBy: { surface: "chat", user_id: "U123" },
+      });
+
+      expect(narrowed).toMatchObject({ success: true, state: "verified" });
+      await expect(permissionGrantStore.load("grant-current-run")).resolves.toMatchObject({
+        state: "superseded",
+      });
+      let active = await permissionGrantStore.listActive();
+      expect(active).toHaveLength(1);
+      expect(active[0]).toMatchObject({
+        capabilities: ["run_tests"],
+        supersedes: ["grant-current-run"],
+      });
+
+      const extended = await service.request({
+        intent: {
+          kind: "extend_permission",
+          reason: "allow local edits too",
+          target: { grantId: active[0]!.grant_id },
+          permissionCapabilities: ["write_workspace"],
+        },
+        cwd: "/repo",
+        requestedBy: { surface: "chat", user_id: "U123" },
+        approvalFn: vi.fn().mockResolvedValue(true),
+      });
+
+      expect(extended).toMatchObject({ success: true, state: "verified" });
+      active = await permissionGrantStore.listActive();
+      expect(active).toHaveLength(1);
+      expect(active[0]?.capabilities).toEqual(["run_tests", "write_workspace"]);
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
+  });
+
+  it("audits active and inactive permission grant evidence", async () => {
+    const tmpDir = makeTempDir("pulseed-runtime-permission-audit-");
+    try {
+      const runtimeRoot = path.join(tmpDir, "runtime");
+      const operationStore = new RuntimeOperationStore(runtimeRoot);
+      const permissionGrantStore = new PermissionGrantStore(runtimeRoot);
+      await permissionGrantStore.createActive(makeGrant({
+        audit_refs: ["tool-call:call-1"],
+      }));
+      await permissionGrantStore.recordUse("grant-current-run", { audit_ref: "tool-call:call-2" });
+      await permissionGrantStore.revoke("grant-current-run", {
+        revoked_by: "U123",
+        reason: "test revoke",
+        audit_refs: ["runtime-control:revoke"],
+      });
+      const service = new RuntimeControlService({ operationStore, permissionGrantStore });
+
+      const result = await service.request({
+        intent: { kind: "audit_permission_check", reason: "why did you not ask" },
+        cwd: "/repo",
+        requestedBy: {
+          surface: "chat",
+          platform: "slack",
+          conversation_id: "C123:1700.1",
+          user_id: "U123",
+        },
+      });
+
+      expect(result).toMatchObject({ success: true, state: "verified" });
+      expect(result.message).toContain("state=revoked");
+      expect(result.message).toContain("tool-call:call-1");
+      expect(result.message).toContain("tool-call:call-2");
+      expect(result.message).toContain("still ask again or block");
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
+  });
+
   it("executes approved restart operations through the configured executor", async () => {
     const tmpDir = makeTempDir("pulseed-runtime-control-service-");
     try {

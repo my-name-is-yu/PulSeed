@@ -4,6 +4,7 @@ import { CrossPlatformChatSessionManager } from "../cross-platform-session.js";
 import type { CrossPlatformChatSessionOptions } from "../cross-platform-session.js";
 import type { ChatRunnerDeps } from "../chat-runner-contracts.js";
 import { ApprovalBroker } from "../../../runtime/approval-broker.js";
+import { RuntimeControlService } from "../../../runtime/control/index.js";
 import { ApprovalStore } from "../../../runtime/store/approval-store.js";
 import { PermissionGrantStore } from "../../../runtime/store/permission-grant-store.js";
 import type { StateManager } from "../../../base/state/state-manager.js";
@@ -1832,6 +1833,88 @@ describe("CrossPlatformChatSessionManager", () => {
         turn_id: "1700.2",
       });
       await expect(resultPromise).resolves.toContain("not approved");
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
+  });
+
+  it("routes natural-language permission inspect and revoke through typed runtime control", async () => {
+    const tmpDir = makeTempDir();
+    try {
+      const runtimeRoot = `${tmpDir}/runtime`;
+      const permissionGrantStore = new PermissionGrantStore(runtimeRoot);
+      await permissionGrantStore.createActive({
+        grant_id: "grant-chat-visible",
+        subject: { kind: "operator", id: "U123" },
+        origin: {
+          channel: "slack",
+          platform: "slack",
+          conversation_id: "C123:1700.1",
+          user_id: "U123",
+          session_id: "identity:workspace:U123",
+          turn_id: "1700.2",
+        },
+        source: {
+          kind: "redacted_text",
+          redacted_text: "sensitive approval text",
+          redaction_reason: "test",
+        },
+        scope: { kind: "run", run_id: "run-chat-visible" },
+        duration: { kind: "until_run_done" },
+        capabilities: ["write_workspace", "run_tests"],
+        excluded_capabilities: ["write_remote"],
+      });
+      const runtimeControlService = new RuntimeControlService({
+        runtimeRoot,
+        permissionGrantStore,
+      });
+      const manager = new CrossPlatformChatSessionManager(makeDeps({
+        llmClient: createMockLLMClient([
+          JSON.stringify({
+            intent: "inspect_permission_boundary",
+            reason: "inspect active permissions",
+          }),
+          JSON.stringify({
+            intent: "revoke_permission",
+            reason: "revoke active permission",
+          }),
+        ]),
+        runtimeControlService,
+        permissionGrantStore,
+      }));
+
+      await expect(manager.processIncomingMessage({
+        text: "今 PulSeed は何を許可されていますか？",
+        platform: "slack",
+        identity_key: "workspace:U123",
+        conversation_id: "C123:1700.1",
+        sender_id: "U123",
+        message_id: "1700.3",
+        cwd: "/repo",
+        runtimeControl: {
+          allowed: true,
+          approvalMode: "interactive",
+        },
+      })).resolves.toContain("Active permission boundary");
+
+      await expect(manager.processIncomingMessage({
+        text: "その権限を取り消して",
+        platform: "slack",
+        identity_key: "workspace:U123",
+        conversation_id: "C123:1700.1",
+        sender_id: "U123",
+        message_id: "1700.4",
+        cwd: "/repo",
+        runtimeControl: {
+          allowed: true,
+          approvalMode: "interactive",
+        },
+      })).resolves.toContain("Future covered actions will ask again or block");
+
+      await expect(permissionGrantStore.load("grant-chat-visible")).resolves.toMatchObject({
+        state: "revoked",
+      });
+      await expect(permissionGrantStore.listActive()).resolves.toHaveLength(0);
     } finally {
       cleanupTempDir(tmpDir);
     }
