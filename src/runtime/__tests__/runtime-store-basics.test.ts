@@ -46,6 +46,9 @@ describe("runtime store basics", () => {
     expect(paths.approvalPendingPath("approval-1")).toBe(
       path.join(tmpDir, "approvals", "pending", "approval-1.json")
     );
+    expect(paths.permissionGrantPath("grant:run/a")).toBe(
+      path.join(tmpDir, "permission-grants", `${encodeRuntimePathSegment("grant:run/a")}.json`)
+    );
     expect(paths.outboxRecordPath(12)).toBe(path.join(tmpDir, "outbox", "000000000012.json"));
     expect(paths.backgroundRunPath("run:agent/a")).toBe(
       path.join(tmpDir, "background-runs", `${encodeRuntimePathSegment("run:agent/a")}.json`)
@@ -63,6 +66,7 @@ describe("runtime store basics", () => {
     await ensureRuntimeStorePaths(paths);
     expect(fs.existsSync(paths.leaderDir)).toBe(true);
     expect(fs.existsSync(paths.approvalsPendingDir)).toBe(true);
+    expect(fs.existsSync(paths.permissionGrantsDir)).toBe(true);
     expect(fs.existsSync(paths.outboxDir)).toBe(true);
     expect(fs.existsSync(paths.backgroundRunsDir)).toBe(true);
     expect(fs.existsSync(paths.healthDir)).toBe(true);
