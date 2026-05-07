@@ -1,5 +1,9 @@
 import { z } from "zod";
 import type { ApprovalRecord } from "./store/runtime-schemas.js";
+import {
+  PermissionGrantCapabilitySchema,
+  PermissionGrantExcludedCapabilitySchema,
+} from "./store/permission-grant-store.js";
 
 export const PermissionRiskClassSchema = z.enum(["low", "medium", "high", "critical", "unknown"]);
 export type PermissionRiskClass = z.infer<typeof PermissionRiskClassSchema>;
@@ -11,6 +15,28 @@ export const PendingPermissionTargetSchema = z.object({
   tool_call_id: z.string().min(1).optional(),
 });
 export type PendingPermissionTarget = z.infer<typeof PendingPermissionTargetSchema>;
+
+export const PendingPermissionGrantProposalScopeSchema = z.enum([
+  "once",
+  "run",
+  "goal",
+  "session",
+  "workspace",
+  "project",
+  "global",
+]);
+export type PendingPermissionGrantProposalScope = z.infer<typeof PendingPermissionGrantProposalScopeSchema>;
+
+export const PendingPermissionGrantProposalSchema = z.object({
+  schema_version: z.literal("permission-grant-proposal-v1"),
+  capabilities: z.array(PermissionGrantCapabilitySchema).min(1),
+  current_request_capabilities: z.array(PermissionGrantCapabilitySchema).min(1).optional(),
+  excluded_capabilities: z.array(PermissionGrantExcludedCapabilitySchema).default([]),
+  default_scope: PendingPermissionGrantProposalScopeSchema.default("run"),
+  allowed_scopes: z.array(PendingPermissionGrantProposalScopeSchema).min(1).default(["once", "run", "goal"]),
+  summary: z.string().min(1).optional(),
+}).strict();
+export type PendingPermissionGrantProposal = z.infer<typeof PendingPermissionGrantProposalSchema>;
 
 export const PendingPermissionTaskSchema = z.object({
   kind: z.literal("permission"),
@@ -26,6 +52,7 @@ export const PendingPermissionTaskSchema = z.object({
   permission_level: z.string().min(1).optional(),
   is_destructive: z.boolean().optional(),
   reversibility: z.string().min(1).optional(),
+  grant_proposal: PendingPermissionGrantProposalSchema.optional(),
 });
 export type PendingPermissionTask = z.infer<typeof PendingPermissionTaskSchema>;
 
@@ -40,6 +67,7 @@ export function createPendingPermissionTask(input: {
   permissionLevel?: string;
   isDestructive?: boolean;
   reversibility?: string;
+  grantProposal?: PendingPermissionGrantProposal;
 }): PendingPermissionTask {
   return PendingPermissionTaskSchema.parse({
     kind: "permission",
@@ -58,6 +86,7 @@ export function createPendingPermissionTask(input: {
     ...(input.permissionLevel ? { permission_level: input.permissionLevel } : {}),
     ...(typeof input.isDestructive === "boolean" ? { is_destructive: input.isDestructive } : {}),
     ...(input.reversibility ? { reversibility: input.reversibility } : {}),
+    ...(input.grantProposal ? { grant_proposal: input.grantProposal } : {}),
   });
 }
 
@@ -76,6 +105,10 @@ export function getPendingPermissionTask(record: ApprovalRecord): PendingPermiss
   const task = payload["task"];
   const parsed = PendingPermissionTaskSchema.safeParse(task);
   return parsed.success ? parsed.data : null;
+}
+
+export function getPendingPermissionGrantProposal(record: ApprovalRecord): PendingPermissionGrantProposal | null {
+  return getPendingPermissionTask(record)?.grant_proposal ?? null;
 }
 
 export function isPermissionApprovalStale(

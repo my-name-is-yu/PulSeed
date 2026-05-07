@@ -320,8 +320,8 @@ function grantOriginMatchesContext(grant: PermissionGrantRecord, context: ToolCa
   const sessionIds = contextSessionIds(context);
   if (grant.origin.session_id && !sessionIds.includes(grant.origin.session_id)) return false;
   if (grant.origin.conversation_id) {
-    if (!context.conversationSessionId) return false;
-    if (context.conversationSessionId !== grant.origin.conversation_id) return false;
+    const conversationIds = contextConversationIds(context);
+    if (!conversationIds.includes(grant.origin.conversation_id)) return false;
   }
   return true;
 }
@@ -330,11 +330,24 @@ function contextSessionIds(context: ToolCallContext): string[] {
   return [context.sessionId, context.conversationSessionId].filter((value): value is string => Boolean(value));
 }
 
+function contextConversationIds(context: ToolCallContext): string[] {
+  return [
+    context.conversationSessionId,
+    stringField(context.runtimeReplyTarget, "conversation_id"),
+    stringField(context.runtimeControlActor, "conversation_id"),
+  ].filter((value): value is string => Boolean(value));
+}
+
 function contextWorkspaceRoots(context: ToolCallContext): string[] {
   return [
     normalizePath(context.executionPolicy?.workspaceRoot),
     normalizePath(context.cwd),
   ].filter((value): value is string => Boolean(value));
+}
+
+function stringField(value: Record<string, unknown> | null | undefined, field: string): string | undefined {
+  const fieldValue = value?.[field];
+  return typeof fieldValue === "string" && fieldValue.trim() ? fieldValue : undefined;
 }
 
 function normalizePath(value: string | undefined): string | undefined {

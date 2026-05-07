@@ -268,6 +268,15 @@ export async function executeAgentLoopRoute(
       approvalFn: agentLoopApprovalFn(host, runtimeContext),
       toolCallContext: {
         executionPolicy: turnContext.hostOnly.execution.executionPolicy,
+        ...(host.deps.permissionGrantContext?.sessionId
+          ? { sessionId: host.deps.permissionGrantContext.sessionId }
+          : host.getConversationSessionId()
+            ? { sessionId: host.getConversationSessionId()! }
+            : {}),
+        runId: turnContext.modelVisible.turn.runId,
+        turnId: turnContext.modelVisible.turn.turnId,
+        ...(host.deps.permissionGrantContext?.projectId ? { projectId: host.deps.permissionGrantContext.projectId } : {}),
+        ...(host.deps.permissionGrantStore ? { permissionGrantStore: host.deps.permissionGrantStore } : {}),
         ...(host.getConversationSessionId() ? { conversationSessionId: host.getConversationSessionId()! } : {}),
         providerConfigBaseDir: host.getProviderConfigBaseDir(),
         setupSecretIntake: host.getSetupSecretIntake(),
@@ -1247,6 +1256,15 @@ async function buildToolCallContext(
     preApproved: false,
     approvalFn: agentLoopApprovalFn(host, runtimeContext),
     executionPolicy,
+    ...(host.deps.permissionGrantContext?.sessionId
+      ? { sessionId: host.deps.permissionGrantContext.sessionId }
+      : host.getConversationSessionId()
+        ? { sessionId: host.getConversationSessionId()! }
+        : {}),
+    ...(turnContext?.modelVisible.turn.runId ? { runId: turnContext.modelVisible.turn.runId } : {}),
+    ...(turnContext?.modelVisible.turn.turnId ? { turnId: turnContext.modelVisible.turn.turnId } : {}),
+    ...(host.deps.permissionGrantContext?.projectId ? { projectId: host.deps.permissionGrantContext.projectId } : {}),
+    ...(host.deps.permissionGrantStore ? { permissionGrantStore: host.deps.permissionGrantStore } : {}),
     ...(host.getConversationSessionId() ? { conversationSessionId: host.getConversationSessionId()! } : {}),
     providerConfigBaseDir: host.getProviderConfigBaseDir(),
     setupSecretIntake: host.getSetupSecretIntake(),

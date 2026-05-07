@@ -271,6 +271,9 @@ export interface ApprovalRequest {
   isDestructive: boolean;
   reversibility: "reversible" | "irreversible" | "unknown";
   callId?: string;
+  sessionId?: string;
+  runId?: string;
+  turnId?: string;
   permissionGrantDecision?: unknown;
 }
 

@@ -13,6 +13,7 @@ import type { ReviewAgentLoopRunner } from "../../orchestrator/execution/agent-l
 import type { RuntimeControlService } from "../../runtime/control/index.js";
 import type { ApprovalBroker } from "../../runtime/approval-broker.js";
 import type { ApprovalRequest } from "../../tools/types.js";
+import type { PermissionGrantStore } from "../../runtime/store/permission-grant-store.js";
 import type {
   RuntimeControlActor,
   RuntimeControlReplyTarget,
@@ -83,6 +84,11 @@ export interface ChatRunnerDeps {
     ApprovalBroker,
     "requestConversationalApproval" | "resolveConversationalApproval" | "findPendingConversationalApproval" | "loadPendingApproval"
   >;
+  permissionGrantStore?: Pick<PermissionGrantStore, "createActive" | "list" | "recordUse">;
+  permissionGrantContext?: {
+    sessionId?: string;
+    projectId?: string;
+  };
   runtimeControlApprovalFn?: (description: string) => Promise<boolean>;
   runtimeReplyTarget?: RuntimeControlReplyTarget;
   runtimeControlActor?: RuntimeControlActor;

@@ -89,6 +89,9 @@ export class ToolExecutor {
         isDestructive: tool.metadata.isDestructive,
         reversibility: "unknown",
         ...(callId ? { callId } : {}),
+        ...(context.sessionId ? { sessionId: context.sessionId } : {}),
+        ...(context.runId ? { runId: context.runId } : {}),
+        ...(context.turnId ? { turnId: context.turnId } : {}),
       } as const;
       await context.onApprovalRequested?.(approvalRequest);
       const approved = await context.approvalFn(approvalRequest);
@@ -119,6 +122,9 @@ export class ToolExecutor {
         isDestructive: tool.metadata.isDestructive,
         reversibility: "reversible",
         ...(callId ? { callId } : {}),
+        ...(context.sessionId ? { sessionId: context.sessionId } : {}),
+        ...(context.runId ? { runId: context.runId } : {}),
+        ...(context.turnId ? { turnId: context.turnId } : {}),
         ...(permResult.permissionGrantDecision ? { permissionGrantDecision: permResult.permissionGrantDecision } : {}),
       } as const;
       await context.onApprovalRequested?.(approvalRequest);
