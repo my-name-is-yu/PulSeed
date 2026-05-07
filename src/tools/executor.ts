@@ -119,6 +119,7 @@ export class ToolExecutor {
         isDestructive: tool.metadata.isDestructive,
         reversibility: "reversible",
         ...(callId ? { callId } : {}),
+        ...(permResult.permissionGrantDecision ? { permissionGrantDecision: permResult.permissionGrantDecision } : {}),
       } as const;
       await context.onApprovalRequested?.(approvalRequest);
       const approved = await context.approvalFn(approvalRequest);
