@@ -8,6 +8,7 @@ import {
   decideHostToolExecution,
   permissionResultFromHostDecision,
 } from "./execution-orchestrator.js";
+import { evaluatePermissionGrantForToolCall } from "./permission-grant-evaluator.js";
 
 /**
  * 3-layer permission model for tool invocations.
@@ -45,7 +46,27 @@ export class ToolPermissionManager {
       }
     }
 
-    if (hostPolicyResult.status !== "allowed") return hostPolicyResult;
+    if (hostPolicyResult.status !== "allowed") {
+      if (hostDecision.status === "needs_permission") {
+        const grantDecision = await evaluatePermissionGrantForToolCall({
+          tool,
+          input,
+          context,
+          hostDecision,
+        });
+        if (grantDecision.allowed) {
+          return {
+            status: "allowed",
+            permissionGrantDecision: grantDecision,
+          };
+        }
+        return {
+          ...hostPolicyResult,
+          permissionGrantDecision: grantDecision,
+        };
+      }
+      return hostPolicyResult;
+    }
     if (context.executionPolicy) return hostPolicyResult;
 
     // Read-only tools are always allowed after deny-list check

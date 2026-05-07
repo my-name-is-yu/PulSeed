@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { ExecutionPolicy, SubagentRole } from "../orchestrator/execution/agent-loop/execution-policy.js";
+import type { PermissionGrantRecord } from "../runtime/store/permission-grant-store.js";
 import type { HostToolExecutionDecision } from "./execution-orchestrator.js";
 
 // --- Tool Result ---
@@ -206,6 +207,17 @@ export interface ToolCallContext {
     currentEpoch: string;
     observedEpoch?: string;
   };
+  /** Optional durable run identifier for scope-bound permission grants. */
+  runId?: string;
+  /** Optional turn identifier for scope-bound permission grants. */
+  turnId?: string;
+  /** Optional project identifier for scope-bound permission grants. */
+  projectId?: string;
+  /** Durable permission grants available to the host/tool permission path. */
+  permissionGrantStore?: {
+    list(): Promise<PermissionGrantRecord[]>;
+    recordUse(grantId: string, input?: { used_at?: number; audit_ref?: string }): Promise<PermissionGrantRecord | null>;
+  };
   /** Optional subagent role for delegated runs. */
   agentRole?: SubagentRole;
   /** Abort signal for cancellation */
@@ -259,24 +271,28 @@ export interface ApprovalRequest {
   isDestructive: boolean;
   reversibility: "reversible" | "irreversible" | "unknown";
   callId?: string;
+  permissionGrantDecision?: unknown;
 }
 
 export const PermissionCheckResultSchema = z.discriminatedUnion("status", [
-  z.object({ status: z.literal("allowed") }),
+  z.object({ status: z.literal("allowed"), permissionGrantDecision: z.unknown().optional() }),
   z.object({
     status: z.literal("denied"),
     reason: z.string(),
     executionReason: ToolExecutionReasonSchema.optional(),
     policyDecision: z.unknown().optional(),
+    permissionGrantDecision: z.unknown().optional(),
   }),
   z.object({
     status: z.literal("needs_approval"),
     reason: z.string(),
     executionReason: ToolExecutionReasonSchema.optional(),
     policyDecision: z.unknown().optional(),
+    permissionGrantDecision: z.unknown().optional(),
   }),
 ]);
 
 export type PermissionCheckResult = z.infer<typeof PermissionCheckResultSchema> & {
   policyDecision?: HostToolExecutionDecision;
+  permissionGrantDecision?: unknown;
 };

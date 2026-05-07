@@ -1,13 +1,15 @@
 // src/tools/__tests__/executor.test.ts
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import { z } from "zod";
 import { ToolExecutor } from "../executor.js";
 import { ToolRegistry } from "../registry.js";
 import { ToolPermissionManager } from "../permission.js";
 import { ConcurrencyController } from "../concurrency.js";
 import { ShellTool } from "../system/ShellTool/ShellTool.js";
+import { PermissionGrantStore } from "../../runtime/store/permission-grant-store.js";
 import type { ExecutionPolicy } from "../../orchestrator/execution/agent-loop/execution-policy.js";
+import { makeTempDir, cleanupTempDir } from "../../../tests/helpers/temp-dir.js";
 import type {
   ITool,
   ToolResult,
@@ -88,6 +90,65 @@ function createExecutor(registeredTools: ITool[] = []) {
   const concurrency = new ConcurrencyController();
   const executor = new ToolExecutor({ registry, permissionManager, concurrency });
   return { executor, registry, permissionManager, concurrency };
+}
+
+const permissionGrantRuntimeRoots: string[] = [];
+
+afterEach(() => {
+  for (const runtimeRoot of permissionGrantRuntimeRoots.splice(0)) {
+    cleanupTempDir(runtimeRoot);
+  }
+});
+
+async function createActiveGrant(
+  overrides: {
+    grantId?: string;
+    goalId?: string;
+    sessionId?: string;
+    capabilities?: Array<"write_workspace" | "run_safe_local_commands" | "run_tests">;
+    excludedCapabilities?: Array<"destructive_action" | "write_remote" | "network_send" | "protected_path_mutation" | "unknown_capability">;
+    stale?: boolean;
+  } = {},
+): Promise<PermissionGrantStore> {
+  const runtimeRoot = makeTempDir("pulseed-permission-grant-evaluator-");
+  permissionGrantRuntimeRoots.push(runtimeRoot);
+  const store = new PermissionGrantStore(runtimeRoot);
+  await store.createActive({
+    grant_id: overrides.grantId ?? "grant-1",
+    subject: {
+      kind: "user",
+      id: "user-1",
+    },
+    origin: {
+      channel: "chat",
+      session_id: overrides.sessionId ?? "session-1",
+    },
+    source: {
+      kind: "redacted_text",
+      redacted_text: "[redacted] approved this scoped permission",
+    },
+    scope: {
+      kind: "goal",
+      goal_id: overrides.goalId ?? "goal-1",
+    },
+    duration: {
+      kind: "until_goal_done",
+    },
+    capabilities: overrides.capabilities ?? ["write_workspace"],
+    excluded_capabilities: overrides.excludedCapabilities ?? [
+      "destructive_action",
+      "write_remote",
+      "network_send",
+      "protected_path_mutation",
+      "unknown_capability",
+    ],
+  });
+  if (overrides.stale) {
+    await store.markStale(overrides.grantId ?? "grant-1", {
+      reason: "test stale permission binding",
+    });
+  }
+  return store;
 }
 
 // --- Tests ---
@@ -279,6 +340,258 @@ describe("ToolExecutor", () => {
           reason: "sandbox_required",
         });
         expect(approvalFn).not.toHaveBeenCalled();
+      });
+
+      it("uses an active write_workspace PermissionGrant for the real executor permission boundary", async () => {
+        const tool = createMockTool({
+          name: "write-workspace-tool",
+          metadata: {
+            name: "write-workspace-tool",
+            aliases: [],
+            permissionLevel: "write_local",
+            isReadOnly: false,
+            isDestructive: false,
+            shouldDefer: false,
+            alwaysLoad: false,
+            maxConcurrency: 0,
+            maxOutputChars: 8000,
+            tags: [],
+          } as ITool["metadata"],
+        });
+        const store = await createActiveGrant();
+        const { executor } = createExecutor([tool]);
+        const approvalFn = vi.fn().mockResolvedValue(false);
+        const ctx = createMockContext({
+          approvalFn,
+          sessionId: "session-1",
+          executionPolicy: createExecutionPolicy({ approvalPolicy: "on_request" }),
+          permissionGrantStore: store,
+        });
+
+        const result = await executor.execute("write-workspace-tool", { value: "x" }, ctx);
+
+        expect(result.success).toBe(true);
+        expect(approvalFn).not.toHaveBeenCalled();
+        expect(await store.load("grant-1")).toMatchObject({
+          usage_count: 1,
+        });
+      });
+
+      it("uses a run_safe_local_commands PermissionGrant only after shell policy classifies the command", async () => {
+        const shellTool = new ShellTool();
+        const store = await createActiveGrant({
+          capabilities: ["run_safe_local_commands"],
+        });
+        const { executor } = createExecutor([shellTool]);
+        const approvalFn = vi.fn().mockResolvedValue(false);
+        const ctx = createMockContext({
+          approvalFn,
+          sessionId: "session-1",
+          dryRun: true,
+          executionPolicy: createExecutionPolicy({ approvalPolicy: "on_request" }),
+          permissionGrantStore: store,
+        });
+
+        const result = await executor.execute("shell", { command: "touch grant-ok.txt" }, ctx);
+
+        expect(result.success).toBe(true);
+        expect(result.execution).toMatchObject({
+          status: "not_executed",
+          reason: "dry_run",
+        });
+        expect(approvalFn).not.toHaveBeenCalled();
+        expect(await store.load("grant-1")).toMatchObject({
+          usage_count: 1,
+        });
+      });
+
+      it("uses a run_tests PermissionGrant for typed test activity", async () => {
+        const tool = createMockTool({
+          name: "test-runner-tool",
+          metadata: {
+            name: "test-runner-tool",
+            aliases: [],
+            permissionLevel: "execute",
+            isReadOnly: false,
+            isDestructive: false,
+            shouldDefer: false,
+            alwaysLoad: false,
+            maxConcurrency: 0,
+            maxOutputChars: 8000,
+            tags: [],
+            activityCategory: "test",
+          } as ITool["metadata"],
+        });
+        const store = await createActiveGrant({
+          capabilities: ["run_tests"],
+        });
+        const { executor } = createExecutor([tool]);
+        const approvalFn = vi.fn().mockResolvedValue(false);
+        const ctx = createMockContext({
+          approvalFn,
+          sessionId: "session-1",
+          executionPolicy: createExecutionPolicy({ approvalPolicy: "on_request" }),
+          permissionGrantStore: store,
+        });
+
+        const result = await executor.execute("test-runner-tool", { value: "x" }, ctx);
+
+        expect(result.success).toBe(true);
+        expect(approvalFn).not.toHaveBeenCalled();
+        expect(await store.load("grant-1")).toMatchObject({
+          usage_count: 1,
+        });
+      });
+
+      it("rejects stale or previous-goal grants and asks again", async () => {
+        const tool = createMockTool({
+          name: "write-stale-tool",
+          metadata: {
+            name: "write-stale-tool",
+            aliases: [],
+            permissionLevel: "write_local",
+            isReadOnly: false,
+            isDestructive: false,
+            shouldDefer: false,
+            alwaysLoad: false,
+            maxConcurrency: 0,
+            maxOutputChars: 8000,
+            tags: [],
+          } as ITool["metadata"],
+        });
+        const store = await createActiveGrant({
+          goalId: "old-goal",
+          stale: true,
+        });
+        const { executor } = createExecutor([tool]);
+        const approvalFn = vi.fn().mockResolvedValue(false);
+        const ctx = createMockContext({
+          approvalFn,
+          goalId: "goal-1",
+          sessionId: "session-1",
+          executionPolicy: createExecutionPolicy({ approvalPolicy: "on_request" }),
+          permissionGrantStore: store,
+        });
+
+        const result = await executor.execute("write-stale-tool", { value: "x" }, ctx);
+
+        expect(result.success).toBe(false);
+        expect(result.execution).toMatchObject({
+          status: "not_executed",
+          reason: "approval_denied",
+        });
+        expect(approvalFn).toHaveBeenCalledOnce();
+        expect(tool.call).not.toHaveBeenCalled();
+        expect(await store.load("grant-1")).toMatchObject({
+          usage_count: 0,
+        });
+      });
+
+      it("does not let a local-work grant cover excluded remote capabilities", async () => {
+        const tool = createMockTool({
+          name: "remote-writer",
+          metadata: {
+            name: "remote-writer",
+            aliases: [],
+            permissionLevel: "write_remote",
+            isReadOnly: false,
+            isDestructive: false,
+            shouldDefer: false,
+            alwaysLoad: false,
+            maxConcurrency: 0,
+            maxOutputChars: 8000,
+            tags: [],
+          } as ITool["metadata"],
+        });
+        const store = await createActiveGrant();
+        const { executor } = createExecutor([tool]);
+        const approvalFn = vi.fn().mockResolvedValue(false);
+        const ctx = createMockContext({
+          approvalFn,
+          sessionId: "session-1",
+          executionPolicy: createExecutionPolicy({
+            approvalPolicy: "on_request",
+            networkAccess: true,
+          }),
+          permissionGrantStore: store,
+        });
+
+        const result = await executor.execute("remote-writer", { value: "x" }, ctx);
+
+        expect(result.success).toBe(false);
+        expect(result.execution).toMatchObject({
+          status: "not_executed",
+          reason: "approval_denied",
+        });
+        expect(approvalFn).toHaveBeenCalledOnce();
+        expect(approvalFn).toHaveBeenCalledWith(expect.objectContaining({
+          permissionGrantDecision: expect.objectContaining({
+            status: "excluded_capability",
+            excludedCapabilities: ["write_remote"],
+          }),
+        }));
+        expect(await store.load("grant-1")).toMatchObject({
+          usage_count: 0,
+        });
+      });
+
+      it("does not let a grant bypass shell unknown-capability classification", async () => {
+        const shellTool = new ShellTool();
+        const store = await createActiveGrant({
+          capabilities: ["run_safe_local_commands"],
+        });
+        const { executor } = createExecutor([shellTool]);
+        const approvalFn = vi.fn().mockResolvedValue(false);
+        const ctx = createMockContext({
+          approvalFn,
+          sessionId: "session-1",
+          dryRun: true,
+          executionPolicy: createExecutionPolicy({ approvalPolicy: "on_request" }),
+          permissionGrantStore: store,
+        });
+
+        const result = await executor.execute("shell", { command: "python -c 'print(1)'" }, ctx);
+
+        expect(result.success).toBe(false);
+        expect(result.execution).toMatchObject({
+          status: "not_executed",
+          reason: "approval_denied",
+        });
+        expect(approvalFn).toHaveBeenCalledOnce();
+        expect(await store.load("grant-1")).toMatchObject({
+          usage_count: 0,
+        });
+      });
+
+      it("does not let grants bypass sandbox hard boundaries", async () => {
+        const shellTool = new ShellTool();
+        const store = await createActiveGrant({
+          capabilities: ["run_safe_local_commands"],
+        });
+        const { executor } = createExecutor([shellTool]);
+        const approvalFn = vi.fn().mockResolvedValue(true);
+        const ctx = createMockContext({
+          approvalFn,
+          sessionId: "session-1",
+          dryRun: true,
+          executionPolicy: createExecutionPolicy({
+            sandboxMode: "read_only",
+            approvalPolicy: "on_request",
+          }),
+          permissionGrantStore: store,
+        });
+
+        const result = await executor.execute("shell", { command: "touch blocked.txt" }, ctx);
+
+        expect(result.success).toBe(false);
+        expect(result.execution).toMatchObject({
+          status: "not_executed",
+          reason: "sandbox_required",
+        });
+        expect(approvalFn).not.toHaveBeenCalled();
+        expect(await store.load("grant-1")).toMatchObject({
+          usage_count: 0,
+        });
       });
     });
 
