@@ -1,5 +1,6 @@
 import type { Logger } from "./logger.js";
-import { ApprovalStore } from "./store/approval-store.js";
+import type { ApprovalStore } from "./store/approval-store.js";
+import type { PermissionWaitPlanStore } from "./store/permission-wait-plan-store.js";
 import type { ApprovalOrigin, ApprovalRecord } from "./store/runtime-schemas.js";
 import {
   getPendingPermissionTask,
@@ -20,6 +21,7 @@ export interface ApprovalTaskRequest {
   state_epoch?: string;
   state_version?: string;
   expires_at?: number;
+  wait_plan_id?: string;
   permission_level?: string;
   is_destructive?: boolean;
   reversibility?: string;
@@ -62,6 +64,7 @@ export type PendingConversationalApprovalLookup =
 
 export interface ApprovalBrokerOptions {
   store: ApprovalStore;
+  permissionWaitPlanStore?: Pick<PermissionWaitPlanStore, "markApproved" | "markDenied" | "markExpired" | "markCancelled">;
   logger?: Logger;
   broadcast?: (eventType: string, data: unknown) => void;
   deliverConversationalApproval?: (
@@ -82,6 +85,7 @@ interface PendingApprovalSession {
 
 export class ApprovalBroker {
   private readonly store: ApprovalStore;
+  private readonly permissionWaitPlanStore?: Pick<PermissionWaitPlanStore, "markApproved" | "markDenied" | "markExpired" | "markCancelled">;
   private readonly logger?: Logger;
   private broadcast?: (eventType: string, data: unknown) => void;
   private readonly deliverConversationalApproval?: (
@@ -95,6 +99,7 @@ export class ApprovalBroker {
 
   constructor(options: ApprovalBrokerOptions) {
     this.store = options.store;
+    this.permissionWaitPlanStore = options.permissionWaitPlanStore;
     this.logger = options.logger;
     this.broadcast = options.broadcast;
     this.deliverConversationalApproval = options.deliverConversationalApproval;
@@ -396,6 +401,13 @@ export class ApprovalBroker {
       return null;
     }
 
+    await this.transitionPermissionWaitPlan(resolved, resolution).catch((err) => {
+      this.logger?.error("ApprovalBroker: failed to transition permission wait plan", {
+        approvalId,
+        error: String(err),
+      });
+    });
+
     currentSession?.resolve?.(resolution.approved);
     this.broadcast?.("approval_resolved", {
       requestId: approvalId,
@@ -423,6 +435,41 @@ export class ApprovalBroker {
       ...(record.origin ? { origin: record.origin } : {}),
       ...(prompt ? { prompt } : {}),
     };
+  }
+
+  private async transitionPermissionWaitPlan(
+    record: ApprovalRecord,
+    resolution: {
+      state: "approved" | "denied" | "expired" | "cancelled";
+      approved: boolean;
+      reason?: string;
+      responseChannel?: string;
+    },
+  ): Promise<void> {
+    if (!this.permissionWaitPlanStore) return;
+    const permission = getPendingPermissionTask(record);
+    const waitPlanId = permission?.wait_plan_id;
+    if (!waitPlanId) return;
+    const input = {
+      resolved_at: record.resolved_at ?? this.now(),
+      ...(resolution.responseChannel ? { response_channel: resolution.responseChannel } : {}),
+      ...(resolution.reason ? { reason: resolution.reason } : {}),
+      audit_refs: [`approval:${record.approval_id}`],
+    };
+    switch (resolution.state) {
+      case "approved":
+        await this.permissionWaitPlanStore.markApproved(waitPlanId, input);
+        return;
+      case "denied":
+        await this.permissionWaitPlanStore.markDenied(waitPlanId, input);
+        return;
+      case "expired":
+        await this.permissionWaitPlanStore.markExpired(waitPlanId, input);
+        return;
+      case "cancelled":
+        await this.permissionWaitPlanStore.markCancelled(waitPlanId, input);
+        return;
+    }
   }
 }
 

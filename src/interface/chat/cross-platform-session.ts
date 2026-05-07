@@ -51,6 +51,7 @@ import {
   PermissionGrantCapabilitySchema,
   PermissionGrantExcludedCapabilitySchema,
   PermissionGrantStore,
+  PermissionWaitPlanStore,
   createRuntimeStorePaths,
   type PermissionGrantCapability,
   type PermissionGrantCreateInput,
@@ -1364,6 +1365,7 @@ export class CrossPlatformChatSessionManager {
           ...(request.callId ? { tool_call_id: request.callId } : {}),
         },
         stateEpoch,
+        waitPlanId: request.permissionWaitPlanId,
         stateVersion: info.last_used_at,
         permissionLevel: request.permissionLevel,
         isDestructive: request.isDestructive,
@@ -1371,6 +1373,7 @@ export class CrossPlatformChatSessionManager {
         ...(grantProposal ? { grantProposal } : {}),
       }), {
         origin,
+        ...(request.approvalId ? { approvalId: request.approvalId } : {}),
         deliverConversationalApproval: async ({ prompt }) => {
           const handler = this.activeApprovalEventHandlers.get(info.session_key);
           if (!handler) {
@@ -1731,6 +1734,7 @@ async function createGlobalCrossPlatformChatSessionManager(): Promise<CrossPlatf
   const runtimeRoot = path.join(stateManager.getBaseDir(), "runtime");
   const runtimeStorePaths = createRuntimeStorePaths(runtimeRoot);
   const permissionGrantStore = new PermissionGrantStore(runtimeStorePaths);
+  const permissionWaitPlanStore = new PermissionWaitPlanStore(runtimeStorePaths);
   const runtimeControlService = new RuntimeControlService({
     runtimeRoot,
     stateManager,
@@ -1783,6 +1787,7 @@ async function createGlobalCrossPlatformChatSessionManager(): Promise<CrossPlatf
 
   const approvalBroker = new ApprovalBroker({
     store: new ApprovalStore(runtimeStorePaths),
+    permissionWaitPlanStore,
   });
 
   return new CrossPlatformChatSessionManager({
@@ -1795,6 +1800,7 @@ async function createGlobalCrossPlatformChatSessionManager(): Promise<CrossPlatf
     reviewAgentLoopRunner,
     approvalBroker,
     permissionGrantStore,
+    permissionWaitPlanStore,
     runtimeControlService,
   });
 }

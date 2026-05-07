@@ -16,6 +16,7 @@ export interface RuntimeStorePaths {
   approvalsPendingDir: string;
   approvalsResolvedDir: string;
   permissionGrantsDir: string;
+  permissionWaitPlansDir: string;
   outboxDir: string;
   backgroundRunsDir: string;
   authHandoffsDir: string;
@@ -45,6 +46,7 @@ export interface RuntimeStorePaths {
   approvalPendingPath(approvalId: string): string;
   approvalResolvedPath(approvalId: string): string;
   permissionGrantPath(grantId: string): string;
+  permissionWaitPlanPath(waitPlanId: string): string;
   outboxRecordPath(seq: number): string;
   backgroundRunPath(runId: string): string;
   authHandoffPath(handoffId: string): string;
@@ -104,6 +106,7 @@ export function createRuntimeStorePaths(runtimeRoot?: string): RuntimeStorePaths
   const approvalsPendingDir = path.join(approvalsDir, "pending");
   const approvalsResolvedDir = path.join(approvalsDir, "resolved");
   const permissionGrantsDir = path.join(rootDir, "permission-grants");
+  const permissionWaitPlansDir = path.join(rootDir, "permission-wait-plans");
   const outboxDir = path.join(rootDir, "outbox");
   const backgroundRunsDir = path.join(rootDir, "background-runs");
   const authHandoffsDir = path.join(rootDir, "auth-handoffs");
@@ -138,6 +141,7 @@ export function createRuntimeStorePaths(runtimeRoot?: string): RuntimeStorePaths
     approvalsPendingDir,
     approvalsResolvedDir,
     permissionGrantsDir,
+    permissionWaitPlansDir,
     outboxDir,
     backgroundRunsDir,
     authHandoffsDir,
@@ -176,6 +180,9 @@ export function createRuntimeStorePaths(runtimeRoot?: string): RuntimeStorePaths
     },
     permissionGrantPath(grantId: string) {
       return path.join(permissionGrantsDir, recordFileName(encodeRuntimePathSegment(grantId)));
+    },
+    permissionWaitPlanPath(waitPlanId: string) {
+      return path.join(permissionWaitPlansDir, recordFileName(encodeRuntimePathSegment(waitPlanId)));
     },
     outboxRecordPath(seq: number) {
       return path.join(outboxDir, outboxFileName(seq));
@@ -251,6 +258,7 @@ export async function ensureRuntimeStorePaths(paths: RuntimeStorePaths): Promise
       paths.approvalsPendingDir,
       paths.approvalsResolvedDir,
       paths.permissionGrantsDir,
+      paths.permissionWaitPlansDir,
       paths.outboxDir,
       paths.backgroundRunsDir,
       paths.authHandoffsDir,

@@ -47,6 +47,7 @@ export const PendingPermissionTaskSchema = z.object({
   risk_class: PermissionRiskClassSchema,
   target: PendingPermissionTargetSchema,
   state_epoch: z.string().min(1),
+  wait_plan_id: z.string().min(1).optional(),
   state_version: z.string().min(1).optional(),
   expires_at: z.number().int().nonnegative().optional(),
   permission_level: z.string().min(1).optional(),
@@ -62,6 +63,7 @@ export function createPendingPermissionTask(input: {
   action: string;
   target: PendingPermissionTarget;
   stateEpoch: string;
+  waitPlanId?: string;
   stateVersion?: string;
   expiresAt?: number;
   permissionLevel?: string;
@@ -81,6 +83,7 @@ export function createPendingPermissionTask(input: {
     }),
     target: input.target,
     state_epoch: input.stateEpoch,
+    ...(input.waitPlanId ? { wait_plan_id: input.waitPlanId } : {}),
     ...(input.stateVersion ? { state_version: input.stateVersion } : {}),
     ...(input.expiresAt ? { expires_at: input.expiresAt } : {}),
     ...(input.permissionLevel ? { permission_level: input.permissionLevel } : {}),
