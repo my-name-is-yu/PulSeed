@@ -88,6 +88,19 @@ import type {
 import { normalizeUserInput, type UserInput } from "./user-input.js";
 import type { ApprovalRequest } from "../../tools/types.js";
 
+const STANDING_PERMISSION_REVIEW_INTERVAL_MS = 30 * 24 * 60 * 60 * 1000;
+const STANDING_PERMISSION_DEFAULT_EXCLUSIONS: PermissionGrantExcludedCapability[] = [
+  "destructive_action",
+  "delete",
+  "write_remote",
+  "network_send",
+  "secret_change",
+  "protected_path_mutation",
+  "production_mutation",
+  "billing_or_purchase",
+  "unknown_capability",
+];
+
 export interface CrossPlatformChatSessionOptions {
   /**
    * Stable cross-platform join key.
@@ -300,6 +313,7 @@ type PermissionGrantScopeResolution =
       status: "ok";
       scope: PermissionGrantScope;
       duration: PermissionGrantCreateInput["duration"];
+      review?: PermissionGrantCreateInput["review"];
     }
   | { status: "needs_confirmation" | "unavailable"; message: string };
 
@@ -307,12 +321,59 @@ function resolveGrantScopeFromReply(
   approval: ApprovalRecord,
   proposal: PendingPermissionGrantProposal,
   decision: PermissionGrantReplyDecision,
+  context: { cwd?: string; projectId?: string } = {},
 ): PermissionGrantScopeResolution {
   const requestedScope = requestedGrantScope(proposal, decision);
+  if (decision.standing_confirmation) {
+    const now = Date.now();
+    const review = {
+      kind: "periodic" as const,
+      interval_ms: STANDING_PERMISSION_REVIEW_INTERVAL_MS,
+      due_at: now + STANDING_PERMISSION_REVIEW_INTERVAL_MS,
+      last_reviewed_at: now,
+    };
+    switch (decision.standing_confirmation.scope) {
+      case "workspace": {
+        if (!context.cwd) {
+          return { status: "unavailable", message: "Standing workspace permission requires a current workspace path. The proposal remains pending." };
+        }
+        return {
+          status: "ok",
+          scope: { kind: "workspace", workspace_root: path.resolve(context.cwd) },
+          duration: { kind: "standing" },
+          review,
+        };
+      }
+      case "project": {
+        if (!context.projectId) {
+          return { status: "unavailable", message: "Standing project permission requires a current project id. The proposal remains pending." };
+        }
+        return {
+          status: "ok",
+          scope: { kind: "project", project_id: context.projectId },
+          duration: { kind: "standing" },
+          review,
+        };
+      }
+      case "global":
+        return {
+          status: "ok",
+          scope: { kind: "global" },
+          duration: { kind: "standing" },
+          review,
+        };
+    }
+  }
   if (requestedScope === "global" || decision.requested_scope === "standing") {
     return {
       status: "needs_confirmation",
-      message: "Standing or global permission requires a second explicit confirmation naming the broader scope. The proposal remains pending.",
+      message: [
+        "Standing or global permission requires a second explicit confirmation naming the broader scope.",
+        `Allowed capabilities: ${proposal.capabilities.join(", ")}.`,
+        `Excluded capabilities: ${proposal.excluded_capabilities.length > 0 ? proposal.excluded_capabilities.join(", ") : "none"}.`,
+        "It can be revoked later with the permission revoke control.",
+        "The proposal remains pending.",
+      ].join(" "),
     };
   }
   if (!proposal.allowed_scopes.includes(requestedScope)) {
@@ -403,6 +464,16 @@ function resolveGrantCapabilitiesFromReply(
   }
   const allowed = new Set(proposal.capabilities);
   return decision.capabilities.filter((capability) => allowed.has(capability));
+}
+
+function resolveGrantExcludedCapabilities(
+  proposal: PendingPermissionGrantProposal,
+  duration: PermissionGrantCreateInput["duration"],
+): PermissionGrantExcludedCapability[] {
+  if (duration.kind !== "standing") {
+    return proposal.excluded_capabilities;
+  }
+  return [...new Set([...proposal.excluded_capabilities, ...STANDING_PERMISSION_DEFAULT_EXCLUSIONS])];
 }
 
 function createPermissionGrantOrigin(origin: ApprovalOrigin): PermissionGrantOrigin {
@@ -862,7 +933,10 @@ export class CrossPlatformChatSessionManager {
     if (!store) {
       return "Permission grant could not be recorded because the grant store is unavailable. The approval remains pending.";
     }
-    const scope = resolveGrantScopeFromReply(input.approval, input.proposal, input.decision);
+    const scope = resolveGrantScopeFromReply(input.approval, input.proposal, input.decision, {
+      cwd: input.ingress.cwd,
+      ...(this.deps.permissionGrantContext?.projectId ? { projectId: this.deps.permissionGrantContext.projectId } : {}),
+    });
     if (scope.status !== "ok") {
       return scope.message;
     }
@@ -886,8 +960,9 @@ export class CrossPlatformChatSessionManager {
       },
       scope: scope.scope,
       duration: scope.duration,
+      ...(scope.review ? { review: scope.review } : {}),
       capabilities,
-      excluded_capabilities: input.proposal.excluded_capabilities,
+      excluded_capabilities: resolveGrantExcludedCapabilities(input.proposal, scope.duration),
       audit_refs: [`approval:${input.approval.approval_id}`],
     };
 
@@ -903,9 +978,12 @@ export class CrossPlatformChatSessionManager {
     if (!resolved) {
       return "Permission grant was recorded, but the approval response did not match an active approval for this conversation.";
     }
-    return currentRequestCovered
-      ? "Permission grant recorded. Approval response recorded."
-      : "Permission grant recorded with a narrower boundary; the current approval was not executed.";
+    if (!currentRequestCovered) {
+      return "Permission grant recorded with a narrower boundary; the current approval was not executed.";
+    }
+    return createInput.duration.kind === "standing"
+      ? "Standing permission grant recorded. Approval response recorded. You can revoke it later with the permission revoke control."
+      : "Permission grant recorded. Approval response recorded.";
   }
 
   private async rejectStalePermissionApprovalIfNeeded(
@@ -995,6 +1073,7 @@ export class CrossPlatformChatSessionManager {
       ...(messageId ? { message_id: messageId } : {}),
       ...(goalId ? { goal_id: goalId } : {}),
       ...(userId ? { user_id: userId } : {}),
+      ...(input.cwd ? { cwd: input.cwd } : {}),
       text: input.text,
       userInput: normalizeUserInput(input.userInput, input.text),
       actor: normalizeActor(channel, {

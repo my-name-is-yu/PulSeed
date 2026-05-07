@@ -122,6 +122,17 @@ export const PermissionGrantDurationSchema = z.discriminatedUnion("kind", [
 ]);
 export type PermissionGrantDuration = z.infer<typeof PermissionGrantDurationSchema>;
 
+export const PermissionGrantReviewSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("none") }).strict(),
+  z.object({
+    kind: z.literal("periodic"),
+    interval_ms: z.number().int().positive(),
+    due_at: z.number().int().nonnegative(),
+    last_reviewed_at: z.number().int().nonnegative().optional(),
+  }).strict(),
+]);
+export type PermissionGrantReview = z.infer<typeof PermissionGrantReviewSchema>;
+
 export const PermissionGrantFreshnessBindingSchema = z.object({
   permission_state_epoch: z.number().int().nonnegative().optional(),
   project_state_ref: z.string().min(1).optional(),
@@ -150,6 +161,7 @@ export const PermissionGrantRecordSchema = z.object({
   source: PermissionGrantSourceSchema,
   scope: PermissionGrantScopeSchema,
   duration: PermissionGrantDurationSchema,
+  review: PermissionGrantReviewSchema.default({ kind: "none" }),
   capabilities: z.array(PermissionGrantCapabilitySchema).min(1),
   excluded_capabilities: z.array(PermissionGrantExcludedCapabilitySchema).default([]),
   state: PermissionGrantStateSchema,
@@ -216,6 +228,13 @@ export const PermissionGrantRecordSchema = z.object({
       message: "superseded permission grants require superseded_by",
     });
   }
+  if (grant.duration.kind === "standing" && grant.review.kind === "none") {
+    ctx.addIssue({
+      code: "custom",
+      path: ["review"],
+      message: "standing permission grants require an explicit review policy",
+    });
+  }
 });
 export type PermissionGrantRecord = z.infer<typeof PermissionGrantRecordSchema>;
 const PermissionGrantRecordRuntimeSchema = PermissionGrantRecordSchema as unknown as z.ZodType<PermissionGrantRecord>;
@@ -227,6 +246,7 @@ export interface PermissionGrantCreateInput {
   source: PermissionGrantSource;
   scope: PermissionGrantScope;
   duration: PermissionGrantDuration;
+  review?: PermissionGrantReview;
   capabilities: PermissionGrantCapability[];
   excluded_capabilities?: PermissionGrantExcludedCapability[];
   staleness?: PermissionGrantStaleness;
@@ -248,9 +268,19 @@ export interface PermissionGrantStaleInput {
   audit_refs?: string[];
 }
 
+export interface PermissionGrantReviewInput {
+  reviewed_at?: number;
+  next_review_due_at: number;
+  audit_refs?: string[];
+}
+
 export function isPermissionGrantExpired(record: PermissionGrantRecord, now = Date.now()): boolean {
   if (record.state === "expired") return true;
   return record.duration.kind === "expires_at" && record.duration.expires_at <= now;
+}
+
+export function isPermissionGrantReviewDue(record: PermissionGrantRecord, now = Date.now()): boolean {
+  return record.review.kind === "periodic" && record.review.due_at <= now;
 }
 
 export function isPermissionGrantStale(record: PermissionGrantRecord): boolean {
@@ -260,6 +290,7 @@ export function isPermissionGrantStale(record: PermissionGrantRecord): boolean {
 export function isPermissionGrantCurrentlyActive(record: PermissionGrantRecord, now = Date.now()): boolean {
   return record.state === "active"
     && !isPermissionGrantExpired(record, now)
+    && !isPermissionGrantReviewDue(record, now)
     && !isPermissionGrantStale(record)
     && !(record.duration.kind === "once" && record.usage_count > 0);
 }
@@ -371,6 +402,32 @@ export class PermissionGrantStore {
     });
   }
 
+  async review(grantId: string, input: PermissionGrantReviewInput): Promise<PermissionGrantRecord | null> {
+    return this.update(grantId, (grant) => {
+      if (grant.state !== "active") return grant;
+      const reviewedAt = input.reviewed_at ?? this.now();
+      const intervalMs = Math.max(input.next_review_due_at - reviewedAt, 1);
+      return {
+        ...grant,
+        state_version: grant.state_version + 1,
+        state_epoch: reviewedAt,
+        updated_at: reviewedAt,
+        review: {
+          kind: "periodic",
+          interval_ms: intervalMs,
+          due_at: input.next_review_due_at,
+          last_reviewed_at: reviewedAt,
+        },
+        staleness: {
+          ...grant.staleness,
+          status: "fresh",
+          checked_at: reviewedAt,
+        },
+        audit_refs: appendUnique(grant.audit_refs, input.audit_refs ?? []),
+      };
+    });
+  }
+
   async recordUse(grantId: string, input: { used_at?: number; audit_ref?: string } = {}): Promise<PermissionGrantRecord | null> {
     return this.update(grantId, (grant) => {
       const usedAt = input.used_at ?? this.now();
@@ -433,6 +490,7 @@ export class PermissionGrantStore {
         source: input.source,
         scope: input.scope,
         duration: input.duration,
+        review: input.review ?? { kind: "none" },
         capabilities: unique(input.capabilities),
         excluded_capabilities: unique(input.excluded_capabilities ?? []),
         state,

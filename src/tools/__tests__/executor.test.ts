@@ -7,7 +7,10 @@ import { ToolRegistry } from "../registry.js";
 import { ToolPermissionManager } from "../permission.js";
 import { ConcurrencyController } from "../concurrency.js";
 import { ShellTool } from "../system/ShellTool/ShellTool.js";
-import { PermissionGrantStore } from "../../runtime/store/permission-grant-store.js";
+import {
+  PermissionGrantStore,
+  type PermissionGrantCreateInput,
+} from "../../runtime/store/permission-grant-store.js";
 import type { ExecutionPolicy } from "../../orchestrator/execution/agent-loop/execution-policy.js";
 import { makeTempDir, cleanupTempDir } from "../../../tests/helpers/temp-dir.js";
 import type {
@@ -107,6 +110,10 @@ async function createActiveGrant(
     sessionId?: string;
     capabilities?: Array<"write_workspace" | "run_safe_local_commands" | "run_tests">;
     excludedCapabilities?: Array<"destructive_action" | "write_remote" | "network_send" | "protected_path_mutation" | "unknown_capability">;
+    origin?: Partial<PermissionGrantCreateInput["origin"]>;
+    scope?: PermissionGrantCreateInput["scope"];
+    duration?: PermissionGrantCreateInput["duration"];
+    review?: PermissionGrantCreateInput["review"];
     stale?: boolean;
   } = {},
 ): Promise<PermissionGrantStore> {
@@ -122,18 +129,20 @@ async function createActiveGrant(
     origin: {
       channel: "chat",
       session_id: overrides.sessionId ?? "session-1",
+      ...overrides.origin,
     },
     source: {
       kind: "redacted_text",
       redacted_text: "[redacted] approved this scoped permission",
     },
-    scope: {
+    scope: overrides.scope ?? {
       kind: "goal",
       goal_id: overrides.goalId ?? "goal-1",
     },
-    duration: {
+    duration: overrides.duration ?? {
       kind: "until_goal_done",
     },
+    ...(overrides.review ? { review: overrides.review } : {}),
     capabilities: overrides.capabilities ?? ["write_workspace"],
     excluded_capabilities: overrides.excludedCapabilities ?? [
       "destructive_action",
@@ -374,6 +383,124 @@ describe("ToolExecutor", () => {
         expect(approvalFn).not.toHaveBeenCalled();
         expect(await store.load("grant-1")).toMatchObject({
           usage_count: 1,
+        });
+      });
+
+      it("uses a standing workspace grant across sessions only within the approving origin boundary", async () => {
+        const tool = createMockTool({
+          name: "standing-write-workspace-tool",
+          metadata: {
+            name: "standing-write-workspace-tool",
+            aliases: [],
+            permissionLevel: "write_local",
+            isReadOnly: false,
+            isDestructive: false,
+            shouldDefer: false,
+            alwaysLoad: false,
+            maxConcurrency: 0,
+            maxOutputChars: 8000,
+            tags: [],
+          } as ITool["metadata"],
+        });
+        const store = await createActiveGrant({
+          sessionId: "old-session",
+          origin: {
+            conversation_id: "conversation-1",
+            user_id: "user-1",
+          },
+          scope: {
+            kind: "workspace",
+            workspace_root: "/tmp",
+          },
+          duration: {
+            kind: "standing",
+          },
+          review: {
+            kind: "periodic",
+            interval_ms: 30 * 24 * 60 * 60 * 1000,
+            due_at: Date.now() + 30 * 24 * 60 * 60 * 1000,
+            last_reviewed_at: Date.now(),
+          },
+        });
+        const { executor } = createExecutor([tool]);
+        const approvalFn = vi.fn().mockResolvedValue(false);
+        const ctx = createMockContext({
+          approvalFn,
+          sessionId: "new-session",
+          executionPolicy: createExecutionPolicy({ approvalPolicy: "on_request", workspaceRoot: "/tmp" }),
+          permissionGrantStore: store,
+          runtimeReplyTarget: {
+            conversation_id: "conversation-1",
+            user_id: "user-1",
+          },
+        });
+
+        const result = await executor.execute("standing-write-workspace-tool", { value: "x" }, ctx);
+
+        expect(result.success).toBe(true);
+        expect(approvalFn).not.toHaveBeenCalled();
+        expect(await store.load("grant-1")).toMatchObject({
+          usage_count: 1,
+        });
+      });
+
+      it("asks again when a standing workspace grant is due for review", async () => {
+        const tool = createMockTool({
+          name: "standing-review-due-tool",
+          metadata: {
+            name: "standing-review-due-tool",
+            aliases: [],
+            permissionLevel: "write_local",
+            isReadOnly: false,
+            isDestructive: false,
+            shouldDefer: false,
+            alwaysLoad: false,
+            maxConcurrency: 0,
+            maxOutputChars: 8000,
+            tags: [],
+          } as ITool["metadata"],
+        });
+        const store = await createActiveGrant({
+          origin: {
+            conversation_id: "conversation-1",
+            user_id: "user-1",
+          },
+          scope: {
+            kind: "workspace",
+            workspace_root: "/tmp",
+          },
+          duration: {
+            kind: "standing",
+          },
+          review: {
+            kind: "periodic",
+            interval_ms: 1,
+            due_at: 1,
+            last_reviewed_at: 0,
+          },
+        });
+        const { executor } = createExecutor([tool]);
+        const approvalFn = vi.fn().mockResolvedValue(false);
+        const ctx = createMockContext({
+          approvalFn,
+          executionPolicy: createExecutionPolicy({ approvalPolicy: "on_request", workspaceRoot: "/tmp" }),
+          permissionGrantStore: store,
+          runtimeReplyTarget: {
+            conversation_id: "conversation-1",
+            user_id: "user-1",
+          },
+        });
+
+        const result = await executor.execute("standing-review-due-tool", { value: "x" }, ctx);
+
+        expect(result.success).toBe(false);
+        expect(result.execution).toMatchObject({
+          status: "not_executed",
+          reason: "approval_denied",
+        });
+        expect(approvalFn).toHaveBeenCalledOnce();
+        expect(await store.load("grant-1")).toMatchObject({
+          usage_count: 0,
         });
       });
 

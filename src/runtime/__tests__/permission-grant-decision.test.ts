@@ -126,4 +126,32 @@ describe("classifyConversationalPermissionGrantDecision", () => {
       requested_scope: "standing",
     });
   });
+
+  it("preserves explicit standing confirmation only when the model returns the typed confirmation field", async () => {
+    const decision = await classifyConversationalPermissionGrantDecision(
+      "I explicitly confirm standing workspace permission for write_workspace and run_tests, excluding write_remote and network_send, and I can revoke it later.",
+      {
+        approval,
+        proposal,
+        replyOrigin: approval.origin!,
+        llmClient: createSingleMockLLMClient(JSON.stringify({
+          decision: "extend_scope",
+          requested_scope: "standing",
+          standing_confirmation: {
+            scope: "workspace",
+          },
+          confidence: 0.98,
+          rationale: "The reply explicitly confirms the standing workspace permission boundary.",
+        })),
+      },
+    );
+
+    expect(decision).toMatchObject({
+      decision: "extend_scope",
+      requested_scope: "standing",
+      standing_confirmation: {
+        scope: "workspace",
+      },
+    });
+  });
 });

@@ -318,10 +318,15 @@ function grantScopeMatchesContext(grant: PermissionGrantRecord, context: ToolCal
 
 function grantOriginMatchesContext(grant: PermissionGrantRecord, context: ToolCallContext): boolean {
   const sessionIds = contextSessionIds(context);
-  if (grant.origin.session_id && !sessionIds.includes(grant.origin.session_id)) return false;
+  const standingGrant = grant.duration.kind === "standing";
+  if (grant.origin.session_id && !standingGrant && !sessionIds.includes(grant.origin.session_id)) return false;
   if (grant.origin.conversation_id) {
     const conversationIds = contextConversationIds(context);
     if (!conversationIds.includes(grant.origin.conversation_id)) return false;
+  }
+  if (grant.origin.user_id) {
+    const userIds = contextUserIds(context);
+    if (userIds.length > 0 && !userIds.includes(grant.origin.user_id)) return false;
   }
   return true;
 }
@@ -335,6 +340,13 @@ function contextConversationIds(context: ToolCallContext): string[] {
     context.conversationSessionId,
     stringField(context.runtimeReplyTarget, "conversation_id"),
     stringField(context.runtimeControlActor, "conversation_id"),
+  ].filter((value): value is string => Boolean(value));
+}
+
+function contextUserIds(context: ToolCallContext): string[] {
+  return [
+    stringField(context.runtimeReplyTarget, "user_id"),
+    stringField(context.runtimeControlActor, "user_id"),
   ].filter((value): value is string => Boolean(value));
 }
 
