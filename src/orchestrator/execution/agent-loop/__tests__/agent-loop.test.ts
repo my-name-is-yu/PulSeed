@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { z } from "zod";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { execFileSync } from "node:child_process";
 import type { ILLMClient, LLMMessage, LLMRequestOptions, LLMResponse } from "../../../../base/llm/llm-client.js";
 import type { ITool, PermissionCheckResult, ToolCallContext, ToolResult } from "../../../../tools/types.js";
 import { ToolRegistry } from "../../../../tools/registry.js";
@@ -1189,6 +1190,151 @@ describe("agentloop phase 1", () => {
     const fallbackToolResult = llmCalls[1]?.messages.find((message) => message.role === "user" && message.content.startsWith("Tool result"));
     expect(fallbackToolResult?.content).toContain("\"type\": \"tool_observation\"");
     expect(fallbackToolResult?.content).toContain("\"state\": \"success\"");
+  });
+
+  it("does not wrap external agent runtime clients in the prompted tool protocol", async () => {
+    const modelInfo = makeModelInfo({ capabilities: { ...defaultAgentLoopCapabilities, toolCalling: false } });
+    const llmCalls: Array<{ messages: LLMMessage[]; options?: LLMRequestOptions }> = [];
+    const cwd = process.cwd();
+    const llmClient: ILLMClient = {
+      async sendMessage(messages: LLMMessage[], options?: LLMRequestOptions): Promise<LLMResponse> {
+        llmCalls.push({ messages, options });
+        return {
+          content: finalJson(),
+          usage: { input_tokens: 1, output_tokens: 1 },
+          stop_reason: "end_turn",
+        };
+      },
+      parseJSON<T>(content: string, schema: z.ZodSchema<T>): T {
+        return schema.parse(JSON.parse(content));
+      },
+      supportsToolCalling: () => false,
+      usesExternalAgentRuntime: () => true,
+    };
+    const { router, runtime } = makeToolRuntime();
+    const modelClient = new ILLMClientAgentLoopModelClient(llmClient, new StaticAgentLoopModelRegistry([modelInfo]));
+    const runner = new BoundedAgentLoopRunner({ modelClient, toolRouter: router, toolRuntime: runtime });
+
+    const result = await runner.run({
+      session: createAgentLoopSession(),
+      turnId: "turn-1",
+      goalId: "goal-1",
+      taskId: "task-1",
+      cwd,
+      model: modelInfo.ref,
+      modelInfo,
+      messages: [{ role: "user", content: "do it" }],
+      outputSchema: z.object({ status: z.literal("done"), finalAnswer: z.string() }),
+      budget: withDefaultBudget({ maxModelTurns: 2 }),
+      toolPolicy: {},
+      toolCallContext: {
+        cwd,
+        goalId: "goal-1",
+        trustBalance: 0,
+        preApproved: true,
+        approvalFn: async () => false,
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.toolCalls).toBe(0);
+    expect(llmCalls).toHaveLength(1);
+    expect(llmCalls[0]?.options?.tools).toBeUndefined();
+    expect(llmCalls[0]?.options?.cwd).toBe(cwd);
+    expect(llmCalls[0]?.options?.system ?? "").not.toContain("You do not have native function/tool calling");
+  });
+
+  it("detects external runtime file changes inside ignored disposable workspaces", async () => {
+    const repo = makeTempDir();
+    fs.writeFileSync(path.join(repo, "tracked.txt"), "base\n", "utf-8");
+    fs.writeFileSync(path.join(repo, ".gitignore"), "tmp/\n", "utf-8");
+    execFileSync("git", ["init"], { cwd: repo });
+    execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: repo });
+    execFileSync("git", ["config", "user.name", "Test"], { cwd: repo });
+    execFileSync("git", ["add", "tracked.txt", ".gitignore"], { cwd: repo });
+    execFileSync("git", ["commit", "-m", "init"], { cwd: repo });
+    const workspace = path.join(repo, "tmp", "canary-workspace");
+    fs.mkdirSync(workspace, { recursive: true });
+    fs.writeFileSync(path.join(workspace, "README.md"), "ignored disposable workspace\n", "utf-8");
+
+    const modelInfo = makeModelInfo({ capabilities: { ...defaultAgentLoopCapabilities, toolCalling: false } });
+    let turnCount = 0;
+    const modelClient: AgentLoopModelClient = {
+      async getModelInfo(): Promise<AgentLoopModelInfo> {
+        return modelInfo;
+      },
+      async createTurn(input: AgentLoopModelRequest): Promise<AgentLoopModelResponse> {
+        const protocol = await this.createTurnProtocol!(input);
+        return {
+          content: protocol.assistant.map((message) => message.content).join("\n"),
+          toolCalls: protocol.toolCalls,
+          stopReason: protocol.stopReason,
+          usage: protocol.usage,
+        };
+      },
+      async createTurnProtocol(input: AgentLoopModelRequest) {
+        turnCount += 1;
+        if (turnCount === 1) {
+          const outputPath = path.join(input.cwd ?? workspace, "reports", "external-runtime.json");
+          fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+          fs.writeFileSync(outputPath, JSON.stringify({ ok: true }), "utf-8");
+        }
+        const content = turnCount === 1
+          ? JSON.stringify({ status: "done", verified: true })
+          : turnCount === 2
+            ? JSON.stringify({ finalAnswer: "missing status after repair" })
+            : JSON.stringify({
+                status: "done",
+                finalAnswer: "wrote ignored workspace artifact",
+                filesChanged: [],
+                completionEvidence: ["external runtime wrote reports/external-runtime.json"],
+                blockers: [],
+              });
+        return {
+          assistant: [{
+            content,
+            phase: "final_answer" as const,
+          }],
+          toolCalls: [],
+          responseItems: [],
+          stopReason: "end_turn",
+          responseCompleted: true,
+          usage: { inputTokens: 1, outputTokens: 1 },
+        };
+      },
+    };
+    const { router, runtime } = makeToolRuntime();
+    const runner = new BoundedAgentLoopRunner({ modelClient, toolRouter: router, toolRuntime: runtime });
+
+    const result = await runner.run({
+      session: createAgentLoopSession(),
+      turnId: "turn-1",
+      goalId: "goal-1",
+      taskId: "task-1",
+      cwd: workspace,
+      model: modelInfo.ref,
+      modelInfo,
+      messages: [{ role: "user", content: "write artifact" }],
+      outputSchema: z.object({
+        status: z.literal("done"),
+        finalAnswer: z.string(),
+        filesChanged: z.array(z.string()).default([]),
+        completionEvidence: z.array(z.string()).default([]),
+        blockers: z.array(z.string()).default([]),
+      }),
+      budget: withDefaultBudget({ maxModelTurns: 3 }),
+      toolPolicy: {},
+      toolCallContext: {
+        cwd: workspace,
+        goalId: "goal-1",
+        trustBalance: 0,
+        preApproved: true,
+        approvalFn: async () => false,
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.changedFiles).toEqual(["reports/external-runtime.json"]);
   });
 
   it("stops after the schema repair budget is exhausted", async () => {

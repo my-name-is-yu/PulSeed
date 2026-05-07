@@ -752,11 +752,15 @@ describe("TaskLifecycle", async () => {
 
       const result = await lifecycle.executeTask(task, adapter);
 
-      // Baseline and post-execution capture still run so failed-result evidence cannot bypass filtering.
       expect(result.filesChanged).toBe(false);
       expect(result.filesChangedPaths).toEqual([]);
       expect(result.fileDiffs).toEqual([]);
-      expect(mockExecFileSync.mock.calls.length).toBeGreaterThanOrEqual(6);
+      expect(mockExecFileSync).toHaveBeenCalledWith(
+        "git",
+        ["check-ignore", "--", "."],
+        expect.objectContaining({ encoding: "utf-8" }),
+      );
+      expect(mockExecFileSync.mock.calls.length).toBeGreaterThanOrEqual(2);
     });
   });
 
@@ -1066,6 +1070,68 @@ describe("TaskLifecycle", async () => {
       expect(result.filesChangedPaths).toEqual([]);
       expect(result.agentLoop?.verificationHints).toContain("No files were modified");
       expect(persisted.status).toBe("error");
+    });
+
+    it("defers external AgentLoop success ledger events until task verification observes the result", async () => {
+      const llm = createMockLLMClient([]);
+      const workspace = path.join(tmpDir, "external-success-deferred");
+      fs.mkdirSync(workspace, { recursive: true });
+      fs.writeFileSync(path.join(workspace, "README.md"), "base\n", "utf-8");
+      const task = makeTask({
+        id: "task-external-success-deferred",
+        constraints: [`workspace_path:${workspace}`],
+      });
+      const agentLoopRunner = {
+        runTask: vi.fn().mockImplementation(async (input: { cwd?: string }) => {
+          expect(input.cwd).toBe(workspace);
+          fs.writeFileSync(path.join(workspace, "result.txt"), "done\n", "utf-8");
+          return makeAgentLoopResult("completed", {
+            output: {
+              status: "done",
+              finalAnswer: "created result.txt",
+              summary: "created result",
+              filesChanged: [],
+              testsRun: [],
+              completionEvidence: ["external runtime reported result.txt"],
+              verificationHints: [],
+              blockers: [],
+            },
+            changedFiles: ["result.txt"],
+            requiresPostVerificationBeforeSuccessLedger: true,
+            workspace: {
+              requestedCwd: workspace,
+              executionCwd: workspace,
+              isolated: false,
+              cleanupStatus: "not_requested",
+              dirty: false,
+              disposition: "not_isolated",
+            },
+          });
+        }),
+      } as unknown as TaskAgentLoopRunner;
+      const lifecycle = createLifecycle(llm, {
+        agentLoopRunner,
+        execFileSyncFn: realExecFileSync,
+      });
+      await stateManager.writeRaw(`tasks/${task.goal_id}/${task.id}.json`, task);
+
+      const result = await lifecycle.executeTaskWithAgentLoop(task, "workspace context", "knowledge context");
+
+      const persisted = await stateManager.readRaw(`tasks/${task.goal_id}/${task.id}.json`) as Record<string, unknown>;
+      const ledger = await stateManager.readRaw(`tasks/${task.goal_id}/ledger/${task.id}.json`) as {
+        events: Array<Record<string, unknown>>;
+        summary: Record<string, unknown>;
+      };
+
+      expect(result.success).toBe(true);
+      expect(result.agentLoop?.requiresPostVerificationBeforeSuccessLedger).toBe(true);
+      expect(result.filesChangedPaths).toEqual(["result.txt"]);
+      expect(result.fileDiffs?.map((diff) => diff.path)).toEqual(["result.txt"]);
+      expect(persisted.status).toBe("running");
+      expect(persisted.completed_at).toBeNull();
+      expect(ledger.events.map((event) => event.type)).toEqual(["started"]);
+      expect(ledger.summary.latest_event_type).toBe("started");
+      expect(ledger.summary.task_status).toBe("running");
     });
 
     it.each([

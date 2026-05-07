@@ -101,6 +101,7 @@ export interface AgentLoopResult<TOutput> {
   executionPolicy?: ExecutionPolicy;
   activeBudgetMs?: number;
   generatedEstimateMs?: number;
+  requiresPostVerificationBeforeSuccessLedger?: boolean;
 }
 
 export interface AgentLoopCompletionValidationResult {

@@ -61,7 +61,7 @@ interface FilesystemSnapshotEntry {
 }
 
 type WorkspaceSnapshot =
-  | { kind: "git"; paths: Set<string> }
+  | { kind: "git"; paths: Set<string>; files?: Map<string, FilesystemSnapshotEntry> }
   | { kind: "filesystem"; files: Map<string, FilesystemSnapshotEntry> };
 
 const FILESYSTEM_SNAPSHOT_EXCLUDED_DIRS = new Set([
@@ -1052,6 +1052,8 @@ export class BoundedAgentLoopRunner {
         model: turn.model,
         messages,
         tools,
+        cwd: turn.cwd,
+        sandboxMode: turn.executionPolicy?.sandboxMode,
         abortSignal: turn.abortSignal,
       });
     }
@@ -1060,6 +1062,8 @@ export class BoundedAgentLoopRunner {
       model: turn.model,
       messages,
       tools,
+      cwd: turn.cwd,
+      sandboxMode: turn.executionPolicy?.sandboxMode,
       abortSignal: turn.abortSignal,
     });
     return {
@@ -1147,22 +1151,55 @@ export class BoundedAgentLoopRunner {
   }
 
   private async captureWorkspaceSnapshot(cwd: string): Promise<WorkspaceSnapshot | null> {
+    if (await this.shouldUseFilesystemWorkspaceSnapshot(cwd)) {
+      return { kind: "filesystem", files: await this.captureFilesystemSnapshot(cwd) };
+    }
     const result = await execFileNoThrow("git", ["status", "--porcelain", "--untracked-files=all"], { cwd, timeoutMs: 10_000 });
     if ((result.exitCode ?? 1) === 0) {
-      return { kind: "git", paths: new Set(this.parseGitStatusPaths(result.stdout)) };
+      return {
+        kind: "git",
+        paths: new Set(this.parseGitStatusPaths(result.stdout)),
+        ...(!await this.isGitRepoRootCwd(cwd) ? { files: await this.captureFilesystemSnapshot(cwd) } : {}),
+      };
     }
     return { kind: "filesystem", files: await this.captureFilesystemSnapshot(cwd) };
   }
 
   private async collectChangedFiles(cwd: string, before: WorkspaceSnapshot | null): Promise<string[]> {
-    const afterResult = await execFileNoThrow("git", ["status", "--porcelain", "--untracked-files=all"], { cwd, timeoutMs: 10_000 });
-    if ((afterResult.exitCode ?? 1) !== 0) {
-      if (before?.kind !== "filesystem") return [];
+    if (before?.kind === "filesystem") {
       return this.collectFilesystemChangedPaths(before.files, await this.captureFilesystemSnapshot(cwd));
     }
+    const afterResult = await execFileNoThrow("git", ["status", "--porcelain", "--untracked-files=all"], { cwd, timeoutMs: 10_000 });
+    if ((afterResult.exitCode ?? 1) !== 0) {
+      return [];
+    }
     const after = new Set(this.parseGitStatusPaths(afterResult.stdout));
-    if (!before || before.kind !== "git") return [...after];
-    return [...after].filter((file) => !before.paths.has(file));
+    const gitChanged = !before || before.kind !== "git"
+      ? [...after]
+      : [...after].filter((file) => !before.paths.has(file));
+    if (before?.kind === "git" && before.files) {
+      const filesystemChanged = this.collectFilesystemChangedPaths(before.files, await this.captureFilesystemSnapshot(cwd));
+      return [...new Set([...gitChanged, ...filesystemChanged])].sort();
+    }
+    return gitChanged;
+  }
+
+  private async shouldUseFilesystemWorkspaceSnapshot(cwd: string): Promise<boolean> {
+    const ignored = await execFileNoThrow("git", ["check-ignore", "-q", "--", "."], { cwd, timeoutMs: 10_000 });
+    if ((ignored.exitCode ?? 1) === 0) return true;
+
+    const tracked = await execFileNoThrow("git", ["ls-files", "--", "."], { cwd, timeoutMs: 10_000 });
+    return (tracked.exitCode ?? 1) === 0 && tracked.stdout.trim().length === 0;
+  }
+
+  private async isGitRepoRootCwd(cwd: string): Promise<boolean> {
+    const root = await execFileNoThrow("git", ["rev-parse", "--show-toplevel"], { cwd, timeoutMs: 10_000 });
+    if ((root.exitCode ?? 1) !== 0 || !root.stdout.trim()) return false;
+    try {
+      return await fsp.realpath(cwd) === await fsp.realpath(root.stdout.trim());
+    } catch {
+      return path.resolve(cwd) === path.resolve(root.stdout.trim());
+    }
   }
 
   private parseGitStatusPaths(stdout: string): string[] {

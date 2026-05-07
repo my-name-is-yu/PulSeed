@@ -127,7 +127,13 @@ export class CodexLLMClient extends BaseLLMClient implements ILLMClient {
 
     for (let attempt = 0; attempt < this.retryAttempts; attempt++) {
       try {
-        const content = await this._spawnCodex(prompt, model, options?.abortSignal);
+        const content = await this._spawnCodex(
+          prompt,
+          model,
+          options?.abortSignal,
+          options?.sandboxPolicy ?? this.sandboxPolicy,
+          options?.cwd,
+        );
         return {
           content,
           usage: {
@@ -152,12 +158,19 @@ export class CodexLLMClient extends BaseLLMClient implements ILLMClient {
 
   /** CodexLLMClient does not support native provider function/tool calling. */
   supportsToolCalling(): boolean { return false; }
+  usesExternalAgentRuntime(): boolean { return true; }
 
   /**
    * Spawn `codex exec -s <sandbox> [-o <tmpfile>] [--model <model>] "PROMPT"`
    * and return the response content read from the temp output file.
    */
-  private async _spawnCodex(prompt: string, model?: string, abortSignal?: AbortSignal): Promise<string> {
+  private async _spawnCodex(
+    prompt: string,
+    model?: string,
+    abortSignal?: AbortSignal,
+    sandboxPolicy = this.sandboxPolicy,
+    cwd = this.repoPath,
+  ): Promise<string> {
     if (abortSignal?.aborted) {
       throw new LLMError("CodexLLMClient: request aborted by operator stop");
     }
@@ -173,7 +186,7 @@ export class CodexLLMClient extends BaseLLMClient implements ILLMClient {
       const spawnArgs: string[] = [
         "exec",
         "-s",
-        this.sandboxPolicy,
+        sandboxPolicy,
         "-o",
         tmpFile,
       ];
@@ -195,7 +208,7 @@ export class CodexLLMClient extends BaseLLMClient implements ILLMClient {
       const child = spawn(this.cliPath, spawnArgs, {
         stdio: ["pipe", "pipe", "pipe"],
         env: { ...process.env, TERM: "dumb" },
-        cwd: this.repoPath,
+        cwd,
         detached: process.platform !== "win32",
       });
 

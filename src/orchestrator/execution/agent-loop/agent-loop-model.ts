@@ -1,5 +1,6 @@
 import type { ToolDefinition } from "../../../base/llm/llm-client.js";
 import type { ToolActivityCategory } from "../../../tools/types.js";
+import type { AgentLoopSandboxMode } from "./execution-policy.js";
 import type { ResponseItem } from "./response-item.js";
 
 export interface AgentLoopModelRef {
@@ -109,6 +110,8 @@ export interface AgentLoopModelRequest {
   system?: string;
   maxOutputTokens?: number;
   reasoningEffort?: AgentLoopReasoningEffort;
+  cwd?: string;
+  sandboxMode?: AgentLoopSandboxMode;
   abortSignal?: AbortSignal;
 }
 

@@ -756,6 +756,38 @@ describe("agentloop phase 6 CorePhaseRunner", () => {
     expect(result.output?.confidence).toBe(0.9);
     expect(modelClient.calls[1].messages.some((m) => m.content.includes("required tool"))).toBe(true);
   });
+
+  it("runs core phase model calls with read-only sandbox posture", async () => {
+    const modelInfo = makeModelInfo();
+    const modelClient = new ScriptedModelClient(modelInfo, [
+      { content: JSON.stringify({ confidence: 0.9, evidence: ["ok"] }), toolCalls: [], stopReason: "end_turn" },
+    ]);
+    const registry = new ToolRegistry();
+    const { router, runtime } = makeRuntime(registry);
+    const runner = new CorePhaseRunner({
+      boundedRunner: new BoundedAgentLoopRunner({ modelClient, toolRouter: router, toolRuntime: runtime }),
+      model: modelInfo.ref,
+      modelInfo,
+      cwd: process.cwd(),
+    });
+
+    const result = await runner.run(
+      {
+        phase: "observe_evidence",
+        inputSchema: z.object({ goalId: z.string() }),
+        outputSchema: z.object({ confidence: z.number(), evidence: z.array(z.string()) }),
+        requiredTools: [],
+        allowedTools: [],
+        failPolicy: "fallback_deterministic",
+      },
+      { goalId: "goal-1" },
+      { goalId: "goal-1" },
+    );
+
+    expect(result.success).toBe(true);
+    expect(modelClient.calls[0]?.sandboxMode).toBe("read_only");
+    expect(result.executionPolicy?.sandboxMode).toBe("read_only");
+  });
 });
 
 describe("agentloop phase 7 ChatAgentLoopRunner and CoreLoopControlTools", () => {

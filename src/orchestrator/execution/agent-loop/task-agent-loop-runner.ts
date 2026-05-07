@@ -121,11 +121,22 @@ export class TaskAgentLoopRunner {
         ...commandResult,
         relevantToTask: isTaskRelevantVerificationCommand(input.task, commandResult),
       }));
+      const hasPulSeedObservedRuntimeVerification = commandResults.some((commandResult) =>
+        commandResult.success &&
+        commandResult.evidenceEligible &&
+        commandResult.relevantToTask !== false
+      );
+      const requiresPostVerificationBeforeSuccessLedger =
+        success &&
+        modelInfo.capabilities.toolCalling === false &&
+        result.changedFiles.length > 0 &&
+        !hasPulSeedObservedRuntimeVerification;
       finalResult = {
         ...result,
         success,
         commandResults,
         activeBudgetMs: turn.budget.maxWallClockMs,
+        requiresPostVerificationBeforeSuccessLedger,
       };
     } catch (error) {
       runError = error;

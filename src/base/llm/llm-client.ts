@@ -43,6 +43,10 @@ export interface LLMRequestOptions {
   model_tier?: ModelTier;
   /** Tool definitions for function calling (tool use). */
   tools?: ToolDefinition[];
+  /** Optional per-request sandbox override for CLI-backed clients. */
+  sandboxPolicy?: "read-only" | "workspace-write" | "danger-full-access";
+  /** Optional per-request working directory for CLI-backed clients. */
+  cwd?: string;
   /** Optional cancellation signal for runtime/operator stop. */
   abortSignal?: AbortSignal;
 }
@@ -84,6 +88,12 @@ export interface ILLMClient {
    * definitions should override this to return false.
    */
   supportsToolCalling?(): boolean;
+  /**
+   * Whether this client is already a CLI-backed agent runtime with its own tools.
+   * Such clients should receive the task prompt directly instead of PulSeed's
+   * prompted JSON tool protocol.
+   */
+  usesExternalAgentRuntime?(): boolean;
 }
 
 // ─── Constants ───

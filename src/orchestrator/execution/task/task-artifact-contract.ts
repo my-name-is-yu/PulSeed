@@ -27,6 +27,13 @@ function hasArtifactRequiredConstraint(constraints: readonly string[] | undefine
   }) ?? false;
 }
 
+function hasKaggleArtifactKindConstraint(constraints: readonly string[] | undefined): boolean {
+  return constraints?.some((constraint) => {
+    const token = constraint.trim();
+    return token === KAGGLE_RUN_SPEC_PROFILE_CONSTRAINT || token === KAGGLE_DOMAIN_CONSTRAINT;
+  }) ?? false;
+}
+
 export function isArtifactContractRequired(input: {
   artifactContract?: Pick<TaskArtifactContract, "required">;
   taskConstraints?: readonly string[];
@@ -74,7 +81,9 @@ export async function verifyTaskArtifactContract(
   }
 
   const referenceTime = task.started_at ?? task.created_at;
-  const failures = required ? requiredArtifactKindFailures(requirements) : [];
+  const failures = required && requiresKaggleArtifactKinds(task, options.goal)
+    ? requiredArtifactKindFailures(requirements)
+    : [];
   const passed: string[] = [];
   for (const requirement of requirements) {
     const result = await verifyArtifactRequirement(requirement, cwd, referenceTime, required);
@@ -95,6 +104,13 @@ export async function verifyTaskArtifactContract(
     passed: true,
     description: `Artifact contract verification passed (${passed.length}/${requirements.length} artifact(s)): ${passed.join("; ")}`,
   };
+}
+
+function requiresKaggleArtifactKinds(
+  task: Task,
+  goal?: Pick<Goal, "constraints"> | null,
+): boolean {
+  return hasKaggleArtifactKindConstraint(task.constraints) || hasKaggleArtifactKindConstraint(goal?.constraints);
 }
 
 function requiredArtifactKindFailures(requirements: readonly TaskArtifactRequirement[]): string[] {
@@ -185,11 +201,12 @@ function verifyMetricsJson(
       description: `${requirement.path} field type mismatch(es): ${typeFailures.join(", ")}`,
     };
   }
-  if (!Object.values(data).some((value) => typeof value === "number")) {
+  const typedFields = Object.keys(requirement.field_types ?? {});
+  const hasExplicitFieldContract = requirement.required_fields.length > 0 || typedFields.length > 0;
+  if (!hasExplicitFieldContract && !Object.values(data).some((value) => typeof value === "number")) {
     return { passed: false, description: `${requirement.path} does not contain any numeric metric fields` };
   }
 
-  const typedFields = Object.keys(requirement.field_types ?? {});
   return {
     passed: true,
     description: `${requirement.path} metrics JSON contains ${requirement.required_fields.length > 0 ? requirement.required_fields.join(", ") : "required fields"}${typedFields.length > 0 ? ` with typed fields ${typedFields.join(", ")}` : ""}`,

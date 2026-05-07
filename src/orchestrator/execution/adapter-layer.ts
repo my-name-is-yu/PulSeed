@@ -59,6 +59,7 @@ export interface AgentLoopExecutionInfo {
   networkAccess?: boolean;
   activeBudgetMs?: number;
   generatedEstimateMs?: number;
+  requiresPostVerificationBeforeSuccessLedger?: boolean;
 }
 
 export interface AgentResult {

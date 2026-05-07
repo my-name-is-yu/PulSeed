@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import path from "node:path";
-import { mkdir, realpath, rm } from "node:fs/promises";
+import { access, mkdir, realpath, rm } from "node:fs/promises";
 import type { Task } from "../../../base/types/task.js";
 import { execFileNoThrow } from "../../../base/utils/execFileNoThrow.js";
 import type { AgentLoopWorkspaceInfo } from "./agent-loop-result.js";
@@ -113,6 +113,24 @@ export async function prepareTaskAgentLoopWorkspace(input: {
     ? path.join(worktreePath, relativeCwd)
     : worktreePath;
 
+  if (!await pathExists(executionCwd)) {
+    await removeGitWorktree(repoRoot, worktreePath);
+    return {
+      requestedCwd,
+      executionCwd: requestedCwd,
+      isolated: false,
+      finalize: async () => ({
+        requestedCwd,
+        executionCwd: requestedCwd,
+        isolated: false,
+        cleanupStatus: "not_requested",
+        cleanupReason: "requested cwd is not present in the isolated git worktree",
+        dirty: false,
+        disposition: "not_isolated",
+      }),
+    };
+  }
+
   return {
     requestedCwd,
     executionCwd,
@@ -181,6 +199,15 @@ export async function prepareTaskAgentLoopWorkspace(input: {
       };
     },
   };
+}
+
+async function pathExists(value: string): Promise<boolean> {
+  try {
+    await access(value);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function resolveGitRepoRoot(cwd: string): Promise<string | null> {

@@ -131,6 +131,25 @@ describe("createNative*AgentLoopRunner", () => {
     });
   });
 
+  it("does not force code-search tools as task completion prerequisites", () => {
+    const providerConfig = makeProviderConfig();
+    const profile = resolveAgentLoopDefaultProfileFromProviderConfig({
+      surface: "task",
+      workspaceRoot: "/repo",
+      providerConfig,
+    });
+
+    expect(profile.toolPolicy.requiredTools ?? []).toEqual([]);
+
+    const explicitProfile = resolveAgentLoopDefaultProfileFromProviderConfig({
+      surface: "task",
+      workspaceRoot: "/repo",
+      providerConfig,
+      toolPolicy: { requiredTools: ["task_get"] },
+    });
+    expect(explicitProfile.toolPolicy.requiredTools).toEqual(["task_get"]);
+  });
+
   it("keeps chat profile defaults for budget, reasoning, and execution policy", () => {
     const providerConfig = makeProviderConfig();
     const registry = new ToolRegistry();
