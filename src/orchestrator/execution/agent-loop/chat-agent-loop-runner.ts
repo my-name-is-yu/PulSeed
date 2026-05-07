@@ -190,6 +190,8 @@ export class ChatAgentLoopRunner {
               reason: request.reason,
               permissionLevel: request.permissionLevel,
               isDestructive: request.isDestructive,
+              ...(request.approvalId ? { approvalId: request.approvalId } : {}),
+              ...(request.permissionWaitPlanId ? { permissionWaitPlanId: request.permissionWaitPlanId } : {}),
             });
           },
           ...this.deps.defaultToolCallContext,

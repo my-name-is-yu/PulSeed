@@ -21,6 +21,8 @@ import { createRuntimeSessionTools } from "../../../../tools/query/runtime-sessi
 import { createSetupRuntimeControlTools } from "../../../../tools/runtime/SetupRuntimeControlTools.js";
 import { BackgroundRunLedger } from "../../../../runtime/store/background-run-store.js";
 import { RuntimeOperationStore } from "../../../../runtime/store/runtime-operation-store.js";
+import { PermissionWaitPlanStore } from "../../../../runtime/store/permission-wait-plan-store.js";
+import type { ITool, PermissionCheckResult, ToolCallContext, ToolResult } from "../../../../tools/types.js";
 
 class ScriptedProtocolModel implements AgentLoopModelClient {
   readonly calls: AgentLoopModelRequest[] = [];
@@ -80,6 +82,33 @@ function makeToolStack(
   return {
     router,
     runtime: new ToolExecutorAgentLoopToolRuntime(executor, router),
+  };
+}
+
+function createApprovalRequiredTool(): ITool<{ value: string }> {
+  return {
+    metadata: {
+      name: "write_wait_tool",
+      aliases: [],
+      permissionLevel: "write_local",
+      isReadOnly: false,
+      isDestructive: false,
+      shouldDefer: false,
+      alwaysLoad: false,
+      maxConcurrency: 0,
+      maxOutputChars: 8000,
+      tags: [],
+    },
+    inputSchema: z.object({ value: z.string() }),
+    description: () => "Write wait tool",
+    checkPermissions: async (): Promise<PermissionCheckResult> => ({ status: "allowed" }),
+    isConcurrencySafe: () => true,
+    call: async (_input: { value: string }, _context: ToolCallContext): Promise<ToolResult> => ({
+      success: true,
+      data: { wrote: true },
+      summary: "write_wait_tool executed",
+      durationMs: 1,
+    }),
   };
 }
 
@@ -308,5 +337,99 @@ describe("runtime tools through the AgentLoop caller path", () => {
     });
     expect(result.toolResults?.[0]?.outputSummary).toContain("stale or terminal");
     expect(executor).not.toHaveBeenCalled();
+  });
+
+  it("resumes an approval-gated tool from the stored wait plan through the AgentLoop caller path", async () => {
+    const baseDir = trackedTempDir();
+    const waitPlanStore = new PermissionWaitPlanStore(path.join(baseDir, "runtime"));
+    const registry = new ToolRegistry();
+    registry.register(createApprovalRequiredTool());
+    const router = new ToolRegistryAgentLoopToolRouter(registry);
+    const runtime = new ToolExecutorAgentLoopToolRuntime(new ToolExecutor({
+      registry,
+      permissionManager: new ToolPermissionManager({}),
+      concurrency: new ConcurrencyController(),
+    }), router);
+    const modelInfo = makeModelInfo();
+    const model = new ScriptedProtocolModel(modelInfo, [
+      {
+        assistant: [],
+        toolCalls: [{ id: "call-write-wait", name: "write_wait_tool", input: { value: "ship" } }],
+        responseItems: [functionToolCallResponseItem({ id: "call-write-wait", name: "write_wait_tool", input: { value: "ship" } })],
+        stopReason: "tool_use",
+        responseCompleted: true,
+      },
+      {
+        assistant: [{ content: "The approved stored plan executed.", phase: "final_answer" }],
+        toolCalls: [],
+        responseItems: [assistantTextResponseItem("The approved stored plan executed.", "final_answer")],
+        stopReason: "end_turn",
+        responseCompleted: true,
+      },
+    ]);
+    const approvals: string[] = [];
+
+    const result = await new BoundedAgentLoopRunner({
+      modelClient: model,
+      toolRouter: router,
+      toolRuntime: runtime,
+    }).run({
+      session: createAgentLoopSession(),
+      turnId: "turn-wait-plan",
+      goalId: "chat",
+      cwd: baseDir,
+      model: modelInfo.ref,
+      modelInfo,
+      messages: [{ role: "user", content: "write the approved value" }],
+      outputSchema: z.string(),
+      finalOutputMode: "display_text",
+      budget: withDefaultBudget({ maxModelTurns: 3, maxToolCalls: 2 }),
+      toolPolicy: { allowedTools: ["write_wait_tool"] },
+      toolCallContext: {
+        cwd: baseDir,
+        goalId: "chat",
+        trustBalance: 0,
+        preApproved: true,
+        approvalFn: vi.fn().mockImplementation(async (request) => {
+          approvals.push(request.permissionWaitPlanId ?? "");
+          return true;
+        }),
+        executionPolicy: {
+          executionProfile: "consumer",
+          sandboxMode: "workspace_write",
+          approvalPolicy: "on_request",
+          networkAccess: true,
+          workspaceRoot: baseDir,
+          protectedPaths: [],
+          trustProjectInstructions: true,
+        },
+        sessionId: "session-wait-plan",
+        runId: "run-wait-plan",
+        turnId: "turn-wait-plan",
+        permissionWaitPlanStore: waitPlanStore,
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.toolResults?.[0]).toMatchObject({
+      toolName: "write_wait_tool",
+      success: true,
+      execution: { status: "executed" },
+    });
+    expect(approvals).toHaveLength(1);
+    expect(await waitPlanStore.load(approvals[0])).toMatchObject({
+      state: "resumed",
+      canonical_plan: {
+        tool_name: "write_wait_tool",
+        input: { value: "ship" },
+        target: expect.objectContaining({
+          goal_id: "chat",
+          session_id: expect.any(String),
+          run_id: "run-wait-plan",
+          turn_id: "turn-wait-plan",
+          tool_call_id: "call-write-wait",
+        }),
+      },
+    });
   });
 });

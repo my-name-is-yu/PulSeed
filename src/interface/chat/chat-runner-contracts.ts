@@ -14,6 +14,7 @@ import type { RuntimeControlService } from "../../runtime/control/index.js";
 import type { ApprovalBroker } from "../../runtime/approval-broker.js";
 import type { ApprovalRequest } from "../../tools/types.js";
 import type { PermissionGrantStore } from "../../runtime/store/permission-grant-store.js";
+import type { PermissionWaitPlanStore } from "../../runtime/store/permission-wait-plan-store.js";
 import type {
   RuntimeControlActor,
   RuntimeControlReplyTarget,
@@ -85,6 +86,10 @@ export interface ChatRunnerDeps {
     "requestConversationalApproval" | "resolveConversationalApproval" | "findPendingConversationalApproval" | "loadPendingApproval"
   >;
   permissionGrantStore?: Pick<PermissionGrantStore, "createActive" | "list" | "recordUse">;
+  permissionWaitPlanStore?: Pick<
+    PermissionWaitPlanStore,
+    "createWaiting" | "markApproved" | "markDenied" | "markExpired" | "resumeApproved"
+  >;
   permissionGrantContext?: {
     sessionId?: string;
     projectId?: string;

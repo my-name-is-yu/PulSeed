@@ -1,6 +1,10 @@
 import { z } from "zod";
 import type { ExecutionPolicy, SubagentRole } from "../orchestrator/execution/agent-loop/execution-policy.js";
 import type { PermissionGrantRecord } from "../runtime/store/permission-grant-store.js";
+import type {
+  PermissionWaitCanonicalPlan,
+  PermissionWaitPlanStore,
+} from "../runtime/store/permission-wait-plan-store.js";
 import type { HostToolExecutionDecision } from "./execution-orchestrator.js";
 
 // --- Tool Result ---
@@ -218,6 +222,11 @@ export interface ToolCallContext {
     list(): Promise<PermissionGrantRecord[]>;
     recordUse(grantId: string, input?: { used_at?: number; audit_ref?: string }): Promise<PermissionGrantRecord | null>;
   };
+  /** Durable canonical plans for approval-gated tool calls. */
+  permissionWaitPlanStore?: Pick<
+    PermissionWaitPlanStore,
+    "createWaiting" | "markApproved" | "markDenied" | "markExpired" | "resumeApproved"
+  >;
   /** Optional subagent role for delegated runs. */
   agentRole?: SubagentRole;
   /** Abort signal for cancellation */
@@ -274,6 +283,9 @@ export interface ApprovalRequest {
   sessionId?: string;
   runId?: string;
   turnId?: string;
+  approvalId?: string;
+  permissionWaitPlanId?: string;
+  canonicalPermissionPlan?: PermissionWaitCanonicalPlan;
   permissionGrantDecision?: unknown;
 }
 

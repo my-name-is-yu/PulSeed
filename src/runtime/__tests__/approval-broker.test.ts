@@ -3,6 +3,7 @@ import * as path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApprovalBroker } from "../approval-broker.js";
 import { ApprovalStore } from "../store/approval-store.js";
+import { PermissionWaitPlanStore, type PermissionWaitCanonicalPlan } from "../store/permission-wait-plan-store.js";
 import { createRuntimeStorePaths } from "../store/runtime-paths.js";
 import type { ApprovalRecord } from "../store/runtime-schemas.js";
 import { makeTempDir, cleanupTempDir } from "../../../tests/helpers/temp-dir.js";
@@ -38,6 +39,33 @@ async function waitForBroadcast(
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
   throw new Error(`Timed out waiting for broadcast: ${eventType}:${requestId}`);
+}
+
+function makeWaitPlan(): PermissionWaitCanonicalPlan {
+  return {
+    schema_version: "permission-wait-canonical-plan-v1",
+    tool_name: "write-tool",
+    input: { value: "ship" },
+    cwd: "/repo",
+    target: {
+      goal_id: "goal-1",
+      session_id: "session-1",
+      tool_call_id: "call-1",
+    },
+    permission: {
+      permission_level: "write_local",
+      is_destructive: false,
+      reversibility: "reversible",
+    },
+    state_epoch: "epoch-1",
+    capability_facts: {
+      tool_permission_level: "write_local",
+      tool_is_read_only: false,
+      tool_is_destructive: false,
+      tool_tags: [],
+      host_decision_status: "needs_permission",
+    },
+  };
 }
 
 describe("ApprovalBroker", () => {
@@ -461,6 +489,57 @@ describe("ApprovalBroker", () => {
     expect(await store.loadResolved("approval-no-delivery")).toMatchObject({
       state: "denied",
       response_channel: "slack",
+    });
+  });
+
+  it("transitions the linked permission wait plan when approvals resolve", async () => {
+    tmpDir = makeTempDir();
+    const paths = createRuntimeStorePaths(tmpDir);
+    const approvalStore = new ApprovalStore(paths);
+    const waitPlanStore = new PermissionWaitPlanStore(paths);
+    await waitPlanStore.createWaiting({
+      wait_plan_id: "wait-linked",
+      approval_id: "approval-linked",
+      goal_id: "goal-1",
+      canonical_plan: makeWaitPlan(),
+    });
+    const broker = new ApprovalBroker({
+      store: approvalStore,
+      permissionWaitPlanStore: waitPlanStore,
+      createId: () => "approval-linked",
+    });
+    const origin = {
+      channel: "chat",
+      conversation_id: "conversation-1",
+      user_id: "user-1",
+      session_id: "session-1",
+      turn_id: "turn-1",
+    };
+
+    const request = broker.requestConversationalApproval("goal-1", {
+      id: "call-1",
+      description: "Write a local file",
+      action: "write-tool",
+      kind: "permission",
+      operation_summary: "Write a local file",
+      risk_class: "medium",
+      target: { session_id: "session-1", tool_id: "write-tool", tool_call_id: "call-1" },
+      state_epoch: "epoch-1",
+      wait_plan_id: "wait-linked",
+    }, {
+      origin,
+      deliverConversationalApproval: async () => ({ delivered: true }),
+    });
+    await waitForFile(paths.approvalPendingPath("approval-linked"));
+
+    await expect(broker.resolveConversationalApproval("approval-linked", true, origin)).resolves.toBe(true);
+    await expect(request).resolves.toBe(true);
+
+    expect(await waitPlanStore.load("wait-linked")).toMatchObject({
+      state: "approved",
+      audit_events: expect.arrayContaining([
+        expect.objectContaining({ state: "approved" }),
+      ]),
     });
   });
 });

@@ -66,6 +66,8 @@ export interface AgentLoopApprovalRequestEvent extends AgentLoopBaseEvent {
   reason: string;
   permissionLevel: string;
   isDestructive: boolean;
+  approvalId?: string;
+  permissionWaitPlanId?: string;
 }
 
 export interface AgentLoopToolCallStartedEvent extends AgentLoopBaseEvent {

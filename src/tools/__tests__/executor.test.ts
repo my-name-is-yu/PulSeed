@@ -11,6 +11,7 @@ import {
   PermissionGrantStore,
   type PermissionGrantCreateInput,
 } from "../../runtime/store/permission-grant-store.js";
+import { PermissionWaitPlanStore } from "../../runtime/store/permission-wait-plan-store.js";
 import type { ExecutionPolicy } from "../../orchestrator/execution/agent-loop/execution-policy.js";
 import { makeTempDir, cleanupTempDir } from "../../../tests/helpers/temp-dir.js";
 import type {
@@ -102,6 +103,14 @@ afterEach(() => {
     cleanupTempDir(runtimeRoot);
   }
 });
+
+function createWaitPlanStore(): PermissionWaitPlanStore {
+  const runtimeRoot = makeTempDir("pulseed-permission-wait-plan-");
+  permissionGrantRuntimeRoots.push(runtimeRoot);
+  return new PermissionWaitPlanStore(runtimeRoot, {
+    createEventId: () => `event-${Math.random().toString(36).slice(2)}`,
+  });
+}
 
 async function createActiveGrant(
   overrides: {
@@ -293,6 +302,172 @@ describe("ToolExecutor", () => {
         const result = await executor.execute("write-tool2", { value: "x" }, ctx);
         expect(result.success).toBe(false);
         expect(result.error).toContain("User denied approval");
+      });
+
+      it("stores and resumes the approved canonical permission wait plan before executing", async () => {
+        const tool = createMockTool({
+          name: "write-wait-tool",
+          metadata: {
+            name: "write-wait-tool",
+            aliases: [],
+            permissionLevel: "write_local",
+            isReadOnly: false,
+            isDestructive: false,
+            shouldDefer: false,
+            alwaysLoad: false,
+            maxConcurrency: 0,
+            maxOutputChars: 8000,
+            tags: [],
+          } as ITool["metadata"],
+        });
+        const waitPlanStore = createWaitPlanStore();
+        const { executor } = createExecutor([tool]);
+        const approvalFn = vi.fn().mockResolvedValue(true);
+        const ctx = createMockContext({
+          approvalFn,
+          callId: "call-wait-1",
+          sessionId: "session-1",
+          runId: "run-1",
+          turnId: "turn-1",
+          executionPolicy: createExecutionPolicy({ approvalPolicy: "on_request" }),
+          hostToolState: {
+            currentEpoch: "epoch-1",
+          },
+          permissionWaitPlanStore: waitPlanStore,
+        });
+
+        const result = await executor.execute("write-wait-tool", { value: "x" }, ctx);
+
+        expect(result.success).toBe(true);
+        expect(tool.call).toHaveBeenCalledOnce();
+        expect(approvalFn).toHaveBeenCalledWith(expect.objectContaining({
+          approvalId: expect.stringMatching(/^permission-wait:/),
+          permissionWaitPlanId: expect.stringMatching(/^permission-wait:/),
+          canonicalPermissionPlan: expect.objectContaining({
+            tool_name: "write-wait-tool",
+            target: expect.objectContaining({
+              session_id: "session-1",
+              run_id: "run-1",
+              turn_id: "turn-1",
+              tool_call_id: "call-wait-1",
+            }),
+            state_epoch: "epoch-1",
+          }),
+        }));
+        const waitPlans = await waitPlanStore.list();
+        expect(waitPlans).toHaveLength(1);
+        expect(waitPlans[0]).toMatchObject({
+          state: "resumed",
+          canonical_plan: {
+            input: { value: "x" },
+            capability_facts: {
+              host_decision_status: "needs_permission",
+            },
+          },
+          audit_events: [
+            expect.objectContaining({ state: "waiting_for_permission" }),
+            expect.objectContaining({ state: "approved" }),
+            expect.objectContaining({ state: "resumed" }),
+          ],
+        });
+      });
+
+      it("keeps denied approvals as typed non-execution state", async () => {
+        const tool = createMockTool({
+          name: "write-wait-denied-tool",
+          metadata: {
+            name: "write-wait-denied-tool",
+            aliases: [],
+            permissionLevel: "write_local",
+            isReadOnly: false,
+            isDestructive: false,
+            shouldDefer: false,
+            alwaysLoad: false,
+            maxConcurrency: 0,
+            maxOutputChars: 8000,
+            tags: [],
+          } as ITool["metadata"],
+        });
+        const waitPlanStore = createWaitPlanStore();
+        const { executor } = createExecutor([tool]);
+        const approvalFn = vi.fn().mockResolvedValue(false);
+        const ctx = createMockContext({
+          approvalFn,
+          callId: "call-denied-1",
+          executionPolicy: createExecutionPolicy({ approvalPolicy: "on_request" }),
+          permissionWaitPlanStore: waitPlanStore,
+        });
+
+        const result = await executor.execute("write-wait-denied-tool", { value: "x" }, ctx);
+
+        expect(result.success).toBe(false);
+        expect(result.execution).toMatchObject({
+          status: "not_executed",
+          reason: "approval_denied",
+        });
+        expect(tool.call).not.toHaveBeenCalled();
+        expect(await waitPlanStore.list()).toEqual([
+          expect.objectContaining({
+            state: "denied",
+            audit_events: expect.arrayContaining([
+              expect.objectContaining({ state: "denied" }),
+            ]),
+          }),
+        ]);
+      });
+
+      it("rejects resume when the state epoch changes after approval was requested", async () => {
+        const tool = createMockTool({
+          name: "write-wait-stale-tool",
+          metadata: {
+            name: "write-wait-stale-tool",
+            aliases: [],
+            permissionLevel: "write_local",
+            isReadOnly: false,
+            isDestructive: false,
+            shouldDefer: false,
+            alwaysLoad: false,
+            maxConcurrency: 0,
+            maxOutputChars: 8000,
+            tags: [],
+          } as ITool["metadata"],
+        });
+        const waitPlanStore = createWaitPlanStore();
+        const { executor } = createExecutor([tool]);
+        const ctx = createMockContext({
+          callId: "call-stale-1",
+          executionPolicy: createExecutionPolicy({ approvalPolicy: "on_request" }),
+          hostToolState: {
+            currentEpoch: "epoch-1",
+          },
+          permissionWaitPlanStore: waitPlanStore,
+        });
+        const approvalFn = vi.fn().mockImplementation(async () => {
+          ctx.hostToolState = { currentEpoch: "epoch-2" };
+          return true;
+        });
+        ctx.approvalFn = approvalFn;
+
+        const result = await executor.execute("write-wait-stale-tool", { value: "x" }, ctx);
+
+        expect(result.success).toBe(false);
+        expect(result.execution).toMatchObject({
+          status: "not_executed",
+          reason: "stale_state",
+        });
+        expect(result.error).toContain("state_epoch_changed");
+        expect(tool.call).not.toHaveBeenCalled();
+        expect(await waitPlanStore.list()).toEqual([
+          expect.objectContaining({
+            state: "mismatch_rejected",
+            audit_events: expect.arrayContaining([
+              expect.objectContaining({
+                state: "mismatch_rejected",
+                mismatch_reasons: expect.arrayContaining(["state_epoch_changed"]),
+              }),
+            ]),
+          }),
+        ]);
       });
 
       it("does not execute escalation-required tools by ordinary approval", async () => {

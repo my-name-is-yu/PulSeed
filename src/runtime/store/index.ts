@@ -186,6 +186,18 @@ export {
   PermissionGrantStore,
   PermissionGrantSubjectSchema,
 } from "./permission-grant-store.js";
+export {
+  diffPermissionWaitCanonicalPlans,
+  isTerminalPermissionWaitPlanState,
+  PermissionWaitCanonicalPlanSchema,
+  PermissionWaitPlanAuditEventSchema,
+  PermissionWaitPlanCapabilityFactsSchema,
+  PermissionWaitPlanPermissionSchema,
+  PermissionWaitPlanRecordSchema,
+  PermissionWaitPlanStateSchema,
+  PermissionWaitPlanStore,
+  PermissionWaitPlanTargetSchema,
+} from "./permission-wait-plan-store.js";
 export type {
   RuntimeBudgetCreateInput,
   RuntimeBudgetDimension,
@@ -231,6 +243,17 @@ export type {
   PermissionGrantState,
   PermissionGrantSubject,
 } from "./permission-grant-store.js";
+export type {
+  PermissionWaitCanonicalPlan,
+  PermissionWaitPlanAuditEvent,
+  PermissionWaitPlanCapabilityFacts,
+  PermissionWaitPlanCreateInput,
+  PermissionWaitPlanPermission,
+  PermissionWaitPlanRecord,
+  PermissionWaitPlanResumeResult,
+  PermissionWaitPlanState,
+  PermissionWaitPlanTarget,
+} from "./permission-wait-plan-store.js";
 export type {
   RuntimeExperimentQueueCreateInput,
   RuntimeExperimentQueueExecutionDirective,
