@@ -1,6 +1,7 @@
 import type { VerificationFileDiff } from "../../../base/types/task.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { createHash } from "node:crypto";
 
 export type ExecFileSyncFn = (
   cmd: string,
@@ -20,6 +21,7 @@ export interface ExecutionDiffBaseline {
   cwd: string;
   changedPaths: string[];
   pathFingerprints: Record<string, string>;
+  filesystemFingerprints?: Record<string, string>;
 }
 
 export interface CaptureExecutionDiffOptions {
@@ -120,7 +122,22 @@ export function captureExecutionDiffBaseline(
 ): ExecutionDiffBaseline {
   const normalizedCwd = normalizeCwd(cwd);
   if (!hasGitMetadata(cwd)) {
-    return { available: false, cwd: normalizedCwd, changedPaths: [], pathFingerprints: {} };
+    return {
+      available: true,
+      cwd: normalizedCwd,
+      changedPaths: [],
+      pathFingerprints: {},
+      filesystemFingerprints: captureFilesystemFingerprints(cwd),
+    };
+  }
+  if (shouldUseFilesystemDiff(execFileSyncFn, cwd)) {
+    return {
+      available: true,
+      cwd: normalizedCwd,
+      changedPaths: [],
+      pathFingerprints: {},
+      filesystemFingerprints: captureFilesystemFingerprints(cwd),
+    };
   }
 
   const snapshot = captureGitChangedPaths(execFileSyncFn, cwd);
@@ -205,12 +222,16 @@ export function captureExecutionDiffArtifacts(
 ): ExecutionDiffArtifacts {
   const baselineChangedPaths = baselineChangedPathSetForCwd(options.baseline, cwd);
   const baselinePathFingerprints = baselinePathFingerprintsForCwd(options.baseline, cwd);
+  const baselineFilesystemFingerprints = baselineFilesystemFingerprintsForCwd(options.baseline, cwd);
   const fallbackPaths = uniqueNonEmpty(options.fallbackChangedPaths ?? [])
     .filter((filePath) => isSafeRelativePath(cwd, filePath));
-  if (!hasGitMetadata(cwd)) {
+  if (!hasGitMetadata(cwd) || shouldUseFilesystemDiff(execFileSyncFn, cwd)) {
+    const filesystemChangedPaths = baselineFilesystemFingerprints
+      ? collectFilesystemChangedPaths(baselineFilesystemFingerprints, cwd)
+      : [];
     return renderFallbackDiffArtifacts(
       cwd,
-      fallbackPaths,
+      uniqueNonEmpty([...fallbackPaths, ...filesystemChangedPaths]),
       options.maxFallbackDiffBytes,
       baselineChangedPaths,
       "filesystem_artifact",
@@ -254,6 +275,73 @@ export function captureExecutionDiffArtifacts(
   }
 
   return { available: true, evidenceSource: "git", changedPaths, fileDiffs };
+}
+
+function baselineFilesystemFingerprintsForCwd(
+  baseline: ExecutionDiffBaseline | undefined,
+  cwd: string,
+): Map<string, string> | undefined {
+  if (!baseline?.available || !baseline.filesystemFingerprints) return undefined;
+  if (baseline.cwd !== normalizeCwd(cwd)) return undefined;
+  return new Map(Object.entries(baseline.filesystemFingerprints));
+}
+
+function shouldUseFilesystemDiff(execFileSyncFn: ExecFileSyncFn, cwd: string): boolean {
+  const ignored = runGitRead(execFileSyncFn, cwd, ["check-ignore", "--", "."]);
+  return ignored !== null && ignored.trim().length > 0;
+}
+
+function captureFilesystemFingerprints(cwd: string): Record<string, string> {
+  const root = path.resolve(cwd);
+  const files = new Map<string, string>();
+  const visit = (dir: string): void => {
+    if (files.size >= 5_000) return;
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (files.size >= 5_000) return;
+      if (entry.name === ".git" || entry.name === "node_modules" || entry.name === ".venv" || entry.name === "venv") {
+        continue;
+      }
+      const absolutePath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        visit(absolutePath);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      const relativePath = path.relative(root, absolutePath).replace(/\\/g, "/");
+      try {
+        const stat = fs.statSync(absolutePath);
+        let fingerprint = `${stat.size}:${stat.mtimeMs}`;
+        if (stat.size <= 1_000_000) {
+          fingerprint = createHash("sha256")
+            .update(fs.readFileSync(absolutePath))
+            .digest("hex");
+        }
+        files.set(relativePath, fingerprint);
+      } catch {
+        // Ignore files that changed during the scan; the next scan can observe them.
+      }
+    }
+  };
+  visit(root);
+  return Object.fromEntries(files);
+}
+
+function collectFilesystemChangedPaths(baseline: Map<string, string>, cwd: string): string[] {
+  const after = new Map(Object.entries(captureFilesystemFingerprints(cwd)));
+  const changed = new Set<string>();
+  for (const [filePath, fingerprint] of after) {
+    if (baseline.get(filePath) !== fingerprint) changed.add(filePath);
+  }
+  for (const filePath of baseline.keys()) {
+    if (!after.has(filePath)) changed.add(filePath);
+  }
+  return [...changed].sort();
 }
 
 function parseGitDiffByPath(output: string, expectedPaths: string[]): Map<string, string> {

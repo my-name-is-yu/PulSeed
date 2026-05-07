@@ -410,10 +410,7 @@ export function resolveAgentLoopDefaultProfile(
     name: "task",
     budget: withDefaultBudget({ ...DEFAULT_SURFACE_PROFILE.budget, ...input.budget }),
     toolPolicy: mergeToolPolicy(
-      {
-        ...DEFAULT_SURFACE_PROFILE.toolPolicy,
-        requiredTools: ["code_search", "code_read_context", "code_search_repair"],
-      },
+      DEFAULT_SURFACE_PROFILE.toolPolicy,
       input.toolPolicy,
     ),
     executionPolicy: withExecutionPolicyOverrides(executionPolicy, {

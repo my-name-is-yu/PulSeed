@@ -268,6 +268,9 @@ export function taskAgentLoopResultToAgentResult(
         : {}),
       ...(typeof result.activeBudgetMs === "number" ? { activeBudgetMs: result.activeBudgetMs } : {}),
       ...(typeof result.generatedEstimateMs === "number" ? { generatedEstimateMs: result.generatedEstimateMs } : {}),
+      ...(result.requiresPostVerificationBeforeSuccessLedger !== undefined
+        ? { requiresPostVerificationBeforeSuccessLedger: result.requiresPostVerificationBeforeSuccessLedger }
+        : {}),
     },
   };
 }

@@ -691,7 +691,10 @@ export class TaskLifecycle {
     }
 
     const completedAt = new Date().toISOString();
+    const deferSuccessLedgerUntilVerification =
+      result.success && result.agentLoop?.requiresPostVerificationBeforeSuccessLedger === true;
     const nextStatus =
+      deferSuccessLedgerUntilVerification ? "running" as const :
       result.success ? "completed" as const :
       result.stopped_reason === "timeout" ? "timed_out" as const :
       result.stopped_reason === "cancelled" ? "cancelled" as const :
@@ -707,13 +710,19 @@ export class TaskLifecycle {
       ...(nextStatus === "blocked" ? { stopped_at: completedAt } : {}),
     });
 
-    await appendTaskOutcomeEvent(this.stateManager, {
-      task: { ...runningTask, status: nextStatus },
-      type: result.success ? "succeeded" : "failed",
-      attempt: task.consecutive_failure_count + 1,
-      reason: result.error ?? undefined,
-      stoppedReason: result.success ? undefined : result.stopped_reason,
-    });
+    if (deferSuccessLedgerUntilVerification) {
+      this.logger?.info("[TaskLifecycle] Deferring external AgentLoop success ledger event until verification", {
+        taskId: task.id,
+      });
+    } else {
+      await appendTaskOutcomeEvent(this.stateManager, {
+        task: { ...runningTask, status: nextStatus },
+        type: result.success ? "succeeded" : "failed",
+        attempt: task.consecutive_failure_count + 1,
+        reason: result.error ?? undefined,
+        stoppedReason: result.success ? undefined : result.stopped_reason,
+      });
+    }
 
     return result;
   }

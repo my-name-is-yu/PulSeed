@@ -94,6 +94,35 @@ describe("prepareTaskAgentLoopWorkspace", () => {
     expect(finalized.cleanupReason).toBe("worktree has changes");
     expect(fs.existsSync(workspace.executionCwd)).toBe(true);
   });
+
+  it("falls back to the requested workspace when cwd is ignored and absent from a git worktree", async () => {
+    const repoDir = makeTempDir();
+    tempDirs.push(repoDir);
+    await fsp.writeFile(path.join(repoDir, "tracked.txt"), "base\n", "utf-8");
+    await fsp.writeFile(path.join(repoDir, ".gitignore"), "tmp/\n", "utf-8");
+    const ignoredWorkspace = path.join(repoDir, "tmp", "canary-workspace");
+    await fsp.mkdir(ignoredWorkspace, { recursive: true });
+    await fsp.writeFile(path.join(ignoredWorkspace, "README.md"), "ignored workspace\n", "utf-8");
+    await run("git", ["init"], repoDir);
+    await run("git", ["config", "user.email", "test@example.com"], repoDir);
+    await run("git", ["config", "user.name", "Test"], repoDir);
+    await run("git", ["add", "tracked.txt", ".gitignore"], repoDir);
+    await run("git", ["commit", "-m", "init"], repoDir);
+    const baseDir = path.join(path.dirname(repoDir), `${path.basename(repoDir)}.agentloop-worktrees`);
+    tempDirs.push(baseDir);
+
+    const workspace = await prepareTaskAgentLoopWorkspace({
+      task: makeTask(),
+      cwd: ignoredWorkspace,
+      policy: { enabled: true, baseDir },
+    });
+
+    expect(workspace.isolated).toBe(false);
+    expect(workspace.executionCwd).toBe(fs.realpathSync(ignoredWorkspace));
+    const finalized = await workspace.finalize({ success: true, changedFiles: [] });
+    expect(finalized.cleanupStatus).toBe("not_requested");
+    expect(finalized.cleanupReason).toBe("requested cwd is not present in the isolated git worktree");
+  });
 });
 
 function run(command: string, args: string[], cwd: string): Promise<void> {

@@ -49,22 +49,34 @@ export class ILLMClientAgentLoopModelClient implements AgentLoopModelClient {
   async createTurnProtocol(input: AgentLoopModelRequest): Promise<AgentLoopModelTurnProtocol> {
     const messages = this.toLLMMessages(input.messages);
     const supportsNativeToolCalling = this.llmClient.supportsToolCalling?.() !== false;
+    const usesExternalAgentRuntime = this.llmClient.usesExternalAgentRuntime?.() === true;
+    const usePromptedToolProtocol = !supportsNativeToolCalling && !usesExternalAgentRuntime;
     const response = await this.llmClient.sendMessage(messages, {
       model: input.model.modelId,
       ...(supportsNativeToolCalling
         ? { system: input.system }
-        : { system: buildPromptedToolProtocolSystemPrompt({ systemPrompt: input.system, tools: input.tools }) }),
+        : {
+            system: usePromptedToolProtocol
+              ? buildPromptedToolProtocolSystemPrompt({ systemPrompt: input.system, tools: input.tools })
+              : input.system,
+          }),
       max_tokens: input.maxOutputTokens,
       abortSignal: input.abortSignal,
+      sandboxPolicy: formatCliSandboxPolicy(input.sandboxMode),
+      cwd: input.cwd,
       ...(supportsNativeToolCalling ? { tools: input.tools } : {}),
     });
 
     const toolCalls = supportsNativeToolCalling
       ? (response.tool_calls ?? []).map((call) => this.toAgentLoopToolCall(call))
-      : extractPromptedToolCalls({ content: response.content, tools: input.tools });
+      : usePromptedToolProtocol
+        ? extractPromptedToolCalls({ content: response.content, tools: input.tools })
+        : [];
     const assistantContent = supportsNativeToolCalling
       ? response.content
-      : (toolCalls.length > 0 ? `Calling ${toolCalls.map((call) => call.name).join(", ")}` : response.content);
+      : (usePromptedToolProtocol && toolCalls.length > 0
+          ? `Calling ${toolCalls.map((call) => call.name).join(", ")}`
+          : response.content);
     const assistant: AgentLoopAssistantOutput[] = assistantContent
       ? [{
           content: assistantContent,
@@ -112,4 +124,11 @@ export class ILLMClientAgentLoopModelClient implements AgentLoopModelClient {
     };
   }
 
+}
+
+function formatCliSandboxPolicy(
+  sandboxMode: AgentLoopModelRequest["sandboxMode"],
+): "read-only" | "workspace-write" | "danger-full-access" | undefined {
+  if (!sandboxMode) return undefined;
+  return sandboxMode === "danger_full_access" ? "danger-full-access" : sandboxMode.replace("_", "-") as "read-only" | "workspace-write";
 }

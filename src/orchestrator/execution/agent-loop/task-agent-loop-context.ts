@@ -65,7 +65,9 @@ export function buildTaskAgentLoopTurnContext(
       "When you return status=done, include concrete completionEvidence.",
       "Final JSON status must be one of done, blocked, partial, or failed. Do not use completed.",
       "Final JSON completionEvidence, verificationHints, blockers, and filesChanged must be arrays of strings, not objects.",
-      "If files changed or you claim files changed, run at least one focused verification command through tools before the final answer.",
+      input.modelInfo.capabilities.toolCalling === false
+        ? "If files changed or you claim files changed, include the exact focused verification command and outcome in completionEvidence before the final answer."
+        : "If files changed or you claim files changed, run at least one focused verification command through tools before the final answer.",
       "Do not return status=done while blockers remain.",
     ],
     role: input.role,
@@ -106,13 +108,25 @@ export function buildTaskAgentLoopTurnContext(
       if (output.status !== "done") return { ok: true, reasons: [] };
 
       const reasons: string[] = [];
+      const artifactVerification = await verifyTaskArtifactContract(input.task, cwd, {
+        goal: input.artifactGoal,
+      });
+      const artifactContractPassed = artifactVerification.applicable && artifactVerification.passed;
+      // CLI-wrapping agents can edit and verify outside PulSeed's function-call protocol.
+      // A fresh artifact contract is the production-observed evidence boundary for those runs.
+      const artifactContractCanStandInForRuntimeVerification =
+        artifactContractPassed && input.modelInfo.capabilities.toolCalling === false;
+      const externalAgentCompletionEvidenceCanDeferToTaskVerification =
+        input.modelInfo.capabilities.toolCalling === false
+        && (output.completionEvidence ?? []).some((item) => item.trim().length > 0);
       const runtimeVerifiedCommands = commandResults.filter((result) =>
         result.success && isTaskRelevantVerificationCommand(input.task, result)
       );
       const claimedChangedFiles = [...new Set([...(output.filesChanged ?? []), ...changedFiles])];
       const completionEvidenceCount =
         (output.completionEvidence ?? []).filter((item) => item.trim().length > 0).length
-        + runtimeVerifiedCommands.length;
+        + runtimeVerifiedCommands.length
+        + (artifactContractPassed ? 1 : 0);
 
       if (!output.finalAnswer.trim()) {
         reasons.push("finalAnswer is empty.");
@@ -123,12 +137,14 @@ export function buildTaskAgentLoopTurnContext(
       if (completionEvidenceCount < 1) {
         reasons.push("Provide at least one concrete completionEvidence item or one successful runtime verification command.");
       }
-      if (claimedChangedFiles.length > 0 && runtimeVerifiedCommands.length < 1) {
+      if (
+        claimedChangedFiles.length > 0
+        && runtimeVerifiedCommands.length < 1
+        && !artifactContractCanStandInForRuntimeVerification
+        && !externalAgentCompletionEvidenceCanDeferToTaskVerification
+      ) {
         reasons.push(`You claimed changed files (${claimedChangedFiles.slice(0, 5).join(", ")}) but no successful runtime verification command was observed.`);
       }
-      const artifactVerification = await verifyTaskArtifactContract(input.task, cwd, {
-        goal: input.artifactGoal,
-      });
       if (artifactVerification.applicable && !artifactVerification.passed) {
         reasons.push(artifactVerification.description);
       }

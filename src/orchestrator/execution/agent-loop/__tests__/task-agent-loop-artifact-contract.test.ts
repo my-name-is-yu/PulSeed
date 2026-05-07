@@ -10,11 +10,14 @@ import {
   type AgentLoopModelInfo,
 } from "../index.js";
 
-function makeModelInfo(): AgentLoopModelInfo {
+function makeModelInfo(options: { toolCalling?: boolean } = {}): AgentLoopModelInfo {
   return {
     ref: { providerId: "test", modelId: "model" },
     displayName: "test/model",
-    capabilities: { ...defaultAgentLoopCapabilities },
+    capabilities: {
+      ...defaultAgentLoopCapabilities,
+      ...(typeof options.toolCalling === "boolean" ? { toolCalling: options.toolCalling } : {}),
+    },
   };
 }
 
@@ -338,6 +341,227 @@ describe("task agent loop artifact contract completion gate", () => {
     });
 
     expect(result).toEqual({ ok: true, reasons: [] });
+  });
+
+  it("allows fresh artifact contract evidence to verify changed files for non-native tool clients", async () => {
+    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-agentloop-artifact-non-native-"));
+    try {
+      const startedAt = new Date(Date.now() - 2_000).toISOString();
+      const metricsPath = path.join(workspace, "reports", "hgb_seed_blend.json");
+      const submissionPath = path.join(workspace, "submissions", "hgb_seed_blend.csv");
+      fs.mkdirSync(path.dirname(metricsPath), { recursive: true });
+      fs.mkdirSync(path.dirname(submissionPath), { recursive: true });
+      fs.writeFileSync(metricsPath, JSON.stringify({ balanced_accuracy: 0.95 }), "utf8");
+      fs.writeFileSync(submissionPath, "id,PitNextLap\n1,0.1\n", "utf8");
+
+      const modelInfo = makeModelInfo({ toolCalling: false });
+      const turn = buildTaskAgentLoopTurnContext({
+        task: makeKaggleArtifactTask({
+          created_at: startedAt,
+          started_at: startedAt,
+        }),
+        model: modelInfo.ref,
+        modelInfo,
+        session: createAgentLoopSession(),
+        cwd: workspace,
+      });
+
+      const result = await turn.completionValidator!({
+        output: {
+          status: "done",
+          finalAnswer: "Produced fresh metrics and submission artifacts.",
+          summary: "fresh artifacts",
+          filesChanged: ["reports/hgb_seed_blend.json", "submissions/hgb_seed_blend.csv"],
+          testsRun: [],
+          completionEvidence: ["fresh artifact contract satisfied"],
+          verificationHints: [],
+          blockers: [],
+        },
+        changedFiles: ["reports/hgb_seed_blend.json", "submissions/hgb_seed_blend.csv"],
+        commandResults: [],
+        calledTools: [],
+        modelTurns: 2,
+        toolCalls: 0,
+      });
+
+      expect(result).toEqual({ ok: true, reasons: [] });
+    } finally {
+      fs.rmSync(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("allows external agent completion evidence to defer changed-file proof to task verification", async () => {
+    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-agentloop-external-evidence-"));
+    try {
+      const reportPath = path.join(workspace, "reports", "final-schema.json");
+      fs.mkdirSync(path.dirname(reportPath), { recursive: true });
+      fs.writeFileSync(
+        reportPath,
+        JSON.stringify({ scenario: "agentloop-final-output-schema", ok: true }),
+        "utf8",
+      );
+      const modelInfo = makeModelInfo({ toolCalling: false });
+      const turn = buildTaskAgentLoopTurnContext({
+        task: makeKaggleArtifactTask({
+          work_description: "Create reports/final-schema.json and verify it with Node.",
+          success_criteria: [
+            {
+              description: "Final schema report exists",
+              verification_method:
+                "node -e \"const fs=require('fs'); const x=JSON.parse(fs.readFileSync('reports/final-schema.json','utf8')); if(x.scenario!=='agentloop-final-output-schema'||x.ok!==true) process.exit(1)\"",
+              is_blocking: true,
+            },
+          ],
+          artifact_contract: { required: false, required_artifacts: [] },
+        }),
+        model: modelInfo.ref,
+        modelInfo,
+        session: createAgentLoopSession(),
+        cwd: workspace,
+      });
+
+      const result = await turn.completionValidator!({
+        output: {
+          status: "done",
+          finalAnswer: "Created and verified reports/final-schema.json.",
+          summary: "final schema artifact created",
+          filesChanged: [],
+          testsRun: [],
+          completionEvidence: [
+            "node -e \"const fs=require('fs'); const x=JSON.parse(fs.readFileSync('reports/final-schema.json','utf8')); if(x.scenario!=='agentloop-final-output-schema'||x.ok!==true) process.exit(1)\" exited successfully",
+          ],
+          verificationHints: [],
+          blockers: [],
+        },
+        changedFiles: ["reports/final-schema.json"],
+        commandResults: [],
+        calledTools: [],
+        modelTurns: 4,
+        toolCalls: 0,
+      });
+
+      expect(result).toEqual({ ok: true, reasons: [] });
+    } finally {
+      fs.rmSync(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("allows an explicit non-numeric JSON artifact contract when required fields and types match", async () => {
+    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-agentloop-typed-json-contract-"));
+    try {
+      const reportPath = path.join(workspace, "reports", "final-schema.json");
+      fs.mkdirSync(path.dirname(reportPath), { recursive: true });
+      fs.writeFileSync(
+        reportPath,
+        JSON.stringify({ scenario: "agentloop-final-output-schema", ok: true }),
+        "utf8",
+      );
+
+      const modelInfo = makeModelInfo({ toolCalling: false });
+      const turn = buildTaskAgentLoopTurnContext({
+        task: makeKaggleArtifactTask({
+          created_at: "2020-01-01T00:00:00.000Z",
+          started_at: "2020-01-01T00:00:00.000Z",
+          work_description: "Create reports/final-schema.json with typed non-numeric fields.",
+          success_criteria: [
+            {
+              description: "Final schema report exists",
+              verification_method:
+                "node -e \"const fs=require('fs'); const x=JSON.parse(fs.readFileSync('reports/final-schema.json','utf8')); if(x.scenario!=='agentloop-final-output-schema'||x.ok!==true) process.exit(1)\"",
+              is_blocking: true,
+            },
+          ],
+          artifact_contract: {
+            required: true,
+            required_artifacts: [
+              {
+                kind: "metrics_json",
+                path: "reports/final-schema.json",
+                required_fields: ["scenario", "ok"],
+                field_types: { ok: "boolean" },
+                fresh_after_task_start: true,
+              },
+            ],
+          },
+        }),
+        model: modelInfo.ref,
+        modelInfo,
+        session: createAgentLoopSession(),
+        cwd: workspace,
+      });
+
+      const result = await turn.completionValidator!({
+        output: {
+          status: "done",
+          finalAnswer: "Created and verified reports/final-schema.json.",
+          summary: "typed json artifact created",
+          filesChanged: ["reports/final-schema.json"],
+          testsRun: [],
+          completionEvidence: ["typed final-schema artifact contract satisfied"],
+          verificationHints: [],
+          blockers: [],
+        },
+        changedFiles: ["reports/final-schema.json"],
+        commandResults: [],
+        calledTools: [],
+        modelTurns: 4,
+        toolCalls: 0,
+      });
+
+      expect(result).toEqual({ ok: true, reasons: [] });
+    } finally {
+      fs.rmSync(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("still rejects stale artifact contract evidence for non-native tool clients", async () => {
+    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-agentloop-artifact-stale-"));
+    try {
+      const startedAt = new Date(Date.now() - 2_000).toISOString();
+      const stale = new Date(Date.now() - 60_000);
+      const metricsPath = path.join(workspace, "reports", "hgb_seed_blend.json");
+      const submissionPath = path.join(workspace, "submissions", "hgb_seed_blend.csv");
+      fs.mkdirSync(path.dirname(metricsPath), { recursive: true });
+      fs.mkdirSync(path.dirname(submissionPath), { recursive: true });
+      fs.writeFileSync(metricsPath, JSON.stringify({ balanced_accuracy: 0.95 }), "utf8");
+      fs.writeFileSync(submissionPath, "id,PitNextLap\n1,0.1\n", "utf8");
+      fs.utimesSync(metricsPath, stale, stale);
+
+      const modelInfo = makeModelInfo({ toolCalling: false });
+      const turn = buildTaskAgentLoopTurnContext({
+        task: makeKaggleArtifactTask({
+          created_at: startedAt,
+          started_at: startedAt,
+        }),
+        model: modelInfo.ref,
+        modelInfo,
+        session: createAgentLoopSession(),
+        cwd: workspace,
+      });
+
+      const result = await turn.completionValidator!({
+        output: {
+          status: "done",
+          finalAnswer: "Produced metrics and submission artifacts.",
+          summary: "stale metrics",
+          filesChanged: ["reports/hgb_seed_blend.json", "submissions/hgb_seed_blend.csv"],
+          testsRun: [],
+          completionEvidence: ["artifact contract claimed"],
+          verificationHints: [],
+          blockers: [],
+        },
+        changedFiles: ["reports/hgb_seed_blend.json", "submissions/hgb_seed_blend.csv"],
+        commandResults: [],
+        calledTools: [],
+        modelTurns: 2,
+        toolCalls: 0,
+      });
+
+      expect(result.ok).toBe(false);
+      expect(result.reasons.join("\n")).toContain("reports/hgb_seed_blend.json is stale relative to task start");
+    } finally {
+      fs.rmSync(workspace, { recursive: true, force: true });
+    }
   });
 
   it("allows required metrics fields that are arrays or objects while enforcing declared field types", async () => {

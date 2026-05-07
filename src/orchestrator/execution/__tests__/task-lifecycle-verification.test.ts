@@ -285,6 +285,54 @@ describe("TaskLifecycle", async () => {
       expect(verification.evidence[0]?.description).toContain("reports/hgb_seed_blend.json is missing");
     });
 
+    it("allows non-Kaggle required artifact contracts to declare only the concrete metrics artifact", async () => {
+      const workspace = path.join(tmpDir, "contract-workspace-metrics-only");
+      const metricsPath = path.join(workspace, "reports", "contract.json");
+      fs.mkdirSync(path.dirname(metricsPath), { recursive: true });
+      fs.writeFileSync(metricsPath, JSON.stringify({ score: 1, scenario: "fresh-contract-canary" }), "utf8");
+      const llm = createMockLLMClient([LLM_REVIEW_PASS]);
+      const lifecycle = createLifecycle(llm, { adapterRegistry: null });
+      const task = makeTask({
+        work_description: "Create a fresh generic metrics contract artifact",
+        approach: "Write and verify reports/contract.json.",
+        created_at: "2020-01-01T00:00:00.000Z",
+        started_at: "2020-01-01T00:00:00.000Z",
+        constraints: [`workspace_path:${workspace}`],
+        success_criteria: [
+          {
+            description: "Metrics artifact exists",
+            verification_method: "test -f reports/contract.json",
+            is_blocking: true,
+          },
+        ],
+        artifact_contract: {
+          required: true,
+          required_artifacts: [
+            {
+              kind: "metrics_json",
+              path: "reports/contract.json",
+              required_fields: ["score", "scenario"],
+              field_types: { score: "number", scenario: "string" },
+              fresh_after_task_start: true,
+            },
+          ],
+        },
+      });
+
+      const verification = await lifecycle.verifyTask(task, makeExecutionResult({
+        output: "Produced reports/contract.json",
+        filesChangedPaths: ["reports/contract.json"],
+      }));
+
+      expect(verification.verdict).toBe("pass");
+      expect(verification.artifact_contract_status).toMatchObject({
+        applicable: true,
+        passed: true,
+      });
+      const artifactContractStatus = verification.artifact_contract_status!;
+      expect(artifactContractStatus.description).not.toContain("submission_csv");
+    });
+
     it("fails stale required artifacts even when the generated artifact opts out of freshness", async () => {
       const workspace = path.join(tmpDir, "kaggle-workspace-stale-artifact");
       const metricsPath = path.join(workspace, "reports", "hgb_seed_blend.json");

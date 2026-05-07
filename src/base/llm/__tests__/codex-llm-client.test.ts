@@ -200,6 +200,39 @@ describe("CodexLLMClient", () => {
       const modelIdx = spawnArgs.indexOf("--model");
       expect(spawnArgs[modelIdx + 1]).toBe("o3");
     });
+
+    it("uses per-request sandboxPolicy when provided", async () => {
+      const client = new CodexLLMClient({ sandboxPolicy: "workspace-write" });
+      const child = makeFakeChild();
+
+      const promise = client.sendMessage(
+        [{ role: "user", content: "inspect only" }],
+        { sandboxPolicy: "read-only" },
+      );
+      await flushMicrotasks();
+      child.emit("close", 0);
+      await promise;
+
+      const [, spawnArgs] = mockSpawn.mock.calls[0] as [string, string[]];
+      const sandboxIdx = spawnArgs.indexOf("-s");
+      expect(spawnArgs[sandboxIdx + 1]).toBe("read-only");
+    });
+
+    it("uses per-request cwd when provided", async () => {
+      const client = new CodexLLMClient({ repoPath: "/default/repo" });
+      const child = makeFakeChild();
+
+      const promise = client.sendMessage(
+        [{ role: "user", content: "edit task workspace" }],
+        { cwd: "/task/workspace" },
+      );
+      await flushMicrotasks();
+      child.emit("close", 0);
+      await promise;
+
+      const [, , spawnOpts] = mockSpawn.mock.calls[0] as [string, string[], Record<string, unknown>];
+      expect(spawnOpts.cwd).toBe("/task/workspace");
+    });
   });
 
   // ─── Prompt building ───

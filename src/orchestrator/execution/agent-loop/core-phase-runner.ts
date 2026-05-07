@@ -7,6 +7,7 @@ import { createAgentLoopSession } from "./agent-loop-session.js";
 import type { AgentLoopToolPolicy } from "./agent-loop-turn-context.js";
 import { withDefaultBudget } from "./agent-loop-turn-context.js";
 import type { BoundedAgentLoopRunner } from "./bounded-agent-loop-runner.js";
+import { resolveExecutionPolicy, withExecutionPolicyOverrides } from "./execution-policy.js";
 
 export type CorePhaseKind =
   | "observe_evidence"
@@ -44,6 +45,14 @@ export class CorePhaseRunner {
     context: { goalId: string; taskId?: string; toolPolicy?: AgentLoopToolPolicy },
   ): Promise<AgentLoopResult<TOutput>> {
     const parsedInput = spec.inputSchema.parse(input);
+    const executionPolicy = withExecutionPolicyOverrides(
+      resolveExecutionPolicy({ workspaceRoot: this.deps.cwd }),
+      {
+        sandboxMode: "read_only",
+        approvalPolicy: "never",
+        networkAccess: false,
+      },
+    );
     return this.deps.boundedRunner.run({
       session: createAgentLoopSession(),
       turnId: randomUUID(),
@@ -69,7 +78,9 @@ export class CorePhaseRunner {
         trustBalance: 0,
         preApproved: true,
         approvalFn: async () => false,
+        executionPolicy,
       },
+      executionPolicy,
     });
   }
 }

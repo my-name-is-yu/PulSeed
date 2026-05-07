@@ -27,6 +27,34 @@ function makeExecFileSync(outputs: Record<string, string>, thrownOutputs: Record
 }
 
 describe("captureExecutionDiffArtifacts", () => {
+  it("uses filesystem diffs for git-ignored disposable workspaces", () => {
+    const workspace = makeGitWorkspace();
+    try {
+      fs.mkdirSync(path.join(workspace, "reports"), { recursive: true });
+      fs.writeFileSync(path.join(workspace, "reports", "contract.json"), "{\"score\":0.1}\n", "utf-8");
+      const execFileSyncFn = makeExecFileSync({
+        "git check-ignore -- .": ".\n",
+      });
+
+      const baseline = captureExecutionDiffBaseline(execFileSyncFn, workspace);
+      fs.mkdirSync(path.join(workspace, "scripts"), { recursive: true });
+      fs.writeFileSync(path.join(workspace, "scripts", "contract-canary.mjs"), "console.log('ok')\n", "utf-8");
+      fs.writeFileSync(path.join(workspace, "reports", "contract.json"), "{\"score\":1,\"scenario\":\"fresh\"}\n", "utf-8");
+      fs.writeFileSync(path.join(workspace, "reports", "contract.done"), "done\n", "utf-8");
+
+      const result = captureExecutionDiffArtifacts(execFileSyncFn, workspace, { baseline });
+
+      expect(result.evidenceSource).toBe("filesystem_artifact");
+      expect(result.changedPaths).toEqual([
+        "reports/contract.done",
+        "reports/contract.json",
+        "scripts/contract-canary.mjs",
+      ]);
+    } finally {
+      fs.rmSync(workspace, { recursive: true, force: true });
+    }
+  });
+
   it("filters paths that were already dirty in the pre-task baseline", () => {
     const workspace = makeGitWorkspace();
     try {
