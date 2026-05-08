@@ -67,6 +67,14 @@ function formatMultiGoalError(command: string, usage: string): string {
   return `Error: only one --goal is supported per pulseed ${command}. Run separately for each goal, or use --tree for tree traversal.\nUsage: ${usage}`;
 }
 
+function parsePositiveIntegerOption(raw: unknown): number | null {
+  if (typeof raw !== "string") return null;
+  const normalized = raw.trim();
+  if (!/^[0-9]+$/.test(normalized)) return null;
+  const parsed = Number(normalized);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
 /**
  * @description Dispatches a PulSeed CLI subcommand and returns an exit code.
  * @param {string[]} argv Filtered arguments (--yes/-y already removed), first element is the subcommand.
@@ -127,6 +135,33 @@ export async function dispatchCommand(
     }
     const goalId = goalIds[0];
 
+    const loopConfig: LoopConfig = {};
+    const residentRequested = values.resident === true || values["no-max-iterations"] === true;
+    if (residentRequested && values["max-iterations"] !== undefined) {
+      logger.error("Error: use either --max-iterations <n> for bounded runs or --resident/--no-max-iterations for resident runs, not both.");
+      return 1;
+    }
+    if (residentRequested) {
+      loopConfig.runPolicy = { mode: "resident", maxIterations: null };
+      loopConfig.maxIterations = null;
+    }
+    if (values["max-iterations"] !== undefined) {
+      const parsed = parsePositiveIntegerOption(values["max-iterations"]);
+      if (parsed !== null) {
+        loopConfig.runPolicy = { mode: "bounded", maxIterations: parsed };
+        loopConfig.maxIterations = parsed;
+      } else {
+        logger.error("--max-iterations must be a positive integer");
+        return 1;
+      }
+    }
+    if (values.adapter !== undefined) {
+      loopConfig.adapterType = values.adapter;
+    }
+    if (values.tree) {
+      loopConfig.treeMode = true;
+    }
+
     let resolvedWorkspace = values.workspace ? resolveWorkspacePath(values.workspace, commandCwd) : undefined;
     if (resolvedWorkspace) {
       const goal = await stateManager.loadGoal(goalId);
@@ -152,33 +187,6 @@ export async function dispatchCommand(
           await stateManager.saveGoal(goal);
         }
       }
-    }
-
-    const loopConfig: LoopConfig = {};
-    const residentRequested = values.resident === true || values["no-max-iterations"] === true;
-    if (residentRequested && values["max-iterations"] !== undefined) {
-      logger.error("Error: use either --max-iterations <n> for bounded runs or --resident/--no-max-iterations for resident runs, not both.");
-      return 1;
-    }
-    if (residentRequested) {
-      loopConfig.runPolicy = { mode: "resident", maxIterations: null };
-      loopConfig.maxIterations = null;
-    }
-    if (values["max-iterations"] !== undefined) {
-      const parsed = parseInt(values["max-iterations"], 10);
-      if (!isNaN(parsed) && parsed > 0) {
-        loopConfig.runPolicy = { mode: "bounded", maxIterations: parsed };
-        loopConfig.maxIterations = parsed;
-      } else {
-        logger.error("--max-iterations must be a positive integer");
-        return 1;
-      }
-    }
-    if (values.adapter !== undefined) {
-      loopConfig.adapterType = values.adapter;
-    }
-    if (values.tree) {
-      loopConfig.treeMode = true;
     }
 
     const result = await cmdRun(
