@@ -13,6 +13,7 @@ import type { IAdapter, AgentResult } from "../../../orchestrator/execution/adap
 import type { EscalationHandler, EscalationResult } from "../escalation.js";
 import type { ILLMClient } from "../../../base/llm/llm-client.js";
 import type { ChatAgentLoopRunner } from "../../../orchestrator/execution/agent-loop/chat-agent-loop-runner.js";
+import type { GoalNegotiator } from "../../../orchestrator/goal/goal-negotiator.js";
 import { RuntimeControlService } from "../../../runtime/control/index.js";
 import { createRuntimeSessionRegistry } from "../../../runtime/session-registry/index.js";
 import { RuntimeOperationStore } from "../../../runtime/store/runtime-operation-store.js";
@@ -1610,6 +1611,27 @@ describe("ChatRunner", () => {
       } finally {
         vi.unstubAllGlobals();
       }
+    });
+
+    it("/tend rejects malformed max args before daemon start", async () => {
+      const adapter = makeMockAdapter();
+      const daemonClient = {
+        startGoal: vi.fn().mockResolvedValue(undefined),
+      };
+      const runner = new ChatRunner(makeDeps({
+        adapter,
+        llmClient: createSingleMockLLMClient("{}"),
+        goalNegotiator: { negotiate: vi.fn() } as unknown as GoalNegotiator,
+        daemonClient: daemonClient as never,
+      }));
+
+      const result = await runner.execute("/tend goal-xyz --max abc", "/repo");
+
+      expect(result.success).toBe(false);
+      expect(result.output).toContain("Usage: /tend [goal-id] [--max <positive-integer>]");
+      expect(result.output).toContain("--max must be a positive integer");
+      expect(daemonClient.startGoal).not.toHaveBeenCalled();
+      expect(adapter.execute).not.toHaveBeenCalled();
     });
 
     it("/tend confirmation fails when durable subscription cannot be armed", async () => {
