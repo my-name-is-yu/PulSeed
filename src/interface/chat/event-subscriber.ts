@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events";
 import { readDaemonAuthToken } from "../../runtime/daemon/client.js";
+import { parseOutboxSeq } from "../../runtime/event/outbox-seq.js";
 import type { ChatEvent } from "./chat-events.js";
 
 export interface TendNotification {
@@ -193,8 +194,8 @@ export class EventSubscriber extends EventEmitter {
     }
 
     if (!data) return;
-    const seq = Number.parseInt(id, 10);
-    if (Number.isFinite(seq) && seq > this.lastOutboxSeq) {
+    const seq = parseOutboxSeq(id);
+    if (seq !== null && seq > this.lastOutboxSeq) {
       this.lastOutboxSeq = seq;
     }
 

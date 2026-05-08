@@ -128,6 +128,22 @@ describe("DaemonClient snapshot + replay", () => {
     }
   });
 
+  it("does not partially parse malformed SSE event ids into the replay cursor", () => {
+    const client = new DaemonClient({
+      host: "127.0.0.1",
+      port: 41700,
+    });
+
+    (client as any).parseSSEMessage('id: 5abc\nevent: goal_updated\ndata: {"goalId":"goal-1"}');
+
+    expect((client as any).lastEventId).toBe("5abc");
+    expect((client as any).lastOutboxSeq).toBe(0);
+
+    (client as any).parseSSEMessage('id: 6\nevent: goal_updated\ndata: {"goalId":"goal-1"}');
+
+    expect((client as any).lastOutboxSeq).toBe(6);
+  });
+
   it("emits operator handoffs from snapshot bootstrap", async () => {
     const runtimeRoot = path.join(tmpDir, "runtime");
     await new RuntimeOperatorHandoffStore(runtimeRoot).create({

@@ -1005,4 +1005,26 @@ describe("snapshot and outbox replay", () => {
 
     expect(events).toEqual([{ goalId: "goal-1", message: "hello" }]);
   });
+
+  it("does not partially parse malformed replay cursors", async () => {
+    const outboxStore = new OutboxStore(tmpDir);
+    server = new EventServer(mockDriveSystem as never, {
+      port: 0,
+      eventsDir: path.join(tmpDir, "events"),
+      outboxStore,
+    });
+
+    await server.start();
+    await server.broadcast("goal_start_requested", { goalId: "goal-1" });
+    await server.broadcast("chat_message_received", { goalId: "goal-1", message: "hello" });
+
+    const events = await collectSseEvents(
+      server.getPort(),
+      "/stream?after=1abc",
+      "goal_start_requested",
+      1
+    );
+
+    expect(events).toEqual([{ goalId: "goal-1" }]);
+  });
 });

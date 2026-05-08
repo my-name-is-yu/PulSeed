@@ -2,6 +2,7 @@ import * as http from "node:http";
 import type { ApprovalBroker } from "../approval-broker.js";
 import type { Logger } from "../logger.js";
 import type { OutboxRecord, OutboxStore } from "../store/index.js";
+import { parseOutboxSeq } from "./outbox-seq.js";
 
 export class EventServerSseManager {
   private readonly sseClients = new Set<http.ServerResponse>();
@@ -111,9 +112,7 @@ export class EventServerSseManager {
   }
 
   private parseReplayCursorValue(value: string | null | undefined): number {
-    if (!value) return 0;
-    const parsed = Number.parseInt(value, 10);
-    return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+    return parseOutboxSeq(value) ?? 0;
   }
 
   private async replayOutbox(
