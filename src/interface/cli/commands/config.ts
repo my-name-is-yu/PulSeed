@@ -6,8 +6,9 @@ import { parseArgs } from "node:util";
 import { getDatasourcesDir } from "../../../base/utils/paths.js";
 import { writeJsonFile, readJsonFile } from "../../../base/utils/json-io.js";
 
-import { StateManager } from "../../../base/state/state-manager.js";
-import { CharacterConfigManager } from "../../../platform/traits/character-config.js";
+import type { StateManager } from "../../../base/state/state-manager.js";
+import type { CharacterConfigManager } from "../../../platform/traits/character-config.js";
+import { CONFIG_METADATA } from "../../../base/config/tool-metadata.js";
 
 import { isReasoningEffort, loadProviderConfig, saveProviderConfig } from "../../../base/llm/provider-config.js";
 import type { ProviderConfig } from "../../../base/llm/provider-config.js";
@@ -36,6 +37,39 @@ function parseCharacterLevel(raw: unknown, flag: string): number {
     throw new Error(`Error: --${flag} must be an integer between 1 and 5 (got: ${normalized})`);
   }
   return parsed;
+}
+
+function parseConfigSetValue(key: string, rawValue: string): unknown {
+  const valueType = CONFIG_METADATA[key]?.type ?? "string";
+  const normalized = rawValue.trim();
+  if (valueType === "boolean") {
+    if (normalized === "true") return true;
+    if (normalized === "false") return false;
+    throw new Error(`${key} must be true or false`);
+  }
+  if (valueType === "number") {
+    if (!/^-?(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?$/.test(normalized)) {
+      throw new Error(`${key} must be a finite number`);
+    }
+    const parsed = Number(normalized);
+    if (!Number.isFinite(parsed) || Math.abs(parsed) > Number.MAX_SAFE_INTEGER) {
+      throw new Error(`${key} must be a finite number within the safe integer range`);
+    }
+    return parsed;
+  }
+  if (valueType === "object") {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(rawValue) as unknown;
+    } catch {
+      throw new Error(`${key} must be a JSON object`);
+    }
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      throw new Error(`${key} must be a JSON object`);
+    }
+    return parsed;
+  }
+  return rawValue;
 }
 
 export async function cmdProvider(argv: string[]): Promise<number> {
@@ -652,28 +686,35 @@ export async function cmdConfigShow(): Promise<number> {
 }
 
 export async function cmdConfigSet(args: string[]): Promise<number> {
+  const { updateGlobalConfig, getConfigKeys } = await import("../../../base/config/global-config.js");
+  const validKeys = getConfigKeys();
   if (args.length < 2) {
     console.error("Usage: pulseed config set <key> <value>");
-    console.error("Available keys: daemon_mode");
+    console.error(`Available keys: ${validKeys.join(", ")}`);
     return 1;
   }
-  const [key, rawValue] = args;
-  const { updateGlobalConfig, getConfigKeys } = await import("../../../base/config/global-config.js");
-
-  const validKeys = getConfigKeys();
+  const key = args[0]!;
+  const rawValue = args[1]!;
   if (!validKeys.includes(key)) {
     console.error(`Unknown config key: "${key}". Available: ${validKeys.join(", ")}`);
     return 1;
   }
 
-  // Parse value based on type
   let value: unknown;
-  if (rawValue === "true") value = true;
-  else if (rawValue === "false") value = false;
-  else if (!isNaN(Number(rawValue))) value = Number(rawValue);
-  else value = rawValue;
+  try {
+    value = parseConfigSetValue(key, rawValue);
+  } catch (err) {
+    console.error(err instanceof Error ? `Error: ${err.message}` : `Error: ${String(err)}`);
+    return 1;
+  }
 
-  const updated = await updateGlobalConfig({ [key]: value });
+  let updated;
+  try {
+    updated = await updateGlobalConfig({ [key]: value });
+  } catch (err) {
+    console.error(formatOperationError(`set config "${key}"`, err));
+    return 1;
+  }
   console.log(`Set ${key} = ${JSON.stringify((updated as Record<string, unknown>)[key])}`);
   return 0;
 }
