@@ -255,6 +255,42 @@ function isArtifactFreshnessDisagreement(
     /\bstale artifact:/i.test(mechanical.description);
 }
 
+function trimUrlToken(value: string): string {
+  return value
+    .trim()
+    .replace(/^[([{"'<]+/, "")
+    .replace(/[)\].,;:!?"'>]+$/, "");
+}
+
+function isExactGitHubIssueUrl(rawToken: string): boolean {
+  const token = trimUrlToken(rawToken);
+  if (!token) return false;
+
+  let url: URL;
+  try {
+    url = new URL(token);
+  } catch {
+    return false;
+  }
+
+  if (url.protocol !== "https:" || url.hostname !== "github.com") return false;
+
+  const [owner, repo, resource, issueNumber, ...extraSegments] =
+    url.pathname.split("/").filter((segment) => segment.length > 0);
+  return Boolean(
+    owner &&
+    repo &&
+    resource === "issues" &&
+    issueNumber &&
+    extraSegments.length === 0 &&
+    /^[1-9]\d*$/.test(issueNumber),
+  );
+}
+
+function hasGitHubIssueUrlEvidence(output: string): boolean {
+  return output.split(/\s+/).some((token) => isExactGitHubIssueUrl(token));
+}
+
 function isTimedOutAgentLoopResult(executionResult: AgentResult): boolean {
   return executionResult.stopped_reason === "timeout" || executionResult.agentLoop?.stopReason === "timeout";
 }
@@ -465,11 +501,10 @@ export async function verifyTask(
   // When execution succeeded and output contains a GitHub issue URL,
   // treat as mechanical pass without running full L1/L2 verification.
   // Dimension updates are left to ObservationEngine (next loop iteration).
-  const githubIssueUrlPattern = /github\.com\/.+\/issues\/\d+/;
   if (
     executionResult.success === true &&
     executionResult.output &&
-    githubIssueUrlPattern.test(executionResult.output) &&
+    hasGitHubIssueUrlEvidence(executionResult.output) &&
     (!artifactResult.applicable || artifactResult.passed)
   ) {
     const scResult = VerificationResultSchema.parse({
