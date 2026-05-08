@@ -147,7 +147,7 @@ describe("DreamAnalyzer", () => {
           [],
           [
             {
-              pattern_type: "recurring_task",
+              pattern_type: "task_generation",
               confidence: 0.88,
               summary: "Retry verification after drift to recover progress.",
               evidence_refs: [`iter:${goalA}:5`, `iter:${goalA}:6`],
@@ -173,6 +173,7 @@ describe("DreamAnalyzer", () => {
       const patternsB = await learningPipeline.getPatterns(goalB);
       expect(patternsA).toHaveLength(1);
       expect(patternsB).toEqual([]);
+      expect(patternsA[0]?.type).toBe("task_generation");
       expect(patternsA[0]?.description).toContain("Retry verification");
 
       const scheduleSuggestions = JSON.parse(
@@ -207,6 +208,44 @@ describe("DreamAnalyzer", () => {
     }
   });
 
+  it("keeps watermarks retryable when LLM pattern types do not match the contract", async () => {
+    const tempDir = makeTempDir("dream-analyzer-pattern-type-");
+    try {
+      const goalId = "goal-pattern-type";
+      await writeJsonl(
+        path.join(tempDir, "goals", goalId, "iteration-logs.jsonl"),
+        Array.from({ length: 2 }, (_, index) => makeIteration(goalId, index))
+      );
+
+      const stateManager = new StateManager(tempDir, undefined, { walEnabled: false });
+      await stateManager.init();
+      const learningPipeline = new LearningPipeline(makeMockLLM([[]]), null, stateManager);
+      const analyzer = new DreamAnalyzer({
+        baseDir: tempDir,
+        llmClient: makeMockLLM([[
+          {
+            pattern_type: "strategy_effectiveness",
+            confidence: 0.91,
+            summary: "Old free-form labels should not be reclassified by substring matching.",
+            evidence_refs: [`iter:${goalId}:1`],
+            metadata: { applicable_domains: ["strategy"] },
+          },
+        ]]),
+        learningPipeline,
+        config: { minIterationsForAnalysis: 1 },
+      });
+
+      const report = await analyzer.runDeep({ goalIds: [goalId], phases: ["A", "B"] });
+
+      expect(report.partial).toBe(true);
+      expect(report.patternsPersisted).toBe(0);
+      await expect(learningPipeline.getPatterns(goalId)).resolves.toEqual([]);
+      expect(fs.existsSync(path.join(tempDir, "dream", "watermarks.json"))).toBe(false);
+    } finally {
+      cleanupTempDir(tempDir);
+    }
+  });
+
   it("falls back to timestamp-based resume when iteration logs were pruned", async () => {
     const tempDir = makeTempDir("dream-analyzer-pruned-");
     try {
@@ -236,7 +275,7 @@ describe("DreamAnalyzer", () => {
       const analyzer = new DreamAnalyzer({
         baseDir: tempDir,
         llmClient: makeMockLLM([[{
-          pattern_type: "strategy_effectiveness",
+          pattern_type: "strategy_selection",
           confidence: 0.91,
           summary: "Recent post-prune iteration was analyzed.",
           evidence_refs: [`iter:${goalId}:5`],
@@ -299,7 +338,7 @@ describe("DreamAnalyzer", () => {
       const analyzer = new DreamAnalyzer({
         baseDir: tempDir,
         llmClient: makeMockLLM([[{
-          pattern_type: "verification",
+          pattern_type: "task_generation",
           confidence: 0.8,
           summary: "Goal A processed",
           evidence_refs: [`iter:${goalA}:2`],
@@ -340,7 +379,7 @@ describe("DreamAnalyzer", () => {
         llmClient: makeMockLLM([
           [
             {
-              pattern_type: "strategy_effectiveness",
+              pattern_type: "strategy_selection",
               confidence: 0.91,
               summary: "Tight loops outperform baseline strategy.",
               evidence_refs: [`iter:${goalId}:10`],
