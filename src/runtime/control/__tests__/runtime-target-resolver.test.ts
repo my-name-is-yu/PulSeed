@@ -111,6 +111,45 @@ describe("resolveRuntimeTarget", () => {
     expect(result.evidence.candidates.map((candidate) => candidate.run_id)).toEqual(["run:other-conversation"]);
   });
 
+  it("does not reuse another conversation's run for latest references", () => {
+    const result = resolveRuntimeTarget({
+      snapshot: snapshot([
+        run({ id: "run:other-conversation", parent_session_id: "session:conversation:other" }),
+      ]),
+      operation: "pause_run",
+      selector: { scope: "run", reference: "latest", sourceText: "latest run" },
+      conversationId: "chat-1",
+    });
+
+    expect(result.status).toBe("unknown");
+    expect(result.evidence.reason).toContain("refusing to reuse another conversation");
+    expect(result.evidence.candidates.map((candidate) => candidate.run_id)).toEqual(["run:other-conversation"]);
+  });
+
+  it("does not reuse another conversation's run for previous references", () => {
+    const result = resolveRuntimeTarget({
+      snapshot: snapshot([
+        run({
+          id: "run:other-newer",
+          parent_session_id: "session:conversation:other",
+          updated_at: "2026-05-02T00:10:00.000Z",
+        }),
+        run({
+          id: "run:other-older",
+          parent_session_id: "session:conversation:other",
+          updated_at: "2026-05-02T00:00:00.000Z",
+        }),
+      ]),
+      operation: "inspect_run",
+      selector: { scope: "run", reference: "previous", sourceText: "previous background job" },
+      conversationId: "chat-1",
+    });
+
+    expect(result.status).toBe("unknown");
+    expect(result.evidence.reason).toContain("refusing to reuse another conversation");
+    expect(result.evidence.candidates.map((candidate) => candidate.run_id)).toEqual(["run:other-newer", "run:other-older"]);
+  });
+
   it("returns stale for terminal exact targets", () => {
     const result = resolveRuntimeTarget({
       snapshot: snapshot([run({ id: "run:done", status: "succeeded" })]),

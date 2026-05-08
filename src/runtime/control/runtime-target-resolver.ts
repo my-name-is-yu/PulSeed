@@ -74,8 +74,22 @@ export function resolveRuntimeTarget(input: ResolveRuntimeTargetInput): RuntimeT
       }
       return ambiguous(selector, candidates, "multiple current candidates require clarification");
     case "latest":
+      if (input.conversationId && scoped.length === 0) {
+        return unknown(
+          selector,
+          selectable,
+          "no latest runtime run is associated with this conversation; refusing to reuse another conversation's runtime run"
+        );
+      }
       return currentOrStale(candidates[0], input.operation, selector, candidates, "latest candidate selected by runtime updated timestamp");
     case "previous":
+      if (input.conversationId && scoped.length === 0) {
+        return unknown(
+          selector,
+          selectable,
+          "no previous runtime run is associated with this conversation; refusing to reuse another conversation's runtime run"
+        );
+      }
       if (candidates.length < 2) {
         return unknown(selector, candidates, "previous target was requested but there is no earlier candidate");
       }

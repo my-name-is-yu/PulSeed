@@ -1264,6 +1264,45 @@ describe("RuntimeControlService", () => {
     }
   });
 
+  it("blocks latest run control when only another conversation has selectable runs", async () => {
+    const tmpDir = makeTempDir("pulseed-runtime-control-service-latest-other-conversation-");
+    try {
+      const executor = vi.fn();
+      const service = new RuntimeControlService({
+        operationStore: new RuntimeOperationStore(path.join(tmpDir, "runtime")),
+        executor,
+        sessionRegistry: {
+          snapshot: vi.fn().mockResolvedValue(snapshotWithRuns([
+            makeRun({
+              id: "run:coreloop:other",
+              parent_session_id: "session:conversation:other",
+              goal_id: "goal-other",
+            }),
+          ])),
+        },
+      });
+
+      const result = await service.request({
+        intent: {
+          kind: "pause_run",
+          reason: "pause latest run",
+          targetSelector: { scope: "run", reference: "latest", sourceText: "latest run" },
+        },
+        cwd: "/repo",
+        requestedBy: { surface: "chat", conversation_id: "chat-1" },
+      });
+
+      expect(result).toMatchObject({
+        success: false,
+        state: "blocked",
+        message: expect.stringContaining("refusing to reuse another conversation"),
+      });
+      expect(executor).not.toHaveBeenCalled();
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
+  });
+
   it("rejects stale terminal runs for control operations", async () => {
     const tmpDir = makeTempDir("pulseed-runtime-control-service-run-stale-");
     try {
