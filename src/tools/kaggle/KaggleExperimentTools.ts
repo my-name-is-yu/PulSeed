@@ -34,6 +34,7 @@ import {
   type ProcessSessionManager,
   type ProcessSessionSnapshot,
 } from "../system/ProcessSessionTool/ProcessSessionTool.js";
+import { isProcessPidValue } from "../../base/utils/process-pid.js";
 
 const DEFAULT_MAX_LOG_CHARS = 12_000;
 
@@ -1384,10 +1385,9 @@ function failureResult(message: string, startTime: number): ToolResult {
 
 async function signalKaggleChildProcess(childProcessPath: string, signal: NodeJS.Signals): Promise<void> {
   const childProcess = await readJsonObject(childProcessPath);
-  const pid = typeof childProcess?.pid === "number" ? childProcess.pid : null;
-  if (!pid) return;
+  if (!isProcessPidValue(childProcess?.pid)) return;
   try {
-    process.kill(pid, signal);
+    process.kill(childProcess.pid, signal);
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== "ESRCH") {
       throw err;
