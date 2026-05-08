@@ -52,7 +52,7 @@ describe("exact protocol boundary", () => {
 
     expect(parseExactSlashCommand("help", definitions)).toBeNull();
     expect(parseExactSlashCommand("show me status", definitions)).toBeNull();
-    expect(parseExactSlashCommand("statusを見せて", definitions)).toBeNull();
+    expect(parseExactSlashCommand("status please", definitions)).toBeNull();
     expect(parseExactSlashCommand("please run /status", definitions)).toBeNull();
   });
 
@@ -63,7 +63,7 @@ describe("exact protocol boundary", () => {
       rawArgs: "open",
     });
     expect(isExactSlashCommandInput("open settings")).toBe(false);
-    expect(isExactSlashCommandInput("設定を開いて")).toBe(false);
+    expect(isExactSlashCommandInput("settings, please")).toBe(false);
     expect(parseExactSlashCommandToken("please use /settings")).toBeNull();
   });
 

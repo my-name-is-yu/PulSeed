@@ -1,5 +1,5 @@
 /**
- * Milestone 7 E2E Tests: 再帰的Goal Tree + 横断ポートフォリオ Phase 2
+ * Milestone 7 E2E Tests: Recursive Goal Tree + Cross-Goal Portfolio Phase 2
  *
  * Group 1: GoalTreeManager — decompose, prune, concreteness, quality
  * Group 2: CrossGoalPortfolio — priority, allocation, momentum, dependency schedule
