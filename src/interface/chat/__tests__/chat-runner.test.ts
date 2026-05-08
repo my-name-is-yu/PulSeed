@@ -1669,6 +1669,26 @@ describe("ChatRunner", () => {
       expect(adapter.execute).not.toHaveBeenCalled();
     });
 
+    it("/tend rejects unsafe max args before daemon start", async () => {
+      const adapter = makeMockAdapter();
+      const daemonClient = {
+        startGoal: vi.fn().mockResolvedValue(undefined),
+      };
+      const runner = new ChatRunner(makeDeps({
+        adapter,
+        llmClient: createSingleMockLLMClient("{}"),
+        goalNegotiator: { negotiate: vi.fn() } as unknown as GoalNegotiator,
+        daemonClient: daemonClient as never,
+      }));
+
+      const result = await runner.execute("/tend goal-xyz --max 9007199254740993", "/repo");
+
+      expect(result.success).toBe(false);
+      expect(result.output).toContain("--max must be a positive integer");
+      expect(daemonClient.startGoal).not.toHaveBeenCalled();
+      expect(adapter.execute).not.toHaveBeenCalled();
+    });
+
     it("/tend confirmation fails when durable subscription cannot be armed", async () => {
       const daemonClient = {
         startGoal: vi.fn().mockResolvedValue(undefined),

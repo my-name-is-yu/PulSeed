@@ -347,7 +347,7 @@ function parseArgs(args: string): { success: true; goalId?: string; maxIteration
         return { success: false, message: `${TEND_USAGE}\n--max must be a positive integer.` };
       }
       const n = Number(rawValue);
-      if (!Number.isInteger(n) || n <= 0) {
+      if (!Number.isSafeInteger(n) || n <= 0) {
         return { success: false, message: `${TEND_USAGE}\n--max must be a positive integer.` };
       }
       maxIterations = n;
