@@ -876,6 +876,84 @@ describe("SurfaceProjection contract", () => {
     }
   });
 
+  it("fails closed for excluded-only stale or permission-blocked Surface runtime admission", () => {
+    const excludedSource = sourceRef();
+    const excludedOnlyProjection = projection({
+      source_refs: [excludedSource],
+      included_context: [],
+      excluded_context: [{
+        lane: "exclusion",
+        source_ref: excludedSource,
+        requested_use: "surface_projection",
+        blocked_by: [gate("staleness", "blocked")],
+        blocked_summary_ref: "blocked/memory-1/stale",
+      }],
+      rationale_entries: [{
+        source_ref: excludedSource,
+        decision: "excluded",
+        gate: "staleness",
+        reason_ref: "rationale/memory-1/stale",
+        policy_refs: ["policy/surface"],
+      }],
+      metadata: {
+        staleness: "stale",
+        sensitivity: "private",
+        permission_state: "granted",
+        invalidation_state: "valid",
+        audit_refs: ["audit/surface-1"],
+      },
+    });
+    const runtimeRef = derivedRef("runtime_item", { ref: "runtime_item-stale-surface" });
+    const staleProjection = attachSurfaceDependencyRef(excludedOnlyProjection, runtimeRef);
+
+    const staleAdmission = evaluateSurfaceRuntimeAdmission({
+      projection: staleProjection,
+      derived_ref: runtimeRef,
+      operation: "action",
+      authorization_basis: "runtime_authority",
+      runtime_authority_ref: "runtime-authority:action",
+    });
+
+    expect(staleAdmission).toMatchObject({
+      status: "blocked",
+      reason: "stale_surface",
+      dependent_ref: "runtime_item-stale-surface",
+    });
+    expect(staleAdmission.blocked_refs).toEqual(expect.arrayContaining([
+      "surface-1",
+      "metadata.staleness:stale",
+    ]));
+
+    const blockedPermissionProjection = attachSurfaceDependencyRef(projection({
+      ...excludedOnlyProjection,
+      metadata: {
+        staleness: "fresh",
+        sensitivity: "private",
+        permission_state: "blocked",
+        invalidation_state: "valid",
+        audit_refs: ["audit/surface-1"],
+      },
+    }), derivedRef("runtime_item", { ref: "runtime_item-permission-blocked" }));
+    const permissionRef = blockedPermissionProjection.dependent_refs.runtime_items[0]!;
+    const permissionAdmission = evaluateSurfaceRuntimeAdmission({
+      projection: blockedPermissionProjection,
+      derived_ref: permissionRef,
+      operation: "action",
+      authorization_basis: "runtime_authority",
+      runtime_authority_ref: "runtime-authority:action",
+    });
+
+    expect(permissionAdmission).toMatchObject({
+      status: "blocked",
+      reason: "permission_blocked",
+      dependent_ref: "runtime_item-permission-blocked",
+    });
+    expect(permissionAdmission.blocked_refs).toEqual(expect.arrayContaining([
+      "surface-1",
+      "metadata.permission_state:blocked",
+    ]));
+  });
+
   it("requires memory source dependency refs to match top-level source refs", () => {
     expect(SurfaceProjectionSchema.safeParse(projection({
       source_refs: [sourceRef({

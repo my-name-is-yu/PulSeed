@@ -692,6 +692,8 @@ export const SurfaceRuntimeAdmissionReasonSchema = z.enum([
   "admitted",
   "missing_dependency_ref",
   "invalid_surface",
+  "stale_surface",
+  "permission_blocked",
   "allowed_use_missing",
   "forbidden_use",
   "memory_is_not_authority",
@@ -769,6 +771,18 @@ export function evaluateSurfaceRuntimeAdmission(
   }
   if (request.projection.metadata.invalidation_state !== "valid") {
     return buildSurfaceRuntimeAdmission(request, "blocked", "invalid_surface", [request.projection.id]);
+  }
+  if (request.projection.metadata.staleness !== "fresh") {
+    return buildSurfaceRuntimeAdmission(request, "blocked", "stale_surface", [
+      request.projection.id,
+      `metadata.staleness:${request.projection.metadata.staleness}`,
+    ]);
+  }
+  if (request.projection.metadata.permission_state !== "granted") {
+    return buildSurfaceRuntimeAdmission(request, "blocked", "permission_blocked", [
+      request.projection.id,
+      `metadata.permission_state:${request.projection.metadata.permission_state}`,
+    ]);
   }
   if (!request.projection.allowed_runtime_uses.includes(request.derived_ref.use_class as z.infer<typeof GovernedMemoryAllowedUseClassSchema>)) {
     return buildSurfaceRuntimeAdmission(request, "blocked", "allowed_use_missing", [request.derived_ref.use_class]);
