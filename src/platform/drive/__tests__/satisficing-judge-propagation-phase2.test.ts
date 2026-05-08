@@ -418,6 +418,79 @@ describe("propagateSubgoalCompletion Phase 2 — aggregation mapping", async () 
     expect(dim!.current_value).toBeCloseTo(0.7);
   });
 
+  it("mapped aggregation only includes exact finite numeric current values", async () => {
+    const parentGoal = makeGoal({
+      id: "parent-exact-finite",
+      dimensions: [
+        makeDimension({
+          name: "overall",
+          current_value: 0,
+          threshold: { type: "min", value: 1 },
+          confidence: 0.9,
+        }),
+      ],
+    });
+    await stateManager.saveGoal(parentGoal);
+
+    const subgoalDims: Dimension[] = [
+      makeDimension({
+        name: "numeric_dim",
+        current_value: 0.4,
+        threshold: { type: "min", value: 1 },
+        confidence: 0.9,
+        dimension_mapping: { parent_dimension: "overall", aggregation: "avg" },
+      }),
+      makeDimension({
+        name: "exact_string_dim",
+        current_value: "6e-1",
+        threshold: { type: "min", value: 1 },
+        confidence: 0.9,
+        dimension_mapping: { parent_dimension: "overall", aggregation: "avg" },
+      }),
+      makeDimension({
+        name: "boolean_dim",
+        current_value: true,
+        threshold: { type: "min", value: 1 },
+        confidence: 0.9,
+        dimension_mapping: { parent_dimension: "overall", aggregation: "avg" },
+      }),
+      makeDimension({
+        name: "hex_dim",
+        current_value: "0x1",
+        threshold: { type: "min", value: 1 },
+        confidence: 0.9,
+        dimension_mapping: { parent_dimension: "overall", aggregation: "avg" },
+      }),
+      makeDimension({
+        name: "overflow_string_dim",
+        current_value: "1e309",
+        threshold: { type: "min", value: 1 },
+        confidence: 0.9,
+        dimension_mapping: { parent_dimension: "overall", aggregation: "avg" },
+      }),
+      makeDimension({
+        name: "infinite_number_dim",
+        current_value: Infinity,
+        threshold: { type: "min", value: 1 },
+        confidence: 0.9,
+        dimension_mapping: { parent_dimension: "overall", aggregation: "avg" },
+      }),
+      makeDimension({
+        name: "nan_number_dim",
+        current_value: NaN,
+        threshold: { type: "min", value: 1 },
+        confidence: 0.9,
+        dimension_mapping: { parent_dimension: "overall", aggregation: "avg" },
+      }),
+    ];
+
+    await judge.propagateSubgoalCompletion("subgoal-id", "parent-exact-finite", subgoalDims);
+
+    const updated = await stateManager.loadGoal("parent-exact-finite");
+    const dim = updated!.dimensions.find((d) => d.name === "overall");
+    expect(dim!.current_value).toBeCloseTo((0.4 + 0.6 + 1) / 3);
+  });
+
   it("multiple parent dimensions: different subgoal dims map to different parent dims", async () => {
     const parentGoal = makeGoal({
       id: "parent-multiparent",
