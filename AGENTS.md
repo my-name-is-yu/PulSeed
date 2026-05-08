@@ -1,5 +1,21 @@
 # PulSeed Codex Rules
 
+## Implementation Philosophy
+
+Do not optimize for the smallest possible diff. Optimize for the best final architecture, correctness, maintainability, and testability.
+
+Small diffs are preferred only when they do not compromise the design. If the existing structure is misaligned with the intended architecture, refactor it instead of adding compatibility layers or patching around it.
+
+Avoid preserving bad abstractions just to reduce the patch size.
+
+When a large change is appropriate:
+- First explain the target design and why a broader change is justified.
+- Separate mechanical refactors from behavior changes when possible.
+- Preserve existing behavior unless the task explicitly changes it.
+- Add or update tests around the affected behavior.
+- Run lint, typecheck, and relevant tests.
+- Summarize the important architectural changes after implementation.
+
 ## Semantic Decision Design
 
 - For freeform user intent, natural-language chat, routing, target/session/run selection, status classification, safety/approval decisions, notification routing, failure recovery, RunSpec derivation, evidence Q&A, and dashboard/operator labels, do not ship keyword filters, regex lists, string `includes`, title matching, or language-specific phrase tables as the primary decision mechanism.
