@@ -741,6 +741,41 @@ describe("run subcommand", async () => {
     );
   });
 
+  it.each(["5abc", "1.5", "0", ""])("rejects malformed --max-iterations value %j before CoreLoop construction", async (value) => {
+    await stateManager.saveGoal(makeGoal({ id: "g-maxiter-invalid" }));
+
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const code = await runCLI("run", "--goal", "g-maxiter-invalid", "--max-iterations", value);
+    errorSpy.mockRestore();
+
+    expect(code).toBe(1);
+    expect(vi.mocked(CoreLoop)).not.toHaveBeenCalled();
+  });
+
+  it("rejects bare --max-iterations before CoreLoop construction", async () => {
+    await stateManager.saveGoal(makeGoal({ id: "g-maxiter-bare" }));
+
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const code = await runCLI("run", "--goal", "g-maxiter-bare", "--max-iterations");
+    errorSpy.mockRestore();
+
+    expect(code).toBe(1);
+    expect(vi.mocked(CoreLoop)).not.toHaveBeenCalled();
+  });
+
+  it("does not persist workspace constraints for invalid --max-iterations", async () => {
+    await stateManager.saveGoal(makeGoal({ id: "g-maxiter-no-mutation", constraints: [] }));
+
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const code = await runCLI("run", "--goal", "g-maxiter-no-mutation", "--max-iterations", "5abc");
+    errorSpy.mockRestore();
+
+    const savedGoal = await stateManager.loadGoal("g-maxiter-no-mutation");
+    expect(code).toBe(1);
+    expect(savedGoal?.constraints).toEqual([]);
+    expect(vi.mocked(CoreLoop)).not.toHaveBeenCalled();
+  });
+
   it("forwards --resident to CoreLoop as an unbounded resident policy", async () => {
     await stateManager.saveGoal(makeGoal({ id: "g-resident" }));
 
