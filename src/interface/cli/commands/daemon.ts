@@ -142,6 +142,27 @@ function reconcileRuntimeHealthForDisplay(
   };
 }
 
+export function parseDaemonPositiveInteger(raw: unknown, label: string): number {
+  const normalized = typeof raw === "string" ? raw.trim() : "";
+  if (!/^[0-9]+$/.test(normalized)) {
+    throw new Error(`${label} must be a positive integer`);
+  }
+  const parsed = Number(normalized);
+  if (!Number.isSafeInteger(parsed) || parsed < 1) {
+    throw new Error(`${label} must be a positive integer`);
+  }
+  return parsed;
+}
+
+function readDaemonPositiveInteger(raw: unknown, label: string): number {
+  try {
+    return parseDaemonPositiveInteger(raw, label);
+  } catch (err) {
+    getCliLogger().error(err instanceof Error ? err.message : String(err));
+    process.exit(1);
+  }
+}
+
 export async function cmdStart(
   stateManager: StateManager,
   characterConfigManager: CharacterConfigManager,
@@ -166,7 +187,7 @@ export async function cmdStart(
     }) as { values: { "api-key"?: string; config?: string; goal?: string[]; detach?: boolean; "check-interval-ms"?: string; "iterations-per-cycle"?: string; resident?: boolean; "max-concurrent-goals"?: string; workspace?: string } });
   } catch (err) {
     getCliLogger().error(formatOperationError("parse start command arguments", err));
-    values = {};
+    process.exit(1);
   }
 
   const goalIds = (values.goal as string[]) || [];
@@ -196,21 +217,13 @@ export async function cmdStart(
   }
 
   // Merge CLI flag overrides into daemonConfig
-  if (values["check-interval-ms"]) {
-    const parsed = parseInt(values["check-interval-ms"], 10);
-    if (isNaN(parsed) || parsed <= 0) {
-      getCliLogger().error("--check-interval-ms must be a positive integer");
-      process.exit(1);
-    }
+  if (values["check-interval-ms"] !== undefined) {
+    const parsed = readDaemonPositiveInteger(values["check-interval-ms"], "--check-interval-ms");
     daemonConfig = daemonConfig ?? {};
     daemonConfig.check_interval_ms = parsed;
   }
-  if (values["iterations-per-cycle"]) {
-    const parsed = parseInt(values["iterations-per-cycle"], 10);
-    if (isNaN(parsed) || parsed <= 0) {
-      getCliLogger().error("--iterations-per-cycle must be a positive integer");
-      process.exit(1);
-    }
+  if (values["iterations-per-cycle"] !== undefined) {
+    const parsed = readDaemonPositiveInteger(values["iterations-per-cycle"], "--iterations-per-cycle");
     daemonConfig = daemonConfig ?? {};
     daemonConfig.iterations_per_cycle = parsed;
     if (values.resident === true) {
@@ -222,12 +235,8 @@ export async function cmdStart(
     daemonConfig = daemonConfig ?? {};
     daemonConfig.run_policy = { mode: "resident", max_iterations: null };
   }
-  if (values["max-concurrent-goals"]) {
-    const parsed = parseInt(values["max-concurrent-goals"], 10);
-    if (isNaN(parsed) || parsed <= 0) {
-      getCliLogger().error("--max-concurrent-goals must be a positive integer");
-      process.exit(1);
-    }
+  if (values["max-concurrent-goals"] !== undefined) {
+    const parsed = readDaemonPositiveInteger(values["max-concurrent-goals"], "--max-concurrent-goals");
     daemonConfig = daemonConfig ?? {};
     daemonConfig.max_concurrent_goals = parsed;
   }

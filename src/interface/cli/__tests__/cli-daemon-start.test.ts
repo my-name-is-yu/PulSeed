@@ -339,6 +339,33 @@ describe("cmdStart", () => {
     );
   });
 
+  it.each([
+    ["--check-interval-ms", "10abc"],
+    ["--iterations-per-cycle", "1.5"],
+    ["--max-concurrent-goals", "0"],
+    ["--check-interval-ms", undefined],
+  ])("rejects invalid daemon integer flag %s=%s", async (flag, value) => {
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: string | number | null) => {
+      throw new Error(`process.exit:${code ?? ""}`);
+    }) as typeof process.exit);
+
+    try {
+      const args = value === undefined ? [flag] : [flag, value];
+      await expect(cmdStart(
+        { getBaseDir: vi.fn().mockReturnValue("/tmp/pulseed-daemon-start-base") } as never,
+        {} as never,
+        args
+      )).rejects.toThrow("process.exit:1");
+    } finally {
+      exitSpy.mockRestore();
+    }
+
+    expect(cliLoggerMock.error).toHaveBeenCalledWith(`${flag} must be a positive integer`);
+    expect(watchdogStartMock).not.toHaveBeenCalled();
+    expect(daemonStartMock).not.toHaveBeenCalled();
+    expect(buildDepsMock).not.toHaveBeenCalled();
+  });
+
   it("keeps legacy daemon.json iterations_per_cycle configs bounded", async () => {
     process.env.PULSEED_WATCHDOG_CHILD = "1";
     fs.mkdirSync("/tmp/pulseed-daemon-start-base", { recursive: true });
