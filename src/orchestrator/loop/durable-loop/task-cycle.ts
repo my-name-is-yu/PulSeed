@@ -30,7 +30,10 @@ import {
 import type { CapabilityAcquisitionOutcome } from "./capability.js";
 import type { CoreLoopEvidenceLedger } from "./evidence-ledger.js";
 import type { ExecutionModeState } from "../../../platform/time/execution-mode.js";
-export { detectStallsAndRebalance } from "./task-cycle-stall.js";
+export {
+  detectStallsAndRebalance,
+  type StallActionHints,
+} from "./task-cycle-stall.js";
 export {
   evaluateWaitStrategiesForObserveOnly,
   type WaitStrategyObservationDecision,
@@ -158,10 +161,6 @@ export interface TaskGenerationHints {
   executionMode?: ExecutionModeState;
   runControlRecommendationContext?: string;
   abortSignal?: AbortSignal;
-}
-
-export interface StallActionHints {
-  recommendedAction?: "continue" | "refine" | "pivot";
 }
 
 /** Collect context, run task cycle, handle capability acquisition,

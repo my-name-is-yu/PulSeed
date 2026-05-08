@@ -12,7 +12,6 @@ import {
 import { gatherStallEvidence } from "../stall-evidence.js";
 import type { LoopIterationResult } from "./contracts.js";
 import type { PhaseCtx } from "./preparation.js";
-import type { StallActionHints } from "./task-cycle.js";
 import {
   buildDecisionLineageForStrategy,
   type WaitStrategyActivationContext,
@@ -23,6 +22,10 @@ type DimensionGapSample = {
   normalized_gap: number;
   timestamp: string;
 };
+
+export interface StallActionHints {
+  recommendedAction?: "continue" | "refine" | "pivot";
+}
 
 type StrategyStallArgs = [
   goalId: string,
