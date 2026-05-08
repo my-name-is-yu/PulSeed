@@ -3,6 +3,7 @@ import { SOURCE_LABELS } from "./constants.js";
 import { pathExists, readJson, safeImportName } from "./fs-utils.js";
 import { collectRecords, isRecord, nestedRecord, stringValue } from "./parse.js";
 import type { SetupImportItem, SetupImportSourceId, SetupImportTelegramSettings } from "./types.js";
+import { parseExactTelegramInteger } from "../../telegram-id-parser.js";
 
 function secretString(value: unknown, env: Record<string, string>): string | undefined {
   if (typeof value === "string" && value.trim()) {
@@ -20,10 +21,10 @@ function secretString(value: unknown, env: Record<string, string>): string | und
 function numberArray(value: unknown): number[] | undefined {
   if (!Array.isArray(value)) return undefined;
   const numbers = value.flatMap((item) => {
-    if (typeof item === "number" && Number.isInteger(item)) return [item];
+    if (typeof item === "number" && Number.isSafeInteger(item)) return [item];
     if (typeof item === "string") {
-      const parsed = parseInt(item, 10);
-      return Number.isInteger(parsed) ? [parsed] : [];
+      const parsed = parseExactTelegramInteger(item);
+      return parsed !== undefined ? [parsed] : [];
     }
     return [];
   });
