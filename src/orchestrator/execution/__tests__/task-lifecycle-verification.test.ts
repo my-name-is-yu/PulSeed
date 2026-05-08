@@ -18,7 +18,7 @@ import type {
 import type { ToolExecutor } from "../../../tools/executor.js";
 import { createMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
 import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
-import { makeGoal } from "../../../../tests/helpers/fixtures.js";
+import { makeDimension, makeGoal } from "../../../../tests/helpers/fixtures.js";
 
 // ─── Spy LLM Client ───
 
@@ -331,6 +331,76 @@ describe("TaskLifecycle", async () => {
       });
       const artifactContractStatus = verification.artifact_contract_status!;
       expect(artifactContractStatus.description).not.toContain("submission_csv");
+    });
+
+    it("uses passed metrics_json artifact values for dimension updates instead of synthetic progress deltas", async () => {
+      const workspace = path.join(tmpDir, "contract-workspace-accuracy-update");
+      const metricsPath = path.join(workspace, "experiments", "fresh", "metrics.json");
+      fs.mkdirSync(path.dirname(metricsPath), { recursive: true });
+      fs.writeFileSync(metricsPath, JSON.stringify({ accuracy: 0.93 }), "utf8");
+      await stateManager.saveGoal(makeGoal({
+        id: "goal-artifact-accuracy",
+        constraints: [`workspace_path:${workspace}`],
+        dimensions: [
+          makeDimension({
+            name: "accuracy",
+            label: "accuracy",
+            current_value: 0,
+            threshold: { type: "min", value: 0.9 },
+          }),
+        ],
+      }));
+      const llm = createMockLLMClient([LLM_REVIEW_PASS]);
+      const lifecycle = createLifecycle(llm, { adapterRegistry: null });
+      const task = makeTask({
+        id: "task-artifact-accuracy",
+        goal_id: "goal-artifact-accuracy",
+        target_dimensions: ["accuracy"],
+        primary_dimension: "accuracy",
+        work_description: "Create fresh accuracy metrics artifact",
+        approach: "Write and verify experiments/fresh/metrics.json.",
+        created_at: "2020-01-01T00:00:00.000Z",
+        started_at: "2020-01-01T00:00:00.000Z",
+        constraints: [`workspace_path:${workspace}`],
+        success_criteria: [
+          {
+            description: "Fresh metrics artifact exists",
+            verification_method: "test -f experiments/fresh/metrics.json",
+            is_blocking: true,
+          },
+        ],
+        artifact_contract: {
+          required: true,
+          required_artifacts: [
+            {
+              kind: "metrics_json",
+              path: "experiments/fresh/metrics.json",
+              required_fields: ["accuracy"],
+              field_types: { accuracy: "number" },
+              fresh_after_task_start: true,
+            },
+          ],
+        },
+      });
+
+      const verification = await lifecycle.verifyTask(task, makeExecutionResult({
+        output: "Produced experiments/fresh/metrics.json",
+        filesChangedPaths: ["experiments/fresh/metrics.json"],
+      }));
+      await lifecycle.handleVerdict(task, verification);
+
+      expect(verification.verdict).toBe("pass");
+      expect(verification.dimension_updates).toEqual([
+        {
+          dimension_name: "accuracy",
+          previous_value: 0,
+          new_value: 0.93,
+          confidence: 0.9,
+          source: "artifact_contract",
+        },
+      ]);
+      const updated = await stateManager.loadGoal("goal-artifact-accuracy");
+      expect(updated?.dimensions[0]?.current_value).toBe(0.93);
     });
 
     it("fails stale required artifacts even when the generated artifact opts out of freshness", async () => {

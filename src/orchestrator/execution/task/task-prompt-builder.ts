@@ -5,6 +5,11 @@ import {
   formatExecutionModePromptSection,
   type ExecutionModeState,
 } from "../../../platform/time/execution-mode.js";
+import {
+  extractWorkspacePathConstraint,
+  resolveWorkspacePath,
+} from "../../../base/utils/workspace-path.js";
+import type { Goal } from "../../goal/types/goal.js";
 
 interface RepositoryPromptContext {
   projectName: string;
@@ -108,6 +113,28 @@ function isRecentFailureEntry(entry: PromptTaskHistoryEntry): boolean {
   if (entry.verification_verdict === "fail" || entry.verification_verdict === "partial") return true;
   if ((entry.consecutive_failure_count ?? 0) > 0) return true;
   return ["failed", "error", "timed_out", "blocked", "abandoned", "discarded"].includes(entry.status ?? "");
+}
+
+function buildGoalConstraintsSection(goal: Goal | null): string {
+  const constraints = goal?.constraints ?? [];
+  if (constraints.length === 0) return "";
+
+  return `\n=== Goal Constraints ===\n${constraints.map((constraint) => `- ${constraint}`).join("\n")}\n`;
+}
+
+function buildWorkspaceBoundarySection(goal: Goal | null, repoRoot: string): string {
+  const workspacePathConstraint = extractWorkspacePathConstraint(goal?.constraints);
+  if (!workspacePathConstraint) return "";
+
+  const workspacePath = resolveWorkspacePath(workspacePathConstraint, repoRoot);
+  return `\n=== Workspace Boundary ===
+- Active writable workspace: ${workspacePath}
+- Generated file edits and artifact writes must stay inside this workspace unless the goal explicitly names another local path.
+- Preserve the workspace_path constraint in the generated task constraints.
+- Workspace artifact/evidence creation is a valid implementation output for artifact/evidence goals; do not convert a workspace artifact task into a PulSeed runtime source-code change merely because the executing adapter is a code agent.
+- For artifact-only workspace tasks, use artifact-local checks such as file existence, exact content/schema checks, or a contract check that exists in the workspace. Do not add broad repository test/build commands unless the task edits repository source or the active workspace contains the relevant package manifest.
+- Only use a --check-contract verification command when that script is already present in the active workspace or the generated task explicitly creates it.
+`;
 }
 
 async function resolveTaskHistoryDescription(
@@ -269,13 +296,13 @@ Gap Analysis:
 - Generate specific, actionable issues only\n`;
   } else if (adapterType === "openai_codex_cli" || adapterType === "claude_code_cli") {
     adapterSection = `\nExecution context: CLI code agent.
-You MUST produce implementation tasks that modify or create files.
+You MUST produce implementation tasks that modify or create files inside the active workspace.
 The executing agent's filesystem and network boundary depends on the configured terminal backend.
-Tasks should involve writing code, fixing bugs, adding tests, or editing configuration — NOT analysis or planning.
-For operational KPI dimensions such as reliability, recovery, latency, uptime, or daemon stability, do not generate a test-only/regression-only task unless the goal explicitly asks for tests; prefer the smallest runtime/config/code change that directly moves the KPI, with tests only as supporting validation.
+Tasks should involve writing code, fixing bugs, adding tests, editing configuration, or creating/updating workspace artifacts that are the goal evidence — NOT analysis or planning.
+For operational KPI dimensions such as reliability, recovery, latency, uptime, or daemon stability, do not generate a test-only/regression-only task unless the goal explicitly asks for tests; prefer the smallest runtime/config/code change that directly moves the KPI, with tests only as supporting validation. If a workspace boundary and artifact contract make local artifacts the KPI evidence, artifact creation is the direct implementation output.
 Constraints:
 - No git commit/push/merge operations
-- Success criteria must be directly verifiable. Use file/content checks as supporting evidence, but for runtime/code behavior changes include at least one relevant test/build command such as "npx vitest run <test-file>" or "npm run build".
+- Success criteria must be directly verifiable. For workspace artifact/evidence tasks, file/content/schema/contract checks can be primary evidence. For runtime/code behavior changes, include at least one relevant test/build command such as "npx vitest run <test-file>" or "npm run build".
 - verification_method: use one single-line, directly runnable check command such as "rg ...", "grep ...", "test -f ...", "npm ...", "npx ...", "python src/experiments/run.py --check-contract", or ".venv/bin/python src/experiments/run.py --check-contract"; do not use heredocs, multiline inline scripts, or prose like "Use rg ..."\n`;
   } else if (adapterType) {
     adapterSection = `\nExecution context: ${adapterType} adapter.\n`;
@@ -286,6 +313,8 @@ Constraints:
     : "";
 
   const repoRoot = options?.repoRoot ?? process.cwd();
+  const goalConstraintsSection = buildGoalConstraintsSection(goal);
+  const workspaceBoundarySection = buildWorkspaceBoundarySection(goal, repoRoot);
   const issueLookupText = [goal?.title, goal?.description, ...parentChain.map((p) => `${p.title} ${p.description}`)]
     .filter(Boolean)
     .join(" ");
@@ -347,7 +376,7 @@ Constraints:
   const executionModeSection = formatExecutionModePromptSection(executionMode);
 
   return `${goalSection}
-${dimensionSection}${executionModeSection}
+${dimensionSection}${goalConstraintsSection}${workspaceBoundarySection}${executionModeSection}
 ${parentSection ? `${parentSection}\n` : ""}${issueSection ? `${issueSection}\n` : ""}${purposeSection ? `${purposeSection}\n` : ""}${repoSection}${adapterSection}${knowledgeSection}${workspaceSection}${existingTasksSection}${failureContextSection}${recentFailureHistorySection}${reflectionsSection}${lessonsSection}
 Requirements:
 - Specific to actual project (goal, description, repo context)

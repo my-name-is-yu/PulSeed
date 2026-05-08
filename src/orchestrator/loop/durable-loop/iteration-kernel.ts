@@ -545,12 +545,19 @@ export class CoreIterationKernel {
               budget: {},
             },
             {
+              goalId,
               goalTitle: goal.title,
               stallType: result.stallReport?.stall_type ?? "unknown",
               ...(result.stallReport?.dimension_name ? { dimensionName: result.stallReport.dimension_name } : {}),
               ...(result.stallReport?.suggested_cause ? { suggestedCause: result.stallReport.suggested_cause } : {}),
+              ...(result.stallReport?.task_id ? { taskId: result.stallReport.task_id } : {}),
             },
-            { goalId, stallDetected: result.stallDetected, gapAggregate },
+            {
+              goalId,
+              ...(result.stallReport?.task_id ? { taskId: result.stallReport.task_id } : {}),
+              stallDetected: result.stallDetected,
+              gapAggregate,
+            },
           )
         )
       : null;

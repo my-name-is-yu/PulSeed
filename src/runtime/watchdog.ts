@@ -23,6 +23,7 @@ export interface RuntimeWatchdogOptions {
   healthProbeFailureThreshold?: number;
   pollIntervalMs?: number;
   heartbeatTimeoutMs?: number;
+  staleHeartbeatRestartGraceMs?: number;
   startupGraceMs?: number;
   restartBackoffMs?: number;
   maxRestartBackoffMs?: number;
@@ -50,6 +51,7 @@ interface ChildExitResult {
 
 const DEFAULT_POLL_INTERVAL_MS = 1_000;
 const DEFAULT_HEARTBEAT_TIMEOUT_MS = 15_000;
+const DEFAULT_STALE_HEARTBEAT_RESTART_GRACE_MS = 5 * 60_000;
 const DEFAULT_STARTUP_GRACE_MS = 20_000;
 const DEFAULT_RESTART_BACKOFF_MS = 1_000;
 const DEFAULT_MAX_RESTART_BACKOFF_MS = 30_000;
@@ -71,6 +73,7 @@ export class RuntimeWatchdog {
   private readonly healthProbeFailureThreshold: number;
   private readonly pollIntervalMs: number;
   private readonly heartbeatTimeoutMs: number;
+  private readonly staleHeartbeatRestartGraceMs: number;
   private readonly startupGraceMs: number;
   private readonly restartBackoffMs: number;
   private readonly maxRestartBackoffMs: number;
@@ -92,6 +95,10 @@ export class RuntimeWatchdog {
     this.healthProbeFailureThreshold = Math.max(1, options.healthProbeFailureThreshold ?? 3);
     this.pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
     this.heartbeatTimeoutMs = options.heartbeatTimeoutMs ?? DEFAULT_HEARTBEAT_TIMEOUT_MS;
+    this.staleHeartbeatRestartGraceMs = Math.max(
+      0,
+      options.staleHeartbeatRestartGraceMs ?? DEFAULT_STALE_HEARTBEAT_RESTART_GRACE_MS
+    );
     this.startupGraceMs = options.startupGraceMs ?? DEFAULT_STARTUP_GRACE_MS;
     this.restartBackoffMs = options.restartBackoffMs ?? DEFAULT_RESTART_BACKOFF_MS;
     this.maxRestartBackoffMs = options.maxRestartBackoffMs ?? DEFAULT_MAX_RESTART_BACKOFF_MS;
@@ -225,6 +232,7 @@ export class RuntimeWatchdog {
     let pollInFlight = false;
     let forceKillTimer: ReturnType<typeof setTimeout> | null = null;
     let consecutiveHealthProbeFailures = 0;
+    let staleHeartbeatObservedAt: number | null = null;
 
     return new Promise<ChildExitResult>((resolve) => {
       const cleanup = (): void => {
@@ -252,6 +260,7 @@ export class RuntimeWatchdog {
       ): void => {
         if (unhealthyKillTriggered || this.stopping) return;
         unhealthyKillTriggered = true;
+        healthy = false;
         unhealthyReason = reason;
         if (reason === "health_probe_failed") {
           this.logger.warn("Watchdog detected unresponsive daemon command surface", {
@@ -263,6 +272,7 @@ export class RuntimeWatchdog {
           this.logger.warn("Watchdog detected stale daemon heartbeat", {
             pid: child.pid,
             heartbeat_timeout_ms: this.heartbeatTimeoutMs,
+            stale_restart_grace_ms: this.staleHeartbeatRestartGraceMs,
             detail,
           });
         }
@@ -317,6 +327,7 @@ export class RuntimeWatchdog {
 
             const leadershipHealthy = heartbeatFresh && leaderFresh;
             if (leadershipHealthy && this.healthProbe) {
+              staleHeartbeatObservedAt = null;
               const probe = await this.healthProbe();
               if (probe.ok) {
                 consecutiveHealthProbeFailures = 0;
@@ -337,6 +348,7 @@ export class RuntimeWatchdog {
 
             if (leadershipHealthy) {
               consecutiveHealthProbeFailures = 0;
+              staleHeartbeatObservedAt = null;
               healthy = true;
               return;
             }
@@ -345,7 +357,24 @@ export class RuntimeWatchdog {
               return;
             }
 
-            triggerRestart("heartbeat_timeout");
+            if (staleHeartbeatObservedAt === null) {
+              staleHeartbeatObservedAt = now;
+              this.logger.warn("Watchdog observed stale daemon heartbeat", {
+                pid: child.pid,
+                heartbeat_timeout_ms: this.heartbeatTimeoutMs,
+                stale_restart_grace_ms: this.staleHeartbeatRestartGraceMs,
+              });
+            }
+
+            const staleObservedMs = now - staleHeartbeatObservedAt;
+            if (staleObservedMs < this.staleHeartbeatRestartGraceMs) {
+              return;
+            }
+
+            triggerRestart(
+              "heartbeat_timeout",
+              `stale heartbeat persisted for ${staleObservedMs}ms`
+            );
           } catch (error) {
             this.logger.warn("Watchdog failed to poll daemon heartbeat", {
               error: error instanceof Error ? error.message : String(error),

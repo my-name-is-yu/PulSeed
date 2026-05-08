@@ -11,6 +11,7 @@ import { formatOperationError } from "../utils.js";
 import { getCliLogger } from "../cli-logger.js";
 import { dimensionProgress } from "../../../platform/drive/gap-calculator.js";
 import { resolvePulSeedExecutionProfile } from "../../../orchestrator/execution/agent-loop/self-protection.js";
+import type { Task } from "../../../base/types/task.js";
 
 async function printActiveGoals(
   stateManager: StateManager,
@@ -166,16 +167,45 @@ export async function cmdStatus(
   const execReports = reports
     .filter((r) => r.report_type === "execution_summary")
     .sort((a, b) => (a.generated_at < b.generated_at ? 1 : -1));
+  const latestTask = await loadLatestTaskForStatus(stateManager, goalId);
 
   if (execReports.length > 0) {
     const latest = execReports[0];
     console.log(`\n## Latest Execution Summary\n`);
     console.log(latest.content);
+    if (latestTask && !latest.content.includes(latestTask.id)) {
+      printLatestTaskRecord(latestTask);
+    }
   } else {
     console.log(`\n_No execution reports yet. Run \`pulseed run --goal ${goalId}\` to start._`);
+    if (latestTask) {
+      printLatestTaskRecord(latestTask);
+    }
   }
 
   return 0;
+}
+
+async function loadLatestTaskForStatus(stateManager: StateManager, goalId: string): Promise<Task | null> {
+  try {
+    const tasks = await stateManager.listTasks(goalId);
+    return tasks[0] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function printLatestTaskRecord(task: Task): void {
+  console.log(`\n## Latest Task Record\n`);
+  console.log(`- **Task ID**: ${task.id}`);
+  console.log(`- **Status**: ${task.status}`);
+  console.log(`- **Dimension**: ${task.primary_dimension}`);
+  if (task.verification_verdict) {
+    console.log(`- **Verification**: ${task.verification_verdict}`);
+  }
+  if (task.completed_at) {
+    console.log(`- **Completed at**: ${task.completed_at}`);
+  }
 }
 
 function formatCurrentValue(value: unknown): string {

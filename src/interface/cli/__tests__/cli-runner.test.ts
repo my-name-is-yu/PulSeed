@@ -1359,6 +1359,45 @@ describe("status subcommand", async () => {
     expect(code).toBe(0);
   });
 
+  it("shows the latest persisted task when the latest execution report has no task result", async () => {
+    const goal = makeGoal({ id: "goal-status-recovered" });
+    await stateManager.saveGoal(goal);
+    await stateManager.writeRaw(
+      "tasks/goal-status-recovered/task-recovered.json",
+      makeTask({
+        id: "task-recovered",
+        goal_id: "goal-status-recovered",
+        status: "completed",
+        completed_at: "2026-05-08T03:18:14.915Z",
+        verification_verdict: "pass",
+      })
+    );
+
+    const reportDir = path.join(tmpDir, "reports", "goal-status-recovered");
+    fs.mkdirSync(reportDir, { recursive: true });
+    fs.writeFileSync(path.join(reportDir, "rep-001.json"), JSON.stringify({
+      id: "rep-001",
+      report_type: "execution_summary",
+      goal_id: "goal-status-recovered",
+      title: "Execution Summary — Loop 1",
+      content: "### Task Result\n\n_No task executed this loop._",
+      verbosity: "standard",
+      generated_at: new Date().toISOString(),
+      delivered_at: null,
+      read: false,
+    }), "utf-8");
+
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    await runCLI("status", "--goal", "goal-status-recovered");
+
+    const output = consoleSpy.mock.calls.map((c) => c.join(" ")).join("\n");
+    expect(output).toContain("Latest Task Record");
+    expect(output).toContain("task-recovered");
+    expect(output).toContain("completed");
+    expect(output).toContain("pass");
+    consoleSpy.mockRestore();
+  });
+
   it("displays the goal ID in the output", async () => {
     await stateManager.saveGoal(makeGoal({ id: "goal-display", title: "Display Goal" }));
 

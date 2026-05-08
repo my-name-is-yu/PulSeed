@@ -9,6 +9,7 @@ import { pathToFileURL } from "node:url";
 const DEFAULT_CYCLE_TIMEOUT_MS = 20 * 60 * 1000;
 const DEFAULT_SNAPSHOT_INTERVAL_MS = 5 * 60 * 1000;
 const DEFAULT_POLL_INTERVAL_MS = 15 * 1000;
+const DEFAULT_DAEMON_SETTLEMENT_TIMEOUT_MS = 60 * 1000;
 
 const SCENARIOS = [
   {
@@ -155,12 +156,22 @@ const SCENARIOS = [
     dimension: "packaged_cli_report_exists:present",
     title: "Goal canary: CLI packaging and build surface",
     expectedArtifact: "reports/packaged-cli.json",
+    seedDist: true,
+    expectedArtifactJson: {
+      cli_runner_executable: true,
+      cli_runner_exists: true,
+      packaged_artifact_verification_passed: true,
+    },
     workspaceFiles: {
       "README.md": [
         "# CLI packaging/build canary",
         "",
-        "Create `reports/packaged-cli.json` after checking the PulSeed build artifact surface from the caller workspace.",
-        "The report should record whether `dist/interface/cli/cli-runner.js` is executable and whether packaged artifact verification passed.",
+        "Create `reports/packaged-cli.json` after checking the PulSeed build artifact surface seeded into this disposable workspace.",
+        "The supervisor copies the caller workspace `dist/` directory into this workspace before daemon start when it exists.",
+        "The report must include exact top-level boolean fields `cli_runner_exists`, `cli_runner_executable`, and `packaged_artifact_verification_passed`.",
+        "`cli_runner_exists` must be true only when `dist/interface/cli/cli-runner.js` exists.",
+        "`cli_runner_executable` must be true only when that file has an executable mode bit.",
+        "`packaged_artifact_verification_passed` must be true only when `node dist/interface/cli/cli-runner.js --version` exits successfully.",
         "Do not run npm publish, create tags, create GitHub Releases, or touch version/changelog files.",
         "",
       ].join("\n"),
@@ -262,14 +273,15 @@ async function main() {
   }
 }
 
-function selectScenarios(options) {
-  const filtered = options.scenarioSlugs.length > 0
-    ? SCENARIOS.filter((scenario) => options.scenarioSlugs.includes(scenario.slug))
-    : SCENARIOS;
-  const missing = options.scenarioSlugs.filter((slug) => !SCENARIOS.some((scenario) => scenario.slug === slug));
+export function selectScenarios(options) {
+  const scenariosBySlug = new Map(SCENARIOS.map((scenario) => [scenario.slug, scenario]));
+  const missing = options.scenarioSlugs.filter((slug) => !scenariosBySlug.has(slug));
   if (missing.length > 0) {
     throw new Error(`Unknown scenario slug(s): ${missing.join(", ")}`);
   }
+  const filtered = options.scenarioSlugs.length > 0
+    ? options.scenarioSlugs.map((slug) => scenariosBySlug.get(slug))
+    : SCENARIOS;
   return filtered.slice(0, options.maxScenarios);
 }
 
@@ -283,6 +295,7 @@ async function runScenario(input) {
   await fs.mkdir(workspace, { recursive: true });
 
   await writeWorkspace(workspace, scenario.workspaceFiles);
+  await seedScenarioWorkspace(scenario, workspace, repoRoot);
   if (scenario.slug === "artifact-contract-exactness") {
     const stale = new Date(Date.now() - 60 * 60 * 1000);
     await fs.utimes(path.join(workspace, "reports", "contract.json"), stale, stale);
@@ -405,6 +418,7 @@ async function runScenario(input) {
       const latest = await readLatestTaskAndLedger(pulseedHome, goalId);
       const workspaceFiles = await listWorkspaceFiles(workspace);
       latest.workspaceFiles = workspaceFiles.map((entry) => entry.path);
+      latest.expectedArtifactJson = await readExpectedArtifactJson(workspace, scenario.expectedArtifact);
       taskId = latest.task?.id ?? taskId;
       const expectedArtifactSeen =
         Boolean(scenario.restartAfterExpectedArtifactSeen) &&
@@ -445,6 +459,16 @@ async function runScenario(input) {
         restartCutoffEventAt,
       });
       if (classificationNow.done) {
+        const settled = await waitForDaemonCycleSettlement({
+          pulseedHome,
+          timeoutMs: Math.min(DEFAULT_DAEMON_SETTLEMENT_TIMEOUT_MS, Math.max(0, deadline - Date.now())),
+          pollMs: options.pollIntervalMs,
+        });
+        if (!settled) {
+          finalState = "blocked";
+          classification = "daemon_cycle_settle_timeout_after_success";
+          break;
+        }
         finalState = "completed";
         classification = classificationNow.classification;
         break;
@@ -483,8 +507,8 @@ async function runScenario(input) {
   };
 }
 
-function buildGoalDescription(scenario, workspace) {
-  return [
+export function buildGoalDescription(scenario, workspace) {
+  const lines = [
     scenario.title,
     "",
     `Disposable workspace: ${workspace}`,
@@ -496,7 +520,21 @@ function buildGoalDescription(scenario, workspace) {
     "",
     "Scenario instructions:",
     scenario.workspaceFiles["README.md"] ?? "",
-  ].join("\n");
+  ];
+  if (scenario.seedDist) {
+    lines.splice(4, 0, "The disposable workspace may contain a seeded copy of the caller workspace build artifacts under `dist/`; inspect those local files.");
+  }
+  if (scenario.expectedArtifactJson) {
+    lines.splice(
+      4,
+      0,
+      "Expected artifact JSON contract:",
+      `The required evidence artifact must include these exact top-level field/value pairs: ${JSON.stringify(scenario.expectedArtifactJson)}.`,
+      "Do not replace those required fields with alternate names or synonyms.",
+      "",
+    );
+  }
+  return lines.join("\n");
 }
 
 async function startDaemon({ cliPath, env, workspace, goalId, logFile }) {
@@ -533,6 +571,10 @@ export function classifyScenarioState(scenario, latest, context = {}) {
     if (task.status === "error" || task.status === "failed") {
       return { done: false, blocked: true, classification: "succeeded_then_terminal_error" };
     }
+    const artifactJsonCheck = checkExpectedArtifactJson(scenario, latest);
+    if (!artifactJsonCheck.ok) {
+      return { done: false, blocked: true, classification: artifactJsonCheck.classification };
+    }
     if (
       scenario.restartAfterExpectedArtifactSeen &&
       (context.restarted !== true ||
@@ -559,12 +601,49 @@ export function classifyScenarioState(scenario, latest, context = {}) {
 
   const expected = scenario.expectedArtifact;
   if (expected && latest.workspaceFiles?.includes(expected) && task.verification_verdict === "pass") {
+    const artifactJsonCheck = checkExpectedArtifactJson(scenario, latest);
+    if (!artifactJsonCheck.ok) {
+      return { done: false, blocked: true, classification: artifactJsonCheck.classification };
+    }
     if (scenario.restartAfterExpectedArtifactSeen) {
       return { done: false, blocked: false, classification: "awaiting_restart_recovery_ledger" };
     }
     return { done: true, blocked: false, classification: "artifact_and_verification_passed" };
   }
   return { done: false, blocked: false, classification: "running" };
+}
+
+function checkExpectedArtifactJson(scenario, latest) {
+  if (!scenario.expectedArtifactJson) return { ok: true };
+  const actual = latest.expectedArtifactJson;
+  if (!actual || typeof actual !== "object") {
+    return { ok: false, classification: "expected_artifact_json_missing" };
+  }
+  for (const [key, expectedValue] of Object.entries(scenario.expectedArtifactJson)) {
+    if (actual[key] !== expectedValue) {
+      return { ok: false, classification: `expected_artifact_json_mismatch_${key}` };
+    }
+  }
+  return { ok: true };
+}
+
+export function isDaemonCycleSettledState(value) {
+  if (!value || typeof value !== "object") return false;
+  return value.status === "running" &&
+    typeof value.last_loop_at === "string" &&
+    value.last_loop_at.length > 0 &&
+    typeof value.loop_count === "number" &&
+    value.loop_count > 0;
+}
+
+async function waitForDaemonCycleSettlement({ pulseedHome, timeoutMs, pollMs }) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() <= deadline) {
+    const daemonState = await readJsonOrNull(path.join(pulseedHome, "daemon-state.json"));
+    if (isDaemonCycleSettledState(daemonState)) return true;
+    await sleep(Math.min(pollMs, Math.max(0, deadline - Date.now()), 1_000));
+  }
+  return false;
 }
 
 function classifyRestartRecoveryState(scenario, latest, context, latestLedgerEvent) {
@@ -717,6 +796,40 @@ async function writeWorkspace(workspace, files) {
     const fullPath = path.join(workspace, relativePath);
     await fs.mkdir(path.dirname(fullPath), { recursive: true });
     await fs.writeFile(fullPath, content, "utf8");
+  }
+}
+
+async function seedScenarioWorkspace(scenario, workspace, repoRoot) {
+  if (!scenario.seedDist) return;
+  const sourceDist = path.join(repoRoot, "dist");
+  const targetDist = path.join(workspace, "dist");
+  try {
+    await fs.access(sourceDist);
+  } catch {
+    return;
+  }
+  await fs.cp(sourceDist, targetDist, { recursive: true, force: true });
+  await preserveExecutableBit(
+    path.join(sourceDist, "interface", "cli", "cli-runner.js"),
+    path.join(targetDist, "interface", "cli", "cli-runner.js"),
+  );
+}
+
+async function preserveExecutableBit(sourcePath, targetPath) {
+  try {
+    const stat = await fs.stat(sourcePath);
+    await fs.chmod(targetPath, stat.mode & 0o777);
+  } catch {
+    // Non-fatal: the canary report and artifact JSON assertion will expose a missing executable bit.
+  }
+}
+
+async function readExpectedArtifactJson(workspace, expectedArtifact) {
+  if (!expectedArtifact) return null;
+  try {
+    return JSON.parse(await fs.readFile(path.join(workspace, expectedArtifact), "utf8"));
+  } catch {
+    return null;
   }
 }
 

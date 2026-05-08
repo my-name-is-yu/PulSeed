@@ -1211,6 +1211,72 @@ describe("TaskLifecycle", async () => {
       expect(ledger.summary.task_status).toBe("running");
     });
 
+    it("defers completion-gate failure ledger events when changed files can be mechanically verified", async () => {
+      const llm = createMockLLMClient([]);
+      const workspace = path.join(tmpDir, "external-completion-gate-mechanical-deferred");
+      fs.mkdirSync(workspace, { recursive: true });
+      const task = makeTask({
+        id: "task-completion-gate-mechanical-deferred",
+        constraints: [`workspace_path:${workspace}`],
+        success_criteria: [{
+          description: "Canary contract validates",
+          verification_method: "node scripts/judger-canary.mjs --check-contract",
+          is_blocking: true,
+        }],
+      });
+      const agentLoopRunner = {
+        runTask: vi.fn().mockImplementation(async (input: { cwd?: string }) => {
+          expect(input.cwd).toBe(workspace);
+          fs.mkdirSync(path.join(workspace, "reports"), { recursive: true });
+          fs.mkdirSync(path.join(workspace, "scripts"), { recursive: true });
+          fs.writeFileSync(
+            path.join(workspace, "reports", "judger.json"),
+            JSON.stringify({ scenario: "completion-judger-fallback", passed: true }),
+            "utf-8"
+          );
+          fs.writeFileSync(
+            path.join(workspace, "scripts", "judger-canary.mjs"),
+            "import fs from 'node:fs';\nconst report = JSON.parse(fs.readFileSync('reports/judger.json', 'utf8'));\nif (report.scenario !== 'completion-judger-fallback' || report.passed !== true) process.exit(1);\n",
+            "utf-8"
+          );
+          return makeAgentLoopResult("completion_gate_failed", {
+            finalText: "{\"status\":\"done\",\"finalAnswer\":\"claimed verification without observed tool call\"}",
+            changedFiles: ["reports/judger.json", "scripts/judger-canary.mjs"],
+            workspace: {
+              requestedCwd: workspace,
+              executionCwd: workspace,
+              isolated: false,
+              cleanupStatus: "not_requested",
+              dirty: false,
+              disposition: "not_isolated",
+            },
+          });
+        }),
+      } as unknown as TaskAgentLoopRunner;
+      const lifecycle = createLifecycle(llm, {
+        agentLoopRunner,
+        execFileSyncFn: realExecFileSync,
+      });
+      await stateManager.writeRaw(`tasks/${task.goal_id}/${task.id}.json`, task);
+
+      const result = await lifecycle.executeTaskWithAgentLoop(task, "workspace context", "knowledge context");
+
+      const persisted = await stateManager.readRaw(`tasks/${task.goal_id}/${task.id}.json`) as Record<string, unknown>;
+      const ledger = await stateManager.readRaw(`tasks/${task.goal_id}/ledger/${task.id}.json`) as {
+        events: Array<Record<string, unknown>>;
+        summary: Record<string, unknown>;
+      };
+
+      expect(result.success).toBe(false);
+      expect(result.stopped_reason).toBe("error");
+      expect(result.agentLoop?.stopReason).toBe("completion_gate_failed");
+      expect(result.filesChangedPaths).toEqual(["reports/judger.json", "scripts/judger-canary.mjs"]);
+      expect(persisted.status).toBe("running");
+      expect(persisted.stopped_at).toBeUndefined();
+      expect(ledger.events.map((event) => event.type)).toEqual(["started"]);
+      expect(ledger.summary.task_status).toBe("running");
+    });
+
     it.each([
       {
         stopReason: "timeout" as const,

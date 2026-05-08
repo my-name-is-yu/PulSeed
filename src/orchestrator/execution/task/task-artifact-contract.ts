@@ -106,6 +106,43 @@ export async function verifyTaskArtifactContract(
   };
 }
 
+export async function readTaskArtifactMetricValues(
+  task: Pick<Task, "artifact_contract">,
+  cwd: string | undefined,
+): Promise<Map<string, number>> {
+  const values = new Map<string, number>();
+  if (!cwd) return values;
+
+  for (const requirement of task.artifact_contract?.required_artifacts ?? []) {
+    if (requirement.kind !== "metrics_json") continue;
+    const resolvedPath = resolveWorkspaceArtifactPath(cwd, requirement.path);
+    if (!resolvedPath) continue;
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(await fs.readFile(resolvedPath, "utf8"));
+    } catch {
+      continue;
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) continue;
+
+    const data = parsed as Record<string, unknown>;
+    const contractFields = new Set([
+      ...requirement.required_fields,
+      ...Object.keys(requirement.field_types ?? {}),
+    ]);
+    const candidateFields = contractFields.size > 0 ? contractFields : new Set(Object.keys(data));
+    for (const field of candidateFields) {
+      const value = data[field];
+      if (typeof value === "number" && Number.isFinite(value)) {
+        values.set(field, value);
+      }
+    }
+  }
+
+  return values;
+}
+
 function requiresKaggleArtifactKinds(
   task: Task,
   goal?: Pick<Goal, "constraints"> | null,

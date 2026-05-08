@@ -114,6 +114,7 @@ describe("RuntimeWatchdog", () => {
       },
       pollIntervalMs: 20,
       heartbeatTimeoutMs: 50,
+      staleHeartbeatRestartGraceMs: 0,
       startupGraceMs: 40,
       restartBackoffMs: 10,
       maxRestartBackoffMs: 20,
@@ -141,6 +142,62 @@ describe("RuntimeWatchdog", () => {
     expect(children[1]!.kills).toContain("SIGTERM");
   }, 20_000);
 
+  it("keeps a live child running during the stale heartbeat restart grace window", async () => {
+    tmpDir = makeTempDir();
+    const runtimeRoot = path.join(tmpDir, "runtime");
+    const pidManager = new PIDManager(tmpDir);
+    const healthStore = new RuntimeHealthStore(runtimeRoot);
+    const leaderLockManager = new LeaderLockManager(runtimeRoot, 60);
+    await healthStore.ensureReady();
+
+    const children: FakeChildProcess[] = [];
+    const logger = {
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+    };
+    const watchdog = new RuntimeWatchdog({
+      pidManager,
+      healthStore,
+      leaderLockManager,
+      logger,
+      startChild: () => {
+        const child = new FakeChildProcess(15_000 + children.length);
+        children.push(child);
+        return child;
+      },
+      pollIntervalMs: 20,
+      heartbeatTimeoutMs: 50,
+      staleHeartbeatRestartGraceMs: 500,
+      startupGraceMs: 0,
+      restartBackoffMs: 10,
+      maxRestartBackoffMs: 20,
+      childShutdownGraceMs: 10,
+    });
+
+    const startPromise = watchdog.start();
+
+    await waitFor(() => children.length === 1);
+    const staleAt = Date.now() - 1_000;
+    await writeLeaderRecord(runtimeRoot, children[0]!.pid, staleAt);
+    await writeDaemonHealth(healthStore, children[0]!.pid, staleAt, "degraded", "degraded");
+
+    await new Promise((resolve) => setTimeout(resolve, 140));
+    expect(children).toHaveLength(1);
+    expect(children[0]!.kills).toEqual([]);
+    expect(logger.warn).toHaveBeenCalledWith(
+      "Watchdog observed stale daemon heartbeat",
+      expect.objectContaining({
+        pid: children[0]!.pid,
+        heartbeat_timeout_ms: 50,
+        stale_restart_grace_ms: 500,
+      })
+    );
+
+    watchdog.stop();
+    await startPromise;
+  }, 20_000);
+
   it("updates the pid file to the current runtime child across restarts", async () => {
     tmpDir = makeTempDir();
     const runtimeRoot = path.join(tmpDir, "runtime");
@@ -166,6 +223,7 @@ describe("RuntimeWatchdog", () => {
       },
       pollIntervalMs: 20,
       heartbeatTimeoutMs: 50,
+      staleHeartbeatRestartGraceMs: 0,
       startupGraceMs: 0,
       restartBackoffMs: 10,
       maxRestartBackoffMs: 20,
@@ -251,6 +309,53 @@ describe("RuntimeWatchdog", () => {
     expect(healthProbe.mock.calls.length).toBeGreaterThanOrEqual(1);
   }, 45_000);
 
+  it("classifies a stale heartbeat restart after a healthy poll as unhealthy", async () => {
+    tmpDir = makeTempDir();
+    const runtimeRoot = path.join(tmpDir, "runtime");
+    const pidManager = new PIDManager(tmpDir);
+    const healthStore = new RuntimeHealthStore(runtimeRoot);
+    const leaderLockManager = new LeaderLockManager(runtimeRoot, 60);
+    await healthStore.ensureReady();
+
+    const child = new FakeChildProcess(35_000);
+    const watchdog = new RuntimeWatchdog({
+      pidManager,
+      healthStore,
+      leaderLockManager,
+      logger: {
+        info: vi.fn(),
+        warn: vi.fn(),
+        error: vi.fn(),
+      },
+      startChild: () => child,
+      pollIntervalMs: 20,
+      heartbeatTimeoutMs: 50,
+      staleHeartbeatRestartGraceMs: 0,
+      startupGraceMs: 0,
+      restartBackoffMs: 10,
+      maxRestartBackoffMs: 20,
+      childShutdownGraceMs: 10,
+    });
+
+    const healthyAt = Date.now();
+    await writeLeaderRecord(runtimeRoot, child.pid, healthyAt + 60_000);
+    await writeDaemonHealth(healthStore, child.pid, healthyAt);
+
+    const resultPromise = (watchdog as unknown as {
+      monitorChild(child: FakeChildProcess): Promise<{ reason: string; healthy: boolean }>;
+    }).monitorChild(child);
+
+    await new Promise((resolve) => setTimeout(resolve, 70));
+    const staleAt = Date.now() - 1_000;
+    await writeLeaderRecord(runtimeRoot, child.pid, staleAt);
+    await writeDaemonHealth(healthStore, child.pid, staleAt, "degraded", "degraded");
+
+    const result = await resultPromise;
+
+    expect(result).toMatchObject({ reason: "heartbeat_timeout", healthy: false });
+    expect(child.kills).toContain("SIGTERM");
+  }, 20_000);
+
   it("opens the circuit breaker instead of restarting forever during a restart storm", async () => {
     tmpDir = makeTempDir();
     const runtimeRoot = path.join(tmpDir, "runtime");
@@ -279,6 +384,7 @@ describe("RuntimeWatchdog", () => {
       },
       pollIntervalMs: 20,
       heartbeatTimeoutMs: 50,
+      staleHeartbeatRestartGraceMs: 0,
       startupGraceMs: 0,
       restartBackoffMs: 1,
       maxRestartBackoffMs: 1,

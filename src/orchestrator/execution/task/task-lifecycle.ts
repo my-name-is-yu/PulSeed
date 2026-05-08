@@ -90,6 +90,7 @@ export type {
 import type { TaskCycleResult } from "./task-execution-types.js";
 import { appendTaskOutcomeEvent } from "./task-outcome-ledger.js";
 import { runTaskLifecycleCycle } from "./task-lifecycle-runner.js";
+import { isMechanicalVerificationMethod } from "./task-verifier-rules.js";
 
 const NATIVE_CODE_TASK_NO_CHANGES_ERROR = "No files were modified";
 const PROFILED_TASK_BUDGET_PADDING_MS = 5 * 60 * 1000;
@@ -169,16 +170,23 @@ function hasRequiredArtifactContract(task: Task): boolean {
 }
 
 function hasCapturedExecutionEvidence(result: AgentResult): boolean {
-  return result.filesChanged === true ||
-    (result.filesChangedPaths?.length ?? 0) > 0 ||
-    (result.agentLoop?.filesChangedPaths?.length ?? 0) > 0;
+  return (result.fileDiffs?.length ?? 0) > 0 ||
+    (result.filesChanged === true && (result.filesChangedPaths?.length ?? 0) > 0);
 }
 
 function shouldDeferAgentLoopTerminalUntilVerification(task: Task, result: AgentResult): boolean {
   if (result.success) return result.agentLoop?.requiresPostVerificationBeforeSuccessLedger === true;
   if (!result.agentLoop) return false;
   if (result.stopped_reason === "cancelled" || result.stopped_reason === "policy_blocked") return false;
-  return hasRequiredArtifactContract(task) && hasCapturedExecutionEvidence(result);
+  if (result.agentLoop.workspaceDisposition === "handoff_required") return false;
+  return hasCapturedExecutionEvidence(result) &&
+    (hasRequiredArtifactContract(task) || hasBlockingMechanicalVerification(task));
+}
+
+function hasBlockingMechanicalVerification(task: Task): boolean {
+  return task.success_criteria.some((criterion) =>
+    criterion.is_blocking && isMechanicalVerificationMethod(criterion.verification_method)
+  );
 }
 
 function shouldKeepDaemonShutdownInterruptedTaskRunning(result: AgentResult, abortSignal?: AbortSignal): boolean {

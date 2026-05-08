@@ -593,7 +593,6 @@ async function createGoalScopedArtifactDataSource(
 }
 
 function isArtifactMetricDimension(dimension: Dimension): boolean {
-  if (typeof dimension.current_value !== "number") return false;
   return dimension.threshold.type === "min" || dimension.threshold.type === "max" || dimension.threshold.type === "range";
 }
 

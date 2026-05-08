@@ -455,6 +455,40 @@ describe("CoreLoop agentic phase hooks", () => {
     );
   });
 
+  it("passes stable goal identifiers into stall investigation for tool lookups", async () => {
+    const { deps, mocks } = createDeps(tmpDir, { stall: true });
+    (deps.stallDetector.checkDimensionStall as ReturnType<typeof vi.fn>).mockReturnValue({
+      stall_type: "dimension_stall",
+      goal_id: "goal-1",
+      dimension_name: "dim1",
+      task_id: "task-1",
+      detected_at: new Date().toISOString(),
+      escalation_level: 0,
+      suggested_cause: "approach_failure",
+      decay_factor: 0.5,
+    });
+    await mocks.stateManager.saveGoal(makeGoal({
+      id: "goal-1",
+      title: "Kaggle S6E5 F1 Pit Stops two-week durable optimization",
+    }));
+
+    const loop = new CoreLoop(deps, { delayBetweenLoopsMs: 0 });
+    await loop.runOneIteration("goal-1", 0);
+
+    const stallCall = (mocks.corePhaseRunner.run as ReturnType<typeof vi.fn>).mock.calls.find(
+      ([spec]) => spec.phase === "stall_investigation"
+    );
+    expect(stallCall?.[1]).toEqual(expect.objectContaining({
+      goalId: "goal-1",
+      goalTitle: "Kaggle S6E5 F1 Pit Stops two-week durable optimization",
+      stallType: "dimension_stall",
+      dimensionName: "dim1",
+      suggestedCause: "approach_failure",
+      taskId: "task-1",
+    }));
+    expect(stallCall?.[2]).toEqual(expect.objectContaining({ goalId: "goal-1", taskId: "task-1" }));
+  });
+
   it("runs bounded public research on plateau and saves structured source evidence for task handoff", async () => {
     const { deps, mocks } = createDeps(tmpDir, { stall: true, publicResearch: true });
     const evidenceLedger = { append: vi.fn().mockResolvedValue([]) };

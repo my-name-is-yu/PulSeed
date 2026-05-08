@@ -343,18 +343,22 @@ export function buildKnowledgeRefreshSpec(): ReturnType<typeof baseSpec<{
 }
 
 export function buildStallInvestigationSpec(): ReturnType<typeof baseSpec<{
+  goalId: string;
   goalTitle: string;
   stallType: string;
   dimensionName?: string;
   suggestedCause?: string;
+  taskId?: string;
 }, StallInvestigationEvidence>> {
   return baseSpec({
     phase: "stall_investigation",
     inputSchema: z.object({
+      goalId: z.string().min(1),
       goalTitle: z.string(),
       stallType: z.string(),
       dimensionName: z.string().optional(),
       suggestedCause: z.string().optional(),
+      taskId: z.string().optional(),
     }),
     outputSchema: StallInvestigationEvidenceSchema,
     failPolicy: "return_low_confidence",

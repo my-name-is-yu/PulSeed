@@ -122,6 +122,7 @@ export const DimensionUpdateSchema = z.object({
   previous_value: z.union([z.number(), z.string(), z.boolean(), z.null()]),
   new_value: z.union([z.number(), z.string(), z.boolean(), z.null()]),
   confidence: z.number().min(0).max(1),
+  source: z.enum(["artifact_contract", "verdict_delta"]).optional(),
 });
 export type DimensionUpdate = z.infer<typeof DimensionUpdateSchema>;
 

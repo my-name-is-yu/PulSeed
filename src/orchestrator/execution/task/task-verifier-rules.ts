@@ -10,38 +10,37 @@ import { execFileNoThrow } from "../../../base/utils/execFileNoThrow.js";
 
 // ─── runMechanicalVerification ───
 
+const MECHANICAL_VERIFICATION_PREFIXES = [
+  "npm",
+  "npx",
+  "pytest",
+  "sh",
+  "bash",
+  "node",
+  "python ",
+  "python3 ",
+  ".venv/bin/python ",
+  "make",
+  "cargo",
+  "go ",
+  "gh ",
+  "rg ",
+  "grep ",
+  "test ",
+  "ls ",
+];
+
+export function isMechanicalVerificationMethod(verificationMethod: string): boolean {
+  const method = verificationMethod.toLowerCase().trim();
+  return MECHANICAL_VERIFICATION_PREFIXES.some((prefix) => method.startsWith(prefix));
+}
+
 export async function runMechanicalVerification(
   deps: VerifierDeps,
   task: Task
 ): Promise<{ applicable: boolean; passed: boolean; description: string }> {
-  // Mechanical prefixes that indicate a command can be run directly
-  const mechanicalPrefixes = [
-    "npm",
-    "npx",
-    "pytest",
-    "sh",
-    "bash",
-    "node",
-    "python ",
-    "python3 ",
-    ".venv/bin/python ",
-    "make",
-    "cargo",
-    "go ",
-    "gh ",
-    "rg ",
-    "grep ",
-    "test ",
-    "ls ",
-  ];
-
-  const isMechanicalMethod = (verificationMethod: string): boolean => {
-    const method = verificationMethod.toLowerCase().trim();
-    return mechanicalPrefixes.some((prefix) => method.startsWith(prefix));
-  };
-
   const blockingMechanicalCriteria = task.success_criteria.filter(
-    (c) => c.is_blocking && isMechanicalMethod(c.verification_method)
+    (c) => c.is_blocking && isMechanicalVerificationMethod(c.verification_method)
   );
 
   if (blockingMechanicalCriteria.length === 0) {
