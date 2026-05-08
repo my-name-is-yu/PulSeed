@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { ITool, ToolResult, ToolCallContext, PermissionCheckResult, ToolMetadata } from "../../types.js";
 import { execFileNoThrow } from "../../../base/utils/execFileNoThrow.js";
+import { parseProcessPid } from "../../../base/utils/process-pid.js";
 import { DESCRIPTION } from "./prompt.js";
 import { TAGS, MAX_OUTPUT_CHARS, PERMISSION_LEVEL } from "./constants.js";
 
@@ -113,8 +114,8 @@ export class ProcessStatusTool implements ITool<ProcessStatusInput, ProcessStatu
     const lines = result.stdout.split("\n").filter(Boolean);
     if (lines.length > 1) {
       const cols = lines[1].trim().split(/\s+/);
-      const parsed = parseInt(cols[1], 10);
-      if (!isNaN(parsed)) pid = parsed;
+      const parsed = parseProcessPid(cols[1] ?? "");
+      if (parsed !== null) pid = parsed;
     }
 
     const output: ProcessStatusOutput = { alive, details, pid };
@@ -151,8 +152,8 @@ export class ProcessStatusTool implements ITool<ProcessStatusInput, ProcessStatu
     let pid: number | undefined;
     if (details) {
       const firstLine = details.split("\n")[0];
-      const parsed = parseInt(firstLine.trim().split(/\s+/)[0], 10);
-      if (!isNaN(parsed)) pid = parsed;
+      const parsed = parseProcessPid(firstLine.trim().split(/\s+/)[0] ?? "");
+      if (parsed !== null) pid = parsed;
     }
 
     const output: ProcessStatusOutput = { alive, details, pid };

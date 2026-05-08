@@ -120,6 +120,20 @@ describe("ProcessStatusTool", () => {
       expect(result.summary).toContain("3000");
     });
 
+    it("does not expose partial numeric lsof PID tokens", async () => {
+      vi.spyOn(execMod, "execFileNoThrow").mockResolvedValueOnce({
+        stdout: "COMMAND  PID  USER\nnode     1234abc user  TCP *:3000 (LISTEN)",
+        stderr: "",
+        exitCode: 0,
+      });
+      const result = await tool.call({ port: 3000 }, makeContext());
+      expect(result.success).toBe(true);
+      const data = result.data as { alive: boolean; pid?: number };
+      expect(data.alive).toBe(true);
+      expect(data.pid).toBeUndefined();
+      expect(result.summary).toBe("Port 3000 is in use");
+    });
+
     it("returns alive=false when lsof finds nothing", async () => {
       vi.spyOn(execMod, "execFileNoThrow").mockResolvedValueOnce({
         stdout: "", stderr: "", exitCode: 1,
@@ -143,6 +157,20 @@ describe("ProcessStatusTool", () => {
       const data = result.data as { alive: boolean; pid?: number };
       expect(data.alive).toBe(true);
       expect(data.pid).toBe(5678);
+    });
+
+    it("does not expose partial numeric pgrep PID tokens", async () => {
+      vi.spyOn(execMod, "execFileNoThrow").mockResolvedValueOnce({
+        stdout: "5678abc node --inspect",
+        stderr: "",
+        exitCode: 0,
+      });
+      const result = await tool.call({ processName: "node" }, makeContext());
+      expect(result.success).toBe(true);
+      const data = result.data as { alive: boolean; pid?: number };
+      expect(data.alive).toBe(true);
+      expect(data.pid).toBeUndefined();
+      expect(result.summary).toBe('Process "node" is running');
     });
 
     it("returns alive=false when pgrep finds nothing", async () => {
