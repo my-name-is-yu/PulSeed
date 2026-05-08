@@ -103,6 +103,23 @@ describe("cmdLogs", () => {
     expect(output).not.toContain("dbg 7\n");
   });
 
+  it.each([
+    ["partial numeric token", ["--lines", "10abc"]],
+    ["zero", ["--lines", "0"]],
+    ["negative", ["--lines", "-1"]],
+    ["missing value", ["--lines"]],
+  ])("returns 1 when --lines is invalid: %s", async (_label, args) => {
+    fs.writeFileSync(logFile, logLine("INFO", "visible") + "\n");
+
+    const code = await cmdLogs(args);
+    expect(code).toBe(1);
+
+    const output = stdoutSpy.mock.calls.map((c: [string | Uint8Array]) => String(c[0])).join("");
+    const errOutput = stderrSpy.mock.calls.map((c: [string | Uint8Array]) => String(c[0])).join("");
+    expect(output).toBe("");
+    expect(errOutput).toMatch(/--lines must be a positive integer|parse logs command arguments/);
+  });
+
   it("handles empty log file without error", async () => {
     fs.writeFileSync(logFile, "");
 

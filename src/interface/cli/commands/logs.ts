@@ -7,6 +7,7 @@ import { parseArgs } from "node:util";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { getLogsDir } from "../../../base/utils/paths.js";
+import { formatOperationError } from "../utils.js";
 
 type LogLevel = "DEBUG" | "INFO" | "WARN" | "ERROR";
 
@@ -22,6 +23,18 @@ const READ_CHUNK_SIZE = 64 * 1024; // 64KB
 function parseLevel(raw: string): LogLevel | null {
   const upper = raw.toUpperCase() as LogLevel;
   return upper in LEVEL_ORDER ? upper : null;
+}
+
+export function parseLogLineCount(raw: unknown, label = "--lines"): number {
+  const normalized = typeof raw === "string" ? raw.trim() : "";
+  if (!/^[0-9]+$/.test(normalized)) {
+    throw new Error(`${label} must be a positive integer`);
+  }
+  const parsed = Number(normalized);
+  if (!Number.isSafeInteger(parsed) || parsed < 1) {
+    throw new Error(`${label} must be a positive integer`);
+  }
+  return parsed;
 }
 
 function lineMatchesLevel(line: string, minLevel: LogLevel): boolean {
@@ -156,14 +169,20 @@ export async function cmdLogs(args: string[]): Promise<number> {
       },
       strict: false,
     }) as { values: { follow?: boolean; lines?: string; level?: string } });
-  } catch {
-    values = { lines: "50" };
+  } catch (err) {
+    process.stderr.write(`${formatOperationError("parse logs command arguments", err)}\n`);
+    return 1;
   }
 
   const logPath = path.join(getLogsDir(), "pulseed.log");
 
-  const lineCount = parseInt(values.lines ?? "50", 10);
-  const n = isNaN(lineCount) || lineCount <= 0 ? 50 : lineCount;
+  let n: number;
+  try {
+    n = parseLogLineCount(values.lines ?? "50");
+  } catch (err) {
+    process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
+    return 1;
+  }
 
   let minLevel: LogLevel | null = null;
   if (values.level) {
