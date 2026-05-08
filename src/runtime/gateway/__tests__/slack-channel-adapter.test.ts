@@ -20,10 +20,14 @@ const eventBase = {
 /** Build valid Slack request headers with correct HMAC signature */
 function buildHeaders(body: string, timestampSec?: number): Record<string, string> {
   const ts = timestampSec ?? Math.floor(Date.now() / 1000);
-  const sigBase = `v0:${ts}:${body}`;
+  return buildHeadersWithTimestamp(body, String(ts));
+}
+
+function buildHeadersWithTimestamp(body: string, timestamp: string): Record<string, string> {
+  const sigBase = `v0:${timestamp}:${body}`;
   const mac = createHmac("sha256", SIGNING_SECRET).update(sigBase).digest("hex");
   return {
-    "x-slack-request-timestamp": String(ts),
+    "x-slack-request-timestamp": timestamp,
     "x-slack-signature": `v0=${mac}`,
   };
 }
@@ -208,6 +212,16 @@ describe("SlackChannelAdapter — replay protection", () => {
     const headers = buildHeaders(body, futureTs);
     const res = adapter.handleRequest(body, headers);
     expect(res.status).toBe(401);
+  });
+
+  it("rejects a signed timestamp with trailing non-numeric bytes", () => {
+    const adapter = makeAdapter();
+    const body = JSON.stringify({ type: "event_callback", event: { type: "message" }, team_id: "T1", event_id: "E1" });
+    const malformedTs = `${Math.floor(Date.now() / 1000)}junk`;
+    const headers = buildHeadersWithTimestamp(body, malformedTs);
+    const res = adapter.handleRequest(body, headers);
+    expect(res.status).toBe(401);
+    expect(res.body).toContain("stale");
   });
 });
 

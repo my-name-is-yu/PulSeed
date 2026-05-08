@@ -30,6 +30,7 @@ export interface SlackResponse {
 
 /** Maximum age of a Slack request timestamp (5 minutes in seconds) */
 const MAX_TIMESTAMP_AGE_SEC = 5 * 60;
+const SLACK_TIMESTAMP_TOKEN = /^[1-9][0-9]*$/;
 
 /**
  * SlackChannelAdapter receives events from the Slack Events API.
@@ -120,8 +121,8 @@ export class SlackChannelAdapter implements ChannelAdapter {
 
     // Replay attack prevention
     const nowSec = Math.floor(Date.now() / 1000);
-    const requestSec = parseInt(timestamp, 10);
-    if (isNaN(requestSec) || Math.abs(nowSec - requestSec) > MAX_TIMESTAMP_AGE_SEC) {
+    const requestSec = parseSlackTimestamp(timestamp);
+    if (requestSec === null || Math.abs(nowSec - requestSec) > MAX_TIMESTAMP_AGE_SEC) {
       return { status: 401, body: "stale timestamp" };
     }
 
@@ -375,6 +376,13 @@ class SlackDisplayTransport implements NonTuiDisplayTransport {
   async editFinal(ref: NonTuiDisplayMessageRef, text: string): Promise<void> {
     await this.api.updateMessage(this.channel, ref.id, text);
   }
+}
+
+function parseSlackTimestamp(value: string): number | null {
+  const normalized = value.trim();
+  if (!SLACK_TIMESTAMP_TOKEN.test(normalized)) return null;
+  const parsed = Number(normalized);
+  return Number.isSafeInteger(parsed) ? parsed : null;
 }
 
 function isSlackChatTextEvent(
