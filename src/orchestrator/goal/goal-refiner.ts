@@ -31,6 +31,8 @@ import {
   evaluateQualitatively,
 } from "./negotiator-feasibility.js";
 
+const EXACT_FINITE_NUMBER_TOKEN = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i;
+
 // ─── Conversion helpers ───
 
 /**
@@ -77,16 +79,11 @@ function leafDimensionToGoalDimension(
 function buildThreshold(leaf: LeafDimension): Goal["dimensions"][number]["threshold"] {
   switch (leaf.threshold_type) {
     case "min":
-      return { type: "min", value: Number(leaf.threshold_value ?? 0) };
+      return { type: "min", value: parseFiniteThresholdNumber(leaf.threshold_value) ?? 0 };
     case "max":
-      return { type: "max", value: Number(leaf.threshold_value ?? 0) };
+      return { type: "max", value: parseFiniteThresholdNumber(leaf.threshold_value) ?? 100 };
     case "range": {
-      // threshold_value may be "[low, high]" or a number
-      const v = leaf.threshold_value;
-      if (Array.isArray(v) && v.length === 2) {
-        return { type: "range", low: Number(v[0]), high: Number(v[1]) };
-      }
-      return { type: "range", low: 0, high: Number(v ?? 100) };
+      return { type: "range", low: 0, high: parseFiniteThresholdNumber(leaf.threshold_value) ?? 100 };
     }
     case "present":
       return { type: "present" };
@@ -98,6 +95,15 @@ function buildThreshold(leaf: LeafDimension): Goal["dimensions"][number]["thresh
     default:
       return { type: "min", value: 0 };
   }
+}
+
+function parseFiniteThresholdNumber(value: LeafDimension["threshold_value"]): number | null {
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value !== "string") return null;
+  const normalized = value.trim();
+  if (!EXACT_FINITE_NUMBER_TOKEN.test(normalized)) return null;
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 // ─── Standalone predicates (also used by TreeLoopOrchestrator) ───
