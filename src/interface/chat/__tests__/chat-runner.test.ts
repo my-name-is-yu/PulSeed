@@ -1281,6 +1281,41 @@ describe("ChatRunner", () => {
       expect(adapter.execute).not.toHaveBeenCalled();
     });
 
+    it("/cleanup parses flags exactly and rejects unknown arguments before cleanup", async () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-cleanup-command-"));
+      try {
+        const stateManager = new StateManager(tmpDir);
+        await stateManager.writeRaw("chat/sessions/old-session.json", {
+          id: "old-session",
+          cwd: "/repo",
+          createdAt: "2024-01-01T00:00:00.000Z",
+          updatedAt: "2024-01-01T01:00:00.000Z",
+          messages: [],
+        });
+
+        const staleSessionPath = path.join(tmpDir, "chat", "sessions", "old-session.json");
+        const runner = new ChatRunner(makeDeps({ stateManager, adapter: makeMockAdapter() }));
+        runner.startSession("/repo");
+
+        const rejected = await runner.execute("/cleanup --delete-old", "/repo");
+        expect(rejected.success).toBe(false);
+        expect(rejected.output).toContain("Usage: /cleanup [--dry-run]");
+        expect(fs.existsSync(staleSessionPath)).toBe(true);
+
+        const dryRun = await runner.execute("/cleanup --dry-run", "/repo");
+        expect(dryRun.success).toBe(true);
+        expect(dryRun.output).toContain("would remove");
+        expect(fs.existsSync(staleSessionPath)).toBe(true);
+
+        const enforced = await runner.execute("/cleanup", "/repo");
+        expect(enforced.success).toBe(true);
+        expect(enforced.output).toContain("removed");
+        expect(fs.existsSync(staleSessionPath)).toBe(false);
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+
     it("/context shows operational working context without calling adapter", async () => {
       const adapter = makeMockAdapter();
       const stateManager = makeMockStateManager();
