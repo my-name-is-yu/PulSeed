@@ -7,6 +7,20 @@ import type {
 import { aggregateValues, getSatisfiedValue } from "./satisficing-helpers.js";
 import type { Logger } from "../../runtime/logger.js";
 
+const EXACT_FINITE_NUMBER_TOKEN = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i;
+
+function toAggregationNumber(value: number | string | boolean | null): number | null {
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value === "boolean") return value ? 1 : 0;
+  if (typeof value === "string") {
+    const normalized = value.trim();
+    if (!EXACT_FINITE_NUMBER_TOKEN.test(normalized)) return null;
+    const parsed = Number(normalized);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
 /**
  * Judge completion of an entire goal tree by checking all children recursively.
  * Non-leaf nodes are complete when all children are completed or cancelled(merged).
@@ -152,22 +166,13 @@ export async function propagateSubgoalCompletion(
 
         for (const dim of dims) {
           const cv = dim.current_value;
-          if (typeof cv === "number") {
-            numericValues.push(cv);
-          } else if (typeof cv === "boolean") {
-            numericValues.push(cv ? 1 : 0);
-          } else if (typeof cv === "string") {
-            const parsed = Number(cv);
-            if (!isNaN(parsed)) {
-              numericValues.push(parsed);
-            } else {
-              // Non-numeric in avg mode: skip with warning
-              if (aggregation === "avg") {
-                logger?.warn(
-                  `propagateSubgoalCompletion: skipping non-numeric current_value "${cv}" for dimension "${dim.name}" in avg aggregation`
-                );
-              }
-            }
+          const numericValue = toAggregationNumber(cv);
+          if (numericValue !== null) {
+            numericValues.push(numericValue);
+          } else if (cv !== null && aggregation === "avg") {
+            logger?.warn(
+              `propagateSubgoalCompletion: skipping non-numeric current_value "${cv}" for dimension "${dim.name}" in avg aggregation`
+            );
           }
           // For all_required: also compute fulfillment ratio
           if (aggregation === "all_required") {
