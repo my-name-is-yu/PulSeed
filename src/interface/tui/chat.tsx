@@ -52,6 +52,7 @@ const INPUT_BOX_HORIZONTAL_CHROME = 4;
 const SUGGESTION_HINT = " arrows to navigate, tab/enter to select, esc to dismiss";
 export { buildChatViewport } from "./chat/viewport.js";
 export {
+  getScrollLineStep,
   getScrollRequest,
   normalizeTerminalInputChunk,
   parseMouseEvent,

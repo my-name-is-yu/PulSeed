@@ -132,8 +132,10 @@ export function getScrollRequest(
 export function getScrollLineStep(): number {
   const raw = process.env.PULSEED_SCROLL_SPEED;
   if (!raw) return 1;
-  const parsed = Number.parseInt(raw, 10);
-  if (!Number.isFinite(parsed)) return 1;
+  const normalized = raw.trim();
+  if (!/^[0-9]+$/.test(normalized)) return 1;
+  const parsed = Number(normalized);
+  if (!Number.isSafeInteger(parsed)) return 1;
   return Math.max(1, Math.min(20, parsed));
 }
 
