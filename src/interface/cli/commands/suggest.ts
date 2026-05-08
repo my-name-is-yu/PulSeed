@@ -18,7 +18,8 @@ import {
   gatherProjectContext,
   hasRepositorySuggestionSurface,
 } from "./suggest-normalizer.js";
-import { looksLikeSoftwareGoal, SuggestTimeoutError } from "../../../orchestrator/goal/goal-suggest.js";
+import { SuggestTimeoutError } from "../../../orchestrator/goal/goal-suggest.js";
+import type { GoalSuggestionSurface } from "../../../orchestrator/goal/goal-suggest.js";
 import {
   buildAutoApprovalFn,
   buildLoopLogger,
@@ -124,8 +125,8 @@ export async function cmdSuggest(
   const targetPath = values.path?.trim() ? values.path : ".";
   const targetFsPath = path.isAbsolute(targetPath) ? targetPath : path.resolve(process.cwd(), targetPath);
   const repoFiles: string[] = [];
-  const isSoftware = looksLikeSoftwareGoal(context);
   const repositorySurface = hasRepositorySuggestionSurface(targetFsPath);
+  const suggestionSurface: GoalSuggestionSurface = repositorySurface ? "repository" : "general";
 
   console.log("Generating goal suggestions...\n");
 
@@ -134,7 +135,7 @@ export async function cmdSuggest(
     suggestRaw = await generateSuggestOutput(
       deps.goalNegotiator.suggestGoals.bind(deps.goalNegotiator),
       context,
-      { maxSuggestions, existingGoals: existingTitles, repoPath: targetPath, capabilityDetector }
+      { maxSuggestions, existingGoals: existingTitles, repoPath: targetPath, suggestionSurface, capabilityDetector }
     );
   } catch (err) {
     if (err instanceof SuggestTimeoutError) {
@@ -146,7 +147,7 @@ export async function cmdSuggest(
   }
 
   const suggestions = Array.isArray(suggestRaw) ? { suggestions: suggestRaw } : suggestRaw;
-  const finalPayload = normalizeSuggestPayload(suggestions, targetPath, targetPath, context, maxSuggestions, repoFiles, isSoftware, repositorySurface);
+  const finalPayload = normalizeSuggestPayload(suggestions, targetPath, targetPath, context, maxSuggestions, repoFiles, repositorySurface, repositorySurface);
   console.log(JSON.stringify(finalPayload, null, 2));
 
   return 0;
@@ -208,15 +209,15 @@ export async function cmdImprove(
   const { deps, existingTitles, capabilityDetector } = setupResult;
   const context = await gatherProjectContext(targetPath);
   const repoFiles: string[] = [];
-  const isSoftware = looksLikeSoftwareGoal(context);
   const repositorySurface = hasRepositorySuggestionSurface(targetFsPath);
+  const suggestionSurface: GoalSuggestionSurface = repositorySurface ? "repository" : "general";
 
   let rawSuggestOutput: unknown;
   try {
     rawSuggestOutput = await generateSuggestOutput(
       deps.goalNegotiator.suggestGoals.bind(deps.goalNegotiator),
       context,
-      { maxSuggestions, existingGoals: existingTitles, repoPath: targetPath, capabilityDetector }
+      { maxSuggestions, existingGoals: existingTitles, repoPath: targetPath, suggestionSurface, capabilityDetector }
     );
   } catch (err) {
     if (err instanceof SuggestTimeoutError) {
@@ -228,7 +229,7 @@ export async function cmdImprove(
   }
 
   const rawSuggestions = Array.isArray(rawSuggestOutput) ? { suggestions: rawSuggestOutput } : rawSuggestOutput;
-  const normalizedPayload = normalizeSuggestPayload(rawSuggestions, targetPath, targetPath, context, maxSuggestions, repoFiles, isSoftware, repositorySurface);
+  const normalizedPayload = normalizeSuggestPayload(rawSuggestions, targetPath, targetPath, context, maxSuggestions, repoFiles, repositorySurface, repositorySurface);
   const suggestions = normalizedPayload.suggestions;
 
   if (suggestions.length === 0) {

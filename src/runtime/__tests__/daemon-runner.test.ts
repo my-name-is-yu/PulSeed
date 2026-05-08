@@ -544,6 +544,10 @@ describe("DaemonRunner durable runtime", () => {
     await waitFor(() => runMock.mock.calls.some((call: unknown[]) => call[0] === "resident-goal"));
 
     expect(goalNegotiator.suggestGoals).toHaveBeenCalledOnce();
+    expect(goalNegotiator.suggestGoals).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ suggestionSurface: "repository" })
+    );
     expect(goalNegotiator.negotiate).toHaveBeenCalledWith(
       "Add regression coverage for idle daemon resident discovery.",
       expect.objectContaining({

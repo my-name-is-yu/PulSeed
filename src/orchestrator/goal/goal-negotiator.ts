@@ -23,6 +23,7 @@ import type {
   DecompositionResult,
 } from "../../base/types/goal-tree.js";
 import type { CapabilityDetector } from "../../platform/observation/capability-detector.js";
+import type { GoalSuggestionSurface } from "./goal-suggest.js";
 import { decompositionToDimension } from "./goal-validation.js";
 import {
   decompose as decomposeImpl,
@@ -490,6 +491,7 @@ export class GoalNegotiator {
       maxSuggestions?: number;
       existingGoals?: string[];
       repoPath?: string;
+      suggestionSurface?: GoalSuggestionSurface;
       capabilityDetector?: CapabilityDetector;
     }
   ): Promise<import("./goal-suggest.js").GoalSuggestion[]> {

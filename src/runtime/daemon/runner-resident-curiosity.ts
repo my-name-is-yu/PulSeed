@@ -6,6 +6,7 @@ import {
   loadExistingGoalTitles,
   loadKnownGoals,
   persistResidentActivity,
+  resolveResidentSuggestionSurface,
   resolveResidentWorkspaceDir,
 } from "./runner-resident-shared.js";
 
@@ -44,10 +45,12 @@ export async function triggerResidentGoalDiscovery(
     const workspaceDir = resolveResidentWorkspaceDir(context.config.workspace_path);
     const workspaceContext = gatherResidentWorkspaceContext(workspaceDir, hintedDescription);
     const existingTitles = await loadExistingGoalTitles(context);
+    const suggestionSurface = resolveResidentSuggestionSurface(workspaceDir);
     const suggestions = await context.goalNegotiator.suggestGoals(workspaceContext, {
       maxSuggestions: 1,
       existingGoals: existingTitles,
       repoPath: workspaceDir,
+      suggestionSurface,
     });
     const suggestion = suggestions[0];
     const suggestionTitle = suggestion?.title ?? hintedTitle;
