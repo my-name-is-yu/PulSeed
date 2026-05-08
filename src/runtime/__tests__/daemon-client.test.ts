@@ -366,6 +366,21 @@ describe("isDaemonRunning", () => {
     });
   });
 
+  it("rejects unsafe daemon-state pids before probing the process table", async () => {
+    fs.writeFileSync(
+      path.join(tmpDir, "daemon-state.json"),
+      JSON.stringify({ status: "running", pid: Number.MAX_SAFE_INTEGER + 1 }),
+      "utf-8"
+    );
+    const killSpy = vi.spyOn(process, "kill");
+
+    await expect(isDaemonRunning(tmpDir)).resolves.toEqual({
+      running: false,
+      port: DEFAULT_PORT,
+    });
+    expect(killSpy).not.toHaveBeenCalled();
+  });
+
   it("prefers the daemon token file over stale process env tokens", () => {
     fs.writeFileSync(
       path.join(tmpDir, "daemon-token.json"),

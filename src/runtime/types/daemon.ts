@@ -86,9 +86,11 @@ export const ResidentActivitySchema = z.object({
 });
 export type ResidentActivity = z.infer<typeof ResidentActivitySchema>;
 
+const ProcessIdSchema = z.number().int().positive().safe();
+
 // Daemon runtime state
 export const DaemonStateSchema = z.object({
-  pid: z.number().int().positive(),
+  pid: ProcessIdSchema,
   started_at: z.string().datetime(),
   last_loop_at: z.string().datetime().nullable(),
   loop_count: z.number().int().nonnegative(),
@@ -117,8 +119,6 @@ export const DaemonStateSchema = z.object({
   safe_pause_goals: z.record(RuntimeSafePauseRecordSchema).optional(),
 });
 export type DaemonState = z.infer<typeof DaemonStateSchema>;
-
-const ProcessIdSchema = z.number().int().positive().safe();
 
 // PID file info
 export const PIDInfoSchema = z.object({

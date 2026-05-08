@@ -9,6 +9,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { DEFAULT_PORT } from "../port-utils.js";
 import { parseOutboxSeq } from "../event/outbox-seq.js";
+import { DaemonStateSchema } from "../types/daemon.js";
 import type { DaemonRuntimeControlRequestBody } from "./control-contracts.js";
 
 export interface DaemonClientConfig {
@@ -498,7 +499,11 @@ export async function isDaemonRunning(baseDir: string): Promise<{ running: boole
   try {
     const statePath = path.join(baseDir, "daemon-state.json");
     const raw = await fs.readFile(statePath, "utf-8");
-    const state = JSON.parse(raw);
+    const parsed = DaemonStateSchema.pick({ pid: true, status: true }).safeParse(JSON.parse(raw) as unknown);
+    if (!parsed.success) {
+      return { running: false, port: DEFAULT_PORT };
+    }
+    const state = parsed.data;
 
     if ((state.status !== "running" && state.status !== "idle") || !state.pid) {
       return { running: false, port: DEFAULT_PORT };
