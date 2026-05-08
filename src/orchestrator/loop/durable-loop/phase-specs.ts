@@ -153,6 +153,7 @@ export const DreamReviewStrategyCandidateSchema = z.object({
   target_dimensions: z.array(z.string().min(1)).default([]),
   expected_evidence_gain: z.string().min(1).optional(),
   retry_reason: z.string().min(1).optional(),
+  failed_lineage_fingerprints: z.array(z.string().min(1)).optional(),
   failed_lineage_warning: z.object({
     fingerprint: z.string().min(1),
     count: z.number().int().positive(),
