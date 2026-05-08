@@ -8,7 +8,7 @@ import { TAGS, MAX_OUTPUT_CHARS, PERMISSION_LEVEL } from "./constants.js";
 export const ProcessStatusInputSchema = z.object({
   port: z.number().int().min(1).max(65535).optional(),
   processName: z.string().min(1).optional(),
-  pid: z.number().int().min(1).optional(),
+  pid: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).optional(),
 }).refine(
   (d) => d.port !== undefined || d.processName !== undefined || d.pid !== undefined,
   { message: "At least one of port, processName, or pid is required" }
