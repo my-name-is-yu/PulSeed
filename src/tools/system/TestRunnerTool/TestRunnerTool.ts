@@ -26,6 +26,32 @@ export interface TestRunnerOutput {
 }
 
 const MAX_RAW_OUTPUT = 10_000;
+const NON_NEGATIVE_INTEGER_TOKEN = /^\d+$/;
+const NON_NEGATIVE_DECIMAL_TOKEN = /^(?:\d+(?:\.\d*)?|\.\d+)$/;
+
+function parseSafeCount(token: string): number | undefined {
+  if (!NON_NEGATIVE_INTEGER_TOKEN.test(token)) return undefined;
+  const value = Number(token);
+  return Number.isSafeInteger(value) ? value : undefined;
+}
+
+function parseDurationMs(token: string, multiplier: number): number | undefined {
+  if (!NON_NEGATIVE_DECIMAL_TOKEN.test(token)) return undefined;
+  const value = Number(token);
+  if (!Number.isFinite(value)) return undefined;
+  const duration = Math.round(value * multiplier);
+  return Number.isSafeInteger(duration) ? duration : undefined;
+}
+
+function assignParsedCount(
+  result: Partial<TestRunnerOutput>,
+  key: "passed" | "failed" | "skipped" | "total",
+  match: RegExpMatchArray | null
+): void {
+  if (!match?.[1]) return;
+  const value = parseSafeCount(match[1]);
+  if (value !== undefined) result[key] = value;
+}
 
 /** Parse vitest summary: "Tests  5 passed | 2 failed | 1 skipped (8)" */
 function parseVitest(output: string): Partial<TestRunnerOutput> {
@@ -34,19 +60,19 @@ function parseVitest(output: string): Partial<TestRunnerOutput> {
   // vitest "Tests  X passed (Y)" or "Tests  X passed | Z failed (N)"
   const testsLine = output.match(/Tests\s+(.+)/);
   if (testsLine) {
-    const passedM = testsLine[1].match(/(\d+)\s+passed/);
-    const failedM = testsLine[1].match(/(\d+)\s+failed/);
-    const skippedM = testsLine[1].match(/(\d+)\s+skipped/);
-    const totalM = testsLine[1].match(/\((\d+)\)/);
-    if (passedM) result.passed = parseInt(passedM[1], 10);
-    if (failedM) result.failed = parseInt(failedM[1], 10);
-    if (skippedM) result.skipped = parseInt(skippedM[1], 10);
-    if (totalM) result.total = parseInt(totalM[1], 10);
+    const passedM = testsLine[1].match(/(?:^|\s)(\S+)\s+passed(?:\s|$)/);
+    const failedM = testsLine[1].match(/(?:^|\s)(\S+)\s+failed(?:\s|$)/);
+    const skippedM = testsLine[1].match(/(?:^|\s)(\S+)\s+skipped(?:\s|$)/);
+    const totalM = testsLine[1].match(/\((\S+)\)/);
+    assignParsedCount(result, "passed", passedM);
+    assignParsedCount(result, "failed", failedM);
+    assignParsedCount(result, "skipped", skippedM);
+    assignParsedCount(result, "total", totalM);
   }
 
   // Duration: "Duration  1.23s"
-  const durM = output.match(/Duration\s+([\d.]+)s/);
-  if (durM) result.duration = Math.round(parseFloat(durM[1]) * 1000);
+  const durM = output.match(/Duration\s+(\S+)s/);
+  if (durM?.[1]) result.duration = parseDurationMs(durM[1], 1000);
 
   // Collect failed test names from vitest output: " FAIL src/..." or "× test name"
   const failedTests: string[] = [];
@@ -65,34 +91,34 @@ function parseJest(output: string): Partial<TestRunnerOutput> {
   const result: Partial<TestRunnerOutput> = {};
   const testsLine = output.match(/Tests:\s+(.+)/);
   if (testsLine) {
-    const passedM = testsLine[1].match(/(\d+)\s+passed/);
-    const failedM = testsLine[1].match(/(\d+)\s+failed/);
-    const skippedM = testsLine[1].match(/(\d+)\s+skipped/);
-    const totalM = testsLine[1].match(/(\d+)\s+total/);
-    if (passedM) result.passed = parseInt(passedM[1], 10);
-    if (failedM) result.failed = parseInt(failedM[1], 10);
-    if (skippedM) result.skipped = parseInt(skippedM[1], 10);
-    if (totalM) result.total = parseInt(totalM[1], 10);
+    const passedM = testsLine[1].match(/(?:^|\s)(\S+)\s+passed(?:,|\s|$)/);
+    const failedM = testsLine[1].match(/(?:^|\s)(\S+)\s+failed(?:,|\s|$)/);
+    const skippedM = testsLine[1].match(/(?:^|\s)(\S+)\s+skipped(?:,|\s|$)/);
+    const totalM = testsLine[1].match(/(?:^|\s)(\S+)\s+total(?:,|\s|$)/);
+    assignParsedCount(result, "passed", passedM);
+    assignParsedCount(result, "failed", failedM);
+    assignParsedCount(result, "skipped", skippedM);
+    assignParsedCount(result, "total", totalM);
   }
-  const timeM = output.match(/Time:\s+([\d.]+)\s*s/);
-  if (timeM) result.duration = Math.round(parseFloat(timeM[1]) * 1000);
+  const timeM = output.match(/Time:\s+(\S+)\s*s/);
+  if (timeM?.[1]) result.duration = parseDurationMs(timeM[1], 1000);
   return result;
 }
 
 /** Parse mocha summary: "5 passing (200ms)" / "2 failing" */
 function parseMocha(output: string): Partial<TestRunnerOutput> {
   const result: Partial<TestRunnerOutput> = {};
-  const passM = output.match(/(\d+)\s+passing/);
-  const failM = output.match(/(\d+)\s+failing/);
-  const pendM = output.match(/(\d+)\s+pending/);
-  if (passM) result.passed = parseInt(passM[1], 10);
-  if (failM) result.failed = parseInt(failM[1], 10);
-  if (pendM) result.skipped = parseInt(pendM[1], 10);
+  const passM = output.match(/(?:^|\s)(\S+)\s+passing(?:\s|\(|$)/);
+  const failM = output.match(/(?:^|\s)(\S+)\s+failing(?:\s|$)/);
+  const pendM = output.match(/(?:^|\s)(\S+)\s+pending(?:\s|$)/);
+  assignParsedCount(result, "passed", passM);
+  assignParsedCount(result, "failed", failM);
+  assignParsedCount(result, "skipped", pendM);
   if (result.passed !== undefined || result.failed !== undefined) {
     result.total = (result.passed ?? 0) + (result.failed ?? 0) + (result.skipped ?? 0);
   }
-  const timeM = output.match(/passing\s+\((\d+)ms\)/);
-  if (timeM) result.duration = parseInt(timeM[1], 10);
+  const timeM = output.match(/passing\s+\((\S+)ms\)/);
+  if (timeM?.[1]) result.duration = parseDurationMs(timeM[1], 1);
   return result;
 }
 

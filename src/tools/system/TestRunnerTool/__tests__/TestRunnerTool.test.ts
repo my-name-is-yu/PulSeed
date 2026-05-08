@@ -32,6 +32,34 @@ const VITEST_FAIL = `
  Duration  0.60s
 `.trim();
 
+const VITEST_UNSAFE_COUNT = `
+ RUN  v1.0.0
+
+ Tests  9007199254740993 passed (9007199254740993)
+ Duration  0.45s
+`.trim();
+
+const VITEST_DECIMAL_COUNT = `
+ RUN  v1.0.0
+
+ Tests  1.5 passed (1.5)
+ Duration  0.45s
+`.trim();
+
+const VITEST_PREFIXED_COUNT = `
+ RUN  v1.0.0
+
+ Tests  abc5 passed (abc5)
+ Duration  0.45s
+`.trim();
+
+const VITEST_MALFORMED_DURATION = `
+ RUN  v1.0.0
+
+ Tests  1 passed (1)
+ Duration  1.2.3s
+`.trim();
+
 const JEST_PASS = `
 Tests: 5 passed, 5 total
 Time: 1.23s
@@ -192,6 +220,45 @@ describe("TestRunnerTool", () => {
       const result = await tool.call({ command: "npx vitest run", timeout: 60000 }, makeContext());
       const data = result.data as { duration?: number };
       expect(data.duration).toBe(450);
+    });
+
+    it("does not round unsafe vitest counts into structured results", async () => {
+      vi.spyOn(execMod, "execFileNoThrow").mockResolvedValueOnce({
+        stdout: VITEST_UNSAFE_COUNT, stderr: "", exitCode: 0,
+      });
+      const result = await tool.call({ command: "npx vitest run", timeout: 60000 }, makeContext());
+      const data = result.data as { passed: number; total: number };
+      expect(data.passed).toBe(0);
+      expect(data.total).toBe(0);
+    });
+
+    it("does not parse suffix digits from decimal vitest counts", async () => {
+      vi.spyOn(execMod, "execFileNoThrow").mockResolvedValueOnce({
+        stdout: VITEST_DECIMAL_COUNT, stderr: "", exitCode: 0,
+      });
+      const result = await tool.call({ command: "npx vitest run", timeout: 60000 }, makeContext());
+      const data = result.data as { passed: number; total: number };
+      expect(data.passed).toBe(0);
+      expect(data.total).toBe(0);
+    });
+
+    it("does not parse suffix digits from prefixed vitest counts", async () => {
+      vi.spyOn(execMod, "execFileNoThrow").mockResolvedValueOnce({
+        stdout: VITEST_PREFIXED_COUNT, stderr: "", exitCode: 0,
+      });
+      const result = await tool.call({ command: "npx vitest run", timeout: 60000 }, makeContext());
+      const data = result.data as { passed: number; total: number };
+      expect(data.passed).toBe(0);
+      expect(data.total).toBe(0);
+    });
+
+    it("does not partially parse malformed vitest durations", async () => {
+      vi.spyOn(execMod, "execFileNoThrow").mockResolvedValueOnce({
+        stdout: VITEST_MALFORMED_DURATION, stderr: "", exitCode: 0,
+      });
+      const result = await tool.call({ command: "npx vitest run", timeout: 60000 }, makeContext());
+      const data = result.data as { duration?: number };
+      expect(data.duration).toBeUndefined();
     });
   });
 
