@@ -26,6 +26,18 @@ function maskSecrets(config: ProviderConfig): ProviderConfig {
   }) as ProviderConfig;
 }
 
+function parseCharacterLevel(raw: unknown, flag: string): number {
+  const normalized = typeof raw === "string" ? raw.trim() : "";
+  if (!/^[0-9]+$/.test(normalized)) {
+    throw new Error(`Error: --${flag} must be an integer between 1 and 5 (got: ${typeof raw === "string" ? raw : ""})`);
+  }
+  const parsed = Number(normalized);
+  if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > 5) {
+    throw new Error(`Error: --${flag} must be an integer between 1 and 5 (got: ${normalized})`);
+  }
+  return parsed;
+}
+
 export async function cmdProvider(argv: string[]): Promise<number> {
   const providerSubcommand = argv[0];
 
@@ -197,7 +209,7 @@ export async function cmdConfigCharacter(
     });
   } catch (err) {
     getCliLogger().error(formatOperationError("parse character config arguments", err));
-    values = {};
+    return 1;
   }
 
   const hasFlags =
@@ -246,11 +258,13 @@ Options:
   ];
 
   for (const [flag, key] of paramMap) {
-    const raw = values[flag as keyof typeof values] as string | undefined;
+    const raw = values[flag as keyof typeof values] as unknown;
     if (raw !== undefined) {
-      const parsed = parseInt(raw, 10);
-      if (isNaN(parsed) || parsed < 1 || parsed > 5) {
-        getCliLogger().error(`Error: --${flag} must be an integer between 1 and 5 (got: ${raw})`);
+      let parsed: number;
+      try {
+        parsed = parseCharacterLevel(raw, flag);
+      } catch (err) {
+        getCliLogger().error(err instanceof Error ? err.message : String(err));
         return 1;
       }
       partial[key] = parsed;
