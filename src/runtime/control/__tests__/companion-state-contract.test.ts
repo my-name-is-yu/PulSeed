@@ -2,7 +2,11 @@ import { describe, expect, it } from "vitest";
 import {
   CompanionStateReducerInputSchema,
   RuntimeItemSchema,
+  RuntimeItemTypeSchema,
+  assembleCompanionStateReducerInput,
   deriveCompanionStateSnapshot,
+  deriveRuntimeItemControlPolicy,
+  evaluateCompanionStateSnapshotFreshness,
   parseAuthorityFailClosed,
   parseStalenessFailClosed,
   type Authority,
@@ -15,7 +19,21 @@ import {
 
 const NOW = "2026-05-08T00:00:00.000Z";
 
-const allowInspectOnlyAuthority: Authority = {
+const operationalAuthority: Authority = {
+  inspectable: true,
+  resumable: true,
+  actionable: true,
+  speakable: false,
+  can_create_urge: false,
+  can_update_surface: false,
+  can_write_memory: false,
+  can_delegate_work: false,
+  requires_confirmation: false,
+  approval_scope: "bounded_runtime_item",
+  authority_reason: "test bounded runtime authority",
+};
+
+const inspectOnlyAuthority: Authority = {
   inspectable: true,
   resumable: false,
   actionable: false,
@@ -39,6 +57,8 @@ const currentStaleness: Staleness = {
   goal: { outcome: "current", reason: "goal current" },
   assumption: { outcome: "current", reason: "assumption current" },
   session: { outcome: "current", reason: "session current" },
+  browser_session: { outcome: "current", reason: "browser session current" },
+  auth_handoff: { outcome: "current", reason: "auth handoff current" },
 };
 
 const inspectOnlyPolicy: ControlPolicy = {
@@ -63,22 +83,39 @@ function makeControl(
 }
 
 function makeRuntimeItem(input: Partial<RuntimeItem> = {}): RuntimeItem {
+  const itemId = input.item_id ?? input.id ?? "run:quiet-work-1";
   return RuntimeItemSchema.parse({
     schema_version: "runtime-item-v1",
-    id: "run:quiet-work-1",
-    type: "quiet_work",
+    item_id: itemId,
+    type: "run",
     status: "running",
     posture: "working",
     source: "runtime-control-test",
     created_at: NOW,
     updated_at: NOW,
     related_goal_refs: ["goal:1"],
+    related_task_refs: [],
     related_session_refs: ["session:1"],
     related_memory_refs: [],
     related_surface_refs: ["surface:1"],
-    authority: allowInspectOnlyAuthority,
-    staleness: currentStaleness,
+    related_agenda_refs: [],
     companion_state_refs: [],
+    companion_control_state: {
+      active_controls: [],
+      global_control_refs: [],
+      held_by_controls: [],
+      rejected_by_controls: [],
+      reason: "no active companion-wide controls",
+    },
+    authority: operationalAuthority,
+    staleness: currentStaleness,
+    visibility_policy: {
+      display: "normal",
+      inspectable: true,
+      auditable: true,
+      policy_ref: null,
+      reason: "normal test visibility",
+    },
     visibility_policy_ref: null,
     control_policy: inspectOnlyPolicy,
     audit_trace_refs: ["audit:1"],
@@ -93,11 +130,13 @@ function makeReducerInput(input: Partial<CompanionStateReducerInput> = {}): Comp
     recent_runtime_events: ["runtime-event:1"],
     active_surface_ref: "surface:1",
     surface_invalidation_events: [],
+    global_control_state_ref: "global-control-state:1",
     global_controls: [makeControl("inspect_companion_state", "inactive")],
     active_goal_refs: ["goal:1"],
     active_watch_refs: [],
     active_wait_refs: [],
     active_quiet_work_refs: ["run:quiet-work-1"],
+    attention_history_refs: [],
     control_overlays: [],
     pre_suspend_mode: null,
     authority_blockers: [],
@@ -105,6 +144,7 @@ function makeReducerInput(input: Partial<CompanionStateReducerInput> = {}): Comp
     safety_blockers: [],
     user_activity_refs: ["activity:1"],
     feedback_refs: [],
+    safety_context_refs: [],
     event_high_watermark: "event:1",
     current_time: NOW,
     ...input,
@@ -112,23 +152,86 @@ function makeReducerInput(input: Partial<CompanionStateReducerInput> = {}): Comp
 }
 
 describe("CompanionState runtime-control contracts", () => {
+  it("defines the RuntimeItem vocabulary from the runtime control design", () => {
+    expect(RuntimeItemTypeSchema.options).toEqual([
+      "run",
+      "task",
+      "session",
+      "goal",
+      "wait",
+      "watch",
+      "hold",
+      "urge_candidate",
+      "agent_agenda_item",
+      "surface_projection",
+      "permission_boundary",
+      "audit_trace",
+      "diff_proposal",
+      "auth_handoff",
+      "browser_session",
+      "guardrail_state",
+      "backpressure_state",
+    ]);
+  });
+
   it("keeps mechanical RuntimeItem status separate from runtime posture", () => {
-    const item = makeRuntimeItem({
+    const completedNeedsUser = makeRuntimeItem({
+      item_id: "run:completed-needs-user",
       status: "completed",
       posture: "needs_user",
     });
+    const activeStale = makeRuntimeItem({
+      item_id: "session:active-stale",
+      type: "session",
+      status: "active",
+      posture: "stale",
+    });
+    const matureSuppressed = makeRuntimeItem({
+      item_id: "urge:mature-suppressed",
+      type: "urge_candidate",
+      status: "mature",
+      posture: "suppressed",
+    });
 
-    expect(item.status).toBe("completed");
-    expect(item.posture).toBe("needs_user");
+    expect(completedNeedsUser.status).toBe("completed");
+    expect(completedNeedsUser.posture).toBe("needs_user");
+    expect(activeStale.status).toBe("active");
+    expect(activeStale.posture).toBe("stale");
+    expect(matureSuppressed.status).toBe("mature");
+    expect(matureSuppressed.posture).toBe("suppressed");
   });
 
-  it("fails Authority closed when required authority evidence is missing", () => {
-    const authority = parseAuthorityFailClosed({
+  it("keeps hidden runtime items inspectable and auditable through shared state", () => {
+    const item = makeRuntimeItem({
+      item_id: "watch:hidden",
+      type: "watch",
+      status: "running",
+      posture: "watching",
+      visibility_policy: {
+        display: "hidden",
+        inspectable: true,
+        auditable: true,
+        policy_ref: "visibility:quiet-watch",
+        reason: "hidden from normal display but inspectable",
+      },
+    });
+
+    expect(item.visibility_policy.display).toBe("hidden");
+    expect(item.visibility_policy.inspectable).toBe(true);
+    expect(item.visibility_policy.auditable).toBe(true);
+  });
+
+  it("fails Authority closed when authority evidence is missing or contradictory", () => {
+    const partialAuthority = parseAuthorityFailClosed({
       inspectable: true,
       authority_reason: "partial authority must not grant action",
     });
+    const contradictoryAuthority = parseAuthorityFailClosed({
+      ...inspectOnlyAuthority,
+      actionable: true,
+    });
 
-    expect(authority).toMatchObject({
+    expect(partialAuthority).toMatchObject({
       inspectable: false,
       resumable: false,
       actionable: false,
@@ -140,6 +243,22 @@ describe("CompanionState runtime-control contracts", () => {
       requires_confirmation: true,
       approval_scope: "none",
     });
+    expect(contradictoryAuthority).toMatchObject({
+      inspectable: false,
+      actionable: false,
+      requires_confirmation: true,
+      approval_scope: "none",
+    });
+  });
+
+  it("proves inspectable authority does not imply resume action speech or writes", () => {
+    expect(inspectOnlyAuthority.inspectable).toBe(true);
+    expect(inspectOnlyAuthority.resumable).toBe(false);
+    expect(inspectOnlyAuthority.actionable).toBe(false);
+    expect(inspectOnlyAuthority.speakable).toBe(false);
+    expect(inspectOnlyAuthority.can_write_memory).toBe(false);
+    expect(inspectOnlyAuthority.can_update_surface).toBe(false);
+    expect(inspectOnlyAuthority.can_delegate_work).toBe(false);
   });
 
   it("fails Staleness closed across all dimensions when staleness evidence is contradictory", () => {
@@ -150,6 +269,176 @@ describe("CompanionState runtime-control contracts", () => {
     });
 
     expect(Object.values(staleness).every((dimension) => dimension.outcome === "rejected")).toBe(true);
+  });
+
+  it("models stale browser session permission Surface and assumption independently", () => {
+    const item = makeRuntimeItem({
+      staleness: {
+        ...currentStaleness,
+        browser_session: { outcome: "not_resumable", reason: "browser session went away" },
+        permission: { outcome: "needs_review", reason: "permission may have expired" },
+        surface: { outcome: "needs_regrounding", reason: "Surface invalidated" },
+        assumption: { outcome: "summary_only", reason: "old assumption can only be summarized" },
+      },
+    });
+
+    expect(item.staleness.browser_session.outcome).toBe("not_resumable");
+    expect(item.staleness.permission.outcome).toBe("needs_review");
+    expect(item.staleness.surface.outcome).toBe("needs_regrounding");
+    expect(item.staleness.assumption.outcome).toBe("summary_only");
+  });
+
+  it("derives per-item ControlPolicy with inspect allowed resume forbidden and reground repair", () => {
+    const item = makeRuntimeItem({
+      authority: inspectOnlyAuthority,
+      staleness: {
+        ...currentStaleness,
+        surface: { outcome: "needs_regrounding", reason: "Surface is stale" },
+      },
+    });
+    const policy = deriveRuntimeItemControlPolicy(item);
+
+    expect(policy.allowed_controls).toContain("inspect_item");
+    expect(policy.forbidden_controls).toContain("resume_item");
+    expect(policy.repair_options).toContain("reground_item");
+  });
+
+  it("does not expose side-effect controls as allowed before required confirmation", () => {
+    const item = makeRuntimeItem({
+      item_id: "run:approval-required",
+      authority: {
+        ...operationalAuthority,
+        requires_confirmation: true,
+      },
+    });
+    const policy = deriveRuntimeItemControlPolicy(item);
+
+    expect(policy.allowed_controls).toContain("inspect_item");
+    expect(policy.allowed_controls).toContain("require_confirmation");
+    expect(policy.forbidden_controls).toContain("resume_item");
+    expect(policy.forbidden_controls).toContain("pause_item");
+    expect(policy.forbidden_controls).toContain("cancel_item");
+    expect(policy.required_confirmation).toEqual(["require_confirmation"]);
+  });
+
+  it("uses RuntimeItem companion-control state to prevent stale resume bypasses", () => {
+    const item = makeRuntimeItem({
+      item_id: "run:held-by-suspend",
+      companion_control_state: {
+        active_controls: [],
+        global_control_refs: ["control:suspend_companion:active"],
+        held_by_controls: ["suspend_companion"],
+        rejected_by_controls: [],
+        reason: "held by companion suspend",
+      },
+    });
+    const policy = deriveRuntimeItemControlPolicy(item);
+
+    expect(policy.forbidden_controls).toContain("resume_item");
+    expect(policy.forbidden_controls).toContain("pause_item");
+    expect(policy.forbidden_controls).toContain("cancel_item");
+    expect(policy.reason).toBe("global_suspend_forbids_runtime_item_resume");
+  });
+
+  it("requires action authority for finalize and forget side-effect controls", () => {
+    const finalizePolicy = deriveRuntimeItemControlPolicy(makeRuntimeItem({
+      item_id: "run:inspect-only-finalize",
+      status: "completed",
+      posture: "ready_to_digest",
+      authority: inspectOnlyAuthority,
+    }));
+    const forgetPolicy = deriveRuntimeItemControlPolicy(makeRuntimeItem({
+      item_id: "run:inspect-only-forget",
+      posture: "safe_to_forget",
+      authority: inspectOnlyAuthority,
+    }));
+
+    expect(finalizePolicy.forbidden_controls).toContain("finalize_item");
+    expect(forgetPolicy.forbidden_controls).toContain("forget_item");
+  });
+
+  it("blocks finalize and forget side-effect controls when staleness blocks action", () => {
+    const staleForAction: Staleness = {
+      ...currentStaleness,
+      permission: { outcome: "not_actionable", reason: "permission is stale for action" },
+    };
+    const staleForReview: Staleness = {
+      ...currentStaleness,
+      permission: { outcome: "needs_review", reason: "permission needs review before action" },
+    };
+    const finalizePolicy = deriveRuntimeItemControlPolicy(makeRuntimeItem({
+      item_id: "run:stale-finalize",
+      status: "completed",
+      posture: "ready_to_digest",
+      staleness: staleForAction,
+    }));
+    const forgetPolicy = deriveRuntimeItemControlPolicy(makeRuntimeItem({
+      item_id: "run:stale-forget",
+      posture: "safe_to_forget",
+      staleness: staleForAction,
+    }));
+    const reviewFinalizePolicy = deriveRuntimeItemControlPolicy(makeRuntimeItem({
+      item_id: "run:review-finalize",
+      status: "completed",
+      posture: "ready_to_digest",
+      staleness: staleForReview,
+    }));
+    const reviewForgetPolicy = deriveRuntimeItemControlPolicy(makeRuntimeItem({
+      item_id: "run:review-forget",
+      posture: "safe_to_forget",
+      staleness: staleForReview,
+    }));
+
+    expect(finalizePolicy.forbidden_controls).toContain("finalize_item");
+    expect(forgetPolicy.forbidden_controls).toContain("forget_item");
+    expect(reviewFinalizePolicy.forbidden_controls).toContain("finalize_item");
+    expect(reviewForgetPolicy.forbidden_controls).toContain("forget_item");
+    expect(finalizePolicy.repair_options).toContain("reground_item");
+    expect(forgetPolicy.repair_options).toContain("reground_item");
+    expect(reviewFinalizePolicy.repair_options).toContain("narrow_permission");
+    expect(reviewForgetPolicy.repair_options).toContain("narrow_permission");
+  });
+
+  it("assembles reducer input from runtime items after posture changes and Surface invalidations", () => {
+    const input = assembleCompanionStateReducerInput({
+      runtime_items: [
+        makeRuntimeItem({
+          item_id: "watch:posture-change",
+          type: "watch",
+          posture: "waiting",
+          related_surface_refs: ["surface:old"],
+        }),
+      ],
+      recent_runtime_events: ["runtime-event:watch-posture"],
+      active_surface_ref: "surface:1",
+      surface_invalidation_events: ["surface:old"],
+      global_control_state_ref: "global-control-state:1",
+      global_controls: [makeControl("inspect_companion_state", "inactive")],
+      event_high_watermark: "event:watch-posture",
+      current_time: NOW,
+    });
+
+    expect(input.active_watch_refs).toEqual(["watch:posture-change"]);
+    expect(input.staleness_blockers).toContain("surface:old");
+    expect(input.event_high_watermark).toBe("event:watch-posture");
+  });
+
+  it("represents missing Surface state as a blocker instead of silently omitting it", () => {
+    const input = assembleCompanionStateReducerInput({
+      runtime_items: [makeRuntimeItem()],
+      recent_runtime_events: ["runtime-event:missing-surface"],
+      active_surface_ref: null,
+      surface_invalidation_events: [],
+      global_control_state_ref: "global-control-state:1",
+      global_controls: [makeControl("inspect_companion_state", "inactive")],
+      event_high_watermark: "event:missing-surface",
+      current_time: NOW,
+    });
+    const snapshot = deriveCompanionStateSnapshot(input);
+
+    expect(input.staleness_blockers).toContain("active_surface_ref");
+    expect(snapshot.mode).toBe("holding_back");
+    expect(snapshot.stale_surface_refs).toContain("active_surface_ref");
   });
 
   it("forces suspend_companion to select suspended and hold active runtime refs", () => {
@@ -163,7 +452,26 @@ describe("CompanionState runtime-control contracts", () => {
     expect(snapshot.active_refs).toEqual([]);
     expect(snapshot.held_runtime_refs).toEqual(["run:quiet-work-1"]);
     expect(snapshot.blocked_refs).toContain("run:quiet-work-1");
+    expect(snapshot.quiet_work_budget).toBe(0);
     expect(snapshot.derivation_trace.reason).toBe("suspend_companion_fail_closed");
+  });
+
+  it("prevents urge pressure from overriding suspend", () => {
+    const snapshot = deriveCompanionStateSnapshot(makeReducerInput({
+      runtime_items: [
+        makeRuntimeItem({
+          item_id: "urge:ready",
+          type: "urge_candidate",
+          status: "mature",
+          posture: "proposed",
+          related_surface_refs: [],
+        }),
+      ],
+      global_controls: [makeControl("suspend_companion")],
+    }));
+
+    expect(snapshot.mode).toBe("suspended");
+    expect(snapshot.derivation_trace.rejected_modes).toContain("reaching_out");
   });
 
   it("fails closed when global companion-control state is missing", () => {
@@ -185,6 +493,17 @@ describe("CompanionState runtime-control contracts", () => {
     ]);
   });
 
+  it("fails closed when the global companion-control state ref is missing", () => {
+    const snapshot = deriveCompanionStateSnapshot(makeReducerInput({
+      global_control_state_ref: null,
+      global_controls: [makeControl("inspect_companion_state", "inactive")],
+    }));
+
+    expect(snapshot.mode).toBe("needs_user");
+    expect(snapshot.blocked_refs).toContain("global_controls");
+    expect(snapshot.derivation_trace.reason).toBe("missing_global_control_state_fail_closed");
+  });
+
   it("fails closed when companion-wide control state is ambiguous", () => {
     const snapshot = deriveCompanionStateSnapshot(makeReducerInput({
       global_controls: [makeControl("resume_companion", "ambiguous")],
@@ -197,24 +516,87 @@ describe("CompanionState runtime-control contracts", () => {
     expect(snapshot.derivation_trace.reason).toBe("ambiguous_global_control_state_fail_closed");
   });
 
-  it("selects quieted mode from active global controls without duplicated overlays", () => {
-    const snapshot = deriveCompanionStateSnapshot(makeReducerInput({
+  it("selects quieted and proactivity_paused modes from active global controls", () => {
+    const quieted = deriveCompanionStateSnapshot(makeReducerInput({
       global_controls: [makeControl("enter_quiet_mode")],
       control_overlays: [],
     }));
-
-    expect(snapshot.mode).toBe("quieted");
-    expect(snapshot.control_overlays).toEqual(["enter_quiet_mode"]);
-  });
-
-  it("selects proactivity_paused mode from active global controls without duplicated overlays", () => {
-    const snapshot = deriveCompanionStateSnapshot(makeReducerInput({
+    const paused = deriveCompanionStateSnapshot(makeReducerInput({
       global_controls: [makeControl("pause_proactivity")],
       control_overlays: [],
     }));
 
-    expect(snapshot.mode).toBe("proactivity_paused");
-    expect(snapshot.control_overlays).toEqual(["pause_proactivity"]);
+    expect(quieted.mode).toBe("quieted");
+    expect(quieted.control_overlays).toEqual(["enter_quiet_mode"]);
+    expect(paused.mode).toBe("proactivity_paused");
+    expect(paused.control_overlays).toEqual(["pause_proactivity"]);
+  });
+
+  it("holds back running watches when the active Surface is stale", () => {
+    const snapshot = deriveCompanionStateSnapshot(makeReducerInput({
+      runtime_items: [
+        makeRuntimeItem({
+          item_id: "watch:surface-stale",
+          type: "watch",
+          status: "running",
+          posture: "watching",
+          staleness: {
+            ...currentStaleness,
+            surface: { outcome: "needs_regrounding", reason: "Surface expired" },
+          },
+        }),
+      ],
+    }));
+
+    expect(snapshot.mode).toBe("holding_back");
+    expect(snapshot.active_watch_refs).toEqual(["watch:surface-stale"]);
+    expect(snapshot.stale_surface_refs).toEqual(["watch:surface-stale"]);
+    expect(snapshot.derivation_trace.rejected_modes).toContain("reaching_out");
+  });
+
+  it("forces needs_user for approval requirements and overloaded for safety blockers", () => {
+    const approvalSnapshot = deriveCompanionStateSnapshot(makeReducerInput({
+      runtime_items: [
+        makeRuntimeItem({
+          item_id: "permission:stale",
+          type: "permission_boundary",
+          authority: inspectOnlyAuthority,
+          staleness: {
+            ...currentStaleness,
+            permission: { outcome: "needs_review", reason: "permission must be renewed" },
+          },
+        }),
+      ],
+    }));
+    const safetySnapshot = deriveCompanionStateSnapshot(makeReducerInput({
+      runtime_items: [
+        makeRuntimeItem({
+          item_id: "guardrail:active",
+          type: "guardrail_state",
+          status: "active",
+          posture: "blocked_by_boundary",
+        }),
+      ],
+    }));
+
+    expect(approvalSnapshot.mode).toBe("needs_user");
+    expect(approvalSnapshot.needs_user_refs).toContain("permission:stale");
+    expect(safetySnapshot.mode).toBe("overloaded");
+    expect(safetySnapshot.blocked_by_boundary_refs).toContain("guardrail:active");
+  });
+
+  it("records budget threshold cooldown and trace changes for feedback-driven cooling down", () => {
+    const snapshot = deriveCompanionStateSnapshot(makeReducerInput({
+      feedback_refs: ["feedback:dismissed"],
+    }));
+
+    expect(snapshot.mode).toBe("cooling_down");
+    expect(snapshot.current_capacity).toBe("constrained");
+    expect(snapshot.interruption_budget).toBe(0);
+    expect(snapshot.cooldowns).toEqual(["feedback:dismissed"]);
+    expect(snapshot.expression_thresholds.user_facing_expression).toBe(0.95);
+    expect(snapshot.derivation_trace.threshold_changes).toContain("recent_feedback_raised_expression_threshold");
+    expect(snapshot.derivation_trace.rejected_modes).toContain("reaching_out");
   });
 
   it("returns the same snapshot for the same parsed input and high-watermark", () => {
@@ -224,5 +606,63 @@ describe("CompanionState runtime-control contracts", () => {
     });
 
     expect(deriveCompanionStateSnapshot(input)).toEqual(deriveCompanionStateSnapshot(input));
+  });
+
+  it("rejects stale snapshots when later runtime or Surface evidence changes the high-watermark", () => {
+    const input = makeReducerInput();
+    const snapshot = deriveCompanionStateSnapshot(input);
+    const laterInput = makeReducerInput({
+      recent_runtime_events: ["runtime-event:2"],
+      surface_invalidation_events: ["surface:1"],
+      event_high_watermark: "event:2",
+    });
+
+    expect(evaluateCompanionStateSnapshotFreshness(snapshot, input)).toEqual({
+      current: true,
+      reason: "current",
+      stale_refs: [],
+    });
+    expect(evaluateCompanionStateSnapshotFreshness(snapshot, laterInput)).toMatchObject({
+      current: false,
+      reason: "event_high_watermark_changed",
+    });
+  });
+
+  it("rejects stale snapshots when global control state changes under the same high-watermark", () => {
+    const input = makeReducerInput();
+    const snapshot = deriveCompanionStateSnapshot(input);
+    const changedControlInput = makeReducerInput({
+      global_control_state_ref: "global-control-state:2",
+      global_controls: [makeControl("pause_proactivity")],
+      event_high_watermark: input.event_high_watermark,
+    });
+
+    expect(evaluateCompanionStateSnapshotFreshness(snapshot, changedControlInput)).toMatchObject({
+      current: false,
+      reason: "global_control_state_changed",
+      stale_refs: expect.arrayContaining([
+        "global-control-state:1",
+        "global-control-state:2",
+        "control:pause_proactivity:active",
+      ]),
+    });
+  });
+
+  it("rejects stale snapshots when the active Surface changes under the same high-watermark", () => {
+    const input = makeReducerInput({
+      active_surface_ref: "surface:1",
+      event_high_watermark: "event:same",
+    });
+    const snapshot = deriveCompanionStateSnapshot(input);
+    const changedSurfaceInput = makeReducerInput({
+      active_surface_ref: "surface:2",
+      event_high_watermark: "event:same",
+    });
+
+    expect(evaluateCompanionStateSnapshotFreshness(snapshot, changedSurfaceInput)).toMatchObject({
+      current: false,
+      reason: "active_surface_changed",
+      stale_refs: ["surface:1", "surface:2"],
+    });
   });
 });
