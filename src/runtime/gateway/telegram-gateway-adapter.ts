@@ -12,6 +12,22 @@ import type { INotifier, NotificationEvent, NotificationEventType } from "../../
 import type { ChatEvent } from "../../interface/chat/chat-events.js";
 
 const BACKOFF_STEPS_MS = [5_000, 10_000, 20_000, 40_000, 60_000];
+const TELEGRAM_INTEGER_ID_TOKEN = /^-?(?:0|[1-9]\d*)$/;
+
+function parseTelegramIntegerId(value: string): number | null {
+  const normalized = value.trim();
+  if (!TELEGRAM_INTEGER_ID_TOKEN.test(normalized)) return null;
+  const parsed = Number(normalized);
+  return Number.isSafeInteger(parsed) ? parsed : null;
+}
+
+function parseTelegramMessageRef(ref: NonTuiDisplayMessageRef): number {
+  const messageId = parseTelegramIntegerId(ref.id);
+  if (messageId === null) {
+    throw new Error(`telegram-display: invalid message reference "${ref.id}"`);
+  }
+  return messageId;
+}
 
 export interface TelegramGatewayConfig {
   bot_token: string;
@@ -73,8 +89,8 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
     this.typingIndicator = createRefreshingTypingIndicator({
       intervalMs: 4_000,
       refresh: async (context) => {
-        const chatId = Number(context.conversation_id);
-        if (!Number.isInteger(chatId)) return;
+        const chatId = parseTelegramIntegerId(context.conversation_id);
+        if (chatId === null) return;
         await this.api.sendChatAction(chatId, "typing");
       },
       onError: (err) => console.warn("TelegramGatewayAdapter: typing indicator failed", err),
@@ -454,11 +470,11 @@ class TelegramDisplayTransport implements NonTuiDisplayTransport {
   }
 
   async editProgress(ref: NonTuiDisplayMessageRef, text: string): Promise<void> {
-    await this.api.editMessageText(this.chatId, Number(ref.id), text);
+    await this.api.editMessageText(this.chatId, parseTelegramMessageRef(ref), text);
   }
 
   async deleteProgress(ref: NonTuiDisplayMessageRef): Promise<void> {
-    await this.api.deleteMessage(this.chatId, Number(ref.id));
+    await this.api.deleteMessage(this.chatId, parseTelegramMessageRef(ref));
   }
 
   async sendFinal(text: string): Promise<NonTuiDisplayMessageRef> {
@@ -467,7 +483,7 @@ class TelegramDisplayTransport implements NonTuiDisplayTransport {
   }
 
   async editFinal(ref: NonTuiDisplayMessageRef, text: string): Promise<void> {
-    await this.api.editMessageText(this.chatId, Number(ref.id), text);
+    await this.api.editMessageText(this.chatId, parseTelegramMessageRef(ref), text);
   }
 }
 

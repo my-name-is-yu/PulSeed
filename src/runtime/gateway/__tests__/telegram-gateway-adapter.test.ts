@@ -116,6 +116,60 @@ describe("TelegramGatewayAdapter", () => {
     );
   });
 
+  it("does not coerce malformed typing conversation ids into Telegram chat ids", async () => {
+    const configDir = await writeConfig({
+      bot_token: "test-token",
+      allowed_user_ids: [42],
+      denied_user_ids: [],
+      allowed_chat_ids: [],
+      denied_chat_ids: [],
+      runtime_control_allowed_user_ids: [42],
+      chat_goal_map: {},
+      user_goal_map: {},
+      allow_all: true,
+      polling_timeout: 30,
+    });
+    const fetchMock = vi.fn(async (url: string | URL | Request) => {
+      const method = String(url).split("/").at(-1);
+      if (method === "sendChatAction") return telegramResponse(true);
+      throw new Error(`unexpected Telegram method: ${method}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const adapter = TelegramGatewayAdapter.fromConfigDir(configDir);
+    adapters.push(adapter);
+
+    const malformedSession = await adapter.typingIndicator.start({
+      platform: "telegram",
+      conversation_id: "0x13a",
+    });
+    await malformedSession.stop();
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    const unsafeSession = await adapter.typingIndicator.start({
+      platform: "telegram",
+      conversation_id: "9007199254740993",
+    });
+    await unsafeSession.stop();
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    const validSession = await adapter.typingIndicator.start({
+      platform: "telegram",
+      conversation_id: "-100314",
+    });
+    await validSession.stop();
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.telegram.org/bottest-token/sendChatAction",
+      expect.objectContaining({
+        body: JSON.stringify({
+          chat_id: -100314,
+          action: "typing",
+        }),
+      })
+    );
+  });
+
   it("renders operation progress events before the final Telegram reply", async () => {
     const configDir = await writeConfig({
       bot_token: "test-token",
