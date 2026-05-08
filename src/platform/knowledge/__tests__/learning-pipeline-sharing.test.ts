@@ -93,7 +93,7 @@ describe("LearningPipeline", () => {
     fs.rmSync(tmpDir, { recursive: true, force: true , maxRetries: 3, retryDelay: 100 });
   });
 
-  // ─── 4. クロスゴール共有（sharePatternAcrossGoals）───
+  // Section 4: Cross-goal sharing (sharePatternAcrossGoals)
 
   describe("sharePatternAcrossGoals", () => {
     it("should do nothing when vectorIndex is null", async () => {
@@ -328,7 +328,7 @@ describe("LearningPipeline", () => {
     });
   });
 
-  // ─── 5. トリガーハンドラ ───
+  // Section 5: Trigger handlers
 
   describe("trigger handlers", () => {
     describe("onMilestoneReached", () => {

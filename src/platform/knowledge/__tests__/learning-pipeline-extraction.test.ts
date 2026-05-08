@@ -140,7 +140,7 @@ describe("LearningPipeline", () => {
     fs.rmSync(tmpDir, { recursive: true, force: true , maxRetries: 3, retryDelay: 100 });
   });
 
-  // ─── 1. パターン分析（analyzeLogs）───
+  // Section 1: Pattern analysis (analyzeLogs)
 
   describe("analyzeLogs", () => {
     it("should return empty array when no logs file exists", async () => {

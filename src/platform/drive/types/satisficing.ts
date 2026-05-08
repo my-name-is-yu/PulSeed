@@ -2,7 +2,7 @@ import { z } from "zod";
 
 // --- SatisficingJudge types ---
 
-// Convergence detection result (改善3: 収束判定の強化)
+// Convergence detection result.
 export const SatisficingStatusSchema = z.enum([
   "satisficed",          // gap < threshold (existing behavior)
   "converged_satisficed",// variance < ε AND gap ≤ threshold × 1.5 (NEW)
