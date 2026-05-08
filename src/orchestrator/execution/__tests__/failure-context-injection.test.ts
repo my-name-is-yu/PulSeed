@@ -34,8 +34,8 @@ describe("buildTaskGenerationPrompt — failure context injection (§4.7)", () =
       "test_coverage"
     );
 
-    expect(prompt).not.toContain("前回のタスク");
-    expect(prompt).not.toContain("この失敗を踏まえて");
+    expect(prompt).not.toContain("Previous task");
+    expect(prompt).not.toContain("Generate a task that uses a different approach based on this failure");
   });
 
   it("injects failure context into the prompt when last-failure-context.json exists", async () => {
@@ -53,11 +53,11 @@ describe("buildTaskGenerationPrompt — failure context injection (§4.7)", () =
       "test_coverage"
     );
 
-    expect(prompt).toContain("前回のタスク「Write tests for the auth module」");
-    expect(prompt).toContain("failedと判定された");
+    expect(prompt).toContain('Previous task "Write tests for the auth module"');
+    expect(prompt).toContain("was judged failed");
     expect(prompt).toContain("Tests could not run due to missing dependency");
-    expect(prompt).toContain("達成基準: 0/3");
-    expect(prompt).toContain("この失敗を踏まえて、異なるアプローチのタスクを生成すること。");
+    expect(prompt).toContain("Acceptance criteria met: 0/3");
+    expect(prompt).toContain("Generate a task that uses a different approach based on this failure.");
   });
 
   it("uses the verdict from the failure context in the injected text", async () => {
@@ -75,8 +75,8 @@ describe("buildTaskGenerationPrompt — failure context injection (§4.7)", () =
       "deployment"
     );
 
-    expect(prompt).toContain("incompleteと判定された");
-    expect(prompt).toContain("達成基準: 1/4");
+    expect(prompt).toContain("was judged incomplete");
+    expect(prompt).toContain("Acceptance criteria met: 1/4");
   });
 
   it("falls back to 'failed' verdict when verdict field is missing", async () => {
@@ -93,7 +93,7 @@ describe("buildTaskGenerationPrompt — failure context injection (§4.7)", () =
       "reliability"
     );
 
-    expect(prompt).toContain("failedと判定された");
+    expect(prompt).toContain("was judged failed");
   });
 
   it("skips injection when prev_task_description is missing", async () => {
@@ -110,8 +110,8 @@ describe("buildTaskGenerationPrompt — failure context injection (§4.7)", () =
       "test_coverage"
     );
 
-    expect(prompt).not.toContain("前回のタスク");
-    expect(prompt).not.toContain("この失敗を踏まえて");
+    expect(prompt).not.toContain("Previous task");
+    expect(prompt).not.toContain("Generate a task that uses a different approach based on this failure");
   });
 
   it("failure context appears before the Requirements section", async () => {
@@ -129,7 +129,7 @@ describe("buildTaskGenerationPrompt — failure context injection (§4.7)", () =
       "code_quality"
     );
 
-    const failureIdx = prompt.indexOf("前回のタスク");
+    const failureIdx = prompt.indexOf("Previous task");
     const requirementsIdx = prompt.indexOf("Requirements:");
     expect(failureIdx).toBeGreaterThan(-1);
     expect(requirementsIdx).toBeGreaterThan(-1);
@@ -240,11 +240,11 @@ describe("§4.7 round-trip: handleVerdict writes, buildTaskGenerationPrompt read
 
     // Now verify the reader (buildTaskGenerationPrompt) picks it up correctly
     const prompt = await buildTaskGenerationPrompt(stateManager, "goal-rt-1", "dim");
-    expect(prompt).toContain("前回のタスク「Round-trip task description」");
-    expect(prompt).toContain("failと判定された");
+    expect(prompt).toContain('Previous task "Round-trip task description"');
+    expect(prompt).toContain("was judged fail");
     expect(prompt).toContain("Round-trip reasoning");
-    expect(prompt).toContain("達成基準: 2/5");
-    expect(prompt).toContain("この失敗を踏まえて、異なるアプローチのタスクを生成すること。");
+    expect(prompt).toContain("Acceptance criteria met: 2/5");
+    expect(prompt).toContain("Generate a task that uses a different approach based on this failure.");
   });
 
   it("criteria_met and criteria_total from the verification result appear in the injected prompt", async () => {
@@ -294,6 +294,6 @@ describe("§4.7 round-trip: handleVerdict writes, buildTaskGenerationPrompt read
 
     // Verify the prompt shows correct criteria counts
     const prompt = await buildTaskGenerationPrompt(stateManager, "goal-rt-1", "dim");
-    expect(prompt).toContain("達成基準: 3/4");
+    expect(prompt).toContain("Acceptance criteria met: 3/4");
   });
 });
