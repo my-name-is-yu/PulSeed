@@ -132,12 +132,12 @@ describe("code search platform", () => {
 
   it("does not classify freeform task intent from keywords without caller intent", () => {
     const planned = planCodeSearchTask({
-      task: "調査してセキュリティっぽい設定名の説明コメントを追加する",
+      task: "Investigate and add explanatory comments to security-ish config names",
       cwd: root,
     });
 
     expect(planned.intent).toBe("unknown");
-    expect(planned.task).toContain("セキュリティっぽい");
+    expect(planned.task).toContain("security-ish");
   });
 
   it("keeps unsafe stacktrace positions out of structured code-search context", () => {
