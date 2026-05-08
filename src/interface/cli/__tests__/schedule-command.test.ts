@@ -49,6 +49,8 @@ describe("cmdSchedule", () => {
         "db-source",
         "--probe-dimension",
         "open_issue_count",
+        "--threshold-value",
+        "12.5",
       ]);
 
       const engine = new ScheduleEngine({ baseDir: tempDir });
@@ -57,6 +59,9 @@ describe("cmdSchedule", () => {
       expect(engine.getEntries()[0]?.probe).toEqual(expect.objectContaining({
         data_source_id: "db-source",
         probe_dimension: "open_issue_count",
+        change_detector: expect.objectContaining({
+          threshold_value: 12.5,
+        }),
       }));
     } finally {
       cleanupTempDir(tempDir);
@@ -216,7 +221,9 @@ describe("cmdSchedule", () => {
     ["failure threshold", ["add", "--name", "invalid", "--type", "custom", "--command", "echo ok", "--threshold", "3abc"], "--threshold must be a positive integer"],
     ["preset interval", ["add", "--preset", "daily_brief", "--interval", "60s"], "--interval must be a positive integer"],
     ["preset baseline window", ["add", "--preset", "goal_probe", "--data-source-id", "db-source", "--baseline-window", "5days"], "--baseline-window must be a positive integer"],
-  ])("rejects invalid schedule add integer input before persisting: %s", async (_label, argv, message) => {
+    ["preset threshold value", ["add", "--preset", "goal_probe", "--data-source-id", "db-source", "--threshold-value", "5days"], "--threshold-value must be a finite number"],
+    ["preset non-finite threshold value", ["add", "--preset", "goal_probe", "--data-source-id", "db-source", "--threshold-value", "Infinity"], "--threshold-value must be a finite number"],
+  ])("rejects invalid schedule add numeric input before persisting: %s", async (_label, argv, message) => {
     const tempDir = makeTempDir("schedule-command-invalid-add-");
     try {
       const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});

@@ -152,6 +152,50 @@ describe("buildThreshold", () => {
     it("returns null when value is not parseable", () => {
       expect(buildThreshold({ name: "x", type: "range", value: "abc" })).toBeNull();
     });
+
+    it("does not partially parse comma-separated range values", () => {
+      expect(buildThreshold({ name: "x", type: "range", value: "1px,2" })).toBeNull();
+      expect(buildThreshold({ name: "x", type: "range", value: "1,2px" })).toBeNull();
+    });
+
+    it("rejects non-finite range values", () => {
+      expect(buildThreshold({ name: "x", type: "range", value: "1,Infinity" })).toBeNull();
+    });
+  });
+
+  describe("min and max types", () => {
+    it("parses exact finite numbers", () => {
+      expect(buildThreshold({ name: "x", type: "min", value: "1.5" })).toEqual({
+        type: "min",
+        value: 1.5,
+      });
+      expect(buildThreshold({ name: "x", type: "max", value: "1e3" })).toEqual({
+        type: "max",
+        value: 1000,
+      });
+    });
+
+    it("rejects partial and non-finite numbers", () => {
+      expect(buildThreshold({ name: "x", type: "min", value: "1abc" })).toBeNull();
+      expect(buildThreshold({ name: "x", type: "max", value: "Infinity" })).toBeNull();
+    });
+  });
+
+  describe("match type", () => {
+    it("only converts exact finite numeric values to numbers", () => {
+      expect(buildThreshold({ name: "x", type: "match", value: "123" })).toEqual({
+        type: "match",
+        value: 123,
+      });
+      expect(buildThreshold({ name: "x", type: "match", value: "123done" })).toEqual({
+        type: "match",
+        value: "123done",
+      });
+      expect(buildThreshold({ name: "x", type: "match", value: "Infinity" })).toEqual({
+        type: "match",
+        value: "Infinity",
+      });
+    });
   });
 });
 

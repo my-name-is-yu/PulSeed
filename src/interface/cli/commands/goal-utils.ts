@@ -8,6 +8,7 @@ import { extractWorkspacePathConstraint, resolveWorkspacePath } from "../../../b
 import { StateManager } from "../../../base/state/state-manager.js";
 import { getCliLogger } from "../cli-logger.js";
 import { formatOperationError } from "../utils.js";
+import { parseExactFiniteNumber } from "./exact-number.js";
 
 // ─── Shell Dimension Patterns ───
 //
@@ -98,33 +99,38 @@ export function buildThreshold(spec: RawDimensionSpec): Threshold | null {
     let high: number;
     const commaParts = spec.value.split(",");
     if (commaParts.length === 2) {
-      low = parseFloat(commaParts[0] ?? "");
-      high = parseFloat(commaParts[1] ?? "");
+      const parsedLow = parseExactFiniteNumber(commaParts[0]);
+      const parsedHigh = parseExactFiniteNumber(commaParts[1]);
+      if (parsedLow === null || parsedHigh === null) return null;
+      low = parsedLow;
+      high = parsedHigh;
     } else {
       // Hyphen fallback: "10-20", "-5-5", "-10--5"
       const rangeMatch = spec.value.match(/^(-?\d+(?:\.\d+)?)\s*-\s*(-?\d+(?:\.\d+)?)$/);
       if (rangeMatch) {
-        low = parseFloat(rangeMatch[1]);
-        high = parseFloat(rangeMatch[2]);
+        const parsedLow = parseExactFiniteNumber(rangeMatch[1]);
+        const parsedHigh = parseExactFiniteNumber(rangeMatch[2]);
+        if (parsedLow === null || parsedHigh === null) return null;
+        low = parsedLow;
+        high = parsedHigh;
       } else {
         return null;
       }
     }
-    if (isNaN(low) || isNaN(high)) return null;
     return { type: "range", low, high };
   }
 
   if (spec.type === "min" || spec.type === "max") {
     if (!spec.value) return null;
-    const num = parseFloat(spec.value);
-    if (isNaN(num)) return null;
+    const num = parseExactFiniteNumber(spec.value);
+    if (num === null) return null;
     return { type: spec.type, value: num };
   }
 
   if (spec.type === "match") {
     if (spec.value === undefined) return null;
-    const num = parseFloat(spec.value);
-    if (!isNaN(num)) return { type: "match", value: num };
+    const num = parseExactFiniteNumber(spec.value);
+    if (num !== null) return { type: "match", value: num };
     if (spec.value === "true") return { type: "match", value: true };
     if (spec.value === "false") return { type: "match", value: false };
     return { type: "match", value: spec.value };
