@@ -2,31 +2,12 @@ import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { parseArgs } from "node:util";
 import type { StateManager } from "../../../base/state/state-manager.js";
+import {
+  addUsageTokenCounts,
+  normalizeUsageCounter,
+  type UsageCounter,
+} from "../../usage-counter.js";
 import { parseUsagePeriodMs } from "../../usage-period.js";
-
-interface UsageCounter {
-  inputTokens: number;
-  outputTokens: number;
-  totalTokens: number;
-}
-
-function zeroUsageCounter(): UsageCounter {
-  return { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
-}
-
-function normalizeUsageCounter(raw: unknown): UsageCounter {
-  if (!raw || typeof raw !== "object") return zeroUsageCounter();
-  const value = raw as Record<string, unknown>;
-  const inputValue = Number(value.inputTokens);
-  const outputValue = Number(value.outputTokens);
-  const totalValue = Number(value.totalTokens);
-  const inputTokens = Number.isFinite(inputValue) ? Math.max(0, Math.floor(inputValue)) : 0;
-  const outputTokens = Number.isFinite(outputValue) ? Math.max(0, Math.floor(outputValue)) : 0;
-  const totalTokens = Number.isFinite(totalValue)
-    ? Math.max(0, Math.floor(totalValue))
-    : inputTokens + outputTokens;
-  return { inputTokens, outputTokens, totalTokens };
-}
 
 async function collectGoalUsage(stateManager: StateManager, goalId: string): Promise<{
   goalId: string;
@@ -54,9 +35,7 @@ async function collectGoalUsage(stateManager: StateManager, goalId: string): Pro
       const parsed = JSON.parse(raw) as {
         summary?: { latest_event_type?: string; tokens_used?: number };
       };
-      if (typeof parsed.summary?.tokens_used === "number") {
-        totalTokens += parsed.summary.tokens_used;
-      }
+      totalTokens = addUsageTokenCounts(totalTokens, parsed.summary?.tokens_used);
       if (
         parsed.summary?.latest_event_type === "succeeded"
         || parsed.summary?.latest_event_type === "failed"
@@ -101,10 +80,7 @@ async function collectScheduleUsage(stateManager: StateManager, period: string):
     const firedAt = typeof finishedAt === "string" ? Date.parse(finishedAt) : Number.NaN;
     if (!Number.isFinite(firedAt) || firedAt < since) continue;
     runs += 1;
-    const tokensUsed = (record as Record<string, unknown>)["tokens_used"];
-    if (typeof tokensUsed === "number" && Number.isFinite(tokensUsed)) {
-      totalTokens += tokensUsed;
-    }
+    totalTokens = addUsageTokenCounts(totalTokens, (record as Record<string, unknown>)["tokens_used"]);
   }
 
   return { period, runs, totalTokens };
