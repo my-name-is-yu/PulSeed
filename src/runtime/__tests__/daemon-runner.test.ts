@@ -474,7 +474,7 @@ describe("DaemonRunner durable runtime", () => {
     await startPromise;
   });
 
-  it("negotiates a resident goal from idle proactive discovery and activates it", async () => {
+  it("records resident goal discovery without directly activating CoreLoop", async () => {
     const residentGoal = {
       id: "resident-goal",
       title: "Add resident daemon coverage",
@@ -495,15 +495,19 @@ describe("DaemonRunner durable runtime", () => {
       }),
     };
     const llmClient = {
-      sendMessage: vi.fn().mockResolvedValue({
-        content: JSON.stringify({
-          action: "suggest_goal",
-          details: {
-            title: "Find one resident improvement",
-            description: "Look for a concrete always-on improvement in the current workspace.",
-          },
+      sendMessage: vi.fn()
+        .mockResolvedValueOnce({
+          content: JSON.stringify({
+            action: "suggest_goal",
+            details: {
+              title: "Find one resident improvement",
+              description: "Look for a concrete always-on improvement in the current workspace.",
+            },
+          }),
+        })
+        .mockResolvedValue({
+          content: JSON.stringify({ action: "sleep" }),
         }),
-      }),
       parseJSON: vi.fn((content: string) => JSON.parse(content)),
     };
 
@@ -528,32 +532,26 @@ describe("DaemonRunner durable runtime", () => {
       resident_activity: { kind: string; goal_id?: string; summary: string } | null;
     }>(
       path.join(tmpDir, "daemon-state.json"),
-      (value) =>
-        value.active_goals.includes("resident-goal")
-        && value.resident_activity?.kind === "negotiation"
+      (value) => value.resident_activity?.kind === "suggestion"
     );
 
-    expect(state.status).toBe("running");
-    expect(state.active_goals).toContain("resident-goal");
+    expect(state.status).toBe("idle");
+    expect(state.active_goals).not.toContain("resident-goal");
     expect(state.resident_activity).toEqual(expect.objectContaining({
-      kind: "negotiation",
-      goal_id: "resident-goal",
+      kind: "suggestion",
     }));
+    expect(state.resident_activity?.goal_id).toBeUndefined();
 
     const runMock = (deps.coreLoop as unknown as { run: ReturnType<typeof vi.fn> }).run;
-    await waitFor(() => runMock.mock.calls.some((call: unknown[]) => call[0] === "resident-goal"));
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    expect(runMock.mock.calls.some((call: unknown[]) => call[0] === "resident-goal")).toBe(false);
 
     expect(goalNegotiator.suggestGoals).toHaveBeenCalledOnce();
     expect(goalNegotiator.suggestGoals).toHaveBeenCalledWith(
       expect.any(String),
       expect.objectContaining({ suggestionSurface: "repository" })
     );
-    expect(goalNegotiator.negotiate).toHaveBeenCalledWith(
-      "Add regression coverage for idle daemon resident discovery.",
-      expect.objectContaining({
-        timeoutMs: 30_000,
-      })
-    );
+    expect(goalNegotiator.negotiate).not.toHaveBeenCalled();
 
     daemon.stop();
     await startPromise;
@@ -637,7 +635,7 @@ describe("DaemonRunner durable runtime", () => {
       config: {
         check_interval_ms: 50,
         proactive_mode: true,
-        proactive_interval_ms: 0,
+        proactive_interval_ms: 60_000,
       },
       llmClient: llmClient as unknown as DaemonDeps["llmClient"],
       curiosityEngine: curiosityEngine as unknown as DaemonDeps["curiosityEngine"],
@@ -880,16 +878,20 @@ describe("DaemonRunner durable runtime", () => {
     expect(scheduledSleepMs).toBe(5_000);
   }, 10_000);
 
-  it("queues an observation wake-up for resident preemptive checks", async () => {
+  it("records resident preemptive checks without directly activating CoreLoop", async () => {
     const llmClient = {
-      sendMessage: vi.fn().mockResolvedValue({
-        content: JSON.stringify({
-          action: "preemptive_check",
-          details: {
-            goal_id: "resident-goal",
-          },
+      sendMessage: vi.fn()
+        .mockResolvedValueOnce({
+          content: JSON.stringify({
+            action: "preemptive_check",
+            details: {
+              goal_id: "resident-goal",
+            },
+          }),
+        })
+        .mockResolvedValue({
+          content: JSON.stringify({ action: "sleep" }),
         }),
-      }),
       parseJSON: vi.fn((content: string) => JSON.parse(content)),
     };
     const residentGoal = {
@@ -949,8 +951,8 @@ describe("DaemonRunner durable runtime", () => {
       (value) => value.resident_activity?.kind === "observation",
     );
 
-    expect(state.status).toBe("running");
-    expect(state.active_goals).toContain("resident-goal");
+    expect(state.status).toBe("idle");
+    expect(state.active_goals).not.toContain("resident-goal");
     expect(state.resident_activity).toEqual(expect.objectContaining({
       kind: "observation",
       goal_id: "resident-goal",
@@ -966,6 +968,9 @@ describe("DaemonRunner durable runtime", () => {
         }),
       }),
     );
+    const runMock = (deps.coreLoop as unknown as { run: ReturnType<typeof vi.fn> }).run;
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    expect(runMock.mock.calls.some((call: unknown[]) => call[0] === "resident-goal")).toBe(false);
 
     daemon.stop();
     await startPromise;

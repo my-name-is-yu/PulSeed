@@ -15,7 +15,7 @@ import {
 export async function triggerResidentPreemptiveCheck(
   context: Pick<
     DaemonRunnerResidentContext,
-    "stateManager" | "driveSystem" | "currentGoalIds" | "refreshOperationalState" | "supervisor" | "abortSleep" | "saveDaemonState" | "state" | "logger"
+    "stateManager" | "driveSystem" | "saveDaemonState" | "state" | "logger"
   >,
   details?: Record<string, unknown>,
 ): Promise<void> {
@@ -55,16 +55,10 @@ export async function triggerResidentPreemptiveCheck(
         },
       }),
     );
-    if (!context.currentGoalIds.includes(goalId)) {
-      context.currentGoalIds.push(goalId);
-    }
-    context.refreshOperationalState();
-    context.supervisor?.activateGoal(goalId);
-    context.abortSleep();
     await persistResidentActivity(context, {
       kind: "observation",
       trigger: "proactive_tick",
-      summary: `Resident preemptive check queued an observation wake-up for goal "${goalId}".`,
+      summary: `Resident preemptive check recorded an attention candidate for goal "${goalId}".`,
       goal_id: goalId,
     });
   } catch (err) {
