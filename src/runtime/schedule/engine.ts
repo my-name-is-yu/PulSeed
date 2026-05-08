@@ -374,6 +374,10 @@ export class ScheduleEngine {
     finished_at: string;
     retry_at: string | null;
     failure_kind: ScheduleFailureKind | null;
+    activation_kind?: "wait_resume" | null;
+    strategy_id?: string | null;
+    wait_strategy_id?: string | null;
+    internal?: boolean;
   }): Promise<void> {
     await this.historyStore.append({
       entry_id: input.entry_id,
@@ -390,6 +394,10 @@ export class ScheduleEngine {
       finished_at: input.finished_at,
       retry_at: input.retry_at,
       failure_kind: input.failure_kind ?? input.result.failure_kind,
+      activation_kind: input.activation_kind ?? null,
+      strategy_id: input.strategy_id ?? null,
+      wait_strategy_id: input.wait_strategy_id ?? null,
+      internal: input.internal ?? false,
     });
   }
 
