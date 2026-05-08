@@ -43,19 +43,52 @@ const PROVIDER_ENV_KEYS: Record<Provider, string[]> = {
   ollama: [],
 };
 
-function normalizeProvider(value: string | undefined): Provider | undefined {
+const PROVIDER_ALIASES: Record<string, Provider> = {
+  openai: "openai",
+  open_ai: "openai",
+  openai_api: "openai",
+  codex: "openai",
+  codex_cli: "openai",
+  openai_codex: "openai",
+  openai_codex_cli: "openai",
+  anthropic: "anthropic",
+  anthropic_api: "anthropic",
+  claude: "anthropic",
+  claude_api: "anthropic",
+  claude_code: "anthropic",
+  claude_code_cli: "anthropic",
+  ollama: "ollama",
+  ollama_local: "ollama",
+};
+
+const ADAPTER_ALIASES: Record<string, ProviderConfig["adapter"]> = {
+  claude_code_cli: "claude_code_cli",
+  claude_code: "claude_code_cli",
+  claude_cli: "claude_code_cli",
+  claude_api: "claude_api",
+  claude: "claude_api",
+  anthropic: "claude_api",
+  anthropic_api: "claude_api",
+  openai_codex_cli: "openai_codex_cli",
+  openai_codex: "openai_codex_cli",
+  codex_cli: "openai_codex_cli",
+  codex: "openai_codex_cli",
+  openai_api: "openai_api",
+  openai: "openai_api",
+  agent_loop: "agent_loop",
+  agentloop: "agent_loop",
+  agent: "agent_loop",
+};
+
+function normalizeImportToken(value: string | undefined): string | undefined {
   const normalized = value?.toLowerCase().trim();
   if (!normalized) return undefined;
-  if (normalized === "codex" || normalized === "openai_codex" || normalized.includes("openai")) {
-    return "openai";
-  }
-  if (normalized === "claude" || normalized.includes("anthropic")) {
-    return "anthropic";
-  }
-  if (normalized.includes("ollama")) {
-    return "ollama";
-  }
-  return PROVIDERS.includes(normalized as Provider) ? (normalized as Provider) : undefined;
+  return normalized.replace(/[\s.-]+/g, "_").replace(/_+/g, "_");
+}
+
+function normalizeProvider(value: string | undefined): Provider | undefined {
+  const normalized = normalizeImportToken(value);
+  return normalized ? PROVIDER_ALIASES[normalized] : undefined;
 }
 
 function providerFromModel(model: string | undefined): Provider | undefined {
@@ -83,22 +116,10 @@ function normalizeAdapter(
   provider: ProviderConfig["provider"] | undefined,
   model: string | undefined
 ): ProviderConfig["adapter"] | undefined {
-  const normalized = value?.toLowerCase().trim();
-  const knownAdapters: ProviderConfig["adapter"][] = [
-    "claude_code_cli",
-    "claude_api",
-    "openai_codex_cli",
-    "openai_api",
-    "agent_loop",
-  ];
-  if (knownAdapters.includes(normalized as ProviderConfig["adapter"])) {
-    return normalized as ProviderConfig["adapter"];
+  const normalized = normalizeImportToken(value);
+  if (normalized && ADAPTER_ALIASES[normalized]) {
+    return ADAPTER_ALIASES[normalized];
   }
-  if (normalized?.includes("codex")) return "openai_codex_cli";
-  if (normalized?.includes("claude") && normalized.includes("code")) return "claude_code_cli";
-  if (normalized?.includes("claude") || normalized?.includes("anthropic")) return "claude_api";
-  if (normalized?.includes("openai")) return "openai_api";
-  if (normalized?.includes("agent")) return "agent_loop";
   if (provider && model) {
     const adapters = getAdaptersForModel(model, provider);
     return adapters[0] as ProviderConfig["adapter"] | undefined;
