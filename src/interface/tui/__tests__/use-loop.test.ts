@@ -122,6 +122,23 @@ describe("calcDimensionProgress", () => {
     expect(calcDimensionProgress(100, t)).toBe(0);
   });
 
+  it("max: invalid numeric current value returns 0", () => {
+    const t: Threshold = { type: "max", value: 50 };
+    expect(calcDimensionProgress("not-a-number", t)).toBe(0);
+    expect(calcDimensionProgress("0x1", t)).toBe(0);
+  });
+
+  it("numeric thresholds reject non-finite current values", () => {
+    expect(calcDimensionProgress(Infinity, { type: "min", value: 100 })).toBe(0);
+    expect(calcDimensionProgress(-Infinity, { type: "max", value: 50 })).toBe(0);
+    expect(calcDimensionProgress(NaN, { type: "range", low: 0, high: 10 })).toBe(0);
+  });
+
+  it("numeric thresholds accept exact finite numeric strings", () => {
+    expect(calcDimensionProgress("5e1", { type: "min", value: 100 })).toBe(50);
+    expect(calcDimensionProgress(" 50 ", { type: "max", value: 50 })).toBe(100);
+  });
+
   it("range: value within range returns 100", () => {
     const t: Threshold = { type: "range", low: 10, high: 20 };
     expect(calcDimensionProgress(15, t)).toBe(100);

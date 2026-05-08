@@ -5,6 +5,8 @@ import type { TrustManager } from "../../platform/traits/trust-manager.js";
 import type { Threshold } from "../../base/types/core.js";
 import type { DaemonClient } from "../../runtime/daemon/client.js";
 
+const EXACT_FINITE_NUMBER_TOKEN = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i;
+
 export interface LoopState {
   running: boolean;
   goalId: string | null;
@@ -53,12 +55,14 @@ export function calcDimensionProgress(
       return currentValue === threshold.value ? 100 : 0;
     }
     case "min": {
-      const cur = toNum(currentValue);
+      const cur = toFiniteNumberOrNull(currentValue);
+      if (cur === null) return 0;
       if (threshold.value === 0) return cur >= 0 ? 100 : 0;
       return Math.min(100, Math.max(0, Math.round((cur / threshold.value) * 100)));
     }
     case "max": {
-      const cur = toNum(currentValue);
+      const cur = toFiniteNumberOrNull(currentValue);
+      if (cur === null) return 0;
       // For max thresholds: being at or below the target is 100%.
       // Being over the target reduces progress.
       if (cur <= threshold.value) return 100;
@@ -68,20 +72,23 @@ export function calcDimensionProgress(
       return Math.max(0, Math.round((1 - excess / threshold.value) * 100));
     }
     case "range": {
-      const cur = toNum(currentValue);
+      const cur = toFiniteNumberOrNull(currentValue);
+      if (cur === null) return 0;
       return cur >= threshold.low && cur <= threshold.high ? 100 : 0;
     }
   }
 }
 
-function toNum(value: unknown): number {
-  if (typeof value === "number") return value;
+function toFiniteNumberOrNull(value: unknown): number | null {
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
   if (typeof value === "boolean") return value ? 1 : 0;
   if (typeof value === "string") {
-    const n = Number(value);
-    return isNaN(n) ? 0 : n;
+    const normalized = value.trim();
+    if (!EXACT_FINITE_NUMBER_TOKEN.test(normalized)) return null;
+    const n = Number(normalized);
+    return Number.isFinite(n) ? n : null;
   }
-  return 0;
+  return null;
 }
 
 // ─── LoopController ───
