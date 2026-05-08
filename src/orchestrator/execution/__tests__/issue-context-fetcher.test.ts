@@ -39,6 +39,17 @@ describe("extractIssueNumbers", () => {
     expect(extractIssueNumbers("#1a2b3c")).toEqual([]);
   });
 
+  it.each(["#123_foo", "#123-bar", "#123abc", "#1234a"])(
+    "does NOT match malformed issue-like token %s",
+    (input) => {
+      expect(extractIssueNumbers(input)).toEqual([]);
+    }
+  );
+
+  it("rejects zero and unsafe issue numbers", () => {
+    expect(extractIssueNumbers("#0 #9007199254740992 #9007199254740993")).toEqual([]);
+  });
+
   it("deduplicates repeated issue numbers", () => {
     expect(extractIssueNumbers("#42 and again #42")).toEqual([42]);
   });
@@ -61,6 +72,12 @@ describe("fetchIssueContext", () => {
 
   it("returns empty string when no issue numbers found", async () => {
     const result = await fetchIssueContext("no issues in this text");
+    expect(result).toBe("");
+    expect(mockExec).not.toHaveBeenCalled();
+  });
+
+  it("does not fetch malformed or unsafe issue-like references", async () => {
+    const result = await fetchIssueContext("Ignore #123_foo #123-bar #0 #9007199254740993");
     expect(result).toBe("");
     expect(mockExec).not.toHaveBeenCalled();
   });

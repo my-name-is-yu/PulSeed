@@ -24,23 +24,30 @@ interface FetchIssueContextOptions {
  * Skips hex-color-like tokens (non-digit characters after #).
  *
  * Matches #NNN preceded by start-of-string, whitespace, or opening paren,
- * and NOT followed by any non-digit word character.
+ * and NOT followed by alphanumeric, underscore, or hyphen suffix text.
  * This avoids matching hex colors like #fff, #abc123, or #1a2b3c.
  */
 export function extractIssueNumbers(text: string): number[] {
   // Regex is defined locally to avoid shared `lastIndex` state bugs with /g flag
-  const issueRefRe = /(?:^|[\s(])#(\d+)(?![a-zA-Z])/g;
+  const issueRefRe = /(?:^|[\s(])#(\d+)(?![A-Za-z0-9_-])/g;
   const seen = new Set<number>();
   const results: number[] = [];
   let match: RegExpExecArray | null;
   while ((match = issueRefRe.exec(text)) !== null) {
-    const num = parseInt(match[1], 10);
+    const num = parseIssueNumber(match[1]);
+    if (num === null) continue;
     if (!seen.has(num)) {
       seen.add(num);
       results.push(num);
     }
   }
   return results;
+}
+
+function parseIssueNumber(value: string | undefined): number | null {
+  if (!value || !/^[0-9]+$/.test(value)) return null;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
 /**
