@@ -163,23 +163,15 @@ async function promptTelegramChannelConfig(baseDir: string): Promise<TelegramGat
   const configPath = path.join(getGatewayChannelDir("telegram-bot", baseDir), "config.json");
   const current = await readJsonFileOrNull<TelegramGatewayConfig>(configPath);
   const token = await promptTelegramBotToken(current?.bot_token);
-  const allowedUserIds = parseIntegerList(
-    guardCancel(
-      await p.text({
-        message: "Allowed Telegram user IDs (comma-separated, blank = closed first-use / explicit unrestricted confirmation)",
-        placeholder: "123456789,987654321",
-        initialValue: current?.allowed_user_ids.join(",") ?? "",
-      })
-    )
+  const allowedUserIds = await promptIntegerList(
+    "Allowed Telegram user IDs (comma-separated, blank = closed first-use / explicit unrestricted confirmation)",
+    "123456789,987654321",
+    current?.allowed_user_ids.join(",") ?? ""
   );
-  const runtimeControlAllowedUserIds = parseIntegerList(
-    guardCancel(
-      await p.text({
-        message: "Telegram runtime-control user IDs (comma-separated, blank = disabled)",
-        placeholder: "123456789",
-        initialValue: current?.runtime_control_allowed_user_ids.join(",") ?? "",
-      })
-    )
+  const runtimeControlAllowedUserIds = await promptIntegerList(
+    "Telegram runtime-control user IDs (comma-separated, blank = disabled)",
+    "123456789",
+    current?.runtime_control_allowed_user_ids.join(",") ?? ""
   );
   const allowAll = allowedUserIds.length === 0
     ? guardCancel(
@@ -189,17 +181,10 @@ async function promptTelegramChannelConfig(baseDir: string): Promise<TelegramGat
       })
     )
     : false;
-  const chatIdInput = guardCancel(
-    await p.text({
-      message: "Home chat ID (optional, blank = use /sethome later)",
-      placeholder: "-1001234567890",
-      initialValue: current?.chat_id !== undefined ? String(current.chat_id) : "",
-      validate: (value) => {
-        if (value === undefined) return "Chat ID is required.";
-        if (value.trim().length === 0) return undefined;
-        return Number.isInteger(Number(value)) ? undefined : "Chat ID must be an integer.";
-      },
-    })
+  const chatId = await promptOptionalInteger(
+    "Home chat ID (optional, blank = use /sethome later)",
+    "-1001234567890",
+    current?.chat_id !== undefined ? String(current.chat_id) : ""
   );
   const identityKey = guardCancel(
     await p.text({
@@ -211,7 +196,7 @@ async function promptTelegramChannelConfig(baseDir: string): Promise<TelegramGat
 
   return {
     bot_token: token,
-    ...(chatIdInput.trim().length > 0 ? { chat_id: Number(chatIdInput) } : {}),
+    ...(chatId !== undefined ? { chat_id: chatId } : {}),
     allowed_user_ids: allowedUserIds,
     denied_user_ids: current?.denied_user_ids ?? [],
     allowed_chat_ids: current?.allowed_chat_ids ?? [],
@@ -432,20 +417,97 @@ async function promptRequiredText(message: string, initialValue?: string): Promi
   ).trim();
 }
 
+export function parseGatewayExactInteger(raw: string): number | undefined {
+  const normalized = raw.trim();
+  if (!/^-?[0-9]+$/.test(normalized)) return undefined;
+  const parsed = Number(normalized);
+  return Number.isSafeInteger(parsed) ? parsed : undefined;
+}
+
+function parseGatewayIntegerInRange(raw: string, min: number, max: number): number | undefined {
+  const parsed = parseGatewayExactInteger(raw);
+  if (parsed === undefined) return undefined;
+  return parsed >= min && parsed <= max ? parsed : undefined;
+}
+
+type IntegerListParseResult =
+  | { ok: true; values: number[] }
+  | { ok: false; invalidValue: string };
+
+export function parseGatewayIntegerList(value: string): IntegerListParseResult {
+  const normalized = value.trim();
+  if (normalized.length === 0) return { ok: true, values: [] };
+
+  const values: number[] = [];
+  for (const part of normalized.split(",")) {
+    const trimmed = part.trim();
+    const parsed = parseGatewayExactInteger(trimmed);
+    if (parsed === undefined) {
+      return { ok: false, invalidValue: trimmed };
+    }
+    values.push(parsed);
+  }
+  return { ok: true, values };
+}
+
+async function promptIntegerList(message: string, placeholder: string, initialValue: string): Promise<number[]> {
+  for (;;) {
+    const input = guardCancel(
+      await p.text({
+        message,
+        placeholder,
+        initialValue,
+        validate: (raw) => {
+          if (raw === undefined) return "This value is required.";
+          const parsed = parseGatewayIntegerList(raw);
+          return parsed.ok ? undefined : `Enter comma-separated exact integers. Invalid value: ${parsed.invalidValue || "(empty)"}.`;
+        },
+      })
+    );
+    const parsed = parseGatewayIntegerList(input);
+    if (parsed.ok) return parsed.values;
+    p.log.warn(`Enter comma-separated exact integers. Invalid value: ${parsed.invalidValue || "(empty)"}.`);
+  }
+}
+
+async function promptOptionalInteger(message: string, placeholder: string, initialValue: string): Promise<number | undefined> {
+  for (;;) {
+    const input = guardCancel(
+      await p.text({
+        message,
+        placeholder,
+        initialValue,
+        validate: (value) => {
+          if (value === undefined) return "This value is required.";
+          if (value.trim().length === 0) return undefined;
+          return parseGatewayExactInteger(value) !== undefined ? undefined : "Enter an exact integer.";
+        },
+      })
+    );
+    if (input.trim().length === 0) return undefined;
+    const parsed = parseGatewayExactInteger(input);
+    if (parsed !== undefined) return parsed;
+    p.log.warn("Enter an exact integer.");
+  }
+}
+
 async function promptInteger(message: string, initialValue: number, min: number, max: number): Promise<number> {
-  const value = guardCancel(
-    await p.text({
-      message,
-      initialValue: String(initialValue),
-      validate: (raw) => {
-        const parsed = Number(raw);
-        if (!Number.isInteger(parsed)) return "Enter a whole number.";
-        if (parsed < min || parsed > max) return `Enter a value between ${min} and ${max}.`;
-        return undefined;
-      },
-    })
-  );
-  return Number(value);
+  for (;;) {
+    const value = guardCancel(
+      await p.text({
+        message,
+        initialValue: String(initialValue),
+        validate: (raw) => {
+          if (raw === undefined) return "This value is required.";
+          const parsed = parseGatewayIntegerInRange(raw, min, max);
+          return parsed === undefined ? `Enter an exact integer between ${min} and ${max}.` : undefined;
+        },
+      })
+    );
+    const parsed = parseGatewayIntegerInRange(value, min, max);
+    if (parsed !== undefined) return parsed;
+    p.log.warn(`Enter an exact integer between ${min} and ${max}.`);
+  }
 }
 
 function parseStringList(value: string): string[] {
@@ -453,13 +515,4 @@ function parseStringList(value: string): string[] {
     .split(",")
     .map((item) => item.trim())
     .filter(Boolean);
-}
-
-function parseIntegerList(value: string): number[] {
-  return value
-    .split(",")
-    .map((item) => item.trim())
-    .filter(Boolean)
-    .map((item) => Number(item))
-    .filter((item) => Number.isInteger(item));
 }

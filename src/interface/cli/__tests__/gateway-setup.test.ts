@@ -133,6 +133,66 @@ describe("cmdGatewaySetup", () => {
     );
   }, 15000);
 
+  it("validates Telegram numeric IDs exactly before writing gateway config", async () => {
+    multiselectMock.mockResolvedValue(["telegram-bot"]);
+    confirmMock.mockResolvedValue(false);
+    textMock
+      .mockResolvedValueOnce("test-token")
+      .mockImplementationOnce(async (options: { validate?: (value: string) => string | undefined }) =>
+        options.validate?.("777abc") === undefined ? "777abc" : "777,888"
+      )
+      .mockImplementationOnce(async (options: { validate?: (value: string) => string | undefined }) =>
+        options.validate?.("999abc") === undefined ? "999abc" : "999"
+      )
+      .mockImplementationOnce(async (options: { validate?: (value: string) => string | undefined }) =>
+        options.validate?.("-100abc") === undefined ? "-100abc" : "-1001234567890"
+      )
+      .mockResolvedValueOnce("personal");
+
+    const { cmdGatewaySetup } = await import("../commands/gateway.js");
+    const code = await cmdGatewaySetup([]);
+
+    expect(code).toBe(0);
+    const telegramConfig = JSON.parse(
+      await fsp.readFile(path.join(tmpDir, "gateway", "channels", "telegram-bot", "config.json"), "utf-8")
+    ) as Record<string, unknown>;
+    expect(telegramConfig).toMatchObject({
+      allowed_user_ids: [777, 888],
+      runtime_control_allowed_user_ids: [999],
+      chat_id: -1001234567890,
+      allow_all: false,
+    });
+  }, 15000);
+
+  it("validates Signal timing fields as exact integers before writing gateway config", async () => {
+    multiselectMock.mockResolvedValue(["signal-bridge"]);
+    textMock
+      .mockResolvedValueOnce("http://127.0.0.1:8080")
+      .mockResolvedValueOnce("+15550001111")
+      .mockResolvedValueOnce("+15550001111")
+      .mockResolvedValueOnce("+15550002222")
+      .mockResolvedValueOnce("")
+      .mockResolvedValueOnce("personal")
+      .mockImplementationOnce(async (options: { validate?: (value: string) => string | undefined }) =>
+        options.validate?.("5e3") === undefined ? "5e3" : "5001"
+      )
+      .mockImplementationOnce(async (options: { validate?: (value: string) => string | undefined }) =>
+        options.validate?.("2e3") === undefined ? "2e3" : "2001"
+      );
+
+    const { cmdGatewaySetup } = await import("../commands/gateway.js");
+    const code = await cmdGatewaySetup([]);
+
+    expect(code).toBe(0);
+    const signalConfig = JSON.parse(
+      await fsp.readFile(path.join(tmpDir, "gateway", "channels", "signal-bridge", "config.json"), "utf-8")
+    ) as Record<string, unknown>;
+    expect(signalConfig).toMatchObject({
+      poll_interval_ms: 5001,
+      receive_timeout_ms: 2001,
+    });
+  }, 15000);
+
   it("exits cleanly when no platform is selected", async () => {
     multiselectMock.mockResolvedValue([]);
 
