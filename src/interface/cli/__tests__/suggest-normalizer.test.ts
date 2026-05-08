@@ -44,4 +44,53 @@ describe("normalizeSuggestPayload fast-path", () => {
     expect(result.suggestions[0]!.repo_context).toBeUndefined();
     expect(result.suggestions[0]!.title).toBe("Improve docs");
   });
+
+  it("does not force non-software legacy suggestions into repository file updates", () => {
+    const result = normalizeSuggestPayload(
+      {
+        title: "Improve sleep routine",
+        description: "Create a stable bedtime plan",
+        rationale: "Rest quality matters",
+        dimensions_hint: ["sleep_consistency"],
+      },
+      ".",
+      ".",
+      "Personal health journal",
+      3,
+      [],
+      false
+    );
+
+    expect(result.suggestions).toHaveLength(1);
+    expect(result.suggestions[0]!.repo_context).toBeUndefined();
+    expect(result.suggestions[0]!.steps[0]).toBe("Create a stable bedtime plan");
+    expect(JSON.stringify(result.suggestions[0])).not.toMatch(/README|package\.json|src\//i);
+  });
+
+  it("uses a general title fallback for non-software legacy suggestions", () => {
+    const result = normalizeSuggestPayload(
+      {
+        description: "Create a stable bedtime plan",
+        dimensions_hint: ["sleep_consistency"],
+      },
+      ".",
+      ".",
+      "Personal health journal",
+      3,
+      [],
+      false
+    );
+
+    expect(result.suggestions).toHaveLength(1);
+    expect(result.suggestions[0]!.title).toBe("Concrete improvement");
+    expect(JSON.stringify(result.suggestions[0])).not.toMatch(/repository/i);
+  });
+
+  it("uses a general fallback when non-software output has no candidates", () => {
+    const result = normalizeSuggestPayload({}, ".", ".", "Personal journal about sleep and exercise", 3, [], false);
+
+    expect(result.suggestions).toHaveLength(1);
+    expect(result.suggestions[0]!.repo_context).toBeUndefined();
+    expect(JSON.stringify(result.suggestions[0])).not.toMatch(/README|package\.json|src\/|repository/i);
+  });
 });

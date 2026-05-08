@@ -211,13 +211,17 @@ function normalizeLegacySuggestion(
   isSoftwareGoal = true
 ): Suggestion {
   const record = candidate && typeof candidate === "object" ? candidate as Record<string, unknown> : {};
-  const title = pickFirstString(record.title, record.name, record.goal, record.action, "Repository improvement");
+  const fallbackTitle = isSoftwareGoal ? "Repository improvement" : "Concrete improvement";
+  const title = pickFirstString(record.title, record.name, record.goal, record.action, fallbackTitle);
+  const fallbackRationale = isSoftwareGoal
+    ? `Improve ${displayPath} with a concrete, verifiable next step.`
+    : "Improve the provided context with a concrete, verifiable next step.";
   const rationale = pickFirstString(
     record.rationale,
     record.reason,
     record.why,
     record.description,
-    `Improve ${displayPath} with a concrete, verifiable next step.`
+    fallbackRationale
   );
   const description = pickFirstString(record.description, record.summary, record.details, record.rationale, title);
   const dimensions = pickStringArray(
@@ -234,6 +238,18 @@ function normalizeLegacySuggestion(
     (record.repo_context as { path?: unknown } | undefined)?.path,
     displayPath
   );
+  const steps = pickStringArray(record.steps, record.actions, record.tasks, record.checklist);
+  if (!isSoftwareGoal) {
+    return {
+      title: title.trim(),
+      rationale: rationale.trim(),
+      steps: steps.length > 0 ? steps : [description.trim()],
+      success_criteria: dimensions.length > 0
+        ? dimensions.map((dimension) => `${dimension} reaches target threshold.`)
+        : ["Complete the concrete next step and verify the result."],
+    };
+  }
+
   const actionable = ensureActionableSuggestion(
     {
       title,
@@ -245,7 +261,6 @@ function normalizeLegacySuggestion(
     context,
     repoFiles
   );
-  const steps = pickStringArray(record.steps, record.actions, record.tasks, record.checklist);
   const normalizedSteps = steps.length > 0 ? steps : [actionable.description];
   const successCriteria = dimensions.length > 0
     ? dimensions.map((dimension) => `${dimension} reaches target threshold.`)
@@ -274,12 +289,27 @@ function extractSuggestCandidates(rawOutput: unknown): unknown[] {
   }
 
   const record = rawOutput as Record<string, unknown>;
+  if (Object.keys(record).length === 0) {
+    return [];
+  }
+
   const nestedCandidates = record.suggestions
     ?? record.goals
     ?? record.items
     ?? record.recommendations;
 
   return Array.isArray(nestedCandidates) ? nestedCandidates : [record];
+}
+
+function buildGeneralFallbackSuggestPayload(): SuggestOutput {
+  return {
+    suggestions: [{
+      title: "Define one concrete improvement",
+      rationale: "No valid suggestions were produced. Use the provided context to define a concrete, measurable next step.",
+      steps: ["Review the provided context and define one concrete, measurable improvement."],
+      success_criteria: ["The next step is specific, measurable, and has a clear completion signal."],
+    }],
+  };
 }
 
 export function buildFallbackSuggestPayload(
@@ -290,6 +320,10 @@ export function buildFallbackSuggestPayload(
   repoFiles: string[] = [],
   isSoftwareGoal = true
 ): SuggestOutput {
+  if (!isSoftwareGoal) {
+    return buildGeneralFallbackSuggestPayload();
+  }
+
   const suggestions = synthesizeFallbackSuggestions(targetPath, context, Math.max(1, maxSuggestions), repoFiles)
     .map((suggestion) => {
       const item: Suggestion = {
