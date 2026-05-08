@@ -6,6 +6,10 @@ import {
   type ScheduleResult,
 } from "../types/schedule.js";
 
+function isProcessPidValue(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+}
+
 export async function executeHeartbeatEntry(
   entry: ScheduleEntry,
   logger: {
@@ -39,7 +43,7 @@ export async function executeHeartbeatEntry(
         await checkTcp(config.host as string, config.port as number, timeoutMs);
         break;
       case "process":
-        checkProcess(config.pid as number);
+        checkProcess(config.pid);
         break;
       case "disk":
         await checkDisk(config.path as string);
@@ -98,7 +102,10 @@ function checkTcp(host: string, port: number, timeoutMs: number): Promise<void> 
   });
 }
 
-function checkProcess(pid: number): void {
+function checkProcess(pid: unknown): void {
+  if (!isProcessPidValue(pid)) {
+    throw new Error("Process heartbeat pid must be a positive safe integer");
+  }
   process.kill(pid, 0);
 }
 
