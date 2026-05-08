@@ -38,7 +38,7 @@ import type { RuntimeEvidenceEntry } from "../../../runtime/store/evidence-ledge
 import type { LoopIterationResult } from "../durable-loop/contracts.js";
 import type { PhaseCtx } from "../durable-loop/preparation.js";
 import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
-import { makeGoal } from "../../../../tests/helpers/fixtures.js";
+import { makeDimension, makeGoal } from "../../../../tests/helpers/fixtures.js";
 
 // ─── Helpers ───
 
@@ -97,6 +97,48 @@ function makeGapHistoryWithStall(dimensionName: string, count: number) {
       },
     ],
   }));
+}
+
+function makeGapHistoryWithDimensions(dimensionNames: string[], count: number) {
+  return Array.from({ length: count }, (_, i) => ({
+    iteration: i,
+    timestamp: new Date().toISOString(),
+    gap_vector: dimensionNames.map((dimensionName) => ({
+      dimension_name: dimensionName,
+      normalized_weighted_gap: 0.8,
+    })),
+    confidence_vector: dimensionNames.map((dimensionName) => ({
+      dimension_name: dimensionName,
+      confidence: 0.5,
+    })),
+  }));
+}
+
+function makeMetricTrendEvidenceEntries(metricLabel: string): RuntimeEvidenceEntry[] {
+  return [
+    {
+      schema_version: "runtime-evidence-entry-v1",
+      id: `${metricLabel}-entry-a`,
+      occurred_at: "2026-04-30T00:00:00.000Z",
+      kind: "metric",
+      scope: { goal_id: "goal-1" },
+      metrics: [{ label: metricLabel, value: 0.5, direction: "maximize", confidence: 0.9 }],
+      artifacts: [],
+      raw_refs: [],
+      outcome: "continued",
+    },
+    {
+      schema_version: "runtime-evidence-entry-v1",
+      id: `${metricLabel}-entry-b`,
+      occurred_at: "2026-04-30T00:05:00.000Z",
+      kind: "metric",
+      scope: { goal_id: "goal-1" },
+      metrics: [{ label: metricLabel, value: 0.7, direction: "maximize", confidence: 0.95 }],
+      artifacts: [],
+      raw_refs: [],
+      outcome: "improved",
+    },
+  ];
 }
 
 function buildPhaseCtx(
@@ -440,6 +482,143 @@ describe("detectStallsAndRebalance — reRefineLeaf on observation-failure stall
       expect.objectContaining({ metric_key: "dim1", trend: "breakthrough" })
     );
     expect(result.metricTrendContext).toMatchObject({ metric_key: "dim1", trend: "breakthrough" });
+  });
+
+  it("feeds runtime metric trend context through typed observation mapping", async () => {
+    const deps = createBaseDeps(tmpDir);
+    const goal = makeGoal({
+      id: "goal-1",
+      dimensions: [
+        makeDimension({
+          name: "model_quality",
+          label: "Model Quality",
+          observation_mapping: {
+            kind: "data_source",
+            data_source: "evals",
+            dimension: "balanced_accuracy",
+            confidence: "high",
+          },
+        }),
+      ],
+    });
+    await deps.stateManager.saveGoal(goal);
+    await deps.stateManager.saveGapHistory("goal-1", makeGapHistoryWithStall("model_quality", 5));
+
+    deps.evidenceLedger = {
+      append: vi.fn().mockResolvedValue([]),
+      readByGoal: vi.fn().mockResolvedValue({
+        entries: makeMetricTrendEvidenceEntries("balanced_accuracy"),
+        warnings: [],
+      }),
+    };
+
+    (deps.stallDetector.checkDimensionStall as ReturnType<typeof vi.fn>).mockImplementation(
+      (_goalId, dimensionName, _history, _feedbackCategory, metricTrendContext) =>
+        makeStallReport({ dimension_name: dimensionName, metric_trend_context: metricTrendContext })
+    );
+
+    const ctx = buildPhaseCtx(deps, { maxIterations: 10, adapterType: "openai_codex_cli" });
+    const result = makeIterationResult();
+
+    await detectStallsAndRebalance(ctx, "goal-1", goal, result);
+
+    expect(deps.stallDetector.checkDimensionStall).toHaveBeenCalledWith(
+      "goal-1",
+      "model_quality",
+      expect.any(Array),
+      undefined,
+      expect.objectContaining({ metric_key: "balanced_accuracy", trend: "breakthrough", latest_value: 0.7 })
+    );
+    expect(result.metricTrendContext).toMatchObject({ metric_key: "balanced_accuracy", trend: "breakthrough" });
+  });
+
+  it("does not reuse metric trend context from a non-stalled dimension", async () => {
+    const deps = createBaseDeps(tmpDir);
+    const goal = makeGoal({
+      id: "goal-1",
+      dimensions: [
+        makeDimension({
+          name: "model_quality",
+          label: "Model Quality",
+          observation_mapping: {
+            kind: "data_source",
+            data_source: "evals",
+            dimension: "balanced_accuracy",
+            confidence: "high",
+          },
+        }),
+        makeDimension({
+          name: "delivery_blocker",
+          label: "Delivery Blocker",
+        }),
+      ],
+    });
+    await deps.stateManager.saveGoal(goal);
+    await deps.stateManager.saveGapHistory(
+      "goal-1",
+      makeGapHistoryWithDimensions(["model_quality", "delivery_blocker"], 5)
+    );
+    deps.evidenceLedger = {
+      append: vi.fn().mockResolvedValue([]),
+      readByGoal: vi.fn().mockResolvedValue({
+        entries: makeMetricTrendEvidenceEntries("balanced_accuracy"),
+        warnings: [],
+      }),
+    };
+    (deps.stallDetector.checkDimensionStall as ReturnType<typeof vi.fn>).mockImplementation(
+      (_goalId, dimensionName, _history, _feedbackCategory, metricTrendContext) => {
+        if (dimensionName === "model_quality") {
+          expect(metricTrendContext).toMatchObject({ metric_key: "balanced_accuracy" });
+          return null;
+        }
+        return makeStallReport({ dimension_name: dimensionName });
+      }
+    );
+
+    const ctx = buildPhaseCtx(deps, { maxIterations: 10, adapterType: "openai_codex_cli" });
+    const result = makeIterationResult();
+
+    await detectStallsAndRebalance(ctx, "goal-1", goal, result);
+
+    expect(result.stallReport).toMatchObject({ dimension_name: "delivery_blocker" });
+    expect(result.metricTrendContext).toBeUndefined();
+  });
+
+  it("does not infer metric trend context by substring without typed mapping", async () => {
+    const deps = createBaseDeps(tmpDir);
+    const goal = makeGoal({
+      id: "goal-1",
+      dimensions: [
+        makeDimension({
+          name: "balanced_accuracy_target",
+          label: "Balanced Accuracy Target",
+        }),
+      ],
+    });
+    await deps.stateManager.saveGoal(goal);
+    await deps.stateManager.saveGapHistory("goal-1", makeGapHistoryWithStall("balanced_accuracy_target", 5));
+
+    deps.evidenceLedger = {
+      append: vi.fn().mockResolvedValue([]),
+      readByGoal: vi.fn().mockResolvedValue({
+        entries: makeMetricTrendEvidenceEntries("balanced_accuracy"),
+        warnings: [],
+      }),
+    };
+
+    const ctx = buildPhaseCtx(deps, { maxIterations: 10, adapterType: "openai_codex_cli" });
+    const result = makeIterationResult();
+
+    await detectStallsAndRebalance(ctx, "goal-1", goal, result);
+
+    expect(deps.stallDetector.checkDimensionStall).toHaveBeenCalledWith(
+      "goal-1",
+      "balanced_accuracy_target",
+      expect.any(Array),
+      undefined,
+      undefined
+    );
+    expect(result.metricTrendContext).toBeUndefined();
   });
 
   it("records typed strategy lineage keys with stall decisions", async () => {

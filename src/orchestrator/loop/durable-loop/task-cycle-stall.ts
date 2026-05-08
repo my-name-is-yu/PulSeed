@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { Goal } from "../../../base/types/goal.js";
+import type { Dimension, Goal } from "../../../base/types/goal.js";
 import type { GapHistoryEntry } from "../../../base/types/gap.js";
 import type { StallReport } from "../../../base/types/stall.js";
 import type { MetricTrendContext } from "../../../platform/drive/metric-history.js";
@@ -55,6 +55,13 @@ function resolveGoalWorkspacePath(goal: Goal): string | undefined {
   const constraint = goal.constraints.find((entry) => entry.startsWith("workspace_path:"));
   const workspacePath = constraint?.slice("workspace_path:".length).trim();
   return workspacePath || undefined;
+}
+
+function resolveMetricTrendKeysForDimension(dimension: Dimension): string[] {
+  const mappedMetricKey = dimension.observation_mapping?.dimension;
+  return mappedMetricKey
+    ? [mappedMetricKey, dimension.name]
+    : [dimension.name];
 }
 
 function indexGapHistoryByDimension(
@@ -592,10 +599,9 @@ export async function detectStallsAndRebalance(
     for (const dim of goal.dimensions) {
       if (suppressedDimensions.has(dim.name)) continue;
       const dimGapHistory = gapHistoryByDimension.get(dim.name) ?? [];
-      const metricTrendContext = selectMetricTrendForDimension(metricTrends, dim.name);
-      if (metricTrendContext) {
-        result.metricTrendContext = metricTrendContext;
-      }
+      const metricTrendContext = selectMetricTrendForDimension(metricTrends, dim.name, {
+        metricKeys: resolveMetricTrendKeysForDimension(dim),
+      });
       const stallReport = ctx.deps.stallDetector.checkDimensionStall(
         goalId,
         dim.name,
@@ -607,6 +613,7 @@ export async function detectStallsAndRebalance(
       if (stallReport) {
         result.stallDetected = true;
         result.stallReport = stallReport;
+        result.metricTrendContext = stallReport.metric_trend_context;
 
         if (
           stallReport.stall_type === "predicted_plateau" ||
