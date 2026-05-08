@@ -5,13 +5,22 @@ import type { StallReport, StallState, StallAnalysis } from "../../base/types/st
 import type { CharacterConfig } from "../../base/types/character.js";
 import { DEFAULT_CHARACTER_CONFIG } from "../../base/types/character.js";
 import { analyzeStallCause as analyzeGapHistory } from "./stall-detector/analysis.js";
-import { detectRepetitivePatterns as detectTaskRepetition } from "./stall-detector/repetitive.js";
+import {
+  detectRepetitivePatterns as detectTaskRepetition,
+  type RepetitivePatternResult,
+  type StallTaskHistoryEntry,
+} from "./stall-detector/repetitive.js";
 import {
   computeTimeThreshold,
   getAdjustedN,
   isZeroProgress,
 } from "./stall-detector/thresholds.js";
 import type { MetricTrendContext } from "./metric-history.js";
+export type {
+  RepetitivePatternResult,
+  StallTaskHistoryEntry,
+  StallTaskResultEvidence,
+} from "./stall-detector/repetitive.js";
 
 // ─── Minimum score-improvement delta to reset stall detection ───
 // Improvements smaller than this are treated as noise (no reset).
@@ -38,39 +47,6 @@ const RECOVERY_SCHEDULE: Array<{ loops: number; factor: number }> = [
   { loops: 2, factor: 0.9 },
   { loops: 4, factor: 1.0 },
 ];
-
-// ─── Exported interfaces ───
-
-export interface StallTaskHistoryEntry {
-  strategy_id: string | null;
-  output: string;
-  task_result?: StallTaskResultEvidence;
-}
-
-export interface StallTaskResultEvidence {
-  changed_files?: string[];
-  diff_stats?: {
-    files_changed?: number;
-    insertions?: number;
-    deletions?: number;
-  };
-  tool_calls?: Array<{
-    tool_name: string;
-    status?: "success" | "failed" | "skipped";
-  }>;
-  verification_status?: "passed" | "failed" | "not_run" | "unknown";
-  artifact_changes?: Array<{
-    artifact_id: string;
-    change_type: "created" | "updated" | "deleted";
-  }>;
-}
-
-export interface RepetitivePatternResult {
-  isRepetitive: boolean;
-  pattern: 'identical_actions' | 'oscillating' | 'no_change' | null;
-  confidence: number;
-  source?: "typed_task_result" | "text_fallback" | "none";
-}
 
 /**
  * StallDetector detects stalls (circuit breaker) in the PulSeed orchestrator loop.
