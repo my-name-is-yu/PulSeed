@@ -1,4 +1,5 @@
 import type { VerificationSignal } from "./contracts.js";
+import { parseSafePosition } from "./parse-position.js";
 
 export function parseVerificationSignal(raw: string): VerificationSignal {
   const undefinedMatch = raw.match(/Cannot find name ['"`]?([A-Za-z_$][\w$]*)['"`]?|([A-Za-z_$][\w$]*)\s+is not defined|is not defined:\s*([A-Za-z_$][\w$]*)/);
@@ -11,7 +12,7 @@ export function parseVerificationSignal(raw: string): VerificationSignal {
     return {
       kind: "type_error",
       file: typeMatch.groups.file,
-      line: Number(typeMatch.groups.line),
+      line: parseSafePosition(typeMatch.groups.line),
       raw,
     };
   }

@@ -1,5 +1,6 @@
 import * as path from "node:path";
 import type { CodeSearchTask, Intent, SearchBudget, SearchRequest, StackFrame, VerificationSignal } from "./contracts.js";
+import { parseSafePosition } from "./parse-position.js";
 
 const DEFAULT_BUDGET: SearchBudget = {
   maxFiles: 1_500,
@@ -38,8 +39,8 @@ function extractStackFrames(text: string): StackFrame[] {
     if (!groups?.file) continue;
     frames.push({
       file: groups.file,
-      line: groups.line ? Number(groups.line) : undefined,
-      column: groups.column ? Number(groups.column) : undefined,
+      line: parseSafePosition(groups.line),
+      column: parseSafePosition(groups.column),
       symbol: groups.symbol,
     });
   }
