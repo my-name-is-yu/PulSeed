@@ -9,12 +9,13 @@ import { ConcurrencyController } from "../../../../tools/concurrency.js";
 import { ToolRegistryAgentLoopToolRouter } from "../agent-loop-tool-router.js";
 import { resolveAgentLoopDefaultProfileFromProviderConfig } from "../agent-loop-default-profile.js";
 import {
+  createAgentLoopModelInfo,
   createNativeChatAgentLoopRunner,
   createNativeReviewAgentLoopRunner,
   createNativeTaskAgentLoopRunner,
 } from "../task-agent-loop-factory.js";
 
-function makeProviderConfig(): ProviderConfig {
+function makeProviderConfig(overrides: Partial<ProviderConfig> = {}): ProviderConfig {
   return {
     provider: "openai",
     model: "gpt-5.5",
@@ -34,6 +35,7 @@ function makeProviderConfig(): ProviderConfig {
         cleanup_policy: "always",
       },
     },
+    ...overrides,
   } as ProviderConfig;
 }
 
@@ -60,7 +62,28 @@ function makeToolExecutor(registry: ToolRegistry): ToolExecutor {
   });
 }
 
+function contextLimitFor(providerConfig: Partial<ProviderConfig>): number | undefined {
+  return createAgentLoopModelInfo(makeProviderConfig({
+    adapter: "agent_loop",
+    ...providerConfig,
+  }), makeLlmClient()).capabilities.contextLimitTokens;
+}
+
 describe("createNative*AgentLoopRunner", () => {
+  it("infers agent-loop context limits from exact provider model contracts", () => {
+    expect(contextLimitFor({ provider: "openai", model: "gpt-5.5" })).toBe(1_000_000);
+    expect(contextLimitFor({ provider: "openai", model: "gpt-4o" })).toBe(128_000);
+    expect(contextLimitFor({ provider: "anthropic", model: "claude-sonnet-4-6" })).toBe(200_000);
+  });
+
+  it("does not infer context limits from misleading model substrings", () => {
+    expect(contextLimitFor({ provider: "openai", model: "vendor-gpt-5-proxy" })).toBeUndefined();
+    expect(contextLimitFor({ provider: "openai", model: "qwen-compatible" })).toBeUndefined();
+    expect(contextLimitFor({ provider: "anthropic", model: "not-claude-compatible" })).toBeUndefined();
+    expect(contextLimitFor({ provider: "ollama", model: "qwen3:4b" })).toBeUndefined();
+    expect(contextLimitFor({ provider: "ollama", model: "custom-local-model" })).toBeUndefined();
+  });
+
   it("keeps task profile defaults for budget, reasoning, and worktree policy", () => {
     const providerConfig = makeProviderConfig();
     const registry = new ToolRegistry();
