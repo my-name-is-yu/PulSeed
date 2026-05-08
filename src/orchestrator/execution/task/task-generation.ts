@@ -573,7 +573,6 @@ export async function generateTask(
   const llmStartedAt = Date.now();
   if (deps.gateway) {
     try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       console.log(`  [LLM] Calling LLM for task generation (${targetDimension})...`);
       if (typeof deps.gateway.executeWithUsage === "function") {
         const gatewayResult = await deps.gateway.executeWithUsage({

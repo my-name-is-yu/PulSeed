@@ -38,7 +38,6 @@ export type LeafTestResult = z.infer<typeof LeafTestResultSchema>;
 
 // --- RefineResult (recursive, uses lazy) ---
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export const RefineResultSchema: z.ZodTypeAny = z.lazy(() =>
   z.object({
     goal: GoalSchema,
