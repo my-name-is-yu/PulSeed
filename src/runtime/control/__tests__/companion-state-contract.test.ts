@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  SurfaceProjectionSchema,
+  attachSurfaceDependencyRef,
+  createSurfaceDerivedRuntimeRef,
+  invalidateSurfaceProjectionFromMemoryCorrection,
+  surfaceInvalidationEventsToRuntimeStateRefs,
+} from "../../../grounding/surface-contracts.js";
+import {
   CompanionStateReducerInputSchema,
   RuntimeItemSchema,
   RuntimeItemTypeSchema,
@@ -148,6 +155,153 @@ function makeReducerInput(input: Partial<CompanionStateReducerInput> = {}): Comp
     event_high_watermark: "event:1",
     current_time: NOW,
     ...input,
+  });
+}
+
+function surfaceOwnerRef() {
+  return {
+    kind: "relationship_profile",
+    store_ref: "relationship-profile.json",
+    record_ref: "memory:1",
+  };
+}
+
+function surfaceDependencyRef(overrides: Record<string, unknown> = {}) {
+  return {
+    kind: "memory_record",
+    ref: "memory:1",
+    owning_store_ref: surfaceOwnerRef(),
+    content_state: "materialized",
+    lifecycle: "active",
+    correction_state: "current",
+    superseded_by_memory_id: null,
+    ...overrides,
+  };
+}
+
+function surfaceSourceRef(overrides: Record<string, unknown> = {}) {
+  return {
+    memory_id: "memory:1",
+    owning_store_ref: surfaceOwnerRef(),
+    role: "relationship",
+    record_kind: "preference",
+    domain_fields: {
+      target: "status reports",
+      preference: "concise",
+      confidence: 0.9,
+      scope: "operator collaboration",
+      allowed_uses: ["surface_projection"],
+      review_condition: "when corrected",
+    },
+    allowed_uses: ["surface_projection", "user_facing_reference"],
+    not_allowed_uses: ["side_effect_authorization", "stale_session_authorization"],
+    lifecycle: "active",
+    correction_state: "current",
+    superseded_by_memory_id: null,
+    sensitivity: "private",
+    content_state: "materialized",
+    dependency_ref: surfaceDependencyRef(),
+    ...overrides,
+  };
+}
+
+function surfaceGate(gateName: string, status = "passed") {
+  return {
+    gate: gateName,
+    status,
+    reason_ref: `reason:${gateName}:${status}`,
+    evaluated_at: NOW,
+  };
+}
+
+function surfacePassedGates() {
+  return [
+    surfaceGate("scope"),
+    surfaceGate("lifecycle"),
+    surfaceGate("staleness"),
+    surfaceGate("sensitivity"),
+    surfaceGate("permission"),
+    surfaceGate("allowed_use"),
+    surfaceGate("forbidden_use"),
+    surfaceGate("projection"),
+    surfaceGate("audit"),
+  ];
+}
+
+function surfaceRelationshipPermission() {
+  return {
+    permission_id: "permission:surface:1",
+    context_scope: "operator collaboration",
+    memory_role_scope: ["relationship"],
+    observation_permission: "allowed",
+    memory_use_permission: "allowed",
+    speakability: "allowed",
+    proactive_permission: "ask_first",
+    interruption_tolerance: "low",
+    autonomy_level: "ask_first",
+    confirmation_requirement: "before_action",
+    emotional_language_boundary: "neutral",
+    preferred_expression_modes: ["concise"],
+    forbidden_moves: ["overfamiliarity"],
+    valid_from: NOW,
+    source_refs: [{
+      memory_id: "memory:1",
+      owning_store_ref: surfaceOwnerRef(),
+    }],
+  };
+}
+
+function makeSurfaceProjection() {
+  const source = surfaceSourceRef();
+  return SurfaceProjectionSchema.parse({
+    id: "surface:1",
+    version: 1,
+    target: "gateway",
+    scope: { kind: "runtime_item", ref: "run:quiet-work-1" },
+    purpose: "runtime invalidation test",
+    requested_use: "surface_projection",
+    source_refs: [source],
+    relationship_permissions: [surfaceRelationshipPermission()],
+    included_context: [{
+      lane: "relationship",
+      source_ref: source,
+      use_class: "surface_projection",
+      excerpt: "The user prefers concise status reports.",
+      gates: surfacePassedGates(),
+    }],
+    excluded_context: [],
+    allowed_runtime_uses: ["surface_projection"],
+    not_allowed_runtime_uses: ["side_effect_authorization", "stale_session_authorization"],
+    staleness_checks: ["staleness:surface:1"],
+    sensitivity_checks: ["sensitivity:surface:1"],
+    rationale_entries: [{
+      source_ref: source,
+      decision: "included",
+      gate: "audit",
+      reason_ref: "rationale:surface:1:memory:1",
+      policy_refs: ["policy:surface"],
+    }],
+    metadata: {
+      staleness: "fresh",
+      sensitivity: "private",
+      permission_state: "granted",
+      invalidation_state: "valid",
+      audit_refs: ["audit:surface:1"],
+    },
+    created_at: NOW,
+  });
+}
+
+function makeSurfaceDerivedRef(kind: "runtime_item" | "outcome_decision" | "expression_decision" | "session_resume_attempt") {
+  return createSurfaceDerivedRuntimeRef({
+    kind,
+    ref: `${kind}:surface:1`,
+    related_surface_refs: ["surface:1"],
+    related_memory_refs: ["memory:1"],
+    permission_check_refs: ["permission:surface:1"],
+    staleness_check_refs: ["staleness:surface:1"],
+    use_class: "surface_projection",
+    audit_refs: ["audit:surface:1"],
   });
 }
 
@@ -421,6 +575,73 @@ describe("CompanionState runtime-control contracts", () => {
     expect(input.active_watch_refs).toEqual(["watch:posture-change"]);
     expect(input.staleness_blockers).toContain("surface:old");
     expect(input.event_high_watermark).toBe("event:watch-posture");
+  });
+
+  it("crosses memory correction through Surface invalidation into runtime state rechecks", () => {
+    let surface = makeSurfaceProjection();
+    for (const kind of ["runtime_item", "outcome_decision", "expression_decision", "session_resume_attempt"] as const) {
+      surface = attachSurfaceDependencyRef(surface, makeSurfaceDerivedRef(kind));
+    }
+    const runtimeItem = makeRuntimeItem({
+      item_id: "run:memory-dependent",
+      related_surface_refs: [surface.id],
+      related_memory_refs: ["memory:1"],
+    });
+    const beforeInput = assembleCompanionStateReducerInput({
+      runtime_items: [runtimeItem],
+      recent_runtime_events: ["runtime-event:surface-before"],
+      active_surface_ref: surface.id,
+      surface_invalidation_events: [],
+      global_control_state_ref: "global-control-state:1",
+      global_controls: [makeControl("inspect_companion_state", "inactive")],
+      event_high_watermark: "event:surface-stable",
+      current_time: NOW,
+    });
+    const beforeSnapshot = deriveCompanionStateSnapshot(beforeInput);
+    const invalidation = invalidateSurfaceProjectionFromMemoryCorrection({
+      projection: surface,
+      correction_event: {
+        event_id: "correction:delete-memory:1",
+        target_memory_ref: "memory:1",
+        action: "delete",
+        affected_use_classes: ["surface_projection", "user_facing_reference"],
+        invalidation_ref: "surface-invalidation:delete-memory:1",
+        audit_ref: "audit:correction:delete-memory:1",
+        created_at: NOW,
+      },
+      occurred_at: NOW,
+      redaction_ref: "redaction:memory:1",
+    });
+    const invalidatedSurfaceRefs = surfaceInvalidationEventsToRuntimeStateRefs([invalidation.event]);
+    const afterInput = assembleCompanionStateReducerInput({
+      runtime_items: [runtimeItem],
+      recent_runtime_events: ["runtime-event:surface-before"],
+      active_surface_ref: surface.id,
+      surface_invalidation_events: invalidatedSurfaceRefs,
+      global_control_state_ref: "global-control-state:1",
+      global_controls: [makeControl("inspect_companion_state", "inactive")],
+      event_high_watermark: beforeInput.event_high_watermark,
+      current_time: NOW,
+    });
+    const afterSnapshot = deriveCompanionStateSnapshot(afterInput);
+
+    expect(afterInput.staleness_blockers).toContain(surface.id);
+    expect(afterSnapshot.mode).toBe("holding_back");
+    expect(afterSnapshot.invalidated_surface_refs).toContain(surface.id);
+    expect(afterSnapshot.derivation_trace.reason).toBe("stale_or_invalid_surface_holds_runtime_state");
+    expect(invalidation.blocked_admissions.map((admission) => admission.operation)).toEqual([
+      "action",
+      "action",
+      "speech",
+      "session_resume",
+    ]);
+    expect(invalidation.blocked_admissions.every((admission) => admission.reason === "invalid_surface")).toBe(true);
+    expect(evaluateCompanionStateSnapshotFreshness(beforeSnapshot, afterInput)).toMatchObject({
+      current: false,
+      reason: "surface_invalidated",
+      stale_refs: [surface.id],
+    });
+    expect(JSON.stringify(invalidation.inspection)).not.toContain("The user prefers concise status reports.");
   });
 
   it("represents missing Surface state as a blocker instead of silently omitting it", () => {
