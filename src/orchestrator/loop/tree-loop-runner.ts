@@ -84,30 +84,40 @@ export async function runTreeIteration(
     await deps.treeLoopOrchestrator?.startTreeExecution(rootId, defaultConfig);
   }
   let decomposed = false;
-  console.log(`  [TREE] rootGoal loaded: ${!!rootGoalForDecomp}, children: ${rootGoalForDecomp?.children_ids.length ?? "N/A"}, hasTLO: ${!!deps.treeLoopOrchestrator}, hasRefiner: ${!!deps.goalRefiner}`);
+  logger?.debug("DurableLoop tree root loaded", {
+    rootId,
+    hasRootGoal: Boolean(rootGoalForDecomp),
+    childrenCount: rootGoalForDecomp?.children_ids.length ?? null,
+    hasTreeLoopOrchestrator: Boolean(deps.treeLoopOrchestrator),
+    hasGoalRefiner: Boolean(deps.goalRefiner),
+  });
   if (rootGoalForDecomp && rootGoalForDecomp.children_ids.length === 0) {
     const defaultConfig = { min_specificity: 0.7, max_depth: 3, parallel_loop_limit: 3, auto_prune_threshold: 0.3 };
     if (deps.treeLoopOrchestrator) {
       try {
-        console.log("  [TREE] Calling ensureGoalRefined(force=true)...");
+        logger?.debug("DurableLoop tree refinement starting", { rootId, force: true });
         await deps.treeLoopOrchestrator.ensureGoalRefined(rootId, { force: true });
-        console.log("  [TREE] ensureGoalRefined complete. Starting tree execution...");
+        logger?.debug("DurableLoop tree refinement complete; starting tree execution", { rootId });
         await deps.treeLoopOrchestrator.startTreeExecution(rootId, defaultConfig);
         const rootAfterRefine = await deps.stateManager.loadGoal(rootId);
         decomposed = (rootAfterRefine?.children_ids.length ?? 0) > 0;
-        console.log(`  [TREE] Refinement result: decomposed=${decomposed}, children=${rootAfterRefine?.children_ids.length ?? 0}`);
+        logger?.debug("DurableLoop tree refinement result", {
+          rootId,
+          decomposed,
+          childrenCount: rootAfterRefine?.children_ids.length ?? 0,
+        });
       } catch (err) {
-        logger?.warn("CoreLoop: refinement failed, falling back to flat iteration", { rootId, err });
+        logger?.warn("DurableLoop: refinement failed, falling back to flat iteration", { rootId, err });
       }
     } else if (deps.goalTreeManager) {
       try {
-        logger?.info("CoreLoop: auto-decomposing goal tree", { rootId });
+        logger?.info("DurableLoop: auto-decomposing goal tree", { rootId });
         const decompResult = await deps.goalTreeManager.decomposeGoal(rootId, defaultConfig);
-        logger?.info("CoreLoop: decomposition complete", { rootId, childCount: decompResult.children.length });
+        logger?.info("DurableLoop: decomposition complete", { rootId, childCount: decompResult.children.length });
         await orchestrator.startTreeExecution(rootId, defaultConfig);
         decomposed = true;
       } catch (err) {
-        logger?.warn("CoreLoop: decomposition failed, falling back to flat iteration", { rootId, err });
+        logger?.warn("DurableLoop: decomposition failed, falling back to flat iteration", { rootId, err });
       }
     }
   }
