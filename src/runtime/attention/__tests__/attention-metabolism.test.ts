@@ -3,6 +3,7 @@ import {
   admitInitiativeGateDecision,
   advanceAttentionMaturation,
   applyAttentionFeedbackConservatively,
+  applySurfaceInvalidationToDecisions,
   applySurfaceInvalidationToAttention,
   assembleSignalContext,
   buildSchedulerWakeSignalContext,
@@ -30,6 +31,17 @@ import type {
 import type { SurfaceMemorySourceRef } from "../../../grounding/surface-contracts.js";
 
 const NOW = "2026-05-08T00:00:00.000Z";
+const REQUIRED_SURFACE_RECHECKS = [
+  "scope",
+  "lifecycle",
+  "staleness",
+  "sensitivity",
+  "permission",
+  "allowed_use",
+  "forbidden_use",
+  "projection",
+  "audit",
+] as const;
 
 function check(
   kind: AutonomyCheck["kind"],
@@ -43,6 +55,18 @@ function check(
     reason,
     evidence_refs: [],
   };
+}
+
+function surfaceDecisionReadmissionChecks(): AutonomyCheck[] {
+  return [
+    ...REQUIRED_SURFACE_RECHECKS.map((kind) =>
+      check(kind, "passed", `Surface ${kind} gate was rerun`)
+    ),
+    check("surface", "passed", "current Surface was regenerated"),
+    check("companion_state", "passed", "CompanionState permits the admission"),
+    check("runtime_control", "passed", "runtime-control admitted the decision"),
+    check("visibility", "passed", "VisibilityPolicy was evaluated for the current Surface"),
+  ];
 }
 
 function signalContext() {
@@ -642,6 +666,32 @@ describe("attention metabolism pipeline", () => {
       expressionDecision: null,
       visibilityPolicy: policy,
     })).toBeNull();
+
+    const inspectableHiddenPolicy = visibilityPolicy({
+      visibility_policy_id: "visibility:approval",
+      applies_to: [
+        ref("outcome_decision", "outcome:approval-expression"),
+        ref("expression_decision", "expression:approval"),
+      ],
+      visible_in_chat: false,
+      visible_in_tui: false,
+      visible_in_cli: false,
+      visible_in_gui: false,
+      visible_in_audit: true,
+      visible_in_debug: true,
+      rationale: "inspectable audit/debug policy must not render daemon snapshots",
+    });
+    expect(renderExpressionDecisionForSurface({
+      render_id: "render:daemon-snapshot:approval",
+      rendered_at: NOW,
+      surface_class: "daemon_snapshot",
+      outcome_decision: approval!,
+      expression_decision: {
+        ...expression!,
+        target_surface_classes: ["daemon_snapshot"],
+      },
+      visibility_policy: inspectableHiddenPolicy,
+    })).toBeNull();
   });
 
   it("holds digest outcomes after Surface invalidation and renders only after re-admission", () => {
@@ -707,6 +757,264 @@ describe("attention metabolism pipeline", () => {
       expression_decision: expression,
       visibility_policy: policy,
     })?.expression_mode).toBe("digest_item");
+  });
+
+  it("expires old Surface outcome decisions and only readmits after all current checks rerun", () => {
+    const admitted = admitInitiativeGateDecision({
+      outcome_decision_id: "outcome:surface-old-expression",
+      decided_at: NOW,
+      gate_decision: selectedGateForOutcome("express_to_user"),
+      admitted_runtime_control_refs: [ref("runtime_control", "runtime-control:express_to_user")],
+      visibility_policy_ref: ref("visibility_policy", "visibility:surface-current"),
+    })!;
+    const admittedWithExpression = {
+      ...admitted,
+      expression_decision_ref: ref("expression_decision", "expression:surface-old-expression"),
+    };
+    const expression = createExpressionDecisionForOutcome({
+      expression_decision_id: "expression:surface-old-expression",
+      created_at: NOW,
+      outcome_decision: admittedWithExpression,
+      target_surface_classes: ["chat", "gateway"],
+    })!;
+    const policy = visibilityPolicy({
+      visibility_policy_id: "visibility:surface-current",
+      applies_to: [
+        ref("outcome_decision", "outcome:surface-old-expression"),
+        ref("expression_decision", "expression:surface-old-expression"),
+      ],
+      rationale: "current Surface allows the expression through one shared visibility policy",
+    });
+    const event = {
+      id: "surface-invalidation:old:outcome",
+      policy_ref: "surface:surface-old:policy:memory_correction",
+      surface_ref: "surface:old",
+      trigger: "memory_correction" as const,
+      source_ref: surfaceMemorySource(),
+      affected_dependencies: [
+        {
+          kind: "outcome_decision" as const,
+          ref: "outcome:surface-old-expression",
+          related_surface_refs: ["surface:old"],
+          related_memory_refs: ["memory:surface-source"],
+          permission_check_refs: ["permission:active"],
+          staleness_check_refs: ["staleness:surface-old"],
+          use_class: "surface_projection" as const,
+          audit_refs: ["audit:surface-old"],
+        },
+        {
+          kind: "expression_decision" as const,
+          ref: "expression:surface-old-expression",
+          related_surface_refs: ["surface:old"],
+          related_memory_refs: ["memory:surface-source"],
+          permission_check_refs: ["permission:active"],
+          staleness_check_refs: ["staleness:surface-old"],
+          use_class: "surface_projection" as const,
+          audit_refs: ["audit:surface-old"],
+        },
+      ],
+      required_rechecks: [...REQUIRED_SURFACE_RECHECKS],
+      action: "regate" as const,
+      audit_ref: "audit:surface-invalidation",
+      occurred_at: NOW,
+    };
+
+    const invalidated = applySurfaceInvalidationToDecisions({
+      surface_invalidation_event: event,
+      outcome_decisions: [admittedWithExpression],
+      expression_decisions: [expression],
+      now: NOW,
+    });
+    const heldOutcome = invalidated.invalidated_outcome_decisions[0]!;
+    expect(heldOutcome.disposition).toBe("needs_readmission");
+    expect(heldOutcome.decision.admission_status).toBe("held");
+    expect(heldOutcome.decision.final_outcome).toBeUndefined();
+    expect(heldOutcome.decision.expression_decision_ref).toBeUndefined();
+    expect(renderExpressionDecisionForSurface({
+      render_id: "render:held-expression",
+      rendered_at: NOW,
+      surface_class: "chat",
+      outcome_decision: heldOutcome.decision,
+      expression_decision: expression,
+      visibility_policy: policy,
+    })).toBeNull();
+
+    const readmitted = applySurfaceInvalidationToDecisions({
+      surface_invalidation_event: event,
+      outcome_decisions: [admittedWithExpression],
+      expression_decisions: [expression],
+      current_surface_ref: ref("surface", "surface:current"),
+      readmission_checks_by_outcome_id: {
+        "outcome:surface-old-expression": surfaceDecisionReadmissionChecks(),
+      },
+      visibility_policies: [policy],
+      now: NOW,
+    });
+    const outcomeRecord = readmitted.invalidated_outcome_decisions[0]!;
+    const expressionRecord = readmitted.invalidated_expression_decisions[0]!;
+    expect(outcomeRecord.disposition).toBe("readmitted");
+    expect(outcomeRecord.decision.final_outcome).toBe("express_to_user");
+    expect(outcomeRecord.decision.visibility_checks.map((item) => item.kind)).toContain("visibility");
+    expect(expressionRecord.disposition).toBe("regenerated");
+    expect(expressionRecord.decision.expression_decision_id).not.toBe(expression.expression_decision_id);
+    expect(renderExpressionDecisionForSurface({
+      render_id: "render:readmitted-expression",
+      rendered_at: NOW,
+      surface_class: "chat",
+      outcome_decision: outcomeRecord.decision,
+      expression_decision: expressionRecord.decision,
+      visibility_policy: policy,
+    })?.user_facing_rationale).toBe("Express the admitted outcome to the user.");
+
+    const missingProjectionGate = applySurfaceInvalidationToDecisions({
+      surface_invalidation_event: event,
+      outcome_decisions: [admittedWithExpression],
+      expression_decisions: [expression],
+      current_surface_ref: ref("surface", "surface:current"),
+      readmission_checks_by_outcome_id: {
+        "outcome:surface-old-expression": surfaceDecisionReadmissionChecks().filter((item) =>
+          item.kind !== "projection"
+        ),
+      },
+      visibility_policies: [policy],
+      now: NOW,
+    }).invalidated_outcome_decisions[0]!;
+    expect(missingProjectionGate.disposition).toBe("needs_readmission");
+    expect(missingProjectionGate.missing_check_kinds).toContain("projection");
+    expect(missingProjectionGate.decision.final_outcome).toBeUndefined();
+
+    const expired = applySurfaceInvalidationToDecisions({
+      surface_invalidation_event: {
+        ...event,
+        id: "surface-invalidation:old:outcome-expired",
+        trigger: "surface_expired",
+        action: "expire",
+      },
+      outcome_decisions: [admittedWithExpression],
+      current_surface_ref: ref("surface", "surface:current"),
+      readmission_checks_by_outcome_id: {
+        "outcome:surface-old-expression": surfaceDecisionReadmissionChecks(),
+      },
+      visibility_policies: [policy],
+      now: NOW,
+    }).invalidated_outcome_decisions[0]!;
+    expect(expired.disposition).toBe("expired");
+    expect(expired.decision.final_outcome).toBeUndefined();
+  });
+
+  it("holds a prepared digest expression after permission revocation until current visibility policy passes", () => {
+    const admitted = admitInitiativeGateDecision({
+      outcome_decision_id: "outcome:digest-permission-revoked",
+      decided_at: NOW,
+      gate_decision: selectedGateForOutcome("add_to_digest"),
+      admitted_runtime_control_refs: [ref("runtime_control", "runtime-control:add_to_digest")],
+      visibility_policy_ref: ref("visibility_policy", "visibility:digest-permission-revoked"),
+    })!;
+    const expression = createExpressionDecisionForOutcome({
+      expression_decision_id: "expression:digest-permission-revoked",
+      created_at: NOW,
+      outcome_decision: admitted,
+      target_surface_classes: ["digest"],
+    })!;
+    const policy = visibilityPolicy({
+      visibility_policy_id: "visibility:digest-permission-revoked",
+      applies_to: [
+        ref("outcome_decision", "outcome:digest-permission-revoked"),
+        ref("expression_decision", "expression:digest-permission-revoked"),
+      ],
+      visible_in_chat: false,
+      visible_in_tui: false,
+      visible_in_cli: false,
+      visible_in_gui: false,
+      digest_only: true,
+      visible_in_digest: true,
+      rationale: "digest expression remains governed by the shared visibility policy",
+    });
+    const event = {
+      id: "surface-invalidation:old:digest-permission",
+      policy_ref: "surface:surface-old:policy:permission_revocation",
+      surface_ref: "surface:old",
+      trigger: "permission_revocation" as const,
+      source_ref: surfaceMemorySource(),
+      affected_dependencies: [{
+        kind: "expression_decision" as const,
+        ref: "expression:digest-permission-revoked",
+        related_surface_refs: ["surface:old"],
+        related_memory_refs: ["memory:surface-source"],
+        permission_check_refs: ["permission:active"],
+        staleness_check_refs: ["staleness:surface-old"],
+        use_class: "surface_projection" as const,
+        audit_refs: ["audit:surface-old"],
+      }],
+      required_rechecks: [...REQUIRED_SURFACE_RECHECKS],
+      action: "regate" as const,
+      audit_ref: "audit:permission-revoked",
+      occurred_at: NOW,
+    };
+
+    const held = applySurfaceInvalidationToDecisions({
+      surface_invalidation_event: event,
+      outcome_decisions: [admitted],
+      expression_decisions: [expression],
+      now: NOW,
+    }).invalidated_expression_decisions[0]!;
+    expect(held.disposition).toBe("held");
+    expect(held.decision.decision_status).toBe("held");
+    expect(renderExpressionDecisionForSurface({
+      render_id: "render:held-digest",
+      rendered_at: NOW,
+      surface_class: "digest",
+      outcome_decision: admitted,
+      expression_decision: held.decision,
+      visibility_policy: policy,
+    })).toBeNull();
+
+    const regenerated = applySurfaceInvalidationToDecisions({
+      surface_invalidation_event: event,
+      outcome_decisions: [admitted],
+      expression_decisions: [expression],
+      current_surface_ref: ref("surface", "surface:current"),
+      readmission_checks_by_expression_id: {
+        "expression:digest-permission-revoked": surfaceDecisionReadmissionChecks(),
+      },
+      visibility_policies: [policy],
+      now: NOW,
+    }).invalidated_expression_decisions[0]!;
+    expect(regenerated.disposition).toBe("regenerated");
+    expect(renderExpressionDecisionForSurface({
+      render_id: "render:regenerated-digest",
+      rendered_at: NOW,
+      surface_class: "digest",
+      outcome_decision: admitted,
+      expression_decision: regenerated.decision,
+      visibility_policy: policy,
+    })?.expression_mode).toBe("digest_item");
+
+    const withdrawn = applySurfaceInvalidationToDecisions({
+      surface_invalidation_event: {
+        ...event,
+        id: "surface-invalidation:old:digest-withdraw",
+        action: "withdraw",
+      },
+      outcome_decisions: [admitted],
+      expression_decisions: [expression],
+      current_surface_ref: ref("surface", "surface:current"),
+      readmission_checks_by_expression_id: {
+        "expression:digest-permission-revoked": surfaceDecisionReadmissionChecks(),
+      },
+      visibility_policies: [policy],
+      now: NOW,
+    }).invalidated_expression_decisions[0]!;
+    expect(withdrawn.disposition).toBe("withdrawn");
+    expect(withdrawn.decision.decision_status).toBe("withdrawn");
+    expect(renderExpressionDecisionForSurface({
+      render_id: "render:withdrawn-digest",
+      rendered_at: NOW,
+      surface_class: "digest",
+      outcome_decision: admitted,
+      expression_decision: withdrawn.decision,
+      visibility_policy: policy,
+    })).toBeNull();
   });
 
   it("does not let high Drive or curiosity bypass permission, Surface, cooldown, or runtime control", () => {

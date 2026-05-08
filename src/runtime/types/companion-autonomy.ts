@@ -529,12 +529,21 @@ export const AutonomyCheckStatusSchema = z.enum(["passed", "failed", "unknown", 
 export type AutonomyCheckStatus = z.infer<typeof AutonomyCheckStatusSchema>;
 
 export const AutonomyCheckKindSchema = z.enum([
+  "scope",
+  "lifecycle",
   "permission",
   "staleness",
+  "sensitivity",
   "surface",
+  "allowed_use",
+  "forbidden_use",
+  "projection",
+  "audit",
   "authority",
   "safety",
   "guardrail",
+  "runtime_control",
+  "companion_state",
   "companion_control",
   "backpressure",
   "capacity",
@@ -635,6 +644,7 @@ export const OutcomeDecisionSchema = z.object({
   staleness_checks: z.array(AutonomyCheckSchema).default([]),
   companion_control_checks: z.array(AutonomyCheckSchema).default([]),
   safety_checks: z.array(AutonomyCheckSchema).default([]),
+  visibility_checks: z.array(AutonomyCheckSchema).default([]),
   downgrade_or_rejection_reason: OutcomeDecisionReasonSchema.optional(),
   visibility_policy_ref: VisibilityPolicyRefSchema.optional(),
   expression_decision_ref: refWithKind("expression_decision").optional(),
@@ -699,6 +709,9 @@ export const OutcomeDecisionSchema = z.object({
 });
 export type OutcomeDecision = z.infer<typeof OutcomeDecisionSchema>;
 
+export const ExpressionDecisionStatusSchema = z.enum(["active", "held", "withdrawn"]);
+export type ExpressionDecisionStatus = z.infer<typeof ExpressionDecisionStatusSchema>;
+
 export const ExpressionModeSchema = z.enum([
   "ambient_presence",
   "digest_item",
@@ -731,6 +744,7 @@ export const ExpressionDecisionSchema = z.object({
   expression_mode: ExpressionModeSchema,
   target_surface_classes: z.array(ExpressionSurfaceClassSchema).min(1),
   visibility_policy_ref: VisibilityPolicyRefSchema,
+  decision_status: ExpressionDecisionStatusSchema.default("active"),
   user_facing_rationale: z.string().min(1),
   suppressed_detail_refs: z.array(CompanionAutonomyRefSchema).default([]),
   audit_ref: AuditTraceRefSchema.optional(),

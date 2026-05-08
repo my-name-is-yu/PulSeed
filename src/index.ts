@@ -198,6 +198,7 @@ export {
   admitInitiativeGateDecision,
   advanceAttentionMaturation,
   applyAttentionFeedbackConservatively,
+  applySurfaceInvalidationToDecisions,
   assembleSignalContext,
   buildSchedulerWakeSignalContext,
   createExpressionDecisionForOutcome,
@@ -220,6 +221,12 @@ export type {
   SignalContextAssemblyInput,
   SurfaceDecisionRender,
   SurfaceDecisionRenderInput,
+  SurfaceDecisionInvalidationInput,
+  SurfaceDecisionInvalidationRecord,
+  SurfaceDecisionInvalidationResult,
+  SurfaceDecisionReadmissionCheckKind,
+  SurfaceExpressionInvalidationDisposition,
+  SurfaceOutcomeInvalidationDisposition,
   UrgeCandidateAssemblyInput,
 } from "./runtime/attention/index.js";
 export {
