@@ -10,6 +10,17 @@ export interface ChangeResult {
   details: string;
 }
 
+function parseFiniteThresholdResult(value: unknown): number | null {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : null;
+  }
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return null;
+  const parsed = Number(trimmed);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 export function detectChange(
   mode: "threshold" | "diff" | "presence",
   currentResult: unknown,
@@ -18,8 +29,8 @@ export function detectChange(
 ): ChangeResult {
   switch (mode) {
     case "threshold": {
-      const num = Number(currentResult);
-      if (isNaN(num) || typeof num !== "number") {
+      const num = parseFiniteThresholdResult(currentResult);
+      if (num === null) {
         // Surface misconfiguration: non-numeric result cannot be evaluated against a threshold.
         // Return changed: true so the issue is visible rather than silently ignored.
         return { changed: true, details: "non-numeric result cannot be evaluated against threshold" };
