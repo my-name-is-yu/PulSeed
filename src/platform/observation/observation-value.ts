@@ -2,7 +2,7 @@ const EXACT_FINITE_NUMBER_TOKEN = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/
 
 export function coerceDataSourceObservationValue(value: unknown): number | string | boolean | null {
   if (typeof value === "number") {
-    return value;
+    return Number.isFinite(value) ? value : null;
   }
   if (typeof value === "string") {
     const normalized = value.trim();
