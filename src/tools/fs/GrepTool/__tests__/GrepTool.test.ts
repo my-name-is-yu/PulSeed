@@ -56,6 +56,10 @@ describe("GrepTool", () => {
       path.join(tmpDir, "beta.ts"),
       'import { hello } from "./alpha.js";\nconsole.log(hello);\n'
     );
+    await fs.writeFile(
+      path.join(tmpDir, "symbols.ts"),
+      'export const marker = "literal[needle]";\n'
+    );
     await fs.writeFile(path.join(tmpDir, "other.json"), '{"key": "value"}');
   });
 
@@ -146,6 +150,16 @@ describe("GrepTool", () => {
     expect(output).toContain("foo");
     expect(output).toContain('export const hello = "world";');
     expect(output).toContain("alpha.ts:2:export const foo = 42;");
+  });
+
+  it.skipIf(!HAS_RG)("fixed string mode treats regex metacharacters literally", async () => {
+    const result = await tool.call(
+      { pattern: "literal[needle]", outputMode: "content", limit: 250, caseInsensitive: false, fixedStrings: true },
+      makeContext(tmpDir)
+    );
+    expect(result.success).toBe(true);
+    expect(result.data).toContain("symbols.ts");
+    expect(result.data).toContain("literal[needle]");
   });
 
   it("checkPermissions returns allowed", async () => {
