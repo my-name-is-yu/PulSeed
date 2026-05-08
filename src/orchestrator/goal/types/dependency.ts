@@ -4,6 +4,12 @@ import { DependencyTypeEnum } from "../../../base/types/core.js";
 export const DependencyEdgeStatusEnum = z.enum(["active", "satisfied", "invalidated"]);
 export type DependencyEdgeStatus = z.infer<typeof DependencyEdgeStatusEnum>;
 
+export const StrategyDependencyMetadataSchema = z.object({
+  dependency_type: z.enum(["prerequisite", "enhances"]),
+  goal_id: z.string().min(1),
+}).strict();
+export type StrategyDependencyMetadata = z.infer<typeof StrategyDependencyMetadataSchema>;
+
 export const DependencyEdgeSchema = z.object({
   from_goal_id: z.string(),
   to_goal_id: z.string(),
@@ -13,6 +19,7 @@ export const DependencyEdgeSchema = z.object({
   affected_dimensions: z.array(z.string()).default([]),
   mitigation: z.string().nullable().default(null),
   detection_confidence: z.number().min(0).max(1).default(1.0),
+  strategy_dependency: StrategyDependencyMetadataSchema.optional(),
   reasoning: z.string().nullable().default(null),
   created_at: z.string(),
 });
