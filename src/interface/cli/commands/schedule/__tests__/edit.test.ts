@@ -61,6 +61,18 @@ describe("buildScheduleEditPatch", () => {
     );
   });
 
+  it("rejects interval values with partial numeric prefixes", () => {
+    expect(() => buildScheduleEditPatch({ interval: "60s" })).toThrow("--interval must be a positive integer");
+  });
+
+  it("rejects explicitly blank interval values", () => {
+    expect(() => buildScheduleEditPatch({ interval: "" })).toThrow("--interval must be a positive integer");
+  });
+
+  it("rejects explicitly blank cron values", () => {
+    expect(() => buildScheduleEditPatch({ cron: "" })).toThrow("--cron must be a non-empty string");
+  });
+
   it("rejects invalid JSON config", () => {
     expect(() => buildScheduleEditPatch({ "cron-json": "{bad" })).toThrow("--cron-json is not valid JSON");
   });
