@@ -11,6 +11,15 @@ import { ROOT_PRESETS } from "../presets/root-presets.js";
 import type { RootPresetKey } from "../presets/root-presets.js";
 import { guardCancel } from "./utils.js";
 
+export function parseSetupDaemonPort(raw: string): number | undefined {
+  const normalized = raw.trim();
+  if (!/^[0-9]+$/.test(normalized)) return undefined;
+  const parsed = Number(normalized);
+  if (!Number.isSafeInteger(parsed)) return undefined;
+  if (parsed < 1024 || parsed > 65535) return undefined;
+  return parsed;
+}
+
 export async function stepDaemon(): Promise<{ start: boolean; port: number }> {
   const baseDir = getPulseedDirPath();
 
@@ -129,14 +138,17 @@ export async function stepDaemon(): Promise<{ start: boolean; port: number }> {
         placeholder: String(suggestedPort),
         validate: (value) => {
           if (!value) return "Port is required.";
-          const parsed = parseInt(value, 10);
-          if (isNaN(parsed) || !Number.isInteger(parsed)) return "Port must be a whole number.";
-          if (parsed < 1024 || parsed > 65535) return "Port must be between 1024 and 65535.";
+          const parsed = parseSetupDaemonPort(value);
+          if (parsed === undefined) return "Port must be a whole number between 1024 and 65535.";
           return undefined;
         },
       })
     );
-    const candidate = parseInt(portInput, 10);
+    const candidate = parseSetupDaemonPort(portInput);
+    if (candidate === undefined) {
+      p.log.warn("Port must be a whole number between 1024 and 65535.");
+      continue;
+    }
     if (await isPortAvailable(candidate)) {
       finalPort = candidate;
       break;
