@@ -171,7 +171,7 @@ export function createAgentLoopModelInfo(
     parallelToolCalls: true,
     structuredOutput: true,
     reasoning: providerConfig.provider === "openai",
-    contextLimitTokens: inferContextLimit(providerConfig.model),
+    contextLimitTokens: inferContextLimit(providerConfig),
   };
   return {
     ref: { providerId: providerConfig.provider, modelId: providerConfig.model },
@@ -180,12 +180,39 @@ export function createAgentLoopModelInfo(
   };
 }
 
-function inferContextLimit(model: string): number | undefined {
-  if (model.includes("gpt-5") || model.includes("gpt-4.1")) return 1_000_000;
-  if (model.includes("gpt-4o")) return 128_000;
-  if (model.includes("claude")) return 200_000;
-  if (model.includes("qwen") || model.includes("llama")) return 32_000;
-  return undefined;
+const OPENAI_CONTEXT_LIMIT_TOKENS_BY_MODEL: Record<string, number> = {
+  "gpt-5.5": 1_000_000,
+  "gpt-5.4": 1_000_000,
+  "gpt-5.2-codex": 1_000_000,
+  "gpt-5.1-codex-max": 1_000_000,
+  "gpt-5.4-mini": 1_000_000,
+  "gpt-5.3-codex": 1_000_000,
+  "gpt-5.3-codex-spark": 1_000_000,
+  "gpt-5.2": 1_000_000,
+  "gpt-5.1-codex-mini": 1_000_000,
+  "gpt-4.1": 1_000_000,
+  "gpt-4o": 128_000,
+  "gpt-4o-mini": 128_000,
+};
+
+const ANTHROPIC_CONTEXT_LIMIT_TOKENS_BY_MODEL: Record<string, number> = {
+  "claude-sonnet-4-6": 200_000,
+  "claude-haiku-4-5": 200_000,
+  "claude-sonnet-4-20250514": 200_000,
+};
+
+function inferContextLimit(providerConfig: ProviderConfig): number | undefined {
+  const modelId = providerConfig.model.trim();
+  switch (providerConfig.provider) {
+    case "openai":
+      return OPENAI_CONTEXT_LIMIT_TOKENS_BY_MODEL[modelId];
+    case "anthropic":
+      return ANTHROPIC_CONTEXT_LIMIT_TOKENS_BY_MODEL[modelId];
+    case "ollama":
+      return undefined;
+    default:
+      return undefined;
+  }
 }
 
 function createNativeAgentLoopRuntime(
