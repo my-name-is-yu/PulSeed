@@ -5,7 +5,7 @@ import type { ILLMClient } from "../../base/llm/llm-client.js";
 import { writeJsonFileAtomic } from "../../base/utils/json-io.js";
 import type { Logger } from "../../runtime/logger.js";
 import type { LearningPipeline } from "../knowledge/learning/learning-pipeline.js";
-import type { LearnedPattern, LearnedPatternType } from "../knowledge/types/learning.js";
+import type { LearnedPattern } from "../knowledge/types/learning.js";
 import {
   buildDreamPatternAnalysisPrompt,
   DREAM_PATTERN_ANALYSIS_SYSTEM_PROMPT,
@@ -457,10 +457,12 @@ export class DreamAnalyzer {
           );
         learnedPatterns.push(...mapped);
       } catch (error) {
+        partial = true;
         this.logger?.warn("Dream analysis skipped goal after LLM or parse failure", {
           goalId,
           error: error instanceof Error ? error.message : String(error),
         });
+        break;
       }
     }
 
@@ -468,10 +470,9 @@ export class DreamAnalyzer {
   }
 
   private toLearnedPattern(goalId: string, candidate: DreamPatternCandidate): LearnedPattern {
-    const type = this.mapPatternType(candidate.pattern_type);
     return {
       pattern_id: `dream_${randomUUID()}`,
-      type,
+      type: candidate.pattern_type,
       description: candidate.summary,
       confidence: candidate.confidence,
       evidence_count: candidate.evidence_refs.length,
@@ -481,17 +482,6 @@ export class DreamAnalyzer {
       created_at: new Date().toISOString(),
       last_applied_at: null,
     };
-  }
-
-  private mapPatternType(patternType: string): LearnedPatternType {
-    if (patternType.includes("observation")) return "observation_accuracy";
-    if (patternType.includes("strategy") || patternType.includes("stall") || patternType.includes("decision")) {
-      return "strategy_selection";
-    }
-    if (patternType.includes("verification") || patternType.includes("task")) {
-      return "task_generation";
-    }
-    return "scope_sizing";
   }
 
   private extractApplicableDomains(candidate: DreamPatternCandidate): string[] {

@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { MemoryCorrectionTargetStateSchema } from "../corrections/memory-correction-ledger.js";
-import { LearnedPatternSchema } from "../knowledge/types/learning.js";
+import { LearnedPatternSchema, LearnedPatternTypeEnum } from "../knowledge/types/learning.js";
 import { ScheduleTriggerSchema } from "../../runtime/types/schedule.js";
 
 export const DreamSourceSchema = z.enum([
@@ -275,7 +275,7 @@ export const IngestionOutputSchema = z.object({
 export type IngestionOutput = z.infer<typeof IngestionOutputSchema>;
 
 export const DreamPatternCandidateSchema = z.object({
-  pattern_type: z.string(),
+  pattern_type: LearnedPatternTypeEnum,
   goal_id: z.string().optional(),
   confidence: z.number().min(0).max(1),
   summary: z.string(),

@@ -25,6 +25,7 @@ Analysis goal:
 Output schema reminder:
 - Return a JSON object with a top-level "patterns" array.
 - Each pattern must include pattern_type, confidence, summary, metadata, and evidence_refs.
+- pattern_type must be one of: observation_accuracy, strategy_selection, scope_sizing, task_generation.
 - Use confidence >= 0 and <= 1.
 - Keep summaries concise and actionable.
 
@@ -46,7 +47,7 @@ Return JSON:
 {
   "patterns": [
     {
-      "pattern_type": "string",
+      "pattern_type": "strategy_selection",
       "goal_id": "string optional",
       "confidence": 0.0,
       "summary": "string",
@@ -60,7 +61,7 @@ Example output:
 {
   "patterns": [
     {
-      "pattern_type": "recurring_task",
+      "pattern_type": "task_generation",
       "goal_id": "${input.goalId ?? "goal-id"}",
       "confidence": 0.82,
       "summary": "Retrying lightweight verification after observation drift often restores progress.",
