@@ -23,6 +23,8 @@ export const RETRY_DELAYS_MS = [1000, 2000, 4000];
 /** Extended backoff delays for HTTP 429 rate-limit responses (up to 5 retries) */
 export const RATE_LIMIT_RETRY_DELAYS_MS = [2000, 8000, 16000, 32000, 60000];
 
+const EXACT_RETRY_AFTER_SECONDS_TOKEN = /^[+]?(?:\d+(?:\.\d*)?|\.\d+)$/;
+
 /**
  * Returns true if the error represents an HTTP 429 rate-limit response.
  */
@@ -46,8 +48,8 @@ export function getRateLimitRetryDelay(err: unknown, attemptIndex: number): numb
     const headers = (err as { headers: unknown }).headers;
     if (headers != null && typeof headers === "object" && "retry-after" in headers) {
       const retryAfter = (headers as Record<string, unknown>)["retry-after"];
-      const seconds = typeof retryAfter === "string" ? parseFloat(retryAfter) : Number(retryAfter);
-      if (!isNaN(seconds) && seconds > 0) {
+      const seconds = parseRetryAfterSeconds(retryAfter);
+      if (seconds !== null) {
         const delay = seconds * 1000;
         return delay * (0.5 + Math.random());
       }
@@ -55,6 +57,17 @@ export function getRateLimitRetryDelay(err: unknown, attemptIndex: number): numb
   }
   const base = RATE_LIMIT_RETRY_DELAYS_MS[attemptIndex] ?? RATE_LIMIT_RETRY_DELAYS_MS[RATE_LIMIT_RETRY_DELAYS_MS.length - 1]!;
   return base * (0.5 + Math.random());
+}
+
+function parseRetryAfterSeconds(value: unknown): number | null {
+  if (typeof value === "number") {
+    return Number.isFinite(value) && value > 0 ? value : null;
+  }
+  if (typeof value !== "string") return null;
+  const normalized = value.trim();
+  if (!EXACT_RETRY_AFTER_SECONDS_TOKEN.test(normalized)) return null;
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
 // ─── JSON extraction utility ───
