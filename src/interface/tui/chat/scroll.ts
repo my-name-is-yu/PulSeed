@@ -7,6 +7,7 @@ const ESC_BRACKETED_PASTE_OPEN_GLOBAL = /\u001b\[200~/g;
 const ESC_BRACKETED_PASTE_CLOSE_GLOBAL = /\u001b\[201~/g;
 const RAW_SHIFT_ENTER_SEQUENCE = "[27;2;13~";
 const RAW_BRACKETED_PASTE_WRAPPER = /^\[200~([\s\S]*)\[201~$/;
+const SGR_MOUSE_INTEGER_TOKEN = /^\d+$/;
 
 type ScrollKey = {
   upArrow?: boolean;
@@ -40,14 +41,14 @@ export function parseMouseEvent(input: string): ParsedMouseEvent | null {
     return null;
   }
 
-  const buttonCode = Number.parseInt(sgrMouseMatch[1] ?? "", 10);
-  const x = Number.parseInt(sgrMouseMatch[2] ?? "", 10);
-  const y = Number.parseInt(sgrMouseMatch[3] ?? "", 10);
+  const buttonCode = parseSgrMouseInteger(sgrMouseMatch[1]);
+  const x = parseSgrMouseInteger(sgrMouseMatch[2]);
+  const y = parseSgrMouseInteger(sgrMouseMatch[3]);
   const suffix = sgrMouseMatch[4];
   if (
-    !Number.isFinite(buttonCode) ||
-    !Number.isFinite(x) ||
-    !Number.isFinite(y) ||
+    buttonCode === null ||
+    x === null ||
+    y === null ||
     !suffix
   ) {
     return null;
@@ -86,6 +87,12 @@ export function parseMouseEvent(input: string): ParsedMouseEvent | null {
   }
 
   return { kind: "press", button, x, y };
+}
+
+function parseSgrMouseInteger(value: string | undefined): number | null {
+  if (value === undefined || !SGR_MOUSE_INTEGER_TOKEN.test(value)) return null;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) ? parsed : null;
 }
 
 export function getScrollRequest(
