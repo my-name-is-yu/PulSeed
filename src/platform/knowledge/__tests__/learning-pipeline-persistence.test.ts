@@ -138,7 +138,7 @@ describe("LearningPipeline", () => {
     fs.rmSync(tmpDir, { recursive: true, force: true , maxRetries: 3, retryDelay: 100 });
   });
 
-  // ─── 6. 永続化（getPatterns, savePatterns, getFeedbackEntries, saveFeedbackEntries）───
+  // Section 6: Persistence (getPatterns, savePatterns, getFeedbackEntries, saveFeedbackEntries)
 
   describe("persistence", () => {
     describe("getPatterns / savePatterns", () => {
@@ -372,7 +372,7 @@ describe("LearningPipeline", () => {
     });
   });
 
-  // ─── 7. エッジケース ───
+  // Section 7: Edge cases
 
   describe("edge cases", () => {
     it("should use default config values when no config provided", async () => {

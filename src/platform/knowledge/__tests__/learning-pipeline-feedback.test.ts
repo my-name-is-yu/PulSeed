@@ -121,7 +121,7 @@ describe("LearningPipeline", () => {
     fs.rmSync(tmpDir, { recursive: true, force: true , maxRetries: 3, retryDelay: 100 });
   });
 
-  // ─── 2. フィードバック生成（generateFeedback）───
+  // Section 2: Feedback generation (generateFeedback)
 
   describe("generateFeedback", () => {
     it("should return empty array for empty patterns list", async () => {
@@ -363,7 +363,7 @@ describe("LearningPipeline", () => {
     });
   });
 
-  // ─── 3. フィードバック適用（applyFeedback）───
+  // Section 3: Feedback application (applyFeedback)
 
   describe("applyFeedback", () => {
     async function makePatternAndFeedback(
