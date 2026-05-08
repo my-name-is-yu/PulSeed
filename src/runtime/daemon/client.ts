@@ -8,6 +8,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { DEFAULT_PORT } from "../port-utils.js";
+import { parseOutboxSeq } from "../event/outbox-seq.js";
 import type { DaemonRuntimeControlRequestBody } from "./control-contracts.js";
 
 export interface DaemonClientConfig {
@@ -223,8 +224,8 @@ export class DaemonClient {
     }
 
     if (id) this.lastEventId = id;
-    const seq = Number.parseInt(id, 10);
-    if (Number.isFinite(seq) && seq > this.lastOutboxSeq) {
+    const seq = parseOutboxSeq(id);
+    if (seq !== null && seq > this.lastOutboxSeq) {
       this.lastOutboxSeq = seq;
     }
     if (!data && event === "message") return;

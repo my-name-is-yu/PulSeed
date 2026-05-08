@@ -638,4 +638,18 @@ describe("EventSubscriber", () => {
       expect(n!.message).toContain("short");
     });
   });
+
+  describe("SSE replay cursor", () => {
+    it("does not partially parse malformed SSE event ids", () => {
+      const sub = makeSubscriber("goal-abc", "normal");
+
+      (sub as any).parseSSEMessage('id: 9abc\nevent: goal_updated\ndata: {"goalId":"goal-abc","status":"running"}');
+
+      expect((sub as any).lastOutboxSeq).toBe(0);
+
+      (sub as any).parseSSEMessage('id: 10\nevent: goal_updated\ndata: {"goalId":"goal-abc","status":"running"}');
+
+      expect((sub as any).lastOutboxSeq).toBe(10);
+    });
+  });
 });
