@@ -91,6 +91,18 @@ describe("autoRegisterShellDataSources", () => {
     expect(configs).toHaveLength(0);
   });
 
+  it("does not auto-register shell datasources from substring dimension matches", async () => {
+    const sm = makeFakeStateManager(tmpDir);
+    await autoRegisterShellDataSources(
+      sm as never,
+      [{ name: "not_todo_count" }, { name: "todo_count_remaining" }],
+      "goal_no_substring"
+    );
+
+    const configs = readDsConfigs(datasourcesDir);
+    expect(configs).toHaveLength(0);
+  });
+
   it("produces valid JSON with the correct structure", async () => {
     const sm = makeFakeStateManager(tmpDir);
     await autoRegisterShellDataSources(

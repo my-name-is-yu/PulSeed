@@ -162,4 +162,13 @@ describe("findShellPattern", () => {
     expect(pattern!.output_type).toBe("raw");
     expect(pattern!.timeout_ms).toBe(120000);
   });
+
+  it("does not match known shell patterns by substring", () => {
+    expect(findShellPattern("not_todo_count")).toBeUndefined();
+    expect(findShellPattern("todo_count_remaining")).toBeUndefined();
+  });
+
+  it("accepts exact known shell pattern names after trimming whitespace", () => {
+    expect(findShellPattern(" todo_count ")).toBeDefined();
+  });
 });
