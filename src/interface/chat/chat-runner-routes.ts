@@ -40,6 +40,13 @@ import { createOperationProgressItem } from "./operation-progress.js";
 import { createRunSpecStore, formatRunSpecSetupProposal } from "../../runtime/run-spec/index.js";
 import type { RunSpecConfirmationState } from "./chat-history.js";
 import { buildStaticSystemPrompt } from "./grounding.js";
+import {
+  addUsageCounter,
+  hasUsage,
+  normalizeUsageCounter,
+  usageFromLLMResponse,
+  zeroUsageCounter,
+} from "./chat-usage.js";
 
 const DEFAULT_TIMEOUT_MS = 120_000;
 const MAX_VERIFY_RETRIES = 2;
@@ -1380,40 +1387,6 @@ function activateToolSearchResults(activatedTools: Set<string>, toolResult: stri
   } catch {
     // Non-JSON result or unexpected shape — ignore
   }
-}
-
-function zeroUsageCounter(): ChatUsageCounter {
-  return { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
-}
-
-function normalizeUsageCounter(usage: ChatUsageCounter): ChatUsageCounter {
-  const inputTokens = Number.isFinite(usage.inputTokens) ? Math.max(0, Math.floor(usage.inputTokens)) : 0;
-  const outputTokens = Number.isFinite(usage.outputTokens) ? Math.max(0, Math.floor(usage.outputTokens)) : 0;
-  const totalTokens = Number.isFinite(usage.totalTokens)
-    ? Math.max(0, Math.floor(usage.totalTokens))
-    : inputTokens + outputTokens;
-  return { inputTokens, outputTokens, totalTokens };
-}
-
-function usageFromLLMResponse(response: LLMResponse): ChatUsageCounter {
-  const inputTokens = response.usage?.input_tokens ?? 0;
-  const outputTokens = response.usage?.output_tokens ?? 0;
-  return {
-    inputTokens,
-    outputTokens,
-    totalTokens: inputTokens + outputTokens,
-  };
-}
-
-function addUsageCounter(target: ChatUsageCounter, delta: ChatUsageCounter): void {
-  const normalizedDelta = normalizeUsageCounter(delta);
-  target.inputTokens += normalizedDelta.inputTokens;
-  target.outputTokens += normalizedDelta.outputTokens;
-  target.totalTokens += normalizedDelta.totalTokens;
-}
-
-function hasUsage(usage: ChatUsageCounter): boolean {
-  return usage.totalTokens > 0 || usage.inputTokens > 0 || usage.outputTokens > 0;
 }
 
 export async function resolveSessionExecutionPolicy(

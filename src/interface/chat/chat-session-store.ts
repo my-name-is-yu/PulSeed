@@ -5,6 +5,7 @@ import { StateError } from "../../base/utils/errors.js";
 import type { StateManager } from "../../base/state/state-manager.js";
 import { ChatSessionSchema, type ChatSession } from "./chat-history.js";
 import { normalizeAgentLoopSessionState, type AgentLoopSessionState } from "../../orchestrator/execution/agent-loop/agent-loop-session-state.js";
+import { normalizeSessionUsage } from "./chat-usage.js";
 
 const CHAT_SESSION_DIR = path.join("chat", "sessions");
 const CHAT_AGENTLOOP_DIR = path.join("chat", "agentloop");
@@ -353,7 +354,7 @@ async function readSessionRecordWithMetadata(
     ...(parsed.data.agentLoop ? { agentLoop: parsed.data.agentLoop } : {}),
     ...(parsed.data.turnContexts ? { turnContexts: [...parsed.data.turnContexts] } : {}),
     ...(parsed.data.rolloutJournal ? { rolloutJournal: [...parsed.data.rolloutJournal] } : {}),
-    ...(parsed.data.usage ? { usage: parsed.data.usage } : {}),
+    ...(parsed.data.usage ? { usage: normalizeSessionUsage(parsed.data.usage) } : {}),
   };
 
   return normalizeSessionRecord(session, filePath, fileMtimeMs, discovery);
@@ -429,7 +430,7 @@ function toPersistedSession(session: LoadedChatSession): ChatSession {
     ...(session.agentLoop ? { agentLoop: session.agentLoop } : {}),
     ...(session.turnContexts ? { turnContexts: [...session.turnContexts] } : {}),
     ...(session.rolloutJournal ? { rolloutJournal: [...session.rolloutJournal] } : {}),
-    ...(session.usage ? { usage: session.usage } : {}),
+    ...(session.usage ? { usage: normalizeSessionUsage(session.usage) } : {}),
   };
 }
 

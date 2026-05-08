@@ -3,15 +3,21 @@ import { getPulseedDirPath } from "../../base/utils/paths.js";
 import { loadProviderConfig } from "../../base/llm/provider-config.js";
 import { TaskSchema, type Task } from "../../base/types/task.js";
 import type { Goal } from "../../base/types/goal.js";
-import type { LLMResponse } from "../../base/llm/llm-client.js";
 import type { LoadedChatSession } from "./chat-session-store.js";
-import type { ChatSession, ChatUsageCounter } from "./chat-history.js";
+import type { ChatSession } from "./chat-history.js";
 import {
   collectGoalUsage,
   collectScheduleUsage,
   listRecoverableArchivedGoalIds,
   readTasksForGoal,
 } from "./chat-runner-state.js";
+export {
+  formatUsageCounter,
+  hasUsage,
+  normalizeUsageCounter,
+  usageFromLLMResponse,
+  zeroUsageCounter,
+} from "./chat-usage.js";
 
 export interface ProviderConfigSummary {
   provider: string;
@@ -165,41 +171,6 @@ export function formatConfig(config: ProviderConfigSummary): string {
     .filter(([, value]) => value !== undefined)
     .map(([key, value]) => `${key}: ${typeof value === "string" && /key|token|secret/i.test(key) ? "[masked]" : String(value)}`)
     .join("\n");
-}
-
-export function zeroUsageCounter(): ChatUsageCounter {
-  return { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
-}
-
-export function normalizeUsageCounter(usage: ChatUsageCounter): ChatUsageCounter {
-  const inputTokens = Number.isFinite(usage.inputTokens) ? Math.max(0, Math.floor(usage.inputTokens)) : 0;
-  const outputTokens = Number.isFinite(usage.outputTokens) ? Math.max(0, Math.floor(usage.outputTokens)) : 0;
-  const totalTokens = Number.isFinite(usage.totalTokens)
-    ? Math.max(0, Math.floor(usage.totalTokens))
-    : inputTokens + outputTokens;
-  return { inputTokens, outputTokens, totalTokens };
-}
-
-export function usageFromLLMResponse(response: LLMResponse): ChatUsageCounter {
-  const inputTokens = response.usage?.input_tokens ?? 0;
-  const outputTokens = response.usage?.output_tokens ?? 0;
-  return {
-    inputTokens,
-    outputTokens,
-    totalTokens: inputTokens + outputTokens,
-  };
-}
-
-export function hasUsage(usage: ChatUsageCounter): boolean {
-  return usage.totalTokens > 0 || usage.inputTokens > 0 || usage.outputTokens > 0;
-}
-
-export function formatUsageCounter(prefix: string, usage: ChatUsageCounter): string[] {
-  return [
-    `${prefix} input tokens:  ${usage.inputTokens}`,
-    `${prefix} output tokens: ${usage.outputTokens}`,
-    `${prefix} total tokens:  ${usage.totalTokens}`,
-  ];
 }
 
 export async function buildGoalUsageSummary(stateManager: StateManager, goalId: string): Promise<string[]> {
