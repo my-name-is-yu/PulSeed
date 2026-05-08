@@ -2,6 +2,7 @@ import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { parseArgs } from "node:util";
 import type { StateManager } from "../../../base/state/state-manager.js";
+import { parseUsagePeriodMs } from "../../usage-period.js";
 
 interface UsageCounter {
   inputTokens: number;
@@ -25,21 +26,6 @@ function normalizeUsageCounter(raw: unknown): UsageCounter {
     ? Math.max(0, Math.floor(totalValue))
     : inputTokens + outputTokens;
   return { inputTokens, outputTokens, totalTokens };
-}
-
-function parseUsagePeriodMs(period: string): number {
-  const match = /^(\d+)([dhw])$/i.exec(period.trim());
-  if (!match) {
-    throw new Error("period must look like 7d, 24h, or 2w");
-  }
-  const value = Number(match[1]);
-  const unit = match[2]?.toLowerCase();
-  if (!Number.isFinite(value) || value <= 0) {
-    throw new Error("period value must be positive");
-  }
-  if (unit === "h") return value * 60 * 60 * 1000;
-  if (unit === "w") return value * 7 * 24 * 60 * 60 * 1000;
-  return value * 24 * 60 * 60 * 1000;
 }
 
 async function collectGoalUsage(stateManager: StateManager, goalId: string): Promise<{

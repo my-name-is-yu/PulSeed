@@ -123,7 +123,15 @@ describe("chat-runner-state helpers", () => {
     });
   });
 
+  it("parseUsagePeriodMs parses exact supported periods", () => {
+    expect(parseUsagePeriodMs("24h")).toBe(24 * 60 * 60 * 1000);
+    expect(parseUsagePeriodMs("7d")).toBe(7 * 24 * 60 * 60 * 1000);
+    expect(parseUsagePeriodMs("2w")).toBe(2 * 7 * 24 * 60 * 60 * 1000);
+  });
+
   it("parseUsagePeriodMs rejects invalid periods", () => {
-    expect(() => parseUsagePeriodMs("tomorrow")).toThrow("period must be one of 24h, 7d, 2w");
+    expect(() => parseUsagePeriodMs("tomorrow")).toThrow("period must look like 7d, 24h, or 2w");
+    expect(() => parseUsagePeriodMs("9007199254740993d")).toThrow("period value must be a positive safe integer");
+    expect(() => parseUsagePeriodMs("9007199254740991d")).toThrow("period value is too large");
   });
 });

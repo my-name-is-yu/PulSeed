@@ -1,6 +1,7 @@
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { TaskSchema, type Task } from "../../base/types/task.js";
+import { parseUsagePeriodMs } from "../usage-period.js";
 
 export interface GoalUsageSummary {
   goalId: string;
@@ -77,20 +78,7 @@ export async function readTasksForGoal(baseDir: string, goalId: string): Promise
   return readTasksFromDir(archiveTasksDir);
 }
 
-export function parseUsagePeriodMs(period: string): number {
-  const match = /^(\d+)([dhw])$/i.exec(period.trim());
-  if (!match) {
-    throw new Error("period must be one of 24h, 7d, 2w");
-  }
-  const value = Number(match[1]);
-  const unit = match[2]?.toLowerCase();
-  if (!Number.isFinite(value) || value <= 0) {
-    throw new Error("period value must be positive");
-  }
-  if (unit === "h") return value * 60 * 60 * 1000;
-  if (unit === "w") return value * 7 * 24 * 60 * 60 * 1000;
-  return value * 24 * 60 * 60 * 1000;
-}
+export { parseUsagePeriodMs };
 
 export async function collectGoalUsage(baseDir: string, goalId: string): Promise<GoalUsageSummary> {
   const ledgerDir = path.join(baseDir, "tasks", goalId, "ledger");
