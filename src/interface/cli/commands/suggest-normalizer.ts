@@ -11,6 +11,19 @@ import { buildTodoLikeMarkerInventory, formatTodoLikeMarkerInventory } from "./g
 
 // ─── Path helpers ───
 
+export function hasRepositorySuggestionSurface(targetPath: string): boolean {
+  return [
+    ".git",
+    "package.json",
+    "README.md",
+    "README",
+    "src",
+    "tests",
+    "test",
+    "docs",
+  ].some((entry) => fs.existsSync(`${targetPath}/${entry}`));
+}
+
 export function extractCandidatePaths(targetPath: string, context: string, repoFiles: string[] = []): string[] {
   const normalizedTarget = targetPath && targetPath !== "." ? targetPath.replace(/\/+$/, "") : ".";
   const candidates = new Set<string>();
@@ -208,16 +221,21 @@ function normalizeLegacySuggestion(
   displayPath: string,
   context: string,
   repoFiles: string[] = [],
-  isSoftwareGoal = true
+  isSoftwareGoal = true,
+  repositorySuggestionSurface = isSoftwareGoal
 ): Suggestion {
   const record = candidate && typeof candidate === "object" ? candidate as Record<string, unknown> : {};
-  const title = pickFirstString(record.title, record.name, record.goal, record.action, "Repository improvement");
+  const fallbackTitle = isSoftwareGoal ? "Repository improvement" : "Concrete improvement";
+  const title = pickFirstString(record.title, record.name, record.goal, record.action, fallbackTitle);
+  const fallbackRationale = isSoftwareGoal
+    ? `Improve ${displayPath} with a concrete, verifiable next step.`
+    : "Improve the provided context with a concrete, verifiable next step.";
   const rationale = pickFirstString(
     record.rationale,
     record.reason,
     record.why,
     record.description,
-    `Improve ${displayPath} with a concrete, verifiable next step.`
+    fallbackRationale
   );
   const description = pickFirstString(record.description, record.summary, record.details, record.rationale, title);
   const dimensions = pickStringArray(
@@ -234,6 +252,18 @@ function normalizeLegacySuggestion(
     (record.repo_context as { path?: unknown } | undefined)?.path,
     displayPath
   );
+  const steps = pickStringArray(record.steps, record.actions, record.tasks, record.checklist);
+  if (!isSoftwareGoal && !repositorySuggestionSurface) {
+    return {
+      title: title.trim(),
+      rationale: rationale.trim(),
+      steps: steps.length > 0 ? steps : [description.trim()],
+      success_criteria: dimensions.length > 0
+        ? dimensions.map((dimension) => `${dimension} reaches target threshold.`)
+        : ["Complete the concrete next step and verify the result."],
+    };
+  }
+
   const actionable = ensureActionableSuggestion(
     {
       title,
@@ -245,7 +275,6 @@ function normalizeLegacySuggestion(
     context,
     repoFiles
   );
-  const steps = pickStringArray(record.steps, record.actions, record.tasks, record.checklist);
   const normalizedSteps = steps.length > 0 ? steps : [actionable.description];
   const successCriteria = dimensions.length > 0
     ? dimensions.map((dimension) => `${dimension} reaches target threshold.`)
@@ -274,6 +303,10 @@ function extractSuggestCandidates(rawOutput: unknown): unknown[] {
   }
 
   const record = rawOutput as Record<string, unknown>;
+  if (Object.keys(record).length === 0) {
+    return [];
+  }
+
   const nestedCandidates = record.suggestions
     ?? record.goals
     ?? record.items
@@ -282,14 +315,30 @@ function extractSuggestCandidates(rawOutput: unknown): unknown[] {
   return Array.isArray(nestedCandidates) ? nestedCandidates : [record];
 }
 
+function buildGeneralFallbackSuggestPayload(): SuggestOutput {
+  return {
+    suggestions: [{
+      title: "Define one concrete improvement",
+      rationale: "No valid suggestions were produced. Use the provided context to define a concrete, measurable next step.",
+      steps: ["Review the provided context and define one concrete, measurable improvement."],
+      success_criteria: ["The next step is specific, measurable, and has a clear completion signal."],
+    }],
+  };
+}
+
 export function buildFallbackSuggestPayload(
   targetPath: string,
   displayPath: string,
   context: string,
   maxSuggestions: number,
   repoFiles: string[] = [],
-  isSoftwareGoal = true
+  isSoftwareGoal = true,
+  repositorySuggestionSurface = isSoftwareGoal
 ): SuggestOutput {
+  if (!isSoftwareGoal && !repositorySuggestionSurface) {
+    return buildGeneralFallbackSuggestPayload();
+  }
+
   const suggestions = synthesizeFallbackSuggestions(targetPath, context, Math.max(1, maxSuggestions), repoFiles)
     .map((suggestion) => {
       const item: Suggestion = {
@@ -333,11 +382,20 @@ export function normalizeLegacySuggestPayload(
   context: string,
   maxSuggestions: number,
   repoFiles: string[] = [],
-  isSoftwareGoal = true
+  isSoftwareGoal = true,
+  repositorySuggestionSurface = isSoftwareGoal
 ): SuggestOutput {
   const candidateSource = extractSuggestCandidates(rawOutput);
   const normalizedSuggestions = candidateSource
-    .map((candidate) => normalizeLegacySuggestion(candidate, targetPath, displayPath, context, repoFiles, isSoftwareGoal))
+    .map((candidate) => normalizeLegacySuggestion(
+      candidate,
+      targetPath,
+      displayPath,
+      context,
+      repoFiles,
+      isSoftwareGoal,
+      repositorySuggestionSurface,
+    ))
     .filter((suggestion, index, all) => all.findIndex((item) => item.title === suggestion.title) === index)
     .slice(0, Math.max(1, maxSuggestions));
 
@@ -345,7 +403,7 @@ export function normalizeLegacySuggestPayload(
     return { suggestions: normalizedSuggestions };
   }
 
-  return buildFallbackSuggestPayload(targetPath, displayPath, context, maxSuggestions, repoFiles, isSoftwareGoal);
+  return buildFallbackSuggestPayload(targetPath, displayPath, context, maxSuggestions, repoFiles, isSoftwareGoal, repositorySuggestionSurface);
 }
 
 export function normalizeSuggestPayload(
@@ -355,7 +413,8 @@ export function normalizeSuggestPayload(
   context: string,
   maxSuggestions: number,
   repoFiles: string[] = [],
-  isSoftwareGoal = true
+  isSoftwareGoal = true,
+  repositorySuggestionSurface = isSoftwareGoal
 ): SuggestOutput {
   const parsed = SuggestOutputSchema.safeParse(rawOutput);
   if (parsed.success) {
@@ -374,14 +433,15 @@ export function normalizeSuggestPayload(
     context,
     maxSuggestions,
     repoFiles,
-    isSoftwareGoal
+    isSoftwareGoal,
+    repositorySuggestionSurface,
   );
   const reparsed = SuggestOutputSchema.safeParse(legacyNormalized);
   if (reparsed.success) {
     return reparsed.data;
   }
 
-  const fallback = buildFallbackSuggestPayload(targetPath, displayPath, context, maxSuggestions, repoFiles, isSoftwareGoal);
+  const fallback = buildFallbackSuggestPayload(targetPath, displayPath, context, maxSuggestions, repoFiles, isSoftwareGoal, repositorySuggestionSurface);
   const fallbackParsed = SuggestOutputSchema.safeParse(fallback);
   if (!fallbackParsed.success) {
     throw new Error(`Failed to normalize suggest output: ${fallbackParsed.error.message}`);

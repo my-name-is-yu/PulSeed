@@ -1,5 +1,6 @@
 // ─── pulseed suggest and improve commands ───
 
+import * as path from "node:path";
 import { parseArgs } from "node:util";
 
 import { StateManager } from "../../../base/state/state-manager.js";
@@ -15,6 +16,7 @@ import {
   normalizeSuggestPayload,
   generateSuggestOutput,
   gatherProjectContext,
+  hasRepositorySuggestionSurface,
 } from "./suggest-normalizer.js";
 import { looksLikeSoftwareGoal, SuggestTimeoutError } from "../../../orchestrator/goal/goal-suggest.js";
 import {
@@ -100,9 +102,11 @@ export async function cmdSuggest(
 
   const { deps, existingTitles, capabilityDetector } = setupResult;
   const targetPath = values.path?.trim() ? values.path : ".";
+  const targetFsPath = path.isAbsolute(targetPath) ? targetPath : path.resolve(process.cwd(), targetPath);
   const maxSuggestions = parseInt(values.max ?? "5", 10);
   const repoFiles: string[] = [];
   const isSoftware = looksLikeSoftwareGoal(context);
+  const repositorySurface = hasRepositorySuggestionSurface(targetFsPath);
 
   console.log("Generating goal suggestions...\n");
 
@@ -123,7 +127,7 @@ export async function cmdSuggest(
   }
 
   const suggestions = Array.isArray(suggestRaw) ? { suggestions: suggestRaw } : suggestRaw;
-  const finalPayload = normalizeSuggestPayload(suggestions, targetPath, targetPath, context, maxSuggestions, repoFiles, isSoftware);
+  const finalPayload = normalizeSuggestPayload(suggestions, targetPath, targetPath, context, maxSuggestions, repoFiles, isSoftware, repositorySurface);
   console.log(JSON.stringify(finalPayload, null, 2));
 
   return 0;
@@ -156,6 +160,7 @@ export async function cmdImprove(
   }
 
   const targetPath = positionals[0] || ".";
+  const targetFsPath = path.isAbsolute(targetPath) ? targetPath : path.resolve(process.cwd(), targetPath);
   console.log(`\n[PulSeed Improve] Analyzing ${targetPath}...\n`);
 
   try {
@@ -178,6 +183,7 @@ export async function cmdImprove(
   const maxSuggestions = parseInt(values.max || "3", 10);
   const repoFiles: string[] = [];
   const isSoftware = looksLikeSoftwareGoal(context);
+  const repositorySurface = hasRepositorySuggestionSurface(targetFsPath);
 
   let rawSuggestOutput: unknown;
   try {
@@ -196,7 +202,7 @@ export async function cmdImprove(
   }
 
   const rawSuggestions = Array.isArray(rawSuggestOutput) ? { suggestions: rawSuggestOutput } : rawSuggestOutput;
-  const normalizedPayload = normalizeSuggestPayload(rawSuggestions, targetPath, targetPath, context, maxSuggestions, repoFiles, isSoftware);
+  const normalizedPayload = normalizeSuggestPayload(rawSuggestions, targetPath, targetPath, context, maxSuggestions, repoFiles, isSoftware, repositorySurface);
   const suggestions = normalizedPayload.suggestions;
 
   if (suggestions.length === 0) {
