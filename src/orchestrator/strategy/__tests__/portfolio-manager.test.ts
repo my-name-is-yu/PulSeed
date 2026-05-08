@@ -1302,6 +1302,75 @@ describe("PortfolioManager", () => {
       }
     });
 
+    it("does not infer process session exit from unsafe pid metadata", async () => {
+      const tmpDir = makeTempDir();
+      try {
+        const unsafePid = Number.MAX_SAFE_INTEGER + 1;
+        fs.mkdirSync(path.join(tmpDir, "runtime", "process-sessions"), { recursive: true });
+        fs.writeFileSync(
+          path.join(tmpDir, "runtime", "process-sessions", "sess-unsafe.json"),
+          JSON.stringify({ session_id: "sess-unsafe", running: true, pid: unsafePid, exitCode: null })
+        );
+        const wait = makeWaitStrategy({
+          id: "ws1",
+          state: "active",
+          wait_until: new Date(Date.now() - 100_000).toISOString(),
+          gap_snapshot_at_start: 0.8,
+          primary_dimension: "quality",
+        });
+        const portfolio = makePortfolio([wait]);
+        (mockStrategyManager.getPortfolio as ReturnType<typeof vi.fn>).mockReturnValue(portfolio);
+        (mockStateManager.getBaseDir as ReturnType<typeof vi.fn>).mockReturnValue(tmpDir);
+        (mockStateManager.readRaw as ReturnType<typeof vi.fn>).mockImplementation((rawPath: string) => {
+          if (rawPath === "strategies/goal-1/wait-meta/ws1.json") {
+            return {
+              schema_version: 1,
+              wait_until: wait.wait_until,
+              conditions: [{ type: "process_session_exited", session_id: "sess-unsafe" }],
+              resume_plan: { action: "complete_wait" },
+              process_refs: [{ session_id: "sess-unsafe", metadata_relative_path: path.join("runtime", "process-sessions", "sess-unsafe.json") }],
+            };
+          }
+          if (rawPath === "capability_registry.json") {
+            return { capabilities: [], last_checked: new Date().toISOString() };
+          }
+          return { quality: 0.5 };
+        });
+        const killSpy = vi.spyOn(process, "kill").mockImplementation(((pid: number | NodeJS.Signals) => {
+          if (pid === unsafePid) {
+            throw new TypeError("unsafe pid");
+          }
+          throw new Error(`unexpected process probe for ${String(pid)}`);
+        }) as typeof process.kill);
+
+        const result = await pm.handleWaitStrategyExpiry("goal-1", "ws1");
+
+        expect(result).toMatchObject({
+          status: "not_due",
+          strategy_id: "ws1",
+          details: "process session still running: sess-unsafe",
+        });
+        expect(killSpy).not.toHaveBeenCalled();
+        expect(mockStrategyManager.updateState).not.toHaveBeenCalled();
+        expect(mockStateManager.writeRaw).toHaveBeenCalledWith(
+          "strategies/goal-1/wait-meta/ws1.json",
+          expect.objectContaining({
+            latest_observation: expect.objectContaining({
+              status: "stale",
+              resume_hint: "process session still running: sess-unsafe",
+              evidence: expect.objectContaining({
+                conditions: expect.arrayContaining([
+                  expect.objectContaining({ session_id: "sess-unsafe", pid: unsafePid }),
+                ]),
+              }),
+            }),
+          })
+        );
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+      }
+    });
+
     it("does not read process session metadata through escaping relative paths", async () => {
       const tmpDir = makeTempDir();
       const outsideDir = makeTempDir();
