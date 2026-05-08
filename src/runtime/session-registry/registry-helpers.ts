@@ -210,11 +210,20 @@ export function processArtifacts(snapshot: ProcessSessionSnapshot): RuntimeArtif
 
 export function classifyArtifact(artifactPath: string): RuntimeArtifactRef["kind"] {
   const basename = path.basename(artifactPath).toLowerCase();
-  if (basename.endsWith(".log") || basename.includes("log")) return "log";
-  if (basename.endsWith(".json") && (basename.includes("metric") || basename.includes("score") || basename.includes("result") || basename.includes("evidence"))) return "metrics";
+  const tokens = artifactNameTokens(basename);
+  if (basename.endsWith(".log") || hasArtifactToken(tokens, ["log", "logs"])) return "log";
+  if (basename.endsWith(".json") && hasArtifactToken(tokens, ["metric", "metrics", "score", "scores", "result", "results", "evidence"])) return "metrics";
   if (basename.endsWith(".md") || basename.endsWith(".txt")) return "report";
   if (basename.endsWith(".diff") || basename.endsWith(".patch")) return "diff";
   return "other";
+}
+
+function artifactNameTokens(basename: string): string[] {
+  return path.parse(basename).name.split(/[^a-z0-9]+/).filter(Boolean);
+}
+
+function hasArtifactToken(tokens: string[], accepted: readonly string[]): boolean {
+  return tokens.some((token) => accepted.includes(token));
 }
 
 export function relativeToBase(baseDir: string, maybePath: string | null): string | null {
