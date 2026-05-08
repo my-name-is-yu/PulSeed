@@ -11,6 +11,19 @@ import { buildTodoLikeMarkerInventory, formatTodoLikeMarkerInventory } from "./g
 
 // ─── Path helpers ───
 
+export function hasRepositorySuggestionSurface(targetPath: string): boolean {
+  return [
+    ".git",
+    "package.json",
+    "README.md",
+    "README",
+    "src",
+    "tests",
+    "test",
+    "docs",
+  ].some((entry) => fs.existsSync(`${targetPath}/${entry}`));
+}
+
 export function extractCandidatePaths(targetPath: string, context: string, repoFiles: string[] = []): string[] {
   const normalizedTarget = targetPath && targetPath !== "." ? targetPath.replace(/\/+$/, "") : ".";
   const candidates = new Set<string>();
@@ -208,7 +221,8 @@ function normalizeLegacySuggestion(
   displayPath: string,
   context: string,
   repoFiles: string[] = [],
-  isSoftwareGoal = true
+  isSoftwareGoal = true,
+  repositorySuggestionSurface = isSoftwareGoal
 ): Suggestion {
   const record = candidate && typeof candidate === "object" ? candidate as Record<string, unknown> : {};
   const fallbackTitle = isSoftwareGoal ? "Repository improvement" : "Concrete improvement";
@@ -239,7 +253,7 @@ function normalizeLegacySuggestion(
     displayPath
   );
   const steps = pickStringArray(record.steps, record.actions, record.tasks, record.checklist);
-  if (!isSoftwareGoal) {
+  if (!isSoftwareGoal && !repositorySuggestionSurface) {
     return {
       title: title.trim(),
       rationale: rationale.trim(),
@@ -318,9 +332,10 @@ export function buildFallbackSuggestPayload(
   context: string,
   maxSuggestions: number,
   repoFiles: string[] = [],
-  isSoftwareGoal = true
+  isSoftwareGoal = true,
+  repositorySuggestionSurface = isSoftwareGoal
 ): SuggestOutput {
-  if (!isSoftwareGoal) {
+  if (!isSoftwareGoal && !repositorySuggestionSurface) {
     return buildGeneralFallbackSuggestPayload();
   }
 
@@ -367,11 +382,20 @@ export function normalizeLegacySuggestPayload(
   context: string,
   maxSuggestions: number,
   repoFiles: string[] = [],
-  isSoftwareGoal = true
+  isSoftwareGoal = true,
+  repositorySuggestionSurface = isSoftwareGoal
 ): SuggestOutput {
   const candidateSource = extractSuggestCandidates(rawOutput);
   const normalizedSuggestions = candidateSource
-    .map((candidate) => normalizeLegacySuggestion(candidate, targetPath, displayPath, context, repoFiles, isSoftwareGoal))
+    .map((candidate) => normalizeLegacySuggestion(
+      candidate,
+      targetPath,
+      displayPath,
+      context,
+      repoFiles,
+      isSoftwareGoal,
+      repositorySuggestionSurface,
+    ))
     .filter((suggestion, index, all) => all.findIndex((item) => item.title === suggestion.title) === index)
     .slice(0, Math.max(1, maxSuggestions));
 
@@ -379,7 +403,7 @@ export function normalizeLegacySuggestPayload(
     return { suggestions: normalizedSuggestions };
   }
 
-  return buildFallbackSuggestPayload(targetPath, displayPath, context, maxSuggestions, repoFiles, isSoftwareGoal);
+  return buildFallbackSuggestPayload(targetPath, displayPath, context, maxSuggestions, repoFiles, isSoftwareGoal, repositorySuggestionSurface);
 }
 
 export function normalizeSuggestPayload(
@@ -389,7 +413,8 @@ export function normalizeSuggestPayload(
   context: string,
   maxSuggestions: number,
   repoFiles: string[] = [],
-  isSoftwareGoal = true
+  isSoftwareGoal = true,
+  repositorySuggestionSurface = isSoftwareGoal
 ): SuggestOutput {
   const parsed = SuggestOutputSchema.safeParse(rawOutput);
   if (parsed.success) {
@@ -408,14 +433,15 @@ export function normalizeSuggestPayload(
     context,
     maxSuggestions,
     repoFiles,
-    isSoftwareGoal
+    isSoftwareGoal,
+    repositorySuggestionSurface,
   );
   const reparsed = SuggestOutputSchema.safeParse(legacyNormalized);
   if (reparsed.success) {
     return reparsed.data;
   }
 
-  const fallback = buildFallbackSuggestPayload(targetPath, displayPath, context, maxSuggestions, repoFiles, isSoftwareGoal);
+  const fallback = buildFallbackSuggestPayload(targetPath, displayPath, context, maxSuggestions, repoFiles, isSoftwareGoal, repositorySuggestionSurface);
   const fallbackParsed = SuggestOutputSchema.safeParse(fallback);
   if (!fallbackParsed.success) {
     throw new Error(`Failed to normalize suggest output: ${fallbackParsed.error.message}`);

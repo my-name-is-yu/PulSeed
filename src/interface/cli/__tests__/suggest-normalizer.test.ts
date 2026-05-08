@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { normalizeSuggestPayload } from "../commands/suggest-normalizer.js";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import { hasRepositorySuggestionSurface, normalizeSuggestPayload } from "../commands/suggest-normalizer.js";
 
 const validSuggestionWithRepoContext = {
   title: "Add tests",
@@ -14,6 +17,17 @@ const validInput = {
 };
 
 describe("normalizeSuggestPayload fast-path", () => {
+  it("detects repository suggestion surface from exact filesystem entries", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-suggest-surface-"));
+    try {
+      expect(hasRepositorySuggestionSurface(tmpDir)).toBe(false);
+      fs.writeFileSync(path.join(tmpDir, "README.md"), "# Notes\n");
+      expect(hasRepositorySuggestionSurface(tmpDir)).toBe(true);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it("preserves repo_context when isSoftwareGoal=true", () => {
     const result = normalizeSuggestPayload(validInput, ".", ".", "context", 3, [], true);
     expect(result.suggestions).toHaveLength(1);
