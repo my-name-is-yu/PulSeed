@@ -1,6 +1,7 @@
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { writeJsonFileAtomic, readJsonFileOrNull } from "../../base/utils/json-io.js";
+import { isProcessPidValue } from "../../base/utils/process-pid.js";
 import { ScheduleEntryListSchema, type ScheduleEntry } from "../types/schedule.js";
 
 const SCHEDULES_FILE = "schedules.json";
@@ -95,7 +96,7 @@ export class ScheduleEntryStore {
     try {
       const raw = await fsp.readFile(path.join(this.schedulesLockPath, "owner.json"), "utf-8");
       const owner = JSON.parse(raw) as { pid?: unknown };
-      if (typeof owner.pid === "number") {
+      if (isProcessPidValue(owner.pid)) {
         try {
           process.kill(owner.pid, 0);
           return;
