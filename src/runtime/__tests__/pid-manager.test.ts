@@ -404,5 +404,17 @@ describe("PIDManager", () => {
       expect(status.stalePids).toEqual([legacyPid]);
       expect(fs.existsSync(legacyPidManager.getPath())).toBe(false);
     });
+
+    it("rejects legacy numeric pidfiles with trailing non-numeric content", async () => {
+      const legacyPidManager = new PIDManager(tmpDir, "legacy-malformed.pid");
+      fs.writeFileSync(legacyPidManager.getPath(), "7101abc", "utf-8");
+
+      await expect(legacyPidManager.readPID()).resolves.toBeNull();
+      const status = await legacyPidManager.inspect();
+
+      expect(status.info).toBeNull();
+      expect(status.running).toBe(false);
+      expect(status.alivePids).toEqual([]);
+    });
   });
 });

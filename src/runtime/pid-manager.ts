@@ -2,6 +2,7 @@ import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { execFileSync } from "node:child_process";
 import { writeJsonFile } from "../base/utils/json-io.js";
+import { parseProcessPid } from "../base/utils/process-pid.js";
 import { PIDInfoSchema, type PIDInfo } from "./types/daemon.js";
 
 const PID_EPOCH_ISO = "1970-01-01T00:00:00.000Z";
@@ -380,8 +381,8 @@ export class PIDManager {
     }
 
     if (!trimmed.startsWith("{")) {
-      const pid = parseInt(trimmed, 10);
-      if (!Number.isInteger(pid) || pid <= 0) {
+      const pid = parseProcessPid(trimmed);
+      if (pid === null) {
         return null;
       }
       return PIDInfoSchema.parse({

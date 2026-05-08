@@ -2,6 +2,7 @@ import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { randomUUID } from "node:crypto";
 import { writeJsonFileAtomic, readJsonFileOrNull } from "../base/utils/json-io.js";
+import { parseProcessPid } from "../base/utils/process-pid.js";
 
 export interface GoalLeaseRecord {
   goal_id: string;
@@ -54,8 +55,8 @@ async function writeMutexPid(mutexDir: string): Promise<void> {
 async function clearStaleMutex(mutexDir: string): Promise<boolean> {
   try {
     const pidText = await fsp.readFile(path.join(mutexDir, "pid"), "utf-8");
-    const pid = Number.parseInt(pidText.trim(), 10);
-    if (!Number.isFinite(pid) || !(await isProcessAlive(pid))) {
+    const pid = parseProcessPid(pidText);
+    if (pid === null || !(await isProcessAlive(pid))) {
       await fsp.rm(mutexDir, { recursive: true, force: true });
       return true;
     }

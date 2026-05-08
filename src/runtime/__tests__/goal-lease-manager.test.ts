@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import * as fs from "node:fs";
+import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { makeTempDir, cleanupTempDir } from "../../../tests/helpers/temp-dir.js";
 import { GoalLeaseManager } from "../goal-lease-manager.js";
@@ -26,6 +27,24 @@ describe("GoalLeaseManager", () => {
     expect(record!.goal_id).toBe("goal-1");
     expect(record!.lease_until).toBe(2000);
     expect(await manager.read("goal-1")).toEqual(record);
+  });
+
+  it("clears a stale mutex with a malformed pid prefixing a live process id", async () => {
+    tmpDir = makeTempDir();
+    const manager = new GoalLeaseManager(tmpDir, 1_000);
+    const mutexPath = path.join(tmpDir, "leases", "goal", "goal-1.json.lock");
+    await fsp.mkdir(mutexPath, { recursive: true });
+    await fsp.writeFile(path.join(mutexPath, "pid"), `${process.pid}abc`, "utf-8");
+
+    const record = await manager.acquire("goal-1", {
+      workerId: "worker-a",
+      ownerToken: "owner-a",
+      attemptId: "attempt-a",
+      now: 1000,
+    });
+
+    expect(record).not.toBeNull();
+    expect(record!.owner_token).toBe("owner-a");
   });
 
   it("blocks a second active acquire for the same goal", async () => {

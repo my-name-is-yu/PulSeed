@@ -75,6 +75,24 @@ describe("state-lock", () => {
     await releaseLock("goal-stale", tmpDir);
   });
 
+  it("does not clear a lock when the pid file is not an exact process id", async () => {
+    tmpDir = makeTempDir();
+    const lockDir = path.join(tmpDir, "locks", "goals", "goal-invalid-pid.lock");
+    await fsp.mkdir(lockDir, { recursive: true });
+    await fsp.writeFile(path.join(lockDir, "pid"), "999999999abc", "utf-8");
+
+    await expect(
+      acquireLock("goal-invalid-pid", tmpDir, {
+        maxRetries: 1,
+        initialDelayMs: 5,
+        maxTotalMs: 20,
+      })
+    ).rejects.toThrow(/timeout|max retries/i);
+
+    expect(fs.existsSync(lockDir)).toBe(true);
+    await fsp.rm(lockDir, { recursive: true, force: true });
+  });
+
   it("second acquire waits then succeeds after release", async () => {
     tmpDir = makeTempDir();
     await acquireLock("goal-seq", tmpDir);
