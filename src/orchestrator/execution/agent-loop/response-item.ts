@@ -1,7 +1,6 @@
 import { z } from "zod";
 import { ToolResultSchema } from "../../../tools/types.js";
 import type { ToolResult } from "../../../tools/types.js";
-import type { AgentLoopMessagePhase, AgentLoopToolCall } from "./agent-loop-model.js";
 
 export const ResponseItemPhaseSchema = z.enum(["commentary", "final_answer"]);
 
@@ -97,7 +96,7 @@ export type ToolObservationResponseItem =
 
 export function assistantTextResponseItem(
   content: string,
-  phase?: AgentLoopMessagePhase,
+  phase?: AssistantTextResponseItem["phase"],
 ): AssistantTextResponseItem {
   return {
     type: "assistant_text",
@@ -113,7 +112,7 @@ export function reasoningProgressResponseItem(content: string): ReasoningProgres
   };
 }
 
-export function functionToolCallResponseItem(call: AgentLoopToolCall): FunctionToolCallResponseItem {
+export function functionToolCallResponseItem(call: { id: string; name: string; input: unknown }): FunctionToolCallResponseItem {
   return {
     type: "function_tool_call",
     id: call.id,
