@@ -113,7 +113,7 @@ PulSeed completed a 30-hour autonomous dogfood run on
 | Final Kaggle result | Finished with `0.97057` balanced accuracy, ranked `1,303 / 4,325` teams, approximately the top `30%`. |
 | Local validation | Improved OOF balanced accuracy from early 0.45-level baselines to a 0.970+ candidate set. |
 | Autonomous exploration | Generated, tested, and compared hypotheses across CatBoost variants, probability adjustment, class weighting, and post-OOF calibration. |
-| Evidence preserved | Kept logs, metrics, OOF predictions, submission candidates, and follow-up engineering issues from the run. |
+| Evidence preserved | Kept logs, metrics, OOF predictions, submission candidates, and follow-up engineering issues from the run; a redacted public evidence log is available at [pulseed-kaggle-s6e4-evidence-log](https://github.com/my-name-is-yu/pulseed-kaggle-s6e4-evidence-log). |
 
 ## Docs and Community
 
