@@ -317,15 +317,12 @@ export async function autoRegisterFileExistenceDataSources(
 
 /**
  * Find a shell pattern for a dimension name.
- * Tries exact match first, then fuzzy (dimName contains key or key contains dimName).
+ * Requires an exact known dimension key so generated free-form dimensions do
+ * not get wired to unrelated observation commands by substring overlap.
  * Returns undefined if no match found.
  */
 export function findShellPattern(dimName: string): ShellCommandConfig | undefined {
-  if (SHELL_DIMENSION_PATTERNS[dimName]) return SHELL_DIMENSION_PATTERNS[dimName];
-  for (const [key, pattern] of Object.entries(SHELL_DIMENSION_PATTERNS)) {
-    if (dimName.includes(key)) return pattern;
-  }
-  return undefined;
+  return SHELL_DIMENSION_PATTERNS[dimName.trim()];
 }
 
 export async function autoRegisterShellDataSources(
