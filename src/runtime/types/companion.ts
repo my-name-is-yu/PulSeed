@@ -108,3 +108,5 @@ export const CompanionOutputPolicyDecisionSchema = z.object({
   ]),
 });
 export type CompanionOutputPolicyDecision = z.infer<typeof CompanionOutputPolicyDecisionSchema>;
+
+export * from "./companion-autonomy.js";
