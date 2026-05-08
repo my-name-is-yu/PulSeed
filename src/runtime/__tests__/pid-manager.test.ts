@@ -135,6 +135,33 @@ describe("PIDManager", () => {
       expect(result!.runtime_pid).toBe(12345);
       expect(result!.owner_pid).toBe(12345);
     });
+
+    it("should return null when a JSON pid is not a safe process id", async () => {
+      fs.writeFileSync(
+        pidManager.getPath(),
+        JSON.stringify({
+          pid: Number.MAX_SAFE_INTEGER + 1,
+          started_at: "2026-01-01T00:00:00.000Z",
+        }),
+        "utf-8"
+      );
+
+      await expect(pidManager.readPID()).resolves.toBeNull();
+    });
+
+    it("should return null when an optional JSON pid is not a safe process id", async () => {
+      fs.writeFileSync(
+        pidManager.getPath(),
+        JSON.stringify({
+          pid: 12345,
+          owner_pid: Number.MAX_SAFE_INTEGER + 1,
+          started_at: "2026-01-01T00:00:00.000Z",
+        }),
+        "utf-8"
+      );
+
+      await expect(pidManager.readPID()).resolves.toBeNull();
+    });
   });
 
   // ─── isRunning ───
