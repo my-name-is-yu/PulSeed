@@ -35,9 +35,9 @@ export class CoreLoopLearning {
     }
     const remainingDays =
       (new Date(goal.target_date).getTime() - Date.now()) / (1000 * 60 * 60 * 24);
-    if (remainingDays <= 30) return 72 * 3600 * 1000;   // 短期: 72h
-    if (remainingDays <= 180) return 168 * 3600 * 1000; // 中期: 1week
-    return 336 * 3600 * 1000;                           // 長期: 2weeks
+    if (remainingDays <= 30) return 72 * 3600 * 1000;   // short-term: 72h
+    if (remainingDays <= 180) return 168 * 3600 * 1000; // mid-term: 1 week
+    return 336 * 3600 * 1000;                           // long-term: 2 weeks
   }
 
   /**
