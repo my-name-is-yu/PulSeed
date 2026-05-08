@@ -189,6 +189,29 @@ describe("gatherNegotiationContext", () => {
     );
   });
 
+  it("ignores partial numeric grep count tokens from ToolExecutor output", async () => {
+    const mockExecutor = {
+      execute: vi.fn(async (toolName: string, input: unknown) => {
+        if (toolName === "glob") {
+          return { success: true, data: [tmpDir + "/src/core.ts", tmpDir + "/src/utils.ts"], summary: "2 files", durationMs: 5 };
+        }
+        const inp = input as { outputMode?: string; pattern?: string };
+        if (toolName === "grep" && inp.outputMode === "count" && inp.pattern === "quality") {
+          return { success: true, data: "src/core.ts:5junk\nsrc/utils.ts:3", summary: "3 matches", durationMs: 5 };
+        }
+        if (toolName === "grep" && inp.outputMode === "count") {
+          return { success: true, data: "src/core.ts:0", summary: "0 matches", durationMs: 5 };
+        }
+        return { success: true, data: "", summary: "no matches", durationMs: 5 };
+      }),
+    } as unknown as ToolExecutor;
+
+    const result = await gatherNegotiationContext("quality", tmpDir, undefined, mockExecutor);
+
+    expect(result).toContain('"quality": 3 occurrences across 1 files');
+    expect(result).not.toContain('"quality": 8 occurrences across 2 files');
+  });
+
   it("uses ToolExecutor grep content for TODO markers", async () => {
     const mockExecutor = {
       execute: vi.fn(async (toolName: string, input: unknown) => {
