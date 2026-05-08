@@ -418,16 +418,7 @@ function failedLineageMatchesCandidate(
   lineage: DreamReviewFailedLineage,
   candidate: DreamReviewStrategyCandidate
 ): boolean {
-  const candidateText = normalizeApproachText(`${candidate.title} ${candidate.rationale}`);
-  if (!candidateText) return false;
-  const lineageTexts = [
-    lineage.strategy_family,
-    lineage.hypothesis,
-    lineage.task_action,
-  ].map((value) => normalizeApproachText(value ?? "")).filter(Boolean);
-  return lineageTexts.some((lineageText) =>
-    candidateText.includes(lineageText) || lineageText.includes(candidateText)
-  );
+  return (candidate.failed_lineage_fingerprints ?? []).includes(lineage.fingerprint);
 }
 
 function rejectedCandidateMatches(
