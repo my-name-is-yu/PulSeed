@@ -30,7 +30,11 @@ import {
 import type { Report } from "../../base/types/report.js";
 import { useLoop } from "./use-loop.js";
 import type { LoopState } from "./use-loop.js";
-import type { ActionHandler } from "./actions.js";
+import {
+  listRunnableStartGoals,
+  selectRunnableStartGoal,
+  type ActionHandler,
+} from "./actions.js";
 import type { IntentRecognizer } from "./intent-recognizer.js";
 import type { DurableLoop } from "../../orchestrator/loop/durable-loop.js";
 import type { StateManager } from "../../base/state/state-manager.js";
@@ -759,12 +763,20 @@ export function App({
           } else if (trimmed === "/dashboard" || trimmed === "/d") {
             setShowSidebar(prev => !prev);
           } else if (trimmed.startsWith("/start ")) {
-            const goalId = input.slice(7).trim();
-            if (goalId) {
-              startLoop(goalId);
+            const goalArg = action.input.trim().slice(7).trim();
+            const runnableGoals = await listRunnableStartGoals(stateManager);
+            const goal = goalArg ? selectRunnableStartGoal(runnableGoals, goalArg) : undefined;
+            if (goal) {
+              startLoop(goal.id);
               setMessages((prev) => [...prev, {
                 id: randomUUID(), role: "pulseed" as const,
-                text: `Starting goal: ${goalId}`, timestamp: new Date(), messageType: "info" as const,
+                text: `Starting goal: ${goal.title}`, timestamp: new Date(), messageType: "info" as const,
+              }].slice(-MAX_MESSAGES));
+            } else {
+              setMessages((prev) => [...prev, {
+                id: randomUUID(), role: "pulseed" as const,
+                text: `No goal matching "${goalArg}". Use /start <number> or /start <goal-id>.`,
+                timestamp: new Date(), messageType: "warning" as const,
               }].slice(-MAX_MESSAGES));
             }
           } else if (trimmed === "/stop") {
