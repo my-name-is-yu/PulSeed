@@ -8,6 +8,8 @@ export interface ParsedToolValue {
   type: "number" | "string" | "boolean" | "null";
 }
 
+const EXACT_FINITE_NUMBER_TOKEN = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i;
+
 /**
  * Parse raw tool output (shell stdout, glob file list, http response) into a typed value.
  *
@@ -30,8 +32,10 @@ export function parseToolOutput(
   if (isShellOutput(rawData)) {
     const stdout = rawData.stdout.trim();
     if (stdout === "") return { value: null, type: "null" };
-    const num = Number(stdout);
-    if (!isNaN(num)) return { value: num, type: "number" };
+    if (EXACT_FINITE_NUMBER_TOKEN.test(stdout)) {
+      const num = Number(stdout);
+      if (Number.isFinite(num)) return { value: num, type: "number" };
+    }
     return { value: stdout, type: "string" };
   }
 

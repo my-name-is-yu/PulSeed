@@ -32,6 +32,18 @@ describe("parseToolOutput", () => {
       expect(result.value).toBe(99);
       expect(result.type).toBe("number");
     });
+
+    it("keeps non-finite stdout tokens as strings", () => {
+      const result = parseToolOutput("shell", { stdout: "Infinity", stderr: "" });
+      expect(result.value).toBe("Infinity");
+      expect(result.type).toBe("string");
+    });
+
+    it("keeps numeric overflow stdout tokens as strings", () => {
+      const result = parseToolOutput("shell", { stdout: "1e309", stderr: "" });
+      expect(result.value).toBe("1e309");
+      expect(result.type).toBe("string");
+    });
   });
 
   describe("glob file list parsing", () => {
