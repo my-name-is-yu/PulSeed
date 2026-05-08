@@ -6,6 +6,7 @@ import {
   calculateDimensionGap,
   calculateGapVector,
   aggregateGaps,
+  dimensionProgress,
 } from "../gap-calculator.js";
 import type { Threshold } from "../../../base/types/core.js";
 import type { Dimension } from "../../../base/types/goal.js";
@@ -608,6 +609,20 @@ describe("edge cases", () => {
     expect(result).toBe(50);
   });
 
+  it("treats non-numeric string values as full gap for numeric thresholds", () => {
+    const result = calculateDimensionGap({
+      name: "error_rate",
+      current_value: "not-a-number",
+      threshold: { type: "max", value: 0.05 },
+      confidence: 0.9,
+      uncertainty_weight: null,
+    });
+
+    expect(result.normalized_gap).toBe(1);
+    expect(result.normalized_weighted_gap).toBe(1);
+    expect(dimensionProgress("not-a-number", { type: "max", value: 0.05 })).toBe(0);
+  });
+
   it("handles boolean current_value for numeric threshold", () => {
     const result = computeRawGap(true as unknown as number, {
       type: "min",
@@ -648,27 +663,19 @@ describe("edge cases", () => {
   // calculations). The tests below document the *current* behaviour of
   // computeRawGap so that any future change is intentional.
 
-  it("NaN current_value with min threshold: raw gap is NaN (does not silently zero out)", () => {
-    // NaN propagates through numeric subtraction. Callers must sanitise inputs
-    // before passing them to GapCalculator; this test pins the observable behaviour.
+  it("NaN current_value with min threshold: full raw gap", () => {
     const result = computeRawGap(NaN, { type: "min", value: 200 });
-    // NaN is not equal to itself — use Number.isNaN to assert propagation.
-    expect(Number.isNaN(result)).toBe(true);
+    expect(result).toBe(200);
   });
 
-  it("Infinity current_value with min threshold: gap is 0 (threshold already exceeded)", () => {
-    // Infinity >= any finite threshold, so the gap should be 0 (no deficit).
+  it("Infinity current_value with min threshold: full raw gap", () => {
     const result = computeRawGap(Infinity, { type: "min", value: 200 });
-    expect(result).toBe(0);
+    expect(result).toBe(200);
   });
 
-  it("-Infinity current_value with max threshold: gap is 0 (floor at zero via Math.max)", () => {
-    // -Infinity is below the max threshold, but computeRawGap uses
-    // Math.max(0, current - threshold), so the result is clamped to 0.
-    // This means -Infinity is treated as "no exceedance" — callers should
-    // treat -Infinity as invalid/unobserved data rather than relying on this.
+  it("-Infinity current_value with max threshold: full raw gap", () => {
     const result = computeRawGap(-Infinity, { type: "max", value: 0.05 });
-    expect(result).toBe(0);
+    expect(result).toBe(0.05);
   });
 
   it("match type: NaN and Infinity return gap=1", () => {

@@ -12,7 +12,6 @@ import type {
 } from "../../base/types/satisficing.js";
 import type { IEmbeddingClient } from "../knowledge/embedding-client.js";
 import {
-  toNumber,
   isTruthy,
   toNumberOrNull,
   getNumericThresholdValue,
@@ -178,15 +177,22 @@ export class SatisficingJudge {
     if (current_value === null) return false;
 
     switch (threshold.type) {
-      case "min":
-        return toNumber(current_value) >= threshold.value;
-      case "max":
-        return toNumber(current_value) <= threshold.value;
-      case "range":
+      case "min": {
+        const current = toNumberOrNull(current_value);
+        return current !== null && current >= threshold.value;
+      }
+      case "max": {
+        const current = toNumberOrNull(current_value);
+        return current !== null && current <= threshold.value;
+      }
+      case "range": {
+        const current = toNumberOrNull(current_value);
         return (
-          toNumber(current_value) >= threshold.low &&
-          toNumber(current_value) <= threshold.high
+          current !== null &&
+          current >= threshold.low &&
+          current <= threshold.high
         );
+      }
       case "present":
         return isTruthy(current_value);
       case "match":
