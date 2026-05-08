@@ -12,7 +12,7 @@ const DEFAULT_BUDGET: SearchBudget = {
 const STOPWORDS = new Set([
   "the", "and", "for", "with", "from", "that", "this", "into", "when", "then", "have",
   "has", "was", "were", "are", "can", "will", "should", "must", "not", "but", "fix",
-  "add", "use", "using", "make", "して", "する", "これ", "実装", "修正",
+  "add", "use", "using", "make",
 ]);
 
 const PATH_RE = /(?:^|[\s"'`(])((?:\.{1,2}\/)?[\w@./-]+\.(?:ts|tsx|js|jsx|json|md|yaml|yml|mjs|cjs))/g;
