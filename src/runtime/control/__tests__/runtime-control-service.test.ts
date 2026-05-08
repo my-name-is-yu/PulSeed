@@ -869,6 +869,161 @@ describe("RuntimeControlService", () => {
     }
   });
 
+  it("sends typed pause requests for active quiet runs when stopping all quiet work", async () => {
+    const tmpDir = makeTempDir("pulseed-runtime-control-companion-stop-quiet-");
+    try {
+      const operationStore = new RuntimeOperationStore(path.join(tmpDir, "runtime"));
+      const executor = vi.fn().mockResolvedValue({
+        ok: true,
+        state: "running",
+        message: "safe pause sent through daemon",
+      });
+      const approvalFn = vi.fn().mockResolvedValue(true);
+      const service = new RuntimeControlService({
+        operationStore,
+        executor,
+        sessionRegistry: {
+          snapshot: vi.fn().mockResolvedValue(snapshotWithRuns([makeRun()])),
+        },
+        now: () => new Date("2026-05-08T00:00:00.000Z"),
+      });
+
+      const stopped = await service.setCompanionControl({
+        control: "stop_all_quiet_work",
+        reason: "stop quiet work now",
+        cwd: "/repo",
+        requestedBy: { surface: "chat", user_id: "operator-1" },
+        approvalFn,
+      });
+      const pauseOperation = executor.mock.calls[0]?.[0];
+      const recomputed = await service.recomputeCompanionState({
+        activeSurfaceRef: "surface:current",
+        currentTime: "2026-05-08T00:01:00.000Z",
+      });
+      const stopControl = recomputed.input.global_controls.find((entry) => entry.control === "stop_all_quiet_work");
+      const pauseItem = recomputed.input.runtime_items.find((item) => item.item_id === `runtime-control:${pauseOperation.operation_id}`);
+
+      expect(stopped).toMatchObject({
+        success: true,
+        state: "verified",
+        message: expect.stringContaining("Typed pause request sent for 1 active quiet run(s)."),
+      });
+      expect(approvalFn).toHaveBeenCalledWith(expect.stringContaining("Runtime control pause_run for run:coreloop:active"));
+      expect(executor).toHaveBeenCalledTimes(1);
+      expect(pauseOperation).toMatchObject({
+        kind: "pause_run",
+        target: {
+          run_id: "run:coreloop:active",
+          session_id: "session:coreloop:worker-1",
+          goal_id: "goal-1",
+        },
+        reason: expect.stringContaining("Parent stop_all_quiet_work"),
+      });
+      expect(stopControl).toMatchObject({
+        state: "active",
+        affected_runtime_refs: ["background-run:run:coreloop:active"],
+      });
+      expect(stopControl?.affected_runtime_refs).not.toEqual(expect.arrayContaining([
+        expect.stringMatching(/^runtime-control:/),
+      ]));
+      expect(pauseItem?.companion_control_state.held_by_controls).not.toContain("stop_all_quiet_work");
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
+  });
+
+  it("records typed non-execution state when quiet work cannot be interrupted", async () => {
+    const tmpDir = makeTempDir("pulseed-runtime-control-companion-stop-quiet-blocked-");
+    try {
+      const operationStore = new RuntimeOperationStore(path.join(tmpDir, "runtime"));
+      const approvalFn = vi.fn().mockResolvedValue(true);
+      const service = new RuntimeControlService({
+        operationStore,
+        sessionRegistry: {
+          snapshot: vi.fn().mockResolvedValue(snapshotWithRuns([makeRun()])),
+        },
+        now: () => new Date("2026-05-08T00:00:00.000Z"),
+      });
+
+      const stopped = await service.setCompanionControl({
+        control: "stop_all_quiet_work",
+        reason: "stop quiet work without executor",
+        cwd: "/repo",
+        approvalFn,
+      });
+      const completed = await operationStore.listCompleted();
+      const blockedPause = completed.find((operation) => operation.kind === "pause_run");
+
+      expect(stopped).toMatchObject({
+        success: false,
+        state: "verified",
+        message: expect.stringContaining("typed non-execution state"),
+      });
+      expect(blockedPause).toMatchObject({
+        kind: "pause_run",
+        state: "blocked",
+        target: {
+          run_id: "run:coreloop:active",
+          goal_id: "goal-1",
+        },
+        result: {
+          ok: false,
+          message: expect.stringContaining("no runtime control executor is configured"),
+        },
+      });
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
+  });
+
+  it("does not execute quiet-work pause children when approval is denied", async () => {
+    const tmpDir = makeTempDir("pulseed-runtime-control-companion-stop-quiet-denied-");
+    try {
+      const operationStore = new RuntimeOperationStore(path.join(tmpDir, "runtime"));
+      const executor = vi.fn();
+      const approvalFn = vi.fn().mockResolvedValue(false);
+      const service = new RuntimeControlService({
+        operationStore,
+        executor,
+        sessionRegistry: {
+          snapshot: vi.fn().mockResolvedValue(snapshotWithRuns([makeRun()])),
+        },
+        now: () => new Date("2026-05-08T00:00:00.000Z"),
+      });
+
+      const stopped = await service.setCompanionControl({
+        control: "stop_all_quiet_work",
+        reason: "stop quiet work denied",
+        cwd: "/repo",
+        approvalFn,
+      });
+      const completed = await operationStore.listCompleted();
+      const cancelledPause = completed.find((operation) => operation.kind === "pause_run");
+
+      expect(stopped).toMatchObject({
+        success: false,
+        state: "verified",
+        message: expect.stringContaining("typed non-execution state"),
+      });
+      expect(approvalFn).toHaveBeenCalledWith(expect.stringContaining("Runtime control pause_run for run:coreloop:active"));
+      expect(executor).not.toHaveBeenCalled();
+      expect(cancelledPause).toMatchObject({
+        kind: "pause_run",
+        state: "cancelled",
+        target: {
+          run_id: "run:coreloop:active",
+          goal_id: "goal-1",
+        },
+        result: {
+          ok: false,
+          message: "Runtime control operation was not approved.",
+        },
+      });
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
+  });
+
   it("lifts companion controls without flushing held runtime items", async () => {
     const tmpDir = makeTempDir("pulseed-runtime-control-companion-lift-");
     try {
