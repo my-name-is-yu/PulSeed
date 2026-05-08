@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { CoreLoop } from '../../orchestrator/loop/durable-loop.js';
+import type { DurableLoop } from '../../orchestrator/loop/durable-loop.js';
 import type { LoopResult } from '../../orchestrator/loop/durable-loop.js';
 import type { LoopRunPolicyMode } from '../../orchestrator/loop/durable-loop.js';
 import type { GoalRunActivationContext } from '../../base/types/goal-activation.js';
@@ -39,7 +39,7 @@ export class GoalWorker {
   private extendRequested: boolean = false;
 
   constructor(
-    private readonly coreLoop: CoreLoop,
+    private readonly durableLoop: DurableLoop,
     private readonly config: GoalWorkerConfig = { iterationsPerCycle: 5 },
     private readonly hooks?: {
       onRunStart?: (goalId: string) => Promise<void> | void;
@@ -66,7 +66,7 @@ export class GoalWorker {
           this.config.runPolicy === 'resident'
             ? null
             : this.config.maxIterations ?? this.config.iterationsPerCycle;
-        lastResult = await this.coreLoop.run(goalId, {
+        lastResult = await this.durableLoop.run(goalId, {
           maxIterations,
           ...(this.config.runPolicy ? { runPolicy: this.config.runPolicy } : {}),
           ...(activation ? { activation: toGoalRunActivationContext(activation) } : {}),

@@ -1,5 +1,5 @@
 import * as path from "node:path";
-import type { CoreLoop } from "../../orchestrator/loop/durable-loop.js";
+import type { DurableLoop } from "../../orchestrator/loop/durable-loop.js";
 import type { GoalNegotiator } from "../../orchestrator/goal/goal-negotiator.js";
 import type { Goal } from "../../base/types/goal.js";
 import type { DriveSystem } from "../../platform/drive/drive-system.js";
@@ -132,11 +132,11 @@ export type { ShutdownMarker } from "./index.js";
 //
 // The daemon loop:
 //   1. Determine which goals need activation (shouldActivate)
-//   2. Run CoreLoop.run(goalId) for each active goal
+//   2. Run DurableLoop.run(goalId) for each active goal
 //   3. Save state and sleep until next check interval
 
 export interface DaemonDeps {
-  coreLoop: CoreLoop;
+  coreLoop: DurableLoop;
   curiosityEngine?: CuriosityEngine;
   goalNegotiator?: GoalNegotiator;
   driveSystem: DriveSystem;
@@ -159,7 +159,7 @@ export interface DaemonDeps {
   supervisor?: LoopSupervisor;
   getProviderRuntimeFingerprint?: () => Promise<string>;
   refreshResidentDeps?: () => Promise<{
-    coreLoop: CoreLoop;
+    coreLoop: DurableLoop;
     curiosityEngine?: CuriosityEngine;
     goalNegotiator?: GoalNegotiator;
     llmClient?: ILLMClient;
@@ -173,14 +173,16 @@ export interface DaemonDeps {
     memoryLifecycle?: MemoryLifecycleManager;
     knowledgeManager?: KnowledgeManager;
   }>;
-  /** Factory to create fresh CoreLoop instances for LoopSupervisor workers. */
-  coreLoopFactory?: () => CoreLoop;
+  /** Factory to create fresh DurableLoop instances for LoopSupervisor workers. */
+  durableLoopFactory?: () => DurableLoop;
+  /** @deprecated Use durableLoopFactory. */
+  coreLoopFactory?: () => DurableLoop;
   /** Optional signal target for tests that must not emit process-wide signals. */
   shutdownSignalTarget?: ProcessSignalTarget;
 }
 
 export class DaemonRunner {
-  private coreLoop: CoreLoop;
+  private coreLoop: DurableLoop;
   private curiosityEngine: CuriosityEngine | undefined;
   private goalNegotiator: GoalNegotiator | undefined;
   private driveSystem: DriveSystem;
