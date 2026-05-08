@@ -66,6 +66,7 @@ function buildDaemonRunner(
     pidManager,
     logger,
     config: {
+      event_server_port: 0,
       check_interval_ms: 50, // short for test speed
       crash_recovery: {
         enabled: true,

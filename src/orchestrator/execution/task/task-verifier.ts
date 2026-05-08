@@ -55,7 +55,7 @@ import {
 import { runLLMReview } from "./task-verifier-llm.js";
 import { appendTaskOutcomeEvent } from "./task-outcome-ledger.js";
 import { resolveTaskWorkspacePath } from "./task-workspace.js";
-import { verifyTaskArtifactContract } from "./task-artifact-contract.js";
+import { readTaskArtifactMetricValues, verifyTaskArtifactContract } from "./task-artifact-contract.js";
 
 function formatSelfReportEvidence(executorReport: import("./task-verifier-types.js").ExecutorReport): string {
   const segments = [
@@ -89,6 +89,22 @@ function getDimensionThresholdType(dim: Record<string, unknown> | undefined): st
 function applyThresholdProgressDelta(prevVal: number | null, scaledDelta: number, thresholdType: string | undefined): number {
   const directionalDelta = thresholdType === "max" ? -scaledDelta : scaledDelta;
   return prevVal !== null ? prevVal + directionalDelta : directionalDelta;
+}
+
+function getArtifactMetricValueForDimension(
+  artifactMetricValues: ReadonlyMap<string, number>,
+  dimensionName: string,
+): number | null {
+  const exact = artifactMetricValues.get(dimensionName);
+  if (exact !== undefined) return exact;
+
+  const withoutBest = dimensionName.startsWith("best_") ? dimensionName.slice("best_".length) : null;
+  if (withoutBest) {
+    const stripped = artifactMetricValues.get(withoutBest);
+    if (stripped !== undefined) return stripped;
+  }
+
+  return null;
 }
 
 function isDimensionUpdateDirectionAllowed(input: {
@@ -250,6 +266,11 @@ function isRecoverableAgentLoopFinalizationFailure(executionResult: AgentResult)
     stopReason === "schema_error" ||
     stopReason === "completion_gate_failed" ||
     executionResult.stopped_reason === "blocked";
+}
+
+function hasCapturedExecutionEvidence(executionResult: AgentResult): boolean {
+  return (executionResult.fileDiffs?.length ?? 0) > 0 ||
+    (executionResult.filesChanged === true && (executionResult.filesChangedPaths?.length ?? 0) > 0);
 }
 
 function formatTimeoutBudgetEvidence(executionResult: AgentResult): string {
@@ -428,13 +449,17 @@ export async function verifyTask(
     goalForArtifactContract = null;
   }
 
+  const taskWorkspacePath = executionResult.agentLoop?.executionCwd
+    ?? executionResult.agentLoop?.requestedCwd
+    ?? await resolveTaskWorkspacePath({ stateManager: deps.stateManager, task, fallbackCwd: deps.revertCwd });
   const artifactResult = await verifyTaskArtifactContract(
     task,
-    executionResult.agentLoop?.executionCwd
-      ?? executionResult.agentLoop?.requestedCwd
-      ?? await resolveTaskWorkspacePath({ stateManager: deps.stateManager, task, fallbackCwd: deps.revertCwd }),
+    taskWorkspacePath,
     { goal: goalForArtifactContract }
   );
+  const artifactMetricValues = artifactResult.passed
+    ? await readTaskArtifactMetricValues(task, taskWorkspacePath)
+    : new Map<string, number>();
 
   // ─── Short-circuit: GitHub issue URL evidence ───
   // When execution succeeded and output contains a GitHub issue URL,
@@ -482,7 +507,11 @@ export async function verifyTask(
     isRecoverableAgentLoopFinalizationFailure(executionResult) &&
     effectiveL1Result.applicable &&
     effectiveL1Result.passed &&
-    (artifactResult.passed || (executionResult.agentLoop?.completionEvidence?.length ?? 0) > 0)
+    (
+      artifactResult.passed ||
+      (executionResult.agentLoop?.completionEvidence?.length ?? 0) > 0 ||
+      hasCapturedExecutionEvidence(executionResult)
+    )
   ) {
     deps.logger?.info?.("[completion_judger] Skipping completion judging for AgentLoop finalization failure with mechanical salvage evidence", {
       taskId: task.id,
@@ -730,11 +759,21 @@ export async function verifyTask(
     verdict === "fail"
       ? []
       : task.target_dimensions.map((dimName) => {
+          const artifactMetricValue = getArtifactMetricValueForDimension(artifactMetricValues, dimName);
           const dim = goalDimsForUpdate?.find((d) => d.name === dimName);
           const prevVal =
             dim !== undefined && typeof dim.current_value === "number"
               ? (dim.current_value as number)
               : null;
+          if (artifactMetricValue !== null) {
+            return {
+              dimension_name: dimName,
+              previous_value: prevVal,
+              new_value: artifactMetricValue,
+              confidence,
+              source: "artifact_contract" as const,
+            };
+          }
           // Scale the normalized delta to raw threshold-scale space.
           const threshold =
             dim !== undefined &&
@@ -766,6 +805,7 @@ export async function verifyTask(
             previous_value: prevVal,
             new_value: newVal,
             confidence,
+            source: "verdict_delta" as const,
           };
         });
 
@@ -953,7 +993,9 @@ export async function handleVerdict(
               })) {
                 continue;
               }
-              dim.current_value = clampDimensionUpdate(prev, update.new_value, deps.logger, String(dim.name));
+              dim.current_value = update.source === "artifact_contract"
+                ? update.new_value
+                : clampDimensionUpdate(prev, update.new_value, deps.logger, String(dim.name));
               dim.confidence = verificationResult.confidence ?? 0.70;
               dim.last_observed_layer = "mechanical";
             }
@@ -1003,7 +1045,9 @@ export async function handleVerdict(
                 })) {
                   continue;
                 }
-                dim.current_value = clampDimensionUpdate(prev, update.new_value, deps.logger, String(dim.name));
+                dim.current_value = update.source === "artifact_contract"
+                  ? update.new_value
+                  : clampDimensionUpdate(prev, update.new_value, deps.logger, String(dim.name));
                 dim.confidence = verificationResult.confidence ?? 0.70;
                 dim.last_observed_layer = "mechanical";
               }

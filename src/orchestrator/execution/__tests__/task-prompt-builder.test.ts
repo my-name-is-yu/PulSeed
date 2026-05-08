@@ -35,6 +35,7 @@ function makeGoal(overrides: {
   title: string;
   description?: string;
   parent_id?: string | null;
+  constraints?: string[];
 }) {
   return {
     id: overrides.id,
@@ -50,6 +51,7 @@ function makeGoal(overrides: {
     current_value: null,
     confidence: 0.5,
     tags: [],
+    constraints: overrides.constraints ?? [],
   };
 }
 
@@ -238,6 +240,42 @@ describe("buildTaskGenerationPrompt — code-agent operational KPI grounding", (
     expect(prompt).toContain(
       "do not use heredocs, multiline inline scripts, or prose like \"Use rg ...\""
     );
+  });
+});
+
+describe("buildTaskGenerationPrompt — workspace constraints", () => {
+  it("includes workspace_path constraints and artifact workspace boundary instructions", async () => {
+    const workspace = path.join("/tmp", "goal-workspace");
+    const goal = makeGoal({
+      id: "g-workspace",
+      title: "Refresh observed artifact",
+      constraints: [`workspace_path:${workspace}`, "artifact_contract:required"],
+    });
+    const sm = makeMockStateManager({ "g-workspace": goal });
+
+    const prompt = await buildTaskGenerationPrompt(
+      sm,
+      "g-workspace",
+      "accuracy",
+      undefined,
+      "openai_codex_cli",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { repoRoot: path.join("/tmp", "repo") }
+    );
+
+    expect(prompt).toContain("=== Goal Constraints ===");
+    expect(prompt).toContain(`- workspace_path:${workspace}`);
+    expect(prompt).toContain("=== Workspace Boundary ===");
+    expect(prompt).toContain(`Active writable workspace: ${workspace}`);
+    expect(prompt).toContain("Preserve the workspace_path constraint");
+    expect(prompt).toContain("Workspace artifact/evidence creation is a valid implementation output");
+    expect(prompt).toContain("do not convert a workspace artifact task into a PulSeed runtime source-code change");
+    expect(prompt).toContain("Do not add broad repository test/build commands unless");
+    expect(prompt).toContain("Only use a --check-contract verification command when that script is already present");
   });
 });
 

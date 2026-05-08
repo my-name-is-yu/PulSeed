@@ -377,6 +377,8 @@ function normalizeLooseKaggleMetrics(
   const allMetrics = isRecord(value["all_metrics"]) ? value["all_metrics"] : null;
   const metricName = stringField(value, "metric_name")
     ?? firstNumericMetricName(allMetrics)
+    ?? (numberField(value, "roc_auc") !== null ? "roc_auc" : null)
+    ?? (numberField(value, "auc") !== null ? "auc" : null)
     ?? (numberField(value, "balanced_accuracy") !== null ? "balanced_accuracy" : null)
     ?? (numberField(value, "accuracy") !== null ? "accuracy" : null);
   if (!metricName) return null;
@@ -472,7 +474,7 @@ function normalizeDateTime(value: string | undefined): string | null {
 
 function firstNumericMetricName(value: Record<string, unknown> | null): string | null {
   if (!value) return null;
-  for (const preferred of ["balanced_accuracy", "accuracy", "macro_f1", "weighted_f1", "log_loss", "rmse"]) {
+  for (const preferred of ["roc_auc", "auc", "balanced_accuracy", "accuracy", "macro_f1", "weighted_f1", "log_loss", "rmse"]) {
     if (numberField(value, preferred) !== null) return preferred;
   }
   for (const [key, field] of Object.entries(value)) {

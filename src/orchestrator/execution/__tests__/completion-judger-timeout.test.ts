@@ -407,6 +407,77 @@ describe("completion_judger timeout + retry", () => {
     expect(result.evidence.find((e) => e.layer === "independent_review")?.description).toContain("completion judging skipped");
   }, 2_000);
 
+  it("salvages a completion-gate failure when changed files pass blocking mechanical verification", async () => {
+    const workspace = `${tmpDir}/completion-gate-mechanical-workspace`;
+    fs.mkdirSync(`${workspace}/reports`, { recursive: true });
+    fs.mkdirSync(`${workspace}/scripts`, { recursive: true });
+    fs.writeFileSync(`${workspace}/reports/judger.json`, JSON.stringify({
+      scenario: "completion-judger-fallback",
+      passed: true,
+    }), "utf8");
+    fs.writeFileSync(`${workspace}/scripts/judger-canary.mjs`, [
+      "import fs from 'node:fs';",
+      "const report = JSON.parse(fs.readFileSync('reports/judger.json', 'utf8'));",
+      "if (report.scenario !== 'completion-judger-fallback' || report.passed !== true) process.exit(1);",
+      "",
+    ].join("\n"), "utf8");
+
+    const failingLLM = makeFailingLLMClient(1);
+    const logger = {
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+    };
+    const deps = makeDeps(failingLLM, {
+      logger: logger as never,
+      completionJudgerConfig: { timeoutMs: 30_000, maxRetries: 0, retryBackoffMs: 0 },
+    });
+    const task = {
+      ...makeTask(),
+      constraints: [`workspace_path:${workspace}`],
+      success_criteria: [
+        {
+          description: "Run the canary contract check",
+          verification_method: "node scripts/judger-canary.mjs --check-contract",
+          is_blocking: true,
+        },
+      ],
+    };
+
+    const result = await verifyTask(deps, task, {
+      ...makeExecutionResult(),
+      success: false,
+      output: "{\"status\":\"done\",\"finalAnswer\":\"claimed verification without observed tool call\"}",
+      error: "{\"status\":\"done\",\"finalAnswer\":\"claimed verification without observed tool call\"}",
+      stopped_reason: "error",
+      filesChanged: true,
+      filesChangedPaths: ["reports/judger.json", "scripts/judger-canary.mjs"],
+      agentLoop: {
+        traceId: "trace-1",
+        sessionId: "session-1",
+        turnId: "turn-1",
+        stopReason: "completion_gate_failed",
+        failureReason: "completion_gate_failed",
+        modelTurns: 5,
+        toolCalls: 0,
+        compactions: 0,
+        executionCwd: workspace,
+        filesChangedPaths: ["reports/judger.json", "scripts/judger-canary.mjs"],
+      },
+    });
+
+    expect(failingLLM.callCount).toBe(0);
+    expect(result.verdict).toBe("pass");
+    expect(result.evidence.find((e) => e.layer === "mechanical")?.description)
+      .toContain("node scripts/judger-canary.mjs --check-contract");
+    expect(result.evidence.find((e) => e.layer === "independent_review")?.description)
+      .toContain("completion judging skipped");
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.stringContaining("Skipping completion judging"),
+      expect.objectContaining({ taskId: task.id, agentLoopStopReason: "completion_gate_failed" })
+    );
+  }, 2_000);
+
   it("uses passing artifact evidence when completion judging is unavailable after successful execution", async () => {
     const workspace = `${tmpDir}/artifact-workspace`;
     fs.mkdirSync(`${workspace}/reports`, { recursive: true });

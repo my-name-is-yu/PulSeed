@@ -148,6 +148,92 @@ const HEREDOC_VERIFICATION_RESPONSE = `\`\`\`json
 }
 \`\`\``;
 
+const WORKSPACE_ARTIFACT_WITH_BROAD_REPO_TEST_RESPONSE = `\`\`\`json
+{
+  "work_description": "Create fresh and stale accuracy metrics artifacts in experiments/",
+  "rationale": "The goal observes fresh workspace artifact evidence",
+  "approach": "Write the fresh metrics artifact and keep the stale comparison artifact in the disposable workspace",
+  "success_criteria": [
+    {
+      "description": "Fresh and stale metrics files exist",
+      "verification_method": "test -f experiments/fresh/metrics.json && test -f experiments/stale/metrics.json",
+      "is_blocking": true
+    },
+    {
+      "description": "Repository tests pass",
+      "verification_method": "npx vitest run",
+      "is_blocking": true
+    },
+    {
+      "description": "Workspace contract check passes",
+      "verification_method": "python src/experiments/run.py --check-contract",
+      "is_blocking": true
+    },
+    {
+      "description": "Non-local PulSeed module check passes",
+      "verification_method": "python -m pulseed observe --check-contract",
+      "is_blocking": true
+    }
+  ],
+  "scope_boundary": {
+    "in_scope": ["experiments/fresh/metrics.json", "experiments/stale/metrics.json"],
+    "out_of_scope": ["PulSeed source changes"],
+    "blast_radius": "disposable workspace artifacts only"
+  },
+  "constraints": [],
+  "artifact_contract": {
+    "required": true,
+    "required_artifacts": [
+      {
+        "kind": "metrics_json",
+        "path": "experiments/fresh/metrics.json",
+        "required_fields": ["accuracy"],
+        "field_types": { "accuracy": "number" },
+        "fresh_after_task_start": true
+      }
+    ]
+  },
+  "reversibility": "reversible",
+  "intended_direction": "increase",
+  "estimated_duration": null
+}
+\`\`\``;
+
+const WORKSPACE_ARTIFACT_WITH_CREATED_CHECK_CONTRACT_RESPONSE = `\`\`\`json
+{
+  "work_description": "Create a local canary script and report artifact",
+  "rationale": "The task should verify the artifact with the script it creates",
+  "approach": "Write scripts/judger-canary.mjs and run its --check-contract mode",
+  "success_criteria": [
+    {
+      "description": "Workspace contract check passes",
+      "verification_method": "node scripts/judger-canary.mjs --check-contract",
+      "is_blocking": true
+    }
+  ],
+  "scope_boundary": {
+    "in_scope": ["scripts/judger-canary.mjs", "reports/judger.json"],
+    "out_of_scope": ["PulSeed source changes"],
+    "blast_radius": "disposable workspace artifacts only"
+  },
+  "constraints": [],
+  "artifact_contract": {
+    "required": true,
+    "required_artifacts": [
+      {
+        "kind": "metrics_json",
+        "path": "reports/judger.json",
+        "required_fields": ["scenario", "passed"],
+        "field_types": { "scenario": "string", "passed": "boolean" },
+        "fresh_after_task_start": true
+      }
+    ]
+  },
+  "reversibility": "reversible",
+  "estimated_duration": null
+}
+\`\`\``;
+
 // ─── Test Suite ───
 
 function expectTask(task: Task | null): Task {
@@ -265,6 +351,80 @@ describe("TaskLifecycle", async () => {
       expect(userMessage).toContain("Project description: context from goal workspace");
       expect(userMessage).not.toContain("daemon-package");
       expect(userMessage).not.toContain("context from daemon cwd");
+    });
+
+    it("does not carry unsupported verification commands into workspace-bound artifact tasks", async () => {
+      const llm = createMockLLMClient([WORKSPACE_ARTIFACT_WITH_BROAD_REPO_TEST_RESPONSE]);
+      const daemonDir = path.join(tmpDir, "daemon-repo");
+      const workspaceDir = path.join(tmpDir, "disposable-workspace");
+      fs.mkdirSync(daemonDir, { recursive: true });
+      fs.mkdirSync(workspaceDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(daemonDir, "package.json"),
+        JSON.stringify({ name: "pulseed-daemon-repo" }),
+        "utf-8",
+      );
+      await stateManager.saveGoal(makeGoal({
+        id: "goal-workspace-artifact",
+        title: "Observe fresh accuracy artifact",
+        constraints: [`workspace_path:${workspaceDir}`, "artifact_contract:required"],
+      }));
+      const lifecycle = createLifecycle(llm, { revertCwd: daemonDir });
+
+      const task = expectTask(await lifecycle.generateTask(
+        "goal-workspace-artifact",
+        "accuracy",
+        undefined,
+        undefined,
+        "openai_codex_cli"
+      ));
+
+      expect(task.constraints).toContain(`workspace_path:${workspaceDir}`);
+      expect(task.success_criteria.map((criterion) => criterion.verification_method)).toEqual([
+        "test -f experiments/fresh/metrics.json && test -f experiments/stale/metrics.json",
+      ]);
+      expect(task.artifact_contract).toMatchObject({
+        required: true,
+        required_artifacts: [
+          {
+            path: "experiments/fresh/metrics.json",
+            required_fields: ["accuracy"],
+          },
+        ],
+      });
+    });
+
+    it("keeps a workspace-local check-contract verifier when the task scope creates that script", async () => {
+      const llm = createMockLLMClient([WORKSPACE_ARTIFACT_WITH_CREATED_CHECK_CONTRACT_RESPONSE]);
+      const daemonDir = path.join(tmpDir, "daemon-repo");
+      const workspaceDir = path.join(tmpDir, "disposable-workspace");
+      fs.mkdirSync(daemonDir, { recursive: true });
+      fs.mkdirSync(workspaceDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(daemonDir, "package.json"),
+        JSON.stringify({ name: "pulseed-daemon-repo" }),
+        "utf-8",
+      );
+      await stateManager.saveGoal(makeGoal({
+        id: "goal-workspace-created-check",
+        title: "Create a checked canary report",
+        constraints: [`workspace_path:${workspaceDir}`, "artifact_contract:required"],
+      }));
+      const lifecycle = createLifecycle(llm, { revertCwd: daemonDir });
+
+      const task = expectTask(await lifecycle.generateTask(
+        "goal-workspace-created-check",
+        "judger_report_exists",
+        undefined,
+        undefined,
+        "openai_codex_cli"
+      ));
+
+      expect(task.constraints).toContain(`workspace_path:${workspaceDir}`);
+      expect(task.success_criteria.map((criterion) => criterion.verification_method)).toEqual([
+        "node scripts/judger-canary.mjs --check-contract",
+      ]);
+      expect(task.scope_boundary.in_scope).toContain("scripts/judger-canary.mjs");
     });
 
     it("does not inject learned pattern hints when verified-only planner mode is enabled", async () => {

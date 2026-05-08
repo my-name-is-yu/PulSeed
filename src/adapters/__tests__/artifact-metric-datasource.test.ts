@@ -129,6 +129,47 @@ describe("ArtifactMetricDataSourceAdapter", () => {
     expect(updated?.dimensions[0]?.last_observed_layer).toBe("mechanical");
   });
 
+  it("uses goal workspace artifacts for numeric threshold dimensions before a current value exists", async () => {
+    const stalePath = path.join(workspace, "experiments", "stale", "metrics.json");
+    const freshPath = path.join(workspace, "experiments", "fresh", "metrics.json");
+    writeJson(stalePath, { accuracy: 0.99, status: "completed" });
+    writeJson(freshPath, { accuracy: 0.93, status: "completed" });
+    setModifiedTime(stalePath, new Date(Date.now() - 48 * 60 * 60 * 1000));
+    const stateManager = new StateManager(tmpDir);
+    const goal = makeGoal({
+      id: "goal-artifact-metrics-unknown-current",
+      constraints: [`workspace_path:${workspace}`],
+      dimensions: [
+        makeDimension({
+          name: "accuracy",
+          label: "Accuracy",
+          current_value: null,
+          threshold: { type: "min", value: 0.9 },
+        }),
+      ],
+    });
+    await stateManager.saveGoal(goal);
+
+    const engine = new ObservationEngine(stateManager, []);
+    await engine.observe("goal-artifact-metrics-unknown-current", []);
+
+    const updated = await stateManager.loadGoal("goal-artifact-metrics-unknown-current");
+    expect(updated?.dimensions[0]?.current_value).toBe(0.93);
+    expect(updated?.dimensions[0]?.last_observed_layer).toBe("mechanical");
+    const observations = await stateManager.loadObservationLog("goal-artifact-metrics-unknown-current");
+    expect(observations?.entries[0]?.raw_result).toMatchObject({
+      selected: {
+        relativePath: "experiments/fresh/metrics.json",
+        key: "accuracy",
+      },
+      stale_candidates: [
+        {
+          path: "experiments/stale/metrics.json",
+        },
+      ],
+    });
+  });
+
   it("reuses artifact metric discovery across dimensions in one ObservationEngine.observe pass", async () => {
     writeJson(path.join(workspace, "artifacts", "probe", "metrics.json"), {
       balanced_accuracy: 0.88,
