@@ -3,9 +3,15 @@ import {
   SurfaceInvalidationEventSchema,
   type SurfaceInvalidationAction,
   type SurfaceInvalidationEvent,
+  type SurfaceGateKind,
 } from "../../grounding/surface-contracts.js";
 import {
+  renderVisibilityPolicyForSurface,
+  type CompanionVisibilitySurface,
+} from "../visibility/index.js";
+import {
   AgentAgendaItemSchema,
+  AutonomyCheckSchema,
   AttentionMaturationTransitionSchema,
   ExpressionDecisionSchema,
   InhibitionDecisionSchema,
@@ -34,6 +40,7 @@ import {
   type CompanionAutonomySourceRef,
   type CompanionStateEffect,
   type ExpressionDecision,
+  type ExpressionDecisionStatus,
   type ExpressionMode,
   type ExpressionSurfaceClass,
   type InhibitionDecision,
@@ -82,6 +89,19 @@ const DEFAULT_REVISIT_CONDITION: AttentionRevisitCondition = {
   refs: [],
   reason: "re-evaluate when fresh typed runtime evidence arrives",
 };
+
+const SURFACE_DECISION_READMISSION_CHECK_KINDS = [
+  "surface",
+  "permission",
+  "staleness",
+  "companion_state",
+  "runtime_control",
+  "visibility",
+] as const satisfies readonly AutonomyCheck["kind"][];
+
+export type SurfaceDecisionReadmissionCheckKind =
+  | SurfaceGateKind
+  | typeof SURFACE_DECISION_READMISSION_CHECK_KINDS[number];
 
 export type AttentionSignalRefInput = {
   source: SignalSource;
@@ -224,6 +244,7 @@ export type RuntimeAdmissionInput = {
   staleness_checks?: AutonomyCheck[];
   companion_control_checks?: AutonomyCheck[];
   safety_checks?: AutonomyCheck[];
+  visibility_checks?: AutonomyCheck[];
   visibility_policy_ref?: CompanionAutonomyRef;
   audit_ref?: CompanionAutonomyRef;
 };
@@ -280,6 +301,46 @@ export type SurfaceDecisionRender = {
   user_facing_rationale: string;
   suppressed_detail_refs: CompanionAutonomyRef[];
   audit_ref?: CompanionAutonomyRef;
+};
+
+export type SurfaceOutcomeInvalidationDisposition =
+  | "expired"
+  | "rejected"
+  | "needs_readmission"
+  | "readmitted";
+
+export type SurfaceExpressionInvalidationDisposition =
+  | "held"
+  | "withdrawn"
+  | "regenerated";
+
+export type SurfaceDecisionInvalidationRecord<TDecision> = {
+  original_ref: CompanionAutonomyRef;
+  disposition: SurfaceOutcomeInvalidationDisposition | SurfaceExpressionInvalidationDisposition;
+  decision: TDecision;
+  missing_check_kinds: SurfaceDecisionReadmissionCheckKind[];
+  failed_check_kinds: SurfaceDecisionReadmissionCheckKind[];
+  audit_refs: CompanionAutonomyRef[];
+};
+
+export type SurfaceDecisionInvalidationInput = {
+  surface_invalidation_event: SurfaceInvalidationEvent | z.input<typeof SurfaceInvalidationEventSchema>;
+  outcome_decisions?: OutcomeDecision[];
+  expression_decisions?: ExpressionDecision[];
+  current_surface_ref?: CompanionAutonomyRef | null;
+  readmission_checks_by_outcome_id?: Record<string, AutonomyCheck[]>;
+  readmission_checks_by_expression_id?: Record<string, AutonomyCheck[]>;
+  visibility_policies?: VisibilityPolicy[];
+  now: string;
+  audit_refs?: CompanionAutonomyRef[];
+};
+
+export type SurfaceDecisionInvalidationResult = {
+  surface_ref: CompanionAutonomyRef;
+  invalidation_check: AutonomyCheck;
+  invalidated_outcome_decisions: Array<SurfaceDecisionInvalidationRecord<OutcomeDecision>>;
+  invalidated_expression_decisions: Array<SurfaceDecisionInvalidationRecord<ExpressionDecision>>;
+  audit_refs: CompanionAutonomyRef[];
 };
 
 export const AttentionFeedbackKindValues = [
@@ -773,6 +834,7 @@ export function admitInitiativeGateDecision(input: RuntimeAdmissionInput): Outco
       staleness_checks: input.staleness_checks ?? [],
       companion_control_checks: input.companion_control_checks ?? [],
       safety_checks: input.safety_checks ?? [],
+      visibility_checks: input.visibility_checks ?? [],
       downgrade_or_rejection_reason: {
         code: "authority_unknown",
         detail: `required runtime control refs must use kind runtime_control: ${invalidRequiredRuntimeControlRefs.map(refKey).join(", ")}`,
@@ -797,6 +859,7 @@ export function admitInitiativeGateDecision(input: RuntimeAdmissionInput): Outco
       staleness_checks: input.staleness_checks ?? [],
       companion_control_checks: input.companion_control_checks ?? [],
       safety_checks: input.safety_checks ?? [],
+      visibility_checks: input.visibility_checks ?? [],
       downgrade_or_rejection_reason: {
         code: "authority_unknown",
         detail: `required runtime control refs were not admitted: ${missingRuntimeControlRefs.map(refKey).join(", ")}`,
@@ -818,6 +881,7 @@ export function admitInitiativeGateDecision(input: RuntimeAdmissionInput): Outco
       staleness_checks: input.staleness_checks ?? [],
       companion_control_checks: input.companion_control_checks ?? [],
       safety_checks: input.safety_checks ?? [],
+      visibility_checks: input.visibility_checks ?? [],
       downgrade_or_rejection_reason: {
         code: "approval_required",
         detail: "initiative gate required approval before runtime admission",
@@ -843,6 +907,7 @@ export function admitInitiativeGateDecision(input: RuntimeAdmissionInput): Outco
       staleness_checks: input.staleness_checks ?? [],
       companion_control_checks: input.companion_control_checks ?? [],
       safety_checks: input.safety_checks ?? [],
+      visibility_checks: input.visibility_checks ?? [],
       downgrade_or_rejection_reason: {
         code: failed.code,
         detail: failed.reason,
@@ -869,6 +934,7 @@ export function admitInitiativeGateDecision(input: RuntimeAdmissionInput): Outco
       staleness_checks: input.staleness_checks ?? [],
       companion_control_checks: input.companion_control_checks ?? [],
       safety_checks: input.safety_checks ?? [],
+      visibility_checks: input.visibility_checks ?? [],
       downgrade_or_rejection_reason: {
         code: "authority_unknown",
         detail: `runtime-control admission evidence is required for ${requested}`,
@@ -889,6 +955,7 @@ export function admitInitiativeGateDecision(input: RuntimeAdmissionInput): Outco
     staleness_checks: input.staleness_checks ?? [],
     companion_control_checks: input.companion_control_checks ?? [],
     safety_checks: input.safety_checks ?? [],
+    visibility_checks: input.visibility_checks ?? [],
     visibility_policy_ref: input.visibility_policy_ref,
     audit_ref: input.audit_ref,
   });
@@ -994,6 +1061,70 @@ export function applySurfaceInvalidationToAttention(
   };
 }
 
+export function applySurfaceInvalidationToDecisions(
+  input: SurfaceDecisionInvalidationInput
+): SurfaceDecisionInvalidationResult {
+  const event = SurfaceInvalidationEventSchema.parse(input.surface_invalidation_event);
+  const invalidatedSurfaceRef = ref("surface", event.surface_ref);
+  const invalidationCheck = surfaceInvalidationStalenessCheck(event);
+  const invalidationAuditRef = ref("audit_trace", event.audit_ref);
+  const auditRefs = uniqueRefs([...(input.audit_refs ?? []), invalidationAuditRef]);
+  const visibilityPolicies = (input.visibility_policies ?? []).map((policy) =>
+    VisibilityPolicySchema.parse(policy)
+  );
+
+  const invalidatedOutcomes = (input.outcome_decisions ?? [])
+    .map((decision) => OutcomeDecisionSchema.parse(decision))
+    .filter((decision) => outcomeUsesInvalidatedSurface(decision, event))
+    .map((decision) =>
+      invalidateOutcomeDecisionAfterSurfaceEvent({
+        decision,
+        event,
+        invalidation_check: invalidationCheck,
+        current_surface_ref: input.current_surface_ref ?? null,
+        readmission_checks: input.readmission_checks_by_outcome_id?.[decision.outcome_decision_id] ?? [],
+        visibility_policies: visibilityPolicies,
+        now: input.now,
+        audit_refs: auditRefs,
+      })
+    );
+  const invalidatedOutcomeById = new Map(
+    invalidatedOutcomes.map((record) => [record.decision.outcome_decision_id, record])
+  );
+
+  const allOutcomesById = new Map<string, OutcomeDecision>();
+  for (const decision of input.outcome_decisions ?? []) {
+    const parsed = OutcomeDecisionSchema.parse(decision);
+    allOutcomesById.set(parsed.outcome_decision_id, invalidatedOutcomeById.get(parsed.outcome_decision_id)?.decision ?? parsed);
+  }
+
+  const invalidatedExpressions = (input.expression_decisions ?? [])
+    .map((decision) => ExpressionDecisionSchema.parse(decision))
+    .filter((decision) => expressionUsesInvalidatedSurface(decision, event, invalidatedOutcomeById))
+    .map((decision) =>
+      invalidateExpressionDecisionAfterSurfaceEvent({
+        decision,
+        linked_outcome: allOutcomesById.get(decision.outcome_decision_ref.id) ?? null,
+        event,
+        current_surface_ref: input.current_surface_ref ?? null,
+        readmission_checks: input.readmission_checks_by_expression_id?.[decision.expression_decision_id]
+          ?? input.readmission_checks_by_outcome_id?.[decision.outcome_decision_ref.id]
+          ?? [],
+        visibility_policies: visibilityPolicies,
+        now: input.now,
+        audit_refs: auditRefs,
+      })
+    );
+
+  return {
+    surface_ref: invalidatedSurfaceRef,
+    invalidation_check: invalidationCheck,
+    invalidated_outcome_decisions: invalidatedOutcomes,
+    invalidated_expression_decisions: invalidatedExpressions,
+    audit_refs: auditRefs,
+  };
+}
+
 export function createExpressionDecisionForOutcome(
   input: ExpressionDecisionCreationInput
 ): ExpressionDecision | null {
@@ -1034,9 +1165,17 @@ export function renderExpressionDecisionForSurface(
   input: SurfaceDecisionRenderInput
 ): SurfaceDecisionRender | null {
   const outcome = OutcomeDecisionSchema.parse(input.outcome_decision);
+  if (
+    outcome.admission_status !== "admitted" &&
+    outcome.admission_status !== "downgraded"
+  ) {
+    return null;
+  }
+  if (!outcome.final_outcome) return null;
   if (!input.expression_decision) return null;
 
   const expression = ExpressionDecisionSchema.parse(input.expression_decision);
+  if (expression.decision_status !== "active") return null;
   const visibilityPolicy = VisibilityPolicySchema.parse(input.visibility_policy);
   const outcomeRef = ref("outcome_decision", outcome.outcome_decision_id);
   const expressionRef = ref("expression_decision", expression.expression_decision_id);
@@ -1057,7 +1196,7 @@ export function renderExpressionDecisionForSurface(
     throw new Error("VisibilityPolicy must apply to the rendered outcome or expression decision");
   }
   if (!expression.target_surface_classes.includes(input.surface_class)) return null;
-  if (!visibilityAllowsSurface(visibilityPolicy, input.surface_class)) return null;
+  if (!visibilityPolicyAllowsExpressionSurface(visibilityPolicy, input.surface_class)) return null;
 
   return {
     schema_version: "surface-decision-render-v1",
@@ -1556,25 +1695,31 @@ function visibilityPolicyAppliesToDecision(
   );
 }
 
-function visibilityAllowsSurface(policy: VisibilityPolicy, surfaceClass: ExpressionSurfaceClass): boolean {
-  if (policy.never_directly_show) return false;
-  if (policy.digest_only && surfaceClass !== "digest") return false;
+function visibilityPolicyAllowsExpressionSurface(
+  policy: VisibilityPolicy,
+  surfaceClass: ExpressionSurfaceClass
+): boolean {
+  const decision = renderVisibilityPolicyForSurface(
+    policy,
+    companionVisibilitySurfaceForExpressionSurface(surfaceClass)
+  );
+  return decision.visible && !decision.redacted;
+}
 
+function companionVisibilitySurfaceForExpressionSurface(
+  surfaceClass: ExpressionSurfaceClass
+): CompanionVisibilitySurface {
   switch (surfaceClass) {
-    case "chat":
-    case "gateway":
     case "notification":
-      return policy.visible_in_chat;
+      return "gateway";
+    case "chat":
     case "tui":
-      return policy.visible_in_tui;
     case "cli":
-      return policy.visible_in_cli;
     case "digest":
-      return policy.visible_in_digest;
     case "daemon_snapshot":
-      return policy.visible_in_debug || policy.visible_in_audit;
     case "gui":
-      return policy.visible_in_gui;
+    case "gateway":
+      return surfaceClass;
   }
 }
 
@@ -1691,6 +1836,405 @@ function sourceEvidenceMatchesInvalidation(
 ): boolean {
   return (evidence.ref.kind === "surface" && evidence.ref.id === event.surface_ref)
     || (evidence.ref.kind === "memory" && evidence.ref.id === event.source_ref.memory_id);
+}
+
+type SurfaceDecisionReadmissionEvaluation = {
+  checks: AutonomyCheck[];
+  missing_check_kinds: SurfaceDecisionReadmissionCheckKind[];
+  failed_check_kinds: SurfaceDecisionReadmissionCheckKind[];
+  visibility_policy?: VisibilityPolicy;
+  can_readmit: boolean;
+};
+
+function invalidateOutcomeDecisionAfterSurfaceEvent(input: {
+  decision: OutcomeDecision;
+  event: SurfaceInvalidationEvent;
+  invalidation_check: AutonomyCheck;
+  current_surface_ref: CompanionAutonomyRef | null;
+  readmission_checks: AutonomyCheck[];
+  visibility_policies: VisibilityPolicy[];
+  now: string;
+  audit_refs: CompanionAutonomyRef[];
+}): SurfaceDecisionInvalidationRecord<OutcomeDecision> {
+  const evaluation = evaluateSurfaceDecisionReadmission({
+    event: input.event,
+    current_surface_ref: input.current_surface_ref,
+    readmission_checks: input.readmission_checks,
+    visibility_policies: input.visibility_policies,
+    outcome_decision: input.decision,
+  });
+  const finalOutcome = input.decision.final_outcome ?? input.decision.requested_outcome;
+  const invalidationEvidence = surfaceInvalidationEvidenceRef(input.event);
+  const auditRef = input.audit_refs[0] ?? ref("audit_trace", input.event.audit_ref);
+
+  if (evaluation.can_readmit && outcomeActionAllowsReadmission(input.event.action)) {
+    const readmitted = OutcomeDecisionSchema.parse({
+      ...input.decision,
+      decided_at: input.now,
+      admission_status: "admitted",
+      final_outcome: finalOutcome,
+      expression_decision_ref: undefined,
+      downgrade_or_rejection_reason: undefined,
+      visibility_policy_ref: visibilityPolicyRefForReadmission(evaluation.visibility_policy, input.decision, finalOutcome),
+      authority_checks: uniqueChecks([
+        ...input.decision.authority_checks,
+        ...checksOfKinds(evaluation.checks, ["permission", "runtime_control"]),
+      ]),
+      staleness_checks: uniqueChecks([
+        ...input.decision.staleness_checks,
+        input.invalidation_check,
+        ...checksOfKinds(evaluation.checks, ["surface", "staleness"]),
+      ]),
+      companion_control_checks: uniqueChecks([
+        ...input.decision.companion_control_checks,
+        ...checksOfKinds(evaluation.checks, ["companion_state"]),
+      ]),
+      visibility_checks: uniqueChecks([
+        ...input.decision.visibility_checks,
+        ...checksOfKinds(evaluation.checks, ["visibility"]),
+      ]),
+      audit_ref: auditRef,
+    });
+
+    return {
+      original_ref: ref("outcome_decision", input.decision.outcome_decision_id),
+      disposition: "readmitted",
+      decision: readmitted,
+      missing_check_kinds: [],
+      failed_check_kinds: [],
+      audit_refs: input.audit_refs,
+    };
+  }
+
+  const admissionStatus = outcomeAdmissionStatusForInvalidationAction(input.event.action);
+  const invalidated = OutcomeDecisionSchema.parse({
+    ...input.decision,
+    decided_at: input.now,
+    admission_status: admissionStatus,
+    final_outcome: undefined,
+    expression_decision_ref: undefined,
+    visibility_policy_ref: undefined,
+    authority_checks: uniqueChecks([
+      ...input.decision.authority_checks,
+      ...checksOfKinds(evaluation.checks, ["permission", "runtime_control"]),
+    ]),
+    staleness_checks: uniqueChecks([
+      ...input.decision.staleness_checks,
+      input.invalidation_check,
+      ...checksOfKinds(evaluation.checks, ["surface", "staleness"]),
+    ]),
+    companion_control_checks: uniqueChecks([
+      ...input.decision.companion_control_checks,
+      ...checksOfKinds(evaluation.checks, ["companion_state"]),
+    ]),
+    visibility_checks: uniqueChecks([
+      ...input.decision.visibility_checks,
+      ...checksOfKinds(evaluation.checks, ["visibility"]),
+    ]),
+    safety_checks: input.decision.safety_checks,
+    downgrade_or_rejection_reason: {
+      code: "invalid_surface",
+      detail: outcomeInvalidationReason(input.event, evaluation),
+      evidence_refs: [invalidationEvidence],
+    },
+    audit_ref: auditRef,
+  });
+
+  return {
+    original_ref: ref("outcome_decision", input.decision.outcome_decision_id),
+    disposition: admissionStatus === "expired"
+      ? "expired"
+      : admissionStatus === "rejected"
+        ? "rejected"
+        : "needs_readmission",
+    decision: invalidated,
+    missing_check_kinds: evaluation.missing_check_kinds,
+    failed_check_kinds: evaluation.failed_check_kinds,
+    audit_refs: input.audit_refs,
+  };
+}
+
+function invalidateExpressionDecisionAfterSurfaceEvent(input: {
+  decision: ExpressionDecision;
+  linked_outcome: OutcomeDecision | null;
+  event: SurfaceInvalidationEvent;
+  current_surface_ref: CompanionAutonomyRef | null;
+  readmission_checks: AutonomyCheck[];
+  visibility_policies: VisibilityPolicy[];
+  now: string;
+  audit_refs: CompanionAutonomyRef[];
+}): SurfaceDecisionInvalidationRecord<ExpressionDecision> {
+  const evaluation = evaluateSurfaceDecisionReadmission({
+    event: input.event,
+    current_surface_ref: input.current_surface_ref,
+    readmission_checks: input.readmission_checks,
+    visibility_policies: input.visibility_policies,
+    outcome_decision: input.linked_outcome,
+    expression_decision: input.decision,
+  });
+  const auditRef = input.audit_refs[0] ?? ref("audit_trace", input.event.audit_ref);
+  const canRegenerate = evaluation.can_readmit
+    && expressionActionAllowsRegeneration(input.event.action)
+    && input.linked_outcome !== null
+    && outcomeIsRenderableForExpression(input.linked_outcome, input.decision)
+    && evaluation.visibility_policy !== undefined;
+
+  if (canRegenerate) {
+    const regenerated = ExpressionDecisionSchema.parse({
+      ...input.decision,
+      expression_decision_id: `${input.decision.expression_decision_id}:regenerated:${stableId(input.event.id)}`,
+      created_at: input.now,
+      visibility_policy_ref: ref("visibility_policy", evaluation.visibility_policy!.visibility_policy_id),
+      decision_status: "active",
+      audit_ref: auditRef,
+    });
+
+    return {
+      original_ref: ref("expression_decision", input.decision.expression_decision_id),
+      disposition: "regenerated",
+      decision: regenerated,
+      missing_check_kinds: [],
+      failed_check_kinds: [],
+      audit_refs: input.audit_refs,
+    };
+  }
+
+  const decisionStatus = expressionDecisionStatusForInvalidationAction(input.event.action);
+  const invalidated = ExpressionDecisionSchema.parse({
+    ...input.decision,
+    decision_status: decisionStatus,
+    suppressed_detail_refs: uniqueRefs([
+      ...input.decision.suppressed_detail_refs,
+      ref("surface", input.event.surface_ref),
+      ref("audit_trace", input.event.audit_ref),
+    ]),
+    audit_ref: auditRef,
+  });
+
+  return {
+    original_ref: ref("expression_decision", input.decision.expression_decision_id),
+    disposition: decisionStatus === "withdrawn" ? "withdrawn" : "held",
+    decision: invalidated,
+    missing_check_kinds: evaluation.missing_check_kinds,
+    failed_check_kinds: evaluation.failed_check_kinds,
+    audit_refs: input.audit_refs,
+  };
+}
+
+function evaluateSurfaceDecisionReadmission(input: {
+  event: SurfaceInvalidationEvent;
+  current_surface_ref: CompanionAutonomyRef | null;
+  readmission_checks: AutonomyCheck[];
+  visibility_policies: VisibilityPolicy[];
+  outcome_decision: OutcomeDecision | null;
+  expression_decision?: ExpressionDecision;
+}): SurfaceDecisionReadmissionEvaluation {
+  const checks = uniqueChecks(input.readmission_checks.map((check) => AutonomyCheckSchema.parse(check)));
+  const requiredKinds = requiredSurfaceDecisionReadmissionCheckKinds(input.event);
+  const presentKinds = new Set(checks.map((check) => check.kind));
+  const missingKinds = requiredKinds.filter((kind) => !presentKinds.has(kind));
+  const failedKinds = checks
+    .filter((check) =>
+      requiredKinds.includes(check.kind as SurfaceDecisionReadmissionCheckKind)
+      && (check.status === "failed" || check.status === "unknown")
+    )
+    .map((check) => check.kind);
+
+  if (
+    !input.current_surface_ref ||
+    input.current_surface_ref.kind !== "surface" ||
+    input.current_surface_ref.id === input.event.surface_ref
+  ) {
+    failedKinds.push("surface");
+  }
+
+  const visibilityPolicy = findCurrentVisibilityPolicy(
+    input.visibility_policies,
+    input.outcome_decision,
+    input.expression_decision
+  );
+  const needsPolicy = input.expression_decision !== undefined
+    || (input.outcome_decision !== null && outcomeNeedsVisibilityPolicy(input.outcome_decision));
+  if (needsPolicy && !visibilityPolicy) {
+    missingKinds.push("visibility");
+  } else if (
+    visibilityPolicy &&
+    !visibilityPolicyCurrentlyAllowsDecision(visibilityPolicy, input.outcome_decision, input.expression_decision)
+  ) {
+    failedKinds.push("visibility");
+  }
+
+  const missing_check_kinds = uniqueRequiredReadmissionKinds(missingKinds, requiredKinds);
+  const failed_check_kinds = uniqueRequiredReadmissionKinds(failedKinds, requiredKinds);
+  return {
+    checks,
+    missing_check_kinds,
+    failed_check_kinds,
+    visibility_policy: visibilityPolicy,
+    can_readmit: missing_check_kinds.length === 0 && failed_check_kinds.length === 0,
+  };
+}
+
+function outcomeUsesInvalidatedSurface(decision: OutcomeDecision, event: SurfaceInvalidationEvent): boolean {
+  return event.affected_dependencies.some((dependency) =>
+    dependency.kind === "outcome_decision" && dependency.ref === decision.outcome_decision_id
+  ) || decision.staleness_checks.some((check) =>
+    check.evidence_refs.some((evidence) => sourceEvidenceMatchesInvalidation(evidence, event))
+  );
+}
+
+function expressionUsesInvalidatedSurface(
+  decision: ExpressionDecision,
+  event: SurfaceInvalidationEvent,
+  invalidatedOutcomeById: Map<string, SurfaceDecisionInvalidationRecord<OutcomeDecision>>
+): boolean {
+  return event.affected_dependencies.some((dependency) =>
+    dependency.kind === "expression_decision" && dependency.ref === decision.expression_decision_id
+  ) || invalidatedOutcomeById.has(decision.outcome_decision_ref.id)
+    || decision.suppressed_detail_refs.some((candidate) =>
+      (candidate.kind === "surface" && candidate.id === event.surface_ref)
+      || (candidate.kind === "memory" && candidate.id === event.source_ref.memory_id)
+    );
+}
+
+function outcomeAdmissionStatusForInvalidationAction(action: SurfaceInvalidationAction): OutcomeAdmissionStatus {
+  switch (action) {
+    case "expire":
+      return "expired";
+    case "reject":
+    case "redact":
+      return "rejected";
+    case "hold":
+    case "regate":
+    case "withdraw":
+    case "needs_review":
+      return "held";
+  }
+}
+
+function outcomeActionAllowsReadmission(action: SurfaceInvalidationAction): boolean {
+  return action === "hold" || action === "regate" || action === "needs_review";
+}
+
+function expressionDecisionStatusForInvalidationAction(action: SurfaceInvalidationAction): ExpressionDecisionStatus {
+  switch (action) {
+    case "expire":
+    case "reject":
+    case "redact":
+    case "withdraw":
+      return "withdrawn";
+    case "hold":
+    case "regate":
+    case "needs_review":
+      return "held";
+  }
+}
+
+function expressionActionAllowsRegeneration(action: SurfaceInvalidationAction): boolean {
+  return action === "hold" || action === "regate" || action === "needs_review";
+}
+
+function outcomeInvalidationReason(
+  event: SurfaceInvalidationEvent,
+  evaluation: SurfaceDecisionReadmissionEvaluation
+): string {
+  const missing = evaluation.missing_check_kinds.length > 0
+    ? ` missing rechecks: ${evaluation.missing_check_kinds.join(", ")}.`
+    : "";
+  const failed = evaluation.failed_check_kinds.length > 0
+    ? ` failed rechecks: ${evaluation.failed_check_kinds.join(", ")}.`
+    : "";
+  return `Surface ${event.surface_ref} was invalidated by ${event.trigger}; outcome requires re-admission.${missing}${failed}`.trim();
+}
+
+function findCurrentVisibilityPolicy(
+  policies: readonly VisibilityPolicy[],
+  outcome: OutcomeDecision | null,
+  expression?: ExpressionDecision
+): VisibilityPolicy | undefined {
+  const outcomeRef = outcome ? ref("outcome_decision", outcome.outcome_decision_id) : null;
+  const expressionRef = expression ? ref("expression_decision", expression.expression_decision_id) : null;
+  const expectedPolicyRef = expression?.visibility_policy_ref ?? outcome?.visibility_policy_ref;
+  if (!expectedPolicyRef) return undefined;
+
+  return policies.find((policy) =>
+    policy.visibility_policy_id === expectedPolicyRef.id &&
+    policy.applies_to.some((candidate) =>
+      (outcomeRef && refKey(candidate) === refKey(outcomeRef))
+      || (expressionRef && refKey(candidate) === refKey(expressionRef))
+    )
+  );
+}
+
+function visibilityPolicyCurrentlyAllowsDecision(
+  policy: VisibilityPolicy,
+  outcome: OutcomeDecision | null,
+  expression?: ExpressionDecision
+): boolean {
+  if (policy.redaction_required || policy.content_lifecycle !== "active") return false;
+  if (expression) {
+    const outcomeRef = outcome ? ref("outcome_decision", outcome.outcome_decision_id) : expression.outcome_decision_ref;
+    const expressionRef = ref("expression_decision", expression.expression_decision_id);
+    return visibilityPolicyAppliesToDecision(policy, outcomeRef, expressionRef)
+      && expression.target_surface_classes.some((surfaceClass) =>
+        visibilityPolicyAllowsExpressionSurface(policy, surfaceClass)
+      );
+  }
+
+  if (!outcome) return false;
+  const outcomeRef = ref("outcome_decision", outcome.outcome_decision_id);
+  return policy.applies_to.some((candidate) => refKey(candidate) === refKey(outcomeRef));
+}
+
+function outcomeNeedsVisibilityPolicy(outcome: OutcomeDecision): boolean {
+  const finalOutcome = outcome.final_outcome ?? outcome.requested_outcome;
+  return SurfaceFacingOutcomeClassSchema.safeParse(finalOutcome).success;
+}
+
+function visibilityPolicyRefForReadmission(
+  policy: VisibilityPolicy | undefined,
+  decision: OutcomeDecision,
+  finalOutcome: OutcomeClass
+): CompanionAutonomyRef | undefined {
+  if (policy) return ref("visibility_policy", policy.visibility_policy_id);
+  if (SurfaceFacingOutcomeClassSchema.safeParse(finalOutcome).success) return undefined;
+  return decision.visibility_policy_ref;
+}
+
+function outcomeIsRenderableForExpression(outcome: OutcomeDecision, expression: ExpressionDecision): boolean {
+  return (outcome.admission_status === "admitted" || outcome.admission_status === "downgraded")
+    && outcome.final_outcome === expression.outcome_class
+    && !!outcome.visibility_policy_ref
+    && refKey(outcome.visibility_policy_ref) === refKey(expression.visibility_policy_ref);
+}
+
+function checksOfKinds(
+  checks: readonly AutonomyCheck[],
+  kinds: readonly AutonomyCheck["kind"][]
+): AutonomyCheck[] {
+  return checks.filter((check) => kinds.includes(check.kind));
+}
+
+function uniqueChecks(checks: readonly AutonomyCheck[]): AutonomyCheck[] {
+  return uniqueBy(checks, (check) => check.check_id);
+}
+
+function uniqueRequiredReadmissionKinds(
+  kinds: readonly AutonomyCheck["kind"][],
+  requiredKinds: readonly SurfaceDecisionReadmissionCheckKind[]
+): SurfaceDecisionReadmissionCheckKind[] {
+  return unique(kinds.filter((kind): kind is SurfaceDecisionReadmissionCheckKind =>
+    requiredKinds.includes(kind as SurfaceDecisionReadmissionCheckKind)
+  ));
+}
+
+function requiredSurfaceDecisionReadmissionCheckKinds(
+  event: SurfaceInvalidationEvent
+): SurfaceDecisionReadmissionCheckKind[] {
+  return unique([
+    ...event.required_rechecks,
+    ...SURFACE_DECISION_READMISSION_CHECK_KINDS,
+  ]);
 }
 
 function agendaPostureForMaturation(state: AttentionMaturationState): AgendaPosture {
