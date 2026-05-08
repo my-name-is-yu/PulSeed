@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import type { CoreLoop, LoopResult } from "../../orchestrator/loop/durable-loop.js";
+import type { DurableLoop, LoopResult } from "../../orchestrator/loop/durable-loop.js";
 import type { StateManager } from "../../base/state/state-manager.js";
 import type { TrustManager } from "../../platform/traits/trust-manager.js";
 import type { Threshold } from "../../base/types/core.js";
@@ -94,7 +94,7 @@ export class LoopController {
   private pollInterval: ReturnType<typeof setInterval> | null = null;
 
   // Nullable to support daemon mode where these are not needed in-process
-  private coreLoop: CoreLoop | null;
+  private coreLoop: DurableLoop | null;
   private stateManager: StateManager;
   private trustManager: TrustManager | null;
 
@@ -103,7 +103,7 @@ export class LoopController {
   private sseHandlers: Map<string, (data: unknown) => void> = new Map();
 
   constructor(
-    coreLoop: CoreLoop | null,
+    coreLoop: DurableLoop | null,
     stateManager: StateManager,
     trustManager: TrustManager | null,
     daemonClient?: DaemonClient,
@@ -303,7 +303,7 @@ export interface UseLoopResult {
 }
 
 export function useLoop(
-  coreLoop: CoreLoop | null,
+  coreLoop: DurableLoop | null,
   stateManager: StateManager,
   trustManager: TrustManager | null,
   daemonClient?: DaemonClient,
