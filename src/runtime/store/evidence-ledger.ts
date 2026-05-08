@@ -815,7 +815,6 @@ function updateSummaryFromAppend(
     };
   }
   if (!canIncrementSummaryWithEntries(appendedEntries)) return null;
-  if (previous.total_entries > 0 && !primaryMetric) return null;
   if (!canPreservePrimaryMetric(appendedEntries, primaryMetric)) return null;
 
   const combinedRecent = [...appendedEntries, ...previous.recent_entries]

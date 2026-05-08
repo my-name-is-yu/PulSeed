@@ -627,6 +627,68 @@ describe("RuntimeEvidenceLedger", () => {
     }
   });
 
+  it("updates non-metric summary indexes on append without reading canonical JSONL", async () => {
+    const sizes = [100, 500, 1000];
+    for (const size of sizes) {
+      const runId = `run:append-non-metric-scale-${size}`;
+      const ledger = new RuntimeEvidenceLedger(runtimeRoot);
+      const entries = Array.from({ length: size }, (_, index) => ({
+        schema_version: "runtime-evidence-entry-v1",
+        id: `append-non-metric-entry-${size}-${index}`,
+        occurred_at: new Date(Date.UTC(2026, 3, 30, 0, 0, index)).toISOString(),
+        kind: "execution",
+        scope: { run_id: runId, loop_index: index },
+        metrics: [],
+        evaluators: [],
+        research: [],
+        dream_checkpoints: [],
+        divergent_exploration: [],
+        candidates: [],
+        artifacts: [],
+        raw_refs: [],
+        result: { status: "completed", summary: `Execution ${index}` },
+        summary: `Execution ${index}`,
+        outcome: index === size - 1 ? "improved" : "continued",
+      }));
+      await fsp.mkdir(path.dirname(ledger.runPath(runId)), { recursive: true });
+      await fsp.writeFile(
+        ledger.runPath(runId),
+        `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`,
+        "utf8"
+      );
+      await ledger.rebuildSummaryIndexForRun(runId);
+
+      const canonicalPath = ledger.runPath(runId);
+      await fsp.chmod(canonicalPath, 0o200);
+      let indexedBestEvidenceId: string | undefined;
+      let indexedRecentEntryIds: string[] = [];
+      try {
+        await ledger.append({
+          id: `append-non-metric-entry-${size}-new`,
+          occurred_at: "2026-04-30T00:30:00.000Z",
+          kind: "execution",
+          scope: { run_id: runId, loop_index: size },
+          result: { status: "completed", summary: "Incremental execution." },
+          summary: "Incremental execution.",
+          outcome: "improved",
+        });
+
+        const summary = await new RuntimeEvidenceLedger(runtimeRoot).summarizeRun(runId);
+        expect(summary.total_entries).toBe(size + 1);
+        expect(summary.best_evidence?.id).toBe(`append-non-metric-entry-${size}-new`);
+        expect(summary.metric_trends).toEqual([]);
+        indexedBestEvidenceId = summary.best_evidence?.id;
+        indexedRecentEntryIds = summary.recent_entries.map((entry) => entry.id);
+      } finally {
+        await fsp.chmod(canonicalPath, 0o600);
+      }
+      const rebuilt = await ledger.rebuildSummaryIndexForRun(runId);
+      expect(rebuilt.best_evidence?.id).toBe(indexedBestEvidenceId);
+      expect(rebuilt.recent_entries.map((entry) => entry.id)).toEqual(indexedRecentEntryIds);
+      expect(rebuilt.metric_trends).toEqual([]);
+    }
+  });
+
   it("keeps live append summary indexes out of full-entry checkpoint storage and equivalent to canonical rebuild", async () => {
     for (const size of [100, 500, 1000]) {
       const runId = `run:append-index-compact-${size}`;
