@@ -101,7 +101,7 @@ export function runtimeEventFromOperationTransition(
     companion_control_delta: {
       before: before?.companion_control_state ?? null,
       after: after.companion_control_state,
-      changed_controls: [],
+      changed_controls: companionControlFromOperation(operation),
     },
     surface_refs: after.related_surface_refs,
     companion_state_refs: after.companion_state_refs,
@@ -444,6 +444,12 @@ function stalenessFromOperation(operation: RuntimeControlOperation): Staleness {
 }
 
 function itemTypeFromOperation(operation: RuntimeControlOperation): RuntimeItem["type"] {
+  if (operation.kind === "inspect_session" || operation.kind === "summarize_session_without_resuming") {
+    return "session";
+  }
+  if (companionControlFromOperation(operation).length > 0) {
+    return operation.kind === "inspect_companion_state" ? "audit_trace" : "hold";
+  }
   if (operation.kind === "automation_control") {
     switch (operation.automation_control?.domain) {
       case "auth_handoff":
@@ -464,6 +470,27 @@ function itemTypeFromOperation(operation: RuntimeControlOperation): RuntimeItem[
     return "permission_boundary";
   }
   return "run";
+}
+
+function companionControlFromOperation(
+  operation: RuntimeControlOperation
+): RuntimeEvent["companion_control_delta"]["changed_controls"] {
+  switch (operation.kind) {
+    case "inspect_companion_state":
+    case "enter_quiet_mode":
+    case "leave_quiet_mode":
+    case "pause_proactivity":
+    case "resume_proactivity":
+    case "suspend_companion":
+    case "resume_companion":
+    case "stop_all_quiet_work":
+    case "stop_all_watches":
+    case "suppress_nonessential_agenda":
+    case "require_confirmation_for_proactivity":
+      return [operation.kind];
+    default:
+      return [];
+  }
 }
 
 function itemStatusFromOperationState(state: RuntimeControlOperationState): RuntimeItemStatus {

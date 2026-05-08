@@ -73,7 +73,7 @@ Decide whether the user's primary intent is to operate on an existing active or 
 
 Return only JSON matching:
 {
-  "intent": "none" | "restart_daemon" | "restart_gateway" | "reload_config" | "self_update" | "inspect_run" | "pause_run" | "resume_run" | "cancel_run" | "finalize_run" | "inspect_permission_boundary" | "revoke_permission" | "narrow_permission" | "extend_permission" | "audit_permission_check",
+  "intent": "none" | ${RuntimeControlOperationKindSchema.options.map((kind) => `"${kind}"`).join(" | ")},
   "reason": "short reason using the user's words",
   "target": { "runId": "optional exact run id", "sessionId": "optional exact session id", "grantId": "optional exact permission grant id" },
   "targetSelector": { "scope": "run" | "session", "reference": "current" | "latest" | "previous" | "mentioned" | "exact", "sourceText": "quoted user reference" },
@@ -85,8 +85,12 @@ Return only JSON matching:
 
 Classification rules:
 - Choose inspect_run, pause_run, resume_run, cancel_run, or finalize_run only when the user is asking to inspect/control/cancel/finalize an existing runtime run/session/execution.
+- Choose inspect_session or summarize_session_without_resuming only when the user is asking to inspect or summarize an old session without granting resume authority.
+- Choose companion-wide controls only when the user is asking to inspect, quiet, pause, suspend, resume, stop quiet work, stop watches, suppress agenda, or require confirmation for PulSeed's overall proactive posture.
+- Choose resume_companion only for the explicit user agency control that exits suspend; do not use it for resuming a runtime run or session.
+- Choose leave_quiet_mode and resume_proactivity as control-lift operations only. They do not release held items automatically.
 - Choose none for ordinary project work, coding requests, implementation continuation, evidence/progress Q&A, status questions, explanations, help, or requests to create/start new work.
-- Choose none for broad follow-ups like "continue", "finish the implementation", or "続けて" unless the message itself clearly refers to resuming/finalizing a runtime run/session/execution.
+- Choose none for broad follow-ups like "continue" or "finish the implementation" unless the message itself clearly refers to resuming/finalizing a runtime run/session/execution.
 - Choose reload_config when the user asks to reload PulSeed runtime/gateway/daemon configuration.
 - Choose self_update when the user asks PulSeed to update itself.
 - Choose cancel_run when the user asks to stop or cancel an existing runtime run/session/execution.

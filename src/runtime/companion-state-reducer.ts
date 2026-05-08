@@ -126,9 +126,17 @@ export function deriveRuntimeItemControlPolicy(
     || companionControls.includes("require_confirmation_for_proactivity");
   const globallyHeld = companionControls.includes("suspend_companion")
     || companionControls.includes("stop_all_quiet_work")
+    || companionControls.includes("stop_all_watches")
     || item.companion_control_state.held_by_controls.length > 0
     || item.companion_control_state.rejected_by_controls.length > 0;
+  const proactiveAdmissionBlocked = isAgentOriginAdmissionItem(item)
+    && (
+      companionControls.includes("enter_quiet_mode")
+      || companionControls.includes("pause_proactivity")
+      || companionControls.includes("suppress_nonessential_agenda")
+    );
   const blocksResume = globallyHeld
+    || proactiveAdmissionBlocked
     || hasBlockingStaleness(item.staleness)
     || isPermissionStale(item.staleness.permission)
     || item.posture === "stale"
@@ -338,8 +346,11 @@ function deriveFromParsedInput(input: CompanionStateReducerInput): CompanionStat
         "require_confirmation_for_proactivity",
       ]),
       preSuspendMode: input.pre_suspend_mode,
-      activeRefs: activeRuntimeRefs(input.runtime_items),
-      heldRuntimeRefs: heldRuntimeRefs(input.runtime_items),
+      activeRefs: admittedActiveRuntimeRefs(input.runtime_items, ["pause_proactivity", "require_confirmation_for_proactivity"]),
+      heldRuntimeRefs: uniqueStrings([
+        ...heldRuntimeRefs(input.runtime_items),
+        ...heldRuntimeRefsForControls(input.runtime_items, ["pause_proactivity", "require_confirmation_for_proactivity"]),
+      ]),
       blockedRefs: uniqueStrings([
         ...signals.authorityBlockerRefs,
         ...signals.safetyBlockerRefs,
@@ -400,7 +411,7 @@ function deriveFromParsedInput(input: CompanionStateReducerInput): CompanionStat
       mode: blockerMode.mode,
       controlOverlays: uniqueControls([...input.control_overlays, ...controlDecision.activeControls]),
       preSuspendMode: input.pre_suspend_mode,
-      activeRefs: activeRuntimeRefs(input.runtime_items),
+      activeRefs: admittedActiveRuntimeRefs(input.runtime_items, controlDecision.activeControls),
       heldRuntimeRefs: uniqueStrings([...heldRuntimeRefs(input.runtime_items), ...signals.staleSurfaceRefs]),
       blockedRefs: blockerMode.blockedRefs,
       staleRefs: signals.staleRefs,
@@ -424,8 +435,11 @@ function deriveFromParsedInput(input: CompanionStateReducerInput): CompanionStat
       mode: "cooling_down",
       controlOverlays: uniqueControls([...input.control_overlays, ...controlDecision.activeControls]),
       preSuspendMode: input.pre_suspend_mode,
-      activeRefs: activeRuntimeRefs(input.runtime_items),
-      heldRuntimeRefs: heldRuntimeRefs(input.runtime_items),
+      activeRefs: admittedActiveRuntimeRefs(input.runtime_items, controlDecision.activeControls),
+      heldRuntimeRefs: uniqueStrings([
+        ...heldRuntimeRefs(input.runtime_items),
+        ...heldRuntimeRefsForControls(input.runtime_items, controlDecision.activeControls),
+      ]),
       blockedRefs: [],
       staleRefs: signals.staleRefs,
       matchedControlRefs: controlDecision.matchedControlRefs,
@@ -448,8 +462,11 @@ function deriveFromParsedInput(input: CompanionStateReducerInput): CompanionStat
     mode,
     controlOverlays: uniqueControls([...input.control_overlays, ...controlDecision.activeControls]),
     preSuspendMode: input.pre_suspend_mode,
-    activeRefs: activeRuntimeRefs(input.runtime_items),
-    heldRuntimeRefs: heldRuntimeRefs(input.runtime_items),
+    activeRefs: admittedActiveRuntimeRefs(input.runtime_items, controlDecision.activeControls),
+    heldRuntimeRefs: uniqueStrings([
+      ...heldRuntimeRefs(input.runtime_items),
+      ...heldRuntimeRefsForControls(input.runtime_items, controlDecision.activeControls),
+    ]),
     blockedRefs: [],
     staleRefs: signals.staleRefs,
     matchedControlRefs: controlDecision.matchedControlRefs,
@@ -610,7 +627,11 @@ function selectNonSuspendedMode(
   const controls = uniqueControls([...input.control_overlays, ...activeControls]);
   if (controls.includes("enter_quiet_mode")) return "quieted";
   if (controls.includes("pause_proactivity")) return "proactivity_paused";
-  if (controls.includes("suppress_nonessential_agenda")) return "holding_back";
+  if (
+    controls.includes("stop_all_quiet_work")
+    || controls.includes("stop_all_watches")
+    || controls.includes("suppress_nonessential_agenda")
+  ) return "holding_back";
   if (signals.waitingConditions.length > 0) return "waiting";
   if (input.runtime_items.some((item) => item.posture === "needs_user")) return "needs_user";
   if (input.runtime_items.some((item) => item.posture === "working")) return "working";
@@ -632,10 +653,29 @@ function activeRuntimeRefs(items: RuntimeItem[]): string[] {
     .map(runtimeItemId);
 }
 
+function admittedActiveRuntimeRefs(items: RuntimeItem[], activeControls: CompanionWideControl[]): string[] {
+  return items
+    .filter((item) => activeRuntimeRefs([item]).length > 0)
+    .filter((item) => isRuntimeItemAdmittedActive(item, activeControls))
+    .map(runtimeItemId);
+}
+
 function activeRefsOfType(items: RuntimeItem[], ...types: RuntimeItem["type"][]): string[] {
   return items
     .filter((item) => types.includes(item.type))
     .filter((item) => activeRuntimeRefs([item]).length > 0)
+    .map(runtimeItemId);
+}
+
+function admittedActiveRefsOfType(
+  items: RuntimeItem[],
+  activeControls: CompanionWideControl[],
+  ...types: RuntimeItem["type"][]
+): string[] {
+  return items
+    .filter((item) => types.includes(item.type))
+    .filter((item) => activeRuntimeRefs([item]).length > 0)
+    .filter((item) => isRuntimeItemAdmittedActive(item, activeControls))
     .map(runtimeItemId);
 }
 
@@ -646,8 +686,41 @@ function heldRuntimeRefs(items: RuntimeItem[]): string[] {
       || item.posture === "waiting"
       || item.posture === "suppressed"
       || item.posture === "suspended"
+      || item.companion_control_state.held_by_controls.length > 0
+      || item.companion_control_state.rejected_by_controls.length > 0
     ))
     .map(runtimeItemId);
+}
+
+function heldRuntimeRefsForControls(items: RuntimeItem[], activeControls: CompanionWideControl[]): string[] {
+  if (activeControls.length === 0) return [];
+  return items
+    .filter((item) => {
+      if (activeControls.includes("suspend_companion")) return activeRuntimeRefs([item]).length > 0;
+      if (activeControls.includes("stop_all_quiet_work") && isQuietWorkRuntimeItem(item)) return activeRuntimeRefs([item]).length > 0;
+      if (activeControls.includes("stop_all_watches") && item.type === "watch") return activeRuntimeRefs([item]).length > 0;
+      if (activeControls.includes("suppress_nonessential_agenda") && isAgendaRuntimeItem(item)) return activeRuntimeRefs([item]).length > 0;
+      if (
+        (activeControls.includes("enter_quiet_mode") || activeControls.includes("pause_proactivity"))
+        && isAgentOriginAdmissionItem(item)
+      ) return activeRuntimeRefs([item]).length > 0;
+      return false;
+    })
+    .map(runtimeItemId);
+}
+
+function isRuntimeItemAdmittedActive(item: RuntimeItem, activeControls: CompanionWideControl[]): boolean {
+  if (item.companion_control_state.held_by_controls.length > 0) return false;
+  if (item.companion_control_state.rejected_by_controls.length > 0) return false;
+  if (activeControls.includes("suspend_companion")) return false;
+  if (activeControls.includes("stop_all_quiet_work") && isQuietWorkRuntimeItem(item)) return false;
+  if (activeControls.includes("stop_all_watches") && item.type === "watch") return false;
+  if (activeControls.includes("suppress_nonessential_agenda") && isAgendaRuntimeItem(item)) return false;
+  if (
+    (activeControls.includes("enter_quiet_mode") || activeControls.includes("pause_proactivity"))
+    && isAgentOriginAdmissionItem(item)
+  ) return false;
+  return true;
 }
 
 function buildSnapshot(input: {
@@ -673,6 +746,8 @@ function buildSnapshot(input: {
 }): CompanionStateSnapshot {
   const budgets = deriveBudgets(input.mode, input.controlOverlays, input.matchedFeedbackRefs, input.signals);
   const runtimeInput = input.input;
+  const activeControls = input.controlOverlays;
+  const refsHeldByControls = runtimeInput === null ? [] : runtimeRefsHeldByCompanionControls(runtimeInput.runtime_items, activeControls);
   return CompanionStateSnapshotSchema.parse({
     schema_version: "companion-state-snapshot-v1",
     snapshot_id: `companion-state:${input.highWatermark}:${input.mode}`,
@@ -705,16 +780,28 @@ function buildSnapshot(input: {
     active_refs: input.activeRefs,
     active_watch_refs: runtimeInput === null
       ? []
-      : uniqueStrings([...runtimeInput.active_watch_refs, ...activeRefsOfType(runtimeInput.runtime_items, "watch")]),
+      : input.mode === "suspended" || activeControls.includes("stop_all_watches")
+        ? []
+        : uniqueStrings([
+          ...runtimeInput.active_watch_refs,
+          ...admittedActiveRefsOfType(runtimeInput.runtime_items, activeControls, "watch"),
+        ]).filter((ref) => !refsHeldByControls.includes(ref)),
     active_wait_refs: runtimeInput === null
       ? []
-      : uniqueStrings([...runtimeInput.active_wait_refs, ...activeRefsOfType(runtimeInput.runtime_items, "wait")]),
+      : input.mode === "suspended"
+        ? []
+        : uniqueStrings([
+          ...runtimeInput.active_wait_refs,
+          ...admittedActiveRefsOfType(runtimeInput.runtime_items, activeControls, "wait"),
+        ]).filter((ref) => !refsHeldByControls.includes(ref)),
     active_quiet_work_refs: runtimeInput === null
       ? []
-      : uniqueStrings([
-        ...runtimeInput.active_quiet_work_refs,
-        ...activeRefsOfType(runtimeInput.runtime_items, "run", "task"),
-      ]),
+      : input.mode === "suspended" || activeControls.includes("stop_all_quiet_work")
+        ? []
+        : uniqueStrings([
+          ...runtimeInput.active_quiet_work_refs,
+          ...admittedActiveRefsOfType(runtimeInput.runtime_items, activeControls, "run", "task"),
+        ]).filter((ref) => !refsHeldByControls.includes(ref)),
     pre_suspend_mode: input.preSuspendMode,
     held_runtime_refs: input.heldRuntimeRefs,
     derivation_trace: {
@@ -730,6 +817,18 @@ function buildSnapshot(input: {
       reason: input.reason,
     },
   });
+}
+
+function runtimeRefsHeldByCompanionControls(items: RuntimeItem[], activeControls: CompanionWideControl[]): string[] {
+  return uniqueStrings([
+    ...heldRuntimeRefsForControls(items, activeControls),
+    ...items
+      .filter((item) => (
+        item.companion_control_state.held_by_controls.length > 0
+        || item.companion_control_state.rejected_by_controls.length > 0
+      ))
+      .map(runtimeItemId),
+  ]);
 }
 
 function deriveBudgets(
@@ -784,6 +883,10 @@ function deriveBudgets(
     interruptionBudget = 0;
     quietWorkBudget = 0.35;
     budgetChanges.push(`${mode}_constrains_interruption`);
+    if (controls.includes("stop_all_quiet_work")) {
+      quietWorkBudget = 0;
+      budgetChanges.push("stop_all_quiet_work_zeroes_quiet_budget");
+    }
   } else if (mode === "working" || mode === "waiting" || mode === "watching") {
     currentCapacity = "constrained";
     capacityScore = 0.65;
@@ -832,9 +935,35 @@ function failClosedControlPolicy(reason: string): ControlPolicy {
 
 function buildControlPolicyReason(item: RuntimeItem, activeCompanionControls: CompanionWideControl[]): string {
   if (activeCompanionControls.includes("suspend_companion")) return "global_suspend_forbids_runtime_item_resume";
+  if (activeCompanionControls.includes("stop_all_quiet_work") && isQuietWorkRuntimeItem(item)) return "global_stop_quiet_work_forbids_runtime_item_resume";
+  if (activeCompanionControls.includes("stop_all_watches") && item.type === "watch") return "global_stop_watches_forbids_runtime_item_resume";
+  if (
+    (activeCompanionControls.includes("enter_quiet_mode")
+      || activeCompanionControls.includes("pause_proactivity")
+      || activeCompanionControls.includes("suppress_nonessential_agenda"))
+    && isAgentOriginAdmissionItem(item)
+  ) return "global_companion_control_forbids_agent_origin_admission";
   if (hasBlockingStaleness(item.staleness)) return "runtime_item_staleness_requires_repair";
   if (item.authority.requires_confirmation) return "runtime_item_authority_requires_confirmation";
   return "runtime_item_authority_and_staleness_policy";
+}
+
+function isQuietWorkRuntimeItem(item: RuntimeItem): boolean {
+  return item.type === "run" || item.type === "task" || item.type === "diff_proposal";
+}
+
+function isAgendaRuntimeItem(item: RuntimeItem): boolean {
+  return item.type === "urge_candidate" || item.type === "agent_agenda_item";
+}
+
+function isAgentOriginAdmissionItem(item: RuntimeItem): boolean {
+  return isAgendaRuntimeItem(item)
+    || item.type === "surface_projection"
+    || item.authority.speakable
+    || item.authority.can_create_urge
+    || item.authority.can_write_memory
+    || item.authority.can_update_surface
+    || item.authority.can_delegate_work;
 }
 
 function hasBlockingStaleness(staleness: Staleness): boolean {

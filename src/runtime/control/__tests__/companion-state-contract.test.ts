@@ -88,6 +88,9 @@ function makeControl(
     source_ref: `control:${control}:${state}`,
     updated_at: NOW,
     reason: "test control",
+    changed_by: null,
+    affected_runtime_refs: [],
+    audit_refs: [],
   };
 }
 
@@ -751,6 +754,32 @@ describe("CompanionState runtime-control contracts", () => {
     expect(snapshot.derivation_trace.reason).toBe("suspend_companion_fail_closed");
   });
 
+  it("does not leak active watch wait or quiet-work refs while suspended", () => {
+    const snapshot = deriveCompanionStateSnapshot(makeReducerInput({
+      runtime_items: [
+        makeRuntimeItem({ item_id: "run:active-quiet-work", type: "run", status: "running", posture: "working" }),
+        makeRuntimeItem({ item_id: "watch:active", type: "watch", status: "running", posture: "watching" }),
+        makeRuntimeItem({ item_id: "wait:active", type: "wait", status: "active", posture: "waiting" }),
+      ],
+      active_watch_refs: ["watch:active"],
+      active_wait_refs: ["wait:active"],
+      active_quiet_work_refs: ["run:active-quiet-work"],
+      global_controls: [makeControl("suspend_companion")],
+    }));
+
+    expect(snapshot.mode).toBe("suspended");
+    expect(snapshot.active_refs).toEqual([]);
+    expect(snapshot.active_watch_refs).toEqual([]);
+    expect(snapshot.active_wait_refs).toEqual([]);
+    expect(snapshot.active_quiet_work_refs).toEqual([]);
+    expect(snapshot.held_runtime_refs).toEqual(expect.arrayContaining([
+      "run:active-quiet-work",
+      "watch:active",
+      "wait:active",
+    ]));
+    expect(snapshot.pre_suspend_mode).toBe("waiting");
+  });
+
   it("prevents urge pressure from overriding suspend", () => {
     const snapshot = deriveCompanionStateSnapshot(makeReducerInput({
       runtime_items: [
@@ -825,6 +854,115 @@ describe("CompanionState runtime-control contracts", () => {
     expect(quieted.control_overlays).toEqual(["enter_quiet_mode"]);
     expect(paused.mode).toBe("proactivity_paused");
     expect(paused.control_overlays).toEqual(["pause_proactivity"]);
+  });
+
+  it("blocks agent-origin admission for quiet and proactivity pause while preserving inspection", () => {
+    const agentAgendaItem = makeRuntimeItem({
+      item_id: "agenda:expression",
+      type: "agent_agenda_item",
+      status: "active",
+      posture: "proposed",
+      authority: {
+        ...operationalAuthority,
+        speakable: true,
+        can_create_urge: true,
+      },
+    });
+    const quieted = deriveCompanionStateSnapshot(makeReducerInput({
+      runtime_items: [agentAgendaItem],
+      global_controls: [makeControl("enter_quiet_mode")],
+    }));
+    const paused = deriveCompanionStateSnapshot(makeReducerInput({
+      runtime_items: [agentAgendaItem],
+      global_controls: [makeControl("pause_proactivity")],
+    }));
+    const quietPolicy = deriveRuntimeItemControlPolicy(agentAgendaItem, ["enter_quiet_mode"]);
+    const pausePolicy = deriveRuntimeItemControlPolicy(agentAgendaItem, ["pause_proactivity"]);
+
+    expect(quieted.mode).toBe("quieted");
+    expect(quieted.active_refs).toEqual([]);
+    expect(quieted.held_runtime_refs).toContain("agenda:expression");
+    expect(paused.mode).toBe("proactivity_paused");
+    expect(paused.active_refs).toEqual([]);
+    expect(quietPolicy.allowed_controls).toContain("inspect_item");
+    expect(quietPolicy.forbidden_controls).toContain("resume_item");
+    expect(quietPolicy.reason).toBe("global_companion_control_forbids_agent_origin_admission");
+    expect(pausePolicy.forbidden_controls).toContain("resume_item");
+  });
+
+  it("stops quiet work watches and nonessential agenda without admitting new active refs", () => {
+    const runtimeItems = [
+      makeRuntimeItem({ item_id: "run:quiet", type: "run", status: "running", posture: "working" }),
+      makeRuntimeItem({ item_id: "watch:quiet", type: "watch", status: "running", posture: "watching" }),
+      makeRuntimeItem({ item_id: "urge:nonessential", type: "urge_candidate", status: "mature", posture: "proposed" }),
+    ];
+    const stoppedQuietWork = deriveCompanionStateSnapshot(makeReducerInput({
+      runtime_items: runtimeItems,
+      active_quiet_work_refs: ["run:quiet"],
+      global_controls: [makeControl("stop_all_quiet_work")],
+    }));
+    const stoppedWatches = deriveCompanionStateSnapshot(makeReducerInput({
+      runtime_items: runtimeItems,
+      active_watch_refs: ["watch:quiet"],
+      global_controls: [makeControl("stop_all_watches")],
+    }));
+    const suppressedAgenda = deriveCompanionStateSnapshot(makeReducerInput({
+      runtime_items: runtimeItems,
+      global_controls: [makeControl("suppress_nonessential_agenda")],
+    }));
+
+    expect(stoppedQuietWork.mode).toBe("holding_back");
+    expect(stoppedQuietWork.active_quiet_work_refs).toEqual([]);
+    expect(stoppedQuietWork.quiet_work_budget).toBe(0);
+    expect(stoppedQuietWork.held_runtime_refs).toContain("run:quiet");
+    expect(stoppedWatches.active_watch_refs).toEqual([]);
+    expect(stoppedWatches.held_runtime_refs).toContain("watch:quiet");
+    expect(suppressedAgenda.active_refs).not.toContain("urge:nonessential");
+    expect(suppressedAgenda.held_runtime_refs).toContain("urge:nonessential");
+  });
+
+  it("does not flush held items when quiet pause or suspend controls are lifted", () => {
+    const heldPing = makeRuntimeItem({
+      item_id: "urge:held-ping",
+      type: "urge_candidate",
+      status: "mature",
+      posture: "holding",
+      companion_control_state: {
+        active_controls: [],
+        global_control_refs: ["control:enter_quiet_mode:active"],
+        held_by_controls: ["enter_quiet_mode"],
+        rejected_by_controls: [],
+        reason: "held while quiet mode was active",
+      },
+    });
+    const heldResumeAttempt = makeRuntimeItem({
+      item_id: "session:held-resume",
+      type: "session",
+      status: "active",
+      posture: "holding",
+      companion_control_state: {
+        active_controls: [],
+        global_control_refs: ["control:suspend_companion:active"],
+        held_by_controls: ["suspend_companion"],
+        rejected_by_controls: [],
+        reason: "resume attempt held while companion was suspended",
+      },
+    });
+    const snapshot = deriveCompanionStateSnapshot(makeReducerInput({
+      runtime_items: [heldPing, heldResumeAttempt],
+      global_controls: [
+        makeControl("leave_quiet_mode", "inactive"),
+        makeControl("resume_companion", "inactive"),
+      ],
+    }));
+
+    expect(snapshot.active_refs).toEqual([]);
+    expect(snapshot.held_runtime_refs).toEqual(expect.arrayContaining([
+      "urge:held-ping",
+      "session:held-resume",
+    ]));
+    expect(deriveRuntimeItemControlPolicy(heldPing).forbidden_controls).toContain("resume_item");
+    expect(deriveRuntimeItemControlPolicy(heldResumeAttempt).forbidden_controls).toContain("resume_item");
   });
 
   it("holds back running watches when the active Surface is stale", () => {
