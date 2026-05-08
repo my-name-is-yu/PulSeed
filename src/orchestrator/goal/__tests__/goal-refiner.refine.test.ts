@@ -203,6 +203,72 @@ describe("GoalRefiner.refine()", () => {
     });
   });
 
+  it("keeps refined numeric thresholds finite", async () => {
+    const response = `{
+      "is_measurable": true,
+      "dimensions": [
+        {
+          "name": "numeric_string",
+          "label": "Numeric String",
+          "threshold_type": "min",
+          "threshold_value": "80",
+          "data_source": "shell",
+          "observation_command": "echo 80"
+        },
+        {
+          "name": "string_infinity",
+          "label": "String Infinity",
+          "threshold_type": "max",
+          "threshold_value": "Infinity",
+          "data_source": "shell",
+          "observation_command": "echo Infinity"
+        },
+        {
+          "name": "overflow_number",
+          "label": "Overflow Number",
+          "threshold_type": "min",
+          "threshold_value": 1e309,
+          "data_source": "shell",
+          "observation_command": "echo 1e309"
+        },
+        {
+          "name": "invalid_range",
+          "label": "Invalid Range",
+          "threshold_type": "range",
+          "threshold_value": "80%",
+          "data_source": "shell",
+          "observation_command": "echo 80%"
+        }
+      ],
+      "reason": "Thresholds are directly measurable"
+    }`;
+    const llmClient = createMockLLMClient([response]);
+    const stateManager = makeStateManager({ [goalId]: goal });
+    const refiner = new GoalRefiner(
+      stateManager,
+      llmClient,
+      makeObservationEngine(),
+      makeTreeManager(),
+      makeEthicsGate()
+    );
+
+    const result = await refiner.refine(goalId, { feasibilityCheck: false });
+
+    expect(result.goal.dimensions.map((dimension) => dimension.threshold)).toEqual([
+      { type: "min", value: 80 },
+      { type: "max", value: 100 },
+      { type: "min", value: 0 },
+      { type: "range", low: 0, high: 100 },
+    ]);
+    expect(result.goal.dimensions).toHaveLength(4);
+    expect(stateManager.saveGoal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: goalId,
+        node_type: "leaf",
+      })
+    );
+  });
+
   it.each([
     {
       name: "schema-invalid JSON",
