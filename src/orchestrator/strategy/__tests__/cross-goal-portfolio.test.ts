@@ -288,6 +288,40 @@ describe("CrossGoalPortfolio", async () => {
       expect(findUserPriority(5)).toBeCloseTo(1.0, 5);
     });
 
+    it("user_priority accepts exact priority constraints with supported separators", async () => {
+      const goals = [
+        makeGoal({ id: "g-colon", constraints: ["priority:4"] }),
+        makeGoal({ id: "g-equals", constraints: ["priority=3"] }),
+        makeGoal({ id: "g-space", constraints: ["priority 2"] }),
+      ];
+      for (const g of goals) {
+        await stateManager.saveGoal(g);
+      }
+
+      const result = await portfolio.calculateGoalPriorities(goals.map((goal) => goal.id));
+
+      expect(result.find((r) => r.goal_id === "g-colon")!.user_priority).toBeCloseTo(0.8, 5);
+      expect(result.find((r) => r.goal_id === "g-equals")!.user_priority).toBeCloseTo(0.6, 5);
+      expect(result.find((r) => r.goal_id === "g-space")!.user_priority).toBeCloseTo(0.4, 5);
+    });
+
+    it("user_priority ignores embedded or out-of-range priority mentions", async () => {
+      const goals = [
+        makeGoal({ id: "g-prose", constraints: ["no priority:5 escalation without review"] }),
+        makeGoal({ id: "g-prefix", constraints: ["work_priority:5"] }),
+        makeGoal({ id: "g-out-of-range", constraints: ["priority:9"] }),
+      ];
+      for (const g of goals) {
+        await stateManager.saveGoal(g);
+      }
+
+      const result = await portfolio.calculateGoalPriorities(goals.map((goal) => goal.id));
+
+      expect(result.find((r) => r.goal_id === "g-prose")!.user_priority).toBe(0.5);
+      expect(result.find((r) => r.goal_id === "g-prefix")!.user_priority).toBe(0.5);
+      expect(result.find((r) => r.goal_id === "g-out-of-range")!.user_priority).toBe(0.5);
+    });
+
     it("user_priority defaults to 0.5 when not specified", async () => {
       const g = makeGoal({ id: "g1", constraints: [] });
       await stateManager.saveGoal(g);
