@@ -5,6 +5,7 @@ import {
   GovernedMemoryRoleSchema,
   GovernedMemorySchema,
   GovernedMemoryUseAuditSchema,
+  evaluateGovernedMemoryUse,
   requiredGovernedMemoryDomainFields,
   type GovernedMemoryRecordKind,
 } from "../governed-memory.js";
@@ -518,5 +519,51 @@ describe("GovernedMemory contract", () => {
       repair_paths: ["forget"],
       created_at: now,
     }).success).toBe(false);
+  });
+
+  it("evaluates memory-use decisions with typed audits instead of letting memory authorize runtime effects", () => {
+    const blockedSpeech = evaluateGovernedMemoryUse({
+      memory: makeMemory({
+        allowed_uses: ["design_grounding", "behavioral_inhibition"],
+        not_allowed_uses: ["user_facing_reference", "proactive_trigger"],
+      }),
+      requested_use: "user_facing_reference",
+      audit_id: "audit-memory-speech-blocked",
+      created_at: now,
+      influenced: ["expression"],
+      gate_ref: "gate/surface/user-facing",
+    });
+    expect(blockedSpeech.status).toBe("blocked");
+    expect(blockedSpeech.blocked_by).toContain("allowed_use");
+    expect(blockedSpeech.blocked_by).toContain("forbidden_use");
+    expect(blockedSpeech.audit.outcome).toBe("blocked");
+    expect(blockedSpeech.audit.repair_paths).toEqual(expect.arrayContaining(["suppress", "revoke"]));
+
+    const deletedNonUse = evaluateGovernedMemoryUse({
+      memory: makeMemory({
+        lifecycle: "deleted",
+        statement: undefined,
+        domain_fields: redactedDomainFields("deleted"),
+        content: {
+          state: "redacted",
+          redaction_ref: "redaction/memory-1",
+          reason: "deleted",
+        },
+        allowed_uses: ["never_use_directly"],
+        projection_policy: {
+          surface_eligible: false,
+          requires_permission_gate: true,
+          inspection_visibility: "redacted",
+        },
+      }),
+      requested_use: "side_effect_authorization",
+      audit_id: "audit-memory-deleted-non-use",
+      created_at: now,
+      influenced: ["action"],
+    });
+    expect(deletedNonUse.status).toBe("blocked");
+    expect(deletedNonUse.audit.outcome).toBe("non_use");
+    expect(deletedNonUse.audit.redaction_ref).toBe("redaction/memory-1");
+    expect(JSON.stringify(deletedNonUse)).not.toContain("The user prefers concise status reports.");
   });
 });

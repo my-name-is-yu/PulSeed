@@ -3,6 +3,7 @@ import {
   GovernedMemoryAllowedUseClassSchema,
   GovernedMemoryBlockedUseClassSchema,
   GovernedMemoryCorrectionStateSchema,
+  GovernedMemoryCorrectionEventSchema,
   GovernedMemoryForbiddenUseClassSchema,
   GovernedMemoryLifecycleSchema,
   GovernedMemoryOwnerRefSchema,
@@ -11,6 +12,7 @@ import {
   GovernedMemorySensitivitySchema,
   type GovernedMemoryLifecycle,
   type GovernedMemoryRole,
+  type GovernedMemoryCorrectionEvent,
 } from "../platform/profile/governed-memory.js";
 
 export const SurfaceProjectionTargetSchema = z.enum([
@@ -451,6 +453,7 @@ export const SurfaceDerivedRuntimeRefSchema = z.object({
   missing_dependency_behavior: z.literal("fail_closed").default("fail_closed"),
 }).strict();
 export type SurfaceDerivedRuntimeRef = z.infer<typeof SurfaceDerivedRuntimeRefSchema>;
+export type SurfaceDerivedRuntimeRefInput = z.input<typeof SurfaceDerivedRuntimeRefSchema>;
 
 export const SurfaceProjectionSchema = z.object({
   id: z.string().min(1),
@@ -662,6 +665,137 @@ export const SurfaceProjectionSchema = z.object({
   }
 });
 export type SurfaceProjection = z.infer<typeof SurfaceProjectionSchema>;
+export type SurfaceProjectionInput = z.input<typeof SurfaceProjectionSchema>;
+
+export const SurfaceRuntimeOperationSchema = z.enum([
+  "speech",
+  "notification",
+  "action",
+  "session_resume",
+  "surface_update",
+  "memory_write",
+]);
+export type SurfaceRuntimeOperation = z.infer<typeof SurfaceRuntimeOperationSchema>;
+
+export const SurfaceRuntimeAuthorizationBasisSchema = z.enum([
+  "runtime_authority",
+  "relationship_permission",
+  "memory_only",
+  "unknown",
+]);
+export type SurfaceRuntimeAuthorizationBasis = z.infer<typeof SurfaceRuntimeAuthorizationBasisSchema>;
+
+export const SurfaceRuntimeAdmissionStatusSchema = z.enum(["admitted", "blocked"]);
+export type SurfaceRuntimeAdmissionStatus = z.infer<typeof SurfaceRuntimeAdmissionStatusSchema>;
+
+export const SurfaceRuntimeAdmissionReasonSchema = z.enum([
+  "admitted",
+  "missing_dependency_ref",
+  "invalid_surface",
+  "allowed_use_missing",
+  "forbidden_use",
+  "memory_is_not_authority",
+  "runtime_authority_required",
+  "authority_unknown",
+]);
+export type SurfaceRuntimeAdmissionReason = z.infer<typeof SurfaceRuntimeAdmissionReasonSchema>;
+
+export const SurfaceRuntimeAdmissionRequestSchema = z.object({
+  projection: SurfaceProjectionSchema,
+  derived_ref: SurfaceDerivedRuntimeRefSchema,
+  operation: SurfaceRuntimeOperationSchema,
+  authorization_basis: SurfaceRuntimeAuthorizationBasisSchema,
+  runtime_authority_ref: z.string().min(1).optional(),
+  audit_ref: z.string().min(1).optional(),
+}).strict();
+export type SurfaceRuntimeAdmissionRequest = z.infer<typeof SurfaceRuntimeAdmissionRequestSchema>;
+export type SurfaceRuntimeAdmissionRequestInput = z.input<typeof SurfaceRuntimeAdmissionRequestSchema>;
+
+export const SurfaceRuntimeAdmissionSchema = z.object({
+  status: SurfaceRuntimeAdmissionStatusSchema,
+  reason: SurfaceRuntimeAdmissionReasonSchema,
+  operation: SurfaceRuntimeOperationSchema,
+  dependent_ref: z.string().min(1),
+  related_surface_refs: z.array(z.string().min(1)),
+  related_memory_refs: z.array(z.string().min(1)),
+  blocked_refs: z.array(z.string().min(1)).default([]),
+  required_rechecks: z.array(SurfaceGateKindSchema).default([]),
+  audit_refs: z.array(z.string().min(1)).default([]),
+}).strict().superRefine((admission, ctx) => {
+  if (admission.status === "admitted" && admission.reason !== "admitted") {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["reason"],
+      message: "admitted Surface runtime admissions must use admitted reason",
+    });
+  }
+  if (admission.status === "blocked" && admission.reason === "admitted") {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["reason"],
+      message: "blocked Surface runtime admissions require a blocker reason",
+    });
+  }
+});
+export type SurfaceRuntimeAdmission = z.infer<typeof SurfaceRuntimeAdmissionSchema>;
+
+export function createSurfaceDerivedRuntimeRef(input: SurfaceDerivedRuntimeRefInput): SurfaceDerivedRuntimeRef {
+  return SurfaceDerivedRuntimeRefSchema.parse(input);
+}
+
+export function attachSurfaceDependencyRef(
+  projectionInput: SurfaceProjectionInput,
+  derivedRefInput: SurfaceDerivedRuntimeRefInput
+): SurfaceProjection {
+  const projection = SurfaceProjectionSchema.parse(projectionInput);
+  const derivedRef = SurfaceDerivedRuntimeRefSchema.parse(derivedRefInput);
+  const groupName = dependentRefGroupForKind(derivedRef.kind);
+  return SurfaceProjectionSchema.parse({
+    ...projection,
+    dependent_refs: {
+      ...projection.dependent_refs,
+      [groupName]: upsertSurfaceDerivedRuntimeRef(projection.dependent_refs[groupName], derivedRef),
+    },
+  });
+}
+
+export function evaluateSurfaceRuntimeAdmission(
+  input: SurfaceRuntimeAdmissionRequestInput
+): SurfaceRuntimeAdmission {
+  const request = SurfaceRuntimeAdmissionRequestSchema.parse(input);
+  const missingDependencyRefs = missingRuntimeDependencyRefs(request.projection, request.derived_ref);
+  if (missingDependencyRefs.length > 0) {
+    return buildSurfaceRuntimeAdmission(request, "blocked", "missing_dependency_ref", missingDependencyRefs);
+  }
+  if (request.projection.metadata.invalidation_state !== "valid") {
+    return buildSurfaceRuntimeAdmission(request, "blocked", "invalid_surface", [request.projection.id]);
+  }
+  if (!request.projection.allowed_runtime_uses.includes(request.derived_ref.use_class as z.infer<typeof GovernedMemoryAllowedUseClassSchema>)) {
+    return buildSurfaceRuntimeAdmission(request, "blocked", "allowed_use_missing", [request.derived_ref.use_class]);
+  }
+  if (
+    isForbiddenRequestedUse(request.derived_ref.use_class)
+    || request.projection.not_allowed_runtime_uses.includes(request.derived_ref.use_class)
+  ) {
+    return buildSurfaceRuntimeAdmission(request, "blocked", "forbidden_use", [
+      ...request.derived_ref.related_memory_refs,
+      ...request.derived_ref.blocked_refs.map((ref) => ref.ref),
+    ]);
+  }
+  if (request.authorization_basis === "memory_only") {
+    return buildSurfaceRuntimeAdmission(request, "blocked", "memory_is_not_authority", request.derived_ref.related_memory_refs);
+  }
+  if (request.authorization_basis === "unknown") {
+    return buildSurfaceRuntimeAdmission(request, "blocked", "authority_unknown", request.derived_ref.related_memory_refs);
+  }
+  if (request.authorization_basis !== "runtime_authority" && requiresRuntimeAuthority(request.operation)) {
+    return buildSurfaceRuntimeAdmission(request, "blocked", "runtime_authority_required", request.derived_ref.related_memory_refs);
+  }
+  if (request.authorization_basis === "runtime_authority" && !request.runtime_authority_ref) {
+    return buildSurfaceRuntimeAdmission(request, "blocked", "runtime_authority_required", request.derived_ref.related_memory_refs);
+  }
+  return buildSurfaceRuntimeAdmission(request, "admitted", "admitted", []);
+}
 
 export const SurfaceInspectionViewSchema = z.object({
   surface_id: z.string().min(1),
@@ -724,6 +858,24 @@ export function createSurfaceInspectionView(
     })),
     redacted_audit_refs: projection.metadata.audit_refs,
     invalidation_state: projection.metadata.invalidation_state,
+  });
+}
+
+export const SurfaceInspectionAdapterPayloadSchema = z.object({
+  target: SurfaceProjectionTargetSchema,
+  inspection: SurfaceInspectionViewSchema,
+  prompt_dump: z.never().optional(),
+}).strict();
+export type SurfaceInspectionAdapterPayload = z.infer<typeof SurfaceInspectionAdapterPayloadSchema>;
+
+export function createSurfaceInspectionAdapterPayload(
+  projectionInput: SurfaceProjectionInput,
+  target: SurfaceProjectionTarget
+): SurfaceInspectionAdapterPayload {
+  const projection = SurfaceProjectionSchema.parse(projectionInput);
+  return SurfaceInspectionAdapterPayloadSchema.parse({
+    target,
+    inspection: createSurfaceInspectionView(projection, target),
   });
 }
 
@@ -845,6 +997,360 @@ export const SurfaceInvalidationEventSchema = z.object({
   }
 });
 export type SurfaceInvalidationEvent = z.infer<typeof SurfaceInvalidationEventSchema>;
+
+export const SurfaceInvalidationRunResultSchema = z.object({
+  projection: SurfaceProjectionSchema,
+  event: SurfaceInvalidationEventSchema,
+  inspection: SurfaceInspectionViewSchema,
+  blocked_admissions: z.array(SurfaceRuntimeAdmissionSchema),
+}).strict();
+export type SurfaceInvalidationRunResult = z.infer<typeof SurfaceInvalidationRunResultSchema>;
+
+export function surfaceInvalidationEventsToRuntimeStateRefs(
+  events: readonly (SurfaceInvalidationEvent | z.input<typeof SurfaceInvalidationEventSchema>)[]
+): string[] {
+  return uniqueStrings(events.map((event) => SurfaceInvalidationEventSchema.parse(event).surface_ref));
+}
+
+export type SurfaceMemoryCorrectionInvalidationInput = {
+  projection: SurfaceProjectionInput;
+  correction_event: GovernedMemoryCorrectionEvent | z.input<typeof GovernedMemoryCorrectionEventSchema>;
+  occurred_at: string;
+  redaction_ref?: string;
+  affected_dependencies?: SurfaceDerivedRuntimeRefInput[];
+  audit_ref?: string;
+  policy_ref?: string;
+};
+
+export type SurfacePermissionInvalidationInput = {
+  projection: SurfaceProjectionInput;
+  source_ref: SurfaceMemorySourceRef;
+  occurred_at: string;
+  affected_dependencies?: SurfaceDerivedRuntimeRefInput[];
+  audit_ref?: string;
+  policy_ref?: string;
+};
+
+export function invalidateSurfaceProjectionFromMemoryCorrection(
+  input: SurfaceMemoryCorrectionInvalidationInput
+): SurfaceInvalidationRunResult {
+  const projection = SurfaceProjectionSchema.parse(input.projection);
+  const correctionEvent = GovernedMemoryCorrectionEventSchema.parse(input.correction_event);
+  const source = projection.source_refs.find((candidate) => candidate.memory_id === correctionEvent.target_memory_ref);
+  if (!source) {
+    throw new Error(`SurfaceProjection ${projection.id} does not include corrected memory ${correctionEvent.target_memory_ref}`);
+  }
+  const trigger = triggerForMemoryCorrection(correctionEvent);
+  const redactionRef = input.redaction_ref ?? redactionRefForCorrection(correctionEvent, trigger);
+  return invalidateSurfaceProjection({
+    projection,
+    source_ref: source,
+    trigger,
+    occurred_at: input.occurred_at,
+    redaction_ref: redactionRef,
+    affected_dependencies: input.affected_dependencies,
+    audit_ref: input.audit_ref ?? correctionEvent.audit_ref,
+    policy_ref: input.policy_ref ?? correctionEvent.invalidation_ref ?? `surface:${projection.id}:policy:${trigger}`,
+  });
+}
+
+export function invalidateSurfaceProjectionFromPermissionChange(
+  input: SurfacePermissionInvalidationInput
+): SurfaceInvalidationRunResult {
+  const projection = SurfaceProjectionSchema.parse(input.projection);
+  const sourceRef = SurfaceMemorySourceRefSchema.parse(input.source_ref);
+  return invalidateSurfaceProjection({
+    projection,
+    source_ref: sourceRef,
+    trigger: "permission_revocation",
+    occurred_at: input.occurred_at,
+    affected_dependencies: input.affected_dependencies,
+    audit_ref: input.audit_ref ?? `audit:${sourceRef.memory_id}:permission-revocation`,
+    policy_ref: input.policy_ref ?? `surface:${projection.id}:policy:permission_revocation`,
+  });
+}
+
+type SurfaceInvalidationRunnerInput = {
+  projection: SurfaceProjection;
+  source_ref: SurfaceMemorySourceRef;
+  trigger: SurfaceInvalidationTrigger;
+  occurred_at: string;
+  redaction_ref?: string;
+  affected_dependencies?: SurfaceDerivedRuntimeRefInput[];
+  audit_ref: string;
+  policy_ref: string;
+};
+
+function invalidateSurfaceProjection(input: SurfaceInvalidationRunnerInput): SurfaceInvalidationRunResult {
+  const sourceRef = SurfaceMemorySourceRefSchema.parse(input.source_ref);
+  const affectedDependencies = resolveAffectedDependencies(input.projection, input.affected_dependencies);
+  const invalidatedProjection = buildInvalidatedSurfaceProjection(input.projection, sourceRef, input.trigger, input.redaction_ref);
+  const event = SurfaceInvalidationEventSchema.parse({
+    id: `surface-invalidation:${input.projection.id}:${input.trigger}:${sourceRef.memory_id}`,
+    policy_ref: input.policy_ref,
+    surface_ref: input.projection.id,
+    trigger: input.trigger,
+    source_ref: redactedSourceForTrigger(sourceRef, input.trigger, input.redaction_ref),
+    affected_dependencies: affectedDependencies,
+    required_rechecks: [...SURFACE_GATE_ORDER],
+    action: actionForInvalidationTrigger(input.trigger),
+    redaction_ref: input.redaction_ref,
+    audit_ref: input.audit_ref,
+    occurred_at: input.occurred_at,
+  });
+  const blockedAdmissions = affectedDependencies.map((dependency) =>
+    evaluateSurfaceRuntimeAdmission({
+      projection: invalidatedProjection,
+      derived_ref: dependency,
+      operation: operationForDerivedRuntimeKind(dependency.kind),
+      authorization_basis: "runtime_authority",
+      runtime_authority_ref: `runtime-authority:${dependency.ref}`,
+      audit_ref: input.audit_ref,
+    })
+  );
+
+  return SurfaceInvalidationRunResultSchema.parse({
+    projection: invalidatedProjection,
+    event,
+    inspection: createSurfaceInspectionView(invalidatedProjection, "daemon"),
+    blocked_admissions: blockedAdmissions,
+  });
+}
+
+function buildInvalidatedSurfaceProjection(
+  projection: SurfaceProjection,
+  sourceRef: SurfaceMemorySourceRef,
+  trigger: SurfaceInvalidationTrigger,
+  redactionRef?: string
+): SurfaceProjection {
+  const affectedSource = redactedSourceForTrigger(sourceRef, trigger, redactionRef);
+  const redactionRequired = triggerRequiresRedaction(trigger);
+  const blockedGate = trigger === "permission_revocation" || trigger === "permission_scope_narrowed"
+    ? "permission"
+    : "lifecycle";
+  return SurfaceProjectionSchema.parse({
+    ...projection,
+    version: projection.version + 1,
+    source_refs: projection.source_refs.map((candidate) =>
+      surfaceMemorySourceMatches(candidate, sourceRef) ? affectedSource : candidate
+    ),
+    included_context: [],
+    excluded_context: [{
+      source_ref: affectedSource,
+      requested_use: projection.requested_use,
+      blocked_by: [{
+        gate: blockedGate,
+        status: "blocked",
+        reason_ref: `surface:${projection.id}:${trigger}:${blockedGate}`,
+        evaluated_at: projection.created_at,
+      }],
+      redaction_ref: redactionRequired ? redactionRef : undefined,
+      inhibition_ref: trigger === "permission_revocation" ? `inhibition:${sourceRef.memory_id}:permission` : undefined,
+      blocked_summary_ref: `summary:${projection.id}:${sourceRef.memory_id}:${trigger}`,
+    }],
+    rationale_entries: [{
+      source_ref: affectedSource,
+      decision: "excluded",
+      gate: blockedGate,
+      reason_ref: `rationale:${projection.id}:${sourceRef.memory_id}:${trigger}`,
+      policy_refs: [`policy:${trigger}`],
+      redaction_ref: redactionRequired ? redactionRef : undefined,
+    }],
+    metadata: {
+      ...projection.metadata,
+      staleness: "unknown",
+      sensitivity: redactionRequired ? "sensitive" : projection.metadata.sensitivity,
+      permission_state: trigger === "permission_revocation" || trigger === "permission_scope_narrowed"
+        ? "blocked"
+        : projection.metadata.permission_state,
+      invalidation_state: "invalid",
+      audit_refs: uniqueStrings([...projection.metadata.audit_refs, `audit:${projection.id}:${trigger}`]),
+    },
+  });
+}
+
+function redactedSourceForTrigger(
+  sourceRef: SurfaceMemorySourceRef,
+  trigger: SurfaceInvalidationTrigger,
+  redactionRef?: string
+): SurfaceMemorySourceRef {
+  if (!triggerRequiresRedaction(trigger)) return sourceRef;
+  if (!redactionRef) {
+    throw new Error(`${trigger} requires a redaction_ref`);
+  }
+  const lifecycle = trigger === "memory_tombstone" ? "tombstoned" : "deleted";
+  const reason = lifecycle === "tombstoned" ? "tombstoned" : "deleted";
+  return SurfaceMemorySourceRefSchema.parse({
+    ...sourceRef,
+    domain_fields: {
+      redaction_ref: redactionRef,
+      reason,
+    },
+    allowed_uses: ["never_use_directly"],
+    not_allowed_uses: uniqueBlockedUseClasses([...sourceRef.not_allowed_uses, ...sourceRef.allowed_uses]),
+    lifecycle,
+    correction_state: lifecycle === "deleted" ? "deleted" : sourceRef.correction_state,
+    content_state: "redacted",
+    dependency_ref: {
+      ...sourceRef.dependency_ref,
+      content_state: "redacted",
+      lifecycle,
+      correction_state: lifecycle === "deleted" ? "deleted" : sourceRef.correction_state,
+    },
+  });
+}
+
+function triggerRequiresRedaction(trigger: SurfaceInvalidationTrigger): boolean {
+  return trigger === "memory_tombstone" || trigger === "memory_deletion" || trigger === "source_redaction";
+}
+
+function triggerForMemoryCorrection(event: GovernedMemoryCorrectionEvent): SurfaceInvalidationTrigger {
+  if (event.action === "delete") return "memory_deletion";
+  if (event.action === "retract") return "memory_retraction";
+  if (event.action === "supersede") return "memory_supersession";
+  return "memory_correction";
+}
+
+function redactionRefForCorrection(
+  event: GovernedMemoryCorrectionEvent,
+  trigger: SurfaceInvalidationTrigger
+): string | undefined {
+  if (!triggerRequiresRedaction(trigger)) return undefined;
+  return event.invalidation_ref ? `${event.invalidation_ref}:redaction` : undefined;
+}
+
+function actionForInvalidationTrigger(trigger: SurfaceInvalidationTrigger): SurfaceInvalidationAction {
+  if (triggerRequiresRedaction(trigger)) return "redact";
+  if (trigger === "permission_revocation" || trigger === "permission_scope_narrowed") return "regate";
+  if (trigger === "surface_expired") return "expire";
+  return "regate";
+}
+
+function operationForDerivedRuntimeKind(kind: SurfaceDerivedRuntimeRef["kind"]): SurfaceRuntimeOperation {
+  switch (kind) {
+    case "expression_decision":
+      return "speech";
+    case "session_resume_attempt":
+      return "session_resume";
+    case "memory_write_candidate":
+      return "memory_write";
+    case "agenda_item":
+    case "outcome_decision":
+    case "runtime_item":
+      return "action";
+  }
+}
+
+function dependentRefGroupForKind(kind: SurfaceDerivedRuntimeRef["kind"]): keyof SurfaceProjection["dependent_refs"] {
+  switch (kind) {
+    case "runtime_item":
+      return "runtime_items";
+    case "agenda_item":
+      return "agenda_items";
+    case "outcome_decision":
+      return "outcome_decisions";
+    case "expression_decision":
+      return "expression_decisions";
+    case "memory_write_candidate":
+      return "memory_write_candidates";
+    case "session_resume_attempt":
+      return "session_resume_attempts";
+  }
+}
+
+function upsertSurfaceDerivedRuntimeRef(
+  refs: SurfaceDerivedRuntimeRef[],
+  nextRef: SurfaceDerivedRuntimeRef
+): SurfaceDerivedRuntimeRef[] {
+  return [...refs.filter((candidate) => candidate.ref !== nextRef.ref), nextRef];
+}
+
+function missingRuntimeDependencyRefs(
+  projection: SurfaceProjection,
+  derivedRef: SurfaceDerivedRuntimeRef
+): string[] {
+  const missing: string[] = [];
+  const groupName = dependentRefGroupForKind(derivedRef.kind);
+  const projectionRef = projection.dependent_refs[groupName].find((candidate) => candidate.ref === derivedRef.ref);
+  const selectedMemoryRefs = new Set(projection.source_refs.map((source) => source.memory_id));
+  const selectedPermissionRefs = new Set(projection.relationship_permissions.map((permission) => permission.permission_id));
+  const selectedStalenessRefs = new Set(projection.staleness_checks);
+  const selectedAuditRefs = new Set(projection.metadata.audit_refs);
+  if (!projectionRef) missing.push(`dependent_refs.${groupName}:${derivedRef.ref}`);
+  if (!derivedRef.related_surface_refs.includes(projection.id)) missing.push(`related_surface_refs:${projection.id}`);
+  if (derivedRef.related_memory_refs.length === 0) missing.push("related_memory_refs");
+  if (derivedRef.permission_check_refs.length === 0) missing.push("permission_check_refs");
+  if (derivedRef.staleness_check_refs.length === 0) missing.push("staleness_check_refs");
+  if (derivedRef.audit_refs.length === 0) missing.push("audit_refs");
+  for (const ref of derivedRef.related_memory_refs) {
+    if (!selectedMemoryRefs.has(ref)) missing.push(`related_memory_refs:${ref}`);
+  }
+  for (const ref of derivedRef.permission_check_refs) {
+    if (!selectedPermissionRefs.has(ref)) missing.push(`permission_check_refs:${ref}`);
+  }
+  for (const ref of derivedRef.staleness_check_refs) {
+    if (!selectedStalenessRefs.has(ref)) missing.push(`staleness_check_refs:${ref}`);
+  }
+  for (const ref of derivedRef.audit_refs) {
+    if (!selectedAuditRefs.has(ref)) missing.push(`audit_refs:${ref}`);
+  }
+  return uniqueStrings(missing);
+}
+
+function buildSurfaceRuntimeAdmission(
+  request: SurfaceRuntimeAdmissionRequest,
+  status: SurfaceRuntimeAdmissionStatus,
+  reason: SurfaceRuntimeAdmissionReason,
+  blockedRefs: string[]
+): SurfaceRuntimeAdmission {
+  return SurfaceRuntimeAdmissionSchema.parse({
+    status,
+    reason,
+    operation: request.operation,
+    dependent_ref: request.derived_ref.ref,
+    related_surface_refs: request.derived_ref.related_surface_refs,
+    related_memory_refs: request.derived_ref.related_memory_refs,
+    blocked_refs: uniqueStrings(blockedRefs),
+    required_rechecks: status === "blocked" ? [...SURFACE_GATE_ORDER] : [],
+    audit_refs: uniqueStrings([
+      ...request.derived_ref.audit_refs,
+      ...(request.audit_ref ? [request.audit_ref] : []),
+    ]),
+  });
+}
+
+function requiresRuntimeAuthority(operation: SurfaceRuntimeOperation): boolean {
+  return operation === "notification"
+    || operation === "action"
+    || operation === "session_resume"
+    || operation === "surface_update"
+    || operation === "memory_write";
+}
+
+function resolveAffectedDependencies(
+  projection: SurfaceProjection,
+  affectedDependencies?: SurfaceDerivedRuntimeRefInput[]
+): SurfaceDerivedRuntimeRef[] {
+  const dependencies = affectedDependencies === undefined
+    ? Object.values(projection.dependent_refs).flat()
+    : affectedDependencies.map((dependency) => SurfaceDerivedRuntimeRefSchema.parse(dependency));
+  return z.array(SurfaceDerivedRuntimeRefSchema).min(1).parse(dependencies);
+}
+
+function surfaceMemorySourceMatches(left: SurfaceMemorySourceRef, right: SurfaceMemorySourceRef): boolean {
+  return left.memory_id === right.memory_id
+    && JSON.stringify(left.owning_store_ref) === JSON.stringify(right.owning_store_ref);
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values)];
+}
+
+function uniqueBlockedUseClasses(
+  values: Array<z.infer<typeof GovernedMemoryBlockedUseClassSchema>>
+): Array<z.infer<typeof GovernedMemoryBlockedUseClassSchema>> {
+  return [...new Set(values)];
+}
 
 function surfaceSourceRefKey(source: SurfaceMemorySourceRef): string {
   return JSON.stringify(source);
