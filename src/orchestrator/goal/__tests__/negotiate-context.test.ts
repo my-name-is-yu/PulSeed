@@ -131,7 +131,7 @@ describe("gatherNegotiationContext", () => {
     // Should not throw, just return empty or partial
   });
 
-  it("does not include TODO section when goal has no TODO/FIXME mention", async () => {
+  it("includes TODO and FIXME marker inventory from workspace contents without goal-text matching", async () => {
     makeSrcWithTodos(tmpDir);
 
     const result = await gatherNegotiationContext(
@@ -139,9 +139,10 @@ describe("gatherNegotiationContext", () => {
       tmpDir
     );
 
-    // Should NOT have sample TODO matches section (no TODO keyword in goal)
-    expect(result).not.toContain("Sample TODO matches");
-    expect(result).not.toContain("Sample FIXME matches");
+    expect(result).toContain("Sample TODO matches");
+    expect(result).toContain("Sample FIXME matches");
+    expect(result).toContain("core.ts");
+    expect(result).toContain("utils.ts");
   });
 
   // ─── ToolExecutor integration tests ───
@@ -205,7 +206,7 @@ describe("gatherNegotiationContext", () => {
       }),
     } as unknown as ToolExecutor;
 
-    const result = await gatherNegotiationContext("fix all TODO items", tmpDir, undefined, mockExecutor);
+    const result = await gatherNegotiationContext("improve code quality", tmpDir, undefined, mockExecutor);
 
     expect(result).toContain("TODO");
     expect(result).toContain("occurrences");

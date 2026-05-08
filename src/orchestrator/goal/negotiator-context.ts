@@ -152,60 +152,62 @@ export async function gatherNegotiationContext(
       }
     }
 
-    const descLower = goalDescription.toLowerCase();
-    if (descLower.includes("todo") || descLower.includes("fixme")) {
-      for (const marker of [TASK_NOTE_MARKER, ISSUE_MARKER] as const) {
-        if (!descLower.includes(marker.toLowerCase())) continue;
-        if (toolExecutor && ctx) {
-          const countResult = await toolExecutor.execute("grep", { pattern: marker, path: dir + "/src", glob: "*.ts", outputMode: "count", limit: 10000, fixedStrings: true }, ctx);
-          const contentResult = await toolExecutor.execute("grep", { pattern: marker, path: dir + "/src", glob: "*.ts", outputMode: "content", limit: 10000, fixedStrings: true }, ctx);
-          const countOut = countResult.success && typeof countResult.data === "string" ? countResult.data : "";
-          const contentOut = contentResult.success && typeof contentResult.data === "string" ? contentResult.data : "";
-          if (countOut) {
-            const lines = countOut.trim().split("\n").filter(Boolean);
-            const totalCount = lines.reduce((sum: number, line: string) => {
-              const count = parseInt(line.split(":").pop() ?? "0", 10);
-              return sum + (isNaN(count) ? 0 : count);
-            }, 0);
-            const fileSet = new Set(lines.map((l: string) => l.split(":")[0]));
+    for (const marker of [TASK_NOTE_MARKER, ISSUE_MARKER] as const) {
+      if (toolExecutor && ctx) {
+        const countResult = await toolExecutor.execute("grep", { pattern: marker, path: dir + "/src", glob: "*.ts", outputMode: "count", limit: 10000, fixedStrings: true }, ctx);
+        const contentResult = await toolExecutor.execute("grep", { pattern: marker, path: dir + "/src", glob: "*.ts", outputMode: "content", limit: 10000, fixedStrings: true }, ctx);
+        const countOut = countResult.success && typeof countResult.data === "string" ? countResult.data : "";
+        const contentOut = contentResult.success && typeof contentResult.data === "string" ? contentResult.data : "";
+        if (countOut) {
+          const lines = countOut.trim().split("\n").filter(Boolean);
+          const positiveLines = lines.filter((line: string) => {
+            const count = parseInt(line.split(":").pop() ?? "0", 10);
+            return !isNaN(count) && count > 0;
+          });
+          const totalCount = positiveLines.reduce((sum: number, line: string) => {
+            const count = parseInt(line.split(":").pop() ?? "0", 10);
+            return sum + (isNaN(count) ? 0 : count);
+          }, 0);
+          const fileSet = new Set(positiveLines.map((l: string) => l.split(":")[0]));
+          if (totalCount > 0) {
             keywordResults.push(
               `  - "${marker}": ${totalCount} occurrences across ${fileSet.size} files`
             );
           }
-          if (contentOut) {
-            const contentLines = contentOut.trim().split("\n").filter(Boolean);
-            const sample = contentLines.slice(0, 5).map((l: string) => {
-              const rel = l.replace(dir + "/", "");
-              return `  ${rel}`;
-            });
-            if (sample.length > 0) {
-              parts.push(`Sample ${marker} matches:\n${sample.join("\n")}`);
-            }
+        }
+        if (contentOut) {
+          const contentLines = contentOut.trim().split("\n").filter(Boolean);
+          const sample = contentLines.slice(0, 5).map((l: string) => {
+            const rel = l.replace(dir + "/", "");
+            return `  ${rel}`;
+          });
+          if (sample.length > 0) {
+            parts.push(`Sample ${marker} matches:\n${sample.join("\n")}`);
           }
-        } else {
-          try {
-            const { stdout: countOut } = await execFileAsync(
-              "grep",
-              ["-rn", "-F", "--include=*.ts", marker, dir + "/src"],
-              { timeout: 3000 }
-            );
-            const lines = countOut.trim().split("\n").filter(Boolean);
-            const fileSet = new Set(lines.map((l) => l.split(":")[0]));
-            keywordResults.push(
-              `  - "${marker}": ${lines.length} occurrences across ${fileSet.size} files`
-            );
+        }
+      } else {
+        try {
+          const { stdout: countOut } = await execFileAsync(
+            "grep",
+            ["-rn", "-F", "--include=*.ts", marker, dir + "/src"],
+            { timeout: 3000 }
+          );
+          const lines = countOut.trim().split("\n").filter(Boolean);
+          const fileSet = new Set(lines.map((l) => l.split(":")[0]));
+          keywordResults.push(
+            `  - "${marker}": ${lines.length} occurrences across ${fileSet.size} files`
+          );
 
-            // Sample matches (up to 5)
-            const sample = lines.slice(0, 5).map((l) => {
-              const rel = l.replace(dir + "/", "");
-              return `  ${rel}`;
-            });
-            if (sample.length > 0) {
-              parts.push(`Sample ${marker} matches:\n${sample.join("\n")}`);
-            }
-          } catch {
-            // ignore
+          // Sample matches (up to 5)
+          const sample = lines.slice(0, 5).map((l) => {
+            const rel = l.replace(dir + "/", "");
+            return `  ${rel}`;
+          });
+          if (sample.length > 0) {
+            parts.push(`Sample ${marker} matches:\n${sample.join("\n")}`);
           }
+        } catch {
+          // ignore
         }
       }
     }
