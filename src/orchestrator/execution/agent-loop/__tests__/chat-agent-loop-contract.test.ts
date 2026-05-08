@@ -167,20 +167,20 @@ describe("chat agentloop final-answer contract", () => {
   it("unwraps answer-only structured chat output into plain assistant text", async () => {
     const { runner } = makeRunner({
       status: "done",
-      answer: "Codexです。あなたの端末上の作業環境でコード作業を進めます。",
+      answer: "I am Codex. I work on code in your local workspace.",
     });
 
-    const result = await runner.execute({ message: "あなたは誰？" });
+    const result = await runner.execute({ message: "Who are you?" });
 
     expect(result.success).toBe(true);
-    expect(result.output).toBe("Codexです。あなたの端末上の作業環境でコード作業を進めます。");
+    expect(result.output).toBe("I am Codex. I work on code in your local workspace.");
     expect(result.output).not.toContain('"answer"');
   });
 
   it("unwraps JSON strings in message fields before display", async () => {
     const { runner } = makeRunner({
       status: "done",
-      message: JSON.stringify({ answer: "JSON文字列ではなく本文だけを表示します。" }),
+      message: JSON.stringify({ answer: "Display only the body, not the JSON string." }),
       evidence: [],
       blockers: [],
     });
@@ -188,7 +188,7 @@ describe("chat agentloop final-answer contract", () => {
     const result = await runner.execute({ message: "test" });
 
     expect(result.success).toBe(true);
-    expect(result.output).toBe("JSON文字列ではなく本文だけを表示します。");
+    expect(result.output).toBe("Display only the body, not the JSON string.");
     expect(result.output).not.toContain('"answer"');
   });
 
@@ -199,7 +199,7 @@ describe("chat agentloop final-answer contract", () => {
       evidence: [],
       blockers: [],
       finalAnswer: {
-        summary: JSON.stringify({ message: "summary の中身だけを表示します。" }),
+        summary: JSON.stringify({ message: "Display only the summary body." }),
         sections: [],
         evidence: [],
         blockers: [],
@@ -210,7 +210,7 @@ describe("chat agentloop final-answer contract", () => {
     const result = await runner.execute({ message: "test" });
 
     expect(result.success).toBe(true);
-    expect(result.output).toBe("summary の中身だけを表示します。");
+    expect(result.output).toBe("Display only the summary body.");
     expect(result.output).not.toContain('"message"');
   });
 
@@ -220,7 +220,7 @@ describe("chat agentloop final-answer contract", () => {
       run: vi.fn().mockResolvedValue({
         success: true,
         output: { status: "done", message: "", evidence: [], blockers: [] },
-        finalText: JSON.stringify({ finalAnswer: { summary: "finalText 由来の本文です。" } }),
+        finalText: JSON.stringify({ finalAnswer: { summary: "This body came from finalText." } }),
         stopReason: "completed",
         traceId: "trace-1",
         sessionId: "session-1",
@@ -245,7 +245,7 @@ describe("chat agentloop final-answer contract", () => {
     const result = await runner.execute({ message: "test" });
 
     expect(result.success).toBe(true);
-    expect(result.output).toBe("finalText 由来の本文です。");
+    expect(result.output).toBe("This body came from finalText.");
     expect(result.output).not.toContain("finalAnswer");
   });
 
@@ -269,7 +269,7 @@ describe("chat agentloop final-answer contract", () => {
     const finalText = JSON.stringify({ foo: "bar" });
     const { runner } = makeRunner(null, finalText);
 
-    const result = await runner.execute({ message: "JSONで返して" });
+    const result = await runner.execute({ message: "Return JSON." });
 
     expect(result.success).toBe(true);
     expect(result.output).toBe(finalText);

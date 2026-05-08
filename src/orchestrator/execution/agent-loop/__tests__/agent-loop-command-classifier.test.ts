@@ -21,7 +21,7 @@ describe("classifyAgentLoopCommandResult", () => {
   it("marks typed test-category tool results as evidence-eligible", () => {
     expect(classifyAgentLoopCommandResult({
       toolName: "verify",
-      command: "任意の検証",
+      command: "arbitrary verification",
       activityCategory: "test",
     })).toMatchObject({
       category: "verification",

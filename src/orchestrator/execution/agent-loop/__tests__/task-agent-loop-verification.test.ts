@@ -63,7 +63,7 @@ describe("isTaskRelevantVerificationCommand", () => {
     const task = makeTask("");
     expect(isTaskRelevantVerificationCommand(task, {
       toolName: "verify",
-      command: "任意の検証",
+      command: "arbitrary verification",
       cwd: process.cwd(),
       success: true,
       category: "verification",
