@@ -139,22 +139,25 @@ export async function answerRuntimeEvidenceQuestion(input: RuntimeEvidenceAnswer
   ]);
   const candidates = selectCandidateRuns(snapshot);
   const queryTargetRunId = query.targetRunId?.trim();
-  const targetRun = queryTargetRunId
-    ? candidates.find((run) => run.id === queryTargetRunId)
+  const acceptedTargetRunId = queryTargetRunId && isExactRunIdReference(input.text, queryTargetRunId)
+    ? queryTargetRunId
+    : undefined;
+  const targetRun = acceptedTargetRunId
+    ? candidates.find((run) => run.id === acceptedTargetRunId)
     : undefined;
   if (
-    queryTargetRunId
+    acceptedTargetRunId
     && !targetRun
-    && isExactMissingRunIdReference(input.text, queryTargetRunId)
+    && isStructuredRunIdReference(acceptedTargetRunId)
   ) {
     return {
       kind: "answered",
       message: [
-        `Runtime evidence answer for run ${queryTargetRunId}.`,
+        `Runtime evidence answer for run ${acceptedTargetRunId}.`,
         "Evidence missing: the requested run was not found in the Runtime Session Catalog.",
       ].join("\n"),
       messageType: "warning",
-      targetRunId: queryTargetRunId,
+      targetRunId: acceptedTargetRunId,
       topics: query.topics,
       confidence: query.confidence,
     };
@@ -164,7 +167,7 @@ export async function answerRuntimeEvidenceQuestion(input: RuntimeEvidenceAnswer
     const summary = await ledger.summarizeRun(run.id).catch(() => null);
     return { run, summary };
   }));
-  const selected = selectUnderstoodRun(summaries, queryTargetRunId);
+  const selected = selectUnderstoodRun(summaries, acceptedTargetRunId);
   const result = buildRuntimeEvidenceAnswer({
     text: input.text,
     topics: query.topics,
@@ -174,7 +177,12 @@ export async function answerRuntimeEvidenceQuestion(input: RuntimeEvidenceAnswer
     summary: selected.summary,
     now: input.now,
   }, query.confidence);
-  return appendIgnoredTargetRunCaveat(result, queryTargetRunId && !targetRun ? queryTargetRunId : undefined);
+  return appendIgnoredTargetRunCaveat(
+    result,
+    queryTargetRunId && (!acceptedTargetRunId || (!targetRun && !isStructuredRunIdReference(acceptedTargetRunId)))
+      ? queryTargetRunId
+      : undefined,
+  );
 }
 
 export function buildRuntimeEvidenceAnswer(input: RuntimeEvidenceAnswerModelInput, confidence?: number): RuntimeEvidenceAnswerResult {
@@ -259,10 +267,35 @@ function selectUnderstoodRun(
   return summaries[0] ?? { run: null, summary: null };
 }
 
-function isExactMissingRunIdReference(text: string, targetRunId: string): boolean {
+function isExactRunIdReference(text: string, targetRunId: string): boolean {
   const target = targetRunId.trim();
-  if (!target || !text.includes(target)) return false;
-  return /^run(?::|-)[A-Za-z0-9][A-Za-z0-9_.:-]*$/.test(target);
+  if (!target) return false;
+  let start = text.indexOf(target);
+  while (start !== -1) {
+    const before = start > 0 ? text[start - 1] : undefined;
+    const afterIndex = start + target.length;
+    const after = afterIndex < text.length ? text[afterIndex] : undefined;
+    if (!isRunIdTokenChar(before) && !isRunIdTokenChar(after)) return true;
+    start = text.indexOf(target, start + 1);
+  }
+  return false;
+}
+
+function isRunIdTokenChar(char: string | undefined): boolean {
+  if (!char) return false;
+  const code = char.charCodeAt(0);
+  return (code >= 48 && code <= 57)
+    || (code >= 65 && code <= 90)
+    || (code >= 97 && code <= 122)
+    || char === "_"
+    || char === "."
+    || char === ":"
+    || char === "-"
+    || char === "/";
+}
+
+function isStructuredRunIdReference(targetRunId: string): boolean {
+  return /[:/_\-.]/.test(targetRunId);
 }
 
 function appendIgnoredTargetRunCaveat(
