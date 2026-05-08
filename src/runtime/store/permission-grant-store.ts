@@ -35,6 +35,7 @@ export const PermissionGrantExcludedCapabilitySchema = z.enum([
   "delete",
   "write_remote",
   "network_send",
+  "external_send",
   "secret_change",
   "protected_path_mutation",
   "production_mutation",

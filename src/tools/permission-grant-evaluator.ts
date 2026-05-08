@@ -210,7 +210,10 @@ function classifyPermissionGrantRequest(
 
   if (tool.metadata.isDestructive) excludedCapabilities.add("destructive_action");
   if (tool.metadata.permissionLevel === "write_remote") excludedCapabilities.add("write_remote");
-  if (tool.metadata.requiresNetwork || tool.metadata.tags.includes("network")) excludedCapabilities.add("network_send");
+  if (tool.metadata.requiresNetwork || tool.metadata.tags.includes("network")) {
+    excludedCapabilities.add("network_send");
+    excludedCapabilities.add("external_send");
+  }
 
   if (tool.metadata.tags.includes("memory")) requiredCapabilities.add("update_memory");
   if (tool.metadata.tags.includes("surface")) requiredCapabilities.add("update_surface");
@@ -277,7 +280,10 @@ function classifyShellPermissionGrantRequest(
 
   if (assessment.capabilities.destructive) excludedCapabilities.add("destructive_action");
   if (assessment.capabilities.protectedTarget) excludedCapabilities.add("protected_path_mutation");
-  if (assessment.capabilities.network) excludedCapabilities.add("network_send");
+  if (assessment.capabilities.network) {
+    excludedCapabilities.add("network_send");
+    excludedCapabilities.add("external_send");
+  }
   if (
     !assessment.capabilities.readOnly
     && !assessment.capabilities.localWrite
