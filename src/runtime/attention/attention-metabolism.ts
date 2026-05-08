@@ -1,3 +1,9 @@
+import type { z } from "zod";
+import {
+  SurfaceInvalidationEventSchema,
+  type SurfaceInvalidationAction,
+  type SurfaceInvalidationEvent,
+} from "../../grounding/surface-contracts.js";
 import {
   AgentAgendaItemSchema,
   AttentionMaturationTransitionSchema,
@@ -211,6 +217,23 @@ export type RuntimeAdmissionInput = {
   safety_checks?: AutonomyCheck[];
   visibility_policy_ref?: CompanionAutonomyRef;
   audit_ref?: CompanionAutonomyRef;
+};
+
+export type AttentionSurfaceInvalidationInput = {
+  surface_invalidation_event: SurfaceInvalidationEvent | z.input<typeof SurfaceInvalidationEventSchema>;
+  urge_candidates?: UrgeCandidate[];
+  agenda_items?: AgentAgendaItem[];
+  current_surface_ref?: CompanionAutonomyRef | null;
+  now: string;
+  audit_refs?: CompanionAutonomyRef[];
+};
+
+export type AttentionSurfaceInvalidationResult = {
+  surface_ref: CompanionAutonomyRef;
+  invalidation_check: AutonomyCheck;
+  invalidated_urge_candidates: UrgeCandidate[];
+  invalidated_agenda_items: AgentAgendaItem[];
+  audit_refs: CompanionAutonomyRef[];
 };
 
 export const AttentionFeedbackKindValues = [
@@ -821,6 +844,106 @@ export function admitInitiativeGateDecision(input: RuntimeAdmissionInput): Outco
   });
 }
 
+export function applySurfaceInvalidationToAttention(
+  input: AttentionSurfaceInvalidationInput
+): AttentionSurfaceInvalidationResult {
+  const event = SurfaceInvalidationEventSchema.parse(input.surface_invalidation_event);
+  const invalidatedSurfaceRef = ref("surface", event.surface_ref);
+  const currentSurfaceRef = input.current_surface_ref ?? null;
+  const invalidationEvidence = surfaceInvalidationEvidenceRef(event);
+  const invalidationAuditRef = ref("audit_trace", event.audit_ref);
+  const auditRefs = uniqueRefs([...(input.audit_refs ?? []), invalidationAuditRef]);
+
+  const invalidatedUrges = (input.urge_candidates ?? [])
+    .filter((urge) => urgeUsesInvalidatedSurface(urge, event))
+    .map((urge) =>
+      UrgeCandidateSchema.parse({
+        ...urge,
+        surface_ref: null,
+        companion_state_ref: null,
+        evidence_refs: [invalidationEvidence],
+        allowed_moves: intersectMoves(urge.allowed_moves, ["notice", "watch", "hold"]),
+        forbidden_moves: uniqueMoves([...urge.forbidden_moves, ...OUTWARD_PRE_GATE_FORBIDDEN_MOVES]),
+        maturation: invalidatedMaturation(urge.maturation, event.action, input.now, invalidationEvidence),
+        audit_refs: uniqueRefs([...urge.audit_refs, ...auditRefs]),
+      })
+    );
+  const invalidatedUrgeRefKeys = new Set(invalidatedUrges.map((urge) => refKey(ref("urge_candidate", urge.urge_id))));
+
+  const invalidatedAgendaItems = (input.agenda_items ?? [])
+    .filter((item) => agendaUsesInvalidatedSurface(item, event, invalidatedUrgeRefKeys))
+    .map((item) => {
+      const canReground = currentSurfaceRef !== null
+        && currentSurfaceRef.id !== event.surface_ref
+        && item.related_surface_refs.some((surfaceRef) => refKey(surfaceRef) === refKey(currentSurfaceRef));
+      const currentPosture = canReground ? "held" : "expired";
+      const maturationState = canReground ? "held" : "expired";
+      const auditOnlyAgendaId = `agenda-history:${stableId(`${item.agenda_item_id}:${event.id}`)}`;
+      const redactedAgendaHistory = event.redaction_ref !== undefined;
+      return AgentAgendaItemSchema.parse({
+        ...item,
+        agenda_item_id: canReground ? item.agenda_item_id : auditOnlyAgendaId,
+        subject: canReground || !redactedAgendaHistory
+          ? item.subject
+          : "Invalidated Surface-derived agenda history",
+        why_pulseed_cares: canReground
+          ? item.why_pulseed_cares
+          : "invalidated Surface dependency is retained only as audit history",
+        expected_user_benefit: canReground
+          ? item.expected_user_benefit
+          : "Prevents stale Surface-derived agenda from reaching the Initiative Gate",
+        related_goal_refs: canReground ? item.related_goal_refs : [],
+        related_memory_refs: canReground ? item.related_memory_refs : [],
+        related_surface_refs: canReground ? uniqueRefs([currentSurfaceRef]) : [],
+        related_runtime_refs: canReground ? item.related_runtime_refs : [],
+        source_urge_refs: canReground ? item.source_urge_refs : [],
+        staleness_state: canReground ? "needs_regrounding" : "rejected",
+        allowed_moves: canReground ? item.allowed_moves : [],
+        current_posture: currentPosture,
+        control_state: canReground ? "held" : "expired",
+        maturation: {
+          ...item.maturation,
+          state: maturationState,
+          expires_at: canReground ? item.maturation.expires_at : input.now,
+          reinforcement_refs: canReground ? item.maturation.reinforcement_refs : [],
+          blocker_refs: canReground
+            ? uniqueSourceRefs([...item.maturation.blocker_refs, invalidationEvidence])
+            : [invalidationEvidence],
+        },
+        revisit_condition: canReground
+          ? {
+              kind: "surface_refresh",
+              refs: [currentSurfaceRef],
+              reason: "re-ground agenda item against current Surface before attention can infer state",
+            }
+          : {
+              kind: "none",
+              refs: [],
+              reason: "agenda item depended on invalid Surface and has no current Surface re-grounding",
+            },
+        merge_trace: item.merge_trace
+          ? {
+              ...item.merge_trace,
+              dedupe_key: canReground ? item.merge_trace.dedupe_key : `audit-only:${auditOnlyAgendaId}`,
+              merged_urge_refs: canReground ? item.merge_trace.merged_urge_refs : [],
+              reinforced_by_refs: canReground ? item.merge_trace.reinforced_by_refs : [],
+              audit_refs: uniqueRefs([...item.merge_trace.audit_refs, ...auditRefs]),
+            }
+          : undefined,
+        updated_at: input.now,
+        audit_refs: uniqueRefs([...item.audit_refs, ...auditRefs]),
+      });
+    });
+
+  return {
+    surface_ref: invalidatedSurfaceRef,
+    invalidation_check: surfaceInvalidationStalenessCheck(event),
+    invalidated_urge_candidates: invalidatedUrges,
+    invalidated_agenda_items: invalidatedAgendaItems,
+    audit_refs: auditRefs,
+  };
+}
+
 export function applyAttentionFeedbackConservatively(
   feedbackEvents: AttentionFeedbackEvent[]
 ): AttentionFeedbackPolicyAdjustment {
@@ -1231,6 +1354,79 @@ function candidateConfidence(candidate: UrgeCandidate | AgentAgendaItem): number
 
 function candidateSubject(candidate: UrgeCandidate | AgentAgendaItem): string {
   return candidate.subject;
+}
+
+function surfaceInvalidationStalenessCheck(event: SurfaceInvalidationEvent): AutonomyCheck {
+  return {
+    check_id: `surface-invalidation:${event.id}`,
+    kind: "staleness",
+    status: "failed",
+    reason: `Surface ${event.surface_ref} invalidated by ${event.trigger}`,
+    evidence_refs: [surfaceInvalidationEvidenceRef(event)],
+  };
+}
+
+function surfaceInvalidationEvidenceRef(event: SurfaceInvalidationEvent): CompanionAutonomySourceRef {
+  return {
+    ref: ref("surface", event.surface_ref),
+    lifecycle: "redacted",
+    redaction_reason: `surface invalidated by ${event.trigger}`,
+  };
+}
+
+function invalidatedMaturation(
+  maturation: AttentionMaturation,
+  action: SurfaceInvalidationAction,
+  now: string,
+  invalidationEvidence: CompanionAutonomySourceRef
+): AttentionMaturation {
+  const state = maturationStateForSurfaceInvalidation(action);
+  return {
+    ...maturation,
+    state,
+    expires_at: state === "expired" || state === "rejected_stale" ? now : maturation.expires_at,
+    reinforcement_refs: [],
+    blocker_refs: [invalidationEvidence],
+  };
+}
+
+function maturationStateForSurfaceInvalidation(action: SurfaceInvalidationAction): AttentionMaturationState {
+  switch (action) {
+    case "hold":
+    case "regate":
+    case "withdraw":
+    case "needs_review":
+      return "held";
+    case "expire":
+      return "expired";
+    case "reject":
+    case "redact":
+      return "rejected_stale";
+  }
+}
+
+function urgeUsesInvalidatedSurface(urge: UrgeCandidate, event: SurfaceInvalidationEvent): boolean {
+  return urge.surface_ref?.id === event.surface_ref
+    || urge.evidence_refs.some((evidence) => sourceEvidenceMatchesInvalidation(evidence, event));
+}
+
+function agendaUsesInvalidatedSurface(
+  item: AgentAgendaItem,
+  event: SurfaceInvalidationEvent,
+  invalidatedUrgeRefKeys: Set<string>
+): boolean {
+  return item.related_surface_refs.some((surfaceRef) => surfaceRef.id === event.surface_ref)
+    || item.related_memory_refs.some((memoryRef) => memoryRef.id === event.source_ref.memory_id)
+    || item.source_urge_refs.some((urgeRef) => invalidatedUrgeRefKeys.has(refKey(urgeRef)))
+    || (item.merge_trace?.reinforced_by_refs ?? []).some((evidence) => sourceEvidenceMatchesInvalidation(evidence, event));
+}
+
+function sourceEvidenceMatchesInvalidation(
+  evidence: CompanionAutonomySourceRef,
+  event: SurfaceInvalidationEvent
+): boolean {
+  return (evidence.ref.kind === "surface" && evidence.ref.id === event.surface_ref)
+    || (evidence.ref.kind === "memory" && evidence.ref.id === event.source_ref.memory_id);
 }
 
 function agendaPostureForMaturation(state: AttentionMaturationState): AgendaPosture {
