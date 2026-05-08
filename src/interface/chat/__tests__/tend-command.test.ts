@@ -467,6 +467,15 @@ describe("TendCommand", () => {
       expect(result.message).toContain("--max must be a positive integer");
       expect(daemonClient.startGoal).not.toHaveBeenCalled();
     });
+
+    it("rejects unsafe integer max values before daemon start", async () => {
+      const daemonClient = makeMockDaemonClient();
+      const deps = makeDeps({ stateManager: makeMockStateManager(makeTestGoal()), daemonClient });
+      const result = await cmd.execute("goal-abc --max 9007199254740993", deps);
+      expect(result.success).toBe(false);
+      expect(result.message).toContain("--max must be a positive integer");
+      expect(daemonClient.startGoal).not.toHaveBeenCalled();
+    });
   });
 
   describe("parseArgs (via execute)", () => {
