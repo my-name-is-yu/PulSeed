@@ -420,6 +420,7 @@ describe("ScheduleEngine", () => {
     expect(history).toHaveLength(1);
     expect(history[0]!.reason).toBe("manual_run");
     expect(history[0]!.status).toBe("ok");
+    expect(history[0]!.failure_kind).toBeUndefined();
   });
 
   it("updateEntry rejects layer config updates that do not match the entry layer", async () => {
@@ -663,6 +664,11 @@ describe("Heartbeat execution", () => {
 
     const updated = engine.getEntries().find((e) => e.id === entry.id)!;
     expect(updated.consecutive_failures).toBe(0);
+
+    const history = await engine.getRecentHistory(10, entry.id);
+    expect(history).toHaveLength(1);
+    expect(history[0]!.status).toBe("ok");
+    expect(history[0]!.failure_kind).toBeUndefined();
   });
 
   it("schedules transient failures with retry/backoff and records durable history", async () => {

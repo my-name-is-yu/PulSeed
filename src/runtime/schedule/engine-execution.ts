@@ -105,7 +105,7 @@ export async function runEntryNowForEngine(
         entry_id: applied.entry?.id ?? entry.id,
         entry_name: applied.entry?.name ?? entry.name,
         layer: entry.layer,
-        result: { ...finalResult, failure_kind: applied.failureKind },
+        result: withClassifiedFailureKind(finalResult, applied.failureKind),
       reason: "manual_run",
       attempt: applied.attempt,
       scheduled_for: scheduledFor,
@@ -169,7 +169,7 @@ export async function tickEngine(host: ScheduleExecutionHost): Promise<ScheduleR
         entry_id: applied.entry?.id ?? descriptor.entry.id,
         entry_name: applied.entry?.name ?? descriptor.entry.name,
         layer: descriptor.entry.layer,
-        result: { ...finalResult, failure_kind: applied.failureKind },
+        result: withClassifiedFailureKind(finalResult, applied.failureKind),
         reason: descriptor.reason,
         attempt: applied.attempt,
         scheduled_for: descriptor.scheduledFor,
@@ -236,7 +236,7 @@ export async function executeEscalationTargetEntryForEngine(
       entry_id: targetEntry.id,
       entry_name: targetEntry.name,
       layer: targetEntry.layer,
-      result: { ...result, failure_kind: applied.failureKind },
+      result: withClassifiedFailureKind(result, applied.failureKind),
       reason: "escalation_target",
       attempt: applied.attempt,
       scheduled_for: immediateEntry.next_fire_at,
@@ -388,9 +388,18 @@ function normalizeRetryPolicy(entry: ScheduleEntry): ScheduleRetryPolicy {
   return { ...DEFAULT_RETRY_POLICY, ...(entry.retry_policy ?? {}) };
 }
 
-function classifyFailureKind(_entry: ScheduleEntry, result: ScheduleResult): ScheduleFailureKind {
+function classifyFailureKind(result: ScheduleResult): ScheduleFailureKind | null {
+  const isFailure = result.status === "error" || result.status === "down";
+  if (!isFailure) return null;
   if (result.failure_kind) return result.failure_kind;
   return "transient";
+}
+
+function withClassifiedFailureKind(result: ScheduleResult, failureKind: ScheduleFailureKind | null): ScheduleResult {
+  const { failure_kind: _discardedFailureKind, ...resultWithoutFailureKind } = result;
+  return failureKind
+    ? { ...resultWithoutFailureKind, failure_kind: failureKind }
+    : resultWithoutFailureKind;
 }
 
 function computeRetryDelay(policy: ScheduleRetryPolicy, attempt: number): number {
@@ -413,7 +422,7 @@ async function applyExecutionOutcome(
   startedAt: string;
   finishedAt: string;
   retryAt: string | null;
-  failureKind: ScheduleFailureKind;
+  failureKind: ScheduleFailureKind | null;
 } | null> {
   const idx = host.entries.findIndex((candidate) => candidate.id === entryId);
   if (idx === -1) return null;
@@ -421,14 +430,19 @@ async function applyExecutionOutcome(
   const entry = host.entries[idx]!;
   const startedAt = scheduledFor ?? result.fired_at;
   const finishedAt = new Date().toISOString();
-  const failureKind = classifyFailureKind(entry, result);
   const isFailure = result.status === "error" || result.status === "down";
+  const failureKind = classifyFailureKind(result);
   const retryPolicy = normalizeRetryPolicy(entry);
   const currentRetryState = entry.retry_state ?? null;
   let retryAt: string | null = null;
   let retryState: ScheduleRetryState | null = null;
 
-  if (isFailure && retryPolicy.enabled && retryPolicy.retryable_failure_kinds.includes(failureKind)) {
+  if (
+    isFailure
+    && failureKind !== null
+    && retryPolicy.enabled
+    && retryPolicy.retryable_failure_kinds.includes(failureKind)
+  ) {
     const attempts = (currentRetryState?.attempts ?? 0) + 1;
     const firstFailureAt = currentRetryState?.first_failure_at ?? result.fired_at;
     const windowElapsed = new Date(result.fired_at).getTime() - new Date(firstFailureAt).getTime();
