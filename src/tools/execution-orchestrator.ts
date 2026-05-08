@@ -1,22 +1,8 @@
-import type { ITool, ToolCallContext, ToolResult } from "./types.js";
+import type { HostToolExecutionDecision, ITool, ToolCallContext, ToolResult } from "./types.js";
 import { assessShellCommand } from "./system/ShellTool/command-policy.js";
 import { resolveWorkspaceCwd } from "./workspace-scope.js";
 
-export type HostToolExecutionDecisionStatus =
-  | "allowed"
-  | "denied"
-  | "needs_permission"
-  | "needs_sandbox"
-  | "needs_escalation"
-  | "fail_closed";
-
-export interface HostToolExecutionDecision {
-  status: HostToolExecutionDecisionStatus;
-  reason: string;
-  executionReason?: NonNullable<ToolResult["execution"]>["reason"];
-  requiredSandboxMode?: "workspace_write" | "danger_full_access";
-  requiredApprovalPolicy?: "on_request";
-}
+export type { HostToolExecutionDecision, HostToolExecutionDecisionStatus } from "./types.js";
 
 export interface HostToolExecutionRequest {
   tool: ITool;
