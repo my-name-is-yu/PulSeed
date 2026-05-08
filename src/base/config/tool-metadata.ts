@@ -20,41 +20,41 @@ export interface ConfigKeyMeta {
 export const CONFIG_METADATA: Record<string, ConfigKeyMeta> = {
   daemon_mode: {
     label: "Daemon Mode",
-    description: "CoreLoopをバックグラウンドdaemonとして実行するモード",
+    description: "Runs the goal runtime through a background daemon process.",
     type: "boolean",
     effects: [
-      "CoreLoopがバックグラウンドdaemonプロセスとして常時動作する",
-      "TUIを閉じてもゴールの実行が継続する",
-      "TUIは「ウィンドウ」として何度でも再接続可能になる",
-      "複数クライアント（TUIや通知チャネル）が同時にダエモンを監視できる",
+      "The daemon keeps eligible goals running in the background.",
+      "Goal execution can continue after the TUI is closed.",
+      "The TUI can reconnect as a client window.",
+      "Multiple clients, including the TUI and notification channels, can observe the daemon at the same time.",
     ],
     requirements: [
-      "常時起動のPC（スリープしないこと）",
-      "ポート41700が空いていること",
-      "エージェント専用PCでの使用を推奨",
+      "A machine that stays awake while the daemon is expected to run.",
+      "Port 41700 must be available unless configured otherwise.",
+      "Recommended on a dedicated agent machine.",
     ],
     risks: [
-      "バックグラウンドでLLM APIを呼び続けるため、APIコストが継続的に発生する",
-      "停止は pulseed daemon stop で明示的に行う必要がある",
-      "PCがスリープするとdaemonも停止し、再起動が必要",
+      "Background goal execution may continue calling LLM APIs and incur ongoing cost.",
+      "The daemon must be stopped explicitly with pulseed daemon stop.",
+      "If the machine sleeps, the daemon may stop and require a restart.",
     ],
-    revert: "pulseed config set daemon_mode false、または TUI内で /settings からOFFに切り替え",
+    revert: "Run pulseed config set daemon_mode false, or turn it off from /settings in the TUI.",
     appliesAt: "next_session",
     requiresExplicitApproval: true,
   },
   no_flicker: {
     label: "No Flicker UI",
-    description: "TUIの描画更新を抑えて端末のちらつきを減らす表示設定",
+    description: "Reduces terminal flicker by throttling TUI redraw behavior.",
     type: "boolean",
     effects: [
-      "TUIの描画挙動が変わる",
-      "端末によってはちらつきが減る",
+      "Changes how the TUI redraws terminal output.",
+      "May reduce visible flicker on some terminals.",
     ],
     requirements: [
-      "TUIセッションで使用すること",
+      "Use during a TUI session.",
     ],
     risks: [
-      "端末によっては体感差がない場合がある",
+      "Some terminals may show no noticeable difference.",
     ],
     revert: "pulseed config set no_flicker false",
     appliesAt: "immediate",
@@ -92,24 +92,24 @@ export function buildConfigKeyDescription(key: string): string {
   const m = CONFIG_METADATA[key];
   if (!m) return `Unknown config key: ${key}`;
   const bullet = (arr: string[]) => arr.map(s => `- ${s}`).join("\n");
-  const timing = m.appliesAt === "next_session" ? "次のセッション（再起動後）から適用" : "即座に適用";
-  const approval = m.requiresExplicitApproval ? "明示的なユーザー確認が必要" : "通常は即時変更してよい";
-  return [`## ${m.label} (${key})`, m.description, "", "### 効果", bullet(m.effects), "",
-    "### 必要な環境", bullet(m.requirements), "", "### リスク", bullet(m.risks), "",
-    "### 元に戻す方法", m.revert, "", "### 適用タイミング", timing, "",
-    "### 承認要件", approval].join("\n");
+  const timing = m.appliesAt === "next_session" ? "Applies from the next session or restart." : "Applies immediately.";
+  const approval = m.requiresExplicitApproval ? "Explicit user confirmation is required." : "Usually safe to change immediately.";
+  return [`## ${m.label} (${key})`, m.description, "", "### Effects", bullet(m.effects), "",
+    "### Requirements", bullet(m.requirements), "", "### Risks", bullet(m.risks), "",
+    "### Revert", m.revert, "", "### Applies", timing, "",
+    "### Approval", approval].join("\n");
 }
 
 /** Build the full tool description with all config keys' metadata injected. */
 export function buildConfigToolDescription(): string {
   const descs = Object.keys(CONFIG_METADATA).map(k => buildConfigKeyDescription(k)).join("\n\n---\n\n");
-  return ["PulSeedの設定を変更する。", "",
-    "【重要ルール】このツールを呼ぶ前に、以下を守ること：",
-    "1. 変更する設定の『効果』『必要な環境』『リスク』『元に戻す方法』『適用タイミング』を説明する",
-    "2. 承認要件が『明示的なユーザー確認が必要』の設定では、同意を得てから呼び出す",
-    "3. 低リスク設定は簡潔に説明したうえで、そのまま実行してよい",
-    "4. ランタイムが追加の承認を要求した場合はそれに従う", "",
-    "【利用可能な設定キー】", "", descs].join("\n");
+  return ["Change PulSeed configuration.", "",
+    "Important rules before calling this tool:",
+    "1. Explain the setting's effects, requirements, risks, revert path, and apply timing.",
+    "2. For settings that require explicit user confirmation, obtain consent before calling the tool.",
+    "3. For low-risk settings, provide a concise explanation before applying the change.",
+    "4. If the runtime requests additional approval, follow that approval flow.", "",
+    "Available configuration keys:", "", descs].join("\n");
 }
 
 // ─── Mutation Tool Metadata (generic) ───
@@ -149,14 +149,14 @@ export function buildMutationToolDescription(toolName: string): string {
   return [
     `## ${m.label}`,
     m.description, "",
-    "重要: このツールを呼び出す前に、必ず以下を行ってください:",
-    "1. 削除・影響の対象を具体的に説明する",
-    "2. リスクを一覧で提示する",
-    "3. この操作は元に戻せないことを明示する",
-    "4. ユーザーの明示的な確認を得る",
-    "ユーザーが確認するまでこのツールを呼び出さないでください。", "",
-    "### 影響", bullet(m.effects), "",
-    "### リスク", bullet(m.risks), "",
-    "### 復元", m.revert,
+    "Important: before calling this tool, do all of the following:",
+    "1. Describe the exact target and expected impact.",
+    "2. List the risks.",
+    "3. State that this operation cannot be undone.",
+    "4. Obtain explicit user confirmation.",
+    "Do not call this tool until the user confirms.", "",
+    "### Effects", bullet(m.effects), "",
+    "### Risks", bullet(m.risks), "",
+    "### Recovery", m.revert,
   ].join("\n");
 }
