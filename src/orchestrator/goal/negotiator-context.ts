@@ -11,6 +11,39 @@ const execFileAsync = promisify(execFile);
 
 const TASK_NOTE_MARKER = "TO" + "DO";
 const ISSUE_MARKER = "FIX" + "ME";
+const NON_NEGATIVE_INTEGER_TOKEN = /^(?:0|[1-9]\d*)$/;
+
+interface GrepCountRecord {
+  file: string;
+  count: number;
+}
+
+function parseGrepCountLine(line: string): GrepCountRecord | null {
+  const separator = line.lastIndexOf(":");
+  if (separator <= 0) return null;
+  const file = line.slice(0, separator);
+  const rawCount = line.slice(separator + 1).trim();
+  if (!NON_NEGATIVE_INTEGER_TOKEN.test(rawCount)) return null;
+  const count = Number(rawCount);
+  if (!Number.isSafeInteger(count)) return null;
+  return { file, count };
+}
+
+function parseGrepCountOutput(stdout: string): GrepCountRecord[] {
+  return stdout
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map(parseGrepCountLine)
+    .filter((record): record is GrepCountRecord => record !== null);
+}
+
+function summarizeGrepCountOutput(stdout: string): { totalCount: number; fileCount: number } {
+  const positiveRecords = parseGrepCountOutput(stdout).filter((record) => record.count > 0);
+  const totalCount = positiveRecords.reduce((sum, record) => sum + record.count, 0);
+  const fileCount = new Set(positiveRecords.map((record) => record.file)).size;
+  return { totalCount, fileCount };
+}
 
 // ─── Workspace Context Scanner ───
 
@@ -97,21 +130,7 @@ export async function gatherNegotiationContext(
         const result = await toolExecutor.execute("grep", { pattern: kw, path: dir + "/src", glob: "*.ts", outputMode: "count", limit: 10000, fixedStrings: true }, ctx);
         const stdout = result.success && typeof result.data === "string" ? result.data : "";
         if (stdout) {
-          const totalCount = stdout
-            .trim()
-            .split("\n")
-            .filter(Boolean)
-            .reduce((sum: number, line: string) => {
-              const count = parseInt(line.split(":").pop() ?? "0", 10);
-              return sum + (isNaN(count) ? 0 : count);
-            }, 0);
-          const fileCount = stdout
-            .trim()
-            .split("\n")
-            .filter((l: string) => {
-              const c = parseInt(l.split(":").pop() ?? "0", 10);
-              return !isNaN(c) && c > 0;
-            }).length;
+          const { totalCount, fileCount } = summarizeGrepCountOutput(stdout);
           if (totalCount > 0) {
             keywordResults.push(
               `  - "${kw}": ${totalCount} occurrences across ${fileCount} files`
@@ -126,21 +145,7 @@ export async function gatherNegotiationContext(
             { timeout: 2000 }
           );
           // Each line is "file:count" — sum them up
-          const totalCount = stdout
-            .trim()
-            .split("\n")
-            .filter(Boolean)
-            .reduce((sum, line) => {
-              const count = parseInt(line.split(":").pop() ?? "0", 10);
-              return sum + (isNaN(count) ? 0 : count);
-            }, 0);
-          const fileCount = stdout
-            .trim()
-            .split("\n")
-            .filter((l) => {
-              const c = parseInt(l.split(":").pop() ?? "0", 10);
-              return !isNaN(c) && c > 0;
-            }).length;
+          const { totalCount, fileCount } = summarizeGrepCountOutput(stdout);
           if (totalCount > 0) {
             keywordResults.push(
               `  - "${kw}": ${totalCount} occurrences across ${fileCount} files`
@@ -159,19 +164,10 @@ export async function gatherNegotiationContext(
         const countOut = countResult.success && typeof countResult.data === "string" ? countResult.data : "";
         const contentOut = contentResult.success && typeof contentResult.data === "string" ? contentResult.data : "";
         if (countOut) {
-          const lines = countOut.trim().split("\n").filter(Boolean);
-          const positiveLines = lines.filter((line: string) => {
-            const count = parseInt(line.split(":").pop() ?? "0", 10);
-            return !isNaN(count) && count > 0;
-          });
-          const totalCount = positiveLines.reduce((sum: number, line: string) => {
-            const count = parseInt(line.split(":").pop() ?? "0", 10);
-            return sum + (isNaN(count) ? 0 : count);
-          }, 0);
-          const fileSet = new Set(positiveLines.map((l: string) => l.split(":")[0]));
+          const { totalCount, fileCount } = summarizeGrepCountOutput(countOut);
           if (totalCount > 0) {
             keywordResults.push(
-              `  - "${marker}": ${totalCount} occurrences across ${fileSet.size} files`
+              `  - "${marker}": ${totalCount} occurrences across ${fileCount} files`
             );
           }
         }
