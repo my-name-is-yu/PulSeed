@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -105,6 +105,7 @@ describe("Kaggle experiment tools", () => {
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     await manager.stopAll();
     if (originalPulseedHome === undefined) {
       delete process.env["PULSEED_HOME"];
@@ -377,6 +378,35 @@ setInterval(() => fs.writeFileSync("experiments/exp-stop/heartbeat.txt", String(
     const heartbeatAfterStop = await fs.readFile(heartbeatPath, "utf-8");
     await new Promise((resolve) => setTimeout(resolve, 200));
     await expect(fs.readFile(heartbeatPath, "utf-8")).resolves.toBe(heartbeatAfterStop);
+  });
+
+  it("does not signal unsafe persisted child process pids", async () => {
+    const stopTool = new KaggleExperimentStopTool(manager);
+    const experimentDir = path.join(workspaceBase, "kaggle", "titanic", "experiments", "exp-unsafe-child");
+    await fs.mkdir(experimentDir, { recursive: true });
+    await fs.writeFile(
+      path.join(experimentDir, "config.json"),
+      JSON.stringify({ process: { session_id: "missing-session" } }),
+      "utf-8",
+    );
+    await fs.writeFile(
+      path.join(experimentDir, "child-process.json"),
+      JSON.stringify({ pid: Number.MAX_SAFE_INTEGER + 1 }),
+      "utf-8",
+    );
+    const killSpy = vi.spyOn(process, "kill");
+
+    const result = await stopTool.call({
+      workspace: "titanic",
+      competition: "titanic",
+      experiment_id: "exp-unsafe-child",
+      signal: "SIGTERM",
+      waitMs: 0,
+    }, makeContext(pulseedHome));
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("Process session not found");
+    expect(killSpy).not.toHaveBeenCalled();
   });
 
   it("reports strict metrics and returns failure details for missing or malformed metrics", async () => {
