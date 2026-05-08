@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { CompanionResumeOutcomeSchema } from "../types/companion-state.js";
 
 export const RuntimeControlOperationKindSchema = z.enum([
   "restart_daemon",
@@ -15,6 +16,19 @@ export const RuntimeControlOperationKindSchema = z.enum([
   "narrow_permission",
   "extend_permission",
   "audit_permission_check",
+  "inspect_companion_state",
+  "enter_quiet_mode",
+  "leave_quiet_mode",
+  "pause_proactivity",
+  "resume_proactivity",
+  "suspend_companion",
+  "resume_companion",
+  "stop_all_quiet_work",
+  "stop_all_watches",
+  "suppress_nonessential_agenda",
+  "require_confirmation_for_proactivity",
+  "inspect_session",
+  "summarize_session_without_resuming",
   "automation_control",
 ]);
 export type RuntimeControlOperationKind = z.infer<typeof RuntimeControlOperationKindSchema>;
@@ -98,6 +112,7 @@ export const RuntimeControlOperationSchema = z.object({
     message: z.string(),
     daemon_status: z.string().optional(),
     health_error: z.string().optional(),
+    resume_outcome: CompanionResumeOutcomeSchema.optional(),
   }).optional(),
 });
 export type RuntimeControlOperation = z.infer<typeof RuntimeControlOperationSchema>;
