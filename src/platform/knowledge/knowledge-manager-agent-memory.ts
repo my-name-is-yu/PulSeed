@@ -273,6 +273,14 @@ function statusForAgentMemoryCorrection(kind: AgentMemoryCorrectionInput["correc
   return "retracted";
 }
 
+function redactsAgentMemoryContentForGovernanceExport(entry: AgentMemoryEntry): boolean {
+  return entry.governance.export_visibility === "redacted"
+    || entry.status === "forgotten"
+    || entry.status === "retracted"
+    || entry.correction_state?.status === "forgotten"
+    || entry.correction_state?.status === "retracted";
+}
+
 export async function applyAgentMemoryCorrection(
   host: AgentMemoryHost,
   input: AgentMemoryCorrectionInput
@@ -366,14 +374,17 @@ export async function exportAgentMemoryGovernance(
     .filter((entry) => opts?.include_secret || entry.governance.sensitivity !== "secret")
     .filter((entry) => !opts?.consent_scope || entry.governance.consent.allowed_contexts.includes(opts.consent_scope))
     .filter((entry) => entry.governance.export_visibility !== "hidden")
-    .map((entry) => ({
-      id: entry.id,
-      key: entry.governance.export_visibility === "redacted" ? "[redacted]" : entry.key,
-      summary: entry.governance.export_visibility === "redacted" ? null : entry.summary ?? entry.value,
-      status: entry.status,
-      governance: entry.governance,
-      provenance: entry.provenance ?? null,
-    }));
+    .map((entry) => {
+      const redacted = redactsAgentMemoryContentForGovernanceExport(entry);
+      return {
+        id: entry.id,
+        key: redacted ? "[redacted]" : entry.key,
+        summary: redacted ? null : entry.summary ?? entry.value,
+        status: entry.status,
+        governance: entry.governance,
+        provenance: entry.provenance ?? null,
+      };
+    });
 }
 
 export async function consolidateAgentMemoryEntries(

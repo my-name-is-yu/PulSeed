@@ -133,4 +133,55 @@ describe("user memory correction operations", () => {
       }),
     ]);
   });
+
+  it("redacts forgotten user memory from governance exports while retaining audit metadata", async () => {
+    await stateManager.writeRaw(AGENT_MEMORY_PATH, {
+      entries: [memoryEntry({
+        summary: "The user's old private editor preference.",
+        governance: {
+          sensitivity: "local",
+          export_visibility: "listed",
+          consent: {
+            scope_id: "local",
+            allowed_contexts: ["local_planning"],
+            source_actor: "user",
+            collection_context: "chat",
+          },
+          retention: {
+            policy_id: "retain_until_retracted",
+            retain_until: null,
+            review_after: null,
+            delete_requires_approval: true,
+          },
+          owner_ref: "user",
+        },
+      })],
+      corrections: [],
+      last_consolidated_at: null,
+    });
+
+    await runUserMemoryOperation(stateManager, {
+      operation: "forget",
+      targetRef: { kind: "agent_memory", id: "memory-old" },
+      reason: "User asked PulSeed to forget this preference.",
+      now: "2026-05-02T02:00:00.000Z",
+    });
+
+    const manager = new KnowledgeManager(stateManager, {} as ILLMClient);
+    const exported = await manager.exportAgentMemoryGovernance({
+      consent_scope: "local_planning",
+    });
+
+    expect(exported).toEqual([
+      expect.objectContaining({
+        id: "memory-old",
+        key: "[redacted]",
+        summary: null,
+        status: "forgotten",
+        governance: expect.any(Object),
+      }),
+    ]);
+    expect(JSON.stringify(exported)).not.toContain("Atom");
+    expect(JSON.stringify(exported)).not.toContain("old private editor preference");
+  });
 });
