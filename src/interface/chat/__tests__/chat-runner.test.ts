@@ -1765,7 +1765,7 @@ describe("ChatRunner", () => {
       expect(adapter.execute).not.toHaveBeenCalled();
     });
 
-    it("/resume resumes native agentloop state without writing a new user turn", async () => {
+    it("/resume resumes running native agentloop state without writing a new user turn", async () => {
       const stateManager = makeMockStateManager();
       const adapter = makeMockAdapter();
       const savedState = {
@@ -1784,8 +1784,7 @@ describe("ChatRunner", () => {
         lastToolLoopSignature: null,
         repeatedToolLoopCount: 0,
         finalText: "continuing...",
-        status: "failed",
-        stopReason: "timeout",
+        status: "running",
         updatedAt: new Date().toISOString(),
       };
       (stateManager.readRaw as ReturnType<typeof vi.fn>).mockResolvedValue(savedState);
@@ -1829,6 +1828,80 @@ describe("ChatRunner", () => {
         ) === true;
       })).toBe(true);
       expect((stateManager.readRaw as ReturnType<typeof vi.fn>).mock.calls.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it("/resume refuses failed native agentloop state without replaying actionable work", async () => {
+      const stateManager = makeMockStateManager();
+      const savedState = {
+        sessionId: "agent-session",
+        traceId: "trace-1",
+        turnId: "turn-1",
+        goalId: "chat",
+        cwd: "/repo",
+        modelRef: "openai/gpt-5.4-mini",
+        messages: [{ role: "assistant", content: "timed out" }],
+        modelTurns: 1,
+        toolCalls: 0,
+        compactions: 0,
+        completionValidationAttempts: 0,
+        calledTools: [],
+        lastToolLoopSignature: null,
+        repeatedToolLoopCount: 0,
+        finalText: "timed out",
+        status: "failed",
+        stopReason: "timeout",
+        updatedAt: new Date().toISOString(),
+      };
+      (stateManager.readRaw as ReturnType<typeof vi.fn>).mockResolvedValue(savedState);
+      const chatAgentLoopRunner = {
+        execute: vi.fn(),
+      } as unknown as ChatAgentLoopRunner;
+      const runner = new ChatRunner(makeDeps({ stateManager, chatAgentLoopRunner }));
+
+      runner.startSession("/repo");
+      const result = await runner.execute("/resume", "/repo");
+
+      expect(result.success).toBe(false);
+      expect(result.output).toContain("Native agentloop state agent-session is failed");
+      expect(result.output).toContain("inspect or summarize it before starting new actionable work");
+      expect(result.output).toContain("Type: Resume failure");
+      expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
+    });
+
+    it("/resume refuses unknown native agentloop state status before normalization", async () => {
+      const stateManager = makeMockStateManager();
+      const savedState = {
+        sessionId: "agent-session",
+        traceId: "trace-1",
+        turnId: "turn-1",
+        goalId: "chat",
+        cwd: "/repo",
+        modelRef: "openai/gpt-5.4-mini",
+        messages: [{ role: "assistant", content: "stale" }],
+        modelTurns: 1,
+        toolCalls: 0,
+        compactions: 0,
+        completionValidationAttempts: 0,
+        calledTools: [],
+        lastToolLoopSignature: null,
+        repeatedToolLoopCount: 0,
+        finalText: "stale",
+        status: "stale",
+        updatedAt: new Date().toISOString(),
+      };
+      (stateManager.readRaw as ReturnType<typeof vi.fn>).mockResolvedValue(savedState);
+      const chatAgentLoopRunner = {
+        execute: vi.fn(),
+      } as unknown as ChatAgentLoopRunner;
+      const runner = new ChatRunner(makeDeps({ stateManager, chatAgentLoopRunner }));
+
+      runner.startSession("/repo");
+      const result = await runner.execute("/resume", "/repo");
+
+      expect(result.success).toBe(false);
+      expect(result.output).toContain("Native agentloop state agent-session is unknown");
+      expect(result.output).toContain("Type: Resume failure");
+      expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
     });
 
     it("/resume without saved state returns recovery guidance", async () => {
@@ -1881,8 +1954,7 @@ describe("ChatRunner", () => {
           lastToolLoopSignature: null,
           repeatedToolLoopCount: 0,
           finalText: "continuing...",
-          status: "failed",
-          stopReason: "timeout",
+          status: "running",
           updatedAt: "2026-01-01T00:00:02.000Z",
         });
         const chatAgentLoopRunner = {
