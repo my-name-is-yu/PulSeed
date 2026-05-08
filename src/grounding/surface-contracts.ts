@@ -998,6 +998,206 @@ export const SurfaceInvalidationEventSchema = z.object({
 });
 export type SurfaceInvalidationEvent = z.infer<typeof SurfaceInvalidationEventSchema>;
 
+export const SurfaceMemoryWriteCandidateStatusSchema = z.enum([
+  "pending",
+  "needs_revalidation",
+  "accepted",
+  "rejected",
+]);
+export type SurfaceMemoryWriteCandidateStatus = z.infer<typeof SurfaceMemoryWriteCandidateStatusSchema>;
+
+export const SurfaceMemoryWriteCandidateSchema = z.object({
+  schema_version: z.literal("surface-memory-write-candidate-v1").default("surface-memory-write-candidate-v1"),
+  candidate_id: z.string().min(1),
+  source_surface_ref: z.string().min(1),
+  proposed_owner_ref: GovernedMemoryOwnerRefSchema,
+  provenance_refs: z.array(SurfaceDependencyRefSchema).min(1),
+  source_dependency_refs: z.array(SurfaceDependencyRefSchema).min(1),
+  permission_check_refs: z.array(z.string().min(1)).min(1),
+  deletion_check_refs: z.array(z.string().min(1)).min(1),
+  source_evidence_check_refs: z.array(z.string().min(1)).min(1),
+  status: SurfaceMemoryWriteCandidateStatusSchema.default("pending"),
+  content_state: z.enum(["materialized", "redacted"]).default("materialized"),
+  redaction_ref: z.string().min(1).optional(),
+  audit_refs: z.array(z.string().min(1)).default([]),
+}).strict().superRefine((candidate, ctx) => {
+  const removedSource = candidate.source_dependency_refs.find(dependencyContentWasRemoved);
+  if (candidate.content_state === "redacted" && !candidate.redaction_ref) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["redaction_ref"],
+      message: "redacted memory-write candidates must carry a redaction ref",
+    });
+  }
+  if (removedSource && candidate.content_state !== "redacted") {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["content_state"],
+      message: "memory-write candidates from deleted or tombstoned Surface sources must not retain reconstructable content",
+    });
+  }
+  if (removedSource && candidate.status === "accepted") {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["status"],
+      message: "memory-write candidates from deleted or tombstoned Surface sources cannot be accepted",
+    });
+  }
+});
+export type SurfaceMemoryWriteCandidate = z.infer<typeof SurfaceMemoryWriteCandidateSchema>;
+export type SurfaceMemoryWriteCandidateInput = z.input<typeof SurfaceMemoryWriteCandidateSchema>;
+
+export const SurfaceMemoryWriteCandidateFreshCheckKindSchema = z.enum([
+  "owner",
+  "provenance",
+  "permission",
+  "deletion",
+  "source_evidence",
+]);
+export type SurfaceMemoryWriteCandidateFreshCheckKind =
+  z.infer<typeof SurfaceMemoryWriteCandidateFreshCheckKindSchema>;
+
+export const SurfaceMemoryWriteCandidateFreshCheckStatusSchema = z.enum(["passed", "failed", "unknown"]);
+export type SurfaceMemoryWriteCandidateFreshCheckStatus =
+  z.infer<typeof SurfaceMemoryWriteCandidateFreshCheckStatusSchema>;
+
+export const SurfaceMemoryWriteCandidateFreshCheckSchema = z.object({
+  kind: SurfaceMemoryWriteCandidateFreshCheckKindSchema,
+  status: SurfaceMemoryWriteCandidateFreshCheckStatusSchema,
+  ref: z.string().min(1),
+  reason: z.string().min(1),
+  evidence_refs: z.array(SurfaceDependencyRefSchema).default([]),
+}).strict();
+export type SurfaceMemoryWriteCandidateFreshCheck =
+  z.infer<typeof SurfaceMemoryWriteCandidateFreshCheckSchema>;
+export type SurfaceMemoryWriteCandidateFreshCheckInput =
+  z.input<typeof SurfaceMemoryWriteCandidateFreshCheckSchema>;
+
+const MEMORY_WRITE_REVALIDATION_CHECK_KINDS = [
+  "owner",
+  "provenance",
+  "permission",
+  "deletion",
+  "source_evidence",
+] as const satisfies readonly SurfaceMemoryWriteCandidateFreshCheckKind[];
+
+export const SurfaceMemoryWriteCandidateRevalidationStatusSchema = z.enum([
+  "accepted",
+  "needs_revalidation",
+  "rejected",
+  "not_affected",
+]);
+export type SurfaceMemoryWriteCandidateRevalidationStatus =
+  z.infer<typeof SurfaceMemoryWriteCandidateRevalidationStatusSchema>;
+
+export const SurfaceMemoryWriteCandidateRevalidationResultSchema = z.object({
+  candidate: SurfaceMemoryWriteCandidateSchema,
+  event_ref: z.string().min(1),
+  surface_ref: z.string().min(1),
+  status: SurfaceMemoryWriteCandidateRevalidationStatusSchema,
+  required_check_kinds: z.array(SurfaceMemoryWriteCandidateFreshCheckKindSchema).min(1),
+  missing_check_kinds: z.array(SurfaceMemoryWriteCandidateFreshCheckKindSchema).default([]),
+  failed_check_kinds: z.array(SurfaceMemoryWriteCandidateFreshCheckKindSchema).default([]),
+  fresh_checks: z.array(SurfaceMemoryWriteCandidateFreshCheckSchema).default([]),
+  required_rechecks: z.array(SurfaceGateKindSchema).min(1),
+  redaction_ref: z.string().min(1).optional(),
+  audit_refs: z.array(z.string().min(1)).default([]),
+  occurred_at: z.string().datetime(),
+}).strict().superRefine((result, ctx) => {
+  if (result.status === "accepted" && (result.missing_check_kinds.length > 0 || result.failed_check_kinds.length > 0)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["status"],
+      message: "accepted memory-write candidate revalidation requires all fresh checks to pass",
+    });
+  }
+  if (result.status === "rejected" && result.candidate.content_state === "redacted" && !result.redaction_ref) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["redaction_ref"],
+      message: "rejected redacted memory-write candidate revalidation must carry a redaction ref",
+    });
+  }
+});
+export type SurfaceMemoryWriteCandidateRevalidationResult =
+  z.infer<typeof SurfaceMemoryWriteCandidateRevalidationResultSchema>;
+
+export type SurfaceMemoryWriteCandidateRevalidationInput = {
+  candidate: SurfaceMemoryWriteCandidateInput;
+  event: SurfaceInvalidationEvent | z.input<typeof SurfaceInvalidationEventSchema>;
+  occurred_at: string;
+  fresh_checks?: SurfaceMemoryWriteCandidateFreshCheckInput[];
+  audit_ref?: string;
+  redaction_ref?: string;
+};
+
+export function revalidateSurfaceMemoryWriteCandidateAfterInvalidation(
+  input: SurfaceMemoryWriteCandidateRevalidationInput
+): SurfaceMemoryWriteCandidateRevalidationResult {
+  const candidate = SurfaceMemoryWriteCandidateSchema.parse(input.candidate);
+  const event = SurfaceInvalidationEventSchema.parse(input.event);
+  const freshChecks = z.array(SurfaceMemoryWriteCandidateFreshCheckSchema).parse(input.fresh_checks ?? []);
+  const affected = memoryWriteCandidateAffectedByInvalidation(candidate, event);
+  const removedAffectedSource = affected
+    && (triggerRequiresRedaction(event.trigger) || dependencyContentWasRemoved(event.source_ref.dependency_ref));
+  const checkKinds = new Set(freshChecks.map((check) => check.kind));
+  const missingCheckKinds = MEMORY_WRITE_REVALIDATION_CHECK_KINDS.filter((kind) => !checkKinds.has(kind));
+  const failedCheckKinds = freshChecks
+    .filter((check) => check.status === "failed")
+    .map((check) => check.kind);
+  const unknownCheckKinds = freshChecks
+    .filter((check) => check.status === "unknown")
+    .map((check) => check.kind);
+  const unboundCheckKinds = freshChecks
+    .filter((check) => check.status === "passed" && !freshCheckBindsToCandidate(candidate, check))
+    .map((check) => check.kind);
+  const status: SurfaceMemoryWriteCandidateRevalidationStatus = !affected
+    ? "not_affected"
+    : removedAffectedSource || failedCheckKinds.length > 0 || unboundCheckKinds.length > 0
+      ? "rejected"
+      : missingCheckKinds.length > 0 || unknownCheckKinds.length > 0
+        ? "needs_revalidation"
+        : "accepted";
+  const redactionRef = removedAffectedSource
+    ? input.redaction_ref ?? event.redaction_ref ?? `redaction:${event.id}:${candidate.candidate_id}`
+    : candidate.redaction_ref;
+  const updatedCandidate = SurfaceMemoryWriteCandidateSchema.parse({
+    ...candidate,
+    source_dependency_refs: removedAffectedSource
+      ? candidate.source_dependency_refs.map((dependency) =>
+          dependencyMatchesInvalidatedSource(dependency, event)
+            ? event.source_ref.dependency_ref
+            : dependency
+        )
+      : candidate.source_dependency_refs,
+    status: status === "not_affected" ? candidate.status : status,
+    content_state: removedAffectedSource ? "redacted" : candidate.content_state,
+    redaction_ref: redactionRef,
+    audit_refs: uniqueStrings([
+      ...candidate.audit_refs,
+      event.audit_ref,
+      ...(input.audit_ref ? [input.audit_ref] : []),
+    ]),
+  });
+
+  return SurfaceMemoryWriteCandidateRevalidationResultSchema.parse({
+    candidate: updatedCandidate,
+    event_ref: event.id,
+    surface_ref: event.surface_ref,
+    status,
+    required_check_kinds: [...MEMORY_WRITE_REVALIDATION_CHECK_KINDS],
+    missing_check_kinds: status === "not_affected" ? [] : missingCheckKinds,
+    failed_check_kinds: status === "not_affected"
+      ? []
+      : uniqueStrings([...failedCheckKinds, ...unknownCheckKinds, ...unboundCheckKinds]),
+    fresh_checks: freshChecks,
+    required_rechecks: event.required_rechecks,
+    redaction_ref: redactionRef,
+    audit_refs: updatedCandidate.audit_refs,
+    occurred_at: input.occurred_at,
+  });
+}
+
 export const SurfaceInvalidationRunResultSchema = z.object({
   projection: SurfaceProjectionSchema,
   event: SurfaceInvalidationEventSchema,
@@ -1295,6 +1495,83 @@ function missingRuntimeDependencyRefs(
     if (!selectedAuditRefs.has(ref)) missing.push(`audit_refs:${ref}`);
   }
   return uniqueStrings(missing);
+}
+
+function memoryWriteCandidateAffectedByInvalidation(
+  candidate: SurfaceMemoryWriteCandidate,
+  event: SurfaceInvalidationEvent
+): boolean {
+  return candidate.source_surface_ref === event.surface_ref
+    || event.affected_dependencies.some((dependency) =>
+      dependency.kind === "memory_write_candidate" && dependency.ref === candidate.candidate_id
+    )
+    || candidate.source_dependency_refs.some((dependency) => dependencyMatchesInvalidatedSource(dependency, event));
+}
+
+function dependencyMatchesInvalidatedSource(
+  dependency: SurfaceDependencyRef,
+  event: SurfaceInvalidationEvent
+): boolean {
+  return dependency.ref === event.source_ref.memory_id
+    || dependency.ref === event.source_ref.dependency_ref.ref;
+}
+
+function dependencyContentWasRemoved(dependency: SurfaceDependencyRef): boolean {
+  return dependency.content_state === "redacted"
+    || dependency.lifecycle === "tombstoned"
+    || dependency.lifecycle === "deleted"
+    || dependency.correction_state === "deleted";
+}
+
+function freshCheckBindsToCandidate(
+  candidate: SurfaceMemoryWriteCandidate,
+  check: SurfaceMemoryWriteCandidateFreshCheck
+): boolean {
+  if (check.evidence_refs.length === 0) return false;
+  switch (check.kind) {
+    case "owner":
+      return check.ref === ownerRefKey(candidate.proposed_owner_ref)
+        && check.evidence_refs.some((evidence) =>
+          evidence.owning_store_ref
+            ? ownerRefsEqual(evidence.owning_store_ref, candidate.proposed_owner_ref)
+            : false
+        );
+    case "provenance":
+      return candidate.provenance_refs.some((dependency) => dependency.ref === check.ref)
+        && check.evidence_refs.some((evidence) =>
+          candidate.provenance_refs.some((dependency) => surfaceDependencyRefsEqual(dependency, evidence))
+        );
+    case "permission":
+      return candidate.permission_check_refs.includes(check.ref)
+        && check.evidence_refs.some((evidence) =>
+          evidence.kind === "permission_grant" && evidence.ref === check.ref
+        );
+    case "deletion":
+      return candidate.deletion_check_refs.includes(check.ref)
+        && check.evidence_refs.some((evidence) =>
+          candidate.source_dependency_refs.some((dependency) => surfaceDependencyRefsEqual(dependency, evidence))
+        );
+    case "source_evidence":
+      return candidate.source_evidence_check_refs.includes(check.ref)
+        && check.evidence_refs.some((evidence) =>
+          candidate.source_dependency_refs.some((dependency) => surfaceDependencyRefsEqual(dependency, evidence))
+        );
+  }
+}
+
+function ownerRefKey(ownerRef: z.infer<typeof GovernedMemoryOwnerRefSchema>): string {
+  return `${ownerRef.kind}:${ownerRef.store_ref}:${ownerRef.record_ref}:${ownerRef.schema_version}`;
+}
+
+function ownerRefsEqual(
+  left: z.infer<typeof GovernedMemoryOwnerRefSchema>,
+  right: z.infer<typeof GovernedMemoryOwnerRefSchema>
+): boolean {
+  return ownerRefKey(left) === ownerRefKey(right);
+}
+
+function surfaceDependencyRefsEqual(left: SurfaceDependencyRef, right: SurfaceDependencyRef): boolean {
+  return left.kind === right.kind && left.ref === right.ref;
 }
 
 function buildSurfaceRuntimeAdmission(

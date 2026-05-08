@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   SurfaceInvalidationEventSchema,
+  SurfaceMemoryWriteCandidateSchema,
   SurfaceInvalidationPolicySchema,
   SurfaceProjectionSchema,
   attachSurfaceDependencyRef,
@@ -10,8 +11,12 @@ import {
   evaluateSurfaceRuntimeAdmission,
   invalidateSurfaceProjectionFromMemoryCorrection,
   invalidateSurfaceProjectionFromPermissionChange,
+  revalidateSurfaceMemoryWriteCandidateAfterInvalidation,
+  type SurfaceDependencyRef,
   type SurfaceDerivedRuntimeRefInput,
   type SurfaceGateKind,
+  type SurfaceMemoryWriteCandidateFreshCheckInput,
+  type SurfaceMemoryWriteCandidateInput,
   type SurfaceMemorySourceRef,
   type SurfaceProjectionInput,
 } from "../surface-contracts.js";
@@ -163,6 +168,72 @@ function derivedRef(
     audit_refs: ["audit/surface-1"],
     ...overrides,
   } as SurfaceDerivedRuntimeRefInput;
+}
+
+function memoryWriteCandidate(overrides: Partial<SurfaceMemoryWriteCandidateInput> = {}): SurfaceMemoryWriteCandidateInput {
+  return {
+    candidate_id: "memory-write-candidate-1",
+    source_surface_ref: "surface-1",
+    proposed_owner_ref: ownerRef(),
+    provenance_refs: [dependencyRef()],
+    source_dependency_refs: [dependencyRef()],
+    permission_check_refs: ["permission-1"],
+    deletion_check_refs: ["deletion-check-1"],
+    source_evidence_check_refs: ["source-evidence-1"],
+    status: "pending",
+    content_state: "materialized",
+    audit_refs: ["audit/surface-1"],
+    ...overrides,
+  } as SurfaceMemoryWriteCandidateInput;
+}
+
+function freshMemoryWriteChecks(status: "passed" | "failed" | "unknown" = "passed"): SurfaceMemoryWriteCandidateFreshCheckInput[] {
+  const sourceDependency = dependencyRef() as SurfaceDependencyRef;
+  return [
+    {
+      kind: "owner",
+      status,
+      ref: "relationship_profile:relationship-profile.json:profile-item-1:1",
+      reason: `owner ${status}`,
+      evidence_refs: [sourceDependency],
+    },
+    {
+      kind: "provenance",
+      status,
+      ref: "memory-1",
+      reason: `provenance ${status}`,
+      evidence_refs: [sourceDependency],
+    },
+    {
+      kind: "permission",
+      status,
+      ref: "permission-1",
+      reason: `permission ${status}`,
+      evidence_refs: [{ kind: "permission_grant", ref: "permission-1" } as SurfaceDependencyRef],
+    },
+    {
+      kind: "deletion",
+      status,
+      ref: "deletion-check-1",
+      reason: `deletion ${status}`,
+      evidence_refs: [sourceDependency],
+    },
+    {
+      kind: "source_evidence",
+      status,
+      ref: "source-evidence-1",
+      reason: `source evidence ${status}`,
+      evidence_refs: [sourceDependency],
+    },
+  ];
+}
+
+function unboundFreshMemoryWriteChecks(): SurfaceMemoryWriteCandidateFreshCheckInput[] {
+  return freshMemoryWriteChecks().map((check) => ({
+    ...check,
+    ref: `unrelated:${check.kind}`,
+    evidence_refs: [{ kind: "audit_trace", ref: `audit/unrelated/${check.kind}` } as SurfaceDependencyRef],
+  }));
 }
 
 function projection(overrides: Record<string, unknown> = {}): SurfaceProjectionInput {
@@ -837,6 +908,8 @@ describe("SurfaceInvalidation contract", () => {
       triggers: ["memory_deletion", "permission_revocation", "surface_expired"],
       affected_dependency_policies: [
         { dependency_kind: "runtime_item", action: "regate" },
+        { dependency_kind: "urge_candidate", action: "hold" },
+        { dependency_kind: "agenda_item", action: "regate" },
         { dependency_kind: "outcome_decision", action: "expire" },
         { dependency_kind: "expression_decision", action: "withdraw" },
         { dependency_kind: "memory_write_candidate", action: "reject" },
@@ -988,5 +1061,134 @@ describe("SurfaceInvalidation contract", () => {
     expect(result.blocked_admissions.every((admission) => admission.reason === "invalid_surface")).toBe(true);
     expect(result.inspection.included_summaries).toEqual([]);
     expect(result.inspection.excluded_summaries[0]?.blocked_by).toContain("permission");
+  });
+
+  it("revalidates pending memory-write candidates after Surface correction before acceptance", () => {
+    const memoryWriteRef = derivedRef("memory_write_candidate", {
+      ref: "memory-write-candidate-1",
+      use_class: "memory_write_candidate",
+    });
+    const parsed = SurfaceProjectionSchema.parse(projection({
+      dependent_refs: {
+        memory_write_candidates: [memoryWriteRef],
+      },
+    }));
+    const invalidation = invalidateSurfaceProjectionFromMemoryCorrection({
+      projection: parsed,
+      correction_event: {
+        event_id: "correction-change-1",
+        target_memory_ref: "memory-1",
+        action: "change_statement",
+        replacement_memory_ref: "memory-1-v2",
+        affected_use_classes: ["surface_projection", "memory_write_candidate"],
+        audit_ref: "audit/correction-change-1",
+        created_at: now,
+      },
+      affected_dependencies: [memoryWriteRef],
+      occurred_at: now,
+    });
+
+    const pending = revalidateSurfaceMemoryWriteCandidateAfterInvalidation({
+      candidate: memoryWriteCandidate(),
+      event: invalidation.event,
+      occurred_at: now,
+    });
+    expect(pending.status).toBe("needs_revalidation");
+    expect(pending.missing_check_kinds).toEqual([
+      "owner",
+      "provenance",
+      "permission",
+      "deletion",
+      "source_evidence",
+    ]);
+    expect(pending.candidate.status).toBe("needs_revalidation");
+    expect(pending.required_rechecks).toEqual(invalidation.event.required_rechecks);
+
+    const accepted = revalidateSurfaceMemoryWriteCandidateAfterInvalidation({
+      candidate: memoryWriteCandidate(),
+      event: invalidation.event,
+      fresh_checks: freshMemoryWriteChecks(),
+      occurred_at: now,
+    });
+    expect(accepted.status).toBe("accepted");
+    expect(accepted.candidate.status).toBe("accepted");
+    expect(accepted.missing_check_kinds).toEqual([]);
+    expect(accepted.failed_check_kinds).toEqual([]);
+
+    const unrelatedChecks = revalidateSurfaceMemoryWriteCandidateAfterInvalidation({
+      candidate: memoryWriteCandidate(),
+      event: invalidation.event,
+      fresh_checks: unboundFreshMemoryWriteChecks(),
+      occurred_at: now,
+    });
+    expect(unrelatedChecks.status).toBe("rejected");
+    expect(unrelatedChecks.failed_check_kinds).toEqual([
+      "owner",
+      "provenance",
+      "permission",
+      "deletion",
+      "source_evidence",
+    ]);
+
+    const permissionRejected = revalidateSurfaceMemoryWriteCandidateAfterInvalidation({
+      candidate: memoryWriteCandidate(),
+      event: invalidation.event,
+      fresh_checks: freshMemoryWriteChecks().map((check) =>
+        check.kind === "permission" ? { ...check, status: "failed", reason: "permission was revoked" } : check
+      ),
+      occurred_at: now,
+    });
+    expect(permissionRejected.status).toBe("rejected");
+    expect(permissionRejected.failed_check_kinds).toEqual(["permission"]);
+  });
+
+  it("rejects memory-write candidates from deleted Surface sources without reconstructing erased content", () => {
+    const candidate = memoryWriteCandidate({
+      candidate_id: "memory-write-candidate-deleted",
+    });
+    const invalidation = invalidateSurfaceProjectionFromMemoryCorrection({
+      projection: SurfaceProjectionSchema.parse(projection({
+        dependent_refs: {
+          memory_write_candidates: [
+            derivedRef("memory_write_candidate", {
+              ref: "memory-write-candidate-deleted",
+              use_class: "memory_write_candidate",
+            }),
+          ],
+        },
+      })),
+      correction_event: {
+        event_id: "correction-delete-2",
+        target_memory_ref: "memory-1",
+        action: "delete",
+        affected_use_classes: ["surface_projection", "memory_write_candidate"],
+        invalidation_ref: "surface-invalidation-delete-2",
+        audit_ref: "audit/correction-delete-2",
+        created_at: now,
+      },
+      occurred_at: now,
+      redaction_ref: "redaction/memory-1/delete",
+    });
+    const rejected = revalidateSurfaceMemoryWriteCandidateAfterInvalidation({
+      candidate,
+      event: invalidation.event,
+      fresh_checks: freshMemoryWriteChecks(),
+      occurred_at: now,
+    });
+
+    expect(rejected.status).toBe("rejected");
+    expect(rejected.candidate.status).toBe("rejected");
+    expect(rejected.candidate.content_state).toBe("redacted");
+    expect(rejected.candidate.redaction_ref).toBe("redaction/memory-1/delete");
+    expect(JSON.stringify(rejected)).not.toContain("The user prefers concise status reports.");
+
+    expect(SurfaceMemoryWriteCandidateSchema.safeParse(memoryWriteCandidate({
+      source_dependency_refs: [dependencyRef({
+        lifecycle: "deleted",
+        correction_state: "deleted",
+        content_state: "redacted",
+      }) as SurfaceDependencyRef],
+      content_state: "materialized",
+    })).success).toBe(false);
   });
 });

@@ -3,6 +3,7 @@ import {
   admitInitiativeGateDecision,
   advanceAttentionMaturation,
   applyAttentionFeedbackConservatively,
+  applySurfaceInvalidationToAttention,
   assembleSignalContext,
   buildSchedulerWakeSignalContext,
   createExpressionDecisionForOutcome,
@@ -26,6 +27,7 @@ import type {
   UrgeCandidate,
   VisibilityPolicy,
 } from "../../types/companion-autonomy.js";
+import type { SurfaceMemorySourceRef } from "../../../grounding/surface-contracts.js";
 
 const NOW = "2026-05-08T00:00:00.000Z";
 
@@ -85,6 +87,7 @@ function curiosityUrge(input: UrgeHelperInput = {}): UrgeCandidate {
     strength: input.strength ?? 0.72,
     confidence: input.confidence ?? 0.74,
     expected_user_benefit: input.expected_user_benefit ?? "The goal can be watched without interrupting the user.",
+    companion_state_ref: input.companion_state_ref,
     allowed_moves: input.allowed_moves,
     forbidden_moves: input.forbidden_moves,
     maturation_state: input.maturation?.state ?? "warming",
@@ -107,6 +110,41 @@ function matureAgenda(input: Partial<AgentAgendaItem> = {}): AgentAgendaItem {
       }),
     ],
   })[0]!;
+}
+
+function surfaceMemorySource(): SurfaceMemorySourceRef {
+  const owner = {
+    schema_version: 1,
+    kind: "relationship_profile" as const,
+    store_ref: "relationship-profile.json",
+    record_ref: "profile-item-1",
+  };
+  return {
+    memory_id: "memory:surface-source",
+    owning_store_ref: owner,
+    role: "relationship" as const,
+    record_kind: "preference" as const,
+    domain_fields: {
+      target: "status reports",
+      preference: "concise",
+    },
+    allowed_uses: ["surface_projection", "attention_prioritization"],
+    not_allowed_uses: [],
+    lifecycle: "active" as const,
+    correction_state: "current" as const,
+    superseded_by_memory_id: null,
+    sensitivity: "private" as const,
+    content_state: "materialized" as const,
+    dependency_ref: {
+      kind: "memory_record" as const,
+      ref: "memory:surface-source",
+      owning_store_ref: owner,
+      content_state: "materialized" as const,
+      lifecycle: "active" as const,
+      correction_state: "current" as const,
+      superseded_by_memory_id: null,
+    },
+  };
 }
 
 function visibilityPolicy(input: Partial<VisibilityPolicy> = {}): VisibilityPolicy {
@@ -715,6 +753,170 @@ describe("attention metabolism pipeline", () => {
       decided_at: NOW,
       gate_decision: gate,
     })).toBeNull();
+  });
+
+  it("invalidates mature Surface-derived urges and expires non-regroundable agenda before the gate", () => {
+    const surfaceBoundSignal = assembleSignalContext({
+      signal_context_id: "signal:surface-old",
+      assembled_at: NOW,
+      signals: [
+        { source: "runtime_event", ref: ref("runtime_event", "runtime:event:surface-old") },
+        { source: "correction", ref: ref("memory", "memory:surface-source") },
+      ],
+      active_surface_ref: ref("surface", "surface:old"),
+      current_goal_refs: [ref("goal", "goal:1")],
+      relationship_permission_refs: [ref("permission_grant", "permission:active")],
+    });
+    const matureUrge = curiosityUrge({
+      urge_id: "urge:surface-old",
+      signal_context: surfaceBoundSignal,
+      maturation: {
+        state: "mature",
+        first_seen_at: NOW,
+        reinforcement_refs: [sourceRef("surface", "surface:old")],
+        blocker_refs: [sourceRef("memory", "memory:surface-source")],
+      },
+      confidence: 0.92,
+      companion_state_ref: ref("companion_state", "state:surface-old"),
+    });
+    const agenda = mergeUrgesIntoAgenda({ urges: [matureUrge], now: NOW })[0]!;
+    expect(agenda.current_posture).toBe("ready_for_gate");
+
+    const invalidation = applySurfaceInvalidationToAttention({
+      surface_invalidation_event: {
+        id: "surface-invalidation:old:correction",
+        policy_ref: "surface:surface-old:policy:memory_correction",
+        surface_ref: "surface:old",
+        trigger: "memory_correction",
+        source_ref: surfaceMemorySource(),
+        affected_dependencies: [{
+          kind: "agenda_item",
+          ref: agenda.agenda_item_id,
+          related_surface_refs: ["surface:old"],
+          related_memory_refs: ["memory:surface-source"],
+          permission_check_refs: ["permission:active"],
+          staleness_check_refs: ["staleness:surface-old"],
+          use_class: "surface_projection",
+          audit_refs: ["audit:surface-old"],
+        }],
+        required_rechecks: [
+          "scope",
+          "lifecycle",
+          "staleness",
+          "sensitivity",
+          "permission",
+          "allowed_use",
+          "forbidden_use",
+          "projection",
+          "audit",
+        ],
+        action: "regate",
+        audit_ref: "audit:surface-invalidation",
+        occurred_at: NOW,
+      },
+      urge_candidates: [matureUrge],
+      agenda_items: [agenda],
+      now: NOW,
+    });
+
+    const invalidatedUrge = invalidation.invalidated_urge_candidates[0]!;
+    const invalidatedAgenda = invalidation.invalidated_agenda_items[0]!;
+    expect(invalidatedUrge.maturation.state).toBe("held");
+    expect(invalidatedUrge.surface_ref).toBeNull();
+    expect(invalidatedUrge.companion_state_ref).toBeNull();
+    expect(invalidatedUrge.evidence_refs).toEqual([
+      {
+        ref: ref("surface", "surface:old"),
+        lifecycle: "redacted",
+        redaction_reason: "surface invalidated by memory_correction",
+      },
+    ]);
+    expect(invalidatedUrge.maturation.reinforcement_refs).toEqual([]);
+    expect(invalidatedUrge.maturation.blocker_refs).toEqual([
+      {
+        ref: ref("surface", "surface:old"),
+        lifecycle: "redacted",
+        redaction_reason: "surface invalidated by memory_correction",
+      },
+    ]);
+    expect(invalidatedAgenda.agenda_item_id).not.toBe(agenda.agenda_item_id);
+    expect(invalidatedAgenda.current_posture).toBe("expired");
+    expect(invalidatedAgenda.source_urge_refs).toEqual([]);
+    expect(invalidatedAgenda.related_surface_refs).toEqual([]);
+    expect(invalidatedAgenda.maturation.blocker_refs).toEqual([
+      {
+        ref: ref("surface", "surface:old"),
+        lifecycle: "redacted",
+        redaction_reason: "surface invalidated by memory_correction",
+      },
+    ]);
+    expect(invalidation.invalidation_check).toMatchObject({
+      kind: "staleness",
+      status: "failed",
+    });
+
+    const inhibition = decideInhibition({
+      decision_id: "inhibition:invalid-surface",
+      decided_at: NOW,
+      candidate: invalidatedUrge,
+      permission_checks: [check("permission")],
+      staleness_checks: [invalidation.invalidation_check],
+      safety_checks: [check("safety")],
+    });
+    const gate = selectInitiativeGateDecision({
+      decision_id: "gate:invalid-surface",
+      decided_at: NOW,
+      candidate: invalidatedUrge,
+      inhibition_decision: inhibition,
+      requested_outcome: "express_to_user",
+    });
+    expect(inhibition.decision).toBe("reject_stale");
+    expect(gate.status).toBe("blocked");
+    expect(gate.selected_outcome).toBeUndefined();
+
+    const regroundableAgenda = applySurfaceInvalidationToAttention({
+      surface_invalidation_event: {
+        id: "surface-invalidation:old:correction",
+        policy_ref: "surface:surface-old:policy:memory_correction",
+        surface_ref: "surface:old",
+        trigger: "memory_correction",
+        source_ref: surfaceMemorySource(),
+        affected_dependencies: [{
+          kind: "agenda_item",
+          ref: agenda.agenda_item_id,
+          related_surface_refs: ["surface:old"],
+          related_memory_refs: ["memory:surface-source"],
+          permission_check_refs: ["permission:active"],
+          staleness_check_refs: ["staleness:surface-old"],
+          use_class: "surface_projection",
+          audit_refs: ["audit:surface-old"],
+        }],
+        required_rechecks: [
+          "scope",
+          "lifecycle",
+          "staleness",
+          "sensitivity",
+          "permission",
+          "allowed_use",
+          "forbidden_use",
+          "projection",
+          "audit",
+        ],
+        action: "regate",
+        audit_ref: "audit:surface-invalidation",
+        occurred_at: NOW,
+      },
+      agenda_items: [{
+        ...agenda,
+        related_surface_refs: [ref("surface", "surface:old"), ref("surface", "surface:current")],
+      }],
+      current_surface_ref: ref("surface", "surface:current"),
+      now: NOW,
+    }).invalidated_agenda_items[0]!;
+    expect(regroundableAgenda.agenda_item_id).toBe(agenda.agenda_item_id);
+    expect(regroundableAgenda.current_posture).toBe("held");
+    expect(regroundableAgenda.staleness_state).toBe("needs_regrounding");
+    expect(regroundableAgenda.related_surface_refs).toEqual([ref("surface", "surface:current")]);
   });
 
   it("routes scheduler and wait wakeups into re-evaluation instead of notification", () => {
