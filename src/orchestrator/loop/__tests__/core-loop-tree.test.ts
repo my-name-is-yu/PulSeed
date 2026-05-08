@@ -519,6 +519,7 @@ describe("CoreLoop tree mode (14C)", async () => {
 
   function createTreeLoopOrchestratorMock(nodeId = "node-id-1") {
     return {
+      ensureGoalRefined: vi.fn().mockResolvedValue(undefined),
       selectNextNode: vi.fn().mockReturnValue(nodeId),
       selectPreferredNode: vi.fn().mockResolvedValue(undefined),
       pauseNodeLoop: vi.fn(),
@@ -585,6 +586,25 @@ describe("CoreLoop tree mode (14C)", async () => {
     // Task cycle should NOT have been called (null node means no work)
     expect(mocks.taskLifecycle.runTaskCycle).not.toHaveBeenCalled();
     expect(["completed", "stopped", "max_iterations"]).toContain(result.finalStatus);
+  });
+
+  it("does not write tree refinement diagnostics directly to console", async () => {
+    const orchestratorMock = createTreeLoopOrchestratorMock();
+    const { deps, mocks } = createTreeModeDeps(tmpDir, orchestratorMock);
+
+    const rootGoal = makeGoal({ id: "root-1", children_ids: [] });
+    await mocks.stateManager.saveGoal(rootGoal);
+
+    const consoleLog = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    try {
+      const loop = new CoreLoop(deps, { treeMode: true, maxIterations: 1, delayBetweenLoopsMs: 0 });
+      await loop.runTreeIteration("root-1", 0, new Map());
+
+      expect(orchestratorMock.ensureGoalRefined).toHaveBeenCalledWith("root-1", { force: true });
+      expect(consoleLog).not.toHaveBeenCalled();
+    } finally {
+      consoleLog.mockRestore();
+    }
   });
 
   it("treeMode=true without treeLoopOrchestrator → falls back to normal mode", async () => {
