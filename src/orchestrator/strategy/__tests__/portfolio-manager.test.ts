@@ -1081,6 +1081,53 @@ describe("PortfolioManager", () => {
       }
     });
 
+    it("keeps waiting when metric threshold metadata is non-finite", async () => {
+      const tmpDir = makeTempDir();
+      const wait = makeWaitStrategy({
+        id: "ws1",
+        state: "active",
+        wait_until: new Date(Date.now() - 100_000).toISOString(),
+        gap_snapshot_at_start: 0.8,
+        primary_dimension: "quality",
+      });
+      const portfolio = makePortfolio([wait]);
+      (mockStrategyManager.getPortfolio as ReturnType<typeof vi.fn>).mockReturnValue(portfolio);
+      (mockStateManager.getBaseDir as ReturnType<typeof vi.fn>).mockReturnValue(tmpDir);
+      (mockStateManager.readRaw as ReturnType<typeof vi.fn>).mockImplementation((rawPath: string) => {
+        if (rawPath === "strategies/goal-1/wait-meta/ws1.json") {
+          return {
+            schema_version: 1,
+            wait_until: wait.wait_until,
+            metrics: { accuracy: Infinity },
+            conditions: [{ type: "metric_threshold", metric: "accuracy", operator: "gte", value: 0.9 }],
+            resume_plan: { action: "complete_wait" },
+          };
+        }
+        if (rawPath === "capability_registry.json") {
+          return { capabilities: [], last_checked: new Date().toISOString() };
+        }
+        return { quality: 0.5 };
+      });
+
+      const result = await pm.handleWaitStrategyExpiry("goal-1", "ws1");
+
+      expect(result).toMatchObject({
+        status: "not_due",
+        strategy_id: "ws1",
+        details: "metric unavailable: accuracy",
+      });
+      expect(mockStrategyManager.updateState).not.toHaveBeenCalled();
+      expect(mockStateManager.writeRaw).toHaveBeenCalledWith(
+        "strategies/goal-1/wait-meta/ws1.json",
+        expect.objectContaining({
+          latest_observation: expect.objectContaining({
+            status: "pending",
+            resume_hint: "metric unavailable: accuracy",
+          }),
+        })
+      );
+    });
+
     it("uses artifact JSON conditions as durable observation evidence before gap outcome", async () => {
       const tmpDir = makeTempDir();
       try {
