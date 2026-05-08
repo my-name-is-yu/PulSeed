@@ -893,7 +893,7 @@ function readMetric(metadata: WaitMetadata, metric: string): number | null {
     asRecord(metadata.latest_observation?.evidence["metrics"])?.[metric],
   ];
   for (const candidate of candidates) {
-    if (typeof candidate === "number") return candidate;
+    if (typeof candidate === "number" && Number.isFinite(candidate)) return candidate;
   }
   return null;
 }
