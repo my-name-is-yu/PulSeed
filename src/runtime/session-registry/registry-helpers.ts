@@ -156,6 +156,10 @@ export function stringField(value: Record<string, unknown>, key: string): string
   return typeof field === "string" && field.length > 0 ? field : null;
 }
 
+export function isProcessPidValue(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+}
+
 export function normalizeProcessSnapshot(value: unknown): ProcessSessionSnapshot | null {
   if (!isObject(value)) return null;
   const sessionId = stringField(value, "session_id");
@@ -176,7 +180,7 @@ export function normalizeProcessSnapshot(value: unknown): ProcessSessionSnapshot
     ...(typeof value["goal_id"] === "string" ? { goal_id: value["goal_id"] } : {}),
     ...(typeof value["task_id"] === "string" ? { task_id: value["task_id"] } : {}),
     ...(typeof value["strategy_id"] === "string" ? { strategy_id: value["strategy_id"] } : {}),
-    ...(typeof value["pid"] === "number" ? { pid: value["pid"] } : {}),
+    ...(isProcessPidValue(value["pid"]) ? { pid: value["pid"] } : {}),
     running: value["running"] === true,
     exitCode,
     signal,

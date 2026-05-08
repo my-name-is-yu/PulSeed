@@ -1,7 +1,7 @@
 import * as fsp from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { StateManager } from "../../../base/state/state-manager.js";
 import {
   RuntimeSessionRegistry,
@@ -151,6 +151,29 @@ describe("RuntimeSessionRegistry", () => {
     expect(snapshot.warnings).toContainEqual(expect.objectContaining({
       code: "dead_process_sidecar",
     }));
+  });
+
+  it("does not probe or report a running process sidecar with an unsafe pid", async () => {
+    await stateManager.writeRaw("runtime/process-sessions/proc-unsafe-pid.json", {
+      ...makeProcessSnapshot({
+        session_id: "proc-unsafe-pid",
+        running: true,
+      }),
+      pid: -1,
+    });
+    const isPidAlive = vi.fn(() => true);
+
+    const snapshot = await new RuntimeSessionRegistry({
+      stateManager,
+      isPidAlive,
+    }).snapshot();
+
+    expect(snapshot.background_runs).toContainEqual(expect.objectContaining({
+      id: "run:process:proc-unsafe-pid",
+      status: "unknown",
+      process_session_id: "proc-unsafe-pid",
+    }));
+    expect(isPidAlive).not.toHaveBeenCalled();
   });
 
   it("keeps orphan agent-loop state with a missing parent join warning", async () => {
