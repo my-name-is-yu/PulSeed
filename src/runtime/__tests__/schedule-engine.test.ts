@@ -1081,6 +1081,34 @@ describe("ChangeDetector", () => {
     expect(result.details).toContain("threshold ok");
   });
 
+  it("threshold mode accepts finite numeric strings", () => {
+    const exceeded = detectChange("threshold", " 150.5 ", [], 100);
+    expect(exceeded.changed).toBe(true);
+    expect(exceeded.details).toContain("150.5 > 100");
+
+    const below = detectChange("threshold", "50", [], 100);
+    expect(below.changed).toBe(false);
+    expect(below.details).toContain("50 <= 100");
+  });
+
+  it.each(["", "   ", "Infinity", "-Infinity", "NaN"])(
+    "threshold mode rejects non-finite or empty string result %j",
+    (value) => {
+      const result = detectChange("threshold", value, [], 100);
+      expect(result.changed).toBe(true);
+      expect(result.details).toContain("non-numeric result");
+    }
+  );
+
+  it.each([Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, Number.NaN])(
+    "threshold mode rejects non-finite numeric result %s",
+    (value) => {
+      const result = detectChange("threshold", value, [], 100);
+      expect(result.changed).toBe(true);
+      expect(result.details).toContain("non-numeric result");
+    }
+  );
+
   it("diff mode detects changed result vs baseline", () => {
     const result = detectChange("diff", { count: 2 }, [{ count: 1 }]);
     expect(result.changed).toBe(true);
