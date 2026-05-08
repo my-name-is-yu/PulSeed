@@ -208,6 +208,31 @@ describe("cmdSchedule", () => {
     }
   });
 
+  it.each([
+    ["heartbeat interval", ["add", "--name", "invalid", "--type", "custom", "--command", "echo ok", "--interval", "60s"], "--interval must be a positive integer"],
+    ["bare heartbeat interval", ["add", "--name", "invalid", "--interval"], "--interval must be a positive integer"],
+    ["tcp port", ["add", "--name", "invalid", "--type", "tcp", "--host", "localhost", "--port", "3000abc"], "--port must be a positive integer"],
+    ["process pid", ["add", "--name", "invalid", "--type", "process", "--pid", "123abc"], "--pid must be a positive integer"],
+    ["failure threshold", ["add", "--name", "invalid", "--type", "custom", "--command", "echo ok", "--threshold", "3abc"], "--threshold must be a positive integer"],
+    ["preset interval", ["add", "--preset", "daily_brief", "--interval", "60s"], "--interval must be a positive integer"],
+    ["preset baseline window", ["add", "--preset", "goal_probe", "--data-source-id", "db-source", "--baseline-window", "5days"], "--baseline-window must be a positive integer"],
+  ])("rejects invalid schedule add integer input before persisting: %s", async (_label, argv, message) => {
+    const tempDir = makeTempDir("schedule-command-invalid-add-");
+    try {
+      const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+      const code = await cmdSchedule(makeStateManager(tempDir), argv);
+
+      const engine = new ScheduleEngine({ baseDir: tempDir });
+      await engine.loadEntries();
+      expect(code).toBe(1);
+      expect(engine.getEntries()).toHaveLength(0);
+      expect(errSpy).toHaveBeenCalledWith(`Error: ${message}`);
+    } finally {
+      cleanupTempDir(tempDir);
+    }
+  });
+
   it("runs a paused schedule entry immediately without resuming it and exposes history", async () => {
     const tempDir = makeTempDir("schedule-command-run-now-");
     try {

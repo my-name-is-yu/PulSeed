@@ -174,6 +174,7 @@ import { ensureProviderConfig } from "../ensure-api-key.js";
 import { dispatchCommand } from "../cli-command-registry.js";
 import { CharacterConfigManager } from "../../../platform/traits/character-config.js";
 import { DaemonClient } from "../../../runtime/daemon/client.js";
+import { ScheduleEngine } from "../../../runtime/schedule-engine.js";
 import { ProactiveInterventionStore } from "../../../runtime/store/proactive-intervention-store.js";
 import { createRelationshipProfileChangeProposal } from "../../../platform/profile/profile-change-proposal.js";
 import { resolveTaskWorkspacePath } from "../../../orchestrator/execution/task/task-workspace.js";
@@ -324,6 +325,20 @@ describe("CLIRunner construction", () => {
   it("exposes a run() method", () => {
     const runner = new CLIRunner(tmpDir);
     expect(typeof runner.run).toBe("function");
+  });
+});
+
+describe("CLIRunner schedule command exit codes", () => {
+  it("returns 1 and does not persist when schedule add integer input is invalid", async () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const code = await runCLI("schedule", "add", "--name", "invalid", "--interval", "60s");
+
+    const engine = new ScheduleEngine({ baseDir: tmpDir });
+    await engine.loadEntries();
+    expect(code).toBe(1);
+    expect(engine.getEntries()).toHaveLength(0);
+    expect(errSpy).toHaveBeenCalledWith("Error: --interval must be a positive integer");
   });
 });
 
