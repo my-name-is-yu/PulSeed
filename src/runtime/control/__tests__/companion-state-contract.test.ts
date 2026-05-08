@@ -682,6 +682,18 @@ describe("CompanionState runtime-control contracts", () => {
     expect(deriveCompanionStateSnapshot(input)).toEqual(deriveCompanionStateSnapshot(input));
   });
 
+  it("keeps legacy runtime event id refs readable while production stores emit typed RuntimeEvent facts", () => {
+    const input = makeReducerInput({
+      recent_runtime_events: ["runtime-event:legacy-ref"],
+      event_high_watermark: "runtime-event:legacy-ref",
+    });
+
+    const snapshot = deriveCompanionStateSnapshot(input);
+
+    expect(input.recent_runtime_events).toEqual(["runtime-event:legacy-ref"]);
+    expect(snapshot.derivation_trace.input_refs).toContain("runtime-event:legacy-ref");
+  });
+
   it("rejects stale snapshots when later runtime or Surface evidence changes the high-watermark", () => {
     const input = makeReducerInput();
     const snapshot = deriveCompanionStateSnapshot(input);

@@ -75,6 +75,7 @@ export type {
   RuntimeEvent,
   RuntimeEventAuthorityDelta,
   RuntimeEventCompanionControlDelta,
+  RuntimeEventRef,
   RuntimeEventStalenessDelta,
   RuntimeEventType,
   RuntimeItemCompanionControlState,

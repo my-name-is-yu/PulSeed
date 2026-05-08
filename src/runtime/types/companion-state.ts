@@ -330,6 +330,9 @@ export const RuntimeEventSchema = z.object({
 }).strict();
 export type RuntimeEvent = z.infer<typeof RuntimeEventSchema>;
 
+export const RuntimeEventRefSchema = z.union([RuntimeEventSchema, z.string().min(1)]);
+export type RuntimeEventRef = z.infer<typeof RuntimeEventRefSchema>;
+
 export const CompanionGlobalControlEntrySchema = z.object({
   control: CompanionWideControlSchema,
   state: z.enum(["active", "inactive", "ambiguous"]),
@@ -365,7 +368,7 @@ export type CompanionCapacity = z.infer<typeof CompanionCapacitySchema>;
 export const CompanionStateReducerInputSchema = z.object({
   schema_version: z.literal("companion-state-reducer-input-v1").default("companion-state-reducer-input-v1"),
   runtime_items: z.array(RuntimeItemSchema),
-  recent_runtime_events: z.array(RuntimeEventSchema),
+  recent_runtime_events: z.array(RuntimeEventRefSchema),
   active_surface_ref: z.string().min(1).nullable(),
   surface_invalidation_events: z.array(z.string().min(1)),
   global_control_state_ref: z.string().min(1).nullable(),

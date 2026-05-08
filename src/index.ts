@@ -223,6 +223,7 @@ export type {
   RuntimeCompanionStateBoundaryRequest,
   RuntimeCompanionStateBoundaryResult,
   RuntimeEvent,
+  RuntimeEventRef,
   RuntimeEventType,
   RuntimeItem,
   CompanionStateReducerInput,

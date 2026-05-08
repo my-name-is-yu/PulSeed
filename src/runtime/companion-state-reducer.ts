@@ -15,7 +15,7 @@ import {
   type CompanionWideControl,
   type ControlPolicy,
   type RuntimeItem,
-  type RuntimeEvent,
+  type RuntimeEventRef,
   type RuntimeItemControl,
   type Staleness,
   type StalenessDimension,
@@ -940,6 +940,6 @@ function inputRefs(input: CompanionStateReducerInput): string[] {
   ]);
 }
 
-function runtimeEventId(event: RuntimeEvent): string {
-  return event.event_id;
+function runtimeEventId(event: RuntimeEventRef): string {
+  return typeof event === "string" ? event : event.event_id;
 }
