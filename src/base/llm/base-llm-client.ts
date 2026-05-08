@@ -187,7 +187,6 @@ export abstract class BaseLLMClient {
    * Used internally by parseJSON retry logic.
    * Subclasses that support retry must override this method.
    */
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   protected async callLLMRaw(_messages: ParseJSONMessage[], _systemPrompt?: string): Promise<string> {
     throw new LLMError("callLLMRaw not implemented — override in subclass to enable parseJSON retry");
   }
