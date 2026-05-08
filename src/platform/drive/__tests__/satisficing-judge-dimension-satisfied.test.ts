@@ -124,6 +124,20 @@ describe("isDimensionSatisfied", () => {
       const result = judge.isDimensionSatisfied(dim);
       expect(result.is_satisfied).toBe(false);
     });
+
+    it("not satisfied when current_value is a non-numeric string", () => {
+      const dim = makeDimension({
+        current_value: "not-a-number",
+        threshold: { type: "max", value: 0.05 },
+        confidence: 0.9,
+      });
+
+      const result = judge.isDimensionSatisfied(dim);
+
+      expect(result.is_satisfied).toBe(false);
+      expect(result.current_value).toBeNull();
+      expect(result.effective_progress).toBe(0);
+    });
   });
 
   describe("range threshold", () => {

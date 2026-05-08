@@ -2,6 +2,8 @@ import type { Dimension } from "../../base/types/goal.js";
 import type { Threshold } from "../../base/types/core.js";
 import type { RawGap, NormalizedGap, WeightedGap, GapVector } from "../../base/types/gap.js";
 
+const EXACT_FINITE_NUMBER_TOKEN = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i;
+
 /**
  * GapCalculator implements the gap calculation pipeline defined in gap-calculation.md:
  *   raw_gap -> normalized_gap -> normalized_weighted_gap
@@ -57,15 +59,18 @@ export function computeRawGap(
 
   switch (threshold.type) {
     case "min": {
-      const current = toNumber(currentValue);
+      const current = toFiniteNumberOrNull(currentValue);
+      if (current === null) return fullNumericGap(threshold);
       return Math.max(0, threshold.value - current);
     }
     case "max": {
-      const current = toNumber(currentValue);
+      const current = toFiniteNumberOrNull(currentValue);
+      if (current === null) return fullNumericGap(threshold);
       return Math.max(0, current - threshold.value);
     }
     case "range": {
-      const current = toNumber(currentValue);
+      const current = toFiniteNumberOrNull(currentValue);
+      if (current === null) return fullNumericGap(threshold);
       return (
         Math.max(0, threshold.low - current) +
         Math.max(0, current - threshold.high)
@@ -107,6 +112,11 @@ export function normalizeGap(
   threshold: Threshold,
   currentValue: number | string | boolean | null
 ): number {
+  if (!Number.isFinite(rawGap)) return 1.0;
+  if (isNumericThreshold(threshold) && currentValue !== null && toFiniteNumberOrNull(currentValue) === null) {
+    return 1.0;
+  }
+
   // Guard: null current_value => maximum gap
   if (currentValue === null) {
     return 1.0;
@@ -293,14 +303,31 @@ export function dimensionProgress(
 
 // ─── Helpers ───
 
-function toNumber(value: number | string | boolean | null): number {
-  if (typeof value === "number") return value;
+function toFiniteNumberOrNull(value: number | string | boolean | null): number | null {
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
   if (typeof value === "boolean") return value ? 1 : 0;
   if (typeof value === "string") {
-    const n = Number(value);
-    return isNaN(n) ? 0 : n;
+    const normalized = value.trim();
+    if (!EXACT_FINITE_NUMBER_TOKEN.test(normalized)) return null;
+    const n = Number(normalized);
+    return Number.isFinite(n) ? n : null;
   }
-  return 0;
+  return null;
+}
+
+function fullNumericGap(threshold: Extract<Threshold, { type: "min" | "max" | "range" }>): number {
+  switch (threshold.type) {
+    case "min":
+      return Math.abs(threshold.value) || 1;
+    case "max":
+      return Math.abs(threshold.value) || 1;
+    case "range":
+      return Math.abs(threshold.high - threshold.low) || 1;
+  }
+}
+
+function isNumericThreshold(threshold: Threshold): threshold is Extract<Threshold, { type: "min" | "max" | "range" }> {
+  return threshold.type === "min" || threshold.type === "max" || threshold.type === "range";
 }
 
 function isTruthy(value: number | string | boolean | null): boolean {

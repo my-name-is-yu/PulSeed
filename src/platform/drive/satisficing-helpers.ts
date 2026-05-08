@@ -1,5 +1,7 @@
 import type { Dimension } from "../../base/types/goal.js";
 
+const EXACT_FINITE_NUMBER_TOKEN = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i;
+
 // ─── Pure Helper: aggregateValues ───
 
 /**
@@ -36,13 +38,7 @@ export function aggregateValues(
 // ─── Helpers ───
 
 export function toNumber(value: number | string | boolean | null): number {
-  if (typeof value === "number") return value;
-  if (typeof value === "boolean") return value ? 1 : 0;
-  if (typeof value === "string") {
-    const n = Number(value);
-    return isNaN(n) ? 0 : n;
-  }
-  return 0;
+  return toNumberOrNull(value) ?? 0;
 }
 
 export function isTruthy(value: number | string | boolean | null): boolean {
@@ -55,7 +51,15 @@ export function isTruthy(value: number | string | boolean | null): boolean {
 
 export function toNumberOrNull(value: number | string | boolean | null): number | null {
   if (value === null) return null;
-  return toNumber(value);
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value === "boolean") return value ? 1 : 0;
+  if (typeof value === "string") {
+    const normalized = value.trim();
+    if (!EXACT_FINITE_NUMBER_TOKEN.test(normalized)) return null;
+    const n = Number(normalized);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
 }
 
 /**
