@@ -6,6 +6,7 @@ import {
   getPendingPermissionTask,
   getPendingPermissionGrantProposal,
   withPermissionExpiry,
+  type PendingPermissionGrantProposal,
   type PendingPermissionTarget,
   type PermissionRiskClass,
 } from "./permission-dialogue.js";
@@ -25,6 +26,7 @@ export interface ApprovalTaskRequest {
   permission_level?: string;
   is_destructive?: boolean;
   reversibility?: string;
+  grant_proposal?: PendingPermissionGrantProposal;
 }
 
 export interface ApprovalRequiredEvent {

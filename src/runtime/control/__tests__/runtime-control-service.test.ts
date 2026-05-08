@@ -161,7 +161,7 @@ describe("RuntimeControlService", () => {
           channel: "slack",
           platform: "slack",
           conversation_id: "C999:1700.1",
-          user_id: "U999",
+          user_id: "U123",
           session_id: "identity:workspace:U999",
           turn_id: "1700.2",
         },
@@ -193,6 +193,60 @@ describe("RuntimeControlService", () => {
         },
       });
       expect(revoked).toMatchObject({ success: false, state: "blocked" });
+      await expect(permissionGrantStore.load("grant-other-chat")).resolves.toMatchObject({
+        state: "active",
+      });
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
+  });
+
+  it("does not let an exact grant id bypass chat permission identity", async () => {
+    const tmpDir = makeTempDir("pulseed-runtime-permission-target-context-");
+    try {
+      const runtimeRoot = path.join(tmpDir, "runtime");
+      const operationStore = new RuntimeOperationStore(runtimeRoot);
+      const permissionGrantStore = new PermissionGrantStore(runtimeRoot);
+      await permissionGrantStore.createActive(makeGrant({
+        grant_id: "grant-other-chat",
+        origin: {
+          channel: "slack",
+          platform: "slack",
+          conversation_id: "C999:1700.1",
+          user_id: "U123",
+          session_id: "identity:workspace:U999",
+          turn_id: "1700.2",
+        },
+      }));
+      const service = new RuntimeControlService({ operationStore, permissionGrantStore });
+
+      const result = await service.request({
+        intent: {
+          kind: "revoke_permission",
+          reason: "revoke the named grant",
+          target: {
+            grantId: "grant-other-chat",
+            runId: "run-1",
+            sessionId: "identity:workspace:U999",
+          },
+        },
+        cwd: "/repo",
+        requestedBy: {
+          surface: "chat",
+          platform: "slack",
+          conversation_id: "C123:1700.1",
+          user_id: "U123",
+        },
+        replyTarget: {
+          surface: "chat",
+          platform: "slack",
+          conversation_id: "C123:1700.1",
+          user_id: "U123",
+        },
+      });
+
+      expect(result).toMatchObject({ success: false, state: "blocked" });
+      expect(result.message).toBe("No active PermissionGrant matches this chat/runtime context.");
       await expect(permissionGrantStore.load("grant-other-chat")).resolves.toMatchObject({
         state: "active",
       });
