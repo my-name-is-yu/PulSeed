@@ -1,5 +1,4 @@
-import type { ChatEventContext } from "./chat-events.js";
-import type { ActiveChatTurn } from "./chat-runner-event-bridge.js";
+import type { ActiveChatTurn, ChatEventContext } from "./turn-state.js";
 import type { UserInput } from "./user-input.js";
 
 export type TurnOperation = TurnStartOperation | TurnSteerOperation;

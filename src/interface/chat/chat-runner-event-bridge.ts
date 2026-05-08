@@ -1,4 +1,5 @@
-import type { ActivityKind, ChatEvent, ChatEventContext, ChatEventHandler } from "./chat-events.js";
+import type { ActivityKind, ChatEvent, ChatEventHandler } from "./chat-events.js";
+import type { ActiveChatTurn, ChatEventContext } from "./turn-state.js";
 import type {
   AgentLoopEvent,
   AgentLoopEventSink,
@@ -33,20 +34,10 @@ import {
 import { createTextUserInput, type UserInput } from "./user-input.js";
 import { createTurnStartOperation, type TurnOperation } from "./turn-protocol.js";
 
+export type { ActiveChatTurn } from "./turn-state.js";
+
 export interface AssistantBuffer {
   text: string;
-}
-
-export interface ActiveChatTurn {
-  context: ChatEventContext;
-  cwd: string;
-  startedAt: number;
-  abortController: AbortController;
-  finished: Promise<void>;
-  resolveFinished: () => void;
-  recentEvents: string[];
-  recentFailureSignals: FailureRecoverySignal[];
-  interruptRequested: boolean;
 }
 
 export class ChatRunnerEventBridge {
