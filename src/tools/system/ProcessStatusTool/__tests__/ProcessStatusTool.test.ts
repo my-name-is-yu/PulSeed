@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { ProcessStatusTool, ProcessStatusInputSchema } from "../ProcessStatusTool.js";
 import type { ToolCallContext } from "../../../types.js";
 import * as execMod from "../../../../base/utils/execFileNoThrow.js";
+import { toToolDefinition } from "../../../tool-definition-adapter.js";
 
 const makeContext = (cwd = "/tmp"): ToolCallContext => ({
   goalId: "goal-1",
@@ -60,6 +61,24 @@ describe("ProcessStatusTool", () => {
 
     it("rejects pid < 1", () => {
       expect(() => ProcessStatusInputSchema.parse({ pid: 0 })).toThrow();
+    });
+
+    it("rejects unsafe pid integers", () => {
+      expect(() => ProcessStatusInputSchema.parse({ pid: Number.MAX_SAFE_INTEGER + 1 })).toThrow();
+    });
+
+    it("exports the direct pid bounds to model-facing tool schema", () => {
+      const definition = toToolDefinition(tool);
+      const parameters = definition.function.parameters as {
+        properties?: Record<string, unknown>;
+      };
+      const pidSchema = parameters.properties?.["pid"] as Record<string, unknown>;
+
+      expect(pidSchema).toMatchObject({
+        type: "integer",
+        minimum: 1,
+        maximum: Number.MAX_SAFE_INTEGER,
+      });
     });
   });
 
