@@ -1,25 +1,20 @@
 import * as path from "node:path";
 import { EventServer } from "../event/server.js";
-import { IngressGateway, HttpChannelAdapter } from "../gateway/index.js";
-import type { LoopSupervisor, SupervisorState } from "../executor/index.js";
+import { HttpChannelAdapter } from "../gateway/index.js";
+import type { SupervisorState } from "../executor/index.js";
 import { PulSeedEventSchema } from "../../base/types/drive.js";
-import { RuntimeOperationStore, type RuntimeControlOperationKind } from "../store/index.js";
+import { RuntimeOperationStore } from "../store/index.js";
 import {
   publishRuntimeControlResult,
   type RuntimeControlResultEventPublisher,
 } from "../control/runtime-control-result-routing.js";
-import { ProcessShutdownCoordinator, startDaemonStatusHeartbeat, type ProcessSignalTarget } from "./runner-lifecycle.js";
+import { ProcessShutdownCoordinator, startDaemonStatusHeartbeat } from "./runner-lifecycle.js";
 import { handleCriticalDaemonError, handleDaemonLoopError } from "./runner-errors.js";
 import type { Envelope } from "../types/envelope.js";
-import type { LoopResult } from "../../orchestrator/loop/durable-loop.js";
-import type { CoreLoop } from "../../orchestrator/loop/durable-loop.js";
 import { CommandDispatcher } from "../command-dispatcher.js";
 import { EventDispatcher } from "../event/dispatcher.js";
 import { BackgroundRunLedger } from "../store/background-run-store.js";
 import { extractGoalStartMetadata } from "./runner-commands.js";
-
-const RUNTIME_LEADER_LEASE_MS = 30_000;
-const RUNTIME_LEADER_HEARTBEAT_MS = 10_000;
 
 export type StartupRunnerContext = any;
 
@@ -203,10 +198,10 @@ export async function startDaemonRunner(
     context.queueClaimSweeper?.start();
 
     if (!context.supervisor) {
-      const factory = context.deps.coreLoopFactory ?? (() => context.coreLoop);
+      const factory = context.deps.durableLoopFactory ?? context.deps.coreLoopFactory ?? (() => context.coreLoop);
       context.supervisor = new (await import("../executor/index.js")).LoopSupervisor(
         {
-          coreLoopFactory: factory,
+          durableLoopFactory: factory,
           journalQueue: context.journalQueue!,
           goalLeaseManager: context.goalLeaseManager!,
           driveSystem: context.driveSystem,

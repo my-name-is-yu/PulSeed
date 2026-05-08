@@ -113,6 +113,30 @@ describe("LoopSupervisor", () => {
     }
   });
 
+  it("prefers durableLoopFactory over legacy coreLoopFactory", async () => {
+    const durableLoop = {
+      run: vi.fn().mockResolvedValue(makeLoopResult({ goalId: "g-durable-factory" })),
+      stop: vi.fn(),
+    };
+    const legacyLoop = {
+      run: vi.fn().mockResolvedValue(makeLoopResult({ goalId: "g-legacy-factory" })),
+      stop: vi.fn(),
+    };
+    const { supervisor, runtimeRoot } = makeSupervisor(undefined, {
+      durableLoopFactory: () => durableLoop as any,
+      coreLoopFactory: () => legacyLoop as any,
+    }, { concurrency: 1 });
+    try {
+      await supervisor.start(["g-durable-factory"]);
+      await waitFor(() => durableLoop.run.mock.calls.some((call: unknown[]) => call[0] === "g-durable-factory"));
+      await supervisor.shutdown();
+      expect(durableLoop.run).toHaveBeenCalledWith("g-durable-factory", expect.anything());
+      expect(legacyLoop.run).not.toHaveBeenCalled();
+    } finally {
+      fs.rmSync(runtimeRoot, { recursive: true, force: true });
+    }
+  });
+
   // ─── 2. Goal Exclusivity: coalescing ───
 
   it("coalesces duplicate goal_activated via requestExtend (re-runs)", async () => {
