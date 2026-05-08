@@ -247,7 +247,7 @@ function parseScalarResult(text: string): number | string | boolean | null {
   if (trimmed === "false") return false;
   if (/^[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?$/.test(trimmed)) {
     const num = Number(trimmed);
-    if (!Number.isNaN(num)) return num;
+    if (Number.isFinite(num)) return num;
   }
   return trimmed;
 }

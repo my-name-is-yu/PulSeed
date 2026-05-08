@@ -461,6 +461,22 @@ describe("PostgresDataSourceAdapter", () => {
     expect(result.metadata?.query).toBe("SELECT count(*) FROM issues WHERE state = 'open'");
   });
 
+  it("keeps non-finite scalar numeric tokens as strings", async () => {
+    const runner = vi.fn().mockResolvedValue({
+      stdout: "1e309\n",
+      stderr: "",
+      code: 0,
+    });
+    const adapter = new PostgresDataSourceAdapter(makeDatabaseConfig(), runner);
+
+    const result = await adapter.query({
+      dimension_name: "open_issue_count",
+      timeout_ms: 5000,
+    });
+
+    expect(result.value).toBe("1e309");
+  });
+
   it("wraps scalar expressions in a SELECT statement", async () => {
     const runner = vi.fn().mockResolvedValue({
       stdout: "7\n",
