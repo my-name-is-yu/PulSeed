@@ -2336,6 +2336,89 @@ describe("GoalTrigger execution (Phase 3)", () => {
     expect(result.status).toBe("error");
     expect(result.error_message).toContain("No coreLoop");
   });
+
+  it("routes wait-resume schedule wakes through attention re-evaluation without notification", async () => {
+    const notificationDispatcher = {
+      dispatch: vi.fn().mockResolvedValue(undefined),
+    };
+    const attentionReevaluation = {
+      reevaluate: vi.fn().mockResolvedValue(undefined),
+    };
+    const eng = new ScheduleEngine({
+      baseDir: tempDir,
+      notificationDispatcher,
+      attentionReevaluation,
+    });
+    const entry = await eng.addEntry(makeGoalTriggerEntry({
+      metadata: {
+        internal: true,
+        activation_kind: "wait_resume",
+        goal_id: "test-goal-id",
+        strategy_id: "strategy:wait",
+        wait_strategy_id: "strategy:wait",
+      },
+      goal_trigger: {
+        goal_id: "test-goal-id",
+        max_iterations: 5,
+        skip_if_active: false,
+      },
+    }));
+
+    eng.getEntries()[0]!.next_fire_at = new Date(Date.now() - 1000).toISOString();
+    await eng.saveEntries();
+    await eng.loadEntries();
+
+    const results = await eng.tick();
+    const result = results.find((candidate) => candidate.entry_id === entry.id)!;
+    const [signalContext, context] = attentionReevaluation.reevaluate.mock.calls[0]!;
+
+    expect(result.status).toBe("ok");
+    expect(result.output_summary).toBe("wait wake re-evaluated through attention");
+    expect(attentionReevaluation.reevaluate).toHaveBeenCalledOnce();
+    expect(signalContext.signal_sources).toEqual(["schedule_tick", "wait_expiry"]);
+    expect(signalContext.current_goal_refs).toEqual([{ kind: "goal", id: "test-goal-id" }]);
+    expect(context).toMatchObject({
+      entry_id: entry.id,
+      entry_name: entry.name,
+      activation_kind: "wait_resume",
+    });
+    expect(notificationDispatcher.dispatch).not.toHaveBeenCalled();
+  });
+
+  it("uses the default attention pipeline for wait-resume wakes when no port is injected", async () => {
+    const notificationDispatcher = {
+      dispatch: vi.fn().mockResolvedValue(undefined),
+    };
+    const eng = new ScheduleEngine({
+      baseDir: tempDir,
+      notificationDispatcher,
+    });
+    const entry = await eng.addEntry(makeGoalTriggerEntry({
+      metadata: {
+        internal: true,
+        activation_kind: "wait_resume",
+        goal_id: "test-goal-id",
+        strategy_id: "strategy:wait-default",
+        wait_strategy_id: "strategy:wait-default",
+      },
+      goal_trigger: {
+        goal_id: "test-goal-id",
+        max_iterations: 5,
+        skip_if_active: false,
+      },
+    }));
+
+    eng.getEntries()[0]!.next_fire_at = new Date(Date.now() - 1000).toISOString();
+    await eng.saveEntries();
+    await eng.loadEntries();
+
+    const results = await eng.tick();
+    const result = results.find((candidate) => candidate.entry_id === entry.id)!;
+
+    expect(result.status).toBe("ok");
+    expect(result.output_summary).toBe("wait wake re-evaluated through attention");
+    expect(notificationDispatcher.dispatch).not.toHaveBeenCalled();
+  });
 });
 
 // ─── Phase 3: tick() routing ───

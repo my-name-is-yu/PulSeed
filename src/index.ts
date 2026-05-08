@@ -195,6 +195,29 @@ export {
   recognizeRuntimeControlIntent,
 } from "./runtime/control/index.js";
 export {
+  admitInitiativeGateDecision,
+  advanceAttentionMaturation,
+  applyAttentionFeedbackConservatively,
+  assembleSignalContext,
+  buildSchedulerWakeSignalContext,
+  createUrgeCandidate,
+  decideInhibition,
+  mergeUrgesIntoAgenda,
+  reevaluateSchedulerWakeThroughAttention,
+  runtimeItemsForAgenda,
+  selectInitiativeGateDecision,
+} from "./runtime/attention/index.js";
+export type {
+  AttentionFeedbackEvent,
+  AttentionFeedbackPolicyAdjustment,
+  AttentionReevaluationContext,
+  AttentionReevaluationPort,
+  AttentionReevaluationResult,
+  SchedulerWakeReevaluationInput,
+  SignalContextAssemblyInput,
+  UrgeCandidateAssemblyInput,
+} from "./runtime/attention/index.js";
+export {
   NonTuiDisplayProjector,
   createNonTuiDisplayProjector,
   createGatewayDisplayPolicy,
