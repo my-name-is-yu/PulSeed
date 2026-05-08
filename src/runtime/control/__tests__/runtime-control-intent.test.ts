@@ -5,17 +5,17 @@ import { createSingleMockLLMClient } from "../../../../tests/helpers/mock-llm.js
 
 describe("recognizeRuntimeControlIntent", () => {
   it("returns null without an LLM classifier", async () => {
-    await expect(recognizeRuntimeControlIntent("この実行を一時停止して")).resolves.toBeNull();
+    await expect(recognizeRuntimeControlIntent("pause this execution")).resolves.toBeNull();
   });
 
   it("uses the LLM decision for daemon and gateway restart operations", async () => {
     await expect(recognizeRuntimeControlIntent(
-      "gateway を再起動して",
+      "restart the gateway",
       createSingleMockLLMClient(JSON.stringify({ intent: "restart_gateway", reason: "restart gateway" }))
     )).resolves.toMatchObject({ kind: "restart_gateway" });
 
     await expect(recognizeRuntimeControlIntent(
-      "PulSeed を再起動して",
+      "restart PulSeed",
       createSingleMockLLMClient(JSON.stringify({ intent: "restart_daemon", reason: "restart daemon" }))
     )).resolves.toMatchObject({ kind: "restart_daemon" });
   });
@@ -38,7 +38,7 @@ describe("recognizeRuntimeControlIntent", () => {
       reason: "inspect current execution",
     }));
 
-    await expect(recognizeRuntimeControlIntent("この実行の状況を見て", llm)).resolves.toMatchObject({
+    await expect(recognizeRuntimeControlIntent("inspect this execution", llm)).resolves.toMatchObject({
       kind: "inspect_run",
     });
   });
@@ -62,7 +62,7 @@ describe("recognizeRuntimeControlIntent", () => {
       reason: "resume this execution",
     }));
 
-    await expect(recognizeRuntimeControlIntent("この実行を続けて", llm)).resolves.toMatchObject({
+    await expect(recognizeRuntimeControlIntent("resume this execution", llm)).resolves.toMatchObject({
       kind: "resume_run",
     });
   });
@@ -71,12 +71,12 @@ describe("recognizeRuntimeControlIntent", () => {
     const llm = createSingleMockLLMClient(JSON.stringify({
       intent: "pause_run",
       reason: "pause current run",
-      targetSelector: { scope: "run", reference: "current", sourceText: "この実行" },
+      targetSelector: { scope: "run", reference: "current", sourceText: "this execution" },
     }));
 
-    await expect(recognizeRuntimeControlIntent("この実行を止めて", llm)).resolves.toMatchObject({
+    await expect(recognizeRuntimeControlIntent("pause this execution", llm)).resolves.toMatchObject({
       kind: "pause_run",
-      targetSelector: { scope: "run", reference: "current", sourceText: "この実行" },
+      targetSelector: { scope: "run", reference: "current", sourceText: "this execution" },
     });
   });
 
@@ -100,7 +100,7 @@ describe("recognizeRuntimeControlIntent", () => {
 
   it("uses the LLM decision for permission boundary inspection and revocation", async () => {
     await expect(recognizeRuntimeControlIntent(
-      "今 PulSeed は何を許可されていますか？",
+      "What is PulSeed allowed to do right now?",
       createSingleMockLLMClient(JSON.stringify({
         intent: "inspect_permission_boundary",
         reason: "inspect active permissions",
@@ -108,7 +108,7 @@ describe("recognizeRuntimeControlIntent", () => {
     )).resolves.toMatchObject({ kind: "inspect_permission_boundary" });
 
     await expect(recognizeRuntimeControlIntent(
-      "grant-1 の権限を取り消して",
+      "Revoke grant-1",
       createSingleMockLLMClient(JSON.stringify({
         intent: "revoke_permission",
         reason: "revoke named grant",
@@ -120,9 +120,41 @@ describe("recognizeRuntimeControlIntent", () => {
     });
   });
 
+  it("uses the LLM decision for companion-wide controls", async () => {
+    await expect(recognizeRuntimeControlIntent(
+      "Suspend companion-wide proactivity until I explicitly resume it",
+      createSingleMockLLMClient(JSON.stringify({
+        intent: "suspend_companion",
+        reason: "suspend companion-wide proactivity",
+      }))
+    )).resolves.toMatchObject({ kind: "suspend_companion" });
+
+    await expect(recognizeRuntimeControlIntent(
+      "Stop all quiet work and watches",
+      createSingleMockLLMClient(JSON.stringify({
+        intent: "stop_all_quiet_work",
+        reason: "stop quiet work",
+      }))
+    )).resolves.toMatchObject({ kind: "stop_all_quiet_work" });
+  });
+
+  it("uses typed session inspection without granting resume authority", async () => {
+    await expect(recognizeRuntimeControlIntent(
+      "Summarize session:conversation:old without resuming it",
+      createSingleMockLLMClient(JSON.stringify({
+        intent: "summarize_session_without_resuming",
+        reason: "summarize old session without resume",
+        target: { sessionId: "session:conversation:old" },
+      }))
+    )).resolves.toMatchObject({
+      kind: "summarize_session_without_resuming",
+      target: { sessionId: "session:conversation:old" },
+    });
+  });
+
   it("uses typed permission capabilities for narrow and extend controls", async () => {
     await expect(recognizeRuntimeControlIntent(
-      "テストだけ許可して、編集はまだしないで",
+      "Allow only tests for now, not edits",
       createSingleMockLLMClient(JSON.stringify({
         intent: "narrow_permission",
         reason: "allow tests only",
@@ -134,7 +166,7 @@ describe("recognizeRuntimeControlIntent", () => {
     });
 
     await expect(recognizeRuntimeControlIntent(
-      "この実行ではローカル編集も許可して",
+      "Allow local edits for this execution too",
       createSingleMockLLMClient(JSON.stringify({
         intent: "extend_permission",
         reason: "allow local edits",
@@ -152,7 +184,7 @@ describe("recognizeRuntimeControlIntent", () => {
       reason: "progress question",
     }));
 
-    await expect(recognizeRuntimeControlIntent("進捗は？", llm)).resolves.toBeNull();
+    await expect(recognizeRuntimeControlIntent("What is the progress?", llm)).resolves.toBeNull();
   });
 
   it("uses the LLM decision to leave ordinary continuation on chat routes", async () => {

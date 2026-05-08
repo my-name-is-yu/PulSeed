@@ -279,6 +279,50 @@ describe("setup import discovery", () => {
     });
   });
 
+  it("does not infer provider or adapter from misleading substrings", async () => {
+    const hermesHome = path.join(tmpDir, "hermes");
+    process.env["PULSEED_IMPORT_HERMES_HOME"] = hermesHome;
+
+    await writeJson(path.join(hermesHome, "settings.json"), {
+      provider: "not-openai",
+      model: "private-runtime-model",
+      adapter: "not-agent",
+    });
+
+    const { detectSetupImportSources } = await import("../commands/setup/import/discovery.js");
+    const sources = detectSetupImportSources();
+    const hermes = sources.find((source) => source.id === "hermes");
+    const provider = hermes?.items.find((item) => item.kind === "provider");
+
+    expect(provider?.providerSettings).toMatchObject({
+      model: "private-runtime-model",
+    });
+    expect(provider?.providerSettings?.provider).toBeUndefined();
+    expect(provider?.providerSettings?.adapter).toBeUndefined();
+  });
+
+  it("normalizes explicit provider and adapter aliases without substring matching", async () => {
+    const openclawHome = path.join(tmpDir, "openclaw");
+    process.env["PULSEED_IMPORT_OPENCLAW_HOME"] = openclawHome;
+
+    await writeJson(path.join(openclawHome, "config.json"), {
+      provider: "Anthropic API",
+      model: "claude-sonnet-4-6",
+      adapter: "Claude Code",
+    });
+
+    const { detectSetupImportSources } = await import("../commands/setup/import/discovery.js");
+    const sources = detectSetupImportSources();
+    const openclaw = sources.find((source) => source.id === "openclaw");
+    const provider = openclaw?.items.find((item) => item.kind === "provider");
+
+    expect(provider?.providerSettings).toMatchObject({
+      provider: "anthropic",
+      model: "claude-sonnet-4-6",
+      adapter: "claude_code_cli",
+    });
+  });
+
   it("detects USER.md from Hermes for identity import", async () => {
     const hermesHome = path.join(tmpDir, "hermes");
     process.env["PULSEED_IMPORT_HERMES_HOME"] = hermesHome;

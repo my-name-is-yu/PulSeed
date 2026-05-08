@@ -181,6 +181,11 @@ describe("gatherNegotiationContext", () => {
 
     expect(result).toContain("8 occurrences across 2 files");
     expect(result).toContain("Keywords found:");
+    expect(mockExecutor.execute).toHaveBeenCalledWith(
+      "grep",
+      expect.objectContaining({ pattern: "improve", fixedStrings: true }),
+      expect.anything()
+    );
   });
 
   it("uses ToolExecutor grep content for TODO markers", async () => {
@@ -205,6 +210,11 @@ describe("gatherNegotiationContext", () => {
     expect(result).toContain("TODO");
     expect(result).toContain("occurrences");
     expect(result).toContain("1 occurrences across 1 files");
+    expect(mockExecutor.execute).toHaveBeenCalledWith(
+      "grep",
+      expect.objectContaining({ pattern: "TODO", outputMode: "content", fixedStrings: true }),
+      expect.anything()
+    );
   });
 });
 

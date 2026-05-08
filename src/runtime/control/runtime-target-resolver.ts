@@ -53,11 +53,15 @@ export function resolveRuntimeTarget(input: ResolveRuntimeTargetInput): RuntimeT
     reference: "current" as const,
     sourceText: "implicit current runtime run",
   };
-  const scoped = scopedConversationRuns(selectable, input.conversationId);
-  const candidates = scoped.length > 0 ? scoped : selectable;
   if (selectable.length === 0) {
     return unknown(selector, selectable, "no active or attention-needed runtime runs are available");
   }
+  const scopeCandidates = scopedRunsBySelector(selectable, selector);
+  if (scopeCandidates.length === 0) {
+    return unknown(selector, selectable, `no ${selector.scope}-scoped runtime runs are available`);
+  }
+  const scoped = scopedConversationRuns(scopeCandidates, input.conversationId);
+  const candidates = scoped.length > 0 ? scoped : scopeCandidates;
 
   switch (selector.reference) {
     case "current":
@@ -81,7 +85,13 @@ export function resolveRuntimeTarget(input: ResolveRuntimeTargetInput): RuntimeT
           "no latest runtime run is associated with this conversation; refusing to reuse another conversation's runtime run"
         );
       }
-      return currentOrStale(candidates[0], input.operation, selector, candidates, "latest candidate selected by runtime updated timestamp");
+      {
+        const timestamped = timestampedRuns(candidates);
+        if (timestamped.length === 0) {
+          return unknown(selector, candidates, "latest target was requested but no timestamped runtime run is available");
+        }
+        return currentOrStale(timestamped[0], input.operation, selector, candidates, "latest candidate selected by runtime timestamp");
+      }
     case "previous":
       if (input.conversationId && scoped.length === 0) {
         return unknown(
@@ -90,10 +100,13 @@ export function resolveRuntimeTarget(input: ResolveRuntimeTargetInput): RuntimeT
           "no previous runtime run is associated with this conversation; refusing to reuse another conversation's runtime run"
         );
       }
-      if (candidates.length < 2) {
-        return unknown(selector, candidates, "previous target was requested but there is no earlier candidate");
+      {
+        const timestamped = timestampedRuns(candidates);
+        if (timestamped.length < 2) {
+          return unknown(selector, candidates, "previous target was requested but there is no earlier timestamped candidate");
+        }
+        return currentOrStale(timestamped[1], input.operation, selector, candidates, "previous candidate selected by runtime timestamp");
       }
-      return currentOrStale(candidates[1], input.operation, selector, candidates, "previous candidate selected by runtime updated timestamp");
     case "exact":
       return unknown(selector, candidates, "exact target selector requires an explicit run or session id");
   }
@@ -134,6 +147,11 @@ function selectableRuns(snapshot: RuntimeSessionRegistrySnapshot): BackgroundRun
     .sort((left, right) => compareUpdated(right, left));
 }
 
+function scopedRunsBySelector(candidates: BackgroundRun[], selector: RuntimeControlTargetSelector): BackgroundRun[] {
+  if (selector.scope === "run") return candidates;
+  return candidates.filter((run) => run.child_session_id !== null);
+}
+
 function scopedConversationRuns(candidates: BackgroundRun[], conversationId: string | null | undefined): BackgroundRun[] {
   if (!conversationId) return [];
   const currentSessionId = `session:conversation:${conversationId}`;
@@ -155,7 +173,25 @@ function resolveGoalId(run: BackgroundRun): string | null {
 }
 
 function compareUpdated(left: BackgroundRun, right: BackgroundRun): number {
-  return Date.parse(left.updated_at ?? left.started_at ?? left.created_at ?? "") - Date.parse(right.updated_at ?? right.started_at ?? right.created_at ?? "");
+  const leftTime = runtimeTimestamp(left);
+  const rightTime = runtimeTimestamp(right);
+  if (leftTime !== rightTime) return leftTime - rightTime;
+  return right.id.localeCompare(left.id);
+}
+
+function timestampedRuns(candidates: BackgroundRun[]): BackgroundRun[] {
+  return [...candidates]
+    .filter((run) => runtimeTimestamp(run) !== Number.NEGATIVE_INFINITY)
+    .sort((left, right) => compareUpdated(right, left));
+}
+
+function runtimeTimestamp(run: BackgroundRun): number {
+  for (const value of [run.updated_at, run.started_at, run.created_at]) {
+    if (!value) continue;
+    const parsed = Date.parse(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return Number.NEGATIVE_INFINITY;
 }
 
 function ambiguous(

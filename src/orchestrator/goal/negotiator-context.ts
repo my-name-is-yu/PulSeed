@@ -94,7 +94,7 @@ export async function gatherNegotiationContext(
     const topKeywords = keywords.slice(0, 5);
     for (const kw of topKeywords) {
       if (toolExecutor && ctx) {
-        const result = await toolExecutor.execute("grep", { pattern: kw, path: dir + "/src", glob: "*.ts", outputMode: "count", limit: 10000 }, ctx);
+        const result = await toolExecutor.execute("grep", { pattern: kw, path: dir + "/src", glob: "*.ts", outputMode: "count", limit: 10000, fixedStrings: true }, ctx);
         const stdout = result.success && typeof result.data === "string" ? result.data : "";
         if (stdout) {
           const totalCount = stdout
@@ -122,7 +122,7 @@ export async function gatherNegotiationContext(
         try {
           const { stdout } = await execFileAsync(
             "grep",
-            ["-rn", "--include=*.ts", "-c", kw, dir + "/src"],
+            ["-rn", "-F", "--include=*.ts", "-c", kw, dir + "/src"],
             { timeout: 2000 }
           );
           // Each line is "file:count" — sum them up
@@ -157,8 +157,8 @@ export async function gatherNegotiationContext(
       for (const marker of [TASK_NOTE_MARKER, ISSUE_MARKER] as const) {
         if (!descLower.includes(marker.toLowerCase())) continue;
         if (toolExecutor && ctx) {
-          const countResult = await toolExecutor.execute("grep", { pattern: marker, path: dir + "/src", glob: "*.ts", outputMode: "count", limit: 10000 }, ctx);
-          const contentResult = await toolExecutor.execute("grep", { pattern: marker, path: dir + "/src", glob: "*.ts", outputMode: "content", limit: 10000 }, ctx);
+          const countResult = await toolExecutor.execute("grep", { pattern: marker, path: dir + "/src", glob: "*.ts", outputMode: "count", limit: 10000, fixedStrings: true }, ctx);
+          const contentResult = await toolExecutor.execute("grep", { pattern: marker, path: dir + "/src", glob: "*.ts", outputMode: "content", limit: 10000, fixedStrings: true }, ctx);
           const countOut = countResult.success && typeof countResult.data === "string" ? countResult.data : "";
           const contentOut = contentResult.success && typeof contentResult.data === "string" ? contentResult.data : "";
           if (countOut) {
@@ -186,7 +186,7 @@ export async function gatherNegotiationContext(
           try {
             const { stdout: countOut } = await execFileAsync(
               "grep",
-              ["-rn", "--include=*.ts", marker, dir + "/src"],
+              ["-rn", "-F", "--include=*.ts", marker, dir + "/src"],
               { timeout: 3000 }
             );
             const lines = countOut.trim().split("\n").filter(Boolean);

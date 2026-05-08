@@ -1,5 +1,6 @@
 // ─── pulseed suggest and improve commands ───
 
+import * as path from "node:path";
 import { parseArgs } from "node:util";
 
 import { StateManager } from "../../../base/state/state-manager.js";
@@ -15,6 +16,7 @@ import {
   normalizeSuggestPayload,
   generateSuggestOutput,
   gatherProjectContext,
+  hasRepositorySuggestionSurface,
 } from "./suggest-normalizer.js";
 import { looksLikeSoftwareGoal, SuggestTimeoutError } from "../../../orchestrator/goal/goal-suggest.js";
 import {
@@ -54,6 +56,18 @@ async function buildSuggestContext(
 
 // ─── cmdSuggest ───
 
+export function parseSuggestionLimit(raw: string | undefined, label = "--max"): number {
+  const normalized = raw?.trim() ?? "";
+  if (!/^[0-9]+$/.test(normalized)) {
+    throw new Error(`${label} must be a positive integer`);
+  }
+  const parsed = Number(normalized);
+  if (!Number.isSafeInteger(parsed) || parsed < 1) {
+    throw new Error(`${label} must be a positive integer`);
+  }
+  return parsed;
+}
+
 export async function cmdSuggest(
   stateManager: StateManager,
   characterConfigManager: CharacterConfigManager,
@@ -83,6 +97,14 @@ export async function cmdSuggest(
     return 1;
   }
 
+  let maxSuggestions: number;
+  try {
+    maxSuggestions = parseSuggestionLimit(values.max ?? "5");
+  } catch (err) {
+    logger.error(err instanceof Error ? err.message : String(err));
+    return 1;
+  }
+
   try {
     await ensureProviderConfig();
   } catch (err) {
@@ -100,9 +122,10 @@ export async function cmdSuggest(
 
   const { deps, existingTitles, capabilityDetector } = setupResult;
   const targetPath = values.path?.trim() ? values.path : ".";
-  const maxSuggestions = parseInt(values.max ?? "5", 10);
+  const targetFsPath = path.isAbsolute(targetPath) ? targetPath : path.resolve(process.cwd(), targetPath);
   const repoFiles: string[] = [];
   const isSoftware = looksLikeSoftwareGoal(context);
+  const repositorySurface = hasRepositorySuggestionSurface(targetFsPath);
 
   console.log("Generating goal suggestions...\n");
 
@@ -123,7 +146,7 @@ export async function cmdSuggest(
   }
 
   const suggestions = Array.isArray(suggestRaw) ? { suggestions: suggestRaw } : suggestRaw;
-  const finalPayload = normalizeSuggestPayload(suggestions, targetPath, targetPath, context, maxSuggestions, repoFiles, isSoftware);
+  const finalPayload = normalizeSuggestPayload(suggestions, targetPath, targetPath, context, maxSuggestions, repoFiles, isSoftware, repositorySurface);
   console.log(JSON.stringify(finalPayload, null, 2));
 
   return 0;
@@ -156,6 +179,15 @@ export async function cmdImprove(
   }
 
   const targetPath = positionals[0] || ".";
+  const targetFsPath = path.isAbsolute(targetPath) ? targetPath : path.resolve(process.cwd(), targetPath);
+  let maxSuggestions: number;
+  try {
+    maxSuggestions = parseSuggestionLimit(values.max ?? "3");
+  } catch (err) {
+    logger.error(err instanceof Error ? err.message : String(err));
+    return 1;
+  }
+
   console.log(`\n[PulSeed Improve] Analyzing ${targetPath}...\n`);
 
   try {
@@ -175,9 +207,9 @@ export async function cmdImprove(
 
   const { deps, existingTitles, capabilityDetector } = setupResult;
   const context = await gatherProjectContext(targetPath);
-  const maxSuggestions = parseInt(values.max || "3", 10);
   const repoFiles: string[] = [];
   const isSoftware = looksLikeSoftwareGoal(context);
+  const repositorySurface = hasRepositorySuggestionSurface(targetFsPath);
 
   let rawSuggestOutput: unknown;
   try {
@@ -196,7 +228,7 @@ export async function cmdImprove(
   }
 
   const rawSuggestions = Array.isArray(rawSuggestOutput) ? { suggestions: rawSuggestOutput } : rawSuggestOutput;
-  const normalizedPayload = normalizeSuggestPayload(rawSuggestions, targetPath, targetPath, context, maxSuggestions, repoFiles, isSoftware);
+  const normalizedPayload = normalizeSuggestPayload(rawSuggestions, targetPath, targetPath, context, maxSuggestions, repoFiles, isSoftware, repositorySurface);
   const suggestions = normalizedPayload.suggestions;
 
   if (suggestions.length === 0) {

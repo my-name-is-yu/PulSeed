@@ -116,30 +116,34 @@ export interface TaskGenerationDeps {
 
 // ─── evaluateTaskComplexity ───
 
-/**
- * Evaluate the complexity of a task to determine pipeline requirements.
- *
- * Rules (from design doc §4):
- * - Small: single file target, simple description (no "and" conjunctions, < 50 chars)
- * - Medium: single file but complex description (6+ expected line changes)
- * - Large: multiple file targets OR "and" in description OR explicit multi-file indicators
- */
 export function evaluateTaskComplexity(task: Task): "small" | "medium" | "large" {
-  const desc = task.work_description ?? "";
   const targets = task.target_dimensions ?? [];
+  const inScope = uniqueNonEmpty(task.scope_boundary?.in_scope ?? []);
+  const requiredArtifacts = uniqueNonEmpty(task.artifact_contract?.required_artifacts.map((artifact) => artifact.path) ?? []);
+  const successCriteria = task.success_criteria ?? [];
+  const constraints = task.constraints ?? [];
+  const duration = task.estimated_duration;
 
-  // Large: multiple dimensions suggest multiple files or actions
   if (targets.length > 1) return "large";
-  // Large: "and" conjunction suggests multiple independent actions
-  if (/\band\b/i.test(desc)) return "large";
-  // Large: explicit multi-file indicator
-  if (/multiple files?|across files?/i.test(desc)) return "large";
+  if (inScope.length > 1) return "large";
+  if (requiredArtifacts.length > 1) return "large";
+  if (task.risk_profile?.external_action.required) return "large";
+  if (duration && (duration.unit === "days" || duration.unit === "weeks")) return "large";
 
-  // Small: short and simple
-  if (desc.length < 50) return "small";
+  if (
+    successCriteria.length > 2
+    || constraints.length > 2
+    || task.artifact_contract?.required === true
+    || duration?.unit === "hours"
+  ) {
+    return "medium";
+  }
 
-  // Medium: single target, complex description
-  return "medium";
+  return "small";
+}
+
+function uniqueNonEmpty(values: string[]): string[] {
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
 }
 
 function normalizeShellCommand(command: string): string {

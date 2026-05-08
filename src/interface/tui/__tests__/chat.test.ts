@@ -5,6 +5,7 @@ import {
   formatSuggestionLabel,
   getInputPromptLabel,
   getMatchingSuggestions,
+  getScrollLineStep,
   normalizeTerminalInputChunk,
   parseMouseEvent,
   getScrollRequest,
@@ -353,6 +354,24 @@ describe("composer sizing", () => {
 });
 
 describe("chat scroll keys", () => {
+  function withScrollSpeed(value: string | undefined, test: () => void): void {
+    const original = process.env.PULSEED_SCROLL_SPEED;
+    try {
+      if (value === undefined) {
+        delete process.env.PULSEED_SCROLL_SPEED;
+      } else {
+        process.env.PULSEED_SCROLL_SPEED = value;
+      }
+      test();
+    } finally {
+      if (original === undefined) {
+        delete process.env.PULSEED_SCROLL_SPEED;
+      } else {
+        process.env.PULSEED_SCROLL_SPEED = original;
+      }
+    }
+  }
+
   it("maps page and scrollback keys without touching arrow history keys", () => {
     expect(getScrollRequest("[5~", { pageUp: true })).toMatchObject({ direction: "up", kind: "page" });
     expect(getScrollRequest("[6~", { pageDown: true })).toMatchObject({ direction: "down", kind: "page" });
@@ -367,6 +386,27 @@ describe("chat scroll keys", () => {
   it("maps sgr mouse wheel sequences to line scroll requests", () => {
     expect(getScrollRequest("\u001b[<64;40;12M", {})).toMatchObject({ direction: "up", kind: "line" });
     expect(getScrollRequest("[<65;40;12M", {})).toMatchObject({ direction: "down", kind: "line" });
+  });
+
+  it("parses scroll speed from exact integer environment tokens", () => {
+    withScrollSpeed("5", () => {
+      expect(getScrollLineStep()).toBe(5);
+    });
+    withScrollSpeed(" 21 ", () => {
+      expect(getScrollLineStep()).toBe(20);
+    });
+    withScrollSpeed("0", () => {
+      expect(getScrollLineStep()).toBe(1);
+    });
+  });
+
+  it("falls back for malformed scroll speed tokens", () => {
+    withScrollSpeed("5fast", () => {
+      expect(getScrollLineStep()).toBe(1);
+    });
+    withScrollSpeed("1.5", () => {
+      expect(getScrollLineStep()).toBe(1);
+    });
   });
 
   it("parses press, drag, and release mouse events for composer selection", () => {

@@ -160,6 +160,27 @@ export const CompanionWideControlSchema = z.enum([
 ]);
 export type CompanionWideControl = z.infer<typeof CompanionWideControlSchema>;
 
+export const CompanionControlActorSchema = z.object({
+  surface: z.enum(["chat", "gateway", "cli", "tui"]),
+  platform: z.string().optional(),
+  conversation_id: z.string().optional(),
+  identity_key: z.string().optional(),
+  user_id: z.string().optional(),
+}).strict();
+export type CompanionControlActor = z.infer<typeof CompanionControlActorSchema>;
+
+export const CompanionResumeOutcomeSchema = z.enum([
+  "resume_allowed",
+  "resume_requires_regrounding",
+  "inspect_only",
+  "summary_only",
+  "resume_rejected_stale",
+  "resume_rejected_permission",
+  "resume_rejected_surface",
+  "resume_rejected_safety",
+]);
+export type CompanionResumeOutcome = z.infer<typeof CompanionResumeOutcomeSchema>;
+
 export const RuntimeItemControlSchema = z.enum([
   "inspect_item",
   "pause_item",
@@ -339,6 +360,9 @@ export const CompanionGlobalControlEntrySchema = z.object({
   source_ref: z.string().min(1),
   updated_at: z.string().datetime(),
   reason: z.string().min(1),
+  changed_by: CompanionControlActorSchema.nullable().default(null),
+  affected_runtime_refs: z.array(z.string().min(1)).default([]),
+  audit_refs: z.array(z.string().min(1)).default([]),
 }).strict();
 export type CompanionGlobalControlEntry = z.infer<typeof CompanionGlobalControlEntrySchema>;
 

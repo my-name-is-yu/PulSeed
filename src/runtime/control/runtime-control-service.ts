@@ -3,6 +3,7 @@ import type { StateManager } from "../../base/state/state-manager.js";
 import {
   createRuntimeSessionRegistry,
   type BackgroundRun,
+  type RuntimeSession,
 } from "../session-registry/index.js";
 import { RuntimeEvidenceLedger, type RuntimeEvidenceLedgerPort } from "../store/evidence-ledger.js";
 import { RuntimeOperationStore } from "../store/runtime-operation-store.js";
@@ -11,6 +12,7 @@ import { BrowserSessionStore, RuntimeAuthHandoffStore } from "../interactive-aut
 import { breakerKey, GuardrailStore } from "../guardrails/index.js";
 import {
   assembleCompanionStateReducerInput,
+  deriveRuntimeItemControlPolicy,
   deriveCompanionStateSnapshot,
 } from "../companion-state-reducer.js";
 import {
@@ -26,6 +28,7 @@ import type {
   CompanionStateReducerInput,
   CompanionStateSnapshot,
   CompanionWideControl,
+  CompanionResumeOutcome,
   RuntimeItem,
 } from "../types/companion-state.js";
 import type {
@@ -72,6 +75,7 @@ export interface RuntimeControlResult {
   message: string;
   operationId?: string;
   state?: RuntimeControlOperationState;
+  resumeOutcome?: CompanionResumeOutcome;
 }
 
 export interface RuntimeCompanionStateBoundaryRequest {
@@ -143,6 +147,18 @@ type TargetResolution =
   | { ok: true; run?: BackgroundRun; goalId?: string | null }
   | { ok: false; result: RuntimeControlResult };
 
+type ProjectedGlobalControls = {
+  stateRef: string | null;
+  controls: CompanionGlobalControlEntry[];
+  activeControls: CompanionWideControl[];
+};
+
+const DEACTIVATES_COMPANION_CONTROL: Partial<Record<CompanionWideControl, CompanionWideControl>> = {
+  leave_quiet_mode: "enter_quiet_mode",
+  resume_proactivity: "pause_proactivity",
+  resume_companion: "suspend_companion",
+};
+
 export class RuntimeControlService {
   private readonly operationStore: RuntimeOperationStore;
   private readonly sessionRegistry?: Pick<ReturnType<typeof createRuntimeSessionRegistry>, "snapshot">;
@@ -171,6 +187,14 @@ export class RuntimeControlService {
   }
 
   async request(request: RuntimeControlRequest): Promise<RuntimeControlResult> {
+    if (isCompanionWideControlKind(request.intent.kind)) {
+      return this.handleCompanionWideControl(request);
+    }
+
+    if (isSessionControlKind(request.intent.kind)) {
+      return this.handleSessionControl(request);
+    }
+
     if (isPermissionControlKind(request.intent.kind)) {
       return this.handlePermissionControl(request);
     }
@@ -249,15 +273,23 @@ export class RuntimeControlService {
     request: RuntimeCompanionStateBoundaryRequest = {},
   ): Promise<CompanionStateReducerInput> {
     const currentTime = request.currentTime ?? this.nowIso();
-    const runtimeItems = await this.collectRuntimeItems(currentTime);
+    const collectedRuntimeItems = await this.collectRuntimeItems(currentTime);
     const runtimeEvents = await this.operationStore.listRuntimeEvents();
+    const projectedControls = request.globalControls
+      ? null
+      : await this.projectGlobalControlState(collectedRuntimeItems);
+    const globalControls = request.globalControls ?? projectedControls?.controls ?? [];
+    const activeControls = request.globalControls
+      ? globalControls.filter((entry) => entry.state === "active").map((entry) => entry.control)
+      : projectedControls?.activeControls ?? [];
+    const runtimeItems = applyCompanionControlState(collectedRuntimeItems, globalControls, activeControls);
     return assembleCompanionStateReducerInput({
       runtime_items: runtimeItems,
       recent_runtime_events: runtimeEvents,
       active_surface_ref: request.activeSurfaceRef ?? null,
       surface_invalidation_events: request.surfaceInvalidationEvents ?? [],
-      global_control_state_ref: request.globalControlStateRef ?? null,
-      global_controls: request.globalControls ?? [],
+      global_control_state_ref: request.globalControlStateRef ?? projectedControls?.stateRef ?? null,
+      global_controls: globalControls,
       control_overlays: request.controlOverlays ?? [],
       pre_suspend_mode: request.preSuspendMode ?? null,
       user_activity_refs: request.userActivityRefs ?? [],
@@ -277,6 +309,94 @@ export class RuntimeControlService {
       input,
       snapshot: deriveCompanionStateSnapshot(input),
     };
+  }
+
+  inspectCompanionState(request: Omit<RuntimeControlRequest, "intent"> & { reason: string }): Promise<RuntimeControlResult> {
+    return this.request({ ...request, intent: { kind: "inspect_companion_state", reason: request.reason } });
+  }
+
+  setCompanionControl(
+    request: Omit<RuntimeControlRequest, "intent"> & { control: CompanionWideControl; reason: string }
+  ): Promise<RuntimeControlResult> {
+    return this.request({ ...request, intent: { kind: request.control, reason: request.reason } });
+  }
+
+  inspectSession(request: RuntimeRunControlRequestBase): Promise<RuntimeControlResult> {
+    return this.request({ ...request, intent: { kind: "inspect_session", reason: request.reason, target: targetFromRunRequest(request) } });
+  }
+
+  summarizeSessionWithoutResuming(request: RuntimeRunControlRequestBase): Promise<RuntimeControlResult> {
+    return this.request({
+      ...request,
+      intent: { kind: "summarize_session_without_resuming", reason: request.reason, target: targetFromRunRequest(request) },
+    });
+  }
+
+  private async handleCompanionWideControl(request: RuntimeControlRequest): Promise<RuntimeControlResult> {
+    const runtimeItemsBeforeControl = await this.collectRuntimeItems(this.nowIso());
+    const initial = await this.createInitialOperation(request);
+    const affectedRefs = affectedRuntimeRefsForControl(
+      request.intent.kind as CompanionWideControl,
+      runtimeItemsBeforeControl,
+    );
+
+    if (request.intent.kind === "inspect_companion_state") {
+      const current = await this.recomputeCompanionState({
+        activeSurfaceRef: null,
+        currentTime: this.nowIso(),
+      });
+      const inspected = await this.update(initial, "verified", {
+        ok: true,
+        message: formatCompanionStateSummary(current.snapshot),
+      });
+      return this.toResult(inspected);
+    }
+
+    const verified = await this.update(initial, "verified", {
+      ok: true,
+      message: formatCompanionControlApplied(request.intent.kind as CompanionWideControl, affectedRefs),
+    });
+    return this.toResult(verified);
+  }
+
+  private async handleSessionControl(request: RuntimeControlRequest): Promise<RuntimeControlResult> {
+    const initial = await this.createInitialOperation(request);
+    if (!this.sessionRegistry) {
+      const blocked = await this.update(initial, "blocked", {
+        ok: false,
+        message: "Runtime session catalog is not available for session control.",
+      });
+      return this.toResult(blocked);
+    }
+
+    const sessionId = request.intent.target?.sessionId;
+    if (!sessionId) {
+      const blocked = await this.update(initial, "blocked", {
+        ok: false,
+        message: `${request.intent.kind} requires an explicit session id; refusing to fall back to latest session.`,
+      });
+      return this.toResult(blocked);
+    }
+
+    const snapshot = await this.sessionRegistry.snapshot();
+    const session = snapshot.sessions.find((candidate) => candidate.id === sessionId);
+    if (!session) {
+      const blocked = await this.update(initial, "blocked", {
+        ok: false,
+        message: `Runtime session ${sessionId} was not found; refusing to fall back to latest session.`,
+        resumeOutcome: "resume_rejected_stale",
+      });
+      return this.toResult(blocked);
+    }
+
+    const verified = await this.update(initial, "verified", {
+      ok: true,
+      message: request.intent.kind === "summarize_session_without_resuming"
+        ? formatSessionSummaryOnly(session)
+        : formatSessionInspection(session),
+      resumeOutcome: request.intent.kind === "summarize_session_without_resuming" ? "summary_only" : "inspect_only",
+    });
+    return this.toResult(verified);
   }
 
   private async handlePermissionControl(request: RuntimeControlRequest): Promise<RuntimeControlResult> {
@@ -398,6 +518,71 @@ export class RuntimeControlService {
     return items;
   }
 
+  private async projectGlobalControlState(runtimeItems: RuntimeItem[]): Promise<ProjectedGlobalControls> {
+    const operations = [
+      ...await this.operationStore.listCompleted(),
+      ...await this.operationStore.listPending(),
+    ]
+      .filter((operation) => isCompanionWideControlKind(operation.kind))
+      .filter((operation) => operation.kind !== "inspect_companion_state")
+      .filter((operation) => operation.state === "verified")
+      .sort((left, right) => left.updated_at.localeCompare(right.updated_at));
+
+    if (operations.length === 0) {
+      return { stateRef: null, controls: [], activeControls: [] };
+    }
+
+    const byControl = new Map<CompanionWideControl, CompanionGlobalControlEntry>();
+    for (const operation of operations) {
+      const control = operation.kind as CompanionWideControl;
+      const affectedRefs = affectedRuntimeRefsForControl(control, runtimeItems);
+      const deactivated = DEACTIVATES_COMPANION_CONTROL[control];
+      if (deactivated) {
+        const previous = byControl.get(deactivated);
+        const preservedAffectedRefs = uniqueStrings([
+          ...(previous?.affected_runtime_refs ?? []),
+          ...affectedRefs,
+        ]);
+        const preservedAuditRefs = uniqueStrings([
+          ...(previous?.audit_refs ?? []),
+          `runtime-control-operation:${operation.operation_id}`,
+        ]);
+        byControl.set(deactivated, companionControlEntry({
+          control: deactivated,
+          state: "inactive",
+          operation,
+          affectedRefs: preservedAffectedRefs,
+          auditRefs: preservedAuditRefs,
+        }));
+        byControl.set(control, companionControlEntry({
+          control,
+          state: "inactive",
+          operation,
+          affectedRefs,
+        }));
+        continue;
+      }
+      const existing = byControl.get(control);
+      if (existing?.state === "inactive" && existing.updated_at >= operation.updated_at) {
+        continue;
+      }
+      byControl.set(control, companionControlEntry({
+        control,
+        state: oneShotCompanionControls().has(control) ? "inactive" : "active",
+        operation,
+        affectedRefs,
+      }));
+    }
+
+    const latest = operations[operations.length - 1]!;
+    const controls = [...byControl.values()].sort((left, right) => left.updated_at.localeCompare(right.updated_at));
+    return {
+      stateRef: `global-control-state:${latest.operation_id}:${encodeURIComponent(latest.updated_at)}`,
+      controls,
+      activeControls: controls.filter((entry) => entry.state === "active").map((entry) => entry.control),
+    };
+  }
+
   private async handleRunControl(request: RuntimeControlRequest): Promise<RuntimeControlResult> {
     const initial = await this.createInitialOperation(request);
     if (initial.state === "blocked") return this.toResult(initial);
@@ -421,9 +606,23 @@ export class RuntimeControlService {
       const blocked = await this.update(initial, "blocked", {
         ok: false,
         message: `Runtime control ${request.intent.kind} is blocked: selected run ${initial.target?.run_id ?? "unknown"} has no typed goal/runtime bridge yet.`,
+        ...(request.intent.kind === "resume_run" ? { resumeOutcome: "resume_rejected_safety" as const } : {}),
       });
       await this.appendControlEvidence(blocked);
       return this.toResult(blocked);
+    }
+
+    if (request.intent.kind === "resume_run") {
+      const resumeDecision = await this.decideRunResume(initial);
+      if (resumeDecision.outcome !== "resume_allowed") {
+        const blocked = await this.update(initial, "blocked", {
+          ok: false,
+          message: resumeDecision.message,
+          resumeOutcome: resumeDecision.outcome,
+        });
+        await this.appendControlEvidence(blocked);
+        return this.toResult(blocked);
+      }
     }
 
     const approved = await this.approveIfRequired(initial, request.approvalFn);
@@ -436,6 +635,53 @@ export class RuntimeControlService {
       if (operation) await this.appendControlEvidence(operation);
     }
     return result;
+  }
+
+  private async decideRunResume(operation: RuntimeControlOperation): Promise<{
+    outcome: CompanionResumeOutcome;
+    message: string;
+  }> {
+    if (!this.sessionRegistry || !operation.target?.run_id) {
+      return {
+        outcome: "resume_rejected_safety",
+        message: "Resume is blocked because runtime session evidence is unavailable.",
+      };
+    }
+    const snapshot = await this.sessionRegistry.snapshot();
+    const run = snapshot.background_runs.find((candidate) => candidate.id === operation.target?.run_id);
+    if (!run) {
+      return {
+        outcome: "resume_rejected_stale",
+        message: `Runtime run ${operation.target.run_id} was not found; refusing to fall back to latest run.`,
+      };
+    }
+    if (run.status !== "running" && run.status !== "queued") {
+      return {
+        outcome: "resume_requires_regrounding",
+        message: `Runtime run ${run.id} is ${run.status}; resume requires explicit re-grounding or inspect/summary first.`,
+      };
+    }
+    const runtimeItems = await this.collectRuntimeItems(this.nowIso());
+    const projectedControls = await this.projectGlobalControlState(runtimeItems);
+    const controlledItems = applyCompanionControlState(
+      runtimeItems,
+      projectedControls.controls,
+      projectedControls.activeControls,
+    );
+    const runtimeItem = controlledItems.find((item) => item.item_id === `background-run:${run.id}`);
+    if (!runtimeItem) {
+      return {
+        outcome: "resume_rejected_stale",
+        message: `Runtime run ${run.id} has no RuntimeItem projection; refusing to fall back to latest run.`,
+      };
+    }
+    if (runtimeItem.control_policy.forbidden_controls.includes("resume_item")) {
+      return resumeBlockedByRuntimeItemPolicy(run.id, runtimeItem);
+    }
+    return {
+      outcome: "resume_allowed",
+      message: `Runtime run ${run.id} is current for resume admission.`,
+    };
   }
 
   private async matchPermissionGrants(
@@ -870,19 +1116,24 @@ export class RuntimeControlService {
       message: operation.result?.message ?? ackMessage(operation.kind),
       operationId: operation.operation_id,
       state: operation.state,
+      ...(operation.result?.resume_outcome ? { resumeOutcome: operation.result.resume_outcome } : {}),
     };
   }
 
   private async update(
     operation: RuntimeControlOperation,
     state: RuntimeControlOperationState,
-    result: { ok: boolean; message: string }
+    result: { ok: boolean; message: string; resumeOutcome?: CompanionResumeOutcome }
   ): Promise<RuntimeControlOperation> {
     const updated: RuntimeControlOperation = {
       ...operation,
       state,
       updated_at: this.nowIso(),
-      result,
+      result: {
+        ok: result.ok,
+        message: result.message,
+        ...(result.resumeOutcome ? { resume_outcome: result.resumeOutcome } : {}),
+      },
     };
     return this.operationStore.save(updated);
   }
@@ -912,6 +1163,26 @@ function isPermissionControlKind(
     || kind === "narrow_permission"
     || kind === "extend_permission"
     || kind === "audit_permission_check";
+}
+
+function isCompanionWideControlKind(kind: RuntimeControlOperationKind): kind is CompanionWideControl {
+  return kind === "inspect_companion_state"
+    || kind === "enter_quiet_mode"
+    || kind === "leave_quiet_mode"
+    || kind === "pause_proactivity"
+    || kind === "resume_proactivity"
+    || kind === "suspend_companion"
+    || kind === "resume_companion"
+    || kind === "stop_all_quiet_work"
+    || kind === "stop_all_watches"
+    || kind === "suppress_nonessential_agenda"
+    || kind === "require_confirmation_for_proactivity";
+}
+
+function isSessionControlKind(
+  kind: RuntimeControlOperationKind
+): kind is Extract<RuntimeControlOperationKind, "inspect_session" | "summarize_session_without_resuming"> {
+  return kind === "inspect_session" || kind === "summarize_session_without_resuming";
 }
 
 function isRunControlKind(
@@ -975,35 +1246,61 @@ function isPastIso(value?: string | null): boolean {
 function ackMessage(kind: RuntimeControlOperationKind): string {
   switch (kind) {
     case "restart_gateway":
-      return "gateway の再起動を開始します。復帰後にこの会話へ結果を返します。";
+      return "Gateway restart has started. A result will be returned to this conversation after recovery.";
     case "restart_daemon":
-      return "PulSeed daemon の再起動を開始します。復帰後にこの会話へ結果を返します。";
+      return "PulSeed daemon restart has started. A result will be returned to this conversation after recovery.";
     case "reload_config":
-      return "runtime 設定の再読み込みを開始します。";
+      return "Runtime configuration reload has started.";
     case "self_update":
-      return "PulSeed 自身の更新準備を開始します。実行前に内容を確認します。";
+      return "PulSeed self-update preparation has started. Changes will be reviewed before execution.";
     case "inspect_run":
-      return "runtime run の状況を確認しました。";
+      return "Runtime run status was inspected.";
     case "pause_run":
-      return "runtime run の safe pause を要求します。";
+      return "Runtime run safe pause was requested.";
     case "resume_run":
-      return "runtime run の再開を要求します。";
+      return "Runtime run resume was requested.";
     case "cancel_run":
-      return "runtime run のキャンセルを要求します。";
+      return "Runtime run cancellation was requested.";
     case "finalize_run":
-      return "runtime run の最終化 proposal を作成します。";
+      return "Runtime run finalization proposal will be created.";
     case "inspect_permission_boundary":
-      return "active permission boundary を確認しました。";
+      return "Active permission boundary was inspected.";
     case "revoke_permission":
-      return "permission grant の revoke を記録しました。";
+      return "Permission grant revocation was recorded.";
     case "narrow_permission":
-      return "permission grant の narrow を記録しました。";
+      return "Permission grant narrowing was recorded.";
     case "extend_permission":
-      return "permission grant の extend を記録しました。";
+      return "Permission grant extension was recorded.";
     case "audit_permission_check":
-      return "permission grant の audit を確認しました。";
+      return "Permission grant audit was inspected.";
+    case "inspect_companion_state":
+      return "Companion state was inspected.";
+    case "enter_quiet_mode":
+      return "Quiet mode was enabled.";
+    case "leave_quiet_mode":
+      return "Quiet mode was disabled. Held items were not resumed automatically.";
+    case "pause_proactivity":
+      return "Proactivity pause was enabled.";
+    case "resume_proactivity":
+      return "Proactivity pause was disabled. Held items require re-evaluation.";
+    case "suspend_companion":
+      return "Companion suspend was enabled.";
+    case "resume_companion":
+      return "Companion suspend was disabled. Held items were not resumed automatically.";
+    case "stop_all_quiet_work":
+      return "Quiet-work stop request was recorded.";
+    case "stop_all_watches":
+      return "Watch stop request was recorded.";
+    case "suppress_nonessential_agenda":
+      return "Nonessential agenda suppression was recorded.";
+    case "require_confirmation_for_proactivity":
+      return "Confirmation was required for proactivity.";
+    case "inspect_session":
+      return "Runtime session was inspected.";
+    case "summarize_session_without_resuming":
+      return "Runtime session was summarized without resuming.";
     case "automation_control":
-      return "runtime automation control を記録しました。";
+      return "Runtime automation control was recorded.";
   }
 }
 
@@ -1150,6 +1447,237 @@ function nextPermissionCapabilities(
 
 function uniqueCapabilities(capabilities: PermissionGrantCapability[]): PermissionGrantCapability[] {
   return [...new Set(capabilities)];
+}
+
+function applyCompanionControlState(
+  runtimeItems: RuntimeItem[],
+  globalControls: CompanionGlobalControlEntry[],
+  activeControls: CompanionWideControl[],
+): RuntimeItem[] {
+  const inactiveHeldControlRefs = globalControls.filter((entry) => (
+    entry.state === "inactive"
+    && controlRequiresReadmissionAfterLift(entry.control)
+    && entry.affected_runtime_refs.length > 0
+  ));
+  if (activeControls.length === 0 && inactiveHeldControlRefs.length === 0) return runtimeItems;
+  const globalControlRefs = globalControls
+    .filter((entry) => entry.state === "active" || inactiveHeldControlRefs.includes(entry))
+    .map((entry) => entry.source_ref);
+  return runtimeItems.map((item) => {
+    const heldByControls = activeControls.filter((control) => controlHoldsRuntimeItem(control, item));
+    const historicallyHeldByControls = inactiveHeldControlRefs
+      .filter((entry) => entry.affected_runtime_refs.includes(item.item_id))
+      .map((entry) => entry.control);
+    const rejectedByControls = activeControls.filter((control) => controlRejectsRuntimeItem(control, item));
+    if (heldByControls.length === 0 && historicallyHeldByControls.length === 0 && rejectedByControls.length === 0) {
+      return item;
+    }
+    const controlled = {
+      ...item,
+      companion_control_state: {
+        active_controls: uniqueControls([
+          ...item.companion_control_state.active_controls,
+          ...activeControls,
+        ]),
+        global_control_refs: uniqueStrings([
+          ...item.companion_control_state.global_control_refs,
+          ...globalControlRefs,
+        ]),
+        held_by_controls: uniqueControls([
+          ...item.companion_control_state.held_by_controls,
+          ...heldByControls,
+          ...historicallyHeldByControls,
+        ]),
+        rejected_by_controls: uniqueControls([
+          ...item.companion_control_state.rejected_by_controls,
+          ...rejectedByControls,
+        ]),
+        reason: "companion-wide global controls applied at runtime admission boundary",
+      },
+    };
+    return {
+      ...controlled,
+      control_policy: deriveRuntimeItemControlPolicy(controlled),
+    };
+  });
+}
+
+function companionControlEntry(input: {
+  control: CompanionWideControl;
+  state: CompanionGlobalControlEntry["state"];
+  operation: RuntimeControlOperation;
+  affectedRefs: string[];
+  auditRefs?: string[];
+}): CompanionGlobalControlEntry {
+  return {
+    control: input.control,
+    state: input.state,
+    source_ref: `runtime-control:${input.operation.operation_id}`,
+    updated_at: input.operation.updated_at,
+    reason: input.operation.reason,
+    changed_by: input.operation.requested_by,
+    affected_runtime_refs: input.affectedRefs,
+    audit_refs: input.auditRefs ?? [`runtime-control-operation:${input.operation.operation_id}`],
+  };
+}
+
+function oneShotCompanionControls(): Set<CompanionWideControl> {
+  return new Set([
+    "leave_quiet_mode",
+    "resume_proactivity",
+    "resume_companion",
+  ]);
+}
+
+function controlRequiresReadmissionAfterLift(control: CompanionWideControl): boolean {
+  return control === "enter_quiet_mode"
+    || control === "pause_proactivity"
+    || control === "suspend_companion"
+    || control === "stop_all_quiet_work"
+    || control === "stop_all_watches"
+    || control === "suppress_nonessential_agenda"
+    || control === "require_confirmation_for_proactivity";
+}
+
+function affectedRuntimeRefsForControl(control: CompanionWideControl, runtimeItems: RuntimeItem[]): string[] {
+  return runtimeItems
+    .filter((item) => activeRuntimeItem(item))
+    .filter((item) => {
+      if (control === "suspend_companion" || control === "resume_companion") return true;
+      if (control === "stop_all_quiet_work") return quietWorkRuntimeItem(item);
+      if (control === "stop_all_watches") return item.type === "watch";
+      if (control === "suppress_nonessential_agenda") return agendaRuntimeItem(item);
+      if (control === "enter_quiet_mode" || control === "pause_proactivity") return agentOriginAdmissionItem(item);
+      if (control === "require_confirmation_for_proactivity") return agentOriginAdmissionItem(item);
+      return false;
+    })
+    .map((item) => item.item_id);
+}
+
+function controlHoldsRuntimeItem(control: CompanionWideControl, item: RuntimeItem): boolean {
+  if (!activeRuntimeItem(item)) return false;
+  if (control === "suspend_companion") return true;
+  if (control === "stop_all_quiet_work") return quietWorkRuntimeItem(item);
+  if (control === "stop_all_watches") return item.type === "watch";
+  if (control === "suppress_nonessential_agenda") return agendaRuntimeItem(item);
+  return false;
+}
+
+function controlRejectsRuntimeItem(control: CompanionWideControl, item: RuntimeItem): boolean {
+  if (!activeRuntimeItem(item)) return false;
+  if (control === "suspend_companion") return true;
+  if (control === "enter_quiet_mode" || control === "pause_proactivity") return agentOriginAdmissionItem(item);
+  return false;
+}
+
+function activeRuntimeItem(item: RuntimeItem): boolean {
+  return item.status === "running"
+    || item.status === "pending"
+    || item.status === "paused"
+    || item.status === "active"
+    || item.status === "mature";
+}
+
+function quietWorkRuntimeItem(item: RuntimeItem): boolean {
+  return item.type === "run" || item.type === "task" || item.type === "diff_proposal";
+}
+
+function agendaRuntimeItem(item: RuntimeItem): boolean {
+  return item.type === "urge_candidate" || item.type === "agent_agenda_item";
+}
+
+function agentOriginAdmissionItem(item: RuntimeItem): boolean {
+  return agendaRuntimeItem(item)
+    || item.type === "surface_projection"
+    || item.authority.speakable
+    || item.authority.can_create_urge
+    || item.authority.can_write_memory
+    || item.authority.can_update_surface
+    || item.authority.can_delegate_work;
+}
+
+function formatCompanionStateSummary(snapshot: CompanionStateSnapshot): string {
+  return [
+    `CompanionState ${snapshot.snapshot_id}: mode=${snapshot.mode}.`,
+    `active_controls=${snapshot.control_overlays.length > 0 ? snapshot.control_overlays.join(", ") : "none"}.`,
+    `active_refs=${snapshot.active_refs.length}.`,
+    `held_refs=${snapshot.held_runtime_refs.length}.`,
+    `blocked_refs=${snapshot.blocked_refs.length}.`,
+  ].join(" ");
+}
+
+function formatCompanionControlApplied(control: CompanionWideControl, affectedRefs: string[]): string {
+  const suffix = affectedRefs.length > 0
+    ? ` Affected runtime items: ${affectedRefs.join(", ")}.`
+    : " No currently active runtime items were affected.";
+  if (control === "leave_quiet_mode" || control === "resume_proactivity" || control === "resume_companion") {
+    return `${control} recorded. Held, stale, or suppressed runtime items were not resumed automatically.${suffix}`;
+  }
+  return `${control} recorded as companion-wide global control.${suffix}`;
+}
+
+function formatSessionInspection(session: RuntimeSession): string {
+  return [
+    `Runtime session ${session.id}: ${session.status}.`,
+    `Kind: ${session.kind}.`,
+    session.title ? `Title: ${session.title}.` : null,
+    `Inspectable: true.`,
+    `Resumable: ${session.resumable ? "requires runtime admission" : "false"}.`,
+    `Updated: ${session.updated_at ?? "unknown"}.`,
+  ].filter((line): line is string => Boolean(line)).join(" ");
+}
+
+function formatSessionSummaryOnly(session: RuntimeSession): string {
+  return [
+    `Runtime session ${session.id} summary-only view: ${session.status}.`,
+    session.title ? `Title: ${session.title}.` : null,
+    `No action, speech, memory write, Surface refresh, or side-effect authority was granted.`,
+  ].filter((line): line is string => Boolean(line)).join(" ");
+}
+
+function resumeBlockedByRuntimeItemPolicy(runId: string, item: RuntimeItem): {
+  outcome: CompanionResumeOutcome;
+  message: string;
+} {
+  if (
+    item.companion_control_state.held_by_controls.includes("suspend_companion")
+    || item.companion_control_state.rejected_by_controls.includes("suspend_companion")
+  ) {
+    return {
+      outcome: "resume_rejected_safety",
+      message: `Runtime run ${runId} cannot resume while companion suspend state requires explicit re-admission.`,
+    };
+  }
+  if (item.companion_control_state.held_by_controls.length > 0 || item.companion_control_state.rejected_by_controls.length > 0) {
+    return {
+      outcome: "resume_requires_regrounding",
+      message: `Runtime run ${runId} is held by companion-wide controls and requires re-grounding before resume.`,
+    };
+  }
+  if (item.staleness.permission.outcome !== "current") {
+    return {
+      outcome: "resume_rejected_permission",
+      message: `Runtime run ${runId} cannot resume because permission state is ${item.staleness.permission.outcome}.`,
+    };
+  }
+  if (item.staleness.surface.outcome !== "current") {
+    return {
+      outcome: "resume_rejected_surface",
+      message: `Runtime run ${runId} cannot resume because Surface state is ${item.staleness.surface.outcome}.`,
+    };
+  }
+  return {
+    outcome: "resume_requires_regrounding",
+    message: `Runtime run ${runId} is not allowed by runtime item control policy: ${item.control_policy.reason}.`,
+  };
+}
+
+function uniqueControls(controls: CompanionWideControl[]): CompanionWideControl[] {
+  return [...new Set(controls)];
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values)];
 }
 
 function replacementGrantInput(

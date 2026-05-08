@@ -7,11 +7,14 @@ import {
 import {
   AgentAgendaItemSchema,
   AttentionMaturationTransitionSchema,
+  ExpressionDecisionSchema,
   InhibitionDecisionSchema,
   InitiativeGateDecisionSchema,
   OutcomeDecisionSchema,
   SignalContextSchema,
+  SurfaceFacingOutcomeClassSchema,
   UrgeCandidateSchema,
+  VisibilityPolicySchema,
   type AgentAgendaItem,
   type AgentAgendaItemKind,
   type AgendaPosture,
@@ -30,20 +33,26 @@ import {
   type CompanionAutonomyRefKind,
   type CompanionAutonomySourceRef,
   type CompanionStateEffect,
+  type ExpressionDecision,
+  type ExpressionMode,
+  type ExpressionSurfaceClass,
   type InhibitionDecision,
   type InhibitionDecisionKind,
   type InitiativeGateDecision,
+  type OutcomeAdmissionStatus,
   type OutcomeClass,
   type OutcomeDecision,
   type OutcomeDecisionReasonCode,
   type SignalContext,
   type SignalSafetyContext,
+  type SurfaceFacingOutcomeClass,
   type SignalSource,
   type StaleTargetContext,
   type TimingContext,
   type UrgeCandidate,
   type UrgeFeeling,
   type UrgeOrigin,
+  type VisibilityPolicy,
 } from "../types/companion-autonomy.js";
 import type {
   CompanionStateSnapshot,
@@ -234,6 +243,43 @@ export type AttentionSurfaceInvalidationResult = {
   invalidated_urge_candidates: UrgeCandidate[];
   invalidated_agenda_items: AgentAgendaItem[];
   audit_refs: CompanionAutonomyRef[];
+};
+
+export type ExpressionDecisionCreationInput = {
+  expression_decision_id: string;
+  created_at: string;
+  outcome_decision: OutcomeDecision;
+  target_surface_classes: ExpressionSurfaceClass[];
+  visibility_policy_ref?: CompanionAutonomyRef;
+  expression_mode?: ExpressionMode;
+  user_facing_rationale?: string;
+  suppressed_detail_refs?: CompanionAutonomyRef[];
+  audit_ref?: CompanionAutonomyRef;
+};
+
+export type SurfaceDecisionRenderInput = {
+  render_id: string;
+  rendered_at: string;
+  surface_class: ExpressionSurfaceClass;
+  outcome_decision: OutcomeDecision;
+  expression_decision?: ExpressionDecision | null;
+  visibility_policy: VisibilityPolicy;
+  audit_ref?: CompanionAutonomyRef;
+};
+
+export type SurfaceDecisionRender = {
+  schema_version: "surface-decision-render-v1";
+  render_id: string;
+  rendered_at: string;
+  surface_class: ExpressionSurfaceClass;
+  outcome_decision_ref: CompanionAutonomyRef;
+  expression_decision_ref: CompanionAutonomyRef;
+  outcome_class: SurfaceFacingOutcomeClass;
+  expression_mode: ExpressionMode;
+  visibility_policy_ref: CompanionAutonomyRef;
+  user_facing_rationale: string;
+  suppressed_detail_refs: CompanionAutonomyRef[];
+  audit_ref?: CompanionAutonomyRef;
 };
 
 export const AttentionFeedbackKindValues = [
@@ -758,13 +804,15 @@ export function admitInitiativeGateDecision(input: RuntimeAdmissionInput): Outco
       audit_ref: input.audit_ref,
     });
   }
-  if (input.gate_decision.required_approval && !input.approval_ref) {
+  if (input.gate_decision.required_approval && !input.approval_ref && requested !== "request_approval") {
+    const finalOutcome = downgradeForRuntimeAdmissionFailure(requested, "approval_required");
     return OutcomeDecisionSchema.parse({
       outcome_decision_id: input.outcome_decision_id,
       initiative_decision_ref: ref("initiative_gate_decision", input.gate_decision.decision_id),
       decided_at: input.decided_at,
       requested_outcome: requested,
-      admission_status: "held",
+      admission_status: finalOutcome ? "downgraded" : "held",
+      final_outcome: finalOutcome,
       runtime_item_refs: input.runtime_item_refs ?? [],
       authority_checks: input.authority_checks ?? [],
       staleness_checks: input.staleness_checks ?? [],
@@ -774,20 +822,22 @@ export function admitInitiativeGateDecision(input: RuntimeAdmissionInput): Outco
         code: "approval_required",
         detail: "initiative gate required approval before runtime admission",
       },
+      visibility_policy_ref: finalOutcome ? input.visibility_policy_ref : undefined,
       audit_ref: input.audit_ref,
     });
   }
 
   const failed = firstRuntimeAdmissionFailure(input);
   if (failed) {
-    const canDigestInstead = requested === "express_to_user" && failed.code === "control_suppressed";
+    const finalOutcome = downgradeForRuntimeAdmissionFailure(requested, failed.code);
+    const admissionStatus = admissionStatusForRuntimeFailure(failed.code, finalOutcome);
     return OutcomeDecisionSchema.parse({
       outcome_decision_id: input.outcome_decision_id,
       initiative_decision_ref: ref("initiative_gate_decision", input.gate_decision.decision_id),
       decided_at: input.decided_at,
       requested_outcome: requested,
-      admission_status: canDigestInstead ? "downgraded" : "rejected",
-      final_outcome: canDigestInstead ? "add_to_digest" : undefined,
+      admission_status: admissionStatus,
+      final_outcome: finalOutcome,
       runtime_item_refs: input.runtime_item_refs ?? [],
       authority_checks: input.authority_checks ?? [],
       staleness_checks: input.staleness_checks ?? [],
@@ -798,7 +848,7 @@ export function admitInitiativeGateDecision(input: RuntimeAdmissionInput): Outco
         detail: failed.reason,
         evidence_refs: failed.evidence_refs,
       },
-      visibility_policy_ref: canDigestInstead ? input.visibility_policy_ref : undefined,
+      visibility_policy_ref: finalOutcome ? input.visibility_policy_ref : undefined,
       audit_ref: input.audit_ref,
     });
   }
@@ -941,6 +991,87 @@ export function applySurfaceInvalidationToAttention(
     invalidated_urge_candidates: invalidatedUrges,
     invalidated_agenda_items: invalidatedAgendaItems,
     audit_refs: auditRefs,
+  };
+}
+
+export function createExpressionDecisionForOutcome(
+  input: ExpressionDecisionCreationInput
+): ExpressionDecision | null {
+  const outcome = OutcomeDecisionSchema.parse(input.outcome_decision);
+  if (
+    outcome.admission_status !== "admitted" &&
+    outcome.admission_status !== "downgraded"
+  ) {
+    return null;
+  }
+
+  if (!outcome.final_outcome) return null;
+
+  const surfaceFacing = SurfaceFacingOutcomeClassSchema.safeParse(outcome.final_outcome);
+  if (!surfaceFacing.success) return null;
+
+  const visibilityPolicyRef = outcome.visibility_policy_ref;
+  if (!visibilityPolicyRef) return null;
+  if (input.visibility_policy_ref && refKey(input.visibility_policy_ref) !== refKey(visibilityPolicyRef)) {
+    throw new Error("ExpressionDecision must use the OutcomeDecision visibility policy");
+  }
+
+  return ExpressionDecisionSchema.parse({
+    expression_decision_id: input.expression_decision_id,
+    outcome_decision_ref: ref("outcome_decision", outcome.outcome_decision_id),
+    outcome_class: surfaceFacing.data,
+    created_at: input.created_at,
+    expression_mode: input.expression_mode ?? defaultExpressionModeForOutcome(surfaceFacing.data),
+    target_surface_classes: input.target_surface_classes,
+    visibility_policy_ref: visibilityPolicyRef,
+    user_facing_rationale: input.user_facing_rationale ?? defaultExpressionRationale(surfaceFacing.data),
+    suppressed_detail_refs: input.suppressed_detail_refs ?? [],
+    audit_ref: input.audit_ref,
+  });
+}
+
+export function renderExpressionDecisionForSurface(
+  input: SurfaceDecisionRenderInput
+): SurfaceDecisionRender | null {
+  const outcome = OutcomeDecisionSchema.parse(input.outcome_decision);
+  if (!input.expression_decision) return null;
+
+  const expression = ExpressionDecisionSchema.parse(input.expression_decision);
+  const visibilityPolicy = VisibilityPolicySchema.parse(input.visibility_policy);
+  const outcomeRef = ref("outcome_decision", outcome.outcome_decision_id);
+  const expressionRef = ref("expression_decision", expression.expression_decision_id);
+
+  if (expression.outcome_decision_ref.id !== outcome.outcome_decision_id) {
+    throw new Error("ExpressionDecision must reference the supplied OutcomeDecision");
+  }
+  if (outcome.final_outcome !== expression.outcome_class) {
+    throw new Error("ExpressionDecision outcome_class must match OutcomeDecision.final_outcome");
+  }
+  if (expression.visibility_policy_ref.id !== visibilityPolicy.visibility_policy_id) {
+    throw new Error("ExpressionDecision visibility_policy_ref must reference the supplied VisibilityPolicy");
+  }
+  if (!outcome.visibility_policy_ref || refKey(outcome.visibility_policy_ref) !== refKey(expression.visibility_policy_ref)) {
+    throw new Error("ExpressionDecision must use the OutcomeDecision visibility policy");
+  }
+  if (!visibilityPolicyAppliesToDecision(visibilityPolicy, outcomeRef, expressionRef)) {
+    throw new Error("VisibilityPolicy must apply to the rendered outcome or expression decision");
+  }
+  if (!expression.target_surface_classes.includes(input.surface_class)) return null;
+  if (!visibilityAllowsSurface(visibilityPolicy, input.surface_class)) return null;
+
+  return {
+    schema_version: "surface-decision-render-v1",
+    render_id: input.render_id,
+    rendered_at: input.rendered_at,
+    surface_class: input.surface_class,
+    outcome_decision_ref: outcomeRef,
+    expression_decision_ref: expressionRef,
+    outcome_class: expression.outcome_class,
+    expression_mode: expression.expression_mode,
+    visibility_policy_ref: expression.visibility_policy_ref,
+    user_facing_rationale: expression.user_facing_rationale,
+    suppressed_detail_refs: expression.suppressed_detail_refs,
+    audit_ref: input.audit_ref ?? expression.audit_ref,
   };
 }
 
@@ -1298,9 +1429,21 @@ function firstRuntimeAdmissionFailure(input: RuntimeAdmissionInput): {
   evidence_refs: CompanionAutonomySourceRef[];
 } | null {
   const safety = firstFailed(input.safety_checks ?? []);
-  if (safety) return { code: "safety_blocked", reason: safety.reason, evidence_refs: safety.evidence_refs };
+  if (safety) {
+    return {
+      code: safety.kind === "guardrail" ? "guardrail_blocked" : "safety_blocked",
+      reason: safety.reason,
+      evidence_refs: safety.evidence_refs,
+    };
+  }
   const staleness = firstFailed(input.staleness_checks ?? []);
-  if (staleness) return { code: "stale_target", reason: staleness.reason, evidence_refs: staleness.evidence_refs };
+  if (staleness) {
+    return {
+      code: staleness.kind === "surface" ? "invalid_surface" : "stale_target",
+      reason: staleness.reason,
+      evidence_refs: staleness.evidence_refs,
+    };
+  }
   const authority = firstFailed(input.authority_checks ?? []);
   if (authority) {
     return {
@@ -1310,8 +1453,129 @@ function firstRuntimeAdmissionFailure(input: RuntimeAdmissionInput): {
     };
   }
   const control = firstFailed(input.companion_control_checks ?? []);
-  if (control) return { code: "control_suppressed", reason: control.reason, evidence_refs: control.evidence_refs };
+  if (control) {
+    return {
+      code: companionControlFailureCode(control.kind),
+      reason: control.reason,
+      evidence_refs: control.evidence_refs,
+    };
+  }
   return null;
+}
+
+function companionControlFailureCode(kind: AutonomyCheck["kind"]): OutcomeDecisionReasonCode {
+  switch (kind) {
+    case "backpressure":
+      return "backpressure";
+    case "capacity":
+      return "overloaded";
+    case "cooldown":
+      return "cooling_down";
+    default:
+      return "control_suppressed";
+  }
+}
+
+function admissionStatusForRuntimeFailure(
+  code: OutcomeDecisionReasonCode,
+  finalOutcome: OutcomeClass | undefined
+): OutcomeAdmissionStatus {
+  if (finalOutcome) return "downgraded";
+  if (code === "invalid_surface" || code === "backpressure" || code === "overloaded" || code === "cooling_down") {
+    return "held";
+  }
+  return "rejected";
+}
+
+function downgradeForRuntimeAdmissionFailure(
+  requested: OutcomeClass,
+  code: OutcomeDecisionReasonCode
+): OutcomeClass | undefined {
+  if (code === "approval_required") {
+    if (requested === "prepare_action_candidate" || requested === "escalate") return "request_approval";
+    return undefined;
+  }
+  if (
+    code !== "control_suppressed" &&
+    code !== "backpressure" &&
+    code !== "overloaded" &&
+    code !== "cooling_down"
+  ) {
+    return undefined;
+  }
+
+  switch (requested) {
+    case "run_authorized_work":
+    case "add_to_digest":
+    case "escalate":
+      return "hold_in_agenda";
+    case "delegate_bounded_work":
+      return "prepare_silently";
+    case "prepare_action_candidate":
+      return code === "control_suppressed" ? undefined : "hold_in_agenda";
+    case "express_to_user":
+      return "add_to_digest";
+    default:
+      return undefined;
+  }
+}
+
+function defaultExpressionModeForOutcome(outcome: SurfaceFacingOutcomeClass): ExpressionMode {
+  switch (outcome) {
+    case "add_to_digest":
+      return "digest_item";
+    case "request_approval":
+      return "approval_request";
+    case "escalate":
+      return "urgent_alert";
+    case "express_to_user":
+      return "direct_message";
+  }
+}
+
+function defaultExpressionRationale(outcome: SurfaceFacingOutcomeClass): string {
+  switch (outcome) {
+    case "add_to_digest":
+      return "Add the admitted outcome to the shared digest.";
+    case "request_approval":
+      return "Ask the user before continuing the blocked action.";
+    case "escalate":
+      return "Escalate the admitted outcome to the user-visible surface.";
+    case "express_to_user":
+      return "Express the admitted outcome to the user.";
+  }
+}
+
+function visibilityPolicyAppliesToDecision(
+  policy: VisibilityPolicy,
+  outcomeRef: CompanionAutonomyRef,
+  expressionRef: CompanionAutonomyRef
+): boolean {
+  return policy.applies_to.some((candidate) =>
+    refKey(candidate) === refKey(outcomeRef) || refKey(candidate) === refKey(expressionRef)
+  );
+}
+
+function visibilityAllowsSurface(policy: VisibilityPolicy, surfaceClass: ExpressionSurfaceClass): boolean {
+  if (policy.never_directly_show) return false;
+  if (policy.digest_only && surfaceClass !== "digest") return false;
+
+  switch (surfaceClass) {
+    case "chat":
+    case "gateway":
+    case "notification":
+      return policy.visible_in_chat;
+    case "tui":
+      return policy.visible_in_tui;
+    case "cli":
+      return policy.visible_in_cli;
+    case "digest":
+      return policy.visible_in_digest;
+    case "daemon_snapshot":
+      return policy.visible_in_debug || policy.visible_in_audit;
+    case "gui":
+      return policy.visible_in_gui;
+  }
 }
 
 function firstFailed(checks: AutonomyCheck[]): AutonomyCheck | null {

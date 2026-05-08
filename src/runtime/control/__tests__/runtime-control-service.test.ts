@@ -48,6 +48,41 @@ function makeRun(input: Partial<RuntimeSessionRegistrySnapshot["background_runs"
   };
 }
 
+function makeSession(input: Partial<RuntimeSessionRegistrySnapshot["sessions"][number]> = {}): RuntimeSessionRegistrySnapshot["sessions"][number] {
+  return {
+    schema_version: "runtime-session-v1",
+    id: "session:conversation:old",
+    kind: "conversation",
+    parent_session_id: null,
+    title: "Old planning session",
+    workspace: "/repo",
+    status: "ended",
+    created_at: "2026-05-01T00:00:00.000Z",
+    updated_at: "2026-05-01T00:30:00.000Z",
+    last_event_at: "2026-05-01T00:30:00.000Z",
+    transcript_ref: null,
+    state_ref: null,
+    reply_target: null,
+    resumable: false,
+    attachable: false,
+    source_refs: [],
+    ...input,
+  };
+}
+
+function makeInactiveInspectControl(updatedAt: string) {
+  return {
+    control: "inspect_companion_state" as const,
+    state: "inactive" as const,
+    source_ref: "global-control:inactive",
+    updated_at: updatedAt,
+    reason: "baseline clear global controls",
+    changed_by: null,
+    affected_runtime_refs: [],
+    audit_refs: [],
+  };
+}
+
 function makeGrant(input: Partial<PermissionGrantCreateInput> = {}): PermissionGrantCreateInput {
   return {
     grant_id: "grant-current-run",
@@ -357,7 +392,7 @@ describe("RuntimeControlService", () => {
       const service = new RuntimeControlService({ operationStore, executor });
 
       const result = await service.request({
-        intent: { kind: "restart_gateway", reason: "gateway を再起動して" },
+        intent: { kind: "restart_gateway", reason: "restart the gateway" },
         cwd: "/repo",
         approvalFn: vi.fn().mockResolvedValue(true),
       });
@@ -392,7 +427,7 @@ describe("RuntimeControlService", () => {
       const service = new RuntimeControlService({ operationStore, executor });
 
       const result = await service.request({
-        intent: { kind: "reload_config", reason: "runtime 設定を再読み込みして" },
+        intent: { kind: "reload_config", reason: "reload runtime configuration" },
         cwd: "/repo",
         approvalFn: vi.fn().mockResolvedValue(true),
       });
@@ -418,7 +453,7 @@ describe("RuntimeControlService", () => {
       const service = new RuntimeControlService({ operationStore, executor });
 
       const result = await service.request({
-        intent: { kind: "restart_daemon", reason: "PulSeed を再起動して" },
+        intent: { kind: "restart_daemon", reason: "restart PulSeed" },
         cwd: "/repo",
         approvalFn: vi.fn().mockResolvedValue(false),
       });
@@ -770,18 +805,113 @@ describe("RuntimeControlService", () => {
         activeSurfaceRef: "surface:current",
         surfaceInvalidationEvents: ["surface:current"],
         globalControlStateRef: "global-control-state:1",
-        globalControls: [{
-          control: "inspect_companion_state",
-          state: "inactive",
-          source_ref: "global-control:inactive",
-          updated_at: "2026-05-08T00:01:00.000Z",
-          reason: "baseline clear global controls",
-        }],
+        globalControls: [makeInactiveInspectControl("2026-05-08T00:01:00.000Z")],
         currentTime: "2026-05-08T00:01:00.000Z",
       });
       expect(invalidatedSurface.snapshot.mode).toBe("holding_back");
       expect(invalidatedSurface.snapshot.invalidated_surface_refs).toContain("surface:current");
       expect(invalidatedSurface.snapshot.derivation_trace.reason).toBe("stale_or_invalid_surface_holds_runtime_state");
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
+  });
+
+  it("persists companion-wide controls as shared global state with affected runtime refs", async () => {
+    const tmpDir = makeTempDir("pulseed-runtime-control-companion-global-");
+    try {
+      const operationStore = new RuntimeOperationStore(path.join(tmpDir, "runtime"));
+      const service = new RuntimeControlService({
+        operationStore,
+        sessionRegistry: {
+          snapshot: vi.fn().mockResolvedValue(snapshotWithRuns([makeRun()])),
+        },
+        now: () => new Date("2026-05-08T00:00:00.000Z"),
+      });
+
+      const suspended = await service.setCompanionControl({
+        control: "suspend_companion",
+        reason: "user requested companion suspend",
+        cwd: "/repo",
+        requestedBy: { surface: "chat", user_id: "operator-1" },
+      });
+      const recomputed = await service.recomputeCompanionState({
+        activeSurfaceRef: "surface:current",
+        currentTime: "2026-05-08T00:01:00.000Z",
+      });
+      const projectedRun = recomputed.input.runtime_items.find((item) => item.item_id === "background-run:run:coreloop:active");
+
+      expect(suspended).toMatchObject({ success: true, state: "verified" });
+      expect(recomputed.input.global_control_state_ref).toMatch(/^global-control-state:/);
+      expect(recomputed.input.global_controls).toContainEqual(expect.objectContaining({
+        control: "suspend_companion",
+        state: "active",
+        changed_by: expect.objectContaining({ surface: "chat", user_id: "operator-1" }),
+        affected_runtime_refs: expect.arrayContaining(["background-run:run:coreloop:active"]),
+        audit_refs: expect.arrayContaining([expect.stringMatching(/^runtime-control-operation:/)]),
+      }));
+      expect(projectedRun).toMatchObject({
+        companion_control_state: expect.objectContaining({
+          held_by_controls: expect.arrayContaining(["suspend_companion"]),
+          rejected_by_controls: expect.arrayContaining(["suspend_companion"]),
+        }),
+        control_policy: expect.objectContaining({
+          forbidden_controls: expect.arrayContaining(["resume_item"]),
+        }),
+      });
+      expect(recomputed.snapshot.mode).toBe("suspended");
+      expect(recomputed.snapshot.active_refs).toEqual([]);
+      expect(recomputed.snapshot.held_runtime_refs).toContain("background-run:run:coreloop:active");
+      expect(recomputed.input.global_controls[0]?.affected_runtime_refs).not.toEqual(expect.arrayContaining([
+        expect.stringMatching(/^runtime-control:/),
+      ]));
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
+  });
+
+  it("lifts companion controls without flushing held runtime items", async () => {
+    const tmpDir = makeTempDir("pulseed-runtime-control-companion-lift-");
+    try {
+      const operationStore = new RuntimeOperationStore(path.join(tmpDir, "runtime"));
+      let nowTick = 0;
+      const service = new RuntimeControlService({
+        operationStore,
+        sessionRegistry: {
+          snapshot: vi.fn().mockResolvedValue(snapshotWithRuns([makeRun()])),
+        },
+        now: () => new Date(Date.UTC(2026, 4, 8, 0, 0, nowTick++)),
+      });
+
+      await service.setCompanionControl({
+        control: "suspend_companion",
+        reason: "suspend companion",
+        cwd: "/repo",
+      });
+      await service.setCompanionControl({
+        control: "resume_companion",
+        reason: "lift companion suspend",
+        cwd: "/repo",
+      });
+      const recomputed = await service.recomputeCompanionState({
+        activeSurfaceRef: "surface:current",
+        currentTime: "2026-05-08T00:01:00.000Z",
+      });
+      const projectedRun = recomputed.input.runtime_items.find((item) => item.item_id === "background-run:run:coreloop:active");
+
+      expect(recomputed.input.global_controls).toContainEqual(expect.objectContaining({
+        control: "suspend_companion",
+        state: "inactive",
+        affected_runtime_refs: expect.arrayContaining(["background-run:run:coreloop:active"]),
+      }));
+      expect(recomputed.input.global_controls).toContainEqual(expect.objectContaining({
+        control: "resume_companion",
+        state: "inactive",
+      }));
+      expect(recomputed.snapshot.control_overlays).not.toContain("suspend_companion");
+      expect(recomputed.snapshot.active_refs).not.toContain("background-run:run:coreloop:active");
+      expect(recomputed.snapshot.held_runtime_refs).toContain("background-run:run:coreloop:active");
+      expect(projectedRun?.companion_control_state.held_by_controls).toContain("suspend_companion");
+      expect(projectedRun?.control_policy.forbidden_controls).toContain("resume_item");
     } finally {
       cleanupTempDir(tmpDir);
     }
@@ -817,13 +947,7 @@ describe("RuntimeControlService", () => {
       const recomputed = await service.recomputeCompanionState({
         activeSurfaceRef: "surface:current",
         globalControlStateRef: "global-control-state:1",
-        globalControls: [{
-          control: "inspect_companion_state",
-          state: "inactive",
-          source_ref: "global-control:inactive",
-          updated_at: "2026-05-08T00:00:00.000Z",
-          reason: "baseline clear global controls",
-        }],
+        globalControls: [makeInactiveInspectControl("2026-05-08T00:00:00.000Z")],
         currentTime: "2026-05-08T00:00:00.000Z",
       });
 
@@ -907,13 +1031,7 @@ describe("RuntimeControlService", () => {
       const recomputed = await service.recomputeCompanionState({
         activeSurfaceRef: "surface:current",
         globalControlStateRef: "global-control-state:1",
-        globalControls: [{
-          control: "inspect_companion_state",
-          state: "inactive",
-          source_ref: "global-control:inactive",
-          updated_at: "2026-05-08T00:01:00.000Z",
-          reason: "baseline clear global controls",
-        }],
+        globalControls: [makeInactiveInspectControl("2026-05-08T00:01:00.000Z")],
         currentTime: "2026-05-08T00:01:00.000Z",
       });
 
@@ -992,13 +1110,7 @@ describe("RuntimeControlService", () => {
       const recomputed = await service.recomputeCompanionState({
         activeSurfaceRef: "surface:current",
         globalControlStateRef: "global-control-state:1",
-        globalControls: [{
-          control: "inspect_companion_state",
-          state: "inactive",
-          source_ref: "global-control:inactive",
-          updated_at: "2026-05-08T00:01:00.000Z",
-          reason: "baseline clear global controls",
-        }],
+        globalControls: [makeInactiveInspectControl("2026-05-08T00:01:00.000Z")],
         currentTime: "2026-05-08T00:01:00.000Z",
       });
 
@@ -1057,25 +1169,13 @@ describe("RuntimeControlService", () => {
       const beforeExpiry = await service.recomputeCompanionState({
         activeSurfaceRef: "surface:current",
         globalControlStateRef: "global-control-state:1",
-        globalControls: [{
-          control: "inspect_companion_state",
-          state: "inactive",
-          source_ref: "global-control:inactive",
-          updated_at: "2026-05-08T00:00:00.000Z",
-          reason: "baseline clear global controls",
-        }],
+        globalControls: [makeInactiveInspectControl("2026-05-08T00:00:00.000Z")],
         currentTime: "2029-12-31T23:59:59.000Z",
       });
       const afterExpiry = await service.recomputeCompanionState({
         activeSurfaceRef: "surface:current",
         globalControlStateRef: "global-control-state:1",
-        globalControls: [{
-          control: "inspect_companion_state",
-          state: "inactive",
-          source_ref: "global-control:inactive",
-          updated_at: "2030-01-01T00:00:01.000Z",
-          reason: "baseline clear global controls",
-        }],
+        globalControls: [makeInactiveInspectControl("2030-01-01T00:00:01.000Z")],
         currentTime: "2030-01-01T00:00:01.000Z",
       });
 
@@ -1141,13 +1241,7 @@ describe("RuntimeControlService", () => {
       const recomputed = await service.recomputeCompanionState({
         activeSurfaceRef: "surface:current",
         globalControlStateRef: "global-control-state:1",
-        globalControls: [{
-          control: "inspect_companion_state",
-          state: "inactive",
-          source_ref: "global-control:inactive",
-          updated_at: "2026-05-08T00:01:00.000Z",
-          reason: "baseline clear global controls",
-        }],
+        globalControls: [makeInactiveInspectControl("2026-05-08T00:01:00.000Z")],
         currentTime: "2026-05-08T00:01:00.000Z",
       });
 
@@ -1303,6 +1397,46 @@ describe("RuntimeControlService", () => {
     }
   });
 
+  it("blocks session-scoped run control when only sessionless runs are selectable", async () => {
+    const tmpDir = makeTempDir("pulseed-runtime-control-service-session-scope-");
+    try {
+      const executor = vi.fn();
+      const service = new RuntimeControlService({
+        operationStore: new RuntimeOperationStore(path.join(tmpDir, "runtime")),
+        executor,
+        sessionRegistry: {
+          snapshot: vi.fn().mockResolvedValue(snapshotWithRuns([
+            makeRun({
+              id: "run:process:sessionless",
+              kind: "process_run",
+              child_session_id: null,
+              goal_id: null,
+            }),
+          ])),
+        },
+      });
+
+      const result = await service.request({
+        intent: {
+          kind: "pause_run",
+          reason: "pause the latest session",
+          targetSelector: { scope: "session", reference: "latest", sourceText: "latest session" },
+        },
+        cwd: "/repo",
+        requestedBy: { surface: "chat", conversation_id: "chat-1" },
+      });
+
+      expect(result).toMatchObject({
+        success: false,
+        state: "blocked",
+        message: expect.stringContaining("no session-scoped runtime runs"),
+      });
+      expect(executor).not.toHaveBeenCalled();
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
+  });
+
   it("rejects stale terminal runs for control operations", async () => {
     const tmpDir = makeTempDir("pulseed-runtime-control-service-run-stale-");
     try {
@@ -1325,6 +1459,175 @@ describe("RuntimeControlService", () => {
         success: false,
         state: "blocked",
         message: expect.stringContaining("stale or terminal"),
+      });
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
+  });
+
+  it("blocks resume_run through CompanionState control policy while suspended", async () => {
+    const tmpDir = makeTempDir("pulseed-runtime-control-service-resume-suspended-");
+    try {
+      const operationStore = new RuntimeOperationStore(path.join(tmpDir, "runtime"));
+      const executor = vi.fn();
+      const service = new RuntimeControlService({
+        operationStore,
+        executor,
+        sessionRegistry: {
+          snapshot: vi.fn().mockResolvedValue(snapshotWithRuns([makeRun()])),
+        },
+        now: () => new Date("2026-05-08T00:00:00.000Z"),
+      });
+      await service.setCompanionControl({
+        control: "suspend_companion",
+        reason: "suspend companion",
+        cwd: "/repo",
+      });
+
+      const result = await service.resumeRun({
+        runId: "run:coreloop:active",
+        reason: "resume while suspended",
+        cwd: "/repo",
+        approvalFn: vi.fn().mockResolvedValue(true),
+      });
+
+      expect(result).toMatchObject({
+        success: false,
+        state: "blocked",
+        resumeOutcome: "resume_rejected_safety",
+        message: expect.stringContaining("companion suspend state"),
+      });
+      expect(executor).not.toHaveBeenCalled();
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
+  });
+
+  it("blocks resume_run after resume_companion until the held run is re-admitted", async () => {
+    const tmpDir = makeTempDir("pulseed-runtime-control-service-resume-after-lift-");
+    try {
+      const operationStore = new RuntimeOperationStore(path.join(tmpDir, "runtime"));
+      const executor = vi.fn();
+      let nowTick = 0;
+      const service = new RuntimeControlService({
+        operationStore,
+        executor,
+        sessionRegistry: {
+          snapshot: vi.fn().mockResolvedValue(snapshotWithRuns([makeRun()])),
+        },
+        now: () => new Date(Date.UTC(2026, 4, 8, 0, 0, nowTick++)),
+      });
+      await service.setCompanionControl({
+        control: "suspend_companion",
+        reason: "suspend companion",
+        cwd: "/repo",
+      });
+      await service.setCompanionControl({
+        control: "resume_companion",
+        reason: "resume companion without flushing work",
+        cwd: "/repo",
+      });
+
+      const result = await service.resumeRun({
+        runId: "run:coreloop:active",
+        reason: "resume held run",
+        cwd: "/repo",
+        approvalFn: vi.fn().mockResolvedValue(true),
+      });
+
+      expect(result).toMatchObject({
+        success: false,
+        state: "blocked",
+        resumeOutcome: "resume_rejected_safety",
+        message: expect.stringContaining("companion suspend state"),
+      });
+      expect(executor).not.toHaveBeenCalled();
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
+  });
+
+  it("requires re-grounding before resuming remembered attention runs", async () => {
+    const tmpDir = makeTempDir("pulseed-runtime-control-service-resume-reground-");
+    try {
+      const executor = vi.fn();
+      const service = new RuntimeControlService({
+        operationStore: new RuntimeOperationStore(path.join(tmpDir, "runtime")),
+        executor,
+        sessionRegistry: {
+          snapshot: vi.fn().mockResolvedValue(snapshotWithRuns([
+            makeRun({ id: "run:coreloop:failed", status: "failed", goal_id: "goal-failed" }),
+          ])),
+        },
+      });
+
+      const result = await service.resumeRun({
+        runId: "run:coreloop:failed",
+        reason: "resume failed run",
+        cwd: "/repo",
+        approvalFn: vi.fn().mockResolvedValue(true),
+      });
+
+      expect(result).toMatchObject({
+        success: false,
+        state: "blocked",
+        resumeOutcome: "resume_requires_regrounding",
+        message: expect.stringContaining("requires explicit re-grounding"),
+      });
+      expect(executor).not.toHaveBeenCalled();
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
+  });
+
+  it("separates session inspection and summary from resume authority", async () => {
+    const tmpDir = makeTempDir("pulseed-runtime-control-service-session-inspect-");
+    try {
+      const snapshot: RuntimeSessionRegistrySnapshot = {
+        schema_version: "runtime-session-registry-v1",
+        generated_at: "2026-05-08T00:00:00.000Z",
+        sessions: [makeSession()],
+        background_runs: [],
+        warnings: [],
+      };
+      const service = new RuntimeControlService({
+        operationStore: new RuntimeOperationStore(path.join(tmpDir, "runtime")),
+        sessionRegistry: { snapshot: vi.fn().mockResolvedValue(snapshot) },
+      });
+
+      const inspected = await service.inspectSession({
+        sessionId: "session:conversation:old",
+        reason: "inspect old session",
+        cwd: "/repo",
+      });
+      const summarized = await service.summarizeSessionWithoutResuming({
+        sessionId: "session:conversation:old",
+        reason: "summarize old session",
+        cwd: "/repo",
+      });
+      const missing = await service.inspectSession({
+        sessionId: "session:conversation:missing",
+        reason: "inspect missing session",
+        cwd: "/repo",
+      });
+
+      expect(inspected).toMatchObject({
+        success: true,
+        state: "verified",
+        resumeOutcome: "inspect_only",
+        message: expect.stringContaining("Inspectable: true"),
+      });
+      expect(summarized).toMatchObject({
+        success: true,
+        state: "verified",
+        resumeOutcome: "summary_only",
+        message: expect.stringContaining("No action, speech, memory write, Surface refresh, or side-effect authority was granted."),
+      });
+      expect(missing).toMatchObject({
+        success: false,
+        state: "blocked",
+        resumeOutcome: "resume_rejected_stale",
+        message: expect.stringContaining("refusing to fall back to latest session"),
       });
     } finally {
       cleanupTempDir(tmpDir);

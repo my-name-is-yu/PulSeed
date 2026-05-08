@@ -528,9 +528,24 @@ export type InhibitionDecision = z.infer<typeof InhibitionDecisionSchema>;
 export const AutonomyCheckStatusSchema = z.enum(["passed", "failed", "unknown", "not_required"]);
 export type AutonomyCheckStatus = z.infer<typeof AutonomyCheckStatusSchema>;
 
+export const AutonomyCheckKindSchema = z.enum([
+  "permission",
+  "staleness",
+  "surface",
+  "authority",
+  "safety",
+  "guardrail",
+  "companion_control",
+  "backpressure",
+  "capacity",
+  "cooldown",
+  "visibility",
+]);
+export type AutonomyCheckKind = z.infer<typeof AutonomyCheckKindSchema>;
+
 export const AutonomyCheckSchema = z.object({
   check_id: z.string().min(1),
-  kind: z.enum(["permission", "staleness", "authority", "safety", "companion_control", "visibility"]),
+  kind: AutonomyCheckKindSchema,
   status: AutonomyCheckStatusSchema,
   reason: z.string().min(1),
   evidence_refs: z.array(CompanionAutonomySourceRefSchema).default([]),
@@ -699,6 +714,7 @@ export const ExpressionSurfaceClassSchema = z.enum([
   "chat",
   "tui",
   "cli",
+  "digest",
   "daemon_snapshot",
   "gui",
   "gateway",

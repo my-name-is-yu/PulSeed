@@ -321,6 +321,24 @@ describe("improve subcommand — suggestion flow", () => {
       expect.objectContaining({ maxSuggestions: 7 })
     );
   });
+
+  it("rejects malformed --max before suggestion generation", async () => {
+    const mockSuggest = vi.fn().mockResolvedValue([makeSuggestion()]);
+
+    vi.mocked(GoalNegotiator).mockImplementation(function() { return {
+      suggestGoals: mockSuggest,
+      negotiate: vi.fn(),
+    } as unknown as GoalNegotiator; });
+
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const code = await runCLI("improve", ".", "--max", "7abc");
+    consoleSpy.mockRestore();
+    errorSpy.mockRestore();
+
+    expect(code).toBe(1);
+    expect(mockSuggest).not.toHaveBeenCalled();
+  });
 });
 
 describe("improve subcommand — negotiation", () => {

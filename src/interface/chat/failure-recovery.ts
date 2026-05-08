@@ -281,6 +281,7 @@ function classifyFromStructuredEvidence(evidence: FailureRecoveryEvidence): Fail
   const signals = evidence.signals ?? [];
   const codes = collectCodes(evidence, signals);
   if (signals.some((signal) => signal.kind === "approval" && (signal.status === "denied" || signal.status === "blocked"))
+    || signals.some((signal) => signal.kind === "tool" && signal.status === "approval_denied")
     || signals.some((signal) => signal.kind === "tool" && signal.disposition === "approval_denied")
     || hasAny(codes, PERMISSION_CODES)) {
     return "permission";
@@ -299,7 +300,8 @@ function classifyFromStructuredEvidence(evidence: FailureRecoveryEvidence): Fail
     return "daemon_loop";
   }
   if (
-    signals.some((signal) => signal.kind === "tool" && signal.disposition === "cancelled")
+    signals.some((signal) => signal.kind === "tool" && signal.status === "cancelled")
+    || signals.some((signal) => signal.kind === "tool" && signal.disposition === "cancelled")
     || hasReason(evidence, RUNTIME_INTERRUPTION_REASONS)
     || hasAny(codes, RUNTIME_INTERRUPTION_CODES)
   ) {

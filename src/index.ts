@@ -200,9 +200,11 @@ export {
   applyAttentionFeedbackConservatively,
   assembleSignalContext,
   buildSchedulerWakeSignalContext,
+  createExpressionDecisionForOutcome,
   createUrgeCandidate,
   decideInhibition,
   mergeUrgesIntoAgenda,
+  renderExpressionDecisionForSurface,
   reevaluateSchedulerWakeThroughAttention,
   runtimeItemsForAgenda,
   selectInitiativeGateDecision,
@@ -213,8 +215,11 @@ export type {
   AttentionReevaluationContext,
   AttentionReevaluationPort,
   AttentionReevaluationResult,
+  ExpressionDecisionCreationInput,
   SchedulerWakeReevaluationInput,
   SignalContextAssemblyInput,
+  SurfaceDecisionRender,
+  SurfaceDecisionRenderInput,
   UrgeCandidateAssemblyInput,
 } from "./runtime/attention/index.js";
 export {

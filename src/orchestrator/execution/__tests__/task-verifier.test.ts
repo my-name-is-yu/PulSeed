@@ -117,4 +117,52 @@ describe("Task verifier malformed JSON regression", () => {
 
     expect(passedResult.verdict).toBe("pass");
   });
+
+  it("accepts exact GitHub issue URLs as mechanical evidence", async () => {
+    const deps: VerifierDeps = {
+      stateManager,
+      llmClient: createMockLLMClient([]),
+      sessionManager,
+      trustManager,
+      stallDetector,
+      durationToMs: (d) => d.value * 3600000,
+    };
+
+    const result = await verifyTask(deps, makeTask(), {
+      success: true,
+      output: "Created issue: https://github.com/owner/repo/issues/123.",
+      error: null,
+      exit_code: 0,
+      elapsed_ms: 10,
+      stopped_reason: "completed",
+    });
+
+    expect(result.verdict).toBe("pass");
+    expect(result.evidence[0]?.description).toContain("GitHub issue URL found");
+  });
+
+  it("does not accept malformed GitHub issue URL suffixes as mechanical evidence", async () => {
+    const deps: VerifierDeps = {
+      stateManager,
+      llmClient: createMockLLMClient([
+        JSON.stringify({ verdict: "fail", reasoning: "issue URL was malformed", criteria_met: 0, criteria_total: 1 }),
+      ]),
+      sessionManager,
+      trustManager,
+      stallDetector,
+      durationToMs: (d) => d.value * 3600000,
+    };
+
+    const result = await verifyTask(deps, makeTask(), {
+      success: true,
+      output: "Created issue: https://github.com/owner/repo/issues/123abc",
+      error: null,
+      exit_code: 0,
+      elapsed_ms: 10,
+      stopped_reason: "completed",
+    });
+
+    expect(result.verdict).toBe("fail");
+    expect(result.evidence.map((entry) => entry.description).join("\n")).not.toContain("GitHub issue URL found");
+  });
 });

@@ -81,6 +81,76 @@ describe("resolveRuntimeTarget", () => {
     if (previous.status === "resolved") expect(previous.run.id).toBe("run:older");
   });
 
+  it("keeps session-scoped selectors on runs with typed child sessions", () => {
+    const result = resolveRuntimeTarget({
+      snapshot: snapshot([
+        run({
+          id: "run:process:newer",
+          kind: "process_run",
+          child_session_id: null,
+          goal_id: null,
+          updated_at: "2026-05-02T00:10:00.000Z",
+        }),
+        run({
+          id: "run:coreloop:session",
+          child_session_id: "session:coreloop:session",
+          updated_at: "2026-05-02T00:00:00.000Z",
+        }),
+      ]),
+      operation: "inspect_run",
+      selector: { scope: "session", reference: "latest", sourceText: "latest session" },
+    });
+
+    expect(result.status).toBe("resolved");
+    if (result.status === "resolved") expect(result.run.id).toBe("run:coreloop:session");
+  });
+
+  it("does not fall back to unrelated runs for session-scoped selectors", () => {
+    const result = resolveRuntimeTarget({
+      snapshot: snapshot([
+        run({
+          id: "run:process:only",
+          kind: "process_run",
+          child_session_id: null,
+          goal_id: null,
+        }),
+      ]),
+      operation: "inspect_run",
+      selector: { scope: "session", reference: "latest", sourceText: "latest session" },
+    });
+
+    expect(result.status).toBe("unknown");
+    expect(result.evidence.reason).toContain("no session-scoped runtime runs");
+  });
+
+  it("does not select latest from runs without sortable runtime timestamps", () => {
+    const result = resolveRuntimeTarget({
+      snapshot: snapshot([
+        run({ id: "run:a", updated_at: "not-a-date", started_at: null, created_at: null }),
+        run({ id: "run:b", updated_at: null, started_at: null, created_at: null }),
+      ]),
+      operation: "inspect_run",
+      selector: { scope: "run", reference: "latest", sourceText: "latest run" },
+    });
+
+    expect(result.status).toBe("unknown");
+    expect(result.evidence.reason).toContain("no timestamped runtime run");
+  });
+
+  it("requires two timestamped candidates for previous selection", () => {
+    const result = resolveRuntimeTarget({
+      snapshot: snapshot([
+        run({ id: "run:valid", updated_at: "2026-05-02T00:10:00.000Z" }),
+        run({ id: "run:missing", updated_at: null, started_at: null, created_at: null }),
+      ]),
+      operation: "inspect_run",
+      selector: { scope: "run", reference: "previous", sourceText: "previous run" },
+    });
+
+    expect(result.status).toBe("unknown");
+    expect(result.evidence.reason).toContain("there is no earlier timestamped candidate");
+  });
+
   it("returns ambiguous for multiple current candidates instead of guessing", () => {
     const result = resolveRuntimeTarget({
       snapshot: snapshot([
