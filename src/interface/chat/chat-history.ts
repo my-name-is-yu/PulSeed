@@ -11,6 +11,7 @@ import { SetupDialoguePublicStateSchema, type SetupDialoguePublicState } from ".
 import { RunSpecSchema } from "../../runtime/run-spec/index.js";
 import type { ChatEvent, ChatEventContext } from "./chat-events.js";
 import type { UserInput } from "./user-input.js";
+import { normalizeSessionUsage, normalizeUsageCounter, sumUsageCounters } from "./chat-usage.js";
 
 // ─── Schemas ───
 
@@ -31,10 +32,12 @@ export const ChatSessionAgentLoopMetadataSchema = z.object({
 }).passthrough();
 export type ChatSessionAgentLoopMetadata = z.infer<typeof ChatSessionAgentLoopMetadataSchema>;
 
+const ChatUsageTokenCountSchema = z.number().int().nonnegative().refine(Number.isSafeInteger).catch(0);
+
 export const ChatUsageCounterSchema = z.object({
-  inputTokens: z.number().int().nonnegative().default(0),
-  outputTokens: z.number().int().nonnegative().default(0),
-  totalTokens: z.number().int().nonnegative().default(0),
+  inputTokens: ChatUsageTokenCountSchema,
+  outputTokens: ChatUsageTokenCountSchema,
+  totalTokens: ChatUsageTokenCountSchema,
 }).passthrough();
 export type ChatUsageCounter = z.infer<typeof ChatUsageCounterSchema>;
 
@@ -523,14 +526,14 @@ export class ChatHistory {
 
   recordUsage(phase: string, usage: ChatUsageCounter): void {
     const normalized = normalizeUsageCounter(usage);
-    const nextTotals = sumUsage(
+    const nextTotals = sumUsageCounters(
       this.session.usage?.totals,
       normalized
     );
     const currentPhase = this.session.usage?.byPhase?.[phase];
     const nextByPhase = {
       ...(this.session.usage?.byPhase ?? {}),
-      [phase]: sumUsage(currentPhase, normalized),
+      [phase]: sumUsageCounters(currentPhase, normalized),
     };
     this.session.usage = {
       totals: nextTotals,
@@ -960,36 +963,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function normalizeUsageCounter(usage: ChatUsageCounter): ChatUsageCounter {
-  const inputTokens = Number.isFinite(usage.inputTokens) ? Math.max(0, Math.floor(usage.inputTokens)) : 0;
-  const outputTokens = Number.isFinite(usage.outputTokens) ? Math.max(0, Math.floor(usage.outputTokens)) : 0;
-  const totalTokens = Number.isFinite(usage.totalTokens)
-    ? Math.max(0, Math.floor(usage.totalTokens))
-    : inputTokens + outputTokens;
-  return {
-    inputTokens,
-    outputTokens,
-    totalTokens,
-  };
-}
-
-function sumUsage(base: ChatUsageCounter | undefined, delta: ChatUsageCounter): ChatUsageCounter {
-  const normalizedBase = normalizeUsageCounter(base ?? { inputTokens: 0, outputTokens: 0, totalTokens: 0 });
-  return {
-    inputTokens: normalizedBase.inputTokens + delta.inputTokens,
-    outputTokens: normalizedBase.outputTokens + delta.outputTokens,
-    totalTokens: normalizedBase.totalTokens + delta.totalTokens,
-  };
-}
-
 function cloneUsage(usage: ChatSessionUsage): ChatSessionUsage {
-  return {
-    totals: { ...usage.totals },
-    byPhase: Object.fromEntries(
-      Object.entries(usage.byPhase ?? {}).map(([phase, counter]) => [phase, { ...counter }])
-    ),
-    ...(usage.updatedAt ? { updatedAt: usage.updatedAt } : {}),
-  };
+  return normalizeSessionUsage(usage);
 }
 
 function cloneJson<T>(value: T): T {

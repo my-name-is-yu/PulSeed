@@ -1,8 +1,10 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
   ChatHistory,
+  ChatSessionSchema,
   reconstructModelVisibleMessagesFromRolloutJournal,
   type ChatSession,
+  type ChatUsageCounter,
 } from "../chat-history.js";
 import type { StateManager } from "../../../base/state/state-manager.js";
 
@@ -150,6 +152,126 @@ describe("ChatHistory", () => {
         })],
       }),
     );
+  });
+
+  it("normalizes unsafe usage counters before persistence", async () => {
+    const history = new ChatHistory(stateManager, SESSION_ID, CWD);
+
+    history.recordUsage("assist", {
+      inputTokens: Number.MAX_SAFE_INTEGER + 1,
+      outputTokens: 1.25,
+      totalTokens: Number.POSITIVE_INFINITY,
+    } as ChatUsageCounter);
+    await history.persist();
+
+    expect(stateManager.writeRaw).toHaveBeenCalledWith(
+      `chat/sessions/${SESSION_ID}.json`,
+      expect.objectContaining({
+        usage: {
+          totals: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+          byPhase: {
+            assist: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+          },
+          updatedAt: expect.any(String),
+        },
+      }),
+    );
+  });
+
+  it("normalizes unsafe usage counters from loaded session schemas", () => {
+    const parsed = ChatSessionSchema.parse({
+      id: SESSION_ID,
+      cwd: CWD,
+      createdAt: "2026-05-09T00:00:00.000Z",
+      updatedAt: "2026-05-09T00:00:00.000Z",
+      messages: [],
+      usage: {
+        totals: {
+          inputTokens: Number.MAX_SAFE_INTEGER + 1,
+          outputTokens: 1.5,
+          totalTokens: Number.POSITIVE_INFINITY,
+        },
+        byPhase: {
+          assist: {
+            inputTokens: -1,
+            outputTokens: Number.NaN,
+            totalTokens: Number.MAX_SAFE_INTEGER + 2,
+          },
+        },
+      },
+    });
+
+    expect(parsed.usage).toEqual({
+      totals: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+      byPhase: {
+        assist: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+      },
+    });
+  });
+
+  it("normalizes existing session usage before persisting a resumed session", async () => {
+    const existingSession = {
+      id: SESSION_ID,
+      cwd: CWD,
+      createdAt: "2026-05-09T00:00:00.000Z",
+      updatedAt: "2026-05-09T00:00:00.000Z",
+      messages: [],
+      usage: {
+        totals: {
+          inputTokens: Number.MAX_SAFE_INTEGER + 1,
+          outputTokens: 2,
+          totalTokens: Number.POSITIVE_INFINITY,
+        },
+        byPhase: {
+          assist: {
+            inputTokens: 1.5,
+            outputTokens: Number.MAX_SAFE_INTEGER + 1,
+            totalTokens: Number.NaN,
+          },
+        },
+      },
+    } as ChatSession;
+
+    const history = ChatHistory.fromSession(stateManager, existingSession);
+    await history.persist();
+
+    expect(stateManager.writeRaw).toHaveBeenCalledWith(
+      `chat/sessions/${SESSION_ID}.json`,
+      expect.objectContaining({
+        usage: {
+          totals: { inputTokens: 0, outputTokens: 2, totalTokens: 2 },
+          byPhase: {
+            assist: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+          },
+        },
+      }),
+    );
+  });
+
+  it("caps accumulated usage counters at the maximum safe integer", () => {
+    const history = new ChatHistory(stateManager, SESSION_ID, CWD);
+
+    history.recordUsage("assist", {
+      inputTokens: Number.MAX_SAFE_INTEGER,
+      outputTokens: 1,
+      totalTokens: Number.MAX_SAFE_INTEGER,
+    });
+    history.recordUsage("assist", {
+      inputTokens: 1,
+      outputTokens: Number.MAX_SAFE_INTEGER,
+      totalTokens: 1,
+    });
+
+    expect(history.getSessionData().usage?.totals).toEqual({
+      inputTokens: Number.MAX_SAFE_INTEGER,
+      outputTokens: Number.MAX_SAFE_INTEGER,
+      totalTokens: Number.MAX_SAFE_INTEGER,
+    });
+    expect(history.getSessionData().usage?.byPhase.assist).toEqual({
+      inputTokens: Number.MAX_SAFE_INTEGER,
+      outputTokens: Number.MAX_SAFE_INTEGER,
+      totalTokens: Number.MAX_SAFE_INTEGER,
+    });
   });
 
   it("persists replayable rollout records and reconstructs model-visible history from them", async () => {

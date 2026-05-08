@@ -1438,6 +1438,30 @@ describe("ChatRunner", () => {
       expect(result.output).toContain("execution: 5");
     });
 
+    it("normalizes unsafe model usage from chat execution before session usage reporting", async () => {
+      const stateManager = makeMockStateManager();
+      const llmClient = {
+        sendMessage: vi.fn().mockResolvedValue({
+          content: "Plain answer",
+          usage: { input_tokens: Number.MAX_SAFE_INTEGER + 1, output_tokens: 4 },
+          stop_reason: "end_turn",
+        }),
+        parseJSON: vi.fn(),
+      } as unknown as ILLMClient;
+      const runner = new ChatRunner(makeDeps({ stateManager, llmClient }));
+      runner.startSession("/repo");
+
+      await runner.execute("What is 1+1?", "/repo");
+      const result = await runner.execute("/usage", "/repo");
+
+      expect(result.success).toBe(true);
+      expect(result.output).toContain("Session input tokens:  0");
+      expect(result.output).toContain("Session output tokens: 4");
+      expect(result.output).toContain("Session total tokens:  4");
+      expect(result.output).toContain("execution: 4");
+      expect(result.output).not.toContain(String(Number.MAX_SAFE_INTEGER + 1));
+    });
+
     it("/usage goal <id> reads goal-level telemetry from task ledgers", async () => {
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-usage-goal-"));
       try {
