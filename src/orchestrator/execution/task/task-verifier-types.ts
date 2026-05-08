@@ -83,7 +83,7 @@ export interface CompletionJudgerConfig {
 export interface VerifierDeps {
   stateManager: StateManager;
   llmClient: ILLMClient;
-  /** Optional separate LLM client for review (忖度防止 — sycophancy mitigation) */
+  /** Optional separate LLM client for review to mitigate sycophancy. */
   reviewerLlmClient?: ILLMClient;
   sessionManager: SessionManager;
   trustManager: TrustManager;
