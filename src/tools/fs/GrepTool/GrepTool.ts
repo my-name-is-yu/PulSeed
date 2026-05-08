@@ -12,6 +12,7 @@ export const GrepInputSchema = z.object({
   outputMode: z.enum(["content", "files_with_matches", "count"]).default("files_with_matches"),
   limit: z.number().default(250),
   caseInsensitive: z.boolean().default(false),
+  fixedStrings: z.boolean().optional(),
   context: z.number().optional(),
 });
 export type GrepInput = z.infer<typeof GrepInputSchema>;
@@ -42,6 +43,7 @@ export class GrepTool implements ITool<GrepInput, string> {
     try {
       const args: string[] = ["--no-heading"];
       if (input.caseInsensitive) args.push("-i");
+      if (input.fixedStrings === true) args.push("-F");
       if (input.glob) args.push("--glob", input.glob);
       if (input.context !== undefined) args.push("-C", String(input.context));
       switch (input.outputMode) {
