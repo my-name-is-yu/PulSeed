@@ -1560,6 +1560,80 @@ describe("observeFromDataSource", () => {
 
     expect(entry.extracted_value).toBe("healthy");
   });
+
+  it("does not partially parse datasource strings with numeric prefixes", async () => {
+    const stringDs = makeMockDataSource({
+      query: vi.fn().mockResolvedValue({
+        value: "42ms",
+        raw: { latency: "42ms" },
+        timestamp: new Date().toISOString(),
+        source_id: "mock-ds",
+      }),
+    });
+    const engineStr = new ObservationEngine(stateManager, [stringDs]);
+
+    const goal = makeGoal({
+      id: "goal-partial-string",
+      dimensions: [
+        {
+          name: "latency",
+          label: "Latency",
+          current_value: 0,
+          threshold: { type: "max", value: 100 },
+          confidence: 0.5,
+          observation_method: defaultMethod,
+          last_updated: new Date().toISOString(),
+          history: [],
+          weight: 1.0,
+          uncertainty_weight: null,
+          state_integrity: "ok",
+          dimension_mapping: null,
+        },
+      ],
+    });
+    await stateManager.saveGoal(goal);
+
+    const entry = await engineStr.observeFromDataSource("goal-partial-string", "latency", "mock-ds");
+
+    expect(entry.extracted_value).toBe("42ms");
+  });
+
+  it("keeps exact finite datasource numeric strings numeric", async () => {
+    const stringDs = makeMockDataSource({
+      query: vi.fn().mockResolvedValue({
+        value: "4.2e1",
+        raw: { latency: "4.2e1" },
+        timestamp: new Date().toISOString(),
+        source_id: "mock-ds",
+      }),
+    });
+    const engineStr = new ObservationEngine(stateManager, [stringDs]);
+
+    const goal = makeGoal({
+      id: "goal-exact-number-string",
+      dimensions: [
+        {
+          name: "latency",
+          label: "Latency",
+          current_value: 0,
+          threshold: { type: "max", value: 100 },
+          confidence: 0.5,
+          observation_method: defaultMethod,
+          last_updated: new Date().toISOString(),
+          history: [],
+          weight: 1.0,
+          uncertainty_weight: null,
+          state_integrity: "ok",
+          dimension_mapping: null,
+        },
+      ],
+    });
+    await stateManager.saveGoal(goal);
+
+    const entry = await engineStr.observeFromDataSource("goal-exact-number-string", "latency", "mock-ds");
+
+    expect(entry.extracted_value).toBe(42);
+  });
 });
 
 function writeJsonFile(filePath: string, value: unknown): void {

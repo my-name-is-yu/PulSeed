@@ -3,6 +3,7 @@ import { ObservationLogEntrySchema } from "../../base/types/state.js";
 import type { ObservationLogEntry } from "../../base/types/state.js";
 import type { IDataSourceAdapter } from "./data-source-adapter.js";
 import type { DataSourceQuery } from "../../base/types/data-source.js";
+import { coerceDataSourceObservationValue } from "./observation-value.js";
 
 /**
  * Find the first DataSource adapter that can serve the given dimension name.
@@ -91,17 +92,7 @@ export async function observeFromDataSource(
 
   const result = await source.query(query);
 
-  let extractedValue: number | string | boolean | null;
-  if (typeof result.value === "number") {
-    extractedValue = result.value;
-  } else if (typeof result.value === "string") {
-    const parsed = parseFloat(result.value);
-    extractedValue = isNaN(parsed) ? result.value : parsed;
-  } else if (typeof result.value === "boolean" || result.value === null) {
-    extractedValue = result.value;
-  } else {
-    extractedValue = 0;
-  }
+  const extractedValue = coerceDataSourceObservationValue(result.value);
 
   if (extractedValue === null || extractedValue === undefined) {
     throw new Error(
