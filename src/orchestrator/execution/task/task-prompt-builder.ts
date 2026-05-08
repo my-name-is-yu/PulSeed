@@ -350,7 +350,7 @@ Constraints:
     } | null;
     if (failureCtx && failureCtx.prev_task_description) {
       failureContextSection = clampSection(
-        `\n前回のタスク「${failureCtx.prev_task_description}」は以下の理由で${failureCtx.verdict ?? "failed"}と判定された:\n${failureCtx.reasoning ?? ""}\n達成基準: ${failureCtx.criteria_met ?? 0}/${failureCtx.criteria_total ?? 0}\nこの失敗を踏まえて、異なるアプローチのタスクを生成すること。\n`,
+        `\nPrevious task "${failureCtx.prev_task_description}" was judged ${failureCtx.verdict ?? "failed"} for the following reason:\n${failureCtx.reasoning ?? ""}\nAcceptance criteria met: ${failureCtx.criteria_met ?? 0}/${failureCtx.criteria_total ?? 0}\nGenerate a task that uses a different approach based on this failure.\n`,
         MAX_FAILURE_CONTEXT_CHARS,
         "failure context"
       );
