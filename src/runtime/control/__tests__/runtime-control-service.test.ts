@@ -700,6 +700,476 @@ describe("RuntimeControlService", () => {
     }
   });
 
+  it("emits RuntimeEvent facts and recomputes CompanionState from the production run-control path", async () => {
+    const tmpDir = makeTempDir("pulseed-runtime-control-companion-boundary-");
+    try {
+      const operationStore = new RuntimeOperationStore(path.join(tmpDir, "runtime"));
+      let nowTick = 0;
+      const service = new RuntimeControlService({
+        operationStore,
+        executor: vi.fn().mockResolvedValue({
+          ok: true,
+          state: "running",
+          message: "typed run control sent",
+        }),
+        sessionRegistry: {
+          snapshot: vi.fn().mockResolvedValue(snapshotWithRuns([makeRun()])),
+        },
+        now: () => new Date(Date.UTC(2026, 4, 8, 0, 0, nowTick++)),
+      });
+
+      const result = await service.pauseRun({
+        runId: "run:coreloop:active",
+        reason: "pause this run",
+        cwd: "/repo",
+        approvalFn: vi.fn().mockResolvedValue(true),
+      });
+
+      expect(result).toMatchObject({ success: true, state: "running" });
+      const events = await operationStore.listRuntimeEvents();
+      expect(events).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          event_type: "waiting",
+          item_ref: expect.stringMatching(/^runtime-control:/),
+          posture_before: null,
+          posture_after: "waiting",
+          source: "runtime-operation-store",
+        }),
+        expect.objectContaining({
+          event_type: "working",
+          item_ref: expect.stringMatching(/^runtime-control:/),
+          posture_before: "waiting",
+          posture_after: "working",
+        }),
+      ]));
+      expect(events[0]?.authority_delta.changed_fields).toContain("approval_scope");
+
+      const missingBoundary = await service.recomputeCompanionState({
+        currentTime: "2026-05-08T00:01:00.000Z",
+      });
+      expect(missingBoundary.input.runtime_items).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          item_id: expect.stringMatching(/^runtime-control:/),
+          type: "run",
+          posture: "working",
+        }),
+        expect.objectContaining({
+          item_id: "background-run:run:coreloop:active",
+          source: "runtime-session-registry",
+        }),
+      ]));
+      expect(missingBoundary.input.recent_runtime_events[0]).toMatchObject({
+        schema_version: "runtime-event-v1",
+        event_type: "waiting",
+      });
+      expect(missingBoundary.snapshot.mode).toBe("needs_user");
+      expect(missingBoundary.snapshot.blocked_refs).toContain("global_controls");
+      expect(missingBoundary.snapshot.stale_surface_refs).toContain("active_surface_ref");
+
+      const invalidatedSurface = await service.recomputeCompanionState({
+        activeSurfaceRef: "surface:current",
+        surfaceInvalidationEvents: ["surface:current"],
+        globalControlStateRef: "global-control-state:1",
+        globalControls: [{
+          control: "inspect_companion_state",
+          state: "inactive",
+          source_ref: "global-control:inactive",
+          updated_at: "2026-05-08T00:01:00.000Z",
+          reason: "baseline clear global controls",
+        }],
+        currentTime: "2026-05-08T00:01:00.000Z",
+      });
+      expect(invalidatedSurface.snapshot.mode).toBe("holding_back");
+      expect(invalidatedSurface.snapshot.invalidated_surface_refs).toContain("surface:current");
+      expect(invalidatedSurface.snapshot.derivation_trace.reason).toBe("stale_or_invalid_surface_holds_runtime_state");
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
+  });
+
+  it("fails closed when a production run-control operation is blocked by a runtime boundary", async () => {
+    const tmpDir = makeTempDir("pulseed-runtime-control-companion-blocked-run-");
+    try {
+      const operationStore = new RuntimeOperationStore(path.join(tmpDir, "runtime"));
+      const service = new RuntimeControlService({
+        operationStore,
+        executor: vi.fn(),
+        sessionRegistry: {
+          snapshot: vi.fn().mockResolvedValue(snapshotWithRuns([
+            makeRun({
+              id: "run:process:abc",
+              kind: "process_run",
+              goal_id: null,
+              child_session_id: null,
+              process_session_id: "proc-1",
+            }),
+          ])),
+        },
+        now: () => new Date("2026-05-08T00:00:00.000Z"),
+      });
+
+      const result = await service.pauseRun({
+        runId: "run:process:abc",
+        reason: "pause process",
+        cwd: "/repo",
+        approvalFn: vi.fn().mockResolvedValue(true),
+      });
+      const recomputed = await service.recomputeCompanionState({
+        activeSurfaceRef: "surface:current",
+        globalControlStateRef: "global-control-state:1",
+        globalControls: [{
+          control: "inspect_companion_state",
+          state: "inactive",
+          source_ref: "global-control:inactive",
+          updated_at: "2026-05-08T00:00:00.000Z",
+          reason: "baseline clear global controls",
+        }],
+        currentTime: "2026-05-08T00:00:00.000Z",
+      });
+
+      expect(result).toMatchObject({ success: false, state: "blocked" });
+      expect(recomputed.input.runtime_items).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          item_id: expect.stringMatching(/^runtime-control:/),
+          type: "run",
+          posture: "blocked_by_boundary",
+        }),
+      ]));
+      expect(recomputed.snapshot.mode).toBe("overloaded");
+      expect(recomputed.snapshot.derivation_trace.reason).toBe("runtime_boundary_blocker_fail_closed");
+      expect(recomputed.snapshot.blocked_by_boundary_refs).toEqual(expect.arrayContaining([
+        expect.stringMatching(/^runtime-control:/),
+      ]));
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
+  });
+
+  it("assembles auth handoffs browser sessions guardrails and backpressure as RuntimeItems", async () => {
+    const tmpDir = makeTempDir("pulseed-runtime-control-safety-runtime-items-");
+    try {
+      const runtimeRoot = path.join(tmpDir, "runtime");
+      const authHandoffStore = new RuntimeAuthHandoffStore(runtimeRoot);
+      const browserSessionStore = new BrowserSessionStore(runtimeRoot);
+      const guardrailStore = new GuardrailStore(runtimeRoot);
+      await browserSessionStore.recordAuthenticated({
+        sessionId: "sess-expired",
+        providerId: "browser",
+        serviceKey: "mail.example.com",
+        workspace: "/repo",
+        actorKey: "chat-1",
+        expiresAt: "2000-01-01T00:00:00.000Z",
+      });
+      const handoff = await authHandoffStore.createPending({
+        providerId: "browser",
+        serviceKey: "mail.example.com",
+        workspace: "/repo",
+        actorKey: "chat-1",
+        browserSessionId: "sess-expired",
+        expiresAt: "2000-01-01T00:00:00.000Z",
+        taskSummary: "Open mail",
+      });
+      await guardrailStore.saveBreaker({
+        key: "browser::mail.example.com",
+        provider_id: "browser",
+        service_key: "mail.example.com",
+        state: "open",
+        failure_count: 2,
+        last_failure_code: "rate_limited",
+        last_failure_message: "too many requests",
+        last_failure_at: "2026-05-08T00:00:00.000Z",
+        opened_at: "2026-05-08T00:00:00.000Z",
+        cooldown_until: "2026-05-08T00:05:00.000Z",
+        updated_at: "2026-05-08T00:00:00.000Z",
+      });
+      await guardrailStore.saveBackpressureSnapshot({
+        updated_at: "2026-05-08T00:00:00.000Z",
+        active: [{
+          provider_id: "browser",
+          service_key: "mail.example.com",
+          run_key: "run:coreloop:active",
+          acquired_at: "2026-05-08T00:00:00.000Z",
+        }],
+        throttled: [{
+          provider_id: "browser",
+          service_key: "mail.example.com",
+          reason: "service concurrency limit reached",
+          at: "2026-05-08T00:00:10.000Z",
+        }],
+      });
+      const service = new RuntimeControlService({
+        runtimeRoot,
+        authHandoffStore,
+        browserSessionStore,
+        guardrailStore,
+      });
+
+      const recomputed = await service.recomputeCompanionState({
+        activeSurfaceRef: "surface:current",
+        globalControlStateRef: "global-control-state:1",
+        globalControls: [{
+          control: "inspect_companion_state",
+          state: "inactive",
+          source_ref: "global-control:inactive",
+          updated_at: "2026-05-08T00:01:00.000Z",
+          reason: "baseline clear global controls",
+        }],
+        currentTime: "2026-05-08T00:01:00.000Z",
+      });
+
+      expect(recomputed.input.runtime_items).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          item_id: `auth-handoff:${handoff.handoff_id}`,
+          type: "auth_handoff",
+          posture: "needs_user",
+        }),
+        expect.objectContaining({
+          item_id: "browser-session:sess-expired",
+          type: "browser_session",
+          posture: "stale",
+          authority: expect.objectContaining({ resumable: false }),
+          staleness: expect.objectContaining({
+            browser_session: expect.objectContaining({ outcome: "not_resumable" }),
+          }),
+        }),
+        expect.objectContaining({
+          item_id: "guardrail:browser::mail.example.com",
+          type: "guardrail_state",
+          posture: "blocked_by_boundary",
+        }),
+        expect.objectContaining({
+          item_id: "backpressure:active:browser:mail.example.com:run:coreloop:active",
+          type: "backpressure_state",
+        }),
+        expect.objectContaining({
+          item_id: "backpressure:throttled:browser:mail.example.com:2026-05-08T00_3A00_3A10.000Z",
+          posture: "blocked_by_boundary",
+        }),
+      ]));
+      expect(recomputed.snapshot.mode).toBe("overloaded");
+      expect(recomputed.snapshot.blocked_by_boundary_refs).toEqual(expect.arrayContaining([
+        "guardrail:browser::mail.example.com",
+        "backpressure:throttled:browser:mail.example.com:2026-05-08T00_3A00_3A10.000Z",
+      ]));
+      expect(recomputed.snapshot.blocked_by_boundary_refs).not.toContain(
+        "backpressure:active:browser:mail.example.com:run:coreloop:active",
+      );
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
+  });
+
+  it("does not keep CompanionState overloaded for recovered guardrails or normal backpressure leases", async () => {
+    const tmpDir = makeTempDir("pulseed-runtime-control-recovered-safety-items-");
+    try {
+      const runtimeRoot = path.join(tmpDir, "runtime");
+      const guardrailStore = new GuardrailStore(runtimeRoot);
+      await guardrailStore.saveBreaker({
+        key: "browser::mail.example.com",
+        provider_id: "browser",
+        service_key: "mail.example.com",
+        state: "closed",
+        failure_count: 0,
+        last_failure_code: null,
+        last_failure_message: null,
+        last_failure_at: null,
+        opened_at: null,
+        cooldown_until: null,
+        updated_at: "2026-05-08T00:00:00.000Z",
+      });
+      await guardrailStore.saveBackpressureSnapshot({
+        updated_at: "2026-05-08T00:00:00.000Z",
+        active: [{
+          provider_id: "browser",
+          service_key: "mail.example.com",
+          run_key: "run:coreloop:active",
+          acquired_at: "2026-05-08T00:00:00.000Z",
+        }],
+        throttled: [],
+      });
+      const service = new RuntimeControlService({ runtimeRoot, guardrailStore });
+
+      const recomputed = await service.recomputeCompanionState({
+        activeSurfaceRef: "surface:current",
+        globalControlStateRef: "global-control-state:1",
+        globalControls: [{
+          control: "inspect_companion_state",
+          state: "inactive",
+          source_ref: "global-control:inactive",
+          updated_at: "2026-05-08T00:01:00.000Z",
+          reason: "baseline clear global controls",
+        }],
+        currentTime: "2026-05-08T00:01:00.000Z",
+      });
+
+      expect(recomputed.input.runtime_items).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          item_id: "guardrail:browser::mail.example.com",
+          type: "guardrail_state",
+          status: "active",
+          posture: "watching",
+        }),
+        expect.objectContaining({
+          item_id: "backpressure:active:browser:mail.example.com:run:coreloop:active",
+          type: "backpressure_state",
+          status: "active",
+          posture: "watching",
+        }),
+      ]));
+      expect(recomputed.snapshot.mode).toBe("watching");
+      expect(recomputed.snapshot.blocked_by_boundary_refs).toEqual([]);
+      expect(recomputed.snapshot.derivation_trace.reason).toBe("companion_state_reducer_skeleton_selected_mode");
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
+  });
+
+  it("uses the CompanionState boundary clock for auth handoff and browser-session expiry", async () => {
+    const tmpDir = makeTempDir("pulseed-runtime-control-boundary-clock-");
+    try {
+      const runtimeRoot = path.join(tmpDir, "runtime");
+      const authHandoffStore = new RuntimeAuthHandoffStore(runtimeRoot);
+      const browserSessionStore = new BrowserSessionStore(runtimeRoot);
+      await browserSessionStore.recordAuthenticated({
+        sessionId: "sess-boundary-clock",
+        providerId: "browser",
+        serviceKey: "mail.example.com",
+        workspace: "/repo",
+        actorKey: "chat-1",
+        expiresAt: "2030-01-01T00:00:00.000Z",
+      });
+      const handoff = await authHandoffStore.createPending({
+        providerId: "browser",
+        serviceKey: "mail.example.com",
+        workspace: "/repo",
+        actorKey: "chat-1",
+        browserSessionId: "sess-boundary-clock",
+        expiresAt: "2030-01-01T00:00:00.000Z",
+        taskSummary: "Open mail",
+      });
+      const service = new RuntimeControlService({
+        runtimeRoot,
+        authHandoffStore,
+        browserSessionStore,
+        now: () => new Date("2026-05-08T00:00:00.000Z"),
+      });
+
+      const beforeExpiry = await service.recomputeCompanionState({
+        activeSurfaceRef: "surface:current",
+        globalControlStateRef: "global-control-state:1",
+        globalControls: [{
+          control: "inspect_companion_state",
+          state: "inactive",
+          source_ref: "global-control:inactive",
+          updated_at: "2026-05-08T00:00:00.000Z",
+          reason: "baseline clear global controls",
+        }],
+        currentTime: "2029-12-31T23:59:59.000Z",
+      });
+      const afterExpiry = await service.recomputeCompanionState({
+        activeSurfaceRef: "surface:current",
+        globalControlStateRef: "global-control-state:1",
+        globalControls: [{
+          control: "inspect_companion_state",
+          state: "inactive",
+          source_ref: "global-control:inactive",
+          updated_at: "2030-01-01T00:00:01.000Z",
+          reason: "baseline clear global controls",
+        }],
+        currentTime: "2030-01-01T00:00:01.000Z",
+      });
+
+      expect(beforeExpiry.input.runtime_items).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          item_id: `auth-handoff:${handoff.handoff_id}`,
+          staleness: expect.objectContaining({
+            auth_handoff: expect.objectContaining({ outcome: "current" }),
+          }),
+        }),
+        expect.objectContaining({
+          item_id: "browser-session:sess-boundary-clock",
+          posture: "watching",
+          staleness: expect.objectContaining({
+            browser_session: expect.objectContaining({ outcome: "current" }),
+          }),
+        }),
+      ]));
+      expect(afterExpiry.input.runtime_items).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          item_id: `auth-handoff:${handoff.handoff_id}`,
+          staleness: expect.objectContaining({
+            auth_handoff: expect.objectContaining({ outcome: "not_resumable" }),
+          }),
+        }),
+        expect.objectContaining({
+          item_id: "browser-session:sess-boundary-clock",
+          posture: "stale",
+          staleness: expect.objectContaining({
+            browser_session: expect.objectContaining({ outcome: "not_resumable" }),
+          }),
+        }),
+      ]));
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
+  });
+
+  it("fails closed for blocked browser sessions instead of treating them as passive watches", async () => {
+    const tmpDir = makeTempDir("pulseed-runtime-control-blocked-browser-session-");
+    try {
+      const runtimeRoot = path.join(tmpDir, "runtime");
+      const browserSessionStore = new BrowserSessionStore(runtimeRoot);
+      await browserSessionStore.upsert({
+        session_id: "sess-blocked",
+        provider_id: "browser",
+        service_key: "mail.example.com",
+        workspace: "/repo",
+        actor_key: "chat-1",
+        state: "blocked",
+        created_at: "2026-05-08T00:00:00.000Z",
+        updated_at: "2026-05-08T00:00:00.000Z",
+        last_auth_at: null,
+        expires_at: null,
+        last_failure_code: "provider_blocked",
+        last_failure_message: "provider is blocked",
+      });
+      const service = new RuntimeControlService({
+        runtimeRoot,
+        browserSessionStore,
+      });
+
+      const recomputed = await service.recomputeCompanionState({
+        activeSurfaceRef: "surface:current",
+        globalControlStateRef: "global-control-state:1",
+        globalControls: [{
+          control: "inspect_companion_state",
+          state: "inactive",
+          source_ref: "global-control:inactive",
+          updated_at: "2026-05-08T00:01:00.000Z",
+          reason: "baseline clear global controls",
+        }],
+        currentTime: "2026-05-08T00:01:00.000Z",
+      });
+
+      expect(recomputed.input.runtime_items).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          item_id: "browser-session:sess-blocked",
+          type: "browser_session",
+          status: "blocked",
+          posture: "blocked_by_boundary",
+          staleness: expect.objectContaining({
+            browser_session: expect.objectContaining({ outcome: "not_actionable" }),
+          }),
+        }),
+      ]));
+      expect(recomputed.snapshot.mode).toBe("overloaded");
+      expect(recomputed.snapshot.blocked_by_boundary_refs).toContain("browser-session:sess-blocked");
+      expect(recomputed.snapshot.derivation_trace.reason).toBe("runtime_boundary_blocker_fail_closed");
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
+  });
+
   it("returns a typed blocked reason when a selected run has no supported goal bridge", async () => {
     const tmpDir = makeTempDir("pulseed-runtime-control-service-run-blocked-");
     try {

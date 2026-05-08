@@ -220,6 +220,14 @@ export type {
   RuntimeControlRequest,
   RuntimeControlResult,
   RuntimeControlServiceOptions,
+  RuntimeCompanionStateBoundaryRequest,
+  RuntimeCompanionStateBoundaryResult,
+  RuntimeEvent,
+  RuntimeEventRef,
+  RuntimeEventType,
+  RuntimeItem,
+  CompanionStateReducerInput,
+  CompanionStateSnapshot,
 } from "./runtime/control/index.js";
 export { RuntimeOperationStore } from "./runtime/store/runtime-operation-store.js";
 export {

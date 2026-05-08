@@ -246,6 +246,93 @@ export const RuntimeItemSchema = z.object({
 });
 export type RuntimeItem = z.infer<typeof RuntimeItemSchema>;
 
+export const RuntimeEventTypeSchema = z.enum([
+  "observing",
+  "holding_urge",
+  "waiting",
+  "working",
+  "blocked_by_boundary",
+  "chose_silence",
+  "needs_permission",
+  "ready_to_digest",
+  "stale_context_detected",
+  "resume_requires_regrounding",
+  "quiet_work_continued",
+  "action_candidate_prepared",
+]);
+export type RuntimeEventType = z.infer<typeof RuntimeEventTypeSchema>;
+
+export const AuthorityDeltaFieldSchema = z.enum([
+  "inspectable",
+  "resumable",
+  "actionable",
+  "speakable",
+  "can_create_urge",
+  "can_update_surface",
+  "can_write_memory",
+  "can_delegate_work",
+  "requires_confirmation",
+  "approval_scope",
+]);
+export type AuthorityDeltaField = z.infer<typeof AuthorityDeltaFieldSchema>;
+
+export const StalenessDimensionKindSchema = z.enum([
+  "temporal",
+  "world",
+  "project",
+  "permission",
+  "relationship",
+  "surface",
+  "goal",
+  "assumption",
+  "session",
+  "browser_session",
+  "auth_handoff",
+]);
+export type StalenessDimensionKind = z.infer<typeof StalenessDimensionKindSchema>;
+
+export const RuntimeEventAuthorityDeltaSchema = z.object({
+  before: AuthoritySchema.nullable(),
+  after: AuthoritySchema.nullable(),
+  changed_fields: z.array(AuthorityDeltaFieldSchema),
+}).strict();
+export type RuntimeEventAuthorityDelta = z.infer<typeof RuntimeEventAuthorityDeltaSchema>;
+
+export const RuntimeEventStalenessDeltaSchema = z.object({
+  before: StalenessSchema.nullable(),
+  after: StalenessSchema.nullable(),
+  changed_dimensions: z.array(StalenessDimensionKindSchema),
+}).strict();
+export type RuntimeEventStalenessDelta = z.infer<typeof RuntimeEventStalenessDeltaSchema>;
+
+export const RuntimeEventCompanionControlDeltaSchema = z.object({
+  before: RuntimeItemCompanionControlStateSchema.nullable(),
+  after: RuntimeItemCompanionControlStateSchema.nullable(),
+  changed_controls: z.array(CompanionWideControlSchema),
+}).strict();
+export type RuntimeEventCompanionControlDelta = z.infer<typeof RuntimeEventCompanionControlDeltaSchema>;
+
+export const RuntimeEventSchema = z.object({
+  schema_version: z.literal("runtime-event-v1").default("runtime-event-v1"),
+  event_id: z.string().min(1),
+  event_type: RuntimeEventTypeSchema,
+  item_ref: z.string().min(1),
+  occurred_at: z.string().datetime(),
+  source: z.string().min(1),
+  posture_before: RuntimeItemPostureSchema.nullable(),
+  posture_after: RuntimeItemPostureSchema,
+  authority_delta: RuntimeEventAuthorityDeltaSchema,
+  staleness_delta: RuntimeEventStalenessDeltaSchema,
+  companion_control_delta: RuntimeEventCompanionControlDeltaSchema,
+  surface_refs: z.array(z.string().min(1)).default([]),
+  companion_state_refs: z.array(z.string().min(1)).default([]),
+  audit_refs: z.array(z.string().min(1)).default([]),
+}).strict();
+export type RuntimeEvent = z.infer<typeof RuntimeEventSchema>;
+
+export const RuntimeEventRefSchema = z.union([RuntimeEventSchema, z.string().min(1)]);
+export type RuntimeEventRef = z.infer<typeof RuntimeEventRefSchema>;
+
 export const CompanionGlobalControlEntrySchema = z.object({
   control: CompanionWideControlSchema,
   state: z.enum(["active", "inactive", "ambiguous"]),
@@ -281,7 +368,7 @@ export type CompanionCapacity = z.infer<typeof CompanionCapacitySchema>;
 export const CompanionStateReducerInputSchema = z.object({
   schema_version: z.literal("companion-state-reducer-input-v1").default("companion-state-reducer-input-v1"),
   runtime_items: z.array(RuntimeItemSchema),
-  recent_runtime_events: z.array(z.string().min(1)),
+  recent_runtime_events: z.array(RuntimeEventRefSchema),
   active_surface_ref: z.string().min(1).nullable(),
   surface_invalidation_events: z.array(z.string().min(1)),
   global_control_state_ref: z.string().min(1).nullable(),

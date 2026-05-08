@@ -8,6 +8,7 @@ import {
 } from "../../../grounding/surface-contracts.js";
 import {
   CompanionStateReducerInputSchema,
+  RuntimeEventSchema,
   RuntimeItemSchema,
   RuntimeItemTypeSchema,
   assembleCompanionStateReducerInput,
@@ -20,6 +21,7 @@ import {
   type CompanionGlobalControlEntry,
   type CompanionStateReducerInput,
   type ControlPolicy,
+  type RuntimeEvent,
   type RuntimeItem,
   type Staleness,
 } from "../index.js";
@@ -130,11 +132,72 @@ function makeRuntimeItem(input: Partial<RuntimeItem> = {}): RuntimeItem {
   });
 }
 
+function makeRuntimeEvent(input: Partial<RuntimeEvent> = {}): RuntimeEvent {
+  return RuntimeEventSchema.parse({
+    schema_version: "runtime-event-v1",
+    event_id: "runtime-event:1",
+    event_type: "working",
+    item_ref: "run:quiet-work-1",
+    occurred_at: NOW,
+    source: "runtime-control-test",
+    posture_before: "waiting",
+    posture_after: "working",
+    authority_delta: {
+      before: null,
+      after: operationalAuthority,
+      changed_fields: [
+        "inspectable",
+        "resumable",
+        "actionable",
+        "speakable",
+        "can_create_urge",
+        "can_update_surface",
+        "can_write_memory",
+        "can_delegate_work",
+        "requires_confirmation",
+        "approval_scope",
+      ],
+    },
+    staleness_delta: {
+      before: null,
+      after: currentStaleness,
+      changed_dimensions: [
+        "temporal",
+        "world",
+        "project",
+        "permission",
+        "relationship",
+        "surface",
+        "goal",
+        "assumption",
+        "session",
+        "browser_session",
+        "auth_handoff",
+      ],
+    },
+    companion_control_delta: {
+      before: null,
+      after: {
+        active_controls: [],
+        global_control_refs: [],
+        held_by_controls: [],
+        rejected_by_controls: [],
+        reason: "no active companion-wide controls",
+      },
+      changed_controls: [],
+    },
+    surface_refs: ["surface:1"],
+    companion_state_refs: [],
+    audit_refs: ["audit:1"],
+    ...input,
+  });
+}
+
 function makeReducerInput(input: Partial<CompanionStateReducerInput> = {}): CompanionStateReducerInput {
   return CompanionStateReducerInputSchema.parse({
     schema_version: "companion-state-reducer-input-v1",
     runtime_items: [makeRuntimeItem()],
-    recent_runtime_events: ["runtime-event:1"],
+    recent_runtime_events: [makeRuntimeEvent()],
     active_surface_ref: "surface:1",
     surface_invalidation_events: [],
     global_control_state_ref: "global-control-state:1",
@@ -563,7 +626,13 @@ describe("CompanionState runtime-control contracts", () => {
           related_surface_refs: ["surface:old"],
         }),
       ],
-      recent_runtime_events: ["runtime-event:watch-posture"],
+      recent_runtime_events: [makeRuntimeEvent({
+        event_id: "runtime-event:watch-posture",
+        event_type: "waiting",
+        item_ref: "watch:posture-change",
+        posture_before: "watching",
+        posture_after: "waiting",
+      })],
       active_surface_ref: "surface:1",
       surface_invalidation_events: ["surface:old"],
       global_control_state_ref: "global-control-state:1",
@@ -647,7 +716,12 @@ describe("CompanionState runtime-control contracts", () => {
   it("represents missing Surface state as a blocker instead of silently omitting it", () => {
     const input = assembleCompanionStateReducerInput({
       runtime_items: [makeRuntimeItem()],
-      recent_runtime_events: ["runtime-event:missing-surface"],
+      recent_runtime_events: [makeRuntimeEvent({
+        event_id: "runtime-event:missing-surface",
+        event_type: "stale_context_detected",
+        item_ref: "run:quiet-work-1",
+        surface_refs: [],
+      })],
       active_surface_ref: null,
       surface_invalidation_events: [],
       global_control_state_ref: "global-control-state:1",
@@ -829,11 +903,27 @@ describe("CompanionState runtime-control contracts", () => {
     expect(deriveCompanionStateSnapshot(input)).toEqual(deriveCompanionStateSnapshot(input));
   });
 
+  it("keeps legacy runtime event id refs readable while production stores emit typed RuntimeEvent facts", () => {
+    const input = makeReducerInput({
+      recent_runtime_events: ["runtime-event:legacy-ref"],
+      event_high_watermark: "runtime-event:legacy-ref",
+    });
+
+    const snapshot = deriveCompanionStateSnapshot(input);
+
+    expect(input.recent_runtime_events).toEqual(["runtime-event:legacy-ref"]);
+    expect(snapshot.derivation_trace.input_refs).toContain("runtime-event:legacy-ref");
+  });
+
   it("rejects stale snapshots when later runtime or Surface evidence changes the high-watermark", () => {
     const input = makeReducerInput();
     const snapshot = deriveCompanionStateSnapshot(input);
     const laterInput = makeReducerInput({
-      recent_runtime_events: ["runtime-event:2"],
+      recent_runtime_events: [makeRuntimeEvent({
+        event_id: "runtime-event:2",
+        event_type: "stale_context_detected",
+        item_ref: "run:quiet-work-1",
+      })],
       surface_invalidation_events: ["surface:1"],
       event_high_watermark: "event:2",
     });
