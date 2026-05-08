@@ -5,20 +5,26 @@ import {
   applyAttentionFeedbackConservatively,
   assembleSignalContext,
   buildSchedulerWakeSignalContext,
+  createExpressionDecisionForOutcome,
   createUrgeCandidate,
   decideInhibition,
   mergeUrgesIntoAgenda,
   ref,
+  renderExpressionDecisionForSurface,
   runtimeItemsForAgenda,
   selectInitiativeGateDecision,
   sourceRef,
   type AttentionFeedbackEvent,
 } from "../index.js";
+import { renderTuiExpressionDecision } from "../../../interface/tui/fullscreen-chat-render.js";
+import { renderGatewayExpressionDecision } from "../../gateway/index.js";
 import type {
   AgentAgendaItem,
   AutonomyCheck,
+  OutcomeClass,
   SignalContext,
   UrgeCandidate,
+  VisibilityPolicy,
 } from "../../types/companion-autonomy.js";
 
 const NOW = "2026-05-08T00:00:00.000Z";
@@ -101,6 +107,59 @@ function matureAgenda(input: Partial<AgentAgendaItem> = {}): AgentAgendaItem {
       }),
     ],
   })[0]!;
+}
+
+function visibilityPolicy(input: Partial<VisibilityPolicy> = {}): VisibilityPolicy {
+  return {
+    schema_version: "visibility-policy-v1",
+    visibility_policy_id: input.visibility_policy_id ?? "visibility:surface-facing",
+    applies_to: input.applies_to ?? [ref("outcome_decision", "outcome:surface")],
+    hidden_by_default: input.hidden_by_default ?? false,
+    visible_in_gui: input.visible_in_gui ?? true,
+    visible_in_chat: input.visible_in_chat ?? true,
+    visible_in_tui: input.visible_in_tui ?? true,
+    visible_in_cli: input.visible_in_cli ?? false,
+    visible_in_audit: input.visible_in_audit ?? true,
+    visible_in_debug: input.visible_in_debug ?? true,
+    digest_only: input.digest_only ?? false,
+    visible_in_digest: input.visible_in_digest ?? false,
+    never_directly_show: input.never_directly_show ?? false,
+    content_lifecycle: input.content_lifecycle ?? "active",
+    redaction_required: input.redaction_required ?? false,
+    raw_content_allowed: input.raw_content_allowed ?? false,
+    inspectable_summary: input.inspectable_summary,
+    rationale: input.rationale ?? "surface-facing outcome can render through shared decision policy",
+    audit_refs: input.audit_refs ?? [],
+  };
+}
+
+function selectedGateForOutcome(outcome: OutcomeClass, input: {
+  decision_id?: string;
+  required_runtime_control_refs?: ReturnType<typeof ref>[];
+  required_approval?: boolean;
+} = {}) {
+  const agenda = matureAgenda();
+  const inhibition = decideInhibition({
+    decision_id: `${input.decision_id ?? outcome}:inhibition`,
+    decided_at: NOW,
+    candidate: agenda,
+    permission_checks: [check("permission")],
+    staleness_checks: [check("staleness")],
+    safety_checks: [check("safety")],
+  });
+
+  return selectInitiativeGateDecision({
+    decision_id: input.decision_id ?? `gate:${outcome}`,
+    decided_at: NOW,
+    candidate: agenda,
+    inhibition_decision: inhibition,
+    requested_outcome: outcome,
+    permission_checks: [check("permission")],
+    staleness_checks: [check("staleness")],
+    side_effect_checks: [check("authority")],
+    required_runtime_control_refs: input.required_runtime_control_refs ?? [ref("runtime_control", `runtime-control:${outcome}`)],
+    required_approval: input.required_approval,
+  });
 }
 
 describe("attention metabolism pipeline", () => {
@@ -362,6 +421,254 @@ describe("attention metabolism pipeline", () => {
     });
     expect(invalidRequiredRuntimeControl?.admission_status).toBe("held");
     expect(invalidRequiredRuntimeControl?.downgrade_or_rejection_reason?.code).toBe("authority_unknown");
+  });
+
+  it("records typed runtime admission failures and downgrades without fake final outcomes", () => {
+    const stale = admitInitiativeGateDecision({
+      outcome_decision_id: "outcome:stale-target",
+      decided_at: NOW,
+      gate_decision: selectedGateForOutcome("express_to_user"),
+      admitted_runtime_control_refs: [ref("runtime_control", "runtime-control:express_to_user")],
+      staleness_checks: [check("staleness", "failed", "target evidence is stale")],
+    });
+    expect(stale?.admission_status).toBe("rejected");
+    expect(stale?.final_outcome).toBeUndefined();
+    expect(stale?.downgrade_or_rejection_reason?.code).toBe("stale_target");
+
+    const missingPermission = admitInitiativeGateDecision({
+      outcome_decision_id: "outcome:missing-permission",
+      decided_at: NOW,
+      gate_decision: selectedGateForOutcome("run_authorized_work"),
+      admitted_runtime_control_refs: [ref("runtime_control", "runtime-control:run_authorized_work")],
+      authority_checks: [check("permission", "failed", "permission grant is absent")],
+    });
+    expect(missingPermission?.admission_status).toBe("rejected");
+    expect(missingPermission?.final_outcome).toBeUndefined();
+    expect(missingPermission?.downgrade_or_rejection_reason?.code).toBe("missing_permission");
+
+    const invalidSurface = admitInitiativeGateDecision({
+      outcome_decision_id: "outcome:invalid-surface",
+      decided_at: NOW,
+      gate_decision: selectedGateForOutcome("add_to_digest"),
+      admitted_runtime_control_refs: [ref("runtime_control", "runtime-control:add_to_digest")],
+      staleness_checks: [check("surface", "failed", "digest Surface invalidated before admission")],
+    });
+    expect(invalidSurface?.admission_status).toBe("held");
+    expect(invalidSurface?.final_outcome).toBeUndefined();
+    expect(invalidSurface?.downgrade_or_rejection_reason?.code).toBe("invalid_surface");
+
+    const guardrail = admitInitiativeGateDecision({
+      outcome_decision_id: "outcome:guardrail",
+      decided_at: NOW,
+      gate_decision: selectedGateForOutcome("escalate"),
+      admitted_runtime_control_refs: [ref("runtime_control", "runtime-control:escalate")],
+      safety_checks: [check("guardrail", "failed", "guardrail blocked escalation")],
+    });
+    expect(guardrail?.admission_status).toBe("rejected");
+    expect(guardrail?.final_outcome).toBeUndefined();
+    expect(guardrail?.downgrade_or_rejection_reason?.code).toBe("guardrail_blocked");
+
+    const backpressure = admitInitiativeGateDecision({
+      outcome_decision_id: "outcome:backpressure",
+      decided_at: NOW,
+      gate_decision: selectedGateForOutcome("express_to_user"),
+      admitted_runtime_control_refs: [ref("runtime_control", "runtime-control:express_to_user")],
+      companion_control_checks: [check("backpressure", "failed", "surface queue is backed up")],
+      visibility_policy_ref: ref("visibility_policy", "visibility:digest"),
+    });
+    expect(backpressure?.admission_status).toBe("downgraded");
+    expect(backpressure?.final_outcome).toBe("add_to_digest");
+    expect(backpressure?.downgrade_or_rejection_reason?.code).toBe("backpressure");
+
+    const approvalGate = {
+      ...selectedGateForOutcome("prepare_action_candidate"),
+      required_approval: true,
+    };
+    const approvalRequired = admitInitiativeGateDecision({
+      outcome_decision_id: "outcome:approval-required",
+      decided_at: NOW,
+      gate_decision: approvalGate,
+      admitted_runtime_control_refs: [ref("runtime_control", "runtime-control:prepare_action_candidate")],
+      visibility_policy_ref: ref("visibility_policy", "visibility:approval"),
+    });
+    expect(approvalRequired?.admission_status).toBe("downgraded");
+    expect(approvalRequired?.final_outcome).toBe("request_approval");
+    expect(approvalRequired?.downgrade_or_rejection_reason?.code).toBe("approval_required");
+
+    const overloaded = admitInitiativeGateDecision({
+      outcome_decision_id: "outcome:overloaded",
+      decided_at: NOW,
+      gate_decision: selectedGateForOutcome("run_authorized_work"),
+      admitted_runtime_control_refs: [ref("runtime_control", "runtime-control:run_authorized_work")],
+      companion_control_checks: [check("capacity", "failed", "runtime is overloaded")],
+    });
+    expect(overloaded?.admission_status).toBe("downgraded");
+    expect(overloaded?.final_outcome).toBe("hold_in_agenda");
+    expect(overloaded?.downgrade_or_rejection_reason?.code).toBe("overloaded");
+
+    const coolingDown = admitInitiativeGateDecision({
+      outcome_decision_id: "outcome:cooling-down",
+      decided_at: NOW,
+      gate_decision: selectedGateForOutcome("delegate_bounded_work"),
+      admitted_runtime_control_refs: [ref("runtime_control", "runtime-control:delegate_bounded_work")],
+      companion_control_checks: [check("cooldown", "failed", "similar intervention is cooling down")],
+    });
+    expect(coolingDown?.admission_status).toBe("downgraded");
+    expect(coolingDown?.final_outcome).toBe("prepare_silently");
+    expect(coolingDown?.downgrade_or_rejection_reason?.code).toBe("cooling_down");
+  });
+
+  it("creates and renders shared ExpressionDecision records only for admitted surface-facing outcomes", () => {
+    const work = admitInitiativeGateDecision({
+      outcome_decision_id: "outcome:quiet-work",
+      decided_at: NOW,
+      gate_decision: selectedGateForOutcome("run_authorized_work"),
+      admitted_runtime_control_refs: [ref("runtime_control", "runtime-control:run_authorized_work")],
+      visibility_policy_ref: ref("visibility_policy", "visibility:work"),
+    });
+    expect(work?.final_outcome).toBe("run_authorized_work");
+    expect(createExpressionDecisionForOutcome({
+      expression_decision_id: "expression:quiet-work",
+      created_at: NOW,
+      outcome_decision: work!,
+      target_surface_classes: ["chat"],
+    })).toBeNull();
+
+    const noVisibilityApproval = admitInitiativeGateDecision({
+      outcome_decision_id: "outcome:approval-no-visibility",
+      decided_at: NOW,
+      gate_decision: selectedGateForOutcome("request_approval"),
+      admitted_runtime_control_refs: [ref("runtime_control", "runtime-control:request_approval")],
+    });
+    expect(createExpressionDecisionForOutcome({
+      expression_decision_id: "expression:no-visibility",
+      created_at: NOW,
+      outcome_decision: noVisibilityApproval!,
+      target_surface_classes: ["gateway", "tui"],
+    })).toBeNull();
+
+    const approval = admitInitiativeGateDecision({
+      outcome_decision_id: "outcome:approval-expression",
+      decided_at: NOW,
+      gate_decision: selectedGateForOutcome("request_approval"),
+      admitted_runtime_control_refs: [ref("runtime_control", "runtime-control:request_approval")],
+      visibility_policy_ref: ref("visibility_policy", "visibility:approval"),
+    });
+    const expression = createExpressionDecisionForOutcome({
+      expression_decision_id: "expression:approval",
+      created_at: NOW,
+      outcome_decision: approval!,
+      target_surface_classes: ["gateway", "tui"],
+    });
+    expect(expression?.expression_mode).toBe("approval_request");
+    expect(() => createExpressionDecisionForOutcome({
+      expression_decision_id: "expression:approval-wrong-visibility",
+      created_at: NOW,
+      outcome_decision: approval!,
+      target_surface_classes: ["gateway", "tui"],
+      visibility_policy_ref: ref("visibility_policy", "visibility:too-broad"),
+    })).toThrow(/OutcomeDecision visibility policy/);
+
+    const policy = visibilityPolicy({
+      visibility_policy_id: "visibility:approval",
+      applies_to: [
+        ref("outcome_decision", "outcome:approval-expression"),
+        ref("expression_decision", "expression:approval"),
+      ],
+    });
+    const gatewayRender = renderGatewayExpressionDecision({
+      renderId: "render:gateway:approval",
+      renderedAt: NOW,
+      outcomeDecision: approval!,
+      expressionDecision: expression,
+      visibilityPolicy: policy,
+    });
+    const tuiRender = renderTuiExpressionDecision({
+      renderId: "render:tui:approval",
+      renderedAt: NOW,
+      outcomeDecision: approval!,
+      expressionDecision: expression,
+      visibilityPolicy: policy,
+    });
+    expect(gatewayRender).toBe("Ask the user before continuing the blocked action.");
+    expect(tuiRender).toMatchObject({
+      key: "render:tui:approval",
+      text: "Ask the user before continuing the blocked action.",
+      bold: true,
+      protected: true,
+    });
+    expect(renderTuiExpressionDecision({
+      renderId: "render:missing-expression",
+      renderedAt: NOW,
+      outcomeDecision: approval!,
+      expressionDecision: null,
+      visibilityPolicy: policy,
+    })).toBeNull();
+  });
+
+  it("holds digest outcomes after Surface invalidation and renders only after re-admission", () => {
+    const gate = selectedGateForOutcome("add_to_digest");
+    const invalidated = admitInitiativeGateDecision({
+      outcome_decision_id: "outcome:digest-invalidated",
+      decided_at: NOW,
+      gate_decision: gate,
+      admitted_runtime_control_refs: [ref("runtime_control", "runtime-control:add_to_digest")],
+      staleness_checks: [check("surface", "failed", "digest Surface was invalidated")],
+      visibility_policy_ref: ref("visibility_policy", "visibility:digest"),
+    });
+    expect(invalidated?.admission_status).toBe("held");
+    expect(createExpressionDecisionForOutcome({
+      expression_decision_id: "expression:digest-invalidated",
+      created_at: NOW,
+      outcome_decision: invalidated!,
+      target_surface_classes: ["digest"],
+    })).toBeNull();
+
+    const readmitted = admitInitiativeGateDecision({
+      outcome_decision_id: "outcome:digest-readmitted",
+      decided_at: NOW,
+      gate_decision: gate,
+      admitted_runtime_control_refs: [ref("runtime_control", "runtime-control:add_to_digest")],
+      visibility_policy_ref: ref("visibility_policy", "visibility:digest"),
+    });
+    const expression = createExpressionDecisionForOutcome({
+      expression_decision_id: "expression:digest-readmitted",
+      created_at: NOW,
+      outcome_decision: readmitted!,
+      target_surface_classes: ["digest"],
+    });
+    expect(expression?.expression_mode).toBe("digest_item");
+
+    const policy = visibilityPolicy({
+      visibility_policy_id: "visibility:digest",
+      applies_to: [
+        ref("outcome_decision", "outcome:digest-readmitted"),
+        ref("expression_decision", "expression:digest-readmitted"),
+      ],
+      visible_in_chat: false,
+      visible_in_tui: false,
+      visible_in_cli: false,
+      visible_in_gui: false,
+      digest_only: true,
+      visible_in_digest: true,
+      rationale: "digest item remains visible only through the digest surface",
+    });
+    expect(renderExpressionDecisionForSurface({
+      render_id: "render:chat:digest",
+      rendered_at: NOW,
+      surface_class: "chat",
+      outcome_decision: readmitted!,
+      expression_decision: expression,
+      visibility_policy: policy,
+    })).toBeNull();
+    expect(renderExpressionDecisionForSurface({
+      render_id: "render:digest:readmitted",
+      rendered_at: NOW,
+      surface_class: "digest",
+      outcome_decision: readmitted!,
+      expression_decision: expression,
+      visibility_policy: policy,
+    })?.expression_mode).toBe("digest_item");
   });
 
   it("does not let high Drive or curiosity bypass permission, Surface, cooldown, or runtime control", () => {
