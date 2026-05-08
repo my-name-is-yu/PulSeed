@@ -13,13 +13,13 @@ import { scheduleEdit } from "./schedule/edit.js";
 import { scheduleCost } from "./schedule/cost.js";
 import { scheduleHistory } from "./schedule/history.js";
 import { scheduleRunNow } from "./schedule/run-now.js";
-import { getScheduleOrPrintError } from "./schedule/shared.js";
+import { getScheduleOrPrintError, parsePositiveInteger } from "./schedule/shared.js";
 
 export async function cmdSchedule(
   stateManager: StateManager,
   argv: string[],
   characterConfigManager?: CharacterConfigManager,
-): Promise<void> {
+): Promise<number> {
   const subcommand = argv[0];
   const baseDir = stateManager.getBaseDir();
   const engine = new ScheduleEngine({ baseDir });
@@ -27,34 +27,45 @@ export async function cmdSchedule(
 
   switch (subcommand) {
     case "list":
-      return scheduleListWithArgs(engine, argv.slice(1));
+      scheduleListWithArgs(engine, argv.slice(1));
+      return 0;
     case "show":
     case "get":
-      return scheduleShow(engine, argv.slice(1));
+      scheduleShow(engine, argv.slice(1));
+      return 0;
     case "add":
       return await scheduleAdd(engine, argv.slice(1));
     case "edit":
     case "update":
-      return await scheduleEdit(engine, argv.slice(1));
+      await scheduleEdit(engine, argv.slice(1));
+      return 0;
     case "pause":
     case "disable":
-      return await scheduleSetEnabled(engine, argv.slice(1), false);
+      await scheduleSetEnabled(engine, argv.slice(1), false);
+      return 0;
     case "resume":
     case "enable":
-      return await scheduleSetEnabled(engine, argv.slice(1), true);
+      await scheduleSetEnabled(engine, argv.slice(1), true);
+      return 0;
     case "run":
     case "run-now":
-      return await scheduleRunNow(stateManager, characterConfigManager, engine, argv.slice(1));
+      await scheduleRunNow(stateManager, characterConfigManager, engine, argv.slice(1));
+      return 0;
     case "history":
-      return await scheduleHistory(engine, argv.slice(1));
+      await scheduleHistory(engine, argv.slice(1));
+      return 0;
     case "cost":
-      return await scheduleCost(engine, argv.slice(1));
+      await scheduleCost(engine, argv.slice(1));
+      return 0;
     case "remove":
-      return await scheduleRemove(engine, argv.slice(1));
+      await scheduleRemove(engine, argv.slice(1));
+      return 0;
     case "presets":
-      return schedulePresetList();
+      schedulePresetList();
+      return 0;
     case "suggestions":
-      return await scheduleSuggestions(baseDir, engine, argv.slice(1));
+      await scheduleSuggestions(baseDir, engine, argv.slice(1));
+      return 0;
     default:
       console.log("Usage: pulseed schedule <list|show|add|edit|pause|resume|run|history|cost|remove|presets|suggestions>");
       console.log("  list [--all]                      List schedule entries (internal wait schedules hidden by default)");
@@ -69,6 +80,7 @@ export async function cmdSchedule(
       console.log("  remove <id>                       Remove a schedule entry");
       console.log("  presets                           List reusable schedule presets");
       console.log("  suggestions <list|apply|reject|dismiss>  Review dream-generated suggestions");
+      return 1;
   }
 }
 
@@ -140,12 +152,16 @@ async function scheduleSetEnabled(engine: ScheduleEngine, argv: string[], enable
   console.log(`${enabled ? "Resumed" : "Paused"} schedule entry: ${updated.id} (${updated.name})`);
 }
 
-function resolveOptionalTrigger(values: { cron?: string; interval?: string }): ScheduleTriggerInput | undefined {
+function parseScheduleAddInteger(value: unknown, label: string): number {
+  return parsePositiveInteger(typeof value === "string" ? value : undefined, label);
+}
+
+function resolveOptionalTrigger(values: { cron?: string; interval?: unknown }): ScheduleTriggerInput | undefined {
   if (values.cron) {
     return { type: "cron", expression: values.cron, timezone: "UTC" };
   }
-  if (values.interval) {
-    return { type: "interval", seconds: parseInt(values.interval, 10), jitter_factor: 0 };
+  if (values.interval !== undefined) {
+    return { type: "interval", seconds: parseScheduleAddInteger(values.interval, "--interval"), jitter_factor: 0 };
   }
   return undefined;
 }
@@ -154,7 +170,7 @@ function buildPresetInput(values: Record<string, unknown>): SchedulePresetInput 
   const preset = String(values.preset ?? "");
   const trigger = resolveOptionalTrigger({
     cron: typeof values.cron === "string" ? values.cron : undefined,
-    interval: typeof values.interval === "string" ? values.interval : undefined,
+    interval: values.interval,
   });
   const common = {
     preset,
@@ -200,7 +216,7 @@ function buildPresetInput(values: Record<string, unknown>): SchedulePresetInput 
           ? parseFloat(values["threshold-value"] as string)
           : undefined,
         baseline_window: typeof values["baseline-window"] === "string"
-          ? parseInt(values["baseline-window"] as string, 10)
+          ? parseScheduleAddInteger(values["baseline-window"], "--baseline-window")
           : 5,
         llm_on_change: values["llm-on-change"] !== false,
         llm_prompt_template: typeof values["llm-prompt-template"] === "string"
@@ -212,77 +228,93 @@ function buildPresetInput(values: Record<string, unknown>): SchedulePresetInput 
   }
 }
 
-async function scheduleAdd(engine: ScheduleEngine, argv: string[]): Promise<void> {
-  const { values } = parseArgs({
-    args: argv,
-    options: {
-      name: { type: "string" },
-      preset: { type: "string" },
-      type: { type: "string", default: "http" },
-      url: { type: "string" },
-      host: { type: "string" },
-      port: { type: "string" },
-      pid: { type: "string" },
-      path: { type: "string" },
-      command: { type: "string" },
-      cron: { type: "string" },
-      interval: { type: "string" },
-      threshold: { type: "string", default: "3" },
-      "data-source-id": { type: "string" },
-      "detector-mode": { type: "string" },
-      "threshold-value": { type: "string" },
-      "baseline-window": { type: "string" },
-      "probe-dimension": { type: "string" },
-      "llm-on-change": { type: "boolean", default: true },
-      "llm-prompt-template": { type: "string" },
-      "context-source": { type: "string", multiple: true },
-    },
-    strict: false,
-  });
-
-  if (values.preset) {
-    const presetInput = buildPresetInput(values);
-    const entry = await engine.addEntry(buildSchedulePresetEntry(presetInput));
-    console.log(`Added preset schedule entry: ${entry.id} (${entry.name})`);
-    return;
+async function scheduleAdd(engine: ScheduleEngine, argv: string[]): Promise<number> {
+  let values: ReturnType<typeof parseArgs>["values"];
+  try {
+    ({ values } = parseArgs({
+      args: argv,
+      options: {
+        name: { type: "string" },
+        preset: { type: "string" },
+        type: { type: "string", default: "http" },
+        url: { type: "string" },
+        host: { type: "string" },
+        port: { type: "string" },
+        pid: { type: "string" },
+        path: { type: "string" },
+        command: { type: "string" },
+        cron: { type: "string" },
+        interval: { type: "string" },
+        threshold: { type: "string", default: "3" },
+        "data-source-id": { type: "string" },
+        "detector-mode": { type: "string" },
+        "threshold-value": { type: "string" },
+        "baseline-window": { type: "string" },
+        "probe-dimension": { type: "string" },
+        "llm-on-change": { type: "boolean", default: true },
+        "llm-prompt-template": { type: "string" },
+        "context-source": { type: "string", multiple: true },
+      },
+      strict: false,
+    }));
+  } catch (err) {
+    console.error(`Error: ${(err as Error).message}`);
+    return 1;
   }
 
-  if (!values.name) {
-    console.error("Error: --name is required");
-    return;
+  try {
+    if (values.preset) {
+      const presetInput = buildPresetInput(values);
+      const entry = await engine.addEntry(buildSchedulePresetEntry(presetInput));
+      console.log(`Added preset schedule entry: ${entry.id} (${entry.name})`);
+      return 0;
+    }
+
+    if (!values.name) {
+      console.error("Error: --name is required");
+      return 1;
+    }
+
+    const checkType = values.type as "http" | "tcp" | "process" | "disk" | "custom";
+    const checkConfig: Record<string, unknown> = {};
+    if (values.url) checkConfig.url = values.url;
+    if (values.host) checkConfig.host = values.host;
+    if (values.port !== undefined) checkConfig.port = parseScheduleAddInteger(values.port, "--port");
+    if (values.pid !== undefined) checkConfig.pid = parseScheduleAddInteger(values.pid, "--pid");
+    if (values.path) checkConfig.path = values.path;
+    if (values.command) checkConfig.command = values.command;
+
+    const trigger = values.cron
+      ? { type: "cron" as const, expression: values.cron as string, timezone: "UTC" }
+      : {
+        type: "interval" as const,
+        seconds: values.interval !== undefined ? parseScheduleAddInteger(values.interval, "--interval") : 60,
+        jitter_factor: 0,
+      };
+
+    const entry = await engine.addEntry({
+      name: values.name as string,
+      layer: "heartbeat",
+      trigger,
+      enabled: true,
+      metadata: {
+        source: "manual",
+        dependency_hints: [],
+      },
+      heartbeat: {
+        check_type: checkType,
+        check_config: checkConfig,
+        failure_threshold: parseScheduleAddInteger(values.threshold, "--threshold"),
+        timeout_ms: 5000,
+      },
+    });
+
+    console.log(`Added schedule entry: ${entry.id} (${entry.name})`);
+    return 0;
+  } catch (err) {
+    console.error(`Error: ${(err as Error).message}`);
+    return 1;
   }
-
-  const checkType = values.type as "http" | "tcp" | "process" | "disk" | "custom";
-  const checkConfig: Record<string, unknown> = {};
-  if (values.url) checkConfig.url = values.url;
-  if (values.host) checkConfig.host = values.host;
-  if (values.port) checkConfig.port = parseInt(values.port as string, 10);
-  if (values.pid) checkConfig.pid = parseInt(values.pid as string, 10);
-  if (values.path) checkConfig.path = values.path;
-  if (values.command) checkConfig.command = values.command;
-
-  const trigger = values.cron
-    ? { type: "cron" as const, expression: values.cron as string, timezone: "UTC" }
-    : { type: "interval" as const, seconds: parseInt(values.interval as string || "60", 10), jitter_factor: 0 };
-
-  const entry = await engine.addEntry({
-    name: values.name as string,
-    layer: "heartbeat",
-    trigger,
-    enabled: true,
-    metadata: {
-      source: "manual",
-      dependency_hints: [],
-    },
-    heartbeat: {
-      check_type: checkType,
-      check_config: checkConfig,
-      failure_threshold: parseInt(values.threshold as string, 10),
-      timeout_ms: 5000,
-    },
-  });
-
-  console.log(`Added schedule entry: ${entry.id} (${entry.name})`);
 }
 
 async function scheduleRemove(engine: ScheduleEngine, argv: string[]): Promise<void> {
