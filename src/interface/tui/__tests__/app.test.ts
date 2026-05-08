@@ -129,7 +129,7 @@ function createDaemonClientMock() {
 function createStateManagerMock() {
   return {
     listGoalIds: vi.fn(async () => [] as string[]),
-    loadGoal: vi.fn(async () => null),
+    loadGoal: vi.fn(async (_id: string) => null),
     getBaseDir: vi.fn(() => "/tmp/pulseed-tui-test"),
     writeRaw: vi.fn(async () => undefined),
     readRaw: vi.fn(async () => null),
@@ -1443,6 +1443,120 @@ describe("daemon-mode chat routing", () => {
 
     expect(chatRunner.execute).toHaveBeenCalledWith("/permissions read-only", "~/workspace");
     expect(daemonClient.chat).not.toHaveBeenCalled();
+
+    screen.unmount();
+  });
+
+  it("resolves daemon-mode /start numeric arguments through runnable goal indexes", async () => {
+    const daemonClient = createDaemonClientMock();
+    const stateManager = createStateManagerMock();
+    const chatRunner = createChatRunnerMock();
+    const goals = [
+      { id: "goal-alpha", title: "Improve alpha routing", status: "active" },
+      { id: "goal-beta", title: "Improve beta routing", status: "active" },
+    ];
+    vi.mocked(stateManager.listGoalIds).mockResolvedValue(goals.map((goal) => goal.id));
+    vi.mocked(stateManager.loadGoal).mockImplementation(async (id) => (goals.find((goal) => goal.id === id) ?? null) as never);
+
+    const screen = render(React.createElement(App, {
+      daemonClient: daemonClient as unknown as DaemonClient,
+      stateManager: stateManager as unknown as StateManager,
+      chatRunner: chatRunner as unknown as TuiChatSurface,
+      noFlicker: false,
+      controlStream: process.stdout,
+      cwd: "~/workspace",
+      gitBranch: "main",
+      providerName: "claude",
+    }), {
+      patchConsole: false,
+      stdout: process.stdout,
+      stderr: process.stderr,
+    });
+
+    await flush();
+    expect(testState.lastChatProps).not.toBeNull();
+
+    await testState.lastChatProps!.onSubmit("  /start 1  ");
+    await flush();
+
+    expect(daemonClient.startGoal).toHaveBeenCalledWith("goal-alpha");
+    expect(testState.lastChatMessages.some((message) => message.text.includes("Improve alpha routing"))).toBe(true);
+
+    screen.unmount();
+  });
+
+  it("preserves daemon-mode /start exact goal IDs while routing slash commands case-insensitively", async () => {
+    const daemonClient = createDaemonClientMock();
+    const stateManager = createStateManagerMock();
+    const chatRunner = createChatRunnerMock();
+    const goals = [
+      { id: "Goal-ABC", title: "Improve exact ID fallback", status: "active" },
+      { id: "goal-beta", title: "Improve beta routing", status: "active" },
+    ];
+    vi.mocked(stateManager.listGoalIds).mockResolvedValue(goals.map((goal) => goal.id));
+    vi.mocked(stateManager.loadGoal).mockImplementation(async (id) => (goals.find((goal) => goal.id === id) ?? null) as never);
+
+    const screen = render(React.createElement(App, {
+      daemonClient: daemonClient as unknown as DaemonClient,
+      stateManager: stateManager as unknown as StateManager,
+      chatRunner: chatRunner as unknown as TuiChatSurface,
+      noFlicker: false,
+      controlStream: process.stdout,
+      cwd: "~/workspace",
+      gitBranch: "main",
+      providerName: "claude",
+    }), {
+      patchConsole: false,
+      stdout: process.stdout,
+      stderr: process.stderr,
+    });
+
+    await flush();
+    expect(testState.lastChatProps).not.toBeNull();
+
+    await testState.lastChatProps!.onSubmit("/START Goal-ABC");
+    await flush();
+
+    expect(daemonClient.startGoal).toHaveBeenCalledWith("Goal-ABC");
+    expect(testState.lastChatMessages.some((message) => message.text.includes("Improve exact ID fallback"))).toBe(true);
+
+    screen.unmount();
+  });
+
+  it("does not partially parse malformed daemon-mode /start indexes", async () => {
+    const daemonClient = createDaemonClientMock();
+    const stateManager = createStateManagerMock();
+    const chatRunner = createChatRunnerMock();
+    const goals = [
+      { id: "goal-alpha", title: "Improve alpha routing", status: "active" },
+      { id: "goal-beta", title: "Improve beta routing", status: "active" },
+    ];
+    vi.mocked(stateManager.listGoalIds).mockResolvedValue(goals.map((goal) => goal.id));
+    vi.mocked(stateManager.loadGoal).mockImplementation(async (id) => (goals.find((goal) => goal.id === id) ?? null) as never);
+
+    const screen = render(React.createElement(App, {
+      daemonClient: daemonClient as unknown as DaemonClient,
+      stateManager: stateManager as unknown as StateManager,
+      chatRunner: chatRunner as unknown as TuiChatSurface,
+      noFlicker: false,
+      controlStream: process.stdout,
+      cwd: "~/workspace",
+      gitBranch: "main",
+      providerName: "claude",
+    }), {
+      patchConsole: false,
+      stdout: process.stdout,
+      stderr: process.stderr,
+    });
+
+    await flush();
+    expect(testState.lastChatProps).not.toBeNull();
+
+    await testState.lastChatProps!.onSubmit("/start 1abc");
+    await flush();
+
+    expect(daemonClient.startGoal).not.toHaveBeenCalled();
+    expect(testState.lastChatMessages.some((message) => message.text.includes('No goal matching "1abc"'))).toBe(true);
 
     screen.unmount();
   });

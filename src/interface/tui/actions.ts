@@ -22,6 +22,43 @@ export interface ActionResult {
   toggleDashboard?: "toggle"; // signal to toggle the dashboard overlay
 }
 
+export interface RunnableGoalOption {
+  id: string;
+  title: string;
+}
+
+const START_INDEX_TOKEN = /^[1-9][0-9]*$/;
+
+function parseStartGoalIndex(value: string): number | null {
+  const normalized = value.trim();
+  if (!START_INDEX_TOKEN.test(normalized)) return null;
+  const parsed = Number(normalized);
+  return Number.isSafeInteger(parsed) ? parsed : null;
+}
+
+export async function listRunnableStartGoals(stateManager: StateManager): Promise<RunnableGoalOption[]> {
+  const ids = await stateManager.listGoalIds();
+  const runnableGoals: RunnableGoalOption[] = [];
+  for (const id of ids) {
+    const goal = await stateManager.loadGoal(id);
+    if (goal && (goal.status === "active" || goal.status === "waiting")) {
+      runnableGoals.push({ id, title: goal.title ?? id });
+    }
+  }
+  return runnableGoals;
+}
+
+export function selectRunnableStartGoal(
+  runnableGoals: RunnableGoalOption[],
+  goalArg: string
+): RunnableGoalOption | undefined {
+  const num = parseStartGoalIndex(goalArg);
+  if (num !== null && num <= runnableGoals.length) {
+    return runnableGoals[num - 1];
+  }
+  return runnableGoals.find((g) => g.id === goalArg);
+}
+
 // ─── ActionHandler ───
 
 /**
@@ -79,15 +116,7 @@ export class ActionHandler {
       return { messages: [`Starting loop: ${label}`], startLoop: { goalId: explicitGoalId } };
     }
 
-    // Load all runnable goals
-    const ids = await this.deps.stateManager.listGoalIds();
-    const runnableGoals: Array<{ id: string; title: string }> = [];
-    for (const id of ids) {
-      const goal = await this.deps.stateManager.loadGoal(id);
-      if (goal && (goal.status === "active" || goal.status === "waiting")) {
-        runnableGoals.push({ id, title: goal.title ?? id });
-      }
-    }
+    const runnableGoals = await listRunnableStartGoals(this.deps.stateManager);
 
     if (runnableGoals.length === 0) {
       return {
@@ -100,17 +129,7 @@ export class ActionHandler {
 
     // If a goal argument was provided, match by number (1-indexed) or exact ID.
     if (goalArg) {
-      const num = parseInt(goalArg, 10);
-      let matched: { id: string; title: string } | undefined;
-
-      if (!isNaN(num) && num >= 1 && num <= runnableGoals.length) {
-        matched = runnableGoals[num - 1];
-      } else {
-        const exactId = runnableGoals.find((g) => g.id === goalArg);
-        if (exactId) {
-          matched = exactId;
-        }
-      }
+      const matched = selectRunnableStartGoal(runnableGoals, goalArg);
 
       if (!matched) {
         const list = runnableGoals.map((g, i) => `  ${i + 1}. ${g.title} (ID: ${g.id})`).join("\n");

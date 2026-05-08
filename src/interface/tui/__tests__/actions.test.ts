@@ -236,6 +236,26 @@ describe("ActionHandler — handle()", () => {
         raw: "/start 1",
       })).resolves.toMatchObject({ startLoop: { goalId: "goal-alpha" } });
     });
+
+    it("does not partially parse malformed list numbers", async () => {
+      const goals = [
+        makeGoal({ id: "goal-alpha", title: "Improve alpha routing", status: "active" }),
+        makeGoal({ id: "goal-beta", title: "Improve beta routing", status: "active" }),
+      ];
+      const deps = makeDeps();
+      vi.mocked(deps.stateManager.listGoalIds).mockResolvedValue(goals.map((goal) => goal.id));
+      vi.mocked(deps.stateManager.loadGoal).mockImplementation(async (id) => goals.find((goal) => goal.id === id) ?? null);
+
+      const handler = new ActionHandler(deps);
+      const result = await handler.handle({
+        intent: "loop_start",
+        params: { goalArg: "1abc" },
+        raw: "/start 1abc",
+      });
+
+      expect(result.startLoop).toBeUndefined();
+      expect(result.messages.join("\n")).toContain('No goal matching "1abc"');
+    });
   });
 
   describe("status intent", () => {
