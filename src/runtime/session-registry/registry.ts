@@ -552,8 +552,10 @@ export class RuntimeSessionRegistry {
     const byId = new Map(backgroundRuns.map((run) => [run.id, run]));
     const sessionIds = new Set(sessions.map((session) => session.id));
     for (const run of ledgerRuns) {
-      const merged = mergeLedgerRunWithProjection(run, byId.get(run.id));
+      const projected = byId.get(run.id);
+      const merged = mergeLedgerRunWithProjection(run, projected);
       byId.set(run.id, merged);
+      pruneSupersededProjectedSession(sessions, sessionIds, byId, projected, merged);
       if (merged.kind === "coreloop_run" && merged.child_session_id && !sessionIds.has(merged.child_session_id)) {
         sessions.push(coreLoopSessionFromLedgerRun(merged));
         sessionIds.add(merged.child_session_id);
@@ -651,6 +653,31 @@ export class RuntimeSessionRegistry {
     }
     return "unknown";
   }
+}
+
+function pruneSupersededProjectedSession(
+  sessions: RuntimeSession[],
+  sessionIds: Set<string>,
+  backgroundRunsById: Map<string, BackgroundRun>,
+  projected: BackgroundRun | undefined,
+  merged: BackgroundRun,
+): void {
+  if (!projected || projected.kind !== "coreloop_run" || merged.kind !== "coreloop_run") return;
+  const staleSessionId = projected.child_session_id;
+  const replacementSessionId = merged.child_session_id;
+  if (!staleSessionId || !replacementSessionId || staleSessionId === replacementSessionId) return;
+  const stillReferenced = [...backgroundRunsById.values()].some((run) =>
+    run.id !== merged.id && run.child_session_id === staleSessionId
+  );
+  if (stillReferenced) return;
+  const index = sessions.findIndex((session) =>
+    session.id === staleSessionId
+    && session.kind === "coreloop"
+    && session.source_refs.some((ref) => ref.kind === "supervisor_state")
+  );
+  if (index < 0) return;
+  sessions.splice(index, 1);
+  sessionIds.delete(staleSessionId);
 }
 
 export function createRuntimeSessionRegistry(deps: RuntimeSessionRegistryDeps): RuntimeSessionRegistry {
