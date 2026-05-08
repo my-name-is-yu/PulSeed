@@ -557,7 +557,10 @@ function summaryIndexPath(canonicalPath: string): string {
 function summaryScopeFromPath(canonicalPath: string): RuntimeEvidenceSummary["scope"] {
   const basename = path.basename(canonicalPath, ".jsonl");
   const decoded = decodeURIComponent(basename);
-  return canonicalPath.includes(`${path.sep}runs${path.sep}`) ? { run_id: decoded } : { goal_id: decoded };
+  const scopeDirectory = path.basename(path.dirname(canonicalPath));
+  if (scopeDirectory === "runs") return { run_id: decoded };
+  if (scopeDirectory === "goals") return { goal_id: decoded };
+  throw new Error(`Cannot derive evidence summary scope from path: ${canonicalPath}`);
 }
 
 async function readReproducibilityManifests(

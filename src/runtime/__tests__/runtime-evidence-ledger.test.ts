@@ -338,6 +338,33 @@ describe("RuntimeEvidenceLedger", () => {
     expect(await fsp.readFile(ledger.goalPath("goal-index"), "utf8")).toContain("{not-json");
   });
 
+  it("derives goal summary scope from the evidence directory when the runtime root contains runs", async () => {
+    const nestedRuntimeRoot = path.join(runtimeRoot, "runs", "nested-runtime");
+    const goalId = "goal-root-runs-component";
+    const ledger = new RuntimeEvidenceLedger(nestedRuntimeRoot);
+    await ledger.append({
+      id: "root-runs-goal-entry",
+      occurred_at: "2026-04-30T00:00:00.000Z",
+      kind: "artifact",
+      scope: { goal_id: goalId },
+      artifacts: [{ label: "report", state_relative_path: "runs/root-component/report.md", kind: "report" }],
+      summary: "Goal evidence under a runtime root whose path contains runs.",
+      outcome: "continued",
+    });
+
+    const goalPath = ledger.goalPath(goalId);
+    expect(goalPath).toContain(`${path.sep}runs${path.sep}`);
+    const indexed = JSON.parse(await fsp.readFile(`${goalPath}.summary.json`, "utf8")) as {
+      summary: { scope: { goal_id?: string; run_id?: string } };
+    };
+    const summary = await new RuntimeEvidenceLedger(nestedRuntimeRoot).summarizeGoal(goalId);
+
+    expect(indexed.summary.scope).toEqual({ goal_id: goalId });
+    expect(indexed.summary.scope.run_id).toBeUndefined();
+    expect(summary.scope).toEqual({ goal_id: goalId });
+    expect(summary.total_entries).toBe(1);
+  });
+
   it("maintains summary indexes on append for new ledgers", async () => {
     const ledger = new RuntimeEvidenceLedger(runtimeRoot);
     await ledger.append({
