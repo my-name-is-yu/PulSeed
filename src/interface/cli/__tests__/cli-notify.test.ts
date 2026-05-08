@@ -157,6 +157,27 @@ describe("cmdNotify", () => {
     expect(raw.channels[0].smtp.port).toBe(465);
   });
 
+  it.each([
+    ["partial numeric token", "465abc"],
+    ["decimal value", "1.5"],
+    ["zero", "0"],
+  ])("add email rejects invalid smtp port: %s", async (_label, port) => {
+    const code = await cmdNotify([
+      "add",
+      "email",
+      "--address",
+      "user@example.com",
+      "--smtp-host",
+      "smtp.example.com",
+      "--smtp-port",
+      port,
+    ]);
+
+    expect(code).toBe(1);
+    expect(consoleErrSpy).toHaveBeenCalledWith("Error: --smtp-port must be a positive integer");
+    expect(fs.existsSync(path.join(tmpDir, "notification.json"))).toBe(false);
+  });
+
   // ─── list ───
 
   it("list shows channels in order", async () => {
@@ -304,6 +325,25 @@ describe("cmdNotify", () => {
     );
   });
 
+  it("remove rejects partial numeric index without removing a channel", async () => {
+    await cmdNotify([
+      "add",
+      "slack",
+      "--webhook-url",
+      "https://hooks.slack.com/services/AAA",
+    ]);
+
+    consoleErrSpy.mockClear();
+    const code = await cmdNotify(["remove", "0abc"]);
+
+    expect(code).toBe(1);
+    expect(consoleErrSpy).toHaveBeenCalledWith("Error: index must be a non-negative integer");
+    const raw = JSON.parse(
+      fs.readFileSync(path.join(tmpDir, "notification.json"), "utf-8")
+    );
+    expect(raw.channels).toHaveLength(1);
+  });
+
   it("remove without index argument returns error", async () => {
     const code = await cmdNotify(["remove"]);
     expect(code).toBe(1);
@@ -347,6 +387,25 @@ describe("cmdNotify", () => {
     const output = consoleSpy.mock.calls.map((c: unknown[]) => c[0] as string).join("\n");
     expect(output).toContain("https://my-server.com/hook");
     expect(output).not.toContain("https://hooks.slack.com/services/AAA");
+  });
+
+  it("test rejects partial numeric index without printing a payload", async () => {
+    await cmdNotify([
+      "add",
+      "slack",
+      "--webhook-url",
+      "https://hooks.slack.com/services/AAA",
+    ]);
+
+    consoleSpy.mockClear();
+    consoleErrSpy.mockClear();
+    const code = await cmdNotify(["test", "0abc"]);
+
+    expect(code).toBe(1);
+    expect(consoleErrSpy).toHaveBeenCalledWith("Error: index must be a non-negative integer");
+    expect(consoleSpy).not.toHaveBeenCalledWith(
+      expect.stringContaining("Test notification payload")
+    );
   });
 
   it("test with no channels shows 'No channels configured'", async () => {
