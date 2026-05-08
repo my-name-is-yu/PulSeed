@@ -55,13 +55,20 @@ export function resolveRuntimeTarget(input: ResolveRuntimeTargetInput): RuntimeT
   };
   const scoped = scopedConversationRuns(selectable, input.conversationId);
   const candidates = scoped.length > 0 ? scoped : selectable;
-  if (candidates.length === 0) {
+  if (selectable.length === 0) {
     return unknown(selector, selectable, "no active or attention-needed runtime runs are available");
   }
 
   switch (selector.reference) {
     case "current":
     case "mentioned":
+      if (input.conversationId && scoped.length === 0) {
+        return unknown(
+          selector,
+          selectable,
+          "no current runtime run is associated with this conversation; refusing to reuse another conversation's runtime run"
+        );
+      }
       if (candidates.length === 1) {
         return currentOrStale(candidates[0], input.operation, selector, candidates, "single current candidate resolved");
       }
