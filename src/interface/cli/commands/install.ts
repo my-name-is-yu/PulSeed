@@ -101,6 +101,18 @@ function escapeXml(s: string): string {
     .replace(/'/g, "&apos;");
 }
 
+export function parseInstallIntervalMs(raw: unknown): number {
+  const normalized = typeof raw === "string" ? raw.trim() : "";
+  if (!/^[0-9]+$/.test(normalized)) {
+    throw new Error("--interval must be a positive integer (milliseconds)");
+  }
+  const parsed = Number(normalized);
+  if (!Number.isSafeInteger(parsed) || parsed < 1) {
+    throw new Error("--interval must be a positive integer (milliseconds)");
+  }
+  return parsed;
+}
+
 export async function cmdInstall(args: string[]): Promise<number> {
   if (process.platform !== "darwin") {
     console.error("launchd is only supported on macOS");
@@ -126,11 +138,14 @@ export async function cmdInstall(args: string[]): Promise<number> {
 
   const goalIds = values.goal ?? [];
 
-  const intervalMs =
-    values.interval !== undefined ? parseInt(values.interval, 10) : undefined;
-  if (intervalMs !== undefined && (isNaN(intervalMs) || intervalMs <= 0)) {
-    console.error("--interval must be a positive integer (milliseconds)");
-    return 1;
+  let intervalMs: number | undefined;
+  if (values.interval !== undefined) {
+    try {
+      intervalMs = parseInstallIntervalMs(values.interval);
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+      return 1;
+    }
   }
 
   if (fs.existsSync(PLIST_PATH)) {

@@ -329,6 +329,25 @@ describe("cmdInstall", () => {
     logSpy.mockRestore();
   });
 
+  it.each([
+    ["partial numeric token", "10abc"],
+    ["decimal value", "1.5"],
+    ["zero", "0"],
+    ["missing value", undefined],
+  ])("returns 1 before launchd side effects when --interval is invalid: %s", async (_label, value) => {
+    Object.defineProperty(process, "platform", { value: "darwin", writable: true });
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const args = value === undefined ? ["--interval"] : ["--interval", value];
+    const code = await cmdInstall(args);
+
+    expect(code).toBe(1);
+    expect(errSpy).toHaveBeenCalledWith("--interval must be a positive integer (milliseconds)");
+    expect(fs.writeFileSync).not.toHaveBeenCalled();
+    expect(execFileNoThrow).not.toHaveBeenCalled();
+    errSpy.mockRestore();
+  });
+
   it("warns when plist already exists and overwrites", async () => {
     Object.defineProperty(process, "platform", { value: "darwin", writable: true });
     vi.mocked(fs.existsSync).mockReturnValue(true);
