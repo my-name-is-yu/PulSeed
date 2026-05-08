@@ -1134,6 +1134,63 @@ describe("PortfolioManager", () => {
       }
     });
 
+    it("does not satisfy artifact JSON conditions through partial array index tokens", async () => {
+      const tmpDir = makeTempDir();
+      try {
+        fs.mkdirSync(path.join(tmpDir, "artifacts"), { recursive: true });
+        fs.writeFileSync(
+          path.join(tmpDir, "artifacts", "metrics.json"),
+          JSON.stringify({ runs: [{ score: 0.1 }, { score: 0.92 }] })
+        );
+        const wait = makeWaitStrategy({
+          id: "ws1",
+          state: "active",
+          wait_until: new Date(Date.now() - 100_000).toISOString(),
+          gap_snapshot_at_start: 0.8,
+          primary_dimension: "quality",
+        });
+        const portfolio = makePortfolio([wait]);
+        (mockStrategyManager.getPortfolio as ReturnType<typeof vi.fn>).mockReturnValue(portfolio);
+        (mockStateManager.getBaseDir as ReturnType<typeof vi.fn>).mockReturnValue(tmpDir);
+        (mockStateManager.readRaw as ReturnType<typeof vi.fn>).mockImplementation((rawPath: string) => {
+          if (rawPath === "strategies/goal-1/wait-meta/ws1.json") {
+            return {
+              schema_version: 1,
+              wait_until: wait.wait_until,
+              conditions: [
+                { type: "artifact_json_value", path: "artifacts/metrics.json", json_pointer: "/runs/1junk/score", expected: 0.92 },
+              ],
+              resume_plan: { action: "complete_wait" },
+            };
+          }
+          if (rawPath === "capability_registry.json") {
+            return { capabilities: [], last_checked: new Date().toISOString() };
+          }
+          return { quality: 0.5 };
+        });
+
+        const result = await pm.handleWaitStrategyExpiry("goal-1", "ws1");
+
+        expect(result).toMatchObject({
+          status: "not_due",
+          strategy_id: "ws1",
+          details: "artifact value did not match: artifacts/metrics.json /runs/1junk/score",
+        });
+        expect(mockStrategyManager.updateState).not.toHaveBeenCalled();
+        expect(mockStateManager.writeRaw).toHaveBeenCalledWith(
+          "strategies/goal-1/wait-meta/ws1.json",
+          expect.objectContaining({
+            latest_observation: expect.objectContaining({
+              status: "stale",
+              resume_hint: "artifact value did not match: artifacts/metrics.json /runs/1junk/score",
+            }),
+          })
+        );
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+      }
+    });
+
     it("rejects wait condition artifact paths outside the state root", async () => {
       const tmpDir = makeTempDir();
       const outsideDir = makeTempDir();

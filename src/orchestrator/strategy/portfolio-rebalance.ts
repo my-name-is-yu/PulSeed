@@ -30,6 +30,7 @@ import {
 import { CapabilityRegistrySchema } from "../../base/types/capability.js";
 
 const DEFAULT_WAIT_REOBSERVE_MS = 5 * 60 * 1000;
+const JSON_POINTER_ARRAY_INDEX_TOKEN = /^[0-9]+$/;
 
 /**
  * Get the current gap value for a specific dimension of a goal.
@@ -863,8 +864,8 @@ function readJsonPointer(value: unknown, pointer: string): unknown {
   for (const part of parts) {
     if (current === null || current === undefined) return undefined;
     if (Array.isArray(current)) {
-      const index = Number.parseInt(part, 10);
-      current = Number.isInteger(index) ? current[index] : undefined;
+      const index = parseJsonPointerArrayIndex(part);
+      current = index !== null ? current[index] : undefined;
     } else if (typeof current === "object") {
       current = (current as Record<string, unknown>)[part];
     } else {
@@ -872,6 +873,12 @@ function readJsonPointer(value: unknown, pointer: string): unknown {
     }
   }
   return current;
+}
+
+function parseJsonPointerArrayIndex(part: string): number | null {
+  if (!JSON_POINTER_ARRAY_INDEX_TOKEN.test(part)) return null;
+  const index = Number(part);
+  return Number.isSafeInteger(index) ? index : null;
 }
 
 function jsonEqual(left: unknown, right: unknown): boolean {
