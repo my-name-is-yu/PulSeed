@@ -457,6 +457,29 @@ describe("getRateLimitRetryDelay", () => {
     expect(delay).toBeLessThanOrEqual(15000);
   });
 
+  it("ignores partial Retry-After seconds and falls back to configured backoff", () => {
+    const err = Object.assign(new Error("429"), {
+      status: 429,
+      headers: { "retry-after": "10abc" },
+    });
+    const delay = getRateLimitRetryDelay(err, 0);
+    const base = RATE_LIMIT_RETRY_DELAYS_MS[0]!;
+    expect(delay).toBeGreaterThanOrEqual(base * 0.5);
+    expect(delay).toBeLessThanOrEqual(base * 1.5);
+  });
+
+  it("ignores non-finite Retry-After seconds and returns a finite fallback delay", () => {
+    const err = Object.assign(new Error("429"), {
+      status: 429,
+      headers: { "retry-after": "Infinity" },
+    });
+    const delay = getRateLimitRetryDelay(err, 0);
+    const base = RATE_LIMIT_RETRY_DELAYS_MS[0]!;
+    expect(Number.isFinite(delay)).toBe(true);
+    expect(delay).toBeGreaterThanOrEqual(base * 0.5);
+    expect(delay).toBeLessThanOrEqual(base * 1.5);
+  });
+
   it("falls back to RATE_LIMIT_RETRY_DELAYS_MS when no Retry-After header", () => {
     const err = Object.assign(new Error("429"), { status: 429 });
     const delay = getRateLimitRetryDelay(err, 2);
