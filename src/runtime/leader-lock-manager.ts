@@ -2,7 +2,7 @@ import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { randomUUID } from "node:crypto";
 import { writeJsonFileAtomic, readJsonFileOrNull } from "../base/utils/json-io.js";
-import { parseProcessPid } from "../base/utils/process-pid.js";
+import { isProcessPidValue, parseProcessPid } from "../base/utils/process-pid.js";
 
 export interface LeaderLockRecord {
   owner_token: string;
@@ -104,7 +104,7 @@ function isLeaderLockRecord(value: unknown): value is LeaderLockRecord {
   const record = value as Partial<LeaderLockRecord>;
   return (
     typeof record.owner_token === "string" &&
-    typeof record.pid === "number" &&
+    isProcessPidValue(record.pid) &&
     typeof record.acquired_at === "number" &&
     typeof record.last_renewed_at === "number" &&
     typeof record.lease_until === "number"

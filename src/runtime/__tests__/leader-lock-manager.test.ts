@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import * as fs from "node:fs";
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
@@ -10,6 +10,7 @@ describe("LeaderLockManager", () => {
 
   afterEach(() => {
     if (tmpDir) cleanupTempDir(tmpDir);
+    vi.restoreAllMocks();
   });
 
   it("acquire writes a durable record and read returns it", async () => {
@@ -111,6 +112,31 @@ describe("LeaderLockManager", () => {
     expect(acquired).not.toBeNull();
     expect(acquired!.owner_token).toBe("leader-b");
     expect(await manager.read()).toEqual(acquired);
+  });
+
+  it("acquire ignores unsafe persisted leader pids before probing the process table", async () => {
+    tmpDir = makeTempDir();
+    const manager = new LeaderLockManager(tmpDir, 1_000);
+
+    const stalePath = path.join(tmpDir, "leader", "leader.json");
+    await fsp.mkdir(path.dirname(stalePath), { recursive: true });
+    await fsp.writeFile(
+      stalePath,
+      JSON.stringify({
+        owner_token: "unsafe-owner",
+        pid: Number.MAX_SAFE_INTEGER + 1,
+        acquired_at: 100,
+        last_renewed_at: 100,
+        lease_until: 10_000,
+      }),
+      "utf-8"
+    );
+    const killSpy = vi.spyOn(process, "kill");
+
+    const acquired = await manager.acquire({ now: 200, ownerToken: "leader-b" });
+    expect(acquired).not.toBeNull();
+    expect(acquired!.owner_token).toBe("leader-b");
+    expect(killSpy).not.toHaveBeenCalled();
   });
 
   it("acquire keeps an unexpired lock when the recorded process is alive", async () => {
