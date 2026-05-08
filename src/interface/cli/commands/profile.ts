@@ -24,6 +24,7 @@ import {
   type RelationshipProfileSensitivity,
   type RelationshipProfileSource,
 } from "../../../platform/profile/relationship-profile.js";
+import { parseExactFiniteNumber } from "./exact-number.js";
 
 function usage(): string {
   return `Usage:
@@ -271,8 +272,8 @@ export async function cmdProfile(stateManager: StateManager, argv: string[]): Pr
 
     let confidence: number | undefined;
     if (values.confidence !== undefined) {
-      confidence = Number(values.confidence);
-      if (!Number.isFinite(confidence) || confidence < 0 || confidence > 1) {
+      confidence = parseExactFiniteNumber(values.confidence) ?? undefined;
+      if (confidence === undefined || confidence < 0 || confidence > 1) {
         getCliLogger().error(`Error: --confidence must be a number between 0 and 1 (got: ${values.confidence})`);
         return 1;
       }

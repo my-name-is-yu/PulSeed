@@ -1732,6 +1732,49 @@ describe("profile command", () => {
     expect(JSON.parse(fs.readFileSync(path.join(tmpDir, "relationship-profile.json"), "utf-8")).items).toHaveLength(1);
   });
 
+  it("rejects broad JavaScript numeric forms for profile confidence", async () => {
+    const code = await runCLI(
+      "profile",
+      "update",
+      "--kind",
+      "preference",
+      "--key",
+      "user.preference.status",
+      "--value",
+      "Prefer concise status reports.",
+      "--scope",
+      "resident_behavior",
+      "--confidence",
+      "0x1"
+    );
+
+    expect(code).toBe(1);
+    expect(fs.existsSync(path.join(tmpDir, "relationship-profile.json"))).toBe(false);
+  });
+
+  it("accepts exact finite exponent confidence values", async () => {
+    const code = await runCLI(
+      "profile",
+      "update",
+      "--kind",
+      "preference",
+      "--key",
+      "user.preference.status",
+      "--value",
+      "Prefer concise status reports.",
+      "--scope",
+      "resident_behavior",
+      "--confidence",
+      "9e-1"
+    );
+
+    expect(code).toBe(0);
+    const profile = JSON.parse(fs.readFileSync(path.join(tmpDir, "relationship-profile.json"), "utf-8")) as {
+      items: Array<{ confidence: number }>;
+    };
+    expect(profile.items[0]?.confidence).toBe(0.9);
+  });
+
   it("supersedes stale profile values on update", async () => {
     await runCLI(
       "profile",
