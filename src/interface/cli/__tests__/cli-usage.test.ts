@@ -58,6 +58,39 @@ describe("CLI usage command", () => {
     expect(output).toContain("execution: 9");
   });
 
+  it("normalizes unsafe session usage counters before reporting", async () => {
+    await stateManager.writeRaw("chat/sessions/session-unsafe-usage.json", {
+      id: "session-unsafe-usage",
+      cwd: "/repo",
+      createdAt: new Date().toISOString(),
+      messages: [],
+      usage: {
+        totals: {
+          inputTokens: Number.MAX_SAFE_INTEGER + 1,
+          outputTokens: "4",
+          totalTokens: 1.5,
+        },
+        byPhase: {
+          execution: {
+            inputTokens: 2,
+            outputTokens: Number.MAX_SAFE_INTEGER,
+          },
+        },
+      },
+    });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    const code = await runCLI(tmpDir, "usage", "session", "session-unsafe-usage");
+
+    expect(code).toBe(0);
+    const output = logSpy.mock.calls.map((call) => call.join(" ")).join("\n");
+    expect(output).toContain("Session total tokens:  0");
+    expect(output).toContain("Session input tokens:  0");
+    expect(output).toContain("Session output tokens: 0");
+    expect(output).toContain(`execution: ${Number.MAX_SAFE_INTEGER}`);
+    expect(output).not.toContain(String(Number.MAX_SAFE_INTEGER + 1));
+  });
+
   it("reports goal usage totals from task ledgers and accepts daemon alias", async () => {
     await stateManager.writeRaw("tasks/goal-usage/ledger/task-1.json", {
       task_id: "task-1",
@@ -84,6 +117,32 @@ describe("CLI usage command", () => {
     expect(output).toContain("Usage summary (daemon scope)");
     expect(output).toContain("Goal: goal-usage");
     expect(output).toContain("Total tokens: 77");
+  });
+
+  it("caps accumulated goal usage totals at the maximum safe integer", async () => {
+    await stateManager.writeRaw("tasks/goal-overflow/ledger/task-1.json", {
+      task_id: "task-1",
+      goal_id: "goal-overflow",
+      summary: { latest_event_type: "succeeded", tokens_used: Number.MAX_SAFE_INTEGER },
+    });
+    await stateManager.writeRaw("tasks/goal-overflow/ledger/task-2.json", {
+      task_id: "task-2",
+      goal_id: "goal-overflow",
+      summary: { latest_event_type: "failed", tokens_used: 1 },
+    });
+    await stateManager.writeRaw("tasks/goal-overflow/ledger/task-3.json", {
+      task_id: "task-3",
+      goal_id: "goal-overflow",
+      summary: { latest_event_type: "succeeded", tokens_used: 1.5 },
+    });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    const code = await runCLI(tmpDir, "usage", "goal", "goal-overflow");
+
+    expect(code).toBe(0);
+    const output = logSpy.mock.calls.map((call) => call.join(" ")).join("\n");
+    expect(output).toContain(`Total tokens: ${Number.MAX_SAFE_INTEGER}`);
+    expect(output).toContain("Terminal tasks: 3");
   });
 
   it("reports schedule usage for a requested period", async () => {
@@ -114,6 +173,39 @@ describe("CLI usage command", () => {
     expect(output).toContain("Usage summary (schedule, 24h)");
     expect(output).toContain("Runs: 1");
     expect(output).toContain("Total tokens: 88");
+  });
+
+  it("caps accumulated schedule usage totals at the maximum safe integer", async () => {
+    const now = new Date().toISOString();
+    await stateManager.writeRaw("schedule-history.json", [
+      {
+        id: "record-1",
+        status: "ok",
+        finished_at: now,
+        tokens_used: Number.MAX_SAFE_INTEGER,
+      },
+      {
+        id: "record-2",
+        status: "ok",
+        finished_at: now,
+        tokens_used: 1,
+      },
+      {
+        id: "record-3",
+        status: "ok",
+        finished_at: now,
+        tokens_used: Number.MAX_SAFE_INTEGER + 1,
+      },
+    ]);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    const code = await runCLI(tmpDir, "usage", "schedule", "--period", "24h");
+
+    expect(code).toBe(0);
+    const output = logSpy.mock.calls.map((call) => call.join(" ")).join("\n");
+    expect(output).toContain("Runs: 3");
+    expect(output).toContain(`Total tokens: ${Number.MAX_SAFE_INTEGER}`);
+    expect(output).not.toContain(String(Number.MAX_SAFE_INTEGER + 1));
   });
 
   it("returns 1 for an unknown usage scope", async () => {

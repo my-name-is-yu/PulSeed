@@ -1,38 +1,30 @@
 import type { LLMResponse } from "../../base/llm/llm-client.js";
 import type { ChatSessionUsage, ChatUsageCounter } from "./chat-history.js";
-
-const MAX_TOKEN_COUNT = Number.MAX_SAFE_INTEGER;
-
-function parseTokenCount(value: unknown): number | null {
-  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
-}
+import {
+  addUsageCounter as addSharedUsageCounter,
+  addUsageTokenCounts,
+  formatUsageCounter as formatSharedUsageCounter,
+  hasUsage as hasSharedUsage,
+  normalizeUsageCounter as normalizeSharedUsageCounter,
+  parseUsageTokenCount,
+  sumUsageCounters as sumSharedUsageCounters,
+  zeroUsageCounter as zeroSharedUsageCounter,
+} from "../usage-counter.js";
 
 export function zeroUsageCounter(): ChatUsageCounter {
-  return { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
+  return zeroSharedUsageCounter() as ChatUsageCounter;
 }
 
 export function addTokenCounts(left: number, right: number): number {
-  const normalizedLeft = parseTokenCount(left) ?? 0;
-  const normalizedRight = parseTokenCount(right) ?? 0;
-  const sum = normalizedLeft + normalizedRight;
-  return Number.isSafeInteger(sum) ? sum : MAX_TOKEN_COUNT;
+  return addUsageTokenCounts(left, right);
 }
 
 export function normalizeUsageCounter(usage: ChatUsageCounter): ChatUsageCounter {
-  const inputTokens = parseTokenCount(usage.inputTokens) ?? 0;
-  const outputTokens = parseTokenCount(usage.outputTokens) ?? 0;
-  const totalTokens = parseTokenCount(usage.totalTokens) ?? addTokenCounts(inputTokens, outputTokens);
-  return { inputTokens, outputTokens, totalTokens };
+  return normalizeSharedUsageCounter(usage) as ChatUsageCounter;
 }
 
 export function sumUsageCounters(base: ChatUsageCounter | undefined, delta: ChatUsageCounter): ChatUsageCounter {
-  const normalizedBase = normalizeUsageCounter(base ?? zeroUsageCounter());
-  const normalizedDelta = normalizeUsageCounter(delta);
-  return {
-    inputTokens: addTokenCounts(normalizedBase.inputTokens, normalizedDelta.inputTokens),
-    outputTokens: addTokenCounts(normalizedBase.outputTokens, normalizedDelta.outputTokens),
-    totalTokens: addTokenCounts(normalizedBase.totalTokens, normalizedDelta.totalTokens),
-  };
+  return sumSharedUsageCounters(base, delta) as ChatUsageCounter;
 }
 
 export function normalizeSessionUsage(usage: ChatSessionUsage): ChatSessionUsage {
@@ -49,32 +41,19 @@ export function normalizeSessionUsage(usage: ChatSessionUsage): ChatSessionUsage
 }
 
 export function addUsageCounter(target: ChatUsageCounter, delta: ChatUsageCounter): void {
-  const next = sumUsageCounters(target, delta);
-  target.inputTokens = next.inputTokens;
-  target.outputTokens = next.outputTokens;
-  target.totalTokens = next.totalTokens;
+  addSharedUsageCounter(target, delta);
 }
 
 export function usageFromLLMResponse(response: LLMResponse): ChatUsageCounter {
-  const inputTokens = parseTokenCount(response.usage?.input_tokens) ?? 0;
-  const outputTokens = parseTokenCount(response.usage?.output_tokens) ?? 0;
-  return {
-    inputTokens,
-    outputTokens,
-    totalTokens: addTokenCounts(inputTokens, outputTokens),
-  };
+  const inputTokens = parseUsageTokenCount(response.usage?.input_tokens) ?? 0;
+  const outputTokens = parseUsageTokenCount(response.usage?.output_tokens) ?? 0;
+  return { inputTokens, outputTokens, totalTokens: addTokenCounts(inputTokens, outputTokens) };
 }
 
 export function hasUsage(usage: ChatUsageCounter): boolean {
-  const normalized = normalizeUsageCounter(usage);
-  return normalized.totalTokens > 0 || normalized.inputTokens > 0 || normalized.outputTokens > 0;
+  return hasSharedUsage(usage);
 }
 
 export function formatUsageCounter(prefix: string, usage: ChatUsageCounter): string[] {
-  const normalized = normalizeUsageCounter(usage);
-  return [
-    `${prefix} input tokens:  ${normalized.inputTokens}`,
-    `${prefix} output tokens: ${normalized.outputTokens}`,
-    `${prefix} total tokens:  ${normalized.totalTokens}`,
-  ];
+  return formatSharedUsageCounter(prefix, usage);
 }
