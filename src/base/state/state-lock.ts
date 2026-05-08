@@ -1,5 +1,6 @@
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
+import { parseProcessPid } from "../utils/process-pid.js";
 
 /**
  * Per-goal advisory locking using lockfiles.
@@ -76,8 +77,8 @@ async function tryAcquire(lockDir: string, checkStale = false): Promise<boolean>
 async function clearStaleLock(lockDir: string): Promise<void> {
   try {
     const pidStr = await fsp.readFile(pidFilePath(lockDir), "utf-8");
-    const pid = parseInt(pidStr.trim(), 10);
-    if (!isNaN(pid) && !(await isProcessAlive(pid))) {
+    const pid = parseProcessPid(pidStr);
+    if (pid !== null && !(await isProcessAlive(pid))) {
       await fsp.rm(lockDir, { recursive: true, force: true });
     }
   } catch {

@@ -27,6 +27,19 @@ describe("LeaderLockManager", () => {
     expect(fs.existsSync(path.join(tmpDir, "leader", "leader.json"))).toBe(true);
   });
 
+  it("clears a stale mutex with a malformed pid prefixing a live process id", async () => {
+    tmpDir = makeTempDir();
+    const manager = new LeaderLockManager(tmpDir, 1_000);
+    const mutexPath = path.join(tmpDir, "leader", "leader.json.lock");
+    await fsp.mkdir(mutexPath, { recursive: true });
+    await fsp.writeFile(path.join(mutexPath, "pid"), `${process.pid}abc`, "utf-8");
+
+    const acquired = await manager.acquire({ now: 1000, ownerToken: "leader-a" });
+
+    expect(acquired).not.toBeNull();
+    expect(acquired!.owner_token).toBe("leader-a");
+  });
+
   it("renew extends the lease only for the current owner", async () => {
     tmpDir = makeTempDir();
     const manager = new LeaderLockManager(tmpDir, 1_000);
