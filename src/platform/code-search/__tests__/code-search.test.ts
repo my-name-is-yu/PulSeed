@@ -140,6 +140,33 @@ describe("code search platform", () => {
     expect(planned.task).toContain("セキュリティっぽい");
   });
 
+  it("keeps unsafe stacktrace positions out of structured code-search context", () => {
+    const planned = planCodeSearchTask({
+      task: "fix rounded stacktrace position",
+      stacktrace: "at run (src/service.ts:9007199254740993:12)",
+      cwd: root,
+    });
+
+    expect(planned.stackFrames).toEqual([{
+      file: "src/service.ts",
+      line: undefined,
+      column: 12,
+      symbol: "run",
+    }]);
+  });
+
+  it("keeps unsafe verification line positions out of structured diagnostics", () => {
+    const signal = parseVerificationSignal(
+      "src/service.ts:9007199254740993:10 - error TS2322: Type 'string' is not assignable to type 'number'."
+    );
+
+    expect(signal).toMatchObject({
+      kind: "type_error",
+      file: "src/service.ts",
+      line: undefined,
+    });
+  });
+
   it("excludes hidden worktree directories before applying the file cap", async () => {
     await fsp.mkdir(path.join(root, ".claude", "worktrees", "old", "src"), { recursive: true });
     for (let i = 0; i < 40; i += 1) {
