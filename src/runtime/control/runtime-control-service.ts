@@ -153,6 +153,19 @@ type ProjectedGlobalControls = {
   activeControls: CompanionWideControl[];
 };
 
+type QuietWorkStopResult = {
+  itemRef: string;
+  operationId: string;
+  state: RuntimeControlOperationState;
+  ok: boolean;
+};
+
+type QuietWorkStopSummary = {
+  ok: boolean;
+  message: string;
+  results: QuietWorkStopResult[];
+};
+
 const DEACTIVATES_COMPANION_CONTROL: Partial<Record<CompanionWideControl, CompanionWideControl>> = {
   leave_quiet_mode: "enter_quiet_mode",
   resume_proactivity: "pause_proactivity",
@@ -335,8 +348,9 @@ export class RuntimeControlService {
   private async handleCompanionWideControl(request: RuntimeControlRequest): Promise<RuntimeControlResult> {
     const runtimeItemsBeforeControl = await this.collectRuntimeItems(this.nowIso());
     const initial = await this.createInitialOperation(request);
+    const control = request.intent.kind as CompanionWideControl;
     const affectedRefs = affectedRuntimeRefsForControl(
-      request.intent.kind as CompanionWideControl,
+      control,
       runtimeItemsBeforeControl,
     );
 
@@ -352,11 +366,122 @@ export class RuntimeControlService {
       return this.toResult(inspected);
     }
 
+    const quietWorkStop = control === "stop_all_quiet_work"
+      ? await this.stopActiveQuietWork(initial, runtimeItemsBeforeControl, request)
+      : null;
     const verified = await this.update(initial, "verified", {
-      ok: true,
-      message: formatCompanionControlApplied(request.intent.kind as CompanionWideControl, affectedRefs),
+      ok: quietWorkStop?.ok ?? true,
+      message: [
+        formatCompanionControlApplied(control, affectedRefs),
+        quietWorkStop?.message,
+      ].filter((part): part is string => Boolean(part)).join(" "),
     });
     return this.toResult(verified);
+  }
+
+  private async stopActiveQuietWork(
+    parentOperation: RuntimeControlOperation,
+    runtimeItems: RuntimeItem[],
+    request: RuntimeControlRequest,
+  ): Promise<QuietWorkStopSummary> {
+    const quietItems = runtimeItems
+      .filter(activeRuntimeItem)
+      .filter(quietWorkRuntimeItem);
+
+    if (quietItems.length === 0) {
+      return {
+        ok: true,
+        message: "No active quiet work needed an interruption request.",
+        results: [],
+      };
+    }
+
+    const results: QuietWorkStopResult[] = [];
+    for (const item of quietItems) {
+      results.push(await this.stopQuietWorkItem(parentOperation, item, request));
+    }
+
+    const sentCount = results.filter((result) => result.ok).length;
+    const nonExecutionCount = results.filter((result) => !result.ok).length;
+    const pieces = [
+      sentCount > 0 ? `Typed pause request sent for ${sentCount} active quiet run(s).` : null,
+      nonExecutionCount > 0 ? `${nonExecutionCount} affected quiet item(s) recorded typed non-execution state.` : null,
+    ].filter((piece): piece is string => Boolean(piece));
+
+    return {
+      ok: nonExecutionCount === 0,
+      message: pieces.join(" "),
+      results,
+    };
+  }
+
+  private async stopQuietWorkItem(
+    parentOperation: RuntimeControlOperation,
+    item: RuntimeItem,
+    request: RuntimeControlRequest,
+  ): Promise<QuietWorkStopResult> {
+    let operation = await this.createQuietWorkPauseOperation(parentOperation, item, request);
+    if (!operation.target?.run_id || !operation.target.goal_id) {
+      operation = await this.update(operation, "blocked", {
+        ok: false,
+        message: `Quiet-work item ${item.item_id} was held but not paused because it has no typed goal/runtime bridge.`,
+      });
+      await this.appendControlEvidence(operation);
+      return quietWorkStopResult(item.item_id, operation);
+    }
+
+    const approved = await this.approveIfRequired(operation, request.approvalFn);
+    if (!approved.ok) {
+      const saved = approved.result.operationId
+        ? await this.operationStore.load(approved.result.operationId)
+        : null;
+      operation = saved ?? operation;
+      await this.appendControlEvidence(operation);
+      return quietWorkStopResult(item.item_id, operation);
+    }
+
+    // The parent companion-wide control is the explicit user command; these child
+    // operations still pass the normal pause_run approval gate before daemon I/O.
+    operation = approved.operation;
+    if (!this.executor) {
+      const runId = operation.target?.run_id ?? item.item_id;
+      operation = await this.update(operation, "blocked", {
+        ok: false,
+        message: `Quiet-work run ${runId} was held but not paused because no runtime control executor is configured.`,
+      });
+      await this.appendControlEvidence(operation);
+      return quietWorkStopResult(item.item_id, operation);
+    }
+
+    const acknowledged = await this.acknowledge(operation);
+    const executed = await this.executeAcknowledgedOperation(acknowledged, request);
+    const executedOperation = executed.operationId
+      ? await this.operationStore.load(executed.operationId)
+      : null;
+    const saved = executedOperation ?? acknowledged;
+    await this.appendControlEvidence(saved);
+    return quietWorkStopResult(item.item_id, saved);
+  }
+
+  private createQuietWorkPauseOperation(
+    parentOperation: RuntimeControlOperation,
+    item: RuntimeItem,
+    request: RuntimeControlRequest,
+  ): Promise<RuntimeControlOperation> {
+    const requestedAt = this.nowIso();
+    const target = quietWorkPauseTarget(item);
+    return this.operationStore.save({
+      operation_id: randomUUID(),
+      kind: "pause_run",
+      state: "pending",
+      requested_at: requestedAt,
+      updated_at: requestedAt,
+      requested_by: request.requestedBy ?? { surface: "chat" },
+      reply_target: normalizeReplyTarget(request.replyTarget ?? { surface: "chat" }),
+      reason: `Parent stop_all_quiet_work ${parentOperation.operation_id}: ${request.intent.reason}`,
+      expected_health: expectedHealthFor("pause_run"),
+      ...(target ? { target } : {}),
+    });
   }
 
   private async handleSessionControl(request: RuntimeControlRequest): Promise<RuntimeControlResult> {
@@ -1579,7 +1704,35 @@ function activeRuntimeItem(item: RuntimeItem): boolean {
 }
 
 function quietWorkRuntimeItem(item: RuntimeItem): boolean {
+  if (item.source === "runtime-operation-store") return false;
   return item.type === "run" || item.type === "task" || item.type === "diff_proposal";
+}
+
+function quietWorkPauseTarget(item: RuntimeItem): RuntimeControlOperation["target"] | null {
+  const runId = backgroundRunIdFromRuntimeItem(item);
+  const sessionId = item.related_session_refs[0];
+  const goalId = item.related_goal_refs[0];
+  const target = {
+    ...(runId ? { run_id: runId } : {}),
+    ...(sessionId ? { session_id: sessionId } : {}),
+    ...(goalId ? { goal_id: goalId } : {}),
+  };
+  return Object.keys(target).length > 0 ? target : null;
+}
+
+function backgroundRunIdFromRuntimeItem(item: RuntimeItem): string | null {
+  const prefix = "background-run:";
+  if (!item.item_id.startsWith(prefix)) return null;
+  return item.item_id.slice(prefix.length);
+}
+
+function quietWorkStopResult(itemRef: string, operation: RuntimeControlOperation): QuietWorkStopResult {
+  return {
+    itemRef,
+    operationId: operation.operation_id,
+    state: operation.state,
+    ok: operation.result?.ok ?? false,
+  };
 }
 
 function agendaRuntimeItem(item: RuntimeItem): boolean {
