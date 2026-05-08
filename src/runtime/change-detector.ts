@@ -10,6 +10,8 @@ export interface ChangeResult {
   details: string;
 }
 
+const EXACT_FINITE_NUMBER_TOKEN = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i;
+
 function parseFiniteThresholdResult(value: unknown): number | null {
   if (typeof value === "number") {
     return Number.isFinite(value) ? value : null;
@@ -17,6 +19,7 @@ function parseFiniteThresholdResult(value: unknown): number | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
   if (trimmed.length === 0) return null;
+  if (!EXACT_FINITE_NUMBER_TOKEN.test(trimmed)) return null;
   const parsed = Number(trimmed);
   return Number.isFinite(parsed) ? parsed : null;
 }

@@ -1089,10 +1089,23 @@ describe("ChangeDetector", () => {
     const below = detectChange("threshold", "50", [], 100);
     expect(below.changed).toBe(false);
     expect(below.details).toContain("50 <= 100");
+
+    const exponent = detectChange("threshold", "1.5e2", [], 100);
+    expect(exponent.changed).toBe(true);
+    expect(exponent.details).toContain("150 > 100");
   });
 
   it.each(["", "   ", "Infinity", "-Infinity", "NaN"])(
     "threshold mode rejects non-finite or empty string result %j",
+    (value) => {
+      const result = detectChange("threshold", value, [], 100);
+      expect(result.changed).toBe(true);
+      expect(result.details).toContain("non-numeric result");
+    }
+  );
+
+  it.each(["0x10", "0b1010", "1_000", "10ms", "1,000"])(
+    "threshold mode rejects non-decimal numeric-looking string result %j",
     (value) => {
       const result = detectChange("threshold", value, [], 100);
       expect(result.changed).toBe(true);
