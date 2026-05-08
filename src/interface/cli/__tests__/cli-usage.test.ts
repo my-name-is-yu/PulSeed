@@ -150,4 +150,26 @@ describe("CLI usage command", () => {
       "Error: period must look like 7d, 24h, or 2w"
     );
   });
+
+  it("returns 1 when schedule period is not a safe integer", async () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const code = await runCLI(tmpDir, "usage", "schedule", "--period", "9007199254740993d");
+
+    expect(code).toBe(1);
+    expect(errSpy.mock.calls.map((call) => call.join(" ")).join("\n")).toContain(
+      "Error: period value must be a positive safe integer"
+    );
+  });
+
+  it("returns 1 when schedule period overflows safe milliseconds", async () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const code = await runCLI(tmpDir, "usage", "schedule", "--period", "9007199254740991d");
+
+    expect(code).toBe(1);
+    expect(errSpy.mock.calls.map((call) => call.join(" ")).join("\n")).toContain(
+      "Error: period value is too large"
+    );
+  });
 });
