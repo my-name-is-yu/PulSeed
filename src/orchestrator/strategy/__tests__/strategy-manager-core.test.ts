@@ -415,7 +415,7 @@ describe("generateCandidates", () => {
         template_id: "tmpl-text-only",
         source_goal_id: "goal-src",
         source_strategy_id: "strat-src",
-        hypothesis_pattern: "監査で分類器の停滞を調べる",
+        hypothesis_pattern: "Audit classifier plateau behavior",
         domain_tags: ["audit"],
         effectiveness_score: 0.95,
         applicable_dimensions: ["unrelated_dimension"],
@@ -601,7 +601,7 @@ describe("generateCandidates", () => {
     const candidates = [
       makeStrategy({
         id: "cand-threshold",
-        hypothesis: "現在の分類器のしきい値をもう一度細かく調整する",
+        hypothesis: "Tune the current classifier threshold again with finer granularity",
         exploration: {
           schema_version: "strategy-exploration-v1",
           phase: "divergent_stall_recovery",
@@ -693,7 +693,7 @@ describe("generateCandidates", () => {
     const response = `\`\`\`json
 [
   {
-    "hypothesis": "現在の分類器のしきい値を少し調整する",
+    "hypothesis": "Slightly adjust the current classifier threshold",
     "expected_effect": [
       { "dimension": "balanced_accuracy", "direction": "increase", "magnitude": "small" }
     ],
@@ -828,7 +828,7 @@ describe("generateCandidates", () => {
     }
   },
   {
-    "hypothesis": "現在の分類器のしきい値を少し調整する",
+    "hypothesis": "Slightly adjust the current classifier threshold",
     "expected_effect": [
       { "dimension": "balanced_accuracy", "direction": "increase", "magnitude": "small" }
     ],

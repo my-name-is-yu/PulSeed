@@ -367,15 +367,15 @@ describe("Dream review checkpoint trigger planning", () => {
         promising: ["feature ablation"],
         relevant_memories: [],
         active_hypotheses: [{
-          hypothesis: "特徴量アブレーションがリーク感度を示す.",
+          hypothesis: "Feature ablation exposes leakage sensitivity.",
           supporting_evidence_ref: "metric:balanced_accuracy",
           target_metric_or_dimension: "balanced_accuracy",
           expected_next_observation: "Ablation changes balanced accuracy by more than noise.",
           status: "testing",
         }],
         rejected_approaches: [{
-          approach: "閾値スイープの再実行",
-          rejection_reason: "3回のスイープが指標ノイズ内に収まった.",
+          approach: "Repeat threshold sweep",
+          rejection_reason: "Three sweeps stayed within metric noise.",
           evidence_ref: "lineage:threshold-sweep",
           revisit_condition: "new calibration evidence appears",
           confidence: 0.88,
@@ -393,11 +393,11 @@ describe("Dream review checkpoint trigger planning", () => {
 
     expect(request).toMatchObject({
       activeHypotheses: [{
-        hypothesis: "特徴量アブレーションがリーク感度を示す.",
+        hypothesis: "Feature ablation exposes leakage sensitivity.",
         target_metric_or_dimension: "balanced_accuracy",
       }],
       rejectedApproaches: [{
-        approach: "閾値スイープの再実行",
+        approach: "Repeat threshold sweep",
         evidence_ref: "lineage:threshold-sweep",
       }],
     });

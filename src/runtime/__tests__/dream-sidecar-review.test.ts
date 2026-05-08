@@ -201,7 +201,7 @@ describe("Runtime Dream sidecar review", () => {
         current_goal: "Improve benchmark",
         active_dimensions: ["balanced_accuracy"],
         recent_strategy_families: ["threshold_sweep"],
-        exhausted: ["閾値スイープの再実行"],
+        exhausted: ["Repeat threshold sweep"],
         promising: ["feature ablation"],
         relevant_memories: [],
         active_hypotheses: [{
@@ -212,8 +212,8 @@ describe("Runtime Dream sidecar review", () => {
           status: "active",
         }],
         rejected_approaches: [{
-          approach: "閾値スイープの再実行",
-          rejection_reason: "3回のスイープが指標ノイズ内に収まった.",
+          approach: "Repeat threshold sweep",
+          rejection_reason: "Three sweeps stayed within metric noise.",
           candidate_ref: "candidate:threshold-sweep-repeat",
           evidence_ref: "lineage:threshold-sweep",
           revisit_condition: "new calibration evidence appears",
@@ -222,8 +222,8 @@ describe("Runtime Dream sidecar review", () => {
         next_strategy_candidates: [
           {
             candidate_ref: "candidate:threshold-sweep-repeat",
-            title: "閾値スイープの再実行",
-            rationale: "同じ探索をもう一度行う.",
+            title: "Repeat threshold sweep",
+            rationale: "Try the same exploration again.",
             target_dimensions: ["balanced_accuracy"],
           },
           {
@@ -246,9 +246,9 @@ describe("Runtime Dream sidecar review", () => {
       runId: "run:coreloop:rejected",
     });
 
-    expect(review.known_gaps).toContainEqual(expect.stringContaining("Rejected approach: 閾値スイープの再実行"));
+    expect(review.known_gaps).toContainEqual(expect.stringContaining("Rejected approach: Repeat threshold sweep"));
     expect(review.suggested_next_moves).not.toContainEqual(expect.objectContaining({
-      title: "閾値スイープの再実行",
+      title: "Repeat threshold sweep",
     }));
     expect(review.suggested_next_moves).toContainEqual(expect.objectContaining({
       title: "Feature ablation",
