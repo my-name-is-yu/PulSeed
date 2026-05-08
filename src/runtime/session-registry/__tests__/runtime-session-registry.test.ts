@@ -352,6 +352,106 @@ describe("RuntimeSessionRegistry", () => {
     }));
   });
 
+  it("prefers the current runtime supervisor-state path over the legacy root path", async () => {
+    await stateManager.writeRaw("supervisor-state.json", {
+      workers: [
+        {
+          workerId: "legacy-worker",
+          goalId: "goal-legacy",
+          startedAt: Date.parse("2026-04-25T00:00:00.000Z"),
+          iterations: 2,
+        },
+      ],
+      crashCounts: {},
+      suspendedGoals: [],
+      updatedAt: Date.parse("2026-04-25T00:30:00.000Z"),
+    });
+    await stateManager.writeRaw("runtime/supervisor-state.json", {
+      workers: [
+        {
+          workerId: "runtime-worker",
+          goalId: "goal-runtime",
+          startedAt: Date.parse("2026-04-25T00:05:00.000Z"),
+          iterations: 1,
+        },
+      ],
+      crashCounts: {},
+      suspendedGoals: [],
+      updatedAt: Date.parse("2026-04-25T00:35:00.000Z"),
+    });
+
+    const snapshot = await new RuntimeSessionRegistry({ stateManager }).snapshot();
+
+    expect(snapshot.sessions.some((session) => session.id === "session:coreloop:legacy-worker")).toBe(false);
+    expect(snapshot.background_runs.some((run) => run.id === "run:coreloop:legacy-worker")).toBe(false);
+    expect(snapshot.sessions).toContainEqual(expect.objectContaining({
+      id: "session:coreloop:runtime-worker",
+      state_ref: expect.objectContaining({
+        relative_path: "runtime/supervisor-state.json",
+      }),
+    }));
+  });
+
+  it("drops stale supervisor child sessions when the durable ledger owns the run", async () => {
+    await stateManager.writeRaw("runtime/supervisor-state.json", {
+      workers: [
+        {
+          workerId: "worker-ledger",
+          goalId: "goal-ledger",
+          backgroundRunId: "run:coreloop:ledger-owned",
+          sessionId: "session:coreloop:stale-projection",
+          parentSessionId: "session:conversation:chat-ledger",
+          startedAt: Date.parse("2026-04-25T00:00:00.000Z"),
+          iterations: 2,
+        },
+      ],
+      crashCounts: {},
+      suspendedGoals: [],
+      updatedAt: Date.parse("2026-04-25T00:30:00.000Z"),
+    });
+
+    const ledger = new BackgroundRunLedger(path.join(tmpDir, "runtime"));
+    await ledger.ensureReady();
+    await ledger.create({
+      id: "run:coreloop:ledger-owned",
+      kind: "coreloop_run",
+      notify_policy: "silent",
+      reply_target_source: "none",
+      parent_session_id: "session:conversation:chat-ledger",
+      child_session_id: "session:coreloop:ledger-current",
+      goal_id: "goal-ledger",
+      title: "Ledger-owned DurableLoop",
+      workspace: "/repo",
+      created_at: "2026-04-25T00:01:00.000Z",
+      started_at: "2026-04-25T00:02:00.000Z",
+      updated_at: "2026-04-25T00:03:00.000Z",
+      status: "running",
+      source_refs: [{
+        kind: "supervisor_state",
+        id: null,
+        path: null,
+        relative_path: "runtime/supervisor-state.json",
+        updated_at: "2026-04-25T00:03:00.000Z",
+      }],
+    });
+
+    const snapshot = await new RuntimeSessionRegistry({ stateManager }).snapshot();
+
+    expect(snapshot.background_runs.filter((run) => run.id === "run:coreloop:ledger-owned")).toHaveLength(1);
+    expect(snapshot.background_runs).toContainEqual(expect.objectContaining({
+      id: "run:coreloop:ledger-owned",
+      child_session_id: "session:coreloop:ledger-current",
+      workspace: "/repo",
+      title: "Ledger-owned DurableLoop",
+    }));
+    expect(snapshot.sessions.some((session) => session.id === "session:coreloop:stale-projection")).toBe(false);
+    expect(snapshot.sessions).toContainEqual(expect.objectContaining({
+      id: "session:coreloop:ledger-current",
+      parent_session_id: "session:conversation:chat-ledger",
+      workspace: "/repo",
+    }));
+  });
+
   it("projects a completed DurableLoop handoff graph from durable ledger records", async () => {
     await stateManager.writeRaw("chat/sessions/chat-coreloop.json", {
       id: "chat-coreloop",
