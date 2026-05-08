@@ -33,6 +33,7 @@ import {
   fileExists,
   filterRuns,
   filterSessions,
+  isProcessPidValue,
   isObject,
   mergeLedgerRunWithProjection,
   messageFromError,
@@ -639,7 +640,7 @@ export class RuntimeSessionRegistry {
     }
     if (!snapshot.running) return "unknown";
     if (hasLiveSession) return "running";
-    if (typeof snapshot.pid !== "number") return "unknown";
+    if (!isProcessPidValue(snapshot.pid)) return "unknown";
 
     const alive = this.isPidAlive(snapshot.pid);
     if (alive === true) return "running";
