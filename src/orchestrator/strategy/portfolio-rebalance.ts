@@ -701,7 +701,7 @@ async function evaluateWaitCondition(
             exitedAt: snapshot["exitedAt"] ?? null,
           });
         }
-        if (typeof snapshot["pid"] === "number" && !isProcessAlive(snapshot["pid"])) {
+        if (isProcessPidValue(snapshot["pid"]) && !isProcessAlive(snapshot["pid"])) {
           return satisfiedCondition(condition, {
             session_id: condition.session_id,
             pid: snapshot["pid"],
@@ -909,13 +909,17 @@ function compareMetric(actual: number, operator: "lt" | "lte" | "eq" | "gte" | "
 }
 
 function isProcessAlive(pid: number): boolean {
-  if (!Number.isInteger(pid) || pid <= 0) return false;
+  if (!isProcessPidValue(pid)) return false;
   try {
     process.kill(pid, 0);
     return true;
   } catch {
     return false;
   }
+}
+
+function isProcessPidValue(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
 }
 
 export function buildWaitApprovalId(goalId: string, strategyId: string): string {
