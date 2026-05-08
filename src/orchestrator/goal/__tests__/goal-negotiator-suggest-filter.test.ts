@@ -73,8 +73,7 @@ describe("GoalNegotiator.suggestGoals() — quality filtering", () => {
     }
   });
 
-  it("filters out partial duplicate (suggestion title is substring of existing goal)", async () => {
-    // "Test Coverage" is a substring of existing goal "Increase Test Coverage"
+  it("keeps title-overlap suggestions when there is no exact duplicate signal", async () => {
     const suggestionList = makeSuggestionList(["Test Coverage", "Reduce Build Time"]);
     const { negotiator, tmpDir } = makeDeps([
       suggestionList,
@@ -86,16 +85,15 @@ describe("GoalNegotiator.suggestGoals() — quality filtering", () => {
       const suggestions = await negotiator.suggestGoals("A Node.js project", {
         existingGoals: ["Increase Test Coverage"],
       });
-      // "Test Coverage" is substring of "Increase Test Coverage" — should be filtered
-      expect(suggestions).toHaveLength(1);
-      expect(suggestions[0]?.title).toBe("Reduce Build Time");
+      expect(suggestions).toHaveLength(2);
+      expect(suggestions[0]?.title).toBe("Test Coverage");
+      expect(suggestions[1]?.title).toBe("Reduce Build Time");
     } finally {
       cleanup(tmpDir);
     }
   });
 
-  it("filters out partial duplicate (existing goal title is substring of suggestion)", async () => {
-    // "Increase Test Coverage" contains "Test Coverage" (existing goal)
+  it("keeps longer title-overlap suggestions when there is no exact duplicate signal", async () => {
     const suggestionList = makeSuggestionList(["Increase Test Coverage", "Reduce Build Time"]);
     const { negotiator, tmpDir } = makeDeps([
       suggestionList,
@@ -107,9 +105,9 @@ describe("GoalNegotiator.suggestGoals() — quality filtering", () => {
       const suggestions = await negotiator.suggestGoals("A Node.js project", {
         existingGoals: ["Test Coverage"],
       });
-      // "Increase Test Coverage" contains "Test Coverage" — should be filtered
-      expect(suggestions).toHaveLength(1);
-      expect(suggestions[0]?.title).toBe("Reduce Build Time");
+      expect(suggestions).toHaveLength(2);
+      expect(suggestions[0]?.title).toBe("Increase Test Coverage");
+      expect(suggestions[1]?.title).toBe("Reduce Build Time");
     } finally {
       cleanup(tmpDir);
     }
@@ -126,6 +124,25 @@ describe("GoalNegotiator.suggestGoals() — quality filtering", () => {
     try {
       const suggestions = await negotiator.suggestGoals("A Node.js project", {
         existingGoals: ["Increase Test Coverage"],
+      });
+      expect(suggestions).toHaveLength(1);
+      expect(suggestions[0]?.title).toBe("Reduce Build Time");
+    } finally {
+      cleanup(tmpDir);
+    }
+  });
+
+  it("dedup check normalizes surrounding and repeated whitespace", async () => {
+    const suggestionList = makeSuggestionList(["Increase   Test Coverage", "Reduce Build Time"]);
+    const { negotiator, tmpDir } = makeDeps([
+      suggestionList,
+      PASS_VERDICT,
+      PASS_VERDICT,
+    ]);
+
+    try {
+      const suggestions = await negotiator.suggestGoals("A Node.js project", {
+        existingGoals: [" increase test coverage "],
       });
       expect(suggestions).toHaveLength(1);
       expect(suggestions[0]?.title).toBe("Reduce Build Time");
