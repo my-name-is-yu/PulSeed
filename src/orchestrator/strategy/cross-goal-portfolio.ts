@@ -160,13 +160,11 @@ export class CrossGoalPortfolio {
       const dependentCount = dependentCountByGoalId.get(goalId) ?? 0;
       const dependencyWeight = totalGoals > 1 ? dependentCount / (totalGoals - 1) : 0;
 
-      // user_priority — extract from goal constraints or metadata
-      // Assume format "priority:N" (N in 1-5) anywhere in constraints
+      // user_priority — extract from exact goal constraint protocol tokens.
       let userPriority = 0.5; // default
       for (const constraint of goal.constraints) {
-        const match = constraint.match(/\bpriority[:\s=]+(\d+)\b/i);
-        if (match) {
-          const level = parseInt(match[1]!, 10);
+        const level = parsePriorityConstraint(constraint);
+        if (level !== null) {
           userPriority = clamp(level / 5, 0, 1);
           break;
         }
@@ -502,6 +500,11 @@ export class CrossGoalPortfolio {
 
     return map;
   }
+}
+
+function parsePriorityConstraint(constraint: string): number | null {
+  const match = constraint.trim().match(/^priority(?:[:=\s]+)([1-5])$/i);
+  return match ? Number.parseInt(match[1]!, 10) : null;
 }
 
 // ─── Re-exports for backward compatibility ───
