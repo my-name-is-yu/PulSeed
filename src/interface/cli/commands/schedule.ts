@@ -14,6 +14,7 @@ import { scheduleCost } from "./schedule/cost.js";
 import { scheduleHistory } from "./schedule/history.js";
 import { scheduleRunNow } from "./schedule/run-now.js";
 import { getScheduleOrPrintError, parsePositiveInteger } from "./schedule/shared.js";
+import { parseExactFiniteNumber } from "./exact-number.js";
 
 export async function cmdSchedule(
   stateManager: StateManager,
@@ -156,6 +157,18 @@ function parseScheduleAddInteger(value: unknown, label: string): number {
   return parsePositiveInteger(typeof value === "string" ? value : undefined, label);
 }
 
+function parseScheduleThresholdValue(value: unknown): number | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string") {
+    throw new Error("--threshold-value must be a finite number");
+  }
+  const parsed = parseExactFiniteNumber(value);
+  if (parsed === null) {
+    throw new Error("--threshold-value must be a finite number");
+  }
+  return parsed;
+}
+
 function resolveOptionalTrigger(values: { cron?: string; interval?: unknown }): ScheduleTriggerInput | undefined {
   if (values.cron) {
     return { type: "cron", expression: values.cron, timezone: "UTC" };
@@ -212,9 +225,7 @@ function buildPresetInput(values: Record<string, unknown>): SchedulePresetInput 
         detector_mode: (typeof values["detector-mode"] === "string"
           ? values["detector-mode"]
           : "diff") as "threshold" | "diff" | "presence",
-        threshold_value: typeof values["threshold-value"] === "string"
-          ? parseFloat(values["threshold-value"] as string)
-          : undefined,
+        threshold_value: parseScheduleThresholdValue(values["threshold-value"]),
         baseline_window: typeof values["baseline-window"] === "string"
           ? parseScheduleAddInteger(values["baseline-window"], "--baseline-window")
           : 5,
