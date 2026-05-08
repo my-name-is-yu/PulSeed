@@ -992,6 +992,54 @@ describe("observeFromDataSource", () => {
     expect(updated?.dimensions[0]?.current_value).toBe(83);
   });
 
+  it("falls back instead of persisting non-finite datasource numbers", async () => {
+    const nonFiniteDs = makeMockDataSource({
+      getSupportedDimensions: () => ["accuracy"],
+      query: vi.fn().mockResolvedValue({
+        value: Infinity,
+        raw: { accuracy: Infinity },
+        timestamp: new Date().toISOString(),
+        source_id: "mock-ds",
+      }),
+    });
+    const llmClient = makeMockLLMClient(0.37);
+    const engineWithFallback = new ObservationEngine(
+      stateManager,
+      [nonFiniteDs],
+      llmClient,
+      async () => "workspace context exists",
+    );
+
+    const goal = makeGoal({
+      id: "goal-non-finite-datasource",
+      dimensions: [
+        {
+          name: "accuracy",
+          label: "Accuracy",
+          current_value: 0,
+          threshold: { type: "min", value: 1 },
+          confidence: 0.5,
+          observation_method: defaultMethod,
+          last_updated: new Date().toISOString(),
+          history: [],
+          weight: 1.0,
+          uncertainty_weight: null,
+          state_integrity: "ok",
+          dimension_mapping: null,
+        },
+      ],
+    });
+    await stateManager.saveGoal(goal);
+
+    await engineWithFallback.observe("goal-non-finite-datasource", []);
+
+    const updated = await stateManager.loadGoal("goal-non-finite-datasource");
+    expect(updated?.dimensions[0]?.current_value).toBe(0.37);
+    expect(updated?.dimensions[0]?.last_observed_layer).toBe("independent_review");
+    expect(nonFiniteDs.query).toHaveBeenCalled();
+    expect(llmClient.sendMessage).toHaveBeenCalled();
+  });
+
   it("observes goal-workspace Kaggle experiment metrics before LLM fallback", async () => {
     const daemonWorkspace = path.join(tmpDir, "daemon-workspace");
     const goalWorkspace = path.join(tmpDir, "kaggle-workspace");
