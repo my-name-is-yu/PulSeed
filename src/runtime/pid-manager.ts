@@ -57,8 +57,12 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function isSafeProcessPid(pid: unknown): pid is number {
+  return typeof pid === "number" && Number.isSafeInteger(pid) && pid > 0;
+}
+
 function uniquePids(pids: Array<number | null | undefined>): number[] {
-  return [...new Set(pids.filter((pid): pid is number => typeof pid === "number" && pid > 0))];
+  return [...new Set(pids.filter(isSafeProcessPid))];
 }
 
 function getRuntimePid(info: PIDInfo): number {

@@ -118,20 +118,22 @@ export const DaemonStateSchema = z.object({
 });
 export type DaemonState = z.infer<typeof DaemonStateSchema>;
 
+const ProcessIdSchema = z.number().int().positive().safe();
+
 // PID file info
 export const PIDInfoSchema = z.object({
   // Authoritative runtime PID. When a watchdog is present, this is the child daemon PID.
-  pid: z.number().int().positive(),
+  pid: ProcessIdSchema,
   started_at: z.string().datetime().default(PID_EPOCH_ISO),
   runtime_started_at: z.string().datetime().optional(),
   // Process that should receive lifecycle signals. When a watchdog is present, this is the parent PID.
-  owner_pid: z.number().int().positive().optional(),
+  owner_pid: ProcessIdSchema.optional(),
   owner_started_at: z.string().datetime().optional(),
   // Explicit watchdog parent PID when running under the watchdog.
-  watchdog_pid: z.number().int().positive().optional(),
+  watchdog_pid: ProcessIdSchema.optional(),
   watchdog_started_at: z.string().datetime().optional(),
   // Explicit daemon/runtime child PID when running under the watchdog.
-  runtime_pid: z.number().int().positive().optional(),
+  runtime_pid: ProcessIdSchema.optional(),
   version: z.string().optional(),
 });
 export type PIDInfo = z.infer<typeof PIDInfoSchema>;
