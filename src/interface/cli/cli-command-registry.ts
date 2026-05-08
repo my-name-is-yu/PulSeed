@@ -341,8 +341,7 @@ export async function dispatchCommand(
     }
 
     if (daemonSubcommand === "cron") {
-      await cmdCron(argv.slice(2));
-      return 0;
+      return await cmdCron(argv.slice(2));
     }
 
     logger.error(`Unknown daemon subcommand: "${daemonSubcommand ?? ""}"`);
@@ -356,8 +355,7 @@ export async function dispatchCommand(
   }
 
   if (subcommand === "cron") {
-    await cmdCron(argv.slice(1));
-    return 0;
+    return await cmdCron(argv.slice(1));
   }
 
   if (subcommand === "schedule") {

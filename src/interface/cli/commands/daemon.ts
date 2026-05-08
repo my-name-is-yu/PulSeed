@@ -910,7 +910,7 @@ export async function cmdDaemonPing(_args: string[]): Promise<number> {
   return 1;
 }
 
-export async function cmdCron(args: string[]): Promise<void> {
+export async function cmdCron(args: string[]): Promise<number> {
   let values: { goal?: string[]; interval?: string };
   try {
     ({ values } = parseArgs({
@@ -927,13 +927,19 @@ export async function cmdCron(args: string[]): Promise<void> {
   }
 
   const goalIds = (values.goal as string[]) || [];
-  const intervalMinutes = parseInt(values.interval as string, 10) || 60;
+  let intervalMinutes: number;
+  try {
+    intervalMinutes = parseDaemonPositiveInteger(values.interval ?? "60", "--interval");
+  } catch (err) {
+    getCliLogger().error(err instanceof Error ? err.message : String(err));
+    return 1;
+  }
 
   if (goalIds.length === 0) {
     getCliLogger().error(
       "Error: at least one --goal is required for pulseed cron.\nUsage: pulseed cron --goal <id> [--goal <id> ...]"
     );
-    process.exit(1);
+    return 1;
   }
 
   console.log("# PulSeed crontab entries");
@@ -941,4 +947,5 @@ export async function cmdCron(args: string[]): Promise<void> {
   for (const goalId of goalIds) {
     console.log(DaemonRunner.generateCronEntry(goalId, intervalMinutes));
   }
+  return 0;
 }
