@@ -18,7 +18,6 @@ const execFileMock = vi.hoisted(() => {
         else resolve({ stdout, stderr });
       });
     });
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (fn as any)[Symbol.for("nodejs.util.promisify.custom")] = customPromisify;
   return fn;
 });
@@ -44,7 +43,6 @@ import {
 function makeExecFileMock(
   handler: (file: string, args: string[]) => { stdout: string } | Error
 ) {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return (...callArgs: any[]) => {
     const file: string = callArgs[0];
     const args: string[] = Array.isArray(callArgs[1]) ? callArgs[1] : [];

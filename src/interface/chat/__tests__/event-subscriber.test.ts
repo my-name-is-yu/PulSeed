@@ -14,7 +14,6 @@ function format(
   eventType: string,
   data: unknown
 ): TendNotification | null {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return (subscriber as any).formatNotification(eventType, data);
 }
 
