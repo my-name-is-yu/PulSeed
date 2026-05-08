@@ -90,13 +90,23 @@ export class PluginLoader {
     const pulseedVersion = getPulseedVersion();
     const minVer = manifest.min_pulseed_version;
     const maxVer = manifest.max_pulseed_version;
-    if (!satisfiesRange(pulseedVersion, minVer, maxVer)) {
-      const range = [
-        minVer ? `>=${minVer}` : "",
-        maxVer ? `<=${maxVer}` : "",
-      ]
-        .filter(Boolean)
-        .join(", ");
+    const range = [
+      minVer ? `>=${minVer}` : "",
+      maxVer ? `<=${maxVer}` : "",
+    ]
+      .filter(Boolean)
+      .join(", ");
+    let isCompatible: boolean;
+    try {
+      isCompatible = satisfiesRange(pulseedVersion, minVer, maxVer);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.logger?.warn(
+        `[PluginLoader] Skipping plugin "${manifest.name}" with invalid PulSeed version constraint: ${msg}`
+      );
+      return this.buildIncompatibleState(manifest, pulseedVersion, range || "invalid semver");
+    }
+    if (!isCompatible) {
       this.logger?.warn(
         `[PluginLoader] Skipping incompatible plugin "${manifest.name}": requires PulSeed ${range}, got ${pulseedVersion}`
       );
@@ -415,10 +425,18 @@ function getPulseedVersion(): string {
 
 // ─── Semver utilities (no external deps) ───
 
+const SEMVER_TOKEN = /^(\d+)\.(\d+)\.(\d+)$/;
+
 export function parseSemver(version: string): { major: number; minor: number; patch: number } {
-  const match = version.match(/^(\d+)\.(\d+)\.(\d+)/);
+  const match = version.match(SEMVER_TOKEN);
   if (!match) throw new Error(`Invalid semver: ${version}`);
-  return { major: Number(match[1]), minor: Number(match[2]), patch: Number(match[3]) };
+  const major = Number(match[1]);
+  const minor = Number(match[2]);
+  const patch = Number(match[3]);
+  if (!Number.isSafeInteger(major) || !Number.isSafeInteger(minor) || !Number.isSafeInteger(patch)) {
+    throw new Error(`Invalid semver: ${version}`);
+  }
+  return { major, minor, patch };
 }
 
 export function compareSemver(

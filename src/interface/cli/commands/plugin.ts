@@ -211,13 +211,23 @@ function checkVersionCompat(
 ): boolean {
   const minVer = manifest.min_pulseed_version;
   const maxVer = manifest.max_pulseed_version;
-  if (!satisfiesRange(pulseedVersion, minVer, maxVer)) {
-    const range = [
-      minVer ? `>=${minVer}` : "",
-      maxVer ? `<=${maxVer}` : "",
-    ]
-      .filter(Boolean)
-      .join(", ");
+  const range = [
+    minVer ? `>=${minVer}` : "",
+    maxVer ? `<=${maxVer}` : "",
+  ]
+    .filter(Boolean)
+    .join(", ");
+  let compatible: boolean;
+  try {
+    compatible = satisfiesRange(pulseedVersion, minVer, maxVer);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    getCliLogger().warn(
+      `Plugin "${manifest.name}" has an invalid PulSeed version constraint (${range || "empty range"}): ${msg}. Aborting install.`
+    );
+    return false;
+  }
+  if (!compatible) {
     getCliLogger().warn(
       `Plugin "${manifest.name}" requires PulSeed ${range}, but current version is ${pulseedVersion}. Aborting install.`
     );
