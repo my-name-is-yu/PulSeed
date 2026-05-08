@@ -351,7 +351,11 @@ Return empty array [] if no dependencies found.`;
       affected_dimensions: [],
       mitigation: null,
       detection_confidence: 1.0,
-      reasoning: `strategy_dependency_type:${dependencyType};goal_id:${goalId}`,
+      strategy_dependency: {
+        dependency_type: dependencyType,
+        goal_id: goalId,
+      },
+      reasoning: null,
     });
   }
 
@@ -371,16 +375,14 @@ Return empty array [] if no dependencies found.`;
           e.type === "strategy_dependency" &&
           (e.from_goal_id === strategyId || e.to_goal_id === strategyId)
       )
-      .map((e) => {
-        // Extract dependency_type and goal_id from the reasoning field
-        const reasoning = e.reasoning ?? "";
-        const dtMatch = reasoning.match(/strategy_dependency_type:(prerequisite|enhances)/);
-        const giMatch = reasoning.match(/goal_id:([^;]+)/);
+      .flatMap((e) => {
+        const metadata = resolveStrategyDependencyMetadata(e);
+        if (!metadata) return [];
         return {
           source_strategy_id: e.from_goal_id,
           target_strategy_id: e.to_goal_id,
-          dependency_type: (dtMatch?.[1] ?? "prerequisite") as "prerequisite" | "enhances",
-          goal_id: giMatch?.[1] ?? "",
+          dependency_type: metadata.dependency_type,
+          goal_id: metadata.goal_id,
         };
       });
   }
@@ -431,4 +433,36 @@ Return empty array [] if no dependencies found.`;
   getGraph(): DependencyGraph {
     return this.graph;
   }
+}
+
+function resolveStrategyDependencyMetadata(edge: DependencyEdge): NonNullable<DependencyEdge["strategy_dependency"]> | null {
+  return edge.strategy_dependency ?? parseLegacyStrategyDependencyReasoning(edge.reasoning);
+}
+
+function parseLegacyStrategyDependencyReasoning(
+  reasoning: string | null | undefined
+): NonNullable<DependencyEdge["strategy_dependency"]> | null {
+  if (!reasoning) return null;
+  const tokens = reasoning.split(";").map((token) => token.trim()).filter((token) => token.length > 0);
+  if (tokens.length !== 2) return null;
+
+  const fields = new Map<string, string>();
+  for (const token of tokens) {
+    const separator = token.indexOf(":");
+    if (separator <= 0) continue;
+    const key = token.slice(0, separator).trim();
+    const value = token.slice(separator + 1).trim();
+    if (key && value) fields.set(key, value);
+  }
+  if (fields.size !== 2) return null;
+
+  const dependencyType = fields.get("strategy_dependency_type");
+  const goalId = fields.get("goal_id");
+  if ((dependencyType !== "prerequisite" && dependencyType !== "enhances") || !goalId) {
+    return null;
+  }
+  return {
+    dependency_type: dependencyType,
+    goal_id: goalId,
+  };
 }

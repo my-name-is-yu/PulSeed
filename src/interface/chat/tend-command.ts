@@ -53,6 +53,9 @@ export interface TendResult {
 const MAX_HISTORY_MESSAGES = 20;
 const DEFAULT_TEND_GOAL_NEGOTIATION_TIMEOUT_MS = 300_000;
 const TEND_USAGE = "Usage: /tend [goal-id] [--max <positive-integer>]";
+// Persisted runtime protocol tokens keep the legacy coreloop spelling for compatibility.
+const DURABLE_LOOP_BACKGROUND_RUN_ID_PREFIX = "run:coreloop:";
+const DURABLE_LOOP_BACKGROUND_RUN_KIND = "coreloop_run";
 const SUMMARY_PROMPT = `You are analyzing a developer's chat conversation to extract their main objective.
 Summarize what the user wants to achieve in 1-3 sentences. Focus on concrete, measurable outcomes.
 Be specific -- mention file names, metrics, or technical goals if present.
@@ -239,7 +242,7 @@ export class TendCommand {
     maxIterations: number | undefined,
     deps: TendDeps
   ): Promise<TendResult> {
-    const run = await createCoreLoopBackgroundRun(goal, deps);
+    const run = await createDurableLoopBackgroundRun(goal, deps);
     try {
       await deps.daemonClient.startGoal(goal.id, {
         backgroundRun: {
@@ -274,13 +277,13 @@ export class TendCommand {
   }
 }
 
-async function createCoreLoopBackgroundRun(goal: Goal, deps: TendDeps) {
+async function createDurableLoopBackgroundRun(goal: Goal, deps: TendDeps) {
   const pinnedReplyTarget = normalizePinnedReplyTarget(deps.replyTarget ?? null);
   const parentSessionId = deps.sessionId ? `session:conversation:${deps.sessionId}` : null;
   const sourceRefs = deps.sessionId ? [chatSessionSourceRef(deps.sessionId)] : [];
   const input: BackgroundRunCreateInput = {
-    id: `run:coreloop:${randomUUID()}`,
-    kind: "coreloop_run",
+    id: `${DURABLE_LOOP_BACKGROUND_RUN_ID_PREFIX}${randomUUID()}`,
+    kind: DURABLE_LOOP_BACKGROUND_RUN_KIND,
     goal_id: goal.id,
     parent_session_id: parentSessionId,
     notify_policy: pinnedReplyTarget ? "done_only" : "silent",

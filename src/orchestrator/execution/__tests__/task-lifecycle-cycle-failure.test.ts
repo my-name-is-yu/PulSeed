@@ -395,7 +395,6 @@ describe("TaskLifecycle — failure handling", () => {
     const badAdapter: import("../task/task-lifecycle.js").IAdapter = {
       adapterType: "mock-bad",
       async execute() {
-        // eslint-disable-next-line @typescript-eslint/no-throw-literal
         throw "string error value";
       },
     };

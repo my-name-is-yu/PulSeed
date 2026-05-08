@@ -65,12 +65,21 @@ export function summarizeEvidenceMetricTrends(
   return summarizeMetricTrends(extractMetricObservationsFromEvidence(entries), options);
 }
 
+export interface MetricTrendDimensionSelectionOptions {
+  metricKeys?: readonly string[];
+}
+
 export function selectMetricTrendForDimension(
   trends: MetricTrendContext[],
-  dimensionName: string
+  dimensionName: string,
+  options: MetricTrendDimensionSelectionOptions = {}
 ): MetricTrendContext | undefined {
-  return trends.find((trend) => trend.metric_key === dimensionName)
-    ?? trends.find((trend) => dimensionName.includes(trend.metric_key) || trend.metric_key.includes(dimensionName));
+  const candidateMetricKeys = uniqueMetricKeys([...(options.metricKeys ?? []), dimensionName]);
+  for (const metricKey of candidateMetricKeys) {
+    const trend = trends.find((entry) => entry.metric_key === metricKey);
+    if (trend) return trend;
+  }
+  return undefined;
 }
 
 function resolveMetricDirection(
@@ -79,4 +88,14 @@ function resolveMetricDirection(
 ): MetricDirection | null {
   if (direction === "maximize" || direction === "minimize") return direction;
   return fallback ?? null;
+}
+
+function uniqueMetricKeys(metricKeys: readonly string[]): string[] {
+  const unique = new Set<string>();
+  for (const metricKey of metricKeys) {
+    const normalized = metricKey.trim();
+    if (normalized.length === 0) continue;
+    unique.add(normalized);
+  }
+  return [...unique];
 }

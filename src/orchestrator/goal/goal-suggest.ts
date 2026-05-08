@@ -287,6 +287,17 @@ export async function suggestGoals(
 
 // ─── filterSuggestions (standalone) ───
 
+function normalizeGoalTitleForDedup(title: string): string {
+  return title.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+function hasExactExistingGoalTitle(title: string, existingGoals: string[]): boolean {
+  const normalizedTitle = normalizeGoalTitleForDedup(title);
+  if (!normalizedTitle) return false;
+
+  return existingGoals.some((existing) => normalizeGoalTitleForDedup(existing) === normalizedTitle);
+}
+
 export async function filterSuggestions(
   suggestions: GoalSuggestion[],
   existingGoals: string[],
@@ -297,12 +308,8 @@ export async function filterSuggestions(
   const filtered: GoalSuggestion[] = [];
 
   for (const suggestion of suggestions) {
-    // 1. Dedup: skip if similar to existing goal (case-insensitive substring match)
-    const isDuplicate = existingGoals.some(existing => {
-      const existingLower = existing.toLowerCase();
-      const titleLower = suggestion.title.toLowerCase();
-      return existingLower.includes(titleLower) || titleLower.includes(existingLower);
-    });
+    // 1. Dedup: exact normalized titles only; semantic similarity needs structured adjudication.
+    const isDuplicate = hasExactExistingGoalTitle(suggestion.title, existingGoals);
     if (isDuplicate) {
       logger?.info(`[GoalNegotiator] Filtered duplicate suggestion: "${suggestion.title}"`);
       continue;

@@ -3,8 +3,17 @@ import {
   SurfaceInvalidationEventSchema,
   SurfaceInvalidationPolicySchema,
   SurfaceProjectionSchema,
+  attachSurfaceDependencyRef,
+  createSurfaceDerivedRuntimeRef,
+  createSurfaceInspectionAdapterPayload,
   createSurfaceInspectionView,
+  evaluateSurfaceRuntimeAdmission,
+  invalidateSurfaceProjectionFromMemoryCorrection,
+  invalidateSurfaceProjectionFromPermissionChange,
+  type SurfaceDerivedRuntimeRefInput,
   type SurfaceGateKind,
+  type SurfaceMemorySourceRef,
+  type SurfaceProjectionInput,
 } from "../surface-contracts.js";
 
 const now = "2026-05-08T00:00:00.000Z";
@@ -48,7 +57,7 @@ function dependencyRef(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function sourceRef(overrides: Record<string, unknown> = {}) {
+function sourceRef(overrides: Record<string, unknown> = {}): SurfaceMemorySourceRef {
   const memoryId = typeof overrides.memory_id === "string" ? overrides.memory_id : "memory-1";
   const owningStoreRef = overrides.owning_store_ref ?? ownerRef();
   const lifecycle = typeof overrides.lifecycle === "string" ? overrides.lifecycle : "active";
@@ -85,7 +94,7 @@ function sourceRef(overrides: Record<string, unknown> = {}) {
       content_state: contentState,
     }),
     ...overrides,
-  };
+  } as SurfaceMemorySourceRef;
 }
 
 function gate(gateName: SurfaceGateKind, status: "passed" | "blocked" | "unknown" = "passed") {
@@ -139,7 +148,10 @@ function permissionSourceRef(source: ReturnType<typeof sourceRef> = sourceRef())
   };
 }
 
-function derivedRef(kind = "runtime_item", overrides: Record<string, unknown> = {}) {
+function derivedRef(
+  kind: SurfaceDerivedRuntimeRefInput["kind"] = "runtime_item",
+  overrides: Partial<SurfaceDerivedRuntimeRefInput> = {}
+): SurfaceDerivedRuntimeRefInput {
   return {
     kind,
     ref: `${kind}-1`,
@@ -150,10 +162,10 @@ function derivedRef(kind = "runtime_item", overrides: Record<string, unknown> = 
     use_class: "surface_projection",
     audit_refs: ["audit/surface-1"],
     ...overrides,
-  };
+  } as SurfaceDerivedRuntimeRefInput;
 }
 
-function projection(overrides: Record<string, unknown> = {}) {
+function projection(overrides: Record<string, unknown> = {}): SurfaceProjectionInput {
   const selected = sourceRef();
   return {
     id: "surface-1",
@@ -195,7 +207,7 @@ function projection(overrides: Record<string, unknown> = {}) {
     },
     created_at: now,
     ...overrides,
-  };
+  } as SurfaceProjectionInput;
 }
 
 describe("SurfaceProjection contract", () => {
@@ -650,9 +662,14 @@ describe("SurfaceProjection contract", () => {
 
     const chatInspection = createSurfaceInspectionView(parsed, "chat");
     const tuiInspection = createSurfaceInspectionView(parsed, "tui");
+    const chatPayload = createSurfaceInspectionAdapterPayload(parsed, "chat");
+    const tuiPayload = createSurfaceInspectionAdapterPayload(parsed, "tui");
 
     expect(chatInspection.surface_id).toBe(parsed.id);
     expect(tuiInspection.source_refs).toEqual(chatInspection.source_refs);
+    expect(chatPayload.inspection).toEqual(chatInspection);
+    expect(tuiPayload.inspection.source_refs).toEqual(chatPayload.inspection.source_refs);
+    expect("prompt_dump" in chatPayload).toBe(false);
     expect(chatInspection.included_summaries[0]).toEqual({
       lane: "relationship",
       memory_id: "memory-1",
@@ -664,16 +681,17 @@ describe("SurfaceProjection contract", () => {
   });
 
   it("tracks Surface dependency refs for memory-derived runtime objects and fails closed when missing", () => {
-    const parsed = SurfaceProjectionSchema.parse(projection({
-      dependent_refs: {
-        runtime_items: [derivedRef("runtime_item")],
-        agenda_items: [derivedRef("agenda_item")],
-        outcome_decisions: [derivedRef("outcome_decision")],
-        expression_decisions: [derivedRef("expression_decision")],
-        memory_write_candidates: [derivedRef("memory_write_candidate")],
-        session_resume_attempts: [derivedRef("session_resume_attempt")],
-      },
-    }));
+    const runtimeRef = createSurfaceDerivedRuntimeRef(derivedRef("runtime_item"));
+    let parsed = attachSurfaceDependencyRef(projection(), runtimeRef);
+    for (const kind of [
+      "agenda_item",
+      "outcome_decision",
+      "expression_decision",
+      "memory_write_candidate",
+      "session_resume_attempt",
+    ] as const) {
+      parsed = attachSurfaceDependencyRef(parsed, derivedRef(kind));
+    }
 
     expect(parsed.dependent_refs.runtime_items[0]?.missing_dependency_behavior).toBe("fail_closed");
     expect(parsed.dependent_refs.session_resume_attempts[0]?.related_surface_refs).toContain("surface-1");
@@ -683,6 +701,108 @@ describe("SurfaceProjection contract", () => {
         runtime_items: [derivedRef("runtime_item", { related_surface_refs: ["different-surface"] })],
       },
     })).success).toBe(false);
+
+    const incompleteRef = derivedRef("expression_decision", {
+      ref: "expression_decision-missing-deps",
+      related_memory_refs: [],
+      permission_check_refs: [],
+      staleness_check_refs: [],
+      audit_refs: [],
+    });
+    const inspectableIncompleteProjection = attachSurfaceDependencyRef(parsed, incompleteRef);
+    const missingDependencyAdmission = evaluateSurfaceRuntimeAdmission({
+      projection: inspectableIncompleteProjection,
+      derived_ref: incompleteRef,
+      operation: "speech",
+      authorization_basis: "runtime_authority",
+      runtime_authority_ref: "runtime-authority:expression",
+    });
+    expect(missingDependencyAdmission).toMatchObject({
+      status: "blocked",
+      reason: "missing_dependency_ref",
+      dependent_ref: "expression_decision-missing-deps",
+    });
+    expect(missingDependencyAdmission.blocked_refs).toEqual(expect.arrayContaining([
+      "related_memory_refs",
+      "permission_check_refs",
+      "staleness_check_refs",
+      "audit_refs",
+    ]));
+
+    const bogusRef = derivedRef("runtime_item", {
+      ref: "runtime_item-bogus-deps",
+      related_memory_refs: ["memory-bogus"],
+      permission_check_refs: ["permission-bogus"],
+      staleness_check_refs: ["staleness-bogus"],
+      audit_refs: ["audit-bogus"],
+    });
+    const inspectableBogusProjection = attachSurfaceDependencyRef(parsed, bogusRef);
+    const bogusDependencyAdmission = evaluateSurfaceRuntimeAdmission({
+      projection: inspectableBogusProjection,
+      derived_ref: bogusRef,
+      operation: "action",
+      authorization_basis: "runtime_authority",
+      runtime_authority_ref: "runtime-authority:action",
+    });
+    expect(bogusDependencyAdmission).toMatchObject({
+      status: "blocked",
+      reason: "missing_dependency_ref",
+      dependent_ref: "runtime_item-bogus-deps",
+    });
+    expect(bogusDependencyAdmission.blocked_refs).toEqual(expect.arrayContaining([
+      "related_memory_refs:memory-bogus",
+      "permission_check_refs:permission-bogus",
+      "staleness_check_refs:staleness-bogus",
+      "audit_refs:audit-bogus",
+    ]));
+
+    const disallowedUseRef = derivedRef("expression_decision", {
+      ref: "expression_decision-disallowed-use",
+      use_class: "user_facing_reference",
+    });
+    const disallowedUseProjection = attachSurfaceDependencyRef(parsed, disallowedUseRef);
+    const disallowedUseAdmission = evaluateSurfaceRuntimeAdmission({
+      projection: disallowedUseProjection,
+      derived_ref: disallowedUseRef,
+      operation: "speech",
+      authorization_basis: "runtime_authority",
+      runtime_authority_ref: "runtime-authority:speech",
+    });
+    expect(disallowedUseAdmission).toMatchObject({
+      status: "blocked",
+      reason: "allowed_use_missing",
+      blocked_refs: ["user_facing_reference"],
+    });
+
+    const memoryOnlyAdmission = evaluateSurfaceRuntimeAdmission({
+      projection: parsed,
+      derived_ref: derivedRef("expression_decision"),
+      operation: "speech",
+      authorization_basis: "memory_only",
+    });
+    expect(memoryOnlyAdmission.status).toBe("blocked");
+    expect(memoryOnlyAdmission.reason).toBe("memory_is_not_authority");
+    expect(memoryOnlyAdmission.blocked_refs).toContain("memory-1");
+
+    for (const operation of ["notification", "action", "session_resume", "surface_update", "memory_write"] as const) {
+      const operationRef = derivedRef(
+        operation === "session_resume"
+          ? "session_resume_attempt"
+          : operation === "memory_write"
+            ? "memory_write_candidate"
+            : "runtime_item",
+        { ref: `${operation}-1` }
+      );
+      const operationProjection = attachSurfaceDependencyRef(parsed, operationRef);
+      const admission = evaluateSurfaceRuntimeAdmission({
+        projection: operationProjection,
+        derived_ref: operationRef,
+        operation,
+        authorization_basis: "memory_only",
+      });
+      expect(admission.status, operation).toBe("blocked");
+      expect(admission.reason, operation).toBe("memory_is_not_authority");
+    }
   });
 
   it("requires memory source dependency refs to match top-level source refs", () => {
@@ -804,5 +924,69 @@ describe("SurfaceInvalidation contract", () => {
       audit_ref: "audit/event-2",
       occurred_at: now,
     }).success).toBe(false);
+  });
+
+  it("starts from memory deletion and invalidates Surface history plus dependent runtime admissions", () => {
+    const dependency = derivedRef("expression_decision");
+    const parsed = SurfaceProjectionSchema.parse(projection({
+      dependent_refs: {
+        expression_decisions: [dependency],
+      },
+    }));
+    const result = invalidateSurfaceProjectionFromMemoryCorrection({
+      projection: parsed,
+      correction_event: {
+        event_id: "correction-delete-1",
+        target_memory_ref: "memory-1",
+        action: "delete",
+        affected_use_classes: ["surface_projection", "user_facing_reference"],
+        invalidation_ref: "surface-invalidation-delete-1",
+        audit_ref: "audit/correction-delete-1",
+        created_at: now,
+      },
+      occurred_at: now,
+      redaction_ref: "redaction/memory-1/delete",
+    });
+
+    expect(result.event.trigger).toBe("memory_deletion");
+    expect(result.event.redaction_ref).toBe("redaction/memory-1/delete");
+    expect(result.projection.metadata.invalidation_state).toBe("invalid");
+    expect(result.projection.included_context).toEqual([]);
+    expect(result.projection.excluded_context[0]?.redaction_ref).toBe("redaction/memory-1/delete");
+    expect(result.blocked_admissions[0]).toMatchObject({
+      status: "blocked",
+      reason: "invalid_surface",
+      operation: "speech",
+    });
+    expect(JSON.stringify(result)).not.toContain("The user prefers concise status reports.");
+  });
+
+  it("starts from permission revocation and blocks expression or resume through the same Surface runner", () => {
+    const expressionRef = derivedRef("expression_decision");
+    const resumeRef = derivedRef("session_resume_attempt");
+    const parsed = SurfaceProjectionSchema.parse(projection({
+      dependent_refs: {
+        expression_decisions: [expressionRef],
+        session_resume_attempts: [resumeRef],
+      },
+    }));
+    const result = invalidateSurfaceProjectionFromPermissionChange({
+      projection: parsed,
+      source_ref: sourceRef(),
+      occurred_at: now,
+      affected_dependencies: [expressionRef, resumeRef],
+      audit_ref: "audit/permission-revoked",
+    });
+
+    expect(result.event.trigger).toBe("permission_revocation");
+    expect(result.projection.metadata.permission_state).toBe("blocked");
+    expect(result.projection.included_context).toHaveLength(0);
+    expect(result.blocked_admissions.map((admission) => admission.operation)).toEqual([
+      "speech",
+      "session_resume",
+    ]);
+    expect(result.blocked_admissions.every((admission) => admission.reason === "invalid_surface")).toBe(true);
+    expect(result.inspection.included_summaries).toEqual([]);
+    expect(result.inspection.excluded_summaries[0]?.blocked_by).toContain("permission");
   });
 });

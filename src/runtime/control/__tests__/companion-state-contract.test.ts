@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
+  SurfaceProjectionSchema,
+  attachSurfaceDependencyRef,
+  createSurfaceDerivedRuntimeRef,
+  invalidateSurfaceProjectionFromMemoryCorrection,
+  surfaceInvalidationEventsToRuntimeStateRefs,
+} from "../../../grounding/surface-contracts.js";
+import {
   CompanionStateReducerInputSchema,
+  RuntimeEventSchema,
   RuntimeItemSchema,
   RuntimeItemTypeSchema,
   assembleCompanionStateReducerInput,
@@ -13,6 +21,7 @@ import {
   type CompanionGlobalControlEntry,
   type CompanionStateReducerInput,
   type ControlPolicy,
+  type RuntimeEvent,
   type RuntimeItem,
   type Staleness,
 } from "../index.js";
@@ -123,11 +132,72 @@ function makeRuntimeItem(input: Partial<RuntimeItem> = {}): RuntimeItem {
   });
 }
 
+function makeRuntimeEvent(input: Partial<RuntimeEvent> = {}): RuntimeEvent {
+  return RuntimeEventSchema.parse({
+    schema_version: "runtime-event-v1",
+    event_id: "runtime-event:1",
+    event_type: "working",
+    item_ref: "run:quiet-work-1",
+    occurred_at: NOW,
+    source: "runtime-control-test",
+    posture_before: "waiting",
+    posture_after: "working",
+    authority_delta: {
+      before: null,
+      after: operationalAuthority,
+      changed_fields: [
+        "inspectable",
+        "resumable",
+        "actionable",
+        "speakable",
+        "can_create_urge",
+        "can_update_surface",
+        "can_write_memory",
+        "can_delegate_work",
+        "requires_confirmation",
+        "approval_scope",
+      ],
+    },
+    staleness_delta: {
+      before: null,
+      after: currentStaleness,
+      changed_dimensions: [
+        "temporal",
+        "world",
+        "project",
+        "permission",
+        "relationship",
+        "surface",
+        "goal",
+        "assumption",
+        "session",
+        "browser_session",
+        "auth_handoff",
+      ],
+    },
+    companion_control_delta: {
+      before: null,
+      after: {
+        active_controls: [],
+        global_control_refs: [],
+        held_by_controls: [],
+        rejected_by_controls: [],
+        reason: "no active companion-wide controls",
+      },
+      changed_controls: [],
+    },
+    surface_refs: ["surface:1"],
+    companion_state_refs: [],
+    audit_refs: ["audit:1"],
+    ...input,
+  });
+}
+
 function makeReducerInput(input: Partial<CompanionStateReducerInput> = {}): CompanionStateReducerInput {
   return CompanionStateReducerInputSchema.parse({
     schema_version: "companion-state-reducer-input-v1",
     runtime_items: [makeRuntimeItem()],
-    recent_runtime_events: ["runtime-event:1"],
+    recent_runtime_events: [makeRuntimeEvent()],
     active_surface_ref: "surface:1",
     surface_invalidation_events: [],
     global_control_state_ref: "global-control-state:1",
@@ -148,6 +218,153 @@ function makeReducerInput(input: Partial<CompanionStateReducerInput> = {}): Comp
     event_high_watermark: "event:1",
     current_time: NOW,
     ...input,
+  });
+}
+
+function surfaceOwnerRef() {
+  return {
+    kind: "relationship_profile",
+    store_ref: "relationship-profile.json",
+    record_ref: "memory:1",
+  };
+}
+
+function surfaceDependencyRef(overrides: Record<string, unknown> = {}) {
+  return {
+    kind: "memory_record",
+    ref: "memory:1",
+    owning_store_ref: surfaceOwnerRef(),
+    content_state: "materialized",
+    lifecycle: "active",
+    correction_state: "current",
+    superseded_by_memory_id: null,
+    ...overrides,
+  };
+}
+
+function surfaceSourceRef(overrides: Record<string, unknown> = {}) {
+  return {
+    memory_id: "memory:1",
+    owning_store_ref: surfaceOwnerRef(),
+    role: "relationship",
+    record_kind: "preference",
+    domain_fields: {
+      target: "status reports",
+      preference: "concise",
+      confidence: 0.9,
+      scope: "operator collaboration",
+      allowed_uses: ["surface_projection"],
+      review_condition: "when corrected",
+    },
+    allowed_uses: ["surface_projection", "user_facing_reference"],
+    not_allowed_uses: ["side_effect_authorization", "stale_session_authorization"],
+    lifecycle: "active",
+    correction_state: "current",
+    superseded_by_memory_id: null,
+    sensitivity: "private",
+    content_state: "materialized",
+    dependency_ref: surfaceDependencyRef(),
+    ...overrides,
+  };
+}
+
+function surfaceGate(gateName: string, status = "passed") {
+  return {
+    gate: gateName,
+    status,
+    reason_ref: `reason:${gateName}:${status}`,
+    evaluated_at: NOW,
+  };
+}
+
+function surfacePassedGates() {
+  return [
+    surfaceGate("scope"),
+    surfaceGate("lifecycle"),
+    surfaceGate("staleness"),
+    surfaceGate("sensitivity"),
+    surfaceGate("permission"),
+    surfaceGate("allowed_use"),
+    surfaceGate("forbidden_use"),
+    surfaceGate("projection"),
+    surfaceGate("audit"),
+  ];
+}
+
+function surfaceRelationshipPermission() {
+  return {
+    permission_id: "permission:surface:1",
+    context_scope: "operator collaboration",
+    memory_role_scope: ["relationship"],
+    observation_permission: "allowed",
+    memory_use_permission: "allowed",
+    speakability: "allowed",
+    proactive_permission: "ask_first",
+    interruption_tolerance: "low",
+    autonomy_level: "ask_first",
+    confirmation_requirement: "before_action",
+    emotional_language_boundary: "neutral",
+    preferred_expression_modes: ["concise"],
+    forbidden_moves: ["overfamiliarity"],
+    valid_from: NOW,
+    source_refs: [{
+      memory_id: "memory:1",
+      owning_store_ref: surfaceOwnerRef(),
+    }],
+  };
+}
+
+function makeSurfaceProjection() {
+  const source = surfaceSourceRef();
+  return SurfaceProjectionSchema.parse({
+    id: "surface:1",
+    version: 1,
+    target: "gateway",
+    scope: { kind: "runtime_item", ref: "run:quiet-work-1" },
+    purpose: "runtime invalidation test",
+    requested_use: "surface_projection",
+    source_refs: [source],
+    relationship_permissions: [surfaceRelationshipPermission()],
+    included_context: [{
+      lane: "relationship",
+      source_ref: source,
+      use_class: "surface_projection",
+      excerpt: "The user prefers concise status reports.",
+      gates: surfacePassedGates(),
+    }],
+    excluded_context: [],
+    allowed_runtime_uses: ["surface_projection"],
+    not_allowed_runtime_uses: ["side_effect_authorization", "stale_session_authorization"],
+    staleness_checks: ["staleness:surface:1"],
+    sensitivity_checks: ["sensitivity:surface:1"],
+    rationale_entries: [{
+      source_ref: source,
+      decision: "included",
+      gate: "audit",
+      reason_ref: "rationale:surface:1:memory:1",
+      policy_refs: ["policy:surface"],
+    }],
+    metadata: {
+      staleness: "fresh",
+      sensitivity: "private",
+      permission_state: "granted",
+      invalidation_state: "valid",
+      audit_refs: ["audit:surface:1"],
+    },
+    created_at: NOW,
+  });
+}
+
+function makeSurfaceDerivedRef(kind: "runtime_item" | "outcome_decision" | "expression_decision" | "session_resume_attempt") {
+  return createSurfaceDerivedRuntimeRef({
+    kind,
+    ref: `${kind}:surface:1`,
+    related_surface_refs: ["surface:1"],
+    related_memory_refs: ["memory:1"],
+    permission_check_refs: ["permission:surface:1"],
+    staleness_check_refs: ["staleness:surface:1"],
+    use_class: "surface_projection",
+    audit_refs: ["audit:surface:1"],
   });
 }
 
@@ -409,7 +626,13 @@ describe("CompanionState runtime-control contracts", () => {
           related_surface_refs: ["surface:old"],
         }),
       ],
-      recent_runtime_events: ["runtime-event:watch-posture"],
+      recent_runtime_events: [makeRuntimeEvent({
+        event_id: "runtime-event:watch-posture",
+        event_type: "waiting",
+        item_ref: "watch:posture-change",
+        posture_before: "watching",
+        posture_after: "waiting",
+      })],
       active_surface_ref: "surface:1",
       surface_invalidation_events: ["surface:old"],
       global_control_state_ref: "global-control-state:1",
@@ -423,10 +646,82 @@ describe("CompanionState runtime-control contracts", () => {
     expect(input.event_high_watermark).toBe("event:watch-posture");
   });
 
+  it("crosses memory correction through Surface invalidation into runtime state rechecks", () => {
+    let surface = makeSurfaceProjection();
+    for (const kind of ["runtime_item", "outcome_decision", "expression_decision", "session_resume_attempt"] as const) {
+      surface = attachSurfaceDependencyRef(surface, makeSurfaceDerivedRef(kind));
+    }
+    const runtimeItem = makeRuntimeItem({
+      item_id: "run:memory-dependent",
+      related_surface_refs: [surface.id],
+      related_memory_refs: ["memory:1"],
+    });
+    const beforeInput = assembleCompanionStateReducerInput({
+      runtime_items: [runtimeItem],
+      recent_runtime_events: ["runtime-event:surface-before"],
+      active_surface_ref: surface.id,
+      surface_invalidation_events: [],
+      global_control_state_ref: "global-control-state:1",
+      global_controls: [makeControl("inspect_companion_state", "inactive")],
+      event_high_watermark: "event:surface-stable",
+      current_time: NOW,
+    });
+    const beforeSnapshot = deriveCompanionStateSnapshot(beforeInput);
+    const invalidation = invalidateSurfaceProjectionFromMemoryCorrection({
+      projection: surface,
+      correction_event: {
+        event_id: "correction:delete-memory:1",
+        target_memory_ref: "memory:1",
+        action: "delete",
+        affected_use_classes: ["surface_projection", "user_facing_reference"],
+        invalidation_ref: "surface-invalidation:delete-memory:1",
+        audit_ref: "audit:correction:delete-memory:1",
+        created_at: NOW,
+      },
+      occurred_at: NOW,
+      redaction_ref: "redaction:memory:1",
+    });
+    const invalidatedSurfaceRefs = surfaceInvalidationEventsToRuntimeStateRefs([invalidation.event]);
+    const afterInput = assembleCompanionStateReducerInput({
+      runtime_items: [runtimeItem],
+      recent_runtime_events: ["runtime-event:surface-before"],
+      active_surface_ref: surface.id,
+      surface_invalidation_events: invalidatedSurfaceRefs,
+      global_control_state_ref: "global-control-state:1",
+      global_controls: [makeControl("inspect_companion_state", "inactive")],
+      event_high_watermark: beforeInput.event_high_watermark,
+      current_time: NOW,
+    });
+    const afterSnapshot = deriveCompanionStateSnapshot(afterInput);
+
+    expect(afterInput.staleness_blockers).toContain(surface.id);
+    expect(afterSnapshot.mode).toBe("holding_back");
+    expect(afterSnapshot.invalidated_surface_refs).toContain(surface.id);
+    expect(afterSnapshot.derivation_trace.reason).toBe("stale_or_invalid_surface_holds_runtime_state");
+    expect(invalidation.blocked_admissions.map((admission) => admission.operation)).toEqual([
+      "action",
+      "action",
+      "speech",
+      "session_resume",
+    ]);
+    expect(invalidation.blocked_admissions.every((admission) => admission.reason === "invalid_surface")).toBe(true);
+    expect(evaluateCompanionStateSnapshotFreshness(beforeSnapshot, afterInput)).toMatchObject({
+      current: false,
+      reason: "surface_invalidated",
+      stale_refs: [surface.id],
+    });
+    expect(JSON.stringify(invalidation.inspection)).not.toContain("The user prefers concise status reports.");
+  });
+
   it("represents missing Surface state as a blocker instead of silently omitting it", () => {
     const input = assembleCompanionStateReducerInput({
       runtime_items: [makeRuntimeItem()],
-      recent_runtime_events: ["runtime-event:missing-surface"],
+      recent_runtime_events: [makeRuntimeEvent({
+        event_id: "runtime-event:missing-surface",
+        event_type: "stale_context_detected",
+        item_ref: "run:quiet-work-1",
+        surface_refs: [],
+      })],
       active_surface_ref: null,
       surface_invalidation_events: [],
       global_control_state_ref: "global-control-state:1",
@@ -608,11 +903,27 @@ describe("CompanionState runtime-control contracts", () => {
     expect(deriveCompanionStateSnapshot(input)).toEqual(deriveCompanionStateSnapshot(input));
   });
 
+  it("keeps legacy runtime event id refs readable while production stores emit typed RuntimeEvent facts", () => {
+    const input = makeReducerInput({
+      recent_runtime_events: ["runtime-event:legacy-ref"],
+      event_high_watermark: "runtime-event:legacy-ref",
+    });
+
+    const snapshot = deriveCompanionStateSnapshot(input);
+
+    expect(input.recent_runtime_events).toEqual(["runtime-event:legacy-ref"]);
+    expect(snapshot.derivation_trace.input_refs).toContain("runtime-event:legacy-ref");
+  });
+
   it("rejects stale snapshots when later runtime or Surface evidence changes the high-watermark", () => {
     const input = makeReducerInput();
     const snapshot = deriveCompanionStateSnapshot(input);
     const laterInput = makeReducerInput({
-      recent_runtime_events: ["runtime-event:2"],
+      recent_runtime_events: [makeRuntimeEvent({
+        event_id: "runtime-event:2",
+        event_type: "stale_context_detected",
+        item_ref: "run:quiet-work-1",
+      })],
       surface_invalidation_events: ["surface:1"],
       event_high_watermark: "event:2",
     });

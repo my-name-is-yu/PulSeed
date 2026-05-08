@@ -5,7 +5,6 @@ import type {
   PermissionWaitCanonicalPlan,
   PermissionWaitPlanStore,
 } from "../runtime/store/permission-wait-plan-store.js";
-import type { HostToolExecutionDecision } from "./execution-orchestrator.js";
 
 // --- Tool Result ---
 
@@ -57,6 +56,22 @@ export const ToolResultSchema = z.object({
 });
 
 export type ToolResult = z.infer<typeof ToolResultSchema>;
+
+export type HostToolExecutionDecisionStatus =
+  | "allowed"
+  | "denied"
+  | "needs_permission"
+  | "needs_sandbox"
+  | "needs_escalation"
+  | "fail_closed";
+
+export interface HostToolExecutionDecision {
+  status: HostToolExecutionDecisionStatus;
+  reason: string;
+  executionReason?: NonNullable<ToolResult["execution"]>["reason"];
+  requiredSandboxMode?: "workspace_write" | "danger_full_access";
+  requiredApprovalPolicy?: "on_request";
+}
 
 // --- Permission Level ---
 

@@ -9,6 +9,25 @@ import { RuntimeOperationStore } from "../store/runtime-operation-store.js";
 import { RuntimeOperatorHandoffStore } from "../store/operator-handoff-store.js";
 import { BrowserSessionStore, RuntimeAuthHandoffStore } from "../interactive-automation/index.js";
 import { breakerKey, GuardrailStore } from "../guardrails/index.js";
+import {
+  assembleCompanionStateReducerInput,
+  deriveCompanionStateSnapshot,
+} from "../companion-state-reducer.js";
+import {
+  buildRuntimeEventHighWatermark,
+  runtimeItemFromAuthHandoff,
+  runtimeItemFromBackgroundRun,
+  runtimeItemFromBrowserSession,
+  runtimeItemFromGuardrailBreaker,
+  runtimeItemsFromBackpressureSnapshot,
+} from "../store/runtime-operation-companion.js";
+import type {
+  CompanionGlobalControlEntry,
+  CompanionStateReducerInput,
+  CompanionStateSnapshot,
+  CompanionWideControl,
+  RuntimeItem,
+} from "../types/companion-state.js";
 import type {
   PermissionGrantCapability,
   PermissionGrantCreateInput,
@@ -53,6 +72,25 @@ export interface RuntimeControlResult {
   message: string;
   operationId?: string;
   state?: RuntimeControlOperationState;
+}
+
+export interface RuntimeCompanionStateBoundaryRequest {
+  activeSurfaceRef?: string | null;
+  surfaceInvalidationEvents?: string[];
+  globalControlStateRef?: string | null;
+  globalControls?: CompanionGlobalControlEntry[];
+  controlOverlays?: CompanionWideControl[];
+  preSuspendMode?: CompanionStateSnapshot["pre_suspend_mode"];
+  userActivityRefs?: string[];
+  feedbackRefs?: string[];
+  safetyContextRefs?: string[];
+  eventHighWatermark?: string;
+  currentTime?: string;
+}
+
+export interface RuntimeCompanionStateBoundaryResult {
+  input: CompanionStateReducerInput;
+  snapshot: CompanionStateSnapshot;
 }
 
 export type RuntimeAutomationControlDomain = "auth_handoff" | "browser_session" | "guardrail" | "backpressure";
@@ -207,6 +245,40 @@ export class RuntimeControlService {
     );
   }
 
+  async assembleCompanionStateInput(
+    request: RuntimeCompanionStateBoundaryRequest = {},
+  ): Promise<CompanionStateReducerInput> {
+    const currentTime = request.currentTime ?? this.nowIso();
+    const runtimeItems = await this.collectRuntimeItems(currentTime);
+    const runtimeEvents = await this.operationStore.listRuntimeEvents();
+    return assembleCompanionStateReducerInput({
+      runtime_items: runtimeItems,
+      recent_runtime_events: runtimeEvents,
+      active_surface_ref: request.activeSurfaceRef ?? null,
+      surface_invalidation_events: request.surfaceInvalidationEvents ?? [],
+      global_control_state_ref: request.globalControlStateRef ?? null,
+      global_controls: request.globalControls ?? [],
+      control_overlays: request.controlOverlays ?? [],
+      pre_suspend_mode: request.preSuspendMode ?? null,
+      user_activity_refs: request.userActivityRefs ?? [],
+      feedback_refs: request.feedbackRefs ?? [],
+      safety_context_refs: request.safetyContextRefs ?? [],
+      event_high_watermark: request.eventHighWatermark
+        ?? buildRuntimeEventHighWatermark(runtimeEvents, `runtime-event-high-watermark:${currentTime}`),
+      current_time: currentTime,
+    });
+  }
+
+  async recomputeCompanionState(
+    request: RuntimeCompanionStateBoundaryRequest = {},
+  ): Promise<RuntimeCompanionStateBoundaryResult> {
+    const input = await this.assembleCompanionStateInput(request);
+    return {
+      input,
+      snapshot: deriveCompanionStateSnapshot(input),
+    };
+  }
+
   private async handlePermissionControl(request: RuntimeControlRequest): Promise<RuntimeControlResult> {
     const initial = await this.createInitialOperation(request);
     if (!this.permissionGrantStore) {
@@ -303,6 +375,27 @@ export class RuntimeControlService {
       message: `Unsupported permission control operation: ${request.intent.kind}`,
     });
     return this.toResult(blocked);
+  }
+
+  private async collectRuntimeItems(currentTime: string): Promise<RuntimeItem[]> {
+    const items: RuntimeItem[] = [
+      ...await this.operationStore.listRuntimeItems(),
+    ];
+
+    if (this.sessionRegistry) {
+      const snapshot = await this.sessionRegistry.snapshot();
+      items.push(...snapshot.background_runs.map((run) => runtimeItemFromBackgroundRun(run, currentTime)));
+    }
+
+    items.push(...(await this.authHandoffStore.list()).map((handoff) => runtimeItemFromAuthHandoff(handoff, currentTime)));
+    items.push(...(await this.browserSessionStore.list()).map((session) => runtimeItemFromBrowserSession(session, currentTime)));
+    items.push(...(await this.guardrailStore.listBreakers()).map(runtimeItemFromGuardrailBreaker));
+    const backpressure = await this.guardrailStore.loadBackpressureSnapshot();
+    if (backpressure) {
+      items.push(...runtimeItemsFromBackpressureSnapshot(backpressure, currentTime));
+    }
+
+    return items;
   }
 
   private async handleRunControl(request: RuntimeControlRequest): Promise<RuntimeControlResult> {

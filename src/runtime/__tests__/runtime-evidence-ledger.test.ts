@@ -338,6 +338,33 @@ describe("RuntimeEvidenceLedger", () => {
     expect(await fsp.readFile(ledger.goalPath("goal-index"), "utf8")).toContain("{not-json");
   });
 
+  it("derives goal summary scope from the evidence directory when the runtime root contains runs", async () => {
+    const nestedRuntimeRoot = path.join(runtimeRoot, "runs", "nested-runtime");
+    const goalId = "goal-root-runs-component";
+    const ledger = new RuntimeEvidenceLedger(nestedRuntimeRoot);
+    await ledger.append({
+      id: "root-runs-goal-entry",
+      occurred_at: "2026-04-30T00:00:00.000Z",
+      kind: "artifact",
+      scope: { goal_id: goalId },
+      artifacts: [{ label: "report", state_relative_path: "runs/root-component/report.md", kind: "report" }],
+      summary: "Goal evidence under a runtime root whose path contains runs.",
+      outcome: "continued",
+    });
+
+    const goalPath = ledger.goalPath(goalId);
+    expect(goalPath).toContain(`${path.sep}runs${path.sep}`);
+    const indexed = JSON.parse(await fsp.readFile(`${goalPath}.summary.json`, "utf8")) as {
+      summary: { scope: { goal_id?: string; run_id?: string } };
+    };
+    const summary = await new RuntimeEvidenceLedger(nestedRuntimeRoot).summarizeGoal(goalId);
+
+    expect(indexed.summary.scope).toEqual({ goal_id: goalId });
+    expect(indexed.summary.scope.run_id).toBeUndefined();
+    expect(summary.scope).toEqual({ goal_id: goalId });
+    expect(summary.total_entries).toBe(1);
+  });
+
   it("maintains summary indexes on append for new ledgers", async () => {
     const ledger = new RuntimeEvidenceLedger(runtimeRoot);
     await ledger.append({
@@ -624,6 +651,68 @@ describe("RuntimeEvidenceLedger", () => {
       } finally {
         await fsp.chmod(canonicalPath, 0o600);
       }
+    }
+  });
+
+  it("updates non-metric summary indexes on append without reading canonical JSONL", async () => {
+    const sizes = [100, 500, 1000];
+    for (const size of sizes) {
+      const runId = `run:append-non-metric-scale-${size}`;
+      const ledger = new RuntimeEvidenceLedger(runtimeRoot);
+      const entries = Array.from({ length: size }, (_, index) => ({
+        schema_version: "runtime-evidence-entry-v1",
+        id: `append-non-metric-entry-${size}-${index}`,
+        occurred_at: new Date(Date.UTC(2026, 3, 30, 0, 0, index)).toISOString(),
+        kind: "execution",
+        scope: { run_id: runId, loop_index: index },
+        metrics: [],
+        evaluators: [],
+        research: [],
+        dream_checkpoints: [],
+        divergent_exploration: [],
+        candidates: [],
+        artifacts: [],
+        raw_refs: [],
+        result: { status: "completed", summary: `Execution ${index}` },
+        summary: `Execution ${index}`,
+        outcome: index === size - 1 ? "improved" : "continued",
+      }));
+      await fsp.mkdir(path.dirname(ledger.runPath(runId)), { recursive: true });
+      await fsp.writeFile(
+        ledger.runPath(runId),
+        `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`,
+        "utf8"
+      );
+      await ledger.rebuildSummaryIndexForRun(runId);
+
+      const canonicalPath = ledger.runPath(runId);
+      await fsp.chmod(canonicalPath, 0o200);
+      let indexedBestEvidenceId: string | undefined;
+      let indexedRecentEntryIds: string[] = [];
+      try {
+        await ledger.append({
+          id: `append-non-metric-entry-${size}-new`,
+          occurred_at: "2026-04-30T00:30:00.000Z",
+          kind: "execution",
+          scope: { run_id: runId, loop_index: size },
+          result: { status: "completed", summary: "Incremental execution." },
+          summary: "Incremental execution.",
+          outcome: "improved",
+        });
+
+        const summary = await new RuntimeEvidenceLedger(runtimeRoot).summarizeRun(runId);
+        expect(summary.total_entries).toBe(size + 1);
+        expect(summary.best_evidence?.id).toBe(`append-non-metric-entry-${size}-new`);
+        expect(summary.metric_trends).toEqual([]);
+        indexedBestEvidenceId = summary.best_evidence?.id;
+        indexedRecentEntryIds = summary.recent_entries.map((entry) => entry.id);
+      } finally {
+        await fsp.chmod(canonicalPath, 0o600);
+      }
+      const rebuilt = await ledger.rebuildSummaryIndexForRun(runId);
+      expect(rebuilt.best_evidence?.id).toBe(indexedBestEvidenceId);
+      expect(rebuilt.recent_entries.map((entry) => entry.id)).toEqual(indexedRecentEntryIds);
+      expect(rebuilt.metric_trends).toEqual([]);
     }
   });
 

@@ -305,6 +305,125 @@ describe("GoalDependencyGraph", () => {
     });
   });
 
+  // ─── Strategy Dependencies ───
+
+  describe("strategy dependencies", () => {
+    it("persists typed strategy dependency metadata", async () => {
+      await graph.addStrategyDependency("strategy-A", "strategy-B", "enhances", "goal-1");
+
+      const edge = graph.getGraph().edges[0];
+      expect(edge).toMatchObject({
+        from_goal_id: "strategy-A",
+        to_goal_id: "strategy-B",
+        type: "strategy_dependency",
+        strategy_dependency: {
+          dependency_type: "enhances",
+          goal_id: "goal-1",
+        },
+        reasoning: null,
+      });
+
+      const freshGraph = new GoalDependencyGraph(stateManager);
+      await freshGraph.init();
+      expect(freshGraph.getStrategyDependencies("strategy-A")).toEqual([
+        {
+          source_strategy_id: "strategy-A",
+          target_strategy_id: "strategy-B",
+          dependency_type: "enhances",
+          goal_id: "goal-1",
+        },
+      ]);
+    });
+
+    it("prefers typed metadata over stale reasoning text", async () => {
+      await graph.addEdge(makeEdge("strategy-A", "strategy-B", "strategy_dependency", {
+        strategy_dependency: {
+          dependency_type: "enhances",
+          goal_id: "goal-current",
+        },
+        reasoning: "strategy_dependency_type:prerequisite;goal_id:goal-stale",
+      }));
+
+      expect(graph.getStrategyDependencies("strategy-B")).toEqual([
+        {
+          source_strategy_id: "strategy-A",
+          target_strategy_id: "strategy-B",
+          dependency_type: "enhances",
+          goal_id: "goal-current",
+        },
+      ]);
+    });
+
+    it("loads legacy strategy dependency protocol fields without regex defaults", async () => {
+      await graph.addEdge(makeEdge("strategy-A", "strategy-B", "strategy_dependency", {
+        reasoning: "strategy_dependency_type:enhances;goal_id:goal-legacy",
+      }));
+      await graph.addEdge(makeEdge("strategy-C", "strategy-B", "strategy_dependency", {
+        reasoning: "human note without strategy dependency metadata",
+      }));
+
+      expect(graph.getStrategyDependencies("strategy-B")).toEqual([
+        {
+          source_strategy_id: "strategy-A",
+          target_strategy_id: "strategy-B",
+          dependency_type: "enhances",
+          goal_id: "goal-legacy",
+        },
+      ]);
+    });
+
+    it("rejects legacy protocol-looking fields mixed into freeform reasoning", async () => {
+      await graph.addEdge(makeEdge("strategy-A", "strategy-B", "strategy_dependency", {
+        reasoning: "human note;strategy_dependency_type:enhances;goal_id:goal-stale",
+      }));
+      await graph.addEdge(makeEdge("strategy-C", "strategy-B", "strategy_dependency", {
+        reasoning: "strategy_dependency_type:enhances;goal_id:goal-stale;source:human-note",
+      }));
+
+      expect(graph.getStrategyDependencies("strategy-B")).toEqual([]);
+    });
+
+    it("reloads raw legacy dependency graph files through the schema", async () => {
+      await stateManager.writeRaw("dependency-graph.json", {
+        nodes: ["strategy-A", "strategy-B"],
+        updated_at: "2026-05-08T00:00:00.000Z",
+        edges: [
+          {
+            from_goal_id: "strategy-A",
+            to_goal_id: "strategy-B",
+            type: "strategy_dependency",
+            status: "active",
+            condition: null,
+            affected_dimensions: [],
+            mitigation: null,
+            detection_confidence: 1,
+            reasoning: "strategy_dependency_type:prerequisite;goal_id:goal-legacy",
+            created_at: "2026-05-08T00:00:00.000Z",
+          },
+        ],
+      });
+
+      const freshGraph = new GoalDependencyGraph(stateManager);
+      await freshGraph.init();
+
+      expect(freshGraph.getStrategyDependencies("strategy-B")).toEqual([
+        {
+          source_strategy_id: "strategy-A",
+          target_strategy_id: "strategy-B",
+          dependency_type: "prerequisite",
+          goal_id: "goal-legacy",
+        },
+      ]);
+    });
+
+    it("checks blocking from typed prerequisite metadata", async () => {
+      await graph.addStrategyDependency("strategy-A", "strategy-B", "prerequisite", "goal-1");
+
+      expect(graph.isStrategyBlocked("strategy-B", [])).toBe(true);
+      expect(graph.isStrategyBlocked("strategy-B", ["strategy-A"])).toBe(false);
+    });
+  });
+
   // ─── Persistence ───
 
   describe("persistence (save / load)", () => {

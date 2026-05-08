@@ -507,3 +507,127 @@ export const GovernedMemoryUseAuditSchema = z.object({
   }
 });
 export type GovernedMemoryUseAudit = z.infer<typeof GovernedMemoryUseAuditSchema>;
+
+export const GovernedMemoryUseDecisionStatusSchema = z.enum(["allowed", "blocked"]);
+export type GovernedMemoryUseDecisionStatus = z.infer<typeof GovernedMemoryUseDecisionStatusSchema>;
+
+export const GovernedMemoryUseBlockerSchema = z.enum([
+  "allowed_use",
+  "forbidden_use",
+  "lifecycle",
+  "correction_state",
+  "redaction",
+  "sensitivity",
+]);
+export type GovernedMemoryUseBlocker = z.infer<typeof GovernedMemoryUseBlockerSchema>;
+
+export const GovernedMemoryUseDecisionSchema = z.object({
+  memory_ref: z.string().min(1),
+  requested_use: z.union([GovernedMemoryAllowedUseClassSchema, GovernedMemoryForbiddenUseClassSchema]),
+  status: GovernedMemoryUseDecisionStatusSchema,
+  outcome: GovernedMemoryAuditOutcomeSchema,
+  blocked_by: z.array(GovernedMemoryUseBlockerSchema).default([]),
+  audit: GovernedMemoryUseAuditSchema,
+}).strict();
+export type GovernedMemoryUseDecision = z.infer<typeof GovernedMemoryUseDecisionSchema>;
+
+export type GovernedMemoryUseDecisionInput = {
+  memory: unknown;
+  requested_use: GovernedMemoryAllowedUseClass | GovernedMemoryForbiddenUseClass;
+  audit_id: string;
+  created_at: string;
+  influenced?: GovernedMemoryInfluenceClass[];
+  gate_ref?: string;
+  redaction_ref?: string;
+};
+
+export function evaluateGovernedMemoryUse(input: GovernedMemoryUseDecisionInput): GovernedMemoryUseDecision {
+  const memory = GovernedMemorySchema.parse(input.memory);
+  const requestedUse = z.union([
+    GovernedMemoryAllowedUseClassSchema,
+    GovernedMemoryForbiddenUseClassSchema,
+  ]).parse(input.requested_use);
+  const blockedBy: GovernedMemoryUseBlocker[] = [];
+
+  if (!memory.allowed_uses.includes(requestedUse as GovernedMemoryAllowedUseClass)) {
+    blockedBy.push("allowed_use");
+  }
+  if (memory.not_allowed_uses.includes(requestedUse)) {
+    blockedBy.push("forbidden_use");
+  }
+  if (GovernedMemoryForbiddenUseClassSchema.safeParse(requestedUse).success) {
+    blockedBy.push("forbidden_use");
+  }
+  if (!SURFACE_PROJECTABLE_LIFECYCLES.includes(memory.lifecycle)) {
+    blockedBy.push("lifecycle");
+  }
+  if (memory.correction_state !== "current" || memory.superseded_by_memory_id !== null) {
+    blockedBy.push("correction_state");
+  }
+  if (memory.content.state === "redacted") {
+    blockedBy.push("redaction");
+  }
+  if (memory.sensitivity === "sensitive" && requestedUse === "user_facing_reference") {
+    blockedBy.push("sensitivity");
+  }
+
+  const blocked = blockedBy.length > 0;
+  const redactionRef = input.redaction_ref
+    ?? (memory.content.state === "redacted" ? memory.content.redaction_ref : undefined);
+  const outcome = deriveGovernedMemoryUseOutcome(memory, blockedBy);
+  const audit = GovernedMemoryUseAuditSchema.parse({
+    audit_id: input.audit_id,
+    memory_ref: memory.memory_id,
+    lifecycle: memory.lifecycle,
+    content_state: memory.content.state,
+    requested_use: requestedUse,
+    outcome,
+    influenced: input.influenced ?? [],
+    gate_ref: input.gate_ref,
+    redaction_ref: redactionRef,
+    repair_paths: deriveGovernedMemoryRepairPaths(memory, blockedBy),
+    created_at: input.created_at,
+  });
+
+  return GovernedMemoryUseDecisionSchema.parse({
+    memory_ref: memory.memory_id,
+    requested_use: requestedUse,
+    status: blocked ? "blocked" : "allowed",
+    outcome,
+    blocked_by: [...new Set(blockedBy)],
+    audit,
+  });
+}
+
+function deriveGovernedMemoryUseOutcome(
+  memory: GovernedMemory,
+  blockedBy: readonly GovernedMemoryUseBlocker[]
+): GovernedMemoryAuditOutcome {
+  if (!blockedBy.length) return "allowed";
+  if (
+    memory.lifecycle === "deleted"
+    || memory.lifecycle === "tombstoned"
+    || memory.content.state === "redacted"
+  ) {
+    return "non_use";
+  }
+  if (memory.lifecycle === "superseded" || memory.correction_state === "superseded") return "superseded";
+  if (blockedBy.includes("sensitivity")) return "sensitive";
+  if (blockedBy.includes("lifecycle") || memory.lifecycle === "decayed") return "stale";
+  return "blocked";
+}
+
+function deriveGovernedMemoryRepairPaths(
+  memory: GovernedMemory,
+  blockedBy: readonly GovernedMemoryUseBlocker[]
+): GovernedMemoryRepairPath[] {
+  if (memory.lifecycle === "deleted" || memory.lifecycle === "tombstoned") return ["forget"];
+  const repairPaths = new Set<GovernedMemoryRepairPath>(["correct", "suppress"]);
+  if (blockedBy.includes("forbidden_use") || blockedBy.includes("allowed_use")) {
+    repairPaths.add("revoke");
+  }
+  if (blockedBy.includes("redaction") || blockedBy.includes("lifecycle")) {
+    repairPaths.add("forget");
+  }
+  return [...repairPaths];
+}

@@ -2,7 +2,7 @@ import { writeFileSync, mkdirSync, renameSync, existsSync, readFileSync } from '
 import { dirname, join } from 'node:path';
 import { GoalWorker, type GoalWorkerConfig, type WorkerResult } from './goal-worker.js';
 import { createEnvelope } from '../types/envelope.js';
-import type { CoreLoop } from '../../orchestrator/loop/durable-loop.js';
+import type { DurableLoop } from '../../orchestrator/loop/durable-loop.js';
 import type { DriveSystem } from '../../platform/drive/drive-system.js';
 import type { StateManager } from '../../base/state/state-manager.js';
 import type { Logger } from '../logger.js';
@@ -31,7 +31,9 @@ export interface SupervisorConfig {
 }
 
 export interface SupervisorDeps {
-  coreLoopFactory: () => CoreLoop;
+  durableLoopFactory?: () => DurableLoop;
+  /** @deprecated Use durableLoopFactory. */
+  coreLoopFactory?: () => DurableLoop;
   journalQueue: JournalBackedQueue;
   goalLeaseManager: GoalLeaseManager;
   driveSystem: DriveSystem;
@@ -140,8 +142,9 @@ export class LoopSupervisor {
       maxIterations: this.config.maxIterations,
       runPolicy: this.config.runPolicy,
     };
+    const durableLoopFactory = resolveDurableLoopFactory(this.deps);
     for (let i = 0; i < this.config.concurrency; i++) {
-      this.workers.push(new GoalWorker(this.deps.coreLoopFactory(), workerCfg, {
+      this.workers.push(new GoalWorker(durableLoopFactory(), workerCfg, {
         onRunStart: () => {
           this.persistState();
         },
@@ -242,7 +245,7 @@ export class LoopSupervisor {
     };
   }
 
-  replaceIdleWorkers(coreLoopFactory: () => CoreLoop): void {
+  replaceIdleWorkers(durableLoopFactory: () => DurableLoop): void {
     if (this.activeGoals.size > 0 || this.workers.some((worker) => !worker.isIdle())) {
       return;
     }
@@ -254,7 +257,7 @@ export class LoopSupervisor {
     };
     this.workers = [];
     for (let i = 0; i < this.config.concurrency; i++) {
-      this.workers.push(new GoalWorker(coreLoopFactory(), workerCfg, {
+      this.workers.push(new GoalWorker(durableLoopFactory(), workerCfg, {
         onRunComplete: async (loopResult, cumulativeIterations) => {
           await this.deps.onCycleComplete?.(loopResult.goalId, {
             goalId: loopResult.goalId,
@@ -898,6 +901,14 @@ export class LoopSupervisor {
       // Corrupt or missing state — start fresh
     }
   }
+}
+
+function resolveDurableLoopFactory(deps: SupervisorDeps): () => DurableLoop {
+  const factory = deps.durableLoopFactory ?? deps.coreLoopFactory;
+  if (!factory) {
+    throw new Error("LoopSupervisor requires a DurableLoop factory.");
+  }
+  return factory;
 }
 
 async function waitForExecutions(promises: Promise<void>[], timeoutMs: number): Promise<boolean> {

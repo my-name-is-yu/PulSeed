@@ -17,6 +17,11 @@ import type { KnowledgeManager } from "../../platform/knowledge/knowledge-manage
 import { detectChange } from "../change-detector.js";
 import { executeReflectionCronJob, executeSoilPublishCronJob } from "./engine-cron-reflection.js";
 import type { GoalRunActivationContext } from "../../base/types/goal-activation.js";
+import {
+  buildSchedulerWakeSignalContext,
+  ref,
+  type AttentionReevaluationPort,
+} from "../attention/index.js";
 
 interface LayerDeps {
   baseDir?: string;
@@ -29,6 +34,7 @@ interface LayerDeps {
   hookManager?: HookManager;
   memoryLifecycle?: MemoryLifecycleManager;
   knowledgeManager?: KnowledgeManager;
+  attentionReevaluation?: AttentionReevaluationPort;
   logger: {
     info: (msg: string, ctx?: Record<string, unknown>) => void;
     warn: (msg: string, ctx?: Record<string, unknown>) => void;
@@ -237,25 +243,54 @@ export async function executeGoalTrigger(entry: ScheduleEntry, deps: LayerDeps):
     }
   }
 
-  if (!deps.coreLoop) {
-    return ScheduleResultSchema.parse({
-      entry_id: entry.id,
-      status: "error",
-      duration_ms: 0,
-      error_message: "No coreLoop provided",
-      fired_at: firedAt,
-      failure_kind: "permanent",
-    });
-  }
-
   try {
     if (entry.metadata?.activation_kind === "wait_resume") {
+      if (!deps.attentionReevaluation) {
+        return ScheduleResultSchema.parse({
+          entry_id: entry.id,
+          status: "error",
+          duration_ms: Date.now() - start,
+          error_message: "No attention re-evaluation port provided for wait_resume wake",
+          fired_at: firedAt,
+          failure_kind: "permanent",
+        });
+      }
+
+      const signalContext = buildSchedulerWakeSignalContext({
+        signal_context_id: `signal:schedule-wake:${entry.id}:${firedAt}`,
+        assembled_at: firedAt,
+        schedule_tick_ref: ref("schedule_tick", entry.id),
+        wait_ref: ref("wait", entry.metadata.wait_strategy_id ?? entry.metadata.strategy_id ?? entry.id),
+        active_surface_ref: null,
+        current_goal_refs: [ref("goal", cfg.goal_id)],
+        runtime_state_refs: [ref("runtime_event", `runtime-event:schedule-wake:${entry.id}`)],
+      });
+
+      await deps.attentionReevaluation.reevaluate(signalContext, {
+        entry_id: entry.id,
+        entry_name: entry.name,
+        activation_kind: "wait_resume",
+        fired_at: firedAt,
+      });
+
       return ScheduleResultSchema.parse({
         entry_id: entry.id,
         status: "ok",
         duration_ms: Date.now() - start,
         fired_at: firedAt,
         goal_id: cfg.goal_id,
+        output_summary: "wait wake re-evaluated through attention",
+      });
+    }
+
+    if (!deps.coreLoop) {
+      return ScheduleResultSchema.parse({
+        entry_id: entry.id,
+        status: "error",
+        duration_ms: 0,
+        error_message: "No coreLoop provided",
+        fired_at: firedAt,
+        failure_kind: "permanent",
       });
     }
 

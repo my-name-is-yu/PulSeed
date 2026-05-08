@@ -9,6 +9,10 @@ import {
 import { executeCron, executeGoalTrigger, executeProbe } from "./engine-layers.js";
 import type { GoalRunActivationContext } from "../../base/types/goal-activation.js";
 import {
+  reevaluateSchedulerWakeThroughAttention,
+  type AttentionReevaluationPort,
+} from "../attention/index.js";
+import {
   ScheduleHistoryStore,
   type ScheduleRunHistoryRecord,
   type ScheduleRunReason,
@@ -68,6 +72,7 @@ interface ScheduleEngineDeps {
   hookManager?: HookManager;
   memoryLifecycle?: MemoryLifecycleManager;
   knowledgeManager?: KnowledgeManager;
+  attentionReevaluation?: AttentionReevaluationPort;
 }
 
 const noopLogger = {
@@ -89,6 +94,7 @@ export class ScheduleEngine {
   private hookManager?: HookManager;
   private memoryLifecycle?: MemoryLifecycleManager;
   private knowledgeManager?: KnowledgeManager;
+  private attentionReevaluation: AttentionReevaluationPort;
   private historyStore: ScheduleHistoryStore;
   private readonly entryStore: ScheduleEntryStore;
 
@@ -104,6 +110,10 @@ export class ScheduleEngine {
     this.hookManager = deps.hookManager;
     this.memoryLifecycle = deps.memoryLifecycle;
     this.knowledgeManager = deps.knowledgeManager;
+    this.attentionReevaluation = deps.attentionReevaluation ?? {
+      reevaluate: (signalContext, context) =>
+        Promise.resolve(reevaluateSchedulerWakeThroughAttention(signalContext, context)),
+    };
     this.historyStore = new ScheduleHistoryStore(this.baseDir);
     this.entryStore = new ScheduleEntryStore(this.baseDir, this.logger, async (entries) => {
       this.entries = entries;
@@ -343,6 +353,7 @@ export class ScheduleEngine {
       hookManager: this.hookManager,
       memoryLifecycle: this.memoryLifecycle,
       knowledgeManager: this.knowledgeManager,
+      attentionReevaluation: this.attentionReevaluation,
       logger: this.logger,
     };
   }

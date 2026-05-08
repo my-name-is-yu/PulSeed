@@ -96,6 +96,21 @@ describe("resolveRuntimeTarget", () => {
     expect(result.evidence.candidates.map((candidate) => candidate.run_id)).toEqual(["run:a", "run:b"]);
   });
 
+  it("does not reuse another conversation's run for current references", () => {
+    const result = resolveRuntimeTarget({
+      snapshot: snapshot([
+        run({ id: "run:other-conversation", parent_session_id: "session:conversation:other" }),
+      ]),
+      operation: "pause_run",
+      selector: { scope: "run", reference: "current", sourceText: "この実行" },
+      conversationId: "chat-1",
+    });
+
+    expect(result.status).toBe("unknown");
+    expect(result.evidence.reason).toContain("refusing to reuse another conversation");
+    expect(result.evidence.candidates.map((candidate) => candidate.run_id)).toEqual(["run:other-conversation"]);
+  });
+
   it("returns stale for terminal exact targets", () => {
     const result = resolveRuntimeTarget({
       snapshot: snapshot([run({ id: "run:done", status: "succeeded" })]),

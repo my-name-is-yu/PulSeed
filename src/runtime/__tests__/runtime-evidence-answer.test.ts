@@ -479,6 +479,109 @@ describe("buildRuntimeEvidenceAnswer", () => {
     expect(result.message).toContain("0.97");
   });
 
+  it("uses copied catalog target run IDs outside the run-prefix shape", async () => {
+    const tmp = await fsp.mkdtemp(path.join(os.tmpdir(), "pulseed-evidence-target-shape-"));
+    const stateManager = { getBaseDir: () => tmp };
+    const ledger = new RuntimeEvidenceLedger(path.join(tmp, "runtime"));
+    const runLedger = new BackgroundRunLedger(path.join(tmp, "runtime"));
+    await ledger.append({
+      kind: "metric",
+      scope: { run_id: "dummy-runtime-run" },
+      occurred_at: "2026-05-02T00:20:00.000Z",
+      metrics: [{ label: "score", value: 0.77, direction: "maximize", observed_at: "2026-05-02T00:20:00.000Z" }],
+      summary: "dummy run evidence",
+    });
+    await runLedger.create({
+      id: "dummy-runtime-run",
+      kind: "coreloop_run",
+      status: "running",
+      notify_policy: "silent",
+      title: "Dummy runtime run",
+      workspace: "/repo",
+      created_at: "2026-05-02T00:00:00.000Z",
+      started_at: "2026-05-02T00:00:00.000Z",
+      updated_at: "2026-05-02T00:25:00.000Z",
+    });
+
+    const result = await answerRuntimeEvidenceQuestion({
+      text: "What was the best metric for dummy-runtime-run?",
+      stateManager,
+      llmClient: createSingleMockLLMClient(JSON.stringify({
+        decision: "runtime_evidence_question",
+        topics: ["metric"],
+        confidence: 0.93,
+        targetRunId: "dummy-runtime-run",
+      })),
+      now: NOW,
+    });
+
+    expect(result.kind).toBe("answered");
+    expect(result.targetRunId).toBe("dummy-runtime-run");
+    expect(result.message).toContain("0.77");
+  });
+
+  it("ignores classifier target run IDs that were not copied in the user text", async () => {
+    const tmp = await fsp.mkdtemp(path.join(os.tmpdir(), "pulseed-evidence-hallucinated-target-"));
+    const stateManager = { getBaseDir: () => tmp };
+    const ledger = new RuntimeEvidenceLedger(path.join(tmp, "runtime"));
+    const runLedger = new BackgroundRunLedger(path.join(tmp, "runtime"));
+    await ledger.append({
+      kind: "metric",
+      scope: { run_id: "run-active" },
+      occurred_at: "2026-05-02T00:20:00.000Z",
+      metrics: [{ label: "score", value: 0.12, direction: "maximize", observed_at: "2026-05-02T00:20:00.000Z" }],
+      summary: "active run evidence",
+    });
+    await ledger.append({
+      kind: "metric",
+      scope: { run_id: "run-target" },
+      occurred_at: "2026-05-01T00:20:00.000Z",
+      metrics: [{ label: "score", value: 0.97, direction: "maximize", observed_at: "2026-05-01T00:20:00.000Z" }],
+      summary: "target run evidence",
+    });
+    await runLedger.create({
+      id: "run-active",
+      kind: "coreloop_run",
+      status: "running",
+      notify_policy: "silent",
+      title: "Active run",
+      workspace: "/repo",
+      created_at: "2026-05-02T00:00:00.000Z",
+      started_at: "2026-05-02T00:00:00.000Z",
+      updated_at: "2026-05-02T00:25:00.000Z",
+    });
+    await runLedger.create({
+      id: "run-target",
+      kind: "coreloop_run",
+      status: "running",
+      notify_policy: "silent",
+      title: "Target run",
+      workspace: "/repo",
+      created_at: "2026-05-01T00:00:00.000Z",
+      started_at: "2026-05-01T00:00:00.000Z",
+      updated_at: "2026-05-01T00:25:00.000Z",
+    });
+
+    const result = await answerRuntimeEvidenceQuestion({
+      text: "What was the best metric for the selected run?",
+      stateManager,
+      llmClient: createSingleMockLLMClient(JSON.stringify({
+        decision: "runtime_evidence_question",
+        topics: ["metric"],
+        confidence: 0.93,
+        targetRunId: "run-target",
+      })),
+      now: NOW,
+    });
+
+    expect(result.kind).toBe("answered");
+    expect(result.targetRunId).toBe("run-active");
+    expect(result.messageType).toBe("warning");
+    expect(result.message).toContain("Requested target \"run-target\" did not match");
+    expect(result.message).toContain("0.12");
+    expect(result.message).not.toContain("0.97");
+  });
+
   it("does not fall back to another run when an explicit classifier target is missing", async () => {
     const tmp = await fsp.mkdtemp(path.join(os.tmpdir(), "pulseed-evidence-missing-target-"));
     const stateManager = { getBaseDir: () => tmp };
@@ -520,6 +623,94 @@ describe("buildRuntimeEvidenceAnswer", () => {
     expect(result.messageType).toBe("warning");
     expect(result.message).toContain("requested run was not found");
     expect(result.message).not.toContain("0.12");
+  });
+
+  it("does not treat substring run id mentions as exact missing targets", async () => {
+    const tmp = await fsp.mkdtemp(path.join(os.tmpdir(), "pulseed-evidence-substring-target-"));
+    const stateManager = { getBaseDir: () => tmp };
+    const ledger = new RuntimeEvidenceLedger(path.join(tmp, "runtime"));
+    const runLedger = new BackgroundRunLedger(path.join(tmp, "runtime"));
+    await ledger.append({
+      kind: "metric",
+      scope: { run_id: "run-active" },
+      occurred_at: "2026-05-02T00:20:00.000Z",
+      metrics: [{ label: "score", value: 0.12, direction: "maximize", observed_at: "2026-05-02T00:20:00.000Z" }],
+      summary: "active run evidence",
+    });
+    await runLedger.create({
+      id: "run-active",
+      kind: "coreloop_run",
+      status: "running",
+      notify_policy: "silent",
+      title: "Active run",
+      workspace: "/repo",
+      created_at: "2026-05-02T00:00:00.000Z",
+      started_at: "2026-05-02T00:00:00.000Z",
+      updated_at: "2026-05-02T00:25:00.000Z",
+    });
+
+    const result = await answerRuntimeEvidenceQuestion({
+      text: "What was the best metric for run-missing-extra?",
+      stateManager,
+      llmClient: createSingleMockLLMClient(JSON.stringify({
+        decision: "runtime_evidence_question",
+        topics: ["metric"],
+        confidence: 0.93,
+        targetRunId: "run-missing",
+      })),
+      now: NOW,
+    });
+
+    expect(result.kind).toBe("answered");
+    expect(result.targetRunId).toBe("run-active");
+    expect(result.messageType).toBe("warning");
+    expect(result.message).toContain("Requested target \"run-missing\" did not match");
+    expect(result.message).toContain("0.12");
+    expect(result.message).not.toContain("requested run was not found");
+  });
+
+  it("does not treat slash-separated run id prefixes as exact missing targets", async () => {
+    const tmp = await fsp.mkdtemp(path.join(os.tmpdir(), "pulseed-evidence-slash-prefix-target-"));
+    const stateManager = { getBaseDir: () => tmp };
+    const ledger = new RuntimeEvidenceLedger(path.join(tmp, "runtime"));
+    const runLedger = new BackgroundRunLedger(path.join(tmp, "runtime"));
+    await ledger.append({
+      kind: "metric",
+      scope: { run_id: "run-active" },
+      occurred_at: "2026-05-02T00:20:00.000Z",
+      metrics: [{ label: "score", value: 0.12, direction: "maximize", observed_at: "2026-05-02T00:20:00.000Z" }],
+      summary: "active run evidence",
+    });
+    await runLedger.create({
+      id: "run-active",
+      kind: "coreloop_run",
+      status: "running",
+      notify_policy: "silent",
+      title: "Active run",
+      workspace: "/repo",
+      created_at: "2026-05-02T00:00:00.000Z",
+      started_at: "2026-05-02T00:00:00.000Z",
+      updated_at: "2026-05-02T00:25:00.000Z",
+    });
+
+    const result = await answerRuntimeEvidenceQuestion({
+      text: "What was the best metric for run:agent/a/b?",
+      stateManager,
+      llmClient: createSingleMockLLMClient(JSON.stringify({
+        decision: "runtime_evidence_question",
+        topics: ["metric"],
+        confidence: 0.93,
+        targetRunId: "run:agent/a",
+      })),
+      now: NOW,
+    });
+
+    expect(result.kind).toBe("answered");
+    expect(result.targetRunId).toBe("run-active");
+    expect(result.messageType).toBe("warning");
+    expect(result.message).toContain("Requested target \"run:agent/a\" did not match");
+    expect(result.message).toContain("0.12");
+    expect(result.message).not.toContain("requested run was not found");
   });
 
   it("does not treat model-extracted freeform labels as exact missing run ids", async () => {

@@ -30,8 +30,16 @@ describe("runtime metric-history selection", () => {
     expect(selectMetricTrendForDimension([trend("accuracy")], "latency")).toBeUndefined();
   });
 
-  it("allows exact or contained dimension matches", () => {
-    expect(selectMetricTrendForDimension([trend("accuracy")], "model_accuracy")?.metric_key).toBe("accuracy");
+  it("allows exact dimension matches", () => {
     expect(selectMetricTrendForDimension([trend("latency")], "latency")?.metric_key).toBe("latency");
+  });
+
+  it("requires explicit metric keys instead of substring matches", () => {
+    expect(selectMetricTrendForDimension([trend("accuracy")], "model_accuracy")).toBeUndefined();
+    expect(
+      selectMetricTrendForDimension([trend("accuracy")], "model_accuracy", {
+        metricKeys: ["accuracy"],
+      })?.metric_key
+    ).toBe("accuracy");
   });
 });

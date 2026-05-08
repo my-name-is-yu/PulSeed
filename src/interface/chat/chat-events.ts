@@ -1,16 +1,15 @@
 import type { FailureRecoveryGuidance } from "./failure-recovery.js";
 import type { ToolActivityCategory } from "../../tools/types.js";
 import type { AgentTimelineItem } from "../../orchestrator/execution/agent-loop/agent-timeline.js";
-import type { TurnLanguageHint } from "./turn-language.js";
+import type { ChatEventContext } from "./turn-state.js";
 import type { OperationProgressItem } from "./operation-progress.js";
 import type { UserInput } from "./user-input.js";
 import type { TurnOperation, TurnSteerOperation } from "./turn-protocol.js";
 
-export interface ChatEventBase {
-  runId: string;
-  turnId: string;
+export type { ChatEventContext } from "./turn-state.js";
+
+export interface ChatEventBase extends ChatEventContext {
   createdAt: string;
-  languageHint?: TurnLanguageHint;
 }
 
 export interface LifecycleStartEvent extends ChatEventBase {
@@ -125,9 +124,3 @@ export type ChatEvent =
   | LifecycleErrorEvent;
 
 export type ChatEventHandler = (event: ChatEvent) => Promise<void> | void;
-
-export interface ChatEventContext {
-  runId: string;
-  turnId: string;
-  languageHint?: TurnLanguageHint;
-}

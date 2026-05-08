@@ -142,9 +142,9 @@ import {
 import type { ScheduleEngine } from "../../runtime/schedule/engine.js";
 import type { ToolRegistry } from "../registry.js";
 import {
-  createCoreLoopControlTools,
-  createDaemonBackedCoreLoopControlToolset,
-  type CoreLoopControlToolset,
+  createDaemonBackedDurableLoopControlToolset,
+  createDurableLoopControlTools,
+  type DurableLoopControlToolset,
 } from "../../orchestrator/execution/agent-loop/durable-loop-control-tools.js";
 import type { BrowserSessionStore } from "../../runtime/interactive-automation/index.js";
 import {
@@ -179,7 +179,9 @@ export interface BuiltinToolDeps {
   authHandoffStore?: RuntimeAuthHandoffStore;
   browserCircuitBreaker?: CircuitBreakerController;
   browserBackpressure?: BackpressureController;
-  coreLoopControl?: CoreLoopControlToolset;
+  durableLoopControl?: DurableLoopControlToolset;
+  /** @deprecated Use durableLoopControl. */
+  coreLoopControl?: DurableLoopControlToolset;
 }
 
 /** All built-in tools, sorted alphabetically by name. */
@@ -258,8 +260,10 @@ export function createBuiltinTools(deps?: BuiltinToolDeps): ITool[] {
         runtimeControlService: deps.runtimeControlService,
       }));
     }
-    tools.push(...createCoreLoopControlTools(
-      deps.coreLoopControl ?? createDaemonBackedCoreLoopControlToolset({ stateManager: deps.stateManager }),
+    tools.push(...createDurableLoopControlTools(
+      deps.durableLoopControl
+        ?? deps.coreLoopControl
+        ?? createDaemonBackedDurableLoopControlToolset({ stateManager: deps.stateManager }),
     ));
   }
 

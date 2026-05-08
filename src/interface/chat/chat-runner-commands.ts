@@ -103,6 +103,15 @@ Review and branching
 Deferred
   /retry is intentionally not supported yet.`;
 
+const CLEANUP_USAGE = "Usage: /cleanup [--dry-run]";
+
+function parseCleanupArgs(args: string): { success: true; dryRun: boolean } | { success: false; output: string } {
+  const argTokens = args.trim() ? args.trim().split(/\s+/) : [];
+  if (argTokens.length === 0) return { success: true, dryRun: false };
+  if (argTokens.length === 1 && argTokens[0] === "--dry-run") return { success: true, dryRun: true };
+  return { success: false, output: CLEANUP_USAGE };
+}
+
 export class ChatRunnerCommandHandler {
   constructor(private readonly host: ChatRunnerCommandHost) {}
 
@@ -165,7 +174,11 @@ export class ChatRunnerCommandHandler {
     }
     if (cmd === "/cleanup") {
       const catalog = new ChatSessionCatalog(this.host.deps.stateManager);
-      const dryRun = trimmed.includes("--dry-run");
+      const parsedCleanupArgs = parseCleanupArgs(args);
+      if (!parsedCleanupArgs.success) {
+        return { success: false, output: parsedCleanupArgs.output, elapsed_ms: Date.now() - start };
+      }
+      const dryRun = parsedCleanupArgs.dryRun;
       const report = await catalog.cleanupSessions({
         dryRun,
         activeSessionId: this.host.getHistory()?.getSessionId(),

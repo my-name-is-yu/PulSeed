@@ -227,7 +227,7 @@ describe("TendCommand", () => {
       expect(result.message).toContain("Started");
     });
 
-    it("creates a durable coreloop background run with parent conversation and forwards metadata", async () => {
+    it("creates a DurableLoop background run with compatible wire tokens and forwarded metadata", async () => {
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "tend-bg-"));
       const runtimeRoot = path.join(tmpDir, "runtime");
       const goal = makeTestGoal();
