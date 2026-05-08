@@ -17,34 +17,34 @@ export type ConfigField = z.infer<typeof ConfigFieldSchema>;
 export const PluginManifestSchema = z.object({
   name: z.string().regex(
     /^(?:@[a-z0-9-]+\/)?[a-z0-9-]+$/,
-    "プラグイン名は小文字英数字とハイフン、または @scope/name 形式のみ",
+    "Plugin name must use lowercase letters, digits, hyphens, or @scope/name format",
   ),
   version: z.string().regex(/^\d+\.\d+\.\d+$/),
   type: z.enum(["adapter", "data_source", "notifier", "schedule_source"]),
 
-  // 能力宣言（CapabilityDetectorが参照する）
+  // Capability declarations referenced by CapabilityDetector.
   capabilities: z.array(z.string()).min(1),
 
-  // data_sourceのみ: 観測可能な次元名リスト
+  // data_source only: observable dimension names.
   dimensions: z.array(z.string()).optional(),
 
-  // notifierのみ: サポートするイベント種別
+  // notifier only: supported event types.
   supported_events: z.array(z.string()).optional(),
 
   description: z.string(),
   config_schema: z.record(ConfigFieldSchema).default({}),
 
-  // npm依存パッケージ
+  // npm package dependencies.
   dependencies: z.array(z.string()).default([]),
 
-  // プラグインのエントリポイント（plugin directoryからの相対パス）
+  // Plugin entry point relative to the plugin directory.
   entry_point: z.string().default("dist/index.js"),
 
-  // 必要なPulSeedのバージョン（semver range）
+  // Required PulSeed version bounds as semver ranges.
   min_pulseed_version: z.string().optional(),
   max_pulseed_version: z.string().optional(),
 
-  // 宣言するリソースアクセス（セキュリティ審査用）
+  // Declared resource access for security review.
   permissions: z
     .object({
       network: z.boolean().default(false),
@@ -67,7 +67,7 @@ export const PluginStateSchema = z.object({
   status: z.enum(["loaded", "error", "disabled", "incompatible"]),
   error_message: z.string().optional(),
   loaded_at: z.string(), // ISO 8601
-  // 信頼スコア（trust-and-safety.md §2 と同じ非対称設計）
+  // Trust score using the asymmetric design from trust-and-safety.md §2.
   trust_score: z.number().int().min(-100).max(100).default(0),
   usage_count: z.number().int().default(0),
   success_count: z.number().int().default(0),
@@ -91,23 +91,23 @@ export type PluginMatchResult = z.infer<typeof PluginMatchResultSchema>;
 // ─── Notification types ───
 
 export type NotificationEventType =
-  | "goal_progress" // ゴールの進捗更新
-  | "goal_complete" // ゴール達成
-  | "task_blocked" // タスクがブロックされた
-  | "approval_needed" // 人間の承認が必要
-  | "stall_detected" // 停滞が検知された
-  | "trust_change" // 信頼スコアが大きく変化した
-  | "schedule_change_detected" // スケジュール変更を検出した
-  | "schedule_heartbeat_failure" // ハートビート失敗
-  | "schedule_escalation" // スケジュールエスカレーション
-  | "schedule_report_ready"; // スケジュールレポート準備完了
+  | "goal_progress" // Goal progress update.
+  | "goal_complete" // Goal completed.
+  | "task_blocked" // Task blocked.
+  | "approval_needed" // Human approval required.
+  | "stall_detected" // Stall detected.
+  | "trust_change" // Trust score changed significantly.
+  | "schedule_change_detected" // Schedule change detected.
+  | "schedule_heartbeat_failure" // Schedule heartbeat failed.
+  | "schedule_escalation" // Schedule escalation.
+  | "schedule_report_ready"; // Schedule report is ready.
 
 export interface NotificationEvent {
   type: NotificationEventType;
   goal_id: string;
   timestamp: string; // ISO 8601
-  summary: string; // 人間が読む1行サマリー
-  details: Record<string, unknown>; // イベント種別固有のデータ
+  summary: string; // Human-readable one-line summary.
+  details: Record<string, unknown>; // Event-type-specific data.
   severity: "info" | "warning" | "critical";
 }
 

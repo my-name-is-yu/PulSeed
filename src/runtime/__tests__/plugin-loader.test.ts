@@ -116,6 +116,10 @@ describe("PluginManifestSchema", () => {
     const data = makeValidManifestData({ name: "MyPlugin" });
     const result = PluginManifestSchema.safeParse(data);
     expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(result.error.issues[0]?.message).toBe(
+      "Plugin name must use lowercase letters, digits, hyphens, or @scope/name format"
+    );
   });
 
   it("rejects a manifest with an invalid version (missing patch)", () => {
