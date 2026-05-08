@@ -270,4 +270,31 @@ describe("suggest output schema", () => {
     expect(payload.suggestions[0]?.repo_context).toBeDefined();
     expect(payload.suggestions[0]?.repo_context?.path).toBe(".");
   }, 15000);
+
+  it("rejects malformed --max before suggestion generation", async () => {
+    const mockSuggest = vi.fn().mockResolvedValue({
+      suggestions: [
+        {
+          title: "Improve docs",
+          description: "Improve docs",
+          rationale: "Docs need clearer guidance.",
+          dimensions_hint: ["documentation_quality"],
+        },
+      ],
+    });
+    vi.spyOn(process, "cwd").mockReturnValue(tmpDir);
+
+    vi.mocked(GoalNegotiator).mockImplementation(function() { return {
+      suggestGoals: mockSuggest,
+    } as unknown as GoalNegotiator; });
+
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const code = await new CLIRunner(tmpDir).run(["suggest", "improve docs", "--max", "7abc"]);
+    consoleSpy.mockRestore();
+    errorSpy.mockRestore();
+
+    expect(code).toBe(1);
+    expect(mockSuggest).not.toHaveBeenCalled();
+  }, 15000);
 });
