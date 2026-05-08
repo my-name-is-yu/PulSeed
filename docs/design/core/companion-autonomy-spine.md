@@ -9,6 +9,9 @@ decomposition. Its job is to keep the whole concept stable enough that later
 concrete schemas, stores, and runtime changes can attach to one coherent
 behavioral contract.
 
+For the Wave 0 issue-to-module ownership map, merge order, and test-harness
+placement, see [Companion Autonomy Implementation Map](companion-autonomy-implementation-map.md).
+
 ## Purpose
 
 PulSeed should become a quiet autonomous companion, not a notification bot,
