@@ -757,6 +757,32 @@ const LLMTaskGroupSchema = z.object({
   shared_context: z.string().optional(),
 });
 
+const SUBTASK_INDEX_TOKEN = /^[0-9]+$/;
+
+function parseSubtaskIndex(value: string): number | null {
+  const normalized = value.trim();
+  if (!SUBTASK_INDEX_TOKEN.test(normalized)) return null;
+  const parsed = Number(normalized);
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null;
+}
+
+function remapSubtaskIndex(value: string, subtasks: Task[]): string | null {
+  const idx = parseSubtaskIndex(value);
+  return idx !== null ? subtasks[idx]?.id ?? null : null;
+}
+
+function addFileOwnership(
+  ownership: Record<string, string[]>,
+  file: string,
+  ownerIds: string[]
+): void {
+  const owners = ownership[file] ?? [];
+  for (const ownerId of ownerIds) {
+    if (!owners.includes(ownerId)) owners.push(ownerId);
+  }
+  ownership[file] = owners;
+}
+
 /**
  * Ask the LLM to decompose a complex task into a TaskGroup of subtasks.
  *
@@ -886,24 +912,24 @@ export async function generateTaskGroup(
     return task;
   });
 
-  // Remap file_ownership keys from index strings to task IDs
+  // Convert LLM index -> files ownership into the public file -> task IDs contract.
   const remappedOwnership: Record<string, string[]> = {};
   for (const [key, files] of Object.entries(raw.file_ownership)) {
-    const idx = parseInt(key, 10);
-    if (!isNaN(idx) && subtasks[idx]) {
-      remappedOwnership[subtasks[idx].id] = files;
+    const taskId = remapSubtaskIndex(key, subtasks);
+    if (taskId) {
+      for (const file of files) {
+        addFileOwnership(remappedOwnership, file, [taskId]);
+      }
     } else {
-      remappedOwnership[key] = files;
+      logger?.warn("generateTaskGroup: ignoring file ownership with invalid subtask index", { key });
     }
   }
 
   // Remap dependency keys from index strings to task IDs
   const remappedDeps = raw.dependencies.map((dep) => {
-    const fromIdx = parseInt(dep.from, 10);
-    const toIdx = parseInt(dep.to, 10);
     return {
-      from: !isNaN(fromIdx) && subtasks[fromIdx] ? subtasks[fromIdx].id : dep.from,
-      to: !isNaN(toIdx) && subtasks[toIdx] ? subtasks[toIdx].id : dep.to,
+      from: remapSubtaskIndex(dep.from, subtasks) ?? dep.from,
+      to: remapSubtaskIndex(dep.to, subtasks) ?? dep.to,
     };
   });
 

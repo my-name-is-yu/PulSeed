@@ -1,7 +1,9 @@
 import { describe, it, expect, vi } from "vitest";
 import { z } from "zod";
+import { ParallelExecutor } from "../parallel-executor.js";
 import { generateTaskGroup } from "../task/task-generation.js";
 import type { ILLMClient, LLMMessage, LLMRequestOptions, LLMResponse } from "../../../base/llm/llm-client.js";
+import type { PipelineExecutor } from "../pipeline-executor.js";
 
 // ─── Spy LLM Client ───
 
@@ -100,6 +102,66 @@ describe("generateTaskGroup", () => {
     expect(result).not.toBeNull();
     expect(result?.subtasks).toHaveLength(2);
     expect(result?.shared_context).toBe("Auth module refactor sprint");
+  });
+
+  it("normalizes generated file ownership into the executor contract", async () => {
+    const response = VALID_TASK_GROUP_RESPONSE.replace(
+      '"file_ownership": { "0": ["tests/auth.test.ts"], "1": ["src/auth/index.ts"] }',
+      '"file_ownership": { "0": ["tests/auth.test.ts", "tests/auth-helpers.ts"], "1": ["src/auth/index.ts"] }'
+    );
+    const client = createSpyLLMClient(response);
+
+    const result = await generateTaskGroup(client, {
+      goalDescription: "Improve auth module",
+      targetDimension: "test_coverage",
+      currentState: "60%",
+      gap: 0.4,
+      availableAdapters: ["claude-code-cli"],
+    });
+
+    expect(result).not.toBeNull();
+    const [first, second] = result!.subtasks;
+    expect(result!.file_ownership).toEqual({
+      "tests/auth.test.ts": [first!.id],
+      "tests/auth-helpers.ts": [first!.id],
+      "src/auth/index.ts": [second!.id],
+    });
+
+    const executor = new ParallelExecutor({ pipelineExecutor: {} as PipelineExecutor });
+    expect(executor.validateFileOwnership(result!)).toEqual([]);
+  });
+
+  it("does not partially parse malformed task-group index tokens", async () => {
+    const response = VALID_TASK_GROUP_RESPONSE
+      .replace(
+        '"dependencies": []',
+        '"dependencies": [ { "from": "0abc", "to": "1" }, { "from": "0", "to": "1xyz" } ]'
+      )
+      .replace(
+        '"file_ownership": { "0": ["tests/auth.test.ts"], "1": ["src/auth/index.ts"] }',
+        '"file_ownership": { "0abc": ["tests/auth.test.ts"], "1": ["src/auth/index.ts"] }'
+      );
+    const client = createSpyLLMClient(response);
+
+    const result = await generateTaskGroup(client, {
+      goalDescription: "Improve auth module",
+      targetDimension: "test_coverage",
+      currentState: "60%",
+      gap: 0.4,
+      availableAdapters: ["claude-code-cli"],
+    });
+
+    expect(result).not.toBeNull();
+    const [first, second] = result!.subtasks;
+    expect(result!.dependencies).toEqual([
+      { from: "0abc", to: second!.id },
+      { from: first!.id, to: "1xyz" },
+    ]);
+    expect(result!.file_ownership).toEqual({
+      "src/auth/index.ts": [second!.id],
+    });
+    expect(result!.file_ownership["0abc"]).toBeUndefined();
+    expect(result!.file_ownership[first!.id]).toBeUndefined();
   });
 
   it("includes contextBlock in the prompt when provided", async () => {
