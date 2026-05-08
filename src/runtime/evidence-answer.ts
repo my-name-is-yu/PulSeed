@@ -295,7 +295,7 @@ function isRunIdTokenChar(char: string | undefined): boolean {
 }
 
 function isStructuredRunIdReference(targetRunId: string): boolean {
-  return /[:/_\-.]/.test(targetRunId);
+  return /^run(?=[:/_\-.]|$)/.test(targetRunId.trim());
 }
 
 function appendIgnoredTargetRunCaveat(
