@@ -10,6 +10,7 @@ import { GoalLeaseManager } from "../goal-lease-manager.js";
 import { StateManager } from "../../base/state/state-manager.js";
 import { makeGoal } from "../../../tests/helpers/fixtures.js";
 import { BackgroundRunLedger } from "../store/background-run-store.js";
+import { isDaemonShutdownAbortSignal } from "../../base/utils/abort-reason.js";
 
 function makeLoopResult(o: Partial<LoopResult> = {}): LoopResult {
   return { goalId: "g", totalIterations: 1, finalStatus: "completed", iterations: [],
@@ -310,6 +311,39 @@ describe("LoopSupervisor", () => {
 
       expect(capturedSignal?.aborted).toBe(true);
       expect(elapsedMs).toBeLessThan(500);
+    } finally {
+      fs.rmSync(runtimeRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("shutdown() relinquishes hung active executions for restart recovery", async () => {
+    let started = false;
+    let capturedSignal: AbortSignal | undefined;
+    const { supervisor, journalQueue, goalLeaseManager, runtimeRoot } = makeSupervisor(
+      (async (_goalId: string, options?: { abortSignal?: AbortSignal }) => {
+        capturedSignal = options?.abortSignal;
+        started = true;
+        await new Promise<void>(() => undefined);
+        return makeLoopResult({ goalId: "g-restart" });
+      }) as unknown as (...args: any[]) => Promise<LoopResult>,
+      {},
+      { concurrency: 1, pollIntervalMs: 10, activeStopGraceMs: 30 }
+    );
+    try {
+      await supervisor.start(["g-restart"]);
+      await waitFor(() => started);
+
+      await supervisor.shutdown();
+
+      expect(capturedSignal?.aborted).toBe(true);
+      expect(isDaemonShutdownAbortSignal(capturedSignal)).toBe(true);
+      const snapshot = journalQueue.snapshot();
+      expect(snapshot.inflight).toEqual({});
+      expect(snapshot.pending.normal.length).toBe(1);
+      expect(await goalLeaseManager.read("g-restart")).toBeNull();
+      expect(supervisor.getState().workers).toEqual([
+        expect.objectContaining({ goalId: null }),
+      ]);
     } finally {
       fs.rmSync(runtimeRoot, { recursive: true, force: true });
     }

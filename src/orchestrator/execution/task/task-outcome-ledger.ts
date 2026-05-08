@@ -114,7 +114,8 @@ function toMillis(value: string | null | undefined): number | null {
 function diffMs(start: string | null | undefined, end: string | null | undefined): number | null {
   const startMs = toMillis(start);
   const endMs = toMillis(end);
-  return startMs === null || endMs === null ? null : endMs - startMs;
+  if (startMs === null || endMs === null) return null;
+  return Math.max(0, endMs - startMs);
 }
 
 function percentile95(values: number[]): number | null {

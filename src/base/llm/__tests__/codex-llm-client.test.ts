@@ -471,8 +471,10 @@ describe("CodexLLMClient", () => {
       const client = new CodexLLMClient({ timeoutMs: 1000, idleTimeoutMs: 1000 });
       const child = makeFakeChild();
       mockSpawn.mockImplementation(() => child);
-      child.kill.mockImplementation(() => {
-        setTimeout(() => child.emit("close", null), 5);
+      child.kill.mockImplementation((signal) => {
+        if (signal === "SIGTERM") {
+          setTimeout(() => child.emit("close", null), 5);
+        }
         return true;
       });
 
@@ -488,6 +490,7 @@ describe("CodexLLMClient", () => {
       vi.useRealTimers();
 
       expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+      expect(child.kill).toHaveBeenCalledWith("SIGKILL");
       expect(mockSpawn).toHaveBeenCalledWith(
         expect.any(String),
         expect.any(Array),
@@ -495,6 +498,8 @@ describe("CodexLLMClient", () => {
       );
       expect(err).toBeInstanceOf(Error);
       expect((err as Error).message).toContain("aborted by operator stop");
+      expect((err as { code?: string }).code).toBe("ABORT_ERR");
+      expect((err as { agentLoopFailureReason?: string }).agentLoopFailureReason).toBe("model_request_aborted");
     });
 
     it("rejects with total timeout error when timeoutMs elapses", async () => {
@@ -504,8 +509,10 @@ describe("CodexLLMClient", () => {
 
       const child = makeFakeChild();
       mockSpawn.mockImplementation(() => child);
-      child.kill.mockImplementation(() => {
-        setTimeout(() => child.emit("close", null), 5);
+      child.kill.mockImplementation((signal) => {
+        if (signal === "SIGTERM") {
+          setTimeout(() => child.emit("close", null), 5);
+        }
         return true;
       });
 
@@ -520,7 +527,42 @@ describe("CodexLLMClient", () => {
 
       expect(err).toBeInstanceOf(Error);
       expect((err as Error).message).toContain("timed out");
+      expect((err as { code?: string }).code).toBe("ETIMEDOUT");
+      expect((err as { agentLoopFailureReason?: string }).agentLoopFailureReason).toBe("model_request_timeout");
+      expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+      expect(child.kill).toHaveBeenCalledWith("SIGKILL");
       expect(mockSpawn).toHaveBeenCalledTimes(1);
+    });
+
+    it("uses per-request timeout and idle timeout overrides for codex exec calls", async () => {
+      vi.useFakeTimers();
+
+      const client = new CodexLLMClient({ timeoutMs: 1000, idleTimeoutMs: 1000 });
+      const child = makeFakeChild();
+      mockSpawn.mockImplementation(() => child);
+      child.kill.mockImplementation((signal) => {
+        if (signal === "SIGTERM") {
+          setTimeout(() => child.emit("close", null), 5);
+        }
+        return true;
+      });
+
+      const promise = client
+        .sendMessage([{ role: "user", content: "hi" }], { timeoutMs: 50, idleTimeoutMs: 50 })
+        .catch((e) => e);
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(49);
+      expect(child.kill).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+      await vi.advanceTimersByTimeAsync(5);
+      const err = await promise;
+
+      vi.useRealTimers();
+
+      expect(err).toBeInstanceOf(Error);
+      expect((err as Error).message).toContain("after 50ms");
+      expect(child.kill).toHaveBeenCalledWith("SIGKILL");
     });
 
     it("rejects with idle timeout error when no output is produced", async () => {
@@ -529,8 +571,10 @@ describe("CodexLLMClient", () => {
       const client = new CodexLLMClient({ timeoutMs: 1000, idleTimeoutMs: 50 });
       const child = makeFakeChild();
       mockSpawn.mockImplementation(() => child);
-      child.kill.mockImplementation(() => {
-        setTimeout(() => child.emit("close", null), 5);
+      child.kill.mockImplementation((signal) => {
+        if (signal === "SIGTERM") {
+          setTimeout(() => child.emit("close", null), 5);
+        }
         return true;
       });
 
@@ -549,6 +593,7 @@ describe("CodexLLMClient", () => {
 
       expect(err).toBeInstanceOf(Error);
       expect((err as Error).message).toContain("idle timed out");
+      expect((err as { agentLoopFailureReason?: string }).agentLoopFailureReason).toBe("model_request_timeout");
     });
   });
 

@@ -56,6 +56,48 @@ describe("finalizeSuccessfulExecution", () => {
       },
     });
 
-    expect(verifyWithGitDiff).toHaveBeenCalledWith(expect.anything(), "goal-2");
+    expect(verifyWithGitDiff).toHaveBeenCalledWith(expect.anything(), "goal-2", expect.objectContaining({
+      success: true,
+    }));
+  });
+
+  it("reports filesystem diff evidence without emitting the old git-only no-change warning", async () => {
+    const verifyWithGitDiff = vi.fn().mockResolvedValue({
+      verified: true,
+      diffSummary: "1 file changed via filesystem evidence",
+      source: "filesystem_artifact",
+    });
+    const logger = {
+      info: vi.fn(),
+      warn: vi.fn(),
+    };
+
+    await finalizeSuccessfulExecution({
+      executionResult: makeExecutionResult({
+        filesChanged: true,
+        filesChangedPaths: ["reports/result.json"],
+        diffEvidenceSource: "filesystem_artifact",
+      }),
+      goalId: "goal-filesystem",
+      healthCheck: {
+        enabled: false,
+        run: vi.fn(),
+      },
+      successVerification: {
+        toolExecutor: {} as never,
+        verifyWithGitDiff,
+      },
+      logger: logger as never,
+    });
+
+    expect(verifyWithGitDiff).toHaveBeenCalledWith(expect.anything(), "goal-filesystem", expect.objectContaining({
+      diffEvidenceSource: "filesystem_artifact",
+      filesChangedPaths: ["reports/result.json"],
+    }));
+    expect(logger.info).toHaveBeenCalledWith(
+      "[TaskLifecycle] Post-execution diff verification: 1 file changed via filesystem evidence",
+      { verified: true, source: "filesystem_artifact" },
+    );
+    expect(logger.warn).not.toHaveBeenCalled();
   });
 });

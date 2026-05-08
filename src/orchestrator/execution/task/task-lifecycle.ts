@@ -62,6 +62,7 @@ import { defaultAgentLoopBudget, type AgentLoopBudget } from "../agent-loop/agen
 import { taskAgentLoopResultToAgentResult } from "../agent-loop/task-agent-loop-result.js";
 import type { IPromptGateway } from "../../../prompt/gateway.js";
 import type { ExecutionModeState } from "../../../platform/time/execution-mode.js";
+import { isDaemonShutdownAbortSignal } from "../../../base/utils/abort-reason.js";
 import type {
   RuntimeOperatorHandoffStore,
   RuntimeOperatorHandoffTrigger,
@@ -159,6 +160,29 @@ function failNativeCodeTaskWithoutFileChanges(input: {
       NATIVE_CODE_TASK_NO_CHANGES_ERROR,
     ];
   }
+}
+
+function hasRequiredArtifactContract(task: Task): boolean {
+  return task.artifact_contract?.required === true &&
+    Array.isArray(task.artifact_contract.required_artifacts) &&
+    task.artifact_contract.required_artifacts.length > 0;
+}
+
+function hasCapturedExecutionEvidence(result: AgentResult): boolean {
+  return result.filesChanged === true ||
+    (result.filesChangedPaths?.length ?? 0) > 0 ||
+    (result.agentLoop?.filesChangedPaths?.length ?? 0) > 0;
+}
+
+function shouldDeferAgentLoopTerminalUntilVerification(task: Task, result: AgentResult): boolean {
+  if (result.success) return result.agentLoop?.requiresPostVerificationBeforeSuccessLedger === true;
+  if (!result.agentLoop) return false;
+  if (result.stopped_reason === "cancelled" || result.stopped_reason === "policy_blocked") return false;
+  return hasRequiredArtifactContract(task) && hasCapturedExecutionEvidence(result);
+}
+
+function shouldKeepDaemonShutdownInterruptedTaskRunning(result: AgentResult, abortSignal?: AbortSignal): boolean {
+  return result.stopped_reason === "cancelled" && isDaemonShutdownAbortSignal(abortSignal);
 }
 
 export interface TaskLifecycleCoreDeps {
@@ -646,6 +670,9 @@ export class TaskLifecycle {
         agentLoopResult.generatedEstimateMs ??= agentLoopBudget.generatedEstimateMs;
       }
       result = taskAgentLoopResultToAgentResult(agentLoopResult);
+      if (shouldKeepDaemonShutdownInterruptedTaskRunning(result, abortSignal)) {
+        result.interruptedByDaemonShutdown = true;
+      }
       if (result.stopped_reason === "timeout" && result.agentLoop) {
         const generated = result.agentLoop.generatedEstimateMs;
         const active = result.agentLoop.activeBudgetMs;
@@ -691,10 +718,11 @@ export class TaskLifecycle {
     }
 
     const completedAt = new Date().toISOString();
-    const deferSuccessLedgerUntilVerification =
-      result.success && result.agentLoop?.requiresPostVerificationBeforeSuccessLedger === true;
+    const daemonShutdownInterruptedTask = shouldKeepDaemonShutdownInterruptedTaskRunning(result, abortSignal);
+    const deferTerminalLedgerUntilVerification = shouldDeferAgentLoopTerminalUntilVerification(runningTask, result);
     const nextStatus =
-      deferSuccessLedgerUntilVerification ? "running" as const :
+      daemonShutdownInterruptedTask ? "running" as const :
+      deferTerminalLedgerUntilVerification ? "running" as const :
       result.success ? "completed" as const :
       result.stopped_reason === "timeout" ? "timed_out" as const :
       result.stopped_reason === "cancelled" ? "cancelled" as const :
@@ -710,9 +738,12 @@ export class TaskLifecycle {
       ...(nextStatus === "blocked" ? { stopped_at: completedAt } : {}),
     });
 
-    if (deferSuccessLedgerUntilVerification) {
-      this.logger?.info("[TaskLifecycle] Deferring external AgentLoop success ledger event until verification", {
+    if (daemonShutdownInterruptedTask || deferTerminalLedgerUntilVerification) {
+      this.logger?.info("[TaskLifecycle] Deferring external AgentLoop terminal ledger event", {
         taskId: task.id,
+        success: result.success,
+        stoppedReason: result.stopped_reason,
+        reason: daemonShutdownInterruptedTask ? "daemon_shutdown_interrupted" : "post_verification_required",
       });
     } else {
       await appendTaskOutcomeEvent(this.stateManager, {

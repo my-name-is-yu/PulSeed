@@ -16,6 +16,7 @@ import type {
   LLMRequestOptions,
   LLMResponse,
 } from "../../../base/llm/llm-client.js";
+import { createDaemonShutdownAbortReason } from "../../../base/utils/abort-reason.js";
 import { createMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
 import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 
@@ -401,6 +402,69 @@ describe("TaskLifecycle", async () => {
       expect(result.action).toBe("completed");
       expect(agentLoopRunner.runTask).toHaveBeenCalledTimes(1);
       expect(adapterExecute).not.toHaveBeenCalled();
+    });
+
+    it("daemon-shutdown-interrupted native agent loop returns before verification can mark the task terminal", async () => {
+      const llm = createMockLLMClient([
+        VALID_TASK_RESPONSE,
+        LLM_REVIEW_FAIL,
+      ]);
+      const abortController = new AbortController();
+      abortController.abort(createDaemonShutdownAbortReason("test daemon shutdown"));
+      const adapter = {
+        adapterType: "external-cli",
+        execute: vi.fn(),
+      } as import("../task/task-lifecycle.js").IAdapter;
+      const agentLoopRunner = {
+        runTask: vi.fn(async () => ({
+          success: false,
+          output: null,
+          finalText: "cancelled",
+          stopReason: "cancelled" as const,
+          elapsedMs: 123,
+          modelTurns: 0,
+          toolCalls: 0,
+          compactions: 0,
+          changedFiles: [],
+          commandResults: [],
+          traceId: "trace-1",
+          sessionId: "session-1",
+          turnId: "turn-1",
+        })),
+      } as unknown as import("../agent-loop/task-agent-loop-runner.js").TaskAgentLoopRunner;
+      const lifecycle = createLifecycle(llm, {
+        approvalFn: async () => true,
+        agentLoopRunner,
+        execFileSyncFn: () => "",
+      });
+      const gapVector = makeGapVector("goal-1", [{ name: "coverage", gap: 0.5 }]);
+      const context = makeDriveContext(["coverage"]);
+
+      const result = await lifecycle.runTaskCycle(
+        "goal-1",
+        gapVector,
+        context,
+        adapter,
+        undefined,
+        undefined,
+        undefined,
+        { abortSignal: abortController.signal },
+      );
+
+      const persisted = await stateManager.readRaw(`tasks/${result.task.goal_id}/${result.task.id}.json`) as Record<string, unknown>;
+      const ledger = await stateManager.readRaw(`tasks/${result.task.goal_id}/ledger/${result.task.id}.json`) as {
+        events: Array<Record<string, unknown>>;
+        summary: Record<string, unknown>;
+      };
+
+      expect(result.action).toBe("keep");
+      expect(result.verificationResult.verdict).toBe("partial");
+      expect(persisted.status).toBe("running");
+      expect(persisted.verification_verdict).toBeUndefined();
+      expect(ledger.events.map((event) => event.type)).toEqual(["acked", "started"]);
+      expect(ledger.summary.latest_event_type).toBe("started");
+      expect(agentLoopRunner.runTask).toHaveBeenCalledTimes(1);
+      expect(adapter.execute).not.toHaveBeenCalled();
     });
 
     it("execution fails -> verify -> handleFailure", async () => {

@@ -201,7 +201,7 @@ function failClosedMechanicalVerification(
 }
 
 interface CheapLocalCommand {
-  cmd: "test" | "rg" | "grep" | "ls" | "python" | "python3" | ".venv/bin/python";
+  cmd: "test" | "rg" | "grep" | "ls" | "node" | "python" | "python3" | ".venv/bin/python";
   args: string[];
 }
 
@@ -304,6 +304,7 @@ function isCheapCommandName(value: string | undefined): value is CheapLocalComma
     value === "rg" ||
     value === "grep" ||
     value === "ls" ||
+    value === "node" ||
     value === "python" ||
     value === "python3" ||
     value === ".venv/bin/python";
@@ -332,6 +333,11 @@ function areSafeCheapCommandArgs(cmd: CheapLocalCommand["cmd"], args: string[]):
     if (!scriptPath || !scriptPath.endsWith(".py") || !isWorkspaceRelativeOperand(scriptPath)) return false;
     return scriptArgs.every(isSafePythonScriptArg);
   }
+  if (cmd === "node") {
+    const [scriptPath, ...scriptArgs] = args;
+    if (!scriptPath || !/\.(?:cjs|mjs|js)$/.test(scriptPath) || !isWorkspaceRelativeOperand(scriptPath)) return false;
+    return scriptArgs.every(isSafeNodeScriptArg);
+  }
   const allowedLsFlags = new Set(["-a", "-l", "-la", "-al"]);
   return args.every((arg) =>
     arg.startsWith("-") ? allowedLsFlags.has(arg) : isWorkspaceRelativeOperand(arg)
@@ -341,6 +347,12 @@ function areSafeCheapCommandArgs(cmd: CheapLocalCommand["cmd"], args: string[]):
 function isSafePythonScriptArg(value: string): boolean {
   if (!value || value.includes("\0") || /[\r\n<>`$|&;]/.test(value)) return false;
   if (value === "-c" || value === "-m" || value === "-") return false;
+  return /^[A-Za-z0-9._=:/,+-]+$/.test(value);
+}
+
+function isSafeNodeScriptArg(value: string): boolean {
+  if (!value || value.includes("\0") || /[\r\n<>`$|&;]/.test(value)) return false;
+  if (value === "-e" || value === "--eval" || value === "-p" || value === "--print" || value === "-") return false;
   return /^[A-Za-z0-9._=:/,+-]+$/.test(value);
 }
 

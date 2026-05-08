@@ -112,6 +112,8 @@ export interface AgentLoopModelRequest {
   reasoningEffort?: AgentLoopReasoningEffort;
   cwd?: string;
   sandboxMode?: AgentLoopSandboxMode;
+  timeoutMs?: number;
+  idleTimeoutMs?: number;
   abortSignal?: AbortSignal;
 }
 

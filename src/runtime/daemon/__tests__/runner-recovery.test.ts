@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as fs from "node:fs";
+import * as path from "node:path";
 import { StateManager } from "../../../base/state/state-manager.js";
 import type { Task } from "../../../base/types/task.js";
 import { makeTempDir, cleanupTempDir } from "../../../../tests/helpers/temp-dir.js";
@@ -152,6 +153,86 @@ describe("runner-recovery", () => {
     expect(ledger.events[0]).toMatchObject({
       type: "failed",
       stopped_reason: "timeout",
+    });
+  });
+
+  it("completes interrupted running tasks when fresh artifact contract evidence passes", async () => {
+    tmpDir = makeTempDir();
+    const workspace = path.join(tmpDir, "workspace");
+    fs.mkdirSync(path.join(workspace, "reports"), { recursive: true });
+    fs.writeFileSync(
+      path.join(workspace, "reports", "restart.json"),
+      JSON.stringify({ scenario: "daemon-stop-restart", restart_safe: true })
+    );
+
+    const stateManager = new StateManager(tmpDir);
+    await stateManager.init();
+    const runningTask = makeTask({
+      id: "task-artifact-recover",
+      goal_id: "goal-artifact-recover",
+      status: "running",
+      started_at: new Date(Date.now() - 5_000).toISOString(),
+      constraints: [`workspace_path:${workspace}`],
+      artifact_contract: {
+        required: true,
+        required_artifacts: [{
+          kind: "metrics_json",
+          path: "reports/restart.json",
+          required_fields: ["scenario", "restart_safe"],
+          field_types: {
+            scenario: "string",
+            restart_safe: "boolean",
+          },
+          fresh_after_task_start: true,
+        }],
+      },
+    });
+    await stateManager.writeRaw(`tasks/${runningTask.goal_id}/${runningTask.id}.json`, runningTask);
+
+    const recoveredGoalIds = await reconcileInterruptedExecutions({
+      baseDir: tmpDir,
+      stateManager,
+      logger: { warn: vi.fn() },
+      recoverySource: "daemon_shutdown",
+      terminalStatus: "cancelled",
+      stoppedReason: "cancelled",
+    });
+
+    expect(recoveredGoalIds).toEqual(["goal-artifact-recover"]);
+    const task = await stateManager.readRaw(`tasks/${runningTask.goal_id}/${runningTask.id}.json`) as Record<string, unknown>;
+    expect(task.status).toBe("completed");
+    expect(task.verification_verdict).toBe("pass");
+    expect(String(task.execution_output)).toContain("artifact_contract verification passed");
+
+    const verification = await stateManager.readRaw(`verification/${runningTask.id}/verification-result.json`) as Record<string, unknown>;
+    expect(verification).toMatchObject({
+      verdict: "pass",
+      artifact_contract_status: {
+        applicable: true,
+        passed: true,
+      },
+    });
+
+    const history = await stateManager.readRaw(`tasks/${runningTask.goal_id}/task-history.json`) as Array<Record<string, unknown>>;
+    expect(history.at(-1)).toMatchObject({
+      task_id: "task-artifact-recover",
+      status: "completed",
+      recovery_source: "daemon_shutdown",
+      retry_intent: "task completed from durable artifact evidence during daemon recovery",
+    });
+
+    const ledger = await stateManager.readRaw(`tasks/${runningTask.goal_id}/ledger/${runningTask.id}.json`) as {
+      events: Array<{ type: string; verification_verdict?: string }>;
+      summary: { latest_event_type: string; task_status: string; verification_verdict?: string };
+    };
+    expect(ledger.events.map((event) => event.type)).toEqual(["succeeded"]);
+    expect(ledger.events[0]).toMatchObject({
+      verification_verdict: "pass",
+    });
+    expect(ledger.summary).toMatchObject({
+      latest_event_type: "succeeded",
+      task_status: "completed",
+      verification_verdict: "pass",
     });
   });
 

@@ -1225,7 +1225,7 @@ describe("agentloop phase 1", () => {
       modelInfo,
       messages: [{ role: "user", content: "do it" }],
       outputSchema: z.object({ status: z.literal("done"), finalAnswer: z.string() }),
-      budget: withDefaultBudget({ maxModelTurns: 2 }),
+      budget: withDefaultBudget({ maxModelTurns: 2, maxWallClockMs: 123_456 }),
       toolPolicy: {},
       toolCallContext: {
         cwd,
@@ -1241,6 +1241,9 @@ describe("agentloop phase 1", () => {
     expect(llmCalls).toHaveLength(1);
     expect(llmCalls[0]?.options?.tools).toBeUndefined();
     expect(llmCalls[0]?.options?.cwd).toBe(cwd);
+    expect(llmCalls[0]?.options?.timeoutMs).toBeGreaterThan(0);
+    expect(llmCalls[0]?.options?.timeoutMs).toBeLessThanOrEqual(123_456);
+    expect(llmCalls[0]?.options?.idleTimeoutMs).toBe(llmCalls[0]?.options?.timeoutMs);
     expect(llmCalls[0]?.options?.system ?? "").not.toContain("You do not have native function/tool calling");
   });
 

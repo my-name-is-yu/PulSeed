@@ -14,6 +14,7 @@ import type { BackgroundRunLedger } from '../store/background-run-store.js';
 import type { BackgroundRun, RuntimeSessionRef } from '../session-registry/types.js';
 import type { WaitResumeActivation } from '../../base/types/goal-activation.js';
 import type { LoopRunPolicyMode } from '../../orchestrator/loop/durable-loop.js';
+import { createDaemonShutdownAbortReason } from '../../base/utils/abort-reason.js';
 
 export interface SupervisorConfig {
   concurrency: number;
@@ -122,7 +123,10 @@ export class LoopSupervisor {
     controller: AbortController;
     goalId: string;
     workerId: string;
+    activation: GoalActivation;
   }> = [];
+  private shutdownRelinquishedClaimTokens: Set<string> = new Set();
+  private shutdownRelinquishedWorkerIds: Set<string> = new Set();
   private pendingTimers: Set<ReturnType<typeof setTimeout>> = new Set();
 
   constructor(deps: SupervisorDeps, config?: Partial<SupervisorConfig>) {
@@ -155,7 +159,10 @@ export class LoopSupervisor {
     }
 
     this.running = true;
+    this.shutdownRelinquishedClaimTokens.clear();
+    this.shutdownRelinquishedWorkerIds.clear();
     this.loadState();
+    this.persistState();
 
     for (const goalId of initialGoalIds) {
       this.enqueueGoalActivation(goalId);
@@ -191,7 +198,7 @@ export class LoopSupervisor {
         goalIds: activeExecutions.map((execution) => execution.goalId),
       });
       for (const execution of activeExecutions) {
-        execution.controller.abort(new Error('operator stop requested'));
+        execution.controller.abort(createDaemonShutdownAbortReason('supervisor shutdown requested'));
       }
     }
     const completed = await waitForExecutions(
@@ -199,6 +206,9 @@ export class LoopSupervisor {
       this.config.activeStopGraceMs
     );
     if (!completed) {
+      await Promise.all([...this.runningExecutions].map((execution) =>
+        this.relinquishActiveExecutionAfterShutdownGrace(execution)
+      ));
       this.deps.logger?.warn('Supervisor shutdown returned before active executions settled', {
         activeCount: this.runningExecutions.length,
         timeoutMs: this.config.activeStopGraceMs,
@@ -211,9 +221,10 @@ export class LoopSupervisor {
     return {
       workers: this.workers.map(w => {
         const backgroundRun = this.activeBackgroundRuns.get(w.id);
+        const goalId = this.shutdownRelinquishedWorkerIds.has(w.id) ? null : w.getCurrentGoalId();
         return {
           workerId: w.id,
-          goalId: w.getCurrentGoalId(),
+          goalId,
           startedAt: w.getStartedAt(),
           iterations: w.getIterations(),
           ...(backgroundRun
@@ -368,6 +379,7 @@ export class LoopSupervisor {
           controller,
           goalId,
           workerId: worker.id,
+          activation: dispatch,
         };
         this.runningExecutions.push(trackedExecution);
         execution.finally(() => {
@@ -504,6 +516,16 @@ export class LoopSupervisor {
         ...(abortSignal ? { abortSignal } : {}),
       });
 
+      if (this.shutdownRelinquishedClaimTokens.has(activation.claim.claimToken)) {
+        this.deps.logger?.warn('Skipping completion for shutdown-relinquished goal execution', {
+          goalId,
+          claimToken: activation.claim.claimToken,
+          workerId: worker.id,
+          status: result.status,
+        });
+        return;
+      }
+
       if (result.status === 'error') {
         const count = (this.crashCounts.get(goalId) ?? 0) + 1;
         this.crashCounts.set(goalId, count);
@@ -557,6 +579,47 @@ export class LoopSupervisor {
       this.activeBackgroundRuns.delete(worker.id);
       this.persistState();
     }
+  }
+
+  private async relinquishActiveExecutionAfterShutdownGrace(execution: {
+    goalId: string;
+    workerId: string;
+    activation: GoalActivation;
+  }): Promise<void> {
+    const { activation } = execution;
+    if (this.shutdownRelinquishedClaimTokens.has(activation.claim.claimToken)) {
+      return;
+    }
+
+    this.shutdownRelinquishedClaimTokens.add(activation.claim.claimToken);
+    this.shutdownRelinquishedWorkerIds.add(execution.workerId);
+    this.activeGoals.delete(execution.goalId);
+    this.activeBackgroundRuns.delete(execution.workerId);
+
+    const nacked = this.deps.journalQueue.nack(
+      activation.claim.claimToken,
+      'daemon shutdown interrupted active execution',
+      true,
+    );
+    let leaseReleased = false;
+    try {
+      leaseReleased = await this.deps.goalLeaseManager.release(activation.goalId, activation.ownerToken);
+    } catch (err) {
+      this.deps.logger?.warn('Failed to release shutdown-relinquished goal lease', {
+        goalId: activation.goalId,
+        workerId: execution.workerId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+
+    this.deps.logger?.warn('Relinquished active goal execution after supervisor shutdown grace', {
+      goalId: activation.goalId,
+      workerId: execution.workerId,
+      claimToken: activation.claim.claimToken,
+      claimRequeued: nacked,
+      leaseReleased,
+    });
+    this.persistState();
   }
 
   private coreLoopSessionId(worker: GoalWorker): string {

@@ -1,9 +1,11 @@
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { PipelineStateSchema } from "../../base/types/pipeline.js";
-import { TaskSchema, type Task } from "../../base/types/task.js";
+import { TaskSchema, VerificationResultSchema, type Task } from "../../base/types/task.js";
 import { appendTaskOutcomeEvent } from "../../orchestrator/execution/task/task-outcome-ledger.js";
 import { durationToMs } from "../../orchestrator/execution/task/task-executor.js";
+import { verifyTaskArtifactContract } from "../../orchestrator/execution/task/task-artifact-contract.js";
+import { resolveTaskWorkspacePath } from "../../orchestrator/execution/task/task-workspace.js";
 import type { StateManager } from "../../base/state/state-manager.js";
 import type { Logger } from "../logger.js";
 
@@ -37,6 +39,12 @@ export async function reconcileInterruptedExecutions(params: ReconcileInterrupte
   for (const task of await findRunningTasks(params.baseDir, params.stateManager)) {
     if (liveOwnerGoalIds.has(task.goal_id)) {
       skippedLiveOwnerGoalIds.add(task.goal_id);
+      continue;
+    }
+
+    const artifactRecoveredTask = await recoverInterruptedTaskFromArtifactContract(task, params, now);
+    if (artifactRecoveredTask) {
+      recoveredGoalIds.add(task.goal_id);
       continue;
     }
 
@@ -88,6 +96,73 @@ export async function reconcileInterruptedExecutions(params: ReconcileInterrupte
   }
 
   return [...recoveredGoalIds];
+}
+
+async function recoverInterruptedTaskFromArtifactContract(
+  task: Task,
+  params: ReconcileInterruptedExecutionsParams,
+  now: string,
+): Promise<Task | null> {
+  const goal = await params.stateManager.loadGoal(task.goal_id).catch(() => null);
+  const cwd = await resolveTaskWorkspacePath({
+    stateManager: params.stateManager,
+    task,
+    fallbackCwd: params.baseDir,
+  });
+  const artifactResult = await verifyTaskArtifactContract(task, cwd, { goal });
+  if (!artifactResult.applicable || !artifactResult.passed) return null;
+
+  const recoverySource = params.recoverySource ?? "daemon_startup";
+  const successReason =
+    "interrupted task recovered from fresh artifact_contract evidence after daemon recovery";
+  const recoveredTask: Task = TaskSchema.parse({
+    ...task,
+    status: "completed",
+    completed_at: task.completed_at ?? now,
+    heartbeat_at: now,
+    verification_verdict: "pass",
+    verification_evidence: [
+      ...(task.verification_evidence ?? []),
+      artifactResult.description,
+      successReason,
+    ],
+    execution_output: [
+      task.execution_output,
+      "[RECOVERED] Task execution was interrupted, but artifact_contract verification passed during daemon recovery.",
+    ]
+      .filter((value): value is string => typeof value === "string" && value.length > 0)
+      .join("\n"),
+  });
+  const verificationResult = VerificationResultSchema.parse({
+    task_id: task.id,
+    verdict: "pass",
+    confidence: 1,
+    evidence: [{
+      layer: "mechanical",
+      description: `${artifactResult.description}; ${successReason}`,
+      confidence: 1,
+    }],
+    dimension_updates: [],
+    artifact_contract_status: artifactResult,
+    timestamp: now,
+  });
+
+  await params.stateManager.writeRaw(`tasks/${task.goal_id}/${task.id}.json`, recoveredTask);
+  await params.stateManager.writeRaw(`verification/${task.id}/verification-result.json`, verificationResult);
+  await appendRecoveredTaskHistory(params.stateManager, recoveredTask, {
+    recoverySource,
+    recovery_reason: successReason,
+    retry_intent: "task completed from durable artifact evidence during daemon recovery",
+  });
+  await appendTaskOutcomeEvent(params.stateManager, {
+    task: recoveredTask,
+    type: "succeeded",
+    attempt: Math.max(task.consecutive_failure_count + 1, 1),
+    action: "completed",
+    verificationResult,
+  });
+
+  return recoveredTask;
 }
 
 function stoppedReasonForStatus(status: InterruptedTaskTerminalStatus): string {
