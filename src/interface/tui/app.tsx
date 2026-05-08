@@ -32,7 +32,7 @@ import { useLoop } from "./use-loop.js";
 import type { LoopState } from "./use-loop.js";
 import type { ActionHandler } from "./actions.js";
 import type { IntentRecognizer } from "./intent-recognizer.js";
-import type { CoreLoop } from "../../orchestrator/loop/core-loop.js";
+import type { DurableLoop } from "../../orchestrator/loop/durable-loop.js";
 import type { StateManager } from "../../base/state/state-manager.js";
 import type { ILLMClient } from "../../base/llm/llm-client.js";
 import type { TrustManager } from "../../platform/traits/trust-manager.js";
@@ -216,7 +216,7 @@ interface AppProps {
   // Daemon mode (thin client — events via SSE, commands via REST)
   daemonClient?: DaemonClient;
   // Standalone mode (in-process CoreLoop)
-  coreLoop?: CoreLoop;
+  coreLoop?: DurableLoop;
   trustManager?: TrustManager;
   actionHandler?: ActionHandler;
   intentRecognizer?: IntentRecognizer;
