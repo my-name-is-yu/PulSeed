@@ -14,6 +14,7 @@ import type {
   DataSourceQuery,
   DataSourceResult,
 } from "../../base/types/data-source.js";
+import { coerceDataSourceObservationValue } from "../../platform/observation/observation-value.js";
 import type {
   MCPServerConfig,
   MCPToolMapping,
@@ -137,8 +138,6 @@ export class MCPDataSourceAdapter implements IDataSourceAdapter {
     if (trimmed === "null") return null;
     if (trimmed === "true") return true;
     if (trimmed === "false") return false;
-    const num = Number(trimmed);
-    if (!isNaN(num) && trimmed !== "") return num;
-    return trimmed;
+    return coerceDataSourceObservationValue(trimmed);
   }
 }
