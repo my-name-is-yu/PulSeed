@@ -6,6 +6,7 @@ import type { Goal } from "../../base/types/goal.js";
 import type { DaemonConfig, DaemonState, ResidentActivity } from "../../base/types/daemon.js";
 import { ResidentActivitySchema } from "../../base/types/daemon.js";
 import type { StateManager } from "../../base/state/state-manager.js";
+import type { GoalSuggestionSurface } from "../../orchestrator/goal/goal-suggest.js";
 import type { GoalNegotiator } from "../../orchestrator/goal/goal-negotiator.js";
 import type { CuriosityEngine } from "../../platform/traits/curiosity-engine.js";
 import type { ILLMClient } from "../../base/llm/llm-client.js";
@@ -20,6 +21,22 @@ import { resolveDaemonRuntimeRoot } from "./runtime-root.js";
 export function resolveResidentWorkspaceDir(configuredPath?: string): string {
   const trimmed = configuredPath?.trim();
   return trimmed ? path.resolve(trimmed) : process.cwd();
+}
+
+export function resolveResidentSuggestionSurface(workspaceDir: string): GoalSuggestionSurface {
+  const repositorySurfaceEntries = [
+    ".git",
+    "package.json",
+    "README.md",
+    "README",
+    "src",
+    "tests",
+    "test",
+    "docs",
+  ];
+  return repositorySurfaceEntries.some((entry) => fs.existsSync(path.join(workspaceDir, entry)))
+    ? "repository"
+    : "general";
 }
 
 export function gatherResidentWorkspaceContext(workspaceDir: string, seedDescription?: string): string {

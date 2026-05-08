@@ -265,8 +265,37 @@ describe("improve subcommand — suggestion flow", () => {
 
     expect(mockSuggest).toHaveBeenCalledOnce();
     // Verify context argument is a string (gathered from the path)
-    const [contextArg] = mockSuggest.mock.calls[0]!;
+    const [contextArg, optionsArg] = mockSuggest.mock.calls[0]!;
     expect(typeof contextArg).toBe("string");
+    expect(optionsArg).toEqual(expect.objectContaining({ suggestionSurface: "repository" }));
+  });
+
+  it("passes general suggestion surface when the target path has no repository markers", async () => {
+    const plainTarget = `${tmpDir}/plain-context`;
+    fs.mkdirSync(plainTarget);
+    const goal = makeGoal();
+    const mockSuggest = vi.fn().mockResolvedValue([makeSuggestion()]);
+    const mockNegotiate = vi.fn().mockResolvedValue(makeNegotiationResult(goal));
+
+    vi.mocked(GoalNegotiator).mockImplementation(function() { return {
+      suggestGoals: mockSuggest,
+      negotiate: mockNegotiate,
+    } as unknown as GoalNegotiator; });
+
+    vi.mocked(CoreLoop).mockImplementation(function() { return {
+      run: vi.fn().mockResolvedValue(makeLoopResult()),
+      stop: vi.fn(),
+      setTimeHorizonEngine: vi.fn(),
+    } as unknown as CoreLoop; });
+
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    await runCLI("improve", plainTarget);
+    consoleSpy.mockRestore();
+
+    expect(mockSuggest).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ repoPath: plainTarget, suggestionSurface: "general" })
+    );
   });
 
   it("falls back to synthesized suggestions when suggestGoals returns empty array", async () => {

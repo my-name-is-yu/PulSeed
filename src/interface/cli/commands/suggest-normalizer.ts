@@ -6,6 +6,7 @@ import { spawnSync } from "node:child_process";
 import { SuggestOutputSchema } from "../../../base/types/suggest.js";
 import type { SuggestOutput, Suggestion } from "../../../base/types/suggest.js";
 import type { GoalSuggestion } from "../../../orchestrator/goal/goal-negotiator.js";
+import type { GoalSuggestionSurface } from "../../../orchestrator/goal/goal-suggest.js";
 import type { CapabilityDetector } from "../../../platform/observation/capability-detector.js";
 import { buildTodoLikeMarkerInventory, formatTodoLikeMarkerInventory } from "./goal-utils.js";
 
@@ -482,6 +483,7 @@ export async function generateSuggestOutput(
       maxSuggestions: number;
       existingGoals: string[];
       repoPath: string;
+      suggestionSurface?: GoalSuggestionSurface;
       capabilityDetector: CapabilityDetector;
     }
   ) => Promise<unknown>,
@@ -490,6 +492,7 @@ export async function generateSuggestOutput(
     maxSuggestions: number;
     existingGoals: string[];
     repoPath: string;
+    suggestionSurface?: GoalSuggestionSurface;
     capabilityDetector: CapabilityDetector;
   }
 ): Promise<unknown> {
@@ -498,7 +501,13 @@ export async function generateSuggestOutput(
     return firstAttempt;
   }
 
-  const retryContext = `${context}\n\nThe first response was empty. Return up to ${options.maxSuggestions} concrete, repository-scoped suggestions and do not return an empty result if actionable repo context is available.`;
+  const retryTarget = options.suggestionSurface === "repository"
+    ? "concrete, repository-scoped suggestions"
+    : "concrete, measurable suggestions";
+  const actionableContext = options.suggestionSurface === "repository"
+    ? "actionable repo context is available"
+    : "actionable context is available";
+  const retryContext = `${context}\n\nThe first response was empty. Return up to ${options.maxSuggestions} ${retryTarget} and do not return an empty result if ${actionableContext}.`;
   const retryAttempt = await suggestGoals(retryContext, options);
   return suggestOutputHasCandidates(retryAttempt) ? retryAttempt : firstAttempt;
 }

@@ -38,44 +38,30 @@ export const CapabilityCheckResultSchema = z.object({
 
 // ─── Prompts ───
 
-const NON_SOFTWARE_KEYWORDS = [
-  'communication', 'team morale', 'health', 'fitness', 'cooking', 'recipe',
-  'learning language', 'marketing', 'sales', 'hiring', 'recruitment', 'exercise',
-  'diet', 'sleep', 'meditation', 'relationship', 'parenting', 'travel',
-];
+export type GoalSuggestionSurface = "general" | "repository";
 
-export function looksLikeSoftwareGoal(context: string, goalDescription?: string): boolean {
-  const SOFTWARE_KEYWORDS = ['package.json', 'src/', 'tests/', 'node_modules', '.git', 'npm', 'build', 'deploy', 'api', 'repository', 'code', 'function', 'class', 'module'];
-  const contextLower = context.toLowerCase();
-  const contextIsSoftware = SOFTWARE_KEYWORDS.some(kw => contextLower.includes(kw));
+export interface GoalSuggestionPromptOptions {
+  suggestionSurface?: GoalSuggestionSurface;
+}
 
-  if (goalDescription) {
-    const descLower = goalDescription.toLowerCase();
-    const hasNonSoftware = NON_SOFTWARE_KEYWORDS.some(kw => descLower.includes(kw));
-    if (hasNonSoftware) {
-      // Software wins when either the description or the context has software keywords
-      const descHasSoftware = SOFTWARE_KEYWORDS.some(kw => descLower.includes(kw));
-      return descHasSoftware || contextIsSoftware;
-    }
-  }
-
-  return contextIsSoftware;
+function isRepositorySuggestionSurface(options?: GoalSuggestionPromptOptions): boolean {
+  return options?.suggestionSurface === "repository";
 }
 
 export function buildSuggestGoalsPrompt(
   context: string,
   maxSuggestions: number,
   existingGoals: string[],
-  goalDescription?: string
+  options?: GoalSuggestionPromptOptions
 ): string {
   const existingGoalsSection =
     existingGoals.length > 0
       ? `\nExisting goals (do NOT suggest duplicates):\n${existingGoals.map((g) => `- ${g}`).join("\n")}`
       : "";
 
-  const isSoftware = looksLikeSoftwareGoal(context, goalDescription);
+  const isRepository = isRepositorySuggestionSurface(options);
 
-  const systemPrompt = isSoftware
+  const systemPrompt = isRepository
     ? `You are a goal advisor for a software project. Given the project context below, suggest concrete, measurable improvement goals.
 
 Each goal should:
@@ -184,6 +170,7 @@ export async function suggestGoals(
   options?: {
     maxSuggestions?: number;
     existingGoals?: string[];
+    suggestionSurface?: GoalSuggestionSurface;
     capabilityDetector?: CapabilityDetector;
     logger?: Logger;
     gateway?: IPromptGateway;
@@ -198,7 +185,9 @@ export async function suggestGoals(
     return [];
   }
 
-  const prompt = buildSuggestGoalsPrompt(context, maxSuggestions, existingGoals);
+  const prompt = buildSuggestGoalsPrompt(context, maxSuggestions, existingGoals, {
+    suggestionSurface: options?.suggestionSurface,
+  });
 
   let suggestions: GoalSuggestion[];
   if (options?.gateway) {

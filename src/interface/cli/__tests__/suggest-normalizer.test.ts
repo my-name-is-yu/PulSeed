@@ -2,7 +2,8 @@ import { describe, it, expect } from "vitest";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { hasRepositorySuggestionSurface, normalizeSuggestPayload } from "../commands/suggest-normalizer.js";
+import type { CapabilityDetector } from "../../../platform/observation/capability-detector.js";
+import { generateSuggestOutput, hasRepositorySuggestionSurface, normalizeSuggestPayload } from "../commands/suggest-normalizer.js";
 
 const validSuggestionWithRepoContext = {
   title: "Add tests",
@@ -106,5 +107,28 @@ describe("normalizeSuggestPayload fast-path", () => {
     expect(result.suggestions).toHaveLength(1);
     expect(result.suggestions[0]!.repo_context).toBeUndefined();
     expect(JSON.stringify(result.suggestions[0])).not.toMatch(/README|package\.json|src\/|repository/i);
+  });
+
+  it("keeps retry instructions general when the typed surface is general", async () => {
+    const contexts: string[] = [];
+    const suggestGoals = async (context: string) => {
+      contexts.push(context);
+      return contexts.length === 1 ? [] : validInput;
+    };
+
+    await generateSuggestOutput(
+      suggestGoals,
+      "Personal journal about sleep and exercise",
+      {
+        maxSuggestions: 2,
+        existingGoals: [],
+        repoPath: ".",
+        suggestionSurface: "general",
+        capabilityDetector: {} as CapabilityDetector,
+      }
+    );
+
+    expect(contexts[1]).toContain("concrete, measurable suggestions");
+    expect(contexts[1]).not.toContain("repository-scoped");
   });
 });
