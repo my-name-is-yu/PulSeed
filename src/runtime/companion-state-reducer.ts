@@ -15,6 +15,7 @@ import {
   type CompanionWideControl,
   type ControlPolicy,
   type RuntimeItem,
+  type RuntimeEvent,
   type RuntimeItemControl,
   type Staleness,
   type StalenessDimension,
@@ -270,7 +271,7 @@ export function evaluateCompanionStateSnapshotFreshness(
       reason: "event_high_watermark_changed",
       stale_refs: uniqueStrings([
         currentInput.event_high_watermark,
-        ...currentInput.recent_runtime_events,
+        ...currentInput.recent_runtime_events.map(runtimeEventId),
         ...currentInput.surface_invalidation_events,
         ...currentInput.global_controls.map((control) => control.source_ref),
         ...currentInput.user_activity_refs,
@@ -582,6 +583,14 @@ function selectBlockerMode(signals: RuntimeSignals): {
       rejectedModes: ["working", "reaching_out", "escalating"],
     };
   }
+  if (signals.blockedByBoundaryRefs.length > 0) {
+    return {
+      mode: "overloaded",
+      blockedRefs: signals.blockedByBoundaryRefs,
+      reason: "runtime_boundary_blocker_fail_closed",
+      rejectedModes: ["working", "watching", "reaching_out", "escalating"],
+    };
+  }
   if (signals.staleSurfaceRefs.length > 0 || signals.invalidatedSurfaceRefs.length > 0) {
     return {
       mode: "holding_back",
@@ -858,7 +867,12 @@ function needsRenewedAuthority(item: RuntimeItem): boolean {
 
 function isSafetyRuntimeItem(item: RuntimeItem): boolean {
   return (item.type === "guardrail_state" || item.type === "backpressure_state")
-    && (item.status === "running" || item.status === "active" || item.status === "blocked");
+    && (
+      item.status === "blocked"
+      || item.status === "failed"
+      || item.posture === "blocked_by_boundary"
+      || item.posture === "needs_user"
+    );
 }
 
 function isContradictoryPosture(item: RuntimeItem): boolean {
@@ -911,7 +925,7 @@ function emptyRuntimeSignals(): RuntimeSignals {
 function inputRefs(input: CompanionStateReducerInput): string[] {
   return uniqueStrings([
     ...input.runtime_items.map(runtimeItemId),
-    ...input.recent_runtime_events,
+    ...input.recent_runtime_events.map(runtimeEventId),
     ...(input.active_surface_ref === null ? [] : [input.active_surface_ref]),
     ...input.surface_invalidation_events,
     ...(input.global_control_state_ref === null ? [] : [input.global_control_state_ref]),
@@ -924,4 +938,8 @@ function inputRefs(input: CompanionStateReducerInput): string[] {
     ...input.feedback_refs,
     ...input.safety_context_refs,
   ]);
+}
+
+function runtimeEventId(event: RuntimeEvent): string {
+  return event.event_id;
 }
