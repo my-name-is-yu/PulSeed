@@ -22,11 +22,23 @@ export function getScheduleOrPrintError(engine: ScheduleEngine, id: string | und
 }
 
 export function parsePositiveInteger(value: string | undefined, label: string): number {
-  const parsed = Number.parseInt(value ?? "", 10);
-  if (!Number.isInteger(parsed) || parsed < 1) {
+  const normalized = value?.trim() ?? "";
+  if (!/^[0-9]+$/.test(normalized)) {
+    throw new Error(`${label} must be a positive integer`);
+  }
+  const parsed = Number(normalized);
+  if (!Number.isSafeInteger(parsed) || parsed < 1) {
     throw new Error(`${label} must be a positive integer`);
   }
   return parsed;
+}
+
+function parseNonEmptyCliValue(value: string, label: string): string {
+  const normalized = value.trim();
+  if (normalized === "") {
+    throw new Error(`${label} must be a non-empty string`);
+  }
+  return normalized;
 }
 
 export function parseJsonConfig<T>(
@@ -58,16 +70,22 @@ export function resolveTriggerPatch(values: {
   interval?: string;
   timezone?: string;
 }): ScheduleTriggerInput | undefined {
-  if (values.cron && values.interval) {
+  const cron = values.cron;
+  const interval = values.interval;
+  if (cron !== undefined && interval !== undefined) {
     throw new Error("Use only one of --cron or --interval");
   }
-  if (values.cron) {
-    return { type: "cron", expression: values.cron, timezone: values.timezone ?? "UTC" };
+  if (cron !== undefined) {
+    return {
+      type: "cron",
+      expression: parseNonEmptyCliValue(cron, "--cron"),
+      timezone: values.timezone !== undefined ? parseNonEmptyCliValue(values.timezone, "--timezone") : "UTC",
+    };
   }
-  if (values.interval) {
-    return { type: "interval", seconds: parsePositiveInteger(values.interval, "--interval"), jitter_factor: 0 };
+  if (interval !== undefined) {
+    return { type: "interval", seconds: parsePositiveInteger(interval, "--interval"), jitter_factor: 0 };
   }
-  if (values.timezone) {
+  if (values.timezone !== undefined) {
     throw new Error("--timezone can only be used with --cron");
   }
   return undefined;
