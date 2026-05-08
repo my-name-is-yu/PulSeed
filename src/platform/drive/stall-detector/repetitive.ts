@@ -1,9 +1,38 @@
-import type { RepetitivePatternResult, StallTaskHistoryEntry } from "../stall-detector.js";
-
 const REPETITIVE_WINDOW = 3;
 const SIMILARITY_THRESHOLD = 0.8;
 const NO_CHANGE_PATTERNS = ["no changes made", "no modifications", "nothing to change", "no action taken"];
 const TEXT_FALLBACK_MAX_CONFIDENCE = 0.6;
+
+export interface StallTaskHistoryEntry {
+  strategy_id: string | null;
+  output: string;
+  task_result?: StallTaskResultEvidence;
+}
+
+export interface StallTaskResultEvidence {
+  changed_files?: string[];
+  diff_stats?: {
+    files_changed?: number;
+    insertions?: number;
+    deletions?: number;
+  };
+  tool_calls?: Array<{
+    tool_name: string;
+    status?: "success" | "failed" | "skipped";
+  }>;
+  verification_status?: "passed" | "failed" | "not_run" | "unknown";
+  artifact_changes?: Array<{
+    artifact_id: string;
+    change_type: "created" | "updated" | "deleted";
+  }>;
+}
+
+export interface RepetitivePatternResult {
+  isRepetitive: boolean;
+  pattern: "identical_actions" | "oscillating" | "no_change" | null;
+  confidence: number;
+  source?: "typed_task_result" | "text_fallback" | "none";
+}
 
 function stringSimilarity(a: string, b: string): number {
   if (a.length === 0 || b.length === 0) {
