@@ -1,3 +1,11 @@
+import { renderExpressionDecisionForSurface } from "../attention/index.js";
+import type {
+  ExpressionDecision,
+  ExpressionSurfaceClass,
+  OutcomeDecision,
+  VisibilityPolicy,
+} from "../types/companion-autonomy.js";
+
 interface OperationProgressItemLike {
   title: string;
   detail?: string;
@@ -33,6 +41,25 @@ interface AgentTimelineItemLike {
 
 export function renderGatewayOperationProgress(item: OperationProgressItemLike): string {
   return redactSetupSecrets(`${item.title}${item.detail ? `: ${item.detail}` : ""}`);
+}
+
+export function renderGatewayExpressionDecision(input: {
+  renderId: string;
+  renderedAt: string;
+  surfaceClass?: Extract<ExpressionSurfaceClass, "gateway" | "notification">;
+  outcomeDecision: OutcomeDecision;
+  expressionDecision?: ExpressionDecision | null;
+  visibilityPolicy: VisibilityPolicy;
+}): string | null {
+  const rendered = renderExpressionDecisionForSurface({
+    render_id: input.renderId,
+    rendered_at: input.renderedAt,
+    surface_class: input.surfaceClass ?? "gateway",
+    outcome_decision: input.outcomeDecision,
+    expression_decision: input.expressionDecision,
+    visibility_policy: input.visibilityPolicy,
+  });
+  return rendered ? redactSetupSecrets(rendered.user_facing_rationale) : null;
 }
 
 export function renderGatewayAgentTimelineItem(item: AgentTimelineItemLike): string {

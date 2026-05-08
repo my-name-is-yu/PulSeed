@@ -29,6 +29,7 @@ export {
   WHATSAPP_GATEWAY_DISPLAY_CONTRACT,
 } from "./channel-display-policy.js";
 export { NonTuiDisplayProjector, createNonTuiDisplayProjector } from "./non-tui-display-projector.js";
+export { renderGatewayExpressionDecision } from "./chat-event-rendering.js";
 export type {
   NonTuiDisplayMessageRef,
   NonTuiDisplayProjectorOptions,

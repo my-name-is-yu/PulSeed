@@ -7,6 +7,13 @@ import { measureCharWidth, measureTextWidth } from "./text-width.js";
 import type { buildChatViewport } from "./chat/viewport.js";
 import { getMatchingSuggestions, type Suggestion } from "./chat/suggestions.js";
 import type { ChatMessage, ChatDisplayRow } from "./chat/types.js";
+import { renderExpressionDecisionForSurface } from "../../runtime/attention/index.js";
+import type {
+  ExpressionDecision,
+  ExpressionSurfaceClass,
+  OutcomeDecision,
+  VisibilityPolicy,
+} from "../../runtime/types/companion-autonomy.js";
 
 const DEFAULT_PROMPT = "◉";
 const BASH_PROMPT = "!";
@@ -36,6 +43,35 @@ export type RenderLine = {
   dim?: boolean;
   protected?: boolean;
 };
+
+export type TuiExpressionDecisionRenderInput = {
+  renderId: string;
+  renderedAt: string;
+  surfaceClass?: Extract<ExpressionSurfaceClass, "tui" | "cli">;
+  outcomeDecision: OutcomeDecision;
+  expressionDecision?: ExpressionDecision | null;
+  visibilityPolicy: VisibilityPolicy;
+};
+
+export function renderTuiExpressionDecision(input: TuiExpressionDecisionRenderInput): RenderLine | null {
+  const rendered = renderExpressionDecisionForSurface({
+    render_id: input.renderId,
+    rendered_at: input.renderedAt,
+    surface_class: input.surfaceClass ?? "tui",
+    outcome_decision: input.outcomeDecision,
+    expression_decision: input.expressionDecision,
+    visibility_policy: input.visibilityPolicy,
+  });
+  if (!rendered) return null;
+
+  return {
+    key: rendered.render_id,
+    text: rendered.user_facing_rationale,
+    dim: rendered.expression_mode === "digest_item",
+    bold: rendered.expression_mode === "approval_request" || rendered.expression_mode === "urgent_alert",
+    protected: true,
+  };
+}
 
 export type FullscreenChatRenderLinesInput = {
   availableCols: number;
