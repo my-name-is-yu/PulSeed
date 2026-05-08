@@ -3,6 +3,7 @@ import {
   SurfaceInvalidationEventSchema,
   SurfaceInvalidationPolicySchema,
   SurfaceProjectionSchema,
+  createSurfaceInspectionView,
   type SurfaceGateKind,
 } from "../surface-contracts.js";
 
@@ -16,26 +17,73 @@ function ownerRef() {
   };
 }
 
+function domainFields() {
+  return {
+    target: "status reports",
+    preference: "concise",
+    confidence: 0.9,
+    scope: "operator collaboration",
+    allowed_uses: ["surface_projection"],
+    review_condition: "when corrected",
+  };
+}
+
+function redactedDomainFields(reason: "sensitive" | "tombstoned" | "deleted" | "permission_revoked" | "scope_excluded" = "deleted") {
+  return {
+    redaction_ref: `redaction/${reason}/memory-1`,
+    reason,
+  };
+}
+
 function dependencyRef(overrides: Record<string, unknown> = {}) {
   return {
     kind: "memory_record",
     ref: "memory-1",
-    owner_ref: ownerRef(),
+    owning_store_ref: ownerRef(),
     content_state: "materialized",
     lifecycle: "active",
+    correction_state: "current",
+    superseded_by_memory_id: null,
     ...overrides,
   };
 }
 
 function sourceRef(overrides: Record<string, unknown> = {}) {
+  const memoryId = typeof overrides.memory_id === "string" ? overrides.memory_id : "memory-1";
+  const owningStoreRef = overrides.owning_store_ref ?? ownerRef();
+  const lifecycle = typeof overrides.lifecycle === "string" ? overrides.lifecycle : "active";
+  const contentState = typeof overrides.content_state === "string" ? overrides.content_state : "materialized";
+  const correctionState = typeof overrides.correction_state === "string" ? overrides.correction_state : "current";
+  const supersededByMemoryId = "superseded_by_memory_id" in overrides
+    ? overrides.superseded_by_memory_id
+    : null;
+  const domainFieldValue = "domain_fields" in overrides
+    ? overrides.domain_fields
+    : contentState === "redacted"
+      ? redactedDomainFields(lifecycle === "tombstoned" ? "tombstoned" : "deleted")
+      : domainFields();
+
   return {
-    memory_id: "memory-1",
-    owner_ref: ownerRef(),
+    memory_id: memoryId,
+    owning_store_ref: owningStoreRef,
+    role: "relationship",
     record_kind: "preference",
-    lifecycle: "active",
+    domain_fields: domainFieldValue,
+    allowed_uses: ["surface_projection", "user_facing_reference", "attention_prioritization"],
+    not_allowed_uses: ["side_effect_authorization", "stale_session_authorization"],
+    lifecycle,
+    correction_state: correctionState,
+    superseded_by_memory_id: supersededByMemoryId,
     sensitivity: "private",
-    content_state: "materialized",
-    dependency_ref: dependencyRef(),
+    content_state: contentState,
+    dependency_ref: dependencyRef({
+      ref: memoryId,
+      owning_store_ref: owningStoreRef,
+      lifecycle,
+      correction_state: correctionState,
+      superseded_by_memory_id: supersededByMemoryId,
+      content_state: contentState,
+    }),
     ...overrides,
   };
 }
@@ -44,6 +92,7 @@ function gate(gateName: SurfaceGateKind, status: "passed" | "blocked" | "unknown
   return {
     gate: gateName,
     status,
+    reason_ref: `reason/${gateName}/${status}`,
     evaluated_at: now,
   };
 }
@@ -62,203 +111,417 @@ function passedGates() {
   ];
 }
 
+function relationshipPermission(overrides: Record<string, unknown> = {}) {
+  return {
+    permission_id: "permission-1",
+    context_scope: "operator collaboration",
+    memory_role_scope: ["relationship", "boundary", "promise", "tension"],
+    observation_permission: "allowed",
+    memory_use_permission: "allowed",
+    speakability: "allowed",
+    proactive_permission: "ask_first",
+    interruption_tolerance: "low",
+    autonomy_level: "ask_first",
+    confirmation_requirement: "before_action",
+    emotional_language_boundary: "neutral",
+    preferred_expression_modes: ["concise"],
+    forbidden_moves: ["overfamiliarity"],
+    valid_from: now,
+    source_refs: [permissionSourceRef()],
+    ...overrides,
+  };
+}
+
+function permissionSourceRef(source: ReturnType<typeof sourceRef> = sourceRef()) {
+  return {
+    memory_id: source.memory_id,
+    owning_store_ref: source.owning_store_ref,
+  };
+}
+
+function derivedRef(kind = "runtime_item", overrides: Record<string, unknown> = {}) {
+  return {
+    kind,
+    ref: `${kind}-1`,
+    related_surface_refs: ["surface-1"],
+    related_memory_refs: ["memory-1"],
+    permission_check_refs: ["permission-1"],
+    staleness_check_refs: ["staleness-1"],
+    use_class: "surface_projection",
+    audit_refs: ["audit/surface-1"],
+    ...overrides,
+  };
+}
+
+function projection(overrides: Record<string, unknown> = {}) {
+  const selected = sourceRef();
+  return {
+    id: "surface-1",
+    version: 1,
+    target: "gateway",
+    scope: {
+      kind: "task",
+      ref: "issue-1274",
+    },
+    purpose: "task_execution",
+    requested_use: "surface_projection",
+    source_refs: [selected],
+    relationship_permissions: [relationshipPermission()],
+    included_context: [{
+      lane: "relationship",
+      source_ref: selected,
+      use_class: "surface_projection",
+      excerpt: "The user prefers concise status reports.",
+      gates: passedGates(),
+    }],
+    excluded_context: [],
+    allowed_runtime_uses: ["surface_projection", "runtime_grounding"],
+    not_allowed_runtime_uses: ["side_effect_authorization"],
+    staleness_checks: ["staleness-1"],
+    sensitivity_checks: ["sensitivity-1"],
+    rationale_entries: [{
+      source_ref: selected,
+      decision: "included",
+      gate: "audit",
+      reason_ref: "rationale/memory-1/included",
+      policy_refs: ["policy/surface"],
+    }],
+    metadata: {
+      staleness: "fresh",
+      sensitivity: "private",
+      permission_state: "granted",
+      invalidation_state: "valid",
+      audit_refs: ["audit/surface-1"],
+    },
+    created_at: now,
+    ...overrides,
+  };
+}
+
 describe("SurfaceProjection contract", () => {
-  it("models selected source refs rather than a whole memory store", () => {
-    const parsed = SurfaceProjectionSchema.parse({
-      id: "surface-1",
-      target: "gateway",
-      purpose: "task_execution",
-      source_refs: [sourceRef()],
-      included_context: [{
-        source_ref: sourceRef(),
-        use_class: "surface_projection",
-        excerpt: "The user prefers concise status reports.",
-        gates: passedGates(),
-      }],
-      metadata: {
-        staleness: "fresh",
-        sensitivity: "private",
-        permission_state: "granted",
-        invalidation_state: "valid",
-        audit_refs: ["audit/surface-1"],
-      },
-      created_at: now,
-    });
+  it("models scoped selected source refs rather than a whole memory store", () => {
+    const parsed = SurfaceProjectionSchema.parse(projection());
 
     expect(parsed.store_scope).toBe("selected_refs");
+    expect(parsed.scope).toEqual({ kind: "task", ref: "issue-1274" });
     expect(parsed.source_refs).toHaveLength(1);
     expect("memory_store" in parsed).toBe(false);
+
+    const withoutScope = { ...projection() };
+    delete (withoutScope as { scope?: unknown }).scope;
+    expect(SurfaceProjectionSchema.safeParse(withoutScope).success).toBe(false);
+
+    expect(SurfaceProjectionSchema.safeParse({
+      ...projection(),
+      source_refs: [],
+      included_context: [],
+      rationale_entries: [],
+    }).success).toBe(false);
   });
 
-  it("requires explicit permission gates for included context", () => {
-    const withoutPermissionGate = SurfaceProjectionSchema.safeParse({
-      id: "surface-1",
-      target: "chat",
-      purpose: "general_turn",
-      source_refs: [sourceRef()],
+  it("requires canonical gates to pass in order before context is included", () => {
+    const withoutPermissionGate = SurfaceProjectionSchema.safeParse(projection({
       included_context: [{
+        lane: "relationship",
         source_ref: sourceRef(),
         use_class: "surface_projection",
         excerpt: "The user prefers concise status reports.",
         gates: passedGates().filter((candidate) => candidate.gate !== "permission"),
       }],
-      metadata: {
-        staleness: "fresh",
-        sensitivity: "private",
-        permission_state: "granted",
-        invalidation_state: "valid",
-      },
-      created_at: now,
-    });
-
+    }));
     expect(withoutPermissionGate.success).toBe(false);
-  });
 
-  it("requires every canonical gate to pass before context is included", () => {
-    const blockedLifecycle = SurfaceProjectionSchema.safeParse({
-      id: "surface-blocked-lifecycle",
-      target: "chat",
-      purpose: "general_turn",
-      source_refs: [sourceRef()],
+    const blockedStaleness = SurfaceProjectionSchema.safeParse(projection({
       included_context: [{
+        lane: "relationship",
         source_ref: sourceRef(),
         use_class: "surface_projection",
-        excerpt: "This stale item must not be included.",
+        excerpt: "A relevant but stale item must not be included.",
         gates: passedGates().map((candidate) =>
-          candidate.gate === "lifecycle" ? gate("lifecycle", "blocked") : candidate
+          candidate.gate === "staleness" ? gate("staleness", "blocked") : candidate
         ),
       }],
-      metadata: {
-        staleness: "fresh",
-        sensitivity: "private",
-        permission_state: "granted",
-        invalidation_state: "valid",
-      },
-      created_at: now,
-    });
+    }));
+    expect(blockedStaleness.success).toBe(false);
 
-    expect(blockedLifecycle.success).toBe(false);
+    expect(SurfaceProjectionSchema.safeParse(projection({
+      gate_order: ["permission", "scope", "lifecycle", "staleness", "sensitivity", "allowed_use", "forbidden_use", "projection", "audit"],
+    })).success).toBe(false);
   });
 
-  it("rejects duplicate gates and non-active source refs for included context", () => {
-    const duplicatePermission = SurfaceProjectionSchema.safeParse({
-      id: "surface-duplicate-gate",
-      target: "chat",
-      purpose: "general_turn",
-      source_refs: [sourceRef()],
-      included_context: [{
-        source_ref: sourceRef(),
-        use_class: "surface_projection",
-        excerpt: "Duplicate gates must not hide blocked decisions.",
-        gates: [...passedGates(), gate("permission", "blocked")],
-      }],
-      metadata: {
-        staleness: "fresh",
-        sensitivity: "private",
-        permission_state: "granted",
-        invalidation_state: "valid",
-      },
-      created_at: now,
-    });
-    expect(duplicatePermission.success).toBe(false);
-
+  it("rejects relevant but superseded forbidden unpermitted or sensitive included memory", () => {
     const supersededSource = sourceRef({ lifecycle: "superseded" });
-    const nonActiveIncluded = SurfaceProjectionSchema.safeParse({
-      id: "surface-superseded-included",
-      target: "chat",
-      purpose: "general_turn",
+    expect(SurfaceProjectionSchema.safeParse(projection({
       source_refs: [supersededSource],
       included_context: [{
+        lane: "relationship",
         source_ref: supersededSource,
         use_class: "surface_projection",
         excerpt: "Superseded memory must not be included.",
         gates: passedGates(),
       }],
+      rationale_entries: [],
+    })).success).toBe(false);
+
+    const correctedSource = sourceRef({
+      correction_state: "superseded",
+      superseded_by_memory_id: "memory-2",
+    });
+    expect(SurfaceProjectionSchema.safeParse(projection({
+      source_refs: [correctedSource],
+      included_context: [{
+        lane: "relationship",
+        source_ref: correctedSource,
+        use_class: "surface_projection",
+        excerpt: "Corrected source refs must not be included as active Surface context.",
+        gates: passedGates(),
+      }],
+      rationale_entries: [{
+        source_ref: correctedSource,
+        decision: "included",
+        gate: "audit",
+        reason_ref: "rationale/corrected-source",
+      }],
+    })).success).toBe(false);
+
+    expect(SurfaceProjectionSchema.safeParse(projection({
+      requested_use: "side_effect_authorization",
+      included_context: [{
+        lane: "relationship",
+        source_ref: sourceRef(),
+        use_class: "surface_projection",
+        excerpt: "Forbidden side effect authorization must not be included.",
+        gates: passedGates(),
+      }],
+    })).success).toBe(false);
+
+    expect(SurfaceProjectionSchema.safeParse(projection({
       metadata: {
         staleness: "fresh",
+        sensitivity: "sensitive",
+        permission_state: "blocked",
+        invalidation_state: "valid",
+      },
+    })).success).toBe(false);
+
+    expect(SurfaceProjectionSchema.safeParse(projection({
+      metadata: {
+        staleness: "stale",
         sensitivity: "private",
         permission_state: "granted",
         invalidation_state: "valid",
       },
-      created_at: now,
+    })).success).toBe(false);
+
+    expect(SurfaceProjectionSchema.safeParse(projection({
+      metadata: {
+        staleness: "fresh",
+        sensitivity: "private",
+        permission_state: "granted",
+        invalidation_state: "invalid",
+      },
+    })).success).toBe(false);
+
+    const sensitiveSource = sourceRef({ sensitivity: "sensitive" });
+    expect(SurfaceProjectionSchema.safeParse(projection({
+      source_refs: [sensitiveSource],
+      included_context: [{
+        lane: "relationship",
+        source_ref: sensitiveSource,
+        use_class: "surface_projection",
+        excerpt: "Sensitive source content must not be included directly.",
+        gates: passedGates(),
+      }],
+      rationale_entries: [{
+        source_ref: sensitiveSource,
+        decision: "included",
+        gate: "sensitivity",
+        reason_ref: "rationale/sensitive",
+      }],
+    })).success).toBe(false);
+
+    expect(SurfaceProjectionSchema.safeParse(projection({
+      requested_use: "user_facing_reference",
+      included_context: [{
+        lane: "relationship",
+        source_ref: sourceRef(),
+        use_class: "user_facing_reference",
+        excerpt: "Speaking this memory is blocked by relationship permission.",
+        gates: passedGates(),
+      }],
+      relationship_permissions: [relationshipPermission({ speakability: "blocked" })],
+      allowed_runtime_uses: ["user_facing_reference"],
+    })).success).toBe(false);
+
+    expect(SurfaceProjectionSchema.safeParse(projection({
+      requested_use: "user_facing_reference",
+      included_context: [{
+        lane: "relationship",
+        source_ref: sourceRef(),
+        use_class: "user_facing_reference",
+        excerpt: "Projection-level allowed uses must admit this use.",
+        gates: passedGates(),
+      }],
+      allowed_runtime_uses: ["surface_projection"],
+    })).success).toBe(false);
+
+    expect(SurfaceProjectionSchema.safeParse(projection({
+      relationship_permissions: [relationshipPermission({
+        source_refs: [{ memory_id: "different-memory", owning_store_ref: ownerRef() }],
+      })],
+    })).success).toBe(false);
+
+    const sameIdDifferentOwner = sourceRef({
+      owning_store_ref: {
+        kind: "soil",
+        store_ref: "soil.sqlite",
+        record_ref: "soil-record-1",
+      },
     });
-    expect(nonActiveIncluded.success).toBe(false);
+    expect(SurfaceProjectionSchema.safeParse(projection({
+      source_refs: [sameIdDifferentOwner],
+      included_context: [{
+        lane: "relationship",
+        source_ref: sameIdDifferentOwner,
+        use_class: "surface_projection",
+        excerpt: "A same id from a different owner is not covered by profile permission.",
+        gates: passedGates(),
+      }],
+      rationale_entries: [{
+        source_ref: sameIdDifferentOwner,
+        decision: "included",
+        gate: "audit",
+        reason_ref: "rationale/same-id-different-owner",
+      }],
+    })).success).toBe(false);
   });
 
-  it("requires included and excluded context source refs to come from selected refs", () => {
-    const selected = sourceRef({ memory_id: "memory-selected" });
-    const unselected = sourceRef({
-      memory_id: "memory-unselected",
-      dependency_ref: dependencyRef({ ref: "memory-unselected" }),
+  it("preserves Surface lanes and uses Exclusion for withheld context", () => {
+    const boundarySource = sourceRef({
+      memory_id: "memory-boundary",
+      role: "boundary",
+      record_kind: "boundary",
+      domain_fields: {
+        prohibited_use: "do not use private context for resident behavior",
+        scope: "resident_behavior",
+        authority_source: "explicit boundary",
+        override_rule: "explicit re-grant",
+      },
+      dependency_ref: dependencyRef({ ref: "memory-boundary" }),
     });
 
-    const parsed = SurfaceProjectionSchema.safeParse({
-      id: "surface-unselected",
-      target: "gateway",
-      purpose: "task_execution",
-      source_refs: [selected],
+    const parsed = SurfaceProjectionSchema.parse(projection({
+      source_refs: [boundarySource],
+      relationship_permissions: [relationshipPermission({ source_refs: [permissionSourceRef(boundarySource)] })],
       included_context: [{
-        source_ref: unselected,
+        lane: "boundary",
+        source_ref: boundarySource,
         use_class: "surface_projection",
-        excerpt: "Unselected memory must not appear in context.",
+        excerpt: "A boundary prevents resident behavior use.",
         gates: passedGates(),
+      }],
+      rationale_entries: [{
+        source_ref: boundarySource,
+        decision: "included",
+        gate: "audit",
+        reason_ref: "rationale/boundary",
+      }],
+    }));
+    expect(parsed.included_context[0]?.lane).toBe("boundary");
+    expect(parsed.included_context[0]?.source_ref.record_kind).toBe("boundary");
+    expect(parsed.included_context[0]?.source_ref.domain_fields).toHaveProperty("prohibited_use");
+
+    expect(SurfaceProjectionSchema.safeParse(projection({
+      source_refs: [boundarySource],
+      included_context: [{
+        lane: "relationship",
+        source_ref: boundarySource,
+        use_class: "surface_projection",
+        excerpt: "Wrong lane must fail.",
+        gates: passedGates(),
+      }],
+      rationale_entries: [],
+    })).success).toBe(false);
+
+    const excluded = SurfaceProjectionSchema.parse(projection({
+      requested_use: "side_effect_authorization",
+      source_refs: [boundarySource],
+      included_context: [],
+      excluded_context: [{
+        source_ref: boundarySource,
+        requested_use: "side_effect_authorization",
+        blocked_by: [gate("forbidden_use", "blocked")],
+        inhibition_ref: "inhibition/boundary",
+        blocked_summary_ref: "summary/boundary",
+      }],
+      rationale_entries: [{
+        source_ref: boundarySource,
+        decision: "excluded",
+        gate: "forbidden_use",
+        reason_ref: "rationale/boundary/excluded",
       }],
       metadata: {
         staleness: "fresh",
         sensitivity: "private",
-        permission_state: "granted",
+        permission_state: "blocked",
         invalidation_state: "valid",
       },
-      created_at: now,
+    }));
+    expect(excluded.excluded_context[0]?.lane).toBe("exclusion");
+  });
+
+  it("uses relationship permissions as projection input without turning memory into resume authority", () => {
+    const watchOnlyGoal = sourceRef({
+      memory_id: "goal-watch-1",
+      role: "promise",
+      record_kind: "work_commitment",
+      domain_fields: {
+        statement: "Watch the release quietly.",
+        linked_refs: ["goal-1"],
+        authority: "current session",
+        fulfillment_condition: "release observed",
+      },
+      allowed_uses: ["attention_prioritization", "ask_for_confirmation"],
+      not_allowed_uses: ["stale_session_authorization", "side_effect_authorization"],
+      dependency_ref: dependencyRef({ ref: "goal-watch-1" }),
     });
 
-    expect(parsed.success).toBe(false);
-
-    const materiallyChanged = SurfaceProjectionSchema.safeParse({
-      id: "surface-materially-changed-ref",
-      target: "gateway",
-      purpose: "task_execution",
-      source_refs: [selected],
-      included_context: [{
-        source_ref: {
-          ...selected,
-          sensitivity: "sensitive",
-        },
-        use_class: "surface_projection",
-        excerpt: "Selected refs must match the full source ref.",
-        gates: passedGates(),
+    const parsed = SurfaceProjectionSchema.parse(projection({
+      requested_use: "stale_session_authorization",
+      source_refs: [watchOnlyGoal],
+      included_context: [],
+      excluded_context: [{
+        source_ref: watchOnlyGoal,
+        requested_use: "stale_session_authorization",
+        blocked_by: [gate("permission", "blocked"), gate("forbidden_use", "blocked")],
+        inhibition_ref: "inhibition/resume-blocked",
+      }],
+      relationship_permissions: [relationshipPermission({
+        memory_role_scope: ["promise"],
+        memory_use_permission: "allowed",
+        confirmation_requirement: "before_resume",
+      })],
+      allowed_runtime_uses: ["attention_prioritization"],
+      not_allowed_runtime_uses: ["stale_session_authorization"],
+      rationale_entries: [{
+        source_ref: watchOnlyGoal,
+        decision: "excluded",
+        gate: "permission",
+        reason_ref: "rationale/watch-only/resume-blocked",
       }],
       metadata: {
         staleness: "fresh",
         sensitivity: "private",
-        permission_state: "granted",
+        permission_state: "blocked",
         invalidation_state: "valid",
       },
-      created_at: now,
-    });
-    expect(materiallyChanged.success).toBe(false);
+    }));
+
+    expect(parsed.excluded_context[0]?.inhibition_ref).toBe("inhibition/resume-blocked");
+    expect(parsed.included_context).toHaveLength(0);
   });
 
-  it("rejects non-canonical gate order at the contract boundary", () => {
-    const reordered = SurfaceProjectionSchema.safeParse({
-      id: "surface-reordered",
-      target: "gateway",
-      purpose: "task_execution",
-      source_refs: [sourceRef()],
-      gate_order: ["permission", "scope", "lifecycle", "staleness", "sensitivity", "allowed_use", "forbidden_use", "projection", "audit"],
-      metadata: {
-        staleness: "fresh",
-        sensitivity: "private",
-        permission_state: "unknown",
-        invalidation_state: "valid",
-      },
-      created_at: now,
-    });
-
-    expect(reordered.success).toBe(false);
-  });
-
-  it("represents deleted and tombstoned content as redacted excluded refs", () => {
+  it("redacts deleted and tombstoned content across excluded context rationale and inspection", () => {
     const deletedSource = sourceRef({
       lifecycle: "deleted",
       content_state: "redacted",
@@ -268,14 +531,20 @@ describe("SurfaceProjection contract", () => {
       }),
     });
 
-    const parsed = SurfaceProjectionSchema.parse({
-      id: "surface-redacted",
-      target: "daemon",
-      purpose: "resident_behavior",
+    const parsed = SurfaceProjectionSchema.parse(projection({
       source_refs: [deletedSource],
+      included_context: [],
       excluded_context: [{
         source_ref: deletedSource,
+        requested_use: "surface_projection",
         blocked_by: [gate("lifecycle", "blocked")],
+        redaction_ref: "redaction/memory-1",
+      }],
+      rationale_entries: [{
+        source_ref: deletedSource,
+        decision: "excluded",
+        gate: "lifecycle",
+        reason_ref: "rationale/deleted",
         redaction_ref: "redaction/memory-1",
       }],
       metadata: {
@@ -284,113 +553,208 @@ describe("SurfaceProjection contract", () => {
         permission_state: "blocked",
         invalidation_state: "invalid",
       },
-      created_at: now,
-    });
+    }));
 
     expect(parsed.excluded_context[0]?.redaction_ref).toBe("redaction/memory-1");
 
-    const reconstructableDeletedSource = SurfaceProjectionSchema.safeParse({
-      id: "surface-bad",
-      target: "daemon",
-      purpose: "resident_behavior",
-      source_refs: [sourceRef({ lifecycle: "deleted", content_state: "materialized" })],
+    const reconstructableDeletedSource = sourceRef({
+      lifecycle: "deleted",
+      content_state: "redacted",
+      domain_fields: domainFields(),
+      dependency_ref: dependencyRef({
+        content_state: "redacted",
+        lifecycle: "deleted",
+      }),
+    });
+    expect(SurfaceProjectionSchema.safeParse(projection({
+      source_refs: [reconstructableDeletedSource],
+      included_context: [],
+      excluded_context: [{
+        source_ref: reconstructableDeletedSource,
+        requested_use: "surface_projection",
+        blocked_by: [gate("lifecycle", "blocked")],
+        redaction_ref: "redaction/memory-1",
+      }],
+      rationale_entries: [{
+        source_ref: reconstructableDeletedSource,
+        decision: "excluded",
+        gate: "lifecycle",
+        reason_ref: "rationale/deleted",
+        redaction_ref: "redaction/memory-1",
+      }],
       metadata: {
         staleness: "unknown",
         sensitivity: "sensitive",
         permission_state: "blocked",
         invalidation_state: "invalid",
       },
-      created_at: now,
-    });
-    expect(reconstructableDeletedSource.success).toBe(false);
+    })).success).toBe(false);
+
+    expect(SurfaceProjectionSchema.safeParse(projection({
+      source_refs: [deletedSource],
+      included_context: [],
+      excluded_context: [{
+        source_ref: deletedSource,
+        requested_use: "surface_projection",
+        blocked_by: [gate("lifecycle", "passed")],
+        redaction_ref: "redaction/memory-1",
+      }],
+      rationale_entries: [{
+        source_ref: deletedSource,
+        decision: "excluded",
+        gate: "lifecycle",
+        reason_ref: "rationale/deleted",
+        redaction_ref: "redaction/memory-1",
+      }],
+      metadata: {
+        staleness: "unknown",
+        sensitivity: "sensitive",
+        permission_state: "blocked",
+        invalidation_state: "invalid",
+      },
+    })).success).toBe(false);
+
+    expect(SurfaceProjectionSchema.safeParse(projection({
+      source_refs: [deletedSource],
+      included_context: [{
+        lane: "relationship",
+        source_ref: deletedSource,
+        use_class: "surface_projection",
+        excerpt: "Deleted content must not appear here.",
+        gates: passedGates(),
+      }],
+      rationale_entries: [],
+    })).success).toBe(false);
+
+    expect(SurfaceProjectionSchema.safeParse(projection({
+      source_refs: [deletedSource],
+      included_context: [],
+      excluded_context: [{
+        source_ref: deletedSource,
+        requested_use: "surface_projection",
+        blocked_by: [gate("lifecycle", "blocked")],
+        redaction_ref: "redaction/memory-1",
+      }],
+      rationale_entries: [{
+        source_ref: deletedSource,
+        decision: "excluded",
+        gate: "lifecycle",
+        reason_ref: "rationale/deleted",
+        text: "Deleted content copied into rationale.",
+      }],
+    })).success).toBe(false);
   });
 
-  it("requires memory source dependency refs to match the top-level source ref", () => {
-    expect(SurfaceProjectionSchema.safeParse({
-      id: "surface-mismatched-dependency",
-      target: "gateway",
-      purpose: "task_execution",
+  it("creates inspection views for multiple targets without prompt-dumping memory", () => {
+    const parsed = SurfaceProjectionSchema.parse(projection());
+
+    const chatInspection = createSurfaceInspectionView(parsed, "chat");
+    const tuiInspection = createSurfaceInspectionView(parsed, "tui");
+
+    expect(chatInspection.surface_id).toBe(parsed.id);
+    expect(tuiInspection.source_refs).toEqual(chatInspection.source_refs);
+    expect(chatInspection.included_summaries[0]).toEqual({
+      lane: "relationship",
+      memory_id: "memory-1",
+      record_kind: "preference",
+      use_class: "surface_projection",
+      summary_ref: "rationale/memory-1/included",
+    });
+    expect("excerpt" in chatInspection.included_summaries[0]!).toBe(false);
+  });
+
+  it("tracks Surface dependency refs for memory-derived runtime objects and fails closed when missing", () => {
+    const parsed = SurfaceProjectionSchema.parse(projection({
+      dependent_refs: {
+        runtime_items: [derivedRef("runtime_item")],
+        agenda_items: [derivedRef("agenda_item")],
+        outcome_decisions: [derivedRef("outcome_decision")],
+        expression_decisions: [derivedRef("expression_decision")],
+        memory_write_candidates: [derivedRef("memory_write_candidate")],
+        session_resume_attempts: [derivedRef("session_resume_attempt")],
+      },
+    }));
+
+    expect(parsed.dependent_refs.runtime_items[0]?.missing_dependency_behavior).toBe("fail_closed");
+    expect(parsed.dependent_refs.session_resume_attempts[0]?.related_surface_refs).toContain("surface-1");
+
+    expect(SurfaceProjectionSchema.safeParse(projection({
+      dependent_refs: {
+        runtime_items: [derivedRef("runtime_item", { related_surface_refs: ["different-surface"] })],
+      },
+    })).success).toBe(false);
+  });
+
+  it("requires memory source dependency refs to match top-level source refs", () => {
+    expect(SurfaceProjectionSchema.safeParse(projection({
       source_refs: [sourceRef({
         dependency_ref: dependencyRef({
           ref: "different-memory",
         }),
       })],
-      metadata: {
-        staleness: "fresh",
-        sensitivity: "private",
-        permission_state: "unknown",
-        invalidation_state: "valid",
-      },
-      created_at: now,
-    }).success).toBe(false);
+      included_context: [],
+      rationale_entries: [],
+    })).success).toBe(false);
 
-    expect(SurfaceProjectionSchema.safeParse({
-      id: "surface-mismatched-dependency-state",
-      target: "gateway",
-      purpose: "task_execution",
+    expect(SurfaceProjectionSchema.safeParse(projection({
       source_refs: [sourceRef({
         dependency_ref: dependencyRef({
           content_state: "redacted",
         }),
       })],
-      metadata: {
-        staleness: "fresh",
-        sensitivity: "private",
-        permission_state: "unknown",
-        invalidation_state: "valid",
-      },
-      created_at: now,
-    }).success).toBe(false);
-
-    expect(SurfaceProjectionSchema.safeParse({
-      id: "surface-missing-dependency-owner-lifecycle",
-      target: "gateway",
-      purpose: "task_execution",
-      source_refs: [sourceRef({
-        dependency_ref: {
-          kind: "memory_record",
-          ref: "memory-1",
-          content_state: "materialized",
-        },
-      })],
-      metadata: {
-        staleness: "fresh",
-        sensitivity: "private",
-        permission_state: "unknown",
-        invalidation_state: "valid",
-      },
-      created_at: now,
-    }).success).toBe(false);
+      included_context: [],
+      rationale_entries: [],
+    })).success).toBe(false);
   });
 });
 
 describe("SurfaceInvalidation contract", () => {
-  it("defaults missing and contradictory dependency behavior to fail closed", () => {
+  it("defaults missing and contradictory dependency behavior to fail closed and reruns canonical gates", () => {
     const parsed = SurfaceInvalidationPolicySchema.parse({
       id: "policy-memory-removal",
-      triggers: ["memory_deletion", "permission_revocation"],
-      dependency_kinds: ["runtime_item", "outcome_decision", "expression_decision", "session_resume_attempt"],
-      default_action: "regate",
-      redacts_deleted_content: true,
+      surface_ref: "surface-1",
+      source_refs: [dependencyRef()],
+      triggers: ["memory_deletion", "permission_revocation", "surface_expired"],
+      affected_dependency_policies: [
+        { dependency_kind: "runtime_item", action: "regate" },
+        { dependency_kind: "outcome_decision", action: "expire" },
+        { dependency_kind: "expression_decision", action: "withdraw" },
+        { dependency_kind: "memory_write_candidate", action: "reject" },
+      ],
+      audit_policy: {
+        audit_ref: "audit/policy-memory-removal",
+        redacts_deleted_content: true,
+      },
     });
 
     expect(parsed.missing_dependency_behavior).toBe("fail_closed");
     expect(parsed.contradictory_dependency_behavior).toBe("fail_closed");
+    expect(parsed.regeneration_policy.rerun_gates).toEqual([
+      "scope",
+      "lifecycle",
+      "staleness",
+      "sensitivity",
+      "permission",
+      "allowed_use",
+      "forbidden_use",
+      "projection",
+      "audit",
+    ]);
   });
 
-  it("requires deletion and redaction policies to redact deleted content", () => {
-    const parsed = SurfaceInvalidationPolicySchema.safeParse({
+  it("requires deletion and redaction policies plus events to carry redaction refs", () => {
+    expect(SurfaceInvalidationPolicySchema.safeParse({
       id: "policy-bad-redaction",
+      surface_ref: "surface-1",
+      source_refs: [dependencyRef()],
       triggers: ["memory_deletion"],
-      dependency_kinds: ["runtime_item"],
-      default_action: "regate",
-      redacts_deleted_content: false,
-    });
+      affected_dependency_policies: [{ dependency_kind: "runtime_item", action: "regate" }],
+      audit_policy: {
+        audit_ref: "audit/policy-bad-redaction",
+        redacts_deleted_content: false,
+      },
+    }).success).toBe(false);
 
-    expect(parsed.success).toBe(false);
-  });
-
-  it("requires redaction refs for content-removal invalidation events", () => {
     const deletedSource = sourceRef({
       lifecycle: "deleted",
       content_state: "redacted",
@@ -403,23 +767,42 @@ describe("SurfaceInvalidation contract", () => {
     expect(SurfaceInvalidationEventSchema.safeParse({
       id: "event-1",
       policy_ref: "policy-memory-removal",
+      surface_ref: "surface-1",
       trigger: "memory_deletion",
       source_ref: deletedSource,
-      affected_dependencies: [dependencyRef({ kind: "outcome_decision", ref: "outcome-1" })],
+      affected_dependencies: [derivedRef("outcome_decision")],
+      required_rechecks: ["scope", "lifecycle", "permission"],
       action: "redact",
+      audit_ref: "audit/event-1",
       occurred_at: now,
     }).success).toBe(false);
 
     const parsed = SurfaceInvalidationEventSchema.parse({
       id: "event-1",
       policy_ref: "policy-memory-removal",
+      surface_ref: "surface-1",
       trigger: "memory_deletion",
       source_ref: deletedSource,
-      affected_dependencies: [dependencyRef({ kind: "outcome_decision", ref: "outcome-1" })],
+      affected_dependencies: [derivedRef("outcome_decision")],
+      required_rechecks: ["scope", "lifecycle", "permission"],
       action: "redact",
       redaction_ref: "redaction/memory-1",
+      audit_ref: "audit/event-1",
       occurred_at: now,
     });
     expect(parsed.redaction_ref).toBe("redaction/memory-1");
+
+    expect(SurfaceInvalidationEventSchema.safeParse({
+      id: "event-2",
+      policy_ref: "policy-memory-removal",
+      surface_ref: "surface-1",
+      trigger: "permission_revocation",
+      source_ref: sourceRef(),
+      affected_dependencies: [derivedRef("runtime_item", { related_surface_refs: ["different-surface"] })],
+      required_rechecks: ["permission"],
+      action: "regate",
+      audit_ref: "audit/event-2",
+      occurred_at: now,
+    }).success).toBe(false);
   });
 });
