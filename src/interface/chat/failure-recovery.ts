@@ -202,6 +202,7 @@ const VERIFICATION_CODES = new Set([
 
 const RESUME_CODES = new Set([
   "resume_state_missing",
+  "resume_state_not_resumable",
   "session_state_missing",
   "agent_loop_state_missing",
 ]);
@@ -251,6 +252,7 @@ const TOOL_INPUT_REASONS = new Set([
 
 const RESUME_REASONS = new Set([
   "resume_state_missing",
+  "resume_state_not_resumable",
   "session_state_missing",
   "agent_loop_state_missing",
 ]);

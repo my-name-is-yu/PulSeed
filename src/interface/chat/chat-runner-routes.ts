@@ -12,7 +12,10 @@ import type { ChatUsageCounter } from "./chat-history.js";
 import type { ChatRunResult, ChatRunnerRouteHost, RuntimeControlChatContext } from "./chat-runner-contracts.js";
 import type { SelectedChatRoute } from "./ingress-router.js";
 import type { ChatEventContext } from "./chat-events.js";
-import type { AgentLoopSessionState } from "../../orchestrator/execution/agent-loop/agent-loop-session-state.js";
+import {
+  normalizeAgentLoopSessionState,
+  type AgentLoopSessionState,
+} from "../../orchestrator/execution/agent-loop/agent-loop-session-state.js";
 import { resolveExecutionPolicy, type ExecutionPolicy } from "../../orchestrator/execution/agent-loop/execution-policy.js";
 import type { AssistantBuffer } from "./chat-runner-event-bridge.js";
 import type { SetupSecretIntakeResult } from "./setup-secret-intake.js";
@@ -235,16 +238,17 @@ export async function executeAgentLoopRoute(
   const turnContext = params.turnContext;
   const runtimeContext = turnContext.hostOnly.runtime.runtimeControlContext;
   try {
-    const resumeState = resumeOnly ? await loadResumableAgentLoopState(host) : null;
-    if (resumeOnly && !resumeState) {
+    const resumeStateResult = resumeOnly ? await loadResumableAgentLoopState(host) : null;
+    const resumeState = resumeStateResult?.kind === "loaded" ? resumeStateResult.state : null;
+    if (resumeOnly && resumeStateResult?.kind !== "loaded") {
       const elapsed_ms = Date.now() - start;
       const output = await host.eventBridge.emitLifecycleErrorEventWithFallback(
-        "No resumable native agentloop state found.",
+        resumeStateResult?.message ?? "No resumable native agentloop state found.",
         assistantBuffer.text,
         eventContext,
         {
-          code: "resume_state_missing",
-          stoppedReason: "resume_state_missing",
+          code: resumeStateResult?.code ?? "resume_state_missing",
+          stoppedReason: resumeStateResult?.code ?? "resume_state_missing",
         },
         host.deps.llmClient
       );
@@ -1304,30 +1308,62 @@ function agentLoopApprovalFn(
   };
 }
 
-async function loadResumableAgentLoopState(host: ChatRunnerRouteHost): Promise<AgentLoopSessionState | null> {
-  if (!host.getNativeAgentLoopStatePath()) return null;
+type AgentLoopResumeStateResult =
+  | { kind: "loaded"; state: AgentLoopSessionState }
+  | { kind: "blocked"; code: "resume_state_missing" | "resume_state_not_resumable"; message: string };
+
+async function loadResumableAgentLoopState(host: ChatRunnerRouteHost): Promise<AgentLoopResumeStateResult> {
+  if (!host.getNativeAgentLoopStatePath()) {
+    return {
+      kind: "blocked",
+      code: "resume_state_missing",
+      message: "No resumable native agentloop state found.",
+    };
+  }
   const raw = await host.deps.stateManager.readRaw(host.getNativeAgentLoopStatePath()!);
-  if (!isAgentLoopSessionState(raw)) return null;
-  if (raw.status === "completed") return null;
-  return {
-    ...raw,
-    messages: [...raw.messages],
-    calledTools: [...raw.calledTools],
-  };
+  if (!raw) {
+    return {
+      kind: "blocked",
+      code: "resume_state_missing",
+      message: "No resumable native agentloop state found.",
+    };
+  }
+  const rawStatus = rawAgentLoopSessionStatus(raw);
+  if (rawStatus !== "running") {
+    return {
+      kind: "blocked",
+      code: "resume_state_not_resumable",
+      message: `Native agentloop state ${rawAgentLoopSessionId(raw)} is ${rawStatus}; inspect or summarize it before starting new actionable work.`,
+    };
+  }
+  const state = normalizeAgentLoopSessionState(raw);
+  if (!state) {
+    return {
+      kind: "blocked",
+      code: "resume_state_missing",
+      message: "No resumable native agentloop state found.",
+    };
+  }
+  if (state.status !== "running") {
+    return {
+      kind: "blocked",
+      code: "resume_state_not_resumable",
+      message: `Native agentloop state ${state.sessionId} is ${state.status}; inspect or summarize it before starting new actionable work.`,
+    };
+  }
+  return { kind: "loaded", state };
 }
 
-function isAgentLoopSessionState(value: unknown): value is AgentLoopSessionState {
-  if (!value || typeof value !== "object") return false;
-  const candidate = value as Record<string, unknown>;
-  return typeof candidate["sessionId"] === "string"
-    && typeof candidate["traceId"] === "string"
-    && typeof candidate["turnId"] === "string"
-    && typeof candidate["goalId"] === "string"
-    && typeof candidate["cwd"] === "string"
-    && typeof candidate["modelRef"] === "string"
-    && Array.isArray(candidate["messages"])
-    && Array.isArray(candidate["calledTools"])
-    && typeof candidate["status"] === "string";
+function rawAgentLoopSessionStatus(value: unknown): AgentLoopSessionState["status"] | "unknown" {
+  if (!value || typeof value !== "object") return "unknown";
+  const raw = (value as Record<string, unknown>)["status"];
+  return raw === "running" || raw === "completed" || raw === "failed" ? raw : "unknown";
+}
+
+function rawAgentLoopSessionId(value: unknown): string {
+  if (!value || typeof value !== "object") return "unknown";
+  const raw = (value as Record<string, unknown>)["sessionId"];
+  return typeof raw === "string" && raw.length > 0 ? raw : "unknown";
 }
 
 function activateToolSearchResults(activatedTools: Set<string>, toolResult: string): void {
