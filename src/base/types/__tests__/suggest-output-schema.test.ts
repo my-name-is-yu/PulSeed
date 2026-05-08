@@ -172,6 +172,7 @@ describe("suggest output schema", () => {
       rationale: "The CLI needs clearer repo-scoped guidance.",
       steps: [expect.stringMatching(/Improve documentation quality by updating .* to deliver a verifiable improvement\./)],
       success_criteria: ["documentation_quality reaches target threshold."],
+      repo_context: { path: "." },
     });
   }, 15000);
 
