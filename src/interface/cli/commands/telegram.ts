@@ -12,6 +12,7 @@ import * as readline from "node:readline";
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { getGatewayChannelDir } from "../../../base/utils/paths.js";
+import { parseExactTelegramInteger, parseTelegramIntegerList } from "./telegram-id-parser.js";
 
 // ─── Readline helpers ───
 
@@ -99,15 +100,12 @@ export async function cmdTelegramSetup(_args: string[]): Promise<number> {
     console.log("  Message @userinfobot if you need your numeric user ID.\n");
 
     const allowedStr = await ask(rl, "Allowed user IDs (e.g. 123456,789012) or press Enter to bind first /sethome sender later: ");
-    const allowedUserIds: number[] = [];
-    if (allowedStr) {
-      for (const part of allowedStr.split(",")) {
-        const n = parseInt(part.trim(), 10);
-        if (!isNaN(n)) {
-          allowedUserIds.push(n);
-        }
-      }
+    const allowedResult = parseTelegramIntegerList(allowedStr);
+    if (!allowedResult.ok) {
+      console.error(`Error: allowed user IDs must be comma-separated exact integers. Invalid value: ${allowedResult.invalidValue || "(empty)"}.`);
+      return 1;
     }
+    const allowedUserIds = allowedResult.values;
     let allowAll = false;
     if (allowedUserIds.length === 0) {
       console.log("\nNo allowed users were entered. By default, PulSeed will keep Telegram chat access closed until the first /sethome sender is bound.");
@@ -119,15 +117,12 @@ export async function cmdTelegramSetup(_args: string[]): Promise<number> {
     console.log("  Runtime-control permission is separate from ordinary Telegram chat access.");
     console.log("  Leave blank to disable Telegram runtime-control approval.\n");
     const runtimeControlStr = await ask(rl, "Runtime-control user IDs (comma-separated) or press Enter to disable: ");
-    const runtimeControlAllowedUserIds: number[] = [];
-    if (runtimeControlStr) {
-      for (const part of runtimeControlStr.split(",")) {
-        const n = parseInt(part.trim(), 10);
-        if (!isNaN(n)) {
-          runtimeControlAllowedUserIds.push(n);
-        }
-      }
+    const runtimeControlResult = parseTelegramIntegerList(runtimeControlStr);
+    if (!runtimeControlResult.ok) {
+      console.error(`Error: runtime-control user IDs must be comma-separated exact integers. Invalid value: ${runtimeControlResult.invalidValue || "(empty)"}.`);
+      return 1;
     }
+    const runtimeControlAllowedUserIds = runtimeControlResult.values;
 
     // Step 3: home chat_id (optional)
     console.log("\nStep 3: Home chat (optional)");
@@ -137,9 +132,9 @@ export async function cmdTelegramSetup(_args: string[]): Promise<number> {
     const chatIdStr = await ask(rl, "Home chat_id (number) or press Enter to set later with /sethome: ");
     let chatId: number | undefined;
     if (chatIdStr) {
-      const parsed = parseInt(chatIdStr, 10);
-      if (isNaN(parsed)) {
-        console.error("Error: chat_id must be a number when provided.");
+      const parsed = parseExactTelegramInteger(chatIdStr);
+      if (parsed === undefined) {
+        console.error("Error: chat_id must be an exact integer when provided.");
         return 1;
       }
       chatId = parsed;

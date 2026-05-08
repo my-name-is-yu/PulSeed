@@ -139,6 +139,10 @@ describe("setup import discovery", () => {
         "channels:",
         "  telegram:",
         "    botToken: ${TELEGRAM_BOT_TOKEN}",
+        "    allowedUserIds:",
+        "      - \"111\"",
+        "      - \"222suffix\"",
+        "      - 333",
         "mcp:",
         "  servers:",
         "    filesystem:",
@@ -157,6 +161,7 @@ describe("setup import discovery", () => {
     const provider = openclaw?.items.find((item) => item.kind === "provider");
     const skill = openclaw?.items.find((item) => item.kind === "skill");
     const mcp = openclaw?.items.find((item) => item.kind === "mcp");
+    const telegram = openclaw?.items.find((item) => item.kind === "telegram");
 
     expect(provider?.providerSettings).toMatchObject({
       provider: "openai",
@@ -165,6 +170,10 @@ describe("setup import discovery", () => {
       baseUrl: "https://api.openai.com/v1",
     });
     expect(provider?.providerSettings?.apiKey).not.toBe("123456:telegram-token");
+    expect(telegram?.telegramSettings).toMatchObject({
+      botToken: "123456:telegram-token",
+      allowedUserIds: [111, 333],
+    });
     expect(skill?.label).toBe("review");
     expect(mcp?.mcpServer).toMatchObject({
       id: "openclaw-filesystem",

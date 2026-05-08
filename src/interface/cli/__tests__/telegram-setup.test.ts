@@ -99,4 +99,40 @@ describe("cmdTelegramSetup", () => {
       allow_all: false,
     });
   });
+
+  it("rejects partially parsed allowed user IDs before writing config", async () => {
+    readlineState.answers = ["test-token", "777abc"];
+    const { cmdTelegramSetup } = await import("../commands/telegram.js");
+
+    const result = await cmdTelegramSetup([]);
+
+    expect(result).toBe(1);
+    expect(readlineState.close).toHaveBeenCalledTimes(1);
+    const configPath = path.join(tmpDir, "gateway", "channels", "telegram-bot", "config.json");
+    expect(fs.existsSync(configPath)).toBe(false);
+  });
+
+  it("rejects partially parsed runtime-control user IDs before writing config", async () => {
+    readlineState.answers = ["test-token", "777", "999abc"];
+    const { cmdTelegramSetup } = await import("../commands/telegram.js");
+
+    const result = await cmdTelegramSetup([]);
+
+    expect(result).toBe(1);
+    expect(readlineState.close).toHaveBeenCalledTimes(1);
+    const configPath = path.join(tmpDir, "gateway", "channels", "telegram-bot", "config.json");
+    expect(fs.existsSync(configPath)).toBe(false);
+  });
+
+  it("rejects partially parsed home chat IDs before writing config", async () => {
+    readlineState.answers = ["test-token", "777", "999", "123abc"];
+    const { cmdTelegramSetup } = await import("../commands/telegram.js");
+
+    const result = await cmdTelegramSetup([]);
+
+    expect(result).toBe(1);
+    expect(readlineState.close).toHaveBeenCalledTimes(1);
+    const configPath = path.join(tmpDir, "gateway", "channels", "telegram-bot", "config.json");
+    expect(fs.existsSync(configPath)).toBe(false);
+  });
 });
