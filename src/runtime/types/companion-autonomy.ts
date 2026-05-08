@@ -938,18 +938,26 @@ export const AuditTraceSchema = z.object({
       message: "audit traces must not expose deleted content",
     });
   }
-  trace.user_visible_outputs.forEach((output, outputIndex) => {
-    const outputUsesDeletedContent = output.source_refs.some((ref) =>
-      ref.lifecycle === "deleted" || ref.lifecycle === "tombstone"
-    );
-    if (outputUsesDeletedContent && !output.redacted) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["user_visible_outputs", outputIndex, "redacted"],
-        message: "user-visible audit outputs that reference deleted or tombstone content must be redacted",
-      });
-    }
-  });
+  for (const [recordPath, records] of [
+    ["actions_taken", trace.actions_taken],
+    ["actions_withheld", trace.actions_withheld],
+    ["quiet_work", trace.quiet_work],
+    ["suppressed_alternatives", trace.suppressed_alternatives],
+    ["user_visible_outputs", trace.user_visible_outputs],
+  ] as const) {
+    records.forEach((record, recordIndex) => {
+      const recordUsesDeletedContent = record.source_refs.some((ref) =>
+        ref.lifecycle === "deleted" || ref.lifecycle === "tombstone"
+      );
+      if (recordUsesDeletedContent && !record.redacted) {
+        ctx.addIssue({
+          code: "custom",
+          path: [recordPath, recordIndex, "redacted"],
+          message: "audit trace records that reference deleted or tombstone content must be redacted",
+        });
+      }
+    });
+  }
 });
 export type AuditTrace = z.infer<typeof AuditTraceSchema>;
 

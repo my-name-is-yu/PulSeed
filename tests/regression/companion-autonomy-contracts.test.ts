@@ -624,6 +624,39 @@ describe("companion autonomy audit and visibility contracts", () => {
 
     expect(() => AuditTraceSchema.parse({
       ...trace,
+      trace_id: "audit:deleted-action-invalid",
+      memory_refs: [sourceRef("memory", "memory:deleted", "deleted")],
+      redaction_state: {
+        state: "redacted",
+        redaction_applied: true,
+      },
+      actions_taken: [{
+        record_id: "audit-record:action-leak",
+        summary: "invalid deleted content action",
+        source_refs: [sourceRef("memory", "memory:deleted", "deleted")],
+        redacted: false,
+      }],
+    })).toThrow(/must be redacted/);
+
+    const redactedQuietWork = AuditTraceSchema.parse({
+      ...trace,
+      trace_id: "audit:deleted-quiet-redacted",
+      memory_refs: [sourceRef("memory", "memory:deleted", "deleted")],
+      redaction_state: {
+        state: "redacted",
+        redaction_applied: true,
+      },
+      quiet_work: [{
+        record_id: "audit-record:quiet-redacted",
+        summary: "Redacted quiet-work audit record.",
+        source_refs: [sourceRef("memory", "memory:deleted", "deleted")],
+        redacted: true,
+      }],
+    });
+    expect(redactedQuietWork.quiet_work[0]?.redacted).toBe(true);
+
+    expect(() => AuditTraceSchema.parse({
+      ...trace,
       trace_id: "audit:deleted-check-evidence-invalid",
       permission_checks: [{
         ...check("permission"),
