@@ -388,6 +388,12 @@ describe("chat scroll keys", () => {
     expect(getScrollRequest("[<65;40;12M", {})).toMatchObject({ direction: "down", kind: "line" });
   });
 
+  it("rejects unsafe sgr mouse integers before creating scroll requests", () => {
+    expect(parseMouseEvent("\u001b[<64;9007199254740993;12M")).toBeNull();
+    expect(parseMouseEvent("\u001b[<9007199254740993;40;12M")).toBeNull();
+    expect(getScrollRequest("\u001b[<64;40;9007199254740993M", {})).toBeNull();
+  });
+
   it("parses scroll speed from exact integer environment tokens", () => {
     withScrollSpeed("5", () => {
       expect(getScrollLineStep()).toBe(5);
