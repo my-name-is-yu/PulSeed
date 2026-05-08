@@ -1644,6 +1644,88 @@ describe("CrossPlatformChatSessionManager", () => {
     }
   });
 
+  it("rejects stale natural-language PermissionGrant replies through the chat caller path", async () => {
+    const tmpDir = makeTempDir();
+    try {
+      const store = new ApprovalStore(tmpDir);
+      const permissionGrantStore = new PermissionGrantStore(tmpDir);
+      const approvalBroker = new ApprovalBroker({
+        store,
+        createId: () => "unused",
+        deliverConversationalApproval: async () => ({ delivered: true }),
+      });
+      const manager = new CrossPlatformChatSessionManager(makeDeps({
+        approvalBroker,
+        permissionGrantStore,
+      }));
+      await manager.processIncomingMessage({
+        text: "ordinary state-changing turn",
+        platform: "slack",
+        identity_key: "workspace:U123",
+        conversation_id: "C123:1700.1",
+        sender_id: "U123",
+        message_id: "1700.3",
+        cwd: "/repo",
+      });
+
+      const staleRequest = approvalBroker.requestConversationalApproval("goal-1", {
+        kind: "permission",
+        id: "call-old-grant",
+        description: "Write the old file and run tests.",
+        action: "write_file",
+        operation_summary: "Write the old file and run tests.",
+        risk_class: "medium",
+        target: {
+          session_id: "identity:workspace:U123",
+          tool_id: "write_file",
+          tool_call_id: "call-old-grant",
+        },
+        state_epoch: "1700.2",
+        state_version: "2026-05-06T00:00:00.000Z",
+        grant_proposal: {
+          schema_version: "permission-grant-proposal-v1",
+          capabilities: ["write_workspace", "run_tests"],
+          current_request_capabilities: ["write_workspace", "run_tests"],
+          excluded_capabilities: [],
+          default_scope: "run",
+          allowed_scopes: ["once", "run", "goal"],
+          summary: "Allow the old local edit/test request.",
+        },
+      }, {
+        approvalId: "approval-old-grant-stale",
+        timeoutMs: 30_000,
+        origin: {
+          channel: "slack",
+          conversation_id: "C123:1700.1",
+          user_id: "U123",
+          session_id: "identity:workspace:U123",
+          turn_id: "1700.2",
+        },
+      });
+      const deadline = Date.now() + 1000;
+      while (Date.now() < deadline && (await store.loadPending("approval-old-grant-stale")) === null) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+
+      await expect(manager.processIncomingMessage({
+        text: "この実行中はローカル編集とテストを進めてください",
+        platform: "slack",
+        identity_key: "workspace:U123",
+        conversation_id: "C123:1700.1",
+        sender_id: "U123",
+        message_id: "1700.4",
+        cwd: "/repo",
+      })).resolves.toContain("approval target changed after the prompt");
+      await expect(staleRequest).resolves.toBe(false);
+      await expect(store.loadResolved("approval-old-grant-stale")).resolves.toMatchObject({
+        state: "denied",
+      });
+      await expect(permissionGrantStore.list()).resolves.toHaveLength(0);
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
+  });
+
   it("records narrowed grant replies without executing the excluded current request", async () => {
     const tmpDir = makeTempDir();
     try {

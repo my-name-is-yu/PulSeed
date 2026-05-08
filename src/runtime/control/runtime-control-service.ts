@@ -355,7 +355,9 @@ export class RuntimeControlService {
       : await this.permissionGrantStore.list();
     const grantId = request.intent.target?.grantId;
     if (grantId) {
-      return grants.filter((grant) => grant.grant_id === grantId);
+      const exact = grants.filter((grant) => grant.grant_id === grantId);
+      if (!hasPermissionGrantSelectionContext(request)) return exact;
+      return exact.filter((grant) => permissionGrantMatchesRequest(grant, request));
     }
     const contextual = grants.filter((grant) => permissionGrantMatchesRequest(grant, request));
     if (contextual.length > 0) return contextual;
@@ -945,15 +947,26 @@ function blocked(message: string): TargetResolution {
 
 function permissionGrantMatchesRequest(grant: PermissionGrantRecord, request: RuntimeControlRequest): boolean {
   const target = request.intent.target;
-  if (target?.runId && grant.scope.kind === "run" && grant.scope.run_id === target.runId) return true;
-  if (target?.sessionId && (grant.scope.session_id === target.sessionId || grant.origin.session_id === target.sessionId)) return true;
-
+  const hasTargetContext = Boolean(target?.runId || target?.sessionId);
+  const targetMatches = Boolean(
+    (target?.runId && grant.scope.kind === "run" && grant.scope.run_id === target.runId)
+      || (target?.sessionId && (grant.scope.session_id === target.sessionId || grant.origin.session_id === target.sessionId))
+  );
   const conversationId = request.replyTarget?.conversation_id ?? request.requestedBy?.conversation_id;
   const userId = request.replyTarget?.user_id ?? request.requestedBy?.user_id;
-  if (conversationId && grant.origin.conversation_id === conversationId) {
-    return !userId || !grant.origin.user_id || grant.origin.user_id === userId;
+  const chatSurface = request.replyTarget?.surface === "chat" || request.requestedBy?.surface === "chat";
+
+  if (conversationId) {
+    if (grant.origin.conversation_id !== conversationId) return false;
+    if (userId && grant.origin.user_id && grant.origin.user_id !== userId) return false;
+    return hasTargetContext ? targetMatches : true;
   }
-  return false;
+  if (userId) {
+    if (grant.origin.user_id !== userId) return false;
+    return hasTargetContext ? targetMatches : true;
+  }
+  if (chatSurface) return false;
+  return targetMatches;
 }
 
 function hasPermissionGrantSelectionContext(request: RuntimeControlRequest): boolean {
@@ -965,6 +978,8 @@ function hasPermissionGrantSelectionContext(request: RuntimeControlRequest): boo
     || request.requestedBy?.conversation_id
     || request.replyTarget?.user_id
     || request.requestedBy?.user_id
+    || request.replyTarget?.surface === "chat"
+    || request.requestedBy?.surface === "chat"
   );
 }
 
