@@ -34,6 +34,30 @@ function formatChannel(ch: NotificationChannel, index: number): string {
   return `[${index}] ${ch.type.padEnd(7)} — ${detail}${reports}`;
 }
 
+function parsePositiveInteger(raw: unknown, label: string): number {
+  const normalized = typeof raw === "string" ? raw.trim() : "";
+  if (!/^[0-9]+$/.test(normalized)) {
+    throw new Error(`${label} must be a positive integer`);
+  }
+  const parsed = Number(normalized);
+  if (!Number.isSafeInteger(parsed) || parsed < 1) {
+    throw new Error(`${label} must be a positive integer`);
+  }
+  return parsed;
+}
+
+function parseNonNegativeInteger(raw: unknown, label: string): number {
+  const normalized = typeof raw === "string" ? raw.trim() : "";
+  if (!/^[0-9]+$/.test(normalized)) {
+    throw new Error(`${label} must be a non-negative integer`);
+  }
+  const parsed = Number(normalized);
+  if (!Number.isSafeInteger(parsed)) {
+    throw new Error(`${label} must be a non-negative integer`);
+  }
+  return parsed;
+}
+
 async function cmdNotifyAdd(args: string[], configPath: string): Promise<number> {
   const positionals = args.filter((a) => !a.startsWith("-"));
   const channelType = positionals[0];
@@ -53,8 +77,9 @@ async function cmdNotifyAdd(args: string[], configPath: string): Promise<number>
         },
         strict: false,
       }) as { values: { "webhook-url"?: string } });
-    } catch {
-      values = {};
+    } catch (err) {
+      console.error(`Error: ${(err as Error).message}`);
+      return 1;
     }
 
     if (!values["webhook-url"]) {
@@ -86,8 +111,9 @@ async function cmdNotifyAdd(args: string[], configPath: string): Promise<number>
         },
         strict: false,
       }) as { values: { url?: string; header?: string[] } });
-    } catch {
-      values = {};
+    } catch (err) {
+      console.error(`Error: ${(err as Error).message}`);
+      return 1;
     }
 
     if (!values.url) {
@@ -133,8 +159,9 @@ async function cmdNotifyAdd(args: string[], configPath: string): Promise<number>
         },
         strict: false,
       }) as { values: { address?: string; "smtp-host"?: string; "smtp-port"?: string } });
-    } catch {
-      values = {};
+    } catch (err) {
+      console.error(`Error: ${(err as Error).message}`);
+      return 1;
     }
 
     if (!values.address) {
@@ -146,9 +173,13 @@ async function cmdNotifyAdd(args: string[], configPath: string): Promise<number>
       return 1;
     }
 
-    const smtpPort = values["smtp-port"] ? parseInt(values["smtp-port"], 10) : 587;
-    if (isNaN(smtpPort) || smtpPort <= 0) {
-      console.error("Error: --smtp-port must be a positive integer");
+    let smtpPort = 587;
+    try {
+      if (values["smtp-port"] !== undefined) {
+        smtpPort = parsePositiveInteger(values["smtp-port"], "--smtp-port");
+      }
+    } catch (err) {
+      console.error(`Error: ${(err as Error).message}`);
       return 1;
     }
 
@@ -204,9 +235,11 @@ async function cmdNotifyRemove(args: string[], configPath: string): Promise<numb
     return 1;
   }
 
-  const index = parseInt(indexStr, 10);
-  if (isNaN(index) || index < 0) {
-    console.error("Error: index must be a non-negative integer");
+  let index: number;
+  try {
+    index = parseNonNegativeInteger(indexStr, "index");
+  } catch (err) {
+    console.error(`Error: ${(err as Error).message}`);
     return 1;
   }
 
@@ -237,9 +270,11 @@ async function cmdNotifyTest(args: string[], configPath: string): Promise<number
   let targets: { index: number; channel: NotificationChannel }[];
 
   if (indexStr !== undefined) {
-    const index = parseInt(indexStr, 10);
-    if (isNaN(index) || index < 0) {
-      console.error("Error: index must be a non-negative integer");
+    let index: number;
+    try {
+      index = parseNonNegativeInteger(indexStr, "index");
+    } catch (err) {
+      console.error(`Error: ${(err as Error).message}`);
       return 1;
     }
     if (index >= config.channels.length) {
