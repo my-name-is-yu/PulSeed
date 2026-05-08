@@ -184,6 +184,29 @@ describe("MCPDataSourceAdapter.query with matching dimension", () => {
     expect(result.value).toBe("some-string");
   });
 
+  it.each(["Infinity", "-Infinity", "1e309", "0x1"])(
+    "returns %s as text instead of broad numeric coercion",
+    async (text) => {
+      (conn.callTool as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        content: [{ type: "text", text }],
+      });
+
+      const result = await adapter.query({ dimension_name: "coverage", timeout_ms: 5000 });
+
+      expect(result.value).toBe(text);
+    }
+  );
+
+  it("parses exact finite numeric tokens from tool text", async () => {
+    (conn.callTool as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      content: [{ type: "text", text: " 1e3 " }],
+    });
+
+    const result = await adapter.query({ dimension_name: "coverage", timeout_ms: 5000 });
+
+    expect(result.value).toBe(1000);
+  });
+
   it("returns null when content array is empty", async () => {
     (conn.callTool as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       content: [],
