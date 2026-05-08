@@ -112,6 +112,8 @@ interface ManifestOverrides {
   capabilities?: string[];
   description?: string;
   permissions?: Record<string, boolean>;
+  min_pulseed_version?: string;
+  max_pulseed_version?: string;
 }
 
 function writePluginManifest(dir: string, overrides: ManifestOverrides = {}): void {
@@ -123,6 +125,8 @@ function writePluginManifest(dir: string, overrides: ManifestOverrides = {}): vo
     capabilities: overrides.capabilities ?? ["notify"],
     description: overrides.description ?? "A test plugin",
     permissions: overrides.permissions ?? {},
+    ...(overrides.min_pulseed_version ? { min_pulseed_version: overrides.min_pulseed_version } : {}),
+    ...(overrides.max_pulseed_version ? { max_pulseed_version: overrides.max_pulseed_version } : {}),
   };
   fs.writeFileSync(path.join(dir, "plugin.yaml"), yaml.dump(manifest), "utf-8");
 }
@@ -256,6 +260,16 @@ describe("cmdPluginInstall", () => {
     const exitCode = await cmdPluginInstall(pluginsDir, []);
 
     expect(exitCode).toBe(1);
+  });
+
+  it("returns 1 when local plugin version constraints are malformed", async () => {
+    const sourceDir = path.join(tmpDir, "source", "malformed-constraint-plugin");
+    writePluginManifest(sourceDir, {
+      name: "malformed-constraint-plugin",
+      min_pulseed_version: "1.2.3abc",
+    });
+
+    await expect(cmdPluginInstall(pluginsDir, [sourceDir])).resolves.toBe(1);
   });
 });
 
@@ -435,6 +449,36 @@ describe("cmdPluginInstall — npm flow", () => {
 
     expect(exitCode).toBe(1);
   });
+
+  it("returns 1 when npm plugin version constraints are malformed", async () => {
+    const mockExecFile = vi.fn().mockImplementation(async (_cmd: string, args: string[]) => {
+      const prefixIndex = args.indexOf("--prefix");
+      if (prefixIndex !== -1) {
+        const prefixDir = args[prefixIndex + 1];
+        const pkgName = args[args.length - 1];
+        const nodeModulesDir = path.join(prefixDir, "node_modules", pkgName);
+        fs.mkdirSync(nodeModulesDir, { recursive: true });
+        const manifest = {
+          name: "malformed-npm-plugin",
+          version: "1.0.0",
+          type: "notifier",
+          capabilities: ["notify"],
+          description: "Malformed PulSeed constraint",
+          permissions: {},
+          min_pulseed_version: "1.2.3abc",
+        };
+        fs.writeFileSync(path.join(nodeModulesDir, "plugin.yaml"), yaml.dump(manifest), "utf-8");
+      }
+      return { stdout: "", stderr: "" };
+    });
+
+    await expect(cmdPluginInstall(
+      pluginsDir,
+      ["malformed-npm-plugin"],
+      () => "1.2.3",
+      mockExecFile as never
+    )).resolves.toBe(1);
+  });
 });
 
 // ─── cmdPluginUpdate ──────────────────────────────────────────────────────────
@@ -544,6 +588,29 @@ describe("cmdPluginUpdate", () => {
     const exitCode = await cmdPluginUpdate(pluginsDir, ["broken-plugin"], mockExecFile as never);
 
     expect(exitCode).toBe(1);
+  });
+
+  it("returns 1 when updated plugin version constraints are malformed", async () => {
+    const pluginDir = path.join(pluginsDir, "malformed-update-plugin");
+    writePluginManifest(pluginDir, { name: "malformed-update-plugin" });
+
+    const mockExecFile = vi.fn().mockImplementation(async (_cmd: string, args: string[]) => {
+      const prefixIndex = args.indexOf("--prefix");
+      if (prefixIndex !== -1) {
+        const prefixDir = args[prefixIndex + 1];
+        const pkgName = args[args.length - 1];
+        const nodeModulesDir = path.join(prefixDir, "node_modules", pkgName);
+        fs.mkdirSync(nodeModulesDir, { recursive: true });
+        writePluginManifest(nodeModulesDir, {
+          name: "malformed-update-plugin",
+          min_pulseed_version: "1.2.3abc",
+        });
+      }
+      return { stdout: "", stderr: "" };
+    });
+
+    await expect(cmdPluginUpdate(pluginsDir, ["malformed-update-plugin"], mockExecFile as never))
+      .resolves.toBe(1);
   });
 });
 

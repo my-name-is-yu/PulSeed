@@ -185,6 +185,14 @@ describe("parseSemver", () => {
   it("throws on invalid semver", () => {
     expect(() => parseSemver("not-a-version")).toThrow(/Invalid semver/);
   });
+
+  it("throws on semver strings with trailing content", () => {
+    expect(() => parseSemver("1.2.3abc")).toThrow(/Invalid semver/);
+  });
+
+  it("throws on semver components outside the safe integer range", () => {
+    expect(() => parseSemver("9007199254740992.0.0")).toThrow(/Invalid semver/);
+  });
 });
 
 describe("compareSemver", () => {
@@ -225,6 +233,10 @@ describe("satisfiesRange", () => {
   it("returns true when version is within min and max range", () => {
     expect(satisfiesRange("1.5.0", "1.0.0", "2.0.0")).toBe(true);
   });
+
+  it("throws when a range boundary is malformed", () => {
+    expect(() => satisfiesRange("1.5.0", "1.0.0abc", "2.0.0")).toThrow(/Invalid semver/);
+  });
 });
 
 // ─── Version compatibility check in loadOne ───
@@ -257,6 +269,15 @@ describe("PluginLoader version compatibility", () => {
     const state = await loader.loadOne("/tmp/plugins/test-plugin");
     expect(state.status).toBe("incompatible");
     expect(state.error_message).toMatch(/0\.0\.1/);
+  });
+
+  it("returns incompatible state when plugin version constraints are malformed", async () => {
+    const manifest = makeValidManifest({ min_pulseed_version: "1.2.3abc" });
+    vi.spyOn(loader, "loadManifest").mockResolvedValue(manifest);
+
+    const state = await loader.loadOne("/tmp/plugins/test-plugin");
+    expect(state.status).toBe("incompatible");
+    expect(state.error_message).toMatch(/1\.2\.3abc/);
   });
 
   it("proceeds normally when no version constraints are specified", async () => {
