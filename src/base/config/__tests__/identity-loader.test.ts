@@ -331,15 +331,15 @@ describe("runtime identity slot", () => {
     expect(result).toContain("Do not identify as Codex, Claude, ChatGPT");
   });
 
-  it("answers self-identity from the configured SEED.md agent name", () => {
+  it("answers self-identity from the configured SEED.md agent name in English by default", () => {
     withFile("SEED.md", "# Sprout\n\nCustom identity.");
     const result = getSelfIdentityResponse();
-    expect(result).toContain("Sprout");
+    expect(result).toContain("I am Sprout");
     expect(result).toContain("SEED.md/ROOT.md/USER.md");
     expect(result).toContain("runtime identity");
-    expect(result).not.toContain("私はCodex");
-    expect(result).not.toContain("私はClaude");
-    expect(result).not.toContain("私はChatGPT");
+    expect(result).not.toContain("I am Codex");
+    expect(result).not.toContain("I am Claude");
+    expect(result).not.toContain("I am ChatGPT");
   });
 
   it("answers English self-identity questions from the same runtime slot", () => {
@@ -351,6 +351,17 @@ describe("runtime identity slot", () => {
     expect(result).not.toContain("I am Codex");
     expect(result).not.toContain("I am Claude");
     expect(result).not.toContain("I am ChatGPT");
+  });
+
+  it("keeps the explicit Japanese self-identity response available", () => {
+    withFile("SEED.md", "# Sprout\n\nCustom identity.");
+    const result = getSelfIdentityResponse("ja");
+    expect(result).toContain("私はSproutです");
+    expect(result).toContain("SEED.md/ROOT.md/USER.md");
+    expect(result).toContain("runtime identity");
+    expect(result).not.toContain("私はCodex");
+    expect(result).not.toContain("私はClaude");
+    expect(result).not.toContain("私はChatGPT");
   });
 
   it("can answer self-identity from an explicit runtime base dir without using global cache", () => {

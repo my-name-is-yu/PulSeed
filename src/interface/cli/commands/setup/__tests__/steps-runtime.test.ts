@@ -46,7 +46,7 @@ describe("setup runtime identity files", () => {
     expect(identity.seed).toContain("I'm Sprout");
     expect(slot).toContain("SEED.md is the canonical local setup file");
     expect(slot).toContain("Active agent name: Sprout");
-    expect(response).toContain("私はSproutです");
+    expect(response).toContain("I am Sprout");
   });
 
   it("seeds a versioned relationship profile without replacing USER.md compatibility", async () => {

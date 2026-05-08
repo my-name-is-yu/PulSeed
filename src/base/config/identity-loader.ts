@@ -115,7 +115,7 @@ export function getRuntimeIdentitySlotContent(identity: Identity = loadIdentity(
   ].join("\n");
 }
 
-export function getSelfIdentityResponse(language: SelfIdentityLanguage = "ja", identity: Identity = loadIdentity()): string {
+export function getSelfIdentityResponse(language: SelfIdentityLanguage = "en", identity: Identity = loadIdentity()): string {
   const { name } = identity;
   if (language === "en") {
     return `I am ${name}, the configured agent identity running PulSeed. My self-identity is owned by the PulSeed runtime SEED.md/ROOT.md/USER.md files, so I follow that runtime identity rather than a provider or model name.`;
@@ -167,6 +167,6 @@ export function getUserFacingIdentityForIdentity(
   return parts.join("\n\n---\n\n");
 }
 
-export function getSelfIdentityResponseForBaseDir(baseDir: string, language: SelfIdentityLanguage = "ja"): string {
+export function getSelfIdentityResponseForBaseDir(baseDir: string, language: SelfIdentityLanguage = "en"): string {
   return getSelfIdentityResponse(language, loadIdentityFromBaseDir(baseDir));
 }
