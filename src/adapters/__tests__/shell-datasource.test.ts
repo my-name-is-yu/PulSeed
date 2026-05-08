@@ -80,6 +80,24 @@ describe("ShellDataSourceAdapter", () => {
     expect(result).toEqual({ coverage: 0 });
   });
 
+  it('observe(["coverage"]) with raw stdout "1abc" does not partially parse the number', async () => {
+    const adapter = new ShellDataSourceAdapter("ds_shell_test", {
+      coverage: { argv: ["echo", "1abc"], output_type: "raw" },
+    });
+
+    const result = await adapter.observe(["coverage"]);
+    expect(result).toEqual({ coverage: 0 });
+  });
+
+  it('observe(["coverage"]) with raw stdout "Infinity" rejects non-finite values', async () => {
+    const adapter = new ShellDataSourceAdapter("ds_shell_test", {
+      coverage: { argv: ["echo", "Infinity"], output_type: "raw" },
+    });
+
+    const result = await adapter.observe(["coverage"]);
+    expect(result).toEqual({ coverage: 0 });
+  });
+
   // 4. observe() with unknown dimension (no command defined) returns {}
   it('observe(["unknown"]) when no command defined for "unknown" returns {}', async () => {
     const adapter = new ShellDataSourceAdapter("ds_shell_test", {
