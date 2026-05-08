@@ -158,16 +158,14 @@ export async function processScheduleEntriesForDaemon(params: {
       }
 
       const entry = scheduleEngine.getEntries().find((candidate) => candidate.id === result.entry_id);
-      const waitResume =
-        entry?.metadata?.activation_kind === "wait_resume" && entry.metadata.wait_strategy_id
-          ? {
-              type: "wait_resume" as const,
-              strategyId: entry.metadata.wait_strategy_id,
-              scheduleEntryId: entry.id,
-              nextObserveAt: entry.next_fire_at,
-              waitReason: entry.metadata.note ?? null,
-            }
-          : undefined;
+      if (entry?.metadata?.activation_kind === "wait_resume") {
+        logger.info("Wait-resume schedule wake completed attention re-evaluation without runtime activation", {
+          entry_id: result.entry_id,
+          goal_id: goalId,
+          strategy_id: entry.metadata.wait_strategy_id ?? entry.metadata.strategy_id ?? entry.id,
+        });
+        continue;
+      }
 
       const envelope = createEnvelope({
         type: "event",
@@ -175,10 +173,7 @@ export async function processScheduleEntriesForDaemon(params: {
         source: "schedule-engine",
         goal_id: goalId,
         priority: "normal",
-        payload: {
-          ...result,
-          ...(waitResume ? { wait_resume: waitResume } : {}),
-        },
+        payload: result,
         dedupe_key: result.entry_id,
       });
       acceptRuntimeEnvelope(envelope);

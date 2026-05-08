@@ -7,6 +7,7 @@ import { Logger } from "../logger.js";
 import type { LoopResult } from "../../orchestrator/loop/durable-loop.js";
 import type { DaemonDeps } from "../daemon-runner.js";
 import { createEnvelope } from "../types/envelope.js";
+import { ScheduleEngine } from "../schedule/engine.js";
 import { makeTempDir } from "../../../tests/helpers/temp-dir.js";
 import { IngressGateway } from "../gateway/ingress-gateway.js";
 
@@ -66,6 +67,9 @@ function makeDeps(tmpDir: string, overrides: Partial<DaemonDeps> = {}): DaemonDe
 
 function readRuntimeQueue(tmpDir: string): Record<string, any> {
   const queuePath = path.join(tmpDir, "runtime", "queue.json");
+  if (!fs.existsSync(queuePath)) {
+    return { records: {} };
+  }
   return JSON.parse(fs.readFileSync(queuePath, "utf-8")) as Record<string, any>;
 }
 
@@ -559,7 +563,12 @@ describe("DaemonRunner durable runtime wiring", () => {
     );
   });
 
-  it("propagates wait resume metadata from schedule activation into CoreLoop run", async () => {
+  const waitResumeMetadataCases: Array<[string, { wait_strategy_id?: string; strategy_id?: string }]> = [
+    ["with wait strategy metadata", { wait_strategy_id: "wait-1", strategy_id: "wait-1" }],
+    ["without wait strategy metadata", {}],
+  ];
+
+  it.each(waitResumeMetadataCases)("keeps wait-resume schedule wakes attention-only without activating CoreLoop %s", async (_label, waitMetadata) => {
     const mockEventServer = {
       setEnvelopeHook: vi.fn(),
       setCommandEnvelopeHook: vi.fn(),
@@ -570,33 +579,37 @@ describe("DaemonRunner durable runtime wiring", () => {
       getPort: vi.fn().mockReturnValue(41700),
       setActiveWorkersProvider: vi.fn(),
     };
-    const waitEntry = {
-      id: "wait-entry-1",
-      next_fire_at: "2026-04-28T10:00:00.000Z",
+    const attentionReevaluation = {
+      reevaluate: vi.fn().mockResolvedValue(undefined),
+    };
+    const scheduleEngine = new ScheduleEngine({
+      baseDir: tmpDir,
+      attentionReevaluation,
+    });
+    const waitEntry = await scheduleEngine.addEntry({
+      name: "Wait resume re-evaluation",
+      layer: "goal_trigger",
+      trigger: { type: "interval", seconds: 60 },
       metadata: {
         internal: true,
         activation_kind: "wait_resume",
         goal_id: "g-wait",
-        wait_strategy_id: "wait-1",
         note: "Awaiting external completion",
+        ...waitMetadata,
       },
-    };
-    const mockScheduleEngine = {
-      tick: vi.fn().mockResolvedValue([
-        {
-          entry_id: "wait-entry-1",
-          status: "ok",
-          goal_id: "g-wait",
-          duration_ms: 1,
-          fired_at: new Date().toISOString(),
-        },
-      ]),
-      getEntries: vi.fn().mockReturnValue([waitEntry]),
-    };
+      goal_trigger: {
+        goal_id: "g-wait",
+        max_iterations: 5,
+        skip_if_active: false,
+      },
+    });
+    scheduleEngine.getEntries()[0]!.next_fire_at = new Date(Date.now() - 1000).toISOString();
+    await scheduleEngine.saveEntries();
+    await scheduleEngine.loadEntries();
 
     const deps = makeDeps(tmpDir, {
       eventServer: mockEventServer as any,
-      scheduleEngine: mockScheduleEngine as any,
+      scheduleEngine,
       config: { check_interval_ms: 50 },
     });
 
@@ -605,12 +618,29 @@ describe("DaemonRunner durable runtime wiring", () => {
     currentStartPromise = daemon.start([]);
 
     const runMock = (deps.coreLoop as unknown as { run: ReturnType<typeof vi.fn> }).run;
-    await waitFor(() =>
-      runMock.mock.calls.some((call: unknown[]) =>
-        call[0] === "g-wait"
-        && typeof call[1] === "object"
-        && (call[1] as Record<string, any>).activation?.waitResume?.strategyId === "wait-1"
-      )
-    );
+    await waitFor(() => attentionReevaluation.reevaluate.mock.calls.length > 0);
+    await new Promise((resolve) => setTimeout(resolve, 120));
+
+    const [signalContext, context] = attentionReevaluation.reevaluate.mock.calls[0]!;
+    expect(signalContext.current_goal_refs).toEqual([{ kind: "goal", id: "g-wait" }]);
+    expect(context).toMatchObject({
+      entry_id: waitEntry.id,
+      activation_kind: "wait_resume",
+    });
+
+    const history = await scheduleEngine.getRecentHistory(10, waitEntry.id);
+    expect(history).toEqual([
+      expect.objectContaining({
+        entry_id: waitEntry.id,
+        activation_kind: "wait_resume",
+        wait_strategy_id: waitMetadata.wait_strategy_id ?? null,
+        internal: true,
+      }),
+    ]);
+    const queue = readRuntimeQueue(tmpDir);
+    expect(Object.values(queue.records).some((entry: any) =>
+      entry.envelope?.name === "schedule_activated"
+    )).toBe(false);
+    expect(runMock).not.toHaveBeenCalled();
   });
 });
