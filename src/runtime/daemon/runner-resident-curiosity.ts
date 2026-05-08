@@ -13,7 +13,7 @@ import {
 export async function triggerResidentGoalDiscovery(
   context: Pick<
     DaemonRunnerResidentContext,
-    "goalNegotiator" | "currentGoalIds" | "config" | "supervisor" | "refreshOperationalState" | "abortSleep" | "logger"
+    "goalNegotiator" | "currentGoalIds" | "config" | "logger"
   > &
     Pick<DaemonRunnerResidentContext, "saveDaemonState" | "state" | "stateManager">,
   details?: Record<string, unknown>,
@@ -66,23 +66,12 @@ export async function triggerResidentGoalDiscovery(
       return;
     }
 
-    const { goal } = await context.goalNegotiator.negotiate(negotiationDescription, {
-      workspaceContext,
-      timeoutMs: 30_000,
-    });
-    if (!context.currentGoalIds.includes(goal.id)) {
-      context.currentGoalIds.push(goal.id);
-    }
-    context.refreshOperationalState();
     await persistResidentActivity(context, {
-      kind: "negotiation",
+      kind: "suggestion",
       trigger: "proactive_tick",
-      summary: `Resident discovery negotiated a new goal: ${suggestionTitle || goal.title}`,
-      suggestion_title: suggestionTitle || goal.title,
-      goal_id: goal.id,
+      summary: `Resident discovery recorded an attention candidate: ${suggestionTitle || negotiationDescription}`,
+      suggestion_title: suggestionTitle || negotiationDescription,
     });
-    context.supervisor?.activateGoal(goal.id);
-    context.abortSleep();
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     context.logger.warn("Resident discovery failed", { error: message });
