@@ -448,12 +448,24 @@ describe("TendCommand", () => {
       expect(result.message).toContain("max 10 iterations");
     });
 
-    it("ignores invalid max value", async () => {
+    it("rejects invalid max value before daemon start", async () => {
       const goal = makeTestGoal();
-      const deps = makeDeps({ stateManager: makeMockStateManager(goal) });
+      const daemonClient = makeMockDaemonClient();
+      const deps = makeDeps({ stateManager: makeMockStateManager(goal), daemonClient });
       const result = await cmd.execute("goal-abc --max abc", deps);
-      expect(result.success).toBe(true);
-      expect(result.message).not.toContain("max");
+      expect(result.success).toBe(false);
+      expect(result.message).toContain("Usage: /tend [goal-id] [--max <positive-integer>]");
+      expect(result.message).toContain("--max must be a positive integer");
+      expect(daemonClient.startGoal).not.toHaveBeenCalled();
+    });
+
+    it("rejects non-decimal max syntax before daemon start", async () => {
+      const daemonClient = makeMockDaemonClient();
+      const deps = makeDeps({ stateManager: makeMockStateManager(makeTestGoal()), daemonClient });
+      const result = await cmd.execute("goal-abc --max 1e3", deps);
+      expect(result.success).toBe(false);
+      expect(result.message).toContain("--max must be a positive integer");
+      expect(daemonClient.startGoal).not.toHaveBeenCalled();
     });
   });
 
@@ -480,6 +492,42 @@ describe("TendCommand", () => {
       const result = await cmd.execute("", deps);
       expect(result.success).toBe(false);
       expect(result.message).toContain("No conversation yet");
+    });
+
+    it("rejects missing max value before daemon start", async () => {
+      const daemonClient = makeMockDaemonClient();
+      const deps = makeDeps({ stateManager: makeMockStateManager(makeTestGoal()), daemonClient });
+      const result = await cmd.execute("goal-abc --max", deps);
+      expect(result.success).toBe(false);
+      expect(result.message).toContain("Missing value for --max");
+      expect(daemonClient.startGoal).not.toHaveBeenCalled();
+    });
+
+    it("rejects unknown flags before daemon start", async () => {
+      const daemonClient = makeMockDaemonClient();
+      const deps = makeDeps({ stateManager: makeMockStateManager(makeTestGoal()), daemonClient });
+      const result = await cmd.execute("goal-abc --background", deps);
+      expect(result.success).toBe(false);
+      expect(result.message).toContain("Unknown option: --background");
+      expect(daemonClient.startGoal).not.toHaveBeenCalled();
+    });
+
+    it("rejects multiple goal ids before daemon start", async () => {
+      const daemonClient = makeMockDaemonClient();
+      const deps = makeDeps({ stateManager: makeMockStateManager(makeTestGoal()), daemonClient });
+      const result = await cmd.execute("goal-abc goal-def", deps);
+      expect(result.success).toBe(false);
+      expect(result.message).toContain("Expected at most one goal id");
+      expect(daemonClient.startGoal).not.toHaveBeenCalled();
+    });
+
+    it("rejects duplicate max options before daemon start", async () => {
+      const daemonClient = makeMockDaemonClient();
+      const deps = makeDeps({ stateManager: makeMockStateManager(makeTestGoal()), daemonClient });
+      const result = await cmd.execute("goal-abc --max 1 --max 1000", deps);
+      expect(result.success).toBe(false);
+      expect(result.message).toContain("Expected at most one --max option");
+      expect(daemonClient.startGoal).not.toHaveBeenCalled();
     });
   });
 });

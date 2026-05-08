@@ -52,6 +52,7 @@ export interface TendResult {
 
 const MAX_HISTORY_MESSAGES = 20;
 const DEFAULT_TEND_GOAL_NEGOTIATION_TIMEOUT_MS = 300_000;
+const TEND_USAGE = "Usage: /tend [goal-id] [--max <positive-integer>]";
 // Persisted runtime protocol tokens keep the legacy coreloop spelling for compatibility.
 const DURABLE_LOOP_BACKGROUND_RUN_ID_PREFIX = "run:coreloop:";
 const DURABLE_LOOP_BACKGROUND_RUN_KIND = "coreloop_run";
@@ -69,7 +70,14 @@ export class TendCommand {
    * and starts the daemon.
    */
   async execute(args: string, deps: TendDeps): Promise<TendResult> {
-    const { goalId, maxIterations } = parseArgs(args);
+    const parsedArgs = parseArgs(args);
+    if (!parsedArgs.success) {
+      return {
+        success: false,
+        message: parsedArgs.message,
+      };
+    }
+    const { goalId, maxIterations } = parsedArgs;
 
     // Path A: existing goal-id provided -- skip generation
     if (goalId) {
@@ -320,20 +328,39 @@ function normalizePinnedReplyTarget(replyTarget: RuntimeControlReplyTarget | nul
 
 // --- Arg parsing ---
 
-function parseArgs(args: string): { goalId?: string; maxIterations?: number } {
+function parseArgs(args: string): { success: true; goalId?: string; maxIterations?: number } | { success: false; message: string } {
   const parts = args.trim().split(/\s+/).filter(Boolean);
   let goalId: string | undefined;
   let maxIterations: number | undefined;
 
   for (let i = 0; i < parts.length; i++) {
-    if (parts[i] === "--max" && parts[i + 1]) {
-      const n = parseInt(parts[i + 1], 10);
-      if (!isNaN(n) && n > 0) maxIterations = n;
+    const token = parts[i]!;
+    if (token === "--max") {
+      if (maxIterations !== undefined) {
+        return { success: false, message: `${TEND_USAGE}\nExpected at most one --max option.` };
+      }
+      const rawValue = parts[i + 1];
+      if (!rawValue || rawValue.startsWith("--")) {
+        return { success: false, message: `${TEND_USAGE}\nMissing value for --max.` };
+      }
+      if (!/^[1-9]\d*$/.test(rawValue)) {
+        return { success: false, message: `${TEND_USAGE}\n--max must be a positive integer.` };
+      }
+      const n = Number(rawValue);
+      if (!Number.isInteger(n) || n <= 0) {
+        return { success: false, message: `${TEND_USAGE}\n--max must be a positive integer.` };
+      }
+      maxIterations = n;
       i++;
-    } else if (!parts[i].startsWith("--")) {
-      goalId = parts[i];
+    } else if (token.startsWith("--")) {
+      return { success: false, message: `${TEND_USAGE}\nUnknown option: ${token}` };
+    } else {
+      if (goalId) {
+        return { success: false, message: `${TEND_USAGE}\nExpected at most one goal id.` };
+      }
+      goalId = token;
     }
   }
 
-  return { goalId, maxIterations };
+  return { success: true, goalId, maxIterations };
 }
