@@ -9,7 +9,7 @@
 // The command's stdout is parsed according to output_type:
 //   "number"  — sums all trailing integers found on each line (handles grep -c multi-file output)
 //   "boolean" — "1" or "true" → 1, otherwise → 0
-//   "raw"     — parseFloat of the trimmed stdout
+//   "raw"     — exact finite numeric value from the trimmed stdout
 //
 // grep exit code 1 (zero matches) is treated as 0, not an error.
 
@@ -28,6 +28,7 @@ import type { Logger } from "../../runtime/logger.js";
 const execFileAsync = promisify(execFile);
 
 const SHELL_BLOCKLIST = ['bash', 'sh', 'zsh', 'dash', 'fish', 'csh', 'ksh', 'cmd', 'cmd.exe', 'powershell', 'powershell.exe', 'pwsh'];
+const RAW_NUMBER_TOKEN = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i;
 
 export interface ShellCommandSpec {
   argv: string[];          // e.g. ["grep", "-rc", "unfinished item", "src/"]
@@ -162,11 +163,17 @@ export class ShellDataSourceAdapter implements IDataSourceAdapter {
       case "boolean":
         return trimmed === "1" || trimmed.toLowerCase() === "true" ? 1 : 0;
       case "raw":
-        return parseFloat(trimmed) || 0;
+        return parseRawNumber(trimmed) ?? 0;
     }
   }
 
   private isExecError(err: unknown): err is { code: number; stdout: string; stderr: string } {
     return typeof err === "object" && err !== null && "code" in err;
   }
+}
+
+function parseRawNumber(value: string): number | null {
+  if (!RAW_NUMBER_TOKEN.test(value)) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
 }
