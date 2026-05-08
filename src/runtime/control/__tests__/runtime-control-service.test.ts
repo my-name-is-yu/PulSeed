@@ -1303,6 +1303,46 @@ describe("RuntimeControlService", () => {
     }
   });
 
+  it("blocks session-scoped run control when only sessionless runs are selectable", async () => {
+    const tmpDir = makeTempDir("pulseed-runtime-control-service-session-scope-");
+    try {
+      const executor = vi.fn();
+      const service = new RuntimeControlService({
+        operationStore: new RuntimeOperationStore(path.join(tmpDir, "runtime")),
+        executor,
+        sessionRegistry: {
+          snapshot: vi.fn().mockResolvedValue(snapshotWithRuns([
+            makeRun({
+              id: "run:process:sessionless",
+              kind: "process_run",
+              child_session_id: null,
+              goal_id: null,
+            }),
+          ])),
+        },
+      });
+
+      const result = await service.request({
+        intent: {
+          kind: "pause_run",
+          reason: "pause the latest session",
+          targetSelector: { scope: "session", reference: "latest", sourceText: "latest session" },
+        },
+        cwd: "/repo",
+        requestedBy: { surface: "chat", conversation_id: "chat-1" },
+      });
+
+      expect(result).toMatchObject({
+        success: false,
+        state: "blocked",
+        message: expect.stringContaining("no session-scoped runtime runs"),
+      });
+      expect(executor).not.toHaveBeenCalled();
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
+  });
+
   it("rejects stale terminal runs for control operations", async () => {
     const tmpDir = makeTempDir("pulseed-runtime-control-service-run-stale-");
     try {
