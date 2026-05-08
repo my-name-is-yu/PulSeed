@@ -39,6 +39,11 @@ describe("failure recovery guidance", () => {
       error: "provider-specific denial text",
       signals: [{ kind: "tool", toolName: "shell", status: "approval_denied", disposition: "approval_denied" }],
     }).kind).toBe("permission");
+
+    expect(classifyFailureRecovery({
+      error: "provider-specific denial text",
+      signals: [{ kind: "tool", toolName: "shell", status: "approval_denied" }],
+    }).kind).toBe("permission");
   });
 
   it("classifies runtime interruption and adapter failures from typed stop metadata", () => {
@@ -56,6 +61,11 @@ describe("failure recovery guidance", () => {
       error: "modelo no disponible temporalmente",
       signals: [{ kind: "adapter", adapterType: "codex", stoppedReason: "error" }],
     }).kind).toBe("adapter");
+
+    expect(classifyFailureRecovery({
+      error: "tool was cancelled",
+      signals: [{ kind: "tool", toolName: "shell", status: "cancelled" }],
+    }).kind).toBe("runtime_interruption");
 
     expect(classifyFailureRecovery({
       error: "timeout-looking provider text",
