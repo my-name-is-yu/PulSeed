@@ -82,6 +82,21 @@ Current verification sources include:
 
 The important point is that verification is not just self-report. It is grounded in observed results.
 
+## Companion Capabilities
+
+Companion capabilities are projected through separate readiness, admission, and
+autonomy contracts. Readiness answers whether the operation substrate has been
+stored, configured, authenticated, and verified for that exact operation.
+Admission answers whether the current actor, surface, target, permissions,
+quieting, privacy, runtime-control, and notification policies allow it.
+Autonomy answers whether the companion may initiate or execute after readiness
+and admission have already matched the same operation scope.
+
+That separation keeps `can execute` different from `may initiate`. Normal
+companion UX should turn the combined decision into the next best safe action,
+while operator and debug surfaces may show the underlying readiness, admission,
+autonomy, evidence, and blocked/degraded state.
+
 ## Completion
 
 PulSeed uses satisficing rather than endless execution.

@@ -91,6 +91,9 @@ PulSeed will guide provider and adapter setup when needed.
   review posture
 - Dream-backed playbooks can feed verified workflow hints into later task
   generation without auto-writing executable skills
+- Companion capability status is projected from readiness evidence plus explicit
+  admission and autonomy decisions; normal companion surfaces show the next safe
+  action rather than a capability catalog
 - State, reports, schedules, and local memory live under `~/.pulseed/`
 - Software-level approval and verification gates protect delegated work
 

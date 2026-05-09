@@ -31,7 +31,7 @@ When public docs overlap, prefer the most specific page for the topic:
 - `mechanism.md` for the conceptual execution model
 - `configuration.md` for config keys and setup details
 - `architecture-map.md` and `module-map.md` for navigation and reference
-- `status.md` for current public status only
+- `status.md` for current public status and capability projection boundaries
 - `docs/design/` for design notes, proposals, and implementation-facing background
 
 If a public doc and a design note disagree, the public doc wins for user-facing behavior and navigation.

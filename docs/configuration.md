@@ -176,6 +176,11 @@ compatibility report and are not loaded until reviewed. Builtin integrations
 such as `soil-display`, `mcp-bridge`, and `foreign-plugin-bridge` ship with the
 runtime and are reported separately from installed plugins.
 
+Capability runtime state is projected from readiness snapshots and matching
+admission/autonomy decisions. A configured plugin, imported foreign plugin, or
+legacy capability record is evidence for discovery and compatibility only; it is
+not an executable or autonomous label by itself.
+
 ## 8. Skills
 
 PulSeed discovers local skills from:

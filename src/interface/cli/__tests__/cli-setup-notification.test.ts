@@ -1895,6 +1895,7 @@ function makeBindingStatus(overrides: {
       recent_health: channel.recent_health ?? { inbound_at: null, outbound_at: null, last_error: null },
       warnings: [],
     })),
+    capability_runtime: [],
     sessions: [],
     background_runs: [],
     warnings: [],
