@@ -3,7 +3,7 @@ import {
   type ConfirmationDecision,
 } from "../confirmation-decision.js";
 import type { ILLMClient } from "../../base/llm/llm-client.js";
-import type { RunSpec, RunSpecMissingField } from "./types.js";
+import type { RunSpec, RunSpecApprovalPolicy, RunSpecMissingField } from "./types.js";
 import { RunSpecSchema } from "./types.js";
 
 export type RunSpecConfirmationResult =
@@ -19,7 +19,41 @@ export interface RunSpecConfirmationContext {
   llmClient?: Pick<ILLMClient, "sendMessage" | "parseJSON">;
 }
 
-export function formatRunSpecSetupProposal(spec: RunSpec): string {
+export interface RunSpecProposalFormatOptions {
+  diagnostic?: boolean;
+}
+
+export function formatRunSpecSetupProposal(
+  spec: RunSpec,
+  options: RunSpecProposalFormatOptions = {},
+): string {
+  if (options.diagnostic) return formatDiagnosticRunSpecSetupProposal(spec);
+  const lines = [
+    "Proposed long-running work",
+    `Objective: ${spec.objective}`,
+    `Workspace: ${spec.workspace?.path ?? "unresolved"}`,
+    `Execution: ${formatExecutionTarget(spec)}`,
+    `Progress: ${spec.progress_contract.semantics}`,
+  ];
+  if (spec.metric) {
+    lines.push(`Metric: ${spec.metric.name} (${formatMetricDirection(spec.metric.direction)})`);
+  }
+  if (spec.deadline) {
+    lines.push(`Deadline: ${spec.deadline.raw}${spec.deadline.iso_at ? ` (${spec.deadline.iso_at})` : ""}`);
+  }
+  lines.push("Safety and approvals:");
+  lines.push(`- Submissions: ${formatPolicy(spec.approval_policy.submit, "submit")}`);
+  lines.push(`- Publishing: ${formatPolicy(spec.approval_policy.publish, "publish")}`);
+  lines.push(`- External actions: ${formatPolicy(spec.approval_policy.external_action, "external_action")}`);
+  lines.push(`- Secrets: ${formatPolicy(spec.approval_policy.secret, "secret")}`);
+  lines.push(`- Irreversible actions: ${formatPolicy(spec.approval_policy.irreversible_action, "irreversible_action")}`);
+  if (spec.missing_fields.length > 0) {
+    lines.push("Questions:", ...spec.missing_fields.map((field) => `- ${field.question}`));
+  }
+  return lines.join("\n");
+}
+
+function formatDiagnosticRunSpecSetupProposal(spec: RunSpec): string {
   const lines = [
     `Proposed long-running run: ${spec.id}`,
     `Profile: ${spec.profile}`,
@@ -45,6 +79,33 @@ export function formatRunSpecSetupProposal(spec: RunSpec): string {
   return lines.join("\n");
 }
 
+function formatExecutionTarget(spec: RunSpec): string {
+  const remote = spec.execution_target.remote_host ? ` on ${spec.execution_target.remote_host}` : "";
+  return spec.execution_target.kind === "daemon"
+    ? `background daemon${remote}`
+    : `${spec.execution_target.kind}${remote}`;
+}
+
+function formatMetricDirection(direction: NonNullable<RunSpec["metric"]>["direction"]): string {
+  return {
+    maximize: "higher is better",
+    minimize: "lower is better",
+    target: "aim for target",
+    unknown: "direction not specified",
+  }[direction] ?? "direction not specified";
+}
+
+function formatPolicy(
+  policy: RunSpecApprovalPolicy[keyof RunSpecApprovalPolicy],
+  kind: keyof RunSpecApprovalPolicy,
+): string {
+  if (policy === "approval_required") return "ask before doing this";
+  if (policy === "allowed") return "allowed";
+  if (policy === "disallowed") return "not allowed";
+  if (kind === "publish") return "not specified";
+  return "not specified";
+}
+
 export async function handleRunSpecConfirmationInput(
   spec: RunSpec,
   input: string,
@@ -60,7 +121,7 @@ export async function handleRunSpecConfirmationInput(
 
   if (decision.decision === "cancel") {
     const cancelled = updateSpec(spec, { status: "cancelled", updated_at: now.toISOString() });
-    return { kind: "cancelled", spec: cancelled, message: `RunSpec cancelled: ${cancelled.id}` };
+    return { kind: "cancelled", spec: cancelled, message: "Long-running work cancelled." };
   }
 
   if (decision.decision === "approve") {
@@ -73,7 +134,7 @@ export async function handleRunSpecConfirmationInput(
       };
     }
     const confirmed = updateSpec(spec, { status: "confirmed", updated_at: now.toISOString() });
-    return { kind: "confirmed", spec: confirmed, message: `RunSpec confirmed: ${confirmed.id}` };
+    return { kind: "confirmed", spec: confirmed, message: "Long-running work approved." };
   }
 
   if (decision.decision === "revise") {
@@ -86,7 +147,7 @@ export async function handleRunSpecConfirmationInput(
         kind: "unrecognized",
         spec,
         message: [
-          "RunSpec revision needs structured workspace, deadline, or metric direction details.",
+          "Long-running work revision needs structured workspace, deadline, or metric direction details.",
           formatMissingFieldsMessage(requiredMissingFields(spec)),
         ].filter(Boolean).join("\n"),
       };
@@ -102,8 +163,8 @@ export async function handleRunSpecConfirmationInput(
     kind: "unrecognized",
     spec,
     message: [
-      "RunSpec is awaiting confirmation.",
-      decision.clarification ?? "Please approve, cancel, or revise the pending RunSpec.",
+      "Long-running work is awaiting confirmation.",
+      decision.clarification ?? "Please approve, cancel, or revise the pending long-running work.",
       formatMissingFieldsMessage(requiredMissingFields(spec)),
     ].filter(Boolean).join("\n"),
   };

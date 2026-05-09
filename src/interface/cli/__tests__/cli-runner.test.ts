@@ -1307,7 +1307,7 @@ describe("goal list subcommand", async () => {
     consoleSpy.mockRestore();
   });
 
-  it("lists all registered goal IDs in the output", async () => {
+  it("hides goal IDs by default and shows them in detailed listing output", async () => {
     await stateManager.saveGoal(makeGoal({ id: "goal-alpha", title: "Alpha" }));
     await stateManager.saveGoal(makeGoal({ id: "goal-beta", title: "Beta" }));
 
@@ -1315,8 +1315,16 @@ describe("goal list subcommand", async () => {
     await runCLI("goal", "list");
 
     const output = consoleSpy.mock.calls.map((c) => c.join(" ")).join("\n");
-    expect(output).toContain("goal-alpha");
-    expect(output).toContain("goal-beta");
+    expect(output).toContain("Alpha");
+    expect(output).toContain("Beta");
+    expect(output).not.toContain("goal-alpha");
+    expect(output).not.toContain("goal-beta");
+
+    consoleSpy.mockClear();
+    await runCLI("goal", "list", "--details");
+    const detailedOutput = consoleSpy.mock.calls.map((c) => c.join(" ")).join("\n");
+    expect(detailedOutput).toContain("goal-alpha");
+    expect(detailedOutput).toContain("goal-beta");
     consoleSpy.mockRestore();
   });
 
@@ -1338,7 +1346,7 @@ describe("goal list subcommand", async () => {
     await runCLI("goal", "list");
 
     const output = consoleSpy.mock.calls.map((c) => c.join(" ")).join("\n");
-    expect(output).toContain("active");
+    expect(output).toContain("In progress");
     consoleSpy.mockRestore();
   });
 
@@ -1400,7 +1408,14 @@ describe("status subcommand", async () => {
     expect(code).toBe(0);
     expect(output).toContain("Current goal");
     expect(output).toContain("- Goal: Current Default Goal");
+    expect(output).not.toContain("Goal ID: goal-current-default");
     expect(output).not.toContain("Error: --goal <id>");
+
+    consoleSpy.mockClear();
+    const detailCode = await runCLI("status", "--details");
+    const detailOutput = consoleSpy.mock.calls.map((c) => c.join(" ")).join("\n");
+    expect(detailCode).toBe(0);
+    expect(detailOutput).toContain("Goal ID: goal-current-default");
     consoleSpy.mockRestore();
   });
 
@@ -1455,7 +1470,7 @@ describe("status subcommand", async () => {
     expect(code).toBe(0);
   });
 
-  it("shows the latest persisted task when the latest execution report has no task result", async () => {
+  it("shows the latest persisted task in detailed status when the latest execution report has no task result", async () => {
     const goal = makeGoal({ id: "goal-status-recovered" });
     await stateManager.saveGoal(goal);
     await stateManager.writeRaw(
@@ -1484,7 +1499,7 @@ describe("status subcommand", async () => {
     }), "utf-8");
 
     const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-    await runCLI("status", "--goal", "goal-status-recovered");
+    await runCLI("status", "--goal", "goal-status-recovered", "--details");
 
     const output = consoleSpy.mock.calls.map((c) => c.join(" ")).join("\n");
     expect(output).toContain("Latest Task Record");
@@ -1494,14 +1509,20 @@ describe("status subcommand", async () => {
     consoleSpy.mockRestore();
   });
 
-  it("displays the goal ID in the output", async () => {
+  it("hides the goal ID by default and shows it in detailed status output", async () => {
     await stateManager.saveGoal(makeGoal({ id: "goal-display", title: "Display Goal" }));
 
     const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     await runCLI("status", "--goal", "goal-display");
 
     const output = consoleSpy.mock.calls.map((c) => c.join(" ")).join("\n");
-    expect(output).toContain("goal-display");
+    expect(output).toContain("Display Goal");
+    expect(output).not.toContain("ID: goal-display");
+
+    consoleSpy.mockClear();
+    await runCLI("status", "--goal", "goal-display", "--details");
+    const detailedOutput = consoleSpy.mock.calls.map((c) => c.join(" ")).join("\n");
+    expect(detailedOutput).toContain("ID: goal-display");
     consoleSpy.mockRestore();
   });
 
@@ -1512,7 +1533,8 @@ describe("status subcommand", async () => {
     await runCLI("status", "--goal", "goal-stat");
 
     const output = consoleSpy.mock.calls.map((c) => c.join(" ")).join("\n");
-    expect(output).toContain("active");
+    expect(output).toContain("In progress");
+    expect(output).not.toContain("Status: active");
     consoleSpy.mockRestore();
   });
 
@@ -1531,9 +1553,10 @@ describe("status subcommand", async () => {
     await runCLI("status", "--goal", "goal-current");
 
     const output = consoleSpy.mock.calls.map((c) => c.join(" ")).join("\n");
-    expect(output.indexOf("Current goal")).toBeLessThan(output.indexOf("## Dimensions"));
+    expect(output.indexOf("Current goal")).toBeLessThan(output.indexOf("Progress signals:"));
     expect(output).toContain("- Goal: Current CLI Goal");
-    expect(output).toContain("Background work: run:coreloop:worker-cli");
+    expect(output).toContain("Background: Background work is running");
+    expect(output).not.toContain("run:coreloop:worker-cli");
     expect(output).toContain("Next safe action: Ask for progress here");
     consoleSpy.mockRestore();
   });
@@ -1552,11 +1575,11 @@ describe("status subcommand", async () => {
     }));
 
     const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-    await runCLI("status", "--goal", "goal-metric-precision");
+    await runCLI("status", "--goal", "goal-metric-precision", "--details");
 
     const output = consoleSpy.mock.calls.map((c) => c.join(" ")).join("\n");
-    expect(output).toContain("raw: 0.958126");
-    expect(output).not.toContain("raw: 1.0");
+    expect(output).toContain("current=0.9581262885420526");
+    expect(output).not.toContain("current=1");
     consoleSpy.mockRestore();
   });
 
@@ -2219,7 +2242,13 @@ describe("integration: goal add then goal list", async () => {
     await runner2.run(["goal", "list"]);
 
     const output = consoleSpy.mock.calls.map((c) => c.join(" ")).join("\n");
-    expect(output).toContain("integ-goal");
+    expect(output).toContain("Integration Test Goal");
+    expect(output).not.toContain("integ-goal");
+
+    consoleSpy.mockClear();
+    await runner2.run(["goal", "list", "--details"]);
+    const detailedOutput = consoleSpy.mock.calls.map((c) => c.join(" ")).join("\n");
+    expect(detailedOutput).toContain("integ-goal");
     consoleSpy.mockRestore();
   });
 });

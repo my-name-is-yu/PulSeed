@@ -620,11 +620,22 @@ describe("RunSpec confirmation", () => {
 
     const proposal = formatRunSpecSetupProposal(spec!);
 
-    expect(proposal).toContain("Submit policy: approval_required");
-    expect(proposal).toContain("Publish policy: unspecified");
-    expect(proposal).toContain("External actions: approval_required");
-    expect(proposal).toContain("Secret policy: approval_required");
-    expect(proposal).toContain("Irreversible actions: approval_required");
+    expect(proposal).toContain("Proposed long-running work");
+    expect(proposal).toContain("Submissions: ask before doing this");
+    expect(proposal).toContain("Publishing: not specified");
+    expect(proposal).toContain("External actions: ask before doing this");
+    expect(proposal).toContain("Secrets: ask before doing this");
+    expect(proposal).toContain("Irreversible actions: ask before doing this");
+    expect(proposal).not.toContain(spec!.id);
+    expect(proposal).not.toContain("approval_required");
+
+    const diagnosticProposal = formatRunSpecSetupProposal(spec!, { diagnostic: true });
+    expect(diagnosticProposal).toContain(`Proposed long-running run: ${spec!.id}`);
+    expect(diagnosticProposal).toContain("Submit policy: approval_required");
+    expect(diagnosticProposal).toContain("Publish policy: unspecified");
+    expect(diagnosticProposal).toContain("External actions: approval_required");
+    expect(diagnosticProposal).toContain("Secret policy: approval_required");
+    expect(diagnosticProposal).toContain("Irreversible actions: approval_required");
   });
 });
 

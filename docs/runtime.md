@@ -39,6 +39,8 @@ Supported chat slash commands:
 - Configuration: `/config`, `/model`, `/model <model> [effort]`, `/plugins`
 - Usage: `/usage [session|goal <goal-id>|daemon <goal-id>|schedule [24h|7d|2w]]`
 
+Default `/status`, `/goals`, and `/sessions` output is human-readable and hides exact goal, session, run, and runtime IDs. Use `--details` or `--diagnostic` on those commands when support or scripting needs exact IDs, raw status values, thresholds, confidence, or parent/runtime links.
+
 `/compact` summarizes older chat turns into the saved session summary and keeps the latest user and assistant turns available for continuation.
 `/config` is read-only and masks secrets. `/model` mirrors Codex-style model selection: without arguments it shows the active model and available choices; `/model <model> [effort]` updates the OpenAI model and optional reasoning effort for subsequent chat turns.
 

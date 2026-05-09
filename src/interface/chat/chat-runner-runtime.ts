@@ -16,6 +16,7 @@ import type { RuntimeControlActor, RuntimeControlReplyTarget } from "../../runti
 import type { RuntimeControlChatContext } from "./chat-runner-contracts.js";
 import type { LoadedChatSession } from "./chat-session-store.js";
 import type { StateManager } from "../../base/state/state-manager.js";
+import { formatPlainRunStatus } from "../current-goal-summary.js";
 
 export interface ChatRunnerRuntimeDeps {
   llmClient?: unknown;
@@ -28,6 +29,10 @@ export interface ChatRunnerRuntimeDeps {
   stateManager: {
     readRaw(path: string): Promise<unknown>;
   };
+}
+
+export interface RuntimeFormatOptions {
+  diagnostic?: boolean;
 }
 
 export function loadedSessionToChatSession(session: LoadedChatSession): ChatSession {
@@ -233,20 +238,32 @@ function statusRuntimeRun(run: BackgroundRun): boolean {
     || run.status === "lost";
 }
 
-function compactRunLine(run: BackgroundRun): string {
+function compactRunLine(run: BackgroundRun, options: RuntimeFormatOptions = {}): string {
   const title = formatRuntimeTitle(run.title);
   const updated = formatRuntimeTimestamp(run.updated_at ?? run.started_at ?? run.created_at);
+  if (!options.diagnostic) {
+    const attention = run.error ? " - needs attention; use details for the error record" : "";
+    return `- Background work is ${formatPlainRunStatus(run.status)}; updated ${updated}${attention}`;
+  }
   const summary = run.summary ? ` - ${run.summary.replace(/\s+/g, " ").trim()}` : "";
   const error = run.error ? ` - error: ${run.error.replace(/\s+/g, " ").trim()}` : "";
   return `- ${run.id}${title} [${run.kind}, ${run.status}], updated ${updated}${summary}${error}`;
 }
 
-function compactSessionLine(session: RuntimeSession): string {
+function compactSessionLine(session: RuntimeSession, options: RuntimeFormatOptions = {}): string {
   const displayId = session.kind === "conversation"
     ? session.transcript_ref?.id ?? session.id.replace(/^session:conversation:/, "")
     : session.id;
   const title = formatRuntimeTitle(session.title);
   const updated = formatRuntimeTimestamp(session.updated_at ?? session.last_event_at ?? session.created_at);
+  if (!options.diagnostic) {
+    const label = session.kind === "conversation"
+      ? session.title ?? "Chat session"
+      : "Other work";
+    const resumable = session.resumable ? " and resumable" : "";
+    const attachable = session.attachable ? " and attachable" : "";
+    return `- ${label} is ${formatPlainSessionStatus(session.status)}${resumable}${attachable}; last updated ${updated}`;
+  }
   const workspace = session.workspace ? `, cwd ${session.workspace}` : "";
   const parent = session.parent_session_id ? `, parent ${session.parent_session_id}` : "";
   const resumable = session.resumable ? ", resumable" : "";
@@ -255,7 +272,20 @@ function compactSessionLine(session: RuntimeSession): string {
   return `- ${displayId}${title} [${session.kind}, ${session.status}], updated ${updated}${workspace}${parent}${resumable}${attachable}${runtimeId}`;
 }
 
-export function formatRuntimeSessionsList(snapshot: RuntimeSessionRegistrySnapshot): string {
+function formatPlainSessionStatus(status: RuntimeSession["status"]): string {
+  return {
+    active: "active",
+    idle: "available",
+    ended: "ended",
+    lost: "needs attention",
+    unknown: "needs attention",
+  }[status] ?? "needs attention";
+}
+
+export function formatRuntimeSessionsList(
+  snapshot: RuntimeSessionRegistrySnapshot,
+  options: RuntimeFormatOptions = {},
+): string {
   const chatSessions = snapshot.sessions.filter((session) => session.kind === "conversation");
   const nonChatSessions = snapshot.sessions.filter((session) => session.kind !== "conversation");
   const lines: string[] = ["Chat sessions:"];
@@ -264,22 +294,22 @@ export function formatRuntimeSessionsList(snapshot: RuntimeSessionRegistrySnapsh
     lines.push("No chat sessions found.");
   } else {
     for (const session of chatSessions) {
-      lines.push(compactSessionLine(session));
+      lines.push(compactSessionLine(session, options));
       const runs = snapshot.background_runs.filter((run) => run.parent_session_id === session.id);
       for (const run of runs) {
-        lines.push(`  ${compactRunLine(run)}`);
+        lines.push(`  ${compactRunLine(run, options)}`);
       }
     }
   }
 
   if (nonChatSessions.length > 0) {
-    lines.push("", "Other runtime sessions:");
-    lines.push(...nonChatSessions.map((session) => compactSessionLine(session)));
+    lines.push("", options.diagnostic ? "Other runtime sessions:" : "Other work:");
+    lines.push(...nonChatSessions.map((session) => compactSessionLine(session, options)));
   }
 
   if (snapshot.background_runs.length > 0) {
-    lines.push("", "Background runs:");
-    lines.push(...snapshot.background_runs.map((run) => compactRunLine(run)));
+    lines.push("", options.diagnostic ? "Background runs:" : "Background work:");
+    lines.push(...snapshot.background_runs.map((run) => compactRunLine(run, options)));
   }
 
   const warningLine = runtimeWarningLine(snapshot.warnings);
@@ -287,20 +317,23 @@ export function formatRuntimeSessionsList(snapshot: RuntimeSessionRegistrySnapsh
   return lines.join("\n");
 }
 
-export function formatRuntimeStatus(snapshot: RuntimeSessionRegistrySnapshot): string {
+export function formatRuntimeStatus(
+  snapshot: RuntimeSessionRegistrySnapshot,
+  options: RuntimeFormatOptions = {},
+): string {
   const activeSessions = snapshot.sessions.filter((session) => activeRuntimeSession(session));
   const statusRuns = snapshot.background_runs.filter((run) => statusRuntimeRun(run));
   const lines: string[] = [];
 
   if (activeSessions.length > 0) {
-    lines.push("Active runtime sessions:");
-    lines.push(...activeSessions.map((session) => compactSessionLine(session)));
+    lines.push(options.diagnostic ? "Active runtime sessions:" : "Active work:");
+    lines.push(...activeSessions.map((session) => compactSessionLine(session, options)));
   }
 
   if (statusRuns.length > 0) {
     if (lines.length > 0) lines.push("");
-    lines.push("Background runs (queued/running/attention-needed):");
-    lines.push(...statusRuns.map((run) => compactRunLine(run)));
+    lines.push(options.diagnostic ? "Background runs (queued/running/attention-needed):" : "Background work:");
+    lines.push(...statusRuns.map((run) => compactRunLine(run, options)));
   }
 
   const warningLine = runtimeWarningLine(snapshot.warnings);
@@ -309,5 +342,9 @@ export function formatRuntimeStatus(snapshot: RuntimeSessionRegistrySnapshot): s
     lines.push(warningLine);
   }
 
-  return lines.length > 0 ? lines.join("\n") : "No active runtime sessions or running/failed/lost background runs found.";
+  return lines.length > 0
+    ? lines.join("\n")
+    : options.diagnostic
+      ? "No active runtime sessions or running/failed/lost background runs found."
+      : "No active background work found.";
 }

@@ -139,7 +139,8 @@ describe("RunSpec handoff tools", () => {
     }, makeContext(baseDir, pendingRef));
 
     expect(result.success).toBe(true);
-    expect(result.summary).toContain("Proposed long-running run:");
+    expect(result.summary).toContain("Proposed long-running work");
+    expect(result.summary).not.toContain("run-spec:");
     expect(pendingRef.value?.state).toBe("pending");
     expect(daemonClient.startGoal).not.toHaveBeenCalled();
     const [fileName] = fs.readdirSync(path.join(baseDir, "run-specs"));
@@ -192,7 +193,9 @@ describe("RunSpec handoff tools", () => {
     };
     const started = await startTool.call(pendingRunSpecStartInput(pendingRef), context);
     expect(started.success).toBe(true);
-    expect(started.summary).toContain("Started daemon-backed DurableLoop goal:");
+    expect(started.summary).toContain("Started background work for:");
+    expect(started.summary).not.toContain("goal-runspec-");
+    expect(started.summary).not.toContain("run:coreloop:");
     expect(daemonClient.startGoal).toHaveBeenCalledOnce();
     expect(daemonClient.startGoal).toHaveBeenCalledWith(
       expect.stringMatching(/^goal-runspec-/),
@@ -212,7 +215,7 @@ describe("RunSpec handoff tools", () => {
 
     const staleCancel = await cancelTool.call({ run_spec_id: pendingId }, context);
     expect(staleCancel.success).toBe(false);
-    expect(staleCancel.summary).toContain("There is no pending RunSpec draft");
+    expect(staleCancel.summary).toContain("There is no pending long-running work draft");
   });
 
   it("exposes runspec_propose and rejects run_start when the observed RunSpec epoch changed", async () => {
@@ -309,7 +312,7 @@ describe("RunSpec handoff tools", () => {
     const result = await startTool.call(pendingRunSpecStartInput(pendingRef), context);
 
     expect(result.success).toBe(false);
-    expect(result.summary).toContain("created in this same AgentLoop turn");
+    expect(result.summary).toContain("created in this same turn");
     expect(daemonClient.startGoal).not.toHaveBeenCalled();
   });
 
@@ -343,7 +346,7 @@ describe("RunSpec handoff tools", () => {
 
     expect(draftResult.success).toBe(true);
     expect(startResult.success).toBe(false);
-    expect(startResult.summary).toContain("created in this same AgentLoop turn");
+    expect(startResult.summary).toContain("created in this same turn");
     expect(daemonClient.startGoal).not.toHaveBeenCalled();
   });
 

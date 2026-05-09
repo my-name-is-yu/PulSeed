@@ -11,6 +11,7 @@ import {
   listRecoverableArchivedGoalIds,
   readTasksForGoal,
 } from "./chat-runner-state.js";
+import { formatGoalListLine } from "../goal-status-display.js";
 export {
   formatUsageCounter,
   hasUsage,
@@ -62,7 +63,11 @@ export function activeGoals(goals: Goal[]): Goal[] {
 }
 
 export function formatGoalLine(goal: Goal): string {
-  return `- ${goal.id} [${goal.status}/${goal.loop_status}] ${goal.title}`;
+  return formatGoalListLine(goal);
+}
+
+export function formatDiagnosticGoalLine(goal: Goal): string {
+  return formatGoalListLine(goal, { diagnostic: true });
 }
 
 export async function readTasksForGoalFromState(stateManager: StateManager, goalId: string): Promise<Task[]> {

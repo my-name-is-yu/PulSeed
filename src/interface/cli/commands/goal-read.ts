@@ -19,10 +19,12 @@ import {
   formatCurrentGoalSummary,
   isCurrentGoalCandidate,
 } from "../../current-goal-summary.js";
+import { formatGoalStatusDetails } from "../../goal-status-display.js";
 
 async function printActiveGoals(
   stateManager: StateManager,
-  goalsDir: string
+  goalsDir: string,
+  opts: { diagnostic?: boolean } = {},
 ): Promise<void> {
   let goalsDirEntries: string[] = [];
   try {
@@ -73,7 +75,11 @@ async function printActiveGoals(
   } else {
     console.log(`Found ${rootGoals.length} root goal(s):\n`);
     for (const g of rootGoals) {
-      console.log(`[${g.id}] status: ${g.status} — ${g.title} (dimensions: ${g.dimensions})`);
+      if (opts.diagnostic) {
+        console.log(`[${g.id}] status: ${g.status} — ${g.title} (dimensions: ${g.dimensions})`);
+      } else {
+        console.log(`- ${g.title} — ${formatGoalListStatus(g.status)} (${g.dimensions} progress signal${g.dimensions === 1 ? "" : "s"})`);
+      }
     }
   }
 
@@ -82,7 +88,11 @@ async function printActiveGoals(
   }
 }
 
-async function printArchivedGoals(stateManager: StateManager, archivedIds: string[]): Promise<void> {
+async function printArchivedGoals(
+  stateManager: StateManager,
+  archivedIds: string[],
+  opts: { diagnostic?: boolean } = {},
+): Promise<void> {
   if (archivedIds.length === 0) {
     console.log(`\nNo archived goals found.`);
     return;
@@ -111,21 +121,25 @@ async function printArchivedGoals(stateManager: StateManager, archivedIds: strin
     } catch (err) {
       getCliLogger().error(formatOperationError(`read archived goal metadata for "${goalId}"`, err));
     }
-    console.log(`[${goalId}] status: ${status} — ${title} (dimensions: ${dimCount})`);
+    if (opts.diagnostic) {
+      console.log(`[${goalId}] status: ${status} — ${title} (dimensions: ${dimCount})`);
+    } else {
+      console.log(`- ${title} — ${formatGoalListStatus(status)} (${dimCount} progress signal${dimCount === 1 ? "" : "s"})`);
+    }
   }
 }
 
 export async function cmdGoalList(
   stateManager: StateManager,
-  opts: { archived?: boolean } = {}
+  opts: { archived?: boolean; diagnostic?: boolean } = {}
 ): Promise<number> {
   const goalsDir = getGoalsDir(stateManager.getBaseDir());
   const archivedIds = await stateManager.listArchivedGoals();
 
   if (opts.archived) {
-    await printArchivedGoals(stateManager, archivedIds);
+    await printArchivedGoals(stateManager, archivedIds, { diagnostic: opts.diagnostic });
   } else {
-    await printActiveGoals(stateManager, goalsDir);
+    await printActiveGoals(stateManager, goalsDir, { diagnostic: opts.diagnostic });
     console.log(`\nArchived goals: ${archivedIds.length} (use \`pulseed goal list --archived\` to show)`);
   }
 
@@ -135,9 +149,11 @@ export async function cmdGoalList(
 export async function cmdStatus(
   stateManager: StateManager,
   goalId: string,
-  reportingEngine?: ReportingEngine
+  reportingEngine?: ReportingEngine,
+  opts: { diagnostic?: boolean } = {},
 ): Promise<number> {
   const engine = reportingEngine ?? new ReportingEngine(stateManager);
+  const diagnostic = opts.diagnostic ?? false;
 
   const goal = await stateManager.loadGoal(goalId);
   if (!goal) {
@@ -153,31 +169,16 @@ export async function cmdStatus(
   ]);
 
   if (isCurrentGoalCandidate(goal)) {
-    console.log(formatCurrentGoalSummary(goal, { runtimeSnapshot, handoffs }));
+    console.log(formatCurrentGoalSummary(goal, {
+      runtimeSnapshot,
+      handoffs,
+      detail: diagnostic ? "diagnostic" : "default",
+    }));
   }
-  console.log(`\n# Status: ${goal.title}`);
-  console.log(`\n**Goal ID**: ${goalId}`);
-  console.log(`**Status**: ${goal.status}`);
+  console.log(`\n# Status: ${goal.title}\n`);
+  console.log(formatGoalStatusDetails(goal, { diagnostic }));
   if (resolvePulSeedExecutionProfile() === "dev") {
     console.log("**Execution profile**: dev");
-  }
-  if (goal.deadline) {
-    console.log(`**Deadline**: ${goal.deadline}`);
-  }
-  console.log(`\n## Dimensions\n`);
-  for (const dim of goal.dimensions) {
-    let progress: string;
-    const prog = dimensionProgress(dim.current_value, dim.threshold);
-    if (prog === null) {
-      progress = "not yet measured";
-    } else {
-      const rawDisplay = formatCurrentValue(dim.current_value);
-      progress = `${prog.toFixed(3)} (raw: ${rawDisplay})`;
-    }
-    const confidence = `${(dim.confidence * 100).toFixed(1)}%`;
-    console.log(`- **${dim.label}** (${dim.name})`);
-    console.log(`  Progress: ${progress}  Confidence: ${confidence}`);
-    console.log(`  Target: ${JSON.stringify(dim.threshold)}`);
   }
 
   const reports = await engine.listReports(goalId);
@@ -189,13 +190,21 @@ export async function cmdStatus(
   if (execReports.length > 0) {
     const latest = execReports[0];
     console.log(`\n## Latest Execution Summary\n`);
-    console.log(latest.content);
-    if (latestTask && !latest.content.includes(latestTask.id)) {
+    if (diagnostic) {
+      console.log(latest.content);
+    } else {
+      console.log(`- ${latest.title}`);
+      console.log(`- Generated: ${latest.generated_at}`);
+      console.log("Use detailed status when you need exact IDs and full report content.");
+    }
+    if (diagnostic && latestTask && !latest.content.includes(latestTask.id)) {
       printLatestTaskRecord(latestTask);
     }
   } else {
-    console.log(`\n_No execution reports yet. Run \`pulseed run --goal ${goalId}\` to start._`);
-    if (latestTask) {
+    console.log(diagnostic
+      ? `\n_No execution reports yet. Run \`pulseed run --goal ${goalId}\` to start._`
+      : "\n_No execution reports yet. Ask PulSeed to start work on this goal when you are ready._");
+    if (diagnostic && latestTask) {
       printLatestTaskRecord(latestTask);
     }
   }
@@ -203,7 +212,11 @@ export async function cmdStatus(
   return 0;
 }
 
-export async function cmdCurrentStatus(stateManager: StateManager): Promise<number> {
+export async function cmdCurrentStatus(
+  stateManager: StateManager,
+  opts: { diagnostic?: boolean } = {},
+): Promise<number> {
+  const diagnostic = opts.diagnostic ?? false;
   const goalIds = await stateManager.listGoalIds();
   const goals = (await Promise.all(goalIds.map((goalId) => stateManager.loadGoal(goalId))))
     .filter((goal): goal is NonNullable<typeof goal> => goal !== null)
@@ -223,8 +236,16 @@ export async function cmdCurrentStatus(stateManager: StateManager): Promise<numb
   ]);
 
   console.log(goals.length === 1
-    ? formatCurrentGoalSummary(goals[0]!, { runtimeSnapshot, handoffs })
-    : formatCurrentGoalChoiceList(goals, { runtimeSnapshot, handoffs }));
+    ? formatCurrentGoalSummary(goals[0]!, {
+      runtimeSnapshot,
+      handoffs,
+      detail: diagnostic ? "diagnostic" : "default",
+    })
+    : formatCurrentGoalChoiceList(goals, {
+      runtimeSnapshot,
+      handoffs,
+      detail: diagnostic ? "diagnostic" : "default",
+    }));
   return 0;
 }
 
@@ -250,11 +271,15 @@ function printLatestTaskRecord(task: Task): void {
   }
 }
 
-function formatCurrentValue(value: unknown): string {
-  if (typeof value !== "number") return String(value);
-  if (!Number.isFinite(value)) return String(value);
-  if (Number.isInteger(value)) return String(value);
-  return Number(value.toPrecision(6)).toString();
+function formatGoalListStatus(status: string): string {
+  return {
+    active: "In progress",
+    waiting: "Waiting",
+    completed: "Completed",
+    cancelled: "Cancelled",
+    archived: "Archived",
+    abandoned: "Stopped",
+  }[status] ?? "Unknown";
 }
 
 export async function cmdGoalShow(stateManager: StateManager, goalId: string): Promise<number> {

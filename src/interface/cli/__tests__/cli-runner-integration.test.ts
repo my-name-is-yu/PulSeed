@@ -351,8 +351,19 @@ describe("goal list reads real StateManager state", () => {
     consoleSpy.mockRestore();
 
     expect(code).toBe(0);
-    expect(output).toContain("direct-goal-1");
-    expect(output).toContain("direct-goal-2");
+    expect(output).toContain("Direct Goal Alpha");
+    expect(output).toContain("Direct Goal Beta");
+    expect(output).not.toContain("direct-goal-1");
+    expect(output).not.toContain("direct-goal-2");
+
+    const detailsSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const detailsCode = await runCLI(tmpDir, "goal", "list", "--details");
+    const detailsOutput = detailsSpy.mock.calls.map((c) => c.join(" ")).join("\n");
+    detailsSpy.mockRestore();
+
+    expect(detailsCode).toBe(0);
+    expect(detailsOutput).toContain("direct-goal-1");
+    expect(detailsOutput).toContain("direct-goal-2");
   });
 
   it("shows empty state message when no goals exist", async () => {

@@ -213,26 +213,29 @@ export async function dispatchCommand(
   }
 
   if (subcommand === "status") {
-    let values: { goal?: string | undefined };
+    let values: { goal?: string | undefined; details?: boolean; diagnostic?: boolean };
     try {
       ({ values } = parseArgs({
         args: argv.slice(1),
         options: {
           goal: { type: "string" },
+          details: { type: "boolean" },
+          diagnostic: { type: "boolean" },
         },
         strict: false,
-      }) as { values: { goal?: string } });
+      }) as { values: { goal?: string; details?: boolean; diagnostic?: boolean } });
     } catch (err) {
       logger.error(formatOperationError("parse status command arguments", err));
       values = {};
     }
 
     const goalId = values.goal;
+    const diagnostic = values.details === true || values.diagnostic === true;
     if (!goalId || typeof goalId !== "string") {
-      return cmdCurrentStatus(stateManager);
+      return cmdCurrentStatus(stateManager, { diagnostic });
     }
 
-    return cmdStatus(stateManager, goalId);
+    return cmdStatus(stateManager, goalId, undefined, { diagnostic });
   }
 
   if (subcommand === "report") {

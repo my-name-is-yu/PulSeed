@@ -170,8 +170,8 @@ describe("CrossPlatformChatSessionManager", () => {
       });
 
       expect(result.success).toBe(true);
-      expect(result.output).toContain("Proposed long-running run:");
-      expect(result.output).toContain("It has not started a daemon run.");
+      expect(result.output).toContain("Proposed long-running work");
+      expect(result.output).toContain("It has not started background work.");
       expect(adapter.execute).not.toHaveBeenCalled();
       const [fileName] = fs.readdirSync(`${baseDir}/run-specs`);
       const stored = JSON.parse(fs.readFileSync(`${baseDir}/run-specs/${fileName}`, "utf8"));
@@ -210,8 +210,8 @@ describe("CrossPlatformChatSessionManager", () => {
       });
 
       expect(result.success).toBe(true);
-      expect(result.output).toContain("Proposed long-running run:");
-      expect(result.output).toContain("It has not started a daemon run.");
+      expect(result.output).toContain("Proposed long-running work");
+      expect(result.output).toContain("It has not started background work.");
       expect(result.output).not.toContain("setup/configuration");
       expect(adapter.execute).not.toHaveBeenCalled();
       expect(fs.readdirSync(`${baseDir}/run-specs`)).toHaveLength(1);
@@ -258,9 +258,11 @@ describe("CrossPlatformChatSessionManager", () => {
       });
 
       expect(draft.success).toBe(true);
-      expect(draft.output).toContain("It has not started a daemon run.");
+      expect(draft.output).toContain("It has not started background work.");
       expect(approved.success).toBe(true);
-      expect(approved.output).toContain("Started daemon-backed DurableLoop goal:");
+      expect(approved.output).toContain("Started background work for:");
+      expect(approved.output).not.toContain("goal-runspec-");
+      expect(approved.output).not.toContain("run:coreloop:");
       expect(daemonClient.startGoal).toHaveBeenCalledOnce();
       expect(adapter.execute).not.toHaveBeenCalled();
 

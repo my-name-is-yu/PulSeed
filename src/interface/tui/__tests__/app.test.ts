@@ -1447,8 +1447,9 @@ describe("daemon-mode chat routing", () => {
     await flush();
 
     expect(stateManager.loadGoal).toHaveBeenCalledWith("goal-anchor");
-    expect(stdout.readOutput()).toContain("Current: Improve daily UX");
-    expect(stdout.readOutput()).toContain("active; loop running");
+    const output = stdout.readOutput();
+    expect(output).toContain("Current: Improve daily UX");
+    expect(output).toContain("In progress; working");
 
     screen.unmount();
   });

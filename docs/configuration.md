@@ -242,7 +242,7 @@ Common scriptable commands:
 | `pulseed run --goal <id> --resident` | Execute DurableLoop with resident policy; iteration count is telemetry, not a lifecycle cap |
 | `pulseed daemon start --iterations-per-cycle <n>` | Start daemon workers in bounded canary mode with `<n>` as the DurableLoop cap |
 | `pulseed daemon start --resident --iterations-per-cycle <n>` | Start daemon workers in resident mode with `<n>` as a telemetry window |
-| `pulseed status --goal <id>` | Inspect goal state |
+| `pulseed status` / `pulseed status --goal <id>` | Inspect the current or selected goal with human-readable defaults; add `--details` for exact IDs and diagnostic fields |
 | `pulseed report --goal <id>` | Read the latest report |
 | `pulseed task list --goal <id>` | Inspect tasks |
 | `pulseed tui` | Start the terminal UI |
