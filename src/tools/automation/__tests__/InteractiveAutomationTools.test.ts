@@ -734,6 +734,57 @@ describe("interactive automation tools", () => {
     }
   });
 
+  it("rejects explicit browser_run_workflow sessions that do not match the current browser scope", async () => {
+    const tmpRuntime = await fs.mkdtemp(path.join(os.tmpdir(), "pulseed-browser-workflow-mismatch-"));
+    try {
+      const store = new BrowserSessionStore(tmpRuntime);
+      await store.recordAuthenticated({
+        sessionId: "sess-workflow-other-scope",
+        providerId: "browser-workflow-mismatch",
+        serviceKey: "other.example.com",
+        workspace: "/tmp",
+        actorKey: "chat-other",
+      });
+      const runBrowserWorkflow = vi.fn();
+      const registry = new InteractiveAutomationRegistry({
+        defaultProviders: { browser: "browser-workflow-mismatch" },
+      });
+      registry.register({
+        id: "browser-workflow-mismatch",
+        family: "browser",
+        capabilities: ["browser_control", "agentic_workflow"],
+        isAvailable: async () => ({ available: true }),
+        describeEnvironment: async () => ({
+          providerId: "browser-workflow-mismatch",
+          family: "browser",
+          capabilities: ["browser_control", "agentic_workflow"],
+          available: true,
+        }),
+        runBrowserWorkflow,
+      });
+      const tool = new BrowserRunWorkflowTool(registry, undefined, { browserSessionStore: store });
+
+      const result = await tool.call(
+        {
+          task: "Resume app",
+          startUrl: "https://app.example.com/home",
+          sessionId: "sess-workflow-other-scope",
+        },
+        makeContext({ conversationSessionId: "chat-workflow-mismatch" }),
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.data).toEqual(expect.objectContaining({
+        status: "browser_session_not_executed",
+        code: "browser_session_scope_mismatch",
+        sessionId: "sess-workflow-other-scope",
+      }));
+      expect(runBrowserWorkflow).not.toHaveBeenCalled();
+    } finally {
+      await fs.rm(tmpRuntime, { recursive: true, force: true });
+    }
+  });
+
   it("uses explicit serviceKey for browser_run_workflow scoped resume without startUrl", async () => {
     const tmpRuntime = await fs.mkdtemp(path.join(os.tmpdir(), "pulseed-browser-workflow-service-key-"));
     try {

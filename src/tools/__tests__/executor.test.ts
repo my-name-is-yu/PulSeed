@@ -561,6 +561,61 @@ describe("ToolExecutor", () => {
         });
       });
 
+      it("does not reuse a consumed one-time PermissionGrant as standing tool authority", async () => {
+        const tool = createMockTool({
+          name: "write-workspace-once-tool",
+          metadata: {
+            name: "write-workspace-once-tool",
+            aliases: [],
+            permissionLevel: "write_local",
+            isReadOnly: false,
+            isDestructive: false,
+            shouldDefer: false,
+            alwaysLoad: false,
+            maxConcurrency: 0,
+            maxOutputChars: 8000,
+            tags: [],
+          } as ITool["metadata"],
+        });
+        const store = await createActiveGrant({
+          duration: { kind: "once" },
+        });
+        const { executor } = createExecutor([tool]);
+        const approvalFn = vi.fn().mockResolvedValue(false);
+        const ctx = createMockContext({
+          approvalFn,
+          callId: "call-once-grant-1",
+          sessionId: "session-1",
+          executionPolicy: createExecutionPolicy({ approvalPolicy: "on_request" }),
+          permissionGrantStore: store,
+        });
+
+        const first = await executor.execute("write-workspace-once-tool", { value: "first" }, ctx);
+        const second = await executor.execute("write-workspace-once-tool", { value: "second" }, {
+          ...ctx,
+          callId: "call-once-grant-2",
+        });
+
+        expect(first.success).toBe(true);
+        expect(second.success).toBe(false);
+        expect(second.execution).toMatchObject({
+          status: "not_executed",
+          reason: "approval_denied",
+        });
+        expect(approvalFn).toHaveBeenCalledOnce();
+        expect(approvalFn).toHaveBeenCalledWith(expect.objectContaining({
+          permissionGrantDecision: expect.objectContaining({
+            status: "expired_grant",
+            matchedGrantId: "grant-1",
+          }),
+        }));
+        expect(tool.call).toHaveBeenCalledOnce();
+        expect(await store.load("grant-1")).toMatchObject({
+          state: "expired",
+          usage_count: 1,
+        });
+      });
+
       it("uses a standing workspace grant across sessions only within the approving origin boundary", async () => {
         const tool = createMockTool({
           name: "standing-write-workspace-tool",

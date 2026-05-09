@@ -4604,6 +4604,157 @@ describe("ChatRunner", () => {
       });
     });
 
+    it("routes paraphrased English and Japanese long-running requests through semantic RunSpec decisions", async () => {
+      const cases = [
+        {
+          text: "Let the optimizer keep improving validation score in the background until it clears 0.98.",
+          cwd: "/repo/bench",
+        },
+        {
+          text: "明日の朝まで評価を回し続けて、しきい値を超えたら止めて",
+          cwd: "/repo/eval",
+        },
+      ];
+
+      for (const item of cases) {
+        const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-runspec-paraphrase-"));
+        const stateManager = new StateManager(baseDir, undefined, { walEnabled: false });
+        const adapter = makeMockAdapter();
+        const llmClient = createMockLLMClient([
+          freeformRouteDecision("run_spec"),
+          runSpecDraftDecision({
+            objective: `Run long-lived work for: ${item.text}`,
+          }),
+        ]);
+        const runner = new ChatRunner(makeDeps({
+          stateManager,
+          adapter,
+          llmClient,
+        }));
+
+        const result = await runner.execute(item.text, item.cwd);
+
+        expect(result.success).toBe(true);
+        expect(result.output).toContain("Proposed long-running run:");
+        expect(adapter.execute).not.toHaveBeenCalled();
+        expect(llmClient.callCount).toBe(2);
+        const [fileName] = fs.readdirSync(path.join(baseDir, "run-specs"));
+        const stored = JSON.parse(fs.readFileSync(path.join(baseDir, "run-specs", fileName), "utf8"));
+        expect(stored.source_text).toBe(item.text);
+        expect(stored.workspace).toMatchObject({ path: item.cwd, source: "context" });
+      }
+    });
+
+    it("lets model-selected assist override keyword-shaped background wording", async () => {
+      const adapter = makeMockAdapter();
+      const llmClient = createMockLLMClient([
+        freeformRouteDecision("assist"),
+        "Background and until wording can still be a read-only explanation request.",
+      ]);
+      const runner = new ChatRunner(makeDeps({
+        adapter,
+        llmClient,
+      }));
+
+      const result = await runner.execute("Why do background runs keep working until done?", "/repo");
+
+      expect(result.success).toBe(true);
+      expect(result.output).toContain("read-only explanation request");
+      expect(adapter.execute).not.toHaveBeenCalled();
+      expect(llmClient.callCount).toBe(2);
+    });
+
+    it("uses the clarify route for ambiguous freeform planning text without entering execution", async () => {
+      const adapter = makeMockAdapter();
+      const llmClient = createMockLLMClient([
+        freeformRouteDecision("clarify", 0.52),
+      ]);
+      const runner = new ChatRunner(makeDeps({
+        adapter,
+        llmClient,
+      }));
+
+      const result = await runner.execute("いい感じに進めておいて", "/repo");
+
+      expect(result.success).toBe(true);
+      expect(result.output).toContain("I need one more detail");
+      expect(adapter.execute).not.toHaveBeenCalled();
+      expect(llmClient.callCount).toBe(1);
+    });
+
+    it("rejects a previous pending RunSpec target when a new freeform operation plan is selected", async () => {
+      const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-runspec-previous-target-"));
+      const stateManager = new StateManager(baseDir, undefined, { walEnabled: false });
+      const adapter = makeMockAdapter();
+      const llmClient = createMockLLMClient([
+        freeformRouteDecision("run_spec"),
+        runSpecDraftDecision({
+          objective: "Keep optimizing the old Kaggle run.",
+        }),
+        runSpecConfirmationDecision("unknown", {
+          clarification: "This is not an approval for the pending RunSpec.",
+        }),
+        runSpecPendingDialogueDecision("new_intent"),
+        freeformRouteDecision("run_spec"),
+        runSpecDraftDecision({
+          profile: "generic",
+          objective: "Run a separate memory benchmark until usage stays below 512 MB.",
+          metric: {
+            name: "memory_usage",
+            direction: "minimize",
+            target: 512,
+            target_rank_percent: null,
+            datasource: "benchmark",
+            confidence: "high",
+          },
+          progress_contract: {
+            kind: "metric_target",
+            dimension: "memory_usage",
+            threshold: 512,
+            semantics: "Memory usage remains below target.",
+            confidence: "high",
+          },
+        }),
+      ]);
+      const runner = new ChatRunner(makeDeps({
+        stateManager,
+        adapter,
+        llmClient,
+      }));
+
+      await runner.execute("Kaggle score 0.98を超えるまで長期で回して", "/repo/kaggle");
+      const result = await runner.execute(
+        "Run a separate memory benchmark in the background until usage is below 512 MB.",
+        "/repo/bench",
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.output).toContain("Proposed long-running run:");
+      expect(adapter.execute).not.toHaveBeenCalled();
+      expect(llmClient.callCount).toBe(6);
+      const runSpecDir = path.join(baseDir, "run-specs");
+      const storedSpecs = fs.readdirSync(runSpecDir)
+        .map((fileName) => JSON.parse(fs.readFileSync(path.join(runSpecDir, fileName), "utf8")));
+      expect(storedSpecs).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          source_text: "Kaggle score 0.98を超えるまで長期で回して",
+          workspace: expect.objectContaining({ path: "/repo/kaggle" }),
+        }),
+        expect.objectContaining({
+          source_text: "Run a separate memory benchmark in the background until usage is below 512 MB.",
+          workspace: expect.objectContaining({ path: "/repo/bench" }),
+        }),
+      ]));
+      const session = await new ChatSessionCatalog(stateManager).loadSession(runner.getSessionId()!);
+      expect(session?.runSpecConfirmation).toMatchObject({
+        state: "pending",
+        spec: expect.objectContaining({
+          source_text: "Run a separate memory benchmark in the background until usage is below 512 MB.",
+          workspace: expect.objectContaining({ path: "/repo/bench" }),
+        }),
+      });
+    });
+
     it("lets typed RunSpec derivation override an over-broad configure route", async () => {
       const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-runspec-configure-override-"));
       const stateManager = new StateManager(baseDir, undefined, { walEnabled: false });
