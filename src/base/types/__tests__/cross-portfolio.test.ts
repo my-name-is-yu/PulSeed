@@ -3,6 +3,7 @@ import {
   CrossGoalAllocationSchema,
   CrossGoalPortfolioConfigSchema,
   GoalPriorityFactorsSchema,
+  MAX_PRIORITY_REBALANCE_INTERVAL_HOURS,
   StrategyTemplateSchema,
   CrossGoalRebalanceTriggerEnum,
   CrossGoalRebalanceResultSchema,
@@ -90,6 +91,26 @@ describe("CrossGoalPortfolioConfigSchema", () => {
   it("rejects max_concurrent_goals=21 (above max 20)", () => {
     const result = CrossGoalPortfolioConfigSchema.safeParse({ max_concurrent_goals: 21 });
     expect(result.success).toBe(false);
+  });
+
+  it("rejects non-finite and over-cap rebalance intervals", () => {
+    expect(CrossGoalPortfolioConfigSchema.safeParse({
+      priority_rebalance_interval_hours: MAX_PRIORITY_REBALANCE_INTERVAL_HOURS,
+    }).success).toBe(true);
+    expect(CrossGoalPortfolioConfigSchema.safeParse({
+      priority_rebalance_interval_hours: 1.5,
+    }).success).toBe(true);
+
+    for (const priority_rebalance_interval_hours of [
+      0,
+      Number.POSITIVE_INFINITY,
+      MAX_PRIORITY_REBALANCE_INTERVAL_HOURS + 1,
+      Number.MAX_SAFE_INTEGER + 1,
+    ]) {
+      expect(CrossGoalPortfolioConfigSchema.safeParse({
+        priority_rebalance_interval_hours,
+      }).success).toBe(false);
+    }
   });
 });
 
