@@ -22,6 +22,13 @@ describe("process PID helpers", () => {
     expect(killSpy).toHaveBeenCalledWith(123, "SIGTERM");
   });
 
+  it("probes safe PID values with signal 0", () => {
+    const killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
+
+    expect(signalProcessPid(123, 0)).toEqual({ status: "sent", pid: 123 });
+    expect(killSpy).toHaveBeenCalledWith(123, 0);
+  });
+
   it("does not signal unsafe PID values", () => {
     const killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
 

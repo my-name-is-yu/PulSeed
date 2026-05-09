@@ -17,7 +17,9 @@ export type ProcessSignalResult =
   | { status: "unsafe_pid" }
   | { status: "missing_process"; pid: number };
 
-export function signalProcessPid(pid: unknown, signal: NodeJS.Signals): ProcessSignalResult {
+export type ProcessSignal = NodeJS.Signals | 0;
+
+export function signalProcessPid(pid: unknown, signal: ProcessSignal): ProcessSignalResult {
   if (!isProcessPidValue(pid)) {
     return { status: "unsafe_pid" };
   }
