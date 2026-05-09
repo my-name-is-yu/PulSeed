@@ -8,26 +8,33 @@ import path from "node:path";
 import { z } from "zod";
 import { getDefaultPulseedWorkspaceRootPath, getPulseedDirPath } from "../utils/paths.js";
 
+const InteractiveAutomationConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  default_desktop_provider: z.string().default("codex_app"),
+  default_browser_provider: z.string().default("manus_browser"),
+  default_research_provider: z.string().default("perplexity_research"),
+  require_approval: z.enum(["always", "write", "destructive"]).default("always"),
+  allowed_apps: z.array(z.string()).default([]),
+  denied_apps: z.array(z.string()).default([
+    "Password Manager",
+    "Banking",
+    "System Settings",
+  ]),
+});
+
 const GlobalConfigSchema = z.object({
   daemon_mode: z.boolean().default(false),
   no_flicker: z.boolean().default(true),
   workspace_root: z.string().min(1).default(getDefaultPulseedWorkspaceRootPath()),
-  interactive_automation: z.object({
-    enabled: z.boolean().default(false),
-    default_desktop_provider: z.string().default("codex_app"),
-    default_browser_provider: z.string().default("manus_browser"),
-    default_research_provider: z.string().default("perplexity_research"),
-    require_approval: z.enum(["always", "write", "destructive"]).default("always"),
-    allowed_apps: z.array(z.string()).default([]),
-    denied_apps: z.array(z.string()).default([
-      "Password Manager",
-      "Banking",
-      "System Settings",
-    ]),
-  }).default({}),
+  interactive_automation: InteractiveAutomationConfigSchema.default({}),
+});
+
+const GlobalConfigPatchSchema = GlobalConfigSchema.partial().extend({
+  interactive_automation: InteractiveAutomationConfigSchema.partial().optional(),
 });
 
 export type GlobalConfig = z.infer<typeof GlobalConfigSchema>;
+export type GlobalConfigPatch = z.infer<typeof GlobalConfigPatchSchema>;
 
 const DEFAULT_CONFIG: GlobalConfig = {
   daemon_mode: false,
@@ -52,11 +59,26 @@ function getConfigPath(): string {
   return path.join(getPulseedDirPath(), "config.json");
 }
 
+function mergeGlobalConfigPatch(base: GlobalConfig, patch: unknown): GlobalConfig {
+  const parsed = GlobalConfigPatchSchema.parse(patch);
+  const { interactive_automation, ...topLevel } = parsed;
+  return GlobalConfigSchema.parse({
+    ...base,
+    ...topLevel,
+    interactive_automation: interactive_automation === undefined
+      ? base.interactive_automation
+      : {
+          ...base.interactive_automation,
+          ...interactive_automation,
+        },
+  });
+}
+
 export async function loadGlobalConfig(): Promise<GlobalConfig> {
   try {
     const raw = await fs.readFile(getConfigPath(), "utf-8");
     const parsed = JSON.parse(raw);
-    return GlobalConfigSchema.parse({ ...DEFAULT_CONFIG, ...parsed });
+    return mergeGlobalConfigPatch(DEFAULT_CONFIG, parsed);
   } catch {
     return { ...DEFAULT_CONFIG };
   }
@@ -66,7 +88,7 @@ export function loadGlobalConfigSync(): GlobalConfig {
   try {
     const raw = fsSync.readFileSync(getConfigPath(), "utf-8");
     const parsed = JSON.parse(raw);
-    return GlobalConfigSchema.parse({ ...DEFAULT_CONFIG, ...parsed });
+    return mergeGlobalConfigPatch(DEFAULT_CONFIG, parsed);
   } catch {
     return { ...DEFAULT_CONFIG };
   }
@@ -74,13 +96,14 @@ export function loadGlobalConfigSync(): GlobalConfig {
 
 export async function saveGlobalConfig(config: GlobalConfig): Promise<void> {
   const configPath = getConfigPath();
+  const validated = GlobalConfigSchema.parse(config);
   await fs.mkdir(path.dirname(configPath), { recursive: true });
-  await fs.writeFile(configPath, JSON.stringify(config, null, 2) + "\n");
+  await fs.writeFile(configPath, JSON.stringify(validated, null, 2) + "\n");
 }
 
-export async function updateGlobalConfig(updates: Partial<GlobalConfig>): Promise<GlobalConfig> {
+export async function updateGlobalConfig(updates: GlobalConfigPatch): Promise<GlobalConfig> {
   const current = await loadGlobalConfig();
-  const updated = GlobalConfigSchema.parse({ ...current, ...updates });
+  const updated = mergeGlobalConfigPatch(current, updates);
   await saveGlobalConfig(updated);
   return updated;
 }
