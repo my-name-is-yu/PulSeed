@@ -5,6 +5,13 @@ import type {
   PermissionWaitCanonicalPlan,
   PermissionWaitPlanStore,
 } from "../runtime/store/permission-wait-plan-store.js";
+import type {
+  CapabilityAuditRecord,
+  CapabilityOperationKind,
+  CapabilityRiskClass,
+  CapabilitySideEffectProfile,
+  CapabilityVerificationRef,
+} from "../runtime/store/capability-verification-schemas.js";
 
 // --- Tool Result ---
 
@@ -202,6 +209,41 @@ export interface ToolDescriptionContext {
   dataSources?: string[];
 }
 
+export interface CapabilityExecutionContext {
+  operationId?: string;
+  providerRef?: string;
+  assetRef?: string;
+  capabilityId?: string;
+  operationKind?: CapabilityOperationKind;
+  toolName?: string;
+  payloadClass?: string;
+  riskClass?: CapabilityRiskClass;
+  sideEffectProfile?: CapabilitySideEffectProfile;
+  userDirected?: boolean;
+  initiatedBy?: string;
+  sourceSurface?: string;
+  readinessSnapshotRefs?: string[];
+  autonomyDecisionRef?: string;
+  approvalRefs?: string[];
+  executionRefs?: string[];
+  userVisibleEffect?: string;
+  sideEffectSummary?: string;
+}
+
+export interface CapabilityExecutionResolutionInput {
+  toolName: string;
+  toolMetadata: ToolMetadata;
+  rawInput: unknown;
+  operationKind: CapabilityOperationKind;
+  payloadClass: string;
+  riskClass: CapabilityRiskClass;
+  sideEffectProfile: CapabilitySideEffectProfile;
+}
+
+export type CapabilityExecutionResolver = (
+  input: CapabilityExecutionResolutionInput
+) => CapabilityExecutionContext | null | Promise<CapabilityExecutionContext | null>;
+
 export interface ToolCallContext {
   /** Current working directory */
   cwd: string;
@@ -242,6 +284,15 @@ export interface ToolCallContext {
     PermissionWaitPlanStore,
     "createWaiting" | "markApproved" | "markDenied" | "markExpired" | "resumeApproved"
   >;
+  /** Durable operation evidence store for capability runtime production executions. */
+  capabilityVerificationStore?: {
+    saveVerification(record: CapabilityVerificationRef): Promise<CapabilityVerificationRef>;
+    saveAudit(record: CapabilityAuditRecord): Promise<CapabilityAuditRecord>;
+  };
+  /** Typed capability operation context supplied by production caller paths. */
+  capabilityExecution?: CapabilityExecutionContext;
+  /** Optional resolver that binds production tool calls to current capability operation contracts. */
+  capabilityExecutionResolver?: CapabilityExecutionResolver;
   /** Optional subagent role for delegated runs. */
   agentRole?: SubagentRole;
   /** Abort signal for cancellation */

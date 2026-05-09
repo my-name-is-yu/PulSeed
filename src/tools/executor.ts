@@ -17,6 +17,7 @@ import {
   permissionResultFromHostDecision,
   type HostToolExecutionDecision,
 } from "./execution-orchestrator.js";
+import { persistCapabilityExecutionRecords } from "./capability-execution-records.js";
 import { assessShellCommand } from "./system/ShellTool/command-policy.js";
 import { resolveWorkspaceCwd } from "./workspace-scope.js";
 import type { PermissionWaitCanonicalPlan } from "../runtime/store/permission-wait-plan-store.js";
@@ -158,6 +159,17 @@ export class ToolExecutor {
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
       logger?.warn("tool.call.failure", { tool: toolName, callId, error });
+      const failure = this.failResult(
+        `Tool ${toolName} failed: ${error}`,
+        Date.now() - startTime,
+        this.executionForFailure(err, context) ?? { status: "executed", reason: "tool_error", message: error },
+      );
+      try {
+        await persistCapabilityExecutionRecords({ tool, rawInput: input, result: failure, context });
+      } catch (persistErr) {
+        const persistError = persistErr instanceof Error ? persistErr.message : String(persistErr);
+        logger?.warn("tool.capability_records.failure", { tool: toolName, callId, error: persistError });
+      }
       throw err;
     }
 
@@ -175,6 +187,13 @@ export class ToolExecutor {
         result.summary = `${result.summary} [truncated: ${originalLength - tool.metadata.maxOutputChars} chars omitted]`;
         result.truncated = { originalChars: originalLength, overflowPath };
       }
+    }
+
+    try {
+      await persistCapabilityExecutionRecords({ tool, rawInput: input, result, context });
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err);
+      logger?.warn("tool.capability_records.failure", { tool: toolName, callId, error });
     }
 
     logger?.debug("tool.call.success", { tool: toolName, callId, durationMs: Date.now() - startTime });

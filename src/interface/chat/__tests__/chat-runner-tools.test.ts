@@ -1,13 +1,17 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import { ChatRunner } from "../chat-runner.js";
 import type { ChatRunnerDeps } from "../chat-runner-contracts.js";
 import type { StateManager } from "../../../base/state/state-manager.js";
 import type { IAdapter } from "../../../orchestrator/execution/adapter-layer.js";
 import type { ILLMClient, LLMMessage, LLMRequestOptions, LLMResponse } from "../../../base/llm/llm-client.js";
 import type { ToolRegistry } from "../../../tools/registry.js";
-import type { ToolExecutor } from "../../../tools/executor.js";
+import { ToolExecutor } from "../../../tools/executor.js";
+import { ToolPermissionManager } from "../../../tools/permission.js";
+import { ConcurrencyController } from "../../../tools/concurrency.js";
 import type { ITool, ToolActivityCategory, ToolResult, ToolCallContext } from "../../../tools/types.js";
 import type { ChatEvent } from "../chat-events.js";
+import { CapabilityVerificationStore } from "../../../runtime/store/capability-verification-store.js";
+import { makeTempDir, cleanupTempDir } from "../../../../tests/helpers/temp-dir.js";
 import { z } from "zod";
 
 // Mock context-provider so tests don't walk the real filesystem
@@ -133,6 +137,14 @@ function makeDeps(overrides: Partial<ChatRunnerDeps> = {}): ChatRunnerDeps {
   };
 }
 
+const runtimeRoots: string[] = [];
+
+afterEach(() => {
+  for (const runtimeRoot of runtimeRoots.splice(0)) {
+    cleanupTempDir(runtimeRoot);
+  }
+});
+
 // ─── Tests ───
 
 describe("ChatRunner — tool status callbacks", () => {
@@ -201,6 +213,109 @@ describe("ChatRunner — tool status callbacks", () => {
       expect(onToolStart).toHaveBeenCalledOnce();
       expect(onToolEnd).toHaveBeenCalledOnce();
       expect(result.output).toBe("Tool executed, here is the result.");
+    });
+
+    it("passes the capability verification store through the production chat tool caller path", async () => {
+      const runtimeRoot = makeTempDir("pulseed-chat-capability-verification-");
+      runtimeRoots.push(runtimeRoot);
+      const capabilityVerificationStore = new CapabilityVerificationStore(runtimeRoot);
+      const saveVerificationSpy = vi.spyOn(capabilityVerificationStore, "saveVerification");
+      const saveAuditSpy = vi.spyOn(capabilityVerificationStore, "saveAudit");
+      const capabilityExecutionResolver = vi.fn().mockResolvedValue({
+        operationId: "workspace_status",
+        providerRef: "runtime:workspace",
+        assetRef: "asset:runtime/workspace-status",
+        capabilityId: "capability:workspace_status",
+        operationKind: "read",
+        toolName: "workspace_status",
+        payloadClass: "workspace_status_payload",
+        riskClass: "low",
+        sideEffectProfile: "read",
+        readinessSnapshotRefs: ["readiness:capability:workspace_status:runtime:workspace:workspace_status"],
+      });
+      const tool = makeMockTool("workspace_status", async () => ({
+        success: true,
+        data: { clean: true },
+        summary: "workspace clean",
+        durationMs: 5,
+      }), "read");
+      const registry = makeMockRegistry(tool);
+      const toolExecutor = new ToolExecutor({
+        registry,
+        permissionManager: new ToolPermissionManager({}),
+        concurrency: new ConcurrencyController(),
+      });
+      const warnings: Array<{ msg: string; meta?: Record<string, unknown> }> = [];
+      const seenContexts: ToolCallContext[] = [];
+      const executorResults: ToolResult[] = [];
+      const dispatchingExecutor = {
+        execute: vi.fn(async (toolName: string, input: unknown, context: ToolCallContext) => {
+          seenContexts.push(context);
+          const result = await toolExecutor.execute(toolName, input, {
+            ...context,
+            logger: {
+              debug: vi.fn(),
+              warn: (msg, meta) => { warnings.push({ msg, meta }); },
+              error: vi.fn(),
+            },
+          });
+          executorResults.push(result);
+          return result;
+        }),
+      } as unknown as ToolExecutor;
+      const deps = makeDeps({
+        llmClient: makeLLMClientWithToolCall("workspace_status", {}),
+        registry,
+        toolExecutor: dispatchingExecutor,
+        capabilityVerificationStore,
+        capabilityExecutionResolver,
+      });
+      const runner = new ChatRunner(deps);
+
+      await runner.execute("Could you inspect the workspace state?", process.cwd());
+
+      expect(dispatchingExecutor.execute).toHaveBeenCalledOnce();
+      expect(seenContexts[0]?.capabilityVerificationStore).toBe(capabilityVerificationStore);
+      expect(executorResults[0]).toMatchObject({ success: true, summary: "workspace clean" });
+      expect(executorResults[0]?.execution?.status).not.toBe("not_executed");
+      expect(warnings).toEqual([]);
+      expect(capabilityExecutionResolver).toHaveBeenCalledWith(expect.objectContaining({
+        toolName: "workspace_status",
+        operationKind: "read",
+        payloadClass: "tool-input:workspace_status",
+        riskClass: "low",
+        sideEffectProfile: "read",
+      }));
+      expect(saveVerificationSpy).toHaveBeenCalledOnce();
+      expect(saveAuditSpy).toHaveBeenCalledOnce();
+      await expect(capabilityVerificationStore.listReadinessEvidenceSummaries()).resolves.toEqual([
+        expect.objectContaining({
+          capability_id: "capability:workspace_status",
+          provider_ref: "runtime:workspace",
+          asset_ref: "asset:runtime/workspace-status",
+          operation_kind: "read",
+          tool_name: "workspace_status",
+          payload_class: "workspace_status_payload",
+          risk_class: "low",
+          side_effect_profile: "read",
+          verification_class: "production_caller_path",
+          evidence_stage: "production_succeeded",
+          result: "passed",
+          readiness_effect: "supports_readiness",
+        }),
+      ]);
+      await expect(capabilityVerificationStore.listAudits()).resolves.toEqual([
+        expect.objectContaining({
+          user_directed: true,
+          initiated_by: "user",
+          source_surface: "chat",
+          capability_refs: ["capability:workspace_status"],
+          provider_refs: ["runtime:workspace"],
+          readiness_snapshot_refs: ["readiness:capability:workspace_status:runtime:workspace:workspace_status"],
+          result: "succeeded",
+          follow_up_policy_effect: "record_only",
+        }),
+      ]);
     });
 
     it("is called before tool.call() executes", async () => {
