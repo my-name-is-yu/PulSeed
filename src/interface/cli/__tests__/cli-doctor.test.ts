@@ -25,6 +25,7 @@ import {
   checkApiKey,
   checkEmbeddingAuth,
   checkStateDirectoryPermissions,
+  checkControlDatabase,
   checkProviderConfigPermissions,
   checkPluginPermissionWarnings,
   checkGoals,
@@ -35,6 +36,7 @@ import {
   checkNativeTaskAgentLoopTools,
   cmdDoctor,
 } from "../commands/doctor.js";
+import { openControlDatabase } from "../../../runtime/store/index.js";
 
 describe("checkNodeVersion", () => {
   it("passes on current Node.js runtime (>= 20)", () => {
@@ -911,6 +913,36 @@ describe("checkNativeTaskAgentLoopTools", () => {
     expect(result.detail).toContain("required");
     expect(result.detail).toContain("recommended");
     expect(result.detail).toContain("profile ready");
+  });
+});
+
+describe("checkControlDatabase", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = makeTempDir("pulseed-doctor-control-db-");
+  });
+
+  afterEach(() => {
+    cleanupTempDir(tmpDir);
+  });
+
+  it("warns before the control database has been initialized", () => {
+    const result = checkControlDatabase(tmpDir);
+
+    expect(result.status).toBe("warn");
+    expect(result.detail).toContain("not initialized");
+  });
+
+  it("passes with the initialized control database schema version", async () => {
+    const database = await openControlDatabase({ baseDir: tmpDir });
+    database.close();
+
+    const result = checkControlDatabase(tmpDir);
+
+    expect(result.status).toBe("pass");
+    expect(result.detail).toContain("schema version 1/1");
+    expect(result.detail).toContain("legacy import record");
   });
 });
 

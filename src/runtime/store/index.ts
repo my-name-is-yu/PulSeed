@@ -17,6 +17,30 @@ export {
 } from "./runtime-journal.js";
 
 export {
+  CONTROL_DB_INITIAL_SCHEMA_SQL,
+  CONTROL_DB_MIGRATIONS,
+  CONTROL_DB_SCHEMA_VERSION,
+  ControlDatabase,
+  controlDbMigrationChecksum,
+  createControlDbMigration,
+  initializeControlDatabase,
+  inspectControlDatabase,
+  openControlDatabase,
+  resolveControlDbPath,
+} from "./control-db/index.js";
+export type {
+  ControlDbInspection,
+  ControlDbMigration,
+  ControlDbMigrationRecord,
+  ControlDbMigrationReport,
+  ControlDbOpenOptions,
+  ControlLegacyImportInput,
+  ControlLegacyImportRecord,
+  ControlLegacyImportStatus,
+  SqliteDatabase,
+} from "./control-db/index.js";
+
+export {
   RuntimeEnvelopeKindSchema,
   RuntimeEnvelopePrioritySchema,
   RuntimeEnvelopeSchema,
