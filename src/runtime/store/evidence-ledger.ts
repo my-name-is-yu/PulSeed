@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
+import { z } from "zod";
 import {
   createRuntimeStorePaths,
   encodeRuntimePathSegment,
@@ -57,6 +58,30 @@ interface RuntimeEvidenceReproducibilityManifest {
     url?: string;
   }>;
 }
+
+const RuntimeEvidenceReproducibilityManifestSchema = z.object({
+  schema_version: z.literal("runtime-reproducibility-manifest-v1"),
+  manifest_id: z.string().min(1),
+  generated_at: z.string().datetime(),
+  updated_at: z.string().datetime(),
+  scope: z.object({
+    goal_id: z.string().min(1).optional(),
+    run_id: z.string().min(1).optional(),
+  }).strict(),
+  finalization_preflight: z.object({
+    manifest_required_before_delivery: z.boolean().default(true),
+    approval_required_before_external_submission: z.boolean().default(true),
+    status: z.enum(["manifest_ready", "manifest_incomplete"]),
+    missing: z.array(z.string().min(1)).default([]),
+  }).strict(),
+  code_state: z.object({
+    commit: z.string().min(1).optional(),
+    dirty: z.boolean().optional(),
+    diff_sha256: z.string().min(1).optional(),
+    source: z.string().min(1).default("provided"),
+  }).strict(),
+  artifacts: z.array(z.unknown()).default([]),
+}).passthrough();
 
 import {
   RuntimeEvidenceEntrySchema,
@@ -581,20 +606,32 @@ async function readReproducibilityManifests(
   for (const fileName of fileNames) {
     if (!fileName.endsWith(".json")) continue;
     if (!reproducibilityManifestFileMayMatchScope(fileName, scope)) continue;
-    try {
-      const parsed = JSON.parse(await fsp.readFile(path.join(paths.reproducibilityManifestsDir, fileName), "utf8")) as Partial<RuntimeEvidenceReproducibilityManifest>;
-      if (parsed.schema_version !== "runtime-reproducibility-manifest-v1") continue;
-      if (scope.goal_id && parsed.scope?.goal_id !== scope.goal_id) continue;
-      if (scope.run_id && parsed.scope?.run_id !== scope.run_id) continue;
-      manifests.push({
-        ...parsed,
-        artifacts: Array.isArray(parsed.artifacts) ? parsed.artifacts.filter(isManifestArtifactRef) : [],
-      } as RuntimeEvidenceReproducibilityManifest);
-    } catch {
-      continue;
-    }
+    const manifest = await readReproducibilityManifestFile(path.join(paths.reproducibilityManifestsDir, fileName));
+    if (!manifest) continue;
+    if (scope.goal_id && manifest.scope.goal_id !== scope.goal_id) continue;
+    if (scope.run_id && manifest.scope.run_id !== scope.run_id) continue;
+    manifests.push(manifest);
   }
   return manifests;
+}
+
+async function readReproducibilityManifestFile(filePath: string): Promise<RuntimeEvidenceReproducibilityManifest | null> {
+  const raw = await fsp.readFile(filePath, "utf8");
+  let parsedJson: unknown;
+  try {
+    parsedJson = JSON.parse(raw) as unknown;
+  } catch (err) {
+    if (err instanceof SyntaxError) return null;
+    throw err;
+  }
+
+  const parsed = RuntimeEvidenceReproducibilityManifestSchema.safeParse(parsedJson);
+  if (!parsed.success) return null;
+  return {
+    schema_version: parsed.data.schema_version,
+    scope: parsed.data.scope,
+    artifacts: parsed.data.artifacts.filter(isManifestArtifactRef),
+  };
 }
 
 function reproducibilityManifestFileMayMatchScope(
