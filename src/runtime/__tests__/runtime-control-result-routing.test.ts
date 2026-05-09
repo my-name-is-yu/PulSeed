@@ -140,7 +140,7 @@ describe("runtime-control restart result routing", () => {
       ]);
       expect(published[1]?.data).toMatchObject({
         goalId: "runtime_control:op-restart-2",
-        message: "PulSeed daemon の再起動を確認しました。",
+        message: "PulSeed daemon restart was verified.",
         reply_target: {
           channel: "plugin_gateway",
           message_id: "msg-1",
@@ -179,7 +179,7 @@ describe("runtime-control restart result routing", () => {
         state: "verified",
         result: {
           ok: true,
-          message: "PulSeed daemon の再起動を確認しました。",
+          message: "PulSeed daemon restart was verified.",
         },
       });
     } finally {

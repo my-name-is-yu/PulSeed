@@ -62,6 +62,7 @@ describe("createDaemonRuntimeControlExecutor", () => {
     })).resolves.toMatchObject({
       ok: true,
       state: "restarting",
+      message: "PulSeed daemon restart request was sent. PulSeed will verify recovery through the watchdog.",
     });
 
     expect(DaemonClient).toHaveBeenCalledWith({
@@ -74,6 +75,24 @@ describe("createDaemonRuntimeControlExecutor", () => {
       operationId: "op-1",
       kind: "restart_daemon",
       reason: "PulSeed を再起動して",
+    });
+  });
+
+  it("uses English public status text for gateway restart requests", async () => {
+    vi.mocked(isDaemonRunning).mockResolvedValue({
+      running: true,
+      port: 41700,
+      authToken: "token-1",
+    });
+
+    const executor = createDaemonRuntimeControlExecutor({ baseDir: "/tmp/pulseed" });
+    await expect(executor(makeOperation("restart_gateway"), {
+      intent: { kind: "restart_gateway", reason: "restart gateway" },
+      cwd: "/repo",
+    })).resolves.toMatchObject({
+      ok: true,
+      state: "restarting",
+      message: "Gateway restart request was sent to the daemon. PulSeed will verify recovery after the daemon restarts.",
     });
   });
 

@@ -8,6 +8,7 @@ import {
   publishRuntimeControlResult,
   type RuntimeControlResultEventPublisher,
 } from "../control/runtime-control-result-routing.js";
+import { runtimeControlRestartVerifiedMessage } from "../control/runtime-control-messages.js";
 import { ProcessShutdownCoordinator, startDaemonStatusHeartbeat } from "./runner-lifecycle.js";
 import { handleCriticalDaemonError, handleDaemonLoopError } from "./runner-errors.js";
 import type { Envelope } from "../types/envelope.js";
@@ -391,10 +392,7 @@ export async function reconcileRuntimeControlOperationsAfterStartup(
       completed_at: now,
       result: {
         ok: true,
-        message:
-          operation.kind === "restart_gateway"
-            ? "gateway の再起動を確認しました。"
-            : "PulSeed daemon の再起動を確認しました。",
+        message: runtimeControlRestartVerifiedMessage(operation.kind),
         daemon_status: state.status,
       },
     });
