@@ -34,6 +34,7 @@ export const RelationshipProfileSourceSchema = z.enum([
   "user_correction",
   "system_migration",
 ]);
+const RelationshipProfilePositiveSafeIntSchema = z.number().int().positive().safe();
 
 export const RelationshipProfileItemSchema = z.object({
   id: z.string().min(1),
@@ -41,7 +42,7 @@ export const RelationshipProfileItemSchema = z.object({
   kind: RelationshipProfileItemKindSchema,
   value: z.string().min(1),
   status: RelationshipProfileItemStatusSchema.default("active"),
-  version: z.number().int().positive(),
+  version: RelationshipProfilePositiveSafeIntSchema,
   confidence: z.number().min(0).max(1).default(0.8),
   sensitivity: RelationshipProfileSensitivitySchema.default("private"),
   allowed_scopes: z.array(RelationshipProfileConsentScopeSchema).min(1).default(["local_planning", "user_facing_review"]),
@@ -62,7 +63,7 @@ export const RelationshipProfileAuditEventSchema = z.object({
   action: z.enum(["created", "superseded", "retracted", "seeded"]),
   item_id: z.string().min(1),
   stable_key: z.string().min(1),
-  version: z.number().int().positive(),
+  version: RelationshipProfilePositiveSafeIntSchema,
   source: RelationshipProfileSourceSchema,
   previous_item_id: z.string().min(1).optional(),
   reason: z.string().min(1).optional(),

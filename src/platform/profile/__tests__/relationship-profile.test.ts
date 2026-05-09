@@ -63,6 +63,28 @@ describe("relationship profile store", () => {
     expect(block).not.toContain("The user prefers Atom.");
   });
 
+  it("rejects persisted profile items with unsafe versions", async () => {
+    const baseDir = makeTempDir();
+    await upsertRelationshipProfileItem(baseDir, {
+      stableKey: "user.preference.editor",
+      kind: "preference",
+      value: "The user prefers VS Code.",
+      source: "cli_update",
+      allowedScopes: ["local_planning"],
+      now: "2026-05-02T00:00:00.000Z",
+    });
+
+    const persisted = JSON.parse(fs.readFileSync(relationshipProfilePath(baseDir), "utf-8")) as {
+      items: Array<{ version: number }>;
+    };
+    persisted.items[0]!.version = Number.MAX_SAFE_INTEGER + 1;
+    fs.writeFileSync(relationshipProfilePath(baseDir), JSON.stringify(persisted, null, 2), "utf-8");
+
+    const store = await loadRelationshipProfile(baseDir);
+    expect(store.items).toEqual([]);
+    expect(store.audit_events).toEqual([]);
+  });
+
   it("tracks active to superseded to retracted lifecycle and keeps stale items out of scoped context", async () => {
     const baseDir = makeTempDir();
 
