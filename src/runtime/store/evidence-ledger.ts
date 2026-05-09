@@ -631,7 +631,17 @@ function safeManifestScopeId(value: string): string {
 function isManifestArtifactRef(value: unknown): value is RuntimeEvidenceReproducibilityManifest["artifacts"][number] {
   return typeof value === "object"
     && value !== null
-    && typeof (value as { label?: unknown }).label === "string";
+    && typeof (value as { label?: unknown }).label === "string"
+    && ((value as { path?: unknown }).path === undefined || typeof (value as { path?: unknown }).path === "string")
+    && (
+      (value as { state_relative_path?: unknown }).state_relative_path === undefined
+      || typeof (value as { state_relative_path?: unknown }).state_relative_path === "string"
+    )
+    && ((value as { url?: unknown }).url === undefined || typeof (value as { url?: unknown }).url === "string")
+    && (
+      (value as { size_bytes?: unknown }).size_bytes === undefined
+      || isSafeNonnegativeInteger((value as { size_bytes?: unknown }).size_bytes)
+    );
 }
 
 async function readSummaryIndex(
@@ -784,10 +794,20 @@ function isCurrentEvidenceSummaryShape(summary: RuntimeEvidenceSummary): boolean
     && typeof summary.artifact_retention === "object"
     && summary.artifact_retention !== null
     && isCurrentArtifactRetentionShape(summary.artifact_retention)
+    && isCurrentSummaryEntry(summary.latest_strategy)
+    && isCurrentSummaryEntry(summary.best_evidence)
+    && Array.isArray(summary.recent_entries)
+    && summary.recent_entries.every((entry) => isCurrentSummaryEntry(entry))
+    && Array.isArray(summary.recent_failed_attempts)
+    && summary.recent_failed_attempts.every((entry) => isCurrentSummaryEntry(entry))
     && Array.isArray(summary.evaluator_summary.budgets)
     && Array.isArray(summary.evaluator_summary.calibration)
     && typeof summary.candidate_selection_summary === "object"
     && summary.candidate_selection_summary !== null;
+}
+
+function isCurrentSummaryEntry(value: unknown): value is RuntimeEvidenceEntry | null {
+  return value === null || RuntimeEvidenceEntrySchema.safeParse(value).success;
 }
 
 function isCurrentArtifactRetentionShape(
@@ -795,13 +815,27 @@ function isCurrentArtifactRetentionShape(
 ): boolean {
   const cleanupPlan = artifactRetention.cleanup_plan;
   if (
-    typeof cleanupPlan !== "object"
+    !isSafeNonnegativeInteger(artifactRetention.total_artifacts)
+    || !isSafeNonnegativeInteger(artifactRetention.total_size_bytes)
+    || !isSafeNonnegativeInteger(artifactRetention.unknown_size_count)
+    || !isSafeNonnegativeInteger(artifactRetention.protected_count)
+    || typeof artifactRetention.by_retention_class !== "object"
+    || artifactRetention.by_retention_class === null
+    || Object.values(artifactRetention.by_retention_class).some((value) => !isSafeNonnegativeInteger(value))
+    || typeof cleanupPlan !== "object"
     || cleanupPlan === null
     || !Array.isArray(cleanupPlan.actions)
   ) {
     return false;
   }
-  return cleanupPlan.actions.every((action) => typeof action.retention_basis === "string");
+  return cleanupPlan.actions.every((action) =>
+    typeof action.retention_basis === "string"
+    && (action.size_bytes === undefined || isSafeNonnegativeInteger(action.size_bytes))
+  );
+}
+
+function isSafeNonnegativeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 }
 
 function updateSummaryFromAppend(

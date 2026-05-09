@@ -8,6 +8,7 @@ import {
   RuntimeReproducibilityManifestSchema,
   RuntimeReproducibilityManifestStore,
 } from "../store/reproducibility-manifest.js";
+import { RuntimeEvidenceArtifactRefSchema } from "../store/evidence-types.js";
 
 describe("RuntimeReproducibilityManifestStore", () => {
   let runtimeRoot: string;
@@ -179,6 +180,74 @@ describe("RuntimeReproducibilityManifestStore", () => {
         score: Number.POSITIVE_INFINITY,
       }],
     }).success).toBe(false);
+  });
+
+  it("rejects unsafe artifact byte counts in evidence and manifest schemas", () => {
+    const unsafeSizeBytes = Number.MAX_SAFE_INTEGER + 1;
+    const baseManifest = {
+      schema_version: "runtime-reproducibility-manifest-v1",
+      manifest_id: "manifest-artifact-size",
+      generated_at: "2026-04-30T00:00:00.000Z",
+      updated_at: "2026-04-30T00:00:00.000Z",
+      scope: { run_id: "run:coreloop:manifest-artifact-size" },
+      finalization_preflight: {
+        manifest_required_before_delivery: true,
+        approval_required_before_external_submission: true,
+        status: "manifest_ready",
+        missing: [],
+      },
+      code_state: { source: "test-fixture" },
+      artifacts: [{
+        label: "final-report",
+        state_relative_path: "runs/final/report.md",
+        kind: "report",
+        size_bytes: 42,
+      }],
+    };
+
+    expect(RuntimeEvidenceArtifactRefSchema.safeParse({
+      label: "unsafe-artifact",
+      state_relative_path: "runs/unsafe.bin",
+      kind: "other",
+      size_bytes: unsafeSizeBytes,
+    }).success).toBe(false);
+    expect(RuntimeReproducibilityManifestSchema.safeParse(baseManifest).success).toBe(true);
+    expect(RuntimeReproducibilityManifestSchema.safeParse({
+      ...baseManifest,
+      artifacts: [{
+        ...baseManifest.artifacts[0],
+        size_bytes: unsafeSizeBytes,
+      }],
+    }).success).toBe(false);
+  });
+
+  it("rejects persisted manifests with unsafe artifact byte counts on load", async () => {
+    const store = new RuntimeReproducibilityManifestStore(runtimeRoot);
+    const manifestId = "manifest-unsafe-artifact-size";
+    const manifestPath = store.pathFor(manifestId);
+    await fsp.mkdir(path.dirname(manifestPath), { recursive: true });
+    await fsp.writeFile(manifestPath, `${JSON.stringify({
+      schema_version: "runtime-reproducibility-manifest-v1",
+      manifest_id: manifestId,
+      generated_at: "2026-04-30T00:00:00.000Z",
+      updated_at: "2026-04-30T00:00:00.000Z",
+      scope: { run_id: "run:coreloop:manifest-unsafe-size" },
+      finalization_preflight: {
+        manifest_required_before_delivery: true,
+        approval_required_before_external_submission: true,
+        status: "manifest_ready",
+        missing: [],
+      },
+      code_state: { source: "test-fixture" },
+      artifacts: [{
+        label: "unsafe-artifact",
+        state_relative_path: "runs/unsafe.bin",
+        kind: "other",
+        size_bytes: Number.MAX_SAFE_INTEGER + 1,
+      }],
+    })}\n`, "utf8");
+
+    await expect(store.load(manifestId)).rejects.toThrow();
   });
 
   it("updates the same manifest with linked external evaluator feedback", async () => {

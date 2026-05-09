@@ -55,6 +55,8 @@ export type RuntimeEvidenceEntryKind = z.infer<typeof RuntimeEvidenceEntryKindSc
 export const RuntimeEvidenceScalarValueSchema = z.union([z.string(), z.number().finite(), z.boolean(), z.null()]);
 export type RuntimeEvidenceScalarValue = z.infer<typeof RuntimeEvidenceScalarValueSchema>;
 
+const RuntimeEvidenceSafeNonnegativeIntSchema = z.number().int().nonnegative().safe();
+
 export const RuntimeEvidenceArtifactRefSchema = z.object({
   label: z.string().min(1),
   path: z.string().min(1).optional(),
@@ -62,7 +64,7 @@ export const RuntimeEvidenceArtifactRefSchema = z.object({
   url: z.string().url().optional(),
   kind: z.enum(["log", "metrics", "report", "diff", "url", "other"]).default("other"),
   retention_class: RuntimeArtifactRetentionClassSchema.optional(),
-  size_bytes: z.number().int().nonnegative().optional(),
+  size_bytes: RuntimeEvidenceSafeNonnegativeIntSchema.optional(),
   source: z.string().min(1).optional(),
   dependency_refs: z.array(z.string().min(1)).optional(),
 }).strict();
