@@ -1,9 +1,20 @@
+import { execFileSync } from 'node:child_process';
 import * as net from 'node:net';
+import { parseProcessPid } from '../base/utils/process-pid.js';
 
 export const DEFAULT_PORT = 41700;
 export const MAX_PORT_ATTEMPTS = 10;
+const MIN_PORT = 1;
+const MAX_PORT = 65_535;
+
+function assertValidPort(port: number, label = 'Port'): void {
+  if (!Number.isInteger(port) || port < MIN_PORT || port > MAX_PORT) {
+    throw new RangeError(`${label} must be an integer between ${MIN_PORT} and ${MAX_PORT}`);
+  }
+}
 
 export async function isPortAvailable(port: number): Promise<boolean> {
+  assertValidPort(port);
   return new Promise((resolve) => {
     const server = net.createServer();
     server.once('error', () => resolve(false));
@@ -15,23 +26,26 @@ export async function isPortAvailable(port: number): Promise<boolean> {
 }
 
 export async function findAvailablePort(startPort: number = DEFAULT_PORT): Promise<number> {
-  for (let port = startPort; port < startPort + MAX_PORT_ATTEMPTS; port++) {
+  assertValidPort(startPort, 'startPort');
+  const endPort = Math.min(MAX_PORT, startPort + MAX_PORT_ATTEMPTS - 1);
+  for (let port = startPort; port <= endPort; port++) {
     if (await isPortAvailable(port)) return port;
   }
   throw new Error(
-    `No available port found in range ${startPort}-${startPort + MAX_PORT_ATTEMPTS - 1}`
+    `No available port found in range ${startPort}-${endPort}`
   );
 }
 
 export async function getProcessOnPort(port: number): Promise<string | null> {
+  assertValidPort(port);
   try {
-    const { execSync } = await import('node:child_process');
     // lsof works on macOS and Linux
-    const output = execSync(`lsof -i :${port} -sTCP:LISTEN -t`, { encoding: 'utf-8' }).trim();
+    const output = execFileSync('lsof', ['-i', `:${port}`, '-sTCP:LISTEN', '-t'], { encoding: 'utf-8' }).trim();
     if (!output) return null;
-    const pid = output.split('\n')[0];
+    const pid = parseProcessPid(output.split('\n')[0] ?? '');
+    if (pid === null) return null;
     // Get process name from PID
-    const name = execSync(`ps -p ${pid} -o comm=`, { encoding: 'utf-8' }).trim();
+    const name = execFileSync('ps', ['-p', String(pid), '-o', 'comm='], { encoding: 'utf-8' }).trim();
     return name || null;
   } catch {
     return null;
