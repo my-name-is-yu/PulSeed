@@ -1,13 +1,17 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { CuriosityEngine } from "../curiosity-engine.js";
 import type { CuriosityEngineDeps } from "../curiosity-engine.js";
-import type { Goal, Dimension } from "../../../base/types/goal.js";
-import type { CuriosityProposal, CuriosityTrigger } from "../../../base/types/curiosity.js";
-import { CuriosityConfigSchema } from "../../../base/types/curiosity.js";
+import type { Dimension } from "../../../base/types/goal.js";
+import {
+  CuriosityConfigSchema,
+  CuriosityProposalSchema,
+} from "../../../base/types/curiosity.js";
 import type { StallState } from "../../../base/types/stall.js";
 import { makeGoal } from "../../../../tests/helpers/fixtures.js";
 
 // ─── Helper Factories ───
+
+const MAX_CURIOSITY_INTERVAL_HOURS = 365 * 24;
 
 function createDimension(overrides: Partial<Dimension> = {}): Dimension {
   const now = new Date().toISOString();
@@ -60,6 +64,30 @@ const DEFAULT_CONFIG = {
   resource_budget: DEFAULT_RESOURCE_BUDGET,
   unexpected_observation_threshold: 2.0,
 };
+
+const MINIMAL_PROPOSAL = {
+  id: "proposal-1",
+  trigger: {
+    type: "periodic_exploration",
+    detected_at: "2026-05-10T00:00:00.000Z",
+    source_goal_id: null,
+    details: "Periodic review",
+    severity: 0.5,
+  },
+  proposed_goal: {
+    description: "Inspect quality boundary behavior",
+    rationale: "Regression coverage for curiosity persisted state",
+    suggested_dimensions: [],
+    scope_domain: "quality",
+    detection_method: "periodic_review",
+  },
+  status: "pending",
+  created_at: "2026-05-10T00:00:00.000Z",
+  expires_at: "2026-05-10T01:00:00.000Z",
+  reviewed_at: null,
+  rejection_cooldown_until: null,
+  goal_id: null,
+} as const;
 
 function createMockDeps(overrides: Partial<CuriosityEngineDeps> = {}): CuriosityEngineDeps {
   const stateManager = {
@@ -136,6 +164,99 @@ describe("CuriosityEngine — constructor", () => {
     });
 
     expect(parsed.resource_budget).toEqual(DEFAULT_RESOURCE_BUDGET);
+  });
+
+  it("rejects non-finite, fractional, and unsafe config counters", () => {
+    expect(CuriosityConfigSchema.parse({
+      max_active_proposals: 0,
+      unproductive_loop_limit: 1,
+    })).toMatchObject({
+      max_active_proposals: 0,
+      unproductive_loop_limit: 1,
+    });
+
+    for (const maxActiveProposals of [-1, 1.5, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
+      expect(() => CuriosityConfigSchema.parse({
+        max_active_proposals: maxActiveProposals,
+      })).toThrow();
+    }
+
+    for (const unproductiveLoopLimit of [0, -1, 1.5, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
+      expect(() => CuriosityConfigSchema.parse({
+        unproductive_loop_limit: unproductiveLoopLimit,
+      })).toThrow();
+    }
+  });
+
+  it("bounds config hour intervals to finite positive values", () => {
+    for (const field of [
+      "proposal_expiry_hours",
+      "rejection_cooldown_hours",
+      "periodic_exploration_hours",
+    ] as const) {
+      expect(CuriosityConfigSchema.parse({
+        [field]: 1,
+      })[field]).toBe(1);
+      expect(CuriosityConfigSchema.parse({
+        [field]: MAX_CURIOSITY_INTERVAL_HOURS,
+      })[field]).toBe(MAX_CURIOSITY_INTERVAL_HOURS);
+
+      for (const invalidValue of [0, -1, Infinity, MAX_CURIOSITY_INTERVAL_HOURS + 1]) {
+        expect(() => CuriosityConfigSchema.parse({
+          [field]: invalidValue,
+        })).toThrow();
+      }
+    }
+  });
+
+  it("bounds resource budget percentages and unexpected observation threshold", () => {
+    expect(CuriosityConfigSchema.parse({
+      resource_budget: {
+        active_user_goals_max_percent: 0,
+        waiting_user_goals_max_percent: 100,
+      },
+      unexpected_observation_threshold: 0,
+    })).toMatchObject({
+      resource_budget: {
+        active_user_goals_max_percent: 0,
+        waiting_user_goals_max_percent: 100,
+      },
+      unexpected_observation_threshold: 0,
+    });
+
+    for (const field of [
+      "active_user_goals_max_percent",
+      "waiting_user_goals_max_percent",
+    ] as const) {
+      for (const invalidValue of [-1, 101, Infinity]) {
+        expect(() => CuriosityConfigSchema.parse({
+          resource_budget: {
+            [field]: invalidValue,
+          },
+        })).toThrow();
+      }
+    }
+
+    for (const invalidThreshold of [-1, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
+      expect(() => CuriosityConfigSchema.parse({
+        unexpected_observation_threshold: invalidThreshold,
+      })).toThrow();
+    }
+  });
+
+  it("defaults proposal loop_count and rejects invalid persisted loop counts", () => {
+    expect(CuriosityProposalSchema.parse(MINIMAL_PROPOSAL).loop_count).toBe(0);
+    expect(CuriosityProposalSchema.parse({
+      ...MINIMAL_PROPOSAL,
+      loop_count: Number.MAX_SAFE_INTEGER,
+    }).loop_count).toBe(Number.MAX_SAFE_INTEGER);
+
+    for (const loopCount of [-1, 1.5, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
+      expect(() => CuriosityProposalSchema.parse({
+        ...MINIMAL_PROPOSAL,
+        loop_count: loopCount,
+      })).toThrow();
+    }
   });
 
   it("creates when partial config omits resource_budget", async () => {

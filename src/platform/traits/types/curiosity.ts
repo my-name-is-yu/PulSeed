@@ -1,5 +1,19 @@
 import { z } from "zod";
 
+const MAX_CURIOSITY_INTERVAL_HOURS = 365 * 24;
+const CuriosityUnitIntervalSchema = z.number().finite().min(0).max(1);
+const CuriosityNonnegativeSafeIntSchema = z.number().finite().int().nonnegative().safe();
+const CuriosityPositiveSafeIntSchema = z.number().finite().int().positive().safe();
+const CuriosityPositiveFiniteHoursSchema = z.number()
+  .finite()
+  .positive()
+  .max(MAX_CURIOSITY_INTERVAL_HOURS);
+const CuriosityPercentSchema = z.number().finite().min(0).max(100);
+const CuriosityNonnegativeFiniteNumberSchema = z.number()
+  .finite()
+  .nonnegative()
+  .max(Number.MAX_SAFE_INTEGER);
+
 // --- CuriosityTriggerType ---
 
 export const CuriosityTriggerTypeEnum = z.enum([
@@ -18,7 +32,7 @@ export const CuriosityTriggerSchema = z.object({
   detected_at: z.string(),
   source_goal_id: z.string().nullable(),
   details: z.string(),
-  severity: z.number().min(0).max(1),
+  severity: CuriosityUnitIntervalSchema,
 });
 export type CuriosityTrigger = z.infer<typeof CuriosityTriggerSchema>;
 
@@ -40,7 +54,7 @@ export const CuriosityTransferEvidenceSchema = z.object({
   source_dimension: z.string(),
   target_goal_id: z.string().nullable(),
   target_dimension: z.string(),
-  similarity: z.number().min(0).max(1),
+  similarity: CuriosityUnitIntervalSchema,
   evidence_refs: z.array(z.string()).default([]),
 });
 export type CuriosityTransferEvidence = z.infer<typeof CuriosityTransferEvidenceSchema>;
@@ -76,7 +90,7 @@ export const CuriosityProposalSchema = z.object({
   expires_at: z.string(),
   reviewed_at: z.string().nullable(),
   rejection_cooldown_until: z.string().nullable(),
-  loop_count: z.number().default(0),
+  loop_count: CuriosityNonnegativeSafeIntSchema.default(0),
   goal_id: z.string().nullable(),
 });
 export type CuriosityProposal = z.infer<typeof CuriosityProposalSchema>;
@@ -85,16 +99,16 @@ export type CuriosityProposal = z.infer<typeof CuriosityProposalSchema>;
 
 export const CuriosityConfigSchema = z.object({
   enabled: z.boolean().default(true),
-  max_active_proposals: z.number().default(3),
-  proposal_expiry_hours: z.number().default(12),
-  rejection_cooldown_hours: z.number().default(168),
-  unproductive_loop_limit: z.number().default(3),
-  periodic_exploration_hours: z.number().default(72),
+  max_active_proposals: CuriosityNonnegativeSafeIntSchema.default(3),
+  proposal_expiry_hours: CuriosityPositiveFiniteHoursSchema.default(12),
+  rejection_cooldown_hours: CuriosityPositiveFiniteHoursSchema.default(168),
+  unproductive_loop_limit: CuriosityPositiveSafeIntSchema.default(3),
+  periodic_exploration_hours: CuriosityPositiveFiniteHoursSchema.default(72),
   resource_budget: z.object({
-    active_user_goals_max_percent: z.number().default(20),
-    waiting_user_goals_max_percent: z.number().default(50),
+    active_user_goals_max_percent: CuriosityPercentSchema.default(20),
+    waiting_user_goals_max_percent: CuriosityPercentSchema.default(50),
   }).default({}),
-  unexpected_observation_threshold: z.number().default(2.0),
+  unexpected_observation_threshold: CuriosityNonnegativeFiniteNumberSchema.default(2.0),
 });
 export type CuriosityConfig = z.infer<typeof CuriosityConfigSchema>;
 
