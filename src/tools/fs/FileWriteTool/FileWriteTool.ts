@@ -10,7 +10,7 @@ export const FileWriteInputSchema = z.object({
   path: z.string().min(1),
   content: z.string(),
   createDirs: z.boolean().default(true),
-});
+}).strict();
 export type FileWriteInput = z.infer<typeof FileWriteInputSchema>;
 
 export interface FileWriteOutput {
