@@ -80,7 +80,7 @@ describe("PermissionGrantStore", () => {
     };
   }
 
-  it("round-trips proposed grants through the production runtime root layout", async () => {
+  it("round-trips proposed grants through the control database", async () => {
     await store.ensureReady();
     const saved = await store.createProposed(makeGrant());
 
@@ -100,7 +100,8 @@ describe("PermissionGrantStore", () => {
       },
     });
     expect(await store.load("grant-1")).toEqual(saved);
-    expect(fs.existsSync(path.join(tmpDir, "permission-grants", "grant-1.json"))).toBe(true);
+    expect(fs.existsSync(path.join(tmpDir, "state", "pulseed-control.sqlite"))).toBe(true);
+    expect(fs.existsSync(path.join(tmpDir, "permission-grants", "grant-1.json"))).toBe(false);
   });
 
   it("rejects unsafe numeric scalars before storing grants", async () => {
@@ -135,12 +136,24 @@ describe("PermissionGrantStore", () => {
     }))).rejects.toThrow();
   });
 
-  it("skips persisted grants with unsafe numeric scalars during load and active listing", async () => {
-    await store.createActive(makeGrant());
+  it("does not read legacy grant JSON on the normal store path", async () => {
+    fs.mkdirSync(path.join(tmpDir, "permission-grants"), { recursive: true });
     const grantPath = path.join(tmpDir, "permission-grants", "grant-1.json");
-    const persisted = JSON.parse(fs.readFileSync(grantPath, "utf-8")) as Record<string, unknown>;
-    persisted.usage_count = Number.MAX_SAFE_INTEGER + 1;
-    fs.writeFileSync(grantPath, JSON.stringify(persisted, null, 2), "utf-8");
+    fs.writeFileSync(
+      grantPath,
+      JSON.stringify(PermissionGrantRecordSchema.parse({
+        schema_version: "permission-grant-v1",
+        ...makeGrant(),
+        state: "active",
+        state_version: 0,
+        state_epoch: now,
+        created_at: now,
+        updated_at: now,
+        activated_at: now,
+        usage_count: 0,
+      }), null, 2),
+      "utf-8",
+    );
 
     const reloaded = new PermissionGrantStore(tmpDir, { now: () => now });
 

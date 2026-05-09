@@ -10,6 +10,7 @@ export interface PublishRuntimeControlResultOptions {
   publisher?: RuntimeControlResultEventPublisher;
   outboxStore?: OutboxStore;
   runtimeRoot?: string | null;
+  controlBaseDir?: string;
   now?: () => number;
 }
 
@@ -46,7 +47,10 @@ export async function publishRuntimeControlResult(
     return;
   }
 
-  const outboxStore = options.outboxStore ?? new OutboxStore(options.runtimeRoot ?? undefined);
+  const outboxStore = options.outboxStore ?? new OutboxStore(
+    options.runtimeRoot ?? undefined,
+    { controlBaseDir: options.controlBaseDir },
+  );
   const createdAt = options.now?.() ?? Date.now();
   await outboxStore.append({
     event_type: "runtime_control_result",

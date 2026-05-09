@@ -65,12 +65,19 @@ describe("runtime store basics", () => {
 
   it("creates the runtime directory layout", async () => {
     await ensureRuntimeStorePaths(paths);
-    expect(fs.existsSync(paths.leaderDir)).toBe(true);
-    expect(fs.existsSync(paths.approvalsPendingDir)).toBe(true);
-    expect(fs.existsSync(paths.permissionGrantsDir)).toBe(true);
-    expect(fs.existsSync(paths.outboxDir)).toBe(true);
-    expect(fs.existsSync(paths.backgroundRunsDir)).toBe(true);
-    expect(fs.existsSync(paths.healthDir)).toBe(true);
+    expect(fs.existsSync(paths.inboxDir)).toBe(true);
+    expect(fs.existsSync(paths.completedByIdempotencyDir)).toBe(true);
+    expect(fs.existsSync(paths.authHandoffsDir)).toBe(true);
+    expect(fs.existsSync(paths.browserSessionsDir)).toBe(true);
+    expect(fs.existsSync(paths.evidenceLedgerGoalsDir)).toBe(true);
+    expect(fs.existsSync(paths.proactiveInterventionsDir)).toBe(true);
+    expect(fs.existsSync(paths.postmortemsDir)).toBe(true);
+    expect(fs.existsSync(paths.leaderDir)).toBe(false);
+    expect(fs.existsSync(paths.approvalsPendingDir)).toBe(false);
+    expect(fs.existsSync(paths.permissionGrantsDir)).toBe(false);
+    expect(fs.existsSync(paths.outboxDir)).toBe(false);
+    expect(fs.existsSync(paths.backgroundRunsDir)).toBe(false);
+    expect(fs.existsSync(paths.healthDir)).toBe(false);
   });
 
   it("persists background runs with pinned reply targets across ledger reloads", async () => {

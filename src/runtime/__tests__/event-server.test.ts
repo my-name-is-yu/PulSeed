@@ -942,7 +942,7 @@ describe("snapshot and outbox replay", () => {
       failureMessage: "login required",
     });
     const now = new Date().toISOString();
-    await new GuardrailStore(runtimeRoot).saveBreaker({
+    await new GuardrailStore(runtimeRoot, { controlBaseDir: tmpDir }).saveBreaker({
       key: "browser-auth:mail.google.com",
       provider_id: "browser-auth",
       service_key: "mail.google.com",
@@ -960,6 +960,7 @@ describe("snapshot and outbox replay", () => {
       port: 0,
       eventsDir: path.join(tmpDir, "events"),
       runtimeRoot,
+      stateManager: { getBaseDir: () => tmpDir } as StateManager,
     });
 
     await server.start();
@@ -1025,6 +1026,8 @@ describe("snapshot and outbox replay", () => {
         }),
       ]),
     }));
+    expect(fs.existsSync(path.join(runtimeRoot, "state", "pulseed-control.sqlite"))).toBe(false);
+    expect(fs.existsSync(path.join(tmpDir, "state", "pulseed-control.sqlite"))).toBe(true);
   });
 
   it("includes open operator handoffs in daemon snapshot", async () => {

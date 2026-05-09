@@ -7,7 +7,7 @@ export interface ControlDbMigration {
   checksum: string;
 }
 
-export const CONTROL_DB_SCHEMA_VERSION = 2;
+export const CONTROL_DB_SCHEMA_VERSION = 3;
 
 export const CONTROL_DB_INITIAL_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS control_schema_migrations (
@@ -116,6 +116,140 @@ CREATE INDEX IF NOT EXISTS runtime_health_records_checked_idx
   ON runtime_health_records(checked_at, record_kind);
 `.trim();
 
+export const CONTROL_DB_RUNTIME_STATE_OWNERSHIP_SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS approval_records (
+  approval_id TEXT PRIMARY KEY,
+  state TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  resolved_at INTEGER,
+  expires_at INTEGER NOT NULL,
+  record_json TEXT NOT NULL CHECK (json_valid(record_json))
+);
+
+CREATE INDEX IF NOT EXISTS approval_records_state_idx
+  ON approval_records(state, expires_at, approval_id);
+
+CREATE INDEX IF NOT EXISTS approval_records_resolved_idx
+  ON approval_records(resolved_at, approval_id);
+
+CREATE TABLE IF NOT EXISTS permission_grants (
+  grant_id TEXT PRIMARY KEY,
+  state TEXT NOT NULL,
+  scope_kind TEXT NOT NULL,
+  subject_kind TEXT NOT NULL,
+  subject_id TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  state_epoch INTEGER NOT NULL,
+  expires_at INTEGER,
+  review_due_at INTEGER,
+  record_json TEXT NOT NULL CHECK (json_valid(record_json))
+);
+
+CREATE INDEX IF NOT EXISTS permission_grants_state_idx
+  ON permission_grants(state, updated_at, grant_id);
+
+CREATE INDEX IF NOT EXISTS permission_grants_scope_idx
+  ON permission_grants(scope_kind, updated_at, grant_id);
+
+CREATE INDEX IF NOT EXISTS permission_grants_subject_idx
+  ON permission_grants(subject_kind, subject_id, updated_at, grant_id);
+
+CREATE INDEX IF NOT EXISTS permission_grants_expiry_idx
+  ON permission_grants(expires_at, grant_id);
+
+CREATE INDEX IF NOT EXISTS permission_grants_review_idx
+  ON permission_grants(review_due_at, grant_id);
+
+CREATE TABLE IF NOT EXISTS permission_wait_plans (
+  wait_plan_id TEXT PRIMARY KEY,
+  approval_id TEXT NOT NULL,
+  goal_id TEXT,
+  state TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  expires_at INTEGER,
+  resolved_at INTEGER,
+  resumed_at INTEGER,
+  record_json TEXT NOT NULL CHECK (json_valid(record_json))
+);
+
+CREATE INDEX IF NOT EXISTS permission_wait_plans_state_idx
+  ON permission_wait_plans(state, updated_at, wait_plan_id);
+
+CREATE INDEX IF NOT EXISTS permission_wait_plans_approval_idx
+  ON permission_wait_plans(approval_id, updated_at, wait_plan_id);
+
+CREATE INDEX IF NOT EXISTS permission_wait_plans_goal_idx
+  ON permission_wait_plans(goal_id, updated_at, wait_plan_id);
+
+CREATE TABLE IF NOT EXISTS outbox_records (
+  seq INTEGER PRIMARY KEY CHECK (seq > 0),
+  created_at INTEGER NOT NULL,
+  kind TEXT NOT NULL,
+  record_json TEXT NOT NULL CHECK (json_valid(record_json))
+);
+
+CREATE INDEX IF NOT EXISTS outbox_records_created_idx
+  ON outbox_records(created_at, seq);
+
+CREATE TABLE IF NOT EXISTS runtime_safe_pauses (
+  goal_id TEXT PRIMARY KEY,
+  state TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  record_json TEXT NOT NULL CHECK (json_valid(record_json))
+);
+
+CREATE INDEX IF NOT EXISTS runtime_safe_pauses_state_idx
+  ON runtime_safe_pauses(state, updated_at, goal_id);
+
+CREATE TABLE IF NOT EXISTS guardrail_breakers (
+  breaker_key TEXT PRIMARY KEY,
+  state TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  record_json TEXT NOT NULL CHECK (json_valid(record_json))
+);
+
+CREATE INDEX IF NOT EXISTS guardrail_breakers_state_idx
+  ON guardrail_breakers(state, updated_at, breaker_key);
+
+CREATE TABLE IF NOT EXISTS guardrail_backpressure_snapshots (
+  snapshot_id TEXT PRIMARY KEY CHECK (snapshot_id = 'current'),
+  updated_at TEXT NOT NULL,
+  snapshot_json TEXT NOT NULL CHECK (json_valid(snapshot_json))
+);
+
+CREATE TABLE IF NOT EXISTS leader_locks (
+  lock_id TEXT PRIMARY KEY CHECK (lock_id = 'runtime_leader'),
+  owner_token TEXT NOT NULL,
+  pid INTEGER NOT NULL,
+  acquired_at INTEGER NOT NULL,
+  last_renewed_at INTEGER NOT NULL,
+  lease_until INTEGER NOT NULL,
+  record_json TEXT NOT NULL CHECK (json_valid(record_json))
+);
+
+CREATE INDEX IF NOT EXISTS leader_locks_lease_idx
+  ON leader_locks(lease_until, lock_id);
+
+CREATE TABLE IF NOT EXISTS goal_leases (
+  goal_id TEXT PRIMARY KEY,
+  owner_token TEXT NOT NULL,
+  worker_id TEXT NOT NULL,
+  attempt_id TEXT NOT NULL,
+  acquired_at INTEGER NOT NULL,
+  last_renewed_at INTEGER NOT NULL,
+  lease_until INTEGER NOT NULL,
+  record_json TEXT NOT NULL CHECK (json_valid(record_json))
+);
+
+CREATE INDEX IF NOT EXISTS goal_leases_lease_idx
+  ON goal_leases(lease_until, goal_id);
+
+CREATE INDEX IF NOT EXISTS goal_leases_worker_idx
+  ON goal_leases(worker_id, lease_until, goal_id);
+`.trim();
+
 export function controlDbMigrationChecksum(sql: string): string {
   return createHash("sha256").update(sql.trim()).digest("hex");
 }
@@ -143,5 +277,10 @@ export const CONTROL_DB_MIGRATIONS: readonly ControlDbMigration[] = [
     2,
     "runtime-control-plane-stores",
     CONTROL_DB_RUNTIME_CONTROL_SCHEMA_SQL
+  ),
+  createControlDbMigration(
+    3,
+    "runtime-state-ownership-stores",
+    CONTROL_DB_RUNTIME_STATE_OWNERSHIP_SCHEMA_SQL
   ),
 ];

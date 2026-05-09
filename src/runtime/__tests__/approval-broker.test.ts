@@ -1,4 +1,3 @@
-import * as fs from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApprovalBroker } from "../approval-broker.js";
 import { ApprovalStore } from "../store/approval-store.js";
@@ -7,15 +6,19 @@ import { createRuntimeStorePaths } from "../store/runtime-paths.js";
 import type { ApprovalRecord } from "../store/runtime-schemas.js";
 import { makeTempDir, cleanupTempDir } from "../../../tests/helpers/temp-dir.js";
 
-async function waitForFile(filePath: string, timeoutMs = 1000): Promise<void> {
+async function waitForPendingApproval(
+  store: ApprovalStore,
+  approvalId: string,
+  timeoutMs = 1000
+): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (fs.existsSync(filePath)) {
+    if (await store.loadPending(approvalId)) {
       return;
     }
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
-  throw new Error(`Timed out waiting for file: ${filePath}`);
+  throw new Error(`Timed out waiting for pending approval: ${approvalId}`);
 }
 
 async function waitForBroadcast(
@@ -80,7 +83,6 @@ describe("ApprovalBroker", () => {
   it("persists pending approvals and resolves live requests", async () => {
     tmpDir = makeTempDir();
     const store = new ApprovalStore(tmpDir);
-    const paths = createRuntimeStorePaths(tmpDir);
     const broadcast = vi.fn();
     const broker = new ApprovalBroker({
       store,
@@ -94,9 +96,7 @@ describe("ApprovalBroker", () => {
       action: "deploy",
     });
 
-    await waitForFile(
-      paths.approvalPendingPath("approval-live")
-    );
+    await waitForPendingApproval(store, "approval-live");
     const pending = await store.loadPending("approval-live");
     expect(pending?.state).toBe("pending");
     await waitForBroadcast(broadcast, "approval_required", "approval-live");
@@ -106,10 +106,10 @@ describe("ApprovalBroker", () => {
 
     expect(await store.loadPending("approval-live")).toBeNull();
 
-    const resolvedPath = paths.approvalResolvedPath("approval-live");
-    const resolved = JSON.parse(fs.readFileSync(resolvedPath, "utf-8")) as ApprovalRecord;
-    expect(resolved.state).toBe("approved");
-    expect(resolved.response_channel).toBe("tui");
+    expect(await store.loadResolved("approval-live")).toMatchObject({
+      state: "approved",
+      response_channel: "tui",
+    });
     expect(broadcast).toHaveBeenCalledWith(
       "approval_required",
       expect.objectContaining({ requestId: "approval-live", restored: false })
@@ -207,7 +207,6 @@ describe("ApprovalBroker", () => {
   it("restores pending approvals from durable storage", async () => {
     tmpDir = makeTempDir();
     const store = new ApprovalStore(tmpDir);
-    const paths = createRuntimeStorePaths(tmpDir);
     const expiresAt = Date.now() + 60_000;
     await store.savePending({
       approval_id: "approval-restored",
@@ -245,10 +244,10 @@ describe("ApprovalBroker", () => {
 
     await expect(broker.resolveApproval("approval-restored", false, "http")).resolves.toBe(true);
 
-    const resolvedPath = paths.approvalResolvedPath("approval-restored");
-    const resolved = JSON.parse(fs.readFileSync(resolvedPath, "utf-8")) as ApprovalRecord;
-    expect(resolved.state).toBe("denied");
-    expect(resolved.response_channel).toBe("http");
+    await expect(store.loadResolved("approval-restored")).resolves.toMatchObject({
+      state: "denied",
+      response_channel: "http",
+    });
   });
 
   it("does not restore invalid permission task expiry metadata into approval events", async () => {
@@ -473,7 +472,7 @@ describe("ApprovalBroker", () => {
     }, {
       origin,
     });
-    await waitForFile(createRuntimeStorePaths(tmpDir).approvalPendingPath("approval-bound"));
+    await waitForPendingApproval(store, "approval-bound");
 
     await expect(broker.resolveConversationalApproval("approval-bound", true, {
       ...origin,
@@ -512,7 +511,7 @@ describe("ApprovalBroker", () => {
         conversation_id: "thread-1",
       },
     });
-    await waitForFile(createRuntimeStorePaths(tmpDir).approvalPendingPath("approval-incomplete-origin"));
+    await waitForPendingApproval(store, "approval-incomplete-origin");
 
     await expect(broker.resolveConversationalApproval("approval-incomplete-origin", true, {
       channel: "slack",
@@ -557,7 +556,7 @@ describe("ApprovalBroker", () => {
     }, {
       origin,
     });
-    await waitForFile(createRuntimeStorePaths(tmpDir).approvalPendingPath("approval-origin-only"));
+    await waitForPendingApproval(store, "approval-origin-only");
 
     await expect(broker.resolveApproval("approval-origin-only", true, "http")).resolves.toBe(false);
     expect(await store.loadPending("approval-origin-only")).toMatchObject({ state: "pending", origin });
@@ -665,7 +664,7 @@ describe("ApprovalBroker", () => {
       origin,
       deliverConversationalApproval: async () => ({ delivered: true }),
     });
-    await waitForFile(paths.approvalPendingPath("approval-linked"));
+    await waitForPendingApproval(approvalStore, "approval-linked");
 
     await expect(broker.resolveConversationalApproval("approval-linked", true, origin)).resolves.toBe(true);
     await expect(request).resolves.toBe(true);

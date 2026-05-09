@@ -1,11 +1,14 @@
-import * as fsp from "node:fs/promises";
-import * as path from "node:path";
 import { z } from "zod";
-import { RuntimeJournal } from "./runtime-journal.js";
 import {
   createRuntimeStorePaths,
   type RuntimeStorePaths,
 } from "./runtime-paths.js";
+import {
+  openRuntimeControlDatabase,
+  type ControlDatabase,
+  type RuntimeControlDbStoreOptions,
+  type SqliteDatabase,
+} from "./control-db/index.js";
 
 export const PermissionGrantStateSchema = z.enum([
   "proposed",
@@ -301,33 +304,39 @@ export function isPermissionGrantCurrentlyActive(record: PermissionGrantRecord, 
 
 export class PermissionGrantStore {
   private readonly paths: RuntimeStorePaths;
-  private readonly journal: RuntimeJournal;
+  private readonly dbOptions: RuntimeControlDbStoreOptions;
+  private dbPromise: Promise<ControlDatabase> | null = null;
   private readonly now: () => number;
 
-  constructor(runtimeRootOrPaths?: string | RuntimeStorePaths, options: { now?: () => number } = {}) {
+  constructor(
+    runtimeRootOrPaths?: string | RuntimeStorePaths,
+    options: RuntimeControlDbStoreOptions & { now?: () => number } = {}
+  ) {
     this.paths =
       typeof runtimeRootOrPaths === "string"
         ? createRuntimeStorePaths(runtimeRootOrPaths)
         : runtimeRootOrPaths ?? createRuntimeStorePaths();
-    this.journal = new RuntimeJournal(this.paths);
+    this.dbOptions = options;
     this.now = options.now ?? (() => Date.now());
   }
 
   async ensureReady(): Promise<void> {
-    await this.journal.ensureReady();
+    await this.database();
   }
 
   async load(grantId: string): Promise<PermissionGrantRecord | null> {
-    return this.journal.load(this.paths.permissionGrantPath(grantId), PermissionGrantRecordRuntimeSchema);
+    const db = await this.database();
+    return db.read((sqlite) => readPermissionGrant(sqlite, grantId));
   }
 
   async list(): Promise<PermissionGrantRecord[]> {
-    return this.journal.list(this.paths.permissionGrantsDir, PermissionGrantRecordRuntimeSchema);
+    const db = await this.database();
+    return db.read((sqlite) => listPermissionGrants(sqlite));
   }
 
   async listByState(state: PermissionGrantState): Promise<PermissionGrantRecord[]> {
-    const grants = await this.list();
-    return grants.filter((grant) => grant.state === state);
+    const db = await this.database();
+    return db.read((sqlite) => listPermissionGrants(sqlite, "state = ?", [state]));
   }
 
   async listActive(now = this.now()): Promise<PermissionGrantRecord[]> {
@@ -481,9 +490,14 @@ export class PermissionGrantStore {
     return { superseded, replacement };
   }
 
+  async importLegacyRecord(record: PermissionGrantRecord): Promise<PermissionGrantRecord> {
+    return this.save(record);
+  }
+
   private async create(input: PermissionGrantCreateInput, state: "proposed" | "active"): Promise<PermissionGrantRecord> {
-    return this.withGrantLock(input.grant_id, async () => {
-      const existing = await this.load(input.grant_id);
+    const db = await this.database();
+    return db.transaction((sqlite) => {
+      const existing = readPermissionGrant(sqlite, input.grant_id);
       if (existing) throw new Error(`Permission grant already exists: ${input.grant_id}`);
       const now = input.created_at ?? this.now();
       const record = PermissionGrantRecordSchema.parse({
@@ -508,7 +522,8 @@ export class PermissionGrantStore {
         usage_count: 0,
         audit_refs: unique(input.audit_refs ?? []),
       });
-      return this.save(record);
+      upsertPermissionGrant(sqlite, record);
+      return record;
     });
   }
 
@@ -517,55 +532,29 @@ export class PermissionGrantStore {
     updater: (grant: PermissionGrantRecord) => PermissionGrantRecord,
     options: { requireActive?: boolean } = {},
   ): Promise<PermissionGrantRecord | null> {
-    return this.withGrantLock(grantId, async () => {
-      const current = await this.load(grantId);
+    const db = await this.database();
+    return db.transaction((sqlite) => {
+      const current = readPermissionGrant(sqlite, grantId);
       if (!current) return null;
       if (options.requireActive && !isPermissionGrantCurrentlyActive(current, this.now())) return null;
       const updated = PermissionGrantRecordSchema.parse(updater(current));
-      return this.save(updated);
+      upsertPermissionGrant(sqlite, updated);
+      return updated;
     });
   }
 
   private async save(record: PermissionGrantRecord): Promise<PermissionGrantRecord> {
-    return this.journal.save(this.paths.permissionGrantPath(record.grant_id), PermissionGrantRecordRuntimeSchema, record);
+    const parsed = PermissionGrantRecordSchema.parse(record);
+    const db = await this.database();
+    db.transaction((sqlite) => {
+      upsertPermissionGrant(sqlite, parsed);
+    });
+    return parsed;
   }
 
-  private lockPath(grantId: string): string {
-    return path.join(this.paths.permissionGrantsDir, "locks", `${encodeURIComponent(grantId)}.lock`);
-  }
-
-  private async withGrantLock<T>(grantId: string, fn: () => Promise<T>): Promise<T> {
-    const lockPath = this.lockPath(grantId);
-    const staleAfterMs = 30_000;
-
-    for (;;) {
-      try {
-        await fsp.mkdir(path.dirname(lockPath), { recursive: true });
-        const handle = await fsp.open(lockPath, "wx");
-        await handle.writeFile(JSON.stringify({ pid: process.pid, acquired_at: this.now() }));
-        try {
-          return await fn();
-        } finally {
-          await handle.close();
-          await fsp.unlink(lockPath).catch(() => undefined);
-        }
-      } catch (err) {
-        if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
-
-        try {
-          const stat = await fsp.stat(lockPath);
-          if (this.now() - stat.mtimeMs > staleAfterMs) {
-            await fsp.unlink(lockPath);
-            continue;
-          }
-        } catch (staleErr) {
-          if ((staleErr as NodeJS.ErrnoException).code === "ENOENT") continue;
-          throw staleErr;
-        }
-
-        await sleep(10);
-      }
-    }
+  private async database(): Promise<ControlDatabase> {
+    this.dbPromise ??= openRuntimeControlDatabase(this.paths, this.dbOptions);
+    return this.dbPromise;
   }
 }
 
@@ -577,6 +566,79 @@ function appendUnique<T extends string>(current: T[], additions: T[]): T[] {
   return unique([...current, ...additions]);
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+interface PermissionGrantRow {
+  record_json: string;
+}
+
+function parsePermissionGrantJson(recordJson: string): PermissionGrantRecord {
+  return PermissionGrantRecordRuntimeSchema.parse(JSON.parse(recordJson) as unknown);
+}
+
+function readPermissionGrant(sqlite: SqliteDatabase, grantId: string): PermissionGrantRecord | null {
+  const row = sqlite.prepare(`
+    SELECT record_json
+    FROM permission_grants
+    WHERE grant_id = ?
+  `).get(grantId) as PermissionGrantRow | undefined;
+  return row ? parsePermissionGrantJson(row.record_json) : null;
+}
+
+function listPermissionGrants(sqlite: SqliteDatabase, whereSql = "1 = 1", params: unknown[] = []): PermissionGrantRecord[] {
+  const rows = sqlite.prepare(`
+    SELECT record_json
+    FROM permission_grants
+    WHERE ${whereSql}
+    ORDER BY updated_at ASC, grant_id ASC
+  `).all(...params) as PermissionGrantRow[];
+  return rows.map((row) => parsePermissionGrantJson(row.record_json));
+}
+
+function permissionGrantExpiresAt(record: PermissionGrantRecord): number | null {
+  return record.duration.kind === "expires_at" ? record.duration.expires_at : null;
+}
+
+function permissionGrantReviewDueAt(record: PermissionGrantRecord): number | null {
+  return record.review.kind === "periodic" ? record.review.due_at : null;
+}
+
+function upsertPermissionGrant(sqlite: SqliteDatabase, record: PermissionGrantRecord): void {
+  sqlite.prepare(`
+    INSERT INTO permission_grants (
+      grant_id,
+      state,
+      scope_kind,
+      subject_kind,
+      subject_id,
+      created_at,
+      updated_at,
+      state_epoch,
+      expires_at,
+      review_due_at,
+      record_json
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, json(?))
+    ON CONFLICT(grant_id) DO UPDATE SET
+      state = excluded.state,
+      scope_kind = excluded.scope_kind,
+      subject_kind = excluded.subject_kind,
+      subject_id = excluded.subject_id,
+      created_at = excluded.created_at,
+      updated_at = excluded.updated_at,
+      state_epoch = excluded.state_epoch,
+      expires_at = excluded.expires_at,
+      review_due_at = excluded.review_due_at,
+      record_json = excluded.record_json
+  `).run(
+    record.grant_id,
+    record.state,
+    record.scope.kind,
+    record.subject.kind,
+    record.subject.id,
+    record.created_at,
+    record.updated_at,
+    record.state_epoch,
+    permissionGrantExpiresAt(record),
+    permissionGrantReviewDueAt(record),
+    JSON.stringify(record),
+  );
 }

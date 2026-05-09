@@ -174,10 +174,10 @@ function extractWaitResume(payload: unknown): WaitResumeActivation | undefined {
 }
 
 export async function handleGoalStopCommand(
-  context: Pick<
-    DaemonRunnerCommandContext,
-    "currentGoalIds" | "refreshOperationalState" | "saveDaemonState" | "supervisor" | "abortSleep" | "broadcastGoalUpdated" | "state" | "runtimeRoot"
-  >,
+	context: Pick<
+		DaemonRunnerCommandContext,
+		"currentGoalIds" | "refreshOperationalState" | "saveDaemonState" | "supervisor" | "abortSleep" | "broadcastGoalUpdated" | "state" | "runtimeRoot" | "stateManager"
+	>,
   goalId: string,
 ): Promise<void> {
   context.currentGoalIds.splice(0, context.currentGoalIds.length, ...context.currentGoalIds.filter((id) => id !== goalId));
@@ -199,8 +199,10 @@ export async function handleGoalStopCommand(
   await context.broadcastGoalUpdated(goalId, "stopped");
 }
 
-function safePauseStore(context: Pick<DaemonRunnerCommandContext, "runtimeRoot">): RuntimeSafePauseStore | null {
-  return context.runtimeRoot ? new RuntimeSafePauseStore(context.runtimeRoot) : null;
+function safePauseStore(context: Pick<DaemonRunnerCommandContext, "runtimeRoot" | "stateManager">): RuntimeSafePauseStore | null {
+  return context.runtimeRoot
+    ? new RuntimeSafePauseStore(context.runtimeRoot, { controlBaseDir: context.stateManager.getBaseDir() })
+    : null;
 }
 
 function activeWorkerCount(context: Pick<DaemonRunnerCommandContext, "supervisor">, goalId: string): number {
@@ -273,10 +275,10 @@ function buildSafePauseResumeReason(checkpoint: RuntimeSafePauseCheckpoint | und
 }
 
 export async function checkpointPauseIfRequested(
-  context: Pick<
-    DaemonRunnerCommandContext,
-    "currentGoalIds" | "refreshOperationalState" | "saveDaemonState" | "supervisor" | "abortSleep" | "broadcastGoalUpdated" | "state" | "runtimeRoot" | "journalQueue" | "logger"
-  >,
+	context: Pick<
+		DaemonRunnerCommandContext,
+		"currentGoalIds" | "refreshOperationalState" | "saveDaemonState" | "supervisor" | "abortSleep" | "broadcastGoalUpdated" | "state" | "runtimeRoot" | "journalQueue" | "logger" | "stateManager"
+	>,
   goalId: string,
 ): Promise<boolean> {
   const current = context.state.safe_pause_goals?.[goalId];
@@ -335,10 +337,10 @@ export async function checkpointPauseIfRequested(
 }
 
 export async function handleGoalPauseCommand(
-  context: Pick<
-    DaemonRunnerCommandContext,
-    "currentGoalIds" | "refreshOperationalState" | "saveDaemonState" | "supervisor" | "abortSleep" | "broadcastGoalUpdated" | "state" | "runtimeRoot" | "journalQueue" | "logger"
-  >,
+	context: Pick<
+		DaemonRunnerCommandContext,
+		"currentGoalIds" | "refreshOperationalState" | "saveDaemonState" | "supervisor" | "abortSleep" | "broadcastGoalUpdated" | "state" | "runtimeRoot" | "journalQueue" | "logger" | "stateManager"
+	>,
   goalId: string,
   reason = "safe pause requested",
 ): Promise<void> {
@@ -372,10 +374,10 @@ export async function handleGoalPauseCommand(
 }
 
 export async function handleGoalResumeCommand(
-  context: Pick<
-    DaemonRunnerCommandContext,
-    "currentGoalIds" | "refreshOperationalState" | "saveDaemonState" | "supervisor" | "abortSleep" | "broadcastGoalUpdated" | "state" | "runtimeRoot"
-  >,
+	context: Pick<
+		DaemonRunnerCommandContext,
+		"currentGoalIds" | "refreshOperationalState" | "saveDaemonState" | "supervisor" | "abortSleep" | "broadcastGoalUpdated" | "state" | "runtimeRoot" | "stateManager"
+	>,
   goalId: string,
 ): Promise<void> {
   const store = safePauseStore(context);
@@ -429,13 +431,16 @@ export async function handleGoalResumeCommand(
 export async function restoreSafePauseStateFromStore(
   context: Pick<
     DaemonRunnerCommandContext,
-    "currentGoalIds" | "refreshOperationalState" | "saveDaemonState" | "state" | "runtimeRoot" | "journalQueue"
+    "currentGoalIds" | "refreshOperationalState" | "saveDaemonState" | "state" | "runtimeRoot" | "journalQueue" | "stateManager"
   >,
 ): Promise<RuntimeSafePauseRecord[]> {
   if (!context.runtimeRoot) {
     return [];
   }
-  const records = await new RuntimeSafePauseStore(context.runtimeRoot).list();
+  const records = await new RuntimeSafePauseStore(
+    context.runtimeRoot,
+    { controlBaseDir: context.stateManager.getBaseDir() },
+  ).list();
   if (records.length === 0) {
     return [];
   }

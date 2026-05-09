@@ -75,6 +75,10 @@ export class EventServerSnapshotReader {
     return this.configuredRuntimeRoot ?? path.join(path.dirname(this.eventsDir), "runtime");
   }
 
+  private controlDbOptions(): { controlBaseDir: string } | undefined {
+    return this.stateManager ? { controlBaseDir: this.stateManager.getBaseDir() } : undefined;
+  }
+
   private async readPendingAuthSessions(): Promise<Array<Record<string, unknown>>> {
     const store = new BrowserSessionStore(this.runtimeRoot());
     const sessions = await store.listPendingAuth();
@@ -90,7 +94,7 @@ export class EventServerSnapshotReader {
   }
 
   private async readGuardrailSnapshot(): Promise<Record<string, unknown> | null> {
-    const store = new GuardrailStore(this.runtimeRoot());
+    const store = new GuardrailStore(this.runtimeRoot(), this.controlDbOptions());
     const [breakers, backpressure] = await Promise.all([
       store.listBreakers(),
       store.loadBackpressureSnapshot(),
@@ -115,11 +119,12 @@ export class EventServerSnapshotReader {
 
   private async readRuntimeAutomationSnapshot(): Promise<RuntimeAutomationSnapshot> {
     const runtimeRoot = this.runtimeRoot();
+    const controlDbOptions = this.controlDbOptions();
     const [authHandoffs, browserSessions, breakers, backpressure] = await Promise.all([
       new RuntimeAuthHandoffStore(runtimeRoot).list(),
       new BrowserSessionStore(runtimeRoot).list(),
-      new GuardrailStore(runtimeRoot).listBreakers(),
-      new GuardrailStore(runtimeRoot).loadBackpressureSnapshot(),
+      new GuardrailStore(runtimeRoot, controlDbOptions).listBreakers(),
+      new GuardrailStore(runtimeRoot, controlDbOptions).loadBackpressureSnapshot(),
     ]);
     const openBreakers = breakers.filter((breaker) => breaker.state === "open");
     const pausedBreakers = breakers.filter((breaker) => breaker.state === "paused");

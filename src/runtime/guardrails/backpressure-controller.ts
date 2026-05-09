@@ -77,7 +77,7 @@ export class BackpressureController {
   }
 
   async release(runKey: string): Promise<void> {
-    await this.store.updateBackpressureSnapshot(async (snapshot) => ({
+    await this.store.updateBackpressureSnapshot((snapshot) => ({
       snapshot: {
         updated_at: this.now().toISOString(),
         active: this.pruneExpired(snapshot.active).filter((entry) => entry.run_key !== runKey),

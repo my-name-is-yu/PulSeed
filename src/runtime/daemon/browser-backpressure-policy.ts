@@ -21,6 +21,7 @@ export interface BrowserBackpressurePolicyResult {
 
 export async function applyBrowserBackpressurePolicy(input: {
   runtimeRoot: string | null;
+  controlBaseDir?: string;
   goalIds: string[];
   snapshot: GoalCycleScheduleSnapshotEntry[];
   providerId?: string;
@@ -32,7 +33,7 @@ export async function applyBrowserBackpressurePolicy(input: {
   if (!input.runtimeRoot || input.goalIds.length === 0) {
     return { activeGoalIds: input.goalIds, blocked: [] };
   }
-  const store = new GuardrailStore(input.runtimeRoot);
+  const store = new GuardrailStore(input.runtimeRoot, { controlBaseDir: input.controlBaseDir });
   const backpressure = await store.loadBackpressureSnapshot();
   const now = input.now ?? (() => new Date());
   const leaseTtlMs = parseBackpressurePositiveSafeInt(

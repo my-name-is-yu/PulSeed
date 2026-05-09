@@ -1,6 +1,3 @@
-import * as fsp from "node:fs/promises";
-import * as path from "node:path";
-import { RuntimeJournal } from "./runtime-journal.js";
 import {
   ApprovalRecordSchema,
   ApprovalStateSchema,
@@ -11,6 +8,12 @@ import {
   createRuntimeStorePaths,
   type RuntimeStorePaths,
 } from "./runtime-paths.js";
+import {
+  openRuntimeControlDatabase,
+  type ControlDatabase,
+  type RuntimeControlDbStoreOptions,
+  type SqliteDatabase,
+} from "./control-db/index.js";
 
 export interface ApprovalResolutionInput {
   state: Exclude<ApprovalState, "pending">;
@@ -21,102 +24,70 @@ export interface ApprovalResolutionInput {
 
 export class ApprovalStore {
   private readonly paths: RuntimeStorePaths;
-  private readonly journal: RuntimeJournal;
+  private readonly dbOptions: RuntimeControlDbStoreOptions;
+  private dbPromise: Promise<ControlDatabase> | null = null;
 
-  constructor(runtimeRootOrPaths?: string | RuntimeStorePaths) {
+  constructor(
+    runtimeRootOrPaths?: string | RuntimeStorePaths,
+    options: RuntimeControlDbStoreOptions = {}
+  ) {
     this.paths =
       typeof runtimeRootOrPaths === "string"
         ? createRuntimeStorePaths(runtimeRootOrPaths)
         : runtimeRootOrPaths ?? createRuntimeStorePaths();
-    this.journal = new RuntimeJournal(this.paths);
-  }
-
-  private async sleep(ms: number): Promise<void> {
-    await new Promise((resolve) => setTimeout(resolve, ms));
-  }
-
-  private lockPath(approvalId: string): string {
-    return path.join(this.paths.approvalsDir, "locks", `${approvalId}.lock`);
-  }
-
-  private async withApprovalLock<T>(approvalId: string, fn: () => Promise<T>): Promise<T> {
-    const lockPath = this.lockPath(approvalId);
-    const staleAfterMs = 30_000;
-
-    for (;;) {
-      try {
-        await fsp.mkdir(path.dirname(lockPath), { recursive: true });
-        const handle = await fsp.open(lockPath, "wx");
-        await handle.writeFile(JSON.stringify({ pid: process.pid, acquired_at: Date.now() }));
-        try {
-          return await fn();
-        } finally {
-          await handle.close();
-          await fsp.unlink(lockPath).catch(() => undefined);
-        }
-      } catch (err) {
-        if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
-
-        try {
-          const stat = await fsp.stat(lockPath);
-          if (Date.now() - stat.mtimeMs > staleAfterMs) {
-            await fsp.unlink(lockPath);
-            continue;
-          }
-        } catch (staleErr) {
-          if ((staleErr as NodeJS.ErrnoException).code === "ENOENT") continue;
-          throw staleErr;
-        }
-
-        await this.sleep(10);
-      }
-    }
+    this.dbOptions = options;
   }
 
   async ensureReady(): Promise<void> {
-    await this.journal.ensureReady();
+    await this.database();
   }
 
   async load(approvalId: string): Promise<ApprovalRecord | null> {
-    return (await this.loadResolved(approvalId)) ?? (await this.loadPending(approvalId));
+    const db = await this.database();
+    return db.read((sqlite) => readApproval(sqlite, approvalId));
   }
 
   async loadPending(approvalId: string): Promise<ApprovalRecord | null> {
-    return this.journal.load(this.paths.approvalPendingPath(approvalId), ApprovalRecordSchema);
+    const record = await this.load(approvalId);
+    return record?.state === "pending" ? record : null;
   }
 
   async loadResolved(approvalId: string): Promise<ApprovalRecord | null> {
-    return this.journal.load(this.paths.approvalResolvedPath(approvalId), ApprovalRecordSchema);
+    const record = await this.load(approvalId);
+    return record && record.state !== "pending" ? record : null;
   }
 
   async listPending(): Promise<ApprovalRecord[]> {
-    const pending = await this.journal.list(this.paths.approvalsPendingDir, ApprovalRecordSchema);
-    const filtered: ApprovalRecord[] = [];
-    for (const record of pending) {
-      const resolved = await this.loadResolved(record.approval_id);
-      if (resolved === null) filtered.push(record);
-    }
-    return filtered;
+    const db = await this.database();
+    return db.read((sqlite) => listApprovals(sqlite, "state = 'pending'"));
   }
 
   async listResolved(): Promise<ApprovalRecord[]> {
-    return this.journal.list(this.paths.approvalsResolvedDir, ApprovalRecordSchema);
+    const db = await this.database();
+    return db.read((sqlite) => listApprovals(sqlite, "state <> 'pending'"));
   }
 
   async removePending(approvalId: string): Promise<void> {
-    await this.journal.remove(this.paths.approvalPendingPath(approvalId));
+    const db = await this.database();
+    db.transaction((sqlite) => {
+      sqlite.prepare("DELETE FROM approval_records WHERE approval_id = ? AND state = 'pending'").run(approvalId);
+    });
   }
 
   async removeResolved(approvalId: string): Promise<void> {
-    await this.journal.remove(this.paths.approvalResolvedPath(approvalId));
+    const db = await this.database();
+    db.transaction((sqlite) => {
+      sqlite.prepare("DELETE FROM approval_records WHERE approval_id = ? AND state <> 'pending'").run(approvalId);
+    });
   }
 
   async savePending(record: ApprovalRecord): Promise<ApprovalRecord> {
     const parsed = ApprovalRecordSchema.parse({ ...record, state: "pending" });
-    return this.withApprovalLock(parsed.approval_id, async () => {
-      const resolved = await this.loadResolved(parsed.approval_id);
-      if (resolved !== null) return resolved;
-      await this.journal.save(this.paths.approvalPendingPath(parsed.approval_id), ApprovalRecordSchema, parsed);
+    const db = await this.database();
+    return db.transaction((sqlite) => {
+      const existing = readApproval(sqlite, parsed.approval_id);
+      if (existing !== null && existing.state !== "pending") return existing;
+      upsertApproval(sqlite, parsed);
       return parsed;
     });
   }
@@ -127,14 +98,19 @@ export class ApprovalStore {
       state: ApprovalStateSchema.parse(record.state),
       resolved_at: record.resolved_at ?? Date.now(),
     });
-    await this.journal.save(this.paths.approvalResolvedPath(parsed.approval_id), ApprovalRecordSchema, parsed);
+    const db = await this.database();
+    db.transaction((sqlite) => {
+      upsertApproval(sqlite, parsed);
+    });
     return parsed;
   }
 
   async resolvePending(approvalId: string, update: ApprovalResolutionInput): Promise<ApprovalRecord | null> {
-    return this.withApprovalLock(approvalId, async () => {
-      const current = await this.loadPending(approvalId);
-      if (current === null) return this.loadResolved(approvalId);
+    const db = await this.database();
+    return db.transaction((sqlite) => {
+      const current = readApproval(sqlite, approvalId);
+      if (current === null) return null;
+      if (current.state !== "pending") return current;
 
       const resolved = ApprovalRecordSchema.parse({
         ...current,
@@ -143,8 +119,7 @@ export class ApprovalStore {
         state: ApprovalStateSchema.parse(update.state),
         resolved_at: update.resolved_at ?? Date.now(),
       });
-      await this.saveResolved(resolved);
-      await this.removePending(approvalId);
+      upsertApproval(sqlite, resolved);
       return resolved;
     });
   }
@@ -153,18 +128,11 @@ export class ApprovalStore {
     removedPending: number;
     expiredPending: number;
   }> {
-    const pending = await this.journal.list(this.paths.approvalsPendingDir, ApprovalRecordSchema);
-    let removedPending = 0;
+    const pending = await this.listPending();
+    const removedPending = 0;
     let expiredPending = 0;
 
     for (const record of pending) {
-      const resolved = await this.loadResolved(record.approval_id);
-      if (resolved !== null) {
-        await this.removePending(record.approval_id);
-        removedPending += 1;
-        continue;
-      }
-
       if (record.expires_at > now) {
         continue;
       }
@@ -198,4 +166,63 @@ export class ApprovalStore {
 
     return pruned;
   }
+
+  private async database(): Promise<ControlDatabase> {
+    this.dbPromise ??= openRuntimeControlDatabase(this.paths, this.dbOptions);
+    return this.dbPromise;
+  }
+}
+
+interface ApprovalRow {
+  record_json: string;
+}
+
+function parseApprovalJson(recordJson: string): ApprovalRecord {
+  return ApprovalRecordSchema.parse(JSON.parse(recordJson) as unknown);
+}
+
+function readApproval(sqlite: SqliteDatabase, approvalId: string): ApprovalRecord | null {
+  const row = sqlite.prepare(`
+    SELECT record_json
+    FROM approval_records
+    WHERE approval_id = ?
+  `).get(approvalId) as ApprovalRow | undefined;
+  return row ? parseApprovalJson(row.record_json) : null;
+}
+
+function listApprovals(sqlite: SqliteDatabase, whereSql: string): ApprovalRecord[] {
+  const rows = sqlite.prepare(`
+    SELECT record_json
+    FROM approval_records
+    WHERE ${whereSql}
+    ORDER BY created_at ASC, approval_id ASC
+  `).all() as ApprovalRow[];
+  return rows.map((row) => parseApprovalJson(row.record_json));
+}
+
+function upsertApproval(sqlite: SqliteDatabase, record: ApprovalRecord): void {
+  sqlite.prepare(`
+    INSERT INTO approval_records (
+      approval_id,
+      state,
+      created_at,
+      resolved_at,
+      expires_at,
+      record_json
+    )
+    VALUES (?, ?, ?, ?, ?, json(?))
+    ON CONFLICT(approval_id) DO UPDATE SET
+      state = excluded.state,
+      created_at = excluded.created_at,
+      resolved_at = excluded.resolved_at,
+      expires_at = excluded.expires_at,
+      record_json = excluded.record_json
+  `).run(
+    record.approval_id,
+    record.state,
+    record.created_at,
+    record.resolved_at ?? null,
+    record.expires_at,
+    JSON.stringify(record),
+  );
 }

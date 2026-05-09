@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { makeTempDir, cleanupTempDir } from "../../../tests/helpers/temp-dir.js";
 import {
+  PermissionWaitPlanRecordSchema,
   PermissionWaitPlanStore,
   type PermissionWaitCanonicalPlan,
 } from "../store/permission-wait-plan-store.js";
@@ -60,7 +61,7 @@ describe("PermissionWaitPlanStore", () => {
     };
   }
 
-  it("round-trips a waiting_for_permission plan through the runtime root layout", async () => {
+  it("round-trips a waiting_for_permission plan through the control database", async () => {
     const record = await store.createWaiting({
       wait_plan_id: "wait-1",
       approval_id: "approval-1",
@@ -82,7 +83,8 @@ describe("PermissionWaitPlanStore", () => {
       ],
     });
     expect(await store.load("wait-1")).toEqual(record);
-    expect(fs.existsSync(path.join(tmpDir, "permission-wait-plans", "wait-1.json"))).toBe(true);
+    expect(fs.existsSync(path.join(tmpDir, "state", "pulseed-control.sqlite"))).toBe(true);
+    expect(fs.existsSync(path.join(tmpDir, "permission-wait-plans", "wait-1.json"))).toBe(false);
   });
 
   it("rejects unsafe permission wait plan timestamps before writing", async () => {
@@ -105,18 +107,20 @@ describe("PermissionWaitPlanStore", () => {
     expect(await store.load("wait-unsafe-expiry")).toBeNull();
   });
 
-  it("ignores persisted permission wait plans with unsafe numeric timestamps", async () => {
-    await store.createWaiting({
+  it("does not read legacy permission wait plan JSON on the normal store path", async () => {
+    fs.mkdirSync(path.join(tmpDir, "permission-wait-plans"), { recursive: true });
+    const recordPath = path.join(tmpDir, "permission-wait-plans", "wait-corrupt.json");
+    fs.writeFileSync(recordPath, JSON.stringify(PermissionWaitPlanRecordSchema.parse({
+      schema_version: "permission-wait-plan-v1",
       wait_plan_id: "wait-corrupt",
       approval_id: "approval-corrupt",
+      state: "waiting_for_permission",
+      created_at: 1_000,
+      updated_at: 1_000,
       canonical_plan: makePlan(),
-    });
-    const recordPath = path.join(tmpDir, "permission-wait-plans", "wait-corrupt.json");
-    const persisted = JSON.parse(fs.readFileSync(recordPath, "utf8")) as Record<string, unknown>;
-    fs.writeFileSync(recordPath, JSON.stringify({
-      ...persisted,
-      updated_at: Number.MAX_SAFE_INTEGER + 1,
-    }), "utf8");
+      audit_refs: [],
+      audit_events: [],
+    }), null, 2), "utf8");
 
     await expect(store.load("wait-corrupt")).resolves.toBeNull();
     await expect(store.list()).resolves.toEqual([]);

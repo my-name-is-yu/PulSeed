@@ -6,8 +6,7 @@ import { DaemonRunner } from "../daemon-runner.js";
 import { PIDManager } from "../pid-manager.js";
 import { Logger } from "../logger.js";
 import { makeTempDir, cleanupTempDir } from "../../../tests/helpers/temp-dir.js";
-import { createRuntimeStorePaths } from "../store/runtime-paths.js";
-import type { ApprovalRecord } from "../store/runtime-schemas.js";
+import { ApprovalStore } from "../store/approval-store.js";
 
 function makeDeps(tmpDir: string) {
   const mockCoreLoop = {
@@ -53,10 +52,10 @@ function makeDeps(tmpDir: string) {
   };
 }
 
-async function waitFor(predicate: () => boolean, timeoutMs = 2000): Promise<void> {
+async function waitFor(predicate: () => boolean | Promise<boolean>, timeoutMs = 2000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (predicate()) {
+    if (await predicate()) {
       return;
     }
     await new Promise((resolve) => setTimeout(resolve, 10));
@@ -184,7 +183,7 @@ describe("DaemonRunner durable approval restart", () => {
 
   it("keeps pending approvals across daemon restart when runtime_journal_v2 is enabled", async () => {
     tmpDir = makeTempDir();
-    const paths = createRuntimeStorePaths(path.join(tmpDir, "runtime"));
+    const approvalStore = new ApprovalStore(path.join(tmpDir, "runtime"), { controlBaseDir: tmpDir });
 
     const deps1 = makeDeps(tmpDir);
     daemon = new DaemonRunner(deps1);
@@ -199,13 +198,7 @@ describe("DaemonRunner durable approval restart", () => {
       action: "deploy",
     });
 
-    const pendingDir = paths.approvalsPendingDir;
-    await waitFor(() =>
-      fs.existsSync(pendingDir) &&
-      fs.readdirSync(pendingDir).some((entry) => entry.endsWith(".json"))
-    );
-    const pendingFile = fs.readdirSync(pendingDir).find((entry) => entry.endsWith(".json"));
-    const pendingPath = path.join(pendingDir, pendingFile!);
+    await waitFor(async () => (await approvalStore.listPending()).length > 0);
 
     daemon.stop();
     await startPromise;
@@ -213,7 +206,7 @@ describe("DaemonRunner durable approval restart", () => {
     daemon = null;
     startPromise = null;
 
-    const pending = JSON.parse(fs.readFileSync(pendingPath, "utf-8")) as ApprovalRecord;
+    const pending = (await approvalStore.listPending())[0]!;
     expect(pending.state).toBe("pending");
     const approvalId = pending.approval_id;
 
@@ -261,9 +254,6 @@ describe("DaemonRunner durable approval restart", () => {
     }, authToken);
     expect(approveResult.status).toBe(200);
 
-    const resolvedPath = paths.approvalResolvedPath(approvalId);
-    await waitFor(() => fs.existsSync(resolvedPath));
-    const resolved = JSON.parse(fs.readFileSync(resolvedPath, "utf-8")) as ApprovalRecord;
-    expect(resolved.state).toBe("approved");
+    await waitFor(async () => (await approvalStore.loadResolved(approvalId))?.state === "approved");
   });
 });

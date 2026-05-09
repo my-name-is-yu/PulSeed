@@ -287,7 +287,7 @@ export async function cmdStart(
   if (shouldUseWatchdog) {
     const runtimeRoot = resolveDaemonRuntimeRoot(baseDir, resolvedDaemonConfig.runtime_root);
     const healthStore = new RuntimeHealthStore(runtimeRoot, { controlBaseDir: baseDir });
-    const leaderLockManager = new LeaderLockManager(runtimeRoot);
+    const leaderLockManager = new LeaderLockManager(runtimeRoot, undefined, { controlBaseDir: baseDir });
     const scriptPath = process.argv[1]!;
     const childArgs = process.argv.slice(2);
     const healthProbe =

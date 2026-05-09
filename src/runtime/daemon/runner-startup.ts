@@ -405,6 +405,7 @@ export async function reconcileRuntimeControlOperationsAfterStartup(
       operation: verified,
       publisher,
       runtimeRoot,
+      controlBaseDir: storeOptions.controlBaseDir,
     });
     logger.info("Runtime control restart operation verified after startup", {
       operation_id: operation.operation_id,

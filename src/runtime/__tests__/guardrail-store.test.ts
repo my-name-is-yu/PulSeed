@@ -35,7 +35,7 @@ describe("GuardrailStore", () => {
     await expect(store.listBreakers()).resolves.toEqual([]);
   });
 
-  it("skips persisted circuit breaker records with unsafe failure counts", async () => {
+  it("does not read legacy circuit breaker JSON on the normal store path", async () => {
     const paths = createRuntimeStorePaths(tmpDir);
     await fs.promises.mkdir(paths.guardrailBreakersDir, { recursive: true });
     await fs.promises.writeFile(paths.guardrailBreakerPath("browser::example"), JSON.stringify({
@@ -43,7 +43,7 @@ describe("GuardrailStore", () => {
       provider_id: "browser",
       service_key: "example",
       state: "open",
-      failure_count: Number.MAX_SAFE_INTEGER + 1,
+      failure_count: 1,
       last_failure_code: "provider_unavailable",
       last_failure_message: null,
       last_failure_at: "2026-05-09T00:00:00.000Z",

@@ -1,10 +1,13 @@
-import * as fsp from "node:fs/promises";
-import * as path from "node:path";
 import { randomUUID } from "node:crypto";
-import { parseProcessPid } from "../base/utils/process-pid.js";
-import { loadRuntimeJson, saveRuntimeJson } from "./store/runtime-journal.js";
+import { createRuntimeStorePaths, type RuntimeStorePaths } from "./store/runtime-paths.js";
 import { GoalLeaseRecordSchema } from "./store/runtime-schemas.js";
 import type { GoalLeaseRecord as RuntimeGoalLeaseRecord } from "./store/runtime-schemas.js";
+import {
+  openRuntimeControlDatabase,
+  type ControlDatabase,
+  type RuntimeControlDbStoreOptions,
+  type SqliteDatabase,
+} from "./store/control-db/index.js";
 
 export type GoalLeaseRecord = RuntimeGoalLeaseRecord;
 
@@ -22,131 +25,48 @@ export interface GoalLeaseRenewOptions {
 }
 
 const DEFAULT_LEASE_MS = 30_000;
-const MUTEX_RETRY_DELAY_MS = 10;
-const MUTEX_MAX_ATTEMPTS = 50;
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function isProcessAlive(pid: number): Promise<boolean> {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function ensureDir(dirPath: string): Promise<void> {
-  await fsp.mkdir(dirPath, { recursive: true });
-}
-
-async function writeMutexPid(mutexDir: string): Promise<void> {
-  await fsp.writeFile(path.join(mutexDir, "pid"), String(process.pid), "utf-8");
-}
-
-async function clearStaleMutex(mutexDir: string): Promise<boolean> {
-  try {
-    const pidText = await fsp.readFile(path.join(mutexDir, "pid"), "utf-8");
-    const pid = parseProcessPid(pidText);
-    if (pid === null || !(await isProcessAlive(pid))) {
-      await fsp.rm(mutexDir, { recursive: true, force: true });
-      return true;
-    }
-  } catch {
-    await fsp.rm(mutexDir, { recursive: true, force: true });
-    return true;
-  }
-
-  return false;
-}
-
-async function acquireMutex(mutexDir: string): Promise<void> {
-  await ensureDir(path.dirname(mutexDir));
-
-  for (let attempt = 0; attempt < MUTEX_MAX_ATTEMPTS; attempt++) {
-    try {
-      await fsp.mkdir(mutexDir);
-      await writeMutexPid(mutexDir);
-      return;
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== "EEXIST") {
-        throw err;
-      }
-
-      if (!(await clearStaleMutex(mutexDir))) {
-        await sleep(MUTEX_RETRY_DELAY_MS);
-      }
-    }
-  }
-
-  throw new Error(`Timed out waiting for mutex: ${mutexDir}`);
-}
-
-async function releaseMutex(mutexDir: string): Promise<void> {
-  await fsp.rm(mutexDir, { recursive: true, force: true });
-}
-
-async function withMutex<T>(mutexDir: string, fn: () => Promise<T>): Promise<T> {
-  await acquireMutex(mutexDir);
-  try {
-    return await fn();
-  } finally {
-    await releaseMutex(mutexDir);
-  }
-}
-
-function safeGoalId(goalId: string): string {
-  return encodeURIComponent(goalId);
-}
 
 export class GoalLeaseManager {
-  private readonly leasesDir: string;
+  private readonly paths: RuntimeStorePaths;
+  private readonly dbOptions: RuntimeControlDbStoreOptions;
+  private dbPromise: Promise<ControlDatabase> | null = null;
   private readonly defaultLeaseMs: number;
 
-  constructor(runtimeRoot: string, defaultLeaseMs = DEFAULT_LEASE_MS) {
-    runtimeRoot = path.resolve(runtimeRoot);
-    this.leasesDir = path.join(runtimeRoot, "leases", "goal");
+  constructor(
+    runtimeRoot: string,
+    defaultLeaseMs = DEFAULT_LEASE_MS,
+    options: RuntimeControlDbStoreOptions = {}
+  ) {
+    this.paths = createRuntimeStorePaths(runtimeRoot);
+    this.dbOptions = options;
     this.defaultLeaseMs = defaultLeaseMs;
   }
 
-  private recordPath(goalId: string): string {
-    return path.join(this.leasesDir, `${safeGoalId(goalId)}.json`);
-  }
-
-  private mutexPath(goalId: string): string {
-    return `${this.recordPath(goalId)}.lock`;
-  }
-
-  private buildRecord(goalId: string, opts: GoalLeaseAcquireOptions, now: number): GoalLeaseRecord {
-    const leaseMs = opts.leaseMs ?? this.defaultLeaseMs;
-    return {
-      goal_id: goalId,
-      owner_token: opts.ownerToken ?? randomUUID(),
-      attempt_id: opts.attemptId ?? randomUUID(),
-      worker_id: opts.workerId,
-      lease_until: now + leaseMs,
-      acquired_at: now,
-      last_renewed_at: now,
-    };
-  }
-
-  private async readRaw(goalId: string): Promise<GoalLeaseRecord | null> {
-    return loadRuntimeJson(this.recordPath(goalId), GoalLeaseRecordSchema);
-  }
+	private buildRecord(goalId: string, opts: GoalLeaseAcquireOptions, now: number): GoalLeaseRecord {
+		const leaseMs = opts.leaseMs ?? this.defaultLeaseMs;
+		return GoalLeaseRecordSchema.parse({
+			goal_id: goalId,
+			owner_token: opts.ownerToken ?? randomUUID(),
+			attempt_id: opts.attemptId ?? randomUUID(),
+			worker_id: opts.workerId,
+			lease_until: now + leaseMs,
+			acquired_at: now,
+			last_renewed_at: now,
+		});
+	}
 
   async acquire(goalId: string, opts: GoalLeaseAcquireOptions): Promise<GoalLeaseRecord | null> {
     const now = opts.now ?? Date.now();
-
-    return withMutex(this.mutexPath(goalId), async () => {
-      const current = await this.readRaw(goalId);
+    const db = await this.database();
+    return db.transaction((sqlite) => {
+      const current = readGoalLease(sqlite, goalId);
       if (current && current.lease_until > now) {
         return null;
       }
 
       const record = this.buildRecord(goalId, opts, now);
-      return saveRuntimeJson(this.recordPath(goalId), GoalLeaseRecordSchema, record);
+      upsertGoalLease(sqlite, record);
+      return record;
     });
   }
 
@@ -157,68 +77,117 @@ export class GoalLeaseManager {
   ): Promise<GoalLeaseRecord | null> {
     const now = opts.now ?? Date.now();
     const leaseMs = opts.leaseMs ?? this.defaultLeaseMs;
-
-    return withMutex(this.mutexPath(goalId), async () => {
-      const current = await this.readRaw(goalId);
+    const db = await this.database();
+    return db.transaction((sqlite) => {
+      const current = readGoalLease(sqlite, goalId);
       if (!current || current.owner_token !== ownerToken || current.lease_until <= now) {
         return null;
       }
 
-      const renewed: GoalLeaseRecord = {
-        ...current,
-        lease_until: now + leaseMs,
-        last_renewed_at: now,
-      };
-      return saveRuntimeJson(this.recordPath(goalId), GoalLeaseRecordSchema, renewed);
-    });
+			const renewed = GoalLeaseRecordSchema.parse({
+				...current,
+				lease_until: now + leaseMs,
+				last_renewed_at: now,
+			});
+			upsertGoalLease(sqlite, renewed);
+			return renewed;
+		});
   }
 
   async release(goalId: string, ownerToken: string): Promise<boolean> {
-    return withMutex(this.mutexPath(goalId), async () => {
-      const current = await this.readRaw(goalId);
+    const db = await this.database();
+    return db.transaction((sqlite) => {
+      const current = readGoalLease(sqlite, goalId);
       if (!current || current.owner_token !== ownerToken) {
         return false;
       }
 
-      await fsp.rm(this.recordPath(goalId), { force: true });
+      sqlite.prepare("DELETE FROM goal_leases WHERE goal_id = ?").run(goalId);
       return true;
     });
   }
 
   async read(goalId: string): Promise<GoalLeaseRecord | null> {
-    return this.readRaw(goalId);
+    const db = await this.database();
+    return db.read((sqlite) => readGoalLease(sqlite, goalId));
   }
 
   async reapStale(now = Date.now()): Promise<GoalLeaseRecord[]> {
-    await ensureDir(this.leasesDir);
-    let entries: string[] = [];
-    try {
-      entries = await fsp.readdir(this.leasesDir);
-    } catch {
-      return [];
-    }
-
-    const removed: GoalLeaseRecord[] = [];
-    for (const entry of entries) {
-      if (!entry.endsWith(".json")) continue;
-
-      let goalId: string;
-      try {
-        goalId = decodeURIComponent(entry.slice(0, -5));
-      } catch {
-        continue;
-      }
-      await withMutex(this.mutexPath(goalId), async () => {
-        const current = await this.readRaw(goalId);
-        if (!current || current.lease_until > now) {
-          return;
-        }
-
-        removed.push(current);
-        await fsp.rm(this.recordPath(goalId), { force: true });
-      });
-    }
-
-    return removed;
+    const db = await this.database();
+    return db.transaction((sqlite) => {
+      const rows = sqlite.prepare(`
+        SELECT record_json
+        FROM goal_leases
+        WHERE lease_until <= ?
+        ORDER BY lease_until ASC, goal_id ASC
+      `).all(now) as GoalLeaseRow[];
+      const removed = rows.map((row) => parseGoalLeaseJson(row.record_json));
+      sqlite.prepare("DELETE FROM goal_leases WHERE lease_until <= ?").run(now);
+      return removed;
+    });
   }
+
+  async importLegacyRecord(record: GoalLeaseRecord): Promise<GoalLeaseRecord> {
+    const parsed = GoalLeaseRecordSchema.parse(record);
+    const db = await this.database();
+    db.transaction((sqlite) => {
+      upsertGoalLease(sqlite, parsed);
+    });
+    return parsed;
+  }
+
+  private async database(): Promise<ControlDatabase> {
+    this.dbPromise ??= openRuntimeControlDatabase(this.paths, this.dbOptions);
+    return this.dbPromise;
+  }
+}
+
+interface GoalLeaseRow {
+  record_json: string;
+}
+
+function parseGoalLeaseJson(recordJson: string): GoalLeaseRecord {
+  return GoalLeaseRecordSchema.parse(JSON.parse(recordJson) as unknown);
+}
+
+function readGoalLease(sqlite: SqliteDatabase, goalId: string): GoalLeaseRecord | null {
+  const row = sqlite.prepare(`
+    SELECT record_json
+    FROM goal_leases
+    WHERE goal_id = ?
+  `).get(goalId) as GoalLeaseRow | undefined;
+  return row ? parseGoalLeaseJson(row.record_json) : null;
+}
+
+function upsertGoalLease(sqlite: SqliteDatabase, record: GoalLeaseRecord): void {
+  sqlite.prepare(`
+    INSERT INTO goal_leases (
+      goal_id,
+      owner_token,
+      worker_id,
+      attempt_id,
+      acquired_at,
+      last_renewed_at,
+      lease_until,
+      record_json
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, json(?))
+    ON CONFLICT(goal_id) DO UPDATE SET
+      owner_token = excluded.owner_token,
+      worker_id = excluded.worker_id,
+      attempt_id = excluded.attempt_id,
+      acquired_at = excluded.acquired_at,
+      last_renewed_at = excluded.last_renewed_at,
+      lease_until = excluded.lease_until,
+      record_json = excluded.record_json
+  `).run(
+    record.goal_id,
+    record.owner_token,
+    record.worker_id,
+    record.attempt_id,
+    record.acquired_at,
+    record.last_renewed_at,
+    record.lease_until,
+    JSON.stringify(record),
+  );
 }

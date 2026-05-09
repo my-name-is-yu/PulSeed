@@ -20,6 +20,7 @@ export {
   CONTROL_DB_INITIAL_SCHEMA_SQL,
   CONTROL_DB_MIGRATIONS,
   CONTROL_DB_RUNTIME_CONTROL_SCHEMA_SQL,
+  CONTROL_DB_RUNTIME_STATE_OWNERSHIP_SCHEMA_SQL,
   CONTROL_DB_SCHEMA_VERSION,
   ControlDatabase,
   controlDbMigrationChecksum,
@@ -450,6 +451,13 @@ export {
   normalizeTerminalStatus,
   validateBackgroundRunLedgerRecord,
 } from "./background-run-store.js";
+export {
+  importLegacyRuntimeControlStateStores,
+} from "./runtime-control-state-migration.js";
+export type {
+  ImportLegacyRuntimeControlStateStoresInput,
+  ImportLegacyRuntimeControlStateStoresResult,
+} from "./runtime-control-state-migration.js";
 export type {
   BackgroundRunCreateInput,
   BackgroundRunLinkInput,

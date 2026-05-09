@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as fs from "node:fs";
-import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { EventEmitter } from "node:events";
 import { makeTempDir, cleanupTempDir } from "../../../tests/helpers/temp-dir.js";
@@ -39,19 +38,13 @@ async function waitFor(
 }
 
 async function writeLeaderRecord(runtimeRoot: string, pid: number, leaseUntil: number): Promise<void> {
-  const leaderPath = path.join(runtimeRoot, "leader", "leader.json");
-  await fsp.mkdir(path.dirname(leaderPath), { recursive: true });
-  await fsp.writeFile(
-    leaderPath,
-    JSON.stringify({
-      owner_token: `owner-${pid}`,
-      pid,
-      acquired_at: Date.now(),
-      last_renewed_at: Date.now(),
-      lease_until: leaseUntil,
-    }),
-    "utf-8"
-  );
+  await new LeaderLockManager(runtimeRoot, 60).importLegacyRecord({
+    owner_token: `owner-${pid}`,
+    pid,
+    acquired_at: Date.now(),
+    last_renewed_at: Date.now(),
+    lease_until: leaseUntil,
+  });
 }
 
 async function writeDaemonHealth(
@@ -134,6 +127,7 @@ describe("RuntimeWatchdog", () => {
     const healthyAt = Date.now();
     await writeLeaderRecord(runtimeRoot, children[1]!.pid, healthyAt + 60_000);
     await writeDaemonHealth(healthStore, children[1]!.pid, healthyAt);
+    await waitFor(() => children[1]!.listenerCount("exit") > 0, 2_000, 20);
 
     watchdog.stop();
     await startPromise;

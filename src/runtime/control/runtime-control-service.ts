@@ -202,7 +202,7 @@ export class RuntimeControlService {
     this.permissionGrantStore = options.permissionGrantStore;
     this.authHandoffStore = options.authHandoffStore ?? new RuntimeAuthHandoffStore(options.runtimeRoot);
     this.browserSessionStore = options.browserSessionStore ?? new BrowserSessionStore(options.runtimeRoot);
-    this.guardrailStore = options.guardrailStore ?? new GuardrailStore(options.runtimeRoot);
+    this.guardrailStore = options.guardrailStore ?? new GuardrailStore(options.runtimeRoot, controlDbOptions);
     this.executor = options.executor;
     this.now = options.now ?? (() => new Date());
   }
