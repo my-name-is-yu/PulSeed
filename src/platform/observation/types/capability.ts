@@ -215,3 +215,69 @@ export const CapabilityGraphSchema = z.object({
   dependency_edges: z.array(CapabilityDependencyEdgeSchema),
 });
 export type CapabilityGraph = z.infer<typeof CapabilityGraphSchema>;
+
+// --- Companion Capability Readiness ---
+
+export const CapabilityReadinessGateEnum = z.enum([
+  "stored",
+  "discoverable",
+  "loadable",
+  "compatible",
+  "configured",
+  "authenticated",
+  "executable_verified",
+  "degraded",
+  "blocked",
+]);
+export type CapabilityReadinessGate = z.infer<typeof CapabilityReadinessGateEnum>;
+
+export const CapabilityReadinessStateEnum = z.enum([
+  "stored",
+  "discoverable",
+  "loadable",
+  "compatible",
+  "configured",
+  "authenticated",
+  "executable_verified",
+  "degraded",
+  "blocked",
+]);
+export type CapabilityReadinessState = z.infer<typeof CapabilityReadinessStateEnum>;
+
+export const CapabilitySafeUserVisibleLabelEnum = z.enum([
+  "Recorded, not executable",
+  "Setup required",
+  "Auth required",
+  "Configured, verification required",
+  "Execution substrate verified",
+  "Degraded",
+  "Blocked",
+]);
+export type CapabilitySafeUserVisibleLabel = z.infer<typeof CapabilitySafeUserVisibleLabelEnum>;
+
+export const CapabilityReadinessSnapshotSchema = z.object({
+  schema_version: z.literal("capability-readiness-snapshot/v1"),
+  snapshot_id: z.string().min(1),
+  capability_id: z.string().min(1),
+  provider_ref: z.string().min(1),
+  asset_ref: z.string().min(1),
+  operation_id: z.string().min(1),
+  operation_kind: CapabilityOperationKindEnum,
+  tool_name: z.string().min(1),
+  payload_class: z.string().min(1),
+  risk_class: CapabilityRiskProfileEnum,
+  side_effect_profile: CapabilitySideEffectProfileEnum,
+  evaluated_at: z.string().min(1),
+  state: CapabilityReadinessStateEnum,
+  passed_gates: z.array(CapabilityReadinessGateEnum).default([]),
+  failed_gates: z.array(CapabilityReadinessGateEnum).default([]),
+  degraded_gates: z.array(CapabilityReadinessGateEnum).default([]),
+  missing_config_refs: z.array(z.string().min(1)).default([]),
+  missing_auth_refs: z.array(z.string().min(1)).default([]),
+  verification_refs: z.array(z.string().min(1)).default([]),
+  evidence_refs: z.array(z.string().min(1)).default([]),
+  stale_refs: z.array(z.string().min(1)).default([]),
+  safe_user_visible_label: CapabilitySafeUserVisibleLabelEnum,
+  metadata: z.record(z.string(), z.unknown()).default({}),
+}).strict();
+export type CapabilityReadinessSnapshot = z.infer<typeof CapabilityReadinessSnapshotSchema>;

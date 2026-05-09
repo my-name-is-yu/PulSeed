@@ -146,6 +146,7 @@ export const CapabilityVerificationEvidenceSummarySchema = z.object({
   evidence_stage: CapabilityEvidenceStageSchema,
   result: CapabilityVerificationResultSchema,
   readiness_effect: CapabilityReadinessEvidenceEffectSchema,
+  expires_at: z.string().min(1).optional(),
 }).strict();
 export type CapabilityVerificationEvidenceSummary = z.infer<typeof CapabilityVerificationEvidenceSummarySchema>;
 
