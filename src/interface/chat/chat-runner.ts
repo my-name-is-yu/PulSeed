@@ -44,6 +44,7 @@ import type {
   ChatRunnerDeps,
   ChatRunnerExecutionOptions,
   PendingTendState,
+  ResumeCommand,
   RuntimeControlChatContext,
 } from "./chat-runner-contracts.js";
 import { intakeSetupSecrets } from "./setup-secret-intake.js";
@@ -241,7 +242,10 @@ export class ChatRunner {
     const candidates = this.pendingResumeChoices;
     if (!candidates || candidates.length === 0) return null;
     const choice = parseResumeChoiceNumber(input);
-    if (choice === null) return null;
+    if (choice === null) {
+      this.pendingResumeChoices = null;
+      return null;
+    }
     const candidate = candidates.find((item) => item.index === choice);
     if (!candidate) {
       return {
@@ -269,8 +273,20 @@ export class ChatRunner {
 
   private async resolveResumeSelectorChoice(selector: string): Promise<{ session?: LoadedChatSession; result?: ChatRunResult } | null> {
     const choice = parseResumeChoiceNumber(selector);
-    if (choice === null || !this.pendingResumeChoices) return null;
+    if (choice === null) {
+      this.pendingResumeChoices = null;
+      return null;
+    }
+    if (!this.pendingResumeChoices) return null;
     return this.resolvePendingResumeSelection(String(choice));
+  }
+
+  private clearPendingResumeChoicesUnlessSelecting(input: string, resumeCommand: ResumeCommand | null): void {
+    if (!this.pendingResumeChoices) return;
+    const selectionInput = resumeCommand?.selector ?? input;
+    if (parseResumeChoiceNumber(selectionInput) === null) {
+      this.pendingResumeChoices = null;
+    }
   }
 
   private async resolveNaturalRecoveryResume(input: string): Promise<{ session?: LoadedChatSession; result?: ChatRunResult } | null> {
@@ -508,6 +524,8 @@ export class ChatRunner {
     if (pendingRunSpecConfirmationResult !== null) {
       return this.finalizeNonPersistentResult(pendingRunSpecConfirmationResult, eventContext);
     }
+
+    this.clearPendingResumeChoicesUnlessSelecting(safeInput, resumeCommand);
 
     const commandResult = resumeOnly ? null : await this.commandHandler.handleCommand(safeInput, resolvedCwd);
     if (commandResult !== null) {

@@ -2251,6 +2251,113 @@ describe("ChatRunner", () => {
       }
     });
 
+    it("clears numbered resume choices when the next turn starts ordinary work", async () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-natural-resume-stale-choice-"));
+      try {
+        const stateManager = new StateManager(tmpDir);
+        await stateManager.init();
+        await stateManager.writeRaw("chat/sessions/older-safe-chat.json", {
+          id: "older-safe-chat",
+          cwd: "/work/older",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:01.000Z",
+          title: "Budget review",
+          sessionSummary: "Waiting to check the numbers.",
+          messages: [],
+          agentLoopStatePath: "chat/agentloop/older-safe-chat.state.json",
+          agentLoopStatus: "running",
+          agentLoopResumable: true,
+          agentLoopUpdatedAt: "2026-01-01T00:00:02.000Z",
+        });
+        await stateManager.writeRaw("chat/agentloop/older-safe-chat.state.json", makeAgentLoopState({
+          sessionId: "agent-older",
+          updatedAt: "2026-01-01T00:00:02.000Z",
+        }));
+        await stateManager.writeRaw("chat/sessions/newer-safe-chat.json", {
+          id: "newer-safe-chat",
+          cwd: "/work/newer",
+          createdAt: "2026-01-02T00:00:00.000Z",
+          updatedAt: "2026-01-02T00:00:01.000Z",
+          title: "Release checklist",
+          sessionSummary: "Waiting on the final verification.",
+          messages: [],
+          agentLoopStatePath: "chat/agentloop/newer-safe-chat.state.json",
+          agentLoopStatus: "running",
+          agentLoopResumable: true,
+          agentLoopUpdatedAt: "2026-01-02T00:00:02.000Z",
+        });
+        await stateManager.writeRaw("chat/agentloop/newer-safe-chat.state.json", makeAgentLoopState({
+          sessionId: "agent-newer",
+          updatedAt: "2026-01-02T00:00:02.000Z",
+        }));
+        const llmClient = createMockLLMClient([
+          JSON.stringify({
+            kind: "continue_latest",
+            confidence: 0.95,
+            rationale: "The user wants to continue prior chat work.",
+          }),
+          JSON.stringify({
+            kind: "none",
+            confidence: 0.95,
+            rationale: "The user is starting ordinary work instead of choosing a saved chat.",
+          }),
+        ]);
+        const chatAgentLoopRunner = {
+          execute: vi.fn()
+            .mockResolvedValueOnce({
+              success: true,
+              output: "Started new work",
+              error: null,
+              exit_code: null,
+              elapsed_ms: 30,
+              stopped_reason: "completed",
+            })
+            .mockResolvedValueOnce({
+              success: true,
+              output: "Handled as ordinary follow-up",
+              error: null,
+              exit_code: null,
+              elapsed_ms: 30,
+              stopped_reason: "completed",
+            }),
+        } as unknown as ChatAgentLoopRunner;
+        const runner = new ChatRunner(makeDeps({ stateManager, llmClient, chatAgentLoopRunner }));
+        const selectedRoute: SelectedChatRoute = {
+          kind: "agent_loop",
+          reason: "agent_loop_available",
+          replyTargetPolicy: "turn_reply_target",
+          eventProjectionPolicy: "turn_only",
+          concurrencyPolicy: "session_serial",
+        };
+
+        const clarification = await runner.execute("continue where we left off", "/repo", 120_000, { selectedRoute });
+
+        expect(clarification.success).toBe(true);
+        expect(clarification.output).toContain("I found more than one chat that can continue");
+
+        const started = await runner.execute("start a new attempt instead", "/repo", 120_000, { selectedRoute });
+
+        expect(started.success).toBe(true);
+        expect(started.output).toBe("Started new work");
+
+        const followUp = await runner.execute("1", "/repo", 120_000, { selectedRoute });
+
+        expect(followUp.success).toBe(true);
+        expect(followUp.output).toBe("Handled as ordinary follow-up");
+        expect(runner.getSessionId()).not.toBe("older-safe-chat");
+        expect(runner.getSessionId()).not.toBe("newer-safe-chat");
+        expect(chatAgentLoopRunner.execute).toHaveBeenCalledTimes(2);
+        const followUpInput = (chatAgentLoopRunner.execute as ReturnType<typeof vi.fn>).mock.calls[1][0] as {
+          resumeOnly?: boolean;
+          resumeState?: { sessionId: string };
+        };
+        expect(followUpInput.resumeOnly).not.toBe(true);
+        expect(followUpInput.resumeState).toBeUndefined();
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+
     it("natural-language resume with no saved state offers recovery choices instead of starting work", async () => {
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-natural-resume-none-"));
       try {
