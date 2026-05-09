@@ -23,7 +23,10 @@ The files under `docs/design/` may mix:
 
 That mix is expected here, but it should not leak back into the public docs.
 
-When a design note conflicts with the public docs, treat the public docs as the user-facing source of truth.
+Public docs are the user-facing source of truth. Active interaction contracts are
+the implementation and safety source of truth for the behavior they govern. When
+they conflict, fix the stale public docs instead of weakening the active
+contract.
 
 ## Archive
 
@@ -41,6 +44,7 @@ The design index is a pointer into background material, not a replacement for th
 - [Relationship Memory And Surface](core/relationship-memory-surface.md)
 - [Attention Metabolism And Initiative](core/attention-metabolism-initiative.md)
 - [Runtime Control Plane](infrastructure/runtime-control-plane.md)
+- [Companion Capability Runtime](infrastructure/companion-capability-runtime.md)
 - [Codex-Like User Interaction Contract](execution/codex-like-interaction-contract.md)
 - [Exact Protocol Grammar Boundaries](execution/exact-protocol-boundaries.md)
 - [Runtime Auth, Browser Session, And Guardrail Control Model](infrastructure/runtime-auth-browser-guardrails.md)
