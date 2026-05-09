@@ -3,7 +3,7 @@ import { cleanupTempDir, makeTempDir } from "../../../../tests/helpers/temp-dir.
 import { ScheduleEngine } from "../engine.js";
 import type { IScheduleSource } from "../source.js";
 
-function makeSource(entries: Awaited<ReturnType<IScheduleSource["fetchEntries"]>>): IScheduleSource {
+function makeSource(entries: unknown[]): IScheduleSource {
   return {
     id: "calendar",
     name: "Calendar",
@@ -11,8 +11,28 @@ function makeSource(entries: Awaited<ReturnType<IScheduleSource["fetchEntries"]>
       return { healthy: true };
     },
     async fetchEntries() {
-      return entries;
+      return entries as Awaited<ReturnType<IScheduleSource["fetchEntries"]>>;
     },
+  };
+}
+
+function externalIntervalCronEntry(externalId: string, seconds: number): unknown {
+  return {
+    external_id: externalId,
+    source_id: "calendar",
+    name: `${externalId} interval`,
+    layer: "cron",
+    trigger: { type: "interval", seconds },
+    enabled: true,
+    cron: {
+      job_kind: "prompt",
+      prompt_template: "This must not schedule",
+      context_sources: [],
+      output_format: "notification",
+      max_tokens: 100,
+    },
+    metadata: {},
+    synced_at: "2026-04-14T00:00:00.000Z",
   };
 }
 
@@ -111,6 +131,35 @@ describe("ScheduleEngine external source sync", () => {
         message: "temporarily unavailable",
       });
       expect(engine.getEntries()[0]?.enabled).toBe(true);
+    } finally {
+      cleanupTempDir(tempDir);
+    }
+  });
+
+  it("skips external interval entries with invalid seconds at the source boundary", async () => {
+    const tempDir = makeTempDir("schedule-source-sync-");
+    try {
+      const engine = new ScheduleEngine({ baseDir: tempDir });
+      await engine.loadEntries();
+
+      const result = await engine.syncExternalSources([
+        makeSource([
+          externalIntervalCronEntry("negative", -1),
+          externalIntervalCronEntry("fractional", 1.5),
+          externalIntervalCronEntry("infinite", Number.POSITIVE_INFINITY),
+          externalIntervalCronEntry("unsafe", Number.MAX_SAFE_INTEGER + 1),
+        ]),
+      ]);
+
+      expect(result).toMatchObject({ added: 0, updated: 0, disabled: 0, skipped: 4 });
+      expect(result.errors).toHaveLength(4);
+      expect(result.errors.map((error) => error.source_id)).toEqual([
+        "calendar",
+        "calendar",
+        "calendar",
+        "calendar",
+      ]);
+      expect(engine.getEntries()).toHaveLength(0);
     } finally {
       cleanupTempDir(tempDir);
     }

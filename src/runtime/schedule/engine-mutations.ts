@@ -330,8 +330,8 @@ function buildExternalScheduleEntryInput(external: ExternalScheduleEntry): Mutab
     name: external.name,
     layer: external.layer,
     trigger: external.trigger.type === "cron"
-      ? { type: "cron" as const, expression: external.trigger.expression!, timezone: "UTC" }
-      : { type: "interval" as const, seconds: external.trigger.seconds!, jitter_factor: 0 },
+      ? { type: "cron" as const, expression: external.trigger.expression, timezone: "UTC" }
+      : { type: "interval" as const, seconds: external.trigger.seconds, jitter_factor: 0 },
     enabled: external.enabled,
     metadata: {
       source: "external" as const,
