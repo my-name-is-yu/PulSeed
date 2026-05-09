@@ -7,12 +7,17 @@ import type { ITool, ToolResult, ToolCallContext, PermissionCheckResult, ToolMet
 import { DESCRIPTION } from "./prompt.js";
 import { TAGS, PERMISSION_LEVEL, MAX_OUTPUT_CHARS } from "./constants.js";
 
+const HTTP_FETCH_DEFAULT_TIMEOUT_MS = 30_000;
+const HTTP_FETCH_MAX_TIMEOUT_MS = 120_000;
+const HTTP_FETCH_DEFAULT_MAX_RESPONSE_BYTES = 1_048_576;
+const HTTP_FETCH_MAX_RESPONSE_BYTES = 5 * 1_048_576;
+
 export const HttpFetchInputSchema = z.object({
   url: z.string().url(),
   method: z.enum(["GET", "HEAD"]).default("GET"),
   headers: z.record(z.string()).optional(),
-  timeoutMs: z.number().default(30_000),
-  maxResponseBytes: z.number().default(1_048_576),
+  timeoutMs: z.number().int().min(1).max(HTTP_FETCH_MAX_TIMEOUT_MS).default(HTTP_FETCH_DEFAULT_TIMEOUT_MS),
+  maxResponseBytes: z.number().int().min(1).max(HTTP_FETCH_MAX_RESPONSE_BYTES).default(HTTP_FETCH_DEFAULT_MAX_RESPONSE_BYTES),
 });
 export type HttpFetchInput = z.infer<typeof HttpFetchInputSchema>;
 export interface HttpFetchOutput { statusCode: number; headers: Record<string, string>; body: string; ok: boolean; }
