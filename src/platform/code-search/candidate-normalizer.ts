@@ -10,14 +10,16 @@ function overlapsOrClose(a: CodeCandidate, b: CodeCandidate): boolean {
 }
 
 function mergeCandidate(a: CodeCandidate, b: CodeCandidate): CodeCandidate {
+  const startBytes = [a.range.startByte, b.range.startByte].filter((value): value is number => value !== undefined);
+  const endBytes = [a.range.endByte, b.range.endByte].filter((value): value is number => value !== undefined);
   return {
     ...a,
     id: `${a.file}:${Math.min(a.range.startLine, b.range.startLine)}-${Math.max(a.range.endLine, b.range.endLine)}:${a.symbol?.stableKey ?? b.symbol?.stableKey ?? "merged"}`,
     range: {
       startLine: Math.min(a.range.startLine, b.range.startLine),
       endLine: Math.max(a.range.endLine, b.range.endLine),
-      startByte: Math.min(a.range.startByte ?? Number.MAX_SAFE_INTEGER, b.range.startByte ?? Number.MAX_SAFE_INTEGER),
-      endByte: Math.max(a.range.endByte ?? 0, b.range.endByte ?? 0),
+      ...(startBytes.length > 0 ? { startByte: Math.min(...startBytes) } : {}),
+      ...(endBytes.length > 0 ? { endByte: Math.max(...endBytes) } : {}),
     },
     preview: [a.preview, b.preview].filter(Boolean).join("\n").slice(0, 300),
     signals: {

@@ -11,10 +11,27 @@ import { DESCRIPTION } from "./prompt.js";
 const CODE_READ_CONTEXT_MAX_RANGES = 50;
 const CODE_READ_CONTEXT_MAX_TOKENS = 20_000;
 
+const FiniteNumberSchema = z.number().finite();
+const PositiveSafeIntegerSchema = z.number().finite().int().min(1).max(Number.MAX_SAFE_INTEGER);
+const NonNegativeSafeIntegerSchema = z.number().finite().int().min(0).max(Number.MAX_SAFE_INTEGER);
+
+const CandidateRangeSchema = z.object({
+  startLine: PositiveSafeIntegerSchema,
+  endLine: PositiveSafeIntegerSchema,
+  startByte: NonNegativeSafeIntegerSchema.optional(),
+  endByte: NonNegativeSafeIntegerSchema.optional(),
+}).refine(
+  (range) => range.endLine >= range.startLine,
+  { message: "endLine must be greater than or equal to startLine", path: ["endLine"] }
+).refine(
+  (range) => range.startByte === undefined || range.endByte === undefined || range.endByte >= range.startByte,
+  { message: "endByte must be greater than or equal to startByte", path: ["endByte"] }
+);
+
 const CandidateSchema = z.object({
   id: z.string(),
   file: z.string(),
-  range: z.object({ startLine: z.number(), endLine: z.number(), startByte: z.number().optional(), endByte: z.number().optional() }),
+  range: CandidateRangeSchema,
   symbol: z.object({
     name: z.string(),
     kind: z.string(),
@@ -22,19 +39,19 @@ const CandidateSchema = z.object({
     stableKey: z.string().optional(),
     enclosing: z.array(z.string()).optional(),
   }).optional(),
-  package: z.object({ name: z.string(), root: z.string(), distanceFromTaskScope: z.number().optional() }).optional(),
+  package: z.object({ name: z.string(), root: z.string(), distanceFromTaskScope: NonNegativeSafeIntegerSchema.optional() }).optional(),
   preview: z.string(),
-  signals: z.record(z.number()),
-  ranks: z.object({ retrieverRanks: z.record(z.number()), finalRank: z.number().optional() }),
-  penalties: z.record(z.number()),
+  signals: z.record(FiniteNumberSchema),
+  ranks: z.object({ retrieverRanks: z.record(PositiveSafeIntegerSchema), finalRank: PositiveSafeIntegerSchema.optional() }),
+  penalties: z.record(FiniteNumberSchema),
   reasons: z.array(z.string()),
   sourceRetrievers: z.array(z.string()),
   indexVersion: z.string(),
-  indexedAt: z.number(),
+  indexedAt: NonNegativeSafeIntegerSchema,
   fileHashAtIndex: z.string(),
   currentFileHash: z.string().optional(),
-  rrfScore: z.number(),
-  rerankScore: z.number(),
+  rrfScore: FiniteNumberSchema,
+  rerankScore: FiniteNumberSchema,
   confidence: z.enum(["high", "medium", "low"]),
   readRecommendation: z.enum(["read_now", "read_if_needed", "reference_only", "avoid_edit"]),
 }).passthrough();

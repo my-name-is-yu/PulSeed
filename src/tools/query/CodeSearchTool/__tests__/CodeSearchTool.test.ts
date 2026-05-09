@@ -33,6 +33,28 @@ describe("code search tools", () => {
     };
   });
 
+  function makeFullCandidate(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      id: "candidate-1",
+      file: "src/alpha.ts",
+      range: { startLine: 1, endLine: 1, startByte: 0, endByte: 41 },
+      preview: "export function alphaValue() { return 1; }",
+      signals: { lexicalMatch: 1 },
+      ranks: { retrieverRanks: { lexical: 1 }, finalRank: 1 },
+      penalties: { generated: 0 },
+      reasons: ["fixture"],
+      sourceRetrievers: ["lexical"],
+      indexVersion: "test",
+      indexedAt: Date.parse("2026-05-09T00:00:00.000Z"),
+      fileHashAtIndex: "hash",
+      rrfScore: 0.5,
+      rerankScore: 1,
+      confidence: "high",
+      readRecommendation: "read_now",
+      ...overrides,
+    };
+  }
+
   afterEach(async () => {
     clearCodeSearchSessionsForTests();
     await fsp.rm(root, { recursive: true, force: true });
@@ -112,6 +134,78 @@ describe("code search tools", () => {
       minimum: 1,
       maximum: 20_000,
     });
+  });
+
+  it("rejects unsafe full candidate numeric fields at runtime and in exported schemas", async () => {
+    expect(CodeReadContextInputSchema.safeParse({
+      candidates: [makeFullCandidate()],
+      maxReadRanges: 1,
+    }).success).toBe(true);
+
+    for (const candidate of [
+      makeFullCandidate({ range: { startLine: Infinity, endLine: 1 } }),
+      makeFullCandidate({ range: { startLine: 3, endLine: 2 } }),
+      makeFullCandidate({ range: { startLine: 1, endLine: 1, startByte: Number.MAX_SAFE_INTEGER + 1 } }),
+      makeFullCandidate({ signals: { lexicalMatch: Infinity } }),
+      makeFullCandidate({ ranks: { retrieverRanks: { lexical: 1.5 } } }),
+      makeFullCandidate({ indexedAt: Number.MAX_SAFE_INTEGER + 1 }),
+      makeFullCandidate({ rrfScore: Infinity }),
+    ]) {
+      expect(CodeReadContextInputSchema.safeParse({ candidates: [candidate] }).success).toBe(false);
+    }
+
+    const registry = new ToolRegistry();
+    registry.register(new CodeReadContextTool());
+    const executor = new ToolExecutor({
+      registry,
+      permissionManager: new ToolPermissionManager({}),
+      concurrency: new ConcurrencyController(),
+    });
+    const result = await executor.execute("code_read_context", {
+      candidates: [
+        makeFullCandidate({ range: { startLine: Infinity, endLine: 1 } }),
+      ],
+    }, context);
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("Input validation failed");
+    expect(result.error).toContain("candidates.0.range.startLine");
+
+    const parameters = toToolDefinition(new CodeReadContextTool()).function.parameters as {
+      properties?: {
+        candidates?: {
+          items?: {
+            properties?: {
+              range?: { properties?: Record<string, unknown> };
+              ranks?: { properties?: { retrieverRanks?: { additionalProperties?: unknown } } };
+            };
+          };
+        };
+      };
+    };
+    expect(parameters.properties?.candidates?.items?.properties?.range?.properties?.startLine).toMatchObject({
+      type: "integer",
+      minimum: 1,
+      maximum: Number.MAX_SAFE_INTEGER,
+    });
+    expect(parameters.properties?.candidates?.items?.properties?.range?.properties?.startByte).toMatchObject({
+      type: "integer",
+      minimum: 0,
+      maximum: Number.MAX_SAFE_INTEGER,
+    });
+    const retrieverRankSchema = parameters.properties
+      ?.candidates?.items?.properties?.ranks?.properties?.retrieverRanks?.additionalProperties as Record<string, unknown> | undefined;
+    if (retrieverRankSchema && "$ref" in retrieverRankSchema) {
+      expect(retrieverRankSchema).toEqual({
+        $ref: "#/properties/candidates/items/properties/range/properties/startLine",
+      });
+    } else {
+      expect(retrieverRankSchema).toMatchObject({
+        type: "integer",
+        minimum: 1,
+        maximum: Number.MAX_SAFE_INTEGER,
+      });
+    }
   });
 
   it("code_search and code_read_context provide structured context through queryId handles", async () => {

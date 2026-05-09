@@ -5,12 +5,13 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { SearchOrchestrator } from "../orchestrator.js";
 import { ProgressiveReader } from "../progressive-reader.js";
 import { rerankCandidates } from "../reranker.js";
+import { normalizeCandidates } from "../candidate-normalizer.js";
 import { buildFileIndex } from "../indexes/file-index.js";
 import { getCodeSearchIndexes } from "../indexes/index-store.js";
 import { planCodeSearchTask } from "../query-planner.js";
 import { parseVerificationSignal } from "../verification-retrieval.js";
 import type { FusedCandidate } from "../fusion.js";
-import { DEFAULT_CANDIDATE_PENALTIES, DEFAULT_CANDIDATE_SIGNALS } from "../contracts.js";
+import { DEFAULT_CANDIDATE_PENALTIES, DEFAULT_CANDIDATE_SIGNALS, type CodeCandidate } from "../contracts.js";
 
 describe("code search platform", () => {
   let root: string;
@@ -97,6 +98,31 @@ describe("code search platform", () => {
 
     expect(ranked.map((candidate) => candidate.id)).toEqual(["lexical", "semantic-only"]);
     expect(ranked[1]!.rerankScore).toBe(0);
+  });
+
+  it("does not synthesize invalid byte offsets when merging candidates without byte offsets", () => {
+    const makeCandidate = (id: string, startLine: number, endLine: number): CodeCandidate => ({
+      id,
+      file: "src/service.ts",
+      range: { startLine, endLine },
+      preview: id,
+      signals: DEFAULT_CANDIDATE_SIGNALS,
+      ranks: { retrieverRanks: { lexical: 1 } },
+      penalties: DEFAULT_CANDIDATE_PENALTIES,
+      reasons: [id],
+      sourceRetrievers: ["lexical"],
+      indexVersion: "test",
+      indexedAt: 1,
+      fileHashAtIndex: id,
+    });
+
+    const [merged] = normalizeCandidates([
+      makeCandidate("first", 1, 2),
+      makeCandidate("second", 3, 4),
+    ]);
+
+    expect(merged).toBeDefined();
+    expect(merged!.range).toEqual({ startLine: 1, endLine: 4 });
   });
 
   it("reads bounded context ranges with budget and trace state", async () => {
