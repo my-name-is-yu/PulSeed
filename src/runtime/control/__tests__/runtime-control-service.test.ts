@@ -11,6 +11,9 @@ import type { RuntimeSessionRegistrySnapshot } from "../../session-registry/type
 import { BrowserSessionStore, RuntimeAuthHandoffStore } from "../../interactive-automation/index.js";
 import { GuardrailStore } from "../../guardrails/index.js";
 import type { RuntimeItem } from "../../types/companion-state.js";
+import { EventServer } from "../../event/server.js";
+import { NotificationDispatcher } from "../../notification-dispatcher.js";
+import { OutboxStore } from "../../store/outbox-store.js";
 
 function snapshotWithRuns(runs: RuntimeSessionRegistrySnapshot["background_runs"]): RuntimeSessionRegistrySnapshot {
   return {
@@ -595,6 +598,63 @@ describe("RuntimeControlService", () => {
     }
   });
 
+  it("rejects superseded auth handoff completion before reusing the linked browser session", async () => {
+    const tmpDir = makeTempDir("pulseed-runtime-control-auth-superseded-");
+    try {
+      const runtimeRoot = path.join(tmpDir, "runtime");
+      const authHandoffStore = new RuntimeAuthHandoffStore(runtimeRoot);
+      const browserSessionStore = new BrowserSessionStore(runtimeRoot);
+      await browserSessionStore.recordAuthRequired({
+        sessionId: "sess-superseded",
+        providerId: "browser",
+        serviceKey: "mail.example.com",
+        workspace: "/repo",
+        actorKey: "chat-1",
+        failureCode: "auth_required",
+        failureMessage: "login required",
+      });
+      const first = await authHandoffStore.createPending({
+        providerId: "browser",
+        serviceKey: "mail.example.com",
+        workspace: "/repo",
+        actorKey: "chat-1",
+        browserSessionId: "sess-superseded",
+        resumableSessionId: "sess-superseded",
+        taskSummary: "Open mail",
+      });
+      await authHandoffStore.createPending({
+        providerId: "browser",
+        serviceKey: "mail.example.com",
+        workspace: "/repo",
+        actorKey: "chat-1",
+        browserSessionId: "sess-current",
+        resumableSessionId: "sess-current",
+        taskSummary: "Open mail again",
+      });
+      const service = new RuntimeControlService({
+        runtimeRoot,
+        authHandoffStore,
+        browserSessionStore,
+      });
+
+      const result = await service.controlAutomation({
+        domain: "auth_handoff",
+        action: "complete",
+        handoffId: first.handoff_id,
+        reason: "complete superseded login",
+        cwd: "/repo",
+        approvalFn: vi.fn().mockResolvedValue(true),
+      });
+
+      expect(result).toMatchObject({ success: false, state: "blocked" });
+      expect(result.message).toContain("terminal: superseded");
+      await expect(authHandoffStore.load(first.handoff_id)).resolves.toMatchObject({ state: "superseded" });
+      await expect(browserSessionStore.load("sess-superseded")).resolves.toMatchObject({ state: "auth_required" });
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
+  });
+
   it("fails closed for unauthorized automation mutations when approval is unavailable", async () => {
     const tmpDir = makeTempDir("pulseed-runtime-control-auth-unauthorized-");
     try {
@@ -736,10 +796,20 @@ describe("RuntimeControlService", () => {
     }
   });
 
-  it("emits RuntimeEvent facts and recomputes CompanionState from the production run-control path", async () => {
+  it("emits RuntimeEvent facts without treating event creation as user notification dispatch", async () => {
     const tmpDir = makeTempDir("pulseed-runtime-control-companion-boundary-");
     try {
-      const operationStore = new RuntimeOperationStore(path.join(tmpDir, "runtime"));
+      const runtimeRoot = path.join(tmpDir, "runtime");
+      const externalEventsDir = path.join(tmpDir, "events");
+      const operationStore = new RuntimeOperationStore(runtimeRoot);
+      const outboxStore = new OutboxStore(runtimeRoot);
+      const eventServer = new EventServer({ writeEvent: vi.fn().mockResolvedValue(undefined) } as never, {
+        eventsDir: externalEventsDir,
+        runtimeRoot,
+        outboxStore,
+      });
+      const notificationDispatcher = new NotificationDispatcher({ channels: [] });
+      notificationDispatcher.setRealtimeSink((report) => eventServer.broadcast("notification_report", report));
       let nowTick = 0;
       const service = new RuntimeControlService({
         operationStore,
@@ -779,6 +849,28 @@ describe("RuntimeControlService", () => {
         }),
       ]));
       expect(events[0]?.authority_delta.changed_fields).toContain("approval_scope");
+      expect(await outboxStore.list()).toEqual([]);
+
+      await notificationDispatcher.dispatch({
+        id: "report-runtime-control-boundary",
+        report_type: "execution_summary",
+        goal_id: "goal-1",
+        title: "Runtime control boundary check",
+        content: "A real notification dispatch should appear in the EventServer outbox.",
+        verbosity: "minimal",
+        generated_at: "2026-05-08T00:00:00.000Z",
+        delivered_at: null,
+        read: false,
+      });
+      expect(await outboxStore.list()).toEqual([
+        expect.objectContaining({
+          event_type: "notification_report",
+          payload: expect.objectContaining({
+            id: "report-runtime-control-boundary",
+            report_type: "execution_summary",
+          }),
+        }),
+      ]);
 
       const missingBoundary = await service.recomputeCompanionState({
         currentTime: "2026-05-08T00:01:00.000Z",
