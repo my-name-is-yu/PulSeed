@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as fs from "node:fs";
-import * as path from "node:path";
 import { StateManager } from "../../../base/state/state-manager.js";
 import { SessionManager } from "../session-manager.js";
 import { TrustManager } from "../../../platform/traits/trust-manager.js";
@@ -111,6 +110,17 @@ function makeLifecycle(
   return { stateManager, lifecycle };
 }
 
+async function readSingleLedger(
+  stateManager: StateManager,
+  goalId: string,
+): Promise<{ summary: { tokens_used: number; latest_event_type?: string | null } }> {
+  const [task] = await stateManager.listTasks(goalId);
+  expect(task).toBeDefined();
+  const ledger = await stateManager.readRaw(`tasks/${goalId}/ledger/${task!.id}.json`);
+  expect(ledger).toBeTruthy();
+  return ledger as { summary: { tokens_used: number; latest_event_type?: string | null } };
+}
+
 describe("TaskLifecycle usage reporting", () => {
   it("threads gateway generation and verifier usage into ledger summaries and CLI reporting", async () => {
     const tmpDir = makeTempDir("pulseed-task-lifecycle-usage-");
@@ -158,12 +168,7 @@ describe("TaskLifecycle usage reporting", () => {
       expect(result.tokensUsed).toBe(77);
       expect(adapter.execute).toHaveBeenCalledTimes(1);
 
-      const ledgerDir = path.join(tmpDir, "tasks", "goal-usage", "ledger");
-      const ledgerFiles = fs.readdirSync(ledgerDir).filter((entry) => entry.endsWith(".json"));
-      expect(ledgerFiles).toHaveLength(1);
-      const ledgerRecord = JSON.parse(
-        fs.readFileSync(path.join(ledgerDir, ledgerFiles[0]!), "utf-8")
-      ) as { summary: { tokens_used: number } };
+      const ledgerRecord = await readSingleLedger(stateManager, "goal-usage");
       expect(ledgerRecord.summary.tokens_used).toBe(77);
 
       await expect(cmdUsage(stateManager, ["goal", "goal-usage"])).resolves.toBe(0);
@@ -247,11 +252,7 @@ describe("TaskLifecycle usage reporting", () => {
       expect(result.action).toBe("completed");
       expect(result.tokensUsed).toBe(88);
 
-      const ledgerDir = path.join(tmpDir, "tasks", "goal-native-usage", "ledger");
-      const ledgerFiles = fs.readdirSync(ledgerDir).filter((entry) => entry.endsWith(".json"));
-      const ledgerRecord = JSON.parse(
-        fs.readFileSync(path.join(ledgerDir, ledgerFiles[0]!), "utf-8")
-      ) as { summary: { tokens_used: number } };
+      const ledgerRecord = await readSingleLedger(stateManager, "goal-native-usage");
       expect(ledgerRecord.summary.tokens_used).toBe(88);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
@@ -411,8 +412,8 @@ describe("TaskLifecycle usage reporting", () => {
       expect(adapter.execute).not.toHaveBeenCalled();
       expect(result.verificationResult.evidence[0]?.description).toContain("Approval denied");
 
-      const ledgerRecord = JSON.parse(
-        fs.readFileSync(path.join(tmpDir, "tasks", "goal-precheck-usage", "ledger", "task-precheck-usage.json"), "utf-8")
+      const ledgerRecord = await stateManager.readRaw(
+        "tasks/goal-precheck-usage/ledger/task-precheck-usage.json"
       ) as { summary: { tokens_used: number; latest_event_type: string | null } };
       expect(ledgerRecord.summary.latest_event_type).toBe("abandoned");
       expect(ledgerRecord.summary.tokens_used).toBe(35);
@@ -511,8 +512,8 @@ describe("TaskLifecycle usage reporting", () => {
       expect(adapterRegistry.isAvailable).toHaveBeenCalledWith("mock");
       expect(result.verificationResult.evidence[0]?.description).toContain("Adapter circuit breaker is open");
 
-      const ledgerRecord = JSON.parse(
-        fs.readFileSync(path.join(tmpDir, "tasks", "goal-circuit-usage", "ledger", "task-circuit-usage.json"), "utf-8")
+      const ledgerRecord = await stateManager.readRaw(
+        "tasks/goal-circuit-usage/ledger/task-circuit-usage.json"
       ) as { summary: { tokens_used: number; latest_event_type: string | null } };
       expect(ledgerRecord.summary.latest_event_type).toBe("failed");
       expect(ledgerRecord.summary.tokens_used).toBe(35);

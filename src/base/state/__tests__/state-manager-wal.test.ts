@@ -9,7 +9,7 @@ import { makeTempDir, cleanupTempDir } from "../../../../tests/helpers/temp-dir.
 import { makeGoal } from "../../../../tests/helpers/fixtures.js";
 import type { ObservationLogEntry } from "../../types/state.js";
 
-describe("StateManager WAL integration", () => {
+describe("StateManager DB-backed goal persistence", () => {
   let tmpDir: string;
 
   beforeEach(async () => {
@@ -20,16 +20,17 @@ describe("StateManager WAL integration", () => {
     cleanupTempDir(tmpDir);
   });
 
-  it("saveGoal with WAL enabled creates WAL records", async () => {
+  it("saveGoal with WAL enabled uses the DB store without legacy WAL records", async () => {
     const sm = new StateManager(tmpDir, undefined, { walEnabled: true });
     await sm.init();
     const goal = makeGoal({ id: "g1" });
     await sm.saveGoal(goal);
 
     const records = await readWAL("g1", tmpDir);
-    expect(records.length).toBe(2); // intent + commit
-    expect(records[0].op).toBe("save_goal");
-    expect(records[1].op).toBe("commit");
+    expect(records.length).toBe(0);
+    const loaded = await sm.loadGoal("g1");
+    expect(loaded).not.toBeNull();
+    expect(loaded!.id).toBe("g1");
   });
 
   it("saveGoal with WAL disabled creates no WAL records", async () => {
@@ -47,7 +48,7 @@ describe("StateManager WAL integration", () => {
     expect(loaded!.id).toBe("g2");
   });
 
-  it("crash recovery replays uncommitted WAL intent", async () => {
+  it("normal init does not replay legacy uncommitted WAL intent", async () => {
     // Step 1: create goal dir and write an intent without commit
     const goalId = "g-crash";
     const goalDir = path.join(tmpDir, "goals", goalId);
@@ -63,17 +64,15 @@ describe("StateManager WAL integration", () => {
     // No goal.json exists yet
     expect(fs.existsSync(path.join(goalDir, "goal.json"))).toBe(false);
 
-    // Step 2: init triggers recovery
+    // Step 2: init uses the SQLite store; legacy WAL import belongs to an explicit migration boundary.
     const sm = new StateManager(tmpDir, undefined, { walEnabled: true });
     await sm.init();
 
-    // Goal should now be recovered
     const loaded = await sm.loadGoal(goalId);
-    expect(loaded).not.toBeNull();
-    expect(loaded!.id).toBe(goalId);
+    expect(loaded).toBeNull();
   });
 
-  it("crash recovery replays combined observation + goal intent", async () => {
+  it("normal init does not replay combined legacy observation + goal WAL intent", async () => {
     const goalId = "g-observation-apply";
     const goalDir = path.join(tmpDir, "goals", goalId);
     fs.mkdirSync(goalDir, { recursive: true });
@@ -140,16 +139,13 @@ describe("StateManager WAL integration", () => {
     await sm.init();
 
     const loadedGoal = await sm.loadGoal(goalId);
-    expect(loadedGoal).not.toBeNull();
-    expect(loadedGoal!.dimensions[0]!.current_value).toBe(1);
+    expect(loadedGoal).toBeNull();
 
     const loadedLog = await sm.loadObservationLog(goalId);
-    expect(loadedLog).not.toBeNull();
-    expect(loadedLog!.entries).toHaveLength(1);
-    expect(loadedLog!.entries[0]!.observation_id).toBe("obs-apply");
+    expect(loadedLog).toBeNull();
   });
 
-  it("snapshot is created every 50 writes", async () => {
+  it("DB-backed saveGoal does not create legacy snapshots every 50 writes", async () => {
     const sm = new StateManager(tmpDir, undefined, { walEnabled: true });
     await sm.init();
 
@@ -158,10 +154,10 @@ describe("StateManager WAL integration", () => {
     }
 
     const snaps = await listSnapshots("g-snap", tmpDir);
-    expect(snaps.length).toBeGreaterThanOrEqual(1);
+    expect(snaps.length).toBe(0);
   });
 
-  it("WAL compaction is triggered every 100 writes", async () => {
+  it("DB-backed saveGoal leaves no committed legacy WAL intents after 100 writes", async () => {
     const sm = new StateManager(tmpDir, undefined, { walEnabled: true });
     await sm.init();
 
@@ -216,7 +212,7 @@ describe("StateManager WAL integration", () => {
     expect(loaded).not.toBeNull();
   });
 
-  it("replay is idempotent on second init", async () => {
+  it("legacy WAL files remain untouched across repeated init", async () => {
     // Step 1: create goal dir and write an intent without commit
     const goalId = "g-idempotent";
     const goalDir = path.join(tmpDir, "goals", goalId);
@@ -229,29 +225,22 @@ describe("StateManager WAL integration", () => {
       ts: "2026-01-01T00:00:00.000Z",
     });
 
-    // Step 2: first init replays the uncommitted intent
     const sm1 = new StateManager(tmpDir, undefined, { walEnabled: true });
     await sm1.init();
 
     const loaded1 = await sm1.loadGoal(goalId);
-    expect(loaded1).not.toBeNull();
-    expect(loaded1!.id).toBe(goalId);
+    expect(loaded1).toBeNull();
 
-    // WAL should now contain a commit record (H2 fix)
     const recordsAfterFirst = await readWAL(goalId, tmpDir);
     const commits = recordsAfterFirst.filter((r) => r.op === "commit");
-    expect(commits.length).toBeGreaterThanOrEqual(1);
+    expect(commits.length).toBe(0);
 
-    // Step 3: second init should NOT replay (commit record exists)
     const sm2 = new StateManager(tmpDir, undefined, { walEnabled: true });
     await sm2.init();
 
     const loaded2 = await sm2.loadGoal(goalId);
-    expect(loaded2).not.toBeNull();
-    expect(loaded2!.id).toBe(goalId);
-    expect(loaded2!.description).toBe("original");
+    expect(loaded2).toBeNull();
 
-    // WAL should still have same number of commits (no extra replay)
     const recordsAfterSecond = await readWAL(goalId, tmpDir);
     const commitsAfterSecond = recordsAfterSecond.filter((r) => r.op === "commit");
     expect(commitsAfterSecond.length).toBe(commits.length);

@@ -1,7 +1,6 @@
-import * as fsp from "node:fs/promises";
-import * as path from "node:path";
 import type { StateManager } from "../../../base/state/state-manager.js";
 import type { Task, VerificationResult } from "../../../base/types/task.js";
+import { GoalTaskStateStore } from "../../../runtime/store/goal-task-state-store.js";
 
 export type TaskOutcomeEventType =
   | "acked"
@@ -334,77 +333,8 @@ export async function recordTaskOutcomeMutation(
   return syncTaskOutcomeSummary(stateManager, task);
 }
 
-async function readLedgerRecordsInDir(dirPath: string): Promise<TaskOutcomeLedgerRecord[]> {
-  let entries: string[];
-  try {
-    entries = await fsp.readdir(dirPath, { withFileTypes: false });
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-      return [];
-    }
-    throw err;
-  }
-
-  const records: TaskOutcomeLedgerRecord[] = [];
-  for (const entry of entries.filter((name) => name.endsWith(".json")).sort()) {
-    try {
-      const raw = JSON.parse(await fsp.readFile(path.join(dirPath, entry), "utf-8")) as Partial<TaskOutcomeLedgerRecord>;
-      if (
-        typeof raw.task_id === "string" &&
-        typeof raw.goal_id === "string" &&
-        Array.isArray(raw.events) &&
-        raw.summary &&
-        typeof raw.summary === "object"
-      ) {
-        records.push(raw as TaskOutcomeLedgerRecord);
-      }
-    } catch {
-      // Ignore malformed ledger records during aggregation.
-    }
-  }
-  return records;
-}
-
 export async function summarizeTaskOutcomeLedgers(baseDir: string): Promise<TaskOutcomeAggregateSummary> {
-  const tasksDir = path.join(baseDir, "tasks");
-  let goalEntries: import("node:fs").Dirent[];
-  try {
-    goalEntries = await fsp.readdir(tasksDir, { withFileTypes: true });
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-      return {
-        total_tasks: 0,
-        terminal_tasks: 0,
-        inflight_tasks: 0,
-        succeeded: 0,
-        failed: 0,
-        abandoned: 0,
-        retried: 0,
-        failure_stopped_reasons: {
-          timeout: 0,
-          policy_blocked: 0,
-          cancelled: 0,
-          error: 0,
-          unknown: 0,
-          other: 0,
-        },
-        total_tokens_used: 0,
-        success_rate: null,
-        retry_rate: null,
-        abandoned_rate: null,
-        p95_created_to_acked_ms: null,
-        p95_started_to_completed_ms: null,
-        p95_created_to_completed_ms: null,
-      };
-    }
-    throw err;
-  }
-
-  const ledgerDirs = goalEntries
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => path.join(tasksDir, entry.name, "ledger"));
-
-  const records = (await Promise.all(ledgerDirs.map((dirPath) => readLedgerRecordsInDir(dirPath)))).flat();
+  const records = await new GoalTaskStateStore(baseDir).listTaskOutcomeLedgers() as unknown as TaskOutcomeLedgerRecord[];
   const createdToAcked = records
     .map((record) => record.summary.latencies.created_to_acked_ms)
     .filter((value): value is number => typeof value === "number" && Number.isFinite(value));

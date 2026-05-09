@@ -3,7 +3,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import yaml from "js-yaml";
-import { getPulseedDirPath, getLogsDir, getGoalsDir, getPluginsDir } from "../../../base/utils/paths.js";
+import { getPulseedDirPath, getLogsDir, getPluginsDir } from "../../../base/utils/paths.js";
 import { execFileNoThrow } from "../../../base/utils/execFileNoThrow.js";
 import { getCliRunnerBuildPath } from "../../../base/utils/pulseed-meta.js";
 import { readJsonFileOrNull } from "../../../base/utils/json-io.js";
@@ -15,11 +15,13 @@ import { probeDaemonHealth } from "../../../runtime/daemon/client.js";
 import {
   ApprovalStore,
   DaemonStateStore,
+  GoalTaskStateStore,
   OutboxStore,
   RuntimeHealthStore,
   compactRuntimeHealthKpi,
   createRuntimeStorePaths,
   inspectControlDatabase,
+  importLegacyGoalTaskDurableLoopState,
   importLegacyQueueDaemonScheduleState,
   type RuntimeHealthKpi,
 } from "../../../runtime/store/index.js";
@@ -482,37 +484,20 @@ export function checkPluginPermissionWarnings(baseDir?: string): CheckResult {
   return { name: "Plugin permissions", status: "pass", detail: "no shell-capable plugins found" };
 }
 
-export function checkGoals(baseDir?: string): CheckResult {
-  const goalsDir = getGoalsDir(baseDir ?? getPulseedDirPath());
-
-  if (!fs.existsSync(goalsDir)) {
-    return { name: "Goals", status: "warn", detail: "goals directory not found" };
-  }
-
-  let count = 0;
+export async function checkGoals(baseDir?: string): Promise<CheckResult> {
+  const resolvedBaseDir = baseDir ?? getPulseedDirPath();
+  let goalIds: string[];
   try {
-    const entries = fs.readdirSync(goalsDir, { withFileTypes: true });
-    for (const entry of entries) {
-      if (entry.isFile() && entry.name.endsWith(".json")) {
-        count += 1;
-        continue;
-      }
-      if (!entry.isDirectory()) {
-        continue;
-      }
-      if (fs.existsSync(path.join(goalsDir, entry.name, "goal.json"))) {
-        count += 1;
-      }
-    }
-  } catch {
-    return { name: "Goals", status: "warn", detail: "could not read goals directory" };
+    goalIds = await new GoalTaskStateStore(resolvedBaseDir).listGoalIds({ archived: false });
+  } catch (err) {
+    return { name: "Goals", status: "warn", detail: `could not read goal database: ${String(err)}` };
   }
 
-  if (count === 0) {
+  if (goalIds.length === 0) {
     return { name: "Goals", status: "warn", detail: "0 goals configured" };
   }
 
-  return { name: "Goals", status: "pass", detail: `${count} goal${count === 1 ? "" : "s"} configured` };
+  return { name: "Goals", status: "pass", detail: `${goalIds.length} goal${goalIds.length === 1 ? "" : "s"} configured` };
 }
 
 export function checkLogDirectory(baseDir?: string): CheckResult {
@@ -766,6 +751,7 @@ export async function cmdDoctor(_args: string[]): Promise<number> {
       importedAt: new Date().toISOString(),
     });
     const chatAgentLoopImportReport = await importLegacyChatAgentLoopSessionState(baseDir);
+    const goalTaskImportReport = await importLegacyGoalTaskDurableLoopState(baseDir);
     const migratedLegacyCronTasks = await migrateLegacyCronTasksIfNeeded({
       baseDir,
       logger: repairLogger,
@@ -788,6 +774,9 @@ export async function cmdDoctor(_args: string[]): Promise<number> {
     console.log(
       `Repair chat import: chat sessions=${chatAgentLoopImportReport.importedChatSessions}, cross-platform sessions=${chatAgentLoopImportReport.importedCrossPlatformSessions}, agentloop states=${chatAgentLoopImportReport.importedAgentLoopStates}, agentloop trace events=${chatAgentLoopImportReport.importedTraceEvents}, blocked=${chatAgentLoopImportReport.blockedSources.length}`
     );
+    console.log(
+      `Repair goal/task import: goals=${goalTaskImportReport.goals}, tasks=${goalTaskImportReport.tasks}, histories=${goalTaskImportReport.taskHistoryRecords}, ledgers=${goalTaskImportReport.taskOutcomeLedgers}, verification=${goalTaskImportReport.verificationResults}, checkpoints=${goalTaskImportReport.checkpoints}, pipelines=${goalTaskImportReport.pipelines}, blocked=${goalTaskImportReport.blockedSources.length}`
+    );
   }
 
   const checks: CheckResult[] = [
@@ -800,7 +789,7 @@ export async function cmdDoctor(_args: string[]): Promise<number> {
     checkControlDatabase(baseDir),
     checkProviderConfigPermissions(baseDir),
     checkPluginPermissionWarnings(baseDir),
-    checkGoals(baseDir),
+    await checkGoals(baseDir),
     checkLogDirectory(baseDir),
     checkBuild(),
     checkNativeTaskAgentLoopTools(),

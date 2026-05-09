@@ -1,5 +1,3 @@
-import * as fsp from "node:fs/promises";
-import * as path from "node:path";
 import { parseArgs } from "node:util";
 import type { StateManager } from "../../../base/state/state-manager.js";
 import {
@@ -9,6 +7,7 @@ import {
 } from "../../usage-counter.js";
 import { parseUsagePeriodMs } from "../../usage-period.js";
 import { ScheduleHistoryStore } from "../../../runtime/schedule/history.js";
+import { GoalTaskStateStore } from "../../../runtime/store/goal-task-state-store.js";
 import { ChatSessionDataStore } from "../../chat/chat-session-data-store.js";
 
 async function collectGoalUsage(stateManager: StateManager, goalId: string): Promise<{
@@ -17,36 +16,20 @@ async function collectGoalUsage(stateManager: StateManager, goalId: string): Pro
   taskCount: number;
   terminalTaskCount: number;
 }> {
-  const ledgerDir = path.join(stateManager.getBaseDir(), "tasks", goalId, "ledger");
-  let entries: string[] = [];
-  try {
-    entries = await fsp.readdir(ledgerDir);
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
-    return { goalId, totalTokens: 0, taskCount: 0, terminalTaskCount: 0 };
-  }
-
   let totalTokens = 0;
   let taskCount = 0;
   let terminalTaskCount = 0;
-  for (const entry of entries) {
-    if (!entry.endsWith(".json")) continue;
+  const ledgers = (await new GoalTaskStateStore(stateManager.getBaseDir()).listTaskOutcomeLedgers())
+    .filter((ledger) => ledger.goal_id === goalId);
+  for (const ledger of ledgers) {
     taskCount += 1;
-    try {
-      const raw = await fsp.readFile(path.join(ledgerDir, entry), "utf-8");
-      const parsed = JSON.parse(raw) as {
-        summary?: { latest_event_type?: string; tokens_used?: number };
-      };
-      totalTokens = addUsageTokenCounts(totalTokens, parsed.summary?.tokens_used);
-      if (
-        parsed.summary?.latest_event_type === "succeeded"
-        || parsed.summary?.latest_event_type === "failed"
-        || parsed.summary?.latest_event_type === "abandoned"
-      ) {
-        terminalTaskCount += 1;
-      }
-    } catch {
-      // Ignore malformed ledger entries.
+    totalTokens = addUsageTokenCounts(totalTokens, ledger.summary?.["tokens_used"]);
+    if (
+      ledger.summary?.["latest_event_type"] === "succeeded"
+      || ledger.summary?.["latest_event_type"] === "failed"
+      || ledger.summary?.["latest_event_type"] === "abandoned"
+    ) {
+      terminalTaskCount += 1;
     }
   }
 

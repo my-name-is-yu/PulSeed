@@ -10,33 +10,39 @@ import type { Goal, GoalTree } from "../types/goal.js";
 import type { ObservationLog, ObservationLogEntry } from "../types/state.js";
 import type { GapHistoryEntry } from "../types/gap.js";
 import type { PaceSnapshot } from "../types/goal.js";
-import { TaskSchema } from "../types/task.js";
 import type { Task } from "../types/task.js";
+import type { PipelineState } from "../types/pipeline.js";
 import { LoopCheckpointSchema } from "../types/checkpoint.js";
 import type { CheckpointTrustPort } from "./checkpoint-trust-port.js";
 import { initDirs, atomicWrite, atomicRead } from "./state-persistence.js";
 import { GoalWriteCoordinator } from "./state-manager-goal-write.js";
-import { recoverStateManagerWAL } from "./state-manager-wal.js";
 import type { StateWriteFence } from "./state-write-fence.js";
 import {
-  archiveCompleteMarkerPath,
-  archiveGoalDir,
-  archiveGoalState,
-  goalStorageLocation,
-  listArchivedGoals as listArchivedGoalsFromState,
   listRecoverableArchivedGoalIds as listRecoverableArchivedGoalIdsFromState,
-  readTasksFromDir,
-  resolveGoalLocation,
-  taskStorageDirs,
-  type GoalLocationKind,
-  type GoalStorageLocation,
-  visitChildGoals,
 } from "./state-manager-goal-state.js";
 
 export { initDirs, atomicWrite, atomicRead };
 export type { StateWriteFence, StateWriteFenceContext } from "./state-write-fence.js";
 
 const MAX_HISTORY_ENTRIES = 500;
+type GoalTaskStateStore = import("../../runtime/store/goal-task-state-store.js").GoalTaskStateStore;
+
+function normalizeRawStatePath(relativePath: string): string[] {
+  return relativePath.replace(/\\/g, "/").replace(/^\/+/, "").split("/").filter(Boolean);
+}
+
+function isGoalTaskDurableStatePath(relativePath: string): boolean {
+  const parts = normalizeRawStatePath(relativePath);
+  if (parts.length === 0) return false;
+  if (parts[0] === "goals" && parts.length >= 3) return true;
+  if (parts[0] === "tasks" && parts.length >= 3) return true;
+  if (parts[0] === "goal-trees" && parts.length === 2) return true;
+  if (parts[0] === "verification" && parts.length === 3) return true;
+  if (parts[0] === "checkpoints" && parts.length >= 3) return true;
+  if (parts[0] === "pipelines" && parts.length === 2) return true;
+  if (parts[0] === "stalls" && parts.length === 2) return true;
+  return false;
+}
 
 /**
  * StateManager handles persistence of goals, state vectors, observation logs,
@@ -58,6 +64,8 @@ export class StateManager {
   private readonly logger?: Logger;
   private readonly walEnabled: boolean;
   private readonly goalWriteCoordinator: GoalWriteCoordinator;
+  private goalTaskStateStorePromise: Promise<GoalTaskStateStore> | null = null;
+  private readonly goalStateWriteQueues = new Map<string, Promise<void>>();
 
   constructor(baseDir?: string, logger?: Logger, options?: { walEnabled?: boolean }) {
     this.baseDir = baseDir ?? getPulseedDirPath();
@@ -73,21 +81,7 @@ export class StateManager {
   /** Create required subdirectories. Must be called after construction before first use. */
   async init(): Promise<void> {
     await initDirs(this.baseDir);
-    if (this.walEnabled) {
-      await this.recoverWAL();
-    }
-  }
-
-  /**
-   * Scan all goals for uncommitted WAL entries and replay them.
-   * Depends on initDirs() having been called first (to ensure goals/ exists).
-   */
-  private async recoverWAL(): Promise<void> {
-    await recoverStateManagerWAL({
-      baseDir: this.baseDir,
-      logger: this.logger,
-      listGoalIds: () => this.listGoalIds(),
-    });
+    await (await this.goalTaskStateStore()).ensureReady();
   }
 
   /** Returns the base directory path */
@@ -105,6 +99,28 @@ export class StateManager {
 
   private async assertWriteFence(goalId: string, op: string, data: unknown): Promise<void> {
     await this.goalWriteCoordinator.assertWriteFence(goalId, op, data);
+  }
+
+  private async runGoalStateMutation<T>(
+    goalId: string,
+    op: string,
+    data: unknown,
+    fn: () => Promise<T>
+  ): Promise<T> {
+    const previous = this.goalStateWriteQueues.get(goalId) ?? Promise.resolve();
+    const run = previous.catch(() => undefined).then(async () => {
+      await this.assertWriteFence(goalId, op, data);
+      return fn();
+    });
+    const marker = run.then(() => undefined, () => undefined);
+    this.goalStateWriteQueues.set(goalId, marker);
+    try {
+      return await run;
+    } finally {
+      if (this.goalStateWriteQueues.get(goalId) === marker) {
+        this.goalStateWriteQueues.delete(goalId);
+      }
+    }
   }
 
   private async goalDir(goalId: string): Promise<string> {
@@ -140,29 +156,6 @@ export class StateManager {
     }
   }
 
-  private goalStorageLocation(goalId: string, kind: GoalLocationKind): GoalStorageLocation {
-    return goalStorageLocation(this.baseDir, goalId, kind);
-  }
-
-  private archiveGoalDir(goalId: string): string {
-    return archiveGoalDir(this.baseDir, goalId);
-  }
-
-  private archiveCompleteMarkerPath(archiveBase: string): string {
-    return archiveCompleteMarkerPath(archiveBase);
-  }
-
-  private taskStorageDirs(goalId: string): { activeDir: string | null; archiveDir: string | null } {
-    return taskStorageDirs(this.baseDir, goalId);
-  }
-
-  private async readTasksFromDir(tasksDir: string): Promise<Task[]> {
-    return readTasksFromDir(tasksDir, {
-      atomicRead: (filePath) => this.atomicRead(filePath),
-      isEnoent: (error) => this.isEnoent(error),
-    });
-  }
-
   private async cleanupActiveGoalState(goalId: string): Promise<void> {
     await fsp.rm(path.join(this.baseDir, "goals", goalId), { recursive: true, force: true });
     await fsp.rm(path.join(this.baseDir, "tasks", goalId), { recursive: true, force: true });
@@ -171,35 +164,34 @@ export class StateManager {
     await fsp.rm(path.join(this.baseDir, "reports", goalId), { recursive: true, force: true });
   }
 
-  private async commitArchiveGoal(stagingBase: string, archiveBase: string): Promise<void> {
-    await fsp.rename(stagingBase, archiveBase);
-  }
-
-  private async resolveGoalLocation(goalId: string, includeArchive: boolean): Promise<GoalStorageLocation | null> {
-    return resolveGoalLocation(this.baseDir, goalId, includeArchive, (filePath) => this.pathExists(filePath));
-  }
-
   private markGoalVisited(goalId: string, visited: Set<string>): boolean {
     if (visited.has(goalId)) return false;
     visited.add(goalId);
     return true;
   }
 
-  private async visitChildGoals(
-    goalId: string,
-    location: GoalStorageLocation,
-    visited: Set<string>,
-    visit: (childId: string, visited: Set<string>) => Promise<boolean>
-  ): Promise<void> {
-    await visitChildGoals(goalId, location, visited, {
-      atomicRead: (filePath) => this.atomicRead(filePath),
-      loadGoal: (childGoalId) => this.loadGoal(childGoalId),
-      logger: this.logger,
-    }, visit);
-  }
-
   private capHistoryEntries<T>(entries: T[]): T[] {
     return entries.slice(-MAX_HISTORY_ENTRIES);
+  }
+
+  private syntheticGoal(goalId: string): Goal {
+    const timestamp = new Date().toISOString();
+    return GoalSchema.parse({
+      id: goalId,
+      title: goalId,
+      description: "",
+      dimensions: [],
+      created_at: timestamp,
+      updated_at: timestamp,
+    });
+  }
+
+  private async ensureGoalRegistryEntryForSidecar(goalId: string): Promise<void> {
+    const store = await this.goalTaskStateStore();
+    const existing = await store.loadGoal(goalId, { includeArchived: true });
+    if (existing === null) {
+      await store.saveGoal(this.syntheticGoal(goalId));
+    }
   }
 
   private assertObservationGoalId(goalId: string, entry: ObservationLogEntry): void {
@@ -236,98 +228,72 @@ export class StateManager {
     });
   }
 
+  private async goalTaskStateStore(): Promise<GoalTaskStateStore> {
+    this.goalTaskStateStorePromise ??= import("../../runtime/store/goal-task-state-store.js")
+      .then(({ GoalTaskStateStore }) => new GoalTaskStateStore(this.baseDir));
+    return this.goalTaskStateStorePromise;
+  }
+
   // ─── Goal CRUD ───
 
   async saveGoal(goal: Goal): Promise<void> {
     const parsed = GoalSchema.parse(goal);
-    const dir = await this.goalDir(parsed.id);
-    await this.protectedWrite(parsed.id, "save_goal", parsed, async () => {
-      await this.atomicWrite(path.join(dir, "goal.json"), parsed);
+    await this.runGoalStateMutation(parsed.id, "save_goal", parsed, async () => {
+      await (await this.goalTaskStateStore()).saveGoal(parsed);
     });
   }
 
   async loadGoal(goalId: string): Promise<Goal | null> {
-    const archiveBase = this.archiveGoalDir(goalId);
-    const archiveCompleteMarkerExists = await this.pathExists(this.archiveCompleteMarkerPath(archiveBase));
-    const archiveGoalPath = this.goalStorageLocation(goalId, "archive").goalJsonPath;
-    const archiveGoalExists = await this.pathExists(archiveGoalPath);
-
-    // Committed archive wins over stale active state after crash cleanup.
-    if (archiveCompleteMarkerExists && archiveGoalExists) {
-      const archiveRaw = await this.atomicRead<unknown>(archiveGoalPath);
-      if (archiveRaw !== null) return GoalSchema.parse(archiveRaw);
-    }
-
-    // Primary path: active goals
-    const filePath = path.join(this.baseDir, "goals", goalId, "goal.json");
-    const raw = await this.atomicRead<unknown>(filePath);
-    if (raw !== null) return GoalSchema.parse(raw);
-
-    // Fallback: archived goals (archiveGoal() copies goal dir to archive/<goalId>/goal/)
-    if (!archiveGoalExists) return null;
-
-    const archiveRaw = await this.atomicRead<unknown>(archiveGoalPath);
-    if (archiveRaw === null) return null;
-    return GoalSchema.parse(archiveRaw);
+    return (await this.goalTaskStateStore()).loadGoal(goalId, { includeArchived: true });
   }
 
   async deleteGoal(goalId: string, _visited = new Set<string>()): Promise<boolean> {
     if (!this.markGoalVisited(goalId, _visited)) return false;
 
-    const location = await this.resolveGoalLocation(goalId, true);
-    if (location === null) return false;
+    const goal = await this.loadGoal(goalId);
+    if (goal === null) {
+      return false;
+    }
 
     // Recursively delete children first (depth-first)
-    await this.visitChildGoals(goalId, location, _visited, (childId, visited) => this.deleteGoal(childId, visited));
-    await fsp.rm(location.dir, { recursive: true, force: true });
+    for (const childId of goal.children_ids) {
+      await this.deleteGoal(childId, _visited);
+    }
+    await (await this.goalTaskStateStore()).deleteGoal(goalId);
+    await this.cleanupActiveGoalState(goalId);
     return true;
   }
 
-  /**
-   * Archive a completed goal by moving its state files to
-   * <base>/archive/<goalId>/.
-   *
-   * Moves:
-   *   goals/<goalId>/         → archive/<goalId>/goal/
-   *   tasks/<goalId>/         → archive/<goalId>/tasks/    (if exists)
-   *   strategies/<goalId>/    → archive/<goalId>/strategies/ (if exists)
-   *   stalls/<goalId>.json    → archive/<goalId>/stalls.json (if exists)
-   *   reports/<goalId>/       → archive/<goalId>/reports/  (if exists)
-   *
-   * Returns true if the goal was archived, false if the goal was not found.
-   */
+  /** Archive a DB-owned goal without falling back to legacy goal JSON. */
   async archiveGoal(goalId: string, _visited = new Set<string>()): Promise<boolean> {
     if (!this.markGoalVisited(goalId, _visited)) return false;
-    return archiveGoalState(goalId, _visited, {
-      baseDir: this.baseDir,
-      logger: this.logger,
-      pathExists: (filePath) => this.pathExists(filePath),
-      atomicRead: (filePath) => this.atomicRead(filePath),
-      atomicWrite: (filePath, data) => this.atomicWrite(filePath, data),
-      loadGoal: (loadGoalId) => this.loadGoal(loadGoalId),
-      cleanupActiveGoalState: (cleanupGoalId) => this.cleanupActiveGoalState(cleanupGoalId),
-      goalWriteProtectedOperation: (writeGoalId, op, data, fn) =>
-        this.goalWriteCoordinator.protectedOperation(writeGoalId, op, data, fn),
-      commitArchiveGoal: (stagingBase, archiveBase) => this.commitArchiveGoal(stagingBase, archiveBase),
-    });
+    const store = await this.goalTaskStateStore();
+    const goal = await store.loadGoal(goalId, { includeArchived: false });
+    if (goal !== null) {
+      for (const childId of goal.children_ids) {
+        await this.archiveGoal(childId, _visited);
+      }
+      return this.runGoalStateMutation(goalId, "archive_goal", { goalId }, async () => {
+        const archived = await store.markGoalArchived(goalId);
+        await fsp.rm(path.join(this.baseDir, "goals", goalId), { recursive: true, force: true });
+        await fsp.rm(path.join(this.baseDir, "tasks", goalId), { recursive: true, force: true });
+        await fsp.rm(path.join(this.baseDir, "stalls", `${goalId}.json`), { force: true });
+        return archived || (await store.loadGoal(goalId, { includeArchived: true })) !== null;
+      });
+    }
+    return false;
   }
 
   /**
-   * Returns the goal IDs of all archived goals under <base>/archive/.
+   * Returns DB-owned archived goal IDs. Legacy archive directories are exposed
+   * only through listRecoverableArchivedGoalIds() for explicit migration/recovery.
    */
   async listArchivedGoals(): Promise<string[]> {
-    return listArchivedGoalsFromState(this.baseDir, (filePath) => this.pathExists(filePath));
+    return (await this.goalTaskStateStore()).listGoalIds({ archived: true });
   }
 
   async listGoalIds(): Promise<string[]> {
-    const goalsDir = path.join(this.baseDir, "goals");
-    try {
-      const entries = await fsp.readdir(goalsDir, { withFileTypes: true });
-      return entries.filter((d) => d.isDirectory()).map((d) => d.name);
-    } catch (e: unknown) {
-      if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
-      return [];
-    }
+    return (await this.goalTaskStateStore()).listGoalIds({ archived: false });
   }
 
   async listRecoverableArchivedGoalIds(): Promise<string[]> {
@@ -335,140 +301,77 @@ export class StateManager {
   }
 
   async listTasks(goalId: string, options: { includeArchive?: boolean } = {}): Promise<Task[]> {
-    const { activeDir, archiveDir } = this.taskStorageDirs(goalId);
-    if (activeDir === null || archiveDir === null) {
-      return [];
-    }
-    const activeTasks = await this.readTasksFromDir(activeDir);
-    if (activeTasks.length > 0 || options.includeArchive === false) {
-      return activeTasks;
-    }
-    return this.readTasksFromDir(archiveDir);
+    void options;
+    return (await this.goalTaskStateStore()).listTasks(goalId);
+  }
+
+  async listTasksByStatus(status: Task["status"]): Promise<Task[]> {
+    return (await this.goalTaskStateStore()).listTasksByStatus(status);
   }
 
   async loadTask(goalId: string, taskId: string, options: { includeArchive?: boolean } = {}): Promise<Task | null> {
-    const relativeCandidates = [`tasks/${goalId}/${taskId}.json`];
-    if (options.includeArchive !== false) {
-      relativeCandidates.push(`archive/${goalId}/tasks/${taskId}.json`);
-    }
+    void options;
+    return (await this.goalTaskStateStore()).loadTask(goalId, taskId);
+  }
 
-    for (const relativePath of relativeCandidates) {
-      const raw = await this.readRaw(relativePath);
-      if (raw === null) continue;
-      const parsed = TaskSchema.safeParse(raw);
-      if (parsed.success) {
-        return parsed.data;
-      }
-    }
-
-    return null;
+  async listPipelinesByStatus(status: PipelineState["status"]): Promise<PipelineState[]> {
+    return (await this.goalTaskStateStore()).listPipelinesByStatus(status);
   }
 
   // ─── Goal Tree ───
 
   async saveGoalTree(tree: GoalTree): Promise<void> {
     const parsed = GoalTreeSchema.parse(tree);
-    const filePath = path.join(
-      this.baseDir,
-      "goal-trees",
-      `${parsed.root_id}.json`
-    );
-    await this.atomicWrite(filePath, parsed);
+    await (await this.goalTaskStateStore()).saveGoalTree(parsed);
   }
 
   async loadGoalTree(rootId: string): Promise<GoalTree | null> {
-    const filePath = path.join(this.baseDir, "goal-trees", `${rootId}.json`);
-    const raw = await this.atomicRead<unknown>(filePath);
-    if (raw === null) return null;
-    return GoalTreeSchema.parse(raw);
+    return (await this.goalTaskStateStore()).loadGoalTree(rootId);
   }
 
   async deleteGoalTree(rootId: string): Promise<boolean> {
-    const filePath = path.join(this.baseDir, "goal-trees", `${rootId}.json`);
-    try {
-      await fsp.unlink(filePath);
-      return true;
-    } catch (e: unknown) {
-      if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
-      return false;
-    }
+    return (await this.goalTaskStateStore()).deleteGoalTree(rootId);
   }
 
   // ─── Observation Log ───
 
   async saveObservationLog(log: ObservationLog): Promise<void> {
     const parsed = ObservationLogSchema.parse(log);
-    await this.writeObservationLog(parsed.goal_id, "save_observation", parsed, true);
+    await this.runGoalStateMutation(parsed.goal_id, "save_observation", parsed, async () => {
+      await (await this.goalTaskStateStore()).saveObservationLog(parsed);
+    });
   }
 
   async loadObservationLog(goalId: string): Promise<ObservationLog | null> {
-    const filePath = path.join(
-      this.baseDir,
-      "goals",
-      goalId,
-      "observations.json"
-    );
-    const raw = await this.atomicRead<unknown>(filePath);
-    if (raw === null) return null;
-    return ObservationLogSchema.parse(raw);
+    return (await this.goalTaskStateStore()).loadObservationLog(goalId);
   }
 
   async appendObservation(goalId: string, entry: ObservationLogEntry): Promise<void> {
     const parsed = ObservationLogEntrySchema.parse(entry);
     this.assertObservationGoalId(goalId, parsed);
-    await this.goalWriteCoordinator.protectedReadModifyWrite(
-      goalId,
-      "append_observation",
-      async () => {
-        const log = (await this.loadObservationLog(goalId)) ?? { goal_id: goalId, entries: [] };
-        return {
-          ...log,
-          entries: this.capHistoryEntries([...log.entries, parsed]),
-        };
-      },
-      async (log) => {
-        const dir = await this.goalDir(goalId);
-        await this.atomicWrite(path.join(dir, "observations.json"), log);
-      }
-    );
+    await this.runGoalStateMutation(goalId, "append_observation", parsed, async () => {
+      await (await this.goalTaskStateStore()).appendObservation(goalId, parsed, MAX_HISTORY_ENTRIES);
+    });
   }
 
   // ─── Gap History ───
 
   async saveGapHistory(goalId: string, history: GapHistoryEntry[]): Promise<void> {
     const parsed = history.map((e) => GapHistoryEntrySchema.parse(e));
-    await this.writeGapHistory(goalId, "save_gap_history", parsed, true);
+    await this.runGoalStateMutation(goalId, "save_gap_history", { goalId, entries: parsed }, async () => {
+      await (await this.goalTaskStateStore()).saveGapHistory(goalId, parsed);
+    });
   }
 
   async loadGapHistory(goalId: string): Promise<GapHistoryEntry[]> {
-    const filePath = path.join(
-      this.baseDir,
-      "goals",
-      goalId,
-      "gap-history.json"
-    );
-    const raw = await this.atomicRead<unknown[]>(filePath);
-    if (raw === null) return [];
-    return raw.map((e) => GapHistoryEntrySchema.parse(e));
+    return (await this.goalTaskStateStore()).loadGapHistory(goalId);
   }
 
   async appendGapHistoryEntry(goalId: string, entry: GapHistoryEntry): Promise<void> {
     const parsed = GapHistoryEntrySchema.parse(entry);
-    await this.goalWriteCoordinator.protectedReadModifyWrite(
-      goalId,
-      "append_gap_entry",
-      async () => {
-        const history = await this.loadGapHistory(goalId);
-        return {
-          goalId,
-          entries: this.capHistoryEntries([...history, parsed]),
-        };
-      },
-      async (payload) => {
-        const dir = await this.goalDir(goalId);
-        await this.atomicWrite(path.join(dir, "gap-history.json"), payload.entries);
-      }
-    );
+    await this.runGoalStateMutation(goalId, "append_gap_entry", parsed, async () => {
+      await (await this.goalTaskStateStore()).appendGapHistoryEntry(goalId, parsed, MAX_HISTORY_ENTRIES);
+    });
   }
 
   async appendObservationAndSaveGoal(
@@ -479,34 +382,19 @@ export class StateManager {
     const parsed = ObservationLogEntrySchema.parse(entry);
     this.assertObservationGoalId(goalId, parsed);
 
-    await this.goalWriteCoordinator.protectedReadModifyWrite(
-      goalId,
-      "append_observation_and_save_goal",
-      async () => {
-        const goal = await this.loadGoal(goalId);
-        if (goal === null) {
-          throw new StateError(`appendObservationAndSaveGoal: goal "${goalId}" not found`);
-        }
-
-        const observationLog = (await this.loadObservationLog(goalId)) ?? { goal_id: goalId, entries: [] };
-        const updatedGoal = GoalSchema.parse(updateGoal(goal));
-        if (updatedGoal.id !== goalId) {
-          throw new StateError(`appendObservationAndSaveGoal: update changed goal id from "${goalId}" to "${updatedGoal.id}"`);
-        }
-        return {
-          observationLog: {
-            ...observationLog,
-            entries: this.capHistoryEntries([...observationLog.entries, parsed]),
-          },
-          goal: updatedGoal,
-        };
-      },
-      async (data) => {
-        const dir = await this.goalDir(goalId);
-        await this.atomicWrite(path.join(dir, "observations.json"), data.observationLog);
-        await this.atomicWrite(path.join(dir, "goal.json"), data.goal);
+    const store = await this.goalTaskStateStore();
+    await this.runGoalStateMutation(goalId, "append_observation_and_save_goal", { observation: parsed }, async () => {
+      const goal = await store.loadGoal(goalId, { includeArchived: true });
+      if (goal === null) {
+        throw new StateError(`appendObservationAndSaveGoal: goal "${goalId}" not found`);
       }
-    );
+      const updatedGoal = GoalSchema.parse(updateGoal(goal));
+      if (updatedGoal.id !== goalId) {
+        throw new StateError(`appendObservationAndSaveGoal: update changed goal id from "${goalId}" to "${updatedGoal.id}"`);
+      }
+      await store.appendObservation(goalId, parsed, MAX_HISTORY_ENTRIES);
+      await store.saveGoal(updatedGoal);
+    });
   }
 
   /**
@@ -518,9 +406,8 @@ export class StateManager {
       throw new StateError(`savePaceSnapshot: goal "${goalId}" not found`);
     }
     const updated: Goal = { ...goal, pace_snapshot: snapshot };
-    const dir = await this.goalDir(goalId);
-    await this.protectedWrite(goalId, "save_pace_snapshot", updated, async () => {
-      await this.atomicWrite(path.join(dir, "goal.json"), GoalSchema.parse(updated));
+    await this.runGoalStateMutation(goalId, "save_pace_snapshot", updated, async () => {
+      await (await this.goalTaskStateStore()).saveGoal(GoalSchema.parse(updated));
     });
   }
 
@@ -611,13 +498,7 @@ export class StateManager {
 
   /** Check whether a goal directory exists */
   async goalExists(goalId: string): Promise<boolean> {
-    try {
-      await fsp.access(path.join(this.baseDir, "goals", goalId, "goal.json"));
-      return true;
-    } catch (e: unknown) {
-      if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
-      return false;
-    }
+    return (await this.goalTaskStateStore()).goalExists(goalId);
   }
 
   /**
@@ -632,9 +513,7 @@ export class StateManager {
     trustManager?: CheckpointTrustPort
   ): Promise<number> {
     try {
-      const raw = await this.atomicRead<unknown>(
-        path.join(this.baseDir, "goals", goalId, "checkpoint.json")
-      );
+      const raw = await (await this.goalTaskStateStore()).loadLoopCheckpoint(goalId);
       if (raw === null) return 0;
 
       const parseResult = LoopCheckpointSchema.safeParse(raw);
@@ -680,6 +559,12 @@ export class StateManager {
     if (!resolved.startsWith(path.resolve(this.baseDir) + path.sep)) {
       throw new Error(`Path traversal detected: ${relativePath}`);
     }
+    if (isGoalTaskDurableStatePath(relativePath)) {
+      const routed = await (await this.goalTaskStateStore()).readRawPath(relativePath);
+      if (routed.handled) {
+        return routed.value;
+      }
+    }
     return this.atomicRead<unknown>(resolved);
   }
 
@@ -689,6 +574,21 @@ export class StateManager {
     if (!resolved.startsWith(path.resolve(this.baseDir) + path.sep)) {
       throw new Error(`Path traversal detected: ${relativePath}`);
     }
+    const parts = relativePath.split("/");
+    if (isGoalTaskDurableStatePath(relativePath)) {
+      const routedStore = await this.goalTaskStateStore();
+      if (relativePath.startsWith("goals/") && parts.length >= 3) {
+        const goalId = parts[1]!;
+        const routed = await this.runGoalStateMutation(goalId, "write_raw", { path: relativePath, payload: data }, async () =>
+          routedStore.writeRawPath(relativePath, data)
+        );
+        if (routed) {
+          return;
+        }
+      } else if (await routedStore.writeRawPath(relativePath, data)) {
+        return;
+      }
+    }
     const filePath = resolved;
     const dir = path.dirname(filePath);
     try {
@@ -697,13 +597,12 @@ export class StateManager {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") return;
       throw err;
     }
-    // Use protectedWrite only for goal-scoped paths like goals/<goalId>/<filename>
-    const parts = relativePath.split("/");
     if (relativePath.startsWith("goals/") && parts.length >= 3) {
-      const goalId = parts[1];
-      await this.protectedWrite(goalId, "write_raw", { path: relativePath, payload: data }, async () => {
-        await this.atomicWrite(filePath, data);
-      });
+      const goalId = parts[1]!;
+      if (data !== null) {
+        await this.ensureGoalRegistryEntryForSidecar(goalId);
+      }
+      await this.atomicWrite(filePath, data);
     } else {
       await this.atomicWrite(filePath, data);
     }

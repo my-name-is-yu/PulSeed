@@ -14,6 +14,7 @@ import { RuntimeOperatorHandoffStore } from "../store/operator-handoff-store.js"
 import { DaemonStateStore } from "../store/daemon-state-store.js";
 import { ChatSessionDataStore } from "../../interface/chat/chat-session-data-store.js";
 import { SqliteAgentLoopSessionStateStore } from "../../orchestrator/execution/agent-loop/agent-loop-session-db-store.js";
+import { makeGoal } from "../../../tests/helpers/fixtures.js";
 
 // ─── Helpers ───
 
@@ -735,18 +736,17 @@ describe("snapshot and outbox replay", () => {
     expect(snapshot.last_outbox_seq).toBe(2);
   });
 
-  it("skips non-object persisted daemon and goal snapshot records", async () => {
+  it("reads DB-owned goal snapshot records and ignores malformed legacy goal files", async () => {
     fs.writeFileSync(path.join(tmpDir, "daemon-state.json"), JSON.stringify([]), "utf-8");
     fs.mkdirSync(path.join(tmpDir, "goals", "g-array"), { recursive: true });
     fs.writeFileSync(path.join(tmpDir, "goals", "g-array", "goal.json"), JSON.stringify([]), "utf-8");
-    fs.mkdirSync(path.join(tmpDir, "goals", "g-valid"), { recursive: true });
-    fs.writeFileSync(path.join(tmpDir, "goals", "g-valid", "goal.json"), JSON.stringify({
+    const stateManager = new StateManager(tmpDir);
+    await stateManager.saveGoal(makeGoal({
       id: "g-valid",
       title: "Valid goal",
       status: "active",
       loop_status: "idle",
-    }), "utf-8");
-    fs.writeFileSync(path.join(tmpDir, "goals", "g-valid", "gap-history.json"), JSON.stringify({ latest: "not-an-array" }), "utf-8");
+    }));
 
     server = new EventServer(mockDriveSystem as never, {
       port: 0,

@@ -139,29 +139,26 @@ describe("StateManager", async () => {
   });
 
   describe("atomic writes", async () => {
-    it("does not leave .tmp files after successful write", async () => {
+    it("does not create legacy goal JSON files after successful DB-backed write", async () => {
       const goal = makeGoal({ id: "atomic-test" });
       await manager.saveGoal(goal);
 
       const goalDir = path.join(tmpDir, "goals", "atomic-test");
-      const files = fs.readdirSync(goalDir);
-      expect(files).toContain("goal.json");
-      expect(files.filter((f) => f.endsWith(".tmp"))).toHaveLength(0);
+      expect(fs.existsSync(goalDir)).toBe(false);
+      expect(await manager.loadGoal("atomic-test")).toMatchObject({ id: "atomic-test" });
     });
 
-    it("writes valid JSON that can be parsed", async () => {
+    it("stores goal payloads through the typed raw facade", async () => {
       const goal = makeGoal({ id: "json-test" });
       await manager.saveGoal(goal);
 
-      const filePath = path.join(tmpDir, "goals", "json-test", "goal.json");
-      const content = fs.readFileSync(filePath, "utf-8");
-      const parsed = JSON.parse(content);
+      const parsed = await manager.readRaw("goals/json-test/goal.json") as Goal;
       expect(parsed.id).toBe("json-test");
     });
   });
 
   describe("task queries", async () => {
-    it("lists active tasks before falling back to archived tasks", async () => {
+    it("lists DB-owned tasks and ignores legacy archive task files", async () => {
       await manager.writeRaw("tasks/goal-1/task-2.json", makeTaskRecord("task-2", "goal-1", {
         created_at: "2026-01-02T00:00:00.000Z",
       }));
@@ -173,8 +170,10 @@ describe("StateManager", async () => {
       expect(tasks.map((task) => task.id)).toEqual(["task-2", "task-1"]);
     });
 
-    it("falls back to archived tasks when active tasks are absent", async () => {
-      await manager.writeRaw("archive/goal-1/tasks/task-archived.json", makeTaskRecord("task-archived", "goal-1"));
+    it("keeps archived goal task state available through the typed store", async () => {
+      await manager.saveGoal(makeGoal({ id: "goal-1" }));
+      await manager.writeRaw("tasks/goal-1/task-archived.json", makeTaskRecord("task-archived", "goal-1"));
+      await manager.archiveGoal("goal-1");
 
       const tasks = await manager.listTasks("goal-1");
       const task = await manager.loadTask("goal-1", "task-archived");
@@ -191,74 +190,76 @@ describe("StateManager", async () => {
     });
   });
 
-  describe("Issue #429: non-ENOENT errors are re-thrown", async () => {
-    it("listGoalIds re-throws non-ENOENT errors", async () => {
+  describe("legacy directory isolation", async () => {
+    it("listGoalIds is isolated from legacy goal directory shape", async () => {
       // Remove the goals dir and replace it with a file to cause ENOTDIR
       const goalsDir = path.join(tmpDir, "goals");
       fs.rmSync(goalsDir, { recursive: true, force: true , maxRetries: 3, retryDelay: 100 });
       fs.writeFileSync(goalsDir, "not a directory");
 
-      await expect(manager.listGoalIds()).rejects.toThrow();
+      await manager.saveGoal(makeGoal({ id: "db-goal" }));
+      await expect(manager.listGoalIds()).resolves.toEqual(["db-goal"]);
 
       // Restore for afterEach cleanup
       fs.rmSync(goalsDir);
       fs.mkdirSync(goalsDir);
     });
 
-    it("listArchivedGoals re-throws non-ENOENT errors", async () => {
-      // Create archive as a file instead of directory to cause ENOTDIR on readdir
+    it("listArchivedGoals is isolated from legacy archive directory shape", async () => {
+      await manager.saveGoal(makeGoal({ id: "db-archived" }));
+      await manager.archiveGoal("db-archived");
+
       const archiveDir = path.join(tmpDir, "archive");
       fs.writeFileSync(archiveDir, "not a directory");
 
-      await expect(manager.listArchivedGoals()).rejects.toThrow();
+      await expect(manager.listArchivedGoals()).resolves.toEqual(["db-archived"]);
 
       // Restore for afterEach cleanup
       fs.rmSync(archiveDir);
     });
 
-    it("deleteGoalTree re-throws non-ENOENT errors", async () => {
+    it("deleteGoalTree is isolated from legacy goal-tree directory shape", async () => {
       // Create a directory where the file should be so unlink gets EISDIR
       const treeDir = path.join(tmpDir, "goal-trees", "bad-id.json");
       fs.mkdirSync(treeDir, { recursive: true });
 
-      await expect(manager.deleteGoalTree("bad-id")).rejects.toThrow();
+      await expect(manager.deleteGoalTree("bad-id")).resolves.toBe(false);
 
       // Restore for afterEach cleanup
       fs.rmSync(treeDir, { recursive: true, force: true , maxRetries: 3, retryDelay: 100 });
     });
 
-    it("goalExists re-throws non-ENOENT errors (ENOTDIR via file as dir)", async () => {
+    it("goalExists is isolated from legacy goal directory shape", async () => {
       // Make goals/<goalId> a regular file — then fsp.access(goals/<goalId>/goal.json)
       // fails with ENOTDIR because it tries to traverse into a non-directory
       const goalEntry = path.join(tmpDir, "goals", "badgoal-exists");
       fs.rmSync(goalEntry, { recursive: true, force: true , maxRetries: 3, retryDelay: 100 });
       fs.writeFileSync(goalEntry, "not a dir");
 
-      await expect(manager.goalExists("badgoal-exists")).rejects.toThrow();
+      await manager.saveGoal(makeGoal({ id: "badgoal-exists" }));
+      await expect(manager.goalExists("badgoal-exists")).resolves.toBe(true);
 
       // Restore for afterEach cleanup
       fs.rmSync(goalEntry);
     });
 
-    it("deleteGoal re-throws non-ENOENT errors on goal dir access", async () => {
-      // Remove execute permission from goals dir so fsp.access fails with EACCES
+    it("deleteGoal is isolated from legacy goal directory access errors", async () => {
       const goalsDir = path.join(tmpDir, "goals");
       fs.chmodSync(goalsDir, 0o000);
 
       try {
-        await expect(manager.deleteGoal("any-goal")).rejects.toThrow();
+        await expect(manager.deleteGoal("any-goal")).resolves.toBe(false);
       } finally {
         fs.chmodSync(goalsDir, 0o755);
       }
     });
 
-    it("archiveGoal re-throws non-ENOENT errors on goal dir access", async () => {
-      // Remove execute permission from goals dir so fsp.access fails with EACCES
+    it("archiveGoal is isolated from legacy goal directory access errors", async () => {
       const goalsDir = path.join(tmpDir, "goals");
       fs.chmodSync(goalsDir, 0o000);
 
       try {
-        await expect(manager.archiveGoal("any-goal")).rejects.toThrow();
+        await expect(manager.archiveGoal("any-goal")).resolves.toBe(false);
       } finally {
         fs.chmodSync(goalsDir, 0o755);
       }
@@ -266,15 +267,16 @@ describe("StateManager", async () => {
   });
 
   describe("Issue #430: corrupt JSON returns null instead of throwing", async () => {
-    it("loadGoal returns null for corrupt goal.json", async () => {
+    it("loadGoal ignores corrupt legacy goal.json after DB ownership", async () => {
       const goal = makeGoal({ id: "corrupt-goal" });
       await manager.saveGoal(goal);
 
       const goalPath = path.join(tmpDir, "goals", "corrupt-goal", "goal.json");
+      fs.mkdirSync(path.dirname(goalPath), { recursive: true });
       fs.writeFileSync(goalPath, "{ not valid json ~~~");
 
       const result = await manager.loadGoal("corrupt-goal");
-      expect(result).toBeNull();
+      expect(result?.id).toBe("corrupt-goal");
     });
 
     it("loadObservationLog returns null for corrupt observations.json", async () => {
@@ -1027,242 +1029,31 @@ describe("StateManager", async () => {
   });
 
   describe("archiveGoal", async () => {
-    const createFreshManager = async () => {
-      const freshManager = new StateManager(tmpDir);
-      await freshManager.init();
-      return freshManager;
-    };
-
-    it("archives a completed goal — moves all state files", async () => {
+    it("archives DB-owned goal state without materializing legacy goal files", async () => {
       const goalId = "archive-full";
-      const goal = makeGoal({ id: goalId });
-      await manager.saveGoal(goal);
-
-      // Create tasks/<goalId>/ directory with a file
-      const tasksDir = path.join(tmpDir, "tasks", goalId);
-      fs.mkdirSync(tasksDir, { recursive: true });
-      fs.writeFileSync(path.join(tasksDir, "task.json"), JSON.stringify({ id: "t1" }));
-
-      // Create strategies/<goalId>/ directory with a file
-      const strategiesDir = path.join(tmpDir, "strategies", goalId);
-      fs.mkdirSync(strategiesDir, { recursive: true });
-      fs.writeFileSync(path.join(strategiesDir, "strategy.json"), JSON.stringify({ id: "s1" }));
-
-      // Create stalls/<goalId>.json
-      const stallsDir = path.join(tmpDir, "stalls");
-      fs.mkdirSync(stallsDir, { recursive: true });
-      fs.writeFileSync(path.join(stallsDir, `${goalId}.json`), JSON.stringify({ stall: true }));
-
-      // Create reports/<goalId>/ directory with a file
-      const reportsDir = path.join(tmpDir, "reports", goalId);
-      fs.mkdirSync(reportsDir, { recursive: true });
-      fs.writeFileSync(path.join(reportsDir, "report.json"), JSON.stringify({ report: 1 }));
+      await manager.saveGoal(makeGoal({ id: goalId }));
+      await manager.writeRaw("tasks/archive-full/task-1.json", makeTaskRecord("task-1", goalId));
 
       const result = await manager.archiveGoal(goalId);
       expect(result).toBe(true);
 
-      const archiveBase = path.join(tmpDir, "archive", goalId);
-
-      // Goal files moved to archive/<goalId>/goal/
-      expect(fs.existsSync(path.join(archiveBase, "goal", "goal.json"))).toBe(true);
-      // Original goal dir removed
+      expect(await manager.listGoalIds()).not.toContain(goalId);
+      expect(await manager.listArchivedGoals()).toContain(goalId);
+      expect(await manager.loadGoal(goalId)).toMatchObject({ id: goalId });
+      expect((await manager.listTasks(goalId)).map((task) => task.id)).toEqual(["task-1"]);
+      expect(fs.existsSync(path.join(tmpDir, "archive", goalId, "goal", "goal.json"))).toBe(false);
       expect(fs.existsSync(path.join(tmpDir, "goals", goalId))).toBe(false);
-
-      // Tasks moved
-      expect(fs.existsSync(path.join(archiveBase, "tasks", "task.json"))).toBe(true);
-      expect(fs.existsSync(tasksDir)).toBe(false);
-
-      // Strategies moved
-      expect(fs.existsSync(path.join(archiveBase, "strategies", "strategy.json"))).toBe(true);
-      expect(fs.existsSync(strategiesDir)).toBe(false);
-
-      // Stalls moved
-      expect(fs.existsSync(path.join(archiveBase, "stalls.json"))).toBe(true);
-      expect(fs.existsSync(path.join(stallsDir, `${goalId}.json`))).toBe(false);
-
-      // Reports moved
-      expect(fs.existsSync(path.join(archiveBase, "reports", "report.json"))).toBe(true);
-      expect(fs.existsSync(reportsDir)).toBe(false);
     });
 
-    it("retries cleanly when the final rename fails before commit", async () => {
-      const goalId = "archive-retry-rename";
-      const goal = makeGoal({ id: goalId });
-      await manager.saveGoal(goal);
-
-      const tasksDir = path.join(tmpDir, "tasks", goalId);
-      fs.mkdirSync(tasksDir, { recursive: true });
-      fs.writeFileSync(path.join(tasksDir, "task.json"), JSON.stringify({ id: "t1" }));
-
-      const strategiesDir = path.join(tmpDir, "strategies", goalId);
-      fs.mkdirSync(strategiesDir, { recursive: true });
-      fs.writeFileSync(path.join(strategiesDir, "strategy.json"), JSON.stringify({ id: "s1" }));
-
-      const stallsDir = path.join(tmpDir, "stalls");
-      fs.mkdirSync(stallsDir, { recursive: true });
-      fs.writeFileSync(path.join(stallsDir, `${goalId}.json`), JSON.stringify({ stall: true }));
-
-      const reportsDir = path.join(tmpDir, "reports", goalId);
-      fs.mkdirSync(reportsDir, { recursive: true });
-      fs.writeFileSync(path.join(reportsDir, "report.json"), JSON.stringify({ report: 1 }));
-
-      const archiveBase = path.join(tmpDir, "archive", goalId);
-      const stagingBase = path.join(tmpDir, "archive", ".staging", goalId);
-      const commitArchiveGoal = manager as unknown as { commitArchiveGoal: (staging: string, archive: string) => Promise<void> };
-      const originalCommit = commitArchiveGoal.commitArchiveGoal.bind(manager);
-      commitArchiveGoal.commitArchiveGoal = async (staging, archive) => {
-        if (staging === stagingBase && archive === archiveBase) {
-          throw new Error("commit failed before final rename");
-        }
-        return originalCommit(staging, archive);
-      };
-
-      await expect(manager.archiveGoal(goalId)).rejects.toThrow("commit failed before final rename");
-
-      expect(fs.existsSync(archiveBase)).toBe(false);
-      expect(fs.existsSync(stagingBase)).toBe(true);
-      expect(fs.existsSync(path.join(tmpDir, "goals", goalId))).toBe(true);
-
-      commitArchiveGoal.commitArchiveGoal = originalCommit;
-
-      const retryManager = await createFreshManager();
-      await expect(retryManager.archiveGoal(goalId)).resolves.toBe(true);
-
-      expect(fs.existsSync(path.join(archiveBase, "goal", "goal.json"))).toBe(true);
-      expect(fs.existsSync(path.join(archiveBase, "tasks", "task.json"))).toBe(true);
-      expect(fs.existsSync(path.join(archiveBase, "strategies", "strategy.json"))).toBe(true);
-      expect(fs.existsSync(path.join(archiveBase, "stalls.json"))).toBe(true);
-      expect(fs.existsSync(path.join(archiveBase, "reports", "report.json"))).toBe(true);
-      expect(fs.existsSync(path.join(tmpDir, "archive", ".staging", goalId))).toBe(false);
-      expect(fs.existsSync(path.join(tmpDir, "goals", goalId))).toBe(false);
-      expect(fs.existsSync(tasksDir)).toBe(false);
-      expect(fs.existsSync(strategiesDir)).toBe(false);
-      expect(fs.existsSync(path.join(stallsDir, `${goalId}.json`))).toBe(false);
-      expect(fs.existsSync(reportsDir)).toBe(false);
-      expect(await retryManager.loadGoal(goalId)).not.toBeNull();
-      expect((await retryManager.loadGoal(goalId))?.status).toBe("archived");
-    });
-
-    it("retries cleanly when active cleanup fails after commit", async () => {
-      const goalId = "archive-retry-cleanup";
-      const goal = makeGoal({ id: goalId });
-      await manager.saveGoal(goal);
-
-      const tasksDir = path.join(tmpDir, "tasks", goalId);
-      fs.mkdirSync(tasksDir, { recursive: true });
-      fs.writeFileSync(path.join(tasksDir, "task.json"), JSON.stringify({ id: "t1" }));
-
-      const archiveBase = path.join(tmpDir, "archive", goalId);
-      const stagingBase = path.join(tmpDir, "archive", ".staging", goalId);
-      const activeGoalDir = path.join(tmpDir, "goals", goalId);
-      const cleanupActiveGoalState = manager as unknown as { cleanupActiveGoalState: (goal: string) => Promise<void> };
-      const originalCleanup = cleanupActiveGoalState.cleanupActiveGoalState.bind(manager);
-      cleanupActiveGoalState.cleanupActiveGoalState = async (goal) => {
-        if (goal === goalId) {
-          throw new Error("cleanup failed after commit");
-        }
-        return originalCleanup(goal);
-      };
-
-      await expect(manager.archiveGoal(goalId)).rejects.toThrow("cleanup failed after commit");
-
-      expect(fs.existsSync(archiveBase)).toBe(true);
-      expect(fs.existsSync(path.join(archiveBase, "goal", "goal.json"))).toBe(true);
-      expect(fs.existsSync(stagingBase)).toBe(false);
-      expect(fs.existsSync(activeGoalDir)).toBe(true);
-      expect(fs.existsSync(tasksDir)).toBe(true);
-
-      cleanupActiveGoalState.cleanupActiveGoalState = originalCleanup;
-
-      const retryManager = await createFreshManager();
-      await expect(retryManager.archiveGoal(goalId)).resolves.toBe(true);
-
-      expect(fs.existsSync(path.join(archiveBase, "goal", "goal.json"))).toBe(true);
-      expect(fs.existsSync(stagingBase)).toBe(false);
-      expect(fs.existsSync(activeGoalDir)).toBe(false);
-      expect(fs.existsSync(tasksDir)).toBe(false);
-      expect(await retryManager.loadGoal(goalId)).not.toBeNull();
-      expect((await retryManager.loadGoal(goalId))?.status).toBe("archived");
-    });
-
-    it("does not rebuild a committed archive from partial active remnants", async () => {
+    it("keeps legacy committed archives out of normal archived-goal listings", async () => {
       const goalId = "archive-committed-source-of-truth";
       const archiveBase = path.join(tmpDir, "archive", goalId);
       fs.mkdirSync(path.join(archiveBase, "goal"), { recursive: true });
-      fs.mkdirSync(path.join(archiveBase, "tasks"), { recursive: true });
       fs.writeFileSync(path.join(archiveBase, "goal", "goal.json"), JSON.stringify({ ...makeGoal({ id: goalId }), status: "archived" }));
-      fs.writeFileSync(path.join(archiveBase, "tasks", "task.json"), JSON.stringify({ id: "archived-task" }));
       fs.writeFileSync(path.join(archiveBase, ".archive-complete.json"), JSON.stringify({ goalId, completed_at: new Date().toISOString() }));
 
-      await manager.saveGoal(makeGoal({ id: goalId, title: "leftover active goal" }));
-
-      expect(await manager.listArchivedGoals()).toContain(goalId);
-
-      const retryManager = await createFreshManager();
-      await expect(retryManager.archiveGoal(goalId)).resolves.toBe(true);
-
-      expect(fs.existsSync(path.join(archiveBase, "tasks", "task.json"))).toBe(true);
-      expect(JSON.parse(fs.readFileSync(path.join(archiveBase, "tasks", "task.json"), "utf-8"))).toEqual({ id: "archived-task" });
-      expect(fs.existsSync(path.join(tmpDir, "goals", goalId))).toBe(false);
-      expect(await retryManager.listArchivedGoals()).toContain(goalId);
-    });
-
-    it("rebuilds an incomplete visible archive from active state before cleanup", async () => {
-      const goalId = "archive-rebuild-visible-partial";
-      await manager.saveGoal(makeGoal({ id: goalId }));
-
-      const tasksDir = path.join(tmpDir, "tasks", goalId);
-      fs.mkdirSync(tasksDir, { recursive: true });
-      fs.writeFileSync(path.join(tasksDir, "task.json"), JSON.stringify({ id: "t1" }));
-
-      const archiveBase = path.join(tmpDir, "archive", goalId);
-      fs.mkdirSync(archiveBase, { recursive: true });
-      fs.writeFileSync(path.join(archiveBase, "partial.json"), JSON.stringify({ incomplete: true }));
-
       expect(await manager.listArchivedGoals()).not.toContain(goalId);
-
-      const retryManager = await createFreshManager();
-      await expect(retryManager.archiveGoal(goalId)).resolves.toBe(true);
-
-      expect(fs.existsSync(path.join(archiveBase, "partial.json"))).toBe(false);
-      expect(fs.existsSync(path.join(archiveBase, "goal", "goal.json"))).toBe(true);
-      expect(fs.existsSync(path.join(archiveBase, "tasks", "task.json"))).toBe(true);
-      expect(fs.existsSync(path.join(tmpDir, "archive", ".staging", goalId))).toBe(false);
-      expect(fs.existsSync(path.join(tmpDir, "goals", goalId))).toBe(false);
-      expect(fs.existsSync(tasksDir)).toBe(false);
-      expect(await retryManager.listArchivedGoals()).toContain(goalId);
-    });
-
-    it("does not list committed archives until active remnants are cleaned up", async () => {
-      const goalId = "archive-remnants-hidden";
-      const archiveBase = path.join(tmpDir, "archive", goalId);
-      fs.mkdirSync(path.join(archiveBase, "goal"), { recursive: true });
-      fs.writeFileSync(path.join(archiveBase, "goal", "goal.json"), JSON.stringify({ ...makeGoal({ id: goalId }), status: "archived" }));
-
-      const tasksDir = path.join(tmpDir, "tasks", goalId);
-      fs.mkdirSync(tasksDir, { recursive: true });
-      fs.writeFileSync(path.join(tasksDir, "task.json"), JSON.stringify({ id: "t1" }));
-
-      expect(await manager.listArchivedGoals()).not.toContain(goalId);
-
-      const retryManager = await createFreshManager();
-      await expect(retryManager.archiveGoal(goalId)).resolves.toBe(true);
-
-      expect(fs.existsSync(path.join(archiveBase, "tasks", "task.json"))).toBe(true);
-      expect(fs.existsSync(tasksDir)).toBe(false);
-      expect(await retryManager.listArchivedGoals()).toContain(goalId);
-    });
-
-    it("finalizes an unmarked legacy archive when no active state remains", async () => {
-      const goalId = "archive-unmarked-legacy";
-      const archiveBase = path.join(tmpDir, "archive", goalId);
-      fs.mkdirSync(path.join(archiveBase, "goal"), { recursive: true });
-      fs.writeFileSync(path.join(archiveBase, "goal", "goal.json"), JSON.stringify({ ...makeGoal({ id: goalId }), status: "archived" }));
-
-      expect(await manager.listArchivedGoals()).not.toContain(goalId);
-      await expect(manager.archiveGoal(goalId)).resolves.toBe(true);
-      expect(fs.existsSync(path.join(archiveBase, ".archive-complete.json"))).toBe(true);
-      expect(await manager.listArchivedGoals()).toContain(goalId);
+      expect(await manager.listRecoverableArchivedGoalIds()).toContain(goalId);
     });
 
     it("serializes concurrent archiveGoal calls on the same goal", async () => {
@@ -1298,8 +1089,7 @@ describe("StateManager", async () => {
       await expect(second).resolves.toBe(true);
       expect(fenceCalls).toBe(2);
 
-      const archiveBase = path.join(tmpDir, "archive", goalId);
-      expect(fs.existsSync(path.join(archiveBase, "goal", "goal.json"))).toBe(true);
+      expect(await manager.listArchivedGoals()).toContain(goalId);
       expect(fs.existsSync(path.join(tmpDir, "goals", goalId))).toBe(false);
     });
 
@@ -1308,7 +1098,18 @@ describe("StateManager", async () => {
       expect(result).toBe(false);
     });
 
-    it("handles partial state (only goal dir, no tasks/strategies)", async () => {
+    it("does not archive unmigrated legacy-only goal JSON on the normal path", async () => {
+      const goalId = "legacy-only-archive";
+      const goalDir = path.join(tmpDir, "goals", goalId);
+      fs.mkdirSync(goalDir, { recursive: true });
+      fs.writeFileSync(path.join(goalDir, "goal.json"), JSON.stringify(makeGoal({ id: goalId })));
+
+      await expect(manager.archiveGoal(goalId)).resolves.toBe(false);
+      expect(await manager.listArchivedGoals()).not.toContain(goalId);
+      expect(fs.existsSync(path.join(goalDir, "goal.json"))).toBe(true);
+    });
+
+    it("handles partial DB state with only a goal row", async () => {
       const goalId = "archive-partial";
       const goal = makeGoal({ id: goalId });
       await manager.saveGoal(goal);
@@ -1316,14 +1117,8 @@ describe("StateManager", async () => {
       const result = await manager.archiveGoal(goalId);
       expect(result).toBe(true);
 
-      const archiveBase = path.join(tmpDir, "archive", goalId);
-
-      // Goal files moved
-      expect(fs.existsSync(path.join(archiveBase, "goal", "goal.json"))).toBe(true);
-      // Optional dirs not created in archive (they didn't exist)
-      expect(fs.existsSync(path.join(archiveBase, "tasks"))).toBe(false);
-      expect(fs.existsSync(path.join(archiveBase, "strategies"))).toBe(false);
-      expect(fs.existsSync(path.join(archiveBase, "stalls.json"))).toBe(false);
+      expect(await manager.listArchivedGoals()).toContain(goalId);
+      expect(await manager.loadGoal(goalId)).toMatchObject({ id: goalId });
     });
 
     it("listArchivedGoals returns archived goal IDs", async () => {
@@ -1340,7 +1135,7 @@ describe("StateManager", async () => {
       expect(archived).toEqual(["arc-1", "arc-2"]);
     });
 
-    it("loadGoal falls back to archive after archiveGoal()", async () => {
+    it("loadGoal reads archived DB rows after archiveGoal()", async () => {
       // Create and save a goal
       const goal = makeGoal({ id: "fallback-test", title: "Archived Goal" });
       await manager.saveGoal(goal);
@@ -1351,36 +1146,13 @@ describe("StateManager", async () => {
       // Archive it — this removes the active-path directory
       await manager.archiveGoal("fallback-test");
 
-      // Active path should no longer exist
       const activePath = path.join(tmpDir, "goals", "fallback-test");
       expect(fs.existsSync(activePath)).toBe(false);
 
-      // loadGoal should still return the goal via archive fallback
       const loaded = await manager.loadGoal("fallback-test");
       expect(loaded).not.toBeNull();
       expect(loaded!.id).toBe("fallback-test");
       expect(loaded!.title).toBe("Archived Goal");
-    });
-
-    it("loadGoal prefers a committed archive over stale active state", async () => {
-      const goalId = "committed-archive-wins";
-      const activeGoal = makeGoal({ id: goalId, title: "Active Goal" });
-      const archivedGoal = makeGoal({ id: goalId, title: "Archived Goal", status: "archived" });
-
-      await manager.saveGoal(activeGoal);
-
-      const archiveBase = path.join(tmpDir, "archive", goalId);
-      fs.mkdirSync(path.join(archiveBase, "goal"), { recursive: true });
-      fs.writeFileSync(path.join(archiveBase, "goal", "goal.json"), JSON.stringify(archivedGoal));
-      fs.writeFileSync(path.join(archiveBase, ".archive-complete.json"), JSON.stringify({
-        goalId,
-        completed_at: new Date().toISOString(),
-      }));
-
-      const loaded = await manager.loadGoal(goalId);
-      expect(loaded).not.toBeNull();
-      expect(loaded!.title).toBe("Archived Goal");
-      expect(loaded!.status).toBe("archived");
     });
 
     it("loadGoal returns null for a goal that was never saved nor archived", async () => {
@@ -1396,36 +1168,25 @@ describe("StateManager", async () => {
       const result = await manager.archiveGoal("arc-parent");
       expect(result).toBe(true);
 
-      // Both parent and child directories should be in the archive
-      expect(fs.existsSync(path.join(tmpDir, "archive", "arc-parent", "goal", "goal.json"))).toBe(true);
-      expect(fs.existsSync(path.join(tmpDir, "archive", "arc-child", "goal", "goal.json"))).toBe(true);
-
-      // Both should have status "archived"
+      expect(await manager.listArchivedGoals()).toEqual(expect.arrayContaining(["arc-parent", "arc-child"]));
       const parentArchived = await manager.loadGoal("arc-parent");
-      expect(parentArchived?.status).toBe("archived");
+      expect(parentArchived?.id).toBe("arc-parent");
       const childArchived = await manager.loadGoal("arc-child");
-      expect(childArchived?.status).toBe("archived");
-    });
-
-    it("archiveGoal tolerates corrupt child — succeeds without throwing", async () => {
-      const child = makeGoal({ id: "arc-corrupt-child", parent_id: "arc-corrupt-parent" });
-      const parent = makeGoal({ id: "arc-corrupt-parent", children_ids: ["arc-corrupt-child"] });
-      await manager.saveGoal(child);
-      await manager.saveGoal(parent);
-
-      // Corrupt the child's goal.json with invalid JSON
-      const childGoalPath = path.join(tmpDir, "goals", "arc-corrupt-child", "goal.json");
-      fs.writeFileSync(childGoalPath, "{ not valid json ~~~");
-
-      // archiveGoal on the parent should succeed despite the corrupt child
-      await expect(manager.archiveGoal("arc-corrupt-parent")).resolves.toBe(true);
-
-      // Parent archive should exist
-      expect(fs.existsSync(path.join(tmpDir, "archive", "arc-corrupt-parent", "goal", "goal.json"))).toBe(true);
+      expect(childArchived?.id).toBe("arc-child");
     });
   });
 
   describe("deleteGoal cascade", async () => {
+    it("does not delete unmigrated legacy-only goal JSON on the normal path", async () => {
+      const goalId = "legacy-only-delete";
+      const goalDir = path.join(tmpDir, "goals", goalId);
+      fs.mkdirSync(goalDir, { recursive: true });
+      fs.writeFileSync(path.join(goalDir, "goal.json"), JSON.stringify(makeGoal({ id: goalId })));
+
+      await expect(manager.deleteGoal(goalId)).resolves.toBe(false);
+      expect(fs.existsSync(path.join(goalDir, "goal.json"))).toBe(true);
+    });
+
     it("deleteGoal cascades to children — both parent and child directories removed", async () => {
       const child = makeGoal({ id: "del-child", parent_id: "del-parent" });
       const parent = makeGoal({ id: "del-parent", children_ids: ["del-child"] });
@@ -1455,35 +1216,34 @@ describe("StateManager", async () => {
       expect(await manager.loadGoal("del-archived-child")).toBeNull();
     });
 
-    it("deleteGoal tolerates corrupt child — succeeds without throwing", async () => {
+    it("deleteGoal ignores corrupt legacy child files once DB owns child state", async () => {
       const child = makeGoal({ id: "del-corrupt-child", parent_id: "del-corrupt-parent" });
       const parent = makeGoal({ id: "del-corrupt-parent", children_ids: ["del-corrupt-child"] });
       await manager.saveGoal(child);
       await manager.saveGoal(parent);
 
-      // Corrupt the child's goal.json with invalid JSON
       const childGoalPath = path.join(tmpDir, "goals", "del-corrupt-child", "goal.json");
+      fs.mkdirSync(path.dirname(childGoalPath), { recursive: true });
       fs.writeFileSync(childGoalPath, "{ not valid json ~~~");
 
-      // deleteGoal on the parent should succeed despite the corrupt child
       await expect(manager.deleteGoal("del-corrupt-parent")).resolves.toBe(true);
 
       expect(await manager.goalExists("del-corrupt-parent")).toBe(false);
+      expect(await manager.goalExists("del-corrupt-child")).toBe(false);
     });
   });
 
   describe("atomicRead / history cap / error propagation", async () => {
-    it("atomicRead returns null on corrupt JSON instead of throwing", async () => {
-      // Write a valid goal first to create the directory, then corrupt its JSON
+    it("loadGoal ignores corrupt legacy JSON after DB ownership", async () => {
       const goal = makeGoal({ id: "corrupt-read" });
       await manager.saveGoal(goal);
 
       const goalPath = path.join(tmpDir, "goals", "corrupt-read", "goal.json");
+      fs.mkdirSync(path.dirname(goalPath), { recursive: true });
       fs.writeFileSync(goalPath, "{ this is not valid json ~~~");
 
-      // loadGoal calls atomicRead which should return null on corrupt JSON
       const loaded = await manager.loadGoal("corrupt-read");
-      expect(loaded).toBeNull();
+      expect(loaded?.id).toBe("corrupt-read");
     });
 
     it("appendObservation caps entries at 500", async () => {
@@ -1531,13 +1291,14 @@ describe("StateManager", async () => {
       expect(loaded!.entries[499].observation_id).toBe("obs-510");
     }, 30_000);
 
-    it("listGoalIds propagates non-ENOENT errors", async () => {
+    it("listGoalIds does not depend on legacy goals directory reads", async () => {
       // Remove the goals directory then replace it with a file — readdir will fail with ENOTDIR
       const goalsDir = path.join(tmpDir, "goals");
       fs.rmSync(goalsDir, { recursive: true, force: true , maxRetries: 3, retryDelay: 100 });
       fs.writeFileSync(goalsDir, "not-a-directory");
 
-      await expect(manager.listGoalIds()).rejects.toThrow();
+      await manager.saveGoal(makeGoal({ id: "db-owned" }));
+      await expect(manager.listGoalIds()).resolves.toEqual(["db-owned"]);
     });
   });
 });

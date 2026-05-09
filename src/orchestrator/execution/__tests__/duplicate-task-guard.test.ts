@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import { StateManager } from "../../../base/state/state-manager.js";
+import { TaskSchema } from "../../../base/types/task.js";
 import { StrategyManager } from "../../strategy/strategy-manager.js";
 import { trigramSimilarity, generateTask } from "../task/task-generation.js";
 import { createMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
@@ -234,9 +235,21 @@ describe("generateTask — duplicate guard (§4.2)", () => {
     const llm = createMockLLMClient([VALID_TASK_RESPONSE]);
     const deps = makeDeps(llm);
 
-    await stateManager.writeRaw("tasks/goal-1/task-old-json.json", {
+    await stateManager.writeRaw("tasks/goal-1/task-old-json.json", TaskSchema.parse({
+      id: "task-old-json",
+      goal_id: "goal-1",
+      strategy_id: null,
+      target_dimensions: ["test_coverage"],
+      primary_dimension: "test_coverage",
       work_description: "Add unit tests for the authentication module",
-    });
+      rationale: "Historical task fixture",
+      approach: "Read from typed task store",
+      success_criteria: [],
+      scope_boundary: { in_scope: [], out_of_scope: [], blast_radius: "test" },
+      constraints: [],
+      created_at: new Date().toISOString(),
+      status: "error",
+    }));
     await stateManager.writeRaw("tasks/goal-1/task-history.json", [
       {
         task_id: "task-old-json",

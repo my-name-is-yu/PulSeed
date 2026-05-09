@@ -2,7 +2,7 @@ import * as path from "node:path";
 import * as fsp from "node:fs/promises";
 import type { Dirent } from "node:fs";
 import type { Logger } from "../logger.js";
-import { DaemonStateStore, ProactiveInterventionStore, SupervisorStateStore } from "../store/index.js";
+import { DaemonStateStore, GoalTaskStateStore, ProactiveInterventionStore, SupervisorStateStore } from "../store/index.js";
 import type { ApprovalStore, OutboxStore, RuntimeHealthStore } from "../store/index.js";
 import type { LeaderLockManager } from "../leader-lock-manager.js";
 import { summarizeTaskOutcomeLedgers } from "../../orchestrator/execution/task/task-outcome-ledger.js";
@@ -407,34 +407,17 @@ export class RuntimeOwnershipCoordinator {
       return null;
     }
 
-    const ledgerDir = path.join(this.deps.baseDir, "tasks", goalId, "ledger");
-    let entries: string[];
-    try {
-      entries = await fsp.readdir(ledgerDir, { withFileTypes: false });
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-        return null;
-      }
-      throw err;
-    }
-
+    const ledgers = await new GoalTaskStateStore(this.deps.baseDir).listTaskOutcomeLedgers();
     let latest: { summary: Record<string, unknown>; observedAt?: number } | null = null;
-    for (const entry of entries.filter((name) => name.endsWith(".json"))) {
-      try {
-        const raw = JSON.parse(await fsp.readFile(path.join(ledgerDir, entry), "utf8")) as unknown;
-        if (!raw || typeof raw !== "object") {
-          continue;
-        }
-        const summary = (raw as { summary?: unknown }).summary;
-        if (!summary || typeof summary !== "object") {
-          continue;
-        }
-        const observedAt = this.parseTimestamp((summary as { latest_event_at?: unknown }).latest_event_at as string | null | undefined);
-        if (!latest || (observedAt ?? 0) > (latest.observedAt ?? 0)) {
-          latest = { summary: summary as Record<string, unknown>, observedAt };
-        }
-      } catch {
-        // Ignore malformed ledger records during health snapshot aggregation.
+    for (const ledger of ledgers) {
+      if (ledger.goal_id !== goalId) {
+        continue;
+      }
+      const observedAt = this.parseTimestamp(
+        typeof ledger.summary["latest_event_at"] === "string" ? ledger.summary["latest_event_at"] : null
+      );
+      if (!latest || (observedAt ?? 0) > (latest.observedAt ?? 0)) {
+        latest = { summary: ledger.summary, observedAt };
       }
     }
 

@@ -7,7 +7,7 @@ export interface ControlDbMigration {
   checksum: string;
 }
 
-export const CONTROL_DB_SCHEMA_VERSION = 5;
+export const CONTROL_DB_SCHEMA_VERSION = 6;
 
 export const CONTROL_DB_INITIAL_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS control_schema_migrations (
@@ -466,6 +466,185 @@ CREATE INDEX IF NOT EXISTS agent_loop_trace_events_type_idx
   ON agent_loop_trace_events(event_type, created_at, event_id);
 `.trim();
 
+export const CONTROL_DB_GOAL_TASK_DURABLE_LOOP_SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS goal_records (
+  goal_id TEXT PRIMARY KEY,
+  parent_goal_id TEXT,
+  status TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  archived INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0, 1)),
+  goal_json TEXT NOT NULL CHECK (json_valid(goal_json))
+);
+
+CREATE INDEX IF NOT EXISTS goal_records_status_idx
+  ON goal_records(archived, status, updated_at, goal_id);
+
+CREATE INDEX IF NOT EXISTS goal_records_parent_idx
+  ON goal_records(parent_goal_id, archived, goal_id);
+
+CREATE TABLE IF NOT EXISTS goal_tree_records (
+  root_id TEXT PRIMARY KEY,
+  updated_at TEXT NOT NULL,
+  tree_json TEXT NOT NULL CHECK (json_valid(tree_json))
+);
+
+CREATE TABLE IF NOT EXISTS goal_observation_logs (
+  goal_id TEXT PRIMARY KEY,
+  updated_at TEXT NOT NULL,
+  log_json TEXT NOT NULL CHECK (json_valid(log_json))
+);
+
+CREATE TABLE IF NOT EXISTS goal_gap_histories (
+  goal_id TEXT PRIMARY KEY,
+  updated_at TEXT NOT NULL,
+  history_json TEXT NOT NULL CHECK (json_valid(history_json))
+);
+
+CREATE TABLE IF NOT EXISTS goal_loop_checkpoints (
+  goal_id TEXT PRIMARY KEY,
+  adapter_type TEXT,
+  cycle_number INTEGER NOT NULL CHECK (cycle_number >= 0),
+  updated_at TEXT NOT NULL,
+  checkpoint_json TEXT NOT NULL CHECK (json_valid(checkpoint_json))
+);
+
+CREATE INDEX IF NOT EXISTS goal_loop_checkpoints_cycle_idx
+  ON goal_loop_checkpoints(cycle_number, updated_at, goal_id);
+
+CREATE TABLE IF NOT EXISTS goal_stall_records (
+  goal_id TEXT PRIMARY KEY,
+  updated_at TEXT NOT NULL,
+  record_json TEXT NOT NULL CHECK (json_valid(record_json))
+);
+
+CREATE TABLE IF NOT EXISTS task_records (
+  goal_id TEXT NOT NULL,
+  task_id TEXT NOT NULL,
+  status TEXT NOT NULL,
+  primary_dimension TEXT NOT NULL,
+  strategy_id TEXT,
+  created_at TEXT NOT NULL,
+  started_at TEXT,
+  completed_at TEXT,
+  updated_at TEXT NOT NULL,
+  task_json TEXT NOT NULL CHECK (json_valid(task_json)),
+  PRIMARY KEY (goal_id, task_id)
+);
+
+CREATE INDEX IF NOT EXISTS task_records_goal_status_idx
+  ON task_records(goal_id, status, updated_at, task_id);
+
+CREATE INDEX IF NOT EXISTS task_records_status_idx
+  ON task_records(status, updated_at, goal_id, task_id);
+
+CREATE INDEX IF NOT EXISTS task_records_strategy_idx
+  ON task_records(goal_id, strategy_id, status, updated_at, task_id);
+
+CREATE TABLE IF NOT EXISTS task_history_records (
+  history_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  goal_id TEXT NOT NULL,
+  task_id TEXT,
+  sort_order INTEGER NOT NULL CHECK (sort_order >= 0),
+  updated_at TEXT NOT NULL,
+  record_json TEXT NOT NULL CHECK (json_valid(record_json))
+);
+
+CREATE INDEX IF NOT EXISTS task_history_records_goal_order_idx
+  ON task_history_records(goal_id, sort_order, history_id);
+
+CREATE INDEX IF NOT EXISTS task_history_records_task_idx
+  ON task_history_records(goal_id, task_id, history_id);
+
+CREATE TABLE IF NOT EXISTS task_outcome_events (
+  goal_id TEXT NOT NULL,
+  task_id TEXT NOT NULL,
+  event_index INTEGER NOT NULL CHECK (event_index >= 0),
+  event_type TEXT NOT NULL,
+  occurred_at TEXT NOT NULL,
+  event_json TEXT NOT NULL CHECK (json_valid(event_json)),
+  PRIMARY KEY (goal_id, task_id, event_index)
+);
+
+CREATE INDEX IF NOT EXISTS task_outcome_events_goal_idx
+  ON task_outcome_events(goal_id, occurred_at, task_id, event_index);
+
+CREATE INDEX IF NOT EXISTS task_outcome_events_type_idx
+  ON task_outcome_events(event_type, occurred_at, goal_id, task_id);
+
+CREATE TABLE IF NOT EXISTS task_outcome_summaries (
+  goal_id TEXT NOT NULL,
+  task_id TEXT NOT NULL,
+  latest_event_type TEXT,
+  latest_event_at TEXT,
+  task_status TEXT NOT NULL,
+  tokens_used INTEGER NOT NULL DEFAULT 0 CHECK (tokens_used >= 0),
+  updated_at TEXT NOT NULL,
+  summary_json TEXT NOT NULL CHECK (json_valid(summary_json)),
+  PRIMARY KEY (goal_id, task_id)
+);
+
+CREATE INDEX IF NOT EXISTS task_outcome_summaries_goal_idx
+  ON task_outcome_summaries(goal_id, latest_event_at, task_id);
+
+CREATE INDEX IF NOT EXISTS task_outcome_summaries_type_idx
+  ON task_outcome_summaries(latest_event_type, latest_event_at, goal_id, task_id);
+
+CREATE TABLE IF NOT EXISTS task_failure_contexts (
+  goal_id TEXT PRIMARY KEY,
+  updated_at TEXT NOT NULL,
+  context_json TEXT NOT NULL CHECK (json_valid(context_json))
+);
+
+CREATE TABLE IF NOT EXISTS task_verification_results (
+  task_id TEXT PRIMARY KEY,
+  goal_id TEXT,
+  verdict TEXT,
+  result_timestamp TEXT,
+  updated_at TEXT NOT NULL,
+  result_json TEXT NOT NULL CHECK (json_valid(result_json))
+);
+
+CREATE INDEX IF NOT EXISTS task_verification_results_goal_idx
+  ON task_verification_results(goal_id, result_timestamp, task_id);
+
+CREATE INDEX IF NOT EXISTS task_verification_results_verdict_idx
+  ON task_verification_results(verdict, result_timestamp, task_id);
+
+CREATE TABLE IF NOT EXISTS task_checkpoints (
+  checkpoint_id TEXT PRIMARY KEY,
+  goal_id TEXT NOT NULL,
+  task_id TEXT NOT NULL,
+  agent_id TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  checkpoint_json TEXT NOT NULL CHECK (json_valid(checkpoint_json))
+);
+
+CREATE INDEX IF NOT EXISTS task_checkpoints_goal_created_idx
+  ON task_checkpoints(goal_id, created_at, checkpoint_id);
+
+CREATE INDEX IF NOT EXISTS task_checkpoints_task_created_idx
+  ON task_checkpoints(goal_id, task_id, created_at, checkpoint_id);
+
+CREATE INDEX IF NOT EXISTS task_checkpoints_agent_idx
+  ON task_checkpoints(agent_id, created_at, checkpoint_id);
+
+CREATE TABLE IF NOT EXISTS pipeline_state_records (
+  task_id TEXT PRIMARY KEY,
+  pipeline_id TEXT NOT NULL,
+  status TEXT NOT NULL,
+  current_stage_index INTEGER NOT NULL CHECK (current_stage_index >= 0),
+  started_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  pipeline_json TEXT NOT NULL CHECK (json_valid(pipeline_json))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS pipeline_state_records_pipeline_idx
+  ON pipeline_state_records(pipeline_id);
+
+CREATE INDEX IF NOT EXISTS pipeline_state_records_status_idx
+  ON pipeline_state_records(status, updated_at, task_id);
+`.trim();
+
 export function controlDbMigrationChecksum(sql: string): string {
   return createHash("sha256").update(sql.trim()).digest("hex");
 }
@@ -508,5 +687,10 @@ export const CONTROL_DB_MIGRATIONS: readonly ControlDbMigration[] = [
     5,
     "chat-agentloop-session-data-plane",
     CONTROL_DB_CHAT_AGENTLOOP_SESSION_SCHEMA_SQL
+  ),
+  createControlDbMigration(
+    6,
+    "goal-task-durable-loop-state",
+    CONTROL_DB_GOAL_TASK_DURABLE_LOOP_SCHEMA_SQL
   ),
 ];

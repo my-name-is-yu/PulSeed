@@ -31,10 +31,8 @@ function makeDeps(baseDir: string): MCPServerDeps {
   return { stateManager, baseDir };
 }
 
-async function createGoalFile(baseDir: string, id: string, overrides: Record<string, unknown> = {}): Promise<void> {
+async function createGoal(stateManager: StateManager, id: string, overrides: Record<string, unknown> = {}): Promise<void> {
   const now = new Date().toISOString();
-  const goalDir = path.join(baseDir, "goals", id);
-  await fsp.mkdir(goalDir, { recursive: true });
   const goal = {
     id,
     parent_id: null,
@@ -62,7 +60,7 @@ async function createGoalFile(baseDir: string, id: string, overrides: Record<str
     updated_at: now,
     ...overrides,
   };
-  await fsp.writeFile(path.join(goalDir, "goal.json"), JSON.stringify(goal), "utf-8");
+  await stateManager.writeRaw(`goals/${id}/goal.json`, goal);
 }
 
 // ─── Tests ───
@@ -89,8 +87,8 @@ describe("pulseed_goal_list", () => {
   });
 
   it("returns goals with correct fields", async () => {
-    await createGoalFile(tmpDir, "goal-1");
-    await createGoalFile(tmpDir, "goal-2");
+    await createGoal(deps.stateManager, "goal-1");
+    await createGoal(deps.stateManager, "goal-2");
 
     const result = await toolGoalList(deps);
     const data = parseMCPText(result) as Array<{ id: string; title: string; status: string; loop_status: string }>;
@@ -127,7 +125,7 @@ describe("pulseed_goal_status", () => {
   });
 
   it("returns goal and gap for valid goal_id", async () => {
-    await createGoalFile(tmpDir, "goal-abc");
+    await createGoal(deps.stateManager, "goal-abc");
 
     const result = await toolGoalStatus(deps, { goal_id: "goal-abc" });
     const data = parseMCPText(result) as { goal: { id: string }; latest_gap: unknown };
@@ -150,19 +148,17 @@ describe("pulseed_goal_create", () => {
     await fsp.rm(tmpDir, { recursive: true, force: true });
   });
 
-  it("creates a goal file and returns goal_id", async () => {
+  it("creates a DB-backed goal and returns goal_id", async () => {
     const result = await toolGoalCreate(deps, { title: "My Goal", description: "Do something" });
     const data = parseMCPText(result) as { goal_id: string; title: string; status: string };
 
     expect(data.goal_id).toBeDefined();
     expect(data.title).toBe("My Goal");
-    expect(data.status).toBe("pending");
+    expect(data.status).toBe("active");
 
-    // Verify the file was created
-    const filePath = path.join(tmpDir, "goals", data.goal_id, "goal.json");
-    const raw = await fsp.readFile(filePath, "utf-8");
-    const saved = JSON.parse(raw);
-    expect(saved.title).toBe("My Goal");
+    const saved = await deps.stateManager.loadGoal(data.goal_id);
+    expect(saved?.title).toBe("My Goal");
+    await expect(fsp.access(path.join(tmpDir, "goals", data.goal_id, "goal.json"))).rejects.toThrow();
   });
 });
 

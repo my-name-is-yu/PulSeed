@@ -18,7 +18,7 @@ import { createEnvelope } from "../types/envelope.js";
 import { runSupervisorMaintenanceCycleForDaemon } from "../daemon/maintenance.js";
 import { GuardrailStore } from "../guardrails/index.js";
 import { RuntimeHealthStore } from "../store/health-store.js";
-import { DaemonShutdownStore, DaemonStateStore, SupervisorStateStore } from "../store/index.js";
+import { DaemonShutdownStore, DaemonStateStore, GoalTaskStateStore, SupervisorStateStore } from "../store/index.js";
 import type { DaemonState } from "../../base/types/daemon.js";
 import { restoreInterruptedGoals } from "../daemon/persistence.js";
 import { upsertRelationshipProfileItem } from "../../platform/profile/relationship-profile.js";
@@ -80,6 +80,10 @@ async function readRuntimeStatePath(filePath: string): Promise<unknown | null> {
     const runtimeRoot = path.dirname(filePath);
     const controlBaseDir = path.basename(runtimeRoot) === "runtime" ? path.dirname(runtimeRoot) : runtimeRoot;
     return new SupervisorStateStore(runtimeRoot, { controlBaseDir }).load();
+  }
+  if (path.basename(path.dirname(filePath)) === "pipelines" && fileName.endsWith(".json")) {
+    const taskId = fileName.slice(0, -".json".length);
+    return new GoalTaskStateStore(path.dirname(path.dirname(filePath))).loadPipeline(taskId);
   }
   if (!fs.existsSync(filePath)) return null;
   return JSON.parse(fs.readFileSync(filePath, "utf-8"));

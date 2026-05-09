@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { RuntimeOwnershipCoordinator } from "../daemon/runtime-ownership.js";
 import { ApprovalStore } from "../store/approval-store.js";
 import { RuntimeHealthStore } from "../store/health-store.js";
-import { SupervisorStateStore } from "../store/index.js";
+import { GoalTaskStateStore, SupervisorStateStore } from "../store/index.js";
 import { makeTempDir, cleanupTempDir } from "../../../tests/helpers/temp-dir.js";
 
 describe("RuntimeOwnershipCoordinator", () => {
@@ -40,20 +40,16 @@ describe("RuntimeOwnershipCoordinator", () => {
     taskId: string,
     summary: Record<string, unknown>
   ): Promise<void> {
-    await fsp.mkdir(path.join(tmpDir, "tasks", goalId, "ledger"), { recursive: true });
-    await fsp.writeFile(
-      path.join(tmpDir, "tasks", goalId, "ledger", `${taskId}.json`),
-      JSON.stringify({
+    await new GoalTaskStateStore(tmpDir).saveTaskOutcomeLedger({
+      task_id: taskId,
+      goal_id: goalId,
+      events: [],
+      summary: {
         task_id: taskId,
         goal_id: goalId,
-        events: [],
-        summary: {
-          task_id: taskId,
-          goal_id: goalId,
-          ...summary,
-        },
-      })
-    );
+        ...summary,
+      },
+    });
   }
 
   it("preserves an observed command failure across heartbeats until a fresh recovery signal arrives", async () => {

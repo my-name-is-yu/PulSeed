@@ -1,8 +1,7 @@
-import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { z } from "zod";
 import type { ApprovalRequiredEvent } from "../approval-broker.js";
-import { DaemonStateStore, type OutboxStore, type RuntimeAutomationSnapshot } from "../store/index.js";
+import { DaemonStateStore, GoalTaskStateStore, type OutboxStore, type RuntimeAutomationSnapshot } from "../store/index.js";
 import { BrowserSessionStore, RuntimeAuthHandoffStore } from "../interactive-automation/index.js";
 import { GuardrailStore } from "../guardrails/index.js";
 import type { StateManager } from "../../base/state/state-manager.js";
@@ -14,7 +13,6 @@ import {
 } from "../store/operator-handoff-store.js";
 
 const JsonObjectSchema = z.object({}).catchall(z.unknown());
-const JsonArraySchema = z.array(z.unknown());
 
 type ActiveWorkersProvider = () =>
   | Array<Record<string, unknown>>
@@ -214,71 +212,34 @@ export class EventServerSnapshotReader {
   }
 
   async readGoalSummaries(): Promise<Array<{ id: string; title: string; status: string; loop_status: string }>> {
-    const goalsDir = path.join(path.dirname(this.eventsDir), "goals");
-    let entries: string[];
-    try {
-      entries = await fsp.readdir(goalsDir);
-    } catch {
-      return [];
-    }
-
+    const store = new GoalTaskStateStore(this.controlBaseDir());
+    const goalIds = await store.listGoalIds({ archived: false });
     const goals: Array<{ id: string; title: string; status: string; loop_status: string }> = [];
-    for (const entry of entries) {
-      const goalFile = path.join(goalsDir, entry, "goal.json");
-      try {
-        const content = await fsp.readFile(goalFile, "utf-8");
-        const raw = parseJsonObject(content);
-        if (!raw) continue;
-        goals.push({
-          id: String(raw["id"] ?? entry),
-          title: String(raw["title"] ?? ""),
-          status: String(raw["status"] ?? "active"),
-          loop_status: String(raw["loop_status"] ?? "idle"),
-        });
-      } catch {
-        // Skip unreadable entries.
-      }
+    for (const goalId of goalIds) {
+      const goal = await store.loadGoal(goalId, { includeArchived: false });
+      if (goal === null) continue;
+      goals.push({
+        id: goal.id,
+        title: goal.title,
+        status: goal.status,
+        loop_status: goal.loop_status,
+      });
     }
     return goals;
   }
 
   async readGoalDetail(goalId: string): Promise<Record<string, unknown> | null> {
-    const goalFile = path.join(path.dirname(this.eventsDir), "goals", goalId, "goal.json");
-    let goalRaw: Record<string, unknown> | null;
-    try {
-      const content = await fsp.readFile(goalFile, "utf-8");
-      goalRaw = parseJsonObject(content);
-    } catch {
-      return null;
-    }
-    if (!goalRaw) return null;
-
-    const gapFile = path.join(path.dirname(this.eventsDir), "goals", goalId, "gap-history.json");
-    let currentGap: unknown = null;
-    try {
-      const gapContent = await fsp.readFile(gapFile, "utf-8");
-      const gapHistory = parseJsonArray(gapContent);
-      currentGap = gapHistory?.at(-1) ?? null;
-    } catch {
-      // Gap file may not exist.
-    }
-
-    return { ...goalRaw, current_gap: currentGap };
+    const store = new GoalTaskStateStore(this.controlBaseDir());
+    const goal = await store.loadGoal(goalId, { includeArchived: false });
+    if (goal === null) return null;
+    const gapHistory = await store.loadGapHistory(goalId);
+    return { ...goal, current_gap: gapHistory.at(-1) ?? null };
   }
 }
 
 function parseJsonObject(raw: string): Record<string, unknown> | null {
   try {
     const parsed = JsonObjectSchema.safeParse(JSON.parse(raw));
-    return parsed.success ? parsed.data : null;
-  } catch {
-    return null;
-  }
-}
-
-function parseJsonArray(raw: string): unknown[] | null {
-  try {
-    const parsed = JsonArraySchema.safeParse(JSON.parse(raw));
     return parsed.success ? parsed.data : null;
   } catch {
     return null;

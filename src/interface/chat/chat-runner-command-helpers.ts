@@ -1,7 +1,7 @@
 import type { StateManager } from "../../base/state/state-manager.js";
 import { getPulseedDirPath } from "../../base/utils/paths.js";
 import { loadProviderConfig } from "../../base/llm/provider-config.js";
-import { TaskSchema, type Task } from "../../base/types/task.js";
+import type { Task } from "../../base/types/task.js";
 import type { Goal } from "../../base/types/goal.js";
 import type { LoadedChatSession } from "./chat-session-store.js";
 import type { ChatSession } from "./chat-history.js";
@@ -9,7 +9,6 @@ import {
   collectGoalUsage,
   collectScheduleUsage,
   listRecoverableArchivedGoalIds,
-  readTasksForGoal,
 } from "./chat-runner-state.js";
 import { formatGoalListLine } from "../goal-status-display.js";
 export {
@@ -52,10 +51,16 @@ export async function loadGoals(stateManager: StateManager): Promise<Goal[]> {
 }
 
 export async function listAllGoalIds(stateManager: StateManager): Promise<string[]> {
-  const activeGoalIds = new Set((await loadGoals(stateManager)).map((goal) => goal.id));
-  const archivedGoalIds = await listRecoverableArchivedGoalIds(stateManager.getBaseDir());
-  for (const goalId of archivedGoalIds) activeGoalIds.add(goalId);
-  return Array.from(activeGoalIds);
+  const [activeGoalIds, archivedGoalIds, recoverableArchivedGoalIds] = await Promise.all([
+    stateManager.listGoalIds(),
+    stateManager.listArchivedGoals(),
+    listRecoverableArchivedGoalIds(stateManager.getBaseDir()),
+  ]);
+  return Array.from(new Set([
+    ...activeGoalIds,
+    ...archivedGoalIds,
+    ...recoverableArchivedGoalIds,
+  ]));
 }
 
 export function activeGoals(goals: Goal[]): Goal[] {
@@ -71,7 +76,7 @@ export function formatDiagnosticGoalLine(goal: Goal): string {
 }
 
 export async function readTasksForGoalFromState(stateManager: StateManager, goalId: string): Promise<Task[]> {
-  return readTasksForGoal(stateManager.getBaseDir(), goalId);
+  return stateManager.listTasks(goalId);
 }
 
 export async function resolveGoalForTasks(
@@ -108,20 +113,19 @@ export async function findTask(
   const goalIds = goalId ? [goalId] : await listAllGoalIds(stateManager);
   const matches: Array<{ goalId: string; task: Task }> = [];
   for (const candidateGoalId of goalIds) {
-    let raw: unknown | null = null;
+    let exact: Task | null = null;
     try {
-      raw = await stateManager.readRaw(`tasks/${candidateGoalId}/${taskId}.json`);
+      exact = await stateManager.loadTask(candidateGoalId, taskId);
     } catch {
-      raw = null;
+      exact = null;
     }
-    if (!raw) {
-      const tasks = await readTasksForGoalFromState(stateManager, candidateGoalId);
-      const matched = tasks.find((task) => task.id === taskId || task.id.startsWith(taskId));
-      if (matched) matches.push({ goalId: candidateGoalId, task: matched });
+    if (exact) {
+      matches.push({ goalId: candidateGoalId, task: exact });
       continue;
     }
-    const parsed = TaskSchema.safeParse(raw);
-    if (parsed.success) matches.push({ goalId: candidateGoalId, task: parsed.data });
+    const tasks = await readTasksForGoalFromState(stateManager, candidateGoalId);
+    const matched = tasks.find((task) => task.id === taskId || task.id.startsWith(taskId));
+    if (matched) matches.push({ goalId: candidateGoalId, task: matched });
   }
   return { task: matches.length === 1 ? matches[0]?.task : undefined, matches };
 }

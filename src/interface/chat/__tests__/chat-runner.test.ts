@@ -3142,20 +3142,16 @@ describe("ChatRunner", () => {
       }
     });
 
-    it("/task <task-id> searches recoverable archived goals without an archive marker", async () => {
-      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-recoverable-archived-task-"));
+    it("/task <task-id> searches DB-archived goals after active task files are retired", async () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-db-archived-task-"));
       try {
         const stateManager = new StateManager(tmpDir);
         await stateManager.init();
-        const archiveGoalDir = path.join(tmpDir, "archive", "goal-a", "goal");
-        const archiveTasksDir = path.join(tmpDir, "archive", "goal-a", "tasks");
-        fs.mkdirSync(archiveGoalDir, { recursive: true });
-        fs.mkdirSync(archiveTasksDir, { recursive: true });
-        fs.writeFileSync(path.join(archiveGoalDir, "goal.json"), JSON.stringify(makeGoal("goal-a", {
+        await stateManager.saveGoal(makeGoal("goal-a", {
           title: "Recoverable archive",
-          status: "archived",
-        })));
-        fs.writeFileSync(path.join(archiveTasksDir, "task-1.json"), JSON.stringify(makeTask("task-1", "goal-a")));
+        }));
+        await stateManager.writeRaw("tasks/goal-a/task-1.json", makeTask("task-1", "goal-a"));
+        await stateManager.archiveGoal("goal-a");
         const adapter = makeMockAdapter();
         const runner = new ChatRunner(makeDeps({ stateManager, adapter }));
 
@@ -3168,6 +3164,34 @@ describe("ChatRunner", () => {
         expect(task.success).toBe(true);
         expect(task.output).toContain("Task: task-1");
         expect(task.output).toContain("Goal: goal-a");
+        expect(adapter.execute).not.toHaveBeenCalled();
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+
+    it("/tasks and /task ignore unmigrated legacy task JSON in normal chat paths", async () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-legacy-task-json-"));
+      try {
+        const stateManager = new StateManager(tmpDir);
+        await stateManager.init();
+        await stateManager.saveGoal(makeGoal("goal-a"));
+        fs.mkdirSync(path.join(tmpDir, "tasks", "goal-a"), { recursive: true });
+        fs.writeFileSync(
+          path.join(tmpDir, "tasks", "goal-a", "task-legacy.json"),
+          JSON.stringify(makeTask("task-legacy", "goal-a")),
+        );
+        const adapter = makeMockAdapter();
+        const runner = new ChatRunner(makeDeps({ stateManager, adapter }));
+
+        const tasks = await runner.execute("/tasks goal-a", "/repo");
+        const task = await runner.execute("/task task-legacy goal-a", "/repo");
+
+        expect(tasks.success).toBe(true);
+        expect(tasks.output).toContain("No tasks found");
+        expect(tasks.output).not.toContain("task-legacy");
+        expect(task.success).toBe(false);
+        expect(task.output).toContain("Task not found: task-legacy");
         expect(adapter.execute).not.toHaveBeenCalled();
       } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });

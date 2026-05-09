@@ -1,7 +1,5 @@
 // ─── pulseed task read commands (read-only) ───
 
-import * as fsp from "node:fs/promises";
-import * as path from "node:path";
 import { parseArgs } from "node:util";
 
 import { StateManager } from "../../../base/state/state-manager.js";
@@ -35,30 +33,7 @@ function elapsedLabel(task: Task): string {
 }
 
 async function readAllTasksForGoal(stateManager: StateManager, goalId: string): Promise<Task[]> {
-  const baseDir = stateManager.getBaseDir();
-  const tasksDir = path.join(baseDir, "tasks", goalId);
-
-  let entries: string[] = [];
-  try {
-    entries = await fsp.readdir(tasksDir);
-  } catch {
-    return [];
-  }
-
-  const tasks: Task[] = [];
-  for (const entry of entries) {
-    if (!entry.endsWith(".json") || entry === "task-history.json" || entry === "last-failure-context.json") continue;
-    const raw = await stateManager.readRaw(`tasks/${goalId}/${entry}`);
-    if (!raw) continue;
-    const parsed = TaskSchema.safeParse(raw);
-    if (parsed.success) {
-      tasks.push(parsed.data);
-    } else {
-      getCliLogger().error(formatOperationError(`parse task file "${entry}"`, parsed.error));
-    }
-  }
-
-  return tasks;
+  return stateManager.listTasks(goalId);
 }
 
 // ─── cmdTaskList ───

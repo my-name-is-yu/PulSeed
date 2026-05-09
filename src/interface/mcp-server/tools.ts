@@ -4,6 +4,7 @@ import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { randomUUID } from "node:crypto";
 import type { StateManager } from "../../base/state/state-manager.js";
+import type { Goal } from "../../base/types/goal.js";
 import { loadSharedEntries } from "../../platform/knowledge/knowledge-search.js";
 
 export interface MCPServerDeps {
@@ -62,13 +63,13 @@ export async function toolGoalCreate(
   try {
     const now = new Date().toISOString();
     const goalId = randomUUID();
-    const goal = {
+    const goal: Goal = {
       id: goalId,
       parent_id: null,
       node_type: "goal",
       title: args.title,
       description: args.description,
-      status: "pending" as const,
+      status: "active",
       dimensions: [],
       gap_aggregation: "max",
       dimension_mapping: null,
@@ -88,10 +89,8 @@ export async function toolGoalCreate(
       created_at: now,
       updated_at: now,
     };
-    const goalDir = path.join(deps.baseDir, "goals", goalId);
-    await fsp.mkdir(goalDir, { recursive: true });
-    await fsp.writeFile(path.join(goalDir, "goal.json"), JSON.stringify(goal, null, 2), "utf-8");
-    return ok({ goal_id: goalId, title: args.title, status: "pending" });
+    await deps.stateManager.saveGoal(goal);
+    return ok({ goal_id: goalId, title: args.title, status: goal.status });
   } catch (e) {
     return err(String(e));
   }
@@ -114,23 +113,7 @@ export async function toolObserve(deps: MCPServerDeps, args: { goal_id: string }
 
 export async function toolTaskList(deps: MCPServerDeps, args: { goal_id: string }): Promise<MCPResult> {
   try {
-    const tasksDir = path.join(deps.baseDir, "tasks", args.goal_id);
-    let entries: string[] = [];
-    try {
-      entries = await fsp.readdir(tasksDir);
-    } catch {
-      return ok({ goal_id: args.goal_id, tasks: [] });
-    }
-    const tasks: unknown[] = [];
-    for (const entry of entries) {
-      if (!entry.endsWith(".json") || entry === "task-history.json" || entry === "last-failure-context.json") continue;
-      try {
-        const raw = await fsp.readFile(path.join(tasksDir, entry), "utf-8");
-        tasks.push(JSON.parse(raw));
-      } catch {
-        // skip corrupt files
-      }
-    }
+    const tasks = await deps.stateManager.listTasks(args.goal_id);
     return ok({ goal_id: args.goal_id, tasks });
   } catch (e) {
     return err(String(e));

@@ -22,10 +22,12 @@ import { HookManager } from "../../src/runtime/hook-manager.js";
 import { EventServer } from "../../src/runtime/event-server.js";
 import { MCPClientManager } from "../../src/adapters/mcp-client-manager.js";
 import { MCPDataSourceAdapter } from "../../src/adapters/datasources/mcp-datasource.js";
+import { StateManager } from "../../src/base/state/state-manager.js";
 import type { HookConfig } from "../../src/base/types/hook.js";
 import type { IMCPConnection, MCPServerConfig } from "../../src/base/types/mcp.js";
 import type { PulSeedEvent } from "../../src/base/types/drive.js";
 import { makeTempDir, cleanupTempDir } from "../helpers/temp-dir.js";
+import { makeGoal } from "../helpers/fixtures.js";
 
 // ─── Shared helpers ───
 
@@ -507,15 +509,9 @@ describe("Phase B — Remote Trigger API: GET /goals returns goal states", () =>
   });
 
   it("GET /goals returns all saved goals with status fields", async () => {
-    const goalsDir = path.join(tmpDir, "goals");
+    const stateManager = new StateManager(tmpDir);
     for (const id of ["goal-a", "goal-b"]) {
-      const goalDir = path.join(goalsDir, id);
-      fs.mkdirSync(goalDir, { recursive: true });
-      fs.writeFileSync(
-        path.join(goalDir, "goal.json"),
-        JSON.stringify({ id, title: `Title ${id}`, status: "active", loop_status: "running" }),
-        "utf-8"
-      );
+      await stateManager.saveGoal(makeGoal({ id, title: `Title ${id}`, status: "active", loop_status: "running" }));
     }
 
     const res = await makeHttpRequest(port, "GET", "/goals");
@@ -531,24 +527,20 @@ describe("Phase B — Remote Trigger API: GET /goals returns goal states", () =>
   });
 
   it("GET /goals/:id returns goal detail with current_gap from gap-history", async () => {
-    const goalDir = path.join(tmpDir, "goals", "goal-detail");
-    fs.mkdirSync(goalDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(goalDir, "goal.json"),
-      JSON.stringify({
-        id: "goal-detail",
-        title: "Detailed Goal",
-        status: "active",
-        loop_status: "idle",
-      }),
-      "utf-8"
-    );
-    const gapEntry = { gap: 0.75, timestamp: new Date().toISOString() };
-    fs.writeFileSync(
-      path.join(goalDir, "gap-history.json"),
-      JSON.stringify([gapEntry]),
-      "utf-8"
-    );
+    const stateManager = new StateManager(tmpDir);
+    await stateManager.saveGoal(makeGoal({
+      id: "goal-detail",
+      title: "Detailed Goal",
+      status: "active",
+      loop_status: "idle",
+    }));
+    const gapEntry = {
+      iteration: 1,
+      timestamp: new Date().toISOString(),
+      gap_vector: [{ dimension_name: "dim1", normalized_weighted_gap: 0.75 }],
+      confidence_vector: [{ dimension_name: "dim1", confidence: 0.8 }],
+    };
+    await stateManager.saveGapHistory("goal-detail", [gapEntry]);
 
     const res = await makeHttpRequest(port, "GET", "/goals/goal-detail");
     expect(res.status).toBe(200);
@@ -556,7 +548,7 @@ describe("Phase B — Remote Trigger API: GET /goals returns goal states", () =>
     expect(parsed["id"]).toBe("goal-detail");
     expect(parsed["title"]).toBe("Detailed Goal");
     const gap = parsed["current_gap"] as Record<string, unknown>;
-    expect(gap["gap"]).toBe(0.75);
+    expect(gap["gap_vector"]).toEqual([{ dimension_name: "dim1", normalized_weighted_gap: 0.75 }]);
   });
 
   it("GET /goals/:id returns 404 for a nonexistent goal", async () => {

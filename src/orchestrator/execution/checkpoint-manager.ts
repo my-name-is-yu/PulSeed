@@ -1,6 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import { promises as fsp } from 'node:fs';
-import path from 'node:path';
 import { z } from 'zod';
 import { StateManager } from '../../base/state/state-manager.js';
 import {
@@ -164,13 +162,7 @@ export class CheckpointManager {
   }
 
   async deleteCheckpoint(goalId: string, checkpointId: string): Promise<void> {
-    const filePath = path.join(
-      this.deps.stateManager.getBaseDir(),
-      this.checkpointPath(goalId, checkpointId),
-    );
-    await fsp.unlink(filePath).catch((err) => {
-      console.error("[CheckpointManager] failed to delete checkpoint file:", err instanceof Error ? err.message : err);
-    });
+    await this.deps.stateManager.writeRaw(this.checkpointPath(goalId, checkpointId), null);
     const index = await this.readIndex(goalId);
     index.checkpoints = index.checkpoints.filter((e) => e.checkpoint_id !== checkpointId);
     await this.writeIndex(index);
@@ -185,13 +177,7 @@ export class CheckpointManager {
     );
 
     for (const entry of toDelete) {
-      const filePath = path.join(
-        this.deps.stateManager.getBaseDir(),
-        this.checkpointPath(goalId, entry.checkpoint_id),
-      );
-      await fsp.unlink(filePath).catch((err) => {
-        console.error("[CheckpointManager] failed to delete checkpoint file during GC:", err instanceof Error ? err.message : err);
-      });
+      await this.deps.stateManager.writeRaw(this.checkpointPath(goalId, entry.checkpoint_id), null);
     }
 
     const deletedIds = new Set(toDelete.map((e) => e.checkpoint_id));

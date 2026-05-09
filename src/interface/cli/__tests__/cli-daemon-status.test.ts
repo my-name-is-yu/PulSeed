@@ -21,7 +21,7 @@ import { cmdDaemonStatus } from "../commands/daemon.js";
 import { PIDManager } from "../../../runtime/pid-manager.js";
 import { RuntimeHealthStore } from "../../../runtime/store/health-store.js";
 import { ProactiveInterventionStore } from "../../../runtime/store/proactive-intervention-store.js";
-import { DaemonShutdownStore, DaemonStateStore, openControlDatabase, SupervisorStateStore } from "../../../runtime/store/index.js";
+import { DaemonShutdownStore, DaemonStateStore, GoalTaskStateStore, openControlDatabase, SupervisorStateStore } from "../../../runtime/store/index.js";
 
 function mockPidInspectRunning(runtimePid: number, ownerPid = runtimePid) {
   return vi.spyOn(PIDManager.prototype, "inspect").mockResolvedValue({
@@ -349,9 +349,7 @@ describe("cmdDaemonStatus", () => {
         },
       }
     );
-    fs.writeFileSync(
-      path.join(tmpDir, "tasks", "goal-kpi", "ledger", "task-1.json"),
-      JSON.stringify({
+    await new GoalTaskStateStore(tmpDir).saveTaskOutcomeLedger({
         task_id: "task-1",
         goal_id: "goal-kpi",
         events: [
@@ -369,8 +367,7 @@ describe("cmdDaemonStatus", () => {
             created_to_completed_ms: 3700,
           },
         },
-      })
-    );
+      });
     await saveDaemonStateFixture(tmpDir, {
         pid: process.pid,
         started_at: new Date(now - 60_000).toISOString(),
@@ -710,9 +707,7 @@ describe("cmdDaemonStatus", () => {
         reason: "stop",
         state: "clean_shutdown",
       });
-    fs.writeFileSync(
-      path.join(tmpDir, "tasks", "goal-stale", "ledger", "task-stale.json"),
-      JSON.stringify({
+    await new GoalTaskStateStore(tmpDir).saveTaskOutcomeLedger({
         task_id: "task-stale",
         goal_id: "goal-stale",
         events: [
@@ -723,8 +718,7 @@ describe("cmdDaemonStatus", () => {
           latest_event_type: "started",
           latencies: {},
         },
-      })
-    );
+      });
 
     await cmdDaemonStatus([]);
 
