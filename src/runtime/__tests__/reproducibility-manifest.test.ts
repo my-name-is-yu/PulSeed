@@ -221,11 +221,15 @@ describe("RuntimeReproducibilityManifestStore", () => {
     }).success).toBe(false);
   });
 
-  it("rejects persisted manifests with unsafe artifact byte counts on load", async () => {
+  it("treats malformed or unsafe persisted manifests as missing on load", async () => {
     const store = new RuntimeReproducibilityManifestStore(runtimeRoot);
     const manifestId = "manifest-unsafe-artifact-size";
     const manifestPath = store.pathFor(manifestId);
     await fsp.mkdir(path.dirname(manifestPath), { recursive: true });
+    await fsp.writeFile(manifestPath, "{", "utf8");
+
+    await expect(store.load(manifestId)).resolves.toBeNull();
+
     await fsp.writeFile(manifestPath, `${JSON.stringify({
       schema_version: "runtime-reproducibility-manifest-v1",
       manifest_id: manifestId,
@@ -247,7 +251,83 @@ describe("RuntimeReproducibilityManifestStore", () => {
       }],
     })}\n`, "utf8");
 
-    await expect(store.load(manifestId)).rejects.toThrow();
+    await expect(store.load(manifestId)).resolves.toBeNull();
+  });
+
+  it("skips malformed persisted manifests while preserving ready finalization lookup", async () => {
+    const store = new RuntimeReproducibilityManifestStore(runtimeRoot);
+    const malformedPath = store.pathFor("manifest-malformed");
+    const unsafePath = store.pathFor("manifest-unsafe");
+    const readyPath = store.pathFor("manifest-ready");
+    await fsp.mkdir(path.dirname(readyPath), { recursive: true });
+    await fsp.writeFile(malformedPath, "{", "utf8");
+    await fsp.writeFile(unsafePath, `${JSON.stringify({
+      schema_version: "runtime-reproducibility-manifest-v1",
+      manifest_id: "manifest-unsafe",
+      generated_at: "2026-04-30T00:00:00.000Z",
+      updated_at: "2026-04-30T00:10:00.000Z",
+      scope: { run_id: "run:coreloop:manifest-ready" },
+      selected_deliverable: {
+        label: "final-report",
+        state_relative_path: "runs/final/report.md",
+        source: "test-fixture",
+      },
+      finalization_preflight: {
+        manifest_required_before_delivery: true,
+        approval_required_before_external_submission: true,
+        status: "manifest_ready",
+        missing: [],
+      },
+      code_state: { source: "test-fixture" },
+      artifacts: [{
+        label: "final-report",
+        state_relative_path: "runs/final/report.md",
+        kind: "report",
+        size_bytes: Number.MAX_SAFE_INTEGER + 1,
+      }],
+    })}\n`, "utf8");
+    await fsp.writeFile(readyPath, `${JSON.stringify(RuntimeReproducibilityManifestSchema.parse({
+      schema_version: "runtime-reproducibility-manifest-v1",
+      manifest_id: "manifest-ready",
+      generated_at: "2026-04-30T00:00:00.000Z",
+      updated_at: "2026-04-30T00:05:00.000Z",
+      scope: { run_id: "run:coreloop:manifest-ready" },
+      selected_deliverable: {
+        label: "final-report",
+        state_relative_path: "runs/final/report.md",
+        source: "test-fixture",
+      },
+      finalization_preflight: {
+        manifest_required_before_delivery: true,
+        approval_required_before_external_submission: true,
+        status: "manifest_ready",
+        missing: [],
+      },
+      code_state: { source: "test-fixture" },
+      artifacts: [{
+        label: "final-report",
+        state_relative_path: "runs/final/report.md",
+        kind: "report",
+        hash_status: "hashed",
+        sha256: "abc123",
+        size_bytes: 12,
+      }],
+    }))}\n`, "utf8");
+
+    const manifest = await store.findReadyForFinalization({
+      runId: "run:coreloop:manifest-ready",
+      deliverable: { label: "final-report" },
+    });
+
+    expect(manifest?.manifest_id).toBe("manifest-ready");
+  });
+
+  it("rethrows manifest read errors during finalization lookup", async () => {
+    const store = new RuntimeReproducibilityManifestStore(runtimeRoot);
+    const manifestPath = store.pathFor("manifest-directory-read-error");
+    await fsp.mkdir(manifestPath, { recursive: true });
+
+    await expect(store.findReadyForFinalization({})).rejects.toThrow();
   });
 
   it("updates the same manifest with linked external evaluator feedback", async () => {
