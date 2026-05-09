@@ -52,6 +52,23 @@ describe("whatsapp-webhook config loader", () => {
     expect(cfg.runtime_control_allowed_sender_ids).toEqual(["15557654321"]);
   });
 
+  it("rejects unsafe or out-of-range ports before loading config", () => {
+    fs.writeFileSync(
+      path.join(tmpDir, "config.json"),
+      JSON.stringify({
+        phone_number_id: "phone-1",
+        access_token: "token-1",
+        verify_token: "verify-1",
+        recipient_id: "15551234567",
+        identity_key: "whatsapp:alpha",
+        port: 65_536,
+      }),
+      "utf-8"
+    );
+
+    expect(() => loadConfig(tmpDir)).toThrow("port must be a safe integer between 1 and 65535");
+  });
+
   it("loads sender security and routing config", () => {
     fs.writeFileSync(
       path.join(tmpDir, "config.json"),

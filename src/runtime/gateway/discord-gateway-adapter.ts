@@ -12,6 +12,8 @@ import { NonTuiDisplayProjector, type NonTuiDisplayMessageRef, type NonTuiDispla
 import type { INotifier, NotificationEvent, NotificationEventType } from "../../base/types/plugin.js";
 
 let discordSyntheticMessageId = 0;
+const MIN_PORT = 1;
+const MAX_PORT = 65_535;
 
 interface DiscordInteractionOption {
   name: string;
@@ -452,7 +454,7 @@ function loadDiscordGatewayConfig(pluginDir: string): DiscordGatewayConfig {
   assertNonEmptyString(raw["identity_key"], "discord-bot: identity_key must be a non-empty string");
   assertNonEmptyString(commandName, "discord-bot: command_name must be a non-empty string");
   assertNonEmptyString(host, "discord-bot: host must be a non-empty string");
-  assertInteger(port, "discord-bot: port must be an integer");
+  assertPort(port, `discord-bot: port must be a safe integer between ${MIN_PORT} and ${MAX_PORT}`);
   assertBoolean(ephemeral, "discord-bot: ephemeral must be a boolean");
   assertStringArray(runtimeControlAllowedSenderIds, "discord-bot: runtime_control_allowed_sender_ids must be an array of non-empty strings");
   assertStringArray(allowedSenderIds, "discord-bot: allowed_sender_ids must be an array of non-empty strings");
@@ -528,8 +530,8 @@ function assertNonEmptyString(value: unknown, message: string): asserts value is
   }
 }
 
-function assertInteger(value: unknown, message: string): asserts value is number {
-  if (typeof value !== "number" || !Number.isInteger(value)) {
+function assertPort(value: unknown, message: string): asserts value is number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < MIN_PORT || value > MAX_PORT) {
     throw new Error(message);
   }
 }

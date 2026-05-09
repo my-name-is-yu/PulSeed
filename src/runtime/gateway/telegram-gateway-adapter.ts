@@ -13,6 +13,8 @@ import type { ChatEvent } from "../../interface/chat/chat-events.js";
 
 const BACKOFF_STEPS_MS = [5_000, 10_000, 20_000, 40_000, 60_000];
 const TELEGRAM_INTEGER_ID_TOKEN = /^-?(?:0|[1-9]\d*)$/;
+const MIN_POLLING_TIMEOUT_SECONDS = 1;
+const MAX_POLLING_TIMEOUT_SECONDS = 60;
 
 function parseTelegramIntegerId(value: string): number | null {
   const normalized = value.trim();
@@ -501,17 +503,22 @@ function loadTelegramGatewayConfig(pluginDir: string): TelegramGatewayConfig {
 
   assertNonEmptyString(raw["bot_token"], "telegram-bot: bot_token must be a non-empty string");
   if (raw["chat_id"] !== undefined) {
-    assertInteger(raw["chat_id"], "telegram-bot: chat_id must be an integer when set");
+    assertInteger(raw["chat_id"], "telegram-bot: chat_id must be a safe integer when set");
   }
-  assertIntegerArray(allowedUserIds, "telegram-bot: allowed_user_ids must be an array of integers");
-  assertIntegerArray(deniedUserIds, "telegram-bot: denied_user_ids must be an array of integers");
-  assertIntegerArray(allowedChatIds, "telegram-bot: allowed_chat_ids must be an array of integers");
-  assertIntegerArray(deniedChatIds, "telegram-bot: denied_chat_ids must be an array of integers");
-  assertIntegerArray(runtimeControlAllowedUserIds, "telegram-bot: runtime_control_allowed_user_ids must be an array of integers");
+  assertIntegerArray(allowedUserIds, "telegram-bot: allowed_user_ids must be an array of safe integers");
+  assertIntegerArray(deniedUserIds, "telegram-bot: denied_user_ids must be an array of safe integers");
+  assertIntegerArray(allowedChatIds, "telegram-bot: allowed_chat_ids must be an array of safe integers");
+  assertIntegerArray(deniedChatIds, "telegram-bot: denied_chat_ids must be an array of safe integers");
+  assertIntegerArray(runtimeControlAllowedUserIds, "telegram-bot: runtime_control_allowed_user_ids must be an array of safe integers");
   if (typeof allowAll !== "boolean") {
     throw new Error("telegram-bot: allow_all must be a boolean");
   }
-  assertInteger(pollingTimeout, "telegram-bot: polling_timeout must be an integer");
+  assertIntegerInRange(
+    pollingTimeout,
+    MIN_POLLING_TIMEOUT_SECONDS,
+    MAX_POLLING_TIMEOUT_SECONDS,
+    `telegram-bot: polling_timeout must be a safe integer between ${MIN_POLLING_TIMEOUT_SECONDS} and ${MAX_POLLING_TIMEOUT_SECONDS}`,
+  );
   if (raw["identity_key"] !== undefined) {
     assertNonEmptyString(raw["identity_key"], "telegram-bot: identity_key must be a non-empty string when set");
   }
@@ -533,7 +540,7 @@ function loadTelegramGatewayConfig(pluginDir: string): TelegramGatewayConfig {
     user_goal_map: userGoalMap as Record<string, string>,
     default_goal_id: raw["default_goal_id"] as string | undefined,
     allow_all: allowAll as boolean,
-    polling_timeout: Math.min(Math.max(pollingTimeout as number, 1), 60),
+    polling_timeout: pollingTimeout as number,
     identity_key: raw["identity_key"] as string | undefined,
   };
 }
@@ -564,13 +571,24 @@ function assertNonEmptyString(value: unknown, message: string): asserts value is
 }
 
 function assertInteger(value: unknown, message: string): asserts value is number {
-  if (typeof value !== "number" || !Number.isInteger(value)) {
+  if (typeof value !== "number" || !Number.isSafeInteger(value)) {
+    throw new Error(message);
+  }
+}
+
+function assertIntegerInRange(
+  value: unknown,
+  min: number,
+  max: number,
+  message: string,
+): asserts value is number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < min || value > max) {
     throw new Error(message);
   }
 }
 
 function assertIntegerArray(value: unknown, message: string): asserts value is number[] {
-  if (!Array.isArray(value) || !value.every((item) => Number.isInteger(item))) {
+  if (!Array.isArray(value) || !value.every((item) => Number.isSafeInteger(item))) {
     throw new Error(message);
   }
 }

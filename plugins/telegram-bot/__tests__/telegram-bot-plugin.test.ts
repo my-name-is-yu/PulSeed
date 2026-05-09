@@ -94,6 +94,22 @@ describe("config — loadConfig", () => {
     expect(cfg.runtime_control_allowed_user_ids).toEqual([123, 456]);
   });
 
+  it("rejects unsafe numeric IDs before loading config", () => {
+    writeTmpConfig(tmpDir, {
+      bot_token: "tok",
+      allowed_user_ids: [Number.MAX_SAFE_INTEGER + 1],
+    });
+    expect(() => loadConfig(tmpDir)).toThrow("allowed_user_ids must be an array of safe integers");
+  });
+
+  it("rejects out-of-range polling timeouts before loading config", () => {
+    writeTmpConfig(tmpDir, {
+      bot_token: "tok",
+      polling_timeout: Number.MAX_SAFE_INTEGER,
+    });
+    expect(() => loadConfig(tmpDir)).toThrow("polling_timeout must be a safe integer between 1 and 60");
+  });
+
   it("accepts channel security and routing config", () => {
     writeTmpConfig(tmpDir, {
       bot_token: "tok",

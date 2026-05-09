@@ -1,6 +1,9 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 
+const MIN_POLLING_TIMEOUT_SECONDS = 1;
+const MAX_POLLING_TIMEOUT_SECONDS = 60;
+
 // ─── Config type ───
 
 export interface TelegramConfig {
@@ -46,13 +49,13 @@ function validateConfig(raw: unknown): TelegramConfig {
   if (typeof cfg["bot_token"] !== "string" || cfg["bot_token"].length === 0) {
     throw new Error("telegram-bot: bot_token must be a non-empty string");
   }
-  if (cfg["chat_id"] !== undefined && (typeof cfg["chat_id"] !== "number" || !Number.isInteger(cfg["chat_id"]))) {
-    throw new Error("telegram-bot: chat_id must be an integer when set");
+  if (cfg["chat_id"] !== undefined && !isSafeInteger(cfg["chat_id"])) {
+    throw new Error("telegram-bot: chat_id must be a safe integer when set");
   }
 
   const allowedUserIds = cfg["allowed_user_ids"] ?? [];
-  if (!Array.isArray(allowedUserIds) || !allowedUserIds.every((id) => Number.isInteger(id))) {
-    throw new Error("telegram-bot: allowed_user_ids must be an array of integers");
+  if (!Array.isArray(allowedUserIds) || !allowedUserIds.every(isSafeInteger)) {
+    throw new Error("telegram-bot: allowed_user_ids must be an array of safe integers");
   }
   const deniedUserIds = cfg["denied_user_ids"] ?? cfg["deny_from"] ?? [];
   const allowedChatIds = cfg["allowed_chat_ids"] ?? [];
@@ -62,17 +65,17 @@ function validateConfig(raw: unknown): TelegramConfig {
     allowed_chat_ids: allowedChatIds,
     denied_chat_ids: deniedChatIds,
   })) {
-    if (!Array.isArray(value) || !value.every((id) => Number.isInteger(id))) {
-      throw new Error(`telegram-bot: ${key} must be an array of integers`);
+    if (!Array.isArray(value) || !value.every(isSafeInteger)) {
+      throw new Error(`telegram-bot: ${key} must be an array of safe integers`);
     }
   }
 
   const runtimeControlAllowedUserIds = cfg["runtime_control_allowed_user_ids"] ?? [];
   if (
     !Array.isArray(runtimeControlAllowedUserIds) ||
-    !runtimeControlAllowedUserIds.every((id) => Number.isInteger(id))
+    !runtimeControlAllowedUserIds.every(isSafeInteger)
   ) {
-    throw new Error("telegram-bot: runtime_control_allowed_user_ids must be an array of integers");
+    throw new Error("telegram-bot: runtime_control_allowed_user_ids must be an array of safe integers");
   }
 
   const allowAll = cfg["allow_all"] ?? false;
@@ -81,8 +84,14 @@ function validateConfig(raw: unknown): TelegramConfig {
   }
 
   const pollingTimeout = cfg["polling_timeout"] ?? 30;
-  if (typeof pollingTimeout !== "number" || !Number.isInteger(pollingTimeout)) {
-    throw new Error("telegram-bot: polling_timeout must be an integer");
+  if (
+    !isSafeInteger(pollingTimeout) ||
+    pollingTimeout < MIN_POLLING_TIMEOUT_SECONDS ||
+    pollingTimeout > MAX_POLLING_TIMEOUT_SECONDS
+  ) {
+    throw new Error(
+      `telegram-bot: polling_timeout must be a safe integer between ${MIN_POLLING_TIMEOUT_SECONDS} and ${MAX_POLLING_TIMEOUT_SECONDS}`
+    );
   }
   if (cfg["identity_key"] !== undefined && (typeof cfg["identity_key"] !== "string" || cfg["identity_key"].trim().length === 0)) {
     throw new Error("telegram-bot: identity_key must be a non-empty string when set");
@@ -115,7 +124,11 @@ function validateConfig(raw: unknown): TelegramConfig {
     user_goal_map: userGoalMap as Record<string, string>,
     default_goal_id: cfg["default_goal_id"] as string | undefined,
     allow_all: allowAll,
-    polling_timeout: Math.min(Math.max(pollingTimeout as number, 1), 60),
+    polling_timeout: pollingTimeout,
     identity_key: cfg["identity_key"] as string | undefined,
   };
+}
+
+function isSafeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value);
 }

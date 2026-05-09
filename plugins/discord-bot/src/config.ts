@@ -1,6 +1,9 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 
+const MIN_PORT = 1;
+const MAX_PORT = 65_535;
+
 export interface DiscordBotConfig {
   application_id: string;
   public_key_hex?: string;
@@ -71,8 +74,8 @@ function validateConfig(raw: unknown): DiscordBotConfig {
   if (typeof host !== "string" || host.length === 0) {
     throw new Error("discord-bot: host must be a non-empty string");
   }
-  if (typeof port !== "number" || !Number.isInteger(port)) {
-    throw new Error("discord-bot: port must be an integer");
+  if (!isPort(port)) {
+    throw new Error(`discord-bot: port must be a safe integer between ${MIN_PORT} and ${MAX_PORT}`);
   }
   if (typeof ephemeral !== "boolean") {
     throw new Error("discord-bot: ephemeral must be a boolean");
@@ -132,4 +135,13 @@ function validateConfig(raw: unknown): DiscordBotConfig {
     port,
     ephemeral,
   };
+}
+
+function isPort(value: unknown): value is number {
+  return (
+    typeof value === "number" &&
+    Number.isSafeInteger(value) &&
+    value >= MIN_PORT &&
+    value <= MAX_PORT
+  );
 }
