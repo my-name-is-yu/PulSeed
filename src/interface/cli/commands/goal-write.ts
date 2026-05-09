@@ -2,6 +2,7 @@
 
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
+import { z } from "zod";
 import { getReportsDir, getDatasourcesDir } from "../../../base/utils/paths.js";
 import { readJsonFile } from "../../../base/utils/json-io.js";
 
@@ -19,6 +20,10 @@ import {
 } from "./goal-utils.js";
 import { cmdDatasourceDedup } from "./config.js";
 import type { RefineResult } from "../../../base/types/goal-refiner.js";
+
+const DatasourceCleanupMetadataSchema = z.object({
+  scope_goal_id: z.string().optional(),
+}).passthrough();
 
 // ─── Display helpers ───
 
@@ -375,8 +380,13 @@ export async function cmdCleanup(stateManager: StateManager): Promise<number> {
       for (const file of dsFiles) {
         const filePath = path.join(datasourcesDir, file);
         try {
-          const raw = JSON.parse(await fsp.readFile(filePath, "utf-8")) as { scope_goal_id?: string };
-          if (raw.scope_goal_id && !activeGoalIds.has(raw.scope_goal_id)) {
+          const raw = JSON.parse(await fsp.readFile(filePath, "utf-8")) as unknown;
+          const parsed = DatasourceCleanupMetadataSchema.safeParse(raw);
+          if (!parsed.success) {
+            getCliLogger().error(formatOperationError(`read datasource "${file}"`, parsed.error));
+            continue;
+          }
+          if (parsed.data.scope_goal_id && !activeGoalIds.has(parsed.data.scope_goal_id)) {
             await fsp.unlink(filePath);
             orphanedCount++;
           }

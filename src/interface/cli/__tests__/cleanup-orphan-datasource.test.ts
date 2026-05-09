@@ -85,6 +85,20 @@ describe("cmdCleanup — orphaned datasource removal", () => {
     expect(listFiles(datasourcesDir)[0]).toBe("ds_manual.json");
   });
 
+  it("keeps datasource when persisted scope_goal_id is not a string", async () => {
+    writeDatasource(datasourcesDir, "ds_invalid_scope.json", {
+      id: "ds_invalid_scope",
+      type: "shell",
+      scope_goal_id: ["goal-deleted-123"],
+      connection: { commands: { test_count: {} } },
+    });
+
+    const sm = makeFakeStateManager(tmpDir, []);
+    const result = await cmdCleanup(sm as never);
+    expect(result).toBe(0);
+    expect(listFiles(datasourcesDir)).toEqual(["ds_invalid_scope.json"]);
+  });
+
   it("does not crash when datasources directory does not exist", async () => {
     // datasourcesDir is never created
     const sm = makeFakeStateManager(tmpDir, []);
