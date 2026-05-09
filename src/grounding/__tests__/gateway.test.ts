@@ -125,6 +125,40 @@ describe("GroundingGateway", () => {
     expect(prompt).not.toContain("Prefer verbose status reports.");
   });
 
+  it("reads provider.json through the validated object-record boundary", async () => {
+    const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-grounding-provider-state-"));
+    fs.writeFileSync(path.join(tmpRoot, "provider.json"), JSON.stringify({ llm: "openai", default_adapter: "codex" }), "utf-8");
+    const gateway = createGroundingGateway({ stateManager: makeStateManager({ getBaseDir: vi.fn().mockReturnValue(tmpRoot) }) });
+
+    const bundle = await gateway.build({
+      surface: "chat",
+      purpose: "general_turn",
+      homeDir: tmpRoot,
+      workspaceRoot: "/repo",
+    });
+
+    const providerState = bundle.dynamicSections.find((section) => section.key === "provider_state");
+    expect(providerState?.content).toBe("openai / codex");
+    expect(providerState?.sources[0]?.type).toBe("file");
+  });
+
+  it("treats non-object provider.json as unconfigured through the gateway path", async () => {
+    const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-grounding-provider-state-"));
+    fs.writeFileSync(path.join(tmpRoot, "provider.json"), JSON.stringify(["openai", "codex"]), "utf-8");
+    const gateway = createGroundingGateway({ stateManager: makeStateManager({ getBaseDir: vi.fn().mockReturnValue(tmpRoot) }) });
+
+    const bundle = await gateway.build({
+      surface: "chat",
+      purpose: "general_turn",
+      homeDir: tmpRoot,
+      workspaceRoot: "/repo",
+    });
+
+    const providerState = bundle.dynamicSections.find((section) => section.key === "provider_state");
+    expect(providerState?.content).toBe("not configured");
+    expect(providerState?.sources[0]?.type).toBe("none");
+  });
+
   it("prefers Soil knowledge over broader knowledge results when Soil hits exist", async () => {
     const gateway = createGroundingGateway({ stateManager: makeStateManager() });
     const knowledgeQuery = vi.fn().mockResolvedValue({
