@@ -4,6 +4,7 @@ import { execFileNoThrow } from "../../../base/utils/execFileNoThrow.js";
 
 const MAX_OUTPUT_CHARS = 20_000;
 const SAFE_REPO_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+const GitHubSafePositiveIntegerSchema = z.number().finite().int().min(1).max(Number.MAX_SAFE_INTEGER);
 
 export const GitHubReadInputSchema = z.object({
   action: z.enum([
@@ -18,9 +19,9 @@ export const GitHubReadInputSchema = z.object({
     "issue_view",
   ]),
   repo: z.string().regex(SAFE_REPO_RE, "repo must be owner/name").optional(),
-  pr: z.number().int().positive().optional(),
-  issue: z.number().int().positive().optional(),
-  run_id: z.union([z.string().min(1), z.number().int().positive()]).optional(),
+  pr: GitHubSafePositiveIntegerSchema.optional(),
+  issue: GitHubSafePositiveIntegerSchema.optional(),
+  run_id: z.union([z.string().min(1), GitHubSafePositiveIntegerSchema]).optional(),
   limit: z.number().int().min(1).max(100).default(20),
   patch: z.boolean().default(true),
   maxChars: z.number().int().min(100).max(100_000).default(MAX_OUTPUT_CHARS),
