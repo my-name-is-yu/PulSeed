@@ -11,6 +11,7 @@ import {
 } from "../types/schedule.js";
 import type { ScheduleEntry, ScheduleEntryInput } from "../types/schedule.js";
 import type { IDataSourceAdapter } from "../../platform/observation/data-source-adapter.js";
+import type { ILLMClient } from "../../base/llm/llm-client.js";
 import { makeTempDir, cleanupTempDir } from "../../../tests/helpers/temp-dir.js";
 
 let tempDir: string;
@@ -2131,6 +2132,87 @@ describe("Cron execution (Phase 3)", () => {
     expect(result.status).toBe("ok");
     expect(mockLlm.sendMessage).toHaveBeenCalledOnce();
     expect(result.tokens_used).toBeGreaterThan(0);
+  });
+
+  it("does not persist non-finite cron token usage counters", async () => {
+    const mockLlm = {
+      sendMessage: vi.fn().mockResolvedValue({
+        content: "summary",
+        usage: { input_tokens: Infinity, output_tokens: 0 },
+      }),
+      parseJSON: vi.fn(),
+    };
+
+    const eng = new ScheduleEngine({
+      baseDir: tempDir,
+      llmClient: mockLlm as unknown as ILLMClient,
+    });
+
+    const entry = await eng.addEntry(makeCronEntry({
+      cron: {
+        prompt_template: "Summarize current status",
+        context_sources: [],
+        output_format: "notification",
+        max_tokens: 1000,
+      },
+    }));
+    const entries = eng.getEntries();
+    entries[0]!.next_fire_at = new Date(Date.now() - 1000).toISOString();
+    await eng.saveEntries();
+    await eng.loadEntries();
+
+    const results = await eng.tick();
+    const rawEntries = JSON.parse(fs.readFileSync(path.join(tempDir, "schedules.json"), "utf-8")) as Array<Record<string, unknown>>;
+    const reloaded = await new ScheduleEngine({ baseDir: tempDir }).loadEntries();
+
+    expect(results.find((result) => result.entry_id === entry.id)?.status).toBe("error");
+    expect(rawEntries[0]?.["total_tokens_used"]).toBe(0);
+    expect(rawEntries[0]?.["tokens_used_today"]).toBe(0);
+    expect(reloaded).toHaveLength(1);
+    expect(reloaded[0]?.id).toBe(entry.id);
+  });
+
+  it("saturates persisted cron counters before they exceed the safe integer range", async () => {
+    const mockLlm = {
+      sendMessage: vi.fn().mockResolvedValue({
+        content: "summary",
+        usage: { input_tokens: 10, output_tokens: 5 },
+      }),
+      parseJSON: vi.fn(),
+    };
+
+    const eng = new ScheduleEngine({
+      baseDir: tempDir,
+      llmClient: mockLlm as unknown as ILLMClient,
+    });
+
+    const entry = await eng.addEntry(makeCronEntry({
+      cron: {
+        prompt_template: "Summarize current status",
+        context_sources: [],
+        output_format: "notification",
+        max_tokens: 1000,
+      },
+    }));
+    const entries = eng.getEntries();
+    entries[0]!.next_fire_at = new Date(Date.now() - 1000).toISOString();
+    entries[0]!.total_executions = Number.MAX_SAFE_INTEGER;
+    entries[0]!.total_tokens_used = Number.MAX_SAFE_INTEGER;
+    entries[0]!.max_tokens_per_day = Number.MAX_SAFE_INTEGER;
+    await eng.saveEntries();
+    await eng.loadEntries();
+
+    const results = await eng.tick();
+    const updatedEntry = eng.getEntries().find((candidate) => candidate.id === entry.id)!;
+    const reloaded = await new ScheduleEngine({ baseDir: tempDir }).loadEntries();
+
+    expect(results.find((result) => result.entry_id === entry.id)?.status).toBe("ok");
+    expect(updatedEntry.total_executions).toBe(Number.MAX_SAFE_INTEGER);
+    expect(updatedEntry.total_tokens_used).toBe(Number.MAX_SAFE_INTEGER);
+    expect(updatedEntry.tokens_used_today).toBe(15);
+    expect(reloaded).toHaveLength(1);
+    expect(reloaded[0]?.total_executions).toBe(Number.MAX_SAFE_INTEGER);
+    expect(reloaded[0]?.total_tokens_used).toBe(Number.MAX_SAFE_INTEGER);
   });
 
   it("executeCron interpolates prompt template with context", async () => {

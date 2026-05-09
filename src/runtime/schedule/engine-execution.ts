@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
+  ScheduleEntrySchema,
   ScheduleResultSchema,
   type ScheduleEntry,
   type ScheduleFailureKind,
@@ -406,6 +407,10 @@ function withClassifiedFailureKind(result: ScheduleResult, failureKind: Schedule
     : resultWithoutFailureKind;
 }
 
+function addScheduleCounter(current: number, increment: number): number {
+  return Math.min(Number.MAX_SAFE_INTEGER, current + increment);
+}
+
 function computeRetryDelay(policy: ScheduleRetryPolicy, attempt: number): number {
   const baseDelay = policy.initial_delay_ms * Math.pow(policy.multiplier, Math.max(0, attempt - 1));
   const cappedDelay = Math.min(baseDelay, policy.max_delay_ms);
@@ -431,15 +436,17 @@ async function applyExecutionOutcome(
   const idx = host.entries.findIndex((candidate) => candidate.id === entryId);
   if (idx === -1) return null;
 
+  const safeResult = ScheduleResultSchema.parse(result);
   const entry = host.entries[idx]!;
-  const startedAt = scheduledFor ?? result.fired_at;
+  const startedAt = scheduledFor ?? safeResult.fired_at;
   const finishedAt = new Date().toISOString();
-  const isFailure = result.status === "error" || result.status === "down";
-  const failureKind = classifyFailureKind(result);
+  const isFailure = safeResult.status === "error" || safeResult.status === "down";
+  const failureKind = classifyFailureKind(safeResult);
   const retryPolicy = normalizeRetryPolicy(entry);
   const currentRetryState = entry.retry_state ?? null;
   let retryAt: string | null = null;
   let retryState: ScheduleRetryState | null = null;
+  const tokensUsed = safeResult.tokens_used ?? 0;
 
   if (
     isFailure
@@ -448,33 +455,33 @@ async function applyExecutionOutcome(
     && retryPolicy.retryable_failure_kinds.includes(failureKind)
   ) {
     const attempts = (currentRetryState?.attempts ?? 0) + 1;
-    const firstFailureAt = currentRetryState?.first_failure_at ?? result.fired_at;
-    const windowElapsed = new Date(result.fired_at).getTime() - new Date(firstFailureAt).getTime();
+    const firstFailureAt = currentRetryState?.first_failure_at ?? safeResult.fired_at;
+    const windowElapsed = new Date(safeResult.fired_at).getTime() - new Date(firstFailureAt).getTime();
     if (attempts <= retryPolicy.max_attempts && windowElapsed <= retryPolicy.max_retry_window_ms) {
       retryAt = new Date(Date.now() + computeRetryDelay(retryPolicy, attempts)).toISOString();
       retryState = {
         attempts,
         next_retry_at: retryAt,
-        last_attempt_at: result.fired_at,
+        last_attempt_at: safeResult.fired_at,
         first_failure_at: firstFailureAt,
         last_failure_kind: failureKind,
-        last_error_message: result.error_message ?? null,
+        last_error_message: safeResult.error_message ?? null,
       };
     }
   }
 
-  host.entries[idx] = {
+  host.entries[idx] = ScheduleEntrySchema.parse({
     ...entry,
     enabled: options.preserveEnabled ? entry.enabled : true,
-    last_fired_at: result.fired_at,
+    last_fired_at: safeResult.fired_at,
     next_fire_at: computeNextFireAt(entry.trigger),
     updated_at: new Date().toISOString(),
-    total_executions: entry.total_executions + 1,
-    total_tokens_used: entry.total_tokens_used + (result.tokens_used ?? 0),
-    tokens_used_today: (entry.tokens_used_today ?? 0) + (result.tokens_used ?? 0),
-    consecutive_failures: isFailure ? entry.consecutive_failures + 1 : 0,
+    total_executions: addScheduleCounter(entry.total_executions, 1),
+    total_tokens_used: addScheduleCounter(entry.total_tokens_used, tokensUsed),
+    tokens_used_today: addScheduleCounter(entry.tokens_used_today ?? 0, tokensUsed),
+    consecutive_failures: isFailure ? addScheduleCounter(entry.consecutive_failures, 1) : 0,
     retry_state: retryState,
-  };
+  });
 
   const updated = host.entries[idx]!;
   if (
