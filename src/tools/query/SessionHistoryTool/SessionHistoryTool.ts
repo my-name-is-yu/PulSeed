@@ -15,7 +15,7 @@ export const SessionHistoryInputSchema = z.object({
   goalId: z.string().optional(),
   limit: z.number().int().min(1).max(SESSION_HISTORY_MAX_LIMIT).default(SESSION_HISTORY_DEFAULT_LIMIT),
   includeObservations: z.boolean().default(true),
-});
+}).strict();
 export type SessionHistoryInput = z.infer<typeof SessionHistoryInputSchema>;
 
 interface SessionSummary {

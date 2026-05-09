@@ -16,7 +16,7 @@ export const ProgressHistoryInputSchema = z.object({
   goalId: z.string().min(1),
   limit: z.number().int().min(1).max(100).default(10),
   dimensionName: z.string().optional(),
-});
+}).strict();
 export type ProgressHistoryInput = z.infer<typeof ProgressHistoryInputSchema>;
 
 export type TrendLabel =

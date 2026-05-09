@@ -7,7 +7,7 @@ import { TAGS, PERMISSION_LEVEL, MAX_OUTPUT_CHARS } from "./constants.js";
 
 export const TrustStateInputSchema = z.object({
   adapterId: z.string().optional(),
-});
+}).strict();
 export type TrustStateInput = z.infer<typeof TrustStateInputSchema>;
 
 const TRUST_STORE_PATH = "trust/trust-store.json";

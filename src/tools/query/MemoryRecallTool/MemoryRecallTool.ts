@@ -58,7 +58,7 @@ export const MemoryRecallInputSchema = z.object({
     .optional()
     .default("local")
     .describe("Maximum sensitivity allowed in returned memories"),
-});
+}).strict();
 export type MemoryRecallInput = z.input<typeof MemoryRecallInputSchema>;
 
 export interface MemoryRecallOutput {
