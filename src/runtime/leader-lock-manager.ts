@@ -1,6 +1,7 @@
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { randomUUID } from "node:crypto";
+import { z } from "zod";
 import { writeJsonFileAtomic, readJsonFileOrNull } from "../base/utils/json-io.js";
 import { isProcessPidValue, parseProcessPid } from "../base/utils/process-pid.js";
 
@@ -26,6 +27,17 @@ export interface LeaderLockRenewOptions {
 const DEFAULT_LEASE_MS = 30_000;
 const MUTEX_RETRY_DELAY_MS = 10;
 const MUTEX_MAX_ATTEMPTS = 50;
+const LeaderLockPidSchema = z.number().int().positive().safe();
+const LeaderLockSafeNonnegativeIntSchema = z.number().int().nonnegative().safe();
+const LeaderLockSafePositiveIntSchema = z.number().int().positive().safe();
+
+const LeaderLockRecordSchema = z.object({
+  owner_token: z.string(),
+  pid: LeaderLockPidSchema,
+  acquired_at: LeaderLockSafeNonnegativeIntSchema,
+  last_renewed_at: LeaderLockSafeNonnegativeIntSchema,
+  lease_until: LeaderLockSafeNonnegativeIntSchema,
+});
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -99,16 +111,21 @@ async function withMutex<T>(mutexDir: string, fn: () => Promise<T>): Promise<T> 
   }
 }
 
-function isLeaderLockRecord(value: unknown): value is LeaderLockRecord {
-  if (!value || typeof value !== "object") return false;
-  const record = value as Partial<LeaderLockRecord>;
-  return (
-    typeof record.owner_token === "string" &&
-    isProcessPidValue(record.pid) &&
-    typeof record.acquired_at === "number" &&
-    typeof record.last_renewed_at === "number" &&
-    typeof record.lease_until === "number"
-  );
+function parseLeaderLockRecord(value: unknown): LeaderLockRecord | null {
+  const parsed = LeaderLockRecordSchema.safeParse(value);
+  return parsed.success && isProcessPidValue(parsed.data.pid) ? parsed.data : null;
+}
+
+function parseLeaseNow(value: number): number {
+  return LeaderLockSafeNonnegativeIntSchema.parse(value);
+}
+
+function parseLeaseMs(value: number): number {
+  return LeaderLockSafePositiveIntSchema.parse(value);
+}
+
+function computeLeaseUntil(now: number, leaseMs: number): number {
+  return LeaderLockSafeNonnegativeIntSchema.parse(now + leaseMs);
 }
 
 export class LeaderLockManager {
@@ -120,7 +137,7 @@ export class LeaderLockManager {
     runtimeRoot = path.resolve(runtimeRoot);
     this.recordPath = path.join(runtimeRoot, "leader", "leader.json");
     this.mutexPath = `${this.recordPath}.lock`;
-    this.defaultLeaseMs = defaultLeaseMs;
+    this.defaultLeaseMs = parseLeaseMs(defaultLeaseMs);
   }
 
   private buildRecord(ownerToken: string, leaseMs: number, now: number): LeaderLockRecord {
@@ -129,18 +146,18 @@ export class LeaderLockManager {
       pid: process.pid,
       acquired_at: now,
       last_renewed_at: now,
-      lease_until: now + leaseMs,
+      lease_until: computeLeaseUntil(now, leaseMs),
     };
   }
 
   private async readRaw(): Promise<LeaderLockRecord | null> {
     const raw = await readJsonFileOrNull<unknown>(this.recordPath);
-    return isLeaderLockRecord(raw) ? raw : null;
+    return parseLeaderLockRecord(raw);
   }
 
   async acquire(opts: LeaderLockAcquireOptions = {}): Promise<LeaderLockRecord | null> {
-    const now = opts.now ?? Date.now();
-    const leaseMs = opts.leaseMs ?? this.defaultLeaseMs;
+    const now = parseLeaseNow(opts.now ?? Date.now());
+    const leaseMs = parseLeaseMs(opts.leaseMs ?? this.defaultLeaseMs);
     const ownerToken = opts.ownerToken ?? randomUUID();
 
     return withMutex(this.mutexPath, async () => {
@@ -157,8 +174,8 @@ export class LeaderLockManager {
   }
 
   async renew(ownerToken: string, opts: LeaderLockRenewOptions = {}): Promise<LeaderLockRecord | null> {
-    const now = opts.now ?? Date.now();
-    const leaseMs = opts.leaseMs ?? this.defaultLeaseMs;
+    const now = parseLeaseNow(opts.now ?? Date.now());
+    const leaseMs = parseLeaseMs(opts.leaseMs ?? this.defaultLeaseMs);
 
     return withMutex(this.mutexPath, async () => {
       const current = await this.readRaw();
@@ -169,7 +186,7 @@ export class LeaderLockManager {
       const renewed: LeaderLockRecord = {
         ...current,
         last_renewed_at: now,
-        lease_until: now + leaseMs,
+        lease_until: computeLeaseUntil(now, leaseMs),
       };
       await writeJsonFileAtomic(this.recordPath, renewed);
       return renewed;
