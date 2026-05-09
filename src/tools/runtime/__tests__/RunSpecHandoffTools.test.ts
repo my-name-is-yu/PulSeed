@@ -107,6 +107,22 @@ function pendingRunSpecStartInput(pendingRef: { value: RunSpecConfirmationSnapsh
 }
 
 describe("RunSpec handoff tools", () => {
+  it("keeps model-facing descriptions on the DurableLoop surface", () => {
+    const tools = createRunSpecHandoffTools({
+      stateManager: {} as StateManager,
+      llmClient: makeLLMClient(),
+      daemonClient: { startGoal: vi.fn() },
+    });
+    const descriptions = [
+      tools[0].description({ cwd: "/repo/kaggle" }),
+      tools[3].description(),
+    ].join("\n");
+
+    expect(descriptions).toContain("daemon-backed DurableLoop handoff requests");
+    expect(descriptions).toContain("daemon-backed DurableLoop run");
+    expect(descriptions).not.toContain("CoreLoop");
+  });
+
   it("drafts and persists a pending RunSpec without starting the daemon", async () => {
     const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-runspec-tools-draft-"));
     const stateManager = new StateManager(baseDir, undefined, { walEnabled: false });

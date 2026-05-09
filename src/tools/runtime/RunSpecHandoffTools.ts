@@ -82,7 +82,7 @@ class DraftRunSpecTool implements ITool<DraftRunSpecToolInput> {
   description(context?: ToolDescriptionContext): string {
     return [
       "Draft and persist a typed long-running RunSpec from the current user request.",
-      "Use this for autonomous DurableLoop/CoreLoop handoff requests such as background Kaggle, benchmark, monitoring, or long-running optimization work.",
+      "Use this for autonomous daemon-backed DurableLoop handoff requests such as background Kaggle, benchmark, monitoring, or long-running optimization work.",
       "This only creates a pending draft and never starts the daemon run.",
       context?.cwd ? `Current cwd: ${context.cwd}.` : "",
     ].filter(Boolean).join(" ");
@@ -179,7 +179,7 @@ class StartDurableRunTool implements ITool<ObservedRunSpecInput> {
 
   description(): string {
     return [
-      "Confirm the pending validated RunSpec draft and start the daemon-backed DurableLoop/CoreLoop run.",
+      "Confirm the pending validated RunSpec draft and start the daemon-backed DurableLoop run.",
       "Only use after the operator explicitly approves the pending draft.",
       "This rejects missing required fields, low-confidence workspace, disallowed safety policy, stale IDs, and cancelled drafts.",
     ].join(" ");
