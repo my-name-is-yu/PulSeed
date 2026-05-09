@@ -15,7 +15,7 @@ export const QueryDataSourceInputSchema = z.object({
   goal_id: z.string().min(1, "goal_id is required"),
   dimension_name: z.string().min(1, "dimension_name is required"),
   source_id: z.string().min(1, "source_id is required"),
-});
+}).strict();
 export type QueryDataSourceInput = z.infer<typeof QueryDataSourceInputSchema>;
 
 export class QueryDataSourceTool implements ITool<QueryDataSourceInput, unknown> {

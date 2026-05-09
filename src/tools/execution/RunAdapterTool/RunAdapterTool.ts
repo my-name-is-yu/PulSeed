@@ -9,7 +9,7 @@ export const RunAdapterInputSchema = z.object({
   task_description: z.string().min(1, "task_description is required"),
   goal_id: z.string().optional(),
   cwd: z.string().optional(),
-});
+}).strict();
 export type RunAdapterInput = z.infer<typeof RunAdapterInputSchema>;
 
 export class RunAdapterTool implements ITool<RunAdapterInput, unknown> {

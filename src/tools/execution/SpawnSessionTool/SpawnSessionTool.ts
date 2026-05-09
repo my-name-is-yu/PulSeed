@@ -14,7 +14,7 @@ export const SpawnSessionInputSchema = z.object({
   goal_id: z.string().min(1, "goal_id is required"),
   task_id: z.string().optional(),
   context_budget: z.number().int().min(1).max(SPAWN_SESSION_MAX_CONTEXT_BUDGET).optional(),
-}).superRefine((value, ctx) => {
+}).strict().superRefine((value, ctx) => {
   if (!value.session_type && !value.role) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
