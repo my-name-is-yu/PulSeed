@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+const MAX_NOTIFICATION_BATCHING_WINDOW_MINUTES = 24 * 60;
+
 // Channel configurations
 export const SlackChannelSchema = z.object({
   type: z.literal("slack"),
@@ -87,7 +89,7 @@ export type GoalReportingOverride = z.infer<typeof GoalReportingOverrideSchema>;
 // Batching config
 export const NotificationBatchingSchema = z.object({
   enabled: z.boolean().default(false),
-  window_minutes: z.number().default(30),
+  window_minutes: z.number().finite().int().positive().max(MAX_NOTIFICATION_BATCHING_WINDOW_MINUTES).default(30),
   digest_format: z.enum(["compact", "detailed"]).default("compact"),
 });
 export type NotificationBatching = z.infer<typeof NotificationBatchingSchema>;
