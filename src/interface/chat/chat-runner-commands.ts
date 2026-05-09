@@ -225,7 +225,7 @@ export class ChatRunnerCommandHandler {
             summary: "PulSeed does not yet have a safe replay contract for the previous turn.",
             nextActions: [
               "Use /review to inspect any current diff before continuing.",
-              "Use /resume when PulSeed reports resumable agent-loop state.",
+              "Continue from the latest chat if PulSeed reports resumable state.",
               "Ask for the exact next step to rerun instead of replaying the full turn.",
             ],
           }),
@@ -1045,7 +1045,7 @@ export class ChatRunnerCommandHandler {
       `- ${recentMessages.length} latest persisted message(s)`,
       `- ${compactionSummary ? "compacted older chat summary because older turns were summarized" : "no compacted older chat summary because none is stored"}`,
       `- ${compactionRecords.length > 0 ? "structured compaction records because compacted chat state was retained for replay" : "no structured compaction records because no compaction has run"}`,
-      `- ${agentLoopPath ? "native agent-loop resume path because this session can persist agent-loop state" : "no native agent-loop resume path because none is active"}`,
+      `- ${agentLoopPath ? "saved chat continuation path because this session can safely resume" : "no saved chat continuation path because none is active"}`,
       "",
       "Not included",
       "- hidden reasoning or private model chain-of-thought",

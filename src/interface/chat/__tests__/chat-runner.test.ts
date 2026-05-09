@@ -1825,7 +1825,8 @@ describe("ChatRunner", () => {
       expect(result.output).toContain("/retry is not supported yet");
       expect(result.output).toContain("Retry unavailable");
       expect(result.output).toContain("/review");
-      expect(result.output).toContain("/resume");
+      expect(result.output).toContain("Continue from the latest chat");
+      expect(result.output).not.toContain("/resume");
       expect(adapter.execute).not.toHaveBeenCalled();
     });
 
@@ -1960,8 +1961,8 @@ describe("ChatRunner", () => {
       const result = await runner.execute("/resume", "/repo");
 
       expect(result.success).toBe(false);
-      expect(result.output).toContain("Native agentloop state agent-session is failed");
-      expect(result.output).toContain("inspect or summarize it before starting new actionable work");
+      expect(result.output).toContain("The saved chat work stopped before it could safely continue");
+      expect(result.output).not.toContain("agent-session");
       expect(result.output).toContain("Type: Resume failure");
       expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
     });
@@ -1997,7 +1998,8 @@ describe("ChatRunner", () => {
       const result = await runner.execute("/resume", "/repo");
 
       expect(result.success).toBe(false);
-      expect(result.output).toContain("Native agentloop state agent-session is unknown");
+      expect(result.output).toContain("The saved chat work is not in a state PulSeed can safely continue");
+      expect(result.output).not.toContain("agent-session");
       expect(result.output).toContain("Type: Resume failure");
       expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
     });
@@ -2014,11 +2016,26 @@ describe("ChatRunner", () => {
       const result = await runner.execute("/resume", "/repo");
 
       expect(result.success).toBe(false);
-      expect(result.output).toContain("No resumable native agentloop state found");
+      expect(result.output).toContain("I could not find a chat that can safely continue");
       expect(result.output).toContain("Type: Resume failure");
-      expect(result.output).toContain("/sessions");
-      expect(result.output).toContain("/resume <id>");
+      expect(result.output).toContain("Continue from the latest chat");
+      expect(result.output).toContain("Inspect what was running");
+      expect(result.output).toContain("Show recent sessions");
+      expect(result.output).not.toContain("native agentloop");
+      expect(result.output).not.toContain("/resume <id>");
       expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
+    });
+
+    it("/resume without chat continuation runtime returns natural recovery guidance", async () => {
+      const runner = new ChatRunner(makeDeps({ adapter: makeMockAdapter() }));
+
+      const result = await runner.execute("/resume", "/repo");
+
+      expect(result.success).toBe(false);
+      expect(result.output).toContain("Continuing a saved chat is not available in this mode");
+      expect(result.output).toContain("Type: Resume failure");
+      expect(result.output).toContain("Continue from the latest chat");
+      expect(result.output).not.toContain("native chat agentloop runtime");
     });
 
     it("/resume <selector> loads the selected session before resuming native agentloop state", async () => {
@@ -2082,6 +2099,270 @@ describe("ChatRunner", () => {
         expect(input.resumeOnly).toBe(true);
         expect(input.resumeState?.sessionId).toBe("saved-session");
         expect(input.resumeStatePath).toBe("chat/agentloop/saved-session.state.json");
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+
+    it("natural-language resume continues a single latest safe chat without copied ids", async () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-natural-resume-one-"));
+      try {
+        const stateManager = new StateManager(tmpDir);
+        await stateManager.init();
+        await stateManager.writeRaw("chat/sessions/latest-safe-chat.json", {
+          id: "latest-safe-chat",
+          cwd: "/loaded-repo",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:01.000Z",
+          title: "Daily writing plan",
+          sessionSummary: "Draft was waiting on a final pass.",
+          messages: [
+            { role: "user", content: "work on the draft", timestamp: "2026-01-01T00:00:00.000Z", turnIndex: 0 },
+          ],
+          agentLoopStatePath: "chat/agentloop/latest-safe-chat.state.json",
+          agentLoopStatus: "running",
+          agentLoopResumable: true,
+          agentLoopUpdatedAt: "2026-01-01T00:00:02.000Z",
+        });
+        await stateManager.writeRaw("chat/agentloop/latest-safe-chat.state.json", makeAgentLoopState({
+          sessionId: "agent-natural-latest",
+          updatedAt: "2026-01-01T00:00:02.000Z",
+        }));
+        const llmClient = createSingleMockLLMClient(JSON.stringify({
+          kind: "continue_latest",
+          confidence: 0.94,
+          rationale: "The user wants to continue prior chat work.",
+        }));
+        const chatAgentLoopRunner = {
+          execute: vi.fn().mockResolvedValue({
+            success: true,
+            output: "Resumed naturally",
+            error: null,
+            exit_code: null,
+            elapsed_ms: 30,
+            stopped_reason: "completed",
+          }),
+        } as unknown as ChatAgentLoopRunner;
+        const runner = new ChatRunner(makeDeps({ stateManager, llmClient, chatAgentLoopRunner }));
+
+        const result = await runner.execute("continue where we left off", "/repo");
+
+        expect(result.success).toBe(true);
+        expect(result.output).toBe("Resumed naturally");
+        expect(runner.getSessionId()).toBe("latest-safe-chat");
+        expect(llmClient.callCount).toBe(1);
+        const input = (chatAgentLoopRunner.execute as ReturnType<typeof vi.fn>).mock.calls[0][0] as {
+          cwd?: string;
+          resumeOnly?: boolean;
+          resumeState?: { sessionId: string };
+          resumeStatePath?: string;
+        };
+        expect(input.cwd).toBe("/loaded-repo");
+        expect(input.resumeOnly).toBe(true);
+        expect(input.resumeState?.sessionId).toBe("agent-natural-latest");
+        expect(input.resumeStatePath).toBe("chat/agentloop/latest-safe-chat.state.json");
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+
+    it("natural-language resume asks numbered human-readable choices when multiple chats can continue", async () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-natural-resume-many-"));
+      try {
+        const stateManager = new StateManager(tmpDir);
+        await stateManager.init();
+        await stateManager.writeRaw("chat/sessions/older-safe-chat.json", {
+          id: "older-safe-chat",
+          cwd: "/work/older",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:01.000Z",
+          title: "Budget review",
+          sessionSummary: "Waiting to check the numbers.",
+          messages: [],
+          agentLoopStatePath: "chat/agentloop/older-safe-chat.state.json",
+          agentLoopStatus: "running",
+          agentLoopResumable: true,
+          agentLoopUpdatedAt: "2026-01-01T00:00:02.000Z",
+        });
+        await stateManager.writeRaw("chat/agentloop/older-safe-chat.state.json", makeAgentLoopState({
+          sessionId: "agent-older",
+          updatedAt: "2026-01-01T00:00:02.000Z",
+        }));
+        await stateManager.writeRaw("chat/sessions/newer-safe-chat.json", {
+          id: "newer-safe-chat",
+          cwd: "/work/newer",
+          createdAt: "2026-01-02T00:00:00.000Z",
+          updatedAt: "2026-01-02T00:00:01.000Z",
+          title: "Release checklist",
+          sessionSummary: "Waiting on the final verification.",
+          messages: [],
+          agentLoopStatePath: "chat/agentloop/newer-safe-chat.state.json",
+          agentLoopStatus: "running",
+          agentLoopResumable: true,
+          agentLoopUpdatedAt: "2026-01-02T00:00:02.000Z",
+        });
+        await stateManager.writeRaw("chat/agentloop/newer-safe-chat.state.json", makeAgentLoopState({
+          sessionId: "agent-newer",
+          updatedAt: "2026-01-02T00:00:02.000Z",
+        }));
+        const llmClient = createSingleMockLLMClient(JSON.stringify({
+          kind: "continue_latest",
+          confidence: 0.95,
+          rationale: "The user wants to continue prior chat work.",
+        }));
+        const chatAgentLoopRunner = {
+          execute: vi.fn().mockResolvedValue({
+            success: true,
+            output: "Resumed selected numbered choice",
+            error: null,
+            exit_code: null,
+            elapsed_ms: 30,
+            stopped_reason: "completed",
+          }),
+        } as unknown as ChatAgentLoopRunner;
+        const runner = new ChatRunner(makeDeps({ stateManager, llmClient, chatAgentLoopRunner }));
+
+        const clarification = await runner.execute("continue where we left off", "/repo");
+
+        expect(clarification.success).toBe(true);
+        expect(clarification.output).toContain("I found more than one chat that can continue");
+        expect(clarification.output).toContain("1. Release checklist");
+        expect(clarification.output).toContain("2. Budget review");
+        expect(clarification.output).not.toContain("newer-safe-chat");
+        expect(clarification.output).not.toContain("older-safe-chat");
+        expect(clarification.output).not.toContain("agent-newer");
+        expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
+
+        const resumed = await runner.execute("2", "/repo");
+
+        expect(resumed.success).toBe(true);
+        expect(resumed.output).toBe("Resumed selected numbered choice");
+        expect(runner.getSessionId()).toBe("older-safe-chat");
+        expect(llmClient.callCount).toBe(1);
+        expect(chatAgentLoopRunner.execute).toHaveBeenCalledOnce();
+        const input = (chatAgentLoopRunner.execute as ReturnType<typeof vi.fn>).mock.calls[0][0] as {
+          resumeOnly?: boolean;
+          resumeState?: { sessionId: string };
+        };
+        expect(input.resumeOnly).toBe(true);
+        expect(input.resumeState?.sessionId).toBe("agent-older");
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+
+    it("natural-language resume with no saved state offers recovery choices instead of starting work", async () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-natural-resume-none-"));
+      try {
+        const stateManager = new StateManager(tmpDir);
+        await stateManager.init();
+        const llmClient = createSingleMockLLMClient(JSON.stringify({
+          kind: "continue_latest",
+          confidence: 0.94,
+          rationale: "The user wants to continue prior chat work.",
+        }));
+        const chatAgentLoopRunner = {
+          execute: vi.fn(),
+        } as unknown as ChatAgentLoopRunner;
+        const runner = new ChatRunner(makeDeps({ stateManager, llmClient, chatAgentLoopRunner }));
+
+        const result = await runner.execute("continue where we left off", "/repo");
+
+        expect(result.success).toBe(false);
+        expect(result.output).toContain("I could not find a chat that can safely continue");
+        expect(result.output).toContain("Continue from the latest chat");
+        expect(result.output).toContain("Inspect what was running");
+        expect(result.output).toContain("Start a new attempt");
+        expect(result.output).not.toContain("agent-loop");
+        expect(result.output).not.toContain("/resume <id>");
+        expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
+        expect(llmClient.callCount).toBe(1);
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+
+    it("ingress natural-language resume with no saved state offers recovery choices before agent loop", async () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-ingress-natural-resume-none-"));
+      try {
+        const stateManager = new StateManager(tmpDir);
+        await stateManager.init();
+        const llmClient = createSingleMockLLMClient(JSON.stringify({
+          kind: "continue_latest",
+          confidence: 0.94,
+          rationale: "The user wants to continue prior chat work.",
+        }));
+        const chatAgentLoopRunner = {
+          execute: vi.fn(),
+        } as unknown as ChatAgentLoopRunner;
+        const runner = new ChatRunner(makeDeps({ stateManager, llmClient, chatAgentLoopRunner }));
+        const selectedRoute: SelectedChatRoute = {
+          kind: "agent_loop",
+          reason: "agent_loop_available",
+          replyTargetPolicy: "turn_reply_target",
+          eventProjectionPolicy: "turn_only",
+          concurrencyPolicy: "session_serial",
+        };
+
+        const result = await runner.executeIngressMessage(
+          makeIngress("continue where we left off"),
+          "/repo",
+          120_000,
+          selectedRoute,
+        );
+
+        expect(result.success).toBe(false);
+        expect(result.output).toContain("I could not find a chat that can safely continue");
+        expect(result.output).toContain("Inspect what was running");
+        expect(result.output).not.toContain("agent-loop");
+        expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
+        expect(llmClient.callCount).toBe(1);
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+
+    it("natural-language resume explains that failed saved work is not safely resumable", async () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-natural-resume-failed-"));
+      try {
+        const stateManager = new StateManager(tmpDir);
+        await stateManager.init();
+        await stateManager.writeRaw("chat/sessions/failed-chat.json", {
+          id: "failed-chat",
+          cwd: "/loaded-repo",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:01.000Z",
+          title: "Failed run",
+          messages: [],
+          agentLoopStatePath: "chat/agentloop/failed-chat.state.json",
+          agentLoopStatus: "failed",
+          agentLoopResumable: true,
+          agentLoopUpdatedAt: "2026-01-01T00:00:02.000Z",
+        });
+        await stateManager.writeRaw("chat/agentloop/failed-chat.state.json", makeAgentLoopState({
+          sessionId: "agent-failed",
+          status: "failed",
+          updatedAt: "2026-01-01T00:00:02.000Z",
+        }));
+        const llmClient = createSingleMockLLMClient(JSON.stringify({
+          kind: "continue_latest",
+          confidence: 0.94,
+          rationale: "The user wants to continue prior chat work.",
+        }));
+        const chatAgentLoopRunner = {
+          execute: vi.fn(),
+        } as unknown as ChatAgentLoopRunner;
+        const runner = new ChatRunner(makeDeps({ stateManager, llmClient, chatAgentLoopRunner }));
+
+        const result = await runner.execute("continue where we left off", "/repo");
+
+        expect(result.success).toBe(false);
+        expect(result.output).toContain("I could not find a chat that can safely continue");
+        expect(result.output).toContain("Inspect what was running");
+        expect(result.output).toContain("Start a new attempt");
+        expect(result.output).not.toContain("failed-chat");
+        expect(result.output).not.toContain("agent-failed");
+        expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
       } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
       }
@@ -3550,7 +3831,7 @@ describe("ChatRunner", () => {
         )
         .map((event) => event.message);
       expect(checkpointMessages).toEqual(expect.arrayContaining([
-        expect.stringContaining("Agent loop started"),
+        expect.stringContaining("Working turn started"),
         expect.stringContaining("Plan updated"),
         expect.stringContaining("Approval requested"),
         expect.stringContaining("Response ready"),
@@ -5565,6 +5846,7 @@ describe("ChatRunner", () => {
       const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-gateway-runspec-tool-"));
       const stateManager = new StateManager(baseDir, undefined, { walEnabled: false });
       const llmClient = createMockLLMClient([
+        JSON.stringify({ kind: "none", confidence: 0.94, rationale: "This is new work, not recovery." }),
         runSpecDraftDecision({
           objective: "Continue Kaggle optimization until score exceeds 0.98",
         }),

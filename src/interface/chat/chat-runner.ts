@@ -11,6 +11,14 @@ import {
   ChatSessionSelectorError,
   type LoadedChatSession,
 } from "./chat-session-store.js";
+import {
+  chooseSingleRecoveryResumeCandidate,
+  classifyRecoveryResumeIntent,
+  formatNoRecoveryResumeCandidates,
+  formatRecoveryResumeChoices,
+  toRecoveryResumeCandidates,
+  type RecoveryResumeCandidate,
+} from "./recovery-resume.js";
 import { buildChatContext, resolveGitRoot } from "../../platform/observation/context-provider.js";
 import { buildChatAgentLoopSystemPrompt, buildStaticSystemPrompt, createChatGroundingGateway } from "./grounding.js";
 import type { GroundingGateway } from "../../grounding/gateway.js";
@@ -167,6 +175,7 @@ export class ChatRunner {
   private setupSecretIntake: ReturnType<typeof intakeSetupSecrets> | null = null;
   private turnLanguageHint: TurnLanguageHint = UNKNOWN_TURN_LANGUAGE_HINT;
   private pendingSetupDialogue: SetupDialogueRuntimeState | null = null;
+  private pendingResumeChoices: RecoveryResumeCandidate[] | null = null;
   private eventJournalHistory: ChatHistory | null = null;
   private eventJournalDirty = false;
 
@@ -226,6 +235,105 @@ export class ChatRunner {
 
   getCurrentSessionMessages(): ChatSession["messages"] {
     return this.history?.getMessages() ?? [];
+  }
+
+  private async resolvePendingResumeSelection(input: string): Promise<{ session?: LoadedChatSession; result?: ChatRunResult } | null> {
+    const candidates = this.pendingResumeChoices;
+    if (!candidates || candidates.length === 0) return null;
+    const choice = parseResumeChoiceNumber(input);
+    if (choice === null) return null;
+    const candidate = candidates.find((item) => item.index === choice);
+    if (!candidate) {
+      return {
+        result: {
+          success: false,
+          output: formatRecoveryResumeChoices(candidates),
+          elapsed_ms: 0,
+        },
+      };
+    }
+    this.pendingResumeChoices = null;
+    const catalog = new ChatSessionCatalog(this.deps.stateManager);
+    const session = await catalog.loadSession(candidate.sessionId);
+    if (!session) {
+      return {
+        result: {
+          success: false,
+          output: formatNoRecoveryResumeCandidates(),
+          elapsed_ms: 0,
+        },
+      };
+    }
+    return { session };
+  }
+
+  private async resolveResumeSelectorChoice(selector: string): Promise<{ session?: LoadedChatSession; result?: ChatRunResult } | null> {
+    const choice = parseResumeChoiceNumber(selector);
+    if (choice === null || !this.pendingResumeChoices) return null;
+    return this.resolvePendingResumeSelection(String(choice));
+  }
+
+  private async resolveNaturalRecoveryResume(input: string): Promise<{ session?: LoadedChatSession; result?: ChatRunResult } | null> {
+    if (!this.deps.chatAgentLoopRunner) return null;
+    if (this.sessionActive) return null;
+    const catalog = this.createChatSessionCatalog();
+    if (!catalog) return null;
+    const sessions = await catalog.listSessions();
+    const candidates = toRecoveryResumeCandidates(sessions);
+    const decision = await classifyRecoveryResumeIntent(input, this.deps.llmClient);
+    if (!decision || decision.kind === "none") return null;
+    if (candidates.length === 0) {
+      this.pendingResumeChoices = null;
+      return {
+        result: {
+          success: false,
+          output: formatNoRecoveryResumeCandidates(),
+          elapsed_ms: 0,
+        },
+      };
+    }
+    if (decision.kind === "show_sessions" || decision.kind === "inspect_running") {
+      this.pendingResumeChoices = candidates;
+      return {
+        result: {
+          success: true,
+          output: formatRecoveryResumeChoices(candidates),
+          elapsed_ms: 0,
+        },
+      };
+    }
+    if (decision.kind === "start_new") {
+      this.pendingResumeChoices = null;
+      return null;
+    }
+    const candidate = chooseSingleRecoveryResumeCandidate(candidates);
+    if (!candidate) {
+      this.pendingResumeChoices = candidates;
+      return {
+        result: {
+          success: true,
+          output: formatRecoveryResumeChoices(candidates),
+          elapsed_ms: 0,
+        },
+      };
+    }
+    this.pendingResumeChoices = null;
+    const session = await catalog.loadSession(candidate.sessionId);
+    if (!session) {
+      return {
+        result: {
+          success: false,
+          output: formatNoRecoveryResumeCandidates(),
+          elapsed_ms: 0,
+        },
+      };
+    }
+    return { session };
+  }
+
+  private createChatSessionCatalog(): ChatSessionCatalog | null {
+    const stateManager = this.deps.stateManager as StateManager & { getBaseDir?: () => string };
+    return typeof stateManager.getBaseDir === "function" ? new ChatSessionCatalog(this.deps.stateManager) : null;
   }
 
   hasActiveTurn(): boolean {
@@ -378,7 +486,7 @@ export class ChatRunner {
     this.eventJournalHistory = null;
     this.eventJournalDirty = false;
     const resumeCommand = this.commandHandler.parseResumeCommand(input);
-    const resumeOnly = resumeCommand !== null;
+    let resumeOnly = resumeCommand !== null;
     const setupSecretIntake = intakeSetupSecrets(input);
     this.setupSecretIntake = setupSecretIntake;
     const safeInput = setupSecretIntake.redactedText;
@@ -411,29 +519,60 @@ export class ChatRunner {
       return this.finalizeNonPersistentResult(confirmationResult, eventContext);
     }
 
-    if (resumeOnly && resumeCommand.selector) {
+    const pendingResumeSelection = !resumeOnly
+      ? await this.resolvePendingResumeSelection(safeInput)
+      : null;
+    if (pendingResumeSelection?.result) {
+      return this.finalizeNonPersistentResult(pendingResumeSelection.result, eventContext);
+    }
+    if (pendingResumeSelection?.session) {
+      this.startSessionFromLoadedSession(pendingResumeSelection.session);
+      resumeOnly = true;
+    }
+
+    if (resumeCommand?.selector) {
       try {
-        const selectorResolution = await resolveChatResumeSelector(resumeCommand.selector, this.deps);
-        if (selectorResolution.nonResumableMessage) {
-          return this.finalizeNonPersistentResult({
-            success: false,
-            output: selectorResolution.nonResumableMessage,
-            elapsed_ms: 0,
-          }, eventContext);
+        const selectedChoice = await this.resolveResumeSelectorChoice(resumeCommand.selector);
+        if (selectedChoice?.result) {
+          return this.finalizeNonPersistentResult(selectedChoice.result, eventContext);
         }
-        const catalog = new ChatSessionCatalog(this.deps.stateManager);
-        const session = await catalog.loadSessionBySelector(selectorResolution.chatSelector);
-        if (!session) {
-          return this.finalizeNonPersistentResult({
-            success: false,
-            output: `No chat session matched selector "${selectorResolution.chatSelector}".`,
-            elapsed_ms: 0,
-          }, eventContext);
+        if (selectedChoice?.session) {
+          this.startSessionFromLoadedSession(selectedChoice.session);
+        } else {
+          const selectorResolution = await resolveChatResumeSelector(resumeCommand.selector, this.deps);
+          if (selectorResolution.nonResumableMessage) {
+            return this.finalizeNonPersistentResult({
+              success: false,
+              output: selectorResolution.nonResumableMessage,
+              elapsed_ms: 0,
+            }, eventContext);
+          }
+          const catalog = new ChatSessionCatalog(this.deps.stateManager);
+          const session = await catalog.loadSessionBySelector(selectorResolution.chatSelector);
+          if (!session) {
+            return this.finalizeNonPersistentResult({
+              success: false,
+              output: `No chat session matched selector "${selectorResolution.chatSelector}".`,
+              elapsed_ms: 0,
+            }, eventContext);
+          }
+          this.startSessionFromLoadedSession(session);
         }
-        this.startSessionFromLoadedSession(session);
       } catch (err) {
         const output = err instanceof ChatSessionSelectorError ? err.message : `Failed to load chat session: ${err instanceof Error ? err.message : String(err)}`;
         return this.finalizeNonPersistentResult({ success: false, output, elapsed_ms: 0 }, eventContext);
+      }
+    }
+
+    const shouldResolveNaturalRecovery = !options.selectedRoute || options.selectedRoute.kind === "agent_loop";
+    if (!resumeOnly && pendingResumeSelection === null && shouldResolveNaturalRecovery) {
+      const naturalRecovery = await this.resolveNaturalRecoveryResume(safeInput);
+      if (naturalRecovery?.result) {
+        return this.finalizeNonPersistentResult(naturalRecovery.result, eventContext);
+      }
+      if (naturalRecovery?.session) {
+        this.startSessionFromLoadedSession(naturalRecovery.session);
+        resumeOnly = true;
       }
     }
 
@@ -664,7 +803,7 @@ export class ChatRunner {
     if (resumeOnly && !this.deps.chatAgentLoopRunner) {
       const elapsed_ms = Date.now() - start;
       const output = await this.eventBridge.emitLifecycleErrorEventWithFallback(
-        "Resume requires the native chat agentloop runtime.",
+        "Continuing a saved chat is not available in this mode.",
         assistantBuffer.text,
         eventContext,
         {
@@ -1186,3 +1325,11 @@ export class ChatRunner {
 
 void COMMAND_HELP;
 void formatRoute;
+
+function parseResumeChoiceNumber(input: string): number | null {
+  const trimmed = input.trim();
+  if (!trimmed) return null;
+  const value = Number(trimmed);
+  if (!Number.isInteger(value) || value < 1) return null;
+  return String(value) === trimmed ? value : null;
+}
