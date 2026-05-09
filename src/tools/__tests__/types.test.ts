@@ -132,6 +132,21 @@ describe("ToolMetadataSchema", () => {
     expect(result.activityCategory).toBe("search");
   });
 
+  it("rejects unsafe numeric metadata limits", () => {
+    expect(() =>
+      ToolMetadataSchema.parse({ ...validMeta, maxConcurrency: Number.POSITIVE_INFINITY })
+    ).toThrow();
+    expect(() =>
+      ToolMetadataSchema.parse({ ...validMeta, maxConcurrency: -1 })
+    ).toThrow();
+    expect(() =>
+      ToolMetadataSchema.parse({ ...validMeta, maxOutputChars: 0 })
+    ).toThrow();
+    expect(() =>
+      ToolMetadataSchema.parse({ ...validMeta, maxOutputChars: Number.MAX_SAFE_INTEGER + 1 })
+    ).toThrow();
+  });
+
   it("rejects when name is missing", () => {
     const { name: _n, ...rest } = validMeta;
     expect(() => ToolMetadataSchema.parse(rest)).toThrow();

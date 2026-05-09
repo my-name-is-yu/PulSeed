@@ -104,9 +104,9 @@ export type ToolActivityCategory = z.infer<typeof ToolActivityCategorySchema>;
 
 export const ToolMetadataSchema = z.object({
   /** Unique tool name (e.g., "glob", "shell") */
-  name: z.string(),
+  name: z.string().min(1),
   /** Alternative names for discovery */
-  aliases: z.array(z.string()).default([]),
+  aliases: z.array(z.string().min(1)).default([]),
   /** Permission level */
   permissionLevel: ToolPermissionLevelSchema,
   /** Whether this tool is read-only (no side effects) */
@@ -123,14 +123,14 @@ export const ToolMetadataSchema = z.object({
   /** Whether this tool should always be loaded into context */
   alwaysLoad: z.boolean().default(false),
   /** Maximum concurrent invocations (0 = unlimited) */
-  maxConcurrency: z.number().default(0),
+  maxConcurrency: z.number().finite().int().nonnegative().max(Number.MAX_SAFE_INTEGER).default(0),
   /** Maximum characters of tool output to pass to LLM (excess persisted to disk) */
-  maxOutputChars: z.number().default(8000),
+  maxOutputChars: z.number().finite().int().positive().max(Number.MAX_SAFE_INTEGER).default(8000),
   /**
    * Tags for categorization and filtering.
    * Used by the context-filtered tier of the registry.
    */
-  tags: z.array(z.string()).default([]),
+  tags: z.array(z.string().min(1)).default([]),
   /** Whether this tool requires network access even if it is otherwise read-only. */
   requiresNetwork: z.boolean().optional(),
   /**

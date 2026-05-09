@@ -52,6 +52,27 @@ describe("ToolRegistry", () => {
       expect(registry.get("glob")).toBe(tool);
     });
 
+    it("registers valid frozen metadata without mutating it", () => {
+      const tool = createMockTool({ name: "frozen" });
+      Object.freeze(tool.metadata);
+
+      registry.register(tool);
+
+      expect(registry.get("frozen")).toBe(tool);
+      expect(tool.metadata.maxConcurrency).toBe(0);
+      expect(tool.metadata.maxOutputChars).toBe(8000);
+    });
+
+    it("rejects non-finite metadata limits at registration", () => {
+      const tool = createMockTool({
+        name: "bad-output-limit",
+        maxOutputChars: Number.POSITIVE_INFINITY,
+      });
+
+      expect(() => registry.register(tool)).toThrow();
+      expect(registry.get("bad-output-limit")).toBeUndefined();
+    });
+
     it("throws on duplicate name registration", () => {
       registry.register(createMockTool({ name: "glob" }));
       expect(() => registry.register(createMockTool({ name: "glob" }))).toThrow(
