@@ -409,6 +409,35 @@ setInterval(() => fs.writeFileSync("experiments/exp-stop/heartbeat.txt", String(
     expect(killSpy).not.toHaveBeenCalled();
   });
 
+  it("does not signal persisted child process pids when the owning session is missing", async () => {
+    const stopTool = new KaggleExperimentStopTool(manager);
+    const experimentDir = path.join(workspaceBase, "kaggle", "titanic", "experiments", "exp-missing-session-child");
+    await fs.mkdir(experimentDir, { recursive: true });
+    await fs.writeFile(
+      path.join(experimentDir, "config.json"),
+      JSON.stringify({ process: { session_id: "missing-session" } }),
+      "utf-8",
+    );
+    await fs.writeFile(
+      path.join(experimentDir, "child-process.json"),
+      JSON.stringify({ pid: process.pid, command: process.execPath, args: [], startedAt: new Date().toISOString() }),
+      "utf-8",
+    );
+    const killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
+
+    const result = await stopTool.call({
+      workspace: "titanic",
+      competition: "titanic",
+      experiment_id: "exp-missing-session-child",
+      signal: "SIGTERM",
+      waitMs: 0,
+    }, makeContext(pulseedHome));
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("Process session not found");
+    expect(killSpy).not.toHaveBeenCalled();
+  });
+
   it("reports strict metrics and returns failure details for missing or malformed metrics", async () => {
     await writeMetrics(workspaceBase, "exp-ok", "maximize", 0.82);
     const tool = new KaggleMetricReportTool(manager);
