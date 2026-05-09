@@ -1,9 +1,9 @@
 import { DaemonClient, isDaemonRunning } from "../daemon/client.js";
-import type { DaemonRuntimeControlRequestBody } from "../daemon/control-contracts.js";
 import type {
   RuntimeControlExecutor,
   RuntimeControlExecutorResult,
 } from "./runtime-control-service.js";
+import { runtimeControlRestartRequestedMessage } from "./runtime-control-messages.js";
 
 export interface DaemonRuntimeControlExecutorOptions {
   baseDir: string;
@@ -93,10 +93,7 @@ export function createDaemonRuntimeControlExecutor(
     return {
       ok: true,
       state: "restarting",
-      message:
-        operation.kind === "restart_gateway"
-          ? "gateway の再起動要求を daemon に送信しました。daemon 全体の再起動として復帰を確認します。"
-          : "PulSeed daemon の再起動要求を送信しました。watchdog による復帰を確認します。",
+      message: runtimeControlRestartRequestedMessage(operation.kind),
     };
   };
 }
