@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+const MAX_HOOK_TIMEOUT_MS = 60 * 60 * 1000;
+
 // ─── HookEventType ───
 
 export const HookEventTypeSchema = z.enum([
@@ -26,7 +28,7 @@ export const HookConfigSchema = z.object({
   command: z.string().optional(),
   url: z.string().url().optional(),
   headers: z.record(z.string(), z.string()).optional(),
-  timeout_ms: z.number().default(5000),
+  timeout_ms: z.number().finite().int().positive().max(MAX_HOOK_TIMEOUT_MS).default(5000),
   enabled: z.boolean().default(true),
   filter: z
     .object({
