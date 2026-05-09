@@ -1,5 +1,4 @@
 import * as fs from "node:fs";
-import * as path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApprovalBroker } from "../approval-broker.js";
 import { ApprovalStore } from "../store/approval-store.js";
@@ -250,6 +249,142 @@ describe("ApprovalBroker", () => {
     const resolved = JSON.parse(fs.readFileSync(resolvedPath, "utf-8")) as ApprovalRecord;
     expect(resolved.state).toBe("denied");
     expect(resolved.response_channel).toBe("http");
+  });
+
+  it("does not restore invalid permission task expiry metadata into approval events", async () => {
+    tmpDir = makeTempDir();
+    const store = new ApprovalStore(tmpDir);
+    const expiresAt = 10_000;
+    await store.savePending({
+      approval_id: "approval-unsafe-permission-expiry",
+      goal_id: "goal-unsafe",
+      request_envelope_id: "approval-unsafe-permission-expiry",
+      correlation_id: "approval-unsafe-permission-expiry",
+      state: "pending",
+      created_at: 1_000,
+      expires_at: expiresAt,
+      payload: {
+        task: {
+          kind: "permission",
+          id: "call-unsafe",
+          description: "Write a local file",
+          action: "write-tool",
+          operation_summary: "Write a local file",
+          risk_class: "medium",
+          target: { session_id: "session-1", tool_id: "write-tool", tool_call_id: "call-unsafe" },
+          state_epoch: "epoch-1",
+          expires_at: Number.MAX_SAFE_INTEGER + 1,
+        },
+      },
+    });
+
+    const broker = new ApprovalBroker({ store, now: () => 2_000 });
+    await broker.start();
+
+    expect(broker.getPendingApprovalEvents()).toEqual([
+      {
+        requestId: "approval-unsafe-permission-expiry",
+        goalId: "goal-unsafe",
+        task: {
+          kind: "permission",
+          id: "call-unsafe",
+          description: "Write a local file",
+          action: "write-tool",
+          operation_summary: "Write a local file",
+          risk_class: "medium",
+          target: { session_id: "session-1", tool_id: "write-tool", tool_call_id: "call-unsafe" },
+          state_epoch: "epoch-1",
+        },
+        expiresAt,
+        restored: true,
+      },
+    ]);
+  });
+
+  it("does not restore invalid generic task expiry metadata into approval events", async () => {
+    tmpDir = makeTempDir();
+    const store = new ApprovalStore(tmpDir);
+    const expiresAt = 10_000;
+    await store.savePending({
+      approval_id: "approval-unsafe-generic-expiry",
+      goal_id: "goal-unsafe",
+      request_envelope_id: "approval-unsafe-generic-expiry",
+      correlation_id: "approval-unsafe-generic-expiry",
+      state: "pending",
+      created_at: 1_000,
+      expires_at: expiresAt,
+      payload: {
+        task: {
+          id: "task-unsafe",
+          description: "Approve a generic task",
+          action: "apply",
+          expires_at: Number.POSITIVE_INFINITY,
+        },
+      },
+    });
+
+    const broker = new ApprovalBroker({ store, now: () => 2_000 });
+    await broker.start();
+
+    expect(broker.getPendingApprovalEvents()).toEqual([
+      {
+        requestId: "approval-unsafe-generic-expiry",
+        goalId: "goal-unsafe",
+        task: { id: "", description: "", action: "" },
+        expiresAt,
+        restored: true,
+      },
+    ]);
+  });
+
+  it("transitions restored permission wait plans when only nested expiry metadata is invalid", async () => {
+    tmpDir = makeTempDir();
+    const paths = createRuntimeStorePaths(tmpDir);
+    const approvalStore = new ApprovalStore(paths);
+    const waitPlanStore = new PermissionWaitPlanStore(paths);
+    await waitPlanStore.createWaiting({
+      wait_plan_id: "wait-unsafe-expiry",
+      approval_id: "approval-unsafe-expiry-linked",
+      goal_id: "goal-unsafe",
+      canonical_plan: makeWaitPlan(),
+    });
+    await approvalStore.savePending({
+      approval_id: "approval-unsafe-expiry-linked",
+      goal_id: "goal-unsafe",
+      request_envelope_id: "approval-unsafe-expiry-linked",
+      correlation_id: "approval-unsafe-expiry-linked",
+      state: "pending",
+      created_at: 1_000,
+      expires_at: 10_000,
+      payload: {
+        task: {
+          kind: "permission",
+          id: "call-unsafe-linked",
+          description: "Write a local file",
+          action: "write-tool",
+          operation_summary: "Write a local file",
+          risk_class: "medium",
+          target: { session_id: "session-1", tool_id: "write-tool", tool_call_id: "call-unsafe-linked" },
+          state_epoch: "epoch-1",
+          wait_plan_id: "wait-unsafe-expiry",
+          expires_at: Number.MAX_SAFE_INTEGER + 1,
+        },
+      },
+    });
+    const broker = new ApprovalBroker({
+      store: approvalStore,
+      permissionWaitPlanStore: waitPlanStore,
+      now: () => 2_000,
+    });
+    await broker.start();
+
+    await expect(broker.resolveApproval("approval-unsafe-expiry-linked", true, "http")).resolves.toBe(true);
+    expect(await waitPlanStore.load("wait-unsafe-expiry")).toMatchObject({
+      state: "approved",
+      audit_events: expect.arrayContaining([
+        expect.objectContaining({ state: "approved" }),
+      ]),
+    });
   });
 
   it("routes conversational approvals to the originating channel with structured context", async () => {

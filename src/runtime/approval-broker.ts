@@ -426,12 +426,11 @@ export class ApprovalBroker {
   }
 
   private toApprovalRequiredEvent(record: ApprovalRecord, restored: boolean): ApprovalRequiredEvent {
-    const payload = record.payload as { task?: ApprovalTaskRequest };
     const prompt = record.origin ? renderConversationalApprovalPrompt(record) : undefined;
     return {
       requestId: record.approval_id,
       goalId: record.goal_id,
-      task: payload.task ?? { id: "", description: "", action: "" },
+      task: approvalTaskFromRecord(record, { id: "", description: "", action: "" }),
       expiresAt: record.expires_at,
       restored,
       ...(record.origin ? { origin: record.origin } : {}),
@@ -476,8 +475,11 @@ export class ApprovalBroker {
 }
 
 function renderConversationalApprovalPrompt(record: ApprovalRecord): string {
-  const payload = record.payload as { task?: ApprovalTaskRequest };
-  const task = payload.task ?? { id: record.approval_id, description: "Approval required", action: "unknown" };
+  const task = approvalTaskFromRecord(record, {
+    id: record.approval_id,
+    description: "Approval required",
+    action: "unknown",
+  });
   const permission = getPendingPermissionTask(record);
   const lines = [
     "Approval required.",
@@ -493,7 +495,7 @@ function renderConversationalApprovalPrompt(record: ApprovalRecord): string {
     );
     if (permission.target.tool_id) lines.push(`Tool: ${permission.target.tool_id}`);
     if (permission.target.tool_call_id) lines.push(`Tool call: ${permission.target.tool_call_id}`);
-    if (permission.expires_at) lines.push(`Expires: ${new Date(permission.expires_at).toISOString()}`);
+    if (permission.expires_at !== undefined) lines.push(`Expires: ${new Date(permission.expires_at).toISOString()}`);
   }
   const grantProposal = getPendingPermissionGrantProposal(record);
   if (grantProposal) {
@@ -505,6 +507,41 @@ function renderConversationalApprovalPrompt(record: ApprovalRecord): string {
   }
   lines.push("Reply in this conversation to approve, reject, or ask for clarification.");
   return lines.join("\n");
+}
+
+function approvalTaskFromRecord(record: ApprovalRecord, fallback: ApprovalTaskRequest): ApprovalTaskRequest {
+  const permission = getPendingPermissionTask(record);
+  if (permission) {
+    return permission;
+  }
+  const payload = record.payload;
+  if (!isRecord(payload)) {
+    return fallback;
+  }
+  const task = payload["task"];
+  return isGenericApprovalTaskRequest(task) ? task : fallback;
+}
+
+function isGenericApprovalTaskRequest(value: unknown): value is ApprovalTaskRequest {
+  if (!isRecord(value)) {
+    return false;
+  }
+  if (value["kind"] !== undefined) {
+    return false;
+  }
+  return typeof value["id"] === "string"
+    && typeof value["description"] === "string"
+    && typeof value["action"] === "string"
+    && hasSafeOptionalTaskExpiry(value["expires_at"]);
+}
+
+function hasSafeOptionalTaskExpiry(value: unknown): boolean {
+  return value === undefined
+    || (typeof value === "number" && Number.isSafeInteger(value) && value >= 0);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function approvalOriginMatches(expected: ApprovalOrigin | undefined, actual: ApprovalOrigin): boolean {
