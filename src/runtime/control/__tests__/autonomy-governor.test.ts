@@ -6,6 +6,11 @@ import {
   type AutonomyDecisionInput,
   type AutonomyOperationPlanInput,
 } from "../autonomy-governor.js";
+import {
+  classifyInternalAutonomyDefault,
+  type InternalAutonomyDefault,
+  type InternalAutonomyDefaultClassificationInput,
+} from "../internal-autonomy-default.js";
 
 const NOW = "2026-05-09T00:00:00.000Z";
 
@@ -187,6 +192,36 @@ function baseInput(operation: AutonomyOperationPlanInput): AutonomyDecisionInput
   };
 }
 
+function internalDefault(
+  operation: AutonomyOperationPlanInput,
+  overrides: Partial<InternalAutonomyDefaultClassificationInput> = {}
+): InternalAutonomyDefault {
+  return classifyInternalAutonomyDefault({
+    capability_family: "knowledge",
+    operation_class: "knowledge_quarantine",
+    operation_id: operation.operation_id,
+    capability_id: operation.capability_id,
+    operation_kind: operation.operation_kind,
+    provider_ref: operation.provider_ref,
+    payload_class: operation.payload_class,
+    side_effect_profile: operation.side_effect_profile,
+    risk_class: operation.risk_class ?? "medium",
+    privacy_profile: operation.privacy_profile,
+    reversibility: operation.reversibility ?? "unknown",
+    external_action_authority: operation.external_action_authority ?? false,
+    target_refs: operation.target_refs ?? [],
+    target_class: "internal_quarantine",
+    mutation_kind: "append",
+    locality: operation.local_only === true ? "local_only" : "not_local",
+    inspectable: operation.inspectable === true,
+    expected_user_visible_effect: operation.expected_user_visible_effect === true,
+    scope: "workspace",
+    evaluated_at: NOW,
+    ref: "internal-default:knowledge-quarantine",
+    ...overrides,
+  });
+}
+
 describe("AutonomyGovernor", () => {
   it("requires approval for autonomous external notification even with executable readiness and positive feedback", () => {
     const operation = notificationOperation();
@@ -219,21 +254,13 @@ describe("AutonomyGovernor", () => {
     const operation = internalOperation();
     const allowed = evaluateAutonomyDecision({
       ...baseInput(operation),
-      internal_autonomy_default: {
-        ref: "internal-default:knowledge-quarantine",
-        result: "eligible",
-        reason: "Append-only local quarantine record.",
-      },
+      internal_autonomy_default: internalDefault(operation),
     });
     expect(allowed.level).toBe("autonomous_low_risk");
 
     const corrected = evaluateAutonomyDecision({
       ...baseInput(operation),
-      internal_autonomy_default: {
-        ref: "internal-default:knowledge-quarantine",
-        result: "eligible",
-        reason: "Append-only local quarantine record.",
-      },
+      internal_autonomy_default: internalDefault(operation),
       recent_feedback: [{
         ref: "feedback:corrected",
         outcome: "corrected",
@@ -245,6 +272,256 @@ describe("AutonomyGovernor", () => {
     expect(corrected.level).toBe("approval_required");
     expect(corrected.required_confirmation_text).toBe("The user corrected this autonomous learning path.");
     expect(corrected.blocked_steps).toEqual(expect.arrayContaining(["autonomous_initiate"]));
+  });
+
+  it("classifies safe Soil, Knowledge, Dream, audit, and readiness metabolism as autonomous low risk", () => {
+    const cases = [
+      {
+        name: "soil retrieval",
+        operation: internalOperation({
+          operation_id: "soil.retrieval.search",
+          capability_id: "capability:soil",
+          operation_kind: "search",
+          provider_ref: "runtime:soil",
+          payload_class: "soil_query",
+          side_effect_profile: "read",
+          reversibility: "reversible",
+          target_refs: ["runtime:soil:generated-cache"],
+        }),
+        classifier: {
+          capability_family: "soil",
+          operation_class: "soil_retrieval",
+          target_class: "generated_cache",
+          mutation_kind: "read",
+          ref: "internal-default:soil-retrieval",
+        },
+      },
+      {
+        name: "soil projection",
+        operation: internalOperation({
+          operation_id: "soil.projection.materialize",
+          capability_id: "capability:soil",
+          operation_kind: "write",
+          provider_ref: "runtime:soil",
+          payload_class: "soil_projection",
+          side_effect_profile: "write",
+          reversibility: "reversible",
+          target_refs: ["runtime:soil:generated-snapshot"],
+        }),
+        classifier: {
+          capability_family: "soil",
+          operation_class: "soil_projection",
+          target_class: "generated_snapshot",
+          mutation_kind: "materialize",
+          ref: "internal-default:soil-projection",
+        },
+      },
+      {
+        name: "knowledge consolidation",
+        operation: internalOperation({
+          operation_id: "knowledge.consolidation.record",
+          capability_id: "capability:knowledge",
+          operation_kind: "write",
+          provider_ref: "runtime:knowledge",
+          payload_class: "internal_learning_record",
+          side_effect_profile: "write",
+          reversibility: "append_only",
+          target_refs: ["runtime:knowledge:learning-store"],
+        }),
+        classifier: {
+          capability_family: "knowledge",
+          operation_class: "knowledge_consolidation",
+          target_class: "internal_learning_store",
+          mutation_kind: "append",
+          ref: "internal-default:knowledge-consolidation",
+        },
+      },
+      {
+        name: "dream confidence update",
+        operation: internalOperation({
+          operation_id: "dream.playbook.confidence.update",
+          capability_id: "capability:dream",
+          operation_kind: "write",
+          provider_ref: "runtime:dream",
+          payload_class: "dream_hint_feedback",
+          side_effect_profile: "write",
+          reversibility: "reversible",
+          target_refs: ["runtime:dream:playbook-metadata"],
+        }),
+        classifier: {
+          capability_family: "dream",
+          operation_class: "dream_confidence_update",
+          target_class: "dream_playbook_metadata",
+          mutation_kind: "update",
+          ref: "internal-default:dream-confidence",
+        },
+      },
+      {
+        name: "audit append",
+        operation: internalOperation({
+          operation_id: "capability.audit.append",
+          capability_id: "capability:audit",
+          operation_kind: "write",
+          provider_ref: "runtime:audit",
+          payload_class: "capability_audit_record",
+          side_effect_profile: "write",
+          reversibility: "append_only",
+          target_refs: ["runtime:audit:capability"],
+        }),
+        classifier: {
+          capability_family: "audit",
+          operation_class: "audit_append",
+          target_class: "audit_log",
+          mutation_kind: "append",
+          ref: "internal-default:audit-append",
+        },
+      },
+      {
+        name: "readiness observation",
+        operation: internalOperation({
+          operation_id: "capability.readiness.observe",
+          capability_id: "capability:readiness",
+          operation_kind: "write",
+          provider_ref: "runtime:readiness",
+          payload_class: "readiness_observation",
+          side_effect_profile: "write",
+          reversibility: "append_only",
+          target_refs: ["runtime:readiness:observation"],
+        }),
+        classifier: {
+          capability_family: "readiness",
+          operation_class: "readiness_observation",
+          target_class: "readiness_observation",
+          mutation_kind: "record",
+          ref: "internal-default:readiness-observation",
+        },
+      },
+    ] as const;
+
+    for (const item of cases) {
+      const defaultEvidence = internalDefault(item.operation, item.classifier);
+      const decision = evaluateAutonomyDecision({
+        ...baseInput(item.operation),
+        internal_autonomy_default: defaultEvidence,
+      });
+
+      expect(defaultEvidence.result, item.name).toBe("eligible");
+      expect(defaultEvidence.target_disposition, item.name).toBe("allowed_internal");
+      expect(decision.level, item.name).toBe("autonomous_low_risk");
+      expect(decision.invalidation_bindings).toEqual(expect.arrayContaining([
+        expect.objectContaining({ kind: "policy", ref: defaultEvidence.ref }),
+      ]));
+    }
+  });
+
+  it("routes protected target mutations away from the internal default", () => {
+    const cases = [
+      ["create", "protected_public_docs", "proposal", "write", "write", "draft_only"],
+      ["append", "protected_user_authored_memory", "quarantine", "write", "write", "append_only"],
+      ["update", "protected_hand_maintained_file", "review", "write", "write", "reversible"],
+      ["overwrite", "protected_published_artifact", "approval_required", "mutate", "mutate", "irreversible"],
+      ["delete", "protected_user_authored_skill", "blocked", "delete", "delete", "irreversible"],
+      ["publish", "protected_public_docs", "approval_required", "publish", "publish", "irreversible"],
+    ] as const;
+
+    for (const [mutationKind, targetClass, disposition, operationKind, sideEffect, reversibility] of cases) {
+      const operation = internalOperation({
+        operation_id: `protected.${mutationKind}`,
+        operation_kind: operationKind,
+        side_effect_profile: sideEffect,
+        reversibility,
+        target_refs: [`target:${targetClass}`],
+      });
+      const defaultEvidence = internalDefault(operation, {
+        operation_class: "protected_target_mutation",
+        target_class: targetClass,
+        mutation_kind: mutationKind,
+        ref: `internal-default:protected:${mutationKind}`,
+      });
+      const decision = evaluateAutonomyDecision({
+        ...baseInput(operation),
+        internal_autonomy_default: defaultEvidence,
+      });
+
+      expect(defaultEvidence.result).toBe("ineligible");
+      expect(defaultEvidence.target_disposition).toBe(disposition);
+      expect(defaultEvidence.protected_target_refs).toEqual([`target:${targetClass}`]);
+      expect(decision.level).not.toBe("autonomous_low_risk");
+      expect(decision.blocked_steps).toEqual(expect.arrayContaining([
+        disposition === "blocked" ? "execute" : "autonomous_initiate",
+      ]));
+    }
+  });
+
+  it("does not reuse safe internal-default evidence for a protected target operation", () => {
+    const safeOperation = internalOperation({
+      operation_id: "knowledge.generated.append",
+      target_refs: ["runtime:knowledge:generated-cache"],
+    });
+    const protectedOperation = internalOperation({
+      operation_id: "knowledge.generated.append",
+      target_refs: ["protected:user-authored-memory"],
+    });
+    const safeEvidence = internalDefault(safeOperation, {
+      operation_class: "knowledge_learning_record",
+      target_class: "generated_cache",
+      mutation_kind: "append",
+      ref: "internal-default:generated-cache",
+    });
+    const decision = evaluateAutonomyDecision({
+      ...baseInput(protectedOperation),
+      internal_autonomy_default: safeEvidence,
+    });
+
+    expect(safeEvidence.result).toBe("eligible");
+    expect(decision.level).toBe("prohibited");
+    expect(decision.rationale).toContain(
+      "Internal autonomy default internal-default:generated-cache does not match this operation scope."
+    );
+    expect(decision.blocked_steps).toEqual(expect.arrayContaining(["autonomous_initiate"]));
+  });
+
+  it("does not pass external side effects through the internal default", () => {
+    const cases = [
+      ["external_publish", "external_surface", "publish", "publish", "publish"],
+      ["external_open", "external_surface", "open", "run", "mutate"],
+      ["notification", "third_party_system", "send", "send", "send"],
+      ["browser_or_desktop_operation", "browser_or_desktop", "run", "run", "mutate"],
+      ["side_effecting_mcp", "side_effecting_mcp", "mutate", "mutate", "mutate"],
+      ["foreign_plugin_execution", "foreign_plugin", "run", "run", "mutate"],
+    ] as const;
+
+    for (const [operationClass, targetClass, mutationKind, operationKind, sideEffect] of cases) {
+      const operation = internalOperation({
+        operation_id: `external.${operationClass}`,
+        operation_kind: operationKind,
+        provider_ref: `runtime:${operationClass}`,
+        payload_class: "external_effect",
+        side_effect_profile: sideEffect,
+        reversibility: "irreversible",
+        external_action_authority: true,
+        target_refs: [`target:${targetClass}`],
+      });
+      const defaultEvidence = internalDefault(operation, {
+        capability_family: "soil",
+        operation_class: operationClass,
+        target_class: targetClass,
+        mutation_kind: mutationKind,
+        ref: `internal-default:${operationClass}`,
+      });
+      const decision = evaluateAutonomyDecision({
+        ...baseInput(operation),
+        internal_autonomy_default: defaultEvidence,
+        blast_radius: "external",
+        external_side_effect: true,
+      });
+
+      expect(defaultEvidence.result).toBe("ineligible");
+      expect(defaultEvidence.target_disposition).toBe("blocked");
+      expect(defaultEvidence.external_effect_refs).toEqual([`target:${targetClass}`]);
+      expect(decision.level).not.toBe("autonomous_low_risk");
+      expect(decision.blocked_steps).toEqual(expect.arrayContaining(["autonomous_initiate"]));
+    }
   });
 
   it("does not reuse admission for a different typed operation kind or side-effect profile", () => {
@@ -329,12 +606,9 @@ describe("AutonomyGovernor", () => {
     const operation = internalOperation();
     const decision = evaluateAutonomyDecision({
       ...baseInput(operation),
-      internal_autonomy_default: {
-        ref: "internal-default:knowledge-quarantine",
-        result: "eligible",
-        reason: "Append-only local quarantine record.",
+      internal_autonomy_default: internalDefault(operation, {
         expires_at: "2026-05-08T00:00:00.000Z",
-      },
+      }),
     });
 
     expect(decision.level).toBe("approval_required");
@@ -394,11 +668,12 @@ describe("AutonomyGovernor", () => {
       readiness_snapshots: [readiness(operation, { state: "degraded" })],
       blast_radius: "high",
       privacy_sensitivity: "high",
-      internal_autonomy_default: {
+      internal_autonomy_default: internalDefault(operation, {
         ref: "internal-default:knowledge-private-search",
-        result: "eligible",
-        reason: "Local read would otherwise be internal.",
-      },
+        operation_class: "knowledge_recall",
+        target_class: "internal_learning_store",
+        mutation_kind: "read",
+      }),
     });
 
     expect(decision.level).toBe("approval_required");
@@ -413,11 +688,7 @@ describe("AutonomyGovernor", () => {
     const decision = evaluateAutonomyDecision({
       ...baseInput(operation),
       readiness_snapshots: [],
-      internal_autonomy_default: {
-        ref: "internal-default:knowledge-quarantine",
-        result: "eligible",
-        reason: "Append-only local quarantine record.",
-      },
+      internal_autonomy_default: internalDefault(operation),
     });
 
     expect(decision.level).toBe("approval_required");
@@ -433,11 +704,7 @@ describe("AutonomyGovernor", () => {
         capability_id: "capability:other",
         snapshot_id: "readiness:other-capability",
       })],
-      internal_autonomy_default: {
-        ref: "internal-default:knowledge-quarantine",
-        result: "eligible",
-        reason: "Append-only local quarantine record.",
-      },
+      internal_autonomy_default: internalDefault(operation),
     });
 
     expect(decision.level).toBe("approval_required");
@@ -453,11 +720,7 @@ describe("AutonomyGovernor", () => {
         risk_class: "low",
         snapshot_id: "readiness:low-risk-only",
       })],
-      internal_autonomy_default: {
-        ref: "internal-default:knowledge-quarantine",
-        result: "eligible",
-        reason: "Append-only local quarantine record.",
-      },
+      internal_autonomy_default: internalDefault(operation),
     });
 
     expect(decision.level).toBe("approval_required");
@@ -469,22 +732,14 @@ describe("AutonomyGovernor", () => {
     const operation = internalOperation();
     const lowRisk = evaluateAutonomyDecision({
       ...baseInput(operation),
-      internal_autonomy_default: {
-        ref: "internal-default:knowledge-quarantine",
-        result: "eligible",
-        reason: "Append-only local quarantine record.",
-      },
+      internal_autonomy_default: internalDefault(operation),
     });
     const highRisk = evaluateAutonomyDecision({
       ...baseInput(operation),
       blast_radius: "high",
       privacy_sensitivity: "high",
       external_side_effect: true,
-      internal_autonomy_default: {
-        ref: "internal-default:knowledge-quarantine",
-        result: "eligible",
-        reason: "Append-only local quarantine record.",
-      },
+      internal_autonomy_default: internalDefault(operation),
     });
 
     expect(lowRisk.level).toBe("autonomous_low_risk");
@@ -501,11 +756,7 @@ describe("AutonomyGovernor", () => {
     const mediumRiskOperation = internalOperation({ risk_class: "medium" });
     const lowRisk = evaluateAutonomyDecision({
       ...baseInput(lowRiskOperation),
-      internal_autonomy_default: {
-        ref: "internal-default:knowledge-quarantine",
-        result: "eligible",
-        reason: "Append-only local quarantine record.",
-      },
+      internal_autonomy_default: internalDefault(lowRiskOperation),
     });
     const mediumRisk = evaluateAutonomyDecision({
       ...baseInput(mediumRiskOperation),
@@ -516,11 +767,7 @@ describe("AutonomyGovernor", () => {
         ...allowedAdmission(mediumRiskOperation),
         evaluation_id: allowedAdmission(lowRiskOperation).evaluation_id,
       },
-      internal_autonomy_default: {
-        ref: "internal-default:knowledge-quarantine",
-        result: "eligible",
-        reason: "Append-only local quarantine record.",
-      },
+      internal_autonomy_default: internalDefault(mediumRiskOperation),
     });
 
     expect(lowRisk.level).toBe("autonomous_low_risk");
@@ -533,11 +780,7 @@ describe("AutonomyGovernor", () => {
     const operation = internalOperation();
     const allowedPolicy = evaluateAutonomyDecision({
       ...baseInput(operation),
-      internal_autonomy_default: {
-        ref: "internal-default:knowledge-quarantine",
-        result: "eligible",
-        reason: "Append-only local quarantine record.",
-      },
+      internal_autonomy_default: internalDefault(operation),
       quieting_policy: [{
         ref: "quiet:same-ref",
         result: "allowed",
@@ -546,11 +789,7 @@ describe("AutonomyGovernor", () => {
     });
     const prohibitedPolicy = evaluateAutonomyDecision({
       ...baseInput(operation),
-      internal_autonomy_default: {
-        ref: "internal-default:knowledge-quarantine",
-        result: "eligible",
-        reason: "Append-only local quarantine record.",
-      },
+      internal_autonomy_default: internalDefault(operation),
       quieting_policy: [{
         ref: "quiet:same-ref",
         result: "prohibited",
@@ -651,12 +890,9 @@ describe("AutonomyGovernor", () => {
     const operation = internalOperation();
     const decision = evaluateAutonomyDecision({
       ...baseInput(operation),
-      internal_autonomy_default: {
-        ref: "internal-default:knowledge-quarantine",
-        result: "eligible",
-        reason: "Append-only local quarantine record.",
-        epoch: "default-v1",
-      },
+      internal_autonomy_default: internalDefault(operation, {
+        policy_epoch: "default-v1",
+      }),
       invalidation_evidence: [
         { kind: "revocation", ref: "grant:revoked", reason: "Permission was revoked.", epoch: "revocation-v1" },
         { kind: "correction", ref: "feedback:correction", reason: "User correction requires confirmation.", epoch: "correction-v1" },
