@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { SurfaceInspectionAdapterPayloadSchema } from "../../grounding/surface-contracts.js";
 import { RuntimeSafePauseRecordSchema } from "../store/runtime-schemas.js";
 
 const PID_EPOCH_ISO = "1970-01-01T00:00:00.000Z";
@@ -87,6 +88,8 @@ export const ResidentActivitySchema = z.object({
   surface_id: z.string().optional(),
   surface_included_count: z.number().int().nonnegative().optional(),
   surface_excluded_count: z.number().int().nonnegative().optional(),
+  surface_inspection: SurfaceInspectionAdapterPayloadSchema.optional(),
+  surface_inspections: z.array(SurfaceInspectionAdapterPayloadSchema).optional(),
 });
 export type ResidentActivity = z.infer<typeof ResidentActivitySchema>;
 

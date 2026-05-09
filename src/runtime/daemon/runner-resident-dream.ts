@@ -7,7 +7,7 @@ import { DreamScheduleSuggestionStore } from "../../platform/dream/dream-schedul
 import { createRuntimeDreamSoilSyncService } from "../../platform/dream/dream-soil-sync.js";
 import type { DreamReport, DreamRunReport, DreamTier } from "../../platform/dream/dream-types.js";
 import { runDreamConsolidation } from "../../reflection/dream-consolidation.js";
-import type { DaemonRunnerResidentContext } from "./runner-resident-shared.js";
+import type { DaemonRunnerResidentContext, ResidentSurfaceActivityMetadata } from "./runner-resident-shared.js";
 import { persistResidentActivity } from "./runner-resident-shared.js";
 
 export async function tryApplyPendingDreamSuggestion(
@@ -121,6 +121,7 @@ export async function triggerResidentDreamMaintenance(
   >,
   details?: Record<string, unknown>,
   tier: DreamTier = "deep",
+  surfaceActivityMetadata: ResidentSurfaceActivityMetadata = {},
 ): Promise<void> {
   try {
     const appliedBeforeAnalysis = await tryApplyPendingDreamSuggestion(context);
@@ -132,6 +133,7 @@ export async function triggerResidentDreamMaintenance(
           ? `Resident dream linked pending suggestion "${appliedBeforeAnalysis.suggestion.name ?? appliedBeforeAnalysis.suggestion.id}" to existing schedule ${appliedBeforeAnalysis.entry.id}.`
           : `Resident dream applied pending suggestion "${appliedBeforeAnalysis.suggestion.name ?? appliedBeforeAnalysis.suggestion.id}" into schedule ${appliedBeforeAnalysis.entry.id}.`,
         suggestion_title: appliedBeforeAnalysis.suggestion.name ?? appliedBeforeAnalysis.suggestion.reason,
+        ...surfaceActivityMetadata,
       });
       return;
     }
@@ -157,6 +159,7 @@ export async function triggerResidentDreamMaintenance(
       summary: tier === "light"
         ? `Resident dream light analysis ran${goalHint}; processed ${analysisReport.goalsProcessed.length} goals, persisted ${analysisReport.patternsPersisted} patterns, and generated ${analysisReport.scheduleSuggestions} schedule suggestion(s).`
         : `Resident dream deep analysis ran${goalHint}; processed ${analysisReport.goalsProcessed.length} goals, persisted ${analysisReport.patternsPersisted} patterns, generated ${analysisReport.scheduleSuggestions} schedule suggestion(s), compressed ${consolidationReport?.entries_compressed ?? 0} entries, and created ${consolidationReport?.revalidation_tasks_created ?? 0} revalidation tasks${appliedAfterAnalysis ? ` while applying "${appliedAfterAnalysis.suggestion.name ?? appliedAfterAnalysis.suggestion.id}"` : ""}.`,
+      ...surfaceActivityMetadata,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -165,6 +168,7 @@ export async function triggerResidentDreamMaintenance(
       kind: "error",
       trigger: "proactive_tick",
       summary: `Resident dream maintenance failed: ${message}`,
+      ...surfaceActivityMetadata,
     });
   }
 }
@@ -174,6 +178,7 @@ export async function triggerIdleResidentMaintenance(
     DaemonRunnerResidentContext,
     "currentGoalIds" | "baseDir" | "memoryLifecycle" | "knowledgeManager" | "llmClient" | "saveDaemonState" | "state" | "logger" | "scheduleEngine" | "stateManager"
   >,
+  surfaceActivityMetadata: ResidentSurfaceActivityMetadata = {},
 ): Promise<void> {
   if (context.currentGoalIds.length > 0) {
     return;
@@ -185,5 +190,5 @@ export async function triggerIdleResidentMaintenance(
     return;
   }
 
-  await triggerResidentDreamMaintenance(context, undefined, "light");
+  await triggerResidentDreamMaintenance(context, undefined, "light", surfaceActivityMetadata);
 }

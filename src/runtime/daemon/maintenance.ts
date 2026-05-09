@@ -5,6 +5,16 @@ import { getInternalIdentityPrefix } from "../../base/config/identity-loader.js"
 import { PulSeedEventSchema } from "../../base/types/drive.js";
 import type { DaemonConfig, DaemonState } from "../../base/types/daemon.js";
 import type { ILLMClient } from "../../base/llm/llm-client.js";
+import { getPulseedDirPath } from "../../base/utils/paths.js";
+import {
+  buildRelationshipProfileSurfaceProjection,
+  formatRelationshipProfileSurfaceContext,
+  loadRelationshipProfileSurfaceContext,
+} from "../../grounding/profile-surface.js";
+import {
+  createSurfaceInspectionAdapterPayload,
+  type SurfaceInspectionAdapterPayload,
+} from "../../grounding/surface-contracts.js";
 import type { DriveSystem, GoalActivationSnapshot } from "../../platform/drive/drive-system.js";
 import { createEnvelope } from "../types/envelope.js";
 import type { Envelope } from "../types/envelope.js";
@@ -51,9 +61,17 @@ const ProactiveResponseSchema = z.object({
 });
 export type ProactiveDecision = z.infer<typeof ProactiveResponseSchema>;
 
+export interface ProactiveMaintenanceSurfaceSummary {
+  surface_id: string;
+  surface_included_count: number;
+  surface_excluded_count: number;
+  surface_inspection: SurfaceInspectionAdapterPayload;
+}
+
 export interface ProactiveMaintenanceResult {
   lastProactiveTickAt: number;
   decision: ProactiveDecision | null;
+  surface?: ProactiveMaintenanceSurfaceSummary;
 }
 
 export type GoalCycleScheduleSnapshotEntry = GoalActivationSnapshot;
@@ -306,6 +324,7 @@ export async function runRuntimeStoreMaintenanceCycle(params: {
 }
 
 export async function runProactiveMaintenance(params: {
+  baseDir?: string;
   config: DaemonConfig;
   llmClient?: ILLMClient;
   state: DaemonState;
@@ -320,15 +339,20 @@ export async function runProactiveMaintenance(params: {
     return { lastProactiveTickAt, decision: null };
   }
 
+  let relationshipProfileSurface: ProactiveMaintenanceSurfaceSummary | undefined;
   try {
     const goalSummaries = state.active_goals.length > 0
       ? state.active_goals.map((id) => `- ${id}`).join("\n")
       : "(no active goals)";
+    const baseDir = params.baseDir ?? config.runtime_root ?? getPulseedDirPath();
+    const relationshipProfileSurfaceContext = await buildProactiveMaintenanceRelationshipProfileSurfaceContext(baseDir);
+    relationshipProfileSurface = relationshipProfileSurfaceContext.surface;
 
-    const prompt = `${getInternalIdentityPrefix("proactive engine", {
-      baseDir: config.runtime_root,
-      profileScope: "resident_behavior",
-    })} Given the current state of all goals:\n${goalSummaries}\n\nDecide what action to take:\n- "suggest_goal": A new goal should be created (provide title + description)\n- "investigate": Something needs investigation (provide what and why)\n- "preemptive_check": Run a pre-emptive observation (provide goal_id)\n- "sleep": Nothing needs attention right now\n\nRespond with JSON: { "action": "...", "details": { ... } }`;
+    const prompt = [
+      getInternalIdentityPrefix("proactive engine", { baseDir }),
+      relationshipProfileSurfaceContext.promptContext,
+      `Given the current state of all goals:\n${goalSummaries}\n\nDecide what action to take:\n- "suggest_goal": A new goal should be created (provide title + description)\n- "investigate": Something needs investigation (provide what and why)\n- "preemptive_check": Run a pre-emptive observation (provide goal_id)\n- "sleep": Nothing needs attention right now\n\nRespond with JSON: { "action": "...", "details": { ... } }`,
+    ].filter((part) => part.trim().length > 0).join("\n\n");
 
     const response = await llmClient.sendMessage(
       [{ role: "user", content: prompt }],
@@ -343,7 +367,11 @@ export async function runProactiveMaintenance(params: {
         raw: response.content,
         error: parsed.error.message,
       });
-      return { lastProactiveTickAt: Date.now(), decision: null };
+      return {
+        lastProactiveTickAt: Date.now(),
+        decision: null,
+        ...(relationshipProfileSurface ? { surface: relationshipProfileSurface } : {}),
+      };
     }
 
     const { action, details } = parsed.data;
@@ -355,6 +383,7 @@ export async function runProactiveMaintenance(params: {
     return {
       lastProactiveTickAt: Date.now(),
       decision: parsed.data,
+      ...(relationshipProfileSurface ? { surface: relationshipProfileSurface } : {}),
     };
   } catch (err) {
     logger.warn("Proactive tick: LLM error (ignored)", {
@@ -363,8 +392,42 @@ export async function runProactiveMaintenance(params: {
     return {
       lastProactiveTickAt: Date.now(),
       decision: null,
+      ...(relationshipProfileSurface ? { surface: relationshipProfileSurface } : {}),
     };
   }
+}
+
+async function buildProactiveMaintenanceRelationshipProfileSurfaceContext(baseDir: string): Promise<{
+  promptContext: string;
+  surface?: ProactiveMaintenanceSurfaceSummary;
+}> {
+  const relationshipProfileContext = await loadRelationshipProfileSurfaceContext({
+    baseDir,
+    scope: "resident_behavior",
+    includeSensitive: true,
+  });
+  const relationshipProfileSurface = buildRelationshipProfileSurfaceProjection({
+    context: relationshipProfileContext,
+    target: "daemon",
+    scopeRef: "proactive-maintenance",
+    purpose: "proactive_maintenance",
+    requestedUse: "proactive_action_candidate",
+    now: new Date().toISOString(),
+  });
+  return {
+    promptContext: formatRelationshipProfileSurfaceContext(
+      relationshipProfileSurface,
+      { title: "Proactive maintenance relationship profile Surface" },
+    ),
+    ...(relationshipProfileSurface ? {
+      surface: {
+        surface_id: relationshipProfileSurface.id,
+        surface_included_count: relationshipProfileSurface.included_context.length,
+        surface_excluded_count: relationshipProfileSurface.excluded_context.length,
+        surface_inspection: createSurfaceInspectionAdapterPayload(relationshipProfileSurface, "daemon"),
+      },
+    } : {}),
+  };
 }
 
 export async function getMaxGapScoreForGoals(

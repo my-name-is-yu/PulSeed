@@ -4,13 +4,18 @@ import {
   formatRelationshipProfileSurfaceContext,
   loadRelationshipProfileSurfaceContext,
 } from "../../grounding/profile-surface.js";
-import type { SurfaceProjection } from "../../grounding/surface-contracts.js";
+import {
+  createSurfaceInspectionAdapterPayload,
+  type SurfaceProjection,
+} from "../../grounding/surface-contracts.js";
 import type { DaemonRunnerResidentContext } from "./runner-resident-shared.js";
 import {
   gatherResidentWorkspaceContext,
   loadExistingGoalTitles,
   loadKnownGoals,
+  mergeResidentSurfaceActivityMetadata,
   persistResidentActivity,
+  type ResidentSurfaceActivityMetadata,
   resolveResidentSuggestionSurface,
   resolveResidentWorkspaceDir,
 } from "./runner-resident-shared.js";
@@ -22,12 +27,14 @@ export async function triggerResidentGoalDiscovery(
   > &
     Pick<DaemonRunnerResidentContext, "saveDaemonState" | "state" | "stateManager">,
   details?: Record<string, unknown>,
+  activityMetadata: ResidentSurfaceActivityMetadata = {},
 ): Promise<void> {
   if (!context.goalNegotiator) {
     await persistResidentActivity(context, {
       kind: "skipped",
       trigger: "proactive_tick",
       summary: "Resident discovery skipped because goal negotiation is unavailable.",
+      ...activityMetadata,
     });
     return;
   }
@@ -37,6 +44,7 @@ export async function triggerResidentGoalDiscovery(
       kind: "skipped",
       trigger: "proactive_tick",
       summary: "Resident discovery skipped because active goals are already running.",
+      ...activityMetadata,
     });
     return;
   }
@@ -67,6 +75,7 @@ export async function triggerResidentGoalDiscovery(
         trigger: "proactive_tick",
         summary: "Resident discovery ran but found no actionable goal to negotiate.",
         suggestion_title: suggestionTitle || undefined,
+        ...activityMetadata,
       });
       return;
     }
@@ -76,6 +85,7 @@ export async function triggerResidentGoalDiscovery(
       trigger: "proactive_tick",
       summary: `Resident discovery recorded an attention candidate: ${suggestionTitle || negotiationDescription}`,
       suggestion_title: suggestionTitle || negotiationDescription,
+      ...activityMetadata,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -84,6 +94,7 @@ export async function triggerResidentGoalDiscovery(
       kind: "error",
       trigger: "proactive_tick",
       summary: `Resident discovery failed: ${message}`,
+      ...activityMetadata,
     });
   }
 }
@@ -98,8 +109,11 @@ export async function runResidentCuriosityCycle(
     focus?: string;
     reviewLabel?: string;
     skipWhenNoTriggers?: boolean;
+    surfaceActivityMetadata?: ResidentSurfaceActivityMetadata;
   },
 ): Promise<boolean> {
+  const inheritedSurfaceActivityMetadata = options?.surfaceActivityMetadata ?? {};
+
   if (!context.curiosityEngine) {
     if (options?.skipWhenNoTriggers) {
       return false;
@@ -108,6 +122,7 @@ export async function runResidentCuriosityCycle(
       kind: "skipped",
       trigger: options?.activityTrigger ?? "proactive_tick",
       summary: "Resident investigation skipped because curiosity wiring is unavailable.",
+      ...inheritedSurfaceActivityMetadata,
     });
     return true;
   }
@@ -127,6 +142,7 @@ export async function runResidentCuriosityCycle(
         summary: options?.reviewLabel
           ? `Resident ${options.reviewLabel} ran and found no curiosity triggers.`
           : `Resident investigation ran${focus ? ` for ${focus}` : ""} and found nothing actionable.`,
+        ...inheritedSurfaceActivityMetadata,
       });
       return true;
     }
@@ -148,7 +164,10 @@ export async function runResidentCuriosityCycle(
       relationshipProfileSurface,
       { title: "Resident relationship profile Surface" },
     );
-    const surfaceActivityMetadata = residentSurfaceActivityMetadata(relationshipProfileSurface);
+    const surfaceActivityMetadata = mergeResidentSurfaceActivityMetadata(
+      inheritedSurfaceActivityMetadata,
+      residentSurfaceActivityMetadata(relationshipProfileSurface),
+    );
     const proposals = await context.curiosityEngine.generateProposals(triggers, goals, {
       relationshipProfileContext: relationshipProfileSurfaceContext,
     });
@@ -182,6 +201,7 @@ export async function runResidentCuriosityCycle(
       kind: "error",
       trigger: options?.activityTrigger ?? "proactive_tick",
       summary: `Resident investigation failed: ${message}`,
+      ...inheritedSurfaceActivityMetadata,
     });
     return true;
   }
@@ -189,24 +209,29 @@ export async function runResidentCuriosityCycle(
 
 function residentSurfaceActivityMetadata(
   projection: SurfaceProjection | null,
-): Partial<Pick<ResidentActivity, "surface_id" | "surface_included_count" | "surface_excluded_count">> {
+): ResidentSurfaceActivityMetadata {
   if (!projection) return {};
+  const surfaceInspection = createSurfaceInspectionAdapterPayload(projection, "daemon");
   return {
     surface_id: projection.id,
     surface_included_count: projection.included_context.length,
     surface_excluded_count: projection.excluded_context.length,
+    surface_inspection: surfaceInspection,
+    surface_inspections: [surfaceInspection],
   };
 }
 
 export async function triggerResidentInvestigation(
   context: Pick<DaemonRunnerResidentContext, "curiosityEngine" | "stateManager" | "saveDaemonState" | "state" | "logger">,
   details?: Record<string, unknown>,
+  surfaceActivityMetadata: ResidentSurfaceActivityMetadata = {},
 ): Promise<void> {
   const focus = typeof details?.["what"] === "string" ? details["what"].trim() : "";
   await runResidentCuriosityCycle(context, {
     activityTrigger: "proactive_tick",
     focus,
     skipWhenNoTriggers: false,
+    surfaceActivityMetadata,
   });
 }
 

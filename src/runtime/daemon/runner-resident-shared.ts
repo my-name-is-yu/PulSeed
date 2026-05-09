@@ -121,6 +121,33 @@ export interface DaemonRunnerResidentContext {
   abortSleep(): void;
 }
 
+export type ResidentSurfaceActivityMetadata = Partial<Pick<
+  ResidentActivity,
+  | "surface_id"
+  | "surface_included_count"
+  | "surface_excluded_count"
+  | "surface_inspection"
+  | "surface_inspections"
+>>;
+
+export function mergeResidentSurfaceActivityMetadata(
+  ...metadatas: Array<ResidentSurfaceActivityMetadata | undefined>
+): ResidentSurfaceActivityMetadata {
+  const present = metadatas.filter((metadata): metadata is ResidentSurfaceActivityMetadata => Boolean(metadata));
+  const primary = [...present].reverse().find((metadata) => metadata.surface_id || metadata.surface_inspection);
+  const inspections = present.flatMap((metadata) => (
+    metadata.surface_inspections ?? (metadata.surface_inspection ? [metadata.surface_inspection] : [])
+  ));
+
+  return {
+    ...(primary?.surface_id ? { surface_id: primary.surface_id } : {}),
+    ...(primary?.surface_included_count !== undefined ? { surface_included_count: primary.surface_included_count } : {}),
+    ...(primary?.surface_excluded_count !== undefined ? { surface_excluded_count: primary.surface_excluded_count } : {}),
+    ...(primary?.surface_inspection ? { surface_inspection: primary.surface_inspection } : {}),
+    ...(inspections.length > 0 ? { surface_inspections: inspections } : {}),
+  };
+}
+
 export async function loadExistingGoalTitles(
   context: Pick<DaemonRunnerResidentContext, "stateManager">,
 ): Promise<string[]> {

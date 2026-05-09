@@ -19,6 +19,7 @@ import { GuardrailStore } from "../guardrails/index.js";
 import type { DaemonState } from "../../base/types/daemon.js";
 import { restoreInterruptedGoals } from "../daemon/persistence.js";
 import { upsertRelationshipProfileItem } from "../../platform/profile/relationship-profile.js";
+import { ProactiveInterventionStore } from "../store/proactive-intervention-store.js";
 
 vi.setConfig({ testTimeout: 20_000 });
 
@@ -730,7 +731,157 @@ describe("DaemonRunner durable runtime", () => {
     await startPromise;
   });
 
+  it("keeps proactive maintenance Surface inspection on follow-on resident investigation", async () => {
+    await upsertRelationshipProfileItem(tmpDir, {
+      stableKey: "user.intervention.investigation",
+      kind: "intervention_policy",
+      value: "Keep investigation candidates inspectable before resident curiosity expands them.",
+      source: "cli_update",
+      allowedScopes: ["resident_behavior", "user_facing_review"],
+      now: "2026-05-03T00:00:00.000Z",
+    });
+    await upsertRelationshipProfileItem(tmpDir, {
+      stableKey: "user.intervention.investigation-sensitive",
+      kind: "intervention_policy",
+      value: "Use sensitive investigation timing context.",
+      source: "cli_update",
+      sensitivity: "sensitive",
+      allowedScopes: ["resident_behavior", "user_facing_review"],
+      now: "2026-05-03T00:01:00.000Z",
+    });
+
+    const curiosityTrigger = {
+      type: "periodic_exploration",
+      detected_at: new Date().toISOString(),
+      source_goal_id: null,
+      details: "Resident investigation found a follow-on curiosity target.",
+      severity: 0.3,
+    };
+    const curiosityEngine = {
+      evaluateTriggers: vi.fn()
+        .mockResolvedValueOnce([])
+        .mockResolvedValue([curiosityTrigger]),
+      generateProposals: vi.fn().mockResolvedValue([
+        {
+          id: "curiosity-investigate-1",
+          trigger: curiosityTrigger,
+          proposed_goal: {
+            description: "Inspect idle resident investigation handoff.",
+            rationale: "The proactive decision surface must survive the follow-on curiosity activity.",
+            suggested_dimensions: [
+              {
+                name: "resident_autonomy",
+                threshold_type: "min",
+                target: 0.7,
+              },
+            ],
+            scope_domain: "engineering",
+            detection_method: "periodic_review",
+          },
+          status: "pending",
+          created_at: new Date().toISOString(),
+          expires_at: new Date(Date.now() + 3_600_000).toISOString(),
+          reviewed_at: null,
+          rejection_cooldown_until: null,
+          loop_count: 0,
+          goal_id: null,
+        },
+      ]),
+    };
+    const llmClient = {
+      sendMessage: vi.fn()
+        .mockResolvedValueOnce({
+          content: JSON.stringify({
+            action: "investigate",
+            details: {
+              what: "resident investigation handoff",
+              why: "Preserve proactive admission inspection through follow-on curiosity.",
+            },
+          }),
+        })
+        .mockResolvedValue({
+          content: JSON.stringify({ action: "sleep" }),
+        }),
+      parseJSON: vi.fn((content: string) => JSON.parse(content)),
+    };
+
+    const deps = makeDeps(tmpDir, {
+      config: {
+        check_interval_ms: 50,
+        proactive_mode: true,
+        proactive_interval_ms: 0,
+      },
+      llmClient: llmClient as unknown as DaemonDeps["llmClient"],
+      curiosityEngine: curiosityEngine as unknown as DaemonDeps["curiosityEngine"],
+    });
+    const daemon = new DaemonRunner(deps);
+    currentDaemon = daemon;
+
+    const startPromise = daemon.start([]);
+    currentStartPromise = startPromise;
+
+    const state = await pollForJsonMatch<{
+      resident_activity: {
+        kind: string;
+        surface_id?: string;
+        surface_inspection?: { inspection?: { surface_id?: string } };
+        surface_inspections?: Array<{ inspection?: { surface_id?: string } }>;
+      } | null;
+    }>(
+      path.join(tmpDir, "daemon-state.json"),
+      (value) => value.resident_activity?.kind === "curiosity",
+    );
+
+    const surfaceIds = state.resident_activity?.surface_inspections?.map((surface) => (
+      surface.inspection?.surface_id ?? ""
+    )) ?? [];
+    expect(state.resident_activity?.surface_id).toContain("surface:relationship-profile:daemon:resident-curiosity");
+    expect(surfaceIds).toEqual(expect.arrayContaining([
+      expect.stringContaining("surface:relationship-profile:daemon:proactive-maintenance"),
+      expect.stringContaining("surface:relationship-profile:daemon:resident-curiosity"),
+    ]));
+    expect(JSON.stringify(state.resident_activity?.surface_inspections)).not.toContain(
+      "Use sensitive investigation timing context."
+    );
+
+    const proactiveEvents = await new ProactiveInterventionStore(path.join(tmpDir, "runtime")).list();
+    expect(proactiveEvents).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        event_type: "intervention",
+        activity: expect.objectContaining({
+          kind: "curiosity",
+          surface_inspections: expect.arrayContaining([
+            expect.objectContaining({
+              inspection: expect.objectContaining({
+                surface_id: expect.stringContaining("surface:relationship-profile:daemon:proactive-maintenance"),
+              }),
+            }),
+            expect.objectContaining({
+              inspection: expect.objectContaining({
+                surface_id: expect.stringContaining("surface:relationship-profile:daemon:resident-curiosity"),
+              }),
+            }),
+          ]),
+        }),
+      }),
+    ]));
+    expect(curiosityEngine.evaluateTriggers).toHaveBeenCalledTimes(2);
+    expect(llmClient.sendMessage).toHaveBeenCalled();
+
+    daemon.stop();
+    await startPromise;
+  });
+
   it("runs resident dream maintenance from idle proactive ticks", async () => {
+    await upsertRelationshipProfileItem(tmpDir, {
+      stableKey: "user.intervention.dream",
+      kind: "intervention_policy",
+      value: "Keep idle resident maintenance inspectable before doing quiet work.",
+      source: "cli_update",
+      allowedScopes: ["resident_behavior", "user_facing_review"],
+      now: "2026-05-03T00:00:00.000Z",
+    });
+
     const scheduleEngine = {
       tick: vi.fn().mockResolvedValue([]),
       getEntries: vi.fn().mockReturnValue([]),
@@ -784,7 +935,13 @@ describe("DaemonRunner durable runtime", () => {
 
     const state = await pollForJsonMatch<{
       status: string;
-      resident_activity: { kind: string; summary: string } | null;
+      resident_activity: {
+        kind: string;
+        summary: string;
+        surface_id?: string;
+        surface_inspection?: { inspection?: { surface_id?: string } };
+        surface_inspections?: Array<{ inspection?: { surface_id?: string } }>;
+      } | null;
     }>(
       path.join(tmpDir, "daemon-state.json"),
       (value) => value.resident_activity?.kind === "dream"
@@ -798,6 +955,19 @@ describe("DaemonRunner durable runtime", () => {
 
     expect(state.status).toBe("idle");
     expect(state.resident_activity?.summary).toContain("applied pending suggestion");
+    expect(state.resident_activity).toEqual(expect.objectContaining({
+      surface_id: expect.stringContaining("surface:relationship-profile:daemon:proactive-maintenance"),
+      surface_inspection: expect.objectContaining({
+        inspection: expect.objectContaining({
+          surface_id: expect.stringContaining("surface:relationship-profile:daemon:proactive-maintenance"),
+        }),
+      }),
+      surface_inspections: [expect.objectContaining({
+        inspection: expect.objectContaining({
+          surface_id: expect.stringContaining("surface:relationship-profile:daemon:proactive-maintenance"),
+        }),
+      })],
+    }));
     expect(scheduleEngine.addEntry).toHaveBeenCalledOnce();
     expect(suggestionFile.suggestions[0]).toEqual(expect.objectContaining({
       status: "applied",
@@ -886,6 +1056,24 @@ describe("DaemonRunner durable runtime", () => {
   }, 10_000);
 
   it("records resident preemptive checks without directly activating CoreLoop", async () => {
+    await upsertRelationshipProfileItem(tmpDir, {
+      stableKey: "user.intervention.preemptive",
+      kind: "intervention_policy",
+      value: "Record non-urgent proactive checks as attention candidates before execution.",
+      source: "cli_update",
+      allowedScopes: ["resident_behavior", "user_facing_review"],
+      now: "2026-05-03T00:00:00.000Z",
+    });
+    await upsertRelationshipProfileItem(tmpDir, {
+      stableKey: "user.intervention.sensitive",
+      kind: "intervention_policy",
+      value: "Use sensitive private context for proactive timing.",
+      source: "cli_update",
+      sensitivity: "sensitive",
+      allowedScopes: ["resident_behavior", "user_facing_review"],
+      now: "2026-05-03T00:01:00.000Z",
+    });
+
     const llmClient = {
       sendMessage: vi.fn()
         .mockResolvedValueOnce({
@@ -952,7 +1140,23 @@ describe("DaemonRunner durable runtime", () => {
     const state = await pollForJsonMatch<{
       status: string;
       active_goals: string[];
-      resident_activity: { kind: string; summary: string; goal_id?: string } | null;
+      resident_activity: {
+        kind: string;
+        summary: string;
+        goal_id?: string;
+        surface_id?: string;
+        surface_included_count?: number;
+        surface_excluded_count?: number;
+        surface_inspection?: {
+          target?: string;
+          inspection?: {
+            surface_id?: string;
+            included_summaries?: unknown[];
+            excluded_summaries?: unknown[];
+          };
+        };
+        surface_inspections?: Array<{ inspection?: { surface_id?: string } }>;
+      } | null;
     }>(
       path.join(tmpDir, "daemon-state.json"),
       (value) => value.resident_activity?.kind === "observation",
@@ -963,7 +1167,59 @@ describe("DaemonRunner durable runtime", () => {
     expect(state.resident_activity).toEqual(expect.objectContaining({
       kind: "observation",
       goal_id: "resident-goal",
+      surface_id: expect.stringContaining("surface:relationship-profile:daemon:proactive-maintenance"),
+      surface_included_count: 1,
+      surface_excluded_count: 1,
+      surface_inspection: expect.objectContaining({
+        target: "daemon",
+        inspection: expect.objectContaining({
+          surface_id: expect.stringContaining("surface:relationship-profile:daemon:proactive-maintenance"),
+          included_summaries: [expect.objectContaining({
+            record_kind: "intervention_policy",
+            use_class: "proactive_action_candidate",
+          })],
+          excluded_summaries: [expect.objectContaining({
+            requested_use: "proactive_action_candidate",
+            blocked_by: expect.arrayContaining(["sensitivity"]),
+            redaction_ref: expect.any(String),
+          })],
+        }),
+      }),
+      surface_inspections: [expect.objectContaining({
+        inspection: expect.objectContaining({
+          surface_id: expect.stringContaining("surface:relationship-profile:daemon:proactive-maintenance"),
+        }),
+      })],
     }));
+    expect(JSON.stringify(state.resident_activity?.surface_inspection)).not.toContain(
+      "Use sensitive private context for proactive timing."
+    );
+    const proactiveEvents = await new ProactiveInterventionStore(path.join(tmpDir, "runtime")).list();
+    expect(proactiveEvents).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        event_type: "intervention",
+        activity: expect.objectContaining({
+          kind: "observation",
+          goal_id: "resident-goal",
+          surface_id: expect.stringContaining("surface:relationship-profile:daemon:proactive-maintenance"),
+          surface_included_count: 1,
+          surface_excluded_count: 1,
+          surface_inspection: expect.objectContaining({
+            target: "daemon",
+            inspection: expect.objectContaining({
+              excluded_summaries: [expect.objectContaining({
+                blocked_by: expect.arrayContaining(["sensitivity"]),
+              })],
+            }),
+          }),
+          surface_inspections: [expect.objectContaining({
+            inspection: expect.objectContaining({
+              surface_id: expect.stringContaining("surface:relationship-profile:daemon:proactive-maintenance"),
+            }),
+          })],
+        }),
+      }),
+    ]));
     expect(
       (deps.driveSystem as unknown as { writeEvent: ReturnType<typeof vi.fn> }).writeEvent
     ).toHaveBeenCalledWith(

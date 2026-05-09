@@ -51,11 +51,12 @@ describe("runProactiveMaintenance relationship profile context", () => {
       ),
     };
 
-    await runProactiveMaintenance({
+    const result = await runProactiveMaintenance({
+      baseDir,
       config: DaemonConfigSchema.parse({
         proactive_mode: true,
         proactive_interval_ms: 1,
-        runtime_root: baseDir,
+        runtime_root: path.join(baseDir, "runtime"),
       }),
       llmClient: llmClient as never,
       state: DaemonStateSchema.parse({
@@ -77,7 +78,30 @@ describe("runProactiveMaintenance relationship profile context", () => {
 
     const prompt = sendMessage.mock.calls[0]?.[0]?.[0]?.content ?? "";
     expect(prompt).toContain("Suggest only when the next action is clearly reversible.");
+    expect(prompt).toContain("Proactive maintenance relationship profile Surface");
+    expect(prompt).toContain("requested_use=proactive_action_candidate");
+    expect(prompt).toContain("Use only Surface-included relationship context below.");
+    expect(prompt).not.toContain("Relationship Profile (active items only; consent scope: resident_behavior)");
     expect(prompt).not.toContain("Use detailed weekly planning notes.");
+    expect(result.surface).toEqual(expect.objectContaining({
+      surface_id: expect.stringContaining("surface:relationship-profile:daemon:proactive-maintenance"),
+      surface_included_count: 1,
+      surface_excluded_count: 0,
+      surface_inspection: expect.objectContaining({
+        target: "daemon",
+        inspection: expect.objectContaining({
+          surface_id: result.surface?.surface_id,
+          included_summaries: [expect.objectContaining({
+            record_kind: "intervention_policy",
+            use_class: "proactive_action_candidate",
+          })],
+          excluded_summaries: [],
+        }),
+      }),
+    }));
+    expect(JSON.stringify(result.surface?.surface_inspection)).not.toContain(
+      "Suggest only when the next action is clearly reversible."
+    );
   });
 
   it("uses the latest active intervention policy and ignores stale or sensitive policies", async () => {
@@ -131,10 +155,11 @@ describe("runProactiveMaintenance relationship profile context", () => {
     };
 
     await runProactiveMaintenance({
+      baseDir,
       config: DaemonConfigSchema.parse({
         proactive_mode: true,
         proactive_interval_ms: 1,
-        runtime_root: baseDir,
+        runtime_root: path.join(baseDir, "runtime"),
       }),
       llmClient: llmClient as never,
       state: DaemonStateSchema.parse({
@@ -156,7 +181,10 @@ describe("runProactiveMaintenance relationship profile context", () => {
 
     const prompt = sendMessage.mock.calls[0]?.[0]?.[0]?.content ?? "";
     expect(prompt).toContain("Ask for confirmation before non-urgent proactive suggestions.");
-    expect(prompt).toContain("status=active; version=2");
+    expect(prompt).toContain("Proactive maintenance relationship profile Surface");
+    expect(prompt).toContain("requested_use=proactive_action_candidate");
+    expect(prompt).not.toContain("Relationship Profile (active items only; consent scope: resident_behavior)");
+    expect(prompt).not.toContain("status=active; version=2");
     expect(prompt).toContain("sensitivity=private");
     expect(prompt).not.toContain("Proactively notify for any minor observation.");
     expect(prompt).not.toContain("Send proactive weekend nudges without asking.");
@@ -200,10 +228,11 @@ describe("runProactiveMaintenance relationship profile context", () => {
     };
 
     await runProactiveMaintenance({
+      baseDir,
       config: DaemonConfigSchema.parse({
         proactive_mode: true,
         proactive_interval_ms: 1,
-        runtime_root: baseDir,
+        runtime_root: path.join(baseDir, "runtime"),
       }),
       llmClient: llmClient as never,
       state: DaemonStateSchema.parse({
@@ -225,6 +254,9 @@ describe("runProactiveMaintenance relationship profile context", () => {
 
     const prompt = sendMessage.mock.calls[0]?.[0]?.[0]?.content ?? "";
     expect(prompt).toContain("Ask before non-urgent notifications.");
+    expect(prompt).toContain("Proactive maintenance relationship profile Surface");
+    expect(prompt).toContain("requested_use=proactive_action_candidate");
+    expect(prompt).not.toContain("Relationship Profile (active items only; consent scope: resident_behavior)");
     expect(prompt).not.toContain("Notify freely.");
     expect(prompt).not.toContain("health context");
   });
