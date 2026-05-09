@@ -41,6 +41,45 @@ describe("DaemonStateSchema", () => {
 });
 
 describe("resolveConfiguredDaemonRuntimeRoot", () => {
+  it("falls back for malformed daemon config but surfaces real config read errors", () => {
+    const malformedDir = makeBaseDir();
+    fs.writeFileSync(path.join(malformedDir, "daemon.json"), "{not json", "utf-8");
+    fs.writeFileSync(
+      path.join(malformedDir, "daemon-config.json"),
+      JSON.stringify({ runtime_root: "legacy-runtime" }),
+      "utf-8"
+    );
+
+    expect(resolveConfiguredDaemonRuntimeRoot(malformedDir)).toBe(path.join(malformedDir, "legacy-runtime"));
+
+    const unreadableDir = makeBaseDir();
+    fs.mkdirSync(path.join(unreadableDir, "daemon.json"));
+
+    expect(() => resolveConfiguredDaemonRuntimeRoot(unreadableDir)).toThrow(/EISDIR|illegal operation on a directory/);
+  });
+
+  it("falls back for malformed daemon state but surfaces real state read errors", () => {
+    const malformedDir = makeBaseDir();
+    fs.writeFileSync(
+      path.join(malformedDir, "daemon.json"),
+      JSON.stringify({ runtime_root: "configured-runtime" }),
+      "utf-8"
+    );
+    fs.writeFileSync(path.join(malformedDir, "daemon-state.json"), "{not json", "utf-8");
+
+    expect(resolveConfiguredDaemonRuntimeRoot(malformedDir)).toBe(path.join(malformedDir, "configured-runtime"));
+
+    const unreadableDir = makeBaseDir();
+    fs.writeFileSync(
+      path.join(unreadableDir, "daemon.json"),
+      JSON.stringify({ runtime_root: "configured-runtime" }),
+      "utf-8"
+    );
+    fs.mkdirSync(path.join(unreadableDir, "daemon-state.json"));
+
+    expect(() => resolveConfiguredDaemonRuntimeRoot(unreadableDir)).toThrow(/EISDIR|illegal operation on a directory/);
+  });
+
   it("ignores running daemon-state runtime roots when the persisted pid is unsafe", () => {
     const baseDir = makeBaseDir();
     fs.writeFileSync(
