@@ -52,10 +52,10 @@ export class TavilySearchClient implements ISearchClient {
 
 // --- WebSearchTool ---
 
-const WebSearchInputSchema = z.object({
+export const WebSearchInputSchema = z.object({
   query: z.string().min(1),
   maxResults: z.number().int().min(1).max(20).optional(),
-});
+}).strict();
 type WebSearchInput = z.infer<typeof WebSearchInputSchema>;
 
 export class WebSearchTool implements ITool<WebSearchInput, SearchResult[]> {

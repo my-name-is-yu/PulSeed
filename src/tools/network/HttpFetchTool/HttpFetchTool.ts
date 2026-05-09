@@ -18,7 +18,7 @@ export const HttpFetchInputSchema = z.object({
   headers: z.record(z.string()).optional(),
   timeoutMs: z.number().int().min(1).max(HTTP_FETCH_MAX_TIMEOUT_MS).default(HTTP_FETCH_DEFAULT_TIMEOUT_MS),
   maxResponseBytes: z.number().int().min(1).max(HTTP_FETCH_MAX_RESPONSE_BYTES).default(HTTP_FETCH_DEFAULT_MAX_RESPONSE_BYTES),
-});
+}).strict();
 export type HttpFetchInput = z.infer<typeof HttpFetchInputSchema>;
 export interface HttpFetchOutput { statusCode: number; headers: Record<string, string>; body: string; ok: boolean; }
 

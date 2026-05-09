@@ -11,7 +11,7 @@ const McpServerProcessSchema = z.object({
   cwd: z.string().optional(),
   env: z.record(z.string()).optional(),
   timeoutMs: z.number().int().min(1_000).max(120_000).default(30_000),
-});
+}).strict();
 
 export const McpListToolsInputSchema = McpServerProcessSchema;
 export type McpListToolsInput = z.infer<typeof McpListToolsInputSchema>;
