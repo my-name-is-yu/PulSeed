@@ -8,7 +8,7 @@ export const ResetTrustInputSchema = z.object({
   domain: z.string().min(1, "domain is required"),
   balance: z.number().min(-100).max(100),
   reason: z.string().optional(),
-});
+}).strict();
 export type ResetTrustInput = z.infer<typeof ResetTrustInputSchema>;
 
 export class ResetTrustTool implements ITool<ResetTrustInput, unknown> {

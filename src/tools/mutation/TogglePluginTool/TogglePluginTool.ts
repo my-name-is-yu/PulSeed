@@ -6,7 +6,7 @@ import { TAGS, CATEGORY as _CATEGORY, READ_ONLY, PERMISSION_LEVEL } from "./cons
 export const TogglePluginInputSchema = z.object({
   pluginId: z.string().min(1, "pluginId is required"),
   enabled: z.boolean(),
-});
+}).strict();
 export type TogglePluginInput = z.infer<typeof TogglePluginInputSchema>;
 
 export class TogglePluginTool implements ITool<TogglePluginInput, unknown> {

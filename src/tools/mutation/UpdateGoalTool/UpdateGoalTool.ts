@@ -8,7 +8,7 @@ export const UpdateGoalInputSchema = z.object({
   goalId: z.string().min(1, "goalId is required"),
   description: z.string().optional(),
   status: z.enum(["active", "paused", "completed"]).optional(),
-});
+}).strict();
 export type UpdateGoalInput = z.infer<typeof UpdateGoalInputSchema>;
 
 export class UpdateGoalTool implements ITool<UpdateGoalInput, unknown> {

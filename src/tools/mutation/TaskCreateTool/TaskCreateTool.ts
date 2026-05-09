@@ -14,6 +14,10 @@ import { DurationSchema, ReversibilityEnum } from "../../../base/types/core.js";
 import { DESCRIPTION } from "./prompt.js";
 import { TAGS, READ_ONLY, PERMISSION_LEVEL } from "./constants.js";
 
+const TaskMutationCriterionInputSchema = CriterionSchema.strict();
+const TaskMutationScopeBoundaryInputSchema = ScopeBoundarySchema.strict();
+const TaskMutationDurationInputSchema = DurationSchema.strict();
+
 export const TaskCreateInputSchema = z.object({
   goalId: z.string().min(1, "goalId is required"),
   strategyId: z.string().nullable().optional(),
@@ -22,8 +26,8 @@ export const TaskCreateInputSchema = z.object({
   work_description: z.string().min(1, "work_description is required"),
   rationale: z.string().default("Created manually via task_create"),
   approach: z.string().default("Delegate to a sub-agent and record results back into the task."),
-  success_criteria: z.array(CriterionSchema).default([]),
-  scope_boundary: ScopeBoundarySchema.default({
+  success_criteria: z.array(TaskMutationCriterionInputSchema).default([]),
+  scope_boundary: TaskMutationScopeBoundaryInputSchema.default({
     in_scope: [],
     out_of_scope: [],
     blast_radius: "unknown",
@@ -31,11 +35,11 @@ export const TaskCreateInputSchema = z.object({
   constraints: z.array(z.string()).default([]),
   reversibility: ReversibilityEnum.default("unknown"),
   intended_direction: z.enum(["increase", "decrease", "neutral"]).optional(),
-  estimated_duration: DurationSchema.nullable().default(null),
+  estimated_duration: TaskMutationDurationInputSchema.nullable().default(null),
   task_category: z
     .enum(["normal", "knowledge_acquisition", "verification", "observation", "capability_acquisition"])
     .default("normal"),
-});
+}).strict();
 export type TaskCreateInput = z.infer<typeof TaskCreateInputSchema>;
 
 export class TaskCreateTool implements ITool<TaskCreateInput, unknown> {
