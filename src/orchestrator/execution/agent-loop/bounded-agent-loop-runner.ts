@@ -1,8 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
-import type { Dirent } from "node:fs";
-import * as fsp from "node:fs/promises";
-import * as path from "node:path";
-import { execFileNoThrow } from "../../../base/utils/execFileNoThrow.js";
+import { randomUUID } from "node:crypto";
 import type { z } from "zod";
 import type { AgentLoopStopReason } from "./agent-loop-budget.js";
 import type {
@@ -32,6 +28,10 @@ import {
   assistantTextResponseItem,
   functionToolCallResponseItem,
 } from "./response-item.js";
+import {
+  captureAgentLoopWorkspaceSnapshot,
+  collectAgentLoopChangedFiles,
+} from "./agent-loop-workspace-snapshot.js";
 
 export interface BoundedAgentLoopRunnerDeps {
   modelClient: AgentLoopModelClient;
@@ -54,28 +54,6 @@ function readToolResultCheckOnly(result: AgentLoopToolOutput): boolean | undefin
   return undefined;
 }
 
-interface FilesystemSnapshotEntry {
-  size: number;
-  mtimeMs: number;
-  hash?: string;
-}
-
-type WorkspaceSnapshot =
-  | { kind: "git"; paths: Set<string>; files?: Map<string, FilesystemSnapshotEntry> }
-  | { kind: "filesystem"; files: Map<string, FilesystemSnapshotEntry> };
-
-const FILESYSTEM_SNAPSHOT_EXCLUDED_DIRS = new Set([
-  ".git",
-  "node_modules",
-  ".venv",
-  "venv",
-  "__pycache__",
-  ".cache",
-  "dist",
-  "build",
-]);
-const FILESYSTEM_SNAPSHOT_MAX_FILES = 5_000;
-const FILESYSTEM_SNAPSHOT_HASH_MAX_BYTES = 1_000_000;
 const MIN_MUTATING_TOOL_BATCH_REMAINING_MS = 1_000;
 
 export class BoundedAgentLoopRunner {
@@ -102,7 +80,7 @@ export class BoundedAgentLoopRunner {
     let repeatedToolLoopCount = resumed?.repeatedToolLoopCount ?? 0;
     const commandResults: AgentLoopCommandResult[] = [];
     const toolResultSummaries: AgentLoopToolResultSummary[] = [];
-    const initialWorkspaceSnapshot = await this.captureWorkspaceSnapshot(turn.cwd);
+    const initialWorkspaceSnapshot = await captureAgentLoopWorkspaceSnapshot(turn.cwd);
     let finalizationReserveUsed = false;
     let forceFinalAnswerOnly = false;
     const stop = (
@@ -173,7 +151,7 @@ export class BoundedAgentLoopRunner {
 
     while (true) {
       if (Date.now() - startedAt > turn.budget.maxWallClockMs) {
-        return stop("timeout", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount);
+        return stop("timeout", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await collectAgentLoopChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount);
       }
       if (modelTurns >= turn.budget.maxModelTurns) {
         if (!finalizationReserveUsed && this.shouldUseFinalizationReserve(turn, messages, toolResultSummaries, finalText)) {
@@ -185,14 +163,14 @@ export class BoundedAgentLoopRunner {
           });
           await this.saveState(turn, messages, compactionRecords, modelTurns, toolCalls, compactions, completionValidationAttempts, calledTools, lastToolLoopSignature, repeatedToolLoopCount, finalText, "running");
         } else {
-          return stop("max_model_turns", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount);
+          return stop("max_model_turns", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await collectAgentLoopChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount);
         }
       }
       if (toolCalls >= turn.budget.maxToolCalls) {
-        return stop("max_tool_calls", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount);
+        return stop("max_tool_calls", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await collectAgentLoopChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount);
       }
       if (turn.abortSignal?.aborted) {
-        return stop("cancelled", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount);
+        return stop("cancelled", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await collectAgentLoopChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount);
       }
 
       const tools = forceFinalAnswerOnly ? [] : this.deps.toolRouter.modelVisibleTools(turn as AgentLoopTurnContext<unknown>);
@@ -218,7 +196,7 @@ export class BoundedAgentLoopRunner {
         protocol = await this.createTurnProtocol(turn, messages, tools, requestTimeoutMs);
       } catch (err) {
         if (turn.abortSignal?.aborted) {
-          return stop("cancelled", startedAt, modelTurns, toolCalls, "Agent loop stopped: operator stop aborted active model work.", null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount, completionValidationAttempts, err instanceof Error ? err.message : String(err));
+          return stop("cancelled", startedAt, modelTurns, toolCalls, "Agent loop stopped: operator stop aborted active model work.", null, false, compactions, await collectAgentLoopChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount, completionValidationAttempts, err instanceof Error ? err.message : String(err));
         }
         const failure = this.classifyRunFailure(err);
         return stop(
@@ -230,7 +208,7 @@ export class BoundedAgentLoopRunner {
           null,
           false,
           compactions,
-          await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot),
+          await collectAgentLoopChangedFiles(turn.cwd, initialWorkspaceSnapshot),
           toolResultSummaries,
           commandResults,
           messages,
@@ -243,10 +221,10 @@ export class BoundedAgentLoopRunner {
         );
       }
       if (!protocol.responseCompleted) {
-        return stop("protocol_incomplete", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount);
+        return stop("protocol_incomplete", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await collectAgentLoopChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount);
       }
       if (turn.abortSignal?.aborted) {
-        return stop("cancelled", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount);
+        return stop("cancelled", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await collectAgentLoopChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount);
       }
 
       const response = this.protocolToResponse(protocol);
@@ -270,7 +248,7 @@ export class BoundedAgentLoopRunner {
           if (response.content.trim().length === 0) {
             schemaRepairAttempts++;
             if (schemaRepairAttempts > turn.budget.maxSchemaRepairAttempts) {
-              return stop("schema_error", startedAt, modelTurns, toolCalls, response.content, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount);
+              return stop("schema_error", startedAt, modelTurns, toolCalls, response.content, null, false, compactions, await collectAgentLoopChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount);
             }
 
             messages.push({ role: "assistant", content: response.content, phase: "final_answer" });
@@ -280,7 +258,7 @@ export class BoundedAgentLoopRunner {
             });
             const compacted = await this.compactIfNeeded(turn, messages, "mid_turn", "context_limit", this.responseUsageTokens(protocol), compactions, compactionRecords);
             if (compacted.error) {
-              return stop("fatal_error", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount);
+              return stop("fatal_error", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await collectAgentLoopChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount);
             }
             messages = compacted.messages;
             compactionRecords = compacted.compactionRecords;
@@ -298,7 +276,7 @@ export class BoundedAgentLoopRunner {
             });
             const compacted = await this.compactIfNeeded(turn, messages, "mid_turn", "context_limit", this.responseUsageTokens(protocol), compactions, compactionRecords);
             if (compacted.error) {
-              return stop("fatal_error", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount);
+              return stop("fatal_error", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await collectAgentLoopChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount);
             }
             messages = compacted.messages;
             compactionRecords = compacted.compactionRecords;
@@ -307,7 +285,7 @@ export class BoundedAgentLoopRunner {
             continue;
           }
 
-          const changedFiles = await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot);
+          const changedFiles = await collectAgentLoopChangedFiles(turn.cwd, initialWorkspaceSnapshot);
           await this.record(turn, {
             type: "final",
             ...this.baseEvent(turn),
@@ -328,7 +306,7 @@ export class BoundedAgentLoopRunner {
             });
             const compacted = await this.compactIfNeeded(turn, messages, "mid_turn", "context_limit", this.responseUsageTokens(protocol), compactions, compactionRecords);
             if (compacted.error) {
-              return stop("fatal_error", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount);
+              return stop("fatal_error", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await collectAgentLoopChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount);
             }
             messages = compacted.messages;
             compactionRecords = compacted.compactionRecords;
@@ -337,7 +315,7 @@ export class BoundedAgentLoopRunner {
             continue;
           }
 
-          const changedFiles = await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot);
+          const changedFiles = await collectAgentLoopChangedFiles(turn.cwd, initialWorkspaceSnapshot);
           const completionValidation = turn.completionValidator
             ? await turn.completionValidator({
               output: parsed.output,
@@ -381,7 +359,7 @@ export class BoundedAgentLoopRunner {
 
         schemaRepairAttempts++;
         if (schemaRepairAttempts > turn.budget.maxSchemaRepairAttempts) {
-          return stop("schema_error", startedAt, modelTurns, toolCalls, response.content, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount);
+          return stop("schema_error", startedAt, modelTurns, toolCalls, response.content, null, false, compactions, await collectAgentLoopChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount);
         }
 
         messages.push({ role: "assistant", content: response.content, phase: "final_answer" });
@@ -391,7 +369,7 @@ export class BoundedAgentLoopRunner {
         });
         const compacted = await this.compactIfNeeded(turn, messages, "mid_turn", "context_limit", this.responseUsageTokens(protocol), compactions, compactionRecords);
         if (compacted.error) {
-          return stop("fatal_error", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount);
+          return stop("fatal_error", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await collectAgentLoopChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount);
         }
         messages = compacted.messages;
         compactionRecords = compacted.compactionRecords;
@@ -402,12 +380,12 @@ export class BoundedAgentLoopRunner {
 
       if (wasFinalAnswerOnly) {
         const detail = "Agent loop reached the finalization reserve, but the model attempted another tool call instead of returning final output.";
-        return stop("max_model_turns", startedAt, modelTurns, toolCalls, response.content || detail, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount, completionValidationAttempts, detail, "max_model_turns");
+        return stop("max_model_turns", startedAt, modelTurns, toolCalls, response.content || detail, null, false, compactions, await collectAgentLoopChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount, completionValidationAttempts, detail, "max_model_turns");
       }
 
       const toolBatchBudgetRefusal = this.toolBatchBudgetRefusalReason(response.toolCalls, turn, startedAt);
       if (toolBatchBudgetRefusal) {
-        return stop("timeout", startedAt, modelTurns, toolCalls, toolBatchBudgetRefusal, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount, completionValidationAttempts, toolBatchBudgetRefusal, "tool_batch_deadline_exceeded");
+        return stop("timeout", startedAt, modelTurns, toolCalls, toolBatchBudgetRefusal, null, false, compactions, await collectAgentLoopChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount, completionValidationAttempts, toolBatchBudgetRefusal, "tool_batch_deadline_exceeded");
       }
 
       messages.push({
@@ -427,10 +405,10 @@ export class BoundedAgentLoopRunner {
       }
 
       if (repeatedToolLoopCount > turn.budget.maxRepeatedToolCalls) {
-        return stop("stalled_tool_loop", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount, undefined, undefined, "repeated_tool_calls");
+        return stop("stalled_tool_loop", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await collectAgentLoopChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount, undefined, undefined, "repeated_tool_calls");
       }
       if (turn.abortSignal?.aborted) {
-        return stop("cancelled", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount);
+        return stop("cancelled", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await collectAgentLoopChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount);
       }
 
       for (const call of response.toolCalls) {
@@ -451,12 +429,12 @@ export class BoundedAgentLoopRunner {
       } catch (err) {
         const detail = this.errorDetail(err);
         const message = `Agent loop stopped: tool runtime failed. ${detail ? `Detail: ${detail}. ` : ""}Inspect the tool execution trace.`;
-        return stop("fatal_error", startedAt, modelTurns, toolCalls, message, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount, completionValidationAttempts, detail, "tool_runtime_failure");
+        return stop("fatal_error", startedAt, modelTurns, toolCalls, message, null, false, compactions, await collectAgentLoopChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount, completionValidationAttempts, detail, "tool_runtime_failure");
       }
       const { results: toolResults, timedOut: toolBatchTimedOut } = toolBatch;
       if (toolBatchTimedOut && toolResults.length === 0) {
         const timeoutReason = this.formatToolBatchWallClockExhaustedReason(response.toolCalls, turn.budget.maxWallClockMs);
-        return stop("timeout", startedAt, modelTurns, toolCalls, timeoutReason, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount, completionValidationAttempts, timeoutReason, "tool_batch_timed_out");
+        return stop("timeout", startedAt, modelTurns, toolCalls, timeoutReason, null, false, compactions, await collectAgentLoopChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount, completionValidationAttempts, timeoutReason, "tool_batch_timed_out");
       }
       for (const result of toolResults) {
         const sourceCall = response.toolCalls.find((call) => call.id === result.callId);
@@ -556,19 +534,19 @@ export class BoundedAgentLoopRunner {
         }
 
         if (result.disposition === "fatal" || result.fatal) {
-          return stop("fatal_error", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount, undefined, undefined, "tool_fatal");
+          return stop("fatal_error", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await collectAgentLoopChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount, undefined, undefined, "tool_fatal");
         }
         if (result.disposition === "cancelled") {
-          return stop(toolBatchTimedOut ? "timeout" : "cancelled", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount, undefined, undefined, toolBatchTimedOut ? "tool_batch_timed_out" : "tool_cancelled");
+          return stop(toolBatchTimedOut ? "timeout" : "cancelled", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await collectAgentLoopChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount, undefined, undefined, toolBatchTimedOut ? "tool_batch_timed_out" : "tool_cancelled");
         }
         if (consecutiveToolErrors >= turn.budget.maxConsecutiveToolErrors) {
-          return stop("consecutive_tool_errors", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount, undefined, undefined, "consecutive_tool_errors");
+          return stop("consecutive_tool_errors", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await collectAgentLoopChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount, undefined, undefined, "consecutive_tool_errors");
         }
       }
 
       const compacted = await this.compactIfNeeded(turn, messages, "mid_turn", "context_limit", this.responseUsageTokens(protocol), compactions, compactionRecords);
       if (compacted.error) {
-        return stop("fatal_error", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await this.collectChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount);
+        return stop("fatal_error", startedAt, modelTurns, toolCalls, finalText, null, false, compactions, await collectAgentLoopChangedFiles(turn.cwd, initialWorkspaceSnapshot), toolResultSummaries, commandResults, messages, calledTools, lastToolLoopSignature, repeatedToolLoopCount);
       }
       messages = compacted.messages;
       compactionRecords = compacted.compactionRecords;
@@ -1156,132 +1134,4 @@ export class BoundedAgentLoopRunner {
     await turn.session.stateStore.save(state);
   }
 
-  private async captureWorkspaceSnapshot(cwd: string): Promise<WorkspaceSnapshot | null> {
-    if (await this.shouldUseFilesystemWorkspaceSnapshot(cwd)) {
-      return { kind: "filesystem", files: await this.captureFilesystemSnapshot(cwd) };
-    }
-    const result = await execFileNoThrow("git", ["status", "--porcelain", "--untracked-files=all"], { cwd, timeoutMs: 10_000 });
-    if ((result.exitCode ?? 1) === 0) {
-      return {
-        kind: "git",
-        paths: new Set(this.parseGitStatusPaths(result.stdout)),
-        ...(!await this.isGitRepoRootCwd(cwd) ? { files: await this.captureFilesystemSnapshot(cwd) } : {}),
-      };
-    }
-    return { kind: "filesystem", files: await this.captureFilesystemSnapshot(cwd) };
-  }
-
-  private async collectChangedFiles(cwd: string, before: WorkspaceSnapshot | null): Promise<string[]> {
-    if (before?.kind === "filesystem") {
-      return this.collectFilesystemChangedPaths(before.files, await this.captureFilesystemSnapshot(cwd));
-    }
-    const afterResult = await execFileNoThrow("git", ["status", "--porcelain", "--untracked-files=all"], { cwd, timeoutMs: 10_000 });
-    if ((afterResult.exitCode ?? 1) !== 0) {
-      return [];
-    }
-    const after = new Set(this.parseGitStatusPaths(afterResult.stdout));
-    const gitChanged = !before || before.kind !== "git"
-      ? [...after]
-      : [...after].filter((file) => !before.paths.has(file));
-    if (before?.kind === "git" && before.files) {
-      const filesystemChanged = this.collectFilesystemChangedPaths(before.files, await this.captureFilesystemSnapshot(cwd));
-      return [...new Set([...gitChanged, ...filesystemChanged])].sort();
-    }
-    return gitChanged;
-  }
-
-  private async shouldUseFilesystemWorkspaceSnapshot(cwd: string): Promise<boolean> {
-    const ignored = await execFileNoThrow("git", ["check-ignore", "-q", "--", "."], { cwd, timeoutMs: 10_000 });
-    if ((ignored.exitCode ?? 1) === 0) return true;
-
-    const tracked = await execFileNoThrow("git", ["ls-files", "--", "."], { cwd, timeoutMs: 10_000 });
-    return (tracked.exitCode ?? 1) === 0 && tracked.stdout.trim().length === 0;
-  }
-
-  private async isGitRepoRootCwd(cwd: string): Promise<boolean> {
-    const root = await execFileNoThrow("git", ["rev-parse", "--show-toplevel"], { cwd, timeoutMs: 10_000 });
-    if ((root.exitCode ?? 1) !== 0 || !root.stdout.trim()) return false;
-    try {
-      return await fsp.realpath(cwd) === await fsp.realpath(root.stdout.trim());
-    } catch {
-      return path.resolve(cwd) === path.resolve(root.stdout.trim());
-    }
-  }
-
-  private parseGitStatusPaths(stdout: string): string[] {
-    return stdout
-      .split("\n")
-      .map((line) => line.trimEnd())
-      .filter((line) => line.length >= 4)
-      .map((line) => line.slice(3).trim())
-      .map((filePath) => filePath.includes(" -> ") ? filePath.split(" -> ").at(-1) ?? filePath : filePath);
-  }
-
-  private async captureFilesystemSnapshot(cwd: string): Promise<Map<string, FilesystemSnapshotEntry>> {
-    const files = new Map<string, FilesystemSnapshotEntry>();
-    const root = path.resolve(cwd);
-    const visit = async (dir: string): Promise<void> => {
-      if (files.size >= FILESYSTEM_SNAPSHOT_MAX_FILES) return;
-      let entries: Dirent[];
-      try {
-        entries = await fsp.readdir(dir, { withFileTypes: true });
-      } catch {
-        return;
-      }
-      for (const entry of entries) {
-        if (files.size >= FILESYSTEM_SNAPSHOT_MAX_FILES) return;
-        if (entry.name.startsWith(".pulseed-")) continue;
-        const absolutePath = path.join(dir, entry.name);
-        if (entry.isDirectory()) {
-          if (!FILESYSTEM_SNAPSHOT_EXCLUDED_DIRS.has(entry.name)) {
-            await visit(absolutePath);
-          }
-          continue;
-        }
-        if (!entry.isFile()) continue;
-        const relativePath = path.relative(root, absolutePath).replace(/\\/g, "/");
-        try {
-          const stat = await fsp.stat(absolutePath);
-          const snapshotEntry: FilesystemSnapshotEntry = {
-            size: stat.size,
-            mtimeMs: stat.mtimeMs,
-          };
-          if (stat.size <= FILESYSTEM_SNAPSHOT_HASH_MAX_BYTES) {
-            snapshotEntry.hash = createHash("sha256")
-              .update(await fsp.readFile(absolutePath))
-              .digest("hex");
-          }
-          files.set(relativePath, snapshotEntry);
-        } catch {
-          // File may have changed while scanning; skip and let the next scan observe it.
-        }
-      }
-    };
-    await visit(root);
-    return files;
-  }
-
-  private collectFilesystemChangedPaths(
-    before: Map<string, FilesystemSnapshotEntry>,
-    after: Map<string, FilesystemSnapshotEntry>,
-  ): string[] {
-    const changed = new Set<string>();
-    for (const [filePath, afterEntry] of after) {
-      const beforeEntry = before.get(filePath);
-      if (!beforeEntry || !this.sameFilesystemEntry(beforeEntry, afterEntry)) {
-        changed.add(filePath);
-      }
-    }
-    for (const filePath of before.keys()) {
-      if (!after.has(filePath)) {
-        changed.add(filePath);
-      }
-    }
-    return [...changed].sort();
-  }
-
-  private sameFilesystemEntry(left: FilesystemSnapshotEntry, right: FilesystemSnapshotEntry): boolean {
-    if (left.hash && right.hash) return left.hash === right.hash;
-    return left.size === right.size && left.mtimeMs === right.mtimeMs;
-  }
 }
