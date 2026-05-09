@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
 import {
+  DriveConfigSchema,
+  MAX_DRIVE_DURATION_HOURS,
+  MAX_DRIVE_URGENCY_STEEPNESS,
+} from "../../../base/types/drive.js";
+import {
   scoreDissatisfaction,
   scoreDeadline,
   scoreOpportunity,
@@ -21,6 +26,32 @@ const DEFAULT_CONFIG: DriveConfig = {
   half_life_hours: 12,
   pacing_urgency_weight: 0.5,
 };
+
+describe("DriveConfigSchema", () => {
+  it("rejects non-finite and unsafe numeric config values", () => {
+    expect(DriveConfigSchema.safeParse({
+      deadline_horizon_hours: MAX_DRIVE_DURATION_HOURS,
+      urgency_steepness: MAX_DRIVE_URGENCY_STEEPNESS,
+    }).success).toBe(true);
+
+    for (const config of [
+      { decay_floor: -0.1 },
+      { decay_floor: 1.1 },
+      { recovery_time_hours: 0 },
+      { deadline_horizon_hours: 0 },
+      { deadline_horizon_hours: Number.POSITIVE_INFINITY },
+      { deadline_horizon_hours: MAX_DRIVE_DURATION_HOURS + 1 },
+      { urgency_steepness: Number.POSITIVE_INFINITY },
+      { urgency_steepness: MAX_DRIVE_URGENCY_STEEPNESS + 1 },
+      { urgency_override_threshold: 0 },
+      { urgency_override_threshold: Number.POSITIVE_INFINITY },
+      { pacing_urgency_weight: Number.POSITIVE_INFINITY },
+      { half_life_hours: 0 },
+    ]) {
+      expect(DriveConfigSchema.safeParse(config).success).toBe(false);
+    }
+  });
+});
 
 // ─── scoreDissatisfaction ───
 
@@ -591,6 +622,62 @@ describe("scoreAllDimensions — edge cases", () => {
     const withDefault = scoreAllDimensions(gv, ctx);
     const withExplicit = scoreAllDimensions(gv, ctx, DEFAULT_CONFIG);
     expect(withDefault[0]!.final_score).toBeCloseTo(withExplicit[0]!.final_score, 5);
+  });
+
+  it("rejects invalid config before scoring dimensions", () => {
+    const gv: GapVector = {
+      goal_id: "goal-1",
+      gaps: [
+        {
+          dimension_name: "dim",
+          raw_gap: 1,
+          normalized_gap: 1,
+          normalized_weighted_gap: 1,
+          confidence: 1,
+          uncertainty_weight: 1,
+        },
+      ],
+      timestamp: new Date().toISOString(),
+    };
+    const ctx: DriveContext = {
+      time_since_last_attempt: { dim: 0 },
+      deadlines: { dim: 0 },
+      opportunities: {},
+      pacing: {},
+    };
+
+    expect(() => scoreAllDimensions(gv, ctx, {
+      ...DEFAULT_CONFIG,
+      urgency_steepness: Number.POSITIVE_INFINITY,
+    })).toThrow();
+  });
+
+  it("rejects zero deadline override threshold before scoring no-deadline dimensions", () => {
+    const gv: GapVector = {
+      goal_id: "goal-1",
+      gaps: [
+        {
+          dimension_name: "dim",
+          raw_gap: 1,
+          normalized_gap: 1,
+          normalized_weighted_gap: 1,
+          confidence: 1,
+          uncertainty_weight: 1,
+        },
+      ],
+      timestamp: new Date().toISOString(),
+    };
+    const ctx: DriveContext = {
+      time_since_last_attempt: { dim: 24 },
+      deadlines: { dim: null },
+      opportunities: {},
+      pacing: {},
+    };
+
+    expect(() => scoreAllDimensions(gv, ctx, {
+      ...DEFAULT_CONFIG,
+      urgency_override_threshold: 0,
+    })).toThrow();
   });
 });
 

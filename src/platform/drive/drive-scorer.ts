@@ -27,10 +27,8 @@ function defaultConfig(): DriveConfig {
   return DriveConfigSchema.parse({});
 }
 
-// ─── Helpers ───
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(Math.max(value, min), max);
+function resolveConfig(config?: unknown): DriveConfig {
+  return config === undefined ? defaultConfig() : DriveConfigSchema.parse(config);
 }
 
 // ─── Dissatisfaction Drive ───
@@ -52,9 +50,17 @@ function clamp(value: number, min: number, max: number): number {
 export function scoreDissatisfaction(
   normalizedWeightedGap: number,
   timeSinceLastAttemptHours: number,
-  config?: DriveConfig
+  config?: unknown
 ): DissatisfactionScore {
-  const cfg = config ?? defaultConfig();
+  const cfg = resolveConfig(config);
+  return scoreDissatisfactionWithConfig(normalizedWeightedGap, timeSinceLastAttemptHours, cfg);
+}
+
+function scoreDissatisfactionWithConfig(
+  normalizedWeightedGap: number,
+  timeSinceLastAttemptHours: number,
+  cfg: DriveConfig
+): DissatisfactionScore {
   const { decay_floor, recovery_time_hours } = cfg;
 
   const t = Math.max(0, timeSinceLastAttemptHours);
@@ -92,10 +98,19 @@ export function scoreDissatisfaction(
 export function scoreDeadline(
   normalizedWeightedGap: number,
   timeRemainingHours: number | null,
-  config?: DriveConfig,
+  config?: unknown,
   pacingRatio?: number | null,
 ): DeadlineScore {
-  const cfg = config ?? defaultConfig();
+  const cfg = resolveConfig(config);
+  return scoreDeadlineWithConfig(normalizedWeightedGap, timeRemainingHours, cfg, pacingRatio);
+}
+
+function scoreDeadlineWithConfig(
+  normalizedWeightedGap: number,
+  timeRemainingHours: number | null,
+  cfg: DriveConfig,
+  pacingRatio?: number | null,
+): DeadlineScore {
   const { deadline_horizon_hours, urgency_steepness } = cfg;
 
   if (timeRemainingHours === null) {
@@ -152,9 +167,17 @@ export function scoreDeadline(
 export function scoreOpportunity(
   opportunityValue: number,
   timeSinceDetectedHours: number,
-  config?: DriveConfig
+  config?: unknown
 ): OpportunityScore {
-  const cfg = config ?? defaultConfig();
+  const cfg = resolveConfig(config);
+  return scoreOpportunityWithConfig(opportunityValue, timeSinceDetectedHours, cfg);
+}
+
+function scoreOpportunityWithConfig(
+  opportunityValue: number,
+  timeSinceDetectedHours: number,
+  cfg: DriveConfig
+): OpportunityScore {
   const { half_life_hours } = cfg;
 
   const t = Math.max(0, timeSinceDetectedHours);
@@ -212,9 +235,18 @@ export function combineDriveScores(
   dissatisfaction: DissatisfactionScore,
   deadline: DeadlineScore,
   opportunity: OpportunityScore,
-  config?: DriveConfig
+  config?: unknown
 ): DriveScore {
-  const cfg = config ?? defaultConfig();
+  const cfg = resolveConfig(config);
+  return combineDriveScoresWithConfig(dissatisfaction, deadline, opportunity, cfg);
+}
+
+function combineDriveScoresWithConfig(
+  dissatisfaction: DissatisfactionScore,
+  deadline: DeadlineScore,
+  opportunity: OpportunityScore,
+  cfg: DriveConfig
+): DriveScore {
   const { urgency_override_threshold } = cfg;
 
   // Deadline urgency override takes precedence
@@ -270,8 +302,9 @@ export function combineDriveScores(
 export function scoreAllDimensions(
   gapVector: GapVector,
   context: DriveContext,
-  config?: DriveConfig
+  config?: unknown
 ): DriveScore[] {
+  const cfg = resolveConfig(config);
   return gapVector.gaps.map((weightedGap) => {
     const dimName = weightedGap.dimension_name;
     const nwg = weightedGap.normalized_weighted_gap;
@@ -282,25 +315,25 @@ export function scoreAllDimensions(
       : null;
     const opp = context.opportunities[dimName];
 
-    const dissatisfactionRaw = scoreDissatisfaction(nwg, timeSince, config);
-    const deadlineRaw = scoreDeadline(
+    const dissatisfactionRaw = scoreDissatisfactionWithConfig(nwg, timeSince, cfg);
+    const deadlineRaw = scoreDeadlineWithConfig(
       nwg,
       deadline,
-      config,
+      cfg,
       context.pacing[dimName]?.pacingRatio,
     );
     const opportunityRaw = opp !== null && opp !== undefined
       ? (() => {
           const timeSinceDetected = (Date.now() - new Date(opp.detected_at).getTime()) / (1000 * 60 * 60);
-          return scoreOpportunity(opp.value, timeSinceDetected, config);
+          return scoreOpportunityWithConfig(opp.value, timeSinceDetected, cfg);
         })()
-      : scoreOpportunity(0, 0, config);
+      : scoreOpportunityWithConfig(0, 0, cfg);
 
-    const combined = combineDriveScores(
+    const combined = combineDriveScoresWithConfig(
       dissatisfactionRaw,
       deadlineRaw,
       opportunityRaw,
-      config
+      cfg
     );
 
     return { ...combined, dimension_name: dimName };
