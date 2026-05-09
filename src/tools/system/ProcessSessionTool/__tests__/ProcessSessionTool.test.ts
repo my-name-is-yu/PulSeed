@@ -64,6 +64,7 @@ describe("ProcessSessionTool", () => {
   describe("inputSchema validation", () => {
     it("rejects unknown fields instead of silently stripping them", () => {
       expect(ProcessSessionStartInputSchema.safeParse({ command: process.execPath, unexpected: true }).success).toBe(false);
+      expect(ProcessSessionStartInputSchema.safeParse({ command: process.execPath, artifact_refs: [""] }).success).toBe(false);
       expect(ProcessSessionReadInputSchema.safeParse({ session_id: "session-1", unexpected: true }).success).toBe(false);
       expect(ProcessSessionWriteInputSchema.safeParse({ session_id: "session-1", input: "x", unexpected: true }).success).toBe(false);
       expect(ProcessSessionStopInputSchema.safeParse({ session_id: "session-1", unexpected: true }).success).toBe(false);
@@ -197,6 +198,74 @@ describe("ProcessSessionTool", () => {
         makeContext(tmpHome)
       );
       expect(readable.success).toBe(true);
+    } finally {
+      if (originalHome === undefined) {
+        delete process.env["PULSEED_HOME"];
+      } else {
+        process.env["PULSEED_HOME"] = originalHome;
+      }
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
+
+  it("drops malformed persisted wait metadata refs before linking process metadata", async () => {
+    const originalHome = process.env["PULSEED_HOME"];
+    const tmpHome = makeTempDir();
+    process.env["PULSEED_HOME"] = tmpHome;
+    try {
+      const waitMetadataPath = path.join(tmpHome, "strategies", "goal-1", "wait-meta", "wait-1.json");
+      fs.mkdirSync(path.dirname(waitMetadataPath), { recursive: true });
+      fs.writeFileSync(
+        waitMetadataPath,
+        JSON.stringify({
+          schema_version: 1,
+          keep_existing_field: true,
+          process_refs: [
+            "bad-ref",
+            { session_id: "existing-session", metadata_relative_path: path.join("runtime", "process-sessions", "existing-session.json") },
+          ],
+          artifact_refs: [
+            42,
+            { kind: "existing_artifact", path: path.join(tmpHome, "artifacts", "existing.log") },
+          ],
+        }, null, 2),
+        "utf8",
+      );
+
+      const start = await startTool.call({
+        command: process.execPath,
+        args: ["-e", "setInterval(() => {}, 1000);"],
+        strategy_id: "wait-1",
+        artifact_refs: [path.join(tmpHome, "artifacts", "train.log")],
+      }, makeContext(tmpHome));
+      expect(start.success).toBe(true);
+      const started = start.data as ProcessSessionSnapshot;
+
+      const waitMetadata = JSON.parse(fs.readFileSync(waitMetadataPath, "utf8")) as {
+        keep_existing_field?: boolean;
+        process_refs: unknown[];
+        artifact_refs: unknown[];
+      };
+      expect(waitMetadata.keep_existing_field).toBe(true);
+      expect(waitMetadata.process_refs).toEqual([
+        { session_id: "existing-session", metadata_relative_path: path.join("runtime", "process-sessions", "existing-session.json") },
+        expect.objectContaining({
+          session_id: started.session_id,
+          metadata_relative_path: path.join("runtime", "process-sessions", `${started.session_id}.json`),
+        }),
+      ]);
+      expect(waitMetadata.artifact_refs).toEqual(
+        expect.arrayContaining([
+          { kind: "existing_artifact", path: path.join(tmpHome, "artifacts", "existing.log") },
+          expect.objectContaining({ kind: "process_metadata", session_id: started.session_id }),
+          expect.objectContaining({
+            kind: "process_artifact",
+            path: path.join(tmpHome, "artifacts", "train.log"),
+          }),
+        ])
+      );
+      expect(waitMetadata.process_refs).not.toContain("bad-ref");
+      expect(waitMetadata.artifact_refs).not.toContain(42);
     } finally {
       if (originalHome === undefined) {
         delete process.env["PULSEED_HOME"];
