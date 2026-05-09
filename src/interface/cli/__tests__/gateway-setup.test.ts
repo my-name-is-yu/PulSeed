@@ -78,6 +78,21 @@ describe("cmdGatewaySetup", () => {
     await fsp.rm(tmpDir, { recursive: true, force: true });
   });
 
+  it("prints setup help without launching the gateway wizard", async () => {
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const { cmdGatewaySetup } = await import("../commands/gateway.js");
+
+    const code = await cmdGatewaySetup(["--help"]);
+    const output = consoleSpy.mock.calls.map((call) => call.join(" ")).join("\n");
+
+    expect(code).toBe(0);
+    expect(output).toContain("Usage: pulseed gateway setup");
+    expect(output).toContain("Interactive messaging gateway setup");
+    expect(introMock).not.toHaveBeenCalled();
+    expect(multiselectMock).not.toHaveBeenCalled();
+    consoleSpy.mockRestore();
+  });
+
   it("writes selected Telegram and Signal core gateway configs", async () => {
     multiselectMock.mockResolvedValue(["telegram-bot", "signal-bridge"]);
     textMock

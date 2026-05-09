@@ -427,6 +427,7 @@ describe("unknown subcommand", async () => {
 
   it("exits with code 0 for --help", async () => {
     const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const initSpy = vi.spyOn(StateManager.prototype, "init");
     const code = await runCLI("--help");
     const output = consoleSpy.mock.calls.map((call) => call.join(" ")).join("\n");
     expect(code).toBe(0);
@@ -436,12 +437,82 @@ describe("unknown subcommand", async () => {
     expect(output).toContain("--no-refine                         Skip GoalRefiner and use the negotiation path directly");
     expect(output).not.toContain("legacy LLM negotiation");
     expect(output).not.toContain("legacy negotiate()");
+    expect(initSpy).not.toHaveBeenCalled();
     consoleSpy.mockRestore();
+    initSpy.mockRestore();
+  });
+
+  it("exits with code 0 for help with global flags before state initialization", async () => {
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const initSpy = vi.spyOn(StateManager.prototype, "init");
+
+    const firstCode = await runCLI("--yes", "--help");
+    const secondCode = await runCLI("help", "--dev");
+
+    const output = consoleSpy.mock.calls.map((call) => call.join(" ")).join("\n");
+    expect(firstCode).toBe(0);
+    expect(secondCode).toBe(0);
+    expect(output).toContain("pulseed daemon ping");
+    expect(initSpy).not.toHaveBeenCalled();
+    consoleSpy.mockRestore();
+    initSpy.mockRestore();
+  });
+
+  it("preserves setup-specific help before state initialization", async () => {
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const initSpy = vi.spyOn(StateManager.prototype, "init");
+
+    const setupCode = await runCLI("setup", "--help");
+    const telegramCode = await runCLI("telegram", "setup", "--help");
+    const gatewayCode = await runCLI("gateway", "setup", "--help");
+
+    const output = consoleSpy.mock.calls.map((call) => call.join(" ")).join("\n");
+    expect(setupCode).toBe(0);
+    expect(telegramCode).toBe(0);
+    expect(gatewayCode).toBe(0);
+    expect(output).toContain("Usage: pulseed setup [options]");
+    expect(output).toContain("Usage: pulseed telegram setup");
+    expect(output).toContain("Usage: pulseed gateway setup");
+    expect(output).toContain("--provider <name>");
+    expect(output).not.toContain("pulseed daemon ping");
+    expect(initSpy).not.toHaveBeenCalled();
+    consoleSpy.mockRestore();
+    initSpy.mockRestore();
   });
 
   it("exits with code 0 for help subcommand", async () => {
+    const initSpy = vi.spyOn(StateManager.prototype, "init");
     const code = await runCLI("help");
     expect(code).toBe(0);
+    expect(initSpy).not.toHaveBeenCalled();
+    initSpy.mockRestore();
+  });
+
+  it("prints usage when default TUI launch cannot initialize local runtime state", async () => {
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const initSpy = vi
+      .spyOn(StateManager.prototype, "init")
+      .mockRejectedValue(new Error("Control DB migration checksum mismatch for version 7."));
+    vi.mocked(ensureProviderConfig).mockClear();
+
+    const defaultCode = await runCLI();
+    const globalFlagCode = await runCLI("--dev");
+    const explicitTuiCode = await runCLI("tui");
+
+    const usageOutput = consoleSpy.mock.calls.map((call) => call.join(" ")).join("\n");
+    const errorOutput = errorSpy.mock.calls.map((call) => call.join(" ")).join("\n");
+    expect(defaultCode).toBe(1);
+    expect(globalFlagCode).toBe(1);
+    expect(explicitTuiCode).toBe(1);
+    expect(initSpy).toHaveBeenCalledTimes(3);
+    expect(ensureProviderConfig).not.toHaveBeenCalled();
+    expect(usageOutput).toContain("PulSeed — lifelong personal agent");
+    expect(errorOutput).toContain("could not open local runtime state");
+    expect(errorOutput).toContain("Control DB migration checksum mismatch");
+    consoleSpy.mockRestore();
+    errorSpy.mockRestore();
+    initSpy.mockRestore();
   });
 
   it("dispatches daemon ping through the registry", async () => {
