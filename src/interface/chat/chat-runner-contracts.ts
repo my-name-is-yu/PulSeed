@@ -12,9 +12,10 @@ import type { ChatAgentLoopRunner } from "../../orchestrator/execution/agent-loo
 import type { ReviewAgentLoopRunner } from "../../orchestrator/execution/agent-loop/review-agent-loop-runner.js";
 import type { RuntimeControlService } from "../../runtime/control/index.js";
 import type { ApprovalBroker } from "../../runtime/approval-broker.js";
-import type { ApprovalRequest } from "../../tools/types.js";
+import type { ApprovalRequest, CapabilityExecutionResolver } from "../../tools/types.js";
 import type { PermissionGrantStore } from "../../runtime/store/permission-grant-store.js";
 import type { PermissionWaitPlanStore } from "../../runtime/store/permission-wait-plan-store.js";
+import type { CapabilityVerificationStore } from "../../runtime/store/capability-verification-store.js";
 import type {
   RuntimeControlActor,
   RuntimeControlReplyTarget,
@@ -90,6 +91,8 @@ export interface ChatRunnerDeps {
     PermissionWaitPlanStore,
     "createWaiting" | "markApproved" | "markDenied" | "markExpired" | "resumeApproved"
   >;
+  capabilityVerificationStore?: Pick<CapabilityVerificationStore, "saveVerification" | "saveAudit">;
+  capabilityExecutionResolver?: CapabilityExecutionResolver;
   permissionGrantContext?: {
     sessionId?: string;
     projectId?: string;

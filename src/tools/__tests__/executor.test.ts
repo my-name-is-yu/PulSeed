@@ -11,6 +11,7 @@ import {
   PermissionGrantStore,
   type PermissionGrantCreateInput,
 } from "../../runtime/store/permission-grant-store.js";
+import { CapabilityVerificationStore } from "../../runtime/store/capability-verification-store.js";
 import { PermissionWaitPlanStore } from "../../runtime/store/permission-wait-plan-store.js";
 import type { ExecutionPolicy } from "../../orchestrator/execution/agent-loop/execution-policy.js";
 import { makeTempDir, cleanupTempDir } from "../../../tests/helpers/temp-dir.js";
@@ -198,6 +199,171 @@ describe("ToolExecutor", () => {
         const ctx = createMockContext();
         const result = await executor.execute("mock-tool", { value: "hello" }, ctx);
         expect(result.success).toBe(true);
+      });
+    });
+
+    describe("Capability verification/audit persistence", () => {
+      it("persists operation-specific production verification and audit records after successful tool execution", async () => {
+        const runtimeRoot = makeTempDir("pulseed-capability-verification-");
+        permissionGrantRuntimeRoots.push(runtimeRoot);
+        const store = new CapabilityVerificationStore(runtimeRoot);
+        const tool = createMockTool({
+          name: "workspace-read",
+          metadata: {
+            name: "workspace-read",
+            aliases: [],
+            permissionLevel: "read_only",
+            isReadOnly: true,
+            isDestructive: false,
+            shouldDefer: false,
+            alwaysLoad: false,
+            maxConcurrency: 0,
+            maxOutputChars: 8000,
+            tags: [],
+            activityCategory: "read",
+          },
+          call: vi.fn().mockResolvedValue({
+            success: true,
+            data: { contents: "ok" },
+            summary: "read workspace file",
+            artifacts: ["file:/repo/README.md"],
+            durationMs: 7,
+          } as ToolResult),
+        });
+        const { executor } = createExecutor([tool]);
+        const ctx = createMockContext({
+          capabilityVerificationStore: store,
+          callId: "call-read-1",
+          sessionId: "session-1",
+          conversationSessionId: "conversation-1",
+          capabilityExecution: {
+            operationId: "operation:workspace-read-1",
+            providerRef: "runtime:workspace",
+            assetRef: "workspace:/repo/README.md",
+            capabilityId: "capability:workspace:read",
+            operationKind: "read",
+            payloadClass: "workspace_read_payload",
+            riskClass: "low",
+            sideEffectProfile: "read",
+            readinessSnapshotRefs: ["readiness:workspace-read"],
+            approvalRefs: ["approval:read-grant"],
+            executionRefs: ["execution:workspace-read-1"],
+            userVisibleEffect: "Read result was returned to chat.",
+            sideEffectSummary: "Read-only workspace file access.",
+            userDirected: true,
+            initiatedBy: "user",
+            sourceSurface: "chat",
+          },
+        });
+
+        const result = await executor.execute("workspace-read", { value: "x" }, ctx);
+
+        expect(result.success).toBe(true);
+        await expect(store.listReadinessEvidenceSummaries()).resolves.toEqual([
+          expect.objectContaining({
+            capability_id: "capability:workspace:read",
+            provider_ref: "runtime:workspace",
+            asset_ref: "workspace:/repo/README.md",
+            operation_kind: "read",
+            tool_name: "workspace-read",
+            payload_class: "workspace_read_payload",
+            risk_class: "low",
+            side_effect_profile: "read",
+            verification_class: "production_caller_path",
+            evidence_stage: "production_succeeded",
+            result: "passed",
+            readiness_effect: "supports_readiness",
+          }),
+        ]);
+        await expect(store.listAudits()).resolves.toEqual([
+          expect.objectContaining({
+            operation_id: "operation:workspace-read-1",
+            user_directed: true,
+            initiated_by: "user",
+            source_surface: "chat",
+            capability_refs: ["capability:workspace:read"],
+            provider_refs: ["runtime:workspace"],
+            readiness_snapshot_refs: ["readiness:workspace-read"],
+            approval_refs: ["approval:read-grant"],
+            execution_refs: ["execution:workspace-read-1"],
+            result: "succeeded",
+            side_effect_summary: "Read-only workspace file access.",
+            user_visible_effect: "Read result was returned to chat.",
+            follow_up_policy_effect: "record_only",
+          }),
+        ]);
+      });
+
+      it("records failed production execution as degraded readiness evidence without admission or autonomy mutation", async () => {
+        const runtimeRoot = makeTempDir("pulseed-capability-verification-failed-");
+        permissionGrantRuntimeRoots.push(runtimeRoot);
+        const store = new CapabilityVerificationStore(runtimeRoot);
+        const tool = createMockTool({
+          name: "workspace-write",
+          metadata: {
+            name: "workspace-write",
+            aliases: [],
+            permissionLevel: "write_local",
+            isReadOnly: false,
+            isDestructive: false,
+            shouldDefer: false,
+            alwaysLoad: false,
+            maxConcurrency: 0,
+            maxOutputChars: 8000,
+            tags: [],
+            activityCategory: "file_modify",
+          },
+          call: vi.fn().mockResolvedValue({
+            success: false,
+            data: null,
+            summary: "write failed",
+            error: "disk full",
+            durationMs: 9,
+          } as ToolResult),
+        });
+        const { executor } = createExecutor([tool]);
+        const ctx = createMockContext({
+          trustBalance: 100,
+          capabilityVerificationStore: store,
+          callId: "call-write-1",
+          capabilityExecution: {
+            operationId: "operation:workspace-write-1",
+            providerRef: "runtime:workspace",
+            assetRef: "workspace:/repo/README.md",
+            capabilityId: "capability:workspace:write",
+            operationKind: "write",
+            payloadClass: "workspace_write_payload",
+            riskClass: "medium",
+            sideEffectProfile: "write",
+            readinessSnapshotRefs: ["readiness:workspace-write"],
+            executionRefs: ["execution:workspace-write-1"],
+            userVisibleEffect: "Write failure was returned to the caller.",
+            sideEffectSummary: "Workspace write attempt failed before durable mutation was confirmed.",
+          },
+        });
+
+        const result = await executor.execute("workspace-write", { value: "x" }, ctx);
+
+        expect(result.success).toBe(false);
+        await expect(store.listReadinessEvidenceSummaries()).resolves.toEqual([
+          expect.objectContaining({
+            capability_id: "capability:workspace:write",
+            evidence_stage: "production_failed",
+            result: "failed",
+            readiness_effect: "degrades_readiness",
+          }),
+        ]);
+        const audits = await store.listAudits();
+        expect(audits).toEqual([
+          expect.objectContaining({
+            operation_id: "operation:workspace-write-1",
+            result: "failed",
+            follow_up_policy_effect: "degrade_readiness_evidence",
+            readiness_snapshot_refs: ["readiness:workspace-write"],
+            verification_refs: [expect.stringMatching(/^capability-verification:/)],
+          }),
+        ]);
+        expect(audits[0]).not.toHaveProperty("autonomy_decision_ref");
       });
     });
 
@@ -1053,6 +1219,50 @@ describe("ToolExecutor", () => {
         await expect(
           executor.execute("mock-tool", { value: "x" }, ctx),
         ).rejects.toThrow("timed out");
+      });
+
+      it("persists timeout failures as degraded production readiness evidence", async () => {
+        const runtimeRoot = makeTempDir("pulseed-capability-timeout-");
+        permissionGrantRuntimeRoots.push(runtimeRoot);
+        const store = new CapabilityVerificationStore(runtimeRoot);
+        const slowTool = createMockTool({
+          name: "timeout-tool",
+          call: vi.fn().mockImplementation(
+            () => new Promise((resolve) => setTimeout(resolve, 200)),
+          ),
+        });
+        const { executor } = createExecutor([slowTool]);
+        const ctx = createMockContext({
+          timeoutMs: 20,
+          capabilityVerificationStore: store,
+          callId: "call-timeout-1",
+          capabilityExecution: {
+            operationId: "operation:timeout-tool",
+            providerRef: "runtime:timeout",
+            assetRef: "asset:runtime/timeout-tool",
+            capabilityId: "capability:timeout-tool",
+            operationKind: "read",
+            toolName: "timeout-tool",
+            payloadClass: "timeout_payload",
+            riskClass: "low",
+            sideEffectProfile: "read",
+            executionRefs: ["execution:timeout-tool-1"],
+          },
+        });
+
+        await expect(
+          executor.execute("timeout-tool", { value: "x" }, ctx),
+        ).rejects.toThrow("timed out");
+
+        await expect(store.listReadinessEvidenceSummaries()).resolves.toEqual([
+          expect.objectContaining({
+            capability_id: "capability:timeout-tool",
+            tool_name: "timeout-tool",
+            evidence_stage: "production_failed",
+            result: "failed",
+            readiness_effect: "degrades_readiness",
+          }),
+        ]);
       });
     });
   });

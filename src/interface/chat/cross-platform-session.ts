@@ -45,9 +45,11 @@ import {
   RuntimeControlService,
   createDaemonRuntimeControlExecutor,
 } from "../../runtime/control/index.js";
+import { createCapabilityExecutionResolver } from "../../runtime/capability-execution-resolver.js";
 import { ApprovalBroker } from "../../runtime/approval-broker.js";
 import {
   ApprovalStore,
+  CapabilityVerificationStore,
   PermissionGrantCapabilitySchema,
   PermissionGrantExcludedCapabilitySchema,
   PermissionGrantStore,
@@ -1771,6 +1773,8 @@ async function createGlobalCrossPlatformChatSessionManager(): Promise<CrossPlatf
   const runtimeStorePaths = createRuntimeStorePaths(runtimeRoot);
   const permissionGrantStore = new PermissionGrantStore(runtimeStorePaths);
   const permissionWaitPlanStore = new PermissionWaitPlanStore(runtimeStorePaths);
+  const capabilityVerificationStore = new CapabilityVerificationStore(runtimeStorePaths);
+  const capabilityExecutionResolver = createCapabilityExecutionResolver({ stateManager });
   const runtimeControlService = new RuntimeControlService({
     runtimeRoot,
     stateManager,
@@ -1837,6 +1841,8 @@ async function createGlobalCrossPlatformChatSessionManager(): Promise<CrossPlatf
     approvalBroker,
     permissionGrantStore,
     permissionWaitPlanStore,
+    capabilityVerificationStore,
+    capabilityExecutionResolver,
     runtimeControlService,
   });
 }
