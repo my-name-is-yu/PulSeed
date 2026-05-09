@@ -57,7 +57,9 @@
 - Worktree: `/Users/yuyoshimuta/Documents/dev/PulSeed-worktrees/database-state-slice-8-knowledge-memory-soil-learning-profile-state-20260510062628`
 - Branch: `codex/database-state-slice-8-knowledge-memory-soil-learning-profile-state-20260510062628`
 - Base: `origin/main` at `a3780e97`
-- Status: implementation and review complete; preparing PR.
+- PR: #1712
+- Merge commit on `origin/main`: `cac30769a05b3f16b331e917e507c8a7fd3ebcb6`
+- Status: merged by this session.
 - Scope:
   - Route domain knowledge, shared knowledge, and agent memory normal paths through a Soil-backed typed store.
   - Keep legacy JSON as explicit `doctor --repair` migration input.
@@ -75,3 +77,35 @@
 - Review:
   - Initial review found migration and caller-path coverage blockers; fixes were applied.
   - Fresh re-review found no material blockers.
+
+### Slice 9: Plugin/Channel Runtime State, Legacy Guardrails, And Final Audit
+
+- Worktree: `/Users/yuyoshimuta/Documents/dev/PulSeed-worktrees/database-state-slice-9-plugin-channel-runtime-state-legacy-guardrails-final-audit-20260510065909`
+- Branch: `codex/database-state-slice-9-plugin-channel-runtime-state-legacy-guardrails-final-audit-20260510065909`
+- Base: `origin/main` at `2671de60` after rebasing over #1713, #1714, #1715, #1717, #1716, and #1718.
+- PR: #1720
+- Status: implementation, validation, final re-review, and PR creation complete; CI rerun in progress after fixing a test fixture path assumption.
+- Scope:
+  - Route plugin runtime state, channel health/binding state, imported plugin compatibility review records, and runtime asset registry rows through `PluginChannelRuntimeStateStore`.
+  - Keep plugin manifests and gateway/channel config files file-backed.
+  - Add explicit doctor migration for legacy plugin/channel runtime files.
+  - Add a database-first legacy-store guard and final ownership design note.
+- Validation:
+  - `npm run typecheck` passed.
+  - Focused CLI unit tests passed: `database-first-legacy-store-check`, `setup-import`, `runtime-command`, `cli-doctor`.
+  - Focused runtime integration tests passed: plugin/channel store, plugin loader, foreign plugin compatibility, Telegram gateway adapter.
+  - `npm run test:unit` passed after the final rebase, 498 files / 7871 tests.
+  - `npm run test:integration` passed after the final rebase, 213 files / 2235 tests.
+  - An initial full integration run executed in parallel with full unit timed out one runtime-evidence summary-index test; the test passed when rerun in isolation, and the full integration lane passed when rerun alone.
+  - `npm run lint:boundaries` passed with existing warnings, 0 errors.
+  - `npm run build` passed.
+  - `npm run check:docs` passed.
+  - `npm run check:database-first-legacy-stores` passed.
+  - `git diff --check` passed.
+  - Initial GitHub `unit (22)` failed only in `database-first-legacy-store-check.test.ts` because the test fixture lived under `/tmp`, which the guard intentionally allowlists; the fixture now lives under the repo root, and `npm run test:unit` passes under Node 24.15.0.
+  - GitHub `integration (24)` exposed CI-only timing in `daemon-runner.test.ts`; the affected tests now keep their first-tick behavior but avoid 50ms idle-loop reentry, and `npm run test:integration -- src/runtime/__tests__/daemon-runner.test.ts` passes under Node 24.15.0.
+- Review:
+  - Fresh review found no storage-boundary material blockers.
+  - Review flagged stale `origin/main` twice; the branch was rebased onto current `origin/main`, then validation was rerun.
+  - Final conflict resolution preserved main's plugin counter validation tests and this slice's SQLite persistence tests.
+  - Final re-review found no high-confidence material blockers and confirmed the branch was up to date with `origin/main`.

@@ -18,6 +18,7 @@ memory/
 docs/archive/
 scripts/*
 !scripts/check-docs.mjs
+!scripts/check-database-first-legacy-stores.mjs
 !scripts/clean-dist.mjs
 !scripts/release.mjs
 !scripts/run-tui-test.mjs

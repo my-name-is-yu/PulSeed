@@ -7,7 +7,7 @@ export interface ControlDbMigration {
   checksum: string;
 }
 
-export const CONTROL_DB_SCHEMA_VERSION = 8;
+export const CONTROL_DB_SCHEMA_VERSION = 9;
 
 export const CONTROL_DB_INITIAL_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS control_schema_migrations (
@@ -869,6 +869,99 @@ export const CONTROL_DB_KNOWLEDGE_MEMORY_SOIL_SCHEMA_SQL = `
 PRAGMA foreign_keys = ON;
 `.trim();
 
+export const CONTROL_DB_PLUGIN_CHANNEL_RUNTIME_SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS plugin_runtime_states (
+  plugin_name TEXT PRIMARY KEY,
+  status TEXT NOT NULL CHECK (status IN ('loaded', 'error', 'disabled', 'incompatible')),
+  manifest_name TEXT NOT NULL,
+  manifest_version TEXT NOT NULL,
+  manifest_type TEXT NOT NULL,
+  loaded_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  trust_score INTEGER NOT NULL,
+  usage_count INTEGER NOT NULL,
+  success_count INTEGER NOT NULL,
+  failure_count INTEGER NOT NULL,
+  state_json TEXT NOT NULL CHECK (json_valid(state_json))
+);
+
+CREATE INDEX IF NOT EXISTS plugin_runtime_states_status_idx
+  ON plugin_runtime_states(status, updated_at, plugin_name);
+
+CREATE INDEX IF NOT EXISTS plugin_runtime_states_manifest_idx
+  ON plugin_runtime_states(manifest_type, manifest_name, manifest_version);
+
+CREATE TABLE IF NOT EXISTS gateway_channel_health (
+  channel_name TEXT PRIMARY KEY,
+  last_inbound_at TEXT,
+  last_outbound_at TEXT,
+  last_error TEXT,
+  updated_at TEXT NOT NULL,
+  health_json TEXT NOT NULL CHECK (json_valid(health_json))
+);
+
+CREATE INDEX IF NOT EXISTS gateway_channel_health_updated_idx
+  ON gateway_channel_health(updated_at, channel_name);
+
+CREATE TABLE IF NOT EXISTS gateway_channel_bindings (
+  channel_name TEXT PRIMARY KEY,
+  home_target_id TEXT,
+  first_bound_actor_id TEXT,
+  updated_at TEXT NOT NULL,
+  binding_json TEXT NOT NULL CHECK (json_valid(binding_json))
+);
+
+CREATE INDEX IF NOT EXISTS gateway_channel_bindings_home_idx
+  ON gateway_channel_bindings(home_target_id, channel_name);
+
+CREATE TABLE IF NOT EXISTS imported_plugin_compatibility_reports (
+  plugin_dir TEXT PRIMARY KEY,
+  source TEXT NOT NULL,
+  plugin_name TEXT NOT NULL,
+  status TEXT NOT NULL,
+  runtime_loadable INTEGER NOT NULL CHECK (runtime_loadable IN (0, 1)),
+  report_ref TEXT NOT NULL,
+  recorded_at TEXT NOT NULL,
+  report_json TEXT NOT NULL CHECK (json_valid(report_json))
+);
+
+CREATE INDEX IF NOT EXISTS imported_plugin_compatibility_status_idx
+  ON imported_plugin_compatibility_reports(status, recorded_at, plugin_dir);
+
+CREATE TABLE IF NOT EXISTS imported_plugin_review_records (
+  plugin_dir TEXT PRIMARY KEY,
+  plugin_name TEXT NOT NULL,
+  status TEXT NOT NULL,
+  report_ref TEXT NOT NULL,
+  review_ref TEXT NOT NULL,
+  runtime_loadable INTEGER NOT NULL CHECK (runtime_loadable IN (0, 1)),
+  load_authority TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  reviewed_at TEXT,
+  review_json TEXT NOT NULL CHECK (json_valid(review_json)),
+  FOREIGN KEY (plugin_dir) REFERENCES imported_plugin_compatibility_reports(plugin_dir) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS imported_plugin_review_status_idx
+  ON imported_plugin_review_records(status, created_at, plugin_dir);
+
+CREATE TABLE IF NOT EXISTS runtime_asset_records (
+  asset_id TEXT PRIMARY KEY,
+  kind TEXT NOT NULL,
+  status TEXT NOT NULL,
+  source_agent TEXT NOT NULL,
+  imported_path TEXT,
+  updated_at TEXT NOT NULL,
+  asset_json TEXT NOT NULL CHECK (json_valid(asset_json))
+);
+
+CREATE INDEX IF NOT EXISTS runtime_asset_records_kind_idx
+  ON runtime_asset_records(kind, status, updated_at, asset_id);
+
+CREATE INDEX IF NOT EXISTS runtime_asset_records_source_idx
+  ON runtime_asset_records(source_agent, updated_at, asset_id);
+`.trim();
+
 export function controlDbMigrationChecksum(sql: string): string {
   return createHash("sha256").update(sql.trim()).digest("hex");
 }
@@ -926,5 +1019,10 @@ export const CONTROL_DB_MIGRATIONS: readonly ControlDbMigration[] = [
     8,
     "knowledge-memory-soil-state",
     CONTROL_DB_KNOWLEDGE_MEMORY_SOIL_SCHEMA_SQL
+  ),
+  createControlDbMigration(
+    9,
+    "plugin-channel-runtime-state",
+    CONTROL_DB_PLUGIN_CHANNEL_RUNTIME_SCHEMA_SQL
   ),
 ];

@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { dispatchGatewayChatInput } from "../chat-session-dispatch.js";
 import { TelegramGatewayAdapter } from "../telegram-gateway-adapter.js";
 import { ChatRunnerEventBridge } from "../../../interface/chat/chat-runner-event-bridge.js";
+import { PluginChannelRuntimeStateStore } from "../../store/plugin-channel-runtime-state-store.js";
 import type { AgentLoopEvent } from "../../../orchestrator/execution/agent-loop/agent-loop-events.js";
 
 vi.mock("../chat-session-dispatch.js", () => ({
@@ -598,11 +599,22 @@ describe("TelegramGatewayAdapter", () => {
     await vi.waitFor(async () => {
       const config = JSON.parse(await fs.readFile(path.join(configDir, "config.json"), "utf-8")) as Record<string, unknown>;
       expect(config).toMatchObject({
-        chat_id: 314,
-        allowed_user_ids: [42],
+        allowed_user_ids: [],
         runtime_control_allowed_user_ids: [],
         allow_all: false,
       });
+      expect(config["chat_id"]).toBeUndefined();
+      const store = new PluginChannelRuntimeStateStore(configDir);
+      const channelName = path.basename(configDir);
+      await expect(store.loadChannelBinding(channelName)).resolves.toMatchObject({
+        home_target_id: "314",
+        first_bound_actor_id: "42",
+      });
+      await expect(store.loadChannelHealth(channelName)).resolves.toMatchObject({
+        last_outbound_at: expect.any(String),
+        last_error: null,
+      });
+      await expect(fs.access(path.join(configDir, "health.json"))).rejects.toThrow();
     });
     expect(dispatchGatewayChatInput).not.toHaveBeenCalled();
     expect(sentMessages[0]).toContain("Runtime control still requires its own allow list.");

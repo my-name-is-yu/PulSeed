@@ -14,6 +14,7 @@ import { RuntimeEvidenceLedger } from "../../../runtime/store/evidence-ledger.js
 import { RuntimeExperimentQueueStore } from "../../../runtime/store/experiment-queue-store.js";
 import { RuntimeBudgetStore } from "../../../runtime/store/budget-store.js";
 import { RuntimeHealthStore } from "../../../runtime/store/health-store.js";
+import { PluginChannelRuntimeStateStore } from "../../../runtime/store/plugin-channel-runtime-state-store.js";
 import { SupervisorStateStore } from "../../../runtime/store/supervisor-state-store.js";
 import * as daemonClient from "../../../runtime/daemon/client.js";
 import { ChatSessionDataStore } from "../../chat/chat-session-data-store.js";
@@ -150,7 +151,7 @@ describe("runtime registry CLI commands", () => {
       polling_timeout: 20,
       identity_key: "personal",
     });
-    await stateManager.writeRaw("gateway/channels/telegram-bot/health.json", {
+    await new PluginChannelRuntimeStateStore(tmpDir).saveChannelHealth("telegram-bot", {
       last_inbound_at: "2026-05-03T00:01:00.000Z",
       last_outbound_at: "2026-05-03T00:02:00.000Z",
       last_error: null,

@@ -1,7 +1,9 @@
 import * as fs from "node:fs";
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
+import { createHash } from "node:crypto";
 import yaml from "js-yaml";
+import { PluginChannelRuntimeStateStore } from "../store/plugin-channel-runtime-state-store.js";
 import type {
   CompatibilityReviewRecord,
   ForeignPluginAdapterRequirement,
@@ -17,7 +19,6 @@ import {
   CompatibilityReviewRecordSchema,
   ForeignPluginCompatibilityReportSchema,
 } from "./types.js";
-import { readJsonFileOrNull, writeJsonFileAtomic } from "../../base/utils/json-io.js";
 
 const MANIFEST_FILENAMES = ["plugin.yaml", "plugin.json"] as const;
 export const FOREIGN_PLUGIN_COMPATIBILITY_REPORT_FILENAME = "pulseed-foreign-plugin-compatibility.json";
@@ -375,34 +376,48 @@ export async function writeForeignPluginCompatibilityArtifacts(
   reviewRecord: CompatibilityReviewRecord;
 }> {
   await fsp.mkdir(pluginDir, { recursive: true });
-  const reportPath = path.join(pluginDir, FOREIGN_PLUGIN_COMPATIBILITY_REPORT_FILENAME);
-  const reviewRecordPath = path.join(pluginDir, FOREIGN_PLUGIN_REVIEW_RECORD_FILENAME);
   const parsedReport = ForeignPluginCompatibilityReportSchema.parse(report);
-  await writeJsonFileAtomic(reportPath, parsedReport);
+  const reportRef = foreignPluginRuntimeRef("foreign-plugin-compatibility", pluginDir);
   const reviewRecord = CompatibilityReviewRecordSchema.parse(createPendingCompatibilityReviewRecord(parsedReport, {
-    reportRef: reportPath,
+    reportRef,
     createdAt: options.createdAt,
   }));
-  await writeJsonFileAtomic(reviewRecordPath, reviewRecord);
-  return { reportPath, reviewRecordPath, reviewRecord };
+  const artifact = await foreignPluginRuntimeStore(pluginDir).saveForeignPluginCompatibility(
+    pluginDir,
+    parsedReport,
+    reviewRecord,
+  );
+  return {
+    reportPath: artifact.reportRef,
+    reviewRecordPath: artifact.reviewRecordRef,
+    reviewRecord: artifact.reviewRecord,
+  };
 }
 
 export async function hasForeignPluginCompatibilityArtifact(pluginDir: string): Promise<boolean> {
-  try {
-    await fsp.access(path.join(pluginDir, FOREIGN_PLUGIN_COMPATIBILITY_REPORT_FILENAME));
-    return true;
-  } catch {
-    return false;
-  }
+  return foreignPluginRuntimeStore(pluginDir).hasForeignPluginCompatibility(pluginDir);
 }
 
 export async function readForeignPluginCompatibilityArtifact(
   pluginDir: string
 ): Promise<ForeignPluginCompatibilityReport | null> {
-  const raw = await readJsonFileOrNull<unknown>(
-    path.join(pluginDir, FOREIGN_PLUGIN_COMPATIBILITY_REPORT_FILENAME)
-  );
-  if (raw === null) return null;
-  const parsed = ForeignPluginCompatibilityReportSchema.safeParse(raw);
-  return parsed.success ? parsed.data : null;
+  return foreignPluginRuntimeStore(pluginDir).loadForeignPluginCompatibility(pluginDir);
+}
+
+function foreignPluginRuntimeStore(pluginDir: string): PluginChannelRuntimeStateStore {
+  return new PluginChannelRuntimeStateStore(inferForeignPluginBaseDir(pluginDir));
+}
+
+function foreignPluginRuntimeRef(kind: string, pluginDir: string): string {
+  const digest = createHash("sha256").update(path.resolve(pluginDir), "utf8").digest("hex").slice(0, 24);
+  return `sqlite://pulseed-control/${kind}/${digest}`;
+}
+
+function inferForeignPluginBaseDir(pluginDir: string): string {
+  const parts = path.resolve(pluginDir).split(path.sep);
+  for (const marker of ["plugins-imported-disabled", "plugins"]) {
+    const index = parts.lastIndexOf(marker);
+    if (index > 0) return parts.slice(0, index).join(path.sep) || path.sep;
+  }
+  return path.resolve(pluginDir);
 }

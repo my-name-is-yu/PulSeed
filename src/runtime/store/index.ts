@@ -20,7 +20,9 @@ export {
   CONTROL_DB_CHAT_AGENTLOOP_SESSION_SCHEMA_SQL,
   CONTROL_DB_GOAL_TASK_DURABLE_LOOP_SCHEMA_SQL,
   CONTROL_DB_INITIAL_SCHEMA_SQL,
+  CONTROL_DB_KNOWLEDGE_MEMORY_SOIL_SCHEMA_SQL,
   CONTROL_DB_MIGRATIONS,
+  CONTROL_DB_PLUGIN_CHANNEL_RUNTIME_SCHEMA_SQL,
   CONTROL_DB_QUEUE_DAEMON_SCHEDULE_SCHEMA_SQL,
   CONTROL_DB_RUNTIME_EVIDENCE_STRATEGY_DREAM_SCHEMA_SQL,
   CONTROL_DB_RUNTIME_CONTROL_SCHEMA_SQL,
@@ -534,3 +536,16 @@ export type {
   ImportLegacyRuntimeControlStoresInput,
   ImportLegacyRuntimeControlStoresResult,
 } from "./runtime-control-store-migration.js";
+export { PluginChannelRuntimeStateStore } from "./plugin-channel-runtime-state-store.js";
+export type {
+  GatewayChannelBinding,
+  GatewayChannelHealth,
+  ImportedPluginCompatibilityArtifact,
+  PluginChannelRuntimeStateStoreOptions,
+} from "./plugin-channel-runtime-state-store.js";
+export {
+  importLegacyPluginChannelRuntimeState,
+} from "./plugin-channel-runtime-state-migration.js";
+export type {
+  PluginChannelRuntimeLegacyImportReport,
+} from "./plugin-channel-runtime-state-migration.js";

@@ -1,39 +1,36 @@
-import * as path from "node:path";
 import { getPulseedDirPath } from "../../base/utils/paths.js";
-import { readJsonFileOrNull, writeJsonFileAtomic } from "../../base/utils/json-io.js";
+import { PluginChannelRuntimeStateStore } from "../store/plugin-channel-runtime-state-store.js";
 import {
-  AssetRegistryFileSchema,
   createAssetRecord,
   toAssetView,
   type AssetRecord,
   type AssetRecordInput,
-  type AssetRegistryFile,
   type AssetView,
 } from "./types.js";
 
 export interface AssetRegistryOptions {
   baseDir?: string;
-  filePath?: string;
+  runtimeStateStore?: PluginChannelRuntimeStateStore;
 }
 
 export class AssetRegistry {
-  private readonly filePath: string;
+  private readonly store: PluginChannelRuntimeStateStore;
 
   constructor(options: AssetRegistryOptions = {}) {
     const baseDir = options.baseDir ?? getPulseedDirPath();
-    this.filePath = options.filePath ?? path.join(baseDir, "runtime", "assets", "registry.json");
+    this.store = options.runtimeStateStore ?? new PluginChannelRuntimeStateStore(baseDir);
   }
 
   async list(): Promise<AssetView[]> {
-    const registry = await this.loadFile();
-    return registry.assets
+    const assets = await this.store.loadAssetRecords();
+    return assets
       .map((asset) => toAssetView(asset))
       .sort((a, b) => a.id.localeCompare(b.id));
   }
 
   async get(id: string): Promise<AssetView | null> {
-    const registry = await this.loadFile();
-    const asset = registry.assets.find((candidate) => candidate.id === id);
+    const assets = await this.store.loadAssetRecords();
+    const asset = assets.find((candidate) => candidate.id === id);
     return asset ? toAssetView(asset) : null;
   }
 
@@ -52,9 +49,9 @@ export class AssetRegistry {
 
   async recordMany(inputs: AssetRecordInput[]): Promise<AssetView[]> {
     if (inputs.length === 0) return [];
-    const current = await this.loadFile();
+    const current = await this.store.loadAssetRecords();
     const now = new Date().toISOString();
-    const byId = new Map(current.assets.map((asset) => [asset.id, asset]));
+    const byId = new Map(current.map((asset) => [asset.id, asset]));
     const written: AssetRecord[] = [];
 
     for (const input of inputs) {
@@ -75,25 +72,8 @@ export class AssetRegistry {
       written.push(record);
     }
 
-    const next: AssetRegistryFile = AssetRegistryFileSchema.parse({
-      version: 1,
-      updated_at: now,
-      assets: [...byId.values()].sort((a, b) => a.id.localeCompare(b.id)),
-    });
-    await writeJsonFileAtomic(this.filePath, next);
+    await this.store.saveAssetRecords([...byId.values()].sort((a, b) => a.id.localeCompare(b.id)));
     return written.map((record) => toAssetView(record));
-  }
-
-  private async loadFile(): Promise<AssetRegistryFile> {
-    const raw = await readJsonFileOrNull<unknown>(this.filePath);
-    if (raw === null) {
-      return {
-        version: 1,
-        updated_at: new Date().toISOString(),
-        assets: [],
-      };
-    }
-    return AssetRegistryFileSchema.parse(raw);
   }
 }
 

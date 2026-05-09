@@ -44,6 +44,7 @@ The design index is a pointer into background material, not a replacement for th
 - [Relationship Memory And Surface](core/relationship-memory-surface.md)
 - [Attention Metabolism And Initiative](core/attention-metabolism-initiative.md)
 - [Runtime Control Plane](infrastructure/runtime-control-plane.md)
+- [Database-First State Ownership](infrastructure/database-first-state-ownership.md)
 - [Companion Capability Runtime](infrastructure/companion-capability-runtime.md)
 - [Companion Capability Runtime Gap Audit](infrastructure/companion-capability-runtime-gap-audit.md)
 - [Codex-Like User Interaction Contract](execution/codex-like-interaction-contract.md)

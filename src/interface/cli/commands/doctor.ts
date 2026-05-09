@@ -23,6 +23,7 @@ import {
   inspectControlDatabase,
   importLegacyGoalTaskDurableLoopState,
   importLegacyKnowledgeMemoryState,
+  importLegacyPluginChannelRuntimeState,
   importLegacyQueueDaemonScheduleState,
   importLegacyRuntimeEvidenceStrategyDreamState,
   type RuntimeHealthKpi,
@@ -756,6 +757,7 @@ export async function cmdDoctor(_args: string[]): Promise<number> {
     const goalTaskImportReport = await importLegacyGoalTaskDurableLoopState(baseDir);
     const evidenceStrategyDreamImportReport = await importLegacyRuntimeEvidenceStrategyDreamState(baseDir, { runtimeRoot });
     const knowledgeMemoryImportReport = await importLegacyKnowledgeMemoryState(baseDir);
+    const pluginChannelImportReport = await importLegacyPluginChannelRuntimeState(baseDir);
     const migratedLegacyCronTasks = await migrateLegacyCronTasksIfNeeded({
       baseDir,
       logger: repairLogger,
@@ -786,6 +788,9 @@ export async function cmdDoctor(_args: string[]): Promise<number> {
     );
     console.log(
       `Repair knowledge/memory import: domain=${knowledgeMemoryImportReport.domainKnowledge}, shared=${knowledgeMemoryImportReport.sharedKnowledgeEntries}, agent memory=${knowledgeMemoryImportReport.agentMemoryEntries}, corrections=${knowledgeMemoryImportReport.agentMemoryCorrections}, blocked=${knowledgeMemoryImportReport.blockedSources.length}`
+    );
+    console.log(
+      `Repair plugin/channel import: plugin states=${pluginChannelImportReport.pluginStates}, channel health=${pluginChannelImportReport.channelHealth}, imported plugin reviews=${pluginChannelImportReport.importedPluginReviews}, assets=${pluginChannelImportReport.assetRecords}, blocked=${pluginChannelImportReport.blockedSources.length}`
     );
   }
 

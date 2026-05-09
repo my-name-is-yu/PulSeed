@@ -3,11 +3,11 @@ import * as path from "node:path";
 import type { ChannelAdapter, EnvelopeHandler, TypingIndicatorCapability } from "./channel-adapter.js";
 import { dispatchGatewayChatInput } from "./chat-session-dispatch.js";
 import { formatTelegramNotification, supportsCoreGatewayNotification } from "./core-channel-notification.js";
-import { writeJsonFileAtomic } from "../../base/utils/json-io.js";
 import { buildChannelPolicyMetadata, buildExternalSurfaceDecision, evaluateChannelAccess, resolveChannelRoute } from "./channel-policy.js";
 import { createRefreshingTypingIndicator, withTypingIndicator } from "./typing-indicator.js";
 import { TELEGRAM_GATEWAY_DISPLAY_CONTRACT, createGatewayDisplayPolicy } from "./channel-display-policy.js";
 import { NonTuiDisplayProjector, type NonTuiDisplayMessageRef, type NonTuiDisplayTransport } from "./non-tui-display-projector.js";
+import { PluginChannelRuntimeStateStore } from "../store/plugin-channel-runtime-state-store.js";
 import type { INotifier, NotificationEvent, NotificationEventType } from "../../base/types/plugin.js";
 import type { ChatEvent } from "../../interface/chat/chat-events.js";
 
@@ -47,6 +47,11 @@ export interface TelegramGatewayConfig {
   identity_key?: string;
 }
 
+interface TelegramGatewayRuntimeOptions {
+  channelName?: string;
+  runtimeStateStore?: PluginChannelRuntimeStateStore;
+}
+
 export class TelegramGatewayNotifier implements INotifier {
   readonly name = "telegram-bot";
 
@@ -76,7 +81,8 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
   private handler: EnvelopeHandler | null = null;
   private readonly api: TelegramAPI;
   private readonly config: TelegramGatewayConfig;
-  private readonly pluginDir: string;
+  private readonly channelName: string;
+  private readonly runtimeStateStore: PluginChannelRuntimeStateStore;
   private readonly homeChatStore: TelegramHomeChatStore;
   private readonly notifier: TelegramGatewayNotifier;
   private running = false;
@@ -84,9 +90,10 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
   private handlingUpdate = false;
   private offset = 0;
 
-  constructor(pluginDir: string, config: TelegramGatewayConfig) {
-    this.pluginDir = pluginDir;
+  constructor(pluginDir: string, config: TelegramGatewayConfig, options: TelegramGatewayRuntimeOptions = {}) {
     this.config = config;
+    this.channelName = options.channelName ?? inferGatewayChannelName(pluginDir);
+    this.runtimeStateStore = options.runtimeStateStore ?? new PluginChannelRuntimeStateStore(inferGatewayRuntimeBaseDir(pluginDir));
     this.api = new TelegramAPI(config.bot_token);
     this.typingIndicator = createRefreshingTypingIndicator({
       intervalMs: 4_000,
@@ -97,12 +104,15 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
       },
       onError: (err) => console.warn("TelegramGatewayAdapter: typing indicator failed", err),
     });
-    this.homeChatStore = new TelegramHomeChatStore(pluginDir, config.chat_id);
+    this.homeChatStore = new TelegramHomeChatStore(this.channelName, this.runtimeStateStore, config.chat_id);
     this.notifier = new TelegramGatewayNotifier(this.api, this.homeChatStore);
   }
 
   static fromConfigDir(configDir: string): TelegramGatewayAdapter {
-    return new TelegramGatewayAdapter(configDir, loadTelegramGatewayConfig(configDir));
+    return new TelegramGatewayAdapter(configDir, loadTelegramGatewayConfig(configDir), {
+      channelName: inferGatewayChannelName(configDir),
+      runtimeStateStore: new PluginChannelRuntimeStateStore(inferGatewayRuntimeBaseDir(configDir)),
+    });
   }
 
   getNotifier(): INotifier {
@@ -115,6 +125,7 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
 
   async start(): Promise<void> {
     if (this.running) return;
+    await this.homeChatStore.load();
     await this.api.getMe();
     this.running = true;
     this.loopPromise = this.loop().catch(() => undefined);
@@ -150,7 +161,7 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
               await this.processMessage(msg.text, fromId, chatId, msg.message_id);
               continue;
             }
-            if (!this.config.allow_all && !this.config.allowed_user_ids.includes(fromId)) continue;
+            if (!this.config.allow_all && !this.effectiveAllowedUserIds().includes(fromId)) continue;
             await this.recordHealth({ last_inbound_at: new Date().toISOString(), last_error: null });
             await this.processMessage(msg.text, fromId, chatId, msg.message_id);
           } finally {
@@ -170,10 +181,8 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
   private async processMessage(text: string, fromUserId: number, chatId: number, messageId: number): Promise<void> {
     const normalized = text.trim().toLowerCase();
     if (normalized === "/sethome" || normalized.startsWith("/sethome@")) {
-      const firstBinding = this.config.allowed_user_ids.length === 0 && this.config.chat_id === undefined && !this.config.allow_all;
+      const firstBinding = this.config.allowed_user_ids.length === 0 && this.homeChatStore.get() === undefined && !this.config.allow_all;
       await this.homeChatStore.set(chatId, firstBinding ? fromUserId : undefined);
-      this.config.chat_id = chatId;
-      if (firstBinding) this.config.allowed_user_ids.push(fromUserId);
       await this.api.sendPlainMessage(
         chatId,
         firstBinding
@@ -202,7 +211,7 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
     );
     const access = evaluateChannelAccess(
       {
-        allowedSenderIds: this.config.allow_all ? undefined : this.config.allowed_user_ids.map(String),
+        allowedSenderIds: this.config.allow_all ? undefined : this.effectiveAllowedUserIds().map(String),
         deniedSenderIds: this.config.denied_user_ids.map(String),
         allowedConversationIds: this.config.allowed_chat_ids.map(String),
         deniedConversationIds: this.config.denied_chat_ids.map(String),
@@ -252,24 +261,19 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
     const normalized = text.trim().toLowerCase();
     return (normalized === "/sethome" || normalized.startsWith("/sethome@"))
       && !this.config.allow_all
-      && this.config.chat_id === undefined
+      && this.homeChatStore.get() === undefined
       && this.config.allowed_user_ids.length === 0
       && !this.config.denied_user_ids.includes(fromUserId);
   }
 
   private async recordHealth(update: Partial<{ last_inbound_at: string; last_outbound_at: string; last_error: string | null }>): Promise<void> {
-    const healthPath = path.join(this.pluginDir, "health.json");
-    let current: Record<string, unknown> = {};
-    try {
-      current = JSON.parse(fs.readFileSync(healthPath, "utf-8")) as Record<string, unknown>;
-    } catch {
-      current = {};
-    }
-    await writeJsonFileAtomic(healthPath, {
-      ...current,
-      ...update,
-      updated_at: new Date().toISOString(),
-    });
+    await this.runtimeStateStore.saveChannelHealth(this.channelName, update);
+  }
+
+  private effectiveAllowedUserIds(): number[] {
+    if (this.config.allowed_user_ids.length > 0) return this.config.allowed_user_ids;
+    const firstBoundUserId = this.homeChatStore.getFirstBoundUserId();
+    return firstBoundUserId !== undefined ? [firstBoundUserId] : [];
   }
 }
 
@@ -381,34 +385,46 @@ class TelegramAPI {
 }
 
 class TelegramHomeChatStore {
-  private readonly configPath: string;
   private chatId: number | undefined;
+  private firstBoundUserId: number | undefined;
 
-  constructor(pluginDir: string, initialChatId?: number) {
-    this.configPath = path.join(pluginDir, "config.json");
+  constructor(
+    private readonly channelName: string,
+    private readonly runtimeStateStore: PluginChannelRuntimeStateStore,
+    private readonly initialChatId?: number
+  ) {
     this.chatId = initialChatId;
+  }
+
+  async load(): Promise<void> {
+    const binding = await this.runtimeStateStore.loadChannelBinding(this.channelName);
+    if (binding?.home_target_id !== null && binding?.home_target_id !== undefined) {
+      const parsedChatId = parseTelegramIntegerId(binding.home_target_id);
+      if (parsedChatId !== null) this.chatId = parsedChatId;
+    } else {
+      this.chatId = this.initialChatId;
+    }
+    if (binding?.first_bound_actor_id !== null && binding?.first_bound_actor_id !== undefined) {
+      const parsedUserId = parseTelegramIntegerId(binding.first_bound_actor_id);
+      if (parsedUserId !== null) this.firstBoundUserId = parsedUserId;
+    }
   }
 
   get(): number | undefined {
     return this.chatId;
   }
 
+  getFirstBoundUserId(): number | undefined {
+    return this.firstBoundUserId;
+  }
+
   async set(chatId: number, firstAllowedUserId?: number): Promise<void> {
     this.chatId = chatId;
-    let current: Record<string, unknown> = {};
-    try {
-      current = JSON.parse(fs.readFileSync(this.configPath, "utf-8")) as Record<string, unknown>;
-    } catch {
-      current = {};
-    }
-    current["chat_id"] = chatId;
-    if (firstAllowedUserId !== undefined && !Array.isArray(current["allowed_user_ids"])) {
-      current["allowed_user_ids"] = [firstAllowedUserId];
-    } else if (firstAllowedUserId !== undefined) {
-      const ids = current["allowed_user_ids"] as unknown[];
-      if (!ids.includes(firstAllowedUserId)) current["allowed_user_ids"] = [...ids, firstAllowedUserId];
-    }
-    await writeJsonFileAtomic(this.configPath, current);
+    if (firstAllowedUserId !== undefined) this.firstBoundUserId = firstAllowedUserId;
+    await this.runtimeStateStore.saveChannelBinding(this.channelName, {
+      home_target_id: String(chatId),
+      first_bound_actor_id: firstAllowedUserId !== undefined ? String(firstAllowedUserId) : undefined,
+    });
   }
 }
 
@@ -539,6 +555,19 @@ function loadTelegramGatewayConfig(pluginDir: string): TelegramGatewayConfig {
     polling_timeout: pollingTimeout as number,
     identity_key: raw["identity_key"] as string | undefined,
   };
+}
+
+function inferGatewayChannelName(configDir: string): string {
+  return path.basename(path.resolve(configDir));
+}
+
+function inferGatewayRuntimeBaseDir(configDir: string): string {
+  const parts = path.resolve(configDir).split(path.sep);
+  const gatewayIndex = parts.lastIndexOf("gateway");
+  if (gatewayIndex > 0 && parts[gatewayIndex + 1] === "channels") {
+    return parts.slice(0, gatewayIndex).join(path.sep) || path.sep;
+  }
+  return path.resolve(configDir);
 }
 
 function splitMessage(text: string, maxLen: number): string[] {
