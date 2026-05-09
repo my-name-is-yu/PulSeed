@@ -9,7 +9,6 @@ import type { TransferCandidate } from "../../base/types/cross-portfolio.js";
 import type { Goal } from "../../base/types/goal.js";
 import {
   CuriosityStateSchema,
-  CuriosityTriggerSchema,
   CuriosityProposalSchema,
   CuriosityConfigSchema,
   LearningRecordSchema,
@@ -22,9 +21,7 @@ import type {
   LearningRecord,
 } from "../../base/types/curiosity.js";
 import {
-  buildProposalPrompt,
   computeProposalHash,
-  isInRejectionCooldown,
   generateProposals as generateProposalsImpl,
 } from "./curiosity-proposals.js";
 import {
@@ -32,6 +29,10 @@ import {
   detectKnowledgeTransferOpportunities as detectKnowledgeTransferOpportunitiesImpl,
 } from "./curiosity-transfer.js";
 import type { SemanticTransferEvidence } from "./curiosity-transfer.js";
+import {
+  evaluateCuriosityTriggers,
+  shouldExploreForCuriosity,
+} from "./curiosity-triggers.js";
 
 // ─── Constants ───
 
@@ -138,186 +139,6 @@ export class CuriosityEngine {
     await this.stateManager.writeRaw(CURIOSITY_STATE_PATH, parsed);
   }
 
-  // ─── Trigger Helpers ───
-
-  /**
-   * 2.1: All active user goals are completed or waiting.
-   */
-  private checkTaskQueueEmpty(goals: Goal[]): CuriosityTrigger | null {
-    const userGoals = goals.filter(
-      (g) => g.origin !== "curiosity" || g.origin === null
-    );
-
-    if (userGoals.length === 0) return null;
-
-    const allInactive = userGoals.every(
-      (g) => g.status === "completed" || g.status === "waiting"
-    );
-
-    if (!allInactive) return null;
-
-    return CuriosityTriggerSchema.parse({
-      type: "task_queue_empty",
-      detected_at: new Date().toISOString(),
-      source_goal_id: null,
-      details: `All ${userGoals.length} user goal(s) are completed or waiting. Entering curiosity mode.`,
-      severity: 0.8,
-    });
-  }
-
-  /**
-   * 2.2: Unexpected observation — a dimension's value deviates significantly
-   * from its historical mean (> threshold * stddev).
-   */
-  private checkUnexpectedObservation(goals: Goal[]): CuriosityTrigger | null {
-    const threshold = this.config.unexpected_observation_threshold;
-
-    for (const goal of goals) {
-      if (goal.status !== "active") continue;
-
-      for (const dim of goal.dimensions) {
-        const history = dim.history;
-        if (history.length < 4) continue; // need enough data
-
-        // Compute mean and stddev of numeric history values
-        const numericValues = history
-          .map((h) => (typeof h.value === "number" ? h.value : null))
-          .filter((v): v is number => v !== null);
-
-        if (numericValues.length < 4) continue;
-
-        const mean =
-          numericValues.reduce((a, b) => a + b, 0) / numericValues.length;
-        const variance =
-          numericValues.reduce((a, b) => a + (b - mean) ** 2, 0) /
-          numericValues.length;
-        const stddev = Math.sqrt(variance);
-
-        if (stddev === 0) continue;
-
-        const currentValue = dim.current_value;
-        if (typeof currentValue !== "number") continue;
-
-        const deviation = Math.abs(currentValue - mean);
-        if (deviation > threshold * stddev) {
-          return CuriosityTriggerSchema.parse({
-            type: "unexpected_observation",
-            detected_at: new Date().toISOString(),
-            source_goal_id: goal.id,
-            details: `Dimension "${dim.name}" in goal "${goal.id}" deviated ${deviation.toFixed(2)} from mean ${mean.toFixed(2)} (stddev=${stddev.toFixed(2)}, threshold=${threshold}σ).`,
-            severity: Math.min(1.0, deviation / (stddev * threshold * 2)),
-          });
-        }
-      }
-    }
-
-    return null;
-  }
-
-  /**
-   * 2.3: Repeated domain failures — StallDetector reports consecutive_failure
-   * or global_stall for any active user goal.
-   */
-  private async checkRepeatedFailures(goals: Goal[]): Promise<CuriosityTrigger | null> {
-    const activeUserGoals = goals.filter(
-      (g) => g.status === "active" && g.origin !== "curiosity"
-    );
-
-    for (const goal of activeUserGoals) {
-      const stallState = await this.stallDetector.getStallState(goal.id);
-
-      // Check dimension-level escalation: any dimension with escalation_level > 0
-      // that was caused by consecutive failures
-      const hasConsecutiveFailure = Object.entries(
-        stallState.dimension_escalation
-      ).some(([, level]) => level > 0);
-
-      if (hasConsecutiveFailure) {
-        const stalledDims = Object.entries(stallState.dimension_escalation)
-          .filter(([, level]) => level > 0)
-          .map(([dim]) => dim);
-
-        return CuriosityTriggerSchema.parse({
-          type: "repeated_failure",
-          detected_at: new Date().toISOString(),
-          source_goal_id: goal.id,
-          details: `Goal "${goal.id}" has escalated stall on dimension(s): ${stalledDims.join(", ")}. Task-level approaches are failing; goal structure may need revision.`,
-          severity: 0.7,
-        });
-      }
-    }
-
-    return null;
-  }
-
-  /**
-   * 2.4: Goal Reviewer found undefined problems — dimensions with very low
-   * observation confidence indicate unmapped important problems.
-   */
-  private checkUndefinedProblems(goals: Goal[]): CuriosityTrigger | null {
-    const activeGoals = goals.filter((g) => g.status === "active");
-
-    for (const goal of activeGoals) {
-      // Look for dimensions with extremely low confidence (< 0.3)
-      // that represent important but poorly understood aspects
-      const lowConfidenceDims = goal.dimensions.filter(
-        (d) => d.confidence < 0.3
-      );
-
-      if (lowConfidenceDims.length > 0 && goal.dimensions.length > 0) {
-        const ratio = lowConfidenceDims.length / goal.dimensions.length;
-        // Trigger only when more than half the dimensions are poorly observed
-        if (ratio >= 0.5) {
-          const dimNames = lowConfidenceDims.map((d) => d.name).join(", ");
-          return CuriosityTriggerSchema.parse({
-            type: "undefined_problem",
-            detected_at: new Date().toISOString(),
-            source_goal_id: goal.id,
-            details: `Goal "${goal.id}" has ${lowConfidenceDims.length} dimension(s) with very low confidence (< 0.3): ${dimNames}. Current goal structure may not cover the real problem space.`,
-            severity: 0.5 + ratio * 0.3,
-          });
-        }
-      }
-    }
-
-    return null;
-  }
-
-  /**
-   * 2.5: Periodic exploration — has it been >= periodic_exploration_hours
-   * since the last exploration trigger?
-   */
-  private checkPeriodicExploration(): CuriosityTrigger | null {
-    const lastExploration = this.state.last_exploration_at;
-    const intervalMs =
-      this.config.periodic_exploration_hours * 60 * 60 * 1000;
-
-    if (lastExploration === null) {
-      // Never explored — trigger immediately
-      return CuriosityTriggerSchema.parse({
-        type: "periodic_exploration",
-        detected_at: new Date().toISOString(),
-        source_goal_id: null,
-        details: `First periodic exploration check. No previous exploration recorded.`,
-        severity: 0.3,
-      });
-    }
-
-    const elapsed = Date.now() - new Date(lastExploration).getTime();
-    if (elapsed >= intervalMs) {
-      const hoursElapsed = (elapsed / (1000 * 60 * 60)).toFixed(1);
-      return CuriosityTriggerSchema.parse({
-        type: "periodic_exploration",
-        detected_at: new Date().toISOString(),
-        source_goal_id: null,
-        details: `${hoursElapsed} hours since last exploration (threshold: ${this.config.periodic_exploration_hours}h). Periodic curiosity check.`,
-        severity: 0.3,
-      });
-    }
-
-    return null;
-  }
-
   // ─── Public API ───
 
   /**
@@ -327,25 +148,11 @@ export class CuriosityEngine {
   async evaluateTriggers(goals: Goal[]): Promise<CuriosityTrigger[]> {
     if (!this.config.enabled) return [];
     await this.ensureStateLoaded();
-
-    const triggers: CuriosityTrigger[] = [];
-
-    const t1 = this.checkTaskQueueEmpty(goals);
-    if (t1) triggers.push(t1);
-
-    const t2 = this.checkUnexpectedObservation(goals);
-    if (t2) triggers.push(t2);
-
-    const t3 = await this.checkRepeatedFailures(goals);
-    if (t3) triggers.push(t3);
-
-    const t4 = this.checkUndefinedProblems(goals);
-    if (t4) triggers.push(t4);
-
-    const t5 = this.checkPeriodicExploration();
-    if (t5) triggers.push(t5);
-
-    return triggers;
+    return evaluateCuriosityTriggers(goals, {
+      config: this.config,
+      stallDetector: this.stallDetector,
+      state: this.state,
+    });
   }
 
   /**
@@ -554,7 +361,7 @@ export class CuriosityEngine {
 
   /**
    * Quick check: are there any triggers that warrant curiosity?
-   * Used by CoreLoop to decide whether to run full evaluateTriggers.
+   * Used by DurableLoop to decide whether to run full evaluateTriggers.
    *
    * Returns true if:
    * - Curiosity is enabled
@@ -564,40 +371,11 @@ export class CuriosityEngine {
   async shouldExplore(goals: Goal[]): Promise<boolean> {
     if (!this.config.enabled) return false;
     await this.ensureStateLoaded();
-
-    // Quick check 1: task queue empty
-    const userGoals = goals.filter((g) => g.origin !== "curiosity");
-    if (
-      userGoals.length > 0 &&
-      userGoals.every(
-        (g) => g.status === "completed" || g.status === "waiting"
-      )
-    ) {
-      return true;
-    }
-
-    // Quick check 2: periodic exploration overdue
-    const lastExploration = this.state.last_exploration_at;
-    if (lastExploration === null) return true;
-    const intervalMs =
-      this.config.periodic_exploration_hours * 60 * 60 * 1000;
-    if (Date.now() - new Date(lastExploration).getTime() >= intervalMs) {
-      return true;
-    }
-
-    // Quick check 3: any active goal has stall state with escalated dimensions
-    const activeGoals = goals.filter(
-      (g) => g.status === "active" && g.origin !== "curiosity"
-    );
-    for (const goal of activeGoals) {
-      const stallState = await this.stallDetector.getStallState(goal.id);
-      const hasEscalated = Object.values(stallState.dimension_escalation).some(
-        (level) => level > 0
-      );
-      if (hasEscalated) return true;
-    }
-
-    return false;
+    return shouldExploreForCuriosity(goals, {
+      config: this.config,
+      stallDetector: this.stallDetector,
+      state: this.state,
+    });
   }
 
   // ─── Phase 2: Embedding-based Detection ───
@@ -674,11 +452,6 @@ export class CuriosityEngine {
   getResourceBudget(goals: Goal[]): number {
     if (!this.config.enabled) return 0;
 
-    const userGoals = goals.filter(
-      (g) => g.origin !== "curiosity" && g.origin !== null
-    );
-
-    // Also treat goals with no origin as user goals
     const allUserGoals = goals.filter((g) => g.origin !== "curiosity");
 
     if (allUserGoals.length === 0) {
@@ -699,7 +472,6 @@ export class CuriosityEngine {
     }
 
     // Some goals are active — limited budget
-    void userGoals; // suppress unused-var warning; variable used above via allUserGoals
     return this.config.resource_budget.active_user_goals_max_percent;
   }
 }
