@@ -5,15 +5,19 @@ import { validateFilePath } from "../FileValidationTool/FileValidationTool.js";
 import { DESCRIPTION } from "./prompt.js";
 import { TAGS, PERMISSION_LEVEL, MAX_OUTPUT_CHARS, READ_ONLY } from "./constants.js";
 
+const GREP_DEFAULT_LIMIT = 250;
+const GREP_MAX_LIMIT = 10_000;
+const GREP_MAX_CONTEXT_LINES = 20;
+
 export const GrepInputSchema = z.object({
   pattern: z.string().min(1),
   path: z.string().optional(),
   glob: z.string().optional(),
   outputMode: z.enum(["content", "files_with_matches", "count"]).default("files_with_matches"),
-  limit: z.number().default(250),
+  limit: z.number().int().min(1).max(GREP_MAX_LIMIT).default(GREP_DEFAULT_LIMIT),
   caseInsensitive: z.boolean().default(false),
   fixedStrings: z.boolean().optional(),
-  context: z.number().optional(),
+  context: z.number().int().min(0).max(GREP_MAX_CONTEXT_LINES).optional(),
 });
 export type GrepInput = z.infer<typeof GrepInputSchema>;
 

@@ -2,7 +2,8 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as os from "node:os";
-import { GlobTool } from "../GlobTool.js";
+import { toToolDefinition } from "../../../tool-definition-adapter.js";
+import { GlobInputSchema, GlobTool } from "../GlobTool.js";
 import type { ToolCallContext } from "../../../types.js";
 
 function makeContext(cwd: string): ToolCallContext {
@@ -103,5 +104,25 @@ describe("GlobTool", () => {
     expect(result.success).toBe(true);
     expect(result.artifacts).toBeDefined();
     expect(result.artifacts!.length).toBe(1);
+  });
+
+  it("rejects invalid numeric limits at runtime schema boundaries", () => {
+    expect(GlobInputSchema.safeParse({ pattern: "**/*.ts", limit: 500 }).success).toBe(true);
+
+    for (const limit of [0, -1, 1.5, Number.POSITIVE_INFINITY, 10_001]) {
+      expect(GlobInputSchema.safeParse({ pattern: "**/*.ts", limit }).success).toBe(false);
+    }
+  });
+
+  it("exports limit bounds to model-facing tool definitions", () => {
+    const parameters = toToolDefinition(tool).function.parameters as {
+      properties?: Record<string, unknown>;
+    };
+
+    expect(parameters.properties?.limit).toMatchObject({
+      type: "integer",
+      minimum: 1,
+      maximum: 10_000,
+    });
   });
 });

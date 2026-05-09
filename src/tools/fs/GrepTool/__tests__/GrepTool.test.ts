@@ -3,7 +3,8 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as os from "node:os";
 import { execFileSync } from "node:child_process";
-import { GrepTool } from "../GrepTool.js";
+import { toToolDefinition } from "../../../tool-definition-adapter.js";
+import { GrepInputSchema, GrepTool } from "../GrepTool.js";
 import type { ToolCallContext } from "../../../types.js";
 
 function makeContext(cwd: string): ToolCallContext {
@@ -180,5 +181,40 @@ describe("GrepTool", () => {
 
   it("isConcurrencySafe returns true", () => {
     expect(tool.isConcurrencySafe({ pattern: "test", outputMode: "files_with_matches", limit: 250, caseInsensitive: false })).toBe(true);
+  });
+
+  it("rejects invalid numeric controls at runtime schema boundaries", () => {
+    expect(GrepInputSchema.safeParse({ pattern: "test", limit: 250, context: 0 }).success).toBe(true);
+
+    for (const input of [
+      { pattern: "test", limit: 0 },
+      { pattern: "test", limit: -1 },
+      { pattern: "test", limit: 1.5 },
+      { pattern: "test", limit: Number.POSITIVE_INFINITY },
+      { pattern: "test", limit: 10_001 },
+      { pattern: "test", context: -1 },
+      { pattern: "test", context: 1.5 },
+      { pattern: "test", context: Number.POSITIVE_INFINITY },
+      { pattern: "test", context: 21 },
+    ]) {
+      expect(GrepInputSchema.safeParse(input).success).toBe(false);
+    }
+  });
+
+  it("exports numeric schema bounds to model-facing tool definitions", () => {
+    const parameters = toToolDefinition(tool).function.parameters as {
+      properties?: Record<string, unknown>;
+    };
+
+    expect(parameters.properties?.limit).toMatchObject({
+      type: "integer",
+      minimum: 1,
+      maximum: 10_000,
+    });
+    expect(parameters.properties?.context).toMatchObject({
+      type: "integer",
+      minimum: 0,
+      maximum: 20,
+    });
   });
 });

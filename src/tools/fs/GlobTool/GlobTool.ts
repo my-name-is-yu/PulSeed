@@ -6,10 +6,13 @@ import { validateFilePath } from "../FileValidationTool/FileValidationTool.js";
 import { DESCRIPTION_PREFIX, DESCRIPTION_SUFFIX } from "./prompt.js";
 import { TAGS, PERMISSION_LEVEL, MAX_OUTPUT_CHARS, READ_ONLY } from "./constants.js";
 
+const GLOB_DEFAULT_LIMIT = 500;
+const GLOB_MAX_LIMIT = 10_000;
+
 export const GlobInputSchema = z.object({
   pattern: z.string().min(1),
   path: z.string().optional(),
-  limit: z.number().default(500),
+  limit: z.number().int().min(1).max(GLOB_MAX_LIMIT).default(GLOB_DEFAULT_LIMIT),
 });
 export type GlobInput = z.infer<typeof GlobInputSchema>;
 
