@@ -45,6 +45,7 @@ describe("foreign plugin compatibility", () => {
       shell: false,
     });
     expect(report.manifest?.name).toBe("convertible");
+    expect(report.manifest?.entry_point).toBe("dist/index.js");
   });
 
   it("classifies a manifest with elevated permissions as quarantined", () => {
@@ -84,5 +85,24 @@ describe("foreign plugin compatibility", () => {
 
     expect(report.status).toBe("incompatible");
     expect(report.issues.length).toBeGreaterThan(0);
+  });
+
+  it("rejects persisted manifests with invalid capability or entry point contracts", async () => {
+    const pluginDir = path.join(tmpDir, "bad-contract");
+    await writeJson(path.join(pluginDir, "plugin.json"), {
+      name: "bad-contract",
+      version: "1.0.0",
+      type: "notifier",
+      capabilities: ["notify", 123],
+      description: "bad manifest",
+      entry_point: "",
+    });
+
+    const report = analyzeForeignPluginDirectory("openclaw", pluginDir);
+
+    expect(report.status).toBe("incompatible");
+    expect(report.manifest).toBeUndefined();
+    expect(report.issues).toContain("capabilities must be a non-empty array of strings");
+    expect(report.issues).toContain("entry_point must be a non-empty string");
   });
 });
