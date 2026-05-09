@@ -1,10 +1,20 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import * as net from "node:net";
+
+const { execFileSyncMock } = vi.hoisted(() => ({
+  execFileSyncMock: vi.fn(),
+}));
+
+vi.mock("node:child_process", () => ({
+  execFileSync: execFileSyncMock,
+}));
+
 import {
   DEFAULT_PORT,
   MAX_PORT_ATTEMPTS,
   isPortAvailable,
   findAvailablePort,
+  getProcessOnPort,
 } from "../port-utils.js";
 
 // ─── Constants ───
@@ -25,6 +35,12 @@ describe("isPortAvailable", () => {
   it("returns true for a free high port", async () => {
     const available = await isPortAvailable(59999);
     expect(available).toBe(true);
+  });
+
+  it("rejects invalid port values before probing the network", async () => {
+    await expect(isPortAvailable(0)).rejects.toThrow(/Port must be an integer between 1 and 65535/);
+    await expect(isPortAvailable(65_536)).rejects.toThrow(/Port must be an integer between 1 and 65535/);
+    await expect(isPortAvailable(1.5)).rejects.toThrow(/Port must be an integer between 1 and 65535/);
   });
 
   it("returns false when port is already in use", async () => {
@@ -87,6 +103,12 @@ describe("findAvailablePort", () => {
     expect(found).toBeGreaterThan(startPort);
   });
 
+  it("rejects invalid start ports before probing the network", async () => {
+    await expect(findAvailablePort(0)).rejects.toThrow(/startPort must be an integer between 1 and 65535/);
+    await expect(findAvailablePort(65_536)).rejects.toThrow(/startPort must be an integer between 1 and 65535/);
+    await expect(findAvailablePort(1.5)).rejects.toThrow(/startPort must be an integer between 1 and 65535/);
+  });
+
   it("throws when all ports in range are occupied", async () => {
     // Occupy a small contiguous range.  Use OS-assigned ports to avoid
     // cross-test conflicts, then run findAvailablePort against them.
@@ -137,5 +159,45 @@ describe("findAvailablePort", () => {
       const p = await findAvailablePort(DEFAULT_PORT);
       expect(p).toBeGreaterThan(0);
     }
+  });
+});
+
+describe("getProcessOnPort", () => {
+  beforeEach(() => {
+    execFileSyncMock.mockReset();
+  });
+
+  it("rejects invalid ports before process lookup", async () => {
+    await expect(getProcessOnPort(0)).rejects.toThrow(/Port must be an integer between 1 and 65535/);
+    await expect(getProcessOnPort(65_536)).rejects.toThrow(/Port must be an integer between 1 and 65535/);
+    expect(execFileSyncMock).not.toHaveBeenCalled();
+  });
+
+  it("looks up the process name with parsed lsof PID output and argv arrays", async () => {
+    execFileSyncMock.mockImplementation((command: string, args: readonly string[]) => {
+      if (command === "lsof") {
+        expect(args).toEqual(["-i", ":41700", "-sTCP:LISTEN", "-t"]);
+        return "1234\n5678\n";
+      }
+      if (command === "ps") {
+        expect(args).toEqual(["-p", "1234", "-o", "comm="]);
+        return "node\n";
+      }
+      throw new Error(`Unexpected command: ${command}`);
+    });
+
+    await expect(getProcessOnPort(41_700)).resolves.toBe("node");
+    expect(execFileSyncMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not call ps when lsof returns a malformed PID token", async () => {
+    execFileSyncMock.mockImplementation((command: string, args: readonly string[]) => {
+      expect(command).toBe("lsof");
+      expect(args).toEqual(["-i", ":41700", "-sTCP:LISTEN", "-t"]);
+      return "1234abc\n";
+    });
+
+    await expect(getProcessOnPort(41_700)).resolves.toBeNull();
+    expect(execFileSyncMock).toHaveBeenCalledTimes(1);
   });
 });
