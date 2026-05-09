@@ -11,6 +11,7 @@ import { BackgroundRunLedger } from "../../../runtime/store/background-run-store
 import { OutboxStore } from "../../../runtime/store/outbox-store.js";
 import type { ITool, ToolCallContext } from "../../types.js";
 import { toToolDefinition } from "../../tool-definition-adapter.js";
+import { RuntimeDreamReviewInputSchema } from "../runtime-dream-review-tool.js";
 import {
   createRuntimeSessionTools,
   RuntimeRunsObserveInputSchema,
@@ -38,6 +39,7 @@ const RUNTIME_SESSION_TOOL_SCHEMA_CASES: RuntimeSessionToolSchemaCase[] = [
   { name: "sessions_history", schema: RuntimeSessionsHistoryInputSchema, validInput: { session_id: "session-1" } },
   { name: "sessions_read", schema: RuntimeSessionsReadInputSchema, validInput: { session_id: "session-1" } },
   { name: "sessions_children", schema: RuntimeSessionsChildrenInputSchema, validInput: { session_id: "session-1" } },
+  { name: "runtime_dream_review", schema: RuntimeDreamReviewInputSchema, validInput: { run_id: "run-1" } },
   { name: "sessions_spawn", schema: RuntimeSessionsSpawnInputSchema, validInput: { title: "Investigate" } },
   {
     name: "sessions_send",

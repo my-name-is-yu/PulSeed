@@ -16,7 +16,7 @@ import type {
 export const RuntimeDreamReviewInputSchema = z.object({
   run_id: z.string().min(1, "run_id is required"),
   request_guidance_injection: z.boolean().default(false),
-});
+}).strict();
 export type RuntimeDreamReviewInput = z.infer<typeof RuntimeDreamReviewInputSchema>;
 
 export class RuntimeDreamReviewTool implements ITool<RuntimeDreamReviewInput, unknown> {
