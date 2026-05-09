@@ -76,6 +76,16 @@ describe("NotificationDispatcher — constructor", () => {
     });
     expect(dispatcher).toBeDefined();
   });
+
+  it("rejects non-finite batching windows before creating the batcher", () => {
+    expect(() => new NotificationDispatcher({
+      batching: {
+        enabled: true,
+        window_minutes: Infinity,
+        digest_format: "compact",
+      },
+    })).toThrow();
+  });
 });
 
 describe("dispatch() — realtime sink", () => {
