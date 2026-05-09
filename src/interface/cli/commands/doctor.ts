@@ -18,6 +18,7 @@ import {
   RuntimeHealthStore,
   compactRuntimeHealthKpi,
   createRuntimeStorePaths,
+  inspectControlDatabase,
   type RuntimeHealthKpi,
 } from "../../../runtime/store/index.js";
 import { runRuntimeStoreMaintenanceCycle, type RuntimeMaintenanceLogger } from "../../../runtime/daemon/maintenance.js";
@@ -307,6 +308,50 @@ export function checkStateDirectoryPermissions(baseDir?: string): CheckResult {
   } catch {
     return { name: "State permissions", status: "warn", detail: `${displayDir} could not be inspected` };
   }
+}
+
+export function checkControlDatabase(baseDir?: string): CheckResult {
+  const inspection = inspectControlDatabase({ baseDir });
+  const home = process.env["HOME"] ?? "";
+  const displayPath = inspection.dbPath.replace(home, "~");
+
+  if (inspection.status === "missing") {
+    return {
+      name: "Control database",
+      status: "warn",
+      detail: `${displayPath} not initialized; database-backed runtime stores will create it on first use`,
+    };
+  }
+
+  if (inspection.status === "unreadable") {
+    return {
+      name: "Control database",
+      status: "fail",
+      detail: `${displayPath} could not be read${inspection.error ? `: ${inspection.error}` : ""}`,
+    };
+  }
+
+  if (inspection.status === "ahead_of_code") {
+    return {
+      name: "Control database",
+      status: "fail",
+      detail: `${displayPath} schema version ${inspection.schemaVersion ?? "unknown"} is newer than supported version ${inspection.expectedSchemaVersion}`,
+    };
+  }
+
+  if (inspection.status === "pending_migration") {
+    return {
+      name: "Control database",
+      status: "warn",
+      detail: `${displayPath} schema version ${inspection.schemaVersion ?? 0}/${inspection.expectedSchemaVersion}; ${inspection.pendingMigrations.length} migration(s) pending`,
+    };
+  }
+
+  return {
+    name: "Control database",
+    status: "pass",
+    detail: `${displayPath} schema version ${inspection.schemaVersion}/${inspection.expectedSchemaVersion}; ${inspection.appliedMigrations.length} migration(s), ${inspection.legacyImportCount ?? 0} legacy import record(s)`,
+  };
 }
 
 export function checkProviderConfigPermissions(baseDir?: string): CheckResult {
@@ -713,6 +758,7 @@ export async function cmdDoctor(_args: string[]): Promise<number> {
     await checkApiKey(baseDir),
     await checkEmbeddingAuth(baseDir),
     checkStateDirectoryPermissions(baseDir),
+    checkControlDatabase(baseDir),
     checkProviderConfigPermissions(baseDir),
     checkPluginPermissionWarnings(baseDir),
     checkGoals(baseDir),

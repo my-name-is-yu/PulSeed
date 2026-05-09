@@ -30,6 +30,14 @@ export function getEventsDir(base?: string): string {
   return path.join(base ?? getPulseedDirPath(), "events");
 }
 
+export function getStateDir(base?: string): string {
+  return path.join(base ?? getPulseedDirPath(), "state");
+}
+
+export function getControlDatabasePath(base?: string): string {
+  return path.join(getStateDir(base), "pulseed-control.sqlite");
+}
+
 export function getArchiveDir(base?: string): string {
   return path.join(base ?? getPulseedDirPath(), "archive");
 }
