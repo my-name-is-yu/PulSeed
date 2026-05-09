@@ -8,8 +8,10 @@ import {
   createWorkspaceArtifactMetricDataSource,
 } from "../../adapters/datasources/artifact-metric-datasource.js";
 import type { ShellCommandSpec } from "../../adapters/datasources/shell-datasource.js";
-import type { DataSourceConfig } from "../../base/types/data-source.js";
-import { readJsonFile } from "../../base/utils/json-io.js";
+import {
+  DataSourceConfigSchema,
+  type DataSourceConfig,
+} from "../../base/types/data-source.js";
 import { getDatasourcesDir } from "../../base/utils/paths.js";
 import type { IDataSourceAdapter } from "../../platform/observation/data-source-adapter.js";
 import {
@@ -28,6 +30,55 @@ const consoleLogger: DataSourceBootstrapLogger = {
   warn: (message) => console.warn(message),
   error: (message) => console.error(message),
 };
+
+async function loadPersistedDataSourceConfig(
+  filePath: string,
+  fileName: string,
+  logger: DataSourceBootstrapLogger,
+): Promise<DataSourceConfig | null> {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(await fsp.readFile(filePath, "utf-8")) as unknown;
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    logger.warn(`[pulseed] Invalid datasource config JSON in ${fileName}; skipping: ${reason}`);
+    return null;
+  }
+
+  const parsed = DataSourceConfigSchema.safeParse(raw);
+  if (!parsed.success) {
+    const fields = parsed.error.issues
+      .map((issue) => issue.path.join(".") || "(root)")
+      .filter((field, index, all) => all.indexOf(field) === index)
+      .join(", ");
+    logger.warn(
+      `[pulseed] Invalid datasource config schema in ${fileName}; skipping${fields ? `: ${fields}` : ""}`
+    );
+    return null;
+  }
+
+  return parsed.data;
+}
+
+function registerPersistedDataSourceConfig(
+  registry: DataSourceRegistry,
+  cfg: DataSourceConfig,
+  fileName: string,
+  workspacePath: string,
+  logger: DataSourceBootstrapLogger,
+): void {
+  try {
+    const adapter = createCliDataSourceAdapter(cfg, workspacePath);
+    if (adapter) {
+      registry.register(adapter);
+    } else {
+      logger.warn(`[pulseed] Unsupported built-in datasource type "${cfg.type}" in ${fileName}; skipping`);
+    }
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    logger.warn(`[pulseed] Failed to initialize datasource config in ${fileName}; skipping: ${reason}`);
+  }
+}
 
 export function createCliDataSourceAdapter(
   cfg: DataSourceConfig,
@@ -85,13 +136,9 @@ export async function buildCliDataSourceRegistry(
     if (dsExists) {
       const files = (await fsp.readdir(dsDir)).filter(f => f.endsWith(".json"));
       for (const file of files) {
-        const cfg = await readJsonFile<DataSourceConfig>(path.join(dsDir, file));
-        const adapter = createCliDataSourceAdapter(cfg, workspacePath);
-        if (adapter) {
-          registry.register(adapter);
-        } else {
-          logger.warn(`[pulseed] Unsupported built-in datasource type "${cfg.type}" in ${file}; skipping`);
-        }
+        const cfg = await loadPersistedDataSourceConfig(path.join(dsDir, file), file, logger);
+        if (!cfg) continue;
+        registerPersistedDataSourceConfig(registry, cfg, file, workspacePath, logger);
       }
     }
   } catch (err) {

@@ -126,4 +126,71 @@ describe("createCliDataSourceAdapter", () => {
       fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
     }
   });
+
+  it("skips invalid persisted datasource files without aborting valid registry entries", async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-datasource-bootstrap-"));
+    const originalHome = process.env["PULSEED_HOME"];
+    process.env["PULSEED_HOME"] = tmpDir;
+    const datasourcesDir = getDatasourcesDir(tmpDir);
+    fs.mkdirSync(datasourcesDir, { recursive: true });
+    fs.writeFileSync(path.join(datasourcesDir, "00-malformed.json"), "{", "utf-8");
+    fs.writeFileSync(
+      path.join(datasourcesDir, "01-invalid-schema.json"),
+      JSON.stringify({
+        id: "missing-name",
+        type: "file_existence",
+        connection: {},
+        created_at: new Date().toISOString(),
+      }),
+      "utf-8"
+    );
+    fs.writeFileSync(
+      path.join(datasourcesDir, "02-invalid-adapter.json"),
+      JSON.stringify({
+        id: "ds_invalid_shell",
+        name: "Invalid Shell",
+        type: "shell",
+        connection: { commands: { todo_count: {} } },
+        enabled: true,
+        created_at: new Date().toISOString(),
+      }),
+      "utf-8"
+    );
+    fs.writeFileSync(
+      path.join(datasourcesDir, "10-valid.json"),
+      JSON.stringify({
+        id: "ds_valid_file",
+        name: "Valid File",
+        type: "file_existence",
+        connection: { path: "README.md" },
+        enabled: true,
+        created_at: new Date().toISOString(),
+      }),
+      "utf-8"
+    );
+    const logger = {
+      warn: vi.fn(),
+      error: vi.fn(),
+    };
+
+    try {
+      const registry = await buildCliDataSourceRegistry(tmpDir, logger);
+
+      expect(registry.listSources()).toEqual(expect.arrayContaining([
+        "ds_builtin_workspace_artifacts",
+        "ds_valid_file",
+      ]));
+      expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("00-malformed.json"));
+      expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("01-invalid-schema.json"));
+      expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("02-invalid-adapter.json"));
+      expect(logger.error).not.toHaveBeenCalled();
+    } finally {
+      if (originalHome === undefined) {
+        delete process.env["PULSEED_HOME"];
+      } else {
+        process.env["PULSEED_HOME"] = originalHome;
+      }
+      fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    }
+  });
 });
