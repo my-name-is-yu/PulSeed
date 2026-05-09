@@ -461,7 +461,26 @@ describe("isDaemonRunning", () => {
     expect(readDaemonAuthToken(tmpDir, 41700)).toBe("fresh-token");
   });
 
+  it("uses the process env token only when no daemon token file exists", () => {
+    process.env["PULSEED_DAEMON_TOKEN"] = "env-token";
+
+    expect(readDaemonAuthToken(tmpDir)).toBe("env-token");
+  });
+
+  it("does not fall back to stale process env tokens for invalid token files", () => {
+    process.env["PULSEED_DAEMON_TOKEN"] = "stale-token";
+    fs.writeFileSync(path.join(tmpDir, "daemon-token.json"), "{not-json", "utf-8");
+
+    expect(readDaemonAuthToken(tmpDir)).toBeNull();
+
+    fs.rmSync(path.join(tmpDir, "daemon-token.json"), { force: true });
+    fs.mkdirSync(path.join(tmpDir, "daemon-token.json"));
+
+    expect(readDaemonAuthToken(tmpDir)).toBeNull();
+  });
+
   it("rejects daemon token files with unsafe numeric metadata", () => {
+    process.env["PULSEED_DAEMON_TOKEN"] = "stale-token";
     fs.writeFileSync(
       path.join(tmpDir, "daemon-token.json"),
       JSON.stringify({ token: "unsafe-token", port: Number.MAX_SAFE_INTEGER + 1 }),
