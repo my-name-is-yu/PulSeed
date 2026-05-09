@@ -14,7 +14,7 @@ export const ReadInputSchema = z.object({
   file_path: z.string().min(1),
   offset: z.number().int().min(0).max(READ_MAX_OFFSET).optional(),
   limit: z.number().int().min(1).max(READ_MAX_LIMIT).default(READ_DEFAULT_LIMIT),
-});
+}).strict();
 export type ReadInput = z.infer<typeof ReadInputSchema>;
 
 export class ReadTool implements ITool<ReadInput, string> {

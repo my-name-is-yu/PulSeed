@@ -9,7 +9,7 @@ import { TAGS, CATEGORY as _CATEGORY, MAX_OUTPUT_CHARS, READ_ONLY, PERMISSION_LE
 export const JsonQueryInputSchema = z.object({
   file_path: z.string().min(1),
   query: z.string().min(1),
-});
+}).strict();
 export type JsonQueryInput = z.infer<typeof JsonQueryInputSchema>;
 
 export class JsonQueryTool implements ITool<JsonQueryInput, unknown> {

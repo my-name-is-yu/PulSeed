@@ -13,7 +13,7 @@ export const GlobInputSchema = z.object({
   pattern: z.string().min(1),
   path: z.string().optional(),
   limit: z.number().int().min(1).max(GLOB_MAX_LIMIT).default(GLOB_DEFAULT_LIMIT),
-});
+}).strict();
 export type GlobInput = z.infer<typeof GlobInputSchema>;
 
 export class GlobTool implements ITool<GlobInput, string[]> {
