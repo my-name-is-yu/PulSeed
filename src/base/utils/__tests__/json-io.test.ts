@@ -1,8 +1,9 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 import { cleanupTempDir, makeTempDir } from "../../../../tests/helpers/temp-dir.js";
-import { readJsonFileOrNull, writeJsonFileAtomic } from "../json-io.js";
+import { readJsonFileOrNull, readJsonFileWithSchema, writeJsonFileAtomic } from "../json-io.js";
 
 describe("json-io", () => {
   it("supports concurrent atomic writes to the same file without temp collisions", async () => {
@@ -38,6 +39,52 @@ describe("json-io", () => {
 
       expect(fs.statSync(privateDir).mode & 0o777).toBe(0o700);
       expect(fs.statSync(filePath).mode & 0o777).toBe(0o600);
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
+  });
+
+  it("returns null for absent or invalid JSON files", async () => {
+    const tmpDir = makeTempDir("pulseed-json-io-null-");
+    try {
+      const missingPath = path.join(tmpDir, "missing.json");
+      const invalidPath = path.join(tmpDir, "invalid.json");
+      fs.writeFileSync(invalidPath, "{not-json", "utf-8");
+
+      await expect(readJsonFileOrNull(missingPath)).resolves.toBeNull();
+      await expect(readJsonFileOrNull(invalidPath)).resolves.toBeNull();
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
+  });
+
+  it("rethrows non-missing read errors instead of treating them as absent JSON", async () => {
+    const tmpDir = makeTempDir("pulseed-json-io-eisdir-");
+    try {
+      const directoryPath = path.join(tmpDir, "state.json");
+      fs.mkdirSync(directoryPath);
+
+      await expect(readJsonFileOrNull(directoryPath)).rejects.toMatchObject({
+        code: "EISDIR",
+      });
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
+  });
+
+  it("preserves schema validation null semantics while surfacing read failures", async () => {
+    const tmpDir = makeTempDir("pulseed-json-io-schema-");
+    try {
+      const schema = z.object({ ok: z.boolean() });
+      const invalidShapePath = path.join(tmpDir, "invalid-shape.json");
+      const directoryPath = path.join(tmpDir, "directory.json");
+      fs.writeFileSync(invalidShapePath, JSON.stringify({ ok: "yes" }), "utf-8");
+      fs.mkdirSync(directoryPath);
+
+      await expect(readJsonFileWithSchema(invalidShapePath, schema)).resolves.toBeNull();
+      await expect(readJsonFileWithSchema(directoryPath, schema)).rejects.toMatchObject({
+        code: "EISDIR",
+      });
     } finally {
       cleanupTempDir(tmpDir);
     }

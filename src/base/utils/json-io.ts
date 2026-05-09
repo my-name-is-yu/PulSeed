@@ -7,7 +7,7 @@
 import * as fsp from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { dirname } from "node:path";
-import { z } from "zod";
+import type { z } from "zod";
 
 interface WriteJsonFileAtomicOptions {
   mode?: number;
@@ -56,11 +56,19 @@ export async function writeJsonFileAtomic(
  * Returns null on ENOENT or invalid JSON (does not throw).
  */
 export async function readJsonFileOrNull<T = unknown>(filePath: string): Promise<T | null> {
+  let content: string;
   try {
-    const content = await fsp.readFile(filePath, "utf-8");
+    content = await fsp.readFile(filePath, "utf-8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw err;
+  }
+
+  try {
     return JSON.parse(content) as T;
-  } catch {
-    return null;
+  } catch (err) {
+    if (err instanceof SyntaxError) return null;
+    throw err;
   }
 }
 
