@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import type { ProcessSessionSnapshot } from "../system/ProcessSessionTool/ProcessSessionTool.js";
-import { isProcessPidValue } from "../../base/utils/process-pid.js";
+import { signalProcessPid } from "../../base/utils/process-pid.js";
 import {
   parseKaggleMetricsCompatible,
   type KaggleMetricParseResult,
@@ -89,12 +89,5 @@ export async function missingArtifactPaths(pathsToCheck: string[]): Promise<stri
 
 export async function signalKaggleChildProcess(childProcessPath: string, signal: NodeJS.Signals): Promise<void> {
   const childProcess = await readJsonObject(childProcessPath);
-  if (!isProcessPidValue(childProcess?.pid)) return;
-  try {
-    process.kill(childProcess.pid, signal);
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== "ESRCH") {
-      throw err;
-    }
-  }
+  signalProcessPid(childProcess?.pid, signal);
 }
