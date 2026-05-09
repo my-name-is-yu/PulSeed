@@ -1,16 +1,21 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { getInternalIdentityPrefix } from "../../base/config/identity-loader.js";
-import type {
-  RunSpec,
-  RunSpecApprovalPolicy,
-  RunSpecArtifactContract,
-  RunSpecConfidence,
-  RunSpecDeadline,
-  RunSpecDerivationContext,
-  RunSpecMetric,
-  RunSpecMissingField,
-  RunSpecProgressContract,
+import {
+  RunSpecConfidenceValueSchema,
+  RunSpecFiniteScalarSchema,
+  RunSpecRankPercentSchema,
+  RunSpecSafeNonnegativeIntSchema,
+  RunSpecSafePositiveIntSchema,
+  type RunSpec,
+  type RunSpecApprovalPolicy,
+  type RunSpecArtifactContract,
+  type RunSpecConfidence,
+  type RunSpecDeadline,
+  type RunSpecDerivationContext,
+  type RunSpecMetric,
+  type RunSpecMissingField,
+  type RunSpecProgressContract,
 } from "./types.js";
 
 const MIN_RUNSPEC_CONFIDENCE = 0.7;
@@ -32,8 +37,8 @@ const DraftExecutionTargetSchema = z.object({
 const DraftMetricSchema = z.object({
   name: z.string().min(1),
   direction: z.enum(["maximize", "minimize", "unknown"]),
-  target: z.number().nullable().optional(),
-  target_rank_percent: z.number().nullable().optional(),
+  target: RunSpecFiniteScalarSchema.nullable().optional(),
+  target_rank_percent: RunSpecRankPercentSchema.nullable().optional(),
   datasource: z.string().nullable().optional(),
   confidence: DraftConfidenceSchema,
 }).nullable();
@@ -41,7 +46,7 @@ const DraftMetricSchema = z.object({
 const DraftProgressContractSchema = z.object({
   kind: z.enum(["metric_target", "rank_percentile", "deadline_only", "open_ended", "unknown"]),
   dimension: z.string().nullable().optional(),
-  threshold: z.number().nullable().optional(),
+  threshold: RunSpecFiniteScalarSchema.nullable().optional(),
   semantics: z.string().min(1),
   confidence: DraftConfidenceSchema,
 }).optional();
@@ -50,13 +55,13 @@ const DraftDeadlineSchema = z.object({
   raw: z.string().min(1),
   iso_at: z.string().nullable().optional(),
   timezone: z.string().nullable().optional(),
-  finalization_buffer_minutes: z.number().nullable().optional(),
+  finalization_buffer_minutes: RunSpecSafeNonnegativeIntSchema.nullable().optional(),
   confidence: DraftConfidenceSchema,
 }).nullable();
 
 const DraftBudgetSchema = z.object({
-  max_trials: z.number().nullable().optional(),
-  max_wall_clock_minutes: z.number().nullable().optional(),
+  max_trials: RunSpecSafePositiveIntSchema.nullable().optional(),
+  max_wall_clock_minutes: RunSpecSafeNonnegativeIntSchema.nullable().optional(),
   resident_policy: z.enum(["until_deadline", "best_effort", "unknown"]).optional(),
 }).optional();
 
@@ -76,7 +81,7 @@ const DraftArtifactContractSchema = z.object({
 
 const RunSpecDraftSchema = z.object({
   decision: z.enum(["run_spec_request", "not_run_spec_request"]),
-  confidence: z.number().min(0).max(1),
+  confidence: RunSpecConfidenceValueSchema,
   profile: z.enum(["generic", "kaggle"]).optional(),
   objective: z.string().optional(),
   workspace: DraftWorkspaceSchema.optional(),

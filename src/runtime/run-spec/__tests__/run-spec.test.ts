@@ -277,6 +277,34 @@ describe("RunSpec derivation", () => {
 
     expect(draft).toBeNull();
   });
+
+  it("rejects unsafe model-derived RunSpec numeric controls", async () => {
+    const unsafeInteger = Number.MAX_SAFE_INTEGER + 1;
+    const spec = await deriveRunSpecFromText("Keep optimizing until the score target is reached.", {
+      cwd: "/repo/app",
+      now: NOW,
+      llmClient: llmDraft({
+        profile: "generic",
+        metric: {
+          name: "score",
+          direction: "maximize",
+          target: unsafeInteger,
+          target_rank_percent: null,
+          datasource: null,
+          confidence: "medium",
+        },
+        progress_contract: {
+          kind: "metric_target",
+          dimension: "score",
+          threshold: unsafeInteger,
+          semantics: "Reach the target score.",
+          confidence: "medium",
+        },
+      }),
+    });
+
+    expect(spec).toBeNull();
+  });
 });
 
 describe("RunSpecStore", () => {
@@ -340,6 +368,34 @@ describe("RunSpecStore", () => {
 
     await expect(store.save({ ...spec!, id: "../sessions/foo" })).rejects.toThrow();
     await expect(store.load("../sessions/foo")).rejects.toThrow();
+  });
+
+  it("rejects non-finite and unsafe persisted RunSpec numeric controls before writing", async () => {
+    const baseDir = await fsp.mkdtemp(path.join(os.tmpdir(), "pulseed-runspec-"));
+    const spec = await deriveRunSpecFromText("Run Kaggle until tomorrow morning and aim for top 15%.", {
+      cwd: "/repo/kaggle",
+      now: NOW,
+      llmClient: llmDraft(),
+    });
+    expect(spec).not.toBeNull();
+    const store = createRunSpecStore({ getBaseDir: () => baseDir });
+
+    await expect(store.save({
+      ...spec!,
+      budget: {
+        ...spec!.budget,
+        max_trials: Number.POSITIVE_INFINITY,
+      },
+    })).rejects.toThrow();
+
+    await expect(store.save({
+      ...spec!,
+      metric: {
+        ...spec!.metric!,
+        target: Number.MAX_SAFE_INTEGER + 1,
+        target_rank_percent: null,
+      },
+    })).rejects.toThrow();
   });
 });
 
@@ -414,6 +470,55 @@ describe("RunSpec confirmation", () => {
       llmClient: confirmationDecision(),
     });
     expect(confirmed.kind).toBe("confirmed");
+  });
+
+  it("revises an immediate deadline without throwing on a zero wall-clock budget", async () => {
+    const spec = await deriveRunSpecFromText("Run a long-running Kaggle experiment for top 20%.", {
+      now: NOW,
+      llmClient: llmDraft({
+        metric: {
+          name: "leaderboard_rank_percentile",
+          direction: "minimize",
+          target: null,
+          target_rank_percent: 20,
+          datasource: "kaggle_leaderboard",
+          confidence: "medium",
+        },
+        progress_contract: {
+          kind: "rank_percentile",
+          dimension: "leaderboard_rank_percentile",
+          threshold: 20,
+          semantics: "Reach top 20 percent leaderboard rank.",
+          confidence: "medium",
+        },
+        deadline: null,
+      }),
+    });
+    expect(spec).not.toBeNull();
+
+    const revised = await handleRunSpecConfirmationInput(spec!, "Use /repo/kaggle and review now", {
+      now: NOW,
+      llmClient: confirmationDecision({
+        decision: "revise",
+        confidence: 0.91,
+        revision: {
+          deadline: {
+            raw: "now",
+            iso_at: NOW.toISOString(),
+            timezone: "Asia/Tokyo",
+            finalization_buffer_minutes: 0,
+            confidence: "medium",
+          },
+        },
+      }),
+    });
+
+    expect(revised.kind).toBe("revised");
+    expect(revised.spec.budget.max_wall_clock_minutes).toBe(0);
+    expect(revised.spec.deadline).toMatchObject({
+      raw: "now",
+      finalization_buffer_minutes: 0,
+    });
   });
 
   it("cancels a pending RunSpec with multilingual freeform text", async () => {
