@@ -71,6 +71,20 @@ export type SoilEdgeType = z.infer<typeof SoilEdgeTypeSchema>;
 
 export const SoilEmbeddingEncodingSchema = z.enum(["json", "f32le"]);
 export type SoilEmbeddingEncoding = z.infer<typeof SoilEmbeddingEncodingSchema>;
+export const SoilEmbeddingVectorSchema = z.array(z.number().finite());
+
+function decodeFloat32Bytes(value: Uint8Array): number[] | null {
+  if (value.byteLength % Float32Array.BYTES_PER_ELEMENT !== 0) {
+    return null;
+  }
+  const copy = value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength);
+  return Array.from(new Float32Array(copy));
+}
+
+function isFiniteFloat32Vector(value: Uint8Array | number[]): boolean {
+  const vector = value instanceof Uint8Array ? decodeFloat32Bytes(value) : value.map((item) => Math.fround(item));
+  return vector !== null && vector.every((item) => Number.isFinite(item));
+}
 
 export const SoilLaneSchema = z.enum(["direct", "lexical", "dense", "hybrid", "recency", "rerank"]);
 export type SoilLane = z.infer<typeof SoilLaneSchema>;
@@ -171,8 +185,16 @@ export const SoilEmbeddingSchema = z.object({
   model: z.string().min(1),
   embedding_version: z.number().int().positive(),
   encoding: SoilEmbeddingEncodingSchema.default("json"),
-  embedding: z.union([z.array(z.number()), z.instanceof(Uint8Array)]),
+  embedding: z.union([SoilEmbeddingVectorSchema, z.instanceof(Uint8Array)]),
   embedded_at: z.string().datetime(),
+}).superRefine((entry, context) => {
+  if (entry.encoding === "f32le" && !isFiniteFloat32Vector(entry.embedding)) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["embedding"],
+      message: "f32le embeddings must decode to finite float32 values",
+    });
+  }
 });
 export type SoilEmbedding = z.infer<typeof SoilEmbeddingSchema>;
 
@@ -232,7 +254,7 @@ export type SoilRecordFilterInput = z.input<typeof SoilRecordFilterSchema>;
 
 export const SoilSearchRequestSchema = z.object({
   query: z.string().min(1),
-  query_embedding: z.array(z.number()).optional(),
+  query_embedding: SoilEmbeddingVectorSchema.optional(),
   query_embedding_model: z.string().min(1).optional(),
   limit: z.number().int().min(1).max(100).default(10),
   lexical_top_k: z.number().int().min(1).max(200).default(50),
@@ -252,7 +274,7 @@ export const SoilCandidateSchema = z.object({
   soil_id: z.string().min(1),
   lane: SoilLaneSchema,
   rank: z.number().int().positive(),
-  score: z.number(),
+  score: z.number().finite(),
   snippet: z.string().nullable().default(null),
   page_id: z.string().min(1).nullable().default(null),
   metadata_json: z.record(z.unknown()).default({}),

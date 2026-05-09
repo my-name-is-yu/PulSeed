@@ -2,10 +2,16 @@ import { describe, expect, it } from "vitest";
 import { SOIL_QUERY_BUDGETS, SOIL_SCHEMA_SQL } from "../ddl.js";
 import {
   SoilMutationSchema,
+  SoilEmbeddingSchema,
+  SoilCandidateSchema,
   SoilPageSchema,
   SoilRecordSchema,
   SoilSearchRequestSchema,
 } from "../contracts.js";
+
+function f32leBytes(values: number[]): Uint8Array {
+  return new Uint8Array(new Float32Array(values).buffer);
+}
 
 describe("soil contracts", () => {
   it("defines the core sqlite tables and fts index", () => {
@@ -102,5 +108,48 @@ describe("soil contracts", () => {
     expect(mutation.records).toEqual([]);
     expect(mutation.pages).toEqual([]);
     expect(mutation.tombstones).toEqual([]);
+  });
+
+  it("rejects non-finite dense vector values", () => {
+    expect(SoilEmbeddingSchema.safeParse({
+      chunk_id: "chunk-1",
+      model: "test-model",
+      embedding_version: 1,
+      encoding: "json",
+      embedding: [Number.POSITIVE_INFINITY],
+      embedded_at: "2026-04-12T00:00:00.000Z",
+    }).success).toBe(false);
+
+    expect(SoilEmbeddingSchema.safeParse({
+      chunk_id: "chunk-1",
+      model: "test-model",
+      embedding_version: 1,
+      encoding: "f32le",
+      embedding: f32leBytes([Number.POSITIVE_INFINITY]),
+      embedded_at: "2026-04-12T00:00:00.000Z",
+    }).success).toBe(false);
+
+    expect(SoilEmbeddingSchema.safeParse({
+      chunk_id: "chunk-1",
+      model: "test-model",
+      embedding_version: 1,
+      encoding: "f32le",
+      embedding: [Number.MAX_VALUE],
+      embedded_at: "2026-04-12T00:00:00.000Z",
+    }).success).toBe(false);
+
+    expect(SoilSearchRequestSchema.safeParse({
+      query: "dense search",
+      query_embedding: [Number.NaN],
+    }).success).toBe(false);
+
+    expect(SoilCandidateSchema.safeParse({
+      chunk_id: "chunk-1",
+      record_id: "rec-1",
+      soil_id: "knowledge/test",
+      lane: "dense",
+      rank: 1,
+      score: Number.NaN,
+    }).success).toBe(false);
   });
 });
