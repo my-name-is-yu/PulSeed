@@ -472,6 +472,22 @@ describe("PluginLoader state builders", () => {
     const state = loader.buildErrorState("/tmp/plugins/test-plugin", "raw string error");
     expect(state.error_message).toBe("raw string error");
   });
+
+  it("rejects invalid plugin state counters at the schema boundary", () => {
+    const base = {
+      name: "my-plugin",
+      manifest: makeValidManifest({ name: "my-plugin" }),
+      status: "loaded",
+      loaded_at: "2026-05-10T00:00:00.000Z",
+      trust_score: 0,
+    };
+
+    expect(PluginStateSchema.parse(base).usage_count).toBe(0);
+    expect(PluginStateSchema.parse({ ...base, usage_count: 1 }).usage_count).toBe(1);
+    expect(PluginStateSchema.safeParse({ ...base, usage_count: -1 }).success).toBe(false);
+    expect(PluginStateSchema.safeParse({ ...base, success_count: Number.MAX_SAFE_INTEGER + 1 }).success).toBe(false);
+    expect(PluginStateSchema.safeParse({ ...base, failure_count: Number.POSITIVE_INFINITY }).success).toBe(false);
+  });
 });
 
 // ─── PluginLoader.loadAll (mocked discoverPluginDirs) ───
@@ -659,6 +675,23 @@ describe("PluginLoader.getPluginState and updatePluginState", () => {
     const state = loader.getPluginState("my-plugin");
     expect(state!.trust_score).toBe(15);
     expect(state!.usage_count).toBe(2);
+  });
+
+  it("updatePluginState rejects invalid counter updates before persistence", async () => {
+    const manifest = makeValidManifest({ name: "my-plugin" });
+    loader.buildSuccessState(manifest);
+
+    await expect(loader.updatePluginState("my-plugin", { usage_count: -1 })).rejects.toThrow();
+    await expect(loader.updatePluginState("my-plugin", { success_count: Number.MAX_SAFE_INTEGER + 1 })).rejects.toThrow();
+    await expect(loader.updatePluginState("my-plugin", { failure_count: Number.POSITIVE_INFINITY })).rejects.toThrow();
+
+    const state = loader.getPluginState("my-plugin");
+    expect(state).toMatchObject({
+      usage_count: 0,
+      success_count: 0,
+      failure_count: 0,
+    });
+    expect(fsSync.existsSync(path.join(tmpDir, "my-plugin", "state.json"))).toBe(false);
   });
 
   it("updatePluginState persists state to disk", async () => {
