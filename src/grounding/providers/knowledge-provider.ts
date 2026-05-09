@@ -1,5 +1,8 @@
 import { loadRelationshipProfileRetrievalContext } from "../../platform/profile/retrieval-context.js";
-import { formatRelationshipProfileRetrievalContext } from "../../platform/profile/retrieval-context.js";
+import {
+  formatRelationshipProfileRetrievalContext,
+  summarizeRelationshipProfileRetrievalContext,
+} from "../../platform/profile/retrieval-context.js";
 import type {
   GroundingKnowledgeResult,
   GroundingProvider,
@@ -58,6 +61,7 @@ export const knowledgeQueryProvider: GroundingProvider = {
     const items = result?.items ?? [];
     context.runtime.set("knowledge_hit_count", items.length);
     const relationshipProfileBlock = formatRelationshipProfileRetrievalContext(relationshipProfileContext);
+    const relationshipProfileMetadata = summarizeRelationshipProfileRetrievalContext(relationshipProfileContext);
     return makeSection(
       "knowledge_query",
       items.length > 0
@@ -74,7 +78,7 @@ export const knowledgeQueryProvider: GroundingProvider = {
           retrievalId: items.length > 0 ? result?.retrievalId ?? "knowledge:query" : "none:knowledge_query",
           metadata: {
             ...(result?.warnings ? { warnings: result.warnings } : {}),
-            relationshipProfileContext,
+            relationshipProfileContext: relationshipProfileMetadata,
           },
         }),
       ],

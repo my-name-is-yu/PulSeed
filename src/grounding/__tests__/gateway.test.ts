@@ -224,8 +224,16 @@ describe("GroundingGateway", () => {
     });
 
     const knowledgeSource = bundle.traces.source.find((source) => source.sectionKey === "knowledge_query");
-    const profileContext = knowledgeSource?.metadata?.["relationshipProfileContext"] as { items?: Array<{ value: string }> } | undefined;
-    expect(profileContext?.items?.map((item) => item.value)).toEqual(["Prefer concise status reports."]);
+    const profileContext = knowledgeSource?.metadata?.["relationshipProfileContext"] as {
+      itemCount?: number;
+      items?: Array<{ stable_key: string; value?: string }>;
+    } | undefined;
+    expect(profileContext).toMatchObject({
+      itemCount: 1,
+      items: [expect.objectContaining({ stable_key: "user.preference.status" })],
+    });
+    expect(JSON.stringify(profileContext)).not.toContain("Prefer concise status reports.");
+    expect(profileContext?.items?.[0]).not.toHaveProperty("value");
     const knowledgeSection = bundle.dynamicSections.find((section) => section.key === "knowledge_query");
     expect(knowledgeSection?.content).toContain("Relationship profile retrieval context");
     expect(knowledgeSection?.content).toContain("Prefer concise status reports.");
