@@ -156,6 +156,36 @@ export {
   RuntimeBudgetUsageSchema,
 } from "./budget-store.js";
 export {
+  CapabilityAuditRecordSchema,
+  CapabilityAuditResultSchema,
+  CapabilityEvidenceStageSchema,
+  CapabilityOperationKindSchema,
+  CapabilityReadinessEvidenceEffectSchema,
+  CapabilityRiskClassSchema,
+  CapabilitySideEffectProfileSchema,
+  CapabilityVerificationClassSchema,
+  CapabilityVerificationEvidenceSummarySchema,
+  CapabilityVerificationRefSchema,
+  CapabilityVerificationResultSchema,
+  readinessEvidenceEffect,
+} from "./capability-verification-schemas.js";
+export type {
+  CapabilityAuditRecord,
+  CapabilityAuditResult,
+  CapabilityEvidenceStage,
+  CapabilityOperationKind,
+  CapabilityReadinessEvidenceEffect,
+  CapabilityRiskClass,
+  CapabilitySideEffectProfile,
+  CapabilityVerificationClass,
+  CapabilityVerificationEvidenceSummary,
+  CapabilityVerificationRef,
+  CapabilityVerificationResult,
+} from "./capability-verification-schemas.js";
+export {
+  CapabilityVerificationStore,
+} from "./capability-verification-store.js";
+export {
   RuntimeOperatorHandoffRecordSchema,
   RuntimeOperatorHandoffStatusSchema,
   RuntimeOperatorHandoffStore,
