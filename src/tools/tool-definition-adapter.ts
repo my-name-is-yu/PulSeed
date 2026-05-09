@@ -2,8 +2,80 @@ import { zodToJsonSchema } from "zod-to-json-schema";
 import type { ITool } from "./types.js";
 import type { ToolDefinition } from "../base/llm/llm-client.js";
 
+type JsonObject = Record<string, unknown>;
+
+function isJsonObject(value: unknown): value is JsonObject {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function normalizeSchemaNode(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(normalizeSchemaNode);
+  }
+
+  if (!isJsonObject(value)) {
+    return value;
+  }
+
+  const normalized: JsonObject = {};
+  for (const [key, child] of Object.entries(value)) {
+    if (key === "$schema") continue;
+    if (isSchemaNameMapKey(key) && isJsonObject(child)) {
+      normalized[key] = normalizeSchemaNameMap(child);
+      continue;
+    }
+    normalized[key] = normalizeSchemaNode(child);
+  }
+
+  removeWeakerInclusiveBoundary(normalized, "minimum", "exclusiveMinimum", (inclusive, exclusive) => inclusive <= exclusive);
+  removeWeakerInclusiveBoundary(normalized, "maximum", "exclusiveMaximum", (inclusive, exclusive) => inclusive >= exclusive);
+  normalizeConstLiteral(normalized);
+
+  return normalized;
+}
+
+function isSchemaNameMapKey(key: string): boolean {
+  return key === "properties" || key === "patternProperties" || key === "$defs" || key === "definitions";
+}
+
+function normalizeSchemaNameMap(value: JsonObject): JsonObject {
+  const normalized: JsonObject = {};
+  for (const [key, child] of Object.entries(value)) {
+    normalized[key] = normalizeSchemaNode(child);
+  }
+  return normalized;
+}
+
+function normalizeConstLiteral(schema: JsonObject): void {
+  if (!Object.hasOwn(schema, "const") || schema.enum !== undefined) return;
+
+  schema.enum = [schema.const];
+  delete schema.const;
+}
+
+function removeWeakerInclusiveBoundary(
+  schema: JsonObject,
+  inclusiveKey: "minimum" | "maximum",
+  exclusiveKey: "exclusiveMinimum" | "exclusiveMaximum",
+  isWeakerOrEqual: (inclusive: number, exclusive: number) => boolean
+): void {
+  const inclusive = schema[inclusiveKey];
+  const exclusive = schema[exclusiveKey];
+  if (
+    typeof inclusive === "number" &&
+    Number.isFinite(inclusive) &&
+    typeof exclusive === "number" &&
+    Number.isFinite(exclusive) &&
+    isWeakerOrEqual(inclusive, exclusive)
+  ) {
+    delete schema[inclusiveKey];
+  }
+}
+
 function toolParametersFromSchema(jsonSchema: unknown): Record<string, unknown> {
-  if (typeof jsonSchema !== "object" || jsonSchema === null || Array.isArray(jsonSchema)) {
+  const normalizedSchema = normalizeSchemaNode(jsonSchema);
+
+  if (!isJsonObject(normalizedSchema)) {
     return {
       type: "object",
       properties: {},
@@ -11,7 +83,7 @@ function toolParametersFromSchema(jsonSchema: unknown): Record<string, unknown> 
     };
   }
 
-  const { $schema: _schema, ...parameters } = jsonSchema as Record<string, unknown>;
+  const parameters = { ...normalizedSchema };
   parameters.type = parameters.type ?? "object";
 
   if (
@@ -32,7 +104,7 @@ function toolParametersFromSchema(jsonSchema: unknown): Record<string, unknown> 
  * that the LLM client understands for function calling.
  */
 export function toToolDefinition(tool: ITool): ToolDefinition {
-  const jsonSchema = zodToJsonSchema(tool.inputSchema, { target: "openApi3" });
+  const jsonSchema = zodToJsonSchema(tool.inputSchema, { target: "jsonSchema7" });
   const parameters = toolParametersFromSchema(jsonSchema);
 
   return {
