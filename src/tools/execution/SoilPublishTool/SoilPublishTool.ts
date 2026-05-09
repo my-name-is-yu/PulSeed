@@ -20,7 +20,7 @@ export const SoilPublishInputSchema = z.object({
   dryRun: z.boolean().default(false),
   baseDir: z.string().min(1).optional(),
   rootDir: z.string().min(1).optional(),
-});
+}).strict();
 export type SoilPublishInput = z.infer<typeof SoilPublishInputSchema>;
 
 export class SoilPublishTool implements ITool<SoilPublishInput> {

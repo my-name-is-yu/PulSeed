@@ -15,7 +15,7 @@ import { DESCRIPTION } from "./prompt.js";
 export const SoilRebuildInputSchema = z.object({
   baseDir: z.string().min(1).optional(),
   rootDir: z.string().min(1).optional(),
-});
+}).strict();
 export type SoilRebuildInput = z.infer<typeof SoilRebuildInputSchema>;
 
 export class SoilRebuildTool implements ITool<SoilRebuildInput> {
