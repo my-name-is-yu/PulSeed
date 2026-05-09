@@ -1,17 +1,28 @@
 import * as path from "node:path";
 
 import type { StateManager } from "../../../base/state/state-manager.js";
+import { MCPServersConfigSchema, type MCPServerConfig } from "../../../base/types/mcp.js";
 import { readJsonFileOrNull } from "../../../base/utils/json-io.js";
 import { getGatewayChannelDir } from "../../../base/utils/paths.js";
+import { buildCompanionCapabilityGraph } from "../../../platform/observation/capability-graph.js";
+import { buildCapabilityReadinessSnapshots } from "../../../platform/observation/capability-readiness.js";
+import { loadRegistry } from "../../../platform/observation/capability-registry.js";
+import type { CapabilityReadinessSnapshot } from "../../../platform/observation/types/capability.js";
+import { AssetRegistry } from "../../../runtime/assets/registry.js";
+import { listBuiltinIntegrations } from "../../../runtime/builtin-integrations.js";
 import { isDaemonRunning } from "../../../runtime/daemon/client.js";
 import { resolveConfiguredDaemonRuntimeRoot } from "../../../runtime/daemon/runtime-root.js";
 import { BUILTIN_GATEWAY_CHANNEL_NAMES, type BuiltinGatewayChannelName } from "../../../runtime/gateway/builtin-channel-names.js";
 import { createRuntimeSessionRegistry } from "../../../runtime/session-registry/index.js";
 import type { BackgroundRun, RuntimeReplyTarget, RuntimeSession } from "../../../runtime/session-registry/types.js";
 import { BackgroundRunLedger } from "../../../runtime/store/background-run-store.js";
+import { CapabilityVerificationStore } from "../../../runtime/store/capability-verification-store.js";
 import { RuntimeHealthStore } from "../../../runtime/store/health-store.js";
 import type { RuntimeHealthSnapshot } from "../../../runtime/store/runtime-schemas.js";
-import type { CapabilityOperatorStatusProjection } from "../../../runtime/control/capability-status-projection.js";
+import {
+  projectCapabilityOperatorStatus,
+  type CapabilityOperatorStatusProjection,
+} from "../../../runtime/control/capability-status-projection.js";
 
 export type OperatorChannelState = "missing" | "configured" | "active" | "degraded";
 export type RuntimeControlPermissionState = "allowed" | "missing_allowlist" | "unrestricted" | "unsupported";
@@ -233,16 +244,135 @@ function formatReplyTarget(target: RuntimeReplyTarget | null): string {
   return targetId ? `${target.channel}:${targetId}` : target.channel;
 }
 
+interface CapabilityRuntimeCollection {
+  projections: CapabilityOperatorStatusProjection[];
+  warnings: string[];
+}
+
+async function collectCapabilityRuntimeProjections(
+  stateManager: StateManager,
+  runtimeRoot: string,
+  evaluatedAt: string
+): Promise<CapabilityRuntimeCollection> {
+  const baseDir = stateManager.getBaseDir();
+  const warnings: string[] = [];
+  const [assets, legacyCapabilities, mcpServers, verificationEvidence] = await Promise.all([
+    loadCapabilityAssets(baseDir, warnings),
+    loadLegacyCapabilities(stateManager, warnings),
+    loadMcpServers(stateManager, warnings),
+    loadVerificationEvidence(runtimeRoot, warnings),
+  ]);
+  const builtinIntegrations = loadBuiltinIntegrations(warnings);
+
+  const graph = buildCompanionCapabilityGraph({
+    assets,
+    legacyCapabilities,
+    mcpServers,
+    builtinIntegrations,
+    generatedAt: evaluatedAt,
+  });
+  const readinessSnapshots = buildCapabilityReadinessSnapshots({
+    graph,
+    verificationEvidence,
+    evaluatedAt,
+  }).filter(hasRuntimeReadinessEvidence);
+
+  return {
+    projections: readinessSnapshots
+      .map((readiness) =>
+        projectCapabilityOperatorStatus({
+          readiness,
+          surface_kind: "status",
+          surface_ref: "operator-binding-status",
+          evaluated_at: evaluatedAt,
+        })
+      )
+      .sort((a, b) =>
+        `${a.capability_id}\0${a.provider_ref}\0${a.operation_id}`.localeCompare(
+          `${b.capability_id}\0${b.provider_ref}\0${b.operation_id}`
+        )
+      ),
+    warnings,
+  };
+}
+
+async function loadCapabilityAssets(
+  baseDir: string,
+  warnings: string[]
+): Promise<Awaited<ReturnType<AssetRegistry["list"]>>> {
+  try {
+    return await new AssetRegistry({ baseDir }).list();
+  } catch (err) {
+    warnings.push(`Capability asset registry could not be read: ${errorMessage(err)}`);
+    return [];
+  }
+}
+
+async function loadLegacyCapabilities(
+  stateManager: StateManager,
+  warnings: string[]
+): Promise<Awaited<ReturnType<typeof loadRegistry>>["capabilities"]> {
+  try {
+    return (await loadRegistry({ stateManager })).capabilities;
+  } catch (err) {
+    warnings.push(`Legacy capability registry could not be read: ${errorMessage(err)}`);
+    return [];
+  }
+}
+
+async function loadMcpServers(stateManager: StateManager, warnings: string[]): Promise<MCPServerConfig[]> {
+  for (const fileName of ["mcp-servers.json", "mcpServers.json"]) {
+    const raw = await stateManager.readRaw(fileName);
+    if (raw === null) continue;
+    const parsed = MCPServersConfigSchema.safeParse(raw);
+    if (parsed.success) return parsed.data.servers;
+    warnings.push(`MCP server config ${fileName} could not be parsed for capability status.`);
+    return [];
+  }
+  return [];
+}
+
+async function loadVerificationEvidence(
+  runtimeRoot: string,
+  warnings: string[]
+): Promise<Awaited<ReturnType<CapabilityVerificationStore["listReadinessEvidenceSummaries"]>>> {
+  try {
+    return await new CapabilityVerificationStore(runtimeRoot).listReadinessEvidenceSummaries();
+  } catch (err) {
+    warnings.push(`Capability verification evidence could not be read: ${errorMessage(err)}`);
+    return [];
+  }
+}
+
+function loadBuiltinIntegrations(warnings: string[]): ReturnType<typeof listBuiltinIntegrations> {
+  try {
+    return listBuiltinIntegrations();
+  } catch (err) {
+    warnings.push(`Builtin integration descriptors could not be read: ${errorMessage(err)}`);
+    return [];
+  }
+}
+
+function hasRuntimeReadinessEvidence(snapshot: CapabilityReadinessSnapshot): boolean {
+  return snapshot.evidence_refs.length > 0 || snapshot.stale_refs.length > 0;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 export async function collectOperatorBindingStatus(stateManager: StateManager): Promise<OperatorBindingStatus> {
   const baseDir = stateManager.getBaseDir();
   const runtimeRoot = resolveConfiguredDaemonRuntimeRoot(baseDir);
-  const [daemon, health, registrySnapshot] = await Promise.all([
+  const generatedAt = new Date().toISOString();
+  const [daemon, health, registrySnapshot, capabilityRuntime] = await Promise.all([
     isDaemonRunning(baseDir),
     new RuntimeHealthStore(runtimeRoot).loadSnapshot(),
     createRuntimeSessionRegistry({
       stateManager,
       backgroundRunLedger: new BackgroundRunLedger(runtimeRoot),
     }).snapshot(),
+    collectCapabilityRuntimeProjections(stateManager, runtimeRoot, generatedAt),
   ]);
   const gatewayHealth = health?.components.gateway ?? "missing";
   const channels: OperatorChannelBindingStatus[] = [];
@@ -283,13 +413,14 @@ export async function collectOperatorBindingStatus(stateManager: StateManager): 
 
   const warnings = [
     ...registrySnapshot.warnings.map((warning) => warning.message),
+    ...capabilityRuntime.warnings,
     ...channels.flatMap((channel) => channel.warnings.map((warning) => `${channel.name}: ${warning}`)),
     ...(!daemon.running ? ["Daemon is not running."] : []),
   ];
 
   return {
     schema_version: "operator-binding-status-v1",
-    generated_at: new Date().toISOString(),
+    generated_at: generatedAt,
     daemon: {
       running: daemon.running,
       port: daemon.port,
@@ -297,7 +428,7 @@ export async function collectOperatorBindingStatus(stateManager: StateManager): 
       runtime_root: runtimeRoot,
     },
     channels,
-    capability_runtime: [],
+    capability_runtime: capabilityRuntime.projections,
     sessions: registrySnapshot.sessions,
     background_runs: registrySnapshot.background_runs.filter(activeRun),
     warnings,
