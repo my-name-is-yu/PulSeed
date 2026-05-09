@@ -1,18 +1,12 @@
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { randomUUID } from "node:crypto";
-import { writeJsonFileAtomic, readJsonFileOrNull } from "../base/utils/json-io.js";
 import { parseProcessPid } from "../base/utils/process-pid.js";
+import { loadRuntimeJson, saveRuntimeJson } from "./store/runtime-journal.js";
+import { GoalLeaseRecordSchema } from "./store/runtime-schemas.js";
+import type { GoalLeaseRecord as RuntimeGoalLeaseRecord } from "./store/runtime-schemas.js";
 
-export interface GoalLeaseRecord {
-  goal_id: string;
-  owner_token: string;
-  attempt_id: string;
-  worker_id: string;
-  lease_until: number;
-  acquired_at: number;
-  last_renewed_at: number;
-}
+export type GoalLeaseRecord = RuntimeGoalLeaseRecord;
 
 export interface GoalLeaseAcquireOptions {
   workerId: string;
@@ -107,20 +101,6 @@ function safeGoalId(goalId: string): string {
   return encodeURIComponent(goalId);
 }
 
-function isGoalLeaseRecord(value: unknown): value is GoalLeaseRecord {
-  if (!value || typeof value !== "object") return false;
-  const record = value as Partial<GoalLeaseRecord>;
-  return (
-    typeof record.goal_id === "string" &&
-    typeof record.owner_token === "string" &&
-    typeof record.attempt_id === "string" &&
-    typeof record.worker_id === "string" &&
-    typeof record.lease_until === "number" &&
-    typeof record.acquired_at === "number" &&
-    typeof record.last_renewed_at === "number"
-  );
-}
-
 export class GoalLeaseManager {
   private readonly leasesDir: string;
   private readonly defaultLeaseMs: number;
@@ -153,8 +133,7 @@ export class GoalLeaseManager {
   }
 
   private async readRaw(goalId: string): Promise<GoalLeaseRecord | null> {
-    const raw = await readJsonFileOrNull<unknown>(this.recordPath(goalId));
-    return isGoalLeaseRecord(raw) ? raw : null;
+    return loadRuntimeJson(this.recordPath(goalId), GoalLeaseRecordSchema);
   }
 
   async acquire(goalId: string, opts: GoalLeaseAcquireOptions): Promise<GoalLeaseRecord | null> {
@@ -167,8 +146,7 @@ export class GoalLeaseManager {
       }
 
       const record = this.buildRecord(goalId, opts, now);
-      await writeJsonFileAtomic(this.recordPath(goalId), record);
-      return record;
+      return saveRuntimeJson(this.recordPath(goalId), GoalLeaseRecordSchema, record);
     });
   }
 
@@ -191,8 +169,7 @@ export class GoalLeaseManager {
         lease_until: now + leaseMs,
         last_renewed_at: now,
       };
-      await writeJsonFileAtomic(this.recordPath(goalId), renewed);
-      return renewed;
+      return saveRuntimeJson(this.recordPath(goalId), GoalLeaseRecordSchema, renewed);
     });
   }
 

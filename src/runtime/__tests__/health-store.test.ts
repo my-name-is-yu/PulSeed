@@ -107,6 +107,132 @@ describe("RuntimeHealthStore", () => {
     expect(await store.loadComponentsHealth()).toMatchObject({ components: { gateway: "ok" } });
   });
 
+  it("rejects unsafe health timestamps before persistence", async () => {
+    const unsafeInteger = Number.MAX_SAFE_INTEGER + 1;
+
+    await expect(store.saveDaemonHealth({
+      status: "ok",
+      leader: true,
+      checked_at: unsafeInteger,
+    })).rejects.toThrow();
+    expect(fs.existsSync(path.join(tmpDir, "health", "daemon.json"))).toBe(false);
+
+    await expect(store.saveComponentsHealth({
+      checked_at: unsafeInteger,
+      components: { gateway: "ok" },
+    })).rejects.toThrow();
+    expect(fs.existsSync(path.join(tmpDir, "health", "components.json"))).toBe(false);
+
+    await expect(store.saveSnapshot({
+      status: "ok",
+      leader: true,
+      checked_at: 1,
+      components: { gateway: "ok" },
+      kpi: {
+        process_alive: { status: "ok", checked_at: unsafeInteger },
+        command_acceptance: { status: "ok", checked_at: 1 },
+        task_execution: { status: "ok", checked_at: 1 },
+      },
+    })).rejects.toThrow();
+    expect(fs.existsSync(path.join(tmpDir, "health", "daemon.json"))).toBe(false);
+    expect(fs.existsSync(path.join(tmpDir, "health", "components.json"))).toBe(false);
+  });
+
+  it("skips persisted health records with unsafe timestamps", async () => {
+    fs.mkdirSync(path.join(tmpDir, "health"), { recursive: true });
+    fs.writeFileSync(path.join(tmpDir, "health", "daemon.json"), JSON.stringify({
+      status: "ok",
+      leader: true,
+      checked_at: Number.MAX_SAFE_INTEGER + 1,
+    }), "utf-8");
+    fs.writeFileSync(path.join(tmpDir, "health", "components.json"), JSON.stringify({
+      checked_at: Number.MAX_SAFE_INTEGER + 1,
+      components: { gateway: "ok" },
+    }), "utf-8");
+
+    await expect(store.loadDaemonHealth()).resolves.toBeNull();
+    await expect(store.loadComponentsHealth()).resolves.toBeNull();
+    await expect(store.loadSnapshot()).resolves.toBeNull();
+  });
+
+  it("rejects unsafe long-running health counters through snapshot persistence", async () => {
+    const unsafeInteger = Number.MAX_SAFE_INTEGER + 1;
+
+    await expect(store.saveSnapshot({
+      status: "ok",
+      leader: true,
+      checked_at: 1,
+      components: { gateway: "ok" },
+      long_running: {
+        summary: "alive_and_progressing",
+        checked_at: 1,
+        signals: longRunSignals({
+          child_activity: {
+            status: "active",
+            checked_at: 1,
+            observed_at: 1,
+            active_count: unsafeInteger,
+          },
+        }),
+      },
+    })).rejects.toThrow();
+
+    expect(fs.existsSync(path.join(tmpDir, "health", "daemon.json"))).toBe(false);
+    expect(fs.existsSync(path.join(tmpDir, "health", "components.json"))).toBe(false);
+  });
+
+  it("rejects non-finite long-running metric values before JSON persistence", async () => {
+    await expect(store.saveSnapshot({
+      status: "ok",
+      leader: true,
+      checked_at: 1,
+      components: { gateway: "ok" },
+      long_running: {
+        summary: "alive_and_progressing",
+        checked_at: 1,
+        signals: longRunSignals({
+          metric_progress: {
+            status: "improved",
+            checked_at: 1,
+            observed_at: 1,
+            metric_name: "score",
+            previous_value: 0.7,
+            current_value: Infinity,
+          },
+        }),
+      },
+    })).rejects.toThrow();
+
+    expect(fs.existsSync(path.join(tmpDir, "health", "daemon.json"))).toBe(false);
+    expect(fs.existsSync(path.join(tmpDir, "health", "components.json"))).toBe(false);
+  });
+
+  it("rejects unsafe long-running metric values before JSON persistence", async () => {
+    await expect(store.saveSnapshot({
+      status: "ok",
+      leader: true,
+      checked_at: 1,
+      components: { gateway: "ok" },
+      long_running: {
+        summary: "alive_and_progressing",
+        checked_at: 1,
+        signals: longRunSignals({
+          metric_progress: {
+            status: "improved",
+            checked_at: 1,
+            observed_at: 1,
+            metric_name: "score",
+            previous_value: 0.7,
+            current_value: Number.MAX_SAFE_INTEGER + 1,
+          },
+        }),
+      },
+    })).rejects.toThrow();
+
+    expect(fs.existsSync(path.join(tmpDir, "health", "daemon.json"))).toBe(false);
+    expect(fs.existsSync(path.join(tmpDir, "health", "components.json"))).toBe(false);
+  });
+
   it("preserves KPI data when repairing a partial snapshot", async () => {
     await store.saveDaemonHealth({
       status: "degraded",

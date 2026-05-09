@@ -44,6 +44,62 @@ describe('JournalBackedQueue', () => {
     expect(reloaded.snapshot().completed).toContain(envelope.id);
   });
 
+  it('rejects unsafe envelope timestamps before writing the journal', () => {
+    const queue = new JournalBackedQueue({ journalPath, now: () => 1_000 });
+    const envelope = {
+      ...createEnvelope({ type: 'event', name: 'job', source: 'test', payload: {}, priority: 'high' }),
+      created_at: Number.MAX_SAFE_INTEGER + 1,
+    };
+
+    expect(() => queue.accept(envelope)).toThrow();
+    expect(fs.existsSync(journalPath)).toBe(false);
+  });
+
+  it('skips persisted queue records with unsafe envelope scalars', () => {
+    const envelope = {
+      ...createEnvelope({ type: 'event', name: 'job', source: 'test', payload: {}, priority: 'high' }),
+      created_at: Number.MAX_SAFE_INTEGER + 1,
+    };
+    fs.writeFileSync(journalPath, JSON.stringify({
+      version: 1,
+      records: {
+        [envelope.id]: {
+          envelope,
+          status: 'pending',
+          attempt: 0,
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      },
+      pending: {
+        critical: [],
+        high: [envelope.id],
+        normal: [],
+        low: [],
+      },
+      inflight: {},
+    }), 'utf-8');
+
+    const queue = new JournalBackedQueue({ journalPath, now: () => 1_000 });
+    expect(queue.get(envelope.id)).toBeUndefined();
+    expect(queue.size()).toBe(0);
+  });
+
+  it('persists fractional safe lease deadlines from retry backoff', () => {
+    const queue = new JournalBackedQueue({ journalPath, now: () => 1_000 });
+    const envelope = createEnvelope({ type: 'event', name: 'job', source: 'test', payload: {}, priority: 'high' });
+    queue.accept(envelope);
+
+    const claim = queue.claim('worker-a', 250.5);
+    expect(claim?.leaseUntil).toBe(1_250.5);
+
+    const renewed = queue.renew(claim!.claimToken, 500.25);
+    expect(renewed?.leaseUntil).toBe(1_500.25);
+
+    const reloaded = new JournalBackedQueue({ journalPath, now: () => 1_000 });
+    expect(reloaded.snapshot().inflight[claim!.claimToken]?.leaseUntil).toBe(1_500.25);
+  });
+
   it('replaces older pending entries that share the same dedupe_key', () => {
     const queue = new JournalBackedQueue({ journalPath, now: () => 1_000 });
     const first = createEnvelope({

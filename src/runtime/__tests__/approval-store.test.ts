@@ -45,6 +45,47 @@ describe("ApprovalStore", () => {
     expect(fs.existsSync(path.join(tmpDir, "approvals", "pending", "approval-1.json"))).toBe(true);
   });
 
+  it("rejects unsafe approval timestamps before persistence", async () => {
+    const unsafeInteger = Number.MAX_SAFE_INTEGER + 1;
+
+    expect(ApprovalRecordSchema.safeParse({
+      approval_id: "approval-unsafe",
+      request_envelope_id: "msg-1",
+      correlation_id: "corr-1",
+      state: "pending",
+      created_at: unsafeInteger,
+      expires_at: 2,
+      payload: { prompt: "approve?" },
+    }).success).toBe(false);
+
+    await expect(store.savePending({
+      ...makeApproval({ approval_id: "approval-unsafe" }),
+      expires_at: unsafeInteger,
+    })).rejects.toThrow();
+
+    expect(fs.existsSync(path.join(tmpDir, "approvals", "pending", "approval-unsafe.json"))).toBe(false);
+  });
+
+  it("skips persisted pending approvals with unsafe timestamps", async () => {
+    await store.ensureReady();
+    fs.writeFileSync(
+      path.join(tmpDir, "approvals", "pending", "approval-unsafe.json"),
+      JSON.stringify({
+        approval_id: "approval-unsafe",
+        request_envelope_id: "msg-1",
+        correlation_id: "corr-1",
+        state: "pending",
+        created_at: 1,
+        expires_at: Number.MAX_SAFE_INTEGER + 1,
+        payload: { prompt: "approve?" },
+      }, null, 2),
+      "utf-8",
+    );
+
+    await expect(store.loadPending("approval-unsafe")).resolves.toBeNull();
+    await expect(store.listPending()).resolves.toEqual([]);
+  });
+
   it("resolves a pending approval into the resolved directory", async () => {
     await store.savePending(makeApproval());
     const resolved = await store.resolvePending("approval-1", {
@@ -58,6 +99,21 @@ describe("ApprovalStore", () => {
     expect(await store.loadPending("approval-1")).toBeNull();
     expect(await store.loadResolved("approval-1")).not.toBeNull();
     expect(await store.load("approval-1")).toMatchObject({ state: "approved" });
+  });
+
+  it("rejects unsafe approval resolution timestamps without removing the pending record", async () => {
+    await store.savePending(makeApproval());
+
+    await expect(store.resolvePending("approval-1", {
+      state: "approved",
+      resolved_at: Number.MAX_SAFE_INTEGER + 1,
+    })).rejects.toThrow();
+
+    await expect(store.loadPending("approval-1")).resolves.toMatchObject({
+      approval_id: "approval-1",
+      state: "pending",
+    });
+    await expect(store.loadResolved("approval-1")).resolves.toBeNull();
   });
 
   it("listPending hides approvals that already have a resolved record", async () => {

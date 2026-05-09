@@ -127,6 +127,62 @@ describe("GoalLeaseManager", () => {
     expect(reclaimed!.owner_token).toBe("owner-b");
   });
 
+  it("ignores persisted goal leases with unsafe numeric scalars before acquisition decisions", async () => {
+    tmpDir = makeTempDir();
+    const manager = new GoalLeaseManager(tmpDir, 1_000);
+    const goalDir = path.join(tmpDir, "leases", "goal");
+    await fsp.mkdir(goalDir, { recursive: true });
+    await fsp.writeFile(path.join(goalDir, "goal-unsafe.json"), JSON.stringify({
+      goal_id: "goal-unsafe",
+      owner_token: "owner-a",
+      attempt_id: "attempt-a",
+      worker_id: "worker-a",
+      lease_until: Number.MAX_SAFE_INTEGER + 1,
+      acquired_at: 1,
+      last_renewed_at: 1,
+    }), "utf-8");
+
+    expect(await manager.read("goal-unsafe")).toBeNull();
+
+    const record = await manager.acquire("goal-unsafe", {
+      workerId: "worker-b",
+      ownerToken: "owner-b",
+      attemptId: "attempt-b",
+      now: 1000,
+    });
+
+    expect(record).not.toBeNull();
+    expect(record!.owner_token).toBe("owner-b");
+    expect(record!.lease_until).toBe(2000);
+  });
+
+  it("rejects unsafe computed lease timestamps without replacing the current lease", async () => {
+    tmpDir = makeTempDir();
+    const manager = new GoalLeaseManager(tmpDir, 1_000);
+
+    const acquired = await manager.acquire("goal-1", {
+      workerId: "worker-a",
+      ownerToken: "owner-a",
+      attemptId: "attempt-a",
+      now: 1000,
+    });
+
+    await expect(manager.renew("goal-1", "owner-a", {
+      now: 1500,
+      leaseMs: Number.MAX_SAFE_INTEGER,
+    })).rejects.toThrow();
+
+    expect(await manager.read("goal-1")).toEqual(acquired);
+
+    await expect(manager.acquire("goal-unsafe-now", {
+      workerId: "worker-a",
+      ownerToken: "owner-a",
+      attemptId: "attempt-a",
+      now: Number.MAX_SAFE_INTEGER + 1,
+    })).rejects.toThrow();
+    expect(await manager.read("goal-unsafe-now")).toBeNull();
+  });
+
   it("reapStale removes only expired goal leases", async () => {
     tmpDir = makeTempDir();
     const manager = new GoalLeaseManager(tmpDir, 1_000);

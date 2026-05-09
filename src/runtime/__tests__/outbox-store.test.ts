@@ -44,6 +44,42 @@ describe("OutboxStore", () => {
     expect(await store.load(1)).toMatchObject({ event_type: "goal_activated" });
   });
 
+  it("rejects unsafe outbox sequence and timestamp values", async () => {
+    const unsafeInteger = Number.MAX_SAFE_INTEGER + 1;
+
+    await expect(store.save({
+      seq: unsafeInteger,
+      event_type: "unsafe_seq",
+      created_at: 1,
+      payload: {},
+    })).rejects.toThrow();
+
+    await expect(store.append({
+      event_type: "unsafe_created_at",
+      created_at: unsafeInteger,
+      payload: {},
+    })).rejects.toThrow();
+
+    await expect(store.list()).resolves.toEqual([]);
+  });
+
+  it("skips persisted outbox records with unsafe numeric scalars", async () => {
+    await store.ensureReady();
+    fs.writeFileSync(
+      path.join(tmpDir, "outbox", "000000000001.json"),
+      JSON.stringify({
+        seq: 1,
+        event_type: "unsafe_created_at",
+        created_at: Number.MAX_SAFE_INTEGER + 1,
+        payload: {},
+      }, null, 2),
+      "utf-8",
+    );
+
+    await expect(store.load(1)).resolves.toBeNull();
+    await expect(store.list()).resolves.toEqual([]);
+  });
+
   it("loads and filters records in sequence order", async () => {
     await store.save(makeRecord(2, "second"));
     await store.save(makeRecord(1, "first"));

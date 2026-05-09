@@ -1,7 +1,8 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { Envelope, EnvelopePriority } from '../types/envelope.js';
+import { z } from 'zod';
+import { EnvelopeSchema, type Envelope, type EnvelopePriority } from '../types/envelope.js';
 
 export interface JournalBackedQueueOptions {
   journalPath: string;
@@ -72,6 +73,46 @@ const PRIORITY_ORDER: EnvelopePriority[] = ['critical', 'high', 'normal', 'low']
 const LOCK_STALE_MS = 30_000;
 const LOCK_WAIT_MS = 10;
 const LOCK_TIMEOUT_MS = 10_000;
+const QueueSafeNonnegativeIntSchema = z.number().int().nonnegative().safe();
+const QueueSafeNonnegativeNumberSchema = z.number()
+  .finite()
+  .min(0)
+  .max(Number.MAX_SAFE_INTEGER);
+
+const JournalBackedQueueRecordSchema = z.object({
+  envelope: EnvelopeSchema,
+  status: z.enum(['pending', 'inflight', 'completed', 'deadletter']),
+  attempt: QueueSafeNonnegativeIntSchema,
+  createdAt: QueueSafeNonnegativeNumberSchema,
+  updatedAt: QueueSafeNonnegativeNumberSchema,
+  workerId: z.string().optional(),
+  claimToken: z.string().optional(),
+  leaseUntil: QueueSafeNonnegativeNumberSchema.optional(),
+  deadletterReason: z.string().optional(),
+  completedAt: QueueSafeNonnegativeNumberSchema.optional(),
+});
+
+const JournalBackedQueueClaimRecordSchema = z.object({
+  messageId: z.string(),
+  workerId: z.string(),
+  leaseUntil: QueueSafeNonnegativeNumberSchema,
+  attempt: QueueSafeNonnegativeIntSchema,
+  claimedAt: QueueSafeNonnegativeNumberSchema,
+});
+
+const JournalBackedQueuePendingSchema = z.object({
+  critical: z.array(z.string()),
+  high: z.array(z.string()),
+  normal: z.array(z.string()),
+  low: z.array(z.string()),
+});
+
+const JournalBackedQueueStateSchema = z.object({
+  version: z.literal(1),
+  records: z.record(JournalBackedQueueRecordSchema),
+  pending: JournalBackedQueuePendingSchema,
+  inflight: z.record(JournalBackedQueueClaimRecordSchema),
+});
 
 function emptyPending(): Record<EnvelopePriority, string[]> {
   return {
@@ -186,19 +227,36 @@ function buildEmptyState(): JournalBackedQueueState {
   };
 }
 
-function normalizeState(state: JournalBackedQueueState): JournalBackedQueueState {
+function isRecordMap(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function parseQueueRecord(value: unknown): JournalBackedQueueRecord | null {
+  const parsed = JournalBackedQueueRecordSchema.safeParse(value);
+  return parsed.success ? parsed.data as JournalBackedQueueRecord : null;
+}
+
+function parseQueueClaimRecord(value: unknown): JournalBackedQueueClaimRecord | null {
+  const parsed = JournalBackedQueueClaimRecordSchema.safeParse(value);
+  return parsed.success ? parsed.data as JournalBackedQueueClaimRecord : null;
+}
+
+function normalizeState(state: Partial<JournalBackedQueueState>): JournalBackedQueueState {
   const normalized = buildEmptyState();
   normalized.version = 1;
   normalized.records = {};
 
-  for (const [messageId, record] of Object.entries(state.records ?? {})) {
-    if (!record?.envelope?.id) continue;
-    normalized.records[messageId] = { ...record };
+  const records = isRecordMap(state.records) ? state.records : {};
+  for (const [messageId, record] of Object.entries(records)) {
+    const parsed = parseQueueRecord(record);
+    if (!parsed || parsed.envelope.id !== messageId) continue;
+    normalized.records[messageId] = parsed;
   }
 
   normalized.pending = emptyPending();
   for (const priority of PRIORITY_ORDER) {
-    const ids = state.pending?.[priority] ?? [];
+    const rawIds = state.pending?.[priority] ?? [];
+    const ids = Array.isArray(rawIds) ? rawIds.filter((id): id is string => typeof id === 'string') : [];
     for (const messageId of ids) {
       const record = normalized.records[messageId];
       if (!record || record.status !== 'pending') continue;
@@ -207,10 +265,13 @@ function normalizeState(state: JournalBackedQueueState): JournalBackedQueueState
   }
 
   normalized.inflight = {};
-  for (const [claimToken, claim] of Object.entries(state.inflight ?? {})) {
-    const record = normalized.records[claim.messageId];
+  const claims = isRecordMap(state.inflight) ? state.inflight : {};
+  for (const [claimToken, claim] of Object.entries(claims)) {
+    const parsed = parseQueueClaimRecord(claim);
+    if (!parsed) continue;
+    const record = normalized.records[parsed.messageId];
     if (!record || record.status !== 'inflight' || record.claimToken !== claimToken) continue;
-    normalized.inflight[claimToken] = { ...claim };
+    normalized.inflight[claimToken] = parsed;
   }
 
   for (const [messageId, record] of Object.entries(normalized.records)) {
@@ -252,26 +313,27 @@ export class JournalBackedQueue {
   }
 
   accept(envelope: Envelope): JournalBackedQueueAcceptResult {
+    const parsedEnvelope = EnvelopeSchema.parse(envelope);
     return this.withLockedState<JournalBackedQueueAcceptResult>((state) => {
-      const existing = state.records[envelope.id];
+      const existing = state.records[parsedEnvelope.id];
       if (existing) {
         return {
-          result: { accepted: false, duplicate: true, messageId: envelope.id },
+          result: { accepted: false, duplicate: true, messageId: parsedEnvelope.id },
           dirty: false,
         };
       }
 
-      if (isExpired(envelope, this.now())) {
+      if (isExpired(parsedEnvelope, this.now())) {
         return {
-          result: { accepted: false, duplicate: false, messageId: envelope.id },
+          result: { accepted: false, duplicate: false, messageId: parsedEnvelope.id },
           dirty: false,
         };
       }
 
-      if (envelope.dedupe_key) {
+      if (parsedEnvelope.dedupe_key) {
         const activeDedupeRecords = Object.entries(state.records).filter(([, record]) => {
           return (
-            record.envelope.dedupe_key === envelope.dedupe_key &&
+            record.envelope.dedupe_key === parsedEnvelope.dedupe_key &&
             record.status !== 'completed' &&
             record.status !== 'deadletter'
           );
@@ -295,16 +357,16 @@ export class JournalBackedQueue {
         }
       }
 
-      state.records[envelope.id] = {
-        envelope,
+      state.records[parsedEnvelope.id] = {
+        envelope: parsedEnvelope,
         status: 'pending',
         attempt: 0,
         createdAt: this.now(),
         updatedAt: this.now(),
       };
-      state.pending[envelope.priority].push(envelope.id);
+      state.pending[parsedEnvelope.priority].push(parsedEnvelope.id);
       return {
-        result: { accepted: true, duplicate: false, messageId: envelope.id },
+        result: { accepted: true, duplicate: false, messageId: parsedEnvelope.id },
         dirty: true,
       };
     });
@@ -582,11 +644,11 @@ export class JournalBackedQueue {
   }
 
   private load(): JournalBackedQueueState {
-    const raw = readJsonOrNull<JournalBackedQueueState>(this.journalPath);
-    if (!raw || raw.version !== 1) {
+    const raw = readJsonOrNull<unknown>(this.journalPath);
+    if (!isRecordMap(raw) || raw.version !== 1) {
       return buildEmptyState();
     }
-    return normalizeState(raw);
+    return normalizeState(raw as Partial<JournalBackedQueueState>);
   }
 
   private loadFromDisk(): JournalBackedQueueState {
@@ -598,7 +660,7 @@ export class JournalBackedQueue {
   }
 
   private persist(state: JournalBackedQueueState): void {
-    atomicWriteJson(this.journalPath, state);
+    atomicWriteJson(this.journalPath, JournalBackedQueueStateSchema.parse(state));
   }
 
   private withLockedState<T>(mutator: (state: JournalBackedQueueState) => { result: T; dirty: boolean }): T {
