@@ -10,10 +10,22 @@ import {
   GovernedMemoryRecordKindSchema,
   GovernedMemoryRoleSchema,
   GovernedMemorySensitivitySchema,
-  type GovernedMemoryLifecycle,
-  type GovernedMemoryRole,
   type GovernedMemoryCorrectionEvent,
 } from "../platform/profile/governed-memory.js";
+import {
+  expectedLaneForRole,
+  hasRationaleForSource,
+  isForbiddenRequestedUse,
+  isSurfaceProjectableLifecycle,
+  rationaleRefForSource,
+  relationshipPermissionSourceMatches,
+  surfaceMemorySourceMatches,
+  surfaceSourceRefKey,
+  uniqueBlockedUseClasses,
+  uniqueStrings,
+  validateContextSourcesSelected,
+  validateRationaleSourcesSelected,
+} from "./surface-contract-source-helpers.js";
 
 export const SurfaceProjectionTargetSchema = z.enum([
   "chat",
@@ -1626,98 +1638,4 @@ function resolveAffectedDependencies(
     ? Object.values(projection.dependent_refs).flat()
     : affectedDependencies.map((dependency) => SurfaceDerivedRuntimeRefSchema.parse(dependency));
   return z.array(SurfaceDerivedRuntimeRefSchema).min(1).parse(dependencies);
-}
-
-function surfaceMemorySourceMatches(left: SurfaceMemorySourceRef, right: SurfaceMemorySourceRef): boolean {
-  return left.memory_id === right.memory_id
-    && JSON.stringify(left.owning_store_ref) === JSON.stringify(right.owning_store_ref);
-}
-
-function uniqueStrings(values: string[]): string[] {
-  return [...new Set(values)];
-}
-
-function uniqueBlockedUseClasses(
-  values: Array<z.infer<typeof GovernedMemoryBlockedUseClassSchema>>
-): Array<z.infer<typeof GovernedMemoryBlockedUseClassSchema>> {
-  return [...new Set(values)];
-}
-
-function surfaceSourceRefKey(source: SurfaceMemorySourceRef): string {
-  return JSON.stringify(source);
-}
-
-function isSurfaceProjectableLifecycle(lifecycle: GovernedMemoryLifecycle): boolean {
-  return lifecycle === "active" || lifecycle === "matured";
-}
-
-function expectedLaneForRole(role: GovernedMemoryRole): SurfaceLane {
-  return role === "seed" ? "knowledge" : role;
-}
-
-function isForbiddenRequestedUse(use: SurfaceRequestedUse): boolean {
-  return GovernedMemoryForbiddenUseClassSchema.safeParse(use).success;
-}
-
-function relationshipPermissionSourceMatches(
-  permissionSource: RelationshipPermissionSourceRef,
-  memorySource: SurfaceMemorySourceRef,
-): boolean {
-  return permissionSource.memory_id === memorySource.memory_id
-    && JSON.stringify(permissionSource.owning_store_ref) === JSON.stringify(memorySource.owning_store_ref);
-}
-
-function validateContextSourcesSelected(
-  contexts: readonly (SurfaceIncludedContext | SurfaceExcludedContext)[],
-  selectedSourceKeys: Set<string>,
-  path: "included_context" | "excluded_context",
-  ctx: z.RefinementCtx,
-): void {
-  for (let index = 0; index < contexts.length; index += 1) {
-    const context = contexts[index];
-    if (context && !selectedSourceKeys.has(surfaceSourceRefKey(context.source_ref))) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: [path, index, "source_ref"],
-        message: `${path} source_ref must be selected in source_refs`,
-      });
-    }
-  }
-}
-
-function validateRationaleSourcesSelected(
-  entries: readonly SurfaceProjectionRationaleEntry[],
-  selectedSourceKeys: Set<string>,
-  ctx: z.RefinementCtx,
-): void {
-  for (let index = 0; index < entries.length; index += 1) {
-    const entry = entries[index];
-    if (entry && !selectedSourceKeys.has(surfaceSourceRefKey(entry.source_ref))) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["rationale_entries", index, "source_ref"],
-        message: "rationale entry source_ref must be selected in source_refs",
-      });
-    }
-  }
-}
-
-function rationaleRefForSource(
-  projection: SurfaceProjection,
-  source: SurfaceMemorySourceRef,
-  decision: "included" | "excluded",
-): string {
-  return projection.rationale_entries.find((entry) =>
-    entry.decision === decision && surfaceSourceRefKey(entry.source_ref) === surfaceSourceRefKey(source)
-  )?.reason_ref ?? `surface:${projection.id}:rationale:${source.memory_id}:${decision}`;
-}
-
-function hasRationaleForSource(
-  projection: SurfaceProjection,
-  source: SurfaceMemorySourceRef,
-  decision: "included" | "excluded",
-): boolean {
-  return projection.rationale_entries.some((entry) =>
-    entry.decision === decision && surfaceSourceRefKey(entry.source_ref) === surfaceSourceRefKey(source)
-  );
 }
