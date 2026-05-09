@@ -15,6 +15,12 @@ import type {
 
 // --- Tool Result ---
 
+const NonNegativeSafeIntegerSchema = z.number()
+  .finite()
+  .int()
+  .nonnegative()
+  .max(Number.MAX_SAFE_INTEGER);
+
 export const ToolExecutionReasonSchema = z.enum([
   "approval_denied",
   "permission_denied",
@@ -47,7 +53,7 @@ export const ToolResultSchema = z.object({
     message: z.string().optional(),
   }).optional(),
   /** Duration of the tool call in milliseconds */
-  durationMs: z.number(),
+  durationMs: NonNegativeSafeIntegerSchema,
   /** Optional context modifier: instructions to append to subsequent LLM context */
   contextModifier: z.string().optional(),
   /**
@@ -57,7 +63,7 @@ export const ToolResultSchema = z.object({
   artifacts: z.array(z.string()).optional(),
   /** Set when output was truncated; contains the original character count */
   truncated: z.object({ 
-    originalChars: z.number(),
+    originalChars: NonNegativeSafeIntegerSchema,
     overflowPath: z.string().optional()
   }).optional(),
 });
