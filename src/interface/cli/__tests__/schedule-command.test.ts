@@ -158,6 +158,95 @@ describe("cmdSchedule", () => {
     }
   });
 
+  it("rejects unsafe schedule cost periods through the command path", async () => {
+    const tempDir = makeTempDir("schedule-command-cost-period-");
+    try {
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+      const code = await cmdSchedule(makeStateManager(tempDir), ["cost", "--period", "9007199254740993d"]);
+
+      expect(code).toBe(1);
+      expect(errorSpy.mock.calls.flat().join("\n")).toContain("Error: period value must be a positive safe integer");
+    } finally {
+      cleanupTempDir(tempDir);
+    }
+  });
+
+  it("caps schedule cost token totals at the safe integer boundary", async () => {
+    const tempDir = makeTempDir("schedule-command-cost-safe-tokens-");
+    try {
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+      const engine = new ScheduleEngine({ baseDir: tempDir });
+      await engine.loadEntries();
+      const entry = await engine.addEntry({
+        name: "Heavy digest",
+        layer: "cron",
+        trigger: { type: "interval", seconds: 3600 },
+        metadata: {
+          source: "manual",
+          dependency_hints: [],
+        },
+        cron: {
+          job_kind: "prompt",
+          prompt_template: "Summarize many artifacts",
+          context_sources: [],
+          output_format: "notification",
+          max_tokens: 500,
+        },
+      });
+      const now = new Date().toISOString();
+      await fs.writeFile(
+        path.join(tempDir, "schedule-history.json"),
+        JSON.stringify([
+          {
+            id: "11111111-1111-4111-8111-111111111111",
+            entry_id: entry.id,
+            entry_name: entry.name,
+            layer: entry.layer,
+            reason: "manual_run",
+            attempt: 0,
+            scheduled_for: now,
+            started_at: now,
+            finished_at: now,
+            retry_at: null,
+            status: "ok",
+            duration_ms: 10,
+            fired_at: now,
+            tokens_used: Number.MAX_SAFE_INTEGER,
+            escalated_to: null,
+          },
+          {
+            id: "22222222-2222-4222-8222-222222222222",
+            entry_id: entry.id,
+            entry_name: entry.name,
+            layer: entry.layer,
+            reason: "manual_run",
+            attempt: 1,
+            scheduled_for: now,
+            started_at: now,
+            finished_at: now,
+            retry_at: null,
+            status: "ok",
+            duration_ms: 10,
+            fired_at: now,
+            tokens_used: 1,
+            escalated_to: null,
+          },
+        ]),
+        "utf8",
+      );
+
+      const code = await cmdSchedule(makeStateManager(tempDir), ["cost", "--period", "7d"]);
+
+      const output = logSpy.mock.calls.flat().join("\n");
+      expect(code).toBe(0);
+      expect(output).toContain(`tokens:     ${Number.MAX_SAFE_INTEGER}`);
+      expect(output).toContain(`tokens=${Number.MAX_SAFE_INTEGER}`);
+    } finally {
+      cleanupTempDir(tempDir);
+    }
+  });
+
   it("pauses, resumes, and edits a schedule entry", async () => {
     const tempDir = makeTempDir("schedule-command-lifecycle-");
     try {

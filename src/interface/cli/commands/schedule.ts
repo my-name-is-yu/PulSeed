@@ -56,8 +56,7 @@ export async function cmdSchedule(
       await scheduleHistory(engine, argv.slice(1));
       return 0;
     case "cost":
-      await scheduleCost(engine, argv.slice(1));
-      return 0;
+      return await scheduleCost(engine, argv.slice(1));
     case "remove":
       await scheduleRemove(engine, argv.slice(1));
       return 0;
