@@ -638,7 +638,7 @@ export const RuntimeSessionsListInputSchema = z.object({
   kinds: z.array(z.enum(["conversation", "agent", "coreloop"])).optional(),
   activeOnly: z.boolean().default(false),
   includeRuns: z.boolean().default(false),
-});
+}).strict();
 export type RuntimeSessionsScope = z.infer<typeof RuntimeSessionsListInputSchema>["scope"];
 export type RuntimeSessionsListInput = z.infer<typeof RuntimeSessionsListInputSchema>;
 
@@ -701,7 +701,7 @@ export const RuntimeRunsObserveInputSchema = z.object({
   activeOnly: z.boolean().default(false),
   includeSessions: z.boolean().default(true),
   limit: z.number().int().positive().max(50).default(20),
-});
+}).strict();
 export type RuntimeRunsObserveInput = z.infer<typeof RuntimeRunsObserveInputSchema>;
 
 export class RuntimeRunsObserveTool implements ITool<RuntimeRunsObserveInput, unknown> {
@@ -758,7 +758,7 @@ export class RuntimeRunsObserveTool implements ITool<RuntimeRunsObserveInput, un
 export const RuntimeSessionsHistoryInputSchema = z.object({
   session_id: z.string().min(1, "session_id is required"),
   limit: z.number().int().positive().max(100).default(20),
-});
+}).strict();
 export type RuntimeSessionsHistoryInput = z.infer<typeof RuntimeSessionsHistoryInputSchema>;
 
 export class RuntimeSessionsHistoryTool implements ITool<RuntimeSessionsHistoryInput, unknown> {
@@ -814,7 +814,7 @@ export class RuntimeSessionsHistoryTool implements ITool<RuntimeSessionsHistoryI
 
 export const RuntimeSessionsReadInputSchema = z.object({
   session_id: z.string().min(1, "session_id is required"),
-});
+}).strict();
 export type RuntimeSessionsReadInput = z.infer<typeof RuntimeSessionsReadInputSchema>;
 
 export class RuntimeSessionsReadTool implements ITool<RuntimeSessionsReadInput, unknown> {
@@ -870,7 +870,7 @@ export class RuntimeSessionsReadTool implements ITool<RuntimeSessionsReadInput, 
 
 export const RuntimeSessionsChildrenInputSchema = z.object({
   session_id: z.string().min(1, "session_id is required"),
-});
+}).strict();
 export type RuntimeSessionsChildrenInput = z.infer<typeof RuntimeSessionsChildrenInputSchema>;
 
 export class RuntimeSessionsChildrenTool implements ITool<RuntimeSessionsChildrenInput, unknown> {
@@ -934,7 +934,7 @@ export const RuntimeSessionsSpawnInputSchema = z.object({
   owner_id: z.string().trim().min(1).optional(),
   copy_recent_messages: z.boolean().default(false),
   recent_message_limit: z.number().int().positive().max(20).default(6),
-});
+}).strict();
 export type RuntimeSessionsSpawnInput = z.infer<typeof RuntimeSessionsSpawnInputSchema>;
 
 export class RuntimeSessionsSpawnTool implements ITool<RuntimeSessionsSpawnInput, unknown> {
@@ -992,7 +992,7 @@ export class RuntimeSessionsSpawnTool implements ITool<RuntimeSessionsSpawnInput
 export const RuntimeSessionsSendInputSchema = z.object({
   session_id: z.string().min(1, "session_id is required"),
   message: z.string().trim().min(1, "message is required"),
-});
+}).strict();
 export type RuntimeSessionsSendInput = z.infer<typeof RuntimeSessionsSendInputSchema>;
 
 export class RuntimeSessionsSendTool implements ITool<RuntimeSessionsSendInput, unknown> {
@@ -1059,7 +1059,7 @@ export const RuntimeSessionsUpdateInputSchema = z.object({
   append_assistant_message: z.boolean().default(false),
   notify_parent: z.boolean().default(false),
   completed_at: z.string().optional(),
-}).superRefine((value, ctx) => {
+}).strict().superRefine((value, ctx) => {
   if ((value.status === "completed" || value.status === "failed") && !value.summary) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
@@ -1131,7 +1131,7 @@ export class RuntimeSessionsUpdateTool implements ITool<RuntimeSessionsUpdateInp
 export const RuntimeSessionsClaimInputSchema = z.object({
   session_id: z.string().min(1, "session_id is required"),
   owner_id: z.string().trim().min(1, "owner_id is required"),
-});
+}).strict();
 export type RuntimeSessionsClaimInput = z.infer<typeof RuntimeSessionsClaimInputSchema>;
 
 export class RuntimeSessionsClaimTool implements ITool<RuntimeSessionsClaimInput, unknown> {
@@ -1188,7 +1188,7 @@ export class RuntimeSessionsClaimTool implements ITool<RuntimeSessionsClaimInput
 export const RuntimeSessionsCancelInputSchema = z.object({
   session_id: z.string().min(1, "session_id is required"),
   reason: z.string().trim().min(1, "reason is required"),
-});
+}).strict();
 export type RuntimeSessionsCancelInput = z.infer<typeof RuntimeSessionsCancelInputSchema>;
 
 export class RuntimeSessionsCancelTool implements ITool<RuntimeSessionsCancelInput, unknown> {
@@ -1245,7 +1245,7 @@ export class RuntimeSessionsCancelTool implements ITool<RuntimeSessionsCancelInp
 export const RuntimeSessionsRetryInputSchema = z.object({
   session_id: z.string().min(1, "session_id is required"),
   message: z.string().trim().min(1).optional(),
-});
+}).strict();
 export type RuntimeSessionsRetryInput = z.infer<typeof RuntimeSessionsRetryInputSchema>;
 
 export class RuntimeSessionsRetryTool implements ITool<RuntimeSessionsRetryInput, unknown> {

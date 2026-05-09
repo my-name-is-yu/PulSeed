@@ -2,6 +2,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import * as fsp from "node:fs/promises";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { z } from "zod";
 
 import { StateManager } from "../../../base/state/state-manager.js";
 import { ChatSessionDataStore } from "../../../interface/chat/chat-session-data-store.js";
@@ -9,7 +10,59 @@ import type { ChatSession } from "../../../interface/chat/chat-history.js";
 import { BackgroundRunLedger } from "../../../runtime/store/background-run-store.js";
 import { OutboxStore } from "../../../runtime/store/outbox-store.js";
 import type { ITool, ToolCallContext } from "../../types.js";
-import { createRuntimeSessionTools } from "../runtime-session-tools.js";
+import { toToolDefinition } from "../../tool-definition-adapter.js";
+import { RuntimeDreamReviewInputSchema } from "../runtime-dream-review-tool.js";
+import {
+  createRuntimeSessionTools,
+  RuntimeRunsObserveInputSchema,
+  RuntimeSessionsCancelInputSchema,
+  RuntimeSessionsChildrenInputSchema,
+  RuntimeSessionsClaimInputSchema,
+  RuntimeSessionsHistoryInputSchema,
+  RuntimeSessionsListInputSchema,
+  RuntimeSessionsReadInputSchema,
+  RuntimeSessionsRetryInputSchema,
+  RuntimeSessionsSendInputSchema,
+  RuntimeSessionsSpawnInputSchema,
+  RuntimeSessionsUpdateInputSchema,
+} from "../runtime-session-tools.js";
+
+interface RuntimeSessionToolSchemaCase {
+  name: string;
+  schema: z.ZodTypeAny;
+  validInput: Record<string, unknown>;
+}
+
+const RUNTIME_SESSION_TOOL_SCHEMA_CASES: RuntimeSessionToolSchemaCase[] = [
+  { name: "sessions_list", schema: RuntimeSessionsListInputSchema, validInput: {} },
+  { name: "runs_observe", schema: RuntimeRunsObserveInputSchema, validInput: {} },
+  { name: "sessions_history", schema: RuntimeSessionsHistoryInputSchema, validInput: { session_id: "session-1" } },
+  { name: "sessions_read", schema: RuntimeSessionsReadInputSchema, validInput: { session_id: "session-1" } },
+  { name: "sessions_children", schema: RuntimeSessionsChildrenInputSchema, validInput: { session_id: "session-1" } },
+  { name: "runtime_dream_review", schema: RuntimeDreamReviewInputSchema, validInput: { run_id: "run-1" } },
+  { name: "sessions_spawn", schema: RuntimeSessionsSpawnInputSchema, validInput: { title: "Investigate" } },
+  {
+    name: "sessions_send",
+    schema: RuntimeSessionsSendInputSchema,
+    validInput: { session_id: "session-1", message: "Continue here" },
+  },
+  {
+    name: "sessions_update",
+    schema: RuntimeSessionsUpdateInputSchema,
+    validInput: { session_id: "session-1", status: "running" },
+  },
+  {
+    name: "sessions_claim",
+    schema: RuntimeSessionsClaimInputSchema,
+    validInput: { session_id: "session-1", owner_id: "agent-1" },
+  },
+  {
+    name: "sessions_cancel",
+    schema: RuntimeSessionsCancelInputSchema,
+    validInput: { session_id: "session-1", reason: "No longer needed" },
+  },
+  { name: "sessions_retry", schema: RuntimeSessionsRetryInputSchema, validInput: { session_id: "session-1" } },
+];
 
 function makeContext(overrides: Partial<ToolCallContext> = {}): ToolCallContext {
   return {
@@ -41,6 +94,18 @@ describe("runtime session tools", () => {
   async function saveChatSession(session: ChatSession): Promise<void> {
     await new ChatSessionDataStore(tmpDir).save(session);
   }
+
+  it.each(RUNTIME_SESSION_TOOL_SCHEMA_CASES)("$name rejects unknown runtime fields", ({ schema, validInput }) => {
+    expect(schema.safeParse(validInput).success).toBe(true);
+    expect(schema.safeParse({ ...validInput, unexpected: true }).success).toBe(false);
+  });
+
+  it.each(RUNTIME_SESSION_TOOL_SCHEMA_CASES)("$name exports a closed model-facing schema", ({ name }) => {
+    const tool = tools.get(name);
+    expect(tool).toBeDefined();
+    const parameters = toToolDefinition(tool!).function.parameters as Record<string, unknown>;
+    expect(parameters.additionalProperties).toBe(false);
+  });
 
   it("spawns a child conversation session and scopes tree listing to spawned descendants", async () => {
     await saveChatSession({
