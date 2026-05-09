@@ -10,7 +10,7 @@ export const ApplyPatchInputSchema = z.object({
   patch: z.string().min(1),
   cwd: z.string().optional(),
   checkOnly: z.boolean().default(false),
-});
+}).strict();
 export type ApplyPatchInput = z.infer<typeof ApplyPatchInputSchema>;
 
 export class ApplyPatchTool implements ITool<ApplyPatchInput> {

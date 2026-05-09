@@ -9,7 +9,7 @@ import { TAGS, CATEGORY as _CATEGORY, MAX_OUTPUT_CHARS, READ_ONLY, PERMISSION_LE
 export const WritePulseedFileInputSchema = z.object({
   path: z.string().min(1, "path is required"),
   content: z.string(),
-});
+}).strict();
 export type WritePulseedFileInput = z.infer<typeof WritePulseedFileInputSchema>;
 
 function resolveSafe(relativePath: string): string | null {
@@ -32,7 +32,6 @@ async function isRealPathInPulseedHome(fullPath: string): Promise<boolean> {
 async function ensureSafeParentDir(fullPath: string): Promise<boolean> {
   const base = resolve(getPulseedDirPath());
   await fs.mkdir(base, { recursive: true });
-  const realBase = await fs.realpath(base);
   const parent = dirname(fullPath);
   const parentRel = relative(base, parent);
   const parts = parentRel === "" ? [] : parentRel.split(sep).filter(Boolean);

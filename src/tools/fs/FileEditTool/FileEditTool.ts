@@ -10,7 +10,7 @@ export const FileEditInputSchema = z.object({
   oldText: z.string().min(1),
   newText: z.string(),
   replaceAll: z.boolean().default(false),
-});
+}).strict();
 export type FileEditInput = z.infer<typeof FileEditInputSchema>;
 
 export interface FileEditOutput {
