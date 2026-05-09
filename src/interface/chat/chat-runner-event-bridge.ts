@@ -25,7 +25,6 @@ import {
 } from "./failure-recovery.js";
 import type { ILLMClient } from "../../base/llm/llm-client.js";
 import { redactSetupSecrets, redactSetupSecretsDeep } from "./setup-secret-intake.js";
-import { shouldRenderJapanese } from "./turn-language.js";
 import {
   createOperationProgressItem,
   operationProgressFromAgentActivitySummary,
@@ -449,13 +448,8 @@ export class ChatRunnerEventBridge {
       nextStep = `prepare the ${selectedRoute.intent.kind} runtime-control request.`;
       reason = "runtime changes need an explicit operation plan and approval path.";
     } else if (selectedRoute?.kind === "configure") {
-      if (shouldRenderJapanese(eventContext.languageHint)) {
-        nextStep = "requested setup flow の設定ガイダンスを準備します。";
-        reason = "setup request は agent-loop 実行前に実行可能な設定手順を返す必要があります。";
-      } else {
-        nextStep = "prepare configuration guidance for the requested setup flow.";
-        reason = "setup requests should return actionable configuration steps before any agent-loop execution.";
-      }
+      nextStep = "prepare configuration guidance for the requested setup flow.";
+      reason = "setup requests should return actionable configuration steps before any agent-loop execution.";
     } else if (selectedRoute?.kind === "assist") {
       nextStep = "answer directly from the current conversation context.";
       reason = "this request can be handled as assistance without resuming an agent loop.";
@@ -473,15 +467,9 @@ export class ChatRunnerEventBridge {
       reason = "the adapter needs the current workspace context to act correctly.";
     }
     const message = [
-      shouldRenderJapanese(eventContext.languageHint)
-        ? `このリクエストは ${subject || "現在のリクエスト"} として扱います。`
-        : `I understand the request as ${subject || "the current request"}.`,
-      shouldRenderJapanese(eventContext.languageHint)
-        ? `次に ${nextStep}`
-        : `Next I will ${nextStep}`,
-      shouldRenderJapanese(eventContext.languageHint)
-        ? `理由: ${reason}`
-        : `This is needed because ${reason}`,
+      `I understand the request as ${subject || "the current request"}.`,
+      `Next I will ${nextStep}`,
+      `This is needed because ${reason}`,
     ].join("\n");
     this.emitActivity("commentary", message, eventContext, "intent:first-step", false);
   }
