@@ -86,6 +86,10 @@ import type {
   ConversationInputModality,
   ConversationOutputMode,
 } from "../../runtime/types/companion.js";
+import {
+  EXTERNAL_SURFACE_METADATA_KEY,
+  type ExternalSurfaceDecision,
+} from "../../runtime/gateway/channel-policy.js";
 import { normalizeUserInput, type UserInput } from "./user-input.js";
 import type { ApprovalRequest } from "../../tools/types.js";
 
@@ -130,6 +134,8 @@ export interface CrossPlatformChatSessionOptions {
   replyTarget?: Partial<ChatIngressReplyTarget>;
   /** Explicit runtime-control policy for the turn. */
   runtimeControl?: Partial<ChatIngressRuntimeControl>;
+  /** Typed external surface policy attached by gateway/channel ingress. */
+  externalSurface?: ExternalSurfaceDecision;
   /** Shared companion presence/policy contract overrides for this turn. */
   companion?: {
     presence?: Partial<CompanionPresenceState>;
@@ -167,6 +173,7 @@ export interface CrossPlatformIncomingChatMessage {
   actor?: Partial<RuntimeControlActor>;
   replyTarget?: Partial<ChatIngressReplyTarget>;
   runtimeControl?: Partial<ChatIngressRuntimeControl>;
+  externalSurface?: ExternalSurfaceDecision;
   companion?: {
     presence?: Partial<CompanionPresenceState>;
     turnPolicy?: Partial<CompanionTurnPolicy>;
@@ -541,16 +548,22 @@ function resolveActorSurface(channel: ChatIngressChannel): RuntimeControlActor["
 function resolveRuntimeControl(
   channel: ChatIngressChannel,
   runtimeControl: Partial<ChatIngressRuntimeControl> | undefined,
-  metadata: Record<string, unknown> | undefined
+  metadata: Record<string, unknown> | undefined,
+  externalSurface: ExternalSurfaceDecision | undefined
 ): ChatIngressRuntimeControl {
+  const surfacePreapproved = externalSurface?.runtime_control_policy.allowed === true
+    && externalSurface.runtime_control_policy.approval_mode === "preapproved";
+  const surfaceDenied = externalSurface?.runtime_control_policy.approval_mode === "disallowed";
   const approvalMode = runtimeControl?.approvalMode
-    ?? (metadata?.["runtime_control_approved"] === true
-      ? "preapproved"
-      : metadata?.["runtime_control_denied"] === true
-        ? "disallowed"
-      : channel === "tui" || channel === "cli"
-        ? "interactive"
-        : "disallowed");
+    ?? (externalSurface
+      ? surfacePreapproved ? "preapproved" : "disallowed"
+      : metadata?.["runtime_control_approved"] === true
+        ? "preapproved"
+        : surfaceDenied || metadata?.["runtime_control_denied"] === true
+          ? "disallowed"
+        : channel === "tui" || channel === "cli"
+          ? "interactive"
+          : "disallowed");
   return {
     allowed: runtimeControl?.allowed ?? approvalMode !== "disallowed",
     approvalMode,
@@ -567,6 +580,7 @@ function normalizeReplyTarget(
     message_id?: string;
     replyTarget?: Partial<ChatIngressReplyTarget>;
     metadata?: Record<string, unknown>;
+    externalSurface?: ExternalSurfaceDecision;
   }
 ): ChatIngressReplyTarget {
   const platform = normalizePlatform(input.replyTarget?.platform ?? input.platform) ?? undefined;
@@ -574,6 +588,16 @@ function normalizeReplyTarget(
   const identityKey = normalizeIdentity(input.replyTarget?.identity_key ?? input.identity_key) ?? undefined;
   const userId = normalizeIdentity(input.replyTarget?.user_id ?? input.user_id) ?? undefined;
   const messageId = normalizeIdentity(input.replyTarget?.message_id ?? input.message_id) ?? undefined;
+  const metadata: Record<string, unknown> = {
+    ...(input.metadata ?? {}),
+    ...(input.replyTarget?.metadata ?? {}),
+    ...(input.externalSurface ? { [EXTERNAL_SURFACE_METADATA_KEY]: input.externalSurface } : {}),
+  };
+  if (input.externalSurface) {
+    delete metadata["notification_route_id"];
+  } else {
+    delete metadata[EXTERNAL_SURFACE_METADATA_KEY];
+  }
 
   return {
     surface: input.replyTarget?.surface ?? resolveActorSurface(channel),
@@ -583,11 +607,8 @@ function normalizeReplyTarget(
     ...(userId ? { user_id: userId } : {}),
     ...(messageId ? { message_id: messageId } : {}),
     deliveryMode: input.replyTarget?.deliveryMode ?? "reply",
-    metadata: {
-      ...(input.metadata ?? {}),
-      ...(input.replyTarget?.metadata ?? {}),
-    },
     ...input.replyTarget,
+    metadata,
   };
 }
 
@@ -681,6 +702,7 @@ export class CrossPlatformChatSessionManager {
       actor: options.actor,
       replyTarget: options.replyTarget,
       runtimeControl: options.runtimeControl,
+      externalSurface: options.externalSurface,
       companion: options.companion,
       cwd: options.cwd,
       timeoutMs: options.timeoutMs,
@@ -1042,12 +1064,17 @@ export class CrossPlatformChatSessionManager {
         ? input.metadata["routed_goal_id"].trim()
         : "";
     const goalId = normalizeIdentity(input.goal_id ?? metadataGoalId) ?? undefined;
+    const externalSurface = input.externalSurface;
     const metadata: Record<string, unknown> = {
       ...(input.metadata ?? {}),
+      ...(externalSurface ? { [EXTERNAL_SURFACE_METADATA_KEY]: externalSurface } : {}),
       ...(goalId ? { goal_id: goalId } : {}),
       ...("sender_id" in input && input.sender_id ? { sender_id: input.sender_id } : {}),
       ...(input.message_id ? { message_id: input.message_id } : {}),
     };
+    if (!externalSurface) {
+      delete metadata[EXTERNAL_SURFACE_METADATA_KEY];
+    }
     const userId = normalizeIdentity(input.user_id ?? ("sender_id" in input ? input.sender_id : undefined)) ?? undefined;
     const platform = normalizePlatform(input.platform) ?? undefined;
     const identityKey = normalizeIdentity(input.identity_key) ?? undefined;
@@ -1084,8 +1111,9 @@ export class CrossPlatformChatSessionManager {
         user_id: userId,
         actor: input.actor,
       }),
-      runtimeControl: resolveRuntimeControl(channel, input.runtimeControl, metadata),
+      runtimeControl: resolveRuntimeControl(channel, input.runtimeControl, metadata, externalSurface),
       companion,
+      ...(externalSurface ? { externalSurface } : {}),
       metadata,
       replyTarget: normalizeReplyTarget(channel, {
         platform,
@@ -1095,6 +1123,7 @@ export class CrossPlatformChatSessionManager {
         message_id: messageId,
         replyTarget: input.replyTarget,
         metadata,
+        externalSurface,
       }),
     };
   }
@@ -1420,26 +1449,33 @@ export class CrossPlatformChatSessionManager {
     const setupSecretIntake = intakeSetupSecrets(ingress.text);
     const safeIngressText = setupSecretIntake.redactedText;
     const hasSetupSecret = setupSecretIntake.suppliedSecrets.length > 0;
+    const surfaceRuntimePolicy = ingress.externalSurface?.runtime_control_policy;
+    const runtimeControlApproved =
+      surfaceRuntimePolicy
+        ? surfaceRuntimePolicy.allowed === true && surfaceRuntimePolicy.approval_mode === "preapproved"
+        : ingress.metadata["runtime_control_approved"] === true;
+    const runtimeControlDenied =
+      surfaceRuntimePolicy
+        ? surfaceRuntimePolicy.approval_mode === "disallowed"
+        : ingress.metadata["runtime_control_denied"] === true;
+    const runtimeControlPolicyPresent =
+      runtimeControlApproved || runtimeControlDenied || ingress.metadata["runtime_control_explicit"] === true;
     const shouldPreferFreeformBeforeDeniedRuntimeControl =
       !hasSetupSecret
       && !capabilities.hasAgentLoop
-      && ingress.metadata["runtime_control_denied"] === true
-      && ingress.metadata["runtime_control_approved"] !== true
+      && runtimeControlDenied
+      && !runtimeControlApproved
       && ingress.metadata["runtime_control_explicit"] !== true;
     const shouldClassifyRuntimeControlForSafety =
       !hasSetupSecret
       && capabilities.hasAgentLoop
-      && (
-        ingress.metadata["runtime_control_approved"] === true
-        || ingress.metadata["runtime_control_denied"] === true
-        || ingress.metadata["runtime_control_explicit"] === true
-      );
+      && runtimeControlPolicyPresent;
     const shouldClassifyRuntimeControl =
       shouldClassifyRuntimeControlForSafety
       || (!hasSetupSecret && !capabilities.hasAgentLoop && (
         (capabilities.hasRuntimeControlService && ingress.runtimeControl.approvalMode !== "disallowed")
-        || ingress.metadata["runtime_control_approved"] === true
-        || ingress.metadata["runtime_control_denied"] === true
+        || runtimeControlApproved
+        || runtimeControlDenied
         || ingress.metadata["runtime_control_explicit"] === true
       ));
     let freeformRouteIntent = shouldPreferFreeformBeforeDeniedRuntimeControl

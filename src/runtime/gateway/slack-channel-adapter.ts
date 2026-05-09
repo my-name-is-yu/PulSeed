@@ -2,9 +2,12 @@ import { createHmac, timingSafeEqual } from "crypto";
 import type { ChannelAdapter, EnvelopeHandler, TypingIndicatorCapability } from "./channel-adapter.js";
 import { createEnvelope } from "../types/envelope.js";
 import {
+  buildChannelPolicyMetadata,
+  buildExternalSurfaceDecision,
   evaluateChannelAccess,
   resolveChannelRoute,
   type ChannelAccessPolicy,
+  type ExternalSurfaceDecision,
   type ChannelRoutingPolicy,
 } from "./channel-policy.js";
 import { dispatchGatewayChatInput } from "./chat-session-dispatch.js";
@@ -178,13 +181,12 @@ export class SlackChannelAdapter implements ChannelAdapter {
     );
 
     const eventType = String(slackEvent["type"] ?? "slack_event");
+    const externalSurface = buildExternalSurfaceDecision(context, access, route);
     const metadata = {
-      ...route.metadata,
+      ...buildChannelPolicyMetadata(context, access, route, externalSurface),
       slack_team_id: parsed["team_id"],
       slack_event_id: parsed["event_id"],
       ...(route.goalId ? { goal_id: route.goalId } : {}),
-      ...(access.runtimeControlApproved ? { runtime_control_approved: true } : {}),
-      ...(access.runtimeControlConfigured && !access.runtimeControlApproved ? { runtime_control_denied: true } : {}),
     };
 
     if (isSlackChatTextEvent(slackEvent, eventType) && this.api) {
@@ -198,6 +200,7 @@ export class SlackChannelAdapter implements ChannelAdapter {
         identityKey: route.identityKey,
         goalId: route.goalId,
         metadata,
+        externalSurface,
       }).catch((err: unknown) => {
         console.warn("SlackChannelAdapter: chat dispatch failed", err);
       });
@@ -236,6 +239,7 @@ export class SlackChannelAdapter implements ChannelAdapter {
     identityKey?: string;
     goalId?: string;
     metadata: Record<string, unknown>;
+    externalSurface: ExternalSurfaceDecision;
   }): Promise<void> {
     if (!this.api) return;
     const projector = new NonTuiDisplayProjector({
@@ -264,6 +268,7 @@ export class SlackChannelAdapter implements ChannelAdapter {
         console.warn("SlackChannelAdapter: failed to project assistant event", err);
       }),
       metadata: input.metadata,
+      externalSurface: input.externalSurface,
     });
     if (reply && !projector.renderedAssistantOutput) {
       await projector.handle({

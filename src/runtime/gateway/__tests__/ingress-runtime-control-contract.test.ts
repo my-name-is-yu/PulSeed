@@ -16,6 +16,7 @@ import {
   clearRegisteredGatewayChatSessionPort,
   registerGatewayChatSessionPort,
 } from "../chat-session-port.js";
+import { normalizeExternalSurfaceDecision } from "../channel-policy.js";
 import { IngressGateway } from "../ingress-gateway.js";
 import { createMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
 
@@ -114,6 +115,7 @@ describe("IngressGateway runtime-control contract", () => {
       gateway.onEnvelope(async (envelope) => {
         const payload = envelope.payload as Record<string, unknown>;
         const metadata = (envelope as Envelope & { metadata?: Record<string, unknown> }).metadata ?? {};
+        const externalSurface = normalizeExternalSurfaceDecision(metadata.external_surface);
         await dispatchGatewayChatInput({
           text: String(payload["text"] ?? ""),
           platform: String(payload["platform"] ?? envelope.source),
@@ -123,6 +125,7 @@ describe("IngressGateway runtime-control contract", () => {
           message_id: String(payload["message_id"] ?? ""),
           cwd: tmpDir,
           metadata,
+          ...(externalSurface ? { externalSurface } : {}),
         });
       });
 
@@ -205,6 +208,44 @@ describe("IngressGateway runtime-control contract", () => {
       });
       expect(daemonRestart?.reply_target.platform).not.toBe(gatewayRestart?.reply_target.platform);
       expect(daemonRestart?.reply_target.conversation_id).not.toBe(gatewayRestart?.reply_target.conversation_id);
+      expect(gatewayRestart?.reply_target.metadata?.external_surface).toMatchObject({
+        channel: "slack",
+        conversation_scope: {
+          sender_id: "owner-user",
+          conversation_id: "slack-thread-1",
+        },
+        reply_target_policy: {
+          policy: "current_turn_only",
+          available: true,
+        },
+        notification_route_policy: {
+          may_notify: false,
+        },
+        runtime_control_policy: {
+          allowed: true,
+          approval_mode: "preapproved",
+        },
+        autonomy_authority: {
+          may_initiate: false,
+        },
+      });
+      expect(daemonRestart?.reply_target.metadata?.external_surface).toMatchObject({
+        channel: "telegram",
+        conversation_scope: {
+          sender_id: "owner-user",
+          conversation_id: "telegram-chat-1",
+        },
+        notification_route_policy: {
+          may_notify: false,
+        },
+        runtime_control_policy: {
+          allowed: true,
+          approval_mode: "preapproved",
+        },
+        autonomy_authority: {
+          may_initiate: false,
+        },
+      });
     } finally {
       clearRegisteredGatewayChatSessionPort();
       cleanupTempDir(tmpDir);

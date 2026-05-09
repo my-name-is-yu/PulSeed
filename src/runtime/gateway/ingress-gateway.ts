@@ -2,6 +2,7 @@ import type { ChannelAdapter, EnvelopeHandler, ReplyChannel } from "./channel-ad
 import type { Envelope } from "../types/envelope.js";
 import type { Logger } from "../logger.js";
 import {
+  buildChannelPolicyMetadata,
   evaluateChannelAccess,
   resolveChannelRoute,
   type ChannelMessageContext,
@@ -137,11 +138,7 @@ export class IngressGateway {
     if (!envelope.goal_id && route.goalId) {
       envelope.goal_id = route.goalId;
     }
-    setEnvelopeMetadata(envelope, {
-      ...route.metadata,
-      ...(access.runtimeControlApproved ? { runtime_control_approved: true } : {}),
-      ...(access.runtimeControlConfigured && !access.runtimeControlApproved ? { runtime_control_denied: true } : {}),
-    });
+    setEnvelopeMetadata(envelope, buildChannelPolicyMetadata(context, access, route));
     return true;
   }
 }

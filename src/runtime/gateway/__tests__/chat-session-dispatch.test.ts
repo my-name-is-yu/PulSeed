@@ -4,7 +4,13 @@ import { renderGatewayAgentTimelineItem } from "../chat-event-rendering.js";
 import {
   clearRegisteredGatewayChatSessionPort,
   registerGatewayChatSessionPort,
+  type GatewayChatDispatchInput,
 } from "../chat-session-port.js";
+import {
+  buildExternalSurfaceDecision,
+  evaluateChannelAccess,
+  resolveChannelRoute,
+} from "../channel-policy.js";
 
 const baseInput = {
   text: "status?",
@@ -69,6 +75,62 @@ describe("dispatchGatewayChatInput display contract", () => {
     }));
 
     await expect(dispatchGatewayChatInput(baseInput)).resolves.toBeNull();
+  });
+
+  it("preserves typed external surface boundaries through gateway chat dispatch", async () => {
+    const context = { platform: "telegram", senderId: "user-1", conversationId: "chat-1" };
+    const access = evaluateChannelAccess({ allowAll: true }, context);
+    const route = resolveChannelRoute({ defaultGoalId: "goal-1" }, context);
+    const externalSurface = buildExternalSurfaceDecision(context, access, route);
+    const received: { current?: GatewayChatDispatchInput } = {};
+    registerGatewayChatSessionPort(async () => ({
+      processIncomingMessage: async (input) => {
+        received.current = input;
+        return "ok";
+      },
+    }));
+
+    await dispatchGatewayChatInput({
+      ...baseInput,
+      externalSurface,
+      metadata: { routed_goal_id: "goal-1" },
+    });
+
+    expect(received.current?.externalSurface).toEqual(externalSurface);
+    expect(received.current?.metadata?.external_surface).toEqual(externalSurface);
+    expect(received.current?.externalSurface?.notification_route_policy).toMatchObject({
+      configured: true,
+      may_notify: false,
+    });
+    expect(received.current?.externalSurface?.autonomy_authority.may_initiate).toBe(false);
+  });
+
+  it("does not promote metadata-only external surfaces into trusted dispatch context", async () => {
+    const context = { platform: "telegram", senderId: "user-1", conversationId: "chat-1" };
+    const externalSurface = buildExternalSurfaceDecision(
+      context,
+      evaluateChannelAccess({ allowAll: true, runtimeControlAllowedSenderIds: ["user-1"] }, context),
+      resolveChannelRoute({ defaultGoalId: "goal-1" }, context)
+    );
+    const received: { current?: GatewayChatDispatchInput } = {};
+    registerGatewayChatSessionPort(async () => ({
+      processIncomingMessage: async (input) => {
+        received.current = input;
+        return "ok";
+      },
+    }));
+
+    await dispatchGatewayChatInput({
+      ...baseInput,
+      metadata: {
+        external_surface: externalSurface,
+        runtime_control_approved: true,
+      },
+    });
+
+    expect(received.current?.externalSurface).toBeUndefined();
+    expect(received.current?.metadata?.external_surface).toBeUndefined();
+    expect(received.current?.metadata?.runtime_control_approved).toBe(true);
   });
 
   it("renders denied typed tool observations as gateway display text", () => {

@@ -4,7 +4,7 @@ import type { ChannelAdapter, EnvelopeHandler, TypingIndicatorCapability } from 
 import { dispatchGatewayChatInput } from "./chat-session-dispatch.js";
 import { formatTelegramNotification, supportsCoreGatewayNotification } from "./core-channel-notification.js";
 import { writeJsonFileAtomic } from "../../base/utils/json-io.js";
-import { evaluateChannelAccess, resolveChannelRoute } from "./channel-policy.js";
+import { buildChannelPolicyMetadata, buildExternalSurfaceDecision, evaluateChannelAccess, resolveChannelRoute } from "./channel-policy.js";
 import { createRefreshingTypingIndicator, withTypingIndicator } from "./typing-indicator.js";
 import { TELEGRAM_GATEWAY_DISPLAY_CONTRACT, createGatewayDisplayPolicy } from "./channel-display-policy.js";
 import { NonTuiDisplayProjector, type NonTuiDisplayMessageRef, type NonTuiDisplayTransport } from "./non-tui-display-projector.js";
@@ -185,6 +185,12 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
     }
 
     const eventAdapter = new TelegramChatEventAdapter(this.api, chatId);
+    const context = {
+      platform: "telegram",
+      senderId: String(fromUserId),
+      conversationId: String(chatId),
+      channelId: String(chatId),
+    };
     const route = resolveChannelRoute(
       {
         identityKey: this.config.identity_key,
@@ -192,12 +198,7 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
         senderGoalMap: this.config.user_goal_map,
         defaultGoalId: this.config.default_goal_id,
       },
-      {
-        platform: "telegram",
-        senderId: String(fromUserId),
-        conversationId: String(chatId),
-        channelId: String(chatId),
-      }
+      context
     );
     const access = evaluateChannelAccess(
       {
@@ -207,16 +208,12 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
         deniedConversationIds: this.config.denied_chat_ids.map(String),
         runtimeControlAllowedSenderIds: this.config.runtime_control_allowed_user_ids.map(String),
       },
-      {
-        platform: "telegram",
-        senderId: String(fromUserId),
-        conversationId: String(chatId),
-        channelId: String(chatId),
-      }
+      context
     );
     if (!access.allowed) {
       return;
     }
+    const externalSurface = buildExternalSurfaceDecision(context, access, route);
 
     const reply = await withTypingIndicator(
       this.typingIndicator,
@@ -236,12 +233,11 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
         goal_id: route.goalId,
         cwd: process.cwd(),
         onEvent: (event) => eventAdapter.handle(event as unknown as ChatEvent),
+        externalSurface,
         metadata: {
-          ...route.metadata,
+          ...buildChannelPolicyMetadata(context, access, route, externalSurface),
           chat_id: chatId,
           ...(route.goalId ? { goal_id: route.goalId } : {}),
-          ...(access.runtimeControlApproved ? { runtime_control_approved: true } : {}),
-          ...(access.runtimeControlConfigured && !access.runtimeControlApproved ? { runtime_control_denied: true } : {}),
         },
       })
     );

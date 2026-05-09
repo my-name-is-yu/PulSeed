@@ -399,7 +399,11 @@ export { createCliDataSourceAdapter, buildCliDataSourceRegistry } from "./interf
 export { ScheduleEngine } from "./runtime/schedule/engine.js";
 export type { RunScheduleNowOptions, RunScheduleNowResult } from "./runtime/schedule/engine.js";
 export {
+  EXTERNAL_SURFACE_METADATA_KEY,
+  buildChannelPolicyMetadata,
+  buildExternalSurfaceDecision,
   evaluateChannelAccess,
+  normalizeExternalSurfaceDecision,
   resolveChannelRoute,
 } from "./runtime/gateway/channel-policy.js";
 export type {
@@ -408,6 +412,9 @@ export type {
   ChannelMessageContext,
   ChannelRouteDecision,
   ChannelRoutingPolicy,
+  ExternalSurfaceAccessReason,
+  ExternalSurfaceDecision,
+  ExternalSurfaceOperationKind,
 } from "./runtime/gateway/channel-policy.js";
 export {
   resolveTerminalBackendConfig,
