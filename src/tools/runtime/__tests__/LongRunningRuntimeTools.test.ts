@@ -12,6 +12,7 @@ import {
 } from "../../system/ProcessSessionTool/ProcessSessionTool.js";
 import type { ToolCallContext } from "../../types.js";
 import {
+  LongRunningEvidenceSchema,
   RuntimeReportWriteTool,
   RuntimeResultNormalizeTool,
   WorkspaceImportTool,
@@ -233,5 +234,29 @@ describe("LongRunningRuntimeTools", () => {
         }),
       ],
     });
+  });
+
+  it("rejects non-finite evidence values instead of persisting JSON null metrics", async () => {
+    expect(LongRunningEvidenceSchema.safeParse({
+      kind: "metric",
+      label: "score",
+      value: Number.POSITIVE_INFINITY,
+    }).success).toBe(false);
+
+    const tool = new RuntimeResultNormalizeTool();
+    const normalized = await tool.call({
+      objective: "Reject non-finite metric",
+      profile: "generic",
+      value: {
+        metrics: {
+          score: Number.POSITIVE_INFINITY,
+        },
+      },
+      run_id: "non-finite-metric",
+    }, makeContext(tmpHome));
+
+    expect(normalized.success).toBe(false);
+    expect(normalized.error).toContain("Failed to normalize long-running result");
+    await expect(fs.access(path.join(tmpHome, "runtime", "artifacts", "non-finite-metric", "result.json"))).rejects.toThrow();
   });
 });

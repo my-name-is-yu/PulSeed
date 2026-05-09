@@ -63,7 +63,7 @@ export type LongRunningArtifactRef = z.infer<typeof LongRunningArtifactRefSchema
 export const LongRunningEvidenceSchema = z.object({
   kind: z.enum(["metric", "log", "artifact", "observation", "error", "other"]),
   label: z.string().min(1),
-  value: z.union([z.string(), z.number(), z.boolean(), z.null()]).optional(),
+  value: z.union([z.string(), z.number().finite(), z.boolean(), z.null()]).optional(),
   unit: z.string().min(1).optional(),
   direction: z.enum(["maximize", "minimize"]).optional(),
   path: z.string().min(1).optional(),
