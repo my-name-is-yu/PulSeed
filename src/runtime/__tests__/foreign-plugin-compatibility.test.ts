@@ -6,6 +6,8 @@ import {
   analyzeForeignPluginDirectory,
   analyzeForeignPluginManifest,
   createPendingCompatibilityReviewRecord,
+  FOREIGN_PLUGIN_COMPATIBILITY_REPORT_FILENAME,
+  readForeignPluginCompatibilityArtifact,
   writeForeignPluginCompatibilityArtifacts,
 } from "../foreign-plugins/compatibility.js";
 
@@ -140,6 +142,33 @@ describe("foreign plugin compatibility", () => {
       plugin_name: "review-me",
       status: "pending_operator_review",
     });
+    await expect(readForeignPluginCompatibilityArtifact(pluginDir)).resolves.toMatchObject({
+      schema_version: "foreign-plugin-compatibility/v1",
+      status: "quarantined",
+      runtime_loadable: false,
+    });
+  });
+
+  it("rejects invalid persisted compatibility artifacts at the read boundary", async () => {
+    const pluginDir = path.join(tmpDir, "invalid-artifact");
+    await writeJson(path.join(pluginDir, FOREIGN_PLUGIN_COMPATIBILITY_REPORT_FILENAME), {
+      schema_version: "foreign-plugin-compatibility/v1",
+      source: "openclaw",
+      status: "convertible",
+      runtime_loadable: true,
+      issues: ["malformed artifact should not be trusted"],
+      permissions: {
+        network: false,
+        file_read: false,
+        file_write: false,
+        shell: false,
+      },
+      execution_blockers: ["foreign_plugin_imported_disabled"],
+      adapter_requirements: [],
+      smoke_requirements: [],
+    });
+
+    await expect(readForeignPluginCompatibilityArtifact(pluginDir)).resolves.toBeNull();
   });
 
   it("classifies an invalid manifest as incompatible", () => {
