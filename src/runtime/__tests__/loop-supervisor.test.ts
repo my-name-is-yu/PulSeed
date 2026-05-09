@@ -485,6 +485,50 @@ describe("LoopSupervisor", () => {
     }
   });
 
+  it("restores only safe integer crash counts from persisted supervisor state", async () => {
+    const { runtimeRoot, deps } = makeSupervisor();
+    const stateFile = path.join(runtimeRoot, "supervisor-state.json");
+    fs.writeFileSync(
+      stateFile,
+      JSON.stringify({
+        workers: [],
+        crashCounts: {
+          "g-valid": 2,
+          "g-zero": 0,
+          "g-string": "2",
+          "g-negative": -1,
+          "g-decimal": 1.5,
+          "g-unsafe": Number.MAX_SAFE_INTEGER + 1,
+          "": 1,
+        },
+        suspendedGoals: [],
+        updatedAt: Date.now(),
+      })
+    );
+
+    const recoveredSupervisor = new LoopSupervisor(deps, {
+      concurrency: 1,
+      pollIntervalMs: 20,
+      maxCrashCount: 3,
+      crashBackoffBaseMs: 50,
+      stateFilePath: stateFile,
+      claimLeaseMs: 200,
+      leaseRenewIntervalMs: 50,
+    });
+
+    try {
+      await recoveredSupervisor.start([]);
+      await recoveredSupervisor.shutdown();
+
+      expect(recoveredSupervisor.getState().crashCounts).toEqual({
+        "g-valid": 2,
+        "g-zero": 0,
+      });
+    } finally {
+      fs.rmSync(runtimeRoot, { recursive: true, force: true });
+    }
+  });
+
   it("persists active worker state while work is in flight", async () => {
     const { supervisor, stateFile, runtimeRoot } = makeSupervisor(async (goalId: string) => {
       await new Promise((resolve) => setTimeout(resolve, 120));
