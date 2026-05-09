@@ -5,7 +5,8 @@ import * as path from "node:path";
 import { getDatasourcesDir } from "../../../base/utils/paths.js";
 import { writeJsonFile } from "../../../base/utils/json-io.js";
 import { extractWorkspacePathConstraint, resolveWorkspacePath } from "../../../base/utils/workspace-path.js";
-import { StateManager } from "../../../base/state/state-manager.js";
+import type { StateManager } from "../../../base/state/state-manager.js";
+import { DataSourceConfigSchema, type DataSourceConfig } from "../../../platform/observation/types/data-source.js";
 import { getCliLogger } from "../cli-logger.js";
 import { formatOperationError } from "../utils.js";
 import { parseExactFiniteNumber } from "./exact-number.js";
@@ -143,29 +144,25 @@ export function buildThreshold(spec: RawDimensionSpec): Threshold | null {
 
 // ─── Dedup helpers ───
 
-interface DatasourceConfig {
-  type?: string;
-  connection?: { commands?: Record<string, unknown>; path?: string };
-  dimension_mapping?: Record<string, unknown>;
-  scope_goal_id?: string;
-}
-
 /**
  * Load all existing datasource configs from the datasources directory.
  * Returns an empty array if the directory does not exist or cannot be read.
  */
-export async function loadExistingDatasources(datasourcesDir: string): Promise<DatasourceConfig[]> {
+export async function loadExistingDatasources(datasourcesDir: string): Promise<DataSourceConfig[]> {
   let entries: string[];
   try {
     entries = await fsp.readdir(datasourcesDir);
   } catch {
     return [];
   }
-  const results: DatasourceConfig[] = [];
+  const results: DataSourceConfig[] = [];
   for (const file of entries.filter((f) => f.endsWith(".json"))) {
     try {
       const raw = await fsp.readFile(path.join(datasourcesDir, file), "utf-8");
-      results.push(JSON.parse(raw) as DatasourceConfig);
+      const parsed = DataSourceConfigSchema.safeParse(JSON.parse(raw) as unknown);
+      if (parsed.success) {
+        results.push(parsed.data);
+      }
     } catch {
       // Skip unreadable files
     }
@@ -180,7 +177,7 @@ export async function loadExistingDatasources(datasourcesDir: string): Promise<D
  * different goal or workspace path.
  */
 function shellDatasourceExists(
-  existing: DatasourceConfig[],
+  existing: DataSourceConfig[],
   dimensionNames: string[],
   workspacePath: string,
   goalId: string
@@ -204,7 +201,7 @@ function shellDatasourceExists(
  * different goal or workspace path.
  */
 function fileExistenceDatasourceExists(
-  existing: DatasourceConfig[],
+  existing: DataSourceConfig[],
   dimensionNames: string[],
   workspacePath: string,
   goalId: string
