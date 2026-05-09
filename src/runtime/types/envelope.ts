@@ -23,8 +23,8 @@ export const EnvelopeSchema = z.object({
   priority: EnvelopePrioritySchema,
   payload: z.unknown(),
   reply_channel_id: z.string().optional(),
-  created_at: z.number(),
-  ttl_ms: z.number().optional(),
+  created_at: z.number().int().nonnegative().safe(),
+  ttl_ms: z.number().int().positive().safe().optional(),
   auth: AuthContextSchema.optional(),
 });
 export type Envelope = z.infer<typeof EnvelopeSchema>;

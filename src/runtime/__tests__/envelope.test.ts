@@ -64,6 +64,29 @@ describe("Envelope", () => {
       const result = EnvelopeSchema.safeParse(envelope);
       expect(result.success).toBe(false);
     });
+
+    it("rejects invalid envelope timing values", () => {
+      const baseEnvelope = {
+        id: "test-id",
+        type: "event",
+        name: "test",
+        source: "http",
+        priority: "normal",
+        payload: {},
+      };
+
+      expect(EnvelopeSchema.safeParse({ ...baseEnvelope, created_at: 0 }).success).toBe(true);
+      expect(EnvelopeSchema.safeParse({ ...baseEnvelope, created_at: Number.MAX_SAFE_INTEGER }).success).toBe(true);
+      expect(EnvelopeSchema.safeParse({ ...baseEnvelope, created_at: 1, ttl_ms: 1 }).success).toBe(true);
+
+      expect(EnvelopeSchema.safeParse({ ...baseEnvelope, created_at: Infinity }).success).toBe(false);
+      expect(EnvelopeSchema.safeParse({ ...baseEnvelope, created_at: 1.5 }).success).toBe(false);
+      expect(EnvelopeSchema.safeParse({ ...baseEnvelope, created_at: Number.MAX_SAFE_INTEGER + 1 }).success).toBe(false);
+      expect(EnvelopeSchema.safeParse({ ...baseEnvelope, created_at: 1, ttl_ms: Infinity }).success).toBe(false);
+      expect(EnvelopeSchema.safeParse({ ...baseEnvelope, created_at: 1, ttl_ms: 1.5 }).success).toBe(false);
+      expect(EnvelopeSchema.safeParse({ ...baseEnvelope, created_at: 1, ttl_ms: 0 }).success).toBe(false);
+      expect(EnvelopeSchema.safeParse({ ...baseEnvelope, created_at: 1, ttl_ms: Number.MAX_SAFE_INTEGER + 1 }).success).toBe(false);
+    });
   });
 
   describe("createEnvelope", () => {
