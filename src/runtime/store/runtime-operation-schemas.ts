@@ -1,5 +1,16 @@
 import { z } from "zod";
-import { CompanionResumeOutcomeSchema } from "../types/companion-state.js";
+import {
+  AuthorityScopeSchema,
+  CompanionResumeOutcomeSchema,
+  CompanionStateModeSchema,
+  CompanionWideControlSchema,
+  RuntimeItemControlSchema,
+  RuntimeItemPostureSchema,
+  RuntimeItemStatusSchema,
+  RuntimeItemTypeSchema,
+  RuntimeItemVisibilityPolicySchema,
+  StalenessOutcomeSchema,
+} from "../types/companion-state.js";
 
 export const RuntimeControlOperationKindSchema = z.enum([
   "restart_daemon",
@@ -71,6 +82,47 @@ export const RuntimeControlReplyTargetSchema = z.object({
 });
 export type RuntimeControlReplyTarget = z.infer<typeof RuntimeControlReplyTargetSchema>;
 
+export const RuntimeControlCompanionStateInspectionItemSchema = z.object({
+  ref: z.string().min(1),
+  type: RuntimeItemTypeSchema,
+  status: RuntimeItemStatusSchema,
+  posture: RuntimeItemPostureSchema,
+  visibility_display: RuntimeItemVisibilityPolicySchema.shape.display,
+  inspectable: z.boolean(),
+  auditable: z.boolean(),
+  authority_scope: AuthorityScopeSchema,
+  authority: z.object({
+    resumable: z.boolean(),
+    actionable: z.boolean(),
+    speakable: z.boolean(),
+    can_create_urge: z.boolean(),
+    can_update_surface: z.boolean(),
+    can_write_memory: z.boolean(),
+    can_delegate_work: z.boolean(),
+    requires_confirmation: z.boolean(),
+  }).strict(),
+  staleness_outcomes: z.record(StalenessOutcomeSchema),
+  allowed_controls: z.array(RuntimeItemControlSchema),
+  repair_options: z.array(RuntimeItemControlSchema),
+  audit_trace_refs: z.array(z.string().min(1)),
+}).strict();
+export type RuntimeControlCompanionStateInspectionItem = z.infer<typeof RuntimeControlCompanionStateInspectionItemSchema>;
+
+export const RuntimeControlCompanionStateInspectionSchema = z.object({
+  snapshot_id: z.string().min(1),
+  mode: CompanionStateModeSchema,
+  inspected_at: z.string().datetime(),
+  active_controls: z.array(CompanionWideControlSchema),
+  active_refs: z.array(z.string().min(1)),
+  held_runtime_refs: z.array(z.string().min(1)),
+  blocked_refs: z.array(z.string().min(1)),
+  hidden_refs: z.array(z.string().min(1)),
+  non_executable_refs: z.array(z.string().min(1)),
+  repairable_refs: z.array(z.string().min(1)),
+  runtime_items: z.array(RuntimeControlCompanionStateInspectionItemSchema),
+}).strict();
+export type RuntimeControlCompanionStateInspection = z.infer<typeof RuntimeControlCompanionStateInspectionSchema>;
+
 export const RuntimeControlOperationSchema = z.object({
   operation_id: z.string().min(1),
   kind: RuntimeControlOperationKindSchema,
@@ -113,6 +165,7 @@ export const RuntimeControlOperationSchema = z.object({
     daemon_status: z.string().optional(),
     health_error: z.string().optional(),
     resume_outcome: CompanionResumeOutcomeSchema.optional(),
+    companion_state_inspection: RuntimeControlCompanionStateInspectionSchema.optional(),
   }).optional(),
 });
 export type RuntimeControlOperation = z.infer<typeof RuntimeControlOperationSchema>;
