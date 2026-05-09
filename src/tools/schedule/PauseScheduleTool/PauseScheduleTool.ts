@@ -15,7 +15,7 @@ import { TAGS, CATEGORY as _CATEGORY, READ_ONLY, PERMISSION_LEVEL } from "./cons
 
 export const PauseScheduleInputSchema = z.object({
   schedule_id: z.string().min(1),
-});
+}).strict();
 export type PauseScheduleInput = z.infer<typeof PauseScheduleInputSchema>;
 
 export interface PauseScheduleOutput {
