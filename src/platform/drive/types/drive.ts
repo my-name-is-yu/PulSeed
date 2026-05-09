@@ -8,6 +8,8 @@ const UnitIntervalSchema = z.number().finite().min(0).max(1);
 const PositiveDurationHoursSchema = z.number().finite().positive().max(MAX_DRIVE_DURATION_HOURS);
 const NonNegativeScoreScaleSchema = z.number().finite().min(0).max(MAX_DRIVE_SCORE_SCALE);
 const PositiveScoreScaleSchema = z.number().finite().positive().max(MAX_DRIVE_SCORE_SCALE);
+const NonNegativeSafeIntegerSchema = z.number().int().nonnegative().safe();
+const IsoDateTimeSchema = z.string().datetime();
 
 // --- Dissatisfaction Drive Score ---
 
@@ -104,12 +106,12 @@ export const PaceConfigSchema = z.object({
 export type PaceConfig = z.infer<typeof PaceConfigSchema>;
 
 export const GoalScheduleSchema = z.object({
-  goal_id: z.string(),
-  next_check_at: z.string(),
-  check_interval_hours: z.number(),
-  last_triggered_at: z.string().nullable().default(null),
-  consecutive_actions: z.number().default(0),
-  cooldown_until: z.string().nullable().default(null),
-  current_interval_hours: z.number(),
+  goal_id: z.string().min(1),
+  next_check_at: IsoDateTimeSchema,
+  check_interval_hours: PositiveDurationHoursSchema,
+  last_triggered_at: IsoDateTimeSchema.nullable().default(null),
+  consecutive_actions: NonNegativeSafeIntegerSchema.default(0),
+  cooldown_until: IsoDateTimeSchema.nullable().default(null),
+  current_interval_hours: PositiveDurationHoursSchema,
 });
 export type GoalSchedule = z.infer<typeof GoalScheduleSchema>;

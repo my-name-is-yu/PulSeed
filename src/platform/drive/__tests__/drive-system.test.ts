@@ -4,8 +4,8 @@ import * as path from "node:path";
 import * as os from "node:os";
 import { StateManager } from "../../../base/state/state-manager.js";
 import { DriveSystem } from "../drive-system.js";
-import type { PulSeedEvent, GoalSchedule } from "../../../base/types/drive.js";
-import type { Goal } from "../../../base/types/goal.js";
+import { MAX_DRIVE_DURATION_HOURS } from "../types/drive.js";
+import type { PulSeedEvent, GoalSchedule } from "../types/drive.js";
 import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 import { makeGoal } from "../../../../tests/helpers/fixtures.js";
 import { randomUUID } from "node:crypto";
@@ -23,6 +23,25 @@ function makeEvent(overrides: Partial<PulSeedEvent> = {}): PulSeedEvent {
 function writeEventFile(eventsDir: string, fileName: string, event: PulSeedEvent): void {
   const filePath = path.join(eventsDir, fileName);
   fs.writeFileSync(filePath, JSON.stringify(event, null, 2), "utf-8");
+}
+
+function writeScheduleFile(baseDir: string, goalId: string, schedule: Record<string, unknown>): void {
+  const scheduleDir = path.join(baseDir, "schedule");
+  fs.mkdirSync(scheduleDir, { recursive: true });
+  fs.writeFileSync(path.join(scheduleDir, `${goalId}.json`), JSON.stringify(schedule, null, 2), "utf-8");
+}
+
+function makeStoredSchedule(goalId: string, overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    goal_id: goalId,
+    next_check_at: "2025-06-01T12:00:00.000Z",
+    check_interval_hours: 4,
+    last_triggered_at: null,
+    consecutive_actions: 0,
+    cooldown_until: null,
+    current_interval_hours: 4,
+    ...overrides,
+  };
 }
 
 // ─── Test Suite ───
@@ -445,6 +464,98 @@ describe("DriveSystem", () => {
       expect(result!.consecutive_actions).toBe(0);
       expect(result!.cooldown_until).toBeNull();
     });
+
+    it("returns fallback schedule for persisted schedules with non-finite intervals", async () => {
+      const goalId = "unsafe-schedule";
+      const scheduleDir = path.join(tmpDir, "schedule");
+      fs.mkdirSync(scheduleDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(scheduleDir, `${goalId}.json`),
+        `{
+          "goal_id": "${goalId}",
+          "next_check_at": "2025-06-01T12:00:00.000Z",
+          "check_interval_hours": 1e309,
+          "last_triggered_at": null,
+          "consecutive_actions": 0,
+          "cooldown_until": null,
+          "current_interval_hours": 4
+        }`,
+        "utf-8"
+      );
+
+      const result = await driveSystem.getSchedule(goalId);
+
+      expect(result).not.toBeNull();
+      expect(result!.goal_id).toBe(goalId);
+      expect(result!.next_check_at).toBe(new Date(0).toISOString());
+      expect(result!.check_interval_hours).toBe(1);
+      expect(result!.consecutive_actions).toBe(0);
+    });
+
+    it("returns fallback schedule for persisted schedules with unsafe action counters", async () => {
+      const goalId = "unsafe-counter";
+      writeScheduleFile(tmpDir, goalId, makeStoredSchedule(goalId, {
+        consecutive_actions: Number.MAX_SAFE_INTEGER + 1,
+      }));
+
+      const result = await driveSystem.getSchedule(goalId);
+
+      expect(result).not.toBeNull();
+      expect(result!.goal_id).toBe(goalId);
+      expect(result!.next_check_at).toBe(new Date(0).toISOString());
+      expect(result!.consecutive_actions).toBe(0);
+    });
+
+    it.each([
+      ["zero interval", { check_interval_hours: 0 }],
+      ["negative interval", { current_interval_hours: -1 }],
+      ["overlarge interval", { check_interval_hours: MAX_DRIVE_DURATION_HOURS + 1 }],
+      ["invalid next check timestamp", { next_check_at: "not-a-date" }],
+      ["invalid last triggered timestamp", { last_triggered_at: "not-a-date" }],
+      ["invalid cooldown timestamp", { cooldown_until: "not-a-date" }],
+    ])("returns fallback schedule for persisted schedules with %s", async (_case, overrides) => {
+      const goalId = `invalid-${String(_case).replaceAll(" ", "-")}`;
+      writeScheduleFile(tmpDir, goalId, makeStoredSchedule(goalId, overrides));
+
+      const result = await driveSystem.getSchedule(goalId);
+
+      expect(result).not.toBeNull();
+      expect(result!.goal_id).toBe(goalId);
+      expect(result!.next_check_at).toBe(new Date(0).toISOString());
+      expect(result!.check_interval_hours).toBe(1);
+    });
+
+    it("rejects invalid schedules before writing", async () => {
+      const goalId = "invalid-write";
+      const schedule = driveSystem.createDefaultSchedule(goalId, 1);
+
+      await expect(driveSystem.updateSchedule(goalId, {
+        ...schedule,
+        check_interval_hours: Infinity,
+      })).rejects.toThrow();
+      await expect(driveSystem.updateSchedule(goalId, {
+        ...schedule,
+        consecutive_actions: Number.MAX_SAFE_INTEGER + 1,
+      })).rejects.toThrow();
+      await expect(driveSystem.updateSchedule(goalId, {
+        ...schedule,
+        next_check_at: "not-a-date",
+      })).rejects.toThrow();
+      await expect(driveSystem.updateSchedule(goalId, {
+        ...schedule,
+        last_triggered_at: "not-a-date",
+      })).rejects.toThrow();
+      await expect(driveSystem.updateSchedule(goalId, {
+        ...schedule,
+        cooldown_until: "not-a-date",
+      })).rejects.toThrow();
+      await expect(driveSystem.updateSchedule(goalId, {
+        ...schedule,
+        current_interval_hours: MAX_DRIVE_DURATION_HOURS + 1,
+      })).rejects.toThrow();
+
+      expect(fs.existsSync(path.join(tmpDir, "schedule", `${goalId}.json`))).toBe(false);
+    });
   });
 
   // ─── createDefaultSchedule ───
@@ -490,6 +601,16 @@ describe("DriveSystem", () => {
     it("sets cooldown_until to null", () => {
       const schedule = driveSystem.createDefaultSchedule("goal-x", 1);
       expect(schedule.cooldown_until).toBeNull();
+    });
+
+    it("rejects non-finite default schedule intervals", () => {
+      expect(() => driveSystem.createDefaultSchedule("goal-x", Infinity)).toThrow();
+    });
+
+    it("rejects out-of-range default schedule intervals", () => {
+      expect(() => driveSystem.createDefaultSchedule("goal-x", 0)).toThrow();
+      expect(() => driveSystem.createDefaultSchedule("goal-x", -1)).toThrow();
+      expect(() => driveSystem.createDefaultSchedule("goal-x", MAX_DRIVE_DURATION_HOURS + 1)).toThrow();
     });
   });
 

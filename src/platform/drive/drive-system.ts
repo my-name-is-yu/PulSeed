@@ -2,8 +2,8 @@ import { watch } from "node:fs";
 import type { FSWatcher } from "node:fs";
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
-import { PulSeedEventSchema, GoalScheduleSchema } from "../../base/types/drive.js";
-import type { PulSeedEvent, GoalSchedule } from "../../base/types/drive.js";
+import { PulSeedEventSchema, GoalScheduleSchema } from "./types/drive.js";
+import type { PulSeedEvent, GoalSchedule } from "./types/drive.js";
 import type { StateManager } from "../../base/state/state-manager.js";
 import type { Logger } from "../../runtime/logger.js";
 import { writeJsonFileAtomic } from "../../base/utils/json-io.js";
@@ -287,16 +287,17 @@ export class DriveSystem {
    * Create a new schedule with next_check_at = now + intervalHours.
    */
   createDefaultSchedule(goalId: string, intervalHours: number): GoalSchedule {
+    const interval = GoalScheduleSchema.shape.check_interval_hours.parse(intervalHours);
     const now = new Date();
-    const nextCheckAt = new Date(now.getTime() + intervalHours * 60 * 60 * 1000);
+    const nextCheckAt = new Date(now.getTime() + interval * 60 * 60 * 1000);
     return GoalScheduleSchema.parse({
       goal_id: goalId,
       next_check_at: nextCheckAt.toISOString(),
-      check_interval_hours: intervalHours,
+      check_interval_hours: interval,
       last_triggered_at: null,
       consecutive_actions: 0,
       cooldown_until: null,
-      current_interval_hours: intervalHours,
+      current_interval_hours: interval,
     });
   }
 
