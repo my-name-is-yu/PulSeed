@@ -57,6 +57,39 @@ describe("ToolResultSchema", () => {
     const result = ToolResultSchema.parse({ ...validResult, data: [1, 2, 3] });
     expect(result.data).toEqual([1, 2, 3]);
   });
+
+  it("rejects unsafe duration metadata", () => {
+    for (const durationMs of [
+      Number.POSITIVE_INFINITY,
+      Number.NaN,
+      -1,
+      1.5,
+      Number.MAX_SAFE_INTEGER + 1,
+    ]) {
+      expect(ToolResultSchema.safeParse({ ...validResult, durationMs }).success).toBe(false);
+    }
+  });
+
+  it("rejects unsafe truncation character counts", () => {
+    const truncatedResult = {
+      ...validResult,
+      truncated: { originalChars: 12_000 },
+    };
+    expect(ToolResultSchema.safeParse(truncatedResult).success).toBe(true);
+
+    for (const originalChars of [
+      Number.POSITIVE_INFINITY,
+      Number.NaN,
+      -1,
+      1.5,
+      Number.MAX_SAFE_INTEGER + 1,
+    ]) {
+      expect(ToolResultSchema.safeParse({
+        ...validResult,
+        truncated: { originalChars },
+      }).success).toBe(false);
+    }
+  });
 });
 
 describe("ToolPermissionLevelSchema", () => {
