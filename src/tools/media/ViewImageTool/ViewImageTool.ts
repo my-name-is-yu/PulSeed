@@ -5,7 +5,7 @@ import type { ITool, PermissionCheckResult, ToolCallContext, ToolMetadata, ToolR
 export const ViewImageInputSchema = z.object({
   path: z.string().min(1),
   detail: z.enum(["auto", "original"]).default("auto"),
-});
+}).strict();
 export type ViewImageInput = z.infer<typeof ViewImageInputSchema>;
 
 export class ViewImageTool implements ITool<ViewImageInput> {

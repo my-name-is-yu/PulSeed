@@ -8,7 +8,7 @@ import { TAGS, CATEGORY as _CATEGORY, READ_ONLY, PERMISSION_LEVEL } from "./cons
 
 export const ReadPlanInputSchema = z.object({
   plan_id: z.string().min(1, "plan_id is required").regex(PLAN_ID_RE, "plan_id must be alphanumeric with hyphens only"),
-});
+}).strict();
 export type ReadPlanInput = z.infer<typeof ReadPlanInputSchema>;
 
 export class ReadPlanTool implements ITool<ReadPlanInput, unknown> {

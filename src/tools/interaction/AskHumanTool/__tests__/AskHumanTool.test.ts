@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { AskHumanTool, AskHumanInputSchema } from "../AskHumanTool.js";
 import type { ToolCallContext } from "../../../types.js";
+import { toToolDefinition } from "../../../tool-definition-adapter.js";
 
 function makeContext(approved: boolean): ToolCallContext {
   return {
@@ -82,5 +83,15 @@ describe("AskHumanTool", () => {
   it("Zod accepts question with optional options", () => {
     const parsed = AskHumanInputSchema.safeParse({ question: "ok?", options: ["yes", "no"] });
     expect(parsed.success).toBe(true);
+  });
+
+  it("rejects unknown fields and exports a closed model-facing schema", () => {
+    expect(AskHumanInputSchema.safeParse({
+      question: "Continue?",
+      unexpected: true,
+    }).success).toBe(false);
+
+    const parameters = toToolDefinition(tool).function.parameters as Record<string, unknown>;
+    expect(parameters.additionalProperties).toBe(false);
   });
 });
