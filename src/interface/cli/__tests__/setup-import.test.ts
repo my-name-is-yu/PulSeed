@@ -567,13 +567,13 @@ describe("setup import apply", () => {
     expect(fs.existsSync(path.join(baseDir, "skills", "imported", "openclaw", "review", "SKILL.md"))).toBe(true);
     expect(fs.existsSync(path.join(baseDir, "skills", "imported", "openclaw", "review", "scripts", "check.sh"))).toBe(true);
     expect(fs.existsSync(path.join(baseDir, "skills", "imported", "openclaw", "review", "templates", "review.md"))).toBe(true);
-    expect(fs.existsSync(path.join(baseDir, "plugins-imported-disabled", "openclaw", "notifier", "plugin.json"))).toBe(true);
-    expect(fs.existsSync(
-      path.join(baseDir, "plugins-imported-disabled", "openclaw", "notifier", "pulseed-foreign-plugin-compatibility.json")
-    )).toBe(true);
-    expect(fs.existsSync(
-      path.join(baseDir, "plugins-imported-disabled", "openclaw", "notifier", "pulseed-foreign-plugin-review.json")
-    )).toBe(true);
+	    expect(fs.existsSync(path.join(baseDir, "plugins-imported-disabled", "openclaw", "notifier", "plugin.json"))).toBe(true);
+	    expect(fs.existsSync(
+	      path.join(baseDir, "plugins-imported-disabled", "openclaw", "notifier", "pulseed-foreign-plugin-compatibility.json")
+	    )).toBe(false);
+	    expect(fs.existsSync(
+	      path.join(baseDir, "plugins-imported-disabled", "openclaw", "notifier", "pulseed-foreign-plugin-review.json")
+	    )).toBe(false);
 
     const mcp = JSON.parse(
       await fsp.readFile(path.join(baseDir, "mcp-servers.json"), "utf-8")
@@ -588,8 +588,8 @@ describe("setup import apply", () => {
     const pluginReportItem = report.items.find((item) => item.kind === "plugin");
     expect(pluginReportItem?.pluginCompatibility?.status).toBe("quarantined");
     expect(pluginReportItem?.pluginCompatibility?.runtime_loadable).toBe(false);
-    expect(pluginReportItem?.pluginCompatibilityReportPath).toMatch(/pulseed-foreign-plugin-compatibility\.json$/);
-    expect(pluginReportItem?.pluginCompatibilityReviewRecordPath).toMatch(/pulseed-foreign-plugin-review\.json$/);
+	    expect(pluginReportItem?.pluginCompatibilityReportPath).toMatch(/^sqlite:\/\/pulseed-control\/foreign-plugin-compatibility\//);
+	    expect(pluginReportItem?.pluginCompatibilityReviewRecordPath).toMatch(/^sqlite:\/\/pulseed-control\/foreign-plugin-review\//);
     const { AssetRegistry } = await import("../../../runtime/assets/registry.js");
     const assets = await new AssetRegistry({ baseDir }).list();
     expect(assets.map((asset) => asset.kind).sort()).toEqual([
@@ -627,7 +627,7 @@ describe("setup import apply", () => {
       },
     });
     const pluginAsset = assets.find((asset) => asset.kind === "foreign_plugin");
-    expect(pluginAsset?.compatibility_report_ref).toMatch(/pulseed-foreign-plugin-compatibility\.json$/);
+	    expect(pluginAsset?.compatibility_report_ref).toMatch(/^sqlite:\/\/pulseed-control\/foreign-plugin-compatibility\//);
     expect(pluginAsset?.metadata?.["runtime_loadable"]).toBe(false);
     expect(pluginAsset?.metadata?.["execution_blockers"]).toEqual(expect.arrayContaining([
       "foreign_plugin_imported_disabled",
@@ -636,7 +636,7 @@ describe("setup import apply", () => {
       "smoke_verification_required",
       "requested_network_permission",
     ]));
-    expect(pluginAsset?.metadata?.["compatibility_review_record_path"]).toMatch(/pulseed-foreign-plugin-review\.json$/);
+	    expect(pluginAsset?.metadata?.["compatibility_review_record_path"]).toMatch(/^sqlite:\/\/pulseed-control\/foreign-plugin-review\//);
     const mcpAsset = assets.find((asset) => asset.kind === "mcp_server");
     expect(mcpAsset?.metadata?.["mcp_server_id"]).toBe("openclaw-filesystem-2");
     expect(mcpAsset?.metadata?.["compatibility"]).toMatchObject({

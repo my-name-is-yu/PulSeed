@@ -3,10 +3,10 @@ import * as fs from "node:fs/promises";
 import yaml from "js-yaml";
 import { getPluginsDir } from "../base/utils/paths.js";
 import { getPulseedVersion as getPackageVersion } from "../base/utils/pulseed-meta.js";
-import { writeJsonFileAtomic } from "../base/utils/json-io.js";
 import { ValidationError } from "../base/utils/errors.js";
 import { exposeRegisteredGatewayChatSessionPort } from "./gateway/chat-session-port.js";
 import { readForeignPluginCompatibilityArtifact, hasForeignPluginCompatibilityArtifact } from "./foreign-plugins/compatibility.js";
+import { PluginChannelRuntimeStateStore } from "./store/plugin-channel-runtime-state-store.js";
 import type { Logger } from "./logger.js";
 import {
   PluginManifestSchema,
@@ -23,6 +23,11 @@ import type { NotifierRegistry } from "./notifier-registry.js";
 import type { IScheduleSource } from "./schedule/source.js";
 
 // ─── PluginLoader ───
+
+export interface PluginLoaderOptions {
+  controlBaseDir?: string;
+  runtimeStateStore?: PluginChannelRuntimeStateStore;
+}
 
 /**
  * Discovers, loads, validates, and registers plugins from ~/.pulseed/plugins/.
@@ -42,6 +47,7 @@ export class PluginLoader {
   private pluginDirsByName: Map<string, string> = new Map();
   private scheduleSources: Map<string, IScheduleSource> = new Map();
   private readonly logger?: Logger;
+  private readonly runtimeStateStore: PluginChannelRuntimeStateStore;
 
   constructor(
     adapterRegistry: AdapterRegistry,
@@ -49,13 +55,17 @@ export class PluginLoader {
     notifierRegistry: NotifierRegistry,
     pluginsDir?: string,
     logger?: Logger,
-    private readonly onDataSourceRegistered?: (adapter: IDataSourceAdapter) => void
+    private readonly onDataSourceRegistered?: (adapter: IDataSourceAdapter) => void,
+    options: PluginLoaderOptions = {},
   ) {
     this.adapterRegistry = adapterRegistry;
     this.dataSourceRegistry = dataSourceRegistry;
     this.notifierRegistry = notifierRegistry;
     this.pluginsDir = pluginsDir ?? getPluginsDir();
     this.logger = logger;
+    this.runtimeStateStore = options.runtimeStateStore ?? new PluginChannelRuntimeStateStore(
+      options.controlBaseDir ?? inferPluginStateBaseDir(this.pluginsDir),
+    );
   }
 
   /**
@@ -72,11 +82,16 @@ export class PluginLoader {
       pluginDirs.map((dir) => this.loadOne(dir))
     );
 
-    return results.map((r, i) =>
-      r.status === "fulfilled"
-        ? r.value
-        : this.buildErrorState(pluginDirs[i], r.reason)
-    );
+    const states: PluginState[] = [];
+    for (let index = 0; index < results.length; index += 1) {
+      const result = results[index]!;
+      const state = result.status === "fulfilled"
+        ? result.value
+        : this.buildErrorState(pluginDirs[index]!, result.reason);
+      await this.persistPluginState(state);
+      states.push(state);
+    }
+    return states;
   }
 
   /**
@@ -86,7 +101,9 @@ export class PluginLoader {
   async loadOne(pluginDir: string): Promise<PluginState> {
     const foreignCompatibility = await readForeignPluginCompatibilityArtifact(pluginDir);
     if (foreignCompatibility) {
-      return this.buildForeignImportDisabledState(pluginDir, foreignCompatibility);
+      const state = this.buildForeignImportDisabledState(pluginDir, foreignCompatibility);
+      await this.persistPluginState(state);
+      return state;
     }
 
     // 1. Read and validate manifest
@@ -111,13 +128,17 @@ export class PluginLoader {
       this.logger?.warn(
         `[PluginLoader] Skipping plugin "${manifest.name}" with invalid PulSeed version constraint: ${msg}`
       );
-      return this.buildIncompatibleState(manifest, pulseedVersion, range || "invalid semver");
+      const state = this.buildIncompatibleState(manifest, pulseedVersion, range || "invalid semver");
+      await this.persistPluginState(state);
+      return state;
     }
     if (!isCompatible) {
       this.logger?.warn(
         `[PluginLoader] Skipping incompatible plugin "${manifest.name}": requires PulSeed ${range}, got ${pulseedVersion}`
       );
-      return this.buildIncompatibleState(manifest, pulseedVersion, range);
+      const state = this.buildIncompatibleState(manifest, pulseedVersion, range);
+      await this.persistPluginState(state);
+      return state;
     }
 
     // 2. Dynamically import the entry point
@@ -150,7 +171,9 @@ export class PluginLoader {
     // 4. Register in the appropriate registry
     await this.registerPlugin(manifest, impl, pluginDir);
 
-    return this.buildSuccessState(manifest);
+    const state = this.buildSuccessState(manifest);
+    await this.persistPluginState(state);
+    return state;
   }
 
   async preparePluginImplementation(impl: unknown, pluginDir: string): Promise<unknown> {
@@ -430,9 +453,11 @@ export class PluginLoader {
     const updated = PluginStateSchema.parse({ ...existing, ...updates });
     this.pluginStates.set(pluginName, updated);
 
-    const pluginDir = this.pluginDirsByName.get(pluginName) ?? path.join(this.pluginsDir, pluginStorageDirName(pluginName));
-    const statePath = path.join(pluginDir, "state.json");
-    await writeJsonFileAtomic(statePath, updated);
+    await this.persistPluginState(updated);
+  }
+
+  private async persistPluginState(state: PluginState): Promise<void> {
+    await this.runtimeStateStore.savePluginState(state);
   }
 
   // ─── Private helpers ───
@@ -460,6 +485,13 @@ function getPulseedVersion(): string {
   if (_pulseedVersion !== undefined) return _pulseedVersion;
   _pulseedVersion = getPackageVersion(import.meta.url);
   return _pulseedVersion;
+}
+
+function inferPluginStateBaseDir(pluginsDir: string): string {
+  const normalized = path.resolve(pluginsDir);
+  const basename = path.basename(normalized);
+  if (basename === "plugins") return path.dirname(normalized);
+  return normalized;
 }
 
 // ─── Semver utilities (no external deps) ───
@@ -515,8 +547,4 @@ function sanitizeName(dirName: string): string {
     .replace(/^-+|-+$/g, "") // trim leading/trailing hyphens
     .replace(/-{2,}/g, "-"); // collapse consecutive hyphens
   return sanitized || "unknown";
-}
-
-function pluginStorageDirName(pluginName: string): string {
-  return pluginName.replace(/\//g, "__").replace(/@/g, "") || "unknown";
 }

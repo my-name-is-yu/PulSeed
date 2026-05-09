@@ -18,6 +18,7 @@ import type { BackgroundRun, RuntimeReplyTarget, RuntimeSession } from "../../..
 import { BackgroundRunLedger } from "../../../runtime/store/background-run-store.js";
 import { CapabilityVerificationStore } from "../../../runtime/store/capability-verification-store.js";
 import { RuntimeHealthStore } from "../../../runtime/store/health-store.js";
+import { PluginChannelRuntimeStateStore, type GatewayChannelBinding } from "../../../runtime/store/plugin-channel-runtime-state-store.js";
 import type { RuntimeHealthSnapshot } from "../../../runtime/store/runtime-schemas.js";
 import {
   projectCapabilityOperatorStatus,
@@ -125,13 +126,13 @@ function missingRequiredFields(raw: Record<string, unknown>, channel: Exclude<Bu
   return REQUIRED_SENDER_CONFIG_FIELDS[channel].filter((field) => nonEmptyString(raw[field]) === null);
 }
 
-function telegramSummary(raw: Record<string, unknown> | null): ChannelConfigSummary {
+function telegramSummary(raw: Record<string, unknown> | null, binding: GatewayChannelBinding | null): ChannelConfigSummary {
   if (!raw) return missingSummary();
   const hasBotToken = nonEmptyString(raw["bot_token"]) !== null;
   const warnings: string[] = [];
-  const chatId = typeof raw["chat_id"] === "number" ? String(raw["chat_id"]) : null;
+  const chatId = binding?.home_target_id ?? (typeof raw["chat_id"] === "number" ? String(raw["chat_id"]) : null);
   const runtimeAllowedCount = arrayCount(raw["runtime_control_allowed_user_ids"]);
-  const allowedUserCount = arrayCount(raw["allowed_user_ids"]);
+  const allowedUserCount = arrayCount(raw["allowed_user_ids"]) || (binding?.first_bound_actor_id ? 1 : 0);
   const defaultGoalId = nonEmptyString(raw["default_goal_id"]);
   if (!chatId) warnings.push("Missing Telegram home chat. Send /sethome from the target chat.");
   if (runtimeAllowedCount === 0) warnings.push("Missing Telegram runtime-control allowed user list.");
@@ -218,12 +219,15 @@ async function loadRawConfig(filePath: string): Promise<Record<string, unknown> 
   return raw && typeof raw === "object" && !Array.isArray(raw) ? raw as Record<string, unknown> : null;
 }
 
-async function loadRecentChannelHealth(configPath: string): Promise<OperatorChannelBindingStatus["recent_health"]> {
-  const raw = await readJsonFileOrNull<Record<string, unknown>>(path.join(path.dirname(configPath), "health.json"));
+async function loadRecentChannelHealth(
+  store: PluginChannelRuntimeStateStore,
+  channel: BuiltinGatewayChannelName,
+): Promise<OperatorChannelBindingStatus["recent_health"]> {
+  const raw = await store.loadChannelHealth(channel);
   return {
-    inbound_at: nonEmptyString(raw?.["last_inbound_at"]),
-    outbound_at: nonEmptyString(raw?.["last_outbound_at"]),
-    last_error: nonEmptyString(raw?.["last_error"]),
+    inbound_at: raw?.last_inbound_at ?? null,
+    outbound_at: raw?.last_outbound_at ?? null,
+    last_error: raw?.last_error ?? null,
   };
 }
 
@@ -375,12 +379,14 @@ export async function collectOperatorBindingStatus(stateManager: StateManager): 
     collectCapabilityRuntimeProjections(stateManager, runtimeRoot, generatedAt),
   ]);
   const gatewayHealth = health?.components.gateway ?? "missing";
+  const pluginChannelStore = new PluginChannelRuntimeStateStore(baseDir);
   const channels: OperatorChannelBindingStatus[] = [];
   for (const name of BUILTIN_GATEWAY_CHANNEL_NAMES) {
     const configPath = channelConfigPath(baseDir, name);
     const raw = await loadRawConfig(configPath);
-    const recentHealth = await loadRecentChannelHealth(configPath);
-    const summary = name === "telegram-bot" ? telegramSummary(raw) : senderSummary(raw, name);
+    const recentHealth = await loadRecentChannelHealth(pluginChannelStore, name);
+    const binding = name === "telegram-bot" ? await pluginChannelStore.loadChannelBinding(name) : null;
+    const summary = name === "telegram-bot" ? telegramSummary(raw, binding) : senderSummary(raw, name);
     const state = channelState(summary, daemon.running, gatewayHealth);
     channels.push({
       name,

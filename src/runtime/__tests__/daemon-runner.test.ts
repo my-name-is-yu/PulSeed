@@ -700,7 +700,7 @@ describe("DaemonRunner durable runtime", () => {
 
     const deps = makeDeps(tmpDir, {
       config: {
-        check_interval_ms: 50,
+        check_interval_ms: 5_000,
         proactive_mode: true,
         proactive_interval_ms: 60_000,
       },
@@ -1451,7 +1451,7 @@ describe("DaemonRunner durable runtime", () => {
   it("initializes durable runtime state and does not create a PID file", async () => {
     const eventServer = makeEventServerMock();
     const deps = makeDeps(tmpDir, {
-      config: { check_interval_ms: 50, runtime_journal_v2: true },
+      config: { check_interval_ms: 5_000, runtime_journal_v2: true },
       eventServer: eventServer as unknown as DaemonDeps["eventServer"],
     });
     const daemon = new DaemonRunner(deps);

@@ -48,6 +48,7 @@ import {
   DaemonStateStore,
   GoalTaskStateStore,
   openControlDatabase,
+  PluginChannelRuntimeStateStore,
   RuntimeHealthStore,
   SupervisorStateStore,
 } from "../../../runtime/store/index.js";
@@ -1342,6 +1343,53 @@ describe("cmdDoctor summary counts", () => {
     const allOutput = consoleSpy.mock.calls.map((c: unknown[]) => c[0] as string).join("\n");
     expect(allOutput).toContain("Repair knowledge/memory import: domain=1, shared=1, agent memory=1");
     expect(checkControlDatabase(tmpDir).detail).toContain("legacy import record");
+  });
+
+  it("imports legacy plugin and channel runtime state through doctor repair", async () => {
+    const origHome = process.env["PULSEED_HOME"];
+    process.env["PULSEED_HOME"] = tmpDir;
+    fs.mkdirSync(path.join(tmpDir, "plugins", "doctor-plugin"), { recursive: true });
+    fs.writeFileSync(path.join(tmpDir, "plugins", "doctor-plugin", "state.json"), JSON.stringify({
+      name: "doctor-plugin",
+      manifest: {
+        name: "doctor-plugin",
+        version: "1.0.0",
+        type: "notifier",
+        capabilities: ["notify"],
+        description: "Doctor plugin",
+      },
+      status: "loaded",
+      loaded_at: "2026-05-09T00:00:00.000Z",
+      trust_score: 12,
+      usage_count: 2,
+      success_count: 1,
+      failure_count: 0,
+    }));
+    fs.mkdirSync(path.join(tmpDir, "gateway", "channels", "telegram-bot"), { recursive: true });
+    fs.writeFileSync(path.join(tmpDir, "gateway", "channels", "telegram-bot", "health.json"), JSON.stringify({
+      last_inbound_at: "2026-05-09T00:01:00.000Z",
+      last_outbound_at: "2026-05-09T00:02:00.000Z",
+      last_error: null,
+    }));
+
+    try {
+      const exitCode = await cmdDoctor(["--repair"]);
+      expect([0, 1]).toContain(exitCode);
+    } finally {
+      if (origHome !== undefined) {
+        process.env["PULSEED_HOME"] = origHome;
+      } else {
+        delete process.env["PULSEED_HOME"];
+      }
+    }
+
+    const store = new PluginChannelRuntimeStateStore(tmpDir);
+    await expect(store.loadPluginState("doctor-plugin")).resolves.toMatchObject({ trust_score: 12 });
+    await expect(store.loadChannelHealth("telegram-bot")).resolves.toMatchObject({
+      last_inbound_at: "2026-05-09T00:01:00.000Z",
+    });
+    const allOutput = consoleSpy.mock.calls.map((c: unknown[]) => c[0] as string).join("\n");
+    expect(allOutput).toContain("Repair plugin/channel import: plugin states=1, channel health=1");
   });
 
   it("imports queue and supervisor legacy state from a configured custom runtime root through doctor repair", async () => {

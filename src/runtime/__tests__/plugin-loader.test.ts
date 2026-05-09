@@ -10,6 +10,7 @@ import { PluginManifestSchema, PluginStateSchema } from "../../base/types/plugin
 import type { INotifier, NotificationEvent, NotificationEventType, PluginManifest } from "../../base/types/plugin.js";
 import type { AdapterRegistry, IAdapter, AgentTask, AgentResult } from "../../orchestrator/execution/adapter-layer.js";
 import type { DataSourceRegistry, IDataSourceAdapter } from "../../platform/observation/data-source-adapter.js";
+import { PluginChannelRuntimeStateStore } from "../store/plugin-channel-runtime-state-store.js";
 
 // ─── Helpers ───
 
@@ -694,24 +695,26 @@ describe("PluginLoader.getPluginState and updatePluginState", () => {
     expect(fsSync.existsSync(path.join(tmpDir, "my-plugin", "state.json"))).toBe(false);
   });
 
-  it("updatePluginState persists state to disk", async () => {
+  it("updatePluginState persists state to sqlite without writing state.json", async () => {
     const manifest = makeValidManifest({ name: "my-plugin" });
     loader.buildSuccessState(manifest);
     await loader.updatePluginState("my-plugin", { trust_score: 25, success_count: 3 });
     const statePath = path.join(tmpDir, "my-plugin", "state.json");
-    expect(fsSync.existsSync(statePath)).toBe(true);
-    const content = JSON.parse(fsSync.readFileSync(statePath, "utf-8"));
-    expect(content.trust_score).toBe(25);
-    expect(content.success_count).toBe(3);
+    expect(fsSync.existsSync(statePath)).toBe(false);
+    const content = await new PluginChannelRuntimeStateStore(tmpDir).loadPluginState("my-plugin");
+    expect(content?.trust_score).toBe(25);
+    expect(content?.success_count).toBe(3);
   });
 
-  it("updatePluginState persists scoped plugin state under the storage directory", async () => {
+  it("updatePluginState persists scoped plugin state by typed plugin name", async () => {
     const manifest = makeValidManifest({ name: "@pulseed-plugins/scoped" });
     loader.buildSuccessState(manifest);
     await loader.updatePluginState("@pulseed-plugins/scoped", { trust_score: 25 });
     const statePath = path.join(tmpDir, "pulseed-plugins__scoped", "state.json");
-    expect(fsSync.existsSync(statePath)).toBe(true);
+    expect(fsSync.existsSync(statePath)).toBe(false);
     expect(fsSync.existsSync(path.join(tmpDir, "@pulseed-plugins", "scoped", "state.json"))).toBe(false);
+    const content = await new PluginChannelRuntimeStateStore(tmpDir).loadPluginState("@pulseed-plugins/scoped");
+    expect(content?.trust_score).toBe(25);
   });
 
   it("updatePluginState does nothing for unknown plugin", async () => {

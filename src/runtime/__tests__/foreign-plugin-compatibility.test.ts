@@ -7,6 +7,7 @@ import {
   analyzeForeignPluginManifest,
   createPendingCompatibilityReviewRecord,
   FOREIGN_PLUGIN_COMPATIBILITY_REPORT_FILENAME,
+  FOREIGN_PLUGIN_REVIEW_RECORD_FILENAME,
   readForeignPluginCompatibilityArtifact,
   writeForeignPluginCompatibilityArtifacts,
 } from "../foreign-plugins/compatibility.js";
@@ -105,7 +106,7 @@ describe("foreign plugin compatibility", () => {
     expect(report.manifest?.name).toBe("riskier");
   });
 
-  it("writes durable compatibility and pending review records beside an imported plugin", async () => {
+  it("writes durable compatibility and pending review records to sqlite", async () => {
     const pluginDir = path.join(tmpDir, "imported-disabled");
     const report = analyzeForeignPluginManifest("openclaw", {
       name: "review-me",
@@ -124,14 +125,11 @@ describe("foreign plugin compatibility", () => {
       createdAt: "2026-05-09T00:00:00.000Z",
     });
 
-    const writtenReport = JSON.parse(await fs.readFile(artifact.reportPath, "utf-8"));
-    const writtenReview = JSON.parse(await fs.readFile(artifact.reviewRecordPath, "utf-8"));
-    expect(writtenReport).toMatchObject({
-      schema_version: "foreign-plugin-compatibility/v1",
-      status: "quarantined",
-      runtime_loadable: false,
-    });
-    expect(writtenReview).toMatchObject({
+    expect(artifact.reportPath).toMatch(/^sqlite:\/\/pulseed-control\/foreign-plugin-compatibility\//);
+    expect(artifact.reviewRecordPath).toMatch(/^sqlite:\/\/pulseed-control\/foreign-plugin-review\//);
+    expect(await fileExists(path.join(pluginDir, FOREIGN_PLUGIN_COMPATIBILITY_REPORT_FILENAME))).toBe(false);
+    expect(await fileExists(path.join(pluginDir, FOREIGN_PLUGIN_REVIEW_RECORD_FILENAME))).toBe(false);
+    expect(artifact.reviewRecord).toMatchObject({
       schema_version: "foreign-plugin-review/v1",
       status: "pending_operator_review",
       runtime_loadable: false,
@@ -224,3 +222,12 @@ describe("foreign plugin compatibility", () => {
     expect(report.issues).toContain("entry_point must be a non-empty string");
   });
 });
+
+async function fileExists(filePath: string): Promise<boolean> {
+  try {
+    await fs.access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
