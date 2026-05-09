@@ -4,6 +4,14 @@ import { RuntimeSafePauseRecordSchema } from "../store/runtime-schemas.js";
 
 const PID_EPOCH_ISO = "1970-01-01T00:00:00.000Z";
 const MAX_EVENT_SERVER_PORT = 65_535;
+const MAX_DAEMON_TIMER_MS = 2_147_483_647;
+const DaemonPositiveTimerMsSchema = z.number().finite().int().positive().max(MAX_DAEMON_TIMER_MS);
+const DaemonNonnegativeTimerMsSchema = z.number().finite().int().nonnegative().max(MAX_DAEMON_TIMER_MS);
+const DaemonPositiveSafeIntSchema = z.number().finite().int().positive().safe();
+const DaemonNonnegativeSafeIntSchema = z.number().finite().int().nonnegative().safe();
+const DaemonPositiveFiniteNumberSchema = z.number().finite().positive().max(Number.MAX_SAFE_INTEGER);
+const DaemonHourSchema = z.number().finite().int().min(0).max(23);
+const DaemonPositiveFiniteMultiplierSchema = z.number().finite().positive().max(Number.MAX_SAFE_INTEGER);
 
 function applyLegacyDaemonRunPolicy(raw: unknown): unknown {
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
@@ -30,24 +38,24 @@ function applyLegacyDaemonRunPolicy(raw: unknown): unknown {
 const DaemonConfigObjectSchema = z.object({
   // Deprecated compatibility flag. Durable runtime recovery is always enabled.
   runtime_journal_v2: z.boolean().default(true),
-  check_interval_ms: z.number().int().positive().default(300_000), // 5 min default
+  check_interval_ms: DaemonPositiveTimerMsSchema.default(300_000), // 5 min default
   pid_file: z.string().default("pulseed.pid"),
   log_dir: z.string().default("logs"),
   runtime_root: z.string().optional(),
   workspace_path: z.string().optional(),
   log_rotation: z.object({
-    max_size_mb: z.number().positive().default(10),
-    max_files: z.number().int().positive().default(5),
+    max_size_mb: DaemonPositiveFiniteNumberSchema.default(10),
+    max_files: DaemonPositiveSafeIntSchema.default(5),
   }).default({}),
   crash_recovery: z.object({
     enabled: z.boolean().default(true),
-    max_retries: z.number().int().nonnegative().default(3),
-    retry_delay_ms: z.number().int().positive().default(10_000),
-    graceful_shutdown_timeout_ms: z.number().int().positive().optional(),
+    max_retries: DaemonNonnegativeSafeIntSchema.default(3),
+    retry_delay_ms: DaemonPositiveTimerMsSchema.default(10_000),
+    graceful_shutdown_timeout_ms: DaemonPositiveTimerMsSchema.optional(),
   }).default({}),
-  goal_intervals: z.record(z.string(), z.number().int().positive()).optional(), // goal_id -> interval_ms override
-  iterations_per_cycle: z.number().int().positive().default(10), // telemetry window in resident mode; bounded fallback cap
-  max_concurrent_goals: z.number().int().positive().default(4), // max goals the supervisor may execute at once
+  goal_intervals: z.record(z.string(), DaemonPositiveTimerMsSchema).optional(), // goal_id -> interval_ms override
+  iterations_per_cycle: DaemonPositiveSafeIntSchema.default(10), // telemetry window in resident mode; bounded fallback cap
+  max_concurrent_goals: DaemonPositiveSafeIntSchema.default(4), // max goals the supervisor may execute at once
   event_server_port: z.number().int().min(0).max(MAX_EVENT_SERVER_PORT).default(41700), // EventServer HTTP port (0 = OS-assigned, safe for tests)
   gateway: z.object({
     slack: z.object({
@@ -61,17 +69,17 @@ const DaemonConfigObjectSchema = z.object({
   proactive_mode: z.boolean().default(false),
   run_policy: z.object({
     mode: z.enum(["bounded", "resident"]).default("resident"),
-    max_iterations: z.number().int().positive().nullable().default(null),
+    max_iterations: DaemonPositiveSafeIntSchema.nullable().default(null),
   }).default({}),
-  proactive_interval_ms: z.number().default(3_600_000), // 1 hour minimum between proactive ticks
-  goal_review_interval_ms: z.number().int().nonnegative().default(7 * 24 * 60 * 60 * 1000), // weekly goal review cadence
+  proactive_interval_ms: DaemonNonnegativeTimerMsSchema.default(3_600_000), // 1 hour default between proactive ticks
+  goal_review_interval_ms: DaemonNonnegativeTimerMsSchema.default(7 * 24 * 60 * 60 * 1000), // weekly goal review cadence
   adaptive_sleep: z.object({
     enabled: z.boolean().default(false),
-    min_interval_ms: z.number().default(60_000),      // 1 minute minimum
-    max_interval_ms: z.number().default(1_800_000),    // 30 minutes maximum
-    night_start_hour: z.number().default(22),           // 22:00
-    night_end_hour: z.number().default(7),              // 07:00
-    night_multiplier: z.number().default(2.0),          // 2x interval at night
+    min_interval_ms: DaemonPositiveTimerMsSchema.default(60_000), // 1 minute minimum
+    max_interval_ms: DaemonPositiveTimerMsSchema.default(1_800_000), // 30 minutes maximum
+    night_start_hour: DaemonHourSchema.default(22), // 22:00
+    night_end_hour: DaemonHourSchema.default(7), // 07:00
+    night_multiplier: DaemonPositiveFiniteMultiplierSchema.default(2.0), // 2x interval at night
   }).default({}),
 });
 export const DaemonConfigSchema = z.preprocess(applyLegacyDaemonRunPolicy, DaemonConfigObjectSchema);
