@@ -18,6 +18,10 @@ import {
   type AdmissionAuthState,
   type AdmissionPolicyEvaluation,
 } from "./admission-policy.js";
+import {
+  InternalAutonomyDefaultSchema,
+  type InternalAutonomyDefault,
+} from "./internal-autonomy-default.js";
 
 export const AutonomyDecisionLevelSchema = z.enum([
   "advisory",
@@ -67,15 +71,6 @@ export const AutonomyOperationPlanSchema = z.object({
 }).strict();
 export type AutonomyOperationPlan = z.infer<typeof AutonomyOperationPlanSchema>;
 export type AutonomyOperationPlanInput = z.input<typeof AutonomyOperationPlanSchema>;
-
-export const InternalAutonomyDefaultSchema = z.object({
-  ref: z.string().min(1),
-  result: z.enum(["eligible", "ineligible", "unknown"]),
-  reason: z.string().min(1),
-  epoch: z.string().min(1).optional(),
-  expires_at: z.string().min(1).optional(),
-}).strict();
-export type InternalAutonomyDefault = z.infer<typeof InternalAutonomyDefaultSchema>;
 
 export const AutonomyPolicySignalResultSchema = z.enum([
   "allowed",
@@ -311,7 +306,7 @@ export function evaluateAutonomyDecision(input: AutonomyDecisionInput): Autonomy
   applyPolicySignals(findings, parsed.backpressure_state, "backpressure state", evaluatedAt);
   applyRuntimeControlState(findings, parsed.runtime_control_state, evaluatedAt);
   applyCompanionState(findings, parsed.companion_state);
-  applyInternalAutonomyDefault(findings, parsed.internal_autonomy_default, evaluatedAt);
+  applyInternalAutonomyDefault(findings, parsed.operation_plan, parsed.internal_autonomy_default, evaluatedAt);
   applyInvalidationEvidence(findings, parsed.invalidation_evidence);
   applyFeedback(findings, parsed.recent_feedback);
   applyOperationRisk(findings, parsed);
@@ -630,6 +625,7 @@ function applyCompanionState(
 
 function applyInternalAutonomyDefault(
   findings: AutonomyFinding[],
+  operation: AutonomyOperationPlan,
   internalDefault: InternalAutonomyDefault | undefined,
   evaluatedAt: string
 ): void {
@@ -640,6 +636,27 @@ function applyInternalAutonomyDefault(
       rationale: `Internal autonomy default ${internalDefault.ref} expired before autonomy evaluation.`,
       blocked_step: "autonomous_initiate",
       confirmationText: internalDefault.reason,
+    });
+    return;
+  }
+  if (!internalDefaultMatchesOperation(internalDefault, operation)) {
+    findings.push({
+      level: "prohibited",
+      rationale: `Internal autonomy default ${internalDefault.ref} does not match this operation scope.`,
+      blocked_step: "autonomous_initiate",
+      suppressionReason: internalDefault.reason,
+    });
+    return;
+  }
+  if (internalDefault.target_disposition !== "allowed_internal") {
+    findings.push({
+      level: internalDefault.target_disposition === "blocked" ? "prohibited" : "approval_required",
+      rationale: `Internal autonomy default ${internalDefault.ref} routes ${internalDefault.target_class} to ${internalDefault.target_disposition}.`,
+      blocked_step: internalDefault.protected_target_refs.length > 0
+        ? "mutate_protected_target"
+        : "autonomous_initiate",
+      confirmationText: internalDefault.target_disposition === "blocked" ? undefined : internalDefault.reason,
+      suppressionReason: internalDefault.target_disposition === "blocked" ? internalDefault.reason : undefined,
     });
   }
 }
@@ -927,13 +944,24 @@ function destructiveAction(operation: AutonomyOperationPlan): boolean {
 
 function lowRiskInternalOperation(input: ParsedAutonomyDecisionInput): boolean {
   const operation = input.operation_plan;
+  const internalDefault = input.internal_autonomy_default;
+  if (
+    !internalDefault
+    || internalDefault.result !== "eligible"
+    || internalDefault.target_disposition !== "allowed_internal"
+    || !internalDefaultMatchesOperation(internalDefault, operation)
+    || internalDefault.protected_target_refs.length > 0
+    || internalDefault.external_effect_refs.length > 0
+  ) {
+    return false;
+  }
   const reversibility = input.reversibility ?? operation.reversibility;
   const safeReversibility = reversibility === "reversible"
     || reversibility === "append_only"
     || reversibility === "draft_only";
   const sideEffectIsInternal = operation.side_effect_profile === "none"
     || operation.side_effect_profile === "read"
-    || (operation.side_effect_profile === "write" && reversibility === "append_only");
+    || (operation.side_effect_profile === "write" && safeReversibility);
   return operation.local_only
     && operation.inspectable
     && !operation.external_action_authority
@@ -944,6 +972,21 @@ function lowRiskInternalOperation(input: ParsedAutonomyDecisionInput): boolean {
     && operation.risk_class === "low"
     && (input.privacy_sensitivity === "none" || input.privacy_sensitivity === "low")
     && (input.blast_radius === "local" || input.blast_radius === "workspace");
+}
+
+function internalDefaultMatchesOperation(
+  internalDefault: InternalAutonomyDefault,
+  operation: AutonomyOperationPlan
+): boolean {
+  return internalDefault.operation_id === operation.operation_id
+    && internalDefault.capability_id === operation.capability_id
+    && internalDefault.operation_kind === operation.operation_kind
+    && internalDefault.provider_ref === operation.provider_ref
+    && internalDefault.payload_class === operation.payload_class
+    && internalDefault.locality === (operation.local_only ? "local_only" : "not_local")
+    && internalDefault.side_effect_profile === operation.side_effect_profile
+    && internalDefault.reversibility === operation.reversibility
+    && sameStringSet(internalDefault.target_refs, operation.target_refs);
 }
 
 function positiveRationale(level: AutonomyDecisionLevel, input: ParsedAutonomyDecisionInput): string {
@@ -1062,6 +1105,23 @@ function cacheInternalAutonomyDefaultParts(internalDefault: InternalAutonomyDefa
   return [
     `internal_default:${internalDefault.ref}`,
     `internal_default_result:${internalDefault.result}`,
+    `internal_default_family:${internalDefault.capability_family}`,
+    `internal_default_operation_class:${internalDefault.operation_class}`,
+    `internal_default_operation_id:${internalDefault.operation_id}`,
+    `internal_default_capability:${internalDefault.capability_id ?? "no-capability"}`,
+    `internal_default_operation_kind:${internalDefault.operation_kind}`,
+    `internal_default_provider:${internalDefault.provider_ref}`,
+    `internal_default_payload:${internalDefault.payload_class}`,
+    `internal_default_locality:${internalDefault.locality}`,
+    `internal_default_side_effect:${internalDefault.side_effect_profile}`,
+    `internal_default_reversibility:${internalDefault.reversibility}`,
+    `internal_default_scope:${internalDefault.scope}`,
+    `internal_default_target_class:${internalDefault.target_class}`,
+    `internal_default_target_disposition:${internalDefault.target_disposition}`,
+    `internal_default_targets:${internalDefault.target_refs.join(",")}`,
+    `internal_default_protected_targets:${internalDefault.protected_target_refs.join(",")}`,
+    `internal_default_external_effects:${internalDefault.external_effect_refs.join(",")}`,
+    `internal_default_guardrails:${internalDefault.guardrail_refs.join(",")}`,
     `internal_default_epoch:${internalDefault.epoch ?? ""}`,
     `internal_default_expires_at:${internalDefault.expires_at ?? ""}`,
     `internal_default_reason:${internalDefault.reason}`,

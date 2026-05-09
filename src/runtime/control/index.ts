@@ -32,8 +32,18 @@ export {
   AutonomyRuntimeControlStateSchema,
   AutonomyTrustProfileSchema,
   AutonomyVerificationProfileSchema,
-  InternalAutonomyDefaultSchema,
 } from "./autonomy-governor.js";
+export {
+  classifyInternalAutonomyDefault,
+  InternalAutonomyCapabilityFamilySchema,
+  InternalAutonomyDefaultClassificationInputSchema,
+  InternalAutonomyDefaultSchema,
+  InternalAutonomyLocalitySchema,
+  InternalAutonomyMutationKindSchema,
+  InternalAutonomyOperationClassSchema,
+  InternalAutonomyTargetClassSchema,
+  InternalAutonomyTargetDispositionSchema,
+} from "./internal-autonomy-default.js";
 export type { RuntimeTargetResolution } from "./runtime-target-resolver.js";
 export type {
   AdmissionAuthState,
@@ -68,8 +78,17 @@ export type {
   AutonomyRuntimeControlState,
   AutonomyTrustProfile,
   AutonomyVerificationProfile,
-  InternalAutonomyDefault,
 } from "./autonomy-governor.js";
+export type {
+  InternalAutonomyCapabilityFamily,
+  InternalAutonomyDefault,
+  InternalAutonomyDefaultClassificationInput,
+  InternalAutonomyLocality,
+  InternalAutonomyMutationKind,
+  InternalAutonomyOperationClass,
+  InternalAutonomyTargetClass,
+  InternalAutonomyTargetDisposition,
+} from "./internal-autonomy-default.js";
 export { createDaemonRuntimeControlExecutor } from "./daemon-runtime-control-executor.js";
 export {
   publishRuntimeControlResult,
