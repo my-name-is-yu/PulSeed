@@ -12,10 +12,12 @@ export type CrossGoalAllocation = z.infer<typeof CrossGoalAllocationSchema>;
 
 // --- Cross-Goal Portfolio Config ---
 
+export const MAX_PRIORITY_REBALANCE_INTERVAL_HOURS = 8_760;
+
 export const CrossGoalPortfolioConfigSchema = z.object({
   max_concurrent_goals: z.number().int().min(1).max(20).default(5),
   /** Rebalance interval in hours. Default: 168 (1 week) */
-  priority_rebalance_interval_hours: z.number().min(1).default(168),
+  priority_rebalance_interval_hours: z.number().finite().min(1).max(MAX_PRIORITY_REBALANCE_INTERVAL_HOURS).default(168),
   min_goal_share: z.number().min(0).max(1).default(0.1),
   synergy_bonus: z.number().min(0).max(2).default(0.2),
 });
