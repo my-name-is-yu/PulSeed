@@ -4,12 +4,13 @@ import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ConcurrencyController } from "../../../concurrency.js";
 import { ToolExecutor } from "../../../executor.js";
+import { toToolDefinition } from "../../../tool-definition-adapter.js";
 import { ToolPermissionManager } from "../../../permission.js";
 import { ToolRegistry } from "../../../registry.js";
 import { clearCodeSearchSessionsForTests } from "../../../../platform/code-search/session-store.js";
-import { CodeReadContextTool } from "../../CodeReadContextTool/CodeReadContextTool.js";
+import { CodeReadContextInputSchema, CodeReadContextTool } from "../../CodeReadContextTool/CodeReadContextTool.js";
 import { CodeSearchRepairTool } from "../../CodeSearchRepairTool/CodeSearchRepairTool.js";
-import { CodeSearchTool } from "../CodeSearchTool.js";
+import { CodeSearchInputSchema, CodeSearchTool } from "../CodeSearchTool.js";
 import { MAX_OUTPUT_CHARS } from "../constants.js";
 import { MAX_OUTPUT_CHARS as READ_CONTEXT_MAX_OUTPUT_CHARS } from "../../CodeReadContextTool/constants.js";
 import type { ToolCallContext } from "../../../types.js";
@@ -35,6 +36,82 @@ describe("code search tools", () => {
   afterEach(async () => {
     clearCodeSearchSessionsForTests();
     await fsp.rm(root, { recursive: true, force: true });
+  });
+
+  it("bounds code_search budget overrides at runtime and in exported schemas", () => {
+    expect(CodeSearchInputSchema.safeParse({
+      task: "find alphaValue",
+      budget: {
+        maxFiles: 5_000,
+        maxCandidatesPerRetriever: 500,
+        maxFusionCandidates: 1_000,
+        maxRerankCandidates: 500,
+      },
+    }).success).toBe(true);
+
+    for (const budget of [
+      { maxFiles: 0 },
+      { maxFiles: 5_001 },
+      { maxFiles: 9007199254740993 },
+      { maxCandidatesPerRetriever: 501 },
+      { maxFusionCandidates: 1_001 },
+      { maxRerankCandidates: 501 },
+    ]) {
+      expect(CodeSearchInputSchema.safeParse({ task: "find alphaValue", budget }).success).toBe(false);
+    }
+
+    const parameters = toToolDefinition(new CodeSearchTool()).function.parameters as {
+      properties?: { budget?: { properties?: Record<string, unknown> } };
+    };
+    expect(parameters.properties?.budget?.properties?.maxFiles).toMatchObject({
+      type: "integer",
+      minimum: 1,
+      maximum: 5_000,
+    });
+    expect(parameters.properties?.budget?.properties?.maxCandidatesPerRetriever).toMatchObject({
+      type: "integer",
+      maximum: 500,
+    });
+    expect(parameters.properties?.budget?.properties?.maxFusionCandidates).toMatchObject({
+      type: "integer",
+      maximum: 1_000,
+    });
+    expect(parameters.properties?.budget?.properties?.maxRerankCandidates).toMatchObject({
+      type: "integer",
+      maximum: 500,
+    });
+  });
+
+  it("bounds code_read_context read controls at runtime and in exported schemas", () => {
+    expect(CodeReadContextInputSchema.safeParse({
+      maxReadRanges: 50,
+      maxReadTokens: 20_000,
+    }).success).toBe(true);
+
+    for (const input of [
+      { maxReadRanges: 0 },
+      { maxReadRanges: 51 },
+      { maxReadRanges: 9007199254740993 },
+      { maxReadTokens: 0 },
+      { maxReadTokens: 20_001 },
+      { maxReadTokens: 9007199254740993 },
+    ]) {
+      expect(CodeReadContextInputSchema.safeParse(input).success).toBe(false);
+    }
+
+    const parameters = toToolDefinition(new CodeReadContextTool()).function.parameters as {
+      properties?: Record<string, unknown>;
+    };
+    expect(parameters.properties?.maxReadRanges).toMatchObject({
+      type: "integer",
+      minimum: 1,
+      maximum: 50,
+    });
+    expect(parameters.properties?.maxReadTokens).toMatchObject({
+      type: "integer",
+      minimum: 1,
+      maximum: 20_000,
+    });
   });
 
   it("code_search and code_read_context provide structured context through queryId handles", async () => {
