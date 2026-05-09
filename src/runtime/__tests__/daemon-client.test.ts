@@ -460,6 +460,32 @@ describe("isDaemonRunning", () => {
 
     expect(readDaemonAuthToken(tmpDir, 41700)).toBe("fresh-token");
   });
+
+  it("rejects daemon token files with unsafe numeric metadata", () => {
+    fs.writeFileSync(
+      path.join(tmpDir, "daemon-token.json"),
+      JSON.stringify({ token: "unsafe-token", port: Number.MAX_SAFE_INTEGER + 1 }),
+      "utf-8"
+    );
+
+    expect(readDaemonAuthToken(tmpDir)).toBeNull();
+
+    fs.writeFileSync(
+      path.join(tmpDir, "daemon-token.json"),
+      JSON.stringify({ token: "unsafe-token", pid: Number.MAX_SAFE_INTEGER + 1 }),
+      "utf-8"
+    );
+
+    expect(readDaemonAuthToken(tmpDir)).toBeNull();
+
+    fs.writeFileSync(
+      path.join(tmpDir, "daemon-token.json"),
+      JSON.stringify({ token: "unsafe-token", created_at: "not-a-date" }),
+      "utf-8"
+    );
+
+    expect(readDaemonAuthToken(tmpDir)).toBeNull();
+  });
 });
 
 describe("probeDaemonHealth", () => {
