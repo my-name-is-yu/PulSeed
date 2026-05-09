@@ -1,5 +1,14 @@
 import { z } from "zod";
 
+export const MAX_DRIVE_DURATION_HOURS = 1_000_000;
+export const MAX_DRIVE_URGENCY_STEEPNESS = 100;
+export const MAX_DRIVE_SCORE_SCALE = 1_000_000;
+
+const UnitIntervalSchema = z.number().finite().min(0).max(1);
+const PositiveDurationHoursSchema = z.number().finite().positive().max(MAX_DRIVE_DURATION_HOURS);
+const NonNegativeScoreScaleSchema = z.number().finite().min(0).max(MAX_DRIVE_SCORE_SCALE);
+const PositiveScoreScaleSchema = z.number().finite().positive().max(MAX_DRIVE_SCORE_SCALE);
+
 // --- Dissatisfaction Drive Score ---
 
 export const DissatisfactionScoreSchema = z.object({
@@ -46,15 +55,15 @@ export type DriveScore = z.infer<typeof DriveScoreSchema>;
 
 export const DriveConfigSchema = z.object({
   // Dissatisfaction drive
-  decay_floor: z.number().default(0.3),
-  recovery_time_hours: z.number().default(24),
+  decay_floor: UnitIntervalSchema.default(0.3),
+  recovery_time_hours: PositiveDurationHoursSchema.default(24),
   // Deadline drive
-  deadline_horizon_hours: z.number().default(168),
-  urgency_steepness: z.number().default(3.0),
-  urgency_override_threshold: z.number().default(10.0),
-  pacing_urgency_weight: z.number().default(0.5),
+  deadline_horizon_hours: PositiveDurationHoursSchema.default(168),
+  urgency_steepness: z.number().finite().min(0).max(MAX_DRIVE_URGENCY_STEEPNESS).default(3.0),
+  urgency_override_threshold: PositiveScoreScaleSchema.default(10.0),
+  pacing_urgency_weight: NonNegativeScoreScaleSchema.default(0.5),
   // Opportunity drive
-  half_life_hours: z.number().default(12),
+  half_life_hours: PositiveDurationHoursSchema.default(12),
 });
 export type DriveConfig = z.infer<typeof DriveConfigSchema>;
 
