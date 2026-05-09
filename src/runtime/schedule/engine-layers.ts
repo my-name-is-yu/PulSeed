@@ -25,6 +25,7 @@ import {
   type AttentionReevaluationPort,
   type AttentionReevaluationResult,
 } from "../attention/index.js";
+import { assembleScheduleOperationPlans } from "../capability-operation-planner.js";
 
 interface LayerDeps {
   baseDir?: string;
@@ -359,6 +360,11 @@ export async function executeGoalTrigger(entry: ScheduleEntry, deps: LayerDeps):
         fired_at: firedAt,
       });
       const projection = buildWaitResumeAttentionProjection(reevaluation, firedAt);
+      const capabilityOperationPlanAssembly = assembleScheduleOperationPlans({
+        entry,
+        firedAt,
+        ...(projection ? { projection } : {}),
+      });
 
       return ScheduleResultSchema.parse({
         entry_id: entry.id,
@@ -368,6 +374,7 @@ export async function executeGoalTrigger(entry: ScheduleEntry, deps: LayerDeps):
         goal_id: cfg.goal_id,
         output_summary: "wait wake re-evaluated through attention",
         ...(projection ? { internal_attention_projection: projection } : {}),
+        capability_operation_plan_assembly: capabilityOperationPlanAssembly,
       });
     }
 

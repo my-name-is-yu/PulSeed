@@ -9,6 +9,7 @@ import {
   RuntimeItemTypeSchema,
   RuntimeItemVisibilityPolicySchema,
 } from "./companion-state.js";
+import { CapabilityOperationPlanAssemblySchema } from "./capability-operation-plan.js";
 
 const SchedulePositiveSafeIntegerSchema = z.number().finite().int().min(1).max(Number.MAX_SAFE_INTEGER);
 const ScheduleNonNegativeSafeIntegerSchema = z.number().finite().int().min(0).max(Number.MAX_SAFE_INTEGER);
@@ -291,6 +292,7 @@ export const ScheduleResultSchema = z.object({
   output_summary: z.string().optional(),
   change_detected: z.boolean().optional(),
   internal_attention_projection: ScheduleInternalAttentionProjectionSchema.optional(),
+  capability_operation_plan_assembly: CapabilityOperationPlanAssemblySchema.optional(),
 });
 
 export type ScheduleResult = z.infer<typeof ScheduleResultSchema>;
