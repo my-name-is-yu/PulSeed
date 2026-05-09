@@ -8,6 +8,7 @@ import type { ITool, PermissionCheckResult, ToolCallContext, ToolMetadata, ToolR
 
 const MAX_BUFFER_CHARS = 1_000_000;
 const DEFAULT_MAX_READ_CHARS = 12_000;
+const JsonObjectSchema = z.record(z.string(), z.unknown());
 
 export const ProcessSessionStartInputSchema = z.object({
   command: z.string().min(1),
@@ -17,7 +18,7 @@ export const ProcessSessionStartInputSchema = z.object({
   label: z.string().min(1).max(120).optional(),
   task_id: z.string().optional(),
   strategy_id: z.string().optional(),
-  artifact_refs: z.array(z.string()).optional(),
+  artifact_refs: z.array(z.string().min(1)).optional(),
 }).strict();
 export type ProcessSessionStartInput = z.infer<typeof ProcessSessionStartInputSchema>;
 
@@ -267,8 +268,8 @@ export class ProcessSessionManager {
     );
     try {
       const existing = readJsonObject(metadataPath);
-      const processRefs = Array.isArray(existing["process_refs"]) ? existing["process_refs"] : [];
-      const artifactRefs = Array.isArray(existing["artifact_refs"]) ? existing["artifact_refs"] : [];
+      const processRefs = readJsonObjectArray(existing["process_refs"]);
+      const artifactRefs = readJsonObjectArray(existing["artifact_refs"]);
       const processRef = {
         session_id: snapshot.session_id,
         command: snapshot.command,
@@ -567,10 +568,19 @@ function readJsonObject(filePath: string): Record<string, unknown> {
   try {
     const raw = fs.readFileSync(filePath, "utf8");
     const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
+    const object = JsonObjectSchema.safeParse(parsed);
+    return object.success ? object.data : {};
   } catch {
     return {};
   }
+}
+
+function readJsonObjectArray(value: unknown): Array<Record<string, unknown>> {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    const parsed = JsonObjectSchema.safeParse(item);
+    return parsed.success ? [parsed.data] : [];
+  });
 }
 
 function dedupeByJson(items: unknown[]): unknown[] {
