@@ -549,6 +549,30 @@ describe("setup import apply", () => {
     );
     expect(report.items.filter((item) => item.status === "applied")).toHaveLength(4);
     expect(report.items.find((item) => item.kind === "plugin")?.pluginCompatibility?.status).toBe("quarantined");
+    const { AssetRegistry } = await import("../../../runtime/assets/registry.js");
+    const assets = await new AssetRegistry({ baseDir }).list();
+    expect(assets.map((asset) => asset.kind).sort()).toEqual([
+      "foreign_plugin",
+      "mcp_server",
+      "notifier",
+      "skill_bundle",
+    ]);
+    const skillAsset = assets.find((asset) => asset.kind === "skill_bundle");
+    expect(skillAsset).toMatchObject({
+      source_agent: "openclaw",
+      source_path: skillDir,
+      imported_path: path.join(baseDir, "skills", "imported", "openclaw", "review"),
+      status: "imported",
+      provenance: {
+        source_label: "OpenClaw",
+      },
+      execution: {
+        executable: false,
+        reason: "asset_record_only",
+      },
+    });
+    expect(skillAsset?.checksum).toMatch(/^sha256:/);
+    expect(await new AssetRegistry({ baseDir }).search("OpenClaw")).toHaveLength(4);
     const telegramConfig = JSON.parse(
       await fsp.readFile(path.join(baseDir, "gateway", "channels", "telegram-bot", "config.json"), "utf-8")
     ) as Record<string, unknown>;

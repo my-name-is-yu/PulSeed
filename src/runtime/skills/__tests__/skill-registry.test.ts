@@ -71,4 +71,26 @@ describe("SkillRegistry", () => {
     expect(skill?.name).toBe("Review");
     expect(skill?.description).toBe("Finds correctness risks.");
   });
+
+  it("projects discovered skills as non-executable asset records", async () => {
+    const skillDir = path.join(homeSkills, "imported", "review");
+    fs.mkdirSync(skillDir, { recursive: true });
+    fs.writeFileSync(path.join(skillDir, "SKILL.md"), "# Review\nCheck code quality.\n");
+    const registry = new SkillRegistry({ homeSkillsDir: homeSkills });
+
+    const [asset] = await registry.listAssetRecords("2026-05-09T14:30:00.000Z");
+
+    expect(asset).toMatchObject({
+      id: "skill_bundle:imported/review",
+      kind: "skill_bundle",
+      label: "Review",
+      source_agent: "unknown",
+      imported_path: path.join(skillDir, "SKILL.md"),
+      status: "recorded",
+      metadata: {
+        registry_source: "home",
+      },
+    });
+    expect(asset?.checksum).toMatch(/^sha256:/);
+  });
 });

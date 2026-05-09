@@ -3,6 +3,16 @@ import * as fsp from "node:fs/promises";
 import { readJsonFileOrNull, writeJsonFileAtomic } from "../../../../../base/utils/json-io.js";
 import type { MCPServerConfig, MCPServersConfig } from "../../../../../base/types/mcp.js";
 import { getGatewayChannelDir } from "../../../../../base/utils/paths.js";
+import { AssetRegistry } from "../../../../../runtime/assets/registry.js";
+import { checksumPath } from "../../../../../runtime/assets/checksum.js";
+import {
+  createAssetRecord,
+  toAssetId,
+  type AssetKind,
+  type AssetRecordInput,
+  type AssetRecordStatus,
+  type AssetSourceAgent,
+} from "../../../../../runtime/assets/types.js";
 import { copyDirectoryNoSymlinks, safeImportName, uniqueImportPath } from "./fs-utils.js";
 import type {
   SetupImportAppliedItem,
@@ -149,6 +159,107 @@ async function applyTelegramConfig(baseDir: string, items: SetupImportItem[]): P
   return configPath;
 }
 
+function assetKindForItem(item: SetupImportItem): AssetKind | null {
+  if (item.kind === "skill") return "skill_bundle";
+  if (item.kind === "plugin") return "foreign_plugin";
+  if (item.kind === "mcp") return "mcp_server";
+  if (item.kind === "telegram") return "notifier";
+  if (item.kind === "provider") return "external_connector";
+  return null;
+}
+
+function assetStatusForItem(item: SetupImportItem): AssetRecordStatus {
+  if (item.kind === "plugin") return "quarantined";
+  if (item.kind === "mcp") return "disabled";
+  return "imported";
+}
+
+function assetSourceAgentForItem(item: SetupImportItem): AssetSourceAgent {
+  return item.source === "hermes" || item.source === "openclaw" ? item.source : "unknown";
+}
+
+function metadataForItem(
+  item: SetupImportItem,
+  applied: SetupImportAppliedItem
+): Record<string, unknown> {
+  return {
+    setup_import_item_id: item.id,
+    setup_import_kind: item.kind,
+    decision: item.decision,
+    reason: item.reason,
+    applied_status: applied.status,
+    ...(item.providerSettings ? {
+      provider: item.providerSettings.provider,
+      model: item.providerSettings.model,
+      adapter: item.providerSettings.adapter,
+      base_url: item.providerSettings.baseUrl,
+      api_key_present: item.providerSettings.apiKey !== undefined,
+    } : {}),
+    ...(item.telegramSettings ? {
+      bot_token_present: item.telegramSettings.botToken !== undefined,
+      allowed_user_count: item.telegramSettings.allowedUserIds?.length ?? 0,
+    } : {}),
+    ...(item.mcpServer ? {
+      mcp_server_id: item.mcpServer.id,
+      mcp_server_name: item.mcpServer.name,
+      transport: item.mcpServer.transport,
+      enabled: item.mcpServer.enabled,
+      tool_mapping_count: item.mcpServer.tool_mappings?.length ?? 0,
+    } : {}),
+    ...(item.pluginCompatibility ? {
+      compatibility_status: item.pluginCompatibility.status,
+      compatibility_issues: item.pluginCompatibility.issues,
+      permissions: item.pluginCompatibility.permissions,
+      manifest: item.pluginCompatibility.manifest,
+    } : {}),
+  };
+}
+
+async function recordImportedAssets(
+  baseDir: string,
+  selectedItems: SetupImportItem[],
+  appliedItems: SetupImportAppliedItem[],
+  reportPath: string,
+  createdAt: string
+): Promise<void> {
+  const selectedById = new Map(selectedItems.map((item) => [item.id, item]));
+  const assets: AssetRecordInput[] = [];
+
+  for (const applied of appliedItems) {
+    if (applied.status !== "applied") continue;
+    const item = selectedById.get(applied.id);
+    if (!item) continue;
+    const kind = assetKindForItem(item);
+    if (!kind) continue;
+    const checksumTarget = applied.targetPath ?? item.sourcePath;
+    const checksum = checksumTarget ? await checksumPath(checksumTarget) : undefined;
+    assets.push(createAssetRecord({
+      id: toAssetId(kind, [item.source, item.label, item.id]),
+      kind,
+      label: item.label,
+      source_agent: assetSourceAgentForItem(item),
+      ...(item.sourcePath ? { source_path: item.sourcePath } : {}),
+      ...(applied.targetPath ? { imported_path: applied.targetPath } : {}),
+      ...(checksum ? { checksum } : {}),
+      ...(item.pluginCompatibility?.manifest?.version ? { version: item.pluginCompatibility.manifest.version } : {}),
+      compatibility_report_ref: reportPath,
+      status: assetStatusForItem(item),
+      recorded_at: createdAt,
+      updated_at: createdAt,
+      provenance: {
+        source_label: item.sourceLabel,
+        import_batch_id: createdAt,
+        evidence_refs: [item.id, reportPath],
+      },
+      metadata: metadataForItem(item, applied),
+    }, createdAt));
+  }
+
+  if (assets.length > 0) {
+    await new AssetRegistry({ baseDir }).recordMany(assets);
+  }
+}
+
 export async function applySetupImportSelection(
   baseDir: string,
   selection: SetupImportSelection
@@ -227,6 +338,7 @@ export async function applySetupImportSelection(
   const sourceName = selection.sources.map((source) => source.id).join("-") || "import";
   const reportPath = path.join(baseDir, "imports", sourceName, reportName, "report.json");
   await writeJsonFileAtomic(reportPath, report);
+  await recordImportedAssets(baseDir, selectedItems, applied, reportPath, createdAt);
 
   return report;
 }

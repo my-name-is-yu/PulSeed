@@ -8,6 +8,12 @@ import {
   toSafeSkillId,
   type SkillSource,
 } from "./skill-parser.js";
+import { checksumPath } from "../assets/checksum.js";
+import {
+  createAssetRecord,
+  toAssetId,
+  type AssetRecord,
+} from "../assets/types.js";
 
 export interface SkillRecord {
   id: string;
@@ -41,6 +47,31 @@ export class SkillRegistry {
       ? await this.scanRoot(workspaceSkillsDir, "workspace")
       : [];
     return [...home, ...workspace].sort((a, b) => a.id.localeCompare(b.id));
+  }
+
+  async listAssetRecords(now = new Date().toISOString()): Promise<AssetRecord[]> {
+    const skills = await this.list();
+    return Promise.all(skills.map(async (skill) =>
+      createAssetRecord({
+        id: toAssetId("skill_bundle", [skill.id]),
+        kind: "skill_bundle",
+        label: skill.name,
+        source_agent: "unknown",
+        source_path: skill.path,
+        imported_path: skill.path,
+        checksum: await checksumPath(path.dirname(skill.path)),
+        status: "recorded",
+        provenance: {
+          source_label: skill.source,
+          evidence_refs: [skill.relativePath],
+        },
+        metadata: {
+          description: skill.description,
+          registry_source: skill.source,
+          relative_path: skill.relativePath,
+        },
+      }, now)
+    ));
   }
 
   async search(query: string): Promise<SkillRecord[]> {
