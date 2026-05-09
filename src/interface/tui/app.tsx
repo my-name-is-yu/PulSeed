@@ -28,6 +28,7 @@ import {
   type FreeformInputRoute,
 } from "./input-action.js";
 import type { Report } from "../../base/types/report.js";
+import type { Goal } from "../../base/types/goal.js";
 import { useLoop } from "./use-loop.js";
 import type { LoopState } from "./use-loop.js";
 import {
@@ -53,6 +54,11 @@ import { RuntimeEvidenceLedger, type RuntimeEvidenceSummary } from "../../runtim
 import { RuntimeHealthStore } from "../../runtime/store/health-store.js";
 import type { RuntimeHealthSnapshot } from "../../runtime/store/runtime-schemas.js";
 import {
+  formatCurrentGoalChoiceList,
+  formatCurrentGoalSummary,
+  isCurrentGoalCandidate,
+} from "../current-goal-summary.js";
+import {
   arbitrateRunSpecPendingDialogue,
   createRunSpecStore,
   handleRunSpecConfirmationInput,
@@ -68,7 +74,7 @@ const MAX_MESSAGES = 200;
 const PULSEED_VERSION = getPulseedVersion(import.meta.url);
 export const DASHBOARD_REFRESH_INTERVAL_MS = 5_000;
 export const APP_HEADER_ROWS = SEEDY_PIXEL.split("\n").length;
-const STATUS_BAR_ROWS = 3;
+const STATUS_BAR_ROWS = 4;
 
 export interface ApprovalRequest {
   task: Task;
@@ -251,18 +257,22 @@ const StatusBar: React.FC<{
   status: string;
   iteration: number;
   daemonConnectionState?: DaemonConnectionState;
-}> = ({ goalCount, trustScore, status, iteration, daemonConnectionState }) => (
+  currentGoalSummary?: string | null;
+}> = ({ goalCount, trustScore, status, iteration, daemonConnectionState, currentGoalSummary }) => (
   <Box
     borderStyle="single"
     borderColor={theme.border}
     paddingX={1}
     justifyContent="space-between"
   >
-    <Text dimColor>
-      Active: {goalCount}  Trust: {trustScore >= 0 ? "+" : ""}
-      {trustScore}  Status: {statusLabel(status)}  Iter: {iteration}
-      {formatDaemonConnectionState(daemonConnectionState)}
-    </Text>
+    <Box flexDirection="column" flexGrow={1}>
+      <Text dimColor>
+        Active: {goalCount}  Trust: {trustScore >= 0 ? "+" : ""}
+        {trustScore}  Status: {statusLabel(status)}  Iter: {iteration}
+        {formatDaemonConnectionState(daemonConnectionState)}
+      </Text>
+      {currentGoalSummary && <Text dimColor>{currentGoalSummary}</Text>}
+    </Box>
     <Text dimColor>d:dashboard  ?:help  Ctrl-C× 2:quit</Text>
   </Box>
 );
@@ -308,6 +318,8 @@ export function App({
   const [runtimeSessionSnapshot, setRuntimeSessionSnapshot] = useState<RuntimeSessionRegistrySnapshot | null>(null);
   const [runtimeHealthSnapshot, setRuntimeHealthSnapshot] = useState<RuntimeHealthSnapshot | null>(null);
   const [runtimeEvidenceSummaries, setRuntimeEvidenceSummaries] = useState<Record<string, RuntimeEvidenceSummary>>({});
+  const [daemonActiveGoalIds, setDaemonActiveGoalIds] = useState<string[]>([]);
+  const [currentGoals, setCurrentGoals] = useState<Goal[]>([]);
 
   // ── Loop state ──
   // In standalone mode, useLoop() manages state via CoreLoop.
@@ -359,6 +371,7 @@ export function App({
       const activeGoals = Array.isArray(d.activeGoals)
         ? d.activeGoals.filter((goalId): goalId is string => typeof goalId === "string" && goalId.length > 0)
         : null;
+      if (activeGoals) setDaemonActiveGoalIds(activeGoals);
       setDaemonLoopState((prev) => {
         const nextGoalId = activeGoals
           ? deriveDaemonGoalIdFromActiveGoals(prev.goalId, activeGoals)
@@ -502,6 +515,33 @@ export function App({
       clearInterval(interval);
     };
   }, [showSidebar, stateManager]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const goalIds = isDaemonMode && daemonActiveGoalIds.length > 0
+      ? daemonActiveGoalIds
+      : loopState.goalId
+        ? [loopState.goalId]
+        : [];
+    if (goalIds.length === 0) {
+      setCurrentGoals([]);
+      return;
+    }
+
+    Promise.all(goalIds.map((goalId) => stateManager.loadGoal(goalId)))
+      .then((goals) => {
+        if (!cancelled) {
+          setCurrentGoals(goals.filter((goal): goal is Goal => goal !== null && isCurrentGoalCandidate(goal)));
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setCurrentGoals([]);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [stateManager, isDaemonMode, daemonActiveGoalIds, loopState.goalId, loopState.status, loopState.iteration]);
 
   // Start ChatRunner session on mount (standalone mode)
   useEffect(() => {
@@ -868,8 +908,22 @@ export function App({
     [intentRecognizer, actionHandler, llmClient, chatRunner, daemonClient, isDaemonMode, daemonLoopState.goalId, startLoop, stopLoop, isProcessing, cwd, stateManager, pendingRunSpec]
   );
 
-  // goalCount: 1 when there is an active goal in the loop, 0 otherwise
-  const goalCount = loopState.goalId !== null ? 1 : 0;
+  const statusGoalCount = isDaemonMode && daemonActiveGoalIds.length > 0
+    ? daemonActiveGoalIds.length
+    : loopState.goalId !== null
+      ? 1
+      : 0;
+  const statusBarCurrentGoal = currentGoals.length === 1
+    ? formatCurrentGoalSummary(currentGoals[0]!, {
+      runtimeSnapshot: runtimeSessionSnapshot,
+      surface: "compact",
+    })
+    : currentGoals.length > 1
+      ? formatCurrentGoalChoiceList(currentGoals, {
+        runtimeSnapshot: runtimeSessionSnapshot,
+        surface: "compact",
+      })
+      : null;
   const chatAvailableRows = Math.max(
     1,
     termRows - APP_HEADER_ROWS - STATUS_BAR_ROWS - (ctrlCPending ? 1 : 0),
@@ -968,11 +1022,12 @@ export function App({
       </Box>
 
       <StatusBar
-        goalCount={goalCount}
+        goalCount={statusGoalCount}
         trustScore={loopState.trustScore}
         status={loopState.status}
         iteration={loopState.iteration}
         daemonConnectionState={daemonConnectionState}
+        currentGoalSummary={statusBarCurrentGoal}
       />
       {ctrlCPending && (
         <Box paddingX={1}>

@@ -2287,6 +2287,11 @@ describe("ChatRunner", () => {
         const goals = await runner.execute("/goals", "/repo");
 
         expect(status.success).toBe(true);
+        expect(status.output.indexOf("Current goal")).toBeLessThan(status.output.indexOf("Active goals:"));
+        expect(status.output).toContain("- Goal: Goal goal-a");
+        expect(status.output).toContain("Background work: run:agent:agent-runtime");
+        expect(status.output).toContain("Needs attention: Deadline handoff");
+        expect(status.output).toContain("Next safe action: Review final artifact");
         expect(status.output).toContain("Active goals");
         expect(status.output).toContain("goal-a");
         expect(status.output).toContain("Active runtime sessions:");
@@ -2298,12 +2303,89 @@ describe("ChatRunner", () => {
         expect(status.output).toContain("Operator handoffs pending:");
         expect(status.output).toContain("Deadline handoff");
         expect(focused.success).toBe(true);
-        expect(focused.output).toContain("Goal status: Goal goal-a");
+        expect(focused.output.indexOf("Current goal")).toBeLessThan(focused.output.indexOf("Dimensions:"));
+        expect(focused.output).toContain("Goal details: Goal goal-a");
         expect(focused.output).toContain("Dimensions:");
         expect(focused.output).not.toContain("Active runtime sessions:");
         expect(goals.success).toBe(true);
         expect(goals.output).toContain("Goals:");
         expect(adapter.execute).not.toHaveBeenCalled();
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+
+    it("/status shows numbered compact summaries for multiple active goals without title matching", async () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-status-multiple-"));
+      try {
+        const stateManager = new StateManager(tmpDir);
+        await stateManager.init();
+        await stateManager.saveGoal(makeGoal("goal-a", { title: "Improve alpha routing" }));
+        await stateManager.saveGoal(makeGoal("goal-b", { title: "Improve beta routing", status: "waiting" }));
+        await stateManager.saveGoal(makeGoal("goal-c", { title: "Archived old work", status: "cancelled" }));
+        await stateManager.writeRaw("supervisor-state.json", {
+          workers: [{
+            workerId: "worker-beta",
+            goalId: "goal-b",
+            startedAt: Date.parse("2026-04-25T00:00:00.000Z"),
+          }],
+          updatedAt: Date.parse("2026-04-25T00:30:00.000Z"),
+        });
+        const runner = new ChatRunner(makeDeps({ stateManager }));
+
+        const result = await runner.execute("/status", "/repo");
+
+        expect(result.success).toBe(true);
+        expect(result.output).toContain("Current goals:");
+        expect(result.output).toContain("1. Improve alpha routing");
+        expect(result.output).toContain("2. Improve beta routing");
+        expect(result.output).toContain("Background: run:coreloop:worker-beta");
+        expect(result.output).not.toContain("Archived old work");
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+
+    it("/status reports no current goal when every goal is terminal", async () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-status-no-current-"));
+      try {
+        const stateManager = new StateManager(tmpDir);
+        await stateManager.init();
+        await stateManager.saveGoal(makeGoal("goal-cancelled", { status: "cancelled" }));
+        const runner = new ChatRunner(makeDeps({ stateManager }));
+
+        const result = await runner.execute("/status", "/repo");
+
+        expect(result.success).toBe(true);
+        expect(result.output).toContain("No active goals found.");
+        expect(result.output).not.toContain("Current goal");
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+
+    it("/status <goal-id> does not attach a background run from a different typed goal id", async () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-status-run-mismatch-"));
+      try {
+        const stateManager = new StateManager(tmpDir);
+        await stateManager.init();
+        await stateManager.saveGoal(makeGoal("goal-a"));
+        await stateManager.writeRaw("supervisor-state.json", {
+          workers: [{
+            workerId: "worker-other",
+            goalId: "goal-b",
+            startedAt: Date.parse("2026-04-25T00:00:00.000Z"),
+          }],
+          updatedAt: Date.parse("2026-04-25T00:30:00.000Z"),
+        });
+        const runner = new ChatRunner(makeDeps({ stateManager }));
+
+        const result = await runner.execute("/status goal-a", "/repo");
+
+        expect(result.success).toBe(true);
+        expect(result.output).toContain("Current goal");
+        expect(result.output).not.toContain("run:coreloop:worker-other");
+        expect(result.output).toContain("Next safe action: Describe the next outcome");
       } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
       }
@@ -2394,7 +2476,8 @@ describe("ChatRunner", () => {
         const result = await runner.execute("/status goal-a", "/repo");
 
         expect(result.success).toBe(true);
-        expect(result.output).toContain("Goal status: Goal goal-a");
+        expect(result.output).not.toContain("Current goal");
+        expect(result.output).toContain("Goal details: Goal goal-a");
         expect(result.output).toContain("ID: goal-a");
         expect(result.output).toContain("Status: archived");
         expect(adapter.execute).not.toHaveBeenCalled();

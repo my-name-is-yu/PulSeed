@@ -10,6 +10,11 @@ import { EventSubscriber } from "./event-subscriber.js";
 import type { ChatEvent } from "./chat-events.js";
 import { createRuntimeSessionRegistry } from "../../runtime/session-registry/index.js";
 import {
+  formatCurrentGoalChoiceList,
+  formatCurrentGoalSummary,
+  isCurrentGoalCandidate,
+} from "../current-goal-summary.js";
+import {
   activeGoals,
   buildGoalUsageSummary,
   buildScheduleUsageSummary,
@@ -53,7 +58,6 @@ import { formatRoute, formatRuntimeSessionsList, formatRuntimeStatus } from "./c
 import type {
   ChatRunResult,
   ChatRunnerCommandHost,
-  PendingTendState,
   ResumeCommand,
 } from "./chat-runner-contracts.js";
 import type { DaemonClient } from "../../runtime/daemon/client.js";
@@ -62,6 +66,7 @@ import type { GoalNegotiator } from "../../orchestrator/goal/goal-negotiator.js"
 import { BrowserSessionStore } from "../../runtime/interactive-automation/index.js";
 import { GuardrailStore } from "../../runtime/guardrails/index.js";
 import { RuntimeOperatorHandoffStore } from "../../runtime/store/operator-handoff-store.js";
+import type { RuntimeOperatorHandoffRecord } from "../../runtime/store/operator-handoff-store.js";
 import * as path from "node:path";
 
 export const COMMAND_HELP = `Available commands:
@@ -399,8 +404,17 @@ export class ChatRunnerCommandHandler {
       if (!goal) {
         return { success: false, output: `Goal not found: ${args}`, elapsed_ms: Date.now() - start };
       }
+      const registry = createRuntimeSessionRegistry({ stateManager: this.host.deps.stateManager });
+      const [runtimeSnapshot, handoffs] = await Promise.all([
+        registry.snapshot(),
+        this.loadOpenOperatorHandoffsFromRuntime(),
+      ]);
+      const summaryLines = isCurrentGoalCandidate(goal)
+        ? [formatCurrentGoalSummary(goal, { runtimeSnapshot, handoffs }), ""]
+        : [];
       const lines = [
-        `Goal status: ${goal.title}`,
+        ...summaryLines,
+        `Goal details: ${goal.title}`,
         `ID: ${goal.id}`,
         `Status: ${goal.status}`,
         `Loop: ${goal.loop_status}`,
@@ -419,6 +433,7 @@ export class ChatRunnerCommandHandler {
       this.loadGoals(),
       registry.snapshot(),
     ]);
+    const handoffs = await this.loadOpenOperatorHandoffsFromRuntime();
     const active = this.activeGoals(goals);
     const runtimeStatus = formatRuntimeStatus(runtimeSnapshot);
     const daemonSnapshot = await this.loadDaemonSnapshot();
@@ -427,9 +442,12 @@ export class ChatRunnerCommandHandler {
     if (active.length === 0) {
       return { success: true, output: `No active goals found.\n\n${runtimeStatus}${statusSuffix}`, elapsed_ms: Date.now() - start };
     }
+    const currentGoalSummary = active.length === 1
+      ? formatCurrentGoalSummary(active[0]!, { runtimeSnapshot, handoffs })
+      : formatCurrentGoalChoiceList(active, { runtimeSnapshot, handoffs });
     return {
       success: true,
-      output: `Active goals:\n${active.map((goal) => this.formatGoalLine(goal)).join("\n")}\n\n${runtimeStatus}${statusSuffix}`,
+      output: `${currentGoalSummary}\n\nActive goals:\n${active.map((goal) => this.formatGoalLine(goal)).join("\n")}\n\n${runtimeStatus}${statusSuffix}`,
       elapsed_ms: Date.now() - start,
     };
   }
@@ -513,9 +531,9 @@ export class ChatRunnerCommandHandler {
     return new BrowserSessionStore(runtimeRoot).listPendingAuth() as Promise<Array<Record<string, unknown>>>;
   }
 
-  private async loadOpenOperatorHandoffsFromRuntime(): Promise<Array<Record<string, unknown>>> {
+  private async loadOpenOperatorHandoffsFromRuntime(): Promise<RuntimeOperatorHandoffRecord[]> {
     const runtimeRoot = path.join(this.host.deps.stateManager.getBaseDir(), "runtime");
-    return new RuntimeOperatorHandoffStore(runtimeRoot).listOpen() as Promise<Array<Record<string, unknown>>>;
+    return new RuntimeOperatorHandoffStore(runtimeRoot).listOpen();
   }
 
   private async loadGuardrailsFromRuntime(): Promise<{
