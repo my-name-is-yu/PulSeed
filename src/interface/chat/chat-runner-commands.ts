@@ -42,7 +42,6 @@ import { formatGoalStatusDetails } from "../goal-status-display.js";
 import { checkGitChanges } from "./chat-runner-support.js";
 import { formatFailureRecovery } from "./failure-recovery.js";
 import {
-  isReasoningEffort,
   loadProviderConfig,
   loadProviderConfigFile,
   MODEL_REGISTRY,
@@ -74,93 +73,17 @@ import {
   createRuntimeBudgetProjections,
   type RuntimeBudgetProjection,
 } from "../runtime-budget-summary.js";
+import {
+  COMMAND_HELP,
+  parseCleanupArgs,
+  parseDetailOnlyArgs,
+  parseModelArgs,
+  parsePermissionArgs,
+  parseStatusArgs,
+} from "./chat-command-args.js";
 import * as path from "node:path";
 
-export const COMMAND_HELP = `Available commands:
-Session
-  /help                 Show this help message
-  /clear                Clear conversation history
-  /sessions             List prior chat sessions
-  /history [id]         Show saved chat history
-  /title <title>        Rename the current session
-  /resume [id]          Resume native agentloop state for the current or selected session
-  /cleanup [--dry-run]  Clean up stale chat sessions
-  /compact              Summarize older chat turns and keep the latest turns
-  /context              Show active working context and session assumptions
-  /exit                 Exit chat mode
-
-Goals and tasks
-  /status [goal-id]     Show active goal status, or one goal when an id is provided
-  /goals                List goals
-  /tasks [goal-id]      List tasks for a goal; uses the only active goal when unambiguous
-  /task <task-id> [goal-id]
-                        Show one task; searches goals when no goal id is provided
-  /track                Promote session to Tier 2 goal pursuit (not yet implemented)
-  /tend                 Generate a goal from chat history and start autonomous daemon execution
-
-Configuration
-  /config               Show provider configuration with secrets masked
-  /model                Show model and reasoning choices
-  /model <model> [effort]
-                        Select OpenAI model and optional reasoning effort
-  /permissions [args]   Show or update session execution policy
-  /plugins              List installed plugins when plugin metadata is available
-  /usage [scope]        Show usage summary (session, goal <id>, daemon <goal-id>, schedule [7d|24h|2w])
-
-Review and branching
-  /review               Show current diff summary and verification context
-  /fork [title]         Fork the current chat session into a new session
-  /undo                 Remove the latest chat turn from session history
-
-Deferred
-  /retry is intentionally not supported yet.`;
-
-const CLEANUP_USAGE = "Usage: /cleanup [--dry-run]";
-
-function parseCleanupArgs(args: string): { success: true; dryRun: boolean } | { success: false; output: string } {
-  const argTokens = args.trim() ? args.trim().split(/\s+/) : [];
-  if (argTokens.length === 0) return { success: true, dryRun: false };
-  if (argTokens.length === 1 && argTokens[0] === "--dry-run") return { success: true, dryRun: true };
-  return { success: false, output: CLEANUP_USAGE };
-}
-
-function isDetailFlag(token: string): boolean {
-  return token === "--details" || token === "--diagnostic";
-}
-
-function parseDetailOnlyArgs(
-  args: string,
-  command: string,
-): { success: true; diagnostic: boolean } | { success: false; output: string } {
-  const tokens = args.trim() ? args.trim().split(/\s+/) : [];
-  let diagnostic = false;
-  for (const token of tokens) {
-    if (!isDetailFlag(token)) {
-      return { success: false, output: `Usage: ${command} [--details]` };
-    }
-    diagnostic = true;
-  }
-  return { success: true, diagnostic };
-}
-
-function parseStatusArgs(
-  args: string,
-): { success: true; goalId?: string; diagnostic: boolean } | { success: false; output: string } {
-  const tokens = args.trim() ? args.trim().split(/\s+/) : [];
-  let goalId: string | undefined;
-  let diagnostic = false;
-  for (const token of tokens) {
-    if (isDetailFlag(token)) {
-      diagnostic = true;
-      continue;
-    }
-    if (goalId) {
-      return { success: false, output: "Usage: /status [goal-id] [--details]" };
-    }
-    goalId = token;
-  }
-  return goalId ? { success: true, goalId, diagnostic } : { success: true, diagnostic };
-}
+export { COMMAND_HELP };
 
 export class ChatRunnerCommandHandler {
   constructor(private readonly host: ChatRunnerCommandHost) {}
@@ -793,25 +716,6 @@ export class ChatRunnerCommandHandler {
     return { success: true, output: `Provider configuration:\n${this.formatConfig(config)}`, elapsed_ms: Date.now() - start };
   }
 
-  private parseModelArgs(args: string): { model?: string; reasoning?: ProviderConfig["reasoning_effort"]; error?: string } {
-    const tokens = args.split(/\s+/).filter(Boolean);
-    if (tokens.length === 0) return {};
-
-    if (tokens.length === 1 && isReasoningEffort(tokens[0])) {
-      return { reasoning: tokens[0] };
-    }
-
-    const model = tokens[0];
-    if (tokens.length > 2) {
-      return { error: "Usage: /model <model> [none|minimal|low|medium|high|xhigh]" };
-    }
-    const reasoning = tokens[1];
-    if (reasoning !== undefined && !isReasoningEffort(reasoning)) {
-      return { error: `Invalid reasoning effort "${reasoning}". Valid: none, minimal, low, medium, high, xhigh` };
-    }
-    return { model, reasoning };
-  }
-
   private formatModelSummary(config: ProviderConfigSummary): string {
     return [
       `Model: ${config.model}`,
@@ -841,7 +745,7 @@ export class ChatRunnerCommandHandler {
       };
     }
 
-    const parsed = this.parseModelArgs(args);
+    const parsed = parseModelArgs(args);
     if (parsed.error) {
       return { success: false, output: parsed.error, elapsed_ms: Date.now() - start };
     }
@@ -1197,41 +1101,15 @@ export class ChatRunnerCommandHandler {
       };
     }
 
-    const tokens = args.toLowerCase().split(/\s+/).filter(Boolean);
-    let nextPolicy = policy;
-    for (let index = 0; index < tokens.length; index++) {
-      const token = tokens[index];
-      if (token === "read-only" || token === "readonly" || token === "read_only") {
-        nextPolicy = withExecutionPolicyOverrides(nextPolicy, { sandboxMode: "read_only" });
-        continue;
-      }
-      if (token === "workspace-write" || token === "workspace_write") {
-        nextPolicy = withExecutionPolicyOverrides(nextPolicy, { sandboxMode: "workspace_write" });
-        continue;
-      }
-      if (token === "full-access" || token === "danger-full-access" || token === "danger_full_access") {
-        nextPolicy = withExecutionPolicyOverrides(nextPolicy, { sandboxMode: "danger_full_access" });
-        continue;
-      }
-      if (token === "network" && tokens[index + 1]) {
-        nextPolicy = withExecutionPolicyOverrides(nextPolicy, { networkAccess: tokens[index + 1] === "on" });
-        index += 1;
-        continue;
-      }
-      if (token === "approval" && tokens[index + 1]) {
-        const approvalPolicy = tokens[index + 1];
-        if (approvalPolicy === "never" || approvalPolicy === "on_request" || approvalPolicy === "untrusted") {
-          nextPolicy = withExecutionPolicyOverrides(nextPolicy, { approvalPolicy });
-          index += 1;
-          continue;
-        }
-      }
+    const parsed = parsePermissionArgs(policy, args);
+    if (!parsed.success) {
       return {
         success: false,
-        output: "Usage: /permissions [read-only|workspace-write|full-access] [network on|off] [approval on_request|never|untrusted]",
+        output: parsed.output,
         elapsed_ms: Date.now() - start,
       };
     }
+    const nextPolicy = parsed.policy;
 
     const runner = this.host as unknown as { setSessionExecutionPolicy?: (policy: ExecutionPolicy) => void; sessionExecutionPolicy?: ExecutionPolicy | null };
     if (typeof runner.setSessionExecutionPolicy === "function") {
