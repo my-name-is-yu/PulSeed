@@ -1,22 +1,9 @@
 import { parseArgs } from "node:util";
 import type { ScheduleEngine } from "../../../../runtime/schedule/engine.js";
+import { addUsageTokenCounts } from "../../../usage-counter.js";
+import { parseUsagePeriodMs } from "../../../usage-period.js";
 
-function parsePeriodMs(period: string): number {
-  const match = /^(\d+)([dhw])$/.exec(period.trim());
-  if (!match) {
-    throw new Error("period must look like 7d, 24h, or 2w");
-  }
-  const value = Number(match[1]);
-  const unit = match[2];
-  if (!Number.isFinite(value) || value <= 0) {
-    throw new Error("period value must be positive");
-  }
-  if (unit === "h") return value * 60 * 60 * 1000;
-  if (unit === "w") return value * 7 * 24 * 60 * 60 * 1000;
-  return value * 24 * 60 * 60 * 1000;
-}
-
-export async function scheduleCost(engine: ScheduleEngine, argv: string[]): Promise<void> {
+export async function scheduleCost(engine: ScheduleEngine, argv: string[]): Promise<number> {
   let parsed: ReturnType<typeof parseArgs>;
   try {
     parsed = parseArgs({
@@ -29,16 +16,16 @@ export async function scheduleCost(engine: ScheduleEngine, argv: string[]): Prom
     });
   } catch (err) {
     console.error(`Error: ${(err as Error).message}`);
-    return;
+    return 1;
   }
 
   let periodMs: number;
   const period = String(parsed.values.period ?? "7d");
   try {
-    periodMs = parsePeriodMs(period);
+    periodMs = parseUsagePeriodMs(period);
   } catch (err) {
     console.error(`Error: ${(err as Error).message}`);
-    return;
+    return 1;
   }
 
   const sinceMs = Date.now() - periodMs;
@@ -64,7 +51,7 @@ export async function scheduleCost(engine: ScheduleEngine, argv: string[]): Prom
       tokens: 0,
     };
     current.executions += 1;
-    current.tokens += record.tokens_used ?? 0;
+    current.tokens = addUsageTokenCounts(current.tokens, record.tokens_used ?? 0);
     byEntry.set(record.entry_id, current);
   }
 
@@ -72,7 +59,7 @@ export async function scheduleCost(engine: ScheduleEngine, argv: string[]): Prom
     .map(([entryId, row]) => ({ entryId, ...row }))
     .filter((row) => row.executions > 0 || row.tokens > 0)
     .sort((left, right) => right.tokens - left.tokens || left.name.localeCompare(right.name));
-  const totalTokens = rows.reduce((sum, row) => sum + row.tokens, 0);
+  const totalTokens = rows.reduce((sum, row) => addUsageTokenCounts(sum, row.tokens), 0);
   const totalExecutions = rows.reduce((sum, row) => sum + row.executions, 0);
 
   console.log(`Schedule cost summary (${period})`);
@@ -81,7 +68,7 @@ export async function scheduleCost(engine: ScheduleEngine, argv: string[]): Prom
 
   if (rows.length === 0) {
     console.log("  no schedule executions in this period");
-    return;
+    return 0;
   }
 
   for (const row of rows) {
@@ -89,4 +76,5 @@ export async function scheduleCost(engine: ScheduleEngine, argv: string[]): Prom
       `  ${row.entryId.slice(0, 8)}  [${row.layer}] ${row.name}  executions=${row.executions}  tokens=${row.tokens}`
     );
   }
+  return 0;
 }
