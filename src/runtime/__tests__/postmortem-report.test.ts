@@ -4,7 +4,10 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { makeTempDir } from "../../../tests/helpers/temp-dir.js";
 import { RuntimeEvidenceLedger } from "../store/evidence-ledger.js";
 import { RuntimeOperatorHandoffStore } from "../store/operator-handoff-store.js";
-import { RuntimePostmortemReportStore } from "../store/postmortem-report.js";
+import {
+  RuntimePostmortemReportSchema,
+  RuntimePostmortemReportStore,
+} from "../store/postmortem-report.js";
 import { RuntimeReproducibilityManifestStore } from "../store/reproducibility-manifest.js";
 
 describe("RuntimePostmortemReportStore", () => {
@@ -273,5 +276,45 @@ describe("RuntimePostmortemReportStore", () => {
         expect.objectContaining({ label: "postmortem.md", retention_class: "evidence_report" }),
       ]),
     }));
+  });
+
+  it("treats malformed or unsafe persisted postmortem JSON as missing", async () => {
+    const ledger = new RuntimeEvidenceLedger(runtimeRoot);
+    await ledger.append({
+      id: "postmortem-corrupt-metric",
+      occurred_at: "2026-04-30T00:00:00.000Z",
+      kind: "metric",
+      scope: { goal_id: "goal-postmortem-corrupt" },
+      metrics: [{ label: "score", value: 0.6, direction: "maximize", observed_at: "2026-04-30T00:00:00.000Z" }],
+      summary: "Score recorded.",
+    });
+    const store = new RuntimePostmortemReportStore(runtimeRoot);
+    const report = await store.generate({
+      goalId: "goal-postmortem-corrupt",
+      trigger: "operator_request",
+    });
+    expect(report.metric_timeline).toHaveLength(1);
+
+    await fsp.writeFile(report.artifact_paths.json_path, "{bad", "utf8");
+    await expect(store.load(report.postmortem_id)).resolves.toBeNull();
+    await expect(store.latestFor({ goalId: "goal-postmortem-corrupt" })).resolves.toBeNull();
+
+    const unsafeMetricJson = JSON.stringify({
+      ...report,
+      metric_timeline: [{
+        ...report.metric_timeline[0],
+        latest_value: "__UNSAFE_VALUE__",
+      }],
+    }, null, 2).replace('"__UNSAFE_VALUE__"', "1e999");
+    await fsp.writeFile(report.artifact_paths.json_path, unsafeMetricJson, "utf8");
+
+    await expect(store.load(report.postmortem_id)).resolves.toBeNull();
+    expect(RuntimePostmortemReportSchema.safeParse({
+      ...report,
+      metric_timeline: [{
+        ...report.metric_timeline[0],
+        observation_count: Number.MAX_SAFE_INTEGER + 1,
+      }],
+    }).success).toBe(false);
   });
 });
