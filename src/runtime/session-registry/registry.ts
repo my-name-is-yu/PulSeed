@@ -205,6 +205,7 @@ export class RuntimeSessionRegistry {
     let agentLoopSessionId: string | null = null;
     let traceId: string | null = null;
     let stateUpdatedAt: string | null = null;
+    let stateGoalId: string | null = null;
     let normalizedStatus = chat.agentLoopStatus;
 
     try {
@@ -214,6 +215,7 @@ export class RuntimeSessionRegistry {
         agentLoopSessionId = state.sessionId;
         traceId = state.traceId;
         stateUpdatedAt = state.updatedAt;
+        stateGoalId = state.goalId;
         normalizedStatus = state.status;
       } else {
         warnings.push({
@@ -265,6 +267,7 @@ export class RuntimeSessionRegistry {
         parent_session_id: conversationId,
         child_session_id: sessionId,
         process_session_id: null,
+        goal_id: stateGoalId,
         status: agentStatusToRunStatus(normalizedStatus),
         notify_policy: "done_only",
         reply_target_source: "none",
@@ -354,6 +357,7 @@ export class RuntimeSessionRegistry {
           parent_session_id: null,
           child_session_id: sessionId,
           process_session_id: null,
+          goal_id: state.goalId,
           status: agentStatusToRunStatus(state.status),
           notify_policy: "done_only",
           reply_target_source: "none",

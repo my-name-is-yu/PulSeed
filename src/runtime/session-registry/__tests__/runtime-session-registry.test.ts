@@ -64,6 +64,7 @@ describe("RuntimeSessionRegistry", () => {
       kind: "agent_run",
       parent_session_id: "session:conversation:chat-a",
       child_session_id: "session:agent:native-session-b",
+      goal_id: "goal-1",
       status: "running",
     });
   });
@@ -191,6 +192,10 @@ describe("RuntimeSessionRegistry", () => {
       kind: "agent",
       parent_session_id: null,
       status: "active",
+    }));
+    expect(snapshot.background_runs).toContainEqual(expect.objectContaining({
+      id: "run:agent:orphan-agent",
+      goal_id: "goal-1",
     }));
     expect(snapshot.warnings).toContainEqual(expect.objectContaining({
       code: "missing_parent_join",

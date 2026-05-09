@@ -5,13 +5,20 @@ import * as path from "node:path";
 import { getArchiveDir, getGoalsDir } from "../../../base/utils/paths.js";
 import { readJsonFile } from "../../../base/utils/json-io.js";
 
-import { StateManager } from "../../../base/state/state-manager.js";
+import type { StateManager } from "../../../base/state/state-manager.js";
 import { ReportingEngine } from "../../../reporting/reporting-engine.js";
 import { formatOperationError } from "../utils.js";
 import { getCliLogger } from "../cli-logger.js";
 import { dimensionProgress } from "../../../platform/drive/gap-calculator.js";
 import { resolvePulSeedExecutionProfile } from "../../../orchestrator/execution/agent-loop/self-protection.js";
 import type { Task } from "../../../base/types/task.js";
+import { createRuntimeSessionRegistry } from "../../../runtime/session-registry/index.js";
+import { RuntimeOperatorHandoffStore } from "../../../runtime/store/operator-handoff-store.js";
+import {
+  formatCurrentGoalChoiceList,
+  formatCurrentGoalSummary,
+  isCurrentGoalCandidate,
+} from "../../current-goal-summary.js";
 
 async function printActiveGoals(
   stateManager: StateManager,
@@ -138,7 +145,17 @@ export async function cmdStatus(
     return 1;
   }
 
-  console.log(`# Status: ${goal.title}`);
+  const registry = createRuntimeSessionRegistry({ stateManager });
+  const runtimeRoot = path.join(stateManager.getBaseDir(), "runtime");
+  const [runtimeSnapshot, handoffs] = await Promise.all([
+    registry.snapshot(),
+    new RuntimeOperatorHandoffStore(runtimeRoot).listOpen(),
+  ]);
+
+  if (isCurrentGoalCandidate(goal)) {
+    console.log(formatCurrentGoalSummary(goal, { runtimeSnapshot, handoffs }));
+  }
+  console.log(`\n# Status: ${goal.title}`);
   console.log(`\n**Goal ID**: ${goalId}`);
   console.log(`**Status**: ${goal.status}`);
   if (resolvePulSeedExecutionProfile() === "dev") {
@@ -183,6 +200,31 @@ export async function cmdStatus(
     }
   }
 
+  return 0;
+}
+
+export async function cmdCurrentStatus(stateManager: StateManager): Promise<number> {
+  const goalIds = await stateManager.listGoalIds();
+  const goals = (await Promise.all(goalIds.map((goalId) => stateManager.loadGoal(goalId))))
+    .filter((goal): goal is NonNullable<typeof goal> => goal !== null)
+    .filter(isCurrentGoalCandidate);
+
+  if (goals.length === 0) {
+    console.log("No active goals found.");
+    console.log("Describe what you want PulSeed to work on, or run `pulseed goal list` to inspect saved goals.");
+    return 0;
+  }
+
+  const registry = createRuntimeSessionRegistry({ stateManager });
+  const runtimeRoot = path.join(stateManager.getBaseDir(), "runtime");
+  const [runtimeSnapshot, handoffs] = await Promise.all([
+    registry.snapshot(),
+    new RuntimeOperatorHandoffStore(runtimeRoot).listOpen(),
+  ]);
+
+  console.log(goals.length === 1
+    ? formatCurrentGoalSummary(goals[0]!, { runtimeSnapshot, handoffs })
+    : formatCurrentGoalChoiceList(goals, { runtimeSnapshot, handoffs }));
   return 0;
 }
 

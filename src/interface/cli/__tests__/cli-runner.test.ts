@@ -358,17 +358,17 @@ describe("CLIRunner goal argument errors", () => {
     errorSpy.mockRestore();
   });
 
-  it("names pulseed status and shows usage when --goal is missing", async () => {
-    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  it("prints current status guidance when --goal is missing for pulseed status", async () => {
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
     const code = await runCLI("status");
 
-    expect(code).toBe(1);
-    const output = errorSpy.mock.calls.map((call) => call.join(" ")).join("\n");
-    expect(output).toContain("Error: --goal <id> is required for pulseed status.");
-    expect(output).toContain("Usage: pulseed status --goal <id>");
+    expect(code).toBe(0);
+    const output = consoleSpy.mock.calls.map((call) => call.join(" ")).join("\n");
+    expect(output).toContain("No active goals found.");
+    expect(output).toContain("Describe what you want PulSeed to work on");
 
-    errorSpy.mockRestore();
+    consoleSpy.mockRestore();
   });
 
   it("names pulseed run and shows usage when multiple goals are provided", async () => {
@@ -1378,9 +1378,45 @@ describe("goal subcommand — unknown sub-subcommand", async () => {
 // ─── `status` subcommand ──────────────────────────────────────────────────────
 
 describe("status subcommand", async () => {
-  it("exits with code 1 when --goal is missing", async () => {
+  it("prints a natural current-status empty state when --goal is missing", async () => {
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
     const code = await runCLI("status");
-    expect(code).toBe(1);
+    const output = consoleSpy.mock.calls.map((c) => c.join(" ")).join("\n");
+
+    expect(code).toBe(0);
+    expect(output).toContain("No active goals found.");
+    expect(output).toContain("Describe what you want PulSeed to work on");
+    consoleSpy.mockRestore();
+  });
+
+  it("prints the current-goal summary without requiring a copied goal ID", async () => {
+    await stateManager.saveGoal(makeGoal({ id: "goal-current-default", title: "Current Default Goal", status: "active" }));
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    const code = await runCLI("status");
+    const output = consoleSpy.mock.calls.map((c) => c.join(" ")).join("\n");
+
+    expect(code).toBe(0);
+    expect(output).toContain("Current goal");
+    expect(output).toContain("- Goal: Current Default Goal");
+    expect(output).not.toContain("Error: --goal <id>");
+    consoleSpy.mockRestore();
+  });
+
+  it("prints numbered current-goal summaries without requiring copied IDs", async () => {
+    await stateManager.saveGoal(makeGoal({ id: "goal-current-a", title: "Current Goal A", status: "active" }));
+    await stateManager.saveGoal(makeGoal({ id: "goal-current-b", title: "Current Goal B", status: "waiting" }));
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    const code = await runCLI("status");
+    const output = consoleSpy.mock.calls.map((c) => c.join(" ")).join("\n");
+
+    expect(code).toBe(0);
+    expect(output).toContain("Current goals:");
+    expect(output).toContain("1. Current Goal A");
+    expect(output).toContain("2. Current Goal B");
+    consoleSpy.mockRestore();
   });
 
   it("exits with code 1 when goal does not exist", async () => {
@@ -1477,6 +1513,28 @@ describe("status subcommand", async () => {
 
     const output = consoleSpy.mock.calls.map((c) => c.join(" ")).join("\n");
     expect(output).toContain("active");
+    consoleSpy.mockRestore();
+  });
+
+  it("prints the compact current-goal summary before detailed dimensions", async () => {
+    await stateManager.saveGoal(makeGoal({ id: "goal-current", title: "Current CLI Goal", status: "active" }));
+    await stateManager.writeRaw("supervisor-state.json", {
+      workers: [{
+        workerId: "worker-cli",
+        goalId: "goal-current",
+        startedAt: Date.parse("2026-04-25T00:00:00.000Z"),
+      }],
+      updatedAt: Date.parse("2026-04-25T00:30:00.000Z"),
+    });
+
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    await runCLI("status", "--goal", "goal-current");
+
+    const output = consoleSpy.mock.calls.map((c) => c.join(" ")).join("\n");
+    expect(output.indexOf("Current goal")).toBeLessThan(output.indexOf("## Dimensions"));
+    expect(output).toContain("- Goal: Current CLI Goal");
+    expect(output).toContain("Background work: run:coreloop:worker-cli");
+    expect(output).toContain("Next safe action: Ask for progress here");
     consoleSpy.mockRestore();
   });
 

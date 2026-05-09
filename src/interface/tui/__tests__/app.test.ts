@@ -1,4 +1,5 @@
 import React, { act } from "react";
+import { Writable } from "node:stream";
 import { render } from "ink";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DaemonClient } from "../../../runtime/daemon/client.js";
@@ -18,6 +19,7 @@ import { ToolPermissionManager } from "../../../tools/permission.js";
 import { ConcurrencyController } from "../../../tools/concurrency.js";
 import { ShellTool } from "../../../tools/system/ShellTool/ShellTool.js";
 import type { ExecutionPolicy } from "../../../orchestrator/execution/agent-loop/execution-policy.js";
+import type { Goal } from "../../../base/types/goal.js";
 import * as execMod from "../../../base/utils/execFileNoThrow.js";
 
 const testState = vi.hoisted(() => ({
@@ -123,6 +125,51 @@ function createDaemonClientMock() {
     startGoal: vi.fn(async () => {}),
     stopGoal: vi.fn(async () => {}),
     chat: vi.fn(async () => {}),
+  };
+}
+
+function createCapturedStdout(): NodeJS.WriteStream & { readOutput: () => string } {
+  let output = "";
+  const stream = new Writable({
+    write(chunk, _encoding, callback) {
+      output += chunk.toString();
+      callback();
+    },
+  }) as NodeJS.WriteStream & { readOutput: () => string };
+  stream.columns = 80;
+  stream.rows = 24;
+  stream.isTTY = true;
+  stream.readOutput = () => output;
+  return stream;
+}
+
+function makeTuiGoal(overrides: Partial<Goal> = {}): Goal {
+  return {
+    id: "goal-anchor",
+    parent_id: null,
+    node_type: "goal",
+    title: "Improve daily UX",
+    description: "",
+    status: "active",
+    dimensions: [],
+    gap_aggregation: "max",
+    dimension_mapping: null,
+    constraints: [],
+    children_ids: [],
+    target_date: null,
+    origin: null,
+    pace_snapshot: null,
+    deadline: null,
+    confidence_flag: null,
+    user_override: false,
+    feasibility_note: null,
+    uncertainty_weight: 1,
+    decomposition_depth: 0,
+    specificity_score: null,
+    loop_status: "running",
+    created_at: "2026-05-09T00:00:00.000Z",
+    updated_at: "2026-05-09T00:05:00.000Z",
+    ...overrides,
   };
 }
 
@@ -1362,6 +1409,90 @@ describe("daemon-mode chat routing", () => {
     expect(text).toContain("Describe what you want to work on");
     expect(text).not.toContain("/start <goal-id>");
     expect(daemonClient.chat).not.toHaveBeenCalled();
+
+    screen.unmount();
+  });
+
+  it("shows a compact current-goal anchor in the always-visible status area", async () => {
+    const daemonClient = createDaemonClientMock();
+    const stateManager = createStateManagerMock();
+    const stdout = createCapturedStdout();
+    vi.mocked(stateManager.loadGoal).mockImplementation(async (id) =>
+      id === "goal-anchor" ? makeTuiGoal() as never : null
+    );
+
+    const screen = render(React.createElement(App, {
+      daemonClient: daemonClient as unknown as DaemonClient,
+      stateManager: stateManager as unknown as StateManager,
+      noFlicker: false,
+      controlStream: stdout,
+      cwd: "~/workspace",
+      gitBranch: "main",
+      providerName: "claude",
+    }), {
+      patchConsole: false,
+      debug: true,
+      stdout,
+      stderr: process.stderr,
+    });
+
+    await flush();
+    await act(async () => {
+      daemonClient.handlers.get("daemon_status")?.({
+        activeGoals: ["goal-anchor"],
+        status: "running",
+        loopCount: 2,
+      });
+    });
+    await flush();
+
+    expect(stateManager.loadGoal).toHaveBeenCalledWith("goal-anchor");
+    expect(stdout.readOutput()).toContain("Current: Improve daily UX");
+    expect(stdout.readOutput()).toContain("active; loop running");
+
+    screen.unmount();
+  });
+
+  it("shows numbered compact summaries when daemon reports multiple active goals", async () => {
+    const daemonClient = createDaemonClientMock();
+    const stateManager = createStateManagerMock();
+    const stdout = createCapturedStdout();
+    vi.mocked(stateManager.loadGoal).mockImplementation(async (id) => {
+      if (id === "goal-a") return makeTuiGoal({ id: "goal-a", title: "Improve alpha UX" }) as never;
+      if (id === "goal-b") return makeTuiGoal({ id: "goal-b", title: "Improve beta UX", status: "waiting" }) as never;
+      return null;
+    });
+
+    const screen = render(React.createElement(App, {
+      daemonClient: daemonClient as unknown as DaemonClient,
+      stateManager: stateManager as unknown as StateManager,
+      noFlicker: false,
+      controlStream: stdout,
+      cwd: "~/workspace",
+      gitBranch: "main",
+      providerName: "claude",
+    }), {
+      patchConsole: false,
+      debug: true,
+      stdout,
+      stderr: process.stderr,
+    });
+
+    await flush();
+    await act(async () => {
+      daemonClient.handlers.get("daemon_status")?.({
+        activeGoals: ["goal-a", "goal-b"],
+        status: "running",
+        loopCount: 2,
+      });
+    });
+    await flush();
+
+    const output = stdout.readOutput();
+    expect(stateManager.loadGoal).toHaveBeenCalledWith("goal-a");
+    expect(stateManager.loadGoal).toHaveBeenCalledWith("goal-b");
+    expect(output).toContain("Current goals: 1. Improve alpha UX");
+    expect(output).toContain("2. Improve beta UX");
 
     screen.unmount();
   });

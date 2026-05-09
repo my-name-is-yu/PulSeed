@@ -3,6 +3,12 @@ import type { StateManager } from "../../base/state/state-manager.js";
 import type { GoalNegotiator } from "../../orchestrator/goal/goal-negotiator.js";
 import type { ReportingEngine } from "../../reporting/reporting-engine.js";
 import type { Report } from "../../base/types/report.js";
+import type { Goal } from "../../base/types/goal.js";
+import {
+  formatCurrentGoalChoiceList,
+  formatCurrentGoalSummary,
+  isCurrentGoalCandidate,
+} from "../current-goal-summary.js";
 
 // ─── Types ───
 
@@ -177,13 +183,23 @@ export class ActionHandler {
       return { messages: ["No active goals."] };
     }
 
-    const messages: string[] = [];
-
+    const active: Goal[] = [];
     for (const id of ids) {
       const goal = await this.deps.stateManager.loadGoal(id);
       if (!goal) continue;
+      if (isCurrentGoalCandidate(goal)) active.push(goal);
+    }
 
-      messages.push(`\n--- Goal: ${goal.title ?? id} ---`);
+    if (active.length === 0) {
+      return { messages: ["No active goals."] };
+    }
+
+    const messages: string[] = [
+      active.length === 1 ? formatCurrentGoalSummary(active[0]!) : formatCurrentGoalChoiceList(active),
+    ];
+
+    for (const goal of active) {
+      messages.push(`\n--- Goal: ${goal.title} ---`);
       messages.push(`Status: ${goal.status}`);
 
       if (goal.dimensions.length === 0) {

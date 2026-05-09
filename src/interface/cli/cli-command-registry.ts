@@ -13,7 +13,7 @@ import type { LoopConfig } from "../../orchestrator/loop/durable-loop.js";
 
 // Commands
 import { cmdRun } from "./commands/run.js";
-import { cmdStatus, cmdLog, cmdCleanup } from "./commands/goal.js";
+import { cmdStatus, cmdCurrentStatus, cmdLog, cmdCleanup } from "./commands/goal.js";
 import { dispatchGoalCommand } from "./commands/goal-dispatch.js";
 import { cmdPluginList, cmdPluginInstall, cmdPluginRemove, cmdPluginUpdate, cmdPluginSearch } from "./commands/plugin.js";
 import { cmdReport } from "./commands/report.js";
@@ -229,8 +229,7 @@ export async function dispatchCommand(
 
     const goalId = values.goal;
     if (!goalId || typeof goalId !== "string") {
-      logger.error(formatGoalRequiredError("status", "pulseed status --goal <id>"));
-      return 1;
+      return cmdCurrentStatus(stateManager);
     }
 
     return cmdStatus(stateManager, goalId);
