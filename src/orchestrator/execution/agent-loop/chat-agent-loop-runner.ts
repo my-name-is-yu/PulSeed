@@ -84,6 +84,7 @@ export interface ChatAgentLoopRunnerDeps {
     goalId?: string;
     eventSink?: AgentLoopEventSink;
     resumeStatePath?: string;
+    resumeSessionId?: string;
     sessionId?: string;
     traceId?: string;
   }) => AgentLoopSession;
@@ -103,6 +104,7 @@ export interface ChatAgentLoopInput {
   toolCallContext?: Partial<ToolCallContext>;
   resumeState?: AgentLoopSessionState;
   resumeStatePath?: string;
+  resumeSessionId?: string;
   resumeOnly?: boolean;
   abortSignal?: AbortSignal;
   role?: SubagentRole;
@@ -124,6 +126,7 @@ export class ChatAgentLoopRunner {
       goalId: input.goalId,
       eventSink: input.eventSink,
       ...(input.resumeStatePath ? { resumeStatePath: input.resumeStatePath } : {}),
+      ...(input.resumeSessionId ? { resumeSessionId: input.resumeSessionId } : {}),
       ...(input.resumeState ? { sessionId: input.resumeState.sessionId, traceId: input.resumeState.traceId } : {}),
     }) ?? createAgentLoopSession({
       ...(input.eventSink ? { eventSink: input.eventSink } : {}),

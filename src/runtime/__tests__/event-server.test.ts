@@ -12,6 +12,8 @@ import { StateManager } from "../../base/state/state-manager.js";
 import { BackgroundRunLedger } from "../store/background-run-store.js";
 import { RuntimeOperatorHandoffStore } from "../store/operator-handoff-store.js";
 import { DaemonStateStore } from "../store/daemon-state-store.js";
+import { ChatSessionDataStore } from "../../interface/chat/chat-session-data-store.js";
+import { SqliteAgentLoopSessionStateStore } from "../../orchestrator/execution/agent-loop/agent-loop-session-db-store.js";
 
 // ─── Helpers ───
 
@@ -841,19 +843,20 @@ describe("snapshot and outbox replay", () => {
   it("includes runtime session catalog data in daemon snapshot when a state manager is configured", async () => {
     const stateManager = new StateManager(tmpDir, undefined, { walEnabled: false });
     await stateManager.init();
-    await stateManager.writeRaw("chat/sessions/chat-runtime.json", {
+    await new ChatSessionDataStore(tmpDir).save({
       id: "chat-runtime",
       cwd: "/repo",
       createdAt: "2026-05-01T00:00:00.000Z",
       updatedAt: "2026-05-01T00:10:00.000Z",
       title: "Runtime snapshot",
       messages: [],
-      agentLoopStatePath: "chat/agentloop/agent-runtime.state.json",
+      agentLoopSessionId: "agent-runtime",
+      agentLoopTraceId: "trace-runtime",
       agentLoopStatus: "running",
       agentLoopResumable: true,
       agentLoopUpdatedAt: "2026-05-01T00:11:00.000Z",
     });
-    await stateManager.writeRaw("chat/agentloop/agent-runtime.state.json", {
+    await new SqliteAgentLoopSessionStateStore(tmpDir, "agent-runtime", "chat").save({
       sessionId: "agent-runtime",
       traceId: "trace-runtime",
       turnId: "turn-runtime",

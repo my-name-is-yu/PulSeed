@@ -8,11 +8,16 @@ import { ChatRunner } from "../chat-runner.js";
 import type { ChatRunnerDeps } from "../chat-runner-contracts.js";
 import { CrossPlatformChatSessionManager } from "../cross-platform-session.js";
 import { ChatSessionCatalog } from "../chat-session-store.js";
+import { ChatSessionDataStore } from "../chat-session-data-store.js";
+import { resolveChatStateBaseDir } from "../chat-state-base-dir.js";
+import { importLegacyChatAgentLoopSessionState } from "../chat-agentloop-state-migration.js";
+import type { ChatSession } from "../chat-history.js";
 import { StateManager } from "../../../base/state/state-manager.js";
 import type { IAdapter, AgentResult } from "../../../orchestrator/execution/adapter-layer.js";
 import type { EscalationHandler, EscalationResult } from "../escalation.js";
 import type { ILLMClient } from "../../../base/llm/llm-client.js";
 import type { ChatAgentLoopRunner } from "../../../orchestrator/execution/agent-loop/chat-agent-loop-runner.js";
+import { SqliteAgentLoopSessionStateStore } from "../../../orchestrator/execution/agent-loop/agent-loop-session-db-store.js";
 import type { GoalNegotiator } from "../../../orchestrator/goal/goal-negotiator.js";
 import { RuntimeControlService } from "../../../runtime/control/index.js";
 import { createRuntimeSessionRegistry } from "../../../runtime/session-registry/index.js";
@@ -61,6 +66,28 @@ function makeMockStateManager(): StateManager {
     writeRaw: vi.fn().mockResolvedValue(undefined),
     readRaw: vi.fn().mockResolvedValue(null),
   } as unknown as StateManager;
+}
+
+async function loadPersistedChatSession(stateManager: StateManager, sessionId: string): Promise<ChatSession | null> {
+  return new ChatSessionDataStore(resolveChatStateBaseDir(stateManager)).load(sessionId);
+}
+
+async function listPersistedChatSessions(stateManager: StateManager): Promise<ChatSession[]> {
+  const catalog = new ChatSessionCatalog(stateManager);
+  const sessions = await catalog.listSessions();
+  const loaded = await Promise.all(sessions.map((session) => loadPersistedChatSession(stateManager, session.id)));
+  return loaded.filter((session): session is ChatSession => session !== null);
+}
+
+async function latestPersistedChatSession(stateManager: StateManager): Promise<ChatSession | null> {
+  return (await listPersistedChatSessions(stateManager))[0] ?? null;
+}
+
+async function findPersistedChatSession(
+  stateManager: StateManager,
+  predicate: (session: ChatSession) => boolean,
+): Promise<ChatSession | null> {
+  return (await listPersistedChatSessions(stateManager)).find(predicate) ?? null;
 }
 
 async function saveSupervisorFixture(
@@ -449,12 +476,10 @@ describe("ChatRunner", () => {
         adapterRoute()
       );
 
-      const persistedSession = (stateManager.writeRaw as ReturnType<typeof vi.fn>).mock.calls
-        .map(([, value]) => value)
-        .find((value) => value && typeof value === "object" && Array.isArray(value.messages));
+      const persistedSession = await latestPersistedChatSession(stateManager);
       expect(JSON.stringify(persistedSession)).not.toContain(telegramToken);
-      expect(persistedSession.messages[0].content).toContain("[REDACTED:telegram_bot_token:setup_secret_1]");
-      expect(persistedSession.messages[0].setupSecretIntake).toEqual([
+      expect(persistedSession?.messages[0]?.content).toContain("[REDACTED:telegram_bot_token:setup_secret_1]");
+      expect(persistedSession?.messages[0]?.setupSecretIntake).toEqual([
         expect.objectContaining({
           id: "setup_secret_1",
           kind: "telegram_bot_token",
@@ -472,11 +497,9 @@ describe("ChatRunner", () => {
 
       await runner.execute(`provider key is ${apiKey}`, "/repo", 30_000);
 
-      const persistedSession = (stateManager.writeRaw as ReturnType<typeof vi.fn>).mock.calls
-        .map(([, value]) => value)
-        .find((value) => value && typeof value === "object" && Array.isArray(value.messages));
+      const persistedSession = await latestPersistedChatSession(stateManager);
       expect(JSON.stringify(persistedSession)).not.toContain(apiKey);
-      expect(persistedSession.messages[0].setupSecretIntake).toEqual([
+      expect(persistedSession?.messages[0]?.setupSecretIntake).toEqual([
         expect.objectContaining({ kind: "openai_api_key" }),
       ]);
     });
@@ -596,10 +619,7 @@ describe("ChatRunner", () => {
       );
       await runner.execute(`regular turn ${echoedToken}`, "/repo", 30_000);
 
-      const persistedSession = (stateManager.writeRaw as ReturnType<typeof vi.fn>).mock.calls
-        .map(([, value]) => value)
-        .filter((value) => value && typeof value === "object" && Array.isArray(value.messages))
-        .at(-1);
+      const persistedSession = await latestPersistedChatSession(stateManager);
       expect(configureResult.output).not.toContain(telegramToken);
       expect(configureResult.output).toContain("I received a Telegram bot token");
       expect(JSON.stringify(persistedSession)).not.toContain(telegramToken);
@@ -629,10 +649,11 @@ describe("ChatRunner", () => {
       }));
 
       const intakeResult = await runner.execute(telegramToken, "/repo", 30_000);
-      const persistedSession = (stateManager.writeRaw as ReturnType<typeof vi.fn>).mock.calls
-        .map(([, value]) => value)
-        .find((value) => value?.setupDialogue?.selectedChannel === "telegram");
-      const persistedDialogue = JSON.parse(JSON.stringify(persistedSession.setupDialogue));
+      const persistedSession = await findPersistedChatSession(
+        stateManager,
+        (session) => session.setupDialogue?.selectedChannel === "telegram",
+      );
+      const persistedDialogue = JSON.parse(JSON.stringify(persistedSession?.setupDialogue));
       const confirmResult = await runner.execute("/confirm-setup-write", "/repo", 30_000);
 
       const configPath = path.join(baseDir, "gateway", "channels", "telegram-bot", "config.json");
@@ -892,14 +913,15 @@ describe("ChatRunner", () => {
       }));
 
       const intakeResult = await runner.execute(`use this new token ${newToken}`, "/repo", 30_000);
-      const persistedSession = (stateManager.writeRaw as ReturnType<typeof vi.fn>).mock.calls
-        .map(([, value]) => value)
-        .find((value) => value?.setupDialogue?.selectedChannel === "telegram");
+      const persistedSession = await findPersistedChatSession(
+        stateManager,
+        (session) => session.setupDialogue?.selectedChannel === "telegram",
+      );
       const confirmResult = await runner.execute("yes, configure it", "/repo", 30_000);
 
       const config = JSON.parse(fs.readFileSync(path.join(configDir, "config.json"), "utf-8"));
       expect(intakeResult.output).toContain("replace the existing configured token");
-      expect(persistedSession.setupDialogue).toMatchObject({ replacesExistingSecret: true });
+      expect(persistedSession?.setupDialogue).toMatchObject({ replacesExistingSecret: true });
       expect(approvalFn).toHaveBeenCalledWith(expect.stringContaining("replace the existing configured Telegram bot token"));
       expect(confirmResult.success).toBe(true);
       expect(config.bot_token).toBe(newToken);
@@ -957,12 +979,13 @@ describe("ChatRunner", () => {
       const planResult = await runner.execute(discordToken, "/repo", 30_000);
       const confirmResult = await runner.execute("/confirm-setup-write", "/repo", 30_000);
 
-      const persistedSession = (stateManager.writeRaw as ReturnType<typeof vi.fn>).mock.calls
-        .map(([, value]) => value)
-        .find((value) => value?.setupDialogue?.selectedChannel === "discord");
+      const persistedSession = await findPersistedChatSession(
+        stateManager,
+        (session) => session.setupDialogue?.selectedChannel === "discord",
+      );
       const discordConfigPath = path.join(baseDir, "gateway", "channels", "discord-bot", "config.json");
       expect(planResult.output).toContain("Discord gateway setup plan");
-      expect(persistedSession.setupDialogue).toMatchObject({
+      expect(persistedSession?.setupDialogue).toMatchObject({
         state: "blocked",
         selectedChannel: "discord",
         action: {
@@ -971,7 +994,7 @@ describe("ChatRunner", () => {
           status: "blocked",
         },
       });
-      expect(JSON.stringify(persistedSession.setupDialogue)).not.toContain(discordToken);
+      expect(JSON.stringify(persistedSession?.setupDialogue)).not.toContain(discordToken);
       expect(confirmResult.success).toBe(false);
       expect(confirmResult.output).toContain("pending setup dialogue is for discord");
       expect(approvalFn).not.toHaveBeenCalled();
@@ -1321,6 +1344,7 @@ describe("ChatRunner", () => {
           updatedAt: "2024-01-01T01:00:00.000Z",
           messages: [],
         });
+        await importLegacyChatAgentLoopSessionState(tmpDir);
 
         const staleSessionPath = path.join(tmpDir, "chat", "sessions", "old-session.json");
         const runner = new ChatRunner(makeDeps({ stateManager, adapter: makeMockAdapter() }));
@@ -1339,7 +1363,8 @@ describe("ChatRunner", () => {
         const enforced = await runner.execute("/cleanup", "/repo");
         expect(enforced.success).toBe(true);
         expect(enforced.output).toContain("removed");
-        expect(fs.existsSync(staleSessionPath)).toBe(false);
+        await expect(new ChatSessionCatalog(stateManager).loadSession("old-session")).resolves.toBeNull();
+        expect(fs.existsSync(staleSessionPath)).toBe(true);
       } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
       }
@@ -1891,28 +1916,22 @@ describe("ChatRunner", () => {
     });
 
     it("/resume resumes running native agentloop state without writing a new user turn", async () => {
-      const stateManager = makeMockStateManager();
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-resume-active-db-"));
+      try {
+      const stateManager = new StateManager(tmpDir);
+      await stateManager.init();
       const adapter = makeMockAdapter();
       const savedState = {
-        sessionId: "agent-session",
-        traceId: "trace-1",
-        turnId: "turn-1",
+        ...makeAgentLoopState({
+          sessionId: "agent-session",
+          status: "running",
+          updatedAt: new Date().toISOString(),
+        }),
         goalId: "chat",
-        cwd: "/repo",
         modelRef: "openai/gpt-5.4-mini",
-        messages: [{ role: "assistant", content: "continuing..." }],
-        modelTurns: 1,
-        toolCalls: 0,
-        compactions: 0,
-        completionValidationAttempts: 0,
-        calledTools: [],
-        lastToolLoopSignature: null,
-        repeatedToolLoopCount: 0,
         finalText: "continuing...",
-        status: "running",
-        updatedAt: new Date().toISOString(),
       };
-      (stateManager.readRaw as ReturnType<typeof vi.fn>).mockResolvedValue(savedState);
+      await new SqliteAgentLoopSessionStateStore(tmpDir, "agent-session", "chat").save(savedState);
       const chatAgentLoopRunner = {
         execute: vi.fn().mockResolvedValue({
           success: true,
@@ -1925,7 +1944,19 @@ describe("ChatRunner", () => {
       } as unknown as ChatAgentLoopRunner;
       const runner = new ChatRunner(makeDeps({ stateManager, adapter, chatAgentLoopRunner }));
 
-      runner.startSession("/repo");
+      runner.startSessionFromLoadedSession({
+        id: "chat-session",
+        cwd: "/repo",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:01.000Z",
+        title: null,
+        messages: [],
+        agentLoopSessionId: "agent-session",
+        agentLoopStatePath: null,
+        agentLoopStatus: "running",
+        agentLoopResumable: true,
+        agentLoopUpdatedAt: savedState.updatedAt,
+      });
       const result = await runner.execute("/resume", "/repo");
 
       expect(result.success).toBe(true);
@@ -1936,54 +1967,58 @@ describe("ChatRunner", () => {
         resumeOnly?: boolean;
         resumeState?: { sessionId: string };
         resumeStatePath?: string;
+        resumeSessionId?: string;
       };
       expect(input.resumeOnly).toBe(true);
       expect(input.resumeState?.sessionId).toBe("agent-session");
-      expect(input.resumeStatePath).toMatch(/^chat\/agentloop\//);
+      expect(input.resumeSessionId).toBe("agent-session");
+      expect(input.resumeStatePath).toBeUndefined();
 
-      const writeRawMock = stateManager.writeRaw as ReturnType<typeof vi.fn>;
-      expect(writeRawMock.mock.calls.some((call) => {
-        const data = call[1] as { turnContexts?: Array<{ schema_version?: string }> };
-        return data.turnContexts?.some((context) => context.schema_version === "chat-turn-context-v1") === true;
-      })).toBe(true);
-      expect(writeRawMock.mock.calls.some((call) => {
-        const data = call[1] as { messages?: Array<{ role: string; content: string }> };
-        return data.messages?.some((message) =>
-          message.role === "assistant" && message.content === "Resumed successfully"
-        ) === true;
-      })).toBe(true);
-      expect((stateManager.readRaw as ReturnType<typeof vi.fn>).mock.calls.length).toBeGreaterThanOrEqual(1);
+      const persisted = await loadPersistedChatSession(stateManager, "chat-session");
+      expect(persisted?.turnContexts?.some((context) => context.schema_version === "chat-turn-context-v1")).toBe(true);
+      expect(persisted?.messages.some((message) =>
+        message.role === "assistant" && message.content === "Resumed successfully"
+      )).toBe(true);
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
     });
 
     it("/resume refuses failed native agentloop state without replaying actionable work", async () => {
-      const stateManager = makeMockStateManager();
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-resume-failed-db-"));
+      try {
+      const stateManager = new StateManager(tmpDir);
+      await stateManager.init();
       const savedState = {
-        sessionId: "agent-session",
-        traceId: "trace-1",
-        turnId: "turn-1",
+        ...makeAgentLoopState({
+          sessionId: "agent-session",
+          status: "failed",
+          updatedAt: new Date().toISOString(),
+        }),
         goalId: "chat",
-        cwd: "/repo",
         modelRef: "openai/gpt-5.4-mini",
-        messages: [{ role: "assistant", content: "timed out" }],
-        modelTurns: 1,
-        toolCalls: 0,
-        compactions: 0,
-        completionValidationAttempts: 0,
-        calledTools: [],
-        lastToolLoopSignature: null,
-        repeatedToolLoopCount: 0,
         finalText: "timed out",
-        status: "failed",
-        stopReason: "timeout",
-        updatedAt: new Date().toISOString(),
+        stopReason: "timeout" as const,
       };
-      (stateManager.readRaw as ReturnType<typeof vi.fn>).mockResolvedValue(savedState);
+      await new SqliteAgentLoopSessionStateStore(tmpDir, "agent-session", "chat").save(savedState);
       const chatAgentLoopRunner = {
         execute: vi.fn(),
       } as unknown as ChatAgentLoopRunner;
       const runner = new ChatRunner(makeDeps({ stateManager, chatAgentLoopRunner }));
 
-      runner.startSession("/repo");
+      runner.startSessionFromLoadedSession({
+        id: "chat-session",
+        cwd: "/repo",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:01.000Z",
+        title: null,
+        messages: [],
+        agentLoopSessionId: "agent-session",
+        agentLoopStatePath: null,
+        agentLoopStatus: "failed",
+        agentLoopResumable: true,
+        agentLoopUpdatedAt: savedState.updatedAt,
+      });
       const result = await runner.execute("/resume", "/repo");
 
       expect(result.success).toBe(false);
@@ -1991,40 +2026,35 @@ describe("ChatRunner", () => {
       expect(result.output).not.toContain("agent-session");
       expect(result.output).toContain("Type: Resume failure");
       expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
     });
 
-    it("/resume refuses unknown native agentloop state status before normalization", async () => {
+    it("/resume refuses missing typed native agentloop state without replaying actionable work", async () => {
       const stateManager = makeMockStateManager();
-      const savedState = {
-        sessionId: "agent-session",
-        traceId: "trace-1",
-        turnId: "turn-1",
-        goalId: "chat",
-        cwd: "/repo",
-        modelRef: "openai/gpt-5.4-mini",
-        messages: [{ role: "assistant", content: "stale" }],
-        modelTurns: 1,
-        toolCalls: 0,
-        compactions: 0,
-        completionValidationAttempts: 0,
-        calledTools: [],
-        lastToolLoopSignature: null,
-        repeatedToolLoopCount: 0,
-        finalText: "stale",
-        status: "stale",
-        updatedAt: new Date().toISOString(),
-      };
-      (stateManager.readRaw as ReturnType<typeof vi.fn>).mockResolvedValue(savedState);
       const chatAgentLoopRunner = {
         execute: vi.fn(),
       } as unknown as ChatAgentLoopRunner;
       const runner = new ChatRunner(makeDeps({ stateManager, chatAgentLoopRunner }));
 
-      runner.startSession("/repo");
+      runner.startSessionFromLoadedSession({
+        id: "chat-session",
+        cwd: "/repo",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:01.000Z",
+        title: null,
+        messages: [],
+        agentLoopSessionId: "agent-session",
+        agentLoopStatePath: null,
+        agentLoopStatus: "running",
+        agentLoopResumable: true,
+        agentLoopUpdatedAt: new Date().toISOString(),
+      });
       const result = await runner.execute("/resume", "/repo");
 
       expect(result.success).toBe(false);
-      expect(result.output).toContain("The saved chat work is not in a state PulSeed can safely continue");
+      expect(result.output).toContain("I could not find a chat that can safely continue");
       expect(result.output).not.toContain("agent-session");
       expect(result.output).toContain("Type: Resume failure");
       expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
@@ -2098,6 +2128,7 @@ describe("ChatRunner", () => {
           status: "running",
           updatedAt: "2026-01-01T00:00:02.000Z",
         });
+        await importLegacyChatAgentLoopSessionState(tmpDir);
         const chatAgentLoopRunner = {
           execute: vi.fn().mockResolvedValue({
             success: true,
@@ -2120,11 +2151,13 @@ describe("ChatRunner", () => {
           resumeOnly?: boolean;
           resumeState?: { sessionId: string };
           resumeStatePath?: string;
+          resumeSessionId?: string;
         };
         expect(input.cwd).toBe("/loaded-repo");
         expect(input.resumeOnly).toBe(true);
         expect(input.resumeState?.sessionId).toBe("saved-session");
-        expect(input.resumeStatePath).toBe("chat/agentloop/saved-session.state.json");
+        expect(input.resumeSessionId).toBe("saved-session");
+        expect(input.resumeStatePath).toBeUndefined();
       } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
       }
@@ -2154,6 +2187,7 @@ describe("ChatRunner", () => {
           sessionId: "agent-natural-latest",
           updatedAt: "2026-01-01T00:00:02.000Z",
         }));
+        await importLegacyChatAgentLoopSessionState(tmpDir);
         const llmClient = createSingleMockLLMClient(JSON.stringify({
           kind: "continue_latest",
           confidence: 0.94,
@@ -2182,11 +2216,13 @@ describe("ChatRunner", () => {
           resumeOnly?: boolean;
           resumeState?: { sessionId: string };
           resumeStatePath?: string;
+          resumeSessionId?: string;
         };
         expect(input.cwd).toBe("/loaded-repo");
         expect(input.resumeOnly).toBe(true);
         expect(input.resumeState?.sessionId).toBe("agent-natural-latest");
-        expect(input.resumeStatePath).toBe("chat/agentloop/latest-safe-chat.state.json");
+        expect(input.resumeSessionId).toBe("agent-natural-latest");
+        expect(input.resumeStatePath).toBeUndefined();
       } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
       }
@@ -2231,6 +2267,7 @@ describe("ChatRunner", () => {
           sessionId: "agent-newer",
           updatedAt: "2026-01-02T00:00:02.000Z",
         }));
+        await importLegacyChatAgentLoopSessionState(tmpDir);
         const llmClient = createSingleMockLLMClient(JSON.stringify({
           kind: "continue_latest",
           confidence: 0.95,
@@ -2316,6 +2353,7 @@ describe("ChatRunner", () => {
           sessionId: "agent-newer",
           updatedAt: "2026-01-02T00:00:02.000Z",
         }));
+        await importLegacyChatAgentLoopSessionState(tmpDir);
         const llmClient = createMockLLMClient([
           JSON.stringify({
             kind: "continue_latest",
@@ -2406,6 +2444,7 @@ describe("ChatRunner", () => {
           sessionId: "agent-older",
           updatedAt: "2026-01-01T00:00:02.000Z",
         }));
+        await importLegacyChatAgentLoopSessionState(tmpDir);
         const adapter = makeMockAdapter({ ...CANNED_RESULT, output: "Handled as fresh adapter work." });
         const llmClient = createSingleMockLLMClient(JSON.stringify({
           decision: "cancel",
@@ -2540,6 +2579,7 @@ describe("ChatRunner", () => {
           status: "failed",
           updatedAt: "2026-01-01T00:00:02.000Z",
         }));
+        await importLegacyChatAgentLoopSessionState(tmpDir);
         const llmClient = createSingleMockLLMClient(JSON.stringify({
           kind: "continue_latest",
           confidence: 0.94,
@@ -2583,6 +2623,7 @@ describe("ChatRunner", () => {
         await stateManager.writeRaw("chat/agentloop/chat-runtime.state.json", makeAgentLoopState({
           sessionId: "agent-runtime",
         }));
+        await importLegacyChatAgentLoopSessionState(tmpDir);
         const chatAgentLoopRunner = {
           execute: vi.fn().mockResolvedValue({
             success: true,
@@ -2672,6 +2713,7 @@ describe("ChatRunner", () => {
           sessionId: "agent-prior",
           updatedAt: "2026-01-01T00:00:02.000Z",
         }));
+        await importLegacyChatAgentLoopSessionState(tmpDir);
         await saveSupervisorFixture(tmpDir, [{
           workerId: "worker-1",
           goalId: "goal-a",
@@ -2744,6 +2786,7 @@ describe("ChatRunner", () => {
           sessionId: "agent-runtime",
           updatedAt: "2026-04-25T00:12:00.000Z",
         }));
+        await importLegacyChatAgentLoopSessionState(tmpDir);
         await stateManager.writeRaw("runtime/process-sessions/proc-failed.json", makeProcessSnapshot({
           session_id: "proc-failed",
           running: false,
@@ -3499,18 +3542,6 @@ describe("ChatRunner", () => {
 
     it("/compact falls back to deterministic summary and keeps latest turns", async () => {
       const stateManager = makeMockStateManager();
-      const writes: Array<{
-        messages: Array<{ role: string; content: string }>;
-        compactionSummary?: string;
-        compactionRecords?: Array<{
-          schema_version: string;
-          pendingPermissions: Array<{ status: string; invalidatedByCompaction: boolean }>;
-          replacementHistory: { retainedOriginalTurnIndexes: number[] };
-        }>;
-      }> = [];
-      (stateManager.writeRaw as ReturnType<typeof vi.fn>).mockImplementation(async (_path, data) => {
-        writes.push(JSON.parse(JSON.stringify(data)));
-      });
       const runner = new ChatRunner(makeDeps({ stateManager }));
       runner.startSession("/repo");
 
@@ -3523,16 +3554,16 @@ describe("ChatRunner", () => {
       expect(result.success).toBe(true);
       expect(result.output).toContain("deterministic summary");
       expect(result.output).toContain("latest user/assistant turns were kept");
-      const lastWrite = writes[writes.length - 1]!;
-      expect(lastWrite.messages).toHaveLength(4);
-      expect(lastWrite.messages.map((message) => message.content)).toEqual([
+      const persisted = await loadPersistedChatSession(stateManager, runner.getSessionId()!);
+      expect(persisted?.messages).toHaveLength(4);
+      expect(persisted?.messages.map((message) => message.content)).toEqual([
         "Turn 2",
         "Task completed successfully.",
         "Turn 3",
         "Task completed successfully.",
       ]);
-      expect(lastWrite.compactionSummary).toContain("Turn 1");
-      expect(lastWrite.compactionRecords?.[0]).toMatchObject({
+      expect(persisted?.compactionSummary).toContain("Turn 1");
+      expect(persisted?.compactionRecords?.[0]).toMatchObject({
         schema_version: "chat-compaction-record-v1",
         replacementHistory: {
           retainedOriginalTurnIndexes: [2, 3, 4, 5],
@@ -3604,16 +3635,9 @@ describe("ChatRunner", () => {
 
       await runner.execute("What is 2+2?", "/repo");
 
-      // writeRaw should have been called at least twice:
-      // once for the user message (persist-before-execute) and
-      // once for the assistant message (fire-and-forget)
-      const writeRawMock = stateManager.writeRaw as ReturnType<typeof vi.fn>;
-      expect(writeRawMock.mock.calls.length).toBeGreaterThanOrEqual(2);
-
-      // Both writes use the same session path
-      const paths = writeRawMock.mock.calls.map((c: unknown[]) => c[0] as string);
-      const sessionPaths = paths.filter((p: string) => p.startsWith("chat/sessions/"));
-      expect(sessionPaths.length).toBeGreaterThanOrEqual(2);
+      const sessions = await listPersistedChatSessions(stateManager);
+      expect(sessions).toHaveLength(1);
+      expect(sessions[0]?.messages.map((message) => message.role)).toEqual(["user", "assistant"]);
     });
 
     it("user message is included in the session data written to stateManager", async () => {
@@ -3623,10 +3647,8 @@ describe("ChatRunner", () => {
       const userInput = "Hello from test";
       await runner.execute(userInput, "/repo");
 
-      const writeRawMock = stateManager.writeRaw as ReturnType<typeof vi.fn>;
-      // The first call contains the user message (persist-before-execute)
-      const firstWriteData = writeRawMock.mock.calls[0][1] as { messages: Array<{ role: string; content: string }> };
-      const userMsg = firstWriteData.messages.find((m) => m.role === "user");
+      const persisted = await latestPersistedChatSession(stateManager);
+      const userMsg = persisted?.messages.find((m) => m.role === "user");
       expect(userMsg).toBeDefined();
       // The prompt passed to adapter may include context prefix, so check the session content
       expect(userMsg?.content).toBe(userInput);
@@ -3634,13 +3656,13 @@ describe("ChatRunner", () => {
 
     it("persists assistant message only after streaming completes", async () => {
       const stateManager = makeMockStateManager();
-      const writes: Array<{
-        messages: Array<{ role: string; content: string }>;
-        turnContexts?: unknown[];
-      }> = [];
-      (stateManager.writeRaw as ReturnType<typeof vi.fn>).mockImplementation(async (_path, data) => {
-        writes.push(JSON.parse(JSON.stringify(data)));
-      });
+      const writes: ChatSession[] = [];
+      const originalSave = ChatSessionDataStore.prototype.save;
+      const saveSpy = vi.spyOn(ChatSessionDataStore.prototype, "save")
+        .mockImplementation(async function (this: ChatSessionDataStore, session: ChatSession) {
+          writes.push(JSON.parse(JSON.stringify(session)) as ChatSession);
+          return originalSave.call(this, session);
+        });
       const events: string[] = [];
       const llmClient = {
         supportsToolCalling: () => true,
@@ -3663,9 +3685,9 @@ describe("ChatRunner", () => {
       }));
 
       await runner.execute("Stream this", "/repo");
+      saveSpy.mockRestore();
 
-      const writeRawMock = stateManager.writeRaw as ReturnType<typeof vi.fn>;
-      expect(writeRawMock.mock.calls.length).toBeGreaterThanOrEqual(3);
+      expect(writes.length).toBeGreaterThanOrEqual(3);
       const firstWrite = writes.find((write) => write.messages.length === 1 && !write.turnContexts);
       const secondWrite = writes.find((write) => write.messages.length === 1 && write.turnContexts?.length === 1);
       const thirdWrite = writes.find((write) =>
@@ -3685,6 +3707,13 @@ describe("ChatRunner", () => {
 
     it("does not persist a partial assistant message when streaming fails", async () => {
       const stateManager = makeMockStateManager();
+      const writes: ChatSession[] = [];
+      const originalSave = ChatSessionDataStore.prototype.save;
+      const saveSpy = vi.spyOn(ChatSessionDataStore.prototype, "save")
+        .mockImplementation(async function (this: ChatSessionDataStore, session: ChatSession) {
+          writes.push(JSON.parse(JSON.stringify(session)) as ChatSession);
+          return originalSave.call(this, session);
+        });
       const capturedEvents: Array<{ type: string; partialText?: string }> = [];
       const llmClient = {
         supportsToolCalling: () => true,
@@ -3711,12 +3740,9 @@ describe("ChatRunner", () => {
       expect(result.success).toBe(false);
       expect(result.output).toContain("Recovery");
       expect(result.output).toContain("Type: Unclassified failure");
-      const writeRawMock = stateManager.writeRaw as ReturnType<typeof vi.fn>;
-      expect(writeRawMock.mock.calls.length).toBeGreaterThanOrEqual(2);
-      const lastWrite = writeRawMock.mock.calls.at(-1)?.[1] as {
-        messages: Array<{ role: string; content: string }>;
-        turnContexts?: unknown[];
-      };
+      saveSpy.mockRestore();
+      expect(writes.length).toBeGreaterThanOrEqual(2);
+      const lastWrite = writes.at(-1)!;
       expect(lastWrite.messages).toHaveLength(1);
       expect(lastWrite.turnContexts).toHaveLength(1);
       expect(capturedEvents).toContainEqual({ type: "lifecycle_error", partialText: "Partial answer" });
@@ -3769,12 +3795,8 @@ describe("ChatRunner", () => {
       await runner.execute("Turn 1", "/repo");
       await runner.execute("Turn 2", "/repo");
 
-      const writeRawMock = stateManager.writeRaw as ReturnType<typeof vi.fn>;
-      const paths = writeRawMock.mock.calls.map((c: unknown[]) => c[0] as string);
-      const sessionPaths = paths.filter((p: string) => p.startsWith("chat/sessions/"));
-      // All writes should use the same session path
-      const uniquePaths = new Set(sessionPaths);
-      expect(uniquePaths.size).toBe(1);
+      const sessions = await listPersistedChatSessions(stateManager);
+      expect(new Set(sessions.map((session) => session.id)).size).toBe(1);
     });
 
     it("multiple execute() calls without startSession create separate sessions", async () => {
@@ -3784,12 +3806,8 @@ describe("ChatRunner", () => {
       await runner.execute("Turn 1", "/repo");
       await runner.execute("Turn 2", "/repo");
 
-      const writeRawMock = stateManager.writeRaw as ReturnType<typeof vi.fn>;
-      const paths = writeRawMock.mock.calls.map((c: unknown[]) => c[0] as string);
-      const sessionPaths = paths.filter((p: string) => p.startsWith("chat/sessions/"));
-      // Each call creates a fresh session → two distinct session paths
-      const uniquePaths = new Set(sessionPaths);
-      expect(uniquePaths.size).toBe(2);
+      const sessions = await listPersistedChatSessions(stateManager);
+      expect(new Set(sessions.map((session) => session.id)).size).toBe(2);
     });
 
     it("history accumulates across turns when session is started", async () => {
@@ -3800,11 +3818,8 @@ describe("ChatRunner", () => {
       await runner.execute("First question", "/repo");
       await runner.execute("Second question", "/repo");
 
-      const writeRawMock = stateManager.writeRaw as ReturnType<typeof vi.fn>;
-      // Last write contains all accumulated messages (2 user + 2 assistant = 4)
-      const lastCall = writeRawMock.mock.calls[writeRawMock.mock.calls.length - 1];
-      const sessionData = lastCall[1] as { messages: Array<{ role: string }> };
-      expect(sessionData.messages.length).toBeGreaterThanOrEqual(4);
+      const sessionData = await loadPersistedChatSession(stateManager, runner.getSessionId()!);
+      expect(sessionData?.messages.length).toBeGreaterThanOrEqual(4);
     });
 
     it("startSession calls from execute() for 1-shot mode are adapter-call-safe", async () => {
@@ -3827,11 +3842,8 @@ describe("ChatRunner", () => {
       await runner.execute("/clear", "/repo");
       await runner.execute("After clear", "/repo");
 
-      const writeRawMock = stateManager.writeRaw as ReturnType<typeof vi.fn>;
-      const paths = writeRawMock.mock.calls.map((c: unknown[]) => c[0] as string);
-      const sessionPaths = paths.filter((p: string) => p.startsWith("chat/sessions/"));
-      const uniquePaths = new Set(sessionPaths);
-      expect(uniquePaths.size).toBe(1);
+      const sessions = await listPersistedChatSessions(stateManager);
+      expect(new Set(sessions.map((session) => session.id)).size).toBe(1);
     });
   });
 
@@ -3839,12 +3851,13 @@ describe("ChatRunner", () => {
     it("stateManager.writeRaw is called before adapter.execute", async () => {
       const callOrder: string[] = [];
 
-      const stateManager = {
-        writeRaw: vi.fn().mockImplementation(async () => {
-          callOrder.push("writeRaw");
-        }),
-        readRaw: vi.fn().mockResolvedValue(null),
-      } as unknown as StateManager;
+      const stateManager = makeMockStateManager();
+      const originalSave = ChatSessionDataStore.prototype.save;
+      const saveSpy = vi.spyOn(ChatSessionDataStore.prototype, "save")
+        .mockImplementation(async function (this: ChatSessionDataStore, session: ChatSession) {
+          callOrder.push("chatSession.save");
+          return originalSave.call(this, session);
+        });
 
       const adapter = {
         adapterType: "mock",
@@ -3856,8 +3869,9 @@ describe("ChatRunner", () => {
 
       const runner = new ChatRunner({ stateManager, adapter });
       await runner.execute("persist ordering check", "/repo");
+      saveSpy.mockRestore();
 
-      const writeIndex = callOrder.indexOf("writeRaw");
+      const writeIndex = callOrder.indexOf("chatSession.save");
       const executeIndex = callOrder.indexOf("adapter.execute");
       expect(writeIndex).toBeGreaterThanOrEqual(0);
       expect(executeIndex).toBeGreaterThanOrEqual(0);
@@ -4103,13 +4117,9 @@ describe("ChatRunner", () => {
       });
       expect(call.toolCallContext?.runtimeControlApprovalMode).toBe("preapproved");
 
-      const persistedSession = (stateManager.writeRaw as ReturnType<typeof vi.fn>).mock.calls
-        .map(([, value]) => value)
-        .find((value) =>
-          value && typeof value === "object" && Array.isArray((value as { turnContexts?: unknown }).turnContexts)
-        ) as { turnContexts: unknown[] } | undefined;
+      const persistedSession = await latestPersistedChatSession(stateManager);
       expect(persistedSession?.turnContexts).toHaveLength(1);
-      const snapshotJson = JSON.stringify(persistedSession?.turnContexts[0]);
+      const snapshotJson = JSON.stringify(persistedSession?.turnContexts?.[0]);
       expect(snapshotJson).toContain("current-thread");
       expect(snapshotJson).not.toContain("stale-thread");
       expect(snapshotJson).not.toContain("approvalFn");

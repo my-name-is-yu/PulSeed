@@ -7,6 +7,8 @@ import * as daemonClient from "../../../runtime/daemon/client.js";
 import { createEnvelope } from "../../../runtime/types/envelope.js";
 import { JournalBackedQueue } from "../../../runtime/queue/journal-backed-queue.js";
 import { ScheduleEntryStore } from "../../../runtime/schedule/entry-store.js";
+import { ChatSessionDataStore } from "../../chat/chat-session-data-store.js";
+import { AgentLoopSessionStateCatalog } from "../../../orchestrator/execution/agent-loop/agent-loop-session-db-store.js";
 
 // ─── cmdDoctor tests ───
 //
@@ -1194,6 +1196,67 @@ describe("cmdDoctor summary counts", () => {
     ]);
     const allOutput = consoleSpy.mock.calls.map((c: unknown[]) => c[0] as string).join("\n");
     expect(allOutput).toContain("Repair legacy import: queue=1");
+    expect(checkControlDatabase(tmpDir).detail).toContain("legacy import record");
+  });
+
+  it("imports legacy chat and AgentLoop session state through doctor repair", async () => {
+    const origHome = process.env["PULSEED_HOME"];
+    process.env["PULSEED_HOME"] = tmpDir;
+    const legacyChatDir = path.join(tmpDir, "chat", "sessions");
+    const legacyAgentDir = path.join(tmpDir, "chat", "agentloop");
+    fs.mkdirSync(legacyChatDir, { recursive: true });
+    fs.mkdirSync(legacyAgentDir, { recursive: true });
+    fs.writeFileSync(path.join(legacyChatDir, "legacy-chat.json"), JSON.stringify({
+      id: "legacy-chat",
+      cwd: "/repo",
+      createdAt: "2026-05-09T00:00:00.000Z",
+      updatedAt: "2026-05-09T00:01:00.000Z",
+      title: "Legacy Chat",
+      messages: [],
+    }));
+    fs.writeFileSync(path.join(legacyAgentDir, "legacy-chat.state.json"), JSON.stringify({
+      sessionId: "agent-legacy",
+      traceId: "trace-legacy",
+      turnId: "turn-legacy",
+      goalId: "goal-legacy",
+      cwd: "/repo",
+      modelRef: "native:test",
+      messages: [],
+      modelTurns: 1,
+      toolCalls: 0,
+      compactions: 0,
+      completionValidationAttempts: 0,
+      calledTools: [],
+      lastToolLoopSignature: null,
+      repeatedToolLoopCount: 0,
+      finalText: "",
+      status: "running",
+      updatedAt: "2026-05-09T00:02:00.000Z",
+    }));
+
+    try {
+      const exitCode = await cmdDoctor(["--repair"]);
+      expect([0, 1]).toContain(exitCode);
+    } finally {
+      if (origHome !== undefined) {
+        process.env["PULSEED_HOME"] = origHome;
+      } else {
+        delete process.env["PULSEED_HOME"];
+      }
+    }
+
+    await expect(new ChatSessionDataStore(tmpDir).load("legacy-chat")).resolves.toMatchObject({
+      id: "legacy-chat",
+      agentLoopSessionId: "agent-legacy",
+      agentLoopStatus: "running",
+    });
+    await expect(new AgentLoopSessionStateCatalog(tmpDir).load("agent-legacy")).resolves.toMatchObject({
+      sessionId: "agent-legacy",
+      status: "running",
+    });
+    const allOutput = consoleSpy.mock.calls.map((c: unknown[]) => c[0] as string).join("\n");
+    expect(allOutput).toContain("Repair chat import: chat sessions=1");
+    expect(allOutput).toContain("agentloop states=1");
     expect(checkControlDatabase(tmpDir).detail).toContain("legacy import record");
   });
 

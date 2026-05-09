@@ -11,6 +11,8 @@ import type { ChatAgentLoopRunner } from "../../../orchestrator/execution/agent-
 import type { ReviewAgentLoopRunner } from "../../../orchestrator/execution/agent-loop/review-agent-loop-runner.js";
 import type { ProviderConfig } from "../../../base/llm/provider-config.js";
 import { ChatSessionCatalog } from "../chat-session-store.js";
+import { ChatSessionDataStore } from "../chat-session-data-store.js";
+import { importLegacyChatAgentLoopSessionState } from "../chat-agentloop-state-migration.js";
 
 const providerConfigMock = vi.hoisted(() => ({
   current: {
@@ -217,41 +219,49 @@ describe("ChatRunner policy commands", () => {
   });
 
   it("/fork clears stale native agentloop metadata from the new session", async () => {
-    const stateManager = makeMockStateManager();
-    const runner = new ChatRunner(makeDeps({ stateManager }));
-    runner.startSessionFromLoadedSession({
-      id: "source-session",
-      cwd: "/repo",
-      createdAt: "2026-04-01T00:00:00.000Z",
-      updatedAt: "2026-04-01T00:01:00.000Z",
-      title: "Source",
-      messages: [
-        { role: "user", content: "continue", timestamp: "2026-04-01T00:00:00.000Z", turnIndex: 0 },
-      ],
-      agentLoopStatePath: "chat/agentloop/source-session.state.json",
-      agentLoopStatus: "running",
-      agentLoopResumable: true,
-      agentLoopUpdatedAt: "2026-04-01T00:02:00.000Z",
-      agentLoop: {
-        statePath: "chat/agentloop/source-session.state.json",
-        status: "running",
-        resumable: true,
-        updatedAt: "2026-04-01T00:02:00.000Z",
-      },
-    });
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-fork-db-"));
+    try {
+      const stateManager = new RealStateManager(tmpDir);
+      await stateManager.init();
+      const runner = new ChatRunner(makeDeps({ stateManager }));
+      runner.startSessionFromLoadedSession({
+        id: "source-session",
+        cwd: "/repo",
+        createdAt: "2026-04-01T00:00:00.000Z",
+        updatedAt: "2026-04-01T00:01:00.000Z",
+        title: "Source",
+        messages: [
+          { role: "user", content: "continue", timestamp: "2026-04-01T00:00:00.000Z", turnIndex: 0 },
+        ],
+        agentLoopSessionId: "source-session",
+        agentLoopTraceId: "trace-source",
+        agentLoopStatePath: "chat/agentloop/source-session.state.json",
+        agentLoopStatus: "running",
+        agentLoopResumable: true,
+        agentLoopUpdatedAt: "2026-04-01T00:02:00.000Z",
+        agentLoop: {
+          statePath: "chat/agentloop/source-session.state.json",
+          status: "running",
+          resumable: true,
+          updatedAt: "2026-04-01T00:02:00.000Z",
+        },
+      });
 
-    const result = await runner.execute("/fork Branch copy", "/repo");
+      const result = await runner.execute("/fork Branch copy", "/repo");
 
-    expect(result.success).toBe(true);
-    const writeCalls = vi.mocked(stateManager.writeRaw).mock.calls;
-    expect(writeCalls.length).toBeGreaterThan(0);
-    const persistedSession = writeCalls.at(-1)?.[1] as Record<string, unknown>;
-    expect(persistedSession["id"]).not.toBe("source-session");
-    expect(persistedSession["agentLoopStatePath"]).toBe(`chat/agentloop/${persistedSession["id"]}.state.json`);
-    expect(persistedSession["agentLoopStatus"]).toBeUndefined();
-    expect(persistedSession["agentLoopResumable"]).toBeUndefined();
-    expect(persistedSession["agentLoopUpdatedAt"]).toBeUndefined();
-    expect(persistedSession["agentLoop"]).toBeUndefined();
+      expect(result.success).toBe(true);
+      const persistedSession = await new ChatSessionDataStore(tmpDir).load(runner.getSessionId()!);
+      expect(persistedSession?.id).not.toBe("source-session");
+      expect(persistedSession?.agentLoopSessionId).toBe(persistedSession?.id);
+      expect(persistedSession?.agentLoopTraceId).toBeUndefined();
+      expect(persistedSession?.agentLoopStatePath).toBeUndefined();
+      expect(persistedSession?.agentLoopStatus).toBeUndefined();
+      expect(persistedSession?.agentLoopResumable).toBeUndefined();
+      expect(persistedSession?.agentLoopUpdatedAt).toBeUndefined();
+      expect(persistedSession?.agentLoop).toBeUndefined();
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 
   it("loaded sessions do not rewrite stale nested agentloop metadata on the next persist", async () => {
@@ -293,6 +303,7 @@ describe("ChatRunner policy commands", () => {
         status: "failed",
         updatedAt: "2026-04-01T00:02:00.000Z",
       });
+      await importLegacyChatAgentLoopSessionState(tmpDir);
 
       const catalog = new ChatSessionCatalog(stateManager);
       const loaded = await catalog.loadSession("forked-session");
@@ -303,12 +314,12 @@ describe("ChatRunner policy commands", () => {
       const result = await runner.execute("/title Renamed Session", "/repo");
 
       expect(result.success).toBe(true);
-      const persisted = await stateManager.readRaw("chat/sessions/forked-session.json") as Record<string, unknown>;
-      expect(persisted["agentLoopStatePath"]).toBe("chat/agentloop/forked-session.state.json");
-      expect(persisted["agentLoopStatus"]).toBeUndefined();
-      expect(persisted["agentLoopResumable"]).toBeUndefined();
-      expect(persisted["agentLoopUpdatedAt"]).toBeUndefined();
-      expect(persisted["agentLoop"]).toEqual({
+      const persisted = await new ChatSessionDataStore(tmpDir).load("forked-session");
+      expect(persisted?.agentLoopStatePath).toBe("chat/agentloop/forked-session.state.json");
+      expect(persisted?.agentLoopStatus).toBeUndefined();
+      expect(persisted?.agentLoopResumable).toBeUndefined();
+      expect(persisted?.agentLoopUpdatedAt).toBeUndefined();
+      expect(persisted?.agentLoop).toEqual({
         statePath: "chat/agentloop/forked-session.state.json",
       });
     } finally {
@@ -355,6 +366,7 @@ describe("ChatRunner policy commands", () => {
         status: "failed",
         updatedAt: "2026-04-01T00:02:00.000Z",
       });
+      await importLegacyChatAgentLoopSessionState(tmpDir);
 
       const catalog = new ChatSessionCatalog(stateManager);
       const loaded = await catalog.loadSession("forked-session");
@@ -365,12 +377,12 @@ describe("ChatRunner policy commands", () => {
       const result = await runner.execute("Continue from here", "/repo");
 
       expect(result.success).toBe(true);
-      const persisted = await stateManager.readRaw("chat/sessions/forked-session.json") as Record<string, unknown>;
-      expect(persisted["agentLoopStatePath"]).toBe("chat/agentloop/forked-session.state.json");
-      expect(persisted["agentLoopStatus"]).toBeUndefined();
-      expect(persisted["agentLoopResumable"]).toBeUndefined();
-      expect(persisted["agentLoopUpdatedAt"]).toBeUndefined();
-      expect(persisted["agentLoop"]).toEqual({
+      const persisted = await new ChatSessionDataStore(tmpDir).load("forked-session");
+      expect(persisted?.agentLoopStatePath).toBe("chat/agentloop/forked-session.state.json");
+      expect(persisted?.agentLoopStatus).toBeUndefined();
+      expect(persisted?.agentLoopResumable).toBeUndefined();
+      expect(persisted?.agentLoopUpdatedAt).toBeUndefined();
+      expect(persisted?.agentLoop).toEqual({
         statePath: "chat/agentloop/forked-session.state.json",
       });
     } finally {

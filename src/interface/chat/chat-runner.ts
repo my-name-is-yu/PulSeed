@@ -170,6 +170,7 @@ export class ChatRunner {
   onNotification: ((message: string) => void) | undefined = undefined;
   onEvent: ChatEventHandler | undefined = undefined;
   private nativeAgentLoopStatePath: string | null = null;
+  private nativeAgentLoopSessionId: string | null = null;
   private runtimeControlContext: RuntimeControlChatContext | null = null;
   private sessionExecutionPolicy: ExecutionPolicy | null = null;
   private lastSelectedRoute: SelectedChatRoute | null = null;
@@ -196,6 +197,8 @@ export class ChatRunner {
       setSessionActive: (active) => { this.sessionActive = active; },
       getNativeAgentLoopStatePath: () => this.nativeAgentLoopStatePath,
       setNativeAgentLoopStatePath: (path) => { this.nativeAgentLoopStatePath = path; },
+      getNativeAgentLoopSessionId: () => this.nativeAgentLoopSessionId,
+      setNativeAgentLoopSessionId: (sessionId) => { this.nativeAgentLoopSessionId = sessionId; },
       getRuntimeControlContext: () => this.runtimeControlContext,
       getPendingTend: () => this.pendingTend,
       setPendingTend: (value) => { this.pendingTend = value; },
@@ -215,8 +218,10 @@ export class ChatRunner {
     this.history = new ChatHistory(this.deps.stateManager, sessionId, gitRoot);
     this.sessionCwd = gitRoot;
     this.sessionActive = true;
-    this.nativeAgentLoopStatePath = `chat/agentloop/${sessionId}.state.json`;
-    this.history.resetAgentLoopState(this.nativeAgentLoopStatePath);
+    this.nativeAgentLoopStatePath = null;
+    this.nativeAgentLoopSessionId = sessionId;
+    this.history.resetAgentLoopState(null);
+    this.history.setAgentLoopSessionIdentity({ sessionId, traceId: null });
     this.sessionExecutionPolicy = null;
   }
 
@@ -225,8 +230,13 @@ export class ChatRunner {
     this.history = ChatHistory.fromSession(this.deps.stateManager, chatSession);
     this.sessionCwd = resolveGitRoot(session.cwd);
     this.sessionActive = true;
-    this.nativeAgentLoopStatePath = session.agentLoopStatePath ?? `chat/agentloop/${session.id}.state.json`;
+    this.nativeAgentLoopStatePath = session.agentLoopStatePath ?? null;
+    this.nativeAgentLoopSessionId = session.agentLoopSessionId ?? session.id;
     this.history.setAgentLoopStatePath(this.nativeAgentLoopStatePath);
+    this.history.setAgentLoopSessionIdentity({
+      sessionId: this.nativeAgentLoopSessionId,
+      traceId: session.agentLoopTraceId ?? null,
+    });
     this.sessionExecutionPolicy = null;
   }
 
@@ -597,8 +607,10 @@ export class ChatRunner {
     if (!this.sessionActive) {
       const sessionId = crypto.randomUUID();
       this.history = new ChatHistory(this.deps.stateManager, sessionId, resolvedCwd);
-      this.nativeAgentLoopStatePath = `chat/agentloop/${sessionId}.state.json`;
-      this.history.resetAgentLoopState(this.nativeAgentLoopStatePath);
+      this.nativeAgentLoopStatePath = null;
+      this.nativeAgentLoopSessionId = sessionId;
+      this.history.resetAgentLoopState(null);
+      this.history.setAgentLoopSessionIdentity({ sessionId, traceId: null });
     }
     const executionCwd = this.sessionCwd ?? resolvedCwd;
     const gitRoot = this.sessionCwd ?? resolvedCwd;
@@ -796,6 +808,7 @@ export class ChatRunner {
       gitRoot,
       executionCwd,
       nativeAgentLoopStatePath: this.nativeAgentLoopStatePath,
+      nativeAgentLoopSessionId: this.nativeAgentLoopSessionId,
       selectedRoute,
       input: safeInput,
       userInput: safeUserInput,
@@ -903,6 +916,10 @@ export class ChatRunner {
 
   getNativeAgentLoopStatePath(): string | null {
     return this.nativeAgentLoopStatePath;
+  }
+
+  getNativeAgentLoopSessionId(): string | null {
+    return this.nativeAgentLoopSessionId;
   }
 
   setSessionExecutionPolicy(policy: ExecutionPolicy): void {
@@ -1020,6 +1037,7 @@ export class ChatRunner {
       getConversationSessionId: () => this.history?.getSessionId() ?? null,
       getSessionCwd: () => this.sessionCwd,
       getNativeAgentLoopStatePath: () => this.nativeAgentLoopStatePath,
+      getNativeAgentLoopSessionId: () => this.nativeAgentLoopSessionId,
       getProviderConfigBaseDir: () => this.providerConfigBaseDir(),
       getSetupSecretIntake: () => this.setupSecretIntake,
       getTurnLanguageHint: () => this.turnLanguageHint,

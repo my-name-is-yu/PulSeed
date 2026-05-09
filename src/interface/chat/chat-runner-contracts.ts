@@ -140,9 +140,11 @@ export interface ChatRunnerCommandHost {
   setHistory(history: ChatHistory | null): void;
   getSessionCwd(): string | null;
   setSessionCwd(cwd: string | null): void;
-  setSessionActive(active: boolean): void;
-  getNativeAgentLoopStatePath(): string | null;
-  setNativeAgentLoopStatePath(path: string | null): void;
+	  setSessionActive(active: boolean): void;
+	  getNativeAgentLoopStatePath(): string | null;
+	  setNativeAgentLoopStatePath(path: string | null): void;
+	  getNativeAgentLoopSessionId?(): string | null;
+	  setNativeAgentLoopSessionId?(sessionId: string | null): void;
   getRuntimeControlContext(): RuntimeControlChatContext | null;
   getPendingTend(): PendingTendState | null;
   setPendingTend(value: PendingTendState | null): void;
@@ -157,9 +159,10 @@ export interface ChatRunnerRouteHost {
   deps: ChatRunnerDeps;
   eventBridge: ChatRunnerEventBridge;
   activatedTools: Set<string>;
-  getConversationSessionId(): string | null;
-  getSessionCwd(): string | null;
-  getNativeAgentLoopStatePath(): string | null;
+	  getConversationSessionId(): string | null;
+	  getSessionCwd(): string | null;
+	  getNativeAgentLoopStatePath(): string | null;
+	  getNativeAgentLoopSessionId(): string | null;
   getProviderConfigBaseDir(): string;
   getSetupSecretIntake(): SetupSecretIntakeResult | null;
   getTurnLanguageHint(): TurnLanguageHint;

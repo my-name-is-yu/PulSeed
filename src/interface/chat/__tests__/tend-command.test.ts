@@ -284,7 +284,8 @@ describe("TendCommand", () => {
           expect.objectContaining({
             kind: "chat_session",
             id: "chat-session-1",
-            relative_path: "chat/sessions/chat-session-1.json",
+            path: null,
+            relative_path: "state/pulseed-control.sqlite",
           }),
         ]);
         expect(daemonClient.startGoal).toHaveBeenCalledWith("goal-abc", {

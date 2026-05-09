@@ -1,14 +1,12 @@
-import * as fsp from "node:fs/promises";
-import * as path from "node:path";
-import { type Dirent } from "node:fs";
 import { StateError } from "../../base/utils/errors.js";
 import type { StateManager } from "../../base/state/state-manager.js";
 import { ChatSessionSchema, type ChatSession } from "./chat-history.js";
-import { normalizeAgentLoopSessionState, type AgentLoopSessionState } from "../../orchestrator/execution/agent-loop/agent-loop-session-state.js";
+import type { AgentLoopSessionState } from "../../orchestrator/execution/agent-loop/agent-loop-session-state.js";
+import { AgentLoopSessionStateCatalog } from "../../orchestrator/execution/agent-loop/agent-loop-session-db-store.js";
 import { normalizeSessionUsage } from "./chat-usage.js";
+import { ChatSessionDataStore } from "./chat-session-data-store.js";
+import { resolveChatStateBaseDir } from "./chat-state-base-dir.js";
 
-const CHAT_SESSION_DIR = path.join("chat", "sessions");
-const CHAT_AGENTLOOP_DIR = path.join("chat", "agentloop");
 const DEFAULT_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 export type ChatSessionAgentLoopStatus = "missing" | "running" | "completed" | "failed";
@@ -31,6 +29,8 @@ export interface ChatSessionCatalogEntry {
   waitingUntil?: string | null;
   waitingCondition?: string | null;
   notificationReplyTarget?: ChatSession["notificationReplyTarget"];
+  agentLoopSessionId?: string | null;
+  agentLoopTraceId?: string | null;
   agentLoopStatePath: string | null;
   agentLoopStatus: ChatSessionAgentLoopStatus;
   agentLoopResumable: boolean;
@@ -69,6 +69,8 @@ export interface LoadedChatSession {
   parentNotificationStatus?: "none" | "pending" | "sent" | "failed" | null;
   parentNotificationSummary?: string | null;
   parentNotifiedAt?: string | null;
+  agentLoopSessionId?: string | null;
+  agentLoopTraceId?: string | null;
   agentLoopStatePath: string | null;
   agentLoopStatus: ChatSessionAgentLoopStatus;
   agentLoopResumable: boolean;
@@ -115,38 +117,24 @@ export class ChatSessionSelectorError extends StateError {
 
 interface SessionRecord {
   session: LoadedChatSession;
-  filePath: string;
   activityAtMs: number;
-  fileMtimeMs: number;
 }
 
 interface AgentLoopDiscovery {
+  sessionId: string | null;
+  traceId: string | null;
   statePath: string | null;
   status: ChatSessionAgentLoopStatus;
   resumable: boolean;
   updatedAt: string | null;
 }
 
-function buildNormalizedAgentLoopMetadata(agentLoop: AgentLoopDiscovery): ChatSession["agentLoop"] | undefined {
-  if (!agentLoop.statePath && agentLoop.status === "missing" && !agentLoop.resumable && !agentLoop.updatedAt) {
-    return undefined;
-  }
-
-  return {
-    ...(agentLoop.statePath ? { statePath: agentLoop.statePath } : {}),
-    ...(agentLoop.status !== "missing" ? { status: agentLoop.status } : {}),
-    ...(agentLoop.resumable ? { resumable: true } : {}),
-    ...(agentLoop.updatedAt ? { updatedAt: agentLoop.updatedAt } : {}),
-  };
-}
-
 function optionalString(value: unknown): string | null {
-  return typeof value === "string" && value.trim().length > 0 ? value : null;
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
 }
 
 function normalizeTitle(value: unknown): string | null {
-  const title = optionalString(value);
-  return title ? title.trim() : null;
+  return optionalString(value);
 }
 
 function parseTime(value: string | null | undefined): number {
@@ -155,46 +143,19 @@ function parseTime(value: string | null | undefined): number {
   return Number.isFinite(parsed) ? parsed : Number.NEGATIVE_INFINITY;
 }
 
-function resolvePathWithinBaseDir(baseDir: string, candidate: string | null | undefined): { relative: string; absolute: string } | null {
-  const trimmed = candidate?.trim();
-  if (!trimmed) return null;
-
-  const absolute = path.isAbsolute(trimmed) ? path.resolve(trimmed) : path.resolve(baseDir, trimmed);
-  const root = path.resolve(baseDir);
-  const relative = path.relative(root, absolute);
-  if (relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative))) {
-    return { absolute, relative: relative === "" ? "." : relative };
-  }
-  return null;
-}
-
-function sessionToAgentLoopStatePath(session: ChatSession, baseDir: string): string | null {
-  const topLevelPath = optionalString(session.agentLoopStatePath);
-  if (topLevelPath) {
-    const resolved = resolvePathWithinBaseDir(baseDir, topLevelPath);
-    if (resolved) return resolved.relative;
-  }
-
-  const nestedPath = optionalString(session.agentLoop?.statePath);
-  if (nestedPath) {
-    const resolved = resolvePathWithinBaseDir(baseDir, nestedPath);
-    if (resolved) return resolved.relative;
-  }
-
-  return path.join(CHAT_AGENTLOOP_DIR, `${session.id}.state.json`);
-}
-
-function extractSessionActivityAtMs(session: { createdAt: string; updatedAt?: string | null; agentLoopUpdatedAt?: string | null }, fileMtimeMs: number): number {
-  const metadataActivity = Math.max(parseTime(session.updatedAt), parseTime(session.createdAt), parseTime(session.agentLoopUpdatedAt));
-  return metadataActivity === Number.NEGATIVE_INFINITY ? fileMtimeMs : metadataActivity;
-}
-
-async function readFileMtimeMs(filePath: string, fallbackMs: number): Promise<number> {
-  try {
-    return (await fsp.stat(filePath)).mtimeMs;
-  } catch {
-    return fallbackMs;
-  }
+function extractSessionActivityAtMs(session: {
+  createdAt: string;
+  updatedAt?: string | null;
+  agentLoopUpdatedAt?: string | null;
+  completedAt?: string | null;
+}): number {
+  const metadataActivity = Math.max(
+    parseTime(session.agentLoopUpdatedAt),
+    parseTime(session.completedAt),
+    parseTime(session.updatedAt),
+    parseTime(session.createdAt),
+  );
+  return metadataActivity === Number.NEGATIVE_INFINITY ? 0 : metadataActivity;
 }
 
 function normalizeAgentLoopStatus(
@@ -212,6 +173,8 @@ function normalizeAgentLoopStatus(
   if (agentLoopState) {
     const status = agentLoopState.status;
     return {
+      sessionId: agentLoopState.sessionId,
+      traceId: agentLoopState.traceId,
       statePath,
       status,
       resumable: status !== "completed",
@@ -221,6 +184,8 @@ function normalizeAgentLoopStatus(
 
   if (metadataStatus) {
     return {
+      sessionId: optionalString(session.agentLoopSessionId),
+      traceId: optionalString(session.agentLoopTraceId),
       statePath,
       status: metadataStatus,
       resumable: resumableMetadata ?? metadataStatus !== "completed",
@@ -229,6 +194,8 @@ function normalizeAgentLoopStatus(
   }
 
   return {
+    sessionId: optionalString(session.agentLoopSessionId),
+    traceId: optionalString(session.agentLoopTraceId),
     statePath,
     status: "missing",
     resumable: resumableMetadata ?? false,
@@ -236,129 +203,85 @@ function normalizeAgentLoopStatus(
   };
 }
 
-async function loadAgentLoopState(
-  stateManager: StateManager,
-  baseDir: string,
-  session: ChatSession,
-): Promise<AgentLoopDiscovery> {
-  const statePaths: string[] = [];
-  const topLevelPath = resolvePathWithinBaseDir(baseDir, optionalString(session.agentLoopStatePath));
-  const nestedPath = !topLevelPath
-    ? resolvePathWithinBaseDir(baseDir, optionalString(session.agentLoop?.statePath))
-    : null;
-
-  for (const resolved of [topLevelPath, nestedPath]) {
-    if (resolved && !statePaths.includes(resolved.relative)) statePaths.push(resolved.relative);
+function buildNormalizedAgentLoopMetadata(agentLoop: AgentLoopDiscovery): ChatSession["agentLoop"] | undefined {
+  if (!agentLoop.statePath && agentLoop.status === "missing" && !agentLoop.resumable && !agentLoop.updatedAt) {
+    return undefined;
   }
-
-  const discoveredPath = sessionToAgentLoopStatePath(session, baseDir);
-  if (discoveredPath && !statePaths.includes(discoveredPath)) statePaths.push(discoveredPath);
-
-  let loadedState: AgentLoopSessionState | null = null;
-  let loadedPath: string | null = null;
-  for (const relativePath of statePaths) {
-    const raw = await stateManager.readRaw(relativePath);
-    const normalized = normalizeAgentLoopSessionState(raw);
-    if (normalized) {
-      loadedState = normalized;
-      loadedPath = relativePath;
-      break;
-    }
-  }
-
-  const discovery = normalizeAgentLoopStatus(session, loadedState);
   return {
-    statePath: loadedPath ?? discovery.statePath,
+    ...(agentLoop.statePath ? { statePath: agentLoop.statePath } : {}),
+    ...(agentLoop.status !== "missing" ? { status: agentLoop.status } : {}),
+    ...(agentLoop.resumable ? { resumable: true } : {}),
+    ...(agentLoop.updatedAt ? { updatedAt: agentLoop.updatedAt } : {}),
+  };
+}
+
+async function loadAgentLoopState(baseDir: string, session: ChatSession): Promise<AgentLoopDiscovery> {
+  const candidateSessionId = optionalString(session.agentLoopSessionId) ?? session.id;
+  const state = await new AgentLoopSessionStateCatalog(baseDir).load(candidateSessionId);
+  const discovery = normalizeAgentLoopStatus(session, state);
+  return {
+    sessionId: state?.sessionId ?? discovery.sessionId,
+    traceId: state?.traceId ?? discovery.traceId,
+    statePath: discovery.statePath,
     status: discovery.status,
-    resumable: loadedState ? loadedState.status !== "completed" : discovery.resumable,
-    updatedAt: loadedState?.updatedAt ?? discovery.updatedAt,
+    resumable: state ? state.status !== "completed" : discovery.resumable,
+    updatedAt: state?.updatedAt ?? discovery.updatedAt,
   };
 }
 
-function normalizeSessionRecord(session: LoadedChatSession, filePath: string, fileMtimeMs: number, agentLoop: AgentLoopDiscovery): SessionRecord {
-  const normalizedAgentLoop = buildNormalizedAgentLoopMetadata(agentLoop);
+function toLoadedSession(session: ChatSession, discovery: AgentLoopDiscovery): LoadedChatSession {
+  const normalizedAgentLoop = buildNormalizedAgentLoopMetadata(discovery);
   return {
-    session: {
-      ...session,
-      title: normalizeTitle(session.title),
-      agentLoopStatePath: agentLoop.statePath,
-      agentLoopStatus: agentLoop.status,
-      agentLoopResumable: agentLoop.resumable,
-      agentLoopUpdatedAt: agentLoop.updatedAt,
-      ...(normalizedAgentLoop ? { agentLoop: normalizedAgentLoop } : { agentLoop: undefined }),
-    },
-    filePath,
-    activityAtMs: extractSessionActivityAtMs(session, fileMtimeMs),
-    fileMtimeMs,
-  };
-}
-
-async function readSessionRecordWithMetadata(
-  stateManager: StateManager,
-  baseDir: string,
-  sessionId: string,
-  fallbackFileMtimeMs: number = Date.now(),
-): Promise<SessionRecord | null> {
-  const relativePath = path.join(CHAT_SESSION_DIR, `${sessionId}.json`);
-  const raw = await stateManager.readRaw(relativePath);
-  if (raw === null) return null;
-
-  const parsed = ChatSessionSchema.safeParse(raw);
-  if (!parsed.success) {
-    const issues = parsed.error.issues.map((issue) => `${issue.path.join(".") || "<root>"}: ${issue.message}`).join("; ");
-    throw new ChatSessionSelectorError(
-      `Invalid chat session record for "${sessionId}" at ${relativePath}: ${issues}`,
-      sessionId,
-      "not_found",
-    );
-  }
-
-  const filePath = path.join(baseDir, relativePath);
-  const fileMtimeMs = await readFileMtimeMs(filePath, fallbackFileMtimeMs);
-  const discovery = await loadAgentLoopState(stateManager, baseDir, parsed.data);
-  const session: LoadedChatSession = {
-    id: parsed.data.id,
-    cwd: parsed.data.cwd,
-    createdAt: parsed.data.createdAt,
-    updatedAt: parsed.data.updatedAt ?? parsed.data.createdAt,
-    title: normalizeTitle(parsed.data.title),
-    messages: [...parsed.data.messages],
-    parentSessionId: optionalString(parsed.data.parentSessionId),
-    ...(optionalString(parsed.data.spawnedBySessionId) ? { spawnedBySessionId: optionalString(parsed.data.spawnedBySessionId) } : {}),
-    ...(optionalString(parsed.data.spawnedByRuntimeSessionId) ? { spawnedByRuntimeSessionId: optionalString(parsed.data.spawnedByRuntimeSessionId) } : {}),
-    ...(optionalString(parsed.data.spawnedAt) ? { spawnedAt: optionalString(parsed.data.spawnedAt) } : {}),
-    ...(parsed.data.sessionStatus ? { sessionStatus: parsed.data.sessionStatus } : {}),
-    ...(optionalString(parsed.data.sessionSummary) !== null ? { sessionSummary: optionalString(parsed.data.sessionSummary) } : {}),
-    ...(optionalString(parsed.data.completedAt) !== null ? { completedAt: optionalString(parsed.data.completedAt) } : {}),
-    ...(optionalString(parsed.data.goalId) !== null ? { goalId: optionalString(parsed.data.goalId) } : {}),
-    ...(optionalString(parsed.data.strategyId) !== null ? { strategyId: optionalString(parsed.data.strategyId) } : {}),
-    ...(parsed.data.notificationPolicy ? { notificationPolicy: parsed.data.notificationPolicy } : {}),
-    ...(optionalString(parsed.data.ownerId) !== null ? { ownerId: optionalString(parsed.data.ownerId) } : {}),
-    ...(optionalString(parsed.data.ownerClaimedAt) !== null ? { ownerClaimedAt: optionalString(parsed.data.ownerClaimedAt) } : {}),
-    ...(optionalString(parsed.data.waitingUntil) !== null ? { waitingUntil: optionalString(parsed.data.waitingUntil) } : {}),
-    ...(optionalString(parsed.data.waitingCondition) !== null ? { waitingCondition: optionalString(parsed.data.waitingCondition) } : {}),
-    ...(typeof parsed.data.retryCount === "number" ? { retryCount: parsed.data.retryCount } : {}),
-    ...(optionalString(parsed.data.lastRetryAt) !== null ? { lastRetryAt: optionalString(parsed.data.lastRetryAt) } : {}),
-    ...(optionalString(parsed.data.lastResumedAt) !== null ? { lastResumedAt: optionalString(parsed.data.lastResumedAt) } : {}),
-    ...(parsed.data.notificationReplyTarget ? { notificationReplyTarget: parsed.data.notificationReplyTarget } : {}),
-    ...(parsed.data.setupDialogue ? { setupDialogue: parsed.data.setupDialogue } : {}),
-    ...(parsed.data.runSpecConfirmation ? { runSpecConfirmation: parsed.data.runSpecConfirmation } : {}),
-    ...(parsed.data.parentNotificationStatus ? { parentNotificationStatus: parsed.data.parentNotificationStatus } : {}),
-    ...(optionalString(parsed.data.parentNotificationSummary) !== null ? { parentNotificationSummary: optionalString(parsed.data.parentNotificationSummary) } : {}),
-    ...(optionalString(parsed.data.parentNotifiedAt) !== null ? { parentNotifiedAt: optionalString(parsed.data.parentNotifiedAt) } : {}),
-    ...(parsed.data.compactionSummary ? { compactionSummary: parsed.data.compactionSummary } : {}),
-    ...(parsed.data.compactionRecords ? { compactionRecords: [...parsed.data.compactionRecords] } : {}),
+    id: session.id,
+    cwd: session.cwd,
+    createdAt: session.createdAt,
+    updatedAt: session.updatedAt ?? session.createdAt,
+    title: normalizeTitle(session.title),
+    messages: [...session.messages],
+    parentSessionId: optionalString(session.parentSessionId),
+    ...(optionalString(session.spawnedBySessionId) ? { spawnedBySessionId: optionalString(session.spawnedBySessionId) } : {}),
+    ...(optionalString(session.spawnedByRuntimeSessionId) ? { spawnedByRuntimeSessionId: optionalString(session.spawnedByRuntimeSessionId) } : {}),
+    ...(optionalString(session.spawnedAt) ? { spawnedAt: optionalString(session.spawnedAt) } : {}),
+    ...(session.sessionStatus ? { sessionStatus: session.sessionStatus } : {}),
+    ...(optionalString(session.sessionSummary) !== null ? { sessionSummary: optionalString(session.sessionSummary) } : {}),
+    ...(optionalString(session.completedAt) !== null ? { completedAt: optionalString(session.completedAt) } : {}),
+    ...(optionalString(session.goalId) !== null ? { goalId: optionalString(session.goalId) } : {}),
+    ...(optionalString(session.strategyId) !== null ? { strategyId: optionalString(session.strategyId) } : {}),
+    ...(session.notificationPolicy ? { notificationPolicy: session.notificationPolicy } : {}),
+    ...(optionalString(session.ownerId) !== null ? { ownerId: optionalString(session.ownerId) } : {}),
+    ...(optionalString(session.ownerClaimedAt) !== null ? { ownerClaimedAt: optionalString(session.ownerClaimedAt) } : {}),
+    ...(optionalString(session.waitingUntil) !== null ? { waitingUntil: optionalString(session.waitingUntil) } : {}),
+    ...(optionalString(session.waitingCondition) !== null ? { waitingCondition: optionalString(session.waitingCondition) } : {}),
+    ...(typeof session.retryCount === "number" ? { retryCount: session.retryCount } : {}),
+    ...(optionalString(session.lastRetryAt) !== null ? { lastRetryAt: optionalString(session.lastRetryAt) } : {}),
+    ...(optionalString(session.lastResumedAt) !== null ? { lastResumedAt: optionalString(session.lastResumedAt) } : {}),
+    ...(session.notificationReplyTarget ? { notificationReplyTarget: session.notificationReplyTarget } : {}),
+    ...(session.setupDialogue ? { setupDialogue: session.setupDialogue } : {}),
+    ...(session.runSpecConfirmation ? { runSpecConfirmation: session.runSpecConfirmation } : {}),
+    ...(session.parentNotificationStatus ? { parentNotificationStatus: session.parentNotificationStatus } : {}),
+    ...(optionalString(session.parentNotificationSummary) !== null ? { parentNotificationSummary: optionalString(session.parentNotificationSummary) } : {}),
+    ...(optionalString(session.parentNotifiedAt) !== null ? { parentNotifiedAt: optionalString(session.parentNotifiedAt) } : {}),
+    ...(session.compactionSummary ? { compactionSummary: session.compactionSummary } : {}),
+    ...(session.compactionRecords ? { compactionRecords: [...session.compactionRecords] } : {}),
+    agentLoopSessionId: discovery.sessionId,
+    agentLoopTraceId: discovery.traceId,
     agentLoopStatePath: discovery.statePath,
     agentLoopStatus: discovery.status,
     agentLoopResumable: discovery.resumable,
     agentLoopUpdatedAt: discovery.updatedAt,
-    ...(parsed.data.agentLoop ? { agentLoop: parsed.data.agentLoop } : {}),
-    ...(parsed.data.turnContexts ? { turnContexts: [...parsed.data.turnContexts] } : {}),
-    ...(parsed.data.rolloutJournal ? { rolloutJournal: [...parsed.data.rolloutJournal] } : {}),
-    ...(parsed.data.usage ? { usage: normalizeSessionUsage(parsed.data.usage) } : {}),
+    ...(normalizedAgentLoop ? { agentLoop: normalizedAgentLoop } : {}),
+    ...(session.turnContexts ? { turnContexts: [...session.turnContexts] } : {}),
+    ...(session.rolloutJournal ? { rolloutJournal: [...session.rolloutJournal] } : {}),
+    ...(session.usage ? { usage: normalizeSessionUsage(session.usage) } : {}),
   };
+}
 
-  return normalizeSessionRecord(session, filePath, fileMtimeMs, discovery);
+function normalizeSessionRecord(session: ChatSession, agentLoop: AgentLoopDiscovery): SessionRecord {
+  const loaded = toLoadedSession(session, agentLoop);
+  return {
+    session: loaded,
+    activityAtMs: extractSessionActivityAtMs(loaded),
+  };
 }
 
 function buildCatalogEntry(record: SessionRecord): ChatSessionCatalogEntry {
@@ -381,6 +304,8 @@ function buildCatalogEntry(record: SessionRecord): ChatSessionCatalogEntry {
     waitingUntil: session.waitingUntil ?? null,
     waitingCondition: session.waitingCondition ?? null,
     notificationReplyTarget: session.notificationReplyTarget ?? null,
+    agentLoopSessionId: session.agentLoopSessionId,
+    agentLoopTraceId: session.agentLoopTraceId,
     agentLoopStatePath: session.agentLoopStatePath,
     agentLoopStatus: session.agentLoopStatus,
     agentLoopResumable: session.agentLoopResumable,
@@ -389,7 +314,7 @@ function buildCatalogEntry(record: SessionRecord): ChatSessionCatalogEntry {
 }
 
 function toPersistedSession(session: LoadedChatSession): ChatSession {
-  return {
+  return ChatSessionSchema.parse({
     id: session.id,
     cwd: session.cwd,
     createdAt: session.createdAt,
@@ -421,69 +346,52 @@ function toPersistedSession(session: LoadedChatSession): ChatSession {
     ...(session.compactionSummary ? { compactionSummary: session.compactionSummary } : {}),
     ...(session.compactionRecords ? { compactionRecords: [...session.compactionRecords] } : {}),
     ...(session.title !== null ? { title: session.title } : {}),
+    ...(session.agentLoopSessionId !== null ? { agentLoopSessionId: session.agentLoopSessionId } : {}),
+    ...(session.agentLoopTraceId !== null ? { agentLoopTraceId: session.agentLoopTraceId } : {}),
     ...(session.agentLoopStatePath !== null ? { agentLoopStatePath: session.agentLoopStatePath } : {}),
     ...(session.agentLoopStatus === "running" || session.agentLoopStatus === "completed" || session.agentLoopStatus === "failed"
       ? { agentLoopStatus: session.agentLoopStatus }
       : {}),
     ...(session.agentLoopResumable ? { agentLoopResumable: true } : {}),
-    ...(session.agentLoopUpdatedAt !== null && session.agentLoopUpdatedAt !== undefined
-      ? { agentLoopUpdatedAt: session.agentLoopUpdatedAt }
-      : {}),
+    ...(session.agentLoopUpdatedAt !== null && session.agentLoopUpdatedAt !== undefined ? { agentLoopUpdatedAt: session.agentLoopUpdatedAt } : {}),
     ...(session.agentLoop ? { agentLoop: session.agentLoop } : {}),
     ...(session.turnContexts ? { turnContexts: [...session.turnContexts] } : {}),
     ...(session.rolloutJournal ? { rolloutJournal: [...session.rolloutJournal] } : {}),
     ...(session.usage ? { usage: normalizeSessionUsage(session.usage) } : {}),
-  };
+  });
 }
 
 export class ChatSessionCatalog {
-  constructor(private readonly stateManager: StateManager) {}
+  private readonly store: ChatSessionDataStore;
+  private readonly resolvedBaseDir: string;
+
+  constructor(private readonly stateManager: StateManager) {
+    this.resolvedBaseDir = resolveChatStateBaseDir(stateManager);
+    this.store = new ChatSessionDataStore(this.resolvedBaseDir);
+  }
 
   private get baseDir(): string {
-    return this.stateManager.getBaseDir();
-  }
-
-  private sessionRelativePath(sessionId: string): string {
-    return path.join(CHAT_SESSION_DIR, `${sessionId}.json`);
-  }
-
-  private sessionAbsolutePath(sessionId: string): string {
-    return path.join(this.baseDir, this.sessionRelativePath(sessionId));
+    return this.resolvedBaseDir;
   }
 
   private async readSessionRecord(sessionId: string): Promise<LoadedChatSession | null> {
-    const record = await readSessionRecordWithMetadata(this.stateManager, this.baseDir, sessionId);
-    return record?.session ?? null;
+    const session = await this.store.load(sessionId);
+    if (!session) return null;
+    const discovery = await loadAgentLoopState(this.baseDir, session);
+    return normalizeSessionRecord(session, discovery).session;
   }
 
-  private async listSessionRecords(): Promise<SessionRecord[]> {
-    const dir = path.join(this.baseDir, CHAT_SESSION_DIR);
-    let entries: Dirent[];
-    try {
-      entries = await fsp.readdir(dir, { withFileTypes: true });
-    } catch (error: unknown) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
-      throw error;
-    }
-
+  private async listSessionRecords(options: ChatSessionListOptions = {}): Promise<SessionRecord[]> {
+    const sessions = await this.store.list(options);
     const records: SessionRecord[] = [];
-    for (const entry of entries) {
-      if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
-      const sessionId = entry.name.slice(0, -".json".length);
-      try {
-        const record = await readSessionRecordWithMetadata(this.stateManager, this.baseDir, sessionId);
-        if (record) records.push(record);
-      } catch {
-        continue;
-      }
+    for (const session of sessions) {
+      const discovery = await loadAgentLoopState(this.baseDir, session);
+      records.push(normalizeSessionRecord(session, discovery));
     }
-
     records.sort((left, right) => {
       if (right.activityAtMs !== left.activityAtMs) return right.activityAtMs - left.activityAtMs;
-      if (right.fileMtimeMs !== left.fileMtimeMs) return right.fileMtimeMs - left.fileMtimeMs;
       return left.session.id.localeCompare(right.session.id);
     });
-
     return records;
   }
 
@@ -492,10 +400,7 @@ export class ChatSessionCatalog {
   }
 
   async listSessions(options: ChatSessionListOptions = {}): Promise<ChatSessionCatalogEntry[]> {
-    const records = await this.listSessionRecords();
-    const cwd = options.cwd?.trim();
-    const catalogEntries = records.map(buildCatalogEntry);
-    return cwd ? catalogEntries.filter((entry) => entry.cwd === cwd) : catalogEntries;
+    return (await this.listSessionRecords(options)).map(buildCatalogEntry);
   }
 
   async latestSession(options: ChatSessionListOptions = {}): Promise<ChatSessionCatalogEntry | null> {
@@ -510,7 +415,6 @@ export class ChatSessionCatalog {
     }
 
     const sessions = await this.listSessions();
-
     const exactId = sessions.find((session) => session.id === normalizedSelector);
     if (exactId) return exactId;
 
@@ -557,46 +461,9 @@ export class ChatSessionCatalog {
       ...(normalizedTitle !== null ? { title: normalizedTitle } : {}),
       updatedAt,
     };
-    await this.stateManager.writeRaw(this.sessionRelativePath(session.id), updated);
-    return {
-      id: session.id,
-      cwd: session.cwd,
-      createdAt: session.createdAt,
-      updatedAt,
-      title: normalizedTitle,
-      messages: [...session.messages],
-      parentSessionId: session.parentSessionId,
-      ...(session.spawnedBySessionId ? { spawnedBySessionId: session.spawnedBySessionId } : {}),
-      ...(session.spawnedByRuntimeSessionId ? { spawnedByRuntimeSessionId: session.spawnedByRuntimeSessionId } : {}),
-      ...(session.spawnedAt ? { spawnedAt: session.spawnedAt } : {}),
-      ...(session.sessionStatus ? { sessionStatus: session.sessionStatus } : {}),
-      ...(session.sessionSummary ? { sessionSummary: session.sessionSummary } : {}),
-      ...(session.completedAt ? { completedAt: session.completedAt } : {}),
-      ...(session.goalId ? { goalId: session.goalId } : {}),
-      ...(session.strategyId ? { strategyId: session.strategyId } : {}),
-      ...(session.notificationPolicy ? { notificationPolicy: session.notificationPolicy } : {}),
-      ...(session.ownerId ? { ownerId: session.ownerId } : {}),
-      ...(session.ownerClaimedAt ? { ownerClaimedAt: session.ownerClaimedAt } : {}),
-      ...(session.waitingUntil ? { waitingUntil: session.waitingUntil } : {}),
-      ...(session.waitingCondition ? { waitingCondition: session.waitingCondition } : {}),
-      ...(session.retryCount !== null && session.retryCount !== undefined ? { retryCount: session.retryCount } : {}),
-      ...(session.lastRetryAt ? { lastRetryAt: session.lastRetryAt } : {}),
-      ...(session.lastResumedAt ? { lastResumedAt: session.lastResumedAt } : {}),
-      ...(session.notificationReplyTarget ? { notificationReplyTarget: session.notificationReplyTarget } : {}),
-      ...(session.setupDialogue ? { setupDialogue: session.setupDialogue } : {}),
-      ...(session.parentNotificationStatus ? { parentNotificationStatus: session.parentNotificationStatus } : {}),
-      ...(session.parentNotificationSummary ? { parentNotificationSummary: session.parentNotificationSummary } : {}),
-      ...(session.parentNotifiedAt ? { parentNotifiedAt: session.parentNotifiedAt } : {}),
-      ...(session.compactionSummary ? { compactionSummary: session.compactionSummary } : {}),
-      ...(session.compactionRecords ? { compactionRecords: [...session.compactionRecords] } : {}),
-      ...(session.turnContexts ? { turnContexts: [...session.turnContexts] } : {}),
-      ...(session.rolloutJournal ? { rolloutJournal: [...session.rolloutJournal] } : {}),
-      agentLoopStatePath: session.agentLoopStatePath,
-      agentLoopStatus: session.agentLoopStatus,
-      agentLoopResumable: session.agentLoopResumable,
-      ...(session.agentLoop ? { agentLoop: session.agentLoop } : {}),
-      ...(session.usage ? { usage: session.usage } : {}),
-    };
+    await this.store.save(updated);
+    const discovery = await loadAgentLoopState(this.baseDir, updated);
+    return normalizeSessionRecord(updated, discovery).session;
   }
 
   async cleanupSessions(options: ChatSessionCleanupOptions = {}): Promise<ChatSessionCleanupReport> {
@@ -615,23 +482,14 @@ export class ChatSessionCatalog {
       const isOld = record.activityAtMs < threshold;
       if (!protectedSession && isOld) {
         removedSessionIds.push(record.session.id);
-        const statePath = record.session.agentLoopStatePath ?? path.join(CHAT_AGENTLOOP_DIR, `${record.session.id}.state.json`);
-        if (statePath) removedAgentLoopStatePaths.push(statePath);
+        if (record.session.agentLoopStatePath) removedAgentLoopStatePaths.push(record.session.agentLoopStatePath);
         continue;
       }
       retainedSessionIds.push(record.session.id);
     }
 
     if (!dryRun) {
-      for (const sessionId of removedSessionIds) {
-        await fsp.rm(this.sessionAbsolutePath(sessionId), { force: true });
-      }
-
-      for (const relativeStatePath of removedAgentLoopStatePaths) {
-        const resolved = resolvePathWithinBaseDir(this.baseDir, relativeStatePath);
-        if (!resolved) continue;
-        await fsp.rm(resolved.absolute, { force: true });
-      }
+      await this.store.deleteSessions(removedSessionIds);
     }
 
     return {

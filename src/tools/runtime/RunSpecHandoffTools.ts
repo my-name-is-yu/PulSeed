@@ -8,6 +8,7 @@ import {
 } from "../../runtime/run-spec/index.js";
 import { RunSpecSafeNonnegativeIntSchema } from "../../runtime/run-spec/types.js";
 import { ChatSessionSchema } from "../../interface/chat/chat-history.js";
+import { ChatSessionDataStore } from "../../interface/chat/chat-session-data-store.js";
 import type {
   ITool,
   PermissionCheckResult,
@@ -393,9 +394,8 @@ async function getPendingConfirmation(
   const bridged = await context.runSpecConfirmation?.get();
   if (bridged) return bridged as RunSpecConfirmationSnapshot;
   if (!context.conversationSessionId) return null;
-  const raw = await stateManager.readRaw(`chat/sessions/${context.conversationSessionId}.json`);
-  if (!raw) return null;
-  const session = ChatSessionSchema.parse(raw);
+  const session = await new ChatSessionDataStore(stateManager.getBaseDir()).load(context.conversationSessionId);
+  if (!session) return null;
   return session.runSpecConfirmation ?? null;
 }
 
@@ -409,13 +409,13 @@ async function setPendingConfirmation(
     return;
   }
   if (!context.conversationSessionId) return;
-  const raw = await stateManager.readRaw(`chat/sessions/${context.conversationSessionId}.json`);
-  if (!raw) return;
-  const session = ChatSessionSchema.parse(raw);
+  const store = new ChatSessionDataStore(stateManager.getBaseDir());
+  const session = await store.load(context.conversationSessionId);
+  if (!session) return;
   const next = confirmation
-    ? { ...session, runSpecConfirmation: confirmation }
-    : omitKey(session, "runSpecConfirmation");
-  await stateManager.writeRaw(`chat/sessions/${context.conversationSessionId}.json`, next);
+    ? ChatSessionSchema.parse({ ...session, runSpecConfirmation: confirmation })
+    : ChatSessionSchema.parse(omitKey(session, "runSpecConfirmation"));
+  await store.save(next);
 }
 
 function omitKey<T extends Record<string, unknown>>(value: T, key: string): T {

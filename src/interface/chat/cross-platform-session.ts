@@ -108,6 +108,8 @@ import {
   resolveRuntimeControl,
   stringField,
 } from "./cross-platform-session-normalization.js";
+import { CrossPlatformChatSessionInfoStore } from "./chat-session-data-store.js";
+import { resolveChatStateBaseDir } from "./chat-state-base-dir.js";
 
 const STANDING_PERMISSION_REVIEW_INTERVAL_MS = 30 * 24 * 60 * 60 * 1000;
 const STANDING_PERMISSION_DEFAULT_EXCLUSIONS: PermissionGrantExcludedCapability[] = [
@@ -1021,43 +1023,12 @@ export class CrossPlatformChatSessionManager {
       : null;
   }
 
-  private sessionInfoRelativePath(sessionKey: string): string {
-    const encoded = Buffer.from(sessionKey, "utf-8").toString("base64url");
-    return path.join("chat", "cross-platform-sessions", `${encoded}.json`);
-  }
-
   private async loadPersistedSessionInfo(sessionKey: string): Promise<CrossPlatformChatSessionInfo | null> {
-    const raw = await this.deps.stateManager.readRaw(this.sessionInfoRelativePath(sessionKey));
-    if (!isRecord(raw) || raw["session_key"] !== sessionKey) return null;
-    const cwd = typeof raw["cwd"] === "string" && raw["cwd"].trim() ? raw["cwd"] : null;
-    const createdAt = typeof raw["created_at"] === "string" && raw["created_at"].trim() ? raw["created_at"] : null;
-    const lastUsedAt = typeof raw["last_used_at"] === "string" && raw["last_used_at"].trim() ? raw["last_used_at"] : null;
-    if (!cwd || !createdAt || !lastUsedAt) return null;
-    return {
-      session_key: sessionKey,
-      ...(typeof raw["identity_key"] === "string" ? { identity_key: raw["identity_key"] } : {}),
-      ...(typeof raw["platform"] === "string" ? { platform: raw["platform"] } : {}),
-      ...(typeof raw["conversation_id"] === "string" ? { conversation_id: raw["conversation_id"] } : {}),
-      ...(typeof raw["conversation_name"] === "string" ? { conversation_name: raw["conversation_name"] } : {}),
-      ...(typeof raw["user_id"] === "string" ? { user_id: raw["user_id"] } : {}),
-      ...(typeof raw["user_name"] === "string" ? { user_name: raw["user_name"] } : {}),
-      cwd,
-      created_at: createdAt,
-      last_used_at: lastUsedAt,
-      ...(typeof raw["last_message_id"] === "string" ? { last_message_id: raw["last_message_id"] } : {}),
-      ...(typeof raw["chat_session_id"] === "string" ? { chat_session_id: raw["chat_session_id"] } : {}),
-      ...(isRecord(raw["active_reply_target"])
-        ? { active_reply_target: cloneReplyTarget(raw["active_reply_target"]) }
-        : {}),
-      ...(isRecord(raw["active_companion_contract"])
-        ? { active_companion_contract: raw["active_companion_contract"] as CompanionRuntimeContract }
-        : {}),
-      metadata: isRecord(raw["metadata"]) ? cloneMetadata(raw["metadata"]) : {},
-    };
+    return new CrossPlatformChatSessionInfoStore(resolveChatStateBaseDir(this.deps.stateManager)).load(sessionKey);
   }
 
   private async persistSessionInfo(info: CrossPlatformChatSessionInfo): Promise<void> {
-    await this.deps.stateManager.writeRaw(this.sessionInfoRelativePath(info.session_key), {
+    await new CrossPlatformChatSessionInfoStore(resolveChatStateBaseDir(this.deps.stateManager)).save({
       ...info,
       metadata: cloneMetadata(info.metadata),
       active_reply_target: info.active_reply_target ? cloneReplyTarget(info.active_reply_target) : undefined,

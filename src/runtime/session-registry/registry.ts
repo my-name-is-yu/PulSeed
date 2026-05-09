@@ -2,7 +2,9 @@ import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import type { StateManager } from "../../base/state/state-manager.js";
 import { ChatSessionCatalog } from "../../interface/chat/chat-session-store.js";
-import { normalizeAgentLoopSessionState } from "../../orchestrator/execution/agent-loop/agent-loop-session-state.js";
+import {
+  AgentLoopSessionStateCatalog,
+} from "../../orchestrator/execution/agent-loop/agent-loop-session-db-store.js";
 import type { ProcessSessionManager, ProcessSessionSnapshot } from "../../tools/system/ProcessSessionTool/ProcessSessionTool.js";
 import { BackgroundRunLedger } from "../store/background-run-store.js";
 import { SupervisorStateStore } from "../store/supervisor-state-store.js";
@@ -77,6 +79,7 @@ export class RuntimeSessionRegistry {
   private readonly stateManager: StateManager;
   private readonly stateBaseDir: string;
   private readonly chatCatalog: ChatSessionCatalog;
+  private readonly agentLoopCatalog: AgentLoopSessionStateCatalog;
   private readonly processSessionManager?: Pick<ProcessSessionManager, "list">;
   private readonly backgroundRunLedger: Pick<BackgroundRunLedger, "list">;
   private readonly now: () => Date;
@@ -86,6 +89,7 @@ export class RuntimeSessionRegistry {
     this.stateManager = deps.stateManager;
     this.stateBaseDir = deps.stateBaseDir ?? deps.stateManager.getBaseDir();
     this.chatCatalog = new ChatSessionCatalog(this.stateManager);
+    this.agentLoopCatalog = new AgentLoopSessionStateCatalog(this.stateBaseDir);
     this.processSessionManager = deps.processSessionManager;
     this.backgroundRunLedger = deps.backgroundRunLedger ?? createDefaultBackgroundRunLedger(this.stateBaseDir);
     this.now = deps.now ?? (() => new Date());
@@ -148,14 +152,14 @@ export class RuntimeSessionRegistry {
       return;
     }
 
-    const linkedAgentStatePaths = new Set<string>();
+    const linkedAgentSessionIds = new Set<string>();
     for (const chat of chatSessions) {
       const conversationId = conversationSessionId(chat.id);
       const chatSource = sourceRef(
         "chat_session",
         chat.id,
         null,
-        path.join("chat", "sessions", `${chat.id}.json`),
+        path.join("state", "pulseed-control.sqlite"),
         chat.updatedAt,
       );
 
@@ -178,15 +182,15 @@ export class RuntimeSessionRegistry {
         source_refs: [chatSource],
       });
 
-      if (chat.agentLoopStatePath && chat.agentLoopStatus !== "missing") {
-        linkedAgentStatePaths.add(chat.agentLoopStatePath);
+      if ((chat.agentLoopSessionId || chat.agentLoopStatePath) && chat.agentLoopStatus !== "missing") {
+        linkedAgentSessionIds.add(chat.agentLoopSessionId ?? chat.id);
         const agentProjection = await this.projectAgentSession(chat, conversationId, chatSource, warnings);
         sessions.push(agentProjection.session);
         backgroundRuns.push(agentProjection.run);
       }
     }
 
-    await this.projectOrphanAgentSessions(linkedAgentStatePaths, sessions, backgroundRuns, warnings);
+    await this.projectOrphanAgentSessions(linkedAgentSessionIds, sessions, backgroundRuns, warnings);
   }
 
   private async projectAgentSession(
@@ -195,44 +199,29 @@ export class RuntimeSessionRegistry {
     chatSource: RuntimeSessionRef,
     warnings: RuntimeSessionRegistryWarning[],
   ): Promise<{ session: RuntimeSession; run: BackgroundRun }> {
+    const requestedSessionId = chat.agentLoopSessionId ?? chat.id;
+    const state = await this.agentLoopCatalog.load(requestedSessionId);
     const stateRef = sourceRef(
       "agentloop_state",
+      state?.sessionId ?? requestedSessionId,
       null,
-      null,
-      chat.agentLoopStatePath,
-      null,
+      path.join("state", "pulseed-control.sqlite"),
+      state?.updatedAt ?? chat.agentLoopUpdatedAt ?? null,
     );
-    let agentLoopSessionId: string | null = null;
-    let traceId: string | null = null;
-    let stateUpdatedAt: string | null = null;
-    let stateGoalId: string | null = null;
-    let normalizedStatus = chat.agentLoopStatus;
-
-    try {
-      const raw = await this.stateManager.readRaw(chat.agentLoopStatePath!);
-      const state = normalizeAgentLoopSessionState(raw);
-      if (state) {
-        agentLoopSessionId = state.sessionId;
-        traceId = state.traceId;
-        stateUpdatedAt = state.updatedAt;
-        stateGoalId = state.goalId;
-        normalizedStatus = state.status;
-      } else {
-        warnings.push({
-          code: "source_parse_failed",
-          source: stateRef,
-          message: `AgentLoop state could not be normalized: ${chat.agentLoopStatePath}`,
-        });
-      }
-    } catch (error) {
+    const agentLoopSessionId = state?.sessionId ?? requestedSessionId;
+    const traceId = state?.traceId ?? chat.agentLoopTraceId ?? null;
+    const stateUpdatedAt = state?.updatedAt ?? chat.agentLoopUpdatedAt ?? null;
+    const stateGoalId = state?.goalId ?? chat.goalId ?? null;
+    const normalizedStatus = state?.status ?? chat.agentLoopStatus;
+    if (!state) {
       warnings.push({
         code: "source_parse_failed",
         source: stateRef,
-        message: `Failed to read AgentLoop state ${chat.agentLoopStatePath}: ${messageFromError(error)}`,
+        message: `AgentLoop state is missing from Control DB for session ${requestedSessionId}.`,
       });
     }
 
-    const stableAgentId = agentLoopSessionId ?? path.basename(chat.agentLoopStatePath!, ".state.json");
+    const stableAgentId = agentLoopSessionId;
     const sessionId = agentSessionId(stableAgentId);
     const updatedAt = stateUpdatedAt ?? chat.updatedAt;
     const agentStateRef = { ...stateRef, id: agentLoopSessionId, updated_at: stateUpdatedAt };
@@ -287,49 +276,30 @@ export class RuntimeSessionRegistry {
   }
 
   private async projectOrphanAgentSessions(
-    linkedAgentStatePaths: Set<string>,
+    linkedAgentSessionIds: Set<string>,
     sessions: RuntimeSession[],
     backgroundRuns: BackgroundRun[],
     warnings: RuntimeSessionRegistryWarning[],
   ): Promise<void> {
-    const dir = path.join(this.stateBaseDir, "chat", "agentloop");
-    let entries;
-    try {
-      entries = await fsp.readdir(dir, { withFileTypes: true });
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
-      warnings.push({
-        code: "source_unavailable",
-        source: sourceRef("agentloop_state", null, dir, path.join("chat", "agentloop"), null),
-        message: `Failed to list AgentLoop state files: ${messageFromError(error)}`,
-      });
-      return;
-    }
+    const agentStates = await this.agentLoopCatalog.list({ kind: "chat" });
 
-    for (const entry of entries) {
-      if (!entry.isFile() || !entry.name.endsWith(".state.json")) continue;
-      const relativePath = path.join("chat", "agentloop", entry.name);
-      if (linkedAgentStatePaths.has(relativePath)) continue;
-      const stateRef = sourceRef("agentloop_state", null, null, relativePath, null);
-      try {
-        const raw = await this.stateManager.readRaw(relativePath);
-        const state = normalizeAgentLoopSessionState(raw);
-        if (!state) {
-          warnings.push({
-            code: "source_parse_failed",
-            source: stateRef,
-            message: `AgentLoop state could not be normalized: ${relativePath}`,
-          });
-          continue;
-        }
-        const sessionId = agentSessionId(state.sessionId);
-        const agentStateRef = { ...stateRef, id: state.sessionId, updated_at: state.updatedAt };
-        warnings.push({
-          code: "missing_parent_join",
-          source: agentStateRef,
-          message: `AgentLoop state ${relativePath} has no owning chat session agentLoopStatePath join.`,
-        });
-        sessions.push({
+    for (const state of agentStates) {
+      if (linkedAgentSessionIds.has(state.sessionId)) continue;
+      const stateRef = sourceRef(
+        "agentloop_state",
+        state.sessionId,
+        null,
+        path.join("state", "pulseed-control.sqlite"),
+        state.updatedAt,
+      );
+      const sessionId = agentSessionId(state.sessionId);
+      const agentStateRef = { ...stateRef, id: state.sessionId, updated_at: state.updatedAt };
+      warnings.push({
+        code: "missing_parent_join",
+        source: agentStateRef,
+        message: `AgentLoop state ${state.sessionId} has no owning chat session join.`,
+      });
+      sessions.push({
           schema_version: "runtime-session-v1",
           id: sessionId,
           kind: "agent",
@@ -349,8 +319,8 @@ export class RuntimeSessionRegistry {
             agentStateRef,
             sourceRef("agentloop_trace", state.traceId, null, null, state.updatedAt),
           ],
-        });
-        backgroundRuns.push(BackgroundRunSchema.parse({
+      });
+      backgroundRuns.push(BackgroundRunSchema.parse({
           schema_version: "background-run-v1",
           id: agentRunId(state.sessionId),
           kind: "agent_run",
@@ -372,14 +342,7 @@ export class RuntimeSessionRegistry {
           error: state.status === "failed" ? "AgentLoop session failed." : null,
           artifacts: [],
           source_refs: [agentStateRef],
-        }));
-      } catch (error) {
-        warnings.push({
-          code: "source_parse_failed",
-          source: stateRef,
-          message: `Failed to read AgentLoop state ${relativePath}: ${messageFromError(error)}`,
-        });
-      }
+      }));
     }
   }
 

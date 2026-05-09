@@ -1,7 +1,7 @@
 // ─── ChatHistory ───
 //
 // Manages conversation history for a chat session.
-// Persists via StateManager.writeRaw (persist-before-execute principle).
+// Persists via the typed chat session store (persist-before-execute principle).
 
 import { z } from "zod";
 import type { StateManager } from "../../base/state/state-manager.js";
@@ -17,6 +17,7 @@ import {
   type ChatSessionUsage,
   type ChatUsageCounter,
 } from "./chat-usage-contracts.js";
+import { resolveChatStateBaseDir } from "./chat-state-base-dir.js";
 export {
   ChatSessionUsageSchema,
   ChatUsageCounterSchema,
@@ -166,6 +167,8 @@ export const ChatSessionSchema = z.object({
   messages: z.array(ChatMessageSchema),
   compactionSummary: z.string().optional(),
   compactionRecords: z.array(ChatCompactionRecordSchema).optional(),
+  agentLoopSessionId: z.string().nullable().optional(),
+  agentLoopTraceId: z.string().nullable().optional(),
   agentLoopStatePath: z.string().nullable().optional(),
   agentLoopStatus: z.enum(["running", "completed", "failed"]).nullable().optional(),
   agentLoopResumable: z.boolean().nullable().optional(),
@@ -363,6 +366,19 @@ export class ChatHistory {
     }
   }
 
+  setAgentLoopSessionIdentity(input: { sessionId: string | null; traceId?: string | null }): void {
+    if (input.sessionId) {
+      this.session.agentLoopSessionId = input.sessionId;
+    } else {
+      delete this.session.agentLoopSessionId;
+    }
+    if (input.traceId) {
+      this.session.agentLoopTraceId = input.traceId;
+    } else if (input.traceId === null) {
+      delete this.session.agentLoopTraceId;
+    }
+  }
+
   setNotificationReplyTarget(target: RuntimeReplyTarget | null): void {
     if (target) {
       this.session.notificationReplyTarget = target;
@@ -537,10 +553,8 @@ export class ChatHistory {
 
   async persist(): Promise<void> {
     this.session.updatedAt = new Date().toISOString();
-    await this.stateManager.writeRaw(
-      `chat/sessions/${this.sessionId}.json`,
-      this.session
-    );
+    const { ChatSessionDataStore } = await import("./chat-session-data-store.js");
+    await new ChatSessionDataStore(resolveChatStateBaseDir(this.stateManager)).save(this.session);
   }
 
   private pushRolloutRecord(input: {
@@ -742,11 +756,13 @@ function collectActiveTargets(
       payload: cloneJson(session.notificationReplyTarget),
     });
   }
-  if (session.agentLoopStatePath || session.agentLoop) {
+  if (session.agentLoopSessionId || session.agentLoopStatePath || session.agentLoop) {
     targets.push({
       source: "agent_loop",
       state: "session",
       payload: {
+        sessionId: session.agentLoopSessionId ?? null,
+        traceId: session.agentLoopTraceId ?? null,
         statePath: session.agentLoopStatePath ?? session.agentLoop?.statePath ?? null,
         status: session.agentLoopStatus ?? session.agentLoop?.status ?? null,
         resumable: session.agentLoopResumable ?? session.agentLoop?.resumable ?? null,

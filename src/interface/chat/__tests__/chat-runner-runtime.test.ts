@@ -12,6 +12,7 @@ import {
   type ChatRunnerRuntimeDeps,
 } from "../chat-runner-runtime.js";
 import { buildStandaloneIngressMessage } from "../ingress-router.js";
+import { importLegacyChatAgentLoopSessionState } from "../chat-agentloop-state-migration.js";
 
 const tempDirs: string[] = [];
 
@@ -238,6 +239,7 @@ describe("chat-runner runtime helpers", () => {
       status: "completed",
       updatedAt: "2026-04-25T00:31:00.000Z",
     });
+    await importLegacyChatAgentLoopSessionState(baseDir);
 
     const active = await resolveChatResumeSelector("session:agent:agent-active", { stateManager });
     const stale = await resolveChatResumeSelector("session:agent:agent-stale", { stateManager });

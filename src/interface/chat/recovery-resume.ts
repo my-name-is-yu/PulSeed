@@ -17,6 +17,7 @@ export interface RecoveryResumeCandidate {
   updatedAt: string;
   cwd: string;
   summary: string | null;
+  agentLoopSessionId: string;
   agentLoopStatePath: string;
 }
 
@@ -50,8 +51,8 @@ export function toRecoveryResumeCandidates(entries: ChatSessionCatalogEntry[]): 
     .filter((entry) =>
       entry.agentLoopResumable
       && entry.agentLoopStatus === "running"
-      && typeof entry.agentLoopStatePath === "string"
-      && entry.agentLoopStatePath.length > 0
+      && typeof (entry.agentLoopSessionId ?? entry.agentLoopStatePath) === "string"
+      && (entry.agentLoopSessionId ?? entry.agentLoopStatePath ?? "").length > 0
     )
     .map((entry, index) => ({
       index: index + 1,
@@ -60,7 +61,8 @@ export function toRecoveryResumeCandidates(entries: ChatSessionCatalogEntry[]): 
       updatedAt: entry.agentLoopUpdatedAt ?? entry.updatedAt,
       cwd: entry.cwd,
       summary: entry.sessionSummary ?? null,
-      agentLoopStatePath: entry.agentLoopStatePath!,
+      agentLoopSessionId: (entry.agentLoopSessionId ?? entry.agentLoopStatePath)!,
+      agentLoopStatePath: entry.agentLoopStatePath ?? "",
     }));
 }
 

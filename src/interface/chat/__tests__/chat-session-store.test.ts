@@ -7,6 +7,7 @@ import {
   ChatSessionCatalog,
   type ChatSessionCatalogEntry,
 } from "../chat-session-store.js";
+import { importLegacyChatAgentLoopSessionState } from "../chat-agentloop-state-migration.js";
 import type { AgentLoopSessionState } from "../../../orchestrator/execution/agent-loop/agent-loop-session-state.js";
 
 function makeSession(overrides: Partial<Record<string, unknown>> & {
@@ -79,6 +80,10 @@ describe("ChatSessionCatalog", () => {
     cleanupTempDir(tmpDir);
   });
 
+  async function importLegacyFixtures(): Promise<void> {
+    await importLegacyChatAgentLoopSessionState(tmpDir);
+  }
+
   it("loads legacy session files and backfills updatedAt", async () => {
     await stateManager.writeRaw(
       "chat/sessions/legacy-session.json",
@@ -92,6 +97,7 @@ describe("ChatSessionCatalog", () => {
       })
     );
 
+    await importLegacyFixtures();
     const loaded = await catalog.loadSession("legacy-session");
     expect(loaded).not.toBeNull();
     expect(loaded?.id).toBe("legacy-session");
@@ -100,6 +106,7 @@ describe("ChatSessionCatalog", () => {
     expect(loaded?.agentLoopStatus).toBe("missing");
     expect(loaded?.agentLoopResumable).toBe(false);
 
+    await importLegacyFixtures();
     const sessions = await catalog.listSessions();
     expect(sessions).toHaveLength(1);
     expect(sessions[0]).toMatchObject({
@@ -155,6 +162,7 @@ describe("ChatSessionCatalog", () => {
       })
     );
 
+    await importLegacyFixtures();
     const sessions = await catalog.listSessions();
     expect(sessions.map((session: ChatSessionCatalogEntry) => session.id)).toEqual(["newer", "older"]);
     expect(sessions[0]).toMatchObject({
@@ -208,6 +216,7 @@ describe("ChatSessionCatalog", () => {
       })
     );
 
+    await importLegacyFixtures();
     const resolvedByPrefix = await catalog.resolveSelector("alpha-001");
     expect(resolvedByPrefix.id).toBe("alpha-001");
 
@@ -249,6 +258,7 @@ describe("ChatSessionCatalog", () => {
       }
     );
 
+    await importLegacyFixtures();
     const renamed = await catalog.renameSession("rename-me", "Renamed Session");
     expect(renamed.title).toBe("Renamed Session");
     expect(renamed.updatedAt).not.toBe("2025-01-01T01:00:00.000Z");
@@ -295,6 +305,7 @@ describe("ChatSessionCatalog", () => {
       })
     );
 
+    await importLegacyFixtures();
     const repoASessions = await catalog.listSessions({ cwd: "/repo-a" });
     expect(repoASessions.map((session) => session.id)).toEqual(["repo-a-new", "repo-a-old"]);
     await expect(catalog.latestSession({ cwd: "/repo-a" })).resolves.toMatchObject({ id: "repo-a-new" });
@@ -312,6 +323,7 @@ describe("ChatSessionCatalog", () => {
       })
     );
 
+    await importLegacyFixtures();
     const renamed = await catalog.renameSession("clear-title", null);
     expect(renamed.title).toBeNull();
     const loaded = await catalog.loadSession("clear-title");
@@ -351,6 +363,7 @@ describe("ChatSessionCatalog", () => {
       }
     );
 
+    await importLegacyFixtures();
     const loaded = await catalog.loadSession("journal-session");
     expect(loaded?.rolloutJournal).toEqual([rolloutRecord]);
 
@@ -385,6 +398,7 @@ describe("ChatSessionCatalog", () => {
       })
     );
 
+    await importLegacyFixtures();
     const dryRun = await catalog.cleanupSessions({
       dryRun: true,
       olderThanMs: 60 * 60 * 1000,
@@ -429,6 +443,7 @@ describe("ChatSessionCatalog", () => {
       })
     );
 
+    await importLegacyFixtures();
     const loaded = await catalog.loadSession("forked-session");
 
     expect(loaded).not.toBeNull();
@@ -476,6 +491,7 @@ describe("ChatSessionCatalog", () => {
       })
     );
 
+    await importLegacyFixtures();
     const dryRun = await catalog.cleanupSessions({
       dryRun: true,
       activeSessionId: "active-session",
@@ -497,8 +513,11 @@ describe("ChatSessionCatalog", () => {
 
     expect(enforced.removedSessionIds).toContain("old-session");
     expect(enforced.retainedSessionIds).toContain("active-session");
-    expect(fs.existsSync(path.join(tmpDir, "chat", "sessions", "old-session.json"))).toBe(false);
-    expect(fs.existsSync(path.join(tmpDir, "chat", "agentloop", "old-session.state.json"))).toBe(false);
+    await expect(catalog.loadSession("old-session")).resolves.toBeNull();
+    await expect(catalog.loadSession("active-session")).resolves.toMatchObject({ id: "active-session" });
+    await expect(catalog.loadSession("fresh-session")).resolves.toMatchObject({ id: "fresh-session" });
+    expect(fs.existsSync(path.join(tmpDir, "chat", "sessions", "old-session.json"))).toBe(true);
+    expect(fs.existsSync(path.join(tmpDir, "chat", "agentloop", "old-session.state.json"))).toBe(true);
     expect(fs.existsSync(path.join(tmpDir, "chat", "sessions", "active-session.json"))).toBe(true);
     expect(fs.existsSync(path.join(tmpDir, "chat", "sessions", "fresh-session.json"))).toBe(true);
   });

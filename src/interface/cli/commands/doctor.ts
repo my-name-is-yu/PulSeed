@@ -30,6 +30,7 @@ import { summarizeTaskOutcomeLedgers } from "../../../orchestrator/execution/tas
 import { assessTaskAgentLoopToolProfileFromTools, nativeTaskAgentLoopToolProfile } from "../../../orchestrator/execution/agent-loop/agent-loop-dogfood-benchmark.js";
 import { ToolRegistry } from "../../../tools/registry.js";
 import { createBuiltinTools } from "../../../tools/builtin/index.js";
+import { importLegacyChatAgentLoopSessionState } from "../../chat/chat-agentloop-state-migration.js";
 
 // ─── Types ───
 
@@ -764,6 +765,7 @@ export async function cmdDoctor(_args: string[]): Promise<number> {
       runtimeRoot,
       importedAt: new Date().toISOString(),
     });
+    const chatAgentLoopImportReport = await importLegacyChatAgentLoopSessionState(baseDir);
     const migratedLegacyCronTasks = await migrateLegacyCronTasksIfNeeded({
       baseDir,
       logger: repairLogger,
@@ -782,6 +784,9 @@ export async function cmdDoctor(_args: string[]): Promise<number> {
     );
     console.log(
       `Repair legacy import: queue=${legacyImportReport.queueRecords}, daemon=${legacyImportReport.daemonState ? "imported" : "none"}, shutdown=${legacyImportReport.shutdownMarker ? "imported" : "none"}, supervisor=${legacyImportReport.supervisorState ? "imported" : "none"}, schedules=${legacyImportReport.scheduleEntries}, schedule history=${legacyImportReport.scheduleHistoryRecords}, legacy cron=${migratedLegacyCronTasks ? "imported" : "none"}`
+    );
+    console.log(
+      `Repair chat import: chat sessions=${chatAgentLoopImportReport.importedChatSessions}, cross-platform sessions=${chatAgentLoopImportReport.importedCrossPlatformSessions}, agentloop states=${chatAgentLoopImportReport.importedAgentLoopStates}, agentloop trace events=${chatAgentLoopImportReport.importedTraceEvents}, blocked=${chatAgentLoopImportReport.blockedSources.length}`
     );
   }
 

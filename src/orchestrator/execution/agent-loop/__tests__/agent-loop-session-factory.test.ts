@@ -6,7 +6,7 @@ import { createPersistentAgentLoopSessionFactory } from "../agent-loop-session-f
 import { JsonAgentLoopSessionStateStore } from "../agent-loop-session-state.js";
 
 describe("createPersistentAgentLoopSessionFactory", () => {
-  it("persists trace events to jsonl files under the configured base directory", async () => {
+  it("persists trace events to Control DB under the configured base directory", async () => {
     const baseDir = makeTempDir();
     const createSession = createPersistentAgentLoopSessionFactory({
       traceBaseDir: baseDir,
@@ -24,16 +24,12 @@ describe("createPersistentAgentLoopSessionFactory", () => {
       createdAt: new Date().toISOString(),
     });
 
-    const tracesDir = path.join(baseDir, "traces", "agentloop", "chat");
-    const files = await fs.readdir(tracesDir);
-    expect(files).toHaveLength(1);
-
-    const content = await fs.readFile(path.join(tracesDir, files[0]!), "utf-8");
-    expect(content).toContain("\"type\":\"started\"");
-    expect(content).toContain(session.traceId);
+    await expect(session.traceStore.list(session.traceId)).resolves.toMatchObject([
+      { type: "started", traceId: session.traceId, sessionId: session.sessionId },
+    ]);
   });
 
-  it("resolves relative resume state paths under the configured base directory", async () => {
+  it("maps relative legacy resume state paths to typed DB session keys", async () => {
     const baseDir = makeTempDir();
     const createSession = createPersistentAgentLoopSessionFactory({
       traceBaseDir: baseDir,
@@ -62,8 +58,11 @@ describe("createPersistentAgentLoopSessionFactory", () => {
       updatedAt: new Date().toISOString(),
     });
 
-    const statePath = path.join(baseDir, "chat", "agentloop", "session-1.state.json");
-    await expect(fs.readFile(statePath, "utf-8")).resolves.toContain(session.sessionId);
+    await expect(session.stateStore.load()).resolves.toMatchObject({
+      sessionId: "session-1",
+      traceId: session.traceId,
+      status: "running",
+    });
   });
 });
 

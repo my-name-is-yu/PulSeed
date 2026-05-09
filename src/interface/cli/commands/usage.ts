@@ -9,6 +9,7 @@ import {
 } from "../../usage-counter.js";
 import { parseUsagePeriodMs } from "../../usage-period.js";
 import { ScheduleHistoryStore } from "../../../runtime/schedule/history.js";
+import { ChatSessionDataStore } from "../../chat/chat-session-data-store.js";
 
 async function collectGoalUsage(stateManager: StateManager, goalId: string): Promise<{
   goalId: string;
@@ -80,13 +81,10 @@ async function readSessionUsage(stateManager: StateManager, sessionId: string): 
   totals: UsageCounter;
   byPhase: Record<string, UsageCounter>;
 }> {
-  const raw = await stateManager.readRaw(`chat/sessions/${sessionId}.json`);
-  if (!raw || typeof raw !== "object") {
+  const session = await new ChatSessionDataStore(stateManager.getBaseDir()).load(sessionId);
+  if (!session) {
     throw new Error(`chat session not found: ${sessionId}`);
   }
-  const session = raw as {
-    usage?: { totals?: unknown; byPhase?: Record<string, unknown> };
-  };
   const byPhase = Object.fromEntries(
     Object.entries(session.usage?.byPhase ?? {}).map(([phase, usage]) => [phase, normalizeUsageCounter(usage)])
   );

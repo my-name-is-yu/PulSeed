@@ -68,6 +68,8 @@ export function loadedSessionToChatSession(session: LoadedChatSession): ChatSess
     ...(session.compactionSummary ? { compactionSummary: session.compactionSummary } : {}),
     ...(session.compactionRecords ? { compactionRecords: [...session.compactionRecords] } : {}),
     ...(session.title ? { title: session.title } : {}),
+    ...(session.agentLoopSessionId ? { agentLoopSessionId: session.agentLoopSessionId } : {}),
+    ...(session.agentLoopTraceId ? { agentLoopTraceId: session.agentLoopTraceId } : {}),
     ...(session.agentLoopStatePath ? { agentLoopStatePath: session.agentLoopStatePath } : {}),
     ...(session.agentLoopStatus === "running" || session.agentLoopStatus === "completed" || session.agentLoopStatus === "failed"
       ? { agentLoopStatus: session.agentLoopStatus }
