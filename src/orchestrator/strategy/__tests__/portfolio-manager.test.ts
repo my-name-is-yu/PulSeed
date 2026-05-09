@@ -105,6 +105,14 @@ describe("PortfolioManager", () => {
     );
   });
 
+  it("rejects non-finite rebalance interval config at construction", () => {
+    expect(() => new PortfolioManager(
+      mockStrategyManager as unknown as StrategyManager,
+      mockStateManager as unknown as StateManager,
+      { rebalance_interval_hours: Number.POSITIVE_INFINITY },
+    )).toThrow();
+  });
+
   // ─── Task Selection ───
 
   describe("selectNextStrategyForTask", () => {

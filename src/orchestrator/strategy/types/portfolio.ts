@@ -51,11 +51,13 @@ export type TaskSelectionResult = z.infer<typeof TaskSelectionResultSchema>;
 
 // --- PortfolioConfig ---
 
+export const MAX_PORTFOLIO_REBALANCE_INTERVAL_HOURS = 8_760;
+
 export const PortfolioConfigSchema = z.object({
   max_active_strategies: z.number().default(4),
   min_allocation: z.number().default(0.1),
   max_allocation: z.number().default(0.7),
-  rebalance_interval_hours: z.number().default(168),
+  rebalance_interval_hours: z.number().finite().positive().max(MAX_PORTFOLIO_REBALANCE_INTERVAL_HOURS).default(168),
   effectiveness_min_tasks: z.number().default(3),
   score_ratio_threshold: z.number().default(2.0),
   termination_stall_count: z.number().default(3),
