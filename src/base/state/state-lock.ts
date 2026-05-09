@@ -1,6 +1,6 @@
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
-import { parseProcessPid } from "../utils/process-pid.js";
+import { parseProcessPid, signalProcessPid } from "../utils/process-pid.js";
 
 /**
  * Per-goal advisory locking using lockfiles.
@@ -47,12 +47,7 @@ async function pathExists(dir: string): Promise<boolean> {
 }
 
 async function isProcessAlive(pid: number): Promise<boolean> {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
+  return signalProcessPid(pid, 0).status === "sent";
 }
 
 function parseNonnegativeSafeInteger(

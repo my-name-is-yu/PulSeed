@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import * as fs from "node:fs";
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
@@ -9,6 +9,7 @@ describe("state-lock", () => {
   let tmpDir: string;
 
   afterEach(() => {
+    vi.restoreAllMocks();
     if (tmpDir) cleanupTempDir(tmpDir);
   });
 
@@ -163,6 +164,32 @@ describe("state-lock", () => {
 
     await expect(
       acquireLock("goal-invalid-pid", tmpDir, {
+        maxRetries: 1,
+        initialDelayMs: 5,
+        maxTotalMs: 20,
+      })
+    ).rejects.toThrow(/timeout|max retries/i);
+
+    expect(fs.existsSync(lockDir)).toBe(true);
+    await fsp.rm(lockDir, { recursive: true, force: true });
+  });
+
+  it("does not clear a lock when the process probe reports EPERM", async () => {
+    tmpDir = makeTempDir();
+    const lockDir = path.join(tmpDir, "locks", "goals", "goal-eperm-pid.lock");
+    await fsp.mkdir(lockDir, { recursive: true });
+    await fsp.writeFile(path.join(lockDir, "pid"), "4242", "utf-8");
+    vi.spyOn(process, "kill").mockImplementation(((pid: number | string, signal?: NodeJS.Signals | number) => {
+      if (pid === 4242 && signal === 0) {
+        const error = new Error("operation not permitted") as NodeJS.ErrnoException;
+        error.code = "EPERM";
+        throw error;
+      }
+      return true;
+    }) as typeof process.kill);
+
+    await expect(
+      acquireLock("goal-eperm-pid", tmpDir, {
         maxRetries: 1,
         initialDelayMs: 5,
         maxTotalMs: 20,
