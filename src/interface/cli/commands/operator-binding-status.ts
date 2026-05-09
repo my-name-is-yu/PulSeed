@@ -11,6 +11,7 @@ import type { BackgroundRun, RuntimeReplyTarget, RuntimeSession } from "../../..
 import { BackgroundRunLedger } from "../../../runtime/store/background-run-store.js";
 import { RuntimeHealthStore } from "../../../runtime/store/health-store.js";
 import type { RuntimeHealthSnapshot } from "../../../runtime/store/runtime-schemas.js";
+import type { CapabilityOperatorStatusProjection } from "../../../runtime/control/capability-status-projection.js";
 
 export type OperatorChannelState = "missing" | "configured" | "active" | "degraded";
 export type RuntimeControlPermissionState = "allowed" | "missing_allowlist" | "unrestricted" | "unsupported";
@@ -57,6 +58,7 @@ export interface OperatorBindingStatus {
     runtime_root: string;
   };
   channels: OperatorChannelBindingStatus[];
+  capability_runtime: CapabilityOperatorStatusProjection[];
   sessions: RuntimeSession[];
   background_runs: BackgroundRun[];
   warnings: string[];
@@ -295,6 +297,7 @@ export async function collectOperatorBindingStatus(stateManager: StateManager): 
       runtime_root: runtimeRoot,
     },
     channels,
+    capability_runtime: [],
     sessions: registrySnapshot.sessions,
     background_runs: registrySnapshot.background_runs.filter(activeRun),
     warnings,
@@ -331,6 +334,22 @@ export function printOperatorBindingStatus(status: OperatorBindingStatus): void 
       console.log(
         `- ${run.id} [${run.kind}/${run.status}] parent=${run.parent_session_id ?? "-"} goal=${run.goal_id ?? "-"} pinned_reply=${formatReplyTarget(run.pinned_reply_target)}`
       );
+    }
+  }
+  console.log("\nCapability runtime:");
+  if (status.capability_runtime.length === 0) {
+    console.log("- none");
+  } else {
+    for (const capability of status.capability_runtime) {
+      console.log(
+        `- ${capability.capability_id} ${capability.operation_id}: readiness=${capability.readiness.label}; admission=${capability.admission.label}; autonomy=${capability.autonomy.label}; execution=${capability.execution.label}`
+      );
+      console.log(
+        `  can_execute=${capability.execution.can_execute ? "yes" : "no"} may_execute=${capability.execution.may_execute_now ? "yes" : "no"} may_initiate=${capability.execution.may_initiate_autonomously ? "yes" : "no"}`
+      );
+      for (const warning of capability.warnings) {
+        console.log(`  warning ${warning}`);
+      }
     }
   }
   if (status.warnings.length > 0) {

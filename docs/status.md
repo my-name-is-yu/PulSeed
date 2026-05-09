@@ -37,6 +37,20 @@ not cover every execution path: local backends and plugins still run with the
 user's privileges. For high-risk or untrusted goals, use Docker, a containerized
 PulSeed process, or a VM boundary. See [Security](../SECURITY.md).
 
+## Capability Projection
+
+Companion capability status is not derived from import or registry presence
+alone. Public and operator-facing labels are derived from readiness snapshots,
+then annotated with explicit admission and autonomy decisions when those
+decisions match the same operation scope.
+
+Normal companion surfaces should not expose a capability catalog or raw policy
+state. They project the next best safe action, such as suggest, prepare a draft,
+ask for approval, execute an already admitted operation, or offer a safe
+alternative. Operator, status, and debug surfaces may show readiness, admission,
+autonomy, evidence, and warning details so degraded or blocked state remains
+inspectable.
+
 ## Source of truth
 
 When public docs disagree, prefer the more specific page:

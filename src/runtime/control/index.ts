@@ -53,6 +53,18 @@ export {
   CompanionSurfaceExpressionPolicySchema,
   CompanionUserVisibleActionKindSchema,
 } from "./companion-action-projection.js";
+export {
+  projectCapabilityNormalCompanionStatusAction,
+  projectCapabilityOperatorStatus,
+  CapabilityNormalCompanionStatusProjectionInputSchema,
+  CapabilityNormalCompanionStatusProjectionSchema,
+  CapabilityOperatorStatusProjectionInputSchema,
+  CapabilityOperatorStatusProjectionSchema,
+  CapabilityProjectionAdmissionLabelSchema,
+  CapabilityProjectionAutonomyLabelSchema,
+  CapabilityProjectionExecutionLabelSchema,
+  CapabilityProjectionReadinessLabelSchema,
+} from "./capability-status-projection.js";
 export type { RuntimeTargetResolution } from "./runtime-target-resolver.js";
 export type {
   AdmissionAuthState,
@@ -107,6 +119,16 @@ export type {
   CompanionSurfaceExpressionPolicy,
   CompanionUserVisibleActionKind,
 } from "./companion-action-projection.js";
+export type {
+  CapabilityNormalCompanionStatusProjection,
+  CapabilityNormalCompanionStatusProjectionInput,
+  CapabilityOperatorStatusProjection,
+  CapabilityOperatorStatusProjectionInput,
+  CapabilityProjectionAdmissionLabel,
+  CapabilityProjectionAutonomyLabel,
+  CapabilityProjectionExecutionLabel,
+  CapabilityProjectionReadinessLabel,
+} from "./capability-status-projection.js";
 export { createDaemonRuntimeControlExecutor } from "./daemon-runtime-control-executor.js";
 export {
   publishRuntimeControlResult,

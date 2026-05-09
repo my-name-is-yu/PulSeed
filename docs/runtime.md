@@ -52,6 +52,11 @@ It keeps the runtime alive for long-running goal work and recovery.
 The normal user-facing path is to ask PulSeed to keep a goal moving in the background.
 Scriptable daemon and cron subcommands remain lower-level controls.
 
+Operator and debug status surfaces can show companion capability readiness,
+admission, autonomy, and execution labels. These labels are diagnostic: normal
+chat and GUI companion surfaces should show the next best safe action instead of
+listing a capability catalog or raw policy state.
+
 ## Schedule Operations
 
 PulSeed schedules are managed by the ScheduleEngine, which supports heartbeat,
