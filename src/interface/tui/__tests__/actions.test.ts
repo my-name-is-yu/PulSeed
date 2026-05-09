@@ -139,7 +139,11 @@ describe("ActionHandler — handle()", () => {
       const handler = new ActionHandler(deps);
       const result = await handler.handle({ intent: "loop_start", raw: "run" });
       expect(result.startLoop).toBeUndefined();
-      expect(result.messages.join("\n")).toMatch(/ゴール|goal/i);
+      const text = result.messages.join("\n");
+      expect(text).toMatch(/ゴール|goal/i);
+      expect(text).toContain("Describe the outcome");
+      expect(text).not.toContain("goal create");
+      expect(text).not.toContain("<goal-id>");
     });
   });
 
@@ -209,6 +213,9 @@ describe("ActionHandler — handle()", () => {
 
       expect(substringResult.startLoop).toBeUndefined();
       expect(substringResult.messages.join("\n")).toContain('No goal matching "routing"');
+      expect(substringResult.messages.join("\n")).toContain("/start <number>");
+      expect(substringResult.messages.join("\n")).not.toContain("<goal-id>");
+      expect(substringResult.messages.join("\n")).not.toContain("ID:");
       expect(exactTitleResult.startLoop).toBeUndefined();
       expect(exactTitleResult.messages.join("\n")).toContain('No goal matching "Improve beta routing"');
     });
@@ -255,6 +262,7 @@ describe("ActionHandler — handle()", () => {
 
       expect(result.startLoop).toBeUndefined();
       expect(result.messages.join("\n")).toContain('No goal matching "1abc"');
+      expect(result.messages.join("\n")).not.toContain("<goal-id>");
     });
   });
 

@@ -494,23 +494,22 @@ export function Dashboard({ state, runtimeSessions, runtimeHealth, evidenceSumma
           🎯 PULSEED
         </Text>
         <Text> </Text>
-        <Text color={theme.warning}>No active goals.</Text>
+        <Text color={theme.warning}>No active goal is running.</Text>
         <Text> </Text>
-        <Text dimColor>Get started:</Text>
+        <Text dimColor>Describe the outcome you want:</Text>
         <Text>
-          {"  1. Type a goal: "}
+          {"  "}
           <Text color={theme.userPrefix}>"improve test coverage to 90%"</Text>
         </Text>
         <Text>
-          {"  2. Then type: "}
-          <Text color={theme.command}>/run</Text>
+          {"  "}
+          <Text color={theme.userPrefix}>"organize this project and tell me what to do next"</Text>
         </Text>
-        <Text>{"  3. PulSeed will decompose and execute automatically."}</Text>
         <Text> </Text>
         <Text dimColor>
-          {"Type "}
+          {"Slash commands are optional. Type "}
           <Text color={theme.text}>/help</Text>
-          {" for all commands."}
+          {" for command details."}
         </Text>
       </Box>
     );

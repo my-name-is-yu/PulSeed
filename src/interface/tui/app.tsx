@@ -164,6 +164,12 @@ const CHAT_RUNNER_OWNED_COMMANDS = new Set([
   "/retry",
 ]);
 
+const INITIAL_CHAT_MESSAGE = [
+  "Describe what you want PulSeed to help with.",
+  'Examples: "organize this project and tell me what to do next" or "keep working on the README until it is ready."',
+  "Type /help when you want command details.",
+].join("\n");
+
 export function isChatRunnerOwnedSlashCommand(input: string): boolean {
   const parsed = parseExactSlashCommandToken(input);
   return parsed ? CHAT_RUNNER_OWNED_COMMANDS.has(parsed.command) : false;
@@ -408,7 +414,7 @@ export function App({
     {
       id: randomUUID(),
       role: "pulseed",
-      text: "What would you like to do? Type '/help' for available commands.",
+      text: INITIAL_CHAT_MESSAGE,
       timestamp: new Date(),
       messageType: "info",
     },
@@ -566,7 +572,7 @@ export function App({
       {
         id: randomUUID(),
         role: "pulseed" as const,
-        text: "Chat cleared. Type '/help' for available commands.",
+        text: "Chat cleared. Describe what you want to do next, or type /help for command details.",
         timestamp: new Date(),
         messageType: "info" as const,
       },
@@ -775,7 +781,7 @@ export function App({
             } else {
               setMessages((prev) => [...prev, {
                 id: randomUUID(), role: "pulseed" as const,
-                text: `No goal matching "${goalArg}". Use /start <number> or /start <goal-id>.`,
+                text: `No goal matching "${goalArg}". Choose one by number with /start <number>, or describe what you want to work on.`,
                 timestamp: new Date(), messageType: "warning" as const,
               }].slice(-MAX_MESSAGES));
             }
@@ -788,7 +794,7 @@ export function App({
           } else {
             setMessages((prev) => [...prev, {
               id: randomUUID(), role: "pulseed" as const,
-              text: `Unknown command: ${input}. Type /help for available commands.`,
+              text: `I could not run "${input}" as a command. Describe what you want instead, or type /help for command details.`,
               timestamp: new Date(), messageType: "warning" as const,
             }].slice(-MAX_MESSAGES));
           }
@@ -837,8 +843,8 @@ export function App({
             setMessages((prev) => [...prev, {
               id: randomUUID(), role: "pulseed" as const,
               text: isDaemonMode
-                ? "No active goal. Use /start <goal-id> to begin."
-                : "Chat is not available. Use slash commands (/help).",
+                ? "No active goal is running. Describe what you want to work on, or choose a listed goal by number with /start <number>."
+                : "Chat is not available yet. Describe the outcome after chat setup is ready, or type /help for command details.",
               timestamp: new Date(), messageType: "info" as const,
             }].slice(-MAX_MESSAGES));
           }

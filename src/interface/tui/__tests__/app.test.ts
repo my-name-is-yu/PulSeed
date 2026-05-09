@@ -378,6 +378,47 @@ describe("formatDaemonConnectionState", () => {
   });
 });
 
+describe("TUI natural empty states", () => {
+  beforeEach(() => {
+    testState.lastChatProps = null;
+    testState.lastChatMessages = [];
+    testState.lastDashboardProps = null;
+    testState.runtimeSessionSnapshots = [];
+    testState.runtimeSessionSnapshotCalls = 0;
+    testState.summarizedRunIds = [];
+    testState.runtimeEvidenceSummaries = {};
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("starts with natural-language examples before command help", async () => {
+    const screen = render(React.createElement(App, {
+      stateManager: createStateManagerMock() as unknown as StateManager,
+      noFlicker: false,
+      controlStream: process.stdout,
+      cwd: "~/workspace",
+      gitBranch: "main",
+      providerName: "claude",
+    }), {
+      patchConsole: false,
+      stdout: process.stdout,
+      stderr: process.stderr,
+    });
+
+    await flush();
+    const text = testState.lastChatMessages[0]?.text ?? "";
+
+    expect(text).toContain("Describe what you want PulSeed to help with.");
+    expect(text).toContain("Examples:");
+    expect(text.indexOf("Describe")).toBeLessThan(text.indexOf("/help"));
+    expect(text).not.toContain("available commands");
+
+    screen.unmount();
+  });
+});
+
 describe("TUI shell execution", () => {
   beforeEach(() => {
     testState.lastChatProps = null;
@@ -1287,6 +1328,39 @@ describe("daemon-mode chat routing", () => {
 
     expect(chatRunner.execute).toHaveBeenCalledWith("free form question", "~/workspace");
     expect(chatRunner.executeIngressMessage).not.toHaveBeenCalled();
+    expect(daemonClient.chat).not.toHaveBeenCalled();
+
+    screen.unmount();
+  });
+
+  it("falls back to natural-language no-active-goal guidance when chat is unavailable", async () => {
+    const daemonClient = createDaemonClientMock();
+    const stateManager = createStateManagerMock();
+
+    const screen = render(React.createElement(App, {
+      daemonClient: daemonClient as unknown as DaemonClient,
+      stateManager: stateManager as unknown as StateManager,
+      noFlicker: false,
+      controlStream: process.stdout,
+      cwd: "~/workspace",
+      gitBranch: "main",
+      providerName: "claude",
+    }), {
+      patchConsole: false,
+      stdout: process.stdout,
+      stderr: process.stderr,
+    });
+
+    await flush();
+    expect(testState.lastChatProps).not.toBeNull();
+
+    await testState.lastChatProps!.onSubmit("please help with this project");
+    await flush();
+    const text = testState.lastChatMessages.map((message) => message.text).join("\n");
+
+    expect(text).toContain("No active goal is running.");
+    expect(text).toContain("Describe what you want to work on");
+    expect(text).not.toContain("/start <goal-id>");
     expect(daemonClient.chat).not.toHaveBeenCalled();
 
     screen.unmount();

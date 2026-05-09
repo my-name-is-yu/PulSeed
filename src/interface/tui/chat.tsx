@@ -50,6 +50,7 @@ const CHAT_CHROME_RESERVED_ROWS = 4;
 const SCROLL_INDICATOR_ROWS = 2;
 const INPUT_BOX_HORIZONTAL_CHROME = 4;
 const SUGGESTION_HINT = " arrows to navigate, tab/enter to select, esc to dismiss";
+const EMPTY_INPUT_HINT = " Describe what you want to do. Type / for commands.";
 export { buildChatViewport } from "./chat/viewport.js";
 export {
   getScrollLineStep,
@@ -211,7 +212,7 @@ export function estimateComposerHeight({
   }
 
   if (emptyHint) {
-    height += estimateWrappedLineCount(" Type a message or /help for commands", termCols);
+    height += estimateWrappedLineCount(EMPTY_INPUT_HINT, termCols);
   }
 
   if (matches.length > 0) {
@@ -639,7 +640,7 @@ export function Chat({
           </Box>
           {bashMode && <Text color={theme.command}>! for bash mode</Text>}
           {emptyHint && (
-            <Text dimColor> Type a message or /help for commands</Text>
+            <Text dimColor>{EMPTY_INPUT_HINT}</Text>
           )}
           {hasMatches && (
             <Box flexDirection="column">
