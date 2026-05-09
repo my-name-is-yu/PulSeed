@@ -33,6 +33,8 @@ export const RuntimeExperimentQueueItemStatusSchema = z.enum([
 ]);
 export type RuntimeExperimentQueueItemStatus = z.infer<typeof RuntimeExperimentQueueItemStatusSchema>;
 
+const RuntimeExperimentQueuePositiveSafeIntSchema = z.number().int().positive().safe();
+
 export const RuntimeExperimentQueueProvenanceSchema = z.object({
   source: z.string().min(1),
   created_by: z.string().min(1).optional(),
@@ -61,10 +63,10 @@ export const RuntimeExperimentQueueItemSchema = z.object({
 export type RuntimeExperimentQueueItem = z.infer<typeof RuntimeExperimentQueueItemSchema>;
 
 export const RuntimeExperimentQueueRevisionSchema = z.object({
-  version: z.number().int().positive(),
+  version: RuntimeExperimentQueuePositiveSafeIntSchema,
   phase: RuntimeExperimentQueuePhaseSchema,
   status: RuntimeExperimentQueueRevisionStatusSchema,
-  revision_of: z.number().int().positive().nullable(),
+  revision_of: RuntimeExperimentQueuePositiveSafeIntSchema.nullable(),
   revision_reason: z.string().min(1).nullable(),
   created_at: z.string().datetime(),
   frozen_at: z.string().datetime().nullable(),
@@ -80,7 +82,7 @@ export const RuntimeExperimentQueueRecordSchema = z.object({
   goal_id: z.string().min(1).optional(),
   run_id: z.string().min(1).optional(),
   title: z.string().min(1).optional(),
-  current_version: z.number().int().positive(),
+  current_version: RuntimeExperimentQueuePositiveSafeIntSchema,
   created_at: z.string().datetime(),
   updated_at: z.string().datetime(),
   revisions: z.array(RuntimeExperimentQueueRevisionSchema).min(1),
