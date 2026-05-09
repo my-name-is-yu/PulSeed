@@ -8,12 +8,18 @@ import {
   toSafeSkillId,
   type SkillSource,
 } from "./skill-parser.js";
-import { checksumPath } from "../assets/checksum.js";
 import {
   createAssetRecord,
   toAssetId,
   type AssetRecord,
 } from "../assets/types.js";
+import {
+  classifySkillBundleMutationTarget,
+  copySkillBundleNoSymlinks,
+  describeSkillBundle,
+  inferSkillSourceAgent,
+  type SkillBundleManifest,
+} from "./skill-bundle.js";
 
 export interface SkillRecord {
   id: string;
@@ -22,6 +28,7 @@ export interface SkillRecord {
   path: string;
   relativePath: string;
   source: SkillSource;
+  bundle: SkillBundleManifest;
 }
 
 export interface SkillRegistryOptions {
@@ -51,27 +58,37 @@ export class SkillRegistry {
 
   async listAssetRecords(now = new Date().toISOString()): Promise<AssetRecord[]> {
     const skills = await this.list();
-    return Promise.all(skills.map(async (skill) =>
-      createAssetRecord({
+    return Promise.all(skills.map(async (skill) => {
+      const sourceAgent = inferSkillSourceAgent(skill.relativePath);
+      return createAssetRecord({
         id: toAssetId("skill_bundle", [skill.id]),
         kind: "skill_bundle",
         label: skill.name,
-        source_agent: "unknown",
+        source_agent: sourceAgent,
         source_path: skill.path,
         imported_path: skill.path,
-        checksum: await checksumPath(path.dirname(skill.path)),
+        checksum: skill.bundle.bundleChecksum,
         status: "recorded",
         provenance: {
           source_label: skill.source,
-          evidence_refs: [skill.relativePath],
+          evidence_refs: [
+            skill.relativePath,
+            ...skill.bundle.files.map((file) => file.relativePath),
+          ],
         },
         metadata: {
           description: skill.description,
           registry_source: skill.source,
           relative_path: skill.relativePath,
+          bundle_manifest: skill.bundle,
+          compatibility: skill.bundle.compatibility,
+          protected_target: classifySkillBundleMutationTarget(skill.path, {
+            homeSkillsDir: this.homeSkillsDir,
+            workspaceRoot: this.workspaceRoot,
+          }),
         },
-      }, now)
-    ));
+      }, now);
+    }));
   }
 
   async search(query: string): Promise<SkillRecord[]> {
@@ -120,13 +137,11 @@ export class SkillRegistry {
     if (fs.existsSync(destFile) && !options.force) {
       throw new Error(`skill "${namespace}/${safeName}" already exists; use --force to overwrite`);
     }
-    await fsp.mkdir(destDir, { recursive: true });
-    await fsp.copyFile(skillFile, destFile);
-    return {
-      ...parseSkillFile(content, destFile, "home", this.homeSkillsDir),
-      id: `${namespace}/${safeName}`,
-      relativePath: path.relative(this.homeSkillsDir, destFile),
-    };
+    if (options.force) {
+      await fsp.rm(destDir, { recursive: true, force: true });
+    }
+    await copySkillBundleNoSymlinks(path.dirname(skillFile), destDir);
+    return this.skillRecordFromFile(destFile, "home", this.homeSkillsDir, `${namespace}/${safeName}`);
   }
 
   private async scanRoot(root: string, source: SkillRecord["source"]): Promise<SkillRecord[]> {
@@ -134,13 +149,29 @@ export class SkillRegistry {
     await walk(root, async (file) => {
       if (path.basename(file) !== "SKILL.md") return;
       try {
-        const content = await fsp.readFile(file, "utf-8");
-        found.push(parseSkillFile(content, file, source, root));
+        found.push(await this.skillRecordFromFile(file, source, root));
       } catch {
         // Ignore unreadable skill files while keeping the registry usable.
       }
     });
     return found;
+  }
+
+  private async skillRecordFromFile(
+    file: string,
+    source: SkillRecord["source"],
+    root: string,
+    overrideId?: string
+  ): Promise<SkillRecord> {
+    const content = await fsp.readFile(file, "utf-8");
+    const parsed = parseSkillFile(content, file, source, root);
+    const relativePath = path.relative(root, file);
+    const sourceAgent = inferSkillSourceAgent(overrideId ?? parsed.relativePath);
+    return {
+      ...parsed,
+      ...(overrideId ? { id: overrideId, relativePath } : {}),
+      bundle: await describeSkillBundle(file, { sourceAgent }),
+    };
   }
 }
 

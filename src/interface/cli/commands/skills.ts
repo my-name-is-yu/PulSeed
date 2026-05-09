@@ -38,15 +38,23 @@ export async function cmdSkills(argv: string[], registry = new SkillRegistry({ w
   }
 
   if (subcommand === "show") {
-    const id = argv[1];
+    const showMetadata = argv.includes("--metadata") || argv.includes("--json");
+    const id = argv.slice(1).find((arg) => !arg.startsWith("--"));
     if (!id) {
-      console.error("Error: skill id is required. Usage: pulseed skills show <id>");
+      console.error("Error: skill id is required. Usage: pulseed skills show <id> [--metadata]");
       return 1;
     }
     const result = await registry.read(id);
     if (!result) {
       console.error(`Error: skill "${id}" not found.`);
       return 1;
+    }
+    if (showMetadata) {
+      console.log(JSON.stringify({
+        skill: result.skill,
+        bundle: result.skill.bundle,
+      }, null, 2));
+      return 0;
     }
     console.log(result.body);
     return 0;
