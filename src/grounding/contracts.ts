@@ -178,6 +178,7 @@ export interface GroundingRequest {
     goalId?: string;
     limit: number;
     relationshipProfileContext?: RelationshipProfileRetrievalContext;
+    relationshipProfilePromptContext?: string;
   }) => Promise<GroundingKnowledgeResult | null>;
   lessonsQuery?: (input: { query: string; goalId?: string; limit: number }) => Promise<GroundingLessonResult | null>;
   relationshipProfileRetrieval?: {

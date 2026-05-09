@@ -195,6 +195,12 @@ describe("GroundingGateway", () => {
     });
     expect((profileContext?.items as Array<{ value: string }> | undefined)?.map((item) => item.value)).toEqual(["Prefer concise status reports."]);
     expect((profileContext?.items as Array<{ status: string }> | undefined)?.map((item) => item.status)).toEqual(["active"]);
+    expect(knowledgeQuery.mock.calls[0]?.[0]?.relationshipProfilePromptContext).toContain(
+      "Relationship profile retrieval context Surface"
+    );
+    expect(knowledgeQuery.mock.calls[0]?.[0]?.relationshipProfilePromptContext).not.toContain(
+      "Relationship profile retrieval context (scope=memory_retrieval; include_sensitive=false)"
+    );
 
     fs.rmSync(tmpRoot, { recursive: true, force: true });
   });
@@ -234,9 +240,61 @@ describe("GroundingGateway", () => {
     });
     expect(JSON.stringify(profileContext)).not.toContain("Prefer concise status reports.");
     expect(profileContext?.items?.[0]).not.toHaveProperty("value");
+    const profileSurface = knowledgeSource?.metadata?.["relationshipProfileSurface"] as {
+      inspection?: { included_summaries?: unknown[]; prompt_dump?: unknown };
+    } | undefined;
+    expect(profileSurface?.inspection?.included_summaries).toHaveLength(1);
+    expect(profileSurface).not.toHaveProperty("prompt_dump");
     const knowledgeSection = bundle.dynamicSections.find((section) => section.key === "knowledge_query");
     expect(knowledgeSection?.content).toContain("Relationship profile retrieval context");
     expect(knowledgeSection?.content).toContain("Prefer concise status reports.");
+
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  });
+
+  it("does not let caller-supplied out-of-scope profile context bypass Surface admission", async () => {
+    const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-grounding-profile-out-of-scope-"));
+    const homeDir = path.join(tmpRoot, "home");
+    fs.mkdirSync(homeDir, { recursive: true });
+    const { item } = await upsertRelationshipProfileItem(homeDir, {
+      stableKey: "user.preference.local-only",
+      kind: "preference",
+      value: "Use this only for local planning.",
+      source: "cli_update",
+      allowedScopes: ["local_planning"],
+      now: "2026-05-03T00:00:00.000Z",
+    });
+    const knowledgeQuery = vi.fn().mockResolvedValue({
+      retrievalId: "knowledge:profile-out-of-scope",
+      items: [{ id: "k1", content: "Knowledge result", source: "test" }],
+    });
+    const gateway = createGroundingGateway({ stateManager: makeStateManager({ getBaseDir: vi.fn().mockReturnValue(homeDir) }) });
+
+    const bundle = await gateway.build({
+      surface: "agent_loop",
+      purpose: "task_execution",
+      homeDir,
+      workspaceRoot: "/repo",
+      userMessage: "Find relevant memory",
+      query: "Find relevant memory",
+      relationshipProfileContext: {
+        scope: "memory_retrieval",
+        includeSensitive: false,
+        items: [item],
+      },
+      knowledgeQuery,
+    });
+
+    expect(knowledgeQuery.mock.calls[0]?.[0]?.relationshipProfileContext?.items).toEqual([]);
+    expect(knowledgeQuery.mock.calls[0]?.[0]?.relationshipProfilePromptContext).toBe("");
+    const knowledgeSource = bundle.traces.source.find((source) => source.sectionKey === "knowledge_query");
+    const profileSurface = knowledgeSource?.metadata?.["relationshipProfileSurface"] as {
+      inspection?: { excluded_summaries?: unknown[] };
+    } | undefined;
+    expect(profileSurface?.inspection?.excluded_summaries).toHaveLength(1);
+    expect(JSON.stringify(knowledgeSource?.metadata)).not.toContain("Use this only for local planning.");
+    const knowledgeSection = bundle.dynamicSections.find((section) => section.key === "knowledge_query");
+    expect(knowledgeSection?.content).not.toContain("Use this only for local planning.");
 
     fs.rmSync(tmpRoot, { recursive: true, force: true });
   });
@@ -282,7 +340,7 @@ describe("GroundingGateway", () => {
       query: "Find relevant memory",
       knowledgeQuery,
     });
-    await gateway.build({
+    const sensitiveBundle = await gateway.build({
       surface: "agent_loop",
       purpose: "task_execution",
       homeDir,
@@ -297,9 +355,13 @@ describe("GroundingGateway", () => {
     expect(knowledgeQuery.mock.calls[1]?.[0]?.relationshipProfileContext).toMatchObject({
       includeSensitive: true,
     });
-    expect((knowledgeQuery.mock.calls[1]?.[0]?.relationshipProfileContext?.items as Array<{ value: string }> | undefined)?.map((item) => item.value)).toEqual([
-      "Do not retrieve health context unless explicitly allowed.",
-    ]);
+    expect(knowledgeQuery.mock.calls[1]?.[0]?.relationshipProfileContext?.items).toEqual([]);
+    const sensitiveKnowledgeSource = sensitiveBundle.traces.source.find((source) => source.sectionKey === "knowledge_query");
+    const sensitiveSurface = sensitiveKnowledgeSource?.metadata?.["relationshipProfileSurface"] as {
+      inspection?: { excluded_summaries?: unknown[] };
+    } | undefined;
+    expect(sensitiveSurface?.inspection?.excluded_summaries).toHaveLength(1);
+    expect(JSON.stringify(sensitiveKnowledgeSource?.metadata)).not.toContain("Do not retrieve health context unless explicitly allowed.");
 
     fs.rmSync(tmpRoot, { recursive: true, force: true });
   });

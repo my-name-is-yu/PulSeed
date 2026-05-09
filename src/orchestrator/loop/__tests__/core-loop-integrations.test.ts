@@ -1206,7 +1206,7 @@ describe("CoreLoop", async () => {
       expect(callArgs![4]).toContain("JWT tokens");
     });
 
-    it("passes active memory-retrieval relationship profile context through production task-cycle recall", async () => {
+    it("passes Surface-admitted relationship profile context through production task-cycle recall", async () => {
       const { deps, mocks } = createMockDeps(tmpDir);
       await mocks.stateManager.saveGoal(makeGoal());
       await saveDreamConfig({
@@ -1279,6 +1279,8 @@ describe("CoreLoop", async () => {
       const semanticQuery = knowledgeManager.searchKnowledge.mock.calls[0]?.[0] as string;
       const relevantOptions = knowledgeManager.getRelevantKnowledge.mock.calls[0]?.[2];
       const semanticOptions = knowledgeManager.searchKnowledge.mock.calls[0]?.[2];
+      const expectedSurfaceHeader = "Relationship profile retrieval context Surface (surface_id=surface:relationship-profile:agent_loop:goal-1:memory_retrieval; requested_use=runtime_grounding)";
+      const rawRetrievalHeader = "Relationship profile retrieval context (scope=memory_retrieval; include_sensitive=false)";
       expect(relevantOptions?.relationshipProfileContext).toMatchObject({
         scope: "memory_retrieval",
         includeSensitive: false,
@@ -1289,13 +1291,20 @@ describe("CoreLoop", async () => {
       expect(semanticOptions?.relationshipProfileContext.items.map((item: { value: string }) => item.value)).toEqual([
         "Prefer concise status reports.",
       ]);
-      expect(semanticQuery).toContain("Relationship profile retrieval context");
+      expect(semanticOptions?.relationshipProfilePromptContext).toContain(expectedSurfaceHeader);
+      expect(semanticOptions?.relationshipProfilePromptContext).toContain("Use only Surface-included relationship context below.");
+      expect(semanticOptions?.relationshipProfilePromptContext).not.toContain(rawRetrievalHeader);
+      expect(semanticQuery).toContain(expectedSurfaceHeader);
+      expect(semanticQuery).toContain("Use only Surface-included relationship context below.");
+      expect(semanticQuery).not.toContain(rawRetrievalHeader);
       expect(semanticQuery).toContain("Prefer concise status reports.");
       expect(semanticQuery).not.toContain("Prefer verbose status reports.");
       expect(semanticQuery).not.toContain("Do not retrieve health context");
       expect(semanticQuery).not.toContain("Prefer VS Code.");
       const callArgs = mocks.taskLifecycle.runTaskCycle.mock.calls[0];
-      expect(callArgs![4]).toContain("Relationship profile retrieval context");
+      expect(callArgs![4]).toContain(expectedSurfaceHeader);
+      expect(callArgs![4]).toContain("Use only Surface-included relationship context below.");
+      expect(callArgs![4]).not.toContain(rawRetrievalHeader);
       expect(callArgs![4]).toContain("Prefer concise status reports.");
       expect(callArgs![4]).not.toContain("Prefer verbose status reports.");
       expect(callArgs![4]).not.toContain("Do not retrieve health context");
