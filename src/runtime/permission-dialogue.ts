@@ -16,6 +16,8 @@ export const PendingPermissionTargetSchema = z.object({
 });
 export type PendingPermissionTarget = z.infer<typeof PendingPermissionTargetSchema>;
 
+const PendingPermissionSafeNonnegativeIntSchema = z.number().int().nonnegative().safe();
+
 export const PendingPermissionGrantProposalScopeSchema = z.enum([
   "once",
   "run",
@@ -49,7 +51,7 @@ export const PendingPermissionTaskSchema = z.object({
   state_epoch: z.string().min(1),
   wait_plan_id: z.string().min(1).optional(),
   state_version: z.string().min(1).optional(),
-  expires_at: z.number().int().nonnegative().optional(),
+  expires_at: PendingPermissionSafeNonnegativeIntSchema.optional(),
   permission_level: z.string().min(1).optional(),
   is_destructive: z.boolean().optional(),
   reversibility: z.string().min(1).optional(),
@@ -85,7 +87,7 @@ export function createPendingPermissionTask(input: {
     state_epoch: input.stateEpoch,
     ...(input.waitPlanId ? { wait_plan_id: input.waitPlanId } : {}),
     ...(input.stateVersion ? { state_version: input.stateVersion } : {}),
-    ...(input.expiresAt ? { expires_at: input.expiresAt } : {}),
+    ...(input.expiresAt !== undefined ? { expires_at: input.expiresAt } : {}),
     ...(input.permissionLevel ? { permission_level: input.permissionLevel } : {}),
     ...(typeof input.isDestructive === "boolean" ? { is_destructive: input.isDestructive } : {}),
     ...(input.reversibility ? { reversibility: input.reversibility } : {}),
@@ -98,7 +100,7 @@ export function withPermissionExpiry<T extends { kind?: string; expires_at?: num
   expiresAt: number,
 ): T {
   return task.kind === "permission"
-    ? { ...task, expires_at: expiresAt }
+    ? PendingPermissionTaskSchema.parse({ ...task, expires_at: expiresAt }) as unknown as T
     : task;
 }
 
@@ -107,7 +109,15 @@ export function getPendingPermissionTask(record: ApprovalRecord): PendingPermiss
   if (!isRecord(payload)) return null;
   const task = payload["task"];
   const parsed = PendingPermissionTaskSchema.safeParse(task);
-  return parsed.success ? parsed.data : null;
+  if (parsed.success) {
+    return parsed.data;
+  }
+  if (!isRecord(task) || task["expires_at"] === undefined) {
+    return null;
+  }
+  const { expires_at: _unsafeExpiresAt, ...taskWithoutExpiry } = task;
+  const sanitized = PendingPermissionTaskSchema.safeParse(taskWithoutExpiry);
+  return sanitized.success ? sanitized.data : null;
 }
 
 export function getPendingPermissionGrantProposal(record: ApprovalRecord): PendingPermissionGrantProposal | null {
