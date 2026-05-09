@@ -8,7 +8,8 @@ import {
   SharedKnowledgeEntrySchema,
 } from "../../base/types/knowledge.js";
 import { readJsonFileOrNull } from "../../base/utils/json-io.js";
-import { ScheduleEntryListSchema } from "../../runtime/types/schedule.js";
+import { parsePersistedScheduleEntries } from "../../runtime/schedule/entry-normalization.js";
+import type { ScheduleEntry } from "../../runtime/types/schedule.js";
 import { AgentMemoryStoreSchema } from "../knowledge/types/agent-memory.js";
 import type { SoilIndexSnapshot } from "./index-store.js";
 import { rebuildSoilIndex } from "./index-store.js";
@@ -102,6 +103,15 @@ async function readJsonWithSchema<TSchema extends z.ZodTypeAny>(
   }
   const parsed = schema.safeParse(raw);
   return parsed.success ? parsed.data : null;
+}
+
+async function readScheduleEntries(filePath: string): Promise<ScheduleEntry[] | null> {
+  const raw = await readJsonFileOrNull(filePath);
+  if (raw === null) {
+    return null;
+  }
+  const parsed = parsePersistedScheduleEntries(raw);
+  return parsed.validList ? parsed.entries : null;
 }
 
 function localSourcePathsForPage(frontmatter: SoilPageFrontmatter, pagePath: string): string[] {
@@ -205,7 +215,7 @@ export async function rebuildSoilFromRuntime(input: SoilRuntimeRebuildInput): Pr
     projected.reports += 1;
   }
 
-  const schedules = await readJsonWithSchema(path.join(input.baseDir, "schedules.json"), ScheduleEntryListSchema);
+  const schedules = await readScheduleEntries(path.join(input.baseDir, "schedules.json"));
   if (schedules !== null) {
     await projectSchedulesToSoil({ ...projectionBase, entries: schedules });
     projected.schedules = schedules.length;

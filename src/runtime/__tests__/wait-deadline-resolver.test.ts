@@ -3,7 +3,13 @@ import { describe, it, expect, afterEach, beforeEach } from "vitest";
 import { StateManager } from "../../base/state/state-manager.js";
 import { WaitDeadlineResolver, clampIntervalToNextWaitDeadline, getDueWaitGoalIds } from "../daemon/wait-deadline-resolver.js";
 import { makeTempDir } from "../../../tests/helpers/temp-dir.js";
-import { ScheduleEntrySchema } from "../types/schedule.js";
+import {
+  MAX_SCHEDULE_RETRY_ATTEMPTS,
+  MAX_SCHEDULE_RETRY_DELAY_MS,
+  MAX_SCHEDULE_RETRY_MULTIPLIER,
+  MAX_SCHEDULE_RETRY_WINDOW_MS,
+  ScheduleEntrySchema,
+} from "../types/schedule.js";
 
 let tempDir: string;
 let stateManager: StateManager;
@@ -47,39 +53,43 @@ function makeActiveWaitStrategy(overrides: Record<string, unknown> = {}): Record
   };
 }
 
+function makeProjectedWaitSchedule(nextFireAt: string, overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: "11111111-1111-4111-8111-111111111111",
+    name: "Wait resume goal-1/wait-1",
+    layer: "goal_trigger",
+    trigger: { type: "interval", seconds: 3600, jitter_factor: 0 },
+    enabled: true,
+    metadata: {
+      source: "manual",
+      internal: true,
+      activation_kind: "wait_resume",
+      goal_id: "goal-1",
+      strategy_id: "wait-1",
+      wait_strategy_id: "wait-1",
+      note: "Awaiting file completion",
+    },
+    goal_trigger: { goal_id: "goal-1", max_iterations: 10, skip_if_active: false },
+    created_at: "2026-04-24T12:00:00.000Z",
+    updated_at: "2026-04-24T12:00:00.000Z",
+    last_fired_at: null,
+    next_fire_at: nextFireAt,
+    consecutive_failures: 0,
+    last_escalation_at: null,
+    escalation_timestamps: [],
+    total_executions: 0,
+    total_tokens_used: 0,
+    max_tokens_per_day: 100000,
+    tokens_used_today: 0,
+    budget_reset_at: null,
+    baseline_results: [],
+    ...overrides,
+  };
+}
+
 async function writeProjectedWaitSchedule(nextFireAt: string, overrides: Record<string, unknown> = {}): Promise<void> {
   await stateManager.writeRaw("schedules.json", [
-    ScheduleEntrySchema.parse({
-      id: "11111111-1111-4111-8111-111111111111",
-      name: "Wait resume goal-1/wait-1",
-      layer: "goal_trigger",
-      trigger: { type: "interval", seconds: 3600, jitter_factor: 0 },
-      enabled: true,
-      metadata: {
-        source: "manual",
-        internal: true,
-        activation_kind: "wait_resume",
-        goal_id: "goal-1",
-        strategy_id: "wait-1",
-        wait_strategy_id: "wait-1",
-        note: "Awaiting file completion",
-      },
-      goal_trigger: { goal_id: "goal-1", max_iterations: 10, skip_if_active: false },
-      created_at: "2026-04-24T12:00:00.000Z",
-      updated_at: "2026-04-24T12:00:00.000Z",
-      last_fired_at: null,
-      next_fire_at: nextFireAt,
-      consecutive_failures: 0,
-      last_escalation_at: null,
-      escalation_timestamps: [],
-      total_executions: 0,
-      total_tokens_used: 0,
-      max_tokens_per_day: 100000,
-      tokens_used_today: 0,
-      budget_reset_at: null,
-      baseline_results: [],
-      ...overrides,
-    }),
+    ScheduleEntrySchema.parse(makeProjectedWaitSchedule(nextFireAt, overrides)),
   ]);
 }
 
@@ -265,5 +275,36 @@ describe("WaitDeadlineResolver", () => {
         }),
       ],
     });
+  });
+
+  it("keeps internal wait schedules with finite legacy retry bounds", async () => {
+    await stateManager.writeRaw("schedules.json", [
+      makeProjectedWaitSchedule("2026-04-24T12:03:00.000Z", {
+        retry_policy: {
+          enabled: true,
+          initial_delay_ms: MAX_SCHEDULE_RETRY_DELAY_MS + 1,
+          max_delay_ms: MAX_SCHEDULE_RETRY_DELAY_MS + 1,
+          multiplier: MAX_SCHEDULE_RETRY_MULTIPLIER + 1,
+          jitter_factor: 0,
+          max_attempts: MAX_SCHEDULE_RETRY_ATTEMPTS + 1,
+          max_retry_window_ms: MAX_SCHEDULE_RETRY_WINDOW_MS + 1,
+          retryable_failure_kinds: ["transient"],
+        },
+        retry_state: {
+          attempts: MAX_SCHEDULE_RETRY_ATTEMPTS + 1,
+        },
+      }),
+    ]);
+
+    const resolution = await new WaitDeadlineResolver(stateManager).resolve(["goal-1"]);
+
+    expect(resolution.next_observe_at).toBe("2026-04-24T12:03:00.000Z");
+    expect(resolution.waiting_goals).toEqual([
+      expect.objectContaining({
+        goal_id: "goal-1",
+        strategy_id: "wait-1",
+        next_observe_at: "2026-04-24T12:03:00.000Z",
+      }),
+    ]);
   });
 });

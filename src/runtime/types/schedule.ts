@@ -142,21 +142,26 @@ export const ScheduleInternalAttentionProjectionSchema = z.object({
 }).strict();
 export type ScheduleInternalAttentionProjection = z.infer<typeof ScheduleInternalAttentionProjectionSchema>;
 
+export const MAX_SCHEDULE_RETRY_DELAY_MS = 24 * 60 * 60 * 1000;
+export const MAX_SCHEDULE_RETRY_WINDOW_MS = 30 * MAX_SCHEDULE_RETRY_DELAY_MS;
+export const MAX_SCHEDULE_RETRY_ATTEMPTS = 100;
+export const MAX_SCHEDULE_RETRY_MULTIPLIER = 100;
+
 export const ScheduleRetryPolicySchema = z.object({
   enabled: z.boolean().default(true),
-  initial_delay_ms: z.number().int().min(0).default(30_000),
-  max_delay_ms: z.number().int().positive().default(15 * 60 * 1000),
-  multiplier: z.number().min(1).default(2),
-  jitter_factor: z.number().min(0).max(1).default(0.2),
-  max_attempts: z.number().int().min(1).default(3),
-  max_retry_window_ms: z.number().int().positive().default(24 * 60 * 60 * 1000),
+  initial_delay_ms: z.number().finite().int().min(0).max(MAX_SCHEDULE_RETRY_DELAY_MS).default(30_000),
+  max_delay_ms: z.number().finite().int().positive().max(MAX_SCHEDULE_RETRY_DELAY_MS).default(15 * 60 * 1000),
+  multiplier: z.number().finite().min(1).max(MAX_SCHEDULE_RETRY_MULTIPLIER).default(2),
+  jitter_factor: z.number().finite().min(0).max(1).default(0.2),
+  max_attempts: z.number().finite().int().min(1).max(MAX_SCHEDULE_RETRY_ATTEMPTS).default(3),
+  max_retry_window_ms: z.number().finite().int().positive().max(MAX_SCHEDULE_RETRY_WINDOW_MS).default(24 * 60 * 60 * 1000),
   retryable_failure_kinds: z.array(ScheduleFailureKindSchema).default(["transient"]),
 });
 
 export type ScheduleRetryPolicy = z.infer<typeof ScheduleRetryPolicySchema>;
 
 export const ScheduleRetryStateSchema = z.object({
-  attempts: z.number().int().nonnegative().default(0),
+  attempts: z.number().finite().int().nonnegative().max(MAX_SCHEDULE_RETRY_ATTEMPTS).default(0),
   next_retry_at: z.string().datetime().nullable().default(null),
   last_attempt_at: z.string().datetime().nullable().default(null),
   first_failure_at: z.string().datetime().nullable().default(null),

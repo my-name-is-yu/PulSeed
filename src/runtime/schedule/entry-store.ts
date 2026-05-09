@@ -2,7 +2,8 @@ import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { writeJsonFileAtomic, readJsonFileOrNull } from "../../base/utils/json-io.js";
 import { isProcessPidValue } from "../../base/utils/process-pid.js";
-import { ScheduleEntryListSchema, type ScheduleEntry } from "../types/schedule.js";
+import { parsePersistedScheduleEntries } from "./entry-normalization.js";
+import type { ScheduleEntry } from "../types/schedule.js";
 
 const SCHEDULES_FILE = "schedules.json";
 const SCHEDULE_LOCK_DIR = `${SCHEDULES_FILE}.lock`;
@@ -31,8 +32,15 @@ export class ScheduleEntryStore {
   async readEntries(): Promise<ScheduleEntry[]> {
     const raw = await readJsonFileOrNull(this.schedulesPath);
     if (raw === null) return [];
-    const result = ScheduleEntryListSchema.safeParse(raw);
-    return result.success ? result.data : [];
+    const { entries, invalidCount, validList } = parsePersistedScheduleEntries(raw);
+    if (!validList) return [];
+
+    if (invalidCount > 0) {
+      this.logger.warn("Skipped invalid schedule entries while loading schedules.json", {
+        invalid_count: invalidCount,
+      });
+    }
+    return entries;
   }
 
   async saveEntries(entries: ScheduleEntry[]): Promise<void> {

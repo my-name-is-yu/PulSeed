@@ -3,6 +3,12 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { ScheduleEngine } from "../schedule-engine.js";
 import { detectChange } from "../change-detector.js";
+import {
+  MAX_SCHEDULE_RETRY_ATTEMPTS,
+  MAX_SCHEDULE_RETRY_DELAY_MS,
+  MAX_SCHEDULE_RETRY_MULTIPLIER,
+  MAX_SCHEDULE_RETRY_WINDOW_MS,
+} from "../types/schedule.js";
 import type { ScheduleEntry, ScheduleEntryInput } from "../types/schedule.js";
 import type { IDataSourceAdapter } from "../../platform/observation/data-source-adapter.js";
 import { makeTempDir, cleanupTempDir } from "../../../tests/helpers/temp-dir.js";
@@ -27,6 +33,139 @@ describe("ScheduleEngine", () => {
   it("loads empty entries from fresh directory", async () => {
     const entries = await engine.loadEntries();
     expect(entries).toEqual([]);
+  });
+
+  it("skips persisted entries with non-finite retry policy values without dropping valid schedules", async () => {
+    fs.writeFileSync(
+      path.join(tempDir, "schedules.json"),
+      `[
+        {
+          "id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+          "name": "valid-retry-policy",
+          "layer": "heartbeat",
+          "trigger": { "type": "interval", "seconds": 60, "jitter_factor": 0 },
+          "enabled": true,
+          "heartbeat": {
+            "check_type": "custom",
+            "check_config": { "command": "echo ok" },
+            "failure_threshold": 3,
+            "timeout_ms": 5000
+          },
+          "created_at": "2026-04-08T00:00:00.000Z",
+          "updated_at": "2026-04-08T00:00:00.000Z",
+          "last_fired_at": null,
+          "next_fire_at": "2026-04-08T00:01:00.000Z",
+          "consecutive_failures": 0,
+          "last_escalation_at": null,
+          "escalation_timestamps": [],
+          "total_executions": 0,
+          "total_tokens_used": 0,
+          "max_tokens_per_day": 100000,
+          "tokens_used_today": 0,
+          "budget_reset_at": null
+        },
+        {
+          "id": "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+          "name": "invalid-retry-policy",
+          "layer": "heartbeat",
+          "trigger": { "type": "interval", "seconds": 60, "jitter_factor": 0 },
+          "enabled": true,
+          "heartbeat": {
+            "check_type": "custom",
+            "check_config": { "command": "echo ok" },
+            "failure_threshold": 3,
+            "timeout_ms": 5000
+          },
+          "retry_policy": {
+            "enabled": true,
+            "initial_delay_ms": 1e309,
+            "max_delay_ms": 60000,
+            "multiplier": 2,
+            "jitter_factor": 0,
+            "max_attempts": 3,
+            "max_retry_window_ms": 120000,
+            "retryable_failure_kinds": ["transient"]
+          },
+          "created_at": "2026-04-08T00:00:00.000Z",
+          "updated_at": "2026-04-08T00:00:00.000Z",
+          "last_fired_at": null,
+          "next_fire_at": "2026-04-08T00:01:00.000Z",
+          "consecutive_failures": 0,
+          "last_escalation_at": null,
+          "escalation_timestamps": [],
+          "total_executions": 0,
+          "total_tokens_used": 0,
+          "max_tokens_per_day": 100000,
+          "tokens_used_today": 0,
+          "budget_reset_at": null
+        }
+      ]`,
+      "utf-8",
+    );
+
+    const entries = await engine.loadEntries();
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.name).toBe("valid-retry-policy");
+  });
+
+  it("clamps finite legacy retry bounds while loading persisted schedules", async () => {
+    fs.writeFileSync(
+      path.join(tempDir, "schedules.json"),
+      JSON.stringify([
+        {
+          id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+          name: "legacy-large-retry-policy",
+          layer: "heartbeat",
+          trigger: { type: "interval", seconds: 60, jitter_factor: 0 },
+          enabled: true,
+          heartbeat: {
+            check_type: "custom",
+            check_config: { command: "echo ok" },
+            failure_threshold: 3,
+            timeout_ms: 5000,
+          },
+          retry_policy: {
+            enabled: true,
+            initial_delay_ms: MAX_SCHEDULE_RETRY_DELAY_MS + 1,
+            max_delay_ms: MAX_SCHEDULE_RETRY_DELAY_MS + 1,
+            multiplier: MAX_SCHEDULE_RETRY_MULTIPLIER + 1,
+            jitter_factor: 0,
+            max_attempts: MAX_SCHEDULE_RETRY_ATTEMPTS + 1,
+            max_retry_window_ms: MAX_SCHEDULE_RETRY_WINDOW_MS + 1,
+            retryable_failure_kinds: ["transient"],
+          },
+          retry_state: {
+            attempts: MAX_SCHEDULE_RETRY_ATTEMPTS + 1,
+          },
+          created_at: "2026-04-08T00:00:00.000Z",
+          updated_at: "2026-04-08T00:00:00.000Z",
+          last_fired_at: null,
+          next_fire_at: "2026-04-08T00:01:00.000Z",
+          consecutive_failures: 0,
+          last_escalation_at: null,
+          escalation_timestamps: [],
+          total_executions: 0,
+          total_tokens_used: 0,
+          max_tokens_per_day: 100000,
+          tokens_used_today: 0,
+          budget_reset_at: null,
+        },
+      ], null, 2),
+      "utf-8",
+    );
+
+    const entries = await engine.loadEntries();
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.retry_policy).toMatchObject({
+      initial_delay_ms: MAX_SCHEDULE_RETRY_DELAY_MS,
+      max_delay_ms: MAX_SCHEDULE_RETRY_DELAY_MS,
+      multiplier: MAX_SCHEDULE_RETRY_MULTIPLIER,
+      max_attempts: MAX_SCHEDULE_RETRY_ATTEMPTS,
+      max_retry_window_ms: MAX_SCHEDULE_RETRY_WINDOW_MS,
+    });
+    expect(entries[0]?.retry_state?.attempts).toBe(MAX_SCHEDULE_RETRY_ATTEMPTS);
   });
 
   it("migrates legacy scheduled-tasks.json into schedules.json on load", async () => {
