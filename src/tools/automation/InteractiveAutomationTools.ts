@@ -1,193 +1,66 @@
-import { z } from "zod";
-import type { InteractiveAutomationCapability, InteractiveAutomationProviderFamily, InteractiveAutomationRegistry } from "../../runtime/interactive-automation/index.js";
-import {
-  BrowserSessionResolver,
-  type BrowserSessionStore,
-  type RuntimeAuthHandoffStore,
-  type BrowserSessionScope,
-} from "../../runtime/interactive-automation/index.js";
+import type { InteractiveAutomationRegistry } from "../../runtime/interactive-automation/registry.js";
+import { BrowserSessionResolver } from "../../runtime/interactive-automation/browser-session-resolver.js";
 import type {
-  BackpressureController,
-  CircuitBreakerController,
-} from "../../runtime/guardrails/index.js";
-import type { ITool, PermissionCheckResult, ToolCallContext, ToolDescriptionContext, ToolMetadata, ToolResult } from "../types.js";
-
-const TAGS = ["automation", "interactive"];
-const MAX_OUTPUT_CHARS = 12_000;
-const DEFAULT_DENIED_APPS = ["Password Manager", "Banking", "System Settings"];
-const MAX_DESKTOP_CLICK_COUNT = 10;
-
-function desktopCoordinateSchema() {
-  return z.number()
-    .finite()
-    .min(Number.MIN_SAFE_INTEGER)
-    .max(Number.MAX_SAFE_INTEGER);
-}
-
-const DesktopClickCountSchema = z.number()
-  .finite()
-  .int()
-  .min(1)
-  .max(MAX_DESKTOP_CLICK_COUNT)
-  .default(1);
-
-export interface InteractiveAutomationToolPolicy {
-  requireApproval: "always" | "write" | "destructive";
-  allowedApps?: readonly string[];
-  deniedApps?: readonly string[];
-}
-
-export const DEFAULT_INTERACTIVE_AUTOMATION_TOOL_POLICY: InteractiveAutomationToolPolicy = {
-  requireApproval: "always",
-  deniedApps: DEFAULT_DENIED_APPS,
-};
-
-const ProviderInputSchema = z.object({
-  providerId: z.string().optional(),
-}).strict();
-
-export const DesktopListAppsInputSchema = ProviderInputSchema;
-export type DesktopListAppsInput = z.infer<typeof DesktopListAppsInputSchema>;
-
-export const DesktopGetAppStateInputSchema = ProviderInputSchema.extend({
-  app: z.string().min(1),
-});
-export type DesktopGetAppStateInput = z.infer<typeof DesktopGetAppStateInputSchema>;
-
-export const DesktopClickInputSchema = ProviderInputSchema.extend({
-  app: z.string().min(1),
-  elementId: z.string().optional(),
-  x: desktopCoordinateSchema().optional(),
-  y: desktopCoordinateSchema().optional(),
-  button: z.enum(["left", "right", "middle"]).default("left"),
-  clickCount: DesktopClickCountSchema,
-});
-export type DesktopClickInput = z.infer<typeof DesktopClickInputSchema>;
-
-export const DesktopTypeTextInputSchema = ProviderInputSchema.extend({
-  app: z.string().min(1),
-  text: z.string(),
-});
-export type DesktopTypeTextInput = z.infer<typeof DesktopTypeTextInputSchema>;
-
-export const ResearchWebInputSchema = ProviderInputSchema.extend({
-  query: z.string().min(1),
-  maxResults: z.number().int().positive().max(20).optional(),
-  domains: z.array(z.string().min(1)).optional(),
-});
-export type ResearchWebInput = z.infer<typeof ResearchWebInputSchema>;
-
-export const ResearchAnswerInputSchema = ProviderInputSchema.extend({
-  question: z.string().min(1),
-  model: z.string().optional(),
-});
-export type ResearchAnswerInput = z.infer<typeof ResearchAnswerInputSchema>;
-
-export const BrowserRunWorkflowInputSchema = ProviderInputSchema.extend({
-  task: z.string().min(1),
-  startUrl: z.string().url().optional(),
-  sessionId: z.string().optional(),
-  serviceKey: z.string().optional(),
-});
-export type BrowserRunWorkflowInput = z.infer<typeof BrowserRunWorkflowInputSchema>;
-
-export const BrowserGetStateInputSchema = ProviderInputSchema.extend({
-  sessionId: z.string().optional(),
-  serviceKey: z.string().optional(),
-  startUrl: z.string().url().optional(),
-});
-export type BrowserGetStateInput = z.infer<typeof BrowserGetStateInputSchema>;
+  BrowserSessionScope,
+  BrowserSessionStore,
+} from "../../runtime/interactive-automation/browser-session-store.js";
+import type { RuntimeAuthHandoffStore } from "../../runtime/interactive-automation/runtime-auth-handoff-store.js";
+import type { BackpressureController } from "../../runtime/guardrails/backpressure-controller.js";
+import type { CircuitBreakerController } from "../../runtime/guardrails/circuit-breaker.js";
+import type { PermissionCheckResult, ToolCallContext, ToolMetadata, ToolResult } from "../types.js";
+import {
+  AutomationTool,
+  DEFAULT_INTERACTIVE_AUTOMATION_TOOL_POLICY,
+  MAX_OUTPUT_CHARS,
+  TAGS,
+  type InteractiveAutomationToolPolicy,
+} from "./automation-tool-base.js";
+import {
+  BrowserGetStateInputSchema,
+  BrowserRunWorkflowInputSchema,
+  DesktopClickInputSchema,
+  DesktopGetAppStateInputSchema,
+  DesktopListAppsInputSchema,
+  DesktopTypeTextInputSchema,
+  ResearchAnswerInputSchema,
+  ResearchWebInputSchema,
+  type BrowserGetStateInput,
+  type BrowserRunWorkflowInput,
+  type DesktopClickInput,
+  type DesktopGetAppStateInput,
+  type DesktopListAppsInput,
+  type DesktopTypeTextInput,
+  type ResearchAnswerInput,
+  type ResearchWebInput,
+} from "./interactive-automation-schemas.js";
+export {
+  DEFAULT_INTERACTIVE_AUTOMATION_TOOL_POLICY,
+  type InteractiveAutomationToolPolicy,
+} from "./automation-tool-base.js";
+export {
+  BrowserGetStateInputSchema,
+  BrowserRunWorkflowInputSchema,
+  DesktopClickInputSchema,
+  DesktopGetAppStateInputSchema,
+  DesktopListAppsInputSchema,
+  DesktopTypeTextInputSchema,
+  ResearchAnswerInputSchema,
+  ResearchWebInputSchema,
+  type BrowserGetStateInput,
+  type BrowserRunWorkflowInput,
+  type DesktopClickInput,
+  type DesktopGetAppStateInput,
+  type DesktopListAppsInput,
+  type DesktopTypeTextInput,
+  type ResearchAnswerInput,
+  type ResearchWebInput,
+} from "./interactive-automation-schemas.js";
 
 export interface BrowserWorkflowRuntimeDeps {
   browserSessionStore?: BrowserSessionStore;
   authHandoffStore?: RuntimeAuthHandoffStore;
   circuitBreaker?: CircuitBreakerController;
   backpressure?: BackpressureController;
-}
-
-abstract class AutomationTool<TInput> implements ITool<TInput> {
-  abstract readonly metadata: ToolMetadata;
-  abstract readonly inputSchema: z.ZodType<TInput, z.ZodTypeDef, any>;
-
-  constructor(
-    protected readonly registry: InteractiveAutomationRegistry,
-    protected readonly policy: InteractiveAutomationToolPolicy = DEFAULT_INTERACTIVE_AUTOMATION_TOOL_POLICY,
-  ) {}
-
-  abstract description(context?: ToolDescriptionContext): string;
-  abstract call(input: TInput, context: ToolCallContext): Promise<ToolResult>;
-  abstract checkPermissions(input: TInput, context: ToolCallContext): Promise<PermissionCheckResult>;
-  abstract isConcurrencySafe(input: TInput): boolean;
-
-  protected resolveProvider(input: { providerId?: string }, family: InteractiveAutomationProviderFamily, capability: InteractiveAutomationCapability) {
-    return this.registry.resolve({
-      providerId: input.providerId,
-      family,
-      capability,
-    });
-  }
-
-  protected fail(summary: string, startTime: number): ToolResult {
-    return {
-      success: false,
-      data: null,
-      summary,
-      error: summary,
-      durationMs: Date.now() - startTime,
-    };
-  }
-
-  protected success(data: unknown, summary: string, startTime: number): ToolResult {
-    return {
-      success: true,
-      data,
-      summary,
-      durationMs: Date.now() - startTime,
-    };
-  }
-
-  protected async availableOrFail(provider: { id: string; isAvailable: () => Promise<{ available: boolean; reason?: string }> } | undefined, startTime: number): Promise<ToolResult | null> {
-    if (!provider) {
-      return this.fail("No matching interactive automation provider is registered", startTime);
-    }
-    const availability = await provider.isAvailable();
-    if (!availability.available) {
-      return this.fail(`${provider.id} is unavailable: ${availability.reason ?? "unknown reason"}`, startTime);
-    }
-    return null;
-  }
-
-  protected checkDesktopMutationPolicy(app: string, action: string): PermissionCheckResult {
-    const appName = app.trim();
-    const allowedApps = this.policy.allowedApps ?? [];
-    if (allowedApps.length > 0 && !matchesAnyApp(appName, allowedApps)) {
-      return {
-        status: "denied",
-        reason: `${action} is not allowed for ${appName}; it is not in the interactive automation allowed_apps list`,
-      };
-    }
-
-    if (matchesAnyApp(appName, this.policy.deniedApps ?? DEFAULT_DENIED_APPS)) {
-      return {
-        status: "denied",
-        reason: `${action} is denied for protected app ${appName}`,
-      };
-    }
-
-    if (this.policy.requireApproval === "always" || this.policy.requireApproval === "write") {
-      return { status: "needs_approval", reason: `${action} in ${appName} requires approval` };
-    }
-
-    return { status: "allowed" };
-  }
-}
-
-function matchesAnyApp(app: string, patterns: readonly string[]): boolean {
-  const normalized = app.toLowerCase();
-  return patterns.some((pattern) => {
-    const candidate = pattern.trim().toLowerCase();
-    return candidate.length > 0 && normalized.includes(candidate);
-  });
 }
 
 export class DesktopListAppsTool extends AutomationTool<DesktopListAppsInput> {
