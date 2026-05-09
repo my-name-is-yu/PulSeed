@@ -26,9 +26,9 @@ export const CodeSearchInputSchema = z.object({
     maxCandidatesPerRetriever: z.number().int().min(1).max(CODE_SEARCH_MAX_CANDIDATES_PER_RETRIEVER).optional(),
     maxFusionCandidates: z.number().int().min(1).max(CODE_SEARCH_MAX_FUSION_CANDIDATES).optional(),
     maxRerankCandidates: z.number().int().min(1).max(CODE_SEARCH_MAX_RERANK_CANDIDATES).optional(),
-  }).optional(),
+  }).strict().optional(),
   outputLimit: z.number().int().positive().max(40).optional(),
-});
+}).strict();
 export type CodeSearchInput = z.infer<typeof CodeSearchInputSchema>;
 
 function compactCandidate(candidate: RankedCandidate): Record<string, unknown> {
