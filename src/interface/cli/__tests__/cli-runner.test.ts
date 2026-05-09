@@ -500,9 +500,10 @@ describe("approval list subcommand", async () => {
     consoleSpy.mockRestore();
   });
 
-  it("skips malformed approval files without crashing", async () => {
+  it("ignores malformed legacy approval files without crashing", async () => {
     const approvalStore = new ApprovalStore(path.join(tmpDir, "runtime"));
     await approvalStore.ensureReady();
+    await fs.promises.mkdir(path.join(tmpDir, "runtime", "approvals", "pending"), { recursive: true });
     await fs.promises.writeFile(
       path.join(tmpDir, "runtime", "approvals", "pending", "bad.json"),
       "{not-json",
@@ -527,7 +528,7 @@ describe("approval list subcommand", async () => {
     expect(output).toContain("approval-valid");
     expect(output).toContain("goal-valid");
     expect(output).not.toContain("bad.json");
-    expect(warnings).toContain("Skipped 1 invalid pending approval record(s).");
+    expect(warnings).toBe("");
     warnSpy.mockRestore();
     consoleSpy.mockRestore();
   });

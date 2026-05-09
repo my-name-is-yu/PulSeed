@@ -1,10 +1,15 @@
 import { z } from "zod";
-import { RuntimeJournal } from "./runtime-journal.js";
 import {
   createRuntimeStorePaths,
   type RuntimeStorePaths,
 } from "./runtime-paths.js";
 import { ApprovalOriginSchema } from "./runtime-schemas.js";
+import {
+  openRuntimeControlDatabase,
+  type ControlDatabase,
+  type RuntimeControlDbStoreOptions,
+  type SqliteDatabase,
+} from "./control-db/index.js";
 
 export const PermissionWaitPlanStateSchema = z.enum([
   "waiting_for_permission",
@@ -113,64 +118,72 @@ export type PermissionWaitPlanResumeResult =
 
 export class PermissionWaitPlanStore {
   private readonly paths: RuntimeStorePaths;
-  private readonly journal: RuntimeJournal;
+  private readonly dbOptions: RuntimeControlDbStoreOptions;
+  private dbPromise: Promise<ControlDatabase> | null = null;
   private readonly now: () => number;
   private readonly createEventId: () => string;
 
   constructor(
     runtimeRootOrPaths?: string | RuntimeStorePaths,
-    options: { now?: () => number; createEventId?: () => string } = {},
+    options: RuntimeControlDbStoreOptions & { now?: () => number; createEventId?: () => string } = {},
   ) {
     this.paths =
       typeof runtimeRootOrPaths === "string"
         ? createRuntimeStorePaths(runtimeRootOrPaths)
         : runtimeRootOrPaths ?? createRuntimeStorePaths();
-    this.journal = new RuntimeJournal(this.paths);
+    this.dbOptions = options;
     this.now = options.now ?? (() => Date.now());
     this.createEventId =
       options.createEventId ?? (() => `permission-wait-event-${this.now()}-${Math.random().toString(36).slice(2, 8)}`);
   }
 
   async ensureReady(): Promise<void> {
-    await this.journal.ensureReady();
+    await this.database();
   }
 
   async load(waitPlanId: string): Promise<PermissionWaitPlanRecord | null> {
-    return this.journal.load(this.paths.permissionWaitPlanPath(waitPlanId), PermissionWaitPlanRecordRuntimeSchema);
+    const db = await this.database();
+    return db.read((sqlite) => readPermissionWaitPlan(sqlite, waitPlanId));
   }
 
   async list(): Promise<PermissionWaitPlanRecord[]> {
-    return this.journal.list(this.paths.permissionWaitPlansDir, PermissionWaitPlanRecordRuntimeSchema);
+    const db = await this.database();
+    return db.read((sqlite) => listPermissionWaitPlans(sqlite));
   }
 
   async listByState(state: PermissionWaitPlanState): Promise<PermissionWaitPlanRecord[]> {
-    return (await this.list()).filter((record) => record.state === state);
+    const db = await this.database();
+    return db.read((sqlite) => listPermissionWaitPlans(sqlite, "state = ?", [state]));
   }
 
   async createWaiting(input: PermissionWaitPlanCreateInput): Promise<PermissionWaitPlanRecord> {
-    const existing = await this.load(input.wait_plan_id);
-    if (existing) return existing;
-    const now = this.now();
-    const record = PermissionWaitPlanRecordSchema.parse({
-      schema_version: "permission-wait-plan-v1",
-      wait_plan_id: input.wait_plan_id,
-      approval_id: input.approval_id ?? input.wait_plan_id,
-      ...(input.goal_id ? { goal_id: input.goal_id } : {}),
-      state: "waiting_for_permission",
-      created_at: now,
-      updated_at: now,
-      ...(input.expires_at ? { expires_at: input.expires_at } : {}),
-      ...(input.origin ? { origin: input.origin } : {}),
-      canonical_plan: input.canonical_plan,
-      audit_refs: input.audit_refs ?? [],
-      audit_events: [
-        this.event("waiting_for_permission", {
-          reason: "approval_required",
-          auditRefs: input.audit_refs ?? [],
-        }),
-      ],
+    const db = await this.database();
+    return db.transaction((sqlite) => {
+      const existing = readPermissionWaitPlan(sqlite, input.wait_plan_id);
+      if (existing) return existing;
+      const now = this.now();
+      const record = PermissionWaitPlanRecordSchema.parse({
+        schema_version: "permission-wait-plan-v1",
+        wait_plan_id: input.wait_plan_id,
+        approval_id: input.approval_id ?? input.wait_plan_id,
+        ...(input.goal_id ? { goal_id: input.goal_id } : {}),
+        state: "waiting_for_permission",
+        created_at: now,
+        updated_at: now,
+        ...(input.expires_at ? { expires_at: input.expires_at } : {}),
+        ...(input.origin ? { origin: input.origin } : {}),
+        canonical_plan: input.canonical_plan,
+        audit_refs: input.audit_refs ?? [],
+        audit_events: [
+          this.event("waiting_for_permission", {
+            reason: "approval_required",
+            auditRefs: input.audit_refs ?? [],
+          }),
+        ],
+      });
+      upsertPermissionWaitPlan(sqlite, record);
+      return record;
     });
-    return this.save(record);
   }
 
   async markApproved(
@@ -287,6 +300,10 @@ export class PermissionWaitPlanStore {
     return { status: "resumed", record: resumed };
   }
 
+  async importLegacyRecord(record: PermissionWaitPlanRecord): Promise<PermissionWaitPlanRecord> {
+    return this.save(record);
+  }
+
   private async transition(
     waitPlanId: string,
     state: PermissionWaitPlanState,
@@ -340,11 +357,17 @@ export class PermissionWaitPlanStore {
   }
 
   private async save(record: PermissionWaitPlanRecord): Promise<PermissionWaitPlanRecord> {
-    return this.journal.save(
-      this.paths.permissionWaitPlanPath(record.wait_plan_id),
-      PermissionWaitPlanRecordRuntimeSchema,
-      PermissionWaitPlanRecordSchema.parse(record),
-    );
+    const parsed = PermissionWaitPlanRecordSchema.parse(record);
+    const db = await this.database();
+    db.transaction((sqlite) => {
+      upsertPermissionWaitPlan(sqlite, parsed);
+    });
+    return parsed;
+  }
+
+  private async database(): Promise<ControlDatabase> {
+    this.dbPromise ??= openRuntimeControlDatabase(this.paths, this.dbOptions);
+    return this.dbPromise;
   }
 }
 
@@ -388,4 +411,74 @@ function sortJson(value: unknown): unknown {
     sorted[key] = sortJson((value as Record<string, unknown>)[key]);
   }
   return sorted;
+}
+
+interface PermissionWaitPlanRow {
+  record_json: string;
+}
+
+function parsePermissionWaitPlanJson(recordJson: string): PermissionWaitPlanRecord {
+  return PermissionWaitPlanRecordRuntimeSchema.parse(JSON.parse(recordJson) as unknown);
+}
+
+function readPermissionWaitPlan(sqlite: SqliteDatabase, waitPlanId: string): PermissionWaitPlanRecord | null {
+  const row = sqlite.prepare(`
+    SELECT record_json
+    FROM permission_wait_plans
+    WHERE wait_plan_id = ?
+  `).get(waitPlanId) as PermissionWaitPlanRow | undefined;
+  return row ? parsePermissionWaitPlanJson(row.record_json) : null;
+}
+
+function listPermissionWaitPlans(
+  sqlite: SqliteDatabase,
+  whereSql = "1 = 1",
+  params: unknown[] = []
+): PermissionWaitPlanRecord[] {
+  const rows = sqlite.prepare(`
+    SELECT record_json
+    FROM permission_wait_plans
+    WHERE ${whereSql}
+    ORDER BY updated_at ASC, wait_plan_id ASC
+  `).all(...params) as PermissionWaitPlanRow[];
+  return rows.map((row) => parsePermissionWaitPlanJson(row.record_json));
+}
+
+function upsertPermissionWaitPlan(sqlite: SqliteDatabase, record: PermissionWaitPlanRecord): void {
+  sqlite.prepare(`
+    INSERT INTO permission_wait_plans (
+      wait_plan_id,
+      approval_id,
+      goal_id,
+      state,
+      created_at,
+      updated_at,
+      expires_at,
+      resolved_at,
+      resumed_at,
+      record_json
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, json(?))
+    ON CONFLICT(wait_plan_id) DO UPDATE SET
+      approval_id = excluded.approval_id,
+      goal_id = excluded.goal_id,
+      state = excluded.state,
+      created_at = excluded.created_at,
+      updated_at = excluded.updated_at,
+      expires_at = excluded.expires_at,
+      resolved_at = excluded.resolved_at,
+      resumed_at = excluded.resumed_at,
+      record_json = excluded.record_json
+  `).run(
+    record.wait_plan_id,
+    record.approval_id,
+    record.goal_id ?? null,
+    record.state,
+    record.created_at,
+    record.updated_at,
+    record.expires_at ?? null,
+    record.resolved_at ?? null,
+    record.resumed_at ?? null,
+    JSON.stringify(record),
+  );
 }

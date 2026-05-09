@@ -29,7 +29,7 @@ describe("OutboxStore", () => {
     });
   }
 
-  it("appends outbox entries with padded sequence numbers", async () => {
+  it("appends outbox entries into the control database", async () => {
     await store.ensureReady();
     const first = await store.append({
       event_type: "goal_activated",
@@ -40,7 +40,8 @@ describe("OutboxStore", () => {
     });
 
     expect(first.seq).toBe(1);
-    expect(fs.existsSync(path.join(tmpDir, "outbox", "000000000001.json"))).toBe(true);
+    expect(fs.existsSync(path.join(tmpDir, "state", "pulseed-control.sqlite"))).toBe(true);
+    expect(fs.existsSync(path.join(tmpDir, "outbox", "000000000001.json"))).toBe(false);
     expect(await store.load(1)).toMatchObject({ event_type: "goal_activated" });
   });
 
@@ -63,16 +64,11 @@ describe("OutboxStore", () => {
     await expect(store.list()).resolves.toEqual([]);
   });
 
-  it("skips persisted outbox records with unsafe numeric scalars", async () => {
-    await store.ensureReady();
+  it("does not read legacy outbox JSON on the normal store path", async () => {
+    fs.mkdirSync(path.join(tmpDir, "outbox"), { recursive: true });
     fs.writeFileSync(
       path.join(tmpDir, "outbox", "000000000001.json"),
-      JSON.stringify({
-        seq: 1,
-        event_type: "unsafe_created_at",
-        created_at: Number.MAX_SAFE_INTEGER + 1,
-        payload: {},
-      }, null, 2),
+      JSON.stringify(makeRecord(1, "legacy"), null, 2),
       "utf-8",
     );
 

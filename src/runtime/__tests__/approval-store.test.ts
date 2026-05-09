@@ -32,17 +32,14 @@ describe("ApprovalStore", () => {
     });
   }
 
-  function sleep(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms));
-  }
-
-  it("creates directories and stores pending approvals", async () => {
+  it("initializes the control database and stores pending approvals", async () => {
     await store.ensureReady();
     const record = makeApproval();
     const saved = await store.savePending(record);
     expect(saved.state).toBe("pending");
     expect(await store.load("approval-1")).not.toBeNull();
-    expect(fs.existsSync(path.join(tmpDir, "approvals", "pending", "approval-1.json"))).toBe(true);
+    expect(fs.existsSync(path.join(tmpDir, "state", "pulseed-control.sqlite"))).toBe(true);
+    expect(fs.existsSync(path.join(tmpDir, "approvals", "pending", "approval-1.json"))).toBe(false);
   });
 
   it("rejects unsafe approval timestamps before persistence", async () => {
@@ -66,23 +63,15 @@ describe("ApprovalStore", () => {
     expect(fs.existsSync(path.join(tmpDir, "approvals", "pending", "approval-unsafe.json"))).toBe(false);
   });
 
-  it("skips persisted pending approvals with unsafe timestamps", async () => {
-    await store.ensureReady();
+  it("does not read legacy pending approval JSON on the normal store path", async () => {
+    fs.mkdirSync(path.join(tmpDir, "approvals", "pending"), { recursive: true });
     fs.writeFileSync(
-      path.join(tmpDir, "approvals", "pending", "approval-unsafe.json"),
-      JSON.stringify({
-        approval_id: "approval-unsafe",
-        request_envelope_id: "msg-1",
-        correlation_id: "corr-1",
-        state: "pending",
-        created_at: 1,
-        expires_at: Number.MAX_SAFE_INTEGER + 1,
-        payload: { prompt: "approve?" },
-      }, null, 2),
+      path.join(tmpDir, "approvals", "pending", "approval-legacy.json"),
+      JSON.stringify(makeApproval({ approval_id: "approval-legacy" }), null, 2),
       "utf-8",
     );
 
-    await expect(store.loadPending("approval-unsafe")).resolves.toBeNull();
+    await expect(store.loadPending("approval-legacy")).resolves.toBeNull();
     await expect(store.listPending()).resolves.toEqual([]);
   });
 
@@ -123,7 +112,7 @@ describe("ApprovalStore", () => {
 
     const pendingList = await store.listPending();
     expect(pendingList).toEqual([]);
-    expect(await store.loadPending("approval-1")).not.toBeNull();
+    expect(await store.loadPending("approval-1")).toBeNull();
     expect(await store.loadResolved("approval-1")).not.toBeNull();
   });
 
@@ -157,54 +146,17 @@ describe("ApprovalStore", () => {
     expect((await store.loadResolved("approval-1"))?.state).toMatch(/approved|denied/);
   });
 
-  it("keeps resolvePending authoritative when savePending races with it", async () => {
+  it("keeps resolved rows authoritative when pending saves replay after resolution", async () => {
     const pending = makeApproval();
-    const pendingPath = path.join(tmpDir, "approvals", "pending", "approval-1.json");
-    const resolvedPath = path.join(tmpDir, "approvals", "resolved", "approval-1.json");
-    const originalJournal = (store as any).journal;
-    const originalSave = originalJournal.save.bind(originalJournal);
+    await store.savePending(pending);
+    await store.resolvePending("approval-1", { state: "approved", resolved_at: 10 });
 
-    await originalSave(pendingPath, ApprovalRecordSchema, pending);
+    const replayed = await store.savePending(pending);
 
-    let releasePendingSave: (() => void) | undefined;
-    let pendingSaveEntered = false;
-    const pendingSaveGate = new Promise<void>((resolve) => {
-      releasePendingSave = resolve;
-    });
-
-    originalJournal.save = async (filePath: string, schema: unknown, value: unknown) => {
-      if (filePath === pendingPath) {
-        pendingSaveEntered = true;
-        await pendingSaveGate;
-      }
-      return originalSave(filePath, schema, value);
-    };
-
-    try {
-      const savePromise = store.savePending(pending);
-
-      for (let i = 0; i < 100; i += 1) {
-        if (pendingSaveEntered) break;
-        await sleep(1);
-      }
-      expect(pendingSaveEntered).toBe(true);
-
-      const resolvePromise = store.resolvePending("approval-1", { state: "approved", resolved_at: 10 });
-
-      await sleep(20);
-      expect(await Promise.race([resolvePromise.then(() => true), sleep(1).then(() => false)])).toBe(false);
-
-      releasePendingSave?.();
-
-      const [, resolved] = await Promise.all([savePromise, resolvePromise]);
-      expect(resolved?.state).toBe("approved");
-      expect(await store.loadPending("approval-1")).toBeNull();
-      expect(await store.loadResolved("approval-1")).toMatchObject({ state: "approved" });
-      expect(fs.existsSync(pendingPath)).toBe(false);
-      expect(fs.existsSync(resolvedPath)).toBe(true);
-    } finally {
-      originalJournal.save = originalSave;
-      releasePendingSave?.();
-    }
+    expect(replayed.state).toBe("approved");
+    expect(await store.loadPending("approval-1")).toBeNull();
+    expect(await store.loadResolved("approval-1")).toMatchObject({ state: "approved" });
+    expect(fs.existsSync(path.join(tmpDir, "approvals", "pending", "approval-1.json"))).toBe(false);
+    expect(fs.existsSync(path.join(tmpDir, "approvals", "resolved", "approval-1.json"))).toBe(false);
   });
 });

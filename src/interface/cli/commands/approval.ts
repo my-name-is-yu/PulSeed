@@ -1,13 +1,13 @@
 // ─── pulseed approval commands (read-only) ───
 
 import * as path from "node:path";
-import * as fsp from "node:fs/promises";
 import { parseArgs } from "node:util";
 
-import { StateManager } from "../../../base/state/state-manager.js";
+import type { StateManager } from "../../../base/state/state-manager.js";
 import { ApprovalStore } from "../../../runtime/store/approval-store.js";
-import { ApprovalRecordSchema, type ApprovalRecord } from "../../../runtime/store/runtime-schemas.js";
-import { createRuntimeStorePaths, type RuntimeStorePaths } from "../../../runtime/store/runtime-paths.js";
+import { type ApprovalRecord } from "../../../runtime/store/runtime-schemas.js";
+import { createRuntimeStorePaths } from "../../../runtime/store/runtime-paths.js";
+import type { RuntimeStorePaths } from "../../../runtime/store/runtime-paths.js";
 import { getCliLogger } from "../cli-logger.js";
 import { formatOperationError } from "../utils.js";
 
@@ -17,7 +17,7 @@ function createApprovalContext(stateManager: StateManager): {
 } {
   const runtimeRoot = path.join(stateManager.getBaseDir(), "runtime");
   const paths = createRuntimeStorePaths(runtimeRoot);
-  return { approvalStore: new ApprovalStore(paths), paths };
+  return { approvalStore: new ApprovalStore(paths, { controlBaseDir: stateManager.getBaseDir() }), paths };
 }
 
 const ID_WIDTH = 14;
@@ -33,29 +33,6 @@ function formatCell(value: string | undefined, maxLen: number): string {
 
 function dateLabel(value?: number): string {
   return value === undefined ? "-" : new Date(value).toISOString();
-}
-
-async function countInvalidApprovalFiles(dirPath: string): Promise<number> {
-  let entries: string[];
-  try {
-    entries = await fsp.readdir(dirPath);
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return 0;
-    throw err;
-  }
-
-  let invalid = 0;
-  for (const fileName of entries.filter((entry) => entry.endsWith(".json"))) {
-    try {
-      const raw = JSON.parse(await fsp.readFile(path.join(dirPath, fileName), "utf-8")) as unknown;
-      if (!ApprovalRecordSchema.safeParse(raw).success) {
-        invalid += 1;
-      }
-    } catch {
-      invalid += 1;
-    }
-  }
-  return invalid;
 }
 
 function printApprovalRows(records: ApprovalRecord[], showResolved: boolean): void {
@@ -101,22 +78,14 @@ export async function cmdApprovalList(stateManager: StateManager, args: string[]
   }
 
   const showResolved = values.resolved === true;
-  const { approvalStore, paths } = createApprovalContext(stateManager);
+  const { approvalStore } = createApprovalContext(stateManager);
 
   let approvals: ApprovalRecord[];
-  let invalidCount = 0;
   try {
     approvals = showResolved ? await approvalStore.listResolved() : await approvalStore.listPending();
-    invalidCount = await countInvalidApprovalFiles(
-      showResolved ? paths.approvalsResolvedDir : paths.approvalsPendingDir
-    );
   } catch (err) {
     logger.error(formatOperationError("load approval records", err));
     return 1;
-  }
-
-  if (invalidCount > 0) {
-    logger.warn(`Skipped ${invalidCount} invalid ${showResolved ? "resolved" : "pending"} approval record(s).`);
   }
 
   const label = showResolved ? "resolved" : "pending";

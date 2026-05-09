@@ -1,113 +1,94 @@
-import * as fs from "node:fs/promises";
-import * as path from "node:path";
-import { RuntimeJournal } from "./runtime-journal.js";
 import { OutboxRecordSchema, type OutboxRecord } from "./runtime-schemas.js";
 import {
   createRuntimeStorePaths,
   type RuntimeStorePaths,
 } from "./runtime-paths.js";
-
-interface AppendLock {
-  release(): Promise<void>;
-}
-
-async function sleep(ms: number): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, ms));
-}
+import {
+  openRuntimeControlDatabase,
+  type ControlDatabase,
+  type RuntimeControlDbStoreOptions,
+  type SqliteDatabase,
+} from "./control-db/index.js";
 
 export class OutboxStore {
   private readonly paths: RuntimeStorePaths;
-  private readonly journal: RuntimeJournal;
+  private readonly dbOptions: RuntimeControlDbStoreOptions;
+  private dbPromise: Promise<ControlDatabase> | null = null;
 
-  constructor(runtimeRootOrPaths?: string | RuntimeStorePaths) {
+  constructor(
+    runtimeRootOrPaths?: string | RuntimeStorePaths,
+    options: RuntimeControlDbStoreOptions = {}
+  ) {
     this.paths =
       typeof runtimeRootOrPaths === "string"
         ? createRuntimeStorePaths(runtimeRootOrPaths)
         : runtimeRootOrPaths ?? createRuntimeStorePaths();
-    this.journal = new RuntimeJournal(this.paths);
+    this.dbOptions = options;
   }
 
   async ensureReady(): Promise<void> {
-    await this.journal.ensureReady();
+    await this.database();
   }
 
   async load(seq: number): Promise<OutboxRecord | null> {
-    return this.journal.load(this.paths.outboxRecordPath(seq), OutboxRecordSchema);
+    const db = await this.database();
+    return db.read((sqlite) => readOutbox(sqlite, seq));
   }
 
   async loadLatest(): Promise<OutboxRecord | null> {
-    const records = await this.list();
-    return records.at(-1) ?? null;
+    const db = await this.database();
+    return db.read((sqlite) => {
+      const row = sqlite.prepare(`
+        SELECT record_json
+        FROM outbox_records
+        ORDER BY seq DESC
+        LIMIT 1
+      `).get() as OutboxRow | undefined;
+      return row ? parseOutboxJson(row.record_json) : null;
+    });
   }
 
   async list(afterSeq = 0): Promise<OutboxRecord[]> {
-    const records = await this.journal.list(this.paths.outboxDir, OutboxRecordSchema);
-    if (afterSeq <= 0) return records;
-    return records.filter((record) => record.seq > afterSeq);
+    const db = await this.database();
+    return db.read((sqlite) => {
+      const rows = sqlite.prepare(`
+        SELECT record_json
+        FROM outbox_records
+        WHERE seq > ?
+        ORDER BY seq ASC
+      `).all(afterSeq) as OutboxRow[];
+      return rows.map((row) => parseOutboxJson(row.record_json));
+    });
   }
 
   async nextSeq(): Promise<number> {
-    const latest = await this.loadLatest();
-    return latest === null ? 1 : latest.seq + 1;
+    const db = await this.database();
+    return db.read((sqlite) => nextOutboxSeq(sqlite));
   }
 
   async save(record: OutboxRecord): Promise<OutboxRecord> {
     const parsed = OutboxRecordSchema.parse(record);
-    await this.journal.save(this.paths.outboxRecordPath(parsed.seq), OutboxRecordSchema, parsed);
+    const db = await this.database();
+    db.transaction((sqlite) => {
+      upsertOutbox(sqlite, parsed);
+    });
     return parsed;
   }
 
   async remove(seq: number): Promise<void> {
-    await this.journal.remove(this.paths.outboxRecordPath(seq));
-  }
-
-  private async acquireAppendLock(): Promise<AppendLock> {
-    const lockPath = path.join(this.paths.outboxDir, ".append.lock");
-    const staleAfterMs = 30_000;
-
-    for (;;) {
-      try {
-        await fs.mkdir(this.paths.outboxDir, { recursive: true });
-        const handle = await fs.open(lockPath, "wx");
-        await handle.writeFile(
-          JSON.stringify({
-            pid: process.pid,
-            acquired_at: Date.now(),
-          })
-        );
-        return {
-          release: async () => {
-            await handle.close();
-            await fs.unlink(lockPath).catch(() => undefined);
-          },
-        };
-      } catch (err) {
-        if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
-
-        try {
-          const stat = await fs.stat(lockPath);
-          if (Date.now() - stat.mtimeMs > staleAfterMs) {
-            await fs.unlink(lockPath);
-            continue;
-          }
-        } catch (staleErr) {
-          if ((staleErr as NodeJS.ErrnoException).code === "ENOENT") continue;
-          throw staleErr;
-        }
-
-        await sleep(10);
-      }
-    }
+    const db = await this.database();
+    db.transaction((sqlite) => {
+      sqlite.prepare("DELETE FROM outbox_records WHERE seq = ?").run(seq);
+    });
   }
 
   async append(record: Omit<OutboxRecord, "seq">): Promise<OutboxRecord> {
-    const lock = await this.acquireAppendLock();
-    try {
-      const seq = await this.nextSeq();
-      return await this.save({ ...record, seq });
-    } finally {
-      await lock.release();
-    }
+    const db = await this.database();
+    return db.transaction((sqlite) => {
+      const parsed = OutboxRecordSchema.parse({ ...record, seq: nextOutboxSeq(sqlite) });
+      upsertOutbox(sqlite, parsed);
+      return parsed;
+    });
   }
 
   async prune(options: {
@@ -138,4 +119,46 @@ export class OutboxStore {
 
     return { pruned, retained: Math.max(records.length - pruned, 0) };
   }
+
+  private async database(): Promise<ControlDatabase> {
+    this.dbPromise ??= openRuntimeControlDatabase(this.paths, this.dbOptions);
+    return this.dbPromise;
+  }
+}
+
+interface OutboxRow {
+  record_json: string;
+}
+
+function parseOutboxJson(recordJson: string): OutboxRecord {
+  return OutboxRecordSchema.parse(JSON.parse(recordJson) as unknown);
+}
+
+function readOutbox(sqlite: SqliteDatabase, seq: number): OutboxRecord | null {
+  const row = sqlite.prepare(`
+    SELECT record_json
+    FROM outbox_records
+    WHERE seq = ?
+  `).get(seq) as OutboxRow | undefined;
+  return row ? parseOutboxJson(row.record_json) : null;
+}
+
+function nextOutboxSeq(sqlite: SqliteDatabase): number {
+  const row = sqlite.prepare("SELECT MAX(seq) AS max_seq FROM outbox_records").get() as { max_seq: number | null };
+  return (row.max_seq ?? 0) + 1;
+}
+
+function outboxKind(record: OutboxRecord): string {
+  return record.event_type;
+}
+
+function upsertOutbox(sqlite: SqliteDatabase, record: OutboxRecord): void {
+  sqlite.prepare(`
+    INSERT INTO outbox_records (seq, created_at, kind, record_json)
+    VALUES (?, ?, ?, json(?))
+    ON CONFLICT(seq) DO UPDATE SET
+      created_at = excluded.created_at,
+      kind = excluded.kind,
+      record_json = excluded.record_json
+  `).run(record.seq, record.created_at, outboxKind(record), JSON.stringify(record));
 }

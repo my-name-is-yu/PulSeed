@@ -13,6 +13,7 @@ import type { GoalActivationSnapshot } from "../../platform/drive/drive-system.j
 import { makeTempDir } from "../../../tests/helpers/temp-dir.js";
 import { JournalBackedQueue } from "../queue/journal-backed-queue.js";
 import { GoalLeaseManager } from "../goal-lease-manager.js";
+import { LeaderLockManager } from "../leader-lock-manager.js";
 import { createEnvelope } from "../types/envelope.js";
 import { runSupervisorMaintenanceCycleForDaemon } from "../daemon/maintenance.js";
 import { GuardrailStore } from "../guardrails/index.js";
@@ -1416,8 +1417,9 @@ describe("DaemonRunner durable runtime", () => {
 
     const runtimeDir = path.join(tmpDir, "runtime");
     const healthStore = new RuntimeHealthStore(runtimeDir, { controlBaseDir: tmpDir });
-    expect(fs.existsSync(path.join(runtimeDir, "approvals", "pending"))).toBe(true);
-    expect(fs.existsSync(path.join(runtimeDir, "outbox"))).toBe(true);
+    expect(fs.existsSync(path.join(tmpDir, "state", "pulseed-control.sqlite"))).toBe(true);
+    expect(fs.existsSync(path.join(runtimeDir, "approvals", "pending"))).toBe(false);
+    expect(fs.existsSync(path.join(runtimeDir, "outbox"))).toBe(false);
     await expect(healthStore.loadDaemonHealth()).resolves.not.toBeNull();
     await expect(healthStore.loadComponentsHealth()).resolves.not.toBeNull();
     expect(fs.existsSync(path.join(runtimeDir, "health", "daemon.json"))).toBe(false);
@@ -1542,8 +1544,9 @@ describe("DaemonRunner durable runtime", () => {
     currentStartPromise = startPromise;
 
     const runtimeDir = path.join(tmpDir, "runtime");
-    const leaderRecord = await pollForJsonMatch<{ pid: number; lease_until: number }>(
-      path.join(runtimeDir, "leader", "leader.json"),
+    const leaderLockManager = new LeaderLockManager(runtimeDir, undefined, { controlBaseDir: tmpDir });
+    const leaderRecord = await pollForStoreMatch(
+      () => leaderLockManager.read(),
       (value) => value.pid === process.pid && value.lease_until > Date.now()
     );
     expect(leaderRecord.pid).toBe(process.pid);
@@ -1827,8 +1830,8 @@ describe("DaemonRunner durable runtime", () => {
   });
 
   it("delays daemon-managed browser goals under shared backpressure and exposes blocked work", async () => {
-    const runtimeRoot = path.join(tmpDir, "runtime");
-    await new GuardrailStore(runtimeRoot).saveBackpressureSnapshot({
+    const runtimeRoot = path.join(tmpDir, "runtime-v2");
+    await new GuardrailStore(runtimeRoot, { controlBaseDir: tmpDir }).saveBackpressureSnapshot({
       updated_at: "2026-01-01T00:00:00.000Z",
       active: [{
         provider_id: "manus_browser",
@@ -1876,7 +1879,7 @@ describe("DaemonRunner durable runtime", () => {
     const activeGoals = await (daemon as any).determineActiveGoals(["goal-browser", "goal-normal"], snapshot);
 
     expect(activeGoals).toEqual(["goal-normal"]);
-    await expect(new GuardrailStore(runtimeRoot).loadBackpressureSnapshot()).resolves.toEqual(expect.objectContaining({
+    await expect(new GuardrailStore(runtimeRoot, { controlBaseDir: tmpDir }).loadBackpressureSnapshot()).resolves.toEqual(expect.objectContaining({
       throttled: [
         expect.objectContaining({
           provider_id: "manus_browser",
@@ -1885,6 +1888,8 @@ describe("DaemonRunner durable runtime", () => {
         }),
       ],
     }));
+    expect(fs.existsSync(path.join(runtimeRoot, "state", "pulseed-control.sqlite"))).toBe(false);
+    expect(fs.existsSync(path.join(tmpDir, "state", "pulseed-control.sqlite"))).toBe(true);
   });
 
   it("generates cron entries for daemon scheduling", () => {

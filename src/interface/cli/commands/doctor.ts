@@ -740,8 +740,8 @@ export async function cmdDoctor(_args: string[]): Promise<number> {
 
     const maintenanceReport = await runRuntimeStoreMaintenanceCycle({
       runtimeRoot,
-      approvalStore: new ApprovalStore(runtimePaths),
-      outboxStore: new OutboxStore(runtimePaths),
+      approvalStore: new ApprovalStore(runtimePaths, { controlBaseDir: baseDir }),
+      outboxStore: new OutboxStore(runtimePaths, { controlBaseDir: baseDir }),
       runtimeHealthStore: new RuntimeHealthStore(runtimePaths, { controlBaseDir: baseDir }),
       logger: repairLogger,
       controlBaseDir: baseDir,

@@ -34,7 +34,7 @@ describe("runRuntimeStoreMaintenanceCycle", () => {
     };
   }
 
-  it("reconciles expired approvals, removes duplicate pending records, and prunes old resolved approvals", async () => {
+  it("reconciles expired approvals, preserves DB uniqueness, and prunes old resolved approvals", async () => {
     const expiredPending = ApprovalRecordSchema.parse({
       approval_id: "approval-expired",
       goal_id: "goal-1",
@@ -84,7 +84,7 @@ describe("runRuntimeStoreMaintenanceCycle", () => {
       },
     });
 
-    expect(report.approvals.removedPending).toBe(1);
+    expect(report.approvals.removedPending).toBe(0);
     expect(report.approvals.expiredPending).toBe(1);
     expect(report.approvals.prunedResolved).toBe(1);
     expect(await approvalStore.loadPending("approval-expired")).toBeNull();

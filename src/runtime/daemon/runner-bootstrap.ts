@@ -30,11 +30,12 @@ export function createRuntimeWiring(
   onLeadershipLost: (reason: string) => void
 ) {
   const runtimePaths = createRuntimeStorePaths(runtimeRoot);
-  const approvalStore = new ApprovalStore(runtimePaths);
-  const outboxStore = new OutboxStore(runtimePaths);
+  const storeOptions = { controlBaseDir: baseDir };
+  const approvalStore = new ApprovalStore(runtimePaths, storeOptions);
+  const outboxStore = new OutboxStore(runtimePaths, storeOptions);
   const runtimeHealthStore = new RuntimeHealthStore(runtimePaths, { controlBaseDir: baseDir });
-  const leaderLockManager = new LeaderLockManager(runtimeRoot);
-  const goalLeaseManager = new GoalLeaseManager(runtimeRoot);
+  const leaderLockManager = new LeaderLockManager(runtimeRoot, undefined, storeOptions);
+  const goalLeaseManager = new GoalLeaseManager(runtimeRoot, undefined, storeOptions);
   const approvalBroker = new ApprovalBroker({
     store: approvalStore,
     logger,

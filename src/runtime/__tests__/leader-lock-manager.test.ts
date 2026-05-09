@@ -25,10 +25,11 @@ describe("LeaderLockManager", () => {
 
     const loaded = await manager.read();
     expect(loaded).toEqual(record);
-    expect(fs.existsSync(path.join(tmpDir, "leader", "leader.json"))).toBe(true);
+    expect(fs.existsSync(path.join(tmpDir, "state", "pulseed-control.sqlite"))).toBe(true);
+    expect(fs.existsSync(path.join(tmpDir, "leader", "leader.json"))).toBe(false);
   });
 
-  it("clears a stale mutex with a malformed pid prefixing a live process id", async () => {
+  it("ignores legacy mutex directories because leader ownership is transactional", async () => {
     tmpDir = makeTempDir();
     const manager = new LeaderLockManager(tmpDir, 1_000);
     const mutexPath = path.join(tmpDir, "leader", "leader.json.lock");
@@ -70,19 +71,13 @@ describe("LeaderLockManager", () => {
     tmpDir = makeTempDir();
     const manager = new LeaderLockManager(tmpDir, 1_000);
 
-    const stalePath = path.join(tmpDir, "leader", "leader.json");
-    await fsp.mkdir(path.dirname(stalePath), { recursive: true });
-    await fsp.writeFile(
-      stalePath,
-      JSON.stringify({
-        owner_token: "stale-owner",
-        pid: process.pid,
-        acquired_at: 100,
-        last_renewed_at: 100,
-        lease_until: 150,
-      }),
-      "utf-8"
-    );
+    await manager.importLegacyRecord({
+      owner_token: "stale-owner",
+      pid: process.pid,
+      acquired_at: 100,
+      last_renewed_at: 100,
+      lease_until: 150,
+    });
 
     const acquired = await manager.acquire({ now: 200, ownerToken: "leader-b" });
     expect(acquired).not.toBeNull();
@@ -94,19 +89,13 @@ describe("LeaderLockManager", () => {
     tmpDir = makeTempDir();
     const manager = new LeaderLockManager(tmpDir, 1_000);
 
-    const stalePath = path.join(tmpDir, "leader", "leader.json");
-    await fsp.mkdir(path.dirname(stalePath), { recursive: true });
-    await fsp.writeFile(
-      stalePath,
-      JSON.stringify({
-        owner_token: "dead-owner",
-        pid: 999_999_999,
-        acquired_at: 100,
-        last_renewed_at: 100,
-        lease_until: 10_000,
-      }),
-      "utf-8"
-    );
+    await manager.importLegacyRecord({
+      owner_token: "dead-owner",
+      pid: 999_999_999,
+      acquired_at: 100,
+      last_renewed_at: 100,
+      lease_until: 10_000,
+    });
 
     const acquired = await manager.acquire({ now: 200, ownerToken: "leader-b" });
     expect(acquired).not.toBeNull();
@@ -118,20 +107,15 @@ describe("LeaderLockManager", () => {
     tmpDir = makeTempDir();
     const manager = new LeaderLockManager(tmpDir, 1_000);
 
-    const stalePath = path.join(tmpDir, "leader", "leader.json");
-    await fsp.mkdir(path.dirname(stalePath), { recursive: true });
-    await fsp.writeFile(
-      stalePath,
-      JSON.stringify({
-        owner_token: "unsafe-owner",
-        pid: Number.MAX_SAFE_INTEGER + 1,
-        acquired_at: 100,
-        last_renewed_at: 100,
-        lease_until: 10_000,
-      }),
-      "utf-8"
-    );
     const killSpy = vi.spyOn(process, "kill");
+
+    await expect(manager.importLegacyRecord({
+      owner_token: "unsafe-owner",
+      pid: Number.MAX_SAFE_INTEGER + 1,
+      acquired_at: 100,
+      last_renewed_at: 100,
+      lease_until: 10_000,
+    })).rejects.toThrow();
 
     const acquired = await manager.acquire({ now: 200, ownerToken: "leader-b" });
     expect(acquired).not.toBeNull();
@@ -143,22 +127,15 @@ describe("LeaderLockManager", () => {
     tmpDir = makeTempDir();
     const manager = new LeaderLockManager(tmpDir, 1_000);
 
-    const stalePath = path.join(tmpDir, "leader", "leader.json");
-    await fsp.mkdir(path.dirname(stalePath), { recursive: true });
-    await fsp.writeFile(
-      stalePath,
-      [
-        "{",
-        "\"owner_token\":\"unsafe-owner\",",
-        `"pid":${process.pid},`,
-        "\"acquired_at\":100,",
-        "\"last_renewed_at\":100,",
-        "\"lease_until\":1e309",
-        "}",
-      ].join(""),
-      "utf-8"
-    );
     const killSpy = vi.spyOn(process, "kill");
+
+    await expect(manager.importLegacyRecord({
+      owner_token: "unsafe-owner",
+      pid: process.pid,
+      acquired_at: 100,
+      last_renewed_at: 100,
+      lease_until: Number.POSITIVE_INFINITY,
+    })).rejects.toThrow();
 
     const acquired = await manager.acquire({ now: 200, ownerToken: "leader-b" });
     expect(acquired).not.toBeNull();
@@ -190,19 +167,13 @@ describe("LeaderLockManager", () => {
     tmpDir = makeTempDir();
     const manager = new LeaderLockManager(tmpDir, 1_000);
 
-    const stalePath = path.join(tmpDir, "leader", "leader.json");
-    await fsp.mkdir(path.dirname(stalePath), { recursive: true });
-    await fsp.writeFile(
-      stalePath,
-      JSON.stringify({
-        owner_token: "live-owner",
-        pid: process.pid,
-        acquired_at: 100,
-        last_renewed_at: 100,
-        lease_until: 10_000,
-      }),
-      "utf-8"
-    );
+    await manager.importLegacyRecord({
+      owner_token: "live-owner",
+      pid: process.pid,
+      acquired_at: 100,
+      last_renewed_at: 100,
+      lease_until: 10_000,
+    });
 
     const acquired = await manager.acquire({ now: 200, ownerToken: "leader-b" });
     expect(acquired).toBeNull();
@@ -226,8 +197,7 @@ describe("LeaderLockManager", () => {
     await manager.acquire({ now: 1000, ownerToken: "leader-a" });
     await manager.renew("leader-a", { now: 1100 });
 
-    const files = fs.readdirSync(path.join(tmpDir, "leader"));
-    expect(files.some((file) => file.includes(".tmp"))).toBe(false);
+    expect(fs.existsSync(path.join(tmpDir, "leader"))).toBe(false);
   });
 
   it("resolves a relative runtime root to an absolute path", async () => {
@@ -237,6 +207,7 @@ describe("LeaderLockManager", () => {
 
     await manager.acquire({ now: 1000, ownerToken: "leader-a" });
 
-    expect(fs.existsSync(path.join(tmpDir, "leader", "leader.json"))).toBe(true);
+    expect(fs.existsSync(path.join(tmpDir, "state", "pulseed-control.sqlite"))).toBe(true);
+    expect(fs.existsSync(path.join(tmpDir, "leader", "leader.json"))).toBe(false);
   });
 });

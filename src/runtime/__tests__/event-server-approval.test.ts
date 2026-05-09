@@ -1,13 +1,10 @@
-import * as fs from "node:fs";
 import * as http from "node:http";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { EventServer } from "../event-server.js";
 import { ApprovalBroker } from "../approval-broker.js";
 import { ApprovalStore } from "../store/approval-store.js";
-import { createRuntimeStorePaths } from "../store/runtime-paths.js";
 import { RuntimeOperatorHandoffStore } from "../store/operator-handoff-store.js";
-import type { ApprovalRecord } from "../store/runtime-schemas.js";
 import { makeTempDir, cleanupTempDir } from "../../../tests/helpers/temp-dir.js";
 
 function createMockDriveSystem() {
@@ -131,15 +128,19 @@ function waitForSseEvent(port: number, eventType: string, authToken: string): Pr
   });
 }
 
-async function waitForFile(filePath: string, timeoutMs = 1000): Promise<void> {
+async function waitForPendingApproval(
+  store: ApprovalStore,
+  approvalId: string,
+  timeoutMs = 1000
+): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (fs.existsSync(filePath)) {
+    if (await store.loadPending(approvalId)) {
       return;
     }
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
-  throw new Error(`Timed out waiting for file: ${filePath}`);
+  throw new Error(`Timed out waiting for pending approval: ${approvalId}`);
 }
 
 describe("EventServer durable approval integration", () => {
@@ -155,7 +156,6 @@ describe("EventServer durable approval integration", () => {
 
   it("routes approval resolution through ApprovalBroker", async () => {
     const store = new ApprovalStore(tmpDir);
-    const paths = createRuntimeStorePaths(tmpDir);
     const broker = new ApprovalBroker({
       store,
       createId: () => "approval-http",
@@ -176,7 +176,7 @@ describe("EventServer durable approval integration", () => {
         description: "Approve HTTP request",
         action: "merge",
       });
-      await waitForFile(paths.approvalPendingPath("approval-http"));
+      await waitForPendingApproval(store, "approval-http");
 
       const result = await request(server.getPort(), "POST", "/goals/goal-1/approve", {
         requestId: "approval-http",
@@ -186,9 +186,7 @@ describe("EventServer durable approval integration", () => {
       expect(result.status).toBe(200);
       await expect(approval).resolves.toBe(true);
 
-      const resolvedPath = paths.approvalResolvedPath("approval-http");
-      const resolved = JSON.parse(fs.readFileSync(resolvedPath, "utf-8")) as ApprovalRecord;
-      expect(resolved.state).toBe("approved");
+      await expect(store.loadResolved("approval-http")).resolves.toMatchObject({ state: "approved" });
     } finally {
       await server.stop();
     }
@@ -332,6 +330,56 @@ describe("EventServer durable approval integration", () => {
         task: {
           id: "task-sse",
           description: "Replayed approval",
+          action: "resume",
+        },
+        expiresAt,
+        restored: true,
+      });
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("hydrates restored approvals for SSE when broker is attached after server start", async () => {
+    const store = new ApprovalStore(tmpDir);
+    const expiresAt = Date.now() + 60_000;
+    await store.savePending({
+      approval_id: "approval-late-broker",
+      goal_id: "goal-sse",
+      request_envelope_id: "approval-late-broker",
+      correlation_id: "approval-late-broker",
+      state: "pending",
+      created_at: Date.now(),
+      expires_at: expiresAt,
+      payload: {
+        task: {
+          id: "task-late-broker",
+          description: "Replayed after late broker attach",
+          action: "resume",
+        },
+      },
+    });
+
+    const broker = new ApprovalBroker({ store });
+    const server = new EventServer(
+      createMockDriveSystem() as never,
+      {
+        port: 0,
+        eventsDir: path.join(tmpDir, "events"),
+      }
+    );
+
+    try {
+      await server.start();
+      server.setApprovalBroker(broker);
+
+      const event = await waitForSseEvent(server.getPort(), "approval_required", server.getAuthToken());
+      expect(event).toEqual({
+        requestId: "approval-late-broker",
+        goalId: "goal-sse",
+        task: {
+          id: "task-late-broker",
+          description: "Replayed after late broker attach",
           action: "resume",
         },
         expiresAt,

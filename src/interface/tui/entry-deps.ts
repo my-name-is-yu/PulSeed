@@ -17,7 +17,7 @@ import { ApprovalStore, createRuntimeStorePaths } from "../../runtime/store/inde
 function createTuiApprovalBroker(stateManager: StateManager): ApprovalBroker {
   const runtimeRoot = path.join(stateManager.getBaseDir(), "runtime");
   return new ApprovalBroker({
-    store: new ApprovalStore(createRuntimeStorePaths(runtimeRoot)),
+    store: new ApprovalStore(createRuntimeStorePaths(runtimeRoot), { controlBaseDir: stateManager.getBaseDir() }),
   });
 }
 

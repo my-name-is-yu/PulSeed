@@ -27,9 +27,11 @@ describe("GoalLeaseManager", () => {
     expect(record!.goal_id).toBe("goal-1");
     expect(record!.lease_until).toBe(2000);
     expect(await manager.read("goal-1")).toEqual(record);
+    expect(fs.existsSync(path.join(tmpDir, "state", "pulseed-control.sqlite"))).toBe(true);
+    expect(fs.existsSync(path.join(tmpDir, "leases", "goal", "goal-1.json"))).toBe(false);
   });
 
-  it("clears a stale mutex with a malformed pid prefixing a live process id", async () => {
+  it("ignores legacy mutex directories because goal lease ownership is transactional", async () => {
     tmpDir = makeTempDir();
     const manager = new GoalLeaseManager(tmpDir, 1_000);
     const mutexPath = path.join(tmpDir, "leases", "goal", "goal-1.json.lock");
@@ -127,12 +129,10 @@ describe("GoalLeaseManager", () => {
     expect(reclaimed!.owner_token).toBe("owner-b");
   });
 
-  it("ignores persisted goal leases with unsafe numeric scalars before acquisition decisions", async () => {
+  it("rejects unsafe legacy goal leases before importing them", async () => {
     tmpDir = makeTempDir();
     const manager = new GoalLeaseManager(tmpDir, 1_000);
-    const goalDir = path.join(tmpDir, "leases", "goal");
-    await fsp.mkdir(goalDir, { recursive: true });
-    await fsp.writeFile(path.join(goalDir, "goal-unsafe.json"), JSON.stringify({
+    await expect(manager.importLegacyRecord({
       goal_id: "goal-unsafe",
       owner_token: "owner-a",
       attempt_id: "attempt-a",
@@ -140,7 +140,7 @@ describe("GoalLeaseManager", () => {
       lease_until: Number.MAX_SAFE_INTEGER + 1,
       acquired_at: 1,
       last_renewed_at: 1,
-    }), "utf-8");
+    })).rejects.toThrow();
 
     expect(await manager.read("goal-unsafe")).toBeNull();
 
@@ -219,9 +219,7 @@ describe("GoalLeaseManager", () => {
     });
     await manager.renew("goal-1", "owner-a", { now: 1100 });
 
-    const goalDir = path.join(tmpDir, "leases", "goal");
-    const files = fs.readdirSync(goalDir);
-    expect(files.some((file) => file.includes(".tmp"))).toBe(false);
+    expect(fs.existsSync(path.join(tmpDir, "leases", "goal"))).toBe(false);
   });
 
   it("resolves a relative runtime root to an absolute path", async () => {
@@ -236,6 +234,7 @@ describe("GoalLeaseManager", () => {
       now: 1000,
     });
 
-    expect(fs.existsSync(path.join(tmpDir, "leases", "goal", "goal-1.json"))).toBe(true);
+    expect(fs.existsSync(path.join(tmpDir, "state", "pulseed-control.sqlite"))).toBe(true);
+    expect(fs.existsSync(path.join(tmpDir, "leases", "goal", "goal-1.json"))).toBe(false);
   });
 });

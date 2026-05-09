@@ -87,6 +87,7 @@ describe("daemon safe pause commands", () => {
   function context() {
     return {
       runtimeRoot: tmpDir,
+      stateManager: { getBaseDir: () => tmpDir },
       currentGoalIds,
       state,
       journalQueue,
@@ -225,9 +226,10 @@ describe("daemon safe pause commands", () => {
       status: "idle",
     };
     const realCurrentGoalIds: string[] = [];
-    const realContext = {
-      runtimeRoot: tmpDir,
-      currentGoalIds: realCurrentGoalIds,
+      const realContext = {
+        runtimeRoot: tmpDir,
+        stateManager: { getBaseDir: () => tmpDir },
+        currentGoalIds: realCurrentGoalIds,
       state: realState,
       journalQueue: realQueue,
       supervisor: realSupervisor,

@@ -400,6 +400,7 @@ export class DaemonRunner {
     const active = await determineActiveGoalsForCycle(this.driveSystem, goalIds, snapshot);
     const policy = await applyBrowserBackpressurePolicy({
       runtimeRoot: this.runtimeRoot,
+      controlBaseDir: this.baseDir,
       goalIds: active,
       snapshot,
       providerId: loadGlobalConfigSync().interactive_automation.default_browser_provider,

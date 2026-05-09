@@ -7,7 +7,12 @@ import {
   createRuntimeStorePaths,
   type RuntimeStorePaths,
 } from "./runtime-paths.js";
-import { RuntimeJournal } from "./runtime-journal.js";
+import {
+  openRuntimeControlDatabase,
+  type ControlDatabase,
+  type RuntimeControlDbStoreOptions,
+  type SqliteDatabase,
+} from "./control-db/index.js";
 
 export interface RuntimeSafePauseRequestInput {
   goalId: string;
@@ -24,26 +29,39 @@ export interface RuntimeSafePauseCheckpointInput {
 
 export class RuntimeSafePauseStore {
   private readonly paths: RuntimeStorePaths;
-  private readonly journal: RuntimeJournal;
+  private readonly dbOptions: RuntimeControlDbStoreOptions;
+  private dbPromise: Promise<ControlDatabase> | null = null;
 
-  constructor(runtimeRootOrPaths?: string | RuntimeStorePaths) {
+  constructor(
+    runtimeRootOrPaths?: string | RuntimeStorePaths,
+    options: RuntimeControlDbStoreOptions = {}
+  ) {
     this.paths =
       typeof runtimeRootOrPaths === "string"
         ? createRuntimeStorePaths(runtimeRootOrPaths)
         : runtimeRootOrPaths ?? createRuntimeStorePaths();
-    this.journal = new RuntimeJournal(this.paths);
+    this.dbOptions = options;
   }
 
   async ensureReady(): Promise<void> {
-    await this.journal.ensureReady();
+    await this.database();
   }
 
   async load(goalId: string): Promise<RuntimeSafePauseRecord | null> {
-    return this.journal.load(this.paths.safePausePath(goalId), RuntimeSafePauseRecordSchema);
+    const db = await this.database();
+    return db.read((sqlite) => readSafePause(sqlite, goalId));
   }
 
   async list(): Promise<RuntimeSafePauseRecord[]> {
-    return this.journal.list(this.paths.safePausesDir, RuntimeSafePauseRecordSchema);
+    const db = await this.database();
+    return db.read((sqlite) => {
+      const rows = sqlite.prepare(`
+        SELECT record_json
+        FROM runtime_safe_pauses
+        ORDER BY updated_at ASC, goal_id ASC
+      `).all() as SafePauseRow[];
+      return rows.map((row) => parseSafePauseJson(row.record_json));
+    });
   }
 
   async requestPause(input: RuntimeSafePauseRequestInput): Promise<RuntimeSafePauseRecord> {
@@ -127,7 +145,43 @@ export class RuntimeSafePauseStore {
 
   async save(record: RuntimeSafePauseRecord): Promise<RuntimeSafePauseRecord> {
     const parsed = RuntimeSafePauseRecordSchema.parse(record);
-    await this.journal.save(this.paths.safePausePath(parsed.goal_id), RuntimeSafePauseRecordSchema, parsed);
+    const db = await this.database();
+    db.transaction((sqlite) => {
+      upsertSafePause(sqlite, parsed);
+    });
     return parsed;
   }
+
+  private async database(): Promise<ControlDatabase> {
+    this.dbPromise ??= openRuntimeControlDatabase(this.paths, this.dbOptions);
+    return this.dbPromise;
+  }
+}
+
+interface SafePauseRow {
+  record_json: string;
+}
+
+function parseSafePauseJson(recordJson: string): RuntimeSafePauseRecord {
+  return RuntimeSafePauseRecordSchema.parse(JSON.parse(recordJson) as unknown);
+}
+
+function readSafePause(sqlite: SqliteDatabase, goalId: string): RuntimeSafePauseRecord | null {
+  const row = sqlite.prepare(`
+    SELECT record_json
+    FROM runtime_safe_pauses
+    WHERE goal_id = ?
+  `).get(goalId) as SafePauseRow | undefined;
+  return row ? parseSafePauseJson(row.record_json) : null;
+}
+
+function upsertSafePause(sqlite: SqliteDatabase, record: RuntimeSafePauseRecord): void {
+  sqlite.prepare(`
+    INSERT INTO runtime_safe_pauses (goal_id, state, updated_at, record_json)
+    VALUES (?, ?, ?, json(?))
+    ON CONFLICT(goal_id) DO UPDATE SET
+      state = excluded.state,
+      updated_at = excluded.updated_at,
+      record_json = excluded.record_json
+  `).run(record.goal_id, record.state, record.updated_at, JSON.stringify(record));
 }

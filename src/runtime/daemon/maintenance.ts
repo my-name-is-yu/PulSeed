@@ -261,8 +261,9 @@ export async function runRuntimeStoreMaintenanceCycle(params: {
   const now = params.now ?? Date.now();
   const options = params.options ?? {};
   const runtimePaths = createRuntimeStorePaths(params.runtimeRoot);
-  const approvalStore = params.approvalStore ?? new ApprovalStore(runtimePaths);
-  const outboxStore = params.outboxStore ?? new OutboxStore(runtimePaths);
+  const controlOptions = { controlBaseDir: params.controlBaseDir };
+  const approvalStore = params.approvalStore ?? new ApprovalStore(runtimePaths, controlOptions);
+  const outboxStore = params.outboxStore ?? new OutboxStore(runtimePaths, controlOptions);
   const runtimeHealthStore =
     params.runtimeHealthStore ?? new RuntimeHealthStore(runtimePaths, { controlBaseDir: params.controlBaseDir });
 

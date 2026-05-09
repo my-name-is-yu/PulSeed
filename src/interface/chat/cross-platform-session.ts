@@ -1771,8 +1771,9 @@ async function createGlobalCrossPlatformChatSessionManager(): Promise<CrossPlatf
   await scheduleEngine.syncExternalSources(pluginLoader.getScheduleSources()).catch(() => undefined);
   const runtimeRoot = path.join(stateManager.getBaseDir(), "runtime");
   const runtimeStorePaths = createRuntimeStorePaths(runtimeRoot);
-  const permissionGrantStore = new PermissionGrantStore(runtimeStorePaths);
-  const permissionWaitPlanStore = new PermissionWaitPlanStore(runtimeStorePaths);
+  const controlDbOptions = { controlBaseDir: stateManager.getBaseDir() };
+  const permissionGrantStore = new PermissionGrantStore(runtimeStorePaths, controlDbOptions);
+  const permissionWaitPlanStore = new PermissionWaitPlanStore(runtimeStorePaths, controlDbOptions);
   const capabilityVerificationStore = new CapabilityVerificationStore(runtimeStorePaths);
   const capabilityExecutionResolver = createCapabilityExecutionResolver({ stateManager });
   const runtimeControlService = new RuntimeControlService({
@@ -1826,7 +1827,7 @@ async function createGlobalCrossPlatformChatSessionManager(): Promise<CrossPlatf
     : undefined;
 
   const approvalBroker = new ApprovalBroker({
-    store: new ApprovalStore(runtimeStorePaths),
+    store: new ApprovalStore(runtimeStorePaths, controlDbOptions),
     permissionWaitPlanStore,
   });
 

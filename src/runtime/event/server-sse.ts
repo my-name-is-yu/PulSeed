@@ -72,6 +72,7 @@ export class EventServerSseManager {
     res.write(`event: connected\ndata: ${JSON.stringify({ timestamp: new Date().toISOString() })}\n\n`);
 
     await this.enqueueBroadcast(async () => {
+      await this.approvalBroker?.start();
       const pendingApprovals = this.approvalBroker?.getPendingApprovalEvents() ?? [];
       const pendingApprovalIds = new Set(pendingApprovals.map((pending) => pending.requestId));
       const replayedApprovals = await this.replayOutbox(res, afterSeq, pendingApprovalIds);
