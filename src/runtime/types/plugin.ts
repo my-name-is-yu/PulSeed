@@ -61,6 +61,12 @@ export type PluginType = PluginManifest["type"];
 
 // ─── Plugin state schema ───
 
+const PluginStateSafeNonnegativeIntSchema = z.number()
+  .finite()
+  .int()
+  .nonnegative()
+  .safe();
+
 export const PluginStateSchema = z.object({
   name: z.string(),
   manifest: PluginManifestSchema,
@@ -69,9 +75,9 @@ export const PluginStateSchema = z.object({
   loaded_at: z.string(), // ISO 8601
   // Trust score using the asymmetric design from trust-and-safety.md §2.
   trust_score: z.number().int().min(-100).max(100).default(0),
-  usage_count: z.number().int().default(0),
-  success_count: z.number().int().default(0),
-  failure_count: z.number().int().default(0),
+  usage_count: PluginStateSafeNonnegativeIntSchema.default(0),
+  success_count: PluginStateSafeNonnegativeIntSchema.default(0),
+  failure_count: PluginStateSafeNonnegativeIntSchema.default(0),
 });
 
 export type PluginState = z.infer<typeof PluginStateSchema>;
