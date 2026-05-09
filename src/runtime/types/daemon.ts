@@ -83,6 +83,9 @@ export const ResidentActivitySchema = z.object({
   recorded_at: z.string().datetime(),
   suggestion_title: z.string().optional(),
   goal_id: z.string().optional(),
+  surface_id: z.string().optional(),
+  surface_included_count: z.number().int().nonnegative().optional(),
+  surface_excluded_count: z.number().int().nonnegative().optional(),
 });
 export type ResidentActivity = z.infer<typeof ResidentActivitySchema>;
 
