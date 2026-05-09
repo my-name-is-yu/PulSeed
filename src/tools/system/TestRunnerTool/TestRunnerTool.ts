@@ -13,7 +13,7 @@ export const TestRunnerInputSchema = z.object({
   cwd: z.string().optional(),
   pattern: z.string().optional(),
   timeout: z.number().int().min(1).max(TEST_RUNNER_TIMEOUT_MAX_MS).default(TEST_RUNNER_TIMEOUT_DEFAULT_MS),
-});
+}).strict();
 
 export type TestRunnerInput = z.infer<typeof TestRunnerInputSchema>;
 

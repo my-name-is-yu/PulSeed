@@ -9,7 +9,7 @@ export const ProcessStatusInputSchema = z.object({
   port: z.number().int().min(1).max(65535).optional(),
   processName: z.string().min(1).optional(),
   pid: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).optional(),
-}).refine(
+}).strict().refine(
   (d) => d.port !== undefined || d.processName !== undefined || d.pid !== undefined,
   { message: "At least one of port, processName, or pid is required" }
 );
@@ -42,7 +42,7 @@ export class ProcessStatusTool implements ITool<ProcessStatusInput, ProcessStatu
     return DESCRIPTION;
   }
 
-  async call(input: ProcessStatusInput, context: ToolCallContext): Promise<ToolResult> {
+  async call(input: ProcessStatusInput, _context: ToolCallContext): Promise<ToolResult> {
     const startTime = Date.now();
 
     try {

@@ -1,13 +1,15 @@
 import { z } from "zod";
 import type { ITool, PermissionCheckResult, ToolCallContext, ToolMetadata, ToolResult } from "../../types.js";
 
+const UpdatePlanStepSchema = z.object({
+  step: z.string().min(1),
+  status: z.enum(["pending", "in_progress", "completed"]),
+}).strict();
+
 export const UpdatePlanInputSchema = z.object({
   summary: z.string().optional(),
-  steps: z.array(z.object({
-    step: z.string().min(1),
-    status: z.enum(["pending", "in_progress", "completed"]),
-  })).min(1),
-});
+  steps: z.array(UpdatePlanStepSchema).min(1),
+}).strict();
 export type UpdatePlanInput = z.infer<typeof UpdatePlanInputSchema>;
 
 export class UpdatePlanTool implements ITool<UpdatePlanInput> {

@@ -6,7 +6,7 @@ import { TAGS, MAX_OUTPUT_CHARS, PERMISSION_LEVEL } from "./constants.js";
 export const SleepInputSchema = z.object({
   durationMs: z.number().int().min(100).max(300000).describe("Duration to sleep in milliseconds (100ms to 5 minutes)"),
   reason: z.string().optional().describe("Why the agent is waiting (for audit logging)"),
-});
+}).strict();
 
 export type SleepInput = z.infer<typeof SleepInputSchema>;
 

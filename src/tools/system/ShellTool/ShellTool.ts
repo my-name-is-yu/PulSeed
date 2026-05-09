@@ -16,7 +16,7 @@ export const ShellInputSchema = z.object({
   cwd: z.string().optional(),
   timeoutMs: ShellTimeoutMsSchema,
   description: z.string().optional(),
-});
+}).strict();
 export type ShellInput = z.infer<typeof ShellInputSchema>;
 
 export interface ShellOutput { stdout: string; stderr: string; exitCode: number; }
