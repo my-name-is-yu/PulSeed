@@ -184,6 +184,27 @@ describe("foreign plugin compatibility", () => {
     expect(report.issues.length).toBeGreaterThan(0);
   });
 
+  it("classifies manifest parse failures separately from read failures", async () => {
+    const malformedDir = path.join(tmpDir, "malformed");
+    await fs.mkdir(malformedDir, { recursive: true });
+    await fs.writeFile(path.join(malformedDir, "plugin.json"), "{not-json", "utf-8");
+
+    const malformed = analyzeForeignPluginDirectory("openclaw", malformedDir);
+
+    expect(malformed.status).toBe("incompatible");
+    expect(malformed.issues).toContain("failed to parse manifest: plugin.json");
+
+    const unreadableDir = path.join(tmpDir, "unreadable");
+    const unreadableManifestPath = path.join(unreadableDir, "plugin.json");
+    await fs.mkdir(unreadableManifestPath, { recursive: true });
+
+    const unreadable = analyzeForeignPluginDirectory("openclaw", unreadableDir);
+
+    expect(unreadable.status).toBe("incompatible");
+    expect(unreadable.issues).toContain("failed to read manifest: plugin.json");
+    expect(unreadable.manifestPath).toBe(unreadableManifestPath);
+  });
+
   it("rejects persisted manifests with invalid capability or entry point contracts", async () => {
     const pluginDir = path.join(tmpDir, "bad-contract");
     await writeJson(path.join(pluginDir, "plugin.json"), {

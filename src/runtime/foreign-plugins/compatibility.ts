@@ -44,15 +44,25 @@ function stringArray(value: unknown): string[] | undefined {
   return result.length > 0 ? result : undefined;
 }
 
-function readManifest(filePath: string): unknown | undefined {
+type ManifestReadResult =
+  | { ok: true; value: unknown }
+  | { ok: false; failure: "read" | "parse" };
+
+function readManifest(filePath: string): ManifestReadResult {
+  let raw: string;
   try {
-    const raw = fs.readFileSync(filePath, "utf-8");
-    if (filePath.endsWith(".yaml")) {
-      return yaml.load(raw) as unknown;
-    }
-    return JSON.parse(raw) as unknown;
+    raw = fs.readFileSync(filePath, "utf-8");
   } catch {
-    return undefined;
+    return { ok: false, failure: "read" };
+  }
+
+  try {
+    if (filePath.endsWith(".yaml")) {
+      return { ok: true, value: yaml.load(raw) as unknown };
+    }
+    return { ok: true, value: JSON.parse(raw) as unknown };
+  } catch {
+    return { ok: false, failure: "parse" };
   }
 }
 
@@ -304,20 +314,20 @@ export function analyzeForeignPluginDirectory(
     };
   }
 
-  const raw = readManifest(manifestPath);
-  if (raw === undefined) {
+  const manifest = readManifest(manifestPath);
+  if (!manifest.ok) {
     return {
       ...compatibilityReport(
         source,
         "incompatible",
-        [`failed to parse manifest: ${path.basename(manifestPath)}`],
+        [`failed to ${manifest.failure} manifest: ${path.basename(manifestPath)}`],
         defaultPermissions(),
         { manifestPath, sourceProvenance: { source_path: pluginDir, manifest_path: manifestPath } }
       ),
     };
   }
 
-  const report = analyzeForeignPluginManifest(source, raw, { pluginDir, manifestPath });
+  const report = analyzeForeignPluginManifest(source, manifest.value, { pluginDir, manifestPath });
   return withForeignPluginProvenance(report, {
     source_path: pluginDir,
     manifest_path: manifestPath,
