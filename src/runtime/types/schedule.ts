@@ -10,13 +10,18 @@ import {
   RuntimeItemVisibilityPolicySchema,
 } from "./companion-state.js";
 
+const SchedulePositiveSafeIntegerSchema = z.number().finite().int().positive().safe();
+const ScheduleNonNegativeSafeIntegerSchema = z.number().finite().int().nonnegative().safe();
+const ScheduleNonNegativeSafeNumberSchema = z.number().finite().safe().min(0);
+const ScheduleUnitIntervalSchema = z.number().finite().safe().min(0).max(1);
+
 export const HeartbeatCheckTypeSchema = z.enum(["http", "tcp", "process", "disk", "custom"]);
 
 export const HeartbeatConfigSchema = z.object({
   check_type: HeartbeatCheckTypeSchema,
   check_config: z.record(z.unknown()),
-  failure_threshold: z.number().int().min(1).default(3),
-  timeout_ms: z.number().int().min(100).default(5000),
+  failure_threshold: SchedulePositiveSafeIntegerSchema.default(3),
+  timeout_ms: SchedulePositiveSafeIntegerSchema.min(100).default(5000),
 });
 
 export type HeartbeatConfig = z.infer<typeof HeartbeatConfigSchema>;
@@ -27,8 +32,8 @@ export const ProbeConfigSchema = z.object({
   query_params: z.record(z.unknown()).default({}),
   change_detector: z.object({
     mode: z.enum(["threshold", "diff", "presence"]),
-    threshold_value: z.number().optional(),
-    baseline_window: z.number().default(5),
+    threshold_value: z.number().finite().safe().optional(),
+    baseline_window: SchedulePositiveSafeIntegerSchema.default(5),
   }),
   llm_on_change: z.boolean().default(true),
   llm_prompt_template: z.string().optional(),
@@ -52,7 +57,7 @@ export const CronConfigSchema = z.object({
   context_sources: z.array(z.string()).default([]),
   output_format: z.enum(['notification', 'report', 'both']).default('notification'),
   report_type: z.string().optional(),
-  max_tokens: z.number().default(4000),
+  max_tokens: ScheduleNonNegativeSafeIntegerSchema.default(4000),
 }).superRefine((value, ctx) => {
   if (value.job_kind === "reflection" && !value.reflection_kind) {
     ctx.addIssue({
@@ -68,7 +73,7 @@ export type CronConfig = z.infer<typeof CronConfigSchema>;
 export const GoalTriggerConfigSchema = z.object({
   goal_id: z.string(),
   run_policy: z.enum(["bounded", "resident"]).default("bounded"),
-  max_iterations: z.number().int().positive().nullable().default(10),
+  max_iterations: SchedulePositiveSafeIntegerSchema.nullable().default(10),
   skip_if_active: z.boolean().default(true),
 }).superRefine((value, ctx) => {
   if (value.run_policy === "bounded" && value.max_iterations === null) {
@@ -176,9 +181,9 @@ export const EscalationConfigSchema = z.object({
   target_layer: z.enum(["probe", "cron", "goal_trigger"]).optional(),
   target_entry_id: z.string().optional(),
   target_goal_id: z.string().optional(),
-  cooldown_minutes: z.number().default(15),
-  max_per_hour: z.number().default(4),
-  circuit_breaker_threshold: z.number().default(10),
+  cooldown_minutes: ScheduleNonNegativeSafeNumberSchema.default(15),
+  max_per_hour: ScheduleNonNegativeSafeIntegerSchema.default(4),
+  circuit_breaker_threshold: SchedulePositiveSafeIntegerSchema.default(10),
 });
 
 export type EscalationConfig = z.infer<typeof EscalationConfigSchema>;
@@ -187,7 +192,11 @@ export const ScheduleLayerSchema = z.enum(["heartbeat", "probe", "cron", "goal_t
 
 export const ScheduleTriggerSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("cron"), expression: z.string(), timezone: z.string().default("UTC") }),
-  z.object({ type: z.literal("interval"), seconds: z.number().int().min(1), jitter_factor: z.number().min(0).max(1).default(0) }),
+  z.object({
+    type: z.literal("interval"),
+    seconds: SchedulePositiveSafeIntegerSchema,
+    jitter_factor: ScheduleUnitIntervalSchema.default(0),
+  }),
 ]);
 export type ScheduleTriggerInput = z.input<typeof ScheduleTriggerSchema>;
 
@@ -208,13 +217,13 @@ export const ScheduleEntrySchema = z.object({
   updated_at: z.string().datetime(),
   last_fired_at: z.string().datetime().nullable().default(null),
   next_fire_at: z.string().datetime(),
-  consecutive_failures: z.number().int().default(0),
+  consecutive_failures: ScheduleNonNegativeSafeIntegerSchema.default(0),
   last_escalation_at: z.string().datetime().nullable().default(null),
   escalation_timestamps: z.array(z.string().datetime()).default([]),
-  total_executions: z.number().int().default(0),
-  total_tokens_used: z.number().int().default(0),
-  max_tokens_per_day: z.number().default(100000),
-  tokens_used_today: z.number().default(0),
+  total_executions: ScheduleNonNegativeSafeIntegerSchema.default(0),
+  total_tokens_used: ScheduleNonNegativeSafeIntegerSchema.default(0),
+  max_tokens_per_day: ScheduleNonNegativeSafeIntegerSchema.default(100000),
+  tokens_used_today: ScheduleNonNegativeSafeIntegerSchema.default(0),
   budget_reset_at: z.string().datetime().nullable().default(null),
   cron: CronConfigSchema.optional(),
   goal_trigger: GoalTriggerConfigSchema.optional(),
@@ -228,13 +237,13 @@ export const ScheduleEntryListSchema = z.array(ScheduleEntrySchema);
 export const ScheduleResultSchema = z.object({
   entry_id: z.string().uuid(),
   status: z.enum(["ok", "degraded", "down", "skipped", "error", "escalated"]),
-  duration_ms: z.number(),
+  duration_ms: ScheduleNonNegativeSafeIntegerSchema,
   error_message: z.string().optional(),
   fired_at: z.string().datetime(),
   layer: z.enum(["heartbeat", "probe", "cron", "goal_trigger"]).optional(),
   goal_id: z.string().optional(),
   failure_kind: ScheduleFailureKindSchema.optional(),
-  tokens_used: z.number().default(0),
+  tokens_used: ScheduleNonNegativeSafeIntegerSchema.default(0),
   escalated_to: z.string().nullable().default(null),
   output_summary: z.string().optional(),
   change_detected: z.boolean().optional(),
