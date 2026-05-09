@@ -13,6 +13,10 @@ import type {
   ForeignPluginSource,
   ForeignPluginSourceProvenance,
 } from "./types.js";
+import {
+  CompatibilityReviewRecordSchema,
+  ForeignPluginCompatibilityReportSchema,
+} from "./types.js";
 import { readJsonFileOrNull, writeJsonFileAtomic } from "../../base/utils/json-io.js";
 
 const MANIFEST_FILENAMES = ["plugin.yaml", "plugin.json"] as const;
@@ -363,11 +367,12 @@ export async function writeForeignPluginCompatibilityArtifacts(
   await fsp.mkdir(pluginDir, { recursive: true });
   const reportPath = path.join(pluginDir, FOREIGN_PLUGIN_COMPATIBILITY_REPORT_FILENAME);
   const reviewRecordPath = path.join(pluginDir, FOREIGN_PLUGIN_REVIEW_RECORD_FILENAME);
-  await writeJsonFileAtomic(reportPath, report);
-  const reviewRecord = createPendingCompatibilityReviewRecord(report, {
+  const parsedReport = ForeignPluginCompatibilityReportSchema.parse(report);
+  await writeJsonFileAtomic(reportPath, parsedReport);
+  const reviewRecord = CompatibilityReviewRecordSchema.parse(createPendingCompatibilityReviewRecord(parsedReport, {
     reportRef: reportPath,
     createdAt: options.createdAt,
-  });
+  }));
   await writeJsonFileAtomic(reviewRecordPath, reviewRecord);
   return { reportPath, reviewRecordPath, reviewRecord };
 }
@@ -384,7 +389,10 @@ export async function hasForeignPluginCompatibilityArtifact(pluginDir: string): 
 export async function readForeignPluginCompatibilityArtifact(
   pluginDir: string
 ): Promise<ForeignPluginCompatibilityReport | null> {
-  return await readJsonFileOrNull<ForeignPluginCompatibilityReport>(
+  const raw = await readJsonFileOrNull<unknown>(
     path.join(pluginDir, FOREIGN_PLUGIN_COMPATIBILITY_REPORT_FILENAME)
   );
+  if (raw === null) return null;
+  const parsed = ForeignPluginCompatibilityReportSchema.safeParse(raw);
+  return parsed.success ? parsed.data : null;
 }
