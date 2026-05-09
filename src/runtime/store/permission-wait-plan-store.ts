@@ -47,6 +47,8 @@ export const PermissionWaitPlanCapabilityFactsSchema = z.object({
 }).strict();
 export type PermissionWaitPlanCapabilityFacts = z.infer<typeof PermissionWaitPlanCapabilityFactsSchema>;
 
+const PermissionWaitPlanSafeNonnegativeIntSchema = z.number().int().nonnegative().safe();
+
 export const PermissionWaitCanonicalPlanSchema = z.object({
   schema_version: z.literal("permission-wait-canonical-plan-v1"),
   tool_name: z.string().min(1),
@@ -63,7 +65,7 @@ export type PermissionWaitCanonicalPlan = z.infer<typeof PermissionWaitCanonical
 export const PermissionWaitPlanAuditEventSchema = z.object({
   event_id: z.string().min(1),
   state: PermissionWaitPlanStateSchema,
-  created_at: z.number().int().nonnegative(),
+  created_at: PermissionWaitPlanSafeNonnegativeIntSchema,
   reason: z.string().min(1).optional(),
   response_channel: z.string().min(1).optional(),
   audit_refs: z.array(z.string()).default([]),
@@ -77,11 +79,11 @@ export const PermissionWaitPlanRecordSchema = z.object({
   approval_id: z.string().min(1),
   goal_id: z.string().min(1).optional(),
   state: PermissionWaitPlanStateSchema,
-  created_at: z.number().int().nonnegative(),
-  updated_at: z.number().int().nonnegative(),
-  expires_at: z.number().int().nonnegative().optional(),
-  resolved_at: z.number().int().nonnegative().optional(),
-  resumed_at: z.number().int().nonnegative().optional(),
+  created_at: PermissionWaitPlanSafeNonnegativeIntSchema,
+  updated_at: PermissionWaitPlanSafeNonnegativeIntSchema,
+  expires_at: PermissionWaitPlanSafeNonnegativeIntSchema.optional(),
+  resolved_at: PermissionWaitPlanSafeNonnegativeIntSchema.optional(),
+  resumed_at: PermissionWaitPlanSafeNonnegativeIntSchema.optional(),
   origin: ApprovalOriginSchema.optional(),
   canonical_plan: PermissionWaitCanonicalPlanSchema,
   audit_refs: z.array(z.string()).default([]),
