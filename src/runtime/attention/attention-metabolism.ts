@@ -10,6 +10,18 @@ import {
   type CompanionVisibilitySurface,
 } from "../visibility/index.js";
 import {
+  missingRequiredRefs,
+  ref,
+  refKey,
+  refsOfKind,
+  sourceRef,
+  sourceRefKey,
+  stableId,
+  uniqueBy,
+  uniqueRefs,
+  uniqueSourceRefs,
+} from "./attention-refs.js";
+import {
   AgentAgendaItemSchema,
   AutonomyCheckSchema,
   AttentionMaturationTransitionSchema,
@@ -36,7 +48,6 @@ import {
   type AutonomyCheck,
   type CompanionAutonomyContentLifecycle,
   type CompanionAutonomyRef,
-  type CompanionAutonomyRefKind,
   type CompanionAutonomySourceRef,
   type CompanionStateEffect,
   type ExpressionDecision,
@@ -65,6 +76,8 @@ import type {
   CompanionStateSnapshot,
   RuntimeItem,
 } from "../types/companion-state.js";
+
+export { ref, sourceRef } from "./attention-refs.js";
 
 const INTERNAL_PRE_GATE_MOVES: readonly AttentionMove[] = [
   "notice",
@@ -374,18 +387,6 @@ export type AttentionFeedbackPolicyAdjustment = {
   audit_refs: CompanionAutonomyRef[];
   threshold_effects: Array<"raise_expression_threshold" | "raise_attention_threshold" | "preserve_thresholds">;
 };
-
-export function ref(kind: CompanionAutonomyRefKind, id: string, version?: string): CompanionAutonomyRef {
-  return version ? { kind, id, version } : { kind, id };
-}
-
-export function sourceRef(
-  kind: CompanionAutonomyRefKind,
-  id: string,
-  lifecycle: CompanionAutonomyContentLifecycle = "active"
-): CompanionAutonomySourceRef {
-  return { ref: ref(kind, id), lifecycle };
-}
 
 export function assembleSignalContext(input: SignalContextAssemblyInput): SignalContext {
   const signals = input.signals.map((signal) => ({
@@ -2293,21 +2294,6 @@ function stalenessStateForEvidence(evidenceRefs: CompanionAutonomySourceRef[]): 
   return "current";
 }
 
-function refsOfKind(
-  refs: CompanionAutonomyRef[],
-  ...kinds: CompanionAutonomyRefKind[]
-): CompanionAutonomyRef[] {
-  return uniqueRefs(refs.filter((candidate) => kinds.includes(candidate.kind)));
-}
-
-function missingRequiredRefs(
-  requiredRefs: readonly CompanionAutonomyRef[],
-  admittedRefs: readonly CompanionAutonomyRef[]
-): CompanionAutonomyRef[] {
-  const admitted = new Set(admittedRefs.map(refKey));
-  return requiredRefs.filter((required) => !admitted.has(refKey(required)));
-}
-
 function intersectMoves(moves: readonly AttentionMove[], allowed: readonly AttentionMove[]): AttentionMove[] {
   return uniqueMoves(moves.filter((move) => allowed.includes(move)));
 }
@@ -2316,45 +2302,8 @@ function uniqueMoves(moves: readonly AttentionMove[]): AttentionMove[] {
   return unique(moves);
 }
 
-function uniqueRefs(refs: readonly CompanionAutonomyRef[]): CompanionAutonomyRef[] {
-  return uniqueBy(refs, refKey);
-}
-
-function uniqueSourceRefs(refs: readonly CompanionAutonomySourceRef[]): CompanionAutonomySourceRef[] {
-  return uniqueBy(refs, sourceRefKey);
-}
-
 function unique<T extends string>(values: readonly T[]): T[] {
   return [...new Set(values)];
-}
-
-function uniqueBy<T>(values: readonly T[], keyForValue: (value: T) => string): T[] {
-  const seen = new Set<string>();
-  const result: T[] = [];
-  for (const value of values) {
-    const key = keyForValue(value);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    result.push(value);
-  }
-  return result;
-}
-
-function refKey(value: CompanionAutonomyRef): string {
-  return `${value.kind}:${value.id}:${value.version ?? ""}`;
-}
-
-function sourceRefKey(value: CompanionAutonomySourceRef): string {
-  return `${refKey(value.ref)}:${value.lifecycle}`;
-}
-
-function stableId(value: string): string {
-  let hash = 2166136261;
-  for (let index = 0; index < value.length; index += 1) {
-    hash ^= value.charCodeAt(index);
-    hash = Math.imul(hash, 16777619);
-  }
-  return (hash >>> 0).toString(16);
 }
 
 function currentStaleness(reason: string): RuntimeItem["staleness"] {
