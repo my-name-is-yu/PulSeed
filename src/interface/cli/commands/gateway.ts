@@ -22,7 +22,27 @@ export async function cmdGateway(argv: string[]): Promise<number> {
   return 1;
 }
 
-export async function cmdGatewaySetup(_argv: string[]): Promise<number> {
+const GATEWAY_SETUP_HELP_TEXT = `
+Usage: pulseed gateway setup
+
+Interactive messaging gateway setup.
+
+What it configures:
+  - Telegram Bot gateway
+  - Signal bridge gateway
+  - Optional channel identity keys for cross-platform continuation
+
+After setup:
+  pulseed daemon start
+  pulseed daemon status
+`.trim();
+
+export async function cmdGatewaySetup(argv: string[]): Promise<number> {
+  if (argv.includes("--help") || argv.includes("-h")) {
+    console.log(GATEWAY_SETUP_HELP_TEXT);
+    return 0;
+  }
+
   const baseDir = getPulseedDirPath();
   p.intro("PulSeed Gateway Setup");
 

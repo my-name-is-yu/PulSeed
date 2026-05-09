@@ -66,9 +66,32 @@ async function ensureChannelDir(channelDir: string): Promise<void> {
   await fsp.mkdir(channelDir, { recursive: true });
 }
 
+const TELEGRAM_SETUP_HELP_TEXT = `
+Usage: pulseed telegram setup
+
+Interactive Telegram Bot gateway setup.
+
+What it configures:
+  - Bot token from @BotFather
+  - Allowed Telegram user IDs
+  - Runtime-control user IDs
+  - Optional home chat ID, or set it later with /sethome
+  - Optional cross-platform identity key
+
+After setup:
+  pulseed daemon start
+  pulseed daemon status
+  Send /sethome to the bot if you skipped home chat setup.
+`.trim();
+
 // ─── Public entry point ───
 
-export async function cmdTelegramSetup(_args: string[]): Promise<number> {
+export async function cmdTelegramSetup(args: string[]): Promise<number> {
+  if (args.includes("--help") || args.includes("-h")) {
+    console.log(TELEGRAM_SETUP_HELP_TEXT);
+    return 0;
+  }
+
   console.log("\nPulSeed — Telegram Bot Setup\n");
 
   const rl = createInterface();

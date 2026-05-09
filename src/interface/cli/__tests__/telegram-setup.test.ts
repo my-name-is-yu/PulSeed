@@ -45,6 +45,19 @@ describe("cmdTelegramSetup", () => {
     await fsp.rm(tmpDir, { recursive: true, force: true });
   });
 
+  it("prints setup help without prompting or verifying a token", async () => {
+    const { cmdTelegramSetup } = await import("../commands/telegram.js");
+
+    const result = await cmdTelegramSetup(["--help"]);
+    const output = vi.mocked(console.log).mock.calls.map((call) => call.join(" ")).join("\n");
+
+    expect(result).toBe(0);
+    expect(output).toContain("Usage: pulseed telegram setup");
+    expect(output).toContain("Bot token from @BotFather");
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(readlineState.close).not.toHaveBeenCalled();
+  });
+
   it("writes optional identity_key for cross-platform continuation", async () => {
     readlineState.answers = ["test-token", "777,888", "999", "", "personal"];
     const { cmdTelegramSetup } = await import("../commands/telegram.js");

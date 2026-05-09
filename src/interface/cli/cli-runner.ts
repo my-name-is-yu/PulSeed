@@ -34,10 +34,46 @@ import { StateManager } from "../../base/state/state-manager.js";
 import { CharacterConfigManager } from "../../platform/traits/character-config.js";
 import type { CoreLoop } from "../../orchestrator/loop/durable-loop.js";
 import { dispatchCommand } from "./cli-command-registry.js";
-import { formatOperationError } from "./utils.js";
+import { formatOperationError, printUsage } from "./utils.js";
 import { getPulseedVersion } from "../../base/utils/pulseed-meta.js";
 
 const logger = getCliLogger();
+
+const STATELESS_GLOBAL_FLAGS = new Set(["--yes", "-y", "--dev"]);
+
+function stripStatelessGlobalFlags(argv: readonly string[]): string[] {
+  return argv.filter((arg) => !STATELESS_GLOBAL_FLAGS.has(arg));
+}
+
+function isTopLevelHelpRequest(argv: readonly string[]): boolean {
+  const args = stripStatelessGlobalFlags(argv);
+  return args.length === 1 && (args[0] === "--help" || args[0] === "-h" || args[0] === "help");
+}
+
+function includesHelpFlag(args: readonly string[]): boolean {
+  return args.some((arg) => arg === "--help" || arg === "-h");
+}
+
+function getStatelessSetupHelpRequest(
+  argv: readonly string[]
+): { kind: "setup" | "telegram_setup" | "gateway_setup"; args: string[] } | null {
+  const args = stripStatelessGlobalFlags(argv);
+  if (args[0] === "setup" && includesHelpFlag(args.slice(1))) {
+    return { kind: "setup", args: args.slice(1) };
+  }
+  if (args[0] === "telegram" && args[1] === "setup" && includesHelpFlag(args.slice(2))) {
+    return { kind: "telegram_setup", args: args.slice(2) };
+  }
+  if (args[0] === "gateway" && args[1] === "setup" && includesHelpFlag(args.slice(2))) {
+    return { kind: "gateway_setup", args: args.slice(2) };
+  }
+  return null;
+}
+
+function isDefaultTuiLaunchRequest(argv: readonly string[]): boolean {
+  const args = stripStatelessGlobalFlags(argv);
+  return args.length === 0 || (args.length === 1 && args[0] === "tui");
+}
 
 // ─── CLIRunner ───
 
@@ -89,8 +125,35 @@ export class CLIRunner {
       console.log(getPulseedVersion(import.meta.url));
       return 0;
     }
+    if (isTopLevelHelpRequest(argv)) {
+      printUsage();
+      return 0;
+    }
+    const statelessSetupHelp = getStatelessSetupHelpRequest(argv);
+    if (statelessSetupHelp !== null) {
+      if (statelessSetupHelp.kind === "setup") {
+        const { cmdSetup } = await import("./commands/setup.js");
+        return cmdSetup(statelessSetupHelp.args);
+      }
+      if (statelessSetupHelp.kind === "telegram_setup") {
+        const { cmdTelegramSetup } = await import("./commands/telegram.js");
+        return cmdTelegramSetup(statelessSetupHelp.args);
+      }
+      const { cmdGatewaySetup } = await import("./commands/gateway.js");
+      return cmdGatewaySetup(statelessSetupHelp.args);
+    }
 
-    await this.init();
+    try {
+      await this.init();
+    } catch (err) {
+      if (isDefaultTuiLaunchRequest(argv)) {
+        logger.error("PulSeed could not open local runtime state before launching the TUI.");
+        logger.error(formatOperationError("initialize CLI state", err));
+        printUsage();
+        return 1;
+      }
+      throw err;
+    }
 
     // Extract --yes / -y and --dev globally so they work regardless of position
     let globalYes = false;
