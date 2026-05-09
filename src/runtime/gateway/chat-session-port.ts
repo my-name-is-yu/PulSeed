@@ -1,4 +1,5 @@
 import type { UserInput } from "../../interface/chat/user-input.js";
+import type { ExternalSurfaceDecision } from "./channel-policy.js";
 
 export type GatewayChatEventHandler = <T extends { type?: unknown; text?: unknown }>(event: T) => void | Promise<void>;
 
@@ -13,6 +14,7 @@ export interface GatewayChatDispatchInput {
   goal_id?: string;
   cwd?: string;
   metadata?: Record<string, unknown>;
+  externalSurface?: ExternalSurfaceDecision;
   onEvent?: GatewayChatEventHandler;
 }
 

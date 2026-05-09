@@ -3,6 +3,7 @@ import {
   type GatewayChatDispatchInput,
 } from "./chat-session-port.js";
 import { normalizeAssistantDisplayText } from "../../orchestrator/execution/agent-loop/chat-display-output.js";
+import { EXTERNAL_SURFACE_METADATA_KEY } from "./channel-policy.js";
 
 export type { GatewayChatDispatchInput } from "./chat-session-port.js";
 
@@ -13,6 +14,13 @@ export async function dispatchGatewayChatInput(
     const portGetter = getRegisteredGatewayChatSessionPort();
     if (!portGetter) return null;
     const port = await portGetter();
+    const metadata = input.metadata ? { ...input.metadata } : undefined;
+    if (metadata && !input.externalSurface) {
+      delete metadata[EXTERNAL_SURFACE_METADATA_KEY];
+    }
+    if (metadata && input.externalSurface) {
+      metadata[EXTERNAL_SURFACE_METADATA_KEY] = input.externalSurface;
+    }
     const result = await port.processIncomingMessage({
       text: input.text,
       userInput: input.userInput,
@@ -23,7 +31,8 @@ export async function dispatchGatewayChatInput(
       message_id: input.message_id,
       goal_id: input.goal_id,
       cwd: input.cwd,
-      metadata: input.metadata,
+      metadata,
+      ...(input.externalSurface ? { externalSurface: input.externalSurface } : {}),
       onEvent: input.onEvent,
     });
     return normalizeManagerResult(result);

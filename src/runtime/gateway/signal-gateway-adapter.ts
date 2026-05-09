@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import type { ChannelAdapter, EnvelopeHandler, TypingIndicatorCapability } from "./channel-adapter.js";
 import { dispatchGatewayChatInput } from "./chat-session-dispatch.js";
 import { formatPlaintextNotification, supportsCoreGatewayNotification } from "./core-channel-notification.js";
-import { evaluateChannelAccess, resolveChannelRoute } from "./channel-policy.js";
+import { buildChannelPolicyMetadata, buildExternalSurfaceDecision, evaluateChannelAccess, resolveChannelRoute } from "./channel-policy.js";
 import { createUnsupportedTypingIndicator, withTypingIndicator } from "./typing-indicator.js";
 import { SIGNAL_GATEWAY_DISPLAY_CONTRACT } from "./channel-display-policy.js";
 import { NonTuiDisplayProjector, type NonTuiDisplayMessageRef, type NonTuiDisplayTransport } from "./non-tui-display-projector.js";
@@ -142,6 +142,7 @@ export class SignalGatewayAdapter implements ChannelAdapter {
         },
         channelContext
       );
+      const externalSurface = buildExternalSurfaceDecision(channelContext, access, route);
       const projector = new NonTuiDisplayProjector({
         display: {
           capabilities: SIGNAL_GATEWAY_DISPLAY_CONTRACT.capabilities,
@@ -174,13 +175,12 @@ export class SignalGatewayAdapter implements ChannelAdapter {
           sender_id: normalized.senderId,
           message_id: normalized.messageId,
           goal_id: route.goalId,
+          externalSurface,
           onEvent: (event) => projector.handle(event as unknown as ChatEvent),
           metadata: {
-            ...route.metadata,
+            ...buildChannelPolicyMetadata(channelContext, access, route, externalSurface),
             ...normalized.metadata,
             ...(route.goalId ? { goal_id: route.goalId } : {}),
-            ...(access.runtimeControlApproved ? { runtime_control_approved: true } : {}),
-            ...(access.runtimeControlConfigured && !access.runtimeControlApproved ? { runtime_control_denied: true } : {}),
           },
         })
       );

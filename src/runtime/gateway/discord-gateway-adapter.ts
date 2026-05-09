@@ -5,7 +5,7 @@ import { webcrypto } from "node:crypto";
 import type { ChannelAdapter, EnvelopeHandler, TypingIndicatorCapability } from "./channel-adapter.js";
 import { dispatchGatewayChatInput } from "./chat-session-dispatch.js";
 import { formatPlaintextNotification, supportsCoreGatewayNotification } from "./core-channel-notification.js";
-import { evaluateChannelAccess, resolveChannelRoute } from "./channel-policy.js";
+import { buildChannelPolicyMetadata, buildExternalSurfaceDecision, evaluateChannelAccess, resolveChannelRoute } from "./channel-policy.js";
 import { createRefreshingTypingIndicator, withTypingIndicator } from "./typing-indicator.js";
 import { DISCORD_GATEWAY_DISPLAY_CONTRACT, createGatewayDisplayPolicy } from "./channel-display-policy.js";
 import { NonTuiDisplayProjector, type NonTuiDisplayMessageRef, type NonTuiDisplayTransport } from "./non-tui-display-projector.js";
@@ -212,6 +212,7 @@ export class DiscordGatewayAdapter implements ChannelAdapter {
       },
       channelContext
     );
+    const externalSurface = buildExternalSurfaceDecision(channelContext, access, route);
 
     void this.processIncomingMessage(payload, {
       text,
@@ -221,15 +222,14 @@ export class DiscordGatewayAdapter implements ChannelAdapter {
       sender_id: senderId,
       message_id: payload.id,
       goal_id: route.goalId,
+      externalSurface,
       metadata: {
-        ...route.metadata,
+        ...buildChannelPolicyMetadata(channelContext, access, route, externalSurface),
         interaction_type: payload.type,
         command_name: payload.data?.name,
         channel_id: payload.channel_id,
         guild_id: payload.guild_id,
         ...(route.goalId ? { goal_id: route.goalId } : {}),
-        ...(access.runtimeControlApproved ? { runtime_control_approved: true } : {}),
-        ...(access.runtimeControlConfigured && !access.runtimeControlApproved ? { runtime_control_denied: true } : {}),
       },
     }).catch(() => undefined);
 

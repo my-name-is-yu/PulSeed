@@ -771,26 +771,33 @@ export class ChatRunner {
   private async resolveRouteFromIngress(ingress: ChatIngressMessage): Promise<SelectedChatRoute> {
     const capabilities = getRouteCapabilities(this.deps);
     const hasSetupSecret = (this.setupSecretIntake?.suppliedSecrets.length ?? 0) > 0;
+    const surfaceRuntimePolicy = ingress.externalSurface?.runtime_control_policy;
+    const runtimeControlApproved =
+      surfaceRuntimePolicy
+        ? surfaceRuntimePolicy.allowed === true && surfaceRuntimePolicy.approval_mode === "preapproved"
+        : ingress.metadata["runtime_control_approved"] === true;
+    const runtimeControlDenied =
+      surfaceRuntimePolicy
+        ? surfaceRuntimePolicy.approval_mode === "disallowed"
+        : ingress.metadata["runtime_control_denied"] === true;
+    const runtimeControlPolicyPresent =
+      runtimeControlApproved || runtimeControlDenied || ingress.metadata["runtime_control_explicit"] === true;
     const shouldPreferFreeformBeforeDeniedRuntimeControl =
       !hasSetupSecret
       && !capabilities.hasAgentLoop
-      && ingress.metadata["runtime_control_denied"] === true
-      && ingress.metadata["runtime_control_approved"] !== true
+      && runtimeControlDenied
+      && !runtimeControlApproved
       && ingress.metadata["runtime_control_explicit"] !== true;
     const shouldClassifyRuntimeControlForSafety =
       !hasSetupSecret
       && capabilities.hasAgentLoop
-      && (
-        ingress.metadata["runtime_control_approved"] === true
-        || ingress.metadata["runtime_control_denied"] === true
-        || ingress.metadata["runtime_control_explicit"] === true
-      );
+      && runtimeControlPolicyPresent;
     const shouldClassifyRuntimeControl =
       shouldClassifyRuntimeControlForSafety
       || (!hasSetupSecret && !capabilities.hasAgentLoop && (
         (capabilities.hasRuntimeControlService && ingress.runtimeControl.approvalMode !== "disallowed")
-        || ingress.metadata["runtime_control_approved"] === true
-        || ingress.metadata["runtime_control_denied"] === true
+        || runtimeControlApproved
+        || runtimeControlDenied
         || ingress.metadata["runtime_control_explicit"] === true
       ));
     let freeformRouteIntent = shouldPreferFreeformBeforeDeniedRuntimeControl

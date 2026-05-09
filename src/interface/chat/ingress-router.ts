@@ -10,6 +10,10 @@ import type {
   RuntimeControlReplyTarget,
 } from "../../runtime/store/runtime-operation-schemas.js";
 import type { CompanionRuntimeContract } from "../../runtime/types/companion.js";
+import {
+  EXTERNAL_SURFACE_METADATA_KEY,
+  type ExternalSurfaceDecision,
+} from "../../runtime/gateway/channel-policy.js";
 
 export type IngressChannel = "tui" | "plugin_gateway" | "cli" | "web";
 export type IngressDeliveryMode = "reply" | "notify" | "thread_reply";
@@ -47,6 +51,7 @@ export interface ChatIngressMessage {
   actor: RuntimeControlActor;
   runtimeControl: ChatIngressRuntimeControl;
   companion?: CompanionRuntimeContract;
+  externalSurface?: ExternalSurfaceDecision;
   deliveryMode?: IngressDeliveryMode;
   metadata: Record<string, unknown>;
   replyTarget: IngressReplyTarget;
@@ -341,6 +346,7 @@ export interface NormalizeLegacyIngressInput {
   replyTarget?: Partial<IngressReplyTarget>;
   runtimeControl?: Partial<ChatIngressRuntimeControl>;
   companion?: CompanionRuntimeContract;
+  externalSurface?: ExternalSurfaceDecision;
 }
 
 export function normalizeLegacyIngressInput(input: NormalizeLegacyIngressInput): ChatIngressMessage {
@@ -356,20 +362,30 @@ export function normalizeLegacyIngressInput(input: NormalizeLegacyIngressInput):
       : "";
   const goalId = normalizeIdentity(input.goal_id ?? metadataGoalId);
   const actorSurface = inferActorSurface(channel);
+  const externalSurface = input.externalSurface;
   const metadata: Record<string, unknown> = {
     ...(input.metadata ?? {}),
+    ...(externalSurface ? { [EXTERNAL_SURFACE_METADATA_KEY]: externalSurface } : {}),
     ...(goalId ? { goal_id: goalId } : {}),
   };
+  if (!externalSurface) {
+    delete metadata[EXTERNAL_SURFACE_METADATA_KEY];
+  }
   const userInput = normalizeUserInput(input.userInput, input.text);
+  const surfacePreapproved = externalSurface?.runtime_control_policy.allowed === true
+    && externalSurface.runtime_control_policy.approval_mode === "preapproved";
+  const surfaceDenied = externalSurface?.runtime_control_policy.approval_mode === "disallowed";
   const preapproved = input.runtimeControl?.approvalMode === "preapproved"
     || input.runtimeControl?.approval_mode === "preapproved"
-    || metadata["runtime_control_approved"] === true;
-  const disallowedByMetadata = metadata["runtime_control_denied"] === true;
+    || (externalSurface ? surfacePreapproved : metadata["runtime_control_approved"] === true);
+  const disallowedByMetadata = metadata["runtime_control_denied"] === true || surfaceDenied;
   const interactiveDefault = channel === "tui" || channel === "cli";
   const allowed = input.runtimeControl?.allowed ?? (preapproved || interactiveDefault);
   const approvalMode = input.runtimeControl?.approvalMode
     ?? input.runtimeControl?.approval_mode
-    ?? (preapproved ? "preapproved" : disallowedByMetadata ? "disallowed" : interactiveDefault ? "interactive" : "disallowed");
+    ?? (externalSurface
+      ? surfacePreapproved ? "preapproved" : "disallowed"
+      : preapproved ? "preapproved" : disallowedByMetadata ? "disallowed" : interactiveDefault ? "interactive" : "disallowed");
 
   const actor: RuntimeControlActor = input.actor ?? {
     surface: actorSurface,
@@ -378,6 +394,14 @@ export function normalizeLegacyIngressInput(input: NormalizeLegacyIngressInput):
     ...(identityKey ? { identity_key: identityKey } : {}),
     ...(userId ? { user_id: userId } : {}),
   };
+  const replyTargetMetadata: Record<string, unknown> = {
+    ...metadata,
+    ...(input.replyTarget?.metadata ?? {}),
+    ...(externalSurface ? { [EXTERNAL_SURFACE_METADATA_KEY]: externalSurface } : {}),
+  };
+  if (externalSurface) {
+    delete replyTargetMetadata["notification_route_id"];
+  }
   const replyTarget: IngressReplyTarget = {
     surface: actor.surface,
     channel,
@@ -386,8 +410,8 @@ export function normalizeLegacyIngressInput(input: NormalizeLegacyIngressInput):
     ...(identityKey ? { identity_key: identityKey } : {}),
     ...(userId ? { user_id: userId } : {}),
     ...(input.message_id ? { message_id: input.message_id } : {}),
-    metadata,
     ...(input.replyTarget ?? {}),
+    metadata: replyTargetMetadata,
   };
 
   return {
@@ -446,6 +470,7 @@ export function normalizeLegacyIngressInput(input: NormalizeLegacyIngressInput):
         },
       },
     },
+    ...(externalSurface ? { externalSurface } : {}),
     ...(input.deliveryMode ? { deliveryMode: input.deliveryMode } : {}),
     metadata,
     replyTarget,

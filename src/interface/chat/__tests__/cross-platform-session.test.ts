@@ -15,6 +15,11 @@ import { StateManager as RealStateManager } from "../../../base/state/state-mana
 import { createSetupRuntimeControlTools } from "../../../tools/runtime/SetupRuntimeControlTools.js";
 import type { ApprovalRequest, ToolCallContext } from "../../../tools/types.js";
 import type { ChatEvent } from "../chat-events.js";
+import {
+  buildExternalSurfaceDecision,
+  evaluateChannelAccess,
+  resolveChannelRoute,
+} from "../../../runtime/gateway/channel-policy.js";
 
 vi.mock("../../../platform/observation/context-provider.js", () => ({
   resolveGitRoot: (cwd: string) => cwd,
@@ -868,6 +873,128 @@ describe("CrossPlatformChatSessionManager", () => {
       identity_key: "owner",
       user_id: "user-1",
     });
+  });
+
+  it("keeps stale reply-target surface metadata out of current runtime-control admission", async () => {
+    const stateManager = makeMockStateManager();
+    const adapter = makeMockAdapter();
+    const runtimeControlService = {
+      request: vi.fn().mockResolvedValue({
+        success: true,
+        message: "restart queued",
+        operationId: "op-1",
+        state: "acknowledged",
+      }),
+    };
+    const manager = new CrossPlatformChatSessionManager(makeDeps({
+      stateManager,
+      adapter,
+      llmClient: createSingleMockLLMClient(JSON.stringify({
+        intent: "restart_daemon",
+        reason: "PulSeed を再起動して",
+      })),
+      runtimeControlService,
+    }));
+    const staleContext = { platform: "slack", senderId: "user-1", conversationId: "old-thread" };
+    const staleSurface = buildExternalSurfaceDecision(
+      staleContext,
+      evaluateChannelAccess({ allowAll: true }, staleContext),
+      resolveChannelRoute({ defaultGoalId: "old-goal" }, staleContext)
+    );
+    const currentContext = { platform: "telegram", senderId: "user-1", conversationId: "current-chat" };
+    const currentSurface = buildExternalSurfaceDecision(
+      currentContext,
+      evaluateChannelAccess({ allowAll: true, runtimeControlAllowedSenderIds: ["user-1"] }, currentContext),
+      resolveChannelRoute({ defaultGoalId: "current-goal" }, currentContext)
+    );
+
+    const result = await manager.execute("PulSeed を再起動して", {
+      identity_key: "owner",
+      platform: "telegram",
+      conversation_id: "current-chat",
+      user_id: "user-1",
+      message_id: "current-message",
+      cwd: "/repo",
+      externalSurface: currentSurface,
+      replyTarget: {
+        metadata: {
+          external_surface: staleSurface,
+          notification_route_id: "old-route",
+        },
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(runtimeControlService.request).toHaveBeenCalledWith(
+      expect.objectContaining({
+        replyTarget: expect.objectContaining({
+          platform: "telegram",
+          conversation_id: "current-chat",
+          message_id: "current-message",
+          metadata: expect.objectContaining({
+            external_surface: expect.objectContaining({
+              channel: "telegram",
+              notification_route_policy: expect.objectContaining({
+                may_notify: false,
+              }),
+              runtime_control_policy: expect.objectContaining({
+                allowed: true,
+                approval_mode: "preapproved",
+              }),
+              autonomy_authority: expect.objectContaining({
+                may_initiate: false,
+              }),
+            }),
+          }),
+        }),
+      })
+    );
+    expect(runtimeControlService.request.mock.calls[0]?.[0].replyTarget.metadata.external_surface.channel).not.toBe("slack");
+    expect(runtimeControlService.request.mock.calls[0]?.[0].replyTarget.metadata.notification_route_id).not.toBe("old-route");
+  });
+
+  it("does not let stale approved metadata override the current denied external surface", async () => {
+    const adapter = makeMockAdapter();
+    const chatAgentLoopRunner = {
+      execute: vi.fn().mockResolvedValue(CANNED_RESULT),
+    };
+    const runtimeControlService = {
+      request: vi.fn().mockResolvedValue({
+        success: true,
+        message: "restart queued",
+      }),
+    };
+    const manager = new CrossPlatformChatSessionManager(makeDeps({
+      adapter,
+      chatAgentLoopRunner: chatAgentLoopRunner as never,
+      llmClient: createSingleMockLLMClient(JSON.stringify({
+        intent: "restart_daemon",
+        reason: "PulSeed を再起動して",
+      })),
+      runtimeControlService,
+    }));
+    const currentContext = { platform: "telegram", senderId: "user-1", conversationId: "current-chat" };
+    const deniedSurface = buildExternalSurfaceDecision(
+      currentContext,
+      evaluateChannelAccess({ allowAll: true }, currentContext),
+      resolveChannelRoute({ defaultGoalId: "current-goal" }, currentContext)
+    );
+
+    const result = await manager.execute("PulSeed を再起動して", {
+      identity_key: "owner",
+      platform: "telegram",
+      conversation_id: "current-chat",
+      user_id: "user-1",
+      message_id: "current-message",
+      cwd: "/repo",
+      externalSurface: deniedSurface,
+      metadata: { runtime_control_approved: true },
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.output).toContain("not authorized for runtime-control lifecycle actions");
+    expect(runtimeControlService.request).not.toHaveBeenCalled();
+    expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
   });
 
   it("fails closed for natural-language daemon restart when runtime control is unavailable", async () => {

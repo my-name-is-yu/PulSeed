@@ -2,6 +2,11 @@ import { describe, expect, it } from "vitest";
 import { IngressRouter, buildStandaloneIngressMessage } from "../ingress-router.js";
 import { createTextUserInput } from "../user-input.js";
 import type { RunSpec } from "../../../runtime/run-spec/index.js";
+import {
+  buildExternalSurfaceDecision,
+  evaluateChannelAccess,
+  resolveChannelRoute,
+} from "../../../runtime/gateway/channel-policy.js";
 
 describe("IngressRouter", () => {
   const router = new IngressRouter();
@@ -158,6 +163,75 @@ describe("IngressRouter", () => {
     expect(route.kind).toBe("runtime_control_blocked");
     expect(route.reason).toBe("runtime_control_unclassified");
     expect(route.eventProjectionPolicy).toBe("latest_active_reply_target");
+  });
+
+  it("does not treat notification route configuration as runtime-control admission", () => {
+    const context = { platform: "slack", senderId: "member", conversationId: "channel-1" };
+    const externalSurface = buildExternalSurfaceDecision(
+      context,
+      evaluateChannelAccess({ allowAll: true }, context),
+      resolveChannelRoute({ defaultGoalId: "goal-1" }, context)
+    );
+    const message = buildStandaloneIngressMessage({
+      text: "restart PulSeed",
+      channel: "plugin_gateway",
+      platform: "slack",
+      externalSurface,
+    });
+
+    const route = router.selectRoute(message, {
+      hasAgentLoop: true,
+      hasToolLoop: true,
+      hasRuntimeControlService: true,
+      runtimeControlIntent: {
+        kind: "restart_daemon",
+        reason: "LLM classified daemon restart",
+      },
+    });
+
+    expect(externalSurface.notification_route_policy).toMatchObject({
+      configured: true,
+      may_notify: false,
+    });
+    expect(message.runtimeControl).toMatchObject({
+      allowed: false,
+      approvalMode: "disallowed",
+    });
+    expect(route.kind).toBe("runtime_control_blocked");
+    expect(route.reason).toBe("runtime_control_disallowed");
+  });
+
+  it("lets the current typed surface denial override stale approved metadata", () => {
+    const context = { platform: "slack", senderId: "member", conversationId: "channel-1" };
+    const externalSurface = buildExternalSurfaceDecision(
+      context,
+      evaluateChannelAccess({ allowAll: true }, context),
+      resolveChannelRoute({ defaultGoalId: "goal-1" }, context)
+    );
+    const message = buildStandaloneIngressMessage({
+      text: "restart PulSeed",
+      channel: "plugin_gateway",
+      platform: "slack",
+      externalSurface,
+      metadata: { runtime_control_approved: true },
+    });
+
+    const route = router.selectRoute(message, {
+      hasAgentLoop: true,
+      hasToolLoop: true,
+      hasRuntimeControlService: true,
+      runtimeControlIntent: {
+        kind: "restart_daemon",
+        reason: "LLM classified daemon restart",
+      },
+    });
+
+    expect(message.runtimeControl).toMatchObject({
+      allowed: false,
+      approvalMode: "disallowed",
+    });
+    expect(route.kind).toBe("runtime_control_blocked");
+    expect(route.reason).toBe("runtime_control_disallowed");
   });
 
   it("keeps long-running natural-language work on agent_loop so tools can decide handoff", () => {

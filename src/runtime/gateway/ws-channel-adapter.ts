@@ -1,6 +1,8 @@
 import type { ChannelAdapter, EnvelopeHandler, ReplyChannel } from "./channel-adapter.js";
 import { createEnvelope, EnvelopeTypeSchema, EnvelopePrioritySchema } from "../types/envelope.js";
 import {
+  buildChannelPolicyMetadata,
+  buildExternalSurfaceDecision,
   evaluateChannelAccess,
   resolveChannelRoute,
   type ChannelAccessPolicy,
@@ -115,6 +117,7 @@ export class WsChannelAdapter implements ChannelAdapter {
       return;
     }
     const route = resolveChannelRoute(this.config.routing, context);
+    const externalSurface = buildExternalSurfaceDecision(context, access, route);
 
     const envelope = createEnvelope({
       type: typeParsed.success ? typeParsed.data : "event",
@@ -126,9 +129,7 @@ export class WsChannelAdapter implements ChannelAdapter {
       auth: senderId ? { principal: senderId } : undefined,
     });
     (envelope as Record<string, unknown>)["metadata"] = {
-      ...route.metadata,
-      ...(access.runtimeControlApproved ? { runtime_control_approved: true } : {}),
-      ...(access.runtimeControlConfigured && !access.runtimeControlApproved ? { runtime_control_denied: true } : {}),
+      ...buildChannelPolicyMetadata(context, access, route, externalSurface),
     };
 
     const reply: ReplyChannel = {

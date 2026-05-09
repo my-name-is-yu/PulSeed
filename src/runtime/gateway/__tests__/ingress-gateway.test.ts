@@ -151,7 +151,29 @@ describe("IngressGateway", () => {
 
     expect(handler).toHaveBeenCalledOnce();
     expect(handler.mock.calls[0][0].goal_id).toBe("goal-1");
-    expect(handler.mock.calls[0][0].metadata.runtime_control_approved).toBe(true);
+    expect(handler.mock.calls[0][0].metadata).toMatchObject({
+      runtime_control_approved: true,
+      external_surface: {
+        channel: "test",
+        inbound_access: { allowed: true },
+        reply_target_policy: {
+          available: true,
+          policy: "current_turn_only",
+        },
+        notification_route_policy: {
+          configured: true,
+          may_notify: false,
+        },
+        runtime_control_policy: {
+          configured: true,
+          allowed: true,
+          approval_mode: "preapproved",
+        },
+        autonomy_authority: {
+          may_initiate: false,
+        },
+      },
+    });
   });
 
   it("drops envelopes rejected by security policy", () => {

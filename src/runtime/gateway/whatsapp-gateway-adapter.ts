@@ -5,7 +5,7 @@ import * as path from "node:path";
 import type { ChannelAdapter, EnvelopeHandler, TypingIndicatorCapability } from "./channel-adapter.js";
 import { dispatchGatewayChatInput } from "./chat-session-dispatch.js";
 import { formatPlaintextNotification, supportsCoreGatewayNotification } from "./core-channel-notification.js";
-import { evaluateChannelAccess, resolveChannelRoute } from "./channel-policy.js";
+import { buildChannelPolicyMetadata, buildExternalSurfaceDecision, evaluateChannelAccess, resolveChannelRoute } from "./channel-policy.js";
 import { createUnsupportedTypingIndicator, withTypingIndicator } from "./typing-indicator.js";
 import { WHATSAPP_GATEWAY_DISPLAY_CONTRACT } from "./channel-display-policy.js";
 import { NonTuiDisplayProjector, type NonTuiDisplayMessageRef, type NonTuiDisplayTransport } from "./non-tui-display-projector.js";
@@ -198,6 +198,7 @@ export class WhatsAppGatewayAdapter implements ChannelAdapter {
       },
       channelContext
     );
+    const externalSurface = buildExternalSurfaceDecision(channelContext, access, route);
     const projector = new NonTuiDisplayProjector({
       display: {
         capabilities: WHATSAPP_GATEWAY_DISPLAY_CONTRACT.capabilities,
@@ -233,14 +234,13 @@ export class WhatsAppGatewayAdapter implements ChannelAdapter {
         sender_id: senderId,
         message_id: message.id,
         goal_id: route.goalId,
+        externalSurface,
         onEvent: (event) => projector.handle(event as unknown as ChatEvent),
         metadata: {
-          ...route.metadata,
+          ...buildChannelPolicyMetadata(channelContext, access, route, externalSurface),
           message_type: message.type,
           timestamp: message.timestamp,
           ...(route.goalId ? { goal_id: route.goalId } : {}),
-          ...(access.runtimeControlApproved ? { runtime_control_approved: true } : {}),
-          ...(access.runtimeControlConfigured && !access.runtimeControlApproved ? { runtime_control_denied: true } : {}),
         },
       })
     );
