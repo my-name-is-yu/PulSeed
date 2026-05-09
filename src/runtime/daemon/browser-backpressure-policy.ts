@@ -1,6 +1,12 @@
 import type { GoalCycleScheduleSnapshotEntry } from "./maintenance.js";
 import type { BackpressureSnapshot } from "../store/index.js";
 import { GuardrailStore } from "../guardrails/index.js";
+import {
+  DEFAULT_BACKPRESSURE_LEASE_TTL_MS,
+  DEFAULT_BACKPRESSURE_MAX_CONCURRENT_PER_PROVIDER,
+  DEFAULT_BACKPRESSURE_MAX_CONCURRENT_PER_SERVICE,
+  parseBackpressurePositiveSafeInt,
+} from "../guardrails/backpressure-limits.js";
 
 export interface BrowserBackpressurePolicyResult {
   activeGoalIds: string[];
@@ -12,10 +18,6 @@ export interface BrowserBackpressurePolicyResult {
     since: string;
   }>;
 }
-
-const DEFAULT_MAX_CONCURRENT_PER_PROVIDER = 2;
-const DEFAULT_MAX_CONCURRENT_PER_SERVICE = 1;
-const DEFAULT_LEASE_TTL_MS = 10 * 60_000;
 
 export async function applyBrowserBackpressurePolicy(input: {
   runtimeRoot: string | null;
@@ -33,11 +35,21 @@ export async function applyBrowserBackpressurePolicy(input: {
   const store = new GuardrailStore(input.runtimeRoot);
   const backpressure = await store.loadBackpressureSnapshot();
   const now = input.now ?? (() => new Date());
-  const activeLeases = pruneExpiredLeases(backpressure?.active ?? [], input.leaseTtlMs ?? DEFAULT_LEASE_TTL_MS, now);
+  const leaseTtlMs = parseBackpressurePositiveSafeInt(
+    input.leaseTtlMs ?? DEFAULT_BACKPRESSURE_LEASE_TTL_MS,
+    "leaseTtlMs"
+  );
+  const maxConcurrentPerProvider = parseBackpressurePositiveSafeInt(
+    input.maxConcurrentPerProvider ?? DEFAULT_BACKPRESSURE_MAX_CONCURRENT_PER_PROVIDER,
+    "maxConcurrentPerProvider"
+  );
+  const maxConcurrentPerService = parseBackpressurePositiveSafeInt(
+    input.maxConcurrentPerService ?? DEFAULT_BACKPRESSURE_MAX_CONCURRENT_PER_SERVICE,
+    "maxConcurrentPerService"
+  );
+  const activeLeases = pruneExpiredLeases(backpressure?.active ?? [], leaseTtlMs, now);
   if (activeLeases.length === 0) return { activeGoalIds: input.goalIds, blocked: [] };
 
-  const maxConcurrentPerProvider = input.maxConcurrentPerProvider ?? DEFAULT_MAX_CONCURRENT_PER_PROVIDER;
-  const maxConcurrentPerService = input.maxConcurrentPerService ?? DEFAULT_MAX_CONCURRENT_PER_SERVICE;
   const blocked: BrowserBackpressurePolicyResult["blocked"] = [];
   const activeGoalIds = input.goalIds.filter((goalId) => {
     const scope = browserScopeForGoal(goalId, input.snapshot, input.providerId);
@@ -62,7 +74,7 @@ export async function applyBrowserBackpressurePolicy(input: {
 
   if (blocked.length > 0) {
     await store.updateBackpressureSnapshot((current) => {
-      const currentActive = pruneExpiredLeases(current.active, input.leaseTtlMs ?? DEFAULT_LEASE_TTL_MS, now);
+      const currentActive = pruneExpiredLeases(current.active, leaseTtlMs, now);
       return {
         snapshot: {
           updated_at: now().toISOString(),

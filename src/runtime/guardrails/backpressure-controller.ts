@@ -1,5 +1,11 @@
 import type { BackpressureSnapshot } from "../store/index.js";
-import { GuardrailStore } from "./guardrail-store.js";
+import type { GuardrailStore } from "./guardrail-store.js";
+import {
+  DEFAULT_BACKPRESSURE_LEASE_TTL_MS,
+  DEFAULT_BACKPRESSURE_MAX_CONCURRENT_PER_PROVIDER,
+  DEFAULT_BACKPRESSURE_MAX_CONCURRENT_PER_SERVICE,
+  parseBackpressurePositiveSafeInt,
+} from "./backpressure-limits.js";
 
 export interface BackpressureControllerOptions {
   maxConcurrentPerProvider?: number;
@@ -24,9 +30,18 @@ export class BackpressureController {
     private readonly store: GuardrailStore,
     options: BackpressureControllerOptions = {},
   ) {
-    this.maxConcurrentPerProvider = options.maxConcurrentPerProvider ?? 2;
-    this.maxConcurrentPerService = options.maxConcurrentPerService ?? 1;
-    this.leaseTtlMs = options.leaseTtlMs ?? 10 * 60_000;
+    this.maxConcurrentPerProvider = parseBackpressurePositiveSafeInt(
+      options.maxConcurrentPerProvider ?? DEFAULT_BACKPRESSURE_MAX_CONCURRENT_PER_PROVIDER,
+      "maxConcurrentPerProvider"
+    );
+    this.maxConcurrentPerService = parseBackpressurePositiveSafeInt(
+      options.maxConcurrentPerService ?? DEFAULT_BACKPRESSURE_MAX_CONCURRENT_PER_SERVICE,
+      "maxConcurrentPerService"
+    );
+    this.leaseTtlMs = parseBackpressurePositiveSafeInt(
+      options.leaseTtlMs ?? DEFAULT_BACKPRESSURE_LEASE_TTL_MS,
+      "leaseTtlMs"
+    );
     this.now = options.now ?? (() => new Date());
   }
 
