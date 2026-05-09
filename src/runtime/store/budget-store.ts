@@ -41,16 +41,18 @@ export const RuntimeBudgetScopeSchema = z.object({
 });
 export type RuntimeBudgetScope = z.infer<typeof RuntimeBudgetScopeSchema>;
 
+const RuntimeBudgetNonNegativeNumberSchema = z.number().finite().nonnegative();
+
 export const RuntimeBudgetLimitSchema = z.object({
   dimension: RuntimeBudgetDimensionSchema,
-  limit: z.number().nonnegative(),
-  warn_at_remaining: z.number().nonnegative().optional(),
-  approval_at_remaining: z.number().nonnegative().optional(),
-  handoff_at_remaining: z.number().nonnegative().optional(),
-  finalization_at_remaining: z.number().nonnegative().optional(),
+  limit: RuntimeBudgetNonNegativeNumberSchema,
+  warn_at_remaining: RuntimeBudgetNonNegativeNumberSchema.optional(),
+  approval_at_remaining: RuntimeBudgetNonNegativeNumberSchema.optional(),
+  handoff_at_remaining: RuntimeBudgetNonNegativeNumberSchema.optional(),
+  finalization_at_remaining: RuntimeBudgetNonNegativeNumberSchema.optional(),
   mode_transition_at_remaining: z.object({
-    consolidation: z.number().nonnegative().optional(),
-    finalization: z.number().nonnegative().optional(),
+    consolidation: RuntimeBudgetNonNegativeNumberSchema.optional(),
+    finalization: RuntimeBudgetNonNegativeNumberSchema.optional(),
   }).strict().optional(),
   exhaustion_policy: z.enum(["stop", "approval_required", "handoff_required", "finalize"]).default("approval_required"),
 }).strict();
@@ -59,10 +61,10 @@ export type RuntimeBudgetLimitInput = z.input<typeof RuntimeBudgetLimitSchema>;
 
 export const RuntimeBudgetUsageSchema = z.object({
   dimension: RuntimeBudgetDimensionSchema,
-  used: z.number().nonnegative(),
+  used: RuntimeBudgetNonNegativeNumberSchema,
   updated_at: z.string().datetime(),
   recent: z.array(z.object({
-    amount: z.number().nonnegative(),
+    amount: RuntimeBudgetNonNegativeNumberSchema,
     source: z.enum(["task_execution", "artifact_generation", "tool_usage", "evaluator_call", "manual"]),
     reason: z.string().min(1).optional(),
     observed_at: z.string().datetime(),
@@ -193,7 +195,9 @@ export class RuntimeBudgetStore {
   }
 
   async updateUsage(budgetId: string, input: RuntimeBudgetUsageUpdateInput): Promise<RuntimeBudgetRecord> {
-    if (input.amount < 0) throw new Error("Budget usage amount must be non-negative");
+    if (!Number.isFinite(input.amount) || input.amount < 0) {
+      throw new Error("Budget usage amount must be a finite non-negative number");
+    }
     return this.update(budgetId, (budget) => {
       const observedAt = input.observed_at ?? this.nowIso();
       const hasLimit = budget.limits.some((limit) => limit.dimension === input.dimension);
