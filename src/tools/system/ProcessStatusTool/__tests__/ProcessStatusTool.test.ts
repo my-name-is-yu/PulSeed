@@ -102,25 +102,41 @@ describe("ProcessStatusTool", () => {
   });
 
   describe("call – pid check", () => {
-    it("returns alive=true when kill -0 exits 0", async () => {
-      vi.spyOn(execMod, "execFileNoThrow").mockResolvedValueOnce({
-        stdout: "", stderr: "", exitCode: 0,
+    it("returns alive=true when signal 0 succeeds", async () => {
+      const killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
+      const execSpy = vi.spyOn(execMod, "execFileNoThrow");
+      const result = await tool.call({ pid: 1234 }, makeContext());
+      expect(result.success).toBe(true);
+      const data = result.data as { alive: boolean; pid?: number };
+      expect(data.alive).toBe(true);
+      expect(data.pid).toBe(1234);
+      expect(killSpy).toHaveBeenCalledWith(1234, 0);
+      expect(execSpy).not.toHaveBeenCalled();
+    });
+
+    it("returns alive=false when signal 0 reports a missing process", async () => {
+      const err = new Error("no such process") as NodeJS.ErrnoException;
+      err.code = "ESRCH";
+      vi.spyOn(process, "kill").mockImplementation(() => {
+        throw err;
+      });
+      const result = await tool.call({ pid: 99999 }, makeContext());
+      expect(result.success).toBe(true);
+      const data = result.data as { alive: boolean };
+      expect(data.alive).toBe(false);
+    });
+
+    it("returns alive=true when signal 0 reports a permission boundary", async () => {
+      const err = new Error("permission denied") as NodeJS.ErrnoException;
+      err.code = "EPERM";
+      vi.spyOn(process, "kill").mockImplementation(() => {
+        throw err;
       });
       const result = await tool.call({ pid: 1234 }, makeContext());
       expect(result.success).toBe(true);
       const data = result.data as { alive: boolean; pid?: number };
       expect(data.alive).toBe(true);
       expect(data.pid).toBe(1234);
-    });
-
-    it("returns alive=false when kill -0 exits non-zero", async () => {
-      vi.spyOn(execMod, "execFileNoThrow").mockResolvedValueOnce({
-        stdout: "", stderr: "no such process", exitCode: 1,
-      });
-      const result = await tool.call({ pid: 99999 }, makeContext());
-      expect(result.success).toBe(true);
-      const data = result.data as { alive: boolean };
-      expect(data.alive).toBe(false);
     });
   });
 
@@ -205,10 +221,12 @@ describe("ProcessStatusTool", () => {
 
   describe("call – error handling", () => {
     it("returns success=false on unexpected error", async () => {
-      vi.spyOn(execMod, "execFileNoThrow").mockRejectedValueOnce(new Error("spawn error"));
+      vi.spyOn(process, "kill").mockImplementation(() => {
+        throw new Error("unexpected process error");
+      });
       const result = await tool.call({ pid: 1 }, makeContext());
       expect(result.success).toBe(false);
-      expect(result.error).toContain("spawn error");
+      expect(result.error).toContain("unexpected process error");
     });
   });
 });
