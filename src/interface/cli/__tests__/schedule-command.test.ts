@@ -216,8 +216,10 @@ describe("cmdSchedule", () => {
   it.each([
     ["heartbeat interval", ["add", "--name", "invalid", "--type", "custom", "--command", "echo ok", "--interval", "60s"], "--interval must be a positive integer"],
     ["bare heartbeat interval", ["add", "--name", "invalid", "--interval"], "--interval must be a positive integer"],
+    ["missing http url", ["add", "--name", "invalid", "--type", "http"], "--url must be a non-empty string"],
     ["tcp port", ["add", "--name", "invalid", "--type", "tcp", "--host", "localhost", "--port", "3000abc"], "--port must be a positive integer"],
     ["process pid", ["add", "--name", "invalid", "--type", "process", "--pid", "123abc"], "--pid must be a positive integer"],
+    ["unsafe process pid", ["add", "--name", "invalid", "--type", "process", "--pid", String(Number.MAX_SAFE_INTEGER + 1)], "--pid must be a positive integer"],
     ["failure threshold", ["add", "--name", "invalid", "--type", "custom", "--command", "echo ok", "--threshold", "3abc"], "--threshold must be a positive integer"],
     ["preset interval", ["add", "--preset", "daily_brief", "--interval", "60s"], "--interval must be a positive integer"],
     ["preset baseline window", ["add", "--preset", "goal_probe", "--data-source-id", "db-source", "--baseline-window", "5days"], "--baseline-window must be a positive integer"],

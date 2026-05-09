@@ -10,19 +10,62 @@ import {
   RuntimeItemVisibilityPolicySchema,
 } from "./companion-state.js";
 
-const SchedulePositiveSafeIntegerSchema = z.number().finite().int().positive().safe();
-const ScheduleNonNegativeSafeIntegerSchema = z.number().finite().int().nonnegative().safe();
-const ScheduleNonNegativeSafeNumberSchema = z.number().finite().safe().min(0);
+const SchedulePositiveSafeIntegerSchema = z.number().finite().int().min(1).max(Number.MAX_SAFE_INTEGER);
+const ScheduleNonNegativeSafeIntegerSchema = z.number().finite().int().min(0).max(Number.MAX_SAFE_INTEGER);
+const ScheduleNonNegativeSafeNumberSchema = z.number().finite().min(0).max(Number.MAX_SAFE_INTEGER);
 const ScheduleUnitIntervalSchema = z.number().finite().safe().min(0).max(1);
+const ScheduleTcpPortSchema = z.number().finite().int().min(1).max(65535);
 
 export const HeartbeatCheckTypeSchema = z.enum(["http", "tcp", "process", "disk", "custom"]);
 
-export const HeartbeatConfigSchema = z.object({
-  check_type: HeartbeatCheckTypeSchema,
-  check_config: z.record(z.unknown()),
+const HeartbeatConfigBaseSchema = z.object({
   failure_threshold: SchedulePositiveSafeIntegerSchema.default(3),
   timeout_ms: SchedulePositiveSafeIntegerSchema.min(100).default(5000),
 });
+
+export const HeartbeatHttpCheckConfigSchema = z.object({
+  url: z.string().url(),
+});
+
+export const HeartbeatTcpCheckConfigSchema = z.object({
+  host: z.string().min(1),
+  port: ScheduleTcpPortSchema,
+});
+
+export const HeartbeatProcessCheckConfigSchema = z.object({
+  pid: SchedulePositiveSafeIntegerSchema,
+});
+
+export const HeartbeatDiskCheckConfigSchema = z.object({
+  path: z.string().min(1),
+});
+
+export const HeartbeatCustomCheckConfigSchema = z.object({
+  command: z.string().min(1),
+});
+
+export const HeartbeatConfigSchema = z.discriminatedUnion("check_type", [
+  HeartbeatConfigBaseSchema.extend({
+    check_type: z.literal("http"),
+    check_config: HeartbeatHttpCheckConfigSchema,
+  }),
+  HeartbeatConfigBaseSchema.extend({
+    check_type: z.literal("tcp"),
+    check_config: HeartbeatTcpCheckConfigSchema,
+  }),
+  HeartbeatConfigBaseSchema.extend({
+    check_type: z.literal("process"),
+    check_config: HeartbeatProcessCheckConfigSchema,
+  }),
+  HeartbeatConfigBaseSchema.extend({
+    check_type: z.literal("disk"),
+    check_config: HeartbeatDiskCheckConfigSchema,
+  }),
+  HeartbeatConfigBaseSchema.extend({
+    check_type: z.literal("custom"),
+    check_config: HeartbeatCustomCheckConfigSchema,
+  }),
+]);
 
 export type HeartbeatConfig = z.infer<typeof HeartbeatConfigSchema>;
 
