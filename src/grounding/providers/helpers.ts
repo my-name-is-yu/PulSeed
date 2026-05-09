@@ -1,5 +1,6 @@
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
+import { z } from "zod";
 import { getPulseedDirPath } from "../../base/utils/paths.js";
 import type { GroundingSection, GroundingSectionKey, GroundingSourceRef } from "../contracts.js";
 
@@ -38,6 +39,10 @@ const SECTION_PRIORITIES: Record<GroundingSectionKey, number> = {
   knowledge_query: 140,
   lessons: 150,
 };
+
+const JsonRecordSchema = z.record(z.string(), z.unknown());
+
+export type JsonRecord = z.infer<typeof JsonRecordSchema>;
 
 export function estimateTokens(content: string): number {
   return Math.max(1, Math.ceil(content.length / 4));
@@ -88,10 +93,11 @@ export function resolveStateManagerBaseDir(stateManager?: { getBaseDir?: () => s
   return typeof stateManager?.getBaseDir === "function" ? stateManager.getBaseDir() : undefined;
 }
 
-export async function readJsonFile(filePath: string): Promise<Record<string, unknown> | null> {
+export async function readJsonFile(filePath: string): Promise<JsonRecord | null> {
   try {
     const raw = await fsp.readFile(filePath, "utf-8");
-    return JSON.parse(raw) as Record<string, unknown>;
+    const parsed = JsonRecordSchema.safeParse(JSON.parse(raw));
+    return parsed.success ? parsed.data : null;
   } catch {
     return null;
   }
