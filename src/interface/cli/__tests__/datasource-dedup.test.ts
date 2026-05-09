@@ -14,7 +14,16 @@ function makeFakeStateManager(baseDir: string) {
 
 function writeDatasource(datasourcesDir: string, filename: string, cfg: Record<string, unknown>): void {
   fs.mkdirSync(datasourcesDir, { recursive: true });
-  fs.writeFileSync(path.join(datasourcesDir, filename), JSON.stringify(cfg));
+  const id = filename.replace(/\.json$/, "");
+  fs.writeFileSync(path.join(datasourcesDir, filename), JSON.stringify({
+    id,
+    name: id,
+    type: "file_existence",
+    connection: {},
+    enabled: true,
+    created_at: "2026-05-09T00:00:00.000Z",
+    ...cfg,
+  }));
 }
 
 function listFiles(datasourcesDir: string): string[] {
@@ -152,5 +161,24 @@ describe("cmdDatasourceDedup", () => {
     const result = await cmdDatasourceDedup(sm as never);
     expect(result).toBe(0);
     expect(listFiles(datasourcesDir)).toHaveLength(0);
+  });
+
+  it("skips malformed persisted datasource files during dedup", async () => {
+    fs.mkdirSync(datasourcesDir, { recursive: true });
+    fs.writeFileSync(path.join(datasourcesDir, "bad.json"), "null");
+    writeDatasource(datasourcesDir, "ds_a_shell.json", {
+      type: "shell",
+      connection: { commands: { todo_count: {} } },
+    });
+    writeDatasource(datasourcesDir, "ds_b_shell.json", {
+      type: "shell",
+      connection: { commands: { todo_count: {} } },
+    });
+
+    const sm = makeFakeStateManager(tmpDir);
+    const result = await cmdDatasourceDedup(sm as never);
+    expect(result).toBe(0);
+
+    expect(listFiles(datasourcesDir)).toEqual(["bad.json", "ds_a_shell.json"]);
   });
 });
