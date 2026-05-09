@@ -2653,6 +2653,60 @@ describe("GoalTrigger execution (Phase 3)", () => {
     expect(notificationDispatcher.dispatch).not.toHaveBeenCalled();
   });
 
+  it("fails closed for stale wait-resume attention projections from the production tick path", async () => {
+    const notificationDispatcher = {
+      dispatch: vi.fn().mockResolvedValue(undefined),
+    };
+    const attentionReevaluation = {
+      reevaluate: vi.fn().mockImplementation(async (signalContext) => ({
+        signal_context: {
+          ...signalContext,
+          signal_context_id: "signal:schedule-wake:stale-entry:2026-05-08T00:00:00.000Z",
+        },
+        urge_candidates: [],
+        agenda_items: [],
+        inhibition_decisions: [],
+        gate_decisions: [],
+        runtime_items: [],
+      })),
+    };
+    const eng = new ScheduleEngine({
+      baseDir: tempDir,
+      notificationDispatcher,
+      attentionReevaluation,
+    });
+    const entry = await eng.addEntry(makeGoalTriggerEntry({
+      metadata: {
+        internal: true,
+        activation_kind: "wait_resume",
+        goal_id: "test-goal-id",
+        strategy_id: "strategy:wait-stale",
+        wait_strategy_id: "strategy:wait-stale",
+      },
+      goal_trigger: {
+        goal_id: "test-goal-id",
+        max_iterations: 5,
+        skip_if_active: false,
+      },
+    }));
+
+    eng.getEntries()[0]!.next_fire_at = new Date(Date.now() - 1000).toISOString();
+    await eng.saveEntries();
+    await eng.loadEntries();
+
+    const results = await eng.tick();
+    const result = results.find((candidate) => candidate.entry_id === entry.id)!;
+
+    expect(result.status).toBe("ok");
+    expect(result.internal_attention_projection?.signal_context_id).toBe("signal:schedule-wake:stale-entry:2026-05-08T00:00:00.000Z");
+    expect(result.capability_operation_plan_assembly).toMatchObject({
+      status: "fail_closed",
+      reason: "Wait-resume attention projection does not match the schedule tick context.",
+      candidate_plans: [],
+    });
+    expect(notificationDispatcher.dispatch).not.toHaveBeenCalled();
+  });
+
   it("uses the default attention pipeline for wait-resume wakes when no port is injected", async () => {
     const notificationDispatcher = {
       dispatch: vi.fn().mockResolvedValue(undefined),
@@ -2705,6 +2759,36 @@ describe("GoalTrigger execution (Phase 3)", () => {
         auditable: true,
       }),
     ]);
+    expect(result.capability_operation_plan_assembly).toMatchObject({
+      status: "planned",
+      source: {
+        kind: "schedule_tick",
+        source_ref: `schedule:${entry.id}`,
+      },
+      candidate_plans: [
+        {
+          operation_plan: {
+            operation_kind: "hint",
+            side_effect_profile: "none",
+            external_action_authority: false,
+            advisory_only: true,
+            local_only: true,
+            expected_user_visible_effect: false,
+          },
+          admission_scope: {
+            requires_runtime_control: false,
+            external_action_authority: false,
+            required_permission_capabilities: [],
+          },
+          required_approvals: [],
+          not_allowed_steps: expect.arrayContaining([
+            "Do not run the goal from this planner output.",
+            "Do not send external notifications from this planner output.",
+            "Do not treat the attention projection as runtime-control admission.",
+          ]),
+        },
+      ],
+    });
     const history = await eng.getRecentHistory(1, entry.id);
     expect(history[0]?.internal_attention_projection).toEqual(result.internal_attention_projection);
     expect(notificationDispatcher.dispatch).not.toHaveBeenCalled();
