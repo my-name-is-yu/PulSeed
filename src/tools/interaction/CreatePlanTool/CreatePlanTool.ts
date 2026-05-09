@@ -10,7 +10,7 @@ export const CreatePlanInputSchema = z.object({
   plan_id: z.string().min(1, "plan_id is required").regex(PLAN_ID_RE, "plan_id must be alphanumeric with hyphens only"),
   title: z.string().min(1, "title is required"),
   content: z.string().min(1, "content is required"),
-});
+}).strict();
 export type CreatePlanInput = z.infer<typeof CreatePlanInputSchema>;
 
 export class CreatePlanTool implements ITool<CreatePlanInput, unknown> {

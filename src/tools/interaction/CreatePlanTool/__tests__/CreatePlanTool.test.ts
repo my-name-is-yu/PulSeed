@@ -1,10 +1,11 @@
-import { describe, it, expect, vi, beforeEach, afterEach, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, afterEach, beforeAll, afterAll } from "vitest";
 import { CreatePlanTool, CreatePlanInputSchema } from "../CreatePlanTool.js";
 import { ReadPlanTool, ReadPlanInputSchema } from "../../ReadPlanTool/ReadPlanTool.js";
 import type { ToolCallContext } from "../../../types.js";
 import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
+import { toToolDefinition } from "../../../tool-definition-adapter.js";
 
 function makeContext(): ToolCallContext {
   return {
@@ -129,6 +130,18 @@ describe("CreatePlanTool", () => {
     });
     expect(parsed.success).toBe(true);
   });
+
+  it("rejects unknown fields and exports a closed model-facing schema", () => {
+    expect(CreatePlanInputSchema.safeParse({
+      plan_id: "my-plan-123",
+      title: "T",
+      content: "C",
+      unexpected: true,
+    }).success).toBe(false);
+
+    const parameters = toToolDefinition(tool).function.parameters as Record<string, unknown>;
+    expect(parameters.additionalProperties).toBe(false);
+  });
 });
 
 describe("ReadPlanTool", () => {
@@ -183,5 +196,15 @@ describe("ReadPlanTool", () => {
   it("Zod accepts valid plan_id", () => {
     const parsed = ReadPlanInputSchema.safeParse({ plan_id: "my-plan-123" });
     expect(parsed.success).toBe(true);
+  });
+
+  it("rejects unknown fields and exports a closed model-facing schema", () => {
+    expect(ReadPlanInputSchema.safeParse({
+      plan_id: "my-plan-123",
+      unexpected: true,
+    }).success).toBe(false);
+
+    const parameters = toToolDefinition(tool).function.parameters as Record<string, unknown>;
+    expect(parameters.additionalProperties).toBe(false);
   });
 });

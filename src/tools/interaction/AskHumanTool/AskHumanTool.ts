@@ -6,7 +6,7 @@ import { TAGS, CATEGORY as _CATEGORY, READ_ONLY, PERMISSION_LEVEL } from "./cons
 export const AskHumanInputSchema = z.object({
   question: z.string().min(1, "question is required"),
   options: z.array(z.string()).optional(),
-});
+}).strict();
 export type AskHumanInput = z.infer<typeof AskHumanInputSchema>;
 
 export class AskHumanTool implements ITool<AskHumanInput, unknown> {
