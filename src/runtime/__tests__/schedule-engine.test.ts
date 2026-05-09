@@ -2464,7 +2464,89 @@ describe("GoalTrigger execution (Phase 3)", () => {
 
     expect(result.status).toBe("ok");
     expect(result.output_summary).toBe("wait wake re-evaluated through attention");
+    expect(result.internal_attention_projection).toMatchObject({
+      kind: "wait_resume_attention_projection",
+      signal_context_id: expect.stringContaining(`signal:schedule-wake:${entry.id}`),
+      signal_sources: ["schedule_tick", "wait_expiry"],
+      urge_candidate_refs: [`urge:schedule-wake:${entry.id}`],
+      non_execution_states: expect.arrayContaining(["delayed", "held", "inspectable_hidden", "silent_runtime_item"]),
+    });
+    expect(result.internal_attention_projection?.agenda_item_refs).toHaveLength(1);
+    expect(result.internal_attention_projection?.initiative_gate_decisions).toEqual([
+      expect.objectContaining({ status: "delayed" }),
+    ]);
+    expect(result.internal_attention_projection?.runtime_items).toEqual([
+      expect.objectContaining({
+        type: "agent_agenda_item",
+        posture: "holding",
+        visibility_display: "hidden",
+        inspectable: true,
+        auditable: true,
+      }),
+    ]);
+    const history = await eng.getRecentHistory(1, entry.id);
+    expect(history[0]?.internal_attention_projection).toEqual(result.internal_attention_projection);
     expect(notificationDispatcher.dispatch).not.toHaveBeenCalled();
+  });
+
+  it("does not report wait-resume success when a structured attention projection cannot be serialized", async () => {
+    const attentionReevaluation = {
+      reevaluate: vi.fn().mockResolvedValue({
+        signal_context: {
+          signal_context_id: "signal:invalid-projection",
+          signal_sources: ["schedule_tick", "wait_expiry"],
+        },
+        urge_candidates: [],
+        agenda_items: [],
+        inhibition_decisions: [],
+        gate_decisions: [],
+        runtime_items: [
+          {
+            item_id: "runtime:invalid",
+            type: "agent_agenda_item",
+            status: "not-a-runtime-status",
+            posture: "holding",
+            visibility_policy: {
+              display: "hidden",
+              inspectable: true,
+              auditable: true,
+              policy_ref: null,
+              reason: "invalid test fixture",
+            },
+          },
+        ],
+      }),
+    };
+    const eng = new ScheduleEngine({
+      baseDir: tempDir,
+      attentionReevaluation,
+    });
+    const entry = await eng.addEntry(makeGoalTriggerEntry({
+      metadata: {
+        internal: true,
+        activation_kind: "wait_resume",
+        goal_id: "test-goal-id",
+        strategy_id: "strategy:wait-invalid",
+        wait_strategy_id: "strategy:wait-invalid",
+      },
+      goal_trigger: {
+        goal_id: "test-goal-id",
+        max_iterations: 5,
+        skip_if_active: false,
+      },
+    }));
+
+    eng.getEntries()[0]!.next_fire_at = new Date(Date.now() - 1000).toISOString();
+    await eng.saveEntries();
+    await eng.loadEntries();
+
+    const results = await eng.tick();
+    const result = results.find((candidate) => candidate.entry_id === entry.id)!;
+
+    expect(attentionReevaluation.reevaluate).toHaveBeenCalledOnce();
+    expect(result.status).toBe("error");
+    expect(result.internal_attention_projection).toBeUndefined();
+    expect(result.error_message).toContain("runtime_items");
   });
 });
 

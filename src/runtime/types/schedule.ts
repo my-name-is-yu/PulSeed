@@ -1,4 +1,14 @@
 import { z } from "zod";
+import {
+  InhibitionDecisionKindSchema,
+  OutcomeClassSchema,
+} from "./companion-autonomy.js";
+import {
+  RuntimeItemPostureSchema,
+  RuntimeItemStatusSchema,
+  RuntimeItemTypeSchema,
+  RuntimeItemVisibilityPolicySchema,
+} from "./companion-state.js";
 
 export const HeartbeatCheckTypeSchema = z.enum(["http", "tcp", "process", "disk", "custom"]);
 
@@ -92,6 +102,46 @@ export type ScheduleEntryMetadata = z.infer<typeof ScheduleEntryMetadataSchema>;
 export const ScheduleFailureKindSchema = z.enum(["transient", "permanent"]);
 export type ScheduleFailureKind = z.infer<typeof ScheduleFailureKindSchema>;
 
+export const ScheduleInternalAttentionProjectionSchema = z.object({
+  kind: z.literal("wait_resume_attention_projection"),
+  projected_at: z.string().datetime(),
+  signal_context_id: z.string().min(1),
+  signal_sources: z.array(z.string().min(1)).default([]),
+  urge_candidate_refs: z.array(z.string().min(1)).default([]),
+  agenda_item_refs: z.array(z.string().min(1)).default([]),
+  inhibition_decisions: z.array(z.object({
+    ref: z.string().min(1),
+    decision: InhibitionDecisionKindSchema,
+  }).strict()).default([]),
+  initiative_gate_decisions: z.array(z.object({
+    ref: z.string().min(1),
+    status: z.enum(["selected", "blocked", "delayed", "narrowed"]),
+    selected_outcome: OutcomeClassSchema.optional(),
+  }).strict()).default([]),
+  runtime_items: z.array(z.object({
+    ref: z.string().min(1),
+    type: RuntimeItemTypeSchema,
+    status: RuntimeItemStatusSchema,
+    posture: RuntimeItemPostureSchema,
+    visibility_display: RuntimeItemVisibilityPolicySchema.shape.display,
+    inspectable: z.boolean(),
+    auditable: z.boolean(),
+  }).strict()).default([]),
+  non_execution_states: z.array(z.enum([
+    "blocked",
+    "delayed",
+    "held",
+    "suppressed",
+    "decayed",
+    "expired",
+    "rejected_stale",
+    "inspectable_hidden",
+    "silent_runtime_item",
+  ])).default([]),
+  summary: z.string().min(1),
+}).strict();
+export type ScheduleInternalAttentionProjection = z.infer<typeof ScheduleInternalAttentionProjectionSchema>;
+
 export const ScheduleRetryPolicySchema = z.object({
   enabled: z.boolean().default(true),
   initial_delay_ms: z.number().int().min(0).default(30_000),
@@ -183,6 +233,7 @@ export const ScheduleResultSchema = z.object({
   escalated_to: z.string().nullable().default(null),
   output_summary: z.string().optional(),
   change_detected: z.boolean().optional(),
+  internal_attention_projection: ScheduleInternalAttentionProjectionSchema.optional(),
 });
 
 export type ScheduleResult = z.infer<typeof ScheduleResultSchema>;

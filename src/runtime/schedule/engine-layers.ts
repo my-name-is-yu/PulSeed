@@ -3,8 +3,10 @@
  * Extracted to keep schedule-engine.ts under 500 lines.
  */
 import {
+  ScheduleInternalAttentionProjectionSchema,
   ScheduleResultSchema,
   type ScheduleEntry,
+  type ScheduleInternalAttentionProjection,
   type ScheduleResult,
 } from "../types/schedule.js";
 import type { IDataSourceAdapter } from "../../platform/observation/data-source-adapter.js";
@@ -21,6 +23,7 @@ import {
   buildSchedulerWakeSignalContext,
   ref,
   type AttentionReevaluationPort,
+  type AttentionReevaluationResult,
 } from "../attention/index.js";
 
 interface LayerDeps {
@@ -55,6 +58,89 @@ async function getAdapter(
   } catch {
     return undefined;
   }
+}
+
+function buildWaitResumeAttentionProjection(
+  value: unknown,
+  projectedAt: string
+): ScheduleInternalAttentionProjection | undefined {
+  if (!isAttentionReevaluationResult(value)) return undefined;
+
+  const gateStatuses = value.gate_decisions.map((decision) => decision.status);
+  const runtimeItems = value.runtime_items.map((item) => ({
+    ref: item.item_id,
+    type: item.type,
+    status: item.status,
+    posture: item.posture,
+    visibility_display: item.visibility_policy.display,
+    inspectable: item.visibility_policy.inspectable,
+    auditable: item.visibility_policy.auditable,
+  }));
+  const nonExecutionStates = new Set<ScheduleInternalAttentionProjection["non_execution_states"][number]>();
+  for (const decision of value.inhibition_decisions) {
+    if (decision.decision === "suppress") nonExecutionStates.add("suppressed");
+    if (decision.decision === "hold" || decision.decision === "watch" || decision.decision === "wait_for_opportunity") {
+      nonExecutionStates.add("held");
+    }
+    if (decision.decision === "decay") nonExecutionStates.add("decayed");
+    if (decision.decision === "reject_stale") nonExecutionStates.add("rejected_stale");
+  }
+  for (const decision of value.gate_decisions) {
+    if (decision.status === "blocked") nonExecutionStates.add("blocked");
+    if (decision.status === "delayed") nonExecutionStates.add("delayed");
+  }
+  for (const item of runtimeItems) {
+    if (item.inspectable && item.posture === "holding") nonExecutionStates.add("held");
+    if (item.inspectable && item.posture === "suppressed") nonExecutionStates.add("suppressed");
+    if (item.inspectable && item.posture === "stale") nonExecutionStates.add("rejected_stale");
+    if (item.inspectable && item.visibility_display === "hidden") nonExecutionStates.add("inspectable_hidden");
+  }
+  if (runtimeItems.length > 0) {
+    nonExecutionStates.add("silent_runtime_item");
+  }
+
+  return ScheduleInternalAttentionProjectionSchema.parse({
+    kind: "wait_resume_attention_projection",
+    projected_at: projectedAt,
+    signal_context_id: value.signal_context.signal_context_id,
+    signal_sources: value.signal_context.signal_sources,
+    urge_candidate_refs: value.urge_candidates.map((urge) => urge.urge_id),
+    agenda_item_refs: value.agenda_items.map((item) => item.agenda_item_id),
+    inhibition_decisions: value.inhibition_decisions.map((decision) => ({
+      ref: decision.decision_id,
+      decision: decision.decision,
+    })),
+    initiative_gate_decisions: value.gate_decisions.map((decision) => ({
+      ref: decision.decision_id,
+      status: decision.status,
+      ...(decision.selected_outcome ? { selected_outcome: decision.selected_outcome } : {}),
+    })),
+    runtime_items: runtimeItems,
+    non_execution_states: [...nonExecutionStates],
+    summary: [
+      `${value.signal_context.signal_sources.length} signal source(s)`,
+      `${value.urge_candidates.length} urge candidate(s)`,
+      `${value.agenda_items.length} agenda item(s)`,
+      `gate=${gateStatuses.length > 0 ? gateStatuses.join(",") : "none"}`,
+      `${runtimeItems.length} inspectable runtime item(s)`,
+    ].join("; "),
+  });
+}
+
+function isAttentionReevaluationResult(value: unknown): value is AttentionReevaluationResult {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Partial<AttentionReevaluationResult>;
+  return Boolean(
+    candidate.signal_context &&
+    typeof candidate.signal_context === "object" &&
+    typeof candidate.signal_context.signal_context_id === "string" &&
+    Array.isArray(candidate.signal_context.signal_sources) &&
+    Array.isArray(candidate.urge_candidates) &&
+    Array.isArray(candidate.agenda_items) &&
+    Array.isArray(candidate.inhibition_decisions) &&
+    Array.isArray(candidate.gate_decisions) &&
+    Array.isArray(candidate.runtime_items)
+  );
 }
 
 export async function executeCron(entry: ScheduleEntry, deps: LayerDeps): Promise<ScheduleResult> {
@@ -266,12 +352,13 @@ export async function executeGoalTrigger(entry: ScheduleEntry, deps: LayerDeps):
         runtime_state_refs: [ref("runtime_event", `runtime-event:schedule-wake:${entry.id}`)],
       });
 
-      await deps.attentionReevaluation.reevaluate(signalContext, {
+      const reevaluation = await deps.attentionReevaluation.reevaluate(signalContext, {
         entry_id: entry.id,
         entry_name: entry.name,
         activation_kind: "wait_resume",
         fired_at: firedAt,
       });
+      const projection = buildWaitResumeAttentionProjection(reevaluation, firedAt);
 
       return ScheduleResultSchema.parse({
         entry_id: entry.id,
@@ -280,6 +367,7 @@ export async function executeGoalTrigger(entry: ScheduleEntry, deps: LayerDeps):
         fired_at: firedAt,
         goal_id: cfg.goal_id,
         output_summary: "wait wake re-evaluated through attention",
+        ...(projection ? { internal_attention_projection: projection } : {}),
       });
     }
 

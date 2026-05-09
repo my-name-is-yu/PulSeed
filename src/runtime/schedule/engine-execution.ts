@@ -99,13 +99,13 @@ export async function runEntryNowForEngine(
     if (escalationResult !== null) finalResult = escalationResult;
   }
 
-    if (applied) {
-      const entryMetadata = applied.entry?.metadata ?? entry.metadata;
-      await host.recordHistory({
-        entry_id: applied.entry?.id ?? entry.id,
-        entry_name: applied.entry?.name ?? entry.name,
-        layer: entry.layer,
-        result: withClassifiedFailureKind(finalResult, applied.failureKind),
+  if (applied) {
+    const entryMetadata = applied.entry?.metadata ?? entry.metadata;
+    await host.recordHistory({
+      entry_id: applied.entry?.id ?? entry.id,
+      entry_name: applied.entry?.name ?? entry.name,
+      layer: entry.layer,
+      result: withClassifiedFailureKind(finalResult, applied.failureKind),
       reason: "manual_run",
       attempt: applied.attempt,
       scheduled_for: scheduledFor,
@@ -113,6 +113,10 @@ export async function runEntryNowForEngine(
       finished_at: applied.finishedAt,
       retry_at: applied.retryAt,
       failure_kind: applied.failureKind,
+      activation_kind: entryMetadata?.activation_kind ?? null,
+      strategy_id: entryMetadata?.strategy_id ?? null,
+      wait_strategy_id: entryMetadata?.wait_strategy_id ?? null,
+      internal: entryMetadata?.internal === true,
     });
   }
 

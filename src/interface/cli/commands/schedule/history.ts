@@ -1,5 +1,6 @@
 import { parseArgs } from "node:util";
 import type { ScheduleEngine } from "../../../../runtime/schedule/engine.js";
+import type { ScheduleInternalAttentionProjection } from "../../../../runtime/types/schedule.js";
 import { getScheduleOrPrintError, parsePositiveInteger } from "./shared.js";
 
 export async function scheduleHistory(engine: ScheduleEngine, argv: string[]): Promise<void> {
@@ -36,11 +37,30 @@ export async function scheduleHistory(engine: ScheduleEngine, argv: string[]): P
           ? ` activation=${record.activation_kind}:${record.wait_strategy_id ?? record.strategy_id ?? "unknown"}`
           : "";
       const internal = record.internal ? " internal" : "";
+      const attentionProjection = record.internal_attention_projection
+        ? ` attention=${formatInternalAttentionProjection(record.internal_attention_projection)}`
+        : "";
       console.log(
-        `  ${record.fired_at}  ${record.reason}  ${record.status}${internal}  attempt=${record.attempt}${activation}${error}${output}`
+        `  ${record.fired_at}  ${record.reason}  ${record.status}${internal}  attempt=${record.attempt}${activation}${attentionProjection}${error}${output}`
       );
     }
   } catch (err) {
     console.error(`Error: ${(err as Error).message}`);
   }
+}
+
+function formatInternalAttentionProjection(projection: ScheduleInternalAttentionProjection): string {
+  const gateStatuses = projection.initiative_gate_decisions.map((decision) => decision.status);
+  const states = projection.non_execution_states.length > 0
+    ? projection.non_execution_states.join(",")
+    : "none";
+  return [
+    projection.kind,
+    `signal=${projection.signal_context_id}`,
+    `urges=${projection.urge_candidate_refs.length}`,
+    `agenda=${projection.agenda_item_refs.length}`,
+    `gates=${gateStatuses.length > 0 ? gateStatuses.join(",") : "none"}`,
+    `runtime=${projection.runtime_items.length}`,
+    `state=${states}`,
+  ].join("/");
 }

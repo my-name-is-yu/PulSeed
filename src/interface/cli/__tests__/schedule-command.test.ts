@@ -331,6 +331,27 @@ describe("cmdSchedule", () => {
             strategy_id: "wait-1",
             wait_strategy_id: "wait-1",
             internal: true,
+            internal_attention_projection: {
+              kind: "wait_resume_attention_projection",
+              projected_at: now,
+              signal_context_id: "signal:schedule-wake:test",
+              signal_sources: ["schedule_tick", "wait_expiry"],
+              urge_candidate_refs: ["urge:schedule-wake:test"],
+              agenda_item_refs: ["agenda:test"],
+              inhibition_decisions: [{ ref: "inhibition:test", decision: "watch" }],
+              initiative_gate_decisions: [{ ref: "gate:test", status: "delayed" }],
+              runtime_items: [{
+                ref: "agenda:test",
+                type: "agent_agenda_item",
+                status: "active",
+                posture: "holding",
+                visibility_display: "hidden",
+                inspectable: true,
+                auditable: true,
+              }],
+              non_execution_states: ["held", "delayed", "inspectable_hidden", "silent_runtime_item"],
+              summary: "test wait-resume attention projection",
+            },
           },
         ]),
         "utf8",
@@ -340,6 +361,9 @@ describe("cmdSchedule", () => {
       const output = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
       expect(output).toContain("internal");
       expect(output).toContain("activation=wait_resume:wait-1");
+      expect(output).toContain("attention=wait_resume_attention_projection");
+      expect(output).toContain("gates=delayed");
+      expect(output).toContain("state=held,delayed,inspectable_hidden,silent_runtime_item");
     } finally {
       cleanupTempDir(tempDir);
     }
