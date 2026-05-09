@@ -5,7 +5,7 @@ import { DaemonStateSchema } from "../../base/types/daemon.js";
 import type { DaemonState } from "../../base/types/daemon.js";
 import type { Logger } from "../logger.js";
 import type { RuntimeOwnershipCoordinator } from "./runtime-ownership.js";
-import type { ShutdownMarker } from "./types.js";
+import { ShutdownMarkerSchema, type ShutdownMarker } from "./types.js";
 
 export async function saveDaemonStateFile(
   baseDir: string,
@@ -79,7 +79,7 @@ export async function writeShutdownMarkerFile(
 ): Promise<void> {
   const markerPath = path.join(baseDir, "shutdown-state.json");
   try {
-    await writeJsonFileAtomic(markerPath, marker);
+    await writeJsonFileAtomic(markerPath, ShutdownMarkerSchema.parse(marker));
   } catch (err) {
     logger.warn("Failed to write shutdown marker", {
       error: err instanceof Error ? err.message : String(err),
@@ -89,7 +89,10 @@ export async function writeShutdownMarkerFile(
 
 export async function readShutdownMarkerFile(baseDir: string): Promise<ShutdownMarker | null> {
   const markerPath = path.join(baseDir, "shutdown-state.json");
-  return readJsonFileOrNull<ShutdownMarker>(markerPath);
+  const raw = await readJsonFileOrNull<unknown>(markerPath);
+  if (raw === null) return null;
+  const parsed = ShutdownMarkerSchema.safeParse(raw);
+  return parsed.success ? parsed.data : null;
 }
 
 export async function deleteShutdownMarkerFile(baseDir: string): Promise<void> {

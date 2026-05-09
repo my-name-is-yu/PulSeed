@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
-import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import * as os from "node:os";
 import { EventEmitter } from "node:events";
@@ -312,6 +311,32 @@ describe("DaemonRunner — Graceful Shutdown + Crash Recovery", () => {
       ).toBe(true);
     });
 
+    it("should ignore malformed persisted shutdown markers at startup", async () => {
+      fs.writeFileSync(
+        path.join(tmpDir, "shutdown-state.json"),
+        `{"goal_ids":["goal-crashed"],"loop_index":1e999,"timestamp":"not-a-date","reason":"startup","state":"running"}`,
+        "utf-8"
+      );
+
+      const deps = makeDeps(tmpDir, { config: { check_interval_ms: 50 } });
+      const loggerWarnSpy = vi.spyOn(deps.logger, "warn");
+
+      const daemon = new DaemonRunner(deps);
+      currentDaemon = daemon;
+      const startPromise = daemon.start(["goal-1"]);
+      currentStartPromise = startPromise;
+      await waitForDaemonRunning(tmpDir);
+
+      const marker = await waitForMarkerState(tmpDir, "running");
+      expect(marker.loop_index).toBe(0);
+
+      daemon.stop();
+      await startPromise;
+
+      const warnCalls = loggerWarnSpy.mock.calls.map((args) => args[0]);
+      expect(warnCalls.some((msg) => msg.includes("Recovering from crash"))).toBe(false);
+    });
+
     it("should delete the shutdown marker after processing it at startup", async () => {
       // Write a marker before starting
       const marker: ShutdownMarker = {
@@ -413,6 +438,19 @@ describe("DaemonRunner — Graceful Shutdown + Crash Recovery", () => {
       expect(result).not.toBeNull();
       expect(result!.state).toBe("clean_shutdown");
       expect(result!.goal_ids).toEqual(["g1"]);
+    });
+
+    it("should return null when the marker schema is invalid", async () => {
+      fs.writeFileSync(
+        path.join(tmpDir, "shutdown-state.json"),
+        `{"goal_ids":["g1"],"loop_index":1e999,"timestamp":"not-a-date","reason":"stop","state":"clean_shutdown"}`,
+        "utf-8"
+      );
+
+      const deps = makeDeps(tmpDir);
+      const daemon = new DaemonRunner(deps);
+      const result = await daemon.readShutdownMarker();
+      expect(result).toBeNull();
     });
 
     it("should delete the marker file via deleteShutdownMarker()", async () => {
