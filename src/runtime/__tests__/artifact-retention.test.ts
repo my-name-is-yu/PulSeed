@@ -499,10 +499,58 @@ describe("artifact retention planning", () => {
         code_state: { commit: "abc123", dirty: false, source: "test" },
         artifacts: [null, "bad-ref", { label: "valid-manifest-ref", state_relative_path: "runs/valid.md", kind: "report" }],
       }), "utf8");
+      await fsp.writeFile(path.join(runtimeRoot, "reproducibility-manifests", "manifest-malformed.json"), "{", "utf8");
+      await fsp.writeFile(path.join(runtimeRoot, "reproducibility-manifests", "manifest-invalid-scope.json"), JSON.stringify({
+        schema_version: "runtime-reproducibility-manifest-v1",
+        manifest_id: "manifest-invalid-scope",
+        generated_at: "2026-04-30T00:00:00.000Z",
+        updated_at: "2026-04-30T00:00:00.000Z",
+        scope: { goal_id: 42 },
+        finalization_preflight: {
+          manifest_required_before_delivery: true,
+          approval_required_before_external_submission: true,
+          status: "manifest_ready",
+          missing: [],
+        },
+        code_state: { commit: "abc123", dirty: false, source: "test" },
+        artifacts: [{ label: "summary", state_relative_path: "runs/summary.md", kind: "report" }],
+      }), "utf8");
 
-      await expect(ledger.summarizeGoal("goal-retention-defaults")).resolves.toMatchObject({
+      const summary = await ledger.summarizeGoal("goal-retention-defaults");
+      expect(summary).toMatchObject({
         artifact_retention: { total_artifacts: 1 },
       });
+      expect(summary).toMatchObject({
+        artifact_retention: {
+          cleanup_plan: {
+            actions: [expect.objectContaining({
+              label: "summary",
+              retention_class: "evidence_report",
+              protected: false,
+            })],
+          },
+        },
+      });
+    } finally {
+      await fsp.rm(runtimeRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("rethrows manifest read errors in runtime evidence summaries", async () => {
+    const runtimeRoot = makeTempDir("pulseed-retention-runtime-manifest-read-error-");
+    try {
+      const ledger = new RuntimeEvidenceLedger(runtimeRoot);
+      await ledger.append({
+        id: "read-error-report",
+        occurred_at: "2026-04-30T00:00:00.000Z",
+        kind: "artifact",
+        scope: { goal_id: "goal-retention-read-error" },
+        artifacts: [{ label: "summary", state_relative_path: "runs/summary.md", kind: "report" }],
+        summary: "Report artifact.",
+      });
+      await fsp.mkdir(path.join(runtimeRoot, "reproducibility-manifests", "manifest-directory.json"), { recursive: true });
+
+      await expect(ledger.summarizeGoal("goal-retention-read-error")).rejects.toThrow();
     } finally {
       await fsp.rm(runtimeRoot, { recursive: true, force: true });
     }
