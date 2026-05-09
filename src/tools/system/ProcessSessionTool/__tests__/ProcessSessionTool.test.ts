@@ -2,9 +2,14 @@ import { describe, it, expect, afterEach } from "vitest";
 import {
   ProcessSessionListTool,
   ProcessSessionManager,
+  ProcessSessionListInputSchema,
+  ProcessSessionReadInputSchema,
   ProcessSessionReadTool,
+  ProcessSessionStartInputSchema,
   ProcessSessionStartTool,
+  ProcessSessionStopInputSchema,
   ProcessSessionStopTool,
+  ProcessSessionWriteInputSchema,
   ProcessSessionWriteTool,
   type ProcessSessionSnapshot,
   type ProcessSessionReadOutput,
@@ -14,6 +19,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { makeTempDir } from "../../../../../tests/helpers/temp-dir.js";
 import { ReadPulseedFileTool } from "../../../fs/ReadPulseedFileTool/ReadPulseedFileTool.js";
+import { toToolDefinition } from "../../../tool-definition-adapter.js";
 
 const makeContext = (cwd = process.cwd()): ToolCallContext => ({
   goalId: "goal-1",
@@ -53,6 +59,25 @@ describe("ProcessSessionTool", () => {
 
   afterEach(async () => {
     await manager.stopAll();
+  });
+
+  describe("inputSchema validation", () => {
+    it("rejects unknown fields instead of silently stripping them", () => {
+      expect(ProcessSessionStartInputSchema.safeParse({ command: process.execPath, unexpected: true }).success).toBe(false);
+      expect(ProcessSessionReadInputSchema.safeParse({ session_id: "session-1", unexpected: true }).success).toBe(false);
+      expect(ProcessSessionWriteInputSchema.safeParse({ session_id: "session-1", input: "x", unexpected: true }).success).toBe(false);
+      expect(ProcessSessionStopInputSchema.safeParse({ session_id: "session-1", unexpected: true }).success).toBe(false);
+      expect(ProcessSessionListInputSchema.safeParse({ includeExited: true, unexpected: true }).success).toBe(false);
+    });
+
+    it("keeps runtime validation aligned with the model-facing closed object schema", () => {
+      const tools = [startTool, readTool, writeTool, stopTool, listTool];
+
+      for (const tool of tools) {
+        const parameters = toToolDefinition(tool).function.parameters as Record<string, unknown>;
+        expect(parameters.additionalProperties).toBe(false);
+      }
+    });
   });
 
   it("starts, reads, lists, and stops a persistent process", async () => {
