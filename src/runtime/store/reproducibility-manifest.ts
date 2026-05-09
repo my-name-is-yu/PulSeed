@@ -253,8 +253,7 @@ export class RuntimeReproducibilityManifestStore {
 
   async load(manifestId: string): Promise<RuntimeReproducibilityManifest | null> {
     try {
-      const raw = await fsp.readFile(this.pathFor(manifestId), "utf8");
-      return RuntimeReproducibilityManifestSchema.parse(JSON.parse(raw));
+      return await readPersistedManifest(this.pathFor(manifestId));
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
       throw err;
@@ -276,12 +275,8 @@ export class RuntimeReproducibilityManifestStore {
     const manifests: RuntimeReproducibilityManifest[] = [];
     for (const fileName of fileNames) {
       if (!fileName.endsWith(".json")) continue;
-      try {
-        const raw = await fsp.readFile(path.join(this.paths.reproducibilityManifestsDir, fileName), "utf8");
-        manifests.push(RuntimeReproducibilityManifestSchema.parse(JSON.parse(raw)));
-      } catch {
-        continue;
-      }
+      const manifest = await readPersistedManifest(path.join(this.paths.reproducibilityManifestsDir, fileName));
+      if (manifest) manifests.push(manifest);
     }
 
     return manifests
@@ -309,6 +304,20 @@ export class RuntimeReproducibilityManifestStore {
     }
     return [...byId.values()].sort((a, b) => a.occurred_at.localeCompare(b.occurred_at));
   }
+}
+
+async function readPersistedManifest(filePath: string): Promise<RuntimeReproducibilityManifest | null> {
+  const raw = await fsp.readFile(filePath, "utf8");
+  let parsedJson: unknown;
+  try {
+    parsedJson = JSON.parse(raw) as unknown;
+  } catch (err) {
+    if (err instanceof SyntaxError) return null;
+    throw err;
+  }
+
+  const parsed = RuntimeReproducibilityManifestSchema.safeParse(parsedJson);
+  return parsed.success ? parsed.data : null;
 }
 
 function manifestIdFor(input: RuntimeReproducibilityManifestInput): string {
