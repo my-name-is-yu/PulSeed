@@ -9,6 +9,7 @@ import type {
   WaitObservationResult,
   WaitExpiryOutcome,
 } from "../../base/types/strategy.js";
+import { ProcessSessionStateStore } from "../../runtime/store/process-session-state-store.js";
 
 const DEFAULT_WAIT_REOBSERVE_MS = 5 * 60 * 1000;
 const JSON_POINTER_ARRAY_INDEX_TOKEN = /^[0-9]+$/;
@@ -302,7 +303,7 @@ async function evaluateWaitCondition(
         }
       }
       case "process_session_exited": {
-        const snapshot = await readProcessSessionSnapshot(condition.session_id, metadata, context.stateBaseDir);
+        const snapshot = await readProcessSessionSnapshot(condition.session_id, context.stateBaseDir);
         if (!snapshot) {
           return pendingCondition(condition, `process session metadata not found: ${condition.session_id}`);
         }
@@ -398,47 +399,17 @@ function failedCondition(condition: WaitCondition, resumeHint: string): Conditio
 
 async function readProcessSessionSnapshot(
   sessionId: string,
-  metadata: WaitMetadata,
   stateBaseDir: string | null
 ): Promise<ProcessSessionWaitSnapshot | null> {
   if (!isSafeSessionId(sessionId)) return null;
-  const refs = metadata.process_refs.filter((ref) => ref["session_id"] === sessionId);
-  const candidates = [
-    ...refs.flatMap((ref) => [
-      typeof ref["metadata_path"] === "string" ? safeRuntimeMetadataPath(ref["metadata_path"], stateBaseDir) : null,
-      typeof ref["metadata_relative_path"] === "string" && stateBaseDir
-        ? resolveConditionPath(ref["metadata_relative_path"], stateBaseDir)
-        : null,
-    ]),
-    stateBaseDir ? path.join(stateBaseDir, "runtime", "process-sessions", `${sessionId}.json`) : null,
-  ].filter((candidate): candidate is string => typeof candidate === "string" && candidate.length > 0);
-
-  for (const candidate of candidates) {
-    try {
-      const parsed = ProcessSessionWaitSnapshotSchema.safeParse(JSON.parse(await fsp.readFile(candidate, "utf8")));
-      if (parsed.success && parsed.data.session_id === sessionId) {
-        return parsed.data;
-      }
-    } catch {
-      // Try the next candidate.
-    }
-  }
-  return null;
+  if (!stateBaseDir) return null;
+  const snapshot = await new ProcessSessionStateStore(stateBaseDir).loadSnapshot(sessionId);
+  const parsed = ProcessSessionWaitSnapshotSchema.safeParse(snapshot);
+  return parsed.success && parsed.data.session_id === sessionId ? parsed.data : null;
 }
 
 function isSafeSessionId(sessionId: string): boolean {
   return /^[A-Za-z0-9._-]+$/.test(sessionId) && sessionId !== "." && sessionId !== "..";
-}
-
-function safeRuntimeMetadataPath(inputPath: string, stateBaseDir: string | null): string | null {
-  if (!stateBaseDir) return inputPath;
-  const base = path.resolve(stateBaseDir);
-  const resolved = path.resolve(inputPath);
-  const relative = path.relative(base, resolved);
-  if (relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative))) {
-    return resolved;
-  }
-  return null;
 }
 
 function jsonEqual(left: unknown, right: unknown): boolean {

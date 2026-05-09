@@ -1,6 +1,11 @@
 import fs from "node:fs/promises";
 import type { ProcessSessionSnapshot } from "../system/ProcessSessionTool/ProcessSessionTool.js";
 import { signalProcessPid } from "../../base/utils/process-pid.js";
+import { getPulseedDirPath } from "../../base/utils/paths.js";
+import {
+  PROCESS_SESSION_SNAPSHOT_REF_PREFIX,
+  ProcessSessionStateStore,
+} from "../../runtime/store/process-session-state-store.js";
 import {
   parseKaggleMetricsCompatible,
   type KaggleMetricParseResult,
@@ -63,10 +68,15 @@ export async function readJsonObject(filePath: string): Promise<Record<string, u
 
 export async function readProcessSnapshotFromMetadata(processPath: string): Promise<ProcessSessionSnapshot | null> {
   const localProcess = await readJsonObject(processPath);
-  const processMetadataPath = typeof localProcess?.metadataPath === "string" ? localProcess.metadataPath : null;
-  if (processMetadataPath) {
-    const durable = await readJsonObject(processMetadataPath);
-    if (durable) return durable as unknown as ProcessSessionSnapshot;
+  const metadataRef = typeof localProcess?.metadataRef === "string"
+    ? localProcess.metadataRef
+    : typeof localProcess?.metadata_ref === "string"
+      ? localProcess.metadata_ref
+      : null;
+  if (metadataRef?.startsWith(PROCESS_SESSION_SNAPSHOT_REF_PREFIX)) {
+    const sessionId = decodeURIComponent(metadataRef.slice(PROCESS_SESSION_SNAPSHOT_REF_PREFIX.length));
+    const durable = await new ProcessSessionStateStore(getPulseedDirPath()).loadSnapshot(sessionId).catch(() => null);
+    if (durable) return durable as ProcessSessionSnapshot;
   }
   return localProcess as unknown as ProcessSessionSnapshot | null;
 }

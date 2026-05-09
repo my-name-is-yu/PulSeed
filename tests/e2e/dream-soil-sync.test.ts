@@ -6,6 +6,7 @@ import { DaemonRunner, type DaemonDeps } from "../../src/runtime/daemon-runner.j
 import { Logger } from "../../src/runtime/logger.js";
 import { PIDManager } from "../../src/runtime/pid-manager.js";
 import { DaemonStateStore } from "../../src/runtime/store/daemon-state-store.js";
+import { StrategyDreamStateStore } from "../../src/runtime/store/strategy-dream-state-store.js";
 import { SqliteSoilRepository } from "../../src/platform/soil/sqlite-repository.js";
 import { cleanupTempDir, makeTempDir } from "../helpers/temp-dir.js";
 
@@ -13,10 +14,9 @@ interface ResidentDreamInvoker {
   triggerResidentDreamMaintenance(details?: Record<string, unknown>, tier?: "light" | "deep"): Promise<void>;
 }
 
-function seedDreamOutputs(baseDir: string): void {
+async function seedDreamOutputs(baseDir: string): Promise<void> {
   fs.mkdirSync(path.join(baseDir, "memory", "agent-memory"), { recursive: true });
   fs.mkdirSync(path.join(baseDir, "learning"), { recursive: true });
-  fs.mkdirSync(path.join(baseDir, "dream", "events"), { recursive: true });
   fs.writeFileSync(
     path.join(baseDir, "memory", "agent-memory", "entries.json"),
     JSON.stringify({
@@ -55,9 +55,7 @@ function seedDreamOutputs(baseDir: string): void {
     ]),
     "utf8"
   );
-  fs.writeFileSync(
-    path.join(baseDir, "dream", "events", "goal-e2e.jsonl"),
-    `${JSON.stringify({
+  await new StrategyDreamStateStore(baseDir).appendEventLog({
       timestamp: "2026-04-12T02:00:00.000Z",
       eventType: "StallDetected",
       goalId: "goal-e2e",
@@ -67,9 +65,7 @@ function seedDreamOutputs(baseDir: string): void {
         stall_type: "confidence_stall",
         suggested_cause: "verification signal is weak",
       },
-    })}\n`,
-    "utf8"
-  );
+    });
 }
 
 async function expectDreamSoilRecords(baseDir: string): Promise<void> {
@@ -121,7 +117,7 @@ describe("Dream Soil sync E2E", () => {
 
   it("syncs Dream agent memory into the SQLite Soil store during dream consolidation", async () => {
     tempDir = makeTempDir("dream-soil-e2e-");
-    seedDreamOutputs(tempDir);
+    await seedDreamOutputs(tempDir);
 
     const stateManager = {
       listGoalIds: async () => ["goal-e2e"],
@@ -157,7 +153,7 @@ describe("Dream Soil sync E2E", () => {
 
   it("syncs Dream outputs through the resident daemon dream maintenance path", async () => {
     tempDir = makeTempDir("dream-soil-daemon-e2e-");
-    seedDreamOutputs(tempDir);
+    await seedDreamOutputs(tempDir);
 
     const stateManager = {
       getBaseDir: () => tempDir,

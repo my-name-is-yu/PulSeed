@@ -727,7 +727,7 @@ describe("Runtime Dream sidecar review", () => {
       signal: null,
       startedAt: "2026-04-30T00:00:00.000Z",
       bufferedChars: 0,
-      metadataRelativePath: "runtime/process-sessions/proc-sidecar.json",
+      metadataRef: "control-db://process-sessions/proc-sidecar",
       artifactRefs: [],
     });
     const ledger = new BackgroundRunLedger(path.join(tmpDir, "runtime"));
@@ -746,7 +746,7 @@ describe("Runtime Dream sidecar review", () => {
         kind: "process_session",
         id: "proc-sidecar",
         path: null,
-        relative_path: "runtime/process-sessions/proc-sidecar.json",
+        relative_path: "control-db://process-sessions/proc-sidecar",
         updated_at: "2026-04-30T00:10:00.000Z",
       }],
     });
@@ -784,7 +784,7 @@ describe("Runtime Dream sidecar review", () => {
       startedAt: "2026-04-30T00:00:00.000Z",
       exitedAt: "2026-04-30T00:12:00.000Z",
       bufferedChars: 0,
-      metadataRelativePath: "runtime/process-sessions/proc-stale.json",
+      metadataRef: "control-db://process-sessions/proc-stale",
       artifactRefs: [],
     });
     const ledger = new BackgroundRunLedger(path.join(tmpDir, "runtime"));
@@ -803,7 +803,7 @@ describe("Runtime Dream sidecar review", () => {
         kind: "process_session",
         id: "proc-stale",
         path: null,
-        relative_path: "runtime/process-sessions/proc-stale.json",
+        relative_path: "control-db://process-sessions/proc-stale",
         updated_at: "2026-04-30T00:10:00.000Z",
       }],
     });

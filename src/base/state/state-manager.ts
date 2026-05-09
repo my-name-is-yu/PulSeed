@@ -26,6 +26,8 @@ export type { StateWriteFence, StateWriteFenceContext } from "./state-write-fenc
 
 const MAX_HISTORY_ENTRIES = 500;
 type GoalTaskStateStore = import("../../runtime/store/goal-task-state-store.js").GoalTaskStateStore;
+type StrategyDreamStateStore = import("../../runtime/store/strategy-dream-state-store.js").StrategyDreamStateStore;
+type ProcessSessionStateStore = import("../../runtime/store/process-session-state-store.js").ProcessSessionStateStore;
 
 function normalizeRawStatePath(relativePath: string): string[] {
   return relativePath.replace(/\\/g, "/").replace(/^\/+/, "").split("/").filter(Boolean);
@@ -42,6 +44,16 @@ function isGoalTaskDurableStatePath(relativePath: string): boolean {
   if (parts[0] === "pipelines" && parts.length === 2) return true;
   if (parts[0] === "stalls" && parts.length === 2) return true;
   return false;
+}
+
+function isStrategyDreamDurableStatePath(relativePath: string): boolean {
+  const parts = normalizeRawStatePath(relativePath);
+  return parts[0] === "strategies" && parts.length >= 3;
+}
+
+function isProcessSessionDurableStatePath(relativePath: string): boolean {
+  const parts = normalizeRawStatePath(relativePath);
+  return parts[0] === "runtime" && parts[1] === "process-sessions" && parts.length === 3 && parts[2]!.endsWith(".json");
 }
 
 /**
@@ -65,6 +77,8 @@ export class StateManager {
   private readonly walEnabled: boolean;
   private readonly goalWriteCoordinator: GoalWriteCoordinator;
   private goalTaskStateStorePromise: Promise<GoalTaskStateStore> | null = null;
+  private strategyDreamStateStorePromise: Promise<StrategyDreamStateStore> | null = null;
+  private processSessionStateStorePromise: Promise<ProcessSessionStateStore> | null = null;
   private readonly goalStateWriteQueues = new Map<string, Promise<void>>();
 
   constructor(baseDir?: string, logger?: Logger, options?: { walEnabled?: boolean }) {
@@ -82,6 +96,8 @@ export class StateManager {
   async init(): Promise<void> {
     await initDirs(this.baseDir);
     await (await this.goalTaskStateStore()).ensureReady();
+    await (await this.strategyDreamStateStore()).ensureReady();
+    await (await this.processSessionStateStore()).ensureReady();
   }
 
   /** Returns the base directory path */
@@ -160,6 +176,7 @@ export class StateManager {
     await fsp.rm(path.join(this.baseDir, "goals", goalId), { recursive: true, force: true });
     await fsp.rm(path.join(this.baseDir, "tasks", goalId), { recursive: true, force: true });
     await fsp.rm(path.join(this.baseDir, "strategies", goalId), { recursive: true, force: true });
+    await (await this.strategyDreamStateStore()).deleteGoalStrategyState(goalId);
     await fsp.rm(path.join(this.baseDir, "stalls", `${goalId}.json`), { force: true });
     await fsp.rm(path.join(this.baseDir, "reports", goalId), { recursive: true, force: true });
   }
@@ -234,6 +251,18 @@ export class StateManager {
     return this.goalTaskStateStorePromise;
   }
 
+  private async strategyDreamStateStore(): Promise<StrategyDreamStateStore> {
+    this.strategyDreamStateStorePromise ??= import("../../runtime/store/strategy-dream-state-store.js")
+      .then(({ StrategyDreamStateStore }) => new StrategyDreamStateStore(this.baseDir));
+    return this.strategyDreamStateStorePromise;
+  }
+
+  private async processSessionStateStore(): Promise<ProcessSessionStateStore> {
+    this.processSessionStateStorePromise ??= import("../../runtime/store/process-session-state-store.js")
+      .then(({ ProcessSessionStateStore }) => new ProcessSessionStateStore(this.baseDir));
+    return this.processSessionStateStorePromise;
+  }
+
   // ─── Goal CRUD ───
 
   async saveGoal(goal: Goal): Promise<void> {
@@ -277,6 +306,7 @@ export class StateManager {
         const archived = await store.markGoalArchived(goalId);
         await fsp.rm(path.join(this.baseDir, "goals", goalId), { recursive: true, force: true });
         await fsp.rm(path.join(this.baseDir, "tasks", goalId), { recursive: true, force: true });
+        await (await this.strategyDreamStateStore()).deleteGoalStrategyState(goalId);
         await fsp.rm(path.join(this.baseDir, "stalls", `${goalId}.json`), { force: true });
         return archived || (await store.loadGoal(goalId, { includeArchived: true })) !== null;
       });
@@ -565,6 +595,18 @@ export class StateManager {
         return routed.value;
       }
     }
+    if (isStrategyDreamDurableStatePath(relativePath)) {
+      const routed = await (await this.strategyDreamStateStore()).readRawPath(relativePath);
+      if (routed.handled) {
+        return routed.value;
+      }
+    }
+    if (isProcessSessionDurableStatePath(relativePath)) {
+      const routed = await (await this.processSessionStateStore()).readRawPath(relativePath);
+      if (routed.handled) {
+        return routed.value;
+      }
+    }
     return this.atomicRead<unknown>(resolved);
   }
 
@@ -586,6 +628,18 @@ export class StateManager {
           return;
         }
       } else if (await routedStore.writeRawPath(relativePath, data)) {
+        return;
+      }
+    }
+    if (isStrategyDreamDurableStatePath(relativePath)) {
+      const routedStore = await this.strategyDreamStateStore();
+      if (await routedStore.writeRawPath(relativePath, data)) {
+        return;
+      }
+    }
+    if (isProcessSessionDurableStatePath(relativePath)) {
+      const routedStore = await this.processSessionStateStore();
+      if (await routedStore.writeRawPath(relativePath, data)) {
         return;
       }
     }

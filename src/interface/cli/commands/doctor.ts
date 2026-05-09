@@ -23,6 +23,7 @@ import {
   inspectControlDatabase,
   importLegacyGoalTaskDurableLoopState,
   importLegacyQueueDaemonScheduleState,
+  importLegacyRuntimeEvidenceStrategyDreamState,
   type RuntimeHealthKpi,
 } from "../../../runtime/store/index.js";
 import { runRuntimeStoreMaintenanceCycle, type RuntimeMaintenanceLogger } from "../../../runtime/daemon/maintenance.js";
@@ -752,6 +753,7 @@ export async function cmdDoctor(_args: string[]): Promise<number> {
     });
     const chatAgentLoopImportReport = await importLegacyChatAgentLoopSessionState(baseDir);
     const goalTaskImportReport = await importLegacyGoalTaskDurableLoopState(baseDir);
+    const evidenceStrategyDreamImportReport = await importLegacyRuntimeEvidenceStrategyDreamState(baseDir, { runtimeRoot });
     const migratedLegacyCronTasks = await migrateLegacyCronTasksIfNeeded({
       baseDir,
       logger: repairLogger,
@@ -776,6 +778,9 @@ export async function cmdDoctor(_args: string[]): Promise<number> {
     );
     console.log(
       `Repair goal/task import: goals=${goalTaskImportReport.goals}, tasks=${goalTaskImportReport.tasks}, histories=${goalTaskImportReport.taskHistoryRecords}, ledgers=${goalTaskImportReport.taskOutcomeLedgers}, verification=${goalTaskImportReport.verificationResults}, checkpoints=${goalTaskImportReport.checkpoints}, pipelines=${goalTaskImportReport.pipelines}, blocked=${goalTaskImportReport.blockedSources.length}`
+    );
+    console.log(
+      `Repair evidence/strategy/dream import: evidence=${evidenceStrategyDreamImportReport.runtimeEvidenceEntries}, strategy=${evidenceStrategyDreamImportReport.strategyRecords}, iteration logs=${evidenceStrategyDreamImportReport.dreamIterationLogs}, session logs=${evidenceStrategyDreamImportReport.dreamSessionLogs}, event logs=${evidenceStrategyDreamImportReport.dreamEventLogs}, importance=${evidenceStrategyDreamImportReport.dreamImportanceEntries}, watermarks=${evidenceStrategyDreamImportReport.dreamWatermarks ? "imported" : "none"}, suggestions=${evidenceStrategyDreamImportReport.dreamScheduleSuggestions}, playbooks=${evidenceStrategyDreamImportReport.dreamPlaybooks}, activation artifacts=${evidenceStrategyDreamImportReport.dreamActivationArtifacts}, workflows=${evidenceStrategyDreamImportReport.dreamWorkflows}, blocked=${evidenceStrategyDreamImportReport.blockedSources.length}`
     );
   }
 

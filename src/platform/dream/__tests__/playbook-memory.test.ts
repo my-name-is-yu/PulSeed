@@ -1,6 +1,4 @@
 import { afterEach, describe, expect, it } from "vitest";
-import * as fs from "node:fs/promises";
-import * as path from "node:path";
 import { cleanupTempDir, makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 import type { Task, VerificationResult } from "../../../base/types/task.js";
 import {
@@ -99,9 +97,7 @@ describe("playbook-memory", () => {
 
     const playbooks = await loadDreamPlaybooks(tmpDir);
     expect(playbooks).toHaveLength(1);
-    await expect(fs.readFile(path.join(tmpDir, "dream", "playbooks", "index.json"), "utf8")).resolves.toContain(
-      "dream-playbooks-v1"
-    );
+    expect(playbooks[0]?.playbook_id).toBe(record?.playbook_id);
   });
 
   it("keeps low-confidence verifier passes as candidates and excludes them from promoted queries", async () => {

@@ -5,6 +5,7 @@ import { cmdSchedule } from "../commands/schedule.js";
 import { ScheduleEngine } from "../../../runtime/schedule-engine.js";
 import { ScheduleHistoryStore, ScheduleRunHistoryRecordSchema } from "../../../runtime/schedule/history.js";
 import { importLegacyQueueDaemonScheduleState } from "../../../runtime/store/queue-daemon-schedule-state-migration.js";
+import { DreamScheduleSuggestionStore } from "../../../platform/dream/dream-schedule-suggestions.js";
 import { cleanupTempDir, makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 import type { StateManager } from "../../../base/state/state-manager.js";
 
@@ -78,25 +79,15 @@ describe("cmdSchedule", () => {
     const tempDir = makeTempDir("schedule-command-suggestion-");
     try {
       vi.spyOn(console, "log").mockImplementation(() => {});
-      await fs.mkdir(path.join(tempDir, "dream"), { recursive: true });
-      await fs.writeFile(
-        path.join(tempDir, "dream", "schedule-suggestions.json"),
-        JSON.stringify({
-          generated_at: "2026-04-08T00:00:00.000Z",
-          suggestions: [
-            {
-              id: "dream-1",
-              type: "goal_trigger",
-              goalId: "goal-123",
-              confidence: 0.9,
-              reason: "Morning runs perform best.",
-              proposal: "0 9 * * *",
-              status: "pending",
-            },
-          ],
-        }),
-        "utf8",
-      );
+      await new DreamScheduleSuggestionStore(tempDir).save([{
+        id: "dream-1",
+        type: "goal_trigger",
+        goalId: "goal-123",
+        confidence: 0.9,
+        reason: "Morning runs perform best.",
+        proposal: "0 9 * * *",
+        status: "pending",
+      }], "2026-04-08T00:00:00.000Z");
 
       await cmdSchedule(makeStateManager(tempDir), ["suggestions", "apply", "dream-1"]);
 

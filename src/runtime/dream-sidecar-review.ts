@@ -559,7 +559,7 @@ function buildEvidenceRefs(
   refs.push({
     kind: "evidence_ledger",
     id: run.id,
-    relative_path: `runtime/evidence-ledger/runs/${encodeURIComponent(run.id)}.jsonl`,
+    relative_path: `control-db://runtime-evidence/run/${encodeURIComponent(run.id)}`,
   });
   return dedupeRefs(refs).slice(0, 20);
 }

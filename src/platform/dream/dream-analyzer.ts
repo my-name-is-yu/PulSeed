@@ -1,9 +1,7 @@
 import { randomUUID } from "node:crypto";
-import * as fsp from "node:fs/promises";
-import * as path from "node:path";
 import type { ILLMClient } from "../../base/llm/llm-client.js";
-import { writeJsonFileAtomic } from "../../base/utils/json-io.js";
 import type { Logger } from "../../runtime/logger.js";
+import { StrategyDreamStateStore } from "../../runtime/store/strategy-dream-state-store.js";
 import type { LearningPipeline } from "../knowledge/learning/learning-pipeline.js";
 import type { LearnedPattern } from "../knowledge/types/learning.js";
 import {
@@ -56,12 +54,14 @@ export class DreamAnalyzer {
   private readonly llmClient?: ILLMClient;
   private readonly learningPipeline?: LearningPipeline;
   private readonly config: DreamLogConfig["analysis"];
+  private readonly stateStore: StrategyDreamStateStore;
 
   constructor(private readonly deps: DreamAnalyzerDeps) {
     this.collector = new DreamLogCollector(deps.baseDir, deps.logger);
     this.logger = deps.logger;
     this.llmClient = deps.llmClient;
     this.learningPipeline = deps.learningPipeline;
+    this.stateStore = new StrategyDreamStateStore(deps.baseDir);
     this.config = {
       ...DEFAULT_DREAM_CONFIG.analysis,
       ...deps.config,
@@ -149,23 +149,20 @@ export class DreamAnalyzer {
   private async resolveGoalIds(requested?: string[]): Promise<string[]> {
     const goalIds = requested && requested.length > 0
       ? Array.from(new Set(requested))
-      : (await fsp.readdir(path.join(this.deps.baseDir, "goals"), { withFileTypes: true }).catch(() => []))
-        .filter((entry) => entry.isDirectory())
-        .map((entry) => entry.name)
-        .sort();
+      : await this.stateStore.listDreamGoalIds();
     if (goalIds.length === 0) return [];
 
     const watermarks = await this.collector.loadWatermarks();
     const pendingCounts = await Promise.all(
       goalIds.map(async (goalId) => {
-        const lineCount = await this.countNonEmptyLines(path.join(this.deps.baseDir, "goals", goalId, "iteration-logs.jsonl"));
+        const lineCount = await this.stateStore.countIterationLogs(goalId);
         const lastProcessedLine = watermarks.goals[goalId]?.lastProcessedLine ?? 0;
         const lastProcessedTimestamp = watermarks.goals[goalId]?.lastProcessedTimestamp;
         const pendingLines =
           lastProcessedLine <= lineCount
             ? Math.max(0, lineCount - lastProcessedLine)
             : await this.countEntriesAfterTimestamp(
-              path.join(this.deps.baseDir, "goals", goalId, "iteration-logs.jsonl"),
+              goalId,
               lastProcessedTimestamp
             );
         return {
@@ -234,18 +231,15 @@ export class DreamAnalyzer {
     totalLineCount: number;
     lastProcessedTimestamp?: string;
   }> {
-    const filePath = path.join(this.deps.baseDir, "goals", goalId, "iteration-logs.jsonl");
-    const raw = await fsp.readFile(filePath, "utf8").catch(() => "");
-    const lines = raw.split(/\r?\n/).filter((line) => line.trim().length > 0);
+    const lines = await this.stateStore.listIterationLogs(goalId);
     const startLine = watermark.lastProcessedLine <= lines.length ? watermark.lastProcessedLine : 0;
     const useTimestampFallback = watermark.lastProcessedLine > lines.length && Boolean(watermark.lastProcessedTimestamp);
     let malformedCount = 0;
     const entries: IterationLog[] = [];
     let latestTimestamp: string | undefined;
     for (let index = startLine; index < lines.length; index += 1) {
-      const line = lines[index]!;
       try {
-        const parsed = IterationLogSchema.parse(JSON.parse(line));
+        const parsed = IterationLogSchema.parse(lines[index]!);
         if (
           useTimestampFallback &&
           watermark.lastProcessedTimestamp &&
@@ -282,9 +276,7 @@ export class DreamAnalyzer {
     totalLineCount: number;
     cursor: IngestionOutput["watermarkTargets"]["importanceBuffer"];
   }> {
-    const filePath = path.join(this.deps.baseDir, "dream", "importance-buffer.jsonl");
-    const raw = await fsp.readFile(filePath, "utf8").catch(() => "");
-    const lines = raw.split(/\r?\n/).filter((line) => line.trim().length > 0);
+    const lines = await this.stateStore.listImportanceEntries();
     const goalIdSet = new Set(goalIds);
     const startLine = watermark.lastProcessedLine <= lines.length ? watermark.lastProcessedLine : 0;
     const useTimestampFallback = watermark.lastProcessedLine > lines.length &&
@@ -296,9 +288,8 @@ export class DreamAnalyzer {
     let lastProcessedId = watermark.lastProcessedId;
 
     for (let index = startLine; index < lines.length; index += 1) {
-      const line = lines[index]!;
       try {
-        const parsed = ImportanceEntrySchema.parse(JSON.parse(line));
+        const parsed = ImportanceEntrySchema.parse(lines[index]!);
         if (
           useTimestampFallback &&
           watermark.lastProcessedTimestamp &&
@@ -340,18 +331,7 @@ export class DreamAnalyzer {
   }
 
   private async readSessionLogs(): Promise<SessionLog[]> {
-    const filePath = path.join(this.deps.baseDir, "dream", "session-logs.jsonl");
-    const raw = await fsp.readFile(filePath, "utf8").catch(() => "");
-    return raw
-      .split(/\r?\n/)
-      .filter((line) => line.trim().length > 0)
-      .flatMap((line) => {
-        try {
-          return [SessionLogSchema.parse(JSON.parse(line))];
-        } catch {
-          return [];
-        }
-      });
+    return this.stateStore.listSessionLogs();
   }
 
   private buildImportanceWindows(goalIterations: Map<string, IterationLog[]>, importanceEntries: ImportanceEntry[]): IterationWindow[] {
@@ -552,12 +532,11 @@ export class DreamAnalyzer {
   }
 
   private async persistScheduleSuggestions(suggestions: ScheduleSuggestion[]): Promise<void> {
-    const filePath = path.join(this.deps.baseDir, "dream", "schedule-suggestions.json");
     const payload = ScheduleSuggestionFileSchema.parse({
       generated_at: new Date().toISOString(),
       suggestions,
     });
-    await writeJsonFileAtomic(filePath, payload);
+    await this.stateStore.saveScheduleSuggestions(payload.suggestions, payload.generated_at);
   }
 
   private estimateTokens(content: string): number {
@@ -569,21 +548,15 @@ export class DreamAnalyzer {
     return match ? Number.parseInt(match[1], 10) : null;
   }
 
-  private async countNonEmptyLines(filePath: string): Promise<number> {
-    const raw = await fsp.readFile(filePath, "utf8").catch(() => "");
-    return raw.split(/\r?\n/).filter((line) => line.trim().length > 0).length;
-  }
-
-  private async countEntriesAfterTimestamp(filePath: string, timestamp?: string): Promise<number> {
+  private async countEntriesAfterTimestamp(goalId: string, timestamp?: string): Promise<number> {
     if (!timestamp) {
-      return this.countNonEmptyLines(filePath);
+      return this.stateStore.countIterationLogs(goalId);
     }
-    const raw = await fsp.readFile(filePath, "utf8").catch(() => "");
+    const entries = await this.stateStore.listIterationLogs(goalId);
     let count = 0;
-    for (const line of raw.split(/\r?\n/)) {
-      if (line.trim().length === 0) continue;
+    for (const entry of entries) {
       try {
-        const parsed = IterationLogSchema.parse(JSON.parse(line));
+        const parsed = IterationLogSchema.parse(entry);
         if (parsed.timestamp > timestamp) {
           count += 1;
         }

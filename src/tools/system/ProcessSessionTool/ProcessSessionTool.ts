@@ -1,9 +1,10 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import * as fs from "node:fs";
 import * as path from "node:path";
 import { z } from "zod";
 import { getPulseedDirPath } from "../../../base/utils/paths.js";
+import { ProcessSessionStateStore } from "../../../runtime/store/process-session-state-store.js";
+import { StrategyDreamStateStore } from "../../../runtime/store/strategy-dream-state-store.js";
 import type { ITool, PermissionCheckResult, ToolCallContext, ToolMetadata, ToolResult } from "../../types.js";
 
 const MAX_BUFFER_CHARS = 1_000_000;
@@ -65,6 +66,7 @@ export interface ProcessSessionSnapshot {
   startedAt: string;
   exitedAt?: string;
   bufferedChars: number;
+  metadataRef?: string;
   metadataPath?: string;
   metadataRelativePath?: string;
   artifactRefs?: string[];
@@ -96,6 +98,8 @@ interface ProcessSessionRecord {
 
 export class ProcessSessionManager {
   private readonly sessions = new Map<string, ProcessSessionRecord>();
+
+  constructor(private readonly baseDir?: string) {}
 
   start(input: ProcessSessionStartInput, cwd: string, context?: Pick<ToolCallContext, "goalId">): ProcessSessionSnapshot {
     const id = randomUUID();
@@ -141,7 +145,7 @@ export class ProcessSessionManager {
     this.sessions.set(id, record);
     const snapshot = this.snapshot(record);
     this.persistSnapshot(record);
-    this.linkWaitMetadata(record, snapshot);
+    void this.linkWaitMetadata(record, snapshot);
     return snapshot;
   }
 
@@ -233,85 +237,63 @@ export class ProcessSessionManager {
       startedAt: record.startedAt.toISOString(),
       exitedAt: record.exitedAt?.toISOString(),
       bufferedChars: record.combined.length,
-      metadataPath: this.metadataPath(record.id),
-      metadataRelativePath: this.metadataRelativePath(record.id),
+      metadataRef: this.processSessionStore().metadataRef(record.id),
       artifactRefs: record.artifactRefs,
     };
   }
 
-  private metadataRelativePath(sessionId: string): string {
-    return path.join("runtime", "process-sessions", `${sessionId}.json`);
+  private getBaseDir(): string {
+    return this.baseDir ?? getPulseedDirPath();
   }
 
-  private metadataPath(sessionId: string): string {
-    return path.join(getPulseedDirPath(), this.metadataRelativePath(sessionId));
+  private processSessionStore(): ProcessSessionStateStore {
+    return new ProcessSessionStateStore(this.getBaseDir());
   }
 
   private persistSnapshot(record: ProcessSessionRecord): void {
     try {
-      const metadataPath = this.metadataPath(record.id);
-      fs.mkdirSync(path.dirname(metadataPath), { recursive: true });
-      fs.writeFileSync(metadataPath, JSON.stringify(this.snapshot(record), null, 2), "utf8");
+      this.processSessionStore().saveSnapshotSync(this.snapshot(record));
     } catch {
-      // Process metadata is best-effort; tool behavior must not depend on the sidecar write.
+      // Process metadata is best-effort; tool behavior must not depend on the DB projection write.
     }
   }
 
-  private linkWaitMetadata(record: ProcessSessionRecord, snapshot: ProcessSessionSnapshot): void {
+  private async linkWaitMetadata(record: ProcessSessionRecord, snapshot: ProcessSessionSnapshot): Promise<void> {
     if (!record.goalId || !record.strategyId) return;
-    const metadataPath = path.join(
-      getPulseedDirPath(),
-      "strategies",
-      record.goalId,
-      "wait-meta",
-      `${record.strategyId}.json`
-    );
     try {
-      const existing = readJsonObject(metadataPath);
+      const store = new StrategyDreamStateStore(this.getBaseDir());
+      const existingRaw = await store.loadWaitMetadata(record.goalId, record.strategyId);
+      const parsedExisting = JsonObjectSchema.safeParse(existingRaw);
+      const existing = parsedExisting.success ? parsedExisting.data : {};
       const processRefs = readJsonObjectArray(existing["process_refs"]);
       const artifactRefs = readJsonObjectArray(existing["artifact_refs"]);
       const processRef = {
         session_id: snapshot.session_id,
+        metadata_ref: snapshot.metadataRef,
         command: snapshot.command,
         args: snapshot.args,
         cwd: snapshot.cwd,
         pid: snapshot.pid,
         started_at: snapshot.startedAt,
-        metadata_path: snapshot.metadataPath,
-        metadata_relative_path: snapshot.metadataRelativePath,
         task_id: snapshot.task_id ?? null,
         strategy_id: snapshot.strategy_id ?? null,
       };
-      const metadataArtifactRef = snapshot.metadataPath
-        ? {
-            kind: "process_metadata",
-            path: snapshot.metadataPath,
-            relative_path: snapshot.metadataRelativePath,
+      await store.saveWaitMetadata(record.goalId, record.strategyId, {
+        ...existing,
+        schema_version: 1,
+        process_refs: dedupeByJson([...processRefs, processRef]),
+        artifact_refs: dedupeByJson([
+          ...artifactRefs,
+          ...record.artifactRefs.map((artifactPath) => ({
+            kind: "process_artifact",
+            path: artifactPath,
+            relative_path: relativePulseedPath(artifactPath),
             session_id: snapshot.session_id,
-          }
-        : null;
-      fs.mkdirSync(path.dirname(metadataPath), { recursive: true });
-      fs.writeFileSync(
-        metadataPath,
-        JSON.stringify({
-          ...existing,
-          schema_version: 1,
-          process_refs: dedupeByJson([...processRefs, processRef]),
-          artifact_refs: dedupeByJson([
-            ...artifactRefs,
-            ...(metadataArtifactRef ? [metadataArtifactRef] : []),
-            ...record.artifactRefs.map((artifactPath) => ({
-              kind: "process_artifact",
-              path: artifactPath,
-              relative_path: relativePulseedPath(artifactPath),
-              session_id: snapshot.session_id,
-            })),
-          ]),
-        }, null, 2),
-        "utf8"
-      );
+          })),
+        ]),
+      });
     } catch {
-      // Wait metadata linkage is best-effort; the session metadata sidecar remains authoritative.
+      // Wait metadata linkage is best-effort; the process session snapshot remains authoritative.
     }
   }
 }
@@ -358,7 +340,7 @@ export class ProcessSessionStartTool extends ProcessSessionBaseTool<ProcessSessi
         data,
         summary: `Started process session ${data.session_id}${data.pid ? ` (pid ${data.pid})` : ""}: ${data.command} ${data.args.join(" ")}`.trim(),
         durationMs: Date.now() - startTime,
-        artifacts: data.metadataPath ? [data.metadataPath, ...(data.artifactRefs ?? [])] : data.artifactRefs,
+        artifacts: data.artifactRefs,
       };
     } catch (err) {
       return failureResult(`Failed to start process session: ${(err as Error).message}`, startTime);
@@ -404,7 +386,7 @@ export class ProcessSessionReadTool extends ProcessSessionBaseTool<ProcessSessio
       data,
       summary: `Read ${data.output.length} chars from process session ${input.session_id}${data.truncated ? " (truncated)" : ""}`,
       durationMs: Date.now() - startTime,
-      artifacts: data.metadataPath ? [data.metadataPath, ...(data.artifactRefs ?? [])] : data.artifactRefs,
+      artifacts: data.artifactRefs,
     };
   }
 
@@ -489,7 +471,7 @@ export class ProcessSessionStopTool extends ProcessSessionBaseTool<ProcessSessio
       data,
       summary: `Stopped process session ${input.session_id}`,
       durationMs: Date.now() - startTime,
-      artifacts: data.metadataPath ? [data.metadataPath, ...(data.artifactRefs ?? [])] : data.artifactRefs,
+      artifacts: data.artifactRefs,
     };
   }
 
@@ -529,10 +511,7 @@ export class ProcessSessionListTool extends ProcessSessionBaseTool<ProcessSessio
       data,
       summary: `Found ${data.length} process session(s)`,
       durationMs: Date.now() - startTime,
-      artifacts: data.flatMap((session) => [
-        ...(session.metadataPath ? [session.metadataPath] : []),
-        ...(session.artifactRefs ?? []),
-      ]),
+      artifacts: data.flatMap((session) => session.artifactRefs ?? []),
     };
   }
 
@@ -562,17 +541,6 @@ function failureResult(message: string, startTime: number): ToolResult {
     error: message,
     durationMs: Date.now() - startTime,
   };
-}
-
-function readJsonObject(filePath: string): Record<string, unknown> {
-  try {
-    const raw = fs.readFileSync(filePath, "utf8");
-    const parsed = JSON.parse(raw);
-    const object = JsonObjectSchema.safeParse(parsed);
-    return object.success ? object.data : {};
-  } catch {
-    return {};
-  }
 }
 
 function readJsonObjectArray(value: unknown): Array<Record<string, unknown>> {

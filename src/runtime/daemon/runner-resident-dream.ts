@@ -1,5 +1,3 @@
-import * as fs from "node:fs";
-import * as path from "node:path";
 import { lintAgentMemory } from "../../platform/knowledge/knowledge-manager-lint.js";
 import { DreamAnalyzer } from "../../platform/dream/dream-analyzer.js";
 import { DreamConsolidator, type DreamLegacyConsolidationReport } from "../../platform/dream/dream-consolidator.js";
@@ -184,9 +182,14 @@ export async function triggerIdleResidentMaintenance(
     return;
   }
 
-  const dreamSuggestionPath = path.join(context.baseDir, "dream", "schedule-suggestions.json");
-  const hasDreamSuggestionFile = fs.existsSync(dreamSuggestionPath);
-  if (!hasDreamSuggestionFile && !context.memoryLifecycle && !context.knowledgeManager && !context.llmClient) {
+  let hasDreamSuggestions = false;
+  try {
+    hasDreamSuggestions = (await new DreamScheduleSuggestionStore(context.baseDir).list()).length > 0;
+  } catch {
+    await triggerResidentDreamMaintenance(context, undefined, "light", surfaceActivityMetadata);
+    return;
+  }
+  if (!hasDreamSuggestions && !context.memoryLifecycle && !context.knowledgeManager && !context.llmClient) {
     return;
   }
 

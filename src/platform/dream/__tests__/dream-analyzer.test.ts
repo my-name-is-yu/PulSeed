@@ -1,10 +1,10 @@
-import * as fs from "node:fs";
-import * as path from "node:path";
 import { describe, expect, it } from "vitest";
 import type { ZodSchema } from "zod";
 import type { ILLMClient, LLMMessage, LLMRequestOptions, LLMResponse } from "../../../base/llm/llm-client.js";
 import { StateManager } from "../../../base/state/state-manager.js";
+import { StrategyDreamStateStore } from "../../../runtime/store/strategy-dream-state-store.js";
 import { LearningPipeline } from "../../knowledge/learning/learning-pipeline.js";
+import type { ImportanceEntry, IterationLog, SessionLog, WatermarkState } from "../dream-types.js";
 import { DreamAnalyzer } from "../dream-analyzer.js";
 import { cleanupTempDir, makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 
@@ -26,12 +26,32 @@ function makeMockLLM(patternBatches: unknown[][]): ILLMClient {
   };
 }
 
-async function writeJsonl(filePath: string, records: unknown[]): Promise<void> {
-  await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
-  await fs.promises.writeFile(filePath, `${records.map((record) => JSON.stringify(record)).join("\n")}\n`, "utf8");
+async function seedIterationLogs(baseDir: string, records: IterationLog[]): Promise<void> {
+  const store = new StrategyDreamStateStore(baseDir);
+  for (const record of records) {
+    await store.appendIterationLog(record);
+  }
 }
 
-function makeIteration(goalId: string, iteration: number) {
+async function seedImportanceEntries(baseDir: string, records: ImportanceEntry[]): Promise<void> {
+  const store = new StrategyDreamStateStore(baseDir);
+  for (const record of records) {
+    await store.appendImportanceEntry(record);
+  }
+}
+
+async function seedSessionLogs(baseDir: string, records: SessionLog[]): Promise<void> {
+  const store = new StrategyDreamStateStore(baseDir);
+  for (const record of records) {
+    await store.appendSessionLog(record);
+  }
+}
+
+function storeFor(baseDir: string): StrategyDreamStateStore {
+  return new StrategyDreamStateStore(baseDir);
+}
+
+function makeIteration(goalId: string, iteration: number): IterationLog {
   return {
     timestamp: `2026-04-07T00:${iteration.toString().padStart(2, "0")}:00.000Z`,
     goalId,
@@ -59,19 +79,19 @@ function makeIteration(goalId: string, iteration: number) {
 
 describe("DreamAnalyzer", () => {
   it("runs phase 2 analysis, persists patterns and schedule suggestions, and advances resumable watermarks", async () => {
-    const tempDir = makeTempDir("dream-analyzer-");
+      const tempDir = makeTempDir("dream-analyzer-");
     try {
       const goalA = "goal-a";
       const goalB = "goal-b";
-      await writeJsonl(
-        path.join(tempDir, "goals", goalA, "iteration-logs.jsonl"),
+      await seedIterationLogs(
+        tempDir,
         Array.from({ length: 12 }, (_, index) => makeIteration(goalA, index))
       );
-      await writeJsonl(
-        path.join(tempDir, "goals", goalB, "iteration-logs.jsonl"),
+      await seedIterationLogs(
+        tempDir,
         Array.from({ length: 15 }, (_, index) => makeIteration(goalB, index))
       );
-      await writeJsonl(path.join(tempDir, "dream", "importance-buffer.jsonl"), [
+      await seedImportanceEntries(tempDir, [
         {
           id: "imp-1",
           timestamp: "2026-04-07T01:00:00.000Z",
@@ -83,7 +103,6 @@ describe("DreamAnalyzer", () => {
           tags: ["verification"],
           processed: false,
         },
-        "not-json",
         {
           id: "imp-2",
           timestamp: "2026-04-07T01:05:00.000Z",
@@ -96,7 +115,7 @@ describe("DreamAnalyzer", () => {
           processed: false,
         },
       ]);
-      await writeJsonl(path.join(tempDir, "dream", "session-logs.jsonl"), [
+      await seedSessionLogs(tempDir, [
         {
           timestamp: "2026-04-07T03:00:00.000Z",
           goalId: goalB,
@@ -176,9 +195,7 @@ describe("DreamAnalyzer", () => {
       expect(patternsA[0]?.type).toBe("task_generation");
       expect(patternsA[0]?.description).toContain("Retry verification");
 
-      const scheduleSuggestions = JSON.parse(
-        await fs.promises.readFile(path.join(tempDir, "dream", "schedule-suggestions.json"), "utf8")
-      ) as { suggestions: Array<{ goalId?: string; proposal: string; type: string }> };
+      const scheduleSuggestions = await storeFor(tempDir).loadScheduleSuggestions();
       expect(scheduleSuggestions.suggestions).toEqual([
         expect.objectContaining({
           goalId: goalB,
@@ -192,16 +209,11 @@ describe("DreamAnalyzer", () => {
         }),
       ]);
 
-      const watermarks = JSON.parse(
-        await fs.promises.readFile(path.join(tempDir, "dream", "watermarks.json"), "utf8")
-      ) as {
-        goals: Record<string, { lastProcessedLine: number; lastProcessedTimestamp?: string }>;
-        importanceBuffer: { lastProcessedLine: number; lastProcessedTimestamp?: string; lastProcessedId?: string };
-      };
+      const watermarks = await storeFor(tempDir).loadWatermarks();
       expect(watermarks.goals[goalA]?.lastProcessedLine).toBe(12);
       expect(watermarks.goals[goalB]?.lastProcessedLine).toBe(15);
       expect(watermarks.goals[goalB]?.lastProcessedTimestamp).toBeTruthy();
-      expect(watermarks.importanceBuffer.lastProcessedLine).toBe(3);
+      expect(watermarks.importanceBuffer.lastProcessedLine).toBe(2);
       expect(watermarks.importanceBuffer.lastProcessedId).toBe("imp-2");
     } finally {
       cleanupTempDir(tempDir);
@@ -209,11 +221,11 @@ describe("DreamAnalyzer", () => {
   });
 
   it("keeps watermarks retryable when LLM pattern types do not match the contract", async () => {
-    const tempDir = makeTempDir("dream-analyzer-pattern-type-");
+      const tempDir = makeTempDir("dream-analyzer-pattern-type-");
     try {
       const goalId = "goal-pattern-type";
-      await writeJsonl(
-        path.join(tempDir, "goals", goalId, "iteration-logs.jsonl"),
+      await seedIterationLogs(
+        tempDir,
         Array.from({ length: 2 }, (_, index) => makeIteration(goalId, index))
       );
 
@@ -240,34 +252,33 @@ describe("DreamAnalyzer", () => {
       expect(report.partial).toBe(true);
       expect(report.patternsPersisted).toBe(0);
       await expect(learningPipeline.getPatterns(goalId)).resolves.toEqual([]);
-      expect(fs.existsSync(path.join(tempDir, "dream", "watermarks.json"))).toBe(false);
+      expect(await storeFor(tempDir).loadWatermarks()).toEqual({
+        goals: {},
+        importanceBuffer: { lastProcessedLine: 0 },
+      });
     } finally {
       cleanupTempDir(tempDir);
     }
   });
 
   it("falls back to timestamp-based resume when iteration logs were pruned", async () => {
-    const tempDir = makeTempDir("dream-analyzer-pruned-");
+      const tempDir = makeTempDir("dream-analyzer-pruned-");
     try {
       const goalId = "goal-pruned";
-      await writeJsonl(
-        path.join(tempDir, "goals", goalId, "iteration-logs.jsonl"),
+      await seedIterationLogs(
+        tempDir,
         [makeIteration(goalId, 3), makeIteration(goalId, 4), makeIteration(goalId, 5)]
       );
-      await fs.promises.mkdir(path.join(tempDir, "dream"), { recursive: true });
-      await fs.promises.writeFile(
-        path.join(tempDir, "dream", "watermarks.json"),
-        JSON.stringify({
-          goals: {
-            [goalId]: {
-              lastProcessedLine: 10,
-              lastProcessedTimestamp: makeIteration(goalId, 4).timestamp,
-            },
+      const prunedWatermarks: WatermarkState = {
+        goals: {
+          [goalId]: {
+            lastProcessedLine: 10,
+            lastProcessedTimestamp: makeIteration(goalId, 4).timestamp,
           },
-          importanceBuffer: { lastProcessedLine: 0 },
-        }),
-        "utf8"
-      );
+        },
+        importanceBuffer: { lastProcessedLine: 0 },
+      };
+      await storeFor(tempDir).saveWatermarks(prunedWatermarks);
 
       const stateManager = new StateManager(tempDir, undefined, { walEnabled: false });
       await stateManager.init();
@@ -295,19 +306,19 @@ describe("DreamAnalyzer", () => {
   });
 
   it("does not advance importance watermark past excluded goals", async () => {
-    const tempDir = makeTempDir("dream-analyzer-importance-");
+      const tempDir = makeTempDir("dream-analyzer-importance-");
     try {
       const goalA = "goal-a";
       const goalB = "goal-b";
-      await writeJsonl(
-        path.join(tempDir, "goals", goalA, "iteration-logs.jsonl"),
+      await seedIterationLogs(
+        tempDir,
         Array.from({ length: 6 }, (_, index) => makeIteration(goalA, index))
       );
-      await writeJsonl(
-        path.join(tempDir, "goals", goalB, "iteration-logs.jsonl"),
+      await seedIterationLogs(
+        tempDir,
         Array.from({ length: 6 }, (_, index) => makeIteration(goalB, index))
       );
-      await writeJsonl(path.join(tempDir, "dream", "importance-buffer.jsonl"), [
+      await seedImportanceEntries(tempDir, [
         {
           id: "imp-a",
           timestamp: "2026-04-07T01:00:00.000Z",
@@ -350,11 +361,7 @@ describe("DreamAnalyzer", () => {
 
       await analyzer.runDeep({ phases: ["A", "B"] });
 
-      const watermarks = JSON.parse(
-        await fs.promises.readFile(path.join(tempDir, "dream", "watermarks.json"), "utf8")
-      ) as {
-        importanceBuffer: { lastProcessedLine: number; lastProcessedId?: string };
-      };
+      const watermarks = await storeFor(tempDir).loadWatermarks();
       expect(watermarks.importanceBuffer.lastProcessedLine).toBe(1);
       expect(watermarks.importanceBuffer.lastProcessedId).toBe("imp-a");
     } finally {
@@ -363,11 +370,11 @@ describe("DreamAnalyzer", () => {
   });
 
   it("marks the run partial and skips persistence when the token budget is exhausted before analysis", async () => {
-    const tempDir = makeTempDir("dream-analyzer-budget-");
+      const tempDir = makeTempDir("dream-analyzer-budget-");
     try {
       const goalId = "goal-budget";
-      await writeJsonl(
-        path.join(tempDir, "goals", goalId, "iteration-logs.jsonl"),
+      await seedIterationLogs(
+        tempDir,
         Array.from({ length: 25 }, (_, index) => makeIteration(goalId, index))
       );
 
@@ -400,8 +407,11 @@ describe("DreamAnalyzer", () => {
       expect(report.patternsPersisted).toBe(0);
       expect(report.scheduleSuggestions).toBe(0);
       expect(await learningPipeline.getPatterns(goalId)).toEqual([]);
-      expect(fs.existsSync(path.join(tempDir, "dream", "watermarks.json"))).toBe(false);
-      expect(fs.existsSync(path.join(tempDir, "dream", "schedule-suggestions.json"))).toBe(false);
+      expect(await storeFor(tempDir).loadWatermarks()).toEqual({
+        goals: {},
+        importanceBuffer: { lastProcessedLine: 0 },
+      });
+      expect((await storeFor(tempDir).loadScheduleSuggestions()).suggestions).toEqual([]);
     } finally {
       cleanupTempDir(tempDir);
     }

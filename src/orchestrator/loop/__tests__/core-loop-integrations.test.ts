@@ -1964,12 +1964,19 @@ describe("CoreLoop", async () => {
 
       const waitStrategy = makeWaitStrategyForCoreLoop();
       const processSessionId = "sess-current";
-      const processSessionDir = path.join(tmpDir, "runtime", "process-sessions");
-      fs.mkdirSync(processSessionDir, { recursive: true });
-      fs.writeFileSync(
-        path.join(processSessionDir, `${processSessionId}.json`),
-        JSON.stringify({ session_id: processSessionId, running: false, exitCode: 0, pid: 4242 }),
-      );
+      await mocks.stateManager.writeRaw(`runtime/process-sessions/${processSessionId}.json`, {
+        session_id: processSessionId,
+        command: "node",
+        args: [],
+        cwd: tmpDir,
+        running: false,
+        exitCode: 0,
+        signal: null,
+        startedAt: "2026-05-10T00:00:00.000Z",
+        exitedAt: "2026-05-10T00:01:00.000Z",
+        pid: 4242,
+        bufferedChars: 0,
+      });
 
       mocks.strategyManager.getPortfolio.mockReturnValue({
         goal_id: "goal-1",
@@ -1985,7 +1992,7 @@ describe("CoreLoop", async () => {
         resume_plan: { action: "complete_wait" },
         process_refs: [{
           session_id: processSessionId,
-          metadata_relative_path: path.join("runtime", "process-sessions", `${processSessionId}.json`),
+          metadata_ref: `control-db://process-sessions/${processSessionId}`,
         }],
       });
 
@@ -2020,16 +2027,30 @@ describe("CoreLoop", async () => {
       const waitStrategy = makeWaitStrategyForCoreLoop();
       const currentSessionId = "sess-current";
       const staleSessionId = "sess-previous";
-      const processSessionDir = path.join(tmpDir, "runtime", "process-sessions");
-      fs.mkdirSync(processSessionDir, { recursive: true });
-      fs.writeFileSync(
-        path.join(processSessionDir, `${currentSessionId}.json`),
-        JSON.stringify({ session_id: currentSessionId, running: true, exitCode: null }),
-      );
-      fs.writeFileSync(
-        path.join(processSessionDir, `${staleSessionId}.json`),
-        JSON.stringify({ session_id: staleSessionId, running: false, exitCode: 0, pid: 4141 }),
-      );
+      await mocks.stateManager.writeRaw(`runtime/process-sessions/${currentSessionId}.json`, {
+        session_id: currentSessionId,
+        command: "node",
+        args: [],
+        cwd: tmpDir,
+        running: true,
+        exitCode: null,
+        signal: null,
+        startedAt: "2026-05-10T00:00:00.000Z",
+        bufferedChars: 0,
+      });
+      await mocks.stateManager.writeRaw(`runtime/process-sessions/${staleSessionId}.json`, {
+        session_id: staleSessionId,
+        command: "node",
+        args: [],
+        cwd: tmpDir,
+        running: false,
+        exitCode: 0,
+        signal: null,
+        startedAt: "2026-05-10T00:00:00.000Z",
+        exitedAt: "2026-05-10T00:01:00.000Z",
+        pid: 4141,
+        bufferedChars: 0,
+      });
 
       mocks.strategyManager.getPortfolio.mockReturnValue({
         goal_id: "goal-1",
@@ -2047,11 +2068,11 @@ describe("CoreLoop", async () => {
         process_refs: [
           {
             session_id: staleSessionId,
-            metadata_relative_path: path.join("runtime", "process-sessions", `${staleSessionId}.json`),
+            metadata_ref: `control-db://process-sessions/${staleSessionId}`,
           },
           {
             session_id: currentSessionId,
-            metadata_relative_path: path.join("runtime", "process-sessions", `${currentSessionId}.json`),
+            metadata_ref: `control-db://process-sessions/${currentSessionId}`,
           },
         ],
       });

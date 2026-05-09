@@ -299,7 +299,7 @@ function makeProcessSnapshot(overrides: Partial<ProcessSessionSnapshot> = {}): P
     startedAt: overrides.startedAt ?? "2026-04-25T00:00:00.000Z",
     ...(overrides.exitedAt ? { exitedAt: overrides.exitedAt } : {}),
     bufferedChars: overrides.bufferedChars ?? 0,
-    metadataRelativePath: overrides.metadataRelativePath ?? `runtime/process-sessions/${overrides.session_id ?? "proc-1"}.json`,
+    metadataRef: overrides.metadataRef ?? `control-db://process-sessions/${encodeURIComponent(overrides.session_id ?? "proc-1")}`,
     artifactRefs: overrides.artifactRefs ?? [],
   };
 }

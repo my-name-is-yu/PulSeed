@@ -3,6 +3,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { StateManager } from "../../../base/state/state-manager.js";
 import { RuntimeSessionRegistry } from "../../../runtime/session-registry/index.js";
+import { ProcessSessionStateStore } from "../../../runtime/store/process-session-state-store.js";
 import {
   ProcessSessionManager,
   ProcessSessionReadTool,
@@ -151,10 +152,8 @@ describe("LongRunningRuntimeTools", () => {
       }, makeContext(tmpHome));
       expect(postLinkRead.success).toBe(true);
 
-      const sidecar = JSON.parse(
-        await fs.readFile(path.join(tmpHome, "runtime", "process-sessions", `${session.session_id}.json`), "utf8")
-      ) as { artifactRefs: string[] };
-      expect(sidecar.artifactRefs).toEqual(expect.arrayContaining([
+      const processSnapshot = await new ProcessSessionStateStore(tmpHome).loadSnapshot(session.session_id);
+      expect(processSnapshot?.artifactRefs).toEqual(expect.arrayContaining([
         trainLogPath,
         reportData.files.summary,
         reportData.files.result,
@@ -162,8 +161,8 @@ describe("LongRunningRuntimeTools", () => {
       ]));
 
       const stateManager = new StateManager(tmpHome, undefined, { walEnabled: false });
-      const snapshot = await new RuntimeSessionRegistry({ stateManager }).snapshot();
-      const run = snapshot.background_runs.find((candidate) => candidate.id === `run:process:${session.session_id}`);
+      const registrySnapshot = await new RuntimeSessionRegistry({ stateManager }).snapshot();
+      const run = registrySnapshot.background_runs.find((candidate) => candidate.id === `run:process:${session.session_id}`);
       expect(run).toMatchObject({
         kind: "process_run",
         status: "succeeded",
@@ -176,6 +175,51 @@ describe("LongRunningRuntimeTools", () => {
     } finally {
       await manager.stopAll();
     }
+  });
+
+  it("links durable report artifacts to a persisted process session after manager restart", async () => {
+    const sessionId = "persisted-process-session";
+    const store = new ProcessSessionStateStore(tmpHome);
+    await store.saveSnapshot({
+      session_id: sessionId,
+      label: "persisted workflow",
+      command: process.execPath,
+      args: ["-e", "console.log('done')"],
+      cwd: tmpHome,
+      goal_id: "goal-runtime",
+      task_id: "task-runtime",
+      strategy_id: "strategy-runtime",
+      running: false,
+      exitCode: 0,
+      signal: null,
+      startedAt: "2026-05-10T00:00:00.000Z",
+      exitedAt: "2026-05-10T00:01:00.000Z",
+      bufferedChars: 128,
+      artifactRefs: ["existing.log"],
+    });
+    const reportTool = new RuntimeReportWriteTool(new ProcessSessionManager());
+
+    const report = await reportTool.call({
+      objective: "Summarize a restarted workflow",
+      status: "succeeded",
+      next_action: {
+        type: "continue",
+        summary: "Review the persisted workflow report.",
+      },
+      run_id: "persisted-runtime-run",
+      process_session_id: sessionId,
+    }, makeContext(tmpHome));
+
+    expect(report.success).toBe(true);
+    const reportData = report.data as RuntimeReportWriteOutput;
+    expect(reportData.warnings).toEqual([]);
+    const processSnapshot = await store.loadSnapshot(sessionId);
+    expect(processSnapshot?.artifactRefs).toEqual(expect.arrayContaining([
+      "existing.log",
+      reportData.files.summary,
+      reportData.files.result,
+      reportData.files.next_action,
+    ]));
   });
 
   it("imports a workspace into PulSeed state and rejects symlink escapes", async () => {

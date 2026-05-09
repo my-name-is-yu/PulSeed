@@ -2,6 +2,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { cleanupTempDir, makeTempDir } from "../../../../tests/helpers/temp-dir.js";
+import { RuntimeEvidenceLedger } from "../../../runtime/store/evidence-ledger.js";
+import { StrategyDreamStateStore } from "../../../runtime/store/strategy-dream-state-store.js";
+import { loadDreamActivationArtifacts } from "../dream-activation-artifacts.js";
 import { DreamConsolidator } from "../dream-consolidator.js";
 
 describe("DreamConsolidator", () => {
@@ -211,49 +214,39 @@ describe("DreamConsolidator", () => {
   it("emits bounded activation artifacts from workflow-backed passes", async () => {
     tmpDir = makeTempDir("dream-consolidator-artifacts-");
     await seedDreamFiles(tmpDir);
-    await fs.writeFile(
-      path.join(tmpDir, "dream", "workflows.json"),
-      JSON.stringify({
-        version: "dream-workflows-v1",
-        generated_at: "2026-04-12T00:00:00.000Z",
-        workflows: [
-          {
-            workflow_id: "dream-workflow:stall",
-            type: "stall_recovery",
-            title: "Stall recovery: confidence stall",
-            description: "Change strategy when confidence stalls.",
-            applicability: {
-              goal_ids: ["goal-1"],
-              task_ids: [],
-              event_types: ["StallDetected"],
-              signals: ["confidence_stall"],
-              scopes: [{ goal_id: "goal-1", task_id: null }],
-            },
-            preconditions: ["A stall was detected."],
-            steps: ["Inspect stall."],
-            failure_modes: ["confidence_stall"],
-            recovery_steps: ["Re-plan."],
-            evidence_refs: ["dream/events/goal-1.jsonl#L1"],
-            evidence_count: 1,
-            success_count: 0,
-            failure_count: 1,
-            confidence: 0.72,
-            created_at: "2026-04-12T00:00:00.000Z",
-            updated_at: "2026-04-12T00:00:00.000Z",
-          },
-        ],
-      }),
-      "utf8"
-    );
+    await new StrategyDreamStateStore(tmpDir).saveDreamWorkflows([
+      {
+        workflow_id: "dream-workflow:stall",
+        type: "stall_recovery",
+        title: "Stall recovery: confidence stall",
+        description: "Change strategy when confidence stalls.",
+        applicability: {
+          goal_ids: ["goal-1"],
+          task_ids: [],
+          event_types: ["StallDetected"],
+          signals: ["confidence_stall"],
+          scopes: [{ goal_id: "goal-1", task_id: null }],
+        },
+        preconditions: ["A stall was detected."],
+        steps: ["Inspect stall."],
+        failure_modes: ["confidence_stall"],
+        recovery_steps: ["Re-plan."],
+        evidence_refs: ["dream/events/goal-1.jsonl#L1"],
+        evidence_count: 1,
+        success_count: 0,
+        failure_count: 1,
+        confidence: 0.72,
+        created_at: "2026-04-12T00:00:00.000Z",
+        updated_at: "2026-04-12T00:00:00.000Z",
+      },
+    ]);
 
     const consolidator = new DreamConsolidator({ baseDir: tmpDir });
     const report = await consolidator.run({ tier: "deep" });
-    const artifacts = JSON.parse(
-      await fs.readFile(path.join(tmpDir, "dream", "activation-artifacts.json"), "utf8")
-    ) as { artifacts?: Array<{ type?: string; source?: string }> };
+    const artifacts = await loadDreamActivationArtifacts(tmpDir);
 
     expect(report.operational?.consolidation.artifacts_created).toBeGreaterThan(0);
-    expect(artifacts.artifacts).toEqual(expect.arrayContaining([
+    expect(artifacts).toEqual(expect.arrayContaining([
       expect.objectContaining({
         type: "workflow_hint_pack",
         source: "stallHistory",
@@ -297,27 +290,40 @@ describe("DreamConsolidator", () => {
 
   it("extracts latent fact and lesson metrics with audit evidence refs", async () => {
     tmpDir = makeTempDir("dream-consolidator-memory-metrics-");
-    await fs.mkdir(path.join(tmpDir, "runtime", "evidence-ledger", "runs"), { recursive: true });
     await fs.mkdir(path.join(tmpDir, "dream", "reports"), { recursive: true });
-    await fs.writeFile(
-      path.join(tmpDir, "runtime", "evidence-ledger", "runs", "run-a.jsonl"),
-      [
-        JSON.stringify({
-          id: "runtime-fact-1",
-          kind: "metric",
-          summary: "Balanced accuracy improved after feature pruning.",
-          outcome: "improved",
-          metrics: [{ label: "balanced_accuracy", value: 0.91, direction: "maximize" }],
-        }),
-        JSON.stringify({
-          id: "runtime-fact-2",
-          kind: "dream_checkpoint",
-          summary: "Avoid repeating threshold-only sweeps.",
-          dream_checkpoints: [{ guidance: "Switch strategy family." }],
-        }),
-      ].join("\n") + "\n",
-      "utf8"
-    );
+    const runtimeEvidence = new RuntimeEvidenceLedger(path.join(tmpDir, "runtime"));
+    await runtimeEvidence.append({
+      id: "runtime-fact-1",
+      kind: "metric",
+      scope: { run_id: "run-a" },
+      summary: "Balanced accuracy improved after feature pruning.",
+      outcome: "improved",
+      metrics: [{ label: "balanced_accuracy", value: 0.91, direction: "maximize" }],
+    });
+    await runtimeEvidence.append({
+      id: "runtime-fact-2",
+      kind: "dream_checkpoint",
+      scope: { run_id: "run-a" },
+      summary: "Avoid repeating threshold-only sweeps.",
+      dream_checkpoints: [{
+        trigger: "iteration",
+        summary: "Avoid repeating threshold-only sweeps.",
+        current_goal: "goal-a",
+        active_dimensions: [],
+        best_evidence_so_far: "runtime-fact-2",
+        recent_strategy_families: [],
+        exhausted: [],
+        promising: [],
+        relevant_memories: [],
+        active_hypotheses: [],
+        rejected_approaches: [],
+        next_strategy_candidates: [],
+        guidance: "Switch strategy family.",
+        uncertainty: [],
+        context_authority: "advisory_only",
+        confidence: 0.8,
+      }],
+    });
     await fs.writeFile(
       path.join(tmpDir, "dream", "reports", "report.json"),
       JSON.stringify({
@@ -331,21 +337,19 @@ describe("DreamConsolidator", () => {
 
     const report = await new DreamConsolidator({ baseDir: tmpDir }).run({ tier: "light" });
     const memory = report.categories.find((category) => category.category === "memory");
-    const artifacts = JSON.parse(
-      await fs.readFile(path.join(tmpDir, "dream", "activation-artifacts.json"), "utf8")
-    ) as { artifacts?: Array<{ source?: string; evidence_refs?: string[] }> };
+    const artifacts = await loadDreamActivationArtifacts(tmpDir);
 
     expect(memory?.metrics.latentFactsExtracted).toBe(3);
     expect(memory?.metrics.lessonsDistilled).toBe(3);
     expect(memory?.evidence_refs).toEqual(expect.arrayContaining([
-      "runtime/evidence-ledger/runs/run-a.jsonl#L1",
-      "runtime/evidence-ledger/runs/run-a.jsonl#L2",
+      "runtime-evidence://run/run-a/runtime-fact-1",
+      "runtime-evidence://run/run-a/runtime-fact-2",
       "dream/events/goal-a.jsonl#L7",
     ]));
-    expect(artifacts.artifacts).toEqual(expect.arrayContaining([
+    expect(artifacts).toEqual(expect.arrayContaining([
       expect.objectContaining({
         source: "memory",
-        evidence_refs: expect.arrayContaining(["runtime/evidence-ledger/runs/run-a.jsonl#L1"]),
+        evidence_refs: expect.arrayContaining(["runtime-evidence://run/run-a/runtime-fact-1"]),
       }),
     ]));
   });
@@ -467,28 +471,48 @@ function agentMemoryEntry(
 }
 
 async function seedDreamFiles(baseDir: string): Promise<void> {
-  await fs.mkdir(path.join(baseDir, "goals", "goal-1"), { recursive: true });
-  await fs.mkdir(path.join(baseDir, "dream", "events"), { recursive: true });
   await fs.mkdir(path.join(baseDir, "archive", "goal-1"), { recursive: true });
   await fs.mkdir(path.join(baseDir, "verification", "task-1"), { recursive: true });
   await fs.mkdir(path.join(baseDir, "memory", "agent-memory"), { recursive: true });
   await fs.mkdir(path.join(baseDir, "trust"), { recursive: true });
+  const dreamStore = new StrategyDreamStateStore(baseDir);
 
-  await fs.writeFile(
-    path.join(baseDir, "goals", "goal-1", "iteration-logs.jsonl"),
-    `${JSON.stringify({ goalId: "goal-1", iteration: 0 })}\n`,
-    "utf8",
-  );
-  await fs.writeFile(
-    path.join(baseDir, "dream", "session-logs.jsonl"),
-    `${JSON.stringify({ goalId: "goal-1", sessionId: "s-1" })}\n`,
-    "utf8",
-  );
-  await fs.writeFile(
-    path.join(baseDir, "dream", "events", "goal-1.jsonl"),
-    `${JSON.stringify({ eventType: "StallDetected" })}\n`,
-    "utf8",
-  );
+  await dreamStore.appendIterationLog({
+    timestamp: "2026-04-12T00:00:00.000Z",
+    goalId: "goal-1",
+    iteration: 0,
+    sessionId: "s-1",
+    gapAggregate: 0.5,
+    taskId: "task-1",
+    taskAction: "verify",
+    strategyId: "baseline",
+    verificationResult: null,
+    stallDetected: true,
+    stallSeverity: 1,
+    tokensUsed: 10,
+    elapsedMs: 100,
+    completionJudgment: { is_complete: false },
+  });
+  await dreamStore.appendSessionLog({
+    timestamp: "2026-04-12T00:05:00.000Z",
+    goalId: "goal-1",
+    sessionId: "s-1",
+    iterationCount: 1,
+    finalGapAggregate: 0.5,
+    initialGapAggregate: 0.7,
+    totalTokensUsed: 10,
+    totalElapsedMs: 100,
+    stallCount: 1,
+    outcome: "max_iterations",
+    strategiesUsed: ["baseline"],
+  });
+  await dreamStore.appendEventLog({
+    timestamp: "2026-04-12T00:01:00.000Z",
+    eventType: "StallDetected",
+    goalId: "goal-1",
+    taskId: "task-1",
+    data: { signal: "confidence_stall" },
+  });
   await fs.writeFile(path.join(baseDir, "archive", "goal-1", "bundle.json"), "{}", "utf8");
   await fs.writeFile(path.join(baseDir, "verification", "task-1", "report.json"), "{}", "utf8");
   await fs.writeFile(

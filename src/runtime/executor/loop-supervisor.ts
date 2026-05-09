@@ -663,7 +663,7 @@ export class LoopSupervisor {
       kind: 'evidence_ledger',
       id: runId,
       path: null,
-      relative_path: runId ? `runtime/evidence-ledger/runs/${encodeURIComponent(runId)}.jsonl` : null,
+      relative_path: runId ? `control-db://runtime-evidence/run/${encodeURIComponent(runId)}` : null,
       updated_at: null,
     };
   }

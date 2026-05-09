@@ -19,10 +19,12 @@ import { runSupervisorMaintenanceCycleForDaemon } from "../daemon/maintenance.js
 import { GuardrailStore } from "../guardrails/index.js";
 import { RuntimeHealthStore } from "../store/health-store.js";
 import { DaemonShutdownStore, DaemonStateStore, GoalTaskStateStore, SupervisorStateStore } from "../store/index.js";
+import { openControlDatabase } from "../store/control-db/index.js";
 import type { DaemonState } from "../../base/types/daemon.js";
 import { restoreInterruptedGoals } from "../daemon/persistence.js";
 import { upsertRelationshipProfileItem } from "../../platform/profile/relationship-profile.js";
 import { ProactiveInterventionStore } from "../store/proactive-intervention-store.js";
+import { DreamScheduleSuggestionStore } from "../../platform/dream/dream-schedule-suggestions.js";
 
 vi.setConfig({ testTimeout: 20_000 });
 
@@ -963,24 +965,18 @@ describe("DaemonRunner durable runtime", () => {
       parseJSON: vi.fn((content: string) => JSON.parse(content)),
     };
 
-    fs.mkdirSync(path.join(tmpDir, "dream"), { recursive: true });
-    fs.writeFileSync(
-      path.join(tmpDir, "dream", "schedule-suggestions.json"),
-      JSON.stringify({
-        generated_at: new Date().toISOString(),
-        suggestions: [
-          {
-            id: "dream-1",
-            type: "cron",
-            name: "Dream resident schedule",
-            confidence: 0.9,
-            reason: "Follow up on resident daemon maintenance during idle time.",
-            proposal: "0 * * * *",
-            status: "pending",
-          },
-        ],
-      })
-    );
+    const suggestionStore = new DreamScheduleSuggestionStore(tmpDir);
+    await suggestionStore.save([
+      {
+        id: "dream-1",
+        type: "cron",
+        name: "Dream resident schedule",
+        confidence: 0.9,
+        reason: "Follow up on resident daemon maintenance during idle time.",
+        proposal: "0 * * * *",
+        status: "pending",
+      },
+    ], new Date().toISOString());
 
     const deps = makeDeps(tmpDir, {
       config: {
@@ -1011,11 +1007,7 @@ describe("DaemonRunner durable runtime", () => {
       (value) => value.resident_activity?.kind === "dream"
     );
 
-    const suggestionFile = JSON.parse(
-      fs.readFileSync(path.join(tmpDir, "dream", "schedule-suggestions.json"), "utf-8")
-    ) as {
-      suggestions: Array<{ status: string; applied_entry_id?: string }>;
-    };
+    const suggestions = await suggestionStore.list();
 
     expect(state.status).toBe("idle");
     expect(state.resident_activity?.summary).toContain("applied pending suggestion");
@@ -1033,7 +1025,7 @@ describe("DaemonRunner durable runtime", () => {
       })],
     }));
     expect(scheduleEngine.addEntry).toHaveBeenCalledOnce();
-    expect(suggestionFile.suggestions[0]).toEqual(expect.objectContaining({
+    expect(suggestions[0]).toEqual(expect.objectContaining({
       status: "applied",
       applied_entry_id: "schedule-entry-1",
     }));
@@ -1313,12 +1305,30 @@ describe("DaemonRunner durable runtime", () => {
       parseJSON: vi.fn((content: string) => JSON.parse(content)),
     };
 
-    fs.mkdirSync(path.join(tmpDir, "dream"), { recursive: true });
-    fs.writeFileSync(
-      path.join(tmpDir, "dream", "schedule-suggestions.json"),
-      JSON.stringify({ generated_at: 42, suggestions: {} }),
-      "utf-8",
-    );
+    const suggestionStore = new DreamScheduleSuggestionStore(tmpDir);
+    await suggestionStore.save([
+      {
+        id: "dream-corrupt",
+        type: "cron",
+        name: "Corrupt resident schedule",
+        confidence: 0.9,
+        reason: "Exercise malformed DB-backed suggestion storage.",
+        proposal: "0 * * * *",
+        status: "pending",
+      },
+    ], new Date().toISOString());
+    const controlDb = await openControlDatabase({ baseDir: tmpDir });
+    try {
+      controlDb.transaction((db) => {
+        db.prepare(`
+          UPDATE dream_schedule_suggestions
+          SET suggestion_json = ?
+          WHERE suggestion_id = ?
+        `).run(JSON.stringify({ generated_at: 42, suggestions: {} }), "dream-corrupt");
+      });
+    } finally {
+      controlDb.close();
+    }
 
     const deps = makeDeps(tmpDir, {
       config: {

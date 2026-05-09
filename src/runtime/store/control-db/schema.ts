@@ -7,7 +7,7 @@ export interface ControlDbMigration {
   checksum: string;
 }
 
-export const CONTROL_DB_SCHEMA_VERSION = 6;
+export const CONTROL_DB_SCHEMA_VERSION = 7;
 
 export const CONTROL_DB_INITIAL_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS control_schema_migrations (
@@ -645,6 +645,226 @@ CREATE INDEX IF NOT EXISTS pipeline_state_records_status_idx
   ON pipeline_state_records(status, updated_at, task_id);
 `.trim();
 
+export const CONTROL_DB_RUNTIME_EVIDENCE_STRATEGY_DREAM_SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS runtime_evidence_entries (
+  scope_kind TEXT NOT NULL CHECK (scope_kind IN ('goal', 'run')),
+  scope_id TEXT NOT NULL,
+  entry_id TEXT NOT NULL,
+  occurred_at TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  outcome TEXT,
+  goal_id TEXT,
+  run_id TEXT,
+  task_id TEXT,
+  source_ref TEXT,
+  entry_json TEXT NOT NULL CHECK (json_valid(entry_json)),
+  PRIMARY KEY (scope_kind, scope_id, entry_id)
+);
+
+CREATE INDEX IF NOT EXISTS runtime_evidence_entries_scope_time_idx
+  ON runtime_evidence_entries(scope_kind, scope_id, occurred_at, entry_id);
+
+CREATE INDEX IF NOT EXISTS runtime_evidence_entries_goal_idx
+  ON runtime_evidence_entries(goal_id, occurred_at, entry_id);
+
+CREATE INDEX IF NOT EXISTS runtime_evidence_entries_run_idx
+  ON runtime_evidence_entries(run_id, occurred_at, entry_id);
+
+CREATE INDEX IF NOT EXISTS runtime_evidence_entries_kind_idx
+  ON runtime_evidence_entries(kind, occurred_at, entry_id);
+
+CREATE TABLE IF NOT EXISTS runtime_evidence_summary_indexes (
+  scope_kind TEXT NOT NULL CHECK (scope_kind IN ('goal', 'run')),
+  scope_id TEXT NOT NULL,
+  generated_at TEXT NOT NULL,
+  summary_json TEXT NOT NULL CHECK (json_valid(summary_json)),
+  append_state_json TEXT,
+  checkpoint_json TEXT,
+  PRIMARY KEY (scope_kind, scope_id),
+  CHECK (append_state_json IS NULL OR json_valid(append_state_json)),
+  CHECK (checkpoint_json IS NULL OR json_valid(checkpoint_json))
+);
+
+CREATE INDEX IF NOT EXISTS runtime_evidence_summary_indexes_generated_idx
+  ON runtime_evidence_summary_indexes(generated_at, scope_kind, scope_id);
+
+CREATE TABLE IF NOT EXISTS strategy_portfolios (
+  goal_id TEXT PRIMARY KEY,
+  updated_at TEXT NOT NULL,
+  portfolio_json TEXT NOT NULL CHECK (json_valid(portfolio_json))
+);
+
+CREATE TABLE IF NOT EXISTS strategy_history_records (
+  goal_id TEXT NOT NULL,
+  strategy_id TEXT NOT NULL,
+  sort_order INTEGER NOT NULL CHECK (sort_order >= 0),
+  updated_at TEXT NOT NULL,
+  strategy_json TEXT NOT NULL CHECK (json_valid(strategy_json)),
+  PRIMARY KEY (goal_id, strategy_id)
+);
+
+CREATE INDEX IF NOT EXISTS strategy_history_records_order_idx
+  ON strategy_history_records(goal_id, sort_order, strategy_id);
+
+CREATE TABLE IF NOT EXISTS strategy_wait_metadata (
+  goal_id TEXT NOT NULL,
+  strategy_id TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  metadata_json TEXT NOT NULL CHECK (json_valid(metadata_json)),
+  PRIMARY KEY (goal_id, strategy_id)
+);
+
+CREATE TABLE IF NOT EXISTS strategy_rebalance_history (
+  goal_id TEXT NOT NULL,
+  sort_order INTEGER NOT NULL CHECK (sort_order >= 0),
+  rebalance_at TEXT NOT NULL,
+  record_json TEXT NOT NULL CHECK (json_valid(record_json)),
+  PRIMARY KEY (goal_id, sort_order)
+);
+
+CREATE INDEX IF NOT EXISTS strategy_rebalance_history_time_idx
+  ON strategy_rebalance_history(goal_id, rebalance_at, sort_order);
+
+CREATE TABLE IF NOT EXISTS process_session_snapshots (
+  session_id TEXT PRIMARY KEY,
+  label TEXT,
+  command TEXT NOT NULL,
+  cwd TEXT NOT NULL,
+  goal_id TEXT,
+  task_id TEXT,
+  strategy_id TEXT,
+  pid INTEGER,
+  running INTEGER NOT NULL CHECK (running IN (0, 1)),
+  exit_code INTEGER,
+  signal TEXT,
+  started_at TEXT NOT NULL,
+  exited_at TEXT,
+  updated_at TEXT NOT NULL,
+  snapshot_json TEXT NOT NULL CHECK (json_valid(snapshot_json))
+);
+
+CREATE INDEX IF NOT EXISTS process_session_snapshots_goal_idx
+  ON process_session_snapshots(goal_id, strategy_id, task_id, updated_at);
+
+CREATE INDEX IF NOT EXISTS process_session_snapshots_running_idx
+  ON process_session_snapshots(running, updated_at, session_id);
+
+CREATE TABLE IF NOT EXISTS dream_iteration_logs (
+  goal_id TEXT NOT NULL,
+  entry_id TEXT NOT NULL,
+  sequence INTEGER NOT NULL CHECK (sequence > 0),
+  session_id TEXT,
+  iteration INTEGER NOT NULL CHECK (iteration >= 0),
+  timestamp TEXT NOT NULL,
+  entry_json TEXT NOT NULL CHECK (json_valid(entry_json)),
+  PRIMARY KEY (goal_id, entry_id),
+  UNIQUE (goal_id, sequence)
+);
+
+CREATE INDEX IF NOT EXISTS dream_iteration_logs_goal_sequence_idx
+  ON dream_iteration_logs(goal_id, sequence);
+
+CREATE INDEX IF NOT EXISTS dream_iteration_logs_timestamp_idx
+  ON dream_iteration_logs(timestamp, goal_id, sequence);
+
+CREATE TABLE IF NOT EXISTS dream_session_logs (
+  session_id TEXT NOT NULL,
+  goal_id TEXT NOT NULL,
+  sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+  timestamp TEXT NOT NULL,
+  entry_json TEXT NOT NULL CHECK (json_valid(entry_json))
+);
+
+CREATE INDEX IF NOT EXISTS dream_session_logs_goal_time_idx
+  ON dream_session_logs(goal_id, timestamp, sequence);
+
+CREATE TABLE IF NOT EXISTS dream_event_logs (
+  goal_id TEXT NOT NULL,
+  entry_id TEXT NOT NULL,
+  sequence INTEGER NOT NULL CHECK (sequence > 0),
+  event_type TEXT NOT NULL,
+  task_id TEXT,
+  timestamp TEXT NOT NULL,
+  entry_json TEXT NOT NULL CHECK (json_valid(entry_json)),
+  PRIMARY KEY (goal_id, entry_id),
+  UNIQUE (goal_id, sequence)
+);
+
+CREATE INDEX IF NOT EXISTS dream_event_logs_goal_sequence_idx
+  ON dream_event_logs(goal_id, sequence);
+
+CREATE INDEX IF NOT EXISTS dream_event_logs_type_idx
+  ON dream_event_logs(event_type, timestamp, goal_id, sequence);
+
+CREATE TABLE IF NOT EXISTS dream_importance_entries (
+  entry_id TEXT PRIMARY KEY,
+  goal_id TEXT NOT NULL,
+  sequence INTEGER UNIQUE NOT NULL,
+  timestamp TEXT NOT NULL,
+  importance REAL NOT NULL,
+  processed INTEGER NOT NULL CHECK (processed IN (0, 1)),
+  entry_json TEXT NOT NULL CHECK (json_valid(entry_json))
+);
+
+CREATE INDEX IF NOT EXISTS dream_importance_entries_goal_sequence_idx
+  ON dream_importance_entries(goal_id, sequence);
+
+CREATE INDEX IF NOT EXISTS dream_importance_entries_processed_idx
+  ON dream_importance_entries(processed, timestamp, entry_id);
+
+CREATE TABLE IF NOT EXISTS dream_watermark_state (
+  state_id TEXT PRIMARY KEY CHECK (state_id = 'current'),
+  updated_at TEXT NOT NULL,
+  state_json TEXT NOT NULL CHECK (json_valid(state_json))
+);
+
+CREATE TABLE IF NOT EXISTS dream_schedule_suggestions (
+  suggestion_id TEXT PRIMARY KEY,
+  status TEXT NOT NULL CHECK (status IN ('pending', 'applied', 'rejected', 'dismissed')),
+  generated_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  goal_id TEXT,
+  suggestion_json TEXT NOT NULL CHECK (json_valid(suggestion_json))
+);
+
+CREATE INDEX IF NOT EXISTS dream_schedule_suggestions_status_idx
+  ON dream_schedule_suggestions(status, updated_at, suggestion_id);
+
+CREATE TABLE IF NOT EXISTS dream_playbooks (
+  playbook_id TEXT PRIMARY KEY,
+  status TEXT NOT NULL CHECK (status IN ('candidate', 'promoted', 'disabled')),
+  updated_at TEXT NOT NULL,
+  record_json TEXT NOT NULL CHECK (json_valid(record_json))
+);
+
+CREATE INDEX IF NOT EXISTS dream_playbooks_status_idx
+  ON dream_playbooks(status, updated_at, playbook_id);
+
+CREATE TABLE IF NOT EXISTS dream_activation_artifacts (
+  artifact_id TEXT PRIMARY KEY,
+  artifact_type TEXT NOT NULL,
+  source TEXT NOT NULL,
+  confidence REAL NOT NULL,
+  valid_from TEXT NOT NULL,
+  valid_to TEXT,
+  updated_at TEXT NOT NULL,
+  artifact_json TEXT NOT NULL CHECK (json_valid(artifact_json))
+);
+
+CREATE INDEX IF NOT EXISTS dream_activation_artifacts_type_idx
+  ON dream_activation_artifacts(artifact_type, valid_from, artifact_id);
+
+CREATE TABLE IF NOT EXISTS dream_workflows (
+  workflow_id TEXT PRIMARY KEY,
+  workflow_type TEXT NOT NULL CHECK (workflow_type IN ('stall_recovery', 'verification_recovery')),
+  updated_at TEXT NOT NULL,
+  record_json TEXT NOT NULL CHECK (json_valid(record_json))
+);
+
+CREATE INDEX IF NOT EXISTS dream_workflows_type_idx
+  ON dream_workflows(workflow_type, updated_at, workflow_id);
+`.trim();
+
 export function controlDbMigrationChecksum(sql: string): string {
   return createHash("sha256").update(sql.trim()).digest("hex");
 }
@@ -692,5 +912,10 @@ export const CONTROL_DB_MIGRATIONS: readonly ControlDbMigration[] = [
     6,
     "goal-task-durable-loop-state",
     CONTROL_DB_GOAL_TASK_DURABLE_LOOP_SCHEMA_SQL
+  ),
+  createControlDbMigration(
+    7,
+    "runtime-evidence-strategy-dream-state",
+    CONTROL_DB_RUNTIME_EVIDENCE_STRATEGY_DREAM_SCHEMA_SQL
   ),
 ];

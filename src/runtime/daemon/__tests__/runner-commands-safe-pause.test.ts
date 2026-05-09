@@ -154,7 +154,7 @@ describe("daemon safe pause commands", () => {
     expect(state.safe_pause_goals?.["goal-1"]?.state).toBe("resumed");
     expect(state.safe_pause_goals?.["goal-1"]?.checkpoint).toMatchObject({
       current_mode: "running",
-      candidate_evidence_refs: expect.arrayContaining([`${tmpDir}/evidence-ledger/goals/goal-1.jsonl`]),
+      candidate_evidence_refs: expect.arrayContaining(["control-db://runtime-evidence/goal/goal-1"]),
       artifact_refs: expect.arrayContaining([`${tmpDir}/artifacts`, "background-run:run-1"]),
       next_action: "resume goal to continue from the saved queue/evidence/artifact context",
     });

@@ -1,4 +1,7 @@
 import React, { act } from "react";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import { Writable } from "node:stream";
 import { render } from "ink";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -174,10 +177,11 @@ function makeTuiGoal(overrides: Partial<Goal> = {}): Goal {
 }
 
 function createStateManagerMock() {
+  const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-tui-test-"));
   return {
     listGoalIds: vi.fn(async () => [] as string[]),
     loadGoal: vi.fn(async (_id: string) => null),
-    getBaseDir: vi.fn(() => "/tmp/pulseed-tui-test"),
+    getBaseDir: vi.fn(() => baseDir),
     writeRaw: vi.fn(async () => undefined),
     readRaw: vi.fn(async () => null),
   };
@@ -1228,7 +1232,7 @@ describe("standalone slash command routing", () => {
 
     expect(chatRunner.execute).toHaveBeenCalledWith("telegramからseedyと会話できるようにしたい", "/work/pulseed");
     expect(chatRunner.executeIngressMessage).not.toHaveBeenCalled();
-    expect(gatewaySetupStatusProvider.getTelegramStatus).toHaveBeenCalledWith("/tmp/pulseed-tui-test");
+    expect(gatewaySetupStatusProvider.getTelegramStatus).toHaveBeenCalledWith(stateManager.getBaseDir());
     await vi.waitFor(() => expect(chatRunnerOutput).toContain("pulseed telegram setup"));
     expect(chatRunnerOutput).toContain("pulseed telegram setup");
     expect(chatRunnerOutput).toContain("pulseed gateway setup");
