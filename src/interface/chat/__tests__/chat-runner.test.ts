@@ -2358,6 +2358,69 @@ describe("ChatRunner", () => {
       }
     });
 
+    it("clears numbered resume choices before pending setup confirmation returns", async () => {
+      const telegramToken = "123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi";
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-natural-resume-setup-clear-"));
+      try {
+        const stateManager = new StateManager(tmpDir);
+        await stateManager.init();
+        await stateManager.writeRaw("chat/sessions/older-safe-chat.json", {
+          id: "older-safe-chat",
+          cwd: "/work/older",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:01.000Z",
+          title: "Budget review",
+          messages: [],
+          agentLoopStatePath: "chat/agentloop/older-safe-chat.state.json",
+          agentLoopStatus: "running",
+          agentLoopResumable: true,
+          agentLoopUpdatedAt: "2026-01-01T00:00:02.000Z",
+        });
+        await stateManager.writeRaw("chat/agentloop/older-safe-chat.state.json", makeAgentLoopState({
+          sessionId: "agent-older",
+          updatedAt: "2026-01-01T00:00:02.000Z",
+        }));
+        const adapter = makeMockAdapter({ ...CANNED_RESULT, output: "Handled as fresh adapter work." });
+        const llmClient = createSingleMockLLMClient(JSON.stringify({
+          decision: "cancel",
+          confidence: 0.95,
+          rationale: "The user cancelled the pending setup write.",
+        }));
+        const runner = new ChatRunner(makeDeps({
+          stateManager,
+          adapter,
+          llmClient,
+          gatewaySetupStatusProvider: makeTelegramStatusProvider(makeTelegramSetupStatus({
+            state: "unconfigured",
+            configPath: path.join(tmpDir, "gateway", "channels", "telegram-bot", "config.json"),
+            daemon: { running: true, port: 41700 },
+          })),
+        }));
+
+        const intake = await runner.execute(telegramToken, "/repo", 30_000);
+        (runner as unknown as { pendingResumeChoices: unknown }).pendingResumeChoices = [{
+          index: 2,
+          sessionId: "older-safe-chat",
+          title: "Budget review",
+          updatedAt: "2026-01-01T00:00:02.000Z",
+          cwd: "/work/older",
+          summary: null,
+          agentLoopStatePath: "chat/agentloop/older-safe-chat.state.json",
+        }];
+        const cancelledSetup = await runner.execute("cancel setup", "/repo", 30_000);
+        const staleNumber = await runner.execute("2", "/repo", 30_000, { selectedRoute: adapterRoute() });
+
+        expect(intake.output).toContain("/confirm-setup-write");
+        expect(cancelledSetup.success).toBe(false);
+        expect(cancelledSetup.output).toContain("cancelled");
+        expect(staleNumber.success).toBe(true);
+        expect(staleNumber.output).toBe("Handled as fresh adapter work.");
+        expect(adapter.execute).toHaveBeenCalledOnce();
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+
     it("natural-language resume with no saved state offers recovery choices instead of starting work", async () => {
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-natural-resume-none-"));
       try {

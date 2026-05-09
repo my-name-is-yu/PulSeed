@@ -515,6 +515,8 @@ export class ChatRunner {
     const runtimeControlContext = options.runtimeControlContext ?? this.runtimeControlContext;
     const executionGoalId = options.goalId ?? this.deps.goalId;
 
+    this.clearPendingResumeChoicesUnlessSelecting(safeInput, resumeCommand);
+
     const pendingTelegramSetupResult = await this.handlePendingSetupConfirmation(safeInput, runtimeControlContext);
     if (pendingTelegramSetupResult !== null) {
       return this.finalizeNonPersistentResult(pendingTelegramSetupResult, eventContext);
@@ -524,8 +526,6 @@ export class ChatRunner {
     if (pendingRunSpecConfirmationResult !== null) {
       return this.finalizeNonPersistentResult(pendingRunSpecConfirmationResult, eventContext);
     }
-
-    this.clearPendingResumeChoicesUnlessSelecting(safeInput, resumeCommand);
 
     const commandResult = resumeOnly ? null : await this.commandHandler.handleCommand(safeInput, resolvedCwd);
     if (commandResult !== null) {
