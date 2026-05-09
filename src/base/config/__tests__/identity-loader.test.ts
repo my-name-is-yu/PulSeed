@@ -353,15 +353,16 @@ describe("runtime identity slot", () => {
     expect(result).not.toContain("I am ChatGPT");
   });
 
-  it("keeps the explicit Japanese self-identity response available", () => {
+  it("keeps the legacy Japanese language option on the English public identity response", () => {
     withFile("SEED.md", "# Sprout\n\nCustom identity.");
     const result = getSelfIdentityResponse("ja");
-    expect(result).toContain("私はSproutです");
+    expect(result).toContain("I am Sprout");
     expect(result).toContain("SEED.md/ROOT.md/USER.md");
     expect(result).toContain("runtime identity");
-    expect(result).not.toContain("私はCodex");
-    expect(result).not.toContain("私はClaude");
-    expect(result).not.toContain("私はChatGPT");
+    expect(result).not.toContain("私は");
+    expect(result).not.toContain("I am Codex");
+    expect(result).not.toContain("I am Claude");
+    expect(result).not.toContain("I am ChatGPT");
   });
 
   it("can answer self-identity from an explicit runtime base dir without using global cache", () => {
