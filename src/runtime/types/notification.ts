@@ -1,6 +1,12 @@
 import { z } from "zod";
 
 const MAX_NOTIFICATION_BATCHING_WINDOW_MINUTES = 24 * 60;
+const MAX_NOTIFICATION_COOLDOWN_MINUTES = 30 * 24 * 60;
+const NotificationCooldownMinutesSchema = z.number()
+  .finite()
+  .safe()
+  .nonnegative()
+  .max(MAX_NOTIFICATION_COOLDOWN_MINUTES);
 
 // Channel configurations
 export const SlackChannelSchema = z.object({
@@ -68,20 +74,20 @@ export type DoNotDisturb = z.infer<typeof DoNotDisturbSchema>;
 
 // Cooldown config (minutes)
 export const NotificationCooldownSchema = z.object({
-  urgent_alert: z.number().nonnegative().default(0),
-  approval_request: z.number().nonnegative().default(0),
-  stall_escalation: z.number().nonnegative().default(60),
-  strategy_change: z.number().nonnegative().default(30),
-  goal_completion: z.number().nonnegative().default(0),
-  capability_escalation: z.number().nonnegative().default(60),
-}).catchall(z.number().nonnegative());
+  urgent_alert: NotificationCooldownMinutesSchema.default(0),
+  approval_request: NotificationCooldownMinutesSchema.default(0),
+  stall_escalation: NotificationCooldownMinutesSchema.default(60),
+  strategy_change: NotificationCooldownMinutesSchema.default(30),
+  goal_completion: NotificationCooldownMinutesSchema.default(0),
+  capability_escalation: NotificationCooldownMinutesSchema.default(60),
+}).catchall(NotificationCooldownMinutesSchema);
 export type NotificationCooldown = z.infer<typeof NotificationCooldownSchema>;
 
 // Per-goal reporting override
 export const GoalReportingOverrideSchema = z.object({
   goal_id: z.string(),
   verbosity: z.enum(["minimal", "standard", "detailed"]).optional(),
-  notification_cooldown: z.record(z.string(), z.number().nonnegative()).optional(),
+  notification_cooldown: z.record(z.string(), NotificationCooldownMinutesSchema).optional(),
   channels: z.array(NotificationChannelSchema).optional(),
 });
 export type GoalReportingOverride = z.infer<typeof GoalReportingOverrideSchema>;
