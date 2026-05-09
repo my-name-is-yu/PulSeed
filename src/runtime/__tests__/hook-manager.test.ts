@@ -71,6 +71,19 @@ describe("HookManager", () => {
       expect(manager.getHookCount()).toBe(0);
     });
 
+    it("rejects persisted non-finite hook timeouts", async () => {
+      fs.writeFileSync(
+        path.join(tempDir, "hooks.json"),
+        "{\"hooks\":[{\"event\":\"LoopCycleStart\",\"type\":\"shell\",\"command\":\"echo hi\",\"timeout_ms\":1e309}]}",
+        "utf-8"
+      );
+
+      const manager = new HookManager(tempDir);
+      await manager.loadHooks();
+
+      expect(manager.getHookCount()).toBe(0);
+    });
+
     it("handles empty hooks array", async () => {
       writeHooksJson(tempDir, []);
 
