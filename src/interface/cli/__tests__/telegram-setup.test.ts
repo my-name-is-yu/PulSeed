@@ -45,6 +45,19 @@ describe("cmdTelegramSetup", () => {
     await fsp.rm(tmpDir, { recursive: true, force: true });
   });
 
+  it("prints parent command help without launching setup", async () => {
+    const { cmdTelegram } = await import("../commands/telegram.js");
+
+    const result = await cmdTelegram(["--help"]);
+    const output = vi.mocked(console.log).mock.calls.map((call) => call.join(" ")).join("\n");
+
+    expect(result).toBe(0);
+    expect(output).toContain("Usage: pulseed telegram <command>");
+    expect(output).toContain("pulseed telegram setup");
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(readlineState.close).not.toHaveBeenCalled();
+  });
+
   it("prints setup help without prompting or verifying a token", async () => {
     const { cmdTelegramSetup } = await import("../commands/telegram.js");
 

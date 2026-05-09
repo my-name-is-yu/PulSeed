@@ -50,19 +50,33 @@ function isTopLevelHelpRequest(argv: readonly string[]): boolean {
   return args.length === 1 && (args[0] === "--help" || args[0] === "-h" || args[0] === "help");
 }
 
+function isHelpToken(arg: string | undefined): boolean {
+  return arg === "--help" || arg === "-h" || arg === "help";
+}
+
 function includesHelpFlag(args: readonly string[]): boolean {
-  return args.some((arg) => arg === "--help" || arg === "-h");
+  return args.some((arg) => isHelpToken(arg));
+}
+
+function isParentHelpRequest(args: readonly string[], parent: "telegram" | "gateway"): boolean {
+  return args[0] === parent && (args.length === 1 || (args.length === 2 && isHelpToken(args[1])));
 }
 
 function getStatelessSetupHelpRequest(
   argv: readonly string[]
-): { kind: "setup" | "telegram_setup" | "gateway_setup"; args: string[] } | null {
+): { kind: "setup" | "telegram" | "telegram_setup" | "gateway" | "gateway_setup"; args: string[] } | null {
   const args = stripStatelessGlobalFlags(argv);
   if (args[0] === "setup" && includesHelpFlag(args.slice(1))) {
     return { kind: "setup", args: args.slice(1) };
   }
+  if (isParentHelpRequest(args, "telegram")) {
+    return { kind: "telegram", args: args.slice(1) };
+  }
   if (args[0] === "telegram" && args[1] === "setup" && includesHelpFlag(args.slice(2))) {
     return { kind: "telegram_setup", args: args.slice(2) };
+  }
+  if (isParentHelpRequest(args, "gateway")) {
+    return { kind: "gateway", args: args.slice(1) };
   }
   if (args[0] === "gateway" && args[1] === "setup" && includesHelpFlag(args.slice(2))) {
     return { kind: "gateway_setup", args: args.slice(2) };
@@ -138,6 +152,14 @@ export class CLIRunner {
       if (statelessSetupHelp.kind === "telegram_setup") {
         const { cmdTelegramSetup } = await import("./commands/telegram.js");
         return cmdTelegramSetup(statelessSetupHelp.args);
+      }
+      if (statelessSetupHelp.kind === "telegram") {
+        const { cmdTelegram } = await import("./commands/telegram.js");
+        return cmdTelegram(statelessSetupHelp.args);
+      }
+      if (statelessSetupHelp.kind === "gateway") {
+        const { cmdGateway } = await import("./commands/gateway.js");
+        return cmdGateway(statelessSetupHelp.args);
       }
       const { cmdGatewaySetup } = await import("./commands/gateway.js");
       return cmdGatewaySetup(statelessSetupHelp.args);

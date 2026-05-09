@@ -84,7 +84,42 @@ After setup:
   Send /sethome to the bot if you skipped home chat setup.
 `.trim();
 
+const TELEGRAM_HELP_TEXT = `
+Usage: pulseed telegram <command>
+
+Telegram Bot gateway commands.
+
+Available commands:
+  setup    Configure the Telegram Bot gateway channel
+
+Common next steps:
+  pulseed telegram setup
+  pulseed telegram setup --help
+  pulseed daemon start
+  pulseed daemon status
+`.trim();
+
+function isHelpRequest(arg: string | undefined): boolean {
+  return arg === undefined || arg === "--help" || arg === "-h" || arg === "help";
+}
+
 // ─── Public entry point ───
+
+export async function cmdTelegram(args: string[]): Promise<number> {
+  const subcommand = args[0];
+  if (isHelpRequest(subcommand)) {
+    console.log(TELEGRAM_HELP_TEXT);
+    return 0;
+  }
+
+  if (subcommand === "setup") {
+    return cmdTelegramSetup(args.slice(1));
+  }
+
+  console.error(`Unknown telegram subcommand: "${subcommand}"`);
+  console.error("Available: telegram setup");
+  return 1;
+}
 
 export async function cmdTelegramSetup(args: string[]): Promise<number> {
   if (args.includes("--help") || args.includes("-h")) {

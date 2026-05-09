@@ -44,7 +44,7 @@ import { cmdLogs } from "./commands/logs.js";
 import { cmdInstall, cmdUninstall } from "./commands/install.js";
 import { cmdNotify } from "./commands/notify.js";
 import { cmdGateway } from "./commands/gateway.js";
-import { cmdTelegramSetup } from "./commands/telegram.js";
+import { cmdTelegram } from "./commands/telegram.js";
 import { cmdSchedule } from "./commands/schedule.js";
 import { cmdSkills } from "./commands/skills.js";
 import { cmdPlaybook } from "./commands/playbook.js";
@@ -594,15 +594,7 @@ export async function dispatchCommand(
   }
 
   if (subcommand === "telegram") {
-    const telegramSubcommand = argv[1];
-
-    if (telegramSubcommand === "setup") {
-      return await cmdTelegramSetup(argv.slice(2));
-    }
-
-    logger.error(`Unknown telegram subcommand: "${telegramSubcommand ?? ""}"`);
-    logger.error("Available: telegram setup");
-    return 1;
+    return await cmdTelegram(argv.slice(1));
   }
 
   if (subcommand === "tui") {
