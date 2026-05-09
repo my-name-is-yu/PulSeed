@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { GitHubPrCreateInputSchema, GitHubPrCreateTool, GitHubReadInputSchema, GitHubReadTool } from "../GitHubCliTool.js";
+import { toToolDefinition } from "../../../tool-definition-adapter.js";
 import type { ToolCallContext } from "../../../types.js";
 import * as execMod from "../../../../base/utils/execFileNoThrow.js";
 
@@ -10,6 +11,22 @@ const makeContext = (cwd = "/tmp"): ToolCallContext => ({
   preApproved: false,
   approvalFn: async () => false,
 });
+
+type JsonObject = Record<string, unknown>;
+
+function isJsonObject(value: unknown): value is JsonObject {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function resolveParameterSchema(schema: unknown, parameters: { properties?: Record<string, unknown> }): JsonObject {
+  if (!isJsonObject(schema)) return {};
+  const ref = schema.$ref;
+  if (typeof ref === "string" && ref.startsWith("#/properties/")) {
+    const key = ref.slice("#/properties/".length);
+    return resolveParameterSchema(parameters.properties?.[key], parameters);
+  }
+  return schema;
+}
 
 describe("GitHubReadTool", () => {
   afterEach(() => {
@@ -40,6 +57,46 @@ describe("GitHubReadTool", () => {
     const input = GitHubReadInputSchema.parse({ action: "run_logs" });
     const permission = await tool.checkPermissions(input);
     expect(permission.status).toBe("denied");
+  });
+
+  it("rejects unsafe numeric GitHub identifiers before stringifying gh args", () => {
+    const unsafeInteger = Number.MAX_SAFE_INTEGER + 1;
+
+    expect(() => GitHubReadInputSchema.parse({ action: "pr_view", pr: unsafeInteger }))
+      .toThrow();
+    expect(() => GitHubReadInputSchema.parse({ action: "issue_view", issue: unsafeInteger }))
+      .toThrow();
+    expect(() => GitHubReadInputSchema.parse({ action: "run_view", run_id: unsafeInteger }))
+      .toThrow();
+    expect(GitHubReadInputSchema.parse({ action: "run_view", run_id: String(unsafeInteger) }).run_id)
+      .toBe(String(unsafeInteger));
+  });
+
+  it("exports safe numeric GitHub identifier bounds to the model-facing schema", () => {
+    const parameters = toToolDefinition(new GitHubReadTool()).function.parameters as {
+      properties?: Record<string, unknown>;
+    };
+
+    expect(resolveParameterSchema(parameters.properties?.pr, parameters)).toMatchObject({
+      type: "integer",
+      minimum: 1,
+      maximum: Number.MAX_SAFE_INTEGER,
+    });
+    expect(resolveParameterSchema(parameters.properties?.issue, parameters)).toMatchObject({
+      type: "integer",
+      minimum: 1,
+      maximum: Number.MAX_SAFE_INTEGER,
+    });
+    const runIdSchema = parameters.properties?.run_id as { anyOf?: Array<Record<string, unknown>> };
+    expect(runIdSchema.anyOf?.map((schema) => resolveParameterSchema(schema, parameters))).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "integer",
+          minimum: 1,
+          maximum: Number.MAX_SAFE_INTEGER,
+        }),
+      ])
+    );
   });
 });
 
