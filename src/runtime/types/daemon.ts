@@ -2,6 +2,7 @@ import { z } from "zod";
 import { RuntimeSafePauseRecordSchema } from "../store/runtime-schemas.js";
 
 const PID_EPOCH_ISO = "1970-01-01T00:00:00.000Z";
+const MAX_EVENT_SERVER_PORT = 65_535;
 
 function applyLegacyDaemonRunPolicy(raw: unknown): unknown {
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
@@ -46,7 +47,7 @@ const DaemonConfigObjectSchema = z.object({
   goal_intervals: z.record(z.string(), z.number().int().positive()).optional(), // goal_id -> interval_ms override
   iterations_per_cycle: z.number().int().positive().default(10), // telemetry window in resident mode; bounded fallback cap
   max_concurrent_goals: z.number().int().positive().default(4), // max goals the supervisor may execute at once
-  event_server_port: z.number().int().nonnegative().default(41700), // EventServer HTTP port (0 = OS-assigned, safe for tests)
+  event_server_port: z.number().int().min(0).max(MAX_EVENT_SERVER_PORT).default(41700), // EventServer HTTP port (0 = OS-assigned, safe for tests)
   gateway: z.object({
     slack: z.object({
       enabled: z.boolean().default(false),

@@ -426,6 +426,34 @@ describe("cmdStart", () => {
     expect(watchdogStartMock).toHaveBeenCalledOnce();
   });
 
+  it("warns and falls back to defaults when baseDir daemon.json uses an invalid event port", async () => {
+    process.env.PULSEED_WATCHDOG_CHILD = "1";
+    fs.mkdirSync("/tmp/pulseed-daemon-start-base", { recursive: true });
+    fs.writeFileSync(
+      path.join("/tmp/pulseed-daemon-start-base", "daemon.json"),
+      JSON.stringify({ event_server_port: 70_000, check_interval_ms: 1234 }),
+      "utf-8"
+    );
+
+    await cmdStart(
+      { getBaseDir: vi.fn().mockReturnValue("/tmp/pulseed-daemon-start-base") } as never,
+      {} as never,
+      []
+    );
+
+    expect(cliLoggerMock.warn).toHaveBeenCalledWith(
+      expect.stringContaining("Ignoring invalid daemon config at")
+    );
+    expect(daemonRunnerArgs[0]).toEqual(
+      expect.objectContaining({
+        config: expect.objectContaining({
+          event_server_port: 41700,
+          check_interval_ms: 300_000,
+        }),
+      })
+    );
+  });
+
   it("loads daemon config and plugins from the active baseDir in watchdog child process", async () => {
     process.env.PULSEED_WATCHDOG_CHILD = "1";
     fs.mkdirSync(path.join("/tmp/pulseed-daemon-start-base", "plugins"), { recursive: true });
