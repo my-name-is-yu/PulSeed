@@ -5,6 +5,7 @@ import { makeTempDir, cleanupTempDir } from "../../../tests/helpers/temp-dir.js"
 import { createMockLLMClient } from "../../../tests/helpers/mock-llm.js";
 import { runEveningCatchup } from "../evening-catchup.js";
 import type { Goal } from "../../base/types/goal.js";
+import { upsertRelationshipProfileItem } from "../../platform/profile/relationship-profile.js";
 
 // ─── Fixtures ───
 
@@ -134,6 +135,59 @@ describe("runEveningCatchup", () => {
     expect(fs.existsSync(filePath)).toBe(true);
     const content = JSON.parse(fs.readFileSync(filePath, "utf-8"));
     expect(content.goals_reviewed).toBe(1);
+  });
+
+  it("routes local-planning relationship profile items through an evening Surface", async () => {
+    tmpDir = makeTempDir();
+    await upsertRelationshipProfileItem(tmpDir, {
+      stableKey: "user.preference.catchup",
+      kind: "preference",
+      value: "Prefer catch-up reports to identify stalls directly.",
+      source: "cli_update",
+      allowedScopes: ["local_planning"],
+      now: "2026-05-02T00:00:00.000Z",
+    });
+    await upsertRelationshipProfileItem(tmpDir, {
+      stableKey: "user.preference.resident_only",
+      kind: "preference",
+      value: "Resident-only evening detail should not affect catch-up.",
+      source: "cli_update",
+      allowedScopes: ["resident_behavior"],
+      now: "2026-05-02T01:00:00.000Z",
+    });
+    await upsertRelationshipProfileItem(tmpDir, {
+      stableKey: "user.preference.sensitive_catchup",
+      kind: "preference",
+      value: "Sensitive catch-up detail should stay out of prompts.",
+      source: "cli_update",
+      sensitivity: "sensitive",
+      allowedScopes: ["local_planning"],
+      now: "2026-05-02T02:00:00.000Z",
+    });
+    const goals = [makeGoal("g1")];
+    const stateManager = makeStateManager(goals);
+    const sendMessage = vi.fn().mockResolvedValue({ content: VALID_LLM_RESPONSE });
+    const llmClient = {
+      sendMessage,
+      parseJSON: vi.fn().mockImplementation((content: string, schema: { parse(value: unknown): unknown }) =>
+        schema.parse(JSON.parse(content))
+      ),
+    };
+
+    await runEveningCatchup({
+      stateManager: stateManager as never,
+      llmClient: llmClient as never,
+      baseDir: tmpDir,
+    });
+
+    const prompt = sendMessage.mock.calls[0]?.[0]?.[0]?.content ?? "";
+    expect(prompt).toContain("Evening catch-up relationship profile Surface");
+    expect(prompt).toContain("requested_use=goal_planning");
+    expect(prompt).toContain("Use only Surface-included relationship context below.");
+    expect(prompt).not.toContain("Relationship Profile (active items only; consent scope: local_planning)");
+    expect(prompt).toContain("Prefer catch-up reports to identify stalls directly.");
+    expect(prompt).not.toContain("Resident-only evening detail should not affect catch-up.");
+    expect(prompt).not.toContain("Sensitive catch-up detail should stay out of prompts.");
   });
 
   it("LLM error: returns partial report without crashing", async () => {

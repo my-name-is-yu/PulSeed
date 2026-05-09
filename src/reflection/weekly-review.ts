@@ -9,6 +9,7 @@ import {
   dispatchReflectionNotification,
   persistReflectionReport,
 } from "./reflection-utils.js";
+import { buildReflectionRelationshipProfileSurfaceContext } from "./reflection-profile-surface.js";
 
 // ─── LLM response schema ───
 
@@ -89,10 +90,19 @@ export async function runWeeklyReview(deps: {
   let summary = "";
 
   if (goalSummaries.length > 0) {
-    const prompt = `${getInternalIdentityPrefix("weekly reviewer", {
+    const relationshipProfileSurface = await buildReflectionRelationshipProfileSurfaceContext({
       baseDir,
-      profileScope: "local_planning",
-    })} Analyze this week's goal progress and provide a strategic review.
+      scopeRef: "weekly-review",
+      purpose: "weekly_review",
+      title: "Weekly review relationship profile Surface",
+      now,
+    });
+    const prompt = [
+      getInternalIdentityPrefix("weekly reviewer", {
+        baseDir,
+      }),
+      relationshipProfileSurface,
+      `Analyze this week's goal progress and provide a strategic review.
 
 Goals (weekly_delta = how much gap closed this week, 0-1):
 ${JSON.stringify(goalSummaries, null, 2)}
@@ -102,7 +112,8 @@ Suggest new goal additions or removals where appropriate.
 Write a brief summary of the week.
 
 Respond with JSON matching this schema:
-{ "rankings": [{"goal_id": string, "progress_rate": number, "strategy_effectiveness": "high"|"medium"|"low", "recommendation": string}], "suggested_additions": [string], "suggested_removals": [string], "summary": string }`;
+{ "rankings": [{"goal_id": string, "progress_rate": number, "strategy_effectiveness": "high"|"medium"|"low", "recommendation": string}], "suggested_additions": [string], "suggested_removals": [string], "summary": string }`,
+    ].filter((part) => part.trim().length > 0).join("\n\n");
 
     try {
       const response = await llmClient.sendMessage([{ role: "user", content: prompt }]);
