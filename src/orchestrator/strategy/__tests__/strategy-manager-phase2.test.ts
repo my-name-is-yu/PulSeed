@@ -4,6 +4,7 @@ import { StateManager } from "../../../base/state/state-manager.js";
 import { StrategyManager } from "../strategy-manager.js";
 import { createMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
 import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
+import { ScheduleEntryStore } from "../../../runtime/schedule/entry-store.js";
 
 // ─── Fixtures ───
 
@@ -629,7 +630,7 @@ describe("Phase 2 methods", () => {
 
       await manager.activateMultiple("goal-1", [wait.id]);
 
-      const schedules = await stateManager.readRaw("schedules.json");
+      const schedules = await new ScheduleEntryStore(tempDir, { warn: () => {} }).readEntries();
       expect(schedules).toEqual(
         expect.arrayContaining([
           expect.objectContaining({

@@ -3,6 +3,8 @@ import * as path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cmdSchedule } from "../commands/schedule.js";
 import { ScheduleEngine } from "../../../runtime/schedule-engine.js";
+import { ScheduleHistoryStore, ScheduleRunHistoryRecordSchema } from "../../../runtime/schedule/history.js";
+import { importLegacyQueueDaemonScheduleState } from "../../../runtime/store/queue-daemon-schedule-state-migration.js";
 import { cleanupTempDir, makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 import type { StateManager } from "../../../base/state/state-manager.js";
 
@@ -10,6 +12,10 @@ function makeStateManager(baseDir: string): StateManager {
   return {
     getBaseDir: () => baseDir,
   } as unknown as StateManager;
+}
+
+async function saveScheduleHistory(baseDir: string, records: unknown[]): Promise<void> {
+  await new ScheduleHistoryStore(baseDir).save(records.map((record) => ScheduleRunHistoryRecordSchema.parse(record)));
 }
 
 afterEach(() => {
@@ -126,29 +132,23 @@ describe("cmdSchedule", () => {
         },
       });
       const now = new Date().toISOString();
-      await fs.writeFile(
-        path.join(tempDir, "schedule-history.json"),
-        JSON.stringify([
-          {
-            id: "11111111-1111-4111-8111-111111111111",
-            entry_id: entry.id,
-            entry_name: entry.name,
-            layer: entry.layer,
-            reason: "manual_run",
-            attempt: 0,
-            scheduled_for: now,
-            started_at: now,
-            finished_at: now,
-            retry_at: null,
-            status: "ok",
-            duration_ms: 10,
-            fired_at: now,
-            tokens_used: 42,
-            escalated_to: null,
-          },
-        ]),
-        "utf8",
-      );
+      await saveScheduleHistory(tempDir, [{
+        id: "11111111-1111-4111-8111-111111111111",
+        entry_id: entry.id,
+        entry_name: entry.name,
+        layer: entry.layer,
+        reason: "manual_run",
+        attempt: 0,
+        scheduled_for: now,
+        started_at: now,
+        finished_at: now,
+        retry_at: null,
+        status: "ok",
+        duration_ms: 10,
+        fired_at: now,
+        tokens_used: 42,
+        escalated_to: null,
+      }]);
 
       await cmdSchedule(makeStateManager(tempDir), ["cost", "--period", "7d"]);
 
@@ -195,46 +195,42 @@ describe("cmdSchedule", () => {
         },
       });
       const now = new Date().toISOString();
-      await fs.writeFile(
-        path.join(tempDir, "schedule-history.json"),
-        JSON.stringify([
-          {
-            id: "11111111-1111-4111-8111-111111111111",
-            entry_id: entry.id,
-            entry_name: entry.name,
-            layer: entry.layer,
-            reason: "manual_run",
-            attempt: 0,
-            scheduled_for: now,
-            started_at: now,
-            finished_at: now,
-            retry_at: null,
-            status: "ok",
-            duration_ms: 10,
-            fired_at: now,
-            tokens_used: Number.MAX_SAFE_INTEGER,
-            escalated_to: null,
-          },
-          {
-            id: "22222222-2222-4222-8222-222222222222",
-            entry_id: entry.id,
-            entry_name: entry.name,
-            layer: entry.layer,
-            reason: "manual_run",
-            attempt: 1,
-            scheduled_for: now,
-            started_at: now,
-            finished_at: now,
-            retry_at: null,
-            status: "ok",
-            duration_ms: 10,
-            fired_at: now,
-            tokens_used: 1,
-            escalated_to: null,
-          },
-        ]),
-        "utf8",
-      );
+      await saveScheduleHistory(tempDir, [
+        {
+          id: "11111111-1111-4111-8111-111111111111",
+          entry_id: entry.id,
+          entry_name: entry.name,
+          layer: entry.layer,
+          reason: "manual_run",
+          attempt: 0,
+          scheduled_for: now,
+          started_at: now,
+          finished_at: now,
+          retry_at: null,
+          status: "ok",
+          duration_ms: 10,
+          fired_at: now,
+          tokens_used: Number.MAX_SAFE_INTEGER,
+          escalated_to: null,
+        },
+        {
+          id: "22222222-2222-4222-8222-222222222222",
+          entry_id: entry.id,
+          entry_name: entry.name,
+          layer: entry.layer,
+          reason: "manual_run",
+          attempt: 1,
+          scheduled_for: now,
+          started_at: now,
+          finished_at: now,
+          retry_at: null,
+          status: "ok",
+          duration_ms: 10,
+          fired_at: now,
+          tokens_used: 1,
+          escalated_to: null,
+        },
+      ]);
 
       const code = await cmdSchedule(makeStateManager(tempDir), ["cost", "--period", "7d"]);
 
@@ -399,54 +395,48 @@ describe("cmdSchedule", () => {
         },
       });
       const now = new Date().toISOString();
-      await fs.writeFile(
-        path.join(tempDir, "schedule-history.json"),
-        JSON.stringify([
-          {
-            id: "11111111-1111-4111-8111-111111111111",
-            entry_id: entry.id,
-            entry_name: entry.name,
-            layer: entry.layer,
-            reason: "cadence",
-            attempt: 0,
-            scheduled_for: now,
-            started_at: now,
-            finished_at: now,
-            retry_at: null,
-            status: "ok",
-            duration_ms: 10,
-            fired_at: now,
-            tokens_used: 0,
-            escalated_to: null,
-            activation_kind: "wait_resume",
-            strategy_id: "wait-1",
-            wait_strategy_id: "wait-1",
-            internal: true,
-            internal_attention_projection: {
-              kind: "wait_resume_attention_projection",
-              projected_at: now,
-              signal_context_id: "signal:schedule-wake:test",
-              signal_sources: ["schedule_tick", "wait_expiry"],
-              urge_candidate_refs: ["urge:schedule-wake:test"],
-              agenda_item_refs: ["agenda:test"],
-              inhibition_decisions: [{ ref: "inhibition:test", decision: "watch" }],
-              initiative_gate_decisions: [{ ref: "gate:test", status: "delayed" }],
-              runtime_items: [{
-                ref: "agenda:test",
-                type: "agent_agenda_item",
-                status: "active",
-                posture: "holding",
-                visibility_display: "hidden",
-                inspectable: true,
-                auditable: true,
-              }],
-              non_execution_states: ["held", "delayed", "inspectable_hidden", "silent_runtime_item"],
-              summary: "test wait-resume attention projection",
-            },
-          },
-        ]),
-        "utf8",
-      );
+      await saveScheduleHistory(tempDir, [{
+        id: "11111111-1111-4111-8111-111111111111",
+        entry_id: entry.id,
+        entry_name: entry.name,
+        layer: entry.layer,
+        reason: "cadence",
+        attempt: 0,
+        scheduled_for: now,
+        started_at: now,
+        finished_at: now,
+        retry_at: null,
+        status: "ok",
+        duration_ms: 10,
+        fired_at: now,
+        tokens_used: 0,
+        escalated_to: null,
+        activation_kind: "wait_resume",
+        strategy_id: "wait-1",
+        wait_strategy_id: "wait-1",
+        internal: true,
+        internal_attention_projection: {
+          kind: "wait_resume_attention_projection",
+          projected_at: now,
+          signal_context_id: "signal:schedule-wake:test",
+          signal_sources: ["schedule_tick", "wait_expiry"],
+          urge_candidate_refs: ["urge:schedule-wake:test"],
+          agenda_item_refs: ["agenda:test"],
+          inhibition_decisions: [{ ref: "inhibition:test", decision: "watch" }],
+          initiative_gate_decisions: [{ ref: "gate:test", status: "delayed" }],
+          runtime_items: [{
+            ref: "agenda:test",
+            type: "agent_agenda_item",
+            status: "active",
+            posture: "holding",
+            visibility_display: "hidden",
+            inspectable: true,
+            auditable: true,
+          }],
+          non_execution_states: ["held", "delayed", "inspectable_hidden", "silent_runtime_item"],
+          summary: "test wait-resume attention projection",
+        },
+      }]);
 
       await cmdSchedule(makeStateManager(tempDir), ["history", entry.id, "--limit", "1"]);
       const output = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
@@ -523,6 +513,10 @@ describe("cmdSchedule", () => {
         ]),
         "utf8",
       );
+      await importLegacyQueueDaemonScheduleState({
+        baseDir: tempDir,
+        runtimeRoot: path.join(tempDir, "runtime"),
+      });
 
       await cmdSchedule(makeStateManager(tempDir), ["history", entry.id, "--limit", "10"]);
       const output = logSpy.mock.calls.map((call) => String(call[0])).join("\n");

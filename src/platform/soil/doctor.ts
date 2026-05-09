@@ -6,6 +6,7 @@ import { createSoilConfig, getDefaultSoilSqliteIndexPath, type SoilConfig, type 
 import { computeSoilChecksum } from "./checksum.js";
 import { parseSoilMarkdownLoose } from "./io.js";
 import { loadSoilIndexSnapshot } from "./index-store.js";
+import { resolveLocalSoilSourcePath } from "./source-paths.js";
 import {
   normalizeSoilId,
   normalizeSoilRelativePath,
@@ -446,7 +447,7 @@ export class SoilDoctor {
 
     const mismatches: Array<{ sourcePath: string; expected: string; actual: string }> = [];
     for (const sourcePath of sourcePaths) {
-      const resolved = await this.resolveLocalSourcePath(page.absolutePath, sourcePath);
+      const resolved = resolveLocalSoilSourcePath(page.absolutePath, sourcePath);
       if (resolved === null) {
         continue;
       }
@@ -492,7 +493,7 @@ export class SoilDoctor {
     }
 
     for (const sourcePath of sourcePaths) {
-      const resolved = await this.resolveLocalSourcePath(page.absolutePath, sourcePath);
+      const resolved = resolveLocalSoilSourcePath(page.absolutePath, sourcePath);
       if (resolved === null) {
         continue;
       }
@@ -514,22 +515,6 @@ export class SoilDoctor {
     }
 
     return findings;
-  }
-
-  private async resolveLocalSourcePath(pagePath: string, sourcePath: string): Promise<string | null> {
-    if (!sourcePath) {
-      return null;
-    }
-    if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(sourcePath) && !sourcePath.startsWith("file://")) {
-      return null;
-    }
-    if (sourcePath.startsWith("file://")) {
-      return fileURLToPath(sourcePath);
-    }
-    if (path.isAbsolute(sourcePath)) {
-      return path.resolve(sourcePath);
-    }
-    return path.resolve(path.dirname(pagePath), sourcePath);
   }
 
   private async computeFileChecksum(filePath: string): Promise<string> {

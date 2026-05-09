@@ -43,6 +43,7 @@ export function createRuntimeWiring(
   const journalQueue = new JournalBackedQueue({
     journalPath: path.join(runtimeRoot, "queue.json"),
     maxAttempts: RUNTIME_JOURNAL_MAX_ATTEMPTS,
+    controlBaseDir: baseDir,
   });
   const queueClaimSweeper = new QueueClaimSweeper({
     queue: journalQueue,

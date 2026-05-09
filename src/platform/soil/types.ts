@@ -53,7 +53,7 @@ export type SoilStatus = z.infer<typeof SoilStatusSchema>;
 export const SoilSourceSchema = z.enum(["runtime", "compiled", "manual", "imported"]);
 export type SoilSource = z.infer<typeof SoilSourceSchema>;
 
-export const SoilSourceTruthSchema = z.enum(["runtime_json", "soil", "mixed"]);
+export const SoilSourceTruthSchema = z.enum(["runtime_json", "runtime_db", "soil", "mixed"]);
 export type SoilSourceTruth = z.infer<typeof SoilSourceTruthSchema>;
 
 export const SoilImportStatusSchema = z.enum(["none", "pending", "approved", "rejected"]);
@@ -64,6 +64,7 @@ export type SoilApprovalStatus = z.infer<typeof SoilApprovalStatusSchema>;
 
 export const SoilSourceTypeSchema = z.enum([
   "runtime_json",
+  "control_db",
   "controlled_md",
   "soil_md",
   "manual_overlay",

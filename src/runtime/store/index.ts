@@ -19,6 +19,7 @@ export {
 export {
   CONTROL_DB_INITIAL_SCHEMA_SQL,
   CONTROL_DB_MIGRATIONS,
+  CONTROL_DB_QUEUE_DAEMON_SCHEDULE_SCHEMA_SQL,
   CONTROL_DB_RUNTIME_CONTROL_SCHEMA_SQL,
   CONTROL_DB_RUNTIME_STATE_OWNERSHIP_SCHEMA_SQL,
   CONTROL_DB_SCHEMA_VERSION,
@@ -28,7 +29,9 @@ export {
   initializeControlDatabase,
   inspectControlDatabase,
   openControlDatabase,
+  openControlDatabaseSync,
   openRuntimeControlDatabase,
+  openRuntimeControlDatabaseSync,
   resolveControlDbPath,
   resolveRuntimeControlDbBaseDir,
 } from "./control-db/index.js";
@@ -446,6 +449,18 @@ export type {
 export { RuntimeSafePauseStore } from "./safe-pause-store.js";
 export { RuntimeOperationStore } from "./runtime-operation-store.js";
 export {
+  DaemonShutdownStore,
+  DaemonStateStore,
+  loadDaemonStateSync,
+} from "./daemon-state-store.js";
+export {
+  SupervisorStateSchema,
+  SupervisorStateStore,
+} from "./supervisor-state-store.js";
+export type {
+  SupervisorStateRecord,
+} from "./supervisor-state-store.js";
+export {
   BackgroundRunLedger,
   BackgroundRunLedgerRecordSchema,
   normalizeTerminalStatus,
@@ -458,6 +473,13 @@ export type {
   ImportLegacyRuntimeControlStateStoresInput,
   ImportLegacyRuntimeControlStateStoresResult,
 } from "./runtime-control-state-migration.js";
+export {
+  importLegacyQueueDaemonScheduleState,
+} from "./queue-daemon-schedule-state-migration.js";
+export type {
+  ImportLegacyQueueDaemonScheduleStateInput,
+  ImportLegacyQueueDaemonScheduleStateResult,
+} from "./queue-daemon-schedule-state-migration.js";
 export type {
   BackgroundRunCreateInput,
   BackgroundRunLinkInput,

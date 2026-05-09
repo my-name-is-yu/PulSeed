@@ -15,6 +15,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 
 import { ScheduleEngine } from "../../src/runtime/schedule/engine.js";
+import { migrateLegacyCronTasksIfNeeded } from "../../src/runtime/schedule/legacy-cron-migration.js";
 import { DaemonRunner } from "../../src/runtime/daemon-runner.js";
 import { StateManager } from "../../src/base/state/state-manager.js";
 import { DriveSystem } from "../../src/platform/drive/drive-system.js";
@@ -193,7 +194,7 @@ describe("Phase A — ScheduleEngine cron layer", () => {
     expect(removed).toBe(false);
   });
 
-  it("migrates legacy scheduled-tasks.json into schedules.json on load", async () => {
+  it("migrates legacy scheduled-tasks.json into Control DB through explicit migration", async () => {
     const legacyTasks = [
       {
         id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
@@ -208,12 +209,17 @@ describe("Phase A — ScheduleEngine cron layer", () => {
     ];
     fs.writeFileSync(path.join(tempDir, "scheduled-tasks.json"), JSON.stringify(legacyTasks, null, 2), "utf-8");
 
+    const migrated = await migrateLegacyCronTasksIfNeeded({
+      baseDir: tempDir,
+      logger: { warn: () => {} },
+    });
     const loaded = await scheduleEngine.loadEntries();
 
+    expect(migrated).toBe(true);
     expect(loaded).toHaveLength(1);
     expect(loaded[0]?.layer).toBe("cron");
     expect(loaded[0]?.cron?.prompt_template).toBe("Legacy reflection prompt");
-    expect(fs.existsSync(path.join(tempDir, "schedules.json"))).toBe(true);
+    expect(fs.existsSync(path.join(tempDir, "schedules.json"))).toBe(false);
     expect(fs.existsSync(path.join(tempDir, "scheduled-tasks.legacy-migrated.json"))).toBe(true);
   });
 });
@@ -680,7 +686,12 @@ describe("Phase A — Integration: ScheduleEngine shares runtime state with Daem
     fs.writeFileSync(path.join(tempDir, "scheduled-tasks.json"), JSON.stringify(legacyTasks, null, 2), "utf-8");
 
     const engine = new ScheduleEngine({ baseDir: tempDir });
+    const didMigrate = await migrateLegacyCronTasksIfNeeded({
+      baseDir: tempDir,
+      logger: { warn: () => {} },
+    });
     const migrated = await engine.loadEntries();
+    expect(didMigrate).toBe(true);
     expect(migrated).toHaveLength(1);
 
     const dueEntry = { ...migrated[0]!, next_fire_at: new Date(Date.now() - 1_000).toISOString() };

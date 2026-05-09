@@ -11,6 +11,7 @@ import { GuardrailStore } from "../guardrails/index.js";
 import { StateManager } from "../../base/state/state-manager.js";
 import { BackgroundRunLedger } from "../store/background-run-store.js";
 import { RuntimeOperatorHandoffStore } from "../store/operator-handoff-store.js";
+import { DaemonStateStore } from "../store/daemon-state-store.js";
 
 // ─── Helpers ───
 
@@ -771,6 +772,40 @@ describe("snapshot and outbox replay", () => {
       id: "g-valid",
       current_gap: null,
     });
+  });
+
+  it("reads daemon state from the control DB base when the event directory is custom", async () => {
+    const runtimeRoot = path.join(tmpDir, "runtime");
+    await new DaemonStateStore(tmpDir).save({
+      pid: 4242,
+      started_at: new Date().toISOString(),
+      last_loop_at: null,
+      loop_count: 1,
+      active_goals: [],
+      status: "running",
+      runtime_root: runtimeRoot,
+      crash_count: 0,
+      last_error: null,
+      last_resident_at: null,
+      resident_activity: null,
+    });
+
+    server = new EventServer(mockDriveSystem as never, {
+      port: 0,
+      eventsDir: path.join(tmpDir, "explicit-events"),
+    });
+    await server.start();
+
+    const snapshotResult = await makeRequest(server.getPort(), "GET", "/snapshot");
+    expect(snapshotResult.status).toBe(200);
+    const snapshot = JSON.parse(snapshotResult.body) as {
+      daemon: Record<string, unknown> | null;
+    };
+    expect(snapshot.daemon).toMatchObject({
+      pid: 4242,
+      runtime_root: runtimeRoot,
+    });
+    expect(fs.existsSync(path.join(tmpDir, "explicit-events", "state", "pulseed-control.sqlite"))).toBe(false);
   });
 
   it("includes active worker summaries in snapshot when a provider is registered", async () => {

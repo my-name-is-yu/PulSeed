@@ -74,6 +74,8 @@ function baseFrontmatter(input: {
   generatedAt: string;
   sourcePath: string;
   sourceHash?: string;
+  sourceType?: SoilPageFrontmatter["source_refs"][number]["source_type"];
+  sourceTruth?: SoilPageFrontmatter["source_truth"];
   summary?: string;
   goalId?: string | null;
   scheduleId?: string | null;
@@ -94,7 +96,7 @@ function baseFrontmatter(input: {
     generated_at: input.generatedAt,
     source_refs: [
       {
-        source_type: "runtime_json",
+        source_type: input.sourceType ?? "runtime_json",
         source_path: input.sourcePath,
         source_hash: input.sourceHash,
         reliability: "high",
@@ -120,7 +122,7 @@ function baseFrontmatter(input: {
     domain: input.domain,
     summary: input.summary,
     owner: "pulseed",
-    source_truth: "runtime_json",
+    source_truth: input.sourceTruth ?? "runtime_json",
     rendered_from: input.renderedFrom,
     import_status: "none",
     approval_status: "none",
@@ -268,8 +270,8 @@ function activeScheduleBody(entries: ScheduleEntry[]): string {
 
 export async function projectSchedulesToSoil(input: ProjectSchedulesToSoilInput): Promise<void> {
   const generatedAt = nowIso(input.clock);
-  const sourcePath = path.join(input.baseDir, "schedules.json");
-  const sourceHash = await hashFile(sourcePath);
+  const sourcePath = "control-db:schedule_entries";
+  const sourceHash = computeSoilChecksum(JSON.stringify(input.entries));
   const enabledCount = input.entries.filter((entry) => entry.enabled).length;
   const updatedAt = input.entries
     .map((entry) => entry.updated_at)
@@ -290,6 +292,8 @@ export async function projectSchedulesToSoil(input: ProjectSchedulesToSoilInput)
     generatedAt,
     sourcePath,
     sourceHash,
+    sourceType: "control_db",
+    sourceTruth: "runtime_db",
     summary: `${enabledCount}/${input.entries.length} schedules enabled`,
     domain: "schedule",
     renderedFrom: "schedule-engine",
@@ -304,6 +308,8 @@ export async function projectSchedulesToSoil(input: ProjectSchedulesToSoilInput)
     generatedAt,
     sourcePath,
     sourceHash,
+    sourceType: "control_db",
+    sourceTruth: "runtime_db",
     summary: `${enabledCount} active schedules`,
     domain: "schedule",
     renderedFrom: "schedule-engine",

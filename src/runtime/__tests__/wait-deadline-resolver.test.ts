@@ -3,6 +3,8 @@ import { describe, it, expect, afterEach, beforeEach } from "vitest";
 import { StateManager } from "../../base/state/state-manager.js";
 import { WaitDeadlineResolver, clampIntervalToNextWaitDeadline, getDueWaitGoalIds } from "../daemon/wait-deadline-resolver.js";
 import { makeTempDir } from "../../../tests/helpers/temp-dir.js";
+import { ScheduleEntryStore } from "../schedule/entry-store.js";
+import { openControlDatabase } from "../store/control-db/index.js";
 import {
   MAX_SCHEDULE_RETRY_ATTEMPTS,
   MAX_SCHEDULE_RETRY_DELAY_MS,
@@ -88,7 +90,7 @@ function makeProjectedWaitSchedule(nextFireAt: string, overrides: Record<string,
 }
 
 async function writeProjectedWaitSchedule(nextFireAt: string, overrides: Record<string, unknown> = {}): Promise<void> {
-  await stateManager.writeRaw("schedules.json", [
+  await new ScheduleEntryStore(tempDir, { warn: () => {} }).saveEntries([
     ScheduleEntrySchema.parse(makeProjectedWaitSchedule(nextFireAt, overrides)),
   ]);
 }
@@ -278,8 +280,7 @@ describe("WaitDeadlineResolver", () => {
   });
 
   it("keeps internal wait schedules with finite legacy retry bounds", async () => {
-    await stateManager.writeRaw("schedules.json", [
-      makeProjectedWaitSchedule("2026-04-24T12:03:00.000Z", {
+    await insertRawProjectedWaitSchedule(makeProjectedWaitSchedule("2026-04-24T12:03:00.000Z", {
         retry_policy: {
           enabled: true,
           initial_delay_ms: MAX_SCHEDULE_RETRY_DELAY_MS + 1,
@@ -293,8 +294,7 @@ describe("WaitDeadlineResolver", () => {
         retry_state: {
           attempts: MAX_SCHEDULE_RETRY_ATTEMPTS + 1,
         },
-      }),
-    ]);
+      }));
 
     const resolution = await new WaitDeadlineResolver(stateManager).resolve(["goal-1"]);
 
@@ -308,3 +308,43 @@ describe("WaitDeadlineResolver", () => {
     ]);
   });
 });
+
+async function insertRawProjectedWaitSchedule(entry: Record<string, unknown>): Promise<void> {
+  const database = await openControlDatabase({ baseDir: tempDir });
+  const metadata = entry["metadata"] as Record<string, unknown> | undefined;
+  try {
+    database.transaction((db) => {
+      db.prepare(`
+        INSERT INTO schedule_entries (
+          entry_id,
+          name,
+          layer,
+          enabled,
+          next_fire_at,
+          updated_at,
+          internal,
+          activation_kind,
+          goal_id,
+          wait_strategy_id,
+          sort_order,
+          entry_json
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, json(?))
+      `).run(
+        entry["id"],
+        entry["name"],
+        entry["layer"],
+        entry["enabled"] === false ? 0 : 1,
+        entry["next_fire_at"],
+        entry["updated_at"],
+        metadata?.["internal"] === true ? 1 : 0,
+        metadata?.["activation_kind"] ?? null,
+        metadata?.["goal_id"] ?? null,
+        metadata?.["wait_strategy_id"] ?? null,
+        JSON.stringify(entry),
+      );
+    });
+  } finally {
+    database.close();
+  }
+}

@@ -1,6 +1,5 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { readJsonFileOrNull } from "../../../base/utils/json-io.js";
 import { DaemonConfigSchema } from "../../../base/types/daemon.js";
 import type { DaemonConfig } from "../../../base/types/daemon.js";
 import type { PIDManager } from "../../../runtime/pid-manager.js";
@@ -228,7 +227,7 @@ export function isPidAlive(pidStatus: Awaited<ReturnType<PIDManager["inspect"]>>
   return typeof pid === "number" && pidStatus.alivePids.includes(pid);
 }
 
-export async function readSupervisorState(runtimeRoot: string): Promise<SupervisorState | null> {
-  const raw = await readJsonFileOrNull(path.join(runtimeRoot, "supervisor-state.json"));
-  return raw as SupervisorState | null;
+export async function readSupervisorState(runtimeRoot: string, controlBaseDir?: string): Promise<SupervisorState | null> {
+  const { SupervisorStateStore } = await import("../../../runtime/store/supervisor-state-store.js");
+  return await new SupervisorStateStore(runtimeRoot, { controlBaseDir }).load() as SupervisorState | null;
 }

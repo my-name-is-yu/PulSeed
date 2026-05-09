@@ -23,7 +23,7 @@ import {
 import { ScheduleEngine } from "../../../runtime/schedule/engine.js";
 import { RuntimeWatchdog } from "../../../runtime/watchdog.js";
 import { LeaderLockManager } from "../../../runtime/leader-lock-manager.js";
-import { ProactiveInterventionStore, RuntimeHealthStore } from "../../../runtime/store/index.js";
+import { DaemonStateStore, ProactiveInterventionStore, RuntimeHealthStore } from "../../../runtime/store/index.js";
 import type { RuntimeHealthSnapshot } from "../../../runtime/store/index.js";
 import { isDaemonRunning, probeDaemonHealth } from "../../../runtime/daemon/client.js";
 import { PluginLoader } from "../../../runtime/plugin-loader.js";
@@ -531,7 +531,6 @@ export async function cmdStart(
 
 export async function cmdDaemonStatus(_args: string[]): Promise<void> {
   const baseDir = getPulseedDirPath();
-  const statePath = path.join(baseDir, "daemon-state.json");
   const pidManager = new PIDManager(baseDir);
   const pidStatus = await pidManager.inspect();
   const runtimePid = pidStatus.runtimePid ?? pidStatus.info?.pid ?? null;
@@ -539,8 +538,14 @@ export async function cmdDaemonStatus(_args: string[]): Promise<void> {
   const runtimeAlive = isPidAlive(pidStatus, runtimePid);
   const watchdogAlive = isPidAlive(pidStatus, watchdogPid);
 
-  const raw = await readJsonFileOrNull(statePath);
-  if (raw === null) {
+  let loadedState;
+  try {
+    loadedState = await new DaemonStateStore(baseDir).load();
+  } catch (error) {
+    console.error(`Invalid daemon state: ${error instanceof Error ? error.message : String(error)}`);
+    return;
+  }
+  if (loadedState === null) {
     if (!runtimeAlive && !watchdogAlive) {
       console.log("No daemon state found");
       return;
@@ -551,10 +556,10 @@ export async function cmdDaemonStatus(_args: string[]): Promise<void> {
       );
       return;
     }
-    console.log("Daemon process is running, but daemon-state.json is missing");
+    console.log("Daemon process is running, but daemon state is missing");
     return;
   }
-  const parsed = DaemonStateSchema.safeParse(raw);
+  const parsed = DaemonStateSchema.safeParse(loadedState);
   if (!parsed.success) {
     console.error(`Invalid daemon state: ${parsed.error.message}`);
     return;
@@ -566,7 +571,7 @@ export async function cmdDaemonStatus(_args: string[]): Promise<void> {
 
   // Load daemon config for config section display
   const cfg = await loadDaemonConfig(baseDir);
-  const runtimeRoot = resolveDaemonRuntimeRoot(baseDir, cfg.runtime_root);
+  const runtimeRoot = data.runtime_root ?? resolveDaemonRuntimeRoot(baseDir, cfg.runtime_root);
   const storedRuntimeHealth = await new RuntimeHealthStore(runtimeRoot, { controlBaseDir: baseDir }).loadSnapshot();
   const runtimeHealth = reconcileRuntimeHealthForDisplay(storedRuntimeHealth, {
     runtimeAlive: resolvedRuntimeAlive,
@@ -576,7 +581,7 @@ export async function cmdDaemonStatus(_args: string[]): Promise<void> {
     storedRuntimeHealth !== runtimeHealth
     && (storedRuntimeHealth?.kpi !== undefined || storedRuntimeHealth?.long_running !== undefined);
   const proactiveSummary = await new ProactiveInterventionStore(runtimeRoot).summarize();
-  const supervisorState = await readSupervisorState(runtimeRoot);
+  const supervisorState = await readSupervisorState(runtimeRoot, baseDir);
   const shutdownMarker = await readShutdownMarkerFile(baseDir);
   const taskKpis = await summarizeTaskOutcomeLedgers(baseDir);
   const safePauseGoals = Object.values(data.safe_pause_goals ?? {});
@@ -898,7 +903,7 @@ export async function cmdDaemonPing(_args: string[]): Promise<number> {
   }
 
   const daemonInfo = await isDaemonRunning(baseDir);
-  const stateRaw = await readJsonFileOrNull(path.join(baseDir, "daemon-state.json")) as Record<string, unknown> | null;
+  const stateRaw = await new DaemonStateStore(baseDir).load() as Record<string, unknown> | null;
   const stateDetail =
     stateRaw && typeof stateRaw.status === "string"
       ? `, daemon state ${stateRaw.status}`

@@ -242,7 +242,7 @@ function buildSafePauseCheckpoint(
       ...(backgroundRunIds.map((runId) => `background-run:${runId}`)),
     ],
     next_action: "resume goal to continue from the saved queue/evidence/artifact context",
-    supervisor_state_ref: context.runtimeRoot ? `${context.runtimeRoot}/supervisor-state.json` : null,
+    supervisor_state_ref: context.runtimeRoot ? "control-db:supervisor_state_snapshots/current" : null,
     background_run_ids: [...new Set(backgroundRunIds)],
   };
 }

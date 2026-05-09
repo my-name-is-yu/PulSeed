@@ -10,6 +10,7 @@ import {
 } from "../index.js";
 import type { ProcessSessionSnapshot } from "../../../tools/system/ProcessSessionTool/ProcessSessionTool.js";
 import { BackgroundRunLedger } from "../../store/background-run-store.js";
+import { SupervisorStateStore } from "../../store/supervisor-state-store.js";
 
 describe("RuntimeSessionRegistry", () => {
   let tmpDir: string;
@@ -23,6 +24,15 @@ describe("RuntimeSessionRegistry", () => {
   afterEach(async () => {
     await fsp.rm(tmpDir, { recursive: true, force: true });
   });
+
+  async function writeSupervisorState(state: {
+    workers: Array<Record<string, unknown>>;
+    crashCounts: Record<string, number>;
+    suspendedGoals: string[];
+    updatedAt: number;
+  }): Promise<void> {
+    await new SupervisorStateStore(path.join(tmpDir, "runtime"), { controlBaseDir: tmpDir }).save(state as never);
+  }
 
   it("joins agent sessions to their owning conversation through agentLoopStatePath", async () => {
     await stateManager.writeRaw("chat/sessions/chat-a.json", {
@@ -353,8 +363,8 @@ describe("RuntimeSessionRegistry", () => {
     }));
   });
 
-  it("projects active supervisor workers from the legacy root supervisor-state path", async () => {
-    await stateManager.writeRaw("supervisor-state.json", {
+  it("projects active supervisor workers from the control database", async () => {
+    await writeSupervisorState({
       workers: [
         {
           workerId: "worker-1",
@@ -383,21 +393,8 @@ describe("RuntimeSessionRegistry", () => {
     }));
   });
 
-  it("prefers the current runtime supervisor-state path over the legacy root path", async () => {
-    await stateManager.writeRaw("supervisor-state.json", {
-      workers: [
-        {
-          workerId: "legacy-worker",
-          goalId: "goal-legacy",
-          startedAt: Date.parse("2026-04-25T00:00:00.000Z"),
-          iterations: 2,
-        },
-      ],
-      crashCounts: {},
-      suspendedGoals: [],
-      updatedAt: Date.parse("2026-04-25T00:30:00.000Z"),
-    });
-    await stateManager.writeRaw("runtime/supervisor-state.json", {
+  it("uses the current runtime supervisor state from the control database", async () => {
+    await writeSupervisorState({
       workers: [
         {
           workerId: "runtime-worker",
@@ -418,13 +415,13 @@ describe("RuntimeSessionRegistry", () => {
     expect(snapshot.sessions).toContainEqual(expect.objectContaining({
       id: "session:coreloop:runtime-worker",
       state_ref: expect.objectContaining({
-        relative_path: "runtime/supervisor-state.json",
+        relative_path: null,
       }),
     }));
   });
 
   it("drops stale supervisor child sessions when the durable ledger owns the run", async () => {
-    await stateManager.writeRaw("runtime/supervisor-state.json", {
+    await writeSupervisorState({
       workers: [
         {
           workerId: "worker-ledger",
@@ -547,7 +544,7 @@ describe("RuntimeSessionRegistry", () => {
   });
 
   it("does not project idle supervisor workers as active CoreLoop runs", async () => {
-    await stateManager.writeRaw("supervisor-state.json", {
+    await writeSupervisorState({
       workers: [
         {
           workerId: "idle-worker",

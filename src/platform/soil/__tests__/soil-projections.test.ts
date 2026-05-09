@@ -80,6 +80,9 @@ describe("Soil projections", () => {
 
       const page = await readSoilMarkdownFile(path.join(baseDir, "soil", "schedule", "current.md"));
       expect(page?.frontmatter.soil_id).toBe("schedule/current");
+      expect(page?.frontmatter.source_truth).toBe("runtime_db");
+      expect(page?.frontmatter.source_refs[0]?.source_type).toBe("control_db");
+      expect(page?.frontmatter.source_refs[0]?.source_path).toBe("control-db:schedule_entries");
       expect(page?.frontmatter.summary).toBe("1/1 schedules enabled");
       expect(page?.body).toContain("Daily brief");
       expect(page?.body).toContain("cron 0 9 * * * (Asia/Tokyo)");

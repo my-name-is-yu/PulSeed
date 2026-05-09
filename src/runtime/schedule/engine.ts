@@ -28,7 +28,6 @@ import { hasConfiguredSoilPublishProvider } from "../../platform/soil/publish/in
 import { buildSchedulePresetEntry } from "./presets.js";
 import type { IScheduleSource } from "./source.js";
 import { ScheduleEntryStore } from "./entry-store.js";
-import { migrateLegacyCronTasksIfNeeded } from "./legacy-cron-migration.js";
 import {
   addEntryForEngine,
   addEntryInMemory,
@@ -125,14 +124,13 @@ export class ScheduleEngine {
 
   async loadEntries(): Promise<ScheduleEntry[]> {
     this.entries = await this.entryStore.withLock(async () => {
-      await migrateLegacyCronTasksIfNeeded({ baseDir: this.baseDir, logger: this.logger });
-      return this.readEntriesFromDisk();
+      return this.readEntriesFromStore();
     });
     await this.projectCurrentSchedulesToSoil();
     return this.entries;
   }
 
-  private async readEntriesFromDisk(): Promise<ScheduleEntry[]> {
+  private async readEntriesFromStore(): Promise<ScheduleEntry[]> {
     return this.entryStore.readEntries();
   }
 
@@ -145,7 +143,7 @@ export class ScheduleEngine {
   }
 
   private async refreshEntriesForMutation(): Promise<void> {
-    this.entries = await this.readEntriesFromDisk();
+    this.entries = await this.readEntriesFromStore();
   }
 
   private captureExecutionSideEffects(entryId: string): Pick<ScheduleEntry, "baseline_results"> | null {
@@ -167,7 +165,7 @@ export class ScheduleEngine {
   }
 
   private async withScheduleMutation<T>(mutate: () => Promise<T>): Promise<T> {
-    return this.withScheduleFileLock(async () => {
+    return this.withScheduleStoreMutation(async () => {
       const previousEntries = this.entries;
       await this.refreshEntriesForMutation();
       try {
@@ -181,8 +179,12 @@ export class ScheduleEngine {
     });
   }
 
-  private async withScheduleFileLock<T>(work: () => Promise<T>): Promise<T> {
+  private async withScheduleStoreMutation<T>(work: () => Promise<T>): Promise<T> {
     return this.entryStore.withLock(work);
+  }
+
+  private async withScheduleFileLock<T>(work: () => Promise<T>): Promise<T> {
+    return this.withScheduleStoreMutation(work);
   }
 
   async ensureSoilPublishSchedule(): Promise<ScheduleEntry | null> {

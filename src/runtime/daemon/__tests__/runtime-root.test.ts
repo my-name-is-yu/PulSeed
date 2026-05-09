@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { DaemonStateSchema } from "../../types/daemon.js";
 import { resolveConfiguredDaemonRuntimeRoot } from "../runtime-root.js";
 import { cleanupTempDir, makeTempDir } from "../../../../tests/helpers/temp-dir.js";
+import { DaemonStateStore, openControlDatabaseSync } from "../../store/index.js";
 
 const tempDirs: string[] = [];
 
@@ -23,6 +24,46 @@ function makeDaemonState(pid: number): Record<string, unknown> {
     status: "running",
     runtime_root: "/corrupt-runtime-root",
   };
+}
+
+async function saveDaemonStateFixture(baseDir: string, state: Record<string, unknown>): Promise<void> {
+  await new DaemonStateStore(baseDir).save(state as never);
+}
+
+function insertRawDaemonStateFixture(baseDir: string, state: Record<string, unknown>): void {
+  const database = openControlDatabaseSync({ baseDir });
+  try {
+    database.transaction((db) => {
+      db.prepare(`
+        INSERT INTO daemon_state_snapshots (
+          state_id,
+          pid,
+          status,
+          runtime_root,
+          loop_count,
+          updated_at,
+          state_json
+        )
+        VALUES ('current', ?, ?, ?, ?, ?, json(?))
+        ON CONFLICT(state_id) DO UPDATE SET
+          pid = excluded.pid,
+          status = excluded.status,
+          runtime_root = excluded.runtime_root,
+          loop_count = excluded.loop_count,
+          updated_at = excluded.updated_at,
+          state_json = excluded.state_json
+      `).run(
+        state["pid"] ?? null,
+        state["status"] ?? "running",
+        state["runtime_root"] ?? null,
+        state["loop_count"] ?? 0,
+        state["last_loop_at"] ?? state["started_at"] ?? new Date().toISOString(),
+        JSON.stringify(state)
+      );
+    });
+  } finally {
+    database.close();
+  }
 }
 
 afterEach(() => {
@@ -58,26 +99,28 @@ describe("resolveConfiguredDaemonRuntimeRoot", () => {
     expect(() => resolveConfiguredDaemonRuntimeRoot(unreadableDir)).toThrow(/EISDIR|illegal operation on a directory/);
   });
 
-  it("falls back for malformed daemon state but surfaces real state read errors", () => {
+  it("uses running daemon state from the control DB before daemon config", async () => {
+    const baseDir = makeBaseDir();
+    fs.writeFileSync(
+      path.join(baseDir, "daemon.json"),
+      JSON.stringify({ runtime_root: "configured-runtime" }),
+      "utf-8"
+    );
+    await saveDaemonStateFixture(baseDir, makeDaemonState(process.pid));
+
+    expect(resolveConfiguredDaemonRuntimeRoot(baseDir)).toBe("/corrupt-runtime-root");
+  });
+
+  it("falls back for malformed control DB daemon state rows", () => {
     const malformedDir = makeBaseDir();
     fs.writeFileSync(
       path.join(malformedDir, "daemon.json"),
       JSON.stringify({ runtime_root: "configured-runtime" }),
       "utf-8"
     );
-    fs.writeFileSync(path.join(malformedDir, "daemon-state.json"), "{not json", "utf-8");
+    insertRawDaemonStateFixture(malformedDir, makeDaemonState(Number.MAX_SAFE_INTEGER + 1));
 
     expect(resolveConfiguredDaemonRuntimeRoot(malformedDir)).toBe(path.join(malformedDir, "configured-runtime"));
-
-    const unreadableDir = makeBaseDir();
-    fs.writeFileSync(
-      path.join(unreadableDir, "daemon.json"),
-      JSON.stringify({ runtime_root: "configured-runtime" }),
-      "utf-8"
-    );
-    fs.mkdirSync(path.join(unreadableDir, "daemon-state.json"));
-
-    expect(() => resolveConfiguredDaemonRuntimeRoot(unreadableDir)).toThrow(/EISDIR|illegal operation on a directory/);
   });
 
   it("ignores running daemon-state runtime roots when the persisted pid is unsafe", () => {
@@ -87,11 +130,7 @@ describe("resolveConfiguredDaemonRuntimeRoot", () => {
       JSON.stringify({ runtime_root: "configured-runtime" }),
       "utf-8"
     );
-    fs.writeFileSync(
-      path.join(baseDir, "daemon-state.json"),
-      JSON.stringify(makeDaemonState(Number.MAX_SAFE_INTEGER + 1)),
-      "utf-8"
-    );
+    insertRawDaemonStateFixture(baseDir, makeDaemonState(Number.MAX_SAFE_INTEGER + 1));
     const killSpy = vi.spyOn(process, "kill");
 
     expect(resolveConfiguredDaemonRuntimeRoot(baseDir)).toBe(path.join(baseDir, "configured-runtime"));

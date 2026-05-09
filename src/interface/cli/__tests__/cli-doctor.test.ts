@@ -4,6 +4,9 @@ import * as path from "node:path";
 import { makeTempDir, cleanupTempDir } from "../../../../tests/helpers/temp-dir.js";
 import { PIDManager } from "../../../runtime/pid-manager.js";
 import * as daemonClient from "../../../runtime/daemon/client.js";
+import { createEnvelope } from "../../../runtime/types/envelope.js";
+import { JournalBackedQueue } from "../../../runtime/queue/journal-backed-queue.js";
+import { ScheduleEntryStore } from "../../../runtime/schedule/entry-store.js";
 
 // ─── cmdDoctor tests ───
 //
@@ -14,7 +17,7 @@ vi.mock("../../../base/utils/paths.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../../base/utils/paths.js")>();
   return {
     ...actual,
-    getPulseedDirPath: vi.fn(() => "/tmp/pulseed-doctor-test-placeholder"),
+    getPulseedDirPath: vi.fn(() => process.env["PULSEED_HOME"] ?? "/tmp/pulseed-doctor-test-placeholder"),
   };
 });
 
@@ -38,9 +41,45 @@ import {
 } from "../commands/doctor.js";
 import {
   CONTROL_DB_SCHEMA_VERSION,
+  DaemonStateStore,
   openControlDatabase,
   RuntimeHealthStore,
+  SupervisorStateStore,
 } from "../../../runtime/store/index.js";
+
+async function saveDaemonStateFixture(tmpDir: string, state: Record<string, unknown>): Promise<void> {
+  await new DaemonStateStore(tmpDir).save(state as never);
+}
+
+function makeHeartbeatSchedule(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: "11111111-1111-4111-8111-111111111111",
+    name: "doctor-legacy-schedule",
+    layer: "heartbeat",
+    trigger: { type: "interval", seconds: 60, jitter_factor: 0 },
+    enabled: true,
+    heartbeat: {
+      check_type: "custom",
+      check_config: { command: "echo ok" },
+      failure_threshold: 3,
+      timeout_ms: 5000,
+    },
+    baseline_results: [],
+    created_at: "2026-05-09T00:00:00.000Z",
+    updated_at: "2026-05-09T00:00:00.000Z",
+    last_fired_at: null,
+    next_fire_at: "2026-05-09T00:01:00.000Z",
+    consecutive_failures: 0,
+    last_escalation_at: null,
+    escalation_timestamps: [],
+    total_executions: 0,
+    total_tokens_used: 0,
+    max_tokens_per_day: 100000,
+    tokens_used_today: 0,
+    budget_reset_at: null,
+    ...overrides,
+  };
+}
 
 describe("checkNodeVersion", () => {
   it("passes on current Node.js runtime (>= 20)", () => {
@@ -595,6 +634,65 @@ describe("checkDaemon", () => {
     expect(result.detail).toContain("live ping ok");
   });
 
+  it("uses persisted daemon runtime root before daemon config when loading daemon health", async () => {
+    const actualRuntimeRoot = path.join(tmpDir, "actual-runtime");
+    fs.writeFileSync(
+      path.join(tmpDir, "daemon.json"),
+      JSON.stringify({ runtime_root: "configured-runtime" }),
+      "utf-8"
+    );
+    fs.writeFileSync(
+      path.join(tmpDir, "pulseed.pid"),
+      JSON.stringify({
+        pid: process.pid,
+        runtime_pid: process.pid,
+        owner_pid: process.pid,
+        started_at: new Date().toISOString(),
+      })
+    );
+    await saveDaemonStateFixture(tmpDir, {
+      pid: process.pid,
+      started_at: new Date().toISOString(),
+      last_loop_at: null,
+      loop_count: 0,
+      active_goals: [],
+      status: "running",
+      runtime_root: actualRuntimeRoot,
+      crash_count: 0,
+      last_error: null,
+    });
+    const observedRoots: string[] = [];
+    const loadSpy = vi
+      .spyOn(RuntimeHealthStore.prototype, "loadSnapshot")
+      .mockImplementation(async function (this: RuntimeHealthStore) {
+        observedRoots.push((this as unknown as { paths: { rootDir: string } }).paths.rootDir);
+        return null;
+      });
+    const inspectSpy = vi.spyOn(PIDManager.prototype, "inspect").mockResolvedValue({
+      info: {
+        pid: process.pid,
+        started_at: new Date().toISOString(),
+        owner_pid: process.pid,
+        runtime_pid: process.pid,
+      },
+      running: true,
+      runtimePid: process.pid,
+      ownerPid: process.pid,
+      alivePids: [process.pid],
+      stalePids: [],
+      verifiedPids: [process.pid],
+      unverifiedLegacyPids: [],
+    });
+
+    try {
+      await checkDaemon(tmpDir);
+    } finally {
+      loadSpy.mockRestore();
+      inspectSpy.mockRestore();
+    }
+    expect(observedRoots).toContain(actualRuntimeRoot);
+  });
+
   it("warns when PID file is JSON format and references running process without KPI telemetry", async () => {
     fs.writeFileSync(path.join(tmpDir, "pulseed.pid"), JSON.stringify({ pid: process.pid }));
     const inspectSpy = vi.spyOn(PIDManager.prototype, "inspect").mockResolvedValue({
@@ -645,19 +743,16 @@ describe("checkDaemon", () => {
       verifiedPids: [watchdogPid],
       unverifiedLegacyPids: [],
     });
-    fs.writeFileSync(
-      path.join(tmpDir, "daemon-state.json"),
-      JSON.stringify({
-        pid: 999999999,
-        started_at: new Date().toISOString(),
-        last_loop_at: null,
-        loop_count: 0,
-        active_goals: [],
-        status: "running",
-        crash_count: 0,
-        last_error: null,
-      })
-    );
+    await saveDaemonStateFixture(tmpDir, {
+      pid: 999999999,
+      started_at: new Date().toISOString(),
+      last_loop_at: null,
+      loop_count: 0,
+      active_goals: [],
+      status: "running",
+      crash_count: 0,
+      last_error: null,
+    });
 
     try {
       const result = await checkDaemon(tmpDir);
@@ -668,7 +763,7 @@ describe("checkDaemon", () => {
     }
   });
 
-  it("fails when daemon-state.json reports crashed", async () => {
+  it("fails when the daemon state store reports crashed", async () => {
     fs.writeFileSync(
       path.join(tmpDir, "pulseed.pid"),
       JSON.stringify({
@@ -678,19 +773,16 @@ describe("checkDaemon", () => {
         started_at: new Date().toISOString(),
       })
     );
-    fs.writeFileSync(
-      path.join(tmpDir, "daemon-state.json"),
-      JSON.stringify({
-        pid: process.pid,
-        started_at: new Date().toISOString(),
-        last_loop_at: null,
-        loop_count: 0,
-        active_goals: [],
-        status: "crashed",
-        crash_count: 1,
-        last_error: "boom",
-      })
-    );
+    await saveDaemonStateFixture(tmpDir, {
+      pid: process.pid,
+      started_at: new Date().toISOString(),
+      last_loop_at: null,
+      loop_count: 0,
+      active_goals: [],
+      status: "crashed",
+      crash_count: 1,
+      last_error: "boom",
+    });
 
     const result = await checkDaemon(tmpDir);
     expect(result.status).toBe("fail");
@@ -708,19 +800,16 @@ describe("checkDaemon", () => {
         started_at: new Date().toISOString(),
       })
     );
-    fs.writeFileSync(
-      path.join(tmpDir, "daemon-state.json"),
-      JSON.stringify({
-        pid: process.pid,
-        started_at: new Date().toISOString(),
-        last_loop_at: null,
-        loop_count: 0,
-        active_goals: [],
-        status: "idle",
-        crash_count: 0,
-        last_error: null,
-      })
-    );
+    await saveDaemonStateFixture(tmpDir, {
+      pid: process.pid,
+      started_at: new Date().toISOString(),
+      last_loop_at: null,
+      loop_count: 0,
+      active_goals: [],
+      status: "idle",
+      crash_count: 0,
+      last_error: null,
+    });
     const inspectSpy = vi.spyOn(PIDManager.prototype, "inspect").mockResolvedValue({
       info: {
         pid: process.pid,
@@ -1047,5 +1136,196 @@ describe("cmdDoctor summary counts", () => {
     expect([0, 1]).toContain(exitCode);
     const allOutput = consoleSpy.mock.calls.map((c: unknown[]) => c[0] as string).join("\n");
     expect(allOutput).toContain("Repair:");
+  });
+
+  it("imports legacy queue and schedule state through doctor repair", async () => {
+    const origHome = process.env["PULSEED_HOME"];
+    process.env["PULSEED_HOME"] = tmpDir;
+    const runtimeRoot = path.join(tmpDir, "runtime");
+    const envelope = createEnvelope({
+      type: "event",
+      name: "goal-run",
+      source: "doctor-test",
+      payload: { goalId: "goal-legacy" },
+      priority: "high",
+    });
+    fs.mkdirSync(runtimeRoot, { recursive: true });
+    fs.writeFileSync(path.join(runtimeRoot, "queue.json"), JSON.stringify({
+      version: 1,
+      records: {
+        [envelope.id]: {
+          envelope,
+          status: "pending",
+          attempt: 0,
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      },
+      pending: {
+        critical: [],
+        high: [envelope.id],
+        normal: [],
+        low: [],
+      },
+      inflight: {},
+    }));
+    fs.writeFileSync(path.join(tmpDir, "schedules.json"), JSON.stringify([
+      makeHeartbeatSchedule(),
+    ]));
+
+    try {
+      const exitCode = await cmdDoctor(["--repair"]);
+      expect([0, 1]).toContain(exitCode);
+    } finally {
+      if (origHome !== undefined) {
+        process.env["PULSEED_HOME"] = origHome;
+      } else {
+        delete process.env["PULSEED_HOME"];
+      }
+    }
+
+    const queue = new JournalBackedQueue({
+      journalPath: path.join(runtimeRoot, "queue.json"),
+      controlBaseDir: tmpDir,
+    });
+    expect(queue.get(envelope.id)?.status).toBe("pending");
+    await expect(new ScheduleEntryStore(tmpDir, { warn: vi.fn() }).readEntries()).resolves.toMatchObject([
+      { id: "11111111-1111-4111-8111-111111111111", name: "doctor-legacy-schedule" },
+    ]);
+    const allOutput = consoleSpy.mock.calls.map((c: unknown[]) => c[0] as string).join("\n");
+    expect(allOutput).toContain("Repair legacy import: queue=1");
+    expect(checkControlDatabase(tmpDir).detail).toContain("legacy import record");
+  });
+
+  it("imports queue and supervisor legacy state from a configured custom runtime root through doctor repair", async () => {
+    const origHome = process.env["PULSEED_HOME"];
+    process.env["PULSEED_HOME"] = tmpDir;
+    const runtimeRoot = path.join(tmpDir, "custom-runtime");
+    fs.writeFileSync(
+      path.join(tmpDir, "daemon.json"),
+      JSON.stringify({ runtime_root: "custom-runtime" }),
+      "utf-8"
+    );
+    const envelope = createEnvelope({
+      type: "event",
+      name: "custom-root-goal-run",
+      source: "doctor-test",
+      payload: { goalId: "goal-custom-runtime" },
+      priority: "normal",
+    });
+    fs.mkdirSync(runtimeRoot, { recursive: true });
+    fs.writeFileSync(path.join(runtimeRoot, "queue.json"), JSON.stringify({
+      version: 1,
+      records: {
+        [envelope.id]: {
+          envelope,
+          status: "pending",
+          attempt: 0,
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      },
+      pending: {
+        critical: [],
+        high: [],
+        normal: [envelope.id],
+        low: [],
+      },
+      inflight: {},
+    }));
+    fs.writeFileSync(path.join(runtimeRoot, "supervisor-state.json"), JSON.stringify({
+      workers: [{
+        workerId: "worker-custom-runtime",
+        goalId: "goal-custom-runtime",
+        startedAt: 1,
+        iterations: 2,
+        backgroundRunId: null,
+        sessionId: null,
+        parentSessionId: null,
+      }],
+      crashCounts: { "goal-custom-runtime": 1 },
+      suspendedGoals: ["goal-paused"],
+      updatedAt: 2,
+    }));
+
+    try {
+      const exitCode = await cmdDoctor(["--repair"]);
+      expect([0, 1]).toContain(exitCode);
+    } finally {
+      if (origHome !== undefined) {
+        process.env["PULSEED_HOME"] = origHome;
+      } else {
+        delete process.env["PULSEED_HOME"];
+      }
+    }
+
+    const queue = new JournalBackedQueue({
+      journalPath: path.join(runtimeRoot, "queue.json"),
+      controlBaseDir: tmpDir,
+    });
+    expect(queue.get(envelope.id)?.status).toBe("pending");
+    await expect(new SupervisorStateStore(runtimeRoot, { controlBaseDir: tmpDir }).load()).resolves.toMatchObject({
+      workers: [expect.objectContaining({ workerId: "worker-custom-runtime" })],
+      crashCounts: { "goal-custom-runtime": 1 },
+      suspendedGoals: ["goal-paused"],
+    });
+    const database = await openControlDatabase({ baseDir: tmpDir });
+    try {
+      expect(database.listLegacyImports()).toContainEqual(expect.objectContaining({
+        source_kind: "runtime-queue-json",
+        source_path: path.join(runtimeRoot, "queue.json"),
+      }));
+      expect(database.listLegacyImports()).toContainEqual(expect.objectContaining({
+        source_kind: "supervisor-state-json",
+        source_path: path.join(runtimeRoot, "supervisor-state.json"),
+      }));
+    } finally {
+      database.close();
+    }
+  });
+
+  it("migrates legacy scheduled tasks through doctor repair", async () => {
+    const origHome = process.env["PULSEED_HOME"];
+    process.env["PULSEED_HOME"] = tmpDir;
+    fs.writeFileSync(path.join(tmpDir, "scheduled-tasks.json"), JSON.stringify([
+      {
+        id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        cron: "0 9 * * *",
+        prompt: "Legacy prompt",
+        type: "reflection",
+        enabled: true,
+        last_fired_at: null,
+        permanent: false,
+        created_at: "2026-04-01T00:00:00.000Z",
+      },
+    ], null, 2));
+
+    try {
+      const exitCode = await cmdDoctor(["--repair"]);
+      expect([0, 1]).toContain(exitCode);
+    } finally {
+      if (origHome !== undefined) {
+        process.env["PULSEED_HOME"] = origHome;
+      } else {
+        delete process.env["PULSEED_HOME"];
+      }
+    }
+
+    const entries = await new ScheduleEntryStore(tmpDir, { warn: vi.fn() }).readEntries();
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.layer).toBe("cron");
+    expect(entries[0]?.cron?.prompt_template).toBe("Legacy prompt");
+    expect(fs.existsSync(path.join(tmpDir, "scheduled-tasks.legacy-migrated.json"))).toBe(true);
+    const database = await openControlDatabase({ baseDir: tmpDir });
+    try {
+      expect(database.listLegacyImports().some((record) => (
+        record.source_kind === "legacy-cron-scheduled-tasks-json"
+        && record.status === "imported"
+      ))).toBe(true);
+    } finally {
+      database.close();
+    }
+    const allOutput = consoleSpy.mock.calls.map((c: unknown[]) => c[0] as string).join("\n");
+    expect(allOutput).toContain("legacy cron=imported");
   });
 });

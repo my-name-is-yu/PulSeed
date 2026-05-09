@@ -8,14 +8,14 @@ import {
   SharedKnowledgeEntrySchema,
 } from "../../base/types/knowledge.js";
 import { readJsonFileOrNull } from "../../base/utils/json-io.js";
-import { parsePersistedScheduleEntries } from "../../runtime/schedule/entry-normalization.js";
-import type { ScheduleEntry } from "../../runtime/types/schedule.js";
+import { ScheduleEntryStore } from "../../runtime/schedule/entry-store.js";
 import { AgentMemoryStoreSchema } from "../knowledge/types/agent-memory.js";
 import type { SoilIndexSnapshot } from "./index-store.js";
 import { rebuildSoilIndex } from "./index-store.js";
 import { readSoilMarkdownFile } from "./io.js";
 import { soilPageRelativePathFromAbsolute } from "./paths.js";
 import { projectReportToSoil, projectSchedulesToSoil } from "./projections.js";
+import { resolveLocalSoilSourcePath } from "./source-paths.js";
 import {
   projectAgentMemoryToSoil,
   projectDecisionsToSoil,
@@ -105,15 +105,6 @@ async function readJsonWithSchema<TSchema extends z.ZodTypeAny>(
   return parsed.success ? parsed.data : null;
 }
 
-async function readScheduleEntries(filePath: string): Promise<ScheduleEntry[] | null> {
-  const raw = await readJsonFileOrNull(filePath);
-  if (raw === null) {
-    return null;
-  }
-  const parsed = parsePersistedScheduleEntries(raw);
-  return parsed.validList ? parsed.entries : null;
-}
-
 function localSourcePathsForPage(frontmatter: SoilPageFrontmatter, pagePath: string): string[] {
   const sourcePaths = new Set<string>();
 
@@ -131,8 +122,8 @@ function localSourcePathsForPage(frontmatter: SoilPageFrontmatter, pagePath: str
   }
 
   return [...sourcePaths]
-    .filter((sourcePath) => sourcePath && !/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(sourcePath))
-    .map((sourcePath) => (path.isAbsolute(sourcePath) ? path.resolve(sourcePath) : path.resolve(path.dirname(pagePath), sourcePath)));
+    .map((sourcePath) => resolveLocalSoilSourcePath(pagePath, sourcePath))
+    .filter((sourcePath): sourcePath is string => sourcePath !== null);
 }
 
 async function pathExists(filePath: string): Promise<boolean> {
@@ -215,8 +206,8 @@ export async function rebuildSoilFromRuntime(input: SoilRuntimeRebuildInput): Pr
     projected.reports += 1;
   }
 
-  const schedules = await readScheduleEntries(path.join(input.baseDir, "schedules.json"));
-  if (schedules !== null) {
+  const schedules = await new ScheduleEntryStore(input.baseDir, { warn: () => {} }).readEntries();
+  if (schedules.length > 0) {
     await projectSchedulesToSoil({ ...projectionBase, entries: schedules });
     projected.schedules = schedules.length;
   }

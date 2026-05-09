@@ -30,6 +30,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { RuntimeBudgetStore } from "../../../runtime/store/budget-store.js";
+import { SupervisorStateStore } from "../../../runtime/store/supervisor-state-store.js";
 
 // ─── Module mocks ───────────────────────────────────────────────────────────
 //
@@ -1561,12 +1562,15 @@ describe("status subcommand", async () => {
 
   it("prints the compact current-goal summary before detailed dimensions", async () => {
     await stateManager.saveGoal(makeGoal({ id: "goal-current", title: "Current CLI Goal", status: "active" }));
-    await stateManager.writeRaw("supervisor-state.json", {
+    await new SupervisorStateStore(path.join(tmpDir, "runtime"), { controlBaseDir: tmpDir }).save({
       workers: [{
         workerId: "worker-cli",
         goalId: "goal-current",
         startedAt: Date.parse("2026-04-25T00:00:00.000Z"),
+        iterations: 0,
       }],
+      crashCounts: {},
+      suspendedGoals: [],
       updatedAt: Date.parse("2026-04-25T00:30:00.000Z"),
     });
 

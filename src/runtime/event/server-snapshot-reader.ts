@@ -2,7 +2,7 @@ import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { z } from "zod";
 import type { ApprovalRequiredEvent } from "../approval-broker.js";
-import type { OutboxStore, RuntimeAutomationSnapshot } from "../store/index.js";
+import { DaemonStateStore, type OutboxStore, type RuntimeAutomationSnapshot } from "../store/index.js";
 import { BrowserSessionStore, RuntimeAuthHandoffStore } from "../interactive-automation/index.js";
 import { GuardrailStore } from "../guardrails/index.js";
 import type { StateManager } from "../../base/state/state-manager.js";
@@ -38,6 +38,7 @@ export class EventServerSnapshotReader {
     private readonly eventsDir: string,
     private readonly configuredRuntimeRoot?: string,
     private readonly stateManager?: StateManager,
+    private readonly configuredControlBaseDir?: string,
   ) {}
 
   async buildSnapshot(
@@ -76,7 +77,11 @@ export class EventServerSnapshotReader {
   }
 
   private controlDbOptions(): { controlBaseDir: string } | undefined {
-    return this.stateManager ? { controlBaseDir: this.stateManager.getBaseDir() } : undefined;
+    return { controlBaseDir: this.controlBaseDir() };
+  }
+
+  private controlBaseDir(): string {
+    return this.configuredControlBaseDir ?? this.stateManager?.getBaseDir() ?? path.dirname(this.eventsDir);
   }
 
   private async readPendingAuthSessions(): Promise<Array<Record<string, unknown>>> {
@@ -198,12 +203,8 @@ export class EventServerSnapshotReader {
   }
 
   async readDaemonStateRaw(): Promise<string | null> {
-    const statePath = path.join(this.eventsDir.replace("/events", ""), "daemon-state.json");
-    try {
-      return await fsp.readFile(statePath, "utf-8");
-    } catch {
-      return null;
-    }
+    const state = await new DaemonStateStore(this.controlBaseDir()).load();
+    return state ? JSON.stringify(state) : null;
   }
 
   async readDaemonState(): Promise<Record<string, unknown> | null> {

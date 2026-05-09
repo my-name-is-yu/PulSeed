@@ -5,6 +5,7 @@ import { ScheduleEngine } from "../../src/runtime/schedule/engine.js";
 import { DaemonRunner, type DaemonDeps } from "../../src/runtime/daemon-runner.js";
 import { Logger } from "../../src/runtime/logger.js";
 import { PIDManager } from "../../src/runtime/pid-manager.js";
+import { DaemonStateStore } from "../../src/runtime/store/daemon-state-store.js";
 import { SqliteSoilRepository } from "../../src/platform/soil/sqlite-repository.js";
 import { cleanupTempDir, makeTempDir } from "../helpers/temp-dir.js";
 
@@ -173,10 +174,8 @@ describe("Dream Soil sync E2E", () => {
 
     await (daemon as unknown as ResidentDreamInvoker).triggerResidentDreamMaintenance(undefined, "deep");
 
-    const state = JSON.parse(fs.readFileSync(path.join(tempDir, "daemon-state.json"), "utf8")) as {
-      resident_activity?: { kind?: string; summary?: string };
-    };
-    expect(state.resident_activity).toEqual(expect.objectContaining({
+    const state = await new DaemonStateStore(tempDir).load();
+    expect(state?.resident_activity).toEqual(expect.objectContaining({
       kind: "dream",
       summary: expect.stringContaining("Resident dream deep analysis ran"),
     }));

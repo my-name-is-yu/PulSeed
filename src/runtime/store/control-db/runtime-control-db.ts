@@ -2,6 +2,7 @@ import * as path from "node:path";
 import type { RuntimeStorePaths } from "../runtime-paths.js";
 import {
   openControlDatabase,
+  openControlDatabaseSync,
   type ControlDatabase,
 } from "./control-db.js";
 
@@ -26,6 +27,19 @@ export async function openRuntimeControlDatabase(
     return options.controlDb;
   }
   return openControlDatabase({
+    baseDir: options.controlBaseDir ?? resolveRuntimeControlDbBaseDir(paths),
+    dbPath: options.controlDbPath,
+  });
+}
+
+export function openRuntimeControlDatabaseSync(
+  paths: Pick<RuntimeStorePaths, "rootDir">,
+  options: RuntimeControlDbStoreOptions = {}
+): ControlDatabase {
+  if (options.controlDb) {
+    return options.controlDb;
+  }
+  return openControlDatabaseSync({
     baseDir: options.controlBaseDir ?? resolveRuntimeControlDbBaseDir(paths),
     dbPath: options.controlDbPath,
   });

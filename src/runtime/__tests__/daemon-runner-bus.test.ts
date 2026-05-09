@@ -10,6 +10,7 @@ import { createEnvelope } from "../types/envelope.js";
 import { ScheduleEngine } from "../schedule/engine.js";
 import { makeTempDir } from "../../../tests/helpers/temp-dir.js";
 import { IngressGateway } from "../gateway/ingress-gateway.js";
+import { JournalBackedQueue } from "../queue/journal-backed-queue.js";
 
 function makeLoopResult(overrides: Partial<LoopResult> = {}): LoopResult {
   return {
@@ -67,10 +68,18 @@ function makeDeps(tmpDir: string, overrides: Partial<DaemonDeps> = {}): DaemonDe
 
 function readRuntimeQueue(tmpDir: string): Record<string, any> {
   const queuePath = path.join(tmpDir, "runtime", "queue.json");
-  if (!fs.existsSync(queuePath)) {
-    return { records: {} };
+  const queue = new JournalBackedQueue({ journalPath: queuePath, controlBaseDir: tmpDir });
+  const snapshot = queue.snapshot();
+  const records: Record<string, unknown> = {};
+  for (const messageId of new Set<string>([
+    ...Object.values(snapshot.pending).flat(),
+    ...Object.values(snapshot.inflight).map((claim) => claim.messageId),
+    ...snapshot.completed,
+    ...snapshot.deadletter,
+  ])) {
+    records[messageId] = queue.get(messageId);
   }
-  return JSON.parse(fs.readFileSync(queuePath, "utf-8")) as Record<string, any>;
+  return { records };
 }
 
 async function waitFor(
@@ -487,19 +496,16 @@ describe("DaemonRunner durable runtime wiring", () => {
 
     await waitFor(() => mockScheduleEngine.tick.mock.calls.length > 0);
 
-    const queuePath = path.join(tmpDir, "runtime", "queue.json");
-    if (fs.existsSync(queuePath)) {
-      const queue = readRuntimeQueue(tmpDir);
-      expect(Object.values(queue.records)).not.toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            envelope: expect.objectContaining({
-              name: "schedule_activated",
-            }),
+    const queue = readRuntimeQueue(tmpDir);
+    expect(Object.values(queue.records)).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          envelope: expect.objectContaining({
+            name: "schedule_activated",
           }),
-        ])
-      );
-    }
+        }),
+      ])
+    );
   });
 
   it("records cron receipts in the runtime journal and marks the task fired after dispatch", async () => {

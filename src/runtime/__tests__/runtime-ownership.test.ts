@@ -4,6 +4,7 @@ import * as path from "node:path";
 import { RuntimeOwnershipCoordinator } from "../daemon/runtime-ownership.js";
 import { ApprovalStore } from "../store/approval-store.js";
 import { RuntimeHealthStore } from "../store/health-store.js";
+import { SupervisorStateStore } from "../store/index.js";
 import { makeTempDir, cleanupTempDir } from "../../../tests/helpers/temp-dir.js";
 
 describe("RuntimeOwnershipCoordinator", () => {
@@ -21,20 +22,17 @@ describe("RuntimeOwnershipCoordinator", () => {
   });
 
   async function writeSupervisorState(goalIds: string[], updatedAt = Date.now()): Promise<void> {
-    await fsp.writeFile(
-      path.join(tmpDir, "supervisor-state.json"),
-      JSON.stringify({
-        workers: goalIds.map((goalId, index) => ({
-          workerId: `worker-${index + 1}`,
-          goalId,
-          startedAt: updatedAt - 1_000,
-          iterations: 1,
-        })),
-        crashCounts: {},
-        suspendedGoals: [],
-        updatedAt,
-      })
-    );
+    await new SupervisorStateStore(tmpDir, { controlBaseDir: tmpDir }).save({
+      workers: goalIds.map((goalId, index) => ({
+        workerId: `worker-${index + 1}`,
+        goalId,
+        startedAt: updatedAt - 1_000,
+        iterations: 1,
+      })),
+      crashCounts: {},
+      suspendedGoals: [],
+      updatedAt,
+    });
   }
 
   async function writeLatestTaskLedger(
@@ -113,15 +111,7 @@ describe("RuntimeOwnershipCoordinator", () => {
       path.join(tmpDir, "artifacts", "run-a", "next-action.json"),
       JSON.stringify({ schema_version: "long-running-next-action-v1" })
     );
-    await fsp.writeFile(
-      path.join(tmpDir, "supervisor-state.json"),
-      JSON.stringify({
-        workers: [{ workerId: "worker-1", goalId: "goal-1", startedAt: Date.now(), iterations: 2 }],
-        crashCounts: {},
-        suspendedGoals: [],
-        updatedAt: Date.now(),
-      })
-    );
+    await writeSupervisorState(["goal-1"]);
     const coordinator = new RuntimeOwnershipCoordinator({
       baseDir: tmpDir,
       runtimeRoot: tmpDir,

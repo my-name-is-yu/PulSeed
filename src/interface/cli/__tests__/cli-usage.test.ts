@@ -3,10 +3,88 @@ import * as fs from "node:fs";
 import { CLIRunner } from "../cli-runner.js";
 import { StateManager } from "../../../base/state/state-manager.js";
 import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
+import { ScheduleHistoryStore } from "../../../runtime/schedule/history.js";
+import { openControlDatabase } from "../../../runtime/store/index.js";
 
 async function runCLI(tmpDir: string, ...args: string[]): Promise<number> {
   const runner = new CLIRunner(tmpDir);
   return runner.run(args);
+}
+
+async function saveScheduleHistory(tmpDir: string, records: Array<Record<string, unknown>>): Promise<void> {
+  const now = new Date().toISOString();
+  await new ScheduleHistoryStore(tmpDir).save(records.map((record, index) => ({
+    id: `00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+    entry_id: `10000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+    entry_name: "Daily brief",
+    layer: "cron",
+    status: "ok",
+    duration_ms: 0,
+    fired_at: record["fired_at"] ?? record["finished_at"] ?? now,
+    reason: "manual_run",
+    attempt: 0,
+    scheduled_for: null,
+    started_at: record["started_at"] ?? record["finished_at"] ?? now,
+    finished_at: record["finished_at"] ?? now,
+    retry_at: null,
+    tokens_used: 0,
+    escalated_to: null,
+    activation_kind: null,
+    strategy_id: null,
+    wait_strategy_id: null,
+    internal: false,
+    ...record,
+  }) as never));
+}
+
+async function insertRawScheduleHistoryRecord(tmpDir: string, record: Record<string, unknown>): Promise<void> {
+  const db = await openControlDatabase({ baseDir: tmpDir });
+  try {
+    const finishedAt = typeof record["finished_at"] === "string" ? record["finished_at"] : new Date().toISOString();
+    db.transaction((sqlite) => {
+      sqlite.prepare(`
+        INSERT INTO schedule_run_history (
+          history_id,
+          entry_id,
+          entry_name,
+          layer,
+          reason,
+          started_at,
+          finished_at,
+          internal,
+          tokens_used,
+          sort_order,
+          record_json
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, json(?))
+      `).run(
+        "raw-invalid-record",
+        "10000000-0000-4000-8000-000000000001",
+        "Daily brief",
+        "cron",
+        "manual_run",
+        finishedAt,
+        finishedAt,
+        0,
+        0,
+        0,
+        JSON.stringify(record)
+      );
+    });
+  } finally {
+    db.close();
+  }
+}
+
+async function dropScheduleHistoryTable(tmpDir: string): Promise<void> {
+  const db = await openControlDatabase({ baseDir: tmpDir });
+  try {
+    db.transaction((sqlite) => {
+      sqlite.prepare("DROP TABLE schedule_run_history").run();
+    });
+  } finally {
+    db.close();
+  }
 }
 
 describe("CLI usage command", () => {
@@ -146,21 +224,13 @@ describe("CLI usage command", () => {
   });
 
   it("reports schedule usage for a requested period", async () => {
-    await stateManager.writeRaw("schedule-history.json", [
+    await saveScheduleHistory(tmpDir, [
       {
-        id: "record-1",
-        entry_id: "entry-1",
         entry_name: "Daily brief",
-        layer: "cron",
-        status: "ok",
         duration_ms: 1200,
         fired_at: new Date().toISOString(),
-        reason: "manual_run",
-        attempt: 0,
-        scheduled_for: null,
         started_at: new Date().toISOString(),
         finished_at: new Date().toISOString(),
-        retry_at: null,
         tokens_used: 88,
       },
     ]);
@@ -177,24 +247,14 @@ describe("CLI usage command", () => {
 
   it("caps accumulated schedule usage totals at the maximum safe integer", async () => {
     const now = new Date().toISOString();
-    await stateManager.writeRaw("schedule-history.json", [
+    await saveScheduleHistory(tmpDir, [
       {
-        id: "record-1",
-        status: "ok",
         finished_at: now,
         tokens_used: Number.MAX_SAFE_INTEGER,
       },
       {
-        id: "record-2",
-        status: "ok",
         finished_at: now,
         tokens_used: 1,
-      },
-      {
-        id: "record-3",
-        status: "ok",
-        finished_at: now,
-        tokens_used: Number.MAX_SAFE_INTEGER + 1,
       },
     ]);
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
@@ -203,13 +263,16 @@ describe("CLI usage command", () => {
 
     expect(code).toBe(0);
     const output = logSpy.mock.calls.map((call) => call.join(" ")).join("\n");
-    expect(output).toContain("Runs: 3");
+    expect(output).toContain("Runs: 2");
     expect(output).toContain(`Total tokens: ${Number.MAX_SAFE_INTEGER}`);
     expect(output).not.toContain(String(Number.MAX_SAFE_INTEGER + 1));
   });
 
-  it("treats malformed schedule history JSON as zero usage", async () => {
-    fs.writeFileSync(`${tmpDir}/schedule-history.json`, "{bad json");
+  it("treats invalid schedule history rows as zero usage", async () => {
+    await insertRawScheduleHistoryRecord(tmpDir, {
+      finished_at: new Date().toISOString(),
+      tokens_used: Number.MAX_SAFE_INTEGER + 1,
+    });
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
     const code = await runCLI(tmpDir, "usage", "schedule", "--period", "24h");
@@ -222,7 +285,7 @@ describe("CLI usage command", () => {
   });
 
   it("surfaces schedule history read errors instead of reporting zero usage", async () => {
-    fs.mkdirSync(`${tmpDir}/schedule-history.json`);
+    await dropScheduleHistoryTable(tmpDir);
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 

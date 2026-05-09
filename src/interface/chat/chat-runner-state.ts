@@ -1,6 +1,7 @@
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { TaskSchema, type Task } from "../../base/types/task.js";
+import { ScheduleHistoryStore } from "../../runtime/schedule/history.js";
 import { parseUsagePeriodMs } from "../usage-period.js";
 
 export interface GoalUsageSummary {
@@ -132,19 +133,7 @@ export async function collectScheduleUsage(
 ): Promise<ScheduleUsageSummary> {
   const periodMs = parseUsagePeriodMs(period);
   const since = now - periodMs;
-  const historyPath = path.join(baseDir, "schedule-history.json");
-  let raw: unknown;
-  try {
-    raw = JSON.parse(await fsp.readFile(historyPath, "utf-8"));
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-      return { period, runs: 0, totalTokens: 0 };
-    }
-    throw err;
-  }
-  if (!Array.isArray(raw)) {
-    return { period, runs: 0, totalTokens: 0 };
-  }
+  const raw = await new ScheduleHistoryStore(baseDir).load();
   let runs = 0;
   let totalTokens = 0;
   for (const record of raw) {

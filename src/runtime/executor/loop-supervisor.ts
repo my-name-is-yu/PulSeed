@@ -1,4 +1,3 @@
-import { writeFileSync, mkdirSync, renameSync, existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { z } from 'zod';
 import { GoalWorker, type GoalWorkerConfig, type WorkerResult } from './goal-worker.js';
@@ -16,6 +15,7 @@ import type { BackgroundRun, RuntimeSessionRef } from '../session-registry/types
 import type { WaitResumeActivation } from '../../base/types/goal-activation.js';
 import type { LoopRunPolicyMode } from '../../orchestrator/loop/durable-loop.js';
 import { createDaemonShutdownAbortReason } from '../../base/utils/abort-reason.js';
+import { SupervisorStateStore } from '../store/supervisor-state-store.js';
 
 export interface SupervisorConfig {
   concurrency: number;
@@ -29,6 +29,7 @@ export interface SupervisorConfig {
   leaseRenewIntervalMs: number;
   runPolicy: LoopRunPolicyMode;
   activeStopGraceMs: number;
+  controlBaseDir?: string;
 }
 
 export interface SupervisorDeps {
@@ -121,6 +122,7 @@ export class LoopSupervisor {
   private pollTimer: ReturnType<typeof setInterval> | null = null;
   private readonly config: SupervisorConfig;
   private readonly deps: SupervisorDeps;
+  private readonly supervisorStateStore: SupervisorStateStore;
   private polling: boolean = false;
   private currentPoll: Promise<void> | null = null;
   private runningExecutions: Array<{
@@ -137,6 +139,9 @@ export class LoopSupervisor {
   constructor(deps: SupervisorDeps, config?: Partial<SupervisorConfig>) {
     this.deps = deps;
     this.config = { ...DEFAULT_CONFIG, ...config };
+    this.supervisorStateStore = new SupervisorStateStore(dirname(this.config.stateFilePath), {
+      controlBaseDir: this.config.controlBaseDir,
+    });
   }
 
   async start(initialGoalIds: string[]): Promise<void> {
@@ -645,9 +650,9 @@ export class LoopSupervisor {
   private supervisorStateRef(): RuntimeSessionRef {
     return {
       kind: 'supervisor_state',
-      id: null,
-      path: this.config.stateFilePath,
-      relative_path: null,
+      id: 'current',
+      path: null,
+      relative_path: 'control-db:supervisor_state_snapshots/current',
       updated_at: null,
     };
   }
@@ -880,23 +885,17 @@ export class LoopSupervisor {
 
   private persistState(): void {
     const state = this.getState();
-    const filePath = this.config.stateFilePath;
-    const tmpPath = filePath + '.tmp';
     try {
-      mkdirSync(dirname(filePath), { recursive: true });
-      writeFileSync(tmpPath, JSON.stringify(state, null, 2), 'utf8');
-      renameSync(tmpPath, filePath);
+      this.supervisorStateStore.saveSync(state);
     } catch (err) {
       this.deps.logger?.error('Failed to persist supervisor state', { err: String(err) });
     }
   }
 
   private loadState(): void {
-    const filePath = this.config.stateFilePath;
-    if (!existsSync(filePath)) return;
     try {
-      const raw = readFileSync(filePath, 'utf8');
-      const state = JSON.parse(raw) as unknown;
+      const state = this.supervisorStateStore.loadSync();
+      if (!state) return;
       for (const [goalId, count] of validCrashCountEntries(state)) {
         this.crashCounts.set(goalId, count);
       }

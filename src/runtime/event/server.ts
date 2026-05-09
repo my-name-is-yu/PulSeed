@@ -67,7 +67,12 @@ export class EventServer {
     this.logger = logger;
     this.approvalBroker = config?.approvalBroker;
     this.outboxStore = config?.outboxStore;
-    this.snapshotReader = new EventServerSnapshotReader(this.eventsDir, config?.runtimeRoot, config?.stateManager);
+    this.snapshotReader = new EventServerSnapshotReader(
+      this.eventsDir,
+      config?.runtimeRoot,
+      config?.stateManager,
+      config?.controlBaseDir,
+    );
     this.sseManager = new EventServerSseManager(this.logger, this.approvalBroker, this.outboxStore);
     this.auth = new EventServerAuth(this.host, this.eventsDir, () => this.port, this.logger);
     this.fileIngestion = new EventServerFileIngestion(

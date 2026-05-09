@@ -11,6 +11,7 @@ export interface EventServerConfig {
   port?: number;
   eventsDir?: string;
   runtimeRoot?: string;
+  controlBaseDir?: string;
   stateManager?: StateManager;
   triggerMapper?: TriggerMapper;
   approvalBroker?: ApprovalBroker;

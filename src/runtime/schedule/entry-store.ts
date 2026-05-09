@@ -1,14 +1,16 @@
-import * as fsp from "node:fs/promises";
-import * as path from "node:path";
-import { writeJsonFileAtomic, readJsonFileOrNull } from "../../base/utils/json-io.js";
-import { isProcessPidValue } from "../../base/utils/process-pid.js";
+import { randomUUID } from "node:crypto";
 import { parsePersistedScheduleEntries } from "./entry-normalization.js";
 import type { ScheduleEntry } from "../types/schedule.js";
+import {
+  openControlDatabase,
+  type ControlDatabase,
+  type RuntimeControlDbStoreOptions,
+  type SqliteDatabase,
+} from "../store/control-db/index.js";
 
-const SCHEDULES_FILE = "schedules.json";
-const SCHEDULE_LOCK_DIR = `${SCHEDULES_FILE}.lock`;
+const SCHEDULE_LOCK_ID = "schedule_entries";
 const SCHEDULE_LOCK_TIMEOUT_MS = 5000;
-const SCHEDULE_LOCK_STALE_MS = 30_000;
+const SCHEDULE_LOCK_LEASE_MS = 30_000;
 const SCHEDULE_LOCK_RETRY_MS = 25;
 
 export interface ScheduleEntryStoreLogger {
@@ -16,27 +18,27 @@ export interface ScheduleEntryStoreLogger {
 }
 
 export class ScheduleEntryStore {
-  private readonly schedulesPath: string;
-  private readonly schedulesLockPath: string;
+  private readonly dbOptions: RuntimeControlDbStoreOptions;
+  private dbPromise: Promise<ControlDatabase> | null = null;
   private lockDepth = 0;
 
   constructor(
     private readonly baseDir: string,
     private readonly logger: ScheduleEntryStoreLogger,
-    private readonly onPersist?: (entries: ScheduleEntry[]) => Promise<void>
+    private readonly onPersist?: (entries: ScheduleEntry[]) => Promise<void>,
+    options: RuntimeControlDbStoreOptions = {}
   ) {
-    this.schedulesPath = path.join(baseDir, SCHEDULES_FILE);
-    this.schedulesLockPath = path.join(baseDir, SCHEDULE_LOCK_DIR);
+    this.dbOptions = options;
   }
 
   async readEntries(): Promise<ScheduleEntry[]> {
-    const raw = await readJsonFileOrNull(this.schedulesPath);
-    if (raw === null) return [];
+    const db = await this.database();
+    const raw = db.read((sqlite) => readScheduleEntryJson(sqlite));
     const { entries, invalidCount, validList } = parsePersistedScheduleEntries(raw);
     if (!validList) return [];
 
     if (invalidCount > 0) {
-      this.logger.warn("Skipped invalid schedule entries while loading schedules.json", {
+      this.logger.warn("Skipped invalid schedule entries while loading schedule_entries", {
         invalid_count: invalidCount,
       });
     }
@@ -45,7 +47,8 @@ export class ScheduleEntryStore {
 
   async saveEntries(entries: ScheduleEntry[]): Promise<void> {
     await this.withLock(async () => {
-      await writeJsonFileAtomic(this.schedulesPath, entries);
+      const db = await this.database();
+      db.transaction((sqlite) => writeScheduleEntries(sqlite, entries));
       await this.onPersist?.(entries);
     });
   }
@@ -55,76 +58,115 @@ export class ScheduleEntryStore {
       return work();
     }
 
-    const release = await this.acquireScheduleFileLock();
+    const release = await this.acquireScheduleStoreLock();
     this.lockDepth++;
     try {
       return await work();
     } finally {
       this.lockDepth--;
-      await release();
+      release();
     }
   }
 
-  private async acquireScheduleFileLock(): Promise<() => Promise<void>> {
-    await fsp.mkdir(this.baseDir, { recursive: true });
+  private async acquireScheduleStoreLock(): Promise<() => void> {
+    const db = await this.database();
+    const ownerToken = randomUUID();
     const startedAt = Date.now();
 
     while (true) {
-      try {
-        await fsp.mkdir(this.schedulesLockPath);
-        await fsp.writeFile(
-          path.join(this.schedulesLockPath, "owner.json"),
-          JSON.stringify({ pid: process.pid, created_at: new Date().toISOString() }),
-          "utf-8"
-        );
-        return async () => {
-          await fsp.rm(this.schedulesLockPath, { recursive: true, force: true });
+      const acquired = db.transaction((sqlite) => {
+        const now = Date.now();
+        sqlite.prepare(`
+          DELETE FROM schedule_store_locks
+          WHERE lock_id = ? AND lease_until <= ?
+        `).run(SCHEDULE_LOCK_ID, now);
+        const result = sqlite.prepare(`
+          INSERT OR IGNORE INTO schedule_store_locks (
+            lock_id,
+            owner_token,
+            owner_pid,
+            acquired_at,
+            lease_until
+          )
+          VALUES (?, ?, ?, ?, ?)
+        `).run(SCHEDULE_LOCK_ID, ownerToken, process.pid, now, now + SCHEDULE_LOCK_LEASE_MS);
+        return result.changes === 1;
+      });
+      if (acquired) {
+        return () => {
+          db.transaction((sqlite) => {
+            sqlite.prepare(`
+              DELETE FROM schedule_store_locks
+              WHERE lock_id = ? AND owner_token = ?
+            `).run(SCHEDULE_LOCK_ID, ownerToken);
+          });
         };
-      } catch (error) {
-        const code = (error as NodeJS.ErrnoException).code;
-        if (code !== "EEXIST") {
-          throw error;
-        }
-
-        await this.removeStaleScheduleLock().catch(() => undefined);
-        if (Date.now() - startedAt >= SCHEDULE_LOCK_TIMEOUT_MS) {
-          throw new Error(`Timed out waiting for schedule file lock at ${this.schedulesLockPath}`);
-        }
-        await new Promise((resolve) => setTimeout(resolve, SCHEDULE_LOCK_RETRY_MS));
       }
+      if (Date.now() - startedAt >= SCHEDULE_LOCK_TIMEOUT_MS) {
+        throw new Error("Timed out waiting for schedule store lock in control DB");
+      }
+      await new Promise((resolve) => setTimeout(resolve, SCHEDULE_LOCK_RETRY_MS));
     }
   }
 
-  private async removeStaleScheduleLock(): Promise<void> {
-    const stat = await fsp.stat(this.schedulesLockPath);
-    if (Date.now() - stat.mtimeMs <= SCHEDULE_LOCK_STALE_MS) {
-      return;
+  private async database(): Promise<ControlDatabase> {
+    if (this.dbOptions.controlDb) {
+      return this.dbOptions.controlDb;
     }
-
-    try {
-      const raw = await fsp.readFile(path.join(this.schedulesLockPath, "owner.json"), "utf-8");
-      const owner = JSON.parse(raw) as { pid?: unknown };
-      if (isProcessPidValue(owner.pid)) {
-        try {
-          process.kill(owner.pid, 0);
-          return;
-        } catch {
-          // Owner is gone; stale lock can be removed.
-        }
-      }
-    } catch {
-      // Missing or malformed owner data is treated as stale after the age threshold.
-    }
-
-    try {
-      await fsp.rm(this.schedulesLockPath, { recursive: true, force: true });
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code;
-      if (code !== "ENOENT") {
-        this.logger.warn("Failed to remove stale schedule lock", {
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
-    }
+    this.dbPromise ??= openControlDatabase({
+      baseDir: this.dbOptions.controlBaseDir ?? this.baseDir,
+      dbPath: this.dbOptions.controlDbPath,
+    });
+    return this.dbPromise;
   }
+}
+
+interface ScheduleEntryRow {
+  entry_json: string;
+}
+
+function readScheduleEntryJson(sqlite: SqliteDatabase): unknown[] {
+  const rows = sqlite.prepare(`
+    SELECT entry_json
+    FROM schedule_entries
+    ORDER BY sort_order ASC, entry_id ASC
+  `).all() as ScheduleEntryRow[];
+  return rows.map((row) => JSON.parse(row.entry_json) as unknown);
+}
+
+function writeScheduleEntries(sqlite: SqliteDatabase, entries: readonly ScheduleEntry[]): void {
+  sqlite.prepare("DELETE FROM schedule_entries").run();
+  const insert = sqlite.prepare(`
+    INSERT INTO schedule_entries (
+      entry_id,
+      name,
+      layer,
+      enabled,
+      next_fire_at,
+      updated_at,
+      internal,
+      activation_kind,
+      goal_id,
+      wait_strategy_id,
+      sort_order,
+      entry_json
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, json(?))
+  `);
+  entries.forEach((entry, index) => {
+    insert.run(
+      entry.id,
+      entry.name,
+      entry.layer,
+      entry.enabled ? 1 : 0,
+      entry.next_fire_at,
+      entry.updated_at,
+      entry.metadata?.internal === true ? 1 : 0,
+      entry.metadata?.activation_kind ?? null,
+      entry.metadata?.goal_id ?? entry.goal_trigger?.goal_id ?? null,
+      entry.metadata?.wait_strategy_id ?? null,
+      index,
+      JSON.stringify(entry),
+    );
+  });
 }

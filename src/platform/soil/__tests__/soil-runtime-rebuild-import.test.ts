@@ -3,12 +3,8 @@ import * as path from "node:path";
 import { describe, expect, it } from "vitest";
 import { cleanupTempDir, makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 import { writeJsonFileAtomic } from "../../../base/utils/json-io.js";
-import {
-  MAX_SCHEDULE_RETRY_ATTEMPTS,
-  MAX_SCHEDULE_RETRY_DELAY_MS,
-  MAX_SCHEDULE_RETRY_MULTIPLIER,
-  MAX_SCHEDULE_RETRY_WINDOW_MS,
-} from "../../../runtime/types/schedule.js";
+import { ScheduleEntryStore } from "../../../runtime/schedule/entry-store.js";
+import { ScheduleEntrySchema } from "../../../runtime/types/schedule.js";
 import { SoilCompiler } from "../compiler.js";
 import { rebuildSoilFromRuntime } from "../runtime-rebuild.js";
 import { SoilDoctor } from "../doctor.js";
@@ -39,7 +35,6 @@ describe("Soil runtime rebuild", () => {
         delivered_at: null,
         read: false,
       });
-      await writeJsonFileAtomic(path.join(baseDir, "schedules.json"), []);
       await writeJsonFileAtomic(path.join(baseDir, "goals", "goal-1", "domain_knowledge.json"), {
         goal_id: "goal-1",
         domain: "research",
@@ -113,57 +108,57 @@ describe("Soil runtime rebuild", () => {
     }
   });
 
-  it("rebuilds schedules with finite legacy retry bounds", async () => {
+  it("rebuilds schedules from Control DB without pruning DB provenance", async () => {
     const baseDir = makeTempDir("soil-runtime-rebuild-schedule-");
     try {
-      await writeJsonFileAtomic(path.join(baseDir, "schedules.json"), [
-        {
-          id: "22222222-2222-4222-8222-222222222222",
-          name: "legacy-large-retry-policy",
-          layer: "heartbeat",
-          trigger: { type: "interval", seconds: 60, jitter_factor: 0 },
-          enabled: true,
-          heartbeat: {
-            check_type: "custom",
-            check_config: { command: "echo ok" },
-            failure_threshold: 3,
-            timeout_ms: 5000,
-          },
-          retry_policy: {
-            enabled: true,
-            initial_delay_ms: MAX_SCHEDULE_RETRY_DELAY_MS + 1,
-            max_delay_ms: MAX_SCHEDULE_RETRY_DELAY_MS + 1,
-            multiplier: MAX_SCHEDULE_RETRY_MULTIPLIER + 1,
-            jitter_factor: 0,
-            max_attempts: MAX_SCHEDULE_RETRY_ATTEMPTS + 1,
-            max_retry_window_ms: MAX_SCHEDULE_RETRY_WINDOW_MS + 1,
-            retryable_failure_kinds: ["transient"],
-          },
-          retry_state: {
-            attempts: MAX_SCHEDULE_RETRY_ATTEMPTS + 1,
-          },
-          created_at: "2026-04-11T09:00:00.000Z",
-          updated_at: "2026-04-11T09:00:00.000Z",
-          last_fired_at: null,
-          next_fire_at: "2026-04-11T09:01:00.000Z",
-          consecutive_failures: 0,
-          last_escalation_at: null,
-          escalation_timestamps: [],
-          total_executions: 0,
-          total_tokens_used: 0,
-          max_tokens_per_day: 100000,
-          tokens_used_today: 0,
-          budget_reset_at: null,
-          baseline_results: [],
+      const entry = ScheduleEntrySchema.parse({
+        id: "22222222-2222-4222-8222-222222222222",
+        name: "control-db-schedule",
+        layer: "heartbeat",
+        trigger: { type: "interval", seconds: 60, jitter_factor: 0 },
+        enabled: true,
+        heartbeat: {
+          check_type: "custom",
+          check_config: { command: "echo ok" },
+          failure_threshold: 3,
+          timeout_ms: 5000,
         },
-      ]);
+        created_at: "2026-04-11T09:00:00.000Z",
+        updated_at: "2026-04-11T09:00:00.000Z",
+        last_fired_at: null,
+        next_fire_at: "2026-04-11T09:01:00.000Z",
+        consecutive_failures: 0,
+        last_escalation_at: null,
+        escalation_timestamps: [],
+        total_executions: 0,
+        total_tokens_used: 0,
+        max_tokens_per_day: 100000,
+        tokens_used_today: 0,
+        budget_reset_at: null,
+        baseline_results: [],
+      });
+      await new ScheduleEntryStore(baseDir, { warn: () => {} }).saveEntries([entry]);
 
       const report = await rebuildSoilFromRuntime({ baseDir, clock: fixedClock });
       const schedulePage = await readSoilMarkdownFile(path.join(baseDir, "soil", "schedule", "current.md"));
+      const rebuilt = await rebuildSoilFromRuntime({ baseDir, clock: fixedClock });
+      const schedulePageAfterRebuild = await readSoilMarkdownFile(path.join(baseDir, "soil", "schedule", "current.md"));
+      const doctor = await SoilDoctor.create({ rootDir: path.join(baseDir, "soil") }).inspect();
 
       expect(report.projected.schedules).toBe(1);
+      expect(rebuilt.pruned.map((item) => item.soilId)).not.toContain("schedule/current");
+      expect(schedulePageAfterRebuild).not.toBeNull();
+      expect(
+        doctor.findings.filter(
+          (finding) => finding.code === "missing-source-path" && finding.soilId?.startsWith("schedule/")
+        )
+      ).toHaveLength(0);
+      expect(doctor.findings.filter((finding) => finding.code === "watermark-mismatch")).toHaveLength(0);
       expect(schedulePage?.frontmatter.summary).toBe("1/1 schedules enabled");
-      expect(schedulePage?.body).toContain("legacy-large-retry-policy");
+      expect(schedulePage?.frontmatter.source_truth).toBe("runtime_db");
+      expect(schedulePage?.frontmatter.source_refs[0]?.source_type).toBe("control_db");
+      expect(schedulePage?.frontmatter.source_refs[0]?.source_path).toBe("control-db:schedule_entries");
+      expect(schedulePage?.body).toContain("control-db-schedule");
     } finally {
       cleanupTempDir(baseDir);
     }

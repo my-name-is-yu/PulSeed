@@ -21,6 +21,7 @@ import { cmdDaemonStatus } from "../commands/daemon.js";
 import { PIDManager } from "../../../runtime/pid-manager.js";
 import { RuntimeHealthStore } from "../../../runtime/store/health-store.js";
 import { ProactiveInterventionStore } from "../../../runtime/store/proactive-intervention-store.js";
+import { DaemonShutdownStore, DaemonStateStore, openControlDatabase, SupervisorStateStore } from "../../../runtime/store/index.js";
 
 function mockPidInspectRunning(runtimePid: number, ownerPid = runtimePid) {
   return vi.spyOn(PIDManager.prototype, "inspect").mockResolvedValue({
@@ -52,6 +53,73 @@ async function saveRuntimeHealthFixture(
   const store = new RuntimeHealthStore(path.join(baseDir, "runtime"), { controlBaseDir: baseDir });
   await store.saveDaemonHealth(daemon);
   await store.saveComponentsHealth(components);
+}
+
+async function saveDaemonStateFixture(baseDir: string, state: Record<string, unknown>): Promise<void> {
+  await new DaemonStateStore(baseDir).save(state as never);
+}
+
+async function insertRawDaemonStateFixture(baseDir: string, state: Record<string, unknown>): Promise<void> {
+  const database = await openControlDatabase({ baseDir });
+  try {
+    database.transaction((db) => {
+      db.prepare(`
+        INSERT INTO daemon_state_snapshots (
+          state_id,
+          pid,
+          status,
+          runtime_root,
+          loop_count,
+          updated_at,
+          state_json
+        )
+        VALUES ('current', ?, ?, ?, ?, ?, json(?))
+        ON CONFLICT(state_id) DO UPDATE SET
+          pid = excluded.pid,
+          status = excluded.status,
+          runtime_root = excluded.runtime_root,
+          loop_count = excluded.loop_count,
+          updated_at = excluded.updated_at,
+          state_json = excluded.state_json
+      `).run(
+        state["pid"] ?? null,
+        state["status"] ?? "running",
+        state["runtime_root"] ?? null,
+        state["loop_count"] ?? 0,
+        state["last_loop_at"] ?? state["started_at"] ?? new Date().toISOString(),
+        JSON.stringify(state)
+      );
+    });
+  } finally {
+    database.close();
+  }
+}
+
+async function saveShutdownMarkerFixture(baseDir: string, marker: Record<string, unknown>): Promise<void> {
+  await new DaemonShutdownStore(baseDir).save(marker as never);
+}
+
+async function saveSupervisorStateFixture(baseDir: string, state: {
+  workers: Array<Record<string, unknown>>;
+  crashCounts: Record<string, number>;
+  suspendedGoals: string[];
+  updatedAt: number;
+}): Promise<void> {
+  await new SupervisorStateStore(path.join(baseDir, "runtime"), { controlBaseDir: baseDir }).save(state as never);
+}
+
+function runningDaemonState(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    pid: process.pid,
+    started_at: new Date(Date.now() - 60_000).toISOString(),
+    last_loop_at: null,
+    loop_count: 1,
+    active_goals: [],
+    status: "running",
+    crash_count: 0,
+    last_error: null,
+    ...overrides,
+  };
 }
 
 describe("cmdDaemonStatus", () => {
@@ -88,7 +156,7 @@ describe("cmdDaemonStatus", () => {
       crash_count: 1,
       last_error: null,
     };
-    fs.writeFileSync(path.join(tmpDir, "daemon-state.json"), JSON.stringify(state));
+    await saveDaemonStateFixture(tmpDir, state);
 
     await cmdDaemonStatus([]);
 
@@ -113,8 +181,10 @@ describe("cmdDaemonStatus", () => {
       status: "running",
       crash_count: 0,
       last_error: null,
+      last_resident_at: null,
+      resident_activity: null,
     };
-    fs.writeFileSync(path.join(tmpDir, "daemon-state.json"), JSON.stringify(state));
+    await insertRawDaemonStateFixture(tmpDir, state);
     fs.writeFileSync(
       path.join(tmpDir, "pulseed.pid"),
       JSON.stringify({
@@ -165,7 +235,7 @@ describe("cmdDaemonStatus", () => {
       last_wait_reason: "approval required before resume",
       approval_pending_count: 1,
     };
-    fs.writeFileSync(path.join(tmpDir, "daemon-state.json"), JSON.stringify(state));
+    await saveDaemonStateFixture(tmpDir, state);
     const inspectSpy = mockPidInspectRunning(process.pid);
 
     try {
@@ -197,8 +267,10 @@ describe("cmdDaemonStatus", () => {
       status: "running",
       crash_count: 0,
       last_error: null,
+      last_resident_at: null,
+      resident_activity: null,
     };
-    fs.writeFileSync(path.join(tmpDir, "daemon-state.json"), JSON.stringify(state));
+    await insertRawDaemonStateFixture(tmpDir, state);
 
     await cmdDaemonStatus([]);
 
@@ -299,9 +371,7 @@ describe("cmdDaemonStatus", () => {
         },
       })
     );
-    fs.writeFileSync(
-      path.join(tmpDir, "daemon-state.json"),
-      JSON.stringify({
+    await saveDaemonStateFixture(tmpDir, {
         pid: process.pid,
         started_at: new Date(now - 60_000).toISOString(),
         last_loop_at: new Date(now).toISOString(),
@@ -310,8 +380,7 @@ describe("cmdDaemonStatus", () => {
         status: "running",
         crash_count: 0,
         last_error: null,
-      })
-    );
+      });
     fs.writeFileSync(
       path.join(tmpDir, "pulseed.pid"),
       JSON.stringify({
@@ -396,9 +465,7 @@ describe("cmdDaemonStatus", () => {
         },
       }
     );
-    fs.writeFileSync(
-      path.join(tmpDir, "daemon-state.json"),
-      JSON.stringify({
+    await saveDaemonStateFixture(tmpDir, {
         pid: process.pid,
         started_at: new Date(now - 60_000).toISOString(),
         last_loop_at: new Date(now).toISOString(),
@@ -407,8 +474,7 @@ describe("cmdDaemonStatus", () => {
         status: "running",
         crash_count: 0,
         last_error: null,
-      })
-    );
+      });
     fs.writeFileSync(
       path.join(tmpDir, "pulseed.pid"),
       JSON.stringify({
@@ -472,9 +538,7 @@ describe("cmdDaemonStatus", () => {
         },
       }
     );
-    fs.writeFileSync(
-      path.join(tmpDir, "daemon-state.json"),
-      JSON.stringify({
+    await saveDaemonStateFixture(tmpDir, {
         pid: stalePid,
         started_at: new Date(now - 120_000).toISOString(),
         last_loop_at: new Date(now - 90_000).toISOString(),
@@ -483,18 +547,14 @@ describe("cmdDaemonStatus", () => {
         status: "running",
         crash_count: 0,
         last_error: null,
-      })
-    );
-    fs.writeFileSync(
-      path.join(tmpDir, "shutdown-state.json"),
-      JSON.stringify({
+      });
+    await saveShutdownMarkerFixture(tmpDir, {
         goal_ids: ["goal-stale"],
         loop_index: 4,
         timestamp: new Date(now - 10_000).toISOString(),
         reason: "stop",
         state: "clean_shutdown",
-      })
-    );
+      });
     const inspectSpy = vi.spyOn(PIDManager.prototype, "inspect").mockResolvedValue({
       info: {
         pid: stalePid,
@@ -534,9 +594,7 @@ describe("cmdDaemonStatus", () => {
   it("shows in-flight worker progress from supervisor state when loops are still zero", async () => {
     const now = Date.now();
     fs.mkdirSync(path.join(tmpDir, "runtime"), { recursive: true });
-    fs.writeFileSync(
-      path.join(tmpDir, "runtime", "supervisor-state.json"),
-      JSON.stringify({
+    await saveSupervisorStateFixture(tmpDir, {
         workers: [
           {
             workerId: "worker-1",
@@ -548,11 +606,8 @@ describe("cmdDaemonStatus", () => {
         crashCounts: {},
         suspendedGoals: [],
         updatedAt: now,
-      })
-    );
-    fs.writeFileSync(
-      path.join(tmpDir, "daemon-state.json"),
-      JSON.stringify({
+      });
+    await saveDaemonStateFixture(tmpDir, {
         pid: process.pid,
         started_at: new Date(now - 60_000).toISOString(),
         last_loop_at: null,
@@ -561,8 +616,7 @@ describe("cmdDaemonStatus", () => {
         status: "running",
         crash_count: 0,
         last_error: null,
-      })
-    );
+      });
     fs.writeFileSync(
       path.join(tmpDir, "pulseed.pid"),
       JSON.stringify({
@@ -587,9 +641,7 @@ describe("cmdDaemonStatus", () => {
     const now = Date.now();
     fs.mkdirSync(path.join(tmpDir, "runtime"), { recursive: true });
     fs.mkdirSync(path.join(tmpDir, "tasks", "goal-stale", "ledger"), { recursive: true });
-    fs.writeFileSync(
-      path.join(tmpDir, "runtime", "supervisor-state.json"),
-      JSON.stringify({
+    await saveSupervisorStateFixture(tmpDir, {
         workers: [
           {
             workerId: "worker-stale",
@@ -601,8 +653,7 @@ describe("cmdDaemonStatus", () => {
         crashCounts: {},
         suspendedGoals: [],
         updatedAt: now,
-      })
-    );
+      });
     await saveRuntimeHealthFixture(
       tmpDir,
       {
@@ -642,9 +693,7 @@ describe("cmdDaemonStatus", () => {
         },
       }
     );
-    fs.writeFileSync(
-      path.join(tmpDir, "daemon-state.json"),
-      JSON.stringify({
+    await saveDaemonStateFixture(tmpDir, {
         pid: 999999999,
         started_at: new Date(now - 60_000).toISOString(),
         last_loop_at: new Date(now - 15_000).toISOString(),
@@ -653,18 +702,14 @@ describe("cmdDaemonStatus", () => {
         status: "stopped",
         crash_count: 0,
         last_error: null,
-      })
-    );
-    fs.writeFileSync(
-      path.join(tmpDir, "shutdown-state.json"),
-      JSON.stringify({
+      });
+    await saveShutdownMarkerFixture(tmpDir, {
         goal_ids: ["goal-stale"],
         loop_index: 0,
         timestamp: new Date(now - 5_000).toISOString(),
         reason: "stop",
         state: "clean_shutdown",
-      })
-    );
+      });
     fs.writeFileSync(
       path.join(tmpDir, "tasks", "goal-stale", "ledger", "task-stale.json"),
       JSON.stringify({
@@ -712,7 +757,7 @@ describe("cmdDaemonStatus", () => {
       crash_count: 0,
       last_error: null,
     };
-    fs.writeFileSync(path.join(tmpDir, "daemon-state.json"), JSON.stringify(state));
+    await saveDaemonStateFixture(tmpDir, state);
     fs.writeFileSync(
       path.join(tmpDir, "pulseed.pid"),
       JSON.stringify({
@@ -747,7 +792,7 @@ describe("cmdDaemonStatus", () => {
       crash_count: 0,
       last_error: null,
     };
-    fs.writeFileSync(path.join(tmpDir, "daemon-state.json"), JSON.stringify(state));
+    await saveDaemonStateFixture(tmpDir, state);
     fs.writeFileSync(
       path.join(tmpDir, "pulseed.pid"),
       JSON.stringify({
@@ -806,7 +851,7 @@ describe("cmdDaemonStatus", () => {
         goal_id: "resident-goal",
       },
     };
-    fs.writeFileSync(path.join(tmpDir, "daemon-state.json"), JSON.stringify(state));
+    await saveDaemonStateFixture(tmpDir, state);
     fs.writeFileSync(
       path.join(tmpDir, "pulseed.pid"),
       JSON.stringify({
@@ -847,7 +892,7 @@ describe("cmdDaemonStatus", () => {
         goal_id: "resident-goal",
       } as const,
     };
-    fs.writeFileSync(path.join(tmpDir, "daemon-state.json"), JSON.stringify(state));
+    await saveDaemonStateFixture(tmpDir, state);
     fs.writeFileSync(
       path.join(tmpDir, "pulseed.pid"),
       JSON.stringify({
@@ -877,6 +922,61 @@ describe("cmdDaemonStatus", () => {
     expect(output).toContain("Accepted:      1");
   });
 
+  it("uses the persisted daemon runtime root before daemon config for runtime-root-backed status stores", async () => {
+    const actualRuntimeRoot = path.join(tmpDir, "actual-runtime");
+    fs.writeFileSync(
+      path.join(tmpDir, "daemon.json"),
+      JSON.stringify({ runtime_root: "configured-runtime" }),
+      "utf-8"
+    );
+    await saveDaemonStateFixture(tmpDir, runningDaemonState({
+      runtime_root: actualRuntimeRoot,
+      active_goals: ["resident-goal"],
+      resident_activity: {
+        intervention_id: "persisted-root-intervention",
+        kind: "suggestion",
+        trigger: "proactive_tick",
+        summary: "Resident suggested a root-specific goal.",
+        recorded_at: new Date(Date.now() - 5_000).toISOString(),
+        goal_id: "resident-goal",
+      },
+    }));
+    fs.writeFileSync(
+      path.join(tmpDir, "pulseed.pid"),
+      JSON.stringify({
+        pid: process.pid,
+        runtime_pid: process.pid,
+        owner_pid: process.pid,
+        started_at: new Date().toISOString(),
+      })
+    );
+    const store = new ProactiveInterventionStore(actualRuntimeRoot);
+    await store.appendIntervention({
+      activity: {
+        intervention_id: "persisted-root-intervention",
+        kind: "suggestion",
+        trigger: "proactive_tick",
+        summary: "Resident suggested a root-specific goal.",
+        recorded_at: new Date(Date.now() - 5_000).toISOString(),
+        goal_id: "resident-goal",
+      },
+    });
+    await store.appendFeedback({
+      interventionId: "persisted-root-intervention",
+      outcome: "accepted",
+      recordedAt: new Date().toISOString(),
+    });
+    const inspectSpy = mockPidInspectRunning(process.pid);
+
+    await cmdDaemonStatus([]);
+    inspectSpy.mockRestore();
+
+    const output = consoleSpy.mock.calls[0]?.[0] as string;
+    expect(output).toContain("Resident event:  persisted-root-intervention");
+    expect(output).toContain("Proactive quality:");
+    expect(output).toContain("Accepted:      1");
+  });
+
   it("shows dream resident activity without requiring a goal id", async () => {
     const state = {
       pid: process.pid,
@@ -895,7 +995,7 @@ describe("cmdDaemonStatus", () => {
         recorded_at: new Date(Date.now() - 5_000).toISOString(),
       },
     };
-    fs.writeFileSync(path.join(tmpDir, "daemon-state.json"), JSON.stringify(state));
+    await saveDaemonStateFixture(tmpDir, state);
     fs.writeFileSync(
       path.join(tmpDir, "pulseed.pid"),
       JSON.stringify({
@@ -927,7 +1027,7 @@ describe("cmdDaemonStatus", () => {
       crash_count: 3,
       last_error: "something went wrong",
     };
-    fs.writeFileSync(path.join(tmpDir, "daemon-state.json"), JSON.stringify(state));
+    await saveDaemonStateFixture(tmpDir, state);
 
     await cmdDaemonStatus([]);
 
@@ -946,7 +1046,7 @@ describe("cmdDaemonStatus", () => {
       crash_count: 0,
       last_error: null,
     };
-    fs.writeFileSync(path.join(tmpDir, "daemon-state.json"), JSON.stringify(state));
+    await saveDaemonStateFixture(tmpDir, state);
 
     await cmdDaemonStatus([]);
 
@@ -965,7 +1065,7 @@ describe("cmdDaemonStatus", () => {
       crash_count: 0,
       last_error: null,
     };
-    fs.writeFileSync(path.join(tmpDir, "daemon-state.json"), JSON.stringify(state));
+    await saveDaemonStateFixture(tmpDir, state);
 
     await cmdDaemonStatus([]);
 
@@ -985,7 +1085,7 @@ describe("cmdDaemonStatus", () => {
       crash_count: 0,
       last_error: null,
     };
-    fs.writeFileSync(path.join(tmpDir, "daemon-state.json"), JSON.stringify(state));
+    await saveDaemonStateFixture(tmpDir, state);
 
     await cmdDaemonStatus([]);
 
@@ -1019,7 +1119,7 @@ describe("cmdDaemonStatus", () => {
       adaptive_sleep: { enabled: true },
       crash_recovery: { enabled: true, max_retries: 5 },
     };
-    fs.writeFileSync(path.join(tmpDir, "daemon-state.json"), JSON.stringify(state));
+    await saveDaemonStateFixture(tmpDir, state);
     fs.writeFileSync(path.join(tmpDir, "daemon-config.json"), JSON.stringify(config));
 
     await cmdDaemonStatus([]);
@@ -1050,7 +1150,7 @@ describe("cmdDaemonStatus", () => {
       iterations_per_cycle: 3,
       runtime_journal_v2: true,
     };
-    fs.writeFileSync(path.join(tmpDir, "daemon-state.json"), JSON.stringify(state));
+    await saveDaemonStateFixture(tmpDir, state);
     fs.writeFileSync(path.join(tmpDir, "daemon.json"), JSON.stringify(config));
 
     await cmdDaemonStatus([]);
@@ -1073,7 +1173,7 @@ describe("cmdDaemonStatus", () => {
       crash_count: 0,
       last_error: null,
     };
-    fs.writeFileSync(path.join(tmpDir, "daemon-state.json"), JSON.stringify(state));
+    await saveDaemonStateFixture(tmpDir, state);
     fs.writeFileSync(
       path.join(tmpDir, "daemon.json"),
       JSON.stringify({ iterations_per_cycle: 7, runtime_journal_v2: true })
@@ -1103,7 +1203,7 @@ describe("cmdDaemonStatus", () => {
       crash_count: 0,
       last_error: null,
     };
-    fs.writeFileSync(path.join(tmpDir, "daemon-state.json"), JSON.stringify(state));
+    await saveDaemonStateFixture(tmpDir, state);
 
     await cmdDaemonStatus([]);
 
@@ -1123,7 +1223,7 @@ describe("cmdDaemonStatus", () => {
       crash_count: 0,
       last_error: null,
     };
-    fs.writeFileSync(path.join(tmpDir, "daemon-state.json"), JSON.stringify(state));
+    await saveDaemonStateFixture(tmpDir, state);
 
     await cmdDaemonStatus([]);
 
