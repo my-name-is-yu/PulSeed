@@ -10,8 +10,40 @@ import * as os from "node:os";
 import { createHash } from "node:crypto";
 import { getPulseedDirPath } from "../utils/paths.js";
 import { writeJsonFileAtomic } from "../utils/json-io.js";
-import type { AgentLoopSecurityConfig } from "../../orchestrator/execution/agent-loop/execution-policy.js";
 import type { AgentLoopWorktreePolicy } from "../../orchestrator/execution/agent-loop/task-agent-loop-worktree.js";
+import {
+  MODEL_REGISTRY,
+  defaultModelForProvider,
+  isReasoningEffort,
+} from "./provider-config-models.js";
+import {
+  parseEnvFile,
+  resolveAdapter,
+  resolveApiKey,
+  resolveBaseUrl,
+  resolveCompatibleModel,
+  resolveLightModel,
+  resolveModel,
+  resolveProvider,
+  resolveReasoningEffort,
+} from "./provider-config-resolution.js";
+import type {
+  LegacyProviderConfig,
+  LoadProviderConfigOptions,
+  ProviderConfig,
+  ProviderNativeAgentLoopConfig,
+  ResolvedProviderNativeAgentLoopDefaults,
+  ValidationResult,
+} from "./provider-config-types.js";
+
+export { MODEL_REGISTRY, isReasoningEffort } from "./provider-config-models.js";
+export type {
+  LoadProviderConfigOptions,
+  ProviderConfig,
+  ProviderNativeAgentLoopConfig,
+  ResolvedProviderNativeAgentLoopDefaults,
+  ValidationResult,
+} from "./provider-config-types.js";
 
 // ─── OAuth Token Helpers ───
 
@@ -46,128 +78,6 @@ export async function readCodexOAuthToken(): Promise<string | undefined> {
   }
 }
 
-// ─── Model Registry ───
-
-/**
- * Known models and their compatible providers/adapters.
- * Ollama models are dynamic and not listed here.
- */
-export const MODEL_REGISTRY: Record<string, { provider: string; adapters: string[] }> = {
-  "gpt-5.5": { provider: "openai", adapters: ["openai_codex_cli", "openai_api", "agent_loop"] },
-  "gpt-5.4": { provider: "openai", adapters: ["openai_codex_cli", "openai_api", "agent_loop"] },
-  "gpt-5.2-codex": { provider: "openai", adapters: ["openai_codex_cli", "openai_api", "agent_loop"] },
-  "gpt-5.1-codex-max": { provider: "openai", adapters: ["openai_codex_cli", "openai_api", "agent_loop"] },
-  "gpt-5.4-mini": { provider: "openai", adapters: ["openai_codex_cli", "openai_api", "agent_loop"] },
-  "gpt-5.3-codex": { provider: "openai", adapters: ["openai_codex_cli", "openai_api", "agent_loop"] },
-  "gpt-5.3-codex-spark": { provider: "openai", adapters: ["openai_codex_cli", "openai_api", "agent_loop"] },
-  "gpt-5.2": { provider: "openai", adapters: ["openai_codex_cli", "openai_api", "agent_loop"] },
-  "gpt-5.1-codex-mini": { provider: "openai", adapters: ["openai_codex_cli", "openai_api", "agent_loop"] },
-  "gpt-4.1": { provider: "openai", adapters: ["openai_codex_cli", "openai_api", "agent_loop"] },
-  "gpt-4o-mini": { provider: "openai", adapters: ["openai_api", "agent_loop"] },
-  "o3-mini": { provider: "openai", adapters: ["openai_api", "agent_loop"] },
-  "claude-sonnet-4-6": { provider: "anthropic", adapters: ["claude_code_cli", "claude_api", "agent_loop"] },
-  "claude-haiku-4-5": { provider: "anthropic", adapters: ["claude_code_cli", "claude_api", "agent_loop"] },
-};
-
-// ─── Types ───
-
-export interface ProviderConfig {
-  /** Which provider to use for internal LLM calls */
-  provider: "openai" | "anthropic" | "ollama";
-
-  /** Which model to use */
-  model: string;
-
-  /** Optional lighter model for routine tasks (observation, verification, reflection).
-   *  When not set, all calls use `model`. */
-  light_model?: string;
-
-  /** Optional OpenAI reasoning effort for supported reasoning models. */
-  reasoning_effort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
-
-  /** Which adapter to use by default for task execution */
-  adapter: "claude_code_cli" | "claude_api" | "openai_codex_cli" | "openai_api" | "agent_loop";
-
-  /** API key (for openai or anthropic) */
-  api_key?: string;
-
-  /** Base URL (for ollama or custom endpoints) */
-  base_url?: string;
-
-  /** CLI path for openai_codex_cli adapter */
-  codex_cli_path?: string;
-
-  /** Total Codex request timeout in milliseconds. */
-  codex_timeout_ms?: number;
-
-  /** Codex idle timeout in milliseconds. Disabled when omitted. */
-  codex_idle_timeout_ms?: number;
-
-  /** Maximum Codex retry attempts. */
-  codex_retry_attempts?: number;
-
-  /** Optional terminal backend for CLI execution adapters. */
-  terminal_backend?: {
-    type: "local" | "docker";
-    docker?: {
-      image: string;
-      workdir?: string;
-      network?: "none" | "host" | "bridge";
-      env?: Record<string, string>;
-      volumes?: string[];
-    };
-  };
-
-  /** A2A protocol agent endpoints */
-  a2a?: {
-    agents?: Record<string, {
-      base_url: string;
-      auth_token?: string;
-      capabilities?: string[];
-      prefer_streaming?: boolean;
-      poll_interval_ms?: number;
-      max_wait_ms?: number;
-    }>;
-  };
-
-  /** Optional local-only OpenClaw ACP adapter configuration */
-  openclaw?: {
-    cli_path?: string;
-    profile?: string;
-    model?: string;
-    work_dir?: string;
-  };
-
-  /** Native agentloop runtime settings */
-  agent_loop?: {
-    security?: AgentLoopSecurityConfig;
-    worktree?: {
-      enabled?: boolean;
-      base_dir?: string;
-      keep_for_debug?: boolean;
-      cleanup_policy?: "on_success" | "always" | "never";
-    };
-  };
-}
-
-export type ProviderNativeAgentLoopConfig = NonNullable<ProviderConfig["agent_loop"]>;
-
-export interface ResolvedProviderNativeAgentLoopDefaults {
-  security?: AgentLoopSecurityConfig;
-  worktreePolicy?: AgentLoopWorktreePolicy;
-}
-
-/** Old nested provider config format (for migration) */
-interface LegacyProviderConfig {
-  llm_provider: "anthropic" | "openai" | "ollama" | "codex";
-  default_adapter: "claude_code_cli" | "claude_api" | "openai_codex_cli" | "openai_api" | "agent_loop";
-  anthropic?: { api_key?: string; model?: string };
-  openai?: { api_key?: string; model?: string; base_url?: string };
-  ollama?: { base_url?: string; model?: string };
-  codex?: { cli_path?: string; model?: string };
-  a2a?: ProviderConfig["a2a"];
-}
-
 // ─── Constants ───
 
 function providerConfigPath(baseDir = getPulseedDirPath()): string {
@@ -198,17 +108,6 @@ const DEFAULT_PROVIDER_CONFIG: ProviderConfig = {
 
 // Track whether we've already warned about provider config issues in this process
 let _warnedOnce = false;
-
-// ─── Helpers ───
-
-/** Default model for a given provider. Single source of truth. */
-function defaultModelForProvider(provider: ProviderConfig["provider"]): string {
-  switch (provider) {
-    case "anthropic": return "claude-sonnet-4-6";
-    case "ollama": return "qwen3:4b";
-    default: return "gpt-5.4-mini";
-  }
-}
 
 // ─── Migration ───
 
@@ -266,13 +165,6 @@ export function migrateProviderConfig(old: LegacyProviderConfig): ProviderConfig
   return result;
 }
 
-// ─── Validation ───
-
-export interface ValidationResult {
-  valid: boolean;
-  errors: string[];
-}
-
 /**
  * Validate provider config for model/adapter compatibility and required fields.
  * Logs warnings but does not throw — allows unknown models for flexibility.
@@ -319,146 +211,6 @@ export function validateProviderConfig(config: ProviderConfig): ValidationResult
   return { valid: errors.length === 0, errors };
 }
 
-// ─── Env Var Resolution ───
-
-function resolveProvider(
-  fileProvider: ProviderConfig["provider"] | undefined
-): ProviderConfig["provider"] {
-  const envProvider = process.env["PULSEED_PROVIDER"] ?? process.env["PULSEED_LLM_PROVIDER"];
-  if (envProvider === "anthropic" || envProvider === "openai" || envProvider === "ollama") {
-    return envProvider;
-  }
-  // "codex" env var maps to "openai"
-  if (envProvider === "codex") {
-    return "openai";
-  }
-  return fileProvider ?? "openai";
-}
-
-function resolveAdapter(
-  fileAdapter: ProviderConfig["adapter"] | undefined
-): ProviderConfig["adapter"] {
-  const envAdapter = process.env["PULSEED_ADAPTER"] ?? process.env["PULSEED_DEFAULT_ADAPTER"];
-  if (
-    envAdapter === "claude_code_cli" ||
-    envAdapter === "claude_api" ||
-    envAdapter === "openai_codex_cli" ||
-    envAdapter === "openai_api" ||
-    envAdapter === "agent_loop"
-  ) {
-    return envAdapter;
-  }
-  return fileAdapter ?? "openai_codex_cli";
-}
-
-type ModelSource = "file" | "env" | "default";
-
-function resolveModel(
-  fileModel: string | undefined,
-  provider: ProviderConfig["provider"]
-): { model: string; source: ModelSource } {
-  if (fileModel) {
-    return { model: fileModel, source: "file" };
-  }
-
-  const envModel = process.env["PULSEED_MODEL"];
-  if (envModel) return { model: envModel, source: "env" };
-
-  // Provider-specific env vars apply only as fallback when model is not set in provider.json
-  if (provider === "openai") {
-    const m = process.env["OPENAI_MODEL"];
-    if (m) return { model: m, source: "env" };
-  } else if (provider === "anthropic") {
-    const m = process.env["ANTHROPIC_MODEL"];
-    if (m) return { model: m, source: "env" };
-  } else if (provider === "ollama") {
-    const m = process.env["OLLAMA_MODEL"];
-    if (m) return { model: m, source: "env" };
-  }
-
-  return { model: defaultModelForProvider(provider), source: "default" };
-}
-
-function resolveApiKey(
-  fileKey: string | undefined,
-  provider: ProviderConfig["provider"],
-  adapter: ProviderConfig["adapter"],
-  envFile: Record<string, string>
-): string | undefined {
-  if (adapter === "openai_api") {
-    return process.env["OPENAI_API_KEY"] ?? envFile["OPENAI_API_KEY"] ?? fileKey;
-  }
-  if (provider === "anthropic") {
-    return process.env["ANTHROPIC_API_KEY"] ?? envFile["ANTHROPIC_API_KEY"] ?? fileKey;
-  }
-  // openai (and codex) both use OPENAI_API_KEY
-  if (provider === "openai") {
-    return process.env["OPENAI_API_KEY"] ?? envFile["OPENAI_API_KEY"] ?? fileKey;
-  }
-  return fileKey;
-}
-
-function resolveBaseUrl(
-  fileUrl: string | undefined,
-  provider: ProviderConfig["provider"],
-  envFile: Record<string, string>
-): string | undefined {
-  if (provider === "ollama") {
-    return process.env["OLLAMA_BASE_URL"] ?? envFile["OLLAMA_BASE_URL"] ?? fileUrl;
-  }
-  if (provider === "openai") {
-    return process.env["OPENAI_BASE_URL"] ?? envFile["OPENAI_BASE_URL"] ?? fileUrl;
-  }
-  return fileUrl;
-}
-
-function resolveLightModel(
-  fileLightModel: string | undefined,
-  envFile: Record<string, string>
-): string | undefined {
-  return process.env["PULSEED_LIGHT_MODEL"] ?? envFile["PULSEED_LIGHT_MODEL"] ?? fileLightModel;
-}
-
-export function isReasoningEffort(value: unknown): value is NonNullable<ProviderConfig["reasoning_effort"]> {
-  return value === "none"
-    || value === "minimal"
-    || value === "low"
-    || value === "medium"
-    || value === "high"
-    || value === "xhigh";
-}
-
-function resolveReasoningEffort(
-  fileReasoningEffort: ProviderConfig["reasoning_effort"] | undefined,
-  provider: ProviderConfig["provider"],
-  envFile: Record<string, string>
-): ProviderConfig["reasoning_effort"] | undefined {
-  if (provider !== "openai") return undefined;
-  const envValue = process.env["PULSEED_REASONING_EFFORT"]
-    ?? process.env["OPENAI_REASONING_EFFORT"]
-    ?? envFile["PULSEED_REASONING_EFFORT"]
-    ?? envFile["OPENAI_REASONING_EFFORT"];
-  if (isReasoningEffort(envValue)) return envValue;
-  if (envValue) {
-    console.warn(`[provider-config] Ignoring invalid reasoning effort "${envValue}".`);
-  }
-  return isReasoningEffort(fileReasoningEffort) ? fileReasoningEffort : undefined;
-}
-
-function parseEnvFile(raw: string): Record<string, string> {
-  const entries = raw
-    .split(/\r?\n/)
-    .flatMap((line) => {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith("#")) return [];
-      const match = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(trimmed);
-      if (!match) return [];
-      const value = match[2]!.trim().replace(/^['"]|['"]$/g, "");
-      return [[match[1]!, value] as const];
-    });
-  return Object.fromEntries(entries);
-}
-
 async function readProviderEnvFile(baseDir?: string): Promise<Record<string, string>> {
   try {
     return parseEnvFile(await fsp.readFile(providerEnvPath(baseDir), "utf-8"));
@@ -482,11 +234,6 @@ async function readProviderConfigFile(baseDir?: string): Promise<Partial<Provide
 }
 
 // ─── Public API ───
-
-export interface LoadProviderConfigOptions {
-  baseDir?: string;
-  saveMigration?: boolean;
-}
 
 interface LoadedProviderFileConfig {
   fileConfig: Partial<ProviderConfig>;
@@ -513,30 +260,6 @@ async function loadProviderFileConfig(configPath: string): Promise<LoadedProvide
   } catch {
     return { fileConfig: {}, needsMigrationSave: false };
   }
-}
-
-function resolveCompatibleModel(
-  resolvedModel: { model: string; source: ModelSource },
-  provider: ProviderConfig["provider"],
-  adapter: ProviderConfig["adapter"]
-): string {
-  const registryEntry = MODEL_REGISTRY[resolvedModel.model];
-  if (!registryEntry || registryEntry.adapters.includes(adapter)) {
-    return resolvedModel.model;
-  }
-
-  if (resolvedModel.source === "file") {
-    console.warn(
-      `[provider-config] Model "${resolvedModel.model}" is not compatible with adapter "${adapter}". Keeping provider.json model and relying on validation to surface the mismatch.`
-    );
-    return resolvedModel.model;
-  }
-
-  const fallback = defaultModelForProvider(provider);
-  console.warn(
-    `[provider-config] Model "${resolvedModel.model}" is not compatible with adapter "${adapter}". Falling back to "${fallback}".`
-  );
-  return fallback;
 }
 
 async function resolveApiKeyWithFallback(
