@@ -660,6 +660,46 @@ describe("goal action commands", () => {
     expect(result.status).toBe(404);
     expect(hook).not.toHaveBeenCalled();
   });
+
+  it("rejects malformed command request bodies before command accept", async () => {
+    const cases: Array<{ name: string; path: string; body: unknown }> = [
+      {
+        name: "goal start background run",
+        path: "/goals/g-1/start",
+        body: { backgroundRun: { backgroundRunId: "" } },
+      },
+      {
+        name: "approval response",
+        path: "/goals/g-1/approve",
+        body: { requestId: "approval-1", approved: "true" },
+      },
+      {
+        name: "chat message",
+        path: "/goals/g-1/chat",
+        body: { message: 42 },
+      },
+      {
+        name: "runtime control",
+        path: "/daemon/runtime-control",
+        body: { operationId: "op-1", kind: "restart_daemon", reason: 42 },
+      },
+      {
+        name: "schedule run now",
+        path: "/schedules/sched-1/run",
+        body: { allowEscalation: "true" },
+      },
+    ];
+
+    for (const testCase of cases) {
+      const hook = vi.fn();
+      server.setCommandEnvelopeHook(hook);
+
+      const result = await makeRequest(port, "POST", testCase.path, testCase.body);
+
+      expect(result.status, testCase.name).toBe(400);
+      expect(hook, testCase.name).not.toHaveBeenCalled();
+    }
+  });
 });
 
 describe("snapshot and outbox replay", () => {

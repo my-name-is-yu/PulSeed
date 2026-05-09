@@ -1,8 +1,40 @@
 import type * as http from "node:http";
+import { z } from "zod";
 import { createEnvelope, type Envelope } from "../types/envelope.js";
 import type { SlackChannelAdapter } from "../gateway/slack-channel-adapter.js";
 import { RuntimeControlOperationKindSchema } from "../store/index.js";
 import { readBody, writeJson, writeJsonError } from "./server-http.js";
+
+const BackgroundRunMetadataSchema = z.object({
+  backgroundRunId: z.string().min(1),
+  parentSessionId: z.string().min(1).nullable().optional(),
+  notifyPolicy: z.string().min(1).optional(),
+  replyTargetSource: z.string().min(1).optional(),
+  pinnedReplyTarget: z.record(z.unknown()).nullable().optional(),
+}).passthrough();
+
+const GoalStartRequestSchema = z.object({
+  backgroundRun: BackgroundRunMetadataSchema.optional(),
+}).passthrough();
+
+const ApprovalResponseRequestSchema = z.object({
+  requestId: z.string().min(1),
+  approved: z.boolean(),
+}).passthrough();
+
+const ChatMessageRequestSchema = z.object({
+  message: z.string().min(1),
+}).passthrough();
+
+const RuntimeControlRequestSchema = z.object({
+  operationId: z.string().min(1),
+  kind: RuntimeControlOperationKindSchema,
+  reason: z.string().default(""),
+}).passthrough();
+
+const ScheduleRunNowRequestSchema = z.object({
+  allowEscalation: z.boolean().default(false),
+}).passthrough();
 
 export class EventServerCommandHandler {
   constructor(
@@ -22,8 +54,8 @@ export class EventServerCommandHandler {
     if (action === "start") {
       try {
         const body = await readBody(req);
-        const parsed = body.trim() ? JSON.parse(body) as Record<string, unknown> : {};
-        const backgroundRun = normalizeBackgroundRunMetadata(parsed["backgroundRun"]);
+        const parsed = GoalStartRequestSchema.parse(parseJsonObjectBody(body));
+        const backgroundRun = parsed.backgroundRun;
         await this.dispatchCommandEnvelope({
           name: "goal_start",
           goalId,
@@ -46,7 +78,7 @@ export class EventServerCommandHandler {
           writeJsonError(res, 413, "Payload too large");
           return;
         }
-        if (err instanceof SyntaxError) {
+        if (isCommandBodyValidationError(err)) {
           writeJsonError(res, 400, "Invalid goal start request", err);
           return;
         }
@@ -105,7 +137,7 @@ export class EventServerCommandHandler {
     if (action === "approve") {
       try {
         const body = await readBody(req);
-        const { requestId, approved } = JSON.parse(body) as { requestId: string; approved: boolean };
+        const { requestId, approved } = ApprovalResponseRequestSchema.parse(parseJsonObjectBody(body));
         if (!(await this.canResolveApproval(requestId))) {
           writeJson(res, 404, { ok: false });
           return;
@@ -132,7 +164,7 @@ export class EventServerCommandHandler {
     if (action === "chat") {
       try {
         const body = await readBody(req);
-        const { message } = JSON.parse(body) as { message: string };
+        const { message } = ChatMessageRequestSchema.parse(parseJsonObjectBody(body));
         await this.dispatchCommandEnvelope({
           name: "chat_message",
           goalId,
@@ -159,14 +191,7 @@ export class EventServerCommandHandler {
   ): Promise<void> {
     try {
       const body = await readBody(req);
-      const parsed = JSON.parse(body) as Record<string, unknown>;
-      const operationId = typeof parsed["operationId"] === "string" ? parsed["operationId"] : "";
-      const reason = typeof parsed["reason"] === "string" ? parsed["reason"] : "";
-      const kind = RuntimeControlOperationKindSchema.parse(parsed["kind"]);
-      if (!operationId) {
-        writeJson(res, 400, { ok: false, error: "operationId is required" });
-        return;
-      }
+      const { operationId, kind, reason } = RuntimeControlRequestSchema.parse(parseJsonObjectBody(body));
 
       await this.dispatchCommandEnvelope({
         name: "runtime_control",
@@ -198,8 +223,7 @@ export class EventServerCommandHandler {
 
     try {
       const body = await readBody(req);
-      const parsed = body.trim() ? JSON.parse(body) as Record<string, unknown> : {};
-      const allowEscalation = parsed["allowEscalation"] === true;
+      const { allowEscalation } = ScheduleRunNowRequestSchema.parse(parseJsonObjectBody(body));
       await this.dispatchCommandEnvelope({
         name: "schedule_run_now",
         priority: "high",
@@ -268,32 +292,10 @@ export class EventServerCommandHandler {
   }
 }
 
-function normalizeBackgroundRunMetadata(value: unknown): {
-  backgroundRunId: string;
-  parentSessionId?: string | null;
-  notifyPolicy?: string;
-  replyTargetSource?: string;
-  pinnedReplyTarget?: Record<string, unknown> | null;
-} | undefined {
-  if (!value || typeof value !== "object") return undefined;
-  const input = value as Record<string, unknown>;
-  const backgroundRunId = input["backgroundRunId"];
-  if (typeof backgroundRunId !== "string" || backgroundRunId.trim() === "") return undefined;
+function parseJsonObjectBody(body: string): unknown {
+  return body.trim() ? JSON.parse(body) : {};
+}
 
-  const parentSessionId = input["parentSessionId"];
-  const notifyPolicy = input["notifyPolicy"];
-  const replyTargetSource = input["replyTargetSource"];
-  const pinnedReplyTarget = input["pinnedReplyTarget"];
-
-  return {
-    backgroundRunId,
-    ...(typeof parentSessionId === "string" || parentSessionId === null ? { parentSessionId } : {}),
-    ...(typeof notifyPolicy === "string" ? { notifyPolicy } : {}),
-    ...(typeof replyTargetSource === "string" ? { replyTargetSource } : {}),
-    ...(pinnedReplyTarget && typeof pinnedReplyTarget === "object"
-      ? { pinnedReplyTarget: pinnedReplyTarget as Record<string, unknown> }
-      : pinnedReplyTarget === null
-        ? { pinnedReplyTarget: null }
-        : {}),
-  };
+function isCommandBodyValidationError(error: unknown): boolean {
+  return error instanceof SyntaxError || error instanceof z.ZodError;
 }
