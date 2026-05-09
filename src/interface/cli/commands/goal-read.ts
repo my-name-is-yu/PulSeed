@@ -1,9 +1,6 @@
 // ─── pulseed goal read commands (read-only) ───
 
-import * as fsp from "node:fs/promises";
 import * as path from "node:path";
-import { getArchiveDir, getGoalsDir } from "../../../base/utils/paths.js";
-import { readJsonFile } from "../../../base/utils/json-io.js";
 
 import type { StateManager } from "../../../base/state/state-manager.js";
 import { ReportingEngine } from "../../../reporting/reporting-engine.js";
@@ -28,36 +25,16 @@ import {
 
 async function printActiveGoals(
   stateManager: StateManager,
-  goalsDir: string,
   opts: { diagnostic?: boolean } = {},
 ): Promise<void> {
-  let goalsDirEntries: string[] = [];
-  try {
-    goalsDirEntries = await fsp.readdir(goalsDir);
-  } catch { /* dir doesn't exist or unreadable */ }
-
-  if (goalsDirEntries.length === 0) {
-    console.log("No goals registered. Use `pulseed goal add` to create one.");
-    return;
-  }
-
-  const goalDirs: string[] = [];
-  for (const e of goalsDirEntries) {
-    try {
-      const stat = await fsp.stat(path.join(goalsDir, e));
-      if (stat.isDirectory()) goalDirs.push(e);
-    } catch (err) {
-      getCliLogger().error(formatOperationError(`inspect goal directory entry "${e}"`, err));
-    }
-  }
-
-  if (goalDirs.length === 0) {
+  const goalIds = await stateManager.listGoalIds();
+  if (goalIds.length === 0) {
     console.log("No goals registered. Use `pulseed goal add` to create one.");
     return;
   }
 
   const allGoals: Array<{ id: string; title: string; status: string; dimensions: number; isSubgoal: boolean }> = [];
-  for (const goalId of goalDirs) {
+  for (const goalId of goalIds) {
     const goal = await stateManager.loadGoal(goalId);
     if (!goal) {
       allGoals.push({ id: goalId, title: "(could not load)", status: "unknown", dimensions: 0, isSubgoal: false });
@@ -105,24 +82,16 @@ async function printArchivedGoals(
 
   console.log(`\nArchived goals (${archivedIds.length}):\n`);
   for (const goalId of archivedIds) {
-    const archivedGoalPath = path.join(
-      getArchiveDir(stateManager.getBaseDir()),
-      goalId,
-      "goal",
-      "goal.json"
-    );
     let title = "(could not load)";
     let status = "unknown";
     let dimCount = 0;
     try {
-      const raw = await readJsonFile<{
-        title?: string;
-        status?: string;
-        dimensions?: unknown[];
-      }>(archivedGoalPath);
-      title = raw.title ?? title;
-      status = raw.status ?? status;
-      dimCount = raw.dimensions?.length ?? 0;
+      const goal = await stateManager.loadGoal(goalId);
+      if (goal !== null) {
+        title = goal.title;
+        status = goal.status;
+        dimCount = goal.dimensions.length;
+      }
     } catch (err) {
       getCliLogger().error(formatOperationError(`read archived goal metadata for "${goalId}"`, err));
     }
@@ -138,13 +107,12 @@ export async function cmdGoalList(
   stateManager: StateManager,
   opts: { archived?: boolean; diagnostic?: boolean } = {}
 ): Promise<number> {
-  const goalsDir = getGoalsDir(stateManager.getBaseDir());
   const archivedIds = await stateManager.listArchivedGoals();
 
   if (opts.archived) {
     await printArchivedGoals(stateManager, archivedIds, { diagnostic: opts.diagnostic });
   } else {
-    await printActiveGoals(stateManager, goalsDir, { diagnostic: opts.diagnostic });
+    await printActiveGoals(stateManager, { diagnostic: opts.diagnostic });
     console.log(`\nArchived goals: ${archivedIds.length} (use \`pulseed goal list --archived\` to show)`);
   }
 

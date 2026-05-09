@@ -4,7 +4,9 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { EventServer } from "../event-server.js";
 import type { PulSeedEvent } from "../../base/types/drive.js";
+import { StateManager } from "../../base/state/state-manager.js";
 import { makeTempDir } from "../../../tests/helpers/temp-dir.js";
+import { makeGoal } from "../../../tests/helpers/fixtures.js";
 
 // ─── Helpers ───
 
@@ -19,6 +21,12 @@ const createMockDriveSystem = (tmpDir: string) => ({
     fs.writeFileSync(file, JSON.stringify(event), "utf-8");
   }),
 });
+
+async function seedGoal(overrides: Parameters<typeof makeGoal>[0]): Promise<StateManager> {
+  const stateManager = new StateManager(tmpDir);
+  await stateManager.saveGoal(makeGoal(overrides));
+  return stateManager;
+}
 
 function makeRequest(
   port: number,
@@ -203,7 +211,7 @@ describe("POST /triggers — invalid body", () => {
 // ─── GET /goals ───
 
 describe("GET /goals", () => {
-  it("returns empty array when no goals directory", async () => {
+  it("returns empty array when no DB-owned goals exist", async () => {
     const res = await makeRequest(port, "GET", "/goals");
     expect(res.status).toBe(200);
     const parsed = JSON.parse(res.body) as unknown[];
@@ -211,18 +219,12 @@ describe("GET /goals", () => {
   });
 
   it("returns goal list with basic status fields", async () => {
-    const goalsDir = path.join(tmpDir, "goals", "goal-abc");
-    fs.mkdirSync(goalsDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(goalsDir, "goal.json"),
-      JSON.stringify({
-        id: "goal-abc",
-        title: "Test Goal",
-        status: "active",
-        loop_status: "running",
-      }),
-      "utf-8"
-    );
+    await seedGoal({
+      id: "goal-abc",
+      title: "Test Goal",
+      status: "active",
+      loop_status: "running",
+    });
 
     const res = await makeRequest(port, "GET", "/goals");
     expect(res.status).toBe(200);
@@ -240,16 +242,13 @@ describe("GET /goals", () => {
 
 describe("GET /goals/:id", () => {
   it("returns goal details for existing goal", async () => {
-    const goalsDir = path.join(tmpDir, "goals", "goal-xyz");
-    fs.mkdirSync(goalsDir, { recursive: true });
-    const goalData = {
+    await seedGoal({
       id: "goal-xyz",
       title: "My Detailed Goal",
       status: "active",
       loop_status: "idle",
       dimensions: [],
-    };
-    fs.writeFileSync(path.join(goalsDir, "goal.json"), JSON.stringify(goalData), "utf-8");
+    });
 
     const res = await makeRequest(port, "GET", "/goals/goal-xyz");
     expect(res.status).toBe(200);
@@ -260,25 +259,20 @@ describe("GET /goals/:id", () => {
   });
 
   it("includes current_gap from gap-history when available", async () => {
-    const goalsDir = path.join(tmpDir, "goals", "goal-gap");
-    fs.mkdirSync(goalsDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(goalsDir, "goal.json"),
-      JSON.stringify({ id: "goal-gap", title: "Gap Goal", status: "active", loop_status: "idle" }),
-      "utf-8"
-    );
-    const gapEntry = { gap: 0.42, timestamp: new Date().toISOString() };
-    fs.writeFileSync(
-      path.join(goalsDir, "gap-history.json"),
-      JSON.stringify([gapEntry]),
-      "utf-8"
-    );
+    const stateManager = await seedGoal({ id: "goal-gap", title: "Gap Goal", status: "active", loop_status: "idle" });
+    const gapEntry = {
+      iteration: 1,
+      timestamp: new Date().toISOString(),
+      gap_vector: [{ dimension_name: "dim1", normalized_weighted_gap: 0.42 }],
+      confidence_vector: [{ dimension_name: "dim1", confidence: 0.8 }],
+    };
+    await stateManager.saveGapHistory("goal-gap", [gapEntry]);
 
     const res = await makeRequest(port, "GET", "/goals/goal-gap");
     expect(res.status).toBe(200);
     const parsed = JSON.parse(res.body) as Record<string, unknown>;
     const gap = parsed["current_gap"] as Record<string, unknown>;
-    expect(gap["gap"]).toBe(0.42);
+    expect(gap["gap_vector"]).toEqual([{ dimension_name: "dim1", normalized_weighted_gap: 0.42 }]);
   });
 
   it("returns 404 for non-existent goal", async () => {

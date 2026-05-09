@@ -1,6 +1,4 @@
 import { randomUUID } from "node:crypto";
-import * as fsp from "node:fs/promises";
-import * as path from "node:path";
 import { StrategySchema, WaitStrategySchema, buildDefaultWaitMetadata, parseStrategy } from "../../base/types/strategy.js";
 import { isWaitStrategy } from "./portfolio-allocation.js";
 import type { Strategy } from "../../base/types/strategy.js";
@@ -163,10 +161,8 @@ export class StrategyManager extends StrategyManagerBase {
         const waitUntil = strategy.wait_until;
         if (!waitUntil) continue;
 
-        // Bug 3 fix: task-history.json only has finalized records. A currently running task
-        // exists only as tasks/{goalId}/{taskId}.json with status="running". Scan directory first.
+        // Bug 3 fix: task-history only has finalized records. Prefer current running tasks from the typed store.
         let taskId: string | undefined;
-        const tasksDir = path.join(this.stateManager.getBaseDir(), "tasks", goalId);
         const preferMatchingStrategyTask = <T extends {
           id: string;
           strategyId: string | null;
@@ -185,40 +181,20 @@ export class StrategyManager extends StrategyManagerBase {
           );
           return sorted[0];
         };
-        try {
-          const files = await fsp.readdir(tasksDir);
-          const runningTasks: Array<{
-            id: string;
-            strategyId: string | null;
-            statusRank: number;
-            startedAtMs: number;
-            createdAtMs: number;
-          }> = [];
-          for (const file of files) {
-            if (!file.endsWith(".json") || file === "task-history.json") continue;
-            const raw = await this.stateManager.readRaw(
-              `tasks/${goalId}/${file}`
-            ) as Record<string, unknown> | null;
-            if (raw && raw["status"] === "running" && typeof raw["id"] === "string") {
-              const startedAtMs = typeof raw["started_at"] === "string"
-                ? Date.parse(raw["started_at"])
-                : Number.NaN;
-              const createdAtMs = typeof raw["created_at"] === "string"
-                ? Date.parse(raw["created_at"])
-                : Number.NaN;
-              runningTasks.push({
-                id: raw["id"] as string,
-                strategyId: typeof raw["strategy_id"] === "string" ? raw["strategy_id"] : null,
-                statusRank: raw["status"] === "running" ? 3 : raw["status"] === "in_progress" ? 2 : 1,
-                startedAtMs: Number.isFinite(startedAtMs) ? startedAtMs : Number.NEGATIVE_INFINITY,
-                createdAtMs: Number.isFinite(createdAtMs) ? createdAtMs : Number.NEGATIVE_INFINITY,
-              });
-            }
-          }
-          taskId = preferMatchingStrategyTask(runningTasks)?.id;
-        } catch {
-          // Directory may not exist yet — fall through to history scan
-        }
+        const runningTasks = (await this.stateManager.listTasksByStatus("running"))
+          .filter((task) => task.goal_id === goalId)
+          .map((task) => {
+            const startedAtMs = task.started_at ? Date.parse(task.started_at) : Number.NaN;
+            const createdAtMs = Date.parse(task.created_at);
+            return {
+              id: task.id,
+              strategyId: task.strategy_id ?? null,
+              statusRank: 3,
+              startedAtMs: Number.isFinite(startedAtMs) ? startedAtMs : Number.NEGATIVE_INFINITY,
+              createdAtMs: Number.isFinite(createdAtMs) ? createdAtMs : Number.NEGATIVE_INFINITY,
+            };
+          });
+        taskId = preferMatchingStrategyTask(runningTasks)?.id;
 
         // Fall back to task-history.json scan (Bug 1 fix: use task_id not id)
         if (!taskId) {

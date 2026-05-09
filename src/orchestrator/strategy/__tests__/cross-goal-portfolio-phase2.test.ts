@@ -197,10 +197,10 @@ describe("CrossGoalPortfolio Phase 2", () => {
       expect(schedule.phases[0]!.blockedBy).toHaveLength(0);
     });
 
-    it("linear chain: A → B → C produces 3 phases", () => {
+    it("linear chain: A → B → C produces 3 phases", async () => {
       // A must complete before B, B before C
-      depGraph.addEdge(makePrerequisiteEdge("A", "B"));
-      depGraph.addEdge(makePrerequisiteEdge("B", "C"));
+      await depGraph.addEdge(makePrerequisiteEdge("A", "B"));
+      await depGraph.addEdge(makePrerequisiteEdge("B", "C"));
 
       const schedule = portfolio.buildDependencySchedule(["A", "B", "C"], depGraph);
       expect(schedule.phases).toHaveLength(3);
@@ -209,11 +209,11 @@ describe("CrossGoalPortfolio Phase 2", () => {
       expect(schedule.phases[2]!.goalIds).toContain("C");
     });
 
-    it("diamond dependency: A → B, A → C, B+C → D", () => {
-      depGraph.addEdge(makePrerequisiteEdge("A", "B"));
-      depGraph.addEdge(makePrerequisiteEdge("A", "C"));
-      depGraph.addEdge(makePrerequisiteEdge("B", "D"));
-      depGraph.addEdge(makePrerequisiteEdge("C", "D"));
+    it("diamond dependency: A → B, A → C, B+C → D", async () => {
+      await depGraph.addEdge(makePrerequisiteEdge("A", "B"));
+      await depGraph.addEdge(makePrerequisiteEdge("A", "C"));
+      await depGraph.addEdge(makePrerequisiteEdge("B", "D"));
+      await depGraph.addEdge(makePrerequisiteEdge("C", "D"));
 
       const schedule = portfolio.buildDependencySchedule(["A", "B", "C", "D"], depGraph);
 
@@ -241,28 +241,28 @@ describe("CrossGoalPortfolio Phase 2", () => {
       expect(schedule.phases[0]!.blockedBy).toHaveLength(0);
     });
 
-    it("phase blockedBy contains prerequisite goalIds", () => {
-      depGraph.addEdge(makePrerequisiteEdge("A", "B"));
+    it("phase blockedBy contains prerequisite goalIds", async () => {
+      await depGraph.addEdge(makePrerequisiteEdge("A", "B"));
 
       const schedule = portfolio.buildDependencySchedule(["A", "B"], depGraph);
       const phaseB = schedule.phases.find((p) => p.goalIds.includes("B"))!;
       expect(phaseB.blockedBy).toContain("A");
     });
 
-    it("critical path for linear chain A → B → C is [A, B, C]", () => {
-      depGraph.addEdge(makePrerequisiteEdge("A", "B"));
-      depGraph.addEdge(makePrerequisiteEdge("B", "C"));
+    it("critical path for linear chain A → B → C is [A, B, C]", async () => {
+      await depGraph.addEdge(makePrerequisiteEdge("A", "B"));
+      await depGraph.addEdge(makePrerequisiteEdge("B", "C"));
 
       const schedule = portfolio.buildDependencySchedule(["A", "B", "C"], depGraph);
       expect(schedule.criticalPath).toEqual(["A", "B", "C"]);
     });
 
-    it("critical path picks the longest chain in a diamond graph", () => {
+    it("critical path picks the longest chain in a diamond graph", async () => {
       // A → B → D (length 3) vs A → C → D (length 3) — either path valid
-      depGraph.addEdge(makePrerequisiteEdge("A", "B"));
-      depGraph.addEdge(makePrerequisiteEdge("A", "C"));
-      depGraph.addEdge(makePrerequisiteEdge("B", "D"));
-      depGraph.addEdge(makePrerequisiteEdge("C", "D"));
+      await depGraph.addEdge(makePrerequisiteEdge("A", "B"));
+      await depGraph.addEdge(makePrerequisiteEdge("A", "C"));
+      await depGraph.addEdge(makePrerequisiteEdge("B", "D"));
+      await depGraph.addEdge(makePrerequisiteEdge("C", "D"));
 
       const schedule = portfolio.buildDependencySchedule(["A", "B", "C", "D"], depGraph);
       expect(schedule.criticalPath).toHaveLength(3); // A → B|C → D
@@ -275,12 +275,12 @@ describe("CrossGoalPortfolio Phase 2", () => {
       expect(schedule.criticalPath).toEqual(["g1"]);
     });
 
-    it("critical path picks longer branch when chains differ in length", () => {
+    it("critical path picks longer branch when chains differ in length", async () => {
       // A → B → C → D (length 4) and E → D (length 2)
-      depGraph.addEdge(makePrerequisiteEdge("A", "B"));
-      depGraph.addEdge(makePrerequisiteEdge("B", "C"));
-      depGraph.addEdge(makePrerequisiteEdge("C", "D"));
-      depGraph.addEdge(makePrerequisiteEdge("E", "D"));
+      await depGraph.addEdge(makePrerequisiteEdge("A", "B"));
+      await depGraph.addEdge(makePrerequisiteEdge("B", "C"));
+      await depGraph.addEdge(makePrerequisiteEdge("C", "D"));
+      await depGraph.addEdge(makePrerequisiteEdge("E", "D"));
 
       const schedule = portfolio.buildDependencySchedule(
         ["A", "B", "C", "D", "E"],
@@ -548,9 +548,9 @@ describe("CrossGoalPortfolio Phase 2", () => {
       expect(result.recentProgress).toBeCloseTo(-0.4, 5);
     });
 
-    it("buildDependencySchedule ignores prerequisite edges between goals not in the list", () => {
+    it("buildDependencySchedule ignores prerequisite edges between goals not in the list", async () => {
       // Add edges between goals outside the provided list
-      depGraph.addEdge(makePrerequisiteEdge("OUTSIDE", "g1"));
+      await depGraph.addEdge(makePrerequisiteEdge("OUTSIDE", "g1"));
 
       const schedule = portfolio.buildDependencySchedule(["g1"], depGraph);
       // g1 should still be in phase 0 since OUTSIDE is not in the goal list

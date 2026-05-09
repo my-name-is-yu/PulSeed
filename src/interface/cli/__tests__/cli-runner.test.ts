@@ -1352,6 +1352,20 @@ describe("goal list subcommand", async () => {
     consoleSpy.mockRestore();
   });
 
+  it("shows DB-owned archived goal metadata without legacy archive JSON", async () => {
+    await stateManager.saveGoal(makeGoal({ id: "goal-archived", title: "Archived Goal", status: "completed" }));
+    await stateManager.archiveGoal("goal-archived");
+
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    await runCLI("goal", "list", "--archived");
+
+    const output = consoleSpy.mock.calls.map((c) => c.join(" ")).join("\n");
+    expect(output).toContain("Archived Goal");
+    expect(output).toContain("Archived");
+    expect(output).not.toContain("(could not load)");
+    consoleSpy.mockRestore();
+  });
+
   it("shows the count of goals found", async () => {
     await stateManager.saveGoal(makeGoal({ id: "ga", title: "A" }));
     await stateManager.saveGoal(makeGoal({ id: "gb", title: "B" }));

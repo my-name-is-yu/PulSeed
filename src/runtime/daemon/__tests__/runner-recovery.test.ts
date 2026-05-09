@@ -57,13 +57,14 @@ describe("runner-recovery", () => {
     }
   });
 
-  it("finds only valid running task files", async () => {
+  it("finds only valid running task rows and ignores malformed legacy files", async () => {
     tmpDir = makeTempDir();
     const stateManager = new StateManager(tmpDir);
     await stateManager.init();
     await stateManager.writeRaw("tasks/goal-1/running.json", makeTask({ id: "running", status: "running" }));
     await stateManager.writeRaw("tasks/goal-1/done.json", makeTask({ id: "done", status: "completed" }));
     await stateManager.writeRaw("tasks/goal-1/task-history.json", [{ task_id: "old" }]);
+    fs.mkdirSync(`${tmpDir}/tasks/goal-1`, { recursive: true });
     fs.writeFileSync(`${tmpDir}/tasks/goal-1/malformed.json`, "{not-json");
 
     const tasks = await findRunningTasks(tmpDir, stateManager);

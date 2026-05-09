@@ -1,5 +1,3 @@
-import * as fs from "node:fs";
-import * as path from "node:path";
 import { z } from "zod";
 import type {
   ITool,
@@ -10,7 +8,7 @@ import type {
   ToolResult,
 } from "../../types.js";
 import type { StateManager } from "../../../base/state/state-manager.js";
-import { TaskSchema, type Task } from "../../../base/types/task.js";
+import type { Task } from "../../../base/types/task.js";
 import { TAGS, PERMISSION_LEVEL, MAX_OUTPUT_CHARS } from "./constants.js";
 import { DESCRIPTION } from "./prompt.js";
 
@@ -85,25 +83,7 @@ export class TaskListTool implements ITool<TaskListInput, { tasks: TaskListItem[
   }
 
   private async loadTasks(goalId: string): Promise<Task[]> {
-    const baseDir = this.stateManager.getBaseDir();
-    const tasksDir = path.join(baseDir, "tasks", goalId);
-    if (!fs.existsSync(tasksDir)) return [];
-
-    const entries = fs.readdirSync(tasksDir);
-    const tasks: Task[] = [];
-
-    for (const entry of entries) {
-      if (!entry.endsWith(".json") || entry === "task-history.json" || entry === "last-failure-context.json") {
-        continue;
-      }
-
-      const raw = await this.stateManager.readRaw(`tasks/${goalId}/${entry}`);
-      if (raw == null) continue;
-      const parsed = TaskSchema.safeParse(raw);
-      if (parsed.success) tasks.push(parsed.data);
-    }
-
-    return tasks;
+    return this.stateManager.listTasks(goalId);
   }
 
   private toSummary(task: Task): TaskListItem {

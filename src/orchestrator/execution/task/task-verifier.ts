@@ -734,7 +734,7 @@ export async function handleVerdict(
         // Non-fatal
       }
 
-      deps.trustManager.recordSuccess(task.task_category);
+      await deps.trustManager.recordSuccess(task.task_category);
 
       const now = new Date().toISOString();
 
@@ -884,7 +884,7 @@ export async function handleFailure(
     verification_evidence: verificationResult.evidence?.map((e) => e.description ?? String(e)) ?? [],
   };
 
-  deps.trustManager.recordFailure(task.task_category);
+  await deps.trustManager.recordFailure(task.task_category);
 
   await deps.stateManager.writeRaw(
     `tasks/${task.goal_id}/${task.id}.json`,

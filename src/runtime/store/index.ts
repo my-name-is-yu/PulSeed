@@ -480,6 +480,21 @@ export type {
   ImportLegacyQueueDaemonScheduleStateInput,
   ImportLegacyQueueDaemonScheduleStateResult,
 } from "./queue-daemon-schedule-state-migration.js";
+export {
+  GoalTaskStateStore,
+} from "./goal-task-state-store.js";
+export type {
+  CheckpointIndexEntry,
+  GoalTaskStateStoreOptions,
+  RawStateStoreResult,
+  TaskOutcomeLedgerRecordLike,
+} from "./goal-task-state-store.js";
+export {
+  importLegacyGoalTaskDurableLoopState,
+} from "./goal-task-state-migration.js";
+export type {
+  GoalTaskStateLegacyImportReport,
+} from "./goal-task-state-migration.js";
 export type {
   BackgroundRunCreateInput,
   BackgroundRunLinkInput,

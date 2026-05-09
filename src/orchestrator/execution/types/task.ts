@@ -95,6 +95,7 @@ export const TaskSchema = z.object({
   started_at: z.string().nullable().default(null),
   completed_at: z.string().nullable().default(null),
   timeout_at: z.string().nullable().default(null),
+  stopped_at: z.string().nullable().optional(),
   heartbeat_at: z.string().datetime().nullable().default(null),
 
   created_at: z.string(),

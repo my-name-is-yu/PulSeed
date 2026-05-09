@@ -681,10 +681,8 @@ describe("resolveGoalId fallback scan", () => {
       pastStrategies: [],
     });
 
-    // Create the goal directory so listGoalIds() finds "goal-1"
-    const fs = await import("node:fs/promises");
-    const path = await import("node:path");
-    await fs.mkdir(path.join(tempDir, "goals", "goal-1"), { recursive: true });
+    // Register the goal ID so resolveGoalId can scan the typed goal registry.
+    await stateManager.writeRaw("goals/goal-1/state.json", { gap: 0.5 });
 
     // manager2 has a fresh in-memory index (no strategyIndex entry)
     const manager2 = new StrategyManager(stateManager, createMockLLMClient([]));

@@ -1,8 +1,7 @@
-import * as fsp from "node:fs/promises";
-import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RuntimeOwnershipCoordinator } from "../daemon/runtime-ownership.js";
 import { RuntimeHealthStore } from "../store/health-store.js";
+import { GoalTaskStateStore } from "../store/goal-task-state-store.js";
 import { makeTempDir, cleanupTempDir } from "../../../tests/helpers/temp-dir.js";
 
 function makeLedgerRecord(taskId: string, goalId: string, latestEventType: string) {
@@ -55,19 +54,14 @@ describe("daemon task success rate", () => {
   });
 
   it("persists task outcome ledger aggregates into the daemon health snapshot", async () => {
-    const ledgerDir = path.join(baseDir, "tasks", "goal-important", "ledger");
-    await fsp.mkdir(ledgerDir, { recursive: true });
+    const goalTaskStore = new GoalTaskStateStore(baseDir);
 
     for (let index = 0; index < 19; index += 1) {
-      await fsp.writeFile(
-        path.join(ledgerDir, `task-success-${index}.json`),
-        JSON.stringify(makeLedgerRecord(`task-success-${index}`, "goal-important", "succeeded"))
+      await goalTaskStore.saveTaskOutcomeLedger(
+        makeLedgerRecord(`task-success-${index}`, "goal-important", "succeeded")
       );
     }
-    await fsp.writeFile(
-      path.join(ledgerDir, "task-failure.json"),
-      JSON.stringify(makeLedgerRecord("task-failure", "goal-important", "failed"))
-    );
+    await goalTaskStore.saveTaskOutcomeLedger(makeLedgerRecord("task-failure", "goal-important", "failed"));
 
     const coordinator = new RuntimeOwnershipCoordinator({
       baseDir,

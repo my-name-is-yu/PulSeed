@@ -11,7 +11,7 @@ import {
   resolveStatePath,
 } from "../chat-runner-state.js";
 import { ScheduleHistoryStore } from "../../../runtime/schedule/history.js";
-import { openControlDatabase } from "../../../runtime/store/index.js";
+import { GoalTaskStateStore, openControlDatabase } from "../../../runtime/store/index.js";
 
 const tempDirs: string[] = [];
 
@@ -25,12 +25,6 @@ function writeJson(baseDir: string, relativePath: string, value: unknown): void 
   const target = path.join(baseDir, relativePath);
   fs.mkdirSync(path.dirname(target), { recursive: true });
   fs.writeFileSync(target, JSON.stringify(value, null, 2));
-}
-
-function writeRaw(baseDir: string, relativePath: string, value: string): void {
-  const target = path.join(baseDir, relativePath);
-  fs.mkdirSync(path.dirname(target), { recursive: true });
-  fs.writeFileSync(target, value);
 }
 
 async function saveScheduleHistory(baseDir: string, records: Array<Record<string, unknown>>): Promise<void> {
@@ -57,6 +51,15 @@ async function saveScheduleHistory(baseDir: string, records: Array<Record<string
     internal: false,
     ...record,
   }) as never));
+}
+
+async function saveGoalLedger(baseDir: string, taskId: string, summary: Record<string, unknown>): Promise<void> {
+  await new GoalTaskStateStore(baseDir).saveTaskOutcomeLedger({
+    task_id: taskId,
+    goal_id: "goal-usage",
+    events: [],
+    summary,
+  });
 }
 
 async function insertRawScheduleHistoryRecords(baseDir: string, records: Array<Record<string, unknown>>): Promise<void> {
@@ -162,45 +165,26 @@ describe("chat-runner-state helpers", () => {
     expect(tasks.map((task) => task.id)).toEqual(["task-2", "task-1"]);
   });
 
-  it("collectGoalUsage ignores malformed ledger records and counts terminal tasks", async () => {
+  it("collectGoalUsage counts typed ledger rows and terminal tasks", async () => {
     const baseDir = makeTempDir("pulseed-chat-usage-goal-");
-    writeJson(baseDir, "tasks/goal-usage/ledger/task-1.json", {
-      summary: { latest_event_type: "succeeded", tokens_used: 21 },
-    });
-    writeJson(baseDir, "tasks/goal-usage/ledger/task-2.json", {
-      summary: { latest_event_type: "running", tokens_used: 8 },
-    });
-    const invalidPath = path.join(baseDir, "tasks", "goal-usage", "ledger", "task-3.json");
-    fs.mkdirSync(path.dirname(invalidPath), { recursive: true });
-    fs.writeFileSync(invalidPath, "{not-json");
+    await saveGoalLedger(baseDir, "task-1", { latest_event_type: "succeeded", tokens_used: 21 });
+    await saveGoalLedger(baseDir, "task-2", { latest_event_type: "running", tokens_used: 8 });
 
     await expect(collectGoalUsage(baseDir, "goal-usage")).resolves.toEqual({
       goalId: "goal-usage",
       totalTokens: 29,
-      taskCount: 3,
+      taskCount: 2,
       terminalTaskCount: 1,
     });
   });
 
   it("collectGoalUsage ignores unsafe persisted token counts", async () => {
     const baseDir = makeTempDir("pulseed-chat-usage-goal-bounds-");
-    writeJson(baseDir, "tasks/goal-usage/ledger/task-valid.json", {
-      summary: { latest_event_type: "succeeded", tokens_used: 21 },
-    });
-    writeJson(baseDir, "tasks/goal-usage/ledger/task-negative.json", {
-      summary: { latest_event_type: "failed", tokens_used: -5 },
-    });
-    writeJson(baseDir, "tasks/goal-usage/ledger/task-fractional.json", {
-      summary: { latest_event_type: "abandoned", tokens_used: 2.5 },
-    });
-    writeJson(baseDir, "tasks/goal-usage/ledger/task-unsafe.json", {
-      summary: { latest_event_type: "succeeded", tokens_used: Number.MAX_SAFE_INTEGER + 1 },
-    });
-    writeRaw(
-      baseDir,
-      "tasks/goal-usage/ledger/task-overflow.json",
-      "{\"summary\":{\"latest_event_type\":\"succeeded\",\"tokens_used\":1e309}}"
-    );
+    await saveGoalLedger(baseDir, "task-valid", { latest_event_type: "succeeded", tokens_used: 21 });
+    await saveGoalLedger(baseDir, "task-negative", { latest_event_type: "failed", tokens_used: -5 });
+    await saveGoalLedger(baseDir, "task-fractional", { latest_event_type: "abandoned", tokens_used: 2.5 });
+    await saveGoalLedger(baseDir, "task-unsafe", { latest_event_type: "succeeded", tokens_used: Number.MAX_SAFE_INTEGER + 1 });
+    await saveGoalLedger(baseDir, "task-overflow", { latest_event_type: "succeeded", tokens_used: Number.POSITIVE_INFINITY });
 
     await expect(collectGoalUsage(baseDir, "goal-usage")).resolves.toEqual({
       goalId: "goal-usage",
@@ -212,12 +196,8 @@ describe("chat-runner-state helpers", () => {
 
   it("collectGoalUsage keeps aggregate token totals safe", async () => {
     const baseDir = makeTempDir("pulseed-chat-usage-goal-aggregate-");
-    writeJson(baseDir, "tasks/goal-usage/ledger/task-a.json", {
-      summary: { latest_event_type: "succeeded", tokens_used: Number.MAX_SAFE_INTEGER },
-    });
-    writeJson(baseDir, "tasks/goal-usage/ledger/task-b.json", {
-      summary: { latest_event_type: "failed", tokens_used: Number.MAX_SAFE_INTEGER },
-    });
+    await saveGoalLedger(baseDir, "task-a", { latest_event_type: "succeeded", tokens_used: Number.MAX_SAFE_INTEGER });
+    await saveGoalLedger(baseDir, "task-b", { latest_event_type: "failed", tokens_used: Number.MAX_SAFE_INTEGER });
 
     await expect(collectGoalUsage(baseDir, "goal-usage")).resolves.toEqual({
       goalId: "goal-usage",

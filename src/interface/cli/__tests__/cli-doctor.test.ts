@@ -9,6 +9,7 @@ import { JournalBackedQueue } from "../../../runtime/queue/journal-backed-queue.
 import { ScheduleEntryStore } from "../../../runtime/schedule/entry-store.js";
 import { ChatSessionDataStore } from "../../chat/chat-session-data-store.js";
 import { AgentLoopSessionStateCatalog } from "../../../orchestrator/execution/agent-loop/agent-loop-session-db-store.js";
+import { makeGoal } from "../../../../tests/helpers/fixtures.js";
 
 // ─── cmdDoctor tests ───
 //
@@ -44,6 +45,7 @@ import {
 import {
   CONTROL_DB_SCHEMA_VERSION,
   DaemonStateStore,
+  GoalTaskStateStore,
   openControlDatabase,
   RuntimeHealthStore,
   SupervisorStateStore,
@@ -468,56 +470,67 @@ describe("checkGoals", () => {
     cleanupTempDir(tmpDir);
   });
 
-  it("warns when goals directory does not exist", () => {
-    const result = checkGoals(tmpDir);
-    expect(result.status).toBe("warn");
-    expect(result.detail).toContain("not found");
-  });
-
-  it("warns when goals directory is empty", () => {
-    const goalsDir = path.join(tmpDir, "goals");
-    fs.mkdirSync(goalsDir);
-    const result = checkGoals(tmpDir);
+  it("warns when the goal database has no active goals", async () => {
+    const result = await checkGoals(tmpDir);
     expect(result.status).toBe("warn");
     expect(result.detail).toContain("0 goals");
   });
 
-  it("passes when goals directory has legacy JSON files", () => {
+  it("warns when legacy goals directory is empty and the DB has no goals", async () => {
     const goalsDir = path.join(tmpDir, "goals");
     fs.mkdirSync(goalsDir);
-    fs.writeFileSync(path.join(goalsDir, "goal-1.json"), "{}");
-    fs.writeFileSync(path.join(goalsDir, "goal-2.json"), "{}");
-    const result = checkGoals(tmpDir);
+    const result = await checkGoals(tmpDir);
+    expect(result.status).toBe("warn");
+    expect(result.detail).toContain("0 goals");
+  });
+
+  it("passes when the goal database has active goals", async () => {
+    const store = new GoalTaskStateStore(tmpDir);
+    await store.saveGoal(makeGoal({ id: "goal-1" }));
+    await store.saveGoal(makeGoal({ id: "goal-2" }));
+
+    const result = await checkGoals(tmpDir);
     expect(result.status).toBe("pass");
     expect(result.detail).toContain("2 goals");
   });
 
-  it("passes when goals directory has nested goal.json files", () => {
+  it("ignores legacy JSON goal files on the normal doctor path", async () => {
+    const goalsDir = path.join(tmpDir, "goals");
+    fs.mkdirSync(goalsDir);
+    fs.writeFileSync(path.join(goalsDir, "goal-1.json"), "{}");
+    fs.writeFileSync(path.join(goalsDir, "goal-2.json"), "{}");
+    const result = await checkGoals(tmpDir);
+    expect(result.status).toBe("warn");
+    expect(result.detail).toContain("0 goals");
+  });
+
+  it("ignores nested legacy goal.json files on the normal doctor path", async () => {
     const goalsDir = path.join(tmpDir, "goals");
     fs.mkdirSync(path.join(goalsDir, "goal-1"), { recursive: true });
     fs.mkdirSync(path.join(goalsDir, "goal-2"), { recursive: true });
     fs.writeFileSync(path.join(goalsDir, "goal-1", "goal.json"), "{}");
     fs.writeFileSync(path.join(goalsDir, "goal-2", "goal.json"), "{}");
-    const result = checkGoals(tmpDir);
-    expect(result.status).toBe("pass");
-    expect(result.detail).toContain("2 goals");
+    const result = await checkGoals(tmpDir);
+    expect(result.status).toBe("warn");
+    expect(result.detail).toContain("0 goals");
   });
 
-  it("counts both nested and legacy goal layouts", () => {
+  it("uses only DB-owned active goals when legacy goal layouts also exist", async () => {
+    await new GoalTaskStateStore(tmpDir).saveGoal(makeGoal({ id: "db-goal" }));
     const goalsDir = path.join(tmpDir, "goals");
     fs.mkdirSync(path.join(goalsDir, "goal-1"), { recursive: true });
     fs.writeFileSync(path.join(goalsDir, "goal-1", "goal.json"), "{}");
     fs.writeFileSync(path.join(goalsDir, "legacy-goal.json"), "{}");
-    const result = checkGoals(tmpDir);
+    const result = await checkGoals(tmpDir);
     expect(result.status).toBe("pass");
-    expect(result.detail).toContain("2 goals");
+    expect(result.detail).toContain("1 goal");
   });
 
-  it("ignores non-JSON files in goals directory", () => {
+  it("ignores non-JSON files in goals directory", async () => {
     const goalsDir = path.join(tmpDir, "goals");
     fs.mkdirSync(goalsDir);
     fs.writeFileSync(path.join(goalsDir, "readme.txt"), "hello");
-    const result = checkGoals(tmpDir);
+    const result = await checkGoals(tmpDir);
     expect(result.status).toBe("warn");
     expect(result.detail).toContain("0 goals");
   });
@@ -866,28 +879,25 @@ describe("checkDaemon", () => {
       },
       details: { pid: process.pid },
     });
-    fs.writeFileSync(
-      path.join(tmpDir, "tasks", "goal-1", "ledger", "task-1.json"),
-      JSON.stringify({
-        task_id: "task-1",
-        goal_id: "goal-1",
-        events: [
-          { type: "acked", ts: new Date(now - 6_000).toISOString() },
-          { type: "started", ts: new Date(now - 5_000).toISOString() },
-          { type: "succeeded", ts: new Date(now - 1_000).toISOString() },
-        ],
-        summary: {
-          latest_event_type: "succeeded",
-          latencies: {
-            created_to_acked_ms: 800,
-            acked_to_started_ms: 100,
-            started_to_completed_ms: 3200,
-            completed_to_verification_ms: 100,
-            created_to_completed_ms: 4100,
-          },
+    await new GoalTaskStateStore(tmpDir).saveTaskOutcomeLedger({
+      task_id: "task-1",
+      goal_id: "goal-1",
+      events: [
+        { type: "acked", ts: new Date(now - 6_000).toISOString() },
+        { type: "started", ts: new Date(now - 5_000).toISOString() },
+        { type: "succeeded", ts: new Date(now - 1_000).toISOString() },
+      ],
+      summary: {
+        latest_event_type: "succeeded",
+        latencies: {
+          created_to_acked_ms: 800,
+          acked_to_started_ms: 100,
+          started_to_completed_ms: 3200,
+          completed_to_verification_ms: 100,
+          created_to_completed_ms: 4100,
         },
-      })
-    );
+      },
+    });
     fs.writeFileSync(
       path.join(tmpDir, "pulseed.pid"),
       JSON.stringify({
