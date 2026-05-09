@@ -23,11 +23,19 @@ import {
 import {
   BrowserRunWorkflowTool,
   BrowserGetStateTool,
+  BrowserGetStateInputSchema,
+  BrowserRunWorkflowInputSchema,
+  DesktopClickInputSchema,
   DesktopClickTool,
+  DesktopGetAppStateInputSchema,
   DesktopGetAppStateTool,
+  DesktopListAppsInputSchema,
   DesktopListAppsTool,
+  DesktopTypeTextInputSchema,
   DesktopTypeTextTool,
+  ResearchAnswerInputSchema,
   ResearchAnswerWithSourcesTool,
+  ResearchWebInputSchema,
   ResearchWebTool,
 } from "../index.js";
 
@@ -258,6 +266,42 @@ describe("interactive automation tools", () => {
       maximum: 10,
       default: 1,
     });
+  });
+
+  it("rejects unknown fields on interactive automation inputs", () => {
+    const cases = [
+      { schema: DesktopListAppsInputSchema, input: { unexpected: true } },
+      { schema: DesktopGetAppStateInputSchema, input: { app: "Notes", unexpected: true } },
+      { schema: DesktopClickInputSchema, input: { app: "Notes", x: 1, y: 2, unexpected: true } },
+      { schema: DesktopTypeTextInputSchema, input: { app: "Notes", text: "hello", unexpected: true } },
+      { schema: ResearchWebInputSchema, input: { query: "PulSeed", unexpected: true } },
+      { schema: ResearchAnswerInputSchema, input: { question: "What is PulSeed?", unexpected: true } },
+      { schema: BrowserRunWorkflowInputSchema, input: { task: "Open dashboard", unexpected: true } },
+      { schema: BrowserGetStateInputSchema, input: { sessionId: "session-1", unexpected: true } },
+    ];
+
+    for (const { schema, input } of cases) {
+      expect(schema.safeParse(input).success).toBe(false);
+    }
+  });
+
+  it("exports closed model-facing schemas for interactive automation inputs", () => {
+    const registry = makeRegistry();
+    const tools = [
+      new DesktopListAppsTool(registry),
+      new DesktopGetAppStateTool(registry),
+      new DesktopClickTool(registry),
+      new DesktopTypeTextTool(registry),
+      new ResearchWebTool(registry),
+      new ResearchAnswerWithSourcesTool(registry),
+      new BrowserRunWorkflowTool(registry),
+      new BrowserGetStateTool(registry),
+    ];
+
+    for (const tool of tools) {
+      const parameters = toToolDefinition(tool).function.parameters as Record<string, unknown>;
+      expect(parameters.additionalProperties).toBe(false);
+    }
   });
 
   it("runs research tools as read-only provider calls", async () => {

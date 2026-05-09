@@ -44,7 +44,7 @@ export const DEFAULT_INTERACTIVE_AUTOMATION_TOOL_POLICY: InteractiveAutomationTo
 
 const ProviderInputSchema = z.object({
   providerId: z.string().optional(),
-});
+}).strict();
 
 export const DesktopListAppsInputSchema = ProviderInputSchema;
 export type DesktopListAppsInput = z.infer<typeof DesktopListAppsInputSchema>;
