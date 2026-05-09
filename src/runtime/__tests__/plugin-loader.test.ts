@@ -559,6 +559,68 @@ describe("PluginLoader.discoverPluginDirs", () => {
 import * as os from "node:os";
 import * as fsSync from "node:fs";
 
+describe("PluginLoader foreign plugin quarantine", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = fsSync.mkdtempSync(path.join(os.tmpdir(), "pulseed-plugin-foreign-test-"));
+  });
+
+  afterEach(() => {
+    fsSync.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+  });
+
+  it("does not discover or load a compatible foreign plugin copied into quarantine", async () => {
+    const pluginDir = path.join(tmpDir, "notifier");
+    fsSync.mkdirSync(path.join(pluginDir, "dist"), { recursive: true });
+    fsSync.writeFileSync(path.join(pluginDir, "plugin.json"), JSON.stringify(makeValidManifestData({
+      name: "foreign-notifier",
+      permissions: {
+        network: true,
+        file_read: false,
+        file_write: false,
+        shell: false,
+      },
+    })));
+    fsSync.writeFileSync(
+      path.join(pluginDir, "dist", "index.js"),
+      [
+        "export default {",
+        "  name: 'foreign-notifier',",
+        "  notify: async () => {},",
+        "  supports: () => true,",
+        "};",
+      ].join("\n"),
+    );
+    const {
+      analyzeForeignPluginManifest,
+      writeForeignPluginCompatibilityArtifacts,
+    } = await import("../foreign-plugins/compatibility.js");
+    const report = analyzeForeignPluginManifest("openclaw", JSON.parse(fsSync.readFileSync(
+      path.join(pluginDir, "plugin.json"),
+      "utf-8"
+    )));
+    await writeForeignPluginCompatibilityArtifacts(pluginDir, report);
+    const notifierRegistry = makeNotifierRegistry();
+    const loader = new PluginLoader(
+      makeAdapterRegistry(),
+      makeDataSourceRegistry(),
+      notifierRegistry,
+      tmpDir
+    );
+
+    await expect(loader.discoverPluginDirs()).resolves.toEqual([]);
+    const state = await loader.loadOne(pluginDir);
+
+    expect(state).toMatchObject({
+      name: "foreign-notifier",
+      status: "disabled",
+      error_message: expect.stringContaining("operator review"),
+    });
+    expect(notifierRegistry.has("foreign-notifier")).toBe(false);
+  });
+});
+
 describe("PluginLoader.getPluginState and updatePluginState", () => {
   let tmpDir: string;
   let loader: PluginLoader;

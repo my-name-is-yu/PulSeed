@@ -6,6 +6,7 @@ import { getPulseedVersion as getPackageVersion } from "../base/utils/pulseed-me
 import { writeJsonFileAtomic } from "../base/utils/json-io.js";
 import { ValidationError } from "../base/utils/errors.js";
 import { exposeRegisteredGatewayChatSessionPort } from "./gateway/chat-session-port.js";
+import { readForeignPluginCompatibilityArtifact, hasForeignPluginCompatibilityArtifact } from "./foreign-plugins/compatibility.js";
 import type { Logger } from "./logger.js";
 import {
   PluginManifestSchema,
@@ -15,6 +16,7 @@ import {
   type PluginType,
   type INotifier,
 } from "../base/types/plugin.js";
+import type { ForeignPluginCompatibilityReport } from "./foreign-plugins/types.js";
 import type { AdapterRegistry, IAdapter } from "../orchestrator/execution/adapter-layer.js";
 import type { DataSourceRegistry, IDataSourceAdapter } from "../platform/observation/data-source-adapter.js";
 import type { NotifierRegistry } from "./notifier-registry.js";
@@ -82,6 +84,11 @@ export class PluginLoader {
    * Throws on any failure (caller catches and converts to error state).
    */
   async loadOne(pluginDir: string): Promise<PluginState> {
+    const foreignCompatibility = await readForeignPluginCompatibilityArtifact(pluginDir);
+    if (foreignCompatibility) {
+      return this.buildForeignImportDisabledState(pluginDir, foreignCompatibility);
+    }
+
     // 1. Read and validate manifest
     const manifest = await this.loadManifest(pluginDir);
     this.pluginDirsByName.set(manifest.name, pluginDir);
@@ -200,6 +207,10 @@ export class PluginLoader {
       if (!stat.isDirectory()) continue;
 
       const hasManifest = await this.hasManifestFile(dirPath);
+      if (hasManifest && await hasForeignPluginCompatibilityArtifact(dirPath)) {
+        this.logger?.warn(`[PluginLoader] Skipping foreign imported plugin "${entry}" until review, adapter, and smoke verification complete`);
+        continue;
+      }
       if (hasManifest) {
         candidates.push(dirPath);
       }
@@ -331,6 +342,34 @@ export class PluginLoader {
       manifest,
       status: "incompatible",
       error_message: `Requires PulSeed ${range}, got ${pulseedVersion}`,
+      loaded_at: new Date().toISOString(),
+      trust_score: 0,
+      usage_count: 0,
+      success_count: 0,
+      failure_count: 0,
+    });
+    this.pluginStates.set(manifest.name, state);
+    return state;
+  }
+
+  buildForeignImportDisabledState(
+    pluginDir: string,
+    report: ForeignPluginCompatibilityReport
+  ): PluginState {
+    const manifest = PluginManifestSchema.parse({
+      name: report.manifest?.name ?? sanitizeName(path.basename(pluginDir)),
+      version: report.manifest?.version ?? "0.0.0",
+      type: report.manifest?.type ?? "adapter",
+      capabilities: report.manifest?.capabilities ?? ["unknown"],
+      description: report.manifest?.description ?? "(foreign import disabled)",
+      entry_point: report.manifest?.entry_point ?? "dist/index.js",
+      permissions: report.permissions,
+    });
+    const state = PluginStateSchema.parse({
+      name: manifest.name,
+      manifest,
+      status: "disabled",
+      error_message: "Foreign plugin import is disabled until operator review, adapter mapping, and smoke verification are recorded.",
       loaded_at: new Date().toISOString(),
       trust_score: 0,
       usage_count: 0,
