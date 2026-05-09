@@ -90,7 +90,11 @@ export function summarizeArtifactRetention(
   for (const decision of decisions) {
     byRetentionClass[decision.retention_class] += 1;
     if (decision.size_bytes === undefined) unknownSizeCount += 1;
-    else totalSizeBytes += decision.size_bytes;
+    else {
+      const nextTotalSizeBytes = addSafeSizeBytes(totalSizeBytes, decision.size_bytes);
+      if (nextTotalSizeBytes === null) unknownSizeCount += 1;
+      else totalSizeBytes = nextTotalSizeBytes;
+    }
     if (decision.protected) protectedCount += 1;
   }
 
@@ -348,4 +352,10 @@ function emptyRetentionClassCounts(): Record<RuntimeArtifactRetentionClass, numb
 
 function unique(values: string[]): string[] {
   return [...new Set(values)];
+}
+
+function addSafeSizeBytes(total: number, next: number): number | null {
+  if (!Number.isSafeInteger(total) || total < 0 || !Number.isSafeInteger(next) || next < 0) return null;
+  const sum = total + next;
+  return Number.isSafeInteger(sum) ? sum : null;
 }

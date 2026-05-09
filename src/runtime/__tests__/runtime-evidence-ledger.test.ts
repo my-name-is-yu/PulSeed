@@ -83,6 +83,50 @@ describe("RuntimeEvidenceLedger", () => {
     await expect(fsp.stat(ledger.runPath("run:non-finite-evaluator-expected-score"))).rejects.toThrow();
   });
 
+  it("rejects unsafe artifact byte counts before persistence and from persisted JSONL", async () => {
+    const ledger = new RuntimeEvidenceLedger(runtimeRoot);
+    const unsafeSizeBytes = Number.MAX_SAFE_INTEGER + 1;
+
+    await expect(ledger.append({
+      kind: "artifact",
+      scope: { run_id: "run:unsafe-artifact-size-append" },
+      artifacts: [{
+        label: "unsafe-artifact",
+        state_relative_path: "runs/unsafe.bin",
+        kind: "other",
+        size_bytes: unsafeSizeBytes,
+      }],
+      summary: "Unsafe artifact byte count should be rejected before JSON persistence.",
+    })).rejects.toThrow();
+
+    const runId = "run:unsafe-artifact-size-persisted";
+    const runPath = ledger.runPath(runId);
+    await fsp.mkdir(path.dirname(runPath), { recursive: true });
+    await fsp.writeFile(runPath, `${JSON.stringify({
+      schema_version: "runtime-evidence-entry-v1",
+      id: "unsafe-artifact-size-persisted",
+      occurred_at: "2026-04-30T00:00:00.000Z",
+      kind: "artifact",
+      scope: { run_id: runId },
+      artifacts: [{
+        label: "unsafe-artifact",
+        state_relative_path: "runs/unsafe.bin",
+        kind: "other",
+        size_bytes: unsafeSizeBytes,
+      }],
+      summary: "Persisted unsafe artifact byte count.",
+    })}\n`, "utf8");
+
+    const read = await ledger.readByRun(runId);
+    const summary = await ledger.summarizeRun(runId);
+
+    expect(read.entries).toEqual([]);
+    expect(read.warnings).toHaveLength(1);
+    expect(summary.total_entries).toBe(0);
+    expect(summary.artifact_retention.total_size_bytes).toBe(0);
+    expect(summary.warnings).toHaveLength(1);
+  });
+
   it("records runtime evidence corrections and exposes target correction state in summaries", async () => {
     const ledger = new RuntimeEvidenceLedger(runtimeRoot);
     await ledger.append({
@@ -546,6 +590,100 @@ describe("RuntimeEvidenceLedger", () => {
       destructive: false,
       approval_required: false,
     }));
+  });
+
+  it("rebuilds stale summary indexes with unsafe artifact retention byte totals", async () => {
+    const ledger = new RuntimeEvidenceLedger(runtimeRoot);
+    await ledger.append({
+      id: "artifact-retention-safe-size-source",
+      occurred_at: "2026-04-30T00:00:00.000Z",
+      kind: "artifact",
+      scope: { run_id: "run:artifact-retention-safe-size" },
+      artifacts: [{
+        label: "small-output",
+        state_relative_path: "runs/small-output.bin",
+        kind: "other",
+        size_bytes: 42,
+      }],
+      summary: "Small artifact with exact byte count.",
+    });
+    await ledger.rebuildSummaryIndexForRun("run:artifact-retention-safe-size");
+    const indexPath = `${ledger.runPath("run:artifact-retention-safe-size")}.summary.json`;
+    const staleIndex = JSON.parse(await fsp.readFile(indexPath, "utf8")) as {
+      summary: {
+        artifact_retention: {
+          total_size_bytes: number;
+          cleanup_plan: {
+            actions: Array<Record<string, unknown>>;
+          };
+        };
+      };
+    };
+    staleIndex.summary.artifact_retention.total_size_bytes = Number.MAX_SAFE_INTEGER + 1;
+    staleIndex.summary.artifact_retention.cleanup_plan.actions = staleIndex.summary.artifact_retention.cleanup_plan.actions.map((action) => ({
+      ...action,
+      size_bytes: Number.MAX_SAFE_INTEGER + 1,
+    }));
+    await fsp.writeFile(indexPath, `${JSON.stringify(staleIndex)}\n`, "utf8");
+
+    const summary = await new RuntimeEvidenceLedger(runtimeRoot).summarizeRun("run:artifact-retention-safe-size");
+
+    expect(summary.artifact_retention.total_size_bytes).toBe(42);
+    expect(summary.artifact_retention.cleanup_plan.actions).toContainEqual(expect.objectContaining({
+      label: "small-output",
+      size_bytes: 42,
+    }));
+  });
+
+  it("rebuilds stale summary indexes with unsafe cached evidence entry artifact sizes", async () => {
+    const ledger = new RuntimeEvidenceLedger(runtimeRoot);
+    await ledger.append({
+      id: "cached-entry-safe-size-source",
+      occurred_at: "2026-04-30T00:00:00.000Z",
+      kind: "artifact",
+      scope: { run_id: "run:cached-entry-safe-size" },
+      artifacts: [{
+        label: "cached-output",
+        state_relative_path: "runs/cached-output.bin",
+        kind: "other",
+        size_bytes: 42,
+      }],
+      summary: "Cached artifact entry with exact byte count.",
+      outcome: "improved",
+    });
+    await ledger.rebuildSummaryIndexForRun("run:cached-entry-safe-size");
+    const indexPath = `${ledger.runPath("run:cached-entry-safe-size")}.summary.json`;
+    const staleIndex = JSON.parse(await fsp.readFile(indexPath, "utf8")) as {
+      summary: {
+        best_evidence?: { artifacts?: Array<{ size_bytes?: number }> } | null;
+        latest_strategy?: { artifacts?: Array<{ size_bytes?: number }> } | null;
+        recent_entries: Array<{ artifacts?: Array<{ size_bytes?: number }> }>;
+        recent_failed_attempts: Array<{ artifacts?: Array<{ size_bytes?: number }> }>;
+      };
+    };
+    const unsafeSizeBytes = Number.MAX_SAFE_INTEGER + 1;
+    staleIndex.summary.best_evidence?.artifacts?.forEach((artifact) => {
+      artifact.size_bytes = unsafeSizeBytes;
+    });
+    staleIndex.summary.latest_strategy?.artifacts?.forEach((artifact) => {
+      artifact.size_bytes = unsafeSizeBytes;
+    });
+    staleIndex.summary.recent_entries.forEach((entry) => {
+      entry.artifacts?.forEach((artifact) => {
+        artifact.size_bytes = unsafeSizeBytes;
+      });
+    });
+    staleIndex.summary.recent_failed_attempts.forEach((entry) => {
+      entry.artifacts?.forEach((artifact) => {
+        artifact.size_bytes = unsafeSizeBytes;
+      });
+    });
+    await fsp.writeFile(indexPath, `${JSON.stringify(staleIndex)}\n`, "utf8");
+
+    const summary = await new RuntimeEvidenceLedger(runtimeRoot).summarizeRun("run:cached-entry-safe-size");
+
+    expect(summary.best_evidence?.artifacts[0]?.size_bytes).toBe(42);
+    expect(summary.recent_entries[0]?.artifacts[0]?.size_bytes).toBe(42);
   });
 
   it("preserves full canonical history when append maintains an existing index", async () => {

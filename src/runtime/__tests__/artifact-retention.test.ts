@@ -121,6 +121,32 @@ describe("artifact retention planning", () => {
     }));
   });
 
+  it("keeps artifact retention byte totals within safe integer precision", () => {
+    const summary = summarizeArtifactRetention([
+      entry({
+        id: "large-artifact-entry",
+        artifacts: [{
+          label: "large-artifact",
+          state_relative_path: "runs/large.bin",
+          kind: "other",
+          size_bytes: Number.MAX_SAFE_INTEGER,
+        }],
+      }),
+      entry({
+        id: "overflow-artifact-entry",
+        artifacts: [{
+          label: "overflow-artifact",
+          state_relative_path: "runs/overflow.bin",
+          kind: "other",
+          size_bytes: 1,
+        }],
+      }),
+    ]);
+
+    expect(summary.total_size_bytes).toBe(Number.MAX_SAFE_INTEGER);
+    expect(summary.unknown_size_count).toBe(1);
+  });
+
   it("does not let explicit cleanup classes override protected candidate or final artifacts", () => {
     const summary = summarizeArtifactRetention([
       entry({

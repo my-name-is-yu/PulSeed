@@ -20,13 +20,15 @@ import type {
   RuntimeEvidenceEvaluatorObservation,
 } from "./evidence-types.js";
 
+const RuntimeReproducibilitySafeNonnegativeIntSchema = z.number().int().nonnegative().safe();
+
 export const RuntimeReproducibilityFileRefSchema = z.object({
   label: z.string().min(1),
   path: z.string().min(1).optional(),
   state_relative_path: z.string().min(1).optional(),
   kind: z.string().min(1).default("other"),
   sha256: z.string().min(1).optional(),
-  size_bytes: z.number().int().nonnegative().optional(),
+  size_bytes: RuntimeReproducibilitySafeNonnegativeIntSchema.optional(),
   hash_status: z.enum(["hashed", "missing", "unreadable", "not_local"]).default("not_local"),
   error: z.string().min(1).optional(),
 }).strict();
