@@ -1,6 +1,12 @@
 import type { Goal } from "../base/types/goal.js";
 import type { BackgroundRun, RuntimeSessionRegistrySnapshot } from "../runtime/session-registry/types.js";
 import type { RuntimeOperatorHandoffRecord } from "../runtime/store/operator-handoff-store.js";
+import {
+  findLinkedRuntimeBudget,
+  formatRuntimeBudgetDiagnosticCommand,
+  formatRuntimeBudgetSummary,
+  type RuntimeBudgetProjection,
+} from "./runtime-budget-summary.js";
 
 type GoalSummarySurface = "full" | "compact";
 type GoalSummaryDetail = "default" | "diagnostic";
@@ -8,6 +14,7 @@ type GoalSummaryDetail = "default" | "diagnostic";
 export interface CurrentGoalSummaryOptions {
   runtimeSnapshot?: RuntimeSessionRegistrySnapshot | null;
   handoffs?: RuntimeOperatorHandoffRecord[];
+  runtimeBudgets?: RuntimeBudgetProjection[];
   surface?: GoalSummarySurface;
   detail?: GoalSummaryDetail;
 }
@@ -34,8 +41,9 @@ export function formatCurrentGoalChoiceList(goals: Goal[], options: CurrentGoalS
       goals.map((goal, index) => {
         const projection = buildCurrentGoalProjection(goal, options);
         const attention = projection.blocker ? "; attention needed" : "";
+        const budget = projection.budget ? `; ${projection.budget}` : "";
         const diagnosticId = projection.diagnostic ? ` [${projection.goalId}]` : "";
-        return `${index + 1}. ${projection.title}${diagnosticId} (${projection.state}${attention})`;
+        return `${index + 1}. ${projection.title}${diagnosticId} (${projection.state}${budget}${attention})`;
       }).join(" · "),
     ].join(" ");
   }
@@ -50,6 +58,7 @@ export function formatCurrentGoalChoiceList(goals: Goal[], options: CurrentGoalS
         title,
         `State: ${projection.state}`,
         projection.background ? `Background: ${projection.background}` : null,
+        projection.budget ? projection.budget : null,
         projection.blocker ? `Needs attention: ${projection.blocker}` : null,
         `Next: ${projection.nextAction}`,
       ].filter((part): part is string => Boolean(part));
@@ -66,6 +75,8 @@ interface CurrentGoalProjection {
   updated: string;
   children: number;
   background: string | null;
+  budget: string | null;
+  budgetDiagnosticAction: string | null;
   blocker: string | null;
   nextAction: string;
 }
@@ -76,6 +87,13 @@ function buildCurrentGoalProjection(goal: Goal, options: CurrentGoalSummaryOptio
   const handoff = findLinkedHandoff(goal, primaryRun, options.handoffs ?? []);
   const detail = options.detail ?? "default";
   const background = primaryRun ? formatBackgroundRun(primaryRun, detail) : null;
+  const linkedBudget = findLinkedRuntimeBudget(goal, options.runtimeBudgets, options.runtimeSnapshot);
+  const budget = linkedBudget
+    ? formatRuntimeBudgetSummary(linkedBudget, {
+        diagnostic: detail === "diagnostic",
+        compact: options.surface === "compact",
+      })
+    : null;
   const blocker = handoff
     ? `${handoff.title}: ${handoff.recommended_action}`
     : primaryRun && ATTENTION_RUN_STATUSES.has(primaryRun.status)
@@ -90,6 +108,10 @@ function buildCurrentGoalProjection(goal: Goal, options: CurrentGoalSummaryOptio
     updated: goal.updated_at || "unknown",
     children: goal.children_ids.length,
     background,
+    budget,
+    budgetDiagnosticAction: linkedBudget && detail === "diagnostic"
+      ? formatRuntimeBudgetDiagnosticCommand(linkedBudget)
+      : null,
     blocker,
     nextAction: chooseNextAction(goal, primaryRun, handoff),
   };
@@ -105,6 +127,8 @@ function formatFullCurrentGoalProjection(projection: CurrentGoalProjection): str
     `- Children: ${projection.children}`,
   ].filter((line): line is string => line !== null);
   if (projection.background) lines.push(`- Background: ${projection.background}`);
+  if (projection.budget) lines.push(`- ${projection.budget}`);
+  if (projection.budgetDiagnosticAction) lines.push(`- Budget diagnostics: ${projection.budgetDiagnosticAction}`);
   if (projection.blocker) lines.push(`- Needs attention: ${projection.blocker}`);
   lines.push(`- Next safe action: ${projection.nextAction}`);
   return lines.join("\n");
@@ -114,6 +138,7 @@ function formatCompactCurrentGoalProjection(projection: CurrentGoalProjection): 
   const title = projection.diagnostic ? `${projection.title} (${projection.goalId})` : projection.title;
   const parts = [`Current: ${title}`, projection.state];
   if (projection.background) parts.push(projection.background);
+  if (projection.budget) parts.push(projection.budget);
   if (projection.blocker) parts.push(`attention: ${projection.blocker}`);
   return parts.join(" · ");
 }

@@ -17,6 +17,7 @@ import type { GoalNegotiator } from "../../../orchestrator/goal/goal-negotiator.
 import { RuntimeControlService } from "../../../runtime/control/index.js";
 import { createRuntimeSessionRegistry } from "../../../runtime/session-registry/index.js";
 import { BackgroundRunLedger } from "../../../runtime/store/background-run-store.js";
+import { RuntimeBudgetStore } from "../../../runtime/store/budget-store.js";
 import { RuntimeOperationStore } from "../../../runtime/store/runtime-operation-store.js";
 import type { Goal } from "../../../base/types/goal.js";
 import type { Task } from "../../../base/types/task.js";
@@ -2301,17 +2302,36 @@ describe("ChatRunner", () => {
             approval_required: true,
           },
         });
+        const budgetStore = new RuntimeBudgetStore(path.join(tmpDir, "runtime"));
+        await budgetStore.create({
+          budget_id: "runtime-budget:goal-a",
+          scope: { goal_id: "goal-a" },
+          title: "Runtime budget for goal-a",
+          created_at: "2026-04-25T00:00:00.000Z",
+          limits: [{
+            dimension: "iterations",
+            limit: 5,
+            approval_at_remaining: 1,
+            exhaustion_policy: "approval_required",
+          }],
+        });
+        await budgetStore.recordTaskExecution("runtime-budget:goal-a", {
+          iterations: 2,
+          observed_at: "2026-04-25T00:20:00.000Z",
+        });
         const adapter = makeMockAdapter();
         const runner = new ChatRunner(makeDeps({ stateManager, adapter }));
 
         const status = await runner.execute("/status", "/repo");
         const focused = await runner.execute("/status goal-a", "/repo");
+        const focusedDetailed = await runner.execute("/status goal-a --details", "/repo");
         const goals = await runner.execute("/goals", "/repo");
 
         expect(status.success).toBe(true);
         expect(status.output.indexOf("Current goal")).toBeLessThan(status.output.indexOf("Active goals:"));
         expect(status.output).toContain("- Goal: Daily planning");
         expect(status.output).toContain("Background: Background work is running");
+        expect(status.output).toContain("Budget: 2 of 5 iterations used (3 left)");
         expect(status.output).toContain("Needs attention: Deadline handoff");
         expect(status.output).toContain("Next safe action: Review final artifact");
         expect(status.output).toContain("Active goals");
@@ -2319,6 +2339,7 @@ describe("ChatRunner", () => {
         expect(status.output).toContain("Other work is active");
         expect(status.output).toContain("Background work:");
         expect(status.output).not.toContain("goal-a");
+        expect(status.output).not.toContain("runtime-budget:goal-a");
         expect(status.output).not.toContain("session:agent:agent-runtime");
         expect(status.output).not.toContain("run:agent:agent-runtime");
         expect(status.output).not.toContain("run:process:proc-failed");
@@ -2329,10 +2350,14 @@ describe("ChatRunner", () => {
         expect(focused.success).toBe(true);
         expect(focused.output.indexOf("Current goal")).toBeLessThan(focused.output.indexOf("Progress signals:"));
         expect(focused.output).toContain("Goal details: Daily planning");
+        expect(focused.output).toContain("Budget: 2 of 5 iterations used (3 left)");
         expect(focused.output).toContain("Progress signals:");
         expect(focused.output).not.toContain("Active work:");
         expect(focused.output).not.toContain("ID: goal-a");
         expect(focused.output).not.toContain("Status: active");
+        expect(focused.output).not.toContain("runtime-budget:goal-a");
+        expect(focusedDetailed.success).toBe(true);
+        expect(focusedDetailed.output).toContain("Budget diagnostics: pulseed runtime budget runtime-budget:goal-a");
         expect(goals.success).toBe(true);
         expect(goals.output).toContain("Goals:");
         expect(adapter.execute).not.toHaveBeenCalled();

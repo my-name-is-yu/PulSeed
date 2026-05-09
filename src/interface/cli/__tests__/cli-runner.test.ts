@@ -29,6 +29,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { RuntimeBudgetStore } from "../../../runtime/store/budget-store.js";
 
 // ─── Module mocks ───────────────────────────────────────────────────────────
 //
@@ -1400,6 +1401,23 @@ describe("status subcommand", async () => {
 
   it("prints the current-goal summary without requiring a copied goal ID", async () => {
     await stateManager.saveGoal(makeGoal({ id: "goal-current-default", title: "Current Default Goal", status: "active" }));
+    const budgetStore = new RuntimeBudgetStore(path.join(tmpDir, "runtime"));
+    await budgetStore.create({
+      budget_id: "runtime-budget:goal-current-default",
+      scope: { goal_id: "goal-current-default" },
+      title: "Runtime budget for current goal",
+      created_at: "2026-04-25T00:00:00.000Z",
+      limits: [{
+        dimension: "wall_clock_ms",
+        limit: 60 * 60 * 1000,
+        finalization_at_remaining: 10 * 60 * 1000,
+        exhaustion_policy: "finalize",
+      }],
+    });
+    await budgetStore.recordTaskExecution("runtime-budget:goal-current-default", {
+      wall_clock_ms: 20 * 60 * 1000,
+      observed_at: "2026-04-25T00:20:00.000Z",
+    });
     const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
     const code = await runCLI("status");
@@ -1408,7 +1426,9 @@ describe("status subcommand", async () => {
     expect(code).toBe(0);
     expect(output).toContain("Current goal");
     expect(output).toContain("- Goal: Current Default Goal");
+    expect(output).toContain("Budget: 20m of 1h used (40m left)");
     expect(output).not.toContain("Goal ID: goal-current-default");
+    expect(output).not.toContain("runtime-budget:goal-current-default");
     expect(output).not.toContain("Error: --goal <id>");
 
     consoleSpy.mockClear();
@@ -1416,6 +1436,7 @@ describe("status subcommand", async () => {
     const detailOutput = consoleSpy.mock.calls.map((c) => c.join(" ")).join("\n");
     expect(detailCode).toBe(0);
     expect(detailOutput).toContain("Goal ID: goal-current-default");
+    expect(detailOutput).toContain("Budget diagnostics: pulseed runtime budget runtime-budget:goal-current-default");
     consoleSpy.mockRestore();
   });
 

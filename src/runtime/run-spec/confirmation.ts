@@ -34,6 +34,7 @@ export function formatRunSpecSetupProposal(
     `Workspace: ${spec.workspace?.path ?? "unresolved"}`,
     `Execution: ${formatExecutionTarget(spec)}`,
     `Progress: ${spec.progress_contract.semantics}`,
+    `Budget: ${formatRunSpecBudget(spec)}`,
   ];
   if (spec.metric) {
     lines.push(`Metric: ${spec.metric.name} (${formatMetricDirection(spec.metric.direction)})`);
@@ -61,6 +62,7 @@ function formatDiagnosticRunSpecSetupProposal(spec: RunSpec): string {
     `Workspace: ${spec.workspace?.path ?? "unresolved"}`,
     `Execution: ${spec.execution_target.kind}${spec.execution_target.remote_host ? ` (${spec.execution_target.remote_host})` : ""}`,
     `Progress: ${spec.progress_contract.semantics}`,
+    `Budget: max_trials=${spec.budget.max_trials ?? "unspecified"}, max_wall_clock_minutes=${spec.budget.max_wall_clock_minutes ?? "unspecified"}, resident_policy=${spec.budget.resident_policy}`,
   ];
   if (spec.metric) {
     lines.push(`Metric: ${spec.metric.name} (${spec.metric.direction})`);
@@ -93,6 +95,47 @@ function formatMetricDirection(direction: NonNullable<RunSpec["metric"]>["direct
     target: "aim for target",
     unknown: "direction not specified",
   }[direction] ?? "direction not specified";
+}
+
+function formatRunSpecBudget(spec: RunSpec): string {
+  return [
+    formatRunSpecTrialBudget(spec.budget.max_trials),
+    formatRunSpecWallClockBudget(spec),
+    formatRunSpecResidentPolicy(spec.budget.resident_policy),
+  ].join("; ");
+}
+
+function formatRunSpecTrialBudget(maxTrials: RunSpec["budget"]["max_trials"]): string {
+  return maxTrials === null
+    ? "trial limit unknown"
+    : `up to ${maxTrials} trial${maxTrials === 1 ? "" : "s"}`;
+}
+
+function formatRunSpecWallClockBudget(spec: RunSpec): string {
+  const minutes = spec.budget.max_wall_clock_minutes;
+  if (minutes === null) {
+    return spec.deadline?.iso_at
+      ? "wall-clock budget unknown; deadline is set"
+      : "wall-clock budget unknown";
+  }
+  const derived = spec.deadline?.iso_at && spec.budget.resident_policy === "until_deadline"
+    ? " from the deadline"
+    : "";
+  return `${formatMinutes(minutes)} wall-clock budget${derived}`;
+}
+
+function formatRunSpecResidentPolicy(policy: RunSpec["budget"]["resident_policy"]): string {
+  if (policy === "until_deadline") return "resident work runs until the deadline";
+  if (policy === "best_effort") return "resident work is best effort";
+  return "resident policy unknown";
+}
+
+function formatMinutes(minutes: number): string {
+  if (minutes === 0) return "0 minutes";
+  if (minutes < 60) return `${minutes} minute${minutes === 1 ? "" : "s"}`;
+  const hours = minutes / 60;
+  if (Number.isInteger(hours)) return `${hours} hour${hours === 1 ? "" : "s"}`;
+  return `${minutes} minutes`;
 }
 
 function formatPolicy(

@@ -14,12 +14,17 @@ import { resolvePulSeedExecutionProfile } from "../../../orchestrator/execution/
 import type { Task } from "../../../base/types/task.js";
 import { createRuntimeSessionRegistry } from "../../../runtime/session-registry/index.js";
 import { RuntimeOperatorHandoffStore } from "../../../runtime/store/operator-handoff-store.js";
+import { RuntimeBudgetStore } from "../../../runtime/store/budget-store.js";
 import {
   formatCurrentGoalChoiceList,
   formatCurrentGoalSummary,
   isCurrentGoalCandidate,
 } from "../../current-goal-summary.js";
 import { formatGoalStatusDetails } from "../../goal-status-display.js";
+import {
+  createRuntimeBudgetProjections,
+  type RuntimeBudgetProjection,
+} from "../../runtime-budget-summary.js";
 
 async function printActiveGoals(
   stateManager: StateManager,
@@ -163,15 +168,17 @@ export async function cmdStatus(
 
   const registry = createRuntimeSessionRegistry({ stateManager });
   const runtimeRoot = path.join(stateManager.getBaseDir(), "runtime");
-  const [runtimeSnapshot, handoffs] = await Promise.all([
+  const [runtimeSnapshot, handoffs, runtimeBudgets] = await Promise.all([
     registry.snapshot(),
     new RuntimeOperatorHandoffStore(runtimeRoot).listOpen(),
+    loadRuntimeBudgetProjections(stateManager),
   ]);
 
   if (isCurrentGoalCandidate(goal)) {
     console.log(formatCurrentGoalSummary(goal, {
       runtimeSnapshot,
       handoffs,
+      runtimeBudgets,
       detail: diagnostic ? "diagnostic" : "default",
     }));
   }
@@ -230,23 +237,35 @@ export async function cmdCurrentStatus(
 
   const registry = createRuntimeSessionRegistry({ stateManager });
   const runtimeRoot = path.join(stateManager.getBaseDir(), "runtime");
-  const [runtimeSnapshot, handoffs] = await Promise.all([
+  const [runtimeSnapshot, handoffs, runtimeBudgets] = await Promise.all([
     registry.snapshot(),
     new RuntimeOperatorHandoffStore(runtimeRoot).listOpen(),
+    loadRuntimeBudgetProjections(stateManager),
   ]);
 
   console.log(goals.length === 1
     ? formatCurrentGoalSummary(goals[0]!, {
       runtimeSnapshot,
       handoffs,
+      runtimeBudgets,
       detail: diagnostic ? "diagnostic" : "default",
     })
     : formatCurrentGoalChoiceList(goals, {
       runtimeSnapshot,
       handoffs,
+      runtimeBudgets,
       detail: diagnostic ? "diagnostic" : "default",
     }));
   return 0;
+}
+
+async function loadRuntimeBudgetProjections(stateManager: StateManager): Promise<RuntimeBudgetProjection[]> {
+  try {
+    const store = new RuntimeBudgetStore(path.join(stateManager.getBaseDir(), "runtime"));
+    return createRuntimeBudgetProjections(store, await store.list());
+  } catch {
+    return [];
+  }
 }
 
 async function loadLatestTaskForStatus(stateManager: StateManager, goalId: string): Promise<Task | null> {
