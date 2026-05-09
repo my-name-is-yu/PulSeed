@@ -7,10 +7,14 @@ import { TAGS, MAX_OUTPUT_CHARS, PERMISSION_LEVEL } from "./constants.js";
 import { assessShellCommand, formatShellPolicyDenialReason, isReadOnlyShellCommand } from "./command-policy.js";
 import { resolveWorkspaceCwd } from "../../workspace-scope.js";
 
+export const SHELL_TIMEOUT_DEFAULT_MS = 120_000;
+export const SHELL_TIMEOUT_MAX_MS = 600_000;
+export const ShellTimeoutMsSchema = z.number().int().min(1).max(SHELL_TIMEOUT_MAX_MS).default(SHELL_TIMEOUT_DEFAULT_MS);
+
 export const ShellInputSchema = z.object({
   command: z.string().min(1),
   cwd: z.string().optional(),
-  timeoutMs: z.number().default(120_000),
+  timeoutMs: ShellTimeoutMsSchema,
   description: z.string().optional(),
 });
 export type ShellInput = z.infer<typeof ShellInputSchema>;

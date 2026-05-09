@@ -5,11 +5,14 @@ import { DESCRIPTION } from "./prompt.js";
 import { TAGS, MAX_OUTPUT_CHARS, PERMISSION_LEVEL } from "./constants.js";
 import { resolveWorkspaceCwd, resolveWorkspacePath } from "../../workspace-scope.js";
 
+export const TEST_RUNNER_TIMEOUT_DEFAULT_MS = 60_000;
+export const TEST_RUNNER_TIMEOUT_MAX_MS = 1_800_000;
+
 export const TestRunnerInputSchema = z.object({
   command: z.string().default("npx vitest run"),
   cwd: z.string().optional(),
   pattern: z.string().optional(),
-  timeout: z.number().default(60_000),
+  timeout: z.number().int().min(1).max(TEST_RUNNER_TIMEOUT_MAX_MS).default(TEST_RUNNER_TIMEOUT_DEFAULT_MS),
 });
 
 export type TestRunnerInput = z.infer<typeof TestRunnerInputSchema>;
