@@ -114,6 +114,12 @@ const JournalBackedQueueStateSchema = z.object({
   inflight: z.record(JournalBackedQueueClaimRecordSchema),
 });
 
+const JournalLockOwnerSchema = z.object({
+  acquiredAt: QueueSafeNonnegativeNumberSchema,
+});
+
+type JournalLockOwner = z.infer<typeof JournalLockOwnerSchema>;
+
 function emptyPending(): Record<EnvelopePriority, string[]> {
   return {
     critical: [],
@@ -157,6 +163,11 @@ function readJsonOrNull<T>(filePath: string): T | null {
   }
 }
 
+function readJournalLockOwner(ownerPath: string): JournalLockOwner | null {
+  const parsed = JournalLockOwnerSchema.safeParse(readJsonOrNull<unknown>(ownerPath));
+  return parsed.success ? parsed.data : null;
+}
+
 function sleepMs(ms: number): void {
   if (ms <= 0) return;
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
@@ -194,8 +205,8 @@ function acquireJournalLock(lockPath: string): JournalLockHandle {
       const code = (err as NodeJS.ErrnoException).code;
       if (code !== 'EEXIST') throw err;
 
-      const owner = readJsonOrNull<{ acquiredAt?: number }>(ownerPath);
-      if (owner?.acquiredAt === undefined || Date.now() - owner.acquiredAt > LOCK_STALE_MS) {
+      const owner = readJournalLockOwner(ownerPath);
+      if (!owner || Date.now() - owner.acquiredAt > LOCK_STALE_MS) {
         try {
           fs.rmSync(lockPath, { recursive: true, force: true });
           continue;

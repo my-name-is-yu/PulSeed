@@ -318,4 +318,17 @@ describe('JournalBackedQueue', () => {
     expect(queue.size()).toBe(1);
     expect(queue.get(envelope.id)?.status).toBe('pending');
   });
+
+  it('reclaims an orphaned lock directory with malformed owner metadata', () => {
+    const lockPath = `${journalPath}.lock`;
+    fs.mkdirSync(lockPath, { recursive: true });
+    fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({ acquiredAt: 'not-a-number' }), 'utf-8');
+
+    const queue = new JournalBackedQueue({ journalPath, now: () => 1_000 });
+    const envelope = createEnvelope({ type: 'event', name: 'malformed-lock', source: 'test', payload: {}, priority: 'normal' });
+
+    expect(queue.accept(envelope).accepted).toBe(true);
+    expect(queue.size()).toBe(1);
+    expect(queue.get(envelope.id)?.status).toBe('pending');
+  });
 });
