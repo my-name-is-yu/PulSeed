@@ -1,4 +1,4 @@
-import type { ITool, ToolMetadata } from "./types.js";
+import { ToolMetadataSchema, type ITool, type ToolMetadata } from "./types.js";
 
 /**
  * 3-tier tool registry.
@@ -19,12 +19,13 @@ export class ToolRegistry {
   // --- Registration ---
 
   register(tool: ITool): void {
-    const name = tool.metadata.name;
+    const metadata = ToolMetadataSchema.parse(tool.metadata);
+    const name = metadata.name;
     if (this.baseCatalog.has(name)) {
       throw new Error(`Tool "${name}" is already registered`);
     }
     this.baseCatalog.set(name, tool);
-    for (const alias of tool.metadata.aliases) {
+    for (const alias of metadata.aliases) {
       if (this.aliasMap.has(alias) || this.baseCatalog.has(alias)) {
         throw new Error(`Alias "${alias}" conflicts with existing tool or alias`);
       }
