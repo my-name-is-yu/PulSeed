@@ -17,7 +17,7 @@ import {
 import { SetupSecretIntakeResultSchema, type SetupSecretIntakeItem } from "../../interface/chat/setup-secret-intake.js";
 import { detectTurnLanguageHint, UNKNOWN_TURN_LANGUAGE_HINT, type TurnLanguageHint } from "../../interface/chat/turn-language.js";
 import { formatRuntimeStatus } from "../../interface/chat/chat-runner-runtime.js";
-import { buildTelegramSetupGuidanceData, formatTelegramConfigureGuidance } from "../../interface/chat/chat-runner-routes.js";
+import { buildTelegramSetupGuidanceData, formatTelegramConfigureGuidance } from "../../interface/chat/telegram-setup-guidance.js";
 import { confirmTelegramGatewayConfigWrite } from "../../interface/chat/setup-config-write.js";
 import type {
   ITool,
