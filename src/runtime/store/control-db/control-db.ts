@@ -273,8 +273,12 @@ export class ControlDatabase {
     return readAppliedMigrations(this.db);
   }
 
-  transaction<T>(fn: () => T): T {
-    return this.db.transaction(fn)();
+  read<T>(fn: (db: SqliteDatabase) => T): T {
+    return fn(this.db);
+  }
+
+  transaction<T>(fn: (db: SqliteDatabase) => T): T {
+    return this.db.transaction(() => fn(this.db))();
   }
 
   recordLegacyImport(input: ControlLegacyImportInput): ControlLegacyImportRecord {

@@ -298,7 +298,8 @@ async function createDurableLoopBackgroundRun(goal: Goal, deps: TendDeps) {
 
 function getBackgroundRunLedger(deps: TendDeps): Pick<BackgroundRunLedger, "create" | "terminal"> {
   if (deps.backgroundRunLedger) return deps.backgroundRunLedger;
-  return new BackgroundRunLedger(resolveConfiguredDaemonRuntimeRoot(deps.stateManager.getBaseDir()));
+  const baseDir = deps.stateManager.getBaseDir();
+  return new BackgroundRunLedger(resolveConfiguredDaemonRuntimeRoot(baseDir), { controlBaseDir: baseDir });
 }
 
 function chatSessionSourceRef(sessionId: string): RuntimeSessionRef {

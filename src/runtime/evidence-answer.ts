@@ -131,7 +131,7 @@ export async function answerRuntimeEvidenceQuestion(input: RuntimeEvidenceAnswer
   const runtimeRoot = path.join(input.stateManager.getBaseDir(), "runtime");
   const registry = createRuntimeSessionRegistry({ stateManager: input.stateManager as StateManager });
   const ledger = new RuntimeEvidenceLedger(runtimeRoot);
-  const healthStore = new RuntimeHealthStore(runtimeRoot);
+  const healthStore = new RuntimeHealthStore(runtimeRoot, { controlBaseDir: input.stateManager.getBaseDir() });
 
   const [snapshot, health] = await Promise.all([
     registry.snapshot().catch(() => null),

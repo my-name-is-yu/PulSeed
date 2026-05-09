@@ -1,4 +1,5 @@
 import * as fsp from "node:fs/promises";
+import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -247,6 +248,8 @@ describe("RuntimeSessionRegistry", () => {
       completed_at: "2026-04-25T00:10:00.000Z",
       summary: "completed after restart",
     });
+    expect(fs.existsSync(path.join(tmpDir, "runtime", "background-runs"))).toBe(false);
+    expect(fs.existsSync(path.join(tmpDir, "state", "pulseed-control.sqlite"))).toBe(true);
 
     const snapshot = await new RuntimeSessionRegistry({ stateManager }).snapshot();
 

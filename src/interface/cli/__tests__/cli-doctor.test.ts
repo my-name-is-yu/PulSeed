@@ -36,7 +36,11 @@ import {
   checkNativeTaskAgentLoopTools,
   cmdDoctor,
 } from "../commands/doctor.js";
-import { openControlDatabase } from "../../../runtime/store/index.js";
+import {
+  CONTROL_DB_SCHEMA_VERSION,
+  openControlDatabase,
+  RuntimeHealthStore,
+} from "../../../runtime/store/index.js";
 
 describe("checkNodeVersion", () => {
   it("passes on current Node.js runtime (>= 20)", () => {
@@ -745,42 +749,32 @@ describe("checkDaemon", () => {
 
   it("warns when runtime KPI reports degraded command acceptance", async () => {
     const now = Date.now();
-    fs.mkdirSync(path.join(tmpDir, "runtime", "health"), { recursive: true });
     fs.mkdirSync(path.join(tmpDir, "tasks", "goal-1", "ledger"), { recursive: true });
-    fs.writeFileSync(
-      path.join(tmpDir, "runtime", "health", "daemon.json"),
-      JSON.stringify({
-        status: "degraded",
-        leader: true,
-        checked_at: now,
-        kpi: {
-          process_alive: { status: "ok", checked_at: now, last_ok_at: now },
-          command_acceptance: {
-            status: "degraded",
-            checked_at: now,
-            last_degraded_at: now,
-            reason: "gateway or queue health degraded",
-          },
-          task_execution: { status: "ok", checked_at: now, last_ok_at: now },
-          degraded_at: now,
+    await new RuntimeHealthStore(path.join(tmpDir, "runtime")).saveSnapshot({
+      status: "degraded",
+      leader: true,
+      checked_at: now,
+      components: {
+        gateway: "degraded",
+        queue: "ok",
+        leases: "ok",
+        approval: "ok",
+        outbox: "ok",
+        supervisor: "ok",
+      },
+      kpi: {
+        process_alive: { status: "ok", checked_at: now, last_ok_at: now },
+        command_acceptance: {
+          status: "degraded",
+          checked_at: now,
+          last_degraded_at: now,
+          reason: "gateway or queue health degraded",
         },
-        details: { pid: process.pid },
-      })
-    );
-    fs.writeFileSync(
-      path.join(tmpDir, "runtime", "health", "components.json"),
-      JSON.stringify({
-        checked_at: now,
-        components: {
-          gateway: "degraded",
-          queue: "ok",
-          leases: "ok",
-          approval: "ok",
-          outbox: "ok",
-          supervisor: "ok",
-        },
-      })
-    );
+        task_execution: { status: "ok", checked_at: now, last_ok_at: now },
+        degraded_at: now,
+      },
+      details: { pid: process.pid },
+    });
     fs.writeFileSync(
       path.join(tmpDir, "tasks", "goal-1", "ledger", "task-1.json"),
       JSON.stringify({
@@ -941,7 +935,7 @@ describe("checkControlDatabase", () => {
     const result = checkControlDatabase(tmpDir);
 
     expect(result.status).toBe("pass");
-    expect(result.detail).toContain("schema version 1/1");
+    expect(result.detail).toContain(`schema version ${CONTROL_DB_SCHEMA_VERSION}/${CONTROL_DB_SCHEMA_VERSION}`);
     expect(result.detail).toContain("legacy import record");
   });
 });

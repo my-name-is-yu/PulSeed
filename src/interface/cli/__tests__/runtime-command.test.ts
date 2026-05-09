@@ -118,7 +118,7 @@ describe("runtime registry CLI commands", () => {
     vi.spyOn(daemonClient, "isDaemonRunning").mockResolvedValue({ running: true, port: 47321 });
     const runtimeRoot = path.join(tmpDir, "resident-runtime");
     await stateManager.writeRaw("daemon.json", { runtime_root: "resident-runtime" });
-    await new RuntimeHealthStore(runtimeRoot).saveSnapshot({
+    await new RuntimeHealthStore(runtimeRoot, { controlBaseDir: tmpDir }).saveSnapshot({
       status: "ok",
       leader: true,
       checked_at: Date.parse("2026-05-03T00:00:00.000Z"),
@@ -168,7 +168,7 @@ describe("runtime registry CLI commands", () => {
       conversation_goal_map: {},
       sender_goal_map: {},
     });
-    await new BackgroundRunLedger(runtimeRoot).create({
+    await new BackgroundRunLedger(runtimeRoot, { controlBaseDir: tmpDir }).create({
       id: "run:coreloop:pinned",
       kind: "coreloop_run",
       status: "running",

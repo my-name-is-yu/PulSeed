@@ -19,6 +19,7 @@ vi.mock("../../../base/utils/paths.js", async (importOriginal) => {
 import { getPulseedDirPath } from "../../../base/utils/paths.js";
 import { cmdDaemonStatus } from "../commands/daemon.js";
 import { PIDManager } from "../../../runtime/pid-manager.js";
+import { RuntimeHealthStore } from "../../../runtime/store/health-store.js";
 import { ProactiveInterventionStore } from "../../../runtime/store/proactive-intervention-store.js";
 
 function mockPidInspectRunning(runtimePid: number, ownerPid = runtimePid) {
@@ -41,6 +42,16 @@ function mockPidInspectRunning(runtimePid: number, ownerPid = runtimePid) {
     verifiedPids: ownerPid === runtimePid ? [runtimePid] : [runtimePid, ownerPid],
     unverifiedLegacyPids: [],
   });
+}
+
+async function saveRuntimeHealthFixture(
+  baseDir: string,
+  daemon: Parameters<RuntimeHealthStore["saveDaemonHealth"]>[0],
+  components: Parameters<RuntimeHealthStore["saveComponentsHealth"]>[0]
+): Promise<void> {
+  const store = new RuntimeHealthStore(path.join(baseDir, "runtime"), { controlBaseDir: baseDir });
+  await store.saveDaemonHealth(daemon);
+  await store.saveComponentsHealth(components);
 }
 
 describe("cmdDaemonStatus", () => {
@@ -197,11 +208,10 @@ describe("cmdDaemonStatus", () => {
 
   it("prints runtime KPI status when health snapshot exists", async () => {
     const now = Date.now();
-    fs.mkdirSync(path.join(tmpDir, "runtime", "health"), { recursive: true });
     fs.mkdirSync(path.join(tmpDir, "tasks", "goal-kpi", "ledger"), { recursive: true });
-    fs.writeFileSync(
-      path.join(tmpDir, "runtime", "health", "daemon.json"),
-      JSON.stringify({
+    await saveRuntimeHealthFixture(
+      tmpDir,
+      {
         status: "degraded",
         leader: true,
         checked_at: now,
@@ -254,11 +264,8 @@ describe("cmdDaemonStatus", () => {
           },
         },
         details: { pid: process.pid },
-      })
-    );
-    fs.writeFileSync(
-      path.join(tmpDir, "runtime", "health", "components.json"),
-      JSON.stringify({
+      },
+      {
         checked_at: now,
         components: {
           gateway: "degraded",
@@ -268,7 +275,7 @@ describe("cmdDaemonStatus", () => {
           outbox: "ok",
           supervisor: "ok",
         },
-      })
+      }
     );
     fs.writeFileSync(
       path.join(tmpDir, "tasks", "goal-kpi", "ledger", "task-1.json"),
@@ -338,10 +345,9 @@ describe("cmdDaemonStatus", () => {
 
   it("separates unrelated approvals from the active goal blocker in long-run health output", async () => {
     const now = Date.now();
-    fs.mkdirSync(path.join(tmpDir, "runtime", "health"), { recursive: true });
-    fs.writeFileSync(
-      path.join(tmpDir, "runtime", "health", "daemon.json"),
-      JSON.stringify({
+    await saveRuntimeHealthFixture(
+      tmpDir,
+      {
         status: "degraded",
         leader: true,
         checked_at: now,
@@ -377,11 +383,8 @@ describe("cmdDaemonStatus", () => {
           },
         },
         details: { pid: process.pid },
-      })
-    );
-    fs.writeFileSync(
-      path.join(tmpDir, "runtime", "health", "components.json"),
-      JSON.stringify({
+      },
+      {
         checked_at: now,
         components: {
           gateway: "ok",
@@ -391,7 +394,7 @@ describe("cmdDaemonStatus", () => {
           outbox: "ok",
           supervisor: "ok",
         },
-      })
+      }
     );
     fs.writeFileSync(
       path.join(tmpDir, "daemon-state.json"),
@@ -430,10 +433,9 @@ describe("cmdDaemonStatus", () => {
   it("reconciles stale runtime health with stopped live PID state", async () => {
     const now = Date.now();
     const stalePid = 999999991;
-    fs.mkdirSync(path.join(tmpDir, "runtime", "health"), { recursive: true });
-    fs.writeFileSync(
-      path.join(tmpDir, "runtime", "health", "daemon.json"),
-      JSON.stringify({
+    await saveRuntimeHealthFixture(
+      tmpDir,
+      {
         status: "ok",
         leader: true,
         checked_at: now - 60_000,
@@ -457,11 +459,8 @@ describe("cmdDaemonStatus", () => {
           },
         },
         details: { pid: stalePid },
-      })
-    );
-    fs.writeFileSync(
-      path.join(tmpDir, "runtime", "health", "components.json"),
-      JSON.stringify({
+      },
+      {
         checked_at: now - 60_000,
         components: {
           gateway: "ok",
@@ -471,7 +470,7 @@ describe("cmdDaemonStatus", () => {
           outbox: "ok",
           supervisor: "ok",
         },
-      })
+      }
     );
     fs.writeFileSync(
       path.join(tmpDir, "daemon-state.json"),
@@ -587,7 +586,6 @@ describe("cmdDaemonStatus", () => {
   it("labels stale in-flight worker state as historical when the runtime is stopped", async () => {
     const now = Date.now();
     fs.mkdirSync(path.join(tmpDir, "runtime"), { recursive: true });
-    fs.mkdirSync(path.join(tmpDir, "runtime", "health"), { recursive: true });
     fs.mkdirSync(path.join(tmpDir, "tasks", "goal-stale", "ledger"), { recursive: true });
     fs.writeFileSync(
       path.join(tmpDir, "runtime", "supervisor-state.json"),
@@ -605,9 +603,9 @@ describe("cmdDaemonStatus", () => {
         updatedAt: now,
       })
     );
-    fs.writeFileSync(
-      path.join(tmpDir, "runtime", "health", "daemon.json"),
-      JSON.stringify({
+    await saveRuntimeHealthFixture(
+      tmpDir,
+      {
         status: "ok",
         leader: true,
         checked_at: now - 15_000,
@@ -631,11 +629,8 @@ describe("cmdDaemonStatus", () => {
           },
         },
         details: { pid: 999999999 },
-      })
-    );
-    fs.writeFileSync(
-      path.join(tmpDir, "runtime", "health", "components.json"),
-      JSON.stringify({
+      },
+      {
         checked_at: now - 15_000,
         components: {
           gateway: "ok",
@@ -645,7 +640,7 @@ describe("cmdDaemonStatus", () => {
           outbox: "ok",
           supervisor: "ok",
         },
-      })
+      }
     );
     fs.writeFileSync(
       path.join(tmpDir, "daemon-state.json"),

@@ -32,7 +32,7 @@ export function createRuntimeWiring(
   const runtimePaths = createRuntimeStorePaths(runtimeRoot);
   const approvalStore = new ApprovalStore(runtimePaths);
   const outboxStore = new OutboxStore(runtimePaths);
-  const runtimeHealthStore = new RuntimeHealthStore(runtimePaths);
+  const runtimeHealthStore = new RuntimeHealthStore(runtimePaths, { controlBaseDir: baseDir });
   const leaderLockManager = new LeaderLockManager(runtimeRoot);
   const goalLeaseManager = new GoalLeaseManager(runtimeRoot);
   const approvalBroker = new ApprovalBroker({

@@ -129,7 +129,10 @@ export async function createRuntimeDreamSidecarReview(
   input: RuntimeDreamSidecarReviewInput
 ): Promise<RuntimeDreamSidecarReview> {
   const runtimeRoot = path.join(input.stateManager.getBaseDir(), "runtime");
-  const ledgerRun = await new BackgroundRunLedger(runtimeRoot).load(input.runId);
+  const ledgerRun = await new BackgroundRunLedger(
+    runtimeRoot,
+    { controlBaseDir: input.stateManager.getBaseDir() },
+  ).load(input.runId);
   const projected = await resolveProjectedRun(input.stateManager, input.runId);
   const resolved = selectResolvedRun(ledgerRun, projected) ?? (ledgerRun
     ? {

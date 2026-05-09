@@ -16,6 +16,7 @@ import { GoalLeaseManager } from "../goal-lease-manager.js";
 import { createEnvelope } from "../types/envelope.js";
 import { runSupervisorMaintenanceCycleForDaemon } from "../daemon/maintenance.js";
 import { GuardrailStore } from "../guardrails/index.js";
+import { RuntimeHealthStore } from "../store/health-store.js";
 import type { DaemonState } from "../../base/types/daemon.js";
 import { restoreInterruptedGoals } from "../daemon/persistence.js";
 import { upsertRelationshipProfileItem } from "../../platform/profile/relationship-profile.js";
@@ -63,6 +64,23 @@ async function pollForJsonMatch<T>(
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }
   throw new Error(`Timed out waiting for matching JSON in file: ${filePath}`);
+}
+
+async function pollForStoreMatch<T>(
+  load: () => Promise<T | null>,
+  predicate: (value: T) => boolean,
+  timeoutMs = 2_000,
+  intervalMs = 20
+): Promise<T> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const value = await load();
+    if (value !== null && predicate(value)) {
+      return value;
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+  throw new Error("Timed out waiting for matching store record");
 }
 
 async function waitFor(
@@ -1397,9 +1415,12 @@ describe("DaemonRunner durable runtime", () => {
     await startPromise;
 
     const runtimeDir = path.join(tmpDir, "runtime");
+    const healthStore = new RuntimeHealthStore(runtimeDir, { controlBaseDir: tmpDir });
     expect(fs.existsSync(path.join(runtimeDir, "approvals", "pending"))).toBe(true);
     expect(fs.existsSync(path.join(runtimeDir, "outbox"))).toBe(true);
-    expect(fs.existsSync(path.join(runtimeDir, "health", "daemon.json"))).toBe(true);
+    await expect(healthStore.loadDaemonHealth()).resolves.not.toBeNull();
+    await expect(healthStore.loadComponentsHealth()).resolves.not.toBeNull();
+    expect(fs.existsSync(path.join(runtimeDir, "health", "daemon.json"))).toBe(false);
     expect(fs.existsSync(path.join(runtimeDir, "queue.json"))).toBe(true);
     expect(fs.existsSync(path.join(tmpDir, "pulseed.pid"))).toBe(false);
   });
@@ -1527,8 +1548,9 @@ describe("DaemonRunner durable runtime", () => {
     );
     expect(leaderRecord.pid).toBe(process.pid);
 
-    const healthRecord = await pollForJsonMatch<{ leader: boolean; details?: { pid?: number } }>(
-      path.join(runtimeDir, "health", "daemon.json"),
+    const healthStore = new RuntimeHealthStore(runtimeDir, { controlBaseDir: tmpDir });
+    const healthRecord = await pollForStoreMatch(
+      () => healthStore.loadDaemonHealth(),
       (value) => value.leader === true
     );
     expect(healthRecord.details?.pid).toBe(process.pid);
@@ -1536,16 +1558,17 @@ describe("DaemonRunner durable runtime", () => {
     daemon.stop();
     void startPromise.catch(() => {});
 
-    await pollForJsonMatch<{ leader: boolean }>(
-      path.join(runtimeDir, "health", "daemon.json"),
+    await pollForStoreMatch(
+      () => healthStore.loadDaemonHealth(),
       (value) => value.leader === false
     );
     currentDaemon = null;
     currentStartPromise = null;
 
     expect(fs.existsSync(path.join(runtimeDir, "leader", "leader.json"))).toBe(false);
-    const finalHealth = JSON.parse(fs.readFileSync(path.join(runtimeDir, "health", "daemon.json"), "utf-8"));
-    expect(finalHealth.leader).toBe(false);
+    const finalHealth = await healthStore.loadDaemonHealth();
+    expect(finalHealth?.leader).toBe(false);
+    expect(fs.existsSync(path.join(runtimeDir, "health", "daemon.json"))).toBe(false);
   }, 30_000);
 
   it("anchors a relative runtime_root to the daemon base dir", async () => {
@@ -1568,7 +1591,11 @@ describe("DaemonRunner durable runtime", () => {
 
       const startPromise = daemon.start(["goal-1"]);
       currentStartPromise = startPromise;
-      await waitFor(() => fs.existsSync(path.join(tmpDir, "runtime-v2", "health", "daemon.json")));
+      const healthStore = new RuntimeHealthStore(path.join(tmpDir, "runtime-v2"), { controlBaseDir: tmpDir });
+      await pollForStoreMatch(
+        () => healthStore.loadDaemonHealth(),
+        (value) => value.status === "ok" || value.status === "degraded"
+      );
       await waitFor(() => {
         const statePath = path.join(tmpDir, "daemon-state.json");
         if (!fs.existsSync(statePath)) {
@@ -1581,8 +1608,10 @@ describe("DaemonRunner durable runtime", () => {
       daemon.stop();
       await startPromise;
 
-      expect(fs.existsSync(path.join(tmpDir, "runtime-v2", "health", "daemon.json"))).toBe(true);
-      expect(fs.existsSync(path.join(otherCwd, "runtime-v2", "health", "daemon.json"))).toBe(false);
+      await expect(healthStore.loadDaemonHealth()).resolves.not.toBeNull();
+      expect(fs.existsSync(path.join(tmpDir, "state", "pulseed-control.sqlite"))).toBe(true);
+      expect(fs.existsSync(path.join(tmpDir, "runtime-v2", "health", "daemon.json"))).toBe(false);
+      expect(fs.existsSync(path.join(otherCwd, "state", "pulseed-control.sqlite"))).toBe(false);
     } finally {
       process.chdir(originalCwd);
       fs.rmSync(otherCwd, { recursive: true, force: true });

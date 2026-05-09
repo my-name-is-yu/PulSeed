@@ -1,6 +1,7 @@
 export {
   CONTROL_DB_INITIAL_SCHEMA_SQL,
   CONTROL_DB_MIGRATIONS,
+  CONTROL_DB_RUNTIME_CONTROL_SCHEMA_SQL,
   CONTROL_DB_SCHEMA_VERSION,
   controlDbMigrationChecksum,
   createControlDbMigration,
@@ -24,3 +25,9 @@ export type {
   ControlLegacyImportStatus,
   SqliteDatabase,
 } from "./control-db.js";
+
+export {
+  openRuntimeControlDatabase,
+  resolveRuntimeControlDbBaseDir,
+} from "./runtime-control-db.js";
+export type { RuntimeControlDbStoreOptions } from "./runtime-control-db.js";

@@ -1,4 +1,3 @@
-import { RuntimeJournal } from "./runtime-journal.js";
 import {
   RuntimeComponentsHealthSchema,
   RuntimeDaemonHealthSchema,
@@ -14,40 +13,76 @@ import {
   createRuntimeStorePaths,
   type RuntimeStorePaths,
 } from "./runtime-paths.js";
+import {
+  openRuntimeControlDatabase,
+  type ControlDatabase,
+  type RuntimeControlDbStoreOptions,
+  type SqliteDatabase,
+} from "./control-db/index.js";
+
+type RuntimeHealthRecordKind = "daemon" | "components";
+
+interface RuntimeHealthRecordRow {
+  record_json: string;
+}
 
 export class RuntimeHealthStore {
   private readonly paths: RuntimeStorePaths;
-  private readonly journal: RuntimeJournal;
+  private readonly dbOptions: RuntimeControlDbStoreOptions;
+  private dbPromise: Promise<ControlDatabase> | null = null;
 
-  constructor(runtimeRootOrPaths?: string | RuntimeStorePaths) {
+  constructor(
+    runtimeRootOrPaths?: string | RuntimeStorePaths,
+    options: RuntimeControlDbStoreOptions = {}
+  ) {
     this.paths =
       typeof runtimeRootOrPaths === "string"
         ? createRuntimeStorePaths(runtimeRootOrPaths)
         : runtimeRootOrPaths ?? createRuntimeStorePaths();
-    this.journal = new RuntimeJournal(this.paths);
+    this.dbOptions = options;
   }
 
   async ensureReady(): Promise<void> {
-    await this.journal.ensureReady();
+    await this.database();
   }
 
   async loadDaemonHealth(): Promise<RuntimeDaemonHealth | null> {
-    return this.journal.load(this.paths.daemonHealthPath, RuntimeDaemonHealthSchema);
+    const db = await this.database();
+    return db.read((sqlite) => {
+      const row = readRuntimeHealthRecord(sqlite, "daemon");
+      return row ? RuntimeDaemonHealthSchema.parse(JSON.parse(row.record_json) as unknown) : null;
+    });
   }
 
   async saveDaemonHealth(health: RuntimeDaemonHealth): Promise<RuntimeDaemonHealth> {
     const parsed = RuntimeDaemonHealthSchema.parse(health);
-    await this.journal.save(this.paths.daemonHealthPath, RuntimeDaemonHealthSchema, parsed);
+    const db = await this.database();
+    db.transaction((sqlite) => {
+      upsertRuntimeHealthRecord(sqlite, "daemon", parsed.checked_at, parsed.status, parsed);
+    });
     return parsed;
   }
 
   async loadComponentsHealth(): Promise<RuntimeComponentsHealth | null> {
-    return this.journal.load(this.paths.componentsHealthPath, RuntimeComponentsHealthSchema);
+    const db = await this.database();
+    return db.read((sqlite) => {
+      const row = readRuntimeHealthRecord(sqlite, "components");
+      return row ? RuntimeComponentsHealthSchema.parse(JSON.parse(row.record_json) as unknown) : null;
+    });
   }
 
   async saveComponentsHealth(health: RuntimeComponentsHealth): Promise<RuntimeComponentsHealth> {
     const parsed = RuntimeComponentsHealthSchema.parse(health);
-    await this.journal.save(this.paths.componentsHealthPath, RuntimeComponentsHealthSchema, parsed);
+    const db = await this.database();
+    db.transaction((sqlite) => {
+      upsertRuntimeHealthRecord(
+        sqlite,
+        "components",
+        parsed.checked_at,
+        summarizeRuntimeHealthStatus(parsed.components),
+        parsed,
+      );
+    });
     return parsed;
   }
 
@@ -70,20 +105,29 @@ export class RuntimeHealthStore {
 
   async saveSnapshot(snapshot: RuntimeHealthSnapshot): Promise<RuntimeHealthSnapshot> {
     const parsed = RuntimeHealthSnapshotSchema.parse(snapshot);
-    await Promise.all([
-      this.saveDaemonHealth({
-        status: parsed.status,
-        leader: parsed.leader,
-        checked_at: parsed.checked_at,
-        kpi: parsed.kpi,
-        long_running: parsed.long_running,
-        details: parsed.details,
-      }),
-      this.saveComponentsHealth({
-        checked_at: parsed.checked_at,
-        components: parsed.components,
-      }),
-    ]);
+    const daemon = RuntimeDaemonHealthSchema.parse({
+      status: parsed.status,
+      leader: parsed.leader,
+      checked_at: parsed.checked_at,
+      kpi: parsed.kpi,
+      long_running: parsed.long_running,
+      details: parsed.details,
+    });
+    const components = RuntimeComponentsHealthSchema.parse({
+      checked_at: parsed.checked_at,
+      components: parsed.components,
+    });
+    const db = await this.database();
+    db.transaction((sqlite) => {
+      upsertRuntimeHealthRecord(sqlite, "daemon", daemon.checked_at, daemon.status, daemon);
+      upsertRuntimeHealthRecord(
+        sqlite,
+        "components",
+        components.checked_at,
+        summarizeRuntimeHealthStatus(components.components),
+        components,
+      );
+    });
     return parsed;
   }
 
@@ -219,4 +263,45 @@ export class RuntimeHealthStore {
   summarizeStatus(components: Record<string, RuntimeHealthSnapshot["status"]>): RuntimeHealthSnapshot["status"] {
     return summarizeRuntimeHealthStatus(components);
   }
+
+  private async database(): Promise<ControlDatabase> {
+    this.dbPromise ??= openRuntimeControlDatabase(this.paths, this.dbOptions);
+    return this.dbPromise;
+  }
+}
+
+function readRuntimeHealthRecord(
+  sqlite: SqliteDatabase,
+  recordKind: RuntimeHealthRecordKind
+): RuntimeHealthRecordRow | undefined {
+  return sqlite.prepare(`
+    SELECT record_json
+    FROM runtime_health_records
+    WHERE record_kind = ?
+  `).get(recordKind) as RuntimeHealthRecordRow | undefined;
+}
+
+function upsertRuntimeHealthRecord(
+  sqlite: SqliteDatabase,
+  recordKind: RuntimeHealthRecordKind,
+  checkedAt: number,
+  status: string,
+  record: RuntimeDaemonHealth | RuntimeComponentsHealth
+): void {
+  sqlite.prepare(`
+    INSERT INTO runtime_health_records (
+      record_kind, checked_at, status, record_json
+    ) VALUES (
+      @record_kind, @checked_at, @status, @record_json
+    )
+    ON CONFLICT(record_kind) DO UPDATE SET
+      checked_at = excluded.checked_at,
+      status = excluded.status,
+      record_json = excluded.record_json
+  `).run({
+    record_kind: recordKind,
+    checked_at: checkedAt,
+    status,
+    record_json: JSON.stringify(record),
+  });
 }

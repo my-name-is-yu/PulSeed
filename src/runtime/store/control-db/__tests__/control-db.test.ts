@@ -43,7 +43,7 @@ describe("ControlDatabase", () => {
     try {
       expect(first.dbPath).toBe(path.join(baseDir, "state", "pulseed-control.sqlite"));
       expect(first.schemaVersion()).toBe(CONTROL_DB_SCHEMA_VERSION);
-      expect(first.listMigrations()).toHaveLength(1);
+      expect(first.listMigrations()).toHaveLength(CONTROL_DB_MIGRATIONS.length);
     } finally {
       first.close();
     }
@@ -51,7 +51,7 @@ describe("ControlDatabase", () => {
     const second = await openControlDatabase({ baseDir });
     try {
       expect(second.schemaVersion()).toBe(CONTROL_DB_SCHEMA_VERSION);
-      expect(second.listMigrations()).toHaveLength(1);
+      expect(second.listMigrations()).toHaveLength(CONTROL_DB_MIGRATIONS.length);
     } finally {
       second.close();
     }
@@ -213,6 +213,6 @@ describe("ControlDatabase", () => {
     const ready = inspectControlDatabase({ baseDir });
     expect(ready.status).toBe("ready");
     expect(ready.schemaVersion).toBe(CONTROL_DB_SCHEMA_VERSION);
-    expect(ready.appliedMigrations).toHaveLength(1);
+    expect(ready.appliedMigrations).toHaveLength(CONTROL_DB_MIGRATIONS.length);
   });
 });

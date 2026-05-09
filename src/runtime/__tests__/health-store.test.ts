@@ -64,8 +64,9 @@ describe("RuntimeHealthStore", () => {
     const daemonPath = path.join(tmpDir, "health", "daemon.json");
     const componentsPath = path.join(tmpDir, "health", "components.json");
 
-    expect(fs.existsSync(daemonPath)).toBe(true);
-    expect(fs.existsSync(componentsPath)).toBe(true);
+    expect(fs.existsSync(daemonPath)).toBe(false);
+    expect(fs.existsSync(componentsPath)).toBe(false);
+    expect(fs.existsSync(path.join(tmpDir, "state", "pulseed-control.sqlite"))).toBe(true);
 
     const loaded = await store.loadSnapshot();
     expect(loaded).toMatchObject({
@@ -138,7 +139,7 @@ describe("RuntimeHealthStore", () => {
     expect(fs.existsSync(path.join(tmpDir, "health", "components.json"))).toBe(false);
   });
 
-  it("skips persisted health records with unsafe timestamps", async () => {
+  it("does not read legacy JSON health records on the normal store path", async () => {
     fs.mkdirSync(path.join(tmpDir, "health"), { recursive: true });
     fs.writeFileSync(path.join(tmpDir, "health", "daemon.json"), JSON.stringify({
       status: "ok",
@@ -181,7 +182,7 @@ describe("RuntimeHealthStore", () => {
     expect(fs.existsSync(path.join(tmpDir, "health", "components.json"))).toBe(false);
   });
 
-  it("rejects non-finite long-running metric values before JSON persistence", async () => {
+  it("rejects non-finite long-running metric values before SQLite persistence", async () => {
     await expect(store.saveSnapshot({
       status: "ok",
       leader: true,
@@ -207,7 +208,7 @@ describe("RuntimeHealthStore", () => {
     expect(fs.existsSync(path.join(tmpDir, "health", "components.json"))).toBe(false);
   });
 
-  it("rejects unsafe long-running metric values before JSON persistence", async () => {
+  it("rejects unsafe long-running metric values before SQLite persistence", async () => {
     await expect(store.saveSnapshot({
       status: "ok",
       leader: true,

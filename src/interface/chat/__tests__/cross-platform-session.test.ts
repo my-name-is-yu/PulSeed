@@ -1,11 +1,13 @@
 import { describe, it, expect, vi } from "vitest";
 import * as fs from "node:fs";
+import * as path from "node:path";
 import { CrossPlatformChatSessionManager } from "../cross-platform-session.js";
 import type { CrossPlatformChatSessionOptions } from "../cross-platform-session.js";
 import type { ChatRunnerDeps } from "../chat-runner-contracts.js";
 import { ApprovalBroker } from "../../../runtime/approval-broker.js";
 import { RuntimeControlService } from "../../../runtime/control/index.js";
 import { ApprovalStore } from "../../../runtime/store/approval-store.js";
+import { BackgroundRunLedger } from "../../../runtime/store/background-run-store.js";
 import { PermissionGrantStore } from "../../../runtime/store/permission-grant-store.js";
 import type { StateManager } from "../../../base/state/state-manager.js";
 import type { IAdapter, AgentResult } from "../../../orchestrator/execution/adapter-layer.js";
@@ -262,9 +264,13 @@ describe("CrossPlatformChatSessionManager", () => {
       expect(daemonClient.startGoal).toHaveBeenCalledOnce();
       expect(adapter.execute).not.toHaveBeenCalled();
 
-      const [runFileName] = fs.readdirSync(`${baseDir}/runtime/background-runs`);
-      const run = JSON.parse(fs.readFileSync(`${baseDir}/runtime/background-runs/${runFileName}`, "utf8"));
+      const runId = (daemonClient.startGoal as ReturnType<typeof vi.fn>).mock.calls[0][1].backgroundRun.backgroundRunId;
+      const run = await new BackgroundRunLedger(path.join(baseDir, "runtime"), { controlBaseDir: baseDir }).load(runId);
+      if (run === null) {
+        throw new Error(`Expected background run ${runId} to be stored`);
+      }
       expect(run).toMatchObject({
+        id: runId,
         status: "queued",
         workspace: "/repo/kaggle",
         parent_session_id: expect.stringMatching(/^session:conversation:/),

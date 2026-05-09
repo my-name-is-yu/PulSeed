@@ -10,6 +10,7 @@ import { GoalLeaseManager } from "../goal-lease-manager.js";
 import { StateManager } from "../../base/state/state-manager.js";
 import { makeGoal } from "../../../tests/helpers/fixtures.js";
 import { BackgroundRunLedger } from "../store/background-run-store.js";
+import type { BackgroundRun } from "../session-registry/types.js";
 import { isDaemonShutdownAbortSignal } from "../../base/utils/abort-reason.js";
 
 function makeLoopResult(o: Partial<LoopResult> = {}): LoopResult {
@@ -53,6 +54,24 @@ async function pollForJsonMatch<T>(
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }
   throw new Error(`Timed out waiting for matching JSON in file: ${filePath}`);
+}
+
+async function pollForBackgroundRunMatch(
+  ledger: BackgroundRunLedger,
+  runId: string,
+  predicate: (value: BackgroundRun) => boolean,
+  timeoutMs = 2_000,
+  intervalMs = 20
+): Promise<BackgroundRun> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const value = await ledger.load(runId);
+    if (value !== null && predicate(value)) {
+      return value;
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+  throw new Error(`Timed out waiting for background run ${runId}`);
 }
 
 function makeSupervisor(
@@ -713,8 +732,7 @@ describe("LoopSupervisor", () => {
         worker.sessionId?.startsWith("session:coreloop:")
       ));
 
-      const runFile = path.join(runtimeRoot, "background-runs", `${encodeURIComponent(runId)}.json`);
-      const terminal = await pollForJsonMatch<any>(runFile, (value) =>
+      const terminal = await pollForBackgroundRunMatch(ledger, runId, (value) =>
         value.status === "succeeded" &&
         typeof value.child_session_id === "string" &&
         value.child_session_id.startsWith("session:coreloop:")
@@ -763,8 +781,7 @@ describe("LoopSupervisor", () => {
         },
       });
 
-      const runFile = path.join(runtimeRoot, "background-runs", `${encodeURIComponent(runId)}.json`);
-      const terminal = await pollForJsonMatch<any>(runFile, (value) =>
+      const terminal = await pollForBackgroundRunMatch(ledger, runId, (value) =>
         value.status === "succeeded" &&
         value.summary === "DurableLoop finalization after 1 iteration(s)."
       );
@@ -817,8 +834,7 @@ describe("LoopSupervisor", () => {
         },
       });
 
-      const coalescedFile = path.join(runtimeRoot, "background-runs", `${encodeURIComponent(coalescedRunId)}.json`);
-      const settled = await pollForJsonMatch<any>(coalescedFile, (value) =>
+      const settled = await pollForBackgroundRunMatch(ledger, coalescedRunId, (value) =>
         value.status === "cancelled" &&
         typeof value.child_session_id === "string" &&
         value.child_session_id.startsWith("session:coreloop:")

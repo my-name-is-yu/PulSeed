@@ -1,7 +1,4 @@
-import * as fsp from "node:fs/promises";
-import * as path from "node:path";
 import type { z } from "zod";
-import { RuntimeJournal } from "./runtime-journal.js";
 import {
   RuntimeControlOperationSchema,
   isTerminalRuntimeControlState,
@@ -13,51 +10,82 @@ import {
   runtimeItemFromOperation,
 } from "./runtime-operation-companion.js";
 import { createRuntimeStorePaths, type RuntimeStorePaths } from "./runtime-paths.js";
+import {
+  openRuntimeControlDatabase,
+  type ControlDatabase,
+  type RuntimeControlDbStoreOptions,
+  type SqliteDatabase,
+} from "./control-db/index.js";
 
 const RuntimeEventJournalSchema = RuntimeEventSchema as z.ZodType<RuntimeEvent>;
 
-export class RuntimeOperationStore {
-  private readonly rootDir: string;
-  private readonly pendingDir: string;
-  private readonly completedDir: string;
-  private readonly eventsDir: string;
-  private readonly journal: RuntimeJournal;
+interface RuntimeOperationRow {
+  operation_json: string;
+}
 
-  constructor(runtimeRootOrPaths?: string | RuntimeStorePaths) {
-    const paths = typeof runtimeRootOrPaths === "string"
+interface RuntimeOperationEventRow {
+  event_json: string;
+}
+
+export interface RuntimeOperationStoreSaveOptions {
+  emitEvent?: boolean;
+}
+
+export class RuntimeOperationStore {
+  private readonly paths: RuntimeStorePaths;
+  private readonly dbOptions: RuntimeControlDbStoreOptions;
+  private dbPromise: Promise<ControlDatabase> | null = null;
+
+  constructor(
+    runtimeRootOrPaths?: string | RuntimeStorePaths,
+    options: RuntimeControlDbStoreOptions = {}
+  ) {
+    this.paths = typeof runtimeRootOrPaths === "string"
       ? createRuntimeStorePaths(runtimeRootOrPaths)
       : runtimeRootOrPaths ?? createRuntimeStorePaths();
-    this.rootDir = path.join(paths.rootDir, "operations");
-    this.pendingDir = path.join(this.rootDir, "pending");
-    this.completedDir = path.join(this.rootDir, "completed");
-    this.eventsDir = path.join(this.rootDir, "events");
-    this.journal = new RuntimeJournal(paths);
+    this.dbOptions = options;
   }
 
   async ensureReady(): Promise<void> {
-    await this.journal.ensureReady();
-    await Promise.all([
-      fsp.mkdir(this.rootDir, { recursive: true }),
-      fsp.mkdir(this.pendingDir, { recursive: true }),
-      fsp.mkdir(this.completedDir, { recursive: true }),
-      fsp.mkdir(this.eventsDir, { recursive: true }),
-    ]);
+    await this.database();
   }
 
   async load(operationId: string): Promise<RuntimeControlOperation | null> {
-    return (
-      await this.journal.load(this.pendingPath(operationId), RuntimeControlOperationSchema)
-    ) ?? (
-      await this.journal.load(this.completedPath(operationId), RuntimeControlOperationSchema)
-    );
+    const db = await this.database();
+    return db.read((sqlite) => {
+      const row = sqlite.prepare(`
+        SELECT operation_json
+        FROM runtime_operations
+        WHERE operation_id = ?
+      `).get(operationId) as RuntimeOperationRow | undefined;
+      return row ? parseRuntimeOperationJson(row.operation_json) : null;
+    });
   }
 
   async listPending(): Promise<RuntimeControlOperation[]> {
-    return this.journal.list(this.pendingDir, RuntimeControlOperationSchema);
+    const db = await this.database();
+    return db.read((sqlite) => {
+      const rows = sqlite.prepare(`
+        SELECT operation_json
+        FROM runtime_operations
+        WHERE terminal = 0
+        ORDER BY requested_at ASC, operation_id ASC
+      `).all() as RuntimeOperationRow[];
+      return rows.map((row) => parseRuntimeOperationJson(row.operation_json));
+    });
   }
 
   async listCompleted(): Promise<RuntimeControlOperation[]> {
-    return this.journal.list(this.completedDir, RuntimeControlOperationSchema);
+    const db = await this.database();
+    return db.read((sqlite) => {
+      const rows = sqlite.prepare(`
+        SELECT operation_json
+        FROM runtime_operations
+        WHERE terminal = 1
+        ORDER BY updated_at ASC, operation_id ASC
+      `).all() as RuntimeOperationRow[];
+      return rows.map((row) => parseRuntimeOperationJson(row.operation_json));
+    });
   }
 
   async listRuntimeItems(): Promise<RuntimeItem[]> {
@@ -66,44 +94,123 @@ export class RuntimeOperationStore {
   }
 
   async listRuntimeEvents(): Promise<RuntimeEvent[]> {
-    return (await this.journal.list(this.eventsDir, RuntimeEventJournalSchema))
-      .sort((a, b) => a.occurred_at.localeCompare(b.occurred_at));
+    const db = await this.database();
+    return db.read((sqlite) => {
+      const rows = sqlite.prepare(`
+        SELECT event_json
+        FROM runtime_operation_events
+        ORDER BY occurred_at ASC, event_id ASC
+      `).all() as RuntimeOperationEventRow[];
+      return rows.map((row) => parseRuntimeEventJson(row.event_json));
+    });
   }
 
-  async save(operation: RuntimeControlOperation): Promise<RuntimeControlOperation> {
-    await this.ensureReady();
+  async save(
+    operation: RuntimeControlOperation,
+    options: RuntimeOperationStoreSaveOptions = {}
+  ): Promise<RuntimeControlOperation> {
     const parsed = RuntimeControlOperationSchema.parse(operation);
-    const previous = await this.load(parsed.operation_id);
-    const targetPath = isTerminalRuntimeControlState(parsed.state)
-      ? this.completedPath(parsed.operation_id)
-      : this.pendingPath(parsed.operation_id);
-    const stalePath = isTerminalRuntimeControlState(parsed.state)
-      ? this.pendingPath(parsed.operation_id)
-      : this.completedPath(parsed.operation_id);
-    await this.journal.save(targetPath, RuntimeControlOperationSchema, parsed);
-    await this.journal.remove(stalePath);
-    await this.appendRuntimeEventForSave(parsed, previous);
+    const db = await this.database();
+    db.transaction((sqlite) => {
+      const previousRow = sqlite.prepare(`
+        SELECT operation_json
+        FROM runtime_operations
+        WHERE operation_id = ?
+      `).get(parsed.operation_id) as RuntimeOperationRow | undefined;
+      const previous = previousRow ? parseRuntimeOperationJson(previousRow.operation_json) : null;
+      upsertRuntimeOperation(sqlite, parsed);
+      if (options.emitEvent !== false) {
+        const event = runtimeEventFromOperationTransition(parsed, previous);
+        if (event) {
+          insertRuntimeOperationEvent(sqlite, event, parsed.operation_id);
+        }
+      }
+    });
     return parsed;
   }
 
-  private async appendRuntimeEventForSave(
-    operation: RuntimeControlOperation,
-    previous: RuntimeControlOperation | null,
-  ): Promise<void> {
-    const event = runtimeEventFromOperationTransition(operation, previous);
-    if (!event) return;
-    await this.journal.save(this.eventPath(event.event_id), RuntimeEventJournalSchema, event);
+  async importLegacyRuntimeEvent(
+    event: RuntimeEvent,
+    operationId: string | null = null,
+  ): Promise<RuntimeEvent> {
+    const parsed = RuntimeEventJournalSchema.parse(event);
+    const db = await this.database();
+    db.transaction((sqlite) => {
+      insertRuntimeOperationEvent(sqlite, parsed, operationId);
+    });
+    return parsed;
   }
 
-  private pendingPath(operationId: string): string {
-    return path.join(this.pendingDir, `${encodeURIComponent(operationId)}.json`);
+  private async database(): Promise<ControlDatabase> {
+    this.dbPromise ??= openRuntimeControlDatabase(this.paths, this.dbOptions);
+    return this.dbPromise;
   }
+}
 
-  private completedPath(operationId: string): string {
-    return path.join(this.completedDir, `${encodeURIComponent(operationId)}.json`);
-  }
+function parseRuntimeOperationJson(operationJson: string): RuntimeControlOperation {
+  return RuntimeControlOperationSchema.parse(JSON.parse(operationJson) as unknown);
+}
 
-  private eventPath(eventId: string): string {
-    return path.join(this.eventsDir, `${encodeURIComponent(eventId)}.json`);
+function parseRuntimeEventJson(eventJson: string): RuntimeEvent {
+  return RuntimeEventJournalSchema.parse(JSON.parse(eventJson) as unknown);
+}
+
+function upsertRuntimeOperation(
+  sqlite: SqliteDatabase,
+  operation: RuntimeControlOperation
+): void {
+  sqlite.prepare(`
+    INSERT INTO runtime_operations (
+      operation_id, kind, state, terminal, requested_at, updated_at, operation_json
+    ) VALUES (
+      @operation_id, @kind, @state, @terminal, @requested_at, @updated_at, @operation_json
+    )
+    ON CONFLICT(operation_id) DO UPDATE SET
+      kind = excluded.kind,
+      state = excluded.state,
+      terminal = excluded.terminal,
+      requested_at = excluded.requested_at,
+      updated_at = excluded.updated_at,
+      operation_json = excluded.operation_json
+  `).run({
+    operation_id: operation.operation_id,
+    kind: operation.kind,
+    state: operation.state,
+    terminal: isTerminalRuntimeControlState(operation.state) ? 1 : 0,
+    requested_at: operation.requested_at,
+    updated_at: operation.updated_at,
+    operation_json: JSON.stringify(operation),
+  });
+}
+
+function insertRuntimeOperationEvent(
+  sqlite: SqliteDatabase,
+  event: RuntimeEvent,
+  operationId: string | null
+): void {
+  const parsed = RuntimeEventJournalSchema.parse(event);
+  sqlite.prepare(`
+    INSERT INTO runtime_operation_events (
+      event_id, operation_id, occurred_at, event_json
+    ) VALUES (
+      @event_id, @operation_id, @occurred_at, @event_json
+    )
+    ON CONFLICT(event_id) DO UPDATE SET
+      operation_id = excluded.operation_id,
+      occurred_at = excluded.occurred_at,
+      event_json = excluded.event_json
+  `).run({
+    event_id: parsed.event_id,
+    operation_id: operationId,
+    occurred_at: parsed.occurred_at,
+    event_json: JSON.stringify(parsed),
+  });
+}
+
+export function deriveRuntimeOperationIdFromEvent(event: RuntimeEvent): string | null {
+  const itemRefPrefix = "runtime-control:";
+  if (!event.item_ref.startsWith(itemRefPrefix)) {
+    return null;
   }
+  return event.item_ref.slice(itemRefPrefix.length);
 }

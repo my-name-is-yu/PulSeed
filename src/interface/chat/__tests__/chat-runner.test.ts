@@ -16,6 +16,7 @@ import type { ChatAgentLoopRunner } from "../../../orchestrator/execution/agent-
 import type { GoalNegotiator } from "../../../orchestrator/goal/goal-negotiator.js";
 import { RuntimeControlService } from "../../../runtime/control/index.js";
 import { createRuntimeSessionRegistry } from "../../../runtime/session-registry/index.js";
+import { BackgroundRunLedger } from "../../../runtime/store/background-run-store.js";
 import { RuntimeOperationStore } from "../../../runtime/store/runtime-operation-store.js";
 import type { Goal } from "../../../base/types/goal.js";
 import type { Task } from "../../../base/types/task.js";
@@ -4833,7 +4834,7 @@ describe("ChatRunner", () => {
       const stored = JSON.parse(fs.readFileSync(path.join(baseDir, "run-specs", fileName), "utf8"));
       expect(stored.status).toBe("confirmed");
       const runId = (daemonClient.startGoal as ReturnType<typeof vi.fn>).mock.calls[0][1].backgroundRun.backgroundRunId;
-      const run = JSON.parse(fs.readFileSync(path.join(baseDir, "runtime", "background-runs", `${encodeURIComponent(runId)}.json`), "utf8"));
+      const run = await new BackgroundRunLedger(path.join(baseDir, "runtime"), { controlBaseDir: baseDir }).load(runId);
       expect(run).toMatchObject({
         id: runId,
         status: "queued",

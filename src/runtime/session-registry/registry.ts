@@ -68,27 +68,9 @@ function chatLifecycleToRuntimeStatus(status: string | null | undefined): Runtim
 
 const PROCESS_SESSION_DIR = path.join("runtime", "process-sessions");
 
-class CompositeBackgroundRunLedger {
-  constructor(private readonly ledgers: Array<Pick<BackgroundRunLedger, "list">>) {}
-
-  async list(): Promise<BackgroundRun[]> {
-    const byId = new Map<string, BackgroundRun>();
-    for (const ledger of this.ledgers) {
-      const runs = await ledger.list();
-      for (const run of runs) {
-        byId.set(run.id, mergeLedgerRunWithProjection(run, byId.get(run.id)));
-      }
-    }
-    return [...byId.values()];
-  }
-}
-
 function createDefaultBackgroundRunLedger(stateBaseDir: string): Pick<BackgroundRunLedger, "list"> {
-  const stateRuntimeRoot = path.join(stateBaseDir, "runtime");
   const configuredRuntimeRoot = resolveConfiguredDaemonRuntimeRoot(stateBaseDir);
-  const roots = [...new Set([stateRuntimeRoot, configuredRuntimeRoot])];
-  if (roots.length === 1) return new BackgroundRunLedger(roots[0]);
-  return new CompositeBackgroundRunLedger(roots.map((root) => new BackgroundRunLedger(root)));
+  return new BackgroundRunLedger(configuredRuntimeRoot, { controlBaseDir: stateBaseDir });
 }
 
 export class RuntimeSessionRegistry {
@@ -544,7 +526,7 @@ export class RuntimeSessionRegistry {
     } catch (error) {
       warnings.push({
         code: "source_unavailable",
-        source: sourceRef("task_ledger", null, null, path.join("runtime", "background-runs"), null),
+        source: sourceRef("task_ledger", "background_runs", null, path.join("state", "pulseed-control.sqlite"), null),
         message: `Failed to list background run ledger records: ${messageFromError(error)}`,
       });
       return;

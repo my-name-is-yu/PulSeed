@@ -446,10 +446,9 @@ export class RunSpecHandoffService {
   }
 
   private getBackgroundRunLedgers(): BackgroundRunLedger[] {
-    const baseRuntimeRoot = `${this.deps.stateManager.getBaseDir()}/runtime`;
-    const configuredRuntimeRoot = resolveConfiguredDaemonRuntimeRoot(this.deps.stateManager.getBaseDir());
-    const roots = [...new Set([configuredRuntimeRoot, baseRuntimeRoot])];
-    return roots.map((root) => new BackgroundRunLedger(root));
+    const baseDir = this.deps.stateManager.getBaseDir();
+    const configuredRuntimeRoot = resolveConfiguredDaemonRuntimeRoot(baseDir);
+    return [new BackgroundRunLedger(configuredRuntimeRoot, { controlBaseDir: baseDir })];
   }
 
   private wasDraftCreatedInCurrentTurn(confirmation: RunSpecConfirmationSnapshot): boolean {

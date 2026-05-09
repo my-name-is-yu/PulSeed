@@ -19,6 +19,7 @@ export {
 export {
   CONTROL_DB_INITIAL_SCHEMA_SQL,
   CONTROL_DB_MIGRATIONS,
+  CONTROL_DB_RUNTIME_CONTROL_SCHEMA_SQL,
   CONTROL_DB_SCHEMA_VERSION,
   ControlDatabase,
   controlDbMigrationChecksum,
@@ -26,7 +27,9 @@ export {
   initializeControlDatabase,
   inspectControlDatabase,
   openControlDatabase,
+  openRuntimeControlDatabase,
   resolveControlDbPath,
+  resolveRuntimeControlDbBaseDir,
 } from "./control-db/index.js";
 export type {
   ControlDbInspection,
@@ -37,6 +40,7 @@ export type {
   ControlLegacyImportInput,
   ControlLegacyImportRecord,
   ControlLegacyImportStatus,
+  RuntimeControlDbStoreOptions,
   SqliteDatabase,
 } from "./control-db/index.js";
 
@@ -442,6 +446,7 @@ export { RuntimeSafePauseStore } from "./safe-pause-store.js";
 export { RuntimeOperationStore } from "./runtime-operation-store.js";
 export {
   BackgroundRunLedger,
+  BackgroundRunLedgerRecordSchema,
   normalizeTerminalStatus,
   validateBackgroundRunLedgerRecord,
 } from "./background-run-store.js";
@@ -452,3 +457,10 @@ export type {
   BackgroundRunTerminalInput,
   BackgroundRunTerminalStatus,
 } from "./background-run-store.js";
+export {
+  importLegacyRuntimeControlStores,
+} from "./runtime-control-store-migration.js";
+export type {
+  ImportLegacyRuntimeControlStoresInput,
+  ImportLegacyRuntimeControlStoresResult,
+} from "./runtime-control-store-migration.js";
