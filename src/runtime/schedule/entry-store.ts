@@ -2,7 +2,14 @@ import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { writeJsonFileAtomic, readJsonFileOrNull } from "../../base/utils/json-io.js";
 import { isProcessPidValue } from "../../base/utils/process-pid.js";
-import { ScheduleEntryListSchema, type ScheduleEntry } from "../types/schedule.js";
+import {
+  MAX_SCHEDULE_RETRY_ATTEMPTS,
+  MAX_SCHEDULE_RETRY_DELAY_MS,
+  MAX_SCHEDULE_RETRY_MULTIPLIER,
+  MAX_SCHEDULE_RETRY_WINDOW_MS,
+  ScheduleEntrySchema,
+  type ScheduleEntry,
+} from "../types/schedule.js";
 
 const SCHEDULES_FILE = "schedules.json";
 const SCHEDULE_LOCK_DIR = `${SCHEDULES_FILE}.lock`;
@@ -31,8 +38,25 @@ export class ScheduleEntryStore {
   async readEntries(): Promise<ScheduleEntry[]> {
     const raw = await readJsonFileOrNull(this.schedulesPath);
     if (raw === null) return [];
-    const result = ScheduleEntryListSchema.safeParse(raw);
-    return result.success ? result.data : [];
+    if (!Array.isArray(raw)) return [];
+
+    const entries: ScheduleEntry[] = [];
+    let invalidCount = 0;
+    for (const candidate of normalizeLegacyScheduleRetryBounds(raw)) {
+      const result = ScheduleEntrySchema.safeParse(candidate);
+      if (result.success) {
+        entries.push(result.data);
+      } else {
+        invalidCount++;
+      }
+    }
+
+    if (invalidCount > 0) {
+      this.logger.warn("Skipped invalid schedule entries while loading schedules.json", {
+        invalid_count: invalidCount,
+      });
+    }
+    return entries;
   }
 
   async saveEntries(entries: ScheduleEntry[]): Promise<void> {
@@ -119,4 +143,73 @@ export class ScheduleEntryStore {
       }
     }
   }
+}
+
+function normalizeLegacyScheduleRetryBounds(rawEntries: unknown[]): unknown[] {
+  return rawEntries.map((entry) => {
+    if (entry === null || typeof entry !== "object" || Array.isArray(entry)) {
+      return entry;
+    }
+
+    const input = entry as Record<string, unknown>;
+    let output: Record<string, unknown> | null = null;
+    const retryPolicy = normalizeRetryPolicyBounds(input.retry_policy);
+    if (retryPolicy !== input.retry_policy) {
+      output = { ...input, retry_policy: retryPolicy };
+    }
+
+    const retryState = normalizeRetryStateBounds(input.retry_state);
+    if (retryState !== input.retry_state) {
+      output = { ...(output ?? input), retry_state: retryState };
+    }
+
+    return output ?? entry;
+  });
+}
+
+function normalizeRetryPolicyBounds(rawPolicy: unknown): unknown {
+  if (rawPolicy === null || typeof rawPolicy !== "object" || Array.isArray(rawPolicy)) {
+    return rawPolicy;
+  }
+
+  let policy = rawPolicy as Record<string, unknown>;
+  policy = clampFiniteLegacyNumber(policy, "initial_delay_ms", 0, MAX_SCHEDULE_RETRY_DELAY_MS, true);
+  policy = clampFiniteLegacyNumber(policy, "max_delay_ms", 1, MAX_SCHEDULE_RETRY_DELAY_MS, true);
+  policy = clampFiniteLegacyNumber(policy, "multiplier", 1, MAX_SCHEDULE_RETRY_MULTIPLIER, false);
+  policy = clampFiniteLegacyNumber(policy, "max_attempts", 1, MAX_SCHEDULE_RETRY_ATTEMPTS, true);
+  policy = clampFiniteLegacyNumber(policy, "max_retry_window_ms", 1, MAX_SCHEDULE_RETRY_WINDOW_MS, true);
+  return policy;
+}
+
+function normalizeRetryStateBounds(rawState: unknown): unknown {
+  if (rawState === null || typeof rawState !== "object" || Array.isArray(rawState)) {
+    return rawState;
+  }
+  return clampFiniteLegacyNumber(
+    rawState as Record<string, unknown>,
+    "attempts",
+    0,
+    MAX_SCHEDULE_RETRY_ATTEMPTS,
+    true
+  );
+}
+
+function clampFiniteLegacyNumber(
+  record: Record<string, unknown>,
+  key: string,
+  min: number,
+  max: number,
+  integer: boolean
+): Record<string, unknown> {
+  const value = record[key];
+  if (
+    typeof value !== "number" ||
+    !Number.isFinite(value) ||
+    value < min ||
+    (integer && !Number.isInteger(value)) ||
+    value <= max
+  ) {
+    return record;
+  }
+  return { ...record, [key]: max };
 }
