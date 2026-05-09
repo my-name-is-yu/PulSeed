@@ -39,6 +39,7 @@ import type {
 } from "../store/permission-grant-store.js";
 import type {
   RuntimeControlActor,
+  RuntimeControlCompanionStateInspection,
   RuntimeControlOperation,
   RuntimeControlOperationKind,
   RuntimeControlOperationState,
@@ -76,6 +77,7 @@ export interface RuntimeControlResult {
   operationId?: string;
   state?: RuntimeControlOperationState;
   resumeOutcome?: CompanionResumeOutcome;
+  companionStateInspection?: RuntimeControlCompanionStateInspection;
 }
 
 export interface RuntimeCompanionStateBoundaryRequest {
@@ -359,9 +361,11 @@ export class RuntimeControlService {
         activeSurfaceRef: null,
         currentTime: this.nowIso(),
       });
+      const inspection = buildCompanionStateInspection(current.input.runtime_items, current.snapshot);
       const inspected = await this.update(initial, "verified", {
         ok: true,
-        message: formatCompanionStateSummary(current.snapshot),
+        message: formatCompanionStateSummary(current.snapshot, inspection),
+        companionStateInspection: inspection,
       });
       return this.toResult(inspected);
     }
@@ -1242,13 +1246,14 @@ export class RuntimeControlService {
       operationId: operation.operation_id,
       state: operation.state,
       ...(operation.result?.resume_outcome ? { resumeOutcome: operation.result.resume_outcome } : {}),
+      ...(operation.result?.companion_state_inspection ? { companionStateInspection: operation.result.companion_state_inspection } : {}),
     };
   }
 
   private async update(
     operation: RuntimeControlOperation,
     state: RuntimeControlOperationState,
-    result: { ok: boolean; message: string; resumeOutcome?: CompanionResumeOutcome }
+    result: { ok: boolean; message: string; resumeOutcome?: CompanionResumeOutcome; companionStateInspection?: RuntimeControlCompanionStateInspection }
   ): Promise<RuntimeControlOperation> {
     const updated: RuntimeControlOperation = {
       ...operation,
@@ -1258,6 +1263,7 @@ export class RuntimeControlService {
         ok: result.ok,
         message: result.message,
         ...(result.resumeOutcome ? { resume_outcome: result.resumeOutcome } : {}),
+        ...(result.companionStateInspection ? { companion_state_inspection: result.companionStateInspection } : {}),
       },
     };
     return this.operationStore.save(updated);
@@ -1749,14 +1755,114 @@ function agentOriginAdmissionItem(item: RuntimeItem): boolean {
     || item.authority.can_delegate_work;
 }
 
-function formatCompanionStateSummary(snapshot: CompanionStateSnapshot): string {
+function buildCompanionStateInspection(
+  runtimeItems: RuntimeItem[],
+  snapshot: CompanionStateSnapshot,
+): RuntimeControlCompanionStateInspection {
+  const inspectedItems = runtimeItems
+    .filter((item) => (
+      item.authority.inspectable
+      && item.visibility_policy.inspectable
+      && item.control_policy.allowed_controls.includes("inspect_item")
+    ))
+    .filter((item) => companionInspectionItem(item, snapshot))
+    .map((item) => ({
+      ref: item.item_id,
+      type: item.type,
+      status: item.status,
+      posture: item.posture,
+      visibility_display: item.visibility_policy.display,
+      inspectable: item.visibility_policy.inspectable,
+      auditable: item.visibility_policy.auditable,
+      authority_scope: item.authority.approval_scope,
+      authority: {
+        resumable: item.authority.resumable,
+        actionable: item.authority.actionable,
+        speakable: item.authority.speakable,
+        can_create_urge: item.authority.can_create_urge,
+        can_update_surface: item.authority.can_update_surface,
+        can_write_memory: item.authority.can_write_memory,
+        can_delegate_work: item.authority.can_delegate_work,
+        requires_confirmation: item.authority.requires_confirmation,
+      },
+      staleness_outcomes: Object.fromEntries(
+        Object.entries(item.staleness).map(([dimension, value]) => [dimension, value.outcome]),
+      ),
+      allowed_controls: item.control_policy.allowed_controls,
+      repair_options: item.control_policy.repair_options,
+      audit_trace_refs: item.audit_trace_refs,
+    }));
+  const allRuntimeItemRefs = new Set(runtimeItems.map((item) => item.item_id));
+  const inspectableRuntimeItemRefs = new Set(inspectedItems.map((item) => item.ref));
+  const inspectableSnapshotRefs = (refs: string[]) => refs.filter((candidate) => (
+    !allRuntimeItemRefs.has(candidate) || inspectableRuntimeItemRefs.has(candidate)
+  ));
+
+  return {
+    snapshot_id: snapshot.snapshot_id,
+    mode: snapshot.mode,
+    inspected_at: snapshot.computed_at,
+    active_controls: snapshot.control_overlays,
+    active_refs: inspectableSnapshotRefs(snapshot.active_refs),
+    held_runtime_refs: inspectableSnapshotRefs(snapshot.held_runtime_refs),
+    blocked_refs: inspectableSnapshotRefs(snapshot.blocked_refs),
+    hidden_refs: inspectedItems
+      .filter((item) => item.visibility_display !== "normal")
+      .map((item) => item.ref),
+    non_executable_refs: inspectedItems
+      .filter((item) => !runtimeItemGrantsExecution(item.authority))
+      .map((item) => item.ref),
+    repairable_refs: inspectedItems
+      .filter((item) => item.repair_options.length > 0)
+      .map((item) => item.ref),
+    runtime_items: inspectedItems,
+  };
+}
+
+function companionInspectionItem(item: RuntimeItem, snapshot: CompanionStateSnapshot): boolean {
+  return item.visibility_policy.display !== "normal"
+    || snapshot.held_runtime_refs.includes(item.item_id)
+    || snapshot.blocked_refs.includes(item.item_id)
+    || !runtimeItemGrantsExecution(item.authority)
+    || item.control_policy.repair_options.length > 0
+    || Object.values(item.staleness).some((dimension) => dimension.outcome !== "current");
+}
+
+type RuntimeExecutionAuthority = Pick<
+  RuntimeItem["authority"],
+  | "resumable"
+  | "actionable"
+  | "speakable"
+  | "can_create_urge"
+  | "can_update_surface"
+  | "can_write_memory"
+  | "can_delegate_work"
+>;
+
+function runtimeItemGrantsExecution(authority: RuntimeExecutionAuthority): boolean {
+  return authority.resumable
+    || authority.actionable
+    || authority.speakable
+    || authority.can_create_urge
+    || authority.can_update_surface
+    || authority.can_write_memory
+    || authority.can_delegate_work;
+}
+
+function formatCompanionStateSummary(
+  snapshot: CompanionStateSnapshot,
+  inspection?: RuntimeControlCompanionStateInspection,
+): string {
   return [
     `CompanionState ${snapshot.snapshot_id}: mode=${snapshot.mode}.`,
     `active_controls=${snapshot.control_overlays.length > 0 ? snapshot.control_overlays.join(", ") : "none"}.`,
     `active_refs=${snapshot.active_refs.length}.`,
     `held_refs=${snapshot.held_runtime_refs.length}.`,
     `blocked_refs=${snapshot.blocked_refs.length}.`,
-  ].join(" ");
+    inspection ? `hidden_items=${inspection.hidden_refs.length}.` : null,
+    inspection ? `non_executable_items=${inspection.non_executable_refs.length}.` : null,
+    inspection ? `repairable_items=${inspection.repairable_refs.length}.` : null,
+  ].filter((part): part is string => Boolean(part)).join(" ");
 }
 
 function formatCompanionControlApplied(control: CompanionWideControl, affectedRefs: string[]): string {

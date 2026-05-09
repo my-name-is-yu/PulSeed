@@ -10,6 +10,7 @@ import { RuntimeControlService } from "../runtime-control-service.js";
 import type { RuntimeSessionRegistrySnapshot } from "../../session-registry/types.js";
 import { BrowserSessionStore, RuntimeAuthHandoffStore } from "../../interactive-automation/index.js";
 import { GuardrailStore } from "../../guardrails/index.js";
+import type { RuntimeItem } from "../../types/companion-state.js";
 
 function snapshotWithRuns(runs: RuntimeSessionRegistrySnapshot["background_runs"]): RuntimeSessionRegistrySnapshot {
   return {
@@ -971,6 +972,165 @@ describe("RuntimeControlService", () => {
           message: expect.stringContaining("no runtime control executor is configured"),
         },
       });
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
+  });
+
+  it("persists structured companion-state inspection for hidden non-execution runtime facts", async () => {
+    const tmpDir = makeTempDir("pulseed-runtime-control-companion-inspect-non-execution-");
+    try {
+      const operationStore = new RuntimeOperationStore(path.join(tmpDir, "runtime"));
+      const service = new RuntimeControlService({
+        operationStore,
+        sessionRegistry: {
+          snapshot: vi.fn().mockResolvedValue(snapshotWithRuns([makeRun()])),
+        },
+        now: () => new Date("2026-05-08T00:00:00.000Z"),
+      });
+
+      await service.setCompanionControl({
+        control: "stop_all_quiet_work",
+        reason: "stop quiet work without executor",
+        cwd: "/repo",
+        approvalFn: vi.fn().mockResolvedValue(true),
+      });
+
+      const inspected = await service.inspectCompanionState({
+        reason: "inspect internal state",
+        cwd: "/repo",
+      });
+      const inspection = inspected.companionStateInspection;
+      const blockedPauseItem = inspection?.runtime_items.find((item) => (
+        item.ref.startsWith("runtime-control:")
+        && item.status === "blocked"
+      ));
+
+      expect(inspected).toMatchObject({
+        success: true,
+        state: "verified",
+      });
+      expect(inspected.message).toContain("hidden_items=");
+      expect(inspected.message).toContain("non_executable_items=");
+      expect(inspection).toMatchObject({
+        inspected_at: "2026-05-08T00:00:00.000Z",
+        hidden_refs: expect.arrayContaining([expect.stringMatching(/^runtime-control:/)]),
+        non_executable_refs: expect.arrayContaining([expect.stringMatching(/^runtime-control:/)]),
+      });
+      expect(blockedPauseItem).toMatchObject({
+        type: "run",
+        posture: "blocked_by_boundary",
+        visibility_display: "hidden",
+        authority_scope: "inspect_only",
+        authority: {
+          actionable: false,
+          resumable: false,
+          requires_confirmation: true,
+        },
+        staleness_outcomes: expect.objectContaining({
+          project: "not_actionable",
+          session: "needs_review",
+        }),
+        allowed_controls: expect.arrayContaining(["inspect_item", "require_confirmation"]),
+        repair_options: expect.arrayContaining(["reground_item", "require_confirmation"]),
+      });
+      expect(JSON.stringify(inspection)).not.toContain("no runtime control executor is configured");
+
+      const completed = await operationStore.listCompleted();
+      const inspectOperation = completed.find((operation) => operation.kind === "inspect_companion_state");
+      expect(inspectOperation?.result?.companion_state_inspection).toEqual(inspection);
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
+  });
+
+  it("does not expose hidden runtime facts without authority to inspect", async () => {
+    const tmpDir = makeTempDir("pulseed-runtime-control-companion-inspect-authority-");
+    try {
+      const hiddenNoAuthorityItem: RuntimeItem = {
+        schema_version: "runtime-item-v1",
+        item_id: "runtime:no-inspect-authority",
+        type: "guardrail_state",
+        status: "blocked",
+        posture: "blocked_by_boundary",
+        source: "test-runtime-item",
+        created_at: "2026-05-08T00:00:00.000Z",
+        updated_at: "2026-05-08T00:00:00.000Z",
+        related_goal_refs: [],
+        related_task_refs: [],
+        related_session_refs: [],
+        related_memory_refs: [],
+        related_surface_refs: [],
+        related_agenda_refs: [],
+        companion_state_refs: [],
+        companion_control_state: {
+          active_controls: [],
+          global_control_refs: [],
+          held_by_controls: [],
+          rejected_by_controls: [],
+          reason: "test item is not inspectable by authority",
+        },
+        authority: {
+          inspectable: false,
+          resumable: false,
+          actionable: false,
+          speakable: false,
+          can_create_urge: false,
+          can_update_surface: false,
+          can_write_memory: false,
+          can_delegate_work: false,
+          requires_confirmation: true,
+          approval_scope: "none",
+          authority_reason: "inspection authority denied",
+        },
+        staleness: {
+          temporal: { outcome: "current", reason: "test" },
+          world: { outcome: "current", reason: "test" },
+          project: { outcome: "not_actionable", reason: "test" },
+          permission: { outcome: "current", reason: "test" },
+          relationship: { outcome: "current", reason: "test" },
+          surface: { outcome: "current", reason: "test" },
+          goal: { outcome: "current", reason: "test" },
+          assumption: { outcome: "current", reason: "test" },
+          session: { outcome: "current", reason: "test" },
+          browser_session: { outcome: "current", reason: "test" },
+          auth_handoff: { outcome: "current", reason: "test" },
+        },
+        visibility_policy: {
+          display: "hidden",
+          inspectable: true,
+          auditable: true,
+          policy_ref: null,
+          reason: "visibility alone is not inspection authority",
+        },
+        visibility_policy_ref: null,
+        control_policy: {
+          allowed_controls: [],
+          forbidden_controls: ["inspect_item"],
+          required_confirmation: [],
+          repair_options: [],
+          reason: "authority denied inspection",
+        },
+        audit_trace_refs: ["audit:no-inspect-authority"],
+      };
+      class OperationStoreWithExtraItem extends RuntimeOperationStore {
+        override async listRuntimeItems(): Promise<RuntimeItem[]> {
+          return [...await super.listRuntimeItems(), hiddenNoAuthorityItem];
+        }
+      }
+      const operationStore = new OperationStoreWithExtraItem(path.join(tmpDir, "runtime"));
+      const service = new RuntimeControlService({
+        operationStore,
+        now: () => new Date("2026-05-08T00:00:00.000Z"),
+      });
+
+      const inspected = await service.inspectCompanionState({
+        reason: "inspect internal state",
+        cwd: "/repo",
+      });
+
+      expect(inspected).toMatchObject({ success: true, state: "verified" });
+      expect(JSON.stringify(inspected.companionStateInspection)).not.toContain("runtime:no-inspect-authority");
     } finally {
       cleanupTempDir(tmpDir);
     }
