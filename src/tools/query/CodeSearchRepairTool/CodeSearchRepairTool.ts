@@ -15,13 +15,13 @@ export const CodeSearchRepairInputSchema = z.object({
     stacktrace: z.string().optional(),
     fileGlobs: z.array(z.string()).optional(),
     packageScope: z.string().optional(),
-  }),
+  }).strict(),
   priorTraceId: z.string().optional(),
   verificationOutput: z.string().min(1),
   changedFiles: z.array(z.string()).optional(),
   failedCommand: z.string().optional(),
   path: z.string().optional(),
-});
+}).strict();
 export type CodeSearchRepairInput = z.infer<typeof CodeSearchRepairInputSchema>;
 
 export class CodeSearchRepairTool implements ITool<CodeSearchRepairInput, unknown> {

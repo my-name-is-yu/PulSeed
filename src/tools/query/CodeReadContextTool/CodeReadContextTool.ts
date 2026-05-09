@@ -64,7 +64,7 @@ export const CodeReadContextInputSchema = z.object({
   maxReadRanges: z.number().int().min(1).max(CODE_READ_CONTEXT_MAX_RANGES).optional(),
   maxReadTokens: z.number().int().min(1).max(CODE_READ_CONTEXT_MAX_TOKENS).optional(),
   path: z.string().optional(),
-});
+}).strict();
 export type CodeReadContextInput = z.infer<typeof CodeReadContextInputSchema>;
 
 function resolveReadRoot(input: CodeReadContextInput, context: ToolCallContext): { cwd: string; error?: string } {
