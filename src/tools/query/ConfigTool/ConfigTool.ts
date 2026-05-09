@@ -8,7 +8,7 @@ import { TAGS, PERMISSION_LEVEL, MAX_OUTPUT_CHARS } from "./constants.js";
 
 export const ConfigToolInputSchema = z.object({
   key: z.string().optional(),
-});
+}).strict();
 export type ConfigToolInput = z.infer<typeof ConfigToolInputSchema>;
 
 interface ProviderConfig {
