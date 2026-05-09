@@ -16,7 +16,7 @@ export const SoilOpenInputSchema = z.object({
   viewer: z.enum(["default", "finder", "vscode", "obsidian", "logseq"]).default("default"),
   target: z.enum(["root", "schedule_active", "status", "report", "schedule", "memory", "knowledge", "path"]).default("root"),
   targetPath: z.string().min(1).optional(),
-});
+}).strict();
 export type SoilOpenInput = z.infer<typeof SoilOpenInputSchema>;
 
 export class SoilOpenTool implements ITool<SoilOpenInput> {

@@ -13,7 +13,7 @@ import { ALIASES, MAX_OUTPUT_CHARS, PERMISSION_LEVEL, READ_ONLY, TAGS, TOOL_NAME
 
 export const SoilDoctorInputSchema = z.object({
   rootDir: z.string().min(1).optional(),
-});
+}).strict();
 export type SoilDoctorInput = z.infer<typeof SoilDoctorInputSchema>;
 
 export interface SoilDoctorOutput {
