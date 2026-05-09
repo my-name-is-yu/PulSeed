@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { ITool, ToolResult, ToolCallContext, PermissionCheckResult, ToolMetadata } from "../../types.js";
 import { execFileNoThrow } from "../../../base/utils/execFileNoThrow.js";
-import { parseProcessPid } from "../../../base/utils/process-pid.js";
+import { parseProcessPid, signalProcessPid } from "../../../base/utils/process-pid.js";
 import { DESCRIPTION } from "./prompt.js";
 import { TAGS, MAX_OUTPUT_CHARS, PERMISSION_LEVEL } from "./constants.js";
 
@@ -75,9 +75,8 @@ export class ProcessStatusTool implements ITool<ProcessStatusInput, ProcessStatu
   }
 
   private async _checkPid(pid: number, startTime: number): Promise<ToolResult> {
-    // kill -0 checks if process is alive without sending a signal
-    const result = await execFileNoThrow("kill", ["-0", String(pid)], { timeoutMs: 5000 });
-    const alive = result.exitCode === 0;
+    const signalResult = signalProcessPid(pid, 0);
+    const alive = signalResult.status === "sent";
     const output: ProcessStatusOutput = { alive, pid };
     return {
       success: true,

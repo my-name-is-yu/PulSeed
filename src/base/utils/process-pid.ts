@@ -28,8 +28,12 @@ export function signalProcessPid(pid: unknown, signal: ProcessSignal): ProcessSi
     process.kill(pid, signal);
     return { status: "sent", pid };
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ESRCH") {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === "ESRCH") {
       return { status: "missing_process", pid };
+    }
+    if (signal === 0 && code === "EPERM") {
+      return { status: "sent", pid };
     }
     throw err;
   }

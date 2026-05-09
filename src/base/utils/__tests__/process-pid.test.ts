@@ -48,6 +48,16 @@ describe("process PID helpers", () => {
     expect(signalProcessPid(123, "SIGTERM")).toEqual({ status: "missing_process", pid: 123 });
   });
 
+  it("treats signal 0 permission errors as existing processes", () => {
+    const err = new Error("permission denied") as NodeJS.ErrnoException;
+    err.code = "EPERM";
+    vi.spyOn(process, "kill").mockImplementation(() => {
+      throw err;
+    });
+
+    expect(signalProcessPid(123, 0)).toEqual({ status: "sent", pid: 123 });
+  });
+
   it("rethrows non-ESRCH signal errors", () => {
     const err = new Error("permission denied") as NodeJS.ErrnoException;
     err.code = "EPERM";
