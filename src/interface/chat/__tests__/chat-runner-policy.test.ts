@@ -47,11 +47,15 @@ vi.mock("../../../base/llm/provider-config.js", async (importOriginal) => {
   };
 });
 
+const tmpDirs: string[] = [];
+
 function makeMockStateManager(): StateManager {
+  const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-runner-policy-"));
+  tmpDirs.push(baseDir);
   return {
     writeRaw: vi.fn().mockResolvedValue(undefined),
     readRaw: vi.fn().mockResolvedValue(null),
-    getBaseDir: vi.fn().mockReturnValue(os.tmpdir()),
+    getBaseDir: vi.fn().mockReturnValue(baseDir),
   } as unknown as StateManager;
 }
 
@@ -98,6 +102,9 @@ afterEach(() => {
     providerConfigMock.current = config;
   });
   vi.restoreAllMocks();
+  for (const dir of tmpDirs.splice(0)) {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 describe("ChatRunner policy commands", () => {
@@ -132,7 +139,8 @@ describe("ChatRunner policy commands", () => {
   });
 
   it("/model updates the OpenAI model and reasoning effort through the chat runner command path", async () => {
-    const runner = new ChatRunner(makeDeps());
+    const deps = makeDeps();
+    const runner = new ChatRunner(deps);
     runner.startSession("/repo");
 
     const result = await runner.execute("/model gpt-5.5 high", "/repo");
@@ -146,7 +154,7 @@ describe("ChatRunner policy commands", () => {
         model: "gpt-5.5",
         reasoning_effort: "high",
       }),
-      { baseDir: os.tmpdir() },
+      { baseDir: deps.stateManager.getBaseDir() },
     );
   });
 

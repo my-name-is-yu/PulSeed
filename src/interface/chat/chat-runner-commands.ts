@@ -64,15 +64,11 @@ import type {
 import type { DaemonClient } from "../../runtime/daemon/client.js";
 import type { DaemonSnapshot } from "../../runtime/daemon/client.js";
 import type { GoalNegotiator } from "../../orchestrator/goal/goal-negotiator.js";
-import { BrowserSessionStore } from "../../runtime/interactive-automation/index.js";
-import { GuardrailStore } from "../../runtime/guardrails/index.js";
-import { RuntimeOperatorHandoffStore } from "../../runtime/store/operator-handoff-store.js";
-import type { RuntimeOperatorHandoffRecord } from "../../runtime/store/operator-handoff-store.js";
-import { RuntimeBudgetStore } from "../../runtime/store/budget-store.js";
 import {
-  createRuntimeBudgetProjections,
-  type RuntimeBudgetProjection,
-} from "../runtime-budget-summary.js";
+  formatGuardrailStatus,
+  loadOpenOperatorHandoffsFromRuntime,
+  loadRuntimeBudgetsFromRuntime,
+} from "./chat-runner-guardrail-status.js";
 import {
   COMMAND_HELP,
   parseCleanupArgs,
@@ -81,7 +77,6 @@ import {
   parsePermissionArgs,
   parseStatusArgs,
 } from "./chat-command-args.js";
-import * as path from "node:path";
 
 export { COMMAND_HELP };
 
@@ -388,8 +383,8 @@ export class ChatRunnerCommandHandler {
       const registry = createRuntimeSessionRegistry({ stateManager: this.host.deps.stateManager });
       const [runtimeSnapshot, handoffs, runtimeBudgets] = await Promise.all([
         registry.snapshot(),
-        this.loadOpenOperatorHandoffsFromRuntime(),
-        this.loadRuntimeBudgetsFromRuntime(),
+        loadOpenOperatorHandoffsFromRuntime(this.host.deps.stateManager),
+        loadRuntimeBudgetsFromRuntime(this.host.deps.stateManager),
       ]);
       const summaryLines = isCurrentGoalCandidate(goal)
         ? [formatCurrentGoalSummary(goal, {
@@ -410,12 +405,16 @@ export class ChatRunnerCommandHandler {
     const [goals, runtimeSnapshot, runtimeBudgets] = await Promise.all([
       this.loadGoals(),
       registry.snapshot(),
-      this.loadRuntimeBudgetsFromRuntime(),
+      loadRuntimeBudgetsFromRuntime(this.host.deps.stateManager),
     ]);
-    const handoffs = await this.loadOpenOperatorHandoffsFromRuntime();
+    const handoffs = await loadOpenOperatorHandoffsFromRuntime(this.host.deps.stateManager);
     const active = this.activeGoals(goals);
     const daemonSnapshot = await this.loadDaemonSnapshot();
-    const guardrailStatus = await this.formatGuardrailStatus(daemonSnapshot, { diagnostic });
+    const guardrailStatus = await formatGuardrailStatus({
+      stateManager: this.host.deps.stateManager,
+      snapshot: daemonSnapshot,
+      diagnostic,
+    });
     const statusSuffix = guardrailStatus ? `\n\n${guardrailStatus}` : "";
     if (active.length === 0) {
       return {
@@ -451,180 +450,6 @@ export class ChatRunnerCommandHandler {
     } catch {
       return null;
     }
-  }
-
-  private async formatGuardrailStatus(
-    snapshot?: DaemonSnapshot | null,
-    options: { diagnostic?: boolean } = {},
-  ): Promise<string | null> {
-    const automation = snapshot?.runtime_automation && typeof snapshot.runtime_automation === "object"
-      ? snapshot.runtime_automation as Record<string, unknown>
-      : null;
-    const remoteAuthSessions = Array.isArray(snapshot?.auth_sessions) ? snapshot.auth_sessions : null;
-    const remoteGuardrails = snapshot?.guardrails && typeof snapshot.guardrails === "object"
-      ? snapshot.guardrails
-      : null;
-    const remoteOperatorHandoffs = Array.isArray(snapshot?.operator_handoffs)
-      ? snapshot.operator_handoffs
-      : null;
-    const typedAuthHandoffs = this.extractPendingAuthFromAutomation(automation);
-    const pendingAuth = typedAuthHandoffs.length > 0
-      ? typedAuthHandoffs
-      : remoteAuthSessions ?? await this.loadPendingAuthSessionsFromRuntime();
-    const operatorHandoffs = remoteOperatorHandoffs ?? await this.loadOpenOperatorHandoffsFromRuntime();
-    const automationSummary = this.extractAutomationSummaryFromSnapshot(automation);
-    const fallbackSummary = remoteGuardrails
-      ? this.extractGuardrailSummaryFromSnapshot(remoteGuardrails)
-      : await this.loadGuardrailsFromRuntime();
-    const openBreakers = automationSummary.openBreakers.length > 0 ? automationSummary.openBreakers : fallbackSummary.openBreakers;
-    const backpressureActiveCount = automationSummary.backpressureActiveCount > 0
-      ? automationSummary.backpressureActiveCount
-      : fallbackSummary.backpressureActiveCount;
-    const blockedWork = automationSummary.blockedWork.length > 0 ? automationSummary.blockedWork : fallbackSummary.blockedWork;
-    const lines: string[] = [];
-    if (operatorHandoffs.length > 0) {
-      lines.push("Operator handoffs pending:");
-      for (const handoff of operatorHandoffs.slice(0, 5)) {
-        const record = handoff as Record<string, unknown>;
-        const triggers = Array.isArray(record["triggers"]) ? record["triggers"].join(",") : "unknown";
-        if (options.diagnostic) {
-          lines.push(`- ${String(record["title"] ?? record["handoff_id"] ?? "handoff")} [${triggers}] ${String(record["recommended_action"] ?? "")}`);
-        } else {
-          lines.push(`- ${String(record["title"] ?? "Operator review")} - ${String(record["recommended_action"] ?? "Review the pending handoff.")}`);
-        }
-      }
-    }
-    if (pendingAuth.length > 0) {
-      if (lines.length > 0) lines.push("");
-      lines.push("Auth handoffs pending:");
-      for (const session of pendingAuth.slice(0, 5)) {
-        const record = session as Record<string, unknown>;
-        if (options.diagnostic) {
-          lines.push(`- ${String(record["service_key"] ?? "unknown")} via ${String(record["provider_id"] ?? "unknown")} [${String(record["state"] ?? "unknown")}] handoff ${String(record["handoff_id"] ?? record["session_id"] ?? "unknown")}`);
-        } else {
-          lines.push(`- ${String(record["service_key"] ?? "unknown service")} via ${String(record["provider_id"] ?? "unknown provider")} is waiting for operator sign-in.`);
-        }
-      }
-    }
-    if (openBreakers.length > 0) {
-      if (lines.length > 0) lines.push("");
-      lines.push("Guardrails:");
-      for (const breaker of openBreakers.slice(0, 5)) {
-        const record = breaker as Record<string, unknown>;
-        if (options.diagnostic) {
-          lines.push(`- breaker ${String(record["provider_id"] ?? "unknown")}/${String(record["service_key"] ?? "unknown")}: ${String(record["state"] ?? "unknown")} (failures ${String(record["failure_count"] ?? "0")})`);
-        } else {
-          lines.push(`- ${String(record["provider_id"] ?? "unknown provider")}/${String(record["service_key"] ?? "unknown service")} is temporarily paused after ${String(record["failure_count"] ?? "0")} failure(s).`);
-        }
-      }
-    }
-    if (backpressureActiveCount > 0) {
-      if (lines.length > 0) lines.push("");
-      lines.push(`Backpressure active: ${backpressureActiveCount} browser workflow(s) in flight`);
-    }
-    if (blockedWork.length > 0) {
-      if (lines.length > 0) lines.push("");
-      lines.push("Blocked automation work:");
-      for (const blocked of blockedWork.slice(0, 5)) {
-        const record = blocked as Record<string, unknown>;
-        if (options.diagnostic) {
-          lines.push(`- ${String(record["provider_id"] ?? "unknown")}/${String(record["service_key"] ?? "unknown")}: ${String(record["reason"] ?? "blocked")}`);
-        } else {
-          lines.push(`- ${String(record["provider_id"] ?? "unknown provider")}/${String(record["service_key"] ?? "unknown service")} is waiting for the automation guardrail to clear.`);
-        }
-      }
-    }
-    return lines.length > 0 ? lines.join("\n") : null;
-  }
-
-  private async loadPendingAuthSessionsFromRuntime(): Promise<Array<Record<string, unknown>>> {
-    const runtimeRoot = path.join(this.host.deps.stateManager.getBaseDir(), "runtime");
-    return new BrowserSessionStore(runtimeRoot).listPendingAuth() as Promise<Array<Record<string, unknown>>>;
-  }
-
-  private async loadOpenOperatorHandoffsFromRuntime(): Promise<RuntimeOperatorHandoffRecord[]> {
-    const runtimeRoot = path.join(this.host.deps.stateManager.getBaseDir(), "runtime");
-    return new RuntimeOperatorHandoffStore(runtimeRoot).listOpen();
-  }
-
-  private async loadRuntimeBudgetsFromRuntime(): Promise<RuntimeBudgetProjection[]> {
-    try {
-      const store = new RuntimeBudgetStore(path.join(this.host.deps.stateManager.getBaseDir(), "runtime"));
-      return createRuntimeBudgetProjections(store, await store.list());
-    } catch {
-      return [];
-    }
-  }
-
-  private async loadGuardrailsFromRuntime(): Promise<{
-    openBreakers: Array<Record<string, unknown>>;
-    backpressureActiveCount: number;
-    blockedWork: Array<Record<string, unknown>>;
-  }> {
-    const runtimeRoot = path.join(this.host.deps.stateManager.getBaseDir(), "runtime");
-    const [breakers, backpressure] = await Promise.all([
-      new GuardrailStore(runtimeRoot).listBreakers(),
-      new GuardrailStore(runtimeRoot).loadBackpressureSnapshot(),
-    ]);
-    return {
-      openBreakers: breakers.filter((breaker) =>
-        breaker.state === "open" || breaker.state === "paused" || breaker.state === "half_open"
-      ) as Array<Record<string, unknown>>,
-      backpressureActiveCount: backpressure?.active.length ?? 0,
-      blockedWork: [],
-    };
-  }
-
-  private extractGuardrailSummaryFromSnapshot(guardrails: Record<string, unknown>): {
-    openBreakers: Array<Record<string, unknown>>;
-    backpressureActiveCount: number;
-    blockedWork: Array<Record<string, unknown>>;
-  } {
-    const openBreakers = Array.isArray(guardrails["open_breakers"])
-      ? guardrails["open_breakers"].filter((entry): entry is Record<string, unknown> => Boolean(entry) && typeof entry === "object")
-      : [];
-    const backpressureActiveCount = Array.isArray(guardrails["backpressure_active"])
-      ? guardrails["backpressure_active"].length
-      : 0;
-    return { openBreakers, backpressureActiveCount, blockedWork: [] };
-  }
-
-  private extractPendingAuthFromAutomation(automation: Record<string, unknown> | null): Array<Record<string, unknown>> {
-    if (!automation) return [];
-    const authHandoffs = automation["auth_handoffs"];
-    if (!authHandoffs || typeof authHandoffs !== "object") return [];
-    const record = authHandoffs as Record<string, unknown>;
-    return Array.isArray(record["pending"])
-      ? record["pending"].filter((entry): entry is Record<string, unknown> => Boolean(entry) && typeof entry === "object")
-      : [];
-  }
-
-  private extractAutomationSummaryFromSnapshot(automation: Record<string, unknown> | null): {
-    openBreakers: Array<Record<string, unknown>>;
-    backpressureActiveCount: number;
-    blockedWork: Array<Record<string, unknown>>;
-  } {
-    if (!automation) return { openBreakers: [], backpressureActiveCount: 0, blockedWork: [] };
-    const guardrails = automation["guardrails"];
-    const guardrailRecord = guardrails && typeof guardrails === "object" ? guardrails as Record<string, unknown> : {};
-    const backpressure = automation["backpressure"];
-    const backpressureRecord = backpressure && typeof backpressure === "object" ? backpressure as Record<string, unknown> : {};
-    return {
-      openBreakers: Array.isArray(guardrailRecord["open_breakers"])
-        ? guardrailRecord["open_breakers"].filter((entry): entry is Record<string, unknown> => Boolean(entry) && typeof entry === "object")
-        : Array.isArray(guardrailRecord["paused_breakers"]) || Array.isArray(guardrailRecord["half_open_breakers"])
-        ? [
-          ...(Array.isArray(guardrailRecord["paused_breakers"]) ? guardrailRecord["paused_breakers"] : []),
-          ...(Array.isArray(guardrailRecord["half_open_breakers"]) ? guardrailRecord["half_open_breakers"] : []),
-        ].filter((entry): entry is Record<string, unknown> => Boolean(entry) && typeof entry === "object")
-        : [],
-      backpressureActiveCount: Array.isArray(backpressureRecord["active"])
-        ? backpressureRecord["active"].length
-        : 0,
-      blockedWork: Array.isArray(automation["blocked_work"])
-        ? automation["blocked_work"].filter((entry): entry is Record<string, unknown> => Boolean(entry) && typeof entry === "object")
-        : [],
-    };
   }
 
   private async handleGoals(args: string, start: number): Promise<ChatRunResult> {
