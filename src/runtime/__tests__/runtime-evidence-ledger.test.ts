@@ -42,6 +42,47 @@ describe("RuntimeEvidenceLedger", () => {
     expect(byRun.entries.map((entry) => entry.kind)).toEqual(["strategy", "verification"]);
   });
 
+  it("rejects non-finite runtime evidence scalar values before persistence", async () => {
+    const ledger = new RuntimeEvidenceLedger(runtimeRoot);
+
+    await expect(ledger.append({
+      kind: "metric",
+      scope: { goal_id: "goal-non-finite", run_id: "run:non-finite-metric" },
+      metrics: [{ label: "accuracy", value: Number.POSITIVE_INFINITY, direction: "maximize" }],
+      summary: "Invalid metric should be rejected before JSON persistence.",
+    })).rejects.toThrow();
+    await expect(ledger.append({
+      kind: "evaluator",
+      scope: { goal_id: "goal-non-finite", run_id: "run:non-finite-evaluator-score" },
+      evaluators: [{
+        evaluator_id: "local-evaluator",
+        signal: "local",
+        source: "local",
+        candidate_id: "candidate-a",
+        status: "unknown",
+        score: Number.POSITIVE_INFINITY,
+      }],
+      summary: "Invalid evaluator score should be rejected before JSON persistence.",
+    })).rejects.toThrow();
+    await expect(ledger.append({
+      kind: "evaluator",
+      scope: { goal_id: "goal-non-finite", run_id: "run:non-finite-evaluator-expected-score" },
+      evaluators: [{
+        evaluator_id: "local-evaluator",
+        signal: "local",
+        source: "local",
+        candidate_id: "candidate-a",
+        status: "unknown",
+        expected_score: Number.POSITIVE_INFINITY,
+      }],
+      summary: "Invalid expected score should be rejected before JSON persistence.",
+    })).rejects.toThrow();
+
+    await expect(fsp.stat(ledger.runPath("run:non-finite-metric"))).rejects.toThrow();
+    await expect(fsp.stat(ledger.runPath("run:non-finite-evaluator-score"))).rejects.toThrow();
+    await expect(fsp.stat(ledger.runPath("run:non-finite-evaluator-expected-score"))).rejects.toThrow();
+  });
+
   it("records runtime evidence corrections and exposes target correction state in summaries", async () => {
     const ledger = new RuntimeEvidenceLedger(runtimeRoot);
     await ledger.append({
