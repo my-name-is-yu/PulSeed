@@ -18,7 +18,7 @@ export const GrepInputSchema = z.object({
   caseInsensitive: z.boolean().default(false),
   fixedStrings: z.boolean().optional(),
   context: z.number().int().min(0).max(GREP_MAX_CONTEXT_LINES).optional(),
-});
+}).strict();
 export type GrepInput = z.infer<typeof GrepInputSchema>;
 
 export class GrepTool implements ITool<GrepInput, string> {

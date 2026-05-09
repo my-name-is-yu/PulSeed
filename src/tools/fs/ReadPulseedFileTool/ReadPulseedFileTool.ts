@@ -8,7 +8,7 @@ import { TAGS, CATEGORY as _CATEGORY, MAX_OUTPUT_CHARS, READ_ONLY, PERMISSION_LE
 
 export const ReadPulseedFileInputSchema = z.object({
   path: z.string().min(1, "path is required"),
-});
+}).strict();
 export type ReadPulseedFileInput = z.infer<typeof ReadPulseedFileInputSchema>;
 
 function resolveSafe(relativePath: string): string | null {

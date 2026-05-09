@@ -15,7 +15,7 @@ export const ListDirInputSchema = z.object({
   recursive: z.boolean().default(false),
   maxDepth: z.number().int().min(1).max(LIST_DIR_MAX_DEPTH).default(LIST_DIR_DEFAULT_MAX_DEPTH),
   includeHidden: z.boolean().default(false),
-});
+}).strict();
 export type ListDirInput = z.infer<typeof ListDirInputSchema>;
 
 export interface DirEntry {
