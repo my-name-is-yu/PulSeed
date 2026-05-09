@@ -11,6 +11,7 @@ import { z } from "zod";
 
 const HISTORY_FILE = "schedule-history.json";
 const DEFAULT_MAX_RECENT = 500;
+const ScheduleHistorySafeNonnegativeIntSchema = z.number().int().nonnegative().safe();
 
 export const ScheduleRunReasonSchema = z.enum(["cadence", "retry", "escalation_target", "manual_run"]);
 export type ScheduleRunReason = z.infer<typeof ScheduleRunReasonSchema>;
@@ -19,7 +20,7 @@ export const ScheduleRunHistoryRecordSchema = ScheduleResultSchema.extend({
   id: z.string().uuid(),
   entry_name: z.string(),
   reason: ScheduleRunReasonSchema,
-  attempt: z.number().int().nonnegative().default(0),
+  attempt: ScheduleHistorySafeNonnegativeIntSchema.default(0),
   scheduled_for: z.string().datetime().nullable().default(null),
   started_at: z.string().datetime(),
   finished_at: z.string().datetime(),

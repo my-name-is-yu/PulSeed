@@ -369,6 +369,79 @@ describe("cmdSchedule", () => {
     }
   });
 
+  it("does not print schedule history records with unsafe persisted attempt counts", async () => {
+    const tempDir = makeTempDir("schedule-command-history-unsafe-attempt-");
+    try {
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+      const engine = new ScheduleEngine({ baseDir: tempDir });
+      await engine.loadEntries();
+      const entry = await engine.addEntry({
+        name: "Retry digest",
+        layer: "cron",
+        trigger: { type: "interval", seconds: 3600 },
+        metadata: {
+          source: "manual",
+          dependency_hints: [],
+        },
+        cron: {
+          job_kind: "prompt",
+          prompt_template: "Summarize retry state",
+          context_sources: [],
+          output_format: "notification",
+          max_tokens: 500,
+        },
+      });
+      const now = new Date().toISOString();
+      await fs.writeFile(
+        path.join(tempDir, "schedule-history.json"),
+        JSON.stringify([
+          {
+            id: "11111111-1111-4111-8111-111111111111",
+            entry_id: entry.id,
+            entry_name: entry.name,
+            layer: entry.layer,
+            reason: "retry",
+            attempt: Number.MAX_SAFE_INTEGER + 1,
+            scheduled_for: now,
+            started_at: now,
+            finished_at: now,
+            retry_at: null,
+            status: "ok",
+            duration_ms: 10,
+            fired_at: now,
+            tokens_used: 0,
+            escalated_to: null,
+          },
+          {
+            id: "22222222-2222-4222-8222-222222222222",
+            entry_id: entry.id,
+            entry_name: entry.name,
+            layer: entry.layer,
+            reason: "retry",
+            attempt: 2,
+            scheduled_for: now,
+            started_at: now,
+            finished_at: now,
+            retry_at: null,
+            status: "ok",
+            duration_ms: 10,
+            fired_at: now,
+            tokens_used: 0,
+            escalated_to: null,
+          },
+        ]),
+        "utf8",
+      );
+
+      await cmdSchedule(makeStateManager(tempDir), ["history", entry.id, "--limit", "10"]);
+      const output = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+      expect(output).toContain("attempt=2");
+      expect(output).not.toContain(String(Number.MAX_SAFE_INTEGER + 1));
+    } finally {
+      cleanupTempDir(tempDir);
+    }
+  });
+
   it("hides internal wait-resume schedules from list by default and shows them with --all", async () => {
     const tempDir = makeTempDir("schedule-command-internal-filter-");
     try {
