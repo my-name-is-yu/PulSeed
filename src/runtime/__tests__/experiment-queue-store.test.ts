@@ -3,6 +3,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { RuntimeExperimentQueueStore } from "../store/experiment-queue-store.js";
+import { createRuntimeStorePaths } from "../store/runtime-paths.js";
 
 describe("RuntimeExperimentQueueStore", () => {
   let tmpDir: string;
@@ -220,6 +221,75 @@ describe("RuntimeExperimentQueueStore", () => {
         }),
       ],
     });
+  });
+
+  it("rejects persisted queue records with unsafe current versions", async () => {
+    await store.create({
+      queue_id: "queue-unsafe-version",
+      created_at: "2026-05-01T00:00:00.000Z",
+      provenance: provenance("experiment-bank-v1"),
+      items: [item("exp-a", { seed: 1 })],
+    });
+
+    const queuePath = createRuntimeStorePaths(path.join(tmpDir, "runtime")).experimentQueuePath("queue-unsafe-version");
+    const persisted = JSON.parse(await fsp.readFile(queuePath, "utf-8")) as {
+      current_version: number;
+      revisions: Array<{ version: number }>;
+    };
+    persisted.current_version = Number.MAX_SAFE_INTEGER + 1;
+    await fsp.writeFile(queuePath, JSON.stringify(persisted, null, 2), "utf-8");
+
+    await expect(store.load("queue-unsafe-version")).resolves.toBeNull();
+  });
+
+  it("rejects persisted queue records with unsafe revision identifiers", async () => {
+    await store.create({
+      queue_id: "queue-unsafe-revision",
+      created_at: "2026-05-01T00:00:00.000Z",
+      provenance: provenance("experiment-bank-v1"),
+      items: [item("exp-a", { seed: 1 })],
+    });
+    await store.appendRevision("queue-unsafe-revision", {
+      reason: "Add another seed",
+      created_at: "2026-05-01T00:10:00.000Z",
+      provenance: provenance("revision-plan"),
+      items: [item("exp-b", { seed: 2 })],
+    });
+
+    const queuePath = createRuntimeStorePaths(path.join(tmpDir, "runtime")).experimentQueuePath("queue-unsafe-revision");
+    const persisted = JSON.parse(await fsp.readFile(queuePath, "utf-8")) as {
+      current_version: number;
+      revisions: Array<{ version: number }>;
+    };
+    persisted.current_version = 1;
+    persisted.revisions[1]!.version = Number.MAX_SAFE_INTEGER + 1;
+    await fsp.writeFile(queuePath, JSON.stringify(persisted, null, 2), "utf-8");
+
+    await expect(store.load("queue-unsafe-revision")).resolves.toBeNull();
+  });
+
+  it("rejects persisted queue records with unsafe revision ancestry", async () => {
+    await store.create({
+      queue_id: "queue-unsafe-revision-of",
+      created_at: "2026-05-01T00:00:00.000Z",
+      provenance: provenance("experiment-bank-v1"),
+      items: [item("exp-a", { seed: 1 })],
+    });
+    await store.appendRevision("queue-unsafe-revision-of", {
+      reason: "Add another seed",
+      created_at: "2026-05-01T00:10:00.000Z",
+      provenance: provenance("revision-plan"),
+      items: [item("exp-b", { seed: 2 })],
+    });
+
+    const queuePath = createRuntimeStorePaths(path.join(tmpDir, "runtime")).experimentQueuePath("queue-unsafe-revision-of");
+    const persisted = JSON.parse(await fsp.readFile(queuePath, "utf-8")) as {
+      revisions: Array<{ revision_of: number | null }>;
+    };
+    persisted.revisions[1]!.revision_of = Number.MAX_SAFE_INTEGER + 1;
+    await fsp.writeFile(queuePath, JSON.stringify(persisted, null, 2), "utf-8");
+
+    await expect(store.load("queue-unsafe-revision-of")).resolves.toBeNull();
   });
 });
 
