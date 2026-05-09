@@ -3,6 +3,12 @@ import * as path from "node:path";
 import { describe, expect, it } from "vitest";
 import { cleanupTempDir, makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 import { writeJsonFileAtomic } from "../../../base/utils/json-io.js";
+import {
+  MAX_SCHEDULE_RETRY_ATTEMPTS,
+  MAX_SCHEDULE_RETRY_DELAY_MS,
+  MAX_SCHEDULE_RETRY_MULTIPLIER,
+  MAX_SCHEDULE_RETRY_WINDOW_MS,
+} from "../../../runtime/types/schedule.js";
 import { SoilCompiler } from "../compiler.js";
 import { rebuildSoilFromRuntime } from "../runtime-rebuild.js";
 import { SoilDoctor } from "../doctor.js";
@@ -102,6 +108,62 @@ describe("Soil runtime rebuild", () => {
       expect(doctor.findings.filter((finding) => finding.code === "missing-index")).toHaveLength(0);
       expect(doctor.findings.filter((finding) => finding.code === "watermark-mismatch")).toHaveLength(0);
       expect(doctor.findings.filter((finding) => finding.code === "index-checksum-mismatch")).toHaveLength(0);
+    } finally {
+      cleanupTempDir(baseDir);
+    }
+  });
+
+  it("rebuilds schedules with finite legacy retry bounds", async () => {
+    const baseDir = makeTempDir("soil-runtime-rebuild-schedule-");
+    try {
+      await writeJsonFileAtomic(path.join(baseDir, "schedules.json"), [
+        {
+          id: "22222222-2222-4222-8222-222222222222",
+          name: "legacy-large-retry-policy",
+          layer: "heartbeat",
+          trigger: { type: "interval", seconds: 60, jitter_factor: 0 },
+          enabled: true,
+          heartbeat: {
+            check_type: "custom",
+            check_config: { command: "echo ok" },
+            failure_threshold: 3,
+            timeout_ms: 5000,
+          },
+          retry_policy: {
+            enabled: true,
+            initial_delay_ms: MAX_SCHEDULE_RETRY_DELAY_MS + 1,
+            max_delay_ms: MAX_SCHEDULE_RETRY_DELAY_MS + 1,
+            multiplier: MAX_SCHEDULE_RETRY_MULTIPLIER + 1,
+            jitter_factor: 0,
+            max_attempts: MAX_SCHEDULE_RETRY_ATTEMPTS + 1,
+            max_retry_window_ms: MAX_SCHEDULE_RETRY_WINDOW_MS + 1,
+            retryable_failure_kinds: ["transient"],
+          },
+          retry_state: {
+            attempts: MAX_SCHEDULE_RETRY_ATTEMPTS + 1,
+          },
+          created_at: "2026-04-11T09:00:00.000Z",
+          updated_at: "2026-04-11T09:00:00.000Z",
+          last_fired_at: null,
+          next_fire_at: "2026-04-11T09:01:00.000Z",
+          consecutive_failures: 0,
+          last_escalation_at: null,
+          escalation_timestamps: [],
+          total_executions: 0,
+          total_tokens_used: 0,
+          max_tokens_per_day: 100000,
+          tokens_used_today: 0,
+          budget_reset_at: null,
+          baseline_results: [],
+        },
+      ]);
+
+      const report = await rebuildSoilFromRuntime({ baseDir, clock: fixedClock });
+      const schedulePage = await readSoilMarkdownFile(path.join(baseDir, "soil", "schedule", "current.md"));
+
+      expect(report.projected.schedules).toBe(1);
+      expect(schedulePage?.frontmatter.summary).toBe("1/1 schedules enabled");
+      expect(schedulePage?.body).toContain("legacy-large-retry-policy");
     } finally {
       cleanupTempDir(baseDir);
     }

@@ -5,7 +5,8 @@ import {
   parseStrategy,
 } from "../../base/types/strategy.js";
 import { isWaitStrategy } from "../../orchestrator/strategy/portfolio-allocation.js";
-import { ScheduleEntryListSchema, type ScheduleEntry } from "../types/schedule.js";
+import { parsePersistedScheduleEntries } from "../schedule/entry-normalization.js";
+import type { ScheduleEntry } from "../types/schedule.js";
 
 export interface WaitDeadlineResolution {
   next_observe_at: string | null;
@@ -44,12 +45,12 @@ export class WaitDeadlineResolver {
 
   private async resolveFromInternalSchedules(goalIds: string[]): Promise<WaitDeadlineResolution["waiting_goals"]> {
     const rawSchedules = await this.stateManager.readRaw("schedules.json");
-    const parsedSchedules = ScheduleEntryListSchema.safeParse(rawSchedules);
-    if (!parsedSchedules.success) {
+    const parsedSchedules = parsePersistedScheduleEntries(rawSchedules);
+    if (!parsedSchedules.validList) {
       return [];
     }
 
-    const waitingGoals = await Promise.all(parsedSchedules.data
+    const waitingGoals = await Promise.all(parsedSchedules.entries
       .filter((entry) =>
         entry.enabled
         && entry.metadata?.internal === true
