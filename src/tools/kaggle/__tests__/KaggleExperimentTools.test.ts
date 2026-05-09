@@ -13,6 +13,7 @@ import {
   KaggleExperimentStopTool,
   KaggleMetricReportTool,
 } from "../KaggleExperimentTools.js";
+import { teeWrapperArgs } from "../tee-wrapper.js";
 import type { KaggleMetricDirection } from "../metrics.js";
 
 function makeContext(cwd = "/tmp"): ToolCallContext {
@@ -88,6 +89,30 @@ async function waitFor(expectation: () => Promise<boolean>): Promise<void> {
   }
   expect(await expectation()).toBe(true);
 }
+
+describe("Kaggle tee wrapper", () => {
+  it("keeps wrapper argument order and child-process artifact path stable", () => {
+    const wrapperArgs = teeWrapperArgs(
+      process.execPath,
+      ["train.js", "--fold", "1"],
+      "/workspace/kaggle/titanic/experiments/exp-a/train.log",
+      "/workspace/kaggle/titanic/experiments/exp-a/metrics.json",
+      "/workspace/kaggle/titanic/experiments/exp-a/summary.md",
+      "/workspace/kaggle/titanic/experiments/exp-a/next-action.json",
+      "exp-a",
+      "titanic",
+    );
+
+    expect(wrapperArgs[0]).toBe("-e");
+    expect(wrapperArgs[2]).toBe(process.execPath);
+    expect(JSON.parse(wrapperArgs[3]!)).toEqual(["train.js", "--fold", "1"]);
+    expect(wrapperArgs[4]).toBe("/workspace/kaggle/titanic/experiments/exp-a/train.log");
+    expect(wrapperArgs[5]).toBe("/workspace/kaggle/titanic/experiments/exp-a/child-process.json");
+    expect(wrapperArgs[8]).toBe("/workspace/kaggle/titanic/experiments/exp-a/next-action.json");
+    expect(wrapperArgs[9]).toBe("exp-a");
+    expect(wrapperArgs[10]).toBe("titanic");
+  });
+});
 
 describe("Kaggle experiment tools", () => {
   const originalPulseedHome = process.env["PULSEED_HOME"];
