@@ -10,6 +10,9 @@ import {
 import {
   RuntimeEvidenceLedger,
 } from "./evidence-ledger.js";
+import {
+  RuntimeEvidenceScalarValueSchema,
+} from "./evidence-types.js";
 import type {
   RuntimeEvidenceArtifactRef,
   RuntimeEvidenceCandidateRecord,
@@ -88,7 +91,7 @@ export const RuntimeReproducibilityManifestSchema = z.object({
     source: z.string().min(1),
     candidate_id: z.string().min(1),
     status: z.string().min(1),
-    score: z.union([z.string(), z.number(), z.boolean(), z.null()]).optional(),
+    score: RuntimeEvidenceScalarValueSchema.optional(),
     score_label: z.string().min(1).optional(),
     direction: z.enum(["maximize", "minimize", "neutral"]).optional(),
     observed_at: z.string().datetime().optional(),

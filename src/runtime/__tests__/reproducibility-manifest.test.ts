@@ -4,7 +4,10 @@ import { createHash } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { makeTempDir } from "../../../tests/helpers/temp-dir.js";
 import { RuntimeEvidenceLedger } from "../store/evidence-ledger.js";
-import { RuntimeReproducibilityManifestStore } from "../store/reproducibility-manifest.js";
+import {
+  RuntimeReproducibilityManifestSchema,
+  RuntimeReproducibilityManifestStore,
+} from "../store/reproducibility-manifest.js";
 
 describe("RuntimeReproducibilityManifestStore", () => {
   let runtimeRoot: string;
@@ -140,6 +143,42 @@ describe("RuntimeReproducibilityManifestStore", () => {
       label: "train.csv",
       hash_status: "hashed",
     });
+  });
+
+  it("rejects non-finite evaluator record scores in the manifest schema", () => {
+    const baseManifest = {
+      schema_version: "runtime-reproducibility-manifest-v1",
+      manifest_id: "manifest-evaluator-score",
+      generated_at: "2026-04-30T00:00:00.000Z",
+      updated_at: "2026-04-30T00:00:00.000Z",
+      scope: { run_id: "run:coreloop:manifest-score" },
+      finalization_preflight: {
+        manifest_required_before_delivery: true,
+        approval_required_before_external_submission: true,
+        status: "manifest_ready",
+        missing: [],
+      },
+      code_state: { source: "test-fixture" },
+      evaluator_records: [{
+        evaluator_id: "leaderboard",
+        signal: "external",
+        source: "public-leaderboard",
+        candidate_id: "candidate-final",
+        status: "passed",
+        score: 0.9692,
+        evidence_entry_id: "external-feedback-final",
+        linked_manifest_id: "manifest-evaluator-score",
+      }],
+    };
+
+    expect(RuntimeReproducibilityManifestSchema.safeParse(baseManifest).success).toBe(true);
+    expect(RuntimeReproducibilityManifestSchema.safeParse({
+      ...baseManifest,
+      evaluator_records: [{
+        ...baseManifest.evaluator_records[0],
+        score: Number.POSITIVE_INFINITY,
+      }],
+    }).success).toBe(false);
   });
 
   it("updates the same manifest with linked external evaluator feedback", async () => {
