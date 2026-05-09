@@ -4,7 +4,13 @@ import * as path from "node:path";
 import { StateManager } from "../../../base/state/state-manager.js";
 import { SessionManager, DEFAULT_CONTEXT_BUDGET } from "../session-manager.js";
 import { CheckpointManager } from "../checkpoint-manager.js";
-import type { Session } from "../../../base/types/session.js";
+import {
+  ContextBudgetConfigSchema,
+  ContextSlotSchema,
+  MAX_CONTEXT_SLOT_TOKEN_ESTIMATE,
+  MAX_SESSION_CONTEXT_BUDGET,
+  SessionSchema,
+} from "../../../base/types/session.js";
 import type { KnowledgeEntry } from "../../../base/types/knowledge.js";
 import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 import { randomUUID } from "node:crypto";
@@ -387,6 +393,77 @@ describe("SessionManager", () => {
       const loaded = await manager2.getSession(session.id);
       expect(loaded!.id).toBe(session.id);
       expect(loaded!.goal_id).toBe("goal-2");
+    });
+
+    it("rejects persisted sessions with non-finite JSON numeric fields", async () => {
+      const sessionsDir = path.join(tmpDir, "sessions");
+      fs.mkdirSync(sessionsDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(sessionsDir, "bad-nonfinite.json"),
+        `{
+          "id": "bad-nonfinite",
+          "session_type": "task_execution",
+          "goal_id": "goal-1",
+          "task_id": null,
+          "context_slots": [
+            { "priority": 1, "label": "task", "content": "content", "token_estimate": 0 }
+          ],
+          "context_budget": 1e309,
+          "started_at": "2024-01-01T00:00:00.000Z",
+          "ended_at": null,
+          "result_summary": null
+        }`,
+      );
+
+      await expect(manager.getSession("bad-nonfinite")).rejects.toThrow();
+    });
+
+    it("rejects unsafe persisted session token budget scalars", () => {
+      const validSession = {
+        id: "session-safe",
+        session_type: "task_execution",
+        goal_id: "goal-1",
+        task_id: null,
+        context_slots: [{ priority: 1, label: "task", content: "content", token_estimate: 0 }],
+        context_budget: MAX_SESSION_CONTEXT_BUDGET,
+        started_at: "2024-01-01T00:00:00.000Z",
+        ended_at: null,
+        result_summary: null,
+      };
+      expect(SessionSchema.safeParse(validSession).success).toBe(true);
+
+      for (const context_budget of [
+        -1,
+        1.5,
+        Number.POSITIVE_INFINITY,
+        MAX_SESSION_CONTEXT_BUDGET + 1,
+        Number.MAX_SAFE_INTEGER + 1,
+      ]) {
+        expect(SessionSchema.safeParse({ ...validSession, context_budget }).success).toBe(false);
+      }
+
+      expect(ContextSlotSchema.safeParse({
+        priority: 4.5,
+        label: "conflict",
+        content: "content",
+        token_estimate: MAX_CONTEXT_SLOT_TOKEN_ESTIMATE,
+      }).success).toBe(true);
+
+      for (const token_estimate of [
+        -1,
+        Number.POSITIVE_INFINITY,
+        MAX_CONTEXT_SLOT_TOKEN_ESTIMATE + 1,
+      ]) {
+        expect(ContextSlotSchema.safeParse({
+          priority: 1,
+          label: "task",
+          content: "content",
+          token_estimate,
+        }).success).toBe(false);
+      }
+
+      expect(ContextBudgetConfigSchema.safeParse({ task_execution: MAX_SESSION_CONTEXT_BUDGET }).success).toBe(true);
+      expect(ContextBudgetConfigSchema.safeParse({ task_execution: Number.POSITIVE_INFINITY }).success).toBe(false);
     });
   });
 
