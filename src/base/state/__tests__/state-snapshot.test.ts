@@ -43,6 +43,50 @@ describe("state-snapshot", () => {
     expect((result!.data as { version: number }).version).toBe(3);
   });
 
+  it("skips malformed parsed snapshot records and returns the newest valid one", async () => {
+    const dir = path.join(tmpDir, "goals", "goal-malformed", "snapshots");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, "2026-01-01T00-00-00.000Z.json"),
+      JSON.stringify({ ts: "2026-01-01T00:00:00.000Z", data: { version: 1 } }),
+      "utf-8"
+    );
+    fs.writeFileSync(
+      path.join(dir, "2026-01-01T00-00-01.000Z.json"),
+      JSON.stringify({ ts: 123, data: { version: 2 } }),
+      "utf-8"
+    );
+    fs.writeFileSync(
+      path.join(dir, "2026-01-01T00-00-02.000Z.json"),
+      JSON.stringify({ ts: "2026-02-31T00:00:00.000Z", data: { version: 3 } }),
+      "utf-8"
+    );
+
+    const result = await loadLatestSnapshot("goal-malformed", tmpDir);
+
+    expect(result).not.toBeNull();
+    expect(result!.ts).toBe("2026-01-01T00:00:00.000Z");
+    expect(result!.data).toEqual({ version: 1 });
+  });
+
+  it("returns null when parsed snapshot records are all malformed", async () => {
+    const dir = path.join(tmpDir, "goals", "goal-invalid-only", "snapshots");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "2026-01-01T00-00-00.000Z.json"), JSON.stringify([]), "utf-8");
+    fs.writeFileSync(
+      path.join(dir, "2026-01-01T00-00-01.000Z.json"),
+      JSON.stringify({ ts: "not-a-date", data: { version: 2 } }),
+      "utf-8"
+    );
+    fs.writeFileSync(
+      path.join(dir, "2026-01-01T00-00-02.000Z.json"),
+      JSON.stringify({ ts: "2026-01-01T00:00:02.000Z" }),
+      "utf-8"
+    );
+
+    await expect(loadLatestSnapshot("goal-invalid-only", tmpDir)).resolves.toBeNull();
+  });
+
   it("listSnapshots returns sorted ascending list", async () => {
     await writeSnapshot("goal-3", tmpDir, { n: 1 });
     await new Promise((r) => setTimeout(r, 10));
