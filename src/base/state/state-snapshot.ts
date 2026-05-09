@@ -12,8 +12,31 @@ function tsToFilename(ts: string): string {
   return ts.replace(/:/g, "-") + ".json";
 }
 
-function filenameToTs(filename: string): string {
-  return filename.replace(/\.json$/, "").replace(/-(?=\d{2}\.)|-(?=\d{2}-\d{3}Z)/g, ":");
+interface SnapshotRecord {
+  ts: string;
+  data: unknown;
+}
+
+function isCanonicalSnapshotTimestamp(value: string): boolean {
+  const parsed = Date.parse(value);
+  return !Number.isNaN(parsed) && new Date(parsed).toISOString() === value;
+}
+
+function parseSnapshotRecord(raw: unknown): SnapshotRecord | null {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    return null;
+  }
+
+  const record = raw as Record<string, unknown>;
+  if (
+    typeof record.ts !== "string" ||
+    !isCanonicalSnapshotTimestamp(record.ts) ||
+    !Object.prototype.hasOwnProperty.call(record, "data")
+  ) {
+    return null;
+  }
+
+  return { ts: record.ts, data: record.data };
 }
 
 /** Write a snapshot. Returns the snapshot filename. */
@@ -44,7 +67,7 @@ export async function loadLatestSnapshot(
   }
   const jsonFiles = files.filter((f) => f.endsWith(".json")).sort().reverse();
   for (const f of jsonFiles) {
-    const parsed = await atomicRead<{ ts: string; data: unknown }>(path.join(dir, f));
+    const parsed = parseSnapshotRecord(await atomicRead<unknown>(path.join(dir, f)));
     if (parsed) return parsed;
   }
   return null;
