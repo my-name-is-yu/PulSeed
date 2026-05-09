@@ -100,25 +100,35 @@ export function getDaemonTokenPath(baseDir?: string): string {
   return path.join(baseDir ?? process.env["PULSEED_HOME"] ?? path.join(os.homedir(), ".pulseed"), DAEMON_TOKEN_FILENAME);
 }
 
-function readDaemonAuthTokenFile(baseDir?: string): DaemonAuthToken | null {
+type DaemonAuthTokenFileReadResult =
+  | { status: "found"; token: DaemonAuthToken }
+  | { status: "missing" }
+  | { status: "unusable" };
+
+function isFileMissingError(err: unknown): boolean {
+  return err instanceof Error && "code" in err && err.code === "ENOENT";
+}
+
+function readDaemonAuthTokenFile(baseDir?: string): DaemonAuthTokenFileReadResult {
   try {
     const raw = fs.readFileSync(getDaemonTokenPath(baseDir), "utf-8");
     const parsed = JSON.parse(raw) as unknown;
     const validated = DaemonAuthTokenFileSchema.safeParse(parsed);
-    return validated.success ? validated.data : null;
-  } catch {
-    return null;
+    return validated.success ? { status: "found", token: validated.data } : { status: "unusable" };
+  } catch (err) {
+    return isFileMissingError(err) ? { status: "missing" } : { status: "unusable" };
   }
 }
 
 export function readDaemonAuthToken(baseDir?: string, expectedPort?: number): string | null {
-  const parsed = readDaemonAuthTokenFile(baseDir);
-  if (parsed !== null) {
-    if (expectedPort !== undefined && parsed.port !== undefined && parsed.port !== expectedPort) {
+  const tokenFile = readDaemonAuthTokenFile(baseDir);
+  if (tokenFile.status === "found") {
+    if (expectedPort !== undefined && tokenFile.token.port !== undefined && tokenFile.token.port !== expectedPort) {
       return null;
     }
-    return typeof parsed.token === "string" && parsed.token.length > 0 ? parsed.token : null;
+    return tokenFile.token.token.length > 0 ? tokenFile.token.token : null;
   }
+  if (tokenFile.status === "unusable") return null;
 
   const envToken = process.env[DAEMON_TOKEN_ENV];
   if (envToken && envToken.trim() !== "") {
@@ -545,7 +555,9 @@ export async function isDaemonRunning(baseDir: string): Promise<{ running: boole
       if (config.success) {
         if (config.data.event_server_port === 0) {
           const tokenFile = readDaemonAuthTokenFile(baseDir);
-          port = isDaemonProbePort(tokenFile?.port) ? tokenFile.port : null;
+          port = tokenFile.status === "found" && isDaemonProbePort(tokenFile.token.port)
+            ? tokenFile.token.port
+            : null;
         } else {
           port = config.data.event_server_port;
         }
