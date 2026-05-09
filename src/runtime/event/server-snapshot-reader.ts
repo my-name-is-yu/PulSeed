@@ -1,5 +1,6 @@
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
+import { z } from "zod";
 import type { ApprovalRequiredEvent } from "../approval-broker.js";
 import type { OutboxStore, RuntimeAutomationSnapshot } from "../store/index.js";
 import { BrowserSessionStore, RuntimeAuthHandoffStore } from "../interactive-automation/index.js";
@@ -11,6 +12,9 @@ import {
   RuntimeOperatorHandoffStore,
   type RuntimeOperatorHandoffRecord,
 } from "../store/operator-handoff-store.js";
+
+const JsonObjectSchema = z.object({}).catchall(z.unknown());
+const JsonArraySchema = z.array(z.unknown());
 
 type ActiveWorkersProvider = () =>
   | Array<Record<string, unknown>>
@@ -200,11 +204,7 @@ export class EventServerSnapshotReader {
   async readDaemonState(): Promise<Record<string, unknown> | null> {
     const raw = await this.readDaemonStateRaw();
     if (raw === null) return null;
-    try {
-      return JSON.parse(raw) as Record<string, unknown>;
-    } catch {
-      return null;
-    }
+    return parseJsonObject(raw);
   }
 
   async readGoalSummaries(): Promise<Array<{ id: string; title: string; status: string; loop_status: string }>> {
@@ -221,7 +221,8 @@ export class EventServerSnapshotReader {
       const goalFile = path.join(goalsDir, entry, "goal.json");
       try {
         const content = await fsp.readFile(goalFile, "utf-8");
-        const raw = JSON.parse(content) as Record<string, unknown>;
+        const raw = parseJsonObject(content);
+        if (!raw) continue;
         goals.push({
           id: String(raw["id"] ?? entry),
           title: String(raw["title"] ?? ""),
@@ -237,24 +238,43 @@ export class EventServerSnapshotReader {
 
   async readGoalDetail(goalId: string): Promise<Record<string, unknown> | null> {
     const goalFile = path.join(path.dirname(this.eventsDir), "goals", goalId, "goal.json");
-    let goalRaw: Record<string, unknown>;
+    let goalRaw: Record<string, unknown> | null;
     try {
       const content = await fsp.readFile(goalFile, "utf-8");
-      goalRaw = JSON.parse(content) as Record<string, unknown>;
+      goalRaw = parseJsonObject(content);
     } catch {
       return null;
     }
+    if (!goalRaw) return null;
 
     const gapFile = path.join(path.dirname(this.eventsDir), "goals", goalId, "gap-history.json");
     let currentGap: unknown = null;
     try {
       const gapContent = await fsp.readFile(gapFile, "utf-8");
-      const gapHistory = JSON.parse(gapContent) as unknown[];
-      currentGap = gapHistory.at(-1) ?? null;
+      const gapHistory = parseJsonArray(gapContent);
+      currentGap = gapHistory?.at(-1) ?? null;
     } catch {
       // Gap file may not exist.
     }
 
     return { ...goalRaw, current_gap: currentGap };
+  }
+}
+
+function parseJsonObject(raw: string): Record<string, unknown> | null {
+  try {
+    const parsed = JsonObjectSchema.safeParse(JSON.parse(raw));
+    return parsed.success ? parsed.data : null;
+  } catch {
+    return null;
+  }
+}
+
+function parseJsonArray(raw: string): unknown[] | null {
+  try {
+    const parsed = JsonArraySchema.safeParse(JSON.parse(raw));
+    return parsed.success ? parsed.data : null;
+  } catch {
+    return null;
   }
 }

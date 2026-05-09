@@ -732,6 +732,47 @@ describe("snapshot and outbox replay", () => {
     expect(snapshot.last_outbox_seq).toBe(2);
   });
 
+  it("skips non-object persisted daemon and goal snapshot records", async () => {
+    fs.writeFileSync(path.join(tmpDir, "daemon-state.json"), JSON.stringify([]), "utf-8");
+    fs.mkdirSync(path.join(tmpDir, "goals", "g-array"), { recursive: true });
+    fs.writeFileSync(path.join(tmpDir, "goals", "g-array", "goal.json"), JSON.stringify([]), "utf-8");
+    fs.mkdirSync(path.join(tmpDir, "goals", "g-valid"), { recursive: true });
+    fs.writeFileSync(path.join(tmpDir, "goals", "g-valid", "goal.json"), JSON.stringify({
+      id: "g-valid",
+      title: "Valid goal",
+      status: "active",
+      loop_status: "idle",
+    }), "utf-8");
+    fs.writeFileSync(path.join(tmpDir, "goals", "g-valid", "gap-history.json"), JSON.stringify({ latest: "not-an-array" }), "utf-8");
+
+    server = new EventServer(mockDriveSystem as never, {
+      port: 0,
+      eventsDir: path.join(tmpDir, "events"),
+    });
+    await server.start();
+
+    const snapshotResult = await makeRequest(server.getPort(), "GET", "/snapshot");
+    expect(snapshotResult.status).toBe(200);
+    const snapshot = JSON.parse(snapshotResult.body) as {
+      daemon: unknown;
+      goals: Array<{ id: string; title: string }>;
+    };
+    expect(snapshot.daemon).toBeNull();
+    expect(snapshot.goals).toEqual([
+      expect.objectContaining({ id: "g-valid", title: "Valid goal" }),
+    ]);
+
+    const malformedGoal = await makeRequest(server.getPort(), "GET", "/goals/g-array");
+    expect(malformedGoal.status).toBe(404);
+
+    const validGoal = await makeRequest(server.getPort(), "GET", "/goals/g-valid");
+    expect(validGoal.status).toBe(200);
+    expect(JSON.parse(validGoal.body)).toMatchObject({
+      id: "g-valid",
+      current_gap: null,
+    });
+  });
+
   it("includes active worker summaries in snapshot when a provider is registered", async () => {
     server = new EventServer(mockDriveSystem as never, {
       port: 0,
