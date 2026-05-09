@@ -5,7 +5,7 @@
 
 import React, { useState, useEffect, useCallback } from "react";
 import { Box, Text, useInput } from "ink";
-import { loadGlobalConfig, updateGlobalConfig } from "../../base/config/global-config.js";
+import { DEFAULT_CONFIG, loadGlobalConfig, updateGlobalConfig } from "../../base/config/global-config.js";
 import { theme } from "./theme.js";
 
 interface FlickerOverlayProps {
@@ -38,7 +38,7 @@ export function FlickerOverlay({ onClose }: FlickerOverlayProps): React.ReactEle
 
   // Load current config on mount
   useEffect(() => {
-    loadGlobalConfig().then((config) => {
+    loadGlobalConfig().catch(() => DEFAULT_CONFIG).then((config) => {
       setActiveValue(config.no_flicker);
       // Pre-select current value
       const idx = OPTIONS.findIndex((o) => o.value === config.no_flicker);

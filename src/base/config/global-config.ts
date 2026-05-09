@@ -74,12 +74,18 @@ function mergeGlobalConfigPatch(base: GlobalConfig, patch: unknown): GlobalConfi
   });
 }
 
+function isRecoverableConfigLoadError(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException).code;
+  return code === "ENOENT" || error instanceof SyntaxError || error instanceof z.ZodError;
+}
+
 export async function loadGlobalConfig(): Promise<GlobalConfig> {
   try {
     const raw = await fs.readFile(getConfigPath(), "utf-8");
     const parsed = JSON.parse(raw);
     return mergeGlobalConfigPatch(DEFAULT_CONFIG, parsed);
-  } catch {
+  } catch (err) {
+    if (!isRecoverableConfigLoadError(err)) throw err;
     return { ...DEFAULT_CONFIG };
   }
 }
@@ -89,7 +95,8 @@ export function loadGlobalConfigSync(): GlobalConfig {
     const raw = fsSync.readFileSync(getConfigPath(), "utf-8");
     const parsed = JSON.parse(raw);
     return mergeGlobalConfigPatch(DEFAULT_CONFIG, parsed);
-  } catch {
+  } catch (err) {
+    if (!isRecoverableConfigLoadError(err)) throw err;
     return { ...DEFAULT_CONFIG };
   }
 }

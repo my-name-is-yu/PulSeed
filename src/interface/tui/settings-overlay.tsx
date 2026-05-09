@@ -5,7 +5,7 @@
 
 import React, { useState, useEffect, useCallback } from "react";
 import { Box, Text, useInput } from "ink";
-import { loadGlobalConfig, updateGlobalConfig } from "../../base/config/global-config.js";
+import { DEFAULT_CONFIG, loadGlobalConfig, updateGlobalConfig } from "../../base/config/global-config.js";
 import type { GlobalConfig } from "../../base/config/global-config.js";
 
 interface SettingsOverlayProps {
@@ -34,7 +34,7 @@ export function SettingsOverlay({ onClose }: SettingsOverlayProps): React.ReactE
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
-    loadGlobalConfig().then(setConfig);
+    loadGlobalConfig().catch(() => DEFAULT_CONFIG).then(setConfig);
   }, []);
 
   const toggleSetting = useCallback(async () => {

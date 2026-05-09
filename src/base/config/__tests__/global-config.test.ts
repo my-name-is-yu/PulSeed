@@ -61,6 +61,22 @@ describe("loadGlobalConfig", () => {
     });
   });
 
+  it("uses defaults for malformed JSON but surfaces real read errors", async () => {
+    await withTempPulseedHome(async (tmpDir) => {
+      await fs.writeFile(path.join(tmpDir, "config.json"), "{not json", "utf8");
+
+      const { loadGlobalConfig, loadGlobalConfigSync } = await import("../global-config.js");
+      await expect(loadGlobalConfig()).resolves.toMatchObject({ no_flicker: true });
+      expect(loadGlobalConfigSync()).toMatchObject({ no_flicker: true });
+
+      await fs.rm(path.join(tmpDir, "config.json"));
+      await fs.mkdir(path.join(tmpDir, "config.json"));
+
+      await expect(loadGlobalConfig()).rejects.toMatchObject({ code: "EISDIR" });
+      expect(() => loadGlobalConfigSync()).toThrow(/EISDIR/);
+    });
+  });
+
   it("preserves interactive automation settings from config.json", async () => {
     await withTempPulseedHome(async (tmpDir) => {
       await fs.writeFile(
