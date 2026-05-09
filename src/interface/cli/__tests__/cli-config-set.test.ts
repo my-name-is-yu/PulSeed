@@ -44,6 +44,38 @@ describe("cmdConfigSet", () => {
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("Set interactive_automation ="));
   });
 
+  it("merges partial object values with existing interactive automation settings", async () => {
+    await fs.writeFile(
+      path.join(tmpDir, "config.json"),
+      JSON.stringify({
+        interactive_automation: {
+          enabled: true,
+          default_desktop_provider: "mac_desktop",
+          default_browser_provider: "playwright_browser",
+          default_research_provider: "internal_research",
+          require_approval: "destructive",
+          allowed_apps: ["Terminal"],
+          denied_apps: ["Banking"],
+        },
+      }, null, 2),
+      "utf8",
+    );
+
+    await expect(cmdConfigSet(["interactive_automation", '{"enabled":false,"require_approval":"write"}'])).resolves.toBe(0);
+
+    await expect(loadGlobalConfig()).resolves.toMatchObject({
+      interactive_automation: {
+        enabled: false,
+        default_desktop_provider: "mac_desktop",
+        default_browser_provider: "playwright_browser",
+        default_research_provider: "internal_research",
+        require_approval: "write",
+        allowed_apps: ["Terminal"],
+        denied_apps: ["Banking"],
+      },
+    });
+  });
+
   it("rejects non-object values for object config keys without writing config", async () => {
     await expect(cmdConfigSet(["interactive_automation", "false"])).resolves.toBe(1);
 
