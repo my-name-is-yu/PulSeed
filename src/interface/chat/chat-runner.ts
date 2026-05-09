@@ -130,31 +130,21 @@ function formatPendingSetupConfirmationSubject(publicState: SetupDialogueRuntime
   return lines.join("\n");
 }
 
-function formatSetupConfirmationCancelled(languageHint: TurnLanguageHint): string {
-  if (languageHint.language === "ja") {
-    return "Telegram setup の config write はキャンセルしました。token は書き込んでいません。";
-  }
+function formatSetupConfirmationCancelled(): string {
   return "Telegram setup config write was cancelled. No token was written.";
 }
 
 function formatTelegramSetupRefreshResult(
-  result: { success: boolean; message: string; operationId?: string; state?: string; unavailable?: boolean },
-  languageHint: TurnLanguageHint
+  result: { success: boolean; message: string; operationId?: string; state?: string; unavailable?: boolean }
 ): string {
   if (result.success) {
     const suffix = result.operationId ? ` (${result.operationId})` : "";
-    return languageHint.language === "ja"
-      ? `PulSeed は更新済み Telegram gateway config を反映するため、internal gateway refresh を要求しました${suffix}: ${result.message}`
-      : `PulSeed requested an internal gateway refresh for the updated Telegram config${suffix}: ${result.message}`;
+    return `PulSeed requested an internal gateway refresh for the updated Telegram config${suffix}: ${result.message}`;
   }
   if (result.unavailable) {
-    return languageHint.language === "ja"
-      ? `PulSeed は internal gateway refresh を試みましたが、この chat surface では runtime control service が利用できません: ${result.message}`
-      : `PulSeed attempted an internal gateway refresh, but runtime control is unavailable in this chat surface: ${result.message}`;
+    return `PulSeed attempted an internal gateway refresh, but runtime control is unavailable in this chat surface: ${result.message}`;
   }
-  return languageHint.language === "ja"
-    ? `PulSeed は internal gateway refresh を試みましたが失敗しました: ${result.message}`
-    : `PulSeed attempted an internal gateway refresh, but it failed: ${result.message}`;
+  return `PulSeed attempted an internal gateway refresh, but it failed: ${result.message}`;
 }
 
 export class ChatRunner {
@@ -1081,7 +1071,7 @@ export class ChatRunner {
         await this.history?.persist();
         return {
           success: false,
-          output: formatSetupConfirmationCancelled(this.turnLanguageHint),
+          output: formatSetupConfirmationCancelled(),
           elapsed_ms: 0,
         };
       }
@@ -1152,28 +1142,18 @@ export class ChatRunner {
     return {
       success: true,
       output: [
-        this.turnLanguageHint.language === "ja"
-          ? "redacted chat-supplied token から Telegram gateway config を書き込みました。"
-          : "Telegram gateway config was written from the redacted chat-supplied token.",
+        "Telegram gateway config was written from the redacted chat-supplied token.",
         "",
-        formatTelegramSetupRefreshResult(writeResult.refresh, this.turnLanguageHint),
+        formatTelegramSetupRefreshResult(writeResult.refresh),
         "",
-        this.turnLanguageHint.language === "ja" ? "Next steps:" : "Next steps:",
+        "Next steps:",
         ...(writeResult.accessClosedByDefault
-          ? [this.turnLanguageHint.language === "ja"
-            ? "- allowed Telegram user IDs を設定するか、`pulseed telegram setup` で意図的に `allow_all` を有効にするまで access は closed のままです。"
-            : "- Access remains closed until you configure allowed Telegram user IDs or intentionally enable `allow_all` with `pulseed telegram setup`."]
+          ? ["- Access remains closed until you configure allowed Telegram user IDs or intentionally enable `allow_all` with `pulseed telegram setup`."]
           : []),
-        this.turnLanguageHint.language === "ja"
-          ? "- home chat が未設定なら Telegram から `/sethome` を送ってください。"
-          : "- Send `/sethome` from Telegram if no home chat is configured yet.",
+        "- Send `/sethome` from Telegram if no home chat is configured yet.",
         writeResult.refresh.success
-          ? this.turnLanguageHint.language === "ja"
-            ? "- Telegram bot にメッセージを送って動作確認してください。"
-            : "- Send a message to the Telegram bot to verify delivery."
-          : this.turnLanguageHint.language === "ja"
-            ? "- 自動反映できませんでした。daemon lifecycle 操作は typed runtime-control が利用可能な chat surface から再実行してください。"
-            : "- Automatic refresh was not applied. Retry the lifecycle refresh from a chat surface with typed runtime-control available.",
+          ? "- Send a message to the Telegram bot to verify delivery."
+          : "- Automatic refresh was not applied. Retry the lifecycle refresh from a chat surface with typed runtime-control available.",
       ].join("\n"),
       elapsed_ms: 0,
     };

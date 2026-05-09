@@ -159,7 +159,7 @@ class PrepareGatewaySetupGuidanceTool implements ITool<SetupGuidanceInput> {
         }));
       }
       const guidance = buildTelegramSetupGuidanceData(status, telegramSecret !== null, telegramSecret !== null);
-      const message = formatTelegramConfigureGuidance(status, telegramSecret !== null, telegramSecret !== null, hint);
+      const message = formatTelegramConfigureGuidance(status, telegramSecret !== null, telegramSecret !== null);
       return toolResult(true, {
         ...guidance,
         user_language: {

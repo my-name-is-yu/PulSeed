@@ -34,10 +34,6 @@ export function detectTurnLanguageHint(input: string): TurnLanguageHint {
   return { language: "unknown", script: "other", confidence: 0.65, source: "input_script" };
 }
 
-export function shouldRenderJapanese(hint: TurnLanguageHint | null | undefined): boolean {
-  return hint?.language === "ja" && hint.confidence >= 0.5;
-}
-
 export function sameLanguageResponseInstruction(hint: TurnLanguageHint | null | undefined): string {
   const base = "Reply in the same language as the user's current input. Do not translate command names, slash commands, file paths, config keys, environment variables, protocol tokens, or code.";
   if (hint?.language === "ja") {
