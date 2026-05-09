@@ -81,6 +81,30 @@ describe("PIDManager", () => {
       expect(written.pid).toBe(process.pid);
       expect(info!.pid).toBe(process.pid);
     });
+
+    it("rejects unsafe PID write options before process metadata probes", async () => {
+      const processStartedAtResolver = vi.fn(async () => {
+        throw new Error("process metadata resolver should not run");
+      });
+      const unsafePidManager = new PIDManager(tmpDir, "unsafe-write.pid", {
+        processStartedAtResolver,
+      });
+      const invalidOptions = [
+        ["pid", Number.NaN],
+        ["runtime_pid", Number.POSITIVE_INFINITY],
+        ["owner_pid", Number.MAX_SAFE_INTEGER + 1],
+        ["watchdog_pid", 0],
+      ] as const;
+
+      for (const [field, value] of invalidOptions) {
+        await expect(unsafePidManager.writePID({ [field]: value })).rejects.toThrow(
+          `Invalid PID write option ${field}`
+        );
+      }
+
+      expect(processStartedAtResolver).not.toHaveBeenCalled();
+      expect(fs.existsSync(unsafePidManager.getPath())).toBe(false);
+    });
   });
 
   // ─── readPID ───
