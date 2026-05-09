@@ -658,6 +658,9 @@ describe("DaemonRunner durable runtime", () => {
     expect(state.resident_activity).toEqual(expect.objectContaining({
       kind: "curiosity",
       suggestion_title: "Explore weak spots in idle daemon resident behavior.",
+      surface_id: expect.stringContaining("surface:relationship-profile:daemon:resident-curiosity"),
+      surface_included_count: 1,
+      surface_excluded_count: 1,
     }));
     expect(curiosityEngine.evaluateTriggers).toHaveBeenCalledOnce();
     expect(curiosityEngine.generateProposals).toHaveBeenCalledWith(
@@ -665,12 +668,16 @@ describe("DaemonRunner durable runtime", () => {
       expect.any(Array),
       expect.objectContaining({
         relationshipProfileContext: expect.stringContaining(
-          "Ask for confirmation before resident curiosity creates non-urgent proposals."
+          "Resident relationship profile Surface"
         ),
       })
     );
     const relationshipProfileContext = curiosityEngine.generateProposals.mock.calls[0]?.[2]?.relationshipProfileContext ?? "";
-    expect(relationshipProfileContext).toContain("status=active; version=1");
+    expect(relationshipProfileContext).toContain("Ask for confirmation before resident curiosity creates non-urgent proposals.");
+    expect(relationshipProfileContext).toContain("requested_use=attention_prioritization");
+    expect(relationshipProfileContext).toContain("Use only Surface-included relationship context below.");
+    expect(relationshipProfileContext).not.toContain("Relationship Profile (active items only; consent scope: resident_behavior)");
+    expect(relationshipProfileContext).not.toContain("status=active; version=1");
     expect(relationshipProfileContext).not.toContain("sensitive health context");
     expect(llmClient.sendMessage).not.toHaveBeenCalled();
 

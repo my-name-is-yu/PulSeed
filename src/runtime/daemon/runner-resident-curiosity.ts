@@ -1,5 +1,10 @@
 import type { ResidentActivity } from "../../base/types/daemon.js";
-import { loadRelationshipProfilePromptBlock } from "../../platform/profile/relationship-profile.js";
+import {
+  buildRelationshipProfileSurfaceProjection,
+  formatRelationshipProfileSurfaceContext,
+  loadRelationshipProfileSurfaceContext,
+} from "../../grounding/profile-surface.js";
+import type { SurfaceProjection } from "../../grounding/surface-contracts.js";
 import type { DaemonRunnerResidentContext } from "./runner-resident-shared.js";
 import {
   gatherResidentWorkspaceContext,
@@ -126,12 +131,26 @@ export async function runResidentCuriosityCycle(
       return true;
     }
 
-    const relationshipProfileContext = loadRelationshipProfilePromptBlock(
-      context.stateManager.getBaseDir(),
-      "resident_behavior"
+    const relationshipProfileContext = await loadRelationshipProfileSurfaceContext({
+      baseDir: context.stateManager.getBaseDir(),
+      scope: "resident_behavior",
+      includeSensitive: true,
+    });
+    const relationshipProfileSurface = buildRelationshipProfileSurfaceProjection({
+      context: relationshipProfileContext,
+      target: "daemon",
+      scopeRef: `resident-curiosity:${options?.activityTrigger ?? "proactive_tick"}`,
+      purpose: options?.reviewLabel ? `resident_${options.reviewLabel.replace(/\s+/g, "_")}` : "resident_curiosity",
+      requestedUse: "attention_prioritization",
+      now: new Date().toISOString(),
+    });
+    const relationshipProfileSurfaceContext = formatRelationshipProfileSurfaceContext(
+      relationshipProfileSurface,
+      { title: "Resident relationship profile Surface" },
     );
+    const surfaceActivityMetadata = residentSurfaceActivityMetadata(relationshipProfileSurface);
     const proposals = await context.curiosityEngine.generateProposals(triggers, goals, {
-      relationshipProfileContext,
+      relationshipProfileContext: relationshipProfileSurfaceContext,
     });
     if (proposals.length === 0) {
       await persistResidentActivity(context, {
@@ -140,6 +159,7 @@ export async function runResidentCuriosityCycle(
         summary: options?.reviewLabel
           ? `Resident ${options.reviewLabel} ran but produced no curiosity proposals.`
           : `Resident investigation ran${focus ? ` for ${focus}` : ""} but produced no curiosity proposals.`,
+        ...surfaceActivityMetadata,
       });
       return true;
     }
@@ -152,6 +172,7 @@ export async function runResidentCuriosityCycle(
         ? `Resident ${options.reviewLabel} created ${proposals.length} curiosity proposal(s); next focus: ${proposal.proposed_goal.description}`
         : `Resident investigation created ${proposals.length} curiosity proposal(s); next focus: ${proposal.proposed_goal.description}`,
       suggestion_title: proposal.proposed_goal.description,
+      ...surfaceActivityMetadata,
     });
     return true;
   } catch (err) {
@@ -164,6 +185,17 @@ export async function runResidentCuriosityCycle(
     });
     return true;
   }
+}
+
+function residentSurfaceActivityMetadata(
+  projection: SurfaceProjection | null,
+): Partial<Pick<ResidentActivity, "surface_id" | "surface_included_count" | "surface_excluded_count">> {
+  if (!projection) return {};
+  return {
+    surface_id: projection.id,
+    surface_included_count: projection.included_context.length,
+    surface_excluded_count: projection.excluded_context.length,
+  };
 }
 
 export async function triggerResidentInvestigation(
