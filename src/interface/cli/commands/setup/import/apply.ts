@@ -6,6 +6,11 @@ import { getGatewayChannelDir } from "../../../../../base/utils/paths.js";
 import { AssetRegistry } from "../../../../../runtime/assets/registry.js";
 import { checksumPath } from "../../../../../runtime/assets/checksum.js";
 import {
+  withForeignPluginProvenance,
+  writeForeignPluginCompatibilityArtifacts,
+} from "../../../../../runtime/foreign-plugins/compatibility.js";
+import { summarizeMcpImportCompatibility } from "../../../../../runtime/mcp/compatibility.js";
+import {
   classifySkillBundleMutationTarget,
   describeSkillBundle,
 } from "../../../../../runtime/skills/skill-bundle.js";
@@ -35,6 +40,11 @@ interface TelegramGatewayConfig {
   identity_key?: string;
 }
 
+interface MergedMcpServers {
+  configPath?: string;
+  imported: MCPServerConfig[];
+}
+
 function nextMcpId(existing: Set<string>, requested: string): string {
   const base = safeImportName(requested);
   if (!existing.has(base)) return base;
@@ -46,8 +56,8 @@ function nextMcpId(existing: Set<string>, requested: string): string {
   }
 }
 
-async function mergeMcpServers(baseDir: string, servers: MCPServerConfig[]): Promise<string | undefined> {
-  if (servers.length === 0) return undefined;
+async function mergeMcpServers(baseDir: string, servers: MCPServerConfig[]): Promise<MergedMcpServers> {
+  if (servers.length === 0) return { imported: [] };
   const configPath = path.join(baseDir, "mcp-servers.json");
   const current = await readJsonFileOrNull<MCPServersConfig>(configPath);
   const existingServers = Array.isArray(current?.servers) ? current.servers : [];
@@ -59,7 +69,7 @@ async function mergeMcpServers(baseDir: string, servers: MCPServerConfig[]): Pro
   });
 
   await writeJsonFileAtomic(configPath, { servers: [...existingServers, ...imported] });
-  return configPath;
+  return { configPath, imported };
 }
 
 async function applyFileItem(baseDir: string, item: SetupImportItem): Promise<SetupImportAppliedItem> {
@@ -96,6 +106,22 @@ async function applyFileItem(baseDir: string, item: SetupImportItem): Promise<Se
     const parentDir = path.join(baseDir, "plugins-imported-disabled", item.source);
     const targetPath = await uniqueImportPath(parentDir, item.label);
     await copyDirectoryNoSymlinks(item.sourcePath, targetPath);
+    let pluginCompatibility = item.pluginCompatibility;
+    let pluginCompatibilityReportPath: string | undefined;
+    let pluginCompatibilityReviewRecordPath: string | undefined;
+    if (pluginCompatibility) {
+      const directoryChecksum = await checksumPath(targetPath);
+      pluginCompatibility = withForeignPluginProvenance(pluginCompatibility, {
+        source_path: item.sourcePath,
+        imported_path: targetPath,
+        directory_checksum: directoryChecksum,
+        manifest_path: pluginCompatibility.manifestPath,
+        recorded_at: new Date().toISOString(),
+      });
+      const artifact = await writeForeignPluginCompatibilityArtifacts(targetPath, pluginCompatibility);
+      pluginCompatibilityReportPath = artifact.reportPath;
+      pluginCompatibilityReviewRecordPath = artifact.reviewRecordPath;
+    }
     return {
       id: item.id,
       source: item.source,
@@ -104,7 +130,9 @@ async function applyFileItem(baseDir: string, item: SetupImportItem): Promise<Se
       decision: item.decision,
       status: "applied",
       targetPath,
-      ...(item.pluginCompatibility ? { pluginCompatibility: item.pluginCompatibility } : {}),
+      ...(pluginCompatibility ? { pluginCompatibility } : {}),
+      ...(pluginCompatibilityReportPath ? { pluginCompatibilityReportPath } : {}),
+      ...(pluginCompatibilityReviewRecordPath ? { pluginCompatibilityReviewRecordPath } : {}),
     };
   }
 
@@ -186,6 +214,8 @@ function metadataForItem(
   item: SetupImportItem,
   applied: SetupImportAppliedItem
 ): Record<string, unknown> {
+  const mcpServer = applied.mcpServer ?? item.mcpServer;
+  const pluginCompatibility = applied.pluginCompatibility ?? item.pluginCompatibility;
   return {
     setup_import_item_id: item.id,
     setup_import_kind: item.kind,
@@ -203,18 +233,26 @@ function metadataForItem(
       bot_token_present: item.telegramSettings.botToken !== undefined,
       allowed_user_count: item.telegramSettings.allowedUserIds?.length ?? 0,
     } : {}),
-    ...(item.mcpServer ? {
-      mcp_server_id: item.mcpServer.id,
-      mcp_server_name: item.mcpServer.name,
-      transport: item.mcpServer.transport,
-      enabled: item.mcpServer.enabled,
-      tool_mapping_count: item.mcpServer.tool_mappings?.length ?? 0,
+    ...(mcpServer ? {
+      mcp_server_id: mcpServer.id,
+      mcp_server_name: mcpServer.name,
+      transport: mcpServer.transport,
+      enabled: mcpServer.enabled,
+      tool_mapping_count: mcpServer.tool_mappings?.length ?? 0,
+      compatibility: summarizeMcpImportCompatibility(mcpServer),
     } : {}),
-    ...(item.pluginCompatibility ? {
-      compatibility_status: item.pluginCompatibility.status,
-      compatibility_issues: item.pluginCompatibility.issues,
-      permissions: item.pluginCompatibility.permissions,
-      manifest: item.pluginCompatibility.manifest,
+    ...(pluginCompatibility ? {
+      compatibility_status: pluginCompatibility.status,
+      compatibility_issues: pluginCompatibility.issues,
+      permissions: pluginCompatibility.permissions,
+      manifest: pluginCompatibility.manifest,
+      runtime_loadable: pluginCompatibility.runtime_loadable,
+      execution_blockers: pluginCompatibility.execution_blockers,
+      adapter_requirements: pluginCompatibility.adapter_requirements,
+      smoke_requirements: pluginCompatibility.smoke_requirements,
+      source_provenance: pluginCompatibility.source_provenance,
+      compatibility_report_path: applied.pluginCompatibilityReportPath,
+      compatibility_review_record_path: applied.pluginCompatibilityReviewRecordPath,
     } : {}),
   };
 }
@@ -240,6 +278,7 @@ async function recordImportedAssets(
     const skillBundle = kind === "skill_bundle" && applied.targetPath
       ? await describeSkillBundle(path.join(applied.targetPath, "SKILL.md"), { sourceAgent: assetSourceAgentForItem(item) })
       : undefined;
+    const compatibilityReportRef = applied.pluginCompatibilityReportPath ?? reportPath;
     assets.push(createAssetRecord({
       id: toAssetId(kind, [item.source, item.label, item.id]),
       kind,
@@ -249,7 +288,7 @@ async function recordImportedAssets(
       ...(applied.targetPath ? { imported_path: applied.targetPath } : {}),
       ...(checksum ? { checksum } : {}),
       ...(item.pluginCompatibility?.manifest?.version ? { version: item.pluginCompatibility.manifest.version } : {}),
-      compatibility_report_ref: reportPath,
+      compatibility_report_ref: compatibilityReportRef,
       status: assetStatusForItem(item),
       recorded_at: createdAt,
       updated_at: createdAt,
@@ -323,19 +362,21 @@ export async function applySetupImportSelection(
 
   const mcpItems = selectedItems.filter((item) => item.kind === "mcp" && item.mcpServer);
   try {
-    const targetPath = await mergeMcpServers(
+    const mergedMcp = await mergeMcpServers(
       baseDir,
       mcpItems.map((item) => item.mcpServer as MCPServerConfig)
     );
-    for (const item of mcpItems) {
+    for (const [index, item] of mcpItems.entries()) {
+      const importedServer = mergedMcp.imported[index];
       applied.push({
         id: item.id,
         source: item.source,
         kind: item.kind,
         label: item.label,
         decision: item.decision,
-        status: targetPath ? "applied" : "skipped",
-        ...(targetPath ? { targetPath } : { reason: "no MCP server config" }),
+        status: mergedMcp.configPath ? "applied" : "skipped",
+        ...(mergedMcp.configPath ? { targetPath: mergedMcp.configPath } : { reason: "no MCP server config" }),
+        ...(importedServer ? { mcpServer: importedServer } : {}),
       });
     }
   } catch (err) {

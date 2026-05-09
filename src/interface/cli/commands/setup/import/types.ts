@@ -67,7 +67,10 @@ export interface SetupImportAppliedItem {
   status: "applied" | "skipped" | "failed";
   targetPath?: string;
   reason?: string;
+  mcpServer?: MCPServerConfig;
   pluginCompatibility?: ForeignPluginCompatibilityReport;
+  pluginCompatibilityReportPath?: string;
+  pluginCompatibilityReviewRecordPath?: string;
 }
 
 export interface SetupImportReport {

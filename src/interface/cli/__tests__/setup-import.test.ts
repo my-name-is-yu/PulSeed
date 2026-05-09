@@ -486,8 +486,10 @@ describe("setup import apply", () => {
           decision: "copy_disabled",
           reason: "quarantine",
           pluginCompatibility: {
+            schema_version: "foreign-plugin-compatibility/v1",
             source: "openclaw",
             status: "quarantined",
+            runtime_loadable: false,
             issues: ["requested permissions: network"],
             permissions: {
               network: true,
@@ -495,6 +497,25 @@ describe("setup import apply", () => {
               file_write: false,
               shell: false,
             },
+            execution_blockers: [
+              "foreign_plugin_imported_disabled",
+              "operator_review_required",
+              "adapter_required",
+              "smoke_verification_required",
+              "requested_network_permission",
+            ],
+            adapter_requirements: [{
+              kind: "compatibility_adapter",
+              required: true,
+              reason: "test adapter requirement",
+            }],
+            smoke_requirements: [{
+              operation_kind: "notifier",
+              payload_class: "foreign_plugin_manifest",
+              risk_class: "medium",
+              side_effect_profile: "send",
+              required: true,
+            }],
             manifestPath: path.join(pluginDir, "plugin.json"),
             manifest: {
               name: "notifier",
@@ -547,6 +568,12 @@ describe("setup import apply", () => {
     expect(fs.existsSync(path.join(baseDir, "skills", "imported", "openclaw", "review", "scripts", "check.sh"))).toBe(true);
     expect(fs.existsSync(path.join(baseDir, "skills", "imported", "openclaw", "review", "templates", "review.md"))).toBe(true);
     expect(fs.existsSync(path.join(baseDir, "plugins-imported-disabled", "openclaw", "notifier", "plugin.json"))).toBe(true);
+    expect(fs.existsSync(
+      path.join(baseDir, "plugins-imported-disabled", "openclaw", "notifier", "pulseed-foreign-plugin-compatibility.json")
+    )).toBe(true);
+    expect(fs.existsSync(
+      path.join(baseDir, "plugins-imported-disabled", "openclaw", "notifier", "pulseed-foreign-plugin-review.json")
+    )).toBe(true);
 
     const mcp = JSON.parse(
       await fsp.readFile(path.join(baseDir, "mcp-servers.json"), "utf-8")
@@ -558,7 +585,11 @@ describe("setup import apply", () => {
       ])
     );
     expect(report.items.filter((item) => item.status === "applied")).toHaveLength(4);
-    expect(report.items.find((item) => item.kind === "plugin")?.pluginCompatibility?.status).toBe("quarantined");
+    const pluginReportItem = report.items.find((item) => item.kind === "plugin");
+    expect(pluginReportItem?.pluginCompatibility?.status).toBe("quarantined");
+    expect(pluginReportItem?.pluginCompatibility?.runtime_loadable).toBe(false);
+    expect(pluginReportItem?.pluginCompatibilityReportPath).toMatch(/pulseed-foreign-plugin-compatibility\.json$/);
+    expect(pluginReportItem?.pluginCompatibilityReviewRecordPath).toMatch(/pulseed-foreign-plugin-review\.json$/);
     const { AssetRegistry } = await import("../../../runtime/assets/registry.js");
     const assets = await new AssetRegistry({ baseDir }).list();
     expect(assets.map((asset) => asset.kind).sort()).toEqual([
@@ -593,6 +624,32 @@ describe("setup import apply", () => {
       directories: {
         scripts: true,
         templates: true,
+      },
+    });
+    const pluginAsset = assets.find((asset) => asset.kind === "foreign_plugin");
+    expect(pluginAsset?.compatibility_report_ref).toMatch(/pulseed-foreign-plugin-compatibility\.json$/);
+    expect(pluginAsset?.metadata?.["runtime_loadable"]).toBe(false);
+    expect(pluginAsset?.metadata?.["execution_blockers"]).toEqual(expect.arrayContaining([
+      "foreign_plugin_imported_disabled",
+      "operator_review_required",
+      "adapter_required",
+      "smoke_verification_required",
+      "requested_network_permission",
+    ]));
+    expect(pluginAsset?.metadata?.["compatibility_review_record_path"]).toMatch(/pulseed-foreign-plugin-review\.json$/);
+    const mcpAsset = assets.find((asset) => asset.kind === "mcp_server");
+    expect(mcpAsset?.metadata?.["mcp_server_id"]).toBe("openclaw-filesystem-2");
+    expect(mcpAsset?.metadata?.["compatibility"]).toMatchObject({
+      schema_version: "mcp-import-compatibility/v1",
+      server_id: "openclaw-filesystem-2",
+      execution: {
+        executable: false,
+        reason: "mcp_operation_specific_verification_required",
+      },
+      states: {
+        config_imported: true,
+        config_enabled: false,
+        blocked: true,
       },
     });
     expect(await new AssetRegistry({ baseDir }).search("OpenClaw")).toHaveLength(4);

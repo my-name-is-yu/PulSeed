@@ -1,11 +1,26 @@
 export {
   analyzeForeignPluginDirectory,
   analyzeForeignPluginManifest,
+  createPendingCompatibilityReviewRecord,
+  FOREIGN_PLUGIN_COMPATIBILITY_REPORT_FILENAME,
+  FOREIGN_PLUGIN_REVIEW_RECORD_FILENAME,
+  hasForeignPluginCompatibilityArtifact,
+  readForeignPluginCompatibilityArtifact,
+  withForeignPluginProvenance,
+  writeForeignPluginCompatibilityArtifacts,
 } from "./compatibility.js";
 export type {
+  CompatibilityReviewRecord,
+  ForeignPluginAdapterRequirement,
+  ForeignPluginAdapterRequirementKind,
   ForeignPluginCompatibilityReport,
   ForeignPluginCompatibilityStatus,
+  ForeignPluginExecutionBlocker,
   ForeignPluginManifestSummary,
   ForeignPluginPermissions,
+  ForeignPluginReviewStatus,
+  ForeignPluginSideEffectProfile,
+  ForeignPluginSmokeRequirement,
   ForeignPluginSource,
+  ForeignPluginSourceProvenance,
 } from "./types.js";
