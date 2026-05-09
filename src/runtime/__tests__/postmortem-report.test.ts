@@ -170,6 +170,28 @@ describe("RuntimePostmortemReportStore", () => {
       candidateId: "candidate-other-run",
       codeState: { commit: "def456", dirty: false },
     });
+    const manifestsDir = path.join(runtimeRoot, "reproducibility-manifests");
+    await fsp.writeFile(path.join(manifestsDir, "manifest-malformed.json"), "{", "utf8");
+    await fsp.writeFile(path.join(manifestsDir, "manifest-unsafe.json"), `${JSON.stringify({
+      schema_version: "runtime-reproducibility-manifest-v1",
+      manifest_id: "manifest-unsafe",
+      generated_at: "2026-04-30T00:00:00.000Z",
+      updated_at: "2026-04-30T00:10:00.000Z",
+      scope: { goal_id: "goal-postmortem", run_id: "run:coreloop:postmortem" },
+      finalization_preflight: {
+        manifest_required_before_delivery: true,
+        approval_required_before_external_submission: true,
+        status: "manifest_ready",
+        missing: [],
+      },
+      code_state: { source: "test-fixture" },
+      artifacts: [{
+        label: "unsafe-artifact",
+        state_relative_path: "runs/final/unsafe.bin",
+        kind: "other",
+        size_bytes: Number.MAX_SAFE_INTEGER + 1,
+      }],
+    })}\n`, "utf8");
     await new RuntimeOperatorHandoffStore(runtimeRoot).create({
       handoff_id: "handoff-finalization",
       goal_id: "goal-postmortem",
@@ -276,6 +298,24 @@ describe("RuntimePostmortemReportStore", () => {
         expect.objectContaining({ label: "postmortem.md", retention_class: "evidence_report" }),
       ]),
     }));
+  });
+
+  it("rethrows manifest read errors during postmortem generation", async () => {
+    const ledger = new RuntimeEvidenceLedger(runtimeRoot);
+    await ledger.append({
+      id: "postmortem-manifest-read-error",
+      occurred_at: "2026-04-30T00:00:00.000Z",
+      kind: "metric",
+      scope: { goal_id: "goal-postmortem-manifest-read-error" },
+      metrics: [{ label: "score", value: 0.6, direction: "maximize", observed_at: "2026-04-30T00:00:00.000Z" }],
+      summary: "Score recorded.",
+    });
+    await fsp.mkdir(path.join(runtimeRoot, "reproducibility-manifests", "manifest-directory.json"), { recursive: true });
+
+    await expect(new RuntimePostmortemReportStore(runtimeRoot).generate({
+      goalId: "goal-postmortem-manifest-read-error",
+      trigger: "operator_request",
+    })).rejects.toThrow();
   });
 
   it("treats malformed or unsafe persisted postmortem JSON as missing", async () => {

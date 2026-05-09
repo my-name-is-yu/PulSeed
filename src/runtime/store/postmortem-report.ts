@@ -238,14 +238,8 @@ export class RuntimePostmortemReportStore {
     const manifests: RuntimeReproducibilityManifest[] = [];
     for (const fileName of fileNames) {
       if (!fileName.endsWith(".json")) continue;
-      try {
-        const parsed = RuntimeReproducibilityManifestSchema.parse(JSON.parse(
-          await fsp.readFile(path.join(this.paths.reproducibilityManifestsDir, fileName), "utf8")
-        ));
-        if (scopeMatches(scope, parsed.scope)) manifests.push(parsed);
-      } catch {
-        continue;
-      }
+      const parsed = await readPersistedManifest(path.join(this.paths.reproducibilityManifestsDir, fileName));
+      if (parsed && scopeMatches(scope, parsed.scope)) manifests.push(parsed);
     }
     return manifests.sort((a, b) => b.updated_at.localeCompare(a.updated_at));
   }
@@ -321,6 +315,20 @@ export class RuntimePostmortemReportStore {
       outcome: "continued",
     });
   }
+}
+
+async function readPersistedManifest(filePath: string): Promise<RuntimeReproducibilityManifest | null> {
+  const raw = await fsp.readFile(filePath, "utf8");
+  let parsedJson: unknown;
+  try {
+    parsedJson = JSON.parse(raw) as unknown;
+  } catch (err) {
+    if (err instanceof SyntaxError) return null;
+    throw err;
+  }
+
+  const parsed = RuntimeReproducibilityManifestSchema.safeParse(parsedJson);
+  return parsed.success ? parsed.data : null;
 }
 
 function postmortemIdFor(scope: RuntimePostmortemScope): string {
