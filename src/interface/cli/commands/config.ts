@@ -13,6 +13,7 @@ import { CONFIG_METADATA } from "../../../base/config/tool-metadata.js";
 import { isReasoningEffort, loadProviderConfig, saveProviderConfig } from "../../../base/llm/provider-config.js";
 import type { ProviderConfig } from "../../../base/llm/provider-config.js";
 import { buildLLMClient } from "../../../base/llm/provider-factory.js";
+import { DataSourceConfigSchema, type DataSourceConfig } from "../../../platform/observation/types/data-source.js";
 import { ReportingEngine } from "../../../reporting/reporting-engine.js";
 import { CapabilityDetector } from "../../../platform/observation/capability-detector.js";
 import { formatOperationError, printCharacterConfig } from "../utils.js";
@@ -547,28 +548,29 @@ export async function cmdDatasourceDedup(stateManager: StateManager): Promise<nu
   }
 
   // Load configs with their filenames
-  const configs: Array<{ file: string; cfg: Record<string, unknown> }> = [];
+  const configs: Array<{ file: string; cfg: DataSourceConfig }> = [];
   for (const file of jsonFiles) {
     try {
       const raw = await fsp.readFile(path.join(datasourcesDir, file), "utf-8");
-      configs.push({ file, cfg: JSON.parse(raw) as Record<string, unknown> });
+      const parsed = DataSourceConfigSchema.safeParse(JSON.parse(raw) as unknown);
+      if (parsed.success) {
+        configs.push({ file, cfg: parsed.data });
+      }
     } catch {
       // Skip unreadable files
     }
   }
 
   // Build dedup key: type + sorted dimension names
-  function dedupKey(cfg: Record<string, unknown>): string {
-    const type = (cfg["type"] as string | undefined) ?? "unknown";
+  function dedupKey(cfg: DataSourceConfig): string {
+    const type = cfg.type;
     let dims: string[] = [];
     if (type === "shell") {
-      const commands = (cfg["connection"] as Record<string, unknown> | undefined)?.["commands"];
-      dims = commands ? Object.keys(commands as Record<string, unknown>).sort() : [];
+      dims = cfg.connection.commands ? Object.keys(cfg.connection.commands).sort() : [];
     } else if (type === "file_existence") {
-      const dimMapping = cfg["dimension_mapping"];
-      dims = dimMapping ? Object.keys(dimMapping as Record<string, unknown>).sort() : [];
+      dims = cfg.dimension_mapping ? Object.keys(cfg.dimension_mapping).sort() : [];
     }
-    const scopeGoalId = (cfg["scope_goal_id"] as string | undefined) ?? "";
+    const scopeGoalId = cfg.scope_goal_id ?? "";
     return `${type}::${dims.join(",")}::${scopeGoalId}`;
   }
 
