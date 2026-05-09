@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import {
@@ -68,6 +68,26 @@ describe("state-wal", () => {
       fs.writeFileSync(path.join(goalDir, "wal.jsonl"), "", "utf-8");
       const records = await readWAL(GOAL_ID, tmpDir);
       expect(records).toEqual([]);
+    });
+
+    it("ignores malformed persisted WAL records before replay", async () => {
+      const goalDir = path.join(tmpDir, "goals", GOAL_ID);
+      fs.mkdirSync(goalDir, { recursive: true });
+      const validIntent = makeIntent("save_goal", "2026-01-01T00:00:00.000Z");
+      fs.writeFileSync(
+        path.join(goalDir, "wal.jsonl"),
+        [
+          JSON.stringify({ op: "commit", ts: "2026-01-01T00:00:01.000Z" }),
+          JSON.stringify({ op: "save_goal", ts: "2026-01-01T00:00:02.000Z" }),
+          "not json",
+          JSON.stringify(validIntent),
+        ].join("\n") + "\n",
+        "utf-8"
+      );
+
+      const records = await readWAL(GOAL_ID, tmpDir);
+
+      expect(records).toEqual([validIntent]);
     });
   });
 

@@ -1,5 +1,6 @@
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
+import { z } from "zod";
 
 export interface WALIntent {
   op: string;
@@ -26,8 +27,53 @@ export interface WALCompactionComplete {
 
 type WALRecord = WALIntent | WALCommit | WALCompactionStart | WALCompactionComplete;
 
+const WALTimestampSchema = z.string().min(1);
+const WALControlOps = new Set(["commit", "compaction_start", "compaction_complete"]);
+const WALIntentSchema = z.object({
+  op: z.string().min(1).refine((op) => !WALControlOps.has(op)),
+  data: z.unknown().optional(),
+  ts: WALTimestampSchema,
+}).superRefine((record, ctx) => {
+  if (!Object.prototype.hasOwnProperty.call(record, "data")) {
+    ctx.addIssue({
+      code: "custom",
+      message: "WAL intent data is required",
+      path: ["data"],
+    });
+  }
+});
+const WALCommitSchema = z.object({
+  op: z.literal("commit"),
+  ref_ts: WALTimestampSchema,
+  ts: WALTimestampSchema,
+});
+const WALCompactionStartSchema = z.object({
+  op: z.literal("compaction_start"),
+  ts: WALTimestampSchema,
+});
+const WALCompactionCompleteSchema = z.object({
+  op: z.literal("compaction_complete"),
+  ref_ts: WALTimestampSchema,
+  ts: WALTimestampSchema,
+});
+const WALRecordSchema = z.union([
+  WALCommitSchema,
+  WALCompactionStartSchema,
+  WALCompactionCompleteSchema,
+  WALIntentSchema,
+]);
+
 function walPath(goalId: string, baseDir: string): string {
   return path.join(baseDir, "goals", goalId, "wal.jsonl");
+}
+
+function parseWALLine(line: string): WALRecord | null {
+  try {
+    const parsed = WALRecordSchema.safeParse(JSON.parse(line) as unknown);
+    return parsed.success ? parsed.data as WALRecord : null;
+  } catch {
+    return null;
+  }
 }
 
 export async function appendWALRecord(
@@ -55,7 +101,10 @@ export async function readWAL(
   return content
     .split("\n")
     .filter((line) => line.trim() !== "")
-    .map((line) => JSON.parse(line) as WALRecord);
+    .flatMap((line) => {
+      const record = parseWALLine(line);
+      return record ? [record] : [];
+    });
 }
 
 export async function replayWAL(
