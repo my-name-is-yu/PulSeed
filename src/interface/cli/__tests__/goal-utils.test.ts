@@ -24,7 +24,16 @@ describe("autoRegisterFileExistenceDataSources — dedup by path and scope_goal_
   });
 
   function writeDatasource(filename: string, cfg: Record<string, unknown>): void {
-    fs.writeFileSync(path.join(datasourcesDir, filename), JSON.stringify(cfg));
+    const id = filename.replace(/\.json$/, "");
+    fs.writeFileSync(path.join(datasourcesDir, filename), JSON.stringify({
+      id,
+      name: id,
+      type: "file_existence",
+      connection: {},
+      enabled: true,
+      created_at: "2026-05-09T00:00:00.000Z",
+      ...cfg,
+    }));
   }
 
   it("skips registration when identical datasource (same dims, same path, same goalId) already exists", async () => {
@@ -92,6 +101,27 @@ describe("autoRegisterFileExistenceDataSources — dedup by path and scope_goal_
     const configs = await loadExistingDatasources(datasourcesDir);
     const newEntry = configs.find((c) => c.scope_goal_id === "goal-2");
     expect(newEntry).toBeDefined();
+  });
+
+  it("ignores invalid persisted datasource JSON during auto-registration", async () => {
+    fs.writeFileSync(path.join(datasourcesDir, "bad.json"), "null");
+
+    await autoRegisterFileExistenceDataSources(
+      fakeStateManager as never,
+      [{ name: "readme_exists", label: "README.md must exist" }],
+      "Ensure README.md is present",
+      "goal-1",
+      ["workspace_path:/workspace/proj"]
+    );
+
+    const configs = await loadExistingDatasources(datasourcesDir);
+    expect(configs).toHaveLength(1);
+    expect(configs[0]).toMatchObject({
+      type: "file_existence",
+      connection: { path: "/workspace/proj" },
+      dimension_mapping: { readme_exists: "README.md" },
+      scope_goal_id: "goal-1",
+    });
   });
 });
 
