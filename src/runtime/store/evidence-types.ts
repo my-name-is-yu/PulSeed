@@ -52,6 +52,9 @@ export const RuntimeEvidenceEntryKindSchema = z.enum([
 ]);
 export type RuntimeEvidenceEntryKind = z.infer<typeof RuntimeEvidenceEntryKindSchema>;
 
+export const RuntimeEvidenceScalarValueSchema = z.union([z.string(), z.number().finite(), z.boolean(), z.null()]);
+export type RuntimeEvidenceScalarValue = z.infer<typeof RuntimeEvidenceScalarValueSchema>;
+
 export const RuntimeEvidenceArtifactRefSchema = z.object({
   label: z.string().min(1),
   path: z.string().min(1).optional(),
@@ -67,7 +70,7 @@ export type RuntimeEvidenceArtifactRef = z.infer<typeof RuntimeEvidenceArtifactR
 
 export const RuntimeEvidenceMetricSchema = z.object({
   label: z.string().min(1),
-  value: z.union([z.string(), z.number(), z.boolean(), z.null()]).optional(),
+  value: RuntimeEvidenceScalarValueSchema.optional(),
   unit: z.string().min(1).optional(),
   direction: z.enum(["maximize", "minimize", "neutral"]).optional(),
   confidence: z.number().min(0).max(1).optional(),
@@ -256,11 +259,11 @@ export const RuntimeEvidenceEvaluatorObservationSchema = z.object({
   candidate_label: z.string().min(1).optional(),
   artifact_labels: z.array(z.string().min(1)).optional(),
   status: RuntimeEvidenceEvaluatorStatusSchema.default("unknown"),
-  score: z.union([z.string(), z.number(), z.boolean(), z.null()]).optional(),
+  score: RuntimeEvidenceScalarValueSchema.optional(),
   score_label: z.string().min(1).optional(),
   direction: z.enum(["maximize", "minimize", "neutral"]).optional(),
   observed_at: z.string().datetime().optional(),
-  expected_score: z.union([z.string(), z.number(), z.boolean(), z.null()]).optional(),
+  expected_score: RuntimeEvidenceScalarValueSchema.optional(),
   expected_status: RuntimeEvidenceEvaluatorStatusSchema.optional(),
   expectation_source: z.string().min(1).optional(),
   validation: RuntimeEvidenceEvaluatorValidationSchema.optional(),

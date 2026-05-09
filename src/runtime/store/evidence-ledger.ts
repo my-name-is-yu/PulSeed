@@ -120,6 +120,7 @@ export {
   RuntimeEvidenceResearchFindingSchema,
   RuntimeEvidenceResearchMemoSchema,
   RuntimeEvidenceResearchSourceSchema,
+  RuntimeEvidenceScalarValueSchema,
 } from "./evidence-types.js";
 export type {
   RuntimeArtifactRetentionClass,
@@ -159,6 +160,7 @@ export type {
   RuntimeEvidenceResearchExternalAction,
   RuntimeEvidenceResearchFinding,
   RuntimeEvidenceResearchSource,
+  RuntimeEvidenceScalarValue,
 } from "./evidence-types.js";
 export interface RuntimeFailedLineageContext {
   fingerprint: string;
