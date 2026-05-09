@@ -299,6 +299,35 @@ describe("RunSpecStore", () => {
     });
   });
 
+  it("returns null for malformed or stale persisted RunSpec JSON", async () => {
+    const baseDir = await fsp.mkdtemp(path.join(os.tmpdir(), "pulseed-runspec-"));
+    const malformedId = "runspec-00000000-0000-4000-8000-000000000001";
+    const staleId = "runspec-00000000-0000-4000-8000-000000000002";
+    const dir = path.join(baseDir, "run-specs");
+    await fsp.mkdir(dir, { recursive: true });
+    await fsp.writeFile(path.join(dir, `${malformedId}.json`), "{bad", "utf8");
+    await fsp.writeFile(path.join(dir, `${staleId}.json`), JSON.stringify({
+      schema_version: "run-spec-v1",
+      id: staleId,
+    }), "utf8");
+
+    const store = createRunSpecStore({ getBaseDir: () => baseDir });
+
+    await expect(store.load(malformedId)).resolves.toBeNull();
+    await expect(store.load(staleId)).resolves.toBeNull();
+  });
+
+  it("still surfaces unexpected RunSpec storage read failures", async () => {
+    const baseDir = await fsp.mkdtemp(path.join(os.tmpdir(), "pulseed-runspec-"));
+    const directoryId = "runspec-00000000-0000-4000-8000-000000000003";
+    const dir = path.join(baseDir, "run-specs");
+    await fsp.mkdir(path.join(dir, `${directoryId}.json`), { recursive: true });
+
+    const store = createRunSpecStore({ getBaseDir: () => baseDir });
+
+    await expect(store.load(directoryId)).rejects.toThrow();
+  });
+
   it("rejects path-like ids before RunSpec store file I/O", async () => {
     const baseDir = await fsp.mkdtemp(path.join(os.tmpdir(), "pulseed-runspec-"));
     const spec = await deriveRunSpecFromText("Run Kaggle until tomorrow morning and aim for top 15%.", {

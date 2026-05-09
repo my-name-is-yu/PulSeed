@@ -17,13 +17,23 @@ export class RunSpecStore {
 
   async load(id: string): Promise<RunSpec | null> {
     const parsedId = RunSpecIdSchema.parse(id);
+    let raw: string;
     try {
-      const raw = await fsp.readFile(path.join(this.runSpecsDir(), `${parsedId}.json`), "utf8");
-      return RunSpecSchema.parse(JSON.parse(raw));
+      raw = await fsp.readFile(path.join(this.runSpecsDir(), `${parsedId}.json`), "utf8");
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
       throw err;
     }
+
+    let parsedJson: unknown;
+    try {
+      parsedJson = JSON.parse(raw) as unknown;
+    } catch {
+      return null;
+    }
+
+    const parsed = RunSpecSchema.safeParse(parsedJson);
+    return parsed.success ? parsed.data : null;
   }
 
   private runSpecsDir(): string {
