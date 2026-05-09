@@ -427,7 +427,15 @@ describe("setup import apply", () => {
     const skillDir = path.join(sourceRoot, "skills", "review");
     const pluginDir = path.join(sourceRoot, "plugins", "notifier");
     await fsp.mkdir(skillDir, { recursive: true });
-    await fsp.writeFile(path.join(skillDir, "SKILL.md"), "# Review\n", "utf-8");
+    await fsp.mkdir(path.join(skillDir, "scripts"), { recursive: true });
+    await fsp.mkdir(path.join(skillDir, "templates"), { recursive: true });
+    await fsp.writeFile(
+      path.join(skillDir, "SKILL.md"),
+      "---\ntools:\n  - MissingTool\n---\n# Review\nSee [script](scripts/check.sh).\n",
+      "utf-8"
+    );
+    await fsp.writeFile(path.join(skillDir, "scripts", "check.sh"), "echo ok\n", "utf-8");
+    await fsp.writeFile(path.join(skillDir, "templates", "review.md"), "{{summary}}\n", "utf-8");
     await fsp.mkdir(pluginDir, { recursive: true });
     await writeJson(path.join(pluginDir, "plugin.json"), {
       name: "notifier",
@@ -536,6 +544,8 @@ describe("setup import apply", () => {
     const report = await applySetupImportSelection(baseDir, selection);
 
     expect(fs.existsSync(path.join(baseDir, "skills", "imported", "openclaw", "review", "SKILL.md"))).toBe(true);
+    expect(fs.existsSync(path.join(baseDir, "skills", "imported", "openclaw", "review", "scripts", "check.sh"))).toBe(true);
+    expect(fs.existsSync(path.join(baseDir, "skills", "imported", "openclaw", "review", "templates", "review.md"))).toBe(true);
     expect(fs.existsSync(path.join(baseDir, "plugins-imported-disabled", "openclaw", "notifier", "plugin.json"))).toBe(true);
 
     const mcp = JSON.parse(
@@ -572,6 +582,19 @@ describe("setup import apply", () => {
       },
     });
     expect(skillAsset?.checksum).toMatch(/^sha256:/);
+    expect(skillAsset?.metadata?.["compatibility"]).toMatchObject({
+      source_agent: "openclaw",
+      referenced_tools: ["MissingTool"],
+      referenced_paths: ["scripts/check.sh"],
+      unsupported_references: ["tool:MissingTool"],
+      execution_mapping_status: "blocked_unresolved_references",
+    });
+    expect(skillAsset?.metadata?.["bundle_manifest"]).toMatchObject({
+      directories: {
+        scripts: true,
+        templates: true,
+      },
+    });
     expect(await new AssetRegistry({ baseDir }).search("OpenClaw")).toHaveLength(4);
     const telegramConfig = JSON.parse(
       await fsp.readFile(path.join(baseDir, "gateway", "channels", "telegram-bot", "config.json"), "utf-8")

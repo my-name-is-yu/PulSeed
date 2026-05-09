@@ -6,6 +6,10 @@ import { getGatewayChannelDir } from "../../../../../base/utils/paths.js";
 import { AssetRegistry } from "../../../../../runtime/assets/registry.js";
 import { checksumPath } from "../../../../../runtime/assets/checksum.js";
 import {
+  classifySkillBundleMutationTarget,
+  describeSkillBundle,
+} from "../../../../../runtime/skills/skill-bundle.js";
+import {
   createAssetRecord,
   toAssetId,
   type AssetKind,
@@ -233,6 +237,9 @@ async function recordImportedAssets(
     if (!kind) continue;
     const checksumTarget = applied.targetPath ?? item.sourcePath;
     const checksum = checksumTarget ? await checksumPath(checksumTarget) : undefined;
+    const skillBundle = kind === "skill_bundle" && applied.targetPath
+      ? await describeSkillBundle(path.join(applied.targetPath, "SKILL.md"), { sourceAgent: assetSourceAgentForItem(item) })
+      : undefined;
     assets.push(createAssetRecord({
       id: toAssetId(kind, [item.source, item.label, item.id]),
       kind,
@@ -252,6 +259,16 @@ async function recordImportedAssets(
         evidence_refs: [item.id, reportPath],
       },
       metadata: metadataForItem(item, applied),
+      ...(skillBundle ? {
+        metadata: {
+          ...metadataForItem(item, applied),
+          bundle_manifest: skillBundle,
+          compatibility: skillBundle.compatibility,
+          protected_target: classifySkillBundleMutationTarget(path.join(applied.targetPath!, "SKILL.md"), {
+            homeSkillsDir: path.join(baseDir, "skills"),
+          }),
+        },
+      } : {}),
     }, createdAt));
   }
 
