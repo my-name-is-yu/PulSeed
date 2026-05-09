@@ -88,9 +88,10 @@ export * from "./public-api.js";
  * KnowledgeManager detects knowledge gaps, generates research tasks,
  * and persists/retrieves domain knowledge entries.
  *
- * File layout:
- *   <base>/goals/<goal_id>/domain_knowledge.json
- *   <base>/memory/shared-knowledge/entries.json  (Phase 2 shared KB)
+ * Durable state layout:
+ *   Soil SQLite records own domain knowledge, shared knowledge, and agent memory.
+ *   Legacy JSON paths are accepted only through StateManager compatibility routing
+ *   and explicit doctor/migration import.
  */
 export class KnowledgeManager {
   private readonly stateManager: StateManager;
@@ -141,9 +142,6 @@ export class KnowledgeManager {
 
   // ─── saveKnowledge ───
 
-  /**
-   * Persist a KnowledgeEntry to ~/.pulseed/goals/<goal_id>/domain_knowledge.json
-   */
   async saveKnowledge(goalId: string, entry: KnowledgeEntry): Promise<void> {
     await saveDomainKnowledgeEntry(this.knowledgeStoreHost(), goalId, entry);
   }

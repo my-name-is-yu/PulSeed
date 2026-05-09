@@ -22,6 +22,7 @@ import {
   createRuntimeStorePaths,
   inspectControlDatabase,
   importLegacyGoalTaskDurableLoopState,
+  importLegacyKnowledgeMemoryState,
   importLegacyQueueDaemonScheduleState,
   importLegacyRuntimeEvidenceStrategyDreamState,
   type RuntimeHealthKpi,
@@ -754,6 +755,7 @@ export async function cmdDoctor(_args: string[]): Promise<number> {
     const chatAgentLoopImportReport = await importLegacyChatAgentLoopSessionState(baseDir);
     const goalTaskImportReport = await importLegacyGoalTaskDurableLoopState(baseDir);
     const evidenceStrategyDreamImportReport = await importLegacyRuntimeEvidenceStrategyDreamState(baseDir, { runtimeRoot });
+    const knowledgeMemoryImportReport = await importLegacyKnowledgeMemoryState(baseDir);
     const migratedLegacyCronTasks = await migrateLegacyCronTasksIfNeeded({
       baseDir,
       logger: repairLogger,
@@ -781,6 +783,9 @@ export async function cmdDoctor(_args: string[]): Promise<number> {
     );
     console.log(
       `Repair evidence/strategy/dream import: evidence=${evidenceStrategyDreamImportReport.runtimeEvidenceEntries}, strategy=${evidenceStrategyDreamImportReport.strategyRecords}, iteration logs=${evidenceStrategyDreamImportReport.dreamIterationLogs}, session logs=${evidenceStrategyDreamImportReport.dreamSessionLogs}, event logs=${evidenceStrategyDreamImportReport.dreamEventLogs}, importance=${evidenceStrategyDreamImportReport.dreamImportanceEntries}, watermarks=${evidenceStrategyDreamImportReport.dreamWatermarks ? "imported" : "none"}, suggestions=${evidenceStrategyDreamImportReport.dreamScheduleSuggestions}, playbooks=${evidenceStrategyDreamImportReport.dreamPlaybooks}, activation artifacts=${evidenceStrategyDreamImportReport.dreamActivationArtifacts}, workflows=${evidenceStrategyDreamImportReport.dreamWorkflows}, blocked=${evidenceStrategyDreamImportReport.blockedSources.length}`
+    );
+    console.log(
+      `Repair knowledge/memory import: domain=${knowledgeMemoryImportReport.domainKnowledge}, shared=${knowledgeMemoryImportReport.sharedKnowledgeEntries}, agent memory=${knowledgeMemoryImportReport.agentMemoryEntries}, corrections=${knowledgeMemoryImportReport.agentMemoryCorrections}, blocked=${knowledgeMemoryImportReport.blockedSources.length}`
     );
   }
 

@@ -7,7 +7,7 @@ export interface ControlDbMigration {
   checksum: string;
 }
 
-export const CONTROL_DB_SCHEMA_VERSION = 7;
+export const CONTROL_DB_SCHEMA_VERSION = 8;
 
 export const CONTROL_DB_INITIAL_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS control_schema_migrations (
@@ -865,6 +865,10 @@ CREATE INDEX IF NOT EXISTS dream_workflows_type_idx
   ON dream_workflows(workflow_type, updated_at, workflow_id);
 `.trim();
 
+export const CONTROL_DB_KNOWLEDGE_MEMORY_SOIL_SCHEMA_SQL = `
+PRAGMA foreign_keys = ON;
+`.trim();
+
 export function controlDbMigrationChecksum(sql: string): string {
   return createHash("sha256").update(sql.trim()).digest("hex");
 }
@@ -917,5 +921,10 @@ export const CONTROL_DB_MIGRATIONS: readonly ControlDbMigration[] = [
     7,
     "runtime-evidence-strategy-dream-state",
     CONTROL_DB_RUNTIME_EVIDENCE_STRATEGY_DREAM_SCHEMA_SQL
+  ),
+  createControlDbMigration(
+    8,
+    "knowledge-memory-soil-state",
+    CONTROL_DB_KNOWLEDGE_MEMORY_SOIL_SCHEMA_SQL
   ),
 ];

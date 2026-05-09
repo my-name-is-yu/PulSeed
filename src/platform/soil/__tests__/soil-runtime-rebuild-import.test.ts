@@ -3,6 +3,8 @@ import * as path from "node:path";
 import { describe, expect, it } from "vitest";
 import { cleanupTempDir, makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 import { writeJsonFileAtomic } from "../../../base/utils/json-io.js";
+import { KnowledgeMemoryStateStore } from "../../knowledge/knowledge-memory-state-store.js";
+import { AgentMemoryStoreSchema } from "../../knowledge/types/agent-memory.js";
 import { ScheduleEntryStore } from "../../../runtime/schedule/entry-store.js";
 import { ScheduleEntrySchema } from "../../../runtime/types/schedule.js";
 import { SoilCompiler } from "../compiler.js";
@@ -21,7 +23,7 @@ function fixedClock(): Date {
 }
 
 describe("Soil runtime rebuild", () => {
-  it("rebuilds projections and index from runtime JSON truth", async () => {
+  it("rebuilds projections and index from runtime DB truth", async () => {
     const baseDir = makeTempDir("soil-runtime-rebuild-");
     try {
       await writeJsonFileAtomic(path.join(baseDir, "reports", "goal-1", "report-1.json"), {
@@ -35,7 +37,8 @@ describe("Soil runtime rebuild", () => {
         delivered_at: null,
         read: false,
       });
-      await writeJsonFileAtomic(path.join(baseDir, "goals", "goal-1", "domain_knowledge.json"), {
+      const knowledgeMemoryStore = new KnowledgeMemoryStateStore(baseDir);
+      await knowledgeMemoryStore.saveDomainKnowledge({
         goal_id: "goal-1",
         domain: "research",
         last_updated: "2026-04-11T09:00:00.000Z",
@@ -54,8 +57,8 @@ describe("Soil runtime rebuild", () => {
           },
         ],
       });
-      await writeJsonFileAtomic(path.join(baseDir, "memory", "shared-knowledge", "entries.json"), []);
-      await writeJsonFileAtomic(path.join(baseDir, "memory", "agent-memory", "entries.json"), {
+      await knowledgeMemoryStore.saveSharedKnowledgeEntries([]);
+      await knowledgeMemoryStore.saveAgentMemoryStore(AgentMemoryStoreSchema.parse({
         entries: [
           {
             id: "m-1",
@@ -69,7 +72,7 @@ describe("Soil runtime rebuild", () => {
           },
         ],
         last_consolidated_at: "2026-04-11T09:30:00.000Z",
-      });
+      }));
       await writeJsonFileAtomic(path.join(baseDir, "decisions", "goal-1-2026-04-11T09-00-00-000Z.json"), {
         id: "d-1",
         goal_id: "goal-1",

@@ -2,14 +2,10 @@ import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { z } from "zod";
 import { ReportSchema } from "../../base/types/report.js";
-import {
-  DecisionRecordSchema,
-  DomainKnowledgeSchema,
-  SharedKnowledgeEntrySchema,
-} from "../../base/types/knowledge.js";
+import { DecisionRecordSchema } from "../../base/types/knowledge.js";
 import { readJsonFileOrNull } from "../../base/utils/json-io.js";
 import { ScheduleEntryStore } from "../../runtime/schedule/entry-store.js";
-import { AgentMemoryStoreSchema } from "../knowledge/types/agent-memory.js";
+import { KnowledgeMemoryStateStore } from "../knowledge/knowledge-memory-state-store.js";
 import type { SoilIndexSnapshot } from "./index-store.js";
 import { rebuildSoilIndex } from "./index-store.js";
 import { readSoilMarkdownFile } from "./io.js";
@@ -212,38 +208,25 @@ export async function rebuildSoilFromRuntime(input: SoilRuntimeRebuildInput): Pr
     projected.schedules = schedules.length;
   }
 
-  const goalsDir = path.join(input.baseDir, "goals");
-  const goalEntries = await fsp.readdir(goalsDir, { withFileTypes: true }).catch(() => []);
-  for (const entry of goalEntries) {
-    if (!entry.isDirectory()) {
-      continue;
-    }
-    const goalId = entry.name;
-    const domainKnowledge = await readJsonWithSchema(
-      path.join(goalsDir, goalId, "domain_knowledge.json"),
-      DomainKnowledgeSchema
-    );
-    if (domainKnowledge === null) {
-      continue;
-    }
+  const knowledgeMemoryStore = new KnowledgeMemoryStateStore(input.baseDir);
+  for (const goalId of await knowledgeMemoryStore.listDomainKnowledgeGoalIds()) {
+    const domainKnowledge = await knowledgeMemoryStore.loadDomainKnowledge(goalId);
     await projectDomainKnowledgeToSoil({ ...projectionBase, goalId, domainKnowledge });
     projected.domainKnowledge += 1;
   }
 
-  const shared = await readJsonWithSchema(
-    path.join(input.baseDir, "memory", "shared-knowledge", "entries.json"),
-    z.array(SharedKnowledgeEntrySchema)
-  );
-  if (shared !== null) {
+  const shared = await knowledgeMemoryStore.loadSharedKnowledgeEntries();
+  if (shared.length > 0) {
     await projectSharedKnowledgeToSoil({ ...projectionBase, entries: shared });
     projected.sharedKnowledge = shared.length;
   }
 
-  const agentMemory = await readJsonWithSchema(
-    path.join(input.baseDir, "memory", "agent-memory", "entries.json"),
-    AgentMemoryStoreSchema
-  );
-  if (agentMemory !== null) {
+  const agentMemory = await knowledgeMemoryStore.loadAgentMemoryStore();
+  if (
+    agentMemory.entries.length > 0
+    || agentMemory.corrections.length > 0
+    || agentMemory.last_consolidated_at !== null
+  ) {
     await projectAgentMemoryToSoil({ ...projectionBase, store: agentMemory });
     projected.agentMemory = agentMemory.entries.length;
   }
