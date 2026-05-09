@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DaemonConfigSchema } from "../daemon.js";
+import { DaemonConfigSchema, DaemonStateSchema, ResidentActivitySchema } from "../daemon.js";
 
 describe("DaemonConfigSchema", () => {
   it("bounds the event server port to the valid TCP port range", () => {
@@ -52,3 +52,54 @@ describe("DaemonConfigSchema", () => {
     }
   });
 });
+
+describe("DaemonStateSchema", () => {
+  it("bounds daemon state counters to safe nonnegative integers", () => {
+    const unsafeInteger = Number.MAX_SAFE_INTEGER + 1;
+    const invalidStates = [
+      { loop_count: unsafeInteger },
+      { crash_count: unsafeInteger },
+      { approval_pending_count: unsafeInteger },
+    ];
+
+    for (const state of invalidStates) {
+      expect(DaemonStateSchema.safeParse(makeDaemonState(state)).success).toBe(false);
+    }
+  });
+
+  it("bounds resident activity surface counters to safe nonnegative integers", () => {
+    const unsafeInteger = Number.MAX_SAFE_INTEGER + 1;
+    const invalidActivities = [
+      { surface_included_count: unsafeInteger },
+      { surface_excluded_count: unsafeInteger },
+    ];
+
+    for (const activity of invalidActivities) {
+      expect(ResidentActivitySchema.safeParse(makeResidentActivity(activity)).success).toBe(false);
+    }
+  });
+});
+
+function makeDaemonState(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    pid: 12345,
+    started_at: "2026-05-09T00:00:00.000Z",
+    last_loop_at: null,
+    loop_count: 0,
+    active_goals: [],
+    status: "running",
+    crash_count: 0,
+    last_error: null,
+    ...overrides,
+  };
+}
+
+function makeResidentActivity(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    kind: "observation",
+    trigger: "proactive_tick",
+    summary: "Inspected resident activity.",
+    recorded_at: "2026-05-09T00:00:00.000Z",
+    ...overrides,
+  };
+}

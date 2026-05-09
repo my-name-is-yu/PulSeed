@@ -94,8 +94,8 @@ export const ResidentActivitySchema = z.object({
   suggestion_title: z.string().optional(),
   goal_id: z.string().optional(),
   surface_id: z.string().optional(),
-  surface_included_count: z.number().int().nonnegative().optional(),
-  surface_excluded_count: z.number().int().nonnegative().optional(),
+  surface_included_count: DaemonNonnegativeSafeIntSchema.optional(),
+  surface_excluded_count: DaemonNonnegativeSafeIntSchema.optional(),
   surface_inspection: SurfaceInspectionAdapterPayloadSchema.optional(),
   surface_inspections: z.array(SurfaceInspectionAdapterPayloadSchema).optional(),
 });
@@ -108,11 +108,11 @@ export const DaemonStateSchema = z.object({
   pid: ProcessIdSchema,
   started_at: z.string().datetime(),
   last_loop_at: z.string().datetime().nullable(),
-  loop_count: z.number().int().nonnegative(),
+  loop_count: DaemonNonnegativeSafeIntSchema,
   active_goals: z.array(z.string()),
   status: z.enum(["idle", "running", "stopping", "stopped", "crashed"]),
   runtime_root: z.string().optional(),
-  crash_count: z.number().int().nonnegative().default(0),
+  crash_count: DaemonNonnegativeSafeIntSchema.default(0),
   last_error: z.string().nullable().default(null),
   interrupted_goals: z.array(z.string()).optional(),
   last_resident_at: z.string().datetime().nullable().default(null),
@@ -130,7 +130,7 @@ export const DaemonStateSchema = z.object({
   next_observe_at: z.string().nullable().optional(),
   last_observe_at: z.string().datetime().nullable().optional(),
   last_wait_reason: z.string().nullable().optional(),
-  approval_pending_count: z.number().int().nonnegative().optional(),
+  approval_pending_count: DaemonNonnegativeSafeIntSchema.optional(),
   safe_pause_goals: z.record(RuntimeSafePauseRecordSchema).optional(),
 });
 export type DaemonState = z.infer<typeof DaemonStateSchema>;
