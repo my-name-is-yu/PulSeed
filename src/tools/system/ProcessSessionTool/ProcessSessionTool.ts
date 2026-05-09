@@ -18,7 +18,7 @@ export const ProcessSessionStartInputSchema = z.object({
   task_id: z.string().optional(),
   strategy_id: z.string().optional(),
   artifact_refs: z.array(z.string()).optional(),
-});
+}).strict();
 export type ProcessSessionStartInput = z.infer<typeof ProcessSessionStartInputSchema>;
 
 export const ProcessSessionReadInputSchema = z.object({
@@ -26,26 +26,26 @@ export const ProcessSessionReadInputSchema = z.object({
   maxChars: z.number().int().min(1).max(100_000).default(DEFAULT_MAX_READ_CHARS),
   waitMs: z.number().int().min(0).max(30_000).default(0),
   consume: z.boolean().default(true),
-});
+}).strict();
 export type ProcessSessionReadInput = z.infer<typeof ProcessSessionReadInputSchema>;
 
 export const ProcessSessionWriteInputSchema = z.object({
   session_id: z.string().min(1),
   input: z.string(),
   appendNewline: z.boolean().default(true),
-});
+}).strict();
 export type ProcessSessionWriteInput = z.infer<typeof ProcessSessionWriteInputSchema>;
 
 export const ProcessSessionStopInputSchema = z.object({
   session_id: z.string().min(1),
   signal: z.enum(["SIGTERM", "SIGINT", "SIGHUP", "SIGKILL"]).default("SIGTERM"),
   waitMs: z.number().int().min(0).max(30_000).default(1_000),
-});
+}).strict();
 export type ProcessSessionStopInput = z.infer<typeof ProcessSessionStopInputSchema>;
 
 export const ProcessSessionListInputSchema = z.object({
   includeExited: z.boolean().default(true),
-});
+}).strict();
 export type ProcessSessionListInput = z.infer<typeof ProcessSessionListInputSchema>;
 
 export interface ProcessSessionSnapshot {
