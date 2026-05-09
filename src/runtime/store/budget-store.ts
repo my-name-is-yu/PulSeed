@@ -41,18 +41,18 @@ export const RuntimeBudgetScopeSchema = z.object({
 });
 export type RuntimeBudgetScope = z.infer<typeof RuntimeBudgetScopeSchema>;
 
-const RuntimeBudgetNonNegativeNumberSchema = z.number().finite().nonnegative();
+const RuntimeBudgetNonNegativeSafeNumberSchema = z.number().finite().safe().nonnegative();
 
 export const RuntimeBudgetLimitSchema = z.object({
   dimension: RuntimeBudgetDimensionSchema,
-  limit: RuntimeBudgetNonNegativeNumberSchema,
-  warn_at_remaining: RuntimeBudgetNonNegativeNumberSchema.optional(),
-  approval_at_remaining: RuntimeBudgetNonNegativeNumberSchema.optional(),
-  handoff_at_remaining: RuntimeBudgetNonNegativeNumberSchema.optional(),
-  finalization_at_remaining: RuntimeBudgetNonNegativeNumberSchema.optional(),
+  limit: RuntimeBudgetNonNegativeSafeNumberSchema,
+  warn_at_remaining: RuntimeBudgetNonNegativeSafeNumberSchema.optional(),
+  approval_at_remaining: RuntimeBudgetNonNegativeSafeNumberSchema.optional(),
+  handoff_at_remaining: RuntimeBudgetNonNegativeSafeNumberSchema.optional(),
+  finalization_at_remaining: RuntimeBudgetNonNegativeSafeNumberSchema.optional(),
   mode_transition_at_remaining: z.object({
-    consolidation: RuntimeBudgetNonNegativeNumberSchema.optional(),
-    finalization: RuntimeBudgetNonNegativeNumberSchema.optional(),
+    consolidation: RuntimeBudgetNonNegativeSafeNumberSchema.optional(),
+    finalization: RuntimeBudgetNonNegativeSafeNumberSchema.optional(),
   }).strict().optional(),
   exhaustion_policy: z.enum(["stop", "approval_required", "handoff_required", "finalize"]).default("approval_required"),
 }).strict();
@@ -61,10 +61,10 @@ export type RuntimeBudgetLimitInput = z.input<typeof RuntimeBudgetLimitSchema>;
 
 export const RuntimeBudgetUsageSchema = z.object({
   dimension: RuntimeBudgetDimensionSchema,
-  used: RuntimeBudgetNonNegativeNumberSchema,
+  used: RuntimeBudgetNonNegativeSafeNumberSchema,
   updated_at: z.string().datetime(),
   recent: z.array(z.object({
-    amount: RuntimeBudgetNonNegativeNumberSchema,
+    amount: RuntimeBudgetNonNegativeSafeNumberSchema,
     source: z.enum(["task_execution", "artifact_generation", "tool_usage", "evaluator_call", "manual"]),
     reason: z.string().min(1).optional(),
     observed_at: z.string().datetime(),
@@ -195,9 +195,7 @@ export class RuntimeBudgetStore {
   }
 
   async updateUsage(budgetId: string, input: RuntimeBudgetUsageUpdateInput): Promise<RuntimeBudgetRecord> {
-    if (!Number.isFinite(input.amount) || input.amount < 0) {
-      throw new Error("Budget usage amount must be a finite non-negative number");
-    }
+    const amount = parseBudgetUsageAmount(input.amount);
     return this.update(budgetId, (budget) => {
       const observedAt = input.observed_at ?? this.nowIso();
       const hasLimit = budget.limits.some((limit) => limit.dimension === input.dimension);
@@ -211,11 +209,11 @@ export class RuntimeBudgetStore {
       };
       const nextUsage: RuntimeBudgetUsage = {
         ...existing,
-        used: existing.used + input.amount,
+        used: addBudgetUsage(existing.used, amount),
         updated_at: observedAt,
         recent: [
           {
-            amount: input.amount,
+            amount,
             source: input.source,
             ...(input.reason ? { reason: input.reason } : {}),
             observed_at: observedAt,
@@ -239,41 +237,38 @@ export class RuntimeBudgetStore {
 
   async recordTaskExecution(budgetId: string, input: { iterations?: number; tasks?: number; process_ms?: number; wall_clock_ms?: number; observed_at?: string; reason?: string }): Promise<RuntimeBudgetRecord> {
     let budget = await this.mustLoad(budgetId);
-    for (const [dimension, amount] of [
+    const updates = this.planUsageUpdates(budget, [
       ["iterations", input.iterations],
       ["tasks", input.tasks],
       ["process_ms", input.process_ms],
       ["wall_clock_ms", input.wall_clock_ms],
-    ] as const) {
-      if (amount && amount > 0 && this.hasLimit(budget, dimension)) {
-        budget = await this.updateUsage(budgetId, { dimension, amount, source: "task_execution", observed_at: input.observed_at, reason: input.reason });
-      }
+    ]);
+    for (const { dimension, amount } of updates) {
+      budget = await this.updateUsage(budgetId, { dimension, amount, source: "task_execution", observed_at: input.observed_at, reason: input.reason });
     }
     return budget;
   }
 
   async recordArtifactGeneration(budgetId: string, input: { disk_bytes?: number; artifacts?: number; observed_at?: string; reason?: string }): Promise<RuntimeBudgetRecord> {
     let budget = await this.mustLoad(budgetId);
-    for (const [dimension, amount] of [
+    const updates = this.planUsageUpdates(budget, [
       ["disk_bytes", input.disk_bytes],
       ["artifacts", input.artifacts],
-    ] as const) {
-      if (amount && amount > 0 && this.hasLimit(budget, dimension)) {
-        budget = await this.updateUsage(budgetId, { dimension, amount, source: "artifact_generation", observed_at: input.observed_at, reason: input.reason });
-      }
+    ]);
+    for (const { dimension, amount } of updates) {
+      budget = await this.updateUsage(budgetId, { dimension, amount, source: "artifact_generation", observed_at: input.observed_at, reason: input.reason });
     }
     return budget;
   }
 
   async recordToolUsage(budgetId: string, input: { llm_tokens?: number; tool_calls?: number; observed_at?: string; reason?: string }): Promise<RuntimeBudgetRecord> {
     let budget = await this.mustLoad(budgetId);
-    for (const [dimension, amount] of [
+    const updates = this.planUsageUpdates(budget, [
       ["llm_tokens", input.llm_tokens],
       ["tool_calls", input.tool_calls],
-    ] as const) {
-      if (amount && amount > 0 && this.hasLimit(budget, dimension)) {
-        budget = await this.updateUsage(budgetId, { dimension, amount, source: "tool_usage", observed_at: input.observed_at, reason: input.reason });
-      }
+    ]);
+    for (const { dimension, amount } of updates) {
+      budget = await this.updateUsage(budgetId, { dimension, amount, source: "tool_usage", observed_at: input.observed_at, reason: input.reason });
     }
     return budget;
   }
@@ -345,6 +340,23 @@ export class RuntimeBudgetStore {
     return budget.limits.some((limit) => limit.dimension === dimension);
   }
 
+  private planUsageUpdates(
+    budget: RuntimeBudgetRecord,
+    inputs: ReadonlyArray<readonly [RuntimeBudgetDimension, number | undefined]>,
+  ): Array<{ dimension: RuntimeBudgetDimension; amount: number }> {
+    const plannedUsedByDimension = new Map(budget.usage.map((usage) => [usage.dimension, usage.used]));
+    const updates: Array<{ dimension: RuntimeBudgetDimension; amount: number }> = [];
+    for (const [dimension, rawAmount] of inputs) {
+      const amount = parseOptionalBudgetUsageAmount(rawAmount);
+      if (amount === null) continue;
+      if (!this.hasLimit(budget, dimension)) continue;
+      const current = plannedUsedByDimension.get(dimension) ?? 0;
+      plannedUsedByDimension.set(dimension, addBudgetUsage(current, amount));
+      updates.push({ dimension, amount });
+    }
+    return updates;
+  }
+
   private async update(
     budgetId: string,
     updater: (budget: RuntimeBudgetRecord) => RuntimeBudgetRecord,
@@ -360,6 +372,38 @@ export class RuntimeBudgetStore {
   private nowIso(): string {
     return this.now().toISOString();
   }
+}
+
+function parseBudgetUsageAmount(amount: number): number {
+  const parsed = RuntimeBudgetNonNegativeSafeNumberSchema.safeParse(amount);
+  if (!parsed.success) {
+    throw new Error("Budget usage amount must be a finite safe non-negative number");
+  }
+  return parsed.data;
+}
+
+function parseOptionalBudgetUsageAmount(amount: number | undefined): number | null {
+  if (amount === undefined) return null;
+  const parsed = parseBudgetUsageAmount(amount);
+  return parsed > 0 ? parsed : null;
+}
+
+function addBudgetUsage(current: number, amount: number): number {
+  const safeCurrent = parseBudgetUsageAmount(current);
+  const safeAmount = parseBudgetUsageAmount(amount);
+  const remainingSafeRange = Number.MAX_SAFE_INTEGER - safeCurrent;
+  if (safeAmount > 0 && safeAmount > remainingSafeRange) {
+    throw new Error("Budget usage total must be a finite safe non-negative number");
+  }
+  const next = safeCurrent + safeAmount;
+  if (safeAmount > 0 && next <= safeCurrent) {
+    throw new Error("Budget usage total must be a finite safe non-negative number");
+  }
+  const parsed = RuntimeBudgetNonNegativeSafeNumberSchema.safeParse(next);
+  if (!parsed.success) {
+    throw new Error("Budget usage total must be a finite safe non-negative number");
+  }
+  return parsed.data;
 }
 
 function thresholdActionsFor(limit: RuntimeBudgetLimit, remaining: number, used: number): RuntimeBudgetThresholdAction[] {

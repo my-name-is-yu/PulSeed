@@ -45,7 +45,7 @@ describe("RuntimeBudgetStore", () => {
     expect(status.recent_consumption[0]).toMatchObject({ source: "evaluator_call", amount: 1 });
   });
 
-  it("rejects non-finite budget values before persistence", async () => {
+  it("rejects non-finite and unsafe budget values before persistence", async () => {
     expect(RuntimeBudgetLimitSchema.safeParse({
       dimension: "wall_clock_ms",
       limit: 1_000,
@@ -53,6 +53,7 @@ describe("RuntimeBudgetStore", () => {
       mode_transition_at_remaining: { consolidation: 400, finalization: 100 },
     }).success).toBe(true);
     expect(RuntimeBudgetLimitSchema.safeParse({ dimension: "wall_clock_ms", limit: Number.POSITIVE_INFINITY }).success).toBe(false);
+    expect(RuntimeBudgetLimitSchema.safeParse({ dimension: "wall_clock_ms", limit: Number.MAX_SAFE_INTEGER + 1 }).success).toBe(false);
     expect(RuntimeBudgetLimitSchema.safeParse({
       dimension: "wall_clock_ms",
       limit: 1_000,
@@ -61,6 +62,11 @@ describe("RuntimeBudgetStore", () => {
     expect(RuntimeBudgetUsageSchema.safeParse({
       dimension: "wall_clock_ms",
       used: Number.POSITIVE_INFINITY,
+      updated_at: "2026-05-01T00:00:00.000Z",
+    }).success).toBe(false);
+    expect(RuntimeBudgetUsageSchema.safeParse({
+      dimension: "wall_clock_ms",
+      used: Number.MAX_SAFE_INTEGER + 1,
       updated_at: "2026-05-01T00:00:00.000Z",
     }).success).toBe(false);
     expect(RuntimeBudgetUsageSchema.safeParse({
@@ -86,16 +92,111 @@ describe("RuntimeBudgetStore", () => {
       budget_id: "budget-non-finite-usage",
       scope: { goal_id: "goal-a" },
       created_at: "2026-05-01T00:00:00.000Z",
-      limits: [{ dimension: "tasks", limit: 10 }],
+      limits: [
+        { dimension: "iterations", limit: 10 },
+        { dimension: "tasks", limit: 10 },
+        { dimension: "disk_bytes", limit: 100 },
+        { dimension: "artifacts", limit: 10 },
+        { dimension: "llm_tokens", limit: 100 },
+        { dimension: "tool_calls", limit: 10 },
+      ],
     });
     await expect(store.updateUsage("budget-non-finite-usage", {
       dimension: "tasks",
       amount: Number.POSITIVE_INFINITY,
       source: "manual",
       observed_at: "2026-05-01T00:01:00.000Z",
-    })).rejects.toThrow("finite non-negative");
+    })).rejects.toThrow("finite safe non-negative");
 
     expect((await store.load("budget-non-finite-usage"))?.usage[0]?.used).toBe(0);
+
+    await expect(store.recordTaskExecution("budget-non-finite-usage", {
+      iterations: 1,
+      tasks: Number.NaN,
+      observed_at: "2026-05-01T00:02:00.000Z",
+    })).rejects.toThrow("finite safe non-negative");
+    await expect(store.recordArtifactGeneration("budget-non-finite-usage", {
+      disk_bytes: 1,
+      artifacts: -1,
+      observed_at: "2026-05-01T00:03:00.000Z",
+    })).rejects.toThrow("finite safe non-negative");
+    await expect(store.recordToolUsage("budget-non-finite-usage", {
+      llm_tokens: 1,
+      tool_calls: Number.MAX_SAFE_INTEGER + 1,
+      observed_at: "2026-05-01T00:04:00.000Z",
+    })).rejects.toThrow("finite safe non-negative");
+
+    const usage = (await store.load("budget-non-finite-usage"))?.usage ?? [];
+    expect(usage.every((entry) => entry.used === 0 && entry.recent.length === 0)).toBe(true);
+  });
+
+  it("rejects unsafe budget usage additions without corrupting persisted counters", async () => {
+    await store.create({
+      budget_id: "budget-unsafe-usage",
+      scope: { goal_id: "goal-a" },
+      created_at: "2026-05-01T00:00:00.000Z",
+      limits: [{ dimension: "llm_tokens", limit: Number.MAX_SAFE_INTEGER }],
+    });
+
+    await expect(store.updateUsage("budget-unsafe-usage", {
+      dimension: "llm_tokens",
+      amount: Number.MAX_SAFE_INTEGER + 1,
+      source: "tool_usage",
+      observed_at: "2026-05-01T00:01:00.000Z",
+    })).rejects.toThrow("finite safe non-negative");
+
+    expect((await store.load("budget-unsafe-usage"))?.usage[0]).toMatchObject({ used: 0, recent: [] });
+
+    await store.updateUsage("budget-unsafe-usage", {
+      dimension: "llm_tokens",
+      amount: Number.MAX_SAFE_INTEGER,
+      source: "tool_usage",
+      observed_at: "2026-05-01T00:02:00.000Z",
+    });
+
+    await expect(store.updateUsage("budget-unsafe-usage", {
+      dimension: "llm_tokens",
+      amount: 0.1,
+      source: "tool_usage",
+      observed_at: "2026-05-01T00:03:00.000Z",
+    })).rejects.toThrow("usage total");
+    await expect(store.updateUsage("budget-unsafe-usage", {
+      dimension: "llm_tokens",
+      amount: 1,
+      source: "tool_usage",
+      observed_at: "2026-05-01T00:04:00.000Z",
+    })).rejects.toThrow("usage total");
+
+    const budget = await store.load("budget-unsafe-usage");
+    expect(budget?.usage[0]).toMatchObject({
+      used: Number.MAX_SAFE_INTEGER,
+      recent: [expect.objectContaining({ amount: Number.MAX_SAFE_INTEGER })],
+    });
+
+    await store.create({
+      budget_id: "budget-rounded-usage",
+      scope: { goal_id: "goal-a" },
+      created_at: "2026-05-01T00:00:00.000Z",
+      limits: [{ dimension: "llm_tokens", limit: Number.MAX_SAFE_INTEGER }],
+    });
+    await store.updateUsage("budget-rounded-usage", {
+      dimension: "llm_tokens",
+      amount: Number.MAX_SAFE_INTEGER - 1,
+      source: "tool_usage",
+      observed_at: "2026-05-01T00:05:00.000Z",
+    });
+    await expect(store.updateUsage("budget-rounded-usage", {
+      dimension: "llm_tokens",
+      amount: 0.5,
+      source: "tool_usage",
+      observed_at: "2026-05-01T00:06:00.000Z",
+    })).rejects.toThrow("usage total");
+
+    const roundedBudget = await store.load("budget-rounded-usage");
+    expect(roundedBudget?.usage[0]).toMatchObject({
+      used: Number.MAX_SAFE_INTEGER - 1,
+      recent: [expect.objectContaining({ amount: Number.MAX_SAFE_INTEGER - 1 })],
+    });
   });
 
   it("marks exhaustion and applies the configured exhaustion policy", async () => {
