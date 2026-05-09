@@ -13,6 +13,7 @@ import {
   persistReflectionReport,
   todayISO,
 } from "./reflection-utils.js";
+import { buildReflectionRelationshipProfileSurfaceContext } from "./reflection-profile-surface.js";
 
 // ─── LLM response schema ───
 
@@ -48,10 +49,19 @@ export async function runMorningPlanning(deps: {
   let concerns: string[] = [];
 
   if (goalSummaries.length > 0) {
-    const prompt = `${getInternalIdentityPrefix("morning planner", {
+    const relationshipProfileSurface = await buildReflectionRelationshipProfileSurfaceContext({
       baseDir,
-      profileScope: "local_planning",
-    })} Review these active goals and create a daily plan.
+      scopeRef: "morning-planning",
+      purpose: "morning_planning",
+      title: "Morning planning relationship profile Surface",
+      now,
+    });
+    const prompt = [
+      getInternalIdentityPrefix("morning planner", {
+        baseDir,
+      }),
+      relationshipProfileSurface,
+      `Review these active goals and create a daily plan.
 
 Goals:
 ${JSON.stringify(goalSummaries, null, 2)}
@@ -60,7 +70,8 @@ For each goal, assign priority (high/medium/low) with reasoning.
 List any suggestions for new actions or concerns.
 
 Respond with JSON matching this schema:
-{ "priorities": [{"goal_id": string, "priority": "high"|"medium"|"low", "reasoning": string}], "suggestions": [string], "concerns": [string] }`;
+{ "priorities": [{"goal_id": string, "priority": "high"|"medium"|"low", "reasoning": string}], "suggestions": [string], "concerns": [string] }`,
+    ].filter((part) => part.trim().length > 0).join("\n\n");
 
     try {
       const response = await llmClient.sendMessage([{ role: "user", content: prompt }]);

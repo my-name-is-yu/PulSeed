@@ -5,6 +5,7 @@ import { makeTempDir, cleanupTempDir } from "../../../tests/helpers/temp-dir.js"
 import { createMockLLMClient } from "../../../tests/helpers/mock-llm.js";
 import { runWeeklyReview } from "../weekly-review.js";
 import type { Goal } from "../../base/types/goal.js";
+import { upsertRelationshipProfileItem } from "../../platform/profile/relationship-profile.js";
 
 // ─── Fixtures ───
 
@@ -147,6 +148,59 @@ describe("runWeeklyReview", () => {
     const content = JSON.parse(fs.readFileSync(filePath, "utf-8"));
     expect(content.goals_reviewed).toBe(1);
     expect(content.week).toBe(report.week);
+  });
+
+  it("routes local-planning relationship profile items through a weekly Surface", async () => {
+    tmpDir = makeTempDir();
+    await upsertRelationshipProfileItem(tmpDir, {
+      stableKey: "user.preference.weekly",
+      kind: "preference",
+      value: "Prefer weekly reviews to separate removals from new goals.",
+      source: "cli_update",
+      allowedScopes: ["local_planning"],
+      now: "2026-05-02T00:00:00.000Z",
+    });
+    await upsertRelationshipProfileItem(tmpDir, {
+      stableKey: "user.preference.resident_weekly",
+      kind: "preference",
+      value: "Resident-only weekly detail should not affect review.",
+      source: "cli_update",
+      allowedScopes: ["resident_behavior"],
+      now: "2026-05-02T01:00:00.000Z",
+    });
+    await upsertRelationshipProfileItem(tmpDir, {
+      stableKey: "user.preference.sensitive_weekly",
+      kind: "preference",
+      value: "Sensitive weekly detail should stay out of prompts.",
+      source: "cli_update",
+      sensitivity: "sensitive",
+      allowedScopes: ["local_planning"],
+      now: "2026-05-02T02:00:00.000Z",
+    });
+    const goals = [makeGoal("g1")];
+    const stateManager = makeStateManager(goals);
+    const sendMessage = vi.fn().mockResolvedValue({ content: VALID_LLM_RESPONSE });
+    const llmClient = {
+      sendMessage,
+      parseJSON: vi.fn().mockImplementation((content: string, schema: { parse(value: unknown): unknown }) =>
+        schema.parse(JSON.parse(content))
+      ),
+    };
+
+    await runWeeklyReview({
+      stateManager: stateManager as never,
+      llmClient: llmClient as never,
+      baseDir: tmpDir,
+    });
+
+    const prompt = sendMessage.mock.calls[0]?.[0]?.[0]?.content ?? "";
+    expect(prompt).toContain("Weekly review relationship profile Surface");
+    expect(prompt).toContain("requested_use=goal_planning");
+    expect(prompt).toContain("Use only Surface-included relationship context below.");
+    expect(prompt).not.toContain("Relationship Profile (active items only; consent scope: local_planning)");
+    expect(prompt).toContain("Prefer weekly reviews to separate removals from new goals.");
+    expect(prompt).not.toContain("Resident-only weekly detail should not affect review.");
+    expect(prompt).not.toContain("Sensitive weekly detail should stay out of prompts.");
   });
 
   it("LLM error: returns partial report without crashing", async () => {

@@ -15,6 +15,7 @@ import {
   persistReflectionReport,
   todayISO,
 } from "./reflection-utils.js";
+import { buildReflectionRelationshipProfileSurfaceContext } from "./reflection-profile-surface.js";
 
 // ─── LLM response schema ───
 
@@ -56,10 +57,19 @@ export async function runEveningCatchup(deps: {
       // No morning report available
     }
 
-    const prompt = `${getInternalIdentityPrefix("evening catch-up assistant", {
+    const relationshipProfileSurface = await buildReflectionRelationshipProfileSurfaceContext({
       baseDir,
-      profileScope: "local_planning",
-    })} Review today's goal progress.
+      scopeRef: "evening-catchup",
+      purpose: "evening_catchup",
+      title: "Evening catch-up relationship profile Surface",
+      now,
+    });
+    const prompt = [
+      getInternalIdentityPrefix("evening catch-up assistant", {
+        baseDir,
+      }),
+      relationshipProfileSurface,
+      `Review today's goal progress.
 
 Current goal state:
 ${JSON.stringify(goalSummaries, null, 2)}
@@ -69,7 +79,8 @@ ${morningData ? `Morning plan:\n${JSON.stringify(morningData, null, 2)}\n` : ""}
 Summarize the day's progress. List any completions, stalls, or concerns.
 
 Respond with JSON:
-{ "progress_summary": string, "completions": [string], "stalls": [string], "concerns": [string] }`;
+{ "progress_summary": string, "completions": [string], "stalls": [string], "concerns": [string] }`,
+    ].filter((part) => part.trim().length > 0).join("\n\n");
 
     try {
       const response = await llmClient.sendMessage([{ role: "user", content: prompt }]);
