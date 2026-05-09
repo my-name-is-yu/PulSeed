@@ -45,6 +45,7 @@ The design index is a pointer into background material, not a replacement for th
 - [Attention Metabolism And Initiative](core/attention-metabolism-initiative.md)
 - [Runtime Control Plane](infrastructure/runtime-control-plane.md)
 - [Companion Capability Runtime](infrastructure/companion-capability-runtime.md)
+- [Companion Capability Runtime Gap Audit](infrastructure/companion-capability-runtime-gap-audit.md)
 - [Codex-Like User Interaction Contract](execution/codex-like-interaction-contract.md)
 - [Exact Protocol Grammar Boundaries](execution/exact-protocol-boundaries.md)
 - [Runtime Auth, Browser Session, And Guardrail Control Model](infrastructure/runtime-auth-browser-guardrails.md)
