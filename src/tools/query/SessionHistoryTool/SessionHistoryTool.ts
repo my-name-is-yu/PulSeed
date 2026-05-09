@@ -8,9 +8,12 @@ import type { StateManager } from "../../../base/state/state-manager.js";
 
 // NOTE: fs.readdirSync is used only for listing filenames (safe). All file READS go through stateManager.readRaw().
 
+export const SESSION_HISTORY_DEFAULT_LIMIT = 5;
+export const SESSION_HISTORY_MAX_LIMIT = 100;
+
 export const SessionHistoryInputSchema = z.object({
   goalId: z.string().optional(),
-  limit: z.number().int().positive().default(5),
+  limit: z.number().int().min(1).max(SESSION_HISTORY_MAX_LIMIT).default(SESSION_HISTORY_DEFAULT_LIMIT),
   includeObservations: z.boolean().default(true),
 });
 export type SessionHistoryInput = z.infer<typeof SessionHistoryInputSchema>;
