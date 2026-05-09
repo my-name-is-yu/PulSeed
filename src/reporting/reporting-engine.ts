@@ -1,7 +1,8 @@
 import * as crypto from "node:crypto";
+import type { Dirent } from "node:fs";
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
-import { StateManager } from "../base/state/state-manager.js";
+import type { StateManager } from "../base/state/state-manager.js";
 import { ReportSchema } from "../base/types/report.js";
 import type { Report } from "../base/types/report.js";
 import type { INotificationDispatcher } from "../runtime/notification-dispatcher.js";
@@ -12,9 +13,8 @@ import {
   formatReportForCLI,
   buildExecutionSummaryContent,
   buildNotificationContent,
-  buildSectionedReportContent,
-  readMetadataOrContent,
 } from "./report-formatters.js";
+import { buildDailySummaryReport, buildWeeklyReport } from "./report-summary-builders.js";
 import type {
   ExecutionSummaryParams,
   NotificationContext,
@@ -103,209 +103,26 @@ export class ReportingEngine {
 
   async generateDailySummary(goalId: string): Promise<Report> {
     const now = new Date();
-    const todayPrefix = now.toISOString().slice(0, 10); // "YYYY-MM-DD"
-
-    // Load all reports for this goal
     const allReports = await this.listReports(goalId);
-
-    // Filter to execution summaries generated today
-    const todayReports = allReports.filter((r) => {
-      return (
-        r.report_type === "execution_summary" &&
-        r.generated_at.startsWith(todayPrefix)
-      );
-    });
-
-    const loopsRun = todayReports.length;
-
-    // Compute progress change from first to last loop
-    let progressChange: string;
-    if (loopsRun === 0) {
-      progressChange = "N/A";
-    } else if (loopsRun === 1) {
-      progressChange = "Single loop (no change to compute)";
-    } else {
-      const getGap = (r: (typeof todayReports)[0]): number | null => {
-        return readMetadataOrContent(
-          r.metadata?.gap_aggregate,
-          r.content,
-          /\*\*Score\*\*:\s*([\d.]+)/,
-          (match) => parseFloat(match[1])
-        );
-      };
-      const firstGap = getGap(todayReports[0]);
-      const lastGap = getGap(todayReports[loopsRun - 1]);
-      if (firstGap !== null && lastGap !== null) {
-        const delta = firstGap - lastGap;
-        progressChange =
-          delta >= 0
-            ? `▼ ${delta.toFixed(4)} (gap reduced)`
-            : `▲ ${Math.abs(delta).toFixed(4)} (gap grew)`;
-      } else {
-        progressChange = "Could not parse gap data";
-      }
-    }
-
-    // Count stalls and pivots
-    const stallCount = todayReports.filter((r) => {
-      return readMetadataOrContent(
-        r.metadata?.stall_detected,
-        r.content,
-        /\*\*Stall detected\*\*:\s*Yes/,
-        () => true
-      ) ?? false;
-    }).length;
-
-    const pivotCount = todayReports.filter((r) => {
-      return readMetadataOrContent(
-        r.metadata?.pivot_occurred,
-        r.content,
-        /\*\*Strategy pivot\*\*:\s*Yes/,
-        () => true
-      ) ?? false;
-    }).length;
-
-    const reportNow = now.toISOString();
-
-    const content = buildSectionedReportContent({
-      heading: `Daily Summary — ${todayPrefix}`,
-      goalId,
-      generatedAt: reportNow,
-      body:
-        `### Activity\n\n` +
-        `- **Loops run**: ${loopsRun}\n` +
-        `- **Stalls detected**: ${stallCount}\n` +
-        `- **Strategy pivots**: ${pivotCount}\n\n` +
-        `### Progress\n\n` +
-        `- **Overall gap change**: ${progressChange}`,
-    });
-
-    const report = ReportSchema.parse({
+    return buildDailySummaryReport({
       id: crypto.randomUUID(),
-      report_type: "daily_summary",
-      goal_id: goalId,
-      title: `Daily Summary — ${todayPrefix}`,
-      content,
-      verbosity: "standard",
-      generated_at: reportNow,
-      delivered_at: null,
-      read: false,
-      metadata: {
-        loops_run: loopsRun,
-        stall_count: stallCount,
-        pivot_count: pivotCount,
-        progress_change: progressChange,
-      },
+      goalId,
+      allReports,
+      now,
     });
-
-    return report;
   }
 
   // ─── generateWeeklyReport ───
 
   async generateWeeklyReport(goalId: string): Promise<Report> {
     const now = new Date();
-    const reportNow = now.toISOString();
-
-    // Collect daily summaries for the last 7 days
     const allReports = await this.listReports(goalId);
-
-    const dailySummaries = allReports.filter((r) => {
-      if (r.report_type !== "daily_summary") return false;
-      const generatedAt = new Date(r.generated_at);
-      const diffDays =
-        (now.getTime() - generatedAt.getTime()) / (1000 * 60 * 60 * 24);
-      return diffDays <= 7;
-    });
-
-    const daysWithActivity = dailySummaries.length;
-
-    // Sum up total loops from daily summaries
-    const getLoopsFromDaily = (r: (typeof dailySummaries)[0]): number => {
-      const loopsRun = readMetadataOrContent(
-        r.metadata?.loops_run,
-        r.content,
-        /\*\*Loops run\*\*:\s*(\d+)/,
-        (match) => parseInt(match[1], 10)
-      );
-      return loopsRun ?? 0;
-    };
-
-    const totalLoops = dailySummaries.reduce((acc, r) => acc + getLoopsFromDaily(r), 0);
-
-    const totalStalls = dailySummaries.reduce((acc, r) => {
-      const stallCount = readMetadataOrContent(
-        r.metadata?.stall_count,
-        r.content,
-        /\*\*Stalls detected\*\*:\s*(\d+)/,
-        (match) => parseInt(match[1], 10)
-      );
-      return acc + (stallCount ?? 0);
-    }, 0);
-
-    const totalPivots = dailySummaries.reduce((acc, r) => {
-      const pivotCount = readMetadataOrContent(
-        r.metadata?.pivot_count,
-        r.content,
-        /\*\*Strategy pivots\*\*:\s*(\d+)/,
-        (match) => parseInt(match[1], 10)
-      );
-      return acc + (pivotCount ?? 0);
-    }, 0);
-
-    // Build trend lines from daily summaries (sorted chronologically)
-    let trendSection = "_No daily activity in the last 7 days._";
-    if (dailySummaries.length > 0) {
-      const sortedSummaries = [...dailySummaries].sort((a, b) =>
-        a.generated_at.localeCompare(b.generated_at)
-      );
-      const trendLines = sortedSummaries.map((r) => {
-        const date = r.generated_at.slice(0, 10);
-        const loops = getLoopsFromDaily(r);
-        const progress =
-          readMetadataOrContent(
-            r.metadata?.progress_change,
-            r.content,
-            /\*\*Overall gap change\*\*:\s*(.+)/,
-            (match) => match[1].trim()
-          ) ?? "N/A";
-        return `- **${date}**: ${loops} loops | Gap change: ${progress}`;
-      });
-      trendSection = trendLines.join("\n");
-    }
-
-    const content = buildSectionedReportContent({
-      heading: "Weekly Report",
-      goalId,
-      generatedAt: reportNow,
-      body:
-        `**Period**: Last 7 days (ending ${reportNow.slice(0, 10)})\n\n` +
-        `### Summary\n\n` +
-        `- **Days with activity**: ${daysWithActivity}\n` +
-        `- **Total loops run**: ${totalLoops}\n` +
-        `- **Total stalls**: ${totalStalls}\n` +
-        `- **Total pivots**: ${totalPivots}\n\n` +
-        `### Daily Trend\n\n${trendSection}`,
-    });
-
-    const report = ReportSchema.parse({
+    return buildWeeklyReport({
       id: crypto.randomUUID(),
-      report_type: "weekly_report",
-      goal_id: goalId,
-      title: `Weekly Report — ${reportNow.slice(0, 10)}`,
-      content,
-      verbosity: "standard",
-      generated_at: reportNow,
-      delivered_at: null,
-      read: false,
-      metadata: {
-        total_loops: totalLoops,
-        total_stalls: totalStalls,
-        total_pivots: totalPivots,
-      },
+      goalId,
+      allReports,
+      now,
     });
-
-    return report;
   }
 
   // ─── saveReport ───
@@ -345,7 +162,7 @@ export class ReportingEngine {
       await this._loadReportsFromAbsDir(`${reportsDir}/${goalId}`, results);
     } else {
       // Scan all subdirectories under reports/
-      let entries: import("node:fs").Dirent<string>[];
+      let entries: Dirent<string>[];
       try {
         entries = await fsp.readdir(reportsDir, { withFileTypes: true });
       } catch {
