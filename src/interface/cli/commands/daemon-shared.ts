@@ -8,7 +8,7 @@ import {
   type RuntimeHealthKpi,
   type RuntimeLongRunHealth,
   type RuntimeLongRunHealthSummary,
-} from "../../../runtime/store/index.js";
+} from "../../../runtime/store/runtime-schemas.js";
 import type { SupervisorState } from "../../../runtime/executor/index.js";
 import { getCliLogger } from "../cli-logger.js";
 
