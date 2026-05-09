@@ -84,20 +84,33 @@ export interface DaemonAuthToken {
   created_at?: string;
 }
 
+function isDaemonProbePort(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 1 && value <= 65_535;
+}
+
 export function getDaemonTokenPath(baseDir?: string): string {
   return path.join(baseDir ?? process.env["PULSEED_HOME"] ?? path.join(os.homedir(), ".pulseed"), DAEMON_TOKEN_FILENAME);
 }
 
-export function readDaemonAuthToken(baseDir?: string, expectedPort?: number): string | null {
+function readDaemonAuthTokenFile(baseDir?: string): Partial<DaemonAuthToken> | null {
   try {
     const raw = fs.readFileSync(getDaemonTokenPath(baseDir), "utf-8");
-    const parsed = JSON.parse(raw) as Partial<DaemonAuthToken>;
+    const parsed = JSON.parse(raw) as unknown;
+    return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed as Partial<DaemonAuthToken>
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+export function readDaemonAuthToken(baseDir?: string, expectedPort?: number): string | null {
+  const parsed = readDaemonAuthTokenFile(baseDir);
+  if (parsed !== null) {
     if (expectedPort !== undefined && parsed.port !== undefined && parsed.port !== expectedPort) {
       return null;
     }
     return typeof parsed.token === "string" && parsed.token.length > 0 ? parsed.token : null;
-  } catch {
-    // Fall back to the environment below.
   }
 
   const envToken = process.env[DAEMON_TOKEN_ENV];
@@ -517,16 +530,25 @@ export async function isDaemonRunning(baseDir: string): Promise<{ running: boole
     }
 
     // Try to read daemon config for port
-    let port = DEFAULT_PORT;
+    let port: number | null = DEFAULT_PORT;
     try {
       const configPath = path.join(baseDir, "daemon.json");
       const configRaw = await fs.readFile(configPath, "utf-8");
       const config = DaemonConfigSchema.safeParse(JSON.parse(configRaw) as unknown);
       if (config.success) {
-        port = config.data.event_server_port;
+        if (config.data.event_server_port === 0) {
+          const tokenFile = readDaemonAuthTokenFile(baseDir);
+          port = isDaemonProbePort(tokenFile?.port) ? tokenFile.port : null;
+        } else {
+          port = config.data.event_server_port;
+        }
       }
     } catch {
       // Use default port
+    }
+
+    if (port === null) {
+      return { running: false, port: 0 };
     }
 
     const authToken = readDaemonAuthToken(baseDir, port);
