@@ -5,7 +5,7 @@ import { TAGS, PERMISSION_LEVEL, MAX_OUTPUT_CHARS } from "./constants.js";
 
 export const ArchitectureToolInputSchema = z.object({
   module: z.string().optional(),
-});
+}).strict();
 export type ArchitectureToolInput = z.infer<typeof ArchitectureToolInputSchema>;
 
 const LAYERS: Record<string, string> = {

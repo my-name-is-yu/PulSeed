@@ -7,7 +7,7 @@ import { TAGS, PERMISSION_LEVEL, MAX_OUTPUT_CHARS } from "./constants.js";
 export const ToolSearchInputSchema = z.object({
   query: z.string().min(1),
   category: z.string().optional(),
-});
+}).strict();
 export type ToolSearchInput = z.infer<typeof ToolSearchInputSchema>;
 
 export interface ToolSearchResult {

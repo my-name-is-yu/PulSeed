@@ -8,7 +8,7 @@ import type { AssetView } from "../../../runtime/assets/types.js";
 
 export const PluginStateToolInputSchema = z.object({
   pluginId: z.string().optional(),
-});
+}).strict();
 export type PluginStateToolInput = z.infer<typeof PluginStateToolInputSchema>;
 
 export class PluginStateTool implements ITool<PluginStateToolInput, unknown> {

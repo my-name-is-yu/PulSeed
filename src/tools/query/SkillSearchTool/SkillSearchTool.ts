@@ -4,7 +4,7 @@ import { SkillRegistry } from "../../../runtime/skills/skill-registry.js";
 
 export const SkillSearchInputSchema = z.object({
   query: z.string().min(1),
-});
+}).strict();
 export type SkillSearchInput = z.infer<typeof SkillSearchInputSchema>;
 
 export class SkillSearchTool implements ITool<SkillSearchInput> {
