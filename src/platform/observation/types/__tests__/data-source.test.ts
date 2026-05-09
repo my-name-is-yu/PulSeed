@@ -67,6 +67,64 @@ describe("data source schemas", () => {
     }).success).toBe(false);
   });
 
+  it("validates persisted shell datasource command specs before adapter construction", () => {
+    const baseConfig = {
+      id: "shell-source",
+      name: "Shell Source",
+      type: "shell",
+      connection: {
+        path: "/repo",
+        commands: {
+          todo_count: {
+            argv: ["grep", "-rc", "TODO", "src/"],
+            output_type: "number",
+            timeout_ms: 15_000,
+          },
+        },
+      },
+      created_at: "2026-05-09T00:00:00.000Z",
+    };
+
+    expect(DataSourceConfigSchema.safeParse(baseConfig).success).toBe(true);
+    expect(DataSourceConfigSchema.safeParse({
+      ...baseConfig,
+      connection: { ...baseConfig.connection, commands: { todo_count: {} } },
+    }).success).toBe(false);
+    expect(DataSourceConfigSchema.safeParse({
+      ...baseConfig,
+      connection: {
+        ...baseConfig.connection,
+        commands: { todo_count: { argv: [], output_type: "number" } },
+      },
+    }).success).toBe(false);
+    expect(DataSourceConfigSchema.safeParse({
+      ...baseConfig,
+      connection: {
+        ...baseConfig.connection,
+        commands: {
+          todo_count: {
+            argv: ["echo", "1"],
+            output_type: "raw",
+            timeout_ms: Number.POSITIVE_INFINITY,
+          },
+        },
+      },
+    }).success).toBe(false);
+    expect(DataSourceConfigSchema.safeParse({
+      ...baseConfig,
+      connection: {
+        ...baseConfig.connection,
+        commands: {
+          todo_count: {
+            argv: ["echo", "1"],
+            output_type: "number",
+            shell: true,
+          },
+        },
+      },
+    }).success).toBe(false);
+  });
+
   it("rejects non-finite numeric observation results", () => {
     expect(DataSourceResultSchema.safeParse({
       value: 0.92,

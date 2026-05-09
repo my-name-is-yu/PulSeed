@@ -26,6 +26,10 @@ function writeDatasource(datasourcesDir: string, filename: string, cfg: Record<s
   }));
 }
 
+function shellCommandSpec(value = "1") {
+  return { argv: ["echo", value], output_type: "number" };
+}
+
 function listFiles(datasourcesDir: string): string[] {
   if (!fs.existsSync(datasourcesDir)) return [];
   return fs.readdirSync(datasourcesDir).filter((f) => f.endsWith(".json")).sort();
@@ -58,7 +62,7 @@ describe("cmdDatasourceDedup", () => {
     writeDatasource(datasourcesDir, "ds_shell_a.json", {
       id: "ds_shell_a",
       type: "shell",
-      connection: { commands: { todo_count: {}, test_count: {} } },
+      connection: { commands: { todo_count: shellCommandSpec(), test_count: shellCommandSpec("2") } },
     });
     writeDatasource(datasourcesDir, "ds_file_b.json", {
       id: "ds_file_b",
@@ -77,12 +81,12 @@ describe("cmdDatasourceDedup", () => {
     writeDatasource(datasourcesDir, "ds_a_shell.json", {
       id: "ds_a_shell",
       type: "shell",
-      connection: { commands: { todo_count: {}, test_count: {} } },
+      connection: { commands: { todo_count: shellCommandSpec(), test_count: shellCommandSpec("2") } },
     });
     writeDatasource(datasourcesDir, "ds_b_shell.json", {
       id: "ds_b_shell",
       type: "shell",
-      connection: { commands: { test_count: {}, todo_count: {} } }, // same dims, different order
+      connection: { commands: { test_count: shellCommandSpec("2"), todo_count: shellCommandSpec() } }, // same dims, different order
     });
 
     const sm = makeFakeStateManager(tmpDir);
@@ -121,7 +125,7 @@ describe("cmdDatasourceDedup", () => {
     writeDatasource(datasourcesDir, "ds_shell.json", {
       id: "ds_shell",
       type: "shell",
-      connection: { commands: { test_count: {} } },
+      connection: { commands: { test_count: shellCommandSpec() } },
     });
     writeDatasource(datasourcesDir, "ds_fe.json", {
       id: "ds_fe",
@@ -142,7 +146,7 @@ describe("cmdDatasourceDedup", () => {
       writeDatasource(datasourcesDir, `ds_shell_${i}.json`, {
         id: `ds_shell_${i}`,
         type: "shell",
-        connection: { commands: { todo_count: {} } },
+        connection: { commands: { todo_count: shellCommandSpec() } },
       });
     }
 
@@ -168,11 +172,11 @@ describe("cmdDatasourceDedup", () => {
     fs.writeFileSync(path.join(datasourcesDir, "bad.json"), "null");
     writeDatasource(datasourcesDir, "ds_a_shell.json", {
       type: "shell",
-      connection: { commands: { todo_count: {} } },
+      connection: { commands: { todo_count: shellCommandSpec() } },
     });
     writeDatasource(datasourcesDir, "ds_b_shell.json", {
       type: "shell",
-      connection: { commands: { todo_count: {} } },
+      connection: { commands: { todo_count: shellCommandSpec() } },
     });
 
     const sm = makeFakeStateManager(tmpDir);

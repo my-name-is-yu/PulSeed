@@ -193,4 +193,57 @@ describe("createCliDataSourceAdapter", () => {
       fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
     }
   });
+
+  it("loads persisted shell datasource commands through the config schema", async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-datasource-bootstrap-"));
+    const originalHome = process.env["PULSEED_HOME"];
+    process.env["PULSEED_HOME"] = tmpDir;
+    const datasourcesDir = getDatasourcesDir(tmpDir);
+    fs.mkdirSync(datasourcesDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(datasourcesDir, "shell.json"),
+      JSON.stringify({
+        id: "ds_shell",
+        name: "Shell",
+        type: "shell",
+        connection: {
+          path: tmpDir,
+          commands: {
+            todo_count: {
+              argv: ["echo", "1"],
+              output_type: "number",
+              timeout_ms: 1000,
+            },
+          },
+        },
+        enabled: true,
+        created_at: new Date().toISOString(),
+      }),
+      "utf-8"
+    );
+    const logger = {
+      warn: vi.fn(),
+      error: vi.fn(),
+    };
+
+    try {
+      const registry = await buildCliDataSourceRegistry(tmpDir, logger);
+
+      expect(registry.listSources()).toEqual(expect.arrayContaining([
+        "ds_builtin_workspace_artifacts",
+        "ds_shell",
+      ]));
+      const shellSource = registry.getSource("ds_shell");
+      expect(shellSource.getSupportedDimensions?.()).toEqual(["todo_count"]);
+      expect(logger.warn).not.toHaveBeenCalled();
+      expect(logger.error).not.toHaveBeenCalled();
+    } finally {
+      if (originalHome === undefined) {
+        delete process.env["PULSEED_HOME"];
+      } else {
+        process.env["PULSEED_HOME"] = originalHome;
+      }
+      fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    }
+  });
 });
