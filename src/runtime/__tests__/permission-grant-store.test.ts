@@ -103,6 +103,51 @@ describe("PermissionGrantStore", () => {
     expect(fs.existsSync(path.join(tmpDir, "permission-grants", "grant-1.json"))).toBe(true);
   });
 
+  it("rejects unsafe numeric scalars before storing grants", async () => {
+    const unsafeInteger = Number.MAX_SAFE_INTEGER + 1;
+
+    await expect(store.createActive(makeGrant({
+      created_at: unsafeInteger,
+    }))).rejects.toThrow();
+
+    await expect(store.createActive(makeGrant({
+      grant_id: "unsafe-expiry",
+      duration: {
+        kind: "expires_at",
+        expires_at: unsafeInteger,
+      },
+    }))).rejects.toThrow();
+
+    await expect(store.createActive(makeGrant({
+      grant_id: "unsafe-review",
+      scope: {
+        kind: "workspace",
+        workspace_root: "/repo",
+      },
+      duration: {
+        kind: "standing",
+      },
+      review: {
+        kind: "periodic",
+        interval_ms: unsafeInteger,
+        due_at: 2_000,
+      },
+    }))).rejects.toThrow();
+  });
+
+  it("skips persisted grants with unsafe numeric scalars during load and active listing", async () => {
+    await store.createActive(makeGrant());
+    const grantPath = path.join(tmpDir, "permission-grants", "grant-1.json");
+    const persisted = JSON.parse(fs.readFileSync(grantPath, "utf-8")) as Record<string, unknown>;
+    persisted.usage_count = Number.MAX_SAFE_INTEGER + 1;
+    fs.writeFileSync(grantPath, JSON.stringify(persisted, null, 2), "utf-8");
+
+    const reloaded = new PermissionGrantStore(tmpDir, { now: () => now });
+
+    await expect(reloaded.load("grant-1")).resolves.toBeNull();
+    await expect(reloaded.listActive()).resolves.toEqual([]);
+  });
+
   it("activates, records use, and keeps active listing to fresh unexpired records", async () => {
     await store.createProposed(makeGrant());
     now = 1_100;
@@ -213,6 +258,42 @@ describe("PermissionGrantStore", () => {
     expect((await store.listActive()).map((grant) => grant.grant_id)).toEqual(["standing-workspace"]);
   });
 
+  it("rejects unsafe review updates without corrupting the existing grant", async () => {
+    await store.createActive(makeGrant({
+      grant_id: "standing-workspace",
+      scope: {
+        kind: "workspace",
+        workspace_root: "/repo",
+      },
+      duration: {
+        kind: "standing",
+      },
+      review: {
+        kind: "periodic",
+        interval_ms: 500,
+        due_at: 1_200,
+        last_reviewed_at: 700,
+      },
+      audit_refs: ["audit:standing-created"],
+    }));
+
+    const unsafeInteger = Number.MAX_SAFE_INTEGER + 1;
+    await expect(store.review("standing-workspace", {
+      reviewed_at: unsafeInteger,
+      next_review_due_at: unsafeInteger,
+      audit_refs: ["audit:unsafe-review"],
+    })).rejects.toThrow();
+
+    expect(await store.load("standing-workspace")).toMatchObject({
+      review: {
+        kind: "periodic",
+        due_at: 1_200,
+        last_reviewed_at: 700,
+      },
+      audit_refs: ["audit:standing-created"],
+    });
+  });
+
   it("persists revocation across restart-like store reload", async () => {
     await store.createActive(makeGrant());
     now = 1_500;
@@ -281,6 +362,26 @@ describe("PermissionGrantStore", () => {
         ref: "runtime-message://conversation-1/message-2",
       },
     });
+  });
+
+  it("rejects unsafe supersede timestamps before writing a replacement grant", async () => {
+    await store.createActive(makeGrant());
+    const unsafeInteger = Number.MAX_SAFE_INTEGER + 1;
+
+    await expect(store.supersede("grant-1", makeGrant({
+      grant_id: "grant-unsafe-replacement",
+      created_at: 2_000,
+    }), {
+      superseded_at: unsafeInteger,
+    })).rejects.toThrow();
+
+    await expect(store.load("grant-unsafe-replacement")).resolves.toBeNull();
+    const original = await store.load("grant-1");
+    expect(original).toMatchObject({
+      grant_id: "grant-1",
+      state: "active",
+    });
+    expect(original).not.toHaveProperty("superseded_by");
   });
 
   it("validates lifecycle invariants before persistence", () => {

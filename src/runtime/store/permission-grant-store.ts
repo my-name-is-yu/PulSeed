@@ -81,6 +81,9 @@ export const PermissionGrantSourceSchema = z.discriminatedUnion("kind", [
 ]);
 export type PermissionGrantSource = z.infer<typeof PermissionGrantSourceSchema>;
 
+const PermissionGrantSafeNonnegativeIntSchema = z.number().int().nonnegative().safe();
+const PermissionGrantSafePositiveIntSchema = z.number().int().positive().safe();
+
 export const PermissionGrantScopeSchema = z.object({
   kind: z.enum(["turn", "run", "goal", "session", "workspace", "project", "global"]),
   turn_id: z.string().min(1).optional(),
@@ -118,7 +121,7 @@ export const PermissionGrantDurationSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("standing") }).strict(),
   z.object({
     kind: z.literal("expires_at"),
-    expires_at: z.number().int().nonnegative(),
+    expires_at: PermissionGrantSafeNonnegativeIntSchema,
   }).strict(),
 ]);
 export type PermissionGrantDuration = z.infer<typeof PermissionGrantDurationSchema>;
@@ -127,15 +130,15 @@ export const PermissionGrantReviewSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("none") }).strict(),
   z.object({
     kind: z.literal("periodic"),
-    interval_ms: z.number().int().positive(),
-    due_at: z.number().int().nonnegative(),
-    last_reviewed_at: z.number().int().nonnegative().optional(),
+    interval_ms: PermissionGrantSafePositiveIntSchema,
+    due_at: PermissionGrantSafeNonnegativeIntSchema,
+    last_reviewed_at: PermissionGrantSafeNonnegativeIntSchema.optional(),
   }).strict(),
 ]);
 export type PermissionGrantReview = z.infer<typeof PermissionGrantReviewSchema>;
 
 export const PermissionGrantFreshnessBindingSchema = z.object({
-  permission_state_epoch: z.number().int().nonnegative().optional(),
+  permission_state_epoch: PermissionGrantSafeNonnegativeIntSchema.optional(),
   project_state_ref: z.string().min(1).optional(),
   goal_state_ref: z.string().min(1).optional(),
   session_state_ref: z.string().min(1).optional(),
@@ -147,8 +150,8 @@ export type PermissionGrantFreshnessBinding = z.infer<typeof PermissionGrantFres
 
 export const PermissionGrantStalenessSchema = z.object({
   status: z.enum(["fresh", "stale", "unknown"]).default("fresh"),
-  checked_at: z.number().int().nonnegative().optional(),
-  stale_at: z.number().int().nonnegative().optional(),
+  checked_at: PermissionGrantSafeNonnegativeIntSchema.optional(),
+  stale_at: PermissionGrantSafeNonnegativeIntSchema.optional(),
   reason: z.string().min(1).optional(),
   binding: PermissionGrantFreshnessBindingSchema.default({}),
 }).strict();
@@ -166,21 +169,21 @@ export const PermissionGrantRecordSchema = z.object({
   capabilities: z.array(PermissionGrantCapabilitySchema).min(1),
   excluded_capabilities: z.array(PermissionGrantExcludedCapabilitySchema).default([]),
   state: PermissionGrantStateSchema,
-  state_version: z.number().int().nonnegative(),
-  state_epoch: z.number().int().nonnegative(),
+  state_version: PermissionGrantSafeNonnegativeIntSchema,
+  state_epoch: PermissionGrantSafeNonnegativeIntSchema,
   staleness: PermissionGrantStalenessSchema.default({ status: "fresh" }),
-  created_at: z.number().int().nonnegative(),
-  updated_at: z.number().int().nonnegative(),
-  activated_at: z.number().int().nonnegative().optional(),
-  expired_at: z.number().int().nonnegative().optional(),
-  revoked_at: z.number().int().nonnegative().optional(),
+  created_at: PermissionGrantSafeNonnegativeIntSchema,
+  updated_at: PermissionGrantSafeNonnegativeIntSchema,
+  activated_at: PermissionGrantSafeNonnegativeIntSchema.optional(),
+  expired_at: PermissionGrantSafeNonnegativeIntSchema.optional(),
+  revoked_at: PermissionGrantSafeNonnegativeIntSchema.optional(),
   revoked_by: z.string().min(1).optional(),
   revocation_reason: z.string().min(1).optional(),
-  superseded_at: z.number().int().nonnegative().optional(),
+  superseded_at: PermissionGrantSafeNonnegativeIntSchema.optional(),
   supersedes: z.array(z.string().min(1)).default([]),
   superseded_by: z.string().min(1).optional(),
-  last_used_at: z.number().int().nonnegative().optional(),
-  usage_count: z.number().int().nonnegative().default(0),
+  last_used_at: PermissionGrantSafeNonnegativeIntSchema.optional(),
+  usage_count: PermissionGrantSafeNonnegativeIntSchema.default(0),
   audit_refs: z.array(z.string().min(1)).default([]),
 }).strict().superRefine((grant, ctx) => {
   for (const [pathName, values] of [
@@ -458,7 +461,7 @@ export class PermissionGrantStore {
   ): Promise<{ superseded: PermissionGrantRecord; replacement: PermissionGrantRecord } | null> {
     const current = await this.load(grantId);
     if (!current) return null;
-    const supersededAt = options.superseded_at ?? this.now();
+    const supersededAt = PermissionGrantSafeNonnegativeIntSchema.parse(options.superseded_at ?? this.now());
     const replacement = await this.createProposed({
       ...replacementInput,
       supersedes: appendUnique(replacementInput.supersedes ?? [], [grantId]),
