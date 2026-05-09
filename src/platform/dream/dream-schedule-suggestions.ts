@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
-import * as path from "node:path";
-import { readJsonFileOrNull, writeJsonFileAtomic } from "../../base/utils/json-io.js";
 import { ScheduleEngine } from "../../runtime/schedule/engine.js";
+import { StrategyDreamStateStore } from "../../runtime/store/strategy-dream-state-store.js";
 import {
   ScheduleTriggerSchema,
   type ScheduleEntry,
@@ -9,12 +8,9 @@ import {
   type ScheduleTriggerInput,
 } from "../../runtime/types/schedule.js";
 import {
-  ScheduleSuggestionFileSchema,
   ScheduleSuggestionSchema,
   type ScheduleSuggestion,
 } from "./dream-types.js";
-
-const DREAM_SCHEDULE_SUGGESTIONS_FILE = path.join("dream", "schedule-suggestions.json");
 
 type CreateScheduleEntryInput = Omit<
   ScheduleEntryInput,
@@ -151,22 +147,14 @@ function buildEntryFromSuggestion(suggestion: ResolvedScheduleSuggestion): Creat
 }
 
 export class DreamScheduleSuggestionStore {
-  private readonly filePath: string;
+  private readonly stateStore: StrategyDreamStateStore;
 
-  constructor(private readonly baseDir: string) {
-    this.filePath = path.join(baseDir, DREAM_SCHEDULE_SUGGESTIONS_FILE);
+  constructor(baseDir: string) {
+    this.stateStore = new StrategyDreamStateStore(baseDir);
   }
 
   async load(): Promise<{ generated_at: string; suggestions: ResolvedScheduleSuggestion[] }> {
-    const raw = await readJsonFileOrNull(this.filePath);
-    if (raw === null) {
-      return {
-        generated_at: new Date(0).toISOString(),
-        suggestions: [],
-      };
-    }
-
-    const parsed = ScheduleSuggestionFileSchema.parse(raw);
+    const parsed = await this.stateStore.loadScheduleSuggestions();
     return {
       generated_at: parsed.generated_at,
       suggestions: parsed.suggestions.map(normalizeSuggestion),
@@ -179,10 +167,10 @@ export class DreamScheduleSuggestionStore {
   }
 
   async save(suggestions: ResolvedScheduleSuggestion[], generatedAt?: string): Promise<void> {
-    await writeJsonFileAtomic(this.filePath, {
-      generated_at: generatedAt ?? new Date().toISOString(),
-      suggestions: suggestions.map((suggestion) => ScheduleSuggestionSchema.parse(suggestion)),
-    });
+    await this.stateStore.saveScheduleSuggestions(
+      suggestions.map((suggestion) => ScheduleSuggestionSchema.parse(suggestion)),
+      generatedAt ?? new Date().toISOString(),
+    );
   }
 
   async resolveSuggestion(idOrPrefix: string): Promise<ResolvedScheduleSuggestion | null> {

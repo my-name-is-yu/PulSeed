@@ -1,6 +1,4 @@
 import { randomUUID } from "node:crypto";
-import * as path from "node:path";
-import { PortfolioSchema } from "../../base/types/strategy.js";
 import {
   normalizeWaitMetadata,
   parseStrategy,
@@ -8,7 +6,7 @@ import {
   type WaitStrategy,
 } from "../../base/types/strategy.js";
 import { isWaitStrategy } from "../../orchestrator/strategy/portfolio-allocation.js";
-import { readJsonFileOrNull } from "../../base/utils/json-io.js";
+import { StrategyDreamStateStore } from "../store/strategy-dream-state-store.js";
 import { ScheduleEntryStore } from "./entry-store.js";
 import { ScheduleEntryListSchema, ScheduleEntrySchema, type ScheduleEntry } from "../types/schedule.js";
 
@@ -76,16 +74,13 @@ async function loadWaitProjectionInputs(baseDir: string, goalId: string, strateg
   strategy: WaitStrategy | null;
   nextObserveAt: string | null;
 }> {
-  const readRaw = (relativePath: string): Promise<unknown | null> =>
-    readJsonFileOrNull(path.join(baseDir, relativePath));
-
-  const rawPortfolio = await readRaw(`strategies/${goalId}/portfolio.json`);
-  const parsedPortfolio = PortfolioSchema.safeParse(rawPortfolio);
-  if (!parsedPortfolio.success) {
+  const stateStore = new StrategyDreamStateStore(baseDir);
+  const portfolio = await stateStore.loadPortfolio(goalId);
+  if (!portfolio) {
     return { strategy: null, nextObserveAt: null };
   }
 
-  const strategy = parsedPortfolio.data.strategies
+  const strategy = portfolio.strategies
     .map((candidate) => parseStrategy(candidate))
     .find((candidate) => candidate.id === strategyId);
   if (!strategy || !isWaitStrategy(strategy as Record<string, unknown>) || strategy.state !== "active") {
@@ -93,7 +88,7 @@ async function loadWaitProjectionInputs(baseDir: string, goalId: string, strateg
   }
 
   const waitStrategy = strategy as WaitStrategy;
-  const rawMetadata = await readRaw(`strategies/${goalId}/wait-meta/${strategyId}.json`);
+  const rawMetadata = await stateStore.loadWaitMetadata(goalId, strategyId);
   const metadata = normalizeWaitMetadata(waitStrategy, rawMetadata);
   return {
     strategy: waitStrategy,

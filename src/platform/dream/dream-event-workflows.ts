@@ -1,9 +1,7 @@
-import * as fsp from "node:fs/promises";
-import * as path from "node:path";
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import { readJsonFileOrNull, writeJsonFileAtomic } from "../../base/utils/json-io.js";
-import { EventLogSchema, WatermarkStateSchema, type EventLog } from "./dream-types.js";
+import { StrategyDreamStateStore } from "../../runtime/store/strategy-dream-state-store.js";
+import type { EventLog } from "./dream-types.js";
 
 export const DreamWorkflowRecordSchema = z.object({
   workflow_id: z.string().min(1),
@@ -75,18 +73,6 @@ interface WorkflowAccumulator {
   lastTimestamp: string;
 }
 
-function workflowFilePath(baseDir: string): string {
-  return path.join(baseDir, "dream", "workflows.json");
-}
-
-function watermarksFilePath(baseDir: string): string {
-  return path.join(baseDir, "dream", "watermarks.json");
-}
-
-function eventDirPath(baseDir: string): string {
-  return path.join(baseDir, "dream", "events");
-}
-
 function stableId(parts: string[]): string {
   const hash = createHash("sha256").update(parts.join("\u0000"), "utf8").digest("hex").slice(0, 16);
   return `dream-workflow:${hash}`;
@@ -156,8 +142,7 @@ function mergeWorkflowScopes(
 }
 
 async function loadEventWatermarks(baseDir: string): Promise<Record<string, EventCursor>> {
-  const raw = await readJsonFileOrNull(watermarksFilePath(baseDir));
-  const parsed = raw === null ? WatermarkStateSchema.parse({}) : WatermarkStateSchema.parse(raw);
+  const parsed = await new StrategyDreamStateStore(baseDir).loadWatermarks();
   const cursors: Record<string, EventCursor> = {};
   for (const [key, cursor] of Object.entries(parsed.goals)) {
     if (key.startsWith("event:")) {
@@ -168,22 +153,22 @@ async function loadEventWatermarks(baseDir: string): Promise<Record<string, Even
 }
 
 async function saveEventWatermarks(baseDir: string, cursors: Record<string, EventCursor>): Promise<void> {
-  const raw = await readJsonFileOrNull(watermarksFilePath(baseDir));
-  const state = raw === null ? WatermarkStateSchema.parse({}) : WatermarkStateSchema.parse(raw);
+  const store = new StrategyDreamStateStore(baseDir);
+  const state = await store.loadWatermarks();
   for (const [fileName, cursor] of Object.entries(cursors)) {
     state.goals[eventCursorKey(fileName)] = {
       lastProcessedLine: cursor.lastProcessedLine,
       ...(cursor.lastProcessedTimestamp ? { lastProcessedTimestamp: cursor.lastProcessedTimestamp } : {}),
     };
   }
-  await writeJsonFileAtomic(watermarksFilePath(baseDir), state);
+  await store.saveWatermarks(state);
 }
 
 async function loadExistingWorkflows(baseDir: string): Promise<DreamWorkflowRecord[]> {
-  const raw = await readJsonFileOrNull(workflowFilePath(baseDir));
-  if (raw === null) return [];
-  const parsed = DreamWorkflowFileSchema.safeParse(raw);
-  return parsed.success ? parsed.data.workflows : [];
+  return (await new StrategyDreamStateStore(baseDir).loadDreamWorkflows())
+    .map((raw) => DreamWorkflowRecordSchema.safeParse(raw))
+    .filter((parsed): parsed is { success: true; data: DreamWorkflowRecord } => parsed.success)
+    .map((parsed) => parsed.data);
 }
 
 async function readNewEvents(baseDir: string): Promise<{
@@ -191,19 +176,18 @@ async function readNewEvents(baseDir: string): Promise<{
   malformedEvents: number;
   cursors: Record<string, EventCursor>;
 }> {
-  const eventDir = eventDirPath(baseDir);
-  const files = (await fsp.readdir(eventDir).catch(() => [] as string[]))
-    .filter((fileName) => fileName.endsWith(".jsonl"))
-    .sort();
   const previousCursors = await loadEventWatermarks(baseDir);
   const nextCursors: Record<string, EventCursor> = {};
   const events: ParsedEvent[] = [];
   let malformedEvents = 0;
+  const byFile = new Map<string, ParsedEvent[]>();
+  for (const parsed of await new StrategyDreamStateStore(baseDir).listEventLogs()) {
+    const list = byFile.get(parsed.fileName) ?? [];
+    list.push(parsed);
+    byFile.set(parsed.fileName, list);
+  }
 
-  for (const fileName of files) {
-    const filePath = path.join(eventDir, fileName);
-    const raw = await fsp.readFile(filePath, "utf8").catch(() => "");
-    const lines = raw.split(/\r?\n/).filter((line) => line.trim().length > 0);
+  for (const [fileName, lines] of [...byFile.entries()].sort((left, right) => left[0].localeCompare(right[0]))) {
     const previous = previousCursors[fileName] ?? { lastProcessedLine: 0 };
     const startLine = previous.lastProcessedLine <= lines.length ? previous.lastProcessedLine : 0;
     const useTimestampFallback = previous.lastProcessedLine > lines.length && Boolean(previous.lastProcessedTimestamp);
@@ -211,12 +195,12 @@ async function readNewEvents(baseDir: string): Promise<{
 
     for (let index = startLine; index < lines.length; index += 1) {
       try {
-        const parsed = EventLogSchema.parse(JSON.parse(lines[index]!));
-        if (useTimestampFallback && previous.lastProcessedTimestamp && parsed.timestamp <= previous.lastProcessedTimestamp) {
+        const parsed = lines[index]!;
+        if (useTimestampFallback && previous.lastProcessedTimestamp && parsed.event.timestamp <= previous.lastProcessedTimestamp) {
           continue;
         }
-        events.push({ event: parsed, line: index + 1, fileName });
-        latestTimestamp = parsed.timestamp;
+        events.push(parsed);
+        latestTimestamp = parsed.event.timestamp;
       } catch {
         malformedEvents += 1;
       }
@@ -387,10 +371,11 @@ export async function consolidateDreamEventWorkflows(baseDir: string): Promise<D
 
   const workflows = [...nextById.values()].sort((left, right) => left.workflow_id.localeCompare(right.workflow_id));
   if (accumulators.length > 0 || events.length > 0 || malformedEvents > 0) {
-    await writeJsonFileAtomic(workflowFilePath(baseDir), DreamWorkflowFileSchema.parse({
+    const parsed = DreamWorkflowFileSchema.parse({
       generated_at: new Date().toISOString(),
       workflows,
-    }));
+    });
+    await new StrategyDreamStateStore(baseDir).saveDreamWorkflows(parsed.workflows as Array<Record<string, unknown>>);
     await saveEventWatermarks(baseDir, cursors);
   }
 

@@ -3,6 +3,7 @@ import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { makeTempDir } from "../../../tests/helpers/temp-dir.js";
 import { RuntimeEvidenceLedger } from "../store/evidence-ledger.js";
+import { RuntimeEvidenceStateStore } from "../store/runtime-evidence-state-store.js";
 
 describe("RuntimeEvidenceLedger", () => {
   let runtimeRoot: string;
@@ -14,6 +15,57 @@ describe("RuntimeEvidenceLedger", () => {
   afterEach(async () => {
     await fsp.rm(runtimeRoot, { recursive: true, force: true });
   });
+
+  function evidenceStore(): RuntimeEvidenceStateStore {
+    return new RuntimeEvidenceStateStore(runtimeRoot);
+  }
+
+  async function requireSummaryIndex(kind: "goal" | "run", id: string) {
+    const index = await evidenceStore().loadSummaryIndex({ kind, id });
+    if (!index) {
+      throw new Error(`missing runtime evidence summary index for ${kind}:${id}`);
+    }
+    return index;
+  }
+
+  async function appendMetricEntries(
+    ledger: RuntimeEvidenceLedger,
+    runId: string,
+    size: number,
+    idPrefix: string,
+    summaryPrefix: string,
+  ): Promise<void> {
+    for (let index = 0; index < size; index += 1) {
+      await ledger.append({
+        id: `${idPrefix}-${size}-${index}`,
+        occurred_at: new Date(Date.UTC(2026, 3, 30, 0, 0, index)).toISOString(),
+        kind: "metric",
+        scope: { run_id: runId, loop_index: index },
+        metrics: [{ label: "accuracy", value: index / size, direction: "maximize" }],
+        summary: `${summaryPrefix} ${index}`,
+        outcome: index === size - 1 ? "improved" : "continued",
+      });
+    }
+  }
+
+  async function appendExecutionEntries(
+    ledger: RuntimeEvidenceLedger,
+    runId: string,
+    size: number,
+    idPrefix: string,
+  ): Promise<void> {
+    for (let index = 0; index < size; index += 1) {
+      await ledger.append({
+        id: `${idPrefix}-${size}-${index}`,
+        occurred_at: new Date(Date.UTC(2026, 3, 30, 0, 0, index)).toISOString(),
+        kind: "execution",
+        scope: { run_id: runId, loop_index: index },
+        result: { status: "completed", summary: `Execution ${index}` },
+        summary: `Execution ${index}`,
+        outcome: index === size - 1 ? "improved" : "continued",
+      });
+    }
+  }
 
   it("appends entries and reads them after constructing a new ledger", async () => {
     const ledger = new RuntimeEvidenceLedger(runtimeRoot);
@@ -83,7 +135,7 @@ describe("RuntimeEvidenceLedger", () => {
     await expect(fsp.stat(ledger.runPath("run:non-finite-evaluator-expected-score"))).rejects.toThrow();
   });
 
-  it("rejects unsafe artifact byte counts before persistence and from persisted JSONL", async () => {
+  it("rejects unsafe artifact byte counts before persistence", async () => {
     const ledger = new RuntimeEvidenceLedger(runtimeRoot);
     const unsafeSizeBytes = Number.MAX_SAFE_INTEGER + 1;
 
@@ -99,32 +151,14 @@ describe("RuntimeEvidenceLedger", () => {
       summary: "Unsafe artifact byte count should be rejected before JSON persistence.",
     })).rejects.toThrow();
 
-    const runId = "run:unsafe-artifact-size-persisted";
-    const runPath = ledger.runPath(runId);
-    await fsp.mkdir(path.dirname(runPath), { recursive: true });
-    await fsp.writeFile(runPath, `${JSON.stringify({
-      schema_version: "runtime-evidence-entry-v1",
-      id: "unsafe-artifact-size-persisted",
-      occurred_at: "2026-04-30T00:00:00.000Z",
-      kind: "artifact",
-      scope: { run_id: runId },
-      artifacts: [{
-        label: "unsafe-artifact",
-        state_relative_path: "runs/unsafe.bin",
-        kind: "other",
-        size_bytes: unsafeSizeBytes,
-      }],
-      summary: "Persisted unsafe artifact byte count.",
-    })}\n`, "utf8");
-
-    const read = await ledger.readByRun(runId);
-    const summary = await ledger.summarizeRun(runId);
+    const read = await ledger.readByRun("run:unsafe-artifact-size-append");
+    const summary = await ledger.summarizeRun("run:unsafe-artifact-size-append");
 
     expect(read.entries).toEqual([]);
-    expect(read.warnings).toHaveLength(1);
+    expect(read.warnings).toEqual([]);
     expect(summary.total_entries).toBe(0);
     expect(summary.artifact_retention.total_size_bytes).toBe(0);
-    expect(summary.warnings).toHaveLength(1);
+    expect(summary.warnings).toEqual([]);
   });
 
   it("records runtime evidence corrections and exposes target correction state in summaries", async () => {
@@ -341,23 +375,19 @@ describe("RuntimeEvidenceLedger", () => {
       provenance: { source: "runtime_verification", confidence: 1 },
     });
 
-    const canonicalPath = path.join(runtimeRoot, "evidence-ledger", "runs", `${encodeURIComponent("run:legacy-summary")}.jsonl`);
-    const stat = await fsp.stat(canonicalPath);
     const entries = (await ledger.readByRun("run:legacy-summary")).entries;
-    const staleSummary = await ledger.rebuildSummaryIndexForRun("run:legacy-summary");
+    await ledger.rebuildSummaryIndexForRun("run:legacy-summary");
+    const staleIndex = await requireSummaryIndex("run", "run:legacy-summary");
     const legacySummary = {
-      ...staleSummary,
+      ...staleIndex.summary,
       best_evidence: entries.find((entry) => entry.id === "legacy-retracted-best") ?? null,
     } as Record<string, unknown>;
     delete legacySummary.context_policy_version;
-    await fsp.writeFile(`${canonicalPath}.summary.json`, JSON.stringify({
-      schema_version: "runtime-evidence-summary-index-v1",
+    await evidenceStore().saveSummaryIndex({ kind: "run", id: "run:legacy-summary" }, {
+      ...staleIndex,
       generated_at: "2026-05-02T00:03:00.000Z",
-      canonical_log_path: canonicalPath,
-      canonical_log_size: stat.size,
-      canonical_log_mtime_ms: stat.mtimeMs,
-      summary: legacySummary,
-    }));
+      summary: legacySummary as unknown as typeof staleIndex.summary,
+    });
 
     const summary = await new RuntimeEvidenceLedger(runtimeRoot).summarizeRun("run:legacy-summary");
 
@@ -365,7 +395,7 @@ describe("RuntimeEvidenceLedger", () => {
     expect(summary.best_evidence?.id).toBe("legacy-active-best");
   });
 
-  it("tolerates malformed JSONL rows and summarizes recent evidence", async () => {
+  it("summarizes recent evidence from database rows", async () => {
     const ledger = new RuntimeEvidenceLedger(runtimeRoot);
     await ledger.append({
       kind: "failure",
@@ -381,12 +411,10 @@ describe("RuntimeEvidenceLedger", () => {
       summary: "Accuracy improved to 0.82.",
       outcome: "improved",
     });
-    await fsp.appendFile(ledger.goalPath("goal-b"), "{not-json\n", "utf8");
-
     const summary = await new RuntimeEvidenceLedger(runtimeRoot).summarizeGoal("goal-b");
 
     expect(summary.total_entries).toBe(2);
-    expect(summary.warnings).toHaveLength(1);
+    expect(summary.warnings).toEqual([]);
     expect(summary.best_evidence?.summary).toBe("Accuracy improved to 0.82.");
     expect(summary.metric_trends[0]).toMatchObject({
       metric_key: "accuracy",
@@ -396,7 +424,7 @@ describe("RuntimeEvidenceLedger", () => {
     expect(summary.recent_failed_attempts[0]?.summary).toBe("Verification failed.");
   });
 
-  it("rebuilds and uses a sidecar summary index while keeping JSONL canonical", async () => {
+  it("rebuilds and uses a control DB summary index", async () => {
     const ledger = new RuntimeEvidenceLedger(runtimeRoot);
     await ledger.append({
       id: "indexed-metric",
@@ -407,20 +435,15 @@ describe("RuntimeEvidenceLedger", () => {
       summary: "Indexed accuracy.",
       outcome: "improved",
     });
-    await fsp.appendFile(ledger.goalPath("goal-index"), "{not-json\n", "utf8");
-
     const rebuilt = await ledger.rebuildSummaryIndexForGoal("goal-index");
-    const indexPath = `${ledger.goalPath("goal-index")}.summary.json`;
-    const indexedText = await fsp.readFile(indexPath, "utf8");
-    const indexed = JSON.parse(indexedText) as { schema_version: string; summary: { warnings: unknown[] } };
+    const indexed = await evidenceStore().loadSummaryIndex({ kind: "goal", id: "goal-index" });
     const summarized = await new RuntimeEvidenceLedger(runtimeRoot).summarizeGoal("goal-index");
 
-    expect(rebuilt.warnings).toHaveLength(1);
-    expect(indexed.schema_version).toBe("runtime-evidence-summary-index-v1");
-    expect(indexed.summary.warnings).toHaveLength(1);
+    expect(rebuilt.warnings).toEqual([]);
+    expect(indexed?.schema_version).toBe("runtime-evidence-summary-index-v1");
+    expect(indexed?.summary.warnings).toEqual([]);
     expect(summarized.best_evidence?.id).toBe("indexed-metric");
-    expect(summarized.warnings).toHaveLength(1);
-    expect(await fsp.readFile(ledger.goalPath("goal-index"), "utf8")).toContain("{not-json");
+    expect(summarized.warnings).toEqual([]);
   });
 
   it("derives goal summary scope from the evidence directory when the runtime root contains runs", async () => {
@@ -439,13 +462,11 @@ describe("RuntimeEvidenceLedger", () => {
 
     const goalPath = ledger.goalPath(goalId);
     expect(goalPath).toContain(`${path.sep}runs${path.sep}`);
-    const indexed = JSON.parse(await fsp.readFile(`${goalPath}.summary.json`, "utf8")) as {
-      summary: { scope: { goal_id?: string; run_id?: string } };
-    };
+    const indexed = await new RuntimeEvidenceStateStore(nestedRuntimeRoot).loadSummaryIndex({ kind: "goal", id: goalId });
     const summary = await new RuntimeEvidenceLedger(nestedRuntimeRoot).summarizeGoal(goalId);
 
-    expect(indexed.summary.scope).toEqual({ goal_id: goalId });
-    expect(indexed.summary.scope.run_id).toBeUndefined();
+    expect(indexed?.summary.scope).toEqual({ goal_id: goalId });
+    expect(indexed?.summary.scope.run_id).toBeUndefined();
     expect(summary.scope).toEqual({ goal_id: goalId });
     expect(summary.total_entries).toBe(1);
   });
@@ -462,13 +483,10 @@ describe("RuntimeEvidenceLedger", () => {
       outcome: "continued",
     });
 
-    const indexPath = `${ledger.runPath("run:indexed")}.summary.json`;
-    const indexed = JSON.parse(await fsp.readFile(indexPath, "utf8")) as {
-      summary: { total_entries: number; best_evidence: { id: string } | null };
-    };
+    const indexed = await evidenceStore().loadSummaryIndex({ kind: "run", id: "run:indexed" });
     const summary = await new RuntimeEvidenceLedger(runtimeRoot).summarizeRun("run:indexed");
 
-    expect(indexed.summary.total_entries).toBe(1);
+    expect(indexed?.summary.total_entries).toBe(1);
     expect(summary.best_evidence?.id).toBe("first-indexed-entry");
   });
 
@@ -527,14 +545,15 @@ describe("RuntimeEvidenceLedger", () => {
       outcome: "improved",
     });
     await ledger.rebuildSummaryIndexForRun("run:candidate-index");
-    const indexPath = `${ledger.runPath("run:candidate-index")}.summary.json`;
-    const staleIndex = JSON.parse(await fsp.readFile(indexPath, "utf8")) as {
-      summary: Record<string, unknown>;
-    };
-    delete staleIndex.summary.candidate_lineages;
-    delete staleIndex.summary.recommended_candidate_portfolio;
-    delete staleIndex.summary.candidate_selection_summary;
-    await fsp.writeFile(indexPath, `${JSON.stringify(staleIndex)}\n`, "utf8");
+    const staleIndex = await requireSummaryIndex("run", "run:candidate-index");
+    const staleSummary = staleIndex.summary as unknown as Record<string, unknown>;
+    delete staleSummary.candidate_lineages;
+    delete staleSummary.recommended_candidate_portfolio;
+    delete staleSummary.candidate_selection_summary;
+    await evidenceStore().saveSummaryIndex({ kind: "run", id: "run:candidate-index" }, {
+      ...staleIndex,
+      summary: staleSummary as unknown as typeof staleIndex.summary,
+    });
 
     const summary = await new RuntimeEvidenceLedger(runtimeRoot).summarizeRun("run:candidate-index");
 
@@ -558,17 +577,15 @@ describe("RuntimeEvidenceLedger", () => {
       summary: "Artifact with cleanup-looking words in its path.",
     });
     await ledger.rebuildSummaryIndexForRun("run:artifact-retention-basis");
-    const indexPath = `${ledger.runPath("run:artifact-retention-basis")}.summary.json`;
-    const staleIndex = JSON.parse(await fsp.readFile(indexPath, "utf8")) as {
-      summary: {
-        artifact_retention: {
-          cleanup_plan: {
-            actions: Array<Record<string, unknown>>;
-          };
+    const staleIndex = await requireSummaryIndex("run", "run:artifact-retention-basis");
+    const staleSummary = staleIndex.summary as unknown as {
+      artifact_retention: {
+        cleanup_plan: {
+          actions: Array<Record<string, unknown>>;
         };
       };
     };
-    staleIndex.summary.artifact_retention.cleanup_plan.actions = staleIndex.summary.artifact_retention.cleanup_plan.actions.map((action) => {
+    staleSummary.artifact_retention.cleanup_plan.actions = staleSummary.artifact_retention.cleanup_plan.actions.map((action) => {
       const { retention_basis: _retentionBasis, ...staleAction } = action;
       return {
         ...staleAction,
@@ -578,7 +595,10 @@ describe("RuntimeEvidenceLedger", () => {
         approval_required: true,
       };
     });
-    await fsp.writeFile(indexPath, `${JSON.stringify(staleIndex)}\n`, "utf8");
+    await evidenceStore().saveSummaryIndex({ kind: "run", id: "run:artifact-retention-basis" }, {
+      ...staleIndex,
+      summary: staleSummary as unknown as typeof staleIndex.summary,
+    });
 
     const summary = await new RuntimeEvidenceLedger(runtimeRoot).summarizeRun("run:artifact-retention-basis");
 
@@ -608,8 +628,7 @@ describe("RuntimeEvidenceLedger", () => {
       summary: "Small artifact with exact byte count.",
     });
     await ledger.rebuildSummaryIndexForRun("run:artifact-retention-safe-size");
-    const indexPath = `${ledger.runPath("run:artifact-retention-safe-size")}.summary.json`;
-    const staleIndex = JSON.parse(await fsp.readFile(indexPath, "utf8")) as {
+    const staleIndex = await requireSummaryIndex("run", "run:artifact-retention-safe-size") as Awaited<ReturnType<typeof requireSummaryIndex>> & {
       summary: {
         artifact_retention: {
           total_size_bytes: number;
@@ -624,7 +643,7 @@ describe("RuntimeEvidenceLedger", () => {
       ...action,
       size_bytes: Number.MAX_SAFE_INTEGER + 1,
     }));
-    await fsp.writeFile(indexPath, `${JSON.stringify(staleIndex)}\n`, "utf8");
+    await evidenceStore().saveSummaryIndex({ kind: "run", id: "run:artifact-retention-safe-size" }, staleIndex);
 
     const summary = await new RuntimeEvidenceLedger(runtimeRoot).summarizeRun("run:artifact-retention-safe-size");
 
@@ -652,8 +671,7 @@ describe("RuntimeEvidenceLedger", () => {
       outcome: "improved",
     });
     await ledger.rebuildSummaryIndexForRun("run:cached-entry-safe-size");
-    const indexPath = `${ledger.runPath("run:cached-entry-safe-size")}.summary.json`;
-    const staleIndex = JSON.parse(await fsp.readFile(indexPath, "utf8")) as {
+    const staleIndex = await requireSummaryIndex("run", "run:cached-entry-safe-size") as Awaited<ReturnType<typeof requireSummaryIndex>> & {
       summary: {
         best_evidence?: { artifacts?: Array<{ size_bytes?: number }> } | null;
         latest_strategy?: { artifacts?: Array<{ size_bytes?: number }> } | null;
@@ -678,7 +696,7 @@ describe("RuntimeEvidenceLedger", () => {
         artifact.size_bytes = unsafeSizeBytes;
       });
     });
-    await fsp.writeFile(indexPath, `${JSON.stringify(staleIndex)}\n`, "utf8");
+    await evidenceStore().saveSummaryIndex({ kind: "run", id: "run:cached-entry-safe-size" }, staleIndex);
 
     const summary = await new RuntimeEvidenceLedger(runtimeRoot).summarizeRun("run:cached-entry-safe-size");
 
@@ -708,7 +726,7 @@ describe("RuntimeEvidenceLedger", () => {
     expect(summary.metric_trends[0]?.latest_value).toBe(11);
   });
 
-  it("does not let stale indexes mask canonical JSONL warnings on append", async () => {
+  it("does not let stale DB indexes mask appended evidence", async () => {
     const ledger = new RuntimeEvidenceLedger(runtimeRoot);
     await ledger.append({
       id: "warning-before",
@@ -720,7 +738,20 @@ describe("RuntimeEvidenceLedger", () => {
       outcome: "continued",
     });
     await ledger.rebuildSummaryIndexForRun("run:index-warning");
-    await fsp.appendFile(ledger.runPath("run:index-warning"), "{bad-json\n", "utf8");
+    const staleIndex = await requireSummaryIndex("run", "run:index-warning");
+    await evidenceStore().saveSummaryIndex({ kind: "run", id: "run:index-warning" }, {
+      ...staleIndex,
+      generated_at: "2026-04-30T00:05:00.000Z",
+      summary: {
+        ...staleIndex.summary,
+        total_entries: 1,
+        best_evidence: {
+          ...staleIndex.summary.best_evidence!,
+          id: "stale-best",
+          summary: "Stale summary best evidence.",
+        },
+      },
+    });
     await ledger.append({
       id: "warning-after",
       occurred_at: "2026-04-30T00:10:00.000Z",
@@ -734,7 +765,7 @@ describe("RuntimeEvidenceLedger", () => {
     const summary = await new RuntimeEvidenceLedger(runtimeRoot).summarizeRun("run:index-warning");
 
     expect(summary.total_entries).toBe(2);
-    expect(summary.warnings).toHaveLength(1);
+    expect(summary.warnings).toEqual([]);
     expect(summary.best_evidence?.id).toBe("warning-after");
   });
 
@@ -743,35 +774,11 @@ describe("RuntimeEvidenceLedger", () => {
     for (const size of sizes) {
       const runId = `run:scale-${size}`;
       const ledger = new RuntimeEvidenceLedger(runtimeRoot);
-      const entries = Array.from({ length: size }, (_, index) => ({
-        schema_version: "runtime-evidence-entry-v1",
-        id: `entry-${size}-${index}`,
-        occurred_at: new Date(Date.UTC(2026, 3, 30, 0, 0, index)).toISOString(),
-        kind: "metric",
-        scope: { run_id: runId, loop_index: index },
-        metrics: [{ label: "accuracy", value: index / size, direction: "maximize" }],
-        evaluators: [],
-        research: [],
-        dream_checkpoints: [],
-        divergent_exploration: [],
-        artifacts: [],
-        raw_refs: [],
-        summary: `Metric ${index}`,
-        outcome: index === size - 1 ? "improved" : "continued",
-      }));
-      await fsp.mkdir(path.dirname(ledger.runPath(runId)), { recursive: true });
-      await fsp.writeFile(
-        ledger.runPath(runId),
-        `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`,
-        "utf8"
-      );
+      await appendMetricEntries(ledger, runId, size, "entry", "Metric");
       await ledger.rebuildSummaryIndexForRun(runId);
-      const indexPath = `${ledger.runPath(runId)}.summary.json`;
-      const index = JSON.parse(await fsp.readFile(indexPath, "utf8")) as {
-        summary: { generated_at: string };
-      };
+      const index = await requireSummaryIndex("run", runId);
       index.summary.generated_at = `indexed-summary-${size}`;
-      await fsp.writeFile(indexPath, `${JSON.stringify(index)}\n`, "utf8");
+      await evidenceStore().saveSummaryIndex({ kind: "run", id: runId }, index);
 
       const summary = await new RuntimeEvidenceLedger(runtimeRoot).summarizeRun(runId);
 
@@ -786,50 +793,22 @@ describe("RuntimeEvidenceLedger", () => {
     for (const size of sizes) {
       const runId = `run:append-scale-${size}`;
       const ledger = new RuntimeEvidenceLedger(runtimeRoot);
-      const entries = Array.from({ length: size }, (_, index) => ({
-        schema_version: "runtime-evidence-entry-v1",
-        id: `append-entry-${size}-${index}`,
-        occurred_at: new Date(Date.UTC(2026, 3, 30, 0, 0, index)).toISOString(),
-        kind: "metric",
-        scope: { run_id: runId, loop_index: index },
-        metrics: [{ label: "accuracy", value: index / size, direction: "maximize" }],
-        evaluators: [],
-        research: [],
-        dream_checkpoints: [],
-        divergent_exploration: [],
-        candidates: [],
-        artifacts: [],
-        raw_refs: [],
-        summary: `Append metric ${index}`,
-        outcome: index === size - 1 ? "improved" : "continued",
-      }));
-      await fsp.mkdir(path.dirname(ledger.runPath(runId)), { recursive: true });
-      await fsp.writeFile(
-        ledger.runPath(runId),
-        `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`,
-        "utf8"
-      );
+      await appendMetricEntries(ledger, runId, size, "append-entry", "Append metric");
       await ledger.rebuildSummaryIndexForRun(runId);
 
-      const canonicalPath = ledger.runPath(runId);
-      await fsp.chmod(canonicalPath, 0o200);
-      try {
-        await ledger.append({
-          id: `append-entry-${size}-new`,
-          occurred_at: "2026-04-30T00:30:00.000Z",
-          kind: "metric",
-          scope: { run_id: runId, loop_index: size },
-          metrics: [{ label: "accuracy", value: 2, direction: "maximize" }],
-          summary: "Incremental append metric.",
-          outcome: "improved",
-        });
+      await ledger.append({
+        id: `append-entry-${size}-new`,
+        occurred_at: "2026-04-30T00:30:00.000Z",
+        kind: "metric",
+        scope: { run_id: runId, loop_index: size },
+        metrics: [{ label: "accuracy", value: 2, direction: "maximize" }],
+        summary: "Incremental append metric.",
+        outcome: "improved",
+      });
 
-        const summary = await new RuntimeEvidenceLedger(runtimeRoot).summarizeRun(runId);
-        expect(summary.total_entries).toBe(size + 1);
-        expect(summary.best_evidence?.id).toBe(`append-entry-${size}-new`);
-      } finally {
-        await fsp.chmod(canonicalPath, 0o600);
-      }
+      const summary = await new RuntimeEvidenceLedger(runtimeRoot).summarizeRun(runId);
+      expect(summary.total_entries).toBe(size + 1);
+      expect(summary.best_evidence?.id).toBe(`append-entry-${size}-new`);
     }
   });
 
@@ -838,56 +817,27 @@ describe("RuntimeEvidenceLedger", () => {
     for (const size of sizes) {
       const runId = `run:append-non-metric-scale-${size}`;
       const ledger = new RuntimeEvidenceLedger(runtimeRoot);
-      const entries = Array.from({ length: size }, (_, index) => ({
-        schema_version: "runtime-evidence-entry-v1",
-        id: `append-non-metric-entry-${size}-${index}`,
-        occurred_at: new Date(Date.UTC(2026, 3, 30, 0, 0, index)).toISOString(),
-        kind: "execution",
-        scope: { run_id: runId, loop_index: index },
-        metrics: [],
-        evaluators: [],
-        research: [],
-        dream_checkpoints: [],
-        divergent_exploration: [],
-        candidates: [],
-        artifacts: [],
-        raw_refs: [],
-        result: { status: "completed", summary: `Execution ${index}` },
-        summary: `Execution ${index}`,
-        outcome: index === size - 1 ? "improved" : "continued",
-      }));
-      await fsp.mkdir(path.dirname(ledger.runPath(runId)), { recursive: true });
-      await fsp.writeFile(
-        ledger.runPath(runId),
-        `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`,
-        "utf8"
-      );
+      await appendExecutionEntries(ledger, runId, size, "append-non-metric-entry");
       await ledger.rebuildSummaryIndexForRun(runId);
 
-      const canonicalPath = ledger.runPath(runId);
-      await fsp.chmod(canonicalPath, 0o200);
       let indexedBestEvidenceId: string | undefined;
       let indexedRecentEntryIds: string[] = [];
-      try {
-        await ledger.append({
-          id: `append-non-metric-entry-${size}-new`,
-          occurred_at: "2026-04-30T00:30:00.000Z",
-          kind: "execution",
-          scope: { run_id: runId, loop_index: size },
-          result: { status: "completed", summary: "Incremental execution." },
-          summary: "Incremental execution.",
-          outcome: "improved",
-        });
+      await ledger.append({
+        id: `append-non-metric-entry-${size}-new`,
+        occurred_at: "2026-04-30T00:30:00.000Z",
+        kind: "execution",
+        scope: { run_id: runId, loop_index: size },
+        result: { status: "completed", summary: "Incremental execution." },
+        summary: "Incremental execution.",
+        outcome: "improved",
+      });
 
-        const summary = await new RuntimeEvidenceLedger(runtimeRoot).summarizeRun(runId);
-        expect(summary.total_entries).toBe(size + 1);
-        expect(summary.best_evidence?.id).toBe(`append-non-metric-entry-${size}-new`);
-        expect(summary.metric_trends).toEqual([]);
-        indexedBestEvidenceId = summary.best_evidence?.id;
-        indexedRecentEntryIds = summary.recent_entries.map((entry) => entry.id);
-      } finally {
-        await fsp.chmod(canonicalPath, 0o600);
-      }
+      const summary = await new RuntimeEvidenceLedger(runtimeRoot).summarizeRun(runId);
+      expect(summary.total_entries).toBe(size + 1);
+      expect(summary.best_evidence?.id).toBe(`append-non-metric-entry-${size}-new`);
+      expect(summary.metric_trends).toEqual([]);
+      indexedBestEvidenceId = summary.best_evidence?.id;
+      indexedRecentEntryIds = summary.recent_entries.map((entry) => entry.id);
       const rebuilt = await ledger.rebuildSummaryIndexForRun(runId);
       expect(rebuilt.best_evidence?.id).toBe(indexedBestEvidenceId);
       expect(rebuilt.recent_entries.map((entry) => entry.id)).toEqual(indexedRecentEntryIds);
@@ -899,29 +849,7 @@ describe("RuntimeEvidenceLedger", () => {
     for (const size of [100, 500, 1000]) {
       const runId = `run:append-index-compact-${size}`;
       const ledger = new RuntimeEvidenceLedger(runtimeRoot);
-      const entries = Array.from({ length: size }, (_, index) => ({
-        schema_version: "runtime-evidence-entry-v1",
-        id: `compact-entry-${size}-${index}`,
-        occurred_at: new Date(Date.UTC(2026, 3, 30, 0, 0, index)).toISOString(),
-        kind: "metric",
-        scope: { run_id: runId, loop_index: index },
-        metrics: [{ label: "accuracy", value: index / size, direction: "maximize" }],
-        evaluators: [],
-        research: [],
-        dream_checkpoints: [],
-        divergent_exploration: [],
-        candidates: [],
-        artifacts: [],
-        raw_refs: [],
-        summary: `Compact metric ${index}`,
-        outcome: index === size - 1 ? "improved" : "continued",
-      }));
-      await fsp.mkdir(path.dirname(ledger.runPath(runId)), { recursive: true });
-      await fsp.writeFile(
-        ledger.runPath(runId),
-        `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`,
-        "utf8"
-      );
+      await appendMetricEntries(ledger, runId, size, "compact-entry", "Compact metric");
       await ledger.rebuildSummaryIndexForRun(runId);
 
       await ledger.append({
@@ -935,10 +863,7 @@ describe("RuntimeEvidenceLedger", () => {
       });
 
       const indexed = await new RuntimeEvidenceLedger(runtimeRoot).summarizeRun(runId);
-      const index = JSON.parse(await fsp.readFile(`${ledger.runPath(runId)}.summary.json`, "utf8")) as {
-        checkpoint?: { entries?: unknown[] };
-        append_state?: { metric_observations?: Array<{ recent?: unknown[] }> };
-      };
+      const index = await requireSummaryIndex("run", runId);
       const indexBytes = Buffer.byteLength(JSON.stringify(index), "utf8");
       const rebuilt = await ledger.rebuildSummaryIndexForRun(runId);
 

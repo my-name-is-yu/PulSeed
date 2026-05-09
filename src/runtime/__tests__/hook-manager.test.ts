@@ -4,6 +4,7 @@ import * as path from "node:path";
 import { HookManager } from "../hook-manager.js";
 import type { HookConfig } from "../../base/types/hook.js";
 import { makeTempDir, cleanupTempDir } from "../../../tests/helpers/temp-dir.js";
+import { StrategyDreamStateStore } from "../store/strategy-dream-state-store.js";
 
 // ─── Helpers ───
 
@@ -12,13 +13,13 @@ function writeHooksJson(dir: string, hooks: HookConfig[]): void {
 }
 
 async function waitFor(
-  predicate: () => boolean,
+  predicate: () => boolean | Promise<boolean>,
   timeoutMs = 8_000,
   intervalMs = 20
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (predicate()) {
+    if (await predicate()) {
       return;
     }
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
@@ -135,13 +136,15 @@ describe("HookManager", () => {
       );
 
       const manager = new HookManager(tempDir);
+      const store = new StrategyDreamStateStore(tempDir);
       await manager.emit("LoopCycleStart", { goal_id: "g1" });
       await new Promise((resolve) => setTimeout(resolve, 100));
 
+      expect(await store.listEventLogs()).toHaveLength(0);
       expect(fs.existsSync(path.join(tempDir, "dream", "events", "g1.jsonl"))).toBe(false);
     });
 
-    it("uses date-based dream event paths when configured", async () => {
+    it("persists DB dream events when date rotation config is enabled", async () => {
       await fs.promises.mkdir(path.join(tempDir, "dream"), { recursive: true });
       await fs.promises.writeFile(
         path.join(tempDir, "dream", "config.json"),
@@ -150,12 +153,19 @@ describe("HookManager", () => {
       );
 
       const manager = new HookManager(tempDir);
+      const store = new StrategyDreamStateStore(tempDir);
       await manager.emit("LoopCycleStart", { goal_id: "g1" });
 
       const dateSuffix = new Date().toISOString().slice(0, 10);
-      await waitFor(() =>
-        fs.existsSync(path.join(tempDir, "dream", "events", `g1.${dateSuffix}.jsonl`))
-      );
+      await waitFor(async () => (await store.listEventLogs()).length === 1);
+      expect(fs.existsSync(path.join(tempDir, "dream", "events", `g1.${dateSuffix}.jsonl`))).toBe(false);
+      expect((await store.listEventLogs())[0]).toEqual(expect.objectContaining({
+        fileName: "g1.jsonl",
+        event: expect.objectContaining({
+          eventType: "LoopCycleStart",
+          goalId: "g1",
+        }),
+      }));
     });
 
     it("only fires hooks matching the event type", async () => {
@@ -351,19 +361,19 @@ describe("HookManager", () => {
 
     it("persists dream event logs for supported hook events", async () => {
       const manager = new HookManager(tempDir);
+      const store = new StrategyDreamStateStore(tempDir);
 
       await manager.emit("PostTaskCreate", { goal_id: "goal-1", data: { task_id: "task-42", status: "ok" } });
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await waitFor(async () => (await store.listEventLogs()).length === 1);
 
       const eventPath = path.join(tempDir, "dream", "events", "goal-1.jsonl");
-      expect(fs.existsSync(eventPath)).toBe(true);
+      expect(fs.existsSync(eventPath)).toBe(false);
 
-      const [firstLine] = fs.readFileSync(eventPath, "utf-8").trim().split("\n");
-      const record = JSON.parse(firstLine!);
-      expect(record.eventType).toBe("PostTaskCreate");
-      expect(record.goalId).toBe("goal-1");
-      expect(record.taskId).toBe("task-42");
-      expect(record.data.status).toBe("ok");
+      const [record] = await store.listEventLogs();
+      expect(record?.event.eventType).toBe("PostTaskCreate");
+      expect(record?.event.goalId).toBe("goal-1");
+      expect(record?.event.taskId).toBe("task-42");
+      expect(record?.event.data.status).toBe("ok");
     });
   });
 });

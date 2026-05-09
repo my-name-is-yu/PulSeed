@@ -1,7 +1,7 @@
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { readJsonFileOrNull } from "../../../base/utils/json-io.js";
-import { WatermarkStateSchema } from "../dream-types.js";
+import { StrategyDreamStateStore } from "../../../runtime/store/strategy-dream-state-store.js";
 
 export async function countGoalDirs(baseDir: string, tier: "light" | "deep"): Promise<number> {
   const goalsDir = path.join(baseDir, "goals");
@@ -32,29 +32,26 @@ export async function collectBacklogMetrics(baseDir: string): Promise<{
   event_lines_pending: number;
   importance_entries_pending: number;
 }> {
-  const raw = await readJsonFileOrNull(path.join(baseDir, "dream", "watermarks.json"));
-  const watermarks = raw === null ? WatermarkStateSchema.parse({}) : WatermarkStateSchema.safeParse(raw).success
-    ? WatermarkStateSchema.parse(raw)
-    : WatermarkStateSchema.parse({});
+  const store = new StrategyDreamStateStore(baseDir);
+  const watermarks = await store.loadWatermarks();
   let iterationLinesPending = 0;
-  const goalsDir = path.join(baseDir, "goals");
-  const goalEntries = await fsp.readdir(goalsDir, { withFileTypes: true }).catch(() => []);
-  for (const entry of goalEntries.filter((candidate) => candidate.isDirectory())) {
-    const total = await countFileLines(path.join(goalsDir, entry.name, "iteration-logs.jsonl"));
-    const lastProcessed = watermarks.goals[entry.name]?.lastProcessedLine ?? 0;
+  for (const goalId of await store.listDreamGoalIds()) {
+    const total = await store.countIterationLogs(goalId);
+    const lastProcessed = watermarks.goals[goalId]?.lastProcessedLine ?? 0;
     iterationLinesPending += Math.max(0, total - Math.min(lastProcessed, total));
   }
 
   let eventLinesPending = 0;
-  const eventDir = path.join(baseDir, "dream", "events");
-  const eventFiles = await fsp.readdir(eventDir).catch(() => [] as string[]);
-  for (const fileName of eventFiles.filter((file) => file.endsWith(".jsonl"))) {
-    const total = await countFileLines(path.join(eventDir, fileName));
+  const eventCounts = new Map<string, number>();
+  for (const row of await store.listEventLogs()) {
+    eventCounts.set(row.fileName, (eventCounts.get(row.fileName) ?? 0) + 1);
+  }
+  for (const [fileName, total] of eventCounts) {
     const lastProcessed = watermarks.goals[`event:${fileName}`]?.lastProcessedLine ?? 0;
     eventLinesPending += Math.max(0, total - Math.min(lastProcessed, total));
   }
 
-  const importanceLines = await countFileLines(path.join(baseDir, "dream", "importance-buffer.jsonl"));
+  const importanceLines = (await store.listImportanceEntries()).length;
   const importanceProcessed = watermarks.importanceBuffer.lastProcessedLine ?? 0;
   const importanceEntriesPending = Math.max(0, importanceLines - Math.min(importanceProcessed, importanceLines));
 
@@ -71,6 +68,12 @@ export async function countFileLines(filePath: string): Promise<number> {
 }
 
 export async function countFilesNamed(root: string, fileName: string): Promise<number> {
+  if (fileName === "iteration-logs.jsonl") {
+    return (await new StrategyDreamStateStore(root).listDreamGoalIds()).length;
+  }
+  if (fileName === "strategy-history.json") {
+    return new StrategyDreamStateStore(root).countStrategyHistoryGoals();
+  }
   let count = 0;
   for await (const filePath of walk(root)) {
     if (path.basename(filePath) === fileName) {
@@ -91,6 +94,9 @@ export async function countJsonFiles(root: string): Promise<number> {
 }
 
 export async function countJsonlLines(baseDir: string, relativePath: string): Promise<number> {
+  if (relativePath.replace(/\\/g, "/") === "dream/session-logs.jsonl") {
+    return (await new StrategyDreamStateStore(baseDir).listSessionLogs()).length;
+  }
   return countFileLines(path.join(baseDir, relativePath));
 }
 
@@ -103,16 +109,8 @@ export async function countAgentMemoryEntries(baseDir: string): Promise<number> 
 }
 
 export async function countEventLines(baseDir: string, eventType: string): Promise<number> {
-  const dreamDir = path.join(baseDir, "dream", "events");
-  let total = 0;
-  for await (const filePath of walk(dreamDir)) {
-    if (!filePath.endsWith(".jsonl")) continue;
-    const raw = await fsp.readFile(filePath, "utf8").catch(() => "");
-    total += raw
-      .split(/\r?\n/)
-      .filter((line) => line.includes(`"eventType":"${eventType}"`)).length;
-  }
-  return total;
+  const rows = await new StrategyDreamStateStore(baseDir).listEventLogs();
+  return rows.filter((row) => row.event.eventType === eventType).length;
 }
 
 export async function countTrustDomains(baseDir: string): Promise<number> {

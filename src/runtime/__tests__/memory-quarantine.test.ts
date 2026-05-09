@@ -1,8 +1,8 @@
 import * as fsp from "node:fs/promises";
-import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { makeTempDir } from "../../../tests/helpers/temp-dir.js";
 import { RuntimeEvidenceLedger } from "../store/evidence-ledger.js";
+import { RuntimeEvidenceStateStore } from "../store/runtime-evidence-state-store.js";
 
 describe("runtime memory quarantine", () => {
   let runtimeRoot: string;
@@ -14,6 +14,14 @@ describe("runtime memory quarantine", () => {
   afterEach(async () => {
     await fsp.rm(runtimeRoot, { recursive: true, force: true });
   });
+
+  async function requireSummaryIndex(runId: string) {
+    const index = await new RuntimeEvidenceStateStore(runtimeRoot).loadSummaryIndex({ kind: "run", id: runId });
+    if (!index) {
+      throw new Error(`missing runtime evidence summary index for ${runId}`);
+    }
+    return index;
+  }
 
   it("excludes quarantined evidence from default runtime summaries", async () => {
     const ledger = new RuntimeEvidenceLedger(runtimeRoot);
@@ -68,21 +76,17 @@ describe("runtime memory quarantine", () => {
         created_at: "2026-05-02T00:01:00.000Z",
       },
     });
-    const canonicalPath = path.join(runtimeRoot, "evidence-ledger", "runs", `${encodeURIComponent("run:cache")}.jsonl`);
-    const stat = await fsp.stat(canonicalPath);
     const staleSummary = {
       ...(await ledger.rebuildSummaryIndexForRun("run:cache")),
       context_policy_version: "correction-filtered-planning-context-v1",
       recent_entries: (await ledger.readByRun("run:cache")).entries,
     };
-    await fsp.writeFile(`${canonicalPath}.summary.json`, JSON.stringify({
-      schema_version: "runtime-evidence-summary-index-v1",
+    const staleIndex = await requireSummaryIndex("run:cache");
+    await new RuntimeEvidenceStateStore(runtimeRoot).saveSummaryIndex({ kind: "run", id: "run:cache" }, {
+      ...staleIndex,
       generated_at: "2026-05-02T00:02:00.000Z",
-      canonical_log_path: canonicalPath,
-      canonical_log_size: stat.size,
-      canonical_log_mtime_ms: stat.mtimeMs,
-      summary: staleSummary,
-    }));
+      summary: staleSummary as unknown as typeof staleIndex.summary,
+    });
 
     const summary = await new RuntimeEvidenceLedger(runtimeRoot).summarizeRun("run:cache");
 

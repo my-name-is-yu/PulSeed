@@ -1,22 +1,11 @@
-import * as path from "node:path";
-import { readJsonFileOrNull, writeJsonFileAtomic } from "../../base/utils/json-io.js";
+import { StrategyDreamStateStore } from "../../runtime/store/strategy-dream-state-store.js";
 import {
-  DreamActivationArtifactFileSchema,
   DreamActivationArtifactSchema,
   type DreamActivationArtifact,
 } from "./dream-types.js";
 
-function activationArtifactPath(baseDir: string): string {
-  return path.join(baseDir, "dream", "activation-artifacts.json");
-}
-
 export async function loadDreamActivationArtifacts(baseDir: string): Promise<DreamActivationArtifact[]> {
-  const raw = await readJsonFileOrNull(activationArtifactPath(baseDir));
-  if (raw === null) {
-    return [];
-  }
-  const parsed = DreamActivationArtifactFileSchema.safeParse(raw);
-  return parsed.success ? parsed.data.artifacts : [];
+  return new StrategyDreamStateStore(baseDir).loadActivationArtifacts();
 }
 
 export async function replaceDreamActivationArtifacts(
@@ -28,12 +17,9 @@ export async function replaceDreamActivationArtifacts(
   for (const artifact of artifacts) {
     unique.set(artifact.artifact_id, DreamActivationArtifactSchema.parse(artifact));
   }
-  await writeJsonFileAtomic(
-    activationArtifactPath(baseDir),
-    DreamActivationArtifactFileSchema.parse({
-      generated_at: generatedAt,
-      artifacts: [...unique.values()].sort((left, right) => left.artifact_id.localeCompare(right.artifact_id)),
-    })
+  await new StrategyDreamStateStore(baseDir).replaceActivationArtifacts(
+    [...unique.values()].sort((left, right) => left.artifact_id.localeCompare(right.artifact_id)),
+    generatedAt,
   );
 }
 

@@ -5,13 +5,15 @@ import { z } from "zod";
 import {
   createRuntimeStorePaths,
   encodeRuntimePathSegment,
-  ensureRuntimeStorePaths,
   type RuntimeStorePaths,
 } from "./runtime-paths.js";
 import {
+  RuntimeEvidenceStateStore,
+  type RuntimeEvidenceScopeKey,
+} from "./runtime-evidence-state-store.js";
+import {
   correctionStateForTarget,
   MemoryCorrectionEntrySchema,
-  MemoryCorrectionTargetStateSchema,
   summarizeMemoryCorrectionState,
   type MemoryCorrectionEntry,
   type MemoryCorrectionEntryInput,
@@ -85,30 +87,17 @@ const RuntimeEvidenceReproducibilityManifestSchema = z.object({
 
 import {
   RuntimeEvidenceEntrySchema,
-  RuntimeEvidenceOutcomeSchema,
-  type RuntimeEvidenceArtifactRef,
   type RuntimeEvidenceCandidateDisposition,
   type RuntimeEvidenceCandidateNearMiss,
   type RuntimeEvidenceCandidateNearMissReason,
   type RuntimeEvidenceCandidateRecord,
   type RuntimeEvidenceCandidateSimilarity,
   type RuntimeEvidenceDivergentHypothesis,
-  type RuntimeEvidenceDreamCheckpoint,
   type RuntimeEvidenceEntry,
   type RuntimeEvidenceEntryInput,
-  type RuntimeEvidenceEntryKind,
-  type RuntimeEvidenceEvaluatorBudget,
-  type RuntimeEvidenceEvaluatorCalibration,
-  type RuntimeEvidenceEvaluatorCandidateSnapshot,
-  type RuntimeEvidenceEvaluatorObservation,
-  type RuntimeEvidenceEvaluatorProvenance,
-  type RuntimeEvidenceEvaluatorPublishAction,
-  type RuntimeEvidenceEvaluatorStatus,
   type RuntimeEvidenceMetric,
-  type RuntimeEvidenceOutcome,
   type RuntimeEvidenceReadResult,
   type RuntimeEvidenceReadWarning,
-  type RuntimeEvidenceResearchMemo,
 } from "./evidence-types.js";
 export {
   RuntimeArtifactRetentionClassSchema,
@@ -401,16 +390,18 @@ export interface RuntimeEvidenceLedgerPort {
 
 export class RuntimeEvidenceLedger implements RuntimeEvidenceLedgerPort {
   private readonly paths: RuntimeStorePaths;
+  private readonly store: RuntimeEvidenceStateStore;
 
   constructor(runtimeRootOrPaths?: string | RuntimeStorePaths) {
     this.paths =
       typeof runtimeRootOrPaths === "string"
         ? createRuntimeStorePaths(runtimeRootOrPaths)
         : runtimeRootOrPaths ?? createRuntimeStorePaths();
+    this.store = new RuntimeEvidenceStateStore(this.paths);
   }
 
   async ensureReady(): Promise<void> {
-    await ensureRuntimeStorePaths(this.paths);
+    await this.store.ensureReady();
   }
 
   goalPath(goalId: string): string {
@@ -438,15 +429,11 @@ export class RuntimeEvidenceLedger implements RuntimeEvidenceLedgerPort {
     });
     await this.ensureReady();
 
-    const targets = new Set<string>();
-    if (entry.scope.goal_id) targets.add(this.paths.evidenceGoalPath(entry.scope.goal_id));
-    if (entry.scope.run_id) targets.add(this.paths.evidenceRunPath(entry.scope.run_id));
-    await Promise.all([...targets].map(async (target) => {
-      await withSummaryIndexUpdateLock(target, async () => {
-        await fsp.mkdir(path.dirname(target), { recursive: true });
-        const preAppendIndex = await readPreAppendSummaryIndex(target);
-        await fsp.appendFile(target, `${JSON.stringify(entry)}\n`, "utf8");
-        await updateSummaryIndexAfterAppend(target, this.paths, [entry], preAppendIndex);
+    const scopes = scopesForEntry(entry);
+    await this.store.append(entry);
+    await Promise.all(scopes.map(async (scope) => {
+      await withSummaryIndexUpdateLock(summaryIndexKey(scope), async () => {
+        await rebuildSummaryIndexForScope(scope, this.paths, this.store);
       });
     }));
     return [entry];
@@ -474,17 +461,18 @@ export class RuntimeEvidenceLedger implements RuntimeEvidenceLedgerPort {
   }
 
   async readByGoal(goalId: string): Promise<RuntimeEvidenceReadResult> {
-    return readEvidenceFile(this.paths.evidenceGoalPath(goalId));
+    return this.store.readByGoal(goalId);
   }
 
   async readByRun(runId: string): Promise<RuntimeEvidenceReadResult> {
-    return readEvidenceFile(this.paths.evidenceRunPath(runId));
+    return this.store.readByRun(runId);
   }
 
   async summarizeGoal(goalId: string): Promise<RuntimeEvidenceSummary> {
+    const scope = evidenceGoalScope(goalId);
     const manifests = await readReproducibilityManifests(this.paths, { goal_id: goalId });
     const indexed = manifests.length === 0
-      ? await readSummaryIndex(this.paths.evidenceGoalPath(goalId), { goal_id: goalId })
+      ? await readDbSummaryIndex(scope, this.store)
       : null;
     if (indexed) return indexed.summary;
     const read = await this.readByGoal(goalId);
@@ -493,9 +481,10 @@ export class RuntimeEvidenceLedger implements RuntimeEvidenceLedgerPort {
   }
 
   async summarizeRun(runId: string): Promise<RuntimeEvidenceSummary> {
+    const scope = evidenceRunScope(runId);
     const manifests = await readReproducibilityManifests(this.paths, { run_id: runId });
     const indexed = manifests.length === 0
-      ? await readSummaryIndex(this.paths.evidenceRunPath(runId), { run_id: runId })
+      ? await readDbSummaryIndex(scope, this.store)
       : null;
     if (indexed) return indexed.summary;
     const read = await this.readByRun(runId);
@@ -504,28 +493,105 @@ export class RuntimeEvidenceLedger implements RuntimeEvidenceLedgerPort {
   }
 
   async rebuildSummaryIndexForGoal(goalId: string): Promise<RuntimeEvidenceSummary> {
-    return rebuildSummaryIndex(this.paths.evidenceGoalPath(goalId), this.paths);
+    return rebuildSummaryIndexForScope(evidenceGoalScope(goalId), this.paths, this.store);
   }
 
   async rebuildSummaryIndexForRun(runId: string): Promise<RuntimeEvidenceSummary> {
-    return rebuildSummaryIndex(this.paths.evidenceRunPath(runId), this.paths);
+    return rebuildSummaryIndexForScope(evidenceRunScope(runId), this.paths, this.store);
+  }
+
+  async listExtractionRefs(limit?: number) {
+    return this.store.listExtractionRefs(limit);
   }
 }
 
-async function rebuildSummaryIndex(canonicalPath: string, paths: RuntimeStorePaths): Promise<RuntimeEvidenceSummary> {
-  const scope = summaryScopeFromPath(canonicalPath);
-  const read = await readEvidenceFile(canonicalPath);
-  const manifests = await readReproducibilityManifests(paths, scope);
-  const summary = summarizeEvidence(scope, read, manifests);
+function evidenceGoalScope(goalId: string): RuntimeEvidenceScopeKey {
+  return { kind: "goal", id: goalId };
+}
+
+function evidenceRunScope(runId: string): RuntimeEvidenceScopeKey {
+  return { kind: "run", id: runId };
+}
+
+function scopesForEntry(entry: RuntimeEvidenceEntry): RuntimeEvidenceScopeKey[] {
+  const scopes: RuntimeEvidenceScopeKey[] = [];
+  if (entry.scope.goal_id) scopes.push(evidenceGoalScope(entry.scope.goal_id));
+  if (entry.scope.run_id) scopes.push(evidenceRunScope(entry.scope.run_id));
+  return scopes;
+}
+
+function scopeToSummaryScope(scope: RuntimeEvidenceScopeKey): RuntimeEvidenceSummary["scope"] {
+  return scope.kind === "goal" ? { goal_id: scope.id } : { run_id: scope.id };
+}
+
+function summaryIndexKey(scope: RuntimeEvidenceScopeKey): string {
+  return `control-db://runtime-evidence/${scope.kind}/${scope.id}`;
+}
+
+async function readDbSummaryIndex(
+  scope: RuntimeEvidenceScopeKey,
+  store: RuntimeEvidenceStateStore
+): Promise<RuntimeEvidenceSummaryIndex | null> {
+  const indexed = await store.loadSummaryIndex(scope);
+  if (!indexed) return null;
+  if (indexed.summary.schema_version !== "runtime-evidence-summary-v1") return null;
+  if (!isCurrentEvidenceSummaryShape(indexed.summary)) return null;
+  const summaryScope = scopeToSummaryScope(scope);
+  if (summaryScope.goal_id && indexed.summary.scope.goal_id !== summaryScope.goal_id) return null;
+  if (summaryScope.run_id && indexed.summary.scope.run_id !== summaryScope.run_id) return null;
+  return indexed;
+}
+
+async function rebuildSummaryIndexForScope(
+  scope: RuntimeEvidenceScopeKey,
+  paths: RuntimeStorePaths,
+  store: RuntimeEvidenceStateStore
+): Promise<RuntimeEvidenceSummary> {
+  const summaryScope = scopeToSummaryScope(scope);
+  const read = scope.kind === "goal" ? await store.readByGoal(scope.id) : await store.readByRun(scope.id);
+  const manifests = await readReproducibilityManifests(paths, summaryScope);
+  const summary = summarizeEvidence(summaryScope, read, manifests);
   const activeRead = manifests.length === 0 ? activeEvidenceRead(read) : null;
-  await writeSummaryIndex(canonicalPath, summary, activeRead
-    ? {
-        warnings: read.warnings,
-        primaryMetric: resolvePrimaryMetricKey([...activeRead.entries].reverse()) ?? undefined,
-        metricObservationState: buildMetricObservationState(activeRead.entries),
-      }
-    : undefined);
+  if (activeRead) {
+    await writeDbSummaryIndex(scope, summary, store, {
+      warnings: read.warnings,
+      primaryMetric: resolvePrimaryMetricKey([...activeRead.entries].reverse()) ?? undefined,
+      metricObservationState: buildMetricObservationState(activeRead.entries),
+    });
+  }
   return summary;
+}
+
+async function writeDbSummaryIndex(
+  scope: RuntimeEvidenceScopeKey,
+  summary: RuntimeEvidenceSummary,
+  store: RuntimeEvidenceStateStore,
+  checkpointRead?: {
+    warnings: RuntimeEvidenceReadWarning[];
+    primaryMetric?: ComparableMetricKey;
+    metricObservationState?: RuntimeEvidenceSummaryMetricObservationState[];
+  }
+): Promise<void> {
+  const warnings = checkpointRead ? checkpointRead.warnings : [];
+  const index: RuntimeEvidenceSummaryIndex = {
+    schema_version: "runtime-evidence-summary-index-v1",
+    generated_at: new Date().toISOString(),
+    canonical_log_path: summaryIndexKey(scope),
+    canonical_log_size: 0,
+    canonical_log_mtime_ms: 0,
+    summary,
+    append_state: {
+      schema_version: "runtime-evidence-summary-append-state-v1",
+      warnings,
+      ...(checkpointRead && "primaryMetric" in checkpointRead && checkpointRead.primaryMetric
+        ? { primary_metric: checkpointRead.primaryMetric }
+        : {}),
+      metric_observations: checkpointRead && "metricObservationState" in checkpointRead
+        ? checkpointRead.metricObservationState
+        : buildMetricObservationState(summary.recent_entries),
+    },
+  };
+  await store.saveSummaryIndex(scope, index);
 }
 
 async function withSummaryIndexUpdateLock<T>(canonicalPath: string, action: () => Promise<T>): Promise<T> {
@@ -545,49 +611,6 @@ async function withSummaryIndexUpdateLock<T>(canonicalPath: string, action: () =
       summaryIndexUpdateLocks.delete(canonicalPath);
     }
   }
-}
-
-async function updateSummaryIndexAfterAppend(
-  canonicalPath: string,
-  paths: RuntimeStorePaths,
-  appendedEntries: RuntimeEvidenceEntry[],
-  preAppendIndex: RuntimeEvidenceSummaryIndex | null
-): Promise<RuntimeEvidenceSummary> {
-  const scope = summaryScopeFromPath(canonicalPath);
-  const manifests = await readReproducibilityManifests(paths, scope);
-  if (manifests.length > 0) {
-    return rebuildSummaryIndex(canonicalPath, paths);
-  }
-
-  if (!preAppendIndex) {
-    return rebuildSummaryIndex(canonicalPath, paths);
-  }
-
-  const warnings = readWarningsFromSummaryIndex(preAppendIndex);
-  if (!warnings) return rebuildSummaryIndex(canonicalPath, paths);
-  const metricState = readMetricObservationStateFromSummaryIndex(preAppendIndex);
-  const primaryMetric = preAppendIndex.append_state?.primary_metric;
-  const summary = updateSummaryFromAppend(scope, preAppendIndex.summary, appendedEntries, warnings, metricState, primaryMetric);
-  if (!summary) return rebuildSummaryIndex(canonicalPath, paths);
-  await writeSummaryIndex(canonicalPath, summary, {
-    warnings,
-    primaryMetric,
-    metricObservationState: updateMetricObservationState(metricState, appendedEntries),
-  });
-  return summary;
-}
-
-function summaryIndexPath(canonicalPath: string): string {
-  return `${canonicalPath}.summary.json`;
-}
-
-function summaryScopeFromPath(canonicalPath: string): RuntimeEvidenceSummary["scope"] {
-  const basename = path.basename(canonicalPath, ".jsonl");
-  const decoded = decodeURIComponent(basename);
-  const scopeDirectory = path.basename(path.dirname(canonicalPath));
-  if (scopeDirectory === "runs") return { run_id: decoded };
-  if (scopeDirectory === "goals") return { goal_id: decoded };
-  throw new Error(`Cannot derive evidence summary scope from path: ${canonicalPath}`);
 }
 
 async function readReproducibilityManifests(
@@ -681,145 +704,6 @@ function isManifestArtifactRef(value: unknown): value is RuntimeEvidenceReproduc
     );
 }
 
-async function readSummaryIndex(
-  canonicalPath: string,
-  expectedScope: RuntimeEvidenceSummary["scope"]
-): Promise<RuntimeEvidenceSummaryIndex | null> {
-  return readSummaryIndexWithStat(canonicalPath, expectedScope);
-}
-
-async function readPreAppendSummaryIndex(canonicalPath: string): Promise<RuntimeEvidenceSummaryIndex | null> {
-  try {
-    const stat = await fsp.stat(canonicalPath);
-    if (stat.size === 0) return emptySummaryIndex(canonicalPath);
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return emptySummaryIndex(canonicalPath);
-    throw err;
-  }
-
-  const scope = summaryScopeFromPath(canonicalPath);
-  return readSummaryIndexWithStat(canonicalPath, scope);
-}
-
-async function emptySummaryIndex(canonicalPath: string): Promise<RuntimeEvidenceSummaryIndex> {
-  const scope = summaryScopeFromPath(canonicalPath);
-  const summary = summarizeEvidence(scope, { entries: [], warnings: [] });
-  return {
-    schema_version: "runtime-evidence-summary-index-v1",
-    generated_at: new Date().toISOString(),
-    canonical_log_path: canonicalPath,
-    canonical_log_size: 0,
-    canonical_log_mtime_ms: 0,
-    summary,
-    append_state: {
-      schema_version: "runtime-evidence-summary-append-state-v1",
-      warnings: [],
-      primary_metric: undefined,
-      metric_observations: [],
-    },
-  };
-}
-
-async function readSummaryIndexWithStat(
-  canonicalPath: string,
-  expectedScope: RuntimeEvidenceSummary["scope"]
-): Promise<RuntimeEvidenceSummaryIndex | null> {
-  let text: string;
-  try {
-    text = await fsp.readFile(summaryIndexPath(canonicalPath), "utf8");
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
-    throw err;
-  }
-  try {
-    const parsed = JSON.parse(text) as RuntimeEvidenceSummaryIndex;
-    if (parsed.schema_version !== "runtime-evidence-summary-index-v1") return null;
-    if (parsed.summary.schema_version !== "runtime-evidence-summary-v1") return null;
-    if (!isCurrentEvidenceSummaryShape(parsed.summary)) return null;
-    const stat = await fsp.stat(canonicalPath);
-    if (parsed.canonical_log_size !== stat.size) return null;
-    if (parsed.canonical_log_mtime_ms !== stat.mtimeMs) return null;
-    if (expectedScope.goal_id && parsed.summary.scope.goal_id !== expectedScope.goal_id) return null;
-    if (expectedScope.run_id && parsed.summary.scope.run_id !== expectedScope.run_id) return null;
-    return parsed;
-  } catch {
-    return null;
-  }
-}
-
-function readCheckpointFromSummaryIndex(index: RuntimeEvidenceSummaryIndex): RuntimeEvidenceReadResult | null {
-  const checkpoint = index.checkpoint;
-  if (!checkpoint || checkpoint.schema_version !== "runtime-evidence-summary-checkpoint-v1") return null;
-  if (!Array.isArray(checkpoint.entries) || !Array.isArray(checkpoint.warnings)) return null;
-
-  const entries: RuntimeEvidenceEntry[] = [];
-  for (const entry of checkpoint.entries) {
-    const parsed = RuntimeEvidenceEntrySchema.safeParse(entry);
-    if (!parsed.success) return null;
-    entries.push(parsed.data);
-  }
-
-  const warnings: RuntimeEvidenceReadWarning[] = [];
-  for (const warning of checkpoint.warnings) {
-    if (
-      typeof warning !== "object"
-      || warning === null
-      || typeof (warning as RuntimeEvidenceReadWarning).file !== "string"
-      || typeof (warning as RuntimeEvidenceReadWarning).line !== "number"
-      || typeof (warning as RuntimeEvidenceReadWarning).message !== "string"
-    ) {
-      return null;
-    }
-    warnings.push(warning as RuntimeEvidenceReadWarning);
-  }
-
-  return { entries, warnings };
-}
-
-function readWarningsFromSummaryIndex(index: RuntimeEvidenceSummaryIndex): RuntimeEvidenceReadWarning[] | null {
-  if (index.append_state?.schema_version === "runtime-evidence-summary-append-state-v1") {
-    return validateRuntimeEvidenceWarnings(index.append_state.warnings);
-  }
-  return readCheckpointFromSummaryIndex(index)?.warnings ?? null;
-}
-
-function readMetricObservationStateFromSummaryIndex(index: RuntimeEvidenceSummaryIndex): RuntimeEvidenceSummaryMetricObservationState[] | null {
-  const state = index.append_state?.metric_observations;
-  if (!state) return null;
-  if (!Array.isArray(state)) return null;
-  for (const group of state) {
-    if (
-      typeof group !== "object"
-      || group === null
-      || typeof group.metric_key !== "string"
-      || (group.direction !== "maximize" && group.direction !== "minimize")
-      || typeof group.count !== "number"
-      || !Array.isArray(group.recent)
-    ) {
-      return null;
-    }
-  }
-  return state;
-}
-
-function validateRuntimeEvidenceWarnings(value: unknown): RuntimeEvidenceReadWarning[] | null {
-  if (!Array.isArray(value)) return null;
-  const warnings: RuntimeEvidenceReadWarning[] = [];
-  for (const warning of value) {
-    if (
-      typeof warning !== "object"
-      || warning === null
-      || typeof (warning as RuntimeEvidenceReadWarning).file !== "string"
-      || typeof (warning as RuntimeEvidenceReadWarning).line !== "number"
-      || typeof (warning as RuntimeEvidenceReadWarning).message !== "string"
-    ) {
-      return null;
-    }
-    warnings.push(warning as RuntimeEvidenceReadWarning);
-  }
-  return warnings;
-}
-
 function isCurrentEvidenceSummaryShape(summary: RuntimeEvidenceSummary): boolean {
   return summary.context_policy_version === "quarantine-filtered-planning-context-v2"
     && Array.isArray(summary.candidate_lineages)
@@ -875,55 +759,6 @@ function isSafeNonnegativeInteger(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 }
 
-function updateSummaryFromAppend(
-  scope: RuntimeEvidenceSummary["scope"],
-  previous: RuntimeEvidenceSummary,
-  appendedEntries: RuntimeEvidenceEntry[],
-  warnings: RuntimeEvidenceReadWarning[],
-  metricState: RuntimeEvidenceSummaryMetricObservationState[] | null,
-  primaryMetric: ComparableMetricKey | undefined
-): RuntimeEvidenceSummary | null {
-  if (appendedEntries.length === 0) {
-    return {
-      ...previous,
-      generated_at: new Date().toISOString(),
-      warnings,
-    };
-  }
-  if (!canIncrementSummaryWithEntries(appendedEntries)) return null;
-  if (!canPreservePrimaryMetric(appendedEntries, primaryMetric)) return null;
-
-  const combinedRecent = [...appendedEntries, ...previous.recent_entries]
-    .sort((a, b) => b.occurred_at.localeCompare(a.occurred_at));
-  const recentEntries = dedupeEvidenceEntriesById(combinedRecent).slice(0, 10);
-  const recentFailedAttempts = dedupeEvidenceEntriesById([
-    ...appendedEntries.filter(isFailedEvidenceEntry),
-    ...previous.recent_failed_attempts,
-  ].sort((a, b) => b.occurred_at.localeCompare(a.occurred_at))).slice(0, 5);
-  const latestStrategyCandidates = appendedEntries.filter((entry) =>
-    entry.kind === "strategy" || Boolean(entry.strategy) || Boolean(entry.decision_reason)
-  );
-  const latestStrategy = [...latestStrategyCandidates, previous.latest_strategy].filter((entry): entry is RuntimeEvidenceEntry => Boolean(entry))
-    .sort((a, b) => b.occurred_at.localeCompare(a.occurred_at))[0] ?? null;
-  const bestEvidence = updateBestEvidenceFromAppend(previous.best_evidence, appendedEntries, primaryMetric);
-  if (bestEvidence === undefined) return null;
-  if (!metricState) return null;
-  const metricTrends = summarizeMetricState(updateMetricObservationState(metricState, appendedEntries));
-
-  return {
-    ...previous,
-    generated_at: new Date().toISOString(),
-    scope,
-    total_entries: previous.total_entries + appendedEntries.length,
-    latest_strategy: latestStrategy,
-    best_evidence: bestEvidence,
-    metric_trends: metricTrends.length > 0 ? metricTrends : previous.metric_trends,
-    recent_failed_attempts: recentFailedAttempts,
-    recent_entries: recentEntries,
-    warnings,
-  };
-}
-
 function activeEvidenceRead(read: RuntimeEvidenceReadResult): RuntimeEvidenceReadResult {
   const entries = [...read.entries].sort((a, b) => a.occurred_at.localeCompare(b.occurred_at));
   const corrections = entries.flatMap((entry) => entry.correction ? [entry.correction] : []);
@@ -932,50 +767,6 @@ function activeEvidenceRead(read: RuntimeEvidenceReadResult): RuntimeEvidenceRea
     entries: entries.filter((entry) => isRuntimeEvidenceEntryActive(entry, correctionState)),
     warnings: read.warnings,
   };
-}
-
-function updateBestEvidenceFromAppend(
-  previousBest: RuntimeEvidenceEntry | null,
-  appendedEntries: RuntimeEvidenceEntry[],
-  primaryMetric: ComparableMetricKey | undefined
-): RuntimeEvidenceEntry | null | undefined {
-  if (!primaryMetric) {
-    return chooseBestEvidence(
-      dedupeEvidenceEntriesById([
-        ...appendedEntries,
-        ...(previousBest ? [previousBest] : []),
-      ].sort((a, b) => b.occurred_at.localeCompare(a.occurred_at)))
-    );
-  }
-
-  let best = previousBest;
-  for (const entry of appendedEntries) {
-    const metric = findComparableMetric([entry], primaryMetric);
-    if (!metric) continue;
-    if (!best) {
-      best = entry;
-      continue;
-    }
-    const current = chooseBestEvidence([entry, best].sort((a, b) => b.occurred_at.localeCompare(a.occurred_at)));
-    if (!current) return undefined;
-    best = current;
-  }
-  return best;
-}
-
-function canPreservePrimaryMetric(
-  appendedEntries: RuntimeEvidenceEntry[],
-  primaryMetric: ComparableMetricKey | undefined
-): boolean {
-  if (!primaryMetric) return appendedEntries.every((entry) => entry.metrics.length === 0);
-  return appendedEntries.every((entry) =>
-    entry.metrics.every((metric) =>
-      metric.direction === undefined
-      || metric.direction === "neutral"
-      || (metric.label === primaryMetric.label && metric.direction === primaryMetric.direction)
-    )
-    && (!entry.task?.primary_dimension || entry.task.primary_dimension === primaryMetric.label)
-  );
 }
 
 function buildMetricObservationState(entries: RuntimeEvidenceEntry[]): RuntimeEvidenceSummaryMetricObservationState[] {
@@ -1067,248 +858,6 @@ function updateMetricState(
       { value: observation.value, normalized, observed_at: observation.observed_at, source: observation.source },
     ].slice(-5),
   };
-}
-
-function summarizeMetricState(states: RuntimeEvidenceSummaryMetricObservationState[]): MetricTrendContext[] {
-  return states.map(metricTrendFromState);
-}
-
-function metricTrendFromState(state: RuntimeEvidenceSummaryMetricObservationState): MetricTrendContext {
-  const improvementThreshold = 0.01;
-  const breakthroughThreshold = 0.05;
-  const noiseBand = 0.005;
-  const recentValues = state.recent.map((entry) => entry.normalized);
-  const recentSlope = linearSlope(recentValues);
-  const minRecent = Math.min(...recentValues);
-  const maxRecent = Math.max(...recentValues);
-  const recentRange = maxRecent - minRecent;
-  const latestBestDelta = state.latest_normalized - state.previous_best_normalized;
-  const latestDeltaFromBest = state.latest_normalized - state.best_normalized;
-  const latestDeltaFromFirst = state.latest_normalized - state.first_normalized;
-  const bestDelta = state.best_normalized - state.first_normalized;
-  const postImprovementRange = state.post_improvement_max_normalized - state.post_improvement_min_normalized;
-  const observationsSinceLastMeaningfulImprovement = state.last_meaningful_improvement_index === null
-    ? null
-    : (state.count - 1) - state.last_meaningful_improvement_index;
-  const trend = classifyCompactMetricTrend({
-    count: state.count,
-    latestBestDelta,
-    latestDeltaFromBest,
-    latestDeltaFromFirst,
-    bestDelta,
-    recentSlope,
-    recentRange,
-    postImprovementRange,
-    observationsSinceLastMeaningfulImprovement,
-    improvementThreshold,
-    breakthroughThreshold,
-    noiseBand,
-  });
-  const meanConfidence = state.confidence_sum / state.count;
-  const sampleConfidence = Math.min(1, state.count / 5);
-  const trendConfidence = trend === "noisy"
-    ? Math.max(0.35, Math.min(0.75, noiseBand / Math.max(recentRange, Number.EPSILON)))
-    : 1;
-  const confidence = clamp01(meanConfidence * sampleConfidence * trendConfidence);
-  return {
-    metric_key: state.metric_key,
-    direction: state.direction,
-    trend,
-    latest_value: state.latest_value,
-    latest_observed_at: state.latest_observed_at,
-    best_value: state.best_value,
-    best_observed_at: state.best_observed_at,
-    observation_count: state.count,
-    recent_slope_per_observation: denormalizeMetricDelta(recentSlope, state.direction),
-    best_delta: denormalizeMetricDelta(bestDelta, state.direction),
-    last_meaningful_improvement_delta: state.last_meaningful_improvement_delta === null
-      ? null
-      : denormalizeMetricDelta(state.last_meaningful_improvement_delta, state.direction),
-    last_breakthrough_delta: state.last_breakthrough_delta === null
-      ? null
-      : denormalizeMetricDelta(state.last_breakthrough_delta, state.direction),
-    time_since_last_meaningful_improvement_ms: state.last_meaningful_improvement_observed_at
-      ? Math.max(0, Date.now() - Date.parse(state.last_meaningful_improvement_observed_at))
-      : null,
-    improvement_threshold: denormalizeMetricDelta(improvementThreshold, state.direction),
-    breakthrough_threshold: denormalizeMetricDelta(breakthroughThreshold, state.direction),
-    noise_band: denormalizeMetricDelta(noiseBand, state.direction),
-    confidence,
-    source_refs: state.recent.map((entry) => entry.source),
-    summary: `${state.metric_key} trend is ${trend} from ${state.count} observation(s); latest=${state.latest_value}, best=${state.best_value}`,
-  };
-}
-
-function classifyCompactMetricTrend(input: {
-  count: number;
-  latestBestDelta: number;
-  latestDeltaFromBest: number;
-  latestDeltaFromFirst: number;
-  bestDelta: number;
-  recentSlope: number;
-  recentRange: number;
-  postImprovementRange: number;
-  observationsSinceLastMeaningfulImprovement: number | null;
-  improvementThreshold: number;
-  breakthroughThreshold: number;
-  noiseBand: number;
-}): MetricTrendContext["trend"] {
-  if (input.count < 2) return "noisy";
-  if (input.latestBestDelta >= input.breakthroughThreshold) return "breakthrough";
-  if (input.latestBestDelta >= input.improvementThreshold) return "improving";
-  if (input.latestDeltaFromBest <= -input.improvementThreshold) return "regressing";
-  if (
-    input.observationsSinceLastMeaningfulImprovement !== null
-    && input.observationsSinceLastMeaningfulImprovement >= 2
-    && input.postImprovementRange <= input.noiseBand
-  ) {
-    return "stalled";
-  }
-  if (input.latestDeltaFromFirst <= -input.improvementThreshold || input.recentSlope <= -input.improvementThreshold) {
-    return "regressing";
-  }
-  if (input.recentSlope >= input.improvementThreshold) return "improving";
-  if (input.recentRange === 0 || input.recentRange <= Number.EPSILON) return "stalled";
-  if (input.recentRange <= input.noiseBand || Math.abs(input.recentSlope) < input.noiseBand) {
-    return input.bestDelta >= input.improvementThreshold ? "stalled" : "noisy";
-  }
-  if (input.bestDelta < input.improvementThreshold) return "stalled";
-  return "noisy";
-}
-
-function linearSlope(values: number[]): number {
-  if (values.length < 2) return 0;
-  const n = values.length;
-  const meanX = (n - 1) / 2;
-  const meanY = values.reduce((sum, value) => sum + value, 0) / n;
-  let numerator = 0;
-  let denominator = 0;
-  for (let index = 0; index < n; index += 1) {
-    const dx = index - meanX;
-    numerator += dx * (values[index]! - meanY);
-    denominator += dx * dx;
-  }
-  return denominator === 0 ? 0 : numerator / denominator;
-}
-
-function denormalizeMetricDelta(delta: number, direction: "maximize" | "minimize"): number {
-  return direction === "maximize" ? delta : -delta;
-}
-
-function canIncrementSummaryWithEntries(entries: RuntimeEvidenceEntry[]): boolean {
-  return entries.every((entry) =>
-    entry.kind !== "correction"
-    && entry.kind !== "failure"
-    && entry.outcome !== "failed"
-    && entry.outcome !== "regressed"
-    && entry.result?.status !== "failed"
-    && entry.verification?.verdict !== "fail"
-    && !entry.correction
-    && !entry.correction_state
-    && !entry.evaluators?.length
-    && !entry.research?.length
-    && !entry.dream_checkpoints?.length
-    && !entry.divergent_exploration?.length
-    && !entry.candidates?.length
-    && !entry.artifacts.length
-    && !entry.quarantine_state
-    && entry.verification_status !== "suspicious"
-    && entry.verification_status !== "contradicted"
-    && !isSuspiciousProvenance(entry.provenance)
-  );
-}
-
-function dedupeEvidenceEntriesById(entries: RuntimeEvidenceEntry[]): RuntimeEvidenceEntry[] {
-  const seen = new Set<string>();
-  const unique: RuntimeEvidenceEntry[] = [];
-  for (const entry of entries) {
-    if (seen.has(entry.id)) continue;
-    seen.add(entry.id);
-    unique.push(entry);
-  }
-  return unique;
-}
-
-async function writeSummaryIndex(
-  canonicalPath: string,
-  summary: RuntimeEvidenceSummary,
-  checkpointRead?: RuntimeEvidenceReadResult | {
-    warnings: RuntimeEvidenceReadWarning[];
-    primaryMetric?: ComparableMetricKey;
-    metricObservationState?: RuntimeEvidenceSummaryMetricObservationState[];
-  }
-): Promise<void> {
-  const stat = await fsp.stat(canonicalPath);
-  const warnings = checkpointRead ? checkpointRead.warnings : [];
-  const index: RuntimeEvidenceSummaryIndex = {
-    schema_version: "runtime-evidence-summary-index-v1",
-    generated_at: new Date().toISOString(),
-    canonical_log_path: canonicalPath,
-    canonical_log_size: stat.size,
-    canonical_log_mtime_ms: stat.mtimeMs,
-    summary,
-    append_state: {
-      schema_version: "runtime-evidence-summary-append-state-v1",
-      warnings,
-      ...(checkpointRead && "primaryMetric" in checkpointRead && checkpointRead.primaryMetric
-        ? { primary_metric: checkpointRead.primaryMetric }
-        : {}),
-      metric_observations: checkpointRead && "metricObservationState" in checkpointRead
-        ? checkpointRead.metricObservationState
-        : buildMetricObservationState(summary.recent_entries),
-    },
-    ...(checkpointRead && "entries" in checkpointRead
-      ? {
-          checkpoint: {
-            schema_version: "runtime-evidence-summary-checkpoint-v1",
-            entries: checkpointRead.entries,
-            warnings,
-          },
-        }
-      : {}),
-  };
-  await fsp.mkdir(path.dirname(canonicalPath), { recursive: true });
-  await fsp.writeFile(summaryIndexPath(canonicalPath), `${JSON.stringify(index)}\n`, "utf8");
-}
-
-async function readEvidenceFile(filePath: string): Promise<RuntimeEvidenceReadResult> {
-  let text: string;
-  try {
-    text = await fsp.readFile(filePath, "utf8");
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-      return { entries: [], warnings: [] };
-    }
-    throw err;
-  }
-
-  const entries: RuntimeEvidenceEntry[] = [];
-  const warnings: RuntimeEvidenceReadWarning[] = [];
-  const lines = text.split(/\r?\n/);
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index];
-    if (!line?.trim()) continue;
-    try {
-      const parsed = RuntimeEvidenceEntrySchema.safeParse(JSON.parse(line));
-      if (parsed.success) {
-        entries.push(parsed.data);
-      } else {
-        warnings.push({
-          file: filePath,
-          line: index + 1,
-          message: parsed.error.issues.map((issue) => issue.message).join("; "),
-        });
-      }
-    } catch (err) {
-      warnings.push({
-        file: filePath,
-        line: index + 1,
-        message: err instanceof Error ? err.message : String(err),
-      });
-    }
-  }
-
-  return { entries, warnings };
 }
 
 function summarizeEvidence(

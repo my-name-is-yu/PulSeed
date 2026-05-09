@@ -1,8 +1,6 @@
-import * as fsp from "node:fs/promises";
-import * as path from "node:path";
 import { randomUUID } from "node:crypto";
-import { writeJsonFileAtomic } from "../../base/utils/json-io.js";
 import type { Logger } from "../../runtime/logger.js";
+import { StrategyDreamStateStore } from "../../runtime/store/strategy-dream-state-store.js";
 import type { LoopIterationResult, LoopResult } from "../../orchestrator/loop/loop-result-types.js";
 import type { DriveScore } from "../../base/types/drive.js";
 import {
@@ -41,17 +39,17 @@ type QueueTask<T> = () => Promise<T>;
 /**
  * Best-effort append-only collector for Dream Mode Phase 1.
  *
- * It intentionally avoids overwriting runtime state. When it has to prune a log,
- * it keeps the newest lines only and preserves JSONL semantics.
+ * Dream runtime state is owned by the control database. Rotation knobs are kept
+ * in the public config contract for legacy callers, but append/prune file
+ * behavior now belongs only to explicit migration/import paths.
  */
 export class DreamLogCollector {
-  private readonly baseDir: string;
   private readonly logger?: Logger;
   private readonly config: Required<DreamCollectorConfig>;
   private readonly queues = new Map<string, Promise<void>>();
+  private readonly stateStore: StrategyDreamStateStore;
 
   constructor(baseDir: string, logger?: Logger, config: DreamCollectorConfig = {}) {
-    this.baseDir = baseDir;
     this.logger = logger;
     this.config = {
       enabled: config.enabled ?? true,
@@ -64,24 +62,25 @@ export class DreamLogCollector {
       watermarkBehavior: config.watermarkBehavior ?? "readwrite",
       importanceThreshold: config.importanceThreshold ?? DEFAULT_IMPORTANCE_THRESHOLD,
     };
+    this.stateStore = new StrategyDreamStateStore(baseDir);
   }
 
   async appendIterationLog(entry: IterationLog): Promise<void> {
     if (!this.config.enabled || !this.config.iterationLoggingEnabled) return;
     const parsed = IterationLogSchema.parse(entry);
-    await this.appendJsonl(this.goalIterationPath(parsed.goalId), parsed);
+    await this.stateStore.appendIterationLog(parsed);
   }
 
   async appendSessionLog(entry: SessionLog): Promise<void> {
     if (!this.config.enabled || !this.config.sessionSummariesEnabled) return;
     const parsed = SessionLogSchema.parse(entry);
-    await this.appendJsonl(this.sessionLogPath(), parsed);
+    await this.stateStore.appendSessionLog(parsed);
   }
 
   async appendEventLog(entry: EventLog): Promise<void> {
     if (!this.config.enabled || !this.config.eventPersistenceEnabled) return;
     const parsed = EventLogSchema.parse(entry);
-    await this.appendJsonl(this.eventLogPath(parsed.goalId), parsed);
+    await this.stateStore.appendEventLog(parsed);
   }
 
   async appendImportanceEntry(entry: ImportanceEntry, options?: { force?: boolean }): Promise<boolean> {
@@ -89,16 +88,12 @@ export class DreamLogCollector {
     if (!options?.force && parsed.importance < this.config.importanceThreshold) {
       return false;
     }
-    await this.appendJsonl(this.importanceBufferPath(), parsed);
+    await this.stateStore.appendImportanceEntry(parsed);
     return true;
   }
 
   async loadWatermarks(): Promise<WatermarkState> {
-    const raw = await this.readWatermarksFile();
-    if (raw === null) {
-      return WatermarkStateSchema.parse({});
-    }
-    return WatermarkStateSchema.parse(raw);
+    return this.stateStore.loadWatermarks();
   }
 
   async saveWatermarks(state: WatermarkState): Promise<void> {
@@ -107,8 +102,7 @@ export class DreamLogCollector {
     }
     const parsed = WatermarkStateSchema.parse(state);
     await this.withQueue("watermarks", async () => {
-      await this.ensureDreamDir();
-      await writeJsonFileAtomic(this.watermarksPath(), parsed);
+      await this.stateStore.saveWatermarks(parsed);
     });
   }
 
@@ -219,111 +213,12 @@ export class DreamLogCollector {
     });
   }
 
-  private goalIterationPath(goalId: string): string {
-    return path.join(this.baseDir, "goals", goalId, "iteration-logs.jsonl");
-  }
-
-  private sessionLogPath(): string {
-    return path.join(this.baseDir, "dream", "session-logs.jsonl");
-  }
-
-  private importanceBufferPath(): string {
-    return path.join(this.baseDir, "dream", "importance-buffer.jsonl");
-  }
-
-  private eventLogPath(goalId: string): string {
-    return path.join(this.baseDir, "dream", "events", `${goalId}.jsonl`);
-  }
-
-  private watermarksPath(): string {
-    return path.join(this.baseDir, "dream", "watermarks.json");
-  }
-
   private toDriveScores(driveScores: DriveScore[]): IterationLog["driveScores"] {
     if (driveScores.length === 0) return undefined;
     return driveScores.map((score) => ({
       dimensionName: score.dimension_name,
       score: score.final_score,
     }));
-  }
-
-  private async readWatermarksFile(): Promise<unknown | null> {
-    try {
-      const raw = await fsp.readFile(this.watermarksPath(), "utf8");
-      return JSON.parse(raw);
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
-      this.logger?.warn(`[DreamLogCollector] Failed to read watermarks: ${err instanceof Error ? err.message : String(err)}`);
-      return null;
-    }
-  }
-
-  private async appendJsonl(filePath: string, entry: unknown): Promise<void> {
-    const line = JSON.stringify(entry);
-    await this.withQueue(filePath, async () => {
-      const targetPath = this.resolveJsonlPath(filePath);
-      await this.ensureDirFor(targetPath);
-      await this.rotateIfNeeded(targetPath, line);
-      await fsp.appendFile(targetPath, `${line}\n`, "utf8");
-    });
-  }
-
-  private resolveJsonlPath(filePath: string): string {
-    if (this.config.rotationMode !== "date") {
-      return filePath;
-    }
-    const ext = path.extname(filePath);
-    const stem = path.basename(filePath, ext);
-    const today = new Date().toISOString().slice(0, 10);
-    return path.join(path.dirname(filePath), `${stem}.${today}${ext || ".jsonl"}`);
-  }
-
-  private async rotateIfNeeded(filePath: string, nextLine: string): Promise<void> {
-    const maxSizeBytes = this.config.maxFileSizeBytes;
-    const currentSize = await fsp.stat(filePath).then((stat) => stat.size).catch(() => 0);
-    const nextSize = Buffer.byteLength(nextLine + "\n", "utf8");
-    if (currentSize + nextSize <= maxSizeBytes) {
-      return;
-    }
-
-    const existing = await fsp.readFile(filePath, "utf8").catch(() => "");
-    const lines = existing.split(/\r?\n/).filter((line) => line.trim().length > 0);
-    const targetBytes = Math.max(
-      nextSize,
-      Math.floor(maxSizeBytes * this.config.pruneTargetRatio)
-    );
-
-    const kept: string[] = [];
-    let total = nextSize;
-    for (let i = lines.length - 1; i >= 0; i--) {
-      const line = lines[i]!;
-      const lineBytes = Buffer.byteLength(`${line}\n`, "utf8");
-      if (kept.length > 0 && total + lineBytes > targetBytes) {
-        break;
-      }
-      kept.unshift(line);
-      total += lineBytes;
-    }
-
-    const rotated = kept.length > 0 ? `${kept.join("\n")}\n` : "";
-    await this.atomicWriteText(filePath, rotated);
-  }
-
-  private async atomicWriteText(filePath: string, content: string): Promise<void> {
-    const dir = path.dirname(filePath);
-    await fsp.mkdir(dir, { recursive: true });
-    const tmp = `${filePath}.${randomUUID()}.tmp`;
-    await fsp.writeFile(tmp, content, "utf8");
-    await fsp.rename(tmp, filePath);
-  }
-
-  private async ensureDirFor(filePath: string): Promise<void> {
-    await fsp.mkdir(path.dirname(filePath), { recursive: true });
-  }
-
-  private async ensureDreamDir(): Promise<void> {
-    await fsp.mkdir(path.join(this.baseDir, "dream"), { recursive: true });
-    await fsp.mkdir(path.join(this.baseDir, "dream", "events"), { recursive: true });
   }
 
   private async withQueue<T>(key: string, task: QueueTask<T>): Promise<T> {

@@ -1,7 +1,5 @@
 import { randomUUID } from "node:crypto";
-import fs from "node:fs/promises";
-import path from "node:path";
-import { atomicWrite } from "../../base/state/state-persistence.js";
+import { StrategyDreamStateStore } from "../../runtime/store/strategy-dream-state-store.js";
 import { DEFAULT_DREAM_CONFIG } from "./dream-config.js";
 import {
   ImportanceEntrySchema,
@@ -13,13 +11,15 @@ import type { DreamLogCollector } from "./dream-log-collector.js";
 
 export class ImportanceBuffer {
   private readonly config: DreamLogCollectionConfig;
+  private readonly stateStore: StrategyDreamStateStore;
 
   constructor(
-    private readonly baseDir: string,
+    baseDir: string,
     config: Partial<DreamLogCollectionConfig> = {},
     private readonly collector?: DreamLogCollector
   ) {
     this.config = { ...DEFAULT_DREAM_CONFIG.logCollection, ...config };
+    this.stateStore = new StrategyDreamStateStore(baseDir);
   }
 
   async append(entry: Omit<ImportanceEntry, "id" | "processed"> & { id?: string; processed?: boolean }): Promise<ImportanceEntry | null> {
@@ -30,9 +30,7 @@ export class ImportanceBuffer {
       id: entry.id ?? randomUUID(),
       processed: entry.processed ?? false,
     });
-    const filePath = this.bufferPath();
-    await fs.mkdir(path.dirname(filePath), { recursive: true });
-    await fs.appendFile(filePath, JSON.stringify(parsed) + "\n", "utf-8");
+    await this.stateStore.appendImportanceEntry(parsed);
     return parsed;
   }
 
@@ -56,15 +54,7 @@ export class ImportanceBuffer {
   }
 
   async readAll(): Promise<ImportanceEntry[]> {
-    try {
-      const raw = await fs.readFile(this.bufferPath(), "utf-8");
-      return raw
-        .split("\n")
-        .filter((line) => line.trim().length > 0)
-        .map((line) => ImportanceEntrySchema.parse(JSON.parse(line)));
-    } catch {
-      return [];
-    }
+    return this.stateStore.listImportanceEntries();
   }
 
   async markProcessed(ids: string[]): Promise<void> {
@@ -72,18 +62,12 @@ export class ImportanceBuffer {
     const all = await this.readAll();
     const idSet = new Set(ids);
     const updated = all.map((entry) => (idSet.has(entry.id) ? { ...entry, processed: true } : entry));
-    const filePath = this.bufferPath();
-    await fs.mkdir(path.dirname(filePath), { recursive: true });
-    await atomicWrite(filePath, updated.map((entry) => JSON.stringify(entry)).join("\n") + (updated.length > 0 ? "\n" : ""));
+    await this.stateStore.markImportanceEntriesProcessed(ids);
     if (this.collector && updated.length > 0) {
       await this.collector.updateImportanceWatermark(
         updated.filter((entry) => entry.processed).length,
         updated[updated.length - 1]?.timestamp
       );
     }
-  }
-
-  private bufferPath(): string {
-    return path.join(this.baseDir, "dream", "importance-buffer.jsonl");
   }
 }

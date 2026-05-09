@@ -218,7 +218,7 @@ console.log("benchmark training completed");
       }, context);
       let writtenWaitMetadata: Record<string, unknown> | null = null;
       const startedProcess = (started.data as {
-        process?: { session_id?: string; metadataRelativePath?: string };
+        process?: { session_id?: string; metadataRef?: string };
       }).process;
       const waitOutcome = await handleWaitStrategyExpiry(
         "goal-1",
@@ -265,7 +265,7 @@ console.log("benchmark training completed");
           resume_plan: { action: "complete_wait" },
           process_refs: [{
             session_id: startedProcess?.session_id,
-            metadata_relative_path: startedProcess?.metadataRelativePath,
+            metadata_ref: startedProcess?.metadataRef,
           }],
         }),
         async () => ({ capabilities: [], last_checked: "2026-04-25T00:00:00.000Z" }),
@@ -295,7 +295,7 @@ console.log("benchmark training completed");
         {
           name: "dummy-tool-training-loop",
           run: async () => ({
-            experimentStarted: Boolean((started.data as { process?: { metadataPath?: string } }).process?.metadataPath),
+            experimentStarted: Boolean((started.data as { process?: { metadataRef?: string } }).process?.metadataRef),
             logArtifactWritten: ((restartedRead.data as { log?: { text?: string } }).log?.text ?? "").includes("benchmark training completed"),
             metricsParsed: report.success,
             reportArtifactWritten: await fileContains(

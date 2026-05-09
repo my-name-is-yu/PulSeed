@@ -747,6 +747,7 @@ describe("RuntimeControlService", () => {
       });
       const evidenceLedger = { append: vi.fn().mockResolvedValue([]) };
       const service = new RuntimeControlService({
+        runtimeRoot: path.join(tmpDir, "runtime"),
         operationStore,
         executor,
         evidenceLedger,
@@ -812,6 +813,7 @@ describe("RuntimeControlService", () => {
       notificationDispatcher.setRealtimeSink((report) => eventServer.broadcast("notification_report", report));
       let nowTick = 0;
       const service = new RuntimeControlService({
+        runtimeRoot: path.join(tmpDir, "runtime"),
         operationStore,
         executor: vi.fn().mockResolvedValue({
           ok: true,
@@ -914,6 +916,7 @@ describe("RuntimeControlService", () => {
     try {
       const operationStore = new RuntimeOperationStore(path.join(tmpDir, "runtime"));
       const service = new RuntimeControlService({
+        runtimeRoot: path.join(tmpDir, "runtime"),
         operationStore,
         sessionRegistry: {
           snapshot: vi.fn().mockResolvedValue(snapshotWithRuns([makeRun()])),
@@ -973,6 +976,7 @@ describe("RuntimeControlService", () => {
       });
       const approvalFn = vi.fn().mockResolvedValue(true);
       const service = new RuntimeControlService({
+        runtimeRoot: path.join(tmpDir, "runtime"),
         operationStore,
         executor,
         sessionRegistry: {
@@ -1031,6 +1035,7 @@ describe("RuntimeControlService", () => {
       const operationStore = new RuntimeOperationStore(path.join(tmpDir, "runtime"));
       const approvalFn = vi.fn().mockResolvedValue(true);
       const service = new RuntimeControlService({
+        runtimeRoot: path.join(tmpDir, "runtime"),
         operationStore,
         sessionRegistry: {
           snapshot: vi.fn().mockResolvedValue(snapshotWithRuns([makeRun()])),
@@ -1074,6 +1079,7 @@ describe("RuntimeControlService", () => {
     try {
       const operationStore = new RuntimeOperationStore(path.join(tmpDir, "runtime"));
       const service = new RuntimeControlService({
+        runtimeRoot: path.join(tmpDir, "runtime"),
         operationStore,
         sessionRegistry: {
           snapshot: vi.fn().mockResolvedValue(snapshotWithRuns([makeRun()])),
@@ -1212,6 +1218,7 @@ describe("RuntimeControlService", () => {
       }
       const operationStore = new OperationStoreWithExtraItem(path.join(tmpDir, "runtime"));
       const service = new RuntimeControlService({
+        runtimeRoot: path.join(tmpDir, "runtime"),
         operationStore,
         now: () => new Date("2026-05-08T00:00:00.000Z"),
       });
@@ -1235,6 +1242,7 @@ describe("RuntimeControlService", () => {
       const executor = vi.fn();
       const approvalFn = vi.fn().mockResolvedValue(false);
       const service = new RuntimeControlService({
+        runtimeRoot: path.join(tmpDir, "runtime"),
         operationStore,
         executor,
         sessionRegistry: {
@@ -1282,6 +1290,7 @@ describe("RuntimeControlService", () => {
       const operationStore = new RuntimeOperationStore(path.join(tmpDir, "runtime"));
       let nowTick = 0;
       const service = new RuntimeControlService({
+        runtimeRoot: path.join(tmpDir, "runtime"),
         operationStore,
         sessionRegistry: {
           snapshot: vi.fn().mockResolvedValue(snapshotWithRuns([makeRun()])),
@@ -1329,6 +1338,7 @@ describe("RuntimeControlService", () => {
     try {
       const operationStore = new RuntimeOperationStore(path.join(tmpDir, "runtime"));
       const service = new RuntimeControlService({
+        runtimeRoot: path.join(tmpDir, "runtime"),
         operationStore,
         executor: vi.fn(),
         sessionRegistry: {
@@ -1677,6 +1687,7 @@ describe("RuntimeControlService", () => {
       const operationStore = new RuntimeOperationStore(path.join(tmpDir, "runtime"));
       const executor = vi.fn();
       const service = new RuntimeControlService({
+        runtimeRoot: path.join(tmpDir, "runtime"),
         operationStore,
         executor,
         sessionRegistry: {
@@ -1710,6 +1721,7 @@ describe("RuntimeControlService", () => {
       const operationStore = new RuntimeOperationStore(path.join(tmpDir, "runtime"));
       const executor = vi.fn();
       const service = new RuntimeControlService({
+        runtimeRoot: path.join(tmpDir, "runtime"),
         operationStore,
         executor,
         sessionRegistry: {
@@ -1741,6 +1753,7 @@ describe("RuntimeControlService", () => {
     const tmpDir = makeTempDir("pulseed-runtime-control-service-run-ambiguous-");
     try {
       const service = new RuntimeControlService({
+        runtimeRoot: path.join(tmpDir, "runtime"),
         operationStore: new RuntimeOperationStore(path.join(tmpDir, "runtime")),
         sessionRegistry: {
           snapshot: vi.fn().mockResolvedValue(snapshotWithRuns([
@@ -1770,6 +1783,7 @@ describe("RuntimeControlService", () => {
     try {
       const executor = vi.fn();
       const service = new RuntimeControlService({
+        runtimeRoot: path.join(tmpDir, "runtime"),
         operationStore: new RuntimeOperationStore(path.join(tmpDir, "runtime")),
         executor,
         sessionRegistry: {
@@ -1809,6 +1823,7 @@ describe("RuntimeControlService", () => {
     try {
       const executor = vi.fn();
       const service = new RuntimeControlService({
+        runtimeRoot: path.join(tmpDir, "runtime"),
         operationStore: new RuntimeOperationStore(path.join(tmpDir, "runtime")),
         executor,
         sessionRegistry: {
@@ -1848,6 +1863,7 @@ describe("RuntimeControlService", () => {
     const tmpDir = makeTempDir("pulseed-runtime-control-service-run-stale-");
     try {
       const service = new RuntimeControlService({
+        runtimeRoot: path.join(tmpDir, "runtime"),
         operationStore: new RuntimeOperationStore(path.join(tmpDir, "runtime")),
         sessionRegistry: {
           snapshot: vi.fn().mockResolvedValue(snapshotWithRuns([
@@ -1878,6 +1894,7 @@ describe("RuntimeControlService", () => {
       const operationStore = new RuntimeOperationStore(path.join(tmpDir, "runtime"));
       const executor = vi.fn();
       const service = new RuntimeControlService({
+        runtimeRoot: path.join(tmpDir, "runtime"),
         operationStore,
         executor,
         sessionRegistry: {
@@ -1917,6 +1934,7 @@ describe("RuntimeControlService", () => {
       const executor = vi.fn();
       let nowTick = 0;
       const service = new RuntimeControlService({
+        runtimeRoot: path.join(tmpDir, "runtime"),
         operationStore,
         executor,
         sessionRegistry: {
@@ -1959,6 +1977,7 @@ describe("RuntimeControlService", () => {
     try {
       const executor = vi.fn();
       const service = new RuntimeControlService({
+        runtimeRoot: path.join(tmpDir, "runtime"),
         operationStore: new RuntimeOperationStore(path.join(tmpDir, "runtime")),
         executor,
         sessionRegistry: {
@@ -1998,6 +2017,7 @@ describe("RuntimeControlService", () => {
         warnings: [],
       };
       const service = new RuntimeControlService({
+        runtimeRoot: path.join(tmpDir, "runtime"),
         operationStore: new RuntimeOperationStore(path.join(tmpDir, "runtime")),
         sessionRegistry: { snapshot: vi.fn().mockResolvedValue(snapshot) },
       });
@@ -2048,6 +2068,7 @@ describe("RuntimeControlService", () => {
       const executor = vi.fn();
       const operatorHandoffStore = { create: vi.fn().mockResolvedValue({ handoff_id: "handoff-1" }) };
       const service = new RuntimeControlService({
+        runtimeRoot: path.join(tmpDir, "runtime"),
         operationStore,
         executor,
         operatorHandoffStore,

@@ -1,4 +1,3 @@
-import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import type { StateManager } from "../../base/state/state-manager.js";
 import { ChatSessionCatalog } from "../../interface/chat/chat-session-store.js";
@@ -7,6 +6,7 @@ import {
 } from "../../orchestrator/execution/agent-loop/agent-loop-session-db-store.js";
 import type { ProcessSessionManager, ProcessSessionSnapshot } from "../../tools/system/ProcessSessionTool/ProcessSessionTool.js";
 import { BackgroundRunLedger } from "../store/background-run-store.js";
+import { ProcessSessionStateStore } from "../store/process-session-state-store.js";
 import { SupervisorStateStore } from "../store/supervisor-state-store.js";
 import { resolveConfiguredDaemonRuntimeRoot } from "../daemon/runtime-root.js";
 import {
@@ -39,7 +39,6 @@ import {
   isObject,
   mergeLedgerRunWithProjection,
   messageFromError,
-  normalizeProcessSnapshot,
   numberToIso,
   processArtifacts,
   processRunId,
@@ -68,8 +67,6 @@ function chatLifecycleToRuntimeStatus(status: string | null | undefined): Runtim
   return "idle";
 }
 
-const PROCESS_SESSION_DIR = path.join("runtime", "process-sessions");
-
 function createDefaultBackgroundRunLedger(stateBaseDir: string): Pick<BackgroundRunLedger, "list"> {
   const configuredRuntimeRoot = resolveConfiguredDaemonRuntimeRoot(stateBaseDir);
   return new BackgroundRunLedger(configuredRuntimeRoot, { controlBaseDir: stateBaseDir });
@@ -81,6 +78,7 @@ export class RuntimeSessionRegistry {
   private readonly chatCatalog: ChatSessionCatalog;
   private readonly agentLoopCatalog: AgentLoopSessionStateCatalog;
   private readonly processSessionManager?: Pick<ProcessSessionManager, "list">;
+  private readonly processSessionStore: ProcessSessionStateStore;
   private readonly backgroundRunLedger: Pick<BackgroundRunLedger, "list">;
   private readonly now: () => Date;
   private readonly isPidAlive: (pid: number) => boolean | "unknown";
@@ -91,6 +89,7 @@ export class RuntimeSessionRegistry {
     this.chatCatalog = new ChatSessionCatalog(this.stateManager);
     this.agentLoopCatalog = new AgentLoopSessionStateCatalog(this.stateBaseDir);
     this.processSessionManager = deps.processSessionManager;
+    this.processSessionStore = new ProcessSessionStateStore(this.stateBaseDir);
     this.backgroundRunLedger = deps.backgroundRunLedger ?? createDefaultBackgroundRunLedger(this.stateBaseDir);
     this.now = deps.now ?? (() => new Date());
     this.isPidAlive = deps.isPidAlive ?? defaultIsPidAlive;
@@ -434,19 +433,19 @@ export class RuntimeSessionRegistry {
       liveSnapshots.set(snapshot.session_id, snapshot);
     }
 
-    const sidecars = await this.readProcessSidecars(warnings);
-    const ids = new Set([...liveSnapshots.keys(), ...sidecars.map((snapshot) => snapshot.session_id)]);
+    const persistedSnapshots = await this.readPersistedProcessSnapshots(warnings);
+    const ids = new Set([...liveSnapshots.keys(), ...persistedSnapshots.map((snapshot) => snapshot.session_id)]);
     for (const id of ids) {
       const live = liveSnapshots.get(id);
-      const sidecar = sidecars.find((snapshot) => snapshot.session_id === id);
-      const snapshot = chooseProcessSnapshot(live, sidecar);
+      const persisted = persistedSnapshots.find((snapshot) => snapshot.session_id === id);
+      const snapshot = chooseProcessSnapshot(live, persisted);
       if (!snapshot) continue;
       const status = this.processRunStatus(snapshot, Boolean(live), warnings);
       const processSource = sourceRef(
         "process_session",
         snapshot.session_id,
-        snapshot.metadataPath ?? null,
-        snapshot.metadataRelativePath ?? path.join(PROCESS_SESSION_DIR, `${snapshot.session_id}.json`),
+        null,
+        snapshot.metadataRef ?? path.join("state", "pulseed-control.sqlite"),
         snapshot.exitedAt ?? snapshot.startedAt,
       );
       const artifacts = processArtifacts(snapshot);
@@ -513,46 +512,17 @@ export class RuntimeSessionRegistry {
     backgroundRuns.splice(0, backgroundRuns.length, ...byId.values());
   }
 
-  private async readProcessSidecars(warnings: RuntimeSessionRegistryWarning[]): Promise<ProcessSessionSnapshot[]> {
-    const dir = path.join(this.stateBaseDir, PROCESS_SESSION_DIR);
-    let entries;
+  private async readPersistedProcessSnapshots(warnings: RuntimeSessionRegistryWarning[]): Promise<ProcessSessionSnapshot[]> {
     try {
-      entries = await fsp.readdir(dir, { withFileTypes: true });
+      return await this.processSessionStore.listSnapshots();
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
       warnings.push({
         code: "source_unavailable",
-        source: sourceRef("process_session", null, dir, PROCESS_SESSION_DIR, null),
-        message: `Failed to list process session sidecars: ${messageFromError(error)}`,
+        source: sourceRef("process_session", null, null, path.join("state", "pulseed-control.sqlite"), null),
+        message: `Failed to list process session snapshots: ${messageFromError(error)}`,
       });
       return [];
     }
-
-    const snapshots: ProcessSessionSnapshot[] = [];
-    for (const entry of entries) {
-      if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
-      const relativePath = path.join(PROCESS_SESSION_DIR, entry.name);
-      try {
-        const raw = await this.stateManager.readRaw(relativePath);
-        const snapshot = normalizeProcessSnapshot(raw);
-        if (snapshot) {
-          snapshots.push(snapshot);
-        } else {
-          warnings.push({
-            code: "source_parse_failed",
-            source: sourceRef("process_session", entry.name.slice(0, -5), null, relativePath, null),
-            message: `Process session sidecar could not be normalized: ${relativePath}`,
-          });
-        }
-      } catch (error) {
-        warnings.push({
-          code: "source_parse_failed",
-          source: sourceRef("process_session", entry.name.slice(0, -5), null, relativePath, null),
-          message: `Failed to read process session sidecar ${relativePath}: ${messageFromError(error)}`,
-        });
-      }
-    }
-    return snapshots;
   }
 
   private processRunStatus(
@@ -567,7 +537,7 @@ export class RuntimeSessionRegistry {
       if (snapshot.exitedAt) return "unknown";
       warnings.push({
         code: "stale_source",
-        source: sourceRef("process_session", snapshot.session_id, snapshot.metadataPath ?? null, snapshot.metadataRelativePath ?? null, snapshot.startedAt),
+        source: sourceRef("process_session", snapshot.session_id, null, snapshot.metadataRef ?? path.join("state", "pulseed-control.sqlite"), snapshot.startedAt),
         message: `Process session ${snapshot.session_id} is not running but has no terminal exit metadata.`,
       });
       return "lost";
@@ -581,7 +551,7 @@ export class RuntimeSessionRegistry {
     if (alive === false) {
       warnings.push({
         code: "dead_process_sidecar",
-        source: sourceRef("process_session", snapshot.session_id, snapshot.metadataPath ?? null, snapshot.metadataRelativePath ?? null, snapshot.startedAt),
+        source: sourceRef("process_session", snapshot.session_id, null, snapshot.metadataRef ?? path.join("state", "pulseed-control.sqlite"), snapshot.startedAt),
         message: `Process session ${snapshot.session_id} is marked running but PID ${snapshot.pid} is not alive.`,
       });
       return "lost";

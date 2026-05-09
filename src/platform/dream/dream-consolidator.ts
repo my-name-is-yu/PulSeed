@@ -3,6 +3,8 @@ import * as path from "node:path";
 import { createHash } from "node:crypto";
 import { readJsonFileOrNull, writeJsonFileAtomic } from "../../base/utils/json-io.js";
 import type { Logger } from "../../runtime/logger.js";
+import { RuntimeEvidenceLedger } from "../../runtime/store/evidence-ledger.js";
+import { StrategyDreamStateStore } from "../../runtime/store/strategy-dream-state-store.js";
 import { AgentMemoryEntrySchema, AgentMemoryStoreSchema, type AgentMemoryEntry } from "../knowledge/types/agent-memory.js";
 import { upsertDreamActivationArtifacts, loadDreamActivationArtifacts } from "./dream-activation-artifacts.js";
 import { consolidateDreamEventWorkflows, loadDreamWorkflowRecords } from "./dream-event-workflows.js";
@@ -15,7 +17,6 @@ import {
   countGoalDirs,
   countGoalPairs,
   countJsonFiles,
-  countJsonlLines,
   countLearnedPatterns,
   countTrustDomains,
   countVerificationArtifacts,
@@ -27,7 +28,6 @@ import {
   isLessonEvidenceEntry,
   isRecord,
   listFilesRecursive,
-  sourceLineRef,
 } from "./dream-consolidator/evidence-helpers.js";
 import {
   ConsolidationCategoryResultSchema,
@@ -276,13 +276,13 @@ export class DreamConsolidator {
       decisionHistory: () => this.collectDecisionHistoryResult(),
       stallHistory: () => this.collectStallHistoryResult(),
       sessionData: async () => ({ metrics: {
-          sessionsScanned: await countJsonlLines(this.deps.baseDir, path.join("dream", "session-logs.jsonl")),
+          sessionsScanned: await this.countDreamSessionLogs(),
           coldSessionsArchived: 0,
           bundlesCreated: 0,
           indexEntriesUpdated: 0,
         } }),
       iterationLogs: async () => ({ metrics: {
-          iterationLogsScanned: await countFilesNamed(this.deps.baseDir, "iteration-logs.jsonl"),
+          iterationLogsScanned: await this.countDreamIterationLogs(),
           rotatedLogSegments: 0,
           archivedCompletedGoalLogs: 0,
           indexEntriesUpdated: 0,
@@ -394,36 +394,19 @@ export class DreamConsolidator {
     lessons: number;
     evidenceRefs: string[];
   }> {
-    const roots = [
-      path.join(this.deps.baseDir, "runtime", "evidence-ledger"),
-      path.join(this.deps.baseDir, "evidence-ledger"),
-    ];
-    const files = (await Promise.all(roots.map((root) => listFilesRecursive(root, (filePath) => filePath.endsWith(".jsonl"))))).flat();
+    const ledger = new RuntimeEvidenceLedger(path.join(this.deps.baseDir, "runtime"));
+    const entries = await ledger.listExtractionRefs(10_000);
     const refs = new Set<string>();
     let latentFacts = 0;
     let lessons = 0;
-    for (const filePath of files) {
-      const text = await fsp.readFile(filePath, "utf8");
-      const lines = text.split(/\r?\n/);
-      for (let index = 0; index < lines.length; index += 1) {
-        const line = lines[index];
-        if (!line?.trim()) continue;
-        let parsed: unknown;
-        try {
-          parsed = JSON.parse(line);
-        } catch {
-          continue;
-        }
-        if (!isRecord(parsed)) continue;
-        const ref = sourceLineRef(this.deps.baseDir, filePath, index + 1);
-        if (isLatentFactEvidenceEntry(parsed)) {
-          latentFacts += 1;
-          refs.add(ref);
-        }
-        if (isLessonEvidenceEntry(parsed)) {
-          lessons += 1;
-          refs.add(ref);
-        }
+    for (const { entry, source_ref } of entries) {
+      if (isLatentFactEvidenceEntry(entry)) {
+        latentFacts += 1;
+        refs.add(source_ref);
+      }
+      if (isLessonEvidenceEntry(entry)) {
+        lessons += 1;
+        refs.add(source_ref);
       }
     }
     return { latentFacts, lessons, evidenceRefs: [...refs] };
@@ -625,7 +608,7 @@ export class DreamConsolidator {
     );
     return {
       metrics: {
-        timelinesReconstructed: await countFilesNamed(this.deps.baseDir, "strategy-history.json"),
+        timelinesReconstructed: await this.stateStore().countStrategyHistoryGoals(),
         strategyTemplatesAvailable: templates.length,
         successfulPivotLaddersFound: templates.length,
         wastefulStrategyFamiliesFlagged: 0,
@@ -823,6 +806,21 @@ export class DreamConsolidator {
       ...(backlog.event_lines_pending > 0 ? ["event"] : []),
       ...(backlog.importance_entries_pending > 0 ? ["importance"] : []),
     ];
+  }
+
+  private stateStore(): StrategyDreamStateStore {
+    return new StrategyDreamStateStore(this.deps.baseDir);
+  }
+
+  private async countDreamSessionLogs(): Promise<number> {
+    return (await this.stateStore().listSessionLogs()).length;
+  }
+
+  private async countDreamIterationLogs(): Promise<number> {
+    const store = this.stateStore();
+    const goalIds = await store.listDreamGoalIds();
+    const counts = await Promise.all(goalIds.map((goalId) => store.countIterationLogs(goalId)));
+    return counts.reduce((sum, count) => sum + count, 0);
   }
 
   private async persistReport(report: DreamReport): Promise<void> {

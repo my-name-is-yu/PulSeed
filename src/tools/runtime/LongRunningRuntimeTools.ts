@@ -4,6 +4,7 @@ import { z } from "zod";
 import { getPulseedDirPath } from "../../base/utils/paths.js";
 import { BackgroundRunLedger } from "../../runtime/store/background-run-store.js";
 import { RuntimeEvidenceLedger } from "../../runtime/store/evidence-ledger.js";
+import { ProcessSessionStateStore } from "../../runtime/store/process-session-state-store.js";
 import type { BackgroundRun, RuntimeArtifactRef, RuntimeSessionRef } from "../../runtime/session-registry/types.js";
 import type {
   ITool,
@@ -528,15 +529,18 @@ async function linkProcessSessionArtifacts(
   artifactPaths: string[],
 ): Promise<string | null> {
   try {
-    const metadataPath = path.join(getPulseedDirPath(), "runtime", "process-sessions", `${sessionId}.json`);
-    const value = await readJson(metadataPath);
-    if (!isObject(value)) throw new Error("process session metadata is not an object");
-    const existing = Array.isArray(value["artifactRefs"])
-      ? value["artifactRefs"].filter((ref): ref is string => typeof ref === "string")
-      : [];
-    const artifactRefs = [...new Set([...existing, ...artifactPaths])];
-    await fs.writeFile(metadataPath, `${JSON.stringify({ ...value, artifactRefs }, null, 2)}\n`, "utf8");
-    processSessionManager.linkArtifacts(sessionId, artifactPaths);
+    const snapshot = processSessionManager.linkArtifacts(sessionId, artifactPaths);
+    if (snapshot) return null;
+    const store = new ProcessSessionStateStore(getPulseedDirPath());
+    const persisted = await store.loadSnapshot(sessionId);
+    if (!persisted) throw new Error("process session not found");
+    await store.saveSnapshot({
+      ...persisted,
+      artifactRefs: dedupeStrings([
+        ...(persisted.artifactRefs ?? []),
+        ...artifactPaths,
+      ]),
+    });
     return null;
   } catch (err) {
     return `Could not link artifacts to process session ${sessionId}: ${messageFromError(err)}`;
@@ -685,6 +689,10 @@ function dedupeSourceRefs(refs: RuntimeSessionRef[]): RuntimeSessionRef[] {
     seen.add(key);
     return true;
   });
+}
+
+function dedupeStrings(values: string[]): string[] {
+  return [...new Set(values)];
 }
 
 function artifactRef(label: string, artifactPath: string): LongRunningArtifactRef {

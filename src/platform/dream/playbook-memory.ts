@@ -1,8 +1,6 @@
-import * as fsp from "node:fs/promises";
-import * as path from "node:path";
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import { readJsonFileOrNull, writeJsonFileAtomic } from "../../base/utils/json-io.js";
+import { StrategyDreamStateStore } from "../../runtime/store/strategy-dream-state-store.js";
 import type { Task, VerificationResult } from "../../base/types/task.js";
 
 const PROMOTION_CONFIDENCE_THRESHOLD = 0.75;
@@ -91,22 +89,6 @@ export interface VerifiedPlaybookCaptureInput {
 export interface PlaybookReuseOutcomeInput {
   playbookIds: string[];
   verificationResult: VerificationResult;
-}
-
-function playbooksDir(baseDir: string): string {
-  return path.join(baseDir, "dream", "playbooks");
-}
-
-function playbookIndexPath(baseDir: string): string {
-  return path.join(playbooksDir(baseDir), "index.json");
-}
-
-function toFilename(playbookId: string): string {
-  return `${playbookId.replace(/[^a-z0-9._-]+/gi, "-")}.json`;
-}
-
-function playbookPath(baseDir: string, playbookId: string): string {
-  return path.join(playbooksDir(baseDir), toFilename(playbookId));
 }
 
 function normalizeText(text: string): string {
@@ -315,49 +297,14 @@ function toPlaybookRecord(
   });
 }
 
-async function ensurePlaybooksDir(baseDir: string): Promise<void> {
-  await fsp.mkdir(playbooksDir(baseDir), { recursive: true });
-}
-
-async function writeIndex(baseDir: string, playbooks: DreamPlaybookRecord[]): Promise<void> {
-  await ensurePlaybooksDir(baseDir);
-  await writeJsonFileAtomic(
-    playbookIndexPath(baseDir),
-    DreamPlaybookIndexSchema.parse({
-      generated_at: new Date().toISOString(),
-      playbooks: playbooks
-        .map((playbook) => ({
-          playbook_id: playbook.playbook_id,
-          title: playbook.title,
-          status: playbook.status,
-          updated_at: playbook.updated_at,
-          verification_confidence: playbook.verification.confidence,
-          verified_success_count: playbook.usage.verified_success_count,
-          successful_reuse_count: playbook.usage.successful_reuse_count,
-          failed_reuse_count: playbook.usage.failed_reuse_count,
-        }))
-        .sort((left, right) => left.playbook_id.localeCompare(right.playbook_id)),
-    })
-  );
-}
-
 export async function loadDreamPlaybooks(
   baseDir: string,
   options: { statuses?: DreamPlaybookStatus[] } = {}
 ): Promise<DreamPlaybookRecord[]> {
-  const dir = playbooksDir(baseDir);
-  const fileNames = (await fsp.readdir(dir).catch(() => [] as string[]))
-    .filter((fileName) => fileName.endsWith(".json") && fileName !== "index.json")
-    .sort();
-
-  const records: DreamPlaybookRecord[] = [];
-  for (const fileName of fileNames) {
-    const raw = await readJsonFileOrNull(path.join(dir, fileName));
-    const parsed = DreamPlaybookRecordSchema.safeParse(raw);
-    if (parsed.success) {
-      records.push(parsed.data);
-    }
-  }
+  const records = (await new StrategyDreamStateStore(baseDir).loadDreamPlaybooks())
+    .map((raw) => DreamPlaybookRecordSchema.safeParse(raw))
+    .filter((parsed): parsed is { success: true; data: DreamPlaybookRecord } => parsed.success)
+    .map((parsed) => parsed.data);
 
   const allowed = options.statuses ? new Set(options.statuses) : null;
   return records
@@ -369,15 +316,8 @@ export async function upsertDreamPlaybook(
   baseDir: string,
   playbook: DreamPlaybookRecord
 ): Promise<DreamPlaybookRecord> {
-  await ensurePlaybooksDir(baseDir);
   const parsed = DreamPlaybookRecordSchema.parse(playbook);
-  await writeJsonFileAtomic(playbookPath(baseDir, parsed.playbook_id), parsed);
-  const all = await loadDreamPlaybooks(baseDir);
-  const next = all
-    .filter((record) => record.playbook_id !== parsed.playbook_id)
-    .concat(parsed)
-    .sort((left, right) => left.playbook_id.localeCompare(right.playbook_id));
-  await writeIndex(baseDir, next);
+  await new StrategyDreamStateStore(baseDir).upsertDreamPlaybook(parsed as DreamPlaybookRecord & Record<string, unknown>);
   return parsed;
 }
 
@@ -386,8 +326,7 @@ export async function captureVerifiedTaskPlaybook(
   input: VerifiedPlaybookCaptureInput
 ): Promise<DreamPlaybookRecord | null> {
   const playbookId = buildPlaybookId(input.task);
-  const existing = await readJsonFileOrNull(playbookPath(baseDir, playbookId));
-  const parsedExisting = DreamPlaybookRecordSchema.safeParse(existing);
+  const parsedExisting = DreamPlaybookRecordSchema.safeParse(await loadDreamPlaybookById(baseDir, playbookId));
   const next = toPlaybookRecord(input.task, input.verificationResult, parsedExisting.success ? parsedExisting.data : undefined);
   if (!next) return null;
   return upsertDreamPlaybook(baseDir, next);
@@ -398,8 +337,7 @@ export async function setDreamPlaybookStatus(
   playbookId: string,
   status: DreamPlaybookStatus
 ): Promise<DreamPlaybookRecord | null> {
-  const existing = await readJsonFileOrNull(playbookPath(baseDir, playbookId));
-  const parsed = DreamPlaybookRecordSchema.safeParse(existing);
+  const parsed = DreamPlaybookRecordSchema.safeParse(await loadDreamPlaybookById(baseDir, playbookId));
   if (!parsed.success) return null;
   const next = DreamPlaybookRecordSchema.parse({
     ...parsed.data,
@@ -420,8 +358,7 @@ export async function recordDreamPlaybookReuseOutcome(
   const uniqueIds = uniqueSorted(input.playbookIds);
   const updated: DreamPlaybookRecord[] = [];
   for (const playbookId of uniqueIds) {
-    const existing = await readJsonFileOrNull(playbookPath(baseDir, playbookId));
-    const parsed = DreamPlaybookRecordSchema.safeParse(existing);
+    const parsed = DreamPlaybookRecordSchema.safeParse(await loadDreamPlaybookById(baseDir, playbookId));
     if (!parsed.success) continue;
     const reuseSucceeded = input.verificationResult.verdict === "pass";
     const nextUsage = {
@@ -460,18 +397,12 @@ export async function recordDreamPlaybookReuseOutcome(
 }
 
 export async function deleteDreamPlaybook(baseDir: string, playbookId: string): Promise<boolean> {
-  const filePath = playbookPath(baseDir, playbookId);
-  try {
-    await fsp.rm(filePath);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return false;
-    }
-    throw error;
-  }
-  const next = await loadDreamPlaybooks(baseDir);
-  await writeIndex(baseDir, next);
-  return true;
+  return new StrategyDreamStateStore(baseDir).deleteDreamPlaybook(playbookId);
+}
+
+async function loadDreamPlaybookById(baseDir: string, playbookId: string): Promise<unknown | null> {
+  const records = await loadDreamPlaybooks(baseDir);
+  return records.find((record) => record.playbook_id === playbookId) ?? null;
 }
 
 export function selectPlaybookHints(

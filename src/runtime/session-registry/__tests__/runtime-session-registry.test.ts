@@ -179,8 +179,8 @@ describe("RuntimeSessionRegistry", () => {
       ...makeProcessSnapshot({
         session_id: "proc-unsafe-pid",
         running: true,
+        pid: undefined,
       }),
-      pid: -1,
     });
     const isPidAlive = vi.fn(() => true);
 
@@ -637,20 +637,22 @@ function makeAgentState(overrides: Partial<{
 }
 
 function makeProcessSnapshot(overrides: Partial<ProcessSessionSnapshot> = {}): ProcessSessionSnapshot {
-  return {
+  const snapshot = {
     session_id: overrides.session_id ?? "proc-1",
     label: overrides.label ?? "training",
     command: overrides.command ?? "node",
     args: overrides.args ?? ["train.js"],
     cwd: overrides.cwd ?? "/repo",
-    pid: overrides.pid ?? 12345,
     running: overrides.running ?? true,
     exitCode: overrides.exitCode ?? null,
     signal: overrides.signal ?? null,
     startedAt: overrides.startedAt ?? "2026-04-25T00:00:00.000Z",
     ...(overrides.exitedAt ? { exitedAt: overrides.exitedAt } : {}),
     bufferedChars: overrides.bufferedChars ?? 0,
-    metadataRelativePath: overrides.metadataRelativePath ?? `runtime/process-sessions/${overrides.session_id ?? "proc-1"}.json`,
+    metadataRef: overrides.metadataRef ?? `control-db://process-sessions/${encodeURIComponent(overrides.session_id ?? "proc-1")}`,
     artifactRefs: overrides.artifactRefs ?? [],
   };
+  return "pid" in overrides
+    ? { ...snapshot, ...(overrides.pid ? { pid: overrides.pid } : {}) }
+    : { ...snapshot, pid: 12345 };
 }

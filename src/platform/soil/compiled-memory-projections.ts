@@ -141,8 +141,8 @@ export async function projectDreamKnowledgeToSoil(input: SoilProjectionOptions &
 }): Promise<void> {
   const generatedAt = nowIso(input.clock);
   const learningSourcePath = path.join(input.baseDir, "learning");
-  const playbookSourcePath = path.join(input.baseDir, "dream", "playbooks");
-  const workflowSourcePath = path.join(input.baseDir, "dream", "workflows.json");
+  const playbookSourcePath = "control-db://dream/playbooks";
+  const workflowSourcePath = "control-db://dream/workflows";
   const learningSourceHash = await sourceHashFromFileOrValue(learningSourcePath, input.learnedPatterns);
   const playbookSourceHash = await sourceHashFromFileOrValue(playbookSourcePath, input.verifiedPlaybooks);
   const workflowSourceHash = await sourceHashFromFileOrValue(workflowSourcePath, input.workflowRecords);
@@ -193,8 +193,8 @@ export async function projectDreamKnowledgeToSoil(input: SoilProjectionOptions &
         createdAt: verifiedPlaybooks.at(-1)?.created_at ?? generatedAt,
         updatedAt: verifiedPlaybooks.at(0)?.updated_at ?? generatedAt,
         generatedAt,
-        sourceRefs: sourceRefsFromPaths("runtime_json", [{ sourcePath: playbookSourcePath, sourceHash: playbookSourceHash, reliability: "high" }]),
-        sourceTruth: "runtime_json",
+        sourceRefs: sourceRefsFromPaths("control_db", [{ sourcePath: playbookSourcePath, sourceHash: playbookSourceHash, reliability: "high" }]),
+        sourceTruth: "runtime_db",
         renderedFrom: "dream-consolidator",
         domain: "verified-playbooks",
         summary: `${verifiedPlaybooks.length} verified playbook records`,
@@ -226,8 +226,8 @@ export async function projectDreamKnowledgeToSoil(input: SoilProjectionOptions &
         createdAt: workflowRecords.at(-1)?.created_at ?? generatedAt,
         updatedAt: workflowRecords.at(0)?.updated_at ?? generatedAt,
         generatedAt,
-        sourceRefs: sourceRefsFromPaths("runtime_json", [{ sourcePath: workflowSourcePath, sourceHash: workflowSourceHash, reliability: "high" }]),
-        sourceTruth: "runtime_json",
+        sourceRefs: sourceRefsFromPaths("control_db", [{ sourcePath: workflowSourcePath, sourceHash: workflowSourceHash, reliability: "high" }]),
+        sourceTruth: "runtime_db",
         renderedFrom: "dream-consolidator",
         domain: "dream-workflows",
         summary: `${workflowRecords.length} Dream workflow records`,

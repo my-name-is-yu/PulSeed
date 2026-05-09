@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { cleanupTempDir, makeTempDir } from "../../../../tests/helpers/temp-dir.js";
+import { StrategyDreamStateStore } from "../../../runtime/store/strategy-dream-state-store.js";
 import type { LearnedPattern } from "../../knowledge/types/learning.js";
 import { readSoilMarkdownFile } from "../../soil/io.js";
 import { buildDreamSoilMutationIntent } from "../dream-soil-mutation.js";
@@ -166,40 +167,31 @@ describe("dream soil sync", () => {
 
   it("loads Dream workflow artifacts and applies them to Soil", async () => {
     tmpDir = makeTempDir("dream-soil-sync-workflow-");
-    await fs.mkdir(path.join(tmpDir, "dream"), { recursive: true });
-    await fs.writeFile(
-      path.join(tmpDir, "dream", "workflows.json"),
-      JSON.stringify({
-        version: "dream-workflows-v1",
-        generated_at: "2026-04-12T05:00:00.000Z",
-        workflows: [
-          {
-            workflow_id: "dream-workflow:abc",
-            type: "stall_recovery",
-            title: "Stall recovery: confidence stall",
-            description: "Change strategy when confidence stalls.",
-            applicability: {
-              goal_ids: ["goal-a"],
-              task_ids: [],
-              event_types: ["StallDetected"],
-              signals: ["confidence_stall"],
-            },
-            preconditions: ["A stall was detected."],
-            steps: ["Inspect the stall.", "Change strategy."],
-            failure_modes: ["confidence_stall"],
-            recovery_steps: ["Re-plan before retrying."],
-            evidence_refs: ["dream/events/goal-a.jsonl#L1"],
-            evidence_count: 1,
-            success_count: 0,
-            failure_count: 1,
-            confidence: 0.72,
-            created_at: "2026-04-12T03:00:00.000Z",
-            updated_at: "2026-04-12T04:00:00.000Z",
-          },
-        ],
-      }),
-      "utf8"
-    );
+    await new StrategyDreamStateStore(tmpDir).saveDreamWorkflows([
+      {
+        workflow_id: "dream-workflow:abc",
+        type: "stall_recovery",
+        title: "Stall recovery: confidence stall",
+        description: "Change strategy when confidence stalls.",
+        applicability: {
+          goal_ids: ["goal-a"],
+          task_ids: [],
+          event_types: ["StallDetected"],
+          signals: ["confidence_stall"],
+        },
+        preconditions: ["A stall was detected."],
+        steps: ["Inspect the stall.", "Change strategy."],
+        failure_modes: ["confidence_stall"],
+        recovery_steps: ["Re-plan before retrying."],
+        evidence_refs: ["dream/events/goal-a.jsonl#L1"],
+        evidence_count: 1,
+        success_count: 0,
+        failure_count: 1,
+        confidence: 0.72,
+        created_at: "2026-04-12T03:00:00.000Z",
+        updated_at: "2026-04-12T04:00:00.000Z",
+      },
+    ]);
     const repository: DreamSoilSyncRepository = {
       loadRecords: vi.fn().mockResolvedValue([]),
       applyMutation: vi.fn().mockResolvedValue(undefined),
@@ -235,57 +227,52 @@ describe("dream soil sync", () => {
 
   it("projects promoted playbooks into Soil while leaving raw dream records out of planner mutation paths", async () => {
     tmpDir = makeTempDir("dream-soil-sync-playbook-");
-    await fs.mkdir(path.join(tmpDir, "dream", "playbooks"), { recursive: true });
-    await fs.writeFile(
-      path.join(tmpDir, "dream", "playbooks", "verified-provider.json"),
-      JSON.stringify({
-        playbook_id: "dream-playbook-provider",
-        status: "promoted",
-        kind: "verified_execution",
-        title: "Repair provider config boundary",
-        summary: "Verified workflow for provider boundary fixes.",
-        source_signature: "provider-boundary",
-        applicability: {
-          goal_ids: ["goal-a"],
-          primary_dimensions: ["type_safety"],
-          task_categories: ["verification"],
-          terms: ["provider", "config", "typecheck"],
+    await new StrategyDreamStateStore(tmpDir).upsertDreamPlaybook({
+      playbook_id: "dream-playbook-provider",
+      status: "promoted",
+      kind: "verified_execution",
+      title: "Repair provider config boundary",
+      summary: "Verified workflow for provider boundary fixes.",
+      source_signature: "provider-boundary",
+      applicability: {
+        goal_ids: ["goal-a"],
+        primary_dimensions: ["type_safety"],
+        task_categories: ["verification"],
+        terms: ["provider", "config", "typecheck"],
+      },
+      preconditions: ["Constraint: keep validation strict"],
+      recommended_steps: ["Patch the narrow boundary", "Run focused typecheck"],
+      verification_checks: [
+        {
+          description: "Focused typecheck passes",
+          verification_method: "npm run typecheck",
+          blocking: true,
         },
-        preconditions: ["Constraint: keep validation strict"],
-        recommended_steps: ["Patch the narrow boundary", "Run focused typecheck"],
-        verification_checks: [
-          {
-            description: "Focused typecheck passes",
-            verification_method: "npm run typecheck",
-            blocking: true,
-          },
-        ],
-        failure_warnings: ["Do not widen runtime acceptance"],
-        evidence_refs: ["Focused typecheck passed"],
-        source_task_ids: ["task-provider"],
-        verification: {
-          verdict: "pass",
-          confidence: 0.91,
-          last_verified_at: "2026-04-12T06:00:00.000Z",
-        },
-        usage: {
-          retrieved_count: 0,
-          verified_success_count: 2,
-          successful_reuse_count: 0,
-          failed_reuse_count: 0,
-        },
-        governance: {
-          created_by: "dream",
-          review_state: "verified",
-          auto_generated: true,
-          user_editable: true,
-          auto_mutation: "forbidden",
-        },
-        created_at: "2026-04-12T05:00:00.000Z",
-        updated_at: "2026-04-12T06:00:00.000Z",
-      }),
-      "utf8"
-    );
+      ],
+      failure_warnings: ["Do not widen runtime acceptance"],
+      evidence_refs: ["Focused typecheck passed"],
+      source_task_ids: ["task-provider"],
+      verification: {
+        verdict: "pass",
+        confidence: 0.91,
+        last_verified_at: "2026-04-12T06:00:00.000Z",
+      },
+      usage: {
+        retrieved_count: 0,
+        verified_success_count: 2,
+        successful_reuse_count: 0,
+        failed_reuse_count: 0,
+      },
+      governance: {
+        created_by: "dream",
+        review_state: "verified",
+        auto_generated: true,
+        user_editable: true,
+        auto_mutation: "forbidden",
+      },
+      created_at: "2026-04-12T05:00:00.000Z",
+      updated_at: "2026-04-12T06:00:00.000Z",
+    });
     const repository: DreamSoilSyncRepository = {
       loadRecords: vi.fn().mockResolvedValue([]),
       applyMutation: vi.fn().mockResolvedValue(undefined),

@@ -89,6 +89,15 @@ function makeMockStateManager(): StateManager {
   } as unknown as StateManager;
 }
 
+function makeMockStateManagerWithBaseDir(): StateManager {
+  const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-mock-state-"));
+  return {
+    getBaseDir: vi.fn().mockReturnValue(baseDir),
+    writeRaw: vi.fn().mockResolvedValue(undefined),
+    readRaw: vi.fn().mockResolvedValue(null),
+  } as unknown as StateManager;
+}
+
 async function loadPersistedChatSession(stateManager: StateManager, sessionId: string): Promise<ChatSession | null> {
   return new ChatSessionDataStore(resolveChatStateBaseDir(stateManager)).load(sessionId);
 }
@@ -385,7 +394,7 @@ function makeProcessSnapshot(overrides: Partial<ProcessSessionSnapshot> = {}): P
     startedAt: overrides.startedAt ?? "2026-04-25T00:00:00.000Z",
     ...(overrides.exitedAt ? { exitedAt: overrides.exitedAt } : {}),
     bufferedChars: overrides.bufferedChars ?? 0,
-    metadataRelativePath: overrides.metadataRelativePath ?? `runtime/process-sessions/${overrides.session_id ?? "proc-1"}.json`,
+    metadataRef: overrides.metadataRef ?? `control-db://process-sessions/${encodeURIComponent(overrides.session_id ?? "proc-1")}`,
     artifactRefs: overrides.artifactRefs ?? [],
   };
 }
@@ -479,7 +488,7 @@ describe("ChatRunner", () => {
   describe("normal execution", () => {
     it("redacts setup secrets through the production ingress entrypoint before persistence, events, and adapter prompts", async () => {
       const telegramToken = "123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi";
-      const stateManager = makeMockStateManager();
+      const stateManager = makeMockStateManagerWithBaseDir();
       const adapter = makeMockAdapter();
       const events: ChatEvent[] = [];
       const runner = new ChatRunner(makeDeps({
@@ -513,7 +522,7 @@ describe("ChatRunner", () => {
 
     it("redacts non-Telegram setup secret shapes through the production chat entrypoint", async () => {
       const apiKey = "sk-proj_abcdefghijklmnopqrstuvwxyz1234567890";
-      const stateManager = makeMockStateManager();
+      const stateManager = makeMockStateManagerWithBaseDir();
       const runner = new ChatRunner(makeDeps({ stateManager }));
 
       await runner.execute(`provider key is ${apiKey}`, "/repo", 30_000);
@@ -621,7 +630,7 @@ describe("ChatRunner", () => {
     it("keeps supplied setup secret facts available to the configure route without persisting raw assistant echoes", async () => {
       const telegramToken = "123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi";
       const echoedToken = "sk-proj_echoedsecretabcdefghijklmnopqrstuvwxyz";
-      const stateManager = makeMockStateManager();
+      const stateManager = makeMockStateManagerWithBaseDir();
       const events: ChatEvent[] = [];
       const runner = new ChatRunner(makeDeps({
         stateManager,
@@ -1393,7 +1402,7 @@ describe("ChatRunner", () => {
 
     it("/context shows operational working context without calling adapter", async () => {
       const adapter = makeMockAdapter();
-      const stateManager = makeMockStateManager();
+      const stateManager = makeMockStateManagerWithBaseDir();
       const runner = new ChatRunner(makeDeps({ adapter, stateManager }));
       runner.startSession("/repo");
 
@@ -2053,7 +2062,7 @@ describe("ChatRunner", () => {
     });
 
     it("/resume refuses missing typed native agentloop state without replaying actionable work", async () => {
-      const stateManager = makeMockStateManager();
+      const stateManager = makeMockStateManagerWithBaseDir();
       const chatAgentLoopRunner = {
         execute: vi.fn(),
       } as unknown as ChatAgentLoopRunner;
@@ -2082,7 +2091,7 @@ describe("ChatRunner", () => {
     });
 
     it("/resume without saved state returns recovery guidance", async () => {
-      const stateManager = makeMockStateManager();
+      const stateManager = makeMockStateManagerWithBaseDir();
       (stateManager.readRaw as ReturnType<typeof vi.fn>).mockResolvedValue(null);
       const chatAgentLoopRunner = {
         execute: vi.fn(),

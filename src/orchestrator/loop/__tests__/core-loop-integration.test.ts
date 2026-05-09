@@ -26,6 +26,7 @@ import { CoreLoop } from "../durable-loop.js";
 import { AdapterRegistry } from "../../execution/adapter-layer.js";
 import type { IAdapter, AgentTask, AgentResult } from "../../execution/adapter-layer.js";
 import { HookManager } from "../../../runtime/hook-manager.js";
+import { StrategyDreamStateStore } from "../../../runtime/store/strategy-dream-state-store.js";
 
 // ─── Pure function modules ───
 import * as GapCalculator from "../../../platform/drive/gap-calculator.js";
@@ -405,12 +406,9 @@ describe("CoreLoop integration — single iteration with real deps", () => {
       expect(taskOnDisk).toBeDefined();
     }
 
-    const iterationLogPath = `${tempDir}/goals/${goalId}/iteration-logs.jsonl`;
-    const sessionLogPath = `${tempDir}/dream/session-logs.jsonl`;
-    const eventLogPath = `${tempDir}/dream/events/${goalId}.jsonl`;
-
-    expect(fs.existsSync(iterationLogPath)).toBe(true);
-    expect(fs.existsSync(sessionLogPath)).toBe(true);
-    expect(fs.existsSync(eventLogPath)).toBe(true);
+    const dreamStore = new StrategyDreamStateStore(tempDir);
+    expect(await dreamStore.countIterationLogs(goalId)).toBeGreaterThan(0);
+    expect((await dreamStore.listSessionLogs()).some((entry) => entry.goalId === goalId)).toBe(true);
+    expect((await dreamStore.listEventLogs()).some((entry) => entry.event.goalId === goalId)).toBe(true);
   });
 });

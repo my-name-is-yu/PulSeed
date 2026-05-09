@@ -1,8 +1,15 @@
 import { afterEach, describe, expect, it } from "vitest";
-import * as fs from "node:fs/promises";
-import * as path from "node:path";
 import { cleanupTempDir, makeTempDir } from "../../../../tests/helpers/temp-dir.js";
+import { StrategyDreamStateStore } from "../../../runtime/store/strategy-dream-state-store.js";
 import { consolidateDreamEventWorkflows, loadDreamWorkflowRecords } from "../dream-event-workflows.js";
+import type { EventLog } from "../dream-types.js";
+
+async function seedEvents(baseDir: string, events: EventLog[]): Promise<void> {
+  const store = new StrategyDreamStateStore(baseDir);
+  for (const event of events) {
+    await store.appendEventLog(event);
+  }
+}
 
 describe("dream event workflow consolidation", () => {
   let tmpDir = "";
@@ -12,46 +19,41 @@ describe("dream event workflow consolidation", () => {
     tmpDir = "";
   });
 
-  it("turns stall and execution events into Dream-owned workflow artifacts", async () => {
+  it("turns stall and execution events into Dream-owned workflow rows", async () => {
     tmpDir = makeTempDir("dream-event-workflows-");
-    await fs.mkdir(path.join(tmpDir, "dream", "events"), { recursive: true });
-    await fs.writeFile(
-      path.join(tmpDir, "dream", "events", "goal-a.jsonl"),
-      [
-        JSON.stringify({
-          timestamp: "2026-04-12T01:00:00.000Z",
-          eventType: "StallDetected",
-          goalId: "goal-a",
-          taskId: "task-a",
-          data: {
-            task_id: "task-a",
-            stall_type: "confidence_stall",
-            suggested_cause: "verification signal is weak",
-          },
-        }),
-        JSON.stringify({
-          timestamp: "2026-04-12T01:05:00.000Z",
-          eventType: "PostExecute",
-          goalId: "goal-a",
-          taskId: "task-a",
-          data: {
-            task_id: "task-a",
-            success: false,
-          },
-        }),
-        JSON.stringify({
-          timestamp: "2026-04-12T01:10:00.000Z",
-          eventType: "PostExecute",
-          goalId: "goal-a",
-          taskId: "task-a",
-          data: {
-            task_id: "task-a",
-            success: true,
-          },
-        }),
-      ].join("\n") + "\n",
-      "utf8"
-    );
+    await seedEvents(tmpDir, [
+      {
+        timestamp: "2026-04-12T01:00:00.000Z",
+        eventType: "StallDetected",
+        goalId: "goal-a",
+        taskId: "task-a",
+        data: {
+          task_id: "task-a",
+          stall_type: "confidence_stall",
+          suggested_cause: "verification signal is weak",
+        },
+      },
+      {
+        timestamp: "2026-04-12T01:05:00.000Z",
+        eventType: "PostExecute",
+        goalId: "goal-a",
+        taskId: "task-a",
+        data: {
+          task_id: "task-a",
+          success: false,
+        },
+      },
+      {
+        timestamp: "2026-04-12T01:10:00.000Z",
+        eventType: "PostExecute",
+        goalId: "goal-a",
+        taskId: "task-a",
+        data: {
+          task_id: "task-a",
+          success: true,
+        },
+      },
+    ]);
 
     const report = await consolidateDreamEventWorkflows(tmpDir);
     const workflows = await loadDreamWorkflowRecords(tmpDir);
@@ -83,20 +85,15 @@ describe("dream event workflow consolidation", () => {
 
   it("uses event watermarks to keep repeated runs idempotent", async () => {
     tmpDir = makeTempDir("dream-event-workflows-idempotent-");
-    await fs.mkdir(path.join(tmpDir, "dream", "events"), { recursive: true });
-    await fs.writeFile(
-      path.join(tmpDir, "dream", "events", "goal-a.jsonl"),
-      `${JSON.stringify({
-        timestamp: "2026-04-12T01:00:00.000Z",
-        eventType: "StallDetected",
-        goalId: "goal-a",
-        data: {
-          stall_type: "confidence_stall",
-          suggested_cause: "verification signal is weak",
-        },
-      })}\n`,
-      "utf8"
-    );
+    await seedEvents(tmpDir, [{
+      timestamp: "2026-04-12T01:00:00.000Z",
+      eventType: "StallDetected",
+      goalId: "goal-a",
+      data: {
+        stall_type: "confidence_stall",
+        suggested_cause: "verification signal is weak",
+      },
+    }]);
 
     const first = await consolidateDreamEventWorkflows(tmpDir);
     const second = await consolidateDreamEventWorkflows(tmpDir);
@@ -106,59 +103,30 @@ describe("dream event workflow consolidation", () => {
     expect((await loadDreamWorkflowRecords(tmpDir))).toHaveLength(1);
   });
 
-  it("advances watermarks for malformed-only event files", async () => {
-    tmpDir = makeTempDir("dream-event-workflows-malformed-");
-    await fs.mkdir(path.join(tmpDir, "dream", "events"), { recursive: true });
-    await fs.writeFile(path.join(tmpDir, "dream", "events", "goal-a.jsonl"), "{not json}\n", "utf8");
-
-    const first = await consolidateDreamEventWorkflows(tmpDir);
-    const second = await consolidateDreamEventWorkflows(tmpDir);
-
-    expect(first).toMatchObject({
-      eventsScanned: 0,
-      malformedEvents: 1,
-      eventWatermarksAdvanced: 1,
-    });
-    expect(second).toMatchObject({
-      eventsScanned: 0,
-      malformedEvents: 0,
-    });
-  });
-
   it("merges new matching events into existing workflow evidence", async () => {
     tmpDir = makeTempDir("dream-event-workflows-merge-");
-    await fs.mkdir(path.join(tmpDir, "dream", "events"), { recursive: true });
-    const eventFile = path.join(tmpDir, "dream", "events", "goal-a.jsonl");
-    await fs.writeFile(
-      eventFile,
-      `${JSON.stringify({
-        timestamp: "2026-04-12T01:00:00.000Z",
-        eventType: "StallDetected",
-        goalId: "goal-a",
-        data: {
-          stall_type: "confidence_stall",
-          suggested_cause: "verification signal is weak",
-        },
-      })}\n`,
-      "utf8"
-    );
+    await seedEvents(tmpDir, [{
+      timestamp: "2026-04-12T01:00:00.000Z",
+      eventType: "StallDetected",
+      goalId: "goal-a",
+      data: {
+        stall_type: "confidence_stall",
+        suggested_cause: "verification signal is weak",
+      },
+    }]);
 
     await consolidateDreamEventWorkflows(tmpDir);
-    await fs.appendFile(
-      eventFile,
-      `${JSON.stringify({
-        timestamp: "2026-04-12T02:00:00.000Z",
-        eventType: "StallDetected",
-        goalId: "goal-a",
-        taskId: "task-b",
-        data: {
-          task_id: "task-b",
-          stall_type: "confidence_stall",
-          suggested_cause: "verification signal is weak",
-        },
-      })}\n`,
-      "utf8"
-    );
+    await seedEvents(tmpDir, [{
+      timestamp: "2026-04-12T02:00:00.000Z",
+      eventType: "StallDetected",
+      goalId: "goal-a",
+      taskId: "task-b",
+      data: {
+        task_id: "task-b",
+        stall_type: "confidence_stall",
+        suggested_cause: "verification signal is weak",
+      },
+    }]);
 
     const second = await consolidateDreamEventWorkflows(tmpDir);
     const [workflow] = await loadDreamWorkflowRecords(tmpDir);

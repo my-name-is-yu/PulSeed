@@ -89,8 +89,6 @@ describe("runtime registry CLI commands", () => {
 
   it("prints JSON list output with generated_at and warnings envelope", async () => {
     await writeConversationWithRunningAgent();
-    await fsp.mkdir(path.join(tmpDir, "runtime", "process-sessions"), { recursive: true });
-    await fsp.writeFile(path.join(tmpDir, "runtime", "process-sessions", "bad.json"), "{not-json", "utf-8");
     await stateManager.writeRaw("runtime/process-sessions/proc-failed.json", makeProcessSnapshot({
       session_id: "proc-failed",
       running: false,
@@ -111,7 +109,7 @@ describe("runtime registry CLI commands", () => {
     expect(code).toBe(0);
     expect(parsed.schema_version).toBe("runtime-session-registry-v1");
     expect(parsed.generated_at).toEqual(expect.any(String));
-    expect(parsed.warnings).toContainEqual(expect.objectContaining({ code: "source_parse_failed" }));
+    expect(parsed.warnings).toEqual(expect.any(Array));
     expect(parsed.background_runs).toEqual([
       expect.objectContaining({
         id: "run:process:proc-failed",
@@ -874,7 +872,7 @@ function makeProcessSnapshot(overrides: Partial<ProcessSessionSnapshot> = {}): P
     startedAt: overrides.startedAt ?? "2026-04-25T00:00:00.000Z",
     ...(overrides.exitedAt ? { exitedAt: overrides.exitedAt } : {}),
     bufferedChars: overrides.bufferedChars ?? 0,
-    metadataRelativePath: overrides.metadataRelativePath ?? `runtime/process-sessions/${overrides.session_id ?? "proc-1"}.json`,
+    metadataRef: overrides.metadataRef ?? `control-db://process-sessions/${encodeURIComponent(overrides.session_id ?? "proc-1")}`,
     artifactRefs: overrides.artifactRefs ?? [],
   };
 }

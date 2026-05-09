@@ -234,7 +234,7 @@ function buildSafePauseCheckpoint(
     queued_goal_ids: [...new Set(queuedGoalIds)],
     current_mode: context.state.status,
     candidate_evidence_refs: [
-      ...(context.runtimeRoot ? [`${context.runtimeRoot}/evidence-ledger/goals/${encodeURIComponent(goalId)}.jsonl`] : []),
+      ...(context.runtimeRoot ? [`control-db://runtime-evidence/goal/${encodeURIComponent(goalId)}`] : []),
       ...(queueSnapshot ? [`queue:pending:${Object.values(queueSnapshot.pending).flat().length}`] : []),
     ],
     artifact_refs: [

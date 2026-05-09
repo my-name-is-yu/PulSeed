@@ -7,6 +7,7 @@ import type { StrategyManager } from "../../strategy-manager.js";
 import type { StateManager } from "../../../base/state/state-manager.js";
 import type { RebalanceTrigger } from "../../../base/types/portfolio.js";
 import { ApprovalStore } from "../../../runtime/store/approval-store.js";
+import { ProcessSessionStateStore } from "../../../runtime/store/process-session-state-store.js";
 import { buildWaitApprovalId } from "../portfolio-rebalance.js";
 import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 
@@ -45,6 +46,25 @@ function makeStrategy(overrides: Partial<Strategy> = {}): Strategy {
     allowed_tools: overrides.allowed_tools ?? [],
     required_tools: overrides.required_tools ?? [],
   };
+}
+
+async function seedProcessSessionSnapshot(
+  baseDir: string,
+  sessionId: string,
+  overrides: Record<string, unknown> = {},
+): Promise<void> {
+  await new ProcessSessionStateStore(baseDir).saveSnapshot({
+    session_id: sessionId,
+    command: "node",
+    args: [],
+    cwd: baseDir,
+    running: true,
+    exitCode: null,
+    signal: null,
+    startedAt: "2026-05-10T00:00:00.000Z",
+    bufferedChars: 0,
+    ...overrides,
+  });
 }
 
 function makeWaitStrategy(overrides: Partial<WaitStrategy> = {}): WaitStrategy {
@@ -1305,11 +1325,7 @@ describe("PortfolioManager", () => {
     it("observes process session exit from durable metadata", async () => {
       const tmpDir = makeTempDir();
       try {
-        fs.mkdirSync(path.join(tmpDir, "runtime", "process-sessions"), { recursive: true });
-        fs.writeFileSync(
-          path.join(tmpDir, "runtime", "process-sessions", "sess-1.json"),
-          JSON.stringify({ session_id: "sess-1", running: true, pid: 99999999, exitCode: null })
-        );
+        await seedProcessSessionSnapshot(tmpDir, "sess-1", { pid: 99999999 });
         const wait = makeWaitStrategy({
           id: "ws1",
           state: "active",
@@ -1327,7 +1343,7 @@ describe("PortfolioManager", () => {
               wait_until: wait.wait_until,
               conditions: [{ type: "process_session_exited", session_id: "sess-1" }],
               resume_plan: { action: "complete_wait" },
-              process_refs: [{ session_id: "sess-1", metadata_relative_path: path.join("runtime", "process-sessions", "sess-1.json") }],
+              process_refs: [{ session_id: "sess-1", metadata_ref: "control-db://process-sessions/sess-1" }],
             };
           }
           if (rawPath === "capability_registry.json") {
@@ -1361,11 +1377,7 @@ describe("PortfolioManager", () => {
       const tmpDir = makeTempDir();
       try {
         const unsafePid = Number.MAX_SAFE_INTEGER + 1;
-        fs.mkdirSync(path.join(tmpDir, "runtime", "process-sessions"), { recursive: true });
-        fs.writeFileSync(
-          path.join(tmpDir, "runtime", "process-sessions", "sess-unsafe.json"),
-          JSON.stringify({ session_id: "sess-unsafe", running: true, pid: unsafePid, exitCode: null })
-        );
+        await seedProcessSessionSnapshot(tmpDir, "sess-unsafe");
         const wait = makeWaitStrategy({
           id: "ws1",
           state: "active",
@@ -1383,7 +1395,7 @@ describe("PortfolioManager", () => {
               wait_until: wait.wait_until,
               conditions: [{ type: "process_session_exited", session_id: "sess-unsafe" }],
               resume_plan: { action: "complete_wait" },
-              process_refs: [{ session_id: "sess-unsafe", metadata_relative_path: path.join("runtime", "process-sessions", "sess-unsafe.json") }],
+              process_refs: [{ session_id: "sess-unsafe", metadata_ref: "control-db://process-sessions/sess-unsafe" }],
             };
           }
           if (rawPath === "capability_registry.json") {
@@ -1429,18 +1441,7 @@ describe("PortfolioManager", () => {
     it("does not satisfy process session exit from invalid terminal metadata", async () => {
       const tmpDir = makeTempDir();
       try {
-        fs.mkdirSync(path.join(tmpDir, "runtime", "process-sessions"), { recursive: true });
-        fs.writeFileSync(
-          path.join(tmpDir, "runtime", "process-sessions", "sess-invalid.json"),
-          JSON.stringify({
-            session_id: "sess-invalid",
-            running: true,
-            pid: Number.MAX_SAFE_INTEGER + 1,
-            exitCode: "0",
-            signal: "not-a-signal",
-            exitedAt: "0",
-          })
-        );
+        await seedProcessSessionSnapshot(tmpDir, "sess-invalid");
         const wait = makeWaitStrategy({
           id: "ws1",
           state: "active",
@@ -1458,7 +1459,7 @@ describe("PortfolioManager", () => {
               wait_until: wait.wait_until,
               conditions: [{ type: "process_session_exited", session_id: "sess-invalid" }],
               resume_plan: { action: "complete_wait" },
-              process_refs: [{ session_id: "sess-invalid", metadata_relative_path: path.join("runtime", "process-sessions", "sess-invalid.json") }],
+              process_refs: [{ session_id: "sess-invalid", metadata_ref: "control-db://process-sessions/sess-invalid" }],
             };
           }
           if (rawPath === "capability_registry.json") {
@@ -1523,7 +1524,7 @@ describe("PortfolioManager", () => {
               resume_plan: { action: "complete_wait" },
               process_refs: [{
                 session_id: "sess-escape",
-                metadata_relative_path: path.relative(tmpDir, outsideSnapshot),
+                metadata_ref: `control-db://process-sessions/${encodeURIComponent(path.relative(tmpDir, outsideSnapshot))}`,
               }],
             };
           }

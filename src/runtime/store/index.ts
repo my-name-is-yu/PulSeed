@@ -17,9 +17,12 @@ export {
 } from "./runtime-journal.js";
 
 export {
+  CONTROL_DB_CHAT_AGENTLOOP_SESSION_SCHEMA_SQL,
+  CONTROL_DB_GOAL_TASK_DURABLE_LOOP_SCHEMA_SQL,
   CONTROL_DB_INITIAL_SCHEMA_SQL,
   CONTROL_DB_MIGRATIONS,
   CONTROL_DB_QUEUE_DAEMON_SCHEDULE_SCHEMA_SQL,
+  CONTROL_DB_RUNTIME_EVIDENCE_STRATEGY_DREAM_SCHEMA_SQL,
   CONTROL_DB_RUNTIME_CONTROL_SCHEMA_SQL,
   CONTROL_DB_RUNTIME_STATE_OWNERSHIP_SCHEMA_SQL,
   CONTROL_DB_SCHEMA_VERSION,
@@ -167,6 +170,22 @@ export {
   RuntimeEvidenceMetricSchema,
   RuntimeEvidenceOutcomeSchema,
 } from "./evidence-ledger.js";
+export {
+  RuntimeEvidenceStateStore,
+} from "./runtime-evidence-state-store.js";
+export {
+  PROCESS_SESSION_SNAPSHOT_REF_PREFIX,
+  ProcessSessionStateStore,
+} from "./process-session-state-store.js";
+export {
+  StrategyDreamStateStore,
+} from "./strategy-dream-state-store.js";
+export {
+  importLegacyRuntimeEvidenceStrategyDreamState,
+} from "./runtime-evidence-strategy-dream-state-migration.js";
+export type {
+  RuntimeEvidenceStrategyDreamLegacyImportReport,
+} from "./runtime-evidence-strategy-dream-state-migration.js";
 export {
   RuntimeExperimentQueueItemSchema,
   RuntimeExperimentQueueItemStatusSchema,

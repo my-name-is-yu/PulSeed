@@ -1,9 +1,9 @@
-import * as fs from "node:fs/promises";
-import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { cleanupTempDir, makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 import { ScheduleEngine } from "../../../runtime/schedule-engine.js";
+import { StrategyDreamStateStore } from "../../../runtime/store/strategy-dream-state-store.js";
 import { DreamScheduleSuggestionStore } from "../dream-schedule-suggestions.js";
+import type { ScheduleSuggestion } from "../dream-types.js";
 
 describe("DreamScheduleSuggestionStore", () => {
   let tempDir: string;
@@ -16,28 +16,21 @@ describe("DreamScheduleSuggestionStore", () => {
     cleanupTempDir(tempDir);
   });
 
-  async function writeSuggestions(payload: unknown): Promise<void> {
-    await fs.mkdir(path.join(tempDir, "dream"), { recursive: true });
-    await fs.writeFile(
-      path.join(tempDir, "dream", "schedule-suggestions.json"),
-      JSON.stringify(payload, null, 2),
-      "utf8",
-    );
+  async function seedSuggestions(suggestions: ScheduleSuggestion[], generatedAt = "2026-04-08T00:00:00.000Z"): Promise<void> {
+    await new StrategyDreamStateStore(tempDir).saveScheduleSuggestions(suggestions, generatedAt);
   }
 
   it("normalizes legacy suggestions into pending review items", async () => {
-    await writeSuggestions({
-      generated_at: "2026-04-08T00:00:00.000Z",
-      suggestions: [
-        {
-          type: "goal_trigger",
-          goalId: "goal-1",
-          proposal: "0 9 * * *",
-          reason: "Manual execution clusters around 09:00 UTC.",
-          confidence: 0.8,
-        },
-      ],
-    });
+    await seedSuggestions([
+      {
+        type: "goal_trigger",
+        goalId: "goal-1",
+        proposal: "0 9 * * *",
+        reason: "Manual execution clusters around 09:00 UTC.",
+        confidence: 0.8,
+        status: "pending",
+      },
+    ]);
 
     const store = new DreamScheduleSuggestionStore(tempDir);
     const suggestions = await store.list();
@@ -48,22 +41,19 @@ describe("DreamScheduleSuggestionStore", () => {
   });
 
   it("applies a pending dream suggestion into a real schedule entry", async () => {
-    await writeSuggestions({
-      generated_at: "2026-04-08T00:00:00.000Z",
-      suggestions: [
-        {
-          id: "dream-1",
-          type: "goal_trigger",
-          goalId: "goal-1",
-          name: "Dream goal trigger: goal-1",
-          trigger: { type: "cron", expression: "0 9 * * *", timezone: "UTC" },
-          proposal: "0 9 * * *",
-          reason: "Manual execution clusters around 09:00 UTC.",
-          confidence: 0.8,
-          status: "pending",
-        },
-      ],
-    });
+    await seedSuggestions([
+      {
+        id: "dream-1",
+        type: "goal_trigger",
+        goalId: "goal-1",
+        name: "Dream goal trigger: goal-1",
+        trigger: { type: "cron", expression: "0 9 * * *", timezone: "UTC" },
+        proposal: "0 9 * * *",
+        reason: "Manual execution clusters around 09:00 UTC.",
+        confidence: 0.8,
+        status: "pending",
+      },
+    ]);
 
     const store = new DreamScheduleSuggestionStore(tempDir);
     const engine = new ScheduleEngine({ baseDir: tempDir });
@@ -88,22 +78,19 @@ describe("DreamScheduleSuggestionStore", () => {
   });
 
   it("reuses an equivalent existing schedule entry instead of duplicating it", async () => {
-    await writeSuggestions({
-      generated_at: "2026-04-08T00:00:00.000Z",
-      suggestions: [
-        {
-          id: "dream-dup",
-          type: "goal_trigger",
-          goalId: "goal-1",
-          name: "Dream goal trigger: goal-1",
-          trigger: { type: "cron", expression: "0 9 * * *", timezone: "UTC" },
-          proposal: "0 9 * * *",
-          reason: "Manual execution clusters around 09:00 UTC.",
-          confidence: 0.8,
-          status: "pending",
-        },
-      ],
-    });
+    await seedSuggestions([
+      {
+        id: "dream-dup",
+        type: "goal_trigger",
+        goalId: "goal-1",
+        name: "Dream goal trigger: goal-1",
+        trigger: { type: "cron", expression: "0 9 * * *", timezone: "UTC" },
+        proposal: "0 9 * * *",
+        reason: "Manual execution clusters around 09:00 UTC.",
+        confidence: 0.8,
+        status: "pending",
+      },
+    ]);
 
     const engine = new ScheduleEngine({ baseDir: tempDir });
     await engine.loadEntries();
@@ -132,20 +119,17 @@ describe("DreamScheduleSuggestionStore", () => {
   });
 
   it("marks suggestions as rejected or dismissed", async () => {
-    await writeSuggestions({
-      generated_at: "2026-04-08T00:00:00.000Z",
-      suggestions: [
-        {
-          id: "dream-reject",
-          type: "goal_trigger",
-          goalId: "goal-1",
-          proposal: "0 9 * * *",
-          reason: "Manual execution clusters around 09:00 UTC.",
-          confidence: 0.8,
-          status: "pending",
-        },
-      ],
-    });
+    await seedSuggestions([
+      {
+        id: "dream-reject",
+        type: "goal_trigger",
+        goalId: "goal-1",
+        proposal: "0 9 * * *",
+        reason: "Manual execution clusters around 09:00 UTC.",
+        confidence: 0.8,
+        status: "pending",
+      },
+    ]);
 
     const store = new DreamScheduleSuggestionStore(tempDir);
     const rejected = await store.markDecision("dream-reject", "rejected", "not useful");

@@ -135,6 +135,7 @@ interface ExperimentMetadata {
   validation_checklist: typeof KAGGLE_VALIDATION_CHECKLIST;
   process: {
     session_id: string;
+    metadata_ref?: string;
     metadata_path?: string;
     metadata_state_relative_path?: string;
   };
@@ -350,7 +351,6 @@ export class KaggleExperimentStartTool extends KaggleToolBase<KaggleExperimentSt
           metricsPath,
           resolved.reportPath,
           resolved.nextActionPath,
-          ...(session.metadataPath ? [session.metadataPath] : []),
           ...extraRefs,
         ],
       };
@@ -965,8 +965,7 @@ function experimentMetadata(
     validation_checklist: KAGGLE_VALIDATION_CHECKLIST,
     process: {
       session_id: session.session_id,
-      metadata_path: session.metadataPath,
-      metadata_state_relative_path: session.metadataPath ? stateRelativePath(session.metadataPath) : undefined,
+      metadata_ref: session.metadataRef,
     },
     strategy_id: input.strategy_id ?? null,
     task_id: input.task_id ?? null,

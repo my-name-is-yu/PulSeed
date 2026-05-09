@@ -17,6 +17,7 @@ import type {
 } from "../../../base/llm/llm-client.js";
 import { saveDreamConfig } from "../../../platform/dream/dream-config.js";
 import { upsertDreamPlaybook } from "../../../platform/dream/playbook-memory.js";
+import { StrategyDreamStateStore } from "../../../runtime/store/strategy-dream-state-store.js";
 import { createMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
 import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 import { makeGoal } from "../../../../tests/helpers/fixtures.js";
@@ -496,35 +497,29 @@ describe("TaskLifecycle", async () => {
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       } as any);
-      await stateManager.writeRaw("dream/workflows.json", {
-        version: "dream-workflows-v1",
-        generated_at: new Date().toISOString(),
-        workflows: [
-          {
-            workflow_id: "dream-workflow:test-stall",
-            type: "stall_recovery",
-            title: "Stall recovery: confidence stall",
-            description: "Change strategy when verification confidence stalls.",
-            applicability: {
-              goal_ids: ["goal-42"],
-              task_ids: [],
-              event_types: ["StallDetected"],
-              signals: ["confidence_stall", "verification"],
-            },
-            preconditions: ["A stall was detected."],
-            steps: ["Pause repeated attempts.", "Inspect the verification signal.", "Change strategy."],
-            failure_modes: ["confidence_stall"],
-            recovery_steps: ["Re-plan before retrying."],
-            evidence_refs: ["dream/events/goal-42.jsonl#L1"],
-            evidence_count: 2,
-            success_count: 0,
-            failure_count: 2,
-            confidence: 0.73,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          },
-        ],
-      });
+      await new StrategyDreamStateStore(stateManager.getBaseDir()).saveDreamWorkflows([{
+        workflow_id: "dream-workflow:test-stall",
+        type: "stall_recovery",
+        title: "Stall recovery: confidence stall",
+        description: "Change strategy when verification confidence stalls.",
+        applicability: {
+          goal_ids: ["goal-42"],
+          task_ids: [],
+          event_types: ["StallDetected"],
+          signals: ["confidence_stall", "verification"],
+        },
+        preconditions: ["A stall was detected."],
+        steps: ["Pause repeated attempts.", "Inspect the verification signal.", "Change strategy."],
+        failure_modes: ["confidence_stall"],
+        recovery_steps: ["Re-plan before retrying."],
+        evidence_refs: ["dream/events/goal-42.jsonl#L1"],
+        evidence_count: 2,
+        success_count: 0,
+        failure_count: 2,
+        confidence: 0.73,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      }]);
       await saveDreamConfig({
         activation: {
           verifiedPlannerHintsOnly: true,
@@ -617,35 +612,29 @@ describe("TaskLifecycle", async () => {
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       } as any);
-      await stateManager.writeRaw("dream/workflows.json", {
-        version: "dream-workflows-v1",
-        generated_at: new Date().toISOString(),
-        workflows: [
-          {
-            workflow_id: "dream-workflow:test-stall",
-            type: "stall_recovery",
-            title: "Stall recovery: confidence stall",
-            description: "Change strategy when verification confidence stalls.",
-            applicability: {
-              goal_ids: ["goal-42"],
-              task_ids: [],
-              event_types: ["StallDetected"],
-              signals: ["confidence_stall", "verification"],
-            },
-            preconditions: ["A stall was detected."],
-            steps: ["Pause repeated attempts.", "Inspect the verification signal.", "Change strategy."],
-            failure_modes: ["confidence_stall"],
-            recovery_steps: ["Re-plan before retrying."],
-            evidence_refs: ["dream/events/goal-42.jsonl#L1"],
-            evidence_count: 2,
-            success_count: 0,
-            failure_count: 2,
-            confidence: 0.73,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          },
-        ],
-      });
+      await new StrategyDreamStateStore(stateManager.getBaseDir()).saveDreamWorkflows([{
+        workflow_id: "dream-workflow:test-stall",
+        type: "stall_recovery",
+        title: "Stall recovery: confidence stall",
+        description: "Change strategy when verification confidence stalls.",
+        applicability: {
+          goal_ids: ["goal-42"],
+          task_ids: [],
+          event_types: ["StallDetected"],
+          signals: ["confidence_stall", "verification"],
+        },
+        preconditions: ["A stall was detected."],
+        steps: ["Pause repeated attempts.", "Inspect the verification signal.", "Change strategy."],
+        failure_modes: ["confidence_stall"],
+        recovery_steps: ["Re-plan before retrying."],
+        evidence_refs: ["dream/events/goal-42.jsonl#L1"],
+        evidence_count: 2,
+        success_count: 0,
+        failure_count: 2,
+        confidence: 0.73,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      }]);
       await saveDreamConfig({
         activation: {
           verifiedPlannerHintsOnly: false,
