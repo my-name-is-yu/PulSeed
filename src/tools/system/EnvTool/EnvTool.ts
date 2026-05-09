@@ -6,7 +6,7 @@ import { TAGS, MAX_OUTPUT_CHARS, PERMISSION_LEVEL } from "./constants.js";
 export const EnvInputSchema = z.object({
   query: z.enum(["node_version", "platform", "env_var", "cwd", "memory", "uptime"]).default("platform"),
   varName: z.string().optional(),
-});
+}).strict();
 export type EnvInput = z.infer<typeof EnvInputSchema>;
 
 export interface EnvOutput {

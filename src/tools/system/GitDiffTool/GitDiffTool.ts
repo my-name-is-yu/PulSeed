@@ -9,7 +9,7 @@ export const GitDiffInputSchema = z.object({
   path: z.string().optional(),
   ref: z.string().optional(),
   maxLines: z.number().int().min(1).max(1000).default(200),
-});
+}).strict();
 export type GitDiffInput = z.infer<typeof GitDiffInputSchema>;
 
 const SAFE_REF_RE = /^[a-zA-Z0-9._/~^-]+$/;

@@ -8,7 +8,7 @@ export const ShellCommandInputSchema = z.object({
   cwd: z.string().optional(),
   timeoutMs: ShellTimeoutMsSchema,
   description: z.string().optional(),
-});
+}).strict();
 export type ShellCommandInput = z.infer<typeof ShellCommandInputSchema>;
 
 export class ShellCommandTool implements ITool<ShellCommandInput> {

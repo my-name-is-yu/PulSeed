@@ -14,7 +14,7 @@ export const GitLogInputSchema = z.object({
   author: z.string().optional(),
   path: z.string().optional(),
   format: z.enum(["oneline", "full"]).default("oneline"),
-});
+}).strict();
 export type GitLogInput = z.infer<typeof GitLogInputSchema>;
 
 export interface GitLogEntryFull {
