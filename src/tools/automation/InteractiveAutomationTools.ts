@@ -2,11 +2,11 @@ import { z } from "zod";
 import type { InteractiveAutomationCapability, InteractiveAutomationProviderFamily, InteractiveAutomationRegistry } from "../../runtime/interactive-automation/index.js";
 import {
   BrowserSessionResolver,
-  BrowserSessionStore,
-  RuntimeAuthHandoffStore,
+  type BrowserSessionStore,
+  type RuntimeAuthHandoffStore,
   type BrowserSessionScope,
 } from "../../runtime/interactive-automation/index.js";
-import {
+import type {
   BackpressureController,
   CircuitBreakerController,
 } from "../../runtime/guardrails/index.js";
@@ -15,6 +15,21 @@ import type { ITool, PermissionCheckResult, ToolCallContext, ToolDescriptionCont
 const TAGS = ["automation", "interactive"];
 const MAX_OUTPUT_CHARS = 12_000;
 const DEFAULT_DENIED_APPS = ["Password Manager", "Banking", "System Settings"];
+const MAX_DESKTOP_CLICK_COUNT = 10;
+
+function desktopCoordinateSchema() {
+  return z.number()
+    .finite()
+    .min(Number.MIN_SAFE_INTEGER)
+    .max(Number.MAX_SAFE_INTEGER);
+}
+
+const DesktopClickCountSchema = z.number()
+  .finite()
+  .int()
+  .min(1)
+  .max(MAX_DESKTOP_CLICK_COUNT)
+  .default(1);
 
 export interface InteractiveAutomationToolPolicy {
   requireApproval: "always" | "write" | "destructive";
@@ -42,10 +57,10 @@ export type DesktopGetAppStateInput = z.infer<typeof DesktopGetAppStateInputSche
 export const DesktopClickInputSchema = ProviderInputSchema.extend({
   app: z.string().min(1),
   elementId: z.string().optional(),
-  x: z.number().optional(),
-  y: z.number().optional(),
+  x: desktopCoordinateSchema().optional(),
+  y: desktopCoordinateSchema().optional(),
   button: z.enum(["left", "right", "middle"]).default("left"),
-  clickCount: z.number().int().positive().default(1),
+  clickCount: DesktopClickCountSchema,
 });
 export type DesktopClickInput = z.infer<typeof DesktopClickInputSchema>;
 
