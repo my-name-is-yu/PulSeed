@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { execFileSync } from "node:child_process";
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { z } from "zod";
 import { ChatRunner } from "../chat-runner.js";
 import type { ChatRunnerDeps } from "../chat-runner-contracts.js";
@@ -39,6 +39,27 @@ import { createSetupRuntimeControlTools } from "../../../tools/runtime/SetupRunt
 import type { ApprovalRequest, ToolCallContext } from "../../../tools/types.js";
 import { createMockLLMClient, createSingleMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
 import { createTextUserInput } from "../user-input.js";
+
+const originalPulseedHome = process.env["PULSEED_HOME"];
+let testPulseedHome: string | null = null;
+
+beforeEach(() => {
+  testPulseedHome = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-runner-home-"));
+  process.env["PULSEED_HOME"] = testPulseedHome;
+});
+
+afterEach(() => {
+  if (originalPulseedHome === undefined) {
+    delete process.env["PULSEED_HOME"];
+  } else {
+    process.env["PULSEED_HOME"] = originalPulseedHome;
+  }
+  if (testPulseedHome) {
+    fs.rmSync(testPulseedHome, { recursive: true, force: true });
+    testPulseedHome = null;
+  }
+});
+
 // Mock context-provider so tests don't walk the real filesystem
 vi.mock("../../../platform/observation/context-provider.js", () => ({
   resolveGitRoot: (cwd: string) => cwd,
