@@ -175,6 +175,26 @@ describe("cmdDaemonStatus", () => {
     expect(output).toContain("approval required before resume, approval pending, schedule-projected, wait_resume");
   });
 
+  it("rejects persisted daemon state with unsafe count metadata", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const state = {
+      pid: process.pid,
+      started_at: "2026-04-24T11:00:00.000Z",
+      last_loop_at: "2026-04-24T12:00:00.000Z",
+      loop_count: Number.MAX_SAFE_INTEGER + 1,
+      active_goals: ["goal-unsafe"],
+      status: "running",
+      crash_count: 0,
+      last_error: null,
+    };
+    fs.writeFileSync(path.join(tmpDir, "daemon-state.json"), JSON.stringify(state));
+
+    await cmdDaemonStatus([]);
+
+    expect(errorSpy.mock.calls[0]?.[0]).toContain("Invalid daemon state");
+    expect(consoleSpy).not.toHaveBeenCalled();
+  });
+
   it("prints runtime KPI status when health snapshot exists", async () => {
     const now = Date.now();
     fs.mkdirSync(path.join(tmpDir, "runtime", "health"), { recursive: true });
