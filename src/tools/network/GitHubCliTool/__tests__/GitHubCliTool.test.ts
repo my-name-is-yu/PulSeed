@@ -98,6 +98,17 @@ describe("GitHubReadTool", () => {
       ])
     );
   });
+
+  it("rejects unknown fields and exports a closed model-facing schema", () => {
+    expect(GitHubReadInputSchema.safeParse({
+      action: "pr_view",
+      pr: 12,
+      unexpected: true,
+    }).success).toBe(false);
+
+    const parameters = toToolDefinition(new GitHubReadTool()).function.parameters as Record<string, unknown>;
+    expect(parameters.additionalProperties).toBe(false);
+  });
 });
 
 describe("GitHubPrCreateTool", () => {
@@ -150,5 +161,16 @@ describe("GitHubPrCreateTool", () => {
     const input = GitHubPrCreateInputSchema.parse({ title: "Add feature", body: "Body", fill: true });
     const permission = await tool.checkPermissions(input);
     expect(permission.status).toBe("denied");
+  });
+
+  it("rejects unknown fields and exports a closed model-facing schema", () => {
+    expect(GitHubPrCreateInputSchema.safeParse({
+      title: "Add feature",
+      body: "Body",
+      unexpected: true,
+    }).success).toBe(false);
+
+    const parameters = toToolDefinition(new GitHubPrCreateTool()).function.parameters as Record<string, unknown>;
+    expect(parameters.additionalProperties).toBe(false);
   });
 });

@@ -26,7 +26,7 @@ export const GitHubReadInputSchema = z.object({
   patch: z.boolean().default(true),
   maxChars: z.number().int().min(100).max(100_000).default(MAX_OUTPUT_CHARS),
   timeoutMs: z.number().int().min(1_000).max(120_000).default(30_000),
-});
+}).strict();
 export type GitHubReadInput = z.infer<typeof GitHubReadInputSchema>;
 
 export const GitHubPrCreateInputSchema = z.object({
@@ -38,7 +38,7 @@ export const GitHubPrCreateInputSchema = z.object({
   draft: z.boolean().default(true),
   fill: z.boolean().default(false),
   timeoutMs: z.number().int().min(1_000).max(120_000).default(30_000),
-});
+}).strict();
 export type GitHubPrCreateInput = z.infer<typeof GitHubPrCreateInputSchema>;
 
 export interface GitHubCliOutput {
