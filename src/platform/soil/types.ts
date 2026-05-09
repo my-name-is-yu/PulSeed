@@ -64,6 +64,7 @@ export type SoilApprovalStatus = z.infer<typeof SoilApprovalStatusSchema>;
 
 export const SoilSourceTypeSchema = z.enum([
   "runtime_json",
+  "runtime_db",
   "control_db",
   "controlled_md",
   "soil_md",

@@ -7,9 +7,9 @@ import type { StateManager } from "../../base/state/state-manager.js";
 import type { VectorIndex } from "./vector-index.js";
 import type { DomainKnowledge } from "../../base/types/knowledge.js";
 import { DomainKnowledgeSchema } from "../../base/types/knowledge.js";
+import { KNOWLEDGE_MEMORY_SHARED_KB_PATH } from "./knowledge-memory-state-store.js";
 
-// ─── Shared KB path (mirrored from knowledge-manager) ───
-const SHARED_KB_PATH = "memory/shared-knowledge/entries.json";
+const SHARED_KB_PATH = KNOWLEDGE_MEMORY_SHARED_KB_PATH;
 
 // ─── Deps interfaces ───
 

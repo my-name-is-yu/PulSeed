@@ -10,6 +10,7 @@ import { ScheduleEntryStore } from "../../../runtime/schedule/entry-store.js";
 import { ChatSessionDataStore } from "../../chat/chat-session-data-store.js";
 import { AgentLoopSessionStateCatalog } from "../../../orchestrator/execution/agent-loop/agent-loop-session-db-store.js";
 import { makeGoal } from "../../../../tests/helpers/fixtures.js";
+import { StateManager } from "../../../base/state/state-manager.js";
 
 // ─── cmdDoctor tests ───
 //
@@ -1267,6 +1268,79 @@ describe("cmdDoctor summary counts", () => {
     const allOutput = consoleSpy.mock.calls.map((c: unknown[]) => c[0] as string).join("\n");
     expect(allOutput).toContain("Repair chat import: chat sessions=1");
     expect(allOutput).toContain("agentloop states=1");
+    expect(checkControlDatabase(tmpDir).detail).toContain("legacy import record");
+  });
+
+  it("imports legacy knowledge and memory state through doctor repair", async () => {
+    const origHome = process.env["PULSEED_HOME"];
+    process.env["PULSEED_HOME"] = tmpDir;
+    const entry = {
+      entry_id: "doctor-knowledge-entry",
+      question: "Where should durable knowledge state live?",
+      answer: "In typed Soil SQLite records.",
+      sources: [{ type: "document", reference: "doctor-test", reliability: "high" }],
+      confidence: 0.9,
+      acquired_at: "2026-05-09T00:00:00.000Z",
+      acquisition_task_id: "task-doctor",
+      superseded_by: null,
+      tags: ["database-first"],
+      embedding_id: null,
+    };
+    fs.mkdirSync(path.join(tmpDir, "goals", "goal-doctor"), { recursive: true });
+    fs.mkdirSync(path.join(tmpDir, "memory", "shared-knowledge"), { recursive: true });
+    fs.mkdirSync(path.join(tmpDir, "memory", "agent-memory"), { recursive: true });
+    fs.writeFileSync(path.join(tmpDir, "goals", "goal-doctor", "domain_knowledge.json"), JSON.stringify({
+      goal_id: "goal-doctor",
+      domain: "doctor",
+      entries: [entry],
+      last_updated: "2026-05-09T00:00:00.000Z",
+    }));
+    fs.writeFileSync(path.join(tmpDir, "memory", "shared-knowledge", "entries.json"), JSON.stringify([{
+      ...entry,
+      source_goal_ids: ["goal-doctor"],
+      domain_stability: "moderate",
+      revalidation_due_at: null,
+    }]));
+    fs.writeFileSync(path.join(tmpDir, "memory", "agent-memory", "entries.json"), JSON.stringify({
+      entries: [{
+        id: "memory-doctor",
+        key: "doctor.knowledge.repair",
+        value: "Doctor repair imports legacy knowledge into Soil SQLite.",
+        tags: ["database-first"],
+        memory_type: "fact",
+        status: "compiled",
+        created_at: "2026-05-09T00:00:00.000Z",
+        updated_at: "2026-05-09T00:00:00.000Z",
+      }],
+      corrections: [],
+      last_consolidated_at: "2026-05-09T00:00:00.000Z",
+    }));
+
+    try {
+      const exitCode = await cmdDoctor(["--repair"]);
+      expect([0, 1]).toContain(exitCode);
+    } finally {
+      if (origHome !== undefined) {
+        process.env["PULSEED_HOME"] = origHome;
+      } else {
+        delete process.env["PULSEED_HOME"];
+      }
+    }
+
+    const stateManager = new StateManager(tmpDir);
+    await stateManager.init();
+    expect(await stateManager.readRaw("goals/goal-doctor/domain_knowledge.json")).toMatchObject({
+      goal_id: "goal-doctor",
+      entries: [{ entry_id: "doctor-knowledge-entry" }],
+    });
+    expect(await stateManager.readRaw("memory/shared-knowledge/entries.json")).toMatchObject([
+      { entry_id: "doctor-knowledge-entry", source_goal_ids: ["goal-doctor"] },
+    ]);
+    expect(await stateManager.readRaw("memory/agent-memory/entries.json")).toMatchObject({
+      entries: [{ id: "memory-doctor", key: "doctor.knowledge.repair" }],
+    });
+    const allOutput = consoleSpy.mock.calls.map((c: unknown[]) => c[0] as string).join("\n");
+    expect(allOutput).toContain("Repair knowledge/memory import: domain=1, shared=1, agent memory=1");
     expect(checkControlDatabase(tmpDir).detail).toContain("legacy import record");
   });
 

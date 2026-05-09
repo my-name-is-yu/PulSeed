@@ -187,6 +187,12 @@ export type {
   RuntimeEvidenceStrategyDreamLegacyImportReport,
 } from "./runtime-evidence-strategy-dream-state-migration.js";
 export {
+  importLegacyKnowledgeMemoryState,
+} from "./knowledge-memory-state-migration.js";
+export type {
+  KnowledgeMemoryLegacyImportReport,
+} from "./knowledge-memory-state-migration.js";
+export {
   RuntimeExperimentQueueItemSchema,
   RuntimeExperimentQueueItemStatusSchema,
   RuntimeExperimentQueuePhaseSchema,

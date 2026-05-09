@@ -132,9 +132,9 @@ async function readIdentitySource(baseDir: string, fileName: string, fallback: s
 
 export async function projectDomainKnowledgeToSoil(input: SoilProjectionOptions & { goalId: string; domainKnowledge: DomainKnowledge }): Promise<void> {
   const generatedAt = nowIso(input.clock);
-  const sourcePath = path.join(input.baseDir, "goals", input.goalId, "domain_knowledge.json");
+  const sourcePath = `soil-sqlite://knowledge/domain/${input.goalId}`;
   const sourceHash = await sourceHashFromFileOrValue(sourcePath, input.domainKnowledge);
-  const sourceRefs = sourceRefsFromPaths("runtime_json", [{ sourcePath, sourceHash, reliability: "high" }]);
+  const sourceRefs = sourceRefsFromPaths("runtime_db", [{ sourcePath, sourceHash, reliability: "high" }]);
   const frontmatter = baseFrontmatter({
     soilId: `knowledge/domain/${input.goalId}`,
     title: `Domain knowledge: ${input.domainKnowledge.domain}`,
@@ -144,7 +144,7 @@ export async function projectDomainKnowledgeToSoil(input: SoilProjectionOptions 
     updatedAt: input.domainKnowledge.last_updated,
     generatedAt,
     sourceRefs,
-    sourceTruth: "runtime_json",
+    sourceTruth: "runtime_db",
     renderedFrom: "knowledge-manager",
     goalId: input.goalId,
     domain: input.domainKnowledge.domain,
@@ -171,9 +171,9 @@ export async function projectDomainKnowledgeToSoil(input: SoilProjectionOptions 
 
 export async function projectSharedKnowledgeToSoil(input: SoilProjectionOptions & { entries: SharedKnowledgeEntry[] }): Promise<void> {
   const generatedAt = nowIso(input.clock);
-  const sourcePath = path.join(input.baseDir, "memory", "shared-knowledge", "entries.json");
+  const sourcePath = "soil-sqlite://knowledge/shared";
   const sourceHash = await sourceHashFromFileOrValue(sourcePath, input.entries);
-  const sourceRefs = sourceRefsFromPaths("runtime_json", [{ sourcePath, sourceHash, reliability: "high" }]);
+  const sourceRefs = sourceRefsFromPaths("runtime_db", [{ sourcePath, sourceHash, reliability: "high" }]);
   const latestUpdatedAt = sortByDate(input.entries, (entry) => entry.acquired_at).at(0)?.acquired_at ?? generatedAt;
   const earliestCreatedAt = input.entries.map((entry) => entry.acquired_at).sort().at(0) ?? generatedAt;
   const frontmatter = baseFrontmatter({
@@ -185,7 +185,7 @@ export async function projectSharedKnowledgeToSoil(input: SoilProjectionOptions 
     updatedAt: latestUpdatedAt,
     generatedAt,
     sourceRefs,
-    sourceTruth: "runtime_json",
+    sourceTruth: "runtime_db",
     renderedFrom: "knowledge-manager",
     domain: "shared",
     summary: `${input.entries.length} shared entries`,
@@ -233,7 +233,7 @@ async function projectMemoryCategoryPage(
   entries: AgentMemoryEntry[]
 ): Promise<void> {
   const generatedAt = nowIso(input.clock);
-  const sourcePath = path.join(input.baseDir, "memory", "agent-memory", "entries.json");
+  const sourcePath = "soil-sqlite://memory/agent";
   const sourceHash = await sourceHashFromFileOrValue(sourcePath, entries);
   const frontmatter = baseFrontmatter({
     soilId: `memory/${category}`,
@@ -243,8 +243,8 @@ async function projectMemoryCategoryPage(
     createdAt: entries.map((entry) => entry.created_at).sort().at(0) ?? generatedAt,
     updatedAt: entries.map((entry) => entry.updated_at).sort().at(-1) ?? generatedAt,
     generatedAt,
-    sourceRefs: sourceRefsFromPaths("runtime_json", [{ sourcePath, sourceHash, reliability: "high" }]),
-    sourceTruth: "runtime_json",
+    sourceRefs: sourceRefsFromPaths("runtime_db", [{ sourcePath, sourceHash, reliability: "high" }]),
+    sourceTruth: "runtime_db",
     renderedFrom: "memory-store",
     domain: "agent-memory",
     summary: `${entries.length} ${category} entries`,
@@ -263,9 +263,9 @@ async function projectMemoryCategoryPage(
 export async function projectAgentMemoryToSoil(input: SoilProjectionOptions & { store: AgentMemoryStore }): Promise<void> {
   const store = AgentMemoryStoreSchema.parse(input.store);
   const generatedAt = nowIso(input.clock);
-  const sourcePath = path.join(input.baseDir, "memory", "agent-memory", "entries.json");
+  const sourcePath = "soil-sqlite://memory/agent";
   const sourceHash = await sourceHashFromFileOrValue(sourcePath, store);
-  const sourceRefs = sourceRefsFromPaths("runtime_json", [{ sourcePath, sourceHash, reliability: "high" }]);
+  const sourceRefs = sourceRefsFromPaths("runtime_db", [{ sourcePath, sourceHash, reliability: "high" }]);
   const createdAt = sortByDate(store.entries, (entry) => entry.created_at).at(-1)?.created_at ?? generatedAt;
   const updatedAt = sortByDate(store.entries, (entry) => entry.updated_at).at(0)?.updated_at ?? generatedAt;
   const planningEligibleEntries = store.entries.filter(isPlanningEligibleMemoryEntry);
@@ -280,7 +280,7 @@ export async function projectAgentMemoryToSoil(input: SoilProjectionOptions & { 
     updatedAt,
     generatedAt,
     sourceRefs,
-    sourceTruth: "runtime_json",
+    sourceTruth: "runtime_db",
     renderedFrom: "memory-store",
     domain: "agent-memory",
     summary: `${planningEligibleEntries.length} planning-eligible entries`,

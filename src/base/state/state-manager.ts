@@ -28,6 +28,7 @@ const MAX_HISTORY_ENTRIES = 500;
 type GoalTaskStateStore = import("../../runtime/store/goal-task-state-store.js").GoalTaskStateStore;
 type StrategyDreamStateStore = import("../../runtime/store/strategy-dream-state-store.js").StrategyDreamStateStore;
 type ProcessSessionStateStore = import("../../runtime/store/process-session-state-store.js").ProcessSessionStateStore;
+type KnowledgeMemoryStateStore = import("../../platform/knowledge/knowledge-memory-state-store.js").KnowledgeMemoryStateStore;
 
 function normalizeRawStatePath(relativePath: string): string[] {
   return relativePath.replace(/\\/g, "/").replace(/^\/+/, "").split("/").filter(Boolean);
@@ -56,6 +57,13 @@ function isProcessSessionDurableStatePath(relativePath: string): boolean {
   return parts[0] === "runtime" && parts[1] === "process-sessions" && parts.length === 3 && parts[2]!.endsWith(".json");
 }
 
+function isKnowledgeMemoryDurableStatePath(relativePath: string): boolean {
+  const parts = normalizeRawStatePath(relativePath);
+  if (parts[0] === "goals" && parts.length === 3 && parts[2] === "domain_knowledge.json") return true;
+  const normalized = parts.join("/");
+  return normalized === "memory/agent-memory/entries.json" || normalized === "memory/shared-knowledge/entries.json";
+}
+
 /**
  * StateManager handles persistence of goals, state vectors, observation logs,
  * and gap history under a base directory (default: ~/.pulseed/).
@@ -79,6 +87,7 @@ export class StateManager {
   private goalTaskStateStorePromise: Promise<GoalTaskStateStore> | null = null;
   private strategyDreamStateStorePromise: Promise<StrategyDreamStateStore> | null = null;
   private processSessionStateStorePromise: Promise<ProcessSessionStateStore> | null = null;
+  private knowledgeMemoryStateStorePromise: Promise<KnowledgeMemoryStateStore> | null = null;
   private readonly goalStateWriteQueues = new Map<string, Promise<void>>();
 
   constructor(baseDir?: string, logger?: Logger, options?: { walEnabled?: boolean }) {
@@ -98,6 +107,7 @@ export class StateManager {
     await (await this.goalTaskStateStore()).ensureReady();
     await (await this.strategyDreamStateStore()).ensureReady();
     await (await this.processSessionStateStore()).ensureReady();
+    await (await this.knowledgeMemoryStateStore()).ensureReady();
   }
 
   /** Returns the base directory path */
@@ -261,6 +271,12 @@ export class StateManager {
     this.processSessionStateStorePromise ??= import("../../runtime/store/process-session-state-store.js")
       .then(({ ProcessSessionStateStore }) => new ProcessSessionStateStore(this.baseDir));
     return this.processSessionStateStorePromise;
+  }
+
+  private async knowledgeMemoryStateStore(): Promise<KnowledgeMemoryStateStore> {
+    this.knowledgeMemoryStateStorePromise ??= import("../../platform/knowledge/knowledge-memory-state-store.js")
+      .then(({ KnowledgeMemoryStateStore }) => new KnowledgeMemoryStateStore(this.baseDir));
+    return this.knowledgeMemoryStateStorePromise;
   }
 
   // ─── Goal CRUD ───
@@ -607,6 +623,12 @@ export class StateManager {
         return routed.value;
       }
     }
+    if (isKnowledgeMemoryDurableStatePath(relativePath)) {
+      const routed = await (await this.knowledgeMemoryStateStore()).readRawPath(relativePath);
+      if (routed.handled) {
+        return routed.value;
+      }
+    }
     return this.atomicRead<unknown>(resolved);
   }
 
@@ -639,6 +661,12 @@ export class StateManager {
     }
     if (isProcessSessionDurableStatePath(relativePath)) {
       const routedStore = await this.processSessionStateStore();
+      if (await routedStore.writeRawPath(relativePath, data)) {
+        return;
+      }
+    }
+    if (isKnowledgeMemoryDurableStatePath(relativePath)) {
+      const routedStore = await this.knowledgeMemoryStateStore();
       if (await routedStore.writeRawPath(relativePath, data)) {
         return;
       }

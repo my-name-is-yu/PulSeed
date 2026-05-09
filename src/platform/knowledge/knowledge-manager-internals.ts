@@ -11,9 +11,13 @@ import {
   AgentMemoryStoreSchema,
   type AgentMemoryStore,
 } from "./types/agent-memory.js";
+import {
+  KNOWLEDGE_MEMORY_AGENT_MEMORY_PATH,
+  KNOWLEDGE_MEMORY_SHARED_KB_PATH,
+} from "./knowledge-memory-state-store.js";
 
-export const AGENT_MEMORY_PATH = "memory/agent-memory/entries.json";
-export const SHARED_KB_PATH = "memory/shared-knowledge/entries.json";
+export const AGENT_MEMORY_PATH = KNOWLEDGE_MEMORY_AGENT_MEMORY_PATH;
+export const SHARED_KB_PATH = KNOWLEDGE_MEMORY_SHARED_KB_PATH;
 
 export async function loadAgentMemoryStore(stateManager: StateManager): Promise<AgentMemoryStore> {
   const raw = await stateManager.readRaw(AGENT_MEMORY_PATH);

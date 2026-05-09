@@ -78,10 +78,9 @@ describe("Soil content projections", () => {
 
       const domainPage = await readSoilMarkdownFile(path.join(baseDir, "soil", "knowledge", "domain", "goal-knowledge.md"));
       expect(domainPage?.frontmatter.soil_id).toBe("knowledge/domain/goal-knowledge");
-      expect(domainPage?.frontmatter.source_truth).toBe("runtime_json");
-      expect(domainPage?.frontmatter.source_refs[0]?.source_path).toBe(
-        path.join(baseDir, "goals", "goal-knowledge", "domain_knowledge.json")
-      );
+      expect(domainPage?.frontmatter.source_truth).toBe("runtime_db");
+      expect(domainPage?.frontmatter.source_refs[0]?.source_type).toBe("runtime_db");
+      expect(domainPage?.frontmatter.source_refs[0]?.source_path).toBe("soil-sqlite://knowledge/domain/goal-knowledge");
       expect(domainPage?.body).toContain("Keep the source of truth small and readable.");
 
       const sharedPage = await readSoilMarkdownFile(path.join(baseDir, "soil", "knowledge", "shared", "index.md"));
