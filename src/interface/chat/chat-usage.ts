@@ -1,5 +1,5 @@
 import type { LLMResponse } from "../../base/llm/llm-client.js";
-import type { ChatSessionUsage, ChatUsageCounter } from "./chat-history.js";
+import type { ChatSessionUsage, ChatUsageCounter } from "./chat-usage-contracts.js";
 import {
   addUsageCounter as addSharedUsageCounter,
   addUsageTokenCounts,
