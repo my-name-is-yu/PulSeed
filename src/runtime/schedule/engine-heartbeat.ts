@@ -1,14 +1,11 @@
 import * as net from "node:net";
 import { exec } from "node:child_process";
+import { signalProcessPid } from "../../base/utils/process-pid.js";
 import {
   ScheduleResultSchema,
   type ScheduleEntry,
   type ScheduleResult,
 } from "../types/schedule.js";
-
-function isProcessPidValue(value: unknown): value is number {
-  return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
-}
 
 export async function executeHeartbeatEntry(
   entry: ScheduleEntry,
@@ -101,10 +98,15 @@ function checkTcp(host: string, port: number, timeoutMs: number): Promise<void> 
 }
 
 function checkProcess(pid: unknown): void {
-  if (!isProcessPidValue(pid)) {
-    throw new Error("Process heartbeat pid must be a positive safe integer");
+  const result = signalProcessPid(pid, 0);
+  switch (result.status) {
+    case "sent":
+      return;
+    case "missing_process":
+      throw new Error(`Process heartbeat pid ${result.pid} is not running`);
+    case "unsafe_pid":
+      throw new Error("Process heartbeat pid must be a positive safe integer");
   }
-  process.kill(pid, 0);
 }
 
 function checkCustom(command: string, timeoutMs: number): Promise<void> {
