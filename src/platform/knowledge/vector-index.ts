@@ -174,10 +174,14 @@ export class VectorIndex {
     }
     try {
       const raw = await fsp.readFile(this.indexPath, "utf-8");
-      const parsed = JSON.parse(raw) as Array<EmbeddingEntry>;
+      const parsed = JSON.parse(raw) as unknown;
+      if (!Array.isArray(parsed)) {
+        return true;
+      }
       for (const item of parsed) {
-        const entry = EmbeddingEntrySchema.parse(item);
-        this.entries.set(entry.id, entry);
+        const result = EmbeddingEntrySchema.safeParse(item);
+        if (!result.success) continue;
+        this.entries.set(result.data.id, result.data);
       }
     } catch {
       // Corrupt or empty file — start fresh
