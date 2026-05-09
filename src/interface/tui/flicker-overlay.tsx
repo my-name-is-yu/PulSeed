@@ -32,8 +32,9 @@ const OPTIONS: FlickerOption[] = [
 ];
 
 export function FlickerOverlay({ onClose }: FlickerOverlayProps): React.ReactElement {
-  const [selectedIndex, setSelectedIndex] = useState(0);
-  const [activeValue, setActiveValue] = useState<boolean | null>(null);
+  const defaultSelectedIndex = OPTIONS.findIndex((option) => option.value === DEFAULT_CONFIG.no_flicker);
+  const [selectedIndex, setSelectedIndex] = useState(defaultSelectedIndex >= 0 ? defaultSelectedIndex : 0);
+  const [activeValue, setActiveValue] = useState<boolean>(DEFAULT_CONFIG.no_flicker);
   const [saved, setSaved] = useState(false);
 
   // Load current config on mount
