@@ -621,6 +621,7 @@ describe("RunSpec confirmation", () => {
     const proposal = formatRunSpecSetupProposal(spec!);
 
     expect(proposal).toContain("Proposed long-running work");
+    expect(proposal).toContain("Budget: trial limit unknown; 24 hours wall-clock budget from the deadline; resident work runs until the deadline");
     expect(proposal).toContain("Submissions: ask before doing this");
     expect(proposal).toContain("Publishing: not specified");
     expect(proposal).toContain("External actions: ask before doing this");
@@ -631,11 +632,48 @@ describe("RunSpec confirmation", () => {
 
     const diagnosticProposal = formatRunSpecSetupProposal(spec!, { diagnostic: true });
     expect(diagnosticProposal).toContain(`Proposed long-running run: ${spec!.id}`);
+    expect(diagnosticProposal).toContain("Budget: max_trials=unspecified, max_wall_clock_minutes=1440, resident_policy=until_deadline");
     expect(diagnosticProposal).toContain("Submit policy: approval_required");
     expect(diagnosticProposal).toContain("Publish policy: unspecified");
     expect(diagnosticProposal).toContain("External actions: approval_required");
     expect(diagnosticProposal).toContain("Secret policy: approval_required");
     expect(diagnosticProposal).toContain("Irreversible actions: approval_required");
+  });
+
+  it("shows explicit and unknown RunSpec budgets in confirmation proposals", async () => {
+    const explicit = await deriveRunSpecFromText("Run this with four trials and ninety minutes.", {
+      cwd: "/repo",
+      now: NOW,
+      llmClient: llmDraft({
+        deadline: null,
+        budget: {
+          max_trials: 4,
+          max_wall_clock_minutes: 90,
+          resident_policy: "best_effort",
+        },
+      }),
+    });
+    expect(explicit).not.toBeNull();
+    expect(formatRunSpecSetupProposal(explicit!)).toContain(
+      "Budget: up to 4 trials; 90 minutes wall-clock budget; resident work is best effort",
+    );
+
+    const unknown = await deriveRunSpecFromText("Keep improving this when possible.", {
+      cwd: "/repo",
+      now: NOW,
+      llmClient: llmDraft({
+        deadline: null,
+        budget: {
+          max_trials: null,
+          max_wall_clock_minutes: null,
+          resident_policy: "unknown",
+        },
+      }),
+    });
+    expect(unknown).not.toBeNull();
+    expect(formatRunSpecSetupProposal(unknown!)).toContain(
+      "Budget: trial limit unknown; wall-clock budget unknown; resident policy unknown",
+    );
   });
 });
 

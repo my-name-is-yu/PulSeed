@@ -69,6 +69,11 @@ import { BrowserSessionStore } from "../../runtime/interactive-automation/index.
 import { GuardrailStore } from "../../runtime/guardrails/index.js";
 import { RuntimeOperatorHandoffStore } from "../../runtime/store/operator-handoff-store.js";
 import type { RuntimeOperatorHandoffRecord } from "../../runtime/store/operator-handoff-store.js";
+import { RuntimeBudgetStore } from "../../runtime/store/budget-store.js";
+import {
+  createRuntimeBudgetProjections,
+  type RuntimeBudgetProjection,
+} from "../runtime-budget-summary.js";
 import * as path from "node:path";
 
 export const COMMAND_HELP = `Available commands:
@@ -458,14 +463,16 @@ export class ChatRunnerCommandHandler {
         return { success: false, output: `Goal not found: ${parsedArgs.goalId}`, elapsed_ms: Date.now() - start };
       }
       const registry = createRuntimeSessionRegistry({ stateManager: this.host.deps.stateManager });
-      const [runtimeSnapshot, handoffs] = await Promise.all([
+      const [runtimeSnapshot, handoffs, runtimeBudgets] = await Promise.all([
         registry.snapshot(),
         this.loadOpenOperatorHandoffsFromRuntime(),
+        this.loadRuntimeBudgetsFromRuntime(),
       ]);
       const summaryLines = isCurrentGoalCandidate(goal)
         ? [formatCurrentGoalSummary(goal, {
           runtimeSnapshot,
           handoffs,
+          runtimeBudgets,
           detail: diagnostic ? "diagnostic" : "default",
         }), ""]
         : [];
@@ -477,9 +484,10 @@ export class ChatRunnerCommandHandler {
     }
 
     const registry = createRuntimeSessionRegistry({ stateManager: this.host.deps.stateManager });
-    const [goals, runtimeSnapshot] = await Promise.all([
+    const [goals, runtimeSnapshot, runtimeBudgets] = await Promise.all([
       this.loadGoals(),
       registry.snapshot(),
+      this.loadRuntimeBudgetsFromRuntime(),
     ]);
     const handoffs = await this.loadOpenOperatorHandoffsFromRuntime();
     const active = this.activeGoals(goals);
@@ -497,11 +505,13 @@ export class ChatRunnerCommandHandler {
       ? formatCurrentGoalSummary(active[0]!, {
         runtimeSnapshot,
         handoffs,
+        runtimeBudgets,
         detail: diagnostic ? "diagnostic" : "default",
       })
       : formatCurrentGoalChoiceList(active, {
         runtimeSnapshot,
         handoffs,
+        runtimeBudgets,
         detail: diagnostic ? "diagnostic" : "default",
       });
     return {
@@ -612,6 +622,15 @@ export class ChatRunnerCommandHandler {
   private async loadOpenOperatorHandoffsFromRuntime(): Promise<RuntimeOperatorHandoffRecord[]> {
     const runtimeRoot = path.join(this.host.deps.stateManager.getBaseDir(), "runtime");
     return new RuntimeOperatorHandoffStore(runtimeRoot).listOpen();
+  }
+
+  private async loadRuntimeBudgetsFromRuntime(): Promise<RuntimeBudgetProjection[]> {
+    try {
+      const store = new RuntimeBudgetStore(path.join(this.host.deps.stateManager.getBaseDir(), "runtime"));
+      return createRuntimeBudgetProjections(store, await store.list());
+    } catch {
+      return [];
+    }
   }
 
   private async loadGuardrailsFromRuntime(): Promise<{
