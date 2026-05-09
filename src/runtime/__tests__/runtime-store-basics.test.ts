@@ -21,6 +21,7 @@ import {
 } from "../store/runtime-journal.js";
 import {
   RuntimeEnvelopeSchema,
+  GoalLeaseRecordSchema,
   RuntimeQueueRecordSchema,
   compactRuntimeHealthKpi,
   evolveRuntimeHealthKpi,
@@ -237,6 +238,41 @@ describe("runtime store basics", () => {
     expect(fs.existsSync(moveTarget)).toBe(false);
 
     expect(record.approval_id).toBe("a-1");
+  });
+
+  it("rejects unsafe queue, envelope, and lease numeric scalars", async () => {
+    const unsafeInteger = Number.MAX_SAFE_INTEGER + 1;
+    const recordPath = path.join(tmpDir, "queue-record.json");
+
+    await expect(saveRuntimeJson(recordPath, RuntimeQueueRecordSchema, {
+      message_id: "msg-unsafe",
+      state: "queued",
+      available_at: unsafeInteger,
+      attempt: 0,
+      updated_at: 1,
+    })).rejects.toThrow();
+
+    expect(RuntimeEnvelopeSchema.safeParse({
+      message_id: "m-unsafe",
+      kind: "event",
+      name: "unsafe",
+      source: "test",
+      priority: "normal",
+      payload: {},
+      created_at: 1,
+      ttl_ms: unsafeInteger,
+      attempt: 0,
+    }).success).toBe(false);
+
+    expect(GoalLeaseRecordSchema.safeParse({
+      goal_id: "goal-1",
+      owner_token: "owner-1",
+      attempt_id: "attempt-1",
+      worker_id: "worker-1",
+      lease_until: unsafeInteger,
+      acquired_at: 1,
+      last_renewed_at: 1,
+    }).success).toBe(false);
   });
 
   it("summarizes component health correctly", () => {

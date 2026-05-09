@@ -4,6 +4,13 @@ import {
   RuntimeControlReplyTargetSchema,
 } from "./runtime-operation-schemas.js";
 
+const RuntimeSafeNonnegativeIntSchema = z.number().int().nonnegative().safe();
+const RuntimeSafePositiveIntSchema = z.number().int().positive().safe();
+const RuntimeSafeFiniteNumberSchema = z.number()
+  .finite()
+  .min(Number.MIN_SAFE_INTEGER)
+  .max(Number.MAX_SAFE_INTEGER);
+
 export const RuntimeEnvelopeKindSchema = z.enum(["event", "command", "approval", "system"]);
 export type RuntimeEnvelopeKind = z.infer<typeof RuntimeEnvelopeKindSchema>;
 
@@ -21,9 +28,9 @@ export const RuntimeEnvelopeSchema = z.object({
   dedupe_key: z.string().optional(),
   priority: RuntimeEnvelopePrioritySchema,
   payload: z.unknown(),
-  created_at: z.number().int().nonnegative(),
-  ttl_ms: z.number().int().positive().optional(),
-  attempt: z.number().int().nonnegative().default(0),
+  created_at: RuntimeSafeNonnegativeIntSchema,
+  ttl_ms: RuntimeSafePositiveIntSchema.optional(),
+  attempt: RuntimeSafeNonnegativeIntSchema.default(0),
 });
 export type RuntimeEnvelope = z.infer<typeof RuntimeEnvelopeSchema>;
 
@@ -41,12 +48,12 @@ export type RuntimeQueueState = z.infer<typeof RuntimeQueueStateSchema>;
 export const RuntimeQueueRecordSchema = z.object({
   message_id: z.string(),
   state: z.enum(["queued", "claimed", "retry_wait", "completed", "deadletter", "cancelled"]),
-  available_at: z.number().int().nonnegative(),
+  available_at: RuntimeSafeNonnegativeIntSchema,
   claimed_by: z.string().optional(),
-  lease_until: z.number().int().nonnegative().optional(),
-  attempt: z.number().int().nonnegative().default(0),
+  lease_until: RuntimeSafeNonnegativeIntSchema.optional(),
+  attempt: RuntimeSafeNonnegativeIntSchema.default(0),
   last_error: z.string().optional(),
-  updated_at: z.number().int().nonnegative(),
+  updated_at: RuntimeSafeNonnegativeIntSchema,
 });
 export type RuntimeQueueRecord = z.infer<typeof RuntimeQueueRecordSchema>;
 
@@ -95,9 +102,9 @@ export const GoalLeaseRecordSchema = z.object({
   owner_token: z.string(),
   attempt_id: z.string(),
   worker_id: z.string(),
-  lease_until: z.number().int().nonnegative(),
-  acquired_at: z.number().int().nonnegative(),
-  last_renewed_at: z.number().int().nonnegative(),
+  lease_until: RuntimeSafeNonnegativeIntSchema,
+  acquired_at: RuntimeSafeNonnegativeIntSchema,
+  last_renewed_at: RuntimeSafeNonnegativeIntSchema,
 });
 export type GoalLeaseRecord = z.infer<typeof GoalLeaseRecordSchema>;
 
@@ -120,9 +127,9 @@ export const ApprovalRecordSchema = z.object({
   request_envelope_id: z.string(),
   correlation_id: z.string(),
   state: ApprovalStateSchema,
-  created_at: z.number().int().nonnegative(),
-  expires_at: z.number().int().nonnegative(),
-  resolved_at: z.number().int().nonnegative().optional(),
+  created_at: RuntimeSafeNonnegativeIntSchema,
+  expires_at: RuntimeSafeNonnegativeIntSchema,
+  resolved_at: RuntimeSafeNonnegativeIntSchema.optional(),
   response_channel: z.string().optional(),
   origin: ApprovalOriginSchema.optional(),
   payload: z.unknown(),
@@ -130,11 +137,11 @@ export const ApprovalRecordSchema = z.object({
 export type ApprovalRecord = z.infer<typeof ApprovalRecordSchema>;
 
 export const OutboxRecordSchema = z.object({
-  seq: z.number().int().positive(),
+  seq: RuntimeSafePositiveIntSchema,
   event_type: z.string(),
   goal_id: z.string().optional(),
   correlation_id: z.string().optional(),
-  created_at: z.number().int().nonnegative(),
+  created_at: RuntimeSafeNonnegativeIntSchema,
   payload: z.unknown(),
 });
 export type OutboxRecord = z.infer<typeof OutboxRecordSchema>;
@@ -184,19 +191,19 @@ export const RuntimeLongRunHealthSummarySchema = z.enum([
 export type RuntimeLongRunHealthSummary = z.infer<typeof RuntimeLongRunHealthSummarySchema>;
 
 const RuntimeLongRunSignalBaseSchema = z.object({
-  checked_at: z.number().int().nonnegative(),
-  observed_at: z.number().int().nonnegative().optional(),
+  checked_at: RuntimeSafeNonnegativeIntSchema,
+  observed_at: RuntimeSafeNonnegativeIntSchema.optional(),
   reason: z.string().optional(),
 });
 
 export const RuntimeLongRunHealthSignalsSchema = z.object({
   process: RuntimeLongRunSignalBaseSchema.extend({
     status: RuntimeLongRunProcessStatusSchema,
-    pid: z.number().int().positive().optional(),
+    pid: RuntimeSafePositiveIntSchema.optional(),
   }),
   child_activity: RuntimeLongRunSignalBaseSchema.extend({
     status: RuntimeLongRunChildActivityStatusSchema,
-    active_count: z.number().int().nonnegative().optional(),
+    active_count: RuntimeSafeNonnegativeIntSchema.optional(),
   }),
   log_freshness: RuntimeLongRunSignalBaseSchema.extend({
     status: RuntimeLongRunFreshnessStatusSchema,
@@ -214,34 +221,34 @@ export const RuntimeLongRunHealthSignalsSchema = z.object({
     status: RuntimeLongRunMetricProgressStatusSchema,
     metric_name: z.string().optional(),
     direction: z.enum(["maximize", "minimize"]).optional(),
-    previous_value: z.number().optional(),
-    current_value: z.number().optional(),
+    previous_value: RuntimeSafeFiniteNumberSchema.optional(),
+    current_value: RuntimeSafeFiniteNumberSchema.optional(),
   }),
   blocker: RuntimeLongRunSignalBaseSchema.extend({
     status: RuntimeLongRunBlockerStatusSchema,
     active_goal_ids: z.array(z.string()).optional(),
-    pending_approval_count: z.number().int().nonnegative().optional(),
-    goal_scoped_pending_approval_count: z.number().int().nonnegative().optional(),
-    unrelated_pending_approval_count: z.number().int().nonnegative().optional(),
+    pending_approval_count: RuntimeSafeNonnegativeIntSchema.optional(),
+    goal_scoped_pending_approval_count: RuntimeSafeNonnegativeIntSchema.optional(),
+    unrelated_pending_approval_count: RuntimeSafeNonnegativeIntSchema.optional(),
   }),
-  expected_next_checkpoint_at: z.number().int().nonnegative().optional(),
+  expected_next_checkpoint_at: RuntimeSafeNonnegativeIntSchema.optional(),
   resumable: z.boolean().optional(),
 });
 export type RuntimeLongRunHealthSignals = z.infer<typeof RuntimeLongRunHealthSignalsSchema>;
 
 export const RuntimeLongRunHealthSchema = z.object({
   summary: RuntimeLongRunHealthSummarySchema,
-  checked_at: z.number().int().nonnegative(),
+  checked_at: RuntimeSafeNonnegativeIntSchema,
   signals: RuntimeLongRunHealthSignalsSchema,
 });
 export type RuntimeLongRunHealth = z.infer<typeof RuntimeLongRunHealthSchema>;
 
 export const RuntimeHealthCapabilitySchema = z.object({
   status: RuntimeHealthStatusSchema,
-  checked_at: z.number().int().nonnegative(),
-  last_ok_at: z.number().int().nonnegative().optional(),
-  last_degraded_at: z.number().int().nonnegative().optional(),
-  last_failed_at: z.number().int().nonnegative().optional(),
+  checked_at: RuntimeSafeNonnegativeIntSchema,
+  last_ok_at: RuntimeSafeNonnegativeIntSchema.optional(),
+  last_degraded_at: RuntimeSafeNonnegativeIntSchema.optional(),
+  last_failed_at: RuntimeSafeNonnegativeIntSchema.optional(),
   reason: z.string().optional(),
 });
 export type RuntimeHealthCapability = z.infer<typeof RuntimeHealthCapabilitySchema>;
@@ -250,8 +257,8 @@ export const RuntimeHealthKpiSchema = z.object({
   process_alive: RuntimeHealthCapabilitySchema,
   command_acceptance: RuntimeHealthCapabilitySchema,
   task_execution: RuntimeHealthCapabilitySchema,
-  degraded_at: z.number().int().nonnegative().optional(),
-  recovered_at: z.number().int().nonnegative().optional(),
+  degraded_at: RuntimeSafeNonnegativeIntSchema.optional(),
+  recovered_at: RuntimeSafeNonnegativeIntSchema.optional(),
 });
 export type RuntimeHealthKpi = z.infer<typeof RuntimeHealthKpiSchema>;
 
@@ -273,7 +280,7 @@ export interface RuntimeHealthKpiSnapshot {
 export const RuntimeDaemonHealthSchema = z.object({
   status: RuntimeHealthStatusSchema,
   leader: z.boolean(),
-  checked_at: z.number().int().nonnegative(),
+  checked_at: RuntimeSafeNonnegativeIntSchema,
   kpi: RuntimeHealthKpiSchema.optional(),
   long_running: RuntimeLongRunHealthSchema.optional(),
   details: z.record(z.unknown()).optional(),
@@ -281,7 +288,7 @@ export const RuntimeDaemonHealthSchema = z.object({
 export type RuntimeDaemonHealth = z.infer<typeof RuntimeDaemonHealthSchema>;
 
 export const RuntimeComponentsHealthSchema = z.object({
-  checked_at: z.number().int().nonnegative(),
+  checked_at: RuntimeSafeNonnegativeIntSchema,
   components: z.record(RuntimeHealthStatusSchema),
 });
 export type RuntimeComponentsHealth = z.infer<typeof RuntimeComponentsHealthSchema>;
@@ -289,7 +296,7 @@ export type RuntimeComponentsHealth = z.infer<typeof RuntimeComponentsHealthSche
 export const RuntimeHealthSnapshotSchema = z.object({
   status: RuntimeHealthStatusSchema,
   leader: z.boolean(),
-  checked_at: z.number().int().nonnegative(),
+  checked_at: RuntimeSafeNonnegativeIntSchema,
   components: z.record(RuntimeHealthStatusSchema),
   kpi: RuntimeHealthKpiSchema.optional(),
   long_running: RuntimeLongRunHealthSchema.optional(),
@@ -377,7 +384,7 @@ export const CircuitBreakerRecordSchema = z.object({
   provider_id: z.string(),
   service_key: z.string(),
   state: CircuitBreakerStateSchema,
-  failure_count: z.number().int().nonnegative(),
+  failure_count: RuntimeSafeNonnegativeIntSchema,
   last_failure_code: z.string().nullable().optional(),
   last_failure_message: z.string().nullable().optional(),
   last_failure_at: z.string().datetime().nullable().optional(),
