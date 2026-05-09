@@ -7,6 +7,7 @@ import http from "node:http";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { z } from "zod";
 import { DEFAULT_PORT } from "../port-utils.js";
 import { parseOutboxSeq } from "../event/outbox-seq.js";
 import { DaemonConfigSchema, DaemonStateSchema } from "../types/daemon.js";
@@ -75,6 +76,13 @@ type EventHandler = (data: unknown) => void;
 
 const DAEMON_TOKEN_FILENAME = "daemon-token.json";
 const DAEMON_TOKEN_ENV = "PULSEED_DAEMON_TOKEN";
+const DaemonAuthTokenFileSchema = z.object({
+  token: z.string().min(1),
+  host: z.string().min(1).optional(),
+  port: z.number().int().min(1).max(65_535).optional(),
+  pid: z.number().int().positive().safe().optional(),
+  created_at: z.string().datetime().optional(),
+}).strict();
 
 export interface DaemonAuthToken {
   token: string;
@@ -92,13 +100,12 @@ export function getDaemonTokenPath(baseDir?: string): string {
   return path.join(baseDir ?? process.env["PULSEED_HOME"] ?? path.join(os.homedir(), ".pulseed"), DAEMON_TOKEN_FILENAME);
 }
 
-function readDaemonAuthTokenFile(baseDir?: string): Partial<DaemonAuthToken> | null {
+function readDaemonAuthTokenFile(baseDir?: string): DaemonAuthToken | null {
   try {
     const raw = fs.readFileSync(getDaemonTokenPath(baseDir), "utf-8");
     const parsed = JSON.parse(raw) as unknown;
-    return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)
-      ? parsed as Partial<DaemonAuthToken>
-      : null;
+    const validated = DaemonAuthTokenFileSchema.safeParse(parsed);
+    return validated.success ? validated.data : null;
   } catch {
     return null;
   }
