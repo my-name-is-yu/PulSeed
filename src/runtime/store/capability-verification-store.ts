@@ -104,6 +104,7 @@ export class CapabilityVerificationStore {
         evidence_stage: record.evidence_stage,
         result: record.result,
         readiness_effect: readinessEvidenceEffect(record),
+        ...(record.expires_at ? { expires_at: record.expires_at } : {}),
       })
     );
   }

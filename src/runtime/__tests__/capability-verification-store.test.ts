@@ -172,6 +172,25 @@ describe("CapabilityVerificationStore", () => {
     ]);
   });
 
+  it("preserves verification expiry for readiness staleness checks", async () => {
+    const store = new CapabilityVerificationStore(tmpDir);
+    await store.saveVerification(verification({
+      verification_id: "verify:expiring-send-smoke",
+      operation_kind: "send",
+      payload_class: "notification_payload",
+      risk_class: "medium",
+      side_effect_profile: "send",
+      expires_at: "2026-05-10T00:00:00.000Z",
+    }));
+
+    await expect(store.listReadinessEvidenceSummaries()).resolves.toEqual([
+      expect.objectContaining({
+        verification_id: "verify:expiring-send-smoke",
+        expires_at: "2026-05-10T00:00:00.000Z",
+      }),
+    ]);
+  });
+
   it("marks failed production caller-path evidence as readiness-degrading without admission decisions", async () => {
     const failed = verification({
       verification_id: "verify:send-production-failed",
