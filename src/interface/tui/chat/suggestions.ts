@@ -9,9 +9,27 @@ export type Suggestion = {
 
 const COMMANDS: Suggestion[] = [
   {
+    name: "/tend",
+    aliases: [],
+    description: "Start background work from this chat",
+    type: "command",
+  },
+  {
+    name: "/status",
+    aliases: [],
+    description: "Show what PulSeed is doing",
+    type: "command",
+  },
+  {
+    name: "/help",
+    aliases: ["?", "/?"],
+    description: "Show examples and commands",
+    type: "command",
+  },
+  {
     name: "/run",
     aliases: ["/start"],
-    description: "Start the goal loop",
+    description: "Start a selected goal loop",
     type: "command",
   },
   {
@@ -69,12 +87,6 @@ const COMMANDS: Suggestion[] = [
     type: "command",
   },
   {
-    name: "/status",
-    aliases: [],
-    description: "Show goal and runtime status",
-    type: "command",
-  },
-  {
     name: "/report",
     aliases: [],
     description: "Generate a summary report",
@@ -102,18 +114,6 @@ const COMMANDS: Suggestion[] = [
     name: "/track",
     aliases: [],
     description: "Promote this chat to a goal",
-    type: "command",
-  },
-  {
-    name: "/tend",
-    aliases: [],
-    description: "Start daemon-backed work from chat",
-    type: "command",
-  },
-  {
-    name: "/help",
-    aliases: ["?", "/?"],
-    description: "Show help overlay",
     type: "command",
   },
   {

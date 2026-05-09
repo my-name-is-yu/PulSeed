@@ -37,7 +37,19 @@ export function HelpOverlay({ onDismiss }: HelpOverlayProps) {
 
       <Box flexDirection="column" marginTop={1}>
         <Text bold color={theme.overlayHeader}>
-          COMMANDS
+          START NATURALLY
+        </Text>
+        <Box flexDirection="column" marginLeft={2}>
+          <Text>Describe the outcome you want in your own words.</Text>
+          <Text dimColor>{'Example: "organize this project and tell me what to do next"'}</Text>
+          <Text dimColor>{'Example: "keep working on the README until it is ready"'}</Text>
+          <Text dimColor>{'Example: "show what is still running"'}</Text>
+        </Box>
+      </Box>
+
+      <Box flexDirection="column" marginTop={1}>
+        <Text bold color={theme.overlayHeader}>
+          COMMANDS FOR EXACT CONTROL
         </Text>
         <Box flexDirection="column" marginLeft={2}>
           <Box>
@@ -141,7 +153,7 @@ export function HelpOverlay({ onDismiss }: HelpOverlayProps) {
       </Box>
 
       <Text dimColor>{separator}</Text>
-      <Text dimColor>Type naturally to create goals or ask questions.</Text>
+      <Text dimColor>Slash commands are optional shortcuts for exact control.</Text>
       <Text dimColor>Set PULSEED_DISABLE_MOUSE=1 to keep native terminal mouse selection.</Text>
       <Text dimColor>Press ESC to close</Text>
     </Box>

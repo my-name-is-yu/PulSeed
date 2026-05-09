@@ -65,6 +65,12 @@ describe("getMatchingSuggestions", () => {
     expect(names).toContain("/review");
   });
 
+  it("keeps slash-command suggestions secondary to natural blank-state guidance", () => {
+    const names = getMatchingSuggestions("/", []).map((suggestion) => suggestion.name);
+
+    expect(names.slice(0, 3)).toEqual(["/tend", "/status", "/help"]);
+  });
+
   it("hides goal suggestions when a goal arg is fully typed", () => {
     expect(getMatchingSuggestions("/run improve-tests", ["improve-tests"])).toEqual([]);
     expect(getMatchingSuggestions("/start Improve-Tests", ["improve-tests"])).toEqual([]);
@@ -350,6 +356,26 @@ describe("composer sizing", () => {
     expect(matches.length).toBeGreaterThan(0);
     expect(formatSuggestionLabel(matches[0]!).length).toBeGreaterThan(0);
     expect(withMatches).toBeGreaterThan(base);
+  });
+
+  it("renders natural-language empty input guidance before slash-command details", () => {
+    const composer = buildComposerLines({
+      cols: 80,
+      input: "",
+      cursorOffset: 0,
+      bashMode: false,
+      emptyHint: true,
+      matches: [],
+      selectedIdx: 0,
+      copyToast: null,
+      selection: null,
+      collapsedPaste: null,
+    });
+    const hint = composer.lines.find((line) => line.key === "empty-hint")?.text ?? "";
+
+    expect(hint).toContain("Describe what you want to do");
+    expect(hint.indexOf("Describe")).toBeLessThan(hint.indexOf("Type /"));
+    expect(hint).not.toContain("/help for commands");
   });
 });
 

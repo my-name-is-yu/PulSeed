@@ -18,6 +18,7 @@ import type {
 const DEFAULT_PROMPT = "◉";
 const BASH_PROMPT = "!";
 const SUGGESTION_HINT = " arrows to navigate, tab/enter to select, esc to dismiss";
+const EMPTY_INPUT_HINT = " Describe what you want to do. Type / for commands.";
 const INPUT_MARGIN = 4;
 const SELECTION_BACKGROUND = theme.text;
 const SELECTION_FOREGROUND = "#1F2329";
@@ -789,7 +790,7 @@ export function buildComposerLines(args: {
   if (emptyHint) {
     lines.push({
       key: "empty-hint",
-      text: padToWidth(" Type a message or /help for commands", cols),
+      text: padToWidth(EMPTY_INPUT_HINT, cols),
       dim: true,
     });
   }

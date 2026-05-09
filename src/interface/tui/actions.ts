@@ -91,7 +91,7 @@ export class ActionHandler {
       case "unknown":
         return {
           messages: [
-            "I didn't understand that. Type 'help' to see available commands.",
+            "I didn't understand that yet. Try describing the outcome in one sentence, or type /help for command options.",
           ],
         };
     }
@@ -121,8 +121,9 @@ export class ActionHandler {
     if (runnableGoals.length === 0) {
       return {
         messages: [
-          "No runnable goal found. Create a goal first.",
-          'Example: "write a README" or "goal create write README"',
+          "No runnable goal is ready to start.",
+          'Describe the outcome you want, for example: "write a README for this project."',
+          "Slash commands are still available from /help.",
         ],
       };
     }
@@ -132,12 +133,12 @@ export class ActionHandler {
       const matched = selectRunnableStartGoal(runnableGoals, goalArg);
 
       if (!matched) {
-        const list = runnableGoals.map((g, i) => `  ${i + 1}. ${g.title} (ID: ${g.id})`).join("\n");
+        const list = runnableGoals.map((g, i) => `  ${i + 1}. ${g.title}`).join("\n");
         return {
           messages: [
             `No goal matching "${goalArg}". Available goals:`,
             list,
-            "Use /start <number> or /start <goal-id>.",
+            "Choose one by number with /start <number>, or describe the outcome you want instead.",
           ],
           messageType: "warning",
         };
@@ -155,9 +156,9 @@ export class ActionHandler {
     const list = runnableGoals.map((g, i) => `  ${i + 1}. ${g.title}`).join("\n");
     return {
       messages: [
-        "Multiple goals available. Specify which one to start:",
+        "Multiple goals are ready. Choose one by number:",
         list,
-        "Use /start <number> or /start <goal-id>.",
+        "Use /start <number>, or describe the outcome you want instead.",
       ],
     };
   }
