@@ -10,6 +10,14 @@ export type DataSourceType = z.infer<typeof DataSourceTypeEnum>;
 const PositiveSafeIntegerSchema = z.number().finite().int().positive().safe();
 const NonNegativeUnitIntervalSchema = z.number().finite().min(0).max(1);
 
+export const ShellDataSourceCommandSchema = z.object({
+  argv: z.array(z.string()).nonempty(),
+  output_type: z.enum(["number", "boolean", "raw"]),
+  cwd: z.string().optional(),
+  timeout_ms: PositiveSafeIntegerSchema.optional(),
+}).strict();
+export type ShellDataSourceCommand = z.infer<typeof ShellDataSourceCommandSchema>;
+
 export const PollingConfigSchema = z.object({
   interval_ms: PositiveSafeIntegerSchema.min(30000),
   change_threshold: NonNegativeUnitIntervalSchema.optional(),
@@ -29,7 +37,7 @@ export const DataSourceConfigSchema = z.object({
     method: z.enum(["GET", "POST"]).optional(),
     headers: z.record(z.string(), z.string()).optional(),
     body_template: z.string().optional(),
-    commands: z.record(z.string(), z.unknown()).optional(),
+    commands: z.record(z.string(), ShellDataSourceCommandSchema).optional(),
     metric_file_names: z.array(z.string()).optional(),
     artifact_roots: z.array(z.string()).optional(),
     include_paths: z.array(z.string()).optional(),

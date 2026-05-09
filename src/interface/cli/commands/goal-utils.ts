@@ -363,7 +363,7 @@ export async function autoRegisterShellDataSources(
 
     // Serialize commands in the format ShellDataSourceAdapter expects:
     // Record<dimensionName, ShellCommandSpec>
-    const commandsConfig: Record<string, { argv: string[]; output_type: string; timeout_ms?: number }> = {};
+    const commandsConfig: Record<string, ShellCommandConfig> = {};
     for (const [dimName, spec] of Object.entries(matchedCommands)) {
       commandsConfig[dimName] = { argv: spec.argv, output_type: spec.output_type, ...(spec.timeout_ms ? { timeout_ms: spec.timeout_ms } : {}) };
     }

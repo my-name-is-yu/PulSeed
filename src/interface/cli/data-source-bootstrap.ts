@@ -7,7 +7,6 @@ import {
   ArtifactMetricDataSourceAdapter,
   createWorkspaceArtifactMetricDataSource,
 } from "../../adapters/datasources/artifact-metric-datasource.js";
-import type { ShellCommandSpec } from "../../adapters/datasources/shell-datasource.js";
 import {
   DataSourceConfigSchema,
   type DataSourceConfig,
@@ -102,7 +101,7 @@ export function createCliDataSourceAdapter(
   if (cfg.type === "shell") {
     const adapter = new ShellDataSourceAdapter(
       cfg.id,
-      (cfg.connection.commands ?? {}) as Record<string, ShellCommandSpec>,
+      cfg.connection.commands ?? {},
       cfg.connection?.path ?? workspacePath
     );
     if (cfg.scope_goal_id) {
