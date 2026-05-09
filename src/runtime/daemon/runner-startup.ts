@@ -4,6 +4,7 @@ import { HttpChannelAdapter } from "../gateway/index.js";
 import type { SupervisorState } from "../executor/index.js";
 import { PulSeedEventSchema } from "../../base/types/drive.js";
 import { RuntimeOperationStore } from "../store/index.js";
+import type { RuntimeControlDbStoreOptions } from "../store/index.js";
 import {
   publishRuntimeControlResult,
   type RuntimeControlResultEventPublisher,
@@ -208,7 +209,10 @@ export async function startDaemonRunner(
           driveSystem: context.driveSystem,
           stateManager: context.stateManager,
           logger: context.logger,
-          backgroundRunLedger: new BackgroundRunLedger(context.runtimeRoot ?? undefined),
+          backgroundRunLedger: new BackgroundRunLedger(
+            context.runtimeRoot ?? undefined,
+            { controlBaseDir: context.baseDir },
+          ),
           onGoalComplete: async (goalId, result) => context.handleGoalCompletion(goalId, result),
           onBackgroundRunTerminal: async (run, result) => {
             if (!context.eventServer || !run.pinned_reply_target) return;
@@ -374,8 +378,9 @@ export async function reconcileRuntimeControlOperationsAfterStartup(
   state: { status: string },
   logger: { info(message: string, meta?: Record<string, unknown>): void },
   publisher?: RuntimeControlResultEventPublisher,
+  storeOptions: Pick<RuntimeControlDbStoreOptions, "controlBaseDir" | "controlDbPath"> = {},
 ): Promise<void> {
-  const operationStore = new RuntimeOperationStore(runtimeRoot ?? undefined);
+  const operationStore = new RuntimeOperationStore(runtimeRoot ?? undefined, storeOptions);
   const pending = await operationStore.listPending();
   const now = new Date().toISOString();
   for (const operation of pending) {

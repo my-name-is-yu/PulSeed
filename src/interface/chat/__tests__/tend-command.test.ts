@@ -320,13 +320,18 @@ describe("TendCommand", () => {
 
         expect(result.success).toBe(true);
         expect(result.backgroundRunId).toMatch(/^run:coreloop:/);
-        const run = await new BackgroundRunLedger(daemonRuntimeRoot).load(result.backgroundRunId!);
+        const run = await new BackgroundRunLedger(
+          daemonRuntimeRoot,
+          { controlBaseDir: baseDir },
+        ).load(result.backgroundRunId!);
         expect(run).toMatchObject({
           id: result.backgroundRunId,
           kind: "coreloop_run",
           parent_session_id: "session:conversation:chat-runtime-root",
           status: "queued",
         });
+        expect(fs.existsSync(path.join(daemonRuntimeRoot, "background-runs"))).toBe(false);
+        expect(fs.existsSync(path.join(baseDir, "state", "pulseed-control.sqlite"))).toBe(true);
       } finally {
         fs.rmSync(baseDir, { recursive: true, force: true });
       }
@@ -364,13 +369,19 @@ describe("TendCommand", () => {
         const result = await cmd.execute("goal-abc", deps);
 
         expect(result.success).toBe(true);
-        const run = await new BackgroundRunLedger(daemonRuntimeRoot).load(result.backgroundRunId!);
+        const run = await new BackgroundRunLedger(
+          daemonRuntimeRoot,
+          { controlBaseDir: baseDir },
+        ).load(result.backgroundRunId!);
         expect(run).toMatchObject({
           id: result.backgroundRunId,
           parent_session_id: "session:conversation:chat-external-runtime",
           status: "queued",
         });
-        expect(await new BackgroundRunLedger(path.join(baseDir, "runtime")).load(result.backgroundRunId!)).toBeNull();
+        expect(fs.existsSync(path.join(daemonRuntimeRoot, "background-runs"))).toBe(false);
+        expect(fs.existsSync(path.join(baseDir, "runtime", "background-runs"))).toBe(false);
+        await expect(new BackgroundRunLedger(path.join(baseDir, "runtime")).load(result.backgroundRunId!))
+          .resolves.toMatchObject({ id: result.backgroundRunId });
       } finally {
         fs.rmSync(baseDir, { recursive: true, force: true });
       }

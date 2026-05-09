@@ -108,6 +108,8 @@ describe("runtime store basics", () => {
 
     const reloaded = await new BackgroundRunLedger(paths).load("run:agent:durable");
 
+    expect(fs.existsSync(paths.backgroundRunPath("run:agent:durable"))).toBe(false);
+    expect(fs.existsSync(path.join(tmpDir, "state", "pulseed-control.sqlite"))).toBe(true);
     expect(reloaded).toMatchObject({
       id: "run:agent:durable",
       child_session_id: "session:agent:durable",

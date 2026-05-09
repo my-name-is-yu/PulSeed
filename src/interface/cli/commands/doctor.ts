@@ -527,7 +527,7 @@ export async function checkDaemon(baseDir?: string): Promise<CheckResult> {
   const pidStatus = await pidManager.inspect();
   const daemonConfig = await loadDaemonConfig(dir);
   const runtimeRoot = resolveDaemonRuntimeRoot(dir, daemonConfig.runtime_root);
-  const runtimeHealth = await new RuntimeHealthStore(runtimeRoot).loadSnapshot();
+  const runtimeHealth = await new RuntimeHealthStore(runtimeRoot, { controlBaseDir: dir }).loadSnapshot();
   const daemonStateRaw = await readJsonFileOrNull(path.join(dir, "daemon-state.json"));
   const daemonState = daemonStateRaw !== null
     ? DaemonStateSchema.safeParse(daemonStateRaw)
@@ -742,8 +742,9 @@ export async function cmdDoctor(_args: string[]): Promise<number> {
       runtimeRoot,
       approvalStore: new ApprovalStore(runtimePaths),
       outboxStore: new OutboxStore(runtimePaths),
-      runtimeHealthStore: new RuntimeHealthStore(runtimePaths),
+      runtimeHealthStore: new RuntimeHealthStore(runtimePaths, { controlBaseDir: baseDir }),
       logger: repairLogger,
+      controlBaseDir: baseDir,
     });
 
     console.log(

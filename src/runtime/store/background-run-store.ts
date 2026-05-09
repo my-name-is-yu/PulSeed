@@ -11,7 +11,11 @@ import {
   createRuntimeStorePaths,
   type RuntimeStorePaths,
 } from "./runtime-paths.js";
-import { RuntimeJournal } from "./runtime-journal.js";
+import {
+  openRuntimeControlDatabase,
+  type ControlDatabase,
+  type RuntimeControlDbStoreOptions,
+} from "./control-db/index.js";
 
 const TERMINAL_STATUS_ALIASES = {
   success: "succeeded",
@@ -25,7 +29,7 @@ const TERMINAL_STATUS_ALIASES = {
   missing: "lost",
 } as const satisfies Record<string, BackgroundRunTerminalStatus>;
 
-const BackgroundRunLedgerRecordSchema = BackgroundRunSchema.superRefine((run, ctx) => {
+export const BackgroundRunLedgerRecordSchema = BackgroundRunSchema.superRefine((run, ctx) => {
   if (run.reply_target_source === "pinned_run" && run.pinned_reply_target === null) {
     ctx.addIssue({
       code: "custom",
@@ -105,26 +109,46 @@ export interface BackgroundRunTerminalInput {
 
 export class BackgroundRunLedger {
   private readonly paths: RuntimeStorePaths;
-  private readonly journal: RuntimeJournal;
+  private readonly dbOptions: RuntimeControlDbStoreOptions;
+  private dbPromise: Promise<ControlDatabase> | null = null;
 
-  constructor(runtimeRootOrPaths?: string | RuntimeStorePaths) {
+  constructor(
+    runtimeRootOrPaths?: string | RuntimeStorePaths,
+    options: RuntimeControlDbStoreOptions = {}
+  ) {
     this.paths =
       typeof runtimeRootOrPaths === "string"
         ? createRuntimeStorePaths(runtimeRootOrPaths)
         : runtimeRootOrPaths ?? createRuntimeStorePaths();
-    this.journal = new RuntimeJournal(this.paths);
+    this.dbOptions = options;
   }
 
   async ensureReady(): Promise<void> {
-    await this.journal.ensureReady();
+    await this.database();
   }
 
   async load(runId: string): Promise<BackgroundRun | null> {
-    return this.journal.load(this.paths.backgroundRunPath(runId), BackgroundRunLedgerRecordSchema);
+    const db = await this.database();
+    return db.read((sqlite) => {
+      const row = sqlite.prepare(`
+        SELECT run_json
+        FROM background_runs
+        WHERE run_id = ?
+      `).get(runId) as { run_json: string } | undefined;
+      return row ? parseBackgroundRunJson(row.run_json) : null;
+    });
   }
 
   async list(): Promise<BackgroundRun[]> {
-    return this.journal.list(this.paths.backgroundRunsDir, BackgroundRunLedgerRecordSchema);
+    const db = await this.database();
+    return db.read((sqlite) => {
+      const rows = sqlite.prepare(`
+        SELECT run_json
+        FROM background_runs
+        ORDER BY updated_at ASC, run_id ASC
+      `).all() as Array<{ run_json: string }>;
+      return rows.map((row) => parseBackgroundRunJson(row.run_json));
+    });
   }
 
   async create(input: BackgroundRunCreateInput): Promise<BackgroundRun> {
@@ -196,7 +220,39 @@ export class BackgroundRunLedger {
 
   async save(run: BackgroundRun): Promise<BackgroundRun> {
     const parsed = validateBackgroundRunLedgerRecord(run);
-    await this.journal.save(this.paths.backgroundRunPath(parsed.id), BackgroundRunLedgerRecordSchema, parsed);
+    const db = await this.database();
+    db.transaction((sqlite) => {
+      sqlite.prepare(`
+        INSERT INTO background_runs (
+          run_id, kind, status, parent_session_id, child_session_id,
+          process_session_id, goal_id, created_at, updated_at, run_json
+        ) VALUES (
+          @run_id, @kind, @status, @parent_session_id, @child_session_id,
+          @process_session_id, @goal_id, @created_at, @updated_at, @run_json
+        )
+        ON CONFLICT(run_id) DO UPDATE SET
+          kind = excluded.kind,
+          status = excluded.status,
+          parent_session_id = excluded.parent_session_id,
+          child_session_id = excluded.child_session_id,
+          process_session_id = excluded.process_session_id,
+          goal_id = excluded.goal_id,
+          created_at = excluded.created_at,
+          updated_at = excluded.updated_at,
+          run_json = excluded.run_json
+      `).run({
+        run_id: parsed.id,
+        kind: parsed.kind,
+        status: parsed.status,
+        parent_session_id: parsed.parent_session_id ?? null,
+        child_session_id: parsed.child_session_id ?? null,
+        process_session_id: parsed.process_session_id ?? null,
+        goal_id: parsed.goal_id ?? null,
+        created_at: parsed.created_at ?? null,
+        updated_at: parsed.updated_at ?? null,
+        run_json: JSON.stringify(parsed),
+      });
+    });
     return parsed;
   }
 
@@ -209,6 +265,11 @@ export class BackgroundRunLedger {
       throw new Error(`BackgroundRun ${runId} does not exist`);
     }
     return this.save(updater(existing));
+  }
+
+  private async database(): Promise<ControlDatabase> {
+    this.dbPromise ??= openRuntimeControlDatabase(this.paths, this.dbOptions);
+    return this.dbPromise;
   }
 }
 
@@ -239,4 +300,8 @@ export function validateBackgroundRunLedgerRecord(run: BackgroundRun): Backgroun
     throw new Error(`BackgroundRun ${parsed.id} with notify_policy ${parsed.notify_policy} requires pinned_run reply target`);
   }
   return parsed;
+}
+
+function parseBackgroundRunJson(runJson: string): BackgroundRun {
+  return BackgroundRunLedgerRecordSchema.parse(JSON.parse(runJson) as unknown);
 }

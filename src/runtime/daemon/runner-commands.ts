@@ -483,11 +483,14 @@ function deadletterPausedGoalActivations(
 }
 
 export async function handleRuntimeControlCommand(
-  context: Pick<DaemonRunnerCommandContext, "runtimeRoot" | "logger" | "beginGracefulShutdown">,
+  context: Pick<DaemonRunnerCommandContext, "runtimeRoot" | "logger" | "beginGracefulShutdown" | "stateManager">,
   operationId: string,
   kind: RuntimeControlOperationKind,
 ): Promise<void> {
-  const operationStore = new RuntimeOperationStore(context.runtimeRoot ?? undefined);
+  const operationStore = new RuntimeOperationStore(
+    context.runtimeRoot ?? undefined,
+    { controlBaseDir: context.stateManager.getBaseDir() },
+  );
   const operation = await operationStore.load(operationId);
   if (!operation) {
     context.logger.warn("Runtime control operation not found", { operation_id: operationId, kind });

@@ -187,7 +187,13 @@ export class RuntimeControlService {
   private readonly now: () => Date;
 
   constructor(options: RuntimeControlServiceOptions = {}) {
-    this.operationStore = options.operationStore ?? new RuntimeOperationStore(options.runtimeRoot);
+    const controlDbOptions = options.stateManager
+      ? { controlBaseDir: options.stateManager.getBaseDir() }
+      : undefined;
+    this.operationStore = options.operationStore ?? new RuntimeOperationStore(
+      options.runtimeRoot,
+      controlDbOptions,
+    );
     this.sessionRegistry = options.sessionRegistry ?? (options.stateManager
       ? createRuntimeSessionRegistry({ stateManager: options.stateManager })
       : undefined);

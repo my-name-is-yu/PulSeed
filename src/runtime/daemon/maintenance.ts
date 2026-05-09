@@ -250,6 +250,7 @@ async function pruneStaleFiles(
 
 export async function runRuntimeStoreMaintenanceCycle(params: {
   runtimeRoot: string;
+  controlBaseDir?: string;
   approvalStore?: ApprovalStore;
   outboxStore?: OutboxStore;
   runtimeHealthStore?: RuntimeHealthStore;
@@ -263,7 +264,7 @@ export async function runRuntimeStoreMaintenanceCycle(params: {
   const approvalStore = params.approvalStore ?? new ApprovalStore(runtimePaths);
   const outboxStore = params.outboxStore ?? new OutboxStore(runtimePaths);
   const runtimeHealthStore =
-    params.runtimeHealthStore ?? new RuntimeHealthStore(runtimePaths);
+    params.runtimeHealthStore ?? new RuntimeHealthStore(runtimePaths, { controlBaseDir: params.controlBaseDir });
 
   const approvals = await approvalStore.reconcile(now);
   const prunedResolved = await approvalStore.pruneResolved(

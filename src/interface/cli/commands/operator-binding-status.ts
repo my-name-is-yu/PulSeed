@@ -367,10 +367,10 @@ export async function collectOperatorBindingStatus(stateManager: StateManager): 
   const generatedAt = new Date().toISOString();
   const [daemon, health, registrySnapshot, capabilityRuntime] = await Promise.all([
     isDaemonRunning(baseDir),
-    new RuntimeHealthStore(runtimeRoot).loadSnapshot(),
+    new RuntimeHealthStore(runtimeRoot, { controlBaseDir: baseDir }).loadSnapshot(),
     createRuntimeSessionRegistry({
       stateManager,
-      backgroundRunLedger: new BackgroundRunLedger(runtimeRoot),
+      backgroundRunLedger: new BackgroundRunLedger(runtimeRoot, { controlBaseDir: baseDir }),
     }).snapshot(),
     collectCapabilityRuntimeProjections(stateManager, runtimeRoot, generatedAt),
   ]);

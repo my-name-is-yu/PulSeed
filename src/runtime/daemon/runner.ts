@@ -483,7 +483,13 @@ export class DaemonRunner {
   }
 
   private async reconcileRuntimeControlOperationsAfterStartup(): Promise<void> {
-    await reconcileRuntimeControlOperationsAfterStartupFn(this.runtimeRoot, this.state, this.logger, this.eventServer ?? undefined);
+    await reconcileRuntimeControlOperationsAfterStartupFn(
+      this.runtimeRoot,
+      this.state,
+      this.logger,
+      this.eventServer ?? undefined,
+      { controlBaseDir: this.baseDir },
+    );
   }
 
   // ─── Private: Cleanup ───
@@ -832,6 +838,7 @@ export class DaemonRunner {
     this.lastRuntimeStoreMaintenanceAt = now;
     await runRuntimeStoreMaintenanceCycle({
       runtimeRoot: this.runtimeRoot,
+      controlBaseDir: this.baseDir,
       approvalStore: this.approvalStore ?? undefined,
       outboxStore: this.outboxStore ?? undefined,
       runtimeHealthStore: this.runtimeHealthStore ?? undefined,

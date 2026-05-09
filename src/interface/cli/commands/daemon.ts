@@ -286,7 +286,7 @@ export async function cmdStart(
 
   if (shouldUseWatchdog) {
     const runtimeRoot = resolveDaemonRuntimeRoot(baseDir, resolvedDaemonConfig.runtime_root);
-    const healthStore = new RuntimeHealthStore(runtimeRoot);
+    const healthStore = new RuntimeHealthStore(runtimeRoot, { controlBaseDir: baseDir });
     const leaderLockManager = new LeaderLockManager(runtimeRoot);
     const scriptPath = process.argv[1]!;
     const childArgs = process.argv.slice(2);
@@ -567,7 +567,7 @@ export async function cmdDaemonStatus(_args: string[]): Promise<void> {
   // Load daemon config for config section display
   const cfg = await loadDaemonConfig(baseDir);
   const runtimeRoot = resolveDaemonRuntimeRoot(baseDir, cfg.runtime_root);
-  const storedRuntimeHealth = await new RuntimeHealthStore(runtimeRoot).loadSnapshot();
+  const storedRuntimeHealth = await new RuntimeHealthStore(runtimeRoot, { controlBaseDir: baseDir }).loadSnapshot();
   const runtimeHealth = reconcileRuntimeHealthForDisplay(storedRuntimeHealth, {
     runtimeAlive: resolvedRuntimeAlive,
     runtimePid: resolvedRuntimePid,

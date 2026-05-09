@@ -1,4 +1,5 @@
 import * as path from "node:path";
+import * as fs from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import { cleanupTempDir, makeTempDir } from "../../../tests/helpers/temp-dir.js";
 import { reconcileRuntimeControlOperationsAfterStartup } from "../daemon/runner-startup.js";
@@ -56,6 +57,8 @@ describe("runtime-control restart result routing", () => {
       const runtimeRoot = path.join(tmpDir, "runtime");
       const operationStore = new RuntimeOperationStore(runtimeRoot);
       await operationStore.save(makeRestartingOperation());
+      expect(fs.existsSync(path.join(runtimeRoot, "operations"))).toBe(false);
+      expect(fs.existsSync(path.join(tmpDir, "state", "pulseed-control.sqlite"))).toBe(true);
 
       await reconcileRuntimeControlOperationsAfterStartup(
         runtimeRoot,
@@ -121,6 +124,7 @@ describe("runtime-control restart result routing", () => {
       const runtimeRoot = path.join(tmpDir, "runtime");
       const operationStore = new RuntimeOperationStore(runtimeRoot);
       await operationStore.save(makeRestartingOperation({ operation_id: "op-restart-2" }));
+      expect(fs.existsSync(path.join(runtimeRoot, "operations"))).toBe(false);
       const published: Array<{ eventType: string; data: unknown }> = [];
 
       await reconcileRuntimeControlOperationsAfterStartup(
@@ -164,6 +168,7 @@ describe("runtime-control restart result routing", () => {
           message: "PulSeed daemon の再起動要求を送信しました。watchdog による復帰を確認します。",
         },
       }));
+      expect(fs.existsSync(path.join(runtimeRoot, "operations"))).toBe(false);
 
       await reconcileRuntimeControlOperationsAfterStartup(
         runtimeRoot,
