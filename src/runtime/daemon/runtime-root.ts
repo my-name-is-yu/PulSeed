@@ -11,15 +11,25 @@ export function resolveDaemonRuntimeRoot(baseDir: string, configuredRoot?: strin
     : path.resolve(baseDir, configuredRoot);
 }
 
+function isRecoverablePersistedJsonReadError(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException).code;
+  return code === "ENOENT" || error instanceof SyntaxError;
+}
+
+function readJsonFileSync(filePath: string): unknown {
+  return JSON.parse(fs.readFileSync(filePath, "utf-8")) as unknown;
+}
+
 export function loadDaemonConfigSync(baseDir: string): DaemonConfig {
   for (const fileName of ["daemon.json", "daemon-config.json"]) {
     const filePath = path.join(baseDir, fileName);
     if (!fs.existsSync(filePath)) continue;
     try {
-      const parsed = DaemonConfigSchema.safeParse(JSON.parse(fs.readFileSync(filePath, "utf-8")) as unknown);
+      const parsed = DaemonConfigSchema.safeParse(readJsonFileSync(filePath));
       if (parsed.success) return parsed.data;
-    } catch {
-      // Ignore invalid daemon config here; callers fall back to the default runtime root.
+    } catch (err) {
+      if (!isRecoverablePersistedJsonReadError(err)) throw err;
+      // Ignore missing, malformed, or schema-invalid daemon config here; callers fall back to the default runtime root.
     }
   }
   return DaemonConfigSchema.parse({});
@@ -36,7 +46,7 @@ function readRunningDaemonRuntimeRoot(baseDir: string): string | null {
   const statePath = path.join(baseDir, "daemon-state.json");
   if (!fs.existsSync(statePath)) return null;
   try {
-    const parsed = DaemonStateSchema.safeParse(JSON.parse(fs.readFileSync(statePath, "utf-8")) as unknown);
+    const parsed = DaemonStateSchema.safeParse(readJsonFileSync(statePath));
     if (!parsed.success) return null;
     const state = parsed.data;
     if (state.status !== "running" && state.status !== "idle") return null;
@@ -48,7 +58,8 @@ function readRunningDaemonRuntimeRoot(baseDir: string): string | null {
       }
     }
     return state.runtime_root ?? null;
-  } catch {
+  } catch (err) {
+    if (!isRecoverablePersistedJsonReadError(err)) throw err;
     return null;
   }
 }
