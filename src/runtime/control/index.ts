@@ -2,7 +2,34 @@ export { classifyRuntimeControlIntent, recognizeRuntimeControlIntent } from "./r
 export type { RuntimeControlIntent, RuntimeControlIntentClassification } from "./runtime-control-intent.js";
 export { RuntimeControlService } from "./runtime-control-service.js";
 export { resolveRuntimeTarget } from "./runtime-target-resolver.js";
+export {
+  evaluateAdmissionPolicy,
+  AdmissionAuthStateSchema,
+  AdmissionInvalidationBindingSchema,
+  AdmissionOperationScopeSchema,
+  AdmissionPermissionGrantBindingSchema,
+  AdmissionPermissionGrantEvidenceSchema,
+  AdmissionPolicyEvaluationSchema,
+  AdmissionPolicyResultSchema,
+  AdmissionPolicySignalSchema,
+  AdmissionSurfaceScopeSchema,
+} from "./admission-policy.js";
 export type { RuntimeTargetResolution } from "./runtime-target-resolver.js";
+export type {
+  AdmissionAuthState,
+  AdmissionInvalidationBinding,
+  AdmissionOperationScope,
+  AdmissionOperationScopeInput,
+  AdmissionPermissionGrantBinding,
+  AdmissionPermissionGrantEvidence,
+  AdmissionPermissionGrantEvidenceInput,
+  AdmissionPolicyEvaluation,
+  AdmissionPolicyResult,
+  AdmissionPolicySignal,
+  AdmissionSurfaceScope,
+  AdmissionSurfaceScopeInput,
+  EvaluateAdmissionPolicyInput,
+} from "./admission-policy.js";
 export { createDaemonRuntimeControlExecutor } from "./daemon-runtime-control-executor.js";
 export {
   publishRuntimeControlResult,
