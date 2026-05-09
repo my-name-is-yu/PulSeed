@@ -1415,7 +1415,79 @@ describe("PortfolioManager", () => {
               resume_hint: "process session still running: sess-unsafe",
               evidence: expect.objectContaining({
                 conditions: expect.arrayContaining([
-                  expect.objectContaining({ session_id: "sess-unsafe", pid: unsafePid }),
+                  expect.objectContaining({ session_id: "sess-unsafe", pid: null }),
+                ]),
+              }),
+            }),
+          })
+        );
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+      }
+    });
+
+    it("does not satisfy process session exit from invalid terminal metadata", async () => {
+      const tmpDir = makeTempDir();
+      try {
+        fs.mkdirSync(path.join(tmpDir, "runtime", "process-sessions"), { recursive: true });
+        fs.writeFileSync(
+          path.join(tmpDir, "runtime", "process-sessions", "sess-invalid.json"),
+          JSON.stringify({
+            session_id: "sess-invalid",
+            running: true,
+            pid: Number.MAX_SAFE_INTEGER + 1,
+            exitCode: "0",
+            signal: "not-a-signal",
+            exitedAt: "0",
+          })
+        );
+        const wait = makeWaitStrategy({
+          id: "ws1",
+          state: "active",
+          wait_until: new Date(Date.now() - 100_000).toISOString(),
+          gap_snapshot_at_start: 0.8,
+          primary_dimension: "quality",
+        });
+        const portfolio = makePortfolio([wait]);
+        (mockStrategyManager.getPortfolio as ReturnType<typeof vi.fn>).mockReturnValue(portfolio);
+        (mockStateManager.getBaseDir as ReturnType<typeof vi.fn>).mockReturnValue(tmpDir);
+        (mockStateManager.readRaw as ReturnType<typeof vi.fn>).mockImplementation((rawPath: string) => {
+          if (rawPath === "strategies/goal-1/wait-meta/ws1.json") {
+            return {
+              schema_version: 1,
+              wait_until: wait.wait_until,
+              conditions: [{ type: "process_session_exited", session_id: "sess-invalid" }],
+              resume_plan: { action: "complete_wait" },
+              process_refs: [{ session_id: "sess-invalid", metadata_relative_path: path.join("runtime", "process-sessions", "sess-invalid.json") }],
+            };
+          }
+          if (rawPath === "capability_registry.json") {
+            return { capabilities: [], last_checked: new Date().toISOString() };
+          }
+          return { quality: 0.5 };
+        });
+        const killSpy = vi.spyOn(process, "kill").mockImplementation((() => {
+          throw new Error("process probe should not run for unsafe pid");
+        }) as typeof process.kill);
+
+        const result = await pm.handleWaitStrategyExpiry("goal-1", "ws1");
+
+        expect(result).toMatchObject({
+          status: "not_due",
+          strategy_id: "ws1",
+          details: "process session still running: sess-invalid",
+        });
+        expect(killSpy).not.toHaveBeenCalled();
+        expect(mockStrategyManager.updateState).not.toHaveBeenCalled();
+        expect(mockStateManager.writeRaw).toHaveBeenCalledWith(
+          "strategies/goal-1/wait-meta/ws1.json",
+          expect.objectContaining({
+            latest_observation: expect.objectContaining({
+              status: "stale",
+              resume_hint: "process session still running: sess-invalid",
+              evidence: expect.objectContaining({
+                conditions: expect.arrayContaining([
+                  expect.objectContaining({ session_id: "sess-invalid", pid: null }),
                 ]),
               }),
             }),

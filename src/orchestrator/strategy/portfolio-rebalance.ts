@@ -8,7 +8,9 @@
  */
 
 import * as fsp from "node:fs/promises";
+import * as os from "node:os";
 import * as path from "node:path";
+import { z } from "zod";
 import type {
   PortfolioConfig,
   EffectivenessRecord,
@@ -31,6 +33,29 @@ import { CapabilityRegistrySchema } from "../../base/types/capability.js";
 
 const DEFAULT_WAIT_REOBSERVE_MS = 5 * 60 * 1000;
 const JSON_POINTER_ARRAY_INDEX_TOKEN = /^[0-9]+$/;
+const PROCESS_SESSION_SIGNALS = new Set(Object.keys(os.constants.signals));
+const PROCESS_SESSION_ISO_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+const ProcessSessionWaitSnapshotSchema = z.object({
+  session_id: z.string().min(1),
+  running: z.boolean(),
+  pid: z.preprocess(
+    (value) => isProcessPidValue(value) ? value : undefined,
+    z.number().int().positive().safe().optional()
+  ),
+  exitCode: z.preprocess(
+    (value) => isProcessExitCodeValue(value) ? value : null,
+    z.number().int().safe().nullable()
+  ),
+  signal: z.preprocess(
+    (value) => isProcessSignalValue(value) ? value : null,
+    z.string().min(1).nullable()
+  ),
+  exitedAt: z.preprocess(
+    (value) => isProcessTimestampValue(value) ? value : undefined,
+    z.string().min(1).optional()
+  ),
+}).passthrough();
+type ProcessSessionWaitSnapshot = z.infer<typeof ProcessSessionWaitSnapshotSchema>;
 
 /**
  * Get the current gap value for a specific dimension of a goal.
@@ -688,29 +713,28 @@ async function evaluateWaitCondition(
         if (!snapshot) {
           return pendingCondition(condition, `process session metadata not found: ${condition.session_id}`);
         }
-        const running = snapshot["running"] === true;
-        const exited = running === false
-          || snapshot["exitCode"] !== null && snapshot["exitCode"] !== undefined
-          || typeof snapshot["exitedAt"] === "string"
-          || typeof snapshot["signal"] === "string";
+        const exited = snapshot.running === false
+          || snapshot.exitCode !== null
+          || typeof snapshot.exitedAt === "string"
+          || snapshot.signal !== null;
         if (exited) {
           return satisfiedCondition(condition, {
             session_id: condition.session_id,
-            exitCode: snapshot["exitCode"] ?? null,
-            signal: snapshot["signal"] ?? null,
-            exitedAt: snapshot["exitedAt"] ?? null,
+            exitCode: snapshot.exitCode,
+            signal: snapshot.signal,
+            exitedAt: snapshot.exitedAt ?? null,
           });
         }
-        if (isProcessPidValue(snapshot["pid"]) && !isProcessAlive(snapshot["pid"])) {
+        if (isProcessPidValue(snapshot.pid) && !isProcessAlive(snapshot.pid)) {
           return satisfiedCondition(condition, {
             session_id: condition.session_id,
-            pid: snapshot["pid"],
+            pid: snapshot.pid,
             inferred_exit: true,
           });
         }
         return staleCondition(condition, `process session still running: ${condition.session_id}`, {
           session_id: condition.session_id,
-          pid: snapshot["pid"] ?? null,
+          pid: snapshot.pid ?? null,
         });
       }
       case "artifact_json_value": {
@@ -814,7 +838,7 @@ async function readProcessSessionSnapshot(
   sessionId: string,
   metadata: WaitMetadata,
   stateBaseDir: string | null
-): Promise<Record<string, unknown> | null> {
+): Promise<ProcessSessionWaitSnapshot | null> {
   if (!isSafeSessionId(sessionId)) return null;
   const refs = metadata.process_refs.filter((ref) => ref["session_id"] === sessionId);
   const candidates = [
@@ -829,9 +853,9 @@ async function readProcessSessionSnapshot(
 
   for (const candidate of candidates) {
     try {
-      const parsed = JSON.parse(await fsp.readFile(candidate, "utf8"));
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-        return parsed as Record<string, unknown>;
+      const parsed = ProcessSessionWaitSnapshotSchema.safeParse(JSON.parse(await fsp.readFile(candidate, "utf8")));
+      if (parsed.success && parsed.data.session_id === sessionId) {
+        return parsed.data;
       }
     } catch {
       // Try the next candidate.
@@ -920,6 +944,20 @@ function isProcessAlive(pid: number): boolean {
 
 function isProcessPidValue(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+}
+
+function isProcessExitCodeValue(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
+function isProcessSignalValue(value: unknown): value is NodeJS.Signals {
+  return typeof value === "string" && PROCESS_SESSION_SIGNALS.has(value);
+}
+
+function isProcessTimestampValue(value: unknown): value is string {
+  if (typeof value !== "string" || !PROCESS_SESSION_ISO_TIMESTAMP.test(value)) return false;
+  const timestampMs = Date.parse(value);
+  return Number.isFinite(timestampMs) && new Date(timestampMs).toISOString() === value;
 }
 
 export function buildWaitApprovalId(goalId: string, strategyId: string): string {
