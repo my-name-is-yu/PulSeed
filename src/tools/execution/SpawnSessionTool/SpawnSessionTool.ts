@@ -6,12 +6,14 @@ import { DEFAULT_CONTEXT_BUDGET } from "../../../orchestrator/execution/session-
 import { DESCRIPTION } from "./prompt.js";
 import { TAGS, CATEGORY as _CATEGORY, READ_ONLY, PERMISSION_LEVEL } from "./constants.js";
 
+export const SPAWN_SESSION_MAX_CONTEXT_BUDGET = 1_000_000;
+
 export const SpawnSessionInputSchema = z.object({
   session_type: z.enum(["task_execution", "observation", "task_review", "goal_review", "chat_execution"]).optional(),
   role: z.enum(["default", "explorer", "worker", "reviewer"]).optional(),
   goal_id: z.string().min(1, "goal_id is required"),
   task_id: z.string().optional(),
-  context_budget: z.number().int().positive().optional(),
+  context_budget: z.number().int().min(1).max(SPAWN_SESSION_MAX_CONTEXT_BUDGET).optional(),
 }).superRefine((value, ctx) => {
   if (!value.session_type && !value.role) {
     ctx.addIssue({

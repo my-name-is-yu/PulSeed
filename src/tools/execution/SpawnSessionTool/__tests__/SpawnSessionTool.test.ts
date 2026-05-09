@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { SpawnSessionTool, resolveSpawnSessionType } from "../SpawnSessionTool.js";
+import { toToolDefinition } from "../../../tool-definition-adapter.js";
+import {
+  SPAWN_SESSION_MAX_CONTEXT_BUDGET,
+  SpawnSessionInputSchema,
+  SpawnSessionTool,
+  resolveSpawnSessionType,
+} from "../SpawnSessionTool.js";
 import type { ToolCallContext } from "../../../types.js";
 import type { SessionManager } from "../../../../orchestrator/execution/session-manager.js";
 import { DEFAULT_CONTEXT_BUDGET } from "../../../../orchestrator/execution/session-manager.js";
@@ -125,5 +131,41 @@ describe("SpawnSessionTool", () => {
   it("rejects missing both session_type and role", () => {
     const parsed = tool.inputSchema.safeParse({ goal_id: "goal-1" });
     expect(parsed.success).toBe(false);
+  });
+
+  it("rejects unsafe context budgets at the schema boundary", () => {
+    expect(SpawnSessionInputSchema.safeParse({
+      session_type: "task_execution",
+      goal_id: "goal-1",
+      context_budget: SPAWN_SESSION_MAX_CONTEXT_BUDGET,
+    }).success).toBe(true);
+
+    for (const context_budget of [
+      0,
+      -1,
+      1.5,
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      SPAWN_SESSION_MAX_CONTEXT_BUDGET + 1,
+      Number.MAX_SAFE_INTEGER + 1,
+    ]) {
+      expect(SpawnSessionInputSchema.safeParse({
+        session_type: "task_execution",
+        goal_id: "goal-1",
+        context_budget,
+      }).success).toBe(false);
+    }
+  });
+
+  it("exports context budget bounds to model-facing tool definitions", () => {
+    const parameters = toToolDefinition(tool).function.parameters as {
+      properties?: Record<string, unknown>;
+    };
+
+    expect(parameters.properties?.context_budget).toMatchObject({
+      type: "integer",
+      minimum: 1,
+      maximum: SPAWN_SESSION_MAX_CONTEXT_BUDGET,
+    });
   });
 });
