@@ -44,6 +44,15 @@ export {
   InternalAutonomyTargetClassSchema,
   InternalAutonomyTargetDispositionSchema,
 } from "./internal-autonomy-default.js";
+export {
+  projectCompanionAction,
+  CompanionActionProjectionInputSchema,
+  CompanionActionProjectionSchema,
+  CompanionProjectionContextSchema,
+  CompanionProjectionSurfaceKindSchema,
+  CompanionSurfaceExpressionPolicySchema,
+  CompanionUserVisibleActionKindSchema,
+} from "./companion-action-projection.js";
 export type { RuntimeTargetResolution } from "./runtime-target-resolver.js";
 export type {
   AdmissionAuthState,
@@ -89,6 +98,15 @@ export type {
   InternalAutonomyTargetClass,
   InternalAutonomyTargetDisposition,
 } from "./internal-autonomy-default.js";
+export type {
+  CompanionActionProjection,
+  CompanionActionProjectionInput,
+  CompanionProjectionContext,
+  CompanionProjectionContextInput,
+  CompanionProjectionSurfaceKind,
+  CompanionSurfaceExpressionPolicy,
+  CompanionUserVisibleActionKind,
+} from "./companion-action-projection.js";
 export { createDaemonRuntimeControlExecutor } from "./daemon-runtime-control-executor.js";
 export {
   publishRuntimeControlResult,
