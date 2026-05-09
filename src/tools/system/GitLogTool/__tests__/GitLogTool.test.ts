@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { GitLogTool } from "../GitLogTool.js";
+import { toToolDefinition } from "../../../tool-definition-adapter.js";
+import { GitLogInputSchema, GitLogTool } from "../GitLogTool.js";
 import type { ToolCallContext } from "../../../types.js";
 
 function makeContext(cwd = "/tmp"): ToolCallContext {
@@ -51,6 +52,28 @@ describe("GitLogTool", () => {
     it("always returns allowed", async () => {
       const result = await tool.checkPermissions({ maxCount: 5, format: "oneline" }, makeContext());
       expect(result.status).toBe("allowed");
+    });
+  });
+
+  describe("input schema", () => {
+    it("rejects invalid maxCount values", () => {
+      expect(GitLogInputSchema.safeParse({ maxCount: 20 }).success).toBe(true);
+
+      for (const maxCount of [0, -1, 1.5, Number.POSITIVE_INFINITY, 1_001]) {
+        expect(GitLogInputSchema.safeParse({ maxCount }).success).toBe(false);
+      }
+    });
+
+    it("exports maxCount bounds to model-facing tool definitions", () => {
+      const parameters = toToolDefinition(tool).function.parameters as {
+        properties?: Record<string, unknown>;
+      };
+
+      expect(parameters.properties?.maxCount).toMatchObject({
+        type: "integer",
+        minimum: 1,
+        maximum: 1_000,
+      });
     });
   });
 

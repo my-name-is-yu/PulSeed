@@ -4,9 +4,12 @@ import { execFileNoThrow } from "../../../base/utils/execFileNoThrow.js";
 import { DESCRIPTION_PREFIX } from "./prompt.js";
 import { TAGS, MAX_OUTPUT_CHARS, PERMISSION_LEVEL } from "./constants.js";
 
+const GIT_LOG_DEFAULT_MAX_COUNT = 20;
+const GIT_LOG_MAX_COUNT = 1_000;
+
 export const GitLogInputSchema = z.object({
   cwd: z.string().optional(),
-  maxCount: z.number().default(20),
+  maxCount: z.number().int().min(1).max(GIT_LOG_MAX_COUNT).default(GIT_LOG_DEFAULT_MAX_COUNT),
   since: z.string().optional(),
   author: z.string().optional(),
   path: z.string().optional(),
