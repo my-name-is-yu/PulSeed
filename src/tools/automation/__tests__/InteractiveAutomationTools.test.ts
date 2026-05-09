@@ -6,6 +6,7 @@ import { ConcurrencyController } from "../../concurrency.js";
 import { ToolExecutor } from "../../executor.js";
 import { ToolPermissionManager } from "../../permission.js";
 import { ToolRegistry } from "../../registry.js";
+import { toToolDefinition } from "../../tool-definition-adapter.js";
 import type { ToolCallContext } from "../../types.js";
 import { createBuiltinTools } from "../../builtin/index.js";
 import {
@@ -191,6 +192,72 @@ describe("interactive automation tools", () => {
       toolName: "desktop_click",
       reason: expect.stringContaining("requires approval"),
     }));
+  });
+
+  it("rejects invalid desktop click numeric controls before provider execution", async () => {
+    const click = vi.fn().mockResolvedValue({ success: true, summary: "clicked" });
+    const registry = new InteractiveAutomationRegistry({
+      defaultProviders: { desktop: "desktop-invalid-input" },
+    });
+    registry.register({
+      id: "desktop-invalid-input",
+      family: "desktop",
+      capabilities: ["desktop_state", "desktop_input"],
+      isAvailable: async () => ({ available: true }),
+      describeEnvironment: async () => ({
+        providerId: "desktop-invalid-input",
+        family: "desktop",
+        capabilities: ["desktop_state", "desktop_input"],
+        available: true,
+      }),
+      click,
+    });
+    const toolRegistry = new ToolRegistry();
+    toolRegistry.register(new DesktopClickTool(registry));
+    const executor = new ToolExecutor({
+      registry: toolRegistry,
+      permissionManager: new ToolPermissionManager({}),
+      concurrency: new ConcurrencyController(),
+    });
+
+    for (const input of [
+      { app: "Notes", x: Number.POSITIVE_INFINITY },
+      { app: "Notes", y: Number.MAX_SAFE_INTEGER + 1 },
+      { app: "Notes", clickCount: 0 },
+      { app: "Notes", clickCount: 11 },
+      { app: "Notes", clickCount: Number.MAX_SAFE_INTEGER + 1 },
+    ]) {
+      const result = await executor.execute("desktop_click", input, makeContext({
+        approvalFn: vi.fn().mockResolvedValue(true),
+      }));
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("Input validation failed");
+    }
+    expect(click).not.toHaveBeenCalled();
+  });
+
+  it("exports desktop click numeric bounds to the model-facing tool schema", () => {
+    const parameters = toToolDefinition(new DesktopClickTool(makeRegistry())).function.parameters as {
+      properties?: Record<string, unknown>;
+    };
+
+    expect(parameters.properties?.x).toMatchObject({
+      type: "number",
+      minimum: Number.MIN_SAFE_INTEGER,
+      maximum: Number.MAX_SAFE_INTEGER,
+    });
+    expect(parameters.properties?.y).toMatchObject({
+      type: "number",
+      minimum: Number.MIN_SAFE_INTEGER,
+      maximum: Number.MAX_SAFE_INTEGER,
+    });
+    expect(parameters.properties?.clickCount).toMatchObject({
+      type: "integer",
+      minimum: 1,
+      maximum: 10,
+      default: 1,
+    });
   });
 
   it("runs research tools as read-only provider calls", async () => {
