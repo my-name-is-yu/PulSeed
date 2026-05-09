@@ -4,6 +4,7 @@ import {
   CreateScheduleInputSchema,
   type CreateScheduleOutput,
 } from "../CreateScheduleTool/CreateScheduleTool.js";
+import { toToolDefinition } from "../../tool-definition-adapter.js";
 import type { ToolCallContext } from "../../types.js";
 import type { ScheduleEngine } from "../../../runtime/schedule-engine.js";
 import { ScheduleEntrySchema } from "../../../runtime/types/schedule.js";
@@ -135,6 +136,19 @@ describe("CreateScheduleTool", () => {
     });
 
     expect(parsed.success).toBe(false);
+  });
+
+  it("exports union branch contracts to the model-facing tool definition", () => {
+    const tool = new CreateScheduleTool({ addEntry: vi.fn() } as unknown as ScheduleEngine);
+    const parameters = toToolDefinition(tool).function.parameters;
+    const branchSchema = parameters.anyOf ?? parameters.oneOf ?? parameters.allOf;
+
+    expect(parameters.type).toBe("object");
+    expect(Array.isArray(branchSchema)).toBe(true);
+    expect(JSON.stringify(parameters)).toContain("\"preset\"");
+    expect(JSON.stringify(parameters)).toContain("\"layer\"");
+    expect(JSON.stringify(parameters)).toContain("\"daily_brief\"");
+    expect(JSON.stringify(parameters)).toContain("\"heartbeat\"");
   });
 
   it("calls scheduleEngine.addEntry with the validated input and returns the entry", async () => {
