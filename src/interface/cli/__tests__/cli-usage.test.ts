@@ -208,6 +208,31 @@ describe("CLI usage command", () => {
     expect(output).not.toContain(String(Number.MAX_SAFE_INTEGER + 1));
   });
 
+  it("treats malformed schedule history JSON as zero usage", async () => {
+    fs.writeFileSync(`${tmpDir}/schedule-history.json`, "{bad json");
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    const code = await runCLI(tmpDir, "usage", "schedule", "--period", "24h");
+
+    expect(code).toBe(0);
+    const output = logSpy.mock.calls.map((call) => call.join(" ")).join("\n");
+    expect(output).toContain("Usage summary (schedule, 24h)");
+    expect(output).toContain("Runs: 0");
+    expect(output).toContain("Total tokens: 0");
+  });
+
+  it("surfaces schedule history read errors instead of reporting zero usage", async () => {
+    fs.mkdirSync(`${tmpDir}/schedule-history.json`);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const code = await runCLI(tmpDir, "usage", "schedule", "--period", "24h");
+
+    expect(code).toBe(1);
+    expect(errSpy.mock.calls.map((call) => call.join(" ")).join("\n")).toContain("Error:");
+    expect(logSpy.mock.calls.map((call) => call.join(" ")).join("\n")).not.toContain("Runs: 0");
+  });
+
   it("returns 1 for an unknown usage scope", async () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
