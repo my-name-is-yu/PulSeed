@@ -576,12 +576,12 @@ export class KaggleExperimentStopTool extends KaggleToolBase<KaggleExperimentSto
       if (!sessionId) {
         return failureResult("Kaggle experiment session not found", startTime);
       }
-      if (located) {
-        await signalKaggleChildProcess(located.childProcessPath, input.signal);
-      }
       const stopped = await this.manager.stop({ session_id: sessionId, signal: input.signal, waitMs: input.waitMs });
       if (!stopped) {
         return failureResult(`Process session not found: ${sessionId}`, startTime);
+      }
+      if (located) {
+        await signalKaggleChildProcess(located.childProcessPath, input.signal);
       }
       if (located) {
         await fs.writeFile(located.processPath, `${JSON.stringify(stopped, null, 2)}\n`, "utf-8");
