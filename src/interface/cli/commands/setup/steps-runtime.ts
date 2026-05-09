@@ -6,6 +6,7 @@ import { DEFAULT_SEED, DEFAULT_USER } from "../../../../base/config/identity-loa
 import { findAvailablePort, isPortAvailable, DEFAULT_PORT, getProcessOnPort } from "../../../../runtime/port-utils.js";
 import { isDaemonRunning } from "../../../../runtime/daemon/client.js";
 import { PIDManager } from "../../../../runtime/pid-manager.js";
+import { DaemonStateStore } from "../../../../runtime/store/index.js";
 import { DaemonStateSchema } from "../../../../runtime/types/daemon.js";
 import { ROOT_PRESETS } from "../presets/root-presets.js";
 import type { RootPresetKey } from "../presets/root-presets.js";
@@ -27,17 +28,14 @@ export async function stepDaemon(): Promise<{ start: boolean; port: number }> {
 
   if (alreadyRunning) {
     try {
-      const stateFile = path.join(baseDir, "daemon-state.json");
-      if (fs.existsSync(stateFile)) {
-        const stateContent = JSON.parse(fs.readFileSync(stateFile, "utf-8"));
-        const parseResult = DaemonStateSchema.safeParse(stateContent);
-        if (parseResult.success) {
-          const activeGoals = parseResult.data.active_goals;
-          if (activeGoals.length > 0) {
-            p.log.info(`Active goals: ${activeGoals.join(", ")}`);
-          } else {
-            p.log.info("(no active goals)");
-          }
+      const stateContent = await new DaemonStateStore(baseDir).load();
+      const parseResult = DaemonStateSchema.safeParse(stateContent);
+      if (parseResult.success) {
+        const activeGoals = parseResult.data.active_goals;
+        if (activeGoals.length > 0) {
+          p.log.info(`Active goals: ${activeGoals.join(", ")}`);
+        } else {
+          p.log.info("(no active goals)");
         }
       }
     } catch {

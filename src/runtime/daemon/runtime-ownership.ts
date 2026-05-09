@@ -2,7 +2,7 @@ import * as path from "node:path";
 import * as fsp from "node:fs/promises";
 import type { Dirent } from "node:fs";
 import type { Logger } from "../logger.js";
-import { ProactiveInterventionStore } from "../store/index.js";
+import { DaemonStateStore, ProactiveInterventionStore, SupervisorStateStore } from "../store/index.js";
 import type { ApprovalStore, OutboxStore, RuntimeHealthStore } from "../store/index.js";
 import type { LeaderLockManager } from "../leader-lock-manager.js";
 import { summarizeTaskOutcomeLedgers } from "../../orchestrator/execution/task/task-outcome-ledger.js";
@@ -300,15 +300,17 @@ export class RuntimeOwnershipCoordinator {
       return { status: "unknown", activeGoalIds: [] };
     }
 
-    const supervisorPath = path.join(this.deps.runtimeRoot, "supervisor-state.json");
     try {
-      const raw = JSON.parse(await fsp.readFile(supervisorPath, "utf8")) as unknown;
-      const updatedAt = typeof (raw as { updatedAt?: unknown })?.updatedAt === "number"
-        ? (raw as { updatedAt: number }).updatedAt
+      const raw = await new SupervisorStateStore(this.deps.runtimeRoot, {
+        controlBaseDir: this.deps.baseDir ?? undefined,
+      }).load();
+      if (!raw) {
+        return { status: "unknown", activeGoalIds: [] };
+      }
+      const updatedAt = typeof raw.updatedAt === "number"
+        ? raw.updatedAt
         : checkedAt;
-      const workers = Array.isArray((raw as { workers?: unknown })?.workers)
-        ? (raw as { workers: Array<Record<string, unknown>> }).workers
-        : [];
+      const workers = raw.workers;
       const activeCount = workers.filter((worker) => typeof worker["goalId"] === "string").length;
       const activeGoalIds = this.uniqueStrings(
         workers
@@ -322,9 +324,6 @@ export class RuntimeOwnershipCoordinator {
         activeGoalIds,
       };
     } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-        return { status: "unknown", activeGoalIds: [] };
-      }
       throw err;
     }
   }
@@ -335,18 +334,13 @@ export class RuntimeOwnershipCoordinator {
     }
 
     try {
-      const raw = JSON.parse(await fsp.readFile(path.join(this.deps.baseDir, "daemon-state.json"), "utf8")) as unknown;
-      const activeGoals = Array.isArray((raw as { active_goals?: unknown })?.active_goals)
-        ? (raw as { active_goals: unknown[] }).active_goals
-        : [];
+      const raw = await new DaemonStateStore(this.deps.baseDir).load();
+      const activeGoals = raw?.active_goals ?? [];
       return this.uniqueStrings(
         activeGoals.filter((goalId): goalId is string => typeof goalId === "string" && goalId.length > 0)
       );
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-        return [];
-      }
-      throw err;
+    } catch {
+      return [];
     }
   }
 
@@ -614,7 +608,7 @@ export class RuntimeOwnershipCoordinator {
 
     this.deps.logger.info("Runtime journal foundation initialized", {
       runtime_root: this.deps.runtimeRoot,
-      queue_path: this.deps.runtimeRoot ? path.join(this.deps.runtimeRoot, "queue.json") : undefined,
+      queue_store: "control-db:runtime_queue_records",
     });
   }
 

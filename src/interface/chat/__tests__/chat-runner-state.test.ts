@@ -10,6 +10,8 @@ import {
   readTasksForGoal,
   resolveStatePath,
 } from "../chat-runner-state.js";
+import { ScheduleHistoryStore } from "../../../runtime/schedule/history.js";
+import { openControlDatabase } from "../../../runtime/store/index.js";
 
 const tempDirs: string[] = [];
 
@@ -29,6 +31,74 @@ function writeRaw(baseDir: string, relativePath: string, value: string): void {
   const target = path.join(baseDir, relativePath);
   fs.mkdirSync(path.dirname(target), { recursive: true });
   fs.writeFileSync(target, value);
+}
+
+async function saveScheduleHistory(baseDir: string, records: Array<Record<string, unknown>>): Promise<void> {
+  const now = new Date().toISOString();
+  await new ScheduleHistoryStore(baseDir).save(records.map((record, index) => ({
+    id: `00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+    entry_id: `10000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+    entry_name: "Daily brief",
+    layer: "cron",
+    status: "ok",
+    duration_ms: 0,
+    fired_at: record["fired_at"] ?? record["finished_at"] ?? now,
+    reason: "manual_run",
+    attempt: 0,
+    scheduled_for: null,
+    started_at: record["started_at"] ?? record["finished_at"] ?? now,
+    finished_at: record["finished_at"] ?? now,
+    retry_at: null,
+    tokens_used: 0,
+    escalated_to: null,
+    activation_kind: null,
+    strategy_id: null,
+    wait_strategy_id: null,
+    internal: false,
+    ...record,
+  }) as never));
+}
+
+async function insertRawScheduleHistoryRecords(baseDir: string, records: Array<Record<string, unknown>>): Promise<void> {
+  const db = await openControlDatabase({ baseDir });
+  try {
+    db.transaction((sqlite) => {
+      const insert = sqlite.prepare(`
+        INSERT INTO schedule_run_history (
+          history_id,
+          entry_id,
+          entry_name,
+          layer,
+          reason,
+          started_at,
+          finished_at,
+          internal,
+          tokens_used,
+          sort_order,
+          record_json
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, json(?))
+      `);
+      records.forEach((record, index) => {
+        const finishedAt = typeof record["finished_at"] === "string" ? record["finished_at"] : new Date().toISOString();
+        insert.run(
+          `raw-invalid-${index + 1}`,
+          `10000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+          "Daily brief",
+          "cron",
+          "manual_run",
+          finishedAt,
+          finishedAt,
+          0,
+          0,
+          index,
+          JSON.stringify(record)
+        );
+      });
+    });
+  } finally {
+    db.close();
+  }
 }
 
 afterEach(() => {
@@ -159,7 +229,7 @@ describe("chat-runner-state helpers", () => {
 
   it("collectScheduleUsage filters by period", async () => {
     const baseDir = makeTempDir("pulseed-chat-usage-schedule-");
-    writeJson(baseDir, "schedule-history.json", [
+    await saveScheduleHistory(baseDir, [
       { finished_at: "2026-04-27T10:00:00.000Z", tokens_used: 13 },
       { finished_at: "2026-04-26T11:00:00.000Z", tokens_used: 7 },
       { finished_at: "2026-04-20T11:00:00.000Z", tokens_used: 99 },
@@ -174,26 +244,22 @@ describe("chat-runner-state helpers", () => {
     });
   });
 
-  it("collectScheduleUsage ignores unsafe persisted token counts", async () => {
+  it("collectScheduleUsage skips invalid persisted schedule rows", async () => {
     const baseDir = makeTempDir("pulseed-chat-usage-schedule-bounds-");
-    writeRaw(
-      baseDir,
-      "schedule-history.json",
-      `[
-        { "finished_at": "2026-04-27T10:00:00.000Z", "tokens_used": 13 },
-        { "finished_at": "2026-04-27T10:02:00.000Z", "tokens_used": 9007199254740991 },
-        { "finished_at": "2026-04-27T10:05:00.000Z", "tokens_used": -1 },
-        { "finished_at": "2026-04-27T10:10:00.000Z", "tokens_used": 1.5 },
-        { "finished_at": "2026-04-27T10:15:00.000Z", "tokens_used": 9007199254740992 },
-        { "finished_at": "2026-04-27T10:20:00.000Z", "tokens_used": 1e309 }
-      ]`
-    );
+    await saveScheduleHistory(baseDir, [
+      { finished_at: "2026-04-27T10:00:00.000Z", tokens_used: 13 },
+    ]);
+    await insertRawScheduleHistoryRecords(baseDir, [
+      { finished_at: "2026-04-27T10:05:00.000Z", tokens_used: -1 },
+      { finished_at: "2026-04-27T10:10:00.000Z", tokens_used: 1.5 },
+      { finished_at: "2026-04-27T10:15:00.000Z", tokens_used: Number.MAX_SAFE_INTEGER + 1 },
+    ]);
 
     await expect(
       collectScheduleUsage(baseDir, "24h", Date.parse("2026-04-27T12:00:00.000Z"))
     ).resolves.toEqual({
       period: "24h",
-      runs: 6,
+      runs: 1,
       totalTokens: 13,
     });
   });

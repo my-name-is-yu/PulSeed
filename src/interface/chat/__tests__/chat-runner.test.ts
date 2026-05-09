@@ -19,6 +19,8 @@ import { createRuntimeSessionRegistry } from "../../../runtime/session-registry/
 import { BackgroundRunLedger } from "../../../runtime/store/background-run-store.js";
 import { RuntimeBudgetStore } from "../../../runtime/store/budget-store.js";
 import { RuntimeOperationStore } from "../../../runtime/store/runtime-operation-store.js";
+import { ScheduleHistoryStore, ScheduleRunHistoryRecordSchema } from "../../../runtime/schedule/history.js";
+import { SupervisorStateStore } from "../../../runtime/store/supervisor-state-store.js";
 import type { Goal } from "../../../base/types/goal.js";
 import type { Task } from "../../../base/types/task.js";
 import type { ChatEvent } from "../chat-events.js";
@@ -59,6 +61,30 @@ function makeMockStateManager(): StateManager {
     writeRaw: vi.fn().mockResolvedValue(undefined),
     readRaw: vi.fn().mockResolvedValue(null),
   } as unknown as StateManager;
+}
+
+async function saveSupervisorFixture(
+  baseDir: string,
+  workers: Array<{
+    workerId: string;
+    goalId: string;
+    startedAt: number;
+    iterations?: number;
+    backgroundRunId?: string;
+    sessionId?: string;
+    parentSessionId?: string;
+  }>,
+  updatedAt = Date.parse("2026-04-25T00:30:00.000Z")
+): Promise<void> {
+  await new SupervisorStateStore(path.join(baseDir, "runtime"), { controlBaseDir: baseDir }).save({
+    workers: workers.map((worker) => ({
+      ...worker,
+      iterations: worker.iterations ?? 0,
+    })),
+    crashCounts: {},
+    suspendedGoals: [],
+    updatedAt,
+  });
 }
 
 function makeIngress(text: string): ChatIngressMessage {
@@ -1503,10 +1529,10 @@ describe("ChatRunner", () => {
       try {
         const stateManager = new StateManager(tmpDir);
         await stateManager.init();
-        await stateManager.writeRaw("schedule-history.json", [
-          {
-            id: "record-1",
-            entry_id: "entry-1",
+        await new ScheduleHistoryStore(tmpDir).save([
+          ScheduleRunHistoryRecordSchema.parse({
+            id: "11111111-1111-4111-8111-111111111111",
+            entry_id: "22222222-2222-4222-8222-222222222222",
             entry_name: "Daily brief",
             layer: "cron",
             status: "ok",
@@ -1519,7 +1545,7 @@ describe("ChatRunner", () => {
             finished_at: new Date().toISOString(),
             retry_at: null,
             tokens_used: 88,
-          },
+          }),
         ]);
         const runner = new ChatRunner(makeDeps({ stateManager }));
 
@@ -2588,16 +2614,11 @@ describe("ChatRunner", () => {
       try {
         const stateManager = new StateManager(tmpDir);
         await stateManager.init();
-        await stateManager.writeRaw("supervisor-state.json", {
-          workers: [
-            {
-              workerId: "worker-1",
-              goalId: "goal-a",
-              startedAt: Date.parse("2026-04-25T00:00:00.000Z"),
-            },
-          ],
-          updatedAt: Date.parse("2026-04-25T00:30:00.000Z"),
-        });
+        await saveSupervisorFixture(tmpDir, [{
+          workerId: "worker-1",
+          goalId: "goal-a",
+          startedAt: Date.parse("2026-04-25T00:00:00.000Z"),
+        }]);
         await stateManager.writeRaw("runtime/process-sessions/proc-running.json", makeProcessSnapshot({
           session_id: "proc-running",
           pid: process.pid,
@@ -2651,16 +2672,11 @@ describe("ChatRunner", () => {
           sessionId: "agent-prior",
           updatedAt: "2026-01-01T00:00:02.000Z",
         }));
-        await stateManager.writeRaw("supervisor-state.json", {
-          workers: [
-            {
-              workerId: "worker-1",
-              goalId: "goal-a",
-              startedAt: Date.parse("2026-04-25T00:00:00.000Z"),
-            },
-          ],
-          updatedAt: Date.parse("2026-04-25T00:30:00.000Z"),
-        });
+        await saveSupervisorFixture(tmpDir, [{
+          workerId: "worker-1",
+          goalId: "goal-a",
+          startedAt: Date.parse("2026-04-25T00:00:00.000Z"),
+        }]);
         await stateManager.writeRaw("runtime/process-sessions/proc-running.json", makeProcessSnapshot({
           session_id: "proc-running",
           pid: process.pid,
@@ -2825,14 +2841,11 @@ describe("ChatRunner", () => {
         await stateManager.saveGoal(makeGoal("goal-a", { title: "Improve alpha routing" }));
         await stateManager.saveGoal(makeGoal("goal-b", { title: "Improve beta routing", status: "waiting" }));
         await stateManager.saveGoal(makeGoal("goal-c", { title: "Archived old work", status: "cancelled" }));
-        await stateManager.writeRaw("supervisor-state.json", {
-          workers: [{
-            workerId: "worker-beta",
-            goalId: "goal-b",
-            startedAt: Date.parse("2026-04-25T00:00:00.000Z"),
-          }],
-          updatedAt: Date.parse("2026-04-25T00:30:00.000Z"),
-        });
+        await saveSupervisorFixture(tmpDir, [{
+          workerId: "worker-beta",
+          goalId: "goal-b",
+          startedAt: Date.parse("2026-04-25T00:00:00.000Z"),
+        }]);
         const runner = new ChatRunner(makeDeps({ stateManager }));
 
         const result = await runner.execute("/status", "/repo");
@@ -2909,14 +2922,11 @@ describe("ChatRunner", () => {
         const stateManager = new StateManager(tmpDir);
         await stateManager.init();
         await stateManager.saveGoal(makeGoal("goal-a", { title: "Focused work" }));
-        await stateManager.writeRaw("supervisor-state.json", {
-          workers: [{
-            workerId: "worker-other",
-            goalId: "goal-b",
-            startedAt: Date.parse("2026-04-25T00:00:00.000Z"),
-          }],
-          updatedAt: Date.parse("2026-04-25T00:30:00.000Z"),
-        });
+        await saveSupervisorFixture(tmpDir, [{
+          workerId: "worker-other",
+          goalId: "goal-b",
+          startedAt: Date.parse("2026-04-25T00:00:00.000Z"),
+        }]);
         const runner = new ChatRunner(makeDeps({ stateManager }));
 
         const result = await runner.execute("/status goal-a", "/repo");

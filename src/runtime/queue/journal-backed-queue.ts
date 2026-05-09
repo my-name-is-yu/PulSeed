@@ -1,10 +1,16 @@
-import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { EnvelopeSchema, type Envelope, type EnvelopePriority } from '../types/envelope.js';
+import { createRuntimeStorePaths } from '../store/runtime-paths.js';
+import {
+  openRuntimeControlDatabaseSync,
+  type ControlDatabase,
+  type RuntimeControlDbStoreOptions,
+  type SqliteDatabase,
+} from '../store/control-db/index.js';
 
-export interface JournalBackedQueueOptions {
+export interface JournalBackedQueueOptions extends RuntimeControlDbStoreOptions {
   journalPath: string;
   defaultLeaseMs?: number;
   maxAttempts?: number;
@@ -70,9 +76,6 @@ interface JournalBackedQueueState {
 }
 
 const PRIORITY_ORDER: EnvelopePriority[] = ['critical', 'high', 'normal', 'low'];
-const LOCK_STALE_MS = 30_000;
-const LOCK_WAIT_MS = 10;
-const LOCK_TIMEOUT_MS = 10_000;
 const QueueSafeNonnegativeIntSchema = z.number().int().nonnegative().safe();
 const QueueSafeNonnegativeNumberSchema = z.number()
   .finite()
@@ -114,12 +117,6 @@ const JournalBackedQueueStateSchema = z.object({
   inflight: z.record(JournalBackedQueueClaimRecordSchema),
 });
 
-const JournalLockOwnerSchema = z.object({
-  acquiredAt: QueueSafeNonnegativeNumberSchema,
-});
-
-type JournalLockOwner = z.infer<typeof JournalLockOwnerSchema>;
-
 function emptyPending(): Record<EnvelopePriority, string[]> {
   return {
     critical: [],
@@ -136,92 +133,6 @@ function clonePending(pending: Record<EnvelopePriority, string[]>): Record<Envel
     normal: [...pending.normal],
     low: [...pending.low],
   };
-}
-
-function atomicWriteJson(filePath: string, data: unknown): void {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  const tmpPath = `${filePath}.tmp`;
-  try {
-    fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2), 'utf-8');
-    fs.renameSync(tmpPath, filePath);
-  } catch (err) {
-    try {
-      fs.unlinkSync(tmpPath);
-    } catch {
-      // Ignore cleanup failures.
-    }
-    throw err;
-  }
-}
-
-function readJsonOrNull<T>(filePath: string): T | null {
-  try {
-    const raw = fs.readFileSync(filePath, 'utf-8');
-    return JSON.parse(raw) as T;
-  } catch {
-    return null;
-  }
-}
-
-function readJournalLockOwner(ownerPath: string): JournalLockOwner | null {
-  const parsed = JournalLockOwnerSchema.safeParse(readJsonOrNull<unknown>(ownerPath));
-  return parsed.success ? parsed.data : null;
-}
-
-function sleepMs(ms: number): void {
-  if (ms <= 0) return;
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-}
-
-interface JournalLockHandle {
-  release(): void;
-}
-
-function acquireJournalLock(lockPath: string): JournalLockHandle {
-  const ownerPath = path.join(lockPath, 'owner.json');
-  const ownerId = randomUUID();
-  const startedAt = Date.now();
-  const lockParentDir = path.dirname(lockPath);
-
-  for (;;) {
-    try {
-      fs.mkdirSync(lockParentDir, { recursive: true });
-      fs.mkdirSync(lockPath);
-      atomicWriteJson(ownerPath, {
-        ownerId,
-        pid: process.pid,
-        acquiredAt: startedAt,
-      });
-      return {
-        release: () => {
-          try {
-            fs.rmSync(lockPath, { recursive: true, force: true });
-          } catch {
-            // Ignore lock cleanup failures.
-          }
-        },
-      };
-    } catch (err) {
-      const code = (err as NodeJS.ErrnoException).code;
-      if (code !== 'EEXIST') throw err;
-
-      const owner = readJournalLockOwner(ownerPath);
-      if (!owner || Date.now() - owner.acquiredAt > LOCK_STALE_MS) {
-        try {
-          fs.rmSync(lockPath, { recursive: true, force: true });
-          continue;
-        } catch {
-          // Another process may have won the race. Fall through to retry.
-        }
-      }
-
-      if (Date.now() - startedAt > LOCK_TIMEOUT_MS) {
-        throw new Error(`Timed out acquiring journal lock at ${lockPath}`);
-      }
-
-      sleepMs(LOCK_WAIT_MS);
-    }
-  }
 }
 
 function isExpired(envelope: Envelope, now: number): boolean {
@@ -307,20 +218,21 @@ function normalizeState(state: Partial<JournalBackedQueueState>): JournalBackedQ
 }
 
 export class JournalBackedQueue {
-  private readonly journalPath: string;
-  private readonly lockPath: string;
   private readonly defaultLeaseMs: number;
   private readonly maxAttempts: number;
   private readonly now: () => number;
+  private readonly controlDb: ControlDatabase;
   private state: JournalBackedQueueState;
 
   constructor(options: JournalBackedQueueOptions) {
-    this.journalPath = options.journalPath;
-    this.lockPath = `${options.journalPath}.lock`;
     this.defaultLeaseMs = options.defaultLeaseMs ?? 60_000;
     this.maxAttempts = options.maxAttempts ?? 3;
     this.now = options.now ?? Date.now;
-    this.state = this.loadFromDisk();
+    this.controlDb = openRuntimeControlDatabaseSync(
+      createRuntimeStorePaths(path.dirname(options.journalPath)),
+      options
+    );
+    this.state = this.loadFromDb();
   }
 
   accept(envelope: Envelope): JournalBackedQueueAcceptResult {
@@ -654,39 +566,40 @@ export class JournalBackedQueue {
     return Object.keys(this.state.inflight).length;
   }
 
-  private load(): JournalBackedQueueState {
-    const raw = readJsonOrNull<unknown>(this.journalPath);
-    if (!isRecordMap(raw) || raw.version !== 1) {
-      return buildEmptyState();
-    }
-    return normalizeState(raw as Partial<JournalBackedQueueState>);
+  importLegacyState(raw: unknown): JournalBackedQueueSnapshot {
+    const state = isRecordMap(raw) && raw.version === 1
+      ? normalizeState(raw as Partial<JournalBackedQueueState>)
+      : buildEmptyState();
+    this.controlDb.transaction((sqlite) => {
+      writeQueueState(sqlite, state);
+    });
+    this.state = state;
+    return this.snapshot();
   }
 
-  private loadFromDisk(): JournalBackedQueueState {
-    return this.load();
+  private loadFromDb(sqlite?: SqliteDatabase): JournalBackedQueueState {
+    const read = (db: SqliteDatabase): JournalBackedQueueState => readQueueState(db);
+    return sqlite ? read(sqlite) : this.controlDb.read(read);
   }
 
   private refresh(): void {
-    this.state = this.loadFromDisk();
+    this.state = this.loadFromDb();
   }
 
-  private persist(state: JournalBackedQueueState): void {
-    atomicWriteJson(this.journalPath, JournalBackedQueueStateSchema.parse(state));
+  private persist(sqlite: SqliteDatabase, state: JournalBackedQueueState): void {
+    writeQueueState(sqlite, JournalBackedQueueStateSchema.parse(state));
   }
 
   private withLockedState<T>(mutator: (state: JournalBackedQueueState) => { result: T; dirty: boolean }): T {
-    const lock = acquireJournalLock(this.lockPath);
-    try {
-      const state = this.loadFromDisk();
+    return this.controlDb.transaction((sqlite) => {
+      const state = this.loadFromDb(sqlite);
       const { result, dirty } = mutator(state);
       if (dirty) {
-        this.persist(state);
+        this.persist(sqlite, state);
       }
       this.state = state;
       return result;
-    } finally {
-      lock.release();
-    }
+    });
   }
 
   private isLeaseExpired(record: JournalBackedQueueRecord, claimToken: string): boolean {
@@ -702,5 +615,101 @@ export class JournalBackedQueue {
         return;
       }
     }
+  }
+}
+
+interface QueueRow {
+  message_id: string;
+  record_json: string;
+}
+
+function readQueueState(sqlite: SqliteDatabase): JournalBackedQueueState {
+  const rows = sqlite.prepare(`
+    SELECT message_id, record_json
+    FROM runtime_queue_records
+    ORDER BY
+      CASE priority
+        WHEN 'critical' THEN 0
+        WHEN 'high' THEN 1
+        WHEN 'normal' THEN 2
+        ELSE 3
+      END ASC,
+      queue_order ASC,
+      created_at ASC,
+      message_id ASC
+  `).all() as QueueRow[];
+
+  const state = buildEmptyState();
+  for (const row of rows) {
+    const record = parseQueueRecord(JSON.parse(row.record_json) as unknown);
+    if (!record || record.envelope.id !== row.message_id) continue;
+    state.records[row.message_id] = record;
+    if (record.status === 'pending') {
+      state.pending[record.envelope.priority].push(row.message_id);
+    }
+    if (record.status === 'inflight' && record.claimToken) {
+      state.inflight[record.claimToken] = {
+        messageId: row.message_id,
+        workerId: record.workerId ?? '',
+        leaseUntil: record.leaseUntil ?? 0,
+        attempt: record.attempt,
+        claimedAt: record.updatedAt,
+      };
+    }
+  }
+  return normalizeState(state);
+}
+
+function writeQueueState(sqlite: SqliteDatabase, state: JournalBackedQueueState): void {
+  sqlite.prepare("DELETE FROM runtime_queue_records").run();
+  const pendingOrder = new Map<string, number>();
+  for (const priority of PRIORITY_ORDER) {
+    state.pending[priority].forEach((messageId, index) => {
+      pendingOrder.set(messageId, index);
+    });
+  }
+
+  const insert = sqlite.prepare(`
+    INSERT INTO runtime_queue_records (
+      message_id,
+      status,
+      priority,
+      attempt,
+      created_at,
+      updated_at,
+      queue_order,
+      worker_id,
+      claim_token,
+      lease_until,
+      claimed_at,
+      completed_at,
+      deadletter_reason,
+      dedupe_key,
+      envelope_json,
+      record_json
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, json(?), json(?))
+  `);
+
+  for (const [messageId, record] of Object.entries(state.records)) {
+    const claim = record.claimToken ? state.inflight[record.claimToken] : undefined;
+    insert.run(
+      messageId,
+      record.status,
+      record.envelope.priority,
+      record.attempt,
+      record.createdAt,
+      record.updatedAt,
+      record.status === 'pending' ? pendingOrder.get(messageId) ?? null : null,
+      record.workerId ?? null,
+      record.claimToken ?? null,
+      record.leaseUntil ?? null,
+      claim?.claimedAt ?? (record.status === 'inflight' ? record.updatedAt : null),
+      record.completedAt ?? null,
+      record.deadletterReason ?? null,
+      record.envelope.dedupe_key ?? null,
+      JSON.stringify(record.envelope),
+      JSON.stringify(record),
+    );
   }
 }

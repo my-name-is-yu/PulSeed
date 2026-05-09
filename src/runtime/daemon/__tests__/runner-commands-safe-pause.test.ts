@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import * as fs from "node:fs";
 import * as path from "node:path";
 import { cleanupTempDir, makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 import { createEnvelope } from "../../types/envelope.js";
 import { JournalBackedQueue } from "../../queue/journal-backed-queue.js";
 import { GoalLeaseManager } from "../../goal-lease-manager.js";
 import { LoopSupervisor } from "../../executor/loop-supervisor.js";
+import { DaemonStateStore } from "../../store/daemon-state-store.js";
 import { RuntimePostmortemReportStore } from "../../store/postmortem-report.js";
 import { RuntimeSafePauseStore } from "../../store/safe-pause-store.js";
 import { CommandDispatcher } from "../../command-dispatcher.js";
@@ -48,16 +48,8 @@ describe("daemon safe pause commands", () => {
       resident_activity: null,
     };
     journalQueue = new JournalBackedQueue({ journalPath: path.join(tmpDir, "queue.json") });
-    journalQueue.accept(createEnvelope({
-      type: "event",
-      name: "goal_activated",
-      source: "test",
-      goal_id: "goal-1",
-      payload: { goalId: "goal-1" },
-      priority: "normal",
-    }));
     saveDaemonState = vi.fn(async () => {
-      fs.writeFileSync(path.join(tmpDir, "daemon-state.json"), JSON.stringify(state));
+      await new DaemonStateStore(tmpDir).save(state);
     });
     broadcastGoalUpdated = vi.fn();
     supervisor = {
@@ -102,7 +94,19 @@ describe("daemon safe pause commands", () => {
     } as never;
   }
 
+  function seedQueuedGoalActivation(goalId = "goal-1"): void {
+    journalQueue.accept(createEnvelope({
+      type: "event",
+      name: "goal_activated",
+      source: "test",
+      goal_id: goalId,
+      payload: { goalId },
+      priority: "normal",
+    }));
+  }
+
   it("records pause-requested during active execution, then persists a paused checkpoint at the safe boundary", async () => {
+    seedQueuedGoalActivation();
     await handleGoalPauseCommand(context(), "goal-1");
 
     expect(state.safe_pause_goals?.["goal-1"]?.state).toBe("pause_requested");
@@ -139,6 +143,7 @@ describe("daemon safe pause commands", () => {
   });
 
   it("resumes a paused goal without duplicating the active goal dispatch target", async () => {
+    seedQueuedGoalActivation();
     await handleGoalPauseCommand(context(), "goal-1");
     await checkpointPauseIfRequested(context(), "goal-1");
 
@@ -308,6 +313,7 @@ describe("daemon safe pause commands", () => {
   });
 
   it("restores paused safe-pause state from the durable store on daemon restart", async () => {
+    seedQueuedGoalActivation();
     await new RuntimeSafePauseStore(tmpDir).markPaused({
       goalId: "goal-1",
       checkpoint: {
@@ -342,8 +348,8 @@ describe("daemon safe pause commands", () => {
         next_action: "resume after restart",
       },
     });
-    const persisted = JSON.parse(fs.readFileSync(path.join(tmpDir, "daemon-state.json"), "utf8"));
-    expect(persisted.safe_pause_goals["goal-1"].state).toBe("paused");
+    const persisted = await new DaemonStateStore(tmpDir).load();
+    expect(persisted?.safe_pause_goals?.["goal-1"]?.state).toBe("paused");
   });
 
   it("keeps emergency stop separate from safe pause", async () => {

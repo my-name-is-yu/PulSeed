@@ -10,6 +10,7 @@ import { GoalLeaseManager } from "../goal-lease-manager.js";
 import { StateManager } from "../../base/state/state-manager.js";
 import { makeGoal } from "../../../tests/helpers/fixtures.js";
 import { BackgroundRunLedger } from "../store/background-run-store.js";
+import { openControlDatabase, SupervisorStateStore } from "../store/index.js";
 import type { BackgroundRun } from "../session-registry/types.js";
 import { isDaemonShutdownAbortSignal } from "../../base/utils/abort-reason.js";
 
@@ -42,8 +43,8 @@ async function pollForJsonMatch<T>(
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
-      if (fs.existsSync(filePath)) {
-        const value = JSON.parse(fs.readFileSync(filePath, "utf-8")) as T;
+      const value = await readSupervisorStatePath(filePath) as T | null;
+      if (value !== null) {
         if (predicate(value)) {
           return value;
         }
@@ -54,6 +55,42 @@ async function pollForJsonMatch<T>(
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }
   throw new Error(`Timed out waiting for matching JSON in file: ${filePath}`);
+}
+
+async function readSupervisorStatePath(filePath: string): Promise<unknown | null> {
+  if (path.basename(filePath) !== "supervisor-state.json") {
+    if (!fs.existsSync(filePath)) return null;
+    return JSON.parse(fs.readFileSync(filePath, "utf-8"));
+  }
+  const runtimeRoot = path.dirname(filePath);
+  const controlBaseDir = path.basename(runtimeRoot) === "runtime" ? path.dirname(runtimeRoot) : runtimeRoot;
+  return new SupervisorStateStore(runtimeRoot, { controlBaseDir }).load();
+}
+
+async function writeRawSupervisorState(runtimeRoot: string, state: Record<string, unknown>): Promise<void> {
+  const database = await openControlDatabase({ baseDir: runtimeRoot });
+  try {
+    database.transaction((db) => {
+      db.prepare(`
+        INSERT INTO supervisor_state_snapshots (
+          state_id,
+          updated_at,
+          active_goal_count,
+          state_json
+        )
+        VALUES ('current', ?, 0, json(?))
+        ON CONFLICT(state_id) DO UPDATE SET
+          updated_at = excluded.updated_at,
+          active_goal_count = excluded.active_goal_count,
+          state_json = excluded.state_json
+      `).run(
+        typeof state["updatedAt"] === "number" ? state["updatedAt"] : Date.now(),
+        JSON.stringify(state),
+      );
+    });
+  } finally {
+    database.close();
+  }
 }
 
 async function pollForBackgroundRunMatch(
@@ -455,14 +492,13 @@ describe("LoopSupervisor", () => {
 
   // ─── 6. State persistence ───
 
-  it("writes supervisor-state.json after execution", async () => {
+  it("writes supervisor state to the control database after execution", async () => {
     const { supervisor, stateFile, runtimeRoot } = makeSupervisor();
     try {
       await supervisor.start(["g1"]);
       await new Promise((r) => setTimeout(r, 100));
       await supervisor.shutdown();
-      expect(fs.existsSync(stateFile)).toBe(true);
-      const state = JSON.parse(fs.readFileSync(stateFile, "utf8"));
+      const state = await readSupervisorStatePath(stateFile) as Record<string, unknown>;
       expect(state).toHaveProperty("workers");
       expect(state).toHaveProperty("crashCounts");
     } finally {
@@ -473,14 +509,14 @@ describe("LoopSupervisor", () => {
   it("does not restore suspended goals from a previous supervisor process", async () => {
     const { runtimeRoot, deps } = makeSupervisor();
     const stateFile = path.join(runtimeRoot, "supervisor-state.json");
-    fs.writeFileSync(
-      stateFile,
-      JSON.stringify({
+    await writeRawSupervisorState(
+      runtimeRoot,
+      {
         workers: [],
         crashCounts: { "g-suspended": 3 },
         suspendedGoals: ["g-suspended"],
         updatedAt: Date.now(),
-      })
+      }
     );
 
     const recoveredSupervisor = new LoopSupervisor(deps, {
@@ -507,9 +543,9 @@ describe("LoopSupervisor", () => {
   it("restores only safe integer crash counts from persisted supervisor state", async () => {
     const { runtimeRoot, deps } = makeSupervisor();
     const stateFile = path.join(runtimeRoot, "supervisor-state.json");
-    fs.writeFileSync(
-      stateFile,
-      JSON.stringify({
+    await writeRawSupervisorState(
+      runtimeRoot,
+      {
         workers: [],
         crashCounts: {
           "g-valid": 2,
@@ -522,7 +558,7 @@ describe("LoopSupervisor", () => {
         },
         suspendedGoals: [],
         updatedAt: Date.now(),
-      })
+      }
     );
 
     const recoveredSupervisor = new LoopSupervisor(deps, {
@@ -614,8 +650,7 @@ describe("LoopSupervisor", () => {
       const snapshot = journalQueue.snapshot();
       expect(snapshot.pending.normal).toHaveLength(1);
       expect(snapshot.pending.normal[0]).toBeDefined();
-      const queueState = JSON.parse(fs.readFileSync(path.join(runtimeRoot, "queue.json"), "utf8"));
-      expect(queueState.records[snapshot.pending.normal[0]].envelope.name).toBe('schedule_report_ready');
+      expect(journalQueue.get(snapshot.pending.normal[0]!)?.envelope.name).toBe('schedule_report_ready');
     } finally {
       fs.rmSync(runtimeRoot, { recursive: true, force: true });
     }
@@ -649,11 +684,10 @@ describe("LoopSupervisor", () => {
 
       await waitFor(() => {
         const snapshot = journalQueue.snapshot();
-        const queueState = JSON.parse(fs.readFileSync(path.join(runtimeRoot, "queue.json"), "utf8"));
         return (
           goalRunCount >= 1 &&
           snapshot.pending.normal
-            .map((messageId) => queueState.records[messageId].envelope.name)
+            .map((messageId) => journalQueue.get(messageId)?.envelope.name)
             .includes("schedule_activated")
         );
       });
@@ -661,9 +695,8 @@ describe("LoopSupervisor", () => {
 
       expect(goalRunCount).toBeGreaterThanOrEqual(1);
       const snapshot = journalQueue.snapshot();
-      const queueState = JSON.parse(fs.readFileSync(path.join(runtimeRoot, "queue.json"), "utf8"));
       expect(
-        snapshot.pending.normal.map((messageId) => queueState.records[messageId].envelope.name)
+        snapshot.pending.normal.map((messageId) => journalQueue.get(messageId)?.envelope.name)
       ).toContain('schedule_activated');
     } finally {
       fs.rmSync(runtimeRoot, { recursive: true, force: true });
@@ -747,7 +780,7 @@ describe("LoopSupervisor", () => {
       });
       expect(terminal.source_refs).toContainEqual(expect.objectContaining({
         kind: "supervisor_state",
-        path: path.join(runtimeRoot, "supervisor-state.json"),
+        relative_path: "control-db:supervisor_state_snapshots/current",
       }));
     } finally {
       await supervisor.shutdown();

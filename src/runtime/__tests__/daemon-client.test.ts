@@ -11,12 +11,70 @@ import { EventServer } from "../event-server.js";
 import { DEFAULT_PORT } from "../port-utils.js";
 import { OutboxStore } from "../store/outbox-store.js";
 import { RuntimeOperatorHandoffStore } from "../store/operator-handoff-store.js";
+import { DaemonStateStore, openControlDatabase } from "../store/index.js";
 import { makeTempDir, cleanupTempDir } from "../../../tests/helpers/temp-dir.js";
 
 function createMockDriveSystem() {
   return {
     writeEvent: async () => undefined,
   };
+}
+
+async function saveDaemonStateFixture(
+  baseDir: string,
+  state: Partial<{
+    pid: number;
+    status: "idle" | "running" | "stopping" | "stopped" | "crashed";
+  }> = {}
+): Promise<void> {
+  await new DaemonStateStore(baseDir).save({
+    pid: state.pid ?? process.pid,
+    started_at: new Date().toISOString(),
+    last_loop_at: null,
+    loop_count: 0,
+    active_goals: [],
+    status: state.status ?? "running",
+    crash_count: 0,
+    last_error: null,
+    last_resident_at: null,
+    resident_activity: null,
+  });
+}
+
+async function insertRawDaemonStateFixture(baseDir: string, state: Record<string, unknown>): Promise<void> {
+  const database = await openControlDatabase({ baseDir });
+  try {
+    database.transaction((db) => {
+      db.prepare(`
+        INSERT INTO daemon_state_snapshots (
+          state_id,
+          pid,
+          status,
+          runtime_root,
+          loop_count,
+          updated_at,
+          state_json
+        )
+        VALUES ('current', ?, ?, ?, ?, ?, json(?))
+        ON CONFLICT(state_id) DO UPDATE SET
+          pid = excluded.pid,
+          status = excluded.status,
+          runtime_root = excluded.runtime_root,
+          loop_count = excluded.loop_count,
+          updated_at = excluded.updated_at,
+          state_json = excluded.state_json
+      `).run(
+        state["pid"] ?? null,
+        state["status"] ?? "running",
+        state["runtime_root"] ?? null,
+        state["loop_count"] ?? 0,
+        state["last_loop_at"] ?? state["started_at"] ?? new Date().toISOString(),
+        JSON.stringify(state)
+      );
+    });
+  } finally {
+    database.close();
+  }
 }
 
 function waitForEvent(
@@ -62,9 +120,6 @@ describe("DaemonClient snapshot + replay", () => {
 
   it("replays events that were missed while disconnected", async () => {
     await server.start();
-
-    const daemonStatePath = path.join(tmpDir, "daemon-state.json");
-    fs.writeFileSync(daemonStatePath, JSON.stringify({ status: "running", pid: process.pid }), "utf-8");
 
     await server.broadcast("daemon_status", { status: "running", loopCount: 1 });
 
@@ -353,11 +408,7 @@ describe("isDaemonRunning", () => {
   });
 
   it("treats idle daemon-state as running when the daemon health check passes", async () => {
-    fs.writeFileSync(
-      path.join(tmpDir, "daemon-state.json"),
-      JSON.stringify({ status: "idle", pid: process.pid }),
-      "utf-8"
-    );
+    await saveDaemonStateFixture(tmpDir, { status: "idle" });
     vi.spyOn(DaemonClient.prototype, "getHealth").mockResolvedValue({ status: "ok" });
 
     await expect(isDaemonRunning(tmpDir)).resolves.toEqual({
@@ -367,11 +418,18 @@ describe("isDaemonRunning", () => {
   });
 
   it("rejects unsafe daemon-state pids before probing the process table", async () => {
-    fs.writeFileSync(
-      path.join(tmpDir, "daemon-state.json"),
-      JSON.stringify({ status: "running", pid: Number.MAX_SAFE_INTEGER + 1 }),
-      "utf-8"
-    );
+    await insertRawDaemonStateFixture(tmpDir, {
+      status: "running",
+      pid: Number.MAX_SAFE_INTEGER + 1,
+      started_at: new Date().toISOString(),
+      last_loop_at: null,
+      loop_count: 0,
+      active_goals: [],
+      crash_count: 0,
+      last_error: null,
+      last_resident_at: null,
+      resident_activity: null,
+    });
     const killSpy = vi.spyOn(process, "kill");
 
     await expect(isDaemonRunning(tmpDir)).resolves.toEqual({
@@ -382,11 +440,7 @@ describe("isDaemonRunning", () => {
   });
 
   it("ignores unsafe daemon config ports before probing daemon health", async () => {
-    fs.writeFileSync(
-      path.join(tmpDir, "daemon-state.json"),
-      JSON.stringify({ status: "running", pid: process.pid }),
-      "utf-8"
-    );
+    await saveDaemonStateFixture(tmpDir);
     fs.writeFileSync(
       path.join(tmpDir, "daemon.json"),
       JSON.stringify({ event_server_port: Number.MAX_SAFE_INTEGER }),
@@ -401,11 +455,7 @@ describe("isDaemonRunning", () => {
   });
 
   it("uses the token file port for daemon configs with OS-assigned event server ports", async () => {
-    fs.writeFileSync(
-      path.join(tmpDir, "daemon-state.json"),
-      JSON.stringify({ status: "running", pid: process.pid }),
-      "utf-8"
-    );
+    await saveDaemonStateFixture(tmpDir);
     fs.writeFileSync(
       path.join(tmpDir, "daemon.json"),
       JSON.stringify({ event_server_port: 0 }),
@@ -431,11 +481,7 @@ describe("isDaemonRunning", () => {
   });
 
   it("does not probe port 0 when an OS-assigned daemon config has no resolved token port", async () => {
-    fs.writeFileSync(
-      path.join(tmpDir, "daemon-state.json"),
-      JSON.stringify({ status: "running", pid: process.pid }),
-      "utf-8"
-    );
+    await saveDaemonStateFixture(tmpDir);
     fs.writeFileSync(
       path.join(tmpDir, "daemon.json"),
       JSON.stringify({ event_server_port: 0 }),

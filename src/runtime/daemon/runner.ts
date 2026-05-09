@@ -128,7 +128,7 @@ export type { ShutdownMarker } from "./index.js";
 //   - Signal handling (SIGINT/SIGTERM → graceful stop)
 //   - queue / dispatcher / supervisor wiring
 //   - Multi-goal scheduling and runtime state persistence
-//   - Daemon state persistence (~/.pulseed/daemon-state.json)
+//   - Daemon state persistence (control DB daemon_state_snapshots)
 //
 // The daemon loop:
 //   1. Determine which goals need activation (shouldActivate)
@@ -457,7 +457,7 @@ export class DaemonRunner {
   // ─── Private: State Persistence ───
 
   /**
-   * Save daemon state to {baseDir}/daemon-state.json atomically.
+   * Save daemon state to the Control DB.
    */
   private async saveDaemonState(): Promise<void> {
     await saveDaemonStateFile(this.baseDir, this.state, this.logger);
@@ -465,7 +465,7 @@ export class DaemonRunner {
 
   /**
    * Restore state from a previous interrupted run.
-   * Merges interrupted_goals from daemon-state.json with the given goalIds (deduped).
+   * Merges interrupted_goals from persisted daemon state with the given goalIds (deduped).
    * Returns the merged goal ID array.
    */
   private async restoreState(goalIds: string[]): Promise<string[]> {
@@ -935,14 +935,14 @@ export class DaemonRunner {
   // ─── Private: Shutdown Marker ───
 
   /**
-   * Write shutdown-state.json to baseDir (async, atomic).
+   * Write the shutdown marker to the Control DB.
    */
   private async writeShutdownMarker(marker: ShutdownMarker): Promise<void> {
     await writeDaemonShutdownMarker(this.baseDir, marker, this.logger);
   }
 
   /**
-   * Read shutdown-state.json from baseDir.
+   * Read the shutdown marker from the Control DB.
    * Returns null if file doesn't exist or fails to parse.
    */
   async readShutdownMarker(): Promise<ShutdownMarker | null> {
@@ -950,7 +950,7 @@ export class DaemonRunner {
   }
 
   /**
-   * Delete shutdown-state.json (after successful resume).
+   * Delete the shutdown marker after successful resume.
    */
   async deleteShutdownMarker(): Promise<void> {
     await deleteDaemonShutdownMarker(this.baseDir);

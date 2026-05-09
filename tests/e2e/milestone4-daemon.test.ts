@@ -21,7 +21,7 @@ import { Logger } from "../../src/runtime/logger.js";
 import { EventServer } from "../../src/runtime/event-server.js";
 import type { DaemonDeps } from "../../src/runtime/daemon-runner.js";
 import type { DaemonState } from "../../src/base/types/daemon.js";
-import { DaemonStateSchema } from "../../src/base/types/daemon.js";
+import { DaemonStateStore } from "../../src/runtime/store/daemon-state-store.js";
 import type { LoopResult } from "../../src/orchestrator/loop/durable-loop.js";
 import { makeTempDir } from "../helpers/temp-dir.js";
 
@@ -95,7 +95,7 @@ describe("Milestone 4 — Group 1: Daemon Mode Integration", () => {
 
   // ── Test 1: DaemonRunner starts and stops cleanly ──
 
-  it("DaemonRunner starts and stops cleanly, writing daemon-state.json", async () => {
+  it("DaemonRunner starts and stops cleanly, writing daemon state to Control DB", async () => {
     const stateManager = new StateManager(tempDir);
 
     let runCount = 0;
@@ -153,17 +153,12 @@ describe("Milestone 4 — Group 1: Daemon Mode Integration", () => {
     // Run daemon — should exit when stop() is called
     await daemon.start(["goal-start-stop"]);
 
-    // Verify daemon-state.json was written
-    const statePath = path.join(tempDir, "daemon-state.json");
-    expect(fs.existsSync(statePath)).toBe(true);
+    const state = await new DaemonStateStore(tempDir).load();
 
-    const rawState = JSON.parse(fs.readFileSync(statePath, "utf-8")) as unknown;
-    const state = DaemonStateSchema.parse(rawState);
-
-    expect(state.status).toBe("stopped");
-    expect(state.loop_count).toBeGreaterThanOrEqual(1);
-    expect(state.active_goals).toContain("goal-start-stop");
-    expect(state.crash_count).toBe(0);
+    expect(state?.status).toBe("stopped");
+    expect(state?.loop_count).toBeGreaterThanOrEqual(1);
+    expect(state?.active_goals).toContain("goal-start-stop");
+    expect(state?.crash_count).toBe(0);
     expect(runCount).toBeGreaterThanOrEqual(1);
   });
 
@@ -223,25 +218,22 @@ describe("Milestone 4 — Group 1: Daemon Mode Integration", () => {
 
     await daemon.start(["goal-graceful"]);
 
-    // After stop, daemon-state.json should show "stopped"
-    const statePath = path.join(tempDir, "daemon-state.json");
-    const rawState = JSON.parse(fs.readFileSync(statePath, "utf-8")) as unknown;
-    const state = DaemonStateSchema.parse(rawState);
+    const state = await new DaemonStateStore(tempDir).load();
 
-    expect(state.status).toBe("stopped");
+    expect(state?.status).toBe("stopped");
     // The daemon should have run at least once before stopping
     expect(loopCalls.length).toBeGreaterThanOrEqual(1);
     expect(loopCalls[0]).toBe("goal-graceful");
     // interrupted_goals was saved (stop() records them)
-    expect(state.interrupted_goals).toBeDefined();
+    expect(state?.interrupted_goals).toBeDefined();
   });
 
   // ── Test 3: State restoration — interrupted_goals merged on restart ──
 
-  it("Restart picks up interrupted_goals from previous daemon-state.json", async () => {
+  it("Restart picks up interrupted_goals from previous daemon Control DB state", async () => {
     const stateManager = new StateManager(tempDir);
 
-    // Write a pre-existing daemon-state.json simulating an interrupted run
+    // Write pre-existing daemon state simulating an interrupted run.
     const interruptedState: DaemonState = {
       pid: 99999,
       started_at: new Date().toISOString(),
@@ -253,8 +245,7 @@ describe("Milestone 4 — Group 1: Daemon Mode Integration", () => {
       last_error: null,
       interrupted_goals: ["goal-interrupted-A", "goal-interrupted-B"],
     };
-    const statePath = path.join(tempDir, "daemon-state.json");
-    fs.writeFileSync(statePath, JSON.stringify(interruptedState, null, 2), "utf-8");
+    await new DaemonStateStore(tempDir).save(interruptedState);
 
     // Create goals so shouldActivate returns true for them
     const now = new Date().toISOString();
@@ -307,13 +298,11 @@ describe("Milestone 4 — Group 1: Daemon Mode Integration", () => {
     // Start with only "goal-new" — but interrupted goals should be merged
     await daemon.start(["goal-new"]);
 
-    // Verify final state has all merged goals in active_goals
-    const rawState = JSON.parse(fs.readFileSync(statePath, "utf-8")) as unknown;
-    const finalState = DaemonStateSchema.parse(rawState);
+    const finalState = await new DaemonStateStore(tempDir).load();
 
-    expect(finalState.active_goals).toContain("goal-new");
-    expect(finalState.active_goals).toContain("goal-interrupted-A");
-    expect(finalState.active_goals).toContain("goal-interrupted-B");
+    expect(finalState?.active_goals).toContain("goal-new");
+    expect(finalState?.active_goals).toContain("goal-interrupted-A");
+    expect(finalState?.active_goals).toContain("goal-interrupted-B");
   });
 
   // ── Test 4: Log rotation — date-based rotation writes dated log file ──

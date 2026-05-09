@@ -5,6 +5,7 @@ import { ChatSessionCatalog } from "../../interface/chat/chat-session-store.js";
 import { normalizeAgentLoopSessionState } from "../../orchestrator/execution/agent-loop/agent-loop-session-state.js";
 import type { ProcessSessionManager, ProcessSessionSnapshot } from "../../tools/system/ProcessSessionTool/ProcessSessionTool.js";
 import { BackgroundRunLedger } from "../store/background-run-store.js";
+import { SupervisorStateStore } from "../store/supervisor-state-store.js";
 import { resolveConfiguredDaemonRuntimeRoot } from "../daemon/runtime-root.js";
 import {
   BackgroundRunSchema,
@@ -30,7 +31,6 @@ import {
   coreLoopSessionFromLedgerRun,
   coreLoopSessionId,
   defaultIsPidAlive,
-  fileExists,
   filterRuns,
   filterSessions,
   isProcessPidValue,
@@ -388,12 +388,11 @@ export class RuntimeSessionRegistry {
     backgroundRuns: BackgroundRun[],
     warnings: RuntimeSessionRegistryWarning[],
   ): Promise<void> {
-    const relativePath = await this.findSupervisorStatePath();
-    if (!relativePath) return;
-    const source = sourceRef("supervisor_state", null, null, relativePath, null);
-    let raw: unknown;
+    const runtimeRoot = resolveConfiguredDaemonRuntimeRoot(this.stateBaseDir);
+    const source = sourceRef("supervisor_state", "current", null, null, null);
+    let raw: SupervisorStateLike | null;
     try {
-      raw = await this.stateManager.readRaw(relativePath);
+      raw = await new SupervisorStateStore(runtimeRoot, { controlBaseDir: this.stateBaseDir }).load();
     } catch (error) {
       warnings.push({
         code: "source_parse_failed",
@@ -404,7 +403,7 @@ export class RuntimeSessionRegistry {
     }
     if (!raw) return;
 
-    const state = raw as SupervisorStateLike;
+    const state = raw;
     const workers = Array.isArray(state.workers) ? state.workers : [];
     const updatedAt = numberToIso(state.updatedAt) ?? null;
     const supervisorSource = { ...source, updated_at: updatedAt };
@@ -591,20 +590,6 @@ export class RuntimeSessionRegistry {
       }
     }
     return snapshots;
-  }
-
-  private async findSupervisorStatePath(): Promise<string | null> {
-    for (const candidate of [
-      path.join("runtime", "supervisor-state.json"),
-      "supervisor-state.json",
-    ]) {
-      try {
-        if (await fileExists(path.join(this.stateBaseDir, candidate))) return candidate;
-      } catch {
-        // Try the next legacy/current candidate.
-      }
-    }
-    return null;
   }
 
   private processRunStatus(

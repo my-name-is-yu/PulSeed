@@ -1,6 +1,7 @@
 export {
   CONTROL_DB_INITIAL_SCHEMA_SQL,
   CONTROL_DB_MIGRATIONS,
+  CONTROL_DB_QUEUE_DAEMON_SCHEDULE_SCHEMA_SQL,
   CONTROL_DB_RUNTIME_CONTROL_SCHEMA_SQL,
   CONTROL_DB_RUNTIME_STATE_OWNERSHIP_SCHEMA_SQL,
   CONTROL_DB_SCHEMA_VERSION,
@@ -14,6 +15,7 @@ export {
   initializeControlDatabase,
   inspectControlDatabase,
   openControlDatabase,
+  openControlDatabaseSync,
   resolveControlDbPath,
 } from "./control-db.js";
 export type {
@@ -29,6 +31,7 @@ export type {
 
 export {
   openRuntimeControlDatabase,
+  openRuntimeControlDatabaseSync,
   resolveRuntimeControlDbBaseDir,
 } from "./runtime-control-db.js";
 export type { RuntimeControlDbStoreOptions } from "./runtime-control-db.js";

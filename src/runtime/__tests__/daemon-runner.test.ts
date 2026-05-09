@@ -18,6 +18,7 @@ import { createEnvelope } from "../types/envelope.js";
 import { runSupervisorMaintenanceCycleForDaemon } from "../daemon/maintenance.js";
 import { GuardrailStore } from "../guardrails/index.js";
 import { RuntimeHealthStore } from "../store/health-store.js";
+import { DaemonShutdownStore, DaemonStateStore, SupervisorStateStore } from "../store/index.js";
 import type { DaemonState } from "../../base/types/daemon.js";
 import { restoreInterruptedGoals } from "../daemon/persistence.js";
 import { upsertRelationshipProfileItem } from "../../platform/profile/relationship-profile.js";
@@ -33,9 +34,8 @@ async function pollForFile(
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
-      if (fs.existsSync(filePath)) {
-        return JSON.parse(fs.readFileSync(filePath, "utf-8"));
-      }
+      const value = await readRuntimeStatePath(filePath);
+      if (value !== null) return value;
     } catch {
       // Retry until stable.
     }
@@ -53,8 +53,9 @@ async function pollForJsonMatch<T>(
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
-      if (fs.existsSync(filePath)) {
-        const value = JSON.parse(fs.readFileSync(filePath, "utf-8")) as T;
+      const raw = await readRuntimeStatePath(filePath);
+      if (raw !== null) {
+        const value = raw as T;
         if (predicate(value)) {
           return value;
         }
@@ -65,6 +66,44 @@ async function pollForJsonMatch<T>(
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }
   throw new Error(`Timed out waiting for matching JSON in file: ${filePath}`);
+}
+
+async function readRuntimeStatePath(filePath: string): Promise<unknown | null> {
+  const fileName = path.basename(filePath);
+  if (fileName === "daemon-state.json") {
+    return new DaemonStateStore(path.dirname(filePath)).load();
+  }
+  if (fileName === "shutdown-state.json") {
+    return new DaemonShutdownStore(path.dirname(filePath)).load();
+  }
+  if (fileName === "supervisor-state.json") {
+    const runtimeRoot = path.dirname(filePath);
+    const controlBaseDir = path.basename(runtimeRoot) === "runtime" ? path.dirname(runtimeRoot) : runtimeRoot;
+    return new SupervisorStateStore(runtimeRoot, { controlBaseDir }).load();
+  }
+  if (!fs.existsSync(filePath)) return null;
+  return JSON.parse(fs.readFileSync(filePath, "utf-8"));
+}
+
+function readQueueState(runtimeRoot: string, controlBaseDir: string): {
+  records: Record<string, unknown>;
+} {
+  const queue = new JournalBackedQueue({
+    journalPath: path.join(runtimeRoot, "queue.json"),
+    controlBaseDir,
+  });
+  const snapshot = queue.snapshot();
+  const ids = new Set<string>([
+    ...Object.values(snapshot.pending).flat(),
+    ...Object.values(snapshot.inflight).map((claim) => claim.messageId),
+    ...snapshot.completed,
+    ...snapshot.deadletter,
+  ]);
+  const records: Record<string, unknown> = {};
+  for (const id of ids) {
+    records[id] = queue.get(id);
+  }
+  return { records };
 }
 
 async function pollForStoreMatch<T>(
@@ -85,13 +124,13 @@ async function pollForStoreMatch<T>(
 }
 
 async function waitFor(
-  predicate: () => boolean,
+  predicate: () => boolean | Promise<boolean>,
   timeoutMs = 2_000,
   intervalMs = 20
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (predicate()) {
+    if (await predicate()) {
       return;
     }
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
@@ -211,17 +250,17 @@ function makeEventServerMock() {
   };
 }
 
-function createPersistedStateFile(tmpDir: string, state: DaemonState): {
+async function createPersistedStateFile(tmpDir: string, state: DaemonState): Promise<{
   filePath: string;
   saveDaemonState: () => Promise<void>;
-} {
+}> {
   const filePath = path.join(tmpDir, "daemon-state.json");
-  fs.writeFileSync(filePath, JSON.stringify(state));
+  await new DaemonStateStore(tmpDir).save(state);
 
   return {
     filePath,
     saveDaemonState: async () => {
-      fs.writeFileSync(filePath, JSON.stringify(state));
+      await new DaemonStateStore(tmpDir).save(state);
     },
   };
 }
@@ -270,9 +309,11 @@ describe("DaemonRunner durable runtime", () => {
     const state = await pollForFile(path.join(tmpDir, "daemon-state.json")) as {
       status: string;
       active_goals: string[];
+      runtime_root?: string;
     };
     expect(state.status).toBe("running");
     expect(state.active_goals).toEqual(["goal-a", "goal-b"]);
+    expect(state.runtime_root).toBe(path.join(tmpDir, "runtime"));
 
     daemon.stop();
     await startPromise;
@@ -369,10 +410,10 @@ describe("DaemonRunner durable runtime", () => {
     daemon.stop();
     await expect(startPromise).rejects.toThrow("startup maintenance failed");
 
-    const state = JSON.parse(fs.readFileSync(path.join(tmpDir, "daemon-state.json"), "utf-8"));
+    const state = await readRuntimeStatePath(path.join(tmpDir, "daemon-state.json")) as { status: string };
     expect(state.status).toBe("stopped");
 
-    const marker = JSON.parse(fs.readFileSync(path.join(tmpDir, "shutdown-state.json"), "utf-8"));
+    const marker = await readRuntimeStatePath(path.join(tmpDir, "shutdown-state.json")) as { state: string; goal_ids: string[] };
     expect(marker.state).toBe("clean_shutdown");
     expect(marker.goal_ids).toEqual(["goal-a"]);
   });
@@ -1318,19 +1359,17 @@ describe("DaemonRunner durable runtime", () => {
     daemon.stop();
     await startPromise;
 
-    const state = JSON.parse(fs.readFileSync(path.join(tmpDir, "daemon-state.json"), "utf-8"));
+    const state = await readRuntimeStatePath(path.join(tmpDir, "daemon-state.json")) as { status: string; interrupted_goals: string[] };
     expect(state.status).toBe("stopped");
     expect(state.interrupted_goals).toEqual(["goal-1"]);
 
-    const marker = JSON.parse(fs.readFileSync(path.join(tmpDir, "shutdown-state.json"), "utf-8"));
+    const marker = await readRuntimeStatePath(path.join(tmpDir, "shutdown-state.json")) as { state: string; goal_ids: string[] };
     expect(marker.state).toBe("clean_shutdown");
     expect(marker.goal_ids).toEqual(["goal-1"]);
   });
 
   it("restores interrupted goals from the previous daemon state", async () => {
-    fs.writeFileSync(
-      path.join(tmpDir, "daemon-state.json"),
-      JSON.stringify({
+    await new DaemonStateStore(tmpDir).save({
         pid: 12345,
         started_at: new Date().toISOString(),
         last_loop_at: null,
@@ -1340,8 +1379,7 @@ describe("DaemonRunner durable runtime", () => {
         status: "stopped",
         crash_count: 0,
         last_error: null,
-      })
-    );
+      } as DaemonState);
 
     const deps = makeDeps(tmpDir, { config: { check_interval_ms: 50 } });
     const daemon = new DaemonRunner(deps);
@@ -1361,9 +1399,7 @@ describe("DaemonRunner durable runtime", () => {
   });
 
   it("restores active goals from an unclean previous state when interrupted goals are absent", async () => {
-    fs.writeFileSync(
-      path.join(tmpDir, "daemon-state.json"),
-      JSON.stringify({
+    await new DaemonStateStore(tmpDir).save({
         pid: 12345,
         started_at: new Date().toISOString(),
         last_loop_at: null,
@@ -1372,8 +1408,7 @@ describe("DaemonRunner durable runtime", () => {
         status: "running",
         crash_count: 1,
         last_error: "simulated crash",
-      })
-    );
+      } as DaemonState);
 
     const deps = makeDeps(tmpDir, { config: { check_interval_ms: 50 } });
     const restored = await restoreInterruptedGoals(tmpDir, [], deps.logger);
@@ -1407,23 +1442,26 @@ describe("DaemonRunner durable runtime", () => {
     });
     const daemon = new DaemonRunner(deps);
     currentDaemon = daemon;
+    const runtimeDir = path.join(tmpDir, "runtime");
+    const healthStore = new RuntimeHealthStore(runtimeDir, { controlBaseDir: tmpDir });
 
     const startPromise = daemon.start(["goal-1"]);
     currentStartPromise = startPromise;
-    await waitFor(() => fs.existsSync(path.join(tmpDir, "runtime", "queue.json")));
+    await pollForStoreMatch(() => healthStore.loadDaemonHealth(), () => true);
 
     daemon.stop();
     await startPromise;
 
-    const runtimeDir = path.join(tmpDir, "runtime");
-    const healthStore = new RuntimeHealthStore(runtimeDir, { controlBaseDir: tmpDir });
     expect(fs.existsSync(path.join(tmpDir, "state", "pulseed-control.sqlite"))).toBe(true);
     expect(fs.existsSync(path.join(runtimeDir, "approvals", "pending"))).toBe(false);
     expect(fs.existsSync(path.join(runtimeDir, "outbox"))).toBe(false);
     await expect(healthStore.loadDaemonHealth()).resolves.not.toBeNull();
     await expect(healthStore.loadComponentsHealth()).resolves.not.toBeNull();
     expect(fs.existsSync(path.join(runtimeDir, "health", "daemon.json"))).toBe(false);
-    expect(fs.existsSync(path.join(runtimeDir, "queue.json"))).toBe(true);
+    expect(new JournalBackedQueue({
+      journalPath: path.join(runtimeDir, "queue.json"),
+      controlBaseDir: tmpDir,
+    }).snapshot()).toMatchObject({ pending: expect.any(Object) });
     expect(fs.existsSync(path.join(tmpDir, "pulseed.pid"))).toBe(false);
   });
 
@@ -1438,12 +1476,15 @@ describe("DaemonRunner durable runtime", () => {
 
     const startPromise = daemon.start(["goal-1"]);
     currentStartPromise = startPromise;
-    await waitFor(() => fs.existsSync(path.join(tmpDir, "runtime", "supervisor-state.json")));
+    await waitFor(async () => {
+      const state = await new SupervisorStateStore(path.join(tmpDir, "runtime"), { controlBaseDir: tmpDir }).load();
+      return state !== null;
+    });
 
     daemon.stop();
     await startPromise;
 
-    expect(fs.existsSync(path.join(tmpDir, "runtime", "supervisor-state.json"))).toBe(true);
+    await expect(new SupervisorStateStore(path.join(tmpDir, "runtime"), { controlBaseDir: tmpDir }).load()).resolves.not.toBeNull();
   });
 
   it("reconciles running tasks on startup, preserves retry context, and restores the goal", async () => {
@@ -1599,13 +1640,9 @@ describe("DaemonRunner durable runtime", () => {
         () => healthStore.loadDaemonHealth(),
         (value) => value.status === "ok" || value.status === "degraded"
       );
-      await waitFor(() => {
-        const statePath = path.join(tmpDir, "daemon-state.json");
-        if (!fs.existsSync(statePath)) {
-          return false;
-        }
-        const state = JSON.parse(fs.readFileSync(statePath, "utf-8")) as { status?: string };
-        return state.status === "running";
+      await waitFor(async () => {
+        const state = await readRuntimeStatePath(path.join(tmpDir, "daemon-state.json")) as { status?: string } | null;
+        return state?.status === "running";
       });
 
       daemon.stop();
@@ -1665,11 +1702,7 @@ describe("DaemonRunner durable runtime", () => {
     daemon.stop();
     await startPromise;
 
-    const persistedQueue = JSON.parse(
-      fs.readFileSync(path.join(runtimeDir, "queue.json"), "utf-8")
-    ) as {
-      records: Record<string, { status: string; envelope?: { goal_id?: string; name?: string } }>;
-    };
+    const persistedQueue = readQueueState(runtimeDir, tmpDir);
     expect(Object.values(persistedQueue.records)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -1726,11 +1759,7 @@ describe("DaemonRunner durable runtime", () => {
     daemon.stop();
     await startPromise;
 
-    const persistedQueue = JSON.parse(
-      fs.readFileSync(path.join(runtimeDir, "queue.json"), "utf-8")
-    ) as {
-      records: Record<string, { status: string; deadletterReason?: string; envelope?: { goal_id?: string } }>;
-    };
+    const persistedQueue = readQueueState(runtimeDir, tmpDir);
     expect(Object.values(persistedQueue.records)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -1911,7 +1940,7 @@ describe("DaemonRunner durable runtime", () => {
       last_resident_at: null,
       resident_activity: null,
     };
-    const { filePath, saveDaemonState } = createPersistedStateFile(tmpDir, state);
+    const { saveDaemonState } = await createPersistedStateFile(tmpDir, state);
     const saveSpy = vi.fn(saveDaemonState);
     const driveSystem = {
       getGoalActivationSnapshot: vi.fn(async (goalId: string) => ({
@@ -1924,7 +1953,6 @@ describe("DaemonRunner durable runtime", () => {
       prioritizeGoals: vi.fn().mockImplementation((ids: string[]) => ids),
     };
 
-    const before = fs.statSync(filePath).mtimeMs;
     await runSupervisorMaintenanceCycleForDaemon({
       currentGoalIds: ["goal-1"],
       driveSystem: driveSystem as never,
@@ -1936,7 +1964,6 @@ describe("DaemonRunner durable runtime", () => {
     });
 
     expect(saveSpy).not.toHaveBeenCalled();
-    expect(fs.statSync(filePath).mtimeMs).toBe(before);
   });
 
   it("persists daemon-state.json when supervisor maintenance changes active goals", async () => {
@@ -1953,7 +1980,7 @@ describe("DaemonRunner durable runtime", () => {
       last_resident_at: null,
       resident_activity: null,
     };
-    const { filePath, saveDaemonState } = createPersistedStateFile(tmpDir, state);
+    const { filePath, saveDaemonState } = await createPersistedStateFile(tmpDir, state);
     const saveSpy = vi.fn(saveDaemonState);
     const driveSystem = {
       getGoalActivationSnapshot: vi.fn(async (goalId: string) => ({
@@ -1982,7 +2009,7 @@ describe("DaemonRunner durable runtime", () => {
     });
 
     expect(saveSpy).toHaveBeenCalledOnce();
-    expect(JSON.parse(fs.readFileSync(filePath, "utf-8"))).toMatchObject({
+    await expect(readRuntimeStatePath(filePath)).resolves.toMatchObject({
       active_goals: ["goal-2"],
       status: "running",
     });

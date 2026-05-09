@@ -14,6 +14,7 @@ import { RuntimeEvidenceLedger } from "../../../runtime/store/evidence-ledger.js
 import { RuntimeExperimentQueueStore } from "../../../runtime/store/experiment-queue-store.js";
 import { RuntimeBudgetStore } from "../../../runtime/store/budget-store.js";
 import { RuntimeHealthStore } from "../../../runtime/store/health-store.js";
+import { SupervisorStateStore } from "../../../runtime/store/supervisor-state-store.js";
 import * as daemonClient from "../../../runtime/daemon/client.js";
 
 describe("runtime registry CLI commands", () => {
@@ -39,14 +40,17 @@ describe("runtime registry CLI commands", () => {
 
   it("lists runtime sessions from real StateManager registry files", async () => {
     await writeConversationWithRunningAgent();
-    await stateManager.writeRaw("supervisor-state.json", {
+    await new SupervisorStateStore(path.join(tmpDir, "runtime"), { controlBaseDir: tmpDir }).save({
       workers: [
         {
           workerId: "worker-1",
           goalId: "goal-runtime",
           startedAt: Date.parse("2026-04-25T00:00:00.000Z"),
+          iterations: 0,
         },
       ],
+      crashCounts: {},
+      suspendedGoals: [],
       updatedAt: Date.parse("2026-04-25T00:30:00.000Z"),
     });
 

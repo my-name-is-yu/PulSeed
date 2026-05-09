@@ -8,6 +8,7 @@ import {
   type UsageCounter,
 } from "../../usage-counter.js";
 import { parseUsagePeriodMs } from "../../usage-period.js";
+import { ScheduleHistoryStore } from "../../../runtime/schedule/history.js";
 
 async function collectGoalUsage(stateManager: StateManager, goalId: string): Promise<{
   goalId: string;
@@ -51,18 +52,6 @@ async function collectGoalUsage(stateManager: StateManager, goalId: string): Pro
   return { goalId, totalTokens, taskCount, terminalTaskCount };
 }
 
-async function readScheduleHistory(historyPath: string): Promise<unknown[] | null> {
-  try {
-    const raw = JSON.parse(await fsp.readFile(historyPath, "utf-8")) as unknown;
-    return Array.isArray(raw) ? raw : null;
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT" || err instanceof SyntaxError) {
-      return null;
-    }
-    throw err;
-  }
-}
-
 async function collectScheduleUsage(stateManager: StateManager, period: string): Promise<{
   period: string;
   runs: number;
@@ -70,11 +59,7 @@ async function collectScheduleUsage(stateManager: StateManager, period: string):
 }> {
   const periodMs = parseUsagePeriodMs(period);
   const since = Date.now() - periodMs;
-  const historyPath = path.join(stateManager.getBaseDir(), "schedule-history.json");
-  const raw = await readScheduleHistory(historyPath);
-  if (raw === null) {
-    return { period, runs: 0, totalTokens: 0 };
-  }
+  const raw = await new ScheduleHistoryStore(stateManager.getBaseDir()).load();
 
   let runs = 0;
   let totalTokens = 0;

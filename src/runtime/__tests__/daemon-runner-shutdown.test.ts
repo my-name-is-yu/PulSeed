@@ -9,6 +9,7 @@ import { PIDManager } from "../pid-manager.js";
 import { Logger } from "../logger.js";
 import type { LoopResult } from "../../orchestrator/loop/durable-loop.js";
 import type { DaemonDeps } from "../daemon-runner.js";
+import { DaemonShutdownStore, DaemonStateStore, openControlDatabase } from "../store/index.js";
 
 // ─── Helpers ───
 
@@ -69,22 +70,17 @@ function makeDeps(tmpDir: string, overrides: Partial<DaemonDeps> = {}): DaemonDe
   };
 }
 
-function readMarker(tmpDir: string): ShutdownMarker | null {
-  const p = path.join(tmpDir, "shutdown-state.json");
-  if (!fs.existsSync(p)) return null;
-  return JSON.parse(fs.readFileSync(p, "utf-8")) as ShutdownMarker;
+async function readMarker(tmpDir: string): Promise<ShutdownMarker | null> {
+  return new DaemonShutdownStore(tmpDir).load();
 }
 
 async function waitForDaemonRunning(tmpDir: string, timeoutMs = 2_000): Promise<void> {
-  const statePath = path.join(tmpDir, "daemon-state.json");
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
-      if (fs.existsSync(statePath)) {
-        const state = JSON.parse(fs.readFileSync(statePath, "utf-8")) as { status?: string };
-        if (state.status === "running") {
-          return;
-        }
+      const state = await new DaemonStateStore(tmpDir).load();
+      if (state?.status === "running") {
+        return;
       }
     } catch {
       // Retry until state file is stable.
@@ -101,13 +97,54 @@ async function waitForMarkerState(
 ): Promise<ShutdownMarker> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const marker = readMarker(tmpDir);
+    const marker = await readMarker(tmpDir);
     if (marker?.state === expectedState) {
       return marker;
     }
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
   throw new Error(`Timed out waiting for shutdown marker state: ${expectedState}`);
+}
+
+async function writeMarker(tmpDir: string, marker: ShutdownMarker): Promise<void> {
+  await new DaemonShutdownStore(tmpDir).save(marker);
+}
+
+async function writeInvalidMarker(tmpDir: string): Promise<void> {
+  const database = await openControlDatabase({ baseDir: tmpDir });
+  try {
+    database.transaction((db) => {
+      db.prepare(`
+        INSERT INTO daemon_shutdown_markers (
+          marker_id,
+          marker_state,
+          reason,
+          marker_timestamp,
+          updated_at,
+          marker_json
+        )
+        VALUES ('current', 'running', 'startup', ?, ?, json(?))
+        ON CONFLICT(marker_id) DO UPDATE SET
+          marker_state = excluded.marker_state,
+          reason = excluded.reason,
+          marker_timestamp = excluded.marker_timestamp,
+          updated_at = excluded.updated_at,
+          marker_json = excluded.marker_json
+      `).run(
+        new Date().toISOString(),
+        new Date().toISOString(),
+        JSON.stringify({
+          goal_ids: ["goal-crashed"],
+          loop_index: Number.MAX_SAFE_INTEGER + 1,
+          timestamp: "not-a-date",
+          reason: "startup",
+          state: "running",
+        }),
+      );
+    });
+  } finally {
+    database.close();
+  }
 }
 
 // ─── Test Suite ───
@@ -167,7 +204,7 @@ describe("DaemonRunner — Graceful Shutdown + Crash Recovery", () => {
       daemon.stop();
       await startPromise;
 
-      const marker = readMarker(tmpDir);
+      const marker = await readMarker(tmpDir);
       expect(marker).not.toBeNull();
       expect(marker!.state).toBe("clean_shutdown");
       expect(marker!.goal_ids).toContain("goal-1");
@@ -184,7 +221,7 @@ describe("DaemonRunner — Graceful Shutdown + Crash Recovery", () => {
       shutdownSignals.emit("SIGTERM");
       await startPromise;
 
-      const marker = readMarker(tmpDir);
+      const marker = await readMarker(tmpDir);
       expect(marker).not.toBeNull();
       expect(marker!.state).toBe("clean_shutdown");
     });
@@ -200,7 +237,7 @@ describe("DaemonRunner — Graceful Shutdown + Crash Recovery", () => {
       shutdownSignals.emit("SIGINT");
       await startPromise;
 
-      const marker = readMarker(tmpDir);
+      const marker = await readMarker(tmpDir);
       expect(marker).not.toBeNull();
       expect(marker!.state).toBe("clean_shutdown");
     });
@@ -216,7 +253,7 @@ describe("DaemonRunner — Graceful Shutdown + Crash Recovery", () => {
       daemon.stop();
       await startPromise;
 
-      const marker = readMarker(tmpDir);
+      const marker = await readMarker(tmpDir);
       expect(marker).not.toBeNull();
       expect(marker!.goal_ids).toContain("goal-alpha");
       expect(marker!.goal_ids).toContain("goal-beta");
@@ -233,7 +270,7 @@ describe("DaemonRunner — Graceful Shutdown + Crash Recovery", () => {
       daemon.stop();
       await startPromise;
 
-      const marker = readMarker(tmpDir);
+      const marker = await readMarker(tmpDir);
       expect(marker).not.toBeNull();
       // Should be a valid ISO 8601 timestamp
       expect(() => new Date(marker!.timestamp)).not.toThrow();
@@ -253,11 +290,7 @@ describe("DaemonRunner — Graceful Shutdown + Crash Recovery", () => {
         reason: "stop",
         state: "clean_shutdown",
       };
-      fs.writeFileSync(
-        path.join(tmpDir, "shutdown-state.json"),
-        JSON.stringify(marker),
-        "utf-8"
-      );
+      await writeMarker(tmpDir, marker);
 
       const deps = makeDeps(tmpDir, { config: { check_interval_ms: 50 } });
       const loggerInfoSpy = vi.spyOn(deps.logger, "info");
@@ -284,11 +317,7 @@ describe("DaemonRunner — Graceful Shutdown + Crash Recovery", () => {
         reason: "startup",
         state: "running",
       };
-      fs.writeFileSync(
-        path.join(tmpDir, "shutdown-state.json"),
-        JSON.stringify(marker),
-        "utf-8"
-      );
+      await writeMarker(tmpDir, marker);
 
       const deps = makeDeps(tmpDir, { config: { check_interval_ms: 50 } });
       const loggerWarnSpy = vi.spyOn(deps.logger, "warn");
@@ -312,11 +341,7 @@ describe("DaemonRunner — Graceful Shutdown + Crash Recovery", () => {
     });
 
     it("should ignore malformed persisted shutdown markers at startup", async () => {
-      fs.writeFileSync(
-        path.join(tmpDir, "shutdown-state.json"),
-        `{"goal_ids":["goal-crashed"],"loop_index":1e999,"timestamp":"not-a-date","reason":"startup","state":"running"}`,
-        "utf-8"
-      );
+      await writeInvalidMarker(tmpDir);
 
       const deps = makeDeps(tmpDir, { config: { check_interval_ms: 50 } });
       const loggerWarnSpy = vi.spyOn(deps.logger, "warn");
@@ -346,11 +371,7 @@ describe("DaemonRunner — Graceful Shutdown + Crash Recovery", () => {
         reason: "stop",
         state: "clean_shutdown",
       };
-      fs.writeFileSync(
-        path.join(tmpDir, "shutdown-state.json"),
-        JSON.stringify(marker),
-        "utf-8"
-      );
+      await writeMarker(tmpDir, marker);
 
       const deps = makeDeps(tmpDir, { config: { check_interval_ms: 50 } });
       const daemon = new DaemonRunner(deps);
@@ -389,10 +410,7 @@ describe("DaemonRunner — Graceful Shutdown + Crash Recovery", () => {
 
     it("should handle missing shutdown marker gracefully (no error)", async () => {
       // Ensure no marker file exists
-      const markerPath = path.join(tmpDir, "shutdown-state.json");
-      if (fs.existsSync(markerPath)) {
-        fs.unlinkSync(markerPath);
-      }
+      await new DaemonShutdownStore(tmpDir).delete();
 
       const deps = makeDeps(tmpDir, { config: { check_interval_ms: 50 } });
       const daemon = new DaemonRunner(deps);
@@ -426,11 +444,7 @@ describe("DaemonRunner — Graceful Shutdown + Crash Recovery", () => {
         reason: "stop",
         state: "clean_shutdown",
       };
-      fs.writeFileSync(
-        path.join(tmpDir, "shutdown-state.json"),
-        JSON.stringify(marker),
-        "utf-8"
-      );
+      await writeMarker(tmpDir, marker);
 
       const deps = makeDeps(tmpDir);
       const daemon = new DaemonRunner(deps);
@@ -441,11 +455,7 @@ describe("DaemonRunner — Graceful Shutdown + Crash Recovery", () => {
     });
 
     it("should return null when the marker schema is invalid", async () => {
-      fs.writeFileSync(
-        path.join(tmpDir, "shutdown-state.json"),
-        `{"goal_ids":["g1"],"loop_index":1e999,"timestamp":"not-a-date","reason":"stop","state":"clean_shutdown"}`,
-        "utf-8"
-      );
+      await writeInvalidMarker(tmpDir);
 
       const deps = makeDeps(tmpDir);
       const daemon = new DaemonRunner(deps);
@@ -454,17 +464,13 @@ describe("DaemonRunner — Graceful Shutdown + Crash Recovery", () => {
     });
 
     it("should delete the marker file via deleteShutdownMarker()", async () => {
-      fs.writeFileSync(
-        path.join(tmpDir, "shutdown-state.json"),
-        JSON.stringify({ goal_ids: [], loop_index: 0, timestamp: new Date().toISOString(), reason: "stop", state: "clean_shutdown" }),
-        "utf-8"
-      );
+      await writeMarker(tmpDir, { goal_ids: [], loop_index: 0, timestamp: new Date().toISOString(), reason: "stop", state: "clean_shutdown" });
 
       const deps = makeDeps(tmpDir);
       const daemon = new DaemonRunner(deps);
       await daemon.deleteShutdownMarker();
 
-      expect(fs.existsSync(path.join(tmpDir, "shutdown-state.json"))).toBe(false);
+      await expect(new DaemonShutdownStore(tmpDir).load()).resolves.toBeNull();
     });
 
     it("should not throw when deleting a non-existent marker", async () => {

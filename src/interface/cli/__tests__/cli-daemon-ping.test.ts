@@ -14,6 +14,7 @@ vi.mock("../../../base/utils/paths.js", async (importOriginal) => {
 import { getPulseedDirPath } from "../../../base/utils/paths.js";
 import { cmdDaemonPing } from "../commands/daemon.js";
 import { DaemonClient } from "../../../runtime/daemon/client.js";
+import { DaemonStateStore } from "../../../runtime/store/index.js";
 
 describe("cmdDaemonPing", () => {
   let tmpDir: string;
@@ -49,10 +50,18 @@ describe("cmdDaemonPing", () => {
 
   it("reports failure with port and daemon state detail when /health is unreachable", async () => {
     fs.writeFileSync(path.join(tmpDir, "daemon.json"), JSON.stringify({ event_server_port: 43123 }));
-    fs.writeFileSync(
-      path.join(tmpDir, "daemon-state.json"),
-      JSON.stringify({ status: "running", pid: process.pid })
-    );
+    await new DaemonStateStore(tmpDir).save({
+      pid: process.pid,
+      started_at: new Date().toISOString(),
+      last_loop_at: null,
+      loop_count: 0,
+      active_goals: [],
+      status: "running",
+      crash_count: 0,
+      last_error: null,
+      last_resident_at: null,
+      resident_activity: null,
+    });
     vi.spyOn(DaemonClient.prototype, "getHealth").mockRejectedValue(new Error("connect ECONNREFUSED"));
     vi.spyOn(DaemonClient.prototype, "healthCheck").mockResolvedValue(false);
 

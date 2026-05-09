@@ -10,6 +10,7 @@ import * as path from "node:path";
 import { z } from "zod";
 import { DEFAULT_PORT } from "../port-utils.js";
 import { parseOutboxSeq } from "../event/outbox-seq.js";
+import { DaemonStateStore } from "../store/index.js";
 import { DaemonConfigSchema, DaemonStateSchema } from "../types/daemon.js";
 import type { DaemonRuntimeControlRequestBody } from "./control-contracts.js";
 
@@ -527,9 +528,8 @@ export async function isDaemonRunning(baseDir: string): Promise<{ running: boole
   // DEFAULT_PORT imported from port-utils
 
   try {
-    const statePath = path.join(baseDir, "daemon-state.json");
-    const raw = await fs.readFile(statePath, "utf-8");
-    const parsed = DaemonStateSchema.pick({ pid: true, status: true }).safeParse(JSON.parse(raw) as unknown);
+    const raw = await new DaemonStateStore(baseDir).load();
+    const parsed = DaemonStateSchema.pick({ pid: true, status: true }).safeParse(raw);
     if (!parsed.success) {
       return { running: false, port: DEFAULT_PORT };
     }

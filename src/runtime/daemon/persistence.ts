@@ -1,20 +1,17 @@
-import * as fsp from "node:fs/promises";
-import * as path from "node:path";
-import { readJsonFileOrNull, writeJsonFileAtomic } from "../../base/utils/json-io.js";
 import { DaemonStateSchema } from "../../base/types/daemon.js";
 import type { DaemonState } from "../../base/types/daemon.js";
 import type { Logger } from "../logger.js";
 import type { RuntimeOwnershipCoordinator } from "./runtime-ownership.js";
 import { ShutdownMarkerSchema, type ShutdownMarker } from "./types.js";
+import { DaemonShutdownStore, DaemonStateStore } from "../store/daemon-state-store.js";
 
 export async function saveDaemonStateFile(
   baseDir: string,
   state: DaemonState,
   logger: Logger,
 ): Promise<void> {
-  const statePath = path.join(baseDir, "daemon-state.json");
   try {
-    await writeJsonFileAtomic(statePath, state);
+    await new DaemonStateStore(baseDir).save(DaemonStateSchema.parse(state));
   } catch (err) {
     logger.warn("Failed to save daemon state", {
       error: err instanceof Error ? err.message : String(err),
@@ -23,13 +20,8 @@ export async function saveDaemonStateFile(
 }
 
 export async function loadDaemonStateFile(baseDir: string): Promise<DaemonState | null> {
-  const statePath = path.join(baseDir, "daemon-state.json");
-  const data = await readJsonFileOrNull(statePath);
-  if (data === null) {
-    return null;
-  }
   try {
-    return DaemonStateSchema.parse(data);
+    return await new DaemonStateStore(baseDir).load();
   } catch {
     return null;
   }
@@ -77,9 +69,8 @@ export async function writeShutdownMarkerFile(
   marker: ShutdownMarker,
   logger: Logger,
 ): Promise<void> {
-  const markerPath = path.join(baseDir, "shutdown-state.json");
   try {
-    await writeJsonFileAtomic(markerPath, ShutdownMarkerSchema.parse(marker));
+    await new DaemonShutdownStore(baseDir).save(ShutdownMarkerSchema.parse(marker));
   } catch (err) {
     logger.warn("Failed to write shutdown marker", {
       error: err instanceof Error ? err.message : String(err),
@@ -88,20 +79,15 @@ export async function writeShutdownMarkerFile(
 }
 
 export async function readShutdownMarkerFile(baseDir: string): Promise<ShutdownMarker | null> {
-  const markerPath = path.join(baseDir, "shutdown-state.json");
-  const raw = await readJsonFileOrNull<unknown>(markerPath);
-  if (raw === null) return null;
-  const parsed = ShutdownMarkerSchema.safeParse(raw);
-  return parsed.success ? parsed.data : null;
+  try {
+    return await new DaemonShutdownStore(baseDir).load();
+  } catch {
+    return null;
+  }
 }
 
 export async function deleteShutdownMarkerFile(baseDir: string): Promise<void> {
-  const markerPath = path.join(baseDir, "shutdown-state.json");
-  try {
-    await fsp.unlink(markerPath);
-  } catch {
-    // File may not exist — ignore
-  }
+  await new DaemonShutdownStore(baseDir).delete();
 }
 
 export async function checkCrashRecoveryMarker(baseDir: string, logger: Logger): Promise<void> {

@@ -166,6 +166,7 @@ export async function startDaemonRunner(
       loop_count: 0,
       active_goals: mergedGoalIds,
       status: mergedGoalIds.length === 0 ? "idle" : "running",
+      runtime_root: context.runtimeRoot ?? undefined,
       crash_count: 0,
       last_error: null,
       last_resident_at: null,
@@ -241,6 +242,7 @@ export async function startDaemonRunner(
           maxIterations: context.config.run_policy?.max_iterations ?? undefined,
           runPolicy: context.config.run_policy?.mode ?? "resident",
           stateFilePath: path.join(context.runtimeRoot!, "supervisor-state.json"),
+          controlBaseDir: context.baseDir,
         }
       );
     }

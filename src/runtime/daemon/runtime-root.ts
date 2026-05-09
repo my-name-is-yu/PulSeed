@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { DaemonConfigSchema, DaemonStateSchema, type DaemonConfig } from "../../base/types/daemon.js";
+import { DaemonConfigSchema, type DaemonConfig } from "../../base/types/daemon.js";
+import { loadDaemonStateSync } from "../store/daemon-state-store.js";
 
 export function resolveDaemonRuntimeRoot(baseDir: string, configuredRoot?: string): string {
   if (!configuredRoot || configuredRoot.trim() === "") {
@@ -43,12 +44,9 @@ export function resolveConfiguredDaemonRuntimeRoot(baseDir: string): string {
 }
 
 function readRunningDaemonRuntimeRoot(baseDir: string): string | null {
-  const statePath = path.join(baseDir, "daemon-state.json");
-  if (!fs.existsSync(statePath)) return null;
   try {
-    const parsed = DaemonStateSchema.safeParse(readJsonFileSync(statePath));
-    if (!parsed.success) return null;
-    const state = parsed.data;
+    const state = loadDaemonStateSync(baseDir);
+    if (!state) return null;
     if (state.status !== "running" && state.status !== "idle") return null;
     if (state.pid) {
       try {
@@ -58,8 +56,7 @@ function readRunningDaemonRuntimeRoot(baseDir: string): string | null {
       }
     }
     return state.runtime_root ?? null;
-  } catch (err) {
-    if (!isRecoverablePersistedJsonReadError(err)) throw err;
+  } catch {
     return null;
   }
 }

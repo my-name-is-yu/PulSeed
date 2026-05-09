@@ -3,6 +3,7 @@ import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { cleanupTempDir, makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 import { ScheduleHistoryStore } from "../history.js";
+import { openControlDatabase } from "../../store/control-db/index.js";
 
 describe("ScheduleHistoryStore", () => {
   let tempDir: string;
@@ -40,16 +41,14 @@ describe("ScheduleHistoryStore", () => {
   });
 
   it("skips persisted history records with unsafe attempt counts", async () => {
-    await fs.writeFile(path.join(tempDir, "schedule-history.json"), JSON.stringify([
-      historyRecord({
+    await insertRawHistoryRecord(tempDir, historyRecord({
         id: "11111111-1111-4111-8111-111111111111",
         attempt: Number.MAX_SAFE_INTEGER + 1,
-      }),
-      historyRecord({
+      }), 0);
+    await insertRawHistoryRecord(tempDir, historyRecord({
         id: "22222222-2222-4222-8222-222222222222",
         attempt: 2,
-      }),
-    ]), "utf8");
+      }), 1);
 
     const records = await store.load();
 
@@ -77,4 +76,42 @@ function historyRecord(overrides: { id: string; attempt: number }) {
     tokens_used: 0,
     escalated_to: null,
   };
+}
+
+async function insertRawHistoryRecord(baseDir: string, record: Record<string, unknown>, sortOrder: number): Promise<void> {
+  const database = await openControlDatabase({ baseDir });
+  try {
+    database.transaction((db) => {
+      db.prepare(`
+        INSERT INTO schedule_run_history (
+          history_id,
+          entry_id,
+          entry_name,
+          layer,
+          reason,
+          started_at,
+          finished_at,
+          internal,
+          tokens_used,
+          sort_order,
+          record_json
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, json(?))
+      `).run(
+        record["id"],
+        record["entry_id"],
+        record["entry_name"],
+        record["layer"],
+        record["reason"],
+        record["started_at"],
+        record["finished_at"],
+        0,
+        record["tokens_used"],
+        sortOrder,
+        JSON.stringify(record),
+      );
+    });
+  } finally {
+    database.close();
+  }
 }

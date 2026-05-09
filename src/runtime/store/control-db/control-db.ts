@@ -257,6 +257,19 @@ export class ControlDatabase {
     }
   }
 
+  static openSync(options: ControlDbOpenOptions = {}): ControlDatabase {
+    const dbPath = resolveControlDbPath(options);
+    fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+    const db = new Database(dbPath);
+    try {
+      initializeControlDatabase(db, options.migrations ?? CONTROL_DB_MIGRATIONS);
+      return new ControlDatabase(db, dbPath);
+    } catch (error) {
+      db.close();
+      throw error;
+    }
+  }
+
   close(): void {
     this.db.close();
   }
@@ -336,6 +349,10 @@ export class ControlDatabase {
 
 export async function openControlDatabase(options: ControlDbOpenOptions = {}): Promise<ControlDatabase> {
   return ControlDatabase.open(options);
+}
+
+export function openControlDatabaseSync(options: ControlDbOpenOptions = {}): ControlDatabase {
+  return ControlDatabase.openSync(options);
 }
 
 export function inspectControlDatabase(

@@ -1,14 +1,15 @@
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
-import { writeJsonFileAtomic, readJsonFileOrNull } from "../../base/utils/json-io.js";
-import { ScheduleEntrySchema, type ScheduleEntry } from "../types/schedule.js";
+import { readJsonFileOrNull } from "../../base/utils/json-io.js";
+import { ScheduleEntrySchema } from "../types/schedule.js";
 import { computeNextFireAt } from "./engine-mutations.js";
+import { ScheduleEntryStore } from "./entry-store.js";
+import { openControlDatabase } from "../store/control-db/index.js";
 
 const LEGACY_CRON_TASKS_FILE = "scheduled-tasks.json";
 const LEGACY_CRON_TASKS_ARCHIVE_FILE = "scheduled-tasks.legacy-migrated.json";
-const SCHEDULES_FILE = "schedules.json";
 
 const LegacyCronTaskListSchema = z.array(z.object({
   id: z.string().uuid(),
@@ -32,10 +33,10 @@ export async function migrateLegacyCronTasksIfNeeded(params: {
 }): Promise<boolean> {
   const legacyPath = path.join(params.baseDir, LEGACY_CRON_TASKS_FILE);
   const archivePath = path.join(params.baseDir, LEGACY_CRON_TASKS_ARCHIVE_FILE);
-  const schedulesPath = path.join(params.baseDir, SCHEDULES_FILE);
+  const entryStore = new ScheduleEntryStore(params.baseDir, params.logger);
 
-  const existingSchedules = await readJsonFileOrNull(schedulesPath);
-  if (existingSchedules !== null) {
+  const existingSchedules = await entryStore.readEntries();
+  if (existingSchedules.length > 0) {
     return false;
   }
 
@@ -54,6 +55,9 @@ export async function migrateLegacyCronTasksIfNeeded(params: {
   }
 
   const now = new Date().toISOString();
+  const legacyStat = await fsp.stat(legacyPath);
+  const legacyBytes = await fsp.readFile(legacyPath);
+  const legacyChecksum = createHash("sha256").update(legacyBytes).digest("hex");
   const migratedEntries = parsed.data.map((task) => {
     const trigger = { type: "cron" as const, expression: task.cron, timezone: "UTC" };
     return ScheduleEntrySchema.parse({
@@ -91,14 +95,35 @@ export async function migrateLegacyCronTasksIfNeeded(params: {
     });
   });
 
-  await writeJsonFileAtomic(schedulesPath, migratedEntries);
+  await entryStore.saveEntries(migratedEntries);
   await fsp.rm(archivePath, { force: true }).catch(() => undefined);
   await fsp.rename(legacyPath, archivePath);
+  const controlDb = await openControlDatabase({ baseDir: params.baseDir });
+  try {
+    controlDb.recordLegacyImport({
+      sourceKind: "legacy-cron-scheduled-tasks-json",
+      sourceId: "scheduled-tasks",
+      sourcePath: legacyPath,
+      sourceChecksum: legacyChecksum,
+      sourceMtimeMs: Math.floor(legacyStat.mtimeMs),
+      migrationName: "legacy-cron-scheduled-tasks-import",
+      migrationVersion: 4,
+      status: "imported",
+      details: {
+        migrated_count: migratedEntries.length,
+        archive_path: archivePath,
+      },
+      importedAt: now,
+      retiredAt: now,
+    });
+  } finally {
+    controlDb.close();
+  }
   params.logger.info?.("Migrated legacy CronScheduler tasks into ScheduleEngine entries", {
     migrated_count: migratedEntries.length,
     legacy_path: legacyPath,
     archive_path: archivePath,
-    schedules_path: schedulesPath,
+    schedules_store: "control-db:schedule_entries",
   });
   return true;
 }

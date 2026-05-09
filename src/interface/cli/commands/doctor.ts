@@ -14,14 +14,17 @@ import { PIDManager } from "../../../runtime/pid-manager.js";
 import { probeDaemonHealth } from "../../../runtime/daemon/client.js";
 import {
   ApprovalStore,
+  DaemonStateStore,
   OutboxStore,
   RuntimeHealthStore,
   compactRuntimeHealthKpi,
   createRuntimeStorePaths,
   inspectControlDatabase,
+  importLegacyQueueDaemonScheduleState,
   type RuntimeHealthKpi,
 } from "../../../runtime/store/index.js";
 import { runRuntimeStoreMaintenanceCycle, type RuntimeMaintenanceLogger } from "../../../runtime/daemon/maintenance.js";
+import { migrateLegacyCronTasksIfNeeded } from "../../../runtime/schedule/legacy-cron-migration.js";
 import { DaemonStateSchema } from "../../../runtime/types/daemon.js";
 import { summarizeTaskOutcomeLedgers } from "../../../orchestrator/execution/task/task-outcome-ledger.js";
 import { assessTaskAgentLoopToolProfileFromTools, nativeTaskAgentLoopToolProfile } from "../../../orchestrator/execution/agent-loop/agent-loop-dogfood-benchmark.js";
@@ -55,6 +58,22 @@ async function loadDaemonConfig(baseDir: string) {
     (await readJsonFileOrNull(legacyConfigPath));
   const parsed = configRaw !== null ? DaemonConfigSchema.safeParse(configRaw) : null;
   return parsed?.success ? parsed.data : DaemonConfigSchema.parse({});
+}
+
+async function resolveRepairRuntimeRoot(baseDir: string): Promise<string> {
+  const storedState = await new DaemonStateStore(baseDir).load().catch(() => null);
+  if (storedState?.runtime_root) {
+    return storedState.runtime_root;
+  }
+
+  const legacyStateRaw = await readJsonFileOrNull(path.join(baseDir, "daemon-state.json"));
+  const legacyState = DaemonStateSchema.safeParse(legacyStateRaw);
+  if (legacyState.success && legacyState.data.runtime_root) {
+    return legacyState.data.runtime_root;
+  }
+
+  const daemonConfig = await loadDaemonConfig(baseDir);
+  return resolveDaemonRuntimeRoot(baseDir, daemonConfig.runtime_root);
 }
 
 function formatRelativeTimestamp(timestamp: number): string {
@@ -526,12 +545,14 @@ export async function checkDaemon(baseDir?: string): Promise<CheckResult> {
   const pidFileExists = fs.existsSync(pidManager.getPath());
   const pidStatus = await pidManager.inspect();
   const daemonConfig = await loadDaemonConfig(dir);
-  const runtimeRoot = resolveDaemonRuntimeRoot(dir, daemonConfig.runtime_root);
-  const runtimeHealth = await new RuntimeHealthStore(runtimeRoot, { controlBaseDir: dir }).loadSnapshot();
-  const daemonStateRaw = await readJsonFileOrNull(path.join(dir, "daemon-state.json"));
+  const daemonStateRaw = await new DaemonStateStore(dir).load();
   const daemonState = daemonStateRaw !== null
     ? DaemonStateSchema.safeParse(daemonStateRaw)
     : null;
+  const runtimeRoot = daemonState?.success && daemonState.data.runtime_root
+    ? daemonState.data.runtime_root
+    : resolveDaemonRuntimeRoot(dir, daemonConfig.runtime_root);
+  const runtimeHealth = await new RuntimeHealthStore(runtimeRoot, { controlBaseDir: dir }).loadSnapshot();
 
   if (!pidFileExists && !pidStatus.running) {
     return { name: "Daemon", status: "pass", detail: "stopped (clean state)" };
@@ -721,7 +742,7 @@ export async function cmdDoctor(_args: string[]): Promise<number> {
   const repair = _args.includes("--repair");
 
   if (repair) {
-    const runtimeRoot = path.join(baseDir, "runtime");
+    const runtimeRoot = await resolveRepairRuntimeRoot(baseDir);
     const runtimePaths = createRuntimeStorePaths(runtimeRoot);
     const repairLogger: RuntimeMaintenanceLogger = {
       debug: (message: string, context?: Record<string, unknown>) => {
@@ -738,6 +759,15 @@ export async function cmdDoctor(_args: string[]): Promise<number> {
       },
     };
 
+    const legacyImportReport = await importLegacyQueueDaemonScheduleState({
+      baseDir,
+      runtimeRoot,
+      importedAt: new Date().toISOString(),
+    });
+    const migratedLegacyCronTasks = await migrateLegacyCronTasksIfNeeded({
+      baseDir,
+      logger: repairLogger,
+    });
     const maintenanceReport = await runRuntimeStoreMaintenanceCycle({
       runtimeRoot,
       approvalStore: new ApprovalStore(runtimePaths, { controlBaseDir: baseDir }),
@@ -749,6 +779,9 @@ export async function cmdDoctor(_args: string[]): Promise<number> {
 
     console.log(
       `Repair: approvals pruned=${maintenanceReport.approvals.prunedResolved}, outbox pruned=${maintenanceReport.outbox.pruned}, claims pruned=${maintenanceReport.claims.pruned}, health=${maintenanceReport.health.status ?? "unknown"}`
+    );
+    console.log(
+      `Repair legacy import: queue=${legacyImportReport.queueRecords}, daemon=${legacyImportReport.daemonState ? "imported" : "none"}, shutdown=${legacyImportReport.shutdownMarker ? "imported" : "none"}, supervisor=${legacyImportReport.supervisorState ? "imported" : "none"}, schedules=${legacyImportReport.scheduleEntries}, schedule history=${legacyImportReport.scheduleHistoryRecords}, legacy cron=${migratedLegacyCronTasks ? "imported" : "none"}`
     );
   }
 

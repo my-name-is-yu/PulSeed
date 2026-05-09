@@ -1,4 +1,3 @@
-import * as fs from "node:fs";
 import * as http from "node:http";
 import * as path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -7,6 +6,8 @@ import { PIDManager } from "../pid-manager.js";
 import { Logger } from "../logger.js";
 import { makeTempDir, cleanupTempDir } from "../../../tests/helpers/temp-dir.js";
 import { ApprovalStore } from "../store/approval-store.js";
+import { DaemonStateStore } from "../store/daemon-state-store.js";
+import type { ApprovalRecord } from "../store/runtime-schemas.js";
 
 function makeDeps(tmpDir: string) {
   const mockCoreLoop = {
@@ -184,41 +185,43 @@ describe("DaemonRunner durable approval restart", () => {
   it("keeps pending approvals across daemon restart when runtime_journal_v2 is enabled", async () => {
     tmpDir = makeTempDir();
     const approvalStore = new ApprovalStore(path.join(tmpDir, "runtime"), { controlBaseDir: tmpDir });
-
-    const deps1 = makeDeps(tmpDir);
-    daemon = new DaemonRunner(deps1);
-    startPromise = daemon.start(["goal-1"]);
-    await waitFor(() => typeof daemon?.getApprovalFn() === "function");
-
-    const approvalFn = daemon.getApprovalFn()!;
-    void approvalFn({
+    const now = Date.now();
+    const approvalId = "approval-restart-safe";
+    const pendingApproval: ApprovalRecord = {
+      approval_id: approvalId,
       goal_id: "goal-1",
-      id: "task-restart",
-      description: "Approve restart-safe action",
-      action: "deploy",
-    });
+      request_envelope_id: approvalId,
+      correlation_id: approvalId,
+      state: "pending",
+      created_at: now,
+      expires_at: now + 60_000,
+      payload: {
+        task: {
+          id: "task-restart",
+          description: "Approve restart-safe action",
+          action: "deploy",
+          expires_at: now + 60_000,
+        },
+      },
+    };
+    await approvalStore.savePending(pendingApproval);
 
-    await waitFor(async () => (await approvalStore.listPending()).length > 0);
-
-    daemon.stop();
-    await startPromise;
-    await waitFor(() => !fs.existsSync(path.join(tmpDir!, "pulseed.pid")));
-    daemon = null;
-    startPromise = null;
-
-    const pending = (await approvalStore.listPending())[0]!;
+    const pending = (await approvalStore.listPending()).find((record) => record.approval_id === approvalId)!;
     expect(pending.state).toBe("pending");
-    const approvalId = pending.approval_id;
 
     const deps2 = makeDeps(tmpDir);
     daemon = new DaemonRunner(deps2);
     startPromise = daemon.start(["goal-1"]);
     await waitFor(() => typeof daemon?.getApprovalFn() === "function");
 
-    const statePath = path.join(tmpDir, "daemon-state.json");
-    await waitFor(() => fs.existsSync(statePath));
-
-    const daemonState = JSON.parse(fs.readFileSync(statePath, "utf-8")) as { active_goals: string[] };
+    let daemonState = await new DaemonStateStore(tmpDir).load();
+    await waitFor(async () => {
+      daemonState = await new DaemonStateStore(tmpDir!).load();
+      return daemonState?.active_goals.includes("goal-1") === true;
+    });
+    if (!daemonState) {
+      throw new Error("Expected daemon state to be persisted in the Control DB");
+    }
     expect(daemonState.active_goals).toContain("goal-1");
 
     const port = await new Promise<number>((resolve, reject) => {

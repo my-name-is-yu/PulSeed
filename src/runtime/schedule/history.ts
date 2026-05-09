@@ -1,15 +1,18 @@
-import * as path from "node:path";
 import { randomUUID } from "node:crypto";
-import { readJsonFileOrNull, writeJsonFileAtomic } from "../../base/utils/json-io.js";
 import {
   ScheduleResultSchema,
-  ScheduleLayerSchema,
+  type ScheduleLayerSchema,
   type ScheduleFailureKind,
   type ScheduleResult,
 } from "../types/schedule.js";
 import { z } from "zod";
+import {
+  openControlDatabase,
+  type ControlDatabase,
+  type RuntimeControlDbStoreOptions,
+  type SqliteDatabase,
+} from "../store/control-db/index.js";
 
-const HISTORY_FILE = "schedule-history.json";
 const DEFAULT_MAX_RECENT = 500;
 const ScheduleHistorySafeNonnegativeIntSchema = z.number().int().nonnegative().safe();
 
@@ -52,38 +55,29 @@ export interface ScheduleRunHistoryInput {
 }
 
 export class ScheduleHistoryStore {
-  private readonly historyPath: string;
+  private readonly dbOptions: RuntimeControlDbStoreOptions;
+  private dbPromise: Promise<ControlDatabase> | null = null;
 
   constructor(
-    baseDir: string,
-    private readonly maxRecent = DEFAULT_MAX_RECENT
+    private readonly baseDir: string,
+    private readonly maxRecent = DEFAULT_MAX_RECENT,
+    options: RuntimeControlDbStoreOptions = {}
   ) {
-    this.historyPath = path.join(baseDir, HISTORY_FILE);
+    this.dbOptions = options;
   }
 
   async load(): Promise<ScheduleRunHistoryRecord[]> {
-    const raw = await readJsonFileOrNull(this.historyPath);
-    if (!Array.isArray(raw)) {
-      return [];
-    }
-
-    const parsed: ScheduleRunHistoryRecord[] = [];
-    for (const item of raw) {
-      const record = ScheduleRunHistoryRecordSchema.safeParse(item);
-      if (record.success) {
-        parsed.push(record.data);
-      }
-    }
-    return parsed;
+    const db = await this.database();
+    return db.read((sqlite) => readScheduleHistory(sqlite));
   }
 
   async save(records: ScheduleRunHistoryRecord[]): Promise<void> {
     const trimmed = records.slice(-this.maxRecent);
-    await writeJsonFileAtomic(this.historyPath, trimmed);
+    const db = await this.database();
+    db.transaction((sqlite) => writeScheduleHistory(sqlite, trimmed));
   }
 
   async append(input: ScheduleRunHistoryInput): Promise<ScheduleRunHistoryRecord> {
-    const existing = await this.load();
     const parsed = ScheduleRunHistoryRecordSchema.parse({
       ...input.result,
       id: randomUUID(),
@@ -103,8 +97,12 @@ export class ScheduleHistoryStore {
       internal: input.internal ?? false,
     });
 
-    existing.push(parsed);
-    await this.save(existing);
+    const db = await this.database();
+    db.transaction((sqlite) => {
+      const existing = readScheduleHistory(sqlite);
+      existing.push(parsed);
+      writeScheduleHistory(sqlite, existing.slice(-this.maxRecent));
+    });
     return parsed;
   }
 
@@ -112,4 +110,70 @@ export class ScheduleHistoryStore {
     const records = await this.load();
     return records.slice(-limit);
   }
+
+  private async database(): Promise<ControlDatabase> {
+    if (this.dbOptions.controlDb) {
+      return this.dbOptions.controlDb;
+    }
+    this.dbPromise ??= openControlDatabase({
+      baseDir: this.dbOptions.controlBaseDir ?? this.baseDir,
+      dbPath: this.dbOptions.controlDbPath,
+    });
+    return this.dbPromise;
+  }
+}
+
+interface ScheduleHistoryRow {
+  record_json: string;
+}
+
+function readScheduleHistory(sqlite: SqliteDatabase): ScheduleRunHistoryRecord[] {
+  const rows = sqlite.prepare(`
+    SELECT record_json
+    FROM schedule_run_history
+    ORDER BY sort_order ASC, history_id ASC
+  `).all() as ScheduleHistoryRow[];
+  const records: ScheduleRunHistoryRecord[] = [];
+  for (const row of rows) {
+    const parsed = ScheduleRunHistoryRecordSchema.safeParse(JSON.parse(row.record_json) as unknown);
+    if (parsed.success) {
+      records.push(parsed.data);
+    }
+  }
+  return records;
+}
+
+function writeScheduleHistory(sqlite: SqliteDatabase, records: readonly ScheduleRunHistoryRecord[]): void {
+  sqlite.prepare("DELETE FROM schedule_run_history").run();
+  const insert = sqlite.prepare(`
+    INSERT INTO schedule_run_history (
+      history_id,
+      entry_id,
+      entry_name,
+      layer,
+      reason,
+      started_at,
+      finished_at,
+      internal,
+      tokens_used,
+      sort_order,
+      record_json
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, json(?))
+  `);
+  records.forEach((record, index) => {
+    insert.run(
+      record.id,
+      record.entry_id,
+      record.entry_name,
+      record.layer,
+      record.reason,
+      record.started_at,
+      record.finished_at,
+      record.internal ? 1 : 0,
+      record.tokens_used,
+      index,
+      JSON.stringify(record),
+    );
+  });
 }

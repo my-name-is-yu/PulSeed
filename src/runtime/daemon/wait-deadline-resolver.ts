@@ -5,7 +5,7 @@ import {
   parseStrategy,
 } from "../../base/types/strategy.js";
 import { isWaitStrategy } from "../../orchestrator/strategy/portfolio-allocation.js";
-import { parsePersistedScheduleEntries } from "../schedule/entry-normalization.js";
+import { ScheduleEntryStore } from "../schedule/entry-store.js";
 import type { ScheduleEntry } from "../types/schedule.js";
 
 export interface WaitDeadlineResolution {
@@ -24,10 +24,18 @@ export interface WaitDeadlineResolution {
 
 export interface WaitDeadlineResolverState {
   readRaw(path: string): Promise<unknown | null>;
+  getBaseDir?(): string;
+}
+
+export interface WaitDeadlineResolverOptions {
+  baseDir?: string;
 }
 
 export class WaitDeadlineResolver {
-  constructor(private readonly stateManager: WaitDeadlineResolverState) {}
+  constructor(
+    private readonly stateManager: WaitDeadlineResolverState,
+    private readonly options: WaitDeadlineResolverOptions = {}
+  ) {}
 
   async resolve(goalIds: string[]): Promise<WaitDeadlineResolution> {
     const waitingGoals = await this.resolveFromInternalSchedules(goalIds);
@@ -44,13 +52,14 @@ export class WaitDeadlineResolver {
   }
 
   private async resolveFromInternalSchedules(goalIds: string[]): Promise<WaitDeadlineResolution["waiting_goals"]> {
-    const rawSchedules = await this.stateManager.readRaw("schedules.json");
-    const parsedSchedules = parsePersistedScheduleEntries(rawSchedules);
-    if (!parsedSchedules.validList) {
+    const baseDir = this.options.baseDir ?? this.stateManager.getBaseDir?.();
+    if (!baseDir) {
       return [];
     }
+    const entryStore = new ScheduleEntryStore(baseDir, { warn: () => {} });
+    const schedules = await entryStore.readEntries();
 
-    const waitingGoals = await Promise.all(parsedSchedules.entries
+    const waitingGoals = await Promise.all(schedules
       .filter((entry) =>
         entry.enabled
         && entry.metadata?.internal === true

@@ -13,6 +13,7 @@ import type { ScheduleEntry, ScheduleEntryInput } from "../types/schedule.js";
 import type { IDataSourceAdapter } from "../../platform/observation/data-source-adapter.js";
 import type { ILLMClient } from "../../base/llm/llm-client.js";
 import { makeTempDir, cleanupTempDir } from "../../../tests/helpers/temp-dir.js";
+import { openControlDatabase } from "../store/index.js";
 
 let tempDir: string;
 let engine: ScheduleEngine;
@@ -28,6 +29,76 @@ afterEach(() => {
   cleanupTempDir(tempDir);
 });
 
+function makePersistedHeartbeatEntry(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+    name: "valid-retry-policy",
+    layer: "heartbeat",
+    trigger: { type: "interval", seconds: 60, jitter_factor: 0 },
+    enabled: true,
+    heartbeat: {
+      check_type: "custom",
+      check_config: { command: "echo ok" },
+      failure_threshold: 3,
+      timeout_ms: 5000,
+    },
+    baseline_results: [],
+    created_at: "2026-04-08T00:00:00.000Z",
+    updated_at: "2026-04-08T00:00:00.000Z",
+    last_fired_at: null,
+    next_fire_at: "2026-04-08T00:01:00.000Z",
+    consecutive_failures: 0,
+    last_escalation_at: null,
+    escalation_timestamps: [],
+    total_executions: 0,
+    total_tokens_used: 0,
+    max_tokens_per_day: 100000,
+    tokens_used_today: 0,
+    budget_reset_at: null,
+    ...overrides,
+  };
+}
+
+async function insertRawScheduleEntry(entry: Record<string, unknown>, sortOrder: number): Promise<void> {
+  const database = await openControlDatabase({ baseDir: tempDir });
+  try {
+    database.transaction((db) => {
+      db.prepare(`
+        INSERT INTO schedule_entries (
+          entry_id,
+          name,
+          layer,
+          enabled,
+          next_fire_at,
+          updated_at,
+          internal,
+          activation_kind,
+          goal_id,
+          wait_strategy_id,
+          sort_order,
+          entry_json
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, json(?))
+      `).run(
+        entry["id"],
+        entry["name"],
+        entry["layer"],
+        entry["enabled"] === false ? 0 : 1,
+        entry["next_fire_at"],
+        entry["updated_at"],
+        0,
+        null,
+        null,
+        null,
+        sortOrder,
+        JSON.stringify(entry)
+      );
+    });
+  } finally {
+    database.close();
+  }
+}
+
 // ─── ScheduleEngine ───
 
 describe("ScheduleEngine", () => {
@@ -36,72 +107,24 @@ describe("ScheduleEngine", () => {
     expect(entries).toEqual([]);
   });
 
-  it("skips persisted entries with non-finite retry policy values without dropping valid schedules", async () => {
-    fs.writeFileSync(
-      path.join(tempDir, "schedules.json"),
-      `[
-        {
-          "id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
-          "name": "valid-retry-policy",
-          "layer": "heartbeat",
-          "trigger": { "type": "interval", "seconds": 60, "jitter_factor": 0 },
-          "enabled": true,
-          "heartbeat": {
-            "check_type": "custom",
-            "check_config": { "command": "echo ok" },
-            "failure_threshold": 3,
-            "timeout_ms": 5000
-          },
-          "created_at": "2026-04-08T00:00:00.000Z",
-          "updated_at": "2026-04-08T00:00:00.000Z",
-          "last_fired_at": null,
-          "next_fire_at": "2026-04-08T00:01:00.000Z",
-          "consecutive_failures": 0,
-          "last_escalation_at": null,
-          "escalation_timestamps": [],
-          "total_executions": 0,
-          "total_tokens_used": 0,
-          "max_tokens_per_day": 100000,
-          "tokens_used_today": 0,
-          "budget_reset_at": null
+  it("skips persisted entries with invalid retry policy values without dropping valid schedules", async () => {
+    await insertRawScheduleEntry(makePersistedHeartbeatEntry(), 0);
+    await insertRawScheduleEntry(
+      makePersistedHeartbeatEntry({
+        id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+        name: "invalid-retry-policy",
+        retry_policy: {
+          enabled: true,
+          initial_delay_ms: 30_000,
+          max_delay_ms: 60000,
+          multiplier: 2,
+          jitter_factor: 2,
+          max_attempts: 3,
+          max_retry_window_ms: 120000,
+          retryable_failure_kinds: ["transient"],
         },
-        {
-          "id": "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
-          "name": "invalid-retry-policy",
-          "layer": "heartbeat",
-          "trigger": { "type": "interval", "seconds": 60, "jitter_factor": 0 },
-          "enabled": true,
-          "heartbeat": {
-            "check_type": "custom",
-            "check_config": { "command": "echo ok" },
-            "failure_threshold": 3,
-            "timeout_ms": 5000
-          },
-          "retry_policy": {
-            "enabled": true,
-            "initial_delay_ms": 1e309,
-            "max_delay_ms": 60000,
-            "multiplier": 2,
-            "jitter_factor": 0,
-            "max_attempts": 3,
-            "max_retry_window_ms": 120000,
-            "retryable_failure_kinds": ["transient"]
-          },
-          "created_at": "2026-04-08T00:00:00.000Z",
-          "updated_at": "2026-04-08T00:00:00.000Z",
-          "last_fired_at": null,
-          "next_fire_at": "2026-04-08T00:01:00.000Z",
-          "consecutive_failures": 0,
-          "last_escalation_at": null,
-          "escalation_timestamps": [],
-          "total_executions": 0,
-          "total_tokens_used": 0,
-          "max_tokens_per_day": 100000,
-          "tokens_used_today": 0,
-          "budget_reset_at": null
-        }
-      ]`,
-      "utf-8",
+      }),
+      1,
     );
 
     const entries = await engine.loadEntries();
@@ -111,49 +134,25 @@ describe("ScheduleEngine", () => {
   });
 
   it("clamps finite legacy retry bounds while loading persisted schedules", async () => {
-    fs.writeFileSync(
-      path.join(tempDir, "schedules.json"),
-      JSON.stringify([
-        {
-          id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
-          name: "legacy-large-retry-policy",
-          layer: "heartbeat",
-          trigger: { type: "interval", seconds: 60, jitter_factor: 0 },
+    await insertRawScheduleEntry(
+      makePersistedHeartbeatEntry({
+        id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+        name: "legacy-large-retry-policy",
+        retry_policy: {
           enabled: true,
-          heartbeat: {
-            check_type: "custom",
-            check_config: { command: "echo ok" },
-            failure_threshold: 3,
-            timeout_ms: 5000,
-          },
-          retry_policy: {
-            enabled: true,
-            initial_delay_ms: MAX_SCHEDULE_RETRY_DELAY_MS + 1,
-            max_delay_ms: MAX_SCHEDULE_RETRY_DELAY_MS + 1,
-            multiplier: MAX_SCHEDULE_RETRY_MULTIPLIER + 1,
-            jitter_factor: 0,
-            max_attempts: MAX_SCHEDULE_RETRY_ATTEMPTS + 1,
-            max_retry_window_ms: MAX_SCHEDULE_RETRY_WINDOW_MS + 1,
-            retryable_failure_kinds: ["transient"],
-          },
-          retry_state: {
-            attempts: MAX_SCHEDULE_RETRY_ATTEMPTS + 1,
-          },
-          created_at: "2026-04-08T00:00:00.000Z",
-          updated_at: "2026-04-08T00:00:00.000Z",
-          last_fired_at: null,
-          next_fire_at: "2026-04-08T00:01:00.000Z",
-          consecutive_failures: 0,
-          last_escalation_at: null,
-          escalation_timestamps: [],
-          total_executions: 0,
-          total_tokens_used: 0,
-          max_tokens_per_day: 100000,
-          tokens_used_today: 0,
-          budget_reset_at: null,
+          initial_delay_ms: MAX_SCHEDULE_RETRY_DELAY_MS + 1,
+          max_delay_ms: MAX_SCHEDULE_RETRY_DELAY_MS + 1,
+          multiplier: MAX_SCHEDULE_RETRY_MULTIPLIER + 1,
+          jitter_factor: 0,
+          max_attempts: MAX_SCHEDULE_RETRY_ATTEMPTS + 1,
+          max_retry_window_ms: MAX_SCHEDULE_RETRY_WINDOW_MS + 1,
+          retryable_failure_kinds: ["transient"],
         },
-      ], null, 2),
-      "utf-8",
+        retry_state: {
+          attempts: MAX_SCHEDULE_RETRY_ATTEMPTS + 1,
+        },
+      }),
+      0,
     );
 
     const entries = await engine.loadEntries();
@@ -169,7 +168,7 @@ describe("ScheduleEngine", () => {
     expect(entries[0]?.retry_state?.attempts).toBe(MAX_SCHEDULE_RETRY_ATTEMPTS);
   });
 
-  it("migrates legacy scheduled-tasks.json into schedules.json on load", async () => {
+  it("does not migrate legacy scheduled-tasks.json during normal load", async () => {
     fs.writeFileSync(
       path.join(tempDir, "scheduled-tasks.json"),
       JSON.stringify([
@@ -189,13 +188,12 @@ describe("ScheduleEngine", () => {
 
     const entries = await engine.loadEntries();
 
-    expect(entries).toHaveLength(1);
-    expect(entries[0]?.layer).toBe("cron");
-    expect(entries[0]?.cron?.prompt_template).toBe("Legacy prompt");
-    expect(fs.existsSync(path.join(tempDir, "scheduled-tasks.legacy-migrated.json"))).toBe(true);
+    expect(entries).toHaveLength(0);
+    expect(fs.existsSync(path.join(tempDir, "scheduled-tasks.json"))).toBe(true);
+    expect(fs.existsSync(path.join(tempDir, "scheduled-tasks.legacy-migrated.json"))).toBe(false);
   });
 
-  it("does not overwrite schedules.json when legacy scheduled-tasks.json still exists", async () => {
+  it("does not overwrite schedule entries when legacy scheduled-tasks.json still exists", async () => {
     await engine.addEntry({
       name: "existing-schedule",
       layer: "heartbeat",
@@ -2162,14 +2160,13 @@ describe("Cron execution (Phase 3)", () => {
     await eng.loadEntries();
 
     const results = await eng.tick();
-    const rawEntries = JSON.parse(fs.readFileSync(path.join(tempDir, "schedules.json"), "utf-8")) as Array<Record<string, unknown>>;
     const reloaded = await new ScheduleEngine({ baseDir: tempDir }).loadEntries();
 
     expect(results.find((result) => result.entry_id === entry.id)?.status).toBe("error");
-    expect(rawEntries[0]?.["total_tokens_used"]).toBe(0);
-    expect(rawEntries[0]?.["tokens_used_today"]).toBe(0);
     expect(reloaded).toHaveLength(1);
     expect(reloaded[0]?.id).toBe(entry.id);
+    expect(reloaded[0]?.total_tokens_used).toBe(0);
+    expect(reloaded[0]?.tokens_used_today).toBe(0);
   });
 
   it("saturates persisted cron counters before they exceed the safe integer range", async () => {
