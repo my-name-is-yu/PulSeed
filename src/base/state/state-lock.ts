@@ -16,6 +16,14 @@ export interface LockOptions {
   maxTotalMs?: number;     // default 500
 }
 
+interface NormalizedLockOptions {
+  maxRetries: number;
+  initialDelayMs: number;
+  maxTotalMs: number;
+}
+
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
+
 function lockPath(goalId: string, baseDir: string): string {
   return path.join(baseDir, "locks", "goals", `${goalId}.lock`);
 }
@@ -45,6 +53,37 @@ async function isProcessAlive(pid: number): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+function parseNonnegativeSafeInteger(
+  opts: LockOptions | undefined,
+  key: keyof LockOptions,
+  fallback: number,
+  max = Number.MAX_SAFE_INTEGER
+): number {
+  const value = opts?.[key];
+  if (value === undefined) return fallback;
+
+  if (!Number.isSafeInteger(value) || value < 0 || value > max) {
+    throw new Error(
+      `acquireLock: ${key} must be a nonnegative integer no greater than ${max}`
+    );
+  }
+
+  return value;
+}
+
+function normalizeLockOptions(opts?: LockOptions): NormalizedLockOptions {
+  return {
+    maxRetries: parseNonnegativeSafeInteger(opts, "maxRetries", 5),
+    initialDelayMs: parseNonnegativeSafeInteger(
+      opts,
+      "initialDelayMs",
+      50,
+      MAX_TIMER_DELAY_MS
+    ),
+    maxTotalMs: parseNonnegativeSafeInteger(opts, "maxTotalMs", 500, MAX_TIMER_DELAY_MS),
+  };
 }
 
 async function tryAcquire(lockDir: string, checkStale = false): Promise<boolean> {
@@ -89,12 +128,10 @@ async function clearStaleLock(lockDir: string): Promise<void> {
 async function acquireLockDir(
   lockDir: string,
   label: string,
-  opts?: LockOptions,
+  opts: NormalizedLockOptions,
   createParent = true
 ): Promise<void> {
-  const maxRetries = opts?.maxRetries ?? 5;
-  const initialDelayMs = opts?.initialDelayMs ?? 50;
-  const maxTotalMs = opts?.maxTotalMs ?? 500;
+  const { maxRetries, initialDelayMs, maxTotalMs } = opts;
 
   if (createParent) {
     await fsp.mkdir(path.dirname(lockDir), { recursive: true });
@@ -138,11 +175,12 @@ export async function acquireLock(
   baseDir: string,
   opts?: LockOptions
 ): Promise<void> {
+  const normalizedOptions = normalizeLockOptions(opts);
   const legacyLockDir = legacyLockPath(goalId, baseDir);
   const needsLegacyLock = await shouldAcquireLegacyLock(goalId, baseDir);
   if (needsLegacyLock) {
     try {
-      await acquireLockDir(legacyLockDir, `${goalId} legacy`, opts, false);
+      await acquireLockDir(legacyLockDir, `${goalId} legacy`, normalizedOptions, false);
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
     }
@@ -150,7 +188,7 @@ export async function acquireLock(
 
   const stableLockDir = lockPath(goalId, baseDir);
   try {
-    await acquireLockDir(stableLockDir, goalId, opts);
+    await acquireLockDir(stableLockDir, goalId, normalizedOptions);
   } catch (err) {
     if (needsLegacyLock) await releaseLockDir(legacyLockDir);
     throw err;

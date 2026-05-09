@@ -46,6 +46,86 @@ describe("state-lock", () => {
     expect(fs.existsSync(legacyLockDir)).toBe(false);
   });
 
+  it("rejects unsafe retry controls before creating lock directories", async () => {
+    tmpDir = makeTempDir();
+    const cases: Array<{
+      goalId: string;
+      opts: Parameters<typeof acquireLock>[2];
+      field: string;
+    }> = [
+      {
+        goalId: "goal-infinite-retries",
+        opts: { maxRetries: Number.POSITIVE_INFINITY },
+        field: "maxRetries",
+      },
+      {
+        goalId: "goal-nan-delay",
+        opts: { initialDelayMs: Number.NaN },
+        field: "initialDelayMs",
+      },
+      {
+        goalId: "goal-unsafe-total",
+        opts: { maxTotalMs: Number.MAX_SAFE_INTEGER + 1 },
+        field: "maxTotalMs",
+      },
+      {
+        goalId: "goal-timer-overflow-delay",
+        opts: { initialDelayMs: 2_147_483_648 },
+        field: "initialDelayMs",
+      },
+      {
+        goalId: "goal-timer-overflow-total",
+        opts: { maxTotalMs: 2_147_483_648 },
+        field: "maxTotalMs",
+      },
+      {
+        goalId: "goal-fractional-retries",
+        opts: { maxRetries: 1.5 },
+        field: "maxRetries",
+      },
+      {
+        goalId: "goal-negative-delay",
+        opts: { initialDelayMs: -1 },
+        field: "initialDelayMs",
+      },
+    ];
+
+    for (const { goalId, opts, field } of cases) {
+      await expect(acquireLock(goalId, tmpDir, opts)).rejects.toThrow(field);
+
+      const stableLockDir = path.join(tmpDir, "locks", "goals", `${goalId}.lock`);
+      expect(fs.existsSync(stableLockDir)).toBe(false);
+    }
+  });
+
+  it("rejects unsafe retry controls before creating legacy lock directories", async () => {
+    tmpDir = makeTempDir();
+    await fsp.mkdir(path.join(tmpDir, "goals", "goal-legacy-invalid"), { recursive: true });
+
+    await expect(
+      acquireLock("goal-legacy-invalid", tmpDir, { maxTotalMs: Number.POSITIVE_INFINITY })
+    ).rejects.toThrow("maxTotalMs");
+
+    const stableLockDir = path.join(tmpDir, "locks", "goals", "goal-legacy-invalid.lock");
+    const legacyLockDir = path.join(tmpDir, "goals", "goal-legacy-invalid", ".lock");
+    expect(fs.existsSync(stableLockDir)).toBe(false);
+    expect(fs.existsSync(legacyLockDir)).toBe(false);
+  });
+
+  it("allows zero retry controls for an uncontended acquire", async () => {
+    tmpDir = makeTempDir();
+
+    await expect(
+      acquireLock("goal-zero-retry", tmpDir, {
+        maxRetries: 0,
+        initialDelayMs: 0,
+        maxTotalMs: 0,
+      })
+    ).resolves.toBeUndefined();
+
+    await releaseLock("goal-zero-retry", tmpDir);
+  });
+
   it("release on non-existent lock is a no-op (does not throw)", async () => {
     tmpDir = makeTempDir();
     await expect(releaseLock("no-such-goal", tmpDir)).resolves.toBeUndefined();
