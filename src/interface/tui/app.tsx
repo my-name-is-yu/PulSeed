@@ -14,13 +14,20 @@ import { randomUUID } from "node:crypto";
 import * as path from "node:path";
 import { Box, Text, useInput, useStdout } from "ink";
 import { theme } from "./theme.js";
-import { buildWorkDashboardRows, Dashboard, statusLabel } from "./dashboard.js";
+import { buildWorkDashboardRows, Dashboard } from "./dashboard.js";
 import { Chat, type ChatMessage } from "./chat.js";
 import { FullscreenChat } from "./fullscreen-chat.js";
 import { HelpOverlay } from "./help-overlay.js";
 import { SettingsOverlay } from "./settings-overlay.js";
 import { ReportView } from "./report-view.js";
-import { SEEDY_PIXEL } from "./seedy-art.js";
+import {
+  AppHeader,
+  APP_HEADER_ROWS,
+  STATUS_BAR_ROWS,
+  StatusBar,
+  type DaemonConnectionState,
+} from "./app-shell.js";
+import { formatApprovalNotice, normalizeApprovalTask } from "./app-approval.js";
 import { createShellApprovalTask, formatShellOutput } from "./bash-mode.js";
 import {
   resolveFreeformInputRoute,
@@ -44,7 +51,6 @@ import type { TrustManager } from "../../platform/traits/trust-manager.js";
 import type { Task } from "../../base/types/task.js";
 import type { TuiChatSurface } from "./chat-surface.js";
 import type { DaemonClient } from "../../runtime/daemon/client.js";
-import { getPulseedVersion } from "../../base/utils/pulseed-meta.js";
 import { parseExactSlashCommandToken } from "../../base/protocol/exact-protocol.js";
 import { applyChatEventToMessages } from "../chat/chat-event-state.js";
 import { setActiveCursorEscape } from "./cursor-tracker.js";
@@ -71,76 +77,14 @@ import type { ApprovalRequest as ToolApprovalRequest } from "../../tools/types.j
 import { defaultExecutionPolicy, type ExecutionPolicy } from "../../orchestrator/execution/agent-loop/execution-policy.js";
 
 const MAX_MESSAGES = 200;
-const PULSEED_VERSION = getPulseedVersion(import.meta.url);
 export const DASHBOARD_REFRESH_INTERVAL_MS = 5_000;
-export const APP_HEADER_ROWS = SEEDY_PIXEL.split("\n").length;
-const STATUS_BAR_ROWS = 4;
 
 export interface ApprovalRequest {
   task: Task;
   resolve: (approved: boolean) => void;
 }
 
-export type DaemonConnectionState = "connected" | "connecting" | "disconnected";
-
-export function formatDaemonConnectionState(state: DaemonConnectionState | undefined): string | undefined {
-  if (!state) return undefined;
-  return `  [daemon ${state}]`;
-}
-
-function normalizeApprovalTask(data: Record<string, unknown>): Task {
-  const rawTask = data.task;
-  if (rawTask && typeof rawTask === "object") {
-    return rawTask as Task;
-  }
-  const goalId = String(data.goalId ?? data.goal_id ?? "");
-  const title = String(data.title ?? "Operator handoff required");
-  const summary = String(data.summary ?? data.recommended_action ?? "Review this operator handoff before continuing.");
-  const currentStatus = String(data.current_status ?? "");
-  const triggers = Array.isArray(data.triggers) ? data.triggers.map(String).join(", ") : "operator_handoff";
-  return {
-    id: String(data.handoff_id ?? data.requestId ?? "operator_handoff"),
-    goal_id: goalId,
-    strategy_id: null,
-    target_dimensions: [],
-    primary_dimension: "operator_handoff",
-    work_description: title,
-    rationale: summary,
-    approach: String(data.recommended_action ?? currentStatus ?? "Operator decision required."),
-    success_criteria: [{
-      description: "Operator has approved or rejected the handoff.",
-      verification_method: "daemon approval response",
-      is_blocking: true,
-    }],
-    scope_boundary: {
-      in_scope: [triggers],
-      out_of_scope: [],
-      blast_radius: "operator handoff",
-    },
-    constraints: ["Requires explicit operator approval."],
-    plateau_until: null,
-    estimated_duration: null,
-    consecutive_failure_count: 0,
-    reversibility: "unknown",
-    task_category: "normal",
-    status: "pending",
-    started_at: null,
-    completed_at: null,
-    timeout_at: null,
-    heartbeat_at: null,
-    created_at: String(data.created_at ?? new Date().toISOString()),
-  };
-}
-
-function formatApprovalNotice(task: Task): string {
-  return [
-    "Approval required.",
-    `Work: ${task.work_description}`,
-    `Rationale: ${task.rationale}`,
-    `Approach: ${task.approach}`,
-    "Approval decisions are handled in the originating conversation channel.",
-  ].join("\n");
-}
+export { APP_HEADER_ROWS, formatDaemonConnectionState, type DaemonConnectionState } from "./app-shell.js";
 
 export { resolveFreeformInputRoute, type FreeformInputRoute } from "./input-action.js";
 
@@ -250,32 +194,6 @@ interface AppProps {
   noFlicker?: boolean;
   controlStream?: Pick<NodeJS.WriteStream, "write">;
 }
-
-const StatusBar: React.FC<{
-  goalCount: number;
-  trustScore: number;
-  status: string;
-  iteration: number;
-  daemonConnectionState?: DaemonConnectionState;
-  currentGoalSummary?: string | null;
-}> = ({ goalCount, trustScore, status, iteration, daemonConnectionState, currentGoalSummary }) => (
-  <Box
-    borderStyle="single"
-    borderColor={theme.border}
-    paddingX={1}
-    justifyContent="space-between"
-  >
-    <Box flexDirection="column" flexGrow={1}>
-      <Text dimColor>
-        Active: {goalCount}  Trust: {trustScore >= 0 ? "+" : ""}
-        {trustScore}  Status: {statusLabel(status)}  Iter: {iteration}
-        {formatDaemonConnectionState(daemonConnectionState)}
-      </Text>
-      {currentGoalSummary && <Text dimColor>{currentGoalSummary}</Text>}
-    </Box>
-    <Text dimColor>d:dashboard  ?:help  Ctrl-C× 2:quit</Text>
-  </Box>
-);
 
 // ─── Default idle loop state for daemon mode ───
 
@@ -943,25 +861,12 @@ export function App({
   return (
     <Box flexDirection="column" height={termRows}>
       {/* App banner — Claude Code style */}
-      <Box flexDirection="row" paddingY={0}>
-        {/* Seedy pixel art (left) */}
-        <Box marginRight={2}>
-          <Text>{SEEDY_PIXEL}</Text>
-        </Box>
-        {/* Info text (right, vertically centered) */}
-        <Box flexDirection="column" justifyContent="center">
-          <Box>
-            <Text bold color={theme.brand}>PulSeed</Text>
-            <Text dimColor> v{PULSEED_VERSION}</Text>
-          </Box>
-          <Text dimColor>
-            daemon: {isDaemonMode ? daemonConnectionState ?? "connecting" : "off"}{providerName ? ` · ${providerName}` : ""}
-          </Text>
-          {cwd && (
-            <Text dimColor>{cwd}</Text>
-          )}
-        </Box>
-      </Box>
+      <AppHeader
+        isDaemonMode={isDaemonMode}
+        daemonConnectionState={daemonConnectionState}
+        providerName={providerName}
+        cwd={cwd}
+      />
 
       {/* Main content: sidebar + chat */}
       <Box flexDirection="row" flexGrow={1}>
