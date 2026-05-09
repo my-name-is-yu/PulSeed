@@ -7,9 +7,12 @@ export type DataSourceType = z.infer<typeof DataSourceTypeEnum>;
 
 // --- PollingConfig ---
 
+const PositiveSafeIntegerSchema = z.number().finite().int().positive().safe();
+const NonNegativeUnitIntervalSchema = z.number().finite().min(0).max(1);
+
 export const PollingConfigSchema = z.object({
-  interval_ms: z.number().min(30000),
-  change_threshold: z.number().min(0).max(1).optional(),
+  interval_ms: PositiveSafeIntegerSchema.min(30000),
+  change_threshold: NonNegativeUnitIntervalSchema.optional(),
 });
 export type PollingConfig = z.infer<typeof PollingConfigSchema>;
 
@@ -33,10 +36,10 @@ export const DataSourceConfigSchema = z.object({
     parser_hints: z.array(z.string()).optional(),
     exclude_dirs: z.array(z.string()).optional(),
     exclude_paths: z.array(z.string()).optional(),
-    max_metric_files: z.number().int().positive().optional(),
-    max_artifact_files: z.number().int().positive().optional(),
-    max_candidates: z.number().int().positive().optional(),
-    stale_after_ms: z.number().int().positive().optional(),
+    max_metric_files: PositiveSafeIntegerSchema.optional(),
+    max_artifact_files: PositiveSafeIntegerSchema.optional(),
+    max_candidates: PositiveSafeIntegerSchema.optional(),
+    stale_after_ms: PositiveSafeIntegerSchema.optional(),
     fresh_after_time: z.string().datetime().optional(),
     freshness_scope: z.enum(["none", "goal", "task", "run"]).optional(),
     freshness_scope_id: z.string().optional(),
@@ -65,14 +68,14 @@ export type DataSourceConfig = z.infer<typeof DataSourceConfigSchema>;
 export const DataSourceQuerySchema = z.object({
   dimension_name: z.string(),
   expression: z.string().optional(),
-  timeout_ms: z.number().default(10000),
+  timeout_ms: PositiveSafeIntegerSchema.default(10000),
 });
 export type DataSourceQuery = z.infer<typeof DataSourceQuerySchema>;
 
 // --- DataSourceResult ---
 
 export const DataSourceResultSchema = z.object({
-  value: z.union([z.number(), z.string(), z.boolean(), z.null()]),
+  value: z.union([z.number().finite(), z.string(), z.boolean(), z.null()]),
   raw: z.unknown(),
   timestamp: z.string(),
   source_id: z.string(),
