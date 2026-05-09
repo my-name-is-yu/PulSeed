@@ -97,4 +97,45 @@ describe("ScheduleEntryStore", () => {
       { invalid_count: 2 }
     );
   });
+
+  it("keeps legacy invalid heartbeat configs visible as disabled compatibility entries", async () => {
+    tmpDir = makeTempDir();
+    const logger = { warn: vi.fn() };
+    const store = new ScheduleEntryStore(tmpDir, logger);
+    await fsp.writeFile(
+      path.join(tmpDir, "schedules.json"),
+      JSON.stringify([
+        makePersistedHeartbeatEntry({
+          name: "legacy-http-heartbeat",
+          metadata: {
+            note: "created before strict heartbeat check configs",
+          },
+          heartbeat: {
+            check_type: "http",
+            check_config: {},
+            failure_threshold: 3,
+            timeout_ms: 5000,
+          },
+        }),
+      ], null, 2),
+      "utf-8"
+    );
+
+    const entries = await store.readEntries();
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      name: "legacy-http-heartbeat",
+      enabled: false,
+      heartbeat: {
+        check_type: "custom",
+        check_config: { command: "false" },
+      },
+      metadata: {
+        note: expect.stringContaining("invalid http check_config"),
+      },
+    });
+    expect(entries[0]?.metadata?.note).toContain("created before strict heartbeat check configs");
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
 });

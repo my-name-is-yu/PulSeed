@@ -33,23 +33,21 @@ export async function executeHeartbeatEntry(
 
   try {
     const timeoutMs = cfg.timeout_ms;
-    const config = cfg.check_config as Record<string, unknown>;
-
     switch (cfg.check_type) {
       case "http":
-        await checkHttp(config.url as string, timeoutMs);
+        await checkHttp(cfg.check_config.url, timeoutMs);
         break;
       case "tcp":
-        await checkTcp(config.host as string, config.port as number, timeoutMs);
+        await checkTcp(cfg.check_config.host, cfg.check_config.port, timeoutMs);
         break;
       case "process":
-        checkProcess(config.pid);
+        checkProcess(cfg.check_config.pid);
         break;
       case "disk":
-        await checkDisk(config.path as string);
+        await checkDisk(cfg.check_config.path);
         break;
       case "custom":
-        await checkCustom(config.command as string, timeoutMs);
+        await checkCustom(cfg.check_config.command, timeoutMs);
         break;
     }
 

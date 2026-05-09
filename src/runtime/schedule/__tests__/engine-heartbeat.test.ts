@@ -2,8 +2,8 @@ import { describe, expect, it, vi, afterEach } from "vitest";
 import { executeHeartbeatEntry } from "../engine-heartbeat.js";
 import { ScheduleEntrySchema } from "../../types/schedule.js";
 
-function makeProcessHeartbeat(pid: unknown) {
-  return ScheduleEntrySchema.parse({
+function makeProcessHeartbeatInput(pid: unknown) {
+  return {
     id: "11111111-1111-4111-8111-111111111111",
     name: "process-heartbeat",
     layer: "heartbeat",
@@ -28,7 +28,11 @@ function makeProcessHeartbeat(pid: unknown) {
     max_tokens_per_day: 100000,
     tokens_used_today: 0,
     budget_reset_at: null,
-  });
+  };
+}
+
+function makeProcessHeartbeat(pid: number) {
+  return ScheduleEntrySchema.parse(makeProcessHeartbeatInput(pid));
 }
 
 describe("executeHeartbeatEntry", () => {
@@ -36,23 +40,28 @@ describe("executeHeartbeatEntry", () => {
     vi.restoreAllMocks();
   });
 
-  it("rejects unsafe process heartbeat pids before probing the process table", async () => {
+  it("rejects unsafe process heartbeat pids at the schedule schema boundary", () => {
     const killSpy = vi.spyOn(process, "kill").mockImplementation(((pid: number | NodeJS.Signals, signal?: NodeJS.Signals | number) => {
       if (pid === -1 && signal === 0) {
         return true;
       }
       throw new Error(`unexpected process probe for ${String(pid)}`);
     }) as typeof process.kill);
+
+    const parsed = ScheduleEntrySchema.safeParse(makeProcessHeartbeatInput(Number.MAX_SAFE_INTEGER + 1));
+
+    expect(parsed.success).toBe(false);
+    expect(killSpy).not.toHaveBeenCalled();
+  });
+
+  it("probes safe process heartbeat pids with kill signal 0", async () => {
+    const killSpy = vi.spyOn(process, "kill").mockImplementation((() => true) as typeof process.kill);
     const logger = { error: vi.fn() };
 
-    const result = await executeHeartbeatEntry(makeProcessHeartbeat(-1), logger);
+    const result = await executeHeartbeatEntry(makeProcessHeartbeat(1234), logger);
 
-    expect(result.status).toBe("down");
-    expect(result.error_message).toContain("positive safe integer");
-    expect(result.failure_kind).toBe("transient");
-    expect(killSpy).not.toHaveBeenCalled();
-    expect(logger.error).toHaveBeenCalledWith(
-      expect.stringContaining("positive safe integer")
-    );
+    expect(result.status).toBe("ok");
+    expect(killSpy).toHaveBeenCalledWith(1234, 0);
+    expect(logger.error).not.toHaveBeenCalled();
   });
 });

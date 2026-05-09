@@ -8,7 +8,7 @@ import {
   type SchedulePresetInput,
 } from "../../../runtime/schedule/presets.js";
 import { DreamScheduleSuggestionStore } from "../../../platform/dream/dream-schedule-suggestions.js";
-import type { ScheduleTriggerInput } from "../../../runtime/types/schedule.js";
+import type { HeartbeatConfig, ScheduleTriggerInput } from "../../../runtime/types/schedule.js";
 import { scheduleEdit } from "./schedule/edit.js";
 import { scheduleCost } from "./schedule/cost.js";
 import { scheduleHistory } from "./schedule/history.js";
@@ -157,6 +157,14 @@ function parseScheduleAddInteger(value: unknown, label: string): number {
   return parsePositiveInteger(typeof value === "string" ? value : undefined, label);
 }
 
+function parseScheduleAddString(value: unknown, label: string): string {
+  const normalized = typeof value === "string" ? value.trim() : "";
+  if (normalized === "") {
+    throw new Error(`${label} must be a non-empty string`);
+  }
+  return normalized;
+}
+
 function parseScheduleThresholdValue(value: unknown): number | undefined {
   if (value === undefined) return undefined;
   if (typeof value !== "string") {
@@ -177,6 +185,55 @@ function resolveOptionalTrigger(values: { cron?: string; interval?: unknown }): 
     return { type: "interval", seconds: parseScheduleAddInteger(values.interval, "--interval"), jitter_factor: 0 };
   }
   return undefined;
+}
+
+function buildHeartbeatConfigFromAddArgs(
+  values: ReturnType<typeof parseArgs>["values"]
+): HeartbeatConfig {
+  const failure_threshold = parseScheduleAddInteger(values.threshold, "--threshold");
+  const timeout_ms = 5000;
+  switch (values.type) {
+    case "http":
+      return {
+        check_type: "http",
+        check_config: { url: parseScheduleAddString(values.url, "--url") },
+        failure_threshold,
+        timeout_ms,
+      };
+    case "tcp":
+      return {
+        check_type: "tcp",
+        check_config: {
+          host: parseScheduleAddString(values.host, "--host"),
+          port: parseScheduleAddInteger(values.port, "--port"),
+        },
+        failure_threshold,
+        timeout_ms,
+      };
+    case "process":
+      return {
+        check_type: "process",
+        check_config: { pid: parseScheduleAddInteger(values.pid, "--pid") },
+        failure_threshold,
+        timeout_ms,
+      };
+    case "disk":
+      return {
+        check_type: "disk",
+        check_config: { path: parseScheduleAddString(values.path, "--path") },
+        failure_threshold,
+        timeout_ms,
+      };
+    case "custom":
+      return {
+        check_type: "custom",
+        check_config: { command: parseScheduleAddString(values.command, "--command") },
+        failure_threshold,
+        timeout_ms,
+      };
+    default:
+      throw new Error(`Unknown heartbeat check type: ${String(values.type)}`);
+  }
 }
 
 function buildPresetInput(values: Record<string, unknown>): SchedulePresetInput {
@@ -286,15 +343,6 @@ async function scheduleAdd(engine: ScheduleEngine, argv: string[]): Promise<numb
       return 1;
     }
 
-    const checkType = values.type as "http" | "tcp" | "process" | "disk" | "custom";
-    const checkConfig: Record<string, unknown> = {};
-    if (values.url) checkConfig.url = values.url;
-    if (values.host) checkConfig.host = values.host;
-    if (values.port !== undefined) checkConfig.port = parseScheduleAddInteger(values.port, "--port");
-    if (values.pid !== undefined) checkConfig.pid = parseScheduleAddInteger(values.pid, "--pid");
-    if (values.path) checkConfig.path = values.path;
-    if (values.command) checkConfig.command = values.command;
-
     const trigger = values.cron
       ? { type: "cron" as const, expression: values.cron as string, timezone: "UTC" }
       : {
@@ -312,12 +360,7 @@ async function scheduleAdd(engine: ScheduleEngine, argv: string[]): Promise<numb
         source: "manual",
         dependency_hints: [],
       },
-      heartbeat: {
-        check_type: checkType,
-        check_config: checkConfig,
-        failure_threshold: parseScheduleAddInteger(values.threshold, "--threshold"),
-        timeout_ms: 5000,
-      },
+      heartbeat: buildHeartbeatConfigFromAddArgs(values),
     });
 
     console.log(`Added schedule entry: ${entry.id} (${entry.name})`);

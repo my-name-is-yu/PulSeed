@@ -57,6 +57,58 @@ function makeScheduleEntry() {
   });
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function findSchema(
+  value: unknown,
+  predicate: (schema: Record<string, unknown>) => boolean
+): Record<string, unknown> | null {
+  const record = asRecord(value);
+  if (record && predicate(record)) return record;
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = findSchema(item, predicate);
+      if (found) return found;
+    }
+    return null;
+  }
+  if (record) {
+    for (const item of Object.values(record)) {
+      const found = findSchema(item, predicate);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+function resolveJsonSchemaRef(root: unknown, schema: unknown): Record<string, unknown> {
+  let current: unknown = schema;
+  const seen = new Set<string>();
+  while (true) {
+    const record = asRecord(current);
+    const ref = typeof record?.["$ref"] === "string" ? record["$ref"] : null;
+    if (!ref) {
+      if (!record) throw new Error("schema node is not an object");
+      return record;
+    }
+    if (seen.has(ref)) throw new Error(`circular schema ref: ${ref}`);
+    seen.add(ref);
+    current = resolveJsonPointer(root, ref);
+  }
+}
+
+function resolveJsonPointer(root: unknown, ref: string): unknown {
+  if (!ref.startsWith("#/")) throw new Error(`unsupported schema ref: ${ref}`);
+  return ref.slice(2).split("/").reduce((current: unknown, token) => {
+    const key = token.replace(/~1/g, "/").replace(/~0/g, "~");
+    return asRecord(current)?.[key] ?? (Array.isArray(current) ? current[Number(key)] : undefined);
+  }, root);
+}
+
 describe("CreateScheduleTool", () => {
   it("has correct metadata", () => {
     const tool = new CreateScheduleTool({ addEntry: vi.fn() } as unknown as ScheduleEngine);
@@ -138,6 +190,48 @@ describe("CreateScheduleTool", () => {
     expect(parsed.success).toBe(false);
   });
 
+  it("rejects heartbeat check_config payloads that do not match check_type", () => {
+    expect(CreateScheduleInputSchema.safeParse({
+      name: "bad http heartbeat",
+      layer: "heartbeat",
+      trigger: { type: "interval", seconds: 15 },
+      heartbeat: {
+        check_type: "http",
+        check_config: { command: "curl https://example.com" },
+      },
+    }).success).toBe(false);
+
+    expect(CreateScheduleInputSchema.safeParse({
+      name: "bad process heartbeat",
+      layer: "heartbeat",
+      trigger: { type: "interval", seconds: 15 },
+      heartbeat: {
+        check_type: "process",
+        check_config: { pid: Number.MAX_SAFE_INTEGER + 1 },
+      },
+    }).success).toBe(false);
+
+    expect(CreateScheduleInputSchema.safeParse({
+      name: "bad tcp heartbeat",
+      layer: "heartbeat",
+      trigger: { type: "interval", seconds: 15 },
+      heartbeat: {
+        check_type: "tcp",
+        check_config: { host: "127.0.0.1", port: 70_000 },
+      },
+    }).success).toBe(false);
+
+    expect(CreateScheduleInputSchema.safeParse({
+      name: "tcp heartbeat",
+      layer: "heartbeat",
+      trigger: { type: "interval", seconds: 15 },
+      heartbeat: {
+        check_type: "tcp",
+        check_config: { host: "127.0.0.1", port: 443 },
+      },
+    }).success).toBe(true);
+  });
+
   it("exports union branch contracts to the model-facing tool definition", () => {
     const tool = new CreateScheduleTool({ addEntry: vi.fn() } as unknown as ScheduleEngine);
     const parameters = toToolDefinition(tool).function.parameters;
@@ -149,6 +243,31 @@ describe("CreateScheduleTool", () => {
     expect(JSON.stringify(parameters)).toContain("\"layer\"");
     expect(JSON.stringify(parameters)).toContain("\"daily_brief\"");
     expect(JSON.stringify(parameters)).toContain("\"heartbeat\"");
+    expect(JSON.stringify(parameters)).toContain("\"check_config\"");
+    expect(JSON.stringify(parameters)).toContain("\"url\"");
+    expect(JSON.stringify(parameters)).toContain("\"pid\"");
+
+    const processHeartbeatSchema = findSchema(parameters, (schema) => {
+      const properties = asRecord(schema["properties"]);
+      const checkType = asRecord(properties?.["check_type"]);
+      const checkConfig = asRecord(properties?.["check_config"]);
+      const checkConfigProperties = asRecord(checkConfig?.["properties"]);
+      const checkTypeEnum = checkType?.["enum"];
+      return Array.isArray(checkTypeEnum) &&
+        checkTypeEnum.includes("process") &&
+        checkConfigProperties?.["pid"] !== undefined;
+    });
+    expect(processHeartbeatSchema).not.toBeNull();
+
+    const heartbeatProperties = asRecord(processHeartbeatSchema!["properties"])!;
+    const checkConfig = asRecord(heartbeatProperties["check_config"])!;
+    const checkConfigProperties = asRecord(checkConfig["properties"])!;
+    const pidSchema = resolveJsonSchemaRef(parameters, checkConfigProperties["pid"]);
+    expect(pidSchema).toMatchObject({
+      type: "integer",
+      minimum: 1,
+      maximum: Number.MAX_SAFE_INTEGER,
+    });
   });
 
   it("calls scheduleEngine.addEntry with the validated input and returns the entry", async () => {

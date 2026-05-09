@@ -1,4 +1,6 @@
 import {
+  HeartbeatConfigSchema,
+  HeartbeatCheckTypeSchema,
   MAX_SCHEDULE_RETRY_ATTEMPTS,
   MAX_SCHEDULE_RETRY_DELAY_MS,
   MAX_SCHEDULE_RETRY_MULTIPLIER,
@@ -50,8 +52,51 @@ export function normalizeLegacyScheduleRetryBounds(rawEntries: readonly unknown[
       output = { ...(output ?? input), retry_state: retryState };
     }
 
+    const heartbeatCompatible = normalizeLegacyHeartbeatCheckConfig(output ?? input);
+    if (heartbeatCompatible !== (output ?? input)) {
+      output = heartbeatCompatible;
+    }
+
     return output ?? entry;
   });
+}
+
+function normalizeLegacyHeartbeatCheckConfig(input: Record<string, unknown>): Record<string, unknown> {
+  if (input["layer"] !== "heartbeat") return input;
+  const heartbeat = asRecord(input["heartbeat"]);
+  if (!heartbeat || HeartbeatConfigSchema.safeParse(heartbeat).success) {
+    return input;
+  }
+
+  const checkTypeResult = HeartbeatCheckTypeSchema.safeParse(heartbeat["check_type"]);
+  if (!checkTypeResult.success) return input;
+
+  const originalNote = asRecord(input["metadata"])?.["note"];
+  const notePrefix = `Disabled legacy heartbeat schedule with invalid ${checkTypeResult.data} check_config.`;
+  const note = typeof originalNote === "string" && originalNote.trim() !== ""
+    ? `${notePrefix} ${originalNote.trim()}`
+    : notePrefix;
+
+  return {
+    ...input,
+    enabled: false,
+    metadata: {
+      ...(asRecord(input["metadata"]) ?? {}),
+      note,
+    },
+    heartbeat: {
+      check_type: "custom",
+      check_config: { command: "false" },
+      failure_threshold: 3,
+      timeout_ms: 5000,
+    },
+  };
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
 }
 
 function normalizeRetryPolicyBounds(rawPolicy: unknown): unknown {
