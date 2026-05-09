@@ -25,6 +25,12 @@ function writeJson(baseDir: string, relativePath: string, value: unknown): void 
   fs.writeFileSync(target, JSON.stringify(value, null, 2));
 }
 
+function writeRaw(baseDir: string, relativePath: string, value: string): void {
+  const target = path.join(baseDir, relativePath);
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.writeFileSync(target, value);
+}
+
 afterEach(() => {
   for (const dir of tempDirs.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -106,6 +112,51 @@ describe("chat-runner-state helpers", () => {
     });
   });
 
+  it("collectGoalUsage ignores unsafe persisted token counts", async () => {
+    const baseDir = makeTempDir("pulseed-chat-usage-goal-bounds-");
+    writeJson(baseDir, "tasks/goal-usage/ledger/task-valid.json", {
+      summary: { latest_event_type: "succeeded", tokens_used: 21 },
+    });
+    writeJson(baseDir, "tasks/goal-usage/ledger/task-negative.json", {
+      summary: { latest_event_type: "failed", tokens_used: -5 },
+    });
+    writeJson(baseDir, "tasks/goal-usage/ledger/task-fractional.json", {
+      summary: { latest_event_type: "abandoned", tokens_used: 2.5 },
+    });
+    writeJson(baseDir, "tasks/goal-usage/ledger/task-unsafe.json", {
+      summary: { latest_event_type: "succeeded", tokens_used: Number.MAX_SAFE_INTEGER + 1 },
+    });
+    writeRaw(
+      baseDir,
+      "tasks/goal-usage/ledger/task-overflow.json",
+      "{\"summary\":{\"latest_event_type\":\"succeeded\",\"tokens_used\":1e309}}"
+    );
+
+    await expect(collectGoalUsage(baseDir, "goal-usage")).resolves.toEqual({
+      goalId: "goal-usage",
+      totalTokens: 21,
+      taskCount: 5,
+      terminalTaskCount: 5,
+    });
+  });
+
+  it("collectGoalUsage keeps aggregate token totals safe", async () => {
+    const baseDir = makeTempDir("pulseed-chat-usage-goal-aggregate-");
+    writeJson(baseDir, "tasks/goal-usage/ledger/task-a.json", {
+      summary: { latest_event_type: "succeeded", tokens_used: Number.MAX_SAFE_INTEGER },
+    });
+    writeJson(baseDir, "tasks/goal-usage/ledger/task-b.json", {
+      summary: { latest_event_type: "failed", tokens_used: Number.MAX_SAFE_INTEGER },
+    });
+
+    await expect(collectGoalUsage(baseDir, "goal-usage")).resolves.toEqual({
+      goalId: "goal-usage",
+      totalTokens: Number.MAX_SAFE_INTEGER,
+      taskCount: 2,
+      terminalTaskCount: 2,
+    });
+  });
+
   it("collectScheduleUsage filters by period", async () => {
     const baseDir = makeTempDir("pulseed-chat-usage-schedule-");
     writeJson(baseDir, "schedule-history.json", [
@@ -119,6 +170,30 @@ describe("chat-runner-state helpers", () => {
     ).resolves.toEqual({
       period: "24h",
       runs: 1,
+      totalTokens: 13,
+    });
+  });
+
+  it("collectScheduleUsage ignores unsafe persisted token counts", async () => {
+    const baseDir = makeTempDir("pulseed-chat-usage-schedule-bounds-");
+    writeRaw(
+      baseDir,
+      "schedule-history.json",
+      `[
+        { "finished_at": "2026-04-27T10:00:00.000Z", "tokens_used": 13 },
+        { "finished_at": "2026-04-27T10:02:00.000Z", "tokens_used": 9007199254740991 },
+        { "finished_at": "2026-04-27T10:05:00.000Z", "tokens_used": -1 },
+        { "finished_at": "2026-04-27T10:10:00.000Z", "tokens_used": 1.5 },
+        { "finished_at": "2026-04-27T10:15:00.000Z", "tokens_used": 9007199254740992 },
+        { "finished_at": "2026-04-27T10:20:00.000Z", "tokens_used": 1e309 }
+      ]`
+    );
+
+    await expect(
+      collectScheduleUsage(baseDir, "24h", Date.parse("2026-04-27T12:00:00.000Z"))
+    ).resolves.toEqual({
+      period: "24h",
+      runs: 6,
       totalTokens: 13,
     });
   });

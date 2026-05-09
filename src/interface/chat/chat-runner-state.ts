@@ -23,6 +23,16 @@ export function resolveStatePath(baseDir: string, ...segments: string[]): string
   return resolved;
 }
 
+function isNonnegativeSafeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
+function addSafeTokenCount(total: number, value: unknown): number {
+  if (!isNonnegativeSafeInteger(value)) return total;
+  if (value > Number.MAX_SAFE_INTEGER - total) return total;
+  return total + value;
+}
+
 export async function listRecoverableArchivedGoalIds(baseDir: string): Promise<string[]> {
   const archiveDir = resolveStatePath(baseDir, "archive");
   if (archiveDir === null) return [];
@@ -101,9 +111,7 @@ export async function collectGoalUsage(baseDir: string, goalId: string): Promise
       const parsed = JSON.parse(raw) as {
         summary?: { latest_event_type?: string; tokens_used?: number };
       };
-      if (typeof parsed.summary?.tokens_used === "number") {
-        totalTokens += parsed.summary.tokens_used;
-      }
+      totalTokens = addSafeTokenCount(totalTokens, parsed.summary?.tokens_used);
       if (parsed.summary?.latest_event_type === "succeeded"
         || parsed.summary?.latest_event_type === "failed"
         || parsed.summary?.latest_event_type === "abandoned") {
@@ -146,9 +154,7 @@ export async function collectScheduleUsage(
     if (!Number.isFinite(firedAt) || firedAt < since) continue;
     runs += 1;
     const tokensUsed = (record as Record<string, unknown>)["tokens_used"];
-    if (typeof tokensUsed === "number" && Number.isFinite(tokensUsed)) {
-      totalTokens += tokensUsed;
-    }
+    totalTokens = addSafeTokenCount(totalTokens, tokensUsed);
   }
   return { period, runs, totalTokens };
 }
