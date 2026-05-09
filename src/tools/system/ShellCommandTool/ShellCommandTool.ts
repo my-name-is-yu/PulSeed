@@ -1,12 +1,12 @@
 import { z } from "zod";
 import type { ITool, PermissionCheckResult, ToolCallContext, ToolMetadata, ToolResult } from "../../types.js";
-import { ShellTool } from "../ShellTool/ShellTool.js";
+import { ShellTimeoutMsSchema, ShellTool } from "../ShellTool/ShellTool.js";
 import { containsShellExecutable } from "../ShellTool/command-policy.js";
 
 export const ShellCommandInputSchema = z.object({
   command: z.string().min(1),
   cwd: z.string().optional(),
-  timeoutMs: z.number().default(120_000),
+  timeoutMs: ShellTimeoutMsSchema,
   description: z.string().optional(),
 });
 export type ShellCommandInput = z.infer<typeof ShellCommandInputSchema>;

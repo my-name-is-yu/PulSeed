@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
+import { toToolDefinition } from "../../../tool-definition-adapter.js";
 import { TestRunnerTool, TestRunnerInputSchema } from "../TestRunnerTool.js";
 import type { ToolCallContext } from "../../../types.js";
 import * as execMod from "../../../../base/utils/execFileNoThrow.js";
@@ -122,6 +123,26 @@ describe("TestRunnerTool", () => {
     it("accepts pattern", () => {
       const parsed = TestRunnerInputSchema.parse({ pattern: "foo.test.ts" });
       expect(parsed.pattern).toBe("foo.test.ts");
+    });
+
+    it("rejects invalid timeout controls", () => {
+      expect(TestRunnerInputSchema.safeParse({ timeout: 60_000 }).success).toBe(true);
+
+      for (const timeout of [0, -1, 1.5, Number.POSITIVE_INFINITY, 1_800_001]) {
+        expect(TestRunnerInputSchema.safeParse({ timeout }).success).toBe(false);
+      }
+    });
+
+    it("exports timeout bounds to model-facing tool definitions", () => {
+      const parameters = toToolDefinition(tool).function.parameters as {
+        properties?: Record<string, unknown>;
+      };
+
+      expect(parameters.properties?.timeout).toMatchObject({
+        type: "integer",
+        minimum: 1,
+        maximum: 1_800_000,
+      });
     });
   });
 
