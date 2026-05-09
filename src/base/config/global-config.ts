@@ -55,6 +55,17 @@ const DEFAULT_CONFIG: GlobalConfig = {
   },
 };
 
+function cloneGlobalConfig(config: GlobalConfig): GlobalConfig {
+  return {
+    ...config,
+    interactive_automation: {
+      ...config.interactive_automation,
+      allowed_apps: [...config.interactive_automation.allowed_apps],
+      denied_apps: [...config.interactive_automation.denied_apps],
+    },
+  };
+}
+
 function getConfigPath(): string {
   return path.join(getPulseedDirPath(), "config.json");
 }
@@ -62,13 +73,14 @@ function getConfigPath(): string {
 function mergeGlobalConfigPatch(base: GlobalConfig, patch: unknown): GlobalConfig {
   const parsed = GlobalConfigPatchSchema.parse(patch);
   const { interactive_automation, ...topLevel } = parsed;
+  const baseConfig = cloneGlobalConfig(base);
   return GlobalConfigSchema.parse({
-    ...base,
+    ...baseConfig,
     ...topLevel,
     interactive_automation: interactive_automation === undefined
-      ? base.interactive_automation
+      ? baseConfig.interactive_automation
       : {
-          ...base.interactive_automation,
+          ...baseConfig.interactive_automation,
           ...interactive_automation,
         },
   });
@@ -83,10 +95,10 @@ export async function loadGlobalConfig(): Promise<GlobalConfig> {
   try {
     const raw = await fs.readFile(getConfigPath(), "utf-8");
     const parsed = JSON.parse(raw);
-    return mergeGlobalConfigPatch(DEFAULT_CONFIG, parsed);
+    return mergeGlobalConfigPatch(cloneGlobalConfig(DEFAULT_CONFIG), parsed);
   } catch (err) {
     if (!isRecoverableConfigLoadError(err)) throw err;
-    return { ...DEFAULT_CONFIG };
+    return cloneGlobalConfig(DEFAULT_CONFIG);
   }
 }
 
@@ -94,10 +106,10 @@ export function loadGlobalConfigSync(): GlobalConfig {
   try {
     const raw = fsSync.readFileSync(getConfigPath(), "utf-8");
     const parsed = JSON.parse(raw);
-    return mergeGlobalConfigPatch(DEFAULT_CONFIG, parsed);
+    return mergeGlobalConfigPatch(cloneGlobalConfig(DEFAULT_CONFIG), parsed);
   } catch (err) {
     if (!isRecoverableConfigLoadError(err)) throw err;
-    return { ...DEFAULT_CONFIG };
+    return cloneGlobalConfig(DEFAULT_CONFIG);
   }
 }
 

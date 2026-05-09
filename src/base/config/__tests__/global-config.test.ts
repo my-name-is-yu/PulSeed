@@ -42,6 +42,48 @@ describe("loadGlobalConfig", () => {
     });
   });
 
+  it("does not share nested default arrays across async loads", async () => {
+    await withTempPulseedHome(async () => {
+      const { loadGlobalConfig } = await import("../global-config.js");
+
+      const first = await loadGlobalConfig();
+      first.interactive_automation.allowed_apps.push("Mutated App");
+      first.interactive_automation.denied_apps.push("Mutated Protected App");
+
+      await expect(loadGlobalConfig()).resolves.toMatchObject({
+        interactive_automation: {
+          allowed_apps: [],
+          denied_apps: [
+            "Password Manager",
+            "Banking",
+            "System Settings",
+          ],
+        },
+      });
+    });
+  });
+
+  it("does not share nested default arrays across sync loads", async () => {
+    await withTempPulseedHome(async () => {
+      const { loadGlobalConfigSync } = await import("../global-config.js");
+
+      const first = loadGlobalConfigSync();
+      first.interactive_automation.allowed_apps.push("Mutated App");
+      first.interactive_automation.denied_apps.push("Mutated Protected App");
+
+      expect(loadGlobalConfigSync()).toMatchObject({
+        interactive_automation: {
+          allowed_apps: [],
+          denied_apps: [
+            "Password Manager",
+            "Banking",
+            "System Settings",
+          ],
+        },
+      });
+    });
+  });
+
   it("preserves an explicit false no_flicker setting from config.json", async () => {
     await withTempPulseedHome(async (tmpDir) => {
       await fs.writeFile(
