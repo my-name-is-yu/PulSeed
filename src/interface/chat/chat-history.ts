@@ -12,6 +12,19 @@ import { RunSpecSchema } from "../../runtime/run-spec/index.js";
 import type { ChatEvent, ChatEventContext } from "./chat-events.js";
 import type { UserInput } from "./user-input.js";
 import { normalizeSessionUsage, normalizeUsageCounter, sumUsageCounters } from "./chat-usage.js";
+import {
+  ChatSessionUsageSchema,
+  type ChatSessionUsage,
+  type ChatUsageCounter,
+} from "./chat-usage-contracts.js";
+export {
+  ChatSessionUsageSchema,
+  ChatUsageCounterSchema,
+} from "./chat-usage-contracts.js";
+export type {
+  ChatSessionUsage,
+  ChatUsageCounter,
+} from "./chat-usage-contracts.js";
 
 // ─── Schemas ───
 
@@ -31,26 +44,6 @@ export const ChatSessionAgentLoopMetadataSchema = z.object({
   updatedAt: z.string().nullable().optional(),
 }).passthrough();
 export type ChatSessionAgentLoopMetadata = z.infer<typeof ChatSessionAgentLoopMetadataSchema>;
-
-const ChatUsageTokenCountSchema = z.number().int().nonnegative().refine(Number.isSafeInteger).catch(0);
-
-export const ChatUsageCounterSchema = z.object({
-  inputTokens: ChatUsageTokenCountSchema,
-  outputTokens: ChatUsageTokenCountSchema,
-  totalTokens: ChatUsageTokenCountSchema,
-}).passthrough();
-export type ChatUsageCounter = z.infer<typeof ChatUsageCounterSchema>;
-
-export const ChatSessionUsageSchema = z.object({
-  totals: ChatUsageCounterSchema.default({
-    inputTokens: 0,
-    outputTokens: 0,
-    totalTokens: 0,
-  }),
-  byPhase: z.record(ChatUsageCounterSchema).default({}),
-  updatedAt: z.string().optional(),
-}).passthrough();
-export type ChatSessionUsage = z.infer<typeof ChatSessionUsageSchema>;
 
 export const ChatTurnContextSnapshotSchema = z.object({
   schema_version: z.string(),
