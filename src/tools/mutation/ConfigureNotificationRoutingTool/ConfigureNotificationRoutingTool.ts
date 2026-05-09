@@ -8,7 +8,7 @@ import { TAGS, READ_ONLY, PERMISSION_LEVEL } from "./constants.js";
 
 export const ConfigureNotificationRoutingInputSchema = z.object({
   instruction: z.string().min(1, "instruction is required"),
-});
+}).strict();
 export type ConfigureNotificationRoutingInput = z.infer<typeof ConfigureNotificationRoutingInputSchema>;
 
 export interface ConfigureNotificationRoutingToolDeps {

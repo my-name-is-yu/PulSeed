@@ -6,7 +6,7 @@ import { TAGS, CATEGORY as _CATEGORY, READ_ONLY, PERMISSION_LEVEL } from "./cons
 
 export const DeleteGoalInputSchema = z.object({
   goalId: z.string().min(1, "goalId is required"),
-});
+}).strict();
 export type DeleteGoalInput = z.infer<typeof DeleteGoalInputSchema>;
 
 export class DeleteGoalTool implements ITool<DeleteGoalInput, unknown> {

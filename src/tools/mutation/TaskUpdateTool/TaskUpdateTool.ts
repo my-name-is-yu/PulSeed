@@ -14,6 +14,10 @@ import { upsertTaskHistory } from "../task-history-utils.js";
 import { DESCRIPTION } from "./prompt.js";
 import { TAGS, READ_ONLY, PERMISSION_LEVEL } from "./constants.js";
 
+const TaskMutationCriterionInputSchema = CriterionSchema.strict();
+const TaskMutationScopeBoundaryInputSchema = ScopeBoundarySchema.strict();
+const TaskMutationDurationInputSchema = DurationSchema.strict();
+
 export const TaskUpdateInputSchema = z.object({
   goalId: z.string().min(1, "goalId is required"),
   taskId: z.string().min(1, "taskId is required"),
@@ -21,10 +25,10 @@ export const TaskUpdateInputSchema = z.object({
   work_description: z.string().optional(),
   rationale: z.string().optional(),
   approach: z.string().optional(),
-  success_criteria: z.array(CriterionSchema).optional(),
-  scope_boundary: ScopeBoundarySchema.optional(),
+  success_criteria: z.array(TaskMutationCriterionInputSchema).optional(),
+  scope_boundary: TaskMutationScopeBoundaryInputSchema.optional(),
   constraints: z.array(z.string()).optional(),
-  estimated_duration: DurationSchema.nullable().optional(),
+  estimated_duration: TaskMutationDurationInputSchema.nullable().optional(),
   plateau_until: z.string().nullable().optional(),
   started_at: z.string().nullable().optional(),
   completed_at: z.string().nullable().optional(),
@@ -38,7 +42,7 @@ export const TaskUpdateInputSchema = z.object({
   verificationVerdict: VerdictEnum.optional(),
   verificationEvidence: z.array(z.string()).optional(),
   appendExecutionOutput: z.string().optional(),
-});
+}).strict();
 export type TaskUpdateInput = z.infer<typeof TaskUpdateInputSchema>;
 
 const LIFECYCLE_OWNED_SELF_UPDATE_FIELDS = new Set([

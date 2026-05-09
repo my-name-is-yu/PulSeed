@@ -7,7 +7,7 @@ import { TAGS, CATEGORY as _CATEGORY, READ_ONLY, PERMISSION_LEVEL } from "./cons
 export const ArchiveGoalInputSchema = z.object({
   goalId: z.string().min(1, "goalId is required"),
   reason: z.string().optional(),
-});
+}).strict();
 export type ArchiveGoalInput = z.infer<typeof ArchiveGoalInputSchema>;
 
 export class ArchiveGoalTool implements ITool<ArchiveGoalInput, unknown> {

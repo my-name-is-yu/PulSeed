@@ -18,7 +18,7 @@ export const TaskStopInputSchema = z.object({
   goalId: z.string().min(1, "goalId is required"),
   taskId: z.string().min(1, "taskId is required"),
   reason: z.string().default("Stopped manually"),
-});
+}).strict();
 export type TaskStopInput = z.infer<typeof TaskStopInputSchema>;
 
 export class TaskStopTool implements ITool<TaskStopInput, unknown> {

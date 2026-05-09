@@ -17,7 +17,7 @@ export const TaskOutputInputSchema = z.object({
   taskId: z.string().min(1, "taskId is required"),
   content: z.string(),
   mode: z.enum(["append", "replace"]).default("append"),
-});
+}).strict();
 export type TaskOutputInput = z.infer<typeof TaskOutputInputSchema>;
 
 export class TaskOutputTool implements ITool<TaskOutputInput, unknown> {

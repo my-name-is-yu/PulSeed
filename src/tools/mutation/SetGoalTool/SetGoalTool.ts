@@ -6,7 +6,7 @@ import { TAGS, CATEGORY as _CATEGORY, READ_ONLY, PERMISSION_LEVEL } from "./cons
 
 export const SetGoalInputSchema = z.object({
   description: z.string().min(1, "description is required"),
-});
+}).strict();
 export type SetGoalInput = z.infer<typeof SetGoalInputSchema>;
 
 export class SetGoalTool implements ITool<SetGoalInput, unknown> {

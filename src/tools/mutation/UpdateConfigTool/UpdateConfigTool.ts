@@ -7,7 +7,7 @@ import { TAGS, CATEGORY as _CATEGORY, READ_ONLY, PERMISSION_LEVEL } from "./cons
 export const UpdateConfigInputSchema = z.object({
   key: z.string().min(1, "key is required"),
   value: z.unknown(),
-});
+}).strict();
 export type UpdateConfigInput = z.infer<typeof UpdateConfigInputSchema>;
 
 export class UpdateConfigTool implements ITool<UpdateConfigInput, unknown> {
