@@ -139,6 +139,53 @@ describe("LeaderLockManager", () => {
     expect(killSpy).not.toHaveBeenCalled();
   });
 
+  it("ignores unsafe persisted leader timestamps before probing the process table", async () => {
+    tmpDir = makeTempDir();
+    const manager = new LeaderLockManager(tmpDir, 1_000);
+
+    const stalePath = path.join(tmpDir, "leader", "leader.json");
+    await fsp.mkdir(path.dirname(stalePath), { recursive: true });
+    await fsp.writeFile(
+      stalePath,
+      [
+        "{",
+        "\"owner_token\":\"unsafe-owner\",",
+        `"pid":${process.pid},`,
+        "\"acquired_at\":100,",
+        "\"last_renewed_at\":100,",
+        "\"lease_until\":1e309",
+        "}",
+      ].join(""),
+      "utf-8"
+    );
+    const killSpy = vi.spyOn(process, "kill");
+
+    const acquired = await manager.acquire({ now: 200, ownerToken: "leader-b" });
+    expect(acquired).not.toBeNull();
+    expect(acquired!.owner_token).toBe("leader-b");
+    expect(killSpy).not.toHaveBeenCalled();
+  });
+
+  it("rejects unsafe computed leader lease timestamps without replacing the current lock", async () => {
+    tmpDir = makeTempDir();
+    const manager = new LeaderLockManager(tmpDir, 1_000);
+
+    const acquired = await manager.acquire({ now: 1000, ownerToken: "leader-a" });
+
+    await expect(manager.renew("leader-a", {
+      now: 1500,
+      leaseMs: Number.MAX_SAFE_INTEGER,
+    })).rejects.toThrow();
+    expect(await manager.read()).toEqual(acquired);
+
+    const unsafeManager = new LeaderLockManager(path.join(tmpDir, "unsafe-now"), 1_000);
+    await expect(unsafeManager.acquire({
+      now: Number.MAX_SAFE_INTEGER + 1,
+      ownerToken: "leader-b",
+    })).rejects.toThrow();
+    expect(await unsafeManager.read()).toBeNull();
+  });
+
   it("acquire keeps an unexpired lock when the recorded process is alive", async () => {
     tmpDir = makeTempDir();
     const manager = new LeaderLockManager(tmpDir, 1_000);
