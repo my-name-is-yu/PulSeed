@@ -90,7 +90,7 @@ export class RunSpecHandoffService {
     if (!spec) {
       return {
         success: false,
-        message: "No long-running RunSpec draft was derived from this request.",
+        message: "No long-running work draft was derived from this request.",
       };
     }
     return this.persistPendingDraft(spec);
@@ -104,7 +104,7 @@ export class RunSpecHandoffService {
     const message = [
       proposal,
       "",
-      "PulSeed prepared this as a typed long-running RunSpec draft. It has not started a daemon run.",
+      "PulSeed prepared this as typed long-running work. It has not started background work.",
       "Reply with approval to confirm, cancel to discard it, or provide updated workspace/deadline/metric details.",
     ].join("\n");
     await this.setPending({
@@ -147,7 +147,7 @@ export class RunSpecHandoffService {
     if (!revised) {
       return {
         success: false,
-        message: "RunSpec update needs a workspace path, deadline, or metric direction.",
+        message: "Long-running work update needs a workspace path, deadline, or metric direction.",
       };
     }
     await createRunSpecStore(this.deps.stateManager).save(revised);
@@ -163,7 +163,7 @@ export class RunSpecHandoffService {
       message: [
         proposal,
         "",
-        "RunSpec updated. Reply with approval to confirm, cancel to discard it, or provide another update.",
+        "Long-running work updated. Reply with approval to confirm, cancel to discard it, or provide another update.",
       ].join("\n"),
       spec: revised,
       data: { run_spec_id: revised.id, status: revised.status },
@@ -184,7 +184,7 @@ export class RunSpecHandoffService {
     await this.setPending(null);
     return {
       success: true,
-      message: `RunSpec cancelled: ${cancelled.id}\nNo background run was started.`,
+      message: "Long-running work cancelled.\nNo background work was started.",
       spec: cancelled,
       data: { run_spec_id: cancelled.id, status: cancelled.status },
     };
@@ -200,8 +200,8 @@ export class RunSpecHandoffService {
       return {
         success: false,
         message: [
-          `RunSpec ${pending.confirmation.spec.id} is drafted and awaiting confirmation.`,
-          "It was created in this same AgentLoop turn, so PulSeed will not start daemon-backed DurableLoop work until the operator confirms the draft in a later turn.",
+          "Long-running work is drafted and awaiting confirmation.",
+          "It was created in this same turn, so PulSeed will not start background work until the operator confirms the draft in a later turn.",
         ].join("\n"),
         spec: pending.confirmation.spec,
       };
@@ -230,7 +230,7 @@ export class RunSpecHandoffService {
         spec: confirmed,
         updatedAt: confirmed.updated_at,
       });
-    } else if (started.message.startsWith("RunSpec confirmed but not started:")) {
+    } else if (started.data?.confirmed_but_not_started === true) {
       const draft = RunSpecSchema.parse({ ...confirmed, status: "draft" });
       await createRunSpecStore(this.deps.stateManager).save(draft);
       await this.setPending({
@@ -247,16 +247,21 @@ export class RunSpecHandoffService {
   async startConfirmed(spec: RunSpec): Promise<RunSpecHandoffResult> {
     const safetyBlock = validateRunSpecStartSafety(spec);
     if (safetyBlock) {
-      return { success: false, message: safetyBlock, spec };
+      return {
+        success: false,
+        message: safetyBlock,
+        spec,
+        data: { confirmed_but_not_started: true },
+      };
     }
     const client = await this.getDaemonClient();
     if (!client) {
       return {
         success: false,
         message: [
-          `RunSpec confirmed: ${spec.id}`,
+          "Long-running work approved.",
           "",
-          "Daemon start is unavailable in this chat surface, so no background run was started.",
+          "Daemon start is unavailable in this chat surface, so no background work was started.",
           "Start or connect the PulSeed daemon, then approve from a daemon-capable chat surface.",
         ].join("\n"),
         spec,
@@ -277,10 +282,10 @@ export class RunSpecHandoffService {
       return {
         success: true,
         message: [
-          `RunSpec confirmed: ${spec.id}`,
-          `Started daemon-backed DurableLoop goal: ${goal.id}`,
-          `Background run: ${run.id}`,
-          "Run `pulseed status` or `/sessions` to check progress.",
+          "Long-running work approved.",
+          `Started background work for: ${goal.title}`,
+          "Ask for progress here, or run `pulseed status` for a plain status summary.",
+          "Use `/sessions --details` or diagnostic CLI commands when you need exact IDs.",
         ].join("\n"),
         spec,
         goalId: goal.id,
@@ -297,11 +302,11 @@ export class RunSpecHandoffService {
       return {
         success: false,
         message: [
-          `RunSpec confirmed: ${spec.id}`,
+          "Long-running work approved.",
           "",
-          `Daemon start failed, so no DurableLoop run was started: ${message}`,
-          "Start the daemon with `pulseed daemon start`, then approve the RunSpec again from a daemon-capable chat surface.",
-          `Background run record marked failed: ${run.id}`,
+          `Daemon start failed, so no background work was started: ${message}`,
+          "Start the daemon with `pulseed daemon start`, then approve again from a daemon-capable chat surface.",
+          "Use diagnostic status commands if you need the failed background run record.",
         ].join("\n"),
         spec,
         goalId: goal.id,
@@ -317,15 +322,15 @@ export class RunSpecHandoffService {
   }> {
     const pending = await this.getPending();
     if (!pending || pending.state !== "pending") {
-      return { success: false, message: "There is no pending RunSpec draft for this chat session." };
+      return { success: false, message: "There is no pending long-running work draft for this chat session." };
     }
     if (pending.spec.status === "cancelled") {
-      return { success: false, message: `RunSpec ${pending.spec.id} was cancelled and cannot be reused.` };
+      return { success: false, message: "That long-running draft was cancelled and cannot be reused." };
     }
     if (runSpecId && pending.spec.id !== runSpecId) {
       return {
         success: false,
-        message: `Pending RunSpec mismatch: expected ${pending.spec.id}, received ${runSpecId}.`,
+        message: "That long-running draft does not match the pending confirmation in this chat session.",
       };
     }
     return { success: true, message: "pending RunSpec found", confirmation: pending };
@@ -464,8 +469,8 @@ export function validateRunSpecStartSafety(spec: RunSpec): string | null {
   const required = spec.missing_fields.filter((field) => field.severity === "required");
   if (required.length > 0) {
     return [
-      `RunSpec confirmed but not started: ${spec.id}`,
-      "Required RunSpec details are unresolved.",
+      "Long-running work approved, but not started: required details are unresolved.",
+      "Required long-running work details are unresolved.",
       ...required.map((field) => `- ${field.question}`),
       "Reply with the missing workspace, deadline, metric, or approval details, then approve again.",
     ].join("\n");
@@ -473,9 +478,9 @@ export function validateRunSpecStartSafety(spec: RunSpec): string | null {
 
   if (!spec.workspace?.path || spec.workspace.confidence === "low") {
     return [
-      `RunSpec confirmed but not started: ${spec.id}`,
+      "Long-running work approved, but not started: the workspace is missing or ambiguous.",
       "Workspace is missing or ambiguous.",
-      "Reply with the exact local or remote workspace path before starting background DurableLoop work.",
+      "Reply with the exact local or remote workspace path before starting background work.",
     ].join("\n");
   }
 
@@ -487,18 +492,18 @@ export function validateRunSpecStartSafety(spec: RunSpec): string | null {
   }
 
   const blockedPolicies = [
-    spec.approval_policy.submit === "disallowed" ? "submit" : null,
-    spec.approval_policy.publish === "disallowed" ? "publish" : null,
+    spec.approval_policy.submit === "disallowed" ? "submissions" : null,
+    spec.approval_policy.publish === "disallowed" ? "publishing" : null,
     spec.approval_policy.external_action === "disallowed" ? "external action" : null,
     spec.approval_policy.irreversible_action === "disallowed" ? "irreversible action" : null,
     spec.approval_policy.secret === "disallowed" ? "secret transmission" : null,
   ].filter((value): value is string => value !== null);
   if (blockedPolicies.length > 0) {
     return [
-      `RunSpec confirmed but not started: ${spec.id}`,
+      "Long-running work approved, but not started: a safety policy blocks the handoff.",
       `Blocked safety policy: ${blockedPolicies.join(", ")}.`,
-      "PulSeed will not start a long-running handoff that requires a disallowed external, secret, production, destructive, or irreversible action.",
-      "Revise the RunSpec to remove the blocked action or mark it approval-required for a later explicit approval gate.",
+      "PulSeed will not start a long-running handoff that requires an action the current safety policy does not allow.",
+      "Revise the long-running work to remove the blocked action or require an explicit approval gate later.",
     ].join("\n");
   }
 
@@ -519,7 +524,7 @@ function validateKaggleWorkspaceWritePolicy(workspacePath: string): string | nul
   });
   if (validation.valid && !isUnderProtectedStateRoot) return null;
   return [
-    "RunSpec confirmed but not started: Kaggle workspace is blocked by the AgentLoop write policy.",
+    "Long-running work approved, but not started: the Kaggle workspace is blocked by the AgentLoop write policy.",
     `Workspace: ${workspaceRoot}`,
     `Protected runtime state root: ${stateRoot}`,
     `Policy reason: ${validation.error ?? "workspace is not writable by policy"}`,

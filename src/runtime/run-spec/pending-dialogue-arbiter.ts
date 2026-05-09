@@ -88,7 +88,7 @@ Confirmation kinds:
 - unknown: insufficiently clear.
 
 Pending RunSpec:
-${formatRunSpecSetupProposal(spec)}
+${formatRunSpecSetupProposal(spec, { diagnostic: true })}
 
 Respond only as JSON:
 {

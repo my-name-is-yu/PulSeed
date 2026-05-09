@@ -182,18 +182,25 @@ export async function dispatchGoalCommand(
   }
 
   if (subCmd === "list") {
-    let listValues: { archived?: boolean } = {};
+    let listValues: { archived?: boolean; details?: boolean; diagnostic?: boolean } = {};
     try {
       ({ values: listValues } = parseArgs({
         args,
-        options: { archived: { type: "boolean" } },
+        options: {
+          archived: { type: "boolean" },
+          details: { type: "boolean" },
+          diagnostic: { type: "boolean" },
+        },
         strict: false,
-      }) as { values: { archived?: boolean } });
+      }) as { values: { archived?: boolean; details?: boolean; diagnostic?: boolean } });
     } catch (err) {
       logger.error(formatOperationError("parse goal list arguments", err));
       listValues = {};
     }
-    return cmdGoalList(stateManager, { archived: listValues.archived });
+    return cmdGoalList(stateManager, {
+      archived: listValues.archived,
+      diagnostic: listValues.details === true || listValues.diagnostic === true,
+    });
   }
 
   if (subCmd === "archive") {

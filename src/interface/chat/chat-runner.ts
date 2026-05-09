@@ -979,7 +979,7 @@ export class ChatRunner {
       await this.history?.persist();
       return {
         success: false,
-        output: `${result.message}\nNo background run was started.`,
+        output: `${result.message}\nNo background work was started.`,
         elapsed_ms: Date.now() - start,
       };
     }
@@ -998,7 +998,7 @@ export class ChatRunner {
         output: [
           proposal,
           "",
-          "RunSpec updated. Reply with approval to confirm, cancel to discard it, or provide another update.",
+          "Long-running work updated. Reply with approval to confirm, cancel to discard it, or provide another update.",
         ].join("\n"),
         elapsed_ms: Date.now() - start,
       };

@@ -2214,20 +2214,42 @@ describe("ChatRunner", () => {
           pid: process.pid,
           running: true,
         }));
+        await new BackgroundRunLedger(path.join(tmpDir, "runtime"), { controlBaseDir: tmpDir }).create({
+          id: "run:coreloop:error-leak",
+          kind: "coreloop_run",
+          status: "running",
+          notify_policy: "silent",
+          goal_id: "goal-a",
+          title: "Error leak probe",
+          error: "raw failure for session:agent:secret-run",
+        });
         const runner = new ChatRunner(makeDeps({ stateManager }));
 
         const result = await runner.execute("/sessions", "/repo");
+        const detailed = await runner.execute("/sessions --details", "/repo");
 
         expect(result.success).toBe(true);
         expect(result.output).toContain("Chat sessions:");
-        expect(result.output).toContain("prior-session");
-        expect(result.output).toContain("runtime session:conversation:prior-session");
         expect(result.output).toContain("Prior");
-        expect(result.output).toContain("run:agent:agent-prior");
-        expect(result.output).toContain("session:coreloop:worker-1");
-        expect(result.output).toContain("run:coreloop:worker-1");
-        expect(result.output).toContain("run:process:proc-running");
+        expect(result.output).toContain("Background work is running");
+        expect(result.output).not.toContain("prior-session");
+        expect(result.output).not.toContain("runtime session:conversation:prior-session");
+        expect(result.output).not.toContain("run:agent:agent-prior");
+        expect(result.output).not.toContain("session:coreloop:worker-1");
+        expect(result.output).not.toContain("run:coreloop:worker-1");
+        expect(result.output).not.toContain("run:process:proc-running");
+        expect(result.output).not.toContain("session:agent:secret-run");
+        expect(result.output).not.toContain("raw failure");
         expect(result.output).not.toContain("{");
+        expect(detailed.success).toBe(true);
+        expect(detailed.output).toContain("prior-session");
+        expect(detailed.output).toContain("runtime session:conversation:prior-session");
+        expect(detailed.output).toContain("run:agent:agent-prior");
+        expect(detailed.output).toContain("session:coreloop:worker-1");
+        expect(detailed.output).toContain("run:coreloop:worker-1");
+        expect(detailed.output).toContain("run:process:proc-running");
+        expect(detailed.output).toContain("run:coreloop:error-leak");
+        expect(detailed.output).toContain("raw failure for session:agent:secret-run");
       } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
       }
@@ -2238,7 +2260,7 @@ describe("ChatRunner", () => {
       try {
         const stateManager = new StateManager(tmpDir);
         await stateManager.init();
-        await stateManager.saveGoal(makeGoal("goal-a"));
+        await stateManager.saveGoal(makeGoal("goal-a", { title: "Daily planning" }));
         await stateManager.writeRaw("chat/sessions/chat-runtime.json", {
           id: "chat-runtime",
           cwd: "/repo",
@@ -2288,25 +2310,29 @@ describe("ChatRunner", () => {
 
         expect(status.success).toBe(true);
         expect(status.output.indexOf("Current goal")).toBeLessThan(status.output.indexOf("Active goals:"));
-        expect(status.output).toContain("- Goal: Goal goal-a");
-        expect(status.output).toContain("Background work: run:agent:agent-runtime");
+        expect(status.output).toContain("- Goal: Daily planning");
+        expect(status.output).toContain("Background: Background work is running");
         expect(status.output).toContain("Needs attention: Deadline handoff");
         expect(status.output).toContain("Next safe action: Review final artifact");
         expect(status.output).toContain("Active goals");
-        expect(status.output).toContain("goal-a");
-        expect(status.output).toContain("Active runtime sessions:");
-        expect(status.output).toContain("session:agent:agent-runtime");
-        expect(status.output).toContain("Background runs (queued/running/attention-needed):");
-        expect(status.output).toContain("run:agent:agent-runtime");
-        expect(status.output).toContain("run:process:proc-failed");
-        expect(status.output).toContain("run:process:proc-lost");
+        expect(status.output).toContain("Active work:");
+        expect(status.output).toContain("Other work is active");
+        expect(status.output).toContain("Background work:");
+        expect(status.output).not.toContain("goal-a");
+        expect(status.output).not.toContain("session:agent:agent-runtime");
+        expect(status.output).not.toContain("run:agent:agent-runtime");
+        expect(status.output).not.toContain("run:process:proc-failed");
+        expect(status.output).not.toContain("run:process:proc-lost");
+        expect(status.output).not.toContain("queued/running/attention-needed");
         expect(status.output).toContain("Operator handoffs pending:");
         expect(status.output).toContain("Deadline handoff");
         expect(focused.success).toBe(true);
-        expect(focused.output.indexOf("Current goal")).toBeLessThan(focused.output.indexOf("Dimensions:"));
-        expect(focused.output).toContain("Goal details: Goal goal-a");
-        expect(focused.output).toContain("Dimensions:");
-        expect(focused.output).not.toContain("Active runtime sessions:");
+        expect(focused.output.indexOf("Current goal")).toBeLessThan(focused.output.indexOf("Progress signals:"));
+        expect(focused.output).toContain("Goal details: Daily planning");
+        expect(focused.output).toContain("Progress signals:");
+        expect(focused.output).not.toContain("Active work:");
+        expect(focused.output).not.toContain("ID: goal-a");
+        expect(focused.output).not.toContain("Status: active");
         expect(goals.success).toBe(true);
         expect(goals.output).toContain("Goals:");
         expect(adapter.execute).not.toHaveBeenCalled();
@@ -2339,8 +2365,45 @@ describe("ChatRunner", () => {
         expect(result.output).toContain("Current goals:");
         expect(result.output).toContain("1. Improve alpha routing");
         expect(result.output).toContain("2. Improve beta routing");
-        expect(result.output).toContain("Background: run:coreloop:worker-beta");
+        expect(result.output).toContain("Background: Background work is running");
+        expect(result.output).not.toContain("run:coreloop:worker-beta");
         expect(result.output).not.toContain("Archived old work");
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+
+    it("/status hides raw failed background-run errors by default but preserves them in details", async () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-status-error-boundary-"));
+      try {
+        const stateManager = new StateManager(tmpDir);
+        await stateManager.init();
+        await stateManager.saveGoal(makeGoal("goal-a", { title: "Recover background work" }));
+        const ledger = new BackgroundRunLedger(path.join(tmpDir, "runtime"), { controlBaseDir: tmpDir });
+        await ledger.create({
+          id: "run:coreloop:raw-error",
+          kind: "coreloop_run",
+          status: "running",
+          notify_policy: "silent",
+          goal_id: "goal-a",
+          title: "Recover background work",
+        });
+        await ledger.terminal("run:coreloop:raw-error", {
+          status: "failed",
+          error: "provider failed for session:agent:secret-run",
+          completed_at: "2026-04-25T00:20:00.000Z",
+        });
+        const runner = new ChatRunner(makeDeps({ stateManager }));
+
+        const result = await runner.execute("/status", "/repo");
+        const detailed = await runner.execute("/status --details", "/repo");
+
+        expect(result.success).toBe(true);
+        expect(result.output).toContain("Needs attention: Background work needs attention.");
+        expect(result.output).not.toContain("provider failed");
+        expect(result.output).not.toContain("session:agent:secret-run");
+        expect(detailed.success).toBe(true);
+        expect(detailed.output).toContain("provider failed for session:agent:secret-run");
       } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
       }
@@ -2369,7 +2432,7 @@ describe("ChatRunner", () => {
       try {
         const stateManager = new StateManager(tmpDir);
         await stateManager.init();
-        await stateManager.saveGoal(makeGoal("goal-a"));
+        await stateManager.saveGoal(makeGoal("goal-a", { title: "Focused work" }));
         await stateManager.writeRaw("supervisor-state.json", {
           workers: [{
             workerId: "worker-other",
@@ -2386,6 +2449,7 @@ describe("ChatRunner", () => {
         expect(result.output).toContain("Current goal");
         expect(result.output).not.toContain("run:coreloop:worker-other");
         expect(result.output).toContain("Next safe action: Describe the next outcome");
+        expect(result.output).not.toContain("ID: goal-a");
       } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
       }
@@ -2448,15 +2512,25 @@ describe("ChatRunner", () => {
         const runner = new ChatRunner(makeDeps({ stateManager, adapter, daemonClient: daemonClient as never }));
 
         const status = await runner.execute("/status", "/repo");
+        const detailedStatus = await runner.execute("/status --details", "/repo");
 
         expect(status.success).toBe(true);
         expect(status.output).toContain("Auth handoffs pending:");
-        expect(status.output).toContain("handoff-mail");
+        expect(status.output).toContain("mail.google.com via browser-auth is waiting for operator sign-in.");
+        expect(status.output).not.toContain("handoff-mail");
+        expect(status.output).not.toContain("pending_operator");
         expect(status.output).toContain("Guardrails:");
-        expect(status.output).toContain("breaker browser-auth/mail.google.com: open");
+        expect(status.output).toContain("browser-auth/mail.google.com is temporarily paused");
+        expect(status.output).not.toContain("breaker browser-auth/mail.google.com: open");
         expect(status.output).toContain("Backpressure active: 1 browser workflow(s) in flight");
         expect(status.output).toContain("Blocked automation work:");
-        expect(status.output).toContain("browser-auth/mail.google.com: guardrail:open");
+        expect(status.output).toContain("browser-auth/mail.google.com is waiting for the automation guardrail to clear.");
+        expect(status.output).not.toContain("guardrail:open");
+        expect(detailedStatus.success).toBe(true);
+        expect(detailedStatus.output).toContain("handoff-mail");
+        expect(detailedStatus.output).toContain("pending_operator");
+        expect(detailedStatus.output).toContain("breaker browser-auth/mail.google.com: open");
+        expect(detailedStatus.output).toContain("browser-auth/mail.google.com: guardrail:open");
         expect(adapter.execute).not.toHaveBeenCalled();
       } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -2468,18 +2542,23 @@ describe("ChatRunner", () => {
       try {
         const stateManager = new StateManager(tmpDir);
         await stateManager.init();
-        await stateManager.saveGoal(makeGoal("goal-a"));
+        await stateManager.saveGoal(makeGoal("goal-a", { title: "Archived planning" }));
         await stateManager.archiveGoal("goal-a");
         const adapter = makeMockAdapter();
         const runner = new ChatRunner(makeDeps({ stateManager, adapter }));
 
         const result = await runner.execute("/status goal-a", "/repo");
+        const detailed = await runner.execute("/status goal-a --details", "/repo");
 
         expect(result.success).toBe(true);
         expect(result.output).not.toContain("Current goal");
-        expect(result.output).toContain("Goal details: Goal goal-a");
-        expect(result.output).toContain("ID: goal-a");
-        expect(result.output).toContain("Status: archived");
+        expect(result.output).toContain("Goal details: Archived planning");
+        expect(result.output).toContain("State: Archived");
+        expect(result.output).not.toContain("ID: goal-a");
+        expect(result.output).not.toContain("Status: archived");
+        expect(detailed.success).toBe(true);
+        expect(detailed.output).toContain("ID: goal-a");
+        expect(detailed.output).toContain("Status: archived");
         expect(adapter.execute).not.toHaveBeenCalled();
       } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -2543,7 +2622,10 @@ describe("ChatRunner", () => {
         const archiveTasksDir = path.join(tmpDir, "archive", "goal-a", "tasks");
         fs.mkdirSync(archiveGoalDir, { recursive: true });
         fs.mkdirSync(archiveTasksDir, { recursive: true });
-        fs.writeFileSync(path.join(archiveGoalDir, "goal.json"), JSON.stringify(makeGoal("goal-a", { status: "archived" })));
+        fs.writeFileSync(path.join(archiveGoalDir, "goal.json"), JSON.stringify(makeGoal("goal-a", {
+          title: "Recoverable archive",
+          status: "archived",
+        })));
         fs.writeFileSync(path.join(archiveTasksDir, "task-1.json"), JSON.stringify(makeTask("task-1", "goal-a")));
         const adapter = makeMockAdapter();
         const runner = new ChatRunner(makeDeps({ stateManager, adapter }));
@@ -2552,7 +2634,8 @@ describe("ChatRunner", () => {
         const task = await runner.execute("/task task-1", "/repo");
 
         expect(status.success).toBe(true);
-        expect(status.output).toContain("Status: archived");
+        expect(status.output).toContain("State: Archived");
+        expect(status.output).not.toContain("Status: archived");
         expect(task.success).toBe(true);
         expect(task.output).toContain("Task: task-1");
         expect(task.output).toContain("Goal: goal-a");
@@ -4724,9 +4807,10 @@ describe("ChatRunner", () => {
       );
 
       expect(result.success).toBe(true);
-      expect(result.output).toContain("Proposed long-running run:");
+      expect(result.output).toContain("Proposed long-running work");
       expect(result.output).toContain("Kaggle score 0.98");
-      expect(result.output).toContain("It has not started a daemon run.");
+      expect(result.output).toContain("It has not started background work.");
+      expect(result.output).not.toContain("run-spec:");
       expect(result.output).toContain("Reply with approval");
       expect(adapter.execute).not.toHaveBeenCalled();
       const runSpecDir = path.join(baseDir, "run-specs");
@@ -4772,7 +4856,7 @@ describe("ChatRunner", () => {
         const result = await runner.execute(item.text, item.cwd);
 
         expect(result.success).toBe(true);
-        expect(result.output).toContain("Proposed long-running run:");
+        expect(result.output).toContain("Proposed long-running work");
         expect(adapter.execute).not.toHaveBeenCalled();
         expect(llmClient.callCount).toBe(2);
         const [fileName] = fs.readdirSync(path.join(baseDir, "run-specs"));
@@ -4866,7 +4950,7 @@ describe("ChatRunner", () => {
       );
 
       expect(result.success).toBe(true);
-      expect(result.output).toContain("Proposed long-running run:");
+      expect(result.output).toContain("Proposed long-running work");
       expect(adapter.execute).not.toHaveBeenCalled();
       expect(llmClient.callCount).toBe(6);
       const runSpecDir = path.join(baseDir, "run-specs");
@@ -4917,8 +5001,8 @@ describe("ChatRunner", () => {
       );
 
       expect(result.success).toBe(true);
-      expect(result.output).toContain("Proposed long-running run:");
-      expect(result.output).toContain("It has not started a daemon run.");
+      expect(result.output).toContain("Proposed long-running work");
+      expect(result.output).toContain("It has not started background work.");
       expect(result.output).not.toContain("setup/configuration");
       expect(adapter.execute).not.toHaveBeenCalled();
       const [fileName] = fs.readdirSync(path.join(baseDir, "run-specs"));
@@ -4949,9 +5033,10 @@ describe("ChatRunner", () => {
       const approveResult = await runner.execute("承認します", "/repo/kaggle");
 
       expect(approveResult.success).toBe(true);
-      expect(approveResult.output).toContain("RunSpec confirmed:");
-      expect(approveResult.output).toContain("Started daemon-backed DurableLoop goal:");
-      expect(approveResult.output).toContain("Background run: run:coreloop:");
+      expect(approveResult.output).toContain("Long-running work approved.");
+      expect(approveResult.output).toContain("Started background work for:");
+      expect(approveResult.output).not.toContain("Background run: run:coreloop:");
+      expect(approveResult.output).not.toContain("goal-runspec-");
       expect(adapter.execute).not.toHaveBeenCalled();
       expect(daemonClient.startGoal).toHaveBeenCalledOnce();
       expect(daemonClient.startGoal).toHaveBeenCalledWith(
@@ -5006,7 +5091,7 @@ describe("ChatRunner", () => {
 
       expect(result.success).toBe(false);
       expect(result.output).toContain("Daemon start failed");
-      expect(result.output).toContain("no DurableLoop run was started");
+      expect(result.output).toContain("no background work was started");
       expect(result.output).toContain("Connection refused");
       expect(daemonClient.startGoal).toHaveBeenCalledOnce();
       const registry = createRuntimeSessionRegistry({ stateManager });
@@ -5075,14 +5160,16 @@ describe("ChatRunner", () => {
 
       expect(result.success).toBe(false);
       expect(result.output).toContain("Blocked safety policy");
-      expect(result.output).toContain("disallowed external");
+      expect(result.output).toContain("external action");
+      expect(result.output).not.toContain("disallowed");
+      expect(result.output).not.toContain("approval-required");
       expect(daemonClient.startGoal).not.toHaveBeenCalled();
       const [fileName] = fs.readdirSync(path.join(baseDir, "run-specs"));
       const stored = JSON.parse(fs.readFileSync(path.join(baseDir, "run-specs", fileName), "utf8"));
       expect(stored.status).toBe("draft");
 
       const cancelResult = await runner.execute("cancel", "/repo/app");
-      expect(cancelResult.output).toContain("RunSpec cancelled:");
+      expect(cancelResult.output).toContain("Long-running work cancelled.");
       expect(daemonClient.startGoal).not.toHaveBeenCalled();
     });
 
@@ -5173,8 +5260,8 @@ describe("ChatRunner", () => {
       const cancelResult = await runner.execute("cancel it", "/repo/kaggle");
 
       expect(cancelResult.success).toBe(false);
-      expect(cancelResult.output).toContain("RunSpec cancelled:");
-      expect(cancelResult.output).toContain("No background run was started.");
+      expect(cancelResult.output).toContain("Long-running work cancelled.");
+      expect(cancelResult.output).toContain("No background work was started.");
       expect(daemonClient.startGoal).not.toHaveBeenCalled();
       const [fileName] = fs.readdirSync(path.join(baseDir, "run-specs"));
       const stored = JSON.parse(fs.readFileSync(path.join(baseDir, "run-specs", fileName), "utf8"));
@@ -5295,7 +5382,7 @@ describe("ChatRunner", () => {
       const approved = await reloadedRunner.execute("approve", "/repo/kaggle");
 
       expect(approved.success).toBe(true);
-      expect(approved.output).toContain("RunSpec confirmed:");
+      expect(approved.output).toContain("Long-running work approved.");
       const [fileName] = fs.readdirSync(path.join(baseDir, "run-specs"));
       const stored = JSON.parse(fs.readFileSync(path.join(baseDir, "run-specs", fileName), "utf8"));
       expect(stored.status).toBe("confirmed");
@@ -5329,7 +5416,7 @@ describe("ChatRunner", () => {
       expect(ambiguousResult.success).toBe(false);
       expect(ambiguousResult.output).toContain("awaiting confirmation");
       expect(approvedResult.success).toBe(true);
-      expect(approvedResult.output).toContain("RunSpec confirmed:");
+      expect(approvedResult.output).toContain("Long-running work approved.");
     });
 
     it("routes unrelated ordinary chat to AgentLoop while preserving a pending RunSpec", async () => {

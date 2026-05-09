@@ -105,7 +105,7 @@ export async function executeRunSpecDraftRoute(
   const output = [
     proposal,
     "",
-    "PulSeed prepared this as a typed long-running RunSpec draft. It has not started a daemon run.",
+    "PulSeed prepared this as typed long-running work. It has not started background work.",
     "Reply with approval to confirm, cancel to discard it, or provide updated workspace/deadline/metric details.",
   ].join("\n");
   await host.setPendingRunSpecConfirmation({
@@ -115,7 +115,7 @@ export async function executeRunSpecDraftRoute(
     createdAt: route.draft.created_at,
     updatedAt: route.draft.updated_at,
   });
-  host.eventBridge.emitCheckpoint("RunSpec confirmation pending", `${route.draft.id} is awaiting confirmation.`, eventContext, "route");
+  host.eventBridge.emitCheckpoint("Long-running work confirmation pending", "A typed background-work draft is awaiting confirmation.", eventContext, "route");
   return persistDirectRouteResult(host, output, eventContext, assistantBuffer, history, start);
 }
 

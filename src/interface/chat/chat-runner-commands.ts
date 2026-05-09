@@ -21,6 +21,7 @@ import {
   deterministicChatSummary,
   findTask,
   formatConfig,
+  formatDiagnosticGoalLine,
   formatGoalLine,
   formatHistory,
   formatTask,
@@ -37,6 +38,7 @@ import {
   zeroUsageCounter,
   type ProviderConfigSummary,
 } from "./chat-runner-command-helpers.js";
+import { formatGoalStatusDetails } from "../goal-status-display.js";
 import { checkGitChanges } from "./chat-runner-support.js";
 import { formatFailureRecovery } from "./failure-recovery.js";
 import {
@@ -117,6 +119,44 @@ function parseCleanupArgs(args: string): { success: true; dryRun: boolean } | { 
   return { success: false, output: CLEANUP_USAGE };
 }
 
+function isDetailFlag(token: string): boolean {
+  return token === "--details" || token === "--diagnostic";
+}
+
+function parseDetailOnlyArgs(
+  args: string,
+  command: string,
+): { success: true; diagnostic: boolean } | { success: false; output: string } {
+  const tokens = args.trim() ? args.trim().split(/\s+/) : [];
+  let diagnostic = false;
+  for (const token of tokens) {
+    if (!isDetailFlag(token)) {
+      return { success: false, output: `Usage: ${command} [--details]` };
+    }
+    diagnostic = true;
+  }
+  return { success: true, diagnostic };
+}
+
+function parseStatusArgs(
+  args: string,
+): { success: true; goalId?: string; diagnostic: boolean } | { success: false; output: string } {
+  const tokens = args.trim() ? args.trim().split(/\s+/) : [];
+  let goalId: string | undefined;
+  let diagnostic = false;
+  for (const token of tokens) {
+    if (isDetailFlag(token)) {
+      diagnostic = true;
+      continue;
+    }
+    if (goalId) {
+      return { success: false, output: "Usage: /status [goal-id] [--details]" };
+    }
+    goalId = token;
+  }
+  return goalId ? { success: true, goalId, diagnostic } : { success: true, diagnostic };
+}
+
 export class ChatRunnerCommandHandler {
   constructor(private readonly host: ChatRunnerCommandHost) {}
 
@@ -144,9 +184,17 @@ export class ChatRunnerCommandHandler {
       return { success: true, output: "Conversation history cleared.", elapsed_ms: Date.now() - start };
     }
     if (cmd === "/sessions") {
+      const parsedSessions = parseDetailOnlyArgs(args.trim(), "/sessions");
+      if (!parsedSessions.success) {
+        return { success: false, output: parsedSessions.output, elapsed_ms: Date.now() - start };
+      }
       const registry = createRuntimeSessionRegistry({ stateManager: this.host.deps.stateManager });
       const snapshot = await registry.snapshot();
-      return { success: true, output: formatRuntimeSessionsList(snapshot), elapsed_ms: Date.now() - start };
+      return {
+        success: true,
+        output: formatRuntimeSessionsList(snapshot, { diagnostic: parsedSessions.diagnostic }),
+        elapsed_ms: Date.now() - start,
+      };
     }
     if (cmd === "/history") {
       const catalog = new ChatSessionCatalog(this.host.deps.stateManager);
@@ -202,7 +250,7 @@ export class ChatRunnerCommandHandler {
       return this.handleStatus(args.trim(), start);
     }
     if (cmd === "/goals") {
-      return this.handleGoals(start);
+      return this.handleGoals(args.trim(), start);
     }
     if (cmd === "/tasks") {
       return this.handleTasks(args.trim(), start);
@@ -394,15 +442,20 @@ export class ChatRunnerCommandHandler {
     return activeGoals(goals);
   }
 
-  private formatGoalLine(goal: Goal): string {
-    return formatGoalLine(goal);
+  private formatGoalLine(goal: Goal, diagnostic = false): string {
+    return diagnostic ? formatDiagnosticGoalLine(goal) : formatGoalLine(goal);
   }
 
   private async handleStatus(args: string, start: number): Promise<ChatRunResult> {
-    if (args) {
-      const goal = await this.host.deps.stateManager.loadGoal(args);
+    const parsedArgs = parseStatusArgs(args);
+    if (!parsedArgs.success) {
+      return { success: false, output: parsedArgs.output, elapsed_ms: Date.now() - start };
+    }
+    const diagnostic = parsedArgs.diagnostic;
+    if (parsedArgs.goalId) {
+      const goal = await this.host.deps.stateManager.loadGoal(parsedArgs.goalId);
       if (!goal) {
-        return { success: false, output: `Goal not found: ${args}`, elapsed_ms: Date.now() - start };
+        return { success: false, output: `Goal not found: ${parsedArgs.goalId}`, elapsed_ms: Date.now() - start };
       }
       const registry = createRuntimeSessionRegistry({ stateManager: this.host.deps.stateManager });
       const [runtimeSnapshot, handoffs] = await Promise.all([
@@ -410,20 +463,15 @@ export class ChatRunnerCommandHandler {
         this.loadOpenOperatorHandoffsFromRuntime(),
       ]);
       const summaryLines = isCurrentGoalCandidate(goal)
-        ? [formatCurrentGoalSummary(goal, { runtimeSnapshot, handoffs }), ""]
+        ? [formatCurrentGoalSummary(goal, {
+          runtimeSnapshot,
+          handoffs,
+          detail: diagnostic ? "diagnostic" : "default",
+        }), ""]
         : [];
       const lines = [
         ...summaryLines,
-        `Goal details: ${goal.title}`,
-        `ID: ${goal.id}`,
-        `Status: ${goal.status}`,
-        `Loop: ${goal.loop_status}`,
-        `Updated: ${goal.updated_at}`,
-        `Children: ${goal.children_ids.length}`,
-        `Dimensions:`,
-        ...goal.dimensions.map((dimension) =>
-          `- ${dimension.name}: current=${String(dimension.current_value)}, threshold=${JSON.stringify(dimension.threshold)}, confidence=${dimension.confidence}`
-        ),
+        formatGoalStatusDetails(goal, { diagnostic }),
       ];
       return { success: true, output: lines.join("\n"), elapsed_ms: Date.now() - start };
     }
@@ -435,19 +483,30 @@ export class ChatRunnerCommandHandler {
     ]);
     const handoffs = await this.loadOpenOperatorHandoffsFromRuntime();
     const active = this.activeGoals(goals);
-    const runtimeStatus = formatRuntimeStatus(runtimeSnapshot);
     const daemonSnapshot = await this.loadDaemonSnapshot();
-    const guardrailStatus = await this.formatGuardrailStatus(daemonSnapshot);
+    const guardrailStatus = await this.formatGuardrailStatus(daemonSnapshot, { diagnostic });
     const statusSuffix = guardrailStatus ? `\n\n${guardrailStatus}` : "";
     if (active.length === 0) {
-      return { success: true, output: `No active goals found.\n\n${runtimeStatus}${statusSuffix}`, elapsed_ms: Date.now() - start };
+      return {
+        success: true,
+        output: `No active goals found.\n\n${formatRuntimeStatus(runtimeSnapshot, { diagnostic })}${statusSuffix}`,
+        elapsed_ms: Date.now() - start,
+      };
     }
     const currentGoalSummary = active.length === 1
-      ? formatCurrentGoalSummary(active[0]!, { runtimeSnapshot, handoffs })
-      : formatCurrentGoalChoiceList(active, { runtimeSnapshot, handoffs });
+      ? formatCurrentGoalSummary(active[0]!, {
+        runtimeSnapshot,
+        handoffs,
+        detail: diagnostic ? "diagnostic" : "default",
+      })
+      : formatCurrentGoalChoiceList(active, {
+        runtimeSnapshot,
+        handoffs,
+        detail: diagnostic ? "diagnostic" : "default",
+      });
     return {
       success: true,
-      output: `${currentGoalSummary}\n\nActive goals:\n${active.map((goal) => this.formatGoalLine(goal)).join("\n")}\n\n${runtimeStatus}${statusSuffix}`,
+      output: `${currentGoalSummary}\n\nActive goals:\n${active.map((goal) => this.formatGoalLine(goal, diagnostic)).join("\n")}\n\n${formatRuntimeStatus(runtimeSnapshot, { diagnostic })}${statusSuffix}`,
       elapsed_ms: Date.now() - start,
     };
   }
@@ -461,7 +520,10 @@ export class ChatRunnerCommandHandler {
     }
   }
 
-  private async formatGuardrailStatus(snapshot?: DaemonSnapshot | null): Promise<string | null> {
+  private async formatGuardrailStatus(
+    snapshot?: DaemonSnapshot | null,
+    options: { diagnostic?: boolean } = {},
+  ): Promise<string | null> {
     const automation = snapshot?.runtime_automation && typeof snapshot.runtime_automation === "object"
       ? snapshot.runtime_automation as Record<string, unknown>
       : null;
@@ -492,7 +554,11 @@ export class ChatRunnerCommandHandler {
       for (const handoff of operatorHandoffs.slice(0, 5)) {
         const record = handoff as Record<string, unknown>;
         const triggers = Array.isArray(record["triggers"]) ? record["triggers"].join(",") : "unknown";
-        lines.push(`- ${String(record["title"] ?? record["handoff_id"] ?? "handoff")} [${triggers}] ${String(record["recommended_action"] ?? "")}`);
+        if (options.diagnostic) {
+          lines.push(`- ${String(record["title"] ?? record["handoff_id"] ?? "handoff")} [${triggers}] ${String(record["recommended_action"] ?? "")}`);
+        } else {
+          lines.push(`- ${String(record["title"] ?? "Operator review")} - ${String(record["recommended_action"] ?? "Review the pending handoff.")}`);
+        }
       }
     }
     if (pendingAuth.length > 0) {
@@ -500,7 +566,11 @@ export class ChatRunnerCommandHandler {
       lines.push("Auth handoffs pending:");
       for (const session of pendingAuth.slice(0, 5)) {
         const record = session as Record<string, unknown>;
-        lines.push(`- ${String(record["service_key"] ?? "unknown")} via ${String(record["provider_id"] ?? "unknown")} [${String(record["state"] ?? "unknown")}] handoff ${String(record["handoff_id"] ?? record["session_id"] ?? "unknown")}`);
+        if (options.diagnostic) {
+          lines.push(`- ${String(record["service_key"] ?? "unknown")} via ${String(record["provider_id"] ?? "unknown")} [${String(record["state"] ?? "unknown")}] handoff ${String(record["handoff_id"] ?? record["session_id"] ?? "unknown")}`);
+        } else {
+          lines.push(`- ${String(record["service_key"] ?? "unknown service")} via ${String(record["provider_id"] ?? "unknown provider")} is waiting for operator sign-in.`);
+        }
       }
     }
     if (openBreakers.length > 0) {
@@ -508,7 +578,11 @@ export class ChatRunnerCommandHandler {
       lines.push("Guardrails:");
       for (const breaker of openBreakers.slice(0, 5)) {
         const record = breaker as Record<string, unknown>;
-        lines.push(`- breaker ${String(record["provider_id"] ?? "unknown")}/${String(record["service_key"] ?? "unknown")}: ${String(record["state"] ?? "unknown")} (failures ${String(record["failure_count"] ?? "0")})`);
+        if (options.diagnostic) {
+          lines.push(`- breaker ${String(record["provider_id"] ?? "unknown")}/${String(record["service_key"] ?? "unknown")}: ${String(record["state"] ?? "unknown")} (failures ${String(record["failure_count"] ?? "0")})`);
+        } else {
+          lines.push(`- ${String(record["provider_id"] ?? "unknown provider")}/${String(record["service_key"] ?? "unknown service")} is temporarily paused after ${String(record["failure_count"] ?? "0")} failure(s).`);
+        }
       }
     }
     if (backpressureActiveCount > 0) {
@@ -520,7 +594,11 @@ export class ChatRunnerCommandHandler {
       lines.push("Blocked automation work:");
       for (const blocked of blockedWork.slice(0, 5)) {
         const record = blocked as Record<string, unknown>;
-        lines.push(`- ${String(record["provider_id"] ?? "unknown")}/${String(record["service_key"] ?? "unknown")}: ${String(record["reason"] ?? "blocked")}`);
+        if (options.diagnostic) {
+          lines.push(`- ${String(record["provider_id"] ?? "unknown")}/${String(record["service_key"] ?? "unknown")}: ${String(record["reason"] ?? "blocked")}`);
+        } else {
+          lines.push(`- ${String(record["provider_id"] ?? "unknown provider")}/${String(record["service_key"] ?? "unknown service")} is waiting for the automation guardrail to clear.`);
+        }
       }
     }
     return lines.length > 0 ? lines.join("\n") : null;
@@ -607,14 +685,18 @@ export class ChatRunnerCommandHandler {
     };
   }
 
-  private async handleGoals(start: number): Promise<ChatRunResult> {
+  private async handleGoals(args: string, start: number): Promise<ChatRunResult> {
+    const parsed = parseDetailOnlyArgs(args, "/goals");
+    if (!parsed.success) {
+      return { success: false, output: parsed.output, elapsed_ms: Date.now() - start };
+    }
     const goals = await this.loadGoals();
     if (goals.length === 0) {
       return { success: true, output: "No goals found.", elapsed_ms: Date.now() - start };
     }
     return {
       success: true,
-      output: `Goals:\n${goals.map((goal) => this.formatGoalLine(goal)).join("\n")}`,
+      output: `Goals:\n${goals.map((goal) => this.formatGoalLine(goal, parsed.diagnostic)).join("\n")}`,
       elapsed_ms: Date.now() - start,
     };
   }

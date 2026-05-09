@@ -3,11 +3,13 @@ import type { BackgroundRun, RuntimeSessionRegistrySnapshot } from "../runtime/s
 import type { RuntimeOperatorHandoffRecord } from "../runtime/store/operator-handoff-store.js";
 
 type GoalSummarySurface = "full" | "compact";
+type GoalSummaryDetail = "default" | "diagnostic";
 
 export interface CurrentGoalSummaryOptions {
   runtimeSnapshot?: RuntimeSessionRegistrySnapshot | null;
   handoffs?: RuntimeOperatorHandoffRecord[];
   surface?: GoalSummarySurface;
+  detail?: GoalSummaryDetail;
 }
 
 const ACTIVE_RUN_STATUSES = new Set<BackgroundRun["status"]>(["queued", "running"]);
@@ -32,7 +34,8 @@ export function formatCurrentGoalChoiceList(goals: Goal[], options: CurrentGoalS
       goals.map((goal, index) => {
         const projection = buildCurrentGoalProjection(goal, options);
         const attention = projection.blocker ? "; attention needed" : "";
-        return `${index + 1}. ${projection.title} (${projection.state}${attention})`;
+        const diagnosticId = projection.diagnostic ? ` [${projection.goalId}]` : "";
+        return `${index + 1}. ${projection.title}${diagnosticId} (${projection.state}${attention})`;
       }).join(" · "),
     ].join(" ");
   }
@@ -40,8 +43,11 @@ export function formatCurrentGoalChoiceList(goals: Goal[], options: CurrentGoalS
     "Current goals:",
     ...goals.map((goal, index) => {
       const projection = buildCurrentGoalProjection(goal, options);
+      const title = projection.diagnostic
+        ? `${index + 1}. ${projection.title} (${projection.goalId})`
+        : `${index + 1}. ${projection.title}`;
       const parts = [
-        `${index + 1}. ${projection.title}`,
+        title,
         `State: ${projection.state}`,
         projection.background ? `Background: ${projection.background}` : null,
         projection.blocker ? `Needs attention: ${projection.blocker}` : null,
@@ -53,6 +59,8 @@ export function formatCurrentGoalChoiceList(goals: Goal[], options: CurrentGoalS
 }
 
 interface CurrentGoalProjection {
+  goalId: string;
+  diagnostic: boolean;
   title: string;
   state: string;
   updated: string;
@@ -66,16 +74,19 @@ function buildCurrentGoalProjection(goal: Goal, options: CurrentGoalSummaryOptio
   const linkedRuns = findLinkedRuns(goal, options.runtimeSnapshot);
   const primaryRun = linkedRuns[0] ?? null;
   const handoff = findLinkedHandoff(goal, primaryRun, options.handoffs ?? []);
-  const background = primaryRun ? formatBackgroundRun(primaryRun) : null;
+  const detail = options.detail ?? "default";
+  const background = primaryRun ? formatBackgroundRun(primaryRun, detail) : null;
   const blocker = handoff
     ? `${handoff.title}: ${handoff.recommended_action}`
     : primaryRun && ATTENTION_RUN_STATUSES.has(primaryRun.status)
-      ? primaryRun.error ?? `Background work needs attention (${primaryRun.status})`
+      ? formatBackgroundRunBlocker(primaryRun, detail)
       : null;
 
   return {
+    goalId: goal.id,
+    diagnostic: detail === "diagnostic",
     title: goal.title,
-    state: formatGoalState(goal),
+    state: detail === "diagnostic" ? formatDiagnosticGoalState(goal) : formatPlainGoalState(goal),
     updated: goal.updated_at || "unknown",
     children: goal.children_ids.length,
     background,
@@ -88,26 +99,42 @@ function formatFullCurrentGoalProjection(projection: CurrentGoalProjection): str
   const lines = [
     "Current goal",
     `- Goal: ${projection.title}`,
+    projection.diagnostic ? `- Goal ID: ${projection.goalId}` : null,
     `- State: ${projection.state}`,
     `- Last update: ${projection.updated}`,
     `- Children: ${projection.children}`,
-  ];
-  if (projection.background) lines.push(`- Background work: ${projection.background}`);
+  ].filter((line): line is string => line !== null);
+  if (projection.background) lines.push(`- Background: ${projection.background}`);
   if (projection.blocker) lines.push(`- Needs attention: ${projection.blocker}`);
   lines.push(`- Next safe action: ${projection.nextAction}`);
   return lines.join("\n");
 }
 
 function formatCompactCurrentGoalProjection(projection: CurrentGoalProjection): string {
-  const parts = [`Current: ${projection.title}`, projection.state];
+  const title = projection.diagnostic ? `${projection.title} (${projection.goalId})` : projection.title;
+  const parts = [`Current: ${title}`, projection.state];
   if (projection.background) parts.push(projection.background);
   if (projection.blocker) parts.push(`attention: ${projection.blocker}`);
   return parts.join(" · ");
 }
 
-function formatGoalState(goal: Goal): string {
+function formatDiagnosticGoalState(goal: Goal): string {
   const loop = goal.loop_status && goal.loop_status !== "idle" ? `; loop ${goal.loop_status}` : "";
   return `${goal.status}${loop}`;
+}
+
+export function formatPlainGoalState(goal: Goal): string {
+  const base = {
+    active: "In progress",
+    waiting: "Waiting",
+    completed: "Completed",
+    cancelled: "Cancelled",
+    archived: "Archived",
+    abandoned: "Stopped",
+  }[goal.status] ?? "Unknown";
+  if (goal.loop_status === "running") return `${base}; working now`;
+  if (goal.loop_status === "paused") return `${base}; paused`;
+  return base;
 }
 
 function findLinkedRuns(goal: Goal, snapshot?: RuntimeSessionRegistrySnapshot | null): BackgroundRun[] {
@@ -136,10 +163,31 @@ function findLinkedHandoff(
   ) ?? null;
 }
 
-function formatBackgroundRun(run: BackgroundRun): string {
+function formatBackgroundRun(run: BackgroundRun, detail: GoalSummaryDetail): string {
   const updated = run.updated_at ?? run.started_at ?? run.created_at ?? "unknown";
+  if (detail !== "diagnostic") {
+    return `Background work is ${formatPlainRunStatus(run.status)}; updated ${updated}`;
+  }
   const title = run.title ? ` ${run.title}` : "";
   return `${run.id}${title} is ${run.status}; updated ${updated}`;
+}
+
+function formatBackgroundRunBlocker(run: BackgroundRun, detail: GoalSummaryDetail): string {
+  if (detail !== "diagnostic") return "Background work needs attention.";
+  return run.error ?? `Background work needs attention (${run.status})`;
+}
+
+export function formatPlainRunStatus(status: BackgroundRun["status"]): string {
+  return {
+    queued: "waiting to start",
+    running: "running",
+    succeeded: "finished",
+    failed: "blocked",
+    timed_out: "out of time",
+    cancelled: "cancelled",
+    lost: "needs attention",
+    unknown: "needs attention",
+  }[status] ?? "needs attention";
 }
 
 function chooseNextAction(
