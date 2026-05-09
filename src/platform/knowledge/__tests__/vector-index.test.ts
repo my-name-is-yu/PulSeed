@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as fs from "fs";
 import * as path from "path";
 import { MockEmbeddingClient } from "../embedding-client.js";
+import type { IEmbeddingClient } from "../embedding-client.js";
 import { VectorIndex } from "../vector-index.js";
 import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 
@@ -170,6 +171,50 @@ describe("VectorIndex", () => {
     const entry = idx2.getEntry("p1");
     expect(entry).toBeDefined();
     expect(entry!.text).toBe("persist across instances");
+  });
+
+  it("rejects non-finite embedding vectors before persistence", async () => {
+    const badClient: IEmbeddingClient = {
+      embed: async () => [Number.POSITIVE_INFINITY],
+      batchEmbed: async () => [[Number.POSITIVE_INFINITY]],
+      cosineSimilarity: () => Number.POSITIVE_INFINITY,
+    };
+    const idx = new VectorIndex(indexPath, badClient);
+
+    await expect(idx.add("bad", "non-finite vector")).rejects.toThrow();
+
+    expect(idx.size).toBe(0);
+    expect(fs.existsSync(indexPath)).toBe(false);
+  });
+
+  it("drops persisted entries with non-finite vector coordinates", async () => {
+    fs.writeFileSync(
+      indexPath,
+      `[{"id":"bad","text":"bad","vector":[1e999],"model":"embedding","created_at":"2026-05-09T00:00:00.000Z"}]`,
+      "utf-8"
+    );
+
+    const idx = await VectorIndex.create(indexPath, client);
+
+    expect(idx.size).toBe(0);
+    expect(idx.getEntry("bad")).toBeUndefined();
+  });
+
+  it("keeps valid persisted entries when another entry has non-finite vector coordinates", async () => {
+    fs.writeFileSync(
+      indexPath,
+      `[
+        {"id":"bad","text":"bad","vector":[1e999],"model":"embedding","created_at":"2026-05-09T00:00:00.000Z"},
+        {"id":"good","text":"good","vector":[1,0],"model":"embedding","created_at":"2026-05-09T00:00:00.000Z"}
+      ]`,
+      "utf-8"
+    );
+
+    const idx = await VectorIndex.create(indexPath, client);
+
+    expect(idx.size).toBe(1);
+    expect(idx.getEntry("bad")).toBeUndefined();
+    expect(idx.getEntry("good")?.vector).toEqual([1, 0]);
   });
 
   it("creates parent directories if they don't exist", async () => {
