@@ -3,7 +3,8 @@ import type { ITool, ToolResult, ToolCallContext, PermissionCheckResult, ToolMet
 import { DESCRIPTION } from "./prompt.js";
 import { TAGS, PERMISSION_LEVEL, MAX_OUTPUT_CHARS } from "./constants.js";
 import type { PluginLoader } from "../../../runtime/plugin-loader.js";
-import { listBuiltinIntegrations } from "../../../runtime/builtin-integrations.js";
+import { listBuiltinIntegrationAssetViews } from "../../../runtime/builtin-integrations.js";
+import type { AssetView } from "../../../runtime/assets/types.js";
 
 export const PluginStateToolInputSchema = z.object({
   pluginId: z.string().optional(),
@@ -41,16 +42,18 @@ export class PluginStateTool implements ITool<PluginStateToolInput, unknown> {
         enabled: p.status === "loaded",
         status: p.status,
       }));
-      const builtinIntegrations = listBuiltinIntegrations();
+      const builtinIntegrationAssets = listBuiltinIntegrationAssetViews();
 
       if (input.pluginId) {
         const match = plugins.find((p) => p.name === input.pluginId);
-        const builtinMatch = builtinIntegrations.find((integration) => integration.id === input.pluginId);
+        const builtinMatch = builtinIntegrationAssets.find((asset) =>
+          asset.id === input.pluginId || builtinIdForAsset(asset) === input.pluginId
+        );
         if (builtinMatch) {
           return {
             success: true,
             data: builtinMatch,
-            summary: `Builtin integration ${builtinMatch.id}: kind=${builtinMatch.kind}, status=${builtinMatch.status}`,
+            summary: `Builtin integration asset ${builtinMatch.id}: status=${builtinMatch.status}, executable=false`,
             durationMs: Date.now() - startTime,
           };
         }
@@ -73,8 +76,8 @@ export class PluginStateTool implements ITool<PluginStateToolInput, unknown> {
 
       return {
         success: true,
-        data: { plugins, builtin_integrations: builtinIntegrations },
-        summary: `Found ${plugins.length} plugin(s) and ${builtinIntegrations.length} builtin integration(s)`,
+        data: { plugins, builtin_integration_assets: builtinIntegrationAssets },
+        summary: `Found ${plugins.length} plugin(s) and ${builtinIntegrationAssets.length} builtin integration asset(s)`,
         durationMs: Date.now() - startTime,
       };
     } catch (err) {
@@ -95,4 +98,9 @@ export class PluginStateTool implements ITool<PluginStateToolInput, unknown> {
   isConcurrencySafe(_input?: PluginStateToolInput): boolean {
     return true;
   }
+}
+
+function builtinIdForAsset(asset: AssetView): string | undefined {
+  const builtinId = asset.metadata?.["builtin_id"];
+  return typeof builtinId === "string" ? builtinId : undefined;
 }

@@ -1,5 +1,12 @@
 import type { BuiltinIntegrationDescriptor } from "./types/builtin-integration.js";
 import { loadGlobalConfigSync } from "../base/config/global-config.js";
+import {
+  createAssetRecord,
+  toAssetId,
+  toAssetView,
+  type AssetRecord,
+  type AssetView,
+} from "./assets/types.js";
 
 export const BUILTIN_INTEGRATIONS: BuiltinIntegrationDescriptor[] = [
   {
@@ -68,4 +75,40 @@ export function listBuiltinIntegrations(): BuiltinIntegrationDescriptor[] {
         }
       : { ...integration }
   );
+}
+
+export function builtinIntegrationToAssetRecord(
+  integration: BuiltinIntegrationDescriptor,
+  now = new Date().toISOString()
+): AssetRecord {
+  return createAssetRecord({
+    id: toAssetId("builtin_integration", [integration.id]),
+    kind: "builtin_integration",
+    label: integration.title,
+    source_agent: "pulseed",
+    imported_path: "src/runtime/builtin-integrations.ts",
+    version: "builtin",
+    status: "recorded",
+    provenance: {
+      source_label: "PulSeed builtin integration descriptor",
+      evidence_refs: [integration.id],
+    },
+    metadata: {
+      builtin_id: integration.id,
+      builtin_kind: integration.kind,
+      description: integration.description,
+      legacy_status: integration.status,
+      advertised_capability_names: integration.capabilities,
+    },
+  }, now);
+}
+
+export function listBuiltinIntegrationAssetRecords(now = new Date().toISOString()): AssetRecord[] {
+  return listBuiltinIntegrations().map((integration) =>
+    builtinIntegrationToAssetRecord(integration, now)
+  );
+}
+
+export function listBuiltinIntegrationAssetViews(now = new Date().toISOString()): AssetView[] {
+  return listBuiltinIntegrationAssetRecords(now).map((asset) => toAssetView(asset));
 }
