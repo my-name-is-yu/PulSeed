@@ -8,6 +8,9 @@ import type { ITool, PermissionCheckResult, ToolCallContext, ToolMetadata, ToolR
 import { MAX_OUTPUT_CHARS, PERMISSION_LEVEL, READ_ONLY, TAGS } from "./constants.js";
 import { DESCRIPTION } from "./prompt.js";
 
+const CODE_READ_CONTEXT_MAX_RANGES = 50;
+const CODE_READ_CONTEXT_MAX_TOKENS = 20_000;
+
 const CandidateSchema = z.object({
   id: z.string(),
   file: z.string(),
@@ -41,8 +44,8 @@ export const CodeReadContextInputSchema = z.object({
   candidateIds: z.array(z.string()).optional(),
   queryId: z.string().optional(),
   phase: z.enum(["locate", "understand", "plan_edit", "edit", "verify", "repair"]).optional(),
-  maxReadRanges: z.number().int().positive().optional(),
-  maxReadTokens: z.number().int().positive().optional(),
+  maxReadRanges: z.number().int().min(1).max(CODE_READ_CONTEXT_MAX_RANGES).optional(),
+  maxReadTokens: z.number().int().min(1).max(CODE_READ_CONTEXT_MAX_TOKENS).optional(),
   path: z.string().optional(),
 });
 export type CodeReadContextInput = z.infer<typeof CodeReadContextInputSchema>;

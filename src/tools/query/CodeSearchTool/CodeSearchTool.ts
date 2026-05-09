@@ -8,6 +8,11 @@ import { resolveCodeSearchRoot } from "../code-search-root.js";
 import { MAX_OUTPUT_CHARS, PERMISSION_LEVEL, READ_ONLY, TAGS } from "./constants.js";
 import { DESCRIPTION } from "./prompt.js";
 
+const CODE_SEARCH_MAX_FILES = 5_000;
+const CODE_SEARCH_MAX_CANDIDATES_PER_RETRIEVER = 500;
+const CODE_SEARCH_MAX_FUSION_CANDIDATES = 1_000;
+const CODE_SEARCH_MAX_RERANK_CANDIDATES = 500;
+
 export const CodeSearchInputSchema = z.object({
   task: z.string().min(1),
   intent: z.enum(["bugfix", "test_failure", "feature_addition", "refactor", "explain", "api_change", "config_fix", "security_review", "unknown"]).optional(),
@@ -17,10 +22,10 @@ export const CodeSearchInputSchema = z.object({
   packageScope: z.string().optional(),
   path: z.string().optional(),
   budget: z.object({
-    maxFiles: z.number().int().positive().optional(),
-    maxCandidatesPerRetriever: z.number().int().positive().optional(),
-    maxFusionCandidates: z.number().int().positive().optional(),
-    maxRerankCandidates: z.number().int().positive().optional(),
+    maxFiles: z.number().int().min(1).max(CODE_SEARCH_MAX_FILES).optional(),
+    maxCandidatesPerRetriever: z.number().int().min(1).max(CODE_SEARCH_MAX_CANDIDATES_PER_RETRIEVER).optional(),
+    maxFusionCandidates: z.number().int().min(1).max(CODE_SEARCH_MAX_FUSION_CANDIDATES).optional(),
+    maxRerankCandidates: z.number().int().min(1).max(CODE_SEARCH_MAX_RERANK_CANDIDATES).optional(),
   }).optional(),
   outputLimit: z.number().int().positive().max(40).optional(),
 });
