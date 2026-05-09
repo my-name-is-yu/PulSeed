@@ -2,6 +2,7 @@ import * as fsp from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { z } from "zod";
+import { isProcessPidValue, signalProcessPid } from "../../base/utils/process-pid.js";
 import { CapabilityRegistrySchema } from "../../base/types/capability.js";
 import type {
   WaitCondition,
@@ -15,6 +16,8 @@ const DEFAULT_WAIT_REOBSERVE_MS = 5 * 60 * 1000;
 const JSON_POINTER_ARRAY_INDEX_TOKEN = /^[0-9]+$/;
 const PROCESS_SESSION_SIGNALS = new Set(Object.keys(os.constants.signals));
 const PROCESS_SESSION_ISO_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+
+export { isProcessPidValue } from "../../base/utils/process-pid.js";
 
 const ProcessSessionWaitSnapshotSchema = z.object({
   session_id: z.string().min(1),
@@ -217,10 +220,6 @@ export function parseJsonPointerArrayIndex(part: string): number | null {
   if (!JSON_POINTER_ARRAY_INDEX_TOKEN.test(part)) return null;
   const index = Number(part);
   return Number.isSafeInteger(index) ? index : null;
-}
-
-export function isProcessPidValue(value: unknown): value is number {
-  return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
 }
 
 export function isProcessTimestampValue(value: unknown): value is string {
@@ -442,8 +441,7 @@ function compareMetric(actual: number, operator: "lt" | "lte" | "eq" | "gte" | "
 function isProcessAlive(pid: number): boolean {
   if (!isProcessPidValue(pid)) return false;
   try {
-    process.kill(pid, 0);
-    return true;
+    return signalProcessPid(pid, 0).status === "sent";
   } catch {
     return false;
   }
