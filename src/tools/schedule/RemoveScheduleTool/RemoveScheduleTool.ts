@@ -8,14 +8,13 @@ import type {
   ToolResult,
 } from "../../types.js";
 import type { ScheduleEngine } from "../../../runtime/schedule/engine.js";
-import type { ScheduleEntry } from "../../../runtime/types/schedule.js";
 import { resolveScheduleEntry } from "../../../runtime/schedule/entry-resolver.js";
 import { DESCRIPTION } from "./prompt.js";
 import { TAGS, CATEGORY as _CATEGORY, READ_ONLY, PERMISSION_LEVEL } from "./constants.js";
 
 export const RemoveScheduleInputSchema = z.object({
   schedule_id: z.string().min(1),
-});
+}).strict();
 export type RemoveScheduleInput = z.infer<typeof RemoveScheduleInputSchema>;
 
 export interface RemoveScheduleOutput {

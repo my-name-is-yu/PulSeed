@@ -14,7 +14,7 @@ import { TAGS, PERMISSION_LEVEL, MAX_OUTPUT_CHARS } from "./constants.js";
 
 export const GetScheduleInputSchema = z.object({
   schedule_id: z.string().min(1),
-});
+}).strict();
 export type GetScheduleInput = z.infer<typeof GetScheduleInputSchema>;
 
 export class GetScheduleTool implements ITool<GetScheduleInput, unknown> {

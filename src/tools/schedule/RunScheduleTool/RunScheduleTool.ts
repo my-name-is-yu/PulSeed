@@ -17,7 +17,7 @@ import { TAGS, CATEGORY as _CATEGORY, READ_ONLY, PERMISSION_LEVEL } from "./cons
 export const RunScheduleInputSchema = z.object({
   schedule_id: z.string().min(1),
   allow_escalation: z.boolean().default(false),
-});
+}).strict();
 export type RunScheduleInput = z.infer<typeof RunScheduleInputSchema>;
 
 export interface RunScheduleOutput {

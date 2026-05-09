@@ -7,20 +7,20 @@ import type {
   ToolMetadata,
   ToolResult,
 } from "../../types.js";
-import {
+import type {
   ScheduleEngine,
-  type ScheduleEntryUpdateInput,
+  ScheduleEntryUpdateInput,
 } from "../../../runtime/schedule/engine.js";
 import { resolveScheduleEntry } from "../../../runtime/schedule/entry-resolver.js";
+import type { ScheduleEntry } from "../../../runtime/types/schedule.js";
 import {
-  CronConfigSchema,
-  EscalationConfigSchema,
-  GoalTriggerConfigSchema,
-  HeartbeatConfigSchema,
-  ProbeConfigSchema,
-  ScheduleTriggerSchema,
-  type ScheduleEntry,
-} from "../../../runtime/types/schedule.js";
+  ScheduleToolCronConfigInputSchema,
+  ScheduleToolEscalationConfigInputSchema,
+  ScheduleToolGoalTriggerConfigInputSchema,
+  ScheduleToolHeartbeatConfigInputSchema,
+  ScheduleToolProbeConfigInputSchema,
+  ScheduleToolTriggerInputSchema,
+} from "../schedule-tool-input-schemas.js";
 import { DESCRIPTION } from "./prompt.js";
 import { TAGS, CATEGORY as _CATEGORY, READ_ONLY, PERMISSION_LEVEL } from "./constants.js";
 
@@ -40,13 +40,13 @@ const UpdateScheduleInputSchemaBase = z.object({
   schedule_id: z.string().min(1),
   name: z.string().min(1).optional(),
   enabled: z.boolean().optional(),
-  trigger: ScheduleTriggerSchema.optional(),
-  heartbeat: HeartbeatConfigSchema.optional(),
-  probe: ProbeConfigSchema.optional(),
-  cron: CronConfigSchema.optional(),
-  goal_trigger: GoalTriggerConfigSchema.optional(),
-  escalation: EscalationConfigSchema.nullish(),
-});
+  trigger: ScheduleToolTriggerInputSchema.optional(),
+  heartbeat: ScheduleToolHeartbeatConfigInputSchema.optional(),
+  probe: ScheduleToolProbeConfigInputSchema.optional(),
+  cron: ScheduleToolCronConfigInputSchema.optional(),
+  goal_trigger: ScheduleToolGoalTriggerConfigInputSchema.optional(),
+  escalation: ScheduleToolEscalationConfigInputSchema.nullish(),
+}).strict();
 
 export const UpdateScheduleInputSchema = UpdateScheduleInputSchemaBase.refine(
   hasAtLeastOnePatchField,

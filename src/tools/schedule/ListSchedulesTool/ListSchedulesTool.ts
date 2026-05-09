@@ -16,7 +16,7 @@ export const ListSchedulesInputSchema = z.object({
   layer: ScheduleLayerSchema.optional(),
   enabled: z.boolean().optional(),
   due_only: z.boolean().default(false),
-});
+}).strict();
 export type ListSchedulesInput = z.infer<typeof ListSchedulesInputSchema>;
 
 type ListScheduleEntrySummary = Pick<

@@ -8,51 +8,51 @@ import type {
   ToolDescriptionContext,
 } from "../../types.js";
 import type { ScheduleEngine } from "../../../runtime/schedule/engine.js";
+import type { ScheduleEntry } from "../../../runtime/types/schedule.js";
 import {
-  CronConfigSchema,
-  EscalationConfigSchema,
-  GoalTriggerConfigSchema,
-  HeartbeatConfigSchema,
-  ProbeConfigSchema,
-  ScheduleTriggerSchema,
-  type ScheduleEntry,
-} from "../../../runtime/types/schedule.js";
-import {
-  SchedulePresetInputSchema,
   buildSchedulePresetEntry,
 } from "../../../runtime/schedule/presets.js";
+import {
+  ScheduleToolCronConfigInputSchema,
+  ScheduleToolEscalationConfigInputSchema,
+  ScheduleToolGoalTriggerConfigInputSchema,
+  ScheduleToolHeartbeatConfigInputSchema,
+  ScheduleToolPresetInputSchema,
+  ScheduleToolProbeConfigInputSchema,
+  ScheduleToolTriggerInputSchema,
+} from "../schedule-tool-input-schemas.js";
 import { DESCRIPTION } from "./prompt.js";
 import { TAGS, CATEGORY as _CATEGORY, READ_ONLY, PERMISSION_LEVEL } from "./constants.js";
 
 const BaseCreateScheduleInputSchema = z.object({
   name: z.string().min(1, "name is required"),
-  trigger: ScheduleTriggerSchema,
+  trigger: ScheduleToolTriggerInputSchema,
   enabled: z.boolean().default(true),
-  escalation: EscalationConfigSchema.optional(),
-});
+  escalation: ScheduleToolEscalationConfigInputSchema.optional(),
+}).strict();
 
 const ExplicitCreateScheduleInputSchema = z.discriminatedUnion("layer", [
   BaseCreateScheduleInputSchema.extend({
     layer: z.literal("heartbeat"),
-    heartbeat: HeartbeatConfigSchema,
-  }),
+    heartbeat: ScheduleToolHeartbeatConfigInputSchema,
+  }).strict(),
   BaseCreateScheduleInputSchema.extend({
     layer: z.literal("probe"),
-    probe: ProbeConfigSchema,
-  }),
+    probe: ScheduleToolProbeConfigInputSchema,
+  }).strict(),
   BaseCreateScheduleInputSchema.extend({
     layer: z.literal("cron"),
-    cron: CronConfigSchema,
-  }),
+    cron: ScheduleToolCronConfigInputSchema,
+  }).strict(),
   BaseCreateScheduleInputSchema.extend({
     layer: z.literal("goal_trigger"),
-    goal_trigger: GoalTriggerConfigSchema,
-  }),
+    goal_trigger: ScheduleToolGoalTriggerConfigInputSchema,
+  }).strict(),
 ]);
 
 export const CreateScheduleInputSchema = z.union([
   ExplicitCreateScheduleInputSchema,
-  SchedulePresetInputSchema,
+  ScheduleToolPresetInputSchema,
 ]);
 
 export type CreateScheduleInput = z.infer<typeof CreateScheduleInputSchema>;
