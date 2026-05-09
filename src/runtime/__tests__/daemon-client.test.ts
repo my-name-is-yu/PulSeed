@@ -381,6 +381,25 @@ describe("isDaemonRunning", () => {
     expect(killSpy).not.toHaveBeenCalled();
   });
 
+  it("ignores unsafe daemon config ports before probing daemon health", async () => {
+    fs.writeFileSync(
+      path.join(tmpDir, "daemon-state.json"),
+      JSON.stringify({ status: "running", pid: process.pid }),
+      "utf-8"
+    );
+    fs.writeFileSync(
+      path.join(tmpDir, "daemon.json"),
+      JSON.stringify({ event_server_port: Number.MAX_SAFE_INTEGER }),
+      "utf-8"
+    );
+    vi.spyOn(DaemonClient.prototype, "getHealth").mockResolvedValue({ status: "ok" });
+
+    await expect(isDaemonRunning(tmpDir)).resolves.toEqual({
+      running: true,
+      port: DEFAULT_PORT,
+    });
+  });
+
   it("prefers the daemon token file over stale process env tokens", () => {
     fs.writeFileSync(
       path.join(tmpDir, "daemon-token.json"),

@@ -9,7 +9,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { DEFAULT_PORT } from "../port-utils.js";
 import { parseOutboxSeq } from "../event/outbox-seq.js";
-import { DaemonStateSchema } from "../types/daemon.js";
+import { DaemonConfigSchema, DaemonStateSchema } from "../types/daemon.js";
 import type { DaemonRuntimeControlRequestBody } from "./control-contracts.js";
 
 export interface DaemonClientConfig {
@@ -521,8 +521,10 @@ export async function isDaemonRunning(baseDir: string): Promise<{ running: boole
     try {
       const configPath = path.join(baseDir, "daemon.json");
       const configRaw = await fs.readFile(configPath, "utf-8");
-      const config = JSON.parse(configRaw);
-      if (config.event_server_port) port = config.event_server_port;
+      const config = DaemonConfigSchema.safeParse(JSON.parse(configRaw) as unknown);
+      if (config.success) {
+        port = config.data.event_server_port;
+      }
     } catch {
       // Use default port
     }
