@@ -16,7 +16,7 @@
  *   - task-verifier-llm.ts    — LLM review, timeout, retry
  */
 
-import { StateManager } from "../../../base/state/state-manager.js";
+import type { StateManager } from "../../../base/state/state-manager.js";
 import { VerificationResultSchema } from "../../../base/types/task.js";
 import type { Task, VerificationResult, VerificationFileDiff } from "../../../base/types/task.js";
 import type { AgentResult } from "../adapter-layer.js";
@@ -41,7 +41,13 @@ export {
   checkDimensionDirection,
 } from "./task-verifier-rules.js";
 
-import type { VerifierDeps, VerdictResult, FailureResult, VerdictHandlingContext } from "./task-verifier-types.js";
+import type {
+  ExecutorReport,
+  FailureResult,
+  VerdictHandlingContext,
+  VerdictResult,
+  VerifierDeps,
+} from "./task-verifier-types.js";
 import {
   runMechanicalVerification,
   clampDimensionUpdate,
@@ -53,11 +59,21 @@ import {
   appendTaskHistory,
 } from "./task-verifier-rules.js";
 import { runLLMReview } from "./task-verifier-llm.js";
+import {
+  applyVerdictHandlingContextGuards,
+  discardedDirtyIsolatedWorkspace,
+  formatDiscardedDirtyIsolatedWorkspaceReason,
+  formatIsolatedWorkspaceHandoffReason,
+  isolatedWorkspaceHandoff,
+  shouldCollectDiffsFromRequestedWorkspace,
+} from "./task-verifier-workspace-guards.js";
 import { appendTaskOutcomeEvent } from "./task-outcome-ledger.js";
 import { resolveTaskWorkspacePath } from "./task-workspace.js";
 import { readTaskArtifactMetricValues, verifyTaskArtifactContract } from "./task-artifact-contract.js";
 
-function formatSelfReportEvidence(executorReport: import("./task-verifier-types.js").ExecutorReport): string {
+export { applyVerdictHandlingContextGuards } from "./task-verifier-workspace-guards.js";
+
+function formatSelfReportEvidence(executorReport: ExecutorReport): string {
   const segments = [
     executorReport.summary.trim(),
     executorReport.stop_reason ? `stop reason: ${executorReport.stop_reason}` : "",
@@ -134,88 +150,6 @@ function isDimensionUpdateDirectionAllowed(input: {
     input.logger,
     String(input.dim.name),
   );
-}
-
-function isolatedWorkspaceHandoff(
-  context: VerdictHandlingContext,
-): NonNullable<VerdictHandlingContext["agentLoopWorkspace"]> | null {
-  const workspace = context.agentLoopWorkspace;
-  if (
-    workspace?.isolatedWorkspace === true &&
-    workspace.workspaceDisposition === "handoff_required"
-  ) {
-    return workspace;
-  }
-  return null;
-}
-
-function discardedDirtyIsolatedWorkspace(
-  context: VerdictHandlingContext,
-): NonNullable<VerdictHandlingContext["agentLoopWorkspace"]> | null {
-  const workspace = context.agentLoopWorkspace;
-  if (
-    workspace?.isolatedWorkspace === true &&
-    workspace.workspaceDirty === true &&
-    workspace.workspaceDisposition === "discarded"
-  ) {
-    return workspace;
-  }
-  return null;
-}
-
-function shouldCollectDiffsFromRequestedWorkspace(executionResult: AgentResult): boolean {
-  if (executionResult.agentLoop?.isolatedWorkspace !== true) return true;
-  if (executionResult.agentLoop.workspaceDirty !== true) return true;
-  return executionResult.agentLoop.workspaceDisposition !== "handoff_required" &&
-    executionResult.agentLoop.workspaceDisposition !== "discarded";
-}
-
-function formatIsolatedWorkspaceHandoffReason(
-  workspace: NonNullable<VerdictHandlingContext["agentLoopWorkspace"]>,
-): string {
-  const executionCwd = workspace.executionCwd ?? "unknown isolated worktree";
-  const requestedCwd = workspace.requestedCwd ?? "unknown requested workspace";
-  return [
-    `dirty isolated worktree retained at ${executionCwd}`,
-    `requested workspace ${requestedCwd} was not reverted or discarded`,
-    "operator review is required before completion",
-  ].join("; ");
-}
-
-function formatDiscardedDirtyIsolatedWorkspaceReason(
-  workspace: NonNullable<VerdictHandlingContext["agentLoopWorkspace"]>,
-): string {
-  const executionCwd = workspace.executionCwd ?? "unknown isolated worktree";
-  const requestedCwd = workspace.requestedCwd ?? "unknown requested workspace";
-  return [
-    `dirty isolated worktree changes were discarded from ${executionCwd}`,
-    `requested workspace ${requestedCwd} was not reverted or discarded`,
-    "task must be retried from the requested workspace",
-  ].join("; ");
-}
-
-export function applyVerdictHandlingContextGuards(
-  verificationResult: VerificationResult,
-  context: VerdictHandlingContext,
-): VerificationResult {
-  const workspace = isolatedWorkspaceHandoff(context) ?? discardedDirtyIsolatedWorkspace(context);
-  if (!workspace) return verificationResult;
-  const reason = workspace.workspaceDisposition === "discarded"
-    ? formatDiscardedDirtyIsolatedWorkspaceReason(workspace)
-    : formatIsolatedWorkspaceHandoffReason(workspace);
-  return {
-    ...verificationResult,
-    verdict: "fail",
-    confidence: Math.max(verificationResult.confidence ?? 0, 0.95),
-    evidence: [
-      {
-        layer: "mechanical" as const,
-        description: reason,
-        confidence: 0.95,
-      },
-      ...(verificationResult.evidence ?? []),
-    ],
-  };
 }
 
 function mergeMechanicalAndArtifactVerification(
