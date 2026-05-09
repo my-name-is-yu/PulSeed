@@ -115,12 +115,9 @@ export function getRuntimeIdentitySlotContent(identity: Identity = loadIdentity(
   ].join("\n");
 }
 
-export function getSelfIdentityResponse(language: SelfIdentityLanguage = "en", identity: Identity = loadIdentity()): string {
+export function getSelfIdentityResponse(_language: SelfIdentityLanguage = "en", identity: Identity = loadIdentity()): string {
   const { name } = identity;
-  if (language === "en") {
-    return `I am ${name}, the configured agent identity running PulSeed. My self-identity is owned by the PulSeed runtime SEED.md/ROOT.md/USER.md files, so I follow that runtime identity rather than a provider or model name.`;
-  }
-  return `私は${name}です。PulSeedを動かす設定済みエージェントとして応答しています。自己認識はPulSeed runtimeのSEED.md/ROOT.md/USER.mdで管理され、プロバイダーやモデル名ではなく、このruntime identityに従います。`;
+  return `I am ${name}, the configured agent identity running PulSeed. My self-identity is owned by the PulSeed runtime SEED.md/ROOT.md/USER.md files, so I follow that runtime identity rather than a provider or model name.`;
 }
 
 export function getInternalIdentityPrefix(
