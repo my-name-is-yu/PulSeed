@@ -1,5 +1,9 @@
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
+import {
+  isProcessPidValue,
+  signalProcessPid,
+} from "../../base/utils/process-pid.js";
 import type { ProcessSessionSnapshot } from "../../tools/system/ProcessSessionTool/ProcessSessionTool.js";
 import { BackgroundRunSchema, type BackgroundRun, type BackgroundRunFilter, type BackgroundRunStatus, type RuntimeArtifactRef, type RuntimeSession, type RuntimeSessionFilter, type RuntimeSessionRef, type RuntimeSessionStatus } from "./types.js";
 
@@ -156,9 +160,7 @@ export function stringField(value: Record<string, unknown>, key: string): string
   return typeof field === "string" && field.length > 0 ? field : null;
 }
 
-export function isProcessPidValue(value: unknown): value is number {
-  return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
-}
+export { isProcessPidValue };
 
 export function normalizeProcessSnapshot(value: unknown): ProcessSessionSnapshot | null {
   if (!isObject(value)) return null;
@@ -238,14 +240,14 @@ export function relativeToBase(baseDir: string, maybePath: string | null): strin
 }
 
 export function defaultIsPidAlive(pid: number): boolean | "unknown" {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code === "ESRCH") return false;
-    if (code === "EPERM") return true;
-    return "unknown";
+  const result = signalProcessPid(pid, 0);
+  switch (result.status) {
+    case "sent":
+      return true;
+    case "missing_process":
+      return false;
+    case "unsafe_pid":
+      return "unknown";
   }
 }
 
