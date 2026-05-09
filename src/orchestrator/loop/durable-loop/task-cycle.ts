@@ -24,9 +24,13 @@ import {
   mergeWorkingMemorySelections,
 } from "../../execution/context/context-builder.js";
 import {
-  formatRelationshipProfileRetrievalContext,
   loadRelationshipProfileRetrievalContext,
 } from "../../../platform/profile/retrieval-context.js";
+import {
+  buildRelationshipProfileSurfaceProjection,
+  contextFromRelationshipProfileSurfaceProjection,
+  formatRelationshipProfileSurfaceContext,
+} from "../../../grounding/profile-surface.js";
 import type { CapabilityAcquisitionOutcome } from "./capability.js";
 import type { CoreLoopEvidenceLedger } from "./evidence-ledger.js";
 import type { ExecutionModeState } from "../../../platform/time/execution-mode.js";
@@ -232,11 +236,26 @@ export async function runTaskCycleWithContext(
 
     // Collect knowledge context
     let knowledgeContext: string | undefined;
-    const relationshipProfileRetrievalContext = baseDir
+    const rawRelationshipProfileRetrievalContext = baseDir
       ? await loadRelationshipProfileRetrievalContext({ baseDir }).catch(() => null)
       : null;
-    const relationshipProfileRetrievalBlock = relationshipProfileRetrievalContext
-      ? formatRelationshipProfileRetrievalContext(relationshipProfileRetrievalContext)
+    const relationshipProfileSurfaceProjection = rawRelationshipProfileRetrievalContext
+      ? buildRelationshipProfileSurfaceProjection({
+          context: rawRelationshipProfileRetrievalContext,
+          target: "agent_loop",
+          scopeRef: goalId,
+          purpose: "task_execution",
+          now: new Date().toISOString(),
+        })
+      : null;
+    const relationshipProfileRetrievalContext = rawRelationshipProfileRetrievalContext
+      ? contextFromRelationshipProfileSurfaceProjection(
+          rawRelationshipProfileRetrievalContext,
+          relationshipProfileSurfaceProjection,
+        )
+      : null;
+    const relationshipProfileRetrievalBlock = relationshipProfileSurfaceProjection
+      ? formatRelationshipProfileSurfaceContext(relationshipProfileSurfaceProjection)
       : "";
     if (ctx.deps.knowledgeManager) {
       try {
@@ -266,7 +285,10 @@ export async function runTaskCycleWithContext(
               semanticQuery,
               5,
               relationshipProfileRetrievalContext
-                ? { relationshipProfileContext: relationshipProfileRetrievalContext }
+                ? {
+                    relationshipProfileContext: relationshipProfileRetrievalContext,
+                    relationshipProfilePromptContext: relationshipProfileRetrievalBlock,
+                  }
                 : undefined
             ).catch(() => []);
             entries = mergeUniqueKnowledgeEntries(entries, semanticEntries, 8);

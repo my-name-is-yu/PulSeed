@@ -211,15 +211,21 @@ export class KnowledgeManager {
   async searchKnowledge(
     query: string,
     topK: number = 5,
-    options: { relationshipProfileContext?: RelationshipProfileRetrievalContext } = {}
+    options: {
+      relationshipProfileContext?: RelationshipProfileRetrievalContext;
+      relationshipProfilePromptContext?: string;
+    } = {}
   ): Promise<KnowledgeEntry[]> {
     const profileEntries = this.relationshipProfileContextToKnowledgeEntries(
       null,
       options.relationshipProfileContext
     );
-    const profileQuery = options.relationshipProfileContext
-      ? formatRelationshipProfileRetrievalContext(options.relationshipProfileContext)
-      : "";
+    let profileQuery = "";
+    if (typeof options.relationshipProfilePromptContext === "string") {
+      profileQuery = options.relationshipProfilePromptContext;
+    } else if (options.relationshipProfileContext) {
+      profileQuery = formatRelationshipProfileRetrievalContext(options.relationshipProfileContext);
+    }
     return searchKnowledge(
       { stateManager: this.stateManager, vectorIndex: this.vectorIndex },
       [query, profileQuery].filter((part) => part.trim().length > 0).join("\n"),

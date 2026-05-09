@@ -1,8 +1,13 @@
-import { loadRelationshipProfileRetrievalContext } from "../../platform/profile/retrieval-context.js";
 import {
-  formatRelationshipProfileRetrievalContext,
+  loadRelationshipProfileRetrievalContext,
   summarizeRelationshipProfileRetrievalContext,
 } from "../../platform/profile/retrieval-context.js";
+import {
+  contextFromRelationshipProfileSurfaceProjection,
+  formatRelationshipProfileSurfaceContext,
+  buildRelationshipProfileSurfaceProjection,
+  relationshipProfileSurfaceInspectionMetadata,
+} from "../profile-surface.js";
 import type {
   GroundingKnowledgeResult,
   GroundingProvider,
@@ -33,8 +38,20 @@ export const knowledgeQueryProvider: GroundingProvider = {
     }
 
     let result: GroundingKnowledgeResult | null = null;
-    const relationshipProfileContext = context.request.relationshipProfileContext
+    const rawRelationshipProfileContext = context.request.relationshipProfileContext
       ?? await buildRelationshipProfileRetrievalContext(context);
+    const relationshipProfileSurface = buildRelationshipProfileSurfaceProjection({
+      context: rawRelationshipProfileContext,
+      target: context.request.surface,
+      scopeRef: context.request.taskId ?? context.request.goalId ?? context.request.query ?? context.request.userMessage ?? "grounding",
+      purpose: context.request.purpose,
+      now: new Date().toISOString(),
+    });
+    const relationshipProfileContext = contextFromRelationshipProfileSurfaceProjection(
+      rawRelationshipProfileContext,
+      relationshipProfileSurface,
+    );
+    const relationshipProfileBlock = formatRelationshipProfileSurfaceContext(relationshipProfileSurface);
     if (context.request.knowledgeContext?.trim()) {
       result = {
         retrievalId: "knowledge:prefetched",
@@ -55,13 +72,17 @@ export const knowledgeQueryProvider: GroundingProvider = {
         goalId: context.request.goalId,
         limit: context.profile.budgets.maxKnowledgeHits,
         relationshipProfileContext,
+        relationshipProfilePromptContext: relationshipProfileBlock,
       });
     }
 
     const items = result?.items ?? [];
     context.runtime.set("knowledge_hit_count", items.length);
-    const relationshipProfileBlock = formatRelationshipProfileRetrievalContext(relationshipProfileContext);
     const relationshipProfileMetadata = summarizeRelationshipProfileRetrievalContext(relationshipProfileContext);
+    const relationshipProfileSurfaceMetadata = relationshipProfileSurfaceInspectionMetadata(
+      relationshipProfileSurface,
+      context.request.surface,
+    );
     return makeSection(
       "knowledge_query",
       items.length > 0
@@ -79,6 +100,7 @@ export const knowledgeQueryProvider: GroundingProvider = {
           metadata: {
             ...(result?.warnings ? { warnings: result.warnings } : {}),
             relationshipProfileContext: relationshipProfileMetadata,
+            ...(relationshipProfileSurfaceMetadata ? { relationshipProfileSurface: relationshipProfileSurfaceMetadata } : {}),
           },
         }),
       ],

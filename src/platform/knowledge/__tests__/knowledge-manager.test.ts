@@ -11,6 +11,8 @@ import type { KnowledgeEntry } from "../../../base/types/knowledge.js";
 import type { ZodSchema } from "zod";
 import { createMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
 import { randomUUID } from "node:crypto";
+import { upsertRelationshipProfileItem } from "../../profile/relationship-profile.js";
+import { loadRelationshipProfileRetrievalContext } from "../../profile/retrieval-context.js";
 
 // ─── Helpers ───
 
@@ -670,6 +672,43 @@ describe("Semantic Search (Phase 2)", () => {
     const results = await manager.searchKnowledge("churn rate SaaS benchmark");
     expect(results.length).toBeGreaterThan(0);
     expect(results[0]!.entry_id).toBe("e1");
+  });
+
+  it("uses Surface-projected relationship profile prompt context for semantic search", async () => {
+    await upsertRelationshipProfileItem(tempDir, {
+      stableKey: "user.preference.status",
+      kind: "preference",
+      value: "Prefer concise status reports.",
+      source: "cli_update",
+      allowedScopes: ["memory_retrieval"],
+      now: "2026-05-03T00:00:00.000Z",
+    });
+    const relationshipProfileContext = await loadRelationshipProfileRetrievalContext({ baseDir: tempDir });
+    const search = vi.fn().mockResolvedValue([]);
+    const vectorIndex = { search } as unknown as VectorIndex;
+    const manager = new KnowledgeManager(
+      stateManager,
+      createMockLLMClient([]),
+      vectorIndex
+    );
+
+    const results = await manager.searchKnowledge("base query", 5, {
+      relationshipProfileContext,
+      relationshipProfilePromptContext: [
+        "Relationship profile retrieval context Surface (surface_id=surface:relationship-profile:agent_loop:goal-1:memory_retrieval; requested_use=runtime_grounding)",
+        "- Use only Surface-included relationship context below.",
+        "- [preference] user.preference.status: Prefer concise status reports.",
+      ].join("\n"),
+    });
+
+    const query = search.mock.calls[0]?.[0] as string;
+    expect(query).toContain("Relationship profile retrieval context Surface");
+    expect(query).toContain("Use only Surface-included relationship context below.");
+    expect(query).not.toContain("Relationship profile retrieval context (scope=memory_retrieval; include_sensitive=false)");
+    expect(query).not.toContain("Use these active profile items only as retrieval context.");
+    expect(results.map((entry) => entry.entry_id)).toEqual([
+      `relationship-profile:${relationshipProfileContext.items[0]!.id}`,
+    ]);
   });
 
   it("searchKnowledge falls back to empty array when no vectorIndex", async () => {
