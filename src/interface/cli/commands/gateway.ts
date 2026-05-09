@@ -13,6 +13,11 @@ import { guardCancel } from "./setup/utils.js";
 
 export async function cmdGateway(argv: string[]): Promise<number> {
   const subcommand = argv[0];
+  if (isGatewayHelpRequest(subcommand)) {
+    console.log(GATEWAY_HELP_TEXT);
+    return 0;
+  }
+
   if (subcommand === "setup") {
     return cmdGatewaySetup(argv.slice(1));
   }
@@ -21,6 +26,21 @@ export async function cmdGateway(argv: string[]): Promise<number> {
   console.error("Available: gateway setup");
   return 1;
 }
+
+const GATEWAY_HELP_TEXT = `
+Usage: pulseed gateway <command>
+
+Messaging gateway commands.
+
+Available commands:
+  setup    Configure messaging gateway channels
+
+Common next steps:
+  pulseed gateway setup
+  pulseed gateway setup --help
+  pulseed daemon start
+  pulseed daemon status
+`.trim();
 
 const GATEWAY_SETUP_HELP_TEXT = `
 Usage: pulseed gateway setup
@@ -36,6 +56,10 @@ After setup:
   pulseed daemon start
   pulseed daemon status
 `.trim();
+
+function isGatewayHelpRequest(arg: string | undefined): boolean {
+  return arg === undefined || arg === "--help" || arg === "-h" || arg === "help";
+}
 
 export async function cmdGatewaySetup(argv: string[]): Promise<number> {
   if (argv.includes("--help") || argv.includes("-h")) {
