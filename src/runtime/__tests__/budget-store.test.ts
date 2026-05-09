@@ -2,7 +2,7 @@ import * as fsp from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { RuntimeBudgetStore } from "../store/budget-store.js";
+import { RuntimeBudgetLimitSchema, RuntimeBudgetStore, RuntimeBudgetUsageSchema } from "../store/budget-store.js";
 
 describe("RuntimeBudgetStore", () => {
   let tmpDir: string;
@@ -43,6 +43,59 @@ describe("RuntimeBudgetStore", () => {
     expect(status.dimensions).toContainEqual(expect.objectContaining({ dimension: "llm_tokens", used: 1000, remaining: 4000 }));
     expect(status.dimensions).toContainEqual(expect.objectContaining({ dimension: "evaluator_attempts", used: 1, remaining: 2 }));
     expect(status.recent_consumption[0]).toMatchObject({ source: "evaluator_call", amount: 1 });
+  });
+
+  it("rejects non-finite budget values before persistence", async () => {
+    expect(RuntimeBudgetLimitSchema.safeParse({
+      dimension: "wall_clock_ms",
+      limit: 1_000,
+      warn_at_remaining: 100,
+      mode_transition_at_remaining: { consolidation: 400, finalization: 100 },
+    }).success).toBe(true);
+    expect(RuntimeBudgetLimitSchema.safeParse({ dimension: "wall_clock_ms", limit: Number.POSITIVE_INFINITY }).success).toBe(false);
+    expect(RuntimeBudgetLimitSchema.safeParse({
+      dimension: "wall_clock_ms",
+      limit: 1_000,
+      warn_at_remaining: Number.POSITIVE_INFINITY,
+    }).success).toBe(false);
+    expect(RuntimeBudgetUsageSchema.safeParse({
+      dimension: "wall_clock_ms",
+      used: Number.POSITIVE_INFINITY,
+      updated_at: "2026-05-01T00:00:00.000Z",
+    }).success).toBe(false);
+    expect(RuntimeBudgetUsageSchema.safeParse({
+      dimension: "wall_clock_ms",
+      used: 0,
+      updated_at: "2026-05-01T00:00:00.000Z",
+      recent: [{
+        amount: Number.POSITIVE_INFINITY,
+        source: "manual",
+        observed_at: "2026-05-01T00:00:00.000Z",
+      }],
+    }).success).toBe(false);
+
+    await expect(store.create({
+      budget_id: "budget-non-finite-limit",
+      scope: { goal_id: "goal-a" },
+      created_at: "2026-05-01T00:00:00.000Z",
+      limits: [{ dimension: "tasks", limit: Number.POSITIVE_INFINITY }],
+    })).rejects.toThrow();
+    await expect(fsp.stat(path.join(tmpDir, "runtime", "budgets", "budget-non-finite-limit.json"))).rejects.toThrow();
+
+    await store.create({
+      budget_id: "budget-non-finite-usage",
+      scope: { goal_id: "goal-a" },
+      created_at: "2026-05-01T00:00:00.000Z",
+      limits: [{ dimension: "tasks", limit: 10 }],
+    });
+    await expect(store.updateUsage("budget-non-finite-usage", {
+      dimension: "tasks",
+      amount: Number.POSITIVE_INFINITY,
+      source: "manual",
+      observed_at: "2026-05-01T00:01:00.000Z",
+    })).rejects.toThrow("finite non-negative");
+
+    expect((await store.load("budget-non-finite-usage"))?.usage[0]?.used).toBe(0);
   });
 
   it("marks exhaustion and applies the configured exhaustion policy", async () => {
