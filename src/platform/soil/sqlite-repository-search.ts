@@ -454,9 +454,13 @@ export function searchDenseCandidates(
   const scored: Array<{ row: typeof rows[number]; similarity: number }> = [];
   for (const row of rows) {
     try {
+      const similarity = cosineSimilarity(request.query_embedding, decodeEmbedding(row));
+      if (!Number.isFinite(similarity)) {
+        continue;
+      }
       scored.push({
         row,
-        similarity: cosineSimilarity(request.query_embedding, decodeEmbedding(row)),
+        similarity,
       });
     } catch {
       continue;

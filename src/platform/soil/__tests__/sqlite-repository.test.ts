@@ -956,6 +956,119 @@ describe("SqliteSoilRepository", () => {
     expect(candidates[0]?.score).toBeGreaterThan(0.9);
   });
 
+  it("rejects non-finite dense vectors at mutation and search boundaries", async () => {
+    await expect(repo.applyMutation({
+      embeddings: [
+        {
+          chunk_id: "chunk-bad",
+          model: "test-model",
+          embedding_version: 1,
+          encoding: "json",
+          embedding: [Number.POSITIVE_INFINITY],
+          embedded_at: "2026-04-12T00:00:00.000Z",
+        },
+      ],
+    })).rejects.toThrow();
+
+    await expect(repo.applyMutation({
+      records: [
+        {
+          record_id: "rec-bad-f32le",
+          record_key: "fact.bad-f32le",
+          version: 1,
+          record_type: "fact",
+          soil_id: "knowledge/bad-f32le",
+          title: "Bad f32le vector",
+          summary: null,
+          canonical_text: "bad f32le vector",
+          goal_id: null,
+          task_id: null,
+          status: "active",
+          confidence: null,
+          importance: null,
+          source_reliability: null,
+          valid_from: null,
+          valid_to: null,
+          supersedes_record_id: null,
+          is_active: true,
+          source_type: "knowledge",
+          source_id: "bad-f32le",
+          metadata_json: {},
+          created_at: "2026-04-12T00:00:00.000Z",
+          updated_at: "2026-04-12T00:00:00.000Z",
+        },
+      ],
+      chunks: [
+        {
+          chunk_id: "chunk-bad-f32le",
+          record_id: "rec-bad-f32le",
+          soil_id: "knowledge/bad-f32le",
+          chunk_index: 0,
+          chunk_kind: "paragraph",
+          heading_path_json: [],
+          chunk_text: "bad f32le vector",
+          token_count: 3,
+          checksum: "bad-f32le",
+          created_at: "2026-04-12T00:00:00.000Z",
+        },
+      ],
+      embeddings: [
+        {
+          chunk_id: "chunk-bad-f32le",
+          model: "test-model",
+          embedding_version: 1,
+          encoding: "f32le",
+          embedding: new Uint8Array(new Float32Array([Number.POSITIVE_INFINITY]).buffer),
+          embedded_at: "2026-04-12T00:00:00.000Z",
+        },
+      ],
+    })).rejects.toThrow();
+
+    await expect(repo.searchDense({
+      query: "bad dense query",
+      query_embedding: [Number.POSITIVE_INFINITY],
+    })).rejects.toThrow();
+  });
+
+  it("skips persisted dense embedding rows with non-finite coordinates", async () => {
+    await seedHybridFixture();
+    const db = new Database(path.join(tmpDir, "soil", ".index", "soil.db"));
+    try {
+      db.prepare("UPDATE soil_embeddings SET embedding = ? WHERE chunk_id = ?")
+        .run(Buffer.from("[1e999]", "utf8"), "chunk-semantic-outside");
+    } finally {
+      db.close();
+    }
+
+    const candidates = await repo.searchDense({
+      query: "semantic",
+      query_embedding: [0, 1, 0],
+      dense_top_k: 10,
+    });
+
+    expect(candidates.some((candidate) => candidate.chunk_id === "chunk-semantic-outside")).toBe(false);
+    expect(candidates.some((candidate) => candidate.chunk_id === "chunk-workflow")).toBe(true);
+  });
+
+  it("skips dense candidates when finite vectors produce non-finite scores", async () => {
+    await seedHybridFixture();
+    const db = new Database(path.join(tmpDir, "soil", ".index", "soil.db"));
+    try {
+      db.prepare("UPDATE soil_embeddings SET embedding = ? WHERE chunk_id = ?")
+        .run(Buffer.from(`[${Number.MAX_VALUE}]`, "utf8"), "chunk-semantic-outside");
+    } finally {
+      db.close();
+    }
+
+    const candidates = await repo.searchDense({
+      query: "semantic",
+      query_embedding: [Number.MAX_VALUE],
+      dense_top_k: 10,
+    });
+
+    expect(candidates).toEqual([]);
+  });
+
   it("uses only the latest embedding version per chunk and model", async () => {
     await repo.applyMutation({
       records: [

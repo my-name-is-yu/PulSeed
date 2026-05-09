@@ -3,6 +3,7 @@ import {
   SoilPageMemberSchema,
   SoilPageSchema,
   SoilRecordSchema,
+  SoilEmbeddingVectorSchema,
   type SoilCandidate,
   type SoilEmbedding,
   type SoilPage,
@@ -153,14 +154,17 @@ export function encodeEmbedding(entry: SoilEmbedding): Buffer {
 }
 
 export function decodeEmbedding(row: SoilRowEmbedding): number[] {
+  let decoded: unknown;
   if (row.encoding === "f32le") {
     const copy = row.embedding.buffer.slice(
       row.embedding.byteOffset,
       row.embedding.byteOffset + row.embedding.byteLength
     );
-    return Array.from(new Float32Array(copy));
+    decoded = Array.from(new Float32Array(copy));
+  } else {
+    decoded = JSON.parse(row.embedding.toString("utf8")) as unknown[];
   }
-  return JSON.parse(row.embedding.toString("utf8")) as number[];
+  return SoilEmbeddingVectorSchema.parse(decoded);
 }
 
 export function toRecord(row: SoilRowRecord): SoilRecord {
