@@ -1,14 +1,16 @@
 import { z } from "zod";
 
+const ReflectionNonnegativeSafeIntSchema = z.number().finite().int().nonnegative().safe();
+
 // ─── GoalSummary ───
 
 export const GoalSummarySchema = z.object({
   goal_id: z.string(),
   title: z.string(),
   status: z.string(),
-  gap_score: z.number().min(0).max(1),
+  gap_score: z.number().finite().min(0).max(1),
   stall_level: z.number().int().min(0).max(3),
-  dimensions_count: z.number().int().min(0),
+  dimensions_count: ReflectionNonnegativeSafeIntSchema,
 });
 export type GoalSummary = z.infer<typeof GoalSummarySchema>;
 
@@ -17,7 +19,7 @@ export type GoalSummary = z.infer<typeof GoalSummarySchema>;
 export const PlanningReportSchema = z.object({
   date: z.string(),
   created_at: z.string(),
-  goals_reviewed: z.number().int().min(0),
+  goals_reviewed: ReflectionNonnegativeSafeIntSchema,
   priorities: z.array(
     z.object({
       goal_id: z.string(),
@@ -35,7 +37,7 @@ export type PlanningReport = z.infer<typeof PlanningReportSchema>;
 export const CatchupReportSchema = z.object({
   date: z.string(),
   created_at: z.string(),
-  goals_reviewed: z.number().int().min(0),
+  goals_reviewed: ReflectionNonnegativeSafeIntSchema,
   progress_summary: z.string(),
   completions: z.array(z.string()),
   stalls: z.array(z.string()),
@@ -48,10 +50,10 @@ export type CatchupReport = z.infer<typeof CatchupReportSchema>;
 export const ConsolidationReportSchema = z.object({
   date: z.string(),
   created_at: z.string(),
-  goals_consolidated: z.number().int().min(0),
-  entries_compressed: z.number().int().min(0),
-  stale_entries_found: z.number().int().min(0),
-  revalidation_tasks_created: z.number().int().min(0),
+  goals_consolidated: ReflectionNonnegativeSafeIntSchema,
+  entries_compressed: ReflectionNonnegativeSafeIntSchema,
+  stale_entries_found: ReflectionNonnegativeSafeIntSchema,
+  revalidation_tasks_created: ReflectionNonnegativeSafeIntSchema,
 });
 export type ConsolidationReport = z.infer<typeof ConsolidationReportSchema>;
 
@@ -60,7 +62,7 @@ export type ConsolidationReport = z.infer<typeof ConsolidationReportSchema>;
 export const WeeklyReviewReportSchema = z.object({
   week: z.string(),
   created_at: z.string(),
-  goals_reviewed: z.number().int().min(0),
+  goals_reviewed: ReflectionNonnegativeSafeIntSchema,
   rankings: z.array(
     z.object({
       goal_id: z.string(),

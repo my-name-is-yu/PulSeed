@@ -4,8 +4,8 @@ import type { StateManager } from "../base/state/state-manager.js";
 import type { ILLMClient } from "../base/llm/llm-client.js";
 import type { INotificationDispatcher } from "../runtime/notification-dispatcher.js";
 import { z } from "zod";
-import type { CatchupReport } from "./types.js";
-import { CatchupReportSchema } from "./types.js";
+import type { CatchupReport, PlanningReport } from "./types.js";
+import { CatchupReportSchema, PlanningReportSchema } from "./types.js";
 import type { HookManager } from "../runtime/hook-manager.js";
 import { getInternalIdentityPrefix } from "../base/config/identity-loader.js";
 import {
@@ -49,10 +49,10 @@ export async function runEveningCatchup(deps: {
   if (goalSummaries.length > 0) {
     // Load morning report if available for comparison
     const morningPath = path.join(baseDir, "reflections", `morning-${date}.json`);
-    let morningData: unknown = null;
+    let morningData: PlanningReport | null = null;
     try {
       const raw = await fsp.readFile(morningPath, "utf-8");
-      morningData = JSON.parse(raw);
+      morningData = PlanningReportSchema.parse(JSON.parse(raw) as unknown);
     } catch {
       // No morning report available
     }
