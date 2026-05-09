@@ -15,6 +15,15 @@ export type RunSpecMetricDirection = z.infer<typeof RunSpecMetricDirectionSchema
 export const RunSpecConfidenceSchema = z.enum(["high", "medium", "low"]);
 export type RunSpecConfidence = z.infer<typeof RunSpecConfidenceSchema>;
 
+export const RunSpecFiniteScalarSchema = z.number().finite().refine(
+  (value) => !Number.isInteger(value) || Number.isSafeInteger(value),
+  { message: "Integer scalar must be within Number safe integer range" },
+);
+export const RunSpecRankPercentSchema = z.number().finite().min(0).max(100);
+export const RunSpecConfidenceValueSchema = z.number().finite().min(0).max(1);
+export const RunSpecSafeNonnegativeIntSchema = z.number().finite().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
+export const RunSpecSafePositiveIntSchema = z.number().finite().int().positive().max(Number.MAX_SAFE_INTEGER);
+
 export const RunSpecMissingFieldSchema = z.object({
   field: z.string(),
   question: z.string(),
@@ -39,8 +48,8 @@ export type RunSpecExecutionTarget = z.infer<typeof RunSpecExecutionTargetSchema
 export const RunSpecMetricSchema = z.object({
   name: z.string(),
   direction: RunSpecMetricDirectionSchema,
-  target: z.number().nullable(),
-  target_rank_percent: z.number().nullable(),
+  target: RunSpecFiniteScalarSchema.nullable(),
+  target_rank_percent: RunSpecRankPercentSchema.nullable(),
   datasource: z.string().nullable(),
   confidence: RunSpecConfidenceSchema,
 });
@@ -49,7 +58,7 @@ export type RunSpecMetric = z.infer<typeof RunSpecMetricSchema>;
 export const RunSpecProgressContractSchema = z.object({
   kind: z.enum(["metric_target", "rank_percentile", "deadline_only", "open_ended", "unknown"]),
   dimension: z.string().nullable(),
-  threshold: z.number().nullable(),
+  threshold: RunSpecFiniteScalarSchema.nullable(),
   semantics: z.string(),
   confidence: RunSpecConfidenceSchema,
 });
@@ -59,14 +68,14 @@ export const RunSpecDeadlineSchema = z.object({
   raw: z.string(),
   iso_at: z.string().nullable(),
   timezone: z.string().nullable(),
-  finalization_buffer_minutes: z.number().nullable(),
+  finalization_buffer_minutes: RunSpecSafeNonnegativeIntSchema.nullable(),
   confidence: RunSpecConfidenceSchema,
 });
 export type RunSpecDeadline = z.infer<typeof RunSpecDeadlineSchema>;
 
 export const RunSpecBudgetSchema = z.object({
-  max_trials: z.number().nullable(),
-  max_wall_clock_minutes: z.number().nullable(),
+  max_trials: RunSpecSafePositiveIntSchema.nullable(),
+  max_wall_clock_minutes: RunSpecSafeNonnegativeIntSchema.nullable(),
   resident_policy: z.enum(["until_deadline", "best_effort", "unknown"]),
 });
 export type RunSpecBudget = z.infer<typeof RunSpecBudgetSchema>;

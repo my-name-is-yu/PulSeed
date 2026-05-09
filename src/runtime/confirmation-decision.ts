@@ -1,6 +1,10 @@
 import { z } from "zod";
 import type { ILLMClient } from "../base/llm/llm-client.js";
 import { getInternalIdentityPrefix } from "../base/config/identity-loader.js";
+import {
+  RunSpecConfidenceValueSchema,
+  RunSpecSafeNonnegativeIntSchema,
+} from "./run-spec/types.js";
 
 const MIN_CONFIRMATION_CONFIDENCE = 0.7;
 
@@ -10,7 +14,7 @@ const ConfirmationRevisionSchema = z.object({
     raw: z.string().min(1),
     iso_at: z.string().nullable().optional(),
     timezone: z.string().nullable().optional(),
-    finalization_buffer_minutes: z.number().nullable().optional(),
+    finalization_buffer_minutes: RunSpecSafeNonnegativeIntSchema.nullable().optional(),
     confidence: z.enum(["high", "medium", "low"]).optional(),
   }).nullable().optional(),
   metric_direction: z.enum(["maximize", "minimize"]).nullable().optional(),
@@ -18,7 +22,7 @@ const ConfirmationRevisionSchema = z.object({
 
 export const ConfirmationDecisionSchema = z.object({
   decision: z.enum(["approve", "cancel", "revise", "unknown"]),
-  confidence: z.number().min(0).max(1),
+  confidence: RunSpecConfidenceValueSchema,
   revision: ConfirmationRevisionSchema,
   clarification: z.string().optional(),
   rationale: z.string().optional(),

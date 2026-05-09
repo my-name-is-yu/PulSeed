@@ -6,6 +6,7 @@ import {
   RunSpecHandoffService,
   type RunSpecConfirmationSnapshot,
 } from "../../runtime/run-spec/index.js";
+import { RunSpecSafeNonnegativeIntSchema } from "../../runtime/run-spec/types.js";
 import { ChatSessionSchema } from "../../interface/chat/chat-history.js";
 import type {
   ITool,
@@ -32,7 +33,7 @@ const UpdateRunSpecDraftToolInputSchema = z.object({
     raw: z.string().min(1),
     iso_at: z.string().nullable().optional(),
     timezone: z.string().nullable().optional(),
-    finalization_buffer_minutes: z.number().nullable().optional(),
+    finalization_buffer_minutes: RunSpecSafeNonnegativeIntSchema.nullable().optional(),
     confidence: z.enum(["high", "medium", "low"]).optional(),
   }).optional(),
   metric_direction: z.enum(["maximize", "minimize"]).optional(),

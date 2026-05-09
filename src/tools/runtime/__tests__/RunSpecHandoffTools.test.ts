@@ -330,4 +330,44 @@ describe("RunSpec handoff tools", () => {
     expect(startResult.summary).toContain("created in this same AgentLoop turn");
     expect(daemonClient.startGoal).not.toHaveBeenCalled();
   });
+
+  it("rejects non-finite deadline buffers through the real tool executor pipeline", async () => {
+    const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-runspec-tools-deadline-buffer-"));
+    const stateManager = new StateManager(baseDir, undefined, { walEnabled: false });
+    const daemonClient = { startGoal: vi.fn().mockResolvedValue({ ok: true }) };
+    const pendingRef: { value: RunSpecConfirmationSnapshot | null } = { value: null };
+    const registry = new ToolRegistry();
+    for (const tool of createRunSpecHandoffTools({
+      stateManager,
+      llmClient: makeLLMClient(),
+      daemonClient,
+    })) {
+      registry.register(tool);
+    }
+    const executor = new ToolExecutor({
+      registry,
+      permissionManager: new ToolPermissionManager({}),
+      concurrency: new ConcurrencyController(),
+    });
+    const context = makeContext(baseDir, pendingRef);
+
+    const draftResult = await executor.execute("draft_run_spec", {
+      request: "DurableloopのほうでKaggleのタスクに取り組んで",
+    }, context);
+    expect(draftResult.success).toBe(true);
+    const originalUpdatedAt = pendingRef.value?.updatedAt;
+
+    const updateResult = await executor.execute("update_run_spec_draft", {
+      run_spec_id: pendingRef.value?.spec.id,
+      deadline: {
+        raw: "review later",
+        finalization_buffer_minutes: Number.POSITIVE_INFINITY,
+      },
+    }, context);
+
+    expect(updateResult.success).toBe(false);
+    expect(updateResult.summary).toContain("Input validation failed");
+    expect(updateResult.summary).toContain("deadline.finalization_buffer_minutes");
+    expect(pendingRef.value?.updatedAt).toBe(originalUpdatedAt);
+  });
 });
