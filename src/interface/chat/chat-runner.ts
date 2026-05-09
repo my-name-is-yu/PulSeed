@@ -755,7 +755,7 @@ export class ChatRunner {
         systemPrompt = this.cachedStaticSystemPrompt ?? "";
       }
       this.eventBridge.emitCheckpoint("Context gathered", usesNativeAgentLoop
-        ? "Workspace and agent-loop grounding are ready."
+        ? "Workspace and tool context are ready."
         : "Workspace grounding is ready.", eventContext, "context");
     }
     const agentLoopSystemPrompt = [

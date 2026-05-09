@@ -1219,7 +1219,7 @@ describe("standalone slash command routing", () => {
     const submit = testState.lastChatProps!.onSubmit("telegramからseedyと会話できるようにしたい");
     await vi.waitFor(() => {
       const visibleText = testState.lastChatMessages.map((message) => message.text).join("\n");
-      expect(visibleText).toContain("Agent loop started");
+      expect(visibleText).toContain("Working turn started");
       expect(visibleText).not.toContain("pulseed telegram setup");
     });
     statusLookupCanFinish.resolve();

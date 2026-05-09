@@ -4871,7 +4871,7 @@ describe("ChatRunner", () => {
       const intent = events.find((event): event is Extract<ChatEvent, { type: "activity" }> =>
         event.type === "activity" && event.sourceId === "intent:first-step"
       );
-      expect(intent?.message).toContain("agent loop");
+      expect(intent?.message).toContain("visible tool activity");
       expect(intent?.message).toContain("I understand the request");
       expect(events.map((event) => event.type === "activity" ? event.message : "").join("\n"))
         .not.toContain("このリクエスト");
@@ -4942,7 +4942,7 @@ describe("ChatRunner", () => {
       const intent = events.find((event): event is Extract<ChatEvent, { type: "activity" }> =>
         event.type === "activity" && event.sourceId === "intent:first-step"
       );
-      expect(intent?.message).toContain("agent loop");
+      expect(intent?.message).toContain("visible tool activity");
       expect(intent?.message).not.toContain("resume the saved agent loop state");
     });
 
@@ -4979,7 +4979,7 @@ describe("ChatRunner", () => {
       const intent = events.find((event): event is Extract<ChatEvent, { type: "activity" }> =>
         event.type === "activity" && event.sourceId === "intent:first-step"
       );
-      expect(intent?.message).toContain("let the agent loop inspect or change files");
+      expect(intent?.message).toContain("inspect or change files with visible tool activity");
     });
 
     it("routes direct assist without agent-loop resume intent copy", async () => {
@@ -5010,7 +5010,7 @@ describe("ChatRunner", () => {
       const intent = events.find((event): event is Extract<ChatEvent, { type: "activity" }> =>
         event.type === "activity" && event.sourceId === "intent:first-step"
       );
-      expect(intent?.message).toContain("agent loop");
+      expect(intent?.message).toContain("visible tool activity");
       expect(intent?.message).not.toContain("resume the saved agent loop state");
     });
 
