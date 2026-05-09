@@ -6,6 +6,9 @@
 
 import { execFile, spawn } from "node:child_process";
 
+const DEFAULT_TIMEOUT_MS = 10_000;
+const MAX_TIMEOUT_MS = 2_147_483_647;
+
 export interface ExecFileResult {
   stdout: string;
   stderr: string;
@@ -35,7 +38,12 @@ export async function execFileNoThrow(
   args: string[],
   options: ExecFileOptions = {}
 ): Promise<ExecFileResult> {
-  const { timeoutMs = 10000, cwd, env, signal, killProcessGroup = false } = options;
+  const { timeoutMs = DEFAULT_TIMEOUT_MS, cwd, env, signal, killProcessGroup = false } = options;
+  const timeoutError = validateTimeoutMs(timeoutMs);
+  if (timeoutError) {
+    return { stdout: "", stderr: timeoutError, exitCode: null };
+  }
+
   if (killProcessGroup) {
     return spawnNoThrow(cmd, args, { timeoutMs, cwd, env, signal });
   }
@@ -65,6 +73,18 @@ export async function execFileNoThrow(
       }
     );
   });
+}
+
+function validateTimeoutMs(timeoutMs: unknown): string | null {
+  if (
+    typeof timeoutMs === "number" &&
+    Number.isSafeInteger(timeoutMs) &&
+    timeoutMs >= 1 &&
+    timeoutMs <= MAX_TIMEOUT_MS
+  ) {
+    return null;
+  }
+  return `Invalid timeoutMs: expected a safe integer from 1 to ${MAX_TIMEOUT_MS} milliseconds`;
 }
 
 function spawnNoThrow(
