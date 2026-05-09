@@ -85,6 +85,43 @@ describe("PermissionWaitPlanStore", () => {
     expect(fs.existsSync(path.join(tmpDir, "permission-wait-plans", "wait-1.json"))).toBe(true);
   });
 
+  it("rejects unsafe permission wait plan timestamps before writing", async () => {
+    now = Number.MAX_SAFE_INTEGER + 1;
+
+    await expect(store.createWaiting({
+      wait_plan_id: "wait-unsafe-now",
+      approval_id: "approval-unsafe-now",
+      canonical_plan: makePlan(),
+    })).rejects.toThrow();
+    expect(await store.load("wait-unsafe-now")).toBeNull();
+
+    now = 1_000;
+    await expect(store.createWaiting({
+      wait_plan_id: "wait-unsafe-expiry",
+      approval_id: "approval-unsafe-expiry",
+      expires_at: Number.POSITIVE_INFINITY,
+      canonical_plan: makePlan(),
+    })).rejects.toThrow();
+    expect(await store.load("wait-unsafe-expiry")).toBeNull();
+  });
+
+  it("ignores persisted permission wait plans with unsafe numeric timestamps", async () => {
+    await store.createWaiting({
+      wait_plan_id: "wait-corrupt",
+      approval_id: "approval-corrupt",
+      canonical_plan: makePlan(),
+    });
+    const recordPath = path.join(tmpDir, "permission-wait-plans", "wait-corrupt.json");
+    const persisted = JSON.parse(fs.readFileSync(recordPath, "utf8")) as Record<string, unknown>;
+    fs.writeFileSync(recordPath, JSON.stringify({
+      ...persisted,
+      updated_at: Number.MAX_SAFE_INTEGER + 1,
+    }), "utf8");
+
+    await expect(store.load("wait-corrupt")).resolves.toBeNull();
+    await expect(store.list()).resolves.toEqual([]);
+  });
+
   it("approves and resumes only the stored canonical plan", async () => {
     const plan = makePlan();
     await store.createWaiting({
