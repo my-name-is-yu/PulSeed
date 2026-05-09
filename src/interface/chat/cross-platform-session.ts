@@ -94,6 +94,20 @@ import {
 } from "../../runtime/gateway/channel-policy.js";
 import { normalizeUserInput, type UserInput } from "./user-input.js";
 import type { ApprovalRequest } from "../../tools/types.js";
+import {
+  buildSessionKeyFromParts,
+  buildSessionMetadata,
+  cloneMetadata,
+  cloneReplyTarget,
+  isRecord,
+  normalizeActor,
+  normalizeIdentity,
+  normalizePlatform,
+  normalizeReplyTarget,
+  resolveChannel,
+  resolveRuntimeControl,
+  stringField,
+} from "./cross-platform-session-normalization.js";
 
 const STANDING_PERMISSION_REVIEW_INTERVAL_MS = 30 * 24 * 60 * 60 * 1000;
 const STANDING_PERMISSION_DEFAULT_EXCLUSIONS: PermissionGrantExcludedCapability[] = [
@@ -215,60 +229,6 @@ interface ManagedChatSession {
   info: CrossPlatformChatSessionInfo;
   queue: Promise<void>;
   lastRoute?: SelectedChatRoute;
-}
-
-function normalizeIdentity(value: string | undefined): string | null {
-  const trimmed = value?.trim();
-  return trimmed ? trimmed : null;
-}
-
-function normalizePlatform(value: string | undefined): string | null {
-  const trimmed = value?.trim();
-  return trimmed ? trimmed.toLowerCase() : null;
-}
-
-function buildSessionKeyFromParts(params: {
-  identity_key?: string;
-  platform?: string;
-  conversation_id?: string;
-  user_id?: string;
-}): string {
-  const identityKey = normalizeIdentity(params.identity_key);
-  if (identityKey) {
-    return `identity:${identityKey}`;
-  }
-
-  const platform = normalizePlatform(params.platform);
-  const conversationId = normalizeIdentity(params.conversation_id);
-  if (platform && conversationId) {
-    return `platform:${platform}:conversation:${conversationId}`;
-  }
-
-  const userId = normalizeIdentity(params.user_id);
-  if (platform && userId) {
-    return `platform:${platform}:user:${userId}`;
-  }
-
-  return `ephemeral:${randomUUID()}`;
-}
-
-function buildSessionKey(options: CrossPlatformChatSessionOptions): string {
-  return buildSessionKeyFromParts(options);
-}
-
-function cloneMetadata(metadata: Record<string, unknown> | undefined): Record<string, unknown> {
-  return metadata ? { ...metadata } : {};
-}
-
-function cloneReplyTarget(target: Record<string, unknown> | ChatIngressReplyTarget): ChatIngressReplyTarget {
-  return {
-    ...target,
-    metadata: isRecord(target.metadata) ? cloneMetadata(target.metadata) : {},
-  } as ChatIngressReplyTarget;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function createPermissionGrantProposalFromApprovalRequest(
@@ -499,143 +459,6 @@ function createPermissionGrantOrigin(origin: ApprovalOrigin): PermissionGrantOri
     ...(origin.turn_id ? { turn_id: origin.turn_id } : {}),
     ...(messageId ? { message_id: messageId } : {}),
     ...(replyTarget ? { reply_target: { ...replyTarget } } : {}),
-  };
-}
-
-function stringField(value: Record<string, unknown> | undefined, field: string): string | undefined {
-  const fieldValue = value?.[field];
-  return typeof fieldValue === "string" && fieldValue.trim() ? fieldValue : undefined;
-}
-
-function buildSessionMetadata(options: {
-  metadata?: Record<string, unknown>;
-  platform?: string;
-  conversation_id?: string;
-  conversation_name?: string;
-  user_id?: string;
-  user_name?: string;
-  channel?: ChatIngressChannel;
-}): Record<string, unknown> {
-  return {
-    ...(options.metadata ?? {}),
-    ...(options.channel ? { channel: options.channel } : {}),
-    ...(options.platform ? { platform: options.platform } : {}),
-    ...(options.conversation_id ? { conversation_id: options.conversation_id } : {}),
-    ...(options.conversation_name ? { conversation_name: options.conversation_name } : {}),
-    ...(options.user_id ? { user_id: options.user_id } : {}),
-    ...(options.user_name ? { user_name: options.user_name } : {}),
-  };
-}
-
-function resolveChannel(
-  input: Pick<CrossPlatformIncomingChatMessage, "channel" | "platform"> | CrossPlatformChatSessionOptions
-): ChatIngressChannel {
-  if (input.channel) return input.channel;
-  return input.platform ? "plugin_gateway" : "cli";
-}
-
-function resolveActorSurface(channel: ChatIngressChannel): RuntimeControlActor["surface"] {
-  switch (channel) {
-    case "plugin_gateway":
-      return "gateway";
-    case "cli":
-      return "cli";
-    case "tui":
-      return "tui";
-    default:
-      return "chat";
-  }
-}
-
-function resolveRuntimeControl(
-  channel: ChatIngressChannel,
-  runtimeControl: Partial<ChatIngressRuntimeControl> | undefined,
-  metadata: Record<string, unknown> | undefined,
-  externalSurface: ExternalSurfaceDecision | undefined
-): ChatIngressRuntimeControl {
-  const surfacePreapproved = externalSurface?.runtime_control_policy.allowed === true
-    && externalSurface.runtime_control_policy.approval_mode === "preapproved";
-  const surfaceDenied = externalSurface?.runtime_control_policy.approval_mode === "disallowed";
-  const approvalMode = runtimeControl?.approvalMode
-    ?? (externalSurface
-      ? surfacePreapproved ? "preapproved" : "disallowed"
-      : metadata?.["runtime_control_approved"] === true
-        ? "preapproved"
-        : surfaceDenied || metadata?.["runtime_control_denied"] === true
-          ? "disallowed"
-        : channel === "tui" || channel === "cli"
-          ? "interactive"
-          : "disallowed");
-  return {
-    allowed: runtimeControl?.allowed ?? approvalMode !== "disallowed",
-    approvalMode,
-  };
-}
-
-function normalizeReplyTarget(
-  channel: ChatIngressChannel,
-  input: {
-    platform?: string;
-    conversation_id?: string;
-    identity_key?: string;
-    user_id?: string;
-    message_id?: string;
-    replyTarget?: Partial<ChatIngressReplyTarget>;
-    metadata?: Record<string, unknown>;
-    externalSurface?: ExternalSurfaceDecision;
-  }
-): ChatIngressReplyTarget {
-  const platform = normalizePlatform(input.replyTarget?.platform ?? input.platform) ?? undefined;
-  const conversationId = normalizeIdentity(input.replyTarget?.conversation_id ?? input.conversation_id) ?? undefined;
-  const identityKey = normalizeIdentity(input.replyTarget?.identity_key ?? input.identity_key) ?? undefined;
-  const userId = normalizeIdentity(input.replyTarget?.user_id ?? input.user_id) ?? undefined;
-  const messageId = normalizeIdentity(input.replyTarget?.message_id ?? input.message_id) ?? undefined;
-  const metadata: Record<string, unknown> = {
-    ...(input.metadata ?? {}),
-    ...(input.replyTarget?.metadata ?? {}),
-    ...(input.externalSurface ? { [EXTERNAL_SURFACE_METADATA_KEY]: input.externalSurface } : {}),
-  };
-  if (input.externalSurface) {
-    delete metadata["notification_route_id"];
-  } else {
-    delete metadata[EXTERNAL_SURFACE_METADATA_KEY];
-  }
-
-  return {
-    surface: input.replyTarget?.surface ?? resolveActorSurface(channel),
-    ...(platform ? { platform } : {}),
-    ...(conversationId ? { conversation_id: conversationId } : {}),
-    ...(identityKey ? { identity_key: identityKey } : {}),
-    ...(userId ? { user_id: userId } : {}),
-    ...(messageId ? { message_id: messageId } : {}),
-    deliveryMode: input.replyTarget?.deliveryMode ?? "reply",
-    ...input.replyTarget,
-    metadata,
-  };
-}
-
-function normalizeActor(
-  channel: ChatIngressChannel,
-  input: {
-    platform?: string;
-    conversation_id?: string;
-    identity_key?: string;
-    user_id?: string;
-    actor?: Partial<RuntimeControlActor>;
-  }
-): RuntimeControlActor {
-  const platform = normalizePlatform(input.actor?.platform ?? input.platform) ?? undefined;
-  const conversationId = normalizeIdentity(input.actor?.conversation_id ?? input.conversation_id) ?? undefined;
-  const identityKey = normalizeIdentity(input.actor?.identity_key ?? input.identity_key) ?? undefined;
-  const userId = normalizeIdentity(input.actor?.user_id ?? input.user_id) ?? undefined;
-
-  return {
-    surface: input.actor?.surface ?? resolveActorSurface(channel),
-    ...(platform ? { platform } : {}),
-    ...(conversationId ? { conversation_id: conversationId } : {}),
-    ...(identityKey ? { identity_key: identityKey } : {}),
-    ...(userId ? { user_id: userId } : {}),
-    ...input.actor,
   };
 }
 
@@ -1182,7 +1005,7 @@ export class CrossPlatformChatSessionManager {
    * Returns the active session info if a matching session is already loaded.
    */
   getSessionInfo(options: CrossPlatformChatSessionOptions): CrossPlatformChatSessionInfo | null {
-    const sessionKey = buildSessionKey(options);
+    const sessionKey = buildSessionKeyFromParts(options);
     const session = this.sessions.get(sessionKey);
     return session
       ? {
