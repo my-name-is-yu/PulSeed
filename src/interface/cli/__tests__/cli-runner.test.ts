@@ -430,6 +430,10 @@ describe("unknown subcommand", async () => {
     expect(code).toBe(0);
     expect(output).toContain("pulseed daemon ping");
     expect(output).toContain("pulseed approval list");
+    expect(output).toContain('pulseed goal add "<description>" --no-refine          Register a goal without refinement');
+    expect(output).toContain("--no-refine                         Skip GoalRefiner and use the negotiation path directly");
+    expect(output).not.toContain("legacy LLM negotiation");
+    expect(output).not.toContain("legacy negotiate()");
     consoleSpy.mockRestore();
   });
 
@@ -1036,6 +1040,7 @@ describe("goal add subcommand", async () => {
   });
 
   it("calls GoalNegotiator.negotiate() with the given description when --no-refine is set", async () => {
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const goal = makeGoal();
     const mockNegotiate = vi.fn().mockResolvedValue(makeNegotiationResult(goal));
     vi.mocked(GoalNegotiator).mockImplementation(
@@ -1043,11 +1048,15 @@ describe("goal add subcommand", async () => {
     );
 
     await runCLI("goal", "add", "Build a better README", "--no-refine");
+    const output = consoleSpy.mock.calls.map((call) => call.join(" ")).join("\n");
 
     expect(mockNegotiate).toHaveBeenCalledWith(
       "Build a better README",
       expect.objectContaining({ deadline: undefined, constraints: [] })
     );
+    expect(output).toContain('Negotiating goal without refinement: "Build a better README"');
+    expect(output).not.toContain("Negotiating goal (legacy)");
+    consoleSpy.mockRestore();
   });
 
   it("exits with code 0 on successful refine (default path)", async () => {

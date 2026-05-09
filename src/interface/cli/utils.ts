@@ -31,7 +31,7 @@ Usage:
   pulseed suggest "<context>"          Suggest improvement goals for a project context
   pulseed goal add --title "<t>" --dim "name:type:val"  Register a goal (raw mode, no LLM)
   pulseed goal add "<description>"                      Register a goal via GoalRefiner (default)
-  pulseed goal add "<description>" --no-refine          Register a goal via legacy LLM negotiation
+  pulseed goal add "<description>" --no-refine          Register a goal without refinement
   pulseed goal list                    List all registered goals
   pulseed goal list --archived         Also list archived goals
   pulseed goal archive <id>            Archive a completed goal (moves state to ~/.pulseed/archive/)
@@ -128,7 +128,7 @@ Options (pulseed suggest):
 Options (pulseed goal add):
   --title <title>                     Goal title (raw mode)
   --dim <name:type:value>             Dimension spec, repeatable (raw mode, e.g. "tsc_error_count:min:0")
-  --no-refine                         Skip GoalRefiner, use legacy negotiate() instead
+  --no-refine                         Skip GoalRefiner and use the negotiation path directly
   --negotiate                         Alias: same as default (refine mode)
   --deadline <ISO-date>               Optional deadline (e.g. 2026-06-01)
   --constraint <text>                 Optional constraint (repeatable)

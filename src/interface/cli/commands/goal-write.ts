@@ -78,9 +78,9 @@ export async function cmdGoalAdd(
 
   const { goalNegotiator } = deps;
 
-  // --no-refine: skip refinement, use legacy negotiate() path
+  // --no-refine: skip refinement and use the direct negotiation path.
   if (opts.noRefine) {
-    return cmdGoalAddLegacyNegotiate(stateManager, goalNegotiator, description, opts);
+    return cmdGoalAddWithoutRefinement(stateManager, goalNegotiator, description, opts);
   }
 
   // Default: use GoalRefiner.refine()
@@ -165,9 +165,9 @@ export async function cmdGoalAdd(
   return 0;
 }
 
-// ─── Legacy negotiate path (--no-refine) ───
+// ─── Direct negotiation path (--no-refine) ───
 
-async function cmdGoalAddLegacyNegotiate(
+async function cmdGoalAddWithoutRefinement(
   stateManager: StateManager,
   goalNegotiator: import("../../../orchestrator/goal/goal-negotiator.js").GoalNegotiator,
   description: string,
@@ -175,7 +175,7 @@ async function cmdGoalAddLegacyNegotiate(
 ): Promise<number> {
   const { gatherNegotiationContext } = await import("../../../orchestrator/goal/goal-negotiator.js");
 
-  console.log(`Negotiating goal (legacy): "${description}"`);
+  console.log(`Negotiating goal without refinement: "${description}"`);
   if (opts.deadline) console.log(`Deadline: ${opts.deadline}`);
   if (opts.constraints && opts.constraints.length > 0) {
     console.log(`Constraints: ${opts.constraints.join(", ")}`);
