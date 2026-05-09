@@ -37,6 +37,9 @@ export const RuntimePostmortemEvidenceRefSchema = z.object({
 }).strict();
 export type RuntimePostmortemEvidenceRef = z.infer<typeof RuntimePostmortemEvidenceRefSchema>;
 
+const RuntimePostmortemFiniteNumberSchema = z.number().finite();
+const RuntimePostmortemSafeNonnegativeIntSchema = z.number().int().nonnegative().safe();
+
 export const RuntimePostmortemReportSchema = z.object({
   schema_version: z.literal("runtime-postmortem-v1"),
   postmortem_id: z.string().min(1),
@@ -60,9 +63,9 @@ export const RuntimePostmortemReportSchema = z.object({
     metric_key: z.string().min(1),
     direction: z.enum(["maximize", "minimize"]),
     trend: z.string().min(1),
-    latest_value: z.number(),
-    best_value: z.number(),
-    observation_count: z.number().int().nonnegative(),
+    latest_value: RuntimePostmortemFiniteNumberSchema,
+    best_value: RuntimePostmortemFiniteNumberSchema,
+    observation_count: RuntimePostmortemSafeNonnegativeIntSchema,
     source_refs: z.array(RuntimePostmortemEvidenceRefSchema).default([]),
     summary: z.string().min(1),
   }).strict()).default([]),
@@ -175,13 +178,23 @@ export class RuntimePostmortemReportStore {
   }
 
   async load(postmortemId: string): Promise<RuntimePostmortemReport | null> {
+    let raw: string;
     try {
-      const raw = await fsp.readFile(this.paths.postmortemJsonPath(postmortemId), "utf8");
-      return RuntimePostmortemReportSchema.parse(JSON.parse(raw));
+      raw = await fsp.readFile(this.paths.postmortemJsonPath(postmortemId), "utf8");
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
       throw err;
     }
+
+    let parsedJson: unknown;
+    try {
+      parsedJson = JSON.parse(raw) as unknown;
+    } catch {
+      return null;
+    }
+
+    const parsed = RuntimePostmortemReportSchema.safeParse(parsedJson);
+    return parsed.success ? parsed.data : null;
   }
 
   async latestFor(input: { goalId?: string; runId?: string }): Promise<RuntimePostmortemReport | null> {
