@@ -381,6 +381,75 @@ describe("isDaemonRunning", () => {
     expect(killSpy).not.toHaveBeenCalled();
   });
 
+  it("ignores unsafe daemon config ports before probing daemon health", async () => {
+    fs.writeFileSync(
+      path.join(tmpDir, "daemon-state.json"),
+      JSON.stringify({ status: "running", pid: process.pid }),
+      "utf-8"
+    );
+    fs.writeFileSync(
+      path.join(tmpDir, "daemon.json"),
+      JSON.stringify({ event_server_port: Number.MAX_SAFE_INTEGER }),
+      "utf-8"
+    );
+    vi.spyOn(DaemonClient.prototype, "getHealth").mockResolvedValue({ status: "ok" });
+
+    await expect(isDaemonRunning(tmpDir)).resolves.toEqual({
+      running: true,
+      port: DEFAULT_PORT,
+    });
+  });
+
+  it("uses the token file port for daemon configs with OS-assigned event server ports", async () => {
+    fs.writeFileSync(
+      path.join(tmpDir, "daemon-state.json"),
+      JSON.stringify({ status: "running", pid: process.pid }),
+      "utf-8"
+    );
+    fs.writeFileSync(
+      path.join(tmpDir, "daemon.json"),
+      JSON.stringify({ event_server_port: 0 }),
+      "utf-8"
+    );
+    fs.writeFileSync(
+      path.join(tmpDir, "daemon-token.json"),
+      JSON.stringify({ token: "dynamic-token", port: 45678 }),
+      "utf-8"
+    );
+    const probedPorts: number[] = [];
+    vi.spyOn(DaemonClient.prototype, "getHealth").mockImplementation(async function (this: DaemonClient) {
+      probedPorts.push((this as unknown as { config: { port: number } }).config.port);
+      return { status: "ok" };
+    });
+
+    await expect(isDaemonRunning(tmpDir)).resolves.toEqual({
+      running: true,
+      port: 45678,
+      authToken: "dynamic-token",
+    });
+    expect(probedPorts).toEqual([45678]);
+  });
+
+  it("does not probe port 0 when an OS-assigned daemon config has no resolved token port", async () => {
+    fs.writeFileSync(
+      path.join(tmpDir, "daemon-state.json"),
+      JSON.stringify({ status: "running", pid: process.pid }),
+      "utf-8"
+    );
+    fs.writeFileSync(
+      path.join(tmpDir, "daemon.json"),
+      JSON.stringify({ event_server_port: 0 }),
+      "utf-8"
+    );
+    const healthSpy = vi.spyOn(DaemonClient.prototype, "getHealth").mockResolvedValue({ status: "ok" });
+
+    await expect(isDaemonRunning(tmpDir)).resolves.toEqual({
+      running: false,
+      port: 0,
+    });
+    expect(healthSpy).not.toHaveBeenCalled();
+  });
+
   it("prefers the daemon token file over stale process env tokens", () => {
     fs.writeFileSync(
       path.join(tmpDir, "daemon-token.json"),
