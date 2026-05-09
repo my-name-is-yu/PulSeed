@@ -61,6 +61,14 @@ function isSafeProcessPid(pid: unknown): pid is number {
   return typeof pid === "number" && Number.isSafeInteger(pid) && pid > 0;
 }
 
+function parseWriteProcessPid(field: keyof PIDWriteOptions, value: number | undefined): number | undefined {
+  if (value === undefined) return undefined;
+  if (!isSafeProcessPid(value)) {
+    throw new Error(`Invalid PID write option ${field}: expected a positive safe integer`);
+  }
+  return value;
+}
+
 function uniquePids(pids: Array<number | null | undefined>): number[] {
   return [...new Set(pids.filter(isSafeProcessPid))];
 }
@@ -154,8 +162,12 @@ export class PIDManager {
 
   /** Write PID ownership info to file (atomic write). */
   async writePID(options: PIDWriteOptions = {}): Promise<PIDInfo> {
-    const runtimePid = options.runtime_pid ?? options.pid ?? process.pid;
-    const ownerPid = options.owner_pid ?? options.watchdog_pid ?? runtimePid;
+    const pid = parseWriteProcessPid("pid", options.pid);
+    const runtimeOptionPid = parseWriteProcessPid("runtime_pid", options.runtime_pid);
+    const ownerOptionPid = parseWriteProcessPid("owner_pid", options.owner_pid);
+    const watchdogPid = parseWriteProcessPid("watchdog_pid", options.watchdog_pid);
+    const runtimePid = runtimeOptionPid ?? pid ?? process.pid;
+    const ownerPid = ownerOptionPid ?? watchdogPid ?? runtimePid;
     const startedAt = options.started_at ?? new Date().toISOString();
     const runtimeStartedAt =
       options.runtime_started_at
@@ -167,14 +179,14 @@ export class PIDManager {
       ?? startedAt;
     const watchdogStartedAt =
       options.watchdog_started_at
-      ?? (options.watchdog_pid ? ownerStartedAt : undefined);
+      ?? (watchdogPid ? ownerStartedAt : undefined);
     const info = PIDInfoSchema.parse({
-      pid: options.pid ?? runtimePid,
+      pid: pid ?? runtimePid,
       started_at: startedAt,
       runtime_started_at: runtimeStartedAt,
       owner_pid: ownerPid,
       owner_started_at: ownerStartedAt,
-      watchdog_pid: options.watchdog_pid,
+      watchdog_pid: watchdogPid,
       watchdog_started_at: watchdogStartedAt,
       runtime_pid: runtimePid,
       version: options.version,
