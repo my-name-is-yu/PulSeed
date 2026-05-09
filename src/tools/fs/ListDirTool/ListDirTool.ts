@@ -7,10 +7,13 @@ import { validateFilePath } from "../FileValidationTool/FileValidationTool.js";
 import { DESCRIPTION_TEMPLATE } from "./prompt.js";
 import { TAGS, CATEGORY as _CATEGORY, MAX_OUTPUT_CHARS, READ_ONLY, PERMISSION_LEVEL } from "./constants.js";
 
+const LIST_DIR_DEFAULT_MAX_DEPTH = 2;
+const LIST_DIR_MAX_DEPTH = 10;
+
 export const ListDirInputSchema = z.object({
   path: z.string().min(1),
   recursive: z.boolean().default(false),
-  maxDepth: z.number().default(2),
+  maxDepth: z.number().int().min(1).max(LIST_DIR_MAX_DEPTH).default(LIST_DIR_DEFAULT_MAX_DEPTH),
   includeHidden: z.boolean().default(false),
 });
 export type ListDirInput = z.infer<typeof ListDirInputSchema>;

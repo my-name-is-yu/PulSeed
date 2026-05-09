@@ -2,7 +2,8 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as os from "node:os";
-import { ListDirTool } from "../ListDirTool.js";
+import { toToolDefinition } from "../../../tool-definition-adapter.js";
+import { ListDirInputSchema, ListDirTool } from "../ListDirTool.js";
 import type { ToolCallContext } from "../../../types.js";
 
 function makeContext(cwd = "/tmp"): ToolCallContext {
@@ -60,6 +61,28 @@ describe("ListDirTool", () => {
 
     it("returns a non-empty string", () => {
       expect(tool.description()).toBeTruthy();
+    });
+  });
+
+  describe("input schema", () => {
+    it("rejects invalid maxDepth controls", () => {
+      expect(ListDirInputSchema.safeParse({ path: ".", maxDepth: 2 }).success).toBe(true);
+
+      for (const maxDepth of [0, -1, 1.5, Number.POSITIVE_INFINITY, 11]) {
+        expect(ListDirInputSchema.safeParse({ path: ".", maxDepth }).success).toBe(false);
+      }
+    });
+
+    it("exports maxDepth bounds to model-facing tool definitions", () => {
+      const parameters = toToolDefinition(tool).function.parameters as {
+        properties?: Record<string, unknown>;
+      };
+
+      expect(parameters.properties?.maxDepth).toMatchObject({
+        type: "integer",
+        minimum: 1,
+        maximum: 10,
+      });
     });
   });
 

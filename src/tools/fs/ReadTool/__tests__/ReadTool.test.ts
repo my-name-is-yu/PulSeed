@@ -2,7 +2,8 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as os from "node:os";
-import { ReadTool } from "../ReadTool.js";
+import { toToolDefinition } from "../../../tool-definition-adapter.js";
+import { ReadInputSchema, ReadTool } from "../ReadTool.js";
 import type { ToolCallContext } from "../../../types.js";
 
 function makeContext(cwd: string): ToolCallContext {
@@ -83,6 +84,40 @@ describe("ReadTool", () => {
   it("artifacts contains the file path", async () => {
     const result = await tool.call({ file_path: testFile, limit: 2000 }, makeContext(tmpDir));
     expect(result.artifacts).toContain(testFile);
+  });
+
+  it("rejects invalid numeric read controls at schema boundaries", () => {
+    expect(ReadInputSchema.safeParse({ file_path: "test.txt", offset: 0, limit: 2000 }).success).toBe(true);
+
+    for (const input of [
+      { file_path: "test.txt", offset: -1 },
+      { file_path: "test.txt", offset: 1.5 },
+      { file_path: "test.txt", offset: Number.POSITIVE_INFINITY },
+      { file_path: "test.txt", offset: 1_000_001 },
+      { file_path: "test.txt", limit: 0 },
+      { file_path: "test.txt", limit: 1.5 },
+      { file_path: "test.txt", limit: Number.POSITIVE_INFINITY },
+      { file_path: "test.txt", limit: 10_001 },
+    ]) {
+      expect(ReadInputSchema.safeParse(input).success).toBe(false);
+    }
+  });
+
+  it("exports numeric bounds to model-facing tool definitions", () => {
+    const parameters = toToolDefinition(tool).function.parameters as {
+      properties?: Record<string, unknown>;
+    };
+
+    expect(parameters.properties?.offset).toMatchObject({
+      type: "integer",
+      minimum: 0,
+      maximum: 1_000_000,
+    });
+    expect(parameters.properties?.limit).toMatchObject({
+      type: "integer",
+      minimum: 1,
+      maximum: 10_000,
+    });
   });
 
   it("checkPermissions flags .env files", async () => {
