@@ -32,7 +32,11 @@ function stringValue(value: unknown): string | undefined {
 
 function stringArray(value: unknown): string[] | undefined {
   if (!Array.isArray(value)) return undefined;
-  const result = value.flatMap((item) => (typeof item === "string" && item.trim() ? [item.trim()] : []));
+  const result: string[] = [];
+  for (const item of value) {
+    if (typeof item !== "string" || !item.trim()) return undefined;
+    result.push(item.trim());
+  }
   return result.length > 0 ? result : undefined;
 }
 
@@ -199,7 +203,16 @@ function summarizeManifest(
   const description = stringValue(raw["description"]);
   if (!description) issues.push("missing plugin description");
 
-  const entryPoint = stringValue(raw["entry_point"]) ?? "dist/index.js";
+  const rawEntryPoint = raw["entry_point"];
+  let entryPoint = "dist/index.js";
+  if (rawEntryPoint !== undefined) {
+    const parsedEntryPoint = stringValue(rawEntryPoint);
+    if (parsedEntryPoint) {
+      entryPoint = parsedEntryPoint;
+    } else {
+      issues.push("entry_point must be a non-empty string");
+    }
+  }
   if (pluginDir) {
     const resolvedEntryPoint = path.resolve(pluginDir, entryPoint);
     const boundary = pluginDir.endsWith(path.sep) ? pluginDir : `${pluginDir}${path.sep}`;
