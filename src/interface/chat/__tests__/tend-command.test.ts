@@ -225,6 +225,14 @@ describe("TendCommand", () => {
         }),
       }));
       expect(result.message).toContain("Started");
+      expect(result.message.startsWith("Next: ask for progress here")).toBe(true);
+      expect(result.message.split("\n")[0]).toBe("Next: ask for progress here.");
+      expect(result.message).toContain("Next: ask for progress here");
+      expect(result.message).toContain("/status goal-abc");
+      expect(result.message).toContain("pulseed status --goal goal-abc");
+      expect(result.message).toContain(`pulseed runtime run ${result.backgroundRunId}`);
+      expect(result.message).toContain("Diagnostic details:");
+      expect(result.message).not.toContain("Run 'pulseed status' to check progress.");
     });
 
     it("creates a DurableLoop background run with compatible wire tokens and forwarded metadata", async () => {

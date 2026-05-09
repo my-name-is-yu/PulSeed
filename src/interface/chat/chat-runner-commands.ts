@@ -5,7 +5,7 @@ import type { LoadedChatSession } from "./chat-session-store.js";
 import { ChatHistory, type ChatSession, type ChatUsageCounter } from "./chat-history.js";
 import { ChatSessionCatalog } from "./chat-session-store.js";
 import { resolveGitRoot } from "../../platform/observation/context-provider.js";
-import { TendCommand, type TendDeps } from "./tend-command.js";
+import { TendCommand, formatTendProgressActions, type TendDeps } from "./tend-command.js";
 import { EventSubscriber } from "./event-subscriber.js";
 import type { ChatEvent } from "./chat-events.js";
 import { createRuntimeSessionRegistry } from "../../runtime/session-registry/index.js";
@@ -344,10 +344,23 @@ export class ChatRunnerCommandHandler {
           elapsed_ms: Date.now() - start,
         };
       }
-      const shortId = goalId.length > 12 ? goalId.slice(0, 12) : goalId;
+      const goalLabel = result.goalTitle ? `"${result.goalTitle}"` : "your goal";
+      const iterNote = maxIterations !== undefined ? ` (max ${maxIterations} iterations)` : "";
+      const diagnosticLines = [
+        "Diagnostic details:",
+        `- Goal: ${goalId}`,
+      ];
+      if (result.backgroundRunId) {
+        diagnosticLines.push(`- Background run: ${result.backgroundRunId}`);
+      }
       return {
         success: true,
-        output: `[tend] ${shortId}: Started — daemon is now tending your goal${maxIterations !== undefined ? ` (max ${maxIterations} iterations)` : ""}.\nBackground run: ${result.backgroundRunId}\nRun 'pulseed status' to check progress.`,
+        output: [
+          formatTendProgressActions(goalId, result.backgroundRunId),
+          "",
+          `Started tending ${goalLabel} in the background${iterNote}.`,
+          ...diagnosticLines,
+        ].join("\n"),
         elapsed_ms: Date.now() - start,
       };
     } catch (err) {

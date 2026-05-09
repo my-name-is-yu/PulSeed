@@ -1653,6 +1653,14 @@ describe("ChatRunner", () => {
         await new Promise((resolve) => setTimeout(resolve, 0));
 
         expect(result.success).toBe(true);
+        expect(result.output.startsWith("Next: ask for progress here")).toBe(true);
+        expect(result.output.split("\n")[0]).toBe("Next: ask for progress here.");
+        expect(result.output).toContain("Next: ask for progress here");
+        expect(result.output).toContain("/status goal-xyz");
+        expect(result.output).toContain("pulseed status --goal goal-xyz");
+        expect(result.output).toContain("pulseed runtime run run:coreloop:");
+        expect(result.output).toContain("Diagnostic details:");
+        expect(result.output).not.toContain("Run 'pulseed status' to check progress.");
         expect(daemonClient.startGoal).toHaveBeenCalledWith("goal-xyz", expect.objectContaining({
           backgroundRun: expect.objectContaining({
             backgroundRunId: expect.stringMatching(/^run:coreloop:/),
@@ -1670,6 +1678,50 @@ describe("ChatRunner", () => {
         ))).toBe(true);
       } finally {
         vi.unstubAllGlobals();
+      }
+    });
+
+    it("/tend <goal-id> returns valid progress commands without bare CLI status", async () => {
+      const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "chat-runner-tend-direct-"));
+      try {
+        const daemonClient = {
+          startGoal: vi.fn().mockResolvedValue(undefined),
+        };
+        const stateManager = {
+          ...makeMockStateManager(),
+          getBaseDir: vi.fn().mockReturnValue(baseDir),
+          loadGoal: vi.fn().mockResolvedValue(makeGoal("goal-xyz", {
+            title: "Tend test goal",
+            dimensions: [],
+          })),
+        } as unknown as StateManager;
+        const runner = new ChatRunner(makeDeps({
+          stateManager,
+          daemonClient: daemonClient as never,
+          llmClient: createSingleMockLLMClient("unused"),
+          goalNegotiator: {
+            negotiate: vi.fn(),
+          } as unknown as GoalNegotiator,
+        }));
+
+        const result = await runner.execute("/tend goal-xyz", "/repo");
+
+        expect(result.success).toBe(true);
+        expect(result.output.startsWith("Next: ask for progress here")).toBe(true);
+        expect(result.output.split("\n")[0]).toBe("Next: ask for progress here.");
+        expect(result.output).toContain("Next: ask for progress here");
+        expect(result.output).toContain("/status goal-xyz");
+        expect(result.output).toContain("pulseed status --goal goal-xyz");
+        expect(result.output).toContain("pulseed runtime run run:coreloop:");
+        expect(result.output).toContain("Diagnostic details:");
+        expect(result.output).not.toContain("Run 'pulseed status' to check progress.");
+        expect(daemonClient.startGoal).toHaveBeenCalledWith("goal-xyz", expect.objectContaining({
+          backgroundRun: expect.objectContaining({
+            backgroundRunId: expect.stringMatching(/^run:coreloop:/),
+          }),
+        }));
+      } finally {
+        fs.rmSync(baseDir, { recursive: true, force: true });
       }
     });
 

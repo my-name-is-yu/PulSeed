@@ -212,5 +212,5 @@ Tasks executed:
 | Daemon not installed/available | Fall back to in-process DurableLoop (blocking, with warning) |
 | No chat history (empty `/tend`) | Ask user to describe what they want first |
 | Goal generation fails (LLM error) | Show error, suggest manual goal creation |
-| EventServer unreachable | Degrade gracefully — no notifications, suggest `pulseed status` |
+| EventServer unreachable | Degrade gracefully — no notifications, suggest `/status <goal-id>` in chat and `pulseed status --goal <goal-id>` for CLI diagnostics |
 | User types `/tend` then `/tend` again | Second tend creates a new goal + daemon (parallel tending) |

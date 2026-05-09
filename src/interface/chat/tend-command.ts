@@ -61,6 +61,20 @@ Summarize what the user wants to achieve in 1-3 sentences. Focus on concrete, me
 Be specific -- mention file names, metrics, or technical goals if present.
 Output only the summary, no preamble.`;
 
+export function formatTendProgressActions(goalId: string, backgroundRunId?: string | null): string {
+  const lines = [
+    "Next: ask for progress here.",
+    `Chat diagnostic: /status ${goalId}.`,
+    `Shell diagnostic: pulseed status --goal ${goalId}.`,
+  ];
+  if (backgroundRunId) {
+    lines.push(`Run diagnostic: pulseed runtime run ${backgroundRunId}.`);
+  } else {
+    lines.push(`Run details: /status ${goalId} will show linked background work when available.`);
+  }
+  return lines.join("\n");
+}
+
 // --- TendCommand ---
 
 export class TendCommand {
@@ -259,7 +273,14 @@ export class TendCommand {
         goalId: goal.id,
         goalTitle: goal.title,
         backgroundRunId: run.id,
-        message: `🌱 [tend] ${goal.id}: Started — "${goal.title}"${iterNote}\nBackground run: ${run.id}\nRun 'pulseed status' to check progress.`,
+        message: [
+          formatTendProgressActions(goal.id, run.id),
+          "",
+          `Started tending "${goal.title}" in the background${iterNote}.`,
+          "Diagnostic details:",
+          `- Goal: ${goal.id}`,
+          `- Background run: ${run.id}`,
+        ].join("\n"),
       };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
