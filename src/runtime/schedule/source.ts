@@ -1,19 +1,29 @@
 import { z } from "zod";
 
+const ExternalSchedulePositiveSafeIntegerSchema = z.number()
+  .finite()
+  .int()
+  .min(1)
+  .max(Number.MAX_SAFE_INTEGER);
+
+const ExternalScheduleTriggerSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("cron"),
+    expression: z.string().min(1),
+  }),
+  z.object({
+    type: z.literal("interval"),
+    seconds: ExternalSchedulePositiveSafeIntegerSchema,
+  }),
+]);
+
 // External schedule entry from a plugin source (e.g., Google Calendar, Jira)
 export const ExternalScheduleEntrySchema = z.object({
   external_id: z.string(),           // ID in the external system
   source_id: z.string(),             // which IScheduleSource provided this
   name: z.string(),
   layer: z.enum(['heartbeat', 'probe', 'cron', 'goal_trigger']),
-  trigger: z.object({
-    type: z.enum(['cron', 'interval']),
-    expression: z.string().optional(),  // for cron type
-    seconds: z.number().optional(),     // for interval type
-  }).refine(
-    (t) => (t.type === 'cron' ? !!t.expression : !!t.seconds),
-    { message: 'cron trigger requires expression, interval trigger requires seconds' }
-  ),
+  trigger: ExternalScheduleTriggerSchema,
   enabled: z.boolean().default(true),
   heartbeat: z.unknown().optional(),
   probe: z.unknown().optional(),
