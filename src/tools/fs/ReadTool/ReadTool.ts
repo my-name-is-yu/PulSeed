@@ -6,10 +6,14 @@ import { validateFilePath } from "../FileValidationTool/FileValidationTool.js";
 import { DESCRIPTION } from "./prompt.js";
 import { TAGS, PERMISSION_LEVEL, MAX_OUTPUT_CHARS, READ_ONLY } from "./constants.js";
 
+const READ_DEFAULT_LIMIT = 2_000;
+const READ_MAX_OFFSET = 1_000_000;
+const READ_MAX_LIMIT = 10_000;
+
 export const ReadInputSchema = z.object({
   file_path: z.string().min(1),
-  offset: z.number().min(0).optional(),
-  limit: z.number().min(1).default(2000),
+  offset: z.number().int().min(0).max(READ_MAX_OFFSET).optional(),
+  limit: z.number().int().min(1).max(READ_MAX_LIMIT).default(READ_DEFAULT_LIMIT),
 });
 export type ReadInput = z.infer<typeof ReadInputSchema>;
 
