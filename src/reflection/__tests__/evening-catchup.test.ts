@@ -4,6 +4,7 @@ import * as path from "node:path";
 import { makeTempDir, cleanupTempDir } from "../../../tests/helpers/temp-dir.js";
 import { createMockLLMClient } from "../../../tests/helpers/mock-llm.js";
 import { runEveningCatchup } from "../evening-catchup.js";
+import { todayISO } from "../reflection-utils.js";
 import type { Goal } from "../../base/types/goal.js";
 import { upsertRelationshipProfileItem } from "../../platform/profile/relationship-profile.js";
 
@@ -188,6 +189,42 @@ describe("runEveningCatchup", () => {
     expect(prompt).toContain("Prefer catch-up reports to identify stalls directly.");
     expect(prompt).not.toContain("Resident-only evening detail should not affect catch-up.");
     expect(prompt).not.toContain("Sensitive catch-up detail should stay out of prompts.");
+  });
+
+  it("ignores invalid persisted morning reports before prompting", async () => {
+    tmpDir = makeTempDir();
+    fs.mkdirSync(path.join(tmpDir, "reflections"), { recursive: true });
+    fs.writeFileSync(
+      path.join(tmpDir, "reflections", `morning-${todayISO()}.json`),
+      JSON.stringify({
+        date: todayISO(),
+        created_at: new Date().toISOString(),
+        goals_reviewed: Number.MAX_SAFE_INTEGER + 1,
+        priorities: [],
+        suggestions: ["unsafe morning plan should not appear"],
+        concerns: [],
+      }),
+      "utf-8"
+    );
+    const goals = [makeGoal("g1")];
+    const stateManager = makeStateManager(goals);
+    const sendMessage = vi.fn().mockResolvedValue({ content: VALID_LLM_RESPONSE });
+    const llmClient = {
+      sendMessage,
+      parseJSON: vi.fn().mockImplementation((content: string, schema: { parse(value: unknown): unknown }) =>
+        schema.parse(JSON.parse(content))
+      ),
+    };
+
+    await runEveningCatchup({
+      stateManager: stateManager as never,
+      llmClient: llmClient as never,
+      baseDir: tmpDir,
+    });
+
+    const prompt = sendMessage.mock.calls[0]?.[0]?.[0]?.content ?? "";
+    expect(prompt).not.toContain("Morning plan:");
+    expect(prompt).not.toContain("unsafe morning plan should not appear");
   });
 
   it("LLM error: returns partial report without crashing", async () => {
