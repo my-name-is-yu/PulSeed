@@ -6,12 +6,8 @@ import type {
   AgentLoopModelClient,
   AgentLoopModelTurnProtocol,
   AgentLoopToolCall,
-  AgentLoopToolObservation,
-  AgentLoopToolObservationExecution,
-  AgentLoopToolObservationState,
 } from "./agent-loop-model.js";
 import type { AgentLoopCommandResult, AgentLoopFailureReason, AgentLoopResult, AgentLoopToolResultSummary } from "./agent-loop-result.js";
-import type { AgentLoopToolOutput } from "./agent-loop-tool-output.js";
 import type { AgentLoopToolRuntime } from "./agent-loop-tool-runtime.js";
 import type { AgentLoopToolRouter } from "./agent-loop-tool-router.js";
 import type { AgentLoopTurnContext } from "./agent-loop-turn-context.js";
@@ -32,26 +28,16 @@ import {
   captureAgentLoopWorkspaceSnapshot,
   collectAgentLoopChangedFiles,
 } from "./agent-loop-workspace-snapshot.js";
+import {
+  createAgentLoopToolObservation,
+  readToolResultCheckOnly,
+} from "./bounded-agent-loop-tool-observation.js";
 
 export interface BoundedAgentLoopRunnerDeps {
   modelClient: AgentLoopModelClient;
   toolRouter: AgentLoopToolRouter;
   toolRuntime: AgentLoopToolRuntime;
   compactor?: AgentLoopCompactor;
-}
-
-function readToolResultCheckOnly(result: AgentLoopToolOutput): boolean | undefined {
-  const data = result.rawResult?.data;
-  if (
-    result.toolName === "apply_patch" &&
-    data &&
-    typeof data === "object" &&
-    "checkOnly" in data &&
-    typeof (data as { checkOnly?: unknown }).checkOnly === "boolean"
-  ) {
-    return (data as { checkOnly: boolean }).checkOnly;
-  }
-  return undefined;
 }
 
 const MIN_MUTATING_TOOL_BATCH_REMAINING_MS = 1_000;
@@ -438,11 +424,11 @@ export class BoundedAgentLoopRunner {
       }
       for (const result of toolResults) {
         const sourceCall = response.toolCalls.find((call) => call.id === result.callId);
-        const observation = this.createToolObservation(
+        const observation = createAgentLoopToolObservation({
           result,
           sourceCall,
           toolBatchTimedOut,
-        );
+        });
         if (result.execution?.status !== "not_executed") {
           calledTools.add(result.toolName);
         }
@@ -956,69 +942,6 @@ export class BoundedAgentLoopRunner {
     calledTools: Set<string>,
   ): string[] {
     return [...(turn.toolPolicy.requiredTools ?? [])].filter((toolName) => !calledTools.has(toolName));
-  }
-
-  private createToolObservation(
-    result: Awaited<ReturnType<AgentLoopToolRuntime["executeBatch"]>>[number],
-    sourceCall: AgentLoopToolCall | undefined,
-    toolBatchTimedOut: boolean,
-  ): AgentLoopToolObservation;
-  private createToolObservation(
-    result: Awaited<ReturnType<AgentLoopToolRuntime["executeBatch"]>>[number],
-    sourceCall: AgentLoopToolCall | undefined,
-    toolBatchTimedOut: boolean,
-  ): AgentLoopToolObservation {
-    const state = this.toolObservationState(result, toolBatchTimedOut);
-    const execution = this.toolObservationExecution(result, state);
-    const rawResult = result.rawResult;
-    return {
-      type: "tool_observation",
-      callId: result.callId,
-      toolName: result.toolName,
-      arguments: sourceCall?.input ?? {},
-      state,
-      success: result.success,
-      execution,
-      durationMs: result.durationMs,
-      output: {
-        content: result.content,
-        ...(rawResult?.summary ? { summary: rawResult.summary } : {}),
-        ...(rawResult && Object.prototype.hasOwnProperty.call(rawResult, "data") ? { data: rawResult.data } : {}),
-        ...(rawResult?.error ? { error: rawResult.error } : {}),
-      },
-      ...(result.command ? { command: result.command } : {}),
-      ...(result.cwd ? { cwd: result.cwd } : {}),
-      ...(result.artifacts ? { artifacts: result.artifacts } : {}),
-      ...(result.truncated ? { truncated: result.truncated } : {}),
-      ...(result.activityCategory ? { activityCategory: result.activityCategory } : {}),
-    };
-  }
-
-  private toolObservationState(
-    result: Awaited<ReturnType<AgentLoopToolRuntime["executeBatch"]>>[number],
-    toolBatchTimedOut: boolean,
-  ): AgentLoopToolObservationState {
-    const reason = result.execution?.reason;
-    if (reason === "timed_out" || (toolBatchTimedOut && result.disposition === "cancelled")) return "timed_out";
-    if (reason === "interrupted" || result.disposition === "cancelled") return "interrupted";
-    if (reason === "approval_denied" || reason === "permission_denied") return "denied";
-    if (reason === "policy_blocked" || reason === "dry_run") return "blocked";
-    return result.success ? "success" : "failure";
-  }
-
-  private toolObservationExecution(
-    result: Awaited<ReturnType<AgentLoopToolRuntime["executeBatch"]>>[number],
-    state: AgentLoopToolObservationState,
-  ): AgentLoopToolObservationExecution {
-    if (result.execution) return result.execution;
-    if (state === "timed_out" || state === "interrupted") {
-      return {
-        status: "executed",
-        reason: state === "timed_out" ? "timed_out" : "interrupted",
-        message: result.content,
-      };
-    }
-    return { status: "executed" };
   }
 
   private async createTurnProtocol<TOutput>(
