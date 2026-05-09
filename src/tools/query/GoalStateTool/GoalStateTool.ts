@@ -7,7 +7,7 @@ import { TAGS, PERMISSION_LEVEL, MAX_OUTPUT_CHARS } from "./constants.js";
 export const GoalStateInputSchema = z.object({
   goalId: z.string().optional(),
   includeTree: z.boolean().default(false),
-});
+}).strict();
 export type GoalStateInput = z.infer<typeof GoalStateInputSchema>;
 
 export class GoalStateTool implements ITool<GoalStateInput, unknown> {

@@ -15,7 +15,7 @@ import { DESCRIPTION } from "./prompt.js";
 export const TaskGetInputSchema = z.object({
   goalId: z.string(),
   taskId: z.string(),
-});
+}).strict();
 export type TaskGetInput = z.infer<typeof TaskGetInputSchema>;
 
 export class TaskGetTool implements ITool<TaskGetInput, unknown> {

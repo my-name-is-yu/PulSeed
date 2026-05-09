@@ -17,7 +17,7 @@ export const KnowledgeQueryInputSchema = z.object({
   goalId: z.string().optional(),
   limit: z.number().int().min(1).max(50).default(5),
   type: z.enum(["semantic", "keyword"]).default("keyword"),
-});
+}).strict();
 export type KnowledgeQueryInput = z.infer<typeof KnowledgeQueryInputSchema>;
 
 export interface KnowledgeQueryResultItem {

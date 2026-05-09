@@ -16,7 +16,7 @@ export const TaskListInputSchema = z.object({
   goalId: z.string(),
   limit: z.number().int().positive().max(100).default(10),
   status: z.string().optional(),
-});
+}).strict();
 export type TaskListInput = z.infer<typeof TaskListInputSchema>;
 
 interface TaskListItem {
