@@ -29,9 +29,10 @@ export interface ChatTurnModelVisibleContext {
   };
   session: {
     sessionId: string | null;
-    cwd: string;
-    gitRoot: string;
-    nativeAgentLoopStatePath: string | null;
+	    cwd: string;
+	    gitRoot: string;
+	    nativeAgentLoopSessionId: string | null;
+	    nativeAgentLoopStatePath: string | null;
     route: {
       kind: string;
       reason: string;
@@ -97,8 +98,9 @@ export interface ChatTurnContextInput {
   sessionId: string | null;
   cwd: string;
   gitRoot: string;
-  executionCwd: string;
-  nativeAgentLoopStatePath: string | null;
+	  executionCwd: string;
+	  nativeAgentLoopSessionId?: string | null;
+	  nativeAgentLoopStatePath: string | null;
   selectedRoute: SelectedChatRoute | null;
   input: string;
   userInput: UserInput;
@@ -205,9 +207,10 @@ export function buildChatTurnContext(input: ChatTurnContextInput): ChatTurnConte
       },
       session: {
         sessionId: input.sessionId,
-        cwd: input.cwd,
-        gitRoot: input.gitRoot,
-        nativeAgentLoopStatePath: input.nativeAgentLoopStatePath,
+	        cwd: input.cwd,
+	        gitRoot: input.gitRoot,
+	        nativeAgentLoopSessionId: input.nativeAgentLoopSessionId ?? null,
+	        nativeAgentLoopStatePath: input.nativeAgentLoopStatePath,
         route,
       },
       input: {

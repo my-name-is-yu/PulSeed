@@ -5,6 +5,7 @@ import { StateManager } from "../../../base/state/state-manager.js";
 import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 import { ScheduleHistoryStore } from "../../../runtime/schedule/history.js";
 import { openControlDatabase } from "../../../runtime/store/index.js";
+import { ChatSessionDataStore } from "../../chat/chat-session-data-store.js";
 
 async function runCLI(tmpDir: string, ...args: string[]): Promise<number> {
   const runner = new CLIRunner(tmpDir);
@@ -113,7 +114,7 @@ describe("CLI usage command", () => {
   });
 
   it("reports session usage totals and phase breakdown", async () => {
-    await stateManager.writeRaw("chat/sessions/session-usage.json", {
+    await new ChatSessionDataStore(tmpDir).save({
       id: "session-usage",
       cwd: "/repo",
       createdAt: new Date().toISOString(),
@@ -137,7 +138,7 @@ describe("CLI usage command", () => {
   });
 
   it("normalizes unsafe session usage counters before reporting", async () => {
-    await stateManager.writeRaw("chat/sessions/session-unsafe-usage.json", {
+    await new ChatSessionDataStore(tmpDir).save({
       id: "session-unsafe-usage",
       cwd: "/repo",
       createdAt: new Date().toISOString(),
@@ -152,10 +153,11 @@ describe("CLI usage command", () => {
           execution: {
             inputTokens: 2,
             outputTokens: Number.MAX_SAFE_INTEGER,
+            totalTokens: Number.MAX_SAFE_INTEGER,
           },
         },
       },
-    });
+    } as never);
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
     const code = await runCLI(tmpDir, "usage", "session", "session-unsafe-usage");

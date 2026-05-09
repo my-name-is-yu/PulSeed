@@ -13,9 +13,9 @@ import type { ChatRunResult, ChatRunnerRouteHost, RuntimeControlChatContext } fr
 import type { SelectedChatRoute } from "./ingress-router.js";
 import type { ChatEventContext } from "./chat-events.js";
 import {
-  normalizeAgentLoopSessionState,
   type AgentLoopSessionState,
 } from "../../orchestrator/execution/agent-loop/agent-loop-session-state.js";
+import { AgentLoopSessionStateCatalog } from "../../orchestrator/execution/agent-loop/agent-loop-session-db-store.js";
 import { resolveExecutionPolicy, type ExecutionPolicy } from "../../orchestrator/execution/agent-loop/execution-policy.js";
 import type { AssistantBuffer } from "./chat-runner-event-bridge.js";
 import type { SetupSecretIntakeResult } from "./setup-secret-intake.js";
@@ -315,7 +315,7 @@ export async function executeAgentLoopRoute(
         runtimeControlAllowed: turnContext.modelVisible.runtime.runtimeControlAllowed,
         runtimeControlApprovalMode: turnContext.modelVisible.runtime.approvalMode,
       },
-      ...(host.getNativeAgentLoopStatePath() ? { resumeStatePath: host.getNativeAgentLoopStatePath()! } : {}),
+      ...(host.getNativeAgentLoopSessionId() ? { resumeSessionId: host.getNativeAgentLoopSessionId()! } : {}),
       ...(resumeState ? { resumeState } : {}),
       ...(resumeOnly ? { resumeOnly: true } : {}),
       systemPrompt: renderSystemPromptWithTurnContext(
@@ -328,6 +328,14 @@ export async function executeAgentLoopRoute(
     const agentLoopUsage = result.agentLoop?.usage
       ? normalizeUsageCounter(result.agentLoop.usage)
       : zeroUsageCounter();
+    if (result.agentLoop) {
+      (history as unknown as {
+        setAgentLoopSessionIdentity(input: { sessionId: string | null; traceId?: string | null }): void;
+      }).setAgentLoopSessionIdentity({
+        sessionId: result.agentLoop.sessionId,
+        traceId: result.agentLoop.traceId,
+      });
+    }
     if (hasUsage(agentLoopUsage)) {
       history.recordUsage("agentloop", agentLoopUsage);
     }
@@ -1106,30 +1114,15 @@ type AgentLoopResumeStateResult =
   | { kind: "blocked"; code: "resume_state_missing" | "resume_state_not_resumable"; message: string };
 
 async function loadResumableAgentLoopState(host: ChatRunnerRouteHost): Promise<AgentLoopResumeStateResult> {
-  if (!host.getNativeAgentLoopStatePath()) {
+  const sessionId = host.getNativeAgentLoopSessionId();
+  if (!sessionId) {
     return {
       kind: "blocked",
       code: "resume_state_missing",
       message: formatMissingResumableChatStateMessage(),
     };
   }
-  const raw = await host.deps.stateManager.readRaw(host.getNativeAgentLoopStatePath()!);
-  if (!raw) {
-    return {
-      kind: "blocked",
-      code: "resume_state_missing",
-      message: formatMissingResumableChatStateMessage(),
-    };
-  }
-  const rawStatus = rawAgentLoopSessionStatus(raw);
-  if (rawStatus !== "running") {
-    return {
-      kind: "blocked",
-      code: "resume_state_not_resumable",
-      message: formatNonResumableAgentLoopStateMessage(rawStatus),
-    };
-  }
-  const state = normalizeAgentLoopSessionState(raw);
+  const state = await new AgentLoopSessionStateCatalog(host.getProviderConfigBaseDir()).load(sessionId);
   if (!state) {
     return {
       kind: "blocked",
@@ -1159,12 +1152,6 @@ function formatNonResumableAgentLoopStateMessage(status: AgentLoopSessionState["
     return "The saved chat work already completed; inspect what finished or start a new attempt.";
   }
   return "The saved chat work is not in a state PulSeed can safely continue; inspect what was running or start a new attempt.";
-}
-
-function rawAgentLoopSessionStatus(value: unknown): AgentLoopSessionState["status"] | "unknown" {
-  if (!value || typeof value !== "object") return "unknown";
-  const raw = (value as Record<string, unknown>)["status"];
-  return raw === "running" || raw === "completed" || raw === "failed" ? raw : "unknown";
 }
 
 function activateToolSearchResults(activatedTools: Set<string>, toolResult: string): void {

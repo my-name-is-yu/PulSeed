@@ -16,6 +16,8 @@ import { RuntimeBudgetStore } from "../../../runtime/store/budget-store.js";
 import { RuntimeHealthStore } from "../../../runtime/store/health-store.js";
 import { SupervisorStateStore } from "../../../runtime/store/supervisor-state-store.js";
 import * as daemonClient from "../../../runtime/daemon/client.js";
+import { ChatSessionDataStore } from "../../chat/chat-session-data-store.js";
+import { SqliteAgentLoopSessionStateStore } from "../../../orchestrator/execution/agent-loop/agent-loop-session-db-store.js";
 
 describe("runtime registry CLI commands", () => {
   let tmpDir: string;
@@ -823,19 +825,20 @@ describe("runtime registry CLI commands", () => {
   });
 
   async function writeConversationWithRunningAgent(): Promise<void> {
-    await stateManager.writeRaw("chat/sessions/chat-a.json", {
+    await new ChatSessionDataStore(tmpDir).save({
       id: "chat-a",
       cwd: "/repo",
       createdAt: "2026-04-25T00:00:00.000Z",
       updatedAt: "2026-04-25T00:10:00.000Z",
       title: "Runtime registry",
       messages: [],
-      agentLoopStatePath: "chat/agentloop/agent-a.state.json",
+      agentLoopSessionId: "agent-session-a",
+      agentLoopTraceId: "trace-a",
       agentLoopStatus: "running",
       agentLoopResumable: true,
       agentLoopUpdatedAt: "2026-04-25T00:11:00.000Z",
     });
-    await stateManager.writeRaw("chat/agentloop/agent-a.state.json", {
+    await new SqliteAgentLoopSessionStateStore(tmpDir, "agent-session-a", "chat").save({
       sessionId: "agent-session-a",
       traceId: "trace-a",
       turnId: "turn-a",

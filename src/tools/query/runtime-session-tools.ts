@@ -104,6 +104,8 @@ function toChatSessionRecord(session: LoadedChatSession): ChatSession {
     ...(session.parentNotifiedAt ? { parentNotifiedAt: session.parentNotifiedAt } : {}),
     ...(session.compactionSummary ? { compactionSummary: session.compactionSummary } : {}),
     ...(session.title ? { title: session.title } : {}),
+    ...(session.agentLoopSessionId ? { agentLoopSessionId: session.agentLoopSessionId } : {}),
+    ...(session.agentLoopTraceId ? { agentLoopTraceId: session.agentLoopTraceId } : {}),
     ...(session.agentLoopStatePath ? { agentLoopStatePath: session.agentLoopStatePath } : {}),
     ...(session.agentLoopStatus === "running" || session.agentLoopStatus === "completed" || session.agentLoopStatus === "failed"
       ? { agentLoopStatus: session.agentLoopStatus }
@@ -369,7 +371,6 @@ class RuntimeSessionToolService {
       sessionStatus: input.message?.trim() ? "queued" : "idle",
       parentNotificationStatus: parentSessionId ? "pending" : "none",
       ...(baseSession?.notificationReplyTarget ? { notificationReplyTarget: baseSession.notificationReplyTarget } : {}),
-      agentLoopStatePath: `chat/agentloop/${sessionId}.state.json`,
     });
 
     const history = ChatHistory.fromSession(this.stateManager, persisted);

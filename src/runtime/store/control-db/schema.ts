@@ -7,7 +7,7 @@ export interface ControlDbMigration {
   checksum: string;
 }
 
-export const CONTROL_DB_SCHEMA_VERSION = 4;
+export const CONTROL_DB_SCHEMA_VERSION = 5;
 
 export const CONTROL_DB_INITIAL_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS control_schema_migrations (
@@ -376,6 +376,96 @@ CREATE INDEX IF NOT EXISTS schedule_run_history_order_idx
   ON schedule_run_history(sort_order, history_id);
 `.trim();
 
+export const CONTROL_DB_CHAT_AGENTLOOP_SESSION_SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS chat_sessions (
+  session_id TEXT PRIMARY KEY,
+  cwd TEXT NOT NULL,
+  title TEXT,
+  parent_session_id TEXT,
+  session_status TEXT,
+  agent_loop_session_id TEXT,
+  agent_loop_trace_id TEXT,
+  message_count INTEGER NOT NULL CHECK (message_count >= 0),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  activity_at_ms INTEGER NOT NULL,
+  session_json TEXT NOT NULL CHECK (json_valid(session_json))
+);
+
+CREATE INDEX IF NOT EXISTS chat_sessions_activity_idx
+  ON chat_sessions(activity_at_ms DESC, updated_at DESC, session_id);
+
+CREATE INDEX IF NOT EXISTS chat_sessions_cwd_idx
+  ON chat_sessions(cwd, activity_at_ms DESC, session_id);
+
+CREATE INDEX IF NOT EXISTS chat_sessions_agent_loop_idx
+  ON chat_sessions(agent_loop_session_id, agent_loop_trace_id);
+
+CREATE TABLE IF NOT EXISTS chat_cross_platform_sessions (
+  session_key TEXT PRIMARY KEY,
+  chat_session_id TEXT,
+  identity_key TEXT,
+  platform TEXT,
+  conversation_id TEXT,
+  user_id TEXT,
+  cwd TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  last_used_at TEXT NOT NULL,
+  info_json TEXT NOT NULL CHECK (json_valid(info_json))
+);
+
+CREATE INDEX IF NOT EXISTS chat_cross_platform_sessions_chat_idx
+  ON chat_cross_platform_sessions(chat_session_id, last_used_at DESC, session_key);
+
+CREATE INDEX IF NOT EXISTS chat_cross_platform_sessions_identity_idx
+  ON chat_cross_platform_sessions(identity_key, platform, conversation_id, user_id);
+
+CREATE TABLE IF NOT EXISTS agent_loop_session_states (
+  session_id TEXT PRIMARY KEY,
+  trace_id TEXT NOT NULL,
+  parent_session_id TEXT,
+  kind TEXT NOT NULL CHECK (kind IN ('task', 'chat', 'review', 'unknown')),
+  status TEXT NOT NULL CHECK (status IN ('running', 'completed', 'failed')),
+  goal_id TEXT NOT NULL,
+  task_id TEXT,
+  cwd TEXT NOT NULL,
+  turn_id TEXT NOT NULL,
+  model_ref TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  state_json TEXT NOT NULL CHECK (json_valid(state_json))
+);
+
+CREATE INDEX IF NOT EXISTS agent_loop_session_states_trace_idx
+  ON agent_loop_session_states(trace_id, updated_at, session_id);
+
+CREATE INDEX IF NOT EXISTS agent_loop_session_states_status_idx
+  ON agent_loop_session_states(kind, status, updated_at, session_id);
+
+CREATE INDEX IF NOT EXISTS agent_loop_session_states_goal_idx
+  ON agent_loop_session_states(goal_id, updated_at, session_id);
+
+CREATE TABLE IF NOT EXISTS agent_loop_trace_events (
+  event_id TEXT PRIMARY KEY,
+  trace_id TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  turn_id TEXT NOT NULL,
+  goal_id TEXT NOT NULL,
+  event_type TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  sequence INTEGER NOT NULL CHECK (sequence >= 0),
+  event_json TEXT NOT NULL CHECK (json_valid(event_json))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS agent_loop_trace_events_trace_sequence_idx
+  ON agent_loop_trace_events(trace_id, sequence);
+
+CREATE INDEX IF NOT EXISTS agent_loop_trace_events_session_idx
+  ON agent_loop_trace_events(session_id, created_at, event_id);
+
+CREATE INDEX IF NOT EXISTS agent_loop_trace_events_type_idx
+  ON agent_loop_trace_events(event_type, created_at, event_id);
+`.trim();
+
 export function controlDbMigrationChecksum(sql: string): string {
   return createHash("sha256").update(sql.trim()).digest("hex");
 }
@@ -413,5 +503,10 @@ export const CONTROL_DB_MIGRATIONS: readonly ControlDbMigration[] = [
     4,
     "queue-daemon-schedule-supervisor-state",
     CONTROL_DB_QUEUE_DAEMON_SCHEDULE_SCHEMA_SQL
+  ),
+  createControlDbMigration(
+    5,
+    "chat-agentloop-session-data-plane",
+    CONTROL_DB_CHAT_AGENTLOOP_SESSION_SCHEMA_SQL
   ),
 ];

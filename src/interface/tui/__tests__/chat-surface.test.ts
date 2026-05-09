@@ -1,9 +1,10 @@
 import { afterEach, describe, it, expect, vi } from "vitest";
-import type { StateManager } from "../../../base/state/state-manager.js";
+import { StateManager } from "../../../base/state/state-manager.js";
 import type { IAdapter, AgentResult } from "../../../orchestrator/execution/adapter-layer.js";
 import type { ChatRunnerDeps } from "../../chat/chat-runner.js";
 import type { ChatEvent } from "../../chat/chat-events.js";
 import { CrossPlatformChatSessionManager } from "../../chat/cross-platform-session.js";
+import { ChatSessionDataStore } from "../../chat/chat-session-data-store.js";
 import { createTextUserInput } from "../../chat/user-input.js";
 import { SharedManagerTuiChatSurface } from "../chat-surface.js";
 import { createMockLLMClient, createSingleMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
@@ -47,13 +48,6 @@ function makeDeps(overrides: Partial<ChatRunnerDeps> = {}): ChatRunnerDeps {
   };
 }
 
-function getSessionPaths(stateManager: StateManager): string[] {
-  const writeRawMock = stateManager.writeRaw as ReturnType<typeof vi.fn>;
-  return writeRawMock.mock.calls
-    .map((call: unknown[]) => call[0] as string)
-    .filter((path: string) => path.startsWith("chat/sessions/"));
-}
-
 describe("SharedManagerTuiChatSurface", () => {
   const tempDirs: string[] = [];
 
@@ -64,7 +58,10 @@ describe("SharedManagerTuiChatSurface", () => {
   });
 
 	  it("keeps a stable TUI conversation id when executeIngressMessage omits one", async () => {
-    const stateManager = makeMockStateManager();
+    const tmpDir = makeTempDir();
+    tempDirs.push(tmpDir);
+    const stateManager = new StateManager(tmpDir, undefined, { walEnabled: false });
+    await stateManager.init();
     const surface = new SharedManagerTuiChatSurface(makeDeps({ stateManager }));
     surface.startSession("/repo");
 
@@ -90,9 +87,11 @@ describe("SharedManagerTuiChatSurface", () => {
       metadata: {},
     }, "/repo");
 
-    const sessionPaths = getSessionPaths(stateManager);
-    expect(new Set(sessionPaths).size).toBe(1);
-    expect(sessionPaths[0]).toMatch(/^chat\/sessions\/.+\.json$/);
+    const sessions = await new ChatSessionDataStore(stateManager.getBaseDir()).list();
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]?.messages
+      .filter((message) => message.role === "user")
+      .map((message) => message.content)).toEqual(["first", "second"]);
 	  });
 
 	  it("routes runtime-control turns through the injected service", async () => {

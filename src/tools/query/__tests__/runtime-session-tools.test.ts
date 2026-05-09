@@ -4,6 +4,8 @@ import * as fsp from "node:fs/promises";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { StateManager } from "../../../base/state/state-manager.js";
+import { ChatSessionDataStore } from "../../../interface/chat/chat-session-data-store.js";
+import type { ChatSession } from "../../../interface/chat/chat-history.js";
 import { BackgroundRunLedger } from "../../../runtime/store/background-run-store.js";
 import { OutboxStore } from "../../../runtime/store/outbox-store.js";
 import type { ITool, ToolCallContext } from "../../types.js";
@@ -36,8 +38,12 @@ describe("runtime session tools", () => {
     await fsp.rm(tmpDir, { recursive: true, force: true });
   });
 
+  async function saveChatSession(session: ChatSession): Promise<void> {
+    await new ChatSessionDataStore(tmpDir).save(session);
+  }
+
   it("spawns a child conversation session and scopes tree listing to spawned descendants", async () => {
-    await stateManager.writeRaw("chat/sessions/root.json", {
+    await saveChatSession({
       id: "root",
       cwd: "/repo",
       createdAt: "2026-04-25T00:00:00.000Z",
@@ -45,7 +51,7 @@ describe("runtime session tools", () => {
       title: "Root",
       messages: [],
     });
-    await stateManager.writeRaw("chat/sessions/external.json", {
+    await saveChatSession({
       id: "external",
       cwd: "/repo",
       createdAt: "2026-04-25T00:00:00.000Z",
@@ -95,7 +101,7 @@ describe("runtime session tools", () => {
   });
 
   it("sends a queued message into another conversation session", async () => {
-    await stateManager.writeRaw("chat/sessions/target.json", {
+    await saveChatSession({
       id: "target",
       cwd: "/repo",
       createdAt: "2026-04-25T00:00:00.000Z",
@@ -130,7 +136,7 @@ describe("runtime session tools", () => {
   });
 
   it("marks a child session completed, appends a parent summary, and writes durable outbox notifications", async () => {
-    await stateManager.writeRaw("chat/sessions/parent.json", {
+    await saveChatSession({
       id: "parent",
       cwd: "/repo",
       createdAt: "2026-04-25T00:00:00.000Z",
@@ -143,7 +149,7 @@ describe("runtime session tools", () => {
         thread_id: "msg-1",
       },
     });
-    await stateManager.writeRaw("chat/sessions/child.json", {
+    await saveChatSession({
       id: "child",
       cwd: "/repo",
       createdAt: "2026-04-25T00:01:00.000Z",
@@ -229,7 +235,7 @@ describe("runtime session tools", () => {
   });
 
   it("persists goal linkage, waiting conditions, and ownership across spawn, claim, children, and update paths", async () => {
-    await stateManager.writeRaw("chat/sessions/root.json", {
+    await saveChatSession({
       id: "root",
       cwd: "/repo",
       createdAt: "2026-04-25T00:00:00.000Z",
@@ -307,7 +313,7 @@ describe("runtime session tools", () => {
   });
 
   it("retries a waiting child session, clears stale waiting fields, and supports explicit cancellation", async () => {
-    await stateManager.writeRaw("chat/sessions/parent.json", {
+    await saveChatSession({
       id: "parent",
       cwd: "/repo",
       createdAt: "2026-04-25T00:00:00.000Z",
@@ -319,7 +325,7 @@ describe("runtime session tools", () => {
         target_id: "chat-123",
       },
     });
-    await stateManager.writeRaw("chat/sessions/child.json", {
+    await saveChatSession({
       id: "child",
       cwd: "/repo",
       createdAt: "2026-04-25T00:01:00.000Z",
@@ -435,7 +441,7 @@ describe("runtime session tools", () => {
   });
 
   it("observes runtime runs with exact ids and epochs for later typed control", async () => {
-    await stateManager.writeRaw("chat/sessions/root.json", {
+    await saveChatSession({
       id: "root",
       cwd: "/repo",
       createdAt: "2026-04-25T00:00:00.000Z",

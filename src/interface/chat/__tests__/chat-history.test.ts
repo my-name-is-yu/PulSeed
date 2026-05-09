@@ -7,6 +7,8 @@ import {
   type ChatUsageCounter,
 } from "../chat-history.js";
 import type { StateManager } from "../../../base/state/state-manager.js";
+import { ChatSessionDataStore } from "../chat-session-data-store.js";
+import { resolveChatStateBaseDir } from "../chat-state-base-dir.js";
 
 function makeMockStateManager(): StateManager {
   return {
@@ -23,6 +25,10 @@ describe("ChatHistory", () => {
   beforeEach(() => {
     stateManager = makeMockStateManager();
   });
+
+  async function loadPersistedSession(sm: StateManager = stateManager): Promise<ChatSession | null> {
+    return new ChatSessionDataStore(resolveChatStateBaseDir(sm)).load(SESSION_ID);
+  }
 
   it("creates a session with correct id, cwd, and empty messages", () => {
     const history = new ChatHistory(stateManager, SESSION_ID, CWD);
@@ -101,40 +107,30 @@ describe("ChatHistory", () => {
     expect(history.getMessages()).toHaveLength(0);
   });
 
-  it("persist() calls stateManager.writeRaw with correct path and session data", async () => {
+  it("persist() saves the session through the chat session data store", async () => {
     const history = new ChatHistory(stateManager, SESSION_ID, CWD);
     await history.persist();
 
-    expect(stateManager.writeRaw).toHaveBeenCalledWith(
-      `chat/sessions/${SESSION_ID}.json`,
-      expect.objectContaining({
-        id: SESSION_ID,
-        cwd: CWD,
-        messages: [],
-      })
-    );
+    await expect(loadPersistedSession()).resolves.toMatchObject({
+      id: SESSION_ID,
+      cwd: CWD,
+      messages: [],
+    });
   });
 
-  it("appendUserMessage awaits persist — stateManager.writeRaw is called before returning", async () => {
-    const callOrder: string[] = [];
-    const mockWriteRaw = vi.fn().mockImplementation(async () => {
-      callOrder.push("writeRaw");
-    });
-    const sm = { writeRaw: mockWriteRaw, readRaw: vi.fn() } as unknown as StateManager;
+  it("appendUserMessage awaits DB persistence before returning", async () => {
+    const sm = makeMockStateManager();
 
     const history = new ChatHistory(sm, SESSION_ID, CWD);
     await history.appendUserMessage("persist-before-execute check");
 
-    callOrder.push("after-await");
-    expect(callOrder).toEqual(["writeRaw", "after-await"]);
+    await expect(loadPersistedSession(sm)).resolves.toMatchObject({
+      messages: [expect.objectContaining({ content: "persist-before-execute check" })],
+    });
   });
 
   it("recordTurnContext persists the snapshot before returning", async () => {
-    const callOrder: string[] = [];
-    const mockWriteRaw = vi.fn().mockImplementation(async () => {
-      callOrder.push("writeRaw");
-    });
-    const sm = { writeRaw: mockWriteRaw, readRaw: vi.fn() } as unknown as StateManager;
+    const sm = makeMockStateManager();
 
     const history = new ChatHistory(sm, SESSION_ID, CWD);
     await history.recordTurnContext({
@@ -142,16 +138,13 @@ describe("ChatHistory", () => {
       modelVisible: { turn: { turnId: "turn-1" } },
     });
 
-    callOrder.push("after-await");
-    expect(callOrder).toEqual(["writeRaw", "after-await"]);
-    expect(mockWriteRaw).toHaveBeenCalledWith(
-      `chat/sessions/${SESSION_ID}.json`,
-      expect.objectContaining({
-        turnContexts: [expect.objectContaining({
+    await expect(loadPersistedSession(sm)).resolves.toMatchObject({
+      turnContexts: [
+        expect.objectContaining({
           schema_version: "chat-turn-context-v1",
-        })],
-      }),
-    );
+        }),
+      ],
+    });
   });
 
   it("normalizes unsafe usage counters before persistence", async () => {
@@ -164,18 +157,15 @@ describe("ChatHistory", () => {
     } as ChatUsageCounter);
     await history.persist();
 
-    expect(stateManager.writeRaw).toHaveBeenCalledWith(
-      `chat/sessions/${SESSION_ID}.json`,
-      expect.objectContaining({
-        usage: {
-          totals: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
-          byPhase: {
-            assist: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
-          },
-          updatedAt: expect.any(String),
+    await expect(loadPersistedSession()).resolves.toMatchObject({
+      usage: {
+        totals: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        byPhase: {
+          assist: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
         },
-      }),
-    );
+        updatedAt: expect.any(String),
+      },
+    });
   });
 
   it("normalizes unsafe usage counters from loaded session schemas", () => {
@@ -235,17 +225,14 @@ describe("ChatHistory", () => {
     const history = ChatHistory.fromSession(stateManager, existingSession);
     await history.persist();
 
-    expect(stateManager.writeRaw).toHaveBeenCalledWith(
-      `chat/sessions/${SESSION_ID}.json`,
-      expect.objectContaining({
-        usage: {
-          totals: { inputTokens: 0, outputTokens: 2, totalTokens: 2 },
-          byPhase: {
-            assist: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
-          },
+    await expect(loadPersistedSession()).resolves.toMatchObject({
+      usage: {
+        totals: { inputTokens: 0, outputTokens: 2, totalTokens: 2 },
+        byPhase: {
+          assist: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
         },
-      }),
-    );
+      },
+    });
   });
 
   it("caps accumulated usage counters at the maximum safe integer", () => {

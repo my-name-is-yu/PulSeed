@@ -22,6 +22,8 @@ import {
   evaluateChannelAccess,
   resolveChannelRoute,
 } from "../../../runtime/gateway/channel-policy.js";
+import { ChatSessionCatalog } from "../chat-session-store.js";
+import { ChatSessionDataStore } from "../chat-session-data-store.js";
 
 vi.mock("../../../platform/observation/context-provider.js", () => ({
   resolveGitRoot: (cwd: string) => cwd,
@@ -57,13 +59,6 @@ function makeDeps(overrides: Partial<ChatRunnerDeps> = {}): ChatRunnerDeps {
     adapter: makeMockAdapter(),
     ...overrides,
   };
-}
-
-function getSessionPaths(stateManager: StateManager): string[] {
-  const writeRawMock = stateManager.writeRaw as ReturnType<typeof vi.fn>;
-  return writeRawMock.mock.calls
-    .map((call: unknown[]) => call[0] as string)
-    .filter((path: string) => path.startsWith("chat/sessions/"));
 }
 
 function createDeferred(): { promise: Promise<void>; resolve: () => void } {
@@ -373,9 +368,8 @@ describe("CrossPlatformChatSessionManager", () => {
     expect(first.success).toBe(true);
     expect(second.success).toBe(true);
 
-    const sessionPaths = getSessionPaths(stateManager);
-    expect(new Set(sessionPaths).size).toBe(1);
-    expect(sessionPaths[0]).toMatch(/^chat\/sessions\/.+\.json$/);
+    const sessions = await new ChatSessionCatalog(stateManager).listSessions();
+    expect(new Set(sessions.map((session) => session.id)).size).toBe(1);
 
     const info = manager.getSessionInfo({ identity_key: "user-123" } satisfies CrossPlatformChatSessionOptions);
     expect(info).not.toBeNull();
@@ -421,8 +415,8 @@ describe("CrossPlatformChatSessionManager", () => {
       platform: "discord",
     });
 
-    const sessionPaths = getSessionPaths(stateManager);
-    expect(new Set(sessionPaths).size).toBe(2);
+    const sessions = await new ChatSessionCatalog(stateManager).listSessions();
+    expect(new Set(sessions.map((session) => session.id)).size).toBe(2);
   });
 
   it("streams ChatEvent updates through the per-turn callback", async () => {
@@ -599,11 +593,11 @@ describe("CrossPlatformChatSessionManager", () => {
       })).resolves.toBe("First structured answer");
       const sessionInfo = firstManager.getSessionInfo({ identity_key: "workspace:U123" });
       expect(sessionInfo?.chat_session_id).toBeTruthy();
-      const sessionPath = `chat/sessions/${sessionInfo!.chat_session_id}.json`;
-      const storedSession = await stateManager.readRaw(sessionPath) as Record<string, unknown>;
-      expect(Array.isArray(storedSession["rolloutJournal"])).toBe(true);
-      await stateManager.writeRaw(sessionPath, {
-        ...storedSession,
+      const sessionStore = new ChatSessionDataStore(tmpDir);
+      const storedSession = await sessionStore.load(sessionInfo!.chat_session_id!);
+      expect(Array.isArray(storedSession?.rolloutJournal)).toBe(true);
+      await sessionStore.save({
+        ...storedSession!,
         messages: [
           {
             role: "user",
@@ -655,8 +649,8 @@ describe("CrossPlatformChatSessionManager", () => {
       ]);
       expect(JSON.stringify(agentLoopInput.history)).not.toContain("STALE transcript");
 
-      const reconstructedSession = await stateManager.readRaw(sessionPath) as Record<string, unknown>;
-      const kinds = (reconstructedSession["rolloutJournal"] as Array<Record<string, unknown>>)
+      const reconstructedSession = await sessionStore.load(sessionInfo!.chat_session_id!);
+      const kinds = (reconstructedSession?.rolloutJournal as Array<Record<string, unknown>>)
         .map((record) => record["kind"]);
       expect(kinds).toEqual(expect.arrayContaining([
         "user_input",

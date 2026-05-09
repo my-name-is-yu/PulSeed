@@ -427,7 +427,7 @@ export class RunSpecHandoffService {
           kind: "chat_session" as const,
           id: sessionId,
           path: null,
-          relative_path: `chat/sessions/${sessionId}.json`,
+          relative_path: "state/pulseed-control.sqlite",
           updated_at: null,
         }] : []),
         {

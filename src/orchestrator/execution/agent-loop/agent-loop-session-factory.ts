@@ -2,8 +2,10 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { createAgentLoopSession, type AgentLoopSession } from "./agent-loop-session.js";
 import type { AgentLoopEventSink } from "./agent-loop-events.js";
-import { JsonlAgentLoopTraceStore } from "./agent-loop-trace-store.js";
-import { JsonAgentLoopSessionStateStore } from "./agent-loop-session-state.js";
+import {
+  SqliteAgentLoopSessionStateStore,
+  SqliteAgentLoopTraceStore,
+} from "./agent-loop-session-db-store.js";
 
 export interface PersistentAgentLoopSessionFactoryOptions {
   traceBaseDir: string;
@@ -14,6 +16,7 @@ export interface PersistentAgentLoopSessionInput {
   eventSink?: AgentLoopEventSink;
   parentSessionId?: string;
   resumeStatePath?: string;
+  resumeSessionId?: string;
   sessionId?: string;
   traceId?: string;
 }
@@ -22,24 +25,17 @@ export function createPersistentAgentLoopSessionFactory(
   options: PersistentAgentLoopSessionFactoryOptions,
 ): (input?: PersistentAgentLoopSessionInput) => AgentLoopSession {
   return (input = {}) => {
-    const sessionId = input.sessionId ?? randomUUID();
+    const sessionId = input.sessionId ?? input.resumeSessionId ?? randomUUID();
     const traceId = input.traceId ?? randomUUID();
-    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-    const tracePath = path.join(
-      options.traceBaseDir,
-      "traces",
-      "agentloop",
-      options.kind,
-      `${timestamp}-${sessionId}.jsonl`,
-    );
-    const statePath = input.resumeStatePath
-      ? path.resolve(options.traceBaseDir, input.resumeStatePath)
-      : tracePath.replace(/\.jsonl$/, ".state.json");
-    const traceStore = new JsonlAgentLoopTraceStore(tracePath);
-    const stateStore = new JsonAgentLoopSessionStateStore(statePath);
+    const legacyResumeSessionId = input.resumeStatePath
+      ? path.basename(input.resumeStatePath, ".state.json")
+      : null;
+    const stateSessionId = input.resumeSessionId ?? input.sessionId ?? legacyResumeSessionId ?? sessionId;
+    const traceStore = new SqliteAgentLoopTraceStore(options.traceBaseDir);
+    const stateStore = new SqliteAgentLoopSessionStateStore(options.traceBaseDir, stateSessionId, options.kind);
 
     return createAgentLoopSession({
-      sessionId,
+      sessionId: stateSessionId,
       traceId,
       parentSessionId: input.parentSessionId,
       eventSink: input.eventSink,

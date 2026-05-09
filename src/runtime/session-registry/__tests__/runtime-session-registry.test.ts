@@ -11,6 +11,7 @@ import {
 import type { ProcessSessionSnapshot } from "../../../tools/system/ProcessSessionTool/ProcessSessionTool.js";
 import { BackgroundRunLedger } from "../../store/background-run-store.js";
 import { SupervisorStateStore } from "../../store/supervisor-state-store.js";
+import { importLegacyChatAgentLoopSessionState } from "../../../interface/chat/chat-agentloop-state-migration.js";
 
 describe("RuntimeSessionRegistry", () => {
   let tmpDir: string;
@@ -34,6 +35,10 @@ describe("RuntimeSessionRegistry", () => {
     await new SupervisorStateStore(path.join(tmpDir, "runtime"), { controlBaseDir: tmpDir }).save(state as never);
   }
 
+  async function importLegacyChatState(): Promise<void> {
+    await importLegacyChatAgentLoopSessionState(tmpDir);
+  }
+
   it("joins agent sessions to their owning conversation through agentLoopStatePath", async () => {
     await stateManager.writeRaw("chat/sessions/chat-a.json", {
       id: "chat-a",
@@ -53,6 +58,7 @@ describe("RuntimeSessionRegistry", () => {
       status: "running",
     }));
 
+    await importLegacyChatState();
     const snapshot = await new RuntimeSessionRegistry({ stateManager }).snapshot();
 
     const conversation = snapshot.sessions.find((session) => session.id === "session:conversation:chat-a");
@@ -67,7 +73,8 @@ describe("RuntimeSessionRegistry", () => {
       kind: "agent",
       parent_session_id: "session:conversation:chat-a",
       state_ref: expect.objectContaining({
-        relative_path: "chat/agentloop/agent-state.state.json",
+        id: "native-session-b",
+        relative_path: "state/pulseed-control.sqlite",
       }),
     });
     expect(run).toMatchObject({
@@ -100,6 +107,7 @@ describe("RuntimeSessionRegistry", () => {
       messages: [],
     });
 
+    await importLegacyChatState();
     const snapshot = await new RuntimeSessionRegistry({ stateManager }).snapshot();
     const childConversation = snapshot.sessions.find((session) => session.id === "session:conversation:chat-child");
 
@@ -128,6 +136,7 @@ describe("RuntimeSessionRegistry", () => {
       messages: [],
     });
 
+    await importLegacyChatState();
     const snapshot = await new RuntimeSessionRegistry({ stateManager }).snapshot();
     const conversation = snapshot.sessions.find((session) => session.id === "session:conversation:chat-notify");
 
@@ -195,6 +204,7 @@ describe("RuntimeSessionRegistry", () => {
       status: "running",
     }));
 
+    await importLegacyChatState();
     const snapshot = await new RuntimeSessionRegistry({ stateManager }).snapshot();
 
     expect(snapshot.sessions).toContainEqual(expect.objectContaining({
@@ -489,6 +499,7 @@ describe("RuntimeSessionRegistry", () => {
       title: "DurableLoop handoff",
       messages: [],
     });
+    await importLegacyChatState();
 
     const ledger = new BackgroundRunLedger(path.join(tmpDir, "runtime"));
     await ledger.ensureReady();
@@ -592,6 +603,7 @@ describe("RuntimeSessionRegistry", () => {
       messages: [],
     });
 
+    await importLegacyChatState();
     const snapshot = await new RuntimeSessionRegistry({ stateManager }).snapshot();
 
     expect(() => RuntimeSessionRegistrySnapshotSchema.parse(snapshot)).not.toThrow();

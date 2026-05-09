@@ -1005,7 +1005,11 @@ export class ChatRunnerCommandHandler {
     const assistantTurns = messages.filter((message) => message.role === "assistant").length;
     const compactionSummary = session?.compactionSummary?.trim() ?? "";
     const compactionRecords = session?.compactionRecords ?? [];
-    const agentLoopPath = this.host.getNativeAgentLoopStatePath() ?? session?.agentLoopStatePath ?? null;
+    const agentLoopPath = this.host.getNativeAgentLoopSessionId?.()
+      ?? this.host.getNativeAgentLoopStatePath()
+      ?? session?.agentLoopSessionId
+      ?? session?.agentLoopStatePath
+      ?? null;
     const replyTarget = this.host.getRuntimeControlContext()?.replyTarget ?? this.host.deps.runtimeReplyTarget ?? null;
     const routeCapabilities = {
       hasAgentLoop: this.host.deps.chatAgentLoopRunner !== undefined,
@@ -1170,8 +1174,10 @@ export class ChatRunnerCommandHandler {
     this.host.setHistory(ChatHistory.fromSession(this.host.deps.stateManager, forkedSession));
     this.host.setSessionCwd(resolveGitRoot(cwd));
     this.host.setSessionActive(true);
-    this.host.setNativeAgentLoopStatePath(`chat/agentloop/${sessionId}.state.json`);
-    this.host.getHistory()!.resetAgentLoopState(this.host.getNativeAgentLoopStatePath()!);
+    this.host.setNativeAgentLoopStatePath(null);
+    this.host.setNativeAgentLoopSessionId?.(sessionId);
+    this.host.getHistory()!.resetAgentLoopState(null);
+    this.host.getHistory()!.setAgentLoopSessionIdentity({ sessionId, traceId: null });
     await this.host.getHistory()!.persist();
     const runner = this.host as unknown as { resetSessionExecutionPolicy?: () => void };
     runner.resetSessionExecutionPolicy?.();

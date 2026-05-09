@@ -325,11 +325,11 @@ function getBackgroundRunLedger(deps: TendDeps): Pick<BackgroundRunLedger, "crea
 
 function chatSessionSourceRef(sessionId: string): RuntimeSessionRef {
   return {
-    kind: "chat_session",
-    id: sessionId,
-    path: null,
-    relative_path: `chat/sessions/${sessionId}.json`,
-    updated_at: null,
+	    kind: "chat_session",
+	    id: sessionId,
+	    path: null,
+	    relative_path: "state/pulseed-control.sqlite",
+	    updated_at: null,
   };
 }
 
