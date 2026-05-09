@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import * as http from "node:http";
-import { defaultHttpFetchTransport, HttpFetchTool } from "../HttpFetchTool.js";
+import { toToolDefinition } from "../../../tool-definition-adapter.js";
+import { defaultHttpFetchTransport, HttpFetchInputSchema, HttpFetchTool } from "../HttpFetchTool.js";
 import type { ToolCallContext } from "../../../types.js";
 
 const lookupMock = vi.hoisted(() => vi.fn());
@@ -30,6 +31,48 @@ describe("HttpFetchTool", () => {
 
     it("is read-only", () => {
       expect(tool.metadata.isReadOnly).toBe(true);
+    });
+  });
+
+  describe("input schema", () => {
+    it("rejects invalid numeric controls", () => {
+      expect(HttpFetchInputSchema.safeParse({
+        url: "https://example.com",
+        timeoutMs: 5_000,
+        maxResponseBytes: 1_048_576,
+      }).success).toBe(true);
+
+      for (const input of [
+        { url: "https://example.com", timeoutMs: 0 },
+        { url: "https://example.com", timeoutMs: -1 },
+        { url: "https://example.com", timeoutMs: 1.5 },
+        { url: "https://example.com", timeoutMs: Number.POSITIVE_INFINITY },
+        { url: "https://example.com", timeoutMs: 120_001 },
+        { url: "https://example.com", maxResponseBytes: 0 },
+        { url: "https://example.com", maxResponseBytes: -1 },
+        { url: "https://example.com", maxResponseBytes: 1.5 },
+        { url: "https://example.com", maxResponseBytes: Number.POSITIVE_INFINITY },
+        { url: "https://example.com", maxResponseBytes: 5_242_881 },
+      ]) {
+        expect(HttpFetchInputSchema.safeParse(input).success).toBe(false);
+      }
+    });
+
+    it("exports numeric bounds to the model-facing tool schema", () => {
+      const parameters = toToolDefinition(tool).function.parameters as {
+        properties?: Record<string, unknown>;
+      };
+
+      expect(parameters.properties?.timeoutMs).toMatchObject({
+        type: "integer",
+        minimum: 1,
+        maximum: 120_000,
+      });
+      expect(parameters.properties?.maxResponseBytes).toMatchObject({
+        type: "integer",
+        minimum: 1,
+        maximum: 5_242_880,
+      });
     });
   });
 
