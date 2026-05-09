@@ -6,7 +6,7 @@ import type { IPromptGateway } from "../../prompt/gateway.js";
 import type { Task } from "../../base/types/task.js";
 import type { PluginMatchResult } from "../../base/types/plugin.js";
 import type { PluginLoader } from "../../runtime/plugin-loader.js";
-import { CapabilityGapSchema } from "../../base/types/capability.js";
+import { CapabilityAcquisitionTaskSchema, CapabilityGapSchema } from "../../base/types/capability.js";
 import type {
   Capability,
   CapabilityRegistry,
@@ -307,7 +307,10 @@ export class CapabilityDetector {
     acquisitionTask: CapabilityAcquisitionTask,
     agentResult: AgentResult
   ): Promise<CapabilityVerificationResult> {
-    const { systemPrompt, userMessage } = buildVerificationPrompt(capability, acquisitionTask, agentResult);
+    const validatedTask = CapabilityAcquisitionTaskSchema.parse(acquisitionTask);
+    acquisitionTask.verification_attempts = validatedTask.verification_attempts;
+    acquisitionTask.max_verification_attempts = validatedTask.max_verification_attempts;
+    const { systemPrompt, userMessage } = buildVerificationPrompt(capability, validatedTask, agentResult);
 
     let parsed: ZodInfer<typeof VerificationResponseSchema>;
     if (this.gateway) {
@@ -325,6 +328,9 @@ export class CapabilityDetector {
     }
 
     if (parsed.verdict === "fail") {
+      if (acquisitionTask.verification_attempts >= acquisitionTask.max_verification_attempts) {
+        return "escalate";
+      }
       acquisitionTask.verification_attempts += 1;
       if (acquisitionTask.verification_attempts >= acquisitionTask.max_verification_attempts) {
         return "escalate";

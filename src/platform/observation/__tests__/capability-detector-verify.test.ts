@@ -5,6 +5,7 @@ import * as os from "node:os";
 import { StateManager } from "../../../base/state/state-manager.js";
 import { ReportingEngine } from "../../../reporting/reporting-engine.js";
 import { CapabilityDetector } from "../../observation/capability-detector.js";
+import { CapabilityAcquisitionTaskSchema } from "../../../base/types/capability.js";
 import type {
   Capability,
   CapabilityGap,
@@ -84,6 +85,37 @@ afterEach(() => {
 // ─── verifyAcquiredCapability ───
 
 describe("verifyAcquiredCapability", () => {
+  it("rejects invalid capability acquisition retry counters", () => {
+    for (const input of [
+      { verification_attempts: Number.POSITIVE_INFINITY },
+      { verification_attempts: -1 },
+      { verification_attempts: 1.5 },
+      { verification_attempts: Number.MAX_SAFE_INTEGER + 1 },
+      { max_verification_attempts: 0 },
+      { max_verification_attempts: Number.POSITIVE_INFINITY },
+      { max_verification_attempts: 1.5 },
+      { max_verification_attempts: Number.MAX_SAFE_INTEGER + 1 },
+    ]) {
+      expect(CapabilityAcquisitionTaskSchema.safeParse(makeAcquisitionTask(input)).success).toBe(false);
+    }
+  });
+
+  it("validates acquisition task retry counters before verification", async () => {
+    const llm = createMockLLMClient([VERIFY_FAIL_RESPONSE]);
+    const detector = new CapabilityDetector(stateManager, llm, reportingEngine);
+    const acquisitionTask = makeAcquisitionTask({
+      verification_attempts: Number.POSITIVE_INFINITY,
+    });
+
+    await expect(detector.verifyAcquiredCapability(
+      makeCapability(),
+      acquisitionTask,
+      makeAgentResult()
+    )).rejects.toThrow();
+
+    expect(llm.callCount).toBe(0);
+  });
+
   it("returns 'pass' when LLM says verdict is pass", async () => {
     const llm = createMockLLMClient([VERIFY_PASS_RESPONSE]);
     const detector = new CapabilityDetector(stateManager, llm, reportingEngine);
@@ -124,6 +156,7 @@ describe("verifyAcquiredCapability", () => {
     );
 
     expect(result).toBe("escalate");
+    expect(acquisitionTask.verification_attempts).toBe(3);
   });
 
   it("returns 'escalate' when verification_attempts already exceeds max on fail", async () => {
@@ -138,6 +171,7 @@ describe("verifyAcquiredCapability", () => {
     );
 
     expect(result).toBe("escalate");
+    expect(acquisitionTask.verification_attempts).toBe(5);
   });
 
   it("calls LLM exactly once per verifyAcquiredCapability call", async () => {

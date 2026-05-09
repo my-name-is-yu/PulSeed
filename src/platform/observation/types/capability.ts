@@ -62,8 +62,8 @@ export const CapabilityAcquisitionTaskSchema = z.object({
   method: AcquisitionMethodEnum,
   task_description: z.string(),
   success_criteria: z.array(z.string()),
-  verification_attempts: z.number().default(0),
-  max_verification_attempts: z.number().default(3),
+  verification_attempts: z.number().finite().int().nonnegative().safe().default(0),
+  max_verification_attempts: z.number().finite().int().positive().safe().default(3),
 });
 export type CapabilityAcquisitionTask = z.infer<typeof CapabilityAcquisitionTaskSchema>;
 
