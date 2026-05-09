@@ -113,9 +113,10 @@ const GUIDANCE_BY_KIND: Record<FailureRecoveryKind, FailureRecoveryGuidance> = {
     label: "Resume failure",
     summary: "PulSeed could not find or load the session state needed to continue this turn.",
     nextActions: [
-      "Run /sessions to find the intended chat session.",
-      "Run /resume <id> when the target session is available.",
-      "Start a new turn with the missing context if no resumable state exists.",
+      "Continue from the latest chat if PulSeed offers one.",
+      "Inspect what was running before resuming.",
+      "Start a new attempt with the missing context if no resumable state exists.",
+      "Show recent sessions when you need to choose manually.",
     ],
   },
   daemon_loop: {
@@ -124,7 +125,7 @@ const GUIDANCE_BY_KIND: Record<FailureRecoveryKind, FailureRecoveryGuidance> = {
     summary: "A background loop or runtime-control path stopped before completing successfully.",
     nextActions: [
       "Run /status to inspect the active goal or daemon state.",
-      "Use /resume when the session has resumable state.",
+      "Continue from the latest resumable chat if PulSeed offers one.",
       "Check the daemon logs if the failure references runtime internals.",
     ],
   },
@@ -133,7 +134,7 @@ const GUIDANCE_BY_KIND: Record<FailureRecoveryKind, FailureRecoveryGuidance> = {
     label: "Runtime interruption",
     summary: "The active turn was interrupted before it could produce a complete final response.",
     nextActions: [
-      "Use /resume if PulSeed reports resumable agent-loop state.",
+      "Continue from the latest chat if PulSeed reports resumable state.",
       "Ask for a narrower continuation from the last visible step.",
       "Run /review first if files may have changed before the interruption.",
     ],

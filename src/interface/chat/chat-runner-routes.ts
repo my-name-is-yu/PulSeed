@@ -257,7 +257,7 @@ export async function executeAgentLoopRoute(
     if (resumeOnly && resumeStateResult?.kind !== "loaded") {
       const elapsed_ms = Date.now() - start;
       const output = await host.eventBridge.emitLifecycleErrorEventWithFallback(
-        resumeStateResult?.message ?? "No resumable native agentloop state found.",
+        resumeStateResult?.message ?? "I could not find a chat that can safely continue.",
         assistantBuffer.text,
         eventContext,
         {
@@ -273,9 +273,9 @@ export async function executeAgentLoopRoute(
         elapsed_ms,
       };
     }
-    host.eventBridge.emitCheckpoint(resumeOnly ? "Session resumed" : "Agent loop started", resumeOnly
-      ? "Resumable agent-loop state is loaded."
-      : "The agent loop can now inspect, plan, edit, or verify with visible tool activity.", eventContext, "execution");
+    host.eventBridge.emitCheckpoint(resumeOnly ? "Session resumed" : "Working turn started", resumeOnly
+      ? "Saved chat state is ready to continue."
+      : "PulSeed can now inspect, plan, edit, or verify with visible tool activity.", eventContext, "execution");
     host.eventBridge.emitActivity("lifecycle", "Calling model...", eventContext, "lifecycle:model");
     const result = await host.deps.chatAgentLoopRunner!.execute({
       message: turnContext.modelVisible.prompts.basePrompt,
@@ -1110,7 +1110,7 @@ async function loadResumableAgentLoopState(host: ChatRunnerRouteHost): Promise<A
     return {
       kind: "blocked",
       code: "resume_state_missing",
-      message: "No resumable native agentloop state found.",
+      message: formatMissingResumableChatStateMessage(),
     };
   }
   const raw = await host.deps.stateManager.readRaw(host.getNativeAgentLoopStatePath()!);
@@ -1118,7 +1118,7 @@ async function loadResumableAgentLoopState(host: ChatRunnerRouteHost): Promise<A
     return {
       kind: "blocked",
       code: "resume_state_missing",
-      message: "No resumable native agentloop state found.",
+      message: formatMissingResumableChatStateMessage(),
     };
   }
   const rawStatus = rawAgentLoopSessionStatus(raw);
@@ -1126,7 +1126,7 @@ async function loadResumableAgentLoopState(host: ChatRunnerRouteHost): Promise<A
     return {
       kind: "blocked",
       code: "resume_state_not_resumable",
-      message: `Native agentloop state ${rawAgentLoopSessionId(raw)} is ${rawStatus}; inspect or summarize it before starting new actionable work.`,
+      message: formatNonResumableAgentLoopStateMessage(rawStatus),
     };
   }
   const state = normalizeAgentLoopSessionState(raw);
@@ -1134,29 +1134,37 @@ async function loadResumableAgentLoopState(host: ChatRunnerRouteHost): Promise<A
     return {
       kind: "blocked",
       code: "resume_state_missing",
-      message: "No resumable native agentloop state found.",
+      message: formatMissingResumableChatStateMessage(),
     };
   }
   if (state.status !== "running") {
     return {
       kind: "blocked",
       code: "resume_state_not_resumable",
-      message: `Native agentloop state ${state.sessionId} is ${state.status}; inspect or summarize it before starting new actionable work.`,
+      message: formatNonResumableAgentLoopStateMessage(state.status),
     };
   }
   return { kind: "loaded", state };
+}
+
+function formatMissingResumableChatStateMessage(): string {
+  return "I could not find a chat that can safely continue.";
+}
+
+function formatNonResumableAgentLoopStateMessage(status: AgentLoopSessionState["status"] | "unknown"): string {
+  if (status === "failed") {
+    return "The saved chat work stopped before it could safely continue; inspect what was running or start a new attempt.";
+  }
+  if (status === "completed") {
+    return "The saved chat work already completed; inspect what finished or start a new attempt.";
+  }
+  return "The saved chat work is not in a state PulSeed can safely continue; inspect what was running or start a new attempt.";
 }
 
 function rawAgentLoopSessionStatus(value: unknown): AgentLoopSessionState["status"] | "unknown" {
   if (!value || typeof value !== "object") return "unknown";
   const raw = (value as Record<string, unknown>)["status"];
   return raw === "running" || raw === "completed" || raw === "failed" ? raw : "unknown";
-}
-
-function rawAgentLoopSessionId(value: unknown): string {
-  if (!value || typeof value !== "object") return "unknown";
-  const raw = (value as Record<string, unknown>)["sessionId"];
-  return typeof raw === "string" && raw.length > 0 ? raw : "unknown";
 }
 
 function activateToolSearchResults(activatedTools: Set<string>, toolResult: string): void {

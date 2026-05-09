@@ -20,13 +20,15 @@ describe("failure recovery guidance", () => {
 
   it("classifies missing resumable state from exact stop code", () => {
     const guidance = classifyFailureRecovery({
-      error: "No resumable native agentloop state found.",
+      error: "I could not find a chat that can safely continue.",
       code: "resume_state_missing",
     });
 
     expect(guidance.kind).toBe("resume");
-    expect(guidance.nextActions.join("\n")).toContain("/sessions");
-    expect(guidance.nextActions.join("\n")).toContain("/resume <id>");
+    expect(guidance.nextActions.join("\n")).toContain("Continue from the latest chat");
+    expect(guidance.nextActions.join("\n")).toContain("Inspect what was running");
+    expect(guidance.nextActions.join("\n")).toContain("Show recent sessions");
+    expect(guidance.nextActions.join("\n")).not.toContain("/resume <id>");
   });
 
   it("classifies permission failures from approval and tool dispositions", () => {

@@ -442,22 +442,22 @@ export class ChatRunnerEventBridge {
     eventContext: ChatEventContext
   ): void {
     const subject = formatIntentInput(input);
-    let nextStep = "resume the saved agent loop state before continuing.";
-    let reason = "resume needs the prior runtime context before any further action.";
+    let nextStep = "continue from the saved chat state before taking further action.";
+    let reason = "continuation needs the prior chat context before any further action.";
     if ((selectedRoute?.kind === "runtime_control" || selectedRoute?.kind === "runtime_control_blocked") && selectedRoute.intent) {
       nextStep = `prepare the ${selectedRoute.intent.kind} runtime-control request.`;
       reason = "runtime changes need an explicit operation plan and approval path.";
     } else if (selectedRoute?.kind === "configure") {
       nextStep = "prepare configuration guidance for the requested setup flow.";
-      reason = "setup requests should return actionable configuration steps before any agent-loop execution.";
+      reason = "setup requests should return actionable configuration steps before any tool-backed execution.";
     } else if (selectedRoute?.kind === "assist") {
       nextStep = "answer directly from the current conversation context.";
-      reason = "this request can be handled as assistance without resuming an agent loop.";
+      reason = "this request can be handled as assistance without continuing saved tool-backed work.";
     } else if (selectedRoute?.kind === "clarify") {
       nextStep = "ask for the missing detail needed to choose the right next action.";
       reason = "the current request is ambiguous and needs clarification before execution.";
     } else if (selectedRoute?.kind === "agent_loop") {
-      nextStep = "gather workspace context, then let the agent loop inspect or change files with visible tool activity.";
+      nextStep = "gather workspace context, then inspect or change files with visible tool activity.";
       reason = "this request may require multiple tool-backed steps.";
     } else if (selectedRoute?.kind === "tool_loop") {
       nextStep = "call the model with the tool catalog, then execute selected tools with visible activity.";

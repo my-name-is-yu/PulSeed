@@ -34,6 +34,7 @@ export interface ChatSessionCatalogEntry {
   agentLoopStatePath: string | null;
   agentLoopStatus: ChatSessionAgentLoopStatus;
   agentLoopResumable: boolean;
+  agentLoopUpdatedAt?: string | null;
 }
 
 export interface LoadedChatSession {
@@ -383,6 +384,7 @@ function buildCatalogEntry(record: SessionRecord): ChatSessionCatalogEntry {
     agentLoopStatePath: session.agentLoopStatePath,
     agentLoopStatus: session.agentLoopStatus,
     agentLoopResumable: session.agentLoopResumable,
+    agentLoopUpdatedAt: session.agentLoopUpdatedAt ?? null,
   };
 }
 

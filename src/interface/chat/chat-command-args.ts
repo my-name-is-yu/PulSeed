@@ -11,7 +11,7 @@ Session
   /sessions             List prior chat sessions
   /history [id]         Show saved chat history
   /title <title>        Rename the current session
-  /resume [id]          Resume native agentloop state for the current or selected session
+  /resume [chat]        Continue the current or selected chat when it can safely resume
   /cleanup [--dry-run]  Clean up stale chat sessions
   /compact              Summarize older chat turns and keep the latest turns
   /context              Show active working context and session assumptions
