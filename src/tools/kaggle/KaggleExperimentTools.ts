@@ -13,13 +13,20 @@ import {
   KAGGLE_VALIDATION_CHECKLIST,
   KaggleMetricDirectionSchema,
   KaggleLongRunValidationContractSchema,
-  type KaggleMetricParseResult,
   type KaggleMetrics,
   type KaggleLongRunValidationContract,
   normalizedMetricScore,
-  parseKaggleMetricsCompatible,
   summarizeKaggleValidation,
 } from "./metrics.js";
+import {
+  missingArtifactPaths,
+  readJsonObject,
+  readKaggleMetrics,
+  readKaggleTail,
+  readProcessSnapshotFromMetadata,
+  signalKaggleChildProcess,
+  type KaggleMetricsFallback,
+} from "./experiment-artifacts.js";
 import {
   getKaggleExperimentDir,
   resolveKaggleWorkspaceInput,
@@ -34,7 +41,6 @@ import {
   type ProcessSessionManager,
   type ProcessSessionSnapshot,
 } from "../system/ProcessSessionTool/ProcessSessionTool.js";
-import { isProcessPidValue } from "../../base/utils/process-pid.js";
 
 const DEFAULT_MAX_LOG_CHARS = 12_000;
 
@@ -399,9 +405,9 @@ export class KaggleExperimentReadTool extends KaggleToolBase<KaggleExperimentRea
         })
         : null;
       const processSnapshot = liveRead ?? await readProcessSnapshotFromMetadata(located.processPath);
-      const log = await readTail(located.logPath, input.maxChars);
-      const metrics = await readMetrics(located.metricsPath, metricsFallback(located.workspaceRoot, input.competition, located.experimentId, located.metricsPath));
-      const missingArtifacts = await missingPaths([located.logPath, located.metricsPath, located.reportPath, located.nextActionPath]);
+      const log = await readKaggleTail(located.logPath, input.maxChars);
+      const metrics = await readKaggleMetrics(located.metricsPath, metricsFallback(located.workspaceRoot, input.competition, located.experimentId, located.metricsPath));
+      const missingArtifacts = await missingArtifactPaths([located.logPath, located.metricsPath, located.reportPath, located.nextActionPath]);
 
       const output = {
         experiment_id: located.experimentId,
@@ -475,7 +481,7 @@ export class KaggleExperimentListTool extends KaggleToolBase<KaggleExperimentLis
         const located = resolveLocatedExperiment(workspaceRoot, input.competition, experimentId);
         const metadata = await readJsonObject(located.metadataPath);
         const processSnapshot = await readProcessSnapshotFromMetadata(located.processPath);
-        const metrics = await readMetrics(located.metricsPath, metricsFallback(workspaceRoot, input.competition, experimentId, located.metricsPath));
+        const metrics = await readKaggleMetrics(located.metricsPath, metricsFallback(workspaceRoot, input.competition, experimentId, located.metricsPath));
         experiments.set(experimentId, {
           experiment_id: experimentId,
           session_id: typeof metadata?.process === "object" && metadata.process !== null
@@ -502,7 +508,7 @@ export class KaggleExperimentListTool extends KaggleToolBase<KaggleExperimentLis
         if (!experimentId) continue;
         const located = resolveLocatedExperiment(workspaceRoot, input.competition, experimentId);
         const existing = experiments.get(experimentId) ?? {};
-        const metrics = await readMetrics(located.metricsPath, metricsFallback(workspaceRoot, input.competition, experimentId, located.metricsPath));
+        const metrics = await readKaggleMetrics(located.metricsPath, metricsFallback(workspaceRoot, input.competition, experimentId, located.metricsPath));
         experiments.set(experimentId, {
           ...existing,
           experiment_id: experimentId,
@@ -645,7 +651,7 @@ export class KaggleMetricReportTool extends KaggleToolBase<KaggleMetricReportInp
         ? resolveWorkspaceRelativePath(workspaceRoot, input.metrics_path, "metrics_path")
         : path.join(getKaggleExperimentDir(workspaceRoot, input.experiment_id!), "metrics.json");
       const fallbackExperimentId = input.experiment_id ?? experimentIdFromMetricsPath(workspaceRoot, metricsPath);
-      const metrics = await readMetrics(metricsPath, metricsFallback(workspaceRoot, input.competition, fallbackExperimentId, metricsPath));
+      const metrics = await readKaggleMetrics(metricsPath, metricsFallback(workspaceRoot, input.competition, fallbackExperimentId, metricsPath));
       if (!metrics.ok) {
         return {
           success: false,
@@ -754,7 +760,7 @@ export class KaggleCompareExperimentsTool extends KaggleToolBase<KaggleCompareEx
       const rows: CompareRow[] = [];
       for (const experimentId of experimentIds) {
         const metricsPath = path.join(getKaggleExperimentDir(workspaceRoot, experimentId), "metrics.json");
-        const metrics = await readMetrics(metricsPath, metricsFallback(workspaceRoot, input.competition, experimentId, metricsPath));
+        const metrics = await readKaggleMetrics(metricsPath, metricsFallback(workspaceRoot, input.competition, experimentId, metricsPath));
         if (!metrics.ok) {
           rows.push({
             experiment_id: experimentId,
@@ -989,7 +995,7 @@ function metricsFallback(
   competition: string,
   experimentId: string | undefined,
   metricsPath: string,
-): Parameters<typeof parseKaggleMetricsCompatible>[1] {
+): KaggleMetricsFallback {
   const metricsDir = path.dirname(metricsPath);
   return {
     experiment_id: experimentId,
@@ -1007,82 +1013,6 @@ function experimentIdFromMetricsPath(workspaceRoot: string, metricsPath: string)
   }
   const parent = path.basename(path.dirname(metricsPath));
   return parent === "experiments" ? undefined : parent;
-}
-
-async function readMetrics(
-  metricsPath: string,
-  fallback: Parameters<typeof parseKaggleMetricsCompatible>[1] = {},
-): Promise<KaggleMetricParseResult> {
-  let raw: string;
-  try {
-    raw = await fs.readFile(metricsPath, "utf-8");
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-      return { ok: false, reason: "missing", message: "metrics.json is missing" };
-    }
-    throw err;
-  }
-  try {
-    return parseKaggleMetricsCompatible(JSON.parse(raw), fallback);
-  } catch (err) {
-    return {
-      ok: false,
-      reason: "malformed",
-      message: `metrics.json is not valid JSON: ${(err as Error).message}`,
-    };
-  }
-}
-
-async function readTail(filePath: string, maxChars: number): Promise<{ text: string; truncated: boolean; path: string }> {
-  try {
-    const raw = await fs.readFile(filePath, "utf-8");
-    return {
-      text: raw.length > maxChars ? raw.slice(raw.length - maxChars) : raw,
-      truncated: raw.length > maxChars,
-      path: filePath,
-    };
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-      return { text: "", truncated: false, path: filePath };
-    }
-    throw err;
-  }
-}
-
-async function readJsonObject(filePath: string): Promise<Record<string, unknown> | null> {
-  try {
-    const raw = await fs.readFile(filePath, "utf-8");
-    const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null;
-  } catch {
-    return null;
-  }
-}
-
-async function readProcessSnapshotFromMetadata(processPath: string): Promise<ProcessSessionSnapshot | null> {
-  const localProcess = await readJsonObject(processPath);
-  const processMetadataPath = typeof localProcess?.metadataPath === "string" ? localProcess.metadataPath : null;
-  if (processMetadataPath) {
-    const durable = await readJsonObject(processMetadataPath);
-    if (durable) return durable as unknown as ProcessSessionSnapshot;
-  }
-  return localProcess as unknown as ProcessSessionSnapshot | null;
-}
-
-async function missingPaths(pathsToCheck: string[]): Promise<string[]> {
-  const missing: string[] = [];
-  for (const candidate of pathsToCheck) {
-    try {
-      await fs.access(candidate);
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-        missing.push(candidate);
-        continue;
-      }
-      throw err;
-    }
-  }
-  return missing;
 }
 
 async function listExperimentIds(workspaceRoot: string): Promise<string[]> {
@@ -1381,16 +1311,4 @@ function failureResult(message: string, startTime: number): ToolResult {
     error: message,
     durationMs: Date.now() - startTime,
   };
-}
-
-async function signalKaggleChildProcess(childProcessPath: string, signal: NodeJS.Signals): Promise<void> {
-  const childProcess = await readJsonObject(childProcessPath);
-  if (!isProcessPidValue(childProcess?.pid)) return;
-  try {
-    process.kill(childProcess.pid, signal);
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== "ESRCH") {
-      throw err;
-    }
-  }
 }
