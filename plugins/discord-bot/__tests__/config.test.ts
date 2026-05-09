@@ -52,6 +52,22 @@ describe("discord-bot config loader", () => {
     expect(cfg.runtime_control_allowed_sender_ids).toEqual(["user-1"]);
   });
 
+  it("rejects unsafe or out-of-range ports before loading config", () => {
+    fs.writeFileSync(
+      path.join(tmpDir, "config.json"),
+      JSON.stringify({
+        application_id: "app-1",
+        bot_token: "bot-1",
+        channel_id: "chan-1",
+        identity_key: "discord:alpha",
+        port: Number.MAX_SAFE_INTEGER,
+      }),
+      "utf-8"
+    );
+
+    expect(() => loadConfig(tmpDir)).toThrow("port must be a safe integer between 1 and 65535");
+  });
+
   it("loads channel security and routing config", () => {
     fs.writeFileSync(
       path.join(tmpDir, "config.json"),

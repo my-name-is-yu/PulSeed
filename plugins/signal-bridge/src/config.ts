@@ -1,6 +1,10 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 
+const MIN_POLL_INTERVAL_MS = 1_000;
+const MIN_RECEIVE_TIMEOUT_MS = 250;
+const MAX_SIGNAL_TIMER_MS = 60_000;
+
 export interface SignalBridgeConfig {
   bridge_url: string;
   account: string;
@@ -60,11 +64,15 @@ function validateConfig(raw: unknown): SignalBridgeConfig {
   if (typeof cfg["identity_key"] !== "string" || cfg["identity_key"].length === 0) {
     throw new Error("signal-bridge: identity_key must be a non-empty string");
   }
-  if (typeof pollInterval !== "number" || !Number.isInteger(pollInterval)) {
-    throw new Error("signal-bridge: poll_interval_ms must be an integer");
+  if (!isIntegerInRange(pollInterval, MIN_POLL_INTERVAL_MS, MAX_SIGNAL_TIMER_MS)) {
+    throw new Error(
+      `signal-bridge: poll_interval_ms must be a safe integer between ${MIN_POLL_INTERVAL_MS} and ${MAX_SIGNAL_TIMER_MS}`
+    );
   }
-  if (typeof receiveTimeout !== "number" || !Number.isInteger(receiveTimeout)) {
-    throw new Error("signal-bridge: receive_timeout_ms must be an integer");
+  if (!isIntegerInRange(receiveTimeout, MIN_RECEIVE_TIMEOUT_MS, MAX_SIGNAL_TIMER_MS)) {
+    throw new Error(
+      `signal-bridge: receive_timeout_ms must be a safe integer between ${MIN_RECEIVE_TIMEOUT_MS} and ${MAX_SIGNAL_TIMER_MS}`
+    );
   }
   if (
     !Array.isArray(runtimeControlAllowedSenderIds) ||
@@ -112,7 +120,11 @@ function validateConfig(raw: unknown): SignalBridgeConfig {
     conversation_goal_map: conversationGoalMap as Record<string, string>,
     sender_goal_map: senderGoalMap as Record<string, string>,
     default_goal_id: cfg["default_goal_id"] as string | undefined,
-    poll_interval_ms: Math.max(1000, pollInterval),
-    receive_timeout_ms: Math.max(250, receiveTimeout),
+    poll_interval_ms: pollInterval,
+    receive_timeout_ms: receiveTimeout,
   };
+}
+
+function isIntegerInRange(value: unknown, min: number, max: number): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= min && value <= max;
 }

@@ -1,6 +1,9 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 
+const MIN_PORT = 1;
+const MAX_PORT = 65_535;
+
 export interface WhatsAppWebhookConfig {
   phone_number_id: string;
   access_token: string;
@@ -64,8 +67,8 @@ function validateConfig(raw: unknown): WhatsAppWebhookConfig {
   if (typeof host !== "string" || host.length === 0) {
     throw new Error("whatsapp-webhook: host must be a non-empty string");
   }
-  if (typeof port !== "number" || !Number.isInteger(port)) {
-    throw new Error("whatsapp-webhook: port must be an integer");
+  if (!isPort(port)) {
+    throw new Error(`whatsapp-webhook: port must be a safe integer between ${MIN_PORT} and ${MAX_PORT}`);
   }
   if (typeof pathValue !== "string" || pathValue.length === 0) {
     throw new Error("whatsapp-webhook: path must be a non-empty string");
@@ -115,4 +118,13 @@ function validateConfig(raw: unknown): WhatsAppWebhookConfig {
     path: pathValue,
     app_secret: cfg["app_secret"] as string | undefined,
   };
+}
+
+function isPort(value: unknown): value is number {
+  return (
+    typeof value === "number" &&
+    Number.isSafeInteger(value) &&
+    value >= MIN_PORT &&
+    value <= MAX_PORT
+  );
 }

@@ -50,6 +50,22 @@ describe("signal-bridge config loader", () => {
     expect(cfg.runtime_control_allowed_sender_ids).toEqual(["+15557654321"]);
   });
 
+  it("rejects timer-overflow polling controls before loading config", () => {
+    fs.writeFileSync(
+      path.join(tmpDir, "config.json"),
+      JSON.stringify({
+        bridge_url: "http://127.0.0.1:7583",
+        account: "+15551234567",
+        recipient_id: "+15557654321",
+        identity_key: "signal:alpha",
+        poll_interval_ms: Number.MAX_SAFE_INTEGER,
+      }),
+      "utf-8"
+    );
+
+    expect(() => loadConfig(tmpDir)).toThrow("poll_interval_ms must be a safe integer between 1000 and 60000");
+  });
+
   it("loads channel security and routing config", () => {
     fs.writeFileSync(
       path.join(tmpDir, "config.json"),

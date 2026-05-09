@@ -12,6 +12,9 @@ import { NonTuiDisplayProjector, type NonTuiDisplayMessageRef, type NonTuiDispla
 import type { INotifier, NotificationEvent, NotificationEventType } from "../../base/types/plugin.js";
 import type { ChatEvent } from "../../interface/chat/chat-events.js";
 
+const MIN_PORT = 1;
+const MAX_PORT = 65_535;
+
 interface WhatsAppWebhookPayload {
   entry?: Array<{
     changes?: Array<{
@@ -376,7 +379,7 @@ function loadWhatsAppGatewayConfig(pluginDir: string): WhatsAppGatewayConfig {
   assertNonEmptyString(raw["recipient_id"], "whatsapp-webhook: recipient_id must be a non-empty string");
   assertNonEmptyString(raw["identity_key"], "whatsapp-webhook: identity_key must be a non-empty string");
   assertNonEmptyString(host, "whatsapp-webhook: host must be a non-empty string");
-  assertInteger(port, "whatsapp-webhook: port must be an integer");
+  assertPort(port, `whatsapp-webhook: port must be a safe integer between ${MIN_PORT} and ${MAX_PORT}`);
   assertNonEmptyString(pathValue, "whatsapp-webhook: path must be a non-empty string");
   if (raw["app_secret"] !== undefined && typeof raw["app_secret"] !== "string") {
     throw new Error("whatsapp-webhook: app_secret must be a string when set");
@@ -413,8 +416,8 @@ function assertNonEmptyString(value: unknown, message: string): asserts value is
   }
 }
 
-function assertInteger(value: unknown, message: string): asserts value is number {
-  if (typeof value !== "number" || !Number.isInteger(value)) {
+function assertPort(value: unknown, message: string): asserts value is number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < MIN_PORT || value > MAX_PORT) {
     throw new Error(message);
   }
 }

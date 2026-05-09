@@ -11,6 +11,10 @@ import { NonTuiDisplayProjector, type NonTuiDisplayMessageRef, type NonTuiDispla
 import type { INotifier, NotificationEvent, NotificationEventType } from "../../base/types/plugin.js";
 import type { ChatEvent } from "../../interface/chat/chat-events.js";
 
+const MIN_POLL_INTERVAL_MS = 1_000;
+const MIN_RECEIVE_TIMEOUT_MS = 250;
+const MAX_SIGNAL_TIMER_MS = 60_000;
+
 export interface SignalGatewayConfig {
   bridge_url: string;
   account: string;
@@ -340,8 +344,18 @@ function loadSignalGatewayConfig(pluginDir: string): SignalGatewayConfig {
   assertNonEmptyString(raw["account"], "signal-bridge: account must be a non-empty string");
   assertNonEmptyString(raw["recipient_id"], "signal-bridge: recipient_id must be a non-empty string");
   assertNonEmptyString(raw["identity_key"], "signal-bridge: identity_key must be a non-empty string");
-  assertInteger(pollInterval, "signal-bridge: poll_interval_ms must be an integer");
-  assertInteger(receiveTimeout, "signal-bridge: receive_timeout_ms must be an integer");
+  assertIntegerInRange(
+    pollInterval,
+    MIN_POLL_INTERVAL_MS,
+    MAX_SIGNAL_TIMER_MS,
+    `signal-bridge: poll_interval_ms must be a safe integer between ${MIN_POLL_INTERVAL_MS} and ${MAX_SIGNAL_TIMER_MS}`,
+  );
+  assertIntegerInRange(
+    receiveTimeout,
+    MIN_RECEIVE_TIMEOUT_MS,
+    MAX_SIGNAL_TIMER_MS,
+    `signal-bridge: receive_timeout_ms must be a safe integer between ${MIN_RECEIVE_TIMEOUT_MS} and ${MAX_SIGNAL_TIMER_MS}`,
+  );
   assertStringArray(runtimeControlAllowedSenderIds, "signal-bridge: runtime_control_allowed_sender_ids must be an array of non-empty strings");
   assertStringArray(allowedSenderIds, "signal-bridge: allowed_sender_ids must be an array of non-empty strings");
   assertStringArray(deniedSenderIds, "signal-bridge: denied_sender_ids must be an array of non-empty strings");
@@ -366,8 +380,8 @@ function loadSignalGatewayConfig(pluginDir: string): SignalGatewayConfig {
     conversation_goal_map: conversationGoalMap as Record<string, string>,
     sender_goal_map: senderGoalMap as Record<string, string>,
     default_goal_id: raw["default_goal_id"] as string | undefined,
-    poll_interval_ms: Math.max(1000, pollInterval as number),
-    receive_timeout_ms: Math.max(250, receiveTimeout as number),
+    poll_interval_ms: pollInterval as number,
+    receive_timeout_ms: receiveTimeout as number,
   };
 }
 
@@ -377,8 +391,13 @@ function assertNonEmptyString(value: unknown, message: string): asserts value is
   }
 }
 
-function assertInteger(value: unknown, message: string): asserts value is number {
-  if (typeof value !== "number" || !Number.isInteger(value)) {
+function assertIntegerInRange(
+  value: unknown,
+  min: number,
+  max: number,
+  message: string,
+): asserts value is number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < min || value > max) {
     throw new Error(message);
   }
 }
