@@ -1,13 +1,14 @@
 import { writeFileSync, mkdirSync, renameSync, existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { z } from 'zod';
 import { GoalWorker, type GoalWorkerConfig, type WorkerResult } from './goal-worker.js';
 import { createEnvelope } from '../types/envelope.js';
 import type { DurableLoop } from '../../orchestrator/loop/durable-loop.js';
 import type { DriveSystem } from '../../platform/drive/drive-system.js';
 import type { StateManager } from '../../base/state/state-manager.js';
 import type { Logger } from '../logger.js';
-import { GoalLeaseManager } from '../goal-lease-manager.js';
-import { JournalBackedQueue, type JournalBackedQueueClaim } from '../queue/journal-backed-queue.js';
+import type { GoalLeaseManager } from '../goal-lease-manager.js';
+import type { JournalBackedQueue, JournalBackedQueueClaim } from '../queue/journal-backed-queue.js';
 import { StateFenceError } from '../../base/utils/errors.js';
 import { getPulseedDirPath } from '../../base/utils/paths.js';
 import type { BackgroundRunLedger } from '../store/background-run-store.js';
@@ -94,6 +95,8 @@ const DEFAULT_CONFIG: SupervisorConfig = {
   runPolicy: 'resident',
   activeStopGraceMs: 5_000,
 };
+
+const SupervisorCrashCountSchema = z.number().finite().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 
 function workerStatusToBackgroundRunStatus(
   status: WorkerResult['status'],
@@ -893,14 +896,26 @@ export class LoopSupervisor {
     if (!existsSync(filePath)) return;
     try {
       const raw = readFileSync(filePath, 'utf8');
-      const state: SupervisorState = JSON.parse(raw);
-      for (const [goalId, count] of Object.entries(state.crashCounts)) {
+      const state = JSON.parse(raw) as unknown;
+      for (const [goalId, count] of validCrashCountEntries(state)) {
         this.crashCounts.set(goalId, count);
       }
     } catch {
       // Corrupt or missing state — start fresh
     }
   }
+}
+
+function validCrashCountEntries(state: unknown): Array<[string, number]> {
+  if (!state || typeof state !== 'object' || Array.isArray(state)) return [];
+  const crashCounts = (state as Record<string, unknown>)['crashCounts'];
+  if (!crashCounts || typeof crashCounts !== 'object' || Array.isArray(crashCounts)) return [];
+
+  return Object.entries(crashCounts).flatMap(([goalId, rawCount]) => {
+    if (goalId.length === 0) return [];
+    const parsed = SupervisorCrashCountSchema.safeParse(rawCount);
+    return parsed.success ? [[goalId, parsed.data]] : [];
+  });
 }
 
 function resolveDurableLoopFactory(deps: SupervisorDeps): () => DurableLoop {
