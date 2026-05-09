@@ -14,6 +14,26 @@ export {
   AdmissionPolicySignalSchema,
   AdmissionSurfaceScopeSchema,
 } from "./admission-policy.js";
+export {
+  evaluateAutonomyDecision,
+  AutonomyBlastRadiusSchema,
+  AutonomyCacheInvalidationEvidenceSchema,
+  AutonomyCompanionStateSchema,
+  AutonomyContextAuthorityEvidenceSchema,
+  AutonomyDecisionInputSchema,
+  AutonomyDecisionLevelSchema,
+  AutonomyDecisionSchema,
+  AutonomyFeedbackSignalSchema,
+  AutonomyInvalidationBindingSchema,
+  AutonomyOperationPlanSchema,
+  AutonomyPolicySignalResultSchema,
+  AutonomyPolicySignalSchema,
+  AutonomyPrivacySensitivitySchema,
+  AutonomyRuntimeControlStateSchema,
+  AutonomyTrustProfileSchema,
+  AutonomyVerificationProfileSchema,
+  InternalAutonomyDefaultSchema,
+} from "./autonomy-governor.js";
 export type { RuntimeTargetResolution } from "./runtime-target-resolver.js";
 export type {
   AdmissionAuthState,
@@ -30,6 +50,26 @@ export type {
   AdmissionSurfaceScopeInput,
   EvaluateAdmissionPolicyInput,
 } from "./admission-policy.js";
+export type {
+  AutonomyBlastRadius,
+  AutonomyCacheInvalidationEvidence,
+  AutonomyCompanionState,
+  AutonomyContextAuthorityEvidence,
+  AutonomyDecision,
+  AutonomyDecisionInput,
+  AutonomyDecisionLevel,
+  AutonomyFeedbackSignal,
+  AutonomyInvalidationBinding,
+  AutonomyOperationPlan,
+  AutonomyOperationPlanInput,
+  AutonomyPolicySignal,
+  AutonomyPolicySignalResult,
+  AutonomyPrivacySensitivity,
+  AutonomyRuntimeControlState,
+  AutonomyTrustProfile,
+  AutonomyVerificationProfile,
+  InternalAutonomyDefault,
+} from "./autonomy-governor.js";
 export { createDaemonRuntimeControlExecutor } from "./daemon-runtime-control-executor.js";
 export {
   publishRuntimeControlResult,
