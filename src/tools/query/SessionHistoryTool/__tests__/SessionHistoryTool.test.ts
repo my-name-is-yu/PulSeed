@@ -2,7 +2,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
-import { SessionHistoryTool } from "../SessionHistoryTool.js";
+import { toToolDefinition } from "../../../tool-definition-adapter.js";
+import { SESSION_HISTORY_MAX_LIMIT, SessionHistoryInputSchema, SessionHistoryTool } from "../SessionHistoryTool.js";
 import type { ToolCallContext } from "../../../types.js";
 import type { StateManager } from "../../../../base/state/state-manager.js";
 
@@ -120,6 +121,34 @@ describe("SessionHistoryTool", () => {
     expect(result.success).toBe(true);
     const data = result.data as { sessions: unknown[] };
     expect(data.sessions).toHaveLength(3);
+  });
+
+  it("rejects oversized and unsafe limit values at the schema boundary", () => {
+    expect(SessionHistoryInputSchema.safeParse({ limit: SESSION_HISTORY_MAX_LIMIT }).success).toBe(true);
+
+    for (const limit of [
+      0,
+      -1,
+      1.5,
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      SESSION_HISTORY_MAX_LIMIT + 1,
+      Number.MAX_SAFE_INTEGER + 1,
+    ]) {
+      expect(SessionHistoryInputSchema.safeParse({ limit }).success).toBe(false);
+    }
+  });
+
+  it("exports limit bounds to model-facing tool definitions", () => {
+    const parameters = toToolDefinition(tool).function.parameters as {
+      properties?: Record<string, unknown>;
+    };
+
+    expect(parameters.properties?.limit).toMatchObject({
+      type: "integer",
+      minimum: 1,
+      maximum: SESSION_HISTORY_MAX_LIMIT,
+    });
   });
 
   it("filters by goalId when provided", async () => {
