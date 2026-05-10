@@ -127,6 +127,36 @@ describe("ChatSessionCatalog", () => {
     });
   });
 
+  it("blocks legacy session import when persisted turn indexes are unsafe integers", async () => {
+    await writeJsonFixture(tmpDir,
+      "chat/sessions/unsafe-turn-index.json",
+      makeSession({
+        id: "unsafe-turn-index",
+        cwd: "/repo",
+        createdAt: "2025-01-01T00:00:00.000Z",
+        messages: [
+          {
+            role: "user",
+            content: "unsafe",
+            timestamp: "2025-01-01T00:00:00.000Z",
+            turnIndex: Number.MAX_SAFE_INTEGER + 1,
+          },
+        ],
+      })
+    );
+
+    const report = await importLegacyChatAgentLoopSessionState(tmpDir);
+
+    expect(report.importedChatSessions).toBe(0);
+    expect(report.blockedSources).toEqual([
+      expect.objectContaining({
+        sourceKind: "chat_session",
+        sourcePath: "chat/sessions/unsafe-turn-index.json",
+      }),
+    ]);
+    await expect(catalog.loadSession("unsafe-turn-index")).resolves.toBeNull();
+  });
+
   it("sorts by updatedAt desc and discovers resumable agentloop state", async () => {
     await writeJsonFixture(tmpDir,
       "chat/sessions/older.json",
