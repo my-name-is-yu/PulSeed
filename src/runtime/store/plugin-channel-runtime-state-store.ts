@@ -21,7 +21,47 @@ export interface GatewayChannelHealth {
   last_inbound_at: string | null;
   last_outbound_at: string | null;
   last_error: string | null;
+  last_timing?: GatewayChannelTimingSnapshot;
   updated_at: string;
+}
+
+export interface GatewayChannelTimingSnapshot {
+  schema_version: "gateway-channel-timing-v1";
+  channel: string;
+  poll?: GatewayChannelPollTiming;
+  turn?: GatewayChannelTurnTiming;
+}
+
+export interface GatewayChannelPollTiming {
+  started_at: string;
+  completed_at: string;
+  duration_ms: number;
+  offset: number;
+  timeout_seconds: number;
+  update_count: number;
+  ok: boolean;
+  error_class?: string;
+}
+
+export interface GatewayChannelTurnTiming {
+  turn_ref: string;
+  update_id?: number;
+  message_id: number;
+  inbound_admitted_at: string;
+  lifecycle_end_at?: string;
+  first_typing_at?: string;
+  first_progress_at?: string;
+  first_final_at?: string;
+  outbound_calls: GatewayChannelOutboundTiming[];
+}
+
+export interface GatewayChannelOutboundTiming {
+  kind: string;
+  started_at: string;
+  completed_at: string;
+  duration_ms: number;
+  ok: boolean;
+  error_class?: string;
 }
 
 export interface GatewayChannelBinding {
@@ -130,18 +170,24 @@ export class PluginChannelRuntimeStateStore {
 
   async saveChannelHealth(
     channelName: string,
-    update: Partial<Pick<GatewayChannelHealth, "last_inbound_at" | "last_outbound_at" | "last_error">>,
+    update: Partial<Pick<GatewayChannelHealth, "last_inbound_at" | "last_outbound_at" | "last_error" | "last_timing">>,
   ): Promise<GatewayChannelHealth> {
     const normalizedChannel = normalizeChannelName(channelName);
-    const current = await this.loadChannelHealth(normalizedChannel);
-    const next: GatewayChannelHealth = {
-      last_inbound_at: update.last_inbound_at ?? current?.last_inbound_at ?? null,
-      last_outbound_at: update.last_outbound_at ?? current?.last_outbound_at ?? null,
-      last_error: update.last_error !== undefined ? update.last_error : current?.last_error ?? null,
-      updated_at: nowIso(),
-    };
     const db = await this.database();
-    db.transaction((sqlite) => {
+    const next = db.transaction((sqlite): GatewayChannelHealth => {
+      const row = sqlite.prepare(`
+        SELECT health_json
+        FROM gateway_channel_health
+        WHERE channel_name = ?
+      `).get(normalizedChannel) as { health_json: string } | undefined;
+      const current = row ? parseJson<GatewayChannelHealth>(row.health_json) : null;
+      const merged: GatewayChannelHealth = {
+        last_inbound_at: update.last_inbound_at ?? current?.last_inbound_at ?? null,
+        last_outbound_at: update.last_outbound_at ?? current?.last_outbound_at ?? null,
+        last_error: update.last_error !== undefined ? update.last_error : current?.last_error ?? null,
+        last_timing: update.last_timing ?? current?.last_timing,
+        updated_at: nowIso(),
+      };
       sqlite.prepare(`
         INSERT INTO gateway_channel_health (
           channel_name, last_inbound_at, last_outbound_at, last_error, updated_at, health_json
@@ -154,12 +200,13 @@ export class PluginChannelRuntimeStateStore {
           health_json = excluded.health_json
       `).run(
         normalizedChannel,
-        next.last_inbound_at,
-        next.last_outbound_at,
-        next.last_error,
-        next.updated_at,
-        stringifyJson(next),
+        merged.last_inbound_at,
+        merged.last_outbound_at,
+        merged.last_error,
+        merged.updated_at,
+        stringifyJson(merged),
       );
+      return merged;
     });
     return next;
   }

@@ -154,6 +154,44 @@ describe("PluginChannelRuntimeStateStore", () => {
     await expect(store.loadForeignPluginCompatibility(pluginDir)).resolves.toMatchObject({ status: "quarantined" });
     await expect(store.loadAssetRecords()).resolves.toHaveLength(1);
   });
+
+  it("merges channel timing updates without dropping existing health fields", async () => {
+    const store = new PluginChannelRuntimeStateStore(tmpDir);
+    await store.saveChannelHealth("telegram-bot", {
+      last_inbound_at: "2026-05-09T00:01:00.000Z",
+      last_outbound_at: "2026-05-09T00:02:00.000Z",
+      last_error: null,
+    });
+    await store.saveChannelHealth("telegram-bot", {
+      last_timing: {
+        schema_version: "gateway-channel-timing-v1",
+        channel: "telegram",
+        poll: {
+          started_at: "2026-05-09T00:02:01.000Z",
+          completed_at: "2026-05-09T00:02:02.000Z",
+          duration_ms: 1000,
+          offset: 10,
+          timeout_seconds: 30,
+          update_count: 1,
+          ok: true,
+        },
+      },
+    });
+
+    await expect(store.loadChannelHealth("telegram-bot")).resolves.toMatchObject({
+      last_inbound_at: "2026-05-09T00:01:00.000Z",
+      last_outbound_at: "2026-05-09T00:02:00.000Z",
+      last_error: null,
+      last_timing: {
+        schema_version: "gateway-channel-timing-v1",
+        channel: "telegram",
+        poll: {
+          offset: 10,
+          ok: true,
+        },
+      },
+    });
+  });
 });
 
 async function writeJson(filePath: string, value: unknown): Promise<void> {
