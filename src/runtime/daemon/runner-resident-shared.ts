@@ -17,6 +17,10 @@ import type { LoopSupervisor } from "../executor/index.js";
 import type { ScheduleEngine } from "../schedule/engine.js";
 import { ProactiveInterventionStore } from "../store/proactive-intervention-store.js";
 import { resolveDaemonRuntimeRoot } from "./runtime-root.js";
+import {
+  formatNodePackageMetadataContext,
+  parsePackageMetadata,
+} from "../../base/utils/package-metadata.js";
 
 export function resolveResidentWorkspaceDir(configuredPath?: string): string {
   const trimmed = configuredPath?.trim();
@@ -49,16 +53,10 @@ export function gatherResidentWorkspaceContext(workspaceDir: string, seedDescrip
   try {
     const pkgPath = path.join(workspaceDir, "package.json");
     const pkgRaw = fs.readFileSync(pkgPath, "utf-8");
-    const pkg = JSON.parse(pkgRaw) as Record<string, unknown>;
-    const name = typeof pkg.name === "string" ? pkg.name : "";
-    const description = typeof pkg.description === "string" ? pkg.description : "";
-    const scripts = pkg.scripts && typeof pkg.scripts === "object"
-      ? Object.keys(pkg.scripts as Record<string, unknown>).join(", ")
-      : "";
-    const prefix = name ? `Node.js project '${name}'` : "Node.js project";
-    const descPart = description ? `. ${description}` : "";
-    const scriptsPart = scripts ? `. Scripts: ${scripts}` : "";
-    parts.push(`${prefix}${descPart}${scriptsPart}`);
+    const pkg = parsePackageMetadata(pkgRaw);
+    if (pkg) {
+      parts.push(formatNodePackageMetadataContext(pkg));
+    }
   } catch {
     // No package metadata available.
   }
