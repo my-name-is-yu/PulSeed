@@ -1,6 +1,8 @@
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
+import { z } from "zod";
 import { type KnowledgeEdge, KnowledgeEdgeSchema } from "../../base/types/knowledge.js";
+import { readTextFileWithinLimit } from "../../base/utils/json-io.js";
 
 interface KnowledgeGraphNode {
   entry_id: string;
@@ -13,6 +15,23 @@ interface GraphData {
   nodes: KnowledgeGraphNode[];
   edges: KnowledgeEdge[];
 }
+
+const KNOWLEDGE_GRAPH_MAX_BYTES = 2 * 1024 * 1024;
+
+const KnowledgeGraphNodeSchema = z.object({
+  entry_id: z.string().min(1),
+  goal_id: z.string().min(1),
+  tags: z.array(z.string()),
+  added_at: z.string().min(1),
+});
+
+const KnowledgeGraphDataSchema = z.object({
+  nodes: z.array(KnowledgeGraphNodeSchema).default([]),
+  edges: z.array(KnowledgeEdgeSchema).default([]),
+}).default({
+  nodes: [],
+  edges: [],
+});
 
 /**
  * KnowledgeGraph stores cross-goal concept relationships as a directed graph.
@@ -229,20 +248,19 @@ export class KnowledgeGraph {
       return;
     }
     try {
-      const raw = await fsp.readFile(this.graphPath, "utf-8");
-      const parsed = JSON.parse(raw) as GraphData;
+      const raw = await readTextFileWithinLimit(this.graphPath, {
+        maxBytes: KNOWLEDGE_GRAPH_MAX_BYTES,
+      });
+      const parsed = KnowledgeGraphDataSchema.parse(JSON.parse(raw) as unknown);
 
       this.nodes.clear();
       this.edges = [];
 
-      for (const node of parsed.nodes ?? []) {
+      for (const node of parsed.nodes) {
         this.nodes.set(node.entry_id, node);
       }
 
-      for (const edge of parsed.edges ?? []) {
-        const validated = KnowledgeEdgeSchema.parse(edge);
-        this.edges.push(validated);
-      }
+      this.edges.push(...parsed.edges);
     } catch {
       // Corrupt or empty file — start fresh
     }
