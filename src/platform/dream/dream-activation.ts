@@ -5,11 +5,11 @@ import { z } from "zod";
 import type { KnowledgeEntry } from "../knowledge/types/knowledge.js";
 import { KnowledgeEntrySchema } from "../knowledge/types/knowledge.js";
 import type { LearnedPattern } from "../knowledge/types/learning.js";
-import { LearnedPatternSchema } from "../knowledge/types/learning.js";
 import type { StrategyTemplate } from "../../orchestrator/strategy/types/cross-portfolio.js";
 import { StrategyTemplateSchema } from "../../orchestrator/strategy/types/cross-portfolio.js";
 import type { Strategy } from "../../orchestrator/strategy/types/strategy.js";
 import { loadDreamConfig } from "./dream-config.js";
+import { LearningRuntimeStateStore } from "../../runtime/store/learning-runtime-state-store.js";
 import {
   DreamDecisionHeuristicSchema,
   DreamStrategySelectorSchema,
@@ -67,25 +67,12 @@ export async function loadDecisionHeuristics(baseDir: string): Promise<DreamDeci
 }
 
 export async function loadLearnedPatterns(baseDir: string, goalId?: string): Promise<LearnedPattern[]> {
-  const learningDir = path.join(baseDir, "learning");
-  const files = await fsp.readdir(learningDir).catch(() => [] as string[]);
-  const targetFiles = goalId
-    ? files.filter((file) => file === `${goalId}_patterns.json`)
-    : files.filter((file) => file.endsWith("_patterns.json"));
-
-  const patterns: LearnedPattern[] = [];
-  for (const file of targetFiles) {
-    try {
-      const raw = JSON.parse(await fsp.readFile(path.join(learningDir, file), "utf8")) as unknown;
-      const parsed = z.array(LearnedPatternSchema).safeParse(raw);
-      if (parsed.success) {
-        patterns.push(...parsed.data);
-      }
-    } catch {
-      // Ignore malformed pattern files.
-    }
+  const store = new LearningRuntimeStateStore(baseDir);
+  try {
+    return goalId ? await store.loadPatterns(goalId) : await store.loadAllPatterns();
+  } catch {
+    return [];
   }
-  return patterns;
 }
 
 export function selectPatternHints(

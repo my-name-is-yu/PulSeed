@@ -30,6 +30,7 @@ import {
   inspectControlDatabase,
   importLegacyGoalTaskDurableLoopState,
   importLegacyKnowledgeMemoryState,
+  importLegacyLearningRuntimeState,
   importLegacyMemoryLifecycleState,
   importLegacyPluginChannelRuntimeState,
   importLegacyQueueDaemonScheduleState,
@@ -751,6 +752,7 @@ export async function cmdDoctor(_args: string[]): Promise<number> {
     const ethicsImportReport = await importLegacyEthicsLogState(baseDir);
     const relationshipProfileProposalImportReport = await importLegacyRelationshipProfileProposalState(baseDir);
     const knowledgeMemoryImportReport = await importLegacyKnowledgeMemoryState(baseDir);
+    const learningRuntimeImportReport = await importLegacyLearningRuntimeState(baseDir);
     const memoryLifecycleImportReport = await importLegacyMemoryLifecycleState(baseDir);
     const dreamDecisionHeuristicImportReport = await importLegacyDreamDecisionHeuristics(baseDir);
     const pluginChannelImportReport = await importLegacyPluginChannelRuntimeState(baseDir);
@@ -805,6 +807,9 @@ export async function cmdDoctor(_args: string[]): Promise<number> {
     );
     console.log(
       `Repair knowledge/memory import: domain=${knowledgeMemoryImportReport.domainKnowledge}, shared=${knowledgeMemoryImportReport.sharedKnowledgeEntries}, agent memory=${knowledgeMemoryImportReport.agentMemoryEntries}, corrections=${knowledgeMemoryImportReport.agentMemoryCorrections}, blocked=${knowledgeMemoryImportReport.blockedSources.length}`
+    );
+    console.log(
+      `Repair learning runtime import: logs=${learningRuntimeImportReport.experienceLogs}, patterns=${learningRuntimeImportReport.patterns}, feedback entries=${learningRuntimeImportReport.feedbackEntries}, structural feedback=${learningRuntimeImportReport.structuralFeedback}, skipped already imported=${learningRuntimeImportReport.skippedAlreadyImported}, retired existing typed state=${learningRuntimeImportReport.retiredExistingTypedState}, blocked=${learningRuntimeImportReport.blockedSources.length}`
     );
     console.log(
       `Repair memory lifecycle import: short-term files=${memoryLifecycleImportReport.shortTermFiles}, short-term entries=${memoryLifecycleImportReport.shortTermEntries}, indexes=${memoryLifecycleImportReport.indexFiles}, index entries=${memoryLifecycleImportReport.indexEntries}, lesson files=${memoryLifecycleImportReport.lessonFiles}, lessons=${memoryLifecycleImportReport.lessons}, statistics=${memoryLifecycleImportReport.statisticsFiles}, archives=${memoryLifecycleImportReport.archives}, blocked=${memoryLifecycleImportReport.blockedSources.length}`

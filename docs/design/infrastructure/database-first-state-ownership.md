@@ -177,12 +177,16 @@ import/publish artifacts:
 - stall detector state uses the typed control DB `StallStateStore`; legacy
   `stalls/<goalId>.json` files are no longer authoritative normal runtime
   state and are explicit `doctor --repair` import inputs only
-- current raw fallback migration follow-up surfaces: learning runtime state,
-  knowledge transfer snapshot/meta-pattern state, transfer trust state,
-  capability dependency state, and task grounding raw task reads. Each is tracked by
-  `scripts/check-database-first-legacy-stores.mjs --json` as `migrate now` debt
-  until its typed store/API slice lands. Character config, MCP server config,
-  and generated reports are explicitly classified non-debt boundaries.
+- learning runtime logs, learned patterns, feedback entries, and structural
+  feedback use the typed control DB `LearningRuntimeStateStore`; legacy
+  learning files are no longer authoritative normal runtime state and are
+  explicit `doctor --repair` import inputs only
+- current raw fallback migration follow-up surfaces: knowledge transfer
+  snapshot/meta-pattern state, transfer trust state, capability dependency
+  state, and task grounding raw task reads. Each is tracked by
+  `scripts/check-database-first-legacy-stores.mjs --json` as `migrate now`
+  debt until its typed store/API slice lands. Character config, MCP server
+  config, and generated reports are explicitly classified non-debt boundaries.
 
 Future durable internal state must add a typed store API and schema migration.
 Adding a new JSON/JSONL sidecar requires documenting why it is config,

@@ -141,6 +141,35 @@ describe("LearningPipeline", () => {
   // Section 6: Persistence (getPatterns, savePatterns, getFeedbackEntries, saveFeedbackEntries)
 
   describe("persistence", () => {
+    it("does not treat stale legacy learning files as authoritative runtime logs", async () => {
+      const llm = createMockLLMClient([TRIPLETS_RESPONSE, PATTERNS_RESPONSE]);
+      const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
+      fs.mkdirSync(path.join(tmpDir, "learning"), { recursive: true });
+      fs.writeFileSync(path.join(tmpDir, "learning", "goal-stale_logs.json"), JSON.stringify([{ task: "legacy" }]));
+
+      const staleResult = await pipeline.analyzeLogs({
+        type: "milestone_reached",
+        goal_id: "goal-stale",
+        context: "stale file should not drive learning",
+        timestamp: new Date().toISOString(),
+      });
+
+      expect(staleResult).toEqual([]);
+      expect(llm.callCount).toBe(0);
+
+      await writeLogs(stateManager, "goal-stale", [{ task: "typed" }]);
+      const typedResult = await pipeline.analyzeLogs({
+        type: "milestone_reached",
+        goal_id: "goal-stale",
+        context: "typed DB logs drive learning",
+        timestamp: new Date().toISOString(),
+      });
+
+      expect(typedResult).toHaveLength(1);
+      expect(fs.existsSync(path.join(tmpDir, "learning", "goal-stale_patterns.json"))).toBe(false);
+      expect(fs.existsSync(path.join(tmpDir, "learning", "goal-stale_feedback.json"))).toBe(false);
+    });
+
     describe("getPatterns / savePatterns", () => {
       it("should return empty array for unknown goal", async () => {
         const llm = createMockLLMClient([]);
@@ -759,23 +788,25 @@ describe("LearningPipeline", () => {
       expect(feedback[0]!.pattern_id).toBe("pat-schema-check");
     });
 
-    it("getPatterns returns empty array when stored data is not a valid array", async () => {
+    it("rejects invalid pattern payloads before they can become typed runtime state", async () => {
       const llm = createMockLLMClient([]);
       const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
 
-      // Write corrupt data (not an array)
-      await stateManager.writeRaw("learning/goal-corrupt_patterns.json", { not: "an array" });
+      await expect(
+        stateManager.writeRaw("learning/goal-corrupt_patterns.json", { not: "an array" }),
+      ).rejects.toThrow(/must be an array/);
 
       const result = await pipeline.getPatterns("goal-corrupt");
       expect(result).toEqual([]);
     });
 
-    it("getFeedbackEntries returns empty array when stored data is not a valid array", async () => {
+    it("rejects invalid feedback payloads before they can become typed runtime state", async () => {
       const llm = createMockLLMClient([]);
       const pipeline = new LearningPipeline(llm, vectorIndex, stateManager);
 
-      // Write corrupt data (not an array)
-      await stateManager.writeRaw("learning/goal-corrupt_feedback.json", { not: "an array" });
+      await expect(
+        stateManager.writeRaw("learning/goal-corrupt_feedback.json", { not: "an array" }),
+      ).rejects.toThrow(/must be an array/);
 
       const result = await pipeline.getFeedbackEntries("goal-corrupt");
       expect(result).toEqual([]);

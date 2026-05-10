@@ -22,6 +22,7 @@ export {
   CONTROL_DB_GOAL_TASK_DURABLE_LOOP_SCHEMA_SQL,
   CONTROL_DB_INITIAL_SCHEMA_SQL,
   CONTROL_DB_KNOWLEDGE_MEMORY_SOIL_SCHEMA_SQL,
+  CONTROL_DB_LEARNING_RUNTIME_SCHEMA_SQL,
   CONTROL_DB_MIGRATIONS,
   CONTROL_DB_PLUGIN_CHANNEL_RUNTIME_SCHEMA_SQL,
   CONTROL_DB_QUEUE_DAEMON_SCHEDULE_SCHEMA_SQL,
@@ -83,6 +84,24 @@ export {
 export type {
   StallStateLegacyImportReport,
 } from "./stall-state-migration.js";
+
+export {
+  LearningRuntimeStateStore,
+  parseLearningRuntimeRawPath,
+} from "./learning-runtime-state-store.js";
+export type {
+  LearningRuntimeRawKind,
+  LearningRuntimeRawPathMatch,
+  LearningRuntimeRawStateStoreResult,
+  LearningRuntimeStateStoreOptions,
+  LearningRuntimeStateStorePort,
+} from "./learning-runtime-state-store.js";
+export {
+  importLegacyLearningRuntimeState,
+} from "./learning-runtime-state-migration.js";
+export type {
+  LearningRuntimeLegacyImportReport,
+} from "./learning-runtime-state-migration.js";
 
 export {
   RuntimeEnvelopeKindSchema,

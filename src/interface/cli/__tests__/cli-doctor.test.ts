@@ -56,6 +56,7 @@ import {
   PluginChannelRuntimeStateStore,
   RuntimeHealthStore,
   StallStateStore,
+  LearningRuntimeStateStore,
   SupervisorStateStore,
   CuriosityStateStore,
   EthicsLogStore,
@@ -1501,6 +1502,85 @@ describe("cmdDoctor summary counts", () => {
           source_kind: "stall_state",
           source_id: goalId,
           migration_name: "stall-runtime-state",
+          status: "imported",
+        }),
+      ]));
+    } finally {
+      database.close();
+    }
+  });
+
+  it("imports legacy learning runtime state through doctor repair", async () => {
+    const origHome = process.env["PULSEED_HOME"];
+    process.env["PULSEED_HOME"] = tmpDir;
+    const goalId = "goal-learning-doctor";
+    fs.mkdirSync(path.join(tmpDir, "learning"), { recursive: true });
+    fs.writeFileSync(path.join(tmpDir, "learning", `${goalId}_logs.json`), JSON.stringify([{ event: "legacy" }]));
+    fs.writeFileSync(path.join(tmpDir, "learning", `${goalId}_patterns.json`), JSON.stringify([
+      {
+        pattern_id: "pat_learning_doctor",
+        type: "scope_sizing",
+        description: "Reduce scope when iteration feedback degrades",
+        confidence: 0.8,
+        evidence_count: 2,
+        source_goal_ids: [goalId],
+        applicable_domains: ["testing"],
+        embedding_id: null,
+        created_at: "2026-05-10T00:00:00.000Z",
+        last_applied_at: null,
+      },
+    ]));
+    fs.writeFileSync(path.join(tmpDir, "learning", `${goalId}_feedback.json`), JSON.stringify([
+      {
+        feedback_id: "fb_learning_doctor",
+        pattern_id: "pat_learning_doctor",
+        target_step: "task",
+        adjustment: "Reduce scope",
+        applied_at: "2026-05-10T00:00:00.000Z",
+        effect_observed: null,
+      },
+    ]));
+    fs.writeFileSync(path.join(tmpDir, "learning", `${goalId}_structural_feedback.json`), JSON.stringify([
+      {
+        id: "sf_learning_doctor",
+        goalId,
+        iterationId: "iter-1",
+        feedbackType: "scope_sizing",
+        expected: "small task",
+        actual: "large task",
+        delta: -0.2,
+        timestamp: "2026-05-10T00:00:00.000Z",
+        context: { dimension: "scope" },
+      },
+    ]));
+
+    try {
+      const exitCode = await cmdDoctor(["--repair"]);
+      expect([0, 1]).toContain(exitCode);
+    } finally {
+      if (origHome !== undefined) {
+        process.env["PULSEED_HOME"] = origHome;
+      } else {
+        delete process.env["PULSEED_HOME"];
+      }
+    }
+
+    const learningStore = new LearningRuntimeStateStore(tmpDir);
+    await expect(learningStore.loadExperienceLogs(goalId)).resolves.toEqual([{ event: "legacy" }]);
+    await expect(learningStore.loadPatterns(goalId)).resolves.toHaveLength(1);
+    await expect(learningStore.loadFeedbackEntries(goalId)).resolves.toHaveLength(1);
+    await expect(learningStore.loadStructuralFeedback(goalId)).resolves.toHaveLength(1);
+
+    const allOutput = consoleSpy.mock.calls.map((c: unknown[]) => c[0] as string).join("\n");
+    expect(allOutput).toContain("Repair learning runtime import: logs=1, patterns=1, feedback entries=1, structural feedback=1, skipped already imported=0, retired existing typed state=0");
+
+    const database = await openControlDatabase({ baseDir: tmpDir });
+    try {
+      expect(database.listLegacyImports()).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          source_kind: "learning_experience_logs",
+          source_id: `logs:${goalId}`,
+          migration_name: "learning-runtime-state",
           status: "imported",
         }),
       ]));

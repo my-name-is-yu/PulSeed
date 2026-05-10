@@ -36,6 +36,7 @@ type StrategyDreamStateStore = import("../../runtime/store/strategy-dream-state-
 type ProcessSessionStateStore = import("../../runtime/store/process-session-state-store.js").ProcessSessionStateStore;
 type CapabilityRegistryStateStore = import("../../runtime/store/capability-registry-state-store.js").CapabilityRegistryStateStore;
 type StallStateStore = import("../../runtime/store/stall-state-store.js").StallStateStore;
+type LearningRuntimeStateStore = import("../../runtime/store/learning-runtime-state-store.js").LearningRuntimeStateStore;
 type StallState = import("../types/stall.js").StallState;
 
 function normalizeRawStatePath(relativePath: string): string[] {
@@ -59,6 +60,16 @@ function parseStallStateRawPath(relativePath: string): string | null {
   if (parts[0] !== "stalls" || parts.length !== 2) return null;
   const fileName = parts[1]!;
   return fileName.endsWith(".json") ? fileName.slice(0, -".json".length) : null;
+}
+
+function isLearningRuntimeRawPath(relativePath: string): boolean {
+  const parts = normalizeRawStatePath(relativePath);
+  if (parts[0] !== "learning" || parts.length !== 2) return false;
+  const fileName = parts[1]!;
+  return fileName.endsWith("_logs.json")
+    || fileName.endsWith("_patterns.json")
+    || fileName.endsWith("_feedback.json")
+    || fileName.endsWith("_structural_feedback.json");
 }
 
 function isStrategyDreamDurableStatePath(relativePath: string): boolean {
@@ -94,6 +105,7 @@ export class StateManager {
   private processSessionStateStorePromise: Promise<ProcessSessionStateStore> | null = null;
   private capabilityRegistryStateStorePromise: Promise<CapabilityRegistryStateStore> | null = null;
   private stallStateStorePromise: Promise<StallStateStore> | null = null;
+  private learningRuntimeStateStorePromise: Promise<LearningRuntimeStateStore> | null = null;
   private readonly goalStateWriteQueues = new Map<string, Promise<void>>();
   private readonly writeFences = new Map<string, StateWriteFence>();
 
@@ -111,6 +123,7 @@ export class StateManager {
     await (await this.capabilityRegistryStateStore()).ensureReady();
     await (await this.processSessionStateStore()).ensureReady();
     await (await this.stallStateStore()).ensureReady();
+    await (await this.learningRuntimeStateStore()).ensureReady();
   }
 
   /** Returns the base directory path */
@@ -188,7 +201,16 @@ export class StateManager {
     await (await this.strategyDreamStateStore()).deleteGoalStrategyState(goalId);
     await (await this.stallStateStore()).deleteStallState(goalId);
     await fsp.rm(path.join(this.baseDir, "stalls", `${goalId}.json`), { force: true });
+    await this.cleanupLearningRuntimeState(goalId);
     await fsp.rm(path.join(this.baseDir, "reports", goalId), { recursive: true, force: true });
+  }
+
+  private async cleanupLearningRuntimeState(goalId: string): Promise<void> {
+    await (await this.learningRuntimeStateStore()).deleteGoalLearningState(goalId);
+    await fsp.rm(path.join(this.baseDir, "learning", `${goalId}_logs.json`), { force: true });
+    await fsp.rm(path.join(this.baseDir, "learning", `${goalId}_patterns.json`), { force: true });
+    await fsp.rm(path.join(this.baseDir, "learning", `${goalId}_feedback.json`), { force: true });
+    await fsp.rm(path.join(this.baseDir, "learning", `${goalId}_structural_feedback.json`), { force: true });
   }
 
   private markGoalVisited(goalId: string, visited: Set<string>): boolean {
@@ -257,6 +279,12 @@ export class StateManager {
     this.stallStateStorePromise ??= import("../../runtime/store/stall-state-store.js")
       .then(({ StallStateStore }) => new StallStateStore(this.baseDir));
     return this.stallStateStorePromise;
+  }
+
+  private async learningRuntimeStateStore(): Promise<LearningRuntimeStateStore> {
+    this.learningRuntimeStateStorePromise ??= import("../../runtime/store/learning-runtime-state-store.js")
+      .then(({ LearningRuntimeStateStore }) => new LearningRuntimeStateStore(this.baseDir));
+    return this.learningRuntimeStateStorePromise;
   }
 
   // ─── Goal CRUD ───
@@ -731,6 +759,12 @@ export class StateManager {
     if (stallGoalId) {
       return (await this.stallStateStore()).loadStallState(stallGoalId);
     }
+    if (isLearningRuntimeRawPath(relativePath)) {
+      const routed = await (await this.learningRuntimeStateStore()).readRawPath(relativePath);
+      if (routed.handled) {
+        return routed.value;
+      }
+    }
     if (isStrategyDreamDurableStatePath(relativePath)) {
       const routed = await (await this.strategyDreamStateStore()).readRawPath(relativePath);
       if (routed.handled) {
@@ -776,6 +810,12 @@ export class StateManager {
         await routedStore.saveStallState(stallGoalId, data as StallState);
       }
       return;
+    }
+    if (isLearningRuntimeRawPath(relativePath)) {
+      const routedStore = await this.learningRuntimeStateStore();
+      if (await routedStore.writeRawPath(relativePath, data)) {
+        return;
+      }
     }
     if (isStrategyDreamDurableStatePath(relativePath)) {
       const routedStore = await this.strategyDreamStateStore();

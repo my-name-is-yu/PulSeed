@@ -9,13 +9,13 @@ import type {
   FeedbackAggregation,
   ParameterTuning,
 } from "../../../base/types/learning.js";
-import type { StateManager } from "../../../base/state/state-manager.js";
 import type { LearningPipelineConfig } from "../../../base/types/learning.js";
+import type { LearningRuntimeStateStorePort } from "../../../runtime/store/learning-runtime-state-store.js";
 
 // ─── Deps ───
 
 export interface FeedbackDeps {
-  stateManager: StateManager;
+  learningStore: LearningRuntimeStateStorePort;
   config: LearningPipelineConfig;
 }
 
@@ -25,24 +25,14 @@ export async function getStructuralFeedback(
   deps: FeedbackDeps,
   goalId: string
 ): Promise<StructuralFeedback[]> {
-  const raw = await deps.stateManager.readRaw(
-    `learning/${goalId}_structural_feedback.json`
-  );
-  if (!raw || !Array.isArray(raw)) return [];
-  try {
-    return (raw as unknown[]).map((item) =>
-      StructuralFeedbackSchema.parse(item)
-    );
-  } catch {
-    return [];
-  }
+  return deps.learningStore.loadStructuralFeedback(goalId);
 }
 
 // ─── recordStructuralFeedback ───
 
 /**
  * Record a structural feedback entry for a goal/iteration.
- * Validates with Zod and persists via StateManager.
+ * Validates with Zod and persists via LearningRuntimeStateStore.
  */
 export async function recordStructuralFeedback(
   deps: FeedbackDeps,
@@ -51,10 +41,7 @@ export async function recordStructuralFeedback(
   const validated = StructuralFeedbackSchema.parse(feedback);
   const existing = await getStructuralFeedback(deps, validated.goalId);
   existing.push(validated);
-  await deps.stateManager.writeRaw(
-    `learning/${validated.goalId}_structural_feedback.json`,
-    existing
-  );
+  await deps.learningStore.saveStructuralFeedback(validated.goalId, existing);
 }
 
 // ─── aggregateFeedback ───
