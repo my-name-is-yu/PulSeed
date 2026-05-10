@@ -23,6 +23,7 @@ import { PIDManager } from "../../../runtime/pid-manager.js";
 import { RuntimeHealthStore } from "../../../runtime/store/health-store.js";
 import { ProactiveInterventionStore } from "../../../runtime/store/proactive-intervention-store.js";
 import { DaemonShutdownStore, DaemonStateStore, GoalTaskStateStore, openControlDatabase, SupervisorStateStore } from "../../../runtime/store/index.js";
+import type { RuntimeLongRunHealth } from "../../../runtime/store/runtime-schemas.js";
 
 function mockPidInspectRunning(runtimePid: number, ownerPid = runtimePid) {
   return vi.spyOn(PIDManager.prototype, "inspect").mockResolvedValue({
@@ -120,6 +121,31 @@ function runningDaemonState(overrides: Record<string, unknown> = {}): Record<str
     crash_count: 0,
     last_error: null,
     ...overrides,
+  };
+}
+
+function staleArtifactLongRunHealth(
+  now: number,
+  overrides: Partial<RuntimeLongRunHealth> = {},
+): RuntimeLongRunHealth {
+  const base: RuntimeLongRunHealth = {
+    summary: "alive_but_artifact_stalled",
+    checked_at: now,
+    signals: {
+      process: { status: "alive", checked_at: now, observed_at: now, pid: process.pid },
+      child_activity: { status: "idle", checked_at: now, observed_at: now, active_count: 0 },
+      log_freshness: { status: "stale", checked_at: now, observed_at: now - 15 * 60_000 },
+      artifact_freshness: { status: "missing", checked_at: now },
+      metric_freshness: { status: "missing", checked_at: now },
+      metric_progress: { status: "missing", checked_at: now },
+      blocker: { status: "none", checked_at: now, observed_at: now },
+      resumable: true,
+    },
+  };
+  return {
+    ...base,
+    ...overrides,
+    signals: overrides.signals ?? base.signals,
   };
 }
 
@@ -410,6 +436,102 @@ describe("cmdDaemonStatus", () => {
     expect(output).toContain("Ack latency:     p95 1.0s");
   });
 
+  it("does not lead idle no-active-goal status with artifact-stalled when no artifact stream is expected", async () => {
+    const now = Date.now();
+    await saveRuntimeHealthFixture(
+      tmpDir,
+      {
+        status: "ok",
+        leader: true,
+        checked_at: now,
+        kpi: {
+          process_alive: { status: "ok", checked_at: now, last_ok_at: now },
+          command_acceptance: { status: "ok", checked_at: now, last_ok_at: now },
+          task_execution: { status: "ok", checked_at: now, last_ok_at: now },
+        },
+        long_running: staleArtifactLongRunHealth(now),
+        details: { pid: process.pid },
+      },
+      {
+        checked_at: now,
+        components: {
+          gateway: "ok",
+          queue: "ok",
+          leases: "ok",
+          approval: "ok",
+          outbox: "ok",
+          supervisor: "ok",
+        },
+      }
+    );
+    await saveDaemonStateFixture(tmpDir, runningDaemonState({
+      active_goals: [],
+      status: "idle",
+    }));
+    const inspectSpy = mockPidInspectRunning(process.pid);
+
+    await cmdDaemonStatus([]);
+    inspectSpy.mockRestore();
+
+    const output = consoleSpy.mock.calls[0]?.[0] as string;
+    expect(output).toContain("Status:          idle");
+    expect(output).toContain("Active goals:    (none)");
+    expect(output).toContain("Summary:        idle; no active artifact stream expected");
+    expect(output).toContain("Artifact fresh: missing; evidence=");
+    expect(output).toContain("Artifact stream: none (idle_no_worker)");
+    expect(output).not.toContain("Summary:        alive but artifact-stalled");
+  });
+
+  it("keeps active-goal missing artifacts visible as artifact-stalled", async () => {
+    const now = Date.now();
+    await saveRuntimeHealthFixture(
+      tmpDir,
+      {
+        status: "degraded",
+        leader: true,
+        checked_at: now,
+        kpi: {
+          process_alive: { status: "ok", checked_at: now, last_ok_at: now },
+          command_acceptance: { status: "ok", checked_at: now, last_ok_at: now },
+          task_execution: { status: "degraded", checked_at: now, last_degraded_at: now },
+          degraded_at: now,
+        },
+        long_running: staleArtifactLongRunHealth(now, {
+          signals: {
+            ...staleArtifactLongRunHealth(now).signals,
+            child_activity: { status: "active", checked_at: now, observed_at: now, active_count: 1 },
+          },
+        }),
+        details: { pid: process.pid },
+      },
+      {
+        checked_at: now,
+        components: {
+          gateway: "ok",
+          queue: "ok",
+          leases: "ok",
+          approval: "ok",
+          outbox: "ok",
+          supervisor: "degraded",
+        },
+      }
+    );
+    await saveDaemonStateFixture(tmpDir, runningDaemonState({
+      active_goals: ["goal-stale"],
+      status: "running",
+    }));
+    const inspectSpy = mockPidInspectRunning(process.pid);
+
+    await cmdDaemonStatus([]);
+    inspectSpy.mockRestore();
+
+    const output = consoleSpy.mock.calls[0]?.[0] as string;
+    expect(output).toContain("Active goals:    goal-stale");
+    expect(output).toContain("Summary:        alive but artifact-stalled");
+    expect(output).toContain("Artifact fresh: missing; evidence=");
+    expect(output).toContain("Artifact stream: expected (active_goal)");
+  });
+
   it("does not throw on out-of-range persisted runtime health timestamps", async () => {
     const now = Date.now();
     const outOfDateRangeTimestamp = 9_000_000_000_000_000;
@@ -572,8 +694,8 @@ describe("cmdDaemonStatus", () => {
             process: { status: "alive", checked_at: now - 60_000, observed_at: now - 60_000, pid: stalePid },
             child_activity: { status: "active", checked_at: now - 60_000, observed_at: now - 60_000, active_count: 2 },
             log_freshness: { status: "fresh", checked_at: now - 60_000, observed_at: now - 60_000 },
-            artifact_freshness: { status: "fresh", checked_at: now - 60_000, observed_at: now - 60_000 },
-            metric_freshness: { status: "fresh", checked_at: now - 60_000, observed_at: now - 60_000 },
+            artifact_freshness: { status: "missing", checked_at: now - 60_000 },
+            metric_freshness: { status: "missing", checked_at: now - 60_000 },
             metric_progress: { status: "plateau", checked_at: now - 60_000, observed_at: now - 60_000 },
             blocker: { status: "none", checked_at: now - 60_000, observed_at: now - 60_000 },
             resumable: true,
@@ -639,7 +761,10 @@ describe("cmdDaemonStatus", () => {
     expect(output).toContain("Process alive:   failed");
     expect(output).toContain("KPI snapshot:    process=down accept=up execute=up (failed)");
     expect(output).toContain("Summary:        dead but resumable");
+    expect(output).not.toContain("Summary:        unknown");
     expect(output).toContain(`Process:        dead pid=${stalePid}`);
+    expect(output).toContain("Artifact fresh: missing; evidence=");
+    expect(output).toContain("Artifact stream: unknown (historical_runtime_snapshot)");
     expect(output).toContain("Historical child activity: active count=2; evidence=");
     expect(output).toContain("(stale snapshot)");
     expect(output).not.toContain("Process alive:   ok");

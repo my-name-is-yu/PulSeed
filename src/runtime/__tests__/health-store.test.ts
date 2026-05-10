@@ -263,6 +263,30 @@ describe("RuntimeHealthStore", () => {
     expect(health.signals.artifact_freshness.observed_at).toBe(1_000);
   });
 
+  it("classifies missing idle artifacts as neutral when no artifact stream is expected", () => {
+    const health = buildLongRunHealth(longRunSignals({
+      child_activity: { status: "idle", checked_at: 2_000, observed_at: 2_000, active_count: 0 },
+      artifact_freshness: { status: "missing", checked_at: 2_000 },
+      metric_freshness: { status: "missing", checked_at: 2_000 },
+      metric_progress: { status: "missing", checked_at: 2_000 },
+      artifact_expectation: { state: "none", reason: "idle_no_worker" },
+    }));
+
+    expect(health.summary).toBe("alive_idle_no_artifact_stream");
+  });
+
+  it("classifies missing artifacts as unknown when artifact expectation is unknown", () => {
+    const health = buildLongRunHealth(longRunSignals({
+      child_activity: { status: "unknown", checked_at: 2_000 },
+      artifact_freshness: { status: "missing", checked_at: 2_000 },
+      metric_freshness: { status: "missing", checked_at: 2_000 },
+      metric_progress: { status: "missing", checked_at: 2_000 },
+      artifact_expectation: { state: "unknown", reason: "supervisor_activity_unknown" },
+    }));
+
+    expect(health.summary).toBe("unknown");
+  });
+
   it("classifies alive runs with a new artifact but no metric improvement as metric-stalled", () => {
     const health = buildLongRunHealth(longRunSignals({
       artifact_freshness: { status: "fresh", checked_at: 2_000, observed_at: 2_000, path: "result.json" },
