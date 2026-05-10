@@ -2,6 +2,7 @@ import * as fsp from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { z } from "zod";
+import { readTextFileWithinLimit } from "../../base/utils/json-io.js";
 import { isProcessPidValue, signalProcessPid } from "../../base/utils/process-pid.js";
 import type {
   WaitCondition,
@@ -12,6 +13,7 @@ import type {
 import { ProcessSessionStateStore } from "../../runtime/store/process-session-state-store.js";
 
 const DEFAULT_WAIT_REOBSERVE_MS = 5 * 60 * 1000;
+const ARTIFACT_JSON_VALUE_MAX_BYTES = 1024 * 1024;
 const JSON_POINTER_ARRAY_INDEX_TOKEN = /^[0-9]+$/;
 const PROCESS_SESSION_SIGNALS = new Set(Object.keys(os.constants.signals));
 const PROCESS_SESSION_ISO_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
@@ -330,7 +332,10 @@ async function evaluateWaitCondition(
         const target = resolveConditionPath(condition.path, context.stateBaseDir);
         if (!target) return failedCondition(condition, `path escapes state base: ${condition.path}`);
         try {
-          const parsed = JSON.parse(await fsp.readFile(target, "utf8"));
+          const raw = await readTextFileWithinLimit(target, {
+            maxBytes: ARTIFACT_JSON_VALUE_MAX_BYTES,
+          });
+          const parsed = JSON.parse(raw) as unknown;
           const actual = readJsonPointer(parsed, condition.json_pointer);
           if (jsonEqual(actual, condition.expected)) {
             return satisfiedCondition(condition, { path: target, json_pointer: condition.json_pointer, actual });
