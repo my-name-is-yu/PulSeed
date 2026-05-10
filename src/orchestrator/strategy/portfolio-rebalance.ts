@@ -482,6 +482,20 @@ export function rebalanceTriggerFromWaitExpiryOutcome(
   return outcome?.rebalance_trigger ?? null;
 }
 
+function normalizeGoalAllocation(value: number | undefined, fallback: number): number | null {
+  const allocation = value ?? fallback;
+  if (!Number.isFinite(allocation) || allocation <= 0 || allocation > Number.MAX_SAFE_INTEGER) {
+    return null;
+  }
+  return allocation;
+}
+
+function normalizeGoalTaskCount(value: number | undefined): number {
+  const count = value ?? 0;
+  if (!Number.isSafeInteger(count) || count < 0) return 0;
+  return count;
+}
+
 /**
  * Select the next strategy across multiple goals.
  *
@@ -504,10 +518,12 @@ export async function selectNextStrategyAcrossGoals(
 } | null> {
   if (goalIds.length === 0) return null;
 
-  const scored = goalIds.map((goalId) => {
-    const allocation = goalAllocations.get(goalId) ?? (1 / goalIds.length);
-    const taskCount = goalTaskCounts.get(goalId) ?? 0;
-    const saturation = allocation > 0 ? taskCount / allocation : Infinity;
+  const fallbackAllocation = 1 / goalIds.length;
+  const scored = goalIds.flatMap((goalId) => {
+    const allocation = normalizeGoalAllocation(goalAllocations.get(goalId), fallbackAllocation);
+    if (allocation === null) return [];
+    const taskCount = normalizeGoalTaskCount(goalTaskCounts.get(goalId));
+    const saturation = taskCount / allocation;
     return { goalId, saturation, allocation };
   });
 
