@@ -6,8 +6,8 @@
 import { parseArgs } from "node:util";
 
 import { getCliLogger } from "./cli-logger.js";
-import { StateManager } from "../../base/state/state-manager.js";
-import { CharacterConfigManager } from "../../platform/traits/character-config.js";
+import type { StateManager } from "../../base/state/state-manager.js";
+import type { CharacterConfigManager } from "../../platform/traits/character-config.js";
 import type { CoreLoop } from "../../orchestrator/loop/durable-loop.js";
 import type { LoopConfig } from "../../orchestrator/loop/durable-loop.js";
 
@@ -32,7 +32,7 @@ import {
   cmdCapabilityList,
   cmdCapabilityRemove,
 } from "./commands/config.js";
-import { cmdStart, cmdStop, cmdCron, cmdDaemonStatus, cmdDaemonPing } from "./commands/daemon.js";
+import { cmdStart, cmdStop, cmdRestart, cmdCron, cmdDaemonStatus, cmdDaemonPing } from "./commands/daemon.js";
 import { cmdSuggest, cmdImprove } from "./commands/suggest.js";
 import { cmdSetup } from "./commands/setup.js";
 import { cmdKnowledgeList, cmdKnowledgeSearch, cmdKnowledgeStats } from "./commands/knowledge.js";
@@ -333,6 +333,10 @@ export async function dispatchCommand(
       return 0;
     }
 
+    if (daemonSubcommand === "restart") {
+      return await cmdRestart(stateManager, characterConfigManager, argv.slice(2));
+    }
+
     if (daemonSubcommand === "status") {
       await cmdDaemonStatus(argv.slice(2));
       return 0;
@@ -347,7 +351,7 @@ export async function dispatchCommand(
     }
 
     logger.error(`Unknown daemon subcommand: "${daemonSubcommand ?? ""}"`);
-    logger.error("Available: daemon start, daemon stop, daemon status, daemon ping, daemon cron");
+    logger.error("Available: daemon start, daemon stop, daemon restart, daemon status, daemon ping, daemon cron");
     return 1;
   }
 

@@ -432,6 +432,7 @@ describe("unknown subcommand", async () => {
     const output = consoleSpy.mock.calls.map((call) => call.join(" ")).join("\n");
     expect(code).toBe(0);
     expect(output).toContain("pulseed daemon ping");
+    expect(output).toContain("pulseed daemon restart");
     expect(output).toContain("pulseed approval list");
     expect(output).toContain('pulseed goal add "<description>" --no-refine          Register a goal without refinement');
     expect(output).toContain("--no-refine                         Skip GoalRefiner and use the negotiation path directly");
@@ -453,6 +454,7 @@ describe("unknown subcommand", async () => {
     expect(firstCode).toBe(0);
     expect(secondCode).toBe(0);
     expect(output).toContain("pulseed daemon ping");
+    expect(output).toContain("pulseed daemon restart");
     expect(initSpy).not.toHaveBeenCalled();
     consoleSpy.mockRestore();
     initSpy.mockRestore();
