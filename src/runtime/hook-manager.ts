@@ -1,8 +1,7 @@
-import * as fs from "node:fs";
-import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { spawn } from "node:child_process";
 import type { Logger } from "./logger.js";
+import { readTextFileWithinLimit, readTextFileWithinLimitSync } from "../base/utils/json-io.js";
 import {
   HooksConfigSchema,
   type HookConfig,
@@ -14,6 +13,9 @@ import type { DreamCollectorConfig } from "../platform/dream/dream-log-collector
 import { DreamLogConfigSchema } from "../platform/dream/dream-types.js";
 
 // ─── HookManager ───
+
+export const HOOKS_CONFIG_JSON_MAX_BYTES = 256 * 1024;
+export const DREAM_CONFIG_JSON_MAX_BYTES = 256 * 1024;
 
 /**
  * HookManager loads hook definitions from {baseDir}/hooks.json and fires them
@@ -37,7 +39,10 @@ export class HookManager {
   private loadDreamCollectorConfig(): DreamCollectorConfig {
     const configPath = path.join(this.baseDir, "dream", "config.json");
     try {
-      const raw = JSON.parse(fs.readFileSync(configPath, "utf8")) as unknown;
+      const content = readTextFileWithinLimitSync(configPath, {
+        maxBytes: DREAM_CONFIG_JSON_MAX_BYTES,
+      });
+      const raw = JSON.parse(content) as unknown;
       return DreamLogConfigSchema.parse(raw).logCollection;
     } catch {
       return {};
@@ -52,7 +57,9 @@ export class HookManager {
   async loadHooks(): Promise<void> {
     const configPath = path.join(this.baseDir, "hooks.json");
     try {
-      const raw = await fsp.readFile(configPath, "utf-8");
+      const raw = await readTextFileWithinLimit(configPath, {
+        maxBytes: HOOKS_CONFIG_JSON_MAX_BYTES,
+      });
       const parsed = JSON.parse(raw);
       const config = HooksConfigSchema.parse(parsed);
       this.hooks = config.hooks;

@@ -1,7 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { HookManager } from "../hook-manager.js";
+import {
+  DREAM_CONFIG_JSON_MAX_BYTES,
+  HOOKS_CONFIG_JSON_MAX_BYTES,
+  HookManager,
+} from "../hook-manager.js";
 import type { HookConfig } from "../../base/types/hook.js";
 import { makeTempDir, cleanupTempDir } from "../../../tests/helpers/temp-dir.js";
 import { StrategyDreamStateStore } from "../store/strategy-dream-state-store.js";
@@ -85,6 +89,30 @@ describe("HookManager", () => {
       expect(manager.getHookCount()).toBe(0);
     });
 
+    it("rejects oversized persisted hooks configs before schema validation", async () => {
+      fs.writeFileSync(
+        path.join(tempDir, "hooks.json"),
+        JSON.stringify({
+          hooks: [
+            {
+              event: "LoopCycleStart",
+              type: "shell",
+              command: "echo hi",
+              timeout_ms: 5000,
+              enabled: true,
+            },
+          ],
+          padding: "x".repeat(HOOKS_CONFIG_JSON_MAX_BYTES),
+        }),
+        "utf-8"
+      );
+
+      const manager = new HookManager(tempDir);
+      await manager.loadHooks();
+
+      expect(manager.getHookCount()).toBe(0);
+    });
+
     it("handles empty hooks array", async () => {
       writeHooksJson(tempDir, []);
 
@@ -142,6 +170,30 @@ describe("HookManager", () => {
 
       expect(await store.listEventLogs()).toHaveLength(0);
       expect(fs.existsSync(path.join(tempDir, "dream", "events", "g1.jsonl"))).toBe(false);
+    });
+
+    it("ignores oversized dream log config and keeps default persistence enabled", async () => {
+      await fs.promises.mkdir(path.join(tempDir, "dream"), { recursive: true });
+      await fs.promises.writeFile(
+        path.join(tempDir, "dream", "config.json"),
+        JSON.stringify({
+          logCollection: { enabled: true, eventPersistenceEnabled: false },
+          padding: "x".repeat(DREAM_CONFIG_JSON_MAX_BYTES),
+        }),
+        "utf8"
+      );
+
+      const manager = new HookManager(tempDir);
+      const store = new StrategyDreamStateStore(tempDir);
+      await manager.emit("LoopCycleStart", { goal_id: "g1" });
+
+      await waitFor(async () => (await store.listEventLogs()).length === 1);
+      expect((await store.listEventLogs())[0]).toEqual(expect.objectContaining({
+        event: expect.objectContaining({
+          eventType: "LoopCycleStart",
+          goalId: "g1",
+        }),
+      }));
     });
 
     it("persists DB dream events when date rotation config is enabled", async () => {
