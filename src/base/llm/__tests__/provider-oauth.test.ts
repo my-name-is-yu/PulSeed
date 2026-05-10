@@ -1,14 +1,17 @@
+import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as os from "node:os";
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-
-const { mockReadTextFileWithinLimit } = vi.hoisted(() => ({
-  mockReadTextFileWithinLimit: vi.fn(),
-}));
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type * as ProviderConfigModule from "../provider-config.js";
 
 const CODEX_AUTH_TEXT_MAX_BYTES = 1024 * 1024;
 
-// ─── isJwtExpired ───
+const {
+  getProviderRuntimeFingerprint,
+  isJwtExpired,
+  loadProviderConfig,
+  readCodexOAuthToken,
+} = await vi.importActual<typeof ProviderConfigModule>("../provider-config.js");
 
 function makeJwt(payload: Record<string, unknown>): string {
   const header = Buffer.from(JSON.stringify({ alg: "RS256", typ: "JWT" })).toString("base64url");
@@ -27,8 +30,7 @@ describe("isJwtExpired", () => {
     expect(isJwtExpired(makeJwt({ exp: past }))).toBe(true);
   });
 
-  it("returns true when exp is absent (missing exp treated as expired)", () => {
-    // No exp field → treat as expired (security policy)
+  it("returns true when exp is absent", () => {
     expect(isJwtExpired(makeJwt({ sub: "user" }))).toBe(true);
   });
 
@@ -37,205 +39,150 @@ describe("isJwtExpired", () => {
   });
 });
 
-// ─── readCodexOAuthToken ───
+describe("provider OAuth config fallback", () => {
+  let tmpHome: string;
+  let tmpPulseedHome: string;
+  let originalHome: string | undefined;
+  let originalPulseedHome: string | undefined;
+  let originalOpenAiKey: string | undefined;
 
-vi.mock("node:fs/promises", async (importOriginal) => {
-  const actual = await importOriginal<Record<string, unknown>>();
-  return { ...actual, readFile: vi.fn() };
-});
+  beforeEach(async () => {
+    originalHome = process.env["HOME"];
+    originalPulseedHome = process.env["PULSEED_HOME"];
+    originalOpenAiKey = process.env["OPENAI_API_KEY"];
+    tmpHome = await fs.mkdtemp(path.join(os.tmpdir(), "pulseed-provider-oauth-"));
+    tmpPulseedHome = path.join(tmpHome, ".pulseed");
+    process.env["HOME"] = tmpHome;
+    process.env["PULSEED_HOME"] = tmpPulseedHome;
+    delete process.env["OPENAI_API_KEY"];
+  });
 
-vi.mock("../../utils/json-io.js", async (importOriginal) => {
-  const actual = await importOriginal<Record<string, unknown>>();
-  return {
-    ...actual,
-    readTextFileWithinLimit: mockReadTextFileWithinLimit,
-  };
-});
-
-const fsp = await import("node:fs/promises");
-const mockReadFile = vi.mocked(fsp.readFile);
-const {
-  getProviderRuntimeFingerprint,
-  isJwtExpired,
-  loadProviderConfig,
-  readCodexOAuthToken,
-} = await import("../provider-config.js");
-
-describe("readCodexOAuthToken", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mockReadTextFileWithinLimit.mockImplementation((filePath: string) => mockReadFile(filePath, "utf-8"));
+  afterEach(async () => {
+    restoreEnv("HOME", originalHome);
+    restoreEnv("PULSEED_HOME", originalPulseedHome);
+    restoreEnv("OPENAI_API_KEY", originalOpenAiKey);
+    await fs.rm(tmpHome, { recursive: true, force: true });
   });
 
   it("returns the access_token from a valid auth.json", async () => {
     const future = Math.floor(Date.now() / 1000) + 3600;
     const token = makeJwt({ exp: future, sub: "user" });
-    const authJson = JSON.stringify({
+    await writeCodexAuthJson({
       auth_mode: "chatgpt",
       tokens: { access_token: token, refresh_token: "rt_abc" },
       last_refresh: "2026-01-01T00:00:00Z",
     });
-    mockReadFile.mockResolvedValueOnce(authJson);
 
     const result = await readCodexOAuthToken();
+
     expect(result).toBe(token);
   });
 
   it("returns undefined when the file does not exist", async () => {
-    mockReadFile.mockRejectedValueOnce(Object.assign(new Error("ENOENT"), { code: "ENOENT" }));
-    const result = await readCodexOAuthToken();
-    expect(result).toBeUndefined();
+    await expect(readCodexOAuthToken()).resolves.toBeUndefined();
   });
 
   it("returns undefined when the token is expired", async () => {
     const past = Math.floor(Date.now() / 1000) - 10;
-    const token = makeJwt({ exp: past });
-    const authJson = JSON.stringify({
-      tokens: { access_token: token },
+    await writeCodexAuthJson({
+      tokens: { access_token: makeJwt({ exp: past }) },
     });
-    mockReadFile.mockResolvedValueOnce(authJson);
 
-    const result = await readCodexOAuthToken();
-    expect(result).toBeUndefined();
+    await expect(readCodexOAuthToken()).resolves.toBeUndefined();
   });
 
   it("returns undefined when tokens.access_token is missing", async () => {
-    const authJson = JSON.stringify({ auth_mode: "chatgpt", tokens: {} });
-    mockReadFile.mockResolvedValueOnce(authJson);
+    await writeCodexAuthJson({ auth_mode: "chatgpt", tokens: {} });
 
-    const result = await readCodexOAuthToken();
-    expect(result).toBeUndefined();
+    await expect(readCodexOAuthToken()).resolves.toBeUndefined();
   });
 
   it("returns undefined when auth.json exceeds the bounded read limit", async () => {
-    mockReadTextFileWithinLimit.mockRejectedValueOnce(new Error("too large"));
-
-    const result = await readCodexOAuthToken();
-
-    expect(result).toBeUndefined();
-    expect(mockReadTextFileWithinLimit).toHaveBeenCalledWith(
-      path.join(os.homedir(), ".codex", "auth.json"),
-      { maxBytes: CODEX_AUTH_TEXT_MAX_BYTES },
+    await fs.mkdir(path.dirname(codexAuthPath()), { recursive: true });
+    await fs.writeFile(
+      codexAuthPath(),
+      JSON.stringify({ tokens: { access_token: "x".repeat(CODEX_AUTH_TEXT_MAX_BYTES) } }),
+      "utf-8",
     );
-  });
-});
 
-// ─── loadProviderConfig — OAuth fallback (integration-style) ───
-
-describe("loadProviderConfig OAuth fallback", () => {
-  let origKey: string | undefined;
-
-  beforeEach(() => {
-    origKey = process.env.OPENAI_API_KEY;
-    delete process.env.OPENAI_API_KEY;
-    vi.clearAllMocks();
-    mockReadTextFileWithinLimit.mockImplementation((filePath: string) => mockReadFile(filePath, "utf-8"));
+    await expect(readCodexOAuthToken()).resolves.toBeUndefined();
   });
 
-  afterEach(() => {
-    if (origKey !== undefined) process.env.OPENAI_API_KEY = origKey;
-    else delete process.env.OPENAI_API_KEY;
-  });
-
-  it("loadProviderConfig uses OAuth token when no API key", async () => {
+  it("loadProviderConfig uses OAuth token when no API key is configured", async () => {
     const futureExp = Math.floor(Date.now() / 1000) + 3600;
-    const payload = Buffer.from(JSON.stringify({ exp: futureExp })).toString("base64url");
-    const validToken = `eyJhbGciOiJSUzI1NiJ9.${payload}.sig`;
-
-    const providerJsonPath = path.join(os.homedir(), ".pulseed", "provider.json");
-    const authJsonPath = path.join(os.homedir(), ".codex", "auth.json");
-
-    const providerJson = JSON.stringify({
+    const validToken = makeJwt({ exp: futureExp });
+    await writeProviderJson({
       provider: "openai",
       model: "gpt-5.4-mini",
       adapter: "openai_codex_cli",
     });
-    const authJson = JSON.stringify({
-      tokens: { access_token: validToken },
-    });
-
-    mockReadFile.mockImplementation(async (filePath: unknown) => {
-      if (filePath === providerJsonPath) return providerJson;
-      if (filePath === authJsonPath) return authJson;
-      throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
-    });
-
-    // Also mock fsp.access so loadProviderConfig thinks provider.json exists
-    const fspModule = await import("node:fs/promises");
-    const accessSpy = vi.spyOn(fspModule, "access").mockResolvedValue(undefined);
+    await writeCodexAuthJson({ tokens: { access_token: validToken } });
 
     const config = await loadProviderConfig();
-    expect(config.api_key).toBe(validToken);
 
-    accessSpy.mockRestore();
+    expect(config.api_key).toBe(validToken);
   });
 
   it("changes fingerprint when the resolved OAuth token changes without exposing the raw token", async () => {
     const futureExp = Math.floor(Date.now() / 1000) + 3600;
     const tokenA = makeJwt({ exp: futureExp, sub: "user-a" });
     const tokenB = makeJwt({ exp: futureExp, sub: "user-b" });
-    const providerJsonPath = path.join(os.homedir(), ".pulseed", "provider.json");
-    const authJsonPath = path.join(os.homedir(), ".codex", "auth.json");
-    const providerJson = JSON.stringify({
+    await writeProviderJson({
       provider: "openai",
       model: "gpt-5.4-mini",
       adapter: "openai_codex_cli",
     });
 
-    let authReadCount = 0;
-    mockReadFile.mockImplementation(async (filePath: unknown) => {
-      if (filePath === providerJsonPath) return providerJson;
-      if (filePath === authJsonPath) {
-        authReadCount += 1;
-        return JSON.stringify({
-          tokens: { access_token: authReadCount === 1 ? tokenA : tokenB },
-        });
-      }
-      throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
-    });
-
-    const fspModule = await import("node:fs/promises");
-    const accessSpy = vi.spyOn(fspModule, "access").mockResolvedValue(undefined);
-
+    await writeCodexAuthJson({ tokens: { access_token: tokenA } });
     const fingerprintA = await getProviderRuntimeFingerprint();
+    await writeCodexAuthJson({ tokens: { access_token: tokenB } });
     const fingerprintB = await getProviderRuntimeFingerprint();
 
     expect(fingerprintA).not.toContain(tokenA);
     expect(fingerprintB).not.toContain(tokenB);
     expect(fingerprintA).not.toBe(fingerprintB);
-
-    accessSpy.mockRestore();
   });
 
   it("changes fingerprint when OpenAI reasoning effort changes", async () => {
-    const providerJsonPath = path.join(os.homedir(), ".pulseed", "provider.json");
-    const providerConfig = (reasoning_effort: string) => JSON.stringify({
-      provider: "openai",
-      model: "gpt-5.5",
-      reasoning_effort,
-      adapter: "openai_codex_cli",
-      api_key: "sk-test",
-    });
-
-    let providerReadCount = 0;
-    mockReadFile.mockImplementation(async (filePath: unknown) => {
-      if (filePath === providerJsonPath) {
-        providerReadCount += 1;
-        return providerConfig(providerReadCount === 1 ? "low" : "high");
-      }
-      throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
-    });
-
-    const fspModule = await import("node:fs/promises");
-    const accessSpy = vi.spyOn(fspModule, "access").mockResolvedValue(undefined);
-
+    await writeProviderJson(providerConfig("low"));
     const fingerprintA = await getProviderRuntimeFingerprint();
+    await writeProviderJson(providerConfig("high"));
     const fingerprintB = await getProviderRuntimeFingerprint();
 
     expect(fingerprintA).not.toBe(fingerprintB);
     expect(fingerprintA).toContain('"reasoning_effort":"low"');
     expect(fingerprintB).toContain('"reasoning_effort":"high"');
-
-    accessSpy.mockRestore();
   });
+
+  function providerConfig(reasoning_effort: string): Record<string, unknown> {
+    return {
+      provider: "openai",
+      model: "gpt-5.5",
+      reasoning_effort,
+      adapter: "openai_codex_cli",
+      api_key: "sk-test",
+    };
+  }
+
+  async function writeProviderJson(value: Record<string, unknown>): Promise<void> {
+    await fs.mkdir(tmpPulseedHome, { recursive: true });
+    await fs.writeFile(path.join(tmpPulseedHome, "provider.json"), JSON.stringify(value), "utf-8");
+  }
+
+  async function writeCodexAuthJson(value: Record<string, unknown>): Promise<void> {
+    await fs.mkdir(path.dirname(codexAuthPath()), { recursive: true });
+    await fs.writeFile(codexAuthPath(), JSON.stringify(value), "utf-8");
+  }
+
+  function codexAuthPath(): string {
+    return path.join(tmpHome, ".codex", "auth.json");
+  }
 });
+
+function restoreEnv(key: string, value: string | undefined): void {
+  if (value === undefined) {
+    delete process.env[key];
+  } else {
+    process.env[key] = value;
+  }
+}
