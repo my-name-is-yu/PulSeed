@@ -14,6 +14,7 @@ const CODE_READ_CONTEXT_MAX_TOKENS = 20_000;
 const FiniteNumberSchema = z.number().finite();
 const PositiveSafeIntegerSchema = z.number().finite().int().min(1).max(Number.MAX_SAFE_INTEGER);
 const NonNegativeSafeIntegerSchema = z.number().finite().int().min(0).max(Number.MAX_SAFE_INTEGER);
+const NonNegativeFiniteNumberSchema = z.number().finite().nonnegative();
 
 const CandidateRangeSchema = z.object({
   startLine: PositiveSafeIntegerSchema,
@@ -49,6 +50,11 @@ const CandidateSchema = z.object({
   indexVersion: z.string(),
   indexedAt: NonNegativeSafeIntegerSchema,
   fileHashAtIndex: z.string(),
+  fileSizeAtIndex: NonNegativeSafeIntegerSchema.optional(),
+  fileMtimeMsAtIndex: NonNegativeFiniteNumberSchema.optional(),
+  fileCtimeMsAtIndex: NonNegativeFiniteNumberSchema.optional(),
+  fileMtimeNsAtIndex: z.string().regex(/^\d+$/).optional(),
+  fileCtimeNsAtIndex: z.string().regex(/^\d+$/).optional(),
   currentFileHash: z.string().optional(),
   rrfScore: FiniteNumberSchema,
   rerankScore: FiniteNumberSchema,

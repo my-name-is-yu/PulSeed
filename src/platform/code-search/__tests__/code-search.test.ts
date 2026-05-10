@@ -144,6 +144,61 @@ describe("code search platform", () => {
     expect(bundle.trace.readCandidates).toEqual(bundle.ranges.map((range) => range.candidateId));
   });
 
+  it("streams bounded context ranges without returning unrelated tail content", async () => {
+    const hugeFile = path.join(root, "src", "large.ts");
+    await fsp.writeFile(
+      hugeFile,
+      [
+        "export const first = 1;",
+        "export const target = 2;",
+        ...Array.from({ length: 10_000 }, (_, index) => `export const unrelated${index} = ${index};`),
+        "export const tailSentinel = true;",
+      ].join("\n")
+    );
+    const indexes = await getCodeSearchIndexes(root, { ttlMs: 0 });
+    const [fileEntry] = indexes.files.filter((entry) => entry.path === "src/large.ts");
+    expect(fileEntry).toBeDefined();
+    const candidates = [{
+      id: "large-target",
+      file: "src/large.ts",
+      range: { startLine: 2, endLine: 2 },
+      preview: "export const target = 2;",
+      reasons: ["target symbol"],
+      signals: DEFAULT_CANDIDATE_SIGNALS,
+      penalties: DEFAULT_CANDIDATE_PENALTIES,
+      readRecommendation: "read_now" as const,
+      sourceRetrievers: ["lexical" as const],
+      indexVersion: indexes.version,
+      indexedAt: indexes.indexedAt,
+      fileHashAtIndex: fileEntry!.hash,
+      fileSizeAtIndex: fileEntry!.size,
+      fileMtimeMsAtIndex: fileEntry!.mtimeMs,
+      fileCtimeMsAtIndex: fileEntry!.ctimeMs,
+      fileMtimeNsAtIndex: fileEntry!.mtimeNs,
+      fileCtimeNsAtIndex: fileEntry!.ctimeNs,
+      ranks: { retrieverRanks: { lexical: 1 } },
+      rrfScore: 1,
+      rerankScore: 1,
+      confidence: "high" as const,
+    }];
+    const indexedStat = await fsp.stat(hugeFile);
+    const original = await fsp.readFile(hugeFile, "utf8");
+    await fsp.writeFile(hugeFile, original.replace("export const target = 2;", "export const target = 3;"));
+    await fsp.utimes(hugeFile, indexedStat.atime, indexedStat.mtime);
+
+    const bundle = await new ProgressiveReader(root, indexes).read(candidates, {
+      phase: "locate",
+      maxReadRanges: 1,
+      maxReadTokens: 2000,
+    });
+
+    expect(bundle.ranges).toHaveLength(1);
+    expect(bundle.ranges[0].content).toContain("2\texport const target = 3;");
+    expect(bundle.ranges[0].content).not.toContain("tailSentinel");
+    expect(bundle.ranges[0].endLine).toBeLessThan(100);
+    expect(bundle.warnings).toContain("Stale candidate file state for src/large.ts");
+  });
+
   it("turns verification output into a repair search", async () => {
     const signal = parseVerificationSignal("src/service.ts:2:10 - error TS2304: Cannot find name 'MissingType'.");
     expect(signal.kind).toBe("undefined_symbol");
