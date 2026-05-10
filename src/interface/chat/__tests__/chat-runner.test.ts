@@ -704,14 +704,16 @@ describe("ChatRunner", () => {
       expect(JSON.stringify(persistedDialogue)).not.toContain(telegramToken);
       expect(config.bot_token).toBe(telegramToken);
       expect(config.allow_all).toBe(false);
-      expect(confirmResult.output).toContain("runtime control is unavailable");
-      expect(confirmResult.output).toContain("typed runtime-control");
+      expect(confirmResult.output).toContain("could not request a gateway reload");
+      expect(confirmResult.output).toContain("cannot request a gateway reload yet");
+      expect(confirmResult.output).not.toContain("internal gateway refresh");
+      expect(confirmResult.output).not.toContain("typed runtime-control");
       expect(confirmResult.output).not.toContain("pulseed daemon restart");
       expect(confirmResult.output).toContain("Access remains closed");
       fs.rmSync(baseDir, { recursive: true, force: true });
     });
 
-    it("requests an internal gateway refresh after approved Telegram config write", async () => {
+    it("requests a gateway reload after approved Telegram config write", async () => {
       const telegramToken = "123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi";
       const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-telegram-refresh-"));
       const stateManager = {
@@ -746,7 +748,8 @@ describe("ChatRunner", () => {
 
       expect(confirmResult.success).toBe(true);
       expect(confirmResult.output).toContain("Telegram gateway config was written");
-      expect(confirmResult.output).toContain("PulSeed requested an internal gateway refresh");
+      expect(confirmResult.output).toContain("PulSeed requested a gateway reload");
+      expect(confirmResult.output).not.toContain("internal gateway refresh");
       expect(confirmResult.output).toContain("op-refresh-1");
       expect(confirmResult.output).not.toContain("Restart the daemon so the gateway loads");
       expect(runtimeControlService.request).toHaveBeenCalledWith(expect.objectContaining({
@@ -792,8 +795,10 @@ describe("ChatRunner", () => {
       const confirmResult = await runner.execute("/confirm-setup-write", "/repo", 30_000);
 
       expect(confirmResult.success).toBe(true);
-      expect(confirmResult.output).toContain("PulSeed attempted an internal gateway refresh, but it failed");
-      expect(confirmResult.output).toContain("typed runtime-control");
+      expect(confirmResult.output).toContain("PulSeed requested a gateway reload, but it failed");
+      expect(confirmResult.output).toContain("Automatic gateway reload was not applied");
+      expect(confirmResult.output).not.toContain("internal gateway refresh");
+      expect(confirmResult.output).not.toContain("typed runtime-control");
       expect(confirmResult.output).not.toContain("pulseed daemon restart");
       expect(confirmResult.output).not.toContain("pulseed daemon status");
       expect(runtimeControlService.request).toHaveBeenCalledOnce();

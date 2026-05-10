@@ -116,7 +116,7 @@ async function requestTelegramGatewayRefresh(params: {
     return {
       success: false,
       unavailable: true,
-      message: "Runtime control service is not available in this chat surface.",
+      message: "This chat surface cannot request a gateway reload yet.",
     };
   }
   const result = await params.runtimeControlService.request({
