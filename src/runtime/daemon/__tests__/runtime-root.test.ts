@@ -111,6 +111,24 @@ describe("resolveConfiguredDaemonRuntimeRoot", () => {
     expect(resolveConfiguredDaemonRuntimeRoot(baseDir)).toBe("/corrupt-runtime-root");
   });
 
+  it("keeps the running daemon runtime root when the pid probe reports EPERM", async () => {
+    const baseDir = makeBaseDir();
+    fs.writeFileSync(
+      path.join(baseDir, "daemon.json"),
+      JSON.stringify({ runtime_root: "configured-runtime" }),
+      "utf-8"
+    );
+    await saveDaemonStateFixture(baseDir, makeDaemonState(4242));
+    const permissionError = new Error("permission denied") as NodeJS.ErrnoException;
+    permissionError.code = "EPERM";
+    const killSpy = vi.spyOn(process, "kill").mockImplementation(() => {
+      throw permissionError;
+    });
+
+    expect(resolveConfiguredDaemonRuntimeRoot(baseDir)).toBe("/corrupt-runtime-root");
+    expect(killSpy).toHaveBeenCalledWith(4242, 0);
+  });
+
   it("falls back for malformed control DB daemon state rows", () => {
     const malformedDir = makeBaseDir();
     fs.writeFileSync(
