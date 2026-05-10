@@ -16,6 +16,10 @@ const CATEGORY = Object.freeze({
 });
 
 const CLASSIFICATIONS = new Set(Object.values(CATEGORY));
+const DEBT_CATEGORIES = new Set([
+  CATEGORY.MIGRATE_NOW,
+  CATEGORY.PRODUCT_DECISION_NEEDED,
+]);
 
 const ALLOWLIST_RULES_BY_ID = new Map(Object.entries({
   "legacy-archived-goal-recovery": ["goal-task-json-state"],
@@ -221,7 +225,6 @@ const PATH_ALLOWLIST = [
     category: CATEGORY.DEBUG_EXPORT_OUTPUT,
     reason: "Dream operational report file counters are diagnostic metrics, not authoritative runtime state",
     owner: "debug metric boundary over exported artifacts",
-    nextSlice: 9,
   }),
   allow({
     id: "soil-import-overlay-queue",
@@ -229,7 +232,6 @@ const PATH_ALLOWLIST = [
     category: CATEGORY.SOIL_IMPORT_PUBLISH_ARTIFACT,
     reason: "Soil import overlay queue is outside normal runtime state ownership",
     owner: "explicit Soil import artifact",
-    nextSlice: 9,
   }),
   allow({
     id: "foreign-plugin-legacy-constants",
@@ -257,7 +259,6 @@ const PATH_ALLOWLIST = [
     category: CATEGORY.SOIL_IMPORT_PUBLISH_ARTIFACT,
     reason: "Soil publish state is an explicit publish artifact",
     owner: "explicit Soil publish artifact",
-    nextSlice: 9,
   }),
   allow({
     id: "legacy-capability-registry-input",
@@ -348,6 +349,7 @@ export function scanFilesDetailed(roots) {
   return {
     findings,
     classifiedFindings,
+    allowlistReport: buildAllowlistReport(classifiedFindings),
     debtReport: buildDebtReport(classifiedFindings),
   };
 }
@@ -358,10 +360,16 @@ function allow(entry) {
     throw new Error(`database-first legacy store allowlist entry "${entry.id}" has invalid category "${entry.category}"`);
   }
   const rules = entry.rules ?? ALLOWLIST_RULES_BY_ID.get(entry.id);
-  if ((entry.debtRank !== undefined || entry.nextSlice !== undefined) && rules === undefined) {
+  if (isDebtAllowlistEntry(entry) && rules === undefined) {
     throw new Error(`database-first legacy store allowlist entry "${entry.id}" requires precise rule ids`);
   }
   return rules === undefined ? entry : { ...entry, rules };
+}
+
+function isDebtAllowlistEntry(entry) {
+  return (entry.debtRank !== undefined && entry.debtRank !== null)
+    || (entry.nextSlice !== undefined && entry.nextSlice !== null)
+    || DEBT_CATEGORIES.has(entry.category);
 }
 
 function isAllowlistedRule(allowlistEntry, ruleId) {
@@ -369,6 +377,17 @@ function isAllowlistedRule(allowlistEntry, ruleId) {
 }
 
 function buildDebtReport(classifiedFindings) {
+  return buildAllowlistReport(classifiedFindings)
+    .filter((entry) => isDebtAllowlistEntry(entry))
+    .sort((left, right) => {
+      const leftRank = left.debtRank ?? Number.MAX_SAFE_INTEGER;
+      const rightRank = right.debtRank ?? Number.MAX_SAFE_INTEGER;
+      if (leftRank !== rightRank) return leftRank - rightRank;
+      return left.id.localeCompare(right.id);
+    });
+}
+
+function buildAllowlistReport(classifiedFindings) {
   const findingsByAllowlistId = new Map();
   for (const finding of classifiedFindings) {
     const existing = findingsByAllowlistId.get(finding.allowlistId) ?? [];
@@ -377,7 +396,6 @@ function buildDebtReport(classifiedFindings) {
   }
 
   return PATH_ALLOWLIST
-    .filter((entry) => entry.debtRank !== undefined || entry.nextSlice !== undefined)
     .map((entry) => {
       const matches = findingsByAllowlistId.get(entry.id) ?? [];
       return {
@@ -387,17 +405,13 @@ function buildDebtReport(classifiedFindings) {
         owner: entry.owner ?? null,
         nextSlice: entry.nextSlice ?? null,
         debtRank: entry.debtRank ?? null,
+        rules: entry.rules ?? null,
         pathPattern: entry.pattern.source,
         matchCount: matches.length,
         matches,
       };
     })
-    .sort((left, right) => {
-      const leftRank = left.debtRank ?? Number.MAX_SAFE_INTEGER;
-      const rightRank = right.debtRank ?? Number.MAX_SAFE_INTEGER;
-      if (leftRank !== rightRank) return leftRank - rightRank;
-      return left.id.localeCompare(right.id);
-    });
+    .sort((left, right) => left.id.localeCompare(right.id));
 }
 
 function printDebtReport(debtReport) {
@@ -450,6 +464,7 @@ function main() {
       ok: result.findings.length === 0,
       findings: result.findings,
       classifiedFindings: result.classifiedFindings,
+      allowlistReport: result.allowlistReport,
       debtReport: result.debtReport,
     }, null, 2));
     if (result.findings.length > 0) process.exitCode = 1;

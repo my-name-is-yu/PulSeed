@@ -121,7 +121,7 @@ describe("database-first legacy store check", () => {
     expect(result.stderr).toContain("Unclassified legacy store references must be moved to typed stores");
   });
 
-  it("emits a machine-readable debt report", () => {
+  it("emits machine-readable final boundary report without treating artifacts as debt", () => {
     writeFile(tmpDir, "src/platform/dream/dream-consolidator/fs-metrics.ts", `
       export const diagnosticSessionLog = "session-logs.jsonl";
     `);
@@ -131,15 +131,16 @@ describe("database-first legacy store check", () => {
     expect(result.status).toBe(0);
     const parsed = JSON.parse(result.stdout) as {
       ok: boolean;
+      allowlistReport: Array<{ id: string; category: string; nextSlice: number | null; matchCount: number }>;
       debtReport: Array<{ id: string; category: string; nextSlice: number | null; matchCount: number }>;
     };
     expect(parsed.ok).toBe(true);
-    expect(parsed.debtReport.some((entry) => entry.nextSlice === 3)).toBe(false);
-    expect(parsed.debtReport).toEqual(expect.arrayContaining([
+    expect(parsed.debtReport).toEqual([]);
+    expect(parsed.allowlistReport).toEqual(expect.arrayContaining([
       expect.objectContaining({
         id: "dream-filesystem-metrics",
         category: "debug/export output",
-        nextSlice: 9,
+        nextSlice: null,
         matchCount: 1,
       }),
     ]));
