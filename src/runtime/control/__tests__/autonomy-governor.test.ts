@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { CapabilityReadinessSnapshot } from "../../../platform/observation/types/capability.js";
 import { evaluateAdmissionPolicy } from "../admission-policy.js";
+import { MAX_AUTONOMY_TTL_MS } from "../autonomy-ttl.js";
 import {
   evaluateAutonomyDecision,
   type AutonomyDecisionInput,
@@ -223,6 +224,35 @@ function internalDefault(
 }
 
 describe("AutonomyGovernor", () => {
+  it("bounds autonomy ttl inputs before computing expiry timestamps", () => {
+    const operation = internalOperation();
+    const maxTtlExpiresAt = "2026-05-10T00:00:00.000Z";
+    const internalDefaultAtMaxTtl = internalDefault(operation, { ttl_ms: MAX_AUTONOMY_TTL_MS });
+    expect(internalDefaultAtMaxTtl.expires_at).toBe(maxTtlExpiresAt);
+
+    const decisionAtMaxTtl = evaluateAutonomyDecision({
+      ...baseInput(operation),
+      internal_autonomy_default: internalDefault(operation),
+      ttl_ms: MAX_AUTONOMY_TTL_MS,
+    });
+    expect(decisionAtMaxTtl.expires_at).toBe(maxTtlExpiresAt);
+
+    const invalidTtls = [
+      0,
+      1.5,
+      MAX_AUTONOMY_TTL_MS + 1,
+      Number.MAX_SAFE_INTEGER + 1,
+      Number.POSITIVE_INFINITY,
+    ];
+    for (const ttl_ms of invalidTtls) {
+      expect(() => internalDefault(operation, { ttl_ms })).toThrow();
+      expect(() => evaluateAutonomyDecision({
+        ...baseInput(operation),
+        ttl_ms,
+      })).toThrow();
+    }
+  });
+
   it("requires approval for autonomous external notification even with executable readiness and positive feedback", () => {
     const operation = notificationOperation();
     const decision = evaluateAutonomyDecision({
