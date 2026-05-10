@@ -60,11 +60,13 @@ function makeGoal(id: string, overrides: Partial<Goal> = {}): Goal {
   };
 }
 
-function makeStateManager(goals: Goal[]) {
+type GapHistoryFixture = Array<{ gap_vector: Array<{ normalized_weighted_gap: number }> }>;
+
+function makeStateManager(goals: Goal[], gapHistoryByGoalId: Record<string, GapHistoryFixture> = {}) {
   return {
     listGoalIds: vi.fn().mockResolvedValue(goals.map((g) => g.id)),
     loadGoal: vi.fn().mockImplementation(async (id: string) => goals.find((g) => g.id === id) ?? null),
-    loadGapHistory: vi.fn().mockResolvedValue([]),
+    loadGapHistory: vi.fn().mockImplementation(async (id: string) => gapHistoryByGoalId[id] ?? []),
   };
 }
 
@@ -148,6 +150,34 @@ describe("runWeeklyReview", () => {
     const content = JSON.parse(fs.readFileSync(filePath, "utf-8"));
     expect(content.goals_reviewed).toBe(1);
     expect(content.week).toBe(report.week);
+  });
+
+  it("keeps weekly_delta numeric when recent gap vectors are empty", async () => {
+    tmpDir = makeTempDir();
+    const goals = [makeGoal("g1")];
+    const stateManager = makeStateManager(goals, {
+      g1: [
+        { gap_vector: [] },
+        { gap_vector: [] },
+      ],
+    });
+    const sendMessage = vi.fn().mockResolvedValue({ content: VALID_LLM_RESPONSE });
+    const llmClient = {
+      sendMessage,
+      parseJSON: vi.fn().mockImplementation((content: string, schema: { parse(value: unknown): unknown }) =>
+        schema.parse(JSON.parse(content))
+      ),
+    };
+
+    await runWeeklyReview({
+      stateManager: stateManager as never,
+      llmClient: llmClient as never,
+      baseDir: tmpDir,
+    });
+
+    const prompt = sendMessage.mock.calls[0]?.[0]?.[0]?.content ?? "";
+    expect(prompt).toContain('"weekly_delta": 0');
+    expect(prompt).not.toContain('"weekly_delta": null');
   });
 
   it("routes local-planning relationship profile items through a weekly Surface", async () => {

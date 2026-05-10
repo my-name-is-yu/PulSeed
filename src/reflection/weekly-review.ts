@@ -38,14 +38,25 @@ function getISOWeek(date: Date): string {
   return `${d.getUTCFullYear()}-W${String(week).padStart(2, "0")}`;
 }
 
+function maxFiniteNormalizedGap(
+  entry: { gap_vector: Array<{ normalized_weighted_gap: number }> }
+): number | null {
+  const values = entry.gap_vector
+    .map((gap) => gap.normalized_weighted_gap)
+    .filter(Number.isFinite);
+  if (values.length === 0) return null;
+  return Math.max(...values.map((value) => Math.min(1, Math.max(0, value))));
+}
+
 function computeWeeklyDelta(
   gapHistory: Array<{ gap_vector: Array<{ normalized_weighted_gap: number }> }>
 ): number {
   if (gapHistory.length < 2) return 0;
   const recent = gapHistory.at(-1)!;
   const prior = gapHistory.at(-2)!;
-  const latest = Math.max(...recent.gap_vector.map((g) => g.normalized_weighted_gap));
-  const previous = Math.max(...prior.gap_vector.map((g) => g.normalized_weighted_gap));
+  const latest = maxFiniteNormalizedGap(recent);
+  const previous = maxFiniteNormalizedGap(prior);
+  if (latest === null || previous === null) return 0;
   // positive delta = gap is closing (progress)
   return Math.min(1, Math.max(0, previous - latest));
 }
