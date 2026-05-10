@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { isProcessPidValue } from "../base/utils/process-pid.js";
+import { isProcessPidValue, signalProcessPid } from "../base/utils/process-pid.js";
 import { createRuntimeStorePaths, type RuntimeStorePaths } from "./store/runtime-paths.js";
 import {
   openRuntimeControlDatabase,
@@ -43,12 +43,7 @@ export const LeaderLockRecordSchema = z.object({
 });
 
 function isProcessAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
+  return signalProcessPid(pid, 0).status === "sent";
 }
 
 function parseLeaderLockRecord(value: unknown): LeaderLockRecord | null {
