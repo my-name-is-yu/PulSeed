@@ -285,6 +285,7 @@ export class DiscordGatewayAdapter implements ChannelAdapter {
       onError: (error, operation) => console.warn("DiscordGatewayAdapter: presence projector failed", { operation, error }),
     });
     let reply: string | null = null;
+    let dispatchCompleted = false;
     try {
       await presenceProjector.update(createUserVisibleSeedyTurnPresence({
         turn_id: `discord:${input.message_id ?? input.conversation_id}`,
@@ -294,6 +295,7 @@ export class DiscordGatewayAdapter implements ChannelAdapter {
         ...input,
         onEvent: async (event) => {
           const chatEvent = event as unknown as ChatEvent;
+          await presenceProjector.prepareForEvent(chatEvent);
           await projector?.handle(chatEvent);
           await presenceProjector.handle(chatEvent, {
             assistantOutputRendered: projector?.deliveredAssistantOutput ?? false,
@@ -301,20 +303,25 @@ export class DiscordGatewayAdapter implements ChannelAdapter {
           });
         },
       });
+      dispatchCompleted = true;
     } finally {
-      await presenceProjector.stop();
-    }
-    const content = reply ?? "Received.";
-
-    if (projector !== null && !projector.renderedAssistantOutput) {
-      await projector.handle({
-        type: "assistant_final",
-        runId: "fallback",
-        turnId: "fallback",
-        createdAt: new Date().toISOString(),
-        text: content,
-        persisted: false,
-      });
+      try {
+        const content = reply ?? "Received.";
+        if (dispatchCompleted && projector !== null && !projector.renderedAssistantOutput) {
+          const fallbackEvent = {
+            type: "assistant_final" as const,
+            runId: "fallback",
+            turnId: "fallback",
+            createdAt: new Date().toISOString(),
+            text: content,
+            persisted: false,
+          };
+          await presenceProjector.prepareForEvent(fallbackEvent);
+          await projector.handle(fallbackEvent);
+        }
+      } finally {
+        await presenceProjector.stop();
+      }
     }
   }
 

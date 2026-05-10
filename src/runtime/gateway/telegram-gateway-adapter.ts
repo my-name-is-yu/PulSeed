@@ -242,6 +242,7 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
     });
 
     let reply: string | null = null;
+    let dispatchCompleted = false;
     try {
       await presenceProjector.update(createUserVisibleSeedyTurnPresence({
         turn_id: `telegram:${chatId}:${messageId}`,
@@ -258,6 +259,9 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
         cwd: process.cwd(),
         onEvent: async (event) => {
           const chatEvent = event as unknown as ChatEvent;
+          if (eventAdapter.shouldRender(chatEvent)) {
+            await presenceProjector.prepareForEvent(chatEvent);
+          }
           await eventAdapter.handle(chatEvent);
           await presenceProjector.handle(chatEvent, {
             assistantOutputRendered: eventAdapter.deliveredAssistantOutput,
@@ -271,12 +275,24 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
           ...(route.goalId ? { goal_id: route.goalId } : {}),
         },
       });
+      dispatchCompleted = true;
     } finally {
-      await presenceProjector.stop();
-    }
-
-    if (!eventAdapter.renderedAssistantOutput) {
-      await eventAdapter.sendFinalFallback(reply ?? "Received.");
+      try {
+        if (dispatchCompleted && !eventAdapter.renderedAssistantOutput) {
+          const fallbackText = reply ?? "Received.";
+          await presenceProjector.prepareForEvent({
+            type: "assistant_final",
+            runId: "fallback",
+            turnId: "fallback",
+            createdAt: new Date().toISOString(),
+            text: fallbackText,
+            persisted: false,
+          });
+          await eventAdapter.sendFinalFallback(fallbackText);
+        }
+      } finally {
+        await presenceProjector.stop();
+      }
     }
     await this.recordHealth({ last_outbound_at: new Date().toISOString(), last_error: null });
   }
@@ -489,9 +505,14 @@ class TelegramChatEventAdapter {
   }
 
   async handle(event: ChatEvent): Promise<void> {
-    if (event.type === "operation_progress" && event.item.metadata?.["source"] === "agent_timeline_activity_summary") return;
-    if (event.type === "agent_timeline" && event.item.visibility !== "user") return;
+    if (!this.shouldRender(event)) return;
     await this.projector.handle(event);
+  }
+
+  shouldRender(event: ChatEvent): boolean {
+    if (event.type === "operation_progress" && event.item.metadata?.["source"] === "agent_timeline_activity_summary") return false;
+    if (event.type === "agent_timeline" && event.item.visibility !== "user") return false;
+    return true;
   }
 
   async sendFinalFallback(text: string): Promise<void> {

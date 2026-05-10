@@ -118,7 +118,7 @@ describe("TelegramGatewayAdapter", () => {
     );
   });
 
-  it("starts and refreshes Telegram typing from shared presence updates", async () => {
+  it("starts Telegram typing around rendered output events, not received presence", async () => {
     vi.useFakeTimers();
     try {
       const configDir = await writeConfig({
@@ -153,10 +153,24 @@ describe("TelegramGatewayAdapter", () => {
       const adapter = TelegramGatewayAdapter.fromConfigDir(configDir);
       adapters.push(adapter);
       const presenceHandled = createDeferred();
+      const presenceCanContinue = createDeferred();
+      const commentaryHandled = createDeferred();
       const dispatchCanFinish = createDeferred();
       vi.mocked(dispatchGatewayChatInput).mockImplementationOnce(async (input) => {
         await input.onEvent?.(presenceEvent("received"));
         presenceHandled.resolve();
+        await presenceCanContinue.promise;
+        await input.onEvent?.({
+          type: "activity",
+          runId: "run-1",
+          turnId: "turn-1",
+          createdAt: "2026-05-10T00:00:00.500Z",
+          kind: "commentary",
+          message: "I'll check the request context first.",
+          sourceId: "preamble:turn-1",
+          presentation: { gatewayProgress: "user" },
+        });
+        commentaryHandled.resolve();
         await dispatchCanFinish.promise;
         await input.onEvent?.(assistantFinalEvent("Done from Telegram."));
         return "Done from Telegram.";
@@ -167,13 +181,14 @@ describe("TelegramGatewayAdapter", () => {
       }).processMessage("hello", 42, 314, 2718);
 
       await presenceHandled.promise;
+      expect(sentChatActions).toEqual([]);
+      presenceCanContinue.resolve();
+
+      await commentaryHandled.promise;
       expect(sentChatActions).toEqual([{ chat_id: 314, action: "typing" }]);
 
       await vi.advanceTimersByTimeAsync(4_000);
-      expect(sentChatActions).toEqual([
-        { chat_id: 314, action: "typing" },
-        { chat_id: 314, action: "typing" },
-      ]);
+      expect(sentChatActions).toHaveLength(1);
 
       dispatchCanFinish.resolve();
       await processing;
@@ -182,6 +197,127 @@ describe("TelegramGatewayAdapter", () => {
       expect(sentChatActions).toHaveLength(2);
       expect(sentMessages).toContain("Done from Telegram.");
       expect(sentMessages).not.toContain("Received.");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("stops Telegram typing even when fallback final delivery fails", async () => {
+    vi.useFakeTimers();
+    try {
+      const configDir = await writeConfig({
+        bot_token: "test-token",
+        allowed_user_ids: [42],
+        denied_user_ids: [],
+        allowed_chat_ids: [],
+        denied_chat_ids: [],
+        runtime_control_allowed_user_ids: [42],
+        chat_goal_map: {},
+        user_goal_map: {},
+        allow_all: true,
+        polling_timeout: 30,
+        identity_key: "seedy",
+      });
+      const sentChatActions: unknown[] = [];
+      const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+        const method = String(url).split("/").at(-1);
+        if (method === "sendChatAction") {
+          sentChatActions.push(JSON.parse(String(init?.body ?? "{}")));
+          return telegramResponse(true);
+        }
+        if (method === "sendMessage") {
+          return {
+            ok: false,
+            status: 500,
+            statusText: "failed",
+            json: async () => ({ ok: false }),
+            text: async () => "failed",
+          } as Response;
+        }
+        throw new Error(`unexpected Telegram method: ${method}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      const adapter = TelegramGatewayAdapter.fromConfigDir(configDir);
+      adapters.push(adapter);
+      vi.mocked(dispatchGatewayChatInput).mockResolvedValueOnce("fallback final");
+
+      await expect((adapter as unknown as {
+        processMessage(text: string, fromUserId: number, chatId: number, messageId: number): Promise<void>;
+      }).processMessage("hello", 42, 314, 2718)).rejects.toThrow("telegram-api: sendMessage returned 500");
+
+      expect(sentChatActions).toEqual([{ chat_id: 314, action: "typing" }]);
+
+      await vi.advanceTimersByTimeAsync(4_000);
+
+      expect(sentChatActions).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not start Telegram typing for operation progress the Telegram adapter drops", async () => {
+    vi.useFakeTimers();
+    try {
+      const configDir = await writeConfig({
+        bot_token: "test-token",
+        allowed_user_ids: [42],
+        denied_user_ids: [],
+        allowed_chat_ids: [],
+        denied_chat_ids: [],
+        runtime_control_allowed_user_ids: [42],
+        chat_goal_map: {},
+        user_goal_map: {},
+        allow_all: true,
+        polling_timeout: 30,
+        identity_key: "seedy",
+      });
+      const sentChatActions: unknown[] = [];
+      const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+        const method = String(url).split("/").at(-1);
+        if (method === "sendChatAction") {
+          sentChatActions.push(JSON.parse(String(init?.body ?? "{}")));
+          return telegramResponse(true);
+        }
+        if (method === "sendMessage") return telegramResponse({ message_id: 9001 });
+        throw new Error(`unexpected Telegram method: ${method}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      const adapter = TelegramGatewayAdapter.fromConfigDir(configDir);
+      adapters.push(adapter);
+      const summaryHandled = createDeferred();
+      const dispatchCanFinish = createDeferred();
+      vi.mocked(dispatchGatewayChatInput).mockImplementationOnce(async (input) => {
+        await input.onEvent?.({
+          type: "operation_progress",
+          runId: "run-1",
+          turnId: "turn-1",
+          createdAt: "2026-05-10T00:00:00.000Z",
+          item: {
+            id: "operation-progress:summary-1",
+            kind: "completed",
+            operation: "agent_loop",
+            title: "Agent-loop activity summarized",
+            createdAt: "2026-05-10T00:00:00.000Z",
+            metadata: { source: "agent_timeline_activity_summary" },
+          },
+        });
+        summaryHandled.resolve();
+        await dispatchCanFinish.promise;
+        await input.onEvent?.(assistantFinalEvent("Done from Telegram."));
+        return "Done from Telegram.";
+      });
+
+      const processing = (adapter as unknown as {
+        processMessage(text: string, fromUserId: number, chatId: number, messageId: number): Promise<void>;
+      }).processMessage("hello", 42, 314, 2718);
+
+      await summaryHandled.promise;
+      expect(sentChatActions).toEqual([]);
+
+      dispatchCanFinish.resolve();
+      await processing;
+
+      expect(sentChatActions).toEqual([{ chat_id: 314, action: "typing" }]);
     } finally {
       vi.useRealTimers();
     }
