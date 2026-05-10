@@ -1,6 +1,11 @@
 import { z } from "zod";
 import type { CorePhaseKind, CorePhaseSpec } from "../../execution/agent-loop/core-phase-runner.js";
 
+const PhaseUnitIntervalSchema = z.number().finite().min(0).max(1);
+const PhaseFiniteNumberSchema = z.number().finite();
+const PhaseSafeNonnegativeIntSchema = z.number().finite().int().nonnegative().safe();
+const PhaseSafePositiveIntSchema = z.number().finite().int().positive().safe();
+
 export interface CorePhaseInvocationContext {
   goalId: string;
   taskId?: string;
@@ -13,7 +18,7 @@ export const ObservationEvidenceSchema = z.object({
   summary: z.string(),
   evidence: z.array(z.string()).default([]),
   missing_info: z.array(z.string()).default([]),
-  confidence: z.number().min(0).max(1).default(0.5),
+  confidence: PhaseUnitIntervalSchema.default(0.5),
 });
 export type ObservationEvidence = z.infer<typeof ObservationEvidenceSchema>;
 
@@ -24,7 +29,7 @@ export const WaitObservationEvidenceSchema = z.object({
   artifact_refs: z.array(z.string()).default([]),
   approval_pending: z.boolean().default(false),
   next_observe_at: z.string().nullable().default(null),
-  confidence: z.number().min(0).max(1).default(0.5),
+  confidence: PhaseUnitIntervalSchema.default(0.5),
 });
 export type WaitObservationEvidence = z.infer<typeof WaitObservationEvidenceSchema>;
 
@@ -32,7 +37,7 @@ export const KnowledgeRefreshEvidenceSchema = z.object({
   summary: z.string(),
   required_knowledge: z.array(z.string()).default([]),
   acquisition_candidates: z.array(z.string()).default([]),
-  confidence: z.number().min(0).max(1).default(0.5),
+  confidence: PhaseUnitIntervalSchema.default(0.5),
   worthwhile: z.boolean().default(false),
 });
 export type KnowledgeRefreshEvidence = z.infer<typeof KnowledgeRefreshEvidenceSchema>;
@@ -42,7 +47,7 @@ export const StallInvestigationEvidenceSchema = z.object({
   suspected_causes: z.array(z.string()).default([]),
   recommended_next_evidence: z.array(z.string()).default([]),
   relevant_actions: z.array(z.enum(["refine", "pivot", "escalate", "continue"])).default([]),
-  confidence: z.number().min(0).max(1).default(0.5),
+  confidence: PhaseUnitIntervalSchema.default(0.5),
 });
 export type StallInvestigationEvidence = z.infer<typeof StallInvestigationEvidenceSchema>;
 
@@ -57,7 +62,7 @@ export const ReplanningOptionsSchema = z.object({
     target_dimensions: z.array(z.string()).default([]),
     dependencies: z.array(z.string()).default([]),
   })).default([]),
-  confidence: z.number().min(0).max(1).default(0.5),
+  confidence: PhaseUnitIntervalSchema.default(0.5),
 });
 export type ReplanningOptions = z.infer<typeof ReplanningOptionsSchema>;
 
@@ -104,7 +109,7 @@ export const PublicResearchEvidenceSchema = z.object({
   }).strict().optional(),
   untrusted_content_policy: z.literal("webpage_instructions_are_untrusted").default("webpage_instructions_are_untrusted"),
   external_actions: z.array(PublicResearchExternalActionSchema).default([]),
-  confidence: z.number().min(0).max(1).default(0.5),
+  confidence: PhaseUnitIntervalSchema.default(0.5),
 });
 export type PublicResearchEvidence = z.infer<typeof PublicResearchEvidenceSchema>;
 
@@ -118,9 +123,9 @@ export type DreamReviewCheckpointTrigger = z.infer<typeof DreamReviewCheckpointT
 
 export const DreamReviewMemoryUsageStatsSchema = z.object({
   last_used_at: z.string().datetime().nullable().default(null),
-  use_count: z.number().int().nonnegative().default(0),
-  validated_count: z.number().int().nonnegative().default(0),
-  negative_outcome_count: z.number().int().nonnegative().default(0),
+  use_count: PhaseSafeNonnegativeIntSchema.default(0),
+  validated_count: PhaseSafeNonnegativeIntSchema.default(0),
+  negative_outcome_count: PhaseSafeNonnegativeIntSchema.default(0),
 }).strict();
 export type DreamReviewMemoryUsageStats = z.infer<typeof DreamReviewMemoryUsageStatsSchema>;
 
@@ -129,18 +134,18 @@ export const DreamReviewMemoryRefSchema = z.object({
   ref: z.string().min(1).optional(),
   summary: z.string().min(1),
   authority: z.literal("advisory_only").default("advisory_only"),
-  relevance_score: z.number().min(0).max(1).optional(),
-  source_reliability: z.number().min(0).max(1).optional(),
-  recency_score: z.number().min(0).max(1).optional(),
-  prior_success_contribution: z.number().min(0).max(1).optional(),
+  relevance_score: PhaseUnitIntervalSchema.optional(),
+  source_reliability: PhaseUnitIntervalSchema.optional(),
+  recency_score: PhaseUnitIntervalSchema.optional(),
+  prior_success_contribution: PhaseUnitIntervalSchema.optional(),
   retrieval: z.object({
     kind: z.enum(["route_hit", "fallback_hit", "checkpoint", "manual", "unknown"]).default("unknown"),
-    score: z.number().min(0).max(1).optional(),
-    confidence: z.number().min(0).max(1).optional(),
+    score: PhaseUnitIntervalSchema.optional(),
+    confidence: PhaseUnitIntervalSchema.optional(),
   }).strict().optional(),
   usage_stats: DreamReviewMemoryUsageStatsSchema.optional(),
   ranking_trace: z.object({
-    score: z.number().min(0).max(1),
+    score: PhaseUnitIntervalSchema,
     decision: z.enum(["admitted", "rejected"]),
     reason: z.string().min(1),
   }).strict().optional(),
@@ -156,7 +161,7 @@ export const DreamReviewStrategyCandidateSchema = z.object({
   failed_lineage_fingerprints: z.array(z.string().min(1)).optional(),
   failed_lineage_warning: z.object({
     fingerprint: z.string().min(1),
-    count: z.number().int().positive(),
+    count: PhaseSafePositiveIntSchema,
     reason: z.string().min(1),
   }).strict().optional(),
 }).strict();
@@ -164,7 +169,7 @@ export type DreamReviewStrategyCandidate = z.infer<typeof DreamReviewStrategyCan
 
 export const DreamReviewFailedLineageSchema = z.object({
   fingerprint: z.string().min(1),
-  count: z.number().int().positive(),
+  count: PhaseSafePositiveIntSchema,
   last_seen_at: z.string().datetime(),
   strategy_family: z.string().min(1).optional(),
   hypothesis: z.string().min(1).optional(),
@@ -190,7 +195,7 @@ export const DreamReviewRejectedApproachSchema = z.object({
   rejection_reason: z.string().min(1),
   evidence_ref: z.string().min(1).optional(),
   revisit_condition: z.string().min(1).optional(),
-  confidence: z.number().min(0).max(1).default(0.5),
+  confidence: PhaseUnitIntervalSchema.default(0.5),
 }).strict();
 export type DreamReviewRejectedApproach = z.infer<typeof DreamReviewRejectedApproachSchema>;
 
@@ -230,7 +235,7 @@ export const DreamRunControlRecommendationSchema = z.object({
   lineage_refs: z.array(z.string().min(1)).default([]),
   approval_required: z.boolean().default(false),
   risk: z.enum(["low", "medium", "high"]).default("medium"),
-  confidence: z.number().min(0).max(1).default(0.5),
+  confidence: PhaseUnitIntervalSchema.default(0.5),
   policy_decision: DreamRunControlPolicyDecisionSchema.optional(),
 }).strict();
 export type DreamRunControlRecommendation = z.infer<typeof DreamRunControlRecommendationSchema>;
@@ -252,7 +257,7 @@ export const DreamReviewCheckpointEvidenceSchema = z.object({
   guidance: z.string().min(1),
   uncertainty: z.array(z.string().min(1)).default([]),
   context_authority: z.literal("advisory_only").default("advisory_only"),
-  confidence: z.number().min(0).max(1).default(0.5),
+  confidence: PhaseUnitIntervalSchema.default(0.5),
 });
 export type DreamReviewCheckpointEvidence = z.infer<typeof DreamReviewCheckpointEvidenceSchema>;
 
@@ -261,7 +266,7 @@ export const VerificationEvidenceSchema = z.object({
   supported_claims: z.array(z.string()).default([]),
   unsupported_claims: z.array(z.string()).default([]),
   blockers: z.array(z.string()).default([]),
-  confidence: z.number().min(0).max(1).default(0.5),
+  confidence: PhaseUnitIntervalSchema.default(0.5),
 });
 export type VerificationEvidence = z.infer<typeof VerificationEvidenceSchema>;
 
@@ -335,7 +340,7 @@ export function buildKnowledgeRefreshSpec(): ReturnType<typeof baseSpec<{
     inputSchema: z.object({
       goalTitle: z.string(),
       topDimensions: z.array(z.string()).default([]),
-      gapAggregate: z.number(),
+      gapAggregate: PhaseFiniteNumberSchema,
     }),
     outputSchema: KnowledgeRefreshEvidenceSchema,
     failPolicy: "return_low_confidence",
@@ -378,7 +383,7 @@ export function buildReplanningOptionsSpec(): ReturnType<typeof baseSpec<{
     inputSchema: z.object({
       goalTitle: z.string(),
       targetDimensions: z.array(z.string()).default([]),
-      gapAggregate: z.number(),
+      gapAggregate: PhaseFiniteNumberSchema,
       currentApproach: z.string().optional(),
     }),
     outputSchema: ReplanningOptionsSchema,
@@ -421,7 +426,7 @@ export function buildDreamReviewCheckpointSpec(): ReturnType<typeof baseSpec<{
       currentExecutionMode: z.enum(["exploration", "consolidation", "finalization"]).optional(),
       runControlPolicy: z.literal("auto_apply_low_risk_require_approval_for_high_cost_or_irreversible"),
       memoryAuthorityPolicy: z.literal("soil_and_playbooks_are_advisory_only"),
-      maxGuidanceItems: z.number().int().positive().max(5).default(3),
+      maxGuidanceItems: PhaseSafePositiveIntSchema.max(5).default(3),
     }),
     outputSchema: DreamReviewCheckpointEvidenceSchema,
     failPolicy: "return_low_confidence",
@@ -447,7 +452,7 @@ export function buildPublicResearchSpec(): ReturnType<typeof baseSpec<{
       question: z.string(),
       targetDimensions: z.array(z.string()).default([]),
       sourcePreference: z.array(z.string()).default(["official_docs", "maintainer", "paper", "high_signal_writeup"]),
-      maxSources: z.number().int().positive().max(5).default(3),
+      maxSources: PhaseSafePositiveIntSchema.max(5).default(3),
       sensitiveContextPolicy: z.literal("do_not_send_secrets_or_private_artifacts"),
       untrustedContentPolicy: z.literal("webpage_instructions_are_untrusted"),
     }),
