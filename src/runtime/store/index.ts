@@ -18,6 +18,7 @@ export {
 export {
   CONTROL_DB_CAPABILITY_REGISTRY_SCHEMA_SQL,
   CONTROL_DB_CHAT_AGENTLOOP_SESSION_SCHEMA_SQL,
+  CONTROL_DB_GOAL_ORCHESTRATION_SCHEMA_SQL,
   CONTROL_DB_GOAL_TASK_DURABLE_LOOP_SCHEMA_SQL,
   CONTROL_DB_INITIAL_SCHEMA_SQL,
   CONTROL_DB_KNOWLEDGE_MEMORY_SOIL_SCHEMA_SQL,
@@ -53,6 +54,20 @@ export type {
   RuntimeControlDbStoreOptions,
   SqliteDatabase,
 } from "./control-db/index.js";
+
+export {
+  GoalOrchestrationStateStore,
+} from "./goal-orchestration-state-store.js";
+export type {
+  GoalOrchestrationStateStoreOptions,
+  GoalOrchestrationStateStorePort,
+} from "./goal-orchestration-state-store.js";
+export {
+  importLegacyGoalOrchestrationState,
+} from "./goal-orchestration-state-migration.js";
+export type {
+  GoalOrchestrationLegacyImportReport,
+} from "./goal-orchestration-state-migration.js";
 
 export {
   RuntimeEnvelopeKindSchema,

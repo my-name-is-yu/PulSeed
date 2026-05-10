@@ -49,6 +49,10 @@ import {
   getFeasibilityThreshold,
   evaluateQualitatively,
 } from "./negotiator-feasibility.js";
+import {
+  GoalOrchestrationStateStore,
+  type GoalOrchestrationStateStorePort,
+} from "../../runtime/store/goal-orchestration-state-store.js";
 
 // ─── GoalNegotiator ───
 
@@ -61,6 +65,7 @@ export class GoalNegotiator {
   private readonly satisficingJudge?: SatisficingJudge;
   private readonly goalTreeManager?: GoalTreeManager;
   private readonly adapterCapabilities?: Array<{ adapterType: string; capabilities: string[] }>;
+  private readonly goalOrchestrationStateStore: GoalOrchestrationStateStorePort;
 
   constructor(
     stateManager: StateManager,
@@ -70,7 +75,8 @@ export class GoalNegotiator {
     characterConfig?: CharacterConfig,
     satisficingJudge?: SatisficingJudge,
     goalTreeManager?: GoalTreeManager,
-    adapterCapabilities?: Array<{ adapterType: string; capabilities: string[] }>
+    adapterCapabilities?: Array<{ adapterType: string; capabilities: string[] }>,
+    goalOrchestrationStateStore?: GoalOrchestrationStateStorePort
   ) {
     this.stateManager = stateManager;
     this.llmClient = llmClient;
@@ -80,6 +86,8 @@ export class GoalNegotiator {
     this.satisficingJudge = satisficingJudge;
     this.goalTreeManager = goalTreeManager;
     this.adapterCapabilities = adapterCapabilities;
+    this.goalOrchestrationStateStore =
+      goalOrchestrationStateStore ?? new GoalOrchestrationStateStore(this.stateManager.getBaseDir());
   }
 
   // ─── negotiate() ───
@@ -507,9 +515,7 @@ export class GoalNegotiator {
   // ─── getNegotiationLog() ───
 
   async getNegotiationLog(goalId: string): Promise<NegotiationLog | null> {
-    const raw = await this.stateManager.readRaw(`goals/${goalId}/negotiation-log.json`);
-    if (raw === null) return null;
-    return NegotiationLogSchema.parse(raw);
+    return this.goalOrchestrationStateStore.loadNegotiationLog(goalId);
   }
 
   // ─── Private helpers ───
@@ -547,7 +553,7 @@ export class GoalNegotiator {
 
   private async saveNegotiationLog(goalId: string, log: NegotiationLog): Promise<void> {
     const parsed = NegotiationLogSchema.parse(log);
-    await this.stateManager.writeRaw(`goals/${goalId}/negotiation-log.json`, parsed);
+    await this.goalOrchestrationStateStore.saveNegotiationLog(goalId, parsed);
   }
 
   /**

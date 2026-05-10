@@ -50,6 +50,7 @@ import {
   CONTROL_DB_SCHEMA_VERSION,
   DaemonStateStore,
   ExecutionSessionStateStore,
+  GoalOrchestrationStateStore,
   GoalTaskStateStore,
   openControlDatabase,
   PluginChannelRuntimeStateStore,
@@ -1382,6 +1383,76 @@ describe("cmdDoctor summary counts", () => {
         status: "imported",
         details: expect.objectContaining({ replayed_intents: 1 }),
       }));
+    } finally {
+      database.close();
+    }
+  });
+
+  it("imports legacy goal orchestration state through doctor repair", async () => {
+    const origHome = process.env["PULSEED_HOME"];
+    process.env["PULSEED_HOME"] = tmpDir;
+    const goalId = "goal-orchestration-doctor";
+    fs.mkdirSync(path.join(tmpDir, "goals", goalId), { recursive: true });
+    fs.writeFileSync(path.join(tmpDir, "goals", goalId, "negotiation-log.json"), JSON.stringify({
+      goal_id: goalId,
+      timestamp: "2026-05-10T00:00:00.000Z",
+      is_renegotiation: false,
+      renegotiation_trigger: null,
+    }));
+    fs.writeFileSync(path.join(tmpDir, "dependency-graph.json"), JSON.stringify({
+      nodes: [goalId, "goal-next"],
+      edges: [{
+        from_goal_id: goalId,
+        to_goal_id: "goal-next",
+        type: "prerequisite",
+        status: "active",
+        condition: null,
+        affected_dimensions: [],
+        mitigation: null,
+        detection_confidence: 1,
+        reasoning: null,
+        created_at: "2026-05-10T00:00:00.000Z",
+      }],
+      updated_at: "2026-05-10T00:00:00.000Z",
+    }));
+
+    try {
+      const exitCode = await cmdDoctor(["--repair"]);
+      expect([0, 1]).toContain(exitCode);
+    } finally {
+      if (origHome !== undefined) {
+        process.env["PULSEED_HOME"] = origHome;
+      } else {
+        delete process.env["PULSEED_HOME"];
+      }
+    }
+
+    const store = new GoalOrchestrationStateStore(tmpDir);
+    await expect(store.loadNegotiationLog(goalId)).resolves.toMatchObject({ goal_id: goalId });
+    await expect(store.loadDependencyGraph()).resolves.toMatchObject({
+      nodes: [goalId, "goal-next"],
+      edges: [expect.objectContaining({ from_goal_id: goalId, to_goal_id: "goal-next" })],
+    });
+
+    const allOutput = consoleSpy.mock.calls.map((c: unknown[]) => c[0] as string).join("\n");
+    expect(allOutput).toContain("Repair goal orchestration import: negotiation logs=1, dependency graphs=1, skipped already imported=0, retired existing typed state=0");
+
+    const database = await openControlDatabase({ baseDir: tmpDir });
+    try {
+      expect(database.listLegacyImports()).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          source_kind: "goal_negotiation_log",
+          source_id: goalId,
+          migration_name: "goal-orchestration-runtime-state",
+          status: "imported",
+        }),
+        expect.objectContaining({
+          source_kind: "goal_dependency_graph",
+          source_id: "current",
+          migration_name: "goal-orchestration-runtime-state",
+          status: "imported",
+        }),
+      ]));
     } finally {
       database.close();
     }

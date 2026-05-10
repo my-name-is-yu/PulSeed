@@ -587,12 +587,12 @@ describe("Milestone 5 — Group 3: Dynamic Context Budget", () => {
 
   // ── Test 13: buildContextWithConflictAwareness injects resource_conflict slot ──
 
-  it("buildContextWithConflictAwareness injects resource_conflict_awareness slot when conflicts exist", () => {
+  it("buildContextWithConflictAwareness injects resource_conflict_awareness slot when conflicts exist", async () => {
     const stateManager = new StateManager(tempDir);
     const depGraph = new GoalDependencyGraph(stateManager);
 
     // Add a resource conflict edge between goal-A and goal-B
-    depGraph.addEdge({
+    await depGraph.addEdge({
       from_goal_id: "goal-A",
       to_goal_id: "goal-B",
       type: "resource_conflict",
