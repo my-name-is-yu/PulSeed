@@ -1,4 +1,3 @@
-import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { CONFIG_FILENAMES, MCP_FILENAMES, SOURCE_LABELS } from "./constants.js";
@@ -7,6 +6,7 @@ import {
   pathExists,
   readEnvFile,
   readJson,
+  readUserTextFile,
   safeImportName,
   unique,
 } from "./fs-utils.js";
@@ -143,26 +143,26 @@ function userItems(source: SetupImportSourceId, rootDir: string): SetupImportIte
     ]),
   ]).filter(pathExists);
 
-  const sourcePath = candidates.find((candidate) => {
-    try {
-      return fs.readFileSync(candidate, "utf-8").trim().length > 0;
-    } catch {
-      return false;
-    }
-  });
-  if (!sourcePath) return [];
+  let userFile: { sourcePath: string; content: string } | undefined;
+  for (const sourcePath of candidates) {
+    const content = readUserTextFile(sourcePath);
+    if (content === undefined || content.trim().length === 0) continue;
+    userFile = { sourcePath, content };
+    break;
+  }
+  if (!userFile) return [];
 
   return [{
-    id: `${source}:user:${safeImportName(sourcePath)}`,
+    id: `${source}:user:${safeImportName(userFile.sourcePath)}`,
     source,
     sourceLabel: SOURCE_LABELS[source],
     kind: "user",
-    label: path.relative(rootDir, sourcePath) || "USER.md",
-    sourcePath,
+    label: path.relative(rootDir, userFile.sourcePath) || "USER.md",
+    sourcePath: userFile.sourcePath,
     decision: "import",
     reason: "USER.md found",
     userSettings: {
-      content: fs.readFileSync(sourcePath, "utf-8"),
+      content: userFile.content,
     },
   }];
 }
