@@ -51,6 +51,7 @@ function makeRouter(overrides: Partial<ConstructorParameters<typeof EventServerR
     handlePostDaemonRuntimeControl: vi.fn(async () => {}),
     handlePostScheduleRunNow: vi.fn(async () => {}),
     handleGoalAction: vi.fn(async () => {}),
+    readHealthStatus: () => ({ status: "ok" }),
     ...overrides,
   });
 }

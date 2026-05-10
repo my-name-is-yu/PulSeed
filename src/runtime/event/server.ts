@@ -112,6 +112,7 @@ export class EventServer {
         this.commandHandler.handlePostScheduleRunNow(req, res, scheduleId),
       handleGoalAction: async (req, res, goalId, action) =>
         this.commandHandler.handleGoalAction(req, res, goalId, action),
+      readHealthStatus: () => config?.healthStatusProvider?.() ?? { status: "ok" },
     });
   }
 

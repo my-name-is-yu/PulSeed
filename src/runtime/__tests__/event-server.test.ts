@@ -531,6 +531,29 @@ describe("daemon HTTP auth guard", () => {
     expect(result.status).toBe(200);
   });
 
+  it("reports configured health failures on /health without auth", async () => {
+    await server.stop();
+    server = new EventServer(mockDriveSystem as never, {
+      port: 0,
+      eventsDir: path.join(tmpDir, "events"),
+      healthStatusProvider: () => ({
+        status: "failed",
+        reason: "unsupported_control_db_schema",
+        detail: "Control DB schema drift detected.",
+      }),
+    });
+    await server.start();
+    port = server.getPort();
+
+    const result = await makeRequest(port, "GET", "/health", undefined, null);
+    expect(result.status).toBe(503);
+    expect(JSON.parse(result.body)).toMatchObject({
+      status: "failed",
+      reason: "unsupported_control_db_schema",
+      detail: "Control DB schema drift detected.",
+    });
+  });
+
   it("rejects state-changing POST requests without a bearer token", async () => {
     const result = await postEvent(port, validEvent, null);
     expect(result.status).toBe(401);

@@ -23,7 +23,11 @@ import {
 import { ScheduleEngine } from "../../../runtime/schedule/engine.js";
 import { RuntimeWatchdog } from "../../../runtime/watchdog.js";
 import { LeaderLockManager } from "../../../runtime/leader-lock-manager.js";
-import { DaemonStateStore, ProactiveInterventionStore, RuntimeHealthStore } from "../../../runtime/store/index.js";
+import {
+  DaemonStateStore,
+  ProactiveInterventionStore,
+  RuntimeHealthStore,
+} from "../../../runtime/store/index.js";
 import type { RuntimeArtifactExpectation } from "../../../runtime/store/index.js";
 import { isDaemonRunning, probeDaemonHealth } from "../../../runtime/daemon/client.js";
 import { PluginLoader } from "../../../runtime/plugin-loader.js";
@@ -61,6 +65,7 @@ import {
 } from "./daemon-shared.js";
 import {
   STALE_RUNTIME_HEALTH_REASON,
+  formatControlDbSchemaDriftMessage,
   formatHistoricalSnapshotContext,
   parseHistoricalObservationTime,
   reconcileRuntimeHealthForDisplay,
@@ -213,6 +218,11 @@ export async function cmdStart(
   const logger = new Logger({
     dir: getLogsDir(baseDir),
   });
+  const schemaDriftMessage = formatControlDbSchemaDriftMessage(baseDir);
+  if (schemaDriftMessage) {
+    getCliLogger().error(schemaDriftMessage);
+    process.exit(1);
+  }
 
   // --detach: spawn a detached process and exit immediately.
   // The detached process becomes the watchdog parent.
@@ -269,6 +279,10 @@ export async function cmdStart(
       leaderLockManager,
       logger,
       healthProbe,
+      preStartCheck: async () => {
+        const detail = formatControlDbSchemaDriftMessage(baseDir);
+        return detail ? { ok: false, detail } : { ok: true };
+      },
       startChild: () =>
         spawn(process.execPath, [scriptPath, ...childArgs], {
           stdio: "inherit",
@@ -365,6 +379,16 @@ export async function cmdStart(
       eventsDir: getEventsDir(daemonBaseDir),
       runtimeRoot: resolveDaemonRuntimeRoot(daemonBaseDir, resolvedDaemonConfig.runtime_root),
       stateManager: deps.stateManager,
+      healthStatusProvider: () => {
+        const schemaDrift = formatControlDbSchemaDriftMessage(daemonBaseDir);
+        return schemaDrift
+          ? {
+            status: "failed",
+            reason: "unsupported_control_db_schema",
+            detail: schemaDrift,
+          }
+          : { status: "ok" };
+      },
     },
     logger
   );
@@ -491,6 +515,16 @@ export async function cmdStart(
 
 export async function cmdDaemonStatus(_args: string[]): Promise<void> {
   const baseDir = getPulseedDirPath();
+  const schemaDriftMessage = formatControlDbSchemaDriftMessage(baseDir);
+  if (schemaDriftMessage) {
+    console.log([
+      "PulSeed Daemon Status",
+      "\u2500".repeat(21),
+      "Status:          schema drift",
+      schemaDriftMessage,
+    ].join("\n"));
+    return;
+  }
   const pidManager = new PIDManager(baseDir);
   const pidStatus = await pidManager.inspect();
   const runtimePid = pidStatus.runtimePid ?? pidStatus.info?.pid ?? null;
@@ -881,6 +915,11 @@ export async function cmdRestart(
 
 export async function cmdDaemonPing(_args: string[]): Promise<number> {
   const baseDir = getPulseedDirPath();
+  const schemaDriftMessage = formatControlDbSchemaDriftMessage(baseDir);
+  if (schemaDriftMessage) {
+    console.log(`Daemon ping failed: ${schemaDriftMessage}`);
+    return 1;
+  }
   const cfg = await loadDaemonConfig(baseDir);
   const port = cfg.event_server_port;
   const probe = await probeDaemonHealth({ host: "127.0.0.1", port });

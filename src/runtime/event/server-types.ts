@@ -16,6 +16,7 @@ export interface EventServerConfig {
   triggerMapper?: TriggerMapper;
   approvalBroker?: ApprovalBroker;
   outboxStore?: OutboxStore;
+  healthStatusProvider?: () => Record<string, unknown>;
   eventFileMaxAttempts?: number;
   eventFileRetryDelayMs?: number;
 }

@@ -13,6 +13,7 @@ const {
   setRealtimeSinkMock,
   eventServerBroadcastMock,
   eventServerInstances,
+  eventServerArgs,
   scheduleEngineArgs,
   daemonRunnerArgs,
   watchdogArgs,
@@ -33,6 +34,7 @@ const {
   setRealtimeSinkMock: vi.fn(),
   eventServerBroadcastMock: vi.fn(),
   eventServerInstances: [] as Array<{ broadcast: ReturnType<typeof vi.fn> }>,
+  eventServerArgs: [] as unknown[][],
   scheduleEngineArgs: [] as unknown[],
   daemonRunnerArgs: [] as unknown[],
   watchdogArgs: [] as unknown[],
@@ -111,7 +113,8 @@ vi.mock("../cli-logger.js", () => ({
 }));
 
 vi.mock("../../../runtime/event/server.js", () => ({
-  EventServer: vi.fn().mockImplementation(function () {
+  EventServer: vi.fn().mockImplementation(function (...args: unknown[]) {
+    eventServerArgs.push(args);
     const instance = {
       broadcast: eventServerBroadcastMock,
     };
@@ -170,6 +173,7 @@ vi.mock("../../../platform/observation/data-source-adapter.js", () => ({
 
 import { cmdRestart, cmdStart } from "../commands/daemon.js";
 import { dispatchCommand } from "../cli-command-registry.js";
+import { CONTROL_DB_SCHEMA_VERSION, openControlDatabase } from "../../../runtime/store/index.js";
 
 describe("cmdStart", () => {
   const mockedHome = "/tmp/pulseed-daemon-start-test-home";
@@ -185,6 +189,7 @@ describe("cmdStart", () => {
     setRealtimeSinkMock.mockClear();
     eventServerBroadcastMock.mockClear();
     eventServerInstances.length = 0;
+    eventServerArgs.length = 0;
     scheduleEngineArgs.length = 0;
     daemonRunnerArgs.length = 0;
     watchdogArgs.length = 0;
@@ -331,6 +336,36 @@ describe("cmdStart", () => {
     );
   });
 
+  it("wires EventServer health to fail if control DB schema drifts after startup", async () => {
+    process.env.PULSEED_WATCHDOG_CHILD = "1";
+    const baseDir = "/tmp/pulseed-daemon-start-base";
+
+    await cmdStart(
+      { getBaseDir: vi.fn().mockReturnValue(baseDir) } as never,
+      {} as never,
+      []
+    );
+
+    const eventServerConfig = eventServerArgs[0]?.[1] as { healthStatusProvider?: () => Record<string, unknown> } | undefined;
+    expect(eventServerConfig?.healthStatusProvider).toBeTypeOf("function");
+    expect(eventServerConfig?.healthStatusProvider?.()).toMatchObject({ status: "ok" });
+
+    const database = await openControlDatabase({ baseDir });
+    try {
+      database.transaction((db) => {
+        db.pragma(`user_version = ${CONTROL_DB_SCHEMA_VERSION + 1}`);
+      });
+    } finally {
+      database.close();
+    }
+
+    expect(eventServerConfig?.healthStatusProvider?.()).toMatchObject({
+      status: "failed",
+      reason: "unsupported_control_db_schema",
+      detail: expect.stringContaining(`Database schema version ${CONTROL_DB_SCHEMA_VERSION + 1} is newer`),
+    });
+  });
+
   it("treats --iterations-per-cycle as a bounded daemon canary cap by default", async () => {
     process.env.PULSEED_WATCHDOG_CHILD = "1";
 
@@ -367,6 +402,43 @@ describe("cmdStart", () => {
         }),
       })
     );
+  });
+
+  it("fails closed before watchdog startup when the control DB schema is newer than this build", async () => {
+    const baseDir = "/tmp/pulseed-daemon-start-base";
+    fs.mkdirSync(baseDir, { recursive: true });
+    const database = await openControlDatabase({ baseDir });
+    try {
+      database.transaction((db) => {
+        db.pragma(`user_version = ${CONTROL_DB_SCHEMA_VERSION + 1}`);
+      });
+    } finally {
+      database.close();
+    }
+
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: string | number | null) => {
+      throw new Error(`process.exit:${code ?? ""}`);
+    }) as typeof process.exit);
+
+    try {
+      await expect(cmdStart(
+        { getBaseDir: vi.fn().mockReturnValue(baseDir) } as never,
+        {} as never,
+        []
+      )).rejects.toThrow("process.exit:1");
+    } finally {
+      exitSpy.mockRestore();
+    }
+
+    expect(cliLoggerMock.error).toHaveBeenCalledWith(
+      expect.stringContaining(`Database schema version ${CONTROL_DB_SCHEMA_VERSION + 1} is newer`)
+    );
+    expect(cliLoggerMock.error).toHaveBeenCalledWith(
+      expect.stringContaining("runtime readiness is not healthy")
+    );
+    expect(watchdogStartMock).not.toHaveBeenCalled();
+    expect(daemonStartMock).not.toHaveBeenCalled();
+    expect(buildDepsMock).not.toHaveBeenCalled();
   });
 
   it.each([
