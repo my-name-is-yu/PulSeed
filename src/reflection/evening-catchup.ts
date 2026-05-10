@@ -1,4 +1,3 @@
-import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import type { StateManager } from "../base/state/state-manager.js";
 import type { ILLMClient } from "../base/llm/llm-client.js";
@@ -16,6 +15,9 @@ import {
   todayISO,
 } from "./reflection-utils.js";
 import { buildReflectionRelationshipProfileSurfaceContext } from "./reflection-profile-surface.js";
+import { readTextFileWithinLimit } from "../base/utils/json-io.js";
+
+const MORNING_REPORT_MAX_BYTES = 1024 * 1024;
 
 // ─── LLM response schema ───
 
@@ -51,7 +53,9 @@ export async function runEveningCatchup(deps: {
     const morningPath = path.join(baseDir, "reflections", `morning-${date}.json`);
     let morningData: PlanningReport | null = null;
     try {
-      const raw = await fsp.readFile(morningPath, "utf-8");
+      const raw = await readTextFileWithinLimit(morningPath, {
+        maxBytes: MORNING_REPORT_MAX_BYTES,
+      });
       morningData = PlanningReportSchema.parse(JSON.parse(raw) as unknown);
     } catch {
       // No morning report available
