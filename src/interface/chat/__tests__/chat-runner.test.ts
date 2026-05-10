@@ -2001,13 +2001,11 @@ describe("ChatRunner", () => {
       const input = (chatAgentLoopRunner.execute as ReturnType<typeof vi.fn>).mock.calls[0][0] as {
         resumeOnly?: boolean;
         resumeState?: { sessionId: string };
-        resumeStatePath?: string;
         resumeSessionId?: string;
       };
       expect(input.resumeOnly).toBe(true);
       expect(input.resumeState?.sessionId).toBe("agent-session");
       expect(input.resumeSessionId).toBe("agent-session");
-      expect(input.resumeStatePath).toBeUndefined();
 
       const persisted = await loadPersistedChatSession(stateManager, "chat-session");
       expect(persisted?.turnContexts?.some((context) => context.schema_version === "chat-turn-context-v1")).toBe(true);
@@ -2185,14 +2183,12 @@ describe("ChatRunner", () => {
           cwd?: string;
           resumeOnly?: boolean;
           resumeState?: { sessionId: string };
-          resumeStatePath?: string;
           resumeSessionId?: string;
         };
         expect(input.cwd).toBe("/loaded-repo");
         expect(input.resumeOnly).toBe(true);
         expect(input.resumeState?.sessionId).toBe("saved-session");
         expect(input.resumeSessionId).toBe("saved-session");
-        expect(input.resumeStatePath).toBeUndefined();
       } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
       }
@@ -2250,14 +2246,12 @@ describe("ChatRunner", () => {
           cwd?: string;
           resumeOnly?: boolean;
           resumeState?: { sessionId: string };
-          resumeStatePath?: string;
           resumeSessionId?: string;
         };
         expect(input.cwd).toBe("/loaded-repo");
         expect(input.resumeOnly).toBe(true);
         expect(input.resumeState?.sessionId).toBe("agent-natural-latest");
         expect(input.resumeSessionId).toBe("agent-natural-latest");
-        expect(input.resumeStatePath).toBeUndefined();
       } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
       }

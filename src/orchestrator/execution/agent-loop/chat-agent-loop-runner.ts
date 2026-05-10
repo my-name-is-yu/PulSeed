@@ -83,7 +83,6 @@ export interface ChatAgentLoopRunnerDeps {
   createSession?: (input: {
     goalId?: string;
     eventSink?: AgentLoopEventSink;
-    resumeStatePath?: string;
     resumeSessionId?: string;
     sessionId?: string;
     traceId?: string;
@@ -103,7 +102,6 @@ export interface ChatAgentLoopInput {
   approvalFn?: (request: ApprovalRequest) => Promise<boolean>;
   toolCallContext?: Partial<ToolCallContext>;
   resumeState?: AgentLoopSessionState;
-  resumeStatePath?: string;
   resumeSessionId?: string;
   resumeOnly?: boolean;
   abortSignal?: AbortSignal;
@@ -125,11 +123,11 @@ export class ChatAgentLoopRunner {
     const session = this.deps.createSession?.({
       goalId: input.goalId,
       eventSink: input.eventSink,
-      ...(input.resumeStatePath ? { resumeStatePath: input.resumeStatePath } : {}),
       ...(input.resumeSessionId ? { resumeSessionId: input.resumeSessionId } : {}),
       ...(input.resumeState ? { sessionId: input.resumeState.sessionId, traceId: input.resumeState.traceId } : {}),
     }) ?? createAgentLoopSession({
       ...(input.eventSink ? { eventSink: input.eventSink } : {}),
+      ...(input.resumeSessionId ? { sessionId: input.resumeSessionId } : {}),
       ...(input.resumeState ? { sessionId: input.resumeState.sessionId, traceId: input.resumeState.traceId } : {}),
     });
     try {

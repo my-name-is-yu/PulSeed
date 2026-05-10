@@ -21,7 +21,6 @@ import {
   ChatAgentLoopRunner,
   CorePhaseRunner,
   ExtractiveAgentLoopCompactor,
-  JsonAgentLoopSessionStateStore,
   NoopAgentLoopCompactor,
   StaticAgentLoopModelRegistry,
   ToolExecutorAgentLoopToolRuntime,
@@ -36,6 +35,7 @@ import {
   type AgentLoopModelRequest,
   type AgentLoopModelResponse,
 } from "../index.js";
+import { SqliteAgentLoopSessionStateStore } from "../agent-loop-session-db-store.js";
 import { defaultExecutionPolicy } from "../execution-policy.js";
 
 class ScriptedModelClient implements AgentLoopModelClient {
@@ -603,7 +603,8 @@ describe("agentloop phase 5 compaction", () => {
   });
 
   it("resumes from persisted compacted state after an interrupted turn", async () => {
-    const statePath = path.join(makeTempDir(), "agentloop.state.json");
+    const stateDir = makeTempDir();
+    const stateStore = new SqliteAgentLoopSessionStateStore(stateDir, "session-1", "chat");
     const modelInfo = makeModelInfo();
     const registry = new ToolRegistry();
     registry.register(new UpdatePlanTool());
@@ -628,7 +629,7 @@ describe("agentloop phase 5 compaction", () => {
       session: createAgentLoopSession({
         sessionId: "session-1",
         traceId: "trace-1",
-        stateStore: new JsonAgentLoopSessionStateStore(statePath),
+        stateStore,
       }),
       turnId: "turn-1",
       goalId: "goal-1",
@@ -657,14 +658,8 @@ describe("agentloop phase 5 compaction", () => {
     expect(first.success).toBe(false);
     expect(first.stopReason).toBe("max_tool_calls");
     expect(first.compactions).toBeGreaterThanOrEqual(1);
-    const persistedAfterFirst = JSON.parse(await fsp.readFile(statePath, "utf-8")) as {
-      compactionRecords?: Array<{
-        schemaVersion: string;
-        modelVisibleSummary: string;
-        toolObservations: Array<{ toolName: string }>;
-        replacementHistory: { summarizedIndexes: number[]; retainedIndexes: number[] };
-      }>;
-    };
+    const persistedAfterFirst = await stateStore.load();
+    if (!persistedAfterFirst) throw new Error("expected persisted AgentLoop session state");
     expect(persistedAfterFirst.compactionRecords?.[0]).toMatchObject({
       schemaVersion: "agent-loop-compaction-record-v1",
       replacementHistory: {
@@ -688,7 +683,7 @@ describe("agentloop phase 5 compaction", () => {
       session: createAgentLoopSession({
         sessionId: "session-1",
         traceId: "trace-1",
-        stateStore: new JsonAgentLoopSessionStateStore(statePath),
+        stateStore,
       }),
       turnId: "turn-1",
       goalId: "goal-1",
@@ -712,7 +707,7 @@ describe("agentloop phase 5 compaction", () => {
     expect(second.compactions).toBeGreaterThanOrEqual(first.compactions);
     expect(secondModelClient.calls[0].messages.some((m) => m.content.includes("Summary of earlier agentloop context"))).toBe(true);
     expect(secondModelClient.calls[0].messages.some((m) => m.role === "tool" && m.toolName === "update_plan")).toBe(true);
-    const resumedState = await new JsonAgentLoopSessionStateStore(statePath).load();
+    const resumedState = await stateStore.load();
     expect(resumedState?.compactionRecords?.[0]?.modelVisibleSummary).toContain("Replacement history");
   });
 });
@@ -1078,9 +1073,8 @@ describe("agentloop phase 7 ChatAgentLoopRunner and CoreLoopControlTools", () =>
     expect(modelClient.calls[1].messages.some((m) => m.role === "tool" && m.toolName === "approval_tool")).toBe(true);
   });
 
-  it("uses the latest chat input even when a state file path is provided and reused", async () => {
+  it("uses the latest chat input even when a typed session id is provided and reused", async () => {
     const stateDir = makeTempDir();
-    const statePath = path.join(stateDir, "chat.state.json");
     try {
       const modelInfo = makeModelInfo();
       const modelClient = new ScriptedModelClient(modelInfo, [
@@ -1105,14 +1099,18 @@ describe("agentloop phase 7 ChatAgentLoopRunner and CoreLoopControlTools", () =>
         defaultModel: modelInfo.ref,
         createSession: (input) =>
           createAgentLoopSession({
-            sessionId: "chat-session",
+            sessionId: input.resumeSessionId ?? "chat-session",
             traceId: "chat-trace",
-            stateStore: new JsonAgentLoopSessionStateStore(input.resumeStatePath ?? statePath),
+            stateStore: new SqliteAgentLoopSessionStateStore(
+              stateDir,
+              input.resumeSessionId ?? "chat-session",
+              "chat",
+            ),
           }),
       });
 
-      await chat.execute({ message: "first input", resumeStatePath: statePath });
-      await chat.execute({ message: "second input", resumeStatePath: statePath });
+      await chat.execute({ message: "first input", resumeSessionId: "chat-session" });
+      await chat.execute({ message: "second input", resumeSessionId: "chat-session" });
 
       const firstLastUser = [...modelClient.calls[0].messages].reverse().find((message) => message.role === "user")?.content ?? "";
       const secondLastUser = [...modelClient.calls[1].messages].reverse().find((message) => message.role === "user")?.content ?? "";
@@ -1126,7 +1124,6 @@ describe("agentloop phase 7 ChatAgentLoopRunner and CoreLoopControlTools", () =>
 
   it("loads persisted state for explicit resumeOnly chat turns", async () => {
     const stateDir = makeTempDir();
-    const statePath = path.join(stateDir, "chat-resume.state.json");
     try {
       const modelInfo = makeModelInfo();
       const modelClient = new ScriptedModelClient(modelInfo, [
@@ -1153,7 +1150,7 @@ describe("agentloop phase 7 ChatAgentLoopRunner and CoreLoopControlTools", () =>
           createAgentLoopSession({
             sessionId: "resume-session",
             traceId: "resume-trace",
-            stateStore: new JsonAgentLoopSessionStateStore(statePath),
+            stateStore: new SqliteAgentLoopSessionStateStore(stateDir, "resume-session", "chat"),
           }),
       });
 

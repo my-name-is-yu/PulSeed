@@ -1,11 +1,9 @@
-import * as path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { StateManager } from "../../../base/state/state-manager.js";
 import type { IAdapter, AgentResult } from "../../../orchestrator/execution/adapter-layer.js";
 import {
   BoundedAgentLoopRunner,
   ChatAgentLoopRunner,
-  JsonAgentLoopSessionStateStore,
   StaticAgentLoopModelRegistry,
   ToolExecutorAgentLoopToolRuntime,
   ToolRegistryAgentLoopToolRouter,
@@ -16,6 +14,7 @@ import {
   type AgentLoopModelRequest,
   type AgentLoopModelResponse,
 } from "../../../orchestrator/execution/agent-loop/index.js";
+import { SqliteAgentLoopSessionStateStore } from "../../../orchestrator/execution/agent-loop/agent-loop-session-db-store.js";
 import { ToolRegistry } from "../../../tools/registry.js";
 import { ToolExecutor } from "../../../tools/executor.js";
 import { ToolPermissionManager } from "../../../tools/permission.js";
@@ -90,7 +89,7 @@ function makeRuntime(registry: ToolRegistry) {
 function makeChatAgentLoopRunner(
   stateDir: string,
   modelClient: ScriptedModelClient,
-  observedStatePaths: string[] = [],
+  observedSessionIds: string[] = [],
 ): ChatAgentLoopRunner {
   const registry = new ToolRegistry();
   const { router, runtime } = makeRuntime(registry);
@@ -101,13 +100,13 @@ function makeChatAgentLoopRunner(
     modelRegistry: new StaticAgentLoopModelRegistry([modelInfo]),
     defaultModel: modelInfo.ref,
     createSession: (input) => {
-      const statePath = path.join(stateDir, input.resumeStatePath ?? "chat/agentloop/fallback.state.json");
-      observedStatePaths.push(statePath);
+      const sessionId = input.resumeSessionId ?? input.sessionId ?? "fallback";
+      observedSessionIds.push(sessionId);
       return createAgentLoopSession({
-        sessionId: input.sessionId,
+        sessionId,
         traceId: input.traceId,
         eventSink: input.eventSink,
-        stateStore: new JsonAgentLoopSessionStateStore(statePath),
+        stateStore: new SqliteAgentLoopSessionStateStore(stateDir, sessionId, "chat"),
       });
     },
   });
@@ -149,14 +148,14 @@ afterEach(() => {
 });
 
 describe("chat boundary contracts", () => {
-  it("ChatRunner normal turns reuse the state path without resuming stale native agentloop state", async () => {
+  it("ChatRunner normal turns reuse the typed session id without resuming stale native agentloop state", async () => {
     const stateDir = trackedTempDir();
     const workspaceDir = trackedTempDir();
     const stateManager = new StateManager(stateDir);
     await stateManager.init();
     const modelClient = makeModelClient();
-    const statePaths: string[] = [];
-    const chatAgentLoopRunner = makeChatAgentLoopRunner(stateDir, modelClient, statePaths);
+    const sessionIds: string[] = [];
+    const chatAgentLoopRunner = makeChatAgentLoopRunner(stateDir, modelClient, sessionIds);
     const runner = new ChatRunner({
       stateManager,
       adapter: makeMockAdapter(),
@@ -168,21 +167,21 @@ describe("chat boundary contracts", () => {
     await runner.execute("second input", workspaceDir);
 
     expect(modelClient.calls).toHaveLength(2);
-    expect(new Set(statePaths).size).toBe(1);
+    expect(new Set(sessionIds).size).toBe(1);
     expect(lastUserMessage(modelClient.calls[0])).toContain("first input");
     const secondLastUser = lastUserMessage(modelClient.calls[1]);
     expect(secondLastUser).toContain("second input");
     expect(secondLastUser).not.toContain("first input");
   });
 
-  it("TUI surface normal turns keep the latest input when native agentloop state path is reused", async () => {
+  it("TUI surface normal turns keep the latest input when native agentloop session id is reused", async () => {
     const stateDir = trackedTempDir();
     const workspaceDir = trackedTempDir();
     const stateManager = new StateManager(stateDir);
     await stateManager.init();
     const modelClient = makeModelClient();
-    const statePaths: string[] = [];
-    const chatAgentLoopRunner = makeChatAgentLoopRunner(stateDir, modelClient, statePaths);
+    const sessionIds: string[] = [];
+    const chatAgentLoopRunner = makeChatAgentLoopRunner(stateDir, modelClient, sessionIds);
     const surface = new SharedManagerTuiChatSurface({
       stateManager,
       adapter: makeMockAdapter(),
@@ -194,7 +193,7 @@ describe("chat boundary contracts", () => {
     await surface.execute("second tui input", workspaceDir);
 
     expect(modelClient.calls).toHaveLength(2);
-    expect(new Set(statePaths).size).toBe(1);
+    expect(new Set(sessionIds).size).toBe(1);
     expect(lastUserMessage(modelClient.calls[0])).toContain("first tui input");
     const secondLastUser = lastUserMessage(modelClient.calls[1]);
     expect(secondLastUser).toContain("second tui input");

@@ -92,6 +92,22 @@ describe("database-first legacy store check", () => {
     expect(result.stderr).toContain("Unclassified legacy store references must be moved to typed stores");
   });
 
+  it("fails AgentLoop path-shaped resume and JSON/JSONL store owners outside migration tests", () => {
+    writeFile(tmpDir, "src/orchestrator/execution/agent-loop/legacy-normal-session.ts", `
+      export class JsonAgentLoopSessionStateStore {}
+      export class JsonlAgentLoopTraceStore {}
+      export const resume = (input: { resumeStatePath?: string }) => input.resumeStatePath;
+    `);
+
+    const result = runCheck(tmpDir);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("src/orchestrator/execution/agent-loop/legacy-normal-session.ts");
+    expect(result.stderr).toContain("[agentloop-json-store-class] AgentLoop database session and trace stores");
+    expect(result.stderr).toContain("[agentloop-path-shaped-resume] AgentLoop database session id resume contract");
+    expect(result.stderr).toContain("Unclassified legacy store references must be moved to typed stores");
+  });
+
   it("fails unexpected legacy store classes inside classified follow-up files", () => {
     writeFile(tmpDir, "src/orchestrator/execution/session-manager.ts", `
       export const wal = "wal.jsonl";

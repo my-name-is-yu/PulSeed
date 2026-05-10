@@ -1,5 +1,3 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
 import type { AgentLoopStopReason } from "./agent-loop-budget.js";
 import type { AgentLoopFailureReason } from "./agent-loop-result.js";
 import type {
@@ -76,24 +74,6 @@ export class InMemoryAgentLoopSessionStateStore implements AgentLoopSessionState
       calledTools: [...state.calledTools],
       ...(state.usage ? { usage: { ...state.usage } } : {}),
     };
-  }
-}
-
-export class JsonAgentLoopSessionStateStore implements AgentLoopSessionStateStore {
-  constructor(private readonly filePath: string) {}
-
-  async load(): Promise<AgentLoopSessionState | null> {
-    try {
-      const raw = await readFile(this.filePath, "utf-8");
-      return normalizeAgentLoopSessionState(JSON.parse(raw));
-    } catch {
-      return null;
-    }
-  }
-
-  async save(state: AgentLoopSessionState): Promise<void> {
-    await mkdir(dirname(this.filePath), { recursive: true });
-    await writeFile(this.filePath, JSON.stringify(state, null, 2), "utf-8");
   }
 }
 
