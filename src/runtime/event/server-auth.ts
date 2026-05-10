@@ -1,11 +1,13 @@
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
-import * as http from "node:http";
+import type * as http from "node:http";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import type { Logger } from "../logger.js";
+import { readTextFileWithinLimit } from "../../base/utils/json-io.js";
 import { writeJsonError } from "./server-http.js";
 
 const DAEMON_TOKEN_FILENAME = "daemon-token.json";
+const DAEMON_TOKEN_FILE_MAX_BYTES = 16 * 1024;
 
 export class EventServerAuth {
   private readonly authToken = randomBytes(32).toString("base64url");
@@ -41,7 +43,7 @@ export class EventServerAuth {
   async removeAuthTokenFile(): Promise<void> {
     const tokenPath = this.getAuthTokenPath();
     try {
-      const raw = await fsp.readFile(tokenPath, "utf-8");
+      const raw = await readTextFileWithinLimit(tokenPath, { maxBytes: DAEMON_TOKEN_FILE_MAX_BYTES });
       const parsed = JSON.parse(raw) as { token?: unknown };
       if (parsed.token !== this.authToken) return;
       await fsp.unlink(tokenPath);
