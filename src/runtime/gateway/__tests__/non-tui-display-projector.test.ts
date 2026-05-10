@@ -103,7 +103,7 @@ describe("non-TUI display projector", () => {
     expect(transport.calls.join("\n")).not.toContain("found files");
   });
 
-  it("does not expose internal lifecycle progress while streaming assistant output", async () => {
+  it("buffers partial assistant deltas until stable text or final output is available", async () => {
     const transport = createTransport();
     const projector = new NonTuiDisplayProjector({
       display: resolveGatewayChannelDisplayContract(TELEGRAM_GATEWAY_DISPLAY_CONTRACT),
@@ -117,8 +117,42 @@ describe("non-TUI display projector", () => {
 
     expect(transport.sendProgress).not.toHaveBeenCalled();
     expect(transport.sendFinal).toHaveBeenCalledOnce();
+    expect(transport.sendFinal).toHaveBeenCalledWith("Hello");
+    expect(transport.editFinal).not.toHaveBeenCalled();
+  });
+
+  it("streams stable assistant chunks through one final-answer surface", async () => {
+    const transport = createTransport();
+    const projector = new NonTuiDisplayProjector({
+      display: resolveGatewayChannelDisplayContract(TELEGRAM_GATEWAY_DISPLAY_CONTRACT),
+      transport,
+    });
+
+    await projector.handle({ ...base, type: "assistant_delta", delta: "Hello", text: "Hello" });
+    await projector.handle({ ...base, type: "assistant_delta", delta: ". ", text: "Hello. " });
+    await projector.handle({ ...base, type: "assistant_delta", delta: "Working", text: "Hello. Working" });
+    await projector.handle({ ...base, type: "assistant_final", text: "Hello. Working now.", persisted: true });
+
+    expect(transport.sendFinal).toHaveBeenCalledOnce();
+    expect(transport.sendFinal).toHaveBeenCalledWith("Hello.");
     expect(transport.editFinal).toHaveBeenCalledOnce();
-    expect(transport.editFinal).toHaveBeenCalledWith({ id: "final-1" }, "Hello");
+    expect(transport.editFinal).toHaveBeenCalledWith({ id: "final-1" }, "Hello. Working now.");
+    expect(transport.calls.filter((call) => call.startsWith("sendFinal:"))).toHaveLength(1);
+  });
+
+  it("does not cut complete fenced code blocks into unclosed partial final text", async () => {
+    const transport = createTransport();
+    const projector = new NonTuiDisplayProjector({
+      display: resolveGatewayChannelDisplayContract(TELEGRAM_GATEWAY_DISPLAY_CONTRACT),
+      transport,
+    });
+    const codeBlock = "```ts\nconst ready = true;\n```";
+
+    await projector.handle({ ...base, type: "assistant_delta", delta: codeBlock, text: codeBlock });
+
+    expect(transport.sendFinal).toHaveBeenCalledOnce();
+    expect(transport.sendFinal).toHaveBeenCalledWith(codeBlock);
+    expect(transport.sendFinal).not.toHaveBeenCalledWith("```ts\nconst ready = true;");
   });
 
   it("deletes completed progress when the policy supports cleanup", async () => {
@@ -139,7 +173,7 @@ describe("non-TUI display projector", () => {
         createdAt: base.createdAt,
       },
     });
-    await projector.handle({ ...base, type: "assistant_final", text: "Done", persisted: true });
+    await projector.handle({ ...base, type: "assistant_final", text: "Done.", persisted: true });
     await projector.handle({ ...base, type: "lifecycle_end", status: "completed", elapsedMs: 1, persisted: true });
 
     expect(transport.deleteProgress).toHaveBeenCalledOnce();
@@ -165,8 +199,8 @@ describe("non-TUI display projector", () => {
 
     await projector.handle(event);
     await projector.handle(event);
-    await projector.handle({ ...base, type: "assistant_delta", delta: "Done", text: "Done" });
-    await projector.handle({ ...base, type: "assistant_final", text: "Done", persisted: true });
+    await projector.handle({ ...base, type: "assistant_delta", delta: "Done.", text: "Done." });
+    await projector.handle({ ...base, type: "assistant_final", text: "Done.", persisted: true });
 
     expect(transport.sendProgress).toHaveBeenCalledOnce();
     expect(transport.editProgress).not.toHaveBeenCalled();

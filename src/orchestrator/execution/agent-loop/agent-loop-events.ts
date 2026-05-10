@@ -55,6 +55,7 @@ export interface AgentLoopModelRequestEvent extends AgentLoopBaseEvent {
 export interface AgentLoopAssistantMessageEvent extends AgentLoopBaseEvent {
   type: "assistant_message";
   phase: "commentary" | "final_candidate";
+  content?: string;
   contentPreview: string;
   toolCallCount: number;
 }

@@ -112,6 +112,77 @@ PR: https://github.com/my-name-is-yu/PulSeed/pull/1863
 
 - Live Telegram dogfood has not been rerun for this slice yet.
 
+## Slice #1852
+
+Issue: https://github.com/my-name-is-yu/PulSeed/issues/1852
+
+Base HEAD: `52f6dc1353bd95ba7baed7d8a655fc31caf434e0`
+
+Branch: `yu/issue-1852-gateway-assistant-streaming`
+
+PR: https://github.com/my-name-is-yu/PulSeed/pull/1871
+
+### Design Decisions
+
+- Preserve existing `assistant_delta` events as the shared chat/gateway streaming contract.
+- Keep final-answer streaming separate from progress/commentary/status surfaces; progress still uses the progress surface and assistant text uses the final-answer surface.
+- Add projector-side stable-boundary buffering for edit-stream surfaces. Partial fragments are held until a newline or sentence boundary is available, and incomplete fenced code blocks are not emitted mid-fence.
+- Add simple backpressure for partial edits: after the first stable chunk, edit updates are rate-limited unless the buffered backlog grows enough to catch up.
+- Keep edit-capable transports on one final-answer surface: a stable partial chunk sends the final surface once, later stable/final text edits the same surface.
+- Preserve send-once/chunked fallback behavior for transports without streaming support.
+- Bridge native agent-loop `final_candidate` snapshots into `assistant_delta` events for non-gateway-gated turns using full event content, not the truncated timeline preview.
+- Keep gateway runtime-evidence-gated agent-loop turns from streaming final-candidate text before the full evidence gate has allowed the final answer; this prevents unverified runtime/status claims from leaking through partial deltas.
+- Treat complete trailing fenced code blocks as stable assistant text so edit-stream transports do not temporarily render closed code blocks as unclosed partial Markdown.
+
+### Commands Run
+
+- `git fetch origin main --prune`
+- `git switch main`
+- `git merge --ff-only origin/main`
+- `git worktree add -b yu/issue-1852-gateway-assistant-streaming /Users/yuyoshimuta/Documents/dev/PulSeed-worktrees/issue-1852-gateway-assistant-streaming origin/main`
+- `npm ci`
+- `npx vitest run --config vitest.integration.config.ts src/runtime/gateway/__tests__/non-tui-display-projector.test.ts`
+- `npx vitest run --config vitest.unit.config.ts src/interface/chat/__tests__/cross-platform-session.test.ts src/interface/chat/__tests__/chat-runner.test.ts`
+- `npx vitest run --config vitest.integration.config.ts src/runtime/gateway/__tests__/non-tui-display-projector.test.ts src/runtime/gateway/__tests__/telegram-gateway-adapter.test.ts src/runtime/gateway/__tests__/slack-channel-adapter.test.ts src/runtime/gateway/__tests__/seedy-presence-projector.test.ts`
+- `npm run typecheck`
+- `git diff --check`
+- GitHub unit CI failed in `plugins/telegram-bot/__tests__/telegram-bot-plugin.test.ts` because the test still expected unstable short partial text to create an editable assistant message.
+- Updated plugin Telegram tests to expect final-send fallback when no stable partial boundary was published, then reran:
+  - `npx vitest run --config vitest.unit.config.ts plugins/telegram-bot/__tests__/telegram-bot-plugin.test.ts --testNamePattern "assistant|delta|stream|final|edit"`
+  - `npx vitest run --config vitest.unit.config.ts src/interface/chat/__tests__/cross-platform-session.test.ts src/interface/chat/__tests__/chat-runner.test.ts plugins/telegram-bot/__tests__/telegram-bot-plugin.test.ts`
+  - `npx vitest run --config vitest.integration.config.ts src/runtime/gateway/__tests__/non-tui-display-projector.test.ts src/runtime/gateway/__tests__/telegram-gateway-adapter.test.ts src/runtime/gateway/__tests__/slack-channel-adapter.test.ts src/runtime/gateway/__tests__/seedy-presence-projector.test.ts`
+  - `npm run typecheck`
+  - `git diff --check`
+- GitHub Codex review on commit `46160d4e67` found three material issues: runtime-gated final-candidate streaming could leak unverified status claims, agent-loop streaming used truncated `contentPreview`, and complete fenced code blocks could be emitted as unclosed partials.
+- Fixed those review findings, then reran:
+  - `npx vitest run --config vitest.unit.config.ts src/interface/chat/__tests__/cross-platform-session.test.ts src/interface/chat/__tests__/chat-event-state.test.ts`
+  - `npx vitest run --config vitest.integration.config.ts src/runtime/gateway/__tests__/non-tui-display-projector.test.ts src/runtime/gateway/__tests__/telegram-gateway-adapter.test.ts src/runtime/gateway/__tests__/slack-channel-adapter.test.ts src/runtime/gateway/__tests__/seedy-presence-projector.test.ts`
+  - `npm run typecheck`
+  - `git diff --check`
+- GitHub unit CI then exposed a timing-sensitive approval test in `cross-platform-session.test.ts`; the test now waits for the pending approval record before sending the narrowed-grant reply.
+- Reran:
+  - `npx vitest run --config vitest.unit.config.ts src/interface/chat/__tests__/cross-platform-session.test.ts`
+  - `npx vitest run --config vitest.unit.config.ts src/interface/chat/__tests__/chat-event-state.test.ts src/interface/chat/__tests__/cross-platform-session.test.ts`
+  - `npm run typecheck`
+  - `git diff --check`
+
+### Verification
+
+- Non-TUI display projector streaming/buffering tests: passed.
+- Production gateway assist caller-path streaming test: passed with multiple `assistant_delta` events before `assistant_final`.
+- Telegram/Slack gateway adapter display tests: passed.
+- Seedy presence projector regression tests: passed.
+- Typecheck: passed.
+- Diff whitespace check: passed.
+- Independent review identified a material blocker: native agent-loop output still only emitted a completed-output delta immediately before final. Fixed by streaming eligible `final_candidate` snapshots through the shared event bridge and adding a gateway agent-loop caller-path regression.
+- GitHub unit CI failure in Telegram plugin tests was fixed by aligning plugin expectations with stable-boundary buffering; focused plugin and gateway tests passed.
+- GitHub Codex P1/P2 findings on the latest review were fixed locally; focused unit/integration tests, typecheck, and diff whitespace check passed after the fix.
+- GitHub unit CI timing failure in the approval-grant regression was fixed by making the test wait for the real pending approval record before submitting the reply.
+
+### Deferred
+
+- Live Telegram dogfood has not been rerun for this slice yet.
+
 ## Slice #1851
 
 Issue: https://github.com/my-name-is-yu/PulSeed/issues/1851

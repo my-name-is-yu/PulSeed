@@ -202,7 +202,11 @@ export class ChatRunnerEventBridge {
     return { success, output, elapsed_ms };
   }
 
-  createAgentLoopEventSink(eventContext: ChatEventContext): AgentLoopEventSink {
+  createAgentLoopEventSink(
+    eventContext: ChatEventContext,
+    assistantBuffer?: AssistantBuffer,
+    options: { streamFinalCandidate?: boolean | (() => boolean) } = {},
+  ): AgentLoopEventSink {
     return {
       emit: async (event: AgentLoopEvent) => {
         const timelineItem = projectAgentLoopEventToTimeline(event);
@@ -272,8 +276,17 @@ export class ChatRunnerEventBridge {
           return;
         }
 
-        if (event.type === "assistant_message" && event.phase === "commentary" && event.contentPreview) {
-          this.emitActivity("commentary", previewActivityText(event.contentPreview, 120), eventContext, `commentary:${event.eventId}`);
+        if (event.type === "assistant_message" && event.contentPreview) {
+          if (event.phase === "commentary") {
+            this.emitActivity("commentary", previewActivityText(event.contentPreview, 120), eventContext, `commentary:${event.eventId}`);
+            return;
+          }
+          const shouldStreamFinalCandidate = typeof options.streamFinalCandidate === "function"
+            ? options.streamFinalCandidate()
+            : options.streamFinalCandidate === true;
+          if (shouldStreamFinalCandidate && assistantBuffer) {
+            this.pushAssistantSnapshot(event.content ?? event.contentPreview, assistantBuffer, eventContext);
+          }
           return;
         }
 
@@ -678,6 +691,22 @@ export class ChatRunnerEventBridge {
       text: assistantBuffer.text,
       ...this.eventBase(eventContext),
     });
+  }
+
+  pushAssistantSnapshot(
+    snapshot: string,
+    assistantBuffer: AssistantBuffer,
+    eventContext: ChatEventContext
+  ): void {
+    const safeSnapshot = redactSetupSecrets(snapshot);
+    if (!safeSnapshot || safeSnapshot === assistantBuffer.text) return;
+    if (safeSnapshot.startsWith(assistantBuffer.text)) {
+      this.pushAssistantDelta(safeSnapshot.slice(assistantBuffer.text.length), assistantBuffer, eventContext);
+      return;
+    }
+    if (!assistantBuffer.text) {
+      this.pushAssistantDelta(safeSnapshot, assistantBuffer, eventContext);
+    }
   }
 
   emitLifecycleEndEvent(

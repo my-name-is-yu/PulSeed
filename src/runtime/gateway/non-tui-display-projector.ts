@@ -38,6 +38,9 @@ interface ProgressOptions {
   readonly forceSingleStatus?: boolean;
 }
 
+const MIN_FINAL_EDIT_INTERVAL_MS = 250;
+const FINAL_EDIT_CATCH_UP_CHARS = 240;
+
 export class NonTuiDisplayProjector {
   private readonly policy: GatewayDisplayPolicy;
   private readonly transport: NonTuiDisplayTransport;
@@ -46,6 +49,7 @@ export class NonTuiDisplayProjector {
   private finalRef: NonTuiDisplayMessageRef | null = null;
   private lastProgressText = "";
   private lastFinalText = "";
+  private lastFinalEditAt = 0;
   private finalText = "";
   private sawFinalSignal = false;
   private readonly progressEntries = new Map<string, ProgressEntry>();
@@ -188,16 +192,20 @@ export class NonTuiDisplayProjector {
 
   private async updateFinal(text: string, complete: boolean): Promise<void> {
     const nextText = text || this.finalText;
-    if (!nextText || nextText === this.lastFinalText) return;
+    if (!nextText) return;
     this.finalText = nextText;
+    const nextDisplayText = complete ? nextText : stableAssistantDisplayText(nextText);
+    if (!nextDisplayText || nextDisplayText === this.lastFinalText) return;
 
     if (this.policy.finalSurface === "edit_stream") {
+      if (!complete && !this.shouldCommitPartialFinal(nextDisplayText)) return;
       if (this.finalRef === null) {
-        this.finalRef = await this.transport.sendFinal(nextText);
+        this.finalRef = await this.transport.sendFinal(nextDisplayText);
       } else {
-        await this.transport.editFinal(this.finalRef, nextText);
+        await this.transport.editFinal(this.finalRef, nextDisplayText);
       }
-      this.lastFinalText = nextText;
+      this.lastFinalText = nextDisplayText;
+      this.lastFinalEditAt = Date.now();
       return;
     }
 
@@ -205,19 +213,25 @@ export class NonTuiDisplayProjector {
 
     if (this.policy.finalSurface === "send_once") {
       if (this.finalRef === null) {
-        this.finalRef = await this.transport.sendFinal(nextText);
-        this.lastFinalText = nextText;
+        this.finalRef = await this.transport.sendFinal(nextDisplayText);
+        this.lastFinalText = nextDisplayText;
       }
       return;
     }
 
     if (this.finalRef === null) {
-      const chunks = this.chunkFinal(nextText);
+      const chunks = this.chunkFinal(nextDisplayText);
       for (const chunk of chunks) {
         this.finalRef = await this.transport.sendFinal(chunk);
       }
-      this.lastFinalText = nextText;
+      this.lastFinalText = nextDisplayText;
     }
+  }
+
+  private shouldCommitPartialFinal(nextText: string): boolean {
+    if (this.finalRef === null) return true;
+    if (nextText.length - this.lastFinalText.length >= FINAL_EDIT_CATCH_UP_CHARS) return true;
+    return Date.now() - this.lastFinalEditAt >= MIN_FINAL_EDIT_INTERVAL_MS;
   }
 
   private chunkFinal(text: string): string[] {
@@ -281,4 +295,47 @@ function isActionRequiredTimelineItem(
   if (item.kind === "approval") return true;
   if (item.kind === "tool_observation") return item.state === "denied" || item.state === "blocked";
   return item.kind === "stopped" && item.reason !== "completed";
+}
+
+function stableAssistantDisplayText(text: string): string {
+  const normalized = text.trimEnd();
+  if (!normalized) return "";
+
+  const fenceSafeText = trimUnclosedCodeFence(normalized);
+  if (!fenceSafeText) return "";
+  if (hasCompleteTrailingCodeFence(fenceSafeText)) return fenceSafeText;
+
+  const newlineIndex = Math.max(fenceSafeText.lastIndexOf("\n\n"), fenceSafeText.lastIndexOf("\n"));
+  if (newlineIndex >= 0) {
+    return fenceSafeText.slice(0, newlineIndex + 1).trimEnd();
+  }
+
+  const sentenceBoundary = findLastSentenceBoundary(fenceSafeText);
+  if (sentenceBoundary >= 0) {
+    return fenceSafeText.slice(0, sentenceBoundary + 1).trimEnd();
+  }
+
+  return "";
+}
+
+function trimUnclosedCodeFence(text: string): string {
+  const fenceMatches = Array.from(text.matchAll(/```/g));
+  if (fenceMatches.length % 2 === 0) return text;
+  const openFence = fenceMatches.at(-1)?.index;
+  return openFence === undefined ? text : text.slice(0, openFence).trimEnd();
+}
+
+function hasCompleteTrailingCodeFence(text: string): boolean {
+  const fenceMatches = Array.from(text.matchAll(/```/g));
+  return fenceMatches.length > 0 && fenceMatches.length % 2 === 0 && text.endsWith("```");
+}
+
+function findLastSentenceBoundary(text: string): number {
+  for (let index = text.length - 1; index >= 0; index--) {
+    const char = text[index];
+    if (char !== "." && char !== "!" && char !== "?" && char !== "。" && char !== "！" && char !== "？") continue;
+    const next = text[index + 1];
+    if (next === undefined || /\s/.test(next)) return index;
+  }
+  return -1;
 }

@@ -224,6 +224,7 @@ export class BoundedAgentLoopRunner {
           type: "assistant_message",
           ...this.baseEvent(turn),
           phase: assistant.phase === "final_answer" ? "final_candidate" : "commentary",
+          content: assistant.content,
           contentPreview: this.preview(assistant.content),
           toolCallCount: response.toolCalls.length,
         });
