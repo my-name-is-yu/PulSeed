@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { MCPClientManager } from "../mcp-client-manager.js";
+import { MCPClientManager, MCP_SERVERS_CONFIG_MAX_BYTES } from "../mcp-client-manager.js";
 import type { IMCPConnection, MCPServerConfig } from "../../base/types/mcp.js";
 import { makeTempDir, cleanupTempDir } from "../../../tests/helpers/temp-dir.js";
 
@@ -91,6 +91,22 @@ describe("MCPClientManager.loadConfig", () => {
     const manager = new MCPClientManager(tmpDir);
     await expect(manager.loadConfig()).rejects.toThrow();
   });
+
+  it("rejects oversized config before parsing", async () => {
+    fs.writeFileSync(
+      path.join(tmpDir, "mcp-servers.json"),
+      JSON.stringify({
+        servers: [],
+        padding: "x".repeat(MCP_SERVERS_CONFIG_MAX_BYTES),
+      }),
+      "utf-8",
+    );
+    const manager = new MCPClientManager(tmpDir);
+
+    await expect(manager.loadConfig()).rejects.toMatchObject({
+      code: "ERR_PULSEED_TEXT_FILE_SIZE_LIMIT",
+    });
+  });
 });
 
 // ─── connectAll ───
@@ -110,6 +126,22 @@ describe("MCPClientManager.connectAll", () => {
     const manager = new MCPClientManager(tmpDir, makeMockConnection);
     const adapters = await manager.connectAll();
     expect(adapters).toEqual([]);
+  });
+
+  it("rejects oversized config through connectAll", async () => {
+    fs.writeFileSync(
+      path.join(tmpDir, "mcp-servers.json"),
+      JSON.stringify({
+        servers: [],
+        padding: "x".repeat(MCP_SERVERS_CONFIG_MAX_BYTES),
+      }),
+      "utf-8",
+    );
+    const manager = new MCPClientManager(tmpDir, makeMockConnection);
+
+    await expect(manager.connectAll()).rejects.toMatchObject({
+      code: "ERR_PULSEED_TEXT_FILE_SIZE_LIMIT",
+    });
   });
 
   it("creates an adapter for each enabled server", async () => {

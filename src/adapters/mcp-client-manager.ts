@@ -4,13 +4,14 @@
 // Each enabled server gets its own MCPDataSourceAdapter backed by a real
 // MCP Client. For testability, a connection factory can be injected.
 
-import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { MCPServersConfigSchema } from "../base/types/mcp.js";
 import type { MCPServerConfig, IMCPConnection } from "../base/types/mcp.js";
+import { readTextFileWithinLimit } from "../base/utils/json-io.js";
 import { MCPDataSourceAdapter } from "./datasources/mcp-datasource.js";
 
 const CONFIG_FILE = "mcp-servers.json";
+export const MCP_SERVERS_CONFIG_MAX_BYTES = 1024 * 1024;
 
 // ─── ServerStatus ───
 
@@ -92,8 +93,11 @@ export class MCPClientManager {
     const configPath = path.join(this.baseDir, CONFIG_FILE);
     let raw: string;
     try {
-      raw = await fsp.readFile(configPath, "utf-8");
-    } catch {
+      raw = await readTextFileWithinLimit(configPath, {
+        maxBytes: MCP_SERVERS_CONFIG_MAX_BYTES,
+      });
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
       // No config file — return empty list
       this.serverConfigs = [];
       return [];
