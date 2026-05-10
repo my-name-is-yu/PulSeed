@@ -24,6 +24,8 @@ import {
 } from "../../../runtime/gateway/channel-policy.js";
 import { ChatSessionCatalog } from "../chat-session-store.js";
 import { ChatSessionDataStore } from "../chat-session-data-store.js";
+import { createRunSpecStore } from "../../../runtime/run-spec/index.js";
+import type { RunSpec } from "../../../runtime/run-spec/index.js";
 
 vi.mock("../../../platform/observation/context-provider.js", () => ({
   resolveGitRoot: (cwd: string) => cwd,
@@ -38,6 +40,17 @@ const CANNED_RESULT: AgentResult = {
   elapsed_ms: 50,
   stopped_reason: "completed",
 };
+
+async function storedRunSpecs(baseDir: string): Promise<RunSpec[]> {
+  const store = createRunSpecStore({ getBaseDir: () => baseDir });
+  return store.list();
+}
+
+async function onlyStoredRunSpec(baseDir: string): Promise<RunSpec> {
+  const specs = await storedRunSpecs(baseDir);
+  expect(specs).toHaveLength(1);
+  return specs[0]!;
+}
 
 function makeMockAdapter(result: AgentResult = CANNED_RESULT): IAdapter {
   return {
@@ -168,8 +181,7 @@ describe("CrossPlatformChatSessionManager", () => {
       expect(result.output).toContain("Proposed long-running work");
       expect(result.output).toContain("It has not started background work.");
       expect(adapter.execute).not.toHaveBeenCalled();
-      const [fileName] = fs.readdirSync(`${baseDir}/run-specs`);
-      const stored = JSON.parse(fs.readFileSync(`${baseDir}/run-specs/${fileName}`, "utf8"));
+      const stored = await onlyStoredRunSpec(baseDir);
       expect(stored.status).toBe("draft");
       expect(stored.origin.channel).toBe("plugin_gateway");
       expect(stored.origin.reply_target).toMatchObject({
@@ -209,7 +221,8 @@ describe("CrossPlatformChatSessionManager", () => {
       expect(result.output).toContain("It has not started background work.");
       expect(result.output).not.toContain("setup/configuration");
       expect(adapter.execute).not.toHaveBeenCalled();
-      expect(fs.readdirSync(`${baseDir}/run-specs`)).toHaveLength(1);
+      await expect(storedRunSpecs(baseDir)).resolves.toHaveLength(1);
+      expect(fs.existsSync(`${baseDir}/run-specs`)).toBe(false);
     } finally {
       cleanupTempDir(baseDir);
     }

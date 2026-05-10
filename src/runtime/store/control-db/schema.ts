@@ -7,7 +7,7 @@ export interface ControlDbMigration {
   checksum: string;
 }
 
-export const CONTROL_DB_SCHEMA_VERSION = 22;
+export const CONTROL_DB_SCHEMA_VERSION = 23;
 
 export const CONTROL_DB_INITIAL_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS control_schema_migrations (
@@ -114,6 +114,32 @@ CREATE TABLE IF NOT EXISTS runtime_health_records (
 
 CREATE INDEX IF NOT EXISTS runtime_health_records_checked_idx
   ON runtime_health_records(checked_at, record_kind);
+`.trim();
+
+export const CONTROL_DB_RUN_SPEC_SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS run_spec_records (
+  run_spec_id TEXT PRIMARY KEY,
+  status TEXT NOT NULL CHECK (status IN ('draft', 'confirmed', 'cancelled', 'attached')),
+  profile TEXT NOT NULL,
+  goal_id TEXT,
+  runtime_session_id TEXT,
+  conversation_id TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  spec_json TEXT NOT NULL CHECK (json_valid(spec_json))
+);
+
+CREATE INDEX IF NOT EXISTS run_spec_records_status_idx
+  ON run_spec_records(status, updated_at, run_spec_id);
+
+CREATE INDEX IF NOT EXISTS run_spec_records_goal_idx
+  ON run_spec_records(goal_id, updated_at, run_spec_id);
+
+CREATE INDEX IF NOT EXISTS run_spec_records_runtime_session_idx
+  ON run_spec_records(runtime_session_id, updated_at, run_spec_id);
+
+CREATE INDEX IF NOT EXISTS run_spec_records_conversation_idx
+  ON run_spec_records(conversation_id, updated_at, run_spec_id);
 `.trim();
 
 export const CONTROL_DB_RUNTIME_STATE_OWNERSHIP_SCHEMA_SQL = `
@@ -1688,5 +1714,10 @@ export const CONTROL_DB_MIGRATIONS: readonly ControlDbMigration[] = [
     22,
     "capability-dependency-state",
     CONTROL_DB_CAPABILITY_DEPENDENCY_SCHEMA_SQL
+  ),
+  createControlDbMigration(
+    23,
+    "run-spec-runtime-state",
+    CONTROL_DB_RUN_SPEC_SCHEMA_SQL
   ),
 ];

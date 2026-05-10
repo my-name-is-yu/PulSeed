@@ -308,7 +308,7 @@ describe("RunSpec derivation", () => {
 });
 
 describe("RunSpecStore", () => {
-  it("persists and reloads a RunSpec under the state root", async () => {
+  it("persists and reloads a RunSpec through the control DB", async () => {
     const baseDir = await fsp.mkdtemp(path.join(os.tmpdir(), "pulseed-runspec-"));
     const spec = await deriveRunSpecFromText("Run Kaggle until tomorrow morning and aim for top 15%.", {
       cwd: "/repo/kaggle",
@@ -325,9 +325,13 @@ describe("RunSpecStore", () => {
       profile: "kaggle",
       schema_version: "run-spec-v1",
     });
+    await expect(fsp.stat(path.join(baseDir, "run-specs"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(store.list()).resolves.toEqual([
+      expect.objectContaining({ id: spec!.id }),
+    ]);
   });
 
-  it("returns null for malformed or stale persisted RunSpec JSON", async () => {
+  it("does not treat legacy RunSpec JSON files as normal runtime state", async () => {
     const baseDir = await fsp.mkdtemp(path.join(os.tmpdir(), "pulseed-runspec-"));
     const malformedId = "runspec-00000000-0000-4000-8000-000000000001";
     const staleId = "runspec-00000000-0000-4000-8000-000000000002";
@@ -343,20 +347,20 @@ describe("RunSpecStore", () => {
 
     await expect(store.load(malformedId)).resolves.toBeNull();
     await expect(store.load(staleId)).resolves.toBeNull();
+    await expect(store.list()).resolves.toEqual([]);
   });
 
-  it("still surfaces unexpected RunSpec storage read failures", async () => {
+  it("still surfaces unexpected RunSpec control DB failures", async () => {
     const baseDir = await fsp.mkdtemp(path.join(os.tmpdir(), "pulseed-runspec-"));
-    const directoryId = "runspec-00000000-0000-4000-8000-000000000003";
-    const dir = path.join(baseDir, "run-specs");
-    await fsp.mkdir(path.join(dir, `${directoryId}.json`), { recursive: true });
+    const dbPath = path.join(baseDir, "state", "pulseed-control.sqlite");
+    await fsp.mkdir(dbPath, { recursive: true });
 
     const store = createRunSpecStore({ getBaseDir: () => baseDir });
 
-    await expect(store.load(directoryId)).rejects.toThrow();
+    await expect(store.load("runspec-00000000-0000-4000-8000-000000000003")).rejects.toThrow();
   });
 
-  it("rejects path-like ids before RunSpec store file I/O", async () => {
+  it("rejects path-like ids before RunSpec store DB lookup", async () => {
     const baseDir = await fsp.mkdtemp(path.join(os.tmpdir(), "pulseed-runspec-"));
     const spec = await deriveRunSpecFromText("Run Kaggle until tomorrow morning and aim for top 15%.", {
       cwd: "/repo/kaggle",

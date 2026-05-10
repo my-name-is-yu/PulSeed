@@ -10,7 +10,7 @@ import { ToolExecutor } from "../../executor.js";
 import { ToolPermissionManager } from "../../permission.js";
 import { ConcurrencyController } from "../../concurrency.js";
 import { createRunSpecHandoffTools } from "../RunSpecHandoffTools.js";
-import type { RunSpecConfirmationSnapshot } from "../../../runtime/run-spec/index.js";
+import { createRunSpecStore, type RunSpecConfirmationSnapshot } from "../../../runtime/run-spec/index.js";
 
 function makeLLMClient(overrides: Record<string, unknown> = {}): Pick<ILLMClient, "sendMessage" | "parseJSON"> {
   const draft = {
@@ -143,8 +143,10 @@ describe("RunSpec handoff tools", () => {
     expect(result.summary).not.toContain("run-spec:");
     expect(pendingRef.value?.state).toBe("pending");
     expect(daemonClient.startGoal).not.toHaveBeenCalled();
-    const [fileName] = fs.readdirSync(path.join(baseDir, "run-specs"));
-    const stored = JSON.parse(fs.readFileSync(path.join(baseDir, "run-specs", fileName), "utf8"));
+    const specs = await createRunSpecStore(stateManager).list();
+    expect(specs).toHaveLength(1);
+    expect(fs.existsSync(path.join(baseDir, "run-specs"))).toBe(false);
+    const stored = specs[0]!;
     expect(stored.status).toBe("draft");
     expect(stored.origin.reply_target).toMatchObject({
       conversation_id: "chat-1",

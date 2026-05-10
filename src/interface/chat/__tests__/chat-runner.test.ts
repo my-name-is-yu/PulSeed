@@ -21,6 +21,8 @@ import { SqliteAgentLoopSessionStateStore } from "../../../orchestrator/executio
 import type { GoalNegotiator } from "../../../orchestrator/goal/goal-negotiator.js";
 import { createRuntimeSessionRegistry } from "../../../runtime/session-registry/index.js";
 import { BackgroundRunLedger } from "../../../runtime/store/background-run-store.js";
+import { createRunSpecStore } from "../../../runtime/run-spec/index.js";
+import type { RunSpec } from "../../../runtime/run-spec/index.js";
 import { RuntimeBudgetStore } from "../../../runtime/store/budget-store.js";
 import { ScheduleHistoryStore, ScheduleRunHistoryRecordSchema } from "../../../runtime/schedule/history.js";
 import { SupervisorStateStore } from "../../../runtime/store/supervisor-state-store.js";
@@ -40,6 +42,17 @@ import { createTextUserInput } from "../user-input.js";
 
 const originalPulseedHome = process.env["PULSEED_HOME"];
 let testPulseedHome: string | null = null;
+
+async function storedRunSpecs(baseDir: string): Promise<RunSpec[]> {
+  const store = createRunSpecStore({ getBaseDir: () => baseDir });
+  return store.list();
+}
+
+async function onlyStoredRunSpec(baseDir: string): Promise<RunSpec> {
+  const specs = await storedRunSpecs(baseDir);
+  expect(specs).toHaveLength(1);
+  return specs[0]!;
+}
 
 beforeEach(() => {
   testPulseedHome = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-runner-home-"));
@@ -5576,9 +5589,8 @@ describe("ChatRunner", () => {
       expect(result.output).not.toContain("run-spec:");
       expect(result.output).toContain("Reply with approval");
       expect(adapter.execute).not.toHaveBeenCalled();
-      const runSpecDir = path.join(baseDir, "run-specs");
-      const [fileName] = fs.readdirSync(runSpecDir);
-      const stored = JSON.parse(fs.readFileSync(path.join(runSpecDir, fileName), "utf8"));
+      const stored = await onlyStoredRunSpec(baseDir);
+      expect(fs.existsSync(path.join(baseDir, "run-specs"))).toBe(false);
       expect(stored.status).toBe("draft");
       expect(stored.source_text).toBe("Kaggle score 0.98を超えるまで長期で回して");
       expect(stored.workspace).toMatchObject({ path: "/repo/kaggle", source: "context" });
@@ -5622,8 +5634,7 @@ describe("ChatRunner", () => {
         expect(result.output).toContain("Proposed long-running work");
         expect(adapter.execute).not.toHaveBeenCalled();
         expect(llmClient.callCount).toBe(2);
-        const [fileName] = fs.readdirSync(path.join(baseDir, "run-specs"));
-        const stored = JSON.parse(fs.readFileSync(path.join(baseDir, "run-specs", fileName), "utf8"));
+        const stored = await onlyStoredRunSpec(baseDir);
         expect(stored.source_text).toBe(item.text);
         expect(stored.workspace).toMatchObject({ path: item.cwd, source: "context" });
       }
@@ -5716,9 +5727,7 @@ describe("ChatRunner", () => {
       expect(result.output).toContain("Proposed long-running work");
       expect(adapter.execute).not.toHaveBeenCalled();
       expect(llmClient.callCount).toBe(6);
-      const runSpecDir = path.join(baseDir, "run-specs");
-      const storedSpecs = fs.readdirSync(runSpecDir)
-        .map((fileName) => JSON.parse(fs.readFileSync(path.join(runSpecDir, fileName), "utf8")));
+      const storedSpecs = await storedRunSpecs(baseDir);
       expect(storedSpecs).toEqual(expect.arrayContaining([
         expect.objectContaining({
           source_text: "Kaggle score 0.98を超えるまで長期で回して",
@@ -5768,8 +5777,7 @@ describe("ChatRunner", () => {
       expect(result.output).toContain("It has not started background work.");
       expect(result.output).not.toContain("setup/configuration");
       expect(adapter.execute).not.toHaveBeenCalled();
-      const [fileName] = fs.readdirSync(path.join(baseDir, "run-specs"));
-      const stored = JSON.parse(fs.readFileSync(path.join(baseDir, "run-specs", fileName), "utf8"));
+      const stored = await onlyStoredRunSpec(baseDir);
       expect(stored.status).toBe("draft");
       expect(stored.profile).toBe("kaggle");
     });
@@ -5813,8 +5821,7 @@ describe("ChatRunner", () => {
           }),
         }),
       );
-      const [fileName] = fs.readdirSync(path.join(baseDir, "run-specs"));
-      const stored = JSON.parse(fs.readFileSync(path.join(baseDir, "run-specs", fileName), "utf8"));
+      const stored = await onlyStoredRunSpec(baseDir);
       expect(stored.status).toBe("confirmed");
       const runId = (daemonClient.startGoal as ReturnType<typeof vi.fn>).mock.calls[0][1].backgroundRun.backgroundRunId;
       const run = await new BackgroundRunLedger(path.join(baseDir, "runtime"), { controlBaseDir: baseDir }).load(runId);
@@ -5826,6 +5833,13 @@ describe("ChatRunner", () => {
           run_spec_id: stored.id,
         },
       });
+      expect(run?.source_refs).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          kind: "run_spec",
+          id: stored.id,
+          relative_path: "state/pulseed-control.sqlite",
+        }),
+      ]));
       const registry = createRuntimeSessionRegistry({ stateManager });
       const snapshot = await registry.snapshot();
       expect(snapshot.background_runs).toContainEqual(expect.objectContaining({
@@ -5927,8 +5941,7 @@ describe("ChatRunner", () => {
       expect(result.output).not.toContain("disallowed");
       expect(result.output).not.toContain("approval-required");
       expect(daemonClient.startGoal).not.toHaveBeenCalled();
-      const [fileName] = fs.readdirSync(path.join(baseDir, "run-specs"));
-      const stored = JSON.parse(fs.readFileSync(path.join(baseDir, "run-specs", fileName), "utf8"));
+      const stored = await onlyStoredRunSpec(baseDir);
       expect(stored.status).toBe("draft");
 
       const cancelResult = await runner.execute("cancel", "/repo/app");
@@ -6026,8 +6039,7 @@ describe("ChatRunner", () => {
       expect(cancelResult.output).toContain("Long-running work cancelled.");
       expect(cancelResult.output).toContain("No background work was started.");
       expect(daemonClient.startGoal).not.toHaveBeenCalled();
-      const [fileName] = fs.readdirSync(path.join(baseDir, "run-specs"));
-      const stored = JSON.parse(fs.readFileSync(path.join(baseDir, "run-specs", fileName), "utf8"));
+      const stored = await onlyStoredRunSpec(baseDir);
       expect(stored.status).toBe("cancelled");
     });
 
@@ -6053,8 +6065,7 @@ describe("ChatRunner", () => {
 
       expect(staleApproval.success).toBe(true);
       expect(staleApproval.output).toBe("There is no pending RunSpec to approve.");
-      const [fileName] = fs.readdirSync(path.join(baseDir, "run-specs"));
-      const stored = JSON.parse(fs.readFileSync(path.join(baseDir, "run-specs", fileName), "utf8"));
+      const stored = await onlyStoredRunSpec(baseDir);
       expect(stored.status).toBe("cancelled");
     });
 
@@ -6146,8 +6157,7 @@ describe("ChatRunner", () => {
 
       expect(approved.success).toBe(true);
       expect(approved.output).toContain("Long-running work approved.");
-      const [fileName] = fs.readdirSync(path.join(baseDir, "run-specs"));
-      const stored = JSON.parse(fs.readFileSync(path.join(baseDir, "run-specs", fileName), "utf8"));
+      const stored = await onlyStoredRunSpec(baseDir);
       expect(stored.status).toBe("confirmed");
     });
 
@@ -6286,8 +6296,7 @@ describe("ChatRunner", () => {
       const result = await runner.executeIngressMessage(ingress, "/repo/kaggle", 120_000, selectedRoute);
 
       expect(result.success).toBe(true);
-      const [fileName] = fs.readdirSync(path.join(baseDir, "run-specs"));
-      const stored = JSON.parse(fs.readFileSync(path.join(baseDir, "run-specs", fileName), "utf8"));
+      const stored = await onlyStoredRunSpec(baseDir);
       expect(stored.origin.channel).toBe("plugin_gateway");
       expect(stored.origin.reply_target).toMatchObject({
         conversation_id: "chat-1",
@@ -6355,8 +6364,7 @@ describe("ChatRunner", () => {
 
       expect(result.success).toBe(true);
       expect(chatAgentLoopRunner.execute).toHaveBeenCalledOnce();
-      const [fileName] = fs.readdirSync(path.join(baseDir, "run-specs"));
-      const stored = JSON.parse(fs.readFileSync(path.join(baseDir, "run-specs", fileName), "utf8"));
+      const stored = await onlyStoredRunSpec(baseDir);
       expect(stored.origin.channel).toBe("agent_loop");
       expect(stored.origin.reply_target).toMatchObject({
         conversation_id: "chat-1",
@@ -6442,8 +6450,7 @@ describe("ChatRunner", () => {
 
       expect(result.success).toBe(true);
       expect(daemonClient.startGoal).not.toHaveBeenCalled();
-      const [fileName] = fs.readdirSync(path.join(baseDir, "run-specs"));
-      const stored = JSON.parse(fs.readFileSync(path.join(baseDir, "run-specs", fileName), "utf8"));
+      const stored = await onlyStoredRunSpec(baseDir);
       expect(stored.origin.channel).toBe("agent_loop");
       expect(stored.origin.reply_target).toMatchObject({
         conversation_id: "chat-1",

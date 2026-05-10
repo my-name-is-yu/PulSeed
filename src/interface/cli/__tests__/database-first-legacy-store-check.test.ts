@@ -253,13 +253,10 @@ describe("database-first legacy store check", () => {
     };
     expect(parsed.ok).toBe(true);
     expect(parsed.debtReport).toEqual([]);
+    expect(parsed.directFileOwnerReport).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "run-spec-store" }),
+    ]));
     expect(parsed.directFileOwnerReport).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        id: "run-spec-store",
-        category: "typed-store migrate now",
-        nextSlice: 2,
-        debt: true,
-      }),
       expect.objectContaining({
         id: "drive-system-event-spool",
         category: "bounded IPC/spool",
@@ -279,12 +276,8 @@ describe("database-first legacy store check", () => {
         debt: true,
       }),
     ]));
-    expect(parsed.directFileDebtReport).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        id: "run-spec-store",
-        category: "typed-store migrate now",
-        nextSlice: 2,
-      }),
+    expect(parsed.directFileDebtReport).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "run-spec-store" }),
     ]));
     expect(parsed.allowlistReport).toEqual(expect.arrayContaining([
       expect.objectContaining({
