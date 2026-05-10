@@ -117,4 +117,15 @@ describe("dream consolidator fs metrics", () => {
     expect(await countTrustDomains(tmpDir)).toBe(2);
     expect(await countVerificationArtifacts(tmpDir)).toBe(1);
   });
+
+  it("treats malformed optional JSON counters as zero", async () => {
+    tmpDir = makeTempDir("dream-fs-malformed-json-");
+    await fs.mkdir(path.join(tmpDir, "memory", "agent-memory"), { recursive: true });
+    await fs.mkdir(path.join(tmpDir, "trust"), { recursive: true });
+    await fs.writeFile(path.join(tmpDir, "memory", "agent-memory", "entries.json"), "{", "utf8");
+    await fs.writeFile(path.join(tmpDir, "trust", "trust-store.json"), "{", "utf8");
+
+    await expect(countAgentMemoryEntries(tmpDir)).resolves.toBe(0);
+    await expect(countTrustDomains(tmpDir)).resolves.toBe(0);
+  });
 });
