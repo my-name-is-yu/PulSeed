@@ -1,4 +1,8 @@
-import { isTextFileSizeLimitError, readTextFileWithinLimitSync } from "../../base/utils/json-io.js";
+import {
+  isTextFileSizeLimitError,
+  readTextFileWithinLimit,
+  readTextFileWithinLimitSync,
+} from "../../base/utils/json-io.js";
 
 export const DAEMON_CONFIG_JSON_MAX_BYTES = 1024 * 1024;
 
@@ -9,6 +13,13 @@ export function isRecoverableDaemonConfigJsonReadError(error: unknown): boolean 
 
 export function readDaemonConfigJsonFileSync(filePath: string): unknown {
   const raw = readTextFileWithinLimitSync(filePath, {
+    maxBytes: DAEMON_CONFIG_JSON_MAX_BYTES,
+  });
+  return JSON.parse(raw) as unknown;
+}
+
+export async function readDaemonConfigJsonFile(filePath: string): Promise<unknown> {
+  const raw = await readTextFileWithinLimit(filePath, {
     maxBytes: DAEMON_CONFIG_JSON_MAX_BYTES,
   });
   return JSON.parse(raw) as unknown;
