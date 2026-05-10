@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { PIDManager } from "../pid-manager.js";
+import { PID_FILE_MAX_BYTES, PIDManager } from "../pid-manager.js";
 import { makeTempDir } from "../../../tests/helpers/temp-dir.js";
 
 // ─── Test Suite ───
@@ -180,6 +180,20 @@ describe("PIDManager", () => {
           pid: 12345,
           owner_pid: Number.MAX_SAFE_INTEGER + 1,
           started_at: "2026-01-01T00:00:00.000Z",
+        }),
+        "utf-8"
+      );
+
+      await expect(pidManager.readPID()).resolves.toBeNull();
+    });
+
+    it("should return null for oversized JSON PID files before parsing", async () => {
+      fs.writeFileSync(
+        pidManager.getPath(),
+        JSON.stringify({
+          pid: 12345,
+          started_at: "2026-01-01T00:00:00.000Z",
+          padding: "x".repeat(PID_FILE_MAX_BYTES),
         }),
         "utf-8"
       );

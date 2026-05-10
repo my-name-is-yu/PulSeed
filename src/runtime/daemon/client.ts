@@ -4,10 +4,10 @@
 // Receives events via SSE, sends commands via REST.
 
 import http from "node:http";
-import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { z } from "zod";
+import { readTextFileWithinLimitSync } from "../../base/utils/json-io.js";
 import { signalProcessPid } from "../../base/utils/process-pid.js";
 import { DEFAULT_PORT } from "../port-utils.js";
 import { parseOutboxSeq } from "../event/outbox-seq.js";
@@ -79,6 +79,7 @@ type EventHandler = (data: unknown) => void;
 
 const DAEMON_TOKEN_FILENAME = "daemon-token.json";
 const DAEMON_TOKEN_ENV = "PULSEED_DAEMON_TOKEN";
+export const DAEMON_AUTH_TOKEN_FILE_MAX_BYTES = 64 * 1024;
 const DaemonAuthTokenFileSchema = z.object({
   token: z.string().min(1),
   host: z.string().min(1).optional(),
@@ -114,7 +115,9 @@ function isFileMissingError(err: unknown): boolean {
 
 function readDaemonAuthTokenFile(baseDir?: string): DaemonAuthTokenFileReadResult {
   try {
-    const raw = fs.readFileSync(getDaemonTokenPath(baseDir), "utf-8");
+    const raw = readTextFileWithinLimitSync(getDaemonTokenPath(baseDir), {
+      maxBytes: DAEMON_AUTH_TOKEN_FILE_MAX_BYTES,
+    });
     const parsed = JSON.parse(raw) as unknown;
     const validated = DaemonAuthTokenFileSchema.safeParse(parsed);
     return validated.success ? { status: "found", token: validated.data } : { status: "unusable" };

@@ -1,7 +1,7 @@
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { execFileSync } from "node:child_process";
-import { writeJsonFile } from "../base/utils/json-io.js";
+import { readTextFileWithinLimit, writeJsonFile } from "../base/utils/json-io.js";
 import { parseProcessPid, signalProcessPid } from "../base/utils/process-pid.js";
 import { PIDInfoSchema, type PIDInfo } from "./types/daemon.js";
 
@@ -9,6 +9,7 @@ const PID_EPOCH_ISO = "1970-01-01T00:00:00.000Z";
 const DEFAULT_STOP_TIMEOUT_MS = 35_000;
 const DEFAULT_STOP_POLL_INTERVAL_MS = 100;
 const PID_START_MATCH_TOLERANCE_MS = 30_000;
+export const PID_FILE_MAX_BYTES = 64 * 1024;
 
 export interface PIDWriteOptions {
   pid?: number;
@@ -200,7 +201,9 @@ export class PIDManager {
   /** Read PID ownership info. Returns null if the file does not exist or is invalid. */
   async readPID(): Promise<PIDInfo | null> {
     try {
-      const content = await fsp.readFile(this.pidPath, "utf-8");
+      const content = await readTextFileWithinLimit(this.pidPath, {
+        maxBytes: PID_FILE_MAX_BYTES,
+      });
       return this.normalizePIDInfo(content);
     } catch {
       return null;
