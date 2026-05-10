@@ -75,7 +75,7 @@ Base HEAD: `cd04e8493793b57b9b7c019b8fd91f39b9e42683`
 
 Branch: `yu/issue-1849-natural-long-wait-status`
 
-PR: pending
+PR: https://github.com/my-name-is-yu/PulSeed/pull/1863
 
 ### Design Decisions
 
@@ -95,6 +95,8 @@ PR: pending
 - `npx vitest run --config vitest.integration.config.ts src/runtime/gateway/__tests__/seedy-presence-rendering.test.ts src/runtime/gateway/__tests__/seedy-presence-projector.test.ts`
 - `npm run typecheck`
 - `git diff --check`
+- `gh pr checks 1863 --watch --interval 10`
+- `gh pr comment 1863 --body '@codex review'`
 
 ### Verification
 
@@ -103,6 +105,8 @@ PR: pending
 - `chat-runner.test.ts` + `cross-platform-session.test.ts`: passed.
 - Typecheck: passed.
 - Diff whitespace check: passed.
+- GitHub CI for PR #1863: unit and integration passed.
+- GitHub Codex review for PR #1863: no major issues.
 
 ### Deferred
 
