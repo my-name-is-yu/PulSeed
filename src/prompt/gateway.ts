@@ -3,12 +3,13 @@
  * Thin orchestrator: assembles context, calls LLM, parses response.
  */
 
-import { z } from "zod";
+import type { z } from "zod";
 import type { ILLMClient } from "../base/llm/llm-client.js";
-import { ContextAssembler } from "./context-assembler.js";
+import type { ContextAssembler } from "./context-assembler.js";
 import { PURPOSE_CONFIGS } from "./purposes/index.js";
 import type { ContextPurpose } from "./slot-definitions.js";
 import { getInternalIdentityPrefix } from "../base/config/identity-loader.js";
+import { addUsageTokenCounts, parseUsageTokenCount } from "../base/utils/usage-counter.js";
 
 // ─── Public Types ─────────────────────────────────────────────────────────────
 
@@ -156,12 +157,12 @@ ${baseSystemPrompt}`;
     }
 
     const parsed = this.llmClient.parseJSON(response.content, input.responseSchema);
-    const inputTokens = response.usage?.input_tokens ?? 0;
-    const outputTokens = response.usage?.output_tokens ?? 0;
+    const inputTokens = parseUsageTokenCount(response.usage?.input_tokens) ?? 0;
+    const outputTokens = parseUsageTokenCount(response.usage?.output_tokens) ?? 0;
     const usage: PromptGatewayUsage = {
       inputTokens,
       outputTokens,
-      totalTokens: inputTokens + outputTokens,
+      totalTokens: addUsageTokenCounts(inputTokens, outputTokens),
     };
 
     if (this.options?.logger) {
