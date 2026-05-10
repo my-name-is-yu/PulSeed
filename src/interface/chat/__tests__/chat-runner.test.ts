@@ -4638,7 +4638,7 @@ describe("ChatRunner", () => {
           elapsed_since_last_activity_ms: 30_000,
         });
         expect(runner.formatActiveSeedyTurnStatus())
-          .toContain("Seedy is waiting: Taking action.");
+          .toContain("I'm still working on it. Last visible activity: the current action");
 
         await capturedEventSink?.emit({
           type: "tool_call_started",

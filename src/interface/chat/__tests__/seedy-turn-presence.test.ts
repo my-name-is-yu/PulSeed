@@ -114,8 +114,43 @@ describe("SeedyTurnPresence", () => {
       elapsed_since_last_activity_ms: 45_000,
     });
     expect(formatSeedyActiveTurnStatus(status))
-      .toBe("Seedy needs input to continue: Waiting for approval. Last visible activity: approval requested 45 seconds ago.");
+      .toBe("I need your input to continue. Last visible activity: waiting for your approval 45 seconds ago.");
     expect(formatSeedyActiveTurnStatus(createSeedyActiveTurnStatus(null)))
-      .toBe("Seedy is not handling an active turn right now.");
+      .toBe("I'm not handling an active turn right now.");
+  });
+
+  it("does not expose unsafe active status activity labels", () => {
+    const presence = createUserVisibleSeedyTurnPresence({
+      turn_id: "turn-unsafe",
+      phase: "waiting",
+      started_at: NOW,
+      updated_at: NOW,
+      last_activity_at: NOW,
+      last_activity_label: "model_request: openai/gpt-5.5",
+    });
+
+    const formatted = formatSeedyActiveTurnStatus(createSeedyActiveTurnStatus(presence, {
+      now: "2026-05-10T05:00:45.000Z",
+    }));
+
+    expect(formatted).toBe("I'm still working on it. I don't have a new visible update yet.");
+    expect(formatted).not.toContain("openai");
+    expect(formatted).not.toContain("gpt");
+  });
+
+  it("falls back to safe typed subject when the active status label is unsafe", () => {
+    const presence = createUserVisibleSeedyTurnPresence({
+      turn_id: "turn-safe-subject",
+      phase: "waiting",
+      subject: "Checking the project state",
+      started_at: NOW,
+      updated_at: NOW,
+      last_activity_at: NOW,
+      last_activity_label: "npm test -- --grep auth",
+    });
+
+    expect(formatSeedyActiveTurnStatus(createSeedyActiveTurnStatus(presence, {
+      now: "2026-05-10T05:00:45.000Z",
+    }))).toBe("I'm still working on it. Last visible activity: checking the project state 45 seconds ago.");
   });
 });

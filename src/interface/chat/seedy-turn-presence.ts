@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { safeSeedyPresenceActivity } from "./seedy-presence-text.js";
 
 export const SEEDY_TURN_PRESENCE_SCHEMA_VERSION = "seedy-turn-presence-v1";
 export const SEEDY_ACTIVE_TURN_STATUS_SCHEMA_VERSION = "seedy-active-turn-status-v1";
@@ -160,25 +161,36 @@ export function createSeedyActiveTurnStatus(
 }
 
 export function formatSeedyActiveTurnStatus(status: SeedyActiveTurnStatus): string {
-  if (!status.active) return "Seedy is not handling an active turn right now.";
+  if (!status.active) return "I'm not handling an active turn right now.";
 
-  const subject = status.subject ? `: ${status.subject}` : "";
-  const elapsed = formatElapsed(status.elapsed_since_last_activity_ms);
-  const activity = status.last_activity_label
-    ? ` Last visible activity: ${status.last_activity_label}${elapsed ? ` ${elapsed}` : ""}.`
-    : elapsed
-      ? ` Last visible activity was ${elapsed}.`
-      : "";
   if (status.blocked) {
-    return `Seedy is blocked${subject}.${activity}`.trim();
+    return withActiveStatusActivity("I'm blocked and need attention.", status);
   }
   if (status.action_required) {
-    return `Seedy needs input to continue${subject}.${activity}`.trim();
+    return withActiveStatusActivity("I need your input to continue.", status);
   }
   if (status.waiting) {
-    return `Seedy is waiting${subject}.${activity}`.trim();
+    return renderWaitingActiveStatus(status);
   }
-  return `Seedy is ${status.phase ?? "working"}${subject}.${activity}`.trim();
+
+  switch (status.phase) {
+    case "received":
+    case "orienting":
+      return withActiveStatusActivity("I'm checking this.", status);
+    case "thinking":
+      return withActiveStatusActivity("I'm thinking through the next step.", status);
+    case "acting":
+      return withActiveStatusActivity("I'm working on it.", status);
+    case "finalizing":
+      return withActiveStatusActivity("I'm putting the reply together.", status);
+    case "complete":
+      return "Done.";
+    case "blocked":
+    case "waiting":
+      return withActiveStatusActivity("I'm working on it.", status);
+    case undefined:
+      return withActiveStatusActivity("I'm working on it.", status);
+  }
 }
 
 export function defaultSeedyPresenceImportance(
@@ -223,4 +235,22 @@ function formatElapsed(elapsedMs: number | undefined): string {
   if (minutes < 60) return `${minutes} minutes ago`;
   const hours = Math.round(minutes / 60);
   return `${hours} hours ago`;
+}
+
+function withActiveStatusActivity(prefix: string, status: SeedyActiveTurnStatus): string {
+  const activity = safeActiveStatusActivity(status);
+  if (!activity) return prefix;
+  const elapsed = formatElapsed(status.elapsed_since_last_activity_ms);
+  return `${prefix} Last visible activity: ${activity}${elapsed ? ` ${elapsed}` : ""}.`;
+}
+
+function renderWaitingActiveStatus(status: SeedyActiveTurnStatus): string {
+  const activity = safeActiveStatusActivity(status);
+  if (!activity) return "I'm still working on it. I don't have a new visible update yet.";
+  const elapsed = formatElapsed(status.elapsed_since_last_activity_ms);
+  return `I'm still working on it. Last visible activity: ${activity}${elapsed ? ` ${elapsed}` : ""}.`;
+}
+
+function safeActiveStatusActivity(status: SeedyActiveTurnStatus): string | null {
+  return safeSeedyPresenceActivity(status);
 }
