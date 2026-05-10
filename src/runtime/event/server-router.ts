@@ -44,7 +44,7 @@ export class EventServerRouter {
     }
 
     if (req.method === "POST" && this.deps.isSlackConfigured() && urlPath === this.deps.slackEventsPath) {
-      void this.deps.handlePostSlackEvents(req, res);
+      this.runHandler(res, () => this.deps.handlePostSlackEvents(req, res));
       return;
     }
 
@@ -53,59 +53,66 @@ export class EventServerRouter {
     }
 
     if (req.method === "POST" && urlPath === "/events") {
-      void this.deps.handlePostEvents(req, res);
+      this.runHandler(res, () => this.deps.handlePostEvents(req, res));
       return;
     }
 
     if (req.method === "POST" && urlPath === "/triggers") {
-      void this.deps.handlePostTriggers(req, res);
+      this.runHandler(res, () => this.deps.handlePostTriggers(req, res));
       return;
     }
 
     if (req.method === "GET" && urlPath === "/goals") {
-      void this.deps.handleGetGoals(res);
+      this.runHandler(res, () => this.deps.handleGetGoals(res));
       return;
     }
 
     if (req.method === "GET" && urlPath === "/snapshot") {
-      void this.deps.handleGetSnapshot(res);
+      this.runHandler(res, () => this.deps.handleGetSnapshot(res));
       return;
     }
 
     const goalsMatch = /^\/goals\/([^/]+)$/.exec(urlPath);
     if (req.method === "GET" && goalsMatch) {
-      void this.deps.handleGetGoalById(res, goalsMatch[1]!);
+      this.runHandler(res, () => this.deps.handleGetGoalById(res, goalsMatch[1]!));
       return;
     }
 
     if (req.method === "GET" && urlPath === "/stream") {
-      void this.deps.handleStream(req, res, requestUrl);
+      this.runHandler(res, () => this.deps.handleStream(req, res, requestUrl));
       return;
     }
 
     if (req.method === "GET" && urlPath === "/daemon/status") {
-      void this.handleGetDaemonStatus(res);
+      this.runHandler(res, () => this.handleGetDaemonStatus(res));
       return;
     }
 
     if (req.method === "POST" && urlPath === "/daemon/runtime-control") {
-      void this.deps.handlePostDaemonRuntimeControl(req, res);
+      this.runHandler(res, () => this.deps.handlePostDaemonRuntimeControl(req, res));
       return;
     }
 
     const scheduleRunMatch = /^\/schedules\/([^/]+)\/run$/.exec(urlPath);
     if (req.method === "POST" && scheduleRunMatch) {
-      void this.deps.handlePostScheduleRunNow(req, res, scheduleRunMatch[1]!);
+      this.runHandler(res, () => this.deps.handlePostScheduleRunNow(req, res, scheduleRunMatch[1]!));
       return;
     }
 
     const goalActionMatch = /^\/goals\/([^/]+)\/([^/]+)$/.exec(urlPath);
     if (req.method === "POST" && goalActionMatch) {
-      void this.deps.handleGoalAction(req, res, goalActionMatch[1]!, goalActionMatch[2]!);
+      this.runHandler(res, () => this.deps.handleGoalAction(req, res, goalActionMatch[1]!, goalActionMatch[2]!));
       return;
     }
 
     writeJsonError(res, 404, "Not found");
+  }
+
+  private runHandler(res: http.ServerResponse, handler: () => Promise<void>): void {
+    void handler().catch((err: unknown) => {
+      if (res.headersSent || res.writableEnded) return;
+      writeJsonError(res, 500, "Internal server error", err);
+    });
   }
 
   private async handleGetDaemonStatus(res: http.ServerResponse): Promise<void> {
