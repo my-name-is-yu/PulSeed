@@ -86,7 +86,7 @@ export class CorePhaseRunner {
 }
 
 function buildCorePhaseSystemPrompt(phase: CorePhaseKind): string {
-  const base = `You are running CoreLoop phase ${phase}. Return schema-valid evidence only.`;
+  const base = `You are running DurableLoop phase ${phase}. Return schema-valid evidence only.`;
   if (phase === "dream_review_checkpoint") {
     return [
       base,

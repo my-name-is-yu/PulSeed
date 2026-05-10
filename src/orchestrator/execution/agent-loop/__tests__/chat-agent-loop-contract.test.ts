@@ -94,6 +94,20 @@ describe("chat agentloop final-answer contract", () => {
     }));
   });
 
+  it("uses DurableLoop naming in model-facing chat instructions", async () => {
+    const { runner, boundedRunner } = makeRunner(null, "ok");
+
+    await runner.execute({ message: "check status" });
+
+    const runInput = vi.mocked(boundedRunner.run).mock.calls[0]?.[0] as {
+      messages: Array<{ role: string; content: string }>;
+    };
+    const systemPrompt = runInput.messages.find((message) => message.role === "system")?.content ?? "";
+    expect(systemPrompt).toContain("operate DurableLoop only through tools");
+    expect(systemPrompt).toContain("Do not call DurableLoop internals directly");
+    expect(systemPrompt).not.toContain("CoreLoop");
+  });
+
   it("keeps parsed structured output separate when structured mode is explicit", async () => {
     const structured = {
       status: "done",
