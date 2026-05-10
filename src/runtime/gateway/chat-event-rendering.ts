@@ -17,6 +17,14 @@ interface FailureRecoveryGuidanceLike {
   nextActions: string[];
 }
 
+interface ActivityEventLike {
+  kind: "lifecycle" | "commentary" | "checkpoint" | "diff" | "tool" | "plugin" | "skill";
+  message: string;
+  presentation?: {
+    gatewayProgress?: "user" | "internal";
+  };
+}
+
 interface AgentTimelineItemLike {
   kind: "lifecycle" | "turn_context" | "model_request" | "assistant_message" | "tool" | "tool_observation" | "plan" | "approval" | "compaction" | "activity_summary" | "final" | "stopped";
   status?: string;
@@ -43,6 +51,23 @@ export function renderGatewayOperationProgress(item: OperationProgressItemLike):
   return redactSetupSecrets(`${item.title}${item.detail ? `: ${item.detail}` : ""}`);
 }
 
+export function renderGatewayActivityEvent(item: ActivityEventLike): string | null {
+  switch (item.kind) {
+    case "lifecycle":
+    case "commentary":
+      return null;
+    case "checkpoint":
+      return item.presentation?.gatewayProgress === "user"
+        ? redactSetupSecrets(item.message)
+        : null;
+    case "diff":
+    case "tool":
+    case "plugin":
+    case "skill":
+      return redactSetupSecrets(item.message);
+  }
+}
+
 export function renderGatewayExpressionDecision(input: {
   renderId: string;
   renderedAt: string;
@@ -62,18 +87,15 @@ export function renderGatewayExpressionDecision(input: {
   return rendered ? redactSetupSecrets(rendered.user_facing_rationale) : null;
 }
 
-export function renderGatewayAgentTimelineItem(item: AgentTimelineItemLike): string {
+export function renderGatewayAgentTimelineItem(item: AgentTimelineItemLike): string | null {
   switch (item.kind) {
     case "lifecycle":
-      if (item.status === "resumed") {
-        return `Resumed ${item.restoredMessages ?? 0} message(s) from ${item.fromUpdatedAt ?? "saved state"}.`;
-      }
-      return "Started work.";
     case "turn_context":
-      return `Prepared turn context with ${item.model ?? "model"} and ${item.visibleTools?.length ?? 0} tool(s).`;
     case "model_request":
-      return `Asked ${item.model ?? "model"} for the next step with ${item.toolCount ?? 0} available tool(s).`;
+    case "compaction":
+      return null;
     case "assistant_message":
+      if (item.phase === "commentary") return null;
       return redactSetupSecrets(item.text ?? "");
     case "tool": {
       const detail = item.status === "started" ? item.inputPreview : item.outputPreview;
@@ -88,13 +110,12 @@ export function renderGatewayAgentTimelineItem(item: AgentTimelineItemLike): str
       return item.status === "requested"
         ? `Approval requested for ${item.toolName ?? "tool"}: ${redactSetupSecrets(item.reason ?? "")}`
         : `Approval denied for ${item.toolName ?? "tool"}: ${redactSetupSecrets(item.reason ?? "")}`;
-    case "compaction":
-      return `Compacted context (${item.phase ?? "unknown"}, ${item.reason ?? "unknown"}): ${item.inputMessages ?? 0} -> ${item.outputMessages ?? 0}.`;
     case "activity_summary":
       return redactSetupSecrets(item.text ?? "");
     case "final":
       return redactSetupSecrets(item.outputPreview ?? "");
     case "stopped":
+      if (item.reason === "completed") return null;
       return item.reasonDetail ? `Stopped: ${item.reason ?? "unknown"} (${redactSetupSecrets(item.reasonDetail)})` : `Stopped: ${item.reason ?? "unknown"}`;
   }
 }

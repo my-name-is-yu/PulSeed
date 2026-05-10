@@ -306,6 +306,33 @@ describe("TelegramGatewayAdapter", () => {
     const adapter = TelegramGatewayAdapter.fromConfigDir(configDir);
     adapters.push(adapter);
     vi.mocked(dispatchGatewayChatInput).mockImplementationOnce(async (input) => {
+      await input.onEvent?.({
+        type: "activity",
+        runId: "run-1",
+        turnId: "chat-turn-1",
+        createdAt: "2026-04-08T00:00:00.000Z",
+        kind: "commentary",
+        message: "I understand the request and will inspect visible tool activity.",
+        transient: false,
+      });
+      await input.onEvent?.({
+        type: "activity",
+        runId: "run-1",
+        turnId: "chat-turn-1",
+        createdAt: "2026-04-08T00:00:00.000Z",
+        kind: "lifecycle",
+        message: "Calling model...",
+        transient: true,
+      });
+      await input.onEvent?.({
+        type: "activity",
+        runId: "run-1",
+        turnId: "chat-turn-1",
+        createdAt: "2026-04-08T00:00:00.000Z",
+        kind: "checkpoint",
+        message: "Working turn started: PulSeed can inspect files with visible tool activity.",
+        transient: false,
+      });
       const bridge = new ChatRunnerEventBridge(() => input.onEvent);
       const sink = bridge.createAgentLoopEventSink({ runId: "run-1", turnId: "chat-turn-1" });
       const emit = (event: Partial<AgentLoopEvent> & { type: AgentLoopEvent["type"]; eventId: string } & {
@@ -319,6 +346,23 @@ describe("TelegramGatewayAdapter", () => {
         ...event,
       } as AgentLoopEvent);
 
+      await emit({
+        type: "started",
+        eventId: "started-1",
+      });
+      await emit({
+        type: "turn_context",
+        eventId: "turn-context-1",
+        cwd: "/Users/yuyoshimuta/PulSeed",
+        model: "openai/gpt-5.5",
+        visibleTools: ["shell_command", "apply_patch"],
+      });
+      await emit({
+        type: "model_request",
+        eventId: "model-request-1",
+        model: "openai/gpt-5.5",
+        toolCount: 54,
+      });
       await emit({
         type: "assistant_message",
         eventId: "commentary-1",
@@ -400,15 +444,21 @@ describe("TelegramGatewayAdapter", () => {
 
     await vi.waitFor(() => {
       const renderedProgress = sentMessages.join("\n");
-      expect(renderedProgress).toContain("Reviewing the timeline path.");
       expect(renderedProgress).toContain(`Started shell_command: ${JSON.stringify({ command: "rg Timeline src/interface/chat" })}`);
       expect(renderedProgress).toContain("Finished shell_command: src/interface/chat/chat-events.ts");
       expect(renderedProgress).toContain("Approval requested for shell_command: run a write command");
       expect(renderedProgress).toContain("Observed shell_command (denied): TOOL NOT EXECUTED (approval_denied): Operator denied release execution.");
-      expect(renderedProgress).toContain("Compacted context (mid_turn, context_limit): 12 -> 4.");
       expect(renderedProgress).toContain("ran 1 command, requested 1 approval");
     });
     expect(sentMessages.some((message) => message.includes("[tool]"))).toBe(false);
+    expect(sentMessages.join("\n")).not.toContain("I understand the request");
+    expect(sentMessages.join("\n")).not.toContain("Calling model");
+    expect(sentMessages.join("\n")).not.toContain("Working turn started");
+    expect(sentMessages.join("\n")).not.toContain("Started work");
+    expect(sentMessages.join("\n")).not.toContain("Prepared turn context");
+    expect(sentMessages.join("\n")).not.toContain("openai/gpt");
+    expect(sentMessages.join("\n")).not.toContain("available tool");
+    expect(sentMessages.join("\n")).not.toContain("Compacted context");
     expect(sentMessages).not.toContain("Done from final.");
     expect(sentMessages).not.toContain("Done from fallback.");
     expect(sentMessages.join("\n")).not.toContain("Agent-loop activity summarized");
