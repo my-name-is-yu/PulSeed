@@ -214,6 +214,15 @@ describe("checkTimeExceeded", () => {
     expect(detector.checkTimeExceeded(task)).toBeNull();
   });
 
+  it("returns null when started_at is malformed", () => {
+    const task = {
+      goal_id: "goal-1",
+      started_at: "not-a-date",
+      estimated_duration: { value: 1, unit: "hours" },
+    };
+    expect(detector.checkTimeExceeded(task)).toBeNull();
+  });
+
   it("returns null when elapsed time is within estimate×2 threshold", () => {
     // Estimate = 1 hour, threshold = 2 hours, started 1 hour ago
     const startedAt = new Date(Date.now() - 60 * 60 * 1000).toISOString();
