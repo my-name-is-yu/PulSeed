@@ -17,9 +17,11 @@ import {
   workspaceRelativePath,
 } from "./paths.js";
 import { ensureDirectoryWithinWorkspaceRoot } from "../../base/utils/workspace-root.js";
+import { isTextFileSizeLimitError, readTextFileWithinLimit } from "../../base/utils/json-io.js";
 import { KaggleMetricsSchema, parseKaggleMetricsCompatible, type KaggleMetrics } from "./metrics.js";
 
 const DEFAULT_MAX_OUTPUT_CHARS = 20_000;
+const KAGGLE_JSON_MAX_BYTES = 1024 * 1024;
 const SUBMISSION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const OUTPUT_FILENAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const KagglePortfolioSlotSchema = z.enum(["safe", "aggressive", "diverse"]);
@@ -602,8 +604,12 @@ async function realpathOrNull(targetPath: string): Promise<string | null> {
 
 async function readJsonObject(filePath: string, label: string): Promise<unknown> {
   try {
-    return JSON.parse(await fs.readFile(filePath, "utf-8"));
+    const raw = await readTextFileWithinLimit(filePath, { maxBytes: KAGGLE_JSON_MAX_BYTES });
+    return JSON.parse(raw) as unknown;
   } catch (err) {
+    if (isTextFileSizeLimitError(err)) {
+      throw new Error(`${label} exceeds ${KAGGLE_JSON_MAX_BYTES} bytes`);
+    }
     if (err instanceof SyntaxError) {
       throw new Error(`${label} must be valid JSON`);
     }

@@ -154,6 +154,27 @@ describe("Kaggle submission tools", () => {
     });
   });
 
+  it("rejects oversized metrics JSON before preparing a submission", async () => {
+    await fs.writeFile(
+      path.join(workspaceRoot, "experiments", "exp-a", "metrics.json"),
+      `${JSON.stringify({ ...metricsJson("exp-a"), padding: "x".repeat(1024 * 1024) })}\n`,
+    );
+
+    const tool = new KaggleSubmissionPrepareTool();
+    const result = await tool.call({
+      workspace: "titanic",
+      competition: "titanic",
+      source_file: "experiments/exp-a/submission.csv",
+      selected_experiment_id: "exp-a",
+      submission_id: "exp-a-public",
+      output_filename: "exp-a-public.csv",
+    }, makeContext(pulseedHome));
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("metrics_path exceeds 1048576 bytes");
+    await expect(fs.stat(path.join(workspaceRoot, "submissions", "exp-a-public.csv"))).rejects.toThrow();
+  });
+
   it("records aggressive and diverse submission portfolio slot intent in local metadata", async () => {
     const tool = new KaggleSubmissionPrepareTool();
     const aggressive = await tool.call({
