@@ -56,6 +56,17 @@ export function formatDurationMs(ms: number | null): string {
   return `${(ms / MS_PER_MINUTE).toFixed(1)}m`;
 }
 
+export function formatWholeMinuteDurationMs(ms: number | null): string {
+  if (ms === null) return "-";
+  if (!Number.isFinite(ms)) return "n/a";
+  if (ms <= 0) return "0m";
+  const minutes = Math.ceil(ms / MS_PER_MINUTE);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const remainder = minutes % 60;
+  return remainder === 0 ? `${hours}h` : `${hours}h ${remainder}m`;
+}
+
 export function formatPercent(value: number | null): string {
   return value === null || !Number.isFinite(value) ? "n/a" : `${(value * 100).toFixed(1)}%`;
 }

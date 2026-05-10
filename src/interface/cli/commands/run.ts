@@ -2,10 +2,10 @@
 
 import * as readline from "node:readline";
 
-import { StateManager } from "../../../base/state/state-manager.js";
-import { CharacterConfigManager } from "../../../platform/traits/character-config.js";
+import type { StateManager } from "../../../base/state/state-manager.js";
+import type { CharacterConfigManager } from "../../../platform/traits/character-config.js";
 import { ensureProviderConfig } from "../ensure-api-key.js";
-import type { LoopConfig } from "../../../orchestrator/loop/durable-loop.js";
+import type { CoreLoop, LoopConfig } from "../../../orchestrator/loop/durable-loop.js";
 import { resolveLoopRunPolicy } from "../../../orchestrator/loop/run-policy.js";
 import type { Task } from "../../../base/types/task.js";
 import { reconcileInterruptedExecutions } from "../../../runtime/daemon/runner-recovery.js";
@@ -18,6 +18,7 @@ import {
   buildProgressHandler,
   runLoopWithSignals,
 } from "../utils/loop-runner.js";
+import { formatWholeMinuteDurationMs } from "./display-format.js";
 
 function buildApprovalFn(rl: readline.Interface): (task: Task) => Promise<boolean> {
   return (task: Task): Promise<boolean> => {
@@ -43,7 +44,7 @@ export async function cmdRun(
   loopConfig?: LoopConfig,
   autoApprove?: boolean,
   verbose?: boolean,
-  activeCoreLoopRef?: { value: import("../../../orchestrator/loop/durable-loop.js").CoreLoop | null },
+  activeCoreLoopRef?: { value: CoreLoop | null },
   workspacePath?: string,
 ): Promise<number> {
   try {
@@ -156,8 +157,8 @@ export async function cmdRun(
   const finalizationStatus = result.iterations.at(-1)?.finalizationStatus;
   if (finalizationStatus && finalizationStatus.mode !== "no_deadline") {
     console.log(`Finalization:     ${finalizationStatus.mode}`);
-    console.log(`Exploration left: ${formatDurationMs(finalizationStatus.remaining_exploration_ms)}`);
-    console.log(`Reserved buffer:  ${formatDurationMs(finalizationStatus.reserved_finalization_ms)}`);
+    console.log(`Exploration left: ${formatWholeMinuteDurationMs(finalizationStatus.remaining_exploration_ms)}`);
+    console.log(`Reserved buffer:  ${formatWholeMinuteDurationMs(finalizationStatus.reserved_finalization_ms)}`);
     const plan = finalizationStatus.finalization_plan;
     if (plan?.best_artifact) {
       console.log(`Best artifact:    ${plan.best_artifact.label}`);
@@ -203,14 +204,4 @@ async function reconcileResidentShutdownTasks(
   } catch (err) {
     logger.warn(formatOperationError("reconcile interrupted resident shutdown tasks", err));
   }
-}
-
-function formatDurationMs(value: number | null): string {
-  if (value === null) return "-";
-  if (value <= 0) return "0m";
-  const minutes = Math.ceil(value / 60_000);
-  if (minutes < 60) return `${minutes}m`;
-  const hours = Math.floor(minutes / 60);
-  const remainder = minutes % 60;
-  return remainder === 0 ? `${hours}h` : `${hours}h ${remainder}m`;
 }
