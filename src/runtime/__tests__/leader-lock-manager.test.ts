@@ -180,6 +180,34 @@ describe("LeaderLockManager", () => {
     expect((await manager.read())?.owner_token).toBe("live-owner");
   });
 
+  it("acquire keeps an unexpired lock when the owner pid probe reports EPERM", async () => {
+    tmpDir = makeTempDir();
+    const manager = new LeaderLockManager(tmpDir, 1_000);
+    const protectedPid = 4242;
+    const killSpy = vi.spyOn(process, "kill").mockImplementation(((pid: number, signal?: NodeJS.Signals | number) => {
+      if (pid === protectedPid && signal === 0) {
+        const err = new Error("operation not permitted") as NodeJS.ErrnoException;
+        err.code = "EPERM";
+        throw err;
+      }
+      throw new Error(`unexpected process probe for ${String(pid)}`);
+    }) as typeof process.kill);
+
+    await manager.importLegacyRecord({
+      owner_token: "protected-owner",
+      pid: protectedPid,
+      acquired_at: 100,
+      last_renewed_at: 100,
+      lease_until: 10_000,
+    });
+
+    const acquired = await manager.acquire({ now: 200, ownerToken: "leader-b" });
+
+    expect(acquired).toBeNull();
+    expect((await manager.read())?.owner_token).toBe("protected-owner");
+    expect(killSpy).toHaveBeenCalledWith(protectedPid, 0);
+  });
+
   it("reapStale removes expired lock files", async () => {
     tmpDir = makeTempDir();
     const manager = new LeaderLockManager(tmpDir, 1_000);
