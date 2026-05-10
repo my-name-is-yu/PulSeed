@@ -31,3 +31,8 @@
 - `npm run lint:boundaries`: passed with existing warnings, 0 errors.
 - `npm run build`: passed.
 - `git diff --check`: passed.
+
+## Review Follow-up
+
+- GitHub Codex review found that the new `conversation_id` index column used `origin.session_id` instead of `links.conversation_id`.
+- Fixed the indexed value and added an integration test with distinct conversation and origin session ids.

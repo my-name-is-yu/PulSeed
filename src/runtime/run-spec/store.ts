@@ -55,7 +55,7 @@ export class RunSpecStore {
         parsed.profile,
         parsed.links.goal_id,
         parsed.links.runtime_session_id,
-        parsed.origin.session_id,
+        parsed.links.conversation_id,
         parsed.created_at,
         parsed.updated_at,
         stringifyJson(parsed),

@@ -53,6 +53,11 @@ Base: origin/main @ 7d87d012 Prefer live daemon status in runtime evidence answe
 - `npm run build`: passed.
 - `git diff --check`: passed.
 
+## Slice 2 Review Follow-up
+
+- GitHub Codex review on PR #1843 / `4b6efa7f632a89ebd2adad5fd7b2de77c2f7be94` found that `run_spec_records.conversation_id` used `origin.session_id` instead of `links.conversation_id`.
+- Fixed by storing `RunSpec.links.conversation_id` and adding an integration test where `links.conversation_id` differs from `origin.session_id`.
+
 ## Merge Policy
 
 This session may merge only PRs created for this direct file state owner closure goal.

@@ -10,6 +10,7 @@ import {
   handleRunSpecConfirmationInput,
 } from "../confirmation.js";
 import { StateManager } from "../../../base/state/state-manager.js";
+import { openControlDatabase } from "../../store/control-db/index.js";
 import { createSingleMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
 
 const NOW = new Date("2026-05-02T00:00:00.000Z");
@@ -329,6 +330,32 @@ describe("RunSpecStore", () => {
     await expect(store.list()).resolves.toEqual([
       expect.objectContaining({ id: spec!.id }),
     ]);
+  });
+
+  it("indexes conversation_id from RunSpec links rather than the origin session", async () => {
+    const baseDir = await fsp.mkdtemp(path.join(os.tmpdir(), "pulseed-runspec-"));
+    const spec = await deriveRunSpecFromText("Run Kaggle until tomorrow morning and aim for top 15%.", {
+      cwd: "/repo/kaggle",
+      now: NOW,
+      conversationId: "telegram-chat-1",
+      sessionId: "local-session-1",
+      llmClient: llmDraft(),
+    });
+    expect(spec).not.toBeNull();
+
+    const store = createRunSpecStore({ getBaseDir: () => baseDir });
+    await store.save(spec!);
+
+    const db = await openControlDatabase({ baseDir });
+    const row = db.read((sqlite) => sqlite.prepare(`
+      SELECT conversation_id
+      FROM run_spec_records
+      WHERE run_spec_id = ?
+    `).get(spec!.id)) as { conversation_id: string | null } | undefined;
+    db.close();
+
+    expect(row).toEqual({ conversation_id: "telegram-chat-1" });
+    expect(spec!.origin.session_id).toBe("local-session-1");
   });
 
   it("does not treat legacy RunSpec JSON files as normal runtime state", async () => {
