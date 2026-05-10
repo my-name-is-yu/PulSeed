@@ -7,7 +7,7 @@ export interface ControlDbMigration {
   checksum: string;
 }
 
-export const CONTROL_DB_SCHEMA_VERSION = 21;
+export const CONTROL_DB_SCHEMA_VERSION = 22;
 
 export const CONTROL_DB_INITIAL_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS control_schema_migrations (
@@ -1154,6 +1154,23 @@ CREATE INDEX IF NOT EXISTS capability_registry_entries_status_idx
   ON capability_registry_entries(capability_status, updated_at, capability_id);
 `.trim();
 
+export const CONTROL_DB_CAPABILITY_DEPENDENCY_SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS capability_dependency_metadata (
+  registry_id TEXT PRIMARY KEY CHECK (registry_id = 'current'),
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS capability_dependency_entries (
+  capability_id TEXT PRIMARY KEY,
+  sort_order INTEGER NOT NULL CHECK (sort_order >= 0),
+  updated_at TEXT NOT NULL,
+  dependency_json TEXT NOT NULL CHECK (json_valid(dependency_json))
+);
+
+CREATE INDEX IF NOT EXISTS capability_dependency_entries_order_idx
+  ON capability_dependency_entries(sort_order, capability_id);
+`.trim();
+
 export const CONTROL_DB_RUNTIME_JOURNAL_REPLACEMENT_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS runtime_operator_handoffs (
   handoff_id TEXT PRIMARY KEY,
@@ -1666,5 +1683,10 @@ export const CONTROL_DB_MIGRATIONS: readonly ControlDbMigration[] = [
     21,
     "transfer-trust-runtime-state",
     CONTROL_DB_TRANSFER_TRUST_STATE_SCHEMA_SQL
+  ),
+  createControlDbMigration(
+    22,
+    "capability-dependency-state",
+    CONTROL_DB_CAPABILITY_DEPENDENCY_SCHEMA_SQL
   ),
 ];

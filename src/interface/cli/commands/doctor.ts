@@ -15,6 +15,7 @@ import {
   ApprovalStore,
   DaemonStateStore,
   GoalTaskStateStore,
+  importLegacyCapabilityDependencyState,
   importLegacyExecutionSessionState,
   importLegacyCapabilityRegistryState,
   importLegacyCuriosityState,
@@ -743,6 +744,7 @@ export async function cmdDoctor(_args: string[]): Promise<number> {
     const goalOrchestrationImportReport = await importLegacyGoalOrchestrationState(baseDir);
     const stallStateImportReport = await importLegacyStallState(baseDir);
     const capabilityRegistryImportReport = await importLegacyCapabilityRegistryState(baseDir);
+    const capabilityDependencyImportReport = await importLegacyCapabilityDependencyState(baseDir);
     const evidenceStrategyDreamImportReport = await importLegacyRuntimeEvidenceStrategyDreamState(baseDir, { runtimeRoot });
     const runtimeFileStateImportReport = await importLegacyRuntimeFileState({
       runtimeRootOrPaths: runtimeRoot,
@@ -796,6 +798,9 @@ export async function cmdDoctor(_args: string[]): Promise<number> {
     );
     console.log(
       `Repair capability registry import: registry files=${capabilityRegistryImportReport.registryFiles}, capabilities=${capabilityRegistryImportReport.importedCapabilities}, blocked=${capabilityRegistryImportReport.blockedSources.length}`
+    );
+    console.log(
+      `Repair capability dependency import: files=${capabilityDependencyImportReport.dependencyFiles}, dependencies=${capabilityDependencyImportReport.dependencies}, skipped already imported=${capabilityDependencyImportReport.skippedAlreadyImported}, retired existing typed state=${capabilityDependencyImportReport.retiredExistingTypedState}, blocked=${capabilityDependencyImportReport.blockedSources.length}`
     );
     console.log(
       `Repair evidence/strategy/dream import: evidence=${evidenceStrategyDreamImportReport.runtimeEvidenceEntries}, strategy=${evidenceStrategyDreamImportReport.strategyRecords}, iteration logs=${evidenceStrategyDreamImportReport.dreamIterationLogs}, session logs=${evidenceStrategyDreamImportReport.dreamSessionLogs}, event logs=${evidenceStrategyDreamImportReport.dreamEventLogs}, importance=${evidenceStrategyDreamImportReport.dreamImportanceEntries}, watermarks=${evidenceStrategyDreamImportReport.dreamWatermarks ? "imported" : "none"}, suggestions=${evidenceStrategyDreamImportReport.dreamScheduleSuggestions}, playbooks=${evidenceStrategyDreamImportReport.dreamPlaybooks}, activation artifacts=${evidenceStrategyDreamImportReport.dreamActivationArtifacts}, workflows=${evidenceStrategyDreamImportReport.dreamWorkflows}, blocked=${evidenceStrategyDreamImportReport.blockedSources.length}`

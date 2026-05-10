@@ -144,9 +144,10 @@ import/publish artifacts:
   metadata, and wait-deadline callers use typed `StateManager` APIs over
   control DB stores; legacy logical filename adapters remain only as
   migration/compatibility test boundaries inside the owning stores
-- capability registry availability checks used by wait strategy decisions use
+- capability registry availability checks and capability dependency ordering use
   the typed control DB capability registry store; legacy
-  `capability_registry.json` is a repair import input only
+  `capability_registry.json` and `capability_dependencies.json` are repair
+  import inputs only
 - AgentLoop normal resume and trace construction use typed control DB session
   and trace stores keyed by session id; legacy `chat/agentloop/*.state.json`
   and `traces/agentloop/*.jsonl` files are explicit `doctor --repair`
@@ -190,11 +191,15 @@ import/publish artifacts:
   `TransferTrustStateStore`; legacy `transfer-trust/*.json`,
   `transfer-trust-history/*.json`, and `transfer-trust/_index.json` files are
   explicit `doctor --repair` import inputs only
-- current raw fallback migration follow-up surfaces: capability dependency
-  state and task grounding raw task reads. Each is tracked by
-  `scripts/check-database-first-legacy-stores.mjs --json` as `migrate now`
-  debt until its typed store/API slice lands. Character config, MCP server
-  config, and generated reports are explicitly classified non-debt boundaries.
+- capability dependency state uses the typed control DB
+  `CapabilityRegistryStateStore`; legacy `capability_dependencies.json` is an
+  explicit `doctor --repair` import input only, and normal capability detection
+  caller paths no longer read stale legacy files as authoritative state
+- current raw fallback migration follow-up surface: task grounding raw task
+  reads. It is tracked by `scripts/check-database-first-legacy-stores.mjs
+  --json` as `migrate now` debt until its typed API slice lands. Character
+  config, MCP server config, and generated reports are explicitly classified
+  non-debt boundaries.
 
 Future durable internal state must add a typed store API and schema migration.
 Adding a new JSON/JSONL sidecar requires documenting why it is config,

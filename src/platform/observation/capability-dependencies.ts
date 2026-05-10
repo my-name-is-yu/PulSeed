@@ -1,41 +1,33 @@
-import { z } from "zod";
 import { StateManager } from "../../base/state/state-manager.js";
 import type { CapabilityDependency, CapabilityGap } from "../../base/types/capability.js";
-
-// ─── Constants ───
-
-const DEPENDENCIES_PATH = "capability_dependencies.json";
+import {
+  CapabilityRegistryStateStore,
+  type CapabilityDependencyStateStorePort,
+} from "../../runtime/store/capability-registry-state-store.js";
 
 // ─── Dependency Deps ───
 
 export interface DependencyDeps {
   stateManager: StateManager;
+  capabilityDependencyStore?: CapabilityDependencyStateStorePort;
 }
 
 // ─── loadDependencies ───
 
 /**
- * Reads the capability dependency map from disk.
- * Returns an empty array if the file does not exist.
+ * Reads the capability dependency map from the typed capability registry store.
  */
 export async function loadDependencies(deps: DependencyDeps): Promise<CapabilityDependency[]> {
-  const raw = await deps.stateManager.readRaw(DEPENDENCIES_PATH);
-  if (raw === null) {
-    return [];
-  }
-  const parsed = z
-    .array(z.object({ capability_id: z.string(), depends_on: z.array(z.string()) }))
-    .safeParse(raw);
-  return parsed.success ? parsed.data : [];
+  return dependencyStore(deps).loadDependencies();
 }
 
 // ─── saveDependencies ───
 
 /**
- * Persists the dependency map to disk.
+ * Persists the dependency map to the typed capability registry store.
  */
 export async function saveDependencies(deps: DependencyDeps, dependencies: CapabilityDependency[]): Promise<void> {
-  await deps.stateManager.writeRaw(DEPENDENCIES_PATH, dependencies);
+  await dependencyStore(deps).saveDependencies(dependencies);
 }
 
 // ─── addDependency ───
@@ -256,4 +248,8 @@ export async function getAcquisitionOrder(
     .filter((g): g is CapabilityGap => g !== undefined);
 
   return [...independent, ...dependent];
+}
+
+function dependencyStore(deps: DependencyDeps): CapabilityDependencyStateStorePort {
+  return deps.capabilityDependencyStore ?? new CapabilityRegistryStateStore(deps.stateManager.getBaseDir());
 }

@@ -1068,6 +1068,18 @@ describe("StateManager", async () => {
       expect(loaded).toEqual({ hello: "world" });
     });
 
+    it("routes capability dependency raw compatibility through the typed store", async () => {
+      const dependencies = [{ capability_id: "cap-report", depends_on: ["cap-query"] }];
+
+      await manager.writeRaw("capability_dependencies.json", dependencies);
+
+      await expect(manager.readRaw("capability_dependencies.json")).resolves.toEqual(dependencies);
+      expect(fs.existsSync(path.join(tmpDir, "capability_dependencies.json"))).toBe(false);
+
+      await manager.writeRaw("capability_dependencies.json", null);
+      await expect(manager.readRaw("capability_dependencies.json")).resolves.toBeNull();
+    });
+
     it("returns null for non-existent raw path", async () => {
       expect(await manager.readRaw("does/not/exist.json")).toBeNull();
     });

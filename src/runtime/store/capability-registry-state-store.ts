@@ -5,12 +5,30 @@ import {
 } from "./control-db/index.js";
 import {
   CapabilityRegistrySchema,
+  CapabilityDependencySchema,
   CapabilitySchema,
   type Capability,
+  type CapabilityDependency,
   type CapabilityRegistry,
 } from "../../base/types/capability.js";
 
 export interface CapabilityRegistryStateStoreOptions extends RuntimeControlDbStoreOptions {}
+
+export const CAPABILITY_DEPENDENCIES_PATH = "capability_dependencies.json";
+
+export interface CapabilityDependencyRawStateStoreResult {
+  handled: boolean;
+  value: unknown | null;
+}
+
+export interface CapabilityDependencyStateStorePort {
+  ensureReady(): Promise<void>;
+  loadDependencies(): Promise<CapabilityDependency[]>;
+  saveDependencies(dependencies: CapabilityDependency[]): Promise<void>;
+  hasDependencies(): Promise<boolean>;
+  readRawPath(relativePath: string): Promise<CapabilityDependencyRawStateStoreResult>;
+  writeRawPath(relativePath: string, data: unknown): Promise<boolean>;
+}
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -24,7 +42,15 @@ function stringifyJson(value: unknown): string {
   return JSON.stringify(value);
 }
 
-export class CapabilityRegistryStateStore {
+function normalizeRelativePath(relativePath: string): string {
+  return relativePath.replace(/\\/g, "/").split("/").filter(Boolean).join("/");
+}
+
+export function isCapabilityDependenciesRawPath(relativePath: string): boolean {
+  return normalizeRelativePath(relativePath) === CAPABILITY_DEPENDENCIES_PATH;
+}
+
+export class CapabilityRegistryStateStore implements CapabilityDependencyStateStorePort {
   private dbPromise: Promise<ControlDatabase> | null = null;
 
   constructor(
@@ -115,6 +141,82 @@ export class CapabilityRegistryStateStore {
     });
   }
 
+  async loadDependencies(): Promise<CapabilityDependency[]> {
+    const db = await this.database();
+    return db.read((sqlite) => {
+      const rows = sqlite.prepare(`
+        SELECT dependency_json
+        FROM capability_dependency_entries
+        ORDER BY sort_order ASC, capability_id ASC
+      `).all() as Array<{ dependency_json: string }>;
+      return rows.map((row) => CapabilityDependencySchema.parse(parseJson<unknown>(row.dependency_json)));
+    });
+  }
+
+  async saveDependencies(dependencies: CapabilityDependency[]): Promise<void> {
+    const parsed = dependencies.map((dependency) => CapabilityDependencySchema.parse(dependency));
+    const updatedAt = nowIso();
+    const db = await this.database();
+    db.transaction((sqlite) => {
+      sqlite.prepare(`
+        INSERT INTO capability_dependency_metadata (registry_id, updated_at)
+        VALUES ('current', ?)
+        ON CONFLICT(registry_id) DO UPDATE SET
+          updated_at = excluded.updated_at
+      `).run(updatedAt);
+      sqlite.prepare("DELETE FROM capability_dependency_entries").run();
+      const insert = sqlite.prepare(`
+        INSERT INTO capability_dependency_entries (
+          capability_id,
+          sort_order,
+          updated_at,
+          dependency_json
+        ) VALUES (?, ?, ?, json(?))
+      `);
+      parsed.forEach((dependency, index) => {
+        insert.run(
+          dependency.capability_id,
+          index,
+          updatedAt,
+          stringifyJson(dependency),
+        );
+      });
+    });
+  }
+
+  async hasDependencies(): Promise<boolean> {
+    const db = await this.database();
+    return db.read((sqlite) => {
+      const row = sqlite.prepare(`
+        SELECT 1
+        FROM capability_dependency_metadata
+        WHERE registry_id = 'current'
+        LIMIT 1
+      `).get() as unknown | undefined;
+      return row !== undefined;
+    });
+  }
+
+  async readRawPath(relativePath: string): Promise<CapabilityDependencyRawStateStoreResult> {
+    if (!isCapabilityDependenciesRawPath(relativePath)) {
+      return { handled: false, value: null };
+    }
+    if (!await this.hasDependencies()) {
+      return { handled: true, value: null };
+    }
+    return { handled: true, value: await this.loadDependencies() };
+  }
+
+  async writeRawPath(relativePath: string, data: unknown): Promise<boolean> {
+    if (!isCapabilityDependenciesRawPath(relativePath)) return false;
+    if (data === null) {
+      await this.clearDependencies();
+      return true;
+    }
+    await this.saveDependencies(zCapabilityDependencies.parse(data));
+    return true;
+  }
+
   private async database(): Promise<ControlDatabase> {
     if (this.options.controlDb) {
       return this.options.controlDb;
@@ -125,4 +227,14 @@ export class CapabilityRegistryStateStore {
     });
     return this.dbPromise;
   }
+
+  private async clearDependencies(): Promise<void> {
+    const db = await this.database();
+    db.transaction((sqlite) => {
+      sqlite.prepare("DELETE FROM capability_dependency_entries").run();
+      sqlite.prepare("DELETE FROM capability_dependency_metadata WHERE registry_id = 'current'").run();
+    });
+  }
 }
+
+const zCapabilityDependencies = CapabilityDependencySchema.array();
