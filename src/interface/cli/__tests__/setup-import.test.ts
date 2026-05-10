@@ -17,6 +17,8 @@ afterEach(async () => {
   delete process.env["PULSEED_IMPORT_HERMES_HOME"];
   vi.doUnmock("@clack/prompts");
   vi.doUnmock("../commands/setup/import/discovery.js");
+  vi.doUnmock("../commands/setup/import/fs-utils.js");
+  vi.resetModules();
   await fsp.rm(tmpDir, { recursive: true, force: true });
 });
 
@@ -332,6 +334,58 @@ describe("setup import discovery", () => {
     });
   });
 
+  it("skips oversized config files during discovery", async () => {
+    const openclawHome = path.join(tmpDir, "openclaw");
+    process.env["PULSEED_IMPORT_OPENCLAW_HOME"] = openclawHome;
+    const { SETUP_IMPORT_CONFIG_MAX_BYTES } = await import("../commands/setup/import/fs-utils.js");
+
+    await fsp.mkdir(path.join(openclawHome, "skills", "review"), { recursive: true });
+    await fsp.writeFile(path.join(openclawHome, "skills", "review", "SKILL.md"), "# Review\n", "utf-8");
+    await writeJson(path.join(openclawHome, "config.json"), {
+      provider: "openai",
+      model: "gpt-5.4",
+      apiKey: "sk-oversized",
+      padding: "x".repeat(SETUP_IMPORT_CONFIG_MAX_BYTES),
+    });
+
+    const { detectSetupImportSources } = await import("../commands/setup/import/discovery.js");
+    const sources = detectSetupImportSources();
+    const openclaw = sources.find((source) => source.id === "openclaw");
+
+    expect(openclaw?.items.some((item) => item.kind === "skill")).toBe(true);
+    expect(openclaw?.items.some((item) => item.kind === "provider")).toBe(false);
+  });
+
+  it("skips oversized env files when resolving provider secrets", async () => {
+    const openclawHome = path.join(tmpDir, "openclaw");
+    process.env["PULSEED_IMPORT_OPENCLAW_HOME"] = openclawHome;
+    const { SETUP_IMPORT_ENV_MAX_BYTES } = await import("../commands/setup/import/fs-utils.js");
+
+    await fsp.mkdir(openclawHome, { recursive: true });
+    await fsp.writeFile(
+      path.join(openclawHome, ".env"),
+      `OPENAI_API_KEY=${"x".repeat(SETUP_IMPORT_ENV_MAX_BYTES)}\n`,
+      "utf-8",
+    );
+    await writeJson(path.join(openclawHome, "config.json"), {
+      provider: "openai",
+      model: "gpt-5.4",
+      apiKey: "OPENAI_API_KEY",
+    });
+
+    const { detectSetupImportSources } = await import("../commands/setup/import/discovery.js");
+    const sources = detectSetupImportSources();
+    const provider = sources
+      .find((source) => source.id === "openclaw")
+      ?.items.find((item) => item.kind === "provider");
+
+    expect(provider?.providerSettings).toMatchObject({
+      provider: "openai",
+      model: "gpt-5.4",
+    });
+    expect(provider?.providerSettings?.apiKey).toBeUndefined();
+  });
+
   it("detects USER.md from Hermes for identity import", async () => {
     const hermesHome = path.join(tmpDir, "hermes");
     process.env["PULSEED_IMPORT_HERMES_HOME"] = hermesHome;
@@ -355,6 +409,60 @@ describe("setup import discovery", () => {
     expect(user?.userSettings).toEqual({
       content: "# About You\n\nName: Imported User\nPrefers concise updates.\n",
     });
+  });
+
+  it("short-circuits USER.md discovery after the first non-empty candidate", async () => {
+    vi.resetModules();
+    const openclawHome = path.join(tmpDir, "openclaw");
+    process.env["PULSEED_IMPORT_OPENCLAW_HOME"] = openclawHome;
+    await fsp.mkdir(openclawHome, { recursive: true });
+    await fsp.writeFile(path.join(openclawHome, "USER.md"), "first user\n", "utf-8");
+    await fsp.writeFile(path.join(openclawHome, "user.md"), "later user\n", "utf-8");
+
+    const readUserTextFileMock = vi.fn((filePath: string) => {
+      if (path.basename(filePath) === "USER.md") return "first user\n";
+      throw new Error("later USER.md candidate should not be read");
+    });
+    vi.doMock("../commands/setup/import/fs-utils.js", async () => {
+      const actual = await vi.importActual<Record<string, unknown>>("../commands/setup/import/fs-utils.js");
+      return {
+        ...actual,
+        readUserTextFile: readUserTextFileMock,
+      };
+    });
+
+    const { detectSetupImportSources } = await import("../commands/setup/import/discovery.js");
+    const sources = detectSetupImportSources();
+    const user = sources
+      .find((source) => source.id === "openclaw")
+      ?.items.find((item) => item.kind === "user");
+
+    expect(user?.userSettings).toEqual({ content: "first user\n" });
+    expect(readUserTextFileMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("skips oversized USER.md identity files during discovery", async () => {
+    const hermesHome = path.join(tmpDir, "hermes");
+    process.env["PULSEED_IMPORT_HERMES_HOME"] = hermesHome;
+    const { SETUP_IMPORT_USER_TEXT_MAX_BYTES } = await import("../commands/setup/import/fs-utils.js");
+
+    await writeJson(path.join(hermesHome, "settings.json"), {
+      provider: "openai",
+      model: "gpt-5.4",
+      adapter: "openai_codex_cli",
+    });
+    await fsp.writeFile(
+      path.join(hermesHome, "USER.md"),
+      "x".repeat(SETUP_IMPORT_USER_TEXT_MAX_BYTES + 1),
+      "utf-8",
+    );
+
+    const { detectSetupImportSources } = await import("../commands/setup/import/discovery.js");
+    const sources = detectSetupImportSources();
+    const hermes = sources.find((source) => source.id === "hermes");
+
+    expect(hermes?.items.some((item) => item.kind === "provider")).toBe(true);
+    expect(hermes?.items.some((item) => item.kind === "user")).toBe(false);
   });
 
   it("classifies imported plugin manifests by compatibility and permission summary", async () => {

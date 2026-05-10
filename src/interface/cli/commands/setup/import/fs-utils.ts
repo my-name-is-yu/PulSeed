@@ -2,6 +2,11 @@ import * as fs from "node:fs";
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { load as parseYaml } from "js-yaml";
+import { readTextFileWithinLimitSync } from "../../../../../base/utils/json-io.js";
+
+export const SETUP_IMPORT_CONFIG_MAX_BYTES = 1024 * 1024;
+export const SETUP_IMPORT_ENV_MAX_BYTES = 256 * 1024;
+export const SETUP_IMPORT_USER_TEXT_MAX_BYTES = 256 * 1024;
 
 export function unique<T>(values: T[]): T[] {
   return [...new Set(values)];
@@ -27,7 +32,9 @@ export async function pathExistsAsync(filePath: string): Promise<boolean> {
 
 export function readJson(filePath: string): unknown | undefined {
   try {
-    const raw = fs.readFileSync(filePath, "utf-8");
+    const raw = readTextFileWithinLimitSync(filePath, {
+      maxBytes: SETUP_IMPORT_CONFIG_MAX_BYTES,
+    });
     if (filePath.endsWith(".yaml") || filePath.endsWith(".yml")) {
       return parseYaml(raw) as unknown;
     }
@@ -39,7 +46,9 @@ export function readJson(filePath: string): unknown | undefined {
 
 export function readEnvFile(filePath: string): Record<string, string> {
   try {
-    const raw = fs.readFileSync(filePath, "utf-8");
+    const raw = readTextFileWithinLimitSync(filePath, {
+      maxBytes: SETUP_IMPORT_ENV_MAX_BYTES,
+    });
     const entries = raw
       .split(/\r?\n/)
       .flatMap((line) => {
@@ -53,6 +62,16 @@ export function readEnvFile(filePath: string): Record<string, string> {
     return Object.fromEntries(entries);
   } catch {
     return {};
+  }
+}
+
+export function readUserTextFile(filePath: string): string | undefined {
+  try {
+    return readTextFileWithinLimitSync(filePath, {
+      maxBytes: SETUP_IMPORT_USER_TEXT_MAX_BYTES,
+    });
+  } catch {
+    return undefined;
   }
 }
 
