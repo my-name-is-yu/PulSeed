@@ -18,6 +18,7 @@ import {
   type AdmissionAuthState,
   type AdmissionPolicyEvaluation,
 } from "./admission-policy.js";
+import { AutonomyTtlMsSchema } from "./autonomy-ttl.js";
 import {
   InternalAutonomyDefaultSchema,
   type InternalAutonomyDefault,
@@ -222,7 +223,7 @@ export const AutonomyDecisionInputSchema = z.object({
   privacy_sensitivity: AutonomyPrivacySensitivitySchema.default("medium"),
   evaluated_at: z.string().min(1).optional(),
   expires_at: z.string().min(1).optional(),
-  ttl_ms: z.number().int().positive().optional(),
+  ttl_ms: AutonomyTtlMsSchema.optional(),
   decision_id: z.string().min(1).optional(),
 }).strict();
 export type AutonomyDecisionInput = z.input<typeof AutonomyDecisionInputSchema>;

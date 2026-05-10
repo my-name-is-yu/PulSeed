@@ -6,6 +6,7 @@ import {
   CapabilityRiskProfileEnum,
   CapabilitySideEffectProfileEnum,
 } from "../../platform/observation/types/capability.js";
+import { AutonomyTtlMsSchema } from "./autonomy-ttl.js";
 
 export const InternalAutonomyCapabilityFamilySchema = z.enum([
   "soil",
@@ -154,7 +155,7 @@ export const InternalAutonomyDefaultClassificationInputSchema = z.object({
   policy_epoch: z.string().min(1).optional(),
   evaluated_at: z.string().min(1).optional(),
   expires_at: z.string().min(1).optional(),
-  ttl_ms: z.number().int().positive().optional(),
+  ttl_ms: AutonomyTtlMsSchema.optional(),
   ref: z.string().min(1).optional(),
 }).strict();
 export type InternalAutonomyDefaultClassificationInput = z.input<typeof InternalAutonomyDefaultClassificationInputSchema>;
