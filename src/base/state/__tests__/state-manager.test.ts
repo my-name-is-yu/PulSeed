@@ -747,6 +747,18 @@ describe("StateManager", async () => {
         const m = makeMilestone({ id: "m-future", target_date: futureDate });
         expect(getOverdueMilestones([m])).toHaveLength(0);
       });
+
+      it("ignores milestones with malformed target dates", () => {
+        const malformed = makeMilestone({ id: "m-malformed", target_date: "not-a-date" });
+
+        expect(getOverdueMilestones([malformed])).toHaveLength(0);
+      });
+
+      it("ignores ISO-like target dates that normalize to a different calendar date", () => {
+        const normalizedByDateParse = makeMilestone({ id: "m-overflow-day", target_date: "2026-02-31T00:00:00.000Z" });
+
+        expect(getOverdueMilestones([normalizedByDateParse])).toHaveLength(0);
+      });
     });
 
     describe("evaluatePace", () => {
@@ -794,6 +806,51 @@ describe("StateManager", async () => {
         expect(snapshot.status).toBe("on_track");
         expect(snapshot.pace_ratio).toBe(1);
         expect(snapshot.elapsed_ratio).toBe(0);
+      });
+
+      it("treats malformed milestone dates as unavailable timing data", () => {
+        const milestone = makeMilestone({
+          id: "m-malformed-date",
+          created_at: "not-a-created-date",
+          target_date: "not-a-target-date",
+        });
+
+        const snapshot = evaluatePace(milestone, 0.4);
+
+        expect(snapshot.status).toBe("on_track");
+        expect(snapshot.elapsed_ratio).toBe(0);
+        expect(snapshot.pace_ratio).toBe(1);
+        expect(snapshot.achievement_ratio).toBe(0.4);
+        expect(Number.isFinite(snapshot.elapsed_ratio)).toBe(true);
+        expect(Number.isFinite(snapshot.pace_ratio)).toBe(true);
+      });
+
+      it("rejects ISO-like milestone dates that normalize to a different calendar date", () => {
+        const milestone = makeMilestone({
+          id: "m-overflow-calendar-date",
+          created_at: "2026-01-01T00:00:00.000Z",
+          target_date: "2026-02-31T00:00:00.000Z",
+        });
+
+        const snapshot = evaluatePace(milestone, 0.4);
+
+        expect(snapshot.status).toBe("on_track");
+        expect(snapshot.elapsed_ratio).toBe(0);
+        expect(snapshot.pace_ratio).toBe(1);
+      });
+
+      it("keeps pace snapshots finite when achievement is non-finite", () => {
+        const now = Date.now();
+        const milestone = makeMilestone({
+          id: "m-nonfinite-achievement",
+          created_at: new Date(now - 50 * 24 * 60 * 60 * 1000).toISOString(),
+          target_date: new Date(now + 50 * 24 * 60 * 60 * 1000).toISOString(),
+        });
+
+        const snapshot = evaluatePace(milestone, Number.NaN);
+
+        expect(snapshot.achievement_ratio).toBe(0);
+        expect(Number.isFinite(snapshot.pace_ratio)).toBe(true);
       });
 
       it("handles 0 elapsed time without divide-by-zero", () => {
@@ -897,6 +954,58 @@ describe("StateManager", async () => {
         expect(new Date(extendOpt.new_target_date!).getTime()).toBeGreaterThan(
           new Date(targetDate).getTime()
         );
+      });
+
+      it("does not throw when milestone target date is malformed", () => {
+        const milestone = makeMilestone({
+          id: "m-invalid-reschedule-date",
+          target_date: "not-a-date",
+        });
+
+        const opts = generateRescheduleOptions(milestone, 0.2);
+        const extendOpt = opts.options.find((o) => o.option_type === "extend_deadline")!;
+
+        expect(extendOpt.new_target_date).toBeNull();
+      });
+
+      it("omits overflowing extended target dates instead of throwing", () => {
+        const nearDateLimit = new Date(8_639_999_999_900_000).toISOString();
+        const milestone = makeMilestone({
+          id: "m-overflow-reschedule-date",
+          created_at: nearDateLimit,
+          target_date: nearDateLimit,
+        });
+
+        const opts = generateRescheduleOptions(milestone, 0.2);
+        const extendOpt = opts.options.find((o) => o.option_type === "extend_deadline")!;
+
+        expect(extendOpt.new_target_date).toBeNull();
+      });
+
+      it("keeps reduced target values finite when achievement is non-finite", () => {
+        const milestone = makeMilestone({ id: "m-nonfinite-reschedule-achievement" });
+
+        const opts = generateRescheduleOptions(milestone, Number.NaN);
+        const reduceOpt = opts.options.find((o) => o.option_type === "reduce_target")!;
+
+        expect(reduceOpt.new_target_value).toBe(5);
+      });
+
+      it("omits reduced target values when threshold math is not JSON-safe", () => {
+        const nonFiniteThreshold = makeMilestone({
+          id: "m-nonfinite-reschedule-threshold",
+          dimensions: [makeDimension({ threshold: { type: "min", value: Infinity } })],
+        });
+        const unsafeIntegerThreshold = makeMilestone({
+          id: "m-unsafe-reschedule-threshold",
+          dimensions: [makeDimension({ threshold: { type: "min", value: Number.MAX_SAFE_INTEGER } })],
+        });
+
+        const nonFiniteOpts = generateRescheduleOptions(nonFiniteThreshold, 0.5);
+        const unsafeIntegerOpts = generateRescheduleOptions(unsafeIntegerThreshold, 1);
+
+        expect(nonFiniteOpts.options.find((o) => o.option_type === "reduce_target")!.new_target_value).toBeNull();
+        expect(unsafeIntegerOpts.options.find((o) => o.option_type === "reduce_target")!.new_target_value).toBeNull();
       });
 
       it("sets renegotiate option with no new values", () => {

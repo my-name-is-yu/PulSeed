@@ -2,6 +2,10 @@ import type { Goal } from "../../base/types/goal.js";
 import type { PaceSnapshot } from "../../base/types/goal.js";
 import type { RescheduleOptions } from "../../base/types/state.js";
 
+const ONE_SECOND_MS = 1000;
+const MIN_RESCHEDULE_EXTENSION_MS = 7 * 24 * 60 * 60 * 1000;
+const MAX_VALID_DATE_MS = 8_640_000_000_000_000;
+
 /**
  * Returns all goals with node_type === "milestone".
  */
@@ -14,10 +18,10 @@ export function getMilestones(goals: Goal[]): Goal[] {
  * Goals without a target_date are excluded.
  */
 export function getOverdueMilestones(goals: Goal[]): Goal[] {
-  const now = new Date();
+  const nowMs = Date.now();
   return getMilestones(goals).filter((g) => {
-    if (!g.target_date) return false;
-    return new Date(g.target_date) < now;
+    const targetMs = parseEpochMs(g.target_date);
+    return targetMs !== null && targetMs < nowMs;
   });
 }
 
@@ -36,46 +40,41 @@ export function getOverdueMilestones(goals: Goal[]): Goal[] {
  * If no target_date is set, returns on_track with pace_ratio = 1.
  */
 export function evaluatePace(milestone: Goal, currentAchievement: number): PaceSnapshot {
-  const now = new Date();
-  const evaluatedAt = now.toISOString();
+  const nowMs = Date.now();
+  const evaluatedAt = new Date(nowMs).toISOString();
+  const achievementRatio = normalizeAchievement(currentAchievement);
 
-  if (!milestone.target_date) {
-    return {
-      elapsed_ratio: 0,
-      achievement_ratio: currentAchievement,
-      pace_ratio: 1,
-      status: "on_track",
-      evaluated_at: evaluatedAt,
-    };
+  const targetDate = parseEpochMs(milestone.target_date);
+  const createdAt = parseEpochMs(milestone.created_at);
+
+  if (targetDate === null || createdAt === null) {
+    return noTimingPaceSnapshot(achievementRatio, evaluatedAt);
   }
 
-  const createdAt = new Date(milestone.created_at).getTime();
-  const targetDate = new Date(milestone.target_date).getTime();
   const totalDuration = targetDate - createdAt;
 
   // If total_duration is 0 or negative (target_date <= created_at), treat as elapsed
   if (totalDuration <= 0) {
-    const paceRatio = currentAchievement;
+    const paceRatio = achievementRatio;
     const status = paceRatio >= 0.8 ? "on_track" : paceRatio >= 0.5 ? "at_risk" : "behind";
     return {
       elapsed_ratio: 1,
-      achievement_ratio: currentAchievement,
+      achievement_ratio: achievementRatio,
       pace_ratio: paceRatio,
       status,
       evaluated_at: evaluatedAt,
     };
   }
 
-  const elapsed = now.getTime() - createdAt;
-  const elapsedRatio = Math.min(elapsed / totalDuration, 1);
+  const elapsed = nowMs - createdAt;
+  const elapsedRatio = Math.min(Math.max(elapsed / totalDuration, 0), 1);
 
-  const ONE_SECOND_MS = 1000;
   let paceRatio: number;
   if (elapsed < ONE_SECOND_MS) {
     // Sub-second elapsed — treat as on_track to avoid flaky timing issues
     paceRatio = 1;
   } else {
-    paceRatio = currentAchievement / elapsedRatio;
+    paceRatio = elapsedRatio > 0 ? achievementRatio / elapsedRatio : 1;
   }
 
   const status =
@@ -83,7 +82,7 @@ export function evaluatePace(milestone: Goal, currentAchievement: number): PaceS
 
   return {
     elapsed_ratio: elapsedRatio,
-    achievement_ratio: currentAchievement,
+    achievement_ratio: achievementRatio,
     pace_ratio: paceRatio,
     status,
     evaluated_at: evaluatedAt,
@@ -95,17 +94,18 @@ export function evaluatePace(milestone: Goal, currentAchievement: number): PaceS
  * Always returns 3 options: extend_deadline, reduce_target, renegotiate.
  */
 export function generateRescheduleOptions(milestone: Goal, currentAchievement: number): RescheduleOptions {
-  const snapshot = evaluatePace(milestone, currentAchievement);
+  const achievementRatio = normalizeAchievement(currentAchievement);
+  const snapshot = evaluatePace(milestone, achievementRatio);
   const now = new Date();
 
   // Extend deadline: add half the remaining duration
   let extendedDate: string | null = null;
-  if (milestone.target_date) {
-    const targetMs = new Date(milestone.target_date).getTime();
-    const createdMs = new Date(milestone.created_at).getTime();
-    const totalDuration = targetMs - createdMs;
-    const halfDuration = Math.max(totalDuration * 0.5, 7 * 24 * 60 * 60 * 1000); // at least 7 days
-    extendedDate = new Date(targetMs + halfDuration).toISOString();
+  const targetMs = parseEpochMs(milestone.target_date);
+  if (targetMs !== null) {
+    const createdMs = parseEpochMs(milestone.created_at);
+    const totalDuration = createdMs !== null ? targetMs - createdMs : 0;
+    const halfDuration = Math.max(totalDuration * 0.5, MIN_RESCHEDULE_EXTENSION_MS);
+    extendedDate = formatEpochMs(targetMs + halfDuration);
   }
 
   // Reduce target: scale current threshold by currentAchievement + buffer
@@ -115,7 +115,7 @@ export function generateRescheduleOptions(milestone: Goal, currentAchievement: n
   );
   if (firstNumericDim && firstNumericDim.threshold.type === "min") {
     const originalTarget = firstNumericDim.threshold.value;
-    reducedTargetValue = Math.round(originalTarget * Math.max(currentAchievement + 0.1, 0.5));
+    reducedTargetValue = reduceTargetValue(originalTarget, achievementRatio);
   }
 
   return {
@@ -144,4 +144,41 @@ export function generateRescheduleOptions(milestone: Goal, currentAchievement: n
     ],
     generated_at: now.toISOString(),
   };
+}
+
+function normalizeAchievement(value: number): number {
+  return Number.isFinite(value) ? value : 0;
+}
+
+function noTimingPaceSnapshot(achievementRatio: number, evaluatedAt: string): PaceSnapshot {
+  return {
+    elapsed_ratio: 0,
+    achievement_ratio: achievementRatio,
+    pace_ratio: 1,
+    status: "on_track",
+    evaluated_at: evaluatedAt,
+  };
+}
+
+function reduceTargetValue(originalTarget: number, achievementRatio: number): number | null {
+  if (!Number.isFinite(originalTarget)) return null;
+  const scale = Math.max(achievementRatio + 0.1, 0.5);
+  const reduced = Math.round(originalTarget * scale);
+  return Number.isSafeInteger(reduced) ? reduced : null;
+}
+
+function parseEpochMs(value: string | null | undefined): number | null {
+  if (!value) return null;
+  const parsed = Date.parse(value);
+  if (!Number.isFinite(parsed) || Math.abs(parsed) > MAX_VALID_DATE_MS) return null;
+  try {
+    return new Date(parsed).toISOString() === value ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function formatEpochMs(value: number): string | null {
+  if (!Number.isFinite(value) || Math.abs(value) > MAX_VALID_DATE_MS) return null;
+  return new Date(value).toISOString();
 }
