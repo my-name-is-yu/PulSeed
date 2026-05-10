@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApprovalBroker } from "../approval-broker.js";
+import type { ConversationalApprovalRequest } from "../approval-broker.js";
 import { ApprovalStore } from "../store/approval-store.js";
 import { PermissionWaitPlanStore, type PermissionWaitCanonicalPlan } from "../store/permission-wait-plan-store.js";
 import { createRuntimeStorePaths } from "../store/runtime-paths.js";
@@ -389,7 +390,7 @@ describe("ApprovalBroker", () => {
   it("routes conversational approvals to the originating channel with structured context", async () => {
     tmpDir = makeTempDir();
     const store = new ApprovalStore(tmpDir);
-    const delivered = vi.fn(async () => ({ delivered: true }));
+    const delivered = vi.fn(async (_request: ConversationalApprovalRequest) => ({ delivered: true }));
     const broadcast = vi.fn();
     const origin = {
       channel: "slack",
@@ -447,6 +448,51 @@ describe("ApprovalBroker", () => {
       response_channel: "slack",
       origin,
     });
+  });
+
+  it("keeps conversational permission prompts deliverable with out-of-range expiry timestamps", async () => {
+    tmpDir = makeTempDir();
+    const store = new ApprovalStore(tmpDir);
+    const delivered = vi.fn(async (_request: ConversationalApprovalRequest) => ({ delivered: true }));
+    const outOfDateRangeTimestamp = 9_000_000_000_000_000;
+    const origin = {
+      channel: "slack",
+      conversation_id: "thread-1",
+      user_id: "user-1",
+      session_id: "session-1",
+      turn_id: "turn-1",
+    };
+    const broker = new ApprovalBroker({
+      store,
+      deliverConversationalApproval: delivered,
+      createId: () => "approval-invalid-expiry-prompt",
+      now: () => outOfDateRangeTimestamp - 60_000,
+    });
+
+    const request = broker.requestConversationalApproval("goal-1", {
+      id: "call-invalid-expiry",
+      description: "Write a local file",
+      action: "write-tool",
+      kind: "permission",
+      operation_summary: "Write a local file",
+      risk_class: "medium",
+      target: { session_id: "session-1", tool_id: "write-tool", tool_call_id: "call-invalid-expiry" },
+      state_epoch: "epoch-1",
+    }, {
+      origin,
+      timeoutMs: 60_000,
+    });
+    await waitForPendingApproval(store, "approval-invalid-expiry-prompt");
+    await vi.waitFor(() => expect(delivered).toHaveBeenCalledOnce());
+
+    const prompt = delivered.mock.calls[0]?.[0].prompt ?? "";
+    expect(prompt).toContain("Expires: unavailable");
+    expect(prompt).not.toContain("Invalid Date");
+    expect(prompt).not.toContain("NaN");
+    expect(prompt).not.toContain("Infinity");
+
+    await expect(broker.resolveConversationalApproval("approval-invalid-expiry-prompt", false, origin)).resolves.toBe(true);
+    await expect(request).resolves.toBe(false);
   });
 
   it("does not resolve conversational approvals from stale or mismatched origins", async () => {
