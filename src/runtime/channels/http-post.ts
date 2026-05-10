@@ -45,38 +45,65 @@ export function httpPost(
       },
     };
 
+    let settled = false;
+    const rejectOnce = (err: Error): void => {
+      if (settled) return;
+      settled = true;
+      reject(err);
+    };
+
     const req = lib.request(requestOptions, (res) => {
       const chunks: Buffer[] = [];
       let storedBytes = 0;
       let bodyTruncated = false;
+      const resolveOnce = (): void => {
+        if (settled) return;
+        settled = true;
+        resolve({
+          statusCode: res.statusCode ?? 0,
+          body: Buffer.concat(chunks).toString("utf8"),
+          bodyTruncated,
+        });
+      };
+      const resolveAndClose = (): void => {
+        resolveOnce();
+        res.destroy();
+        req.destroy();
+      };
+
       res.on("data", (chunk: Buffer | string) => {
         const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
         const remainingBytes = maxResponseBodyBytes - storedBytes;
         if (remainingBytes <= 0) {
           bodyTruncated = true;
+          resolveAndClose();
           return;
         }
         if (buffer.byteLength > remainingBytes) {
           chunks.push(buffer.subarray(0, remainingBytes));
           storedBytes += remainingBytes;
           bodyTruncated = true;
+          resolveAndClose();
           return;
         }
         chunks.push(buffer);
         storedBytes += buffer.byteLength;
+        if (storedBytes >= maxResponseBodyBytes) {
+          bodyTruncated = true;
+          resolveAndClose();
+        }
       });
       res.on("end", () => {
-        resolve({
-          statusCode: res.statusCode ?? 0,
-          body: Buffer.concat(chunks).toString("utf8"),
-          bodyTruncated,
-        });
+        resolveOnce();
       });
+      res.on("error", (err: Error) => rejectOnce(err));
     });
 
-    req.on("error", (err: Error) => reject(err));
+    req.on("error", (err: Error) => rejectOnce(err));
     req.setTimeout(10_000, () => {
-      req.destroy(new Error("HTTP request timeout"));
+      if (!settled) {
+        req.destroy(new Error("HTTP request timeout"));
+      }
     });
 
     req.write(payload);
