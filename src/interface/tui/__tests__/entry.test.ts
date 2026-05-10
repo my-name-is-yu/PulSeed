@@ -2,9 +2,30 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { PIDManager } from "../../../runtime/pid-manager.js";
+import { PIDManager, type PIDRuntimeStatus } from "../../../runtime/pid-manager.js";
 import * as daemonClient from "../../../runtime/daemon/client.js";
+import { DEFAULT_PORT } from "../../../runtime/port-utils.js";
 import { resolveRunningDaemonConnection } from "../entry.js";
+
+function runningPidStatus(): PIDRuntimeStatus {
+  return {
+    info: {
+      pid: 12345,
+      started_at: new Date().toISOString(),
+      runtime_started_at: new Date().toISOString(),
+      owner_pid: 12345,
+      owner_started_at: new Date().toISOString(),
+      runtime_pid: 12345,
+    },
+    running: true,
+    runtimePid: 12345,
+    ownerPid: 12345,
+    alivePids: [12345],
+    stalePids: [],
+    verifiedPids: [12345],
+    unverifiedLegacyPids: [],
+  };
+}
 
 describe("resolveRunningDaemonConnection", () => {
   let tmpDir: string;
@@ -25,23 +46,7 @@ describe("resolveRunningDaemonConnection", () => {
       "utf-8"
     );
 
-    vi.spyOn(PIDManager.prototype, "inspect").mockResolvedValue({
-      info: {
-        pid: 12345,
-        started_at: new Date().toISOString(),
-        runtime_started_at: new Date().toISOString(),
-        owner_pid: 12345,
-        owner_started_at: new Date().toISOString(),
-        runtime_pid: 12345,
-      },
-      running: true,
-      runtimePid: 12345,
-      ownerPid: 12345,
-      alivePids: [12345],
-      stalePids: [],
-      verifiedPids: [12345],
-      unverifiedLegacyPids: [],
-    });
+    vi.spyOn(PIDManager.prototype, "inspect").mockResolvedValue(runningPidStatus());
     const probeSpy = vi.spyOn(daemonClient, "probeDaemonHealth").mockResolvedValue({
       ok: true,
       port: 41888,
@@ -63,6 +68,64 @@ describe("resolveRunningDaemonConnection", () => {
     expect(runningSpy).not.toHaveBeenCalled();
   });
 
+  it("falls back to the default port for unsafe persisted daemon ports", async () => {
+    fs.writeFileSync(
+      path.join(tmpDir, "daemon.json"),
+      JSON.stringify({ event_server_port: Number.MAX_SAFE_INTEGER + 1 }),
+      "utf-8"
+    );
+
+    vi.spyOn(PIDManager.prototype, "inspect").mockResolvedValue(runningPidStatus());
+    const probeSpy = vi.spyOn(daemonClient, "probeDaemonHealth").mockResolvedValue({
+      ok: true,
+      port: DEFAULT_PORT,
+      latency_ms: 1,
+      health: {
+        ok: true,
+        accepting_commands: true,
+        task_execution_ok: true,
+        runtime_kpi: null,
+      },
+    });
+    const runningSpy = vi.spyOn(daemonClient, "isDaemonRunning");
+
+    await expect(resolveRunningDaemonConnection(tmpDir)).resolves.toEqual({
+      port: DEFAULT_PORT,
+      authToken: null,
+    });
+    expect(probeSpy).toHaveBeenCalledWith({ host: "127.0.0.1", port: DEFAULT_PORT });
+    expect(runningSpy).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the default port for oversized daemon config", async () => {
+    fs.writeFileSync(
+      path.join(tmpDir, "daemon.json"),
+      JSON.stringify({ event_server_port: 41888, padding: "x".repeat(1024 * 1024) }),
+      "utf-8"
+    );
+
+    vi.spyOn(PIDManager.prototype, "inspect").mockResolvedValue(runningPidStatus());
+    const probeSpy = vi.spyOn(daemonClient, "probeDaemonHealth").mockResolvedValue({
+      ok: true,
+      port: DEFAULT_PORT,
+      latency_ms: 1,
+      health: {
+        ok: true,
+        accepting_commands: true,
+        task_execution_ok: true,
+        runtime_kpi: null,
+      },
+    });
+    const runningSpy = vi.spyOn(daemonClient, "isDaemonRunning");
+
+    await expect(resolveRunningDaemonConnection(tmpDir)).resolves.toEqual({
+      port: DEFAULT_PORT,
+      authToken: null,
+    });
+    expect(probeSpy).toHaveBeenCalledWith({ host: "127.0.0.1", port: DEFAULT_PORT });
+    expect(runningSpy).not.toHaveBeenCalled();
+  });
+
   it("falls back when the pid is live but daemon health never comes up", async () => {
     fs.writeFileSync(
       path.join(tmpDir, "daemon.json"),
@@ -71,23 +134,7 @@ describe("resolveRunningDaemonConnection", () => {
     );
 
     vi.spyOn(PIDManager.prototype, "inspect")
-      .mockResolvedValueOnce({
-        info: {
-          pid: 12345,
-          started_at: new Date().toISOString(),
-          runtime_started_at: new Date().toISOString(),
-          owner_pid: 12345,
-          owner_started_at: new Date().toISOString(),
-          runtime_pid: 12345,
-        },
-        running: true,
-        runtimePid: 12345,
-        ownerPid: 12345,
-        alivePids: [12345],
-        stalePids: [],
-        verifiedPids: [12345],
-        unverifiedLegacyPids: [],
-      })
+      .mockResolvedValueOnce(runningPidStatus())
       .mockResolvedValueOnce({
         info: {
           pid: 12345,

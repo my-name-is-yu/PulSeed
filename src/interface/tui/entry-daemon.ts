@@ -1,12 +1,16 @@
 import os from "os";
 import path from "path";
-import * as fs from "node:fs/promises";
 import { PIDManager } from "../../runtime/pid-manager.js";
 import { probeDaemonHealth, readDaemonAuthToken } from "../../runtime/daemon/client.js";
+import { readDaemonConfigJsonFile } from "../../runtime/daemon/config-json.js";
 import { DEFAULT_PORT } from "../../runtime/port-utils.js";
 
 const EXISTING_DAEMON_HEALTH_TIMEOUT_MS = 10_000;
 const EXISTING_DAEMON_HEALTH_POLL_MS = 250;
+
+function isDaemonProbePort(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 1 && value <= 65_535;
+}
 
 export function getDisplayCwd(): string {
   const raw = process.cwd();
@@ -34,10 +38,12 @@ export async function startDaemonDetached(baseDir: string): Promise<void> {
 export async function readDaemonPort(baseDir: string): Promise<number> {
   try {
     const configPath = path.join(baseDir, "daemon.json");
-    const raw = await fs.readFile(configPath, "utf-8");
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    const port = parsed.event_server_port;
-    return typeof port === "number" && Number.isInteger(port) && port > 0 ? port : DEFAULT_PORT;
+    const parsed = await readDaemonConfigJsonFile(configPath);
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      return DEFAULT_PORT;
+    }
+    const port = (parsed as { event_server_port?: unknown }).event_server_port;
+    return isDaemonProbePort(port) ? port : DEFAULT_PORT;
   } catch {
     return DEFAULT_PORT;
   }
