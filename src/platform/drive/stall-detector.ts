@@ -1,5 +1,6 @@
 import type { StateManager } from "../../base/state/state-manager.js";
 import type { ProgressPredictor } from "./progress-predictor.js";
+import { StallStateStore, type StallStateStorePort } from "../../runtime/store/stall-state-store.js";
 import { StallReportSchema, StallStateSchema } from "../../base/types/stall.js";
 import type { StallReport, StallState, StallAnalysis } from "../../base/types/stall.js";
 import type { CharacterConfig } from "../../base/types/character.js";
@@ -53,12 +54,17 @@ const RECOVERY_SCHEDULE: Array<{ loops: number; factor: number }> = [
  * Supports 4 stall types: dimension_stall, time_exceeded, consecutive_failure, global_stall.
  */
 export class StallDetector {
-  private readonly stateManager: StateManager;
+  private readonly stallStateStore: StallStateStorePort;
   private readonly characterConfig: CharacterConfig;
   private readonly predictor?: ProgressPredictor;
 
-  constructor(stateManager: StateManager, characterConfig?: CharacterConfig, predictor?: ProgressPredictor) {
-    this.stateManager = stateManager;
+  constructor(
+    stateManager: StateManager,
+    characterConfig?: CharacterConfig,
+    predictor?: ProgressPredictor,
+    stallStateStore?: StallStateStorePort,
+  ) {
+    this.stallStateStore = stallStateStore ?? new StallStateStore(stateManager.getBaseDir());
     this.characterConfig = characterConfig ?? DEFAULT_CHARACTER_CONFIG;
     this.predictor = predictor;
   }
@@ -376,12 +382,12 @@ export class StallDetector {
   }
 
   /**
-   * Load the StallState for a goal from StateManager.
+   * Load the DB-owned StallState for a goal.
    * Returns a default state if not found.
    */
   async getStallState(goalId: string): Promise<StallState> {
-    const raw = await this.stateManager.readRaw(`stalls/${goalId}.json`);
-    if (raw === null) {
+    const state = await this.stallStateStore.loadStallState(goalId);
+    if (state === null) {
       return StallStateSchema.parse({
         goal_id: goalId,
         dimension_escalation: {},
@@ -391,15 +397,15 @@ export class StallDetector {
       });
     }
 
-    return StallStateSchema.parse(raw);
+    return state;
   }
 
   /**
-   * Persist the StallState for a goal via StateManager.
+   * Persist the DB-owned StallState for a goal.
    */
   async saveStallState(goalId: string, state: StallState): Promise<void> {
     const parsed = StallStateSchema.parse(state);
-    await this.stateManager.writeRaw(`stalls/${goalId}.json`, parsed);
+    await this.stallStateStore.saveStallState(goalId, parsed);
   }
 
   /**

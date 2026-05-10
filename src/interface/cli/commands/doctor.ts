@@ -21,6 +21,7 @@ import {
   importLegacyEthicsLogState,
   importLegacyGoalOrchestrationState,
   importLegacyRelationshipProfileProposalState,
+  importLegacyStallState,
   importLegacyTrustState,
   OutboxStore,
   RuntimeHealthStore,
@@ -737,6 +738,7 @@ export async function cmdDoctor(_args: string[]): Promise<number> {
     const executionSessionImportReport = await importLegacyExecutionSessionState(baseDir);
     const goalTaskImportReport = await importLegacyGoalTaskDurableLoopState(baseDir);
     const goalOrchestrationImportReport = await importLegacyGoalOrchestrationState(baseDir);
+    const stallStateImportReport = await importLegacyStallState(baseDir);
     const capabilityRegistryImportReport = await importLegacyCapabilityRegistryState(baseDir);
     const evidenceStrategyDreamImportReport = await importLegacyRuntimeEvidenceStrategyDreamState(baseDir, { runtimeRoot });
     const runtimeFileStateImportReport = await importLegacyRuntimeFileState({
@@ -782,6 +784,9 @@ export async function cmdDoctor(_args: string[]): Promise<number> {
     );
     console.log(
       `Repair goal orchestration import: negotiation logs=${goalOrchestrationImportReport.negotiationLogs}, dependency graphs=${goalOrchestrationImportReport.dependencyGraphs}, skipped already imported=${goalOrchestrationImportReport.skippedAlreadyImported}, retired existing typed state=${goalOrchestrationImportReport.retiredExistingTypedState}, blocked=${goalOrchestrationImportReport.blockedSources.length}`
+    );
+    console.log(
+      `Repair stall state import: stall states=${stallStateImportReport.stallStates}, skipped already imported=${stallStateImportReport.skippedAlreadyImported}, retired existing typed state=${stallStateImportReport.retiredExistingTypedState}, blocked=${stallStateImportReport.blockedSources.length}`
     );
     console.log(
       `Repair capability registry import: registry files=${capabilityRegistryImportReport.registryFiles}, capabilities=${capabilityRegistryImportReport.importedCapabilities}, blocked=${capabilityRegistryImportReport.blockedSources.length}`

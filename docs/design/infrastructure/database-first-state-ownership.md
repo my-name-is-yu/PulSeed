@@ -65,7 +65,7 @@ The database-first state slices added typed owners for these areas:
   guardrail, outbox, lease, queue, daemon, supervisor, and schedule stores
 - chat session and AgentLoop data-plane stores
 - goal, task, checkpoint, verification, pipeline, ledger, DurableLoop evidence,
-  negotiation log, dependency graph, runtime evidence, strategy, dream,
+  negotiation log, dependency graph, stall state, runtime evidence, strategy, dream,
   reflection, knowledge, memory, learning, profile, plugin runtime, channel
   health, channel binding, foreign plugin compatibility, and runtime asset stores
 - execution sessions used by `SessionManager`, session history grounding, and
@@ -174,10 +174,12 @@ import/publish artifacts:
   `GoalOrchestrationStateStore`; legacy `goals/<id>/negotiation-log.json` and
   `dependency-graph.json` files are no longer authoritative normal runtime
   state and are explicit `doctor --repair` import inputs only
-- current raw fallback migration follow-up surfaces: stall detector state,
-  learning runtime state, knowledge transfer snapshot/meta-pattern state,
-  transfer trust state, capability dependency state, and task grounding raw task
-  reads. Each is tracked by
+- stall detector state uses the typed control DB `StallStateStore`; legacy
+  `stalls/<goalId>.json` files are no longer authoritative normal runtime
+  state and are explicit `doctor --repair` import inputs only
+- current raw fallback migration follow-up surfaces: learning runtime state,
+  knowledge transfer snapshot/meta-pattern state, transfer trust state,
+  capability dependency state, and task grounding raw task reads. Each is tracked by
   `scripts/check-database-first-legacy-stores.mjs --json` as `migrate now` debt
   until its typed store/API slice lands. Character config, MCP server config,
   and generated reports are explicitly classified non-debt boundaries.

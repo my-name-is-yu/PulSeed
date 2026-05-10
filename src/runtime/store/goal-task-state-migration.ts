@@ -35,7 +35,6 @@ export interface GoalTaskStateLegacyImportReport {
   verificationResults: number;
   checkpoints: number;
   pipelines: number;
-  stalls: number;
   blockedSources: Array<{ sourceKind: string; sourcePath: string; reason: string }>;
 }
 
@@ -63,7 +62,6 @@ export async function importLegacyGoalTaskDurableLoopState(
     verificationResults: 0,
     checkpoints: 0,
     pipelines: 0,
-    stalls: 0,
     blockedSources: [],
   };
 
@@ -76,7 +74,6 @@ export async function importLegacyGoalTaskDurableLoopState(
     await importVerificationResults(baseDir, store, controlDb, report);
     await importCheckpoints(baseDir, store, controlDb, report);
     await importPipelines(baseDir, store, controlDb, report);
-    await importStalls(baseDir, store, controlDb, report);
     return report;
   } finally {
     if (!options.controlDb) {
@@ -545,31 +542,6 @@ async function importPipelines(
       onImport: async (raw) => {
         await store.savePipeline(taskId, PipelineStateSchema.parse(raw));
         report.pipelines += 1;
-      },
-    });
-  }
-}
-
-async function importStalls(
-  baseDir: string,
-  store: GoalTaskStateStore,
-  controlDb: ControlDatabase,
-  report: GoalTaskStateLegacyImportReport,
-): Promise<void> {
-  const dir = path.join(baseDir, "stalls");
-  for (const entry of await readDir(dir)) {
-    if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
-    const goalId = entry.name.slice(0, -".json".length);
-    await importJson({
-      baseDir,
-      filePath: path.join(dir, entry.name),
-      sourceKind: "goal_stall_state",
-      sourceId: goalId,
-      controlDb,
-      report,
-      onImport: async (raw) => {
-        await store.saveStallRecord(goalId, raw);
-        report.stalls += 1;
       },
     });
   }

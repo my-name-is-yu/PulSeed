@@ -7,7 +7,7 @@ export interface ControlDbMigration {
   checksum: string;
 }
 
-export const CONTROL_DB_SCHEMA_VERSION = 17;
+export const CONTROL_DB_SCHEMA_VERSION = 18;
 
 export const CONTROL_DB_INITIAL_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS control_schema_migrations (
@@ -886,6 +886,24 @@ CREATE INDEX IF NOT EXISTS goal_dependency_graph_state_updated_idx
   ON goal_dependency_graph_state(updated_at, graph_id);
 `.trim();
 
+export const CONTROL_DB_STALL_STATE_SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS stall_states (
+  goal_id TEXT PRIMARY KEY,
+  updated_at TEXT NOT NULL,
+  state_json TEXT NOT NULL CHECK (json_valid(state_json))
+);
+
+CREATE INDEX IF NOT EXISTS stall_states_updated_idx
+  ON stall_states(updated_at, goal_id);
+
+INSERT INTO stall_states (goal_id, updated_at, state_json)
+SELECT goal_id, updated_at, record_json
+FROM goal_stall_records
+WHERE json_valid(record_json)
+  AND json_extract(record_json, '$.goal_id') = goal_id
+ON CONFLICT(goal_id) DO NOTHING;
+`.trim();
+
 export const CONTROL_DB_KNOWLEDGE_MEMORY_SOIL_SCHEMA_SQL = `
 PRAGMA foreign_keys = ON;
 `.trim();
@@ -1537,5 +1555,10 @@ export const CONTROL_DB_MIGRATIONS: readonly ControlDbMigration[] = [
     17,
     "goal-orchestration-runtime-state",
     CONTROL_DB_GOAL_ORCHESTRATION_SCHEMA_SQL
+  ),
+  createControlDbMigration(
+    18,
+    "stall-runtime-state",
+    CONTROL_DB_STALL_STATE_SCHEMA_SQL
   ),
 ];
