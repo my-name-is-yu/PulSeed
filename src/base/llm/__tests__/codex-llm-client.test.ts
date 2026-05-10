@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { EventEmitter } from "node:events";
 import { z } from "zod";
+import type * as NodeFs from "node:fs";
+import type * as NodeFsPromises from "node:fs/promises";
 
 // ─── Mock child_process.spawn and fs ───
 //
@@ -21,7 +23,7 @@ vi.mock("node:child_process", () => ({
 }));
 
 vi.mock("node:fs", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("node:fs")>();
+  const actual = await importOriginal<typeof NodeFs>();
   return {
     ...actual,
     mkdtempSync: vi.fn((_prefix: string) => "/tmp/pulseed-codex-test123"),
@@ -29,18 +31,31 @@ vi.mock("node:fs", async (importOriginal) => {
 });
 
 vi.mock("node:fs/promises", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  const actual = await importOriginal<typeof NodeFsPromises>();
   return {
     ...actual,
     mkdtemp: vi.fn((_prefix: string) => Promise.resolve("/tmp/pulseed-codex-test123")),
     readFile: vi.fn((_path: string, _encoding: string) => Promise.resolve(mockTmpContents.value)),
+    open: vi.fn(async () => {
+      const bytes = Buffer.from(mockTmpContents.value, "utf-8");
+      let position = 0;
+      return {
+        read: vi.fn(async (buffer: Buffer, offset: number, length: number) => {
+          const chunk = bytes.subarray(position, position + length);
+          chunk.copy(buffer, offset);
+          position += chunk.length;
+          return { bytesRead: chunk.length, buffer };
+        }),
+        close: vi.fn(() => Promise.resolve()),
+      };
+    }),
     access: vi.fn(() => Promise.resolve()),
     unlink: vi.fn(() => Promise.resolve()),
     rmdir: vi.fn(() => Promise.resolve()),
   };
 });
 
-import { CodexLLMClient } from "../codex-llm-client.js";
+import { CODEX_RESPONSE_TEXT_MAX_BYTES, CodexLLMClient } from "../codex-llm-client.js";
 
 // ─── Helpers ───
 
@@ -336,6 +351,20 @@ describe("CodexLLMClient", () => {
 
       expect(result.usage.input_tokens).toBe(0);
       expect(result.usage.output_tokens).toBe(0);
+    });
+
+    it("rejects oversized temp response files before returning content", async () => {
+      const client = new CodexLLMClient();
+      const child = makeFakeChild();
+      mockTmpContents.value = "x".repeat(CODEX_RESPONSE_TEXT_MAX_BYTES + 1);
+
+      const promise = client.sendMessage([{ role: "user", content: "go" }]).catch((e) => e);
+      await flushMicrotasks();
+      child.emit("close", 0);
+      const err = await promise;
+
+      expect(err).toBeInstanceOf(Error);
+      expect((err as Error).message).toContain(`output file exceeds ${CODEX_RESPONSE_TEXT_MAX_BYTES} bytes`);
     });
   });
 
