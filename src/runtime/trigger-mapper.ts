@@ -1,10 +1,13 @@
 import * as path from "node:path";
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { TriggerEvent, TriggerMapping } from "../base/types/trigger.js";
 import type { ILLMClient } from "../base/llm/llm-client.js";
 import { readTriggerMappingsConfig } from "./trigger-mappings-json.js";
 
 export type TriggerAction = "observe" | "create_task" | "notify" | "wake" | "none";
+
+const MAX_LLM_CACHE_ENTRIES = 100;
 
 const LlmTriggerResolutionSchema = z.object({
   goal_id: z.string().min(1),
@@ -95,7 +98,11 @@ export class TriggerMapper {
     const cacheKey = buildLlmCacheKey(trigger, goals);
     const cached = this.llmCache.get(cacheKey);
     if (cached) {
-      if (goalIds.has(cached.goal_id)) return cached;
+      if (goalIds.has(cached.goal_id)) {
+        this.llmCache.delete(cacheKey);
+        this.llmCache.set(cacheKey, cached);
+        return cached;
+      }
       this.llmCache.delete(cacheKey);
     }
 
@@ -116,11 +123,23 @@ export class TriggerMapper {
       const parsed = this.llmClient!.parseJSON(response.content, LlmTriggerResolutionSchema);
       if (!goalIds.has(parsed.goal_id)) return null;
 
-      this.llmCache.set(cacheKey, parsed);
+      this.rememberLlmResolution(cacheKey, parsed);
       return parsed;
     } catch {
       return null;
     }
+  }
+
+  private rememberLlmResolution(cacheKey: string, resolution: LlmTriggerResolution): void {
+    if (this.llmCache.has(cacheKey)) {
+      this.llmCache.delete(cacheKey);
+    }
+    while (this.llmCache.size >= MAX_LLM_CACHE_ENTRIES) {
+      const oldestKey = this.llmCache.keys().next().value;
+      if (oldestKey === undefined) break;
+      this.llmCache.delete(oldestKey);
+    }
+    this.llmCache.set(cacheKey, resolution);
   }
 
   clearCache(): void {
@@ -140,12 +159,18 @@ function buildLlmCacheKey(trigger: TriggerEvent, goals: Array<{ id: string; titl
   return [
     trigger.source,
     trigger.event_type,
-    stableCacheString(trigger.data),
-    goalSignature,
+    stableCacheDigest(trigger.data),
+    stableCacheDigest(goalSignature),
   ].join("\u0002");
 }
 
-function stableCacheString(value: unknown): string {
+function stableCacheDigest(value: unknown): string {
+  return createHash("sha256")
+    .update(toStableCacheString(value))
+    .digest("hex");
+}
+
+function toStableCacheString(value: unknown): string {
   try {
     return JSON.stringify(sortJsonValue(value)) ?? "undefined";
   } catch {

@@ -199,6 +199,27 @@ describe("TriggerMapper.resolve — LLM fallback", () => {
     fs.rmSync(tmpDir, { recursive: true, force: true , maxRetries: 3, retryDelay: 100 });
   });
 
+  it("bounds cached LLM routing entries for high-cardinality trigger payloads", async () => {
+    const tmpDir = makeTempDir();
+    const mockLLM = new MockLLMClient(
+      Array.from({ length: 101 }, () => '{"goal_id": "g-a", "action": "observe"}')
+    );
+    const mapper = new TriggerMapper(tmpDir, mockLLM);
+    await mapper.loadMappings();
+
+    const goals = [{ id: "g-a", title: "Goal A", status: "active" }];
+    for (let issue = 0; issue < 101; issue++) {
+      await mapper.resolve(
+        { source: "github" as const, event_type: "issue_opened", data: { issue } },
+        goals
+      );
+    }
+
+    expect(mockLLM.callCount).toBe(101);
+    expect(mapper.getCacheSize()).toBe(100);
+    fs.rmSync(tmpDir, { recursive: true, force: true , maxRetries: 3, retryDelay: 100 });
+  });
+
   it("fails closed when LLM returns an action outside the trigger contract", async () => {
     const tmpDir = makeTempDir();
     const mockLLM = new MockLLMClient([
