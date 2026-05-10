@@ -1,8 +1,11 @@
-import * as fs from "fs";
-import * as path from "path";
 import { z } from "zod";
 import type { ITool, ToolResult, ToolCallContext, PermissionCheckResult, ToolMetadata, ToolDescriptionContext } from "../../types.js";
 import { getPulseedDirPath } from "../../../base/utils/paths.js";
+import {
+  DEFAULT_PROVIDER_CONFIG,
+  loadProviderConfigFile,
+  type ProviderConfig,
+} from "../../../base/llm/provider-config.js";
 import { DESCRIPTION } from "./prompt.js";
 import { TAGS, PERMISSION_LEVEL, MAX_OUTPUT_CHARS } from "./constants.js";
 
@@ -11,13 +14,29 @@ export const ConfigToolInputSchema = z.object({
 }).strict();
 export type ConfigToolInput = z.infer<typeof ConfigToolInputSchema>;
 
-interface ProviderConfig {
+interface ConfigToolData {
   provider?: unknown;
   model?: unknown;
   reasoning_effort?: unknown;
+  adapter?: unknown;
   default_adapter?: unknown;
   pulseed_home_dir?: unknown;
   [key: string]: unknown;
+}
+
+function buildConfigToolData(
+  fileConfig: Partial<ProviderConfig>,
+  pulseedHome: string,
+): ConfigToolData {
+  const adapter = fileConfig.adapter ?? DEFAULT_PROVIDER_CONFIG.adapter;
+  return {
+    provider: fileConfig.provider ?? "unknown",
+    model: fileConfig.model ?? "unknown",
+    reasoning_effort: fileConfig.reasoning_effort,
+    adapter,
+    default_adapter: adapter,
+    pulseed_home_dir: pulseedHome,
+  };
 }
 
 export class ConfigTool implements ITool<ConfigToolInput, unknown> {
@@ -39,33 +58,12 @@ export class ConfigTool implements ITool<ConfigToolInput, unknown> {
     return DESCRIPTION;
   }
 
-  async call(input: ConfigToolInput, _context: ToolCallContext): Promise<ToolResult> {
+  async call(input: ConfigToolInput, context: ToolCallContext): Promise<ToolResult> {
     const startTime = Date.now();
     try {
-      const pulseedHome = getPulseedDirPath();
-      const providerPath = path.join(pulseedHome, "provider.json");
-      const defaults: ProviderConfig = {
-        provider: "unknown",
-        model: "unknown",
-        default_adapter: "claude-code-cli",
-        pulseed_home_dir: pulseedHome,
-      };
-      let config: ProviderConfig = { ...defaults };
-      if (fs.existsSync(providerPath)) {
-        try {
-          const raw = fs.readFileSync(providerPath, "utf-8");
-          const parsed = JSON.parse(raw) as ProviderConfig;
-          config = {
-            provider: parsed["provider"] ?? defaults.provider,
-            model: parsed["model"] ?? defaults.model,
-            reasoning_effort: parsed["reasoning_effort"],
-            default_adapter: parsed["default_adapter"] ?? defaults.default_adapter,
-            pulseed_home_dir: defaults.pulseed_home_dir,
-          };
-        } catch {
-          // use defaults on parse failure
-        }
-      }
+      const pulseedHome = context.providerConfigBaseDir ?? getPulseedDirPath();
+      const fileConfig = await loadProviderConfigFile({ baseDir: pulseedHome });
+      const config = buildConfigToolData(fileConfig, pulseedHome);
       if (input.key) {
         const value = config[input.key];
         const data = { key: input.key, value: value ?? null };
