@@ -670,6 +670,7 @@ describe("CrossPlatformChatSessionManager", () => {
       JSON.stringify({
         verdict: "requires_evidence",
         reason: "The answer claims a current daemon status check succeeded.",
+        claim_domain: "runtime_status",
       }),
     ]);
     const manager = new CrossPlatformChatSessionManager(makeDeps({
@@ -706,6 +707,156 @@ describe("CrossPlatformChatSessionManager", () => {
       event.type === "assistant_final"
     );
     expect(final?.text).toBe(result.output);
+  });
+
+  it("uses workspace-specific evidence fallback for unsupported repository file claims", async () => {
+    const stateManager = makeMockStateManager();
+    const events: ChatEvent[] = [];
+    const chatAgentLoopRunner = {
+      execute: vi.fn().mockImplementation(async (input: { eventSink?: { emit(event: unknown): Promise<void> } }) => {
+        await input.eventSink?.emit({
+          type: "assistant_message",
+          eventId: "event-final-candidate",
+          sessionId: "session-1",
+          traceId: "trace-1",
+          turnId: "turn-1",
+          goalId: "goal-1",
+          createdAt: "2026-05-10T00:00:00.000Z",
+          phase: "final_candidate",
+          contentPreview: "あります。リポジトリ直下に /repo/README.md がありました。",
+          toolCallCount: 0,
+        });
+        return {
+          success: true,
+          output: "あります。リポジトリ直下に /repo/README.md がありました。",
+          error: null,
+          exit_code: null,
+          elapsed_ms: 42,
+          stopped_reason: "completed",
+        };
+      }),
+    };
+    const runtimeEvidenceGateClient = createMockLLMClient([
+      JSON.stringify({
+        verdict: "requires_evidence",
+        reason: "The answer claims current repository file state without same-turn file evidence.",
+        claim_domain: "workspace_state",
+      }),
+    ]);
+    const manager = new CrossPlatformChatSessionManager(makeDeps({
+      stateManager,
+      chatAgentLoopRunner: chatAgentLoopRunner as never,
+      runtimeEvidenceGateClient,
+    }));
+
+    const result = await manager.execute("このリポジトリにREADMEがあるかだけ軽く見て", {
+      identity_key: "workspace-file-claim-user",
+      platform: "telegram",
+      conversation_id: "telegram-chat-1",
+      user_id: "user-1",
+      cwd: "/repo",
+      onEvent: (event) => { events.push(event); },
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.output).toContain("current workspace or repository state");
+    expect(result.output).toContain("workspace/file check");
+    expect(result.output).not.toContain("daemon");
+    expect(result.output).not.toContain("gateway");
+    expect(result.output).not.toContain("watchdog");
+    expect(result.output).not.toContain("/repo/README.md");
+    const deltaText = events
+      .filter((event): event is Extract<ChatEvent, { type: "assistant_delta" }> => event.type === "assistant_delta")
+      .map((event) => event.text)
+      .join("\n");
+    expect(deltaText).not.toContain("/repo/README.md");
+    expect(events.some((event) =>
+      event.type === "activity"
+      && event.sourceId === "checkpoint:runtime-evidence"
+    )).toBe(true);
+    const final = events.find((event): event is Extract<ChatEvent, { type: "assistant_final" }> =>
+      event.type === "assistant_final"
+    );
+    expect(final?.text).toBe(result.output);
+  });
+
+  it("does not default missing evidence domains to runtime-specific fallback text", async () => {
+    const stateManager = makeMockStateManager();
+    const chatAgentLoopRunner = {
+      execute: vi.fn().mockResolvedValue({
+        success: true,
+        output: "あります。リポジトリ直下に /repo/README.md がありました。",
+        error: null,
+        exit_code: null,
+        elapsed_ms: 42,
+        stopped_reason: "completed",
+      }),
+    };
+    const runtimeEvidenceGateClient = createMockLLMClient([
+      JSON.stringify({
+        verdict: "requires_evidence",
+        reason: "The answer claims current repository file state without same-turn file evidence.",
+      }),
+    ]);
+    const manager = new CrossPlatformChatSessionManager(makeDeps({
+      stateManager,
+      chatAgentLoopRunner: chatAgentLoopRunner as never,
+      runtimeEvidenceGateClient,
+    }));
+
+    const result = await manager.execute("このリポジトリにREADMEがあるかだけ軽く見て", {
+      identity_key: "workspace-file-claim-missing-domain-user",
+      platform: "telegram",
+      conversation_id: "telegram-chat-1",
+      user_id: "user-1",
+      cwd: "/repo",
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.output).toContain("current local state");
+    expect(result.output).not.toContain("current PulSeed runtime status");
+    expect(result.output).not.toContain("daemon");
+    expect(result.output).not.toContain("gateway");
+    expect(result.output).not.toContain("watchdog");
+    expect(result.output).not.toContain("/repo/README.md");
+  });
+
+  it("coerces unknown evidence domains to the generic fallback instead of failing open", async () => {
+    const stateManager = makeMockStateManager();
+    const chatAgentLoopRunner = {
+      execute: vi.fn().mockResolvedValue({
+        success: true,
+        output: "あります。リポジトリ直下に /repo/README.md がありました。",
+        error: null,
+        exit_code: null,
+        elapsed_ms: 42,
+        stopped_reason: "completed",
+      }),
+    };
+    const runtimeEvidenceGateClient = createMockLLMClient([
+      JSON.stringify({
+        verdict: "requires_evidence",
+        reason: "The answer claims current repository file state without same-turn file evidence.",
+        claim_domain: "repository_state",
+      }),
+    ]);
+    const manager = new CrossPlatformChatSessionManager(makeDeps({
+      stateManager,
+      chatAgentLoopRunner: chatAgentLoopRunner as never,
+      runtimeEvidenceGateClient,
+    }));
+
+    const result = await manager.execute("このリポジトリにREADMEがあるかだけ軽く見て", {
+      identity_key: "workspace-file-claim-unknown-domain-user",
+      platform: "telegram",
+      conversation_id: "telegram-chat-1",
+      user_id: "user-1",
+      cwd: "/repo",
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.output).toContain("current local state");
+    expect(result.output).not.toContain("/repo/README.md");
   });
 
   it("allows runtime status answers when the same gateway turn produced tool evidence", async () => {
@@ -815,6 +966,7 @@ describe("CrossPlatformChatSessionManager", () => {
       JSON.stringify({
         verdict: "requires_evidence",
         reason: "The only evidence is an unrelated failed read_file tool.",
+        claim_domain: "runtime_status",
       }),
     ]);
     const manager = new CrossPlatformChatSessionManager(makeDeps({
@@ -861,6 +1013,7 @@ describe("CrossPlatformChatSessionManager", () => {
         JSON.stringify({
           verdict: "uncertain",
           reason: "The answer may be making a current runtime status claim without evidence.",
+          claim_domain: "runtime_status",
         }),
       ]),
     }));
