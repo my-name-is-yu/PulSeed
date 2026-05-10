@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { ITool, ToolResult, ToolCallContext, PermissionCheckResult, ToolMetadata, ToolDescriptionContext } from "../../types.js";
-import { glob } from "glob";
+import { globIterate } from "glob";
 import { isAbsolute } from "node:path";
 import { validateFilePath } from "../FileValidationTool/FileValidationTool.js";
 import { DESCRIPTION_PREFIX, DESCRIPTION_SUFFIX } from "./prompt.js";
@@ -15,6 +15,24 @@ export const GlobInputSchema = z.object({
   limit: z.number().int().min(1).max(GLOB_MAX_LIMIT).default(GLOB_DEFAULT_LIMIT),
 }).strict();
 export type GlobInput = z.infer<typeof GlobInputSchema>;
+
+interface GlobCollection {
+  matches: string[];
+  truncated: boolean;
+}
+
+async function collectGlobMatches(pattern: string, searchPath: string, limit: number): Promise<GlobCollection> {
+  const matches: string[] = [];
+  let truncated = false;
+  for await (const match of globIterate(pattern, { cwd: searchPath, absolute: true, nodir: false })) {
+    if (matches.length >= limit) {
+      truncated = true;
+      break;
+    }
+    matches.push(match);
+  }
+  return { matches, truncated };
+}
 
 export class GlobTool implements ITool<GlobInput, string[]> {
   readonly metadata: ToolMetadata = {
@@ -41,14 +59,13 @@ export class GlobTool implements ITool<GlobInput, string[]> {
     const startTime = Date.now();
     const searchPath = input.path ?? context.cwd;
     try {
-      const matches = await glob(input.pattern, { cwd: searchPath, absolute: true, nodir: false });
-      const limited = matches.slice(0, input.limit);
+      const { matches, truncated } = await collectGlobMatches(input.pattern, searchPath, input.limit);
       return {
         success: true,
-        data: limited,
-        summary: `Found ${matches.length} files matching "${input.pattern}"${matches.length > input.limit ? ` (showing first ${input.limit})` : ""}`,
+        data: matches,
+        summary: `Found ${matches.length}${truncated ? "+" : ""} files matching "${input.pattern}"${truncated ? ` (showing first ${input.limit})` : ""}`,
         durationMs: Date.now() - startTime,
-        artifacts: limited,
+        artifacts: matches,
       };
     } catch (err) {
       return {
