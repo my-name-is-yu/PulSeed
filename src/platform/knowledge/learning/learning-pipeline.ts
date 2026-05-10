@@ -6,6 +6,10 @@ import type { VectorIndex } from "../vector-index.js";
 import type { StateManager } from "../../../base/state/state-manager.js";
 import type { IPromptGateway } from "../../../prompt/gateway.js";
 import {
+  LearningRuntimeStateStore,
+  type LearningRuntimeStateStorePort,
+} from "../../../runtime/store/learning-runtime-state-store.js";
+import {
   LearningTriggerSchema,
   LearnedPatternSchema,
   FeedbackEntrySchema,
@@ -53,25 +57,25 @@ import type { Triplet } from "./learning-pipeline-prompts.js";
  * LearningPipeline extracts patterns from goal execution logs and
  * applies feedback to future iterations via SessionManager context injection.
  *
- * File layout:
- *   <base>/learning/<goal_id>_logs.json
- *   <base>/learning/<goal_id>_patterns.json
- *   <base>/learning/<goal_id>_feedback.json
+ * Runtime state is owned by LearningRuntimeStateStore in the control DB.
  */
 export class LearningPipeline {
   private readonly config: LearningPipelineConfig;
   private knowledgeTransfer?: { updateMetaPatternsIncremental(): Promise<number> };
   private readonly gateway?: IPromptGateway;
+  private readonly learningStore: LearningRuntimeStateStorePort;
 
   constructor(
     private readonly llmClient: ILLMClient,
     private readonly vectorIndex: VectorIndex | null,
     private readonly stateManager: StateManager,
     config?: LearningPipelineConfig,
-    gateway?: IPromptGateway
+    gateway?: IPromptGateway,
+    learningStore?: LearningRuntimeStateStorePort
   ) {
     this.config = config ?? LearningPipelineConfigSchema.parse({});
     this.gateway = gateway;
+    this.learningStore = learningStore ?? new LearningRuntimeStateStore(stateManager.getBaseDir());
   }
 
   setKnowledgeTransfer(kt: { updateMetaPatternsIncremental(): Promise<number> }): void {
@@ -173,8 +177,7 @@ export class LearningPipeline {
    */
   async analyzeLogs(trigger: LearningTrigger): Promise<LearnedPattern[]> {
     // 1. Load experience logs
-    const logsKey = `learning/${trigger.goal_id}_logs.json`;
-    const rawLogs = await this.stateManager.readRaw(logsKey);
+    const rawLogs = await this.learningStore.loadExperienceLogs(trigger.goal_id);
     if (!rawLogs) {
       return [];
     }
@@ -502,40 +505,28 @@ export class LearningPipeline {
    * Load learned patterns for a goal. Returns empty array if not found.
    */
   async getPatterns(goalId: string): Promise<LearnedPattern[]> {
-    const raw = await this.stateManager.readRaw(`learning/${goalId}_patterns.json`);
-    if (!raw || !Array.isArray(raw)) return [];
-    try {
-      return (raw as unknown[]).map((item) => LearnedPatternSchema.parse(item));
-    } catch {
-      return [];
-    }
+    return this.learningStore.loadPatterns(goalId);
   }
 
   /**
    * Persist learned patterns for a goal.
    */
   async savePatterns(goalId: string, patterns: LearnedPattern[]): Promise<void> {
-    await this.stateManager.writeRaw(`learning/${goalId}_patterns.json`, patterns);
+    await this.learningStore.savePatterns(goalId, patterns);
   }
 
   /**
    * Load feedback entries for a goal. Returns empty array if not found.
    */
   async getFeedbackEntries(goalId: string): Promise<FeedbackEntry[]> {
-    const raw = await this.stateManager.readRaw(`learning/${goalId}_feedback.json`);
-    if (!raw || !Array.isArray(raw)) return [];
-    try {
-      return (raw as unknown[]).map((item) => FeedbackEntrySchema.parse(item));
-    } catch {
-      return [];
-    }
+    return this.learningStore.loadFeedbackEntries(goalId);
   }
 
   /**
    * Persist feedback entries for a goal.
    */
   async saveFeedbackEntries(goalId: string, entries: FeedbackEntry[]): Promise<void> {
-    await this.stateManager.writeRaw(`learning/${goalId}_feedback.json`, entries);
+    await this.learningStore.saveFeedbackEntries(goalId, entries);
   }
 
   // ─── Structural Feedback (thin wrappers over learning-feedback.ts) ───
@@ -545,7 +536,7 @@ export class LearningPipeline {
    */
   async recordStructuralFeedback(feedback: StructuralFeedback): Promise<void> {
     await recordStructuralFeedback(
-      { stateManager: this.stateManager, config: this.config },
+      { learningStore: this.learningStore, config: this.config },
       feedback
     );
   }
@@ -555,7 +546,7 @@ export class LearningPipeline {
    */
   async getStructuralFeedback(goalId: string): Promise<StructuralFeedback[]> {
     return getStructuralFeedback(
-      { stateManager: this.stateManager, config: this.config },
+      { learningStore: this.learningStore, config: this.config },
       goalId
     );
   }
@@ -568,7 +559,7 @@ export class LearningPipeline {
     feedbackType?: StructuralFeedbackType
   ): Promise<FeedbackAggregation[]> {
     return aggregateFeedback(
-      { stateManager: this.stateManager, config: this.config },
+      { learningStore: this.learningStore, config: this.config },
       goalId,
       feedbackType
     );
@@ -579,7 +570,7 @@ export class LearningPipeline {
    */
   async autoTuneParameters(goalId: string): Promise<ParameterTuning[]> {
     return await autoTuneParameters(
-      { stateManager: this.stateManager, config: this.config },
+      { learningStore: this.learningStore, config: this.config },
       goalId
     );
   }
@@ -591,7 +582,7 @@ export class LearningPipeline {
    */
   async extractCrossGoalPatterns(goalIds: string[]): Promise<CrossGoalPattern[]> {
     return await extractCrossGoalPatterns(
-      { stateManager: this.stateManager, config: this.config },
+      { learningStore: this.learningStore, config: this.config },
       goalIds
     );
   }
@@ -604,7 +595,7 @@ export class LearningPipeline {
     targetGoalIds: string[]
   ): Promise<PatternSharingResult> {
     return await sharePatternsAcrossGoals(
-      { stateManager: this.stateManager, config: this.config },
+      { learningStore: this.learningStore, config: this.config },
       patterns,
       targetGoalIds
     );

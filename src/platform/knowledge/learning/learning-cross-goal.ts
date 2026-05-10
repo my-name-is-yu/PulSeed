@@ -10,7 +10,7 @@ import type {
   PatternSharingResult,
   LearningPipelineConfig,
 } from "../../../base/types/learning.js";
-import type { StateManager } from "../../../base/state/state-manager.js";
+import type { LearningRuntimeStateStorePort } from "../../../runtime/store/learning-runtime-state-store.js";
 import {
   getStructuralFeedback,
   recordStructuralFeedback,
@@ -19,7 +19,7 @@ import {
 // ─── Deps ───
 
 export interface CrossGoalDeps {
-  stateManager: StateManager;
+  learningStore: LearningRuntimeStateStorePort;
   config: LearningPipelineConfig;
 }
 

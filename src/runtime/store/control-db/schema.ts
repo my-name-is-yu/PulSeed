@@ -7,7 +7,7 @@ export interface ControlDbMigration {
   checksum: string;
 }
 
-export const CONTROL_DB_SCHEMA_VERSION = 18;
+export const CONTROL_DB_SCHEMA_VERSION = 19;
 
 export const CONTROL_DB_INITIAL_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS control_schema_migrations (
@@ -904,6 +904,44 @@ WHERE json_valid(record_json)
 ON CONFLICT(goal_id) DO NOTHING;
 `.trim();
 
+export const CONTROL_DB_LEARNING_RUNTIME_SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS learning_experience_logs (
+  goal_id TEXT PRIMARY KEY,
+  updated_at TEXT NOT NULL,
+  logs_json TEXT NOT NULL CHECK (json_valid(logs_json))
+);
+
+CREATE INDEX IF NOT EXISTS learning_experience_logs_updated_idx
+  ON learning_experience_logs(updated_at, goal_id);
+
+CREATE TABLE IF NOT EXISTS learning_patterns (
+  goal_id TEXT PRIMARY KEY,
+  updated_at TEXT NOT NULL,
+  patterns_json TEXT NOT NULL CHECK (json_valid(patterns_json))
+);
+
+CREATE INDEX IF NOT EXISTS learning_patterns_updated_idx
+  ON learning_patterns(updated_at, goal_id);
+
+CREATE TABLE IF NOT EXISTS learning_feedback_entries (
+  goal_id TEXT PRIMARY KEY,
+  updated_at TEXT NOT NULL,
+  feedback_json TEXT NOT NULL CHECK (json_valid(feedback_json))
+);
+
+CREATE INDEX IF NOT EXISTS learning_feedback_entries_updated_idx
+  ON learning_feedback_entries(updated_at, goal_id);
+
+CREATE TABLE IF NOT EXISTS learning_structural_feedback (
+  goal_id TEXT PRIMARY KEY,
+  updated_at TEXT NOT NULL,
+  feedback_json TEXT NOT NULL CHECK (json_valid(feedback_json))
+);
+
+CREATE INDEX IF NOT EXISTS learning_structural_feedback_updated_idx
+  ON learning_structural_feedback(updated_at, goal_id);
+`.trim();
+
 export const CONTROL_DB_KNOWLEDGE_MEMORY_SOIL_SCHEMA_SQL = `
 PRAGMA foreign_keys = ON;
 `.trim();
@@ -1560,5 +1598,10 @@ export const CONTROL_DB_MIGRATIONS: readonly ControlDbMigration[] = [
     18,
     "stall-runtime-state",
     CONTROL_DB_STALL_STATE_SCHEMA_SQL
+  ),
+  createControlDbMigration(
+    19,
+    "learning-runtime-state",
+    CONTROL_DB_LEARNING_RUNTIME_SCHEMA_SQL
   ),
 ];
