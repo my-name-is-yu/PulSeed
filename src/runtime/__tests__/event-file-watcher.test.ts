@@ -13,6 +13,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { EventServer } from "../event-server.js";
+import { EVENT_FILE_MAX_BYTES } from "../event/server-file-ingestion.js";
 import type { PulSeedEvent } from "../../base/types/drive.js";
 import { makeTempDir } from "../../../tests/helpers/temp-dir.js";
 
@@ -255,6 +256,32 @@ describe("file watcher — malformed files handled gracefully", () => {
     await waitFor(() => fs.existsSync(path.join(eventsDir, "failed", "dispatch_failure.json")), 8000);
     expect(mockDriveSystem.writeEvent).toHaveBeenCalledTimes(3);
     expect(fs.existsSync(path.join(eventsDir, "dispatch_failure.json"))).toBe(false);
+  });
+
+  it("quarantines oversized event JSON without dispatching", { timeout: 10000 }, async () => {
+    server.stopFileWatcher();
+    server = new EventServer(mockDriveSystem as never, {
+      eventsDir: path.join(tmpDir, "events"),
+      eventFileMaxAttempts: 1,
+      eventFileRetryDelayMs: 20,
+    });
+    const eventsDir = path.join(tmpDir, "events");
+    server.startFileWatcher();
+    await waitForWatcherReady();
+
+    const filename = "oversized.json";
+    fs.writeFileSync(
+      path.join(eventsDir, filename),
+      JSON.stringify({
+        ...validEvent,
+        data: { payload: "x".repeat(EVENT_FILE_MAX_BYTES) },
+      }),
+      "utf-8"
+    );
+
+    await waitFor(() => fs.existsSync(path.join(eventsDir, "failed", filename)), 8000);
+    expect(mockDriveSystem.writeEvent).not.toHaveBeenCalled();
+    expect(fs.existsSync(path.join(eventsDir, filename))).toBe(false);
   });
 
   it("does not crash when a JSON file contains invalid JSON", async () => {
