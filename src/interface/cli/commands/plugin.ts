@@ -6,6 +6,7 @@ import { getPulseedVersion as getPackageVersion } from "../../../base/utils/puls
 import { formatOperationError } from "../utils.js";
 import { getCliLogger } from "../cli-logger.js";
 import { getPluginsDir } from "../../../base/utils/paths.js";
+import { readTextFileWithinLimit } from "../../../base/utils/json-io.js";
 import { satisfiesRange } from "../../../runtime/plugin-loader.js";
 import {
   readPluginManifest,
@@ -14,6 +15,7 @@ import {
 
 const execFile = promisify(cp.execFile);
 const NPM_SOURCE_METADATA = ".pulseed-plugin-source.json";
+const NPM_SOURCE_METADATA_MAX_BYTES = 64 * 1024;
 
 function defaultPluginsDir(): string {
   return getPluginsDir();
@@ -154,7 +156,9 @@ async function writeNpmSourceMetadata(pluginDir: string, packageName: string): P
 
 async function readNpmSourceMetadata(pluginDir: string): Promise<{ packageName: string } | null> {
   try {
-    const raw = await fsp.readFile(path.join(pluginDir, NPM_SOURCE_METADATA), "utf-8");
+    const raw = await readTextFileWithinLimit(path.join(pluginDir, NPM_SOURCE_METADATA), {
+      maxBytes: NPM_SOURCE_METADATA_MAX_BYTES,
+    });
     const parsed = JSON.parse(raw) as { type?: unknown; packageName?: unknown };
     if (parsed.type === "npm" && typeof parsed.packageName === "string" && parsed.packageName.length > 0) {
       return { packageName: parsed.packageName };
