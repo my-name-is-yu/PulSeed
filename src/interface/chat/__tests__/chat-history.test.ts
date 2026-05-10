@@ -415,6 +415,25 @@ describe("ChatHistory", () => {
     expect(JSON.stringify(displayRecords)).not.toContain("trace:presence-debug");
   });
 
+  it("rejects stale Seedy presence for a previous turn before journaling", async () => {
+    const history = new ChatHistory(stateManager, SESSION_ID, CWD);
+    const createdAt = "2026-05-10T05:00:00.000Z";
+
+    await expect(history.recordChatEvent({
+      type: "presence_update",
+      runId: "run-presence",
+      turnId: "turn-current",
+      createdAt,
+      presence: createUserVisibleSeedyTurnPresence({
+        turn_id: "turn-previous",
+        phase: "received",
+        started_at: createdAt,
+      }),
+    })).rejects.toThrow("presence.turn_id must match event turnId");
+
+    expect(history.getSessionData().rolloutJournal).toBeUndefined();
+  });
+
   it("compacts into structured records with invalidated pending permissions and retained active targets", async () => {
     const history = new ChatHistory(stateManager, SESSION_ID, CWD);
     const eventContext = { runId: "run-compact", turnId: "turn-compact" };

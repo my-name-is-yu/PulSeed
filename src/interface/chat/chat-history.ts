@@ -303,6 +303,7 @@ export class ChatHistory {
   }
 
   async recordChatEvent(event: ChatEvent, options: { persist?: boolean } = {}): Promise<void> {
+    assertChatEventInvariants(event);
     const projection = rolloutProjectionFromChatEvent(event);
     this.pushRolloutRecord({
       kind: projection.kind,
@@ -725,6 +726,14 @@ function toReplayableUserInput(input: UserInput): unknown {
       }
     }),
   };
+}
+
+function assertChatEventInvariants(event: ChatEvent): void {
+  if (event.type !== "presence_update") return;
+  if (event.presence.turn_id === event.turnId) return;
+  throw new Error(
+    `presence.turn_id must match event turnId for presence_update events: ${event.presence.turn_id} !== ${event.turnId}`,
+  );
 }
 
 function rolloutProjectionFromChatEvent(event: ChatEvent): {
