@@ -61,6 +61,9 @@ describe("GrepTool", () => {
       path.join(tmpDir, "symbols.ts"),
       'export const marker = "literal[needle]";\n'
     );
+    await fs.writeFile(path.join(tmpDir, "limit-a.txt"), "bounded needle\n");
+    await fs.writeFile(path.join(tmpDir, "limit-b.txt"), "bounded needle\n");
+    await fs.writeFile(path.join(tmpDir, "limit-c.txt"), "bounded needle\n");
     await fs.writeFile(path.join(tmpDir, "other.json"), '{"key": "value"}');
   });
 
@@ -139,6 +142,52 @@ describe("GrepTool", () => {
     );
     expect(result.success).toBe(true);
     expect(result.data).toBe("");
+  });
+
+  it.skipIf(!HAS_RG)("returns failure for ripgrep execution errors", async () => {
+    const result = await tool.call(
+      { pattern: "[", outputMode: "content", limit: 250, caseInsensitive: false },
+      makeContext(tmpDir)
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("regex parse error");
+    expect(result.summary).toContain("Grep failed:");
+  });
+
+  it.skipIf(!HAS_RG)("enforces a global files_with_matches result limit", async () => {
+    const result = await tool.call(
+      { pattern: "bounded needle", outputMode: "files_with_matches", limit: 2, caseInsensitive: false },
+      makeContext(tmpDir)
+    );
+
+    expect(result.success).toBe(true);
+    expect((result.data as string).split("\n").filter(Boolean)).toHaveLength(2);
+    expect(result.summary).toContain("truncated to limit 2");
+  });
+
+  it.skipIf(!HAS_RG)("enforces a global content result limit", async () => {
+    const result = await tool.call(
+      { pattern: "bounded needle", outputMode: "content", limit: 2, caseInsensitive: false },
+      makeContext(tmpDir)
+    );
+
+    expect(result.success).toBe(true);
+    const lines = (result.data as string).split("\n").filter(Boolean);
+    expect(lines).toHaveLength(2);
+    expect(lines.every((line) => line.includes("bounded needle"))).toBe(true);
+    expect(result.summary).toContain("truncated to limit 2");
+  });
+
+  it.skipIf(!HAS_RG)("enforces a global count row limit", async () => {
+    const result = await tool.call(
+      { pattern: "bounded needle", outputMode: "count", limit: 2, caseInsensitive: false },
+      makeContext(tmpDir)
+    );
+
+    expect(result.success).toBe(true);
+    expect((result.data as string).split("\n").filter(Boolean)).toHaveLength(2);
+    expect(result.summary).toContain("truncated to limit 2");
   });
 
   it.skipIf(!HAS_RG)("context lines option adds surrounding lines", async () => {

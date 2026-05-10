@@ -21,6 +21,48 @@ export const GrepInputSchema = z.object({
 }).strict();
 export type GrepInput = z.infer<typeof GrepInputSchema>;
 
+interface LimitedGrepOutput {
+  output: string;
+  lines: string[];
+  truncated: boolean;
+}
+
+function limitGrepOutput(rawOutput: string, limit: number): LimitedGrepOutput {
+  const output = rawOutput.trim();
+  if (output.length === 0) {
+    return { output: "", lines: [], truncated: false };
+  }
+
+  const lines = output.split("\n");
+  const limitedLines = lines.slice(0, limit);
+  return {
+    output: limitedLines.join("\n"),
+    lines: limitedLines,
+    truncated: lines.length > limitedLines.length,
+  };
+}
+
+function formatGrepSummary(
+  pattern: string,
+  outputMode: GrepInput["outputMode"],
+  lineCount: number,
+  truncated: boolean,
+  limit: number
+): string {
+  const resultKind = (() => {
+    switch (outputMode) {
+      case "files_with_matches":
+        return "files";
+      case "count":
+        return "count rows";
+      case "content":
+        return "matches";
+    }
+  })();
+  const truncation = truncated ? ` (truncated to limit ${limit})` : "";
+  return `Found ${lineCount} ${resultKind} for pattern "${pattern}"${truncation}`;
+}
+
 export class GrepTool implements ITool<GrepInput, string> {
   readonly metadata: ToolMetadata = {
     name: "grep",
@@ -65,20 +107,39 @@ export class GrepTool implements ITool<GrepInput, string> {
       args.push(input.pattern, searchPath);
 
       const result = await execFileNoThrow("rg", args, { cwd: context.cwd, timeoutMs: 30_000 });
-      let output = result.stdout.trim();
+      if (result.exitCode !== 0 && result.exitCode !== 1) {
+        const error = result.stderr.trim() || `ripgrep exited with code ${result.exitCode ?? "unknown"}`;
+        return {
+          success: false,
+          data: "",
+          summary: `Grep failed: ${error}`,
+          error,
+          durationMs: Date.now() - startTime,
+        };
+      }
+
+      const limited = limitGrepOutput(result.stdout, input.limit);
+      let output = limited.output;
       if (
         input.outputMode === "content" &&
         input.context !== undefined &&
         output.length > 0 &&
+        !limited.truncated &&
+        limited.lines.length < input.limit &&
         !output.includes("\n--\n")
       ) {
         output = `${output}\n--`;
       }
-      const lines = output ? output.split("\n") : [];
       return {
         success: true,
         data: output,
-        summary: `Found ${lines.length} ${input.outputMode === "files_with_matches" ? "files" : "matches"} for pattern "${input.pattern}"`,
+        summary: formatGrepSummary(
+          input.pattern,
+          input.outputMode,
+          limited.lines.length,
+          limited.truncated,
+          input.limit
+        ),
         durationMs: Date.now() - startTime,
       };
     } catch (err) {
