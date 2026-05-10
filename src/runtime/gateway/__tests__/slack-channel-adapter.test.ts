@@ -571,7 +571,7 @@ describe("SlackChannelAdapter — chat dispatch", () => {
         expect.objectContaining({
           url: "https://slack.com/api/chat.postMessage",
           body: expect.objectContaining({
-            text: "Checking this.",
+            text: "I'm checking this.",
             thread_ts: "123.456",
           }),
         }),
@@ -595,7 +595,7 @@ describe("SlackChannelAdapter — chat dispatch", () => {
         ]));
       });
       const statusPosts = slackCalls(fetchMock)
-        .filter((call) => call.url === "https://slack.com/api/chat.postMessage" && call.body.text === "Checking this.");
+        .filter((call) => call.url === "https://slack.com/api/chat.postMessage" && call.body.text === "I'm checking this.");
       expect(statusPosts).toHaveLength(1);
     } finally {
       vi.useRealTimers();
