@@ -54,6 +54,7 @@ import { assessTaskAgentLoopToolProfileFromTools, nativeTaskAgentLoopToolProfile
 import { ToolRegistry } from "../../../tools/registry.js";
 import { createBuiltinTools } from "../../../tools/builtin/index.js";
 import { importLegacyChatAgentLoopSessionState } from "../../chat/chat-agentloop-state-migration.js";
+import { importLegacyDriveGoalScheduleState } from "../../../platform/drive/drive-schedule-state-migration.js";
 import {
   formatDurationMs,
   formatPercent,
@@ -764,6 +765,7 @@ export async function cmdDoctor(_args: string[]): Promise<number> {
     const chatAgentLoopImportReport = await importLegacyChatAgentLoopSessionState(baseDir);
     const executionSessionImportReport = await importLegacyExecutionSessionState(baseDir);
     const runSpecImportReport = await importLegacyRunSpecState(baseDir);
+    const driveScheduleImportReport = await importLegacyDriveGoalScheduleState(baseDir);
     const goalTaskImportReport = await importLegacyGoalTaskDurableLoopState(baseDir);
     const goalOrchestrationImportReport = await importLegacyGoalOrchestrationState(baseDir);
     const stallStateImportReport = await importLegacyStallState(baseDir);
@@ -813,6 +815,9 @@ export async function cmdDoctor(_args: string[]): Promise<number> {
     );
     console.log(
       `Repair RunSpec import: files=${runSpecImportReport.runSpecFiles}, imported=${runSpecImportReport.importedRunSpecs}, skipped already imported=${runSpecImportReport.skippedAlreadyImported}, blocked=${runSpecImportReport.blockedSources.length}`
+    );
+    console.log(
+      `Repair Drive schedule import: files=${driveScheduleImportReport.scheduleFiles}, imported=${driveScheduleImportReport.importedSchedules}, skipped already imported=${driveScheduleImportReport.skippedAlreadyImported}, blocked=${driveScheduleImportReport.blockedSources.length}`
     );
     console.log(
       `Repair goal/task import: goals=${goalTaskImportReport.goals}, legacy WAL files=${goalTaskImportReport.legacyWalFiles}, legacy WAL intents=${goalTaskImportReport.legacyWalIntents}, tasks=${goalTaskImportReport.tasks}, histories=${goalTaskImportReport.taskHistoryRecords}, ledgers=${goalTaskImportReport.taskOutcomeLedgers}, verification=${goalTaskImportReport.verificationResults}, checkpoints=${goalTaskImportReport.checkpoints}, pipelines=${goalTaskImportReport.pipelines}, blocked=${goalTaskImportReport.blockedSources.length}`

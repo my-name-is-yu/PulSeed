@@ -7,7 +7,7 @@ export interface ControlDbMigration {
   checksum: string;
 }
 
-export const CONTROL_DB_SCHEMA_VERSION = 23;
+export const CONTROL_DB_SCHEMA_VERSION = 24;
 
 export const CONTROL_DB_INITIAL_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS control_schema_migrations (
@@ -140,6 +140,26 @@ CREATE INDEX IF NOT EXISTS run_spec_records_runtime_session_idx
 
 CREATE INDEX IF NOT EXISTS run_spec_records_conversation_idx
   ON run_spec_records(conversation_id, updated_at, run_spec_id);
+`.trim();
+
+export const CONTROL_DB_DRIVE_SCHEDULE_SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS goal_drive_schedules (
+  goal_id TEXT PRIMARY KEY,
+  next_check_at TEXT NOT NULL,
+  check_interval_hours REAL NOT NULL CHECK (check_interval_hours > 0),
+  last_triggered_at TEXT,
+  consecutive_actions INTEGER NOT NULL CHECK (consecutive_actions >= 0),
+  cooldown_until TEXT,
+  current_interval_hours REAL NOT NULL CHECK (current_interval_hours > 0),
+  updated_at TEXT NOT NULL,
+  schedule_json TEXT NOT NULL CHECK (json_valid(schedule_json))
+);
+
+CREATE INDEX IF NOT EXISTS goal_drive_schedules_due_idx
+  ON goal_drive_schedules(next_check_at, goal_id);
+
+CREATE INDEX IF NOT EXISTS goal_drive_schedules_cooldown_idx
+  ON goal_drive_schedules(cooldown_until, goal_id);
 `.trim();
 
 export const CONTROL_DB_RUNTIME_STATE_OWNERSHIP_SCHEMA_SQL = `
@@ -1719,5 +1739,10 @@ export const CONTROL_DB_MIGRATIONS: readonly ControlDbMigration[] = [
     23,
     "run-spec-runtime-state",
     CONTROL_DB_RUN_SPEC_SCHEMA_SQL
+  ),
+  createControlDbMigration(
+    24,
+    "drive-goal-activation-schedule-state",
+    CONTROL_DB_DRIVE_SCHEDULE_SCHEMA_SQL
   ),
 ];

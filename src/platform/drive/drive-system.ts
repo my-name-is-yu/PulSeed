@@ -7,6 +7,10 @@ import type { PulSeedEvent, GoalSchedule } from "./types/drive.js";
 import type { StateManager } from "../../base/state/state-manager.js";
 import type { Logger } from "../../runtime/logger.js";
 import { writeJsonFileAtomic } from "../../base/utils/json-io.js";
+import {
+  DriveGoalScheduleStateStore,
+  type DriveGoalScheduleStateStoreOptions,
+} from "./drive-schedule-state-store.js";
 
 export interface GoalActivationSnapshot {
   goalId: string;
@@ -21,7 +25,7 @@ export interface GoalActivationSnapshot {
  * File layout:
  *   <baseDir>/events/*.json          — event queue
  *   <baseDir>/events/archive/*.json  — processed events
- *   <baseDir>/schedule/<goalId>.json — goal schedules
+ *   state/pulseed-control.sqlite      — goal activation schedules
  *
  * Inactive goal statuses: "completed", "cancelled", "archived"
  * All writes are atomic: write to .tmp file, then rename.
@@ -34,11 +38,16 @@ export class DriveSystem {
   private inMemoryQueue: PulSeedEvent[] = [];
   private onEventCallback: ((event: PulSeedEvent) => void) | null = null;
   private readonly initPromise: Promise<void>;
+  private readonly scheduleStore: DriveGoalScheduleStateStore;
 
-  constructor(stateManager: StateManager, options?: { baseDir?: string; logger?: Logger }) {
+  constructor(
+    stateManager: StateManager,
+    options?: { baseDir?: string; logger?: Logger } & DriveGoalScheduleStateStoreOptions,
+  ) {
     this.stateManager = stateManager;
     this.baseDir = options?.baseDir ?? stateManager.getBaseDir();
     this.logger = options?.logger;
+    this.scheduleStore = new DriveGoalScheduleStateStore(this.baseDir, options);
     this.watcher = null;
     this.inMemoryQueue = [];
     this.onEventCallback = null;
@@ -53,7 +62,6 @@ export class DriveSystem {
     const dirs = [
       path.join(this.baseDir, "events"),
       path.join(this.baseDir, "events", "archive"),
-      path.join(this.baseDir, "schedule"),
     ];
     for (const dir of dirs) {
       await fsp.mkdir(dir, { recursive: true });
@@ -230,44 +238,21 @@ export class DriveSystem {
   // ─── Schedule Management ───
 
   /**
-   * Load schedule from {baseDir}/schedule/{goalId}.json.
-   * Returns null if no schedule exists or parsing fails.
+   * Load the typed schedule from the control DB.
+   * Returns null if no schedule exists.
    */
   async getSchedule(goalId: string): Promise<GoalSchedule | null> {
     await this.initPromise;
-    const filePath = path.join(this.baseDir, "schedule", `${goalId}.json`);
-    try {
-      const content = await fsp.readFile(filePath, "utf-8");
-      const raw = JSON.parse(content) as unknown;
-      return GoalScheduleSchema.parse(raw);
-    } catch (err: unknown) {
-      if (typeof err === "object" && err !== null && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT") {
-        return null;
-      }
-      // Corrupted or invalid schedule file — return a fallback schedule that is immediately due
-      this.logger?.warn(`DriveSystem: failed to load schedule for goal "${goalId}", using fallback: ${err}`);
-      return GoalScheduleSchema.parse({
-        goal_id: goalId,
-        next_check_at: new Date(0).toISOString(),
-        check_interval_hours: 1,
-        last_triggered_at: null,
-        consecutive_actions: 0,
-        cooldown_until: null,
-        current_interval_hours: 1,
-      });
-    }
+    return this.scheduleStore.load(goalId);
   }
 
   /**
-   * Save schedule atomically to {baseDir}/schedule/{goalId}.json.
+   * Save the goal activation schedule to the typed control DB store.
    */
   async updateSchedule(goalId: string, schedule: GoalSchedule): Promise<void> {
     await this.initPromise;
-    const scheduleDir = path.join(this.baseDir, "schedule");
-    await fsp.mkdir(scheduleDir, { recursive: true });
     const validated = GoalScheduleSchema.parse(schedule);
-    const filePath = path.join(scheduleDir, `${goalId}.json`);
-    await writeJsonFileAtomic(filePath, validated);
+    await this.scheduleStore.save(goalId, validated);
   }
 
   /**
