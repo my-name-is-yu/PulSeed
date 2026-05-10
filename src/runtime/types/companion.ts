@@ -54,6 +54,8 @@ export const CompanionDialogueKindSchema = z.enum([
 ]);
 export type CompanionDialogueKind = z.infer<typeof CompanionDialogueKindSchema>;
 
+export const MAX_COMPANION_LATENCY_BUDGET_MS = 24 * 60 * 60 * 1000;
+
 export const CompanionCurrentTargetContextSchema = z.object({
   session_key: z.string().min(1).nullable().default(null),
   conversation_id: z.string().min(1).nullable().default(null),
@@ -81,7 +83,7 @@ export const CompanionTurnPolicySchema = z.object({
   input_modality: ConversationInputModalitySchema,
   output_mode: ConversationOutputModeSchema,
   can_interrupt: z.boolean(),
-  latency_budget_ms: z.number().int().positive(),
+  latency_budget_ms: z.number().finite().int().positive().safe().max(MAX_COMPANION_LATENCY_BUDGET_MS),
   urgency: CompanionUrgencySchema,
   quieting: CompanionQuietingDecisionSchema,
   requires_explicit_interruption: z.boolean().default(false),
