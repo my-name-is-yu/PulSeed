@@ -3,7 +3,14 @@ import * as path from "node:path";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { cleanupTempDir, makeTempDir } from "../../../../tests/helpers/temp-dir.js";
-import { readJsonFileOrNull, readJsonFileWithSchema, writeJsonFileAtomic } from "../json-io.js";
+import {
+  isTextFileSizeLimitError,
+  readJsonFileOrNull,
+  readJsonFileWithSchema,
+  readTextFileWithinLimit,
+  readTextFileWithinLimitSync,
+  writeJsonFileAtomic,
+} from "../json-io.js";
 
 describe("json-io", () => {
   it("supports concurrent atomic writes to the same file without temp collisions", async () => {
@@ -85,6 +92,59 @@ describe("json-io", () => {
       await expect(readJsonFileWithSchema(directoryPath, schema)).rejects.toMatchObject({
         code: "EISDIR",
       });
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
+  });
+
+  it("reads text files up to the exact byte limit", async () => {
+    const tmpDir = makeTempDir("pulseed-json-io-limit-exact-");
+    try {
+      const filePath = path.join(tmpDir, "payload.json");
+      fs.writeFileSync(filePath, "abcde", "utf-8");
+
+      await expect(readTextFileWithinLimit(filePath, { maxBytes: 5, chunkBytes: 2 })).resolves.toBe("abcde");
+      expect(readTextFileWithinLimitSync(filePath, { maxBytes: 5, chunkBytes: 2 })).toBe("abcde");
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
+  });
+
+  it("rejects oversized async reads after the byte cap", async () => {
+    const tmpDir = makeTempDir("pulseed-json-io-limit-async-");
+    try {
+      const filePath = path.join(tmpDir, "payload.json");
+      fs.writeFileSync(filePath, "abcdef", "utf-8");
+
+      let caught: unknown;
+      try {
+        await readTextFileWithinLimit(filePath, { maxBytes: 5, chunkBytes: 2 });
+      } catch (err) {
+        caught = err;
+      }
+
+      expect(isTextFileSizeLimitError(caught)).toBe(true);
+      expect(caught).toMatchObject({ filePath, maxBytes: 5 });
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
+  });
+
+  it("rejects oversized sync reads after the byte cap", () => {
+    const tmpDir = makeTempDir("pulseed-json-io-limit-sync-");
+    try {
+      const filePath = path.join(tmpDir, "payload.json");
+      fs.writeFileSync(filePath, "abcdef", "utf-8");
+
+      let caught: unknown;
+      try {
+        readTextFileWithinLimitSync(filePath, { maxBytes: 5, chunkBytes: 2 });
+      } catch (err) {
+        caught = err;
+      }
+
+      expect(isTextFileSizeLimitError(caught)).toBe(true);
+      expect(caught).toMatchObject({ filePath, maxBytes: 5 });
     } finally {
       cleanupTempDir(tmpDir);
     }

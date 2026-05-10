@@ -1,6 +1,7 @@
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { z } from "zod";
+import { isTextFileSizeLimitError, readTextFileWithinLimit } from "../../base/utils/json-io.js";
 import { getPulseedDirPath } from "../../base/utils/paths.js";
 import type { GroundingSection, GroundingSectionKey, GroundingSourceRef } from "../contracts.js";
 
@@ -42,7 +43,6 @@ const SECTION_PRIORITIES: Record<GroundingSectionKey, number> = {
 
 const JsonRecordSchema = z.record(z.string(), z.unknown());
 export const GROUNDING_PROVIDER_JSON_MAX_BYTES = 1024 * 1024;
-const GROUNDING_PROVIDER_JSON_READ_CHUNK_BYTES = 64 * 1024;
 
 export type JsonRecord = z.infer<typeof JsonRecordSchema>;
 
@@ -97,42 +97,14 @@ export function resolveStateManagerBaseDir(stateManager?: { getBaseDir?: () => s
 
 export async function readJsonFile(filePath: string): Promise<JsonRecord | null> {
   try {
-    const raw = await readTextFileWithinLimit(filePath, GROUNDING_PROVIDER_JSON_MAX_BYTES);
-    if (raw === null) {
-      return null;
-    }
+    const raw = await readTextFileWithinLimit(filePath, { maxBytes: GROUNDING_PROVIDER_JSON_MAX_BYTES });
     const parsed = JsonRecordSchema.safeParse(JSON.parse(raw));
     return parsed.success ? parsed.data : null;
-  } catch {
-    return null;
-  }
-}
-
-async function readTextFileWithinLimit(filePath: string, maxBytes: number): Promise<string | null> {
-  const handle = await fsp.open(filePath, "r");
-  try {
-    const chunks: Buffer[] = [];
-    const buffer = Buffer.allocUnsafe(Math.min(GROUNDING_PROVIDER_JSON_READ_CHUNK_BYTES, maxBytes + 1));
-    let totalBytes = 0;
-
-    while (true) {
-      const remainingBytes = maxBytes + 1 - totalBytes;
-      if (remainingBytes <= 0) {
-        return null;
-      }
-      const { bytesRead } = await handle.read(buffer, 0, Math.min(buffer.byteLength, remainingBytes), null);
-      if (bytesRead === 0) break;
-
-      totalBytes += bytesRead;
-      if (totalBytes > maxBytes) {
-        return null;
-      }
-      chunks.push(Buffer.from(buffer.subarray(0, bytesRead)));
+  } catch (err) {
+    if (isTextFileSizeLimitError(err)) {
+      return null;
     }
-
-    return Buffer.concat(chunks, totalBytes).toString("utf-8");
-  } finally {
-    await handle.close();
+    return null;
   }
 }
 
