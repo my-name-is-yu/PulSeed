@@ -120,7 +120,7 @@ export function formatTelegramConfigureGuidance(
   } else if (guidance.daemon.running && guidance.state !== "unconfigured") {
     lines.push(
       "",
-      "If Telegram was configured or changed through chat-assisted setup, PulSeed will request an internal gateway refresh after the approved write.",
+      "If Telegram was configured or changed through chat-assisted setup, PulSeed will request a gateway reload after the approved write.",
       "For config changes made outside PulSeed chat setup, run `pulseed daemon restart` if delivery does not pick up the updated gateway config."
     );
   }

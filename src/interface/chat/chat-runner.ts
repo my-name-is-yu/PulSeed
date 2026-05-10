@@ -148,12 +148,12 @@ function formatTelegramSetupRefreshResult(
 ): string {
   if (result.success) {
     const suffix = result.operationId ? ` (${result.operationId})` : "";
-    return `PulSeed requested an internal gateway refresh for the updated Telegram config${suffix}: ${result.message}`;
+    return `PulSeed requested a gateway reload for the updated Telegram config${suffix}: ${result.message}`;
   }
   if (result.unavailable) {
-    return `PulSeed attempted an internal gateway refresh, but runtime control is unavailable in this chat surface: ${result.message}`;
+    return `PulSeed could not request a gateway reload from this chat surface: ${result.message}`;
   }
-  return `PulSeed attempted an internal gateway refresh, but it failed: ${result.message}`;
+  return `PulSeed requested a gateway reload, but it failed: ${result.message}`;
 }
 
 export class ChatRunner {
@@ -1328,7 +1328,7 @@ export class ChatRunner {
         "- Send `/sethome` from Telegram if no home chat is configured yet.",
         writeResult.refresh.success
           ? "- Send a message to the Telegram bot to verify delivery."
-          : "- Automatic refresh was not applied. Retry the lifecycle refresh from a chat surface with typed runtime-control available.",
+          : "- Automatic gateway reload was not applied. Retry from a chat surface that can request gateway lifecycle actions.",
       ].join("\n"),
       elapsed_ms: 0,
     };
