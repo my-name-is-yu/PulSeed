@@ -170,7 +170,8 @@ describe("dispatchGatewayChatInput display contract", () => {
       },
     });
 
-    expect(result).toBe("Approval is needed for the requested tool action: write access was denied.");
+    expect(result).toBe("Blocked on the requested tool action: write access was denied.");
+    expect(result).not.toContain("Approval is needed");
     expect(result).not.toContain("\"observation\"");
     expect(result).not.toContain("TOOL NOT EXECUTED");
   });

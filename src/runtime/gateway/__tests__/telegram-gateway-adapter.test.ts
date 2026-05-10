@@ -447,9 +447,10 @@ describe("TelegramGatewayAdapter", () => {
       expect(renderedProgress).toContain("Running the tool-backed step so I can gather the result needed for the next step.");
       expect(renderedProgress).toContain("Finalizing the tool-backed step so I can gather the result needed for the next step.");
       expect(renderedProgress).toContain("Approval is needed for a tool action: run a write command.");
-      expect(renderedProgress).toContain("Approval is needed for the requested tool action: Operator denied release execution.");
+      expect(renderedProgress).toContain("Blocked on the requested tool action: Operator denied release execution.");
       expect(renderedProgress).toContain("Finalizing completed tool activity so I can keep the final response grounded in verified work.");
     });
+    expect(sentMessages.join("\n")).not.toContain("Approval is needed for the requested tool action");
     expect(sentMessages.some((message) => message.includes("[tool]"))).toBe(false);
     expect(sentMessages.join("\n")).not.toContain("rg Timeline src/interface/chat");
     expect(sentMessages.join("\n")).not.toContain("src/interface/chat/chat-events.ts");

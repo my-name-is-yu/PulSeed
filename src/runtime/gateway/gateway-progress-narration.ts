@@ -202,11 +202,11 @@ export function publicProgressFromAgentTimelineItem(item: AgentTimelineItem): Ga
       if (item.state !== "denied" && item.state !== "blocked") return null;
       return {
         audience: "user",
-        phase: item.state === "blocked" ? "blocked" : "waiting",
-        importance: item.state === "blocked" ? "blocked" : "action_required",
+        phase: "blocked",
+        importance: "blocked",
         verbosity: "summary",
         subject: "the requested tool action",
-        reason: item.observation.execution?.message ?? item.observation.execution?.reason ?? "user input is needed before continuing",
+        reason: toolObservationBlockedReason(item),
         diagnosticRef: item.sourceEventId,
       };
     }
@@ -302,6 +302,16 @@ function phaseVerb(phase: GatewayPublicProgress["phase"]): string {
 function humanizeProtocolToken(value: string): string {
   const normalized = normalizePhrase(value.replace(/[_-]+/g, " "));
   return normalized || "the requested operation";
+}
+
+function toolObservationBlockedReason(item: Extract<AgentTimelineItem, { kind: "tool_observation" }>): string {
+  const message = item.observation.execution?.message;
+  if (message && normalizePhrase(message)) return message;
+  const reason = item.observation.execution?.reason;
+  if (reason) return humanizeProtocolToken(reason);
+  return item.state === "denied"
+    ? "the operator denied the action"
+    : "the action is blocked";
 }
 
 function normalizePhrase(value: string): string {
