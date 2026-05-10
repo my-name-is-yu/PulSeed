@@ -103,4 +103,17 @@ describe("schedule-presets", () => {
 
     expect(parsed.success).toBe(false);
   });
+
+  it("rejects non-finite or unsafe goal probe threshold values", () => {
+    for (const threshold_value of [Number.POSITIVE_INFINITY, Number.NaN, Number.MAX_SAFE_INTEGER + 1]) {
+      const parsed = SchedulePresetInputSchema.safeParse({
+        preset: "goal_probe",
+        data_source_id: "source-1",
+        detector_mode: "threshold",
+        threshold_value,
+      });
+
+      expect(parsed.success).toBe(false);
+    }
+  });
 });
