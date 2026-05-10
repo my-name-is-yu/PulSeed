@@ -107,8 +107,10 @@ list:
 - capability registry availability checks used by wait strategy decisions use
   the typed control DB capability registry store; legacy
   `capability_registry.json` is a repair import input only
-- `src/orchestrator/execution/agent-loop/agent-loop-session-factory.ts`:
-  path-shaped AgentLoop resume option compatibility
+- AgentLoop normal resume and trace construction use typed control DB session
+  and trace stores keyed by session id; legacy `chat/agentloop/*.state.json`
+  and `traces/agentloop/*.jsonl` files are explicit `doctor --repair`
+  migration inputs only
 - dream filesystem metrics and memory-persistence compatibility maps
 - capability registry, curiosity, and supervisor state surfaces already called
   out as future typed-store work

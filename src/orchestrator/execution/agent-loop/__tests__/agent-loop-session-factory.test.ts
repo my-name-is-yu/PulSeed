@@ -1,9 +1,7 @@
 import { describe, expect, it } from "vitest";
-import * as fs from "node:fs/promises";
-import * as path from "node:path";
 import { makeTempDir } from "../../../../../tests/helpers/temp-dir.js";
 import { createPersistentAgentLoopSessionFactory } from "../agent-loop-session-factory.js";
-import { JsonAgentLoopSessionStateStore } from "../agent-loop-session-state.js";
+import { normalizeAgentLoopSessionState } from "../agent-loop-session-state.js";
 
 describe("createPersistentAgentLoopSessionFactory", () => {
   it("persists trace events to Control DB under the configured base directory", async () => {
@@ -29,13 +27,13 @@ describe("createPersistentAgentLoopSessionFactory", () => {
     ]);
   });
 
-  it("maps relative legacy resume state paths to typed DB session keys", async () => {
+  it("resumes by typed DB session id", async () => {
     const baseDir = makeTempDir();
     const createSession = createPersistentAgentLoopSessionFactory({
       traceBaseDir: baseDir,
       kind: "chat",
     });
-    const session = createSession({ resumeStatePath: "chat/agentloop/session-1.state.json" });
+    const session = createSession({ resumeSessionId: "session-1" });
 
     await session.stateStore.save({
       sessionId: session.sessionId,
@@ -66,11 +64,10 @@ describe("createPersistentAgentLoopSessionFactory", () => {
   });
 });
 
-describe("JsonAgentLoopSessionStateStore", () => {
-  it("normalizes legacy state files that predate newer counters", async () => {
+describe("normalizeAgentLoopSessionState", () => {
+  it("normalizes legacy state payloads that predate newer counters", () => {
     const baseDir = makeTempDir();
-    const statePath = path.join(baseDir, "legacy.state.json");
-    await fs.writeFile(statePath, JSON.stringify({
+    const state = normalizeAgentLoopSessionState({
       sessionId: "session-1",
       traceId: "trace-1",
       turnId: "turn-1",
@@ -89,9 +86,7 @@ describe("JsonAgentLoopSessionStateStore", () => {
       toolCalls: 1,
       compactions: 1,
       status: "running",
-    }), "utf-8");
-
-    const state = await new JsonAgentLoopSessionStateStore(statePath).load();
+    });
 
     expect(state).toMatchObject({
       sessionId: "session-1",
@@ -111,19 +106,12 @@ describe("JsonAgentLoopSessionStateStore", () => {
     });
   });
 
-  it("returns null for corrupt or incompatible state files", async () => {
-    const baseDir = makeTempDir();
-    const corruptPath = path.join(baseDir, "corrupt.state.json");
-    const incompatiblePath = path.join(baseDir, "incompatible.state.json");
-    await fs.writeFile(corruptPath, "{", "utf-8");
-    await fs.writeFile(incompatiblePath, JSON.stringify({
+  it("returns null for incompatible state payloads", () => {
+    expect(normalizeAgentLoopSessionState({
       sessionId: "session-1",
       traceId: "trace-1",
       goalId: "goal-1",
       messages: [{ role: "user", content: "missing turnId/cwd/modelRef" }],
-    }), "utf-8");
-
-    await expect(new JsonAgentLoopSessionStateStore(corruptPath).load()).resolves.toBeNull();
-    await expect(new JsonAgentLoopSessionStateStore(incompatiblePath).load()).resolves.toBeNull();
+    })).toBeNull();
   });
 });
