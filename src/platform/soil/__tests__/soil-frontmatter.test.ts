@@ -4,7 +4,39 @@ import {
   parseSoilFrontmatter,
   serializeSoilMarkdown,
 } from "../frontmatter.js";
-import { SoilPageFrontmatterSchema } from "../types.js";
+import { isSoilDatetime, SoilPageFrontmatterSchema } from "../types.js";
+
+function makeFrontmatter(overrides: Record<string, unknown> = {}) {
+  return {
+    soil_id: "note/1",
+    kind: "note",
+    status: "draft",
+    title: "note",
+    route: "inbox",
+    source: "manual",
+    version: "1",
+    created_at: "2026-04-11T09:00:00.000Z",
+    updated_at: "2026-04-11T09:00:00.000Z",
+    generated_at: "2026-04-11T09:00:00.000Z",
+    source_refs: [],
+    generation_watermark: {
+      scope: "note/1",
+      source_paths: [],
+      source_hashes: [],
+      generated_at: "2026-04-11T09:00:00.000Z",
+      projection_version: "soil-v1",
+    },
+    stale: false,
+    manual_overlay: {
+      enabled: false,
+      status: "candidate",
+    },
+    import_status: "none",
+    approval_status: "none",
+    supersedes: [],
+    ...overrides,
+  };
+}
 
 describe("Soil frontmatter schema", () => {
   it("parses a complete frontmatter object", () => {
@@ -169,5 +201,46 @@ describe("Soil frontmatter schema", () => {
     expect(frontmatter.soil_id).toBe("note/1");
     expect(frontmatter.kind).toBe("note");
   });
-});
 
+  it("rejects ISO-like datetimes that normalize to a different calendar date", () => {
+    const parsed = SoilPageFrontmatterSchema.safeParse(makeFrontmatter({
+      created_at: "2026-02-31T00:00:00.000Z",
+    }));
+
+    expect(parsed.success).toBe(false);
+    expect(isSoilDatetime("2026-02-31T00:00:00.000Z")).toBe(false);
+    expect(isSoilDatetime("2026-04-11T09:00:00Z")).toBe(true);
+    expect(isSoilDatetime("2026-04-11T09:00:00.123+09:00")).toBe(true);
+  });
+
+  it("rejects normalized calendar overflow timestamps on the markdown frontmatter path", () => {
+    const markdown = [
+      "---",
+      "soil_id: note/1",
+      "kind: note",
+      "status: draft",
+      "title: note",
+      "route: inbox",
+      "source: manual",
+      "version: \"1\"",
+      "created_at: 2026-02-31T00:00:00.000Z",
+      "updated_at: 2026-04-11T09:00:00.000Z",
+      "generated_at: 2026-04-11T09:00:00.000Z",
+      "source_refs: []",
+      "generation_watermark:",
+      "  scope: note/1",
+      "  source_paths: []",
+      "  source_hashes: []",
+      "  generated_at: 2026-04-11T09:00:00.000Z",
+      "  projection_version: soil-v1",
+      "stale: false",
+      "manual_overlay:",
+      "  enabled: false",
+      "  status: candidate",
+      "---",
+      "Body",
+    ].join("\n");
+
+    expect(() => parseSoilFrontmatter(markdown)).toThrow();
+  });
+});
