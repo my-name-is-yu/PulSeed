@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { makeTempDir, cleanupTempDir } from "../../../tests/helpers/temp-dir.js";
 import { runDreamConsolidation } from "../dream-consolidation.js";
+import { loadReflectionReport } from "../reflection-utils.js";
 
 // ─── Fixtures ───
 
@@ -115,7 +116,7 @@ describe("runDreamConsolidation", () => {
     expect(report.revalidation_tasks_created).toBe(0);
   });
 
-  it("persists report to file", async () => {
+  it("persists report to typed store without writing legacy JSON", async () => {
     tmpDir = makeTempDir();
     const stateManager = makeStateManager(["g1"]);
 
@@ -124,10 +125,9 @@ describe("runDreamConsolidation", () => {
       baseDir: tmpDir,
     });
 
-    const filePath = path.join(tmpDir, "reflections", `dream-${report.date}.json`);
-    expect(fs.existsSync(filePath)).toBe(true);
-    const content = JSON.parse(fs.readFileSync(filePath, "utf-8"));
-    expect(content.goals_consolidated).toBe(1);
+    const loaded = await loadReflectionReport(tmpDir, "dream", report.date);
+    expect(loaded?.goals_consolidated).toBe(1);
+    expect(fs.existsSync(path.join(tmpDir, "reflections", `dream-${report.date}.json`))).toBe(false);
   });
 
   it("memoryLifecycle error on one data type: continues with others", async () => {

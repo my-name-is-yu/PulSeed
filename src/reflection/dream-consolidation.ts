@@ -1,11 +1,9 @@
-import * as fsp from "node:fs/promises";
-import * as path from "node:path";
-import { writeJsonFileAtomic } from "../base/utils/json-io.js";
 import type { StateManager } from "../base/state/state-manager.js";
 import type { MemoryLifecycleManager } from "../platform/knowledge/memory/memory-lifecycle.js";
 import type { KnowledgeManager } from "../platform/knowledge/knowledge-manager.js";
 import type { ConsolidationReport } from "./types.js";
 import { ConsolidationReportSchema } from "./types.js";
+import { saveReflectionReport } from "./reflection-utils.js";
 
 // ─── Helpers ───
 
@@ -69,10 +67,7 @@ export async function runDreamConsolidation(deps: {
     revalidation_tasks_created: revalidationTasksCreated,
   });
 
-  // Persist report
-  const reflectionsDir = path.join(baseDir, "reflections");
-  await fsp.mkdir(reflectionsDir, { recursive: true });
-  await writeJsonFileAtomic(path.join(reflectionsDir, `dream-${date}.json`), report);
+  await saveReflectionReport(baseDir, "dream", date, report);
 
   return report;
 }

@@ -22,6 +22,7 @@ import { NotificationDispatcher } from "../../src/runtime/notification-dispatche
 import { AgentProfileLoader } from "../../src/adapters/agents/agent-profile-loader.js";
 import { TriggerMapper } from "../../src/runtime/trigger-mapper.js";
 import { runWeeklyReview } from "../../src/reflection/weekly-review.js";
+import { loadReflectionReport } from "../../src/reflection/reflection-utils.js";
 import { StateManager } from "../../src/base/state/state-manager.js";
 import { makeTempDir, cleanupTempDir } from "../helpers/temp-dir.js";
 import { createMockLLMClient } from "../helpers/mock-llm.js";
@@ -734,10 +735,8 @@ describe("Phase C — Full intelligence cycle integration", () => {
     expect(reviewReport.rankings[0]!.strategy_effectiveness).toBe("medium");
     expect(reviewReport.summary).toContain("E2E cycle goal");
 
-    // Verify the review report was persisted to disk
-    const reflectionsDir = path.join(tmpDir, "reflections");
-    const files = fs.readdirSync(reflectionsDir);
-    expect(files.some((f) => f.startsWith("weekly-"))).toBe(true);
+    const storedReview = await loadReflectionReport(tmpDir, "weekly", reviewReport.week);
+    expect(storedReview?.goals_reviewed).toBe(1);
   });
 
   it("weekly review skips non-active goals and returns goals_reviewed=0 with no LLM call", async () => {

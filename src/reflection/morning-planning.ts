@@ -10,7 +10,7 @@ import {
   dispatchReflectionNotification,
   emitReflectionComplete,
   loadActiveGoalSummaries,
-  persistReflectionReport,
+  saveReflectionReport,
   todayISO,
 } from "./reflection-utils.js";
 import { buildReflectionRelationshipProfileSurfaceContext } from "./reflection-profile-surface.js";
@@ -93,7 +93,7 @@ Respond with JSON matching this schema:
     concerns,
   });
 
-  await persistReflectionReport(baseDir, `morning-${date}.json`, report);
+  await saveReflectionReport(baseDir, "morning", date, report);
 
   emitReflectionComplete(hookManager, "morning_planning");
 

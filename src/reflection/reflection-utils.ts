@@ -1,12 +1,17 @@
-import * as fsp from "node:fs/promises";
-import * as path from "node:path";
 import type { StateManager } from "../base/state/state-manager.js";
-import { writeJsonFileAtomic } from "../base/utils/json-io.js";
 import type { GoalSummary } from "./types.js";
 import type { HookManager } from "../runtime/hook-manager.js";
 import type { INotificationDispatcher } from "../runtime/notification-dispatcher.js";
+import {
+  ReflectionReportStateStore,
+  type ReflectionReportByType,
+  type ReflectionReportStateStoreOptions,
+  type ReflectionReportType,
+} from "./reflection-report-state-store.js";
 
 type GapHistoryEntry = { gap_vector: Array<{ normalized_weighted_gap: number }> };
+
+export const REFLECTION_REPORT_PROMPT_MAX_BYTES = 1024 * 1024;
 
 export function todayISO(): string {
   return new Date().toISOString().slice(0, 10);
@@ -42,14 +47,42 @@ export async function loadActiveGoalSummaries(stateManager: StateManager): Promi
   return summaries;
 }
 
-export async function persistReflectionReport(
+export async function saveReflectionReport<TType extends ReflectionReportType>(
   baseDir: string,
-  filename: string,
-  report: unknown
-): Promise<void> {
-  const reflectionsDir = path.join(baseDir, "reflections");
-  await fsp.mkdir(reflectionsDir, { recursive: true });
-  await writeJsonFileAtomic(path.join(reflectionsDir, filename), report);
+  reportType: TType,
+  periodKey: string,
+  report: ReflectionReportByType[TType],
+  options: ReflectionReportStateStoreOptions = {},
+): Promise<ReflectionReportByType[TType]> {
+  const store = new ReflectionReportStateStore(baseDir, options);
+  try {
+    return await store.save(reportType, periodKey, report);
+  } finally {
+    await store.close();
+  }
+}
+
+export async function loadReflectionReport<TType extends ReflectionReportType>(
+  baseDir: string,
+  reportType: TType,
+  periodKey: string,
+  options: ReflectionReportStateStoreOptions = {},
+): Promise<ReflectionReportByType[TType] | null> {
+  const store = new ReflectionReportStateStore(baseDir, options);
+  try {
+    return await store.load(reportType, periodKey);
+  } finally {
+    await store.close();
+  }
+}
+
+export function formatReflectionReportForPrompt(
+  report: unknown,
+  options: { maxBytes?: number } = {},
+): string | null {
+  const maxBytes = options.maxBytes ?? REFLECTION_REPORT_PROMPT_MAX_BYTES;
+  const serialized = JSON.stringify(report, null, 2);
+  return Buffer.byteLength(serialized, "utf8") <= maxBytes ? serialized : null;
 }
 
 export function emitReflectionComplete(hookManager: HookManager | undefined, type: string): void {

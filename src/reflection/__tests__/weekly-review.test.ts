@@ -4,6 +4,7 @@ import * as path from "node:path";
 import { makeTempDir, cleanupTempDir } from "../../../tests/helpers/temp-dir.js";
 import { createMockLLMClient } from "../../../tests/helpers/mock-llm.js";
 import { runWeeklyReview } from "../weekly-review.js";
+import { loadReflectionReport } from "../reflection-utils.js";
 import type { Goal } from "../../base/types/goal.js";
 import { upsertRelationshipProfileItem } from "../../platform/profile/relationship-profile.js";
 
@@ -126,7 +127,7 @@ describe("runWeeklyReview", () => {
     expect(llmClient.callCount).toBe(0);
   });
 
-  it("persists report to file with correct week-based name", async () => {
+  it("persists report to typed store with correct week key", async () => {
     tmpDir = makeTempDir();
     const goals = [makeGoal("g1")];
     const stateManager = makeStateManager(goals);
@@ -145,11 +146,10 @@ describe("runWeeklyReview", () => {
       baseDir: tmpDir,
     });
 
-    const filePath = path.join(tmpDir, "reflections", `weekly-${report.week}.json`);
-    expect(fs.existsSync(filePath)).toBe(true);
-    const content = JSON.parse(fs.readFileSync(filePath, "utf-8"));
-    expect(content.goals_reviewed).toBe(1);
-    expect(content.week).toBe(report.week);
+    const loaded = await loadReflectionReport(tmpDir, "weekly", report.week);
+    expect(loaded?.goals_reviewed).toBe(1);
+    expect(loaded?.week).toBe(report.week);
+    expect(fs.existsSync(path.join(tmpDir, "reflections", `weekly-${report.week}.json`))).toBe(false);
   });
 
   it("keeps weekly_delta numeric when recent gap vectors are empty", async () => {

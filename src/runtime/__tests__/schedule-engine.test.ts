@@ -14,6 +14,7 @@ import type { IDataSourceAdapter } from "../../platform/observation/data-source-
 import type { ILLMClient } from "../../base/llm/llm-client.js";
 import { makeTempDir, cleanupTempDir } from "../../../tests/helpers/temp-dir.js";
 import { openControlDatabase } from "../store/index.js";
+import { loadReflectionReport } from "../../reflection/reflection-utils.js";
 
 let tempDir: string;
 let engine: ScheduleEngine;
@@ -2391,7 +2392,8 @@ describe("Cron execution (Phase 3)", () => {
     expect(result.tokens_used).toBe(15);
     expect(updatedEntry.tokens_used_today).toBe(15);
     expect(notificationDispatcher.dispatch).toHaveBeenCalledOnce();
-    expect(fs.existsSync(path.join(tempDir, "reflections"))).toBe(true);
+    const storedReport = await loadReflectionReport(tempDir, "morning", new Date().toISOString().slice(0, 10));
+    expect(storedReport?.goals_reviewed).toBe(1);
   });
 
   it("executeCron runs dream_consolidation reflection jobs without llmClient", async () => {
@@ -2429,7 +2431,8 @@ describe("Cron execution (Phase 3)", () => {
     expect(result.status).toBe("ok");
     expect(result.output_summary).toContain("Dream consolidation completed");
     expect(memoryLifecycle.compressToLongTerm).toHaveBeenCalled();
-    expect(fs.existsSync(path.join(tempDir, "reflections"))).toBe(true);
+    const storedReport = await loadReflectionReport(tempDir, "dream", new Date().toISOString().slice(0, 10));
+    expect(storedReport?.goals_consolidated).toBe(1);
   });
 
   it("executeCron runs soil_publish jobs without an LLM", async () => {

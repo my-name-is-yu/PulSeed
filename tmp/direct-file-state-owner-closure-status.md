@@ -246,3 +246,55 @@ This session may merge only PRs created for this direct file state owner closure
 - Worktree cleanup: removed after merge
 - Remote branch cleanup: deleted after merge
 - Merged by this session: yes
+
+## Slice 6 Merge Record
+
+- PR: https://github.com/my-name-is-yu/PulSeed/pull/1868
+- Branch: `codex/direct-file-state-slice-6-vector-knowledge-20260511003822`
+- Worktree: `/Users/yuyoshimuta/Documents/dev/PulSeed-worktrees/direct-file-state-slice-6-vector-knowledge-20260511003822`
+- Head commit: `9ae2de969d3bd993f19fbf9c69df9dcf7e8bacf1`
+- Merge commit: `873d832cc7d5162aa745b8cab0d962678e94bac2`
+- CI: `unit (22)` success, `integration (24)` success
+- GitHub Codex review: initial current-head review on `59558da7a6` found a P1 per-cycle KnowledgeGraph DB handle issue; fixed in `9ae2de96`
+- `@codex review`: needed after fix; it produced eyes reaction but no usable current-head review
+- Fallback sub-agent review: used after `@codex review`; LGTM, no material blockers at `9ae2de96`
+- Worktree cleanup: pending after this record
+- Remote branch cleanup: deleted after merge
+- Merged by this session: yes
+
+## Slice 7 Direct File Owner Plan
+
+| Owner | Current boundary | Classification | Planned guard state |
+| --- | --- | --- | --- |
+| Runtime reports, manifests, postmortems, long-running results | report/result/manifest files | reproducibility artifact or debug/export artifact unless authoritative runtime input is found | classify each artifact surface explicitly; migrate if any normal runtime state hides in artifact paths |
+| Morning/evening/weekly/dream reflection reports | `reflections/{morning,evening,dream}-<date>.json`, `reflections/weekly-<week>.json` | typed-store migrate now | inspect reflection callers; either migrate authoritative report inputs to typed control DB or split report artifacts from runtime state |
+| Workspace and tool-produced deliverables | workspace files and task/tool artifacts | workspace content | keep file-backed only as explicit output boundary; guard new unclassified runtime state |
+| Debug logs, process pid, and health diagnostics | log, pid, and health diagnostic files | debug/export artifact | verify these are not durable state owners and keep precise guard classifications |
+
+## Slice 7 Direct File Owner Update
+
+| Owner | Previous boundary | Current boundary | Classification | Guard state |
+| --- | --- | --- | --- | --- |
+| Morning/evening/weekly/dream reflection reports | `reflections/{morning,evening,dream}-<date>.json`, `reflections/weekly-<week>.json`; evening catch-up loaded morning JSON as runtime input | `reflection_reports` in `state/pulseed-control.sqlite`; legacy `reflections/*.json` is doctor/repair import input only | typed control DB state | legacy reflection JSON remains a fail-closed guard rule outside `reflection-report-state-migration.ts`; `reflection-reports` is no longer direct-file debt |
+| Runtime reports/manifests/postmortems/results | report/result/manifest files | unchanged artifact output boundary | reproducibility artifact | already classified by Slice 1 inventory; no authoritative runtime input found in this slice |
+| Workspace/tool deliverables | workspace files and task/tool outputs | unchanged workspace output boundary | workspace content | already classified by Slice 1 inventory; no migration needed in Slice 7 |
+| Debug logs/pid/health diagnostics | log, pid, and health diagnostic files | unchanged debug/export boundary | debug/export artifact | already classified by Slice 1 inventory; no migration needed in Slice 7 |
+
+## Slice 7 Validation
+
+- Worktree: `/Users/yuyoshimuta/Documents/dev/PulSeed-worktrees/direct-file-state-slice-7-artifact-reports-20260511011743`
+- Branch: `codex/direct-file-state-slice-7-artifact-reports-20260511011743`
+- Base: `origin/main @ 52f6dc13 Add early gateway commentary preambles (#1866)` after rebase
+- `nvm use 24.15.0 && npm ci`: passed
+- `npx vitest run --config vitest.unit.config.ts src/reflection/__tests__/morning-planning.test.ts src/reflection/__tests__/evening-catchup.test.ts src/reflection/__tests__/weekly-review.test.ts src/reflection/__tests__/dream-consolidation.test.ts src/reflection/__tests__/reflection-report-state-store.test.ts`: passed, 32 tests
+- `npx vitest run --config vitest.unit.config.ts src/interface/cli/__tests__/database-first-legacy-store-check.test.ts src/runtime/store/control-db/__tests__/control-db.test.ts`: passed, 19 tests
+- Rebase rerun `npx vitest run --config vitest.unit.config.ts src/reflection/__tests__/morning-planning.test.ts src/reflection/__tests__/evening-catchup.test.ts src/reflection/__tests__/weekly-review.test.ts src/reflection/__tests__/dream-consolidation.test.ts src/reflection/__tests__/reflection-report-state-store.test.ts src/interface/cli/__tests__/database-first-legacy-store-check.test.ts src/runtime/store/control-db/__tests__/control-db.test.ts`: passed, 51 tests
+- GitHub Codex review finding on `13f248ec`: P2 bounded morning-report prompt load lost after DB migration
+- Fix validation `npx vitest run --config vitest.unit.config.ts src/reflection/__tests__/evening-catchup.test.ts src/reflection/__tests__/morning-planning.test.ts src/reflection/__tests__/weekly-review.test.ts src/reflection/__tests__/dream-consolidation.test.ts src/reflection/__tests__/reflection-report-state-store.test.ts src/interface/cli/__tests__/database-first-legacy-store-check.test.ts src/runtime/store/control-db/__tests__/control-db.test.ts`: passed, 52 tests
+- CI integration failure on `fc2b6005`: e2e/schedule tests still asserted legacy `reflections/` files instead of typed `reflection_reports`; updated those tests to load typed reports through the production reflection report helper
+- Integration fix validation `npx vitest run --config vitest.integration.config.ts tests/e2e/dream-soil-sync.test.ts tests/e2e/phase-a-reflection.test.ts tests/e2e/phase-c-intelligence.test.ts src/runtime/__tests__/schedule-engine.test.ts`: passed, 183 tests
+- `node scripts/check-database-first-legacy-stores.mjs --json`: ok=true, findings=0, `debtReport=[]`, `directFileDebtReport=[]`, no Slice 7 follow-up owners
+- `npm run typecheck`: passed
+- `npm run lint:boundaries`: passed with existing warnings, 0 errors
+- `npm run build`: passed
+- `git diff --check`: passed
