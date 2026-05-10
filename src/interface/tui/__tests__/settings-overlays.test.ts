@@ -96,7 +96,11 @@ describe("settings overlays", () => {
       const output = stdout.readOutput();
 
       expect(output).toContain("Settings");
+      expect(output).toContain("Background Mode");
+      expect(output).toContain("Keep PulSeed working in the background");
       expect(output).toContain("[OFF]");
+      expect(output).not.toContain("Daemon Mode");
+      expect(output).not.toContain("CoreLoop");
 
       screen.unmount();
     });

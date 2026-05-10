@@ -22,8 +22,8 @@ interface SettingItem {
 const SETTINGS: SettingItem[] = [
   {
     key: "daemon_mode",
-    label: "Daemon Mode",
-    description: "Run CoreLoop as background daemon. TUI becomes a client that can disconnect without stopping the loop.",
+    label: "Background Mode",
+    description: "Keep PulSeed working in the background so the TUI can disconnect without stopping active work.",
     type: "boolean",
   },
 ];
