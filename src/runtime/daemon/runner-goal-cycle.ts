@@ -94,6 +94,9 @@ async function broadcastOpenOperatorHandoffs(context: GoalCycleRunnerContext, go
       ? path.join(context.stateManager.getBaseDir(), "runtime")
       : null);
   if (!runtimeRoot) return;
+  const controlOptions = typeof context.stateManager?.getBaseDir === "function"
+    ? { controlBaseDir: context.stateManager.getBaseDir() }
+    : undefined;
 
   const broadcasted = context.operatorHandoffBroadcastedIds instanceof Set
     ? context.operatorHandoffBroadcastedIds
@@ -101,7 +104,7 @@ async function broadcastOpenOperatorHandoffs(context: GoalCycleRunnerContext, go
   context.operatorHandoffBroadcastedIds = broadcasted;
 
   try {
-    const handoffs = await new RuntimeOperatorHandoffStore(runtimeRoot).listOpen();
+    const handoffs = await new RuntimeOperatorHandoffStore(runtimeRoot, controlOptions).listOpen();
     for (const handoff of handoffs) {
       if (handoff.goal_id && handoff.goal_id !== goalId) continue;
       if (broadcasted.has(handoff.handoff_id)) continue;

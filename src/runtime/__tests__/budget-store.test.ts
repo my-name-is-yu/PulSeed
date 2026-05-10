@@ -38,6 +38,7 @@ describe("RuntimeBudgetStore", () => {
     const budget = await restarted.load("budget-run");
     const status = restarted.status(budget!);
 
+    await expect(fsp.stat(path.join(tmpDir, "runtime", "budgets", "budget-run.json"))).rejects.toThrow();
     expect(status.dimensions).toContainEqual(expect.objectContaining({ dimension: "iterations", used: 2, remaining: 8 }));
     expect(status.dimensions).toContainEqual(expect.objectContaining({ dimension: "disk_bytes", used: 250, remaining: 750 }));
     expect(status.dimensions).toContainEqual(expect.objectContaining({ dimension: "llm_tokens", used: 1000, remaining: 4000 }));

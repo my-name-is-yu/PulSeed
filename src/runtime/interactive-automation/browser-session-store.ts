@@ -4,10 +4,17 @@ import type {
 } from "../store/index.js";
 import {
   BrowserAutomationSessionRecordSchema,
+} from "../store/runtime-schemas.js";
+import {
   createRuntimeStorePaths,
-  RuntimeJournal,
   type RuntimeStorePaths,
-} from "../store/index.js";
+} from "../store/runtime-paths.js";
+import {
+  openRuntimeControlDatabase,
+  type ControlDatabase,
+  type RuntimeControlDbStoreOptions,
+  type SqliteDatabase,
+} from "../store/control-db/index.js";
 
 export interface BrowserSessionScope {
   providerId: string;
@@ -18,29 +25,32 @@ export interface BrowserSessionScope {
 
 export class BrowserSessionStore {
   private readonly paths: RuntimeStorePaths;
-  private readonly journal: RuntimeJournal;
+  private readonly dbOptions: RuntimeControlDbStoreOptions;
+  private dbPromise: Promise<ControlDatabase> | null = null;
 
-  constructor(runtimeRootOrPaths?: string | RuntimeStorePaths) {
+  constructor(
+    runtimeRootOrPaths?: string | RuntimeStorePaths,
+    options: RuntimeControlDbStoreOptions = {}
+  ) {
     this.paths =
       typeof runtimeRootOrPaths === "string"
         ? createRuntimeStorePaths(runtimeRootOrPaths)
         : runtimeRootOrPaths ?? createRuntimeStorePaths();
-    this.journal = new RuntimeJournal(this.paths);
+    this.dbOptions = options;
   }
 
   async ensureReady(): Promise<void> {
-    await this.journal.ensureReady();
+    await this.database();
   }
 
   async load(sessionId: string): Promise<BrowserAutomationSessionRecord | null> {
-    return this.journal.load(
-      this.paths.browserSessionPath(sessionId),
-      BrowserAutomationSessionRecordSchema,
-    );
+    const db = await this.database();
+    return db.read((sqlite) => readBrowserSession(sqlite, sessionId));
   }
 
   async list(): Promise<BrowserAutomationSessionRecord[]> {
-    return this.journal.list(this.paths.browserSessionsDir, BrowserAutomationSessionRecordSchema);
+    const db = await this.database();
+    return db.read((sqlite) => listBrowserSessions(sqlite));
   }
 
   async listPendingAuth(): Promise<BrowserAutomationSessionRecord[]> {
@@ -67,9 +77,9 @@ export class BrowserSessionStore {
   }
 
   async upsert(record: BrowserAutomationSessionRecord): Promise<BrowserAutomationSessionRecord> {
-    await this.ensureReady();
     const parsed = BrowserAutomationSessionRecordSchema.parse(record);
-    await this.journal.save(this.paths.browserSessionPath(parsed.session_id), BrowserAutomationSessionRecordSchema, parsed);
+    const db = await this.database();
+    db.transaction((sqlite) => upsertBrowserSession(sqlite, parsed));
     return parsed;
   }
 
@@ -148,6 +158,91 @@ export class BrowserSessionStore {
       metadata: updates.metadata ?? existing.metadata,
     });
   }
+
+  async importLegacyRecord(record: BrowserAutomationSessionRecord): Promise<BrowserAutomationSessionRecord> {
+    return this.upsert(BrowserAutomationSessionRecordSchema.parse(record));
+  }
+
+  private async database(): Promise<ControlDatabase> {
+    this.dbPromise ??= openRuntimeControlDatabase(this.paths, this.dbOptions);
+    return this.dbPromise;
+  }
+}
+
+interface BrowserSessionRow {
+  record_json: string;
+}
+
+function parseBrowserSessionJson(recordJson: string): BrowserAutomationSessionRecord | null {
+  try {
+    const parsed = BrowserAutomationSessionRecordSchema.safeParse(JSON.parse(recordJson) as unknown);
+    return parsed.success ? parsed.data : null;
+  } catch {
+    return null;
+  }
+}
+
+function readBrowserSession(sqlite: SqliteDatabase, sessionId: string): BrowserAutomationSessionRecord | null {
+  const row = sqlite.prepare(`
+    SELECT record_json
+    FROM browser_automation_sessions
+    WHERE session_id = ?
+  `).get(sessionId) as BrowserSessionRow | undefined;
+  return row ? parseBrowserSessionJson(row.record_json) : null;
+}
+
+function listBrowserSessions(sqlite: SqliteDatabase): BrowserAutomationSessionRecord[] {
+  const rows = sqlite.prepare(`
+    SELECT record_json
+    FROM browser_automation_sessions
+    ORDER BY session_id ASC
+  `).all() as BrowserSessionRow[];
+  return rows.flatMap((row) => {
+    const record = parseBrowserSessionJson(row.record_json);
+    return record ? [record] : [];
+  });
+}
+
+function upsertBrowserSession(sqlite: SqliteDatabase, record: BrowserAutomationSessionRecord): void {
+  sqlite.prepare(`
+    INSERT INTO browser_automation_sessions (
+      session_id,
+      provider_id,
+      service_key,
+      workspace,
+      actor_key,
+      state,
+      created_at,
+      updated_at,
+      last_auth_at,
+      expires_at,
+      record_json
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, json(?))
+    ON CONFLICT(session_id) DO UPDATE SET
+      provider_id = excluded.provider_id,
+      service_key = excluded.service_key,
+      workspace = excluded.workspace,
+      actor_key = excluded.actor_key,
+      state = excluded.state,
+      created_at = excluded.created_at,
+      updated_at = excluded.updated_at,
+      last_auth_at = excluded.last_auth_at,
+      expires_at = excluded.expires_at,
+      record_json = excluded.record_json
+  `).run(
+    record.session_id,
+    record.provider_id,
+    record.service_key,
+    record.workspace,
+    record.actor_key,
+    record.state,
+    record.created_at,
+    record.updated_at,
+    record.last_auth_at ?? null,
+    record.expires_at ?? null,
+    JSON.stringify(record),
+  );
 }
 
 function isExpired(expiresAt?: string | null): boolean {

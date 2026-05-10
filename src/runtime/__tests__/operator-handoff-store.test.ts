@@ -48,6 +48,7 @@ describe("RuntimeOperatorHandoffStore", () => {
 
     const restarted = new RuntimeOperatorHandoffStore(path.join(tmpDir, "runtime"));
     expect(await restarted.listOpen()).toHaveLength(1);
+    await expect(fsp.stat(path.join(tmpDir, "runtime", "operator-handoffs", "handoff-run-1.json"))).rejects.toThrow();
 
     await restarted.resolve("handoff-run-1", "approved");
     expect(await restarted.listOpen()).toHaveLength(0);

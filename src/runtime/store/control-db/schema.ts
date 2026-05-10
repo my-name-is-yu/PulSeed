@@ -7,7 +7,7 @@ export interface ControlDbMigration {
   checksum: string;
 }
 
-export const CONTROL_DB_SCHEMA_VERSION = 12;
+export const CONTROL_DB_SCHEMA_VERSION = 13;
 
 export const CONTROL_DB_INITIAL_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS control_schema_migrations (
@@ -1024,6 +1024,156 @@ CREATE INDEX IF NOT EXISTS capability_registry_entries_status_idx
   ON capability_registry_entries(capability_status, updated_at, capability_id);
 `.trim();
 
+export const CONTROL_DB_RUNTIME_JOURNAL_REPLACEMENT_SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS runtime_operator_handoffs (
+  handoff_id TEXT PRIMARY KEY,
+  status TEXT NOT NULL CHECK (status IN ('open', 'approved', 'resolved', 'dismissed')),
+  goal_id TEXT,
+  run_id TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  resolved_at TEXT,
+  record_json TEXT NOT NULL CHECK (json_valid(record_json))
+);
+
+CREATE INDEX IF NOT EXISTS runtime_operator_handoffs_status_idx
+  ON runtime_operator_handoffs(status, updated_at, handoff_id);
+
+CREATE INDEX IF NOT EXISTS runtime_operator_handoffs_goal_idx
+  ON runtime_operator_handoffs(goal_id, status, updated_at, handoff_id);
+
+CREATE INDEX IF NOT EXISTS runtime_operator_handoffs_run_idx
+  ON runtime_operator_handoffs(run_id, status, updated_at, handoff_id);
+
+CREATE TABLE IF NOT EXISTS runtime_budgets (
+  budget_id TEXT PRIMARY KEY,
+  goal_id TEXT,
+  run_id TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  record_json TEXT NOT NULL CHECK (json_valid(record_json))
+);
+
+CREATE INDEX IF NOT EXISTS runtime_budgets_goal_idx
+  ON runtime_budgets(goal_id, updated_at, budget_id);
+
+CREATE INDEX IF NOT EXISTS runtime_budgets_run_idx
+  ON runtime_budgets(run_id, updated_at, budget_id);
+
+CREATE TABLE IF NOT EXISTS runtime_experiment_queues (
+  queue_id TEXT PRIMARY KEY,
+  goal_id TEXT,
+  run_id TEXT,
+  current_version INTEGER NOT NULL CHECK (current_version > 0),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  record_json TEXT NOT NULL CHECK (json_valid(record_json))
+);
+
+CREATE INDEX IF NOT EXISTS runtime_experiment_queues_goal_idx
+  ON runtime_experiment_queues(goal_id, updated_at, queue_id);
+
+CREATE INDEX IF NOT EXISTS runtime_experiment_queues_run_idx
+  ON runtime_experiment_queues(run_id, updated_at, queue_id);
+
+CREATE TABLE IF NOT EXISTS capability_verification_refs (
+  verification_id TEXT PRIMARY KEY,
+  capability_id TEXT NOT NULL,
+  provider_ref TEXT NOT NULL,
+  asset_ref TEXT NOT NULL,
+  operation_kind TEXT NOT NULL,
+  tool_name TEXT NOT NULL,
+  payload_class TEXT NOT NULL,
+  risk_class TEXT NOT NULL,
+  side_effect_profile TEXT NOT NULL,
+  verification_class TEXT NOT NULL,
+  result TEXT NOT NULL,
+  evidence_stage TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  expires_at TEXT,
+  record_json TEXT NOT NULL CHECK (json_valid(record_json))
+);
+
+CREATE INDEX IF NOT EXISTS capability_verification_refs_operation_idx
+  ON capability_verification_refs(capability_id, provider_ref, asset_ref, operation_kind, tool_name, payload_class, risk_class, side_effect_profile, created_at, verification_id);
+
+CREATE INDEX IF NOT EXISTS capability_verification_refs_created_idx
+  ON capability_verification_refs(created_at, verification_id);
+
+CREATE TABLE IF NOT EXISTS capability_audit_records (
+  audit_id TEXT PRIMARY KEY,
+  operation_id TEXT NOT NULL,
+  result TEXT NOT NULL,
+  follow_up_policy_effect TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  record_json TEXT NOT NULL CHECK (json_valid(record_json))
+);
+
+CREATE INDEX IF NOT EXISTS capability_audit_records_created_idx
+  ON capability_audit_records(created_at, audit_id);
+
+CREATE INDEX IF NOT EXISTS capability_audit_records_operation_idx
+  ON capability_audit_records(operation_id, created_at, audit_id);
+
+CREATE TABLE IF NOT EXISTS browser_automation_sessions (
+  session_id TEXT PRIMARY KEY,
+  provider_id TEXT NOT NULL,
+  service_key TEXT NOT NULL,
+  workspace TEXT NOT NULL,
+  actor_key TEXT NOT NULL,
+  state TEXT NOT NULL CHECK (state IN ('fresh', 'authenticated', 'auth_required', 'expired', 'blocked', 'unavailable')),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  last_auth_at TEXT,
+  expires_at TEXT,
+  record_json TEXT NOT NULL CHECK (json_valid(record_json))
+);
+
+CREATE INDEX IF NOT EXISTS browser_automation_sessions_scope_idx
+  ON browser_automation_sessions(provider_id, service_key, workspace, actor_key, state, updated_at, session_id);
+
+CREATE INDEX IF NOT EXISTS browser_automation_sessions_state_idx
+  ON browser_automation_sessions(state, updated_at, session_id);
+
+CREATE TABLE IF NOT EXISTS runtime_auth_handoffs (
+  handoff_id TEXT PRIMARY KEY,
+  provider_id TEXT NOT NULL,
+  service_key TEXT NOT NULL,
+  workspace TEXT NOT NULL,
+  actor_key TEXT NOT NULL,
+  state TEXT NOT NULL CHECK (state IN ('requested', 'pending_operator', 'in_progress', 'completed', 'cancelled', 'expired', 'superseded', 'blocked')),
+  requested_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  expires_at TEXT,
+  completed_at TEXT,
+  supersedes_handoff_id TEXT,
+  superseded_by_handoff_id TEXT,
+  record_json TEXT NOT NULL CHECK (json_valid(record_json))
+);
+
+CREATE INDEX IF NOT EXISTS runtime_auth_handoffs_scope_idx
+  ON runtime_auth_handoffs(provider_id, service_key, workspace, actor_key, state, updated_at, handoff_id);
+
+CREATE INDEX IF NOT EXISTS runtime_auth_handoffs_state_idx
+  ON runtime_auth_handoffs(state, updated_at, handoff_id);
+
+CREATE TABLE IF NOT EXISTS proactive_intervention_events (
+  sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_id TEXT NOT NULL,
+  intervention_id TEXT NOT NULL,
+  event_type TEXT NOT NULL CHECK (event_type IN ('intervention', 'feedback')),
+  recorded_at TEXT NOT NULL,
+  channel TEXT NOT NULL CHECK (channel IN ('daemon', 'cli', 'gateway')),
+  event_json TEXT NOT NULL CHECK (json_valid(event_json))
+);
+
+CREATE INDEX IF NOT EXISTS proactive_intervention_events_intervention_idx
+  ON proactive_intervention_events(intervention_id, sequence);
+
+CREATE INDEX IF NOT EXISTS proactive_intervention_events_recorded_idx
+  ON proactive_intervention_events(recorded_at, sequence);
+`.trim();
+
 export function controlDbMigrationChecksum(sql: string): string {
   return createHash("sha256").update(sql.trim()).digest("hex");
 }
@@ -1101,5 +1251,10 @@ export const CONTROL_DB_MIGRATIONS: readonly ControlDbMigration[] = [
     12,
     "capability-registry-state",
     CONTROL_DB_CAPABILITY_REGISTRY_SCHEMA_SQL
+  ),
+  createControlDbMigration(
+    13,
+    "runtime-journal-replacement-stores",
+    CONTROL_DB_RUNTIME_JOURNAL_REPLACEMENT_SCHEMA_SQL
   ),
 ];

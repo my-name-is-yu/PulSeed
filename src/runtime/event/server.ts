@@ -211,7 +211,7 @@ export class EventServer {
 
   private async canResolveApproval(requestId: string): Promise<boolean> {
     if (this.approvalBroker || this.approvalQueue.has(requestId)) return true;
-    const handoff = await new RuntimeOperatorHandoffStore(this.runtimeRoot).load(requestId);
+    const handoff = await new RuntimeOperatorHandoffStore(this.runtimeRoot, this.controlDbOptions()).load(requestId);
     return handoff?.status === "open";
   }
 
@@ -220,7 +220,7 @@ export class EventServer {
     approved: boolean,
     options: { allowAlreadyResolved?: boolean } = {}
   ): Promise<boolean> {
-    const store = new RuntimeOperatorHandoffStore(this.runtimeRoot);
+    const store = new RuntimeOperatorHandoffStore(this.runtimeRoot, this.controlDbOptions());
     const existing = await store.load(requestId);
     if (!existing) return false;
     if (existing.status !== "open") return options.allowAlreadyResolved === true;
@@ -232,6 +232,12 @@ export class EventServer {
       kind: "operator_handoff",
     });
     return true;
+  }
+
+  private controlDbOptions(): { controlBaseDir: string } | undefined {
+    if (this.config?.controlBaseDir) return { controlBaseDir: this.config.controlBaseDir };
+    const stateManager = this.config?.stateManager;
+    return stateManager ? { controlBaseDir: stateManager.getBaseDir() } : undefined;
   }
 
   setEnvelopeHook(hook: (eventData: Record<string, unknown>) => void | Promise<void>): void {

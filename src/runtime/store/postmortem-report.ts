@@ -20,6 +20,7 @@ import {
 import { RuntimeOperatorHandoffStore, type RuntimeOperatorHandoffRecord } from "./operator-handoff-store.js";
 import { RuntimeExperimentQueueStore, type RuntimeExperimentQueueRecord } from "./experiment-queue-store.js";
 import { RuntimeBudgetStore, type RuntimeBudgetRecord } from "./budget-store.js";
+import type { RuntimeControlDbStoreOptions } from "./control-db/index.js";
 
 export const RuntimePostmortemScopeSchema = z.object({
   goal_id: z.string().min(1).optional(),
@@ -114,11 +115,16 @@ export interface RuntimePostmortemGenerateInput {
 
 export class RuntimePostmortemReportStore {
   private readonly paths: RuntimeStorePaths;
+  private readonly dbOptions: RuntimeControlDbStoreOptions;
 
-  constructor(runtimeRootOrPaths?: string | RuntimeStorePaths) {
+  constructor(
+    runtimeRootOrPaths?: string | RuntimeStorePaths,
+    options: RuntimeControlDbStoreOptions = {},
+  ) {
     this.paths = typeof runtimeRootOrPaths === "string"
       ? createRuntimeStorePaths(runtimeRootOrPaths)
       : runtimeRootOrPaths ?? createRuntimeStorePaths();
+    this.dbOptions = options;
   }
 
   async generate(input: RuntimePostmortemGenerateInput): Promise<RuntimePostmortemReport> {
@@ -164,7 +170,7 @@ export class RuntimePostmortemReportStore {
         scope: budget.scope,
         title: budget.title,
         updated_at: budget.updated_at,
-        status: new RuntimeBudgetStore(this.paths).status(budget),
+        status: new RuntimeBudgetStore(this.paths, this.dbOptions).status(budget),
       })),
       experiment_queues: experimentQueues.map(summarizeExperimentQueue),
       follow_up_actions: buildFollowUpActions(summary, handoffs),
@@ -245,19 +251,19 @@ export class RuntimePostmortemReportStore {
   }
 
   private async readHandoffs(scope: RuntimePostmortemScopeContext): Promise<RuntimeOperatorHandoffRecord[]> {
-    const store = new RuntimeOperatorHandoffStore(this.paths);
+    const store = new RuntimeOperatorHandoffStore(this.paths, this.dbOptions);
     const handoffs = await store.list();
     return handoffs.filter((handoff) => scopeMatches(scope, { goal_id: handoff.goal_id, run_id: handoff.run_id }));
   }
 
   private async readBudgets(scope: RuntimePostmortemScopeContext): Promise<RuntimeBudgetRecord[]> {
-    const store = new RuntimeBudgetStore(this.paths);
+    const store = new RuntimeBudgetStore(this.paths, this.dbOptions);
     const budgets = await store.list();
     return budgets.filter((budget) => scopeMatches(scope, budget.scope));
   }
 
   private async readExperimentQueues(scope: RuntimePostmortemScopeContext): Promise<RuntimeExperimentQueueRecord[]> {
-    const store = new RuntimeExperimentQueueStore(this.paths);
+    const store = new RuntimeExperimentQueueStore(this.paths, this.dbOptions);
     const queues = await store.list();
     return queues.filter((queue) => scopeMatches(scope, { goal_id: queue.goal_id, run_id: queue.run_id }));
   }

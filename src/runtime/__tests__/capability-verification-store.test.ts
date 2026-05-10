@@ -85,6 +85,7 @@ describe("CapabilityVerificationStore", () => {
       created_at: "2026-05-09T00:00:03.000Z",
     }));
 
+    expect(fs.existsSync(path.join(tmpDir, "capability-verification", "verifications", "verify%3Aread-smoke.json"))).toBe(false);
     const all = await store.listVerifications();
     expect(all.map((record) => [
       record.verification_id,

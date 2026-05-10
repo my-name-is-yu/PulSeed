@@ -1,8 +1,6 @@
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { readJsonFileOrNull, writeJsonFileAtomic } from "../../base/utils/json-io.js";
-import type { RuntimeStorePaths } from "./runtime-paths.js";
-import { ensureRuntimeStorePaths } from "./runtime-paths.js";
 import type { z } from "zod";
 
 export async function ensureRuntimeDirectory(dirPath: string): Promise<void> {
@@ -62,32 +60,4 @@ export async function listRuntimeJson<T>(
 export async function moveRuntimeJson(sourcePath: string, targetPath: string): Promise<void> {
   await fsp.mkdir(path.dirname(targetPath), { recursive: true });
   await fsp.rename(sourcePath, targetPath);
-}
-
-export class RuntimeJournal {
-  constructor(private readonly paths: RuntimeStorePaths) {}
-
-  async ensureReady(): Promise<void> {
-    await ensureRuntimeStorePaths(this.paths);
-  }
-
-  async load<T>(filePath: string, schema: z.ZodType<T>): Promise<T | null> {
-    return loadRuntimeJson(filePath, schema);
-  }
-
-  async save<T>(filePath: string, schema: z.ZodType<T>, value: T): Promise<T> {
-    return saveRuntimeJson(filePath, schema, value);
-  }
-
-  async list<T>(dirPath: string, schema: z.ZodType<T>): Promise<T[]> {
-    return listRuntimeJson(dirPath, schema);
-  }
-
-  async remove(filePath: string): Promise<void> {
-    await removeRuntimeJson(filePath);
-  }
-
-  async move(sourcePath: string, targetPath: string): Promise<void> {
-    await moveRuntimeJson(sourcePath, targetPath);
-  }
 }

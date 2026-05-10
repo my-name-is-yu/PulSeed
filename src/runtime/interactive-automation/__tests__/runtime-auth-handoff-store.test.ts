@@ -30,6 +30,7 @@ describe("RuntimeAuthHandoffStore", () => {
           failure_code: "auth_required",
         }),
       );
+      await expect(fs.stat(path.join(tmpRuntime, "auth-handoffs", `${created.handoff_id}.json`))).rejects.toThrow();
 
       await expect(store.transition(created.handoff_id, "completed", {
         browser_session_id: "session-1",

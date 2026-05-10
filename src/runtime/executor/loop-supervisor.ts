@@ -23,6 +23,8 @@ export interface SupervisorConfig {
   maxIterations?: number | null;
   maxCrashCount: number;
   crashBackoffBaseMs: number;
+  runtimeRoot: string;
+  /** @deprecated Normal runtime supervisor state is control DB backed; this remains only to infer runtimeRoot for legacy tests. */
   stateFilePath: string;
   pollIntervalMs: number;
   claimLeaseMs: number;
@@ -89,6 +91,7 @@ const DEFAULT_CONFIG: SupervisorConfig = {
   iterationsPerCycle: 5,
   maxCrashCount: 3,
   crashBackoffBaseMs: 1000,
+  runtimeRoot: getPulseedDirPath(),
   stateFilePath: join(getPulseedDirPath(), 'supervisor-state.json'),
   pollIntervalMs: 100,
   claimLeaseMs: 30_000,
@@ -139,7 +142,8 @@ export class LoopSupervisor {
   constructor(deps: SupervisorDeps, config?: Partial<SupervisorConfig>) {
     this.deps = deps;
     this.config = { ...DEFAULT_CONFIG, ...config };
-    this.supervisorStateStore = new SupervisorStateStore(dirname(this.config.stateFilePath), {
+    const runtimeRoot = config?.runtimeRoot ?? dirname(this.config.stateFilePath);
+    this.supervisorStateStore = new SupervisorStateStore(runtimeRoot, {
       controlBaseDir: this.config.controlBaseDir,
     });
   }

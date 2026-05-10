@@ -41,7 +41,7 @@ export function createRuntimeWiring(
     logger,
   });
   const journalQueue = new JournalBackedQueue({
-    journalPath: path.join(runtimeRoot, "queue.json"),
+    runtimeRoot,
     maxAttempts: RUNTIME_JOURNAL_MAX_ATTEMPTS,
     controlBaseDir: baseDir,
   });

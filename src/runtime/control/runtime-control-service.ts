@@ -187,22 +187,23 @@ export class RuntimeControlService {
   private readonly now: () => Date;
 
   constructor(options: RuntimeControlServiceOptions = {}) {
+    const runtimeRoot = options.runtimeRoot ?? options.operationStore?.runtimeRootDir();
     const controlDbOptions = options.stateManager
       ? { controlBaseDir: options.stateManager.getBaseDir() }
-      : undefined;
+      : options.operationStore?.runtimeControlDbOptions();
     this.operationStore = options.operationStore ?? new RuntimeOperationStore(
-      options.runtimeRoot,
+      runtimeRoot,
       controlDbOptions,
     );
     this.sessionRegistry = options.sessionRegistry ?? (options.stateManager
       ? createRuntimeSessionRegistry({ stateManager: options.stateManager })
       : undefined);
-    this.evidenceLedger = options.evidenceLedger ?? (options.runtimeRoot ? new RuntimeEvidenceLedger(options.runtimeRoot) : undefined);
-    this.operatorHandoffStore = options.operatorHandoffStore ?? (options.runtimeRoot ? new RuntimeOperatorHandoffStore(options.runtimeRoot) : undefined);
+    this.evidenceLedger = options.evidenceLedger ?? (runtimeRoot ? new RuntimeEvidenceLedger(runtimeRoot) : undefined);
+    this.operatorHandoffStore = options.operatorHandoffStore ?? (runtimeRoot ? new RuntimeOperatorHandoffStore(runtimeRoot, controlDbOptions) : undefined);
     this.permissionGrantStore = options.permissionGrantStore;
-    this.authHandoffStore = options.authHandoffStore ?? new RuntimeAuthHandoffStore(options.runtimeRoot);
-    this.browserSessionStore = options.browserSessionStore ?? new BrowserSessionStore(options.runtimeRoot);
-    this.guardrailStore = options.guardrailStore ?? new GuardrailStore(options.runtimeRoot, controlDbOptions);
+    this.authHandoffStore = options.authHandoffStore ?? new RuntimeAuthHandoffStore(runtimeRoot, controlDbOptions);
+    this.browserSessionStore = options.browserSessionStore ?? new BrowserSessionStore(runtimeRoot, controlDbOptions);
+    this.guardrailStore = options.guardrailStore ?? new GuardrailStore(runtimeRoot, controlDbOptions);
     this.executor = options.executor;
     this.now = options.now ?? (() => new Date());
   }

@@ -540,7 +540,7 @@ export async function cmdDaemonStatus(_args: string[]): Promise<void> {
   const runtimeHealthReconciled =
     storedRuntimeHealth !== runtimeHealth
     && (storedRuntimeHealth?.kpi !== undefined || storedRuntimeHealth?.long_running !== undefined);
-  const proactiveSummary = await new ProactiveInterventionStore(runtimeRoot).summarize();
+  const proactiveSummary = await new ProactiveInterventionStore(runtimeRoot, { controlBaseDir: baseDir }).summarize();
   const supervisorState = await readSupervisorState(runtimeRoot, baseDir);
   const shutdownMarker = await readShutdownMarkerFile(baseDir);
   const taskKpis = await summarizeTaskOutcomeLedgers(baseDir);

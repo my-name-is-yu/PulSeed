@@ -28,6 +28,7 @@ import {
   importLegacyPluginChannelRuntimeState,
   importLegacyQueueDaemonScheduleState,
   importLegacyRuntimeEvidenceStrategyDreamState,
+  importLegacyRuntimeFileState,
   type RuntimeHealthKpi,
 } from "../../../runtime/store/index.js";
 import { runRuntimeStoreMaintenanceCycle, type RuntimeMaintenanceLogger } from "../../../runtime/daemon/maintenance.js";
@@ -747,6 +748,11 @@ export async function cmdDoctor(_args: string[]): Promise<number> {
     const goalTaskImportReport = await importLegacyGoalTaskDurableLoopState(baseDir);
     const capabilityRegistryImportReport = await importLegacyCapabilityRegistryState(baseDir);
     const evidenceStrategyDreamImportReport = await importLegacyRuntimeEvidenceStrategyDreamState(baseDir, { runtimeRoot });
+    const runtimeFileStateImportReport = await importLegacyRuntimeFileState({
+      runtimeRootOrPaths: runtimeRoot,
+      controlBaseDir: baseDir,
+      importedAt: new Date().toISOString(),
+    });
     const knowledgeMemoryImportReport = await importLegacyKnowledgeMemoryState(baseDir);
     const pluginChannelImportReport = await importLegacyPluginChannelRuntimeState(baseDir);
     const migratedLegacyCronTasks = await migrateLegacyCronTasksIfNeeded({
@@ -782,6 +788,9 @@ export async function cmdDoctor(_args: string[]): Promise<number> {
     );
     console.log(
       `Repair evidence/strategy/dream import: evidence=${evidenceStrategyDreamImportReport.runtimeEvidenceEntries}, strategy=${evidenceStrategyDreamImportReport.strategyRecords}, iteration logs=${evidenceStrategyDreamImportReport.dreamIterationLogs}, session logs=${evidenceStrategyDreamImportReport.dreamSessionLogs}, event logs=${evidenceStrategyDreamImportReport.dreamEventLogs}, importance=${evidenceStrategyDreamImportReport.dreamImportanceEntries}, watermarks=${evidenceStrategyDreamImportReport.dreamWatermarks ? "imported" : "none"}, suggestions=${evidenceStrategyDreamImportReport.dreamScheduleSuggestions}, playbooks=${evidenceStrategyDreamImportReport.dreamPlaybooks}, activation artifacts=${evidenceStrategyDreamImportReport.dreamActivationArtifacts}, workflows=${evidenceStrategyDreamImportReport.dreamWorkflows}, blocked=${evidenceStrategyDreamImportReport.blockedSources.length}`
+    );
+    console.log(
+      `Repair runtime file-state import: operator handoffs=${runtimeFileStateImportReport.operatorHandoffs}, budgets=${runtimeFileStateImportReport.budgets}, experiment queues=${runtimeFileStateImportReport.experimentQueues}, capability verifications=${runtimeFileStateImportReport.capabilityVerifications}, capability audits=${runtimeFileStateImportReport.capabilityAudits}, browser sessions=${runtimeFileStateImportReport.browserSessions}, auth handoffs=${runtimeFileStateImportReport.authHandoffs}, proactive events=${runtimeFileStateImportReport.proactiveInterventionEvents}, invalid=${runtimeFileStateImportReport.invalidLegacyRecords}`
     );
     console.log(
       `Repair knowledge/memory import: domain=${knowledgeMemoryImportReport.domainKnowledge}, shared=${knowledgeMemoryImportReport.sharedKnowledgeEntries}, agent memory=${knowledgeMemoryImportReport.agentMemoryEntries}, corrections=${knowledgeMemoryImportReport.agentMemoryCorrections}, blocked=${knowledgeMemoryImportReport.blockedSources.length}`

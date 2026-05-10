@@ -46,6 +46,14 @@ export class RuntimeOperationStore {
     this.dbOptions = options;
   }
 
+  runtimeRootDir(): string {
+    return this.paths.rootDir;
+  }
+
+  runtimeControlDbOptions(): RuntimeControlDbStoreOptions {
+    return this.dbOptions;
+  }
+
   async ensureReady(): Promise<void> {
     await this.database();
   }

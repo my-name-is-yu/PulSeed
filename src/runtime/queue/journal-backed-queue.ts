@@ -11,7 +11,8 @@ import {
 } from '../store/control-db/index.js';
 
 export interface JournalBackedQueueOptions extends RuntimeControlDbStoreOptions {
-  journalPath: string;
+  runtimeRoot?: string;
+  journalPath?: string;
   defaultLeaseMs?: number;
   maxAttempts?: number;
   now?: () => number;
@@ -228,8 +229,12 @@ export class JournalBackedQueue {
     this.defaultLeaseMs = options.defaultLeaseMs ?? 60_000;
     this.maxAttempts = options.maxAttempts ?? 3;
     this.now = options.now ?? Date.now;
+    const runtimeRoot = options.runtimeRoot ?? (options.journalPath ? path.dirname(options.journalPath) : null);
+    if (!runtimeRoot) {
+      throw new Error('JournalBackedQueue requires runtimeRoot for normal operation or journalPath for explicit legacy import tests.');
+    }
     this.controlDb = openRuntimeControlDatabaseSync(
-      createRuntimeStorePaths(path.dirname(options.journalPath)),
+      createRuntimeStorePaths(runtimeRoot),
       options
     );
     this.state = this.loadFromDb();

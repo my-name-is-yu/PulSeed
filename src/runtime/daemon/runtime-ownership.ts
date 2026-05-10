@@ -155,7 +155,9 @@ export class RuntimeOwnershipCoordinator {
       details.task_success_rate = taskOutcome.success_rate;
       details.task_outcome = taskOutcome;
     }
-    details.proactive_interventions = await new ProactiveInterventionStore(this.deps.runtimeRoot ?? undefined).summarize();
+    details.proactive_interventions = await new ProactiveInterventionStore(this.deps.runtimeRoot ?? undefined, {
+      controlBaseDir: this.deps.baseDir ?? undefined,
+    }).summarize();
     return details;
   }
 

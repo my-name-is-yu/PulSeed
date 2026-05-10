@@ -1127,7 +1127,7 @@ describe("cmdDaemonStatus", () => {
         started_at: new Date().toISOString(),
       })
     );
-    const store = new ProactiveInterventionStore(actualRuntimeRoot);
+    const store = new ProactiveInterventionStore(actualRuntimeRoot, { controlBaseDir: tmpDir });
     await store.appendIntervention({
       activity: {
         intervention_id: "persisted-root-intervention",

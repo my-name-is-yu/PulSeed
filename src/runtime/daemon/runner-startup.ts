@@ -1,4 +1,3 @@
-import * as path from "node:path";
 import { EventServer } from "../event/server.js";
 import { HttpChannelAdapter } from "../gateway/index.js";
 import type { SupervisorState } from "../executor/index.js";
@@ -241,7 +240,7 @@ export async function startDaemonRunner(
           iterationsPerCycle: context.config.iterations_per_cycle,
           maxIterations: context.config.run_policy?.max_iterations ?? undefined,
           runPolicy: context.config.run_policy?.mode ?? "resident",
-          stateFilePath: path.join(context.runtimeRoot!, "supervisor-state.json"),
+          runtimeRoot: context.runtimeRoot!,
           controlBaseDir: context.baseDir,
         }
       );

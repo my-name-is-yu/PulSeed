@@ -13,10 +13,10 @@ import {
   normalizeTerminalStatus,
 } from "../store/background-run-store.js";
 import {
-  RuntimeJournal,
   listRuntimeJson,
   loadRuntimeJson,
   moveRuntimeJson,
+  removeRuntimeJson,
   saveRuntimeJson,
 } from "../store/runtime-journal.js";
 import {
@@ -67,10 +67,8 @@ describe("runtime store basics", () => {
     await ensureRuntimeStorePaths(paths);
     expect(fs.existsSync(paths.inboxDir)).toBe(true);
     expect(fs.existsSync(paths.completedByIdempotencyDir)).toBe(true);
-    expect(fs.existsSync(paths.authHandoffsDir)).toBe(true);
-    expect(fs.existsSync(paths.browserSessionsDir)).toBe(true);
-    expect(fs.existsSync(paths.evidenceLedgerGoalsDir)).toBe(true);
-    expect(fs.existsSync(paths.proactiveInterventionsDir)).toBe(true);
+    expect(fs.existsSync(paths.dlqDir)).toBe(true);
+    expect(fs.existsSync(paths.reproducibilityManifestsDir)).toBe(true);
     expect(fs.existsSync(paths.postmortemsDir)).toBe(true);
     expect(fs.existsSync(paths.leaderDir)).toBe(false);
     expect(fs.existsSync(paths.approvalsPendingDir)).toBe(false);
@@ -177,8 +175,7 @@ describe("runtime store basics", () => {
   });
 
   it("writes, reads, lists, moves, and removes runtime JSON records", async () => {
-    const journal = new RuntimeJournal(paths);
-    await journal.ensureReady();
+    await ensureRuntimeStorePaths(paths);
 
     const recordPath = paths.approvalPendingPath("a-1");
     const record = {
@@ -243,7 +240,7 @@ describe("runtime store basics", () => {
     expect(fs.existsSync(moveSource)).toBe(false);
     expect(fs.existsSync(moveTarget)).toBe(true);
 
-    await journal.remove(moveTarget);
+    await removeRuntimeJson(moveTarget);
     expect(fs.existsSync(moveTarget)).toBe(false);
 
     expect(record.approval_id).toBe("a-1");

@@ -1,4 +1,3 @@
-import * as fsp from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { ResidentActivitySchema } from "../../base/types/daemon.js";
@@ -6,6 +5,12 @@ import {
   createRuntimeStorePaths,
   type RuntimeStorePaths,
 } from "./runtime-paths.js";
+import {
+  openRuntimeControlDatabase,
+  type ControlDatabase,
+  type RuntimeControlDbStoreOptions,
+  type SqliteDatabase,
+} from "./control-db/index.js";
 
 export const ProactiveInterventionOutcomeSchema = z.enum([
   "accepted",
@@ -134,16 +139,22 @@ function recommendationForFeedback(input: {
 
 export class ProactiveInterventionStore {
   private readonly paths: RuntimeStorePaths;
+  private readonly dbOptions: RuntimeControlDbStoreOptions;
+  private dbPromise: Promise<ControlDatabase> | null = null;
 
-  constructor(runtimeRootOrPaths?: string | RuntimeStorePaths) {
+  constructor(
+    runtimeRootOrPaths?: string | RuntimeStorePaths,
+    options: RuntimeControlDbStoreOptions = {}
+  ) {
     this.paths =
       typeof runtimeRootOrPaths === "string"
         ? createRuntimeStorePaths(runtimeRootOrPaths)
         : runtimeRootOrPaths ?? createRuntimeStorePaths();
+    this.dbOptions = options;
   }
 
   async ensureReady(): Promise<void> {
-    await fsp.mkdir(this.paths.proactiveInterventionsDir, { recursive: true });
+    await this.database();
   }
 
   async appendIntervention(input: {
@@ -191,30 +202,88 @@ export class ProactiveInterventionStore {
 
   async append<T extends ProactiveInterventionEvent>(event: T): Promise<T> {
     const parsed = ProactiveInterventionEventSchema.parse(event) as T;
-    await this.ensureReady();
-    await fsp.appendFile(this.paths.proactiveInterventionLedgerPath, `${JSON.stringify(parsed)}\n`, "utf8");
+    const db = await this.database();
+    db.transaction((sqlite) => appendProactiveIntervention(sqlite, parsed));
     return parsed;
   }
 
   async list(limit?: number): Promise<ProactiveInterventionEvent[]> {
-    const raw = await fsp.readFile(this.paths.proactiveInterventionLedgerPath, "utf8").catch(() => "");
-    if (!raw.trim()) return [];
-    const events: ProactiveInterventionEvent[] = [];
-    for (const line of raw.split(/\r?\n/)) {
-      if (!line.trim()) continue;
-      try {
-        events.push(ProactiveInterventionEventSchema.parse(JSON.parse(line)));
-      } catch {
-        // Malformed history should not block operational health surfaces.
-      }
-    }
-    const effectiveLimit = limit ?? events.length;
-    return events.slice(Math.max(0, events.length - effectiveLimit));
+    const db = await this.database();
+    return db.read((sqlite) => listProactiveInterventions(sqlite, limit));
   }
 
   async summarize(): Promise<ProactiveInterventionSummary> {
     return summarizeProactiveInterventions(await this.list());
   }
+
+  async importLegacyEvent(event: ProactiveInterventionEvent): Promise<ProactiveInterventionEvent> {
+    return this.append(ProactiveInterventionEventSchema.parse(event));
+  }
+
+  private async database(): Promise<ControlDatabase> {
+    this.dbPromise ??= openRuntimeControlDatabase(this.paths, this.dbOptions);
+    return this.dbPromise;
+  }
+}
+
+interface ProactiveInterventionRow {
+  event_json: string;
+}
+
+function parseProactiveInterventionJson(eventJson: string): ProactiveInterventionEvent | null {
+  try {
+    const parsed = ProactiveInterventionEventSchema.safeParse(JSON.parse(eventJson) as unknown);
+    return parsed.success ? parsed.data : null;
+  } catch {
+    return null;
+  }
+}
+
+function appendProactiveIntervention(sqlite: SqliteDatabase, event: ProactiveInterventionEvent): void {
+  sqlite.prepare(`
+    INSERT INTO proactive_intervention_events (
+      event_id,
+      intervention_id,
+      event_type,
+      recorded_at,
+      channel,
+      event_json
+    )
+    VALUES (?, ?, ?, ?, ?, json(?))
+  `).run(
+    event.event_id,
+    event.intervention_id,
+    event.event_type,
+    event.recorded_at,
+    event.channel,
+    JSON.stringify(event),
+  );
+}
+
+function listProactiveInterventions(sqlite: SqliteDatabase, limit?: number): ProactiveInterventionEvent[] {
+  const boundedLimit = limit === undefined
+    ? null
+    : Math.max(0, Math.floor(Number.isFinite(limit) ? limit : 0));
+  const rows = boundedLimit === null
+    ? sqlite.prepare(`
+      SELECT event_json
+      FROM proactive_intervention_events
+      ORDER BY sequence ASC
+    `).all() as ProactiveInterventionRow[]
+    : sqlite.prepare(`
+      SELECT event_json
+      FROM (
+        SELECT sequence, event_json
+        FROM proactive_intervention_events
+        ORDER BY sequence DESC
+        LIMIT ?
+      )
+      ORDER BY sequence ASC
+    `).all(boundedLimit) as ProactiveInterventionRow[];
+  return rows.flatMap((row) => {
+    const event = parseProactiveInterventionJson(row.event_json);
+    return event ? [event] : [];
+  });
 }
 
 export function summarizeProactiveInterventions(events: ProactiveInterventionEvent[]): ProactiveInterventionSummary {
