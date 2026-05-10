@@ -5412,6 +5412,11 @@ describe("ChatRunner", () => {
       );
       expect(intent?.message).toContain("visible tool activity");
       expect(intent?.message).toContain("I understand the request");
+      expect(intent?.presentation?.gatewayNarration).toMatchObject({
+        audience: "user",
+        phase: "planning",
+        subject: "the request",
+      });
       expect(events.map((event) => event.type === "activity" ? event.message : "").join("\n"))
         .not.toContain("このリクエスト");
       expect(JSON.stringify(events)).not.toContain("123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi");

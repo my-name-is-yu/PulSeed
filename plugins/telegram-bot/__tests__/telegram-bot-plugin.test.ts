@@ -873,6 +873,54 @@ describe("TelegramChatEventAdapter", () => {
     expect(editMessageText).not.toHaveBeenCalled();
   });
 
+  it("collapses visible progress instead of deleting it when an immediate final arrives", async () => {
+    const sendPlainMessage = vi.fn()
+      .mockResolvedValueOnce(14)
+      .mockResolvedValueOnce(15);
+    const editMessageText = vi.fn().mockResolvedValue(undefined);
+    const deleteMessage = vi.fn().mockResolvedValue(undefined);
+    const api = {
+      sendPlainMessage,
+      editMessageText,
+      deleteMessage,
+    } as unknown as TelegramAPI;
+
+    const adapter = new TelegramChatEventAdapter(api, 777);
+
+    await adapter.handle({
+      type: "activity",
+      runId: "run-1",
+      turnId: "turn-1",
+      createdAt: "2026-04-08T00:00:00.000Z",
+      kind: "commentary",
+      message: "I will check this before answering.",
+      sourceId: "intent:first-step",
+      presentation: { gatewayProgress: "user" },
+    });
+    await adapter.handle({
+      type: "assistant_final",
+      runId: "run-1",
+      turnId: "turn-1",
+      createdAt: "2026-04-08T00:00:00.050Z",
+      text: "Blocked final.",
+      persisted: true,
+    });
+    await adapter.handle({
+      type: "lifecycle_end",
+      runId: "run-1",
+      turnId: "turn-1",
+      createdAt: "2026-04-08T00:00:00.060Z",
+      status: "completed",
+      elapsedMs: 60,
+      persisted: true,
+    });
+
+    expect(sendPlainMessage).toHaveBeenNthCalledWith(1, 777, "I will check this before answering.");
+    expect(sendPlainMessage).toHaveBeenNthCalledWith(2, 777, "Blocked final.");
+    expect(deleteMessage).not.toHaveBeenCalled();
+    expect(editMessageText).toHaveBeenCalledWith(777, 14, "Completed.");
+  });
+
   it("edits the assistant message to show lifecycle_error partial text", async () => {
     const sendPlainMessage = vi.fn().mockResolvedValue(12);
     const editMessageText = vi.fn().mockResolvedValue(undefined);
