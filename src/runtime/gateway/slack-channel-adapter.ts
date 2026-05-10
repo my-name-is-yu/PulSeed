@@ -77,17 +77,17 @@ export class SlackChannelAdapter implements ChannelAdapter {
    * @returns HTTP response to send back to Slack
    */
   handleRequest(body: string, headers: Record<string, string>): SlackResponse {
+    // Authenticate the raw request before any JSON parsing work.
+    const sigResult = this.verifySignature(body, headers);
+    if (sigResult !== null) {
+      return sigResult;
+    }
+
     let parsed: Record<string, unknown>;
     try {
       parsed = JSON.parse(body) as Record<string, unknown>;
     } catch {
       return { status: 400, body: "invalid json" };
-    }
-
-    // Signature verification for ALL requests (including url_verification)
-    const sigResult = this.verifySignature(body, headers);
-    if (sigResult !== null) {
-      return sigResult;
     }
 
     // URL Verification Challenge
