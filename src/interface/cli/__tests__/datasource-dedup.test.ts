@@ -185,4 +185,27 @@ describe("cmdDatasourceDedup", () => {
 
     expect(listFiles(datasourcesDir)).toEqual(["bad.json", "ds_a_shell.json"]);
   });
+
+  it("skips oversized persisted datasource files during dedup", async () => {
+    fs.mkdirSync(datasourcesDir, { recursive: true });
+    writeDatasource(datasourcesDir, "00-oversized.json", {
+      type: "shell",
+      connection: { commands: { todo_count: shellCommandSpec() } },
+      padding: "x".repeat(300 * 1024),
+    });
+    writeDatasource(datasourcesDir, "ds_a_shell.json", {
+      type: "shell",
+      connection: { commands: { todo_count: shellCommandSpec() } },
+    });
+    writeDatasource(datasourcesDir, "ds_b_shell.json", {
+      type: "shell",
+      connection: { commands: { todo_count: shellCommandSpec() } },
+    });
+
+    const sm = makeFakeStateManager(tmpDir);
+    const result = await cmdDatasourceDedup(sm as never);
+    expect(result).toBe(0);
+
+    expect(listFiles(datasourcesDir)).toEqual(["00-oversized.json", "ds_a_shell.json"]);
+  });
 });

@@ -4,7 +4,7 @@ import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { parseArgs } from "node:util";
 import { getDatasourcesDir } from "../../../base/utils/paths.js";
-import { writeJsonFile, readJsonFile } from "../../../base/utils/json-io.js";
+import { writeJsonFile } from "../../../base/utils/json-io.js";
 
 import type { StateManager } from "../../../base/state/state-manager.js";
 import type { CharacterConfigManager } from "../../../platform/traits/character-config.js";
@@ -13,11 +13,12 @@ import { CONFIG_METADATA } from "../../../base/config/tool-metadata.js";
 import { isReasoningEffort, loadProviderConfig, saveProviderConfig } from "../../../base/llm/provider-config.js";
 import type { ProviderConfig } from "../../../base/llm/provider-config.js";
 import { buildLLMClient } from "../../../base/llm/provider-factory.js";
-import { DataSourceConfigSchema, type DataSourceConfig } from "../../../platform/observation/types/data-source.js";
+import type { DataSourceConfig } from "../../../platform/observation/types/data-source.js";
 import { ReportingEngine } from "../../../reporting/reporting-engine.js";
 import { CapabilityDetector } from "../../../platform/observation/capability-detector.js";
 import { formatOperationError, printCharacterConfig } from "../utils.js";
 import { getCliLogger } from "../cli-logger.js";
+import { readDatasourceConfigFile, readDatasourceJsonFile } from "../datasource-config-file.js";
 
 function maskSecrets(config: ProviderConfig): ProviderConfig {
   return JSON.parse(JSON.stringify(config), (key, value) => {
@@ -491,7 +492,12 @@ export async function cmdDatasourceList(stateManager: StateManager): Promise<num
 
   for (const file of jsonFiles) {
     try {
-      const cfg = await readJsonFile<{ id?: string; type?: string; name?: string; enabled?: boolean }>(path.join(datasourcesDir, file));
+      const cfg = await readDatasourceJsonFile(path.join(datasourcesDir, file)) as {
+        id?: string;
+        type?: string;
+        name?: string;
+        enabled?: boolean;
+      };
       const id = cfg.id ?? file.replace(".json", "");
       const type = cfg.type ?? "unknown";
       const enabled = cfg.enabled !== false ? "yes" : "no";
@@ -551,10 +557,9 @@ export async function cmdDatasourceDedup(stateManager: StateManager): Promise<nu
   const configs: Array<{ file: string; cfg: DataSourceConfig }> = [];
   for (const file of jsonFiles) {
     try {
-      const raw = await fsp.readFile(path.join(datasourcesDir, file), "utf-8");
-      const parsed = DataSourceConfigSchema.safeParse(JSON.parse(raw) as unknown);
-      if (parsed.success) {
-        configs.push({ file, cfg: parsed.data });
+      const cfg = await readDatasourceConfigFile(path.join(datasourcesDir, file));
+      if (cfg) {
+        configs.push({ file, cfg });
       }
     } catch {
       // Skip unreadable files

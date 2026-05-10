@@ -123,6 +123,28 @@ describe("autoRegisterFileExistenceDataSources — dedup by path and scope_goal_
       scope_goal_id: "goal-1",
     });
   });
+
+  it("skips oversized persisted datasource JSON while loading existing configs", async () => {
+    writeDatasource("oversized.json", {
+      id: "oversized",
+      type: "file_existence",
+      connection: { path: "/workspace/proj" },
+      dimension_mapping: { readme_exists: "README.md" },
+      scope_goal_id: "goal-1",
+      padding: "x".repeat(300 * 1024),
+    });
+    writeDatasource("valid.json", {
+      id: "valid",
+      type: "file_existence",
+      connection: { path: "/workspace/proj" },
+      dimension_mapping: { package_exists: "package.json" },
+      scope_goal_id: "goal-1",
+    });
+
+    const configs = await loadExistingDatasources(datasourcesDir);
+
+    expect(configs.map((config) => config.id)).toEqual(["valid"]);
+  });
 });
 
 describe("buildThreshold", () => {
