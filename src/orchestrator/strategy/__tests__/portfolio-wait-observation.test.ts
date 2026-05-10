@@ -107,4 +107,32 @@ describe("portfolio wait observation helpers", () => {
     expect(escaped.status).toBe("failed");
     expect(escaped.resume_hint).toContain("path escapes state base");
   });
+
+  it("keeps oversized artifact JSON conditions pending without parsing the full file", async () => {
+    await fsp.writeFile(
+      path.join(tmpDir, "large-result.json"),
+      JSON.stringify({
+        score: 0.92,
+        padding: "x".repeat(1024 * 1024),
+      }),
+      "utf8"
+    );
+
+    const result = await evaluateWaitConditions([
+      {
+        type: "artifact_json_value",
+        path: "large-result.json",
+        json_pointer: "/score",
+        expected: 0.92,
+      },
+    ], waitMetadata(), {
+      nowMs: Date.parse("2026-05-10T00:00:00.000Z"),
+      stateBaseDir: tmpDir,
+    });
+
+    expect(result.status).toBe("pending");
+    expect(result.resume_hint).toBe("artifact JSON unavailable: large-result.json");
+    const conditions = result.evidence["conditions"] as unknown[];
+    expect(JSON.stringify(conditions[0])).toContain("exceeds 1048576 bytes");
+  });
 });
