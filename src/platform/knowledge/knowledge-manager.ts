@@ -2,8 +2,8 @@ import type { StateManager } from "../../base/state/state-manager.js";
 import type { ILLMClient } from "../../base/llm/llm-client.js";
 import type { IPromptGateway } from "../../prompt/gateway.js";
 import type { Task } from "../../base/types/task.js";
-import {
-} from "../../base/types/knowledge.js";
+import { z } from "zod";
+import { KnowledgeEntrySchema } from "../../base/types/knowledge.js";
 import type {
   KnowledgeEntry,
   DomainKnowledge,
@@ -81,6 +81,41 @@ import {
 } from "./knowledge-manager-store.js";
 
 export * from "./public-api.js";
+
+const ToolAcquisitionPlanCallSchema = z.object({
+  toolName: z.string(),
+  input: z.unknown().optional(),
+});
+
+const ToolAcquisitionSynthesisSchema = z.object({
+  answer: z.string(),
+  confidence: z.number().finite().nonnegative(),
+  tags: z.array(z.string()).nullish().transform((tags) => tags ?? []),
+});
+
+function parseJsonUnknown(content: string): unknown | null {
+  try {
+    return JSON.parse(content) as unknown;
+  } catch {
+    return null;
+  }
+}
+
+function parseToolAcquisitionPlan(content: string, maxToolCalls: number): Array<{ toolName: string; input: unknown }> {
+  const raw = parseJsonUnknown(content);
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .slice(0, maxToolCalls)
+    .map((call) => ToolAcquisitionPlanCallSchema.safeParse(call))
+    .filter((parsed): parsed is { success: true; data: z.infer<typeof ToolAcquisitionPlanCallSchema> } => parsed.success)
+    .map((parsed) => ({ toolName: parsed.data.toolName, input: parsed.data.input }));
+}
+
+function parseToolAcquisitionSynthesis(content: string): z.infer<typeof ToolAcquisitionSynthesisSchema> | null {
+  const raw = parseJsonUnknown(content);
+  const parsed = ToolAcquisitionSynthesisSchema.safeParse(raw);
+  return parsed.success ? parsed.data : null;
+}
 
 // ─── KnowledgeManager ───
 
@@ -633,16 +668,8 @@ export class KnowledgeManager {
     );
 
     // Step 2: Parse plan, return [] on error or empty
-    let toolCalls: Array<{ toolName: string; input: unknown }>;
-    try { toolCalls = JSON.parse(planResponse.content); } catch { return []; }
-    if (!Array.isArray(toolCalls) || toolCalls.length === 0) return [];
-    // Sanitize: cap length and validate element shape (CLAUDE.md: sanitize LLM responses)
     const MAX_TOOL_CALLS = 10;
-    const validCalls = toolCalls
-      .slice(0, MAX_TOOL_CALLS)
-      .filter((tc): tc is { toolName: string; input: unknown } =>
-        typeof tc === "object" && tc !== null && typeof tc.toolName === "string",
-      );
+    const validCalls = parseToolAcquisitionPlan(planResponse.content, MAX_TOOL_CALLS);
     if (validCalls.length === 0) return [];
 
     // Step 3: Execute batch
@@ -657,9 +684,10 @@ export class KnowledgeManager {
       [{ role: "user", content: `Question: ${question}\n\nTool outputs:\n${successfulResults.join("\n---\n")}` }],
       { system: "Synthesize the following tool outputs to answer the question. Return a JSON object with: { answer: string, confidence: number (0-1), tags: string[] }" }
     );
+    const synthesis = parseToolAcquisitionSynthesis(synthesisResponse.content);
+    if (!synthesis) return [];
     try {
-      const synthesis = JSON.parse(synthesisResponse.content);
-      return [{
+      return [KnowledgeEntrySchema.parse({
         entry_id: crypto.randomUUID(),
         question,
         answer: synthesis.answer,
@@ -674,7 +702,7 @@ export class KnowledgeManager {
         superseded_by: null,
         tags: synthesis.tags ?? [],
         embedding_id: null,
-      }];
+      })];
     } catch { return []; }
   }
 
