@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { DaemonConfigSchema, type DaemonConfig } from "../../base/types/daemon.js";
+import { signalProcessPid } from "../../base/utils/process-pid.js";
 import { loadDaemonStateSync } from "../store/daemon-state-store.js";
 
 export function resolveDaemonRuntimeRoot(baseDir: string, configuredRoot?: string): string {
@@ -49,9 +50,8 @@ function readRunningDaemonRuntimeRoot(baseDir: string): string | null {
     if (!state) return null;
     if (state.status !== "running" && state.status !== "idle") return null;
     if (state.pid) {
-      try {
-        process.kill(state.pid, 0);
-      } catch {
+      const result = signalProcessPid(state.pid, 0);
+      if (result.status !== "sent") {
         return null;
       }
     }
