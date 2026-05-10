@@ -75,11 +75,13 @@ export class SeedyPresenceProjector {
   private typingStartPromise: Promise<void> | null = null;
   private statusRef: NonTuiDisplayMessageRef | null = null;
   private statusSendPromise: Promise<void> | null = null;
+  private statusTimer: ReturnType<typeof setTimeout> | null = null;
   private fallbackTimer: ReturnType<typeof setTimeout> | null = null;
   private fallbackAckInFlight = false;
   private fallbackAckSent = false;
   private terminal = false;
   private lastStatusText = "";
+  private pendingStatusText = "";
 
   constructor(options: SeedyPresenceProjectorOptions) {
     this.capabilities = options.presence.capabilities;
@@ -115,6 +117,7 @@ export class SeedyPresenceProjector {
       case "tool_update":
       case "tool_end":
         if (this.shouldCancelFallbackForProgress(event, projection)) this.cancelFallbackTimer();
+        if (this.shouldCancelPendingStatusForProgress(event, projection)) this.cancelStatusTimer();
         return;
       case "lifecycle_start":
       case "turn_steer":
@@ -213,7 +216,7 @@ export class SeedyPresenceProjector {
     if (!text || text === this.lastStatusText) return;
 
     if (this.statusRef === null) {
-      await this.sendInitialEditableStatus(text);
+      await this.queueInitialEditableStatus(text);
       return;
     }
 
@@ -228,7 +231,33 @@ export class SeedyPresenceProjector {
     });
   }
 
+  private async queueInitialEditableStatus(text: string): Promise<void> {
+    if (this.statusSendPromise !== null) {
+      await this.sendInitialEditableStatus(text);
+      return;
+    }
+
+    const delayMs = this.capabilities.meaningfulStatusDelayMs;
+    if (delayMs <= 0) {
+      await this.sendInitialEditableStatus(text);
+      return;
+    }
+
+    this.pendingStatusText = text;
+    if (this.statusTimer !== null) return;
+
+    this.statusTimer = setTimeout(() => {
+      this.statusTimer = null;
+      const pendingText = this.pendingStatusText;
+      this.pendingStatusText = "";
+      if (!pendingText || this.terminal || this.statusRef !== null) return;
+      void this.sendInitialEditableStatus(pendingText);
+    }, delayMs);
+    this.statusTimer.unref?.();
+  }
+
   private async sendInitialEditableStatus(text: string): Promise<void> {
+    this.cancelStatusTimer();
     if (this.statusSendPromise !== null) {
       await this.statusSendPromise;
       if (this.statusRef === null || text === this.lastStatusText) return;
@@ -262,6 +291,7 @@ export class SeedyPresenceProjector {
     if (this.terminal && this.typingSession === null && this.statusRef === null) return;
     this.terminal = true;
     this.cancelFallbackTimer();
+    this.cancelStatusTimer();
     await this.waitForPendingTransportStarts();
     await this.stopNativePresence();
     await this.cleanupEditableStatus(reason);
@@ -276,6 +306,14 @@ export class SeedyPresenceProjector {
     if (this.fallbackTimer === null) return;
     clearTimeout(this.fallbackTimer);
     this.fallbackTimer = null;
+  }
+
+  private cancelStatusTimer(): void {
+    if (this.statusTimer !== null) {
+      clearTimeout(this.statusTimer);
+      this.statusTimer = null;
+    }
+    this.pendingStatusText = "";
   }
 
   private async stopNativePresence(): Promise<void> {
@@ -337,6 +375,23 @@ export class SeedyPresenceProjector {
   ): boolean {
     if (!isMeaningfulProgressEvent(event)) return false;
     if (!this.shouldUseFallbackAck()) return true;
+    return projection.meaningfulProgressRendered === true;
+  }
+
+  private shouldCancelPendingStatusForProgress(
+    event: Extract<ChatEvent, {
+      type:
+        | "operation_progress"
+        | "activity"
+        | "agent_timeline"
+        | "tool_start"
+        | "tool_update"
+        | "tool_end";
+    }>,
+    projection: SeedyPresenceEventProjection,
+  ): boolean {
+    if (this.statusTimer === null) return false;
+    if (!isMeaningfulProgressEvent(event)) return false;
     return projection.meaningfulProgressRendered === true;
   }
 

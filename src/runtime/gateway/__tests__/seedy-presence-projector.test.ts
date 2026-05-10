@@ -289,17 +289,38 @@ describe("SeedyPresenceProjector", () => {
     await projector.update(presence("received"));
     await projector.update(presence("thinking"));
     await projector.update(presence("thinking"));
+    await vi.advanceTimersByTimeAsync(2_000);
     await projector.update(presence("complete"));
 
     expect(transport.sendStatus).toHaveBeenCalledOnce();
-    expect(transport.editStatus).toHaveBeenCalledOnce();
+    expect(transport.editStatus).not.toHaveBeenCalled();
     expect(transport.deleteStatus).toHaveBeenCalledOnce();
     expect(transport.calls).toEqual([
-      "sendStatus:Checking this.",
-      "editStatus:Thinking through the next step.",
+      "sendStatus:Thinking through the next step.",
       "deleteStatus",
     ]);
     expect(transport.sendFallbackAck).not.toHaveBeenCalled();
+  });
+
+  it("cancels delayed editable status when final arrives before the status threshold", async () => {
+    const transport = createTransport();
+    const projector = new SeedyPresenceProjector({
+      presence: resolveGatewayChannelPresenceContract(SLACK_SEEDY_PRESENCE_CONTRACT),
+      transport,
+    });
+
+    await projector.update(presence("received"));
+    await vi.advanceTimersByTimeAsync(1_999);
+    await projector.handle({
+      ...base,
+      type: "assistant_final",
+      text: "Done",
+      persisted: true,
+    });
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    expect(transport.sendStatus).not.toHaveBeenCalled();
+    expect(transport.deleteStatus).not.toHaveBeenCalled();
   });
 
   it("serializes overlapping initial editable status sends", async () => {
@@ -317,14 +338,14 @@ describe("SeedyPresenceProjector", () => {
       transport,
     });
 
-    const first = projector.update(presence("received"));
+    await projector.update(presence("received"));
+    await vi.advanceTimersByTimeAsync(2_000);
     const second = projector.update(presence("thinking"));
-    await vi.advanceTimersByTimeAsync(0);
 
     expect(transport.sendStatus).toHaveBeenCalledOnce();
 
     resolveSend?.();
-    await Promise.all([first, second]);
+    await second;
 
     expect(transport.sendStatus).toHaveBeenCalledOnce();
     expect(transport.editStatus).toHaveBeenCalledOnce();
@@ -350,7 +371,7 @@ describe("SeedyPresenceProjector", () => {
     });
 
     const update = projector.update(presence("received"));
-    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(2_000);
 
     expect(transport.sendStatus).toHaveBeenCalledOnce();
     expect(transport.deleteStatus).not.toHaveBeenCalled();
@@ -595,6 +616,7 @@ describe("SeedyPresenceProjector", () => {
     });
 
     await expect(projector.update(presence("received"))).resolves.toBeUndefined();
+    await vi.advanceTimersByTimeAsync(2_000);
 
     expect(onError).toHaveBeenCalledWith(expect.any(Error), "typing_start");
     expect(onError).toHaveBeenCalledWith(expect.any(Error), "status_send");
@@ -667,6 +689,7 @@ describe("SeedyPresenceProjector", () => {
     });
 
     await projector.update(presence("received"));
+    await vi.advanceTimersByTimeAsync(2_000);
     await projector.update(presence("complete"));
 
     expect(onError).toHaveBeenCalledWith(expect.any(Error), "status_delete");

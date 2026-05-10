@@ -13,9 +13,11 @@ import {
 import { dispatchGatewayChatInput } from "./chat-session-dispatch.js";
 import { createUnsupportedTypingIndicator } from "./typing-indicator.js";
 import { SLACK_GATEWAY_DISPLAY_CONTRACT, createGatewayDisplayPolicy } from "./channel-display-policy.js";
-import { SLACK_SEEDY_PRESENCE_CONTRACT } from "./channel-presence-policy.js";
+import { SLACK_SEEDY_PRESENCE_CONTRACT, resolveGatewayChannelPresenceContract } from "./channel-presence-policy.js";
 import { NonTuiDisplayProjector, type NonTuiDisplayMessageRef, type NonTuiDisplayTransport } from "./non-tui-display-projector.js";
+import { SeedyPresenceProjector, createSeedyPresenceTransportFromNonTuiDisplay } from "./seedy-presence-projector.js";
 import type { ChatEvent } from "../../interface/chat/chat-events.js";
+import { createUserVisibleSeedyTurnPresence } from "../../interface/chat/seedy-turn-presence.js";
 
 export interface SlackChannelAdapterConfig {
   signingSecret: string;
@@ -244,6 +246,7 @@ export class SlackChannelAdapter implements ChannelAdapter {
     externalSurface: ExternalSurfaceDecision;
   }): Promise<void> {
     if (!this.api) return;
+    const transport = new SlackDisplayTransport(this.api, input.channel, input.messageId);
     const projector = new NonTuiDisplayProjector({
       display: {
         capabilities: SLACK_GATEWAY_DISPLAY_CONTRACT.capabilities,
@@ -254,24 +257,47 @@ export class SlackChannelAdapter implements ChannelAdapter {
           cleanupPolicy: "delete",
         },
       },
-      transport: new SlackDisplayTransport(this.api, input.channel, input.messageId),
+      transport,
+    });
+    const presenceProjector = new SeedyPresenceProjector({
+      presence: resolveGatewayChannelPresenceContract(this.presenceContract),
+      transport: createSeedyPresenceTransportFromNonTuiDisplay(transport),
+      onError: (error, operation) => console.warn("SlackChannelAdapter: presence projector failed", { operation, error }),
     });
 
-    const reply = await dispatchGatewayChatInput({
-      text: input.text,
-      platform: "slack",
-      identity_key: input.identityKey,
-      conversation_id: input.channel,
-      sender_id: input.user,
-      message_id: input.messageId,
-      goal_id: input.goalId,
-      cwd: process.cwd(),
-      onEvent: (event) => projector.handle(event as unknown as ChatEvent).catch((err: unknown) => {
-        console.warn("SlackChannelAdapter: failed to project assistant event", err);
-      }),
-      metadata: input.metadata,
-      externalSurface: input.externalSurface,
-    });
+    let reply: string | null = null;
+    try {
+      await presenceProjector.update(createUserVisibleSeedyTurnPresence({
+        turn_id: `slack:${input.channel}:${input.messageId ?? "message"}`,
+        phase: "received",
+      }));
+      reply = await dispatchGatewayChatInput({
+        text: input.text,
+        platform: "slack",
+        identity_key: input.identityKey,
+        conversation_id: input.channel,
+        sender_id: input.user,
+        message_id: input.messageId,
+        goal_id: input.goalId,
+        cwd: process.cwd(),
+        onEvent: async (event) => {
+          const chatEvent = event as unknown as ChatEvent;
+          try {
+            await projector.handle(chatEvent);
+          } catch (err) {
+            console.warn("SlackChannelAdapter: failed to project assistant event", err);
+          }
+          await presenceProjector.handle(chatEvent, {
+            assistantOutputRendered: projector.deliveredAssistantOutput,
+            meaningfulProgressRendered: projector.deliveredProgressOutput,
+          });
+        },
+        metadata: input.metadata,
+        externalSurface: input.externalSurface,
+      });
+    } finally {
+      await presenceProjector.stop();
+    }
     if (reply && !projector.renderedAssistantOutput) {
       await projector.handle({
         type: "assistant_final",

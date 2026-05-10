@@ -342,7 +342,7 @@ describe("SlackChannelAdapter — event_callback to Envelope", () => {
 // ---------------------------------------------------------------------------
 
 describe("SlackChannelAdapter — chat dispatch", () => {
-  it("dispatches Slack message text to the cross-platform chat path", () => {
+  it("dispatches Slack message text to the cross-platform chat path", async () => {
     const adapter = makeAdapter({
       botToken: "xoxb-test-token",
       channelGoalMap: { C_GENERAL: "goal-001" },
@@ -368,24 +368,26 @@ describe("SlackChannelAdapter — chat dispatch", () => {
 
     expect(res.status).toBe(200);
     expect(handler).not.toHaveBeenCalled();
-    expect(dispatchGatewayChatInput).toHaveBeenCalledWith(expect.objectContaining({
-      text: "hello from slack",
-      platform: "slack",
-      identity_key: "shared-slack-user",
-      conversation_id: "C_GENERAL",
-      sender_id: "U123",
-      message_id: "171234.567",
-      goal_id: "goal-001",
-      metadata: expect.objectContaining({
+    await vi.waitFor(() => {
+      expect(dispatchGatewayChatInput).toHaveBeenCalledWith(expect.objectContaining({
+        text: "hello from slack",
+        platform: "slack",
+        identity_key: "shared-slack-user",
+        conversation_id: "C_GENERAL",
+        sender_id: "U123",
+        message_id: "171234.567",
         goal_id: "goal-001",
-        routed_goal_id: "goal-001",
-        slack_team_id: "T_TEAM1",
-        slack_event_id: "Ev_001",
-      }),
-    }));
+        metadata: expect.objectContaining({
+          goal_id: "goal-001",
+          routed_goal_id: "goal-001",
+          slack_team_id: "T_TEAM1",
+          slack_event_id: "Ev_001",
+        }),
+      }));
+    });
   });
 
-  it("dispatches app_mention text through the same chat path", () => {
+  it("dispatches app_mention text through the same chat path", async () => {
     const adapter = makeAdapter({ botToken: "xoxb-test-token" });
     vi.mocked(dispatchGatewayChatInput).mockResolvedValueOnce(null);
     const body = JSON.stringify({
@@ -397,13 +399,15 @@ describe("SlackChannelAdapter — chat dispatch", () => {
 
     adapter.handleRequest(body, buildHeaders(body));
 
-    expect(dispatchGatewayChatInput).toHaveBeenCalledWith(expect.objectContaining({
-      text: "<@BOT> help",
-      platform: "slack",
-      conversation_id: "C_HELP",
-      sender_id: "U_HELP",
-      message_id: "E1",
-    }));
+    await vi.waitFor(() => {
+      expect(dispatchGatewayChatInput).toHaveBeenCalledWith(expect.objectContaining({
+        text: "<@BOT> help",
+        platform: "slack",
+        conversation_id: "C_HELP",
+        sender_id: "U_HELP",
+        message_id: "E1",
+      }));
+    });
   });
 
   it("posts the chat reply back to Slack when a bot token is configured", async () => {
@@ -498,6 +502,104 @@ describe("SlackChannelAdapter — chat dispatch", () => {
         body: expect.objectContaining({ ts: "1001" }),
       }),
     ]));
+  });
+
+  it("does not post a separate Slack status for fast final answers", async () => {
+    let nextTs = 1000;
+    const fetchMock = vi.fn().mockImplementation(async () => ({
+      ok: true,
+      json: async () => ({ ok: true, ts: String(++nextTs) }),
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    vi.mocked(dispatchGatewayChatInput).mockImplementationOnce(async (input) => {
+      await input.onEvent?.({ ...eventBase, type: "assistant_final", text: "Fast answer", persisted: true });
+      return "Fast answer";
+    });
+    const adapter = makeAdapter({ botToken: "xoxb-test-token" });
+    const body = JSON.stringify({
+      type: "event_callback",
+      team_id: "T1",
+      event_id: "E1",
+      event: { type: "message", text: "hello", channel: "C_HELP", user: "U_HELP", ts: "123.456" },
+    });
+
+    adapter.handleRequest(body, buildHeaders(body));
+
+    await vi.waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "https://slack.com/api/chat.postMessage",
+        expect.objectContaining({
+          body: expect.stringContaining("Fast answer"),
+        })
+      );
+    });
+    const calls = slackCalls(fetchMock);
+    expect(calls.filter((call) => call.url === "https://slack.com/api/chat.postMessage")).toHaveLength(1);
+    expect(calls.map((call) => call.body.text ?? "").join("\n")).not.toContain("Checking this.");
+  });
+
+  it("posts one delayed editable Slack status in the message thread for slow turns", async () => {
+    vi.useFakeTimers();
+    try {
+      let nextTs = 1000;
+      const fetchMock = vi.fn().mockImplementation(async () => ({
+        ok: true,
+        json: async () => ({ ok: true, ts: String(++nextTs) }),
+      }));
+      vi.stubGlobal("fetch", fetchMock);
+      const dispatchStarted = createDeferred();
+      const dispatchCanFinish = createDeferred();
+      vi.mocked(dispatchGatewayChatInput).mockImplementationOnce(async (input) => {
+        dispatchStarted.resolve();
+        await dispatchCanFinish.promise;
+        await input.onEvent?.({ ...eventBase, type: "assistant_final", text: "Done after wait", persisted: true });
+        return "Done after wait";
+      });
+      const adapter = makeAdapter({ botToken: "xoxb-test-token" });
+      const body = JSON.stringify({
+        type: "event_callback",
+        team_id: "T1",
+        event_id: "E1",
+        event: { type: "message", text: "slow please", channel: "C_HELP", user: "U_HELP", ts: "123.456" },
+      });
+
+      adapter.handleRequest(body, buildHeaders(body));
+      await dispatchStarted.promise;
+      await vi.advanceTimersByTimeAsync(2_000);
+
+      expect(slackCalls(fetchMock)).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          url: "https://slack.com/api/chat.postMessage",
+          body: expect.objectContaining({
+            text: "Checking this.",
+            thread_ts: "123.456",
+          }),
+        }),
+      ]));
+
+      dispatchCanFinish.resolve();
+      await vi.waitFor(() => {
+        const calls = slackCalls(fetchMock);
+        expect(calls).toEqual(expect.arrayContaining([
+          expect.objectContaining({
+            url: "https://slack.com/api/chat.delete",
+            body: expect.objectContaining({ ts: "1001" }),
+          }),
+          expect.objectContaining({
+            url: "https://slack.com/api/chat.postMessage",
+            body: expect.objectContaining({
+              text: "Done after wait",
+              thread_ts: "123.456",
+            }),
+          }),
+        ]));
+      });
+      const statusPosts = slackCalls(fetchMock)
+        .filter((call) => call.url === "https://slack.com/api/chat.postMessage" && call.body.text === "Checking this.");
+      expect(statusPosts).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("renders denied tool observations as blocked Slack progress", async () => {
@@ -624,6 +726,21 @@ function deniedToolObservationEvent() {
       },
     },
   };
+}
+
+function slackCalls(fetchMock: ReturnType<typeof vi.fn>): Array<{ url: string; body: Record<string, unknown> }> {
+  return fetchMock.mock.calls.map(([url, init]) => ({
+    url: String(url),
+    body: JSON.parse(String((init as RequestInit).body ?? "{}")) as Record<string, unknown>,
+  }));
+}
+
+function createDeferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((innerResolve) => {
+    resolve = innerResolve;
+  });
+  return { promise, resolve };
 }
 
 // ---------------------------------------------------------------------------
