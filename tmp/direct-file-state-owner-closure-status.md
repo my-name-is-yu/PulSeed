@@ -181,6 +181,54 @@ Base: origin/main @ 7d87d012 Prefer live daemon status in runtime evidence answe
 - `npm run build`: passed
 - `git diff --check`: passed
 
+## Slice 8 Merge Record
+
+- PR: https://github.com/my-name-is-yu/PulSeed/pull/1873
+- Branch: `codex/direct-file-state-slice-8-config-setup-files-20260511015622`
+- Worktree: `/Users/yuyoshimuta/Documents/dev/PulSeed-worktrees/direct-file-state-slice-8-config-setup-files-20260511015622`
+- Head commit: `7d5a00b17594438d7055c5589d47ced920e52a08`
+- Merge commit: `c75c14dbdc3414ee77f4cea3b0cdb573e1ba3afa`
+- CI: `unit (22)` success, `integration (24)` success
+- GitHub Codex review: `@codex review` needed; current-head comment reported no major issues
+- Fallback sub-agent review: started while waiting but shut down after GitHub Codex review arrived; not used as merge gate
+- Worktree cleanup: removed after merge
+- Remote branch cleanup: deleted after merge
+- Merged by this session: yes
+
+## Slice 9 Final Audit Plan
+
+| Check | Result |
+| --- | --- |
+| Guard findings | baseline `findings=[]` |
+| Legacy debt | baseline `debtReport=[]` |
+| Direct file debt | baseline `directFileDebtReport=[]` |
+| Direct owner follow-up | none; all `directFileOwnerReport.nextSlice` entries are null |
+| Remaining file-backed categories | config/secret, user-authored content, workspace content, debug/export artifact, migration-only input, reproducibility artifact, bounded IPC/spool, Soil import/publish artifact |
+
+## Slice 9 Final Audit Update
+
+| Check | Result |
+| --- | --- |
+| Guard findings | `findings=[]` |
+| Legacy debt | `debtReport=[]` |
+| Direct file debt | `directFileDebtReport=[]` |
+| Direct owner follow-up | none; final guard test asserts every owner has `nextSlice: null` and `debt: false` |
+| Remaining runtime durable file owners | none found |
+| Remaining file-backed surfaces | config/secret, user-authored content, workspace content, debug/export artifact, migration-only input, reproducibility artifact, bounded IPC/spool, Soil import/publish artifact |
+
+## Slice 9 Validation
+
+- Worktree: `/Users/yuyoshimuta/Documents/dev/PulSeed-worktrees/direct-file-state-slice-9-final-audit-20260511021143`
+- Branch: `codex/direct-file-state-slice-9-final-audit-20260511021143`
+- Base: `origin/main @ c75c14db Close direct file config boundaries (#1873)`
+- `nvm use 24.15.0 && npm ci`: passed
+- `npx vitest run --config vitest.unit.config.ts src/interface/cli/__tests__/database-first-legacy-store-check.test.ts`: passed, 21 tests
+- `node scripts/check-database-first-legacy-stores.mjs --json`: ok=true, findings=0, `debtReport=[]`, `directFileDebtReport=[]`, no follow-up owners
+- `npm run typecheck`: passed
+- `npm run lint:boundaries`: passed with existing warnings, 0 errors
+- `npm run build`: passed
+- `git diff --check`: passed
+
 ## Slice 7 Merge Record
 
 - PR: https://github.com/my-name-is-yu/PulSeed/pull/1869

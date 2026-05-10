@@ -429,6 +429,20 @@ describe("database-first legacy store check", () => {
       }),
     ]));
   });
+
+  it("keeps the final direct file owner inventory closed with no follow-up debt", () => {
+    const result = runCheck(tmpDir, ["--json"]);
+
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout) as {
+      directFileOwnerReport: Array<{ id: string; debt: boolean; nextSlice: number | null }>;
+      directFileDebtReport: Array<{ id: string }>;
+    };
+    expect(parsed.directFileDebtReport).toEqual([]);
+    expect(parsed.directFileOwnerReport.length).toBeGreaterThan(0);
+    expect(parsed.directFileOwnerReport.every((entry) => entry.debt === false)).toBe(true);
+    expect(parsed.directFileOwnerReport.every((entry) => entry.nextSlice === null)).toBe(true);
+  });
 });
 
 function runCheck(rootDir: string, args: string[] = []): { status: number; stdout: string; stderr: string } {

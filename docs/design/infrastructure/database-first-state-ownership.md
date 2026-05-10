@@ -196,9 +196,10 @@ ownership in the index, graph, setup, or DurableLoop caller path fails the guard
 
 Remaining known non-database file surfaces are intentionally allowlisted in the
 guard so the repository can prevent new ad hoc stores while preserving an
-explicit final audit list. A completed closure pass should leave `debtReport`
-empty. The remaining non-debt `allowlistReport` entries are migration inputs,
-config/user content, debug/export outputs, workspace artifacts, or Soil
+explicit final audit list. The completed closure pass leaves both `debtReport`
+and `directFileDebtReport` empty, and every `directFileOwnerReport` entry has no
+follow-up slice. The remaining non-debt `allowlistReport` entries are migration
+inputs, config/user content, debug/export outputs, workspace artifacts, or Soil
 import/publish artifacts. `StateManager.readRaw` and `StateManager.writeRaw`
 route legacy logical paths through typed stores first, then reject any
 unclassified fallback path outside explicit config/user-authored content and
