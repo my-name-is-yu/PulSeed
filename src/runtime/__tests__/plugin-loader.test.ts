@@ -8,7 +8,7 @@ import {
   clearRegisteredCrossPlatformChatSessionManager,
   registerGlobalCrossPlatformChatSessionManager,
 } from "../../interface/chat/cross-platform-session-global.js";
-import { PluginManifestSchema, PluginStateSchema } from "../../base/types/plugin.js";
+import { PluginManifestSchema, PluginMatchResultSchema, PluginStateSchema } from "../../base/types/plugin.js";
 import type { INotifier, PluginManifest } from "../../base/types/plugin.js";
 import type { AdapterRegistry, IAdapter, AgentResult } from "../../orchestrator/execution/adapter-layer.js";
 import type { DataSourceRegistry, IDataSourceAdapter } from "../../platform/observation/data-source-adapter.js";
@@ -521,8 +521,27 @@ describe("PluginLoader state builders", () => {
     expect(PluginStateSchema.parse(base).usage_count).toBe(0);
     expect(PluginStateSchema.parse({ ...base, usage_count: 1 }).usage_count).toBe(1);
     expect(PluginStateSchema.safeParse({ ...base, usage_count: -1 }).success).toBe(false);
+    expect(PluginStateSchema.safeParse({ ...base, trust_score: Number.POSITIVE_INFINITY }).success).toBe(false);
+    expect(PluginStateSchema.safeParse({ ...base, trust_score: 101 }).success).toBe(false);
     expect(PluginStateSchema.safeParse({ ...base, success_count: Number.MAX_SAFE_INTEGER + 1 }).success).toBe(false);
     expect(PluginStateSchema.safeParse({ ...base, failure_count: Number.POSITIVE_INFINITY }).success).toBe(false);
+  });
+
+  it("rejects invalid plugin match scores at the schema boundary", () => {
+    const base = {
+      pluginName: "my-plugin",
+      matchScore: 1,
+      matchedDimensions: ["quality"],
+      trustScore: 20,
+      autoSelectable: true,
+    };
+
+    expect(PluginMatchResultSchema.parse(base)).toEqual(base);
+    expect(PluginMatchResultSchema.safeParse({ ...base, matchScore: Number.NaN }).success).toBe(false);
+    expect(PluginMatchResultSchema.safeParse({ ...base, matchScore: Number.POSITIVE_INFINITY }).success).toBe(false);
+    expect(PluginMatchResultSchema.safeParse({ ...base, matchScore: 1.1 }).success).toBe(false);
+    expect(PluginMatchResultSchema.safeParse({ ...base, trustScore: Number.MAX_SAFE_INTEGER + 1 }).success).toBe(false);
+    expect(PluginMatchResultSchema.safeParse({ ...base, trustScore: -101 }).success).toBe(false);
   });
 });
 

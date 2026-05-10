@@ -66,6 +66,16 @@ const PluginStateSafeNonnegativeIntSchema = z.number()
   .int()
   .nonnegative()
   .safe();
+const PluginTrustScoreSchema = z.number()
+  .finite()
+  .int()
+  .safe()
+  .min(-100)
+  .max(100);
+const PluginMatchScoreSchema = z.number()
+  .finite()
+  .min(0)
+  .max(1);
 
 export const PluginStateSchema = z.object({
   name: z.string(),
@@ -74,7 +84,7 @@ export const PluginStateSchema = z.object({
   error_message: z.string().optional(),
   loaded_at: z.string(), // ISO 8601
   // Trust score using the asymmetric design from trust-and-safety.md §2.
-  trust_score: z.number().int().min(-100).max(100).default(0),
+  trust_score: PluginTrustScoreSchema.default(0),
   usage_count: PluginStateSafeNonnegativeIntSchema.default(0),
   success_count: PluginStateSafeNonnegativeIntSchema.default(0),
   failure_count: PluginStateSafeNonnegativeIntSchema.default(0),
@@ -86,9 +96,9 @@ export type PluginState = z.infer<typeof PluginStateSchema>;
 
 export const PluginMatchResultSchema = z.object({
   pluginName: z.string(),
-  matchScore: z.number().min(0).max(1),
+  matchScore: PluginMatchScoreSchema,
   matchedDimensions: z.array(z.string()),
-  trustScore: z.number().int(),
+  trustScore: PluginTrustScoreSchema,
   autoSelectable: z.boolean(), // trust_score >= 20
 });
 
