@@ -62,7 +62,7 @@ function isGatewayHelpRequest(arg: string | undefined): boolean {
 }
 
 export async function cmdGatewaySetup(argv: string[]): Promise<number> {
-  if (argv.includes("--help") || argv.includes("-h")) {
+  if (argv.some((arg) => isGatewayHelpRequest(arg))) {
     console.log(GATEWAY_SETUP_HELP_TEXT);
     return 0;
   }

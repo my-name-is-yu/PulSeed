@@ -122,7 +122,7 @@ export async function cmdTelegram(args: string[]): Promise<number> {
 }
 
 export async function cmdTelegramSetup(args: string[]): Promise<number> {
-  if (args.includes("--help") || args.includes("-h")) {
+  if (args.some((arg) => isHelpRequest(arg))) {
     console.log(TELEGRAM_SETUP_HELP_TEXT);
     return 0;
   }
