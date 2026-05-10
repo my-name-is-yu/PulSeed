@@ -5,11 +5,13 @@ import { SetupDialoguePublicStateSchema } from "./setup-dialogue.js";
 import { SetupSecretIntakeItemSchema } from "./setup-secret-intake.js";
 import { ChatSessionUsageSchema } from "./chat-usage-contracts.js";
 
+const ChatSafeNonnegativeIntSchema = z.number().finite().int().nonnegative().safe();
+
 export const ChatMessageSchema = z.object({
   role: z.enum(["user", "assistant"]),
   content: z.string(),
   timestamp: z.string(),
-  turnIndex: z.number().int().min(0),
+  turnIndex: ChatSafeNonnegativeIntSchema,
   setupSecretIntake: z.array(SetupSecretIntakeItemSchema.omit({ value: true })).optional(),
 }).passthrough();
 export type ChatMessage = z.infer<typeof ChatMessageSchema>;
@@ -46,7 +48,7 @@ export const ChatRolloutJournalRecordSchema = z.object({
   sessionId: z.string(),
   runId: z.string().nullable(),
   turnId: z.string().nullable(),
-  sequence: z.number().int().nonnegative(),
+  sequence: ChatSafeNonnegativeIntSchema,
   createdAt: z.string(),
   kind: ChatRolloutJournalRecordKindSchema,
   source: z.enum(["chat_history", "chat_event", "agent_timeline", "approval_store"]).default("chat_history"),
@@ -61,27 +63,27 @@ export const ChatCompactionRecordSchema = z.object({
   schema_version: z.literal(CHAT_COMPACTION_RECORD_SCHEMA_VERSION),
   id: z.string(),
   sessionId: z.string(),
-  sequence: z.number().int().nonnegative(),
+  sequence: ChatSafeNonnegativeIntSchema,
   createdAt: z.string(),
   reason: z.enum(["manual_command", "auto_context_limit"]).default("manual_command"),
-  inputMessageCount: z.number().int().nonnegative(),
-  outputMessageCount: z.number().int().nonnegative(),
-  removedMessageCount: z.number().int().nonnegative(),
-  retainedMessageCount: z.number().int().nonnegative(),
+  inputMessageCount: ChatSafeNonnegativeIntSchema,
+  outputMessageCount: ChatSafeNonnegativeIntSchema,
+  removedMessageCount: ChatSafeNonnegativeIntSchema,
+  retainedMessageCount: ChatSafeNonnegativeIntSchema,
   summary: z.string(),
   modelVisibleSummary: z.string(),
   archivedUserMessages: z.array(ChatMessageSchema),
   archivedAssistantMessages: z.array(ChatMessageSchema),
   retainedMessages: z.array(ChatMessageSchema),
   pendingPermissions: z.array(z.object({
-    sequence: z.number().int().nonnegative(),
+    sequence: ChatSafeNonnegativeIntSchema,
     source: z.string(),
     status: z.enum(["requested", "resolved", "unknown"]),
     invalidatedByCompaction: z.boolean(),
     payload: z.unknown(),
   }).passthrough()),
   decisions: z.array(z.object({
-    sequence: z.number().int().nonnegative(),
+    sequence: ChatSafeNonnegativeIntSchema,
     kind: ChatRolloutJournalRecordKindSchema,
     source: z.string(),
     visibility: z.string(),
@@ -93,11 +95,11 @@ export const ChatCompactionRecordSchema = z.object({
     payload: z.unknown(),
   }).passthrough()),
   replacementHistory: z.object({
-    removedTurnIndexes: z.array(z.number().int().nonnegative()),
-    retainedOriginalTurnIndexes: z.array(z.number().int().nonnegative()),
-    rewrittenTurnIndexes: z.array(z.number().int().nonnegative()),
-    rolloutJournalSequences: z.array(z.number().int().nonnegative()),
-    turnContextCount: z.number().int().nonnegative(),
+    removedTurnIndexes: z.array(ChatSafeNonnegativeIntSchema),
+    retainedOriginalTurnIndexes: z.array(ChatSafeNonnegativeIntSchema),
+    rewrittenTurnIndexes: z.array(ChatSafeNonnegativeIntSchema),
+    rolloutJournalSequences: z.array(ChatSafeNonnegativeIntSchema),
+    turnContextCount: ChatSafeNonnegativeIntSchema,
   }).passthrough(),
 }).passthrough();
 export type ChatCompactionRecord = z.infer<typeof ChatCompactionRecordSchema>;
@@ -131,7 +133,7 @@ export const ChatSessionSchema = z.object({
   ownerClaimedAt: z.string().nullable().optional(),
   waitingUntil: z.string().nullable().optional(),
   waitingCondition: z.string().nullable().optional(),
-  retryCount: z.number().int().nonnegative().nullable().optional(),
+  retryCount: ChatSafeNonnegativeIntSchema.nullable().optional(),
   lastRetryAt: z.string().nullable().optional(),
   lastResumedAt: z.string().nullable().optional(),
   notificationReplyTarget: RuntimeReplyTargetSchema.nullable().optional(),
