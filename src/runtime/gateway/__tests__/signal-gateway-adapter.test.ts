@@ -161,6 +161,46 @@ describe("SignalGatewayAdapter", () => {
       vi.useRealTimers();
     }
   });
+
+  it("sends a terminal fallback if a slow null reply already produced presence", async () => {
+    vi.useFakeTimers();
+    try {
+      const sentBodies: string[] = [];
+      vi.stubGlobal("fetch", vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+        if (String(url).includes("/receive/")) {
+          return okResponse({
+            messages: [{
+              id: "signal-null",
+              sender: "+10000000002",
+              message: "slow failure",
+              timestamp: 123,
+            }],
+          });
+        }
+        const body = JSON.parse(String(init?.body ?? "{}")) as { message?: string };
+        sentBodies.push(body.message ?? "");
+        return okResponse({});
+      }));
+      const dispatchStarted = createDeferred();
+      const dispatchCanFinish = createDeferred();
+      vi.mocked(dispatchGatewayChatInput).mockImplementationOnce(async () => {
+        dispatchStarted.resolve();
+        await dispatchCanFinish.promise;
+        return null;
+      });
+      const adapter = new SignalGatewayAdapter(makeConfig());
+
+      const polling = (adapter as unknown as { pollOnce(): Promise<void> }).pollOnce();
+      await dispatchStarted.promise;
+      await vi.advanceTimersByTimeAsync(4_000);
+      dispatchCanFinish.resolve();
+      await polling;
+
+      expect(sentBodies).toEqual(["I'm checking this.", "Received."]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 const eventBase = {

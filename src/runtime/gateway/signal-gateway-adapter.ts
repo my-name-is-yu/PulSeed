@@ -200,13 +200,13 @@ export class SignalGatewayAdapter implements ChannelAdapter {
         await presenceProjector.stop();
       }
 
-      if (reply !== null && !projector.renderedAssistantOutput) {
+      if (!projector.renderedAssistantOutput && (reply !== null || presenceProjector.hasSentFallbackAck)) {
         await projector.handle({
           type: "assistant_final",
           runId: "fallback",
           turnId: "fallback",
           createdAt: new Date().toISOString(),
-          text: reply,
+          text: reply ?? "Received.",
           persisted: false,
         });
       }
