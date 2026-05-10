@@ -5,12 +5,14 @@ import { loadGatewayConfigJson } from "./config-json.js";
 import { dispatchGatewayChatInput } from "./chat-session-dispatch.js";
 import { formatPlaintextNotification, supportsCoreGatewayNotification } from "./core-channel-notification.js";
 import { buildChannelPolicyMetadata, buildExternalSurfaceDecision, evaluateChannelAccess, resolveChannelRoute } from "./channel-policy.js";
-import { createRefreshingTypingIndicator, withTypingIndicator } from "./typing-indicator.js";
+import { createRefreshingTypingIndicator } from "./typing-indicator.js";
 import { DISCORD_GATEWAY_DISPLAY_CONTRACT, createGatewayDisplayPolicy } from "./channel-display-policy.js";
-import { DISCORD_SEEDY_PRESENCE_CONTRACT } from "./channel-presence-policy.js";
+import { DISCORD_SEEDY_PRESENCE_CONTRACT, resolveGatewayChannelPresenceContract } from "./channel-presence-policy.js";
 import { NonTuiDisplayProjector, type NonTuiDisplayMessageRef, type NonTuiDisplayTransport } from "./non-tui-display-projector.js";
+import { SeedyPresenceProjector, createSeedyPresenceTransportFromNonTuiDisplay } from "./seedy-presence-projector.js";
 import { isPayloadTooLargeError, readBody } from "../http-body.js";
 import type { INotifier, NotificationEvent, NotificationEventType } from "../../base/types/plugin.js";
+import type { ChatEvent } from "../../interface/chat/chat-events.js";
 
 let discordSyntheticMessageId = 0;
 const MIN_PORT = 1;
@@ -251,7 +253,10 @@ export class DiscordGatewayAdapter implements ChannelAdapter {
     payload: DiscordInteractionPayload,
     input: Parameters<typeof dispatchGatewayChatInput>[0]
   ): Promise<void> {
-    const projector = payload.application_id !== undefined && payload.token !== undefined
+    const displayTransport = payload.application_id !== undefined && payload.token !== undefined
+      ? new DiscordInteractionDisplayTransport(this.api, payload.application_id, payload.token, this.config.ephemeral)
+      : null;
+    const projector = displayTransport !== null
       ? new NonTuiDisplayProjector({
         display: {
           capabilities: DISCORD_GATEWAY_DISPLAY_CONTRACT.capabilities,
@@ -262,23 +267,38 @@ export class DiscordGatewayAdapter implements ChannelAdapter {
             cleanupPolicy: "delete",
           },
         },
-        transport: new DiscordInteractionDisplayTransport(this.api, payload.application_id, payload.token, this.config.ephemeral),
+        transport: displayTransport,
       })
       : null;
-    const reply = await withTypingIndicator(
-      this.typingIndicator,
-      {
+    const presenceProjector = new SeedyPresenceProjector({
+      presence: resolveGatewayChannelPresenceContract(this.presenceContract),
+      transport: displayTransport !== null ? createSeedyPresenceTransportFromNonTuiDisplay(displayTransport) : undefined,
+      typingIndicator: this.typingIndicator,
+      typingContext: {
         platform: "discord",
         conversation_id: input.conversation_id,
         sender_id: input.sender_id,
         message_id: input.message_id,
         metadata: input.metadata,
       },
-      () => dispatchGatewayChatInput({
+      onError: (error, operation) => console.warn("DiscordGatewayAdapter: presence projector failed", { operation, error }),
+    });
+    let reply: string | null = null;
+    try {
+      reply = await dispatchGatewayChatInput({
         ...input,
-        onEvent: (event) => projector?.handle(event as unknown as Parameters<NonTuiDisplayProjector["handle"]>[0]),
-      })
-    );
+        onEvent: async (event) => {
+          const chatEvent = event as unknown as ChatEvent;
+          await projector?.handle(chatEvent);
+          await presenceProjector.handle(chatEvent, {
+            assistantOutputRendered: projector?.deliveredAssistantOutput ?? false,
+            meaningfulProgressRendered: projector?.deliveredProgressOutput ?? false,
+          });
+        },
+      });
+    } finally {
+      await presenceProjector.stop();
+    }
     const content = reply ?? "Received.";
 
     if (projector !== null && !projector.renderedAssistantOutput) {

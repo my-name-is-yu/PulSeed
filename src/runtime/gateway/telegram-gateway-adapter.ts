@@ -4,10 +4,11 @@ import { loadGatewayConfigJson } from "./config-json.js";
 import { dispatchGatewayChatInput } from "./chat-session-dispatch.js";
 import { formatTelegramNotification, supportsCoreGatewayNotification } from "./core-channel-notification.js";
 import { buildChannelPolicyMetadata, buildExternalSurfaceDecision, evaluateChannelAccess, resolveChannelRoute } from "./channel-policy.js";
-import { createRefreshingTypingIndicator, withTypingIndicator } from "./typing-indicator.js";
+import { createRefreshingTypingIndicator } from "./typing-indicator.js";
 import { TELEGRAM_GATEWAY_DISPLAY_CONTRACT, createGatewayDisplayPolicy } from "./channel-display-policy.js";
-import { TELEGRAM_SEEDY_PRESENCE_CONTRACT } from "./channel-presence-policy.js";
+import { TELEGRAM_SEEDY_PRESENCE_CONTRACT, resolveGatewayChannelPresenceContract } from "./channel-presence-policy.js";
 import { NonTuiDisplayProjector, type NonTuiDisplayMessageRef, type NonTuiDisplayTransport } from "./non-tui-display-projector.js";
+import { SeedyPresenceProjector, createSeedyPresenceTransportFromNonTuiDisplay, type SeedyPresenceTransport } from "./seedy-presence-projector.js";
 import { PluginChannelRuntimeStateStore } from "../store/plugin-channel-runtime-state-store.js";
 import type { INotifier, NotificationEvent, NotificationEventType } from "../../base/types/plugin.js";
 import type { ChatEvent } from "../../interface/chat/chat-events.js";
@@ -226,15 +227,22 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
     }
     const externalSurface = buildExternalSurfaceDecision(context, access, route);
 
-    const reply = await withTypingIndicator(
-      this.typingIndicator,
-      {
+    const presenceProjector = new SeedyPresenceProjector({
+      presence: resolveGatewayChannelPresenceContract(this.presenceContract),
+      transport: eventAdapter.presenceTransport,
+      typingIndicator: this.typingIndicator,
+      typingContext: {
         platform: "telegram",
         conversation_id: String(chatId),
         sender_id: String(fromUserId),
         message_id: String(messageId),
       },
-      () => dispatchGatewayChatInput({
+      onError: (error, operation) => console.warn("TelegramGatewayAdapter: presence projector failed", { operation, error }),
+    });
+
+    let reply: string | null = null;
+    try {
+      reply = await dispatchGatewayChatInput({
         text,
         platform: "telegram",
         identity_key: route.identityKey ?? this.config.identity_key,
@@ -243,15 +251,24 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
         message_id: String(messageId),
         goal_id: route.goalId,
         cwd: process.cwd(),
-        onEvent: (event) => eventAdapter.handle(event as unknown as ChatEvent),
+        onEvent: async (event) => {
+          const chatEvent = event as unknown as ChatEvent;
+          await eventAdapter.handle(chatEvent);
+          await presenceProjector.handle(chatEvent, {
+            assistantOutputRendered: eventAdapter.deliveredAssistantOutput,
+            meaningfulProgressRendered: eventAdapter.deliveredProgressOutput,
+          });
+        },
         externalSurface,
         metadata: {
           ...buildChannelPolicyMetadata(context, access, route, externalSurface),
           chat_id: chatId,
           ...(route.goalId ? { goal_id: route.goalId } : {}),
         },
-      })
-    );
+      });
+    } finally {
+      await presenceProjector.stop();
+    }
 
     if (!eventAdapter.renderedAssistantOutput) {
       await eventAdapter.sendFinalFallback(reply ?? "Received.");
@@ -432,11 +449,14 @@ class TelegramHomeChatStore {
 
 class TelegramChatEventAdapter {
   private readonly projector: NonTuiDisplayProjector;
+  readonly presenceTransport: SeedyPresenceTransport;
 
   constructor(
     private readonly api: TelegramAPI,
     private readonly chatId: number
   ) {
+    const transport = new TelegramDisplayTransport(api, chatId);
+    this.presenceTransport = createSeedyPresenceTransportFromNonTuiDisplay(transport);
     this.projector = new NonTuiDisplayProjector({
       display: {
         capabilities: TELEGRAM_GATEWAY_DISPLAY_CONTRACT.capabilities,
@@ -447,12 +467,20 @@ class TelegramChatEventAdapter {
           cleanupPolicy: "delete",
         },
       },
-      transport: new TelegramDisplayTransport(api, chatId),
+      transport,
     });
   }
 
   get renderedAssistantOutput(): boolean {
     return this.projector.renderedAssistantOutput;
+  }
+
+  get deliveredAssistantOutput(): boolean {
+    return this.projector.deliveredAssistantOutput;
+  }
+
+  get deliveredProgressOutput(): boolean {
+    return this.projector.deliveredProgressOutput;
   }
 
   async handle(event: ChatEvent): Promise<void> {
