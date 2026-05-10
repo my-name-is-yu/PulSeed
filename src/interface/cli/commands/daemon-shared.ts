@@ -11,6 +11,20 @@ import {
 } from "../../../runtime/store/runtime-schemas.js";
 import type { SupervisorState } from "../../../runtime/executor/index.js";
 import { getCliLogger } from "../cli-logger.js";
+import {
+  formatAbsoluteRelativeTimestamp,
+  formatPercent,
+  formatRelativeTimestamp,
+} from "./display-format.js";
+
+export {
+  formatAbsoluteRelativeTimestamp,
+  formatDurationMs,
+  formatPercent,
+  formatRelativeTime,
+  formatRelativeTimestamp,
+  formatUptime,
+} from "./display-format.js";
 
 export function resolveDaemonRuntimeRoot(baseDir: string, configuredRoot?: string): string {
   if (!configuredRoot || configuredRoot.trim() === "") {
@@ -53,42 +67,6 @@ export async function loadDaemonConfig(baseDir: string): Promise<DaemonConfig> {
   return readDaemonConfigFile(configPath) ?? readDaemonConfigFile(legacyConfigPath) ?? DaemonConfigSchema.parse({});
 }
 
-export function formatUptime(startedAt: string): string {
-  const ms = Date.now() - new Date(startedAt).getTime();
-  const days = Math.floor(ms / 86400000);
-  const hours = Math.floor((ms % 86400000) / 3600000);
-  const minutes = Math.floor((ms % 3600000) / 60000);
-  const parts: string[] = [];
-  if (days > 0) parts.push(`${days}d`);
-  if (hours > 0) parts.push(`${hours}h`);
-  parts.push(`${minutes}m`);
-  return parts.join(" ");
-}
-
-export function formatRelativeTime(isoDate: string): string {
-  const ms = Date.now() - new Date(isoDate).getTime();
-  const suffix = ms < 0 ? "from now" : "ago";
-  const absMs = Math.abs(ms);
-  if (absMs < 60000) return `${Math.floor(absMs / 1000)}s ${suffix}`;
-  if (absMs < 3600000) return `${Math.floor(absMs / 60000)}m ${suffix}`;
-  if (absMs < 86400000) return `${Math.floor(absMs / 3600000)}h ${suffix}`;
-  return `${Math.floor(absMs / 86400000)}d ${suffix}`;
-}
-
-export function formatRelativeTimestamp(timestamp: number): string {
-  return formatRelativeTime(new Date(timestamp).toISOString());
-}
-
-export function formatDurationMs(ms: number): string {
-  if (ms < 1000) return `${ms}ms`;
-  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
-  return `${(ms / 60_000).toFixed(1)}m`;
-}
-
-export function formatPercent(value: number | null): string {
-  return value === null ? "n/a" : `${(value * 100).toFixed(1)}%`;
-}
-
 export type RuntimeHealthCapabilityKey = "process_alive" | "command_acceptance" | "task_execution";
 
 export function formatCapabilityLabel(
@@ -121,9 +99,7 @@ const LONG_RUN_SUMMARY_LABELS: Record<RuntimeLongRunHealthSummary, string> = {
 };
 
 function formatEvidenceTimestamp(timestamp: number | undefined): string {
-  return timestamp === undefined
-    ? "n/a"
-    : `${new Date(timestamp).toISOString()} (${formatRelativeTimestamp(timestamp)})`;
+  return formatAbsoluteRelativeTimestamp(timestamp);
 }
 
 export function formatLongRunHealthLines(

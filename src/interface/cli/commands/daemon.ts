@@ -39,6 +39,7 @@ import { getPulseedDirPath, getLogsDir, getEventsDir } from "../../../base/utils
 import { summarizeTaskOutcomeLedgers } from "../../../orchestrator/execution/task/task-outcome-ledger.js";
 import { createBuiltinTools } from "../../../tools/index.js";
 import {
+  formatAbsoluteRelativeTimestamp,
   formatCapabilityLabel,
   formatDurationMs,
   formatGoalMode,
@@ -702,14 +703,10 @@ export async function cmdDaemonStatus(_args: string[]): Promise<void> {
       lines.push(`  Important task success rate: ${formatTaskOutcomeLine(taskOutcome)}`);
     }
     if (runtimeHealth.kpi.degraded_at !== undefined) {
-      lines.push(
-        `  Degraded at:     ${new Date(runtimeHealth.kpi.degraded_at).toISOString()} (${formatRelativeTimestamp(runtimeHealth.kpi.degraded_at)})`
-      );
+      lines.push(`  Degraded at:     ${formatAbsoluteRelativeTimestamp(runtimeHealth.kpi.degraded_at)}`);
     }
     if (runtimeHealth.kpi.recovered_at !== undefined) {
-      lines.push(
-        `  Recovered at:    ${new Date(runtimeHealth.kpi.recovered_at).toISOString()} (${formatRelativeTimestamp(runtimeHealth.kpi.recovered_at)})`
-      );
+      lines.push(`  Recovered at:    ${formatAbsoluteRelativeTimestamp(runtimeHealth.kpi.recovered_at)}`);
     }
   }
 
