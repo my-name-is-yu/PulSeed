@@ -60,6 +60,16 @@ describe("ReadTool", () => {
     expect(data).not.toContain("Line 9");
   });
 
+  it("returns an empty window when offset is beyond EOF", async () => {
+    const result = await tool.call({ file_path: testFile, offset: 50, limit: 3 }, makeContext(tmpDir));
+
+    expect(result.success).toBe(true);
+    expect(result.data).toBe("");
+    expect(result.summary).toContain("Read 0 lines");
+    expect(result.summary).toContain("starting at line 51");
+    expect(result.summary).not.toContain("Read -");
+  });
+
   it("resolves relative paths using context.cwd", async () => {
     const result = await tool.call({ file_path: "test.txt", limit: 2000 }, makeContext(tmpDir));
     expect(result.success).toBe(true);

@@ -1,7 +1,8 @@
 import { z } from "zod";
 import type { ITool, ToolResult, ToolCallContext, PermissionCheckResult, ToolMetadata } from "../../types.js";
-import * as fs from "node:fs/promises";
+import { createReadStream } from "node:fs";
 import * as path from "node:path";
+import { createInterface } from "node:readline";
 import { validateFilePath } from "../FileValidationTool/FileValidationTool.js";
 import { DESCRIPTION } from "./prompt.js";
 import { TAGS, PERMISSION_LEVEL, MAX_OUTPUT_CHARS, READ_ONLY } from "./constants.js";
@@ -16,6 +17,54 @@ export const ReadInputSchema = z.object({
   limit: z.number().int().min(1).max(READ_MAX_LIMIT).default(READ_DEFAULT_LIMIT),
 }).strict();
 export type ReadInput = z.infer<typeof ReadInputSchema>;
+
+interface ReadLineWindow {
+  formatted: string;
+  selectedCount: number;
+  startLine: number;
+  endLine: number;
+}
+
+async function readLineWindow(filePath: string, offset: number, limit: number): Promise<ReadLineWindow> {
+  const stream = createReadStream(filePath, { encoding: "utf-8" });
+  const reader = createInterface({ input: stream, crlfDelay: Infinity });
+  const selected: string[] = [];
+  let lineNumber = 0;
+
+  try {
+    for await (const line of reader) {
+      lineNumber += 1;
+      if (lineNumber <= offset) continue;
+
+      selected.push(`${lineNumber}\t${line}`);
+      if (selected.length >= limit) {
+        reader.close();
+        stream.destroy();
+        break;
+      }
+    }
+  } finally {
+    reader.close();
+    if (!stream.destroyed) {
+      stream.destroy();
+    }
+  }
+
+  return {
+    formatted: selected.join("\n"),
+    selectedCount: selected.length,
+    startLine: offset + 1,
+    endLine: selected.length > 0 ? offset + selected.length : offset,
+  };
+}
+
+function formatReadSummary(filePath: string, window: ReadLineWindow): string {
+  const basename = path.basename(filePath);
+  if (window.selectedCount === 0) {
+    return `Read 0 lines from ${basename} (starting at line ${window.startLine})`;
+  }
+  return `Read ${window.selectedCount} lines from ${basename} (lines ${window.startLine}-${window.endLine})`;
+}
 
 export class ReadTool implements ITool<ReadInput, string> {
   readonly metadata: ToolMetadata = {
@@ -43,16 +92,12 @@ export class ReadTool implements ITool<ReadInput, string> {
       ? input.file_path
       : path.resolve(context.cwd, input.file_path);
     try {
-      const content = await fs.readFile(filePath, "utf-8");
-      const lines = content.split("\n");
       const start = input.offset ?? 0;
-      const end = Math.min(start + input.limit, lines.length);
-      const selected = lines.slice(start, end);
-      const formatted = selected.map((line, i) => `${start + i + 1}\t${line}`).join("\n");
+      const window = await readLineWindow(filePath, start, input.limit);
       return {
         success: true,
-        data: formatted,
-        summary: `Read ${end - start} lines from ${path.basename(filePath)} (lines ${start + 1}-${end} of ${lines.length})`,
+        data: window.formatted,
+        summary: formatReadSummary(filePath, window),
         durationMs: Date.now() - startTime,
         artifacts: [filePath],
       };
