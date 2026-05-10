@@ -6,7 +6,7 @@ import { TriggerEventSchema, TriggerMappingsConfigSchema } from "../../base/type
 import type { TriggerMappingsConfig } from "../../base/types/trigger.js";
 import type { Logger } from "../logger.js";
 import type { TriggerMapper } from "../trigger-mapper.js";
-import { readJsonBody, writeJsonError, writeJson } from "./server-http.js";
+import { isPayloadTooLargeError, readJsonBody, writeJsonError, writeJson } from "./server-http.js";
 
 type TriggerInput = { source: string; event_type: string; data: Record<string, unknown>; goal_id?: string };
 
@@ -62,7 +62,7 @@ export class EventServerTriggerHandler {
       await this.executeTriggerAction(action, trigger, goalId ?? undefined);
       writeJson(res, 200, { status: "ok", action, goal_id: goalId ?? null });
     } catch (err) {
-      if (err instanceof Error && err.message === "Payload too large") {
+      if (isPayloadTooLargeError(err)) {
         writeJsonError(res, 413, "Payload too large");
         return;
       }

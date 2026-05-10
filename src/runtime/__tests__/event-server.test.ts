@@ -410,6 +410,15 @@ describe("POST /events — invalid data", () => {
     expect(result.status).toBe(400);
   });
 
+  it("returns 413 for oversized event bodies", async () => {
+    const result = await postEvent(port, { type: "test.event", data: "x".repeat(1_048_577) });
+    const parsed = JSON.parse(result.body);
+
+    expect(result.status).toBe(413);
+    expect(parsed).toEqual({ error: "Payload too large" });
+    expect(mockDriveSystem.writeEvent).not.toHaveBeenCalled();
+  });
+
   it("returns 400 when event type is missing", async () => {
     const result = await postEvent(port, {
       source: "test",

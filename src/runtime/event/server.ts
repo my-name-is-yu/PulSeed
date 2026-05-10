@@ -14,7 +14,7 @@ import type { SlackChannelAdapter } from "../gateway/slack-channel-adapter.js";
 import { EventServerAuth } from "./server-auth.js";
 import { EventServerCommandHandler } from "./server-command-handler.js";
 import { EventServerFileIngestion } from "./server-file-ingestion.js";
-import { readJsonBody, writeJson, writeJsonError } from "./server-http.js";
+import { isPayloadTooLargeError, readJsonBody, writeJson, writeJsonError } from "./server-http.js";
 import { EventServerRouter } from "./server-router.js";
 import { EventServerSnapshotReader } from "./server-snapshot-reader.js";
 import { EventServerSseManager } from "./server-sse.js";
@@ -305,6 +305,10 @@ export class EventServer {
       await this.dispatchEvent(event as unknown as Record<string, unknown>);
       writeJson(res, 200, { status: "accepted", event_type: event.type });
     } catch (err) {
+      if (isPayloadTooLargeError(err)) {
+        writeJsonError(res, 413, "Payload too large");
+        return;
+      }
       writeJsonError(res, 400, "Invalid event", err);
     }
   }

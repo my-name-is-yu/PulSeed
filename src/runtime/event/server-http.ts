@@ -1,6 +1,19 @@
 import type * as http from "node:http";
 
 const MAX_BODY_SIZE = 1_048_576;
+const PAYLOAD_TOO_LARGE_MESSAGE = "Payload too large";
+
+export class PayloadTooLargeError extends Error {
+  constructor() {
+    super(PAYLOAD_TOO_LARGE_MESSAGE);
+    this.name = "PayloadTooLargeError";
+  }
+}
+
+export function isPayloadTooLargeError(error: unknown): boolean {
+  return error instanceof PayloadTooLargeError
+    || (error instanceof Error && error.message === PAYLOAD_TOO_LARGE_MESSAGE);
+}
 
 export function writeJson(
   res: http.ServerResponse,
@@ -24,17 +37,29 @@ export function readBody(req: http.IncomingMessage): Promise<string> {
   return new Promise<string>((resolve, reject) => {
     let body = "";
     let bytes = 0;
+    let bodyTooLarge = false;
     req.on("data", (chunk: Buffer) => {
+      if (bodyTooLarge) {
+        return;
+      }
       bytes += chunk.length;
       if (bytes > MAX_BODY_SIZE) {
-        reject(new Error("Payload too large"));
-        req.destroy();
+        bodyTooLarge = true;
+        reject(new PayloadTooLargeError());
         return;
       }
       body += chunk;
     });
-    req.on("end", () => resolve(body));
-    req.on("error", reject);
+    req.on("end", () => {
+      if (!bodyTooLarge) {
+        resolve(body);
+      }
+    });
+    req.on("error", (error) => {
+      if (!bodyTooLarge) {
+        reject(error);
+      }
+    });
   });
 }
 

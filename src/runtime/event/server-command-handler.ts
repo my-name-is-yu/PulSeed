@@ -3,7 +3,7 @@ import { z } from "zod";
 import { createEnvelope, type Envelope } from "../types/envelope.js";
 import type { SlackChannelAdapter } from "../gateway/slack-channel-adapter.js";
 import { RuntimeControlOperationKindSchema } from "../store/index.js";
-import { readBody, writeJson, writeJsonError } from "./server-http.js";
+import { isPayloadTooLargeError, readBody, writeJson, writeJsonError } from "./server-http.js";
 
 const BackgroundRunMetadataSchema = z.object({
   backgroundRunId: z.string().min(1),
@@ -74,7 +74,7 @@ export class EventServerCommandHandler {
           ...(backgroundRun?.backgroundRunId ? { backgroundRunId: backgroundRun.backgroundRunId } : {}),
         });
       } catch (err) {
-        if (err instanceof Error && err.message === "Payload too large") {
+        if (isPayloadTooLargeError(err)) {
           writeJsonError(res, 413, "Payload too large");
           return;
         }
@@ -152,7 +152,7 @@ export class EventServerCommandHandler {
         const resolved = await this.resolveApproval(requestId, approved);
         writeJson(res, resolved ? 200 : 404, { ok: resolved });
       } catch (err) {
-        if (err instanceof Error && err.message === "Payload too large") {
+        if (isPayloadTooLargeError(err)) {
           writeJsonError(res, 413, "Payload too large");
           return;
         }
@@ -173,7 +173,7 @@ export class EventServerCommandHandler {
         await this.broadcast("chat_message_received", { goalId, message });
         writeJson(res, 200, { ok: true });
       } catch (err) {
-        if (err instanceof Error && err.message === "Payload too large") {
+        if (isPayloadTooLargeError(err)) {
           writeJsonError(res, 413, "Payload too large");
           return;
         }
@@ -202,7 +202,7 @@ export class EventServerCommandHandler {
       await this.broadcast("runtime_control_requested", { operationId, kind });
       writeJson(res, 200, { ok: true, operationId });
     } catch (err) {
-      if (err instanceof Error && err.message === "Payload too large") {
+      if (isPayloadTooLargeError(err)) {
         writeJson(res, 413, { ok: false, error: "Payload too large" });
         return;
       }
@@ -232,7 +232,7 @@ export class EventServerCommandHandler {
       await this.broadcast("schedule_run_requested", { scheduleId, allowEscalation });
       writeJson(res, 200, { ok: true, scheduleId });
     } catch (err) {
-      if (err instanceof Error && err.message === "Payload too large") {
+      if (isPayloadTooLargeError(err)) {
         writeJson(res, 413, { ok: false, error: "Payload too large" });
         return;
       }
@@ -261,7 +261,7 @@ export class EventServerCommandHandler {
       res.writeHead(response.status, { "Content-Type": "application/json" });
       res.end(response.body);
     } catch (err) {
-      if (err instanceof Error && err.message === "Payload too large") {
+      if (isPayloadTooLargeError(err)) {
         writeJson(res, 413, { ok: false, error: "Payload too large" });
         return;
       }
