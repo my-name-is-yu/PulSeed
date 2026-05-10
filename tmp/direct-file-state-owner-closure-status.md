@@ -168,7 +168,8 @@ Base: origin/main @ 7d87d012 Prefer live daemon status in runtime evidence answe
 - Branch: `codex/direct-file-state-slice-5-strategy-template-20260510235349`
 - PR: https://github.com/my-name-is-yu/PulSeed/pull/1862
 - Head commit at PR creation: `72f63605`
-- Base: `origin/main @ 83a90a9c Bound daemon metadata reads (#1861)`
+- Current local head after latest rebase: `bbb8d9f027fbaab2e050395c1a47440d772e565e`
+- Base after latest rebase: `origin/main @ 57128119 Address runtime evidence gate review (#1864)`
 - `nvm use 24.15.0 && npm ci`: passed
 - `npx vitest run --config vitest.unit.config.ts src/orchestrator/strategy/__tests__/strategy-template-registry.test.ts src/orchestrator/strategy/__tests__/strategy-template-state-store.test.ts src/orchestrator/strategy/__tests__/strategy-manager-core.test.ts`: passed, 71 tests
 - `npx vitest run --config vitest.unit.config.ts src/interface/cli/__tests__/database-first-legacy-store-check.test.ts src/interface/cli/__tests__/cli-doctor.test.ts`: passed, 93 tests
@@ -177,7 +178,7 @@ Base: origin/main @ 7d87d012 Prefer live daemon status in runtime evidence answe
 - `npm run lint:boundaries`: passed with existing warnings, 0 errors
 - `npm run build`: passed
 - `git diff --check`: passed
-- CI: pending PR
+- CI: earlier head `d3c269ac` had `integration (24)` pass and `unit (22)` fail in unrelated `agent-loop.test.ts`; branch rebased onto latest `origin/main`, local targeted failed test passed under Node 24.15.0, new CI pending push
 - GitHub Codex review: unavailable after `@codex review` on PR head `7a03137f862f4c3e60cd7bfe937fdac9ffec437e`
 - Fallback sub-agent review: found material blocker that doctor repair could overwrite existing typed strategy templates from stale legacy JSON; fixed by retiring legacy imports when typed state already exists and adding regression coverage
 
