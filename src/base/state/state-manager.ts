@@ -45,6 +45,15 @@ function normalizeRawStatePath(relativePath: string): string[] {
   return relativePath.replace(/\\/g, "/").replace(/^\/+/, "").split("/").filter(Boolean);
 }
 
+function assertSafeRawStateLogicalPath(relativePath: string): void {
+  const unsafeSegment = normalizeRawStatePath(relativePath).some((part) => part === "." || part === "..");
+  if (unsafeSegment) {
+    throw new StateError(
+      `Unsafe StateManager raw fallback path is not allowed: ${relativePath}`
+    );
+  }
+}
+
 function isGoalTaskDurableStatePath(relativePath: string): boolean {
   const parts = normalizeRawStatePath(relativePath);
   if (parts.length === 0) return false;
@@ -102,14 +111,52 @@ function isProcessSessionDurableStatePath(relativePath: string): boolean {
   return parts[0] === "runtime" && parts[1] === "process-sessions" && parts.length === 3 && parts[2]!.endsWith(".json");
 }
 
+const RAW_FALLBACK_CONFIG_FILES = new Set([
+  "provider.json",
+  "daemon.json",
+  "daemon-config.json",
+  "notification.json",
+  "character-config.json",
+  "mcp-servers.json",
+  "mcpServers.json",
+  "relationship-profile.json",
+]);
+
+function isExplicitRawFallbackBoundary(relativePath: string): boolean {
+  const parts = normalizeRawStatePath(relativePath);
+  if (parts.length === 1 && RAW_FALLBACK_CONFIG_FILES.has(parts[0]!)) {
+    return true;
+  }
+  if (
+    parts.length === 4
+    && parts[0] === "gateway"
+    && parts[1] === "channels"
+    && parts[3] === "config.json"
+  ) {
+    return true;
+  }
+  if (parts.length === 3 && parts[0] === "reports" && parts[2]!.endsWith(".json")) {
+    return true;
+  }
+  return false;
+}
+
+function assertExplicitRawFallbackBoundary(relativePath: string): void {
+  if (!isExplicitRawFallbackBoundary(relativePath)) {
+    throw new StateError(
+      `Unclassified StateManager raw fallback path is not allowed: ${relativePath}`
+    );
+  }
+}
+
 /**
  * StateManager handles persistence of goals, state vectors, observation logs,
  * and gap history under a typed database owned by the configured base directory
  * (default: ~/.pulseed/).
  *
- * Legacy JSON paths are still accepted by readRaw/writeRaw compatibility
- * callers, but goal/task state is routed through GoalTaskStateStore instead of
- * whole-file JSON mutation.
+ * Durable logical paths are routed through typed stores. The remaining raw
+ * fallback is restricted to explicit config/user-authored content and
+ * debug/export artifact boundaries.
  *
  * Durable state layout:
  *   <base>/runtime/control.db
@@ -245,26 +292,6 @@ export class StateManager {
 
   private capHistoryEntries<T>(entries: T[]): T[] {
     return entries.slice(-MAX_HISTORY_ENTRIES);
-  }
-
-  private syntheticGoal(goalId: string): Goal {
-    const timestamp = new Date().toISOString();
-    return GoalSchema.parse({
-      id: goalId,
-      title: goalId,
-      description: "",
-      dimensions: [],
-      created_at: timestamp,
-      updated_at: timestamp,
-    });
-  }
-
-  private async ensureGoalRegistryEntryForSidecar(goalId: string): Promise<void> {
-    const store = await this.goalTaskStateStore();
-    const existing = await store.loadGoal(goalId, { includeArchived: true });
-    if (existing === null) {
-      await store.saveGoal(this.syntheticGoal(goalId));
-    }
   }
 
   private assertObservationGoalId(goalId: string, entry: ObservationLogEntry): void {
@@ -779,12 +806,13 @@ export class StateManager {
     }
   }
 
-  /** Read raw JSON from any path relative to base dir */
+  /** Read a typed legacy route or an explicitly allowlisted raw artifact path. */
   async readRaw(relativePath: string): Promise<unknown | null> {
     const resolved = path.resolve(this.baseDir, relativePath);
     if (!resolved.startsWith(path.resolve(this.baseDir) + path.sep)) {
       throw new Error(`Path traversal detected: ${relativePath}`);
     }
+    assertSafeRawStateLogicalPath(relativePath);
     if (isGoalTaskDurableStatePath(relativePath)) {
       const routed = await (await this.goalTaskStateStore()).readRawPath(relativePath);
       if (routed.handled) {
@@ -831,15 +859,17 @@ export class StateManager {
         return routed.value;
       }
     }
+    assertExplicitRawFallbackBoundary(relativePath);
     return this.atomicRead<unknown>(resolved);
   }
 
-  /** Write raw JSON to any path relative to base dir (atomic) */
+  /** Write a typed legacy route or an explicitly allowlisted raw artifact path. */
   async writeRaw(relativePath: string, data: unknown): Promise<void> {
     const resolved = path.resolve(this.baseDir, relativePath);
     if (!resolved.startsWith(path.resolve(this.baseDir) + path.sep)) {
       throw new Error(`Path traversal detected: ${relativePath}`);
     }
+    assertSafeRawStateLogicalPath(relativePath);
     const parts = relativePath.split("/");
     if (isGoalTaskDurableStatePath(relativePath)) {
       const routedStore = await this.goalTaskStateStore();
@@ -901,6 +931,7 @@ export class StateManager {
         return;
       }
     }
+    assertExplicitRawFallbackBoundary(relativePath);
     const filePath = resolved;
     const dir = path.dirname(filePath);
     try {
@@ -909,14 +940,6 @@ export class StateManager {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") return;
       throw err;
     }
-    if (relativePath.startsWith("goals/") && parts.length >= 3) {
-      const goalId = parts[1]!;
-      if (data !== null) {
-        await this.ensureGoalRegistryEntryForSidecar(goalId);
-      }
-      await this.atomicWrite(filePath, data);
-    } else {
-      await this.atomicWrite(filePath, data);
-    }
+    await this.atomicWrite(filePath, data);
   }
 }

@@ -55,8 +55,15 @@ function makeMockStateManager(): StateManager {
   return {
     writeRaw: vi.fn().mockResolvedValue(undefined),
     readRaw: vi.fn().mockResolvedValue(null),
+    listTasks: vi.fn().mockResolvedValue([]),
     getBaseDir: vi.fn().mockReturnValue(baseDir),
   } as unknown as StateManager;
+}
+
+async function writeJsonFixture(baseDir: string, relativePath: string, value: unknown): Promise<void> {
+  const filePath = path.join(baseDir, relativePath);
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, JSON.stringify(value), "utf8");
 }
 
 function makeMockAdapter(): IAdapter {
@@ -277,7 +284,7 @@ describe("ChatRunner policy commands", () => {
     try {
       const stateManager = new RealStateManager(tmpDir);
       await stateManager.init();
-      await stateManager.writeRaw("chat/sessions/forked-session.json", {
+      await writeJsonFixture(tmpDir, "chat/sessions/forked-session.json", {
         id: "forked-session",
         cwd: "/repo",
         createdAt: "2026-04-01T00:00:00.000Z",
@@ -292,7 +299,7 @@ describe("ChatRunner policy commands", () => {
           updatedAt: "2026-04-01T00:02:00.000Z",
         },
       });
-      await stateManager.writeRaw("chat/agentloop/source-session.state.json", {
+      await writeJsonFixture(tmpDir, "chat/agentloop/source-session.state.json", {
         sessionId: "source-session",
         traceId: "trace-source",
         turnId: "turn-source",
@@ -340,7 +347,7 @@ describe("ChatRunner policy commands", () => {
     try {
       const stateManager = new RealStateManager(tmpDir);
       await stateManager.init();
-      await stateManager.writeRaw("chat/sessions/forked-session.json", {
+      await writeJsonFixture(tmpDir, "chat/sessions/forked-session.json", {
         id: "forked-session",
         cwd: "/repo",
         createdAt: "2026-04-01T00:00:00.000Z",
@@ -355,7 +362,7 @@ describe("ChatRunner policy commands", () => {
           updatedAt: "2026-04-01T00:02:00.000Z",
         },
       });
-      await stateManager.writeRaw("chat/agentloop/source-session.state.json", {
+      await writeJsonFixture(tmpDir, "chat/agentloop/source-session.state.json", {
         sessionId: "source-session",
         traceId: "trace-source",
         turnId: "turn-source",

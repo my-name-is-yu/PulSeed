@@ -187,8 +187,6 @@ describe("TaskLifecycle — post-execution health check", () => {
         },
       ],
     });
-    await stateManager.writeRaw("goals/goal-1/strategy.json", null);
-
     await lifecycle.executeTask(task, adapter);
 
     expect(healthCheckSpy).not.toHaveBeenCalled();

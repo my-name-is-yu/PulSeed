@@ -54,6 +54,7 @@ function makeMockStateManager(
   return {
     listGoalIds: vi.fn().mockResolvedValue(goalIds),
     loadGoal: vi.fn().mockImplementation(async (id: string) => goals[id] ?? null),
+    listTasks: vi.fn().mockResolvedValue([]),
     writeRaw: vi.fn().mockResolvedValue(undefined),
     readRaw: vi.fn().mockResolvedValue(null),
   } as unknown as StateManager;

@@ -5,6 +5,7 @@ import { StateManager } from "../../../base/state/state-manager.js";
 import { StrategyManager } from "../strategy-manager.js";
 import type { ILLMClient } from "../../../base/llm/llm-client.js";
 import { createMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
+import { makeGoal } from "../../../../tests/helpers/fixtures.js";
 import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 
 // ─── Fixtures ───
@@ -682,7 +683,7 @@ describe("resolveGoalId fallback scan", () => {
     });
 
     // Register the goal ID so resolveGoalId can scan the typed goal registry.
-    await stateManager.writeRaw("goals/goal-1/state.json", { gap: 0.5 });
+    await stateManager.saveGoal(makeGoal({ id: "goal-1" }));
 
     // manager2 has a fresh in-memory index (no strategyIndex entry)
     const manager2 = new StrategyManager(stateManager, createMockLLMClient([]));

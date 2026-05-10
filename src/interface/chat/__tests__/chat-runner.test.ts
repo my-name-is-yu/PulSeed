@@ -84,6 +84,7 @@ function makeMockStateManager(): StateManager {
   return {
     writeRaw: vi.fn().mockResolvedValue(undefined),
     readRaw: vi.fn().mockResolvedValue(null),
+    listTasks: vi.fn().mockResolvedValue([]),
   } as unknown as StateManager;
 }
 
@@ -93,7 +94,14 @@ function makeMockStateManagerWithBaseDir(): StateManager {
     getBaseDir: vi.fn().mockReturnValue(baseDir),
     writeRaw: vi.fn().mockResolvedValue(undefined),
     readRaw: vi.fn().mockResolvedValue(null),
+    listTasks: vi.fn().mockResolvedValue([]),
   } as unknown as StateManager;
+}
+
+async function writeJsonFixture(baseDir: string, relativePath: string, value: unknown): Promise<void> {
+  const filePath = path.join(baseDir, relativePath);
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, JSON.stringify(value), "utf8");
 }
 
 async function loadPersistedChatSession(stateManager: StateManager, sessionId: string): Promise<ChatSession | null> {
@@ -1370,7 +1378,7 @@ describe("ChatRunner", () => {
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-cleanup-command-"));
       try {
         const stateManager = new StateManager(tmpDir);
-        await stateManager.writeRaw("chat/sessions/old-session.json", {
+        await writeJsonFixture(tmpDir, "chat/sessions/old-session.json", {
           id: "old-session",
           cwd: "/repo",
           createdAt: "2024-01-01T00:00:00.000Z",
@@ -2130,7 +2138,7 @@ describe("ChatRunner", () => {
       try {
         const stateManager = new StateManager(tmpDir);
         await stateManager.init();
-        await stateManager.writeRaw("chat/sessions/saved-session.json", {
+        await writeJsonFixture(tmpDir, "chat/sessions/saved-session.json", {
           id: "saved-session",
           cwd: "/loaded-repo",
           createdAt: "2026-01-01T00:00:00.000Z",
@@ -2140,7 +2148,7 @@ describe("ChatRunner", () => {
             { role: "user", content: "continue this", timestamp: "2026-01-01T00:00:00.000Z", turnIndex: 0 },
           ],
         });
-        await stateManager.writeRaw("chat/agentloop/saved-session.state.json", {
+        await writeJsonFixture(tmpDir, "chat/agentloop/saved-session.state.json", {
           sessionId: "saved-session",
           traceId: "trace-1",
           turnId: "turn-1",
@@ -2197,7 +2205,7 @@ describe("ChatRunner", () => {
       try {
         const stateManager = new StateManager(tmpDir);
         await stateManager.init();
-        await stateManager.writeRaw("chat/sessions/latest-safe-chat.json", {
+        await writeJsonFixture(tmpDir, "chat/sessions/latest-safe-chat.json", {
           id: "latest-safe-chat",
           cwd: "/loaded-repo",
           createdAt: "2026-01-01T00:00:00.000Z",
@@ -2212,7 +2220,7 @@ describe("ChatRunner", () => {
           agentLoopResumable: true,
           agentLoopUpdatedAt: "2026-01-01T00:00:02.000Z",
         });
-        await stateManager.writeRaw("chat/agentloop/latest-safe-chat.state.json", makeAgentLoopState({
+        await writeJsonFixture(tmpDir, "chat/agentloop/latest-safe-chat.state.json", makeAgentLoopState({
           sessionId: "agent-natural-latest",
           updatedAt: "2026-01-01T00:00:02.000Z",
         }));
@@ -2260,7 +2268,7 @@ describe("ChatRunner", () => {
       try {
         const stateManager = new StateManager(tmpDir);
         await stateManager.init();
-        await stateManager.writeRaw("chat/sessions/older-safe-chat.json", {
+        await writeJsonFixture(tmpDir, "chat/sessions/older-safe-chat.json", {
           id: "older-safe-chat",
           cwd: "/work/older",
           createdAt: "2026-01-01T00:00:00.000Z",
@@ -2273,11 +2281,11 @@ describe("ChatRunner", () => {
           agentLoopResumable: true,
           agentLoopUpdatedAt: "2026-01-01T00:00:02.000Z",
         });
-        await stateManager.writeRaw("chat/agentloop/older-safe-chat.state.json", makeAgentLoopState({
+        await writeJsonFixture(tmpDir, "chat/agentloop/older-safe-chat.state.json", makeAgentLoopState({
           sessionId: "agent-older",
           updatedAt: "2026-01-01T00:00:02.000Z",
         }));
-        await stateManager.writeRaw("chat/sessions/newer-safe-chat.json", {
+        await writeJsonFixture(tmpDir, "chat/sessions/newer-safe-chat.json", {
           id: "newer-safe-chat",
           cwd: "/work/newer",
           createdAt: "2026-01-02T00:00:00.000Z",
@@ -2290,7 +2298,7 @@ describe("ChatRunner", () => {
           agentLoopResumable: true,
           agentLoopUpdatedAt: "2026-01-02T00:00:02.000Z",
         });
-        await stateManager.writeRaw("chat/agentloop/newer-safe-chat.state.json", makeAgentLoopState({
+        await writeJsonFixture(tmpDir, "chat/agentloop/newer-safe-chat.state.json", makeAgentLoopState({
           sessionId: "agent-newer",
           updatedAt: "2026-01-02T00:00:02.000Z",
         }));
@@ -2346,7 +2354,7 @@ describe("ChatRunner", () => {
       try {
         const stateManager = new StateManager(tmpDir);
         await stateManager.init();
-        await stateManager.writeRaw("chat/sessions/older-safe-chat.json", {
+        await writeJsonFixture(tmpDir, "chat/sessions/older-safe-chat.json", {
           id: "older-safe-chat",
           cwd: "/work/older",
           createdAt: "2026-01-01T00:00:00.000Z",
@@ -2359,11 +2367,11 @@ describe("ChatRunner", () => {
           agentLoopResumable: true,
           agentLoopUpdatedAt: "2026-01-01T00:00:02.000Z",
         });
-        await stateManager.writeRaw("chat/agentloop/older-safe-chat.state.json", makeAgentLoopState({
+        await writeJsonFixture(tmpDir, "chat/agentloop/older-safe-chat.state.json", makeAgentLoopState({
           sessionId: "agent-older",
           updatedAt: "2026-01-01T00:00:02.000Z",
         }));
-        await stateManager.writeRaw("chat/sessions/newer-safe-chat.json", {
+        await writeJsonFixture(tmpDir, "chat/sessions/newer-safe-chat.json", {
           id: "newer-safe-chat",
           cwd: "/work/newer",
           createdAt: "2026-01-02T00:00:00.000Z",
@@ -2376,7 +2384,7 @@ describe("ChatRunner", () => {
           agentLoopResumable: true,
           agentLoopUpdatedAt: "2026-01-02T00:00:02.000Z",
         });
-        await stateManager.writeRaw("chat/agentloop/newer-safe-chat.state.json", makeAgentLoopState({
+        await writeJsonFixture(tmpDir, "chat/agentloop/newer-safe-chat.state.json", makeAgentLoopState({
           sessionId: "agent-newer",
           updatedAt: "2026-01-02T00:00:02.000Z",
         }));
@@ -2455,7 +2463,7 @@ describe("ChatRunner", () => {
       try {
         const stateManager = new StateManager(tmpDir);
         await stateManager.init();
-        await stateManager.writeRaw("chat/sessions/older-safe-chat.json", {
+        await writeJsonFixture(tmpDir, "chat/sessions/older-safe-chat.json", {
           id: "older-safe-chat",
           cwd: "/work/older",
           createdAt: "2026-01-01T00:00:00.000Z",
@@ -2467,7 +2475,7 @@ describe("ChatRunner", () => {
           agentLoopResumable: true,
           agentLoopUpdatedAt: "2026-01-01T00:00:02.000Z",
         });
-        await stateManager.writeRaw("chat/agentloop/older-safe-chat.state.json", makeAgentLoopState({
+        await writeJsonFixture(tmpDir, "chat/agentloop/older-safe-chat.state.json", makeAgentLoopState({
           sessionId: "agent-older",
           updatedAt: "2026-01-01T00:00:02.000Z",
         }));
@@ -2518,7 +2526,7 @@ describe("ChatRunner", () => {
       try {
         const stateManager = new StateManager(tmpDir);
         await stateManager.init();
-        await stateManager.writeRaw("chat/sessions/latest-safe-chat.json", {
+        await writeJsonFixture(tmpDir, "chat/sessions/latest-safe-chat.json", {
           id: "latest-safe-chat",
           cwd: "/work/latest",
           createdAt: "2026-01-01T00:00:00.000Z",
@@ -2530,7 +2538,7 @@ describe("ChatRunner", () => {
           agentLoopResumable: true,
           agentLoopUpdatedAt: "2026-01-01T00:00:02.000Z",
         });
-        await stateManager.writeRaw("chat/agentloop/latest-safe-chat.state.json", makeAgentLoopState({
+        await writeJsonFixture(tmpDir, "chat/agentloop/latest-safe-chat.state.json", makeAgentLoopState({
           sessionId: "agent-latest",
           updatedAt: "2026-01-01T00:00:02.000Z",
         }));
@@ -2647,7 +2655,7 @@ describe("ChatRunner", () => {
       try {
         const stateManager = new StateManager(tmpDir);
         await stateManager.init();
-        await stateManager.writeRaw("chat/sessions/failed-chat.json", {
+        await writeJsonFixture(tmpDir, "chat/sessions/failed-chat.json", {
           id: "failed-chat",
           cwd: "/loaded-repo",
           createdAt: "2026-01-01T00:00:00.000Z",
@@ -2659,7 +2667,7 @@ describe("ChatRunner", () => {
           agentLoopResumable: true,
           agentLoopUpdatedAt: "2026-01-01T00:00:02.000Z",
         });
-        await stateManager.writeRaw("chat/agentloop/failed-chat.state.json", makeAgentLoopState({
+        await writeJsonFixture(tmpDir, "chat/agentloop/failed-chat.state.json", makeAgentLoopState({
           sessionId: "agent-failed",
           status: "failed",
           updatedAt: "2026-01-01T00:00:02.000Z",
@@ -2694,7 +2702,7 @@ describe("ChatRunner", () => {
       try {
         const stateManager = new StateManager(tmpDir);
         await stateManager.init();
-        await stateManager.writeRaw("chat/sessions/chat-runtime.json", {
+        await writeJsonFixture(tmpDir, "chat/sessions/chat-runtime.json", {
           id: "chat-runtime",
           cwd: "/loaded-repo",
           createdAt: "2026-04-25T00:00:00.000Z",
@@ -2705,7 +2713,7 @@ describe("ChatRunner", () => {
           agentLoopStatus: "running",
           agentLoopResumable: true,
         });
-        await stateManager.writeRaw("chat/agentloop/chat-runtime.state.json", makeAgentLoopState({
+        await writeJsonFixture(tmpDir, "chat/agentloop/chat-runtime.state.json", makeAgentLoopState({
           sessionId: "agent-runtime",
         }));
         await importLegacyChatAgentLoopSessionState(tmpDir);
@@ -2782,7 +2790,7 @@ describe("ChatRunner", () => {
       try {
         const stateManager = new StateManager(tmpDir);
         await stateManager.init();
-        await stateManager.writeRaw("chat/sessions/prior-session.json", {
+        await writeJsonFixture(tmpDir, "chat/sessions/prior-session.json", {
           id: "prior-session",
           cwd: "/repo",
           createdAt: "2026-01-01T00:00:00.000Z",
@@ -2794,7 +2802,7 @@ describe("ChatRunner", () => {
           agentLoopResumable: true,
           agentLoopUpdatedAt: "2026-01-01T00:00:02.000Z",
         });
-        await stateManager.writeRaw("chat/agentloop/prior-session.state.json", makeAgentLoopState({
+        await writeJsonFixture(tmpDir, "chat/agentloop/prior-session.state.json", makeAgentLoopState({
           sessionId: "agent-prior",
           updatedAt: "2026-01-01T00:00:02.000Z",
         }));
@@ -2856,7 +2864,7 @@ describe("ChatRunner", () => {
         const stateManager = new StateManager(tmpDir);
         await stateManager.init();
         await stateManager.saveGoal(makeGoal("goal-a", { title: "Daily planning" }));
-        await stateManager.writeRaw("chat/sessions/chat-runtime.json", {
+        await writeJsonFixture(tmpDir, "chat/sessions/chat-runtime.json", {
           id: "chat-runtime",
           cwd: "/repo",
           createdAt: "2026-04-25T00:00:00.000Z",
@@ -2867,7 +2875,7 @@ describe("ChatRunner", () => {
           agentLoopStatus: "running",
           agentLoopResumable: true,
         });
-        await stateManager.writeRaw("chat/agentloop/chat-runtime.state.json", makeAgentLoopState({
+        await writeJsonFixture(tmpDir, "chat/agentloop/chat-runtime.state.json", makeAgentLoopState({
           sessionId: "agent-runtime",
           updatedAt: "2026-04-25T00:12:00.000Z",
         }));

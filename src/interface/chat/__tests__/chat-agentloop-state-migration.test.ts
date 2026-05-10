@@ -8,6 +8,12 @@ import { AgentLoopSessionStateCatalog, SqliteAgentLoopTraceStore } from "../../.
 import { ChatSessionDataStore, CrossPlatformChatSessionInfoStore } from "../chat-session-data-store.js";
 import { importLegacyChatAgentLoopSessionState } from "../chat-agentloop-state-migration.js";
 
+async function writeJsonFixture(baseDir: string, relativePath: string, value: unknown): Promise<void> {
+  const filePath = path.join(baseDir, relativePath);
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, JSON.stringify(value), "utf8");
+}
+
 describe("importLegacyChatAgentLoopSessionState", () => {
   let tmpDir: string;
   let stateManager: StateManager;
@@ -23,7 +29,7 @@ describe("importLegacyChatAgentLoopSessionState", () => {
   });
 
   it("imports legacy chat, cross-platform, AgentLoop state, and trace files into typed Control DB rows", async () => {
-    await stateManager.writeRaw("chat/sessions/legacy-chat.json", {
+    await writeJsonFixture(tmpDir, "chat/sessions/legacy-chat.json", {
       id: "legacy-chat",
       cwd: "/repo",
       createdAt: "2026-05-09T00:00:00.000Z",
@@ -31,7 +37,7 @@ describe("importLegacyChatAgentLoopSessionState", () => {
       title: "Legacy Chat",
       messages: [],
     });
-    await stateManager.writeRaw("chat/agentloop/legacy-chat.state.json", {
+    await writeJsonFixture(tmpDir, "chat/agentloop/legacy-chat.state.json", {
       sessionId: "agent-native",
       traceId: "trace-native",
       turnId: "turn-native",
@@ -50,7 +56,7 @@ describe("importLegacyChatAgentLoopSessionState", () => {
       status: "running",
       updatedAt: "2026-05-09T00:02:00.000Z",
     });
-    await stateManager.writeRaw("chat/cross-platform-sessions/session-info.json", {
+    await writeJsonFixture(tmpDir, "chat/cross-platform-sessions/session-info.json", {
       session_key: "identity:one",
       identity_key: "identity:one",
       platform: "slack",

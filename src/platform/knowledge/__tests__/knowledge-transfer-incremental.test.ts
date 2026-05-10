@@ -9,6 +9,7 @@ import { StateManager } from "../../../base/state/state-manager.js";
 import { VectorIndex } from "../vector-index.js";
 import { MockEmbeddingClient } from "../embedding-client.js";
 import { createMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
+import { seedGoalState } from "./goal-state-fixture.js";
 import type { LearnedPattern } from "../../../base/types/learning.js";
 
 // ─── Helpers ───
@@ -106,7 +107,7 @@ describe("M16.6: Incremental Meta-Pattern Update + Transfer Effect Report", () =
       fs.writeFileSync(path.join(tmpDir, "meta-patterns", "last_aggregated_at.json"), JSON.stringify({
         ts: "2099-01-01T00:00:00.000Z",
       }));
-      await stateManager.writeRaw("goals/goal_a/state.json", { gap: 0.5 });
+      await seedGoalState(stateManager, "goal_a", 0.5);
 
       const llmClient = createMockLLMClient([META_PATTERN_RESPONSE]);
       const getPatterns = vi.fn().mockResolvedValue([pattern]);
@@ -153,7 +154,7 @@ describe("M16.6: Incremental Meta-Pattern Update + Transfer Effect Report", () =
         ts: "2026-03-15T00:00:00.000Z",
       });
       // Also write goal so listGoalIds returns something
-      await stateManager.writeRaw("goals/goal_a/state.json", { gap: 0.5 });
+      await seedGoalState(stateManager, "goal_a", 0.5);
 
       const llmClient = createMockLLMClient([META_PATTERN_RESPONSE]);
       const getPatterns = vi.fn().mockResolvedValue([pattern1, pattern2, pattern3]);
@@ -186,7 +187,7 @@ describe("M16.6: Incremental Meta-Pattern Update + Transfer Effect Report", () =
       const pat1 = makePattern({ pattern_id: "pat_a", confidence: 0.75, created_at: "2026-01-01T00:00:00.000Z" });
       const pat2 = makePattern({ pattern_id: "pat_b", confidence: 0.65, created_at: "2026-02-01T00:00:00.000Z" });
 
-      await stateManager.writeRaw("goals/goal_x/state.json", { gap: 0.3 });
+      await seedGoalState(stateManager, "goal_x", 0.3);
 
       const llmClient = createMockLLMClient([META_PATTERN_RESPONSE]);
       const learningPipeline = { getPatterns: vi.fn().mockResolvedValue([pat1, pat2]) } as never;
@@ -225,7 +226,7 @@ describe("M16.6: Incremental Meta-Pattern Update + Transfer Effect Report", () =
       await stateManager.writeRaw("meta-patterns/last_aggregated_at.json", {
         ts: "2026-03-15T00:00:00.000Z",
       });
-      await stateManager.writeRaw("goals/goal_a/state.json", { gap: 0.5 });
+      await seedGoalState(stateManager, "goal_a", 0.5);
 
       const llmClient = createMockLLMClient([]);
       const learningPipeline = { getPatterns: vi.fn().mockResolvedValue([oldPattern, lowConf]) } as never;
@@ -256,7 +257,7 @@ describe("M16.6: Incremental Meta-Pattern Update + Transfer Effect Report", () =
       await stateManager.writeRaw("meta-patterns/last_aggregated_at.json", {
         ts: "2026-03-15T00:00:00.000Z",
       });
-      await stateManager.writeRaw("goals/goal_a/state.json", { gap: 0.5 });
+      await seedGoalState(stateManager, "goal_a", 0.5);
 
       // LLM returns non-parseable content
       const llmClient = createMockLLMClient(["this is not json at all"]);
@@ -287,7 +288,7 @@ describe("M16.6: Incremental Meta-Pattern Update + Transfer Effect Report", () =
         confidence: 0.8,
       });
 
-      await stateManager.writeRaw("goals/goal_a/state.json", { gap: 0.5 });
+      await seedGoalState(stateManager, "goal_a", 0.5);
 
       const llmClient = createMockLLMClient([META_PATTERN_RESPONSE]);
       const learningPipeline = { getPatterns: vi.fn().mockResolvedValue([newPat]) } as never;

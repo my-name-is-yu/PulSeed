@@ -8,6 +8,7 @@ import { StateManager } from "../../../base/state/state-manager.js";
 import { VectorIndex } from "../vector-index.js";
 import { MockEmbeddingClient } from "../embedding-client.js";
 import { createMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
+import { seedGoalState } from "./goal-state-fixture.js";
 import type { LearnedPattern } from "../../../base/types/learning.js";
 import type { DecisionRecord } from "../../../base/types/knowledge.js";
 
@@ -88,8 +89,8 @@ describe("KnowledgeTransfer.autoApplyHighConfidenceTransfers", () => {
     vectorIndex = new VectorIndex(path.join(tmpDir, "vectors.json"), embeddingClient);
 
     // Set up two goals in state manager
-    await stateManager.writeRaw("goals/goal_a/state.json", { gap: 0.5 });
-    await stateManager.writeRaw("goals/goal_b/state.json", { gap: 0.6 });
+    await seedGoalState(stateManager, "goal_a", 0.5);
+    await seedGoalState(stateManager, "goal_b", 0.6);
   });
 
   it("auto-applies when confidence >= 0.85 and trust_score >= 0.7", async () => {
@@ -228,8 +229,8 @@ describe("KnowledgeTransfer.detectCandidatesRealtime", () => {
     const embeddingClient = new MockEmbeddingClient();
     vectorIndex = new VectorIndex(path.join(tmpDir, "vectors.json"), embeddingClient);
 
-    await stateManager.writeRaw("goals/goal_a/state.json", { gap: 0.5 });
-    await stateManager.writeRaw("goals/goal_b/state.json", { gap: 0.6 });
+    await seedGoalState(stateManager, "goal_a", 0.5);
+    await seedGoalState(stateManager, "goal_b", 0.6);
   });
 
   it("returns contextSnippets for high-score candidates", async () => {

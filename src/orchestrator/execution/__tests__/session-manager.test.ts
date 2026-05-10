@@ -714,7 +714,12 @@ describe("SessionManager", () => {
 
   describe("legacy session index edge cases (via getActiveSessions)", () => {
     it("ignores corrupt legacy index files on the normal path", async () => {
-      await stateManager.writeRaw("sessions/index.json", { corrupt: true });
+      fs.mkdirSync(path.join(tmpDir, "sessions"), { recursive: true });
+      fs.writeFileSync(
+        path.join(tmpDir, "sessions", "index.json"),
+        JSON.stringify({ corrupt: true }),
+        "utf8",
+      );
 
       const sessions = await manager.getActiveSessions("any-goal");
       expect(sessions).toEqual([]);

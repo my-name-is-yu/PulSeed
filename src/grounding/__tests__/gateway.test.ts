@@ -19,6 +19,7 @@ function makeStateManager(overrides: Partial<StateManager> = {}): StateManager {
       status: "active",
       loop_status: "running",
     }),
+    listTasks: vi.fn().mockResolvedValue([]),
     readRaw: vi.fn().mockResolvedValue(null),
     loadGapHistory: vi.fn().mockResolvedValue([]),
     getBaseDir: vi.fn().mockReturnValue(path.join(os.tmpdir(), "pulseed-grounding-home")),

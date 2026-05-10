@@ -7,6 +7,7 @@ import { StateManager } from "../../../base/state/state-manager.js";
 import { VectorIndex } from "../vector-index.js";
 import { MockEmbeddingClient } from "../embedding-client.js";
 import { createMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
+import { seedGoalState } from "./goal-state-fixture.js";
 import type { LearnedPattern } from "../../../base/types/learning.js";
 
 // ─── Helpers ───
@@ -84,7 +85,7 @@ describe("KnowledgeTransfer", async () => {
     const ethicsGate = makeMockEthicsGate(opts.ethicsVerdict ?? "pass");
 
     for (const goalId of opts.goalIds ?? []) {
-      await stateManager.writeRaw(`goals/${goalId}/state.json`, { gap: 0.5 });
+      await seedGoalState(stateManager, goalId, 0.5);
     }
 
     return new KnowledgeTransfer({
