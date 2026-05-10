@@ -4,6 +4,8 @@ import * as path from "node:path";
 import { cleanupTempDir, makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 import { RuntimeEvidenceLedger } from "../../../runtime/store/evidence-ledger.js";
 import { StrategyDreamStateStore } from "../../../runtime/store/strategy-dream-state-store.js";
+import { KnowledgeMemoryStateStore } from "../../knowledge/knowledge-memory-state-store.js";
+import { AgentMemoryEntrySchema, type AgentMemoryEntry } from "../../knowledge/types/agent-memory.js";
 import { loadDreamActivationArtifacts } from "../dream-activation-artifacts.js";
 import { DreamConsolidator } from "../dream-consolidator.js";
 
@@ -357,41 +359,37 @@ describe("DreamConsolidator", () => {
   it("detects duplicate and superseded agent memory records with evidence refs", async () => {
     tmpDir = makeTempDir("dream-consolidator-agent-memory-metrics-");
     await fs.mkdir(path.join(tmpDir, "memory", "agent-memory"), { recursive: true });
-    await fs.writeFile(
-      path.join(tmpDir, "memory", "agent-memory", "entries.json"),
-      JSON.stringify({
-        entries: [
-          agentMemoryEntry("memory-1", { key: "style.direct", value: "Prefer direct status updates." }),
-          agentMemoryEntry("memory-2", { key: "style.direct", value: "Prefer direct status updates." }),
-          agentMemoryEntry("memory-3", {
-            key: "style.direct.compiled",
-            value: "Prefer direct status updates.",
-            status: "compiled",
-            compiled_from: ["memory-1", "memory-2"],
-          }),
-          agentMemoryEntry("memory-4", {
-            key: "style.direct.old",
-            value: "Old duplicate.",
-            status: "superseded",
-            supersedes_memory_id: "memory-1",
-          }),
-          agentMemoryEntry("memory-5", {
-            key: "style.corrected",
-            value: "Corrected preference.",
-            status: "corrected",
-            supersedes_memory_id: "memory-6",
-          }),
-          agentMemoryEntry("memory-6", {
-            key: "style.retracted",
-            value: "Retracted preference.",
-            status: "retracted",
-          }),
-        ],
-        corrections: [],
-        last_consolidated_at: null,
-      }),
-      "utf8"
-    );
+    await new KnowledgeMemoryStateStore(tmpDir).saveAgentMemoryStore({
+      entries: [
+        agentMemoryEntry("memory-1", { key: "style.direct", value: "Prefer direct status updates." }),
+        agentMemoryEntry("memory-2", { key: "style.direct", value: "Prefer direct status updates." }),
+        agentMemoryEntry("memory-3", {
+          key: "style.direct.compiled",
+          value: "Prefer direct status updates.",
+          status: "compiled",
+          compiled_from: ["memory-1", "memory-2"],
+        }),
+        agentMemoryEntry("memory-4", {
+          key: "style.direct.old",
+          value: "Old duplicate.",
+          status: "superseded",
+          supersedes_memory_id: "memory-1",
+        }),
+        agentMemoryEntry("memory-5", {
+          key: "style.corrected",
+          value: "Corrected preference.",
+          status: "corrected",
+          supersedes_memory_id: "memory-6",
+        }),
+        agentMemoryEntry("memory-6", {
+          key: "style.retracted",
+          value: "Retracted preference.",
+          status: "retracted",
+        }),
+      ],
+      corrections: [],
+      last_consolidated_at: null,
+    });
 
     const report = await new DreamConsolidator({ baseDir: tmpDir }).run({ tier: "light" });
     const agentMemory = report.categories.find((category) => category.category === "agentMemory");
@@ -402,10 +400,10 @@ describe("DreamConsolidator", () => {
     expect(agentMemory?.metrics.duplicateMemoryGroupsDetected).toBe(1);
     expect(agentMemory?.metrics.supersededMemoryRecords).toBe(1);
     expect(agentMemory?.evidence_refs).toEqual(expect.arrayContaining([
-      "memory/agent-memory/entries.json#memory-1",
-      "memory/agent-memory/entries.json#memory-2",
-      "memory/agent-memory/entries.json#memory-3",
-      "memory/agent-memory/entries.json#memory-4",
+      "soil-sqlite://memory/agent#memory-1",
+      "soil-sqlite://memory/agent#memory-2",
+      "soil-sqlite://memory/agent#memory-3",
+      "soil-sqlite://memory/agent#memory-4",
     ]));
   });
 
@@ -455,9 +453,9 @@ describe("DreamConsolidator", () => {
 
 function agentMemoryEntry(
   id: string,
-  overrides: Record<string, unknown>
-): Record<string, unknown> {
-  return {
+  overrides: Partial<AgentMemoryEntry>
+): AgentMemoryEntry {
+  return AgentMemoryEntrySchema.parse({
     id,
     key: id,
     value: `Value ${id}`,
@@ -467,7 +465,7 @@ function agentMemoryEntry(
     created_at: "2026-05-02T00:00:00.000Z",
     updated_at: "2026-05-02T00:00:00.000Z",
     ...overrides,
-  };
+  });
 }
 
 async function seedDreamFiles(baseDir: string): Promise<void> {

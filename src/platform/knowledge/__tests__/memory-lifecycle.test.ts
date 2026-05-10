@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { MemoryLifecycleManager } from "../memory/memory-lifecycle.js";
+import { MemoryLifecycleStateStore } from "../memory/memory-lifecycle-state-store.js";
 import type { ILLMClient, LLMMessage, LLMRequestOptions, LLMResponse } from "../../../base/llm/llm-client.js";
 import type { ZodSchema } from "zod";
 import { createMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
@@ -27,6 +28,10 @@ function makeLLMCompressionResponses(lessonCount = 1) {
 
 let tmpDir: string;
 
+function stateStore(): MemoryLifecycleStateStore {
+  return new MemoryLifecycleStateStore(path.join(tmpDir, "memory"));
+}
+
 beforeEach(() => {
   tmpDir = makeTempDir();
 });
@@ -40,42 +45,28 @@ afterEach(() => {
 // ═══════════════════════════════════════════════════════
 
 describe("initializeDirectories", () => {
-  it("creates all required short-term and long-term subdirectories", async () => {
+  it("initializes typed short-term and long-term stores", async () => {
+    const mgr = new MemoryLifecycleManager(tmpDir, createMockLLMClient([]));
+    await mgr.initializeDirectories();
+
+    await expect(stateStore().loadIndex("short-term")).resolves.toMatchObject({ entries: [] });
+    await expect(stateStore().loadIndex("long-term")).resolves.toMatchObject({ entries: [] });
+  });
+
+  it("does not create legacy short-term and long-term index files", async () => {
     const mgr = new MemoryLifecycleManager(tmpDir, createMockLLMClient([]));
     await mgr.initializeDirectories();
 
     const memDir = path.join(tmpDir, "memory");
-    expect(fs.existsSync(path.join(memDir, "short-term", "goals"))).toBe(true);
-    expect(fs.existsSync(path.join(memDir, "long-term", "lessons", "by-goal"))).toBe(true);
-    expect(fs.existsSync(path.join(memDir, "long-term", "lessons", "by-dimension"))).toBe(true);
-    expect(fs.existsSync(path.join(memDir, "long-term", "statistics"))).toBe(true);
-    expect(fs.existsSync(path.join(memDir, "archive"))).toBe(true);
+    expect(fs.existsSync(path.join(memDir, "short-term", "index.json"))).toBe(false);
+    expect(fs.existsSync(path.join(memDir, "long-term", "index.json"))).toBe(false);
   });
 
-  it("creates short-term and long-term index.json files", async () => {
+  it("initializes an empty long-term lesson store", async () => {
     const mgr = new MemoryLifecycleManager(tmpDir, createMockLLMClient([]));
     await mgr.initializeDirectories();
 
-    const memDir = path.join(tmpDir, "memory");
-    expect(fs.existsSync(path.join(memDir, "short-term", "index.json"))).toBe(true);
-    expect(fs.existsSync(path.join(memDir, "long-term", "index.json"))).toBe(true);
-  });
-
-  it("creates global.json in long-term lessons", async () => {
-    const mgr = new MemoryLifecycleManager(tmpDir, createMockLLMClient([]));
-    await mgr.initializeDirectories();
-
-    const globalPath = path.join(
-      tmpDir,
-      "memory",
-      "long-term",
-      "lessons",
-      "global.json"
-    );
-    expect(fs.existsSync(globalPath)).toBe(true);
-    const content = JSON.parse(fs.readFileSync(globalPath, "utf-8")) as unknown;
-    expect(Array.isArray(content)).toBe(true);
-    expect((content as unknown[]).length).toBe(0);
+    await expect(stateStore().loadLessons()).resolves.toEqual([]);
   });
 
   it("is idempotent — calling twice does not throw or corrupt files", async () => {
@@ -83,8 +74,7 @@ describe("initializeDirectories", () => {
     await mgr.initializeDirectories();
     await expect(mgr.initializeDirectories()).resolves.not.toThrow();
 
-    const indexPath = path.join(tmpDir, "memory", "short-term", "index.json");
-    const raw = JSON.parse(fs.readFileSync(indexPath, "utf-8")) as { version: number; entries: unknown[] };
+    const raw = await stateStore().loadIndex("short-term");
     expect(raw.version).toBe(1);
     expect(raw.entries).toHaveLength(0);
   });
@@ -95,43 +85,26 @@ describe("initializeDirectories", () => {
 // ═══════════════════════════════════════════════════════
 
 describe("recordToShortTerm", () => {
-  it("records entry to experience-log.json for experience_log data type", async () => {
+  it("records entry to the typed short-term store for experience_log data type", async () => {
     const mgr = new MemoryLifecycleManager(tmpDir, createMockLLMClient([]));
     await mgr.initializeDirectories();
 
     await mgr.recordToShortTerm("goal-1", "experience_log", { event: "loop_start" });
 
-    const dataFile = path.join(
-      tmpDir,
-      "memory",
-      "short-term",
-      "goals",
-      "goal-1",
-      "experience-log.json"
-    );
-    expect(fs.existsSync(dataFile)).toBe(true);
-    const entries = JSON.parse(fs.readFileSync(dataFile, "utf-8")) as unknown[];
+    const entries = await stateStore().loadShortTermEntries("goal-1", "experience_log");
     expect(entries).toHaveLength(1);
   });
 
-  it("records entry to observations.json for observation data type", async () => {
+  it("records entry to the typed short-term store for observation data type", async () => {
     const mgr = new MemoryLifecycleManager(tmpDir, createMockLLMClient([]));
     await mgr.initializeDirectories();
 
     await mgr.recordToShortTerm("goal-1", "observation", { value: 42 });
 
-    const dataFile = path.join(
-      tmpDir,
-      "memory",
-      "short-term",
-      "goals",
-      "goal-1",
-      "observations.json"
-    );
-    expect(fs.existsSync(dataFile)).toBe(true);
+    await expect(stateStore().loadShortTermEntries("goal-1", "observation")).resolves.toHaveLength(1);
   });
 
-  it("creates goal directory if it does not exist yet", async () => {
+  it("does not create a legacy goal directory for short-term state", async () => {
     const mgr = new MemoryLifecycleManager(tmpDir, createMockLLMClient([]));
     await mgr.initializeDirectories();
 
@@ -140,7 +113,8 @@ describe("recordToShortTerm", () => {
 
     await mgr.recordToShortTerm("new-goal", "task", { status: "pending" });
 
-    expect(fs.existsSync(goalDir)).toBe(true);
+    expect(fs.existsSync(goalDir)).toBe(false);
+    await expect(stateStore().loadShortTermEntries("new-goal", "task")).resolves.toHaveLength(1);
   });
 
   it("returns a ShortTermEntry with generated ID, goal_id, data_type, and data", async () => {
@@ -161,8 +135,7 @@ describe("recordToShortTerm", () => {
 
     await mgr.recordToShortTerm("goal-1", "observation", { value: 10 }, { tags: ["perf"] });
 
-    const indexPath = path.join(tmpDir, "memory", "short-term", "index.json");
-    const index = JSON.parse(fs.readFileSync(indexPath, "utf-8")) as { entries: unknown[] };
+    const index = await stateStore().loadIndex("short-term");
     expect(index.entries).toHaveLength(1);
   });
 
@@ -174,15 +147,7 @@ describe("recordToShortTerm", () => {
     await mgr.recordToShortTerm("goal-1", "experience_log", { seq: 2 });
     await mgr.recordToShortTerm("goal-1", "experience_log", { seq: 3 });
 
-    const dataFile = path.join(
-      tmpDir,
-      "memory",
-      "short-term",
-      "goals",
-      "goal-1",
-      "experience-log.json"
-    );
-    const entries = JSON.parse(fs.readFileSync(dataFile, "utf-8")) as unknown[];
+    const entries = await stateStore().loadShortTermEntries("goal-1", "experience_log");
     expect(entries).toHaveLength(3);
   });
 
@@ -209,24 +174,8 @@ describe("recordToShortTerm", () => {
     await mgr.recordToShortTerm("goal-A", "task", { status: "done" });
     await mgr.recordToShortTerm("goal-B", "task", { status: "pending" });
 
-    const fileA = path.join(
-      tmpDir,
-      "memory",
-      "short-term",
-      "goals",
-      "goal-A",
-      "tasks.json"
-    );
-    const fileB = path.join(
-      tmpDir,
-      "memory",
-      "short-term",
-      "goals",
-      "goal-B",
-      "tasks.json"
-    );
-    expect(JSON.parse(fs.readFileSync(fileA, "utf-8")) as unknown[]).toHaveLength(1);
-    expect(JSON.parse(fs.readFileSync(fileB, "utf-8")) as unknown[]).toHaveLength(1);
+    await expect(stateStore().loadShortTermEntries("goal-A", "task")).resolves.toHaveLength(1);
+    await expect(stateStore().loadShortTermEntries("goal-B", "task")).resolves.toHaveLength(1);
   });
 });
 
@@ -269,7 +218,7 @@ describe("compressToLongTerm", () => {
     expect(result.quality_check.passed).toBe(true);
   });
 
-  it("stores lessons in by-goal file after successful compression", async () => {
+  it("stores lessons in the typed long-term lesson store after successful compression", async () => {
     const mgr = new MemoryLifecycleManager(
       tmpDir,
       createMockLLMClient(makeLLMCompressionResponses(1)),
@@ -283,16 +232,7 @@ describe("compressToLongTerm", () => {
 
     await mgr.compressToLongTerm("goal-1", "experience_log");
 
-    const byGoalPath = path.join(
-      tmpDir,
-      "memory",
-      "long-term",
-      "lessons",
-      "by-goal",
-      "goal-1.json"
-    );
-    expect(fs.existsSync(byGoalPath)).toBe(true);
-    const lessons = JSON.parse(fs.readFileSync(byGoalPath, "utf-8")) as unknown[];
+    const lessons = await stateStore().loadLessons({ goalId: "goal-1", status: "active" });
     expect(lessons.length).toBeGreaterThan(0);
   });
 
@@ -321,15 +261,7 @@ describe("compressToLongTerm", () => {
     expect(result.entries_compressed).toBe(0);
 
     // Short-term data must still be present
-    const dataFile = path.join(
-      tmpDir,
-      "memory",
-      "short-term",
-      "goals",
-      "goal-1",
-      "experience-log.json"
-    );
-    const remaining = JSON.parse(fs.readFileSync(dataFile, "utf-8")) as unknown[];
+    const remaining = await stateStore().loadShortTermEntries("goal-1", "experience_log");
     expect(remaining.length).toBe(11);
   });
 
@@ -534,7 +466,7 @@ describe("applyRetentionPolicy", () => {
 // ═══════════════════════════════════════════════════════
 
 describe("onGoalClose", () => {
-  it("creates archive directory for goal on close", async () => {
+  it("records a typed archive for goal on close", async () => {
     const mgr = new MemoryLifecycleManager(
       tmpDir,
       createMockLLMClient(makeLLMCompressionResponses(1))
@@ -545,11 +477,10 @@ describe("onGoalClose", () => {
 
     await mgr.onGoalClose("goal-1", "completed");
 
-    const archiveDir = path.join(tmpDir, "memory", "archive", "goal-1");
-    expect(fs.existsSync(archiveDir)).toBe(true);
+    await expect(stateStore().loadArchives("goal-1")).resolves.toHaveLength(1);
   });
 
-  it("removes goal's short-term directory after close", async () => {
+  it("removes goal's short-term rows after close", async () => {
     const mgr = new MemoryLifecycleManager(
       tmpDir,
       createMockLLMClient(makeLLMCompressionResponses(1))
@@ -558,21 +489,14 @@ describe("onGoalClose", () => {
 
     await mgr.recordToShortTerm("goal-1", "task", { status: "done" });
 
-    const shortTermGoalDir = path.join(
-      tmpDir,
-      "memory",
-      "short-term",
-      "goals",
-      "goal-1"
-    );
-    expect(fs.existsSync(shortTermGoalDir)).toBe(true);
+    await expect(stateStore().loadShortTermEntries("goal-1", "task")).resolves.toHaveLength(1);
 
     await mgr.onGoalClose("goal-1", "completed");
 
-    expect(fs.existsSync(shortTermGoalDir)).toBe(false);
+    await expect(stateStore().loadShortTermEntries("goal-1", "task")).resolves.toHaveLength(0);
   });
 
-  it("archives short-term files into archive/<goalId>/", async () => {
+  it("archives short-term entries into typed archive rows", async () => {
     const mgr = new MemoryLifecycleManager(
       tmpDir,
       createMockLLMClient(makeLLMCompressionResponses(1))
@@ -583,9 +507,8 @@ describe("onGoalClose", () => {
 
     await mgr.onGoalClose("goal-1", "cancelled");
 
-    const archiveDir = path.join(tmpDir, "memory", "archive", "goal-1");
-    const files = fs.readdirSync(archiveDir);
-    expect(files.length).toBeGreaterThan(0);
+    const archives = await stateStore().loadArchives("goal-1");
+    expect(archives.length).toBeGreaterThan(0);
   });
 
   it("does not throw when goal has no short-term data", async () => {

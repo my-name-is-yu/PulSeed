@@ -8,6 +8,7 @@ import { cleanupTempDir, makeTempDir } from "../../../../tests/helpers/temp-dir.
 import { importLegacyKnowledgeMemoryState } from "../../../runtime/store/knowledge-memory-state-migration.js";
 import { openControlDatabase } from "../../../runtime/store/control-db/index.js";
 import { SqliteSoilRepository } from "../../soil/sqlite-repository.js";
+import { KnowledgeMemoryStateStore } from "../knowledge-memory-state-store.js";
 import { KnowledgeManager } from "../knowledge-manager.js";
 
 const fixedNow = "2026-05-09T12:00:00.000Z";
@@ -184,9 +185,7 @@ describe("KnowledgeMemoryStateStore database ownership", () => {
     const retried = await importLegacyKnowledgeMemoryState(baseDir);
     expect(retried.domainKnowledge).toBe(1);
 
-    const stateManager = new StateManager(baseDir);
-    await stateManager.init();
-    expect(await stateManager.readRaw("goals/goal-path/domain_knowledge.json")).toMatchObject({
+    expect(await new KnowledgeMemoryStateStore(baseDir).loadDomainKnowledge("goal-path")).toMatchObject({
       goal_id: "goal-path",
       entries: [{ entry_id: "domain-retry-entry" }],
     });
@@ -225,9 +224,7 @@ describe("KnowledgeMemoryStateStore database ownership", () => {
     const retried = await importLegacyKnowledgeMemoryState(baseDir);
     expect(retried.sharedKnowledgeEntries).toBe(1);
 
-    const stateManager = new StateManager(baseDir);
-    await stateManager.init();
-    expect(await stateManager.readRaw("memory/shared-knowledge/entries.json")).toMatchObject([
+    expect(await new KnowledgeMemoryStateStore(baseDir).loadSharedKnowledgeEntries()).toMatchObject([
       { entry_id: "shared-retry-entry" },
     ]);
     const controlDb = await openControlDatabase({ baseDir });

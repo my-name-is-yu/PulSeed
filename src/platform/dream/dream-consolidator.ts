@@ -5,8 +5,10 @@ import { readJsonFileOrNull, writeJsonFileAtomic } from "../../base/utils/json-i
 import type { Logger } from "../../runtime/logger.js";
 import { RuntimeEvidenceLedger } from "../../runtime/store/evidence-ledger.js";
 import { StrategyDreamStateStore } from "../../runtime/store/strategy-dream-state-store.js";
-import { AgentMemoryEntrySchema, AgentMemoryStoreSchema, type AgentMemoryEntry } from "../knowledge/types/agent-memory.js";
+import type { AgentMemoryEntry } from "../knowledge/types/agent-memory.js";
+import { KnowledgeMemoryStateStore } from "../knowledge/knowledge-memory-state-store.js";
 import { upsertDreamActivationArtifacts, loadDreamActivationArtifacts } from "./dream-activation-artifacts.js";
+import { loadDecisionHeuristics } from "./dream-activation.js";
 import { consolidateDreamEventWorkflows, loadDreamWorkflowRecords } from "./dream-event-workflows.js";
 import type { DreamSoilSyncService } from "./dream-soil-sync.js";
 import { DEFAULT_DREAM_CONFIG } from "./dream-config.js";
@@ -438,23 +440,7 @@ export class DreamConsolidator {
   }
 
   private async loadAgentMemoryStore() {
-    const raw = await readJsonFileOrNull(path.join(this.deps.baseDir, "memory", "agent-memory", "entries.json"));
-    if (!raw) {
-      return AgentMemoryStoreSchema.parse({ entries: [], corrections: [], last_consolidated_at: null });
-    }
-    const parsed = AgentMemoryStoreSchema.safeParse(raw);
-    if (parsed.success) return parsed.data;
-    if (isRecord(raw) && Array.isArray(raw["entries"])) {
-      return AgentMemoryStoreSchema.parse({
-        entries: raw["entries"]
-          .map((entry) => AgentMemoryEntrySchema.safeParse(entry))
-          .filter((entry): entry is { success: true; data: AgentMemoryEntry } => entry.success)
-          .map((entry) => entry.data),
-        corrections: [],
-        last_consolidated_at: null,
-      });
-    }
-    return AgentMemoryStoreSchema.parse({ entries: [], corrections: [], last_consolidated_at: null });
+    return new KnowledgeMemoryStateStore(this.deps.baseDir).loadAgentMemoryStore();
   }
 
   private async collectAgentMemoryResult(): Promise<DreamConsolidationPassResult> {
@@ -566,10 +552,7 @@ export class DreamConsolidator {
   }
 
   private async collectDecisionHistoryResult(): Promise<DreamConsolidationPassResult> {
-    const raw = await readJsonFileOrNull(path.join(this.deps.baseDir, "dream", "decision-heuristics.json"));
-    const heuristics = typeof raw === "object" && raw !== null && Array.isArray((raw as { heuristics?: unknown[] }).heuristics)
-      ? (raw as { heuristics: unknown[] }).heuristics
-      : [];
+    const heuristics = await loadDecisionHeuristics(this.deps.baseDir);
     const activationArtifacts = this.activationArtifactIf(
       heuristics.length > 0,
       {

@@ -4,7 +4,7 @@ import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 import { StateManager } from "../../../base/state/state-manager.js";
 import type { ILLMClient } from "../../../base/llm/llm-client.js";
 import { KnowledgeManager } from "../../knowledge/knowledge-manager.js";
-import { AGENT_MEMORY_PATH } from "../../knowledge/knowledge-manager-internals.js";
+import { KnowledgeMemoryStateStore } from "../../knowledge/knowledge-memory-state-store.js";
 import { AgentMemoryEntrySchema, type AgentMemoryEntry } from "../../knowledge/types/agent-memory.js";
 import { runUserMemoryOperation } from "../user-memory-operations.js";
 
@@ -37,7 +37,7 @@ describe("user memory correction operations", () => {
   });
 
   it("records a user correction event and keeps stale agent memory out of default recall", async () => {
-    await stateManager.writeRaw(AGENT_MEMORY_PATH, {
+    await new KnowledgeMemoryStateStore(tmpDir).saveAgentMemoryStore({
       entries: [memoryEntry()],
       corrections: [],
       last_consolidated_at: null,
@@ -78,7 +78,7 @@ describe("user memory correction operations", () => {
   });
 
   it("preserves governance when correcting sensitive user memory", async () => {
-    await stateManager.writeRaw(AGENT_MEMORY_PATH, {
+    await new KnowledgeMemoryStateStore(tmpDir).saveAgentMemoryStore({
       entries: [
         memoryEntry({
           governance: {
@@ -135,7 +135,7 @@ describe("user memory correction operations", () => {
   });
 
   it("redacts forgotten user memory from governance exports while retaining audit metadata", async () => {
-    await stateManager.writeRaw(AGENT_MEMORY_PATH, {
+    await new KnowledgeMemoryStateStore(tmpDir).saveAgentMemoryStore({
       entries: [memoryEntry({
         summary: "The user's old private editor preference.",
         governance: {

@@ -19,10 +19,7 @@ export { storeLessonsLongTerm, loadIndex, saveIndex, updateIndex, removeFromInde
 export { queryLessons, queryCrossGoalLessons } from "./memory-query.js";
 
 export {
-  atomicWriteAsync,
-  readJsonFileAsync,
-  getDataFile,
   generateId,
-  getDirectorySizeAsync,
   getRetentionLimit,
 } from "./memory-persistence.js";
+export { MemoryLifecycleStateStore } from "./memory-lifecycle-state-store.js";

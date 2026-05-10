@@ -28,16 +28,12 @@ export async function estimateCurrentGap(
   stateManager: StateManager
 ): Promise<number> {
   try {
-    const raw = await stateManager.readRaw(`goals/${goalId}/state.json`);
-    if (raw && typeof raw === "object" && raw !== null) {
-      const state = raw as Record<string, unknown>;
-      if (typeof state["gap"] === "number") {
-        return state["gap"] as number;
-      }
-      // Try gap_score from loop state
-      if (typeof state["gap_score"] === "number") {
-        return state["gap_score"] as number;
-      }
+    const latest = (await stateManager.loadGapHistory(goalId)).at(-1);
+    const scores = latest?.gap_vector
+      .map((gap) => gap.normalized_weighted_gap)
+      .filter((value) => Number.isFinite(value)) ?? [];
+    if (scores.length > 0) {
+      return Math.max(...scores);
     }
   } catch {
     // non-fatal

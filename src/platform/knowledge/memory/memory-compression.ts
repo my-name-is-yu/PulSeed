@@ -1,10 +1,6 @@
-import * as fsp from "node:fs/promises";
-import * as path from "node:path";
-import { z } from "zod";
 import type { ILLMClient } from "../../../base/llm/llm-client.js";
 import type { VectorIndex } from "../vector-index.js";
 import {
-  ShortTermEntrySchema,
   LessonEntrySchema,
   RetentionConfigSchema,
 } from "../../../base/types/memory-lifecycle.js";
@@ -17,11 +13,7 @@ import type {
 } from "../../../base/types/memory-lifecycle.js";
 import type { IDriveScorer } from "../drive-score-adapter.js";
 import {
-  atomicWriteAsync,
-  readJsonFileAsync,
-  getDataFile,
   generateId,
-  getDirectorySizeAsync,
   getRetentionLimit,
 } from "./memory-persistence.js";
 import {
@@ -35,6 +27,7 @@ import {
   archiveOldestLongTermEntries,
 } from "./memory-index.js";
 import { updateStatistics } from "./memory-stats.js";
+import { MemoryLifecycleStateStore } from "./memory-lifecycle-state-store.js";
 
 // ─── Deps interface ───
 
@@ -91,12 +84,8 @@ export async function compressToLongTerm(
   dataType: MemoryDataType
 ): Promise<CompressionResult> {
   const now = new Date().toISOString();
-  const dataFile = getDataFile(deps.memoryDir, goalId, dataType);
-  const allEntries =
-    (await readJsonFileAsync<ShortTermEntry[]>(
-      dataFile,
-      z.array(ShortTermEntrySchema)
-    )) ?? [];
+  const stateStore = new MemoryLifecycleStateStore(deps.memoryDir);
+  const allEntries = await stateStore.loadShortTermEntries(goalId, dataType);
 
   // Determine the retention limit for this goal
   const retentionLimit = getRetentionLimit(deps.config, goalId);
@@ -199,12 +188,12 @@ export async function compressToLongTerm(
     }
 
     // Step 5: Update statistics
-    updateStatistics(deps.memoryDir, goalId, expiredEntries);
+    await updateStatistics(deps.memoryDir, goalId, expiredEntries);
 
     // Step 6: Purge compressed short-term entries (only if compression succeeded)
     const compressedIds = new Set(expiredEntries.map((e) => e.id));
     const remaining = allEntries.filter((e) => !compressedIds.has(e.id));
-    await atomicWriteAsync(dataFile, remaining);
+    await stateStore.replaceShortTermEntries(goalId, dataType, remaining);
 
     // Remove purged entries from the short-term index
     await removeFromIndex(deps.memoryDir, "short-term", compressedIds);
@@ -271,7 +260,7 @@ export async function compressAllRemainingToLongTerm(
   );
 
   await storeLessonsLongTerm(deps.memoryDir, goalId, lessons, entries);
-  updateStatistics(deps.memoryDir, goalId, entries);
+  await updateStatistics(deps.memoryDir, goalId, entries);
 
   void dataType; // type info available for future audit logging
 }
@@ -295,16 +284,10 @@ export async function applyRetentionPolicy(
   ];
 
   const results: CompressionResult[] = [];
+  const stateStore = new MemoryLifecycleStateStore(deps.memoryDir);
 
   for (const dataType of dataTypes) {
-    const dataFile = getDataFile(deps.memoryDir, goalId, dataType);
-    try { await fsp.access(dataFile); } catch { continue; }
-
-    const entries =
-      (await readJsonFileAsync<ShortTermEntry[]>(
-        dataFile,
-        z.array(ShortTermEntrySchema)
-      )) ?? [];
+    const entries = await stateStore.loadShortTermEntries(goalId, dataType);
 
     if (entries.length === 0) continue;
 
@@ -355,25 +338,15 @@ export async function applyRetentionPolicy(
 export async function runGarbageCollection(
   deps: MemoryCompressionDeps
 ): Promise<void> {
-  const shortTermGoalsDir = path.join(
-    deps.memoryDir,
-    "short-term",
-    "goals"
-  );
-
-  try { await fsp.access(shortTermGoalsDir); } catch { return; }
-
-  const goalDirs = (await fsp.readdir(shortTermGoalsDir, { withFileTypes: true }))
-    .filter((d) => d.isDirectory())
-    .map((d) => d.name);
+  const stateStore = new MemoryLifecycleStateStore(deps.memoryDir);
+  const goalIds = await stateStore.listShortTermGoalIds();
 
   const shortTermLimitBytes =
     deps.config.size_limits.short_term_per_goal_mb * 1024 * 1024;
 
   // Check short-term size per goal
-  for (const goalId of goalDirs) {
-    const goalDir = path.join(shortTermGoalsDir, goalId);
-    const size = await getDirectorySizeAsync(goalDir);
+  for (const goalId of goalIds) {
+    const size = await stateStore.estimateShortTermGoalSize(goalId);
 
     if (size > shortTermLimitBytes) {
       // Trigger early compression for all data types
@@ -395,19 +368,13 @@ export async function runGarbageCollection(
   }
 
   // Check long-term total size
-  const longTermDir = path.join(deps.memoryDir, "long-term");
-  try {
-    await fsp.access(longTermDir);
-    const longTermSize = await getDirectorySizeAsync(longTermDir);
-    const longTermLimitBytes =
-      deps.config.size_limits.long_term_total_mb * 1024 * 1024;
+  const longTermSize = await stateStore.estimateLongTermSize();
+  const longTermLimitBytes =
+    deps.config.size_limits.long_term_total_mb * 1024 * 1024;
 
-    if (longTermSize > longTermLimitBytes) {
-      // Archive oldest (by last_accessed) lessons from long-term index
-      await archiveOldestLongTermEntries(deps.memoryDir);
-    }
-  } catch {
-    // longTermDir doesn't exist, nothing to do
+  if (longTermSize > longTermLimitBytes) {
+    // Archive oldest (by last_accessed) lessons from long-term index.
+    await archiveOldestLongTermEntries(deps.memoryDir);
   }
 }
 

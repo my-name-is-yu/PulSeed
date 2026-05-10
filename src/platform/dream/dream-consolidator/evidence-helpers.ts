@@ -48,7 +48,7 @@ export function isLessonEvidenceEntry(entry: Record<string, unknown>): boolean {
 }
 
 export function agentMemoryEvidenceRef(entry: AgentMemoryEntry): string {
-  return `memory/agent-memory/entries.json#${entry.id}`;
+  return `soil-sqlite://memory/agent#${entry.id}`;
 }
 
 export function duplicateAgentMemoryGroups(

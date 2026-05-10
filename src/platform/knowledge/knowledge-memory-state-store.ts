@@ -25,9 +25,6 @@ import {
   type MemoryCorrectionEntry,
 } from "../corrections/memory-correction-ledger.js";
 
-export const KNOWLEDGE_MEMORY_AGENT_MEMORY_PATH = "memory/agent-memory/entries.json";
-export const KNOWLEDGE_MEMORY_SHARED_KB_PATH = "memory/shared-knowledge/entries.json";
-
 const SOURCE_DOMAIN_STATE = "knowledge_domain_state";
 const SOURCE_DOMAIN_ENTRY = "knowledge_domain_entry";
 const SOURCE_SHARED_ENTRY = "knowledge_shared_entry";
@@ -36,33 +33,6 @@ const SOURCE_AGENT_MEMORY_CORRECTION = "knowledge_agent_memory_correction";
 const SOURCE_AGENT_MEMORY_STATE = "knowledge_agent_memory_state";
 
 const STATE_SCHEMA_VERSION = "knowledge-memory-state-v1";
-
-export interface RawStateStoreResult {
-  handled: boolean;
-  value: unknown | null;
-}
-
-function normalizeRawStatePath(relativePath: string): string[] {
-  return relativePath.replace(/\\/g, "/").replace(/^\/+/, "").split("/").filter(Boolean);
-}
-
-function domainKnowledgeGoalIdFromPath(relativePath: string): string | null {
-  const parts = normalizeRawStatePath(relativePath);
-  return parts[0] === "goals" && parts.length === 3 && parts[2] === "domain_knowledge.json"
-    ? parts[1]!
-    : null;
-}
-
-function knowledgeSourcePathForRecord(record: SoilRecord): string | undefined {
-  const pathValue = record.metadata_json["legacy_path"];
-  return typeof pathValue === "string" ? pathValue : undefined;
-}
-
-export function isKnowledgeMemoryDurableStatePath(relativePath: string): boolean {
-  if (domainKnowledgeGoalIdFromPath(relativePath)) return true;
-  const normalized = normalizeRawStatePath(relativePath).join("/");
-  return normalized === KNOWLEDGE_MEMORY_AGENT_MEMORY_PATH || normalized === KNOWLEDGE_MEMORY_SHARED_KB_PATH;
-}
 
 function nonEmptyText(value: string, fallback: string): string {
   const trimmed = value.trim();
@@ -104,6 +74,18 @@ function recordId(sourceType: string, sourceId: string): string {
 
 function recordKey(sourceType: string, sourceId: string): string {
   return `${sourceType}:${sourceId}`;
+}
+
+function domainSourceRef(goalId: string): string {
+  return `soil-sqlite://knowledge/domain/${goalId}`;
+}
+
+function sharedSourceRef(): string {
+  return "soil-sqlite://knowledge/shared";
+}
+
+function agentMemorySourceRef(): string {
+  return "soil-sqlite://memory/agent";
 }
 
 function chunkForRecord(input: {
@@ -197,7 +179,7 @@ function recordForDomainState(domainKnowledge: DomainKnowledge): SoilRecordInput
         domain: domainKnowledge.domain,
         last_updated: domainKnowledge.last_updated,
       },
-      legacy_path: `goals/${domainKnowledge.goal_id}/domain_knowledge.json`,
+      source_ref: domainSourceRef(domainKnowledge.goal_id),
     },
     last_used_at: null,
     use_count: 0,
@@ -238,7 +220,7 @@ function recordForDomainEntry(goalId: string, entry: KnowledgeEntry, sortOrder: 
       schema_version: STATE_SCHEMA_VERSION,
       entry,
       sort_order: sortOrder,
-      legacy_path: `goals/${goalId}/domain_knowledge.json`,
+      source_ref: `${domainSourceRef(goalId)}#${entry.entry_id}`,
     },
     last_used_at: null,
     use_count: 0,
@@ -279,7 +261,7 @@ function recordForSharedEntry(entry: SharedKnowledgeEntry, sortOrder: number): S
       schema_version: STATE_SCHEMA_VERSION,
       entry,
       sort_order: sortOrder,
-      legacy_path: KNOWLEDGE_MEMORY_SHARED_KB_PATH,
+      source_ref: `${sharedSourceRef()}#${entry.entry_id}`,
     },
     last_used_at: null,
     use_count: 0,
@@ -325,7 +307,7 @@ function recordForAgentMemoryEntry(entry: AgentMemoryEntry, sortOrder: number): 
       schema_version: STATE_SCHEMA_VERSION,
       entry,
       sort_order: sortOrder,
-      legacy_path: KNOWLEDGE_MEMORY_AGENT_MEMORY_PATH,
+      source_ref: `${agentMemorySourceRef()}#${entry.id}`,
     },
     last_used_at: null,
     use_count: 0,
@@ -369,7 +351,7 @@ function recordForAgentMemoryCorrection(correction: MemoryCorrectionEntry, sortO
       schema_version: STATE_SCHEMA_VERSION,
       correction,
       sort_order: sortOrder,
-      legacy_path: KNOWLEDGE_MEMORY_AGENT_MEMORY_PATH,
+      source_ref: `${agentMemorySourceRef()}#correction:${correction.correction_id}`,
     },
     last_used_at: null,
     use_count: 0,
@@ -412,7 +394,7 @@ function recordForAgentMemoryState(store: AgentMemoryStore): SoilRecordInput {
       state: {
         last_consolidated_at: store.last_consolidated_at,
       },
-      legacy_path: KNOWLEDGE_MEMORY_AGENT_MEMORY_PATH,
+      source_ref: `${agentMemorySourceRef()}#state`,
     },
     last_used_at: null,
     use_count: 0,
@@ -429,53 +411,6 @@ export class KnowledgeMemoryStateStore {
   async ensureReady(): Promise<void> {
     const repo = await this.openRepository();
     repo.close();
-  }
-
-  async readRawPath(relativePath: string): Promise<RawStateStoreResult> {
-    const goalId = domainKnowledgeGoalIdFromPath(relativePath);
-    if (goalId) {
-      return { handled: true, value: await this.loadDomainKnowledge(goalId) };
-    }
-    const normalized = normalizeRawStatePath(relativePath).join("/");
-    if (normalized === KNOWLEDGE_MEMORY_SHARED_KB_PATH) {
-      return { handled: true, value: await this.loadSharedKnowledgeEntries() };
-    }
-    if (normalized === KNOWLEDGE_MEMORY_AGENT_MEMORY_PATH) {
-      return { handled: true, value: await this.loadAgentMemoryStore() };
-    }
-    return { handled: false, value: null };
-  }
-
-  async writeRawPath(relativePath: string, data: unknown): Promise<boolean> {
-    const goalId = domainKnowledgeGoalIdFromPath(relativePath);
-    if (goalId) {
-      if (data === null) {
-        await this.deleteDomainKnowledge(goalId);
-      } else {
-        const parsed = DomainKnowledgeSchema.parse(data);
-        if (parsed.goal_id !== goalId) {
-          throw new Error(`Domain knowledge goal_id "${parsed.goal_id}" does not match path goal "${goalId}".`);
-        }
-        await this.saveDomainKnowledge(parsed);
-      }
-      return true;
-    }
-    const normalized = normalizeRawStatePath(relativePath).join("/");
-    if (normalized === KNOWLEDGE_MEMORY_SHARED_KB_PATH) {
-      if (data !== null && !Array.isArray(data)) {
-        throw new Error("Shared knowledge state must be an array.");
-      }
-      const entries = data === null ? [] : data.map((entry) => SharedKnowledgeEntrySchema.parse(entry));
-      await this.saveSharedKnowledgeEntries(entries);
-      return true;
-    }
-    if (normalized === KNOWLEDGE_MEMORY_AGENT_MEMORY_PATH) {
-      await this.saveAgentMemoryStore(data === null
-        ? AgentMemoryStoreSchema.parse({ entries: [], corrections: [], last_consolidated_at: null })
-        : AgentMemoryStoreSchema.parse(data));
-      return true;
-    }
-    return false;
   }
 
   async loadDomainKnowledge(goalId: string): Promise<DomainKnowledge> {
@@ -677,8 +612,4 @@ export class KnowledgeMemoryStateStore {
   private async openRepository(): Promise<SqliteSoilRepository> {
     return SqliteSoilRepository.create({ rootDir: `${this.baseDir}/soil` });
   }
-}
-
-export function legacyPathForKnowledgeRecord(record: SoilRecord): string | undefined {
-  return knowledgeSourcePathForRecord(record);
 }

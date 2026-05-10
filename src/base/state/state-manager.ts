@@ -34,7 +34,6 @@ type CheckpointIndexEntry = import("../../runtime/store/goal-task-state-store.js
 type TaskOutcomeLedgerRecordLike = import("../../runtime/store/goal-task-state-store.js").TaskOutcomeLedgerRecordLike;
 type StrategyDreamStateStore = import("../../runtime/store/strategy-dream-state-store.js").StrategyDreamStateStore;
 type ProcessSessionStateStore = import("../../runtime/store/process-session-state-store.js").ProcessSessionStateStore;
-type KnowledgeMemoryStateStore = import("../../platform/knowledge/knowledge-memory-state-store.js").KnowledgeMemoryStateStore;
 type CapabilityRegistryStateStore = import("../../runtime/store/capability-registry-state-store.js").CapabilityRegistryStateStore;
 
 function normalizeRawStatePath(relativePath: string): string[] {
@@ -64,13 +63,6 @@ function isProcessSessionDurableStatePath(relativePath: string): boolean {
   return parts[0] === "runtime" && parts[1] === "process-sessions" && parts.length === 3 && parts[2]!.endsWith(".json");
 }
 
-function isKnowledgeMemoryDurableStatePath(relativePath: string): boolean {
-  const parts = normalizeRawStatePath(relativePath);
-  if (parts[0] === "goals" && parts.length === 3 && parts[2] === "domain_knowledge.json") return true;
-  const normalized = parts.join("/");
-  return normalized === "memory/agent-memory/entries.json" || normalized === "memory/shared-knowledge/entries.json";
-}
-
 /**
  * StateManager handles persistence of goals, state vectors, observation logs,
  * and gap history under a typed database owned by the configured base directory
@@ -92,7 +84,6 @@ export class StateManager {
   private goalTaskStateStorePromise: Promise<GoalTaskStateStore> | null = null;
   private strategyDreamStateStorePromise: Promise<StrategyDreamStateStore> | null = null;
   private processSessionStateStorePromise: Promise<ProcessSessionStateStore> | null = null;
-  private knowledgeMemoryStateStorePromise: Promise<KnowledgeMemoryStateStore> | null = null;
   private capabilityRegistryStateStorePromise: Promise<CapabilityRegistryStateStore> | null = null;
   private readonly goalStateWriteQueues = new Map<string, Promise<void>>();
   private readonly writeFences = new Map<string, StateWriteFence>();
@@ -110,7 +101,6 @@ export class StateManager {
     await (await this.strategyDreamStateStore()).ensureReady();
     await (await this.capabilityRegistryStateStore()).ensureReady();
     await (await this.processSessionStateStore()).ensureReady();
-    await (await this.knowledgeMemoryStateStore()).ensureReady();
   }
 
   /** Returns the base directory path */
@@ -244,12 +234,6 @@ export class StateManager {
     this.processSessionStateStorePromise ??= import("../../runtime/store/process-session-state-store.js")
       .then(({ ProcessSessionStateStore }) => new ProcessSessionStateStore(this.baseDir));
     return this.processSessionStateStorePromise;
-  }
-
-  private async knowledgeMemoryStateStore(): Promise<KnowledgeMemoryStateStore> {
-    this.knowledgeMemoryStateStorePromise ??= import("../../platform/knowledge/knowledge-memory-state-store.js")
-      .then(({ KnowledgeMemoryStateStore }) => new KnowledgeMemoryStateStore(this.baseDir));
-    return this.knowledgeMemoryStateStorePromise;
   }
 
   private async capabilityRegistryStateStore(): Promise<CapabilityRegistryStateStore> {
@@ -737,12 +721,6 @@ export class StateManager {
         return routed.value;
       }
     }
-    if (isKnowledgeMemoryDurableStatePath(relativePath)) {
-      const routed = await (await this.knowledgeMemoryStateStore()).readRawPath(relativePath);
-      if (routed.handled) {
-        return routed.value;
-      }
-    }
     return this.atomicRead<unknown>(resolved);
   }
 
@@ -775,12 +753,6 @@ export class StateManager {
     }
     if (isProcessSessionDurableStatePath(relativePath)) {
       const routedStore = await this.processSessionStateStore();
-      if (await routedStore.writeRawPath(relativePath, data)) {
-        return;
-      }
-    }
-    if (isKnowledgeMemoryDurableStatePath(relativePath)) {
-      const routedStore = await this.knowledgeMemoryStateStore();
       if (await routedStore.writeRawPath(relativePath, data)) {
         return;
       }

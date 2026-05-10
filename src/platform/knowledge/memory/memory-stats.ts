@@ -1,10 +1,9 @@
-import * as path from "node:path";
 import { StatisticalSummarySchema } from "../../../base/types/memory-lifecycle.js";
 import type {
   ShortTermEntry,
   StatisticalSummary,
 } from "../../../base/types/memory-lifecycle.js";
-import { atomicWriteAsync, readJsonFileAsync } from "./memory-persistence.js";
+import { MemoryLifecycleStateStore } from "./memory-lifecycle-state-store.js";
 
 // ─── Statistics ───
 
@@ -13,19 +12,11 @@ export async function updateStatistics(
   goalId: string,
   entries: ShortTermEntry[]
 ): Promise<void> {
-  const statsPath = path.join(
-    memoryDir,
-    "long-term",
-    "statistics",
-    `${goalId}.json`
-  );
   const now = new Date().toISOString();
+  const stateStore = new MemoryLifecycleStateStore(memoryDir);
 
   // Load existing or create fresh
-  const existing = await readJsonFileAsync<StatisticalSummary>(
-    statsPath,
-    StatisticalSummarySchema
-  );
+  const existing = await stateStore.loadStatistics(goalId);
 
   // Compute task statistics from task entries
   const taskEntries = entries.filter((e) => e.data_type === "task");
@@ -157,7 +148,7 @@ export async function updateStatistics(
     updated_at: now,
   });
 
-  await atomicWriteAsync(statsPath, summary);
+  await stateStore.saveStatistics(summary);
 }
 
 export function mergeTaskStats(

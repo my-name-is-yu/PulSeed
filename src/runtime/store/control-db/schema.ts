@@ -7,7 +7,7 @@ export interface ControlDbMigration {
   checksum: string;
 }
 
-export const CONTROL_DB_SCHEMA_VERSION = 15;
+export const CONTROL_DB_SCHEMA_VERSION = 16;
 
 export const CONTROL_DB_INITIAL_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS control_schema_migrations (
@@ -1334,6 +1334,86 @@ CREATE INDEX IF NOT EXISTS relationship_profile_proposal_events_proposal_idx
   ON relationship_profile_proposal_audit_events(proposal_id, event_timestamp, event_id);
 `.trim();
 
+export const CONTROL_DB_MEMORY_LIFECYCLE_SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS memory_lifecycle_short_term_entries (
+  entry_id TEXT PRIMARY KEY,
+  goal_id TEXT NOT NULL,
+  data_type TEXT NOT NULL CHECK (data_type IN ('experience_log', 'observation', 'strategy', 'task', 'knowledge')),
+  loop_number INTEGER NOT NULL CHECK (loop_number >= 0),
+  event_timestamp TEXT NOT NULL,
+  memory_tier TEXT NOT NULL CHECK (memory_tier IN ('core', 'recall', 'archival')),
+  sort_order INTEGER NOT NULL CHECK (sort_order >= 0),
+  entry_json TEXT NOT NULL CHECK (json_valid(entry_json))
+);
+
+CREATE INDEX IF NOT EXISTS memory_lifecycle_short_term_goal_type_idx
+  ON memory_lifecycle_short_term_entries(goal_id, data_type, sort_order, entry_id);
+
+CREATE INDEX IF NOT EXISTS memory_lifecycle_short_term_goal_idx
+  ON memory_lifecycle_short_term_entries(goal_id, sort_order, entry_id);
+
+CREATE TABLE IF NOT EXISTS memory_lifecycle_index_entries (
+  index_id TEXT PRIMARY KEY,
+  layer TEXT NOT NULL CHECK (layer IN ('short-term', 'long-term')),
+  entry_id TEXT NOT NULL,
+  goal_id TEXT NOT NULL,
+  event_timestamp TEXT NOT NULL,
+  last_accessed TEXT NOT NULL,
+  access_count INTEGER NOT NULL CHECK (access_count >= 0),
+  memory_tier TEXT NOT NULL CHECK (memory_tier IN ('core', 'recall', 'archival')),
+  sort_order INTEGER NOT NULL CHECK (sort_order >= 0),
+  entry_json TEXT NOT NULL CHECK (json_valid(entry_json))
+);
+
+CREATE INDEX IF NOT EXISTS memory_lifecycle_index_layer_goal_idx
+  ON memory_lifecycle_index_entries(layer, goal_id, sort_order, index_id);
+
+CREATE INDEX IF NOT EXISTS memory_lifecycle_index_entry_idx
+  ON memory_lifecycle_index_entries(layer, entry_id, index_id);
+
+CREATE TABLE IF NOT EXISTS memory_lifecycle_lessons (
+  lesson_id TEXT PRIMARY KEY,
+  goal_id TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('active', 'superseded', 'archived')),
+  extracted_at TEXT NOT NULL,
+  lesson_json TEXT NOT NULL CHECK (json_valid(lesson_json))
+);
+
+CREATE INDEX IF NOT EXISTS memory_lifecycle_lessons_goal_idx
+  ON memory_lifecycle_lessons(goal_id, status, extracted_at, lesson_id);
+
+CREATE INDEX IF NOT EXISTS memory_lifecycle_lessons_status_idx
+  ON memory_lifecycle_lessons(status, extracted_at, lesson_id);
+
+CREATE TABLE IF NOT EXISTS memory_lifecycle_statistics (
+  goal_id TEXT PRIMARY KEY,
+  updated_at TEXT NOT NULL,
+  summary_json TEXT NOT NULL CHECK (json_valid(summary_json))
+);
+
+CREATE TABLE IF NOT EXISTS memory_lifecycle_archives (
+  archive_id TEXT PRIMARY KEY,
+  goal_id TEXT NOT NULL,
+  archive_kind TEXT NOT NULL,
+  data_type TEXT,
+  archived_at TEXT NOT NULL,
+  archive_json TEXT NOT NULL CHECK (json_valid(archive_json))
+);
+
+CREATE INDEX IF NOT EXISTS memory_lifecycle_archives_goal_idx
+  ON memory_lifecycle_archives(goal_id, archived_at, archive_id);
+
+CREATE TABLE IF NOT EXISTS dream_decision_heuristics (
+  heuristic_id TEXT PRIMARY KEY,
+  sort_order INTEGER NOT NULL CHECK (sort_order >= 0),
+  updated_at TEXT NOT NULL,
+  heuristic_json TEXT NOT NULL CHECK (json_valid(heuristic_json))
+);
+
+CREATE INDEX IF NOT EXISTS dream_decision_heuristics_order_idx
+  ON dream_decision_heuristics(sort_order, heuristic_id);
+`.trim();
+
 export function controlDbMigrationChecksum(sql: string): string {
   return createHash("sha256").update(sql.trim()).digest("hex");
 }
@@ -1426,5 +1506,10 @@ export const CONTROL_DB_MIGRATIONS: readonly ControlDbMigration[] = [
     15,
     "trust-ethics-profile-runtime-state",
     CONTROL_DB_TRUST_ETHICS_PROFILE_SCHEMA_SQL
+  ),
+  createControlDbMigration(
+    16,
+    "memory-dream-boundary-runtime-state",
+    CONTROL_DB_MEMORY_LIFECYCLE_SCHEMA_SQL
   ),
 ];

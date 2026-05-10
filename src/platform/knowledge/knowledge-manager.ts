@@ -43,11 +43,11 @@ import type { ToolExecutor } from "../../tools/executor.js";
 import type { ToolCallContext } from "../../tools/types.js";
 import type { AgentMemoryEntry, AgentMemoryStore, AgentMemoryType } from "./types/agent-memory.js";
 import {
-  AGENT_MEMORY_PATH,
   loadAgentMemoryStore,
   projectAgentMemory,
   projectDomainKnowledge,
   projectSharedKnowledge,
+  saveAgentMemoryStore,
 } from "./knowledge-manager-internals.js";
 import {
   archiveAgentMemoryEntries,
@@ -125,8 +125,8 @@ function parseToolAcquisitionSynthesis(content: string): z.infer<typeof ToolAcqu
  *
  * Durable state layout:
  *   Soil SQLite records own domain knowledge, shared knowledge, and agent memory.
- *   Legacy JSON paths are accepted only through StateManager compatibility routing
- *   and explicit doctor/migration import.
+ *   Legacy JSON knowledge/memory files are explicit doctor/migration inputs only;
+ *   normal runtime callers use KnowledgeMemoryStateStore directly.
  */
 export class KnowledgeManager {
   private readonly stateManager: StateManager;
@@ -623,7 +623,7 @@ export class KnowledgeManager {
   }
 
   async saveAgentMemoryStore(store: AgentMemoryStore): Promise<void> {
-    await this.stateManager.writeRaw(AGENT_MEMORY_PATH, store);
+    await saveAgentMemoryStore(this.stateManager, store);
     await this._projectAgentMemoryToSoil(store);
   }
 

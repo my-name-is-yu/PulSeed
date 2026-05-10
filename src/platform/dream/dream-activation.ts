@@ -10,44 +10,26 @@ import type { StrategyTemplate } from "../../orchestrator/strategy/types/cross-p
 import { StrategyTemplateSchema } from "../../orchestrator/strategy/types/cross-portfolio.js";
 import type { Strategy } from "../../orchestrator/strategy/types/strategy.js";
 import { loadDreamConfig } from "./dream-config.js";
+import {
+  DreamDecisionHeuristicSchema,
+  DreamStrategySelectorSchema,
+  type DreamDecisionHeuristic,
+  type DreamStrategySelector,
+} from "./dream-decision-heuristics.js";
 import { loadDreamWorkflowRecords, type DreamWorkflowRecord } from "./dream-event-workflows.js";
 import { loadDreamPlaybooks, type DreamPlaybookRecord } from "./playbook-memory.js";
+import { DreamDecisionHeuristicStore } from "../../runtime/store/dream-decision-heuristic-store.js";
 export { formatPlaybookHints, selectPlaybookHints } from "./playbook-memory.js";
+export {
+  DreamDecisionHeuristicSchema,
+  DreamStrategySelectorSchema,
+  type DreamDecisionHeuristic,
+  type DreamStrategySelector,
+} from "./dream-decision-heuristics.js";
 
 export interface DreamActivationRuntimeState {
   flags: Awaited<ReturnType<typeof loadDreamConfig>>["activation"];
 }
-
-export const DreamStrategySelectorSchema = z.object({
-  strategy_id: z.string().optional(),
-  source_template_id: z.string().optional(),
-  strategy_family: z.string().optional(),
-  exploration_role: z.enum(["exploitation", "adjacent_exploration", "divergent_exploration"]).optional(),
-  smoke_status: z.enum(["not_run", "promote", "defer", "retire"]).optional(),
-  metric_trend: z.enum(["improving", "stalled", "noisy", "regressing", "breakthrough"]).optional(),
-  failed_lineage_fingerprint: z.string().optional(),
-}).strict();
-export type DreamStrategySelector = z.infer<typeof DreamStrategySelectorSchema>;
-
-export const DreamDecisionHeuristicSchema = z.object({
-  id: z.string(),
-  if_stall_count_gte: z.number().int().nonnegative().optional(),
-  strategy_id: z.string().optional(),
-  candidate_selector: DreamStrategySelectorSchema.optional(),
-  prefer_candidate_selector: DreamStrategySelectorSchema.optional(),
-  avoid_candidate_selector: DreamStrategySelectorSchema.optional(),
-  strategy_hypothesis_includes: z.string().optional(),
-  prefer_strategy_hypothesis_includes: z.string().optional(),
-  avoid_strategy_hypothesis_includes: z.string().optional(),
-  score_delta: z.number().default(0),
-  reason: z.string().default("dream heuristic"),
-});
-
-export type DreamDecisionHeuristic = z.infer<typeof DreamDecisionHeuristicSchema>;
-
-const DreamDecisionHeuristicFileSchema = z.object({
-  heuristics: z.array(DreamDecisionHeuristicSchema).default([]),
-});
 
 function scoreTextOverlap(query: string, candidate: string): number {
   const queryTokens = new Set(
@@ -81,13 +63,7 @@ export async function loadStrategyTemplates(baseDir: string): Promise<StrategyTe
 }
 
 export async function loadDecisionHeuristics(baseDir: string): Promise<DreamDecisionHeuristic[]> {
-  const filePath = path.join(baseDir, "dream", "decision-heuristics.json");
-  try {
-    const raw = JSON.parse(await fsp.readFile(filePath, "utf8")) as unknown;
-    return DreamDecisionHeuristicFileSchema.parse(raw).heuristics;
-  } catch {
-    return [];
-  }
+  return new DreamDecisionHeuristicStore({ controlBaseDir: baseDir }).loadDecisionHeuristics();
 }
 
 export async function loadLearnedPatterns(baseDir: string, goalId?: string): Promise<LearnedPattern[]> {

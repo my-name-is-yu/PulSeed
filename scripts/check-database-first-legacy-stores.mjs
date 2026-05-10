@@ -18,16 +18,10 @@ const CATEGORY = Object.freeze({
 const CLASSIFICATIONS = new Set(Object.values(CATEGORY));
 
 const ALLOWLIST_RULES_BY_ID = new Map(Object.entries({
-  "state-manager-memory-compatibility-facade": ["memory-dream-json-state"],
   "legacy-archived-goal-recovery": ["goal-task-json-state"],
   "legacy-goal-wal-input": ["goal-wal-jsonl"],
   "legacy-execution-session-input": ["execution-session-json"],
   "dream-filesystem-metrics": ["goal-task-json-state", "memory-dream-json-state", "strategy-dream-json-state"],
-  "dream-soil-sync-compatibility": ["memory-dream-json-state"],
-  "dream-activation-file-state": ["memory-dream-json-state"],
-  "dream-evidence-file-references": ["memory-dream-json-state"],
-  "knowledge-memory-state-compatibility-map": ["memory-dream-json-state"],
-  "memory-persistence-compatibility-map": ["goal-task-json-state", "memory-dream-json-state"],
   "soil-import-overlay-queue": ["soil-import-publish-artifact"],
   "goal-task-store-logical-path-parser": ["goal-task-json-state"],
   "strategy-dream-store-logical-path-parser": ["strategy-dream-json-state"],
@@ -35,7 +29,6 @@ const ALLOWLIST_RULES_BY_ID = new Map(Object.entries({
   "legacy-capability-registry-input": ["capability-registry-json-state"],
   "relationship-profile-user-content": ["profile-json-state"],
   "character-config-user-content": ["profile-json-state"],
-  "knowledge-transfer-state-manager-facade": ["plugin-channel-runtime-json"],
 }));
 
 const RULES = [
@@ -198,15 +191,6 @@ const PATH_ALLOWLIST = [
     reason: "doctor is the compatibility boundary",
   }),
   allow({
-    id: "state-manager-memory-compatibility-facade",
-    pattern: /(^|\/)src\/base\/state\/state-manager\.ts$/,
-    category: CATEGORY.MIGRATE_NOW,
-    reason: "temporary memory compatibility facade over Soil/control DB memory stores",
-    owner: "direct Soil memory store APIs instead of logical file paths",
-    nextSlice: 9,
-    debtRank: 9,
-  }),
-  allow({
     id: "legacy-archived-goal-recovery",
     pattern: /(^|\/)src\/base\/state\/legacy-archived-goal-recovery\.ts$/,
     category: CATEGORY.MIGRATION_ONLY_INPUT,
@@ -234,56 +218,10 @@ const PATH_ALLOWLIST = [
   allow({
     id: "dream-filesystem-metrics",
     pattern: /(^|\/)src\/platform\/dream\/dream-consolidator(?:\/fs-metrics)?\.ts$/,
-    category: CATEGORY.PRODUCT_DECISION_NEEDED,
-    reason: "known follow-up dream file metrics surface",
-    owner: "typed dream/memory metric sources or explicit debug metric boundary",
+    category: CATEGORY.DEBUG_EXPORT_OUTPUT,
+    reason: "Dream operational report file counters are diagnostic metrics, not authoritative runtime state",
+    owner: "debug metric boundary over exported artifacts",
     nextSlice: 9,
-    debtRank: 9,
-  }),
-  allow({
-    id: "dream-soil-sync-compatibility",
-    pattern: /(^|\/)src\/platform\/dream\/dream-soil-sync\.ts$/,
-    category: CATEGORY.MIGRATE_NOW,
-    reason: "known follow-up legacy memory projection read",
-    owner: "Soil memory projections",
-    nextSlice: 9,
-    debtRank: 9,
-  }),
-  allow({
-    id: "dream-activation-file-state",
-    pattern: /(^|\/)src\/platform\/dream\/dream-activation\.ts$/,
-    category: CATEGORY.MIGRATE_NOW,
-    reason: "known follow-up dream activation file-state reads",
-    owner: "typed dream, learning, and strategy activation stores",
-    nextSlice: 9,
-    debtRank: 9,
-  }),
-  allow({
-    id: "dream-evidence-file-references",
-    pattern: /(^|\/)src\/platform\/dream\/dream-consolidator\/evidence-helpers\.ts$/,
-    category: CATEGORY.PRODUCT_DECISION_NEEDED,
-    reason: "known follow-up legacy evidence reference surface",
-    owner: "typed memory evidence references or explicit debug reference boundary",
-    nextSlice: 9,
-    debtRank: 9,
-  }),
-  allow({
-    id: "knowledge-memory-state-compatibility-map",
-    pattern: /(^|\/)src\/platform\/knowledge\/knowledge-memory-state-store\.ts$/,
-    category: CATEGORY.MIGRATE_NOW,
-    reason: "known follow-up memory compatibility path map over Soil state",
-    owner: "direct Soil memory store APIs",
-    nextSlice: 9,
-    debtRank: 9,
-  }),
-  allow({
-    id: "memory-persistence-compatibility-map",
-    pattern: /(^|\/)src\/platform\/knowledge\/memory\/memory-persistence\.ts$/,
-    category: CATEGORY.MIGRATE_NOW,
-    reason: "known follow-up memory compatibility map",
-    owner: "Soil memory state",
-    nextSlice: 9,
-    debtRank: 9,
   }),
   allow({
     id: "soil-import-overlay-queue",
@@ -341,15 +279,6 @@ const PATH_ALLOWLIST = [
     category: CATEGORY.CONFIG_SECRET,
     reason: "character config is explicit user-editable configuration",
     owner: "character configuration",
-  }),
-  allow({
-    id: "knowledge-transfer-state-manager-facade",
-    pattern: /(^|\/)src\/platform\/knowledge\/transfer\/knowledge-transfer-types\.ts$/,
-    category: CATEGORY.MIGRATE_NOW,
-    reason: "StateManager compatibility facade call site",
-    owner: "typed knowledge transfer store APIs",
-    nextSlice: 9,
-    debtRank: 9,
   }),
 ];
 

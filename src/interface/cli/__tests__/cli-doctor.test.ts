@@ -10,8 +10,10 @@ import { ScheduleEntryStore } from "../../../runtime/schedule/entry-store.js";
 import { ChatSessionDataStore } from "../../chat/chat-session-data-store.js";
 import { AgentLoopSessionStateCatalog } from "../../../orchestrator/execution/agent-loop/agent-loop-session-db-store.js";
 import { makeGoal } from "../../../../tests/helpers/fixtures.js";
-import { StateManager } from "../../../base/state/state-manager.js";
 import { appendWALRecord } from "../../../base/state/legacy-state-wal.js";
+import { KnowledgeMemoryStateStore } from "../../../platform/knowledge/knowledge-memory-state-store.js";
+import { MemoryLifecycleStateStore } from "../../../platform/knowledge/memory/memory-lifecycle-state-store.js";
+import { DreamDecisionHeuristicStore } from "../../../runtime/store/dream-decision-heuristic-store.js";
 
 // ─── cmdDoctor tests ───
 //
@@ -1441,20 +1443,136 @@ describe("cmdDoctor summary counts", () => {
       }
     }
 
-    const stateManager = new StateManager(tmpDir);
-    await stateManager.init();
-    expect(await stateManager.readRaw("goals/goal-doctor/domain_knowledge.json")).toMatchObject({
+    const knowledgeStore = new KnowledgeMemoryStateStore(tmpDir);
+    expect(await knowledgeStore.loadDomainKnowledge("goal-doctor")).toMatchObject({
       goal_id: "goal-doctor",
       entries: [{ entry_id: "doctor-knowledge-entry" }],
     });
-    expect(await stateManager.readRaw("memory/shared-knowledge/entries.json")).toMatchObject([
+    expect(await knowledgeStore.loadSharedKnowledgeEntries()).toMatchObject([
       { entry_id: "doctor-knowledge-entry", source_goal_ids: ["goal-doctor"] },
     ]);
-    expect(await stateManager.readRaw("memory/agent-memory/entries.json")).toMatchObject({
+    expect(await knowledgeStore.loadAgentMemoryStore()).toMatchObject({
       entries: [{ id: "memory-doctor", key: "doctor.knowledge.repair" }],
     });
     const allOutput = consoleSpy.mock.calls.map((c: unknown[]) => c[0] as string).join("\n");
     expect(allOutput).toContain("Repair knowledge/memory import: domain=1, shared=1, agent memory=1");
+    expect(checkControlDatabase(tmpDir).detail).toContain("legacy import record");
+  });
+
+  it("imports legacy memory lifecycle and dream decision heuristics through doctor repair", async () => {
+    const origHome = process.env["PULSEED_HOME"];
+    process.env["PULSEED_HOME"] = tmpDir;
+    const now = "2026-05-09T00:00:00.000Z";
+    const legacyMemoryDir = path.join(tmpDir, "memory");
+    fs.mkdirSync(path.join(legacyMemoryDir, "short-term", "goals", "goal-lifecycle"), { recursive: true });
+    fs.mkdirSync(path.join(legacyMemoryDir, "long-term", "lessons", "by-goal"), { recursive: true });
+    fs.mkdirSync(path.join(legacyMemoryDir, "long-term", "statistics"), { recursive: true });
+    fs.mkdirSync(path.join(legacyMemoryDir, "archive", "goal-lifecycle"), { recursive: true });
+    fs.mkdirSync(path.join(tmpDir, "dream"), { recursive: true });
+
+    fs.writeFileSync(path.join(legacyMemoryDir, "short-term", "goals", "goal-lifecycle", "observations.json"), JSON.stringify([{
+      id: "st-doctor",
+      goal_id: "goal-lifecycle",
+      data_type: "observation",
+      loop_number: 1,
+      timestamp: now,
+      dimensions: ["quality"],
+      tags: ["database-first"],
+      data: { value: 0.8 },
+      embedding_id: null,
+      memory_tier: "recall",
+    }]));
+    fs.writeFileSync(path.join(legacyMemoryDir, "short-term", "index.json"), JSON.stringify({
+      version: 1,
+      last_updated: now,
+      entries: [{
+        id: "idx-doctor",
+        goal_id: "goal-lifecycle",
+        dimensions: ["quality"],
+        tags: ["database-first"],
+        timestamp: now,
+        data_file: "goals/goal-lifecycle/observations.json",
+        entry_id: "st-doctor",
+        last_accessed: now,
+        access_count: 2,
+        embedding_id: null,
+        memory_tier: "recall",
+      }],
+    }));
+    fs.writeFileSync(path.join(legacyMemoryDir, "long-term", "lessons", "by-goal", "goal-lifecycle.json"), JSON.stringify([{
+      lesson_id: "lesson-doctor",
+      type: "success_pattern",
+      goal_id: "goal-lifecycle",
+      context: "Doctor repair",
+      lesson: "Memory lifecycle repair imports old JSON into the typed store.",
+      source_loops: ["loop_1"],
+      extracted_at: now,
+      relevance_tags: ["database-first"],
+      status: "active",
+    }]));
+    fs.writeFileSync(path.join(legacyMemoryDir, "long-term", "statistics", "goal-lifecycle.json"), JSON.stringify({
+      goal_id: "goal-lifecycle",
+      task_stats: [],
+      dimension_stats: [],
+      overall: {
+        total_loops: 1,
+        total_tasks: 0,
+        overall_success_rate: 0,
+        active_period: "2026-05-09",
+      },
+      updated_at: now,
+    }));
+    fs.writeFileSync(path.join(legacyMemoryDir, "archive", "goal-lifecycle", "lessons.json"), JSON.stringify([{
+      lesson_id: "archived-lesson-doctor",
+      type: "success_pattern",
+      goal_id: "goal-lifecycle",
+      context: "Archived doctor repair",
+      lesson: "Archives are imported as typed archive payloads.",
+      source_loops: ["loop_1"],
+      extracted_at: now,
+      relevance_tags: ["archive"],
+      status: "archived",
+    }]));
+    fs.writeFileSync(path.join(tmpDir, "dream", "decision-heuristics.json"), JSON.stringify({
+      heuristics: [{
+        id: "doctor-heuristic",
+        score_delta: 0.15,
+        reason: "Doctor repair imports legacy dream heuristic JSON.",
+      }],
+    }));
+
+    try {
+      const exitCode = await cmdDoctor(["--repair"]);
+      expect([0, 1]).toContain(exitCode);
+    } finally {
+      if (origHome !== undefined) {
+        process.env["PULSEED_HOME"] = origHome;
+      } else {
+        delete process.env["PULSEED_HOME"];
+      }
+    }
+
+    const lifecycleStore = new MemoryLifecycleStateStore(path.join(tmpDir, "memory"));
+    await expect(lifecycleStore.loadShortTermEntries("goal-lifecycle", "observation")).resolves.toMatchObject([
+      { id: "st-doctor", data_type: "observation" },
+    ]);
+    await expect(lifecycleStore.loadIndex("short-term")).resolves.toMatchObject({
+      entries: [{ entry_id: "st-doctor", data_file: "memory-lifecycle:short-term:goal-lifecycle:observation" }],
+    });
+    await expect(lifecycleStore.loadLessons({ goalId: "goal-lifecycle" })).resolves.toMatchObject([
+      { lesson_id: "lesson-doctor" },
+    ]);
+    await expect(lifecycleStore.loadStatistics("goal-lifecycle")).resolves.toMatchObject({
+      goal_id: "goal-lifecycle",
+    });
+    await expect(lifecycleStore.loadArchives("goal-lifecycle")).resolves.toHaveLength(1);
+    await expect(new DreamDecisionHeuristicStore({ controlBaseDir: tmpDir }).loadDecisionHeuristics()).resolves.toMatchObject([
+      { id: "doctor-heuristic", score_delta: 0.15 },
+    ]);
+
+    const allOutput = consoleSpy.mock.calls.map((c: unknown[]) => c[0] as string).join("\n");
+    expect(allOutput).toContain("Repair memory lifecycle import: short-term files=1, short-term entries=1");
+    expect(allOutput).toContain("Repair dream decision heuristics import: imported, heuristics=1");
     expect(checkControlDatabase(tmpDir).detail).toContain("legacy import record");
   });
 

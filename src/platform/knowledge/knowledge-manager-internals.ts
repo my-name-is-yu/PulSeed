@@ -11,20 +11,20 @@ import {
   AgentMemoryStoreSchema,
   type AgentMemoryStore,
 } from "./types/agent-memory.js";
-import {
-  KNOWLEDGE_MEMORY_AGENT_MEMORY_PATH,
-  KNOWLEDGE_MEMORY_SHARED_KB_PATH,
-} from "./knowledge-memory-state-store.js";
+import { KnowledgeMemoryStateStore } from "./knowledge-memory-state-store.js";
 
-export const AGENT_MEMORY_PATH = KNOWLEDGE_MEMORY_AGENT_MEMORY_PATH;
-export const SHARED_KB_PATH = KNOWLEDGE_MEMORY_SHARED_KB_PATH;
+export function knowledgeMemoryStoreForStateManager(stateManager: StateManager): KnowledgeMemoryStateStore {
+  return new KnowledgeMemoryStateStore(stateManager.getBaseDir());
+}
 
 export async function loadAgentMemoryStore(stateManager: StateManager): Promise<AgentMemoryStore> {
-  const raw = await stateManager.readRaw(AGENT_MEMORY_PATH);
-  if (!raw) {
-    return AgentMemoryStoreSchema.parse({ entries: [], last_consolidated_at: null });
-  }
-  return AgentMemoryStoreSchema.parse(raw);
+  return AgentMemoryStoreSchema.parse(
+    await knowledgeMemoryStoreForStateManager(stateManager).loadAgentMemoryStore()
+  );
+}
+
+export async function saveAgentMemoryStore(stateManager: StateManager, store: AgentMemoryStore): Promise<void> {
+  await knowledgeMemoryStoreForStateManager(stateManager).saveAgentMemoryStore(store);
 }
 
 export async function projectDomainKnowledge(stateManager: StateManager, goalId: string, domainKnowledge: DomainKnowledge): Promise<void> {

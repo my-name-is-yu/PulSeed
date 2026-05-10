@@ -1,6 +1,4 @@
-import * as fsp from "node:fs/promises";
 import * as path from "node:path";
-import { z } from "zod";
 import type { ILLMClient } from "../../../base/llm/llm-client.js";
 import type { IEmbeddingClient } from "../embedding-client.js";
 import type { VectorIndex } from "../vector-index.js";
@@ -21,9 +19,6 @@ import type { IDriveScorer } from "../drive-score-adapter.js";
 export type { IDriveScorer } from "../drive-score-adapter.js";
 export { DriveScoreAdapter } from "../drive-score-adapter.js";
 import {
-  atomicWriteAsync,
-  readJsonFileAsync,
-  getDataFile,
   generateId,
 } from "./memory-persistence.js";
 import {
@@ -49,6 +44,10 @@ import {
   archiveGoalMemory,
   initializeMemoryDirectories,
 } from "./memory-lifecycle-storage.js";
+import {
+  MemoryLifecycleStateStore,
+  memoryLifecycleShortTermDataRef,
+} from "./memory-lifecycle-state-store.js";
 
 // ─── MemoryLifecycleManager ───
 // NOTE: This file is ~666 lines. Most methods are thin wrappers delegating to
@@ -62,15 +61,13 @@ import {
  *   - Short-term Memory: raw data, configurable retention (default: 100 loops)
  *   - Long-term Memory: compressed lessons + statistics (permanent)
  *
- * Directory layout:
- *   <base>/memory/short-term/goals/<goal_id>/{experience-log,observations,strategies,tasks}.json
- *   <base>/memory/short-term/index.json
- *   <base>/memory/long-term/lessons/by-goal/<goal_id>.json
- *   <base>/memory/long-term/lessons/by-dimension/<dim>.json
- *   <base>/memory/long-term/lessons/global.json
- *   <base>/memory/long-term/statistics/<goal_id>.json
- *   <base>/memory/long-term/index.json
- *   <base>/memory/archive/<goal_id>/{lessons,statistics}.json
+ * Durable state layout:
+ *   <base>/state/pulseed-control.sqlite
+ *     - memory_lifecycle_short_term_entries
+ *     - memory_lifecycle_index_entries
+ *     - memory_lifecycle_lessons
+ *     - memory_lifecycle_statistics
+ *     - memory_lifecycle_archives
  */
 export class MemoryLifecycleManager {
   private readonly baseDir: string;
@@ -145,15 +142,6 @@ export class MemoryLifecycleManager {
       tags?: string[];
     }
   ): Promise<ShortTermEntry> {
-    // Ensure goal directory exists
-    const goalDir = path.join(
-      this.memoryDir,
-      "short-term",
-      "goals",
-      goalId
-    );
-    await fsp.mkdir(goalDir, { recursive: true });
-
     const now = new Date().toISOString();
     const entry = ShortTermEntrySchema.parse({
       id: generateId("st"),
@@ -166,15 +154,8 @@ export class MemoryLifecycleManager {
       data,
     });
 
-    // Append to appropriate file
-    const dataFile = getDataFile(this.memoryDir, goalId, dataType);
-    const existing = await readJsonFileAsync<ShortTermEntry[]>(
-      dataFile,
-      z.array(ShortTermEntrySchema)
-    );
-    const entries = existing ?? [];
-    entries.push(entry);
-    await atomicWriteAsync(dataFile, entries);
+    const stateStore = new MemoryLifecycleStateStore(this.memoryDir);
+    await stateStore.appendShortTermEntry(entry);
 
     // Update short-term index
     await updateIndex(this.memoryDir, "short-term", {
@@ -183,10 +164,7 @@ export class MemoryLifecycleManager {
       dimensions: entry.dimensions,
       tags: entry.tags,
       timestamp: entry.timestamp,
-      data_file: path.relative(
-        path.join(this.memoryDir, "short-term"),
-        dataFile
-      ),
+      data_file: memoryLifecycleShortTermDataRef(goalId, dataType),
       entry_id: entry.id,
       last_accessed: now,
       access_count: 0,
@@ -441,16 +419,8 @@ export class MemoryLifecycleManager {
    * Read and return the statistical summary for a goal.
    */
   async getStatistics(goalId: string): Promise<StatisticalSummary | null> {
-    const statsPath = path.join(
-      this.memoryDir,
-      "long-term",
-      "statistics",
-      `${goalId}.json`
-    );
-    return readJsonFileAsync<StatisticalSummary>(
-      statsPath,
-      StatisticalSummarySchema
-    );
+    const summary = await new MemoryLifecycleStateStore(this.memoryDir).loadStatistics(goalId);
+    return summary ? StatisticalSummarySchema.parse(summary) : null;
   }
 
   // ─── Garbage Collection ───

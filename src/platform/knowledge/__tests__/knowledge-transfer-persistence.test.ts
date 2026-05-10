@@ -7,6 +7,7 @@ import { StateManager } from "../../../base/state/state-manager.js";
 import { VectorIndex } from "../vector-index.js";
 import { MockEmbeddingClient } from "../embedding-client.js";
 import { createMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
+import { makeGoal } from "../../../../tests/helpers/fixtures.js";
 import type { CrossGoalPattern, LearnedPattern } from "../../../base/types/learning.js";
 
 function makeTmpDir(): string {
@@ -63,6 +64,16 @@ function makeMockLearningPipeline(patternsPerGoal: Record<string, LearnedPattern
   } as any;
 }
 
+async function setCurrentGap(stateManager: StateManager, goalId: string, gap: number): Promise<void> {
+  await stateManager.saveGoal(makeGoal({ id: goalId }));
+  await stateManager.saveGapHistory(goalId, [{
+    iteration: 1,
+    timestamp: new Date().toISOString(),
+    gap_vector: [{ dimension_name: "overall", normalized_weighted_gap: gap }],
+    confidence_vector: [{ dimension_name: "overall", confidence: 1 }],
+  }]);
+}
+
 const ADAPTATION_RESPONSE = JSON.stringify({
   adaptation_description: "Adapted pattern for target context",
   adapted_content: "Reduce scope when blocked in target domain",
@@ -83,8 +94,8 @@ describe("KnowledgeTransfer snapshot persistence", () => {
       confidence: 0.85,
     });
 
-    await stateManager1.writeRaw("goals/goal_a/state.json", { gap: 0.8 });
-    await stateManager1.writeRaw("goals/goal_b/state.json", { gap: 0.4 });
+    await setCurrentGap(stateManager1, "goal_a", 0.8);
+    await setCurrentGap(stateManager1, "goal_b", 0.4);
 
     const kt1 = new KnowledgeTransfer({
       llmClient: createMockLLMClient([ADAPTATION_RESPONSE]),
@@ -99,7 +110,7 @@ describe("KnowledgeTransfer snapshot persistence", () => {
     expect(candidates).toHaveLength(1);
 
     const applyResult = await kt1.applyTransfer(candidates[0]!.candidate_id, "goal_a");
-    await stateManager1.writeRaw("goals/goal_a/state.json", { gap: 0.2 });
+    await setCurrentGap(stateManager1, "goal_a", 0.2);
     const effectiveness = await kt1.evaluateTransferEffect(applyResult.transfer_id);
     expect(effectiveness.effectiveness).toBe("positive");
 
@@ -139,8 +150,8 @@ describe("KnowledgeTransfer snapshot persistence", () => {
       confidence: 0.85,
     });
 
-    await stateManager.writeRaw("goals/goal_a/state.json", { gap: 0.8 });
-    await stateManager.writeRaw("goals/goal_b/state.json", { gap: 0.4 });
+    await setCurrentGap(stateManager, "goal_a", 0.8);
+    await setCurrentGap(stateManager, "goal_b", 0.4);
 
     const kt = new KnowledgeTransfer({
       llmClient: createMockLLMClient([ADAPTATION_RESPONSE]),
@@ -196,8 +207,8 @@ describe("KnowledgeTransfer snapshot persistence", () => {
       confidence: 0.85,
     });
 
-    await stateManager1.writeRaw("goals/goal_a/state.json", { gap: 0.7 });
-    await stateManager1.writeRaw("goals/goal_b/state.json", { gap: 0.4 });
+    await setCurrentGap(stateManager1, "goal_a", 0.7);
+    await setCurrentGap(stateManager1, "goal_b", 0.4);
 
     const kt1 = new KnowledgeTransfer({
       llmClient: createMockLLMClient([]),

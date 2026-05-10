@@ -3,6 +3,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { cleanupTempDir, makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 import { StrategyDreamStateStore } from "../../../runtime/store/strategy-dream-state-store.js";
+import { KnowledgeMemoryStateStore } from "../../knowledge/knowledge-memory-state-store.js";
 import type { LearnedPattern } from "../../knowledge/types/learning.js";
 import { readSoilMarkdownFile } from "../../soil/io.js";
 import { buildDreamSoilMutationIntent } from "../dream-soil-mutation.js";
@@ -18,27 +19,40 @@ describe("dream soil sync", () => {
 
   it("loads previous records by source metadata and applies a Soil mutation", async () => {
     tmpDir = makeTempDir("dream-soil-sync-");
-    await fs.mkdir(path.join(tmpDir, "memory", "agent-memory"), { recursive: true });
     await fs.mkdir(path.join(tmpDir, "learning"), { recursive: true });
-    await fs.writeFile(
-      path.join(tmpDir, "memory", "agent-memory", "entries.json"),
-      JSON.stringify({
-        entries: [
-          {
-            id: "mem-1",
-            key: "procedure.deploy",
-            value: "Deploy after CI passes.",
-            tags: ["deploy"],
-            memory_type: "procedure",
-            status: "compiled",
-            created_at: "2026-04-12T00:00:00.000Z",
-            updated_at: "2026-04-12T00:00:00.000Z",
+    await new KnowledgeMemoryStateStore(tmpDir).saveAgentMemoryStore({
+      entries: [
+        {
+          id: "mem-1",
+          key: "procedure.deploy",
+          value: "Deploy after CI passes.",
+          tags: ["deploy"],
+          memory_type: "procedure",
+          status: "compiled",
+          governance: {
+            sensitivity: "local",
+            consent: {
+              scope_id: "local_planning",
+              allowed_contexts: ["local_planning"],
+              source_actor: "user",
+              collection_context: "memory_save",
+            },
+            retention: {
+              policy_id: "retain_until_retracted",
+              retain_until: null,
+              review_after: null,
+              delete_requires_approval: true,
+            },
+            export_visibility: "listed",
+            owner_ref: "user",
           },
-        ],
-        last_consolidated_at: null,
-      }),
-      "utf8"
-    );
+          created_at: "2026-04-12T00:00:00.000Z",
+          updated_at: "2026-04-12T00:00:00.000Z",
+        },
+      ],
+      corrections: [],
+      last_consolidated_at: null,
+    });
     await fs.writeFile(
       path.join(tmpDir, "learning", "goal-a_patterns.json"),
       JSON.stringify([
