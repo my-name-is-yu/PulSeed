@@ -1,14 +1,8 @@
-import * as fs from "node:fs";
 import * as path from "node:path";
 import { DaemonConfigSchema, type DaemonConfig } from "../../base/types/daemon.js";
-import {
-  isTextFileSizeLimitError,
-  readTextFileWithinLimitSync,
-} from "../../base/utils/json-io.js";
 import { signalProcessPid } from "../../base/utils/process-pid.js";
 import { loadDaemonStateSync } from "../store/daemon-state-store.js";
-
-const DAEMON_CONFIG_JSON_MAX_BYTES = 1024 * 1024;
+import { isRecoverableDaemonConfigJsonReadError, readDaemonConfigJsonFileSync } from "./config-json.js";
 
 export function resolveDaemonRuntimeRoot(baseDir: string, configuredRoot?: string): string {
   if (!configuredRoot || configuredRoot.trim() === "") {
@@ -19,28 +13,15 @@ export function resolveDaemonRuntimeRoot(baseDir: string, configuredRoot?: strin
     : path.resolve(baseDir, configuredRoot);
 }
 
-function isRecoverablePersistedJsonReadError(error: unknown): boolean {
-  const code = (error as NodeJS.ErrnoException).code;
-  return code === "ENOENT" || error instanceof SyntaxError || isTextFileSizeLimitError(error);
-}
-
-function readJsonFileSync(filePath: string): unknown {
-  const raw = readTextFileWithinLimitSync(filePath, {
-    maxBytes: DAEMON_CONFIG_JSON_MAX_BYTES,
-  });
-  return JSON.parse(raw) as unknown;
-}
-
 export function loadDaemonConfigSync(baseDir: string): DaemonConfig {
   for (const fileName of ["daemon.json", "daemon-config.json"]) {
     const filePath = path.join(baseDir, fileName);
-    if (!fs.existsSync(filePath)) continue;
     try {
-      const parsed = DaemonConfigSchema.safeParse(readJsonFileSync(filePath));
+      const parsed = DaemonConfigSchema.safeParse(readDaemonConfigJsonFileSync(filePath));
       if (parsed.success) return parsed.data;
     } catch (err) {
-      if (!isRecoverablePersistedJsonReadError(err)) throw err;
-      // Ignore missing, malformed, or schema-invalid daemon config here; callers fall back to the default runtime root.
+      if (!isRecoverableDaemonConfigJsonReadError(err)) throw err;
+      // Ignore missing, malformed, or oversized daemon config here; callers fall back to the next config/default runtime root.
     }
   }
   return DaemonConfigSchema.parse({});
