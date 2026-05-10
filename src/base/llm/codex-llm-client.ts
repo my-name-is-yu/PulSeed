@@ -12,6 +12,7 @@ import {
 import { sleep } from "../utils/sleep.js";
 import { LLMError } from "../utils/errors.js";
 import { signalProcessGroup } from "../utils/process-pid.js";
+import { isTextFileSizeLimitError, readTextFileWithinLimit } from "../utils/json-io.js";
 
 // ─── Constants ───
 
@@ -20,6 +21,7 @@ const DEFAULT_RETRY_ATTEMPTS = 3;
 const MAX_RETRY_ATTEMPTS = 5;
 const RETRY_DELAYS_MS = [1000, 2000, 4000, 8000];
 const SIGKILL_DELAY_MS = 5000;
+export const CODEX_RESPONSE_TEXT_MAX_BYTES = 8 * 1024 * 1024;
 type CodexAgentLoopFailureReason = "model_request_timeout" | "model_request_aborted";
 
 type CodexLLMError = LLMError & {
@@ -362,13 +364,21 @@ export class CodexLLMClient extends BaseLLMClient implements ILLMClient {
         }
 
         // Read response from temp file
-        fsp.readFile(tmpFile, "utf-8")
+        readTextFileWithinLimit(tmpFile, { maxBytes: CODEX_RESPONSE_TEXT_MAX_BYTES })
           .then((raw) => {
             cleanupTmp();
             resolve(raw.trim());
           })
           .catch((readErr) => {
             cleanupTmp();
+            if (isTextFileSizeLimitError(readErr)) {
+              reject(
+                new LLMError(
+                  `CodexLLMClient: output file exceeds ${CODEX_RESPONSE_TEXT_MAX_BYTES} bytes`
+                )
+              );
+              return;
+            }
             reject(
               new LLMError(
                 `CodexLLMClient: failed to read output file — ${String(readErr)}`
