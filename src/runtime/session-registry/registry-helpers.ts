@@ -7,6 +7,8 @@ import {
 import type { ProcessSessionSnapshot } from "../../tools/system/ProcessSessionTool/ProcessSessionTool.js";
 import { BackgroundRunSchema, type BackgroundRun, type BackgroundRunFilter, type BackgroundRunStatus, type RuntimeArtifactRef, type RuntimeSession, type RuntimeSessionFilter, type RuntimeSessionRef, type RuntimeSessionStatus } from "./types.js";
 
+const MAX_VALID_DATE_MS = 8_640_000_000_000_000;
+
 export function filterSessions(sessions: RuntimeSession[], filter: RuntimeSessionFilter): RuntimeSession[] {
   return sessions.filter((session) => {
     if (filter.kind && session.kind !== filter.kind) return false;
@@ -148,6 +150,7 @@ export function parseTime(value: string | null): number {
 
 export function numberToIso(value: unknown): string | null {
   if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  if (Math.abs(value) > MAX_VALID_DATE_MS) return null;
   return new Date(value).toISOString();
 }
 

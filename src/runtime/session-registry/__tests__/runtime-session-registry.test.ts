@@ -494,6 +494,36 @@ describe("RuntimeSessionRegistry", () => {
     }));
   });
 
+  it("ignores out-of-range supervisor timestamps instead of throwing during snapshot projection", async () => {
+    await writeSupervisorState({
+      workers: [
+        {
+          workerId: "worker-unsafe-time",
+          goalId: "goal-a",
+          startedAt: Number.MAX_SAFE_INTEGER,
+          iterations: 1,
+        },
+      ],
+      crashCounts: {},
+      suspendedGoals: [],
+      updatedAt: Number.MAX_SAFE_INTEGER,
+    });
+
+    const snapshot = await new RuntimeSessionRegistry({ stateManager }).snapshot();
+
+    expect(snapshot.sessions).toContainEqual(expect.objectContaining({
+      id: "session:coreloop:worker-unsafe-time",
+      created_at: null,
+      updated_at: null,
+    }));
+    expect(snapshot.background_runs).toContainEqual(expect.objectContaining({
+      id: "run:coreloop:worker-unsafe-time",
+      created_at: null,
+      started_at: null,
+      updated_at: null,
+    }));
+  });
+
   it("uses the current runtime supervisor state from the control database", async () => {
     await writeSupervisorState({
       workers: [
