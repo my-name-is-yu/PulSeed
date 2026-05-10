@@ -282,6 +282,19 @@ describe("database-first legacy store check", () => {
     expect(result.stderr).toContain("Unclassified legacy store references must be moved to typed stores");
   });
 
+  it("fails normal runtime strategy-template JSON ownership outside the doctor import boundary", () => {
+    writeFile(tmpDir, "src/orchestrator/strategy/strategy-template-registry.ts", `
+      export const persistPath = "strategy-templates.json";
+    `);
+
+    const result = runCheck(tmpDir);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("src/orchestrator/strategy/strategy-template-registry.ts");
+    expect(result.stderr).toContain("[strategy-template-json-state] Strategy template typed store or explicit import/export artifact");
+    expect(result.stderr).toContain("Unclassified legacy store references must be moved to typed stores");
+  });
+
   it("emits machine-readable final boundary report without treating artifacts as debt", () => {
     writeFile(tmpDir, "src/platform/dream/dream-consolidator/fs-metrics.ts", `
       export const diagnosticSessionLog = "session-logs.jsonl";
@@ -316,6 +329,12 @@ describe("database-first legacy store check", () => {
         debt: false,
       }),
       expect.objectContaining({
+        id: "strategy-template-registry",
+        category: "migration-only input",
+        nextSlice: null,
+        debt: false,
+      }),
+      expect.objectContaining({
         id: "reflection-reports",
         category: "typed-store migrate now",
         nextSlice: 7,
@@ -324,6 +343,7 @@ describe("database-first legacy store check", () => {
     ]));
     expect(parsed.directFileDebtReport).not.toEqual(expect.arrayContaining([
       expect.objectContaining({ id: "run-spec-store" }),
+      expect.objectContaining({ id: "strategy-template-registry" }),
     ]));
     expect(parsed.allowlistReport).toEqual(expect.arrayContaining([
       expect.objectContaining({

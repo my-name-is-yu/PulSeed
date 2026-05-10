@@ -10,6 +10,7 @@ import { KnowledgeMemoryStateStore } from "../knowledge/knowledge-memory-state-s
 import { upsertDreamActivationArtifacts, loadDreamActivationArtifacts } from "./dream-activation-artifacts.js";
 import { loadDecisionHeuristics } from "./dream-activation.js";
 import { consolidateDreamEventWorkflows, loadDreamWorkflowRecords } from "./dream-event-workflows.js";
+import { StrategyTemplateStateStore } from "../../orchestrator/strategy/strategy-template-state-store.js";
 import type { DreamSoilSyncService } from "./dream-soil-sync.js";
 import { DEFAULT_DREAM_CONFIG } from "./dream-config.js";
 import {
@@ -577,8 +578,7 @@ export class DreamConsolidator {
   }
 
   private async collectStrategyHistoryResult(): Promise<DreamConsolidationPassResult> {
-    const raw = await readJsonFileOrNull(path.join(this.deps.baseDir, "strategy-templates.json"));
-    const templates = Array.isArray(raw) ? raw : [];
+    const templates = await new StrategyTemplateStateStore(this.deps.baseDir).list().catch(() => []);
     const activationArtifacts = this.activationArtifactIf(
       templates.length > 0,
       {

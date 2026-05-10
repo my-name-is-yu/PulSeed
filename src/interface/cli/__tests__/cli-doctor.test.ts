@@ -16,6 +16,8 @@ import { MemoryLifecycleStateStore } from "../../../platform/knowledge/memory/me
 import { DreamDecisionHeuristicStore } from "../../../runtime/store/dream-decision-heuristic-store.js";
 import { createRunSpecStore, type RunSpec } from "../../../runtime/run-spec/index.js";
 import { DriveGoalScheduleStateStore } from "../../../platform/drive/drive-schedule-state-store.js";
+import { StrategyTemplateStateStore } from "../../../orchestrator/strategy/strategy-template-state-store.js";
+import type { StrategyTemplate } from "../../../base/types/cross-portfolio.js";
 
 // ─── cmdDoctor tests ───
 //
@@ -118,6 +120,21 @@ function makeRunSpec(overrides: Partial<RunSpec> = {}): RunSpec {
     },
     created_at: now,
     updated_at: now,
+    ...overrides,
+  };
+}
+
+function makeStrategyTemplate(overrides: Partial<StrategyTemplate> = {}): StrategyTemplate {
+  return {
+    template_id: "tmpl-doctor-001",
+    source_goal_id: "goal-doctor",
+    source_strategy_id: "strat-doctor",
+    hypothesis_pattern: "Automate repeated validation steps",
+    domain_tags: ["automation", "validation"],
+    effectiveness_score: 0.88,
+    applicable_dimensions: ["throughput"],
+    embedding_id: null,
+    created_at: "2026-05-10T00:00:00.000Z",
     ...overrides,
   };
 }
@@ -1493,6 +1510,36 @@ describe("cmdDoctor summary counts", () => {
     });
     const allOutput = consoleSpy.mock.calls.map((c: unknown[]) => c[0] as string).join("\n");
     expect(allOutput).toContain("Repair Drive schedule import: files=2, imported=1");
+    expect(checkControlDatabase(tmpDir).detail).toContain("legacy import record");
+  });
+
+  it("imports legacy strategy template files through doctor repair", async () => {
+    const origHome = process.env["PULSEED_HOME"];
+    process.env["PULSEED_HOME"] = tmpDir;
+    const legacyTemplate = makeStrategyTemplate();
+    fs.writeFileSync(path.join(tmpDir, "strategy-templates.json"), JSON.stringify([
+      legacyTemplate,
+      { ...legacyTemplate, template_id: "tmpl-invalid", effectiveness_score: 2 },
+    ]));
+
+    try {
+      const exitCode = await cmdDoctor(["--repair"]);
+      expect([0, 1]).toContain(exitCode);
+    } finally {
+      if (origHome !== undefined) {
+        process.env["PULSEED_HOME"] = origHome;
+      } else {
+        delete process.env["PULSEED_HOME"];
+      }
+    }
+
+    await expect(new StrategyTemplateStateStore(tmpDir).load(legacyTemplate.template_id)).resolves.toMatchObject({
+      template_id: legacyTemplate.template_id,
+      source_goal_id: "goal-doctor",
+    });
+    const allOutput = consoleSpy.mock.calls.map((c: unknown[]) => c[0] as string).join("\n");
+    expect(allOutput).toContain("Repair strategy template import: files=1, imported=1");
+    expect(allOutput).toContain("blocked=1");
     expect(checkControlDatabase(tmpDir).detail).toContain("legacy import record");
   });
 

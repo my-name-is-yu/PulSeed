@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { StrategyTemplateRegistry } from "../strategy-template-registry.js";
+import { StrategyTemplateStateStore } from "../strategy-template-state-store.js";
 import { VectorIndex } from "../../../platform/knowledge/vector-index.js";
 import { MockEmbeddingClient } from "../../../platform/knowledge/embedding-client.js";
 import type { IEmbeddingClient } from "../../../platform/knowledge/embedding-client.js";
@@ -213,7 +214,7 @@ describe("StrategyTemplateRegistry", () => {
       expect(vectorIndex.size).toBe(1);
     });
 
-    it("persists template after registration", async () => {
+    it("persists template after registration in the typed store", async () => {
       const llm = createMockLLMClient([GENERALIZE_RESPONSE]);
       const registry = new StrategyTemplateRegistry(
         llm,
@@ -225,10 +226,10 @@ describe("StrategyTemplateRegistry", () => {
 
       await registry.registerTemplate(strategy, "goal-001");
 
-      const filePath = path.join(tmpDir, "strategy-templates.json");
-      expect(fs.existsSync(filePath)).toBe(true);
-      const data = JSON.parse(fs.readFileSync(filePath, "utf-8")) as unknown[];
+      const data = await new StrategyTemplateStateStore(tmpDir).list();
       expect(data).toHaveLength(1);
+      expect(data[0]?.source_strategy_id).toBe("strat-test-001");
+      expect(fs.existsSync(path.join(tmpDir, "strategy-templates.json"))).toBe(false);
     });
 
     it("returns a valid StrategyTemplate", async () => {
@@ -622,7 +623,7 @@ describe("StrategyTemplateRegistry", () => {
   // ─── persistence ───
 
   describe("persistence", () => {
-    it("save writes templates to JSON file", async () => {
+    it("save writes templates to the typed store", async () => {
       const llm = createMockLLMClient([GENERALIZE_RESPONSE]);
       const registry = new StrategyTemplateRegistry(
         llm,
@@ -636,16 +637,11 @@ describe("StrategyTemplateRegistry", () => {
       // save is called internally by registerTemplate, but let's call explicitly
       await registry.save();
 
-      const filePath = path.join(tmpDir, "strategy-templates.json");
-      expect(fs.existsSync(filePath)).toBe(true);
-
-      const raw = JSON.parse(
-        fs.readFileSync(filePath, "utf-8")
-      ) as unknown[];
+      const raw = await new StrategyTemplateStateStore(tmpDir).list();
       expect(raw).toHaveLength(1);
     });
 
-    it("load restores templates from JSON file", async () => {
+    it("load restores templates from the typed store", async () => {
       const llm = createMockLLMClient([GENERALIZE_RESPONSE]);
       const registry = new StrategyTemplateRegistry(
         llm,
@@ -674,7 +670,7 @@ describe("StrategyTemplateRegistry", () => {
       expect(loaded?.hypothesis_pattern).toBe(template.hypothesis_pattern);
     });
 
-    it("load handles missing file gracefully", async () => {
+    it("load handles empty typed store gracefully", async () => {
       const llm = createMockLLMClient([]);
       const registry = new StrategyTemplateRegistry(
         llm,
@@ -683,7 +679,6 @@ describe("StrategyTemplateRegistry", () => {
         tmpDir
       );
 
-      // File doesn't exist — should not throw
       await expect(registry.load()).resolves.not.toThrow();
       expect(registry.size).toBe(0);
     });
@@ -724,7 +719,7 @@ describe("StrategyTemplateRegistry", () => {
       expect(restored?.created_at).toBe(template.created_at);
     });
 
-    it("save creates parent directory if it doesn't exist", async () => {
+    it("save creates the control DB under nested base directories", async () => {
       const nestedDir = path.join(tmpDir, "nested", "dir");
       const llm = createMockLLMClient([GENERALIZE_RESPONSE]);
       const registry = new StrategyTemplateRegistry(
@@ -737,8 +732,40 @@ describe("StrategyTemplateRegistry", () => {
 
       await registry.registerTemplate(strategy, "goal-001");
 
-      const filePath = path.join(nestedDir, "strategy-templates.json");
-      expect(fs.existsSync(filePath)).toBe(true);
+      const data = await new StrategyTemplateStateStore(nestedDir).list();
+      expect(data).toHaveLength(1);
+      expect(fs.existsSync(path.join(nestedDir, "strategy-templates.json"))).toBe(false);
+    });
+
+    it("does not silently fall back to a legacy strategy-templates.json file", async () => {
+      const legacyTemplate = {
+        template_id: "tmpl-legacy",
+        source_goal_id: "goal-legacy",
+        source_strategy_id: "strat-legacy",
+        hypothesis_pattern: "Legacy file-backed pattern",
+        domain_tags: ["legacy"],
+        effectiveness_score: 0.9,
+        applicable_dimensions: ["throughput"],
+        embedding_id: null,
+        created_at: "2026-01-01T00:00:00.000Z",
+      };
+      fs.writeFileSync(
+        path.join(tmpDir, "strategy-templates.json"),
+        JSON.stringify([legacyTemplate], null, 2),
+        "utf8"
+      );
+      const llm = createMockLLMClient([]);
+      const registry = new StrategyTemplateRegistry(
+        llm,
+        vectorIndex,
+        embeddingClient,
+        tmpDir
+      );
+
+      await registry.load();
+
+      expect(registry.size).toBe(0);
+      expect(registry.getTemplate("tmpl-legacy")).toBeUndefined();
     });
   });
 });

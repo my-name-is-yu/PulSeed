@@ -17,7 +17,8 @@ Base: origin/main @ 7d87d012 Prefer live daemon status in runtime evidence answe
 | 1 | Direct File Owner Inventory And Guard Expansion | codex/direct-file-state-slice-1-inventory-guard-20260510213328 | /Users/yuyoshimuta/Documents/dev/PulSeed-worktrees/direct-file-state-slice-1-inventory-guard-20260510213328 | https://github.com/my-name-is-yu/PulSeed/pull/1837 | merged |
 | 2 | RunSpec Store | codex/direct-file-state-slice-2-run-spec-store-20260510220128 | /Users/yuyoshimuta/Documents/dev/PulSeed-worktrees/direct-file-state-slice-2-run-spec-store-20260510220128 | https://github.com/my-name-is-yu/PulSeed/pull/1843 | merged |
 | 3 | DriveSystem Schedule State | codex/direct-file-state-slice-3-drive-schedule-20260510225201 | /Users/yuyoshimuta/Documents/dev/PulSeed-worktrees/direct-file-state-slice-3-drive-schedule-20260510225201 | https://github.com/my-name-is-yu/PulSeed/pull/1853 | merged |
-| 4 | DriveSystem Event Queue / Runtime Event Spool | codex/direct-file-state-slice-4-event-spool-20260510232220 | /Users/yuyoshimuta/Documents/dev/PulSeed-worktrees/direct-file-state-slice-4-event-spool-20260510232220 | https://github.com/my-name-is-yu/PulSeed/pull/1858 | PR open |
+| 4 | DriveSystem Event Queue / Runtime Event Spool | codex/direct-file-state-slice-4-event-spool-20260510232220 | /Users/yuyoshimuta/Documents/dev/PulSeed-worktrees/direct-file-state-slice-4-event-spool-20260510232220 | https://github.com/my-name-is-yu/PulSeed/pull/1858 | merged |
+| 5 | Strategy Template Registry | codex/direct-file-state-slice-5-strategy-template-20260510235349 | /Users/yuyoshimuta/Documents/dev/PulSeed-worktrees/direct-file-state-slice-5-strategy-template-20260510235349 | pending | in progress |
 
 ## Slice 1 Direct File Owner Inventory
 
@@ -26,7 +27,7 @@ Base: origin/main @ 7d87d012 Prefer live daemon status in runtime evidence answe
 | RunSpec durable draft/confirmation/start state | `src/runtime/run-spec/store.ts` | `run-specs/<id>.json` | typed-store migrate now | 2 |
 | DriveSystem goal activation schedule | `src/platform/drive/drive-system.ts` | `schedule/<goalId>.json` | typed-store migrate now | 3 |
 | DriveSystem runtime event ingestion spool | `src/platform/drive/drive-system.ts`; `src/runtime/event/*`; daemon writeEvent callers | `events/*.json`; `events/archive/*.json` | bounded IPC/spool | 4 |
-| Successful strategy template reuse | `src/orchestrator/strategy/strategy-template-registry.ts`; dream strategy-template readers | `strategy-templates.json` | typed-store migrate now | 5 |
+| Successful strategy template reuse | `src/orchestrator/strategy/strategy-template-registry.ts`; dream strategy-template readers | `strategy_templates` control DB table; legacy `strategy-templates.json` doctor/repair import input | typed control DB state / migration-only input | closed in Slice 5 |
 | Runtime semantic vector index | `src/platform/knowledge/vector-index.ts` | caller-provided `indexPath` JSON | typed-store migrate now | 6 |
 | Cross-goal knowledge graph | `src/platform/knowledge/knowledge-graph.ts` | caller-provided `graphPath` JSON | typed-store migrate now | 6 |
 | Runtime reports, manifests, postmortems, long-running results | runtime report stores and runtime tools | report/result/manifest files | reproducibility artifact | 7 |
@@ -146,10 +147,36 @@ Base: origin/main @ 7d87d012 Prefer live daemon status in runtime evidence answe
 - PR: https://github.com/my-name-is-yu/PulSeed/pull/1858
 - Branch: `codex/direct-file-state-slice-4-event-spool-20260510232220`
 - Head commit at PR creation: `5c3f0ea4`
-- CI: `unit (22)` failed on first head because MCP trigger explicit filename compatibility was broken; fixed and rerun pending
-- GitHub Codex review: pending
-- `@codex review`: not yet needed
-- Fallback sub-agent review: not used
+- Final head commit: `ebb483676a01a2abced0ac805411cf240be47d0d`
+- Merge commit: `3febbb9c62a2665465f65514608a06f1e8e610fa`
+- CI: first `unit (22)` failed because MCP trigger explicit filename compatibility was broken; final `unit (22)` success and `integration (24)` success
+- GitHub Codex review: initial review covered old head `5c3f0ea4`; `@codex review` was needed after the compatibility fix but did not produce a current-head review
+- Fallback sub-agent review: used after `@codex review`; LGTM, no material blockers at `ebb483676a01a2abced0ac805411cf240be47d0d`
+- Worktree cleanup: pending after Slice 5 records this merge
+- Remote branch cleanup: deleted by merge
+- Merged by this session: yes
+
+## Slice 5 Direct File Owner Plan
+
+| Owner | Current boundary | Classification | Planned guard state |
+| --- | --- | --- | --- |
+| Successful strategy template reuse | `strategy-templates.json` in `src/orchestrator/strategy/strategy-template-registry.ts` and dream callers | typed-store migrate now | move registry, strategy enrichment, dream activation, and dream consolidation to `strategy_templates` control DB table; leave legacy JSON only as doctor/repair import input and make runtime reintroduction fail the guard |
+
+## Slice 5 Validation
+
+- Worktree: `/Users/yuyoshimuta/Documents/dev/PulSeed-worktrees/direct-file-state-slice-5-strategy-template-20260510235349`
+- Branch: `codex/direct-file-state-slice-5-strategy-template-20260510235349`
+- Base: `origin/main @ 83a90a9c Bound daemon metadata reads (#1861)`
+- `nvm use 24.15.0 && npm ci`: passed
+- `npx vitest run --config vitest.unit.config.ts src/orchestrator/strategy/__tests__/strategy-template-registry.test.ts src/orchestrator/strategy/__tests__/strategy-template-state-store.test.ts src/orchestrator/strategy/__tests__/strategy-manager-core.test.ts`: passed, 70 tests
+- `npx vitest run --config vitest.unit.config.ts src/interface/cli/__tests__/database-first-legacy-store-check.test.ts src/interface/cli/__tests__/cli-doctor.test.ts`: passed, 93 tests
+- `node scripts/check-database-first-legacy-stores.mjs --json`: `ok=true`, `findings=0`, `strategy-template-registry` debt=false, remaining direct-file debt `knowledge-graph`, `vector-index`, `reflection-reports`
+- `npm run typecheck`: passed
+- `npm run lint:boundaries`: passed with existing warnings, 0 errors
+- `npm run build`: passed
+- `git diff --check`: passed
+- CI: pending PR
+- GitHub Codex review: pending PR
 
 ## Merge Policy
 

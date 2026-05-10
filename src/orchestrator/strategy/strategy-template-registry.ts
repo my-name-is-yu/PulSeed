@@ -1,6 +1,4 @@
 import { randomUUID } from "node:crypto";
-import * as fsp from "node:fs/promises";
-import * as path from "node:path";
 import { z } from "zod";
 import { ValidationError } from "../../base/utils/errors.js";
 import type { ILLMClient } from "../../base/llm/llm-client.js";
@@ -16,6 +14,7 @@ import type {
 } from "../../base/types/cross-portfolio.js";
 import { StrategySchema } from "../../base/types/strategy.js";
 import type { Strategy } from "../../base/types/strategy.js";
+import { StrategyTemplateStateStore } from "./strategy-template-state-store.js";
 
 // ─── LLM Response Schemas ───
 
@@ -45,22 +44,22 @@ const AdaptTemplateResponseSchema = z.object({
  * It stores templates derived from completed strategies, generates semantic embeddings
  * for semantic search, and can adapt templates to new goal contexts.
  *
- * Persistence: {basePath}/strategy-templates.json
+ * Persistence: strategy_templates control DB table.
  */
 export class StrategyTemplateRegistry {
   private readonly templates: Map<string, StrategyTemplate> = new Map();
-  private readonly persistPath: string;
+  private readonly stateStore: StrategyTemplateStateStore;
   private readonly logger?: Logger;
 
   constructor(
     private readonly llmClient: ILLMClient,
     private readonly vectorIndex: VectorIndex,
     private readonly embeddingClient: IEmbeddingClient,
-    private readonly basePath: string,
+    basePath: string,
     logger?: Logger,
     private readonly promptGateway?: IPromptGateway
   ) {
-    this.persistPath = path.join(basePath, "strategy-templates.json");
+    this.stateStore = new StrategyTemplateStateStore(basePath);
     this.logger = logger;
   }
 
@@ -390,39 +389,26 @@ export class StrategyTemplateRegistry {
   }
 
   /**
-   * Persist all templates to JSON file (atomic write).
+   * Persist all templates to the typed strategy template store.
    */
   async save(): Promise<void> {
-    const dir = path.dirname(this.persistPath);
-    await fsp.mkdir(dir, { recursive: true });
-
-    const data = JSON.stringify(
-      Array.from(this.templates.values()),
-      null,
-      2
-    );
-    const tmpPath = `${this.persistPath}.tmp`;
-    await fsp.writeFile(tmpPath, data, "utf-8");
-    await fsp.rename(tmpPath, this.persistPath);
+    await this.stateStore.saveMany(Array.from(this.templates.values()));
   }
 
   /**
-   * Load templates from JSON file.
-   * Silently succeeds if the file does not exist.
+   * Load templates from the typed strategy template store.
+   * Silently succeeds when no templates have been persisted yet.
    */
   async load(): Promise<void> {
-    try { await fsp.access(this.persistPath); } catch { return; }
-
     try {
-      const raw = await fsp.readFile(this.persistPath, "utf-8");
-      const parsed = JSON.parse(raw) as unknown[];
+      const parsed = await this.stateStore.list();
       this.templates.clear();
       for (const item of parsed) {
         const template = StrategyTemplateSchema.parse(item);
         this.templates.set(template.template_id, template);
       }
     } catch (err) {
-      this.logger?.warn(`[StrategyTemplateRegistry] Failed to load templates from ${this.persistPath}, starting fresh: ${err}`);
+      this.logger?.warn(`[StrategyTemplateRegistry] Failed to load templates from control DB, starting fresh: ${err}`);
     }
   }
 
