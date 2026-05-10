@@ -901,7 +901,7 @@ describe("CrossPlatformChatSessionManager", () => {
       identity_key: "status-user",
       platform: "slack",
       conversation_id: "status-thread",
-    })).toContain("I'm working on it. Last visible activity: the current action");
+    })).toBe("I'm working on it.");
     expect(events).toHaveLength(eventCountBeforeStatus);
 
     resolveActive?.(CANNED_RESULT);

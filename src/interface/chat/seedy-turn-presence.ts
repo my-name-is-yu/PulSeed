@@ -246,7 +246,7 @@ function withActiveStatusActivity(prefix: string, status: SeedyActiveTurnStatus)
 
 function renderWaitingActiveStatus(status: SeedyActiveTurnStatus): string {
   const activity = safeActiveStatusActivity(status);
-  if (!activity) return "I'm still working on it. I don't have a new visible update yet.";
+  if (!activity) return "I'm still checking this. I don't have a more specific visible update yet.";
   const elapsed = formatElapsed(status.elapsed_since_last_activity_ms);
   return `I'm still working on it. Last visible activity: ${activity}${elapsed ? ` ${elapsed}` : ""}.`;
 }
