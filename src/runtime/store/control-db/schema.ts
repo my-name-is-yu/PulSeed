@@ -7,7 +7,7 @@ export interface ControlDbMigration {
   checksum: string;
 }
 
-export const CONTROL_DB_SCHEMA_VERSION = 10;
+export const CONTROL_DB_SCHEMA_VERSION = 11;
 
 export const CONTROL_DB_INITIAL_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS control_schema_migrations (
@@ -975,6 +975,29 @@ CREATE INDEX IF NOT EXISTS goal_state_write_locks_lease_idx
   ON goal_state_write_locks(lease_until, goal_id);
 `.trim();
 
+export const CONTROL_DB_EXECUTION_SESSION_SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS execution_sessions (
+  session_id TEXT PRIMARY KEY,
+  session_type TEXT NOT NULL,
+  goal_id TEXT NOT NULL,
+  task_id TEXT,
+  started_at TEXT NOT NULL,
+  ended_at TEXT,
+  updated_at TEXT NOT NULL,
+  active INTEGER NOT NULL CHECK (active IN (0, 1)),
+  session_json TEXT NOT NULL CHECK (json_valid(session_json))
+);
+
+CREATE INDEX IF NOT EXISTS execution_sessions_goal_active_idx
+  ON execution_sessions(goal_id, active, started_at DESC, session_id);
+
+CREATE INDEX IF NOT EXISTS execution_sessions_started_idx
+  ON execution_sessions(started_at DESC, session_id);
+
+CREATE INDEX IF NOT EXISTS execution_sessions_goal_idx
+  ON execution_sessions(goal_id, started_at DESC, session_id);
+`.trim();
+
 export function controlDbMigrationChecksum(sql: string): string {
   return createHash("sha256").update(sql.trim()).digest("hex");
 }
@@ -1042,5 +1065,10 @@ export const CONTROL_DB_MIGRATIONS: readonly ControlDbMigration[] = [
     10,
     "goal-state-write-locks",
     CONTROL_DB_GOAL_STATE_WRITE_LOCK_SCHEMA_SQL
+  ),
+  createControlDbMigration(
+    11,
+    "execution-session-state",
+    CONTROL_DB_EXECUTION_SESSION_SCHEMA_SQL
   ),
 ];

@@ -1,12 +1,10 @@
 import { z } from "zod";
-import * as fs from "node:fs";
-import * as path from "node:path";
 import type { ITool, ToolResult, ToolCallContext, PermissionCheckResult, ToolMetadata, ToolDescriptionContext } from "../../types.js";
 import { DESCRIPTION } from "./prompt.js";
 import { TAGS, PERMISSION_LEVEL, MAX_OUTPUT_CHARS } from "./constants.js";
 import type { StateManager } from "../../../base/state/state-manager.js";
-
-// NOTE: fs.readdirSync is used only for listing filenames (safe). All file READS go through stateManager.readRaw().
+import { ExecutionSessionStateStore } from "../../../runtime/store/execution-session-state-store.js";
+import type { Session } from "../../../base/types/session.js";
 
 export const SESSION_HISTORY_DEFAULT_LIMIT = 5;
 export const SESSION_HISTORY_MAX_LIMIT = 100;
@@ -43,7 +41,14 @@ export class SessionHistoryTool implements ITool<SessionHistoryInput, unknown> {
   };
   readonly inputSchema = SessionHistoryInputSchema;
 
-  constructor(private readonly stateManager: StateManager) {}
+  private sessionStore: ExecutionSessionStateStore | null;
+
+  constructor(
+    private readonly stateManager: StateManager,
+    sessionStore?: ExecutionSessionStateStore,
+  ) {
+    this.sessionStore = sessionStore ?? null;
+  }
 
   description(_context?: ToolDescriptionContext): string {
     return DESCRIPTION;
@@ -71,63 +76,37 @@ export class SessionHistoryTool implements ITool<SessionHistoryInput, unknown> {
   }
 
   private async _loadSessions(input: SessionHistoryInput): Promise<SessionSummary[]> {
-    const baseDir = this.stateManager.getBaseDir();
-    const sessionsDir = path.join(baseDir, "sessions");
-
-    if (!fs.existsSync(sessionsDir)) {
-      return [];
-    }
-
-    // Listing filenames is safe; all file READS go through stateManager.readRaw() (path traversal protection).
-    const files = fs
-      .readdirSync(sessionsDir)
-      .filter((f) => f.endsWith(".json"));
-
-    // Filter by goalId if provided
-    const summaries: SessionSummary[] = [];
-    for (const file of files) {
-      try {
-        const raw = await this.stateManager.readRaw(`sessions/${file}`) as Record<string, unknown> | null;
-        if (raw == null) continue;
-        const session = this._toSummary(raw, input.includeObservations);
-        if (!session) continue;
-        if (input.goalId && session.goalId !== input.goalId) continue;
-        summaries.push(session);
-      } catch {
-        // skip unparseable files
-      }
-    }
-
-    // Sort by actual timestamp descending (ISO 8601 strings sort lexicographically), then take limit
-    summaries.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
-    return summaries.slice(0, input.limit);
+    const sessions = await this.getSessionStore().list({
+      goalId: input.goalId,
+      limit: input.limit,
+    });
+    return sessions.map((session) => this._toSummary(session, input.includeObservations));
   }
 
-  private _toSummary(raw: Record<string, unknown>, includeObservations: boolean): SessionSummary | null {
-    const id = typeof raw["id"] === "string" ? raw["id"] : undefined;
-    const goalId = typeof raw["goal_id"] === "string" ? raw["goal_id"] : undefined;
-    const startedAt = typeof raw["started_at"] === "string" ? raw["started_at"] : new Date(0).toISOString();
+  private getSessionStore(): ExecutionSessionStateStore {
+    this.sessionStore ??= new ExecutionSessionStateStore(this.stateManager.getBaseDir());
+    return this.sessionStore;
+  }
 
-    if (!id || !goalId) return null;
-
+  private _toSummary(session: Session, includeObservations: boolean): SessionSummary {
     const summary: SessionSummary = {
-      sessionId: id,
-      goalId,
-      timestamp: startedAt,
+      sessionId: session.id,
+      goalId: session.goal_id,
+      timestamp: session.started_at,
     };
 
-    if (typeof raw["result_summary"] === "string") {
-      summary.taskSummary = raw["result_summary"];
+    if (typeof session.result_summary === "string") {
+      summary.taskSummary = session.result_summary;
     }
-    if (typeof raw["session_type"] === "string") {
-      summary.strategy = raw["session_type"];
+    if (typeof session.session_type === "string") {
+      summary.strategy = session.session_type;
     }
-    if (raw["ended_at"] != null) {
-      summary.outcome = raw["ended_at"] ? "completed" : "in_progress";
+    if (session.ended_at !== null) {
+      summary.outcome = "completed";
     }
 
-    if (includeObservations && raw["context_slots"] != null) {
-      summary.observations = raw["context_slots"];
+    if (includeObservations) {
+      summary.observations = session.context_slots;
     }
 
     return summary;

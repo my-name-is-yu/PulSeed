@@ -42,6 +42,10 @@ describe("database-first legacy store check", () => {
     writeFile(tmpDir, "src/base/state/legacy-state-wal.ts", `
       export const legacyWalPath = "wal.jsonl";
     `);
+    writeFile(tmpDir, "src/runtime/store/execution-session-state-migration.ts", `
+      export const legacySessionIndex = "sessions/index.json";
+      export const legacySessionPath = (sessionId: string) => \`sessions/\${sessionId}.json\`;
+    `);
     writeFile(tmpDir, "src/runtime/channel-config.ts", `
       export const configPath = "gateway/channels/telegram-bot/config.json";
       export const pluginManifest = "plugin.json";
@@ -53,7 +57,7 @@ describe("database-first legacy store check", () => {
     expect(result.stdout).toContain("database-first legacy store check passed");
   });
 
-  it("reports classified follow-up debt instead of hiding allowlisted runtime owners", () => {
+  it("fails path-shaped execution session owners outside the migration boundary", () => {
     writeFile(tmpDir, "src/orchestrator/execution/session-manager.ts", `
       export const sessionIndex = "sessions/index.json";
       export const sessionPath = (sessionId: string) => \`sessions/\${sessionId}.json\`;
@@ -61,10 +65,10 @@ describe("database-first legacy store check", () => {
 
     const result = runCheck(tmpDir);
 
-    expect(result.status).toBe(0);
-    expect(result.stdout).toContain("classified legacy store debt report:");
-    expect(result.stdout).toContain("execution-session-manager: migrate now; rank 3; Slice 3; owner: ExecutionSessionStateStore; matches: 2");
-    expect(result.stdout).toContain("run with --json for line-level classified matches and reasons");
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("src/orchestrator/execution/session-manager.ts");
+    expect(result.stderr).toContain("[execution-session-json] ExecutionSessionStateStore / control DB execution session tables");
+    expect(result.stderr).toContain("Unclassified legacy store references must be moved to typed stores");
   });
 
   it("fails unexpected legacy store classes inside classified follow-up files", () => {
@@ -77,7 +81,7 @@ describe("database-first legacy store check", () => {
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("src/orchestrator/execution/session-manager.ts");
     expect(result.stderr).toContain("[goal-wal-jsonl] Goal WAL control DB ownership");
-    expect(result.stderr).toContain('allowlist entry "execution-session-manager" does not permit rule "goal-wal-jsonl"');
+    expect(result.stderr).toContain("Unclassified legacy store references must be moved to typed stores");
   });
 
   it("emits a machine-readable debt report", () => {
@@ -94,6 +98,7 @@ describe("database-first legacy store check", () => {
       debtReport: Array<{ id: string; category: string; nextSlice: number | null; matchCount: number }>;
     };
     expect(parsed.ok).toBe(true);
+    expect(parsed.debtReport.some((entry) => entry.nextSlice === 3)).toBe(false);
     expect(parsed.debtReport).toEqual(expect.arrayContaining([
       expect.objectContaining({
         id: "operator-handoff-runtime-journal",

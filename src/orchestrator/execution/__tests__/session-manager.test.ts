@@ -4,6 +4,7 @@ import * as path from "node:path";
 import { StateManager } from "../../../base/state/state-manager.js";
 import { SessionManager, DEFAULT_CONTEXT_BUDGET } from "../session-manager.js";
 import { CheckpointManager } from "../checkpoint-manager.js";
+import { ExecutionSessionStateStore } from "../../../runtime/store/execution-session-state-store.js";
 import {
   ContextBudgetConfigSchema,
   ContextSlotSchema,
@@ -82,10 +83,14 @@ describe("SessionManager", () => {
       expect(s1.id).not.toBe(s2.id);
     });
 
-    it("persists session to sessions/<session_id>.json", async () => {
+    it("persists session to the execution session store without legacy session JSON", async () => {
       const session = await manager.createSession("task_execution", "goal-1", "task-1");
-      const filePath = path.join(tmpDir, "sessions", `${session.id}.json`);
-      expect(fs.existsSync(filePath)).toBe(true);
+      await expect(new ExecutionSessionStateStore(tmpDir).load(session.id)).resolves.toMatchObject({
+        id: session.id,
+        goal_id: "goal-1",
+      });
+      expect(fs.existsSync(path.join(tmpDir, "sessions", `${session.id}.json`))).toBe(false);
+      expect(fs.existsSync(path.join(tmpDir, "sessions", "index.json"))).toBe(false);
     });
 
     it("task_execution session includes 4 context slots", async () => {
@@ -346,11 +351,11 @@ describe("SessionManager", () => {
       expect(isNaN(date.getTime())).toBe(false);
     });
 
-    it("persists the updated session to disk", async () => {
+    it("persists the updated session to the typed store", async () => {
       const session = await manager.createSession("observation", "goal-1", null);
       await manager.endSession(session.id, "observed");
 
-      // Load via a fresh manager to confirm disk persistence
+      // Load via a fresh manager to confirm database persistence
       const manager2 = new SessionManager(stateManager);
       const loaded = (await manager2.getSession(session.id))!;
       expect(loaded.result_summary).toBe("observed");
@@ -387,7 +392,7 @@ describe("SessionManager", () => {
       expect(loaded!.id).toBe(session.id);
     });
 
-    it("returns the session from a fresh manager (disk persistence)", async () => {
+    it("returns the session from a fresh manager (database persistence)", async () => {
       const session = await manager.createSession("observation", "goal-2", null);
       const manager2 = new SessionManager(stateManager);
       const loaded = await manager2.getSession(session.id);
@@ -395,7 +400,7 @@ describe("SessionManager", () => {
       expect(loaded!.goal_id).toBe("goal-2");
     });
 
-    it("rejects persisted sessions with non-finite JSON numeric fields", async () => {
+    it("does not fall back to invalid legacy session JSON on the normal path", async () => {
       const sessionsDir = path.join(tmpDir, "sessions");
       fs.mkdirSync(sessionsDir, { recursive: true });
       fs.writeFileSync(
@@ -415,7 +420,7 @@ describe("SessionManager", () => {
         }`,
       );
 
-      await expect(manager.getSession("bad-nonfinite")).rejects.toThrow();
+      await expect(manager.getSession("bad-nonfinite")).resolves.toBeNull();
     });
 
     it("rejects unsafe persisted session token budget scalars", () => {
@@ -705,52 +710,41 @@ describe("SessionManager", () => {
     });
   });
 
-  // ─── loadSessionIndex edge cases ───
+  // ─── legacy session index edge cases ───
 
-  describe("loadSessionIndex edge cases (via getActiveSessions)", () => {
-    it("handles non-array raw index by treating as empty (returns no sessions)", async () => {
-      // Write a non-array value to the index file to hit the !Array.isArray(raw) branch
+  describe("legacy session index edge cases (via getActiveSessions)", () => {
+    it("ignores corrupt legacy index files on the normal path", async () => {
       await stateManager.writeRaw("sessions/index.json", { corrupt: true });
 
-      // getActiveSessions reads the index — non-array raw should be treated as empty
       const sessions = await manager.getActiveSessions("any-goal");
       expect(sessions).toEqual([]);
     });
 
-    it("handles null index (no index file) by returning empty array", async () => {
-      // No index file written — readRaw returns null → return []
+    it("does not require a legacy index file", async () => {
       const sessions = await manager.getActiveSessions("any-goal");
       expect(sessions).toEqual([]);
     });
   });
 
-  // ─── updateSessionIndex deduplication ───
+  // ─── typed session persistence deduplication ───
 
-  describe("updateSessionIndex deduplication", () => {
-    it("does not duplicate session IDs in the index when createSession is called twice for same session structure", async () => {
+  describe("typed session persistence deduplication", () => {
+    it("stores each created session once in the typed store", async () => {
       const s1 = await manager.createSession("task_execution", "goal-1", "task-1");
-
-      // Manually write the same session ID to index again to simulate a duplicate scenario,
-      // then create another session — the index should not contain more duplicates
       const s2 = await manager.createSession("observation", "goal-1", null);
 
-      // Read the raw index and verify no duplicates
-      const rawIndex = await stateManager.readRaw("sessions/index.json") as string[];
-      expect(rawIndex).toContain(s1.id);
-      expect(rawIndex).toContain(s2.id);
-      // Verify uniqueness
-      const unique = new Set(rawIndex);
-      expect(unique.size).toBe(rawIndex.length);
+      const sessions = await new ExecutionSessionStateStore(tmpDir).list({ goalId: "goal-1" });
+      expect(sessions.map((session) => session.id).sort()).toEqual([s1.id, s2.id].sort());
     });
 
-    it("does not add duplicate session ID when persistSession is called twice", async () => {
+    it("updates the same typed session row when persistSession is called twice", async () => {
       const s = await manager.createSession("goal_review", "goal-dup", null);
-      // End the session (which calls persistSession again with the same id)
       await manager.endSession(s.id, "done");
 
-      const rawIndex = await stateManager.readRaw("sessions/index.json") as string[];
-      const count = rawIndex.filter((id) => id === s.id).length;
+      const sessions = await new ExecutionSessionStateStore(tmpDir).list({ goalId: "goal-dup" });
+      const count = sessions.filter((session) => session.id === s.id).length;
       expect(count).toBe(1);
+      expect(sessions[0]?.result_summary).toBe("done");
     });
   });
 

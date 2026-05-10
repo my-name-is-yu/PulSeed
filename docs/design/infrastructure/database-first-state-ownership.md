@@ -61,6 +61,8 @@ The database-first state slices added typed owners for these areas:
   runtime evidence, strategy, dream, reflection, knowledge, memory, learning,
   profile, plugin runtime, channel health, channel binding, foreign plugin
   compatibility, and runtime asset stores
+- execution sessions used by `SessionManager`, session history grounding, and
+  `SessionHistoryTool`
 
 `scripts/check-database-first-legacy-stores.mjs` blocks new normal-path durable
 JSON/JSONL runtime stores unless the file is a documented compatibility boundary,
@@ -94,6 +96,10 @@ list:
   StateManager writes do not append `wal.jsonl`
 - `src/base/state/legacy-archived-goal-recovery.ts`: explicit legacy archived
   goal recovery inspection; normal archive ownership is DB-backed
+- `src/runtime/store/execution-session-state-migration.ts`: explicit legacy
+  `sessions/*.json` and `sessions/index.json` import/validation boundary reached
+  through `doctor --repair`; normal execution session create/get/end/list and
+  history reads use the control DB execution session store
 - `src/orchestrator/execution/agent-loop/agent-loop-session-factory.ts`:
   path-shaped AgentLoop resume option compatibility
 - task verifier, task lifecycle, checkpoint, strategy, and wait-deadline callers:

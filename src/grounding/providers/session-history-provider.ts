@@ -1,12 +1,19 @@
-import * as fs from "node:fs";
-import * as path from "node:path";
 import type { GroundingMessage, GroundingProvider } from "../contracts.js";
 import { makeSection, makeSource } from "./helpers.js";
+import { ExecutionSessionStateStore } from "../../runtime/store/execution-session-state-store.js";
 
 function formatRecentMessages(messages: GroundingMessage[]): string {
   return messages
     .map((message) => `${message.role === "user" ? "User" : "Assistant"}: ${message.content}`)
     .join("\n");
+}
+
+function formatStoredSessionLine(session: {
+  id: string;
+  goal_id: string;
+  result_summary: string | null;
+}): string {
+  return `- ${session.id} (${session.goal_id}): ${session.result_summary ?? "No summary"}`;
 }
 
 export const sessionHistoryProvider: GroundingProvider = {
@@ -43,12 +50,12 @@ export const sessionHistoryProvider: GroundingProvider = {
     if (!baseDir) {
       return null;
     }
-    const sessionsDir = path.join(baseDir, "sessions");
-    if (!fs.existsSync(sessionsDir)) {
+    const store = new ExecutionSessionStateStore(baseDir);
+    const sessions = await store.list({ limit: context.profile.budgets.maxHistoryMessages });
+    if (sessions.length === 0) {
       return makeSection("session_history", "No recorded session history.", [
-        makeSource("session_history", "sessions directory", {
+        makeSource("session_history", "execution session store", {
           type: "none",
-          path: sessionsDir,
           trusted: true,
           accepted: true,
           retrievalId: "none:session_history",
@@ -56,27 +63,15 @@ export const sessionHistoryProvider: GroundingProvider = {
       ]);
     }
 
-    const files = fs.readdirSync(sessionsDir).filter((entry) => entry.endsWith(".json")).slice(0, context.profile.budgets.maxHistoryMessages);
-    const lines: string[] = [];
-    for (const file of files) {
-      const raw = await stateManager.readRaw(`sessions/${file}`) as Record<string, unknown> | null;
-      if (!raw) continue;
-      const id = typeof raw["id"] === "string" ? raw["id"] : file;
-      const goalId = typeof raw["goal_id"] === "string" ? raw["goal_id"] : "unknown-goal";
-      const summary = typeof raw["result_summary"] === "string" ? raw["result_summary"] : "No summary";
-      lines.push(`- ${id} (${goalId}): ${summary}`);
-    }
-
     return makeSection(
       "session_history",
-      lines.length > 0 ? lines.join("\n") : "No recorded session history.",
+      sessions.map(formatStoredSessionLine).join("\n"),
       [
-        makeSource("session_history", "sessions directory", {
-          type: lines.length > 0 ? "state" : "none",
-          path: sessionsDir,
+        makeSource("session_history", "execution session store", {
+          type: "state",
           trusted: true,
           accepted: true,
-          retrievalId: lines.length > 0 ? "session:stored" : "none:session_history",
+          retrievalId: "session:stored",
         }),
       ],
     );

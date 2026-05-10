@@ -180,6 +180,19 @@ export {
   ProcessSessionStateStore,
 } from "./process-session-state-store.js";
 export {
+  ExecutionSessionStateStore,
+} from "./execution-session-state-store.js";
+export type {
+  ExecutionSessionListOptions,
+  ExecutionSessionStateStoreOptions,
+} from "./execution-session-state-store.js";
+export {
+  importLegacyExecutionSessionState,
+} from "./execution-session-state-migration.js";
+export type {
+  ExecutionSessionLegacyImportReport,
+} from "./execution-session-state-migration.js";
+export {
   StrategyDreamStateStore,
 } from "./strategy-dream-state-store.js";
 export {
