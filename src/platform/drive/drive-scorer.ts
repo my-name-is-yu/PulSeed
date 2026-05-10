@@ -335,7 +335,7 @@ export function scoreAllDimensions(
     );
     const opportunityRaw = opp !== null && opp !== undefined
       ? (() => {
-          const timeSinceDetected = (Date.now() - new Date(opp.detected_at).getTime()) / (1000 * 60 * 60);
+          const timeSinceDetected = hoursSinceOpportunityDetected(opp.detected_at);
           return scoreOpportunityWithConfig(opp.value, timeSinceDetected, cfg);
         })()
       : scoreOpportunityWithConfig(0, 0, cfg);
@@ -349,6 +349,12 @@ export function scoreAllDimensions(
 
     return { ...combined, dimension_name: dimName };
   });
+}
+
+function hoursSinceOpportunityDetected(detectedAt: string): number {
+  const detectedAtMs = Date.parse(detectedAt);
+  if (!Number.isFinite(detectedAtMs)) return 0;
+  return Math.max(0, (Date.now() - detectedAtMs) / (1000 * 60 * 60));
 }
 
 // ─── Ranking ───

@@ -640,6 +640,40 @@ describe("scoreAllDimensions — edge cases", () => {
     expect(scores[0]!.opportunity).toBe(0);
   });
 
+  it("keeps opportunity scores finite when detected_at is malformed", () => {
+    const gv: GapVector = {
+      goal_id: "goal-1",
+      gaps: [
+        {
+          dimension_name: "dim_bad_timestamp",
+          raw_gap: 0.4,
+          normalized_gap: 0.4,
+          normalized_weighted_gap: 0.4,
+          confidence: 0.8,
+          uncertainty_weight: 1.0,
+        },
+      ],
+      timestamp: new Date().toISOString(),
+    };
+
+    const ctx: DriveContext = {
+      time_since_last_attempt: { dim_bad_timestamp: 0 },
+      deadlines: { dim_bad_timestamp: null },
+      opportunities: {
+        dim_bad_timestamp: {
+          value: 0.75,
+          detected_at: "not-a-date",
+        },
+      },
+      pacing: {},
+    };
+
+    const scores = scoreAllDimensions(gv, ctx, DEFAULT_CONFIG);
+    expect(scores).toHaveLength(1);
+    expect(Number.isFinite(scores[0]!.opportunity)).toBe(true);
+    expect(scores[0]!.opportunity).toBe(0.75);
+  });
+
   it("empty gaps array returns empty scores", () => {
     const gv: GapVector = {
       goal_id: "goal-1",
