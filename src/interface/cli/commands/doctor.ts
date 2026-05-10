@@ -37,6 +37,11 @@ import { assessTaskAgentLoopToolProfileFromTools, nativeTaskAgentLoopToolProfile
 import { ToolRegistry } from "../../../tools/registry.js";
 import { createBuiltinTools } from "../../../tools/builtin/index.js";
 import { importLegacyChatAgentLoopSessionState } from "../../chat/chat-agentloop-state-migration.js";
+import {
+  formatDurationMs,
+  formatPercent,
+  formatRelativeTimestamp,
+} from "./display-format.js";
 
 // ─── Types ───
 
@@ -83,30 +88,12 @@ async function resolveRepairRuntimeRoot(baseDir: string): Promise<string> {
   return resolveDaemonRuntimeRoot(baseDir, daemonConfig.runtime_root);
 }
 
-function formatRelativeTimestamp(timestamp: number): string {
-  const ms = Date.now() - timestamp;
-  if (ms < 60000) return `${Math.floor(ms / 1000)}s ago`;
-  if (ms < 3600000) return `${Math.floor(ms / 60000)}m ago`;
-  if (ms < 86400000) return `${Math.floor(ms / 3600000)}h ago`;
-  return `${Math.floor(ms / 86400000)}d ago`;
-}
-
 function formatCompactKpiDetail(kpi: RuntimeHealthKpi): string {
   const compact = compactRuntimeHealthKpi(kpi);
   if (!compact) {
     return "KPI unavailable";
   }
   return `KPI process=${compact.process_alive ? "up" : "down"} accept=${compact.can_accept_command ? "up" : "down"} execute=${compact.can_execute_task ? "up" : "down"} (${compact.status})`;
-}
-
-function formatDurationMs(ms: number): string {
-  if (ms < 1000) return `${ms}ms`;
-  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
-  return `${(ms / 60_000).toFixed(1)}m`;
-}
-
-function formatPercent(value: number | null): string {
-  return value === null ? "n/a" : `${(value * 100).toFixed(1)}%`;
 }
 
 function formatFailureReasonCounts(failureReasons: {

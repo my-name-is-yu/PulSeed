@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { makeTempDir, cleanupTempDir } from "../../../../tests/helpers/temp-dir.js";
+import type * as PathsModule from "../../../base/utils/paths.js";
 
 // ─── cmdDaemonStatus tests ───
 
@@ -9,7 +10,7 @@ import { makeTempDir, cleanupTempDir } from "../../../../tests/helpers/temp-dir.
 // so it points to a temp directory we control.
 
 vi.mock("../../../base/utils/paths.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../../base/utils/paths.js")>();
+  const actual = await importOriginal<typeof PathsModule>();
   return {
     ...actual,
     getPulseedDirPath: vi.fn(() => "/tmp/pulseed-test-placeholder"),
@@ -407,6 +408,63 @@ describe("cmdDaemonStatus", () => {
     expect(output).toContain("Task KPIs:");
     expect(output).toContain("Success rate:    1/1 (100.0%)");
     expect(output).toContain("Ack latency:     p95 1.0s");
+  });
+
+  it("does not throw on out-of-range persisted runtime health timestamps", async () => {
+    const now = Date.now();
+    const outOfDateRangeTimestamp = 9_000_000_000_000_000;
+    await saveRuntimeHealthFixture(
+      tmpDir,
+      {
+        status: "degraded",
+        leader: true,
+        checked_at: now,
+        kpi: {
+          process_alive: { status: "ok", checked_at: now, last_ok_at: now },
+          command_acceptance: { status: "degraded", checked_at: now, last_degraded_at: now },
+          task_execution: { status: "ok", checked_at: now, last_ok_at: now },
+          degraded_at: outOfDateRangeTimestamp,
+          recovered_at: outOfDateRangeTimestamp,
+        },
+      },
+      {
+        checked_at: now,
+        components: {
+          gateway: "degraded",
+          queue: "ok",
+          leases: "ok",
+          approval: "ok",
+          outbox: "ok",
+          supervisor: "ok",
+        },
+      }
+    );
+    await saveDaemonStateFixture(tmpDir, runningDaemonState({
+      pid: process.pid,
+      started_at: new Date(now - 60_000).toISOString(),
+      last_loop_at: new Date(now).toISOString(),
+    }));
+    fs.writeFileSync(
+      path.join(tmpDir, "pulseed.pid"),
+      JSON.stringify({
+        pid: process.pid,
+        runtime_pid: process.pid,
+        owner_pid: process.pid,
+        started_at: new Date(now).toISOString(),
+      })
+    );
+    const inspectSpy = mockPidInspectRunning(process.pid);
+
+    await cmdDaemonStatus([]);
+    inspectSpy.mockRestore();
+
+    const output = consoleSpy.mock.calls[0]?.[0] as string;
+    expect(output).toContain("Runtime health:");
+    expect(output).toContain("Degraded at:     n/a");
+    expect(output).toContain("Recovered at:    n/a");
+    expect(output).not.toContain("Invalid Date");
+    expect(output).not.toContain("NaN");
+    expect(output).not.toContain("Infinity");
   });
 
   it("separates unrelated approvals from the active goal blocker in long-run health output", async () => {
