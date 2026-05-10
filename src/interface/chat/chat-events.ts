@@ -4,6 +4,7 @@ import type { AgentTimelineItem } from "../../orchestrator/execution/agent-loop/
 import type { ChatEventContext } from "./turn-state.js";
 import type { GatewayPublicProgress } from "./gateway-progress.js";
 import type { OperationProgressItem } from "./operation-progress.js";
+import type { SeedyTurnPresence } from "./seedy-turn-presence.js";
 import type { UserInput } from "./user-input.js";
 import type { TurnOperation, TurnSteerOperation } from "./turn-protocol.js";
 
@@ -99,6 +100,11 @@ export interface OperationProgressEvent extends ChatEventBase {
   item: OperationProgressItem;
 }
 
+export interface PresenceUpdateEvent extends ChatEventBase {
+  type: "presence_update";
+  presence: SeedyTurnPresence;
+}
+
 export interface LifecycleEndEvent extends ChatEventBase {
   type: "lifecycle_end";
   status: "completed" | "error";
@@ -122,6 +128,7 @@ export type ChatEvent =
   | ActivityEvent
   | AgentTimelineEvent
   | OperationProgressEvent
+  | PresenceUpdateEvent
   | ToolStartEvent
   | ToolUpdateEvent
   | ToolEndEvent

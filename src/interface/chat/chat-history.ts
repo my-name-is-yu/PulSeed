@@ -773,6 +773,14 @@ function rolloutProjectionFromChatEvent(event: ChatEvent): {
       },
     };
   }
+  if (event.type === "presence_update") {
+    return {
+      kind: "display_event",
+      source: "chat_event",
+      visibility: visibilityFromSeedyPresenceAudience(event.presence.audience),
+      payload: { event },
+    };
+  }
   if (event.type === "lifecycle_end" || event.type === "lifecycle_error") {
     return {
       kind: "completion_state",
@@ -787,6 +795,19 @@ function rolloutProjectionFromChatEvent(event: ChatEvent): {
     visibility: "display",
     payload: { event },
   };
+}
+
+function visibilityFromSeedyPresenceAudience(
+  audience: Extract<ChatEvent, { type: "presence_update" }>["presence"]["audience"],
+): ChatRolloutJournalRecord["visibility"] {
+  switch (audience) {
+    case "user":
+      return "display";
+    case "diagnostic":
+      return "debug";
+    case "internal":
+      return "host_only";
+  }
 }
 
 function rolloutProjectionFromAgentTimelineEvent(event: Extract<ChatEvent, { type: "agent_timeline" }>): {
