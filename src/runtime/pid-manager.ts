@@ -2,7 +2,7 @@ import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { execFileSync } from "node:child_process";
 import { writeJsonFile } from "../base/utils/json-io.js";
-import { parseProcessPid } from "../base/utils/process-pid.js";
+import { parseProcessPid, signalProcessPid } from "../base/utils/process-pid.js";
 import { PIDInfoSchema, type PIDInfo } from "./types/daemon.js";
 
 const PID_EPOCH_ISO = "1970-01-01T00:00:00.000Z";
@@ -458,12 +458,7 @@ export class PIDManager {
   }
 
   private isPidAlive(pid: number): boolean {
-    try {
-      process.kill(pid, 0);
-      return true;
-    } catch {
-      return false;
-    }
+    return signalProcessPid(pid, 0).status === "sent";
   }
 
   private async getTrackedPidState(
@@ -506,8 +501,7 @@ export class PIDManager {
 
   private sendSignal(pid: number, signal: NodeJS.Signals): boolean {
     try {
-      process.kill(pid, signal);
-      return true;
+      return signalProcessPid(pid, signal).status === "sent";
     } catch {
       return false;
     }
