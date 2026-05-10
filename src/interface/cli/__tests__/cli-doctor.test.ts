@@ -164,6 +164,19 @@ describe("checkProviderConfig", () => {
     expect(result.status).toBe("fail");
     expect(result.detail).toContain("invalid JSON");
   });
+
+  it("fails before parsing oversized provider.json", () => {
+    fs.writeFileSync(
+      path.join(tmpDir, "provider.json"),
+      JSON.stringify({ provider: "openai", model: "x".repeat(1024 * 1024) }),
+      "utf-8",
+    );
+
+    const result = checkProviderConfig(tmpDir);
+
+    expect(result.status).toBe("fail");
+    expect(result.detail).toContain("exceeds 1048576 bytes");
+  });
 });
 
 describe("checkApiKey", () => {
@@ -419,6 +432,21 @@ describe("checkProviderConfigPermissions", () => {
     const result = checkProviderConfigPermissions(tmpDir);
     expect(result.status).toBe("warn");
     expect(result.detail).toContain("recommended 0600");
+  });
+
+  it("warns before parsing oversized provider.json", () => {
+    fs.writeFileSync(
+      providerPath,
+      JSON.stringify({ api_key: "sk-test", padding: "x".repeat(1024 * 1024) }),
+      "utf-8",
+    );
+    fs.chmodSync(providerPath, 0o644);
+
+    const result = checkProviderConfigPermissions(tmpDir);
+
+    expect(result.status).toBe("warn");
+    expect(result.detail).toContain("exceeds 1048576 bytes");
+    expect(result.detail).not.toContain("recommended 0600");
   });
 });
 

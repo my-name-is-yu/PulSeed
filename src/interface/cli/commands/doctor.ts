@@ -5,7 +5,11 @@ import * as path from "node:path";
 import { getPulseedDirPath, getLogsDir, getPluginsDir } from "../../../base/utils/paths.js";
 import { execFileNoThrow } from "../../../base/utils/execFileNoThrow.js";
 import { getCliRunnerBuildPath } from "../../../base/utils/pulseed-meta.js";
-import { readJsonFileOrNull } from "../../../base/utils/json-io.js";
+import {
+  isTextFileSizeLimitError,
+  readJsonFileOrNull,
+  readTextFileWithinLimitSync,
+} from "../../../base/utils/json-io.js";
 import { isJwtExpired, loadProviderConfig, resolveOpenAIApiKey, validateProviderConfig } from "../../../base/llm/provider-config.js";
 import { DaemonConfigSchema } from "../../../base/types/daemon.js";
 import { PIDManager } from "../../../runtime/pid-manager.js";
@@ -59,6 +63,8 @@ import {
 // ─── Types ───
 
 type CheckStatus = "pass" | "fail" | "warn";
+
+const DOCTOR_PROVIDER_CONFIG_TEXT_MAX_BYTES = 1024 * 1024;
 
 export interface CheckResult {
   name: string;
@@ -147,6 +153,19 @@ function formatNameList(names: string[], limit = 5): string {
   return names.length > limit ? `${shown}, +${names.length - limit} more` : shown;
 }
 
+function readProviderConfigTextSync(configPath: string): string {
+  return readTextFileWithinLimitSync(configPath, {
+    maxBytes: DOCTOR_PROVIDER_CONFIG_TEXT_MAX_BYTES,
+  });
+}
+
+function formatProviderConfigParseFailure(displayPath: string, err: unknown): string {
+  if (isTextFileSizeLimitError(err)) {
+    return `${displayPath} exceeds ${DOCTOR_PROVIDER_CONFIG_TEXT_MAX_BYTES} bytes`;
+  }
+  return `${displayPath} is invalid JSON`;
+}
+
 // ─── Individual checks ───
 
 export function checkNodeVersion(): CheckResult {
@@ -177,11 +196,11 @@ export function checkProviderConfig(baseDir?: string): CheckResult {
   }
 
   try {
-    const content = fs.readFileSync(configPath, "utf-8");
+    const content = readProviderConfigTextSync(configPath);
     JSON.parse(content);
     return { name: "Provider config", status: "pass", detail: `${displayPath} found` };
-  } catch {
-    return { name: "Provider config", status: "fail", detail: `${displayPath} is invalid JSON` };
+  } catch (err) {
+    return { name: "Provider config", status: "fail", detail: formatProviderConfigParseFailure(displayPath, err) };
   }
 }
 
@@ -391,15 +410,18 @@ export function checkProviderConfigPermissions(baseDir?: string): CheckResult {
 
   let hasStoredApiKey = false;
   try {
-    const content = fs.readFileSync(configPath, "utf-8");
+    const content = readProviderConfigTextSync(configPath);
     const parsed = JSON.parse(content) as unknown;
     hasStoredApiKey =
       parsed !== null &&
       typeof parsed === "object" &&
       typeof (parsed as Record<string, unknown>)["api_key"] === "string" &&
       ((parsed as Record<string, string>)["api_key"] ?? "").length > 0;
-  } catch {
-    return { name: "Provider permissions", status: "warn", detail: `${displayPath} could not be parsed` };
+  } catch (err) {
+    const detail = isTextFileSizeLimitError(err)
+      ? `${displayPath} exceeds ${DOCTOR_PROVIDER_CONFIG_TEXT_MAX_BYTES} bytes`
+      : `${displayPath} could not be parsed`;
+    return { name: "Provider permissions", status: "warn", detail };
   }
 
   if (!hasStoredApiKey) {
