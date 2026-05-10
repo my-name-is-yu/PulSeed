@@ -175,17 +175,7 @@ export function publicProgressFromAgentTimelineItem(item: AgentTimelineItem): Ga
     case "final":
       return null;
     case "assistant_message":
-      return item.phase === "final_candidate"
-        ? {
-          audience: "user",
-          phase: "finalizing",
-          importance: "heartbeat",
-          verbosity: "summary",
-          subject: "the final response",
-          reason: "separate the answer from transient progress",
-          diagnosticRef: item.sourceEventId,
-        }
-        : null;
+      return null;
     case "tool": {
       const activity = item.activityCategory ?? "command";
       return {

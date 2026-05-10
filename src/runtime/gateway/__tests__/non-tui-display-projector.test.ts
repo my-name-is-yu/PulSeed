@@ -333,6 +333,32 @@ describe("non-TUI display projector", () => {
     expect(transport.calls.join("\n")).not.toContain("openai/gpt");
   });
 
+  it("does not expose assistant final candidates as transient progress", async () => {
+    const transport = createTransport();
+    const projector = new NonTuiDisplayProjector({
+      display: resolveGatewayChannelDisplayContract(TELEGRAM_GATEWAY_DISPLAY_CONTRACT),
+      transport,
+    });
+
+    await projector.handle({
+      ...base,
+      type: "agent_timeline",
+      item: {
+        ...timelineBase,
+        sourceEventId: "assistant-final-candidate-1",
+        sourceType: "assistant_message",
+        kind: "assistant_message",
+        phase: "final_candidate",
+        text: "Final answer draft",
+        toolCallCount: 0,
+      },
+    });
+
+    expect(transport.sendProgress).not.toHaveBeenCalled();
+    expect(transport.editProgress).not.toHaveBeenCalled();
+    expect(transport.calls.join("\n")).not.toContain("Finalizing");
+  });
+
   it("renders explicit public narration from typed presentation even when the diagnostic message looks internal", async () => {
     const transport = createTransport();
     const projector = new NonTuiDisplayProjector({
