@@ -3,7 +3,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { RuntimeExperimentQueueStore } from "../store/experiment-queue-store.js";
-import { createRuntimeStorePaths } from "../store/runtime-paths.js";
+import { openControlDatabase, type SqliteDatabase } from "../store/control-db/index.js";
 
 describe("RuntimeExperimentQueueStore", () => {
   let tmpDir: string;
@@ -43,6 +43,7 @@ describe("RuntimeExperimentQueueStore", () => {
     const restarted = new RuntimeExperimentQueueStore(path.join(tmpDir, "runtime"));
     const directive = await restarted.nextExecutionDirective("queue-a");
 
+    await expect(fsp.stat(path.join(tmpDir, "runtime", "experiment-queues", "queue-a.json"))).rejects.toThrow();
     expect(directive).toMatchObject({
       mode: "execute_frozen_queue_item",
       queue_id: "queue-a",
@@ -231,13 +232,12 @@ describe("RuntimeExperimentQueueStore", () => {
       items: [item("exp-a", { seed: 1 })],
     });
 
-    const queuePath = createRuntimeStorePaths(path.join(tmpDir, "runtime")).experimentQueuePath("queue-unsafe-version");
-    const persisted = JSON.parse(await fsp.readFile(queuePath, "utf-8")) as {
+    await corruptPersistedQueue("queue-unsafe-version", (persisted: {
       current_version: number;
       revisions: Array<{ version: number }>;
-    };
+    }) => {
     persisted.current_version = Number.MAX_SAFE_INTEGER + 1;
-    await fsp.writeFile(queuePath, JSON.stringify(persisted, null, 2), "utf-8");
+    });
 
     await expect(store.load("queue-unsafe-version")).resolves.toBeNull();
   });
@@ -256,14 +256,13 @@ describe("RuntimeExperimentQueueStore", () => {
       items: [item("exp-b", { seed: 2 })],
     });
 
-    const queuePath = createRuntimeStorePaths(path.join(tmpDir, "runtime")).experimentQueuePath("queue-unsafe-revision");
-    const persisted = JSON.parse(await fsp.readFile(queuePath, "utf-8")) as {
+    await corruptPersistedQueue("queue-unsafe-revision", (persisted: {
       current_version: number;
       revisions: Array<{ version: number }>;
-    };
+    }) => {
     persisted.current_version = 1;
     persisted.revisions[1]!.version = Number.MAX_SAFE_INTEGER + 1;
-    await fsp.writeFile(queuePath, JSON.stringify(persisted, null, 2), "utf-8");
+    });
 
     await expect(store.load("queue-unsafe-revision")).resolves.toBeNull();
   });
@@ -282,15 +281,40 @@ describe("RuntimeExperimentQueueStore", () => {
       items: [item("exp-b", { seed: 2 })],
     });
 
-    const queuePath = createRuntimeStorePaths(path.join(tmpDir, "runtime")).experimentQueuePath("queue-unsafe-revision-of");
-    const persisted = JSON.parse(await fsp.readFile(queuePath, "utf-8")) as {
+    await corruptPersistedQueue("queue-unsafe-revision-of", (persisted: {
       revisions: Array<{ revision_of: number | null }>;
-    };
+    }) => {
     persisted.revisions[1]!.revision_of = Number.MAX_SAFE_INTEGER + 1;
-    await fsp.writeFile(queuePath, JSON.stringify(persisted, null, 2), "utf-8");
+    });
 
     await expect(store.load("queue-unsafe-revision-of")).resolves.toBeNull();
   });
+
+  async function corruptPersistedQueue<T extends Record<string, unknown>>(
+    queueId: string,
+    mutate: (persisted: T) => void,
+  ): Promise<void> {
+    const db = await openControlDatabase({ baseDir: tmpDir });
+    try {
+      const row = db.read((sqlite) => sqlite.prepare(`
+        SELECT record_json
+        FROM runtime_experiment_queues
+        WHERE queue_id = ?
+      `).get(queueId) as { record_json: string } | undefined);
+      if (!row) throw new Error(`Missing persisted queue: ${queueId}`);
+      const persisted = JSON.parse(row.record_json) as T;
+      mutate(persisted);
+      db.transaction((sqlite: SqliteDatabase) => {
+        sqlite.prepare(`
+          UPDATE runtime_experiment_queues
+          SET record_json = json(?)
+          WHERE queue_id = ?
+        `).run(JSON.stringify(persisted), queueId);
+      });
+    } finally {
+      db.close();
+    }
+  }
 });
 
 function provenance(source: string) {

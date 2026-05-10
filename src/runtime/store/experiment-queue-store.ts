@@ -3,7 +3,12 @@ import {
   createRuntimeStorePaths,
   type RuntimeStorePaths,
 } from "./runtime-paths.js";
-import { RuntimeJournal } from "./runtime-journal.js";
+import {
+  openRuntimeControlDatabase,
+  type ControlDatabase,
+  type RuntimeControlDbStoreOptions,
+  type SqliteDatabase,
+} from "./control-db/index.js";
 import {
   RuntimeEvidenceArtifactRefSchema,
   RuntimeEvidenceMetricSchema,
@@ -166,24 +171,30 @@ const TERMINAL_ITEM_STATUSES = new Set<RuntimeExperimentQueueItemStatus>([
 
 export class RuntimeExperimentQueueStore {
   private readonly paths: RuntimeStorePaths;
-  private readonly journal: RuntimeJournal;
+  private readonly dbOptions: RuntimeControlDbStoreOptions;
+  private dbPromise: Promise<ControlDatabase> | null = null;
   private readonly now: () => Date;
 
-  constructor(runtimeRootOrPaths?: string | RuntimeStorePaths, options: { now?: () => Date } = {}) {
+  constructor(
+    runtimeRootOrPaths?: string | RuntimeStorePaths,
+    options: { now?: () => Date } & RuntimeControlDbStoreOptions = {}
+  ) {
     this.paths =
       typeof runtimeRootOrPaths === "string"
         ? createRuntimeStorePaths(runtimeRootOrPaths)
         : runtimeRootOrPaths ?? createRuntimeStorePaths();
-    this.journal = new RuntimeJournal(this.paths);
+    this.dbOptions = options;
     this.now = options.now ?? (() => new Date());
   }
 
   async load(queueId: string): Promise<RuntimeExperimentQueueRecord | null> {
-    return this.journal.load(this.paths.experimentQueuePath(queueId), RuntimeExperimentQueueRecordRuntimeSchema);
+    const db = await this.database();
+    return db.read((sqlite) => readExperimentQueue(sqlite, queueId));
   }
 
   async list(): Promise<RuntimeExperimentQueueRecord[]> {
-    return this.journal.list(this.paths.experimentQueuesDir, RuntimeExperimentQueueRecordRuntimeSchema);
+    const db = await this.database();
+    return db.read((sqlite) => listExperimentQueues(sqlite));
   }
 
   async create(input: RuntimeExperimentQueueCreateInput): Promise<RuntimeExperimentQueueRecord> {
@@ -386,7 +397,19 @@ export class RuntimeExperimentQueueStore {
   }
 
   private async save(queue: RuntimeExperimentQueueRecord): Promise<RuntimeExperimentQueueRecord> {
-    return this.journal.save(this.paths.experimentQueuePath(queue.queue_id), RuntimeExperimentQueueRecordRuntimeSchema, queue);
+    const parsed = RuntimeExperimentQueueRecordRuntimeSchema.parse(queue);
+    const db = await this.database();
+    db.transaction((sqlite) => upsertExperimentQueue(sqlite, parsed));
+    return parsed;
+  }
+
+  async importLegacyRecord(record: RuntimeExperimentQueueRecord): Promise<RuntimeExperimentQueueRecord> {
+    return this.save(RuntimeExperimentQueueRecordRuntimeSchema.parse(record));
+  }
+
+  private async database(): Promise<ControlDatabase> {
+    this.dbPromise ??= openRuntimeControlDatabase(this.paths, this.dbOptions);
+    return this.dbPromise;
   }
 
   private normalizeItem(input: RuntimeExperimentQueueItemInput, updatedAt: string): RuntimeExperimentQueueItem {
@@ -416,6 +439,70 @@ export class RuntimeExperimentQueueStore {
   private nowIso(): string {
     return this.now().toISOString();
   }
+}
+
+interface ExperimentQueueRow {
+  record_json: string;
+}
+
+function parseExperimentQueueJson(recordJson: string): RuntimeExperimentQueueRecord | null {
+  try {
+    const parsed = RuntimeExperimentQueueRecordRuntimeSchema.safeParse(JSON.parse(recordJson) as unknown);
+    return parsed.success ? parsed.data : null;
+  } catch {
+    return null;
+  }
+}
+
+function readExperimentQueue(sqlite: SqliteDatabase, queueId: string): RuntimeExperimentQueueRecord | null {
+  const row = sqlite.prepare(`
+    SELECT record_json
+    FROM runtime_experiment_queues
+    WHERE queue_id = ?
+  `).get(queueId) as ExperimentQueueRow | undefined;
+  return row ? parseExperimentQueueJson(row.record_json) : null;
+}
+
+function listExperimentQueues(sqlite: SqliteDatabase): RuntimeExperimentQueueRecord[] {
+  const rows = sqlite.prepare(`
+    SELECT record_json
+    FROM runtime_experiment_queues
+    ORDER BY queue_id ASC
+  `).all() as ExperimentQueueRow[];
+  return rows.flatMap((row) => {
+    const record = parseExperimentQueueJson(row.record_json);
+    return record ? [record] : [];
+  });
+}
+
+function upsertExperimentQueue(sqlite: SqliteDatabase, record: RuntimeExperimentQueueRecord): void {
+  sqlite.prepare(`
+    INSERT INTO runtime_experiment_queues (
+      queue_id,
+      goal_id,
+      run_id,
+      current_version,
+      created_at,
+      updated_at,
+      record_json
+    )
+    VALUES (?, ?, ?, ?, ?, ?, json(?))
+    ON CONFLICT(queue_id) DO UPDATE SET
+      goal_id = excluded.goal_id,
+      run_id = excluded.run_id,
+      current_version = excluded.current_version,
+      created_at = excluded.created_at,
+      updated_at = excluded.updated_at,
+      record_json = excluded.record_json
+  `).run(
+    record.queue_id,
+    record.goal_id ?? null,
+    record.run_id ?? null,
+    record.current_version,
+    record.created_at,
+    record.updated_at,
+    JSON.stringify(record),
+  );
 }
 
 function stableConfigKey(config: Record<string, unknown>): string {

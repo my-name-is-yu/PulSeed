@@ -7,7 +7,6 @@ export {
 export type { RuntimeStorePaths } from "./runtime-paths.js";
 
 export {
-  RuntimeJournal,
   ensureRuntimeDirectory,
   listRuntimeJson,
   loadRuntimeJson,
@@ -26,6 +25,7 @@ export {
   CONTROL_DB_PLUGIN_CHANNEL_RUNTIME_SCHEMA_SQL,
   CONTROL_DB_QUEUE_DAEMON_SCHEDULE_SCHEMA_SQL,
   CONTROL_DB_RUNTIME_EVIDENCE_STRATEGY_DREAM_SCHEMA_SQL,
+  CONTROL_DB_RUNTIME_JOURNAL_REPLACEMENT_SCHEMA_SQL,
   CONTROL_DB_RUNTIME_CONTROL_SCHEMA_SQL,
   CONTROL_DB_RUNTIME_STATE_OWNERSHIP_SCHEMA_SQL,
   CONTROL_DB_SCHEMA_VERSION,
@@ -561,6 +561,13 @@ export type {
   ImportLegacyRuntimeControlStoresInput,
   ImportLegacyRuntimeControlStoresResult,
 } from "./runtime-control-store-migration.js";
+export {
+  importLegacyRuntimeFileState,
+} from "./runtime-journal-state-migration.js";
+export type {
+  ImportLegacyRuntimeFileStateInput,
+  ImportLegacyRuntimeFileStateResult,
+} from "./runtime-journal-state-migration.js";
 export { PluginChannelRuntimeStateStore } from "./plugin-channel-runtime-state-store.js";
 export type {
   GatewayChannelBinding,

@@ -19,11 +19,6 @@ export interface RuntimeStorePaths {
   permissionWaitPlansDir: string;
   outboxDir: string;
   backgroundRunsDir: string;
-  authHandoffsDir: string;
-  browserSessionsDir: string;
-  evidenceLedgerDir: string;
-  evidenceLedgerGoalsDir: string;
-  evidenceLedgerRunsDir: string;
   safePausesDir: string;
   leasesDir: string;
   goalLeasesDir: string;
@@ -31,14 +26,9 @@ export interface RuntimeStorePaths {
   healthDir: string;
   guardrailsDir: string;
   guardrailBreakersDir: string;
-  proactiveInterventionsDir: string;
   reproducibilityManifestsDir: string;
-  experimentQueuesDir: string;
-  budgetsDir: string;
-  operatorHandoffsDir: string;
   postmortemsDir: string;
   backpressureSnapshotPath: string;
-  proactiveInterventionLedgerPath: string;
   daemonHealthPath: string;
   componentsHealthPath: string;
   inboxBucketDir(dateKey: string): string;
@@ -49,16 +39,9 @@ export interface RuntimeStorePaths {
   permissionWaitPlanPath(waitPlanId: string): string;
   outboxRecordPath(seq: number): string;
   backgroundRunPath(runId: string): string;
-  authHandoffPath(handoffId: string): string;
-  browserSessionPath(sessionId: string): string;
-  evidenceGoalPath(goalId: string): string;
-  evidenceRunPath(runId: string): string;
   safePausePath(goalId: string): string;
   guardrailBreakerPath(key: string): string;
   reproducibilityManifestPath(manifestId: string): string;
-  experimentQueuePath(queueId: string): string;
-  budgetPath(budgetId: string): string;
-  operatorHandoffPath(handoffId: string): string;
   postmortemDir(postmortemId: string): string;
   postmortemJsonPath(postmortemId: string): string;
   postmortemMarkdownPath(postmortemId: string): string;
@@ -109,11 +92,6 @@ export function createRuntimeStorePaths(runtimeRoot?: string): RuntimeStorePaths
   const permissionWaitPlansDir = path.join(rootDir, "permission-wait-plans");
   const outboxDir = path.join(rootDir, "outbox");
   const backgroundRunsDir = path.join(rootDir, "background-runs");
-  const authHandoffsDir = path.join(rootDir, "auth-handoffs");
-  const browserSessionsDir = path.join(rootDir, "browser-sessions");
-  const evidenceLedgerDir = path.join(rootDir, "evidence-ledger");
-  const evidenceLedgerGoalsDir = path.join(evidenceLedgerDir, "goals");
-  const evidenceLedgerRunsDir = path.join(evidenceLedgerDir, "runs");
   const safePausesDir = path.join(rootDir, "safe-pauses");
   const leasesDir = path.join(rootDir, "leases");
   const goalLeasesDir = path.join(leasesDir, "goal");
@@ -121,11 +99,7 @@ export function createRuntimeStorePaths(runtimeRoot?: string): RuntimeStorePaths
   const healthDir = path.join(rootDir, "health");
   const guardrailsDir = path.join(rootDir, "guardrails");
   const guardrailBreakersDir = path.join(guardrailsDir, "breakers");
-  const proactiveInterventionsDir = path.join(rootDir, "proactive-interventions");
   const reproducibilityManifestsDir = path.join(rootDir, "reproducibility-manifests");
-  const experimentQueuesDir = path.join(rootDir, "experiment-queues");
-  const budgetsDir = path.join(rootDir, "budgets");
-  const operatorHandoffsDir = path.join(rootDir, "operator-handoffs");
   const postmortemsDir = path.join(rootDir, "postmortems");
 
   return {
@@ -144,11 +118,6 @@ export function createRuntimeStorePaths(runtimeRoot?: string): RuntimeStorePaths
     permissionWaitPlansDir,
     outboxDir,
     backgroundRunsDir,
-    authHandoffsDir,
-    browserSessionsDir,
-    evidenceLedgerDir,
-    evidenceLedgerGoalsDir,
-    evidenceLedgerRunsDir,
     safePausesDir,
     leasesDir,
     goalLeasesDir,
@@ -156,14 +125,9 @@ export function createRuntimeStorePaths(runtimeRoot?: string): RuntimeStorePaths
     healthDir,
     guardrailsDir,
     guardrailBreakersDir,
-    proactiveInterventionsDir,
     reproducibilityManifestsDir,
-    experimentQueuesDir,
-    budgetsDir,
-    operatorHandoffsDir,
     postmortemsDir,
     backpressureSnapshotPath: path.join(guardrailsDir, "backpressure.json"),
-    proactiveInterventionLedgerPath: path.join(proactiveInterventionsDir, "events.jsonl"),
     daemonHealthPath: path.join(healthDir, "daemon.json"),
     componentsHealthPath: path.join(healthDir, "components.json"),
     inboxBucketDir(dateKey: string) {
@@ -190,18 +154,6 @@ export function createRuntimeStorePaths(runtimeRoot?: string): RuntimeStorePaths
     backgroundRunPath(runId: string) {
       return path.join(backgroundRunsDir, recordFileName(encodeRuntimePathSegment(runId)));
     },
-    authHandoffPath(handoffId: string) {
-      return path.join(authHandoffsDir, recordFileName(encodeRuntimePathSegment(handoffId)));
-    },
-    browserSessionPath(sessionId: string) {
-      return path.join(browserSessionsDir, recordFileName(encodeRuntimePathSegment(sessionId)));
-    },
-    evidenceGoalPath(goalId: string) {
-      return path.join(evidenceLedgerGoalsDir, `${encodeRuntimePathSegment(goalId)}.jsonl`);
-    },
-    evidenceRunPath(runId: string) {
-      return path.join(evidenceLedgerRunsDir, `${encodeRuntimePathSegment(runId)}.jsonl`);
-    },
     safePausePath(goalId: string) {
       return path.join(safePausesDir, `${encodeRuntimePathSegment(goalId)}.json`);
     },
@@ -210,15 +162,6 @@ export function createRuntimeStorePaths(runtimeRoot?: string): RuntimeStorePaths
     },
     reproducibilityManifestPath(manifestId: string) {
       return path.join(reproducibilityManifestsDir, recordFileName(encodeRuntimePathSegment(manifestId)));
-    },
-    experimentQueuePath(queueId: string) {
-      return path.join(experimentQueuesDir, recordFileName(encodeRuntimePathSegment(queueId)));
-    },
-    budgetPath(budgetId: string) {
-      return path.join(budgetsDir, recordFileName(encodeRuntimePathSegment(budgetId)));
-    },
-    operatorHandoffPath(handoffId: string) {
-      return path.join(operatorHandoffsDir, recordFileName(encodeRuntimePathSegment(handoffId)));
     },
     postmortemDir(postmortemId: string) {
       return path.join(postmortemsDir, encodeRuntimePathSegment(postmortemId));
@@ -253,17 +196,8 @@ export async function ensureRuntimeStorePaths(paths: RuntimeStorePaths): Promise
       paths.completedDir,
       paths.completedByIdempotencyDir,
       paths.completedByMessageDir,
-      paths.authHandoffsDir,
-      paths.browserSessionsDir,
-      paths.evidenceLedgerDir,
-      paths.evidenceLedgerGoalsDir,
-      paths.evidenceLedgerRunsDir,
       paths.dlqDir,
-      paths.proactiveInterventionsDir,
       paths.reproducibilityManifestsDir,
-      paths.experimentQueuesDir,
-      paths.budgetsDir,
-      paths.operatorHandoffsDir,
       paths.postmortemsDir,
     ].map((dir) => fsp.mkdir(dir, { recursive: true }))
   );

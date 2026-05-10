@@ -23,15 +23,17 @@ interface RuntimeGuardrailSummary {
 export async function loadOpenOperatorHandoffsFromRuntime(
   stateManager: StateManager
 ): Promise<RuntimeOperatorHandoffRecord[]> {
-  const runtimeRoot = path.join(stateManager.getBaseDir(), "runtime");
-  return new RuntimeOperatorHandoffStore(runtimeRoot).listOpen();
+  const baseDir = stateManager.getBaseDir();
+  const runtimeRoot = path.join(baseDir, "runtime");
+  return new RuntimeOperatorHandoffStore(runtimeRoot, { controlBaseDir: baseDir }).listOpen();
 }
 
 export async function loadRuntimeBudgetsFromRuntime(
   stateManager: StateManager
 ): Promise<RuntimeBudgetProjection[]> {
   try {
-    const store = new RuntimeBudgetStore(path.join(stateManager.getBaseDir(), "runtime"));
+    const baseDir = stateManager.getBaseDir();
+    const store = new RuntimeBudgetStore(path.join(baseDir, "runtime"), { controlBaseDir: baseDir });
     return createRuntimeBudgetProjections(store, await store.list());
   } catch {
     return [];
@@ -124,15 +126,18 @@ export async function formatGuardrailStatus(input: {
 }
 
 async function loadPendingAuthSessionsFromRuntime(stateManager: StateManager): Promise<Array<Record<string, unknown>>> {
-  const runtimeRoot = path.join(stateManager.getBaseDir(), "runtime");
-  return new BrowserSessionStore(runtimeRoot).listPendingAuth() as Promise<Array<Record<string, unknown>>>;
+  const baseDir = stateManager.getBaseDir();
+  const runtimeRoot = path.join(baseDir, "runtime");
+  return new BrowserSessionStore(runtimeRoot, { controlBaseDir: baseDir }).listPendingAuth() as Promise<Array<Record<string, unknown>>>;
 }
 
 async function loadGuardrailsFromRuntime(stateManager: StateManager): Promise<RuntimeGuardrailSummary> {
-  const runtimeRoot = path.join(stateManager.getBaseDir(), "runtime");
+  const baseDir = stateManager.getBaseDir();
+  const runtimeRoot = path.join(baseDir, "runtime");
+  const controlDbOptions = { controlBaseDir: baseDir };
   const [breakers, backpressure] = await Promise.all([
-    new GuardrailStore(runtimeRoot).listBreakers(),
-    new GuardrailStore(runtimeRoot).loadBackpressureSnapshot(),
+    new GuardrailStore(runtimeRoot, controlDbOptions).listBreakers(),
+    new GuardrailStore(runtimeRoot, controlDbOptions).loadBackpressureSnapshot(),
   ]);
   return {
     openBreakers: breakers.filter((breaker) =>

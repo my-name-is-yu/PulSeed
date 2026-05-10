@@ -191,7 +191,7 @@ export async function persistResidentActivity(
   context.state.resident_activity = residentActivity;
   if (context.baseDir && context.config) {
     const runtimeRoot = resolveDaemonRuntimeRoot(context.baseDir, context.config.runtime_root);
-    await new ProactiveInterventionStore(runtimeRoot)
+    await new ProactiveInterventionStore(runtimeRoot, { controlBaseDir: context.baseDir })
       .appendIntervention({ activity: residentActivity, channel: "daemon" })
       .catch((err: unknown) => {
         context.logger?.warn("Failed to append proactive intervention event", {

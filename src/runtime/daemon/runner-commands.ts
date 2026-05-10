@@ -310,7 +310,9 @@ export async function checkpointPauseIfRequested(
   await context.saveDaemonState();
   if (context.runtimeRoot) {
     try {
-      const postmortemStore = new RuntimePostmortemReportStore(context.runtimeRoot);
+      const postmortemStore = new RuntimePostmortemReportStore(context.runtimeRoot, {
+        controlBaseDir: context.stateManager.getBaseDir(),
+      });
       await postmortemStore.generate({
         goalId,
         finalStatus: "paused",

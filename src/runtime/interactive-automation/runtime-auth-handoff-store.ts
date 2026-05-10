@@ -6,11 +6,18 @@ import type {
   RuntimeControlReplyTarget,
 } from "../store/index.js";
 import {
-  createRuntimeStorePaths,
   RuntimeAuthHandoffRecordSchema,
-  RuntimeJournal,
+} from "../store/runtime-schemas.js";
+import {
+  createRuntimeStorePaths,
   type RuntimeStorePaths,
-} from "../store/index.js";
+} from "../store/runtime-paths.js";
+import {
+  openRuntimeControlDatabase,
+  type ControlDatabase,
+  type RuntimeControlDbStoreOptions,
+  type SqliteDatabase,
+} from "../store/control-db/index.js";
 import type { BrowserSessionScope } from "./browser-session-store.js";
 import type { z } from "zod";
 
@@ -41,26 +48,32 @@ export interface RuntimeAuthHandoffCreateInput {
 
 export class RuntimeAuthHandoffStore {
   private readonly paths: RuntimeStorePaths;
-  private readonly journal: RuntimeJournal;
+  private readonly dbOptions: RuntimeControlDbStoreOptions;
+  private dbPromise: Promise<ControlDatabase> | null = null;
 
-  constructor(runtimeRootOrPaths?: string | RuntimeStorePaths) {
+  constructor(
+    runtimeRootOrPaths?: string | RuntimeStorePaths,
+    options: RuntimeControlDbStoreOptions = {}
+  ) {
     this.paths =
       typeof runtimeRootOrPaths === "string"
         ? createRuntimeStorePaths(runtimeRootOrPaths)
         : runtimeRootOrPaths ?? createRuntimeStorePaths();
-    this.journal = new RuntimeJournal(this.paths);
+    this.dbOptions = options;
   }
 
   async ensureReady(): Promise<void> {
-    await this.journal.ensureReady();
+    await this.database();
   }
 
   async load(handoffId: string): Promise<RuntimeAuthHandoffRecord | null> {
-    return this.journal.load(this.paths.authHandoffPath(handoffId), RuntimeAuthHandoffJournalSchema);
+    const db = await this.database();
+    return db.read((sqlite) => readRuntimeAuthHandoff(sqlite, handoffId));
   }
 
   async list(): Promise<RuntimeAuthHandoffRecord[]> {
-    return this.journal.list(this.paths.authHandoffsDir, RuntimeAuthHandoffJournalSchema);
+    const db = await this.database();
+    return db.read((sqlite) => listRuntimeAuthHandoffs(sqlite));
   }
 
   async listActive(scope?: BrowserSessionScope): Promise<RuntimeAuthHandoffRecord[]> {
@@ -81,9 +94,9 @@ export class RuntimeAuthHandoffStore {
   }
 
   async upsert(record: RuntimeAuthHandoffRecord): Promise<RuntimeAuthHandoffRecord> {
-    await this.ensureReady();
     const parsed = RuntimeAuthHandoffRecordSchema.parse(record);
-    await this.journal.save(this.paths.authHandoffPath(parsed.handoff_id), RuntimeAuthHandoffJournalSchema, parsed);
+    const db = await this.database();
+    db.transaction((sqlite) => upsertRuntimeAuthHandoff(sqlite, parsed));
     return parsed;
   }
 
@@ -179,4 +192,95 @@ export class RuntimeAuthHandoffStore {
     }
     return superseded;
   }
+
+  async importLegacyRecord(record: RuntimeAuthHandoffRecord): Promise<RuntimeAuthHandoffRecord> {
+    return this.upsert(RuntimeAuthHandoffRecordSchema.parse(record));
+  }
+
+  private async database(): Promise<ControlDatabase> {
+    this.dbPromise ??= openRuntimeControlDatabase(this.paths, this.dbOptions);
+    return this.dbPromise;
+  }
+}
+
+interface RuntimeAuthHandoffRow {
+  record_json: string;
+}
+
+function parseRuntimeAuthHandoffJson(recordJson: string): RuntimeAuthHandoffRecord | null {
+  try {
+    const parsed = RuntimeAuthHandoffJournalSchema.safeParse(JSON.parse(recordJson) as unknown);
+    return parsed.success ? parsed.data : null;
+  } catch {
+    return null;
+  }
+}
+
+function readRuntimeAuthHandoff(sqlite: SqliteDatabase, handoffId: string): RuntimeAuthHandoffRecord | null {
+  const row = sqlite.prepare(`
+    SELECT record_json
+    FROM runtime_auth_handoffs
+    WHERE handoff_id = ?
+  `).get(handoffId) as RuntimeAuthHandoffRow | undefined;
+  return row ? parseRuntimeAuthHandoffJson(row.record_json) : null;
+}
+
+function listRuntimeAuthHandoffs(sqlite: SqliteDatabase): RuntimeAuthHandoffRecord[] {
+  const rows = sqlite.prepare(`
+    SELECT record_json
+    FROM runtime_auth_handoffs
+    ORDER BY handoff_id ASC
+  `).all() as RuntimeAuthHandoffRow[];
+  return rows.flatMap((row) => {
+    const record = parseRuntimeAuthHandoffJson(row.record_json);
+    return record ? [record] : [];
+  });
+}
+
+function upsertRuntimeAuthHandoff(sqlite: SqliteDatabase, record: RuntimeAuthHandoffRecord): void {
+  sqlite.prepare(`
+    INSERT INTO runtime_auth_handoffs (
+      handoff_id,
+      provider_id,
+      service_key,
+      workspace,
+      actor_key,
+      state,
+      requested_at,
+      updated_at,
+      expires_at,
+      completed_at,
+      supersedes_handoff_id,
+      superseded_by_handoff_id,
+      record_json
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, json(?))
+    ON CONFLICT(handoff_id) DO UPDATE SET
+      provider_id = excluded.provider_id,
+      service_key = excluded.service_key,
+      workspace = excluded.workspace,
+      actor_key = excluded.actor_key,
+      state = excluded.state,
+      requested_at = excluded.requested_at,
+      updated_at = excluded.updated_at,
+      expires_at = excluded.expires_at,
+      completed_at = excluded.completed_at,
+      supersedes_handoff_id = excluded.supersedes_handoff_id,
+      superseded_by_handoff_id = excluded.superseded_by_handoff_id,
+      record_json = excluded.record_json
+  `).run(
+    record.handoff_id,
+    record.provider_id,
+    record.service_key,
+    record.workspace,
+    record.actor_key,
+    record.state,
+    record.requested_at,
+    record.updated_at,
+    record.expires_at ?? null,
+    record.completed_at ?? null,
+    record.supersedes_handoff_id ?? null,
+    record.superseded_by_handoff_id ?? null,
+    JSON.stringify(record),
+  );
 }

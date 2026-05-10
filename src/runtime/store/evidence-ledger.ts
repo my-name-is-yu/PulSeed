@@ -405,11 +405,11 @@ export class RuntimeEvidenceLedger implements RuntimeEvidenceLedgerPort {
   }
 
   goalPath(goalId: string): string {
-    return this.paths.evidenceGoalPath(goalId);
+    return legacyEvidenceScopePath(this.paths.rootDir, "goals", goalId);
   }
 
   runPath(runId: string): string {
-    return this.paths.evidenceRunPath(runId);
+    return legacyEvidenceScopePath(this.paths.rootDir, "runs", runId);
   }
 
   async append(input: RuntimeEvidenceEntryInput): Promise<RuntimeEvidenceEntry[]> {
@@ -503,6 +503,10 @@ export class RuntimeEvidenceLedger implements RuntimeEvidenceLedgerPort {
   async listExtractionRefs(limit?: number) {
     return this.store.listExtractionRefs(limit);
   }
+}
+
+function legacyEvidenceScopePath(runtimeRoot: string, scopeDir: "goals" | "runs", scopeId: string): string {
+  return path.join(runtimeRoot, "evidence-ledger", scopeDir, `${encodeRuntimePathSegment(scopeId)}.jsonl`);
 }
 
 function evidenceGoalScope(goalId: string): RuntimeEvidenceScopeKey {

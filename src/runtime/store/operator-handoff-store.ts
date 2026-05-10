@@ -3,7 +3,12 @@ import {
   createRuntimeStorePaths,
   type RuntimeStorePaths,
 } from "./runtime-paths.js";
-import { RuntimeJournal } from "./runtime-journal.js";
+import {
+  openRuntimeControlDatabase,
+  type ControlDatabase,
+  type RuntimeControlDbStoreOptions,
+  type SqliteDatabase,
+} from "./control-db/index.js";
 
 export const RuntimeOperatorHandoffTriggerSchema = z.enum([
   "deadline",
@@ -79,24 +84,30 @@ const RuntimeOperatorHandoffRecordRuntimeSchema =
 
 export class RuntimeOperatorHandoffStore {
   private readonly paths: RuntimeStorePaths;
-  private readonly journal: RuntimeJournal;
+  private readonly dbOptions: RuntimeControlDbStoreOptions;
+  private dbPromise: Promise<ControlDatabase> | null = null;
   private readonly now: () => Date;
 
-  constructor(runtimeRootOrPaths?: string | RuntimeStorePaths, options: { now?: () => Date } = {}) {
+  constructor(
+    runtimeRootOrPaths?: string | RuntimeStorePaths,
+    options: { now?: () => Date } & RuntimeControlDbStoreOptions = {}
+  ) {
     this.paths =
       typeof runtimeRootOrPaths === "string"
         ? createRuntimeStorePaths(runtimeRootOrPaths)
         : runtimeRootOrPaths ?? createRuntimeStorePaths();
-    this.journal = new RuntimeJournal(this.paths);
+    this.dbOptions = options;
     this.now = options.now ?? (() => new Date());
   }
 
   async load(handoffId: string): Promise<RuntimeOperatorHandoffRecord | null> {
-    return this.journal.load(this.paths.operatorHandoffPath(handoffId), RuntimeOperatorHandoffRecordRuntimeSchema);
+    const db = await this.database();
+    return db.read((sqlite) => readOperatorHandoff(sqlite, handoffId));
   }
 
   async list(): Promise<RuntimeOperatorHandoffRecord[]> {
-    return this.journal.list(this.paths.operatorHandoffsDir, RuntimeOperatorHandoffRecordRuntimeSchema);
+    const db = await this.database();
+    return db.read((sqlite) => listOperatorHandoffs(sqlite));
   }
 
   async listOpen(): Promise<RuntimeOperatorHandoffRecord[]> {
@@ -117,14 +128,14 @@ export class RuntimeOperatorHandoffStore {
       updated_at: now,
       resolved_at: existing?.resolved_at ?? null,
     });
-    return this.journal.save(this.paths.operatorHandoffPath(handoffId), RuntimeOperatorHandoffRecordRuntimeSchema, record);
+    return this.save(record);
   }
 
   async resolve(handoffId: string, status: Exclude<RuntimeOperatorHandoffStatus, "open">): Promise<RuntimeOperatorHandoffRecord> {
     const existing = await this.load(handoffId);
     if (!existing) throw new Error(`Runtime operator handoff not found: ${handoffId}`);
     const now = this.nowIso();
-    return this.journal.save(this.paths.operatorHandoffPath(handoffId), RuntimeOperatorHandoffRecordRuntimeSchema, {
+    return this.save({
       ...existing,
       status,
       updated_at: now,
@@ -132,9 +143,92 @@ export class RuntimeOperatorHandoffStore {
     });
   }
 
+  async importLegacyRecord(record: RuntimeOperatorHandoffRecord): Promise<RuntimeOperatorHandoffRecord> {
+    return this.save(RuntimeOperatorHandoffRecordSchema.parse(record));
+  }
+
+  private async save(record: RuntimeOperatorHandoffRecord): Promise<RuntimeOperatorHandoffRecord> {
+    const parsed = RuntimeOperatorHandoffRecordRuntimeSchema.parse(record);
+    const db = await this.database();
+    db.transaction((sqlite) => upsertOperatorHandoff(sqlite, parsed));
+    return parsed;
+  }
+
+  private async database(): Promise<ControlDatabase> {
+    this.dbPromise ??= openRuntimeControlDatabase(this.paths, this.dbOptions);
+    return this.dbPromise;
+  }
+
   private nowIso(): string {
     return this.now().toISOString();
   }
+}
+
+interface OperatorHandoffRow {
+  record_json: string;
+}
+
+function parseOperatorHandoffJson(recordJson: string): RuntimeOperatorHandoffRecord | null {
+  try {
+    const parsed = RuntimeOperatorHandoffRecordRuntimeSchema.safeParse(JSON.parse(recordJson) as unknown);
+    return parsed.success ? parsed.data : null;
+  } catch {
+    return null;
+  }
+}
+
+function readOperatorHandoff(sqlite: SqliteDatabase, handoffId: string): RuntimeOperatorHandoffRecord | null {
+  const row = sqlite.prepare(`
+    SELECT record_json
+    FROM runtime_operator_handoffs
+    WHERE handoff_id = ?
+  `).get(handoffId) as OperatorHandoffRow | undefined;
+  return row ? parseOperatorHandoffJson(row.record_json) : null;
+}
+
+function listOperatorHandoffs(sqlite: SqliteDatabase): RuntimeOperatorHandoffRecord[] {
+  const rows = sqlite.prepare(`
+    SELECT record_json
+    FROM runtime_operator_handoffs
+    ORDER BY handoff_id ASC
+  `).all() as OperatorHandoffRow[];
+  return rows.flatMap((row) => {
+    const record = parseOperatorHandoffJson(row.record_json);
+    return record ? [record] : [];
+  });
+}
+
+function upsertOperatorHandoff(sqlite: SqliteDatabase, record: RuntimeOperatorHandoffRecord): void {
+  sqlite.prepare(`
+    INSERT INTO runtime_operator_handoffs (
+      handoff_id,
+      status,
+      goal_id,
+      run_id,
+      created_at,
+      updated_at,
+      resolved_at,
+      record_json
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, json(?))
+    ON CONFLICT(handoff_id) DO UPDATE SET
+      status = excluded.status,
+      goal_id = excluded.goal_id,
+      run_id = excluded.run_id,
+      created_at = excluded.created_at,
+      updated_at = excluded.updated_at,
+      resolved_at = excluded.resolved_at,
+      record_json = excluded.record_json
+  `).run(
+    record.handoff_id,
+    record.status,
+    record.goal_id ?? null,
+    record.run_id ?? null,
+    record.created_at,
+    record.updated_at,
+    record.resolved_at ?? null,
+    JSON.stringify(record),
+  );
 }
 
 function deterministicHandoffId(input: RuntimeOperatorHandoffInput): string {

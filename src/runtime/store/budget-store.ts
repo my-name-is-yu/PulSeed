@@ -3,7 +3,12 @@ import {
   createRuntimeStorePaths,
   type RuntimeStorePaths,
 } from "./runtime-paths.js";
-import { RuntimeJournal } from "./runtime-journal.js";
+import {
+  openRuntimeControlDatabase,
+  type ControlDatabase,
+  type RuntimeControlDbStoreOptions,
+  type SqliteDatabase,
+} from "./control-db/index.js";
 
 export const RuntimeBudgetDimensionSchema = z.enum([
   "wall_clock_ms",
@@ -151,24 +156,30 @@ export interface RuntimeBudgetStatus {
 
 export class RuntimeBudgetStore {
   private readonly paths: RuntimeStorePaths;
-  private readonly journal: RuntimeJournal;
+  private readonly dbOptions: RuntimeControlDbStoreOptions;
+  private dbPromise: Promise<ControlDatabase> | null = null;
   private readonly now: () => Date;
 
-  constructor(runtimeRootOrPaths?: string | RuntimeStorePaths, options: { now?: () => Date } = {}) {
+  constructor(
+    runtimeRootOrPaths?: string | RuntimeStorePaths,
+    options: { now?: () => Date } & RuntimeControlDbStoreOptions = {}
+  ) {
     this.paths =
       typeof runtimeRootOrPaths === "string"
         ? createRuntimeStorePaths(runtimeRootOrPaths)
         : runtimeRootOrPaths ?? createRuntimeStorePaths();
-    this.journal = new RuntimeJournal(this.paths);
+    this.dbOptions = options;
     this.now = options.now ?? (() => new Date());
   }
 
   async load(budgetId: string): Promise<RuntimeBudgetRecord | null> {
-    return this.journal.load(this.paths.budgetPath(budgetId), RuntimeBudgetRecordRuntimeSchema);
+    const db = await this.database();
+    return db.read((sqlite) => readBudget(sqlite, budgetId));
   }
 
   async list(): Promise<RuntimeBudgetRecord[]> {
-    return this.journal.list(this.paths.budgetsDir, RuntimeBudgetRecordRuntimeSchema);
+    const db = await this.database();
+    return db.read((sqlite) => listBudgets(sqlite));
   }
 
   async create(input: RuntimeBudgetCreateInput): Promise<RuntimeBudgetRecord> {
@@ -366,12 +377,85 @@ export class RuntimeBudgetStore {
   }
 
   private async save(budget: RuntimeBudgetRecord): Promise<RuntimeBudgetRecord> {
-    return this.journal.save(this.paths.budgetPath(budget.budget_id), RuntimeBudgetRecordRuntimeSchema, budget);
+    const parsed = RuntimeBudgetRecordRuntimeSchema.parse(budget);
+    const db = await this.database();
+    db.transaction((sqlite) => upsertBudget(sqlite, parsed));
+    return parsed;
+  }
+
+  async importLegacyRecord(record: RuntimeBudgetRecord): Promise<RuntimeBudgetRecord> {
+    return this.save(RuntimeBudgetRecordRuntimeSchema.parse(record));
+  }
+
+  private async database(): Promise<ControlDatabase> {
+    this.dbPromise ??= openRuntimeControlDatabase(this.paths, this.dbOptions);
+    return this.dbPromise;
   }
 
   private nowIso(): string {
     return this.now().toISOString();
   }
+}
+
+interface BudgetRow {
+  record_json: string;
+}
+
+function parseBudgetJson(recordJson: string): RuntimeBudgetRecord | null {
+  try {
+    const parsed = RuntimeBudgetRecordRuntimeSchema.safeParse(JSON.parse(recordJson) as unknown);
+    return parsed.success ? parsed.data : null;
+  } catch {
+    return null;
+  }
+}
+
+function readBudget(sqlite: SqliteDatabase, budgetId: string): RuntimeBudgetRecord | null {
+  const row = sqlite.prepare(`
+    SELECT record_json
+    FROM runtime_budgets
+    WHERE budget_id = ?
+  `).get(budgetId) as BudgetRow | undefined;
+  return row ? parseBudgetJson(row.record_json) : null;
+}
+
+function listBudgets(sqlite: SqliteDatabase): RuntimeBudgetRecord[] {
+  const rows = sqlite.prepare(`
+    SELECT record_json
+    FROM runtime_budgets
+    ORDER BY budget_id ASC
+  `).all() as BudgetRow[];
+  return rows.flatMap((row) => {
+    const record = parseBudgetJson(row.record_json);
+    return record ? [record] : [];
+  });
+}
+
+function upsertBudget(sqlite: SqliteDatabase, record: RuntimeBudgetRecord): void {
+  sqlite.prepare(`
+    INSERT INTO runtime_budgets (
+      budget_id,
+      goal_id,
+      run_id,
+      created_at,
+      updated_at,
+      record_json
+    )
+    VALUES (?, ?, ?, ?, ?, json(?))
+    ON CONFLICT(budget_id) DO UPDATE SET
+      goal_id = excluded.goal_id,
+      run_id = excluded.run_id,
+      created_at = excluded.created_at,
+      updated_at = excluded.updated_at,
+      record_json = excluded.record_json
+  `).run(
+    record.budget_id,
+    record.scope.goal_id ?? null,
+    record.scope.run_id ?? null,
+    record.created_at,
+    record.updated_at,
+    JSON.stringify(record),
+  );
 }
 
 function parseBudgetUsageAmount(amount: number): number {

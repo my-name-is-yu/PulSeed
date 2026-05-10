@@ -1470,7 +1470,7 @@ async function createGlobalCrossPlatformChatSessionManager(): Promise<CrossPlatf
   const controlDbOptions = { controlBaseDir: stateManager.getBaseDir() };
   const permissionGrantStore = new PermissionGrantStore(runtimeStorePaths, controlDbOptions);
   const permissionWaitPlanStore = new PermissionWaitPlanStore(runtimeStorePaths, controlDbOptions);
-  const capabilityVerificationStore = new CapabilityVerificationStore(runtimeStorePaths);
+  const capabilityVerificationStore = new CapabilityVerificationStore(runtimeStorePaths, controlDbOptions);
   const capabilityExecutionResolver = createCapabilityExecutionResolver({ stateManager });
   const runtimeControlService = new RuntimeControlService({
     runtimeRoot,

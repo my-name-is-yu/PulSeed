@@ -75,7 +75,9 @@ export class EventServerSnapshotReader {
   }
 
   private controlDbOptions(): { controlBaseDir: string } | undefined {
-    return { controlBaseDir: this.controlBaseDir() };
+    if (this.configuredControlBaseDir) return { controlBaseDir: this.configuredControlBaseDir };
+    if (this.stateManager) return { controlBaseDir: this.stateManager.getBaseDir() };
+    return undefined;
   }
 
   private controlBaseDir(): string {
@@ -83,7 +85,7 @@ export class EventServerSnapshotReader {
   }
 
   private async readPendingAuthSessions(): Promise<Array<Record<string, unknown>>> {
-    const store = new BrowserSessionStore(this.runtimeRoot());
+    const store = new BrowserSessionStore(this.runtimeRoot(), this.controlDbOptions());
     const sessions = await store.listPendingAuth();
     return sessions.map((session) => ({
       session_id: session.session_id,
@@ -124,8 +126,8 @@ export class EventServerSnapshotReader {
     const runtimeRoot = this.runtimeRoot();
     const controlDbOptions = this.controlDbOptions();
     const [authHandoffs, browserSessions, breakers, backpressure] = await Promise.all([
-      new RuntimeAuthHandoffStore(runtimeRoot).list(),
-      new BrowserSessionStore(runtimeRoot).list(),
+      new RuntimeAuthHandoffStore(runtimeRoot, controlDbOptions).list(),
+      new BrowserSessionStore(runtimeRoot, controlDbOptions).list(),
       new GuardrailStore(runtimeRoot, controlDbOptions).listBreakers(),
       new GuardrailStore(runtimeRoot, controlDbOptions).loadBackpressureSnapshot(),
     ]);
@@ -197,7 +199,7 @@ export class EventServerSnapshotReader {
   }
 
   private async readOpenOperatorHandoffs(): Promise<RuntimeOperatorHandoffRecord[]> {
-    return new RuntimeOperatorHandoffStore(this.runtimeRoot()).listOpen();
+    return new RuntimeOperatorHandoffStore(this.runtimeRoot(), this.controlDbOptions()).listOpen();
   }
 
   async readDaemonStateRaw(): Promise<string | null> {

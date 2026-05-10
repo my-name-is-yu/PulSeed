@@ -264,7 +264,7 @@ async function collectCapabilityRuntimeProjections(
     loadCapabilityAssets(baseDir, warnings),
     loadLegacyCapabilities(stateManager, warnings),
     loadMcpServers(stateManager, warnings),
-    loadVerificationEvidence(runtimeRoot, warnings),
+    loadVerificationEvidence(runtimeRoot, baseDir, warnings),
   ]);
   const builtinIntegrations = loadBuiltinIntegrations(warnings);
 
@@ -338,10 +338,11 @@ async function loadMcpServers(stateManager: StateManager, warnings: string[]): P
 
 async function loadVerificationEvidence(
   runtimeRoot: string,
+  baseDir: string,
   warnings: string[]
 ): Promise<Awaited<ReturnType<CapabilityVerificationStore["listReadinessEvidenceSummaries"]>>> {
   try {
-    return await new CapabilityVerificationStore(runtimeRoot).listReadinessEvidenceSummaries();
+    return await new CapabilityVerificationStore(runtimeRoot, { controlBaseDir: baseDir }).listReadinessEvidenceSummaries();
   } catch (err) {
     warnings.push(`Capability verification evidence could not be read: ${errorMessage(err)}`);
     return [];

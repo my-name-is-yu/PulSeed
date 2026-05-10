@@ -220,10 +220,11 @@ export async function buildStandaloneTuiDeps() {
       })
     : undefined;
 
+  const controlDbOptions = { controlBaseDir: stateManager.getBaseDir() };
   const runtimeRoot = path.join(stateManager.getBaseDir(), "runtime");
-  const runtimeBudgetStore = new RuntimeBudgetStore(runtimeRoot);
-  const operatorHandoffStore = new RuntimeOperatorHandoffStore(runtimeRoot);
-  const postmortemReportStore = new RuntimePostmortemReportStore(runtimeRoot);
+  const runtimeBudgetStore = new RuntimeBudgetStore(runtimeRoot, controlDbOptions);
+  const operatorHandoffStore = new RuntimeOperatorHandoffStore(runtimeRoot, controlDbOptions);
+  const postmortemReportStore = new RuntimePostmortemReportStore(runtimeRoot, controlDbOptions);
 
   const taskLifecycle = new TaskLifecycle({
     stateManager,

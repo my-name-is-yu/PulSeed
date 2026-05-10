@@ -122,9 +122,8 @@ describe("database-first legacy store check", () => {
   });
 
   it("emits a machine-readable debt report", () => {
-    writeFile(tmpDir, "src/runtime/store/operator-handoff-store.ts", `
-      import { RuntimeJournal } from "./runtime-journal.js";
-      export const journal = RuntimeJournal;
+    writeFile(tmpDir, "src/runtime/executor/loop-supervisor.ts", `
+      export const stateFile = "supervisor-state.json";
     `);
 
     const result = runCheck(tmpDir, ["--json"]);
@@ -138,10 +137,10 @@ describe("database-first legacy store check", () => {
     expect(parsed.debtReport.some((entry) => entry.nextSlice === 3)).toBe(false);
     expect(parsed.debtReport).toEqual(expect.arrayContaining([
       expect.objectContaining({
-        id: "operator-handoff-runtime-journal",
+        id: "loop-supervisor-file-state",
         category: "migrate now",
-        nextSlice: 6,
-        matchCount: 2,
+        nextSlice: 7,
+        matchCount: 1,
       }),
     ]));
   });

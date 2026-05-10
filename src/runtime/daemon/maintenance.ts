@@ -278,7 +278,7 @@ export async function runRuntimeStoreMaintenanceCycle(params: {
     now,
   });
   const health = await runtimeHealthStore.reconcile(now);
-  const proactiveInterventions = await new ProactiveInterventionStore(runtimePaths).summarize();
+  const proactiveInterventions = await new ProactiveInterventionStore(runtimePaths, controlOptions).summarize();
   health.details = {
     ...health.details,
     proactive_interventions: proactiveInterventions,

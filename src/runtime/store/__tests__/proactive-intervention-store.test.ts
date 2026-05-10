@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { makeTempDir, cleanupTempDir } from "../../../../tests/helpers/temp-dir.js";
 import { ProactiveInterventionStore } from "../proactive-intervention-store.js";
 
@@ -78,6 +80,7 @@ describe("ProactiveInterventionStore", () => {
     });
 
     const summary = await store.summarize();
+    expect(fs.existsSync(path.join(runtimeRoot, "proactive-interventions", "events.jsonl"))).toBe(false);
     expect(summary.total_interventions).toBe(4);
     expect(summary.accepted_count).toBe(1);
     expect(summary.ignored_count).toBe(1);

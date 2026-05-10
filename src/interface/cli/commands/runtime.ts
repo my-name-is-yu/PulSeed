@@ -521,8 +521,9 @@ export async function cmdRuntime(stateManager: StateManager, args: string[]): Pr
       logger.error("Error: goal ID or run ID is required. Usage: pulseed runtime postmortem <goal-id|run-id> [--json]");
       return 1;
     }
-    const runtimeRoot = path.join(stateManager.getBaseDir(), "runtime");
-    const store = new RuntimePostmortemReportStore(runtimeRoot);
+    const baseDir = stateManager.getBaseDir();
+    const runtimeRoot = path.join(baseDir, "runtime");
+    const store = new RuntimePostmortemReportStore(runtimeRoot, { controlBaseDir: baseDir });
     const report = await generatePostmortemTarget(store, values.id, runtimeRoot);
     values.json ? printJson(report) : printPostmortemSummary(report);
     return 0;
@@ -530,7 +531,8 @@ export async function cmdRuntime(stateManager: StateManager, args: string[]): Pr
 
   if (runtimeSubcommand === "experiment-queues") {
     const values = parseListArgs(args.slice(1), "experiment-queues");
-    const store = new RuntimeExperimentQueueStore(path.join(stateManager.getBaseDir(), "runtime"));
+    const baseDir = stateManager.getBaseDir();
+    const store = new RuntimeExperimentQueueStore(path.join(baseDir, "runtime"), { controlBaseDir: baseDir });
     const queues = await store.list();
     if (values.json) {
       printJson({
@@ -549,7 +551,8 @@ export async function cmdRuntime(stateManager: StateManager, args: string[]): Pr
       logger.error("Error: queue ID is required. Usage: pulseed runtime experiment-queue <id> [--json]");
       return 1;
     }
-    const store = new RuntimeExperimentQueueStore(path.join(stateManager.getBaseDir(), "runtime"));
+    const baseDir = stateManager.getBaseDir();
+    const store = new RuntimeExperimentQueueStore(path.join(baseDir, "runtime"), { controlBaseDir: baseDir });
     const queue = await store.load(values.id);
     if (!queue) {
       console.error(`Runtime experiment queue not found: ${values.id}`);
@@ -561,7 +564,8 @@ export async function cmdRuntime(stateManager: StateManager, args: string[]): Pr
 
   if (runtimeSubcommand === "budgets") {
     const values = parseListArgs(args.slice(1), "budgets");
-    const store = new RuntimeBudgetStore(path.join(stateManager.getBaseDir(), "runtime"));
+    const baseDir = stateManager.getBaseDir();
+    const store = new RuntimeBudgetStore(path.join(baseDir, "runtime"), { controlBaseDir: baseDir });
     const budgets = await store.list();
     if (values.json) {
       printJson({
@@ -583,7 +587,8 @@ export async function cmdRuntime(stateManager: StateManager, args: string[]): Pr
       logger.error("Error: budget ID is required. Usage: pulseed runtime budget <id> [--json]");
       return 1;
     }
-    const store = new RuntimeBudgetStore(path.join(stateManager.getBaseDir(), "runtime"));
+    const baseDir = stateManager.getBaseDir();
+    const store = new RuntimeBudgetStore(path.join(baseDir, "runtime"), { controlBaseDir: baseDir });
     const budget = await store.load(values.id);
     if (!budget) {
       console.error(`Runtime budget not found: ${values.id}`);
@@ -619,7 +624,8 @@ export async function cmdRuntime(stateManager: StateManager, args: string[]): Pr
 
   if (runtimeSubcommand === "proactive-quality") {
     const values = parseListArgs(args.slice(1), "proactive-quality");
-    const store = new ProactiveInterventionStore(resolveConfiguredDaemonRuntimeRoot(stateManager.getBaseDir()));
+    const baseDir = stateManager.getBaseDir();
+    const store = new ProactiveInterventionStore(resolveConfiguredDaemonRuntimeRoot(baseDir), { controlBaseDir: baseDir });
     const summary = await store.summarize();
     values.json ? printJson(summary) : printProactiveSummary(summary);
     return 0;
@@ -644,7 +650,8 @@ export async function cmdRuntime(stateManager: StateManager, args: string[]): Pr
       return 1;
     }
     const overreachIndicators = parsedIndicators.flatMap((indicator) => indicator.success ? [indicator.data] : []);
-    const store = new ProactiveInterventionStore(resolveConfiguredDaemonRuntimeRoot(stateManager.getBaseDir()));
+    const baseDir = stateManager.getBaseDir();
+    const store = new ProactiveInterventionStore(resolveConfiguredDaemonRuntimeRoot(baseDir), { controlBaseDir: baseDir });
     const event = await store.appendFeedback({
       interventionId: values.interventionId,
       outcome: outcome.data,

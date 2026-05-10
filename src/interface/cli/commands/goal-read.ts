@@ -135,10 +135,11 @@ export async function cmdStatus(
   }
 
   const registry = createRuntimeSessionRegistry({ stateManager });
-  const runtimeRoot = path.join(stateManager.getBaseDir(), "runtime");
+  const baseDir = stateManager.getBaseDir();
+  const runtimeRoot = path.join(baseDir, "runtime");
   const [runtimeSnapshot, handoffs, runtimeBudgets] = await Promise.all([
     registry.snapshot(),
-    new RuntimeOperatorHandoffStore(runtimeRoot).listOpen(),
+    new RuntimeOperatorHandoffStore(runtimeRoot, { controlBaseDir: baseDir }).listOpen(),
     loadRuntimeBudgetProjections(stateManager),
   ]);
 
@@ -204,10 +205,11 @@ export async function cmdCurrentStatus(
   }
 
   const registry = createRuntimeSessionRegistry({ stateManager });
-  const runtimeRoot = path.join(stateManager.getBaseDir(), "runtime");
+  const baseDir = stateManager.getBaseDir();
+  const runtimeRoot = path.join(baseDir, "runtime");
   const [runtimeSnapshot, handoffs, runtimeBudgets] = await Promise.all([
     registry.snapshot(),
-    new RuntimeOperatorHandoffStore(runtimeRoot).listOpen(),
+    new RuntimeOperatorHandoffStore(runtimeRoot, { controlBaseDir: baseDir }).listOpen(),
     loadRuntimeBudgetProjections(stateManager),
   ]);
 
@@ -229,7 +231,8 @@ export async function cmdCurrentStatus(
 
 async function loadRuntimeBudgetProjections(stateManager: StateManager): Promise<RuntimeBudgetProjection[]> {
   try {
-    const store = new RuntimeBudgetStore(path.join(stateManager.getBaseDir(), "runtime"));
+    const baseDir = stateManager.getBaseDir();
+    const store = new RuntimeBudgetStore(path.join(baseDir, "runtime"), { controlBaseDir: baseDir });
     return createRuntimeBudgetProjections(store, await store.list());
   } catch {
     return [];

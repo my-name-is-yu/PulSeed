@@ -968,7 +968,8 @@ describe("snapshot and outbox replay", () => {
 
   it("includes typed runtime automation snapshot while preserving compatibility fields", async () => {
     const runtimeRoot = path.join(tmpDir, "custom-runtime");
-    await new RuntimeAuthHandoffStore(runtimeRoot).createPending({
+    const controlDbOptions = { controlBaseDir: tmpDir };
+    await new RuntimeAuthHandoffStore(runtimeRoot, controlDbOptions).createPending({
       providerId: "browser-auth",
       serviceKey: "mail.google.com",
       workspace: "/tmp",
@@ -979,7 +980,7 @@ describe("snapshot and outbox replay", () => {
       failureMessage: "login required",
       taskSummary: "Open mail",
     });
-    await new BrowserSessionStore(runtimeRoot).recordAuthRequired({
+    await new BrowserSessionStore(runtimeRoot, controlDbOptions).recordAuthRequired({
       sessionId: "sess-custom",
       providerId: "browser-auth",
       serviceKey: "mail.google.com",
