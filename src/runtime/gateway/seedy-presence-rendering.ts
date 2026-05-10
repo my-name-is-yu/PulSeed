@@ -68,7 +68,7 @@ function renderActivityStatus(
   presence: SeedyTurnPresence,
   options: SeedyPresenceRenderingOptions,
 ): string {
-  const activity = safeActivityFragment(presence.last_activity_label ?? presence.subject);
+  const activity = safePresenceActivity(presence);
   if (!activity) return fallback;
   const elapsed = formatElapsedSince(presence.last_activity_at ?? presence.updated_at, options.now);
   return `I'm working on it. Last visible activity: ${activity}${elapsed}.`;
@@ -78,7 +78,7 @@ function renderWaitingStatus(
   presence: SeedyTurnPresence,
   options: SeedyPresenceRenderingOptions,
 ): string {
-  const activity = safeActivityFragment(presence.last_activity_label ?? presence.subject);
+  const activity = safePresenceActivity(presence);
   if (!activity) {
     return "I'm still working on it. I don't have a new visible update yet.";
   }
@@ -90,6 +90,11 @@ function withSafeSubject(prefix: string, presence: SeedyTurnPresence): string {
   const subject = safeActivityFragment(presence.subject);
   if (!subject) return prefix;
   return `${prefix} ${subject}.`;
+}
+
+function safePresenceActivity(presence: SeedyTurnPresence): string | null {
+  return safeActivityFragment(presence.last_activity_label)
+    ?? safeActivityFragment(presence.subject);
 }
 
 function safeActivityFragment(value: string | undefined): string | null {
@@ -161,13 +166,15 @@ function looksLikeCommandOrPath(value: string): boolean {
 }
 
 function formatElapsedSince(value: string | undefined, nowInput: Date | string | number | undefined): string {
-  if (!value || nowInput === undefined) return "";
+  if (!value) return "";
   const then = Date.parse(value);
   const now = nowInput instanceof Date
     ? nowInput.getTime()
     : typeof nowInput === "string"
       ? Date.parse(nowInput)
-      : nowInput;
+      : typeof nowInput === "number"
+        ? nowInput
+        : Date.now();
   if (!Number.isFinite(then) || !Number.isFinite(now)) return "";
   const elapsedMs = Math.max(0, now - then);
   const seconds = Math.round(elapsedMs / 1_000);

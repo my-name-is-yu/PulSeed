@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createSeedyTurnPresence, createUserVisibleSeedyTurnPresence } from "../../../interface/chat/seedy-turn-presence.js";
 import {
@@ -7,6 +7,10 @@ import {
 } from "../seedy-presence-rendering.js";
 
 describe("seedy presence rendering", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("renders compact status without leaking runtime internals from presence metadata", () => {
     const presence = createSeedyTurnPresence({
       turn_id: "turn-raw-metadata",
@@ -140,6 +144,39 @@ describe("seedy presence rendering", () => {
 
     expect(status).toBe("I'm still working on it. I don't have a new visible update yet.");
     expect(status).not.toMatch(/npm test|aws ssm|with-decryption|prod\/secret/i);
+  });
+
+  it("falls back to safe subject when the activity label is unsafe", () => {
+    const presence = createUserVisibleSeedyTurnPresence({
+      turn_id: "turn-safe-subject",
+      phase: "waiting",
+      importance: "status",
+      subject: "Checking the project state",
+      last_activity_at: "2026-05-10T00:00:00.000Z",
+      last_activity_label: "npm test -- --grep auth",
+      expected_next: "progress",
+    });
+
+    expect(renderSeedyPresenceStatusText(presence, {
+      now: "2026-05-10T00:00:35.000Z",
+    })).toBe("I'm still working on it. Last visible activity: checking the project state about 35 seconds ago.");
+  });
+
+  it("uses the current clock for elapsed context when no explicit clock is provided", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-10T00:00:35.000Z"));
+    const presence = createUserVisibleSeedyTurnPresence({
+      turn_id: "turn-real-clock",
+      phase: "waiting",
+      importance: "status",
+      subject: "Checking the project state",
+      last_activity_at: "2026-05-10T00:00:00.000Z",
+      last_activity_label: "Checking the project state",
+      expected_next: "progress",
+    });
+
+    expect(renderSeedyPresenceStatusText(presence))
+      .toBe("I'm still working on it. Last visible activity: checking the project state about 35 seconds ago.");
   });
 
   it("filters uppercase internal provider labels with locale-stable matching", () => {
