@@ -131,6 +131,61 @@ describe("TransferTrustManager", () => {
     expect(score.success_count).toBe(2);
   });
 
+  it("persists through the typed store without creating legacy JSON files", async () => {
+    const pair = "typed::runtime";
+    await manager.updateTrust(pair, "positive");
+    await manager.updateTrust(pair, "negative");
+
+    expect(fs.existsSync(path.join(tmpDir, "transfer-trust", "typed::runtime.json"))).toBe(false);
+    expect(fs.existsSync(path.join(tmpDir, "transfer-trust-history", "typed::runtime.json"))).toBe(false);
+    expect(fs.existsSync(path.join(tmpDir, "transfer-trust", "_index.json"))).toBe(false);
+    await expect(manager.getAllScores()).resolves.toEqual([
+      expect.objectContaining({
+        domain_pair: pair,
+        success_count: 1,
+        failure_count: 1,
+      }),
+    ]);
+  });
+
+  it("keeps index-only domain pairs visible as default score records", async () => {
+    await stateManager.writeRaw("transfer-trust/_index.json", ["index-only::pair"]);
+
+    await expect(manager.getAllScores()).resolves.toEqual([
+      expect.objectContaining({
+        domain_pair: "index-only::pair",
+        trust_score: 0.5,
+        success_count: 0,
+        failure_count: 0,
+        neutral_count: 0,
+      }),
+    ]);
+  });
+
+  it("ignores stale legacy score and history files on the normal runtime caller path", async () => {
+    const pair = "legacy::stale";
+    fs.mkdirSync(path.join(tmpDir, "transfer-trust"), { recursive: true });
+    fs.mkdirSync(path.join(tmpDir, "transfer-trust-history"), { recursive: true });
+    fs.writeFileSync(path.join(tmpDir, "transfer-trust", "legacy::stale.json"), JSON.stringify({
+      domain_pair: pair,
+      success_count: 9,
+      failure_count: 0,
+      neutral_count: 0,
+      trust_score: 1,
+      last_updated: "2026-05-09T00:00:00.000Z",
+    }));
+    fs.writeFileSync(path.join(tmpDir, "transfer-trust-history", "legacy::stale.json"), JSON.stringify([
+      "negative",
+      "negative",
+      "negative",
+    ]));
+
+    const score = await manager.getTrustScore(pair);
+
+    expect(score.trust_score).toBe(0.5);
+    expect(await manager.shouldInvalidate(pair)).toBe(false);
+  });
+
   it("computes the scoring formula: similarity * confidence * trustScore", () => {
     // This is a pure calculation test — no async needed
     const similarityScore = 0.8;

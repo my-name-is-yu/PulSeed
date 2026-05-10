@@ -22,6 +22,7 @@ import {
   importLegacyGoalOrchestrationState,
   importLegacyRelationshipProfileProposalState,
   importLegacyStallState,
+  importLegacyTransferTrustState,
   importLegacyTrustState,
   OutboxStore,
   RuntimeHealthStore,
@@ -754,6 +755,7 @@ export async function cmdDoctor(_args: string[]): Promise<number> {
     const relationshipProfileProposalImportReport = await importLegacyRelationshipProfileProposalState(baseDir);
     const knowledgeMemoryImportReport = await importLegacyKnowledgeMemoryState(baseDir);
     const knowledgeTransferImportReport = await importLegacyKnowledgeTransferState(baseDir);
+    const transferTrustImportReport = await importLegacyTransferTrustState(baseDir);
     const learningRuntimeImportReport = await importLegacyLearningRuntimeState(baseDir);
     const memoryLifecycleImportReport = await importLegacyMemoryLifecycleState(baseDir);
     const dreamDecisionHeuristicImportReport = await importLegacyDreamDecisionHeuristics(baseDir);
@@ -812,6 +814,9 @@ export async function cmdDoctor(_args: string[]): Promise<number> {
     );
     console.log(
       `Repair knowledge transfer import: snapshots=${knowledgeTransferImportReport.snapshots}, meta-pattern watermarks=${knowledgeTransferImportReport.metaPatternWatermarks}, skipped already imported=${knowledgeTransferImportReport.skippedAlreadyImported}, retired existing typed state=${knowledgeTransferImportReport.retiredExistingTypedState}, blocked=${knowledgeTransferImportReport.blockedSources.length}`
+    );
+    console.log(
+      `Repair transfer trust import: index entries=${transferTrustImportReport.indexEntries}, scores=${transferTrustImportReport.scores}, history entries=${transferTrustImportReport.historyEntries}, skipped already imported=${transferTrustImportReport.skippedAlreadyImported}, retired existing typed state=${transferTrustImportReport.retiredExistingTypedState}, blocked=${transferTrustImportReport.blockedSources.length}`
     );
     console.log(
       `Repair learning runtime import: logs=${learningRuntimeImportReport.experienceLogs}, patterns=${learningRuntimeImportReport.patterns}, feedback entries=${learningRuntimeImportReport.feedbackEntries}, structural feedback=${learningRuntimeImportReport.structuralFeedback}, skipped already imported=${learningRuntimeImportReport.skippedAlreadyImported}, retired existing typed state=${learningRuntimeImportReport.retiredExistingTypedState}, blocked=${learningRuntimeImportReport.blockedSources.length}`

@@ -674,6 +674,26 @@ export type {
   TrustStateLegacyImportReport,
 } from "./trust-state-migration.js";
 export {
+  TransferTrustStateStore,
+  parseTransferTrustRawPath,
+  transferTrustDomainPairKey,
+  TRANSFER_TRUST_HISTORY_PREFIX,
+  TRANSFER_TRUST_INDEX_PATH,
+  TRANSFER_TRUST_SCORE_PREFIX,
+} from "./transfer-trust-state-store.js";
+export type {
+  TransferTrustRawPathMatch,
+  TransferTrustRawStateStoreResult,
+  TransferTrustStateStoreOptions,
+  TransferTrustStateStorePort,
+} from "./transfer-trust-state-store.js";
+export {
+  importLegacyTransferTrustState,
+} from "./transfer-trust-state-migration.js";
+export type {
+  TransferTrustLegacyImportReport,
+} from "./transfer-trust-state-migration.js";
+export {
   EthicsLogStore,
 } from "./ethics-log-store.js";
 export type {

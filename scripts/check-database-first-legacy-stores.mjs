@@ -40,6 +40,7 @@ const ALLOWLIST_RULES_BY_ID = new Map(Object.entries({
   "goal-task-store-logical-path-parser": ["goal-task-json-state"],
   "strategy-dream-store-logical-path-parser": ["strategy-dream-json-state"],
   "knowledge-transfer-store-logical-path-parser": ["knowledge-transfer-json-state"],
+  "transfer-trust-store-logical-path-parser": ["transfer-trust-json-state"],
   "soil-publish-artifact-state": ["plugin-channel-runtime-json", "soil-import-publish-artifact"],
   "legacy-capability-registry-input": ["capability-registry-json-state"],
   "relationship-profile-user-content": ["profile-json-state"],
@@ -258,6 +259,13 @@ const PATH_ALLOWLIST = [
     reason: "knowledge transfer snapshot and aggregation watermark are runtime transfer state and must move behind typed store APIs",
     owner: "Knowledge transfer typed store / Soil transfer store",
     nextSlice: 5,
+  }),
+  allow({
+    id: "transfer-trust-store-logical-path-parser",
+    pattern: /(^|\/)src\/runtime\/store\/transfer-trust-state-(?:store|migration)\.ts$/,
+    category: CATEGORY.MIGRATION_ONLY_INPUT,
+    reason: "typed transfer trust store parses legacy logical paths for compatibility and explicit repair import",
+    owner: "Transfer trust typed store / Soil transfer trust store",
   }),
   allow({
     id: "transfer-trust-raw-caller",
