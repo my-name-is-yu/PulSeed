@@ -83,7 +83,11 @@ export async function gateRuntimeEvidenceBoundFinalAnswer(input: RuntimeEvidence
     });
     decision = input.llmClient.parseJSON(response.content, RuntimeEvidenceGateDecisionSchema);
   } catch {
-    return { output: input.assistantOutput, blocked: false };
+    return {
+      output: boundedUnverifiedRuntimeStatusAnswer(),
+      blocked: true,
+      reason: "Runtime evidence classifier failed; refusing to pass through an unverified gateway status answer.",
+    };
   }
 
   if (decision.verdict === "allow") {

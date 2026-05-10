@@ -111,6 +111,13 @@ function makeMockStateManagerWithBaseDir(): StateManager {
   } as unknown as StateManager;
 }
 
+function makeAllowRuntimeEvidenceGateClient() {
+  return createMockLLMClient(Array.from({ length: 100 }, () => JSON.stringify({
+    verdict: "allow",
+    reason: "Test fixture allows non-runtime-status assertions.",
+  })));
+}
+
 async function writeJsonFixture(baseDir: string, relativePath: string, value: unknown): Promise<void> {
   const filePath = path.join(baseDir, relativePath);
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -263,6 +270,7 @@ function makeDeps(overrides: Partial<ChatRunnerDeps> = {}): ChatRunnerDeps {
   return {
     stateManager: makeMockStateManager(),
     adapter: makeMockAdapter(),
+    runtimeEvidenceGateClient: makeAllowRuntimeEvidenceGateClient(),
     ...overrides,
   };
 }

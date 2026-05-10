@@ -346,7 +346,7 @@ export async function executeAgentLoopRoute(
         assistantOutput: result.output,
         hasRuntimeEvidence: host.eventBridge.hasRuntimeEvidenceForTurn(eventContext),
         runtimeEvidenceRefs: host.eventBridge.getRuntimeEvidenceRefsForTurn(eventContext),
-        llmClient: host.deps.llmClient,
+        llmClient: host.getRuntimeEvidenceGateClient(),
       });
       if (gate.blocked) {
         host.eventBridge.emitCheckpoint(
@@ -457,7 +457,7 @@ export async function executeToolLoopRoute(
         assistantOutput: toolResult.output,
         hasRuntimeEvidence: host.eventBridge.hasRuntimeEvidenceForTurn(params.eventContext),
         runtimeEvidenceRefs: host.eventBridge.getRuntimeEvidenceRefsForTurn(params.eventContext),
-        llmClient: host.deps.llmClient,
+        llmClient: host.getRuntimeEvidenceGateClient(),
       });
       if (gate.blocked) {
         host.eventBridge.emitCheckpoint(
