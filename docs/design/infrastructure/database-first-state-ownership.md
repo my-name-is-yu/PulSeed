@@ -181,9 +181,13 @@ import/publish artifacts:
   feedback use the typed control DB `LearningRuntimeStateStore`; legacy
   learning files are no longer authoritative normal runtime state and are
   explicit `doctor --repair` import inputs only
-- current raw fallback migration follow-up surfaces: knowledge transfer
-  snapshot/meta-pattern state, transfer trust state, capability dependency
-  state, and task grounding raw task reads. Each is tracked by
+- knowledge transfer snapshot and meta-pattern aggregation watermark state use
+  the typed control DB `KnowledgeTransferStateStore`; legacy
+  `knowledge-transfer/snapshot.json` and
+  `meta-patterns/last_aggregated_at.json` files are explicit
+  `doctor --repair` import inputs only
+- current raw fallback migration follow-up surfaces: transfer trust state,
+  capability dependency state, and task grounding raw task reads. Each is tracked by
   `scripts/check-database-first-legacy-stores.mjs --json` as `migrate now`
   debt until its typed store/API slice lands. Character config, MCP server
   config, and generated reports are explicitly classified non-debt boundaries.

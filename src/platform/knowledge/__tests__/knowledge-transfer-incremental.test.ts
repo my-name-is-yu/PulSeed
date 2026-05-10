@@ -96,6 +96,37 @@ describe("M16.6: Incremental Meta-Pattern Update + Transfer Effect Report", () =
   // ─── KnowledgeTransfer.updateMetaPatternsIncremental ───
 
   describe("KnowledgeTransfer.updateMetaPatternsIncremental", () => {
+    it("ignores stale legacy meta-pattern watermark files on the normal runtime caller path", async () => {
+      const pattern = makePattern({
+        pattern_id: "pat_legacy_watermark_ignored",
+        created_at: "2026-03-10T00:00:00.000Z",
+        confidence: 0.8,
+      });
+      fs.mkdirSync(path.join(tmpDir, "meta-patterns"), { recursive: true });
+      fs.writeFileSync(path.join(tmpDir, "meta-patterns", "last_aggregated_at.json"), JSON.stringify({
+        ts: "2099-01-01T00:00:00.000Z",
+      }));
+      await stateManager.writeRaw("goals/goal_a/state.json", { gap: 0.5 });
+
+      const llmClient = createMockLLMClient([META_PATTERN_RESPONSE]);
+      const getPatterns = vi.fn().mockResolvedValue([pattern]);
+      const learningPipeline = { getPatterns } as never;
+
+      const kt = new KnowledgeTransfer({
+        llmClient,
+        knowledgeManager: makeMockKnowledgeManager(),
+        vectorIndex,
+        learningPipeline,
+        ethicsGate: makeMockEthicsGate(),
+        stateManager,
+      });
+
+      await expect(stateManager.readRaw("meta-patterns/last_aggregated_at.json")).resolves.toBeNull();
+      const result = await kt.updateMetaPatternsIncremental();
+
+      expect(llmClient.callCount).toBe(1);
+      expect(result).toBe(1);
+    });
 
     it("processes only patterns created after lastAggregatedAt", async () => {
       // pattern1: old (before last_aggregated_at), confidence 0.8

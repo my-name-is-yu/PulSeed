@@ -21,6 +21,7 @@ export {
   CONTROL_DB_GOAL_ORCHESTRATION_SCHEMA_SQL,
   CONTROL_DB_GOAL_TASK_DURABLE_LOOP_SCHEMA_SQL,
   CONTROL_DB_INITIAL_SCHEMA_SQL,
+  CONTROL_DB_KNOWLEDGE_TRANSFER_STATE_SCHEMA_SQL,
   CONTROL_DB_KNOWLEDGE_MEMORY_SOIL_SCHEMA_SQL,
   CONTROL_DB_LEARNING_RUNTIME_SCHEMA_SQL,
   CONTROL_DB_MIGRATIONS,
@@ -102,6 +103,29 @@ export {
 export type {
   LearningRuntimeLegacyImportReport,
 } from "./learning-runtime-state-migration.js";
+
+export {
+  buildKnowledgeTransferSnapshot,
+  KnowledgeTransferSnapshotSchema,
+  KnowledgeTransferStateStore,
+  parseKnowledgeTransferRawPath,
+} from "./knowledge-transfer-state-store.js";
+export type {
+  KnowledgeTransferRawKind,
+  KnowledgeTransferRawPathMatch,
+  KnowledgeTransferRawStateStoreResult,
+  KnowledgeTransferSnapshot,
+  KnowledgeTransferStateStoreOptions,
+  KnowledgeTransferStateStorePort,
+  PatternEffectivenessTrackerSnapshot,
+  TransferContextSnapshot,
+} from "./knowledge-transfer-state-store.js";
+export {
+  importLegacyKnowledgeTransferState,
+} from "./knowledge-transfer-state-migration.js";
+export type {
+  KnowledgeTransferLegacyImportReport,
+} from "./knowledge-transfer-state-migration.js";
 
 export {
   RuntimeEnvelopeKindSchema,

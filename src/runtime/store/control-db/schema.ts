@@ -7,7 +7,7 @@ export interface ControlDbMigration {
   checksum: string;
 }
 
-export const CONTROL_DB_SCHEMA_VERSION = 19;
+export const CONTROL_DB_SCHEMA_VERSION = 20;
 
 export const CONTROL_DB_INITIAL_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS control_schema_migrations (
@@ -942,6 +942,27 @@ CREATE INDEX IF NOT EXISTS learning_structural_feedback_updated_idx
   ON learning_structural_feedback(updated_at, goal_id);
 `.trim();
 
+export const CONTROL_DB_KNOWLEDGE_TRANSFER_STATE_SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS knowledge_transfer_snapshots (
+  snapshot_id TEXT PRIMARY KEY CHECK (snapshot_id = 'current'),
+  updated_at TEXT NOT NULL,
+  snapshot_json TEXT NOT NULL CHECK (json_valid(snapshot_json))
+);
+
+CREATE INDEX IF NOT EXISTS knowledge_transfer_snapshots_updated_idx
+  ON knowledge_transfer_snapshots(updated_at, snapshot_id);
+
+CREATE TABLE IF NOT EXISTS knowledge_transfer_meta_pattern_watermarks (
+  watermark_id TEXT PRIMARY KEY CHECK (watermark_id = 'last_aggregated_at'),
+  updated_at TEXT NOT NULL,
+  timestamp TEXT NOT NULL,
+  watermark_json TEXT NOT NULL CHECK (json_valid(watermark_json))
+);
+
+CREATE INDEX IF NOT EXISTS knowledge_transfer_meta_pattern_watermarks_updated_idx
+  ON knowledge_transfer_meta_pattern_watermarks(updated_at, watermark_id);
+`.trim();
+
 export const CONTROL_DB_KNOWLEDGE_MEMORY_SOIL_SCHEMA_SQL = `
 PRAGMA foreign_keys = ON;
 `.trim();
@@ -1603,5 +1624,10 @@ export const CONTROL_DB_MIGRATIONS: readonly ControlDbMigration[] = [
     19,
     "learning-runtime-state",
     CONTROL_DB_LEARNING_RUNTIME_SCHEMA_SQL
+  ),
+  createControlDbMigration(
+    20,
+    "knowledge-transfer-runtime-state",
+    CONTROL_DB_KNOWLEDGE_TRANSFER_STATE_SCHEMA_SQL
   ),
 ];
