@@ -166,6 +166,8 @@ describe("SignalGatewayAdapter", () => {
     vi.useFakeTimers();
     try {
       const sentBodies: string[] = [];
+      const fallbackCanComplete = createDeferred();
+      let sendAttempt = 0;
       vi.stubGlobal("fetch", vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
         if (String(url).includes("/receive/")) {
           return okResponse({
@@ -179,6 +181,10 @@ describe("SignalGatewayAdapter", () => {
         }
         const body = JSON.parse(String(init?.body ?? "{}")) as { message?: string };
         sentBodies.push(body.message ?? "");
+        sendAttempt += 1;
+        if (sendAttempt === 1) {
+          await fallbackCanComplete.promise;
+        }
         return okResponse({});
       }));
       const dispatchStarted = createDeferred();
@@ -194,6 +200,11 @@ describe("SignalGatewayAdapter", () => {
       await dispatchStarted.promise;
       await vi.advanceTimersByTimeAsync(4_000);
       dispatchCanFinish.resolve();
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(sentBodies).toEqual(["I'm checking this."]);
+
+      fallbackCanComplete.resolve();
       await polling;
 
       expect(sentBodies).toEqual(["I'm checking this.", "Received."]);

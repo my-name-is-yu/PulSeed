@@ -678,6 +678,41 @@ describe("SeedyPresenceProjector", () => {
     expect(transport.sendFallbackAck).toHaveBeenCalledOnce();
   });
 
+  it("waits for in-flight fallback ack sends before stop resolves", async () => {
+    let resolveFallbackAck: (() => void) | undefined;
+    const transport = createTransport();
+    vi.mocked(transport.sendFallbackAck).mockImplementationOnce(async (text: string) => {
+      transport.calls.push(`sendFallbackAck:${text}`);
+      await new Promise<void>((resolve) => {
+        resolveFallbackAck = resolve;
+      });
+      return { id: "fallback-slow" };
+    });
+    const projector = new SeedyPresenceProjector({
+      presence: resolveGatewayChannelPresenceContract(SIGNAL_SEEDY_PRESENCE_CONTRACT),
+      transport,
+    });
+
+    await projector.update(presence("received"));
+    await vi.advanceTimersByTimeAsync(4_000);
+
+    let stopped = false;
+    const stop = projector.stop().then(() => {
+      stopped = true;
+    });
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(transport.sendFallbackAck).toHaveBeenCalledOnce();
+    expect(stopped).toBe(false);
+    expect(projector.hasSentFallbackAck).toBe(false);
+
+    resolveFallbackAck?.();
+    await stop;
+
+    expect(stopped).toBe(true);
+    expect(projector.hasSentFallbackAck).toBe(true);
+  });
+
   it("keeps editable status ref for cleanup retry when delete fails", async () => {
     const onError = vi.fn();
     const transport = createTransport();
