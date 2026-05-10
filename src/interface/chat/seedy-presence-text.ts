@@ -15,14 +15,13 @@ export function safeSeedyPresenceActivityFragment(value: string | undefined): st
   return normalizeControlledActivityLabel(normalized);
 }
 
-function normalizeControlledActivityLabel(value: string): string {
+function normalizeControlledActivityLabel(value: string): string | null {
   switch (value) {
     case "Taking action":
-      return "the current action";
     case "tool activity":
     case "tool activity started":
     case "tool activity finished":
-      return "the current action";
+      return null;
     case "drafting the response":
       return "drafting the reply";
     case "approval requested":

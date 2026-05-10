@@ -133,7 +133,7 @@ describe("SeedyTurnPresence", () => {
       now: "2026-05-10T05:00:45.000Z",
     }));
 
-    expect(formatted).toBe("I'm still working on it. I don't have a new visible update yet.");
+    expect(formatted).toBe("I'm still checking this. I don't have a more specific visible update yet.");
     expect(formatted).not.toContain("openai");
     expect(formatted).not.toContain("gpt");
   });

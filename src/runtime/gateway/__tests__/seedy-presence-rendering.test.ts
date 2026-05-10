@@ -123,7 +123,7 @@ describe("seedy presence rendering", () => {
       now: "2026-05-10T00:00:35.000Z",
     });
 
-    expect(status).toBe("I'm still working on it. I don't have a new visible update yet.");
+    expect(status).toBe("I'm still checking this. I don't have a more specific visible update yet.");
     expect(status).not.toMatch(/openai|gpt|model|tool catalog|command output/i);
   });
 
@@ -142,7 +142,7 @@ describe("seedy presence rendering", () => {
       now: "2026-05-10T00:00:35.000Z",
     });
 
-    expect(status).toBe("I'm still working on it. I don't have a new visible update yet.");
+    expect(status).toBe("I'm still checking this. I don't have a more specific visible update yet.");
     expect(status).not.toMatch(/npm test|aws ssm|with-decryption|prod\/secret/i);
   });
 
@@ -161,7 +161,7 @@ describe("seedy presence rendering", () => {
       now: "2026-05-10T00:00:35.000Z",
     });
 
-    expect(status).toBe("I'm still working on it. I don't have a new visible update yet.");
+    expect(status).toBe("I'm still checking this. I don't have a more specific visible update yet.");
     expect(status).not.toMatch(/PIP install|private-package/i);
   });
 
@@ -213,7 +213,7 @@ describe("seedy presence rendering", () => {
       now: "2026-05-10T00:00:35.000Z",
     });
 
-    expect(status).toBe("I'm still working on it. I don't have a new visible update yet.");
+    expect(status).toBe("I'm still checking this. I don't have a more specific visible update yet.");
     expect(status).not.toMatch(/OPENAI|API KEY/i);
   });
 });

@@ -84,7 +84,7 @@ function renderWaitingStatus(
 ): string {
   const activity = safePresenceActivity(presence);
   if (!activity) {
-    return "I'm still working on it. I don't have a new visible update yet.";
+    return "I'm still checking this. I don't have a more specific visible update yet.";
   }
   const elapsed = formatElapsedSince(presence.last_activity_at ?? presence.updated_at, options.now);
   return `I'm still working on it. Last visible activity: ${activity}${elapsed}.`;

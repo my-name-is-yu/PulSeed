@@ -66,3 +66,44 @@ PR: https://github.com/my-name-is-yu/PulSeed/pull/1859
 
 - Live Telegram dogfood was not run for this slice before PR creation.
 - Later slices will address early commentary, streaming, long-wait wording, and native typing timing.
+
+## Slice #1849
+
+Issue: https://github.com/my-name-is-yu/PulSeed/issues/1849
+
+Base HEAD: `cd04e8493793b57b9b7c019b8fd91f39b9e42683`
+
+Branch: `yu/issue-1849-natural-long-wait-status`
+
+PR: pending
+
+### Design Decisions
+
+- Treat generic internal labels such as `Taking action` and generic `tool activity` as unavailable user-level activity, instead of normalizing them to `the current action`.
+- Keep safe typed labels such as `Checking the project state` visible through the same renderer.
+- Change the unknown waiting fallback to `I'm still checking this. I don't have a more specific visible update yet.` so long waits remain honest without leaking internals.
+- Preserve send-only no-spam behavior and keep this slice limited to status text rendering.
+
+### Commands Run
+
+- `git fetch origin main --prune`
+- `git worktree add -b yu/issue-1849-natural-long-wait-status /Users/yuyoshimuta/Documents/dev/PulSeed-worktrees/issue-1849-natural-long-wait-status origin/main`
+- `npm ci`
+- `npx vitest run --config vitest.unit.config.ts src/interface/chat/__tests__/seedy-turn-presence.test.ts src/runtime/gateway/__tests__/seedy-presence-rendering.test.ts src/runtime/gateway/__tests__/seedy-presence-projector.test.ts src/interface/chat/__tests__/chat-runner.test.ts --testNamePattern "waiting|active status|does not spam fallback|presence"` (initially failed before `npm ci`; rerun after install)
+- `npx vitest run --config vitest.unit.config.ts src/interface/chat/__tests__/seedy-turn-presence.test.ts src/runtime/gateway/__tests__/seedy-presence-rendering.test.ts src/runtime/gateway/__tests__/seedy-presence-projector.test.ts`
+- `npx vitest run --config vitest.unit.config.ts src/interface/chat/__tests__/chat-runner.test.ts src/interface/chat/__tests__/cross-platform-session.test.ts`
+- `npx vitest run --config vitest.integration.config.ts src/runtime/gateway/__tests__/seedy-presence-rendering.test.ts src/runtime/gateway/__tests__/seedy-presence-projector.test.ts`
+- `npm run typecheck`
+- `git diff --check`
+
+### Verification
+
+- Presence rendering unit tests: passed.
+- Gateway runtime presence rendering/projector integration tests: passed.
+- `chat-runner.test.ts` + `cross-platform-session.test.ts`: passed.
+- Typecheck: passed.
+- Diff whitespace check: passed.
+
+### Deferred
+
+- Live Telegram dogfood has not been rerun for this slice yet.
