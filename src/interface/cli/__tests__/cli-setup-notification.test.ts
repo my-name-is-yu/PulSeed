@@ -253,7 +253,10 @@ describe("setup notification step", () => {
     vi.doUnmock("../../../base/llm/provider-config.js");
     vi.doUnmock("../../../base/config/global-config.js");
     vi.doUnmock("../../../base/config/identity-loader.js");
+    vi.doUnmock("../../../platform/profile/relationship-profile.js");
+    vi.doUnmock("../../../platform/profile/user-md-profile-import.js");
     vi.doUnmock("../../../runtime/daemon/client.js");
+    vi.doUnmock("../commands/operator-binding-status.js");
     vi.doUnmock("node:child_process");
     vi.doUnmock("node:fs");
     vi.doUnmock("../commands/setup/import/flow.js");
@@ -960,6 +963,119 @@ describe("setup notification step", () => {
     expect(logSuccessMock).toHaveBeenCalledWith(
       "Daemon and gateway started (PID: 12345) on port 41701."
     );
+  });
+
+  it("does not clobber oversized .env or daemon config during full setup", async () => {
+    const tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), "pulseed-setup-bounded-test-"));
+    process.env["PULSEED_HOME"] = tmpDir;
+    const envPath = path.join(tmpDir, ".env");
+    const daemonConfigPath = path.join(tmpDir, "daemon.json");
+    const oversizedEnv = `EXISTING_KEY=keep\n${"x".repeat(1024 * 1024)}\n`;
+    const oversizedDaemonConfig = `${JSON.stringify({ existing: true, padding: "x".repeat(256 * 1024) })}\n`;
+    await fsp.writeFile(envPath, oversizedEnv, "utf-8");
+    await fsp.writeFile(daemonConfigPath, oversizedDaemonConfig, "utf-8");
+    const spawnChild = {
+      pid: 12345,
+      unref: vi.fn(),
+      once: vi.fn(),
+    };
+    spawnChild.once.mockImplementation((event: string, callback: () => void) => {
+      if (event === "spawn") queueMicrotask(callback);
+      return spawnChild;
+    });
+    const spawnMock = vi.fn(() => spawnChild);
+    vi.doUnmock("node:fs");
+    vi.doMock("node:child_process", () => ({
+      spawn: spawnMock,
+    }));
+    vi.doMock("../../../runtime/daemon/client.js", () => ({
+      isDaemonRunning: vi.fn(async () => ({ running: true, port: 41701 })),
+    }));
+    vi.doMock("../commands/operator-binding-status.js", () => ({
+      collectOperatorBindingStatus: vi.fn(async () => makeBindingStatus({
+        daemon: { running: true, port: 41701, health: "ok", runtime_root: tmpDir },
+      })),
+    }));
+    vi.doMock("../commands/setup/import/flow.js", () => ({
+      providerConfigPatchFromImport: vi.fn(() => undefined),
+      stepSetupImport: vi.fn(async () => null),
+    }));
+    vi.doMock("../commands/setup/import/apply.js", () => ({
+      applySetupImportSelection: vi.fn(),
+    }));
+    vi.doMock("../commands/setup/steps-identity.js", () => ({
+      getBanner: () => "banner",
+      stepExistingConfig: vi.fn(async () => "reset"),
+      stepUserName: vi.fn(async () => "User"),
+      stepSeedyName: vi.fn(async () => "Seedy"),
+    }));
+    vi.doMock("../commands/setup/steps-provider.js", () => ({
+      stepRootPreset: vi.fn(async () => "default"),
+      stepProvider: vi.fn(async () => "openai"),
+      stepModel: vi.fn(async () => "gpt-5.4-mini"),
+      stepApiKey: vi.fn(async () => "sk-test"),
+      stepOpenAIAuthMethod: vi.fn(async () => "api_key"),
+    }));
+    vi.doMock("../commands/setup/steps-adapter.js", () => ({
+      stepAdapter: vi.fn(async () => "openai_codex_cli"),
+    }));
+    vi.doMock("../commands/setup/steps-runtime.js", () => ({
+      ensurePulseedDir: vi.fn(() => tmpDir),
+      stepDaemon: vi.fn(async () => ({ start: true, port: 41701 })),
+      writeSeedMd: vi.fn(),
+      writeRootMd: vi.fn(),
+      writeUserMd: vi.fn(),
+    }));
+    vi.doMock("../commands/setup/steps-gateway.js", () => ({
+      formatGatewaySetupSummary: vi.fn(() => "Gateway: disabled"),
+      saveGatewayChannels: vi.fn(async () => {}),
+      stepGatewayChannels: vi.fn(async () => null),
+    }));
+    vi.doMock("../commands/setup/steps-notification.js", () => ({
+      stepNotification: vi.fn(async () => null),
+    }));
+    vi.doMock("../../../base/llm/provider-config.js", () => ({
+      MODEL_REGISTRY: {
+        "gpt-5.4-mini": {
+          provider: "openai",
+          adapters: ["openai_codex_cli", "openai_api", "agent_loop"],
+        },
+      },
+      loadProviderConfig: vi.fn(),
+      saveProviderConfig: vi.fn(async () => {}),
+      validateProviderConfig: vi.fn(() => ({ valid: true, errors: [] })),
+    }));
+    vi.doMock("../../../base/config/global-config.js", () => ({
+      updateGlobalConfig: updateGlobalConfigMock,
+    }));
+    vi.doMock("../../../base/config/identity-loader.js", () => ({
+      clearIdentityCache: vi.fn(),
+    }));
+    vi.doMock("../../../platform/profile/relationship-profile.js", () => ({
+      seedRelationshipProfileFromSetup: vi.fn(async () => {}),
+    }));
+    vi.doMock("../../../platform/profile/user-md-profile-import.js", () => ({
+      createRelationshipProfileProposalsFromUserMdImport: vi.fn(async () => ({ proposals: [] })),
+    }));
+
+    confirmMock.mockResolvedValueOnce(true);
+    selectMock
+      .mockResolvedValueOnce("continue")
+      .mockResolvedValueOnce("continue")
+      .mockResolvedValueOnce("continue")
+      .mockResolvedValueOnce("save");
+
+    const { runSetupWizard } = await import("../commands/setup-wizard.js");
+    const code = await runSetupWizard();
+
+    expect(code).toBe(0);
+    await expect(fsp.readFile(envPath, "utf-8")).resolves.toBe(oversizedEnv);
+    await expect(fsp.readFile(daemonConfigPath, "utf-8")).resolves.toBe(oversizedDaemonConfig);
+    expect(logWarnMock).toHaveBeenCalledWith(
+      expect.stringContaining("Setup saved, but could not update .env because it exceeds")
+    );
+    expect(logWarnMock).toHaveBeenCalledWith("Setup saved, but could not save daemon port to daemon.json");
+    expect(updateGlobalConfigMock).toHaveBeenCalledWith({ daemon_mode: true });
   });
 
   it("does not enable daemon mode when daemon startup fails", async () => {

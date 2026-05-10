@@ -16,6 +16,7 @@ import { seedRelationshipProfileFromSetup } from "../../../platform/profile/rela
 import { createRelationshipProfileProposalsFromUserMdImport } from "../../../platform/profile/user-md-profile-import.js";
 import { updateGlobalConfig } from "../../../base/config/global-config.js";
 import { readCodexOAuthToken } from "../../../base/llm/provider-config.js";
+import { isTextFileSizeLimitError, readTextFileWithinLimitSync } from "../../../base/utils/json-io.js";
 import { isDaemonRunning } from "../../../runtime/daemon/client.js";
 import { StateManager } from "../../../base/state/state-manager.js";
 import { ROOT_PRESETS } from "./presets/root-presets.js";
@@ -41,6 +42,9 @@ import {
   printResidentReadinessReport,
 } from "./setup/resident-readiness.js";
 export { buildResidentReadinessReport } from "./setup/resident-readiness.js";
+
+export const SETUP_ENV_TEXT_MAX_BYTES = 1024 * 1024;
+export const SETUP_DAEMON_CONFIG_MAX_BYTES = 256 * 1024;
 
 type SetupAnswers = {
   userName: string;
@@ -479,8 +483,14 @@ function saveProviderApiKeyToEnv(provider: ProviderConfig["provider"], apiKey: s
   const envPath = path.join(dir, ".env");
   let lines: string[] = [];
   try {
-    lines = fs.readFileSync(envPath, "utf-8").split(/\r?\n/);
-  } catch {
+    lines = readTextFileWithinLimitSync(envPath, {
+      maxBytes: SETUP_ENV_TEXT_MAX_BYTES,
+    }).split(/\r?\n/);
+  } catch (err) {
+    if (isTextFileSizeLimitError(err)) {
+      p.log.warn(`Setup saved, but could not update .env because it exceeds ${SETUP_ENV_TEXT_MAX_BYTES} bytes`);
+      return;
+    }
     lines = [];
   }
 
@@ -788,7 +798,10 @@ export async function runSetupWizard(): Promise<number> {
     try {
       let existing: Record<string, unknown> = {};
       if (fs.existsSync(daemonConfigPath)) {
-        existing = JSON.parse(fs.readFileSync(daemonConfigPath, "utf-8")) as Record<string, unknown>;
+        const raw = readTextFileWithinLimitSync(daemonConfigPath, {
+          maxBytes: SETUP_DAEMON_CONFIG_MAX_BYTES,
+        });
+        existing = JSON.parse(raw) as Record<string, unknown>;
       }
       existing["event_server_port"] = finalAnswers.daemonPort;
       fs.writeFileSync(daemonConfigPath, JSON.stringify(existing, null, 2), "utf-8");
