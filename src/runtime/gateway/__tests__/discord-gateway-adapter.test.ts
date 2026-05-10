@@ -4,6 +4,7 @@ import { webcrypto } from "node:crypto";
 import { dispatchGatewayChatInput } from "../chat-session-dispatch.js";
 import { DiscordGatewayAdapter, type DiscordGatewayConfig } from "../discord-gateway-adapter.js";
 import { MAX_HTTP_BODY_SIZE } from "../../http-body.js";
+import { createUserVisibleSeedyTurnPresence, type SeedyTurnPresencePhase } from "../../../interface/chat/seedy-turn-presence.js";
 
 vi.mock("../chat-session-dispatch.js", () => ({
   dispatchGatewayChatInput: vi.fn().mockResolvedValue("Discord reply"),
@@ -49,6 +50,110 @@ describe("DiscordGatewayAdapter", () => {
       }),
     }));
     expect(calls.some((call) => call.url.startsWith("https://discord.com/api/v10/webhooks/app-1/token-1"))).toBe(true);
+    const renderedText = calls
+      .map((call) => JSON.parse(String(call.init?.body ?? "{}")) as { content?: string })
+      .map((body) => body.content ?? "");
+    expect(renderedText).toContain("Discord reply");
+    expect(renderedText).not.toContain("Received.");
+  });
+
+  it("acknowledges Discord interactions while shared presence drives typing and final follow-up output", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      calls.push({ url: String(url), init });
+      return okResponse({ id: `message-${calls.length}` });
+    }));
+    vi.mocked(dispatchGatewayChatInput).mockImplementationOnce(async (input) => {
+      await input.onEvent?.(presenceEvent("received"));
+      await input.onEvent?.(assistantFinalEvent("Done from interaction."));
+      return "Done from interaction.";
+    });
+    const adapter = new DiscordGatewayAdapter({ ...makeConfig(), port: 0 });
+    await adapter.start();
+    try {
+      const result = await postRaw(getListeningPort(adapter), JSON.stringify({
+        id: "interaction-1",
+        type: 2,
+        token: "token-1",
+        application_id: "app-1",
+        channel_id: "channel-1",
+        user: { id: "user-1" },
+        data: {
+          name: "pulseed",
+          options: [{ name: "message", value: "hello" }],
+        },
+      }));
+
+      expect(result.status).toBe(200);
+      expect(JSON.parse(result.body)).toEqual({ type: 5 });
+      await vi.waitFor(() => {
+        expect(dispatchGatewayChatInput).toHaveBeenCalledWith(expect.objectContaining({
+          text: "hello",
+          platform: "discord",
+          conversation_id: "channel-1",
+          sender_id: "user-1",
+          message_id: "interaction-1",
+        }));
+      });
+      await vi.waitFor(() => {
+        const renderedText = calls
+          .map((call) => JSON.parse(String(call.init?.body ?? "{}")) as { content?: string })
+          .map((body) => body.content ?? "");
+        expect(renderedText).toContain("Done from interaction.");
+        expect(renderedText).not.toContain("Received.");
+      });
+      expect(calls).toContainEqual(expect.objectContaining({
+        url: "https://discord.com/api/v10/channels/channel-1/typing",
+        init: expect.objectContaining({ method: "POST" }),
+      }));
+    } finally {
+      await adapter.stop();
+    }
+  });
+
+  it("logs and suppresses Discord native typing failures from presence projection", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const calls: Array<{ url: string; init?: RequestInit }> = [];
+      vi.stubGlobal("fetch", vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+        calls.push({ url: String(url), init });
+        if (String(url) === "https://discord.com/api/v10/channels/channel-1/typing") {
+          return failedResponse(503, "typing unavailable");
+        }
+        return okResponse({ id: `message-${calls.length}` });
+      }));
+      vi.mocked(dispatchGatewayChatInput).mockImplementationOnce(async (input) => {
+        await input.onEvent?.(presenceEvent("received"));
+        await input.onEvent?.(assistantFinalEvent("Typing failed, but the turn completed."));
+        return "Typing failed, but the turn completed.";
+      });
+      const adapter = new DiscordGatewayAdapter(makeConfig());
+
+      await (adapter as unknown as {
+        processIncomingMessage(payload: unknown, input: Parameters<typeof dispatchGatewayChatInput>[0]): Promise<void>;
+      }).processIncomingMessage(
+        { application_id: "app-1", token: "token-1" },
+        {
+          text: "hello",
+          platform: "discord",
+          identity_key: "discord:user",
+          conversation_id: "channel-1",
+          sender_id: "user-1",
+          metadata: { channel_id: "channel-1" },
+        }
+      );
+
+      expect(warn).toHaveBeenCalledWith(
+        "DiscordGatewayAdapter: typing indicator failed",
+        expect.any(Error)
+      );
+      const renderedText = calls
+        .map((call) => JSON.parse(String(call.init?.body ?? "{}")) as { content?: string })
+        .map((body) => body.content ?? "");
+      expect(renderedText).toContain("Typing failed, but the turn completed.");
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("keeps projected follow-up messages ephemeral when configured", async () => {
@@ -191,6 +296,28 @@ const eventBase = {
   createdAt: "2026-05-07T00:00:00.000Z",
 };
 
+function presenceEvent(phase: SeedyTurnPresencePhase) {
+  return {
+    ...eventBase,
+    type: "presence_update" as const,
+    presence: createUserVisibleSeedyTurnPresence({
+      turn_id: eventBase.turnId,
+      phase,
+      started_at: eventBase.createdAt,
+      updated_at: eventBase.createdAt,
+    }),
+  };
+}
+
+function assistantFinalEvent(text: string) {
+  return {
+    ...eventBase,
+    type: "assistant_final" as const,
+    text,
+    persisted: true,
+  };
+}
+
 function deniedToolObservationEvent() {
   return {
     ...eventBase,
@@ -258,6 +385,15 @@ function okResponse(payload: unknown): Response {
     ok: true,
     json: async () => payload,
     text: async () => JSON.stringify(payload),
+  } as Response;
+}
+
+function failedResponse(status: number, body: string): Response {
+  return {
+    ok: false,
+    status,
+    json: async () => ({ message: body }),
+    text: async () => body,
   } as Response;
 }
 

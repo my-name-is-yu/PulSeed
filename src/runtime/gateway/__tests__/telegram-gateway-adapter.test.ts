@@ -6,6 +6,7 @@ import { dispatchGatewayChatInput } from "../chat-session-dispatch.js";
 import { TelegramGatewayAdapter } from "../telegram-gateway-adapter.js";
 import { ChatRunnerEventBridge } from "../../../interface/chat/chat-runner-event-bridge.js";
 import { PluginChannelRuntimeStateStore } from "../../store/plugin-channel-runtime-state-store.js";
+import { createUserVisibleSeedyTurnPresence, type SeedyTurnPresencePhase } from "../../../interface/chat/seedy-turn-presence.js";
 import type { AgentLoopEvent } from "../../../orchestrator/execution/agent-loop/agent-loop-events.js";
 
 vi.mock("../chat-session-dispatch.js", () => ({
@@ -115,6 +116,125 @@ describe("TelegramGatewayAdapter", () => {
         }),
       })
     );
+  });
+
+  it("starts and refreshes Telegram typing from shared presence updates", async () => {
+    vi.useFakeTimers();
+    try {
+      const configDir = await writeConfig({
+        bot_token: "test-token",
+        allowed_user_ids: [42],
+        denied_user_ids: [],
+        allowed_chat_ids: [],
+        denied_chat_ids: [],
+        runtime_control_allowed_user_ids: [42],
+        chat_goal_map: {},
+        user_goal_map: {},
+        allow_all: true,
+        polling_timeout: 30,
+        identity_key: "seedy",
+      });
+      const sentChatActions: unknown[] = [];
+      const sentMessages: string[] = [];
+      const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+        const method = String(url).split("/").at(-1);
+        if (method === "sendChatAction") {
+          sentChatActions.push(JSON.parse(String(init?.body ?? "{}")));
+          return telegramResponse(true);
+        }
+        if (method === "sendMessage") {
+          const body = JSON.parse(String(init?.body ?? "{}")) as { text?: string };
+          sentMessages.push(body.text ?? "");
+          return telegramResponse({ message_id: 9000 + sentMessages.length });
+        }
+        throw new Error(`unexpected Telegram method: ${method}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      const adapter = TelegramGatewayAdapter.fromConfigDir(configDir);
+      adapters.push(adapter);
+      const presenceHandled = createDeferred();
+      const dispatchCanFinish = createDeferred();
+      vi.mocked(dispatchGatewayChatInput).mockImplementationOnce(async (input) => {
+        await input.onEvent?.(presenceEvent("received"));
+        presenceHandled.resolve();
+        await dispatchCanFinish.promise;
+        await input.onEvent?.(assistantFinalEvent("Done from Telegram."));
+        return "Done from Telegram.";
+      });
+
+      const processing = (adapter as unknown as {
+        processMessage(text: string, fromUserId: number, chatId: number, messageId: number): Promise<void>;
+      }).processMessage("hello", 42, 314, 2718);
+
+      await presenceHandled.promise;
+      expect(sentChatActions).toEqual([{ chat_id: 314, action: "typing" }]);
+
+      await vi.advanceTimersByTimeAsync(4_000);
+      expect(sentChatActions).toEqual([
+        { chat_id: 314, action: "typing" },
+        { chat_id: 314, action: "typing" },
+      ]);
+
+      dispatchCanFinish.resolve();
+      await processing;
+      await vi.advanceTimersByTimeAsync(4_000);
+
+      expect(sentChatActions).toHaveLength(2);
+      expect(sentMessages).toContain("Done from Telegram.");
+      expect(sentMessages).not.toContain("Received.");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("logs and suppresses Telegram native typing failures from presence projection", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const configDir = await writeConfig({
+        bot_token: "test-token",
+        allowed_user_ids: [42],
+        denied_user_ids: [],
+        allowed_chat_ids: [],
+        denied_chat_ids: [],
+        runtime_control_allowed_user_ids: [42],
+        chat_goal_map: {},
+        user_goal_map: {},
+        allow_all: true,
+        polling_timeout: 30,
+        identity_key: "seedy",
+      });
+      const sentMessages: string[] = [];
+      const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+        const method = String(url).split("/").at(-1);
+        if (method === "sendChatAction") return telegramErrorResponse(500, "typing unavailable");
+        if (method === "sendMessage") {
+          const body = JSON.parse(String(init?.body ?? "{}")) as { text?: string };
+          sentMessages.push(body.text ?? "");
+          return telegramResponse({ message_id: 9000 + sentMessages.length });
+        }
+        throw new Error(`unexpected Telegram method: ${method}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      const adapter = TelegramGatewayAdapter.fromConfigDir(configDir);
+      adapters.push(adapter);
+      vi.mocked(dispatchGatewayChatInput).mockImplementationOnce(async (input) => {
+        await input.onEvent?.(presenceEvent("received"));
+        await input.onEvent?.(assistantFinalEvent("Typing failed, but the turn completed."));
+        return "Typing failed, but the turn completed.";
+      });
+
+      await (adapter as unknown as {
+        processMessage(text: string, fromUserId: number, chatId: number, messageId: number): Promise<void>;
+      }).processMessage("hello", 42, 314, 2718);
+
+      expect(warn).toHaveBeenCalledWith(
+        "TelegramGatewayAdapter: typing indicator failed",
+        expect.any(Error)
+      );
+      expect(sentMessages).toContain("Typing failed, but the turn completed.");
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("does not coerce malformed typing conversation ids into Telegram chat ids", async () => {
@@ -683,6 +803,32 @@ function createDeferred(): { promise: Promise<void>; resolve: () => void } {
   return { promise, resolve };
 }
 
+function presenceEvent(phase: SeedyTurnPresencePhase) {
+  return {
+    type: "presence_update" as const,
+    runId: "run-1",
+    turnId: "turn-1",
+    createdAt: "2026-05-10T00:00:00.000Z",
+    presence: createUserVisibleSeedyTurnPresence({
+      turn_id: "turn-1",
+      phase,
+      started_at: "2026-05-10T00:00:00.000Z",
+      updated_at: "2026-05-10T00:00:00.000Z",
+    }),
+  };
+}
+
+function assistantFinalEvent(text: string) {
+  return {
+    type: "assistant_final" as const,
+    runId: "run-1",
+    turnId: "turn-1",
+    createdAt: "2026-05-10T00:00:01.000Z",
+    text,
+    persisted: true,
+  };
+}
+
 async function writeConfig(config: Record<string, unknown>): Promise<string> {
   const configDir = await fs.mkdtemp(path.join(os.tmpdir(), "pulseed-telegram-gateway-"));
   tempDirs.push(configDir);
@@ -694,5 +840,13 @@ function telegramResponse(result: unknown): Response {
   return {
     ok: true,
     json: async () => ({ ok: true, result }),
+  } as Response;
+}
+
+function telegramErrorResponse(status: number, body: string): Response {
+  return {
+    ok: false,
+    status,
+    text: async () => body,
   } as Response;
 }
