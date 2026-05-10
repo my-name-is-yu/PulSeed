@@ -111,6 +111,17 @@ describe("daemon status health helpers", () => {
     expect(rendered).toContain("checked 2026-05-10T00:10:00.000Z");
   });
 
+  it("formats malformed historical numeric timestamps without throwing", () => {
+    const rendered = formatHistoricalSnapshotContext({
+      lastObservedAt: Number.MAX_SAFE_INTEGER,
+      checkedAt: Number.NaN,
+    });
+
+    expect(rendered).toContain("historical snapshot");
+    expect(rendered).not.toContain("last observed");
+    expect(rendered).toContain("checked unknown");
+  });
+
   it("marks stored runtime health as historical when live PID inspection reports stopped", () => {
     const now = Date.parse("2026-05-10T01:00:00.000Z");
     vi.useFakeTimers();
