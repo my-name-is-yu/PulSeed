@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { DimensionPreChecker } from "../dimension-pre-checker.js";
 import type { ObservationLogEntry } from "../../../base/types/state.js";
 import type { Dimension } from "../../../base/types/goal.js";
@@ -60,6 +60,17 @@ describe("DimensionPreChecker", () => {
       // Only age strategy, no other strategy → falls back to changed=true
       const result = await checker.check(mockDimension, oldObs, {});
       expect(result.changed).toBe(true);
+    });
+
+    it("runs when the last observation timestamp is malformed", async () => {
+      const checker = new DimensionPreChecker({
+        min_observation_interval_sec: 300,
+        strategies: ["age"],
+      });
+      const result = await checker.check(mockDimension, makeObs({ timestamp: "not-a-date" }), {});
+
+      expect(result.changed).toBe(true);
+      expect(result.hint).toContain("timestamp is invalid");
     });
   });
 
@@ -187,6 +198,24 @@ describe("DimensionPreChecker", () => {
       const recentObs = makeObs({ timestamp: new Date(Date.now() - 10_000).toISOString() });
       const result = await checker.check(mockDimension, recentObs, { workspace_path: "/fake/path" });
       expect(result.changed).toBe(false);
+    });
+
+    it("does not let clean git status suppress a malformed observation timestamp", async () => {
+      const mockExecutor = {
+        execute: vi.fn().mockResolvedValue({
+          success: true, data: { stdout: "", stderr: "", exitCode: 0 }, summary: "", durationMs: 5,
+        }),
+      };
+
+      const checker = new DimensionPreChecker({
+        min_observation_interval_sec: 300,
+        strategies: ["age", "git_diff"],
+        toolExecutor: mockExecutor as any,
+      });
+      const result = await checker.check(mockDimension, makeObs({ timestamp: "not-a-date" }), { workspace_path: "/fake/path" });
+
+      expect(result.changed).toBe(true);
+      expect(result.hint).toContain("timestamp is invalid");
     });
   });
 });
