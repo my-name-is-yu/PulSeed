@@ -7,7 +7,7 @@ export interface ControlDbMigration {
   checksum: string;
 }
 
-export const CONTROL_DB_SCHEMA_VERSION = 24;
+export const CONTROL_DB_SCHEMA_VERSION = 25;
 
 export const CONTROL_DB_INITIAL_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS control_schema_migrations (
@@ -160,6 +160,30 @@ CREATE INDEX IF NOT EXISTS goal_drive_schedules_due_idx
 
 CREATE INDEX IF NOT EXISTS goal_drive_schedules_cooldown_idx
   ON goal_drive_schedules(cooldown_until, goal_id);
+`.trim();
+
+export const CONTROL_DB_STRATEGY_TEMPLATE_SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS strategy_templates (
+  template_id TEXT PRIMARY KEY,
+  source_goal_id TEXT NOT NULL,
+  source_strategy_id TEXT NOT NULL,
+  effectiveness_score REAL NOT NULL CHECK (effectiveness_score >= 0 AND effectiveness_score <= 1),
+  embedding_id TEXT,
+  created_at TEXT NOT NULL,
+  template_json TEXT NOT NULL CHECK (json_valid(template_json))
+);
+
+CREATE INDEX IF NOT EXISTS strategy_templates_source_goal_idx
+  ON strategy_templates(source_goal_id, created_at, template_id);
+
+CREATE INDEX IF NOT EXISTS strategy_templates_source_strategy_idx
+  ON strategy_templates(source_strategy_id, created_at, template_id);
+
+CREATE INDEX IF NOT EXISTS strategy_templates_effectiveness_idx
+  ON strategy_templates(effectiveness_score DESC, created_at, template_id);
+
+CREATE INDEX IF NOT EXISTS strategy_templates_embedding_idx
+  ON strategy_templates(embedding_id, template_id);
 `.trim();
 
 export const CONTROL_DB_RUNTIME_STATE_OWNERSHIP_SCHEMA_SQL = `
@@ -1744,5 +1768,10 @@ export const CONTROL_DB_MIGRATIONS: readonly ControlDbMigration[] = [
     24,
     "drive-goal-activation-schedule-state",
     CONTROL_DB_DRIVE_SCHEDULE_SCHEMA_SQL
+  ),
+  createControlDbMigration(
+    25,
+    "strategy-template-runtime-state",
+    CONTROL_DB_STRATEGY_TEMPLATE_SCHEMA_SQL
   ),
 ];

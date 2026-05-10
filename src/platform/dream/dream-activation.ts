@@ -1,15 +1,12 @@
-import * as fsp from "node:fs/promises";
-import * as path from "node:path";
 import { randomUUID } from "node:crypto";
-import { z } from "zod";
 import type { KnowledgeEntry } from "../knowledge/types/knowledge.js";
 import { KnowledgeEntrySchema } from "../knowledge/types/knowledge.js";
 import type { LearnedPattern } from "../knowledge/types/learning.js";
 import type { StrategyTemplate } from "../../orchestrator/strategy/types/cross-portfolio.js";
-import { StrategyTemplateSchema } from "../../orchestrator/strategy/types/cross-portfolio.js";
 import type { Strategy } from "../../orchestrator/strategy/types/strategy.js";
 import { loadDreamConfig } from "./dream-config.js";
 import { LearningRuntimeStateStore } from "../../runtime/store/learning-runtime-state-store.js";
+import { StrategyTemplateStateStore } from "../../orchestrator/strategy/strategy-template-state-store.js";
 import {
   DreamDecisionHeuristicSchema,
   DreamStrategySelectorSchema,
@@ -53,10 +50,8 @@ export async function loadDreamActivationState(baseDir: string): Promise<DreamAc
 }
 
 export async function loadStrategyTemplates(baseDir: string): Promise<StrategyTemplate[]> {
-  const filePath = path.join(baseDir, "strategy-templates.json");
   try {
-    const raw = JSON.parse(await fsp.readFile(filePath, "utf8")) as unknown;
-    return z.array(StrategyTemplateSchema).parse(raw);
+    return await new StrategyTemplateStateStore(baseDir).list();
   } catch {
     return [];
   }

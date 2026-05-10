@@ -12,6 +12,7 @@ import {
 } from "../../../platform/dream/dream-activation.js";
 import { saveDreamConfig } from "../../../platform/dream/dream-config.js";
 import { DreamDecisionHeuristicStore } from "../../../runtime/store/dream-decision-heuristic-store.js";
+import { StrategyTemplateStateStore } from "../strategy-template-state-store.js";
 import { createMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
 import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 
@@ -139,6 +140,13 @@ const STRATEGY_TEMPLATES_ACTIVATION = {
   decisionHeuristics: false,
   graphTraversal: false,
 } as const;
+
+async function saveStrategyTemplates(
+  baseDir: string,
+  templates: Parameters<StrategyTemplateStateStore["saveMany"]>[0]
+): Promise<void> {
+  await new StrategyTemplateStateStore(baseDir).saveMany(templates);
+}
 
 const DECISION_HEURISTICS_ACTIVATION = {
   ...STRATEGY_TEMPLATES_ACTIVATION,
@@ -378,22 +386,19 @@ describe("generateCandidates", () => {
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     } as any);
-    fs.writeFileSync(
-      `${tempDir}/strategy-templates.json`,
-      JSON.stringify([
-        {
-          template_id: "tmpl-1",
-          source_goal_id: "goal-src",
-          source_strategy_id: "strat-src",
-          hypothesis_pattern: "Start with a structured research checklist",
-          domain_tags: ["research"],
-          effectiveness_score: 0.9,
-          applicable_dimensions: ["research_depth"],
-          embedding_id: null,
-          created_at: new Date().toISOString(),
-        },
-      ], null, 2)
-    );
+    await saveStrategyTemplates(tempDir, [
+      {
+        template_id: "tmpl-1",
+        source_goal_id: "goal-src",
+        source_strategy_id: "strat-src",
+        hypothesis_pattern: "Start with a structured research checklist",
+        domain_tags: ["research"],
+        effectiveness_score: 0.9,
+        applicable_dimensions: ["research_depth"],
+        embedding_id: null,
+        created_at: new Date().toISOString(),
+      },
+    ]);
 
     const candidates = await manager.generateCandidates("goal-1", "research_depth", ["research_depth"], {
       currentGap: 0.5,
@@ -470,33 +475,30 @@ describe("generateCandidates", () => {
         last_applied_at: null,
       }], null, 2)
     );
-    fs.writeFileSync(
-      `${tempDir}/strategy-templates.json`,
-      JSON.stringify([
-        {
-          template_id: "tmpl-audit",
-          source_goal_id: "goal-src",
-          source_strategy_id: "strat-src",
-          hypothesis_pattern: "Run fold distribution audit",
-          domain_tags: ["audit"],
-          effectiveness_score: 0.8,
-          applicable_dimensions: ["balanced_accuracy"],
-          embedding_id: null,
-          created_at: new Date().toISOString(),
-        },
-        {
-          template_id: "tmpl-text-only",
-          source_goal_id: "goal-src",
-          source_strategy_id: "strat-src-2",
-          hypothesis_pattern: "Prefer text-only threshold tuning",
-          domain_tags: ["kaggle"],
-          effectiveness_score: 0.99,
-          applicable_dimensions: ["other_dimension"],
-          embedding_id: null,
-          created_at: new Date().toISOString(),
-        },
-      ], null, 2)
-    );
+    await saveStrategyTemplates(tempDir, [
+      {
+        template_id: "tmpl-audit",
+        source_goal_id: "goal-src",
+        source_strategy_id: "strat-src",
+        hypothesis_pattern: "Run fold distribution audit",
+        domain_tags: ["audit"],
+        effectiveness_score: 0.8,
+        applicable_dimensions: ["balanced_accuracy"],
+        embedding_id: null,
+        created_at: new Date().toISOString(),
+      },
+      {
+        template_id: "tmpl-text-only",
+        source_goal_id: "goal-src",
+        source_strategy_id: "strat-src-2",
+        hypothesis_pattern: "Prefer text-only threshold tuning",
+        domain_tags: ["kaggle"],
+        effectiveness_score: 0.99,
+        applicable_dimensions: ["other_dimension"],
+        embedding_id: null,
+        created_at: new Date().toISOString(),
+      },
+    ]);
 
     const candidates = await manager.generateCandidates("goal-1", "balanced_accuracy", ["balanced_accuracy"], {
       currentGap: 0.2,
@@ -526,22 +528,19 @@ describe("generateCandidates", () => {
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     } as any);
-    fs.writeFileSync(
-      `${tempDir}/strategy-templates.json`,
-      JSON.stringify([
-        {
-          template_id: "tmpl-1",
-          source_goal_id: "goal-src",
-          source_strategy_id: "strat-src",
-          hypothesis_pattern: "Start with a structured research checklist",
-          domain_tags: ["research"],
-          effectiveness_score: 0.9,
-          applicable_dimensions: ["research_depth"],
-          embedding_id: null,
-          created_at: new Date().toISOString(),
-        },
-      ], null, 2)
-    );
+    await saveStrategyTemplates(tempDir, [
+      {
+        template_id: "tmpl-1",
+        source_goal_id: "goal-src",
+        source_strategy_id: "strat-src",
+        hypothesis_pattern: "Start with a structured research checklist",
+        domain_tags: ["research"],
+        effectiveness_score: 0.9,
+        applicable_dimensions: ["research_depth"],
+        embedding_id: null,
+        created_at: new Date().toISOString(),
+      },
+    ]);
 
     const first = await manager.generateCandidates("goal-1", "research_depth", ["research_depth"], {
       currentGap: 0.5,

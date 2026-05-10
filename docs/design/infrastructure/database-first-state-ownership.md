@@ -127,7 +127,7 @@ Current direct filesystem owner inventory:
 | RunSpec durable draft/confirmation/start state | `src/runtime/run-spec/store.ts` | `run_spec_records` in `state/pulseed-control.sqlite`; legacy `run-specs/<id>.json` is doctor/repair import input only | typed control DB state | closed in Slice 2 |
 | DriveSystem goal activation schedule | `src/platform/drive/drive-system.ts` | `goal_drive_schedules` in `state/pulseed-control.sqlite`; legacy `schedule/<goalId>.json` is doctor/repair import input only | typed control DB state | closed in Slice 3 |
 | DriveSystem runtime event ingestion spool | `src/platform/drive/drive-system.ts`, `src/runtime/event/*`, daemon `writeEvent` callers | `events/*.json`, `events/{archive,processed,failed}/*.json` | bounded IPC/spool | closed in Slice 4 |
-| Successful strategy template reuse | `src/orchestrator/strategy/strategy-template-registry.ts` | `strategy-templates.json` | typed-store migrate now | Slice 5 |
+| Successful strategy template reuse | `src/orchestrator/strategy/strategy-template-registry.ts`, dream activation/consolidation callers | `strategy_templates` in `state/pulseed-control.sqlite`; legacy `strategy-templates.json` is doctor/repair import input only | typed control DB state | closed in Slice 5 |
 | Runtime semantic vector index | `src/platform/knowledge/vector-index.ts` | caller-provided `indexPath` JSON | typed-store migrate now | Slice 6 |
 | Cross-goal knowledge graph | `src/platform/knowledge/knowledge-graph.ts` | caller-provided `graphPath` JSON | typed-store migrate now | Slice 6 |
 | Runtime reports, manifests, postmortems, long-running results | runtime report stores and runtime tools | report/result/manifest files | reproducibility artifact | Slice 7 |
@@ -159,6 +159,20 @@ This file-backed boundary is allowed only with these invariants:
 - The direct-file guard classifies only the DriveSystem/event-server/MCP/daemon
   event spool boundary. New runtime event JSON owners outside that boundary fail
   the guard.
+
+### Strategy Template Runtime State
+
+Successful strategy templates are normal runtime learning/reuse state. The
+registry, strategy enrichment, dream activation, and dream consolidation paths
+read and write the `strategy_templates` control DB table through the typed
+strategy template store. Runtime callers do not read `strategy-templates.json`.
+
+The legacy `strategy-templates.json` file remains a migration-only input reached
+through `doctor --repair`. Repair imports valid templates into the typed table,
+records per-template legacy import bookkeeping, and records invalid legacy
+entries as blocked sources. The direct-file guard allows this filename only in
+the explicit strategy template migration module, so reintroducing runtime JSON
+ownership in the registry or dream caller path fails the guard.
 
 ## Final Audit
 
