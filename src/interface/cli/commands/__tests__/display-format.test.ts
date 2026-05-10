@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   formatAbsoluteRelativeTimestamp,
   formatDurationMs,
+  formatWholeMinuteDurationMs,
   formatPercent,
   formatRelativeTime,
   formatRelativeTimestamp,
@@ -24,6 +25,11 @@ describe("CLI display format helpers", () => {
       "2026-05-09T00:10:00.000Z (1d ago)"
     );
     expect(formatDurationMs(90_000)).toBe("1.5m");
+    expect(formatWholeMinuteDurationMs(null)).toBe("-");
+    expect(formatWholeMinuteDurationMs(0)).toBe("0m");
+    expect(formatWholeMinuteDurationMs(90_000)).toBe("2m");
+    expect(formatWholeMinuteDurationMs(3_600_000)).toBe("1h");
+    expect(formatWholeMinuteDurationMs(3_660_000)).toBe("1h 1m");
     expect(formatPercent(0.955)).toBe("95.5%");
   });
 
@@ -36,6 +42,8 @@ describe("CLI display format helpers", () => {
     expect(formatDurationMs(Number.NaN)).toBe("n/a");
     expect(formatDurationMs(Number.POSITIVE_INFINITY)).toBe("n/a");
     expect(formatDurationMs(-1)).toBe("n/a");
+    expect(formatWholeMinuteDurationMs(Number.NaN)).toBe("n/a");
+    expect(formatWholeMinuteDurationMs(Number.POSITIVE_INFINITY)).toBe("n/a");
     expect(formatPercent(Number.NaN)).toBe("n/a");
     expect(formatPercent(Number.NEGATIVE_INFINITY)).toBe("n/a");
   });
