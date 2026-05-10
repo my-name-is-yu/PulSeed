@@ -455,6 +455,34 @@ describe("ensureProviderConfig", () => {
     vi.mocked(tty.isatty).mockReset();
   });
 
+  it("does not fall through to defaults when provider.json is oversized and interactive setup is required", async () => {
+    await writeConfig(JSON.stringify({
+      provider: "openai",
+      model: "gpt-5.4-mini",
+      adapter: "openai_codex_cli",
+      padding: "x".repeat(1024 * 1024),
+    }));
+
+    vi.mocked(tty.isatty).mockReturnValue(false);
+    const providerConfigMod = await import("../../../base/llm/provider-config.js");
+    const loadSpy = vi.spyOn(providerConfigMod, "loadProviderConfig").mockResolvedValue({
+      provider: "openai",
+      model: "gpt-5.4-mini",
+      adapter: "openai_codex_cli",
+      api_key: "sk-default",
+    });
+
+    const { ensureProviderConfig } = await import("../ensure-api-key.js");
+
+    await expect(
+      ensureProviderConfig({ requireInteractiveSetup: true })
+    ).rejects.toThrow(/invalid json/i);
+    expect(loadSpy).not.toHaveBeenCalled();
+
+    loadSpy.mockRestore();
+    vi.mocked(tty.isatty).mockReset();
+  });
+
   it("starts the setup wizard for invalid JSON when interactive setup is required", async () => {
     await writeConfig("{not-json");
 

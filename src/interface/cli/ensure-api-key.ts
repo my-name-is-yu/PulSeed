@@ -7,7 +7,10 @@ import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import * as tty from "node:tty";
 import { loadProviderConfig, type ProviderConfig } from "../../base/llm/provider-config.js";
+import { readTextFileWithinLimit } from "../../base/utils/json-io.js";
 import { getPulseedDirPath } from "../../base/utils/paths.js";
+
+const PROVIDER_CONFIG_INSPECTION_MAX_BYTES = 1024 * 1024;
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -25,7 +28,9 @@ async function inspectProviderConfig(configPath: string): Promise<
   }
 
   try {
-    const raw = await fsp.readFile(configPath, "utf-8");
+    const raw = await readTextFileWithinLimit(configPath, {
+      maxBytes: PROVIDER_CONFIG_INSPECTION_MAX_BYTES,
+    });
     const parsed = JSON.parse(raw) as unknown;
     return { exists: true, validJson: isPlainObject(parsed) };
   } catch {
