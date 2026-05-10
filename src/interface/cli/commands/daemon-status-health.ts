@@ -6,6 +6,8 @@ import {
 } from "./daemon-shared.js";
 
 export const STALE_RUNTIME_HEALTH_REASON = "live PID inspection reports runtime stopped; stored health snapshot is historical";
+export const LIVE_RUNTIME_OVERRIDES_STALE_HEALTH_REASON =
+  "live PID inspection reports runtime running; stored process health is a historical snapshot";
 
 export interface HistoricalSnapshotContext {
   lastObservedAt?: number;
@@ -51,8 +53,55 @@ export function reconcileRuntimeHealthForDisplay(
   snapshot: RuntimeHealthSnapshot | null,
   opts: { runtimeAlive: boolean; runtimePid: number | null }
 ): RuntimeHealthSnapshot | null {
-  if (!snapshot || opts.runtimeAlive) {
+  if (!snapshot) {
     return snapshot;
+  }
+  if (opts.runtimeAlive) {
+    if (!runtimeHealthContradictsLivePid(snapshot)) {
+      return snapshot;
+    }
+    const checkedAt = Date.now();
+    const kpi: RuntimeHealthSnapshot["kpi"] = snapshot.kpi
+      ? {
+        ...snapshot.kpi,
+        process_alive: {
+          ...snapshot.kpi.process_alive,
+          status: "ok",
+          checked_at: checkedAt,
+          last_ok_at: checkedAt,
+          reason: LIVE_RUNTIME_OVERRIDES_STALE_HEALTH_REASON,
+        },
+        recovered_at: snapshot.kpi.recovered_at ?? checkedAt,
+      }
+      : undefined;
+    const longRunning: RuntimeHealthSnapshot["long_running"] = snapshot.long_running
+      ? {
+        ...snapshot.long_running,
+        summary: snapshot.long_running.summary === "dead_but_resumable" || snapshot.long_running.summary === "dead_needs_intervention"
+          ? "unknown"
+          : snapshot.long_running.summary,
+        checked_at: checkedAt,
+        signals: {
+          ...snapshot.long_running.signals,
+          process: {
+            ...snapshot.long_running.signals.process,
+            status: "alive",
+            pid: opts.runtimePid ?? snapshot.long_running.signals.process.pid,
+            checked_at: checkedAt,
+            observed_at: checkedAt,
+            reason: LIVE_RUNTIME_OVERRIDES_STALE_HEALTH_REASON,
+          },
+        },
+      }
+      : undefined;
+
+    return {
+      ...snapshot,
+      status: snapshot.status === "failed" ? "degraded" : snapshot.status,
+      checked_at: checkedAt,
+      kpi,
+      long_running: longRunning,
+    };
   }
 
   const checkedAt = Date.now();
@@ -97,4 +146,9 @@ export function reconcileRuntimeHealthForDisplay(
     kpi,
     long_running: longRunning,
   };
+}
+
+function runtimeHealthContradictsLivePid(snapshot: RuntimeHealthSnapshot): boolean {
+  return snapshot.kpi?.process_alive.status === "failed"
+    || snapshot.long_running?.signals.process.status === "dead";
 }

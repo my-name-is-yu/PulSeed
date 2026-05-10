@@ -3,11 +3,14 @@ import { z } from "zod";
 import type { StateManager } from "../base/state/state-manager.js";
 import type { ILLMClient } from "../base/llm/llm-client.js";
 import { getInternalIdentityPrefix } from "../base/config/identity-loader.js";
+import { DaemonStateSchema } from "./types/daemon.js";
+import { PIDManager } from "./pid-manager.js";
 import { createRuntimeSessionRegistry } from "./session-registry/index.js";
 import type {
   BackgroundRun,
   RuntimeSessionRegistrySnapshot,
 } from "./session-registry/types.js";
+import { DaemonStateStore } from "./store/index.js";
 import { RuntimeEvidenceLedger, type RuntimeEvidenceSummary } from "./store/evidence-ledger.js";
 import { RuntimeHealthStore } from "./store/health-store.js";
 import type { RuntimeHealthSnapshot } from "./store/runtime-schemas.js";
@@ -49,9 +52,29 @@ interface RuntimeEvidenceAnswerModelInput {
   topics: RuntimeEvidenceQuestionTopic[];
   snapshot: RuntimeSessionRegistrySnapshot | null;
   health: RuntimeHealthSnapshot | null;
+  daemonStatus?: RuntimeDaemonStatusEvidence | null;
   run: BackgroundRun | null;
   summary: RuntimeEvidenceSummary | null;
   now?: Date;
+}
+
+export interface RuntimeDaemonStatusEvidence {
+  source: "live_daemon_state" | "historical_health_snapshot" | "unavailable";
+  checked_at: string;
+  live?: {
+    status: "idle" | "running";
+    pid: number;
+    last_loop_at?: string | null;
+    active_goal_count: number;
+  };
+  health_snapshot?: {
+    checked_at: string;
+    status: RuntimeHealthSnapshot["status"];
+    process_status?: string;
+    summary?: string;
+    historical: boolean;
+    reason?: string;
+  };
 }
 
 const STALE_EVIDENCE_MS = 30 * 60 * 1000;
@@ -137,6 +160,12 @@ export async function answerRuntimeEvidenceQuestion(input: RuntimeEvidenceAnswer
     registry.snapshot().catch(() => null),
     healthStore.loadSnapshot().catch(() => null),
   ]);
+  const daemonStatus = await collectRuntimeDaemonStatusEvidence({
+    baseDir: input.stateManager.getBaseDir(),
+    runtimeRoot,
+    health,
+    now: input.now,
+  }).catch(() => null);
   const candidates = selectCandidateRuns(snapshot);
   const queryTargetRunId = query.targetRunId?.trim();
   const acceptedTargetRunId = queryTargetRunId && isExactRunIdReference(input.text, queryTargetRunId)
@@ -173,6 +202,7 @@ export async function answerRuntimeEvidenceQuestion(input: RuntimeEvidenceAnswer
     topics: query.topics,
     snapshot,
     health,
+    daemonStatus,
     run: selected.run,
     summary: selected.summary,
     now: input.now,
@@ -193,6 +223,7 @@ export function buildRuntimeEvidenceAnswer(input: RuntimeEvidenceAnswerModelInpu
 
   if (!run) {
     lines.push("Evidence missing: no active or recent Runtime Session Catalog run was found.");
+    appendDaemonStatusEvidence(lines, input.daemonStatus, input.health);
     return {
       kind: "answered",
       message: lines.join("\n"),
@@ -202,10 +233,13 @@ export function buildRuntimeEvidenceAnswer(input: RuntimeEvidenceAnswerModelInpu
     };
   }
 
-  lines.push(`Sources: Runtime Session Catalog${summary ? ", Runtime Evidence Ledger" : ""}${input.health ? ", Runtime Health" : ""}.`);
+  lines.push(
+    `Sources: Runtime Session Catalog${summary ? ", Runtime Evidence Ledger" : ""}${input.health ? ", Runtime Health" : ""}${input.daemonStatus?.live ? ", Live Daemon Status" : ""}.`
+  );
   lines.push(`Catalog status: ${run.status}${run.summary ? `; ${sanitize(run.summary)}` : ""}.`);
   if (run.error) warningLines.push(`Run error: ${sanitize(run.error)}`);
-  if (input.health?.long_running) {
+  appendDaemonStatusEvidence(lines, input.daemonStatus, input.health);
+  if (input.health?.long_running && !shouldSuppressCurrentHealthLiveness(input.daemonStatus, input.health)) {
     const health = input.health.long_running;
     lines.push(`Liveness: daemon aggregate ${health.signals.process.status}; logs ${health.signals.log_freshness.status}; ${health.summary}.`);
   }
@@ -246,6 +280,106 @@ export function buildRuntimeEvidenceAnswer(input: RuntimeEvidenceAnswerModelInpu
     topics,
     confidence,
   };
+}
+
+export async function collectRuntimeDaemonStatusEvidence(input: {
+  baseDir: string;
+  runtimeRoot: string;
+  health?: RuntimeHealthSnapshot | null;
+  now?: Date;
+}): Promise<RuntimeDaemonStatusEvidence> {
+  const checkedAt = (input.now ?? new Date()).toISOString();
+  const [rawState, pidStatus, loadedHealth] = await Promise.all([
+    new DaemonStateStore(input.baseDir).load().catch(() => null),
+    new PIDManager(input.baseDir).inspect().catch(() => null),
+    input.health === undefined
+      ? new RuntimeHealthStore(input.runtimeRoot, { controlBaseDir: input.baseDir }).loadSnapshot().catch(() => null)
+      : Promise.resolve(input.health),
+  ]);
+  const parsedState = DaemonStateSchema.safeParse(rawState);
+  const state = parsedState.success ? parsedState.data : null;
+  const runtimePid = pidStatus?.runtimePid ?? pidStatus?.info?.pid ?? state?.pid ?? null;
+  const pidAlive = runtimePid !== null
+    && pidStatus?.alivePids.includes(runtimePid) === true;
+  const live =
+    state
+    && (state.status === "idle" || state.status === "running")
+    && runtimePid !== null
+    && pidAlive
+      ? {
+        status: state.status,
+        pid: runtimePid,
+        last_loop_at: state.last_loop_at,
+        active_goal_count: state.active_goals.length,
+      }
+      : undefined;
+  const healthSnapshot = loadedHealth
+    ? {
+      checked_at: new Date(loadedHealth.checked_at).toISOString(),
+      status: loadedHealth.status,
+      process_status: loadedHealth.long_running?.signals.process.status,
+      summary: loadedHealth.long_running?.summary,
+      historical: live ? healthContradictsLiveDaemon(loadedHealth) : true,
+      reason: live && healthContradictsLiveDaemon(loadedHealth)
+        ? "live daemon state was checked after this persisted health snapshot"
+        : undefined,
+    }
+    : undefined;
+
+  return {
+    source: live
+      ? "live_daemon_state"
+      : healthSnapshot
+        ? "historical_health_snapshot"
+        : "unavailable",
+    checked_at: checkedAt,
+    live,
+    health_snapshot: healthSnapshot,
+  };
+}
+
+function appendDaemonStatusEvidence(
+  lines: string[],
+  daemonStatus: RuntimeDaemonStatusEvidence | null | undefined,
+  health: RuntimeHealthSnapshot | null,
+): void {
+  if (!daemonStatus) return;
+  if (daemonStatus.live) {
+    const activeGoals = daemonStatus.live.active_goal_count;
+    lines.push(
+      `Live daemon status: ${daemonStatus.live.status} (PID ${daemonStatus.live.pid}); checked ${daemonStatus.checked_at}; active goals ${activeGoals}.`
+    );
+    if (daemonStatus.health_snapshot?.historical) {
+      const process = daemonStatus.health_snapshot.process_status
+        ? `; process snapshot ${daemonStatus.health_snapshot.process_status}`
+        : "";
+      const reason = daemonStatus.health_snapshot.reason ? `; ${daemonStatus.health_snapshot.reason}` : "";
+      lines.push(
+        `Historical Runtime Health snapshot: ${daemonStatus.health_snapshot.status}${process}; checked ${daemonStatus.health_snapshot.checked_at}${reason}.`
+      );
+    }
+    return;
+  }
+  if (health?.long_running) {
+    const checkedAt = daemonStatus.health_snapshot?.checked_at ?? new Date(health.checked_at).toISOString();
+    lines.push(
+      `Historical Runtime Health snapshot: daemon aggregate ${health.long_running.signals.process.status}; logs ${health.long_running.signals.log_freshness.status}; ${health.long_running.summary}; checked ${checkedAt}.`
+    );
+  }
+}
+
+function shouldSuppressCurrentHealthLiveness(
+  daemonStatus: RuntimeDaemonStatusEvidence | null | undefined,
+  health: RuntimeHealthSnapshot,
+): boolean {
+  if (!daemonStatus) return false;
+  if (!daemonStatus.live) return true;
+  return healthContradictsLiveDaemon(health);
+}
+
+function healthContradictsLiveDaemon(health: RuntimeHealthSnapshot): boolean {
+  return health.kpi?.process_alive.status === "failed"
+    || health.long_running?.signals.process.status === "dead";
 }
 
 function selectRunsForEvidenceSummary(candidates: BackgroundRun[], targetRun: BackgroundRun | undefined): BackgroundRun[] {

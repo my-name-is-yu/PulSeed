@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { RuntimeHealthSnapshot } from "../../../runtime/store/runtime-schemas.js";
 import {
+  LIVE_RUNTIME_OVERRIDES_STALE_HEALTH_REASON,
   STALE_RUNTIME_HEALTH_REASON,
   formatHistoricalSnapshotContext,
   parseHistoricalObservationTime,
@@ -145,5 +146,58 @@ describe("daemon status health helpers", () => {
       runtimeAlive: true,
       runtimePid: snapshot.long_running?.signals.process.pid ?? null,
     })).toBe(snapshot);
+  });
+
+  it("does not mark aggregate failed health as historical when process health is live", () => {
+    const snapshot = runtimeHealthSnapshot();
+    snapshot.status = "failed";
+    snapshot.components.supervisor = "failed";
+    if (snapshot.kpi) {
+      snapshot.kpi.command_acceptance.status = "failed";
+    }
+
+    expect(reconcileRuntimeHealthForDisplay(snapshot, {
+      runtimeAlive: true,
+      runtimePid: snapshot.long_running?.signals.process.pid ?? null,
+    })).toBe(snapshot);
+  });
+
+  it("marks dead stored process health as historical when live PID inspection reports running", () => {
+    const now = Date.parse("2026-05-10T01:00:00.000Z");
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+    const snapshot = runtimeHealthSnapshot(4321);
+    snapshot.status = "failed";
+    if (snapshot.kpi) {
+      snapshot.kpi.process_alive.status = "failed";
+      snapshot.kpi.process_alive.last_failed_at = Date.parse("2026-05-10T00:00:00.000Z");
+    }
+    if (snapshot.long_running) {
+      snapshot.long_running.summary = "dead_needs_intervention";
+      snapshot.long_running.signals.process.status = "dead";
+    }
+
+    const reconciled = reconcileRuntimeHealthForDisplay(snapshot, {
+      runtimeAlive: true,
+      runtimePid: 9999,
+    });
+
+    expect(reconciled).not.toBe(snapshot);
+    expect(reconciled?.status).toBe("degraded");
+    expect(reconciled?.checked_at).toBe(now);
+    expect(reconciled?.kpi?.process_alive).toMatchObject({
+      status: "ok",
+      checked_at: now,
+      last_ok_at: now,
+      reason: LIVE_RUNTIME_OVERRIDES_STALE_HEALTH_REASON,
+    });
+    expect(reconciled?.long_running?.summary).toBe("unknown");
+    expect(reconciled?.long_running?.signals.process).toMatchObject({
+      status: "alive",
+      pid: 9999,
+      checked_at: now,
+      observed_at: now,
+      reason: LIVE_RUNTIME_OVERRIDES_STALE_HEALTH_REASON,
+    });
   });
 });
