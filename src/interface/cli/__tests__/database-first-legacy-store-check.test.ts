@@ -108,6 +108,84 @@ describe("database-first legacy store check", () => {
     expect(result.stderr).toContain("Unclassified legacy store references must be moved to typed stores");
   });
 
+  it("fails unclassified StateManager raw fallback callers even when the durable path is dynamic", () => {
+    writeFile(tmpDir, "src/runtime/new-runtime-owner.ts", `
+      export async function persist(stateManager: { readRaw(path: string): Promise<unknown>; writeRaw(path: string, value: unknown): Promise<void> }, key: string) {
+        const existing = await stateManager.readRaw(key);
+        await stateManager.writeRaw(key, { existing });
+      }
+    `);
+
+    const result = runCheck(tmpDir);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("src/runtime/new-runtime-owner.ts");
+    expect(result.stderr).toContain("[state-manager-raw-call] StateManager raw fallback boundary / typed store APIs");
+    expect(result.stderr).toContain("Unclassified legacy store references must be moved to typed stores");
+  });
+
+  it("fails unclassified StateManager raw fallback callers even for config-shaped JSON names", () => {
+    writeFile(tmpDir, "src/runtime/config-shaped-raw-owner.ts", `
+      export async function persist(stateManager: { readRaw(path: string): Promise<unknown>; writeRaw(path: string, value: unknown): Promise<void> }) {
+        const existing = await stateManager.readRaw("mcp-servers.json");
+        await stateManager.writeRaw("config.json", { existing });
+      }
+    `);
+
+    const result = runCheck(tmpDir);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("src/runtime/config-shaped-raw-owner.ts");
+    expect(result.stderr).toContain("[state-manager-raw-call] StateManager raw fallback boundary / typed store APIs");
+    expect(result.stderr).toContain("Unclassified legacy store references must be moved to typed stores");
+  });
+
+  it("reports classified raw fallback migration debt for known follow-up slices", () => {
+    writeFile(tmpDir, "src/orchestrator/goal/goal-negotiator.ts", `
+      export async function load(stateManager: { readRaw(path: string): Promise<unknown> }, goalId: string) {
+        return stateManager.readRaw(\`goals/\${goalId}/negotiation-log.json\`);
+      }
+      export async function save(stateManager: { writeRaw(path: string, value: unknown): Promise<void> }, goalId: string, log: unknown) {
+        await stateManager.writeRaw(\`goals/\${goalId}/negotiation-log.json\`, log);
+      }
+    `);
+    writeFile(tmpDir, "src/platform/traits/character-config.ts", `
+      const CHARACTER_CONFIG_PATH = "character-config.json";
+      export async function loadConfig(stateManager: { readRaw(path: string): Promise<unknown> }) {
+        return stateManager.readRaw(CHARACTER_CONFIG_PATH);
+      }
+    `);
+
+    const result = runCheck(tmpDir, ["--json"]);
+
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout) as {
+      ok: boolean;
+      allowlistReport: Array<{ id: string; category: string; nextSlice: number | null; matchCount: number }>;
+      debtReport: Array<{ id: string; category: string; nextSlice: number | null; matchCount: number }>;
+    };
+    expect(parsed.ok).toBe(true);
+    expect(parsed.debtReport).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: "goal-negotiation-log-raw-caller",
+        category: "migrate now",
+        nextSlice: 2,
+        matchCount: 4,
+      }),
+    ]));
+    expect(parsed.debtReport).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "character-config-user-content" }),
+    ]));
+    expect(parsed.allowlistReport).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: "character-config-user-content",
+        category: "config/secret",
+        nextSlice: null,
+        matchCount: 1,
+      }),
+    ]));
+  });
+
   it("fails unexpected legacy store classes inside classified follow-up files", () => {
     writeFile(tmpDir, "src/orchestrator/execution/session-manager.ts", `
       export const wal = "wal.jsonl";

@@ -22,6 +22,16 @@ const DEBT_CATEGORIES = new Set([
 ]);
 
 const ALLOWLIST_RULES_BY_ID = new Map(Object.entries({
+  "goal-negotiation-log-raw-caller": ["state-manager-raw-call", "goal-negotiation-log-json-state"],
+  "goal-dependency-graph-raw-caller": ["state-manager-raw-call", "goal-dependency-graph-json-state"],
+  "stall-detector-raw-caller": ["state-manager-raw-call", "stall-json-state"],
+  "learning-runtime-raw-caller": ["state-manager-raw-call", "learning-runtime-json-state"],
+  "knowledge-transfer-snapshot-raw-caller": ["state-manager-raw-call", "knowledge-transfer-json-state"],
+  "transfer-trust-raw-caller": ["state-manager-raw-call", "transfer-trust-json-state"],
+  "capability-dependencies-raw-caller": ["state-manager-raw-call", "capability-dependencies-json-state"],
+  "task-state-provider-raw-task-read": ["state-manager-raw-call"],
+  "reporting-report-artifact": ["state-manager-raw-call", "reports-json-artifact"],
+  "mcp-server-config-raw-caller": ["state-manager-raw-call", "mcp-server-config-json"],
   "legacy-archived-goal-recovery": ["goal-task-json-state"],
   "legacy-goal-wal-input": ["goal-wal-jsonl"],
   "legacy-execution-session-input": ["execution-session-json"],
@@ -32,10 +42,60 @@ const ALLOWLIST_RULES_BY_ID = new Map(Object.entries({
   "soil-publish-artifact-state": ["plugin-channel-runtime-json", "soil-import-publish-artifact"],
   "legacy-capability-registry-input": ["capability-registry-json-state"],
   "relationship-profile-user-content": ["profile-json-state"],
-  "character-config-user-content": ["profile-json-state"],
+  "character-config-user-content": ["state-manager-raw-call", "profile-json-state"],
 }));
 
 const RULES = [
+  {
+    id: "state-manager-raw-call",
+    owner: "StateManager raw fallback boundary / typed store APIs",
+    pattern: /\.\s*(?:readRaw|writeRaw)\s*\(/,
+  },
+  {
+    id: "goal-negotiation-log-json-state",
+    owner: "Goal negotiation typed store / control DB negotiation log table",
+    pattern: /\bnegotiation-log\.json\b/,
+  },
+  {
+    id: "goal-dependency-graph-json-state",
+    owner: "Goal dependency graph typed store / control DB dependency graph table",
+    pattern: /\bdependency-graph\.json\b/,
+  },
+  {
+    id: "stall-json-state",
+    owner: "Stall detector typed store / control DB stall state table",
+    pattern: /\bstalls\/[^`'"]+\.json\b/,
+  },
+  {
+    id: "learning-runtime-json-state",
+    owner: "Learning runtime typed store / Soil learning store",
+    pattern: /\blearning\/[^`'"]+_(?:logs|patterns|feedback|structural_feedback)\.json\b/,
+  },
+  {
+    id: "knowledge-transfer-json-state",
+    owner: "Knowledge transfer typed store / Soil transfer store",
+    pattern: /\b(?:knowledge-transfer\/snapshot\.json|meta-patterns\/last_aggregated_at\.json)\b/,
+  },
+  {
+    id: "transfer-trust-json-state",
+    owner: "Transfer trust typed store / Soil transfer trust store",
+    pattern: /\b(?:transfer-trust(?:-history)?\/[^`'"]+\.json|transfer-trust\/_index\.json)\b/,
+  },
+  {
+    id: "capability-dependencies-json-state",
+    owner: "Capability dependency typed registry / control DB capability dependency table",
+    pattern: /\bcapability_dependencies\.json\b/,
+  },
+  {
+    id: "reports-json-artifact",
+    owner: "Report export/debug artifact boundary",
+    pattern: /\breports\/[^`'"]+\/[^`'"]+\.json\b/,
+  },
+  {
+    id: "mcp-server-config-json",
+    owner: "MCP server configuration file",
+    pattern: /\bmcp-?servers\.json\b|\bmcpServers\.json\b/,
+  },
   {
     id: "daemon-json-state",
     owner: "DaemonStateStore / control DB daemon tables",
@@ -157,6 +217,84 @@ const PATH_ALLOWLIST = [
     pattern: /(^|\/)tmp\//,
     category: CATEGORY.DEBUG_EXPORT_OUTPUT,
     reason: "tmp status and audit artifacts are not runtime code",
+  }),
+  allow({
+    id: "goal-negotiation-log-raw-caller",
+    pattern: /(^|\/)src\/orchestrator\/goal\/goal-negotiator\.ts$/,
+    category: CATEGORY.MIGRATE_NOW,
+    reason: "goal negotiation log is goal-scoped durable runtime state and must move behind a typed store API",
+    owner: "Goal negotiation typed store",
+    nextSlice: 2,
+  }),
+  allow({
+    id: "goal-dependency-graph-raw-caller",
+    pattern: /(^|\/)src\/orchestrator\/goal\/goal-dependency-graph\.ts$/,
+    category: CATEGORY.MIGRATE_NOW,
+    reason: "goal dependency graph is orchestration runtime state and must move behind a typed store API",
+    owner: "Goal dependency graph typed store",
+    nextSlice: 2,
+  }),
+  allow({
+    id: "stall-detector-raw-caller",
+    pattern: /(^|\/)src\/platform\/drive\/stall-detector\.ts$/,
+    category: CATEGORY.MIGRATE_NOW,
+    reason: "stall state is normal runtime state and should use a typed stall store instead of raw path compatibility",
+    owner: "Stall detector typed store",
+    nextSlice: 3,
+  }),
+  allow({
+    id: "learning-runtime-raw-caller",
+    pattern: /(^|\/)src\/platform\/knowledge\/learning\/(?:learning-pipeline|learning-feedback)\.ts$/,
+    category: CATEGORY.MIGRATE_NOW,
+    reason: "learning logs, patterns, feedback, and structural feedback are runtime learning state and must move behind typed store APIs",
+    owner: "Learning runtime typed store / Soil learning store",
+    nextSlice: 4,
+  }),
+  allow({
+    id: "knowledge-transfer-snapshot-raw-caller",
+    pattern: /(^|\/)src\/platform\/knowledge\/transfer\/knowledge-transfer\.ts$/,
+    category: CATEGORY.MIGRATE_NOW,
+    reason: "knowledge transfer snapshot and aggregation watermark are runtime transfer state and must move behind typed store APIs",
+    owner: "Knowledge transfer typed store / Soil transfer store",
+    nextSlice: 5,
+  }),
+  allow({
+    id: "transfer-trust-raw-caller",
+    pattern: /(^|\/)src\/platform\/knowledge\/transfer\/transfer-trust\.ts$/,
+    category: CATEGORY.MIGRATE_NOW,
+    reason: "transfer trust score, history, and index are runtime trust state and must move behind typed store APIs",
+    owner: "Transfer trust typed store / Soil transfer trust store",
+    nextSlice: 6,
+  }),
+  allow({
+    id: "capability-dependencies-raw-caller",
+    pattern: /(^|\/)src\/platform\/observation\/capability-dependencies\.ts$/,
+    category: CATEGORY.MIGRATE_NOW,
+    reason: "capability dependency state is capability registry/control-plane state and must move behind typed store APIs",
+    owner: "Capability dependency typed registry / control DB capability dependency table",
+    nextSlice: 7,
+  }),
+  allow({
+    id: "task-state-provider-raw-task-read",
+    pattern: /(^|\/)src\/grounding\/providers\/task-state-provider\.ts$/,
+    category: CATEGORY.MIGRATE_NOW,
+    reason: "grounding should use typed task listing/loading APIs instead of StateManager raw task path compatibility",
+    owner: "GoalTaskStateStore typed task APIs",
+    nextSlice: 8,
+  }),
+  allow({
+    id: "reporting-report-artifact",
+    pattern: /(^|\/)src\/reporting\/reporting-engine\.ts$/,
+    category: CATEGORY.DEBUG_EXPORT_OUTPUT,
+    reason: "reports are generated user/debug artifacts under the explicit report output boundary",
+    owner: "report artifact boundary",
+  }),
+  allow({
+    id: "mcp-server-config-raw-caller",
+    pattern: /(^|\/)(?:src\/runtime\/capability-execution-resolver\.ts|src\/interface\/cli\/commands\/operator-binding-status\.ts)$/,
+    category: CATEGORY.CONFIG_SECRET,
+    reason: "MCP server files are user-editable configuration, not durable runtime state",
+    owner: "MCP server configuration",
   }),
   allow({
     id: "goal-canary-debug-export",
@@ -298,7 +436,7 @@ export function scanTextDetailed(filePath, text) {
   const lines = text.split(/\r?\n/);
   lines.forEach((line, index) => {
     for (const rule of RULES) {
-      if (rule.pattern.test(line) && !isConfigAllowed(line)) {
+      if (rule.pattern.test(line) && !isLineAllowedForRule(rule, line)) {
         const finding = {
           filePath: normalizedPath,
           line: index + 1,
@@ -378,7 +516,7 @@ function isAllowlistedRule(allowlistEntry, ruleId) {
 
 function buildDebtReport(classifiedFindings) {
   return buildAllowlistReport(classifiedFindings)
-    .filter((entry) => isDebtAllowlistEntry(entry))
+    .filter((entry) => entry.matchCount > 0 && isDebtAllowlistEntry(entry))
     .sort((left, right) => {
       const leftRank = left.debtRank ?? Number.MAX_SAFE_INTEGER;
       const rightRank = right.debtRank ?? Number.MAX_SAFE_INTEGER;
@@ -425,8 +563,15 @@ function printDebtReport(debtReport) {
   console.log("run with --json for line-level classified matches and reasons");
 }
 
+function isLineAllowedForRule(rule, line) {
+  if (rule.id === "state-manager-raw-call") return false;
+  return isConfigAllowed(line);
+}
+
 function isConfigAllowed(line) {
   return /\b(?:provider|notification|daemon|config|plugin|package|tsconfig)\.json\b/.test(line)
+    || /\bmcp-?servers\.json\b/.test(line)
+    || /\bmcpServers\.json\b/.test(line)
     || /\bplugin\.ya?ml\b/.test(line)
     || /\bgateway\/channels\/[^`'"]+\/config\.json\b/.test(line);
 }
