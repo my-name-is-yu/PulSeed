@@ -148,6 +148,92 @@ describe("TriggerMapper.resolve — LLM fallback", () => {
     expect(mockLLM.callCount).toBe(1);
     fs.rmSync(tmpDir, { recursive: true, force: true , maxRetries: 3, retryDelay: 100 });
   });
+
+  it("does not reuse cached LLM routing across a changed goal set", async () => {
+    const tmpDir = makeTempDir();
+    const mockLLM = new MockLLMClient([
+      '{"goal_id": "g-a", "action": "observe"}',
+      '{"goal_id": "g-b", "action": "wake"}',
+    ]);
+    const mapper = new TriggerMapper(tmpDir, mockLLM);
+    await mapper.loadMappings();
+
+    const trigger = { source: "github" as const, event_type: "issue_opened", data: {} };
+    const first = await mapper.resolve(trigger, [
+      { id: "g-a", title: "Goal A", status: "active" },
+    ]);
+    const second = await mapper.resolve(trigger, [
+      { id: "g-b", title: "Goal B", status: "active" },
+    ]);
+
+    expect(mockLLM.callCount).toBe(2);
+    expect(first).toMatchObject({ source: "llm", goal_id: "g-a", action: "observe" });
+    expect(second).toMatchObject({ source: "llm", goal_id: "g-b", action: "wake" });
+    expect(mapper.getCacheSize()).toBe(2);
+    fs.rmSync(tmpDir, { recursive: true, force: true , maxRetries: 3, retryDelay: 100 });
+  });
+
+  it("does not reuse cached LLM routing across changed trigger data", async () => {
+    const tmpDir = makeTempDir();
+    const mockLLM = new MockLLMClient([
+      '{"goal_id": "g-a", "action": "observe"}',
+      '{"goal_id": "g-a", "action": "notify"}',
+    ]);
+    const mapper = new TriggerMapper(tmpDir, mockLLM);
+    await mapper.loadMappings();
+
+    const goals = [{ id: "g-a", title: "Goal A", status: "active" }];
+    const first = await mapper.resolve(
+      { source: "github" as const, event_type: "issue_opened", data: { issue: 1 } },
+      goals
+    );
+    const second = await mapper.resolve(
+      { source: "github" as const, event_type: "issue_opened", data: { issue: 2 } },
+      goals
+    );
+
+    expect(mockLLM.callCount).toBe(2);
+    expect(first).toMatchObject({ source: "llm", goal_id: "g-a", action: "observe" });
+    expect(second).toMatchObject({ source: "llm", goal_id: "g-a", action: "notify" });
+    expect(mapper.getCacheSize()).toBe(2);
+    fs.rmSync(tmpDir, { recursive: true, force: true , maxRetries: 3, retryDelay: 100 });
+  });
+
+  it("fails closed when LLM returns an action outside the trigger contract", async () => {
+    const tmpDir = makeTempDir();
+    const mockLLM = new MockLLMClient([
+      '{"goal_id": "g-llm", "action": "delete_goal"}',
+    ]);
+    const mapper = new TriggerMapper(tmpDir, mockLLM);
+    await mapper.loadMappings();
+
+    const result = await mapper.resolve(
+      { source: "custom", event_type: "deploy", data: {} },
+      [{ id: "g-llm", title: "Deploy goal", status: "active" }]
+    );
+
+    expect(result).toEqual({ action: "none", goal_id: null, source: "default" });
+    expect(mapper.getCacheSize()).toBe(0);
+    fs.rmSync(tmpDir, { recursive: true, force: true , maxRetries: 3, retryDelay: 100 });
+  });
+
+  it("fails closed when LLM resolves a goal outside the current goal list", async () => {
+    const tmpDir = makeTempDir();
+    const mockLLM = new MockLLMClient([
+      '{"goal_id": "stale-goal", "action": "observe"}',
+    ]);
+    const mapper = new TriggerMapper(tmpDir, mockLLM);
+    await mapper.loadMappings();
+
+    const result = await mapper.resolve(
+      { source: "custom", event_type: "deploy", data: {} },
+      [{ id: "current-goal", title: "Deploy goal", status: "active" }]
+    );
+
+    expect(result).toEqual({ action: "none", goal_id: null, source: "default" });
+    expect(mapper.getCacheSize()).toBe(0);
+    fs.rmSync(tmpDir, { recursive: true, force: true , maxRetries: 3, retryDelay: 100 });
+  });
 });
 
 describe("TriggerMapper.resolve — no mapping, no LLM", () => {
