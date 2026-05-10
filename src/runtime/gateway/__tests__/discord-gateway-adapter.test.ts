@@ -55,7 +55,14 @@ describe("DiscordGatewayAdapter", () => {
       return okResponse({ id: `message-${calls.length}` });
     }));
     vi.mocked(dispatchGatewayChatInput).mockImplementationOnce(async (input) => {
-      await input.onEvent?.({ ...eventBase, type: "activity", kind: "tool", message: "Running tool" });
+      await input.onEvent?.({
+        ...eventBase,
+        type: "tool_start",
+        toolCallId: "tool-1",
+        toolName: "search",
+        args: {},
+        activityCategory: "search",
+      });
       await input.onEvent?.({ ...eventBase, type: "assistant_final", text: "Done", persisted: true });
       return "Done";
     });

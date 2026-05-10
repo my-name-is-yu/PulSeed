@@ -4,6 +4,7 @@ import {
   renderGatewayActivityEvent,
   renderGatewayAgentTimelineItem,
   renderGatewayOperationProgress,
+  renderGatewayToolProgressEvent,
 } from "./chat-event-rendering.js";
 import {
   type GatewayDisplayPolicy,
@@ -33,6 +34,10 @@ interface ProgressEntry {
   readonly text: string;
 }
 
+interface ProgressOptions {
+  readonly forceSingleStatus?: boolean;
+}
+
 export class NonTuiDisplayProjector {
   private readonly policy: GatewayDisplayPolicy;
   private readonly transport: NonTuiDisplayTransport;
@@ -55,18 +60,29 @@ export class NonTuiDisplayProjector {
     switch (event.type) {
       case "tool_start":
         if (event.presentation?.suppressTranscript || this.policy.toolProgress === "off") return;
-        await this.upsertProgress(`tool:${event.toolCallId}`, `Started ${event.toolName}.`);
+        {
+          const text = renderGatewayToolProgressEvent(event);
+          if (!text) return;
+          await this.upsertProgress(`tool:${event.toolCallId}`, text);
+        }
         return;
       case "tool_update":
         if (event.presentation?.suppressTranscript || this.policy.toolProgress === "off") return;
-        await this.upsertProgress(`tool:${event.toolCallId}`, `${event.toolName}: ${event.message}`);
+        {
+          const text = renderGatewayToolProgressEvent(event);
+          if (!text) return;
+          await this.upsertProgress(`tool:${event.toolCallId}`, text, {
+            forceSingleStatus: event.status === "awaiting_approval",
+          });
+        }
         return;
       case "tool_end":
         if (event.presentation?.suppressTranscript || this.policy.toolProgress === "off") return;
-        await this.upsertProgress(
-          `tool:${event.toolCallId}`,
-          `${event.success ? "Finished" : "Failed"} ${event.toolName}: ${event.summary}`,
-        );
+        {
+          const text = renderGatewayToolProgressEvent(event);
+          if (!text) return;
+          await this.upsertProgress(`tool:${event.toolCallId}`, text);
+        }
         return;
       case "activity": {
         const text = renderGatewayActivityEvent(event);
@@ -74,11 +90,18 @@ export class NonTuiDisplayProjector {
         await this.upsertProgress(
           event.sourceId ? `activity:${event.sourceId}` : `activity:${event.kind}`,
           text,
+          { forceSingleStatus: isActionRequiredActivityEvent(event) },
         );
         return;
       }
       case "operation_progress":
-        await this.upsertProgress(`operation:${event.item.id}`, renderGatewayOperationProgress(event.item));
+        {
+          const text = renderGatewayOperationProgress(event.item);
+          if (!text) return;
+          await this.upsertProgress(`operation:${event.item.id}`, text, {
+            forceSingleStatus: isActionRequiredOperationProgress(event.item),
+          });
+        }
         return;
       case "agent_timeline":
         if (event.item.visibility !== "user") return;
@@ -92,6 +115,7 @@ export class NonTuiDisplayProjector {
           await this.upsertProgress(
             `timeline:${event.item.sourceEventId}`,
             text,
+            { forceSingleStatus: isActionRequiredTimelineItem(event.item) },
           );
         }
         return;
@@ -120,7 +144,7 @@ export class NonTuiDisplayProjector {
     return this.sawFinalSignal || this.finalRef !== null || this.finalText.trim().length > 0;
   }
 
-  private async upsertProgress(id: string, text: string): Promise<void> {
+  private async upsertProgress(id: string, text: string, options: ProgressOptions = {}): Promise<void> {
     if (this.policy.progressSurface === "off") return;
     const normalized = text.trim();
     if (!normalized) return;
@@ -128,6 +152,14 @@ export class NonTuiDisplayProjector {
     this.progressEntries.set(id, { id, text: normalized });
     const rendered = this.renderProgress();
     if (rendered === this.lastProgressText) return;
+
+    if (
+      this.policy.progressSurface === "single_status" &&
+      this.progressRef !== null &&
+      !options.forceSingleStatus
+    ) {
+      return;
+    }
 
     if (this.progressRef === null || this.policy.progressSurface === "single_status") {
       this.progressRef = await this.transport.sendProgress(rendered);
@@ -139,8 +171,9 @@ export class NonTuiDisplayProjector {
 
   private renderProgress(): string {
     const entries = Array.from(this.progressEntries.values()).slice(-this.policy.progressMaxItems);
-    const lines = entries.map((entry) => `- ${entry.text}`);
-    const rendered = lines.join("\n");
+    const rendered = entries.length === 1
+      ? entries[0]!.text
+      : entries.map((entry) => `- ${entry.text}`).join("\n");
     if (rendered.length <= this.policy.progressMaxChars) return rendered;
     return rendered.slice(0, this.policy.progressMaxChars - 1).trimEnd();
   }
@@ -216,4 +249,28 @@ export function createNonTuiDisplayProjector(
     transport: options.transport,
     display: options.display ?? resolveGatewayChannelDisplayContract(undefined),
   });
+}
+
+function isActionRequiredOperationProgress(
+  item: Extract<ChatEvent, { type: "operation_progress" }>["item"],
+): boolean {
+  return item.kind === "awaiting_approval" ||
+    item.kind === "blocked" ||
+    item.publicProgress?.importance === "action_required" ||
+    item.publicProgress?.importance === "blocked";
+}
+
+function isActionRequiredActivityEvent(
+  event: Extract<ChatEvent, { type: "activity" }>,
+): boolean {
+  return event.presentation?.gatewayNarration?.importance === "action_required" ||
+    event.presentation?.gatewayNarration?.importance === "blocked";
+}
+
+function isActionRequiredTimelineItem(
+  item: Extract<ChatEvent, { type: "agent_timeline" }>["item"],
+): boolean {
+  if (item.kind === "approval") return true;
+  if (item.kind === "tool_observation") return item.state === "denied" || item.state === "blocked";
+  return item.kind === "stopped" && item.reason !== "completed";
 }

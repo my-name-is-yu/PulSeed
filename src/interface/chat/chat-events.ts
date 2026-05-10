@@ -2,6 +2,7 @@ import type { FailureRecoveryGuidance } from "./failure-recovery.js";
 import type { ToolActivityCategory } from "../../tools/types.js";
 import type { AgentTimelineItem } from "../../orchestrator/execution/agent-loop/agent-timeline.js";
 import type { ChatEventContext } from "./turn-state.js";
+import type { GatewayPublicProgress } from "./gateway-progress.js";
 import type { OperationProgressItem } from "./operation-progress.js";
 import type { UserInput } from "./user-input.js";
 import type { TurnOperation, TurnSteerOperation } from "./turn-protocol.js";
@@ -48,6 +49,7 @@ export interface ActivityEvent extends ChatEventBase {
   transient?: boolean;
   presentation?: {
     gatewayProgress?: "user" | "internal";
+    gatewayNarration?: GatewayPublicProgress;
   };
 }
 

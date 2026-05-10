@@ -172,6 +172,13 @@ export type {
   LifecycleEndEvent,
   LifecycleErrorEvent,
 } from "./interface/chat/chat-events.js";
+export type {
+  GatewayPublicProgress,
+  GatewayProgressAudience,
+  GatewayProgressPhase,
+  GatewayProgressImportance,
+  GatewayProgressVerbosity,
+} from "./interface/chat/gateway-progress.js";
 export { createTextUserInput } from "./interface/chat/user-input.js";
 export type { UserInput, UserInputItem } from "./interface/chat/user-input.js";
 export { IntentRecognizer } from "./interface/tui/intent-recognizer.js";
@@ -233,6 +240,15 @@ export {
   NonTuiDisplayProjector,
   createNonTuiDisplayProjector,
   createGatewayDisplayPolicy,
+  publicProgressFromActivityEvent,
+  publicProgressFromAgentTimelineItem,
+  publicProgressFromOperationProgress,
+  publicProgressFromToolEvent,
+  renderGatewayActivityEvent,
+  renderGatewayAgentTimelineItem,
+  renderGatewayOperationProgress,
+  renderGatewayPublicProgress,
+  renderGatewayToolProgressEvent,
   resolveGatewayChannelDisplayContract,
   TELEGRAM_GATEWAY_DISPLAY_CONTRACT,
   SLACK_GATEWAY_DISPLAY_CONTRACT,

@@ -434,7 +434,14 @@ describe("SlackChannelAdapter — chat dispatch", () => {
     }));
     vi.stubGlobal("fetch", fetchMock);
     vi.mocked(dispatchGatewayChatInput).mockImplementationOnce(async (input) => {
-      await input.onEvent?.({ ...eventBase, type: "activity", kind: "tool", message: "Running lookup" });
+      await input.onEvent?.({
+        ...eventBase,
+        type: "tool_start",
+        toolCallId: "tool-1",
+        toolName: "search",
+        args: {},
+        activityCategory: "search",
+      });
       await input.onEvent?.({ ...eventBase, type: "assistant_delta", delta: "Hel", text: "Hel" });
       await input.onEvent?.({ ...eventBase, type: "assistant_final", text: "Hello", persisted: true });
       await input.onEvent?.({ ...eventBase, type: "lifecycle_end", status: "completed", elapsedMs: 10, persisted: true });
@@ -461,7 +468,7 @@ describe("SlackChannelAdapter — chat dispatch", () => {
     expect(calls).toEqual(expect.arrayContaining([
       expect.objectContaining({
         url: "https://slack.com/api/chat.postMessage",
-        body: expect.objectContaining({ text: "- Running lookup", thread_ts: "123.456" }),
+        body: expect.objectContaining({ text: "Checking the workspace search so I can find the relevant evidence before answering.", thread_ts: "123.456" }),
       }),
       expect.objectContaining({
         url: "https://slack.com/api/chat.postMessage",

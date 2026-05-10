@@ -1,4 +1,14 @@
 import { renderExpressionDecisionForSurface } from "../attention/index.js";
+import type { ActivityEvent } from "../../interface/chat/chat-events.js";
+import type { OperationProgressItem } from "../../interface/chat/operation-progress.js";
+import type { AgentTimelineItem } from "../../orchestrator/execution/agent-loop/agent-timeline.js";
+import {
+  publicProgressFromActivityEvent,
+  publicProgressFromAgentTimelineItem,
+  publicProgressFromOperationProgress,
+  publicProgressFromToolEvent,
+  renderGatewayPublicProgress,
+} from "./gateway-progress-narration.js";
 import type {
   ExpressionDecision,
   ExpressionSurfaceClass,
@@ -6,52 +16,21 @@ import type {
   VisibilityPolicy,
 } from "../types/companion-autonomy.js";
 
-interface OperationProgressItemLike {
-  title: string;
-  detail?: string;
-}
-
 interface FailureRecoveryGuidanceLike {
   label: string;
   summary: string;
   nextActions: string[];
 }
 
-interface ActivityEventLike {
-  kind: "lifecycle" | "commentary" | "checkpoint" | "diff" | "tool" | "plugin" | "skill";
-  message: string;
-  presentation?: {
-    gatewayProgress?: "user" | "internal";
-  };
+export function renderGatewayOperationProgress(item: OperationProgressItem): string | null {
+  const narrated = renderGatewayPublicProgress(publicProgressFromOperationProgress(item));
+  if (item.publicProgress) return narrated ? redactSetupSecrets(narrated) : null;
+  return redactSetupSecrets(narrated ?? `${item.title}${item.detail ? `: ${item.detail}` : ""}`);
 }
 
-interface AgentTimelineItemLike {
-  kind: "lifecycle" | "turn_context" | "model_request" | "assistant_message" | "tool" | "tool_observation" | "plan" | "approval" | "compaction" | "activity_summary" | "final" | "stopped";
-  status?: string;
-  restoredMessages?: number;
-  fromUpdatedAt?: string;
-  model?: string;
-  visibleTools?: unknown[];
-  toolCount?: number;
-  text?: string;
-  inputPreview?: string;
-  outputPreview?: string;
-  success?: boolean;
-  toolName?: string;
-  state?: string;
-  summary?: string;
-  reason?: string;
-  phase?: string;
-  inputMessages?: number;
-  outputMessages?: number;
-  reasonDetail?: string;
-}
-
-export function renderGatewayOperationProgress(item: OperationProgressItemLike): string {
-  return redactSetupSecrets(`${item.title}${item.detail ? `: ${item.detail}` : ""}`);
-}
-
-export function renderGatewayActivityEvent(item: ActivityEventLike): string | null {
+export function renderGatewayActivityEvent(item: ActivityEvent): string | null {
+  const narrated = renderGatewayPublicProgress(publicProgressFromActivityEvent(item));
+  if (narrated) return redactSetupSecrets(narrated);
   switch (item.kind) {
     case "lifecycle":
     case "commentary":
@@ -60,12 +39,19 @@ export function renderGatewayActivityEvent(item: ActivityEventLike): string | nu
       return item.presentation?.gatewayProgress === "user"
         ? redactSetupSecrets(item.message)
         : null;
-    case "diff":
     case "tool":
     case "plugin":
     case "skill":
-      return redactSetupSecrets(item.message);
+    case "diff":
+      return item.presentation?.gatewayProgress === "user"
+        ? redactSetupSecrets(item.message)
+        : null;
   }
+}
+
+export function renderGatewayToolProgressEvent(item: Parameters<typeof publicProgressFromToolEvent>[0]): string | null {
+  const narrated = renderGatewayPublicProgress(publicProgressFromToolEvent(item));
+  return narrated ? redactSetupSecrets(narrated) : null;
 }
 
 export function renderGatewayExpressionDecision(input: {
@@ -87,37 +73,9 @@ export function renderGatewayExpressionDecision(input: {
   return rendered ? redactSetupSecrets(rendered.user_facing_rationale) : null;
 }
 
-export function renderGatewayAgentTimelineItem(item: AgentTimelineItemLike): string | null {
-  switch (item.kind) {
-    case "lifecycle":
-    case "turn_context":
-    case "model_request":
-    case "compaction":
-      return null;
-    case "assistant_message":
-      if (item.phase === "commentary") return null;
-      return redactSetupSecrets(item.text ?? "");
-    case "tool": {
-      const detail = item.status === "started" ? item.inputPreview : item.outputPreview;
-      const label = item.status === "started" ? "Started" : item.success ? "Finished" : "Failed";
-      return detail ? `${label} ${item.toolName ?? "tool"}: ${redactSetupSecrets(detail)}` : `${label} ${item.toolName ?? "tool"}.`;
-    }
-    case "tool_observation":
-      return `Observed ${item.toolName ?? "tool"} (${item.state ?? "unknown"}): ${redactSetupSecrets(item.outputPreview ?? "")}`;
-    case "plan":
-      return `Plan changed: ${redactSetupSecrets(item.summary ?? "")}`;
-    case "approval":
-      return item.status === "requested"
-        ? `Approval requested for ${item.toolName ?? "tool"}: ${redactSetupSecrets(item.reason ?? "")}`
-        : `Approval denied for ${item.toolName ?? "tool"}: ${redactSetupSecrets(item.reason ?? "")}`;
-    case "activity_summary":
-      return redactSetupSecrets(item.text ?? "");
-    case "final":
-      return redactSetupSecrets(item.outputPreview ?? "");
-    case "stopped":
-      if (item.reason === "completed") return null;
-      return item.reasonDetail ? `Stopped: ${item.reason ?? "unknown"} (${redactSetupSecrets(item.reasonDetail)})` : `Stopped: ${item.reason ?? "unknown"}`;
-  }
+export function renderGatewayAgentTimelineItem(item: AgentTimelineItem): string | null {
+  const narrated = renderGatewayPublicProgress(publicProgressFromAgentTimelineItem(item));
+  return narrated ? redactSetupSecrets(narrated) : null;
 }
 
 export function formatGatewayLifecycleFailureMessage(
