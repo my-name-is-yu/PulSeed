@@ -3,6 +3,7 @@
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { randomUUID } from "node:crypto";
+import { writeEventSpoolJson } from "../../base/utils/event-spool.js";
 import type { StateManager } from "../../base/state/state-manager.js";
 import type { Goal } from "../../base/types/goal.js";
 import { loadSharedEntries } from "../../platform/knowledge/knowledge-search.js";
@@ -144,7 +145,6 @@ export async function toolTrigger(
 ): Promise<MCPResult> {
   try {
     const eventsDir = path.join(deps.baseDir, "events");
-    await fsp.mkdir(eventsDir, { recursive: true });
     const eventId = randomUUID();
     const event = {
       id: eventId,
@@ -153,8 +153,7 @@ export async function toolTrigger(
       data: args.data,
       created_at: new Date().toISOString(),
     };
-    const filePath = path.join(eventsDir, `${eventId}.json`);
-    await fsp.writeFile(filePath, JSON.stringify(event, null, 2), "utf-8");
+    await writeEventSpoolJson(eventsDir, event, { prefix: "mcp_trigger" });
     return ok({ event_id: eventId, status: "queued" });
   } catch (e) {
     return err(String(e));

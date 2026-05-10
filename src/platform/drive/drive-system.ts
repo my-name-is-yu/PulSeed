@@ -6,7 +6,14 @@ import { PulSeedEventSchema, GoalScheduleSchema } from "./types/drive.js";
 import type { PulSeedEvent, GoalSchedule } from "./types/drive.js";
 import type { StateManager } from "../../base/state/state-manager.js";
 import type { Logger } from "../../runtime/logger.js";
-import { writeJsonFileAtomic } from "../../base/utils/json-io.js";
+import {
+  assertEventSpoolJsonFileName,
+  listEventSpoolJsonFiles,
+  moveEventSpoolFile,
+  pruneEventSpoolDirectory,
+  readEventSpoolText,
+  writeEventSpoolJson,
+} from "../../base/utils/event-spool.js";
 import {
   DriveGoalScheduleStateStore,
   type DriveGoalScheduleStateStoreOptions,
@@ -23,8 +30,8 @@ export interface GoalActivationSnapshot {
  * processing, and goal schedule management.
  *
  * File layout:
- *   <baseDir>/events/*.json          — event queue
- *   <baseDir>/events/archive/*.json  — processed events
+ *   <baseDir>/events/*.json          — bounded IPC spool for unprocessed events
+ *   <baseDir>/events/archive/*.json  — processed event spool retention
  *   state/pulseed-control.sqlite      — goal activation schedules
  *
  * Inactive goal statuses: "completed", "cancelled", "archived"
@@ -140,7 +147,7 @@ export class DriveSystem {
 
     let fileNames: string[];
     try {
-      fileNames = (await fsp.readdir(eventsDir)).filter((f) => f.endsWith(".json"));
+      fileNames = await listEventSpoolJsonFiles(eventsDir);
     } catch {
       return [];
     }
@@ -158,7 +165,7 @@ export class DriveSystem {
       }
 
       try {
-        const content = await fsp.readFile(filePath, "utf-8");
+        const content = await readEventSpoolText(eventsDir, fileName);
         const raw = JSON.parse(content) as unknown;
         const event = PulSeedEventSchema.parse(raw);
         events.push(event);
@@ -182,11 +189,11 @@ export class DriveSystem {
    * {baseDir}/events/archive/{fileName}. Creates the archive dir if needed.
    */
   async archiveEvent(eventFileName: string): Promise<void> {
-    const srcPath = path.join(this.baseDir, "events", eventFileName);
+    assertEventSpoolJsonFileName(eventFileName);
+    const eventsDir = path.join(this.baseDir, "events");
     const archiveDir = path.join(this.baseDir, "events", "archive");
-    await fsp.mkdir(archiveDir, { recursive: true });
-    const dstPath = path.join(archiveDir, eventFileName);
-    await fsp.rename(srcPath, dstPath);
+    await moveEventSpoolFile(eventsDir, eventFileName, archiveDir);
+    await pruneEventSpoolDirectory(archiveDir);
   }
 
   /**
@@ -198,7 +205,7 @@ export class DriveSystem {
 
     let fileNames: string[];
     try {
-      fileNames = (await fsp.readdir(eventsDir)).filter((f) => f.endsWith(".json"));
+      fileNames = await listEventSpoolJsonFiles(eventsDir);
     } catch {
       return [];
     }
@@ -215,7 +222,7 @@ export class DriveSystem {
       }
 
       try {
-        const content = await fsp.readFile(filePath, "utf-8");
+        const content = await readEventSpoolText(eventsDir, fileName);
         const raw = JSON.parse(content) as unknown;
         const event = PulSeedEventSchema.parse(raw);
         await this.archiveEvent(fileName);
@@ -320,10 +327,7 @@ export class DriveSystem {
   async writeEvent(event: PulSeedEvent): Promise<void> {
     await this.initPromise;
     const eventsDir = path.join(this.baseDir, "events");
-    await fsp.mkdir(eventsDir, { recursive: true });
-    const filename = `event_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.json`;
-    const filePath = path.join(eventsDir, filename);
-    await writeJsonFileAtomic(filePath, event);
+    await writeEventSpoolJson(eventsDir, event, { prefix: "event" });
   }
 
   /**
@@ -342,11 +346,11 @@ export class DriveSystem {
       if (this.onEventCallback === null && onEvent !== undefined) return;
 
       this.watcher = watch(eventsDir, (eventType, filename) => {
-        if (eventType !== "rename" || !filename?.endsWith(".json")) return;
-        if (filename.endsWith(".tmp")) return;
+        const fileName = filename ? String(filename) : "";
+        if (eventType !== "rename" || !fileName) return;
+        if (!listenableEventFile(fileName)) return;
 
-        const filePath = path.join(eventsDir, filename);
-        void this.handleWatchEvent(filePath).catch((err) => {
+        void this.handleWatchEvent(eventsDir, fileName).catch((err) => {
           this.logger?.warn(`[DriveSystem] watcher async error: ${String(err)}`);
         });
       });
@@ -356,10 +360,10 @@ export class DriveSystem {
   /**
    * Handle a file event from the watcher asynchronously.
    */
-  private async handleWatchEvent(filePath: string): Promise<void> {
+  private async handleWatchEvent(eventsDir: string, fileName: string): Promise<void> {
     let content: string;
     try {
-      content = await fsp.readFile(filePath, "utf-8");
+      content = await readEventSpoolText(eventsDir, fileName);
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") return; // file deleted — expected
       this.logger?.warn(`[DriveSystem] watcher read error: ${String(err)}`);
@@ -372,7 +376,7 @@ export class DriveSystem {
         this.onEventCallback(event);
       }
     } catch (err) {
-      this.logger?.warn(`[DriveSystem] watcher parse error in ${path.basename(filePath)}: ${String(err)}`);
+      this.logger?.warn(`[DriveSystem] watcher parse error in ${fileName}: ${String(err)}`);
     }
   }
 
@@ -395,5 +399,14 @@ export class DriveSystem {
     const events = [...this.inMemoryQueue];
     this.inMemoryQueue = [];
     return events;
+  }
+}
+
+function listenableEventFile(fileName: string): boolean {
+  try {
+    assertEventSpoolJsonFileName(fileName);
+    return true;
+  } catch {
+    return false;
   }
 }

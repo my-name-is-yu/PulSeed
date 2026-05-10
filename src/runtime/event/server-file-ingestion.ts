@@ -2,11 +2,17 @@ import * as fs from "node:fs";
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { PulSeedEventSchema } from "../../base/types/drive.js";
-import { readTextFileWithinLimit } from "../../base/utils/json-io.js";
-import { MAX_HTTP_BODY_SIZE } from "../http-body.js";
+import {
+  EVENT_SPOOL_MAX_FILE_BYTES,
+  assertEventSpoolJsonFileName,
+  listEventSpoolJsonFiles,
+  moveEventSpoolFile,
+  pruneEventSpoolDirectory,
+  readEventSpoolText,
+} from "../../base/utils/event-spool.js";
 import type { Logger } from "../logger.js";
 
-export const EVENT_FILE_MAX_BYTES = MAX_HTTP_BODY_SIZE;
+export const EVENT_FILE_MAX_BYTES = EVENT_SPOOL_MAX_FILE_BYTES;
 
 export class EventServerFileIngestion {
   private fileWatcher: fs.FSWatcher | null = null;
@@ -77,25 +83,20 @@ export class EventServerFileIngestion {
     }
     if (!stat.isFile()) return;
 
-    const content = await readTextFileWithinLimit(filePath, { maxBytes: EVENT_FILE_MAX_BYTES });
+    const content = await readEventSpoolText(this.eventsDir, filename, EVENT_FILE_MAX_BYTES);
     const raw = JSON.parse(content) as unknown;
     const event = PulSeedEventSchema.parse(raw);
 
     await this.dispatchEvent(event as Record<string, unknown>);
 
     const processedDir = path.join(this.eventsDir, "processed");
-    await fsp.mkdir(processedDir, { recursive: true });
-    await fsp.rename(filePath, path.join(processedDir, filename));
+    await moveEventSpoolFile(this.eventsDir, filename, processedDir);
+    await pruneEventSpoolDirectory(processedDir);
     this.eventFileAttempts.delete(filename);
   }
 
   private async rescanEventFiles(generation: number): Promise<void> {
-    let entries: string[];
-    try {
-      entries = await fsp.readdir(this.eventsDir);
-    } catch {
-      return;
-    }
+    const entries = await listEventSpoolJsonFiles(this.eventsDir);
     if (generation !== this.fileWatcherGeneration) return;
     for (const entry of entries) {
       this.queueEventFile(entry, 0, generation);
@@ -121,7 +122,7 @@ export class EventServerFileIngestion {
         try {
           await this.processEventFile(filePath, filename);
         } catch (err) {
-          await this.handleEventFileFailure(filePath, filename, err);
+          await this.handleEventFileFailure(filename, err);
         } finally {
           this.processingFiles.delete(filename);
         }
@@ -139,13 +140,15 @@ export class EventServerFileIngestion {
   }
 
   private shouldProcessEventFilename(filename: string): boolean {
-    if (path.basename(filename) !== filename) return false;
-    if (!filename.endsWith(".json") || filename.endsWith(".tmp")) return false;
-    return filename !== "daemon-token.json";
+    try {
+      assertEventSpoolJsonFileName(filename);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   private async handleEventFileFailure(
-    filePath: string,
     filename: string,
     err: unknown
   ): Promise<void> {
@@ -165,22 +168,14 @@ export class EventServerFileIngestion {
       `EventServer: failed to process event file "${filename}" after ${attempt} attempts; moving to failed/: ${message}`
     );
     this.eventFileAttempts.delete(filename);
-    await this.moveFailedEventFile(filePath, filename);
+    await this.moveFailedEventFile(filename);
   }
 
-  private async moveFailedEventFile(filePath: string, filename: string): Promise<void> {
+  private async moveFailedEventFile(filename: string): Promise<void> {
     try {
       const failedDir = path.join(this.eventsDir, "failed");
-      await fsp.mkdir(failedDir, { recursive: true });
-      let dstPath = path.join(failedDir, filename);
-      try {
-        await fsp.access(dstPath);
-        const parsed = path.parse(filename);
-        dstPath = path.join(failedDir, `${parsed.name}-${Date.now()}${parsed.ext}`);
-      } catch {
-        // Destination is free.
-      }
-      await fsp.rename(filePath, dstPath);
+      await moveEventSpoolFile(this.eventsDir, filename, failedDir);
+      await pruneEventSpoolDirectory(failedDir);
     } catch (moveErr) {
       this.logger?.error(
         `EventServer: failed to quarantine event file "${filename}": ${String(moveErr)}`

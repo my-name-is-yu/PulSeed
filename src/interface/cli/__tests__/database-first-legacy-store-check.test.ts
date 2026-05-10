@@ -161,6 +161,21 @@ describe("database-first legacy store check", () => {
     expect(result.stdout).toContain("database-first legacy store check passed");
   });
 
+  it("fails unclassified runtime event spool owners outside the bounded IPC boundary", () => {
+    writeFile(tmpDir, "src/runtime/unclassified-event-file-owner.ts", `
+      import * as fsp from "node:fs/promises";
+      export async function writeUnboundedEvent(eventsDir: string, value: unknown) {
+        await fsp.writeFile(eventsDir + "/event.json", JSON.stringify(value));
+      }
+    `);
+
+    const result = runCheck(tmpDir);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("src/runtime/unclassified-event-file-owner.ts");
+    expect(result.stderr).toContain("[drive-event-spool-json] DriveSystem bounded runtime event IPC spool");
+  });
+
   it("fails path-shaped goal task, checkpoint, pipeline, and wait metadata stores", () => {
     writeFile(tmpDir, "src/orchestrator/execution/legacy-normal-paths.ts", `
       export const taskPath = (goalId: string, taskId: string) => \`tasks/\${goalId}/\${taskId}.json\`;
@@ -291,7 +306,7 @@ describe("database-first legacy store check", () => {
       expect.objectContaining({
         id: "drive-system-event-spool",
         category: "bounded IPC/spool",
-        nextSlice: 4,
+        nextSlice: null,
         debt: false,
       }),
       expect.objectContaining({

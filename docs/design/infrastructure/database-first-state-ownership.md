@@ -126,7 +126,7 @@ Current direct filesystem owner inventory:
 | --- | --- | --- | --- | --- |
 | RunSpec durable draft/confirmation/start state | `src/runtime/run-spec/store.ts` | `run_spec_records` in `state/pulseed-control.sqlite`; legacy `run-specs/<id>.json` is doctor/repair import input only | typed control DB state | closed in Slice 2 |
 | DriveSystem goal activation schedule | `src/platform/drive/drive-system.ts` | `goal_drive_schedules` in `state/pulseed-control.sqlite`; legacy `schedule/<goalId>.json` is doctor/repair import input only | typed control DB state | closed in Slice 3 |
-| DriveSystem runtime event ingestion spool | `src/platform/drive/drive-system.ts`, `src/runtime/event/*`, daemon `writeEvent` callers | `events/*.json`, `events/archive/*.json` | bounded IPC/spool | Slice 4 |
+| DriveSystem runtime event ingestion spool | `src/platform/drive/drive-system.ts`, `src/runtime/event/*`, daemon `writeEvent` callers | `events/*.json`, `events/{archive,processed,failed}/*.json` | bounded IPC/spool | closed in Slice 4 |
 | Successful strategy template reuse | `src/orchestrator/strategy/strategy-template-registry.ts` | `strategy-templates.json` | typed-store migrate now | Slice 5 |
 | Runtime semantic vector index | `src/platform/knowledge/vector-index.ts` | caller-provided `indexPath` JSON | typed-store migrate now | Slice 6 |
 | Cross-goal knowledge graph | `src/platform/knowledge/knowledge-graph.ts` | caller-provided `graphPath` JSON | typed-store migrate now | Slice 6 |
@@ -138,6 +138,27 @@ Current direct filesystem owner inventory:
 | Doctor/repair compatibility inputs | migration helpers, legacy recovery, doctor repair paths | legacy JSON/JSONL/lock files | migration-only input | none |
 | Soil import, compile, projection, and publish artifacts | Soil import/publish/compiler/projection/doctor paths | Soil-owned files and publish state | Soil import/publish artifact | none |
 | Debug logs, process pid, and health diagnostics | logger, TUI debug log, pid manager, daemon health logs | log, pid, and health diagnostic files | debug/export artifact | Slice 7 |
+
+### Bounded Runtime Event Spool
+
+The runtime event files under `events/*.json` are an IPC spool, not
+authoritative durable runtime state. Durable goal/task/run state lives in typed
+SQLite/Soil stores; event files are transient ingress envelopes used to wake or
+notify the daemon and are safe to replay, archive, quarantine, or prune without
+becoming the source of truth.
+
+This file-backed boundary is allowed only with these invariants:
+
+- Only basename `.json` files are accepted; temp files, reserved auth files, and
+  path traversal are rejected before reads, moves, or watcher dispatch.
+- Event payload reads are capped at 1 MiB, matching HTTP event ingestion.
+- Normal event writers use atomic JSON writes and reject new writes once the
+  pending spool reaches the configured pending-file cap.
+- Processed, archived, and failed retained directories use non-overwriting
+  moves and best-effort age/count pruning.
+- The direct-file guard classifies only the DriveSystem/event-server/MCP/daemon
+  event spool boundary. New runtime event JSON owners outside that boundary fail
+  the guard.
 
 ## Final Audit
 

@@ -1,8 +1,8 @@
-import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import type * as http from "node:http";
 import { PulSeedEventSchema } from "../../base/types/drive.js";
 import { TriggerEventSchema } from "../../base/types/trigger.js";
+import { writeEventSpoolJson } from "../../base/utils/event-spool.js";
 import type { TriggerMappingsConfig } from "../../base/types/trigger.js";
 import type { Logger } from "../logger.js";
 import type { TriggerMapper } from "../trigger-mapper.js";
@@ -93,15 +93,13 @@ export class EventServerTriggerHandler {
     }
 
     if (action === "create_task") {
-      const filename = `trigger_${Date.now()}_${Math.random().toString(36).slice(2)}.json`;
-      const filePath = path.join(this.eventsDir, filename);
       const payload = {
         type: "external",
         source: trigger.source,
         timestamp: new Date().toISOString(),
         data: { ...trigger.data, event_type: trigger.event_type, action: "create_task", goal_id: goalId },
       };
-      await fsp.writeFile(filePath, JSON.stringify(payload), "utf-8");
+      await writeEventSpoolJson(this.eventsDir, payload, { prefix: "trigger" });
       return;
     }
 
