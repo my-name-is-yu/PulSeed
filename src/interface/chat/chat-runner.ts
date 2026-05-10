@@ -608,7 +608,19 @@ export class ChatRunner {
       }
     }
 
-    const shouldResolveNaturalRecovery = !options.selectedRoute || options.selectedRoute.kind === "agent_loop";
+    let resolvedRoute = options.selectedRoute;
+    if (!resumeOnly && !resolvedRoute && options.routeSelector) {
+      resolvedRoute = await options.routeSelector({
+        safeInput,
+        setupSecretIntake,
+        runtimeControlContext,
+        eventContext,
+        cwd: resolvedCwd,
+        sessionId: this.getSessionId(),
+      });
+    }
+
+    const shouldResolveNaturalRecovery = !resolvedRoute || resolvedRoute.kind === "agent_loop";
     if (!resumeOnly && pendingResumeSelection === null && shouldResolveNaturalRecovery) {
       const naturalRecovery = await this.resolveNaturalRecoveryResume(safeInput);
       if (naturalRecovery?.result) {
@@ -692,16 +704,7 @@ export class ChatRunner {
 
     const selectedRoute = resumeOnly
       ? null
-      : (options.selectedRoute ?? await (options.routeSelector
-        ? options.routeSelector({
-            safeInput,
-            setupSecretIntake,
-            runtimeControlContext,
-            eventContext,
-            cwd: resolvedCwd,
-            sessionId: history.getSessionId(),
-          })
-        : this.resolveRouteFromInput(safeInput, runtimeControlContext, resolvedCwd)));
+      : (resolvedRoute ?? await this.resolveRouteFromInput(safeInput, runtimeControlContext, resolvedCwd));
     this.lastSelectedRoute = selectedRoute;
     if (selectedRoute) {
       this.eventBridge.emitSeedyPresence("thinking", eventContext, {
