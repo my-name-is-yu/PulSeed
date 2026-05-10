@@ -7,6 +7,7 @@ import type { VectorIndex } from "../knowledge/vector-index.js";
 import type { KnowledgeTransfer } from "../knowledge/transfer/knowledge-transfer.js";
 import type { TransferCandidate } from "../../base/types/cross-portfolio.js";
 import type { Goal } from "../../base/types/goal.js";
+import { CuriosityStateStore, type CuriosityStateStorePort } from "../../runtime/store/curiosity-state-store.js";
 import {
   CuriosityStateSchema,
   CuriosityProposalSchema,
@@ -34,14 +35,11 @@ import {
   shouldExploreForCuriosity,
 } from "./curiosity-triggers.js";
 
-// ─── Constants ───
-
-const CURIOSITY_STATE_PATH = "curiosity/state.json";
-
 // ─── Deps Interface ───
 
 export interface CuriosityEngineDeps {
   stateManager: StateManager;
+  curiosityStateStore?: CuriosityStateStorePort;
   llmClient: ILLMClient;
   ethicsGate: EthicsGate;
   stallDetector: StallDetector;
@@ -65,7 +63,7 @@ export interface CuriosityEngineDeps {
  * - Generate LLM-based proposals, filtered by ethics gate
  * - Track proposal lifecycle (pending → approved/rejected/expired/auto_closed)
  * - Enforce constraints: max proposals, rejection cooldown, resource budget
- * - Persist all state to curiosity/state.json via StateManager
+ * - Persist all state through the typed curiosity runtime state store
  */
 export class CuriosityEngine {
   private readonly stateManager: StateManager;
@@ -73,6 +71,7 @@ export class CuriosityEngine {
   private readonly ethicsGate: EthicsGate;
   private readonly stallDetector: StallDetector;
   private readonly driveSystem: DriveSystem;
+  private readonly curiosityStateStore: CuriosityStateStorePort;
   private readonly vectorIndex?: VectorIndex;
   private readonly knowledgeTransfer?: KnowledgeTransfer;
   private readonly config: CuriosityConfig;
@@ -84,6 +83,8 @@ export class CuriosityEngine {
     this.ethicsGate = deps.ethicsGate;
     this.stallDetector = deps.stallDetector;
     this.driveSystem = deps.driveSystem;
+    this.curiosityStateStore =
+      deps.curiosityStateStore ?? new CuriosityStateStore(this.stateManager.getBaseDir());
     this.vectorIndex = deps.vectorIndex;
     this.knowledgeTransfer = deps.knowledgeTransfer;
 
@@ -112,16 +113,16 @@ export class CuriosityEngine {
   // ─── State Persistence ───
 
   private async loadState(): Promise<CuriosityState> {
-    const raw = await this.stateManager.readRaw(CURIOSITY_STATE_PATH);
-    if (raw === null) {
-      return CuriosityStateSchema.parse({
-        proposals: [],
-        learning_records: [],
-        last_exploration_at: null,
-        rejected_proposal_hashes: [],
-      });
-    }
     try {
+      const raw = await this.curiosityStateStore.load();
+      if (raw === null) {
+        return CuriosityStateSchema.parse({
+          proposals: [],
+          learning_records: [],
+          last_exploration_at: null,
+          rejected_proposal_hashes: [],
+        });
+      }
       return CuriosityStateSchema.parse(raw);
     } catch {
       // Corrupt state — start fresh
@@ -134,9 +135,9 @@ export class CuriosityEngine {
     }
   }
 
-  private async saveState(): Promise<void> {
+  private saveState(): void {
     const parsed = CuriosityStateSchema.parse(this.state);
-    await this.stateManager.writeRaw(CURIOSITY_STATE_PATH, parsed);
+    this.curiosityStateStore.saveSync(parsed);
   }
 
   // ─── Public API ───

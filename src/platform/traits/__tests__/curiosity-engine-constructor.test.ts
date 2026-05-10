@@ -91,11 +91,15 @@ const MINIMAL_PROPOSAL = {
 
 function createMockDeps(overrides: Partial<CuriosityEngineDeps> = {}): CuriosityEngineDeps {
   const stateManager = {
-    readRaw: vi.fn().mockResolvedValue(null),
-    writeRaw: vi.fn().mockResolvedValue(undefined),
     loadGoal: vi.fn().mockResolvedValue(null),
     saveGoal: vi.fn().mockResolvedValue(undefined),
+    getBaseDir: vi.fn().mockReturnValue("/tmp/pulseed-test"),
   } as any;
+
+  const curiosityStateStore = {
+    load: vi.fn().mockResolvedValue(null),
+    saveSync: vi.fn((state: any) => state),
+  };
 
   const llmClient = {
     sendMessage: vi.fn().mockResolvedValue({ content: "[]" }),
@@ -126,6 +130,7 @@ function createMockDeps(overrides: Partial<CuriosityEngineDeps> = {}): Curiosity
 
   return {
     stateManager,
+    curiosityStateStore,
     llmClient,
     ethicsGate,
     stallDetector,
@@ -286,7 +291,7 @@ describe("CuriosityEngine — constructor", () => {
       rejected_proposal_hashes: ["abc123"],
     };
     const deps = createMockDeps();
-    (deps.stateManager.readRaw as ReturnType<typeof vi.fn>).mockResolvedValue(existingState);
+    (deps.curiosityStateStore!.load as ReturnType<typeof vi.fn>).mockResolvedValue(existingState);
 
     const engine = new CuriosityEngine(deps);
     // Trigger state load by calling an async method
@@ -294,12 +299,12 @@ describe("CuriosityEngine — constructor", () => {
     // Engine loaded state — periodic exploration should NOT trigger since last_exploration_at is recent
     // (or far past depending on config). Just verify it doesn't crash.
     expect(engine).toBeInstanceOf(CuriosityEngine);
-    expect(deps.stateManager.readRaw).toHaveBeenCalledWith("curiosity/state.json");
+    expect(deps.curiosityStateStore!.load).toHaveBeenCalledTimes(1);
   });
 
   it("starts fresh when StateManager returns null", async () => {
     const deps = createMockDeps();
-    (deps.stateManager.readRaw as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+    (deps.curiosityStateStore!.load as ReturnType<typeof vi.fn>).mockResolvedValue(null);
     const engine = new CuriosityEngine(deps);
     expect(engine.getActiveProposals()).toHaveLength(0);
   });
@@ -347,7 +352,7 @@ describe("CuriosityEngine — evaluateTriggers", () => {
     it("does NOT trigger when any user goal is active", async () => {
       const deps = createMockDeps();
       // Set last_exploration_at to now to suppress periodic_exploration
-      (deps.stateManager.readRaw as ReturnType<typeof vi.fn>).mockResolvedValue({
+      (deps.curiosityStateStore!.load as ReturnType<typeof vi.fn>).mockResolvedValue({
         proposals: [],
         learning_records: [],
         last_exploration_at: new Date().toISOString(),
@@ -365,7 +370,7 @@ describe("CuriosityEngine — evaluateTriggers", () => {
 
     it("does NOT trigger when goals array is empty", async () => {
       const deps = createMockDeps();
-      (deps.stateManager.readRaw as ReturnType<typeof vi.fn>).mockResolvedValue({
+      (deps.curiosityStateStore!.load as ReturnType<typeof vi.fn>).mockResolvedValue({
         proposals: [],
         learning_records: [],
         last_exploration_at: new Date().toISOString(),
@@ -379,7 +384,7 @@ describe("CuriosityEngine — evaluateTriggers", () => {
 
     it("ignores curiosity-origin goals when checking task queue", async () => {
       const deps = createMockDeps();
-      (deps.stateManager.readRaw as ReturnType<typeof vi.fn>).mockResolvedValue({
+      (deps.curiosityStateStore!.load as ReturnType<typeof vi.fn>).mockResolvedValue({
         proposals: [],
         learning_records: [],
         last_exploration_at: new Date().toISOString(),
@@ -401,7 +406,7 @@ describe("CuriosityEngine — evaluateTriggers", () => {
   describe("unexpected_observation trigger", () => {
     it("triggers when observation deviation > threshold * stddev", async () => {
       const deps = createMockDeps();
-      (deps.stateManager.readRaw as ReturnType<typeof vi.fn>).mockResolvedValue({
+      (deps.curiosityStateStore!.load as ReturnType<typeof vi.fn>).mockResolvedValue({
         proposals: [],
         learning_records: [],
         last_exploration_at: new Date().toISOString(),
@@ -438,7 +443,7 @@ describe("CuriosityEngine — evaluateTriggers", () => {
 
     it("does NOT trigger when deviation is within normal range", async () => {
       const deps = createMockDeps();
-      (deps.stateManager.readRaw as ReturnType<typeof vi.fn>).mockResolvedValue({
+      (deps.curiosityStateStore!.load as ReturnType<typeof vi.fn>).mockResolvedValue({
         proposals: [],
         learning_records: [],
         last_exploration_at: new Date().toISOString(),
@@ -471,7 +476,7 @@ describe("CuriosityEngine — evaluateTriggers", () => {
 
     it("handles missing observation history gracefully (fewer than 4 entries)", async () => {
       const deps = createMockDeps();
-      (deps.stateManager.readRaw as ReturnType<typeof vi.fn>).mockResolvedValue({
+      (deps.curiosityStateStore!.load as ReturnType<typeof vi.fn>).mockResolvedValue({
         proposals: [],
         learning_records: [],
         last_exploration_at: new Date().toISOString(),
@@ -498,7 +503,7 @@ describe("CuriosityEngine — evaluateTriggers", () => {
 
     it("does NOT trigger for non-active goals", async () => {
       const deps = createMockDeps();
-      (deps.stateManager.readRaw as ReturnType<typeof vi.fn>).mockResolvedValue({
+      (deps.curiosityStateStore!.load as ReturnType<typeof vi.fn>).mockResolvedValue({
         proposals: [],
         learning_records: [],
         last_exploration_at: new Date().toISOString(),
@@ -532,7 +537,7 @@ describe("CuriosityEngine — evaluateTriggers", () => {
   describe("repeated_failure trigger", () => {
     it("triggers when dimension escalation level > 0", async () => {
       const deps = createMockDeps();
-      (deps.stateManager.readRaw as ReturnType<typeof vi.fn>).mockResolvedValue({
+      (deps.curiosityStateStore!.load as ReturnType<typeof vi.fn>).mockResolvedValue({
         proposals: [],
         learning_records: [],
         last_exploration_at: new Date().toISOString(),
@@ -552,7 +557,7 @@ describe("CuriosityEngine — evaluateTriggers", () => {
 
     it("includes goal_id in the trigger", async () => {
       const deps = createMockDeps();
-      (deps.stateManager.readRaw as ReturnType<typeof vi.fn>).mockResolvedValue({
+      (deps.curiosityStateStore!.load as ReturnType<typeof vi.fn>).mockResolvedValue({
         proposals: [],
         learning_records: [],
         last_exploration_at: new Date().toISOString(),
@@ -572,7 +577,7 @@ describe("CuriosityEngine — evaluateTriggers", () => {
 
     it("does NOT trigger when all dimension escalation levels are 0", async () => {
       const deps = createMockDeps();
-      (deps.stateManager.readRaw as ReturnType<typeof vi.fn>).mockResolvedValue({
+      (deps.curiosityStateStore!.load as ReturnType<typeof vi.fn>).mockResolvedValue({
         proposals: [],
         learning_records: [],
         last_exploration_at: new Date().toISOString(),
@@ -592,7 +597,7 @@ describe("CuriosityEngine — evaluateTriggers", () => {
 
     it("does NOT trigger for curiosity-origin goals", async () => {
       const deps = createMockDeps();
-      (deps.stateManager.readRaw as ReturnType<typeof vi.fn>).mockResolvedValue({
+      (deps.curiosityStateStore!.load as ReturnType<typeof vi.fn>).mockResolvedValue({
         proposals: [],
         learning_records: [],
         last_exploration_at: new Date().toISOString(),
@@ -612,7 +617,7 @@ describe("CuriosityEngine — evaluateTriggers", () => {
 
     it("does NOT trigger for non-active user goals", async () => {
       const deps = createMockDeps();
-      (deps.stateManager.readRaw as ReturnType<typeof vi.fn>).mockResolvedValue({
+      (deps.curiosityStateStore!.load as ReturnType<typeof vi.fn>).mockResolvedValue({
         proposals: [],
         learning_records: [],
         last_exploration_at: new Date().toISOString(),
@@ -634,7 +639,7 @@ describe("CuriosityEngine — evaluateTriggers", () => {
   describe("undefined_problem trigger", () => {
     it("triggers when > 50% of dimensions have very low confidence (< 0.3)", async () => {
       const deps = createMockDeps();
-      (deps.stateManager.readRaw as ReturnType<typeof vi.fn>).mockResolvedValue({
+      (deps.curiosityStateStore!.load as ReturnType<typeof vi.fn>).mockResolvedValue({
         proposals: [],
         learning_records: [],
         last_exploration_at: new Date().toISOString(),
@@ -662,7 +667,7 @@ describe("CuriosityEngine — evaluateTriggers", () => {
 
     it("does NOT trigger when all dimensions have adequate confidence", async () => {
       const deps = createMockDeps();
-      (deps.stateManager.readRaw as ReturnType<typeof vi.fn>).mockResolvedValue({
+      (deps.curiosityStateStore!.load as ReturnType<typeof vi.fn>).mockResolvedValue({
         proposals: [],
         learning_records: [],
         last_exploration_at: new Date().toISOString(),
@@ -689,7 +694,7 @@ describe("CuriosityEngine — evaluateTriggers", () => {
 
     it("does NOT trigger when exactly 50% have low confidence (threshold is strictly > 50%)", async () => {
       const deps = createMockDeps();
-      (deps.stateManager.readRaw as ReturnType<typeof vi.fn>).mockResolvedValue({
+      (deps.curiosityStateStore!.load as ReturnType<typeof vi.fn>).mockResolvedValue({
         proposals: [],
         learning_records: [],
         last_exploration_at: new Date().toISOString(),
@@ -718,7 +723,7 @@ describe("CuriosityEngine — evaluateTriggers", () => {
 
     it("does NOT trigger for non-active goals", async () => {
       const deps = createMockDeps();
-      (deps.stateManager.readRaw as ReturnType<typeof vi.fn>).mockResolvedValue({
+      (deps.curiosityStateStore!.load as ReturnType<typeof vi.fn>).mockResolvedValue({
         proposals: [],
         learning_records: [],
         last_exploration_at: new Date().toISOString(),
@@ -746,7 +751,7 @@ describe("CuriosityEngine — evaluateTriggers", () => {
   describe("periodic_exploration trigger", () => {
     it("triggers when no exploration has ever occurred (last_exploration_at is null)", async () => {
       const deps = createMockDeps();
-      // readRaw returns null => state initializes with last_exploration_at: null
+      // load returns null => state initializes with last_exploration_at: null
       const engine = new CuriosityEngine(deps);
 
       const triggers = await engine.evaluateTriggers([]);
@@ -760,7 +765,7 @@ describe("CuriosityEngine — evaluateTriggers", () => {
       });
       // last explored 2 hours ago
       const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
-      (deps.stateManager.readRaw as ReturnType<typeof vi.fn>).mockResolvedValue({
+      (deps.curiosityStateStore!.load as ReturnType<typeof vi.fn>).mockResolvedValue({
         proposals: [],
         learning_records: [],
         last_exploration_at: twoHoursAgo,
@@ -779,7 +784,7 @@ describe("CuriosityEngine — evaluateTriggers", () => {
       });
       // last explored 1 hour ago
       const oneHourAgo = new Date(Date.now() - 1 * 60 * 60 * 1000).toISOString();
-      (deps.stateManager.readRaw as ReturnType<typeof vi.fn>).mockResolvedValue({
+      (deps.curiosityStateStore!.load as ReturnType<typeof vi.fn>).mockResolvedValue({
         proposals: [],
         learning_records: [],
         last_exploration_at: oneHourAgo,

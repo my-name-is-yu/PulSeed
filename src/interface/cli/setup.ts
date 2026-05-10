@@ -33,6 +33,7 @@ import { RuntimeEvidenceLedger } from "../../runtime/store/evidence-ledger.js";
 import { RuntimeBudgetStore } from "../../runtime/store/budget-store.js";
 import { RuntimeOperatorHandoffStore } from "../../runtime/store/operator-handoff-store.js";
 import { RuntimePostmortemReportStore } from "../../runtime/store/postmortem-report.js";
+import { CuriosityStateStore } from "../../runtime/store/curiosity-state-store.js";
 import { TreeLoopOrchestrator } from "../../orchestrator/goal/tree-loop-orchestrator.js";
 import { GoalTreeManager } from "../../orchestrator/goal/goal-tree-manager.js";
 import { StateAggregator } from "../../orchestrator/goal/state-aggregator.js";
@@ -448,6 +449,7 @@ export async function buildDeps(
 
   const curiosityEngine = new CuriosityEngine({
     stateManager,
+    curiosityStateStore: new CuriosityStateStore(stateManager.getBaseDir()),
     llmClient,
     ethicsGate,
     stallDetector,

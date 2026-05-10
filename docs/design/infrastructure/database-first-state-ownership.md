@@ -21,7 +21,7 @@ explicit migration or debug/export outputs, not normal runtime owners.
   binding, imported plugin review, and runtime asset registry rows
 - operator handoffs, runtime budgets, experiment queues, capability
   verification/audit refs, browser automation sessions, runtime auth handoffs,
-  and proactive intervention events
+  proactive intervention events, and curiosity runtime state
 - schema version, migration history, and legacy import bookkeeping
 
 `~/.pulseed/state/pulseed-memory.sqlite` and Soil-owned SQLite storage own memory,
@@ -108,6 +108,10 @@ list:
   through `doctor --repair`; normal operator handoff, budget, experiment queue,
   capability verification/audit, browser session, auth handoff, and proactive
   intervention event writes use control DB tables
+- `src/runtime/store/curiosity-state-migration.ts`: explicit legacy
+  `curiosity/state.json` import/validation boundary reached through
+  `doctor --repair`; normal curiosity proposal, learning record, exploration
+  timestamp, and rejection-cooldown writes use control DB tables
 - task verifier, task lifecycle, checkpoint, strategy, current gap, wait
   metadata, and wait-deadline callers use typed `StateManager` APIs over
   control DB stores; legacy logical filename adapters remain only as
@@ -119,9 +123,8 @@ list:
   and trace stores keyed by session id; legacy `chat/agentloop/*.state.json`
   and `traces/agentloop/*.jsonl` files are explicit `doctor --repair`
   migration inputs only
-- dream filesystem metrics and memory-persistence compatibility maps
-- curiosity and loop-supervisor compatibility surfaces already called out as
-  future typed-store cleanup
+- trust, ethics, grounding, relationship/profile, dream filesystem metrics,
+  and memory-persistence compatibility maps
 - Soil import overlay queue and publish state, which are import/publish artifact
   surfaces rather than normal runtime owners
 

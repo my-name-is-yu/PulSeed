@@ -37,11 +37,15 @@ const DEFAULT_CONFIG = {
 
 function createMockDeps(overrides: Partial<CuriosityEngineDeps> = {}): CuriosityEngineDeps {
   const stateManager = {
-    readRaw: vi.fn().mockResolvedValue(null),
-    writeRaw: vi.fn().mockResolvedValue(undefined),
     loadGoal: vi.fn().mockResolvedValue(null),
     saveGoal: vi.fn().mockResolvedValue(undefined),
+    getBaseDir: vi.fn().mockReturnValue("/tmp/pulseed-test"),
   } as any;
+
+  const curiosityStateStore = {
+    load: vi.fn().mockResolvedValue(null),
+    saveSync: vi.fn((state: any) => state),
+  };
 
   const llmClient = {
     sendMessage: vi.fn().mockResolvedValue({ content: "[]" }),
@@ -72,6 +76,7 @@ function createMockDeps(overrides: Partial<CuriosityEngineDeps> = {}): Curiosity
 
   return {
     stateManager,
+    curiosityStateStore,
     llmClient,
     ethicsGate,
     stallDetector,
@@ -450,7 +455,7 @@ describe("CuriosityEngine — generateProposals", async () => {
 
     const engine = new CuriosityEngine(deps);
     await engine.generateProposals([makeTrigger()], []);
-    expect(deps.stateManager.writeRaw).toHaveBeenCalled();
+    expect(deps.curiosityStateStore!.saveSync).toHaveBeenCalled();
   });
 
   it("sets correct expiry time based on proposal_expiry_hours config", async () => {
@@ -505,9 +510,9 @@ describe("CuriosityEngine — generateProposals", async () => {
     const after = Date.now();
 
     // shouldExplore should no longer return true for periodic check (last_exploration_at updated)
-    // We can verify by confirming writeRaw was called (state was saved)
-    expect(deps.stateManager.writeRaw).toHaveBeenCalled();
-    const writtenState = (deps.stateManager.writeRaw as ReturnType<typeof vi.fn>).mock.calls[0]![1] as any;
+    // We can verify by confirming saveSync was called (state was saved)
+    expect(deps.curiosityStateStore!.saveSync).toHaveBeenCalled();
+    const writtenState = (deps.curiosityStateStore!.saveSync as ReturnType<typeof vi.fn>).mock.calls[0]![0] as any;
     const explorationTime = new Date(writtenState.last_exploration_at).getTime();
     expect(explorationTime).toBeGreaterThanOrEqual(before);
     expect(explorationTime).toBeLessThanOrEqual(after);
@@ -678,17 +683,17 @@ describe("CuriosityEngine — approval flow", async () => {
 
   it("saves state after approving", async () => {
     const { engine, proposal, deps } = await engineWithPendingProposal();
-    const callCountBefore = (deps.stateManager.writeRaw as ReturnType<typeof vi.fn>).mock.calls.length;
+    const callCountBefore = (deps.curiosityStateStore!.saveSync as ReturnType<typeof vi.fn>).mock.calls.length;
     engine.approveProposal(proposal.id);
-    const callCountAfter = (deps.stateManager.writeRaw as ReturnType<typeof vi.fn>).mock.calls.length;
+    const callCountAfter = (deps.curiosityStateStore!.saveSync as ReturnType<typeof vi.fn>).mock.calls.length;
     expect(callCountAfter).toBeGreaterThan(callCountBefore);
   });
 
   it("saves state after rejecting", async () => {
     const { engine, proposal, deps } = await engineWithPendingProposal();
-    const callCountBefore = (deps.stateManager.writeRaw as ReturnType<typeof vi.fn>).mock.calls.length;
+    const callCountBefore = (deps.curiosityStateStore!.saveSync as ReturnType<typeof vi.fn>).mock.calls.length;
     engine.rejectProposal(proposal.id);
-    const callCountAfter = (deps.stateManager.writeRaw as ReturnType<typeof vi.fn>).mock.calls.length;
+    const callCountAfter = (deps.curiosityStateStore!.saveSync as ReturnType<typeof vi.fn>).mock.calls.length;
     expect(callCountAfter).toBeGreaterThan(callCountBefore);
   });
 

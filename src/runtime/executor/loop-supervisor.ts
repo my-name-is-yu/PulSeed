@@ -1,4 +1,3 @@
-import { dirname, join } from 'node:path';
 import { z } from 'zod';
 import { GoalWorker, type GoalWorkerConfig, type WorkerResult } from './goal-worker.js';
 import { createEnvelope } from '../types/envelope.js';
@@ -24,8 +23,6 @@ export interface SupervisorConfig {
   maxCrashCount: number;
   crashBackoffBaseMs: number;
   runtimeRoot: string;
-  /** @deprecated Normal runtime supervisor state is control DB backed; this remains only to infer runtimeRoot for legacy tests. */
-  stateFilePath: string;
   pollIntervalMs: number;
   claimLeaseMs: number;
   leaseRenewIntervalMs: number;
@@ -92,7 +89,6 @@ const DEFAULT_CONFIG: SupervisorConfig = {
   maxCrashCount: 3,
   crashBackoffBaseMs: 1000,
   runtimeRoot: getPulseedDirPath(),
-  stateFilePath: join(getPulseedDirPath(), 'supervisor-state.json'),
   pollIntervalMs: 100,
   claimLeaseMs: 30_000,
   leaseRenewIntervalMs: 10_000,
@@ -142,8 +138,7 @@ export class LoopSupervisor {
   constructor(deps: SupervisorDeps, config?: Partial<SupervisorConfig>) {
     this.deps = deps;
     this.config = { ...DEFAULT_CONFIG, ...config };
-    const runtimeRoot = config?.runtimeRoot ?? dirname(this.config.stateFilePath);
-    this.supervisorStateStore = new SupervisorStateStore(runtimeRoot, {
+    this.supervisorStateStore = new SupervisorStateStore(this.config.runtimeRoot, {
       controlBaseDir: this.config.controlBaseDir,
     });
   }

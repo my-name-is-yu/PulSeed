@@ -568,6 +568,19 @@ export type {
   ImportLegacyRuntimeFileStateInput,
   ImportLegacyRuntimeFileStateResult,
 } from "./runtime-journal-state-migration.js";
+export {
+  CuriosityStateStore,
+} from "./curiosity-state-store.js";
+export type {
+  CuriosityStateStoreOptions,
+  CuriosityStateStorePort,
+} from "./curiosity-state-store.js";
+export {
+  importLegacyCuriosityState,
+} from "./curiosity-state-migration.js";
+export type {
+  CuriosityStateLegacyImportReport,
+} from "./curiosity-state-migration.js";
 export { PluginChannelRuntimeStateStore } from "./plugin-channel-runtime-state-store.js";
 export type {
   GatewayChannelBinding,

@@ -36,11 +36,15 @@ const DEFAULT_CONFIG = {
 
 function createMockDeps(overrides: Partial<CuriosityEngineDeps> = {}): CuriosityEngineDeps {
   const stateManager = {
-    readRaw: vi.fn().mockResolvedValue(null),
-    writeRaw: vi.fn().mockResolvedValue(undefined),
     loadGoal: vi.fn().mockResolvedValue(null),
     saveGoal: vi.fn().mockResolvedValue(undefined),
+    getBaseDir: vi.fn().mockReturnValue("/tmp/pulseed-test"),
   } as any;
+
+  const curiosityStateStore = {
+    load: vi.fn().mockResolvedValue(null),
+    saveSync: vi.fn((state: any) => state),
+  };
 
   const llmClient = {
     sendMessage: vi.fn().mockResolvedValue({ content: "[]" }),
@@ -71,6 +75,7 @@ function createMockDeps(overrides: Partial<CuriosityEngineDeps> = {}): Curiosity
 
   return {
     stateManager,
+    curiosityStateStore,
     llmClient,
     ethicsGate,
     stallDetector,
@@ -186,7 +191,7 @@ describe("CuriosityEngine — getResourceBudget", () => {
 describe("CuriosityEngine — shouldExplore", () => {
   it("returns true when task queue is empty (all user goals completed)", async () => {
     const deps = createMockDeps();
-    (deps.stateManager.readRaw as ReturnType<typeof vi.fn>).mockResolvedValue({
+    (deps.curiosityStateStore!.load as ReturnType<typeof vi.fn>).mockResolvedValue({
       proposals: [],
       learning_records: [],
       last_exploration_at: new Date().toISOString(), // suppress periodic
@@ -198,7 +203,7 @@ describe("CuriosityEngine — shouldExplore", () => {
   });
 
   it("returns true when no exploration has ever occurred", async () => {
-    const deps = createMockDeps(); // readRaw returns null → last_exploration_at = null
+    const deps = createMockDeps(); // load returns null → last_exploration_at = null
     const engine = new CuriosityEngine(deps);
     expect(await engine.shouldExplore([])).toBe(true);
   });
@@ -206,7 +211,7 @@ describe("CuriosityEngine — shouldExplore", () => {
   it("returns true when periodic exploration is overdue", async () => {
     const deps = createMockDeps({ config: { periodic_exploration_hours: 1 } });
     const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
-    (deps.stateManager.readRaw as ReturnType<typeof vi.fn>).mockResolvedValue({
+    (deps.curiosityStateStore!.load as ReturnType<typeof vi.fn>).mockResolvedValue({
       proposals: [],
       learning_records: [],
       last_exploration_at: twoHoursAgo,
@@ -219,7 +224,7 @@ describe("CuriosityEngine — shouldExplore", () => {
   it("returns true when any active goal has escalated stall dimensions", async () => {
     const deps = createMockDeps({ config: { periodic_exploration_hours: 72 } });
     const recentExploration = new Date(Date.now() - 1000).toISOString();
-    (deps.stateManager.readRaw as ReturnType<typeof vi.fn>).mockResolvedValue({
+    (deps.curiosityStateStore!.load as ReturnType<typeof vi.fn>).mockResolvedValue({
       proposals: [],
       learning_records: [],
       last_exploration_at: recentExploration,
@@ -237,7 +242,7 @@ describe("CuriosityEngine — shouldExplore", () => {
   it("returns false when no triggers apply", async () => {
     const deps = createMockDeps({ config: { periodic_exploration_hours: 72 } });
     const recentExploration = new Date(Date.now() - 1000).toISOString();
-    (deps.stateManager.readRaw as ReturnType<typeof vi.fn>).mockResolvedValue({
+    (deps.curiosityStateStore!.load as ReturnType<typeof vi.fn>).mockResolvedValue({
       proposals: [],
       learning_records: [],
       last_exploration_at: recentExploration,
@@ -277,7 +282,7 @@ describe("CuriosityEngine — shouldExplore", () => {
   it("returns false when all user goals are active but no stall", async () => {
     const deps = createMockDeps({ config: { periodic_exploration_hours: 72 } });
     const recentExploration = new Date(Date.now() - 1000).toISOString();
-    (deps.stateManager.readRaw as ReturnType<typeof vi.fn>).mockResolvedValue({
+    (deps.curiosityStateStore!.load as ReturnType<typeof vi.fn>).mockResolvedValue({
       proposals: [],
       learning_records: [],
       last_exploration_at: recentExploration,
@@ -298,7 +303,7 @@ describe("CuriosityEngine — shouldExplore", () => {
   it("ignores curiosity-origin goals when checking task queue in shouldExplore", async () => {
     const deps = createMockDeps({ config: { periodic_exploration_hours: 72 } });
     const recentExploration = new Date(Date.now() - 1000).toISOString();
-    (deps.stateManager.readRaw as ReturnType<typeof vi.fn>).mockResolvedValue({
+    (deps.curiosityStateStore!.load as ReturnType<typeof vi.fn>).mockResolvedValue({
       proposals: [],
       learning_records: [],
       last_exploration_at: recentExploration,
@@ -327,7 +332,7 @@ describe("CuriosityEngine — learning feedback", async () => {
     (deps.llmClient.parseJSON as ReturnType<typeof vi.fn>).mockReturnValue([]);
 
     // Pre-seed a learning record
-    (deps.stateManager.readRaw as ReturnType<typeof vi.fn>).mockResolvedValue({
+    (deps.curiosityStateStore!.load as ReturnType<typeof vi.fn>).mockResolvedValue({
       proposals: [],
       learning_records: [
         {
