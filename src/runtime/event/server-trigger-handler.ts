@@ -2,10 +2,11 @@ import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import type * as http from "node:http";
 import { PulSeedEventSchema } from "../../base/types/drive.js";
-import { TriggerEventSchema, TriggerMappingsConfigSchema } from "../../base/types/trigger.js";
+import { TriggerEventSchema } from "../../base/types/trigger.js";
 import type { TriggerMappingsConfig } from "../../base/types/trigger.js";
 import type { Logger } from "../logger.js";
 import type { TriggerMapper } from "../trigger-mapper.js";
+import { readTriggerMappingsConfig } from "../trigger-mappings-json.js";
 import { isPayloadTooLargeError, readJsonBody, writeJsonError, writeJson } from "./server-http.js";
 
 type TriggerInput = { source: string; event_type: string; data: Record<string, unknown>; goal_id?: string };
@@ -123,9 +124,7 @@ export class EventServerTriggerHandler {
 
     const mappingsPath = path.join(this.eventsDir, "..", "trigger-mappings.json");
     try {
-      const content = await fsp.readFile(mappingsPath, "utf-8");
-      const raw = JSON.parse(content) as unknown;
-      this.triggerMappingsCache = TriggerMappingsConfigSchema.parse(raw);
+      this.triggerMappingsCache = await readTriggerMappingsConfig(mappingsPath);
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code;
       if (code !== "ENOENT") {

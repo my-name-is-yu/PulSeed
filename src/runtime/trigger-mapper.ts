@@ -1,8 +1,7 @@
-import * as fsp from "node:fs/promises";
 import * as path from "node:path";
-import { TriggerMappingsConfigSchema } from "../base/types/trigger.js";
 import type { TriggerEvent, TriggerMapping } from "../base/types/trigger.js";
 import type { ILLMClient } from "../base/llm/llm-client.js";
+import { readTriggerMappingsConfig } from "./trigger-mappings-json.js";
 
 export type TriggerAction = "observe" | "create_task" | "notify" | "wake" | "none";
 
@@ -30,9 +29,7 @@ export class TriggerMapper {
   async loadMappings(): Promise<void> {
     const mappingsPath = path.join(this.baseDir, "trigger-mappings.json");
     try {
-      const content = await fsp.readFile(mappingsPath, "utf-8");
-      const raw = JSON.parse(content) as unknown;
-      const config = TriggerMappingsConfigSchema.parse(raw);
+      const config = await readTriggerMappingsConfig(mappingsPath);
       this.mappings = config.mappings;
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code;

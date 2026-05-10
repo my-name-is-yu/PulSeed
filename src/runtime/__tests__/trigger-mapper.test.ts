@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { TriggerMapper } from "../trigger-mapper.js";
+import { TRIGGER_MAPPINGS_MAX_BYTES } from "../trigger-mappings-json.js";
 import { MockLLMClient } from "../../base/llm/llm-client.js";
 import { makeTempDir } from "../../../tests/helpers/temp-dir.js";
 
@@ -39,6 +40,35 @@ describe("TriggerMapper.loadMappings", () => {
     const tmpDir = makeTempDir();
     const mapper = new TriggerMapper(tmpDir);
     await expect(mapper.loadMappings()).resolves.toBeUndefined();
+    fs.rmSync(tmpDir, { recursive: true, force: true , maxRetries: 3, retryDelay: 100 });
+  });
+
+  it("treats oversized mappings files as empty", async () => {
+    const tmpDir = makeTempDir();
+    fs.writeFileSync(
+      path.join(tmpDir, "trigger-mappings.json"),
+      JSON.stringify({
+        mappings: [
+          {
+            source: "github",
+            event_type: "push",
+            action: "observe",
+            goal_id: "g1",
+            padding: "x".repeat(TRIGGER_MAPPINGS_MAX_BYTES),
+          },
+        ],
+      }),
+      "utf-8"
+    );
+    const mapper = new TriggerMapper(tmpDir);
+    await expect(mapper.loadMappings()).resolves.toBeUndefined();
+
+    const result = await mapper.resolve(
+      { source: "github", event_type: "push", data: {} },
+      []
+    );
+
+    expect(result).toEqual({ action: "none", goal_id: null, source: "default" });
     fs.rmSync(tmpDir, { recursive: true, force: true , maxRetries: 3, retryDelay: 100 });
   });
 });
