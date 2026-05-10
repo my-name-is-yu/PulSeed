@@ -227,6 +227,43 @@ describe("runEveningCatchup", () => {
     expect(prompt).not.toContain("unsafe morning plan should not appear");
   });
 
+  it("ignores oversized persisted morning reports before prompting", async () => {
+    tmpDir = makeTempDir();
+    fs.mkdirSync(path.join(tmpDir, "reflections"), { recursive: true });
+    fs.writeFileSync(
+      path.join(tmpDir, "reflections", `morning-${todayISO()}.json`),
+      JSON.stringify({
+        date: todayISO(),
+        created_at: new Date().toISOString(),
+        goals_reviewed: 1,
+        priorities: [],
+        suggestions: ["oversized morning plan should not appear"],
+        concerns: [],
+        padding: "x".repeat(1024 * 1024),
+      }),
+      "utf-8"
+    );
+    const goals = [makeGoal("g1")];
+    const stateManager = makeStateManager(goals);
+    const sendMessage = vi.fn().mockResolvedValue({ content: VALID_LLM_RESPONSE });
+    const llmClient = {
+      sendMessage,
+      parseJSON: vi.fn().mockImplementation((content: string, schema: { parse(value: unknown): unknown }) =>
+        schema.parse(JSON.parse(content))
+      ),
+    };
+
+    await runEveningCatchup({
+      stateManager: stateManager as never,
+      llmClient: llmClient as never,
+      baseDir: tmpDir,
+    });
+
+    const prompt = sendMessage.mock.calls[0]?.[0]?.[0]?.content ?? "";
+    expect(prompt).not.toContain("Morning plan:");
+    expect(prompt).not.toContain("oversized morning plan should not appear");
+  });
+
   it("LLM error: returns partial report without crashing", async () => {
     tmpDir = makeTempDir();
     const goals = [makeGoal("g1")];
