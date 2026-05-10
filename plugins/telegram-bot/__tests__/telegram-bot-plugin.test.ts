@@ -838,7 +838,7 @@ describe("TelegramChatEventAdapter", () => {
     expect(editMessageText.mock.calls[0]![2]).toContain("done");
   });
 
-  it("renders visible activity in one progress message", async () => {
+  it("renders plugin activity without leaking lifecycle progress", async () => {
     const sendPlainMessage = vi.fn().mockResolvedValue(13);
     const editMessageText = vi.fn().mockResolvedValue(undefined);
     const api = {
@@ -867,12 +867,8 @@ describe("TelegramChatEventAdapter", () => {
     });
 
     expect(sendPlainMessage).toHaveBeenCalledOnce();
-    expect(sendPlainMessage).toHaveBeenCalledWith(777, "- Received. Starting work...");
-    expect(editMessageText).toHaveBeenCalledWith(
-      777,
-      13,
-      "- Received. Starting work...\n- Plugin completed"
-    );
+    expect(sendPlainMessage).toHaveBeenCalledWith(777, "- Plugin completed");
+    expect(editMessageText).not.toHaveBeenCalled();
   });
 
   it("edits the assistant message to show lifecycle_error partial text", async () => {

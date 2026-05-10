@@ -46,6 +46,9 @@ export interface ActivityEvent extends ChatEventBase {
   message: string;
   sourceId?: string;
   transient?: boolean;
+  presentation?: {
+    gatewayProgress?: "user" | "internal";
+  };
 }
 
 export interface ToolStartEvent extends ChatEventBase {

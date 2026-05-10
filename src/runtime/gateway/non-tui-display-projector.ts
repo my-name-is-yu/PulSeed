@@ -1,6 +1,7 @@
 import type { ChatEvent } from "../../interface/chat/chat-events.js";
 import {
   formatGatewayLifecycleFailureMessage,
+  renderGatewayActivityEvent,
   renderGatewayAgentTimelineItem,
   renderGatewayOperationProgress,
 } from "./chat-event-rendering.js";
@@ -67,12 +68,15 @@ export class NonTuiDisplayProjector {
           `${event.success ? "Finished" : "Failed"} ${event.toolName}: ${event.summary}`,
         );
         return;
-      case "activity":
+      case "activity": {
+        const text = renderGatewayActivityEvent(event);
+        if (!text) return;
         await this.upsertProgress(
           event.sourceId ? `activity:${event.sourceId}` : `activity:${event.kind}`,
-          event.message,
+          text,
         );
         return;
+      }
       case "operation_progress":
         await this.upsertProgress(`operation:${event.item.id}`, renderGatewayOperationProgress(event.item));
         return;
@@ -82,10 +86,14 @@ export class NonTuiDisplayProjector {
           this.sawFinalSignal = true;
           return;
         }
-        await this.upsertProgress(
-          `timeline:${event.item.sourceEventId}`,
-          renderGatewayAgentTimelineItem(event.item),
-        );
+        {
+          const text = renderGatewayAgentTimelineItem(event.item);
+          if (!text) return;
+          await this.upsertProgress(
+            `timeline:${event.item.sourceEventId}`,
+            text,
+          );
+        }
         return;
       case "assistant_delta":
         await this.updateFinal(event.text, false);
