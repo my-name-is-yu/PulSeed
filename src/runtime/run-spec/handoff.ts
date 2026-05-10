@@ -431,10 +431,10 @@ export class RunSpecHandoffService {
           updated_at: null,
         }] : []),
         {
-          kind: "artifact" as const,
+          kind: "run_spec" as const,
           id: spec.id,
           path: null,
-          relative_path: `run-specs/${spec.id}.json`,
+          relative_path: "state/pulseed-control.sqlite",
           updated_at: spec.updated_at,
         },
       ],

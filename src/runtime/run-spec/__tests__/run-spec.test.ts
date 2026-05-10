@@ -4,12 +4,14 @@ import * as path from "node:path";
 import { describe, expect, it } from "vitest";
 import { deriveRunSpecFromText, understandRunSpecDraft } from "../derive.js";
 import { createRunSpecStore } from "../store.js";
+import { importLegacyRunSpecState } from "../run-spec-state-migration.js";
 import { RunSpecHandoffService } from "../handoff.js";
 import {
   formatRunSpecSetupProposal,
   handleRunSpecConfirmationInput,
 } from "../confirmation.js";
 import { StateManager } from "../../../base/state/state-manager.js";
+import { openControlDatabase } from "../../store/control-db/index.js";
 import { createSingleMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
 
 const NOW = new Date("2026-05-02T00:00:00.000Z");
@@ -308,7 +310,7 @@ describe("RunSpec derivation", () => {
 });
 
 describe("RunSpecStore", () => {
-  it("persists and reloads a RunSpec under the state root", async () => {
+  it("persists and reloads a RunSpec through the control DB", async () => {
     const baseDir = await fsp.mkdtemp(path.join(os.tmpdir(), "pulseed-runspec-"));
     const spec = await deriveRunSpecFromText("Run Kaggle until tomorrow morning and aim for top 15%.", {
       cwd: "/repo/kaggle",
@@ -325,9 +327,39 @@ describe("RunSpecStore", () => {
       profile: "kaggle",
       schema_version: "run-spec-v1",
     });
+    await expect(fsp.stat(path.join(baseDir, "run-specs"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(store.list()).resolves.toEqual([
+      expect.objectContaining({ id: spec!.id }),
+    ]);
   });
 
-  it("returns null for malformed or stale persisted RunSpec JSON", async () => {
+  it("indexes conversation_id from RunSpec links rather than the origin session", async () => {
+    const baseDir = await fsp.mkdtemp(path.join(os.tmpdir(), "pulseed-runspec-"));
+    const spec = await deriveRunSpecFromText("Run Kaggle until tomorrow morning and aim for top 15%.", {
+      cwd: "/repo/kaggle",
+      now: NOW,
+      conversationId: "telegram-chat-1",
+      sessionId: "local-session-1",
+      llmClient: llmDraft(),
+    });
+    expect(spec).not.toBeNull();
+
+    const store = createRunSpecStore({ getBaseDir: () => baseDir });
+    await store.save(spec!);
+
+    const db = await openControlDatabase({ baseDir });
+    const row = db.read((sqlite) => sqlite.prepare(`
+      SELECT conversation_id
+      FROM run_spec_records
+      WHERE run_spec_id = ?
+    `).get(spec!.id)) as { conversation_id: string | null } | undefined;
+    db.close();
+
+    expect(row).toEqual({ conversation_id: "telegram-chat-1" });
+    expect(spec!.origin.session_id).toBe("local-session-1");
+  });
+
+  it("does not treat legacy RunSpec JSON files as normal runtime state", async () => {
     const baseDir = await fsp.mkdtemp(path.join(os.tmpdir(), "pulseed-runspec-"));
     const malformedId = "runspec-00000000-0000-4000-8000-000000000001";
     const staleId = "runspec-00000000-0000-4000-8000-000000000002";
@@ -343,20 +375,78 @@ describe("RunSpecStore", () => {
 
     await expect(store.load(malformedId)).resolves.toBeNull();
     await expect(store.load(staleId)).resolves.toBeNull();
+    await expect(store.list()).resolves.toEqual([]);
   });
 
-  it("still surfaces unexpected RunSpec storage read failures", async () => {
+  it("imports valid legacy RunSpec JSON only through the explicit repair boundary", async () => {
     const baseDir = await fsp.mkdtemp(path.join(os.tmpdir(), "pulseed-runspec-"));
-    const directoryId = "runspec-00000000-0000-4000-8000-000000000003";
+    const validSpec = await deriveRunSpecFromText("Run Kaggle until tomorrow morning and aim for top 15%.", {
+      cwd: "/repo/kaggle",
+      now: NOW,
+      conversationId: "telegram-chat-1",
+      sessionId: "local-session-1",
+      llmClient: llmDraft(),
+    });
+    expect(validSpec).not.toBeNull();
     const dir = path.join(baseDir, "run-specs");
-    await fsp.mkdir(path.join(dir, `${directoryId}.json`), { recursive: true });
+    await fsp.mkdir(dir, { recursive: true });
+    await fsp.writeFile(path.join(dir, `${validSpec!.id}.json`), JSON.stringify(validSpec), "utf8");
+    await fsp.writeFile(path.join(dir, "broken.json"), "{bad", "utf8");
+
+    const store = createRunSpecStore({ getBaseDir: () => baseDir });
+    await expect(store.load(validSpec!.id)).resolves.toBeNull();
+
+    const report = await importLegacyRunSpecState(baseDir);
+
+    expect(report).toMatchObject({
+      runSpecFiles: 2,
+      importedRunSpecs: 1,
+      skippedAlreadyImported: 0,
+      blockedSources: [expect.objectContaining({ sourcePath: "run-specs/broken.json" })],
+    });
+    await expect(store.load(validSpec!.id)).resolves.toMatchObject({
+      id: validSpec!.id,
+      links: { conversation_id: "telegram-chat-1" },
+      origin: { session_id: "local-session-1" },
+    });
+    await expect(importLegacyRunSpecState(baseDir)).resolves.toMatchObject({
+      runSpecFiles: 2,
+      importedRunSpecs: 0,
+      skippedAlreadyImported: 1,
+      blockedSources: [expect.objectContaining({ sourcePath: "run-specs/broken.json" })],
+    });
+    const db = await openControlDatabase({ baseDir });
+    try {
+      expect(db.listLegacyImports()).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          source_kind: "run_spec",
+          source_id: validSpec!.id,
+          migration_name: "run-spec-runtime-state",
+          status: "imported",
+        }),
+        expect.objectContaining({
+          source_kind: "run_spec",
+          source_id: "broken.json",
+          migration_name: "run-spec-runtime-state",
+          status: "blocked",
+        }),
+      ]));
+    } finally {
+      db.close();
+    }
+  });
+
+  it("still surfaces unexpected RunSpec control DB failures", async () => {
+    const baseDir = await fsp.mkdtemp(path.join(os.tmpdir(), "pulseed-runspec-"));
+    const dbPath = path.join(baseDir, "state", "pulseed-control.sqlite");
+    await fsp.mkdir(dbPath, { recursive: true });
 
     const store = createRunSpecStore({ getBaseDir: () => baseDir });
 
-    await expect(store.load(directoryId)).rejects.toThrow();
+    await expect(store.load("runspec-00000000-0000-4000-8000-000000000003")).rejects.toThrow();
   });
 
-  it("rejects path-like ids before RunSpec store file I/O", async () => {
+  it("rejects path-like ids before RunSpec store DB lookup", async () => {
     const baseDir = await fsp.mkdtemp(path.join(os.tmpdir(), "pulseed-runspec-"));
     const spec = await deriveRunSpecFromText("Run Kaggle until tomorrow morning and aim for top 15%.", {
       cwd: "/repo/kaggle",

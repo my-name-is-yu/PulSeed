@@ -34,6 +34,7 @@ export const RuntimeSessionRefKindSchema = z.enum([
   "evidence_ledger",
   "process_session",
   "runtime_health",
+  "run_spec",
   "artifact",
 ]);
 export type RuntimeSessionRefKind = z.infer<typeof RuntimeSessionRefKindSchema>;

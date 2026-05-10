@@ -14,6 +14,7 @@ import { appendWALRecord } from "../../../base/state/legacy-state-wal.js";
 import { KnowledgeMemoryStateStore } from "../../../platform/knowledge/knowledge-memory-state-store.js";
 import { MemoryLifecycleStateStore } from "../../../platform/knowledge/memory/memory-lifecycle-state-store.js";
 import { DreamDecisionHeuristicStore } from "../../../runtime/store/dream-decision-heuristic-store.js";
+import { createRunSpecStore, type RunSpec } from "../../../runtime/run-spec/index.js";
 
 // ─── cmdDoctor tests ───
 //
@@ -66,6 +67,59 @@ import {
   TransferTrustStateStore,
 } from "../../../runtime/store/index.js";
 import { loadRelationshipProfileProposalStore } from "../../../platform/profile/profile-change-proposal.js";
+
+function makeRunSpec(overrides: Partial<RunSpec> = {}): RunSpec {
+  const now = "2026-05-10T00:00:00.000Z";
+  return {
+    schema_version: "run-spec-v1",
+    id: "runspec-00000000-0000-4000-8000-000000000001",
+    status: "draft",
+    profile: "generic",
+    source_text: "Run a long background benchmark.",
+    objective: "Run a long background benchmark.",
+    workspace: { path: "/repo/bench", source: "context", confidence: "high" },
+    execution_target: { kind: "daemon", remote_host: null, confidence: "high" },
+    metric: null,
+    progress_contract: {
+      kind: "open_ended",
+      dimension: null,
+      threshold: null,
+      semantics: "Continue until stopped.",
+      confidence: "medium",
+    },
+    deadline: null,
+    budget: {
+      max_trials: null,
+      max_wall_clock_minutes: null,
+      resident_policy: "best_effort",
+    },
+    approval_policy: {
+      submit: "approval_required",
+      publish: "unspecified",
+      secret: "approval_required",
+      external_action: "approval_required",
+      irreversible_action: "approval_required",
+    },
+    artifact_contract: {
+      expected_artifacts: [],
+      discovery_globs: [],
+      primary_outputs: [],
+    },
+    risk_flags: [],
+    missing_fields: [],
+    confidence: "medium",
+    links: { goal_id: null, runtime_session_id: null, conversation_id: "telegram-chat-1" },
+    origin: {
+      channel: "plugin_gateway",
+      session_id: "local-session-1",
+      reply_target: null,
+      metadata: {},
+    },
+    created_at: now,
+    updated_at: now,
+    ...overrides,
+  };
+}
 
 async function saveDaemonStateFixture(tmpDir: string, state: Record<string, unknown>): Promise<void> {
   await new DaemonStateStore(tmpDir).save(state as never);
@@ -1374,6 +1428,35 @@ describe("cmdDoctor summary counts", () => {
     } finally {
       database.close();
     }
+  });
+
+  it("imports legacy RunSpec files through doctor repair", async () => {
+    const origHome = process.env["PULSEED_HOME"];
+    process.env["PULSEED_HOME"] = tmpDir;
+    const legacyRunSpecDir = path.join(tmpDir, "run-specs");
+    fs.mkdirSync(legacyRunSpecDir, { recursive: true });
+    const legacySpec = makeRunSpec();
+    fs.writeFileSync(path.join(legacyRunSpecDir, `${legacySpec.id}.json`), JSON.stringify(legacySpec));
+    fs.writeFileSync(path.join(legacyRunSpecDir, "invalid.json"), "{bad");
+
+    try {
+      const exitCode = await cmdDoctor(["--repair"]);
+      expect([0, 1]).toContain(exitCode);
+    } finally {
+      if (origHome !== undefined) {
+        process.env["PULSEED_HOME"] = origHome;
+      } else {
+        delete process.env["PULSEED_HOME"];
+      }
+    }
+
+    await expect(createRunSpecStore({ getBaseDir: () => tmpDir }).load(legacySpec.id)).resolves.toMatchObject({
+      id: legacySpec.id,
+      links: { conversation_id: "telegram-chat-1" },
+    });
+    const allOutput = consoleSpy.mock.calls.map((c: unknown[]) => c[0] as string).join("\n");
+    expect(allOutput).toContain("Repair RunSpec import: files=2, imported=1");
+    expect(checkControlDatabase(tmpDir).detail).toContain("legacy import record");
   });
 
   it("imports legacy goal WAL through doctor repair and records import bookkeeping", async () => {

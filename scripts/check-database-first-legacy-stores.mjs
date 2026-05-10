@@ -50,7 +50,7 @@ const ALLOWLIST_RULES_BY_ID = new Map(Object.entries({
   "legacy-capability-registry-input": ["capability-registry-json-state"],
   "relationship-profile-user-content": ["profile-json-state"],
   "character-config-user-content": ["state-manager-raw-call", "profile-json-state"],
-  "run-spec-direct-file-state": ["run-spec-json-state"],
+  "run-spec-legacy-import-input": ["run-spec-json-state"],
   "drive-system-schedule-state": ["drive-schedule-json-state"],
   "drive-system-event-spool": ["drive-event-spool-json"],
   "daemon-drive-event-spool-callers": ["drive-event-spool-json"],
@@ -63,7 +63,6 @@ const ALLOWLIST_RULES_BY_ID = new Map(Object.entries({
   "strategy-template-runtime-callers": ["strategy-template-json-state"],
   "vector-index-file-cache": ["vector-index-json-state"],
   "knowledge-graph-file-state": ["knowledge-graph-json-state"],
-  "run-spec-runtime-callers": ["run-spec-json-state"],
   "reflection-report-file-state": ["reflection-report-json-state"],
 }));
 
@@ -256,15 +255,6 @@ const RULES = [
 ];
 
 const DIRECT_FILE_OWNER_INVENTORY = [
-  inventory({
-    id: "run-spec-store",
-    surface: "src/runtime/run-spec/store.ts",
-    category: CATEGORY.TYPED_STORE_MIGRATE_NOW,
-    owner: "RunSpec durable draft/confirmation/start state",
-    boundary: "run-specs/<id>.json",
-    nextSlice: 2,
-    reason: "normal chat/TUI/runtime handoff state is durable internal runtime state",
-  }),
   inventory({
     id: "drive-system-schedule",
     surface: "src/platform/drive/drive-system.ts",
@@ -575,13 +565,11 @@ const PATH_ALLOWLIST = [
     owner: "character configuration",
   }),
   allow({
-    id: "run-spec-direct-file-state",
-    pattern: /(^|\/)src\/runtime\/run-spec\/store\.ts$/,
-    category: CATEGORY.TYPED_STORE_MIGRATE_NOW,
-    reason: "RunSpec normal durable state is a direct JSON file owner pending Slice 2 typed control DB migration",
+    id: "run-spec-legacy-import-input",
+    pattern: /(^|\/)src\/runtime\/run-spec\/run-spec-state-migration\.ts$/,
+    category: CATEGORY.MIGRATION_ONLY_INPUT,
+    reason: "legacy run-specs JSON is read only through explicit doctor/repair import",
     owner: "RunSpecStore typed control DB table",
-    nextSlice: 2,
-    debtRank: 10,
   }),
   allow({
     id: "drive-system-schedule-state",
@@ -683,15 +671,6 @@ const PATH_ALLOWLIST = [
     owner: "Knowledge graph typed store or rebuildable cache boundary",
     nextSlice: 6,
     debtRank: 50,
-  }),
-  allow({
-    id: "run-spec-runtime-callers",
-    pattern: /(^|\/)src\/runtime\/run-spec\/handoff\.ts$/,
-    category: CATEGORY.TYPED_STORE_MIGRATE_NOW,
-    reason: "RunSpec handoff still references the file path surfaced by the pending Slice 2 RunSpec store",
-    owner: "RunSpecStore typed control DB table",
-    nextSlice: 2,
-    debtRank: 11,
   }),
   allow({
     id: "reflection-report-file-state",
