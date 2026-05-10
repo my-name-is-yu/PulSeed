@@ -1,7 +1,7 @@
 import type {
   BrowserAutomationSessionRecord,
   BrowserAutomationSessionState,
-} from "../store/index.js";
+} from "../store/runtime-schemas.js";
 import {
   BrowserAutomationSessionRecordSchema,
 } from "../store/runtime-schemas.js";

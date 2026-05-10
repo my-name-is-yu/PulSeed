@@ -17,7 +17,7 @@ import {
 import type {
   RuntimeEvidenceSummary,
   RuntimeEvidenceSummaryIndex,
-} from "./evidence-ledger.js";
+} from "./runtime-evidence-summary-types.js";
 
 export type RuntimeEvidenceScopeKind = "goal" | "run";
 

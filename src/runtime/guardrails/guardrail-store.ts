@@ -1,17 +1,21 @@
 import type {
   BackpressureSnapshot,
   CircuitBreakerRecord,
-} from "../store/index.js";
+} from "../store/runtime-schemas.js";
 import {
   BackpressureSnapshotSchema,
   CircuitBreakerRecordSchema,
+} from "../store/runtime-schemas.js";
+import {
   createRuntimeStorePaths,
+  type RuntimeStorePaths,
+} from "../store/runtime-paths.js";
+import {
   openRuntimeControlDatabase,
   type ControlDatabase,
   type RuntimeControlDbStoreOptions,
-  type RuntimeStorePaths,
   type SqliteDatabase,
-} from "../store/index.js";
+} from "../store/control-db/index.js";
 
 export class GuardrailStore {
   private readonly paths: RuntimeStorePaths;
