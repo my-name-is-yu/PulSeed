@@ -18,6 +18,7 @@ export {
 export {
   CONTROL_DB_CAPABILITY_REGISTRY_SCHEMA_SQL,
   CONTROL_DB_CHAT_AGENTLOOP_SESSION_SCHEMA_SQL,
+  CONTROL_DB_DRIVE_SCHEDULE_SCHEMA_SQL,
   CONTROL_DB_GOAL_ORCHESTRATION_SCHEMA_SQL,
   CONTROL_DB_GOAL_TASK_DURABLE_LOOP_SCHEMA_SQL,
   CONTROL_DB_INITIAL_SCHEMA_SQL,
@@ -57,6 +58,19 @@ export type {
   RuntimeControlDbStoreOptions,
   SqliteDatabase,
 } from "./control-db/index.js";
+
+export {
+  DriveGoalScheduleStateStore,
+} from "../../platform/drive/drive-schedule-state-store.js";
+export type {
+  DriveGoalScheduleStateStoreOptions,
+} from "../../platform/drive/drive-schedule-state-store.js";
+export {
+  importLegacyDriveGoalScheduleState,
+} from "../../platform/drive/drive-schedule-state-migration.js";
+export type {
+  DriveGoalScheduleLegacyImportReport,
+} from "../../platform/drive/drive-schedule-state-migration.js";
 
 export {
   GoalOrchestrationStateStore,

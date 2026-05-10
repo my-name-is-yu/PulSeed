@@ -15,7 +15,8 @@ Base: origin/main @ 7d87d012 Prefer live daemon status in runtime evidence answe
 | Slice | Scope | Branch | Worktree | PR | State |
 | --- | --- | --- | --- | --- | --- |
 | 1 | Direct File Owner Inventory And Guard Expansion | codex/direct-file-state-slice-1-inventory-guard-20260510213328 | /Users/yuyoshimuta/Documents/dev/PulSeed-worktrees/direct-file-state-slice-1-inventory-guard-20260510213328 | https://github.com/my-name-is-yu/PulSeed/pull/1837 | merged |
-| 2 | RunSpec Store | codex/direct-file-state-slice-2-run-spec-store-20260510220128 | /Users/yuyoshimuta/Documents/dev/PulSeed-worktrees/direct-file-state-slice-2-run-spec-store-20260510220128 | https://github.com/my-name-is-yu/PulSeed/pull/1843 | in progress |
+| 2 | RunSpec Store | codex/direct-file-state-slice-2-run-spec-store-20260510220128 | /Users/yuyoshimuta/Documents/dev/PulSeed-worktrees/direct-file-state-slice-2-run-spec-store-20260510220128 | https://github.com/my-name-is-yu/PulSeed/pull/1843 | merged |
+| 3 | DriveSystem Schedule State | codex/direct-file-state-slice-3-drive-schedule-20260510225201 | /Users/yuyoshimuta/Documents/dev/PulSeed-worktrees/direct-file-state-slice-3-drive-schedule-20260510225201 | pending | in progress |
 
 ## Slice 1 Direct File Owner Inventory
 
@@ -59,6 +60,42 @@ Base: origin/main @ 7d87d012 Prefer live daemon status in runtime evidence answe
 - Fixed by storing `RunSpec.links.conversation_id` and adding an integration test where `links.conversation_id` differs from `origin.session_id`.
 - Fallback review after `@codex review` did not produce a current-head result found a missing doctor/repair import boundary for valid legacy `run-specs/*.json`.
 - Fixed by adding explicit `importLegacyRunSpecState` doctor/repair import with imported/blocked `control_legacy_imports` bookkeeping and tests.
+
+## Slice 2 Merge Record
+
+- PR: https://github.com/my-name-is-yu/PulSeed/pull/1843
+- Branch: `codex/direct-file-state-slice-2-run-spec-store-20260510220128`
+- Head commit: `a2ee9d4bd8f61b81418e2b3999c281c50241acfb`
+- Merge commit: `33fa214faac5a8fa87f1685551472549f0b90ca1`
+- CI: `unit (22)` success, `integration (24)` success
+- GitHub Codex review: `@codex review` needed; no usable current-head review after retry
+- Fallback sub-agent review: used after GitHub Codex review did not produce a current-head result; LGTM, no material blockers
+- Worktree cleanup: removed after merge
+- Remote branch cleanup: deleted after merge
+- Merged by this session: yes
+
+## Slice 3 Direct File Owner Update
+
+| Owner | Previous boundary | Current boundary | Classification | Guard state |
+| --- | --- | --- | --- | --- |
+| DriveSystem goal activation schedule | `schedule/<goalId>.json` | `goal_drive_schedules` in `state/pulseed-control.sqlite`; `schedule/<goalId>.json` is doctor/repair import input only | typed control DB state | schedule JSON remains a fail-closed guard rule; normal runtime debt removed |
+
+## Slice 3 Validation
+
+- `npm ci`: passed after creating the fresh worktree.
+- `npx vitest run --config vitest.unit.config.ts src/platform/drive/__tests__/drive-system.test.ts src/interface/cli/__tests__/cli-doctor.test.ts src/interface/cli/__tests__/database-first-legacy-store-check.test.ts src/runtime/store/control-db/__tests__/control-db.test.ts --reporter dot`: passed, 150 tests.
+- `npx vitest run --config vitest.integration.config.ts src/runtime/store/control-db/__tests__/control-db.test.ts --reporter dot`: passed, 9 tests.
+- `node scripts/check-database-first-legacy-stores.mjs --json`: ok=true, findings=0; DriveSystem schedule removed from `directFileDebtReport`.
+- `npm run typecheck`: passed.
+- `npm run lint:boundaries`: passed with existing warnings, 0 errors.
+- `npm run build`: passed.
+- `git diff --check`: passed.
+
+## Slice 3 Review Follow-up
+
+- Fallback review found that `src/platform/drive/drive-system.ts` was still allowlisted for legacy schedule JSON matches as migration-only input.
+- Fixed by removing the normal runtime `DriveSystem` schedule allowlist while keeping `src/platform/drive/drive-schedule-state-migration.ts` as the only explicit repair import boundary.
+- Added guard regression coverage that fails if `DriveSystem` reintroduces `schedule/*.json` ownership.
 
 ## Merge Policy
 

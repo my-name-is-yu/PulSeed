@@ -15,6 +15,7 @@ import { KnowledgeMemoryStateStore } from "../../../platform/knowledge/knowledge
 import { MemoryLifecycleStateStore } from "../../../platform/knowledge/memory/memory-lifecycle-state-store.js";
 import { DreamDecisionHeuristicStore } from "../../../runtime/store/dream-decision-heuristic-store.js";
 import { createRunSpecStore, type RunSpec } from "../../../runtime/run-spec/index.js";
+import { DriveGoalScheduleStateStore } from "../../../platform/drive/drive-schedule-state-store.js";
 
 // ─── cmdDoctor tests ───
 //
@@ -1456,6 +1457,42 @@ describe("cmdDoctor summary counts", () => {
     });
     const allOutput = consoleSpy.mock.calls.map((c: unknown[]) => c[0] as string).join("\n");
     expect(allOutput).toContain("Repair RunSpec import: files=2, imported=1");
+    expect(checkControlDatabase(tmpDir).detail).toContain("legacy import record");
+  });
+
+  it("imports legacy DriveSystem schedule files through doctor repair", async () => {
+    const origHome = process.env["PULSEED_HOME"];
+    process.env["PULSEED_HOME"] = tmpDir;
+    const legacyScheduleDir = path.join(tmpDir, "schedule");
+    fs.mkdirSync(legacyScheduleDir, { recursive: true });
+    fs.writeFileSync(path.join(legacyScheduleDir, "goal-schedule.json"), JSON.stringify({
+      goal_id: "goal-schedule",
+      next_check_at: "2026-05-11T00:00:00.000Z",
+      check_interval_hours: 4,
+      last_triggered_at: null,
+      consecutive_actions: 2,
+      cooldown_until: null,
+      current_interval_hours: 4,
+    }));
+    fs.writeFileSync(path.join(legacyScheduleDir, "invalid.json"), "{bad");
+
+    try {
+      const exitCode = await cmdDoctor(["--repair"]);
+      expect([0, 1]).toContain(exitCode);
+    } finally {
+      if (origHome !== undefined) {
+        process.env["PULSEED_HOME"] = origHome;
+      } else {
+        delete process.env["PULSEED_HOME"];
+      }
+    }
+
+    await expect(new DriveGoalScheduleStateStore(tmpDir).load("goal-schedule")).resolves.toMatchObject({
+      goal_id: "goal-schedule",
+      consecutive_actions: 2,
+    });
+    const allOutput = consoleSpy.mock.calls.map((c: unknown[]) => c[0] as string).join("\n");
+    expect(allOutput).toContain("Repair Drive schedule import: files=2, imported=1");
     expect(checkControlDatabase(tmpDir).detail).toContain("legacy import record");
   });
 

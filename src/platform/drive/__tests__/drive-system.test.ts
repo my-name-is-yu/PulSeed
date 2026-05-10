@@ -6,6 +6,9 @@ import { StateManager } from "../../../base/state/state-manager.js";
 import { DriveSystem } from "../drive-system.js";
 import { MAX_DRIVE_DURATION_HOURS } from "../types/drive.js";
 import type { PulSeedEvent, GoalSchedule } from "../types/drive.js";
+import { importLegacyDriveGoalScheduleState } from "../drive-schedule-state-migration.js";
+import { openControlDatabase } from "../../../runtime/store/control-db/index.js";
+import { collectGoalCycleScheduleSnapshot } from "../../../runtime/daemon/maintenance.js";
 import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 import { makeGoal } from "../../../../tests/helpers/fixtures.js";
 import { randomUUID } from "node:crypto";
@@ -71,7 +74,7 @@ describe("DriveSystem", () => {
       await new Promise((resolve) => setTimeout(resolve, 50));
       expect(fs.existsSync(path.join(tmpDir, "events"))).toBe(true);
       expect(fs.existsSync(path.join(tmpDir, "events", "archive"))).toBe(true);
-      expect(fs.existsSync(path.join(tmpDir, "schedule"))).toBe(true);
+      expect(fs.existsSync(path.join(tmpDir, "schedule"))).toBe(false);
     });
 
     it("uses stateManager baseDir when no baseDir option provided", async () => {
@@ -79,7 +82,7 @@ describe("DriveSystem", () => {
       await new Promise((resolve) => setTimeout(resolve, 50));
       expect(ds).toBeDefined();
       expect(fs.existsSync(path.join(tmpDir, "events"))).toBe(true);
-      expect(fs.existsSync(path.join(tmpDir, "schedule"))).toBe(true);
+      expect(fs.existsSync(path.join(tmpDir, "schedule"))).toBe(false);
     });
   });
 
@@ -104,6 +107,25 @@ describe("DriveSystem", () => {
       await driveSystem.updateSchedule(goalId, { ...schedule, next_check_at: futureTime });
 
       expect(await driveSystem.shouldActivate(goalId)).toBe(false);
+    });
+
+    it("exposes typed schedules through the daemon maintenance snapshot caller path", async () => {
+      const goalId = randomUUID();
+      await stateManager.saveGoal(makeGoal({ id: goalId, status: "active" }));
+      const schedule = driveSystem.createDefaultSchedule(goalId, 10);
+      await driveSystem.updateSchedule(goalId, {
+        ...schedule,
+        next_check_at: new Date(Date.now() + 10 * 60 * 60 * 1000).toISOString(),
+      });
+
+      const snapshot = await collectGoalCycleScheduleSnapshot(driveSystem, [goalId]);
+
+      expect(snapshot).toEqual([expect.objectContaining({
+        goalId,
+        shouldActivate: false,
+        schedule: expect.objectContaining({ goal_id: goalId }),
+      })]);
+      expect(fs.existsSync(path.join(tmpDir, "schedule", `${goalId}.json`))).toBe(false);
     });
 
     it("returns true when schedule is overdue", async () => {
@@ -438,7 +460,7 @@ describe("DriveSystem", () => {
       expect(loaded?.check_interval_hours).toBe(8);
     });
 
-    it("creates schedule directory if it does not exist", async () => {
+    it("does not recreate the legacy schedule directory on normal schedule updates", async () => {
       const scheduleDir = path.join(tmpDir, "schedule");
       fs.rmSync(scheduleDir, { recursive: true, force: true , maxRetries: 3, retryDelay: 100 });
 
@@ -446,26 +468,21 @@ describe("DriveSystem", () => {
       const schedule = driveSystem.createDefaultSchedule(goalId, 1);
       await driveSystem.updateSchedule(goalId, schedule);
 
-      expect(fs.existsSync(scheduleDir)).toBe(true);
+      expect(fs.existsSync(scheduleDir)).toBe(false);
       expect(await driveSystem.getSchedule(goalId)).not.toBeNull();
     });
 
-    it("returns fallback schedule for corrupted schedule file", async () => {
+    it("ignores corrupted legacy schedule files on the normal runtime path", async () => {
       const goalId = "corrupted-goal";
       const scheduleDir = path.join(tmpDir, "schedule");
       fs.mkdirSync(scheduleDir, { recursive: true });
       fs.writeFileSync(path.join(scheduleDir, `${goalId}.json`), "not valid json", "utf-8");
 
       const result = await driveSystem.getSchedule(goalId);
-      expect(result).not.toBeNull();
-      expect(result!.goal_id).toBe(goalId);
-      expect(result!.next_check_at).toBe(new Date(0).toISOString());
-      expect(result!.last_triggered_at).toBeNull();
-      expect(result!.consecutive_actions).toBe(0);
-      expect(result!.cooldown_until).toBeNull();
+      expect(result).toBeNull();
     });
 
-    it("returns fallback schedule for persisted schedules with non-finite intervals", async () => {
+    it("ignores unsafe legacy schedule files on the normal runtime path", async () => {
       const goalId = "unsafe-schedule";
       const scheduleDir = path.join(tmpDir, "schedule");
       fs.mkdirSync(scheduleDir, { recursive: true });
@@ -485,14 +502,61 @@ describe("DriveSystem", () => {
 
       const result = await driveSystem.getSchedule(goalId);
 
-      expect(result).not.toBeNull();
-      expect(result!.goal_id).toBe(goalId);
-      expect(result!.next_check_at).toBe(new Date(0).toISOString());
-      expect(result!.check_interval_hours).toBe(1);
-      expect(result!.consecutive_actions).toBe(0);
+      expect(result).toBeNull();
     });
 
-    it("returns fallback schedule for persisted schedules with unsafe action counters", async () => {
+    it("imports valid legacy schedule JSON only through the explicit repair boundary", async () => {
+      const goalId = "legacy-schedule";
+      const legacy = makeStoredSchedule(goalId, {
+        next_check_at: "2025-06-01T12:00:00.000Z",
+        consecutive_actions: 3,
+      });
+      writeScheduleFile(tmpDir, goalId, legacy);
+      writeScheduleFile(tmpDir, "broken", { ...legacy, goal_id: "broken", check_interval_hours: 0 });
+
+      await expect(driveSystem.getSchedule(goalId)).resolves.toBeNull();
+
+      const report = await importLegacyDriveGoalScheduleState(tmpDir);
+
+      expect(report).toMatchObject({
+        scheduleFiles: 2,
+        importedSchedules: 1,
+        skippedAlreadyImported: 0,
+        blockedSources: [expect.objectContaining({ sourcePath: "schedule/broken.json" })],
+      });
+      await expect(driveSystem.getSchedule(goalId)).resolves.toMatchObject({
+        goal_id: goalId,
+        next_check_at: "2025-06-01T12:00:00.000Z",
+        consecutive_actions: 3,
+      });
+      await expect(importLegacyDriveGoalScheduleState(tmpDir)).resolves.toMatchObject({
+        scheduleFiles: 2,
+        importedSchedules: 0,
+        skippedAlreadyImported: 1,
+        blockedSources: [expect.objectContaining({ sourcePath: "schedule/broken.json" })],
+      });
+      const db = await openControlDatabase({ baseDir: tmpDir });
+      try {
+        expect(db.listLegacyImports()).toEqual(expect.arrayContaining([
+          expect.objectContaining({
+            source_kind: "drive_goal_schedule",
+            source_id: goalId,
+            migration_name: "drive-goal-activation-schedule-state",
+            status: "imported",
+          }),
+          expect.objectContaining({
+            source_kind: "drive_goal_schedule",
+            source_id: "broken.json",
+            migration_name: "drive-goal-activation-schedule-state",
+            status: "blocked",
+          }),
+        ]));
+      } finally {
+        db.close();
+      }
+    });
+
+    it("ignores legacy schedules with unsafe action counters on the normal runtime path", async () => {
       const goalId = "unsafe-counter";
       writeScheduleFile(tmpDir, goalId, makeStoredSchedule(goalId, {
         consecutive_actions: Number.MAX_SAFE_INTEGER + 1,
@@ -500,10 +564,7 @@ describe("DriveSystem", () => {
 
       const result = await driveSystem.getSchedule(goalId);
 
-      expect(result).not.toBeNull();
-      expect(result!.goal_id).toBe(goalId);
-      expect(result!.next_check_at).toBe(new Date(0).toISOString());
-      expect(result!.consecutive_actions).toBe(0);
+      expect(result).toBeNull();
     });
 
     it.each([
@@ -513,16 +574,13 @@ describe("DriveSystem", () => {
       ["invalid next check timestamp", { next_check_at: "not-a-date" }],
       ["invalid last triggered timestamp", { last_triggered_at: "not-a-date" }],
       ["invalid cooldown timestamp", { cooldown_until: "not-a-date" }],
-    ])("returns fallback schedule for persisted schedules with %s", async (_case, overrides) => {
+    ])("ignores legacy schedules with %s on the normal runtime path", async (_case, overrides) => {
       const goalId = `invalid-${String(_case).replaceAll(" ", "-")}`;
       writeScheduleFile(tmpDir, goalId, makeStoredSchedule(goalId, overrides));
 
       const result = await driveSystem.getSchedule(goalId);
 
-      expect(result).not.toBeNull();
-      expect(result!.goal_id).toBe(goalId);
-      expect(result!.next_check_at).toBe(new Date(0).toISOString());
-      expect(result!.check_interval_hours).toBe(1);
+      expect(result).toBeNull();
     });
 
     it("rejects invalid schedules before writing", async () => {
@@ -698,7 +756,7 @@ describe("DriveSystem", () => {
       expect(await driveSystem.getSchedule("any-goal")).toBeNull();
     });
 
-    it("atomic write creates .tmp then renames (file is not corrupt after write)", async () => {
+    it("normal schedule writes do not create legacy JSON files", async () => {
       const goalId = randomUUID();
       const schedule = driveSystem.createDefaultSchedule(goalId, 1);
       await driveSystem.updateSchedule(goalId, schedule);
@@ -706,7 +764,7 @@ describe("DriveSystem", () => {
       const scheduleFile = path.join(tmpDir, "schedule", `${goalId}.json`);
       const tmpFile = scheduleFile + ".tmp";
 
-      expect(fs.existsSync(scheduleFile)).toBe(true);
+      expect(fs.existsSync(scheduleFile)).toBe(false);
       expect(fs.existsSync(tmpFile)).toBe(false); // tmp file should be cleaned up
     });
   });

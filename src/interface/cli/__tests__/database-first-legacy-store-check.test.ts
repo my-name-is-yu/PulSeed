@@ -130,6 +130,37 @@ describe("database-first legacy store check", () => {
     expect(result.stderr).toContain("Unclassified legacy store references must be moved to typed stores");
   });
 
+  it("fails legacy DriveSystem schedule JSON owners outside the explicit repair boundary", () => {
+    writeFile(tmpDir, "src/platform/drive/drive-system.ts", `
+      import * as path from "node:path";
+      import * as fsp from "node:fs/promises";
+      export async function persistLegacySchedule(root: string, goalId: string, value: unknown) {
+        const scheduleDir = path.join(root, "schedule");
+        await fsp.mkdir(scheduleDir, { recursive: true });
+        await fsp.writeFile(path.join(scheduleDir, \`\${goalId}.json\`), JSON.stringify(value));
+      }
+    `);
+
+    const result = runCheck(tmpDir);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("src/platform/drive/drive-system.ts");
+    expect(result.stderr).toContain("[drive-schedule-json-state] DriveSystem schedule typed control DB table");
+    expect(result.stderr).toContain("Unclassified legacy store references must be moved to typed stores");
+  });
+
+  it("allows legacy DriveSystem schedule JSON only through the explicit repair import boundary", () => {
+    writeFile(tmpDir, "src/platform/drive/drive-schedule-state-migration.ts", `
+      export const legacyScheduleDir = "schedule";
+      export const legacySchedulePath = "schedule/<goalId>.json";
+    `);
+
+    const result = runCheck(tmpDir);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("database-first legacy store check passed");
+  });
+
   it("fails path-shaped goal task, checkpoint, pipeline, and wait metadata stores", () => {
     writeFile(tmpDir, "src/orchestrator/execution/legacy-normal-paths.ts", `
       export const taskPath = (goalId: string, taskId: string) => \`tasks/\${goalId}/\${taskId}.json\`;
