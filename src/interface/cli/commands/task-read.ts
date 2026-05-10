@@ -2,8 +2,8 @@
 
 import { parseArgs } from "node:util";
 
-import { StateManager } from "../../../base/state/state-manager.js";
 import { TaskSchema } from "../../../base/types/task.js";
+import type { StateManager } from "../../../base/state/state-manager.js";
 import type { Task } from "../../../base/types/task.js";
 import { getCliLogger } from "../cli-logger.js";
 import { formatOperationError } from "../utils.js";
@@ -21,9 +21,11 @@ function shortId(id: string): string {
 
 function elapsedLabel(task: Task): string {
   if (!task.started_at) return "-";
-  const start = new Date(task.started_at).getTime();
-  const end = task.completed_at ? new Date(task.completed_at).getTime() : Date.now();
+  const start = Date.parse(task.started_at);
+  const end = task.completed_at ? Date.parse(task.completed_at) : Date.now();
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return "-";
   const ms = end - start;
+  if (ms < 0) return "-";
   const seconds = Math.floor(ms / 1000);
   if (seconds < 60) return `${seconds}s`;
   const minutes = Math.floor(seconds / 60);
