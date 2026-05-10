@@ -7,7 +7,7 @@ export interface ControlDbMigration {
   checksum: string;
 }
 
-export const CONTROL_DB_SCHEMA_VERSION = 20;
+export const CONTROL_DB_SCHEMA_VERSION = 21;
 
 export const CONTROL_DB_INITIAL_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS control_schema_migrations (
@@ -963,6 +963,38 @@ CREATE INDEX IF NOT EXISTS knowledge_transfer_meta_pattern_watermarks_updated_id
   ON knowledge_transfer_meta_pattern_watermarks(updated_at, watermark_id);
 `.trim();
 
+export const CONTROL_DB_TRANSFER_TRUST_STATE_SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS transfer_trust_scores (
+  domain_pair_key TEXT PRIMARY KEY,
+  domain_pair TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  score_json TEXT NOT NULL CHECK (json_valid(score_json))
+);
+
+CREATE INDEX IF NOT EXISTS transfer_trust_scores_domain_pair_idx
+  ON transfer_trust_scores(domain_pair, updated_at);
+
+CREATE TABLE IF NOT EXISTS transfer_trust_history (
+  domain_pair_key TEXT PRIMARY KEY,
+  domain_pair TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  history_json TEXT NOT NULL CHECK (json_valid(history_json))
+);
+
+CREATE INDEX IF NOT EXISTS transfer_trust_history_domain_pair_idx
+  ON transfer_trust_history(domain_pair, updated_at);
+
+CREATE TABLE IF NOT EXISTS transfer_trust_index_entries (
+  domain_pair_key TEXT PRIMARY KEY,
+  domain_pair TEXT NOT NULL,
+  sort_order INTEGER NOT NULL CHECK (sort_order >= 0),
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS transfer_trust_index_order_idx
+  ON transfer_trust_index_entries(sort_order, domain_pair_key);
+`.trim();
+
 export const CONTROL_DB_KNOWLEDGE_MEMORY_SOIL_SCHEMA_SQL = `
 PRAGMA foreign_keys = ON;
 `.trim();
@@ -1629,5 +1661,10 @@ export const CONTROL_DB_MIGRATIONS: readonly ControlDbMigration[] = [
     20,
     "knowledge-transfer-runtime-state",
     CONTROL_DB_KNOWLEDGE_TRANSFER_STATE_SCHEMA_SQL
+  ),
+  createControlDbMigration(
+    21,
+    "transfer-trust-runtime-state",
+    CONTROL_DB_TRANSFER_TRUST_STATE_SCHEMA_SQL
   ),
 ];

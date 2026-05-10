@@ -4,6 +4,10 @@ import {
 } from "../../../base/types/cross-portfolio.js";
 import type { TransferTrustScore } from "../../../base/types/cross-portfolio.js";
 import type { TransferEffectiveness } from "../../../base/types/cross-portfolio.js";
+import {
+  TransferTrustStateStore,
+  type TransferTrustStateStorePort,
+} from "../../../runtime/store/transfer-trust-state-store.js";
 
 /** How many recent outcomes to store for shouldInvalidate check */
 const HISTORY_WINDOW = 3;
@@ -14,24 +18,27 @@ const HISTORY_WINDOW = 3;
  * Trust starts at 0.5 (neutral). Positive outcomes raise it; negative outcomes lower it.
  * After HISTORY_WINDOW consecutive non-positive outcomes, shouldInvalidate returns true.
  *
- * Persistence: uses StateManager.readRaw / writeRaw under "transfer-trust/<domainPair>.json"
- * and "transfer-trust-history/<domainPair>.json".
+ * Persistence: typed transfer trust runtime state store.
  */
 export class TransferTrustManager {
-  private readonly deps: { stateManager: StateManager };
+  private readonly stateManager: StateManager;
+  private transferTrustStateStore: TransferTrustStateStorePort | null;
 
-  constructor(deps: { stateManager: StateManager }) {
-    this.deps = deps;
+  constructor(deps: { stateManager: StateManager; transferTrustStateStore?: TransferTrustStateStorePort }) {
+    this.stateManager = deps.stateManager;
+    this.transferTrustStateStore = deps.transferTrustStateStore ?? null;
+  }
+
+  private store(): TransferTrustStateStorePort {
+    this.transferTrustStateStore ??= new TransferTrustStateStore(this.stateManager.getBaseDir());
+    return this.transferTrustStateStore;
   }
 
   /** Return the trust score record for a domain pair, creating a default if absent. */
   async getTrustScore(domainPair: string): Promise<TransferTrustScore> {
-    const key = this._scoreKey(domainPair);
     try {
-      const raw = await this.deps.stateManager.readRaw(key);
-      if (raw !== null) {
-        return TransferTrustScoreSchema.parse(raw);
-      }
+      const score = await this.store().loadScore(domainPair);
+      if (score !== null) return score;
     } catch {
       // non-fatal: return default
     }
@@ -70,7 +77,7 @@ export class TransferTrustManager {
       last_updated: new Date().toISOString(),
     });
 
-    await this.deps.stateManager.writeRaw(this._scoreKey(domainPair), updated);
+    await this.store().saveScore(updated);
 
     // Append to history
     await this._appendHistory(domainPair, effectiveness);
@@ -94,12 +101,13 @@ export class TransferTrustManager {
   /** Return all stored trust score records. */
   async getAllScores(): Promise<TransferTrustScore[]> {
     try {
-      const raw = await this.deps.stateManager.readRaw("transfer-trust/_index.json");
-      if (!Array.isArray(raw)) return [];
-      const scores: TransferTrustScore[] = [];
-      for (const domainPair of raw as string[]) {
-        const score = await this.getTrustScore(domainPair);
-        scores.push(score);
+      const scores = await this.store().listScores();
+      const seenDomainPairs = new Set(scores.map((score) => score.domain_pair));
+      const indexDomainPairs = await this.store().listIndexDomainPairs();
+      for (const domainPair of indexDomainPairs) {
+        if (!seenDomainPairs.has(domainPair)) {
+          scores.push(this._defaultScore(domainPair));
+        }
       }
       return scores;
     } catch {
@@ -108,16 +116,6 @@ export class TransferTrustManager {
   }
 
   // ─── Private Helpers ───
-
-  private _scoreKey(domainPair: string): string {
-    const safe = domainPair.replace(/[^a-zA-Z0-9_:.-]/g, "_");
-    return `transfer-trust/${safe}.json`;
-  }
-
-  private _historyKey(domainPair: string): string {
-    const safe = domainPair.replace(/[^a-zA-Z0-9_:.-]/g, "_");
-    return `transfer-trust-history/${safe}.json`;
-  }
 
   private _defaultScore(domainPair: string): TransferTrustScore {
     return TransferTrustScoreSchema.parse({
@@ -132,10 +130,7 @@ export class TransferTrustManager {
 
   private async _getHistory(domainPair: string): Promise<TransferEffectiveness[]> {
     try {
-      const raw = await this.deps.stateManager.readRaw(this._historyKey(domainPair));
-      if (Array.isArray(raw)) {
-        return raw as TransferEffectiveness[];
-      }
+      return await this.store().loadHistory(domainPair);
     } catch {
       // non-fatal
     }
@@ -151,7 +146,7 @@ export class TransferTrustManager {
     // Keep only the last HISTORY_WINDOW * 2 entries to bound file size
     const trimmed = history.slice(-(HISTORY_WINDOW * 2));
     try {
-      await this.deps.stateManager.writeRaw(this._historyKey(domainPair), trimmed);
+      await this.store().saveHistory(domainPair, trimmed);
     } catch {
       // non-fatal
     }

@@ -38,6 +38,7 @@ type CapabilityRegistryStateStore = import("../../runtime/store/capability-regis
 type StallStateStore = import("../../runtime/store/stall-state-store.js").StallStateStore;
 type LearningRuntimeStateStore = import("../../runtime/store/learning-runtime-state-store.js").LearningRuntimeStateStore;
 type KnowledgeTransferStateStore = import("../../runtime/store/knowledge-transfer-state-store.js").KnowledgeTransferStateStore;
+type TransferTrustStateStore = import("../../runtime/store/transfer-trust-state-store.js").TransferTrustStateStore;
 type StallState = import("../types/stall.js").StallState;
 
 function normalizeRawStatePath(relativePath: string): string[] {
@@ -79,6 +80,13 @@ function isKnowledgeTransferRawPath(relativePath: string): boolean {
     || (parts.length === 2 && parts[0] === "meta-patterns" && parts[1] === "last_aggregated_at.json");
 }
 
+function isTransferTrustRawPath(relativePath: string): boolean {
+  const parts = normalizeRawStatePath(relativePath);
+  return (parts.length === 2 && parts[0] === "transfer-trust" && parts[1] === "_index.json")
+    || (parts.length === 2 && parts[0] === "transfer-trust" && parts[1]!.endsWith(".json"))
+    || (parts.length === 2 && parts[0] === "transfer-trust-history" && parts[1]!.endsWith(".json"));
+}
+
 function isStrategyDreamDurableStatePath(relativePath: string): boolean {
   const parts = normalizeRawStatePath(relativePath);
   return parts[0] === "strategies" && parts.length >= 3;
@@ -114,6 +122,7 @@ export class StateManager {
   private stallStateStorePromise: Promise<StallStateStore> | null = null;
   private learningRuntimeStateStorePromise: Promise<LearningRuntimeStateStore> | null = null;
   private knowledgeTransferStateStorePromise: Promise<KnowledgeTransferStateStore> | null = null;
+  private transferTrustStateStorePromise: Promise<TransferTrustStateStore> | null = null;
   private readonly goalStateWriteQueues = new Map<string, Promise<void>>();
   private readonly writeFences = new Map<string, StateWriteFence>();
 
@@ -133,6 +142,7 @@ export class StateManager {
     await (await this.stallStateStore()).ensureReady();
     await (await this.learningRuntimeStateStore()).ensureReady();
     await (await this.knowledgeTransferStateStore()).ensureReady();
+    await (await this.transferTrustStateStore()).ensureReady();
   }
 
   /** Returns the base directory path */
@@ -300,6 +310,12 @@ export class StateManager {
     this.knowledgeTransferStateStorePromise ??= import("../../runtime/store/knowledge-transfer-state-store.js")
       .then(({ KnowledgeTransferStateStore }) => new KnowledgeTransferStateStore(this.baseDir));
     return this.knowledgeTransferStateStorePromise;
+  }
+
+  private async transferTrustStateStore(): Promise<TransferTrustStateStore> {
+    this.transferTrustStateStorePromise ??= import("../../runtime/store/transfer-trust-state-store.js")
+      .then(({ TransferTrustStateStore }) => new TransferTrustStateStore(this.baseDir));
+    return this.transferTrustStateStorePromise;
   }
 
   // ─── Goal CRUD ───
@@ -786,6 +802,12 @@ export class StateManager {
         return routed.value;
       }
     }
+    if (isTransferTrustRawPath(relativePath)) {
+      const routed = await (await this.transferTrustStateStore()).readRawPath(relativePath);
+      if (routed.handled) {
+        return routed.value;
+      }
+    }
     if (isStrategyDreamDurableStatePath(relativePath)) {
       const routed = await (await this.strategyDreamStateStore()).readRawPath(relativePath);
       if (routed.handled) {
@@ -840,6 +862,12 @@ export class StateManager {
     }
     if (isKnowledgeTransferRawPath(relativePath)) {
       const routedStore = await this.knowledgeTransferStateStore();
+      if (await routedStore.writeRawPath(relativePath, data)) {
+        return;
+      }
+    }
+    if (isTransferTrustRawPath(relativePath)) {
+      const routedStore = await this.transferTrustStateStore();
       if (await routedStore.writeRawPath(relativePath, data)) {
         return;
       }

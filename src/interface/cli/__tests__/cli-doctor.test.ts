@@ -62,6 +62,7 @@ import {
   EthicsLogStore,
   TrustStateStore,
   KnowledgeTransferStateStore,
+  TransferTrustStateStore,
 } from "../../../runtime/store/index.js";
 import { loadRelationshipProfileProposalStore } from "../../../platform/profile/profile-change-proposal.js";
 
@@ -1633,6 +1634,61 @@ describe("cmdDoctor summary counts", () => {
           source_kind: "knowledge_transfer_snapshot",
           source_id: "current",
           migration_name: "knowledge-transfer-runtime-state",
+          status: "imported",
+        }),
+      ]));
+    } finally {
+      database.close();
+    }
+  });
+
+  it("imports legacy transfer trust state through doctor repair", async () => {
+    const origHome = process.env["PULSEED_HOME"];
+    process.env["PULSEED_HOME"] = tmpDir;
+    const domainPair = "doctor::transfer";
+    const score = {
+      domain_pair: domainPair,
+      success_count: 1,
+      failure_count: 1,
+      neutral_count: 0,
+      trust_score: 0.45,
+      last_updated: "2026-05-10T01:00:00.000Z",
+    };
+    fs.mkdirSync(path.join(tmpDir, "transfer-trust"), { recursive: true });
+    fs.mkdirSync(path.join(tmpDir, "transfer-trust-history"), { recursive: true });
+    fs.writeFileSync(path.join(tmpDir, "transfer-trust", "doctor::transfer.json"), JSON.stringify(score));
+    fs.writeFileSync(path.join(tmpDir, "transfer-trust-history", "doctor::transfer.json"), JSON.stringify([
+      "negative",
+      "neutral",
+    ]));
+    fs.writeFileSync(path.join(tmpDir, "transfer-trust", "_index.json"), JSON.stringify([domainPair]));
+
+    try {
+      const exitCode = await cmdDoctor(["--repair"]);
+      expect([0, 1]).toContain(exitCode);
+    } finally {
+      if (origHome !== undefined) {
+        process.env["PULSEED_HOME"] = origHome;
+      } else {
+        delete process.env["PULSEED_HOME"];
+      }
+    }
+
+    const transferTrustStore = new TransferTrustStateStore(tmpDir);
+    await expect(transferTrustStore.loadScore(domainPair)).resolves.toEqual(score);
+    await expect(transferTrustStore.loadHistory(domainPair)).resolves.toEqual(["negative", "neutral"]);
+    await expect(transferTrustStore.listIndexDomainPairs()).resolves.toEqual([domainPair]);
+
+    const allOutput = consoleSpy.mock.calls.map((c: unknown[]) => c[0] as string).join("\n");
+    expect(allOutput).toContain("Repair transfer trust import: index entries=1, scores=1, history entries=1, skipped already imported=0, retired existing typed state=0");
+
+    const database = await openControlDatabase({ baseDir: tmpDir });
+    try {
+      expect(database.listLegacyImports()).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          source_kind: "transfer_trust_score",
+          source_id: "doctor::transfer",
+          migration_name: "transfer-trust-runtime-state",
           status: "imported",
         }),
       ]));
