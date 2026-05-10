@@ -2,7 +2,7 @@ import * as fsp from "node:fs/promises";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { makeTempDir } from "../../../../../tests/helpers/temp-dir.js";
 import { StateManager } from "../../../../base/state/state-manager.js";
-import { AGENT_MEMORY_PATH } from "../../../../platform/knowledge/knowledge-manager-internals.js";
+import { KnowledgeMemoryStateStore } from "../../../../platform/knowledge/knowledge-memory-state-store.js";
 import { AgentMemoryStoreSchema } from "../../../../platform/knowledge/types/agent-memory.js";
 import { cmdMemory } from "../memory.js";
 
@@ -20,7 +20,7 @@ describe("cmdMemory", () => {
       logs.push(args.map(String).join(" "));
     });
     vi.spyOn(console, "error").mockImplementation(() => undefined);
-    await stateManager.writeRaw(AGENT_MEMORY_PATH, {
+    await new KnowledgeMemoryStateStore(tmpDir).saveAgentMemoryStore({
       entries: [{
         id: "memory-forget",
         key: "temporary-fact",
@@ -67,7 +67,7 @@ describe("cmdMemory", () => {
     ]);
 
     expect(forgetExit).toBe(0);
-    const rawStore = await stateManager.readRaw(AGENT_MEMORY_PATH);
+    const rawStore = await new KnowledgeMemoryStateStore(tmpDir).loadAgentMemoryStore();
     const store = AgentMemoryStoreSchema.parse(rawStore);
     expect(store.entries).toHaveLength(1);
     expect(store.entries[0]).toMatchObject({
@@ -95,7 +95,7 @@ describe("cmdMemory", () => {
     ]);
 
     expect(exitCode).toBe(1);
-    const store = AgentMemoryStoreSchema.parse(await stateManager.readRaw(AGENT_MEMORY_PATH));
+    const store = AgentMemoryStoreSchema.parse(await new KnowledgeMemoryStateStore(tmpDir).loadAgentMemoryStore());
     expect(store.entries[0]!.status).toBe("raw");
     expect(store.corrections).toEqual([]);
   });

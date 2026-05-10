@@ -426,6 +426,48 @@ describe("DaemonRunner durable runtime", () => {
     expect(marker.goal_ids).toEqual(["goal-a"]);
   });
 
+  it("logs scheduled supervisor maintenance failures without leaking unhandled rejections", async () => {
+    const scheduledMaintenanceError = new Error("scheduled maintenance failed");
+    const supervisor = {
+      start: vi.fn().mockResolvedValue(undefined),
+      shutdown: vi.fn().mockResolvedValue(undefined),
+      getState: vi.fn().mockReturnValue({ workers: [] }),
+      replaceIdleWorkers: vi.fn(),
+    };
+    const deps = makeDeps(tmpDir, {
+      config: { check_interval_ms: 20 },
+      supervisor: supervisor as unknown as DaemonDeps["supervisor"],
+    });
+    const daemon = new DaemonRunner(deps);
+    const warnSpy = vi.spyOn(deps.logger, "warn");
+    const runSupervisorMaintenanceCycle = vi
+      .fn<() => Promise<void>>()
+      .mockResolvedValue(undefined)
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(scheduledMaintenanceError);
+    (daemon as unknown as {
+      runSupervisorMaintenanceCycle(): Promise<void>;
+    }).runSupervisorMaintenanceCycle = runSupervisorMaintenanceCycle;
+    currentDaemon = daemon;
+
+    const startPromise = daemon.start([]);
+    currentStartPromise = startPromise;
+
+    await waitFor(() => runSupervisorMaintenanceCycle.mock.calls.length >= 2, 2_000, 10);
+    await waitFor(
+      () => warnSpy.mock.calls.some(([message]) => message === "Supervisor maintenance cycle failed"),
+      2_000,
+      10
+    );
+    expect(warnSpy).toHaveBeenCalledWith(
+      "Supervisor maintenance cycle failed",
+      { error: "scheduled maintenance failed" }
+    );
+
+    daemon.stop();
+    await startPromise;
+  });
+
   it("starts in idle status when launched without initial goals", async () => {
     const deps = makeDeps(tmpDir, { config: { check_interval_ms: 50 } });
     const daemon = new DaemonRunner(deps);

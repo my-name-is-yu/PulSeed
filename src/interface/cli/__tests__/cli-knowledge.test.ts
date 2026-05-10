@@ -103,7 +103,7 @@ vi.mock("../../../base/llm/provider-factory.js", async (importOriginal) => {
 // ─── Imports after mocks ─────────────────────────────────────────────────────
 
 import { CLIRunner } from "../cli-runner.js";
-import { StateManager } from "../../../base/state/state-manager.js";
+import { KnowledgeMemoryStateStore } from "../../../platform/knowledge/knowledge-memory-state-store.js";
 import type { SharedKnowledgeEntry } from "../../../base/types/knowledge.js";
 import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 
@@ -132,9 +132,7 @@ async function writeSharedKnowledge(
   baseDir: string,
   entries: SharedKnowledgeEntry[]
 ): Promise<void> {
-  const sm = new StateManager(baseDir);
-  await sm.init();
-  await sm.writeRaw("memory/shared-knowledge/entries.json", entries);
+  await new KnowledgeMemoryStateStore(baseDir).saveSharedKnowledgeEntries(entries);
 }
 
 // ─── Setup / Teardown ────────────────────────────────────────────────────────

@@ -17,9 +17,11 @@ import * as path from "node:path";
 // ─── Real implementations ───
 import { StateManager } from "../../src/base/state/state-manager.js";
 import { KnowledgeManager } from "../../src/platform/knowledge/knowledge-manager.js";
+import { KnowledgeMemoryStateStore } from "../../src/platform/knowledge/knowledge-memory-state-store.js";
 import { VectorIndex } from "../../src/platform/knowledge/vector-index.js";
 import { MockEmbeddingClient } from "../../src/platform/knowledge/embedding-client.js";
 import { MemoryLifecycleManager } from "../../src/platform/knowledge/memory/memory-lifecycle.js";
+import { MemoryLifecycleStateStore } from "../../src/platform/knowledge/memory/memory-lifecycle-state-store.js";
 import type { IDriveScorer } from "../../src/platform/knowledge/memory/memory-lifecycle.js";
 import { SessionManager } from "../../src/orchestrator/execution/session-manager.js";
 import { GoalDependencyGraph } from "../../src/orchestrator/goal/goal-dependency-graph.js";
@@ -333,11 +335,11 @@ describe("Milestone 5 — Group 1: Cross-Goal Knowledge Sharing", () => {
       ["volatile-domain"]
     );
 
-    // Manually save to shared KB then mutate the revalidation_due_at via stateManager
+    // Manually save to shared KB then mutate the revalidation_due_at via the typed store.
     await km.saveToSharedKnowledgeBase(entry, "goal-stale-test");
 
-    // Read the raw shared KB and set a past due date
-    const rawEntries = await stateManager.readRaw("memory/shared-knowledge/entries.json") as unknown[];
+    const sharedStore = new KnowledgeMemoryStateStore(stateManager.getBaseDir());
+    const rawEntries = await sharedStore.loadSharedKnowledgeEntries();
     const mutated = rawEntries.map((e: unknown) => {
       const obj = e as Record<string, unknown>;
       if (obj["entry_id"] === "stale-entry-1") {
@@ -345,7 +347,7 @@ describe("Milestone 5 — Group 1: Cross-Goal Knowledge Sharing", () => {
       }
       return obj;
     });
-    await stateManager.writeRaw("memory/shared-knowledge/entries.json", mutated);
+    await sharedStore.saveSharedKnowledgeEntries(mutated);
 
     const stale = await km.getStaleEntries();
     expect(stale.length).toBeGreaterThanOrEqual(1);
@@ -396,7 +398,7 @@ describe("Milestone 5 — Group 2: Drive-based Memory Management", () => {
 
   // ── Test 6: High-dissatisfaction dimension extends compression delay ──
 
-  it("compressionDelay is 2x for high-dissatisfaction dimension (>0.7)", () => {
+  it("compressionDelay is 2x for high-dissatisfaction dimension (>0.7)", async () => {
     const driveScorer = makeDriveScorer({ quality_score: 0.9 });
     const llmClient = createSequentialMockLLMClient([]);
     const manager = new MemoryLifecycleManager(
@@ -407,7 +409,7 @@ describe("Milestone 5 — Group 2: Drive-based Memory Management", () => {
       undefined,
       driveScorer
     );
-    manager.initializeDirectories();
+    await manager.initializeDirectories();
 
     // With dissatisfaction = 0.9 (>0.7) → delay = 2.0 * 100 = 200
     const delay = manager.compressionDelay("goal-retention", "quality_score");
@@ -416,7 +418,7 @@ describe("Milestone 5 — Group 2: Drive-based Memory Management", () => {
 
   // ── Test 7: Moderate dissatisfaction extends retention by 1.5x ──
 
-  it("compressionDelay is 1.5x for moderate dissatisfaction (0.4 < score <= 0.7)", () => {
+  it("compressionDelay is 1.5x for moderate dissatisfaction (0.4 < score <= 0.7)", async () => {
     const driveScorer = makeDriveScorer({ quality_score: 0.55 });
     const llmClient = createSequentialMockLLMClient([]);
     const manager = new MemoryLifecycleManager(
@@ -427,7 +429,7 @@ describe("Milestone 5 — Group 2: Drive-based Memory Management", () => {
       undefined,
       driveScorer
     );
-    manager.initializeDirectories();
+    await manager.initializeDirectories();
 
     // dissatisfaction = 0.55 (0.4 < 0.55 <= 0.7) → 1.5x
     const delay = manager.compressionDelay("goal-moderate", "quality_score");
@@ -436,10 +438,10 @@ describe("Milestone 5 — Group 2: Drive-based Memory Management", () => {
 
   // ── Test 8: onSatisficingJudgment marks dimension for early compression ──
 
-  it("onSatisficingJudgment(satisfied=true) marks dimension for early compression", () => {
+  it("onSatisficingJudgment(satisfied=true) marks dimension for early compression", async () => {
     const llmClient = createSequentialMockLLMClient([]);
     const manager = new MemoryLifecycleManager(tempDir, llmClient);
-    manager.initializeDirectories();
+    await manager.initializeDirectories();
 
     expect(manager.getEarlyCompressionCandidates("goal-satisfy").size).toBe(0);
 
@@ -455,7 +457,7 @@ describe("Milestone 5 — Group 2: Drive-based Memory Management", () => {
 
   // ── Test 9: relevanceScore ranks high-dissatisfaction entries higher ──
 
-  it("relevanceScore ranks high-dissatisfaction entries higher than low-dissatisfaction", () => {
+  it("relevanceScore ranks high-dissatisfaction entries higher than low-dissatisfaction", async () => {
     const driveScorer = makeDriveScorer({
       high_dissatisfaction_dim: 0.9,
       low_dissatisfaction_dim: 0.1,
@@ -469,7 +471,7 @@ describe("Milestone 5 — Group 2: Drive-based Memory Management", () => {
       undefined,
       driveScorer
     );
-    manager.initializeDirectories();
+    await manager.initializeDirectories();
 
     const now = new Date().toISOString();
 
@@ -523,9 +525,9 @@ describe("Milestone 5 — Group 2: Drive-based Memory Management", () => {
     expect(entry.loop_number).toBe(1);
     expect(entry.dimensions).toContain("quality_score");
 
-    // Verify file was written
-    const goalDir = path.join(tempDir, "memory", "short-term", "goals", "goal-persist");
-    expect(fs.existsSync(goalDir)).toBe(true);
+    const persisted = await new MemoryLifecycleStateStore(path.join(tempDir, "memory"))
+      .loadShortTermEntries("goal-persist", "experience_log");
+    expect(persisted).toHaveLength(1);
   });
 });
 
@@ -767,16 +769,9 @@ describe("Milestone 5 — Group 4: Full Integration — Multi-Goal Loop with Kno
     expect(entry.data_type).toBe("observation");
     expect(entry.dimensions).toContain("quality_score");
 
-    // Short-term data file should exist
-    const stEntryFile = path.join(
-      stateDir,
-      "memory",
-      "short-term",
-      "goals",
-      goalId,
-      "observations.json"
-    );
-    expect(fs.existsSync(stEntryFile)).toBe(true);
+    const persisted = await new MemoryLifecycleStateStore(path.join(stateDir, "memory"))
+      .loadShortTermEntries(goalId, "observation");
+    expect(persisted).toHaveLength(1);
   });
 
   // ── Test 17: Multi-goal sequential loop — both goals run, knowledge persists between them ──

@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { MemoryLifecycleManager, type IDriveScorer } from "../memory/memory-lifecycle.js";
+import { MemoryLifecycleStateStore } from "../memory/memory-lifecycle-state-store.js";
 import type { IEmbeddingClient } from "../embedding-client.js";
 import type { VectorIndex } from "../vector-index.js";
 import type { VectorSearchResult } from "../../../base/types/embedding.js";
@@ -517,8 +518,6 @@ describe("searchCrossGoalLessons", () => {
     );
     await mgr.initializeDirectories();
 
-    // Manually write a lesson to global.json so the manager can find it
-    const globalPath = path.join(tmpDir, "memory", "long-term", "lessons", "global.json");
     const lesson: LessonEntry = {
       lesson_id: lessonId,
       type: "strategy_outcome",
@@ -530,7 +529,7 @@ describe("searchCrossGoalLessons", () => {
       relevance_tags: ["strategy"],
       status: "active",
     };
-    fs.writeFileSync(globalPath, JSON.stringify([lesson]));
+    await new MemoryLifecycleStateStore(path.join(tmpDir, "memory")).storeLessonsLongTerm("goal-a", [lesson], []);
 
     const results = await mgr.searchCrossGoalLessons("test lesson", 5);
     expect(mockVI.search).toHaveBeenCalled();
@@ -549,7 +548,6 @@ describe("searchCrossGoalLessons", () => {
       mockVI
     );
     await mgr.initializeDirectories();
-    const globalPath = path.join(tmpDir, "memory", "long-term", "lessons", "global.json");
     const lesson: LessonEntry = {
       lesson_id: "lesson-fallback",
       type: "strategy_outcome",
@@ -561,7 +559,7 @@ describe("searchCrossGoalLessons", () => {
       relevance_tags: ["fallback"],
       status: "active",
     };
-    fs.writeFileSync(globalPath, JSON.stringify([lesson]));
+    await new MemoryLifecycleStateStore(path.join(tmpDir, "memory")).storeLessonsLongTerm("goal-a", [lesson], []);
 
     try {
       const results = await mgr.searchCrossGoalLessons("Fallback Lesson", 5);

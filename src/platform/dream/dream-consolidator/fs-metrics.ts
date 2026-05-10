@@ -2,6 +2,8 @@ import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { readJsonFileOrNull } from "../../../base/utils/json-io.js";
 import { StrategyDreamStateStore } from "../../../runtime/store/strategy-dream-state-store.js";
+import { TrustStateStore } from "../../../runtime/store/trust-state-store.js";
+import { KnowledgeMemoryStateStore } from "../../knowledge/knowledge-memory-state-store.js";
 
 export async function countGoalDirs(baseDir: string, tier: "light" | "deep"): Promise<number> {
   const goalsDir = path.join(baseDir, "goals");
@@ -101,10 +103,7 @@ export async function countJsonlLines(baseDir: string, relativePath: string): Pr
 }
 
 export async function countAgentMemoryEntries(baseDir: string): Promise<number> {
-  const filePath = path.join(baseDir, "memory", "agent-memory", "entries.json");
-  const parsed = await readJsonFileOrNull<{ entries?: unknown[] }>(filePath);
-  if (!parsed) return 0;
-  return Array.isArray(parsed.entries) ? parsed.entries.length : 0;
+  return (await new KnowledgeMemoryStateStore(baseDir).loadAgentMemoryStore()).entries.length;
 }
 
 export async function countEventLines(baseDir: string, eventType: string): Promise<number> {
@@ -113,10 +112,7 @@ export async function countEventLines(baseDir: string, eventType: string): Promi
 }
 
 export async function countTrustDomains(baseDir: string): Promise<number> {
-  const filePath = path.join(baseDir, "trust", "trust-store.json");
-  const parsed = await readJsonFileOrNull<{ balances?: Record<string, unknown> }>(filePath);
-  if (!parsed) return 0;
-  return parsed.balances ? Object.keys(parsed.balances).length : 0;
+  return Object.keys((await new TrustStateStore(baseDir).loadStore()).balances).length;
 }
 
 export async function countVerificationArtifacts(baseDir: string): Promise<number> {

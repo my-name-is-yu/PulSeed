@@ -11,6 +11,7 @@ import {
   selectTemplateCandidatesWithTrace,
 } from "../../../platform/dream/dream-activation.js";
 import { saveDreamConfig } from "../../../platform/dream/dream-config.js";
+import { DreamDecisionHeuristicStore } from "../../../runtime/store/dream-decision-heuristic-store.js";
 import { createMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
 import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 
@@ -771,22 +772,16 @@ describe("generateCandidates", () => {
       { activation: DECISION_HEURISTICS_ACTIVATION },
       stateManager.getBaseDir()
     );
-    fs.mkdirSync(`${tempDir}/dream`, { recursive: true });
-    fs.writeFileSync(
-      `${tempDir}/dream/decision-heuristics.json`,
-      JSON.stringify({
-        heuristics: [{
-          id: "heur-prefer-audit",
-          prefer_candidate_selector: {
-            strategy_family: "fold_distribution_audit",
-            exploration_role: "divergent_exploration",
-            smoke_status: "promote",
-          },
-          score_delta: 0.5,
-          reason: "prefer promoted fold audit",
-        }],
-      }, null, 2)
-    );
+    await new DreamDecisionHeuristicStore({ controlBaseDir: tempDir }).saveDecisionHeuristics([{
+      id: "heur-prefer-audit",
+      prefer_candidate_selector: {
+        strategy_family: "fold_distribution_audit",
+        exploration_role: "divergent_exploration",
+        smoke_status: "promote",
+      },
+      score_delta: 0.5,
+      reason: "prefer promoted fold audit",
+    }]);
 
     const candidates = await manager.generateCandidates("goal-1", "balanced_accuracy", ["balanced_accuracy"], {
       currentGap: 0.2,
@@ -859,18 +854,12 @@ describe("generateCandidates", () => {
       { activation: VERIFIED_HINTS_ONLY_HEURISTICS_ACTIVATION },
       stateManager.getBaseDir()
     );
-    fs.mkdirSync(`${tempDir}/dream`, { recursive: true });
-    fs.writeFileSync(
-      `${tempDir}/dream/decision-heuristics.json`,
-      JSON.stringify({
-        heuristics: [{
-          id: "heur-prefer-threshold",
-          prefer_candidate_selector: { strategy_family: "threshold_sweep" },
-          score_delta: 0.5,
-          reason: "would prefer threshold if unverified hints were allowed",
-        }],
-      }, null, 2)
-    );
+    await new DreamDecisionHeuristicStore({ controlBaseDir: tempDir }).saveDecisionHeuristics([{
+      id: "heur-prefer-threshold",
+      prefer_candidate_selector: { strategy_family: "threshold_sweep" },
+      score_delta: 0.5,
+      reason: "would prefer threshold if unverified hints were allowed",
+    }]);
 
     const candidates = await manager.generateCandidates("goal-1", "balanced_accuracy", ["balanced_accuracy"], {
       currentGap: 0.2,

@@ -1,20 +1,13 @@
-import * as path from "node:path";
-import { z } from "zod";
 import type { VectorIndex } from "../vector-index.js";
-import {
-  ShortTermEntrySchema,
-} from "../../../base/types/memory-lifecycle.js";
 import type {
   ShortTermEntry,
   LessonEntry,
 } from "../../../base/types/memory-lifecycle.js";
 import type { IDriveScorer } from "../drive-score-adapter.js";
-import {
-  readJsonFileAsync,
-} from "./memory-persistence.js";
 import { loadIndex, touchIndexEntry } from "./memory-index.js";
 import { queryLessons, queryCrossGoalLessons } from "./memory-query.js";
 import { classifyTier, sortByTier, computeDynamicBudget, filterByTierBudget, llmClassifyTier, getDeadlineBonus } from "./memory-tier.js";
+import { MemoryLifecycleStateStore } from "./memory-lifecycle-state-store.js";
 export { getCompressionDelay, getDeadlineBonus } from "./memory-tier.js";
 
 // ─── Deps interface ───
@@ -330,17 +323,7 @@ async function loadShortTermEntry(
   deps: Pick<MemorySelectionDeps, "memoryDir">,
   idxEntry: import("../../../base/types/memory-lifecycle.js").MemoryIndexEntry
 ): Promise<ShortTermEntry | undefined> {
-  const dataFilePath = path.join(
-    deps.memoryDir,
-    "short-term",
-    idxEntry.data_file
-  );
-  const allEntries =
-    (await readJsonFileAsync<ShortTermEntry[]>(
-      dataFilePath,
-      z.array(ShortTermEntrySchema)
-    )) ?? [];
-  return allEntries.find((e) => e.id === idxEntry.entry_id);
+  return (await new MemoryLifecycleStateStore(deps.memoryDir).loadShortTermEntry(idxEntry.entry_id)) ?? undefined;
 }
 
 // ─── searchCrossGoalLessons ───
@@ -357,7 +340,7 @@ export async function searchCrossGoalLessons(
   query: string,
   topK = 5
 ): Promise<LessonEntry[]> {
-  const { LessonEntrySchema } = await import("../../../base/types/memory-lifecycle.js");
+  const stateStore = new MemoryLifecycleStateStore(deps.memoryDir);
 
   if (deps.vectorIndex) {
     try {
@@ -367,19 +350,7 @@ export async function searchCrossGoalLessons(
       // Filter to lesson entries (metadata.is_lesson === true)
       const lessonResults = results.filter((r) => r.metadata.is_lesson === true);
 
-      // Load actual lessons from global file
-      const globalPath = path.join(
-        deps.memoryDir,
-        "long-term",
-        "lessons",
-        "global.json"
-      );
-      const globalLessons =
-        (await readJsonFileAsync<LessonEntry[]>(
-          globalPath,
-          z.array(LessonEntrySchema)
-        )) ?? [];
-
+      const globalLessons = await stateStore.loadLessons({ status: "active" });
       const lessonMap = new Map(globalLessons.map((l) => [l.lesson_id, l]));
       const matched: LessonEntry[] = [];
       for (const r of lessonResults) {
@@ -400,19 +371,8 @@ export async function searchCrossGoalLessons(
     }
   }
 
-  // Fallback: tag-based global search
-  const { LessonEntrySchema: LessonSchema } = await import("../../../base/types/memory-lifecycle.js");
-  const globalPath = path.join(
-    deps.memoryDir,
-    "long-term",
-    "lessons",
-    "global.json"
-  );
-  const globalLessons =
-    (await readJsonFileAsync<LessonEntry[]>(
-      globalPath,
-      z.array(LessonSchema)
-    )) ?? [];
+  // Fallback: text search across typed long-term lessons.
+  const globalLessons = await stateStore.loadLessons({ status: "active" });
 
   // Simple text match on lesson content
   const queryLower = query.toLowerCase();
@@ -496,18 +456,7 @@ export async function selectForWorkingMemorySemantic(
 
     const combinedScore = result.similarity + recencyScore * 0.3 + maxBonus;
 
-    // Load the actual entry from disk
-    const dataFilePath = path.join(
-      deps.memoryDir,
-      "short-term",
-      idxEntry.data_file
-    );
-    const allEntries =
-      (await readJsonFileAsync<ShortTermEntry[]>(
-        dataFilePath,
-        z.array(ShortTermEntrySchema)
-      )) ?? [];
-    const found = allEntries.find((e) => e.id === idxEntry.entry_id);
+    const found = await new MemoryLifecycleStateStore(deps.memoryDir).loadShortTermEntry(idxEntry.entry_id);
     if (found) {
       scoredEntries.push({ entry: found, combinedScore });
       seenEntryIds.add(result.id);

@@ -2,7 +2,9 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { cleanupTempDir, makeTempDir } from "../../../../tests/helpers/temp-dir.js";
+import { KnowledgeMemoryStateStore } from "../../knowledge/knowledge-memory-state-store.js";
 import { StrategyDreamStateStore } from "../../../runtime/store/strategy-dream-state-store.js";
+import { TrustStateStore } from "../../../runtime/store/trust-state-store.js";
 import {
   collectBacklogMetrics,
   countAgentMemoryEntries,
@@ -97,8 +99,74 @@ describe("dream consolidator fs metrics", () => {
       },
       importanceBuffer: { lastProcessedLine: 1 },
     });
-    await fs.writeFile(path.join(tmpDir, "memory", "agent-memory", "entries.json"), JSON.stringify({ entries: [{ id: 1 }, { id: 2 }] }), "utf8");
-    await fs.writeFile(path.join(tmpDir, "trust", "trust-store.json"), JSON.stringify({ balances: { a: 1, b: 2 } }), "utf8");
+    await new KnowledgeMemoryStateStore(tmpDir).saveAgentMemoryStore({
+      entries: [
+        {
+          id: "memory-1",
+          key: "metric.one",
+          value: "Metric one",
+          tags: [],
+          memory_type: "fact",
+          status: "compiled",
+          governance: {
+            sensitivity: "local",
+            consent: {
+              scope_id: "local_planning",
+              allowed_contexts: ["local_planning"],
+              source_actor: "user",
+              collection_context: "memory_save",
+            },
+            retention: {
+              policy_id: "retain_until_retracted",
+              retain_until: null,
+              review_after: null,
+              delete_requires_approval: true,
+            },
+            export_visibility: "listed",
+            owner_ref: "user",
+          },
+          created_at: "2026-04-12T00:00:00.000Z",
+          updated_at: "2026-04-12T00:00:00.000Z",
+        },
+        {
+          id: "memory-2",
+          key: "metric.two",
+          value: "Metric two",
+          tags: [],
+          memory_type: "fact",
+          status: "compiled",
+          governance: {
+            sensitivity: "local",
+            consent: {
+              scope_id: "local_planning",
+              allowed_contexts: ["local_planning"],
+              source_actor: "user",
+              collection_context: "memory_save",
+            },
+            retention: {
+              policy_id: "retain_until_retracted",
+              retain_until: null,
+              review_after: null,
+              delete_requires_approval: true,
+            },
+            export_visibility: "listed",
+            owner_ref: "user",
+          },
+          created_at: "2026-04-12T00:01:00.000Z",
+          updated_at: "2026-04-12T00:01:00.000Z",
+        },
+      ],
+      corrections: [],
+      last_consolidated_at: null,
+    });
+    await new TrustStateStore(tmpDir).saveStore({
+      balances: {
+        a: { domain: "a", balance: 1, success_delta: 3, failure_delta: -10 },
+        b: { domain: "b", balance: 2, success_delta: 3, failure_delta: -10 },
+      },
+      permanent_gates: {},
+      override_log: [],
+    });
     await fs.writeFile(path.join(tmpDir, "verification", "nested", "artifact.json"), "{}", "utf8");
     await fs.writeFile(path.join(tmpDir, "root.json"), "{}", "utf8");
     await fs.writeFile(path.join(tmpDir, "log.jsonl"), "1\n2\n", "utf8");

@@ -167,7 +167,7 @@ export async function buildStandaloneTuiDeps() {
       undefined,
       driveScoreAdapter
     );
-    memoryLifecycleManager.initializeDirectories();
+    await memoryLifecycleManager.initializeDirectories();
   } catch (err) {
     getCliLogger().warn(`[pulseed] MemoryLifecycleManager init failed — memory features disabled: ${err instanceof Error ? err.message : String(err)}`);
     memoryLifecycleManager = undefined;

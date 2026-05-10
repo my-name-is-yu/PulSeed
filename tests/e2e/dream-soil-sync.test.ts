@@ -8,6 +8,7 @@ import { PIDManager } from "../../src/runtime/pid-manager.js";
 import { DaemonStateStore } from "../../src/runtime/store/daemon-state-store.js";
 import { StrategyDreamStateStore } from "../../src/runtime/store/strategy-dream-state-store.js";
 import { SqliteSoilRepository } from "../../src/platform/soil/sqlite-repository.js";
+import { KnowledgeMemoryStateStore } from "../../src/platform/knowledge/knowledge-memory-state-store.js";
 import { cleanupTempDir, makeTempDir } from "../helpers/temp-dir.js";
 
 interface ResidentDreamInvoker {
@@ -15,28 +16,41 @@ interface ResidentDreamInvoker {
 }
 
 async function seedDreamOutputs(baseDir: string): Promise<void> {
-  fs.mkdirSync(path.join(baseDir, "memory", "agent-memory"), { recursive: true });
   fs.mkdirSync(path.join(baseDir, "learning"), { recursive: true });
-  fs.writeFileSync(
-    path.join(baseDir, "memory", "agent-memory", "entries.json"),
-    JSON.stringify({
-      entries: [
-        {
-          id: "mem-e2e-procedure",
-          key: "procedure.release",
-          value: "Run CI before release.",
-          summary: "Release procedure",
-          tags: ["release"],
-          memory_type: "procedure",
-          status: "compiled",
-          created_at: "2026-04-12T00:00:00.000Z",
-          updated_at: "2026-04-12T01:00:00.000Z",
+  await new KnowledgeMemoryStateStore(baseDir).saveAgentMemoryStore({
+    entries: [
+      {
+        id: "mem-e2e-procedure",
+        key: "procedure.release",
+        value: "Run CI before release.",
+        summary: "Release procedure",
+        tags: ["release"],
+        memory_type: "procedure",
+        status: "compiled",
+        governance: {
+          sensitivity: "local",
+          consent: {
+            scope_id: "local_planning",
+            allowed_contexts: ["local_planning"],
+            source_actor: "user",
+            collection_context: "memory_save",
+          },
+          retention: {
+            policy_id: "retain_until_retracted",
+            retain_until: null,
+            review_after: null,
+            delete_requires_approval: true,
+          },
+          export_visibility: "listed",
+          owner_ref: "user",
         },
-      ],
-      last_consolidated_at: null,
-    }),
-    "utf8"
-  );
+        created_at: "2026-04-12T00:00:00.000Z",
+        updated_at: "2026-04-12T01:00:00.000Z",
+      },
+    ],
+    corrections: [],
+    last_consolidated_at: null,
+  });
   fs.writeFileSync(
     path.join(baseDir, "learning", "goal_patterns.json"),
     JSON.stringify([

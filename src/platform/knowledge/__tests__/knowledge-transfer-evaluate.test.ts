@@ -7,6 +7,7 @@ import { StateManager } from "../../../base/state/state-manager.js";
 import { VectorIndex } from "../vector-index.js";
 import { MockEmbeddingClient } from "../embedding-client.js";
 import { createMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
+import { makeGoal } from "../../../../tests/helpers/fixtures.js";
 import type { LearnedPattern } from "../../../base/types/learning.js";
 
 // ─── Helpers ───
@@ -92,6 +93,16 @@ describe("KnowledgeTransfer", async () => {
     );
   });
 
+  async function setCurrentGap(goalId: string, gap: number): Promise<void> {
+    await stateManager.saveGoal(makeGoal({ id: goalId }));
+    await stateManager.saveGapHistory(goalId, [{
+      iteration: 1,
+      timestamp: new Date().toISOString(),
+      gap_vector: [{ dimension_name: "overall", normalized_weighted_gap: gap }],
+      confidence_vector: [{ dimension_name: "overall", confidence: 1 }],
+    }]);
+  }
+
   async function createKT(opts: {
     llmResponses?: string[];
     patternsPerGoal?: Record<string, LearnedPattern[]>;
@@ -103,7 +114,7 @@ describe("KnowledgeTransfer", async () => {
     const ethicsGate = makeMockEthicsGate(opts.ethicsVerdict ?? "pass");
 
     for (const goalId of opts.goalIds ?? []) {
-      await stateManager.writeRaw(`goals/${goalId}/state.json`, { gap: 0.5 });
+      await setCurrentGap(goalId, 0.5);
     }
 
     return new KnowledgeTransfer({
@@ -134,11 +145,11 @@ describe("KnowledgeTransfer", async () => {
         ethicsVerdict: "pass",
       });
 
-      await stateManager.writeRaw("goals/goal_a/state.json", { gap: 0.8 });
+      await setCurrentGap("goal_a", 0.8);
       const candidates = await kt.detectTransferOpportunities("goal_a");
       const applyResult = await kt.applyTransfer(candidates[0]!.candidate_id, "goal_a");
 
-      await stateManager.writeRaw("goals/goal_a/state.json", { gap: 0.3 });
+      await setCurrentGap("goal_a", 0.3);
       const record = await kt.evaluateTransferEffect(applyResult.transfer_id);
       expect(record.effectiveness).toBe("positive");
       expect(record.gap_delta_before).toBe(0.8);
@@ -154,11 +165,11 @@ describe("KnowledgeTransfer", async () => {
         ethicsVerdict: "pass",
       });
 
-      await stateManager.writeRaw("goals/goal_a/state.json", { gap: 0.3 });
+      await setCurrentGap("goal_a", 0.3);
       const candidates = await kt.detectTransferOpportunities("goal_a");
       const applyResult = await kt.applyTransfer(candidates[0]!.candidate_id, "goal_a");
 
-      await stateManager.writeRaw("goals/goal_a/state.json", { gap: 0.8 });
+      await setCurrentGap("goal_a", 0.8);
       const record = await kt.evaluateTransferEffect(applyResult.transfer_id);
       expect(record.effectiveness).toBe("negative");
     });
@@ -172,11 +183,11 @@ describe("KnowledgeTransfer", async () => {
         ethicsVerdict: "pass",
       });
 
-      await stateManager.writeRaw("goals/goal_a/state.json", { gap: 0.5 });
+      await setCurrentGap("goal_a", 0.5);
       const candidates = await kt.detectTransferOpportunities("goal_a");
       const applyResult = await kt.applyTransfer(candidates[0]!.candidate_id, "goal_a");
 
-      await stateManager.writeRaw("goals/goal_a/state.json", { gap: 0.48 });
+      await setCurrentGap("goal_a", 0.48);
       const record = await kt.evaluateTransferEffect(applyResult.transfer_id);
       expect(record.effectiveness).toBe("neutral");
     });
@@ -196,7 +207,7 @@ describe("KnowledgeTransfer", async () => {
         ethicsVerdict: "pass",
       });
 
-      await stateManager.writeRaw("goals/goal_a/state.json", { gap: 0.5 });
+      await setCurrentGap("goal_a", 0.5);
 
       for (let i = 0; i < 3; i++) {
         const candidates = await kt.detectTransferOpportunities("goal_a");
@@ -218,18 +229,18 @@ describe("KnowledgeTransfer", async () => {
         ethicsVerdict: "pass",
       });
 
-      await stateManager.writeRaw("goals/goal_a/state.json", { gap: 0.5 });
+      await setCurrentGap("goal_a", 0.5);
       for (let i = 0; i < 2; i++) {
         const candidates = await kt.detectTransferOpportunities("goal_a");
         const applyResult = await kt.applyTransfer(candidates[0]!.candidate_id, "goal_a");
         await kt.evaluateTransferEffect(applyResult.transfer_id);
       }
 
-      await stateManager.writeRaw("goals/goal_a/state.json", { gap: 0.8 });
+      await setCurrentGap("goal_a", 0.8);
       const candidates = await kt.detectTransferOpportunities("goal_a");
       expect(candidates.length).toBe(1);
       const applyResult = await kt.applyTransfer(candidates[0]!.candidate_id, "goal_a");
-      await stateManager.writeRaw("goals/goal_a/state.json", { gap: 0.2 });
+      await setCurrentGap("goal_a", 0.2);
       const record = await kt.evaluateTransferEffect(applyResult.transfer_id);
       expect(record.effectiveness).toBe("positive");
 
@@ -237,7 +248,7 @@ describe("KnowledgeTransfer", async () => {
       expect(moreCandidates.length).toBe(1);
     });
 
-    it("uses gap_score when gap field is absent", async () => {
+    it("uses typed gap history as the current transfer gap source", async () => {
       const pattern = makePattern({ confidence: 0.8, source_goal_ids: ["goal_b"] });
       const kt = await createKT({
         goalIds: ["goal_a", "goal_b"],
@@ -246,11 +257,11 @@ describe("KnowledgeTransfer", async () => {
         ethicsVerdict: "pass",
       });
 
-      await stateManager.writeRaw("goals/goal_a/state.json", { gap_score: 0.7 });
+      await setCurrentGap("goal_a", 0.7);
       const candidates = await kt.detectTransferOpportunities("goal_a");
       const applyResult = await kt.applyTransfer(candidates[0]!.candidate_id, "goal_a");
 
-      await stateManager.writeRaw("goals/goal_a/state.json", { gap_score: 0.2 });
+      await setCurrentGap("goal_a", 0.2);
       const record = await kt.evaluateTransferEffect(applyResult.transfer_id);
       expect(record.effectiveness).toBe("positive");
       expect(record.gap_delta_before).toBe(0.7);
@@ -263,8 +274,8 @@ describe("KnowledgeTransfer", async () => {
       const llmClient = createMockLLMClient([ADAPTATION_RESPONSE]);
       const ethicsGate = makeMockEthicsGate("pass");
 
-      await stateManager.writeRaw("goals/goal_a/state.json", { something: "else" });
-      await stateManager.writeRaw("goals/goal_b/state.json", { gap: 0.3 });
+      await stateManager.saveGapHistory("goal_a", []);
+      await setCurrentGap("goal_b", 0.3);
 
       const kt = new KnowledgeTransfer({
         llmClient, knowledgeManager: makeMockKnowledgeManager(),
@@ -296,8 +307,8 @@ describe("KnowledgeTransfer", async () => {
       const llmClient = createMockLLMClient([]);
       const ethicsGate = makeMockEthicsGate("pass");
 
-      await stateManager.writeRaw("goals/goal_a/state.json", { gap: 0.5 });
-      await stateManager.writeRaw("goals/goal_b/state.json", { gap: 0.3 });
+      await setCurrentGap("goal_a", 0.5);
+      await setCurrentGap("goal_b", 0.3);
 
       const kt = new KnowledgeTransfer({
         llmClient, knowledgeManager: makeMockKnowledgeManager(),
@@ -322,11 +333,11 @@ describe("KnowledgeTransfer", async () => {
       });
 
       // Use values that produce exactly 0.04 delta (clearly neutral)
-      await stateManager.writeRaw("goals/goal_a/state.json", { gap: 0.54 });
+      await setCurrentGap("goal_a", 0.54);
       const candidates = await kt.detectTransferOpportunities("goal_a");
       const applyResult = await kt.applyTransfer(candidates[0]!.candidate_id, "goal_a");
 
-      await stateManager.writeRaw("goals/goal_a/state.json", { gap: 0.5 });
+      await setCurrentGap("goal_a", 0.5);
       const record = await kt.evaluateTransferEffect(applyResult.transfer_id);
       expect(record.effectiveness).toBe("neutral");
     });
@@ -340,11 +351,11 @@ describe("KnowledgeTransfer", async () => {
         ethicsVerdict: "pass",
       });
 
-      await stateManager.writeRaw("goals/goal_a/state.json", { gap: 0.56 });
+      await setCurrentGap("goal_a", 0.56);
       const candidates = await kt.detectTransferOpportunities("goal_a");
       const applyResult = await kt.applyTransfer(candidates[0]!.candidate_id, "goal_a");
 
-      await stateManager.writeRaw("goals/goal_a/state.json", { gap: 0.5 });
+      await setCurrentGap("goal_a", 0.5);
       const record = await kt.evaluateTransferEffect(applyResult.transfer_id);
       expect(record.effectiveness).toBe("positive");
     });
@@ -359,11 +370,11 @@ describe("KnowledgeTransfer", async () => {
       });
 
       // Use values that produce exactly -0.04 delta (clearly neutral)
-      await stateManager.writeRaw("goals/goal_a/state.json", { gap: 0.5 });
+      await setCurrentGap("goal_a", 0.5);
       const candidates = await kt.detectTransferOpportunities("goal_a");
       const applyResult = await kt.applyTransfer(candidates[0]!.candidate_id, "goal_a");
 
-      await stateManager.writeRaw("goals/goal_a/state.json", { gap: 0.54 });
+      await setCurrentGap("goal_a", 0.54);
       const record = await kt.evaluateTransferEffect(applyResult.transfer_id);
       expect(record.effectiveness).toBe("neutral");
     });
@@ -384,11 +395,11 @@ describe("KnowledgeTransfer", async () => {
       });
 
       for (let i = 0; i < 3; i++) {
-        await stateManager.writeRaw("goals/goal_a/state.json", { gap: 0.3 });
+        await setCurrentGap("goal_a", 0.3);
         const candidates = await kt.detectTransferOpportunities("goal_a");
         if (candidates.length === 0) break;
         const applyResult = await kt.applyTransfer(candidates[0]!.candidate_id, "goal_a");
-        await stateManager.writeRaw("goals/goal_a/state.json", { gap: 0.8 });
+        await setCurrentGap("goal_a", 0.8);
         const record = await kt.evaluateTransferEffect(applyResult.transfer_id);
         expect(record.effectiveness).toBe("negative");
       }
@@ -493,7 +504,7 @@ describe("KnowledgeTransfer", async () => {
 
       const llmClient = createMockLLMClient([META_PATTERNS_RESPONSE]);
       const learningPipeline = makeMockLearningPipeline({ goal_a: [pattern] });
-      await stateManager.writeRaw("goals/goal_a/state.json", { gap: 0.5 });
+      await setCurrentGap("goal_a", 0.5);
 
       const kt = new KnowledgeTransfer({
         llmClient, knowledgeManager: makeMockKnowledgeManager(),

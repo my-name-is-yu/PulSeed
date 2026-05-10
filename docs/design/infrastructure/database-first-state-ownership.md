@@ -137,7 +137,21 @@ list:
   migration inputs only
 - relationship profile content remains file-backed as user-authored profile
   content; character config remains file-backed as user-editable configuration
-- dream filesystem metrics and memory-persistence compatibility maps
+- memory lifecycle short-term entries, long-term lessons, indexes,
+  statistics, and close archives use control DB tables; the old
+  `memory/short-term/**`, `memory/long-term/**`, and memory persistence file
+  helpers are explicit `doctor --repair` import inputs only, not normal
+  runtime owners
+- KnowledgeManager, dream consolidation, Soil sync, CLI memory operations, and
+  user memory correction flows use direct Soil memory store APIs for
+  domain/shared/agent memory; StateManager no longer routes
+  `memory/*/entries.json` or `domain_knowledge.json` logical paths for normal
+  callers
+- dream decision heuristics use a typed control DB table; legacy
+  `dream/decision-heuristics.json` is an explicit `doctor --repair` import
+  input only
+- dream filesystem counters in operational reports are diagnostic/export
+  metrics over artifacts and legacy fixtures, not authoritative runtime state
 - Soil import overlay queue and publish state, which are import/publish artifact
   surfaces rather than normal runtime owners
 

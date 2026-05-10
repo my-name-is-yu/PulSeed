@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { StateManager } from "../../../base/state/state-manager.js";
 import { KnowledgeManager } from "../knowledge-manager.js";
+import { KnowledgeMemoryStateStore } from "../knowledge-memory-state-store.js";
 import { VectorIndex } from "../vector-index.js";
 import { MockEmbeddingClient } from "../embedding-client.js";
 import { createMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
@@ -256,25 +257,19 @@ describe("searchByEmbedding", () => {
 });
 
 describe("searchKnowledge", () => {
-  it("loads each goal once and preserves vector search order", async () => {
-    const readCalls: string[] = [];
-    const originalReadRaw = stateManager.readRaw.bind(stateManager);
-    vi.spyOn(stateManager, "readRaw").mockImplementation(async (relativePath: string) => {
-      readCalls.push(relativePath);
-      return originalReadRaw(relativePath);
-    });
-
+  it("preserves vector search order while loading goal knowledge from the typed store", async () => {
+    const knowledgeStore = new KnowledgeMemoryStateStore(stateManager.getBaseDir());
     const goal1EntryA = makeKnowledgeEntry({ entry_id: "goal-1-a" });
     const goal1EntryB = makeKnowledgeEntry({ entry_id: "goal-1-b" });
     const goal2Entry = makeKnowledgeEntry({ entry_id: "goal-2-a" });
 
-    await stateManager.writeRaw("goals/goal-1/domain_knowledge.json", {
+    await knowledgeStore.saveDomainKnowledge({
       goal_id: "goal-1",
       domain: "goal-1",
       entries: [goal1EntryA, goal1EntryB],
       last_updated: new Date().toISOString(),
     });
-    await stateManager.writeRaw("goals/goal-2/domain_knowledge.json", {
+    await knowledgeStore.saveDomainKnowledge({
       goal_id: "goal-2",
       domain: "goal-2",
       entries: [goal2Entry],
@@ -302,8 +297,6 @@ describe("searchKnowledge", () => {
       "goal-1-b",
       "goal-1-a",
     ]);
-    expect(readCalls.filter((path) => path === "goals/goal-1/domain_knowledge.json")).toHaveLength(1);
-    expect(readCalls.filter((path) => path === "goals/goal-2/domain_knowledge.json")).toHaveLength(1);
   });
 });
 
@@ -360,9 +353,8 @@ describe("getStaleEntries", () => {
     const shared = await manager.saveToSharedKnowledgeBase(entry, "g1");
 
     // Overwrite with a past due date by writing directly
-    const all = await manager.querySharedKnowledge([]);
     const updated = { ...shared, revalidation_due_at: daysAgo(1) };
-    await stateManager.writeRaw("memory/shared-knowledge/entries.json", [updated]);
+    await new KnowledgeMemoryStateStore(stateManager.getBaseDir()).saveSharedKnowledgeEntries([updated]);
 
     const stale = await manager.getStaleEntries();
     expect(stale.some((e) => e.entry_id === "stale-e1")).toBe(true);
@@ -374,7 +366,7 @@ describe("getStaleEntries", () => {
     const shared = await manager.saveToSharedKnowledgeBase(entry, "g1");
 
     const updated = { ...shared, revalidation_due_at: daysFromNow(30) };
-    await stateManager.writeRaw("memory/shared-knowledge/entries.json", [updated]);
+    await new KnowledgeMemoryStateStore(stateManager.getBaseDir()).saveSharedKnowledgeEntries([updated]);
 
     const stale = await manager.getStaleEntries();
     expect(stale.some((e) => e.entry_id === "fresh-e1")).toBe(false);
@@ -390,7 +382,7 @@ describe("getStaleEntries", () => {
       domain_stability: "stable",
       revalidation_due_at: null,
     };
-    await stateManager.writeRaw("memory/shared-knowledge/entries.json", [entry]);
+    await new KnowledgeMemoryStateStore(stateManager.getBaseDir()).saveSharedKnowledgeEntries([entry]);
 
     const stale = await manager.getStaleEntries();
     expect(stale.some((e) => e.entry_id === "old-stable")).toBe(true);
@@ -406,7 +398,7 @@ describe("getStaleEntries", () => {
       domain_stability: "volatile",
       revalidation_due_at: null,
     };
-    await stateManager.writeRaw("memory/shared-knowledge/entries.json", [entry]);
+    await new KnowledgeMemoryStateStore(stateManager.getBaseDir()).saveSharedKnowledgeEntries([entry]);
 
     const stale = await manager.getStaleEntries();
     expect(stale.some((e) => e.entry_id === "old-volatile")).toBe(true);

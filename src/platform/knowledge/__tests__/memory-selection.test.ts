@@ -5,6 +5,7 @@ import { selectForWorkingMemory, relevanceScore } from "../memory/memory-selecti
 import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 import type { MemoryIndexEntry, ShortTermEntry } from "../../../base/types/memory-lifecycle.js";
 import type { VectorIndex } from "../vector-index.js";
+import { MemoryLifecycleStateStore } from "../memory/memory-lifecycle-state-store.js";
 
 // ─── Helpers ───
 
@@ -18,16 +19,17 @@ async function setupShortTermData(
   entries: ShortTermEntry[],
   accessCounts?: number[]
 ): Promise<void> {
-  const goalId = entries[0]?.goal_id ?? "goal-test";
-  const stDir = path.join(memoryDir, "short-term");
-  const goalsDir = path.join(stDir, "goals");
-  fs.mkdirSync(goalsDir, { recursive: true });
-
-  const dataFile = `goals/${goalId}.json`;
-  fs.writeFileSync(
-    path.join(stDir, dataFile),
-    JSON.stringify(entries)
-  );
+  const store = new MemoryLifecycleStateStore(memoryDir);
+  await store.initialize();
+  const entriesByGoalAndType = new Map<string, ShortTermEntry[]>();
+  for (const entry of entries) {
+    const key = `${entry.goal_id}\u0000${entry.data_type}`;
+    entriesByGoalAndType.set(key, [...(entriesByGoalAndType.get(key) ?? []), entry]);
+  }
+  for (const groupedEntries of entriesByGoalAndType.values()) {
+    const first = groupedEntries[0]!;
+    await store.replaceShortTermEntries(first.goal_id, first.data_type, groupedEntries);
+  }
 
   const indexEntries: MemoryIndexEntry[] = entries.map((e, i) => ({
     id: `idx-${i}`,
@@ -35,7 +37,7 @@ async function setupShortTermData(
     dimensions: e.dimensions,
     tags: e.tags,
     timestamp: e.timestamp,
-    data_file: dataFile,
+    data_file: `memory-lifecycle:short-term:${e.goal_id}:${e.data_type}`,
     entry_id: e.id,
     last_accessed: e.timestamp,
     access_count: accessCounts?.[i] ?? 0,
@@ -43,24 +45,16 @@ async function setupShortTermData(
     memory_tier: e.memory_tier,
   }));
 
-  fs.writeFileSync(
-    path.join(stDir, "index.json"),
-    JSON.stringify({ version: 1, last_updated: new Date().toISOString(), entries: indexEntries })
-  );
-
-  // Long-term dirs required by queryLessons
-  const ltDir = path.join(memoryDir, "long-term");
-  fs.mkdirSync(path.join(ltDir, "lessons", "by-goal"), { recursive: true });
-  fs.mkdirSync(path.join(ltDir, "lessons", "by-dimension"), { recursive: true });
-  fs.writeFileSync(
-    path.join(ltDir, "lessons", "global.json"),
-    JSON.stringify([])
-  );
-  // long-term index
-  fs.writeFileSync(
-    path.join(ltDir, "index.json"),
-    JSON.stringify({ version: 1, last_updated: new Date().toISOString(), entries: [] })
-  );
+  await store.saveIndex("short-term", {
+    version: 1,
+    last_updated: new Date().toISOString(),
+    entries: indexEntries,
+  });
+  await store.saveIndex("long-term", {
+    version: 1,
+    last_updated: new Date().toISOString(),
+    entries: [],
+  });
 }
 
 let tmpDir: string;

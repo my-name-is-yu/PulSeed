@@ -211,6 +211,12 @@ export type {
   KnowledgeMemoryLegacyImportReport,
 } from "./knowledge-memory-state-migration.js";
 export {
+  importLegacyMemoryLifecycleState,
+} from "./memory-lifecycle-state-migration.js";
+export type {
+  MemoryLifecycleLegacyImportReport,
+} from "./memory-lifecycle-state-migration.js";
+export {
   RuntimeExperimentQueueItemSchema,
   RuntimeExperimentQueueItemStatusSchema,
   RuntimeExperimentQueuePhaseSchema,

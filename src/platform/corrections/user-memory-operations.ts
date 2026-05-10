@@ -15,7 +15,7 @@ import {
   AgentMemoryStoreSchema,
   type AgentMemoryEntry,
 } from "../knowledge/types/agent-memory.js";
-import { AGENT_MEMORY_PATH } from "../knowledge/knowledge-manager-internals.js";
+import { knowledgeMemoryStoreForStateManager } from "../knowledge/knowledge-manager-internals.js";
 import {
   applyAgentMemoryCorrection,
   listAgentMemoryCorrectionHistory,
@@ -80,14 +80,14 @@ function correctionReason(input: UserMemoryOperationInput): string {
 
 function stateManagerAgentMemoryHost(stateManager: StateManager): AgentMemoryHost {
   const llmClient = {} as ILLMClient;
+  const store = knowledgeMemoryStoreForStateManager(stateManager);
   return {
     llmClient,
     loadAgentMemoryStore: async () => {
-      const raw = await stateManager.readRaw(AGENT_MEMORY_PATH);
-      return AgentMemoryStoreSchema.parse(raw ?? { entries: [], corrections: [], last_consolidated_at: null });
+      return AgentMemoryStoreSchema.parse(await store.loadAgentMemoryStore());
     },
     saveAgentMemoryStore: async (store) => {
-      await stateManager.writeRaw(AGENT_MEMORY_PATH, store);
+      await knowledgeMemoryStoreForStateManager(stateManager).saveAgentMemoryStore(store);
     },
   };
 }

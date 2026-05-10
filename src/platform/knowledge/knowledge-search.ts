@@ -7,9 +7,7 @@ import type { StateManager } from "../../base/state/state-manager.js";
 import type { VectorIndex } from "./vector-index.js";
 import type { DomainKnowledge } from "../../base/types/knowledge.js";
 import { DomainKnowledgeSchema } from "../../base/types/knowledge.js";
-import { KNOWLEDGE_MEMORY_SHARED_KB_PATH } from "./knowledge-memory-state-store.js";
-
-const SHARED_KB_PATH = KNOWLEDGE_MEMORY_SHARED_KB_PATH;
+import { KnowledgeMemoryStateStore } from "./knowledge-memory-state-store.js";
 
 // ─── Deps interfaces ───
 
@@ -22,12 +20,8 @@ export interface SearchDeps {
 
 /** Load all SharedKnowledgeEntries from the shared KB file. */
 export async function loadSharedEntries(stateManager: StateManager): Promise<SharedKnowledgeEntry[]> {
-  const raw = await stateManager.readRaw(SHARED_KB_PATH);
-  if (!raw || !Array.isArray(raw)) {
-    return [];
-  }
   try {
-    return (raw as unknown[]).map((item) =>
+    return (await new KnowledgeMemoryStateStore(stateManager.getBaseDir()).loadSharedKnowledgeEntries()).map((item) =>
       SharedKnowledgeEntrySchema.parse(item)
     );
   } catch {
@@ -40,18 +34,8 @@ export async function loadDomainKnowledge(
   stateManager: StateManager,
   goalId: string
 ): Promise<DomainKnowledge> {
-  const raw = await stateManager.readRaw(`goals/${goalId}/domain_knowledge.json`);
-
-  if (raw === null) {
-    return DomainKnowledgeSchema.parse({
-      goal_id: goalId,
-      domain: goalId,
-      entries: [],
-      last_updated: new Date().toISOString(),
-    });
-  }
-
-  return DomainKnowledgeSchema.parse(raw);
+  const store = new KnowledgeMemoryStateStore(stateManager.getBaseDir());
+  return DomainKnowledgeSchema.parse(await store.loadDomainKnowledge(goalId));
 }
 
 // ─── Search functions ───

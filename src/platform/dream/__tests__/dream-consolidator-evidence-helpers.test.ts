@@ -52,7 +52,7 @@ describe("dream consolidator evidence helpers", () => {
 
     expect(groups).toHaveLength(1);
     expect(groups[0]?.entries.map((entry) => entry.id)).toEqual(["memory-1", "memory-2"]);
-    expect(agentMemoryEvidenceRef(entries[0]!)).toBe("memory/agent-memory/entries.json#memory-1");
+    expect(agentMemoryEvidenceRef(entries[0]!)).toBe("soil-sqlite://memory/agent#memory-1");
   });
 
   it("formats source line refs relative to the Dream base dir", () => {

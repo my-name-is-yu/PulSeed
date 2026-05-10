@@ -2,8 +2,9 @@ import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { z } from "zod";
 import { readJsonFileOrNull } from "../../base/utils/json-io.js";
-import { AgentMemoryStoreSchema, type AgentMemoryEntry } from "../knowledge/types/agent-memory.js";
+import type { AgentMemoryEntry } from "../knowledge/types/agent-memory.js";
 import { LearnedPatternSchema, type LearnedPattern } from "../knowledge/types/learning.js";
+import { KnowledgeMemoryStateStore } from "../knowledge/knowledge-memory-state-store.js";
 import type { SoilMutationInput, SoilRecord, SoilRecordFilterInput } from "../soil/contracts.js";
 import { SqliteSoilRepository } from "../soil/sqlite-repository.js";
 import { projectDreamKnowledgeToSoil, projectSoilFeedbackToSoil } from "../soil/content-projections.js";
@@ -46,10 +47,7 @@ export interface DreamSoilSyncInput {
 }
 
 async function loadAgentMemoryEntries(baseDir: string): Promise<AgentMemoryEntry[]> {
-  const raw = await readJsonFileOrNull(path.join(baseDir, "memory", "agent-memory", "entries.json"));
-  if (raw === null) return [];
-  const parsed = AgentMemoryStoreSchema.safeParse(raw);
-  return parsed.success ? parsed.data.entries : [];
+  return (await new KnowledgeMemoryStateStore(baseDir).loadAgentMemoryStore()).entries;
 }
 
 async function loadLearnedPatterns(baseDir: string): Promise<LearnedPattern[]> {

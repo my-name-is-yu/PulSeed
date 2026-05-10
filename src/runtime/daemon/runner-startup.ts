@@ -304,9 +304,14 @@ export async function startDaemonRunner(
         const maintenanceIntervalMs = context.config.check_interval_ms;
         await context.runSupervisorMaintenanceCycle();
         await context.reconcileRuntimeControlOperationsAfterStartup();
-        context.cronScheduleInterval = setInterval(async () => {
+        context.cronScheduleInterval = setInterval(() => {
           if (context.shuttingDown) return;
-          await context.runSupervisorMaintenanceCycle();
+          void context.runSupervisorMaintenanceCycle().catch((error: unknown) => {
+            if (context.shuttingDown) return;
+            context.logger.warn("Supervisor maintenance cycle failed", {
+              error: error instanceof Error ? error.message : String(error),
+            });
+          });
         }, maintenanceIntervalMs);
 
         await new Promise<void>((resolve) => {

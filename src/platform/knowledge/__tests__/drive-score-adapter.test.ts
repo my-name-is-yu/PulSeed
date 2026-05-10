@@ -75,7 +75,7 @@ describe("DriveScoreAdapter", () => {
 // ═══════════════════════════════════════════════════════
 
 describe("MemoryLifecycleManager + DriveScoreAdapter integration", () => {
-  it("compressionDelay() uses DriveScoreAdapter dissatisfaction > 0.7 → 2x retention", () => {
+  it("compressionDelay() uses DriveScoreAdapter dissatisfaction > 0.7 → 2x retention", async () => {
     const adapter = new DriveScoreAdapter();
     const mgr = new MemoryLifecycleManager(
       tmpDir,
@@ -85,7 +85,7 @@ describe("MemoryLifecycleManager + DriveScoreAdapter integration", () => {
       undefined,
       adapter
     );
-    mgr.initializeDirectories();
+    await mgr.initializeDirectories();
 
     // Set high dissatisfaction for the dimension
     adapter.update([{ dimension_name: "reliability", dissatisfaction: 0.9 }]);
@@ -96,7 +96,7 @@ describe("MemoryLifecycleManager + DriveScoreAdapter integration", () => {
     expect(boostedDelay).toBe(baseDelay * 2.0);
   });
 
-  it("compressionDelay() uses DriveScoreAdapter dissatisfaction in (0.4, 0.7] → 1.5x retention", () => {
+  it("compressionDelay() uses DriveScoreAdapter dissatisfaction in (0.4, 0.7] → 1.5x retention", async () => {
     const adapter = new DriveScoreAdapter();
     const mgr = new MemoryLifecycleManager(
       tmpDir,
@@ -106,7 +106,7 @@ describe("MemoryLifecycleManager + DriveScoreAdapter integration", () => {
       undefined,
       adapter
     );
-    mgr.initializeDirectories();
+    await mgr.initializeDirectories();
 
     adapter.update([{ dimension_name: "latency", dissatisfaction: 0.6 }]);
 
@@ -116,7 +116,7 @@ describe("MemoryLifecycleManager + DriveScoreAdapter integration", () => {
     expect(boostedDelay).toBe(baseDelay * 1.5);
   });
 
-  it("compressionDelay() reflects updated adapter values after a second update()", () => {
+  it("compressionDelay() reflects updated adapter values after a second update()", async () => {
     const adapter = new DriveScoreAdapter();
     const mgr = new MemoryLifecycleManager(
       tmpDir,
@@ -126,7 +126,7 @@ describe("MemoryLifecycleManager + DriveScoreAdapter integration", () => {
       undefined,
       adapter
     );
-    mgr.initializeDirectories();
+    await mgr.initializeDirectories();
 
     // First update: low dissatisfaction → base retention
     adapter.update([{ dimension_name: "coverage", dissatisfaction: 0.2 }]);

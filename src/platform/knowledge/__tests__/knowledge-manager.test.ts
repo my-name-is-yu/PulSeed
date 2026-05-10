@@ -4,6 +4,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { StateManager } from "../../../base/state/state-manager.js";
 import { KnowledgeManager } from "../knowledge-manager.js";
+import { KnowledgeMemoryStateStore } from "../knowledge-memory-state-store.js";
 import { VectorIndex } from "../vector-index.js";
 import { MockEmbeddingClient } from "../embedding-client.js";
 import type { ILLMClient, LLMMessage, LLMRequestOptions, LLMResponse } from "../../../base/llm/llm-client.js";
@@ -430,8 +431,8 @@ describe("saveKnowledge / loadKnowledge", () => {
       vectorIndex
     );
 
-    // Make writeRaw throw
-    vi.spyOn(stateManager, "writeRaw").mockRejectedValueOnce(
+    // Make the typed knowledge store write fail after vector indexing.
+    vi.spyOn(KnowledgeMemoryStateStore.prototype, "saveDomainKnowledge").mockRejectedValueOnce(
       new Error("disk full")
     );
 

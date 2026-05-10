@@ -28,12 +28,14 @@ import {
   inspectControlDatabase,
   importLegacyGoalTaskDurableLoopState,
   importLegacyKnowledgeMemoryState,
+  importLegacyMemoryLifecycleState,
   importLegacyPluginChannelRuntimeState,
   importLegacyQueueDaemonScheduleState,
   importLegacyRuntimeEvidenceStrategyDreamState,
   importLegacyRuntimeFileState,
   type RuntimeHealthKpi,
 } from "../../../runtime/store/index.js";
+import { importLegacyDreamDecisionHeuristics } from "../../../runtime/store/dream-decision-heuristic-migration.js";
 import { runRuntimeStoreMaintenanceCycle, type RuntimeMaintenanceLogger } from "../../../runtime/daemon/maintenance.js";
 import { migrateLegacyCronTasksIfNeeded } from "../../../runtime/schedule/legacy-cron-migration.js";
 import { DaemonStateSchema } from "../../../runtime/types/daemon.js";
@@ -745,6 +747,8 @@ export async function cmdDoctor(_args: string[]): Promise<number> {
     const ethicsImportReport = await importLegacyEthicsLogState(baseDir);
     const relationshipProfileProposalImportReport = await importLegacyRelationshipProfileProposalState(baseDir);
     const knowledgeMemoryImportReport = await importLegacyKnowledgeMemoryState(baseDir);
+    const memoryLifecycleImportReport = await importLegacyMemoryLifecycleState(baseDir);
+    const dreamDecisionHeuristicImportReport = await importLegacyDreamDecisionHeuristics(baseDir);
     const pluginChannelImportReport = await importLegacyPluginChannelRuntimeState(baseDir);
     const migratedLegacyCronTasks = await migrateLegacyCronTasksIfNeeded({
       baseDir,
@@ -791,6 +795,12 @@ export async function cmdDoctor(_args: string[]): Promise<number> {
     );
     console.log(
       `Repair knowledge/memory import: domain=${knowledgeMemoryImportReport.domainKnowledge}, shared=${knowledgeMemoryImportReport.sharedKnowledgeEntries}, agent memory=${knowledgeMemoryImportReport.agentMemoryEntries}, corrections=${knowledgeMemoryImportReport.agentMemoryCorrections}, blocked=${knowledgeMemoryImportReport.blockedSources.length}`
+    );
+    console.log(
+      `Repair memory lifecycle import: short-term files=${memoryLifecycleImportReport.shortTermFiles}, short-term entries=${memoryLifecycleImportReport.shortTermEntries}, indexes=${memoryLifecycleImportReport.indexFiles}, index entries=${memoryLifecycleImportReport.indexEntries}, lesson files=${memoryLifecycleImportReport.lessonFiles}, lessons=${memoryLifecycleImportReport.lessons}, statistics=${memoryLifecycleImportReport.statisticsFiles}, archives=${memoryLifecycleImportReport.archives}, blocked=${memoryLifecycleImportReport.blockedSources.length}`
+    );
+    console.log(
+      `Repair dream decision heuristics import: ${dreamDecisionHeuristicImportReport.imported ? "imported" : dreamDecisionHeuristicImportReport.skipped ?? "blocked"}, heuristics=${dreamDecisionHeuristicImportReport.heuristicCount}, blocked=${dreamDecisionHeuristicImportReport.blocked ? 1 : 0}`
     );
     console.log(
       `Repair plugin/channel import: plugin states=${pluginChannelImportReport.pluginStates}, channel health=${pluginChannelImportReport.channelHealth}, imported plugin reviews=${pluginChannelImportReport.importedPluginReviews}, assets=${pluginChannelImportReport.assetRecords}, blocked=${pluginChannelImportReport.blockedSources.length}`
