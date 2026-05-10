@@ -19,6 +19,7 @@ import {
   HttpApiDataSourceAdapter,
   PostgresDataSourceAdapter,
 } from "../../platform/observation/data-source-adapter.js";
+import { readDatasourceJsonFile } from "./datasource-config-file.js";
 
 interface DataSourceBootstrapLogger {
   warn(message: string): void;
@@ -37,7 +38,7 @@ async function loadPersistedDataSourceConfig(
 ): Promise<DataSourceConfig | null> {
   let raw: unknown;
   try {
-    raw = JSON.parse(await fsp.readFile(filePath, "utf-8")) as unknown;
+    raw = await readDatasourceJsonFile(filePath);
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
     logger.warn(`[pulseed] Invalid datasource config JSON in ${fileName}; skipping: ${reason}`);

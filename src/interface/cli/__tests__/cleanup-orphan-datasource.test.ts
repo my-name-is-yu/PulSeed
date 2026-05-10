@@ -99,6 +99,21 @@ describe("cmdCleanup — orphaned datasource removal", () => {
     expect(listFiles(datasourcesDir)).toEqual(["ds_invalid_scope.json"]);
   });
 
+  it("keeps oversized datasource files because ownership cannot be parsed safely", async () => {
+    writeDatasource(datasourcesDir, "ds_oversized.json", {
+      id: "ds_oversized",
+      type: "shell",
+      scope_goal_id: "goal-deleted-123",
+      connection: { commands: { test_count: {} } },
+      padding: "x".repeat(300 * 1024),
+    });
+
+    const sm = makeFakeStateManager(tmpDir, []);
+    const result = await cmdCleanup(sm as never);
+    expect(result).toBe(0);
+    expect(listFiles(datasourcesDir)).toEqual(["ds_oversized.json"]);
+  });
+
   it("does not crash when datasources directory does not exist", async () => {
     // datasourcesDir is never created
     const sm = makeFakeStateManager(tmpDir, []);

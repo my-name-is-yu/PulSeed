@@ -157,6 +157,19 @@ describe("createCliDataSourceAdapter", () => {
       "utf-8"
     );
     fs.writeFileSync(
+      path.join(datasourcesDir, "03-oversized.json"),
+      JSON.stringify({
+        id: "ds_oversized_file",
+        name: "Oversized File",
+        type: "file_existence",
+        connection: { path: "README.md" },
+        enabled: true,
+        created_at: new Date().toISOString(),
+        padding: "x".repeat(300 * 1024),
+      }),
+      "utf-8"
+    );
+    fs.writeFileSync(
       path.join(datasourcesDir, "10-valid.json"),
       JSON.stringify({
         id: "ds_valid_file",
@@ -183,6 +196,7 @@ describe("createCliDataSourceAdapter", () => {
       expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("00-malformed.json"));
       expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("01-invalid-schema.json"));
       expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("02-invalid-adapter.json"));
+      expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("03-oversized.json"));
       expect(logger.error).not.toHaveBeenCalled();
     } finally {
       if (originalHome === undefined) {

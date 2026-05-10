@@ -6,7 +6,8 @@ import { getDatasourcesDir } from "../../../base/utils/paths.js";
 import { writeJsonFile } from "../../../base/utils/json-io.js";
 import { extractWorkspacePathConstraint, resolveWorkspacePath } from "../../../base/utils/workspace-path.js";
 import type { StateManager } from "../../../base/state/state-manager.js";
-import { DataSourceConfigSchema, type DataSourceConfig } from "../../../platform/observation/types/data-source.js";
+import type { DataSourceConfig } from "../../../platform/observation/types/data-source.js";
+import { readDatasourceConfigFile } from "../datasource-config-file.js";
 import { getCliLogger } from "../cli-logger.js";
 import { formatOperationError } from "../utils.js";
 import { parseExactFiniteNumber } from "./exact-number.js";
@@ -158,10 +159,9 @@ export async function loadExistingDatasources(datasourcesDir: string): Promise<D
   const results: DataSourceConfig[] = [];
   for (const file of entries.filter((f) => f.endsWith(".json"))) {
     try {
-      const raw = await fsp.readFile(path.join(datasourcesDir, file), "utf-8");
-      const parsed = DataSourceConfigSchema.safeParse(JSON.parse(raw) as unknown);
-      if (parsed.success) {
-        results.push(parsed.data);
+      const config = await readDatasourceConfigFile(path.join(datasourcesDir, file));
+      if (config) {
+        results.push(config);
       }
     } catch {
       // Skip unreadable files

@@ -6,14 +6,16 @@ import { z } from "zod";
 import { getReportsDir, getDatasourcesDir } from "../../../base/utils/paths.js";
 import { readJsonFile } from "../../../base/utils/json-io.js";
 
-import { StateManager } from "../../../base/state/state-manager.js";
-import { CharacterConfigManager } from "../../../platform/traits/character-config.js";
+import type { StateManager } from "../../../base/state/state-manager.js";
+import type { CharacterConfigManager } from "../../../platform/traits/character-config.js";
 import { ensureProviderConfig } from "../ensure-api-key.js";
 import { EthicsRejectedError } from "../../../orchestrator/goal/goal-negotiator.js";
+import type { GoalNegotiator } from "../../../orchestrator/goal/goal-negotiator.js";
 import { collectLeafGoalIds } from "../../../orchestrator/goal/goal-refiner.js";
 import { buildDeps } from "../setup.js";
 import { formatOperationError } from "../utils.js";
 import { getCliLogger } from "../cli-logger.js";
+import { readDatasourceJsonFile } from "../datasource-config-file.js";
 import {
   autoRegisterFileExistenceDataSources,
   autoRegisterShellDataSources,
@@ -169,7 +171,7 @@ export async function cmdGoalAdd(
 
 async function cmdGoalAddWithoutRefinement(
   stateManager: StateManager,
-  goalNegotiator: import("../../../orchestrator/goal/goal-negotiator.js").GoalNegotiator,
+  goalNegotiator: GoalNegotiator,
   description: string,
   opts: { deadline?: string; constraints?: string[]; yes?: boolean }
 ): Promise<number> {
@@ -380,7 +382,7 @@ export async function cmdCleanup(stateManager: StateManager): Promise<number> {
       for (const file of dsFiles) {
         const filePath = path.join(datasourcesDir, file);
         try {
-          const raw = JSON.parse(await fsp.readFile(filePath, "utf-8")) as unknown;
+          const raw = await readDatasourceJsonFile(filePath);
           const parsed = DatasourceCleanupMetadataSchema.safeParse(raw);
           if (!parsed.success) {
             getCliLogger().error(formatOperationError(`read datasource "${file}"`, parsed.error));
