@@ -303,6 +303,7 @@ export class ChatHistory {
   }
 
   async recordChatEvent(event: ChatEvent, options: { persist?: boolean } = {}): Promise<void> {
+    assertChatEventInvariants(event);
     const projection = rolloutProjectionFromChatEvent(event);
     this.pushRolloutRecord({
       kind: projection.kind,
@@ -727,6 +728,14 @@ function toReplayableUserInput(input: UserInput): unknown {
   };
 }
 
+function assertChatEventInvariants(event: ChatEvent): void {
+  if (event.type !== "presence_update") return;
+  if (event.presence.turn_id === event.turnId) return;
+  throw new Error(
+    `presence.turn_id must match event turnId for presence_update events: ${event.presence.turn_id} !== ${event.turnId}`,
+  );
+}
+
 function rolloutProjectionFromChatEvent(event: ChatEvent): {
   kind: ChatRolloutJournalRecordKind;
   source: ChatRolloutJournalRecord["source"];
@@ -773,6 +782,14 @@ function rolloutProjectionFromChatEvent(event: ChatEvent): {
       },
     };
   }
+  if (event.type === "presence_update") {
+    return {
+      kind: "display_event",
+      source: "chat_event",
+      visibility: visibilityFromSeedyPresenceAudience(event.presence.audience),
+      payload: { event },
+    };
+  }
   if (event.type === "lifecycle_end" || event.type === "lifecycle_error") {
     return {
       kind: "completion_state",
@@ -787,6 +804,19 @@ function rolloutProjectionFromChatEvent(event: ChatEvent): {
     visibility: "display",
     payload: { event },
   };
+}
+
+function visibilityFromSeedyPresenceAudience(
+  audience: Extract<ChatEvent, { type: "presence_update" }>["presence"]["audience"],
+): ChatRolloutJournalRecord["visibility"] {
+  switch (audience) {
+    case "user":
+      return "display";
+    case "diagnostic":
+      return "debug";
+    case "internal":
+      return "host_only";
+  }
 }
 
 function rolloutProjectionFromAgentTimelineEvent(event: Extract<ChatEvent, { type: "agent_timeline" }>): {

@@ -9,6 +9,7 @@ import {
 import type { StateManager } from "../../../base/state/state-manager.js";
 import { ChatSessionDataStore } from "../chat-session-data-store.js";
 import { resolveChatStateBaseDir } from "../chat-state-base-dir.js";
+import { createSeedyTurnPresence, createUserVisibleSeedyTurnPresence } from "../seedy-turn-presence.js";
 
 function makeMockStateManager(): StateManager {
   return {
@@ -357,6 +358,80 @@ describe("ChatHistory", () => {
       "Please inspect the rollout journal.",
       "The rollout journal is replayable.",
     ]);
+  });
+
+  it("projects Seedy presence audience into rollout journal visibility", async () => {
+    const history = new ChatHistory(stateManager, SESSION_ID, CWD);
+    const eventContext = { runId: "run-presence", turnId: "turn-presence" };
+    const createdAt = "2026-05-10T05:00:00.000Z";
+
+    await history.recordChatEvent({
+      type: "presence_update",
+      ...eventContext,
+      createdAt,
+      presence: createUserVisibleSeedyTurnPresence({
+        turn_id: eventContext.turnId,
+        phase: "received",
+        started_at: createdAt,
+      }),
+    });
+    await history.recordChatEvent({
+      type: "presence_update",
+      ...eventContext,
+      createdAt,
+      presence: createSeedyTurnPresence({
+        turn_id: eventContext.turnId,
+        audience: "diagnostic",
+        phase: "acting",
+        importance: "status",
+        started_at: createdAt,
+        updated_at: createdAt,
+        diagnostic_ref: "trace:presence-debug",
+      }),
+    });
+    await history.recordChatEvent({
+      type: "presence_update",
+      ...eventContext,
+      createdAt,
+      presence: createSeedyTurnPresence({
+        turn_id: eventContext.turnId,
+        audience: "internal",
+        phase: "orienting",
+        importance: "ephemeral",
+        started_at: createdAt,
+        updated_at: createdAt,
+      }),
+    });
+
+    const presenceRecords = (history.getSessionData().rolloutJournal ?? [])
+      .filter((record) => record.kind === "display_event" && record.source === "chat_event");
+
+    expect(presenceRecords.map((record) => record.visibility)).toEqual([
+      "display",
+      "debug",
+      "host_only",
+    ]);
+    const displayRecords = presenceRecords.filter((record) => record.visibility === "display");
+    expect(JSON.stringify(displayRecords)).not.toContain("trace:presence-debug");
+  });
+
+  it("rejects stale Seedy presence for a previous turn before journaling", async () => {
+    const history = new ChatHistory(stateManager, SESSION_ID, CWD);
+    const createdAt = "2026-05-10T05:00:00.000Z";
+
+    await expect(history.recordChatEvent({
+      type: "presence_update",
+      runId: "run-presence",
+      turnId: "turn-current",
+      createdAt,
+      presence: createUserVisibleSeedyTurnPresence({
+        turn_id: "turn-previous",
+        phase: "received",
+        started_at: createdAt,
+      }),
+    })).rejects.toThrow("presence.turn_id must match event turnId");
+
+    expect(history.getSessionData().rolloutJournal).toBeUndefined();
   });
 
   it("compacts into structured records with invalidated pending permissions and retained active targets", async () => {
