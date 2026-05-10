@@ -2,7 +2,7 @@
 
 import { getLogsDir } from "../../../base/utils/paths.js";
 import { Logger } from "../../../runtime/logger.js";
-import type { CoreLoop, LoopResult, ProgressEvent } from "../../../orchestrator/loop/durable-loop.js";
+import type { DurableLoop, LoopResult, ProgressEvent } from "../../../orchestrator/loop/durable-loop.js";
 import type { Task } from "../../../base/types/task.js";
 
 export function buildAutoApprovalFn(): (task: Task) => Promise<boolean> {
@@ -64,20 +64,20 @@ export function formatProgressGap(gap: number): string {
 }
 
 export async function runLoopWithSignals(
-  coreLoop: CoreLoop,
+  durableLoop: DurableLoop,
   goalId: string
 ): Promise<LoopResult> {
   const controller = new AbortController();
   const shutdown = () => {
     console.log("\nStopping loop...");
-    coreLoop.stop();
+    durableLoop.stop();
     controller.abort();
   };
   process.once("SIGINT", shutdown);
   process.once("SIGTERM", shutdown);
 
   try {
-    return await coreLoop.run(goalId, { abortSignal: controller.signal });
+    return await durableLoop.run(goalId, { abortSignal: controller.signal });
   } finally {
     process.off("SIGINT", shutdown);
     process.off("SIGTERM", shutdown);

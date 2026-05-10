@@ -6,7 +6,7 @@ import * as path from "node:path";
 import { dispatchCommand } from "../cli-command-registry.js";
 import type { StateManager } from "../../../base/state/state-manager.js";
 import type { CharacterConfigManager } from "../../../platform/traits/character-config.js";
-import type { CoreLoop } from "../../../orchestrator/loop/durable-loop.js";
+import type { DurableLoop } from "../../../orchestrator/loop/durable-loop.js";
 
 describe("cron command dispatch", () => {
   let tmpDir: string;
@@ -38,7 +38,7 @@ describe("cron command dispatch", () => {
       false,
       {} as StateManager,
       {} as CharacterConfigManager,
-      { value: null } as { value: CoreLoop | null },
+      { value: null } as { value: DurableLoop | null },
       tmpDir,
     );
   }

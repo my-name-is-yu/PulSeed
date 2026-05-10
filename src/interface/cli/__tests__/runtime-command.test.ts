@@ -7,7 +7,7 @@ import { StateManager } from "../../../base/state/state-manager.js";
 import { CharacterConfigManager } from "../../../platform/traits/character-config.js";
 import { dispatchCommand } from "../cli-command-registry.js";
 import { CLIRunner } from "../cli-runner.js";
-import type { CoreLoop } from "../../../orchestrator/loop/durable-loop.js";
+import type { DurableLoop } from "../../../orchestrator/loop/durable-loop.js";
 import type { ProcessSessionSnapshot } from "../../../tools/system/ProcessSessionTool/ProcessSessionTool.js";
 import { BackgroundRunLedger } from "../../../runtime/store/background-run-store.js";
 import { RuntimeEvidenceLedger } from "../../../runtime/store/evidence-ledger.js";
@@ -38,7 +38,7 @@ describe("runtime registry CLI commands", () => {
   });
 
   async function runCLI(...args: string[]): Promise<number> {
-    return dispatchCommand(args, false, stateManager, characterConfigManager, { value: null as CoreLoop | null });
+    return dispatchCommand(args, false, stateManager, characterConfigManager, { value: null as DurableLoop | null });
   }
 
   it("lists runtime sessions from real StateManager registry files", async () => {
