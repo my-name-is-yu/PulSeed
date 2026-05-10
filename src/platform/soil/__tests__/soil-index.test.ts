@@ -107,6 +107,34 @@ describe("Soil index snapshot", () => {
     }
   });
 
+  it("ignores persisted index snapshots with normalized calendar overflow timestamps", async () => {
+    const rootDir = makeTempDir("soil-index-invalid-date-");
+    try {
+      const indexPath = path.join(rootDir, ".index", "soil.db");
+      await fsp.mkdir(path.dirname(indexPath), { recursive: true });
+      await fsp.writeFile(
+        indexPath,
+        JSON.stringify({
+          storage: SOIL_INDEX_STORAGE_FORMAT,
+          root_dir: rootDir,
+          index_path: indexPath,
+          generated_at: "2026-02-31T00:00:00.000Z",
+          source_manifest_checksum: "sha256:test",
+          page_count: 0,
+          chunk_count: 0,
+          pages: [],
+          chunks: [],
+          retrieval_runs: [],
+        }),
+        "utf-8"
+      );
+
+      await expect(loadSoilIndexSnapshot({ rootDir })).resolves.toBeNull();
+    } finally {
+      cleanupTempDir(rootDir);
+    }
+  });
+
   it("detects index drift after the page set changes", async () => {
     const rootDir = makeTempDir("soil-index-drift-");
     try {

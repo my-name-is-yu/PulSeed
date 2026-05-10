@@ -18,6 +18,9 @@ const {
   watchdogArgs,
   notificationDispatcherArgs,
   pluginLoaderArgs,
+  pidIsRunningMock,
+  pidReadPIDMock,
+  pidStopRuntimeMock,
   cliLoggerMock,
 } = vi.hoisted(() => ({
   buildDepsMock: vi.fn(),
@@ -35,6 +38,17 @@ const {
   watchdogArgs: [] as unknown[],
   notificationDispatcherArgs: [] as unknown[],
   pluginLoaderArgs: [] as unknown[][],
+  pidIsRunningMock: vi.fn().mockResolvedValue(false),
+  pidReadPIDMock: vi.fn().mockResolvedValue(null),
+  pidStopRuntimeMock: vi.fn().mockResolvedValue({
+    info: null,
+    runtimePid: null,
+    ownerPid: null,
+    sentSignalsTo: [],
+    forced: false,
+    stopped: false,
+    alivePids: [],
+  }),
   cliLoggerMock: {
     info: vi.fn(),
     warn: vi.fn(),
@@ -75,8 +89,9 @@ vi.mock("../../../runtime/watchdog.js", () => ({
 vi.mock("../../../runtime/pid-manager.js", () => ({
   PIDManager: vi.fn().mockImplementation(function () {
     return {
-      isRunning: vi.fn().mockResolvedValue(false),
-      readPID: vi.fn().mockResolvedValue(null),
+      isRunning: pidIsRunningMock,
+      readPID: pidReadPIDMock,
+      stopRuntime: pidStopRuntimeMock,
     };
   }),
 }));
@@ -153,7 +168,8 @@ vi.mock("../../../platform/observation/data-source-adapter.js", () => ({
   }),
 }));
 
-import { cmdStart } from "../commands/daemon.js";
+import { cmdRestart, cmdStart } from "../commands/daemon.js";
+import { dispatchCommand } from "../cli-command-registry.js";
 
 describe("cmdStart", () => {
   const mockedHome = "/tmp/pulseed-daemon-start-test-home";
@@ -174,6 +190,20 @@ describe("cmdStart", () => {
     watchdogArgs.length = 0;
     notificationDispatcherArgs.length = 0;
     pluginLoaderArgs.length = 0;
+    pidIsRunningMock.mockReset();
+    pidIsRunningMock.mockResolvedValue(false);
+    pidReadPIDMock.mockReset();
+    pidReadPIDMock.mockResolvedValue(null);
+    pidStopRuntimeMock.mockReset();
+    pidStopRuntimeMock.mockResolvedValue({
+      info: null,
+      runtimePid: null,
+      ownerPid: null,
+      sentSignalsTo: [],
+      forced: false,
+      stopped: false,
+      alivePids: [],
+    });
     cliLoggerMock.info.mockClear();
     cliLoggerMock.warn.mockClear();
     cliLoggerMock.error.mockClear();
@@ -523,5 +553,139 @@ describe("cmdStart", () => {
 
     expect(watchdogStartMock).toHaveBeenCalledOnce();
     expect(daemonStartMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("cmdRestart", () => {
+  const stateManager = { getBaseDir: vi.fn().mockReturnValue("/tmp/pulseed-daemon-start-base") };
+  const characterConfigManager = {};
+
+  beforeEach(() => {
+    buildDepsMock.mockReset();
+    daemonStartMock.mockClear();
+    watchdogStartMock.mockClear();
+    scheduleLoadEntriesMock.mockClear();
+    scheduleEnsureSoilPublishScheduleMock.mockClear();
+    scheduleSyncExternalSourcesMock.mockClear();
+    pluginLoadAllMock.mockClear();
+    setRealtimeSinkMock.mockClear();
+    eventServerBroadcastMock.mockClear();
+    eventServerInstances.length = 0;
+    scheduleEngineArgs.length = 0;
+    daemonRunnerArgs.length = 0;
+    watchdogArgs.length = 0;
+    notificationDispatcherArgs.length = 0;
+    pluginLoaderArgs.length = 0;
+    pidIsRunningMock.mockReset();
+    pidIsRunningMock.mockResolvedValue(false);
+    pidReadPIDMock.mockReset();
+    pidReadPIDMock.mockResolvedValue(null);
+    pidStopRuntimeMock.mockReset();
+    delete process.env.PULSEED_WATCHDOG_CHILD;
+    fs.rmSync("/tmp/pulseed-daemon-start-base", { recursive: true, force: true });
+  });
+
+  afterEach(() => {
+    fs.rmSync("/tmp/pulseed-daemon-start-base", { recursive: true, force: true });
+    delete process.env.PULSEED_WATCHDOG_CHILD;
+  });
+
+  function captureConsoleLog(): {
+    spy: ReturnType<typeof vi.spyOn>;
+    read: () => string;
+  } {
+    const spy = vi.spyOn(console, "log").mockImplementation(() => {});
+    return {
+      spy,
+      read: () => spy.mock.calls.map((call) => call.join(" ")).join("\n"),
+    };
+  }
+
+  it("stops a running daemon before starting it again", async () => {
+    pidStopRuntimeMock.mockResolvedValue({
+      info: { pid: 123, started_at: new Date("2026-05-10T00:00:00.000Z").toISOString() },
+      runtimePid: 456,
+      ownerPid: 123,
+      sentSignalsTo: [123, 456],
+      forced: false,
+      stopped: true,
+      alivePids: [],
+    });
+    const consoleCapture = captureConsoleLog();
+
+    try {
+      const code = await cmdRestart(stateManager as never, characterConfigManager as never, []);
+
+      expect(code).toBe(0);
+      expect(pidStopRuntimeMock).toHaveBeenCalledOnce();
+      expect(watchdogStartMock).toHaveBeenCalledOnce();
+      expect(daemonStartMock).not.toHaveBeenCalled();
+      const output = consoleCapture.read();
+      expect(output).toContain("Stopping daemon (PID: 456)...");
+      expect(output).toContain("Daemon stopped");
+      expect(output).toContain("Starting daemon...");
+    } finally {
+      consoleCapture.spy.mockRestore();
+    }
+  });
+
+  it("starts the daemon and reports when there was no running daemon to stop", async () => {
+    pidStopRuntimeMock.mockResolvedValue({
+      info: null,
+      runtimePid: null,
+      ownerPid: null,
+      sentSignalsTo: [],
+      forced: false,
+      stopped: false,
+      alivePids: [],
+    });
+    const consoleCapture = captureConsoleLog();
+
+    try {
+      const code = await dispatchCommand(
+        ["daemon", "restart"],
+        false,
+        stateManager as never,
+        characterConfigManager as never,
+        { value: null },
+      );
+
+      expect(code).toBe(0);
+      expect(pidStopRuntimeMock).toHaveBeenCalledOnce();
+      expect(watchdogStartMock).toHaveBeenCalledOnce();
+      const output = consoleCapture.read();
+      expect(output).toContain("No running daemon found");
+      expect(output).toContain("Starting daemon...");
+    } finally {
+      consoleCapture.spy.mockRestore();
+    }
+  });
+
+  it("does not start a second daemon when the stop path fails", async () => {
+    pidStopRuntimeMock.mockResolvedValue({
+      info: { pid: 123, started_at: new Date("2026-05-10T00:00:00.000Z").toISOString() },
+      runtimePid: 456,
+      ownerPid: 123,
+      sentSignalsTo: [123, 456],
+      forced: false,
+      stopped: false,
+      alivePids: [123, 456],
+    });
+    const consoleCapture = captureConsoleLog();
+
+    try {
+      const code = await cmdRestart(stateManager as never, characterConfigManager as never, []);
+
+      expect(code).toBe(1);
+      expect(pidStopRuntimeMock).toHaveBeenCalledOnce();
+      expect(watchdogStartMock).not.toHaveBeenCalled();
+      expect(daemonStartMock).not.toHaveBeenCalled();
+      const output = consoleCapture.read();
+      expect(output).toContain("Daemon still running (PIDs: 123, 456)");
+      expect(output).toContain("Daemon restart aborted");
+      expect(output).toContain("pulseed daemon status");
+    } finally {
+      consoleCapture.spy.mockRestore();
+    }
   });
 });

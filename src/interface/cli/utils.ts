@@ -57,6 +57,9 @@ Usage:
   pulseed tui                          Launch the interactive TUI
   pulseed start --goal <id>            Start daemon mode for one or more goals
   pulseed stop                         Stop the running daemon
+  pulseed daemon start                 Start the resident daemon
+  pulseed daemon stop                  Stop the resident daemon
+  pulseed daemon restart               Restart the resident daemon
   pulseed daemon status                Show running daemon status
   pulseed daemon ping                  Check daemon responsiveness
   pulseed cron --goal <id>             Print crontab entry for a goal
