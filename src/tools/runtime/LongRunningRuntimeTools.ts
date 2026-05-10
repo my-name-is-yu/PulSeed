@@ -1,7 +1,9 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
+import { readTextFileWithinLimit } from "../../base/utils/json-io.js";
 import { getPulseedDirPath } from "../../base/utils/paths.js";
+import { MAX_HTTP_BODY_SIZE } from "../../runtime/http-body.js";
 import { BackgroundRunLedger } from "../../runtime/store/background-run-store.js";
 import { RuntimeEvidenceLedger } from "../../runtime/store/evidence-ledger.js";
 import { ProcessSessionStateStore } from "../../runtime/store/process-session-state-store.js";
@@ -64,6 +66,8 @@ import {
   stateRelativePath,
   validateSafeSegment,
 } from "./long-running-runtime-paths.js";
+
+export const LONG_RUNNING_RESULT_JSON_MAX_BYTES = MAX_HTTP_BODY_SIZE;
 
 export interface RuntimeReportWriteOutput {
   result: LongRunningResult;
@@ -727,7 +731,10 @@ async function loadCanonicalResult(filePath: string): Promise<LongRunningResult>
 }
 
 async function readJson(filePath: string): Promise<unknown> {
-  return JSON.parse(await fs.readFile(filePath, "utf8")) as unknown;
+  const raw = await readTextFileWithinLimit(filePath, {
+    maxBytes: LONG_RUNNING_RESULT_JSON_MAX_BYTES,
+  });
+  return JSON.parse(raw) as unknown;
 }
 
 async function assertTreeHasNoSymlinks(sourcePath: string): Promise<void> {
