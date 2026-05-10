@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 export const SEEDY_TURN_PRESENCE_SCHEMA_VERSION = "seedy-turn-presence-v1";
+export const SEEDY_ACTIVE_TURN_STATUS_SCHEMA_VERSION = "seedy-active-turn-status-v1";
 
 export const SeedyTurnPresencePhaseSchema = z.enum([
   "received",
@@ -62,6 +63,25 @@ export type CreateSeedyTurnPresenceInput = SeedyTurnPresenceInput & {
   readonly schema_version?: typeof SEEDY_TURN_PRESENCE_SCHEMA_VERSION;
 };
 
+export interface SeedyActiveTurnStatus {
+  readonly schema_version: typeof SEEDY_ACTIVE_TURN_STATUS_SCHEMA_VERSION;
+  readonly active: boolean;
+  readonly presence?: SeedyTurnPresence;
+  readonly phase?: SeedyTurnPresencePhase;
+  readonly importance?: SeedyPresenceImportance;
+  readonly subject?: string;
+  readonly reason?: string;
+  readonly started_at?: string;
+  readonly updated_at?: string;
+  readonly last_activity_at?: string;
+  readonly last_activity_label?: string;
+  readonly expected_next?: SeedyPresenceExpectedNext;
+  readonly elapsed_since_last_activity_ms?: number;
+  readonly waiting: boolean;
+  readonly blocked: boolean;
+  readonly action_required: boolean;
+}
+
 export interface CreateUserVisibleSeedyTurnPresenceInput {
   readonly turn_id: string;
   readonly ingress_id?: string;
@@ -101,6 +121,66 @@ export function isUserVisibleSeedyTurnPresence(presence: SeedyTurnPresence): boo
   return presence.audience === "user";
 }
 
+export function createSeedyActiveTurnStatus(
+  presence: SeedyTurnPresence | null | undefined,
+  options: { readonly now?: Date | string | number } = {},
+): SeedyActiveTurnStatus {
+  if (!presence) {
+    return {
+      schema_version: SEEDY_ACTIVE_TURN_STATUS_SCHEMA_VERSION,
+      active: false,
+      waiting: false,
+      blocked: false,
+      action_required: false,
+    };
+  }
+
+  const lastActivityAt = presence.last_activity_at ?? presence.updated_at;
+  const elapsedMs = elapsedSince(lastActivityAt, options.now);
+  const blocked = presence.phase === "blocked" || presence.importance === "blocked";
+  const actionRequired = presence.importance === "action_required" || presence.expected_next === "approval";
+  return {
+    schema_version: SEEDY_ACTIVE_TURN_STATUS_SCHEMA_VERSION,
+    active: true,
+    presence,
+    phase: presence.phase,
+    importance: presence.importance,
+    ...(presence.subject ? { subject: presence.subject } : {}),
+    ...(presence.reason ? { reason: presence.reason } : {}),
+    started_at: presence.started_at,
+    updated_at: presence.updated_at,
+    last_activity_at: lastActivityAt,
+    ...(presence.last_activity_label ? { last_activity_label: presence.last_activity_label } : {}),
+    ...(presence.expected_next ? { expected_next: presence.expected_next } : {}),
+    ...(elapsedMs !== null ? { elapsed_since_last_activity_ms: elapsedMs } : {}),
+    waiting: presence.phase === "waiting",
+    blocked,
+    action_required: actionRequired,
+  };
+}
+
+export function formatSeedyActiveTurnStatus(status: SeedyActiveTurnStatus): string {
+  if (!status.active) return "Seedy is not handling an active turn right now.";
+
+  const subject = status.subject ? `: ${status.subject}` : "";
+  const elapsed = formatElapsed(status.elapsed_since_last_activity_ms);
+  const activity = status.last_activity_label
+    ? ` Last visible activity: ${status.last_activity_label}${elapsed ? ` ${elapsed}` : ""}.`
+    : elapsed
+      ? ` Last visible activity was ${elapsed}.`
+      : "";
+  if (status.blocked) {
+    return `Seedy is blocked${subject}.${activity}`.trim();
+  }
+  if (status.action_required) {
+    return `Seedy needs input to continue${subject}.${activity}`.trim();
+  }
+  if (status.waiting) {
+    return `Seedy is waiting${subject}.${activity}`.trim();
+  }
+  return `Seedy is ${status.phase ?? "working"}${subject}.${activity}`.trim();
+}
+
 export function defaultSeedyPresenceImportance(
   phase: SeedyTurnPresencePhase,
 ): SeedyPresenceImportance {
@@ -118,4 +198,29 @@ export function defaultSeedyPresenceImportance(
     case "finalizing":
       return "ephemeral";
   }
+}
+
+function elapsedSince(value: string | undefined, nowInput: Date | string | number | undefined): number | null {
+  if (!value) return null;
+  const then = Date.parse(value);
+  if (!Number.isFinite(then)) return null;
+  const now = nowInput instanceof Date
+    ? nowInput.getTime()
+    : typeof nowInput === "string"
+      ? Date.parse(nowInput)
+      : typeof nowInput === "number"
+        ? nowInput
+        : Date.now();
+  if (!Number.isFinite(now)) return null;
+  return Math.max(0, now - then);
+}
+
+function formatElapsed(elapsedMs: number | undefined): string {
+  if (elapsedMs === undefined) return "";
+  const seconds = Math.max(0, Math.round(elapsedMs / 1_000));
+  if (seconds < 60) return `${seconds} seconds ago`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes} minutes ago`;
+  const hours = Math.round(minutes / 60);
+  return `${hours} hours ago`;
 }

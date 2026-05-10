@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   SEEDY_TURN_PRESENCE_SCHEMA_VERSION,
   SeedyTurnPresenceSchema,
+  createSeedyActiveTurnStatus,
   createSeedyTurnPresence,
   createUserVisibleSeedyTurnPresence,
+  formatSeedyActiveTurnStatus,
   isUserVisibleSeedyTurnPresence,
 } from "../seedy-turn-presence.js";
 
@@ -84,5 +86,36 @@ describe("SeedyTurnPresence", () => {
       updated_at: NOW,
       raw_model_name: "debug-only",
     }).success).toBe(false);
+  });
+
+  it("formats active status from typed presence without raw diagnostic fields", () => {
+    const presence = createUserVisibleSeedyTurnPresence({
+      turn_id: "turn-1",
+      phase: "waiting",
+      importance: "action_required",
+      subject: "Waiting for approval",
+      reason: "A tool request needs approval before the turn can continue.",
+      started_at: NOW,
+      updated_at: "2026-05-10T05:00:10.000Z",
+      last_activity_at: NOW,
+      last_activity_label: "approval requested",
+      expected_next: "approval",
+    });
+
+    const status = createSeedyActiveTurnStatus(presence, {
+      now: "2026-05-10T05:00:45.000Z",
+    });
+
+    expect(status).toMatchObject({
+      active: true,
+      phase: "waiting",
+      action_required: true,
+      waiting: true,
+      elapsed_since_last_activity_ms: 45_000,
+    });
+    expect(formatSeedyActiveTurnStatus(status))
+      .toBe("Seedy needs input to continue: Waiting for approval. Last visible activity: approval requested 45 seconds ago.");
+    expect(formatSeedyActiveTurnStatus(createSeedyActiveTurnStatus(null)))
+      .toBe("Seedy is not handling an active turn right now.");
   });
 });

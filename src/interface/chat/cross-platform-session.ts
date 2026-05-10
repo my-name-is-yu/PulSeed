@@ -88,6 +88,11 @@ import { EXTERNAL_SURFACE_METADATA_KEY } from "../../runtime/gateway/channel-pol
 import { normalizeUserInput } from "./user-input.js";
 import type { ApprovalRequest } from "../../tools/types.js";
 import {
+  createSeedyActiveTurnStatus,
+  formatSeedyActiveTurnStatus,
+  type SeedyActiveTurnStatus,
+} from "./seedy-turn-presence.js";
+import {
   buildSessionKeyFromParts,
   buildSessionMetadata,
   cloneMetadata,
@@ -924,6 +929,23 @@ export class CrossPlatformChatSessionManager {
             : undefined,
         }
       : null;
+  }
+
+  getActiveSeedyTurnStatus(
+    options: CrossPlatformChatSessionOptions,
+    statusOptions: { readonly now?: Date | string | number } = {},
+  ): SeedyActiveTurnStatus {
+    const session = this.sessions.get(buildSessionKeyFromParts(options));
+    return session
+      ? session.runner.getActiveSeedyTurnStatus(statusOptions)
+      : createSeedyActiveTurnStatus(null, statusOptions);
+  }
+
+  formatActiveSeedyTurnStatus(
+    options: CrossPlatformChatSessionOptions,
+    statusOptions: { readonly now?: Date | string | number } = {},
+  ): string {
+    return formatSeedyActiveTurnStatus(this.getActiveSeedyTurnStatus(options, statusOptions));
   }
 
   private async loadPersistedSessionInfo(sessionKey: string): Promise<CrossPlatformChatSessionInfo | null> {

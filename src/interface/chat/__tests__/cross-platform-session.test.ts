@@ -619,6 +619,62 @@ describe("CrossPlatformChatSessionManager", () => {
     await active;
   });
 
+  it("reports active Seedy status from typed turn state without emitting a new reply", async () => {
+    let resolveActive: ((value: AgentResult) => void) | undefined;
+    const chatAgentLoopRunner = {
+      execute: vi.fn().mockImplementation(() => {
+        return new Promise<AgentResult>((resolve) => {
+          resolveActive = resolve;
+        });
+      }),
+    };
+    const events: ChatEvent[] = [];
+    const manager = new CrossPlatformChatSessionManager(makeDeps({
+      stateManager: makeMockStateManager(),
+      chatAgentLoopRunner: chatAgentLoopRunner as never,
+    }));
+
+    const active = manager.execute("Implement a feature", {
+      identity_key: "status-user",
+      platform: "slack",
+      conversation_id: "status-thread",
+      user_id: "U123",
+      message_id: "status-message",
+      cwd: "/repo",
+      onEvent: (event) => {
+        events.push(event);
+      },
+    });
+    await vi.waitFor(() => expect(chatAgentLoopRunner.execute).toHaveBeenCalledOnce());
+    const eventCountBeforeStatus = events.length;
+
+    const status = manager.getActiveSeedyTurnStatus({
+      identity_key: "status-user",
+      platform: "slack",
+      conversation_id: "status-thread",
+    });
+
+    expect(status).toMatchObject({
+      active: true,
+      phase: "acting",
+      subject: "Taking action",
+      expected_next: "progress",
+      blocked: false,
+      action_required: false,
+    });
+    expect(manager.formatActiveSeedyTurnStatus({
+      identity_key: "status-user",
+      platform: "slack",
+      conversation_id: "status-thread",
+    })).toContain("Seedy is acting: Taking action.");
+    expect(events).toHaveLength(eventCountBeforeStatus);
+
+    resolveActive?.(CANNED_RESULT);
+    await active;
+    expect(manager.getActiveSeedyTurnStatus({ identity_key: "status-user" }))
+      .toMatchObject({ active: false });
+  });
+
   it("reconstructs resumed gateway history from the rollout journal instead of stale transcript messages", async () => {
     const tmpDir = makeTempDir();
     try {

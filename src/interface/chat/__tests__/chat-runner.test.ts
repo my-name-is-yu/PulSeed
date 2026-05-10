@@ -19,11 +19,9 @@ import type { ILLMClient } from "../../../base/llm/llm-client.js";
 import type { ChatAgentLoopRunner } from "../../../orchestrator/execution/agent-loop/chat-agent-loop-runner.js";
 import { SqliteAgentLoopSessionStateStore } from "../../../orchestrator/execution/agent-loop/agent-loop-session-db-store.js";
 import type { GoalNegotiator } from "../../../orchestrator/goal/goal-negotiator.js";
-import { RuntimeControlService } from "../../../runtime/control/index.js";
 import { createRuntimeSessionRegistry } from "../../../runtime/session-registry/index.js";
 import { BackgroundRunLedger } from "../../../runtime/store/background-run-store.js";
 import { RuntimeBudgetStore } from "../../../runtime/store/budget-store.js";
-import { RuntimeOperationStore } from "../../../runtime/store/runtime-operation-store.js";
 import { ScheduleHistoryStore, ScheduleRunHistoryRecordSchema } from "../../../runtime/schedule/history.js";
 import { SupervisorStateStore } from "../../../runtime/store/supervisor-state-store.js";
 import type { Goal } from "../../../base/types/goal.js";
@@ -4572,6 +4570,141 @@ describe("ChatRunner", () => {
       await active;
       expect(runner.hasActiveTurn()).toBe(false);
       expect(runner.getActiveSeedyPresence()).toBeNull();
+    });
+
+    it("emits a typed waiting heartbeat from active turn activity age", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-05-10T05:00:00.000Z"));
+      try {
+        let resolveStarted!: () => void;
+        let resolveActive!: (value: AgentResult) => void;
+        let capturedEventSink: { emit(event: unknown): Promise<void> | void } | undefined;
+        const started = new Promise<void>((resolve) => {
+          resolveStarted = resolve;
+        });
+        const chatAgentLoopRunner = {
+          execute: vi.fn().mockImplementation((input: {
+            eventSink?: { emit(event: unknown): Promise<void> | void };
+          }) => {
+            capturedEventSink = input.eventSink;
+            resolveStarted();
+            return new Promise<AgentResult>((resolve) => {
+              resolveActive = resolve;
+            });
+          }),
+        } as unknown as ChatAgentLoopRunner;
+        const events: ChatEvent[] = [];
+        const runner = new ChatRunner(makeDeps({
+          stateManager: makeMockStateManager(),
+          chatAgentLoopRunner,
+          onEvent: (event) => {
+            events.push(event);
+          },
+        }));
+        runner.startSession("/repo");
+
+        const active = runner.execute("Implement a feature", "/repo");
+        await started;
+
+        expect(events.filter((event) => event.type === "presence_update").map((event) => event.presence.phase))
+          .not.toContain("waiting");
+
+        await vi.advanceTimersByTimeAsync(30_000);
+
+        const waiting = events
+          .filter((event): event is Extract<ChatEvent, { type: "presence_update" }> =>
+            event.type === "presence_update" && event.presence.phase === "waiting"
+          )
+          .at(-1);
+        expect(waiting?.presence).toMatchObject({
+          phase: "waiting",
+          importance: "status",
+          expected_next: "progress",
+          last_activity_at: "2026-05-10T05:00:00.000Z",
+          last_activity_label: "Taking action",
+        });
+        expect(runner.getActiveSeedyTurnStatus()).toMatchObject({
+          active: true,
+          phase: "waiting",
+          waiting: true,
+          elapsed_since_last_activity_ms: 30_000,
+        });
+        expect(runner.formatActiveSeedyTurnStatus())
+          .toContain("Seedy is waiting: Taking action.");
+
+        await capturedEventSink?.emit({
+          type: "tool_call_started",
+          eventId: "tool-event-1",
+          sessionId: "agent-session-1",
+          traceId: "trace-1",
+          turnId: "agent-turn-1",
+          goalId: "goal-1",
+          createdAt: new Date().toISOString(),
+          callId: "tool-call-1",
+          toolName: "read_file",
+          inputPreview: "{}",
+        });
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(events
+          .filter((event): event is Extract<ChatEvent, { type: "presence_update" }> =>
+            event.type === "presence_update"
+          )
+          .at(-1)?.presence).toMatchObject({
+            phase: "acting",
+            expected_next: "progress",
+          });
+        expect(runner.getActiveSeedyTurnStatus()).toMatchObject({
+          active: true,
+          phase: "acting",
+          waiting: false,
+        });
+
+        resolveActive({
+          success: true,
+          output: "done",
+          error: null,
+          exit_code: 0,
+          elapsed_ms: 30_000,
+          stopped_reason: "completed",
+        });
+        await active;
+        expect(runner.getActiveSeedyTurnStatus()).toMatchObject({ active: false });
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("clears waiting heartbeat timers for fast turns", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-05-10T05:00:00.000Z"));
+      try {
+        const events: ChatEvent[] = [];
+        const runner = new ChatRunner(makeDeps({
+          stateManager: makeMockStateManager(),
+          adapter: makeMockAdapter({
+            success: true,
+            output: "Fast result",
+            error: null,
+            exit_code: 0,
+            elapsed_ms: 5,
+            stopped_reason: "completed",
+          }),
+          onEvent: (event) => {
+            events.push(event);
+          },
+        }));
+        runner.startSession("/repo");
+
+        await runner.execute("quick task", "/repo", 30_000, { selectedRoute: adapterRoute() });
+        await vi.advanceTimersByTimeAsync(60_000);
+
+        expect(events.filter((event) => event.type === "presence_update").map((event) => event.presence.phase))
+          .not.toContain("waiting");
+        expect(runner.getActiveSeedyTurnStatus()).toMatchObject({ active: false });
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it("uses structured interrupt intent classification for multilingual diff redirects", async () => {
