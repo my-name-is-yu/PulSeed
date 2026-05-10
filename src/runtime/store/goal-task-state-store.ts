@@ -47,8 +47,7 @@ interface RawPathMatch {
     | "task_verification_result"
     | "checkpoint_index"
     | "checkpoint"
-    | "pipeline"
-    | "stall";
+    | "pipeline";
   goalId?: string;
   taskId?: string;
   rootId?: string;
@@ -177,11 +176,6 @@ function parseRawPath(relativePath: string): RawPathMatch | null {
   if (parts[0] === "pipelines" && parts.length === 2) {
     const taskId = stripJsonExtension(parts[1]!);
     return taskId ? { kind: "pipeline", taskId } : null;
-  }
-
-  if (parts[0] === "stalls" && parts.length === 2) {
-    const goalId = stripJsonExtension(parts[1]!);
-    return goalId ? { kind: "stall", goalId } : null;
   }
 
   return null;
@@ -830,35 +824,6 @@ export class GoalTaskStateStore {
     });
   }
 
-  async saveStallRecord(goalId: string, record: unknown): Promise<void> {
-    const db = await this.database();
-    db.transaction((sqlite) => {
-      if (record === null) {
-        sqlite.prepare("DELETE FROM goal_stall_records WHERE goal_id = ?").run(goalId);
-        return;
-      }
-      sqlite.prepare(`
-        INSERT INTO goal_stall_records (goal_id, updated_at, record_json)
-        VALUES (?, ?, json(?))
-        ON CONFLICT(goal_id) DO UPDATE SET
-          updated_at = excluded.updated_at,
-          record_json = excluded.record_json
-      `).run(goalId, nowIso(), JSON.stringify(record));
-    });
-  }
-
-  async loadStallRecord(goalId: string): Promise<unknown | null> {
-    const db = await this.database();
-    return db.read((sqlite) => {
-      const row = sqlite.prepare(`
-        SELECT record_json
-        FROM goal_stall_records
-        WHERE goal_id = ?
-      `).get(goalId) as { record_json: string } | undefined;
-      return row ? parseJson(row.record_json) : null;
-    });
-  }
-
   async readRawPath(relativePath: string): Promise<RawStateStoreResult> {
     const match = parseRawPath(relativePath);
     if (!match) return { handled: false, value: null };
@@ -892,8 +857,6 @@ export class GoalTaskStateStore {
         return { handled: true, value: await this.loadCheckpoint(match.checkpointId!) };
       case "pipeline":
         return { handled: true, value: await this.loadPipeline(match.taskId!) };
-      case "stall":
-        return { handled: true, value: await this.loadStallRecord(match.goalId!) };
     }
   }
 
@@ -974,9 +937,6 @@ export class GoalTaskStateStore {
         if (data !== null) {
           await this.savePipeline(match.taskId!, PipelineStateSchema.parse(data));
         }
-        return true;
-      case "stall":
-        await this.saveStallRecord(match.goalId!, data);
         return true;
     }
   }

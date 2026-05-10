@@ -547,6 +547,68 @@ describe("getStallState / saveStallState", () => {
     expect(loaded.decay_factors["dim-a"]).toBe(0.6);
     expect(loaded.recovery_loops["dim-b"]).toBe(3);
   });
+
+  it("does not create legacy stall JSON when saving runtime state", async () => {
+    const stateToSave: StallState = {
+      goal_id: "goal-typed",
+      dimension_escalation: { "dim-a": 2 },
+      global_escalation: 1,
+      decay_factors: { "dim-a": 0.6 },
+      recovery_loops: { "dim-a": 1 },
+    };
+
+    await detector.saveStallState("goal-typed", stateToSave);
+
+    expect(fs.existsSync(path.join(tempDir, "stalls", "goal-typed.json"))).toBe(false);
+    await expect(new StallDetector(stateManager).getStallState("goal-typed")).resolves.toMatchObject({
+      dimension_escalation: { "dim-a": 2 },
+      global_escalation: 1,
+    });
+  });
+
+  it("ignores stale legacy stall JSON as authoritative runtime state", async () => {
+    fs.mkdirSync(path.join(tempDir, "stalls"), { recursive: true });
+    fs.writeFileSync(path.join(tempDir, "stalls", "goal-legacy.json"), JSON.stringify({
+      goal_id: "goal-legacy",
+      dimension_escalation: { "dim-a": 3 },
+      global_escalation: 2,
+      decay_factors: { "dim-a": 0.2 },
+      recovery_loops: { "dim-a": 9 },
+    }));
+
+    await expect(detector.getStallState("goal-legacy")).resolves.toMatchObject({
+      goal_id: "goal-legacy",
+      dimension_escalation: {},
+      global_escalation: 0,
+      decay_factors: {},
+      recovery_loops: {},
+    });
+  });
+
+  it("prefers typed stall state over stale legacy files", async () => {
+    await detector.saveStallState("goal-current", {
+      goal_id: "goal-current",
+      dimension_escalation: { "dim-a": 1 },
+      global_escalation: 0,
+      decay_factors: { "dim-a": 0.8 },
+      recovery_loops: {},
+    });
+    fs.mkdirSync(path.join(tempDir, "stalls"), { recursive: true });
+    fs.writeFileSync(path.join(tempDir, "stalls", "goal-current.json"), JSON.stringify({
+      goal_id: "goal-current",
+      dimension_escalation: { "dim-a": 3 },
+      global_escalation: 3,
+      decay_factors: { "dim-a": 0.1 },
+      recovery_loops: { "dim-a": 9 },
+    }));
+
+    await expect(new StallDetector(stateManager).getStallState("goal-current")).resolves.toMatchObject({
+      dimension_escalation: { "dim-a": 1 },
+      global_escalation: 0,
+      decay_factors: { "dim-a": 0.8 },
+      recovery_loops: {},
+    });
+  });
 });
 
 // ─── getEscalationLevel / incrementEscalation / resetEscalation ───

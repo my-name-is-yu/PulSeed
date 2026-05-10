@@ -30,6 +30,7 @@ export {
   CONTROL_DB_RUNTIME_CONTROL_SCHEMA_SQL,
   CONTROL_DB_RUNTIME_STATE_OWNERSHIP_SCHEMA_SQL,
   CONTROL_DB_SCHEMA_VERSION,
+  CONTROL_DB_STALL_STATE_SCHEMA_SQL,
   ControlDatabase,
   controlDbMigrationChecksum,
   createControlDbMigration,
@@ -68,6 +69,20 @@ export {
 export type {
   GoalOrchestrationLegacyImportReport,
 } from "./goal-orchestration-state-migration.js";
+
+export {
+  StallStateStore,
+} from "./stall-state-store.js";
+export type {
+  StallStateStoreOptions,
+  StallStateStorePort,
+} from "./stall-state-store.js";
+export {
+  importLegacyStallState,
+} from "./stall-state-migration.js";
+export type {
+  StallStateLegacyImportReport,
+} from "./stall-state-migration.js";
 
 export {
   RuntimeEnvelopeKindSchema,

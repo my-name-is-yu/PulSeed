@@ -55,6 +55,7 @@ import {
   openControlDatabase,
   PluginChannelRuntimeStateStore,
   RuntimeHealthStore,
+  StallStateStore,
   SupervisorStateStore,
   CuriosityStateStore,
   EthicsLogStore,
@@ -1450,6 +1451,56 @@ describe("cmdDoctor summary counts", () => {
           source_kind: "goal_dependency_graph",
           source_id: "current",
           migration_name: "goal-orchestration-runtime-state",
+          status: "imported",
+        }),
+      ]));
+    } finally {
+      database.close();
+    }
+  });
+
+  it("imports legacy stall state through doctor repair", async () => {
+    const origHome = process.env["PULSEED_HOME"];
+    process.env["PULSEED_HOME"] = tmpDir;
+    const goalId = "goal-stall-doctor";
+    fs.mkdirSync(path.join(tmpDir, "stalls"), { recursive: true });
+    fs.writeFileSync(path.join(tmpDir, "stalls", `${goalId}.json`), JSON.stringify({
+      goal_id: goalId,
+      dimension_escalation: { "dim-a": 2 },
+      global_escalation: 1,
+      decay_factors: { "dim-a": 0.6 },
+      recovery_loops: { "dim-a": 3 },
+    }));
+
+    try {
+      const exitCode = await cmdDoctor(["--repair"]);
+      expect([0, 1]).toContain(exitCode);
+    } finally {
+      if (origHome !== undefined) {
+        process.env["PULSEED_HOME"] = origHome;
+      } else {
+        delete process.env["PULSEED_HOME"];
+      }
+    }
+
+    await expect(new StallStateStore(tmpDir).loadStallState(goalId)).resolves.toMatchObject({
+      goal_id: goalId,
+      dimension_escalation: { "dim-a": 2 },
+      global_escalation: 1,
+      decay_factors: { "dim-a": 0.6 },
+      recovery_loops: { "dim-a": 3 },
+    });
+
+    const allOutput = consoleSpy.mock.calls.map((c: unknown[]) => c[0] as string).join("\n");
+    expect(allOutput).toContain("Repair stall state import: stall states=1, skipped already imported=0, retired existing typed state=0");
+
+    const database = await openControlDatabase({ baseDir: tmpDir });
+    try {
+      expect(database.listLegacyImports()).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          source_kind: "stall_state",
+          source_id: goalId,
+          migration_name: "stall-runtime-state",
           status: "imported",
         }),
       ]));
