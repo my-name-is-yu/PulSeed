@@ -18,7 +18,8 @@ Base: origin/main @ 7d87d012 Prefer live daemon status in runtime evidence answe
 | 2 | RunSpec Store | codex/direct-file-state-slice-2-run-spec-store-20260510220128 | /Users/yuyoshimuta/Documents/dev/PulSeed-worktrees/direct-file-state-slice-2-run-spec-store-20260510220128 | https://github.com/my-name-is-yu/PulSeed/pull/1843 | merged |
 | 3 | DriveSystem Schedule State | codex/direct-file-state-slice-3-drive-schedule-20260510225201 | /Users/yuyoshimuta/Documents/dev/PulSeed-worktrees/direct-file-state-slice-3-drive-schedule-20260510225201 | https://github.com/my-name-is-yu/PulSeed/pull/1853 | merged |
 | 4 | DriveSystem Event Queue / Runtime Event Spool | codex/direct-file-state-slice-4-event-spool-20260510232220 | /Users/yuyoshimuta/Documents/dev/PulSeed-worktrees/direct-file-state-slice-4-event-spool-20260510232220 | https://github.com/my-name-is-yu/PulSeed/pull/1858 | merged |
-| 5 | Strategy Template Registry | codex/direct-file-state-slice-5-strategy-template-20260510235349 | /Users/yuyoshimuta/Documents/dev/PulSeed-worktrees/direct-file-state-slice-5-strategy-template-20260510235349 | https://github.com/my-name-is-yu/PulSeed/pull/1862 | PR open |
+| 5 | Strategy Template Registry | codex/direct-file-state-slice-5-strategy-template-20260510235349 | /Users/yuyoshimuta/Documents/dev/PulSeed-worktrees/direct-file-state-slice-5-strategy-template-20260510235349 | https://github.com/my-name-is-yu/PulSeed/pull/1862 | merged |
+| 6 | VectorIndex And KnowledgeGraph State | codex/direct-file-state-slice-6-vector-knowledge-20260511003822 | /Users/yuyoshimuta/Documents/dev/PulSeed-worktrees/direct-file-state-slice-6-vector-knowledge-20260511003822 | pending | in progress |
 
 ## Slice 1 Direct File Owner Inventory
 
@@ -28,8 +29,8 @@ Base: origin/main @ 7d87d012 Prefer live daemon status in runtime evidence answe
 | DriveSystem goal activation schedule | `src/platform/drive/drive-system.ts` | `schedule/<goalId>.json` | typed-store migrate now | 3 |
 | DriveSystem runtime event ingestion spool | `src/platform/drive/drive-system.ts`; `src/runtime/event/*`; daemon writeEvent callers | `events/*.json`; `events/archive/*.json` | bounded IPC/spool | 4 |
 | Successful strategy template reuse | `src/orchestrator/strategy/strategy-template-registry.ts`; dream strategy-template readers | `strategy_templates` control DB table; legacy `strategy-templates.json` doctor/repair import input | typed control DB state / migration-only input | closed in Slice 5 |
-| Runtime semantic vector index | `src/platform/knowledge/vector-index.ts` | caller-provided `indexPath` JSON | typed-store migrate now | 6 |
-| Cross-goal knowledge graph | `src/platform/knowledge/knowledge-graph.ts` | caller-provided `graphPath` JSON | typed-store migrate now | 6 |
+| Runtime semantic vector index | `src/platform/knowledge/vector-index.ts` | `vector_index_entries` control DB table; legacy `memory/vector-index.json` doctor/repair import input | typed control DB state / migration-only input | closed in Slice 6 |
+| Cross-goal knowledge graph | `src/platform/knowledge/knowledge-graph.ts` | `knowledge_graph_nodes` and `knowledge_graph_edges` control DB tables; legacy `knowledge/graph.json` doctor/repair import input | typed control DB state / migration-only input | closed in Slice 6 |
 | Runtime reports, manifests, postmortems, long-running results | runtime report stores and runtime tools | report/result/manifest files | reproducibility artifact | 7 |
 | Morning/evening/weekly/dream reflection reports | `src/reflection/*` | `reflections/{morning,evening,dream}-<date>.json`; `reflections/weekly-<week>.json` | typed-store migrate now | 7 |
 | Workspace and tool-produced deliverables | filesystem tools, Kaggle tools, workspace prep/edit/write paths, code-search reads | workspace files and external task artifacts | workspace content | 7 |
@@ -168,7 +169,8 @@ Base: origin/main @ 7d87d012 Prefer live daemon status in runtime evidence answe
 - Branch: `codex/direct-file-state-slice-5-strategy-template-20260510235349`
 - PR: https://github.com/my-name-is-yu/PulSeed/pull/1862
 - Head commit at PR creation: `72f63605`
-- Current local head after latest rebase: `bbb8d9f027fbaab2e050395c1a47440d772e565e`
+- Final head commit: `e0091ba6458775fcde3623838017151152cbae65`
+- Merge commit: `f5901c7f7468ca5fcb29e8b548f66e91d4d3c29c`
 - Base after latest rebase: `origin/main @ 57128119 Address runtime evidence gate review (#1864)`
 - `nvm use 24.15.0 && npm ci`: passed
 - `npx vitest run --config vitest.unit.config.ts src/orchestrator/strategy/__tests__/strategy-template-registry.test.ts src/orchestrator/strategy/__tests__/strategy-template-state-store.test.ts src/orchestrator/strategy/__tests__/strategy-manager-core.test.ts`: passed, 71 tests
@@ -178,9 +180,47 @@ Base: origin/main @ 7d87d012 Prefer live daemon status in runtime evidence answe
 - `npm run lint:boundaries`: passed with existing warnings, 0 errors
 - `npm run build`: passed
 - `git diff --check`: passed
-- CI: earlier head `d3c269ac` had `integration (24)` pass and `unit (22)` fail in unrelated `agent-loop.test.ts`; branch rebased onto latest `origin/main`, local targeted failed test passed under Node 24.15.0, new CI pending push
-- GitHub Codex review: unavailable after `@codex review` on PR head `7a03137f862f4c3e60cd7bfe937fdac9ffec437e`
+
+## Slice 6 Review Follow-up
+
+- GitHub Codex review on PR #1868 / `59558da7a6ebe95a294500f1c57859d59cf54ad1` found that DurableLoop graph traversal opened a fresh SQLite-backed `KnowledgeGraph` per task cycle without closing the underlying DB handle.
+- Fixed by adding explicit `close()` methods to the vector and graph typed stores/facades and closing the per-cycle graph in a `finally` block.
+- CI: earlier head `d3c269ac` had `integration (24)` pass and `unit (22)` fail in unrelated `agent-loop.test.ts`; branch rebased onto latest `origin/main`, local targeted failed test passed under Node 24.15.0, final `unit (22)` success and `integration (24)` success
+- GitHub Codex review: `@codex review` needed; initial usable no-major-issues comment covered an older head, current-head review did not produce a usable review after retry
 - Fallback sub-agent review: found material blocker that doctor repair could overwrite existing typed strategy templates from stale legacy JSON; fixed by retiring legacy imports when typed state already exists and adding regression coverage
+- Final fallback sub-agent review: LGTM, no material blockers at `e0091ba6458775fcde3623838017151152cbae65`
+- Worktree cleanup: pending after Slice 6 records this merge
+- Remote branch cleanup: deleted by merge
+- Merged by this session: yes
+
+## Slice 6 Direct File Owner Plan
+
+| Owner | Current boundary | Classification | Planned guard state |
+| --- | --- | --- | --- |
+| Runtime semantic vector index | caller-provided `indexPath` JSON in `src/platform/knowledge/vector-index.ts` | typed-store migrate now or explicit rebuildable cache | inspect production knowledge caller paths; either move authoritative vector/index state to typed SQLite/Soil or make the file cache explicitly rebuildable and non-authoritative |
+| Cross-goal knowledge graph | caller-provided `graphPath` JSON in `src/platform/knowledge/knowledge-graph.ts` | typed-store migrate now or explicit rebuildable cache | inspect production knowledge graph callers; either move authoritative graph state to typed SQLite/Soil or make the file cache explicitly rebuildable and non-authoritative |
+
+## Slice 6 Direct File Owner Update
+
+| Owner | Previous boundary | Current boundary | Classification | Guard state |
+| --- | --- | --- | --- | --- |
+| Runtime semantic vector index | caller-provided `indexPath` JSON, including setup-created `memory/vector-index.json` | `vector_index_entries` in `state/pulseed-control.sqlite`; `memory/vector-index.json` is doctor/repair import input only | typed control DB state | legacy vector-index JSON remains a fail-closed guard rule; runtime `VectorIndex` no longer reads/writes the file |
+| Cross-goal knowledge graph | caller-provided `graphPath` JSON, including DurableLoop `knowledge/graph.json` traversal | `knowledge_graph_nodes` and `knowledge_graph_edges` in `state/pulseed-control.sqlite`; `knowledge/graph.json` is doctor/repair import input only | typed control DB state | legacy knowledge graph JSON remains a fail-closed guard rule; DurableLoop graph traversal uses `KnowledgeGraph.createForControlDb` |
+
+## Slice 6 Validation
+
+- Worktree: `/Users/yuyoshimuta/Documents/dev/PulSeed-worktrees/direct-file-state-slice-6-vector-knowledge-20260511003822`
+- Branch: `codex/direct-file-state-slice-6-vector-knowledge-20260511003822`
+- Base: `origin/main @ d533560f Bound knowledge graph loads (#1867)`
+- `nvm use 24.15.0 && npm ci`: passed
+- `npx vitest run --config vitest.unit.config.ts src/platform/knowledge/__tests__/vector-index.test.ts src/platform/knowledge/__tests__/knowledge-graph.test.ts src/platform/knowledge/__tests__/knowledge-vector-graph-state-migration.test.ts`: passed, 59 tests
+- `npx vitest run --config vitest.unit.config.ts src/interface/cli/__tests__/database-first-legacy-store-check.test.ts src/orchestrator/execution/__tests__/task-lifecycle-cycle-helpers.test.ts`: passed, 25 tests
+- Combined focused rerun `npx vitest run --config vitest.unit.config.ts src/platform/knowledge/__tests__/vector-index.test.ts src/platform/knowledge/__tests__/knowledge-graph.test.ts src/platform/knowledge/__tests__/knowledge-vector-graph-state-migration.test.ts src/interface/cli/__tests__/database-first-legacy-store-check.test.ts src/orchestrator/execution/__tests__/task-lifecycle-cycle-helpers.test.ts`: passed, 86 tests
+- `node scripts/check-database-first-legacy-stores.mjs --json`: ok=true, findings=0; vector-index and knowledge-graph removed from `debtReport` and `directFileDebtReport`; remaining direct-file debt is `reflection-reports`
+- `npm run typecheck`: passed
+- `npm run lint:boundaries`: passed with existing warnings, 0 errors
+- `npm run build`: passed
+- `git diff --check`: passed
 
 ## Merge Policy
 

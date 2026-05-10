@@ -309,7 +309,7 @@ describe("Persistence", () => {
     await graph.addNode("e2", "goal-B", ["tag3"]);
     await graph.addEdge({ from_id: "e1", to_id: "e2", relation: "refines", confidence: 0.85 });
 
-    // Load fresh instance from the same path
+    // Load fresh instance from the same typed control DB base directory
     const graph2 = await KnowledgeGraph.create(path.join(tempDir, "graph.json"));
     expect(graph2.nodeCount).toBe(2);
     expect(graph2.edgeCount).toBe(1);
@@ -325,7 +325,7 @@ describe("Persistence", () => {
     expect(edge.confidence).toBe(0.85);
   });
 
-  it("starts fresh when file does not exist", () => {
+  it("starts fresh when typed state does not exist", () => {
     const freshGraph = new KnowledgeGraph(
       path.join(tempDir, "nonexistent", "graph.json")
     );
@@ -333,11 +333,11 @@ describe("Persistence", () => {
     expect(freshGraph.edgeCount).toBe(0);
   });
 
-  it("creates parent directories on first save", async () => {
+  it("does not create legacy graph JSON on first save", async () => {
     const nestedPath = path.join(tempDir, "deep", "nested", "graph.json");
     const g = new KnowledgeGraph(nestedPath);
     await g.addNode("e1", "goal-A", []);
-    expect(fs.existsSync(nestedPath)).toBe(true);
+    expect(fs.existsSync(nestedPath)).toBe(false);
   });
 });
 
@@ -377,7 +377,7 @@ describe("_load via KnowledgeGraph.create", () => {
     expect(g.edgeCount).toBe(0);
   });
 
-  it("recovers from corrupt JSON — starts fresh", async () => {
+  it("does not use corrupt legacy JSON as runtime fallback", async () => {
     const filePath = path.join(tempDir, "corrupt.json");
     // Write corrupt JSON
     const { writeFileSync } = await import("node:fs");
@@ -388,22 +388,11 @@ describe("_load via KnowledgeGraph.create", () => {
     expect(g.edgeCount).toBe(0);
   });
 
-  it("handles file with null nodes/edges arrays gracefully", async () => {
+  it("ignores valid legacy JSON during normal runtime load", async () => {
     const filePath = path.join(tempDir, "null-arrays.json");
     const { writeFileSync } = await import("node:fs");
-    // nodes and edges are missing — ?? [] fallback
-    writeFileSync(filePath, JSON.stringify({}), "utf-8");
-
-    const g = await KnowledgeGraph.create(filePath);
-    expect(g.nodeCount).toBe(0);
-    expect(g.edgeCount).toBe(0);
-  });
-
-  it("starts fresh when persisted nodes fail the graph schema", async () => {
-    const filePath = path.join(tempDir, "invalid-node.json");
-    const { writeFileSync } = await import("node:fs");
     writeFileSync(filePath, JSON.stringify({
-      nodes: [{ entry_id: "", goal_id: "goal-A", tags: [], added_at: "2026-05-10T00:00:00.000Z" }],
+      nodes: [{ entry_id: "legacy", goal_id: "goal", tags: [], added_at: "2026-05-09T00:00:00.000Z" }],
       edges: [],
     }), "utf-8");
 
@@ -412,22 +401,20 @@ describe("_load via KnowledgeGraph.create", () => {
     expect(g.edgeCount).toBe(0);
   });
 
-  it("starts fresh when persisted graph JSON exceeds the load bound", async () => {
-    const filePath = path.join(tempDir, "oversized.json");
-    const { writeFileSync } = await import("node:fs");
-    writeFileSync(filePath, JSON.stringify({
-      nodes: [{
-        entry_id: "entry-1",
-        goal_id: "goal-A",
-        tags: [],
-        added_at: "2026-05-10T00:00:00.000Z",
-      }],
-      edges: [],
-      padding: "x".repeat(2 * 1024 * 1024),
-    }), "utf-8");
+  it("createForControlDb loads graph state from the production base directory store", async () => {
+    const g = await KnowledgeGraph.createForControlDb(tempDir);
+    await g.addNode("e1", "goal-A", ["tag"]);
+    await g.addNode("e2", "goal-A", []);
+    await g.addEdge({ from_id: "e1", to_id: "e2", relation: "supports", confidence: 0.9 });
 
-    const g = await KnowledgeGraph.create(filePath);
+    const loaded = await KnowledgeGraph.createForControlDb(tempDir);
+    expect(loaded.nodeCount).toBe(2);
+    expect(loaded.edgeCount).toBe(1);
+  });
+
+  it("rejects invalid typed graph nodes before persistence", async () => {
+    const g = await KnowledgeGraph.createForControlDb(tempDir);
+    await expect(g.addNode("", "goal-A", [])).rejects.toThrow();
     expect(g.nodeCount).toBe(0);
-    expect(g.edgeCount).toBe(0);
   });
 });

@@ -128,8 +128,8 @@ Current direct filesystem owner inventory:
 | DriveSystem goal activation schedule | `src/platform/drive/drive-system.ts` | `goal_drive_schedules` in `state/pulseed-control.sqlite`; legacy `schedule/<goalId>.json` is doctor/repair import input only | typed control DB state | closed in Slice 3 |
 | DriveSystem runtime event ingestion spool | `src/platform/drive/drive-system.ts`, `src/runtime/event/*`, daemon `writeEvent` callers | `events/*.json`, `events/{archive,processed,failed}/*.json` | bounded IPC/spool | closed in Slice 4 |
 | Successful strategy template reuse | `src/orchestrator/strategy/strategy-template-registry.ts`, dream activation/consolidation callers | `strategy_templates` in `state/pulseed-control.sqlite`; legacy `strategy-templates.json` is doctor/repair import input only | typed control DB state | closed in Slice 5 |
-| Runtime semantic vector index | `src/platform/knowledge/vector-index.ts` | caller-provided `indexPath` JSON | typed-store migrate now | Slice 6 |
-| Cross-goal knowledge graph | `src/platform/knowledge/knowledge-graph.ts` | caller-provided `graphPath` JSON | typed-store migrate now | Slice 6 |
+| Runtime semantic vector index | `src/platform/knowledge/vector-index.ts`, `KnowledgeManager` and strategy/learning callers | `vector_index_entries` in `state/pulseed-control.sqlite`; legacy `memory/vector-index.json` is doctor/repair import input only | typed control DB state | closed in Slice 6 |
+| Cross-goal knowledge graph | `src/platform/knowledge/knowledge-graph.ts`, DurableLoop graph traversal caller | `knowledge_graph_nodes` and `knowledge_graph_edges` in `state/pulseed-control.sqlite`; legacy `knowledge/graph.json` is doctor/repair import input only | typed control DB state | closed in Slice 6 |
 | Runtime reports, manifests, postmortems, long-running results | runtime report stores and runtime tools | report/result/manifest files | reproducibility artifact | Slice 7 |
 | Morning/evening/weekly/dream reflection reports | `src/reflection/*` | `reflections/{morning,evening,dream}-<date>.json`, `reflections/weekly-<week>.json` | typed-store migrate now | Slice 7 |
 | Workspace and tool-produced deliverables | filesystem tools, Kaggle tools, workspace prep/edit/write paths, code-search reads | workspace files and external task artifacts | workspace content | Slice 7 |
@@ -173,6 +173,24 @@ records per-template legacy import bookkeeping, and records invalid legacy
 entries as blocked sources. The direct-file guard allows this filename only in
 the explicit strategy template migration module, so reintroducing runtime JSON
 ownership in the registry or dream caller path fails the guard.
+
+### Knowledge Vector And Graph Runtime State
+
+The semantic vector index and cross-goal knowledge graph are normal runtime
+state. `VectorIndex` reads and writes `vector_index_entries` through a typed
+control DB store; `KnowledgeGraph` reads and writes `knowledge_graph_nodes` and
+`knowledge_graph_edges`. Setup, knowledge-manager callers, strategy template
+embedding callers, learning/transfer callers, and DurableLoop graph traversal
+do not read or write `memory/vector-index.json` or `knowledge/graph.json` during
+normal operation.
+
+Legacy `memory/vector-index.json` and `knowledge/graph.json` files are
+migration-only inputs reached through `doctor --repair`. Repair imports valid
+vector entries and graph nodes/edges into the typed tables, records blocked
+legacy sources when validation fails, and retires stale legacy data when typed
+state already exists. The direct-file guard allows those legacy filenames only
+inside the explicit knowledge migration modules, so reintroducing runtime JSON
+ownership in the index, graph, setup, or DurableLoop caller path fails the guard.
 
 ## Final Audit
 
@@ -240,6 +258,9 @@ debug/export artifact boundaries:
 - dream decision heuristics use a typed control DB table; legacy
   `dream/decision-heuristics.json` is an explicit `doctor --repair` import
   input only
+- semantic vector index and knowledge graph state use typed control DB tables;
+  legacy `memory/vector-index.json` and `knowledge/graph.json` are explicit
+  `doctor --repair` import inputs only
 - dream filesystem counters in operational reports are diagnostic/export
   metrics over artifacts and legacy fixtures, not authoritative runtime state
 - morning/evening/weekly/dream reflection reports are currently classified as a direct

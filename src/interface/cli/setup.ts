@@ -3,7 +3,6 @@
 // buildDeps() wires all PulSeed dependencies for CLI subcommands.
 
 import * as path from "node:path";
-import * as fsp from "node:fs/promises";
 import { getPulseedDirPath } from "../../base/utils/paths.js";
 import { resolveWorkspacePath } from "../../base/utils/workspace-path.js";
 
@@ -216,10 +215,7 @@ export async function buildDeps(
 
   let vectorIndex: VectorIndex | undefined;
   try {
-    const vectorDir = path.join(pulseedBaseDir, "memory");
-    await fsp.mkdir(vectorDir, { recursive: true });
-    const vectorIndexPath = path.join(vectorDir, "vector-index.json");
-    vectorIndex = await VectorIndex.create(vectorIndexPath, embeddingClient);
+    vectorIndex = await VectorIndex.createForControlDb(pulseedBaseDir, embeddingClient);
   } catch (err) {
     // Non-fatal: semantic search disabled if vector index init fails
     console.warn(`[pulseed] VectorIndex init failed — semantic search disabled: ${err instanceof Error ? err.message : String(err)}`);

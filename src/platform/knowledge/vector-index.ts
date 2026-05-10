@@ -1,34 +1,50 @@
-import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import type { IEmbeddingClient } from "./embedding-client.js";
 import type { EmbeddingEntry, VectorSearchResult } from "../../base/types/embedding.js";
 import { EmbeddingEntrySchema } from "../../base/types/embedding.js";
 import { cosineSimilarity } from "./embedding-client.js";
+import type { RuntimeControlDbStoreOptions } from "../../runtime/store/control-db/index.js";
+import { VectorIndexStateStore } from "./vector-index-state-store.js";
+
+export interface VectorIndexOptions extends RuntimeControlDbStoreOptions {}
 
 export class VectorIndex {
   private readonly entries: Map<string, EmbeddingEntry> = new Map();
+  private readonly stateStore: VectorIndexStateStore;
 
   constructor(
-    private readonly indexPath: string,
-    private readonly embeddingClient: IEmbeddingClient
+    legacyFilePath: string,
+    private readonly embeddingClient: IEmbeddingClient,
+    options: VectorIndexOptions = {},
   ) {
-    // Sync loading removed. Use VectorIndex.create() for async load on construction,
-    // or call _load() manually after construction.
+    const baseDir = options.controlBaseDir ?? path.dirname(legacyFilePath);
+    this.stateStore = new VectorIndexStateStore(baseDir, options);
   }
 
   /**
-   * Factory method: constructs a VectorIndex and loads existing data from disk.
+   * Factory method: constructs a VectorIndex and loads existing data from the typed store.
+   * The path argument is retained for compatibility; normal runtime does not read or write it.
    */
   static async create(
-    indexPath: string,
-    embeddingClient: IEmbeddingClient
+    legacyFilePath: string,
+    embeddingClient: IEmbeddingClient,
+    options: VectorIndexOptions = {},
   ): Promise<VectorIndex> {
-    const index = new VectorIndex(indexPath, embeddingClient);
-    const fileExisted = await index._load();
-    if (!fileExisted) {
-      // Persist empty index on first run so the file exists for next time
-      await index._save();
-    }
+    const index = new VectorIndex(legacyFilePath, embeddingClient, options);
+    await index._load();
+    return index;
+  }
+
+  static async createForControlDb(
+    baseDir: string,
+    embeddingClient: IEmbeddingClient,
+    options: VectorIndexOptions = {},
+  ): Promise<VectorIndex> {
+    const index = new VectorIndex(path.join(baseDir, "control.sqlite"), embeddingClient, {
+      ...options,
+      controlBaseDir: options.controlBaseDir ?? baseDir,
+    });
+    await index._load();
     return index;
   }
 
@@ -50,7 +66,7 @@ export class VectorIndex {
       metadata,
     });
     this.entries.set(id, entry);
-    await this._save();
+    await this.stateStore.save(entry);
     return entry;
   }
 
@@ -99,7 +115,7 @@ export class VectorIndex {
     const existed = this.entries.has(id);
     if (existed) {
       this.entries.delete(id);
-      await this._save();
+      await this.stateStore.remove(id);
     }
     return existed;
   }
@@ -163,39 +179,21 @@ export class VectorIndex {
    */
   async clear(): Promise<void> {
     this.entries.clear();
-    await this._save();
+    await this.stateStore.clear();
   }
 
-  async _load(): Promise<boolean> {
-    try {
-      await fsp.access(this.indexPath);
-    } catch {
-      return false;
-    }
-    try {
-      const raw = await fsp.readFile(this.indexPath, "utf-8");
-      const parsed = JSON.parse(raw) as unknown;
-      if (!Array.isArray(parsed)) {
-        return true;
-      }
-      for (const item of parsed) {
-        const result = EmbeddingEntrySchema.safeParse(item);
-        if (!result.success) continue;
-        this.entries.set(result.data.id, result.data);
-      }
-    } catch {
-      // Corrupt or empty file — start fresh
-    }
-    return true;
+  async close(): Promise<void> {
+    await this.stateStore.close();
   }
 
-  private async _save(): Promise<void> {
-    const dir = path.dirname(this.indexPath);
-    await fsp.mkdir(dir, { recursive: true });
-
-    const data = JSON.stringify(Array.from(this.entries.values()), null, 2);
-    const tmpPath = `${this.indexPath}.tmp`;
-    await fsp.writeFile(tmpPath, data, "utf-8");
-    await fsp.rename(tmpPath, this.indexPath);
+  async _load(): Promise<void> {
+    this.entries.clear();
+    try {
+      for (const entry of await this.stateStore.list()) {
+        this.entries.set(entry.id, entry);
+      }
+    } catch {
+      // Corrupt typed rows or unavailable store: keep semantic search disabled for this instance.
+    }
   }
 }

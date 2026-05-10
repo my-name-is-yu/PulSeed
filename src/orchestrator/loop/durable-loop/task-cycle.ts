@@ -2,7 +2,6 @@
  * Completion checks and task execution for a CoreLoop iteration.
  */
 
-import * as path from "node:path";
 import type { Goal } from "../../../base/types/goal.js";
 import type { GapVector } from "../../../base/types/gap.js";
 import type { DriveScore } from "../../../base/types/drive.js";
@@ -301,15 +300,17 @@ export async function runTaskCycleWithContext(
             typeof ctx.deps.knowledgeManager!.loadKnowledge === "function"
           ) {
             const graph = baseDir
-              ? await KnowledgeGraph.create(
-                  path.join(baseDir, "knowledge", "graph.json")
-                ).catch(() => null)
+              ? await KnowledgeGraph.createForControlDb(baseDir).catch(() => null)
               : null;
             if (graph) {
-              const allEntries = await ctx.deps.knowledgeManager!.loadKnowledge(goalId).catch(() => []);
-              const expanded = expandKnowledgeEntriesWithGraph(entries, allEntries, graph);
-              entries = mergeUniqueKnowledgeEntries(entries, expanded.relatedEntries, 10);
-              contradictionWarnings = expanded.contradictionWarnings;
+              try {
+                const allEntries = await ctx.deps.knowledgeManager!.loadKnowledge(goalId).catch(() => []);
+                const expanded = expandKnowledgeEntriesWithGraph(entries, allEntries, graph);
+                entries = mergeUniqueKnowledgeEntries(entries, expanded.relatedEntries, 10);
+                contradictionWarnings = expanded.contradictionWarnings;
+              } finally {
+                await graph.close();
+              }
             }
           }
 
