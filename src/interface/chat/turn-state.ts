@@ -16,6 +16,7 @@ export interface ActiveChatTurn {
   finished: Promise<void>;
   resolveFinished: () => void;
   recentEvents: string[];
+  runtimeEvidenceRefs: string[];
   recentFailureSignals: FailureRecoverySignal[];
   interruptRequested: boolean;
   seedyPresence?: SeedyTurnPresence;

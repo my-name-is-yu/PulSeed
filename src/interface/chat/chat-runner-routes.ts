@@ -25,6 +25,7 @@ import {
   type ChatTurnContext,
 } from "./turn-context.js";
 import { buildChatModelRequest } from "./model-request-builder.js";
+import { gateRuntimeEvidenceBoundFinalAnswer } from "./runtime-evidence-gate.js";
 import {
   createDiscordAdapterPlanDialogue,
   createTelegramConfirmWriteDialogue,
@@ -339,6 +340,24 @@ export async function executeAgentLoopRoute(
     if (hasUsage(agentLoopUsage)) {
       history.recordUsage("agentloop", agentLoopUsage);
     }
+    if (result.output && shouldGateRuntimeEvidenceForTurn(turnContext)) {
+      const gate = await gateRuntimeEvidenceBoundFinalAnswer({
+        turnContext,
+        assistantOutput: result.output,
+        hasRuntimeEvidence: host.eventBridge.hasRuntimeEvidenceForTurn(eventContext),
+        runtimeEvidenceRefs: host.eventBridge.getRuntimeEvidenceRefsForTurn(eventContext),
+        llmClient: host.getRuntimeEvidenceGateClient(),
+      });
+      if (gate.blocked) {
+        host.eventBridge.emitCheckpoint(
+          "Runtime evidence required",
+          gate.reason ?? "The final answer made an unverified runtime status claim.",
+          eventContext,
+          "runtime-evidence",
+        );
+      }
+      result.output = gate.output;
+    }
     if (result.output) {
       host.eventBridge.pushAssistantDelta(result.output, assistantBuffer, eventContext);
     }
@@ -431,17 +450,39 @@ export async function executeToolLoopRoute(
     if (diffArtifact) {
       host.eventBridge.emitDiffArtifact(diffArtifact, params.eventContext);
     }
-    await params.history.appendAssistantMessage(toolResult.output);
+    let output = toolResult.output;
+    if (shouldGateRuntimeEvidenceForTurn(params.turnContext)) {
+      const gate = await gateRuntimeEvidenceBoundFinalAnswer({
+        turnContext: params.turnContext,
+        assistantOutput: toolResult.output,
+        hasRuntimeEvidence: host.eventBridge.hasRuntimeEvidenceForTurn(params.eventContext),
+        runtimeEvidenceRefs: host.eventBridge.getRuntimeEvidenceRefsForTurn(params.eventContext),
+        llmClient: host.getRuntimeEvidenceGateClient(),
+      });
+      if (gate.blocked) {
+        host.eventBridge.emitCheckpoint(
+          "Runtime evidence required",
+          gate.reason ?? "The final answer made an unverified runtime status claim.",
+          params.eventContext,
+          "runtime-evidence",
+        );
+      }
+      output = gate.output;
+    }
+    if (!params.assistantBuffer.text) {
+      host.eventBridge.pushAssistantDelta(output, params.assistantBuffer, params.eventContext);
+    }
+    await params.history.appendAssistantMessage(output);
     host.eventBridge.emitCheckpoint("Response ready", "The tool-loop response has been persisted for this turn.", params.eventContext, "complete");
     host.eventBridge.emitActivity("lifecycle", "Finalizing response...", params.eventContext, "lifecycle:finalizing");
     host.eventBridge.emitEvent({
       type: "assistant_final",
-      text: toolResult.output,
+      text: output,
       persisted: true,
       ...host.eventBridge.eventBase(params.eventContext),
     });
     host.eventBridge.emitLifecycleEndEvent("completed", elapsed_ms, params.eventContext, true);
-    return { success: true, output: toolResult.output, elapsed_ms };
+    return { success: true, output, elapsed_ms };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     const output = await host.eventBridge.emitLifecycleErrorEventWithFallback(
@@ -611,6 +652,10 @@ export async function executeAdapterRoute(
   };
 }
 
+function shouldGateRuntimeEvidenceForTurn(turnContext: ChatTurnContext): boolean {
+  return turnContext.modelVisible.runtime.replyTarget?.surface === "gateway";
+}
+
 async function executeWithTools(
   host: ChatRunnerRouteHost,
   turnContext: ChatTurnContext,
@@ -648,7 +693,9 @@ async function executeWithTools(
     let response: LLMResponse;
     try {
       host.eventBridge.emitActivity("lifecycle", "Calling model...", eventContext, "lifecycle:model");
-      response = await sendLLMMessage(host, llmClient, modelRequest.messages, modelRequest.options, assistantBuffer, eventContext);
+      response = await sendLLMMessage(host, llmClient, modelRequest.messages, modelRequest.options, assistantBuffer, eventContext, {
+        emitAssistantDeltas: !shouldGateRuntimeEvidenceForTurn(turnContext),
+      });
     } catch (err) {
       console.error("[chat-runner] executeWithTools error:", err);
       const hint = err instanceof Error ? `: ${err.message}` : "";
@@ -1021,24 +1068,28 @@ async function sendLLMMessage(
   messages: LLMMessage[],
   options: LLMRequestOptions | undefined,
   assistantBuffer: AssistantBuffer,
-  eventContext: ChatEventContext
+  eventContext: ChatEventContext,
+  behavior: { emitAssistantDeltas?: boolean } = {},
 ): Promise<LLMResponse> {
+  const emitAssistantDeltas = behavior.emitAssistantDeltas ?? true;
   let streamed = false;
   if (llmClient.sendMessageStream) {
     const response = await llmClient.sendMessageStream(messages, options, {
       onTextDelta: (delta) => {
         streamed = true;
-        host.eventBridge.pushAssistantDelta(delta, assistantBuffer, eventContext);
+        if (emitAssistantDeltas) {
+          host.eventBridge.pushAssistantDelta(delta, assistantBuffer, eventContext);
+        }
       },
     });
-    if (!streamed && response.content) {
+    if (emitAssistantDeltas && !streamed && response.content) {
       host.eventBridge.pushAssistantDelta(response.content, assistantBuffer, eventContext);
     }
     return response;
   }
 
   const response = await llmClient.sendMessage(messages, options);
-  if (response.content) {
+  if (emitAssistantDeltas && response.content) {
     host.eventBridge.pushAssistantDelta(response.content, assistantBuffer, eventContext);
   }
   return response;

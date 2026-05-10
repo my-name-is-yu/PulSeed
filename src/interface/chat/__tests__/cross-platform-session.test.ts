@@ -66,10 +66,18 @@ function makeMockStateManager(): StateManager {
   } as unknown as StateManager;
 }
 
+function makeAllowRuntimeEvidenceGateClient() {
+  return createMockLLMClient(Array.from({ length: 100 }, () => JSON.stringify({
+    verdict: "allow",
+    reason: "Test fixture allows non-runtime-status assertions.",
+  })));
+}
+
 function makeDeps(overrides: Partial<ChatRunnerDeps> = {}): ChatRunnerDeps {
   return {
     stateManager: makeMockStateManager(),
     adapter: makeMockAdapter(),
+    runtimeEvidenceGateClient: makeAllowRuntimeEvidenceGateClient(),
     ...overrides,
   };
 }
@@ -452,6 +460,220 @@ describe("CrossPlatformChatSessionManager", () => {
     expect(events.some((event) => event.type === "assistant_delta")).toBe(true);
     expect(events.some((event) => event.type === "assistant_final")).toBe(true);
     expect(events.at(-1)?.type).toBe("lifecycle_end");
+  });
+
+  it("blocks runtime status claims from gateway agent-loop turns without tool evidence", async () => {
+    const stateManager = makeMockStateManager();
+    const events: ChatEvent[] = [];
+    const chatAgentLoopRunner = {
+      execute: vi.fn().mockResolvedValue({
+        success: true,
+        output: "I ran `pulseed daemon status`; it succeeded, and the daemon is stopped.",
+        error: null,
+        exit_code: null,
+        elapsed_ms: 42,
+        stopped_reason: "completed",
+      }),
+    };
+    const runtimeEvidenceGateClient = createMockLLMClient([
+      JSON.stringify({
+        verdict: "requires_evidence",
+        reason: "The answer claims a current daemon status check succeeded.",
+      }),
+    ]);
+    const manager = new CrossPlatformChatSessionManager(makeDeps({
+      stateManager,
+      chatAgentLoopRunner: chatAgentLoopRunner as never,
+      runtimeEvidenceGateClient,
+    }));
+
+    const result = await manager.execute("35秒待ってから pulseed daemon status を確認して", {
+      identity_key: "runtime-status-user",
+      platform: "telegram",
+      conversation_id: "telegram-chat-1",
+      user_id: "user-1",
+      cwd: "/repo",
+      onEvent: (event) => { events.push(event); },
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.output).toContain("I can't verify the current PulSeed runtime status");
+    expect(result.output).not.toContain("daemon is stopped");
+    expect(result.output).not.toContain("it succeeded");
+    expect(events.filter((event) => event.type === "tool_start" || event.type === "tool_end")).toHaveLength(0);
+    expect(events.some((event) =>
+      event.type === "activity"
+      && event.sourceId === "checkpoint:runtime-evidence"
+    )).toBe(true);
+    const final = events.find((event): event is Extract<ChatEvent, { type: "assistant_final" }> =>
+      event.type === "assistant_final"
+    );
+    expect(final?.text).toBe(result.output);
+  });
+
+  it("allows runtime status answers when the same gateway turn produced tool evidence", async () => {
+    const stateManager = makeMockStateManager();
+    const events: ChatEvent[] = [];
+    const now = "2026-05-10T00:00:00.000Z";
+    const chatAgentLoopRunner = {
+      execute: vi.fn().mockImplementation(async (input: { eventSink?: { emit(event: unknown): Promise<void> } }) => {
+        await input.eventSink?.emit({
+          type: "tool_call_started",
+          eventId: "event-tool-start",
+          sessionId: "session-1",
+          traceId: "trace-1",
+          turnId: "turn-1",
+          goalId: "goal-1",
+          createdAt: now,
+          callId: "call-1",
+          toolName: "runtime_status",
+          inputPreview: "{}",
+        });
+        await input.eventSink?.emit({
+          type: "tool_call_finished",
+          eventId: "event-tool-end",
+          sessionId: "session-1",
+          traceId: "trace-1",
+          turnId: "turn-1",
+          goalId: "goal-1",
+          createdAt: now,
+          callId: "call-1",
+          toolName: "runtime_status",
+          success: true,
+          outputPreview: "daemon: idle",
+          durationMs: 5,
+        });
+        return {
+          success: true,
+          output: "The runtime status tool reported daemon: idle.",
+          error: null,
+          exit_code: null,
+          elapsed_ms: 42,
+          stopped_reason: "completed",
+        };
+      }),
+    };
+    const runtimeEvidenceGateClient = createMockLLMClient([
+      JSON.stringify({
+        verdict: "allow",
+        reason: "The runtime status tool evidence supports the answer.",
+      }),
+    ]);
+    const manager = new CrossPlatformChatSessionManager(makeDeps({
+      stateManager,
+      chatAgentLoopRunner: chatAgentLoopRunner as never,
+      runtimeEvidenceGateClient,
+    }));
+
+    const result = await manager.execute("PulSeed runtime status を確認して", {
+      identity_key: "runtime-status-user-with-evidence",
+      platform: "telegram",
+      conversation_id: "telegram-chat-1",
+      user_id: "user-1",
+      cwd: "/repo",
+      onEvent: (event) => { events.push(event); },
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.output).toBe("The runtime status tool reported daemon: idle.");
+    expect(events.some((event) => event.type === "tool_start")).toBe(true);
+    expect(events.some((event) => event.type === "tool_end")).toBe(true);
+    expect(events.some((event) =>
+      event.type === "activity"
+      && event.sourceId === "checkpoint:runtime-evidence"
+    )).toBe(false);
+  });
+
+  it("does not let unrelated failed tool evidence bypass runtime status gating", async () => {
+    const stateManager = makeMockStateManager();
+    const events: ChatEvent[] = [];
+    const now = "2026-05-10T00:00:00.000Z";
+    const chatAgentLoopRunner = {
+      execute: vi.fn().mockImplementation(async (input: { eventSink?: { emit(event: unknown): Promise<void> } }) => {
+        await input.eventSink?.emit({
+          type: "tool_call_finished",
+          eventId: "event-tool-end",
+          sessionId: "session-1",
+          traceId: "trace-1",
+          turnId: "turn-1",
+          goalId: "goal-1",
+          createdAt: now,
+          callId: "call-1",
+          toolName: "read_file",
+          success: false,
+          outputPreview: "file missing",
+          durationMs: 5,
+        });
+        return {
+          success: true,
+          output: "I ran `pulseed daemon status`; it succeeded, and the daemon is running.",
+          error: null,
+          exit_code: null,
+          elapsed_ms: 42,
+          stopped_reason: "completed",
+        };
+      }),
+    };
+    const runtimeEvidenceGateClient = createMockLLMClient([
+      JSON.stringify({
+        verdict: "requires_evidence",
+        reason: "The only evidence is an unrelated failed read_file tool.",
+      }),
+    ]);
+    const manager = new CrossPlatformChatSessionManager(makeDeps({
+      stateManager,
+      chatAgentLoopRunner: chatAgentLoopRunner as never,
+      runtimeEvidenceGateClient,
+    }));
+
+    const result = await manager.execute("PulSeed daemon status を確認して", {
+      identity_key: "runtime-status-user-unrelated-evidence",
+      platform: "telegram",
+      conversation_id: "telegram-chat-1",
+      user_id: "user-1",
+      cwd: "/repo",
+      onEvent: (event) => { events.push(event); },
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.output).toContain("I can't verify the current PulSeed runtime status");
+    expect(result.output).not.toContain("daemon is running");
+    expect(events.some((event) => event.type === "tool_end")).toBe(true);
+    expect(events.some((event) =>
+      event.type === "activity"
+      && event.sourceId === "checkpoint:runtime-evidence"
+    )).toBe(true);
+  });
+
+  it("fails closed when the runtime evidence classifier cannot return a decision", async () => {
+    const stateManager = makeMockStateManager();
+    const chatAgentLoopRunner = {
+      execute: vi.fn().mockResolvedValue({
+        success: true,
+        output: "The daemon status check succeeded, and the daemon is running.",
+        error: null,
+        exit_code: null,
+        elapsed_ms: 42,
+        stopped_reason: "completed",
+      }),
+    };
+    const manager = new CrossPlatformChatSessionManager(makeDeps({
+      stateManager,
+      chatAgentLoopRunner: chatAgentLoopRunner as never,
+      runtimeEvidenceGateClient: createMockLLMClient([]),
+    }));
+
+    const result = await manager.execute("PulSeed daemon status を確認して", {
+      identity_key: "runtime-status-user-classifier-failure",
+      platform: "telegram",
+      conversation_id: "telegram-chat-1",
+      user_id: "user-1",
+      cwd: "/repo",
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.output).toContain("I can't verify the current PulSeed runtime status");
+    expect(result.output).not.toContain("daemon is running");
   });
 
   it("emits Seedy presence before gateway route classification work", async () => {
