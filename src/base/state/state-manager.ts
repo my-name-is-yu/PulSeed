@@ -80,6 +80,11 @@ function isKnowledgeTransferRawPath(relativePath: string): boolean {
     || (parts.length === 2 && parts[0] === "meta-patterns" && parts[1] === "last_aggregated_at.json");
 }
 
+function isCapabilityDependenciesRawPath(relativePath: string): boolean {
+  const parts = normalizeRawStatePath(relativePath);
+  return parts.length === 1 && parts[0] === "capability_dependencies.json";
+}
+
 function isTransferTrustRawPath(relativePath: string): boolean {
   const parts = normalizeRawStatePath(relativePath);
   return (parts.length === 2 && parts[0] === "transfer-trust" && parts[1] === "_index.json")
@@ -802,6 +807,12 @@ export class StateManager {
         return routed.value;
       }
     }
+    if (isCapabilityDependenciesRawPath(relativePath)) {
+      const routed = await (await this.capabilityRegistryStateStore()).readRawPath(relativePath);
+      if (routed.handled) {
+        return routed.value;
+      }
+    }
     if (isTransferTrustRawPath(relativePath)) {
       const routed = await (await this.transferTrustStateStore()).readRawPath(relativePath);
       if (routed.handled) {
@@ -862,6 +873,12 @@ export class StateManager {
     }
     if (isKnowledgeTransferRawPath(relativePath)) {
       const routedStore = await this.knowledgeTransferStateStore();
+      if (await routedStore.writeRawPath(relativePath, data)) {
+        return;
+      }
+    }
+    if (isCapabilityDependenciesRawPath(relativePath)) {
+      const routedStore = await this.capabilityRegistryStateStore();
       if (await routedStore.writeRawPath(relativePath, data)) {
         return;
       }

@@ -2,10 +2,13 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { cleanupTempDir, makeTempDir } from "../../../../tests/helpers/temp-dir.js";
-import type { Capability, CapabilityRegistry } from "../../../base/types/capability.js";
+import type { Capability, CapabilityDependency, CapabilityRegistry } from "../../../base/types/capability.js";
 import { openControlDatabase } from "../control-db/index.js";
 import { CapabilityRegistryStateStore } from "../capability-registry-state-store.js";
-import { importLegacyCapabilityRegistryState } from "../capability-registry-state-migration.js";
+import {
+  importLegacyCapabilityDependencyState,
+  importLegacyCapabilityRegistryState,
+} from "../capability-registry-state-migration.js";
 
 function makeCapability(overrides: Partial<Capability> = {}): Capability {
   return {
@@ -23,6 +26,10 @@ function makeRegistry(capabilities: Capability[]): CapabilityRegistry {
     capabilities,
     last_checked: "2026-05-10T00:00:00.000Z",
   };
+}
+
+function makeDependency(capabilityId: string, dependsOn: string[]): CapabilityDependency {
+  return { capability_id: capabilityId, depends_on: dependsOn };
 }
 
 describe("CapabilityRegistryStateStore", () => {
@@ -91,5 +98,86 @@ describe("CapabilityRegistryStateStore", () => {
     } finally {
       database.close();
     }
+  });
+
+  it("stores capability dependencies in the control DB without legacy JSON", async () => {
+    const baseDir = tempHome("pulseed-capability-dependency-store-");
+    const store = new CapabilityRegistryStateStore(baseDir);
+    const dependencies = [
+      makeDependency("cap-submit", ["cap-login", "cap-dataset"]),
+      makeDependency("cap-report", []),
+    ];
+
+    await store.saveDependencies(dependencies);
+
+    await expect(store.loadDependencies()).resolves.toEqual(dependencies);
+    await expect(store.hasDependencies()).resolves.toBe(true);
+    expect(fs.existsSync(path.join(baseDir, "capability_dependencies.json"))).toBe(false);
+  });
+
+  it("tracks an intentionally empty dependency map as typed state", async () => {
+    const baseDir = tempHome("pulseed-capability-dependency-empty-");
+    const store = new CapabilityRegistryStateStore(baseDir);
+
+    await store.saveDependencies([]);
+
+    await expect(store.loadDependencies()).resolves.toEqual([]);
+    await expect(store.hasDependencies()).resolves.toBe(true);
+  });
+
+  it("imports legacy capability_dependencies.json only through explicit repair input", async () => {
+    const baseDir = tempHome("pulseed-capability-dependency-import-");
+    fs.writeFileSync(path.join(baseDir, "capability_dependencies.json"), JSON.stringify([
+      makeDependency("cap-imported", ["cap-prereq"]),
+    ]));
+
+    const report = await importLegacyCapabilityDependencyState(baseDir);
+    expect(report).toEqual({
+      dependencyFiles: 1,
+      dependencies: 1,
+      skippedAlreadyImported: 0,
+      retiredExistingTypedState: 0,
+      blockedSources: [],
+    });
+
+    const store = new CapabilityRegistryStateStore(baseDir);
+    await expect(store.loadDependencies()).resolves.toEqual([
+      makeDependency("cap-imported", ["cap-prereq"]),
+    ]);
+
+    const database = await openControlDatabase({ baseDir });
+    try {
+      expect(database.listLegacyImports()).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          source_kind: "capability_dependency_state",
+          source_id: "current",
+          migration_name: "capability-dependency-state",
+          status: "imported",
+          details: expect.objectContaining({ dependency_count: 1 }),
+        }),
+      ]));
+    } finally {
+      database.close();
+    }
+  });
+
+  it("retires legacy dependency input when typed dependency state already exists", async () => {
+    const baseDir = tempHome("pulseed-capability-dependency-retire-");
+    const store = new CapabilityRegistryStateStore(baseDir);
+    await store.saveDependencies([]);
+    fs.writeFileSync(path.join(baseDir, "capability_dependencies.json"), JSON.stringify([
+      makeDependency("legacy-capability", ["legacy-prereq"]),
+    ]));
+
+    const report = await importLegacyCapabilityDependencyState(baseDir);
+    expect(report).toMatchObject({
+      dependencyFiles: 0,
+      dependencies: 0,
+      skippedAlreadyImported: 0,
+      retiredExistingTypedState: 1,
+      blockedSources: [],
+    });
+
+    await expect(store.loadDependencies()).resolves.toEqual([]);
   });
 });

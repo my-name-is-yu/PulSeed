@@ -163,6 +163,7 @@ describe("addDependency / getDependencies", () => {
   it("stores and retrieves a dependency entry", async () => {
     await detector.addDependency("cap-A", ["cap-B", "cap-C"]);
     expect(await detector.getDependencies("cap-A")).toEqual(["cap-B", "cap-C"]);
+    expect(fs.existsSync(path.join(tempDir, "capability_dependencies.json"))).toBe(false);
   });
 
   it("replaces an existing entry when called again with the same capabilityId", async () => {
@@ -180,6 +181,14 @@ describe("addDependency / getDependencies", () => {
       reportingEngine
     );
     expect(await detector2.getDependencies("cap-X")).toEqual(["cap-Y"]);
+  });
+
+  it("ignores stale legacy dependency files on the normal detector caller path", async () => {
+    fs.writeFileSync(path.join(tempDir, "capability_dependencies.json"), JSON.stringify([
+      makeDep("cap-stale", ["cap-old"]),
+    ]));
+
+    expect(await detector.getDependencies("cap-stale")).toEqual([]);
   });
 
   it("stores multiple independent entries", async () => {
@@ -201,6 +210,16 @@ describe("getAcquisitionOrder", () => {
     const gaps = [makeGap("tool-A"), makeGap("tool-B"), makeGap("tool-C")];
     const result = await detector.getAcquisitionOrder(gaps);
     expect(result.map((g) => g.missing_capability.name)).toEqual(["tool-A", "tool-B", "tool-C"]);
+  });
+
+  it("does not let stale legacy dependency files reorder acquisition gaps", async () => {
+    fs.writeFileSync(path.join(tempDir, "capability_dependencies.json"), JSON.stringify([
+      makeDep("tool-B", ["tool-A"]),
+    ]));
+
+    const gaps = [makeGap("tool-B"), makeGap("tool-A")];
+    const result = await detector.getAcquisitionOrder(gaps);
+    expect(result.map((g) => g.missing_capability.name)).toEqual(["tool-B", "tool-A"]);
   });
 
   it("reorders gaps so dependency comes before dependent", async () => {

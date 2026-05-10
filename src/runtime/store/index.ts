@@ -340,12 +340,20 @@ export {
   CapabilityVerificationStore,
 } from "./capability-verification-store.js";
 export {
+  CAPABILITY_DEPENDENCIES_PATH,
   CapabilityRegistryStateStore,
+  isCapabilityDependenciesRawPath,
+} from "./capability-registry-state-store.js";
+export type {
+  CapabilityDependencyRawStateStoreResult,
+  CapabilityDependencyStateStorePort,
 } from "./capability-registry-state-store.js";
 export {
+  importLegacyCapabilityDependencyState,
   importLegacyCapabilityRegistryState,
 } from "./capability-registry-state-migration.js";
 export type {
+  CapabilityDependencyLegacyImportReport,
   CapabilityRegistryLegacyImportReport,
 } from "./capability-registry-state-migration.js";
 export {

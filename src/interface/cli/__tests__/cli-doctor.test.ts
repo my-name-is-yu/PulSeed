@@ -48,6 +48,7 @@ import {
 } from "../commands/doctor.js";
 import {
   CONTROL_DB_SCHEMA_VERSION,
+  CapabilityRegistryStateStore,
   DaemonStateStore,
   ExecutionSessionStateStore,
   GoalOrchestrationStateStore,
@@ -1689,6 +1690,47 @@ describe("cmdDoctor summary counts", () => {
           source_kind: "transfer_trust_score",
           source_id: "doctor::transfer",
           migration_name: "transfer-trust-runtime-state",
+          status: "imported",
+        }),
+      ]));
+    } finally {
+      database.close();
+    }
+  });
+
+  it("imports legacy capability dependency state through doctor repair", async () => {
+    const origHome = process.env["PULSEED_HOME"];
+    process.env["PULSEED_HOME"] = tmpDir;
+    fs.writeFileSync(path.join(tmpDir, "capability_dependencies.json"), JSON.stringify([
+      { capability_id: "doctor-capability", depends_on: ["doctor-prereq"] },
+    ]));
+
+    try {
+      const exitCode = await cmdDoctor(["--repair"]);
+      expect([0, 1]).toContain(exitCode);
+    } finally {
+      if (origHome !== undefined) {
+        process.env["PULSEED_HOME"] = origHome;
+      } else {
+        delete process.env["PULSEED_HOME"];
+      }
+    }
+
+    const store = new CapabilityRegistryStateStore(tmpDir);
+    await expect(store.loadDependencies()).resolves.toEqual([
+      { capability_id: "doctor-capability", depends_on: ["doctor-prereq"] },
+    ]);
+
+    const allOutput = consoleSpy.mock.calls.map((c: unknown[]) => c[0] as string).join("\n");
+    expect(allOutput).toContain("Repair capability dependency import: files=1, dependencies=1, skipped already imported=0, retired existing typed state=0");
+
+    const database = await openControlDatabase({ baseDir: tmpDir });
+    try {
+      expect(database.listLegacyImports()).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          source_kind: "capability_dependency_state",
+          source_id: "current",
+          migration_name: "capability-dependency-state",
           status: "imported",
         }),
       ]));
