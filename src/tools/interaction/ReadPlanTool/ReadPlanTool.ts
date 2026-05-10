@@ -1,8 +1,8 @@
 import { z } from "zod";
-import fs from "node:fs/promises";
 import path from "node:path";
+import { isTextFileSizeLimitError, readTextFileWithinLimit } from "../../../base/utils/json-io.js";
 import type { ITool, ToolResult, ToolCallContext, PermissionCheckResult, ToolMetadata, ToolDescriptionContext } from "../../types.js";
-import { PLAN_ID_RE, decisionsDir } from "../plan-utils.js";
+import { PLAN_FILE_MAX_BYTES, PLAN_ID_RE, decisionsDir } from "../plan-utils.js";
 import { DESCRIPTION } from "./prompt.js";
 import { TAGS, CATEGORY as _CATEGORY, READ_ONLY, PERMISSION_LEVEL } from "./constants.js";
 
@@ -36,8 +36,17 @@ export class ReadPlanTool implements ITool<ReadPlanInput, unknown> {
       const filePath = path.join(decisionsDir(), `${input.plan_id}.md`);
       let content: string;
       try {
-        content = await fs.readFile(filePath, "utf8");
-      } catch {
+        content = await readTextFileWithinLimit(filePath, { maxBytes: PLAN_FILE_MAX_BYTES });
+      } catch (err) {
+        if (isTextFileSizeLimitError(err)) {
+          return {
+            success: false,
+            data: null,
+            summary: `Plan too large: ${input.plan_id}`,
+            error: `Plan ${input.plan_id} exceeds the read limit; limit is ${PLAN_FILE_MAX_BYTES} bytes`,
+            durationMs: Date.now() - startTime,
+          };
+        }
         return {
           success: false,
           data: null,
