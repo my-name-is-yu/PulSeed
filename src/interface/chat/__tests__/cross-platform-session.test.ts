@@ -510,6 +510,57 @@ describe("CrossPlatformChatSessionManager", () => {
     expect((events[finalIndex] as Extract<ChatEvent, { type: "assistant_final" }>).text).toBe("First sentence. Second sentence.");
   });
 
+  it("streams a Japanese no-tool gateway assist turn through the production caller path", async () => {
+    const stateManager = makeMockStateManager();
+    const events: ChatEvent[] = [];
+    const llmClient = {
+      sendMessage: vi.fn().mockImplementation(async (_messages, options?: { system?: string }) => {
+        const isRecoveryClassification = options?.system?.includes("recover or resume prior chat work");
+        return {
+          content: isRecoveryClassification
+            ? JSON.stringify({ kind: "none", confidence: 0.99, rationale: "casual greeting" })
+            : JSON.stringify({ kind: "assist", confidence: 0.96, rationale: "casual greeting" }),
+          usage: { input_tokens: 1, output_tokens: 1 },
+          stop_reason: "end_turn",
+        };
+      }),
+      sendMessageStream: vi.fn().mockImplementation(async (_messages, _options, handlers) => {
+        handlers.onTextDelta?.("やあ。");
+        handlers.onTextDelta?.("元気です。");
+        return {
+          content: "やあ。元気です。",
+          usage: { input_tokens: 1, output_tokens: 2 },
+          stop_reason: "end_turn",
+        };
+      }),
+      parseJSON: vi.fn((content: string, schema: { parse(value: unknown): unknown }) => schema.parse(JSON.parse(content))),
+    };
+    const manager = new CrossPlatformChatSessionManager(makeDeps({
+      stateManager,
+      llmClient: llmClient as never,
+    }));
+
+    const result = await manager.execute("やあ！", {
+      identity_key: "ja-stream-gateway-user",
+      platform: "telegram",
+      conversation_id: "telegram-chat-1",
+      user_id: "user-1",
+      cwd: "/repo",
+      onEvent: (event) => { events.push(event); },
+    });
+
+    const deltaEvents = events.filter((event): event is Extract<ChatEvent, { type: "assistant_delta" }> =>
+      event.type === "assistant_delta"
+    );
+    const final = events.find((event): event is Extract<ChatEvent, { type: "assistant_final" }> =>
+      event.type === "assistant_final"
+    );
+
+    expect(result.success).toBe(true);
+    expect(deltaEvents.map((event) => event.delta)).toEqual(["やあ。", "元気です。"]);
+    expect(final?.text).toBe("やあ。元気です。");
+  });
+
   it("streams native agent-loop final text only after the runtime evidence gate allows it", async () => {
     const stateManager = makeMockStateManager();
     const events: ChatEvent[] = [];
