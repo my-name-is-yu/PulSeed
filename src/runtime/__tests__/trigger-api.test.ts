@@ -3,6 +3,7 @@ import * as http from "node:http";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { EventServer } from "../event-server.js";
+import { TRIGGER_MAPPINGS_MAX_BYTES } from "../trigger-mappings-json.js";
 import type { PulSeedEvent } from "../../base/types/drive.js";
 import { StateManager } from "../../base/state/state-manager.js";
 import { makeTempDir } from "../../../tests/helpers/temp-dir.js";
@@ -337,5 +338,35 @@ describe("trigger mapping file loading", () => {
     expect(res.status).toBe(200);
     const parsed = JSON.parse(res.body) as Record<string, unknown>;
     expect(parsed["status"]).toBe("no_mapping");
+  });
+
+  it("returns no_mapping when mappings file is oversized", async () => {
+    fs.writeFileSync(
+      path.join(tmpDir, "trigger-mappings.json"),
+      JSON.stringify({
+        mappings: [
+          {
+            source: "slack",
+            event_type: "mention",
+            action: "observe",
+            goal_id: "goal-oversized",
+            padding: "x".repeat(TRIGGER_MAPPINGS_MAX_BYTES),
+          },
+        ],
+      }),
+      "utf-8"
+    );
+    server.invalidateTriggerMappingsCache();
+
+    const res = await makeRequest(port, "POST", "/triggers", {
+      source: "slack",
+      event_type: "mention",
+      data: {},
+    });
+
+    expect(res.status).toBe(200);
+    const parsed = JSON.parse(res.body) as Record<string, unknown>;
+    expect(parsed["status"]).toBe("no_mapping");
+    expect(mockDriveSystem.writeEvent).not.toHaveBeenCalled();
   });
 });
