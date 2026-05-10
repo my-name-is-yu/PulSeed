@@ -1368,6 +1368,32 @@ describe("cmdDaemonStatus", () => {
     expect(output).toContain("Runtime:       durable auto-recovery");
   });
 
+  it("falls back before parsing oversized daemon.json config", async () => {
+    const state = {
+      pid: 999999999,
+      started_at: "2026-01-01T00:00:00.000Z",
+      last_loop_at: null,
+      loop_count: 0,
+      active_goals: [],
+      status: "stopped",
+      crash_count: 0,
+      last_error: null,
+    };
+    await saveDaemonStateFixture(tmpDir, state);
+    fs.writeFileSync(path.join(tmpDir, "daemon.json"), `{ "padding": "${"x".repeat(1024 * 1024)}" }`);
+    fs.writeFileSync(
+      path.join(tmpDir, "daemon-config.json"),
+      JSON.stringify({ iterations_per_cycle: 4, runtime_journal_v2: true })
+    );
+
+    await cmdDaemonStatus([]);
+
+    const output = consoleSpy.mock.calls[0]?.[0] as string;
+    expect(output).toContain("bounded (4 iterations max)");
+    expect(output).toContain("4 iterations max");
+    expect(output).toContain("Runtime:       durable auto-recovery");
+  });
+
   it("shows last cycle relative time when last_loop_at is present", async () => {
     const lastLoop = new Date(Date.now() - 3 * 60 * 1000).toISOString(); // 3 minutes ago
     const state = {

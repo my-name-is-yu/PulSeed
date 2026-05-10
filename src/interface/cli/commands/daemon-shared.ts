@@ -1,7 +1,7 @@
-import * as fs from "node:fs";
 import * as path from "node:path";
 import { DaemonConfigSchema } from "../../../base/types/daemon.js";
 import type { DaemonConfig } from "../../../base/types/daemon.js";
+import { readDaemonConfigJsonFileSync } from "../../../runtime/daemon/config-json.js";
 import type { PIDManager } from "../../../runtime/pid-manager.js";
 import {
   compactRuntimeHealthKpi,
@@ -45,18 +45,17 @@ export async function loadDaemonConfig(baseDir: string): Promise<DaemonConfig> {
   const legacyConfigPath = path.join(baseDir, "daemon-config.json");
 
   function readDaemonConfigFile(filePath: string): DaemonConfig | null {
-    if (!fs.existsSync(filePath)) {
-      return null;
-    }
-
     try {
-      const raw = JSON.parse(fs.readFileSync(filePath, "utf-8")) as unknown;
+      const raw = readDaemonConfigJsonFileSync(filePath);
       const configParsed = DaemonConfigSchema.safeParse(raw);
       if (configParsed.success) {
         return configParsed.data;
       }
       getCliLogger().warn(`Ignoring invalid daemon config at ${filePath}; using defaults.`);
     } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+        return null;
+      }
       getCliLogger().warn(
         `Ignoring invalid daemon config at ${filePath}; using defaults. ${err instanceof Error ? err.message : String(err)}`
       );
