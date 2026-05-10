@@ -97,13 +97,21 @@ workspace, user-content, and Soil import/publish boundaries are not debt.
 runtime owners must either move to a typed store or be added to `debtReport`
 with a precise owner, category, and follow-up slice.
 
+The guard also treats normal-code `StateManager.readRaw` / `StateManager.writeRaw`
+calls as raw fallback boundary usage. Existing callers must be classified as one
+of the categories above. `migrate now` raw callers appear in `debtReport` only
+while matching code remains, and allowed config/report/export callers remain
+visible in `allowlistReport` without being counted as debt.
+
 ## Final Audit
 
 Remaining known non-database file surfaces are intentionally allowlisted in the
 guard so the repository can prevent new ad hoc stores while preserving an
-explicit final audit list. The current final `debtReport` is empty; the
-remaining `allowlistReport` entries are migration inputs, config/user content,
-debug/export outputs, workspace artifacts, or Soil import/publish artifacts:
+explicit final audit list. A completed closure pass should leave `debtReport`
+empty; while a refactor is active, `migrate now` entries identify the next typed
+store slices. The remaining non-debt `allowlistReport` entries are migration
+inputs, config/user content, debug/export outputs, workspace artifacts, or Soil
+import/publish artifacts:
 
 - `src/base/state/legacy-state-wal.ts` and
   `src/base/state/legacy-state-manager-wal-recovery.ts`: explicit legacy goal
@@ -162,6 +170,13 @@ debug/export outputs, workspace artifacts, or Soil import/publish artifacts:
   metrics over artifacts and legacy fixtures, not authoritative runtime state
 - Soil import overlay queue and publish state, which are import/publish artifact
   surfaces rather than normal runtime owners
+- current raw fallback migration follow-up surfaces: goal negotiation logs and
+  dependency graph state, stall detector state, learning runtime state,
+  knowledge transfer snapshot/meta-pattern state, transfer trust state,
+  capability dependency state, and task grounding raw task reads. Each is tracked
+  by `scripts/check-database-first-legacy-stores.mjs --json` as `migrate now`
+  debt until its typed store/API slice lands. Character config, MCP server
+  config, and generated reports are explicitly classified non-debt boundaries.
 
 Future durable internal state must add a typed store API and schema migration.
 Adding a new JSON/JSONL sidecar requires documenting why it is config,
