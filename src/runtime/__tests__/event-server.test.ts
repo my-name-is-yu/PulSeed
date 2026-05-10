@@ -514,6 +514,18 @@ describe("daemon HTTP auth guard", () => {
     expect(tokenFile.port).toBe(port);
   });
 
+  it("does not unlink oversized daemon token files during shutdown", async () => {
+    const tokenPath = path.join(tmpDir, "daemon-token.json");
+    fs.writeFileSync(tokenPath, JSON.stringify({
+      token: server.getAuthToken(),
+      padding: "x".repeat(20 * 1024),
+    }), "utf-8");
+
+    await server.stop();
+
+    expect(fs.existsSync(tokenPath)).toBe(true);
+  });
+
   it("keeps /health available without auth", async () => {
     const result = await makeRequest(port, "GET", "/health", undefined, null);
     expect(result.status).toBe(200);
