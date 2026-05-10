@@ -1,9 +1,20 @@
 import * as path from "node:path";
+import { createHash } from "node:crypto";
+import { z } from "zod";
 import type { TriggerEvent, TriggerMapping } from "../base/types/trigger.js";
 import type { ILLMClient } from "../base/llm/llm-client.js";
 import { readTriggerMappingsConfig } from "./trigger-mappings-json.js";
 
 export type TriggerAction = "observe" | "create_task" | "notify" | "wake" | "none";
+
+const MAX_LLM_CACHE_ENTRIES = 100;
+
+const LlmTriggerResolutionSchema = z.object({
+  goal_id: z.string().min(1),
+  action: z.enum(["observe", "create_task", "notify", "wake"]),
+}).strict();
+
+type LlmTriggerResolution = z.infer<typeof LlmTriggerResolutionSchema>;
 
 export interface ResolveResult {
   action: TriggerAction;
@@ -19,7 +30,7 @@ export interface GoalSummary {
 
 export class TriggerMapper {
   private mappings: TriggerMapping[] = [];
-  private llmCache: Map<string, { goal_id: string; action: string }> = new Map();
+  private llmCache: Map<string, LlmTriggerResolution> = new Map();
 
   constructor(
     private baseDir: string,
@@ -68,7 +79,7 @@ export class TriggerMapper {
       const goals = goalSummaries.map((g) => ({ id: g.id, title: g.title }));
       const llmResult = await this.llmResolve(trigger, goals);
       if (llmResult) {
-        const action = (llmResult.action as TriggerAction) ?? "observe";
+        const action = llmResult.action;
         return { action, goal_id: llmResult.goal_id, source: "llm" };
       }
     }
@@ -80,31 +91,55 @@ export class TriggerMapper {
   private async llmResolve(
     trigger: TriggerEvent,
     goals: Array<{ id: string; title: string }>,
-  ): Promise<{ goal_id: string; action: string } | null> {
-    const cacheKey = `${trigger.source}:${trigger.event_type}`;
+  ): Promise<LlmTriggerResolution | null> {
+    const goalIds = new Set(goals.map((goal) => goal.id));
+    if (goalIds.size === 0) return null;
+
+    const cacheKey = buildLlmCacheKey(trigger, goals);
     const cached = this.llmCache.get(cacheKey);
-    if (cached) return cached;
+    if (cached) {
+      if (goalIds.has(cached.goal_id)) {
+        this.llmCache.delete(cacheKey);
+        this.llmCache.set(cacheKey, cached);
+        return cached;
+      }
+      this.llmCache.delete(cacheKey);
+    }
 
     try {
       const goalList = goals.map((g) => `- ${g.id}: ${g.title}`).join("\n");
-      const prompt = `Given event ${trigger.source}/${trigger.event_type} with data ${JSON.stringify(trigger.data)}, and goals:\n${goalList}\nWhich goal is most relevant? What action (observe, create_task, notify, wake)? Respond JSON: {"goal_id": "...", "action": "..."}`;
+      const prompt = [
+        `Given event ${trigger.source}/${trigger.event_type} with data ${JSON.stringify(trigger.data)}, and goals:`,
+        goalList,
+        "Which goal is most relevant? What action should be taken?",
+        "Respond with JSON only. Use an existing goal id, and set action to one of observe, create_task, notify, wake.",
+        "{\"goal_id\":\"<existing goal id>\",\"action\":\"observe\"}",
+      ].join("\n");
 
       const response = await this.llmClient!.sendMessage([
         { role: "user", content: prompt },
       ]);
 
-      const jsonMatch = /\{[^}]*"goal_id"[^}]*\}/.exec(response.content);
-      if (!jsonMatch) return null;
+      const parsed = this.llmClient!.parseJSON(response.content, LlmTriggerResolutionSchema);
+      if (!goalIds.has(parsed.goal_id)) return null;
 
-      const parsed = JSON.parse(jsonMatch[0]) as { goal_id?: string; action?: string };
-      if (!parsed.goal_id || !parsed.action) return null;
-
-      const result = { goal_id: parsed.goal_id, action: parsed.action };
-      this.llmCache.set(cacheKey, result);
-      return result;
+      this.rememberLlmResolution(cacheKey, parsed);
+      return parsed;
     } catch {
       return null;
     }
+  }
+
+  private rememberLlmResolution(cacheKey: string, resolution: LlmTriggerResolution): void {
+    if (this.llmCache.has(cacheKey)) {
+      this.llmCache.delete(cacheKey);
+    }
+    while (this.llmCache.size >= MAX_LLM_CACHE_ENTRIES) {
+      const oldestKey = this.llmCache.keys().next().value;
+      if (oldestKey === undefined) break;
+      this.llmCache.delete(oldestKey);
+    }
+    this.llmCache.set(cacheKey, resolution);
   }
 
   clearCache(): void {
@@ -114,4 +149,45 @@ export class TriggerMapper {
   getCacheSize(): number {
     return this.llmCache.size;
   }
+}
+
+function buildLlmCacheKey(trigger: TriggerEvent, goals: Array<{ id: string; title: string }>): string {
+  const goalSignature = goals
+    .map((goal) => `${goal.id}\u0000${goal.title}`)
+    .sort()
+    .join("\u0001");
+  return [
+    trigger.source,
+    trigger.event_type,
+    stableCacheDigest(trigger.data),
+    stableCacheDigest(goalSignature),
+  ].join("\u0002");
+}
+
+function stableCacheDigest(value: unknown): string {
+  return createHash("sha256")
+    .update(toStableCacheString(value))
+    .digest("hex");
+}
+
+function toStableCacheString(value: unknown): string {
+  try {
+    return JSON.stringify(sortJsonValue(value)) ?? "undefined";
+  } catch {
+    return "[unserializable]";
+  }
+}
+
+function sortJsonValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(sortJsonValue);
+  }
+  if (typeof value === "object" && value !== null) {
+    const sorted: Record<string, unknown> = {};
+    for (const key of Object.keys(value).sort()) {
+      sorted[key] = sortJsonValue((value as Record<string, unknown>)[key]);
+    }
+    return sorted;
+  }
+  return value;
 }
