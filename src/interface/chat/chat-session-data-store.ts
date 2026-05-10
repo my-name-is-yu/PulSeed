@@ -7,7 +7,7 @@ import {
 import {
   ChatSessionSchema,
   type ChatSession,
-} from "./chat-history.js";
+} from "./chat-session-contracts.js";
 import type { CrossPlatformChatSessionInfo } from "./cross-platform-session-types.js";
 
 interface ChatSessionRow {
