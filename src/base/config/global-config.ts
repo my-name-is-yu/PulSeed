@@ -3,10 +3,16 @@
 // Manages ~/.pulseed/config.json — single source for all PulSeed user preferences.
 
 import fs from "node:fs/promises";
-import * as fsSync from "node:fs";
 import path from "node:path";
 import { z } from "zod";
+import {
+  readTextFileWithinLimit,
+  readTextFileWithinLimitSync,
+  TextFileSizeLimitError,
+} from "../utils/json-io.js";
 import { getDefaultPulseedWorkspaceRootPath, getPulseedDirPath } from "../utils/paths.js";
+
+export const GLOBAL_CONFIG_MAX_BYTES = 256 * 1024;
 
 const InteractiveAutomationConfigSchema = z.object({
   enabled: z.boolean().default(false),
@@ -88,12 +94,16 @@ function mergeGlobalConfigPatch(base: GlobalConfig, patch: unknown): GlobalConfi
 
 function isRecoverableConfigLoadError(error: unknown): boolean {
   const code = (error as NodeJS.ErrnoException).code;
-  return code === "ENOENT" || error instanceof SyntaxError || error instanceof z.ZodError;
+  return code === "ENOENT"
+    || error instanceof SyntaxError
+    || error instanceof z.ZodError;
 }
 
 export async function loadGlobalConfig(): Promise<GlobalConfig> {
   try {
-    const raw = await fs.readFile(getConfigPath(), "utf-8");
+    const raw = await readTextFileWithinLimit(getConfigPath(), {
+      maxBytes: GLOBAL_CONFIG_MAX_BYTES,
+    });
     const parsed = JSON.parse(raw);
     return mergeGlobalConfigPatch(cloneGlobalConfig(DEFAULT_CONFIG), parsed);
   } catch (err) {
@@ -104,7 +114,9 @@ export async function loadGlobalConfig(): Promise<GlobalConfig> {
 
 export function loadGlobalConfigSync(): GlobalConfig {
   try {
-    const raw = fsSync.readFileSync(getConfigPath(), "utf-8");
+    const raw = readTextFileWithinLimitSync(getConfigPath(), {
+      maxBytes: GLOBAL_CONFIG_MAX_BYTES,
+    });
     const parsed = JSON.parse(raw);
     return mergeGlobalConfigPatch(cloneGlobalConfig(DEFAULT_CONFIG), parsed);
   } catch (err) {
@@ -116,8 +128,12 @@ export function loadGlobalConfigSync(): GlobalConfig {
 export async function saveGlobalConfig(config: GlobalConfig): Promise<void> {
   const configPath = getConfigPath();
   const validated = GlobalConfigSchema.parse(config);
+  const content = JSON.stringify(validated, null, 2) + "\n";
+  if (Buffer.byteLength(content, "utf8") > GLOBAL_CONFIG_MAX_BYTES) {
+    throw new TextFileSizeLimitError(configPath, GLOBAL_CONFIG_MAX_BYTES);
+  }
   await fs.mkdir(path.dirname(configPath), { recursive: true });
-  await fs.writeFile(configPath, JSON.stringify(validated, null, 2) + "\n");
+  await fs.writeFile(configPath, content);
 }
 
 export async function updateGlobalConfig(updates: GlobalConfigPatch): Promise<GlobalConfig> {

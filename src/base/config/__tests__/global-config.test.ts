@@ -119,6 +119,46 @@ describe("loadGlobalConfig", () => {
     });
   });
 
+  it("rejects oversized config.json instead of replacing it with defaults", async () => {
+    await withTempPulseedHome(async (tmpDir) => {
+      const {
+        GLOBAL_CONFIG_MAX_BYTES,
+        loadGlobalConfig,
+        loadGlobalConfigSync,
+      } = await import("../global-config.js");
+      await fs.writeFile(
+        path.join(tmpDir, "config.json"),
+        JSON.stringify({
+          no_flicker: false,
+          padding: "x".repeat(GLOBAL_CONFIG_MAX_BYTES),
+        }),
+        "utf8",
+      );
+
+      await expect(loadGlobalConfig()).rejects.toMatchObject({
+        code: "ERR_PULSEED_TEXT_FILE_SIZE_LIMIT",
+      });
+      expect(() => loadGlobalConfigSync()).toThrow(/exceeds/);
+    });
+  });
+
+  it("rejects writes that would exceed the read limit", async () => {
+    await withTempPulseedHome(async (tmpDir) => {
+      const { DEFAULT_CONFIG, GLOBAL_CONFIG_MAX_BYTES, saveGlobalConfig } = await import("../global-config.js");
+
+      await expect(saveGlobalConfig({
+        ...DEFAULT_CONFIG,
+        interactive_automation: {
+          ...DEFAULT_CONFIG.interactive_automation,
+          allowed_apps: ["x".repeat(GLOBAL_CONFIG_MAX_BYTES)],
+        },
+      })).rejects.toMatchObject({
+        code: "ERR_PULSEED_TEXT_FILE_SIZE_LIMIT",
+      });
+      await expect(fs.access(path.join(tmpDir, "config.json"))).rejects.toMatchObject({ code: "ENOENT" });
+    });
+  });
+
   it("preserves interactive automation settings from config.json", async () => {
     await withTempPulseedHome(async (tmpDir) => {
       await fs.writeFile(
