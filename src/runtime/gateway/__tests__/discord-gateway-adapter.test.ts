@@ -1,6 +1,9 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+import * as http from "node:http";
+import { webcrypto } from "node:crypto";
 import { dispatchGatewayChatInput } from "../chat-session-dispatch.js";
 import { DiscordGatewayAdapter, type DiscordGatewayConfig } from "../discord-gateway-adapter.js";
+import { MAX_HTTP_BODY_SIZE } from "../../http-body.js";
 
 vi.mock("../chat-session-dispatch.js", () => ({
   dispatchGatewayChatInput: vi.fn().mockResolvedValue("Discord reply"),
@@ -123,6 +126,63 @@ describe("DiscordGatewayAdapter", () => {
     expect(renderedText).toContain("Blocked on the requested tool action: Operator denied release execution.");
     expect(renderedText).not.toContain("Approval is needed for the requested tool action");
   });
+
+  it("returns 413 for oversized interaction bodies", async () => {
+    const adapter = new DiscordGatewayAdapter({ ...makeConfig(), port: 0 });
+    await adapter.start();
+    try {
+      const result = await postRaw(getListeningPort(adapter), "x".repeat(MAX_HTTP_BODY_SIZE + 1));
+
+      expect(result.status).toBe(413);
+      expect(JSON.parse(result.body)).toEqual({ error: "payload_too_large" });
+      expect(dispatchGatewayChatInput).not.toHaveBeenCalled();
+    } finally {
+      await adapter.stop();
+    }
+  });
+
+  it("verifies signed non-ASCII interaction bodies", async () => {
+    const body = JSON.stringify({ type: 1, locale: "\u3042" });
+    const timestamp = "1710000000";
+    type Ed25519KeyPair = {
+      publicKey: Parameters<typeof webcrypto.subtle.exportKey>[1];
+      privateKey: Parameters<typeof webcrypto.subtle.sign>[1];
+    };
+    const keyPair = await webcrypto.subtle.generateKey(
+      { name: "Ed25519" },
+      true,
+      ["sign", "verify"]
+    ) as Ed25519KeyPair;
+    const publicKeyHex = Buffer.from(await webcrypto.subtle.exportKey("raw", keyPair.publicKey)).toString("hex");
+    const signature = Buffer.from(
+      await webcrypto.subtle.sign(
+        "Ed25519",
+        keyPair.privateKey,
+        new TextEncoder().encode(`${timestamp}${body}`)
+      )
+    ).toString("hex");
+    const adapter = new DiscordGatewayAdapter({
+      ...makeConfig(),
+      port: 0,
+      public_key_hex: publicKeyHex,
+    });
+    await adapter.start();
+    try {
+      const result = await postRawChunks(
+        getListeningPort(adapter),
+        splitUtf8Body(body, "\u3042"),
+        {
+          "x-signature-ed25519": signature,
+          "x-signature-timestamp": timestamp,
+        }
+      );
+
+      expect(result.status).toBe(200);
+      expect(JSON.parse(result.body)).toEqual({ type: 1 });
+    } finally {
+      await adapter.stop();
+    }
+  });
 });
 
 const eventBase = {
@@ -199,4 +259,68 @@ function okResponse(payload: unknown): Response {
     json: async () => payload,
     text: async () => JSON.stringify(payload),
   } as Response;
+}
+
+function getListeningPort(adapter: DiscordGatewayAdapter): number {
+  const server = (adapter as unknown as { server: http.Server | null }).server;
+  const address = server?.address();
+  if (address === null || typeof address !== "object") {
+    throw new Error("expected test server to be listening on a TCP port");
+  }
+  return address.port;
+}
+
+function postRaw(port: number, body: string): Promise<{ status: number; body: string }> {
+  return postRawChunks(port, [Buffer.from(body, "utf-8")]);
+}
+
+function postRawChunks(
+  port: number,
+  chunks: Buffer[],
+  headers: Record<string, string> = {}
+): Promise<{ status: number; body: string }> {
+  return new Promise((resolve, reject) => {
+    const contentLength = chunks.reduce((total, chunk) => total + chunk.length, 0);
+    const req = http.request(
+      {
+        host: "127.0.0.1",
+        port,
+        path: "/",
+        method: "POST",
+        headers: {
+          "Content-Length": contentLength,
+          "Content-Type": "application/json",
+          ...headers,
+        },
+      },
+      (res) => {
+        let responseBody = "";
+        res.setEncoding("utf-8");
+        res.on("data", (chunk) => { responseBody += chunk; });
+        res.on("end", () => resolve({ status: res.statusCode ?? 0, body: responseBody }));
+      }
+    );
+    req.on("error", reject);
+    writeChunks(req, chunks);
+  });
+}
+
+function writeChunks(req: http.ClientRequest, chunks: Buffer[]): void {
+  if (chunks.length === 0) {
+    req.end();
+    return;
+  }
+  const [first, ...rest] = chunks;
+  req.write(first);
+  setImmediate(() => writeChunks(req, rest));
+}
+
+function splitUtf8Body(body: string, needle: string): [Buffer, Buffer] {
+  const charIndex = body.indexOf(needle);
+  if (charIndex === -1) {
+    throw new Error("expected body to contain split marker");
+  }
+  const bytes = Buffer.from(body, "utf-8");
+  const splitAt = Buffer.byteLength(body.slice(0, charIndex), "utf-8") + 1;
+  return [bytes.subarray(0, splitAt), bytes.subarray(splitAt)];
 }
