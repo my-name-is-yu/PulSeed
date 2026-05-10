@@ -56,6 +56,7 @@ describe("GlobTool", () => {
     expect(result.success).toBe(true);
     const files = result.data as string[];
     expect(files.length).toBe(1);
+    expect(result.summary).toContain("Found 1+ files");
     expect(result.summary).toContain("showing first 1");
   });
 
