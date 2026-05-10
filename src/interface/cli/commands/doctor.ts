@@ -822,7 +822,7 @@ export async function cmdDoctor(_args: string[]): Promise<number> {
       `Repair Drive schedule import: files=${driveScheduleImportReport.scheduleFiles}, imported=${driveScheduleImportReport.importedSchedules}, skipped already imported=${driveScheduleImportReport.skippedAlreadyImported}, blocked=${driveScheduleImportReport.blockedSources.length}`
     );
     console.log(
-      `Repair strategy template import: files=${strategyTemplateImportReport.strategyTemplateFiles}, imported=${strategyTemplateImportReport.importedTemplates}, skipped already imported=${strategyTemplateImportReport.skippedAlreadyImported}, blocked=${strategyTemplateImportReport.blockedSources.length}`
+      `Repair strategy template import: files=${strategyTemplateImportReport.strategyTemplateFiles}, imported=${strategyTemplateImportReport.importedTemplates}, skipped already imported=${strategyTemplateImportReport.skippedAlreadyImported}, retired existing typed state=${strategyTemplateImportReport.retiredExistingTypedState}, blocked=${strategyTemplateImportReport.blockedSources.length}`
     );
     console.log(
       `Repair goal/task import: goals=${goalTaskImportReport.goals}, legacy WAL files=${goalTaskImportReport.legacyWalFiles}, legacy WAL intents=${goalTaskImportReport.legacyWalIntents}, tasks=${goalTaskImportReport.tasks}, histories=${goalTaskImportReport.taskHistoryRecords}, ledgers=${goalTaskImportReport.taskOutcomeLedgers}, verification=${goalTaskImportReport.verificationResults}, checkpoints=${goalTaskImportReport.checkpoints}, pipelines=${goalTaskImportReport.pipelines}, blocked=${goalTaskImportReport.blockedSources.length}`

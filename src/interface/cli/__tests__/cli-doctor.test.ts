@@ -1539,6 +1539,7 @@ describe("cmdDoctor summary counts", () => {
     });
     const allOutput = consoleSpy.mock.calls.map((c: unknown[]) => c[0] as string).join("\n");
     expect(allOutput).toContain("Repair strategy template import: files=1, imported=1");
+    expect(allOutput).toContain("retired existing typed state=0");
     expect(allOutput).toContain("blocked=1");
     expect(checkControlDatabase(tmpDir).detail).toContain("legacy import record");
   });

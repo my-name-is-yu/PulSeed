@@ -17,6 +17,7 @@ export interface StrategyTemplateLegacyImportReport {
   strategyTemplateFiles: number;
   importedTemplates: number;
   skippedAlreadyImported: number;
+  retiredExistingTypedState: number;
   blockedSources: Array<{ sourceKind: string; sourcePath: string; reason: string }>;
 }
 
@@ -32,6 +33,7 @@ export async function importLegacyStrategyTemplateState(
     strategyTemplateFiles: 0,
     importedTemplates: 0,
     skippedAlreadyImported: 0,
+    retiredExistingTypedState: 0,
     blockedSources: [],
   };
 
@@ -89,6 +91,26 @@ export async function importLegacyStrategyTemplateState(
 
       if (hasCompletedLegacyImport(controlDb, parsed.data.template_id)) {
         report.skippedAlreadyImported += 1;
+        continue;
+      }
+
+      const existingTemplate = await store.load(parsed.data.template_id);
+      if (existingTemplate !== null) {
+        report.retiredExistingTypedState += 1;
+        controlDb.recordLegacyImport({
+          sourceKind: "strategy_template",
+          sourceId: parsed.data.template_id,
+          sourcePath: path.relative(baseDir, filePath),
+          sourceChecksum: payload.checksum,
+          sourceMtimeMs: payload.mtimeMs,
+          migrationName: MIGRATION_NAME,
+          migrationVersion: MIGRATION_VERSION,
+          status: "retired",
+          details: {
+            reason: "typed strategy template state already exists",
+            existing_created_at: existingTemplate.created_at,
+          },
+        });
         continue;
       }
 

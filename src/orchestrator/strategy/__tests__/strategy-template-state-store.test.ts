@@ -72,6 +72,7 @@ describe("StrategyTemplateStateStore", () => {
       strategyTemplateFiles: 1,
       importedTemplates: 1,
       skippedAlreadyImported: 0,
+      retiredExistingTypedState: 0,
     });
     expect(firstReport.blockedSources).toHaveLength(1);
 
@@ -82,5 +83,36 @@ describe("StrategyTemplateStateStore", () => {
     expect(secondReport.importedTemplates).toBe(0);
     expect(secondReport.skippedAlreadyImported).toBe(1);
     expect(secondReport.blockedSources).toHaveLength(1);
+  });
+
+  it("retires stale legacy templates instead of overwriting existing typed state", async () => {
+    const store = new StrategyTemplateStateStore(tmpDir);
+    const currentTemplate = makeTemplate({
+      template_id: "tmpl-existing",
+      hypothesis_pattern: "Current typed DB pattern",
+      effectiveness_score: 0.91,
+    });
+    const staleLegacyTemplate = makeTemplate({
+      template_id: "tmpl-existing",
+      hypothesis_pattern: "Stale legacy JSON pattern",
+      effectiveness_score: 0.52,
+    });
+    await store.save(currentTemplate);
+    fs.writeFileSync(
+      path.join(tmpDir, "strategy-templates.json"),
+      JSON.stringify([staleLegacyTemplate], null, 2),
+      "utf8",
+    );
+
+    const report = await importLegacyStrategyTemplateState(tmpDir);
+
+    expect(report).toMatchObject({
+      strategyTemplateFiles: 1,
+      importedTemplates: 0,
+      skippedAlreadyImported: 0,
+      retiredExistingTypedState: 1,
+      blockedSources: [],
+    });
+    await expect(store.load("tmpl-existing")).resolves.toEqual(currentTemplate);
   });
 });

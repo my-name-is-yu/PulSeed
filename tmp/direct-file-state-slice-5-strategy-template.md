@@ -21,7 +21,7 @@ The registry persisted successful strategy templates to `strategy-templates.json
 ## Validation
 
 - `nvm use 24.15.0 && npm ci`
-- `npx vitest run --config vitest.unit.config.ts src/orchestrator/strategy/__tests__/strategy-template-registry.test.ts src/orchestrator/strategy/__tests__/strategy-template-state-store.test.ts src/orchestrator/strategy/__tests__/strategy-manager-core.test.ts`: passed, 70 tests
+- `npx vitest run --config vitest.unit.config.ts src/orchestrator/strategy/__tests__/strategy-template-registry.test.ts src/orchestrator/strategy/__tests__/strategy-template-state-store.test.ts src/orchestrator/strategy/__tests__/strategy-manager-core.test.ts`: passed, 71 tests
 - `npx vitest run --config vitest.unit.config.ts src/interface/cli/__tests__/database-first-legacy-store-check.test.ts src/interface/cli/__tests__/cli-doctor.test.ts`: passed, 93 tests
 - `node scripts/check-database-first-legacy-stores.mjs --json`: `ok=true`, `findings=0`; `strategy-template-registry` is non-debt migration-only input with typed control DB ownership
 - `npm run typecheck`: passed
@@ -32,3 +32,7 @@ The registry persisted successful strategy templates to `strategy-templates.json
 ## Guard State
 
 `strategy-template-registry` is now closed as normal runtime state. Remaining direct-file debt is `knowledge-graph`, `vector-index`, and `reflection-reports`, which are later slices.
+
+## Review Finding
+
+Fallback review found that `doctor --repair` could overwrite existing typed strategy-template state from a stale legacy file. The importer now retires legacy entries when typed state already exists and records that decision in `control_legacy_imports`; a regression test proves the existing typed template remains authoritative.

@@ -170,7 +170,7 @@ Base: origin/main @ 7d87d012 Prefer live daemon status in runtime evidence answe
 - Head commit at PR creation: `72f63605`
 - Base: `origin/main @ 83a90a9c Bound daemon metadata reads (#1861)`
 - `nvm use 24.15.0 && npm ci`: passed
-- `npx vitest run --config vitest.unit.config.ts src/orchestrator/strategy/__tests__/strategy-template-registry.test.ts src/orchestrator/strategy/__tests__/strategy-template-state-store.test.ts src/orchestrator/strategy/__tests__/strategy-manager-core.test.ts`: passed, 70 tests
+- `npx vitest run --config vitest.unit.config.ts src/orchestrator/strategy/__tests__/strategy-template-registry.test.ts src/orchestrator/strategy/__tests__/strategy-template-state-store.test.ts src/orchestrator/strategy/__tests__/strategy-manager-core.test.ts`: passed, 71 tests
 - `npx vitest run --config vitest.unit.config.ts src/interface/cli/__tests__/database-first-legacy-store-check.test.ts src/interface/cli/__tests__/cli-doctor.test.ts`: passed, 93 tests
 - `node scripts/check-database-first-legacy-stores.mjs --json`: `ok=true`, `findings=0`, `strategy-template-registry` debt=false, remaining direct-file debt `knowledge-graph`, `vector-index`, `reflection-reports`
 - `npm run typecheck`: passed
@@ -178,7 +178,8 @@ Base: origin/main @ 7d87d012 Prefer live daemon status in runtime evidence answe
 - `npm run build`: passed
 - `git diff --check`: passed
 - CI: pending PR
-- GitHub Codex review: pending PR
+- GitHub Codex review: unavailable after `@codex review` on PR head `7a03137f862f4c3e60cd7bfe937fdac9ffec437e`
+- Fallback sub-agent review: found material blocker that doctor repair could overwrite existing typed strategy templates from stale legacy JSON; fixed by retiring legacy imports when typed state already exists and adding regression coverage
 
 ## Merge Policy
 
