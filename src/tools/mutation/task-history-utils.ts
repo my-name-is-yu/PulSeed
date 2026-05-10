@@ -1,15 +1,13 @@
 import type { StateManager } from "../../base/state/state-manager.js";
 import type { Task } from "../../base/types/task.js";
 import { durationToMs } from "../../orchestrator/execution/task/task-executor.js";
+import { computeActualElapsedMs } from "../../orchestrator/execution/task/task-history-metrics.js";
 import { recordTaskOutcomeMutation } from "../../orchestrator/execution/task/task-outcome-ledger.js";
 
 export async function upsertTaskHistory(stateManager: StateManager, task: Task): Promise<void> {
   const history = [...await stateManager.loadTaskHistory(task.goal_id)];
 
-  const actual_elapsed_ms =
-    task.started_at && task.completed_at
-      ? new Date(task.completed_at).getTime() - new Date(task.started_at).getTime()
-      : null;
+  const actual_elapsed_ms = computeActualElapsedMs(task.started_at, task.completed_at);
 
   const estimated_duration_ms = task.estimated_duration
     ? durationToMs(task.estimated_duration)

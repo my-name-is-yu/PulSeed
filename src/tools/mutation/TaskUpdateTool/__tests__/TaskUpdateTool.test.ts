@@ -211,6 +211,29 @@ describe("TaskUpdateTool", () => {
     expect(history[0]?.task_id).toBe("task-1");
   });
 
+  it("stores null elapsed history when task timestamps are invalid", async () => {
+    const tasksDir = path.join(tmpDir, "tasks", "goal-1");
+    fs.mkdirSync(tasksDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(tasksDir, "task-1.json"),
+      JSON.stringify(makeTaskJson("task-1", "goal-1", { status: "running", started_at: "not-a-date" }))
+    );
+
+    const result = await tool.call(
+      {
+        goalId: "goal-1",
+        taskId: "task-1",
+        status: "completed",
+        completed_at: "2026-01-01T00:05:00.000Z",
+      },
+      makeContext()
+    );
+
+    expect(result.success).toBe(true);
+    const history = await fakeReadRaw(tmpDir, "tasks/goal-1/task-history.json") as Array<Record<string, unknown>>;
+    expect(history[0]?.actual_elapsed_ms).toBeNull();
+  });
+
   it("does not infer a succeeded ledger event for externally completed tasks without verification", async () => {
     const tasksDir = path.join(tmpDir, "tasks", "goal-1");
     fs.mkdirSync(tasksDir, { recursive: true });

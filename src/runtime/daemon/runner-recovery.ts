@@ -1,6 +1,7 @@
 import { TaskSchema, VerificationResultSchema, type Task } from "../../base/types/task.js";
 import { appendTaskOutcomeEvent } from "../../orchestrator/execution/task/task-outcome-ledger.js";
 import { durationToMs } from "../../orchestrator/execution/task/task-executor.js";
+import { computeActualElapsedMs } from "../../orchestrator/execution/task/task-history-metrics.js";
 import { verifyTaskArtifactContract } from "../../orchestrator/execution/task/task-artifact-contract.js";
 import { resolveTaskWorkspacePath } from "../../orchestrator/execution/task/task-workspace.js";
 import type { StateManager } from "../../base/state/state-manager.js";
@@ -193,10 +194,7 @@ export async function appendRecoveredTaskHistory(
   }
 ): Promise<void> {
   const history = await stateManager.loadTaskHistory(task.goal_id);
-  const actualElapsedMs =
-    task.started_at && task.completed_at
-      ? new Date(task.completed_at).getTime() - new Date(task.started_at).getTime()
-      : null;
+  const actualElapsedMs = computeActualElapsedMs(task.started_at, task.completed_at);
 
   history.push({
     task_id: task.id,

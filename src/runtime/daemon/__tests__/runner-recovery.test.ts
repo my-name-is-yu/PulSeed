@@ -159,6 +159,31 @@ describe("runner-recovery", () => {
     });
   });
 
+  it("stores null elapsed recovery history for invalid task timestamps", async () => {
+    tmpDir = makeTempDir();
+    const stateManager = new StateManager(tmpDir);
+    await stateManager.init();
+    await stateManager.saveTask(makeTask({
+      id: "task-invalid-time",
+      goal_id: "goal-invalid-time",
+      status: "running",
+      started_at: "not-a-date",
+    }));
+
+    await reconcileInterruptedExecutions({
+      baseDir: tmpDir,
+      stateManager,
+      logger: { warn: vi.fn() },
+    });
+
+    const history = await stateManager.loadTaskHistory("goal-invalid-time") as Array<Record<string, unknown>>;
+    expect(history.at(-1)).toMatchObject({
+      task_id: "task-invalid-time",
+      status: "cancelled",
+      actual_elapsed_ms: null,
+    });
+  });
+
   it("completes interrupted running tasks when fresh artifact contract evidence passes", async () => {
     tmpDir = makeTempDir();
     const workspace = path.join(tmpDir, "workspace");

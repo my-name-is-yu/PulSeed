@@ -5,6 +5,7 @@ import type { VerificationResult } from "../../../base/types/task.js";
 import type { AgentTask, AgentResult, IAdapter } from "../adapter-layer.js";
 import type { RevertAttemptResult, VerifierDeps } from "./task-verifier-types.js";
 import { syncTaskOutcomeSummary } from "./task-outcome-ledger.js";
+import { computeActualElapsedMs } from "./task-history-metrics.js";
 import { resolveTaskWorkspacePath } from "./task-workspace.js";
 import { execFileNoThrow } from "../../../base/utils/execFileNoThrow.js";
 
@@ -706,10 +707,7 @@ export async function setDimensionIntegrity(
 export async function appendTaskHistory(deps: VerifierDeps, goalId: string, task: Task): Promise<void> {
   const history = await deps.stateManager.loadTaskHistory(goalId);
 
-  const actual_elapsed_ms =
-    task.started_at && task.completed_at
-      ? new Date(task.completed_at).getTime() - new Date(task.started_at).getTime()
-      : null;
+  const actual_elapsed_ms = computeActualElapsedMs(task.started_at, task.completed_at);
 
   const estimated_duration_ms = task.estimated_duration
     ? deps.durationToMs(task.estimated_duration)
