@@ -2,6 +2,38 @@ import { describe, expect, it } from "vitest";
 import { NotificationConfigSchema } from "../notification.js";
 
 describe("NotificationConfigSchema", () => {
+  it("bounds email SMTP ports to the valid TCP port range", () => {
+    const emailConfig = (port?: number) => ({
+      channels: [{
+        type: "email",
+        address: "user@example.com",
+        smtp: {
+          host: "smtp.example.com",
+          ...(port === undefined ? {} : { port }),
+          secure: true,
+          auth: { user: "user", pass: "pass" },
+        },
+      }],
+    });
+    const parseSmtpPort = (port?: number) => NotificationConfigSchema.safeParse(emailConfig(port));
+
+    const defaultChannel = NotificationConfigSchema.parse(emailConfig()).channels[0];
+    expect(defaultChannel?.type).toBe("email");
+    if (defaultChannel?.type !== "email") {
+      throw new Error("expected email channel");
+    }
+    expect(defaultChannel.smtp.port).toBe(587);
+    expect(parseSmtpPort(1).success).toBe(true);
+    expect(parseSmtpPort(465).success).toBe(true);
+    expect(parseSmtpPort(65_535).success).toBe(true);
+
+    expect(parseSmtpPort(0).success).toBe(false);
+    expect(parseSmtpPort(1.5).success).toBe(false);
+    expect(parseSmtpPort(65_536).success).toBe(false);
+    expect(parseSmtpPort(Infinity).success).toBe(false);
+    expect(parseSmtpPort(Number.MAX_SAFE_INTEGER + 1).success).toBe(false);
+  });
+
   it("bounds batching windows to finite positive integer minutes", () => {
     const parseWindow = (windowMinutes: number) => NotificationConfigSchema.safeParse({
       batching: {

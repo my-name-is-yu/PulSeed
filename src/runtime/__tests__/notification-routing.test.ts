@@ -6,6 +6,7 @@ import { NotificationConfigSchema } from "../../base/types/notification.js";
 import {
   applyNaturalLanguageNotificationRouting,
   applyNaturalLanguageNotificationRoutingToConfig,
+  saveNotificationConfig,
   type NotificationRoutingDecision,
 } from "../notification-routing.js";
 import type { ILLMClient } from "../../base/llm/llm-client.js";
@@ -210,5 +211,28 @@ describe("notification routing natural language updates", () => {
     ).rejects.toThrow(/Invalid notification config/);
 
     expect(fs.readFileSync(configPath, "utf-8")).toBe(invalidJson);
+  });
+
+  it("validates notification config before persisting", async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-routing-save-invalid-"));
+    tmpDirs.push(tmpDir);
+    const configPath = path.join(tmpDir, "notification.json");
+    const invalidConfig = NotificationConfigSchema.parse({});
+    invalidConfig.channels.push({
+      type: "email",
+      address: "user@example.com",
+      smtp: {
+        host: "smtp.example.com",
+        port: 65_536,
+        secure: true,
+        auth: { user: "user", pass: "pass" },
+      },
+      report_types: [],
+      format: "full",
+    });
+
+    await expect(saveNotificationConfig(configPath, invalidConfig)).rejects.toThrow();
+
+    expect(fs.existsSync(configPath)).toBe(false);
   });
 });

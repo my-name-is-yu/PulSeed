@@ -1,7 +1,11 @@
 // ─── pulseed notify commands (add, list, remove, test) ───
 
 import { parseArgs } from "node:util";
-import type { NotificationConfig, NotificationChannel } from "../../../base/types/notification.js";
+import {
+  MAX_EMAIL_SMTP_PORT,
+  type NotificationConfig,
+  type NotificationChannel,
+} from "../../../base/types/notification.js";
 import {
   applyNaturalLanguageNotificationRouting,
   getNotificationConfigPath,
@@ -44,6 +48,14 @@ function parsePositiveInteger(raw: unknown, label: string): number {
     throw new Error(`${label} must be a positive integer`);
   }
   return parsed;
+}
+
+function parseSmtpPort(raw: unknown): number {
+  const port = parsePositiveInteger(raw, "--smtp-port");
+  if (port > MAX_EMAIL_SMTP_PORT) {
+    throw new Error(`--smtp-port must be between 1 and ${MAX_EMAIL_SMTP_PORT}`);
+  }
+  return port;
 }
 
 function parseNonNegativeInteger(raw: unknown, label: string): number {
@@ -176,7 +188,7 @@ async function cmdNotifyAdd(args: string[], configPath: string): Promise<number>
     let smtpPort = 587;
     try {
       if (values["smtp-port"] !== undefined) {
-        smtpPort = parsePositiveInteger(values["smtp-port"], "--smtp-port");
+        smtpPort = parseSmtpPort(values["smtp-port"]);
       }
     } catch (err) {
       console.error(`Error: ${(err as Error).message}`);
