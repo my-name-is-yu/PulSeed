@@ -61,10 +61,12 @@ describe("cmdTelegramSetup", () => {
   it("prints setup help without prompting or verifying a token", async () => {
     const { cmdTelegramSetup } = await import("../commands/telegram.js");
 
-    const result = await cmdTelegramSetup(["--help"]);
+    const flagResult = await cmdTelegramSetup(["--help"]);
+    const subcommandResult = await cmdTelegramSetup(["help"]);
     const output = vi.mocked(console.log).mock.calls.map((call) => call.join(" ")).join("\n");
 
-    expect(result).toBe(0);
+    expect(flagResult).toBe(0);
+    expect(subcommandResult).toBe(0);
     expect(output).toContain("Usage: pulseed telegram setup");
     expect(output).toContain("Bot token from @BotFather");
     expect(fetchMock).not.toHaveBeenCalled();

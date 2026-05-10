@@ -97,10 +97,12 @@ describe("cmdGatewaySetup", () => {
     const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const { cmdGatewaySetup } = await import("../commands/gateway.js");
 
-    const code = await cmdGatewaySetup(["--help"]);
+    const flagCode = await cmdGatewaySetup(["--help"]);
+    const subcommandCode = await cmdGatewaySetup(["help"]);
     const output = consoleSpy.mock.calls.map((call) => call.join(" ")).join("\n");
 
-    expect(code).toBe(0);
+    expect(flagCode).toBe(0);
+    expect(subcommandCode).toBe(0);
     expect(output).toContain("Usage: pulseed gateway setup");
     expect(output).toContain("Interactive messaging gateway setup");
     expect(introMock).not.toHaveBeenCalled();

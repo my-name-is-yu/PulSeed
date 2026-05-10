@@ -467,10 +467,12 @@ describe("unknown subcommand", async () => {
     const telegramParentCode = await runCLI("telegram", "--help");
     const telegramHelpCode = await runCLI("telegram", "help");
     const telegramCode = await runCLI("telegram", "setup", "--help");
+    const telegramSetupHelpCode = await runCLI("telegram", "setup", "help");
     const gatewayBareCode = await runCLI("gateway");
     const gatewayParentCode = await runCLI("gateway", "--help");
     const gatewayHelpCode = await runCLI("gateway", "help");
     const gatewayCode = await runCLI("gateway", "setup", "--help");
+    const gatewaySetupHelpCode = await runCLI("gateway", "setup", "help");
 
     const output = consoleSpy.mock.calls.map((call) => call.join(" ")).join("\n");
     expect(setupCode).toBe(0);
@@ -478,10 +480,12 @@ describe("unknown subcommand", async () => {
     expect(telegramParentCode).toBe(0);
     expect(telegramHelpCode).toBe(0);
     expect(telegramCode).toBe(0);
+    expect(telegramSetupHelpCode).toBe(0);
     expect(gatewayBareCode).toBe(0);
     expect(gatewayParentCode).toBe(0);
     expect(gatewayHelpCode).toBe(0);
     expect(gatewayCode).toBe(0);
+    expect(gatewaySetupHelpCode).toBe(0);
     expect(output).toContain("Usage: pulseed setup [options]");
     expect(output).toContain("Usage: pulseed telegram <command>");
     expect(output).toContain("Usage: pulseed telegram setup");
