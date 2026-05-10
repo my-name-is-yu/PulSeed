@@ -18,6 +18,10 @@ describe("database-first legacy store check", () => {
     writeFile(tmpDir, "src/runtime/bad-store.ts", `
       import * as path from "node:path";
       export const queuePath = (root: string) => path.join(root, "queue.json");
+      export const queueLogPath = (root: string) => path.join(root, "queue.jsonl");
+      export const cachePath = (root: string) => path.join(root, "cache.json");
+      export const runtimeStatePath = (root: string) => path.join(root, "runtime/state.json");
+      export const arbitraryStatePath = (root: string, key: string) => \`state/\${key}.json\`;
       export const pluginStatePath = (pluginDir: string) => path.join(pluginDir, "state.json");
       export const sessionIndex = "sessions/index.json";
       export const wal = "wal.jsonl";
@@ -33,8 +37,61 @@ describe("database-first legacy store check", () => {
     expect(result.stderr).toContain("ExecutionSessionStateStore / control DB execution session tables");
     expect(result.stderr).toContain("Goal WAL control DB ownership");
     expect(result.stderr).toContain("StateManager typed gap history/current gap APIs");
+    expect(result.stderr).toContain("direct filesystem runtime state must be typed SQLite/Soil or explicitly categorized");
     expect(result.stderr).toContain("Unclassified legacy store references must be moved to typed stores");
   });
+
+  it("fails unclassified direct file owners for runtime cache, queue, and state directories", () => {
+    writeFile(tmpDir, "src/runtime/unclassified-direct-file-owner.ts", `
+      import * as path from "node:path";
+      import * as fsp from "node:fs/promises";
+      export async function persist(root: string, key: string, value: unknown) {
+        const stateDir = path.join(root, "state");
+        await fsp.mkdir(stateDir, { recursive: true });
+        await fsp.writeFile(path.join(root, "cache.json"), JSON.stringify(value));
+        await fsp.writeFile(path.join(root, "queue.jsonl"), JSON.stringify(value) + "\\n");
+        await fsp.writeFile(path.join(stateDir, \`\${key}.json\`), JSON.stringify(value));
+      }
+    `);
+
+    const result = runCheck(tmpDir);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("src/runtime/unclassified-direct-file-owner.ts");
+    expect(result.stderr).toContain("[unclassified-direct-runtime-json-state] direct filesystem runtime state must be typed SQLite/Soil or explicitly categorized");
+  });
+
+  it("classifies reflection reports as direct typed-store debt", () => {
+    writeFile(tmpDir, "src/reflection/reflection-utils.ts", `
+      const reflectionsDir = "reflections";
+      export const morning = \`morning-\${date}.json\`;
+    `);
+
+    const result = runCheck(tmpDir, ["--json"]);
+
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout) as {
+      allowlistReport: Array<{ id: string; category: string; nextSlice: number | null; matchCount: number }>;
+      debtReport: Array<{ id: string; category: string; nextSlice: number | null; matchCount: number }>;
+    };
+    expect(parsed.allowlistReport).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: "reflection-report-file-state",
+        category: "typed-store migrate now",
+        nextSlice: 7,
+        matchCount: 2,
+      }),
+    ]));
+    expect(parsed.debtReport).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: "reflection-report-file-state",
+        category: "typed-store migrate now",
+        nextSlice: 7,
+        matchCount: 2,
+      }),
+    ]));
+  });
+
 
   it("allows explicit migration boundaries and file-backed config surfaces", () => {
     writeFile(tmpDir, "src/runtime/store/sample-migration.ts", `
@@ -191,9 +248,44 @@ describe("database-first legacy store check", () => {
       ok: boolean;
       allowlistReport: Array<{ id: string; category: string; nextSlice: number | null; matchCount: number }>;
       debtReport: Array<{ id: string; category: string; nextSlice: number | null; matchCount: number }>;
+      directFileOwnerReport: Array<{ id: string; category: string; nextSlice: number | null; debt: boolean }>;
+      directFileDebtReport: Array<{ id: string; category: string; nextSlice: number | null; debt: boolean }>;
     };
     expect(parsed.ok).toBe(true);
     expect(parsed.debtReport).toEqual([]);
+    expect(parsed.directFileOwnerReport).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: "run-spec-store",
+        category: "typed-store migrate now",
+        nextSlice: 2,
+        debt: true,
+      }),
+      expect.objectContaining({
+        id: "drive-system-event-spool",
+        category: "bounded IPC/spool",
+        nextSlice: 4,
+        debt: false,
+      }),
+      expect.objectContaining({
+        id: "config-setup-plugin-gateway-channel-files",
+        category: "config/secret",
+        nextSlice: 8,
+        debt: false,
+      }),
+      expect.objectContaining({
+        id: "reflection-reports",
+        category: "typed-store migrate now",
+        nextSlice: 7,
+        debt: true,
+      }),
+    ]));
+    expect(parsed.directFileDebtReport).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: "run-spec-store",
+        category: "typed-store migrate now",
+        nextSlice: 2,
+      }),
+    ]));
     expect(parsed.allowlistReport).toEqual(expect.arrayContaining([
       expect.objectContaining({
         id: "dream-filesystem-metrics",
