@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import {
   DriveConfigSchema,
+  DriveContextSchema,
+  MAX_DRIVE_PACING_RATIO,
   MAX_DRIVE_DURATION_HOURS,
   MAX_DRIVE_URGENCY_STEEPNESS,
 } from "../../../base/types/drive.js";
@@ -13,7 +15,7 @@ import {
   scoreAllDimensions,
   rankDimensions,
 } from "../drive-scorer.js";
-import type { DriveConfig, DriveContext } from "../../../base/types/drive.js";
+import type { DriveConfig, DriveContext, DriveScore } from "../../../base/types/drive.js";
 import type { GapVector } from "../../../base/types/gap.js";
 
 // Shared default config values (mirrors DriveConfigSchema defaults)
@@ -49,6 +51,41 @@ describe("DriveConfigSchema", () => {
       { half_life_hours: 0 },
     ]) {
       expect(DriveConfigSchema.safeParse(config).success).toBe(false);
+    }
+  });
+});
+
+describe("DriveContextSchema", () => {
+  it("rejects non-finite and out-of-range pacing ratios", () => {
+    expect(DriveContextSchema.safeParse({
+      time_since_last_attempt: {},
+      deadlines: {},
+      opportunities: {},
+      pacing: {
+        coverage: {
+          pacingRatio: MAX_DRIVE_PACING_RATIO,
+          pacingStatus: "critical",
+        },
+      },
+    }).success).toBe(true);
+
+    for (const pacingRatio of [
+      Number.POSITIVE_INFINITY,
+      Number.NaN,
+      -0.1,
+      MAX_DRIVE_PACING_RATIO + 1,
+    ]) {
+      expect(DriveContextSchema.safeParse({
+        time_since_last_attempt: {},
+        deadlines: {},
+        opportunities: {},
+        pacing: {
+          coverage: {
+            pacingRatio,
+            pacingStatus: "critical",
+          },
+        },
+      }).success).toBe(false);
     }
   });
 });
@@ -172,6 +209,24 @@ describe("scoreDeadline", () => {
     const withExplicit = scoreDeadline(0.5, null, DEFAULT_CONFIG);
     expect(withDefault.score).toBeCloseTo(withExplicit.score, 10);
   });
+
+  it("caps infinite pacing ratio bonus to a finite score", () => {
+    const result = scoreDeadline(0.8, 84, DEFAULT_CONFIG, Number.POSITIVE_INFINITY);
+    const expectedUrgency = Math.exp(3.0 * (1 - 84 / 168));
+    const expectedPacingBonus = (MAX_DRIVE_PACING_RATIO - 1.0)
+      * DEFAULT_CONFIG.pacing_urgency_weight;
+
+    expect(Number.isFinite(result.score)).toBe(true);
+    expect(result.score).toBeCloseTo(0.8 * (expectedUrgency + expectedPacingBonus), 5);
+  });
+
+  it("ignores NaN pacing ratio bonus", () => {
+    const withNaN = scoreDeadline(0.8, 84, DEFAULT_CONFIG, Number.NaN);
+    const withoutPacing = scoreDeadline(0.8, 84, DEFAULT_CONFIG);
+
+    expect(Number.isFinite(withNaN.score)).toBe(true);
+    expect(withNaN.score).toBeCloseTo(withoutPacing.score, 10);
+  });
 });
 
 // ─── scoreOpportunity ───
@@ -267,17 +322,6 @@ describe("computeOpportunityValue", () => {
 // ─── combineDriveScores ───
 
 describe("combineDriveScores", () => {
-  const makeD = (score: number) =>
-    scoreDissatisfaction(score > 0 ? 1.0 : 0.0, score > 0 ? 10000 : 0, DEFAULT_CONFIG);
-  const makeDeadline = (score: number, urgency?: number) => ({
-    dimension_name: "",
-    normalized_weighted_gap: score,
-    urgency: urgency ?? score,
-    score,
-  });
-  const makeOpp = (score: number) =>
-    scoreOpportunity(score, 0, DEFAULT_CONFIG);
-
   it("dissatisfaction wins when it has the highest score", () => {
     const d = { dimension_name: "", normalized_weighted_gap: 1.0, decay_factor: 1.0, score: 0.9 };
     const dl = { dimension_name: "", normalized_weighted_gap: 0.5, urgency: 1.0, score: 0.5 };
@@ -444,12 +488,26 @@ describe("scoreAllDimensions", () => {
     // performance: nwg=0.7, t=48h; coverage: nwg=0.3, t=12h
     expect(performance.dissatisfaction).toBeGreaterThan(coverage.dissatisfaction);
   });
+
+  it("keeps final scores finite when stale context contains an infinite pacing ratio", () => {
+    const gv = makeGapVector();
+    const ctx = makeContext();
+    ctx.pacing.coverage = {
+      pacingRatio: Number.POSITIVE_INFINITY,
+      pacingStatus: "critical",
+    };
+
+    const scores = scoreAllDimensions(gv, ctx, DEFAULT_CONFIG);
+    const coverage = scores.find((s) => s.dimension_name === "coverage")!;
+    expect(Number.isFinite(coverage.deadline)).toBe(true);
+    expect(Number.isFinite(coverage.final_score)).toBe(true);
+  });
 });
 
 // ─── rankDimensions ───
 
 describe("rankDimensions", () => {
-  const makeScore = (name: string, finalScore: number): import("../../../base/types/drive.js").DriveScore => ({
+  const makeScore = (name: string, finalScore: number): DriveScore => ({
     dimension_name: name,
     dissatisfaction: finalScore,
     deadline: 0,
@@ -498,7 +556,7 @@ describe("rankDimensions", () => {
 
   it("two elements with identical name and score maintain stable relative order (comparator returns 0)", () => {
     // Exercises the `0` branch of the ternary: a.dimension_name === b.dimension_name
-    const s1: import("../../../base/types/drive.js").DriveScore = {
+    const s1: DriveScore = {
       dimension_name: "same",
       dissatisfaction: 0.5,
       deadline: 0,
@@ -506,7 +564,7 @@ describe("rankDimensions", () => {
       final_score: 0.5,
       dominant_drive: "dissatisfaction",
     };
-    const s2: import("../../../base/types/drive.js").DriveScore = {
+    const s2: DriveScore = {
       dimension_name: "same",
       dissatisfaction: 0.5,
       deadline: 0,

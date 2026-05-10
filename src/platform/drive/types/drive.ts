@@ -3,6 +3,7 @@ import { z } from "zod";
 export const MAX_DRIVE_DURATION_HOURS = 1_000_000;
 export const MAX_DRIVE_URGENCY_STEEPNESS = 100;
 export const MAX_DRIVE_SCORE_SCALE = 1_000_000;
+export const MAX_DRIVE_PACING_RATIO = 1_000_000;
 
 const UnitIntervalSchema = z.number().finite().min(0).max(1);
 const PositiveDurationHoursSchema = z.number().finite().positive().max(MAX_DRIVE_DURATION_HOURS);
@@ -10,6 +11,7 @@ const NonNegativeScoreScaleSchema = z.number().finite().min(0).max(MAX_DRIVE_SCO
 const PositiveScoreScaleSchema = z.number().finite().positive().max(MAX_DRIVE_SCORE_SCALE);
 const NonNegativeSafeIntegerSchema = z.number().int().nonnegative().safe();
 const IsoDateTimeSchema = z.string().datetime();
+const PacingRatioSchema = z.number().finite().min(0).max(MAX_DRIVE_PACING_RATIO);
 
 // --- Dissatisfaction Drive Score ---
 
@@ -89,7 +91,7 @@ export const DriveContextSchema = z.object({
     detected_at: z.string(),
   })),
   pacing: z.record(z.string(), z.object({
-    pacingRatio: z.number().nullable(),
+    pacingRatio: PacingRatioSchema.nullable(),
     pacingStatus: z.enum(["ahead", "on_track", "behind", "critical", "no_deadline"]),
   })).default({}),
 });

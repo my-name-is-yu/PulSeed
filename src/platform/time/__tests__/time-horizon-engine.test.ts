@@ -1,5 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { TimeHorizonEngine } from "../time-horizon-engine.js";
+import {
+  MAX_PACING_RATIO,
+  PacingAlertSchema,
+  PacingResultSchema,
+} from "../../../base/types/time-horizon.js";
 import type { GapObservation } from "../../../base/types/time-horizon.js";
 
 // Helper: build a history array with evenly-spaced timestamps
@@ -28,6 +33,41 @@ function startHoursAgo(h: number): string {
 }
 
 // ─── EMA velocity calculation ─────────────────────────────────────────────────
+
+describe("pacing result schemas", () => {
+  it("reject finite-boundary violations for pacing ratios", () => {
+    const resultBase = {
+      status: "critical",
+      velocityPerHour: 0,
+      velocityStddev: 0,
+      projectedCompletionDate: null,
+      timeRemainingHours: 1,
+      pacingRatio: MAX_PACING_RATIO,
+      confidence: 1,
+      recommendation: "escalate_to_user",
+    };
+    expect(PacingResultSchema.safeParse(resultBase).success).toBe(true);
+
+    const alertBase = {
+      type: "PACING_ALERT",
+      goalId: "goal-1",
+      status: "critical",
+      pacingRatio: MAX_PACING_RATIO,
+      currentStrategy: null,
+    };
+    expect(PacingAlertSchema.safeParse(alertBase).success).toBe(true);
+
+    for (const pacingRatio of [
+      Number.POSITIVE_INFINITY,
+      Number.NaN,
+      -0.1,
+      MAX_PACING_RATIO + 1,
+    ]) {
+      expect(PacingResultSchema.safeParse({ ...resultBase, pacingRatio }).success).toBe(false);
+      expect(PacingAlertSchema.safeParse({ ...alertBase, pacingRatio }).success).toBe(false);
+    }
+  });
+});
 
 describe("EMA velocity calculation", () => {
   const engine = new TimeHorizonEngine();
@@ -158,8 +198,10 @@ describe("evaluatePacing — status classification", () => {
     const deadline = deadlineInHours(1);
     const history1 = makeHistory([0.5], 1);
     const result1 = engine.evaluatePacing("g1", 0.5, deadline, history1);
-    // velocity = 0, pacing_ratio = Infinity → critical, confidence = 1/3 = 0.33
+    // velocity = 0, pacing ratio is capped → critical, confidence = 1/3 = 0.33
     expect(result1.status).toBe("critical");
+    expect(result1.pacingRatio).toBe(MAX_PACING_RATIO);
+    expect(Number.isFinite(result1.pacingRatio)).toBe(true);
     expect(result1.confidence).toBeLessThan(0.6);
     expect(result1.recommendation).toBe("consider_strategy_change");
   });
@@ -174,7 +216,6 @@ describe("evaluatePacing — status classification", () => {
   });
 
   it("recommendation behind with low confidence → increase_effort", () => {
-    const history = makeHistory([0.5, 0.4], 1); // 2 obs, confidence = 2/3 = 0.67
     // Need confidence < 0.6 → use 1 obs but behind requires velocity > 0
     // Use engine with min_observations=5 to force low confidence
     const eng2 = new TimeHorizonEngine({ min_observations_for_projection: 10 });
@@ -233,6 +274,7 @@ describe("zero and negative velocity", () => {
     const result = engine.evaluatePacing("g1", 0.5, deadline, history);
     expect(result.status).toBe("critical");
     expect(result.velocityPerHour).toBeCloseTo(0, 5);
+    expect(result.pacingRatio).toBe(MAX_PACING_RATIO);
   });
 
   it("negative velocity → critical status", () => {
