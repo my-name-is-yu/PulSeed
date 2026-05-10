@@ -178,6 +178,23 @@ describe("cmdNotify", () => {
     expect(fs.existsSync(path.join(tmpDir, "notification.json"))).toBe(false);
   });
 
+  it("add email rejects out-of-range smtp port", async () => {
+    const code = await cmdNotify([
+      "add",
+      "email",
+      "--address",
+      "user@example.com",
+      "--smtp-host",
+      "smtp.example.com",
+      "--smtp-port",
+      "65536",
+    ]);
+
+    expect(code).toBe(1);
+    expect(consoleErrSpy).toHaveBeenCalledWith("Error: --smtp-port must be between 1 and 65535");
+    expect(fs.existsSync(path.join(tmpDir, "notification.json"))).toBe(false);
+  });
+
   // ─── list ───
 
   it("list shows channels in order", async () => {

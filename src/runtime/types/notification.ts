@@ -2,11 +2,18 @@ import { z } from "zod";
 
 const MAX_NOTIFICATION_BATCHING_WINDOW_MINUTES = 24 * 60;
 const MAX_NOTIFICATION_COOLDOWN_MINUTES = 30 * 24 * 60;
+export const MAX_EMAIL_SMTP_PORT = 65_535;
 const NotificationCooldownMinutesSchema = z.number()
   .finite()
   .safe()
   .nonnegative()
   .max(MAX_NOTIFICATION_COOLDOWN_MINUTES);
+const EmailSmtpPortSchema = z.number()
+  .finite()
+  .int()
+  .safe()
+  .min(1)
+  .max(MAX_EMAIL_SMTP_PORT);
 
 // Channel configurations
 export const SlackChannelSchema = z.object({
@@ -22,7 +29,7 @@ export const EmailChannelSchema = z.object({
   address: z.string().email(),
   smtp: z.object({
     host: z.string(),
-    port: z.number().int().positive().default(587),
+    port: EmailSmtpPortSchema.default(587),
     secure: z.boolean().default(true),
     auth: z.object({
       user: z.string(),

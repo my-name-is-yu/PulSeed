@@ -81,7 +81,8 @@ export async function loadNotificationConfig(
 }
 
 export async function saveNotificationConfig(configPath: string, config: NotificationConfig): Promise<void> {
-  await writeJsonFileAtomic(configPath, config);
+  const parsed = NotificationConfigSchema.parse(config);
+  await writeJsonFileAtomic(configPath, parsed);
 }
 
 export async function applyNaturalLanguageNotificationRouting(
