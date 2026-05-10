@@ -1,6 +1,6 @@
-import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ChannelAdapter, EnvelopeHandler, TypingIndicatorCapability } from "./channel-adapter.js";
+import { loadGatewayConfigJson } from "./config-json.js";
 import { dispatchGatewayChatInput } from "./chat-session-dispatch.js";
 import { formatTelegramNotification, supportsCoreGatewayNotification } from "./core-channel-notification.js";
 import { buildChannelPolicyMetadata, buildExternalSurfaceDecision, evaluateChannelAccess, resolveChannelRoute } from "./channel-policy.js";
@@ -504,7 +504,7 @@ class TelegramDisplayTransport implements NonTuiDisplayTransport {
 }
 
 function loadTelegramGatewayConfig(pluginDir: string): TelegramGatewayConfig {
-  const raw = JSON.parse(fs.readFileSync(path.join(pluginDir, "config.json"), "utf-8")) as Record<string, unknown>;
+  const raw = loadGatewayConfigJson(pluginDir, "telegram-bot");
   const allowedUserIds = raw["allowed_user_ids"] ?? [];
   const deniedUserIds = raw["denied_user_ids"] ?? raw["deny_from"] ?? [];
   const allowedChatIds = raw["allowed_chat_ids"] ?? [];

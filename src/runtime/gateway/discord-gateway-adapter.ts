@@ -1,8 +1,7 @@
-import * as fs from "node:fs";
-import * as path from "node:path";
 import * as http from "node:http";
 import { webcrypto } from "node:crypto";
 import type { ChannelAdapter, EnvelopeHandler, TypingIndicatorCapability } from "./channel-adapter.js";
+import { loadGatewayConfigJson } from "./config-json.js";
 import { dispatchGatewayChatInput } from "./chat-session-dispatch.js";
 import { formatPlaintextNotification, supportsCoreGatewayNotification } from "./core-channel-notification.js";
 import { buildChannelPolicyMetadata, buildExternalSurfaceDecision, evaluateChannelAccess, resolveChannelRoute } from "./channel-policy.js";
@@ -435,8 +434,7 @@ class DiscordAPI {
 }
 
 function loadDiscordGatewayConfig(pluginDir: string): DiscordGatewayConfig {
-  const configPath = path.join(pluginDir, "config.json");
-  const raw = JSON.parse(fs.readFileSync(configPath, "utf-8")) as Record<string, unknown>;
+  const raw = loadGatewayConfigJson(pluginDir, "discord-bot");
   const commandName = raw["command_name"] ?? "pulseed";
   const host = raw["host"] ?? "127.0.0.1";
   const port = raw["port"] ?? 8787;

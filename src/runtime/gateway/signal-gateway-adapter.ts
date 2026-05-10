@@ -1,7 +1,6 @@
-import * as fs from "node:fs";
-import * as path from "node:path";
 import { randomUUID } from "node:crypto";
 import type { ChannelAdapter, EnvelopeHandler, TypingIndicatorCapability } from "./channel-adapter.js";
+import { loadGatewayConfigJson } from "./config-json.js";
 import { dispatchGatewayChatInput } from "./chat-session-dispatch.js";
 import { formatPlaintextNotification, supportsCoreGatewayNotification } from "./core-channel-notification.js";
 import { buildChannelPolicyMetadata, buildExternalSurfaceDecision, evaluateChannelAccess, resolveChannelRoute } from "./channel-policy.js";
@@ -331,7 +330,7 @@ function normalizeReceiveResponse(payload: unknown): SignalReceivedMessage[] | n
 }
 
 function loadSignalGatewayConfig(pluginDir: string): SignalGatewayConfig {
-  const raw = JSON.parse(fs.readFileSync(path.join(pluginDir, "config.json"), "utf-8")) as Record<string, unknown>;
+  const raw = loadGatewayConfigJson(pluginDir, "signal-bridge");
   const pollInterval = raw["poll_interval_ms"] ?? 5000;
   const receiveTimeout = raw["receive_timeout_ms"] ?? 2000;
   const runtimeControlAllowedSenderIds = raw["runtime_control_allowed_sender_ids"] ?? [];
