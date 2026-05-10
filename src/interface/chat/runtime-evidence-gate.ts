@@ -61,7 +61,7 @@ export async function gateRuntimeEvidenceBoundFinalAnswer(input: RuntimeEvidence
     return { output: input.assistantOutput, blocked: false };
   }
 
-  let decision: RuntimeEvidenceGateDecision;
+  let responseContent: string;
   try {
     const response = await input.llmClient.sendMessage([
       {
@@ -81,13 +81,16 @@ export async function gateRuntimeEvidenceBoundFinalAnswer(input: RuntimeEvidence
       temperature: 0,
       model_tier: "light",
     });
-    decision = input.llmClient.parseJSON(response.content, RuntimeEvidenceGateDecisionSchema);
+    responseContent = response.content;
   } catch {
-    return {
-      output: boundedUnverifiedRuntimeStatusAnswer(),
-      blocked: true,
-      reason: "Runtime evidence classifier failed; refusing to pass through an unverified gateway status answer.",
-    };
+    return { output: input.assistantOutput, blocked: false, reason: "Runtime evidence classifier unavailable." };
+  }
+
+  let decision: RuntimeEvidenceGateDecision;
+  try {
+    decision = input.llmClient.parseJSON(responseContent, RuntimeEvidenceGateDecisionSchema);
+  } catch {
+    return { output: input.assistantOutput, blocked: false, reason: "Runtime evidence classifier returned an invalid decision." };
   }
 
   if (decision.verdict === "allow") {

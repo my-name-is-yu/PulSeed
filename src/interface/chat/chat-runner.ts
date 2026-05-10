@@ -185,10 +185,8 @@ export class ChatRunner {
   private pendingResumeChoices: RecoveryResumeCandidate[] | null = null;
   private eventJournalHistory: ChatHistory | null = null;
   private eventJournalDirty = false;
-  private readonly runtimeEvidenceGateClient: Pick<NonNullable<ChatRunnerDeps["llmClient"]>, "sendMessage" | "parseJSON"> | undefined;
 
   constructor(private readonly deps: ChatRunnerDeps) {
-    this.runtimeEvidenceGateClient = deps.runtimeEvidenceGateClient ?? deps.llmClient;
     this.groundingGateway = createChatGroundingGateway({
       stateManager: deps.stateManager,
       pluginLoader: deps.pluginLoader,
@@ -1092,7 +1090,7 @@ export class ChatRunner {
       deps: this.deps,
       eventBridge: this.eventBridge,
       activatedTools: this.activatedTools,
-      getRuntimeEvidenceGateClient: () => this.runtimeEvidenceGateClient,
+      getRuntimeEvidenceGateClient: () => this.deps.runtimeEvidenceGateClient ?? this.deps.llmClient,
       getConversationSessionId: () => this.history?.getSessionId() ?? null,
       getSessionCwd: () => this.sessionCwd,
       getNativeAgentLoopStatePath: () => this.nativeAgentLoopStatePath,

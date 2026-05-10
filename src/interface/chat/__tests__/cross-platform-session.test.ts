@@ -645,7 +645,7 @@ describe("CrossPlatformChatSessionManager", () => {
     )).toBe(true);
   });
 
-  it("fails closed when the runtime evidence classifier cannot return a decision", async () => {
+  it("fails closed when the runtime evidence classifier returns an uncertain decision", async () => {
     const stateManager = makeMockStateManager();
     const chatAgentLoopRunner = {
       execute: vi.fn().mockResolvedValue({
@@ -660,7 +660,12 @@ describe("CrossPlatformChatSessionManager", () => {
     const manager = new CrossPlatformChatSessionManager(makeDeps({
       stateManager,
       chatAgentLoopRunner: chatAgentLoopRunner as never,
-      runtimeEvidenceGateClient: createMockLLMClient([]),
+      runtimeEvidenceGateClient: createMockLLMClient([
+        JSON.stringify({
+          verdict: "uncertain",
+          reason: "The answer may be making a current runtime status claim without evidence.",
+        }),
+      ]),
     }));
 
     const result = await manager.execute("PulSeed daemon status を確認して", {
@@ -674,6 +679,78 @@ describe("CrossPlatformChatSessionManager", () => {
     expect(result.success).toBe(true);
     expect(result.output).toContain("I can't verify the current PulSeed runtime status");
     expect(result.output).not.toContain("daemon is running");
+  });
+
+  it("preserves unrelated gateway replies when the runtime evidence classifier is unavailable", async () => {
+    const stateManager = makeMockStateManager();
+    const events: ChatEvent[] = [];
+    const chatAgentLoopRunner = {
+      execute: vi.fn().mockResolvedValue({
+        success: true,
+        output: "I can help draft that plan.",
+        error: null,
+        exit_code: null,
+        elapsed_ms: 42,
+        stopped_reason: "completed",
+      }),
+    };
+    const manager = new CrossPlatformChatSessionManager(makeDeps({
+      stateManager,
+      chatAgentLoopRunner: chatAgentLoopRunner as never,
+      runtimeEvidenceGateClient: createMockLLMClient([]),
+    }));
+
+    const result = await manager.execute("Plan the README cleanup", {
+      identity_key: "runtime-status-user-classifier-transport-failure",
+      platform: "telegram",
+      conversation_id: "telegram-chat-1",
+      user_id: "user-1",
+      cwd: "/repo",
+      onEvent: (event) => { events.push(event); },
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.output).toBe("I can help draft that plan.");
+    expect(events.some((event) =>
+      event.type === "activity"
+      && event.sourceId === "checkpoint:runtime-evidence"
+    )).toBe(false);
+  });
+
+  it("preserves unrelated gateway replies when the runtime evidence classifier returns invalid JSON", async () => {
+    const stateManager = makeMockStateManager();
+    const events: ChatEvent[] = [];
+    const chatAgentLoopRunner = {
+      execute: vi.fn().mockResolvedValue({
+        success: true,
+        output: "I can help draft that plan.",
+        error: null,
+        exit_code: null,
+        elapsed_ms: 42,
+        stopped_reason: "completed",
+      }),
+    };
+    const manager = new CrossPlatformChatSessionManager(makeDeps({
+      stateManager,
+      chatAgentLoopRunner: chatAgentLoopRunner as never,
+      runtimeEvidenceGateClient: createMockLLMClient(["not json"]),
+    }));
+
+    const result = await manager.execute("Plan the README cleanup", {
+      identity_key: "runtime-status-user-classifier-parse-failure",
+      platform: "telegram",
+      conversation_id: "telegram-chat-1",
+      user_id: "user-1",
+      cwd: "/repo",
+      onEvent: (event) => { events.push(event); },
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.output).toBe("I can help draft that plan.");
+    expect(events.some((event) =>
+      event.type === "activity"
+      && event.sourceId === "checkpoint:runtime-evidence"
+    )).toBe(false);
   });
 
   it("emits Seedy presence before gateway route classification work", async () => {
