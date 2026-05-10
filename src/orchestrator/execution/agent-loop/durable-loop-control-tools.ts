@@ -21,6 +21,13 @@ export interface DurableLoopControlToolset {
 /** @deprecated Use DurableLoopControlToolset. */
 export type CoreLoopControlToolset = DurableLoopControlToolset;
 
+const DurableLoopControlSafeNumberSchema = z.number().finite().safe();
+const DurableLoopControlPositiveSafeIntegerSchema = z.number()
+  .finite()
+  .int()
+  .min(1)
+  .max(Number.MAX_SAFE_INTEGER);
+
 const schemas = {
   core_goal_status: z.object({ goalId: z.string().min(1) }),
   core_goal_create: z.object({ description: z.string().min(1) }),
@@ -39,8 +46,15 @@ const schemas = {
   core_goal_resume: z.object({ goalId: z.string().min(1) }),
   core_goal_cancel: z.object({ goalId: z.string().min(1) }),
   core_task_status: z.object({ goalId: z.string().min(1), taskId: z.string().optional() }),
-  core_task_prioritize: z.object({ goalId: z.string().min(1), taskId: z.string().min(1), priority: z.number() }),
-  core_run_cycle: z.object({ goalId: z.string().min(1), maxIterations: z.number().int().positive().optional() }),
+  core_task_prioritize: z.object({
+    goalId: z.string().min(1),
+    taskId: z.string().min(1),
+    priority: DurableLoopControlSafeNumberSchema,
+  }),
+  core_run_cycle: z.object({
+    goalId: z.string().min(1),
+    maxIterations: DurableLoopControlPositiveSafeIntegerSchema.optional(),
+  }),
 };
 
 type CoreToolName = keyof typeof schemas;
