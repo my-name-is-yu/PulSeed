@@ -8,7 +8,10 @@ import type { SuggestOutput, Suggestion } from "../../../base/types/suggest.js";
 import type { GoalSuggestion } from "../../../orchestrator/goal/goal-negotiator.js";
 import type { GoalSuggestionSurface } from "../../../orchestrator/goal/goal-suggest.js";
 import type { CapabilityDetector } from "../../../platform/observation/capability-detector.js";
+import { readTextFileWithinLimitSync } from "../../../base/utils/json-io.js";
 import { buildTodoLikeMarkerInventory, formatTodoLikeMarkerInventory } from "./goal-utils.js";
+
+const PROJECT_CONTEXT_PACKAGE_JSON_MAX_BYTES = 512 * 1024;
 
 // ─── Path helpers ───
 
@@ -520,7 +523,9 @@ export async function gatherProjectContext(targetPath: string): Promise<string> 
   // Read package.json if present
   try {
     const pkgPath = `${targetPath}/package.json`;
-    const pkgRaw = fs.readFileSync(pkgPath, "utf-8");
+    const pkgRaw = readTextFileWithinLimitSync(pkgPath, {
+      maxBytes: PROJECT_CONTEXT_PACKAGE_JSON_MAX_BYTES,
+    });
     const pkg = JSON.parse(pkgRaw) as Record<string, unknown>;
     const name = typeof pkg.name === "string" ? pkg.name : "";
     const description = typeof pkg.description === "string" ? pkg.description : "";

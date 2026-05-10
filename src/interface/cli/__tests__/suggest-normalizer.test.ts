@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { CapabilityDetector } from "../../../platform/observation/capability-detector.js";
-import { generateSuggestOutput, hasRepositorySuggestionSurface, normalizeSuggestPayload } from "../commands/suggest-normalizer.js";
+import { gatherProjectContext, generateSuggestOutput, hasRepositorySuggestionSurface, normalizeSuggestPayload } from "../commands/suggest-normalizer.js";
 
 const validSuggestionWithRepoContext = {
   title: "Add tests",
@@ -18,6 +18,28 @@ const validInput = {
 };
 
 describe("normalizeSuggestPayload fast-path", () => {
+  it("skips oversized package.json when gathering project context", async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-suggest-context-"));
+    try {
+      fs.writeFileSync(
+        path.join(tmpDir, "package.json"),
+        JSON.stringify({
+          name: "oversized-package-name",
+          description: "This package metadata should be skipped",
+          padding: "x".repeat(512 * 1024),
+        }),
+      );
+
+      const context = await gatherProjectContext(tmpDir);
+
+      expect(context).not.toContain("oversized-package-name");
+      expect(context).toContain("Files:");
+      expect(context).toContain("package.json");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it("detects repository suggestion surface from exact filesystem entries", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-suggest-surface-"));
     try {
