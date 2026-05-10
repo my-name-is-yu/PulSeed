@@ -691,6 +691,29 @@ describe("StateManager", async () => {
     it("returns empty array for non-existent gap history", async () => {
       expect(await manager.loadGapHistory("nonexistent")).toEqual([]);
     });
+
+    it("loads current gap values from typed gap history", async () => {
+      await manager.saveGoal(makeGoal({ id: "gap-current" }));
+      await manager.saveGapHistory("gap-current", [
+        {
+          iteration: 1,
+          timestamp: "2026-05-10T00:00:00.000Z",
+          gap_vector: [{ dimension_name: "quality", normalized_weighted_gap: 0.8 }],
+          confidence_vector: [{ dimension_name: "quality", confidence: 0.7 }],
+        },
+        {
+          iteration: 2,
+          timestamp: "2026-05-10T00:01:00.000Z",
+          gap_vector: [{ dimension_name: "quality", normalized_weighted_gap: 0.35 }],
+          confidence_vector: [{ dimension_name: "quality", confidence: 0.9 }],
+        },
+      ]);
+
+      await manager.writeRaw("gaps/gap-current/current.json", { quality: 0.99 });
+
+      expect(await manager.loadCurrentGapForDimension("gap-current", "quality")).toBe(0.35);
+      expect(await manager.loadCurrentGapForDimension("gap-current", "missing")).toBeNull();
+    });
   });
 
   describe("milestone tracking", async () => {

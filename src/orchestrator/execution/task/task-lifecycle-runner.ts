@@ -278,7 +278,7 @@ export async function runTaskLifecycleCycle(context: TaskLifecycleTaskCycleConte
       completed_at: now,
       execution_output: reason,
     };
-    await stateManager.writeRaw(`tasks/${task.goal_id}/${task.id}.json`, blockedTask);
+    await stateManager.saveTask(blockedTask);
     await appendTaskOutcomeEvent(stateManager, {
       task: blockedTask,
       type: "failed",
@@ -367,9 +367,9 @@ export async function runTaskLifecycleCycle(context: TaskLifecycleTaskCycleConte
   const effectiveVerificationResult = applyVerdictHandlingContextGuards(verificationResult, verdictContext);
   const effectiveVerdictContext = { ...verdictContext, verificationGuardsApplied: true };
   if (effectiveVerificationResult !== verificationResult) {
-    const rawVerification = await stateManager.readRaw(`verification/${taskForVerification.id}/verification-result.json`);
-    await stateManager.writeRaw(
-      `verification/${taskForVerification.id}/verification-result.json`,
+    const rawVerification = await stateManager.loadTaskVerificationResult(taskForVerification.id);
+    await stateManager.saveTaskVerificationResult(
+      taskForVerification.id,
       rawVerification && typeof rawVerification === "object"
         ? { ...rawVerification, ...effectiveVerificationResult }
         : effectiveVerificationResult

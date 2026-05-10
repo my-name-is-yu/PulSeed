@@ -127,7 +127,7 @@ export async function executeTask(
 
   // Update task status to running
   const runningTask = { ...task, status: "running" as const, started_at: new Date().toISOString() };
-  await stateManager.writeRaw(`tasks/${task.goal_id}/${task.id}.json`, runningTask);
+  await stateManager.saveTask(runningTask);
   await appendTaskOutcomeEvent(stateManager, {
     task: runningTask,
     type: "started",
@@ -156,7 +156,7 @@ export async function executeTask(
           await sessionManager.endSession(session.id, skipSummary);
           const skipNow = new Date().toISOString();
           const skippedTask = { ...runningTask, status: 'completed' as const, completed_at: skipNow };
-          await stateManager.writeRaw(`tasks/${task.goal_id}/${task.id}.json`, skippedTask);
+          await stateManager.saveTask(skippedTask);
           return result;
         }
       } catch { /* non-fatal: proceed with execution if dedup check fails */ }
@@ -207,7 +207,7 @@ export async function executeTask(
     ...(newStatus === "timed_out" ? { timeout_at: now } : {}),
     execution_output: result.output ? result.output.slice(0, 2000) : undefined,
   };
-  await stateManager.writeRaw(`tasks/${task.goal_id}/${task.id}.json`, updatedTask);
+  await stateManager.saveTask(updatedTask);
 
   return result;
 }
@@ -275,8 +275,8 @@ export async function applyPostExecutionDiffScopeChecks(input: {
  */
 export async function reloadTaskFromDisk(stateManager: StateManager, task: Task): Promise<Task> {
   try {
-    const raw = await stateManager.readRaw(`tasks/${task.goal_id}/${task.id}.json`);
-    if (raw) return TaskSchema.parse(raw);
+    const stored = await stateManager.loadTask(task.goal_id, task.id);
+    if (stored) return TaskSchema.parse(stored);
   } catch { /* fall back to in-memory task */ }
   return task;
 }

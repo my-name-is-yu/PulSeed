@@ -191,8 +191,10 @@ describe("executeTask toolset_locked warning", () => {
 
     const deps: TaskExecutorDeps = {
       stateManager: {
-        writeRaw: vi.fn().mockResolvedValue(undefined),
-        readRaw: vi.fn().mockResolvedValue(null),
+        saveTask: vi.fn().mockResolvedValue(undefined),
+        loadTask: vi.fn().mockResolvedValue(null),
+        loadTaskOutcomeLedger: vi.fn().mockResolvedValue(null),
+        saveTaskOutcomeLedger: vi.fn().mockResolvedValue(undefined),
       } as unknown as TaskExecutorDeps["stateManager"],
       sessionManager: mockSessionManager as unknown as TaskExecutorDeps["sessionManager"],
       logger: { warn: warnFn, info: vi.fn(), error: vi.fn(), debug: vi.fn() } as unknown as TaskExecutorDeps["logger"],

@@ -33,23 +33,16 @@ interface CheckpointManagerDeps {
 export class CheckpointManager {
   constructor(private readonly deps: CheckpointManagerDeps) {}
 
-  private indexPath = (goalId: string) => `checkpoints/${goalId}/index.json`;
-  private checkpointPath = (goalId: string, checkpointId: string) =>
-    `checkpoints/${goalId}/${checkpointId}.json`;
-
   private async readIndex(goalId: string): Promise<CheckpointIndex> {
-    const raw = await this.deps.stateManager.readRaw(this.indexPath(goalId));
-    if (!raw) return { goal_id: goalId, checkpoints: [] };
     try {
-      return CheckpointIndexSchema.parse(raw);
+      return CheckpointIndexSchema.parse({
+        goal_id: goalId,
+        checkpoints: await this.deps.stateManager.listCheckpointEntries(goalId),
+      });
     } catch {
       this.deps.logger?.warn('checkpoint index parse failed, resetting', { goalId });
       return { goal_id: goalId, checkpoints: [] };
     }
-  }
-
-  private async writeIndex(index: CheckpointIndex): Promise<void> {
-    await this.deps.stateManager.writeRaw(this.indexPath(index.goal_id), index);
   }
 
   async saveCheckpoint(params: {
@@ -71,19 +64,7 @@ export class CheckpointManager {
       metadata: params.metadata ?? {},
     });
 
-    await this.deps.stateManager.writeRaw(
-      this.checkpointPath(params.goalId, checkpoint.checkpoint_id),
-      checkpoint,
-    );
-
-    const index = await this.readIndex(params.goalId);
-    index.checkpoints.push({
-      checkpoint_id: checkpoint.checkpoint_id,
-      task_id: checkpoint.task_id,
-      agent_id: checkpoint.agent_id,
-      created_at: checkpoint.created_at,
-    });
-    await this.writeIndex(index);
+    await this.deps.stateManager.saveCheckpoint(checkpoint);
 
     this.deps.logger?.info('checkpoint saved', {
       checkpointId: checkpoint.checkpoint_id,
@@ -94,22 +75,12 @@ export class CheckpointManager {
   }
 
   async loadCheckpoint(goalId: string, taskId?: string): Promise<Checkpoint | null> {
-    const index = await this.readIndex(goalId);
-    let entries = index.checkpoints;
-    if (taskId) entries = entries.filter((e) => e.task_id === taskId);
-    if (entries.length === 0) return null;
-
-    const latest = entries.reduce((a, b) => (a.created_at > b.created_at ? a : b));
-    const raw = await this.deps.stateManager.readRaw(
-      this.checkpointPath(goalId, latest.checkpoint_id),
-    );
-    if (!raw) return null;
-
     try {
-      return CheckpointSchema.parse(raw);
+      return await this.deps.stateManager.loadLatestCheckpoint(goalId, taskId);
     } catch {
       this.deps.logger?.warn('checkpoint parse failed', {
-        checkpointId: latest.checkpoint_id,
+        goalId,
+        taskId,
       });
       return null;
     }
@@ -162,29 +133,14 @@ export class CheckpointManager {
   }
 
   async deleteCheckpoint(goalId: string, checkpointId: string): Promise<void> {
-    await this.deps.stateManager.writeRaw(this.checkpointPath(goalId, checkpointId), null);
-    const index = await this.readIndex(goalId);
-    index.checkpoints = index.checkpoints.filter((e) => e.checkpoint_id !== checkpointId);
-    await this.writeIndex(index);
+    await this.deps.stateManager.deleteCheckpoint(goalId, checkpointId);
     this.deps.logger?.info('checkpoint deleted', { checkpointId, goalId });
   }
 
   async garbageCollect(goalId: string, maxAgeDays = 7): Promise<number> {
-    const index = await this.readIndex(goalId);
     const cutoff = Date.now() - maxAgeDays * 86_400_000;
-    const toDelete = index.checkpoints.filter(
-      (e) => new Date(e.created_at).getTime() < cutoff,
-    );
-
-    for (const entry of toDelete) {
-      await this.deps.stateManager.writeRaw(this.checkpointPath(goalId, entry.checkpoint_id), null);
-    }
-
-    const deletedIds = new Set(toDelete.map((e) => e.checkpoint_id));
-    index.checkpoints = index.checkpoints.filter((e) => !deletedIds.has(e.checkpoint_id));
-    await this.writeIndex(index);
-
-    this.deps.logger?.info('garbage collected checkpoints', { goalId, count: toDelete.length });
-    return toDelete.length;
+    const deleted = await this.deps.stateManager.garbageCollectCheckpoints(goalId, cutoff);
+    this.deps.logger?.info('garbage collected checkpoints', { goalId, count: deleted });
+    return deleted;
   }
 }

@@ -33,6 +33,8 @@ function makeDeps(tmpDir: string) {
 
   const mockStateManager = {
     getBaseDir: vi.fn().mockReturnValue(tmpDir),
+    listTasksByStatus: vi.fn().mockResolvedValue([]),
+    listPipelinesByStatus: vi.fn().mockResolvedValue([]),
   };
 
   return {

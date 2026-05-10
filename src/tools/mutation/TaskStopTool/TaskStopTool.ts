@@ -46,7 +46,7 @@ export class TaskStopTool implements ITool<TaskStopInput, unknown> {
   async call(input: TaskStopInput, _context: ToolCallContext): Promise<ToolResult> {
     const startTime = Date.now();
     try {
-      const raw = await this.stateManager.readRaw(`tasks/${input.goalId}/${input.taskId}.json`);
+      const raw = await this.stateManager.loadTask(input.goalId, input.taskId);
       if (raw == null) {
         return {
           success: false,
@@ -79,7 +79,7 @@ export class TaskStopTool implements ITool<TaskStopInput, unknown> {
         execution_output: existingOutput ? `${existingOutput}\n\n${stopLine}` : stopLine,
       });
 
-      await this.stateManager.writeRaw(`tasks/${input.goalId}/${input.taskId}.json`, updatedTask);
+      await this.stateManager.saveTask(updatedTask);
       await appendTaskOutcomeEvent(this.stateManager, {
         task: updatedTask,
         type: "abandoned",

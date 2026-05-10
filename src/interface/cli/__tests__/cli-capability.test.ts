@@ -120,7 +120,7 @@ async function writeRegistry(baseDir: string, capabilities: Capability[]): Promi
     last_checked: new Date().toISOString(),
   };
   const sm = new StateManager(baseDir);
-  await sm.writeRaw("capability_registry.json", registry);
+  await sm.saveCapabilityRegistry(registry);
 }
 
 // ─── Setup / Teardown ────────────────────────────────────────────────────────
@@ -228,9 +228,8 @@ describe("CLIRunner — pulseed capability remove", () => {
 
     // Verify the capability is actually gone from the registry
     const sm = new StateManager(tmpDir);
-    const raw = await sm.readRaw("capability_registry.json") as { capabilities: Capability[] } | null;
-    expect(raw).not.toBeNull();
-    const remaining = raw!.capabilities.filter((c) => c.id === "removable_cap");
+    const registry = await sm.loadCapabilityRegistry();
+    const remaining = registry.capabilities.filter((c) => c.id === "removable_cap");
     expect(remaining).toHaveLength(0);
   });
 

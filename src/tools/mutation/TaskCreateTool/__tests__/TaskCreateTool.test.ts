@@ -19,6 +19,15 @@ async function fakeReadRaw(baseDir: string, relativePath: string): Promise<unkno
   }
 }
 
+async function fakeWriteRaw(baseDir: string, relativePath: string, payload: unknown): Promise<void> {
+  const resolved = path.resolve(baseDir, relativePath);
+  if (!resolved.startsWith(path.resolve(baseDir) + path.sep)) {
+    throw new Error(`Path traversal detected: ${relativePath}`);
+  }
+  fs.mkdirSync(path.dirname(resolved), { recursive: true });
+  fs.writeFileSync(resolved, JSON.stringify(payload, null, 2), "utf-8");
+}
+
 function makeContext(): ToolCallContext {
   return {
     cwd: "/tmp",
@@ -37,11 +46,9 @@ describe("TaskCreateTool", () => {
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "task-create-tool-"));
     stateManager = {
-      writeRaw: vi.fn().mockImplementation(async (rel: string, data: unknown) => {
-        const resolved = path.resolve(tmpDir, rel);
-        fs.mkdirSync(path.dirname(resolved), { recursive: true });
-        fs.writeFileSync(resolved, JSON.stringify(data), "utf-8");
-      }),
+      saveTask: vi.fn().mockImplementation((task: { goal_id: string; id: string }) =>
+        fakeWriteRaw(tmpDir, `tasks/${task.goal_id}/${task.id}.json`, task)
+      ),
     } as unknown as StateManager;
     tool = new TaskCreateTool(stateManager);
   });

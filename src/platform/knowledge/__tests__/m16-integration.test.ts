@@ -17,6 +17,7 @@ import {
 } from "../../../orchestrator/execution/context/context-budget.js";
 import { createMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
 import type { LearnedPattern } from "../../../base/types/learning.js";
+import type { Checkpoint } from "../../../base/types/checkpoint.js";
 
 // ─── Helpers ───
 
@@ -55,10 +56,42 @@ function makeMockLearningPipeline(patternsPerGoal: Record<string, LearnedPattern
 
 function makeStoreBacked() {
   const stored: Record<string, unknown> = {};
+  const checkpoints = new Map<string, Checkpoint>();
   const stateManager = {
     readRaw: vi.fn(async (p: string) => stored[p] ?? null),
     writeRaw: vi.fn(async (p: string, data: unknown) => { stored[p] = data; }),
     getBaseDir: vi.fn(() => "/tmp/test"),
+    saveCheckpoint: vi.fn(async (checkpoint: Checkpoint) => {
+      checkpoints.set(checkpoint.checkpoint_id, checkpoint);
+    }),
+    loadLatestCheckpoint: vi.fn(async (goalId: string, taskId?: string) => {
+      return [...checkpoints.values()]
+        .filter((checkpoint) => checkpoint.goal_id === goalId && (taskId === undefined || checkpoint.task_id === taskId))
+        .sort((a, b) => b.created_at.localeCompare(a.created_at))[0] ?? null;
+    }),
+    listCheckpointEntries: vi.fn(async (goalId: string) => {
+      return [...checkpoints.values()]
+        .filter((checkpoint) => checkpoint.goal_id === goalId)
+        .map((checkpoint) => ({
+          checkpoint_id: checkpoint.checkpoint_id,
+          task_id: checkpoint.task_id,
+          agent_id: checkpoint.agent_id,
+          created_at: checkpoint.created_at,
+        }));
+    }),
+    deleteCheckpoint: vi.fn(async (_goalId: string, checkpointId: string) => {
+      checkpoints.delete(checkpointId);
+    }),
+    garbageCollectCheckpoints: vi.fn(async (goalId: string, olderThanMs: number) => {
+      let deleted = 0;
+      for (const checkpoint of checkpoints.values()) {
+        if (checkpoint.goal_id === goalId && new Date(checkpoint.created_at).getTime() < olderThanMs) {
+          checkpoints.delete(checkpoint.checkpoint_id);
+          deleted += 1;
+        }
+      }
+      return deleted;
+    }),
   } as unknown as StateManager;
   return { stored, stateManager };
 }
@@ -214,17 +247,17 @@ describe("Flow 2: CheckpointManager save/load/adapt/GC", () => {
 
     // GC removes entries older than 7 days
     const oldAt = new Date(Date.now() - 10 * 86_400_000).toISOString();
-    const indexKey = `checkpoints/${GOAL_ID}/index.json`;
-    type CpEntry = { checkpoint_id: string; task_id: string; agent_id: string; created_at: string };
-    const currentIndex = stored[indexKey] as { goal_id: string; checkpoints: CpEntry[] };
     const oldId = "old-checkpoint-id";
-    currentIndex.checkpoints.push({ checkpoint_id: oldId, task_id: TASK_ID, agent_id: "agent-A", created_at: oldAt });
-    stored[indexKey] = currentIndex;
+    await stateManager.saveCheckpoint({
+      ...checkpoint,
+      checkpoint_id: oldId,
+      created_at: oldAt,
+    });
 
     const gcCount = await manager.garbageCollect(GOAL_ID, 7);
     expect(gcCount).toBe(1);
 
-    const ids = (stored[indexKey] as typeof currentIndex).checkpoints.map((c) => c.checkpoint_id);
+    const ids = (await stateManager.listCheckpointEntries(GOAL_ID)).map((c) => c.checkpoint_id);
     expect(ids).not.toContain(oldId);
     expect(ids).toContain(checkpoint.checkpoint_id);
   });

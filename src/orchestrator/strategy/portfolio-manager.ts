@@ -30,6 +30,12 @@ import {
 } from "./portfolio-allocation.js";
 import type { WaitStrategyActivationContext } from "./strategy-manager-base.js";
 
+export interface PortfolioManagerPorts {
+  capabilityAvailability?: {
+    isAvailable(capabilityName: string): boolean | Promise<boolean>;
+  };
+}
+
 /**
  * PortfolioManager provides portfolio-level orchestration on top of StrategyManager.
  *
@@ -60,7 +66,8 @@ export class PortfolioManager {
   constructor(
     strategyManager: StrategyManager,
     stateManager: StateManager,
-    config?: Partial<PortfolioConfig>
+    config?: Partial<PortfolioConfig>,
+    private readonly ports: PortfolioManagerPorts = {}
   ) {
     this.strategyManager = strategyManager;
     this.stateManager = stateManager;
@@ -403,15 +410,15 @@ export class PortfolioManager {
         await this.strategyManager.activateMultiple(gId, [sId], activationContext);
       },
       async (gId) => (await this.strategyManager.getPortfolio(gId))?.strategies ?? [],
-      (gId, sId) => this.stateManager.readRaw(`strategies/${gId}/wait-meta/${sId}.json`),
-      () => this.stateManager.readRaw("capability_registry.json"),
+      (gId, sId) => this.stateManager.loadWaitMetadata(gId, sId),
+      (capabilityName) => this.ports.capabilityAvailability?.isAvailable(capabilityName) ?? false,
       (approvalId) => {
         const getBaseDir = this.stateManager.getBaseDir;
         if (typeof getBaseDir !== "function") return null;
         return new ApprovalStore(path.join(getBaseDir.call(this.stateManager), "runtime")).load(approvalId);
       },
       async (gId, sId, metadata) => {
-        await this.stateManager.writeRaw(`strategies/${gId}/wait-meta/${sId}.json`, metadata);
+        await this.stateManager.saveWaitMetadata(gId, sId, metadata);
         await syncWaitStrategyScheduleProjection({
           baseDir: this.stateManager.getBaseDir(),
           goalId: gId,
@@ -485,7 +492,7 @@ export class PortfolioManager {
     return _calculateGapDeltaForStrategy(
       strategy,
       goalId,
-      async (path) => await this.stateManager.readRaw(path)
+      (gId, dim) => this.stateManager.loadCurrentGapForDimension(gId, dim)
     );
   }
 
@@ -493,7 +500,7 @@ export class PortfolioManager {
     return _getCurrentGapForDimension(
       goalId,
       dimension,
-      async (path) => await this.stateManager.readRaw(path)
+      (gId, dim) => this.stateManager.loadCurrentGapForDimension(gId, dim)
     );
   }
 
@@ -531,9 +538,6 @@ export class PortfolioManager {
     history.push(result);
     this.rebalanceHistory.set(goalId, history);
 
-    await this.stateManager.writeRaw(
-      `strategies/${goalId}/rebalance-history.json`,
-      history
-    );
+    await this.stateManager.saveRebalanceHistory(goalId, history);
   }
 }

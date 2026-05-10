@@ -14,10 +14,6 @@ import type {
 } from "../../base/types/capability.js";
 import type { Logger } from "../../runtime/logger.js";
 
-// ─── Constants ───
-
-const REGISTRY_PATH = "capability_registry.json";
-
 // ─── Registry Deps ───
 
 export interface RegistryDeps {
@@ -31,31 +27,24 @@ export interface EscalateDeps {
 // ─── loadRegistry ───
 
 /**
- * Reads capability registry from ~/.pulseed/capability_registry.json.
- * Returns an empty registry if the file does not exist.
+ * Reads the capability registry from the typed control DB store.
+ * Returns an empty registry if no registry has been persisted yet.
  */
 export async function loadRegistry(deps: RegistryDeps): Promise<CapabilityRegistry> {
-  const raw = await deps.stateManager.readRaw(REGISTRY_PATH);
-  if (raw === null) {
-    return CapabilityRegistrySchema.parse({
-      capabilities: [],
-      last_checked: new Date().toISOString(),
-    });
-  }
-  return CapabilityRegistrySchema.parse(raw);
+  return deps.stateManager.loadCapabilityRegistry();
 }
 
 // ─── saveRegistry ───
 
 /**
- * Persists the capability registry to disk.
+ * Persists the capability registry to the typed control DB store.
  */
 export async function saveRegistry(
   deps: RegistryDeps,
   registry: CapabilityRegistry
 ): Promise<void> {
   const parsed = CapabilityRegistrySchema.parse(registry);
-  await deps.stateManager.writeRaw(REGISTRY_PATH, parsed);
+  await deps.stateManager.saveCapabilityRegistry(parsed);
 }
 
 // ─── registerCapability ───

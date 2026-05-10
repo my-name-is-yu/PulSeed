@@ -21,9 +21,7 @@ export { StrategyManagerBase } from "./strategy-manager-base.js";
  * - Phase 2: parallel multi-strategy execution (activateMultiple, terminateStrategy,
  *   createWaitStrategy, suspendStrategy, resumeStrategy, getAllActiveStrategies, updateAllocation)
  *
- * Persistence paths (relative to StateManager base):
- *   strategies/<goal_id>/portfolio.json
- *   strategies/<goal_id>/strategy-history.json
+ * Persistence is owned by typed database stores behind StateManager.
  *
  * In-memory index: strategyId → goalId for fast lookups without directory scanning.
  */
@@ -82,7 +80,7 @@ export class StrategyManager extends StrategyManagerBase {
           await getCurrentGapForDimension(
             goalId,
             s.primary_dimension,
-            (gapPath) => this.stateManager.readRaw(gapPath)
+            (gId, dim) => this.stateManager.loadCurrentGapForDimension(gId, dim)
           );
         const baseline = s.gap_snapshot_at_start ?? currentGap ?? 1.0;
         const waitHours = Math.max(
@@ -198,10 +196,8 @@ export class StrategyManager extends StrategyManagerBase {
 
         // Fall back to task-history.json scan (Bug 1 fix: use task_id not id)
         if (!taskId) {
-          const rawHistory = await this.stateManager.readRaw(
-            `tasks/${goalId}/task-history.json`
-          );
-          if (Array.isArray(rawHistory) && rawHistory.length > 0) {
+          const rawHistory = await this.stateManager.loadTaskHistory(goalId);
+          if (rawHistory.length > 0) {
             const history = rawHistory as Array<Record<string, unknown>>;
             const rankedHistory = history
               .map((entry, index) => {
@@ -241,16 +237,10 @@ export class StrategyManager extends StrategyManagerBase {
 
         if (!taskId) continue;
 
-        const taskRaw = await this.stateManager.readRaw(
-          `tasks/${goalId}/${taskId}.json`
-        ) as Record<string, unknown> | null;
-        if (!taskRaw) continue;
+        const task = await this.stateManager.loadTask(goalId, taskId);
+        if (!task) continue;
 
-        taskRaw["plateau_until"] = waitUntil;
-        await this.stateManager.writeRaw(
-          `tasks/${goalId}/${taskId}.json`,
-          taskRaw
-        );
+        await this.stateManager.saveTask({ ...task, plateau_until: waitUntil });
       } catch {
         // Non-fatal: plateau_until write failure does not block activation
       }
@@ -342,10 +332,7 @@ export class StrategyManager extends StrategyManagerBase {
     await this.savePortfolio(goalId, portfolio);
 
     // Persist wait-specific fields in a sidecar so wait observation can survive schema changes.
-    await this.stateManager.writeRaw(
-      `strategies/${goalId}/wait-meta/${waitStrategy.id}.json`,
-      buildDefaultWaitMetadata(waitStrategy)
-    );
+    await this.stateManager.saveWaitMetadata(goalId, waitStrategy.id, buildDefaultWaitMetadata(waitStrategy));
     await syncWaitStrategyScheduleProjection({
       baseDir: this.stateManager.getBaseDir(),
       goalId,

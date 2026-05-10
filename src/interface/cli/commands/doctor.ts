@@ -17,6 +17,7 @@ import {
   DaemonStateStore,
   GoalTaskStateStore,
   importLegacyExecutionSessionState,
+  importLegacyCapabilityRegistryState,
   OutboxStore,
   RuntimeHealthStore,
   compactRuntimeHealthKpi,
@@ -744,6 +745,7 @@ export async function cmdDoctor(_args: string[]): Promise<number> {
     const chatAgentLoopImportReport = await importLegacyChatAgentLoopSessionState(baseDir);
     const executionSessionImportReport = await importLegacyExecutionSessionState(baseDir);
     const goalTaskImportReport = await importLegacyGoalTaskDurableLoopState(baseDir);
+    const capabilityRegistryImportReport = await importLegacyCapabilityRegistryState(baseDir);
     const evidenceStrategyDreamImportReport = await importLegacyRuntimeEvidenceStrategyDreamState(baseDir, { runtimeRoot });
     const knowledgeMemoryImportReport = await importLegacyKnowledgeMemoryState(baseDir);
     const pluginChannelImportReport = await importLegacyPluginChannelRuntimeState(baseDir);
@@ -774,6 +776,9 @@ export async function cmdDoctor(_args: string[]): Promise<number> {
     );
     console.log(
       `Repair goal/task import: goals=${goalTaskImportReport.goals}, legacy WAL files=${goalTaskImportReport.legacyWalFiles}, legacy WAL intents=${goalTaskImportReport.legacyWalIntents}, tasks=${goalTaskImportReport.tasks}, histories=${goalTaskImportReport.taskHistoryRecords}, ledgers=${goalTaskImportReport.taskOutcomeLedgers}, verification=${goalTaskImportReport.verificationResults}, checkpoints=${goalTaskImportReport.checkpoints}, pipelines=${goalTaskImportReport.pipelines}, blocked=${goalTaskImportReport.blockedSources.length}`
+    );
+    console.log(
+      `Repair capability registry import: registry files=${capabilityRegistryImportReport.registryFiles}, capabilities=${capabilityRegistryImportReport.importedCapabilities}, blocked=${capabilityRegistryImportReport.blockedSources.length}`
     );
     console.log(
       `Repair evidence/strategy/dream import: evidence=${evidenceStrategyDreamImportReport.runtimeEvidenceEntries}, strategy=${evidenceStrategyDreamImportReport.strategyRecords}, iteration logs=${evidenceStrategyDreamImportReport.dreamIterationLogs}, session logs=${evidenceStrategyDreamImportReport.dreamSessionLogs}, event logs=${evidenceStrategyDreamImportReport.dreamEventLogs}, importance=${evidenceStrategyDreamImportReport.dreamImportanceEntries}, watermarks=${evidenceStrategyDreamImportReport.dreamWatermarks ? "imported" : "none"}, suggestions=${evidenceStrategyDreamImportReport.dreamScheduleSuggestions}, playbooks=${evidenceStrategyDreamImportReport.dreamPlaybooks}, activation artifacts=${evidenceStrategyDreamImportReport.dreamActivationArtifacts}, workflows=${evidenceStrategyDreamImportReport.dreamWorkflows}, blocked=${evidenceStrategyDreamImportReport.blockedSources.length}`

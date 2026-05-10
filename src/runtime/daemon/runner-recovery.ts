@@ -4,7 +4,6 @@ import { durationToMs } from "../../orchestrator/execution/task/task-executor.js
 import { verifyTaskArtifactContract } from "../../orchestrator/execution/task/task-artifact-contract.js";
 import { resolveTaskWorkspacePath } from "../../orchestrator/execution/task/task-workspace.js";
 import type { StateManager } from "../../base/state/state-manager.js";
-import { GoalTaskStateStore } from "../store/goal-task-state-store.js";
 import type { Logger } from "../logger.js";
 
 type InterruptedTaskTerminalStatus = Extract<Task["status"], "cancelled" | "timed_out" | "error">;
@@ -62,7 +61,7 @@ export async function reconcileInterruptedExecutions(params: ReconcileInterrupte
         .join("\n"),
     });
 
-    await params.stateManager.writeRaw(`tasks/${task.goal_id}/${task.id}.json`, recoveredTask);
+    await params.stateManager.saveTask(recoveredTask);
     await appendRecoveredTaskHistory(params.stateManager, recoveredTask, {
       recoverySource,
       recovery_reason: failedEventReason,
@@ -145,8 +144,8 @@ async function recoverInterruptedTaskFromArtifactContract(
     timestamp: now,
   });
 
-  await params.stateManager.writeRaw(`tasks/${task.goal_id}/${task.id}.json`, recoveredTask);
-  await params.stateManager.writeRaw(`verification/${task.id}/verification-result.json`, verificationResult);
+  await params.stateManager.saveTask(recoveredTask);
+  await params.stateManager.saveTaskVerificationResult(task.id, verificationResult);
   await appendRecoveredTaskHistory(params.stateManager, recoveredTask, {
     recoverySource,
     recovery_reason: successReason,
@@ -180,14 +179,8 @@ function inferInterruptedTaskStatus(task: Task, now: string): InterruptedTaskTer
   return "cancelled";
 }
 
-export async function findRunningTasks(baseDir: string, stateManager: StateManager): Promise<Task[]> {
-  const listTasksByStatus = (stateManager as {
-    listTasksByStatus?: StateManager["listTasksByStatus"];
-  }).listTasksByStatus;
-  if (typeof listTasksByStatus === "function") {
-    return listTasksByStatus.call(stateManager, "running");
-  }
-  return new GoalTaskStateStore(baseDir).listTasksByStatus("running");
+export async function findRunningTasks(_baseDir: string, stateManager: StateManager): Promise<Task[]> {
+  return stateManager.listTasksByStatus("running");
 }
 
 export async function appendRecoveredTaskHistory(
@@ -199,9 +192,7 @@ export async function appendRecoveredTaskHistory(
     retry_intent: string;
   }
 ): Promise<void> {
-  const historyPath = `tasks/${task.goal_id}/task-history.json`;
-  const existing = await stateManager.readRaw(historyPath);
-  const history = Array.isArray(existing) ? existing : [];
+  const history = await stateManager.loadTaskHistory(task.goal_id);
   const actualElapsedMs =
     task.started_at && task.completed_at
       ? new Date(task.completed_at).getTime() - new Date(task.started_at).getTime()
@@ -219,22 +210,17 @@ export async function appendRecoveredTaskHistory(
     recovery_reason: recovery.recovery_reason,
     retry_intent: recovery.retry_intent,
   });
-  await stateManager.writeRaw(historyPath, history);
+  await stateManager.saveTaskHistory(task.goal_id, history);
 }
 
 export async function reconcileInterruptedPipelines(
-  baseDir: string,
+  _baseDir: string,
   stateManager: StateManager,
   now: string
 ): Promise<void> {
-  const listPipelinesByStatus = (stateManager as {
-    listPipelinesByStatus?: StateManager["listPipelinesByStatus"];
-  }).listPipelinesByStatus;
-  const runningPipelines = typeof listPipelinesByStatus === "function"
-    ? await listPipelinesByStatus.call(stateManager, "running")
-    : await new GoalTaskStateStore(baseDir).listPipelinesByStatus("running");
+  const runningPipelines = await stateManager.listPipelinesByStatus("running");
   for (const pipelineState of runningPipelines) {
-    await stateManager.writeRaw(`pipelines/${pipelineState.task_id}.json`, {
+    await stateManager.savePipeline(pipelineState.task_id, {
       ...pipelineState,
       status: "interrupted",
       updated_at: now,

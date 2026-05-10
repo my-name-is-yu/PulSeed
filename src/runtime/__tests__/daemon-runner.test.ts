@@ -220,6 +220,8 @@ function makeDeps(tmpDir: string, overrides: Partial<DaemonDeps> = {}): DaemonDe
     readRaw: vi.fn().mockResolvedValue(null),
     loadGoal: vi.fn().mockResolvedValue(null),
     listGoalIds: vi.fn().mockResolvedValue([]),
+    listTasksByStatus: vi.fn().mockResolvedValue([]),
+    listPipelinesByStatus: vi.fn().mockResolvedValue([]),
   };
 
   const pidManager = new PIDManager(tmpDir);
@@ -1176,6 +1178,8 @@ describe("DaemonRunner durable runtime", () => {
       getBaseDir: vi.fn().mockReturnValue(tmpDir),
       loadGoal: vi.fn(async (goalId: string) => (goalId === "resident-goal" ? residentGoal : null)),
       listGoalIds: vi.fn().mockResolvedValue(["resident-goal"]),
+      listTasksByStatus: vi.fn().mockResolvedValue([]),
+      listPipelinesByStatus: vi.fn().mockResolvedValue([]),
     };
 
     const deps = makeDeps(tmpDir, {

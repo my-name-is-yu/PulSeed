@@ -121,7 +121,7 @@ export async function cmdTaskShow(stateManager: StateManager, args: string[]): P
     return 1;
   }
 
-  const raw = await stateManager.readRaw(`tasks/${goalId}/${taskId}.json`);
+  const raw = await stateManager.loadTask(goalId, taskId);
   if (!raw) {
     getCliLogger().error(`Error: Task "${taskId}" not found for goal "${goalId}".`);
     return 1;

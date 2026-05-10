@@ -29,7 +29,7 @@ export interface TaskOutcomeEvent {
   tokens_used: number | null;
 }
 
-export interface TaskOutcomeSummary {
+export interface TaskOutcomeSummary extends Record<string, unknown> {
   task_id: string;
   goal_id: string;
   latest_event_type: TaskOutcomeEventType | null;
@@ -101,8 +101,6 @@ interface AppendTaskOutcomeEventParams {
   elapsedMs?: number | null;
   tokensUsed?: number | null;
 }
-
-const ledgerPath = (goalId: string, taskId: string): string => `tasks/${goalId}/ledger/${taskId}.json`;
 
 function toMillis(value: string | null | undefined): number | null {
   if (!value) return null;
@@ -232,11 +230,11 @@ async function readLedgerRecord(
   goalId: string,
   taskId: string
 ): Promise<TaskOutcomeLedgerRecord | null> {
-  const existing = await stateManager.readRaw(ledgerPath(goalId, taskId));
+  const existing = await stateManager.loadTaskOutcomeLedger(goalId, taskId);
   if (!existing || typeof existing !== "object") {
     return null;
   }
-  const record = existing as Partial<TaskOutcomeLedgerRecord>;
+  const record = existing as unknown as Partial<TaskOutcomeLedgerRecord>;
   return {
     task_id: typeof record.task_id === "string" ? record.task_id : taskId,
     goal_id: typeof record.goal_id === "string" ? record.goal_id : goalId,
@@ -256,7 +254,7 @@ async function writeLedgerRecord(
     events,
     summary: buildSummary(task, events),
   };
-  await stateManager.writeRaw(ledgerPath(task.goal_id, task.id), record);
+  await stateManager.saveTaskOutcomeLedger(record);
   return record;
 }
 

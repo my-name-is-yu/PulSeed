@@ -81,6 +81,12 @@ describe("TaskOutputTool", () => {
     stateManager = {
       readRaw: vi.fn().mockImplementation((rel: string) => fakeReadRaw(tmpDir, rel)),
       writeRaw: vi.fn().mockImplementation((rel: string, payload: unknown) => fakeWriteRaw(tmpDir, rel, payload)),
+      loadTask: vi.fn().mockImplementation((goalId: string, taskId: string) =>
+        fakeReadRaw(tmpDir, `tasks/${goalId}/${taskId}.json`)
+      ),
+      saveTask: vi.fn().mockImplementation((task: { goal_id: string; id: string }) =>
+        fakeWriteRaw(tmpDir, `tasks/${task.goal_id}/${task.id}.json`, task)
+      ),
     } as unknown as StateManager;
     tool = new TaskOutputTool(stateManager);
   });

@@ -382,10 +382,9 @@ export async function verifyTask(
 
   let stateBlock = "";
   try {
-    const goalDataForState = await deps.stateManager.readRaw(`goals/${task.goal_id}/goal.json`);
-    if (goalDataForState && typeof goalDataForState === "object") {
-      const dims = (goalDataForState as Record<string, unknown>).dimensions as Array<Record<string, unknown>> | undefined;
-      const primaryDim = dims?.find((d) => d.name === task.primary_dimension);
+    const goalDataForState = await deps.stateManager.loadGoal(task.goal_id);
+    if (goalDataForState) {
+      const primaryDim = goalDataForState.dimensions.find((d) => d.name === task.primary_dimension);
       if (primaryDim) {
         const currentValue = typeof primaryDim.current_value === "number" ? primaryDim.current_value : undefined;
         const threshold = primaryDim.threshold;
@@ -526,13 +525,8 @@ export async function verifyTask(
   const progressDelta = progressByVerdict[verdict] ?? 0;
 
   // Read goal state to get actual current dimension values for previous_value / new_value.
-  const goalDataForUpdate = await deps.stateManager.readRaw(`goals/${task.goal_id}/goal.json`);
-  const goalDimsForUpdate =
-    goalDataForUpdate && typeof goalDataForUpdate === "object"
-      ? ((goalDataForUpdate as Record<string, unknown>).dimensions as
-          | Array<Record<string, unknown>>
-          | undefined)
-      : undefined;
+  const goalDataForUpdate = await deps.stateManager.loadGoal(task.goal_id);
+  const goalDimsForUpdate = goalDataForUpdate?.dimensions;
 
   const dimension_updates =
     verdict === "fail"
@@ -624,17 +618,14 @@ export async function verifyTask(
   }
 
   // Persist verification result — include criteria fields from LLM review for failure context
-  await deps.stateManager.writeRaw(
-    `verification/${task.id}/verification-result.json`,
-    {
-      ...verificationResult,
-      criteria_met: effectiveL2.criteria_met,
-      criteria_total: effectiveL2.criteria_total,
-      executor_report: executorReport,
-      agent_loop: executionResult.agentLoop ?? null,
-      impact_analysis: impactAnalysis,
-    }
-  );
+  await deps.stateManager.saveTaskVerificationResult(task.id, {
+    ...verificationResult,
+    criteria_met: effectiveL2.criteria_met,
+    criteria_total: effectiveL2.criteria_total,
+    executor_report: executorReport,
+    agent_loop: executionResult.agentLoop ?? null,
+    impact_analysis: impactAnalysis,
+  });
 
   return verificationResult;
 }
@@ -652,14 +643,8 @@ export async function handleVerdict(
 ): Promise<VerdictResult> {
   // P0: Progress-verdict contradiction check (§4.1)
   if (verificationResult.verdict === "pass" && verificationResult.dimension_updates?.length > 0) {
-    const goalRawForGuard = await deps.stateManager.readRaw(`goals/${task.goal_id}/goal.json`);
-    const goalDimsForGuard = (
-      goalRawForGuard &&
-      typeof goalRawForGuard === "object" &&
-      Array.isArray((goalRawForGuard as Record<string, unknown>).dimensions)
-        ? (goalRawForGuard as Record<string, unknown>).dimensions as Array<Record<string, unknown>>
-        : []
-    );
+    const goalRawForGuard = await deps.stateManager.loadGoal(task.goal_id);
+    const goalDimsForGuard = goalRawForGuard?.dimensions ?? [];
 
     const anyWorsened = verificationResult.dimension_updates.some((u) => {
       const prev = typeof u.previous_value === "number" ? u.previous_value : null;
@@ -698,7 +683,7 @@ export async function handleVerdict(
     let criteria_met: number | undefined;
     let criteria_total: number | undefined;
     try {
-      const raw = await deps.stateManager.readRaw(`verification/${task.id}/verification-result.json`) as Record<string, unknown> | null;
+      const raw = await deps.stateManager.loadTaskVerificationResult(task.id) as Record<string, unknown> | null;
       if (raw && typeof raw.criteria_met === "number") criteria_met = raw.criteria_met;
       if (raw && typeof raw.criteria_total === "number") criteria_total = raw.criteria_total;
     } catch {
@@ -713,10 +698,7 @@ export async function handleVerdict(
       timestamp: new Date().toISOString(),
     };
     try {
-      await deps.stateManager.writeRaw(
-        `tasks/${task.goal_id}/last-failure-context.json`,
-        failureContext
-      );
+      await deps.stateManager.saveTaskFailureContext(task.goal_id, failureContext);
     } catch {
       // Non-fatal: failure context saving is best-effort
     }
@@ -726,10 +708,7 @@ export async function handleVerdict(
     case "pass": {
       // Clear stale failure context
       try {
-        await deps.stateManager.writeRaw(
-          `tasks/${task.goal_id}/last-failure-context.json`,
-          null
-        );
+        await deps.stateManager.saveTaskFailureContext(task.goal_id, null);
       } catch {
         // Non-fatal
       }
@@ -746,44 +725,42 @@ export async function handleVerdict(
         verification_verdict: verificationResult.verdict,
         verification_evidence: verificationResult.evidence?.map((e) => e.description ?? String(e)) ?? [],
       };
-      await deps.stateManager.writeRaw(
-        `tasks/${task.goal_id}/${task.id}.json`,
-        completedTask
-      );
+      await deps.stateManager.saveTask(completedTask);
 
       // Apply dimension_updates
-      const goalData = await deps.stateManager.readRaw(`goals/${task.goal_id}/goal.json`);
-      if (goalData && typeof goalData === "object") {
-        const goal = goalData as Record<string, unknown>;
-        const dimensions = goal.dimensions as Array<Record<string, unknown>> | undefined;
-        if (dimensions) {
-          for (const dim of dimensions) {
-            const update = verificationResult.dimension_updates.find(
-              (u) => u.dimension_name === dim.name
-            );
-            if (update !== undefined && typeof update.new_value === "number") {
-              const prev = typeof dim.current_value === "number" ? dim.current_value : 0;
-              if (!isDimensionUpdateDirectionAllowed({
-                intendedDirection: task.intended_direction,
-                dim,
-                previousValue: prev,
-                newValue: update.new_value,
-                logger: deps.logger,
-              })) {
-                continue;
-              }
-              dim.current_value = update.source === "artifact_contract"
+      const goalData = await deps.stateManager.loadGoal(task.goal_id);
+      if (goalData) {
+        const dimensions = goalData.dimensions.map((dimension) => {
+          let dim = dimension;
+          const update = verificationResult.dimension_updates.find(
+            (u) => u.dimension_name === dim.name
+          );
+          if (update !== undefined && typeof update.new_value === "number") {
+            const prev = typeof dim.current_value === "number" ? dim.current_value : 0;
+            if (!isDimensionUpdateDirectionAllowed({
+              intendedDirection: task.intended_direction,
+              dim,
+              previousValue: prev,
+              newValue: update.new_value,
+              logger: deps.logger,
+            })) {
+              return dim;
+            }
+            dim = {
+              ...dim,
+              current_value: update.source === "artifact_contract"
                 ? update.new_value
-                : clampDimensionUpdate(prev, update.new_value, deps.logger, String(dim.name));
-              dim.confidence = verificationResult.confidence ?? 0.70;
-              dim.last_observed_layer = "mechanical";
-            }
-            if (dim.name === task.primary_dimension) {
-              dim.last_updated = now;
-            }
+                : clampDimensionUpdate(prev, update.new_value, deps.logger, String(dim.name)),
+              confidence: verificationResult.confidence ?? 0.70,
+              last_observed_layer: "mechanical" as const,
+            };
           }
-          await deps.stateManager.writeRaw(`goals/${task.goal_id}/goal.json`, goal);
-        }
+          if (dim.name === task.primary_dimension) {
+            dim = { ...dim, last_updated: now };
+          }
+          return dim;
+        });
+        await deps.stateManager.saveGoal({ ...goalData, dimensions });
       }
 
       await appendTaskHistory(deps, task.goal_id, completedTask);
@@ -804,35 +781,36 @@ export async function handleVerdict(
     case "partial": {
       const directionCorrect = isDirectionCorrect(verificationResult);
       if (directionCorrect) {
-        const goalDataPartial = await deps.stateManager.readRaw(`goals/${task.goal_id}/goal.json`);
-        if (goalDataPartial && typeof goalDataPartial === "object") {
-          const goal = goalDataPartial as Record<string, unknown>;
-          const dimensions = goal.dimensions as Array<Record<string, unknown>> | undefined;
-          if (dimensions) {
-            for (const dim of dimensions) {
-              const update = verificationResult.dimension_updates.find(
-                (u) => u.dimension_name === dim.name
-              );
-              if (update !== undefined && typeof update.new_value === "number") {
-                const prev = typeof dim.current_value === "number" ? dim.current_value : 0;
-                if (!isDimensionUpdateDirectionAllowed({
-                  intendedDirection: task.intended_direction,
-                  dim,
-                  previousValue: prev,
-                  newValue: update.new_value,
-                  logger: deps.logger,
-                })) {
-                  continue;
-                }
-                dim.current_value = update.source === "artifact_contract"
-                  ? update.new_value
-                  : clampDimensionUpdate(prev, update.new_value, deps.logger, String(dim.name));
-                dim.confidence = verificationResult.confidence ?? 0.70;
-                dim.last_observed_layer = "mechanical";
+        const goalDataPartial = await deps.stateManager.loadGoal(task.goal_id);
+        if (goalDataPartial) {
+          const dimensions = goalDataPartial.dimensions.map((dimension) => {
+            let dim = dimension;
+            const update = verificationResult.dimension_updates.find(
+              (u) => u.dimension_name === dim.name
+            );
+            if (update !== undefined && typeof update.new_value === "number") {
+              const prev = typeof dim.current_value === "number" ? dim.current_value : 0;
+              if (!isDimensionUpdateDirectionAllowed({
+                intendedDirection: task.intended_direction,
+                dim,
+                previousValue: prev,
+                newValue: update.new_value,
+                logger: deps.logger,
+              })) {
+                return dim;
               }
+              dim = {
+                ...dim,
+                current_value: update.source === "artifact_contract"
+                  ? update.new_value
+                  : clampDimensionUpdate(prev, update.new_value, deps.logger, String(dim.name)),
+                confidence: verificationResult.confidence ?? 0.70,
+                last_observed_layer: "mechanical" as const,
+              };
             }
-            await deps.stateManager.writeRaw(`goals/${task.goal_id}/goal.json`, goal);
-          }
+            return dim;
+          });
+          await deps.stateManager.saveGoal({ ...goalDataPartial, dimensions });
         }
         const partialTask = {
           ...task,
@@ -840,10 +818,7 @@ export async function handleVerdict(
           verification_verdict: verificationResult.verdict,
           verification_evidence: verificationResult.evidence?.map((e) => e.description ?? String(e)) ?? [],
         };
-        await deps.stateManager.writeRaw(
-          `tasks/${task.goal_id}/${task.id}.json`,
-          partialTask
-        );
+        await deps.stateManager.saveTask(partialTask);
         await appendTaskHistory(deps, task.goal_id, partialTask);
         await appendTaskOutcomeEvent(deps.stateManager, {
           task: partialTask,
@@ -886,10 +861,7 @@ export async function handleFailure(
 
   await deps.trustManager.recordFailure(task.task_category);
 
-  await deps.stateManager.writeRaw(
-    `tasks/${task.goal_id}/${task.id}.json`,
-    updatedTask
-  );
+  await deps.stateManager.saveTask(updatedTask);
   await appendTaskOutcomeEvent(deps.stateManager, {
     task: updatedTask,
     type: "failed",

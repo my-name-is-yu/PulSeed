@@ -117,7 +117,7 @@ export class TaskUpdateTool implements ITool<TaskUpdateInput, unknown> {
         };
       }
 
-      const raw = await this.stateManager.readRaw(`tasks/${effectiveInput.goalId}/${effectiveInput.taskId}.json`);
+      const raw = await this.stateManager.loadTask(effectiveInput.goalId, effectiveInput.taskId);
       if (raw == null) {
         return {
           success: false,
@@ -178,7 +178,7 @@ export class TaskUpdateTool implements ITool<TaskUpdateInput, unknown> {
         ...updates,
       });
 
-      await this.stateManager.writeRaw(`tasks/${input.goalId}/${input.taskId}.json`, updatedTask);
+      await this.stateManager.saveTask(updatedTask);
       await upsertTaskHistory(this.stateManager, updatedTask);
 
       return {

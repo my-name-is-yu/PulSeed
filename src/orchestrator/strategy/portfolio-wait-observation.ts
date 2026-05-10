@@ -3,7 +3,6 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { z } from "zod";
 import { isProcessPidValue, signalProcessPid } from "../../base/utils/process-pid.js";
-import { CapabilityRegistrySchema } from "../../base/types/capability.js";
 import type {
   WaitCondition,
   WaitMetadata,
@@ -53,11 +52,13 @@ interface ConditionEvaluation {
   resumeHint?: string | null;
 }
 
+export type CapabilityAvailabilityProvider = (capabilityName: string) => boolean | Promise<boolean>;
+
 export async function approvalOutcomeFromWaitMetadata(
   goalId: string,
   strategyId: string,
   metadata: WaitMetadata,
-  getCapabilityRegistry?: () => unknown | null | Promise<unknown | null>,
+  isCapabilityAvailable?: CapabilityAvailabilityProvider,
   getWaitApprovalRecord?: (approvalId: string) => unknown | null | Promise<unknown | null>
 ): Promise<WaitExpiryOutcome | null> {
   const resumePlan = metadata.resume_plan;
@@ -86,7 +87,7 @@ export async function approvalOutcomeFromWaitMetadata(
     : typeof approvalPolicy["approved_capability"] === "string"
       ? approvalPolicy["approved_capability"]
       : null;
-  if (capabilityName && await hasAvailableCapability(capabilityName, getCapabilityRegistry)) {
+  if (capabilityName && await hasAvailableCapability(capabilityName, isCapabilityAvailable)) {
     return null;
   }
 
@@ -102,7 +103,7 @@ export async function approvalOutcomeFromWaitMetadata(
 
 export async function missingRequiredCapabilities(
   metadata: WaitMetadata,
-  getCapabilityRegistry?: () => unknown | null | Promise<unknown | null>
+  isCapabilityAvailable?: CapabilityAvailabilityProvider
 ): Promise<string[]> {
   const raw = (metadata as Record<string, unknown>)["required_capabilities"];
   if (!Array.isArray(raw) || raw.length === 0) return [];
@@ -115,7 +116,7 @@ export async function missingRequiredCapabilities(
         ? asRecord(item)?.["name"] as string
         : null;
     if (!name) continue;
-    if (!await hasAvailableCapability(name, getCapabilityRegistry)) missing.push(name);
+    if (!await hasAvailableCapability(name, isCapabilityAvailable)) missing.push(name);
   }
   return missing;
 }
@@ -241,15 +242,10 @@ async function getApprovedWaitApproval(
 
 async function hasAvailableCapability(
   capabilityName: string,
-  getCapabilityRegistry?: () => unknown | null | Promise<unknown | null>
+  isCapabilityAvailable?: CapabilityAvailabilityProvider
 ): Promise<boolean> {
-  if (!getCapabilityRegistry) return false;
-  const raw = await getCapabilityRegistry();
-  const parsed = CapabilityRegistrySchema.safeParse(raw);
-  if (!parsed.success) return false;
-  return parsed.data.capabilities.some(
-    (capability) => capability.name === capabilityName && capability.status === "available"
-  );
+  if (!isCapabilityAvailable) return false;
+  return isCapabilityAvailable(capabilityName);
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {

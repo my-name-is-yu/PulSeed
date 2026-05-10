@@ -45,7 +45,7 @@ export class TaskOutputTool implements ITool<TaskOutputInput, unknown> {
   async call(input: TaskOutputInput, _context: ToolCallContext): Promise<ToolResult> {
     const startTime = Date.now();
     try {
-      const raw = await this.stateManager.readRaw(`tasks/${input.goalId}/${input.taskId}.json`);
+      const raw = await this.stateManager.loadTask(input.goalId, input.taskId);
       if (raw == null) {
         return {
           success: false,
@@ -79,7 +79,7 @@ export class TaskOutputTool implements ITool<TaskOutputInput, unknown> {
         execution_output: nextOutput,
       });
 
-      await this.stateManager.writeRaw(`tasks/${input.goalId}/${input.taskId}.json`, updatedTask);
+      await this.stateManager.saveTask(updatedTask);
 
       return {
         success: true,

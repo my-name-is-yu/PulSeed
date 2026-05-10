@@ -100,12 +100,32 @@ function createMockStrategyManager(): StrategyManager {
 }
 
 function createMockStateManager(): StateManager {
-  return {
+  const stateManager = {
     readRaw: vi.fn().mockResolvedValue(null),
     writeRaw: vi.fn().mockResolvedValue(undefined),
     loadGoalState: vi.fn().mockReturnValue(null),
     getBaseDir: vi.fn().mockReturnValue(""),
-  } as unknown as StateManager;
+  };
+  Object.assign(stateManager, {
+    loadWaitMetadata: vi.fn((goalId: string, strategyId: string) =>
+      stateManager.readRaw(`strategies/${goalId}/wait-meta/${strategyId}.json`)
+    ),
+    saveWaitMetadata: vi.fn((goalId: string, strategyId: string, metadata: unknown) =>
+      stateManager.writeRaw(`strategies/${goalId}/wait-meta/${strategyId}.json`, metadata)
+    ),
+    saveRebalanceHistory: vi.fn((goalId: string, history: unknown[]) =>
+      stateManager.writeRaw(`strategies/${goalId}/rebalance-history.json`, history)
+    ),
+    loadCurrentGapForDimension: vi.fn(async (goalId: string, dimension: string) => {
+      const raw = await stateManager.readRaw(`gaps/${goalId}/current.json`);
+      if (!raw || typeof raw !== "object") return null;
+      const direct = (raw as Record<string, unknown>)[dimension];
+      if (typeof direct === "number") return direct;
+      const nested = (raw as { dimensions?: Record<string, { normalized_weighted_gap?: unknown }> }).dimensions?.[dimension]?.normalized_weighted_gap;
+      return typeof nested === "number" ? nested : null;
+    }),
+  });
+  return stateManager as unknown as StateManager;
 }
 
 // ─── Tests ───
@@ -997,6 +1017,78 @@ describe("PortfolioManager", () => {
       expect(result).toMatchObject({ status: "approval_required", strategy_id: "ws1" });
       expect(result?.details).toContain("kaggle_submit_approved");
       expect(mockStrategyManager.updateState).not.toHaveBeenCalled();
+    });
+
+    it("does not consult legacy capability_registry.json for wait capability decisions", async () => {
+      const wait = makeWaitStrategy({
+        id: "ws1",
+        state: "active",
+        wait_until: new Date(Date.now() - 100_000).toISOString(),
+        gap_snapshot_at_start: 0.5,
+        primary_dimension: "quality",
+      });
+      const portfolio = makePortfolio([wait]);
+      (mockStrategyManager.getPortfolio as ReturnType<typeof vi.fn>).mockReturnValue(portfolio);
+      (mockStateManager.readRaw as ReturnType<typeof vi.fn>).mockImplementation((rawPath: string) => {
+        if (rawPath === "strategies/goal-1/wait-meta/ws1.json") {
+          return {
+            schema_version: 1,
+            wait_until: wait.wait_until,
+            conditions: [{ type: "time_until", until: wait.wait_until }],
+            resume_plan: { action: "complete_wait" },
+            approval_policy: { required: true, capability: "kaggle_submit_approved" },
+          };
+        }
+        if (rawPath === "capability_registry.json") {
+          throw new Error("legacy capability registry must not be used by normal wait expiry");
+        }
+        return { quality: 0.5 };
+      });
+
+      const result = await pm.handleWaitStrategyExpiry("goal-1", "ws1");
+
+      expect(result).toMatchObject({ status: "approval_required", strategy_id: "ws1" });
+      expect(result?.details).toContain("kaggle_submit_approved");
+      expect(mockStrategyManager.updateState).not.toHaveBeenCalled();
+    });
+
+    it("uses the typed capability availability provider for wait capability decisions", async () => {
+      const wait = makeWaitStrategy({
+        id: "ws1",
+        state: "active",
+        wait_until: new Date(Date.now() - 100_000).toISOString(),
+        gap_snapshot_at_start: 0.8,
+        primary_dimension: "quality",
+      });
+      const portfolio = makePortfolio([wait]);
+      (mockStrategyManager.getPortfolio as ReturnType<typeof vi.fn>).mockReturnValue(portfolio);
+      const providerBackedManager = new PortfolioManager(
+        mockStrategyManager as unknown as StrategyManager,
+        mockStateManager as unknown as StateManager,
+        undefined,
+        {
+          capabilityAvailability: {
+            isAvailable: (capabilityName) => capabilityName === "kaggle_submit_approved",
+          },
+        }
+      );
+      (mockStateManager.readRaw as ReturnType<typeof vi.fn>).mockImplementation((rawPath: string) => {
+        if (rawPath === "strategies/goal-1/wait-meta/ws1.json") {
+          return {
+            schema_version: 1,
+            wait_until: wait.wait_until,
+            conditions: [{ type: "time_until", until: wait.wait_until }],
+            resume_plan: { action: "complete_wait" },
+            approval_policy: { required: true, capability: "kaggle_submit_approved" },
+          };
+        }
+        return { quality: 0.4 };
+      });
+
+      const result = await providerBackedManager.handleWaitStrategyExpiry("goal-1", "ws1");
+
+      expect(result).toMatchObject({ status: "improved", strategy_id: "ws1" });
+      expect(mockStrategyManager.updateState).toHaveBeenCalledWith("ws1", "completed");
     });
 
     it("continues expiry handling when a required wait approval is already approved", async () => {

@@ -182,11 +182,8 @@ async function resolveHistoryWorkDescription(
   if (!taskId) return "";
 
   try {
-    const raw = await stateManager.readRaw(`tasks/${goalId}/${taskId}.json`);
-    if (raw && typeof raw === "object") {
-      const description = (raw as { work_description?: unknown }).work_description;
-      return typeof description === "string" ? description : "";
-    }
+    const task = await stateManager.loadTask(goalId, taskId);
+    return task?.work_description ?? "";
   } catch {
     // Non-fatal: old history entries may reference tasks that were pruned.
   }
@@ -198,7 +195,7 @@ async function resolveHistoryWorkDescription(
 /**
  * Check whether `description` is too similar to a recently finalized or failed task.
  *
- * Reads `tasks/${goalId}/task-history.json`, takes a recent window, and returns
+ * Reads typed task history, takes a recent window, and returns
  * the matching entry if trigram similarity >= 0.7. Returns null if no duplicate.
  */
 async function checkDuplicateTask(
@@ -209,10 +206,7 @@ async function checkDuplicateTask(
 ): Promise<TaskHistoryEntry | null> {
   let history: TaskHistoryEntry[] = [];
   try {
-    const raw = await stateManager.readRaw(`tasks/${goalId}/task-history.json`);
-    if (Array.isArray(raw)) {
-      history = raw as TaskHistoryEntry[];
-    }
+    history = await stateManager.loadTaskHistory(goalId) as TaskHistoryEntry[];
   } catch {
     // no history yet — not an error
     return null;
@@ -486,7 +480,7 @@ export async function generateTask(
   }
 
   // Persist
-  await deps.stateManager.writeRaw(`tasks/${goalId}/${taskId}.json`, task);
+  await deps.stateManager.saveTask(task);
 
   return { task, tokensUsed: generationTokens };
 }

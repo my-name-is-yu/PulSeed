@@ -191,7 +191,11 @@ export async function buildDeps(
   const sessionManager = new SessionManager(stateManager, goalDependencyGraph);
   const strategyManager = new StrategyManager(stateManager, llmClient);
   strategyManager.setToolExecutor?.(toolExecutor);
-  const portfolioManager = new PortfolioManager(strategyManager, stateManager);
+  const portfolioManager = new PortfolioManager(strategyManager, stateManager, undefined, {
+    capabilityAvailability: {
+      isAvailable: (capabilityName) => stateManager.isCapabilityAvailable(capabilityName),
+    },
+  });
 
   const reportingEngine = new ReportingEngine(stateManager, undefined, characterConfig);
 

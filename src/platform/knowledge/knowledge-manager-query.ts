@@ -266,8 +266,8 @@ ${questions.map((q, i) => `${i + 1}. ${q}`).join("\n")}`,
     created_at: now,
   });
 
-  // Persist
-  await stateManager.writeRaw(`tasks/${goalId}/${taskId}.json`, task);
+  // Persist through the typed task store.
+  await stateManager.saveTask(task);
 
   return task;
 }
