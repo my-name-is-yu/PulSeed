@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { ITool, ToolResult, ToolCallContext, PermissionCheckResult, ToolMetadata } from "../../types.js";
-import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import { isTextFileSizeLimitError, readTextFileWithinLimit } from "../../../base/utils/json-io.js";
 import { validateFilePath } from "../FileValidationTool/FileValidationTool.js";
 import { DESCRIPTION } from "./prompt.js";
 import {
@@ -11,7 +11,6 @@ import {
   READ_ONLY,
   PERMISSION_LEVEL,
   JSON_QUERY_MAX_FILE_BYTES,
-  JSON_QUERY_READ_CHUNK_BYTES,
 } from "./constants.js";
 
 export const JsonQueryInputSchema = z.object({
@@ -27,31 +26,13 @@ function oversizedJsonError(filePath: string): Error {
 }
 
 async function readJsonFileWithinLimit(filePath: string): Promise<string> {
-  const handle = await fs.open(filePath, "r");
   try {
-    const chunks: Buffer[] = [];
-    const buffer = Buffer.allocUnsafe(Math.min(JSON_QUERY_READ_CHUNK_BYTES, JSON_QUERY_MAX_FILE_BYTES + 1));
-    let totalBytes = 0;
-
-    while (true) {
-      const remainingBytes = JSON_QUERY_MAX_FILE_BYTES + 1 - totalBytes;
-      if (remainingBytes <= 0) {
-        throw oversizedJsonError(filePath);
-      }
-
-      const { bytesRead } = await handle.read(buffer, 0, Math.min(buffer.byteLength, remainingBytes), null);
-      if (bytesRead === 0) break;
-
-      totalBytes += bytesRead;
-      if (totalBytes > JSON_QUERY_MAX_FILE_BYTES) {
-        throw oversizedJsonError(filePath);
-      }
-      chunks.push(Buffer.from(buffer.subarray(0, bytesRead)));
+    return await readTextFileWithinLimit(filePath, { maxBytes: JSON_QUERY_MAX_FILE_BYTES });
+  } catch (err) {
+    if (isTextFileSizeLimitError(err)) {
+      throw oversizedJsonError(filePath);
     }
-
-    return Buffer.concat(chunks, totalBytes).toString("utf-8");
-  } finally {
-    await handle.close();
+    throw err;
   }
 }
 
