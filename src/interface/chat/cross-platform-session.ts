@@ -2,7 +2,11 @@ import { randomUUID } from "node:crypto";
 import * as path from "node:path";
 import { ChatRunner } from "./chat-runner.js";
 import { ChatSessionCatalog } from "./chat-session-store.js";
-import type { ChatRunResult, ChatRunnerDeps } from "./chat-runner-contracts.js";
+import type {
+  ChatRunResult,
+  ChatRunnerDeps,
+  ChatRunnerRouteSelectionInput,
+} from "./chat-runner-contracts.js";
 import type { ChatEvent, ChatEventHandler } from "./chat-events.js";
 import {
   createIngressRouter,
@@ -13,7 +17,6 @@ import {
 import { classifyRuntimeControlIntent } from "../../runtime/control/index.js";
 import { classifyFreeformRouteIntent } from "./freeform-route-classifier.js";
 import { deriveRunSpecFromText } from "../../runtime/run-spec/index.js";
-import { intakeSetupSecrets } from "./setup-secret-intake.js";
 import { StateManager } from "../../base/state/state-manager.js";
 import { buildAdapterRegistry, buildLLMClient } from "../../base/llm/provider-factory.js";
 import { loadProviderConfig } from "../../base/llm/provider-config.js";
@@ -1139,13 +1142,50 @@ export class CrossPlatformChatSessionManager {
     this.updateSessionInfoForIngress(session, ingress, options);
     await this.persistSessionInfo(session.info);
 
+    const previousOnEvent = session.runner.onEvent;
+    let deliveryQueue: ChatEventDeliveryQueue | null = null;
+    if (options.onEvent) {
+      deliveryQueue = new ChatEventDeliveryQueue(options.onEvent, this.deps.onEvent);
+      this.activeApprovalEventHandlers.set(session.info.session_key, options.onEvent);
+      session.runner.onEvent = deliveryQueue.dispatch;
+    } else {
+      this.activeApprovalEventHandlers.delete(session.info.session_key);
+      session.runner.onEvent = undefined;
+    }
+
+    try {
+      return await session.runner.executeIngressMessage(
+        ingress,
+        session.info.cwd,
+        options.timeoutMs,
+        undefined,
+        {
+          routeSelector: async (selectionInput) => {
+            const selectedRoute = await this.selectRouteForSession(session, ingress, selectionInput);
+            session.lastRoute = selectedRoute;
+            return selectedRoute;
+          },
+        }
+      );
+    } finally {
+      await deliveryQueue?.drain();
+      this.activeApprovalEventHandlers.delete(session.info.session_key);
+      session.runner.onEvent = previousOnEvent;
+    }
+  }
+
+  private async selectRouteForSession(
+    session: ManagedChatSession,
+    ingress: CrossPlatformIngressMessage,
+    input: ChatRunnerRouteSelectionInput,
+  ): Promise<SelectedChatRoute> {
     const capabilities = {
       hasAgentLoop: this.deps.chatAgentLoopRunner !== undefined,
       hasToolLoop: this.deps.llmClient !== undefined,
       hasRuntimeControlService: this.deps.runtimeControlService !== undefined,
     };
-    const setupSecretIntake = intakeSetupSecrets(ingress.text);
-    const safeIngressText = setupSecretIntake.redactedText;
+    const setupSecretIntake = input.setupSecretIntake;
+    const safeIngressText = input.safeInput;
     const hasSetupSecret = setupSecretIntake.suppliedSecrets.length > 0;
     const surfaceRuntimePolicy = ingress.externalSurface?.runtime_control_policy;
     const runtimeControlApproved =
@@ -1204,7 +1244,7 @@ export class CrossPlatformChatSessionManager {
         cwd: ingress.cwd ?? session.info.cwd,
         conversationId: ingress.conversation_id ?? null,
         channel: ingress.channel,
-        sessionId: session.runner.getSessionId() ?? ingress.conversation_id ?? null,
+        sessionId: input.sessionId ?? session.runner.getSessionId() ?? ingress.conversation_id ?? null,
         replyTarget: ingress.replyTarget as unknown as Record<string, unknown>,
         originMetadata: {
           ingress_id: ingress.ingress_id ?? null,
@@ -1216,7 +1256,7 @@ export class CrossPlatformChatSessionManager {
         llmClient: this.deps.llmClient,
       })
       : null;
-    const selectedRoute = this.ingressRouter.selectRoute(ingress, {
+    return this.ingressRouter.selectRoute(ingress, {
       ...capabilities,
       runtimeControlIntent,
       runtimeControlUnclassified: shouldClassifyRuntimeControlForSafety
@@ -1226,31 +1266,6 @@ export class CrossPlatformChatSessionManager {
       setupSecretIntake,
       runSpecDraft,
     });
-    session.lastRoute = selectedRoute;
-
-    const previousOnEvent = session.runner.onEvent;
-    let deliveryQueue: ChatEventDeliveryQueue | null = null;
-    if (options.onEvent) {
-      deliveryQueue = new ChatEventDeliveryQueue(options.onEvent, this.deps.onEvent);
-      this.activeApprovalEventHandlers.set(session.info.session_key, options.onEvent);
-      session.runner.onEvent = deliveryQueue.dispatch;
-    } else {
-      this.activeApprovalEventHandlers.delete(session.info.session_key);
-      session.runner.onEvent = undefined;
-    }
-
-    try {
-      return await session.runner.executeIngressMessage(
-        ingress,
-        session.info.cwd,
-        options.timeoutMs,
-        selectedRoute
-      );
-    } finally {
-      await deliveryQueue?.drain();
-      this.activeApprovalEventHandlers.delete(session.info.session_key);
-      session.runner.onEvent = previousOnEvent;
-    }
   }
 
   private updateSessionInfoForIngress(

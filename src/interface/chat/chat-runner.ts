@@ -366,6 +366,10 @@ export class ChatRunner {
     return this.eventBridge.hasActiveTurn();
   }
 
+  getActiveSeedyPresence() {
+    return this.eventBridge.getActiveSeedyPresence();
+  }
+
   async interruptAndRedirect(
     input: string,
     cwd: string,
@@ -483,16 +487,19 @@ export class ChatRunner {
     ingress: ChatIngressMessage,
     cwd: string,
     timeoutMs = DEFAULT_TIMEOUT_MS,
-    selectedRoute: SelectedChatRoute
+    selectedRoute?: SelectedChatRoute,
+    options: Pick<ChatRunnerExecutionOptions, "routeSelector"> = {}
   ): Promise<ChatRunResult> {
-    if (!selectedRoute) {
+    if (!selectedRoute && !options.routeSelector) {
       throw new Error(
         "executeIngressMessage requires selectedRoute; use CrossPlatformChatSessionManager for ingress route selection."
       );
     }
     const runtimeControlContext = buildRuntimeControlContextFromIngress(ingress, this.runtimeControlContext, this.deps);
     return this.execute(ingress.text, cwd, timeoutMs, {
-      selectedRoute,
+      ...(selectedRoute ? { selectedRoute } : {}),
+      ...(options.routeSelector ? { routeSelector: options.routeSelector } : {}),
+      presenceIngressId: ingress.ingress_id,
       runtimeControlContext,
       goalId: ingress.goal_id,
       userInput: ingress.userInput,
@@ -524,6 +531,15 @@ export class ChatRunner {
     const persistedSecretIntake = setupSecretIntake.suppliedSecrets.map(({ value: _value, ...metadata }) => metadata);
     const runtimeControlContext = options.runtimeControlContext ?? this.runtimeControlContext;
     const executionGoalId = options.goalId ?? this.deps.goalId;
+
+    await this.eventBridge.emitSeedyPresenceAndFlush("received", eventContext, {
+      ...(options.presenceIngressId ? { ingressId: options.presenceIngressId } : {}),
+      expectedNext: "progress",
+    });
+    await this.eventBridge.emitSeedyPresenceAndFlush("orienting", eventContext, {
+      ...(options.presenceIngressId ? { ingressId: options.presenceIngressId } : {}),
+      expectedNext: "progress",
+    });
 
     this.clearPendingResumeChoicesUnlessSelecting(safeInput, resumeCommand);
 
@@ -592,7 +608,19 @@ export class ChatRunner {
       }
     }
 
-    const shouldResolveNaturalRecovery = !options.selectedRoute || options.selectedRoute.kind === "agent_loop";
+    let resolvedRoute = options.selectedRoute;
+    if (!resumeOnly && !resolvedRoute && options.routeSelector) {
+      resolvedRoute = await options.routeSelector({
+        safeInput,
+        setupSecretIntake,
+        runtimeControlContext,
+        eventContext,
+        cwd: resolvedCwd,
+        sessionId: this.getSessionId(),
+      });
+    }
+
+    const shouldResolveNaturalRecovery = !resolvedRoute || resolvedRoute.kind === "agent_loop";
     if (!resumeOnly && pendingResumeSelection === null && shouldResolveNaturalRecovery) {
       const naturalRecovery = await this.resolveNaturalRecoveryResume(safeInput);
       if (naturalRecovery?.result) {
@@ -676,10 +704,25 @@ export class ChatRunner {
 
     const selectedRoute = resumeOnly
       ? null
-      : (options.selectedRoute ?? await this.resolveRouteFromInput(safeInput, runtimeControlContext, resolvedCwd));
+      : (resolvedRoute ?? await this.resolveRouteFromInput(safeInput, runtimeControlContext, resolvedCwd));
     this.lastSelectedRoute = selectedRoute;
+    if (selectedRoute) {
+      this.eventBridge.emitSeedyPresence("thinking", eventContext, {
+        ...(options.presenceIngressId ? { ingressId: options.presenceIngressId } : {}),
+        subject: "Route selected",
+        reason: "PulSeed selected the execution path for this turn.",
+        expectedNext: "progress",
+      });
+    }
     if (selectedRoute?.kind !== "configure") {
       this.eventBridge.emitIntent(safeInput, selectedRoute, eventContext);
+    }
+    if (selectedRoute) {
+      this.eventBridge.emitSeedyPresence("acting", eventContext, {
+        ...(options.presenceIngressId ? { ingressId: options.presenceIngressId } : {}),
+        reason: "PulSeed is executing the selected path.",
+        expectedNext: "progress",
+      });
     }
 
     if (selectedRoute?.kind === "runtime_control") {

@@ -2515,6 +2515,64 @@ describe("ChatRunner", () => {
       }
     });
 
+    it("uses a routeSelector decision before natural recovery heuristics", async () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-route-selector-before-recovery-"));
+      try {
+        const stateManager = new StateManager(tmpDir);
+        await stateManager.init();
+        await stateManager.writeRaw("chat/sessions/latest-safe-chat.json", {
+          id: "latest-safe-chat",
+          cwd: "/work/latest",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:01.000Z",
+          title: "Latest work",
+          messages: [],
+          agentLoopStatePath: "chat/agentloop/latest-safe-chat.state.json",
+          agentLoopStatus: "running",
+          agentLoopResumable: true,
+          agentLoopUpdatedAt: "2026-01-01T00:00:02.000Z",
+        });
+        await stateManager.writeRaw("chat/agentloop/latest-safe-chat.state.json", makeAgentLoopState({
+          sessionId: "agent-latest",
+          updatedAt: "2026-01-01T00:00:02.000Z",
+        }));
+        await importLegacyChatAgentLoopSessionState(tmpDir);
+        const adapter = makeMockAdapter({ ...CANNED_RESULT, output: "Handled as fresh adapter work." });
+        const chatAgentLoopRunner = {
+          execute: vi.fn().mockResolvedValue(CANNED_RESULT),
+        } as unknown as ChatAgentLoopRunner;
+        const sendMessage = vi.fn().mockResolvedValue({
+          content: JSON.stringify({
+            kind: "show_sessions",
+            confidence: 0.95,
+            rationale: "Would trigger recovery if routeSelector did not win first.",
+          }),
+        });
+        const llmClient = {
+          sendMessage,
+          parseJSON: vi.fn((content: string, schema: { parse(value: unknown): unknown }) => schema.parse(JSON.parse(content))),
+        } as unknown as ILLMClient;
+        const runner = new ChatRunner(makeDeps({
+          stateManager,
+          adapter,
+          chatAgentLoopRunner,
+          llmClient,
+        }));
+
+        const result = await runner.execute("continue where we left off", "/repo", 30_000, {
+          routeSelector: async () => adapterRoute(),
+        });
+
+        expect(result.success).toBe(true);
+        expect(result.output).toBe("Handled as fresh adapter work.");
+        expect(adapter.execute).toHaveBeenCalledOnce();
+        expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
+        expect(sendMessage).not.toHaveBeenCalled();
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+
     it("natural-language resume with no saved state offers recovery choices instead of starting work", async () => {
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-natural-resume-none-"));
       try {
@@ -4479,15 +4537,23 @@ describe("ChatRunner", () => {
 
     it("does not abort the active turn for unsupported background redirect requests", async () => {
       const interruptible = makeInterruptibleAgentLoopRunner();
+      const events: ChatEvent[] = [];
       const runner = new ChatRunner(makeDeps({
         stateManager: makeMockStateManager(),
         chatAgentLoopRunner: interruptible.runner,
         llmClient: createMockLLMClient([interruptDecision("background")]),
+        onEvent: (event) => {
+          events.push(event);
+        },
       }));
       runner.startSession("/repo");
 
       const active = runner.execute("Implement a feature", "/repo");
       await vi.waitFor(() => expect(interruptible.runner.execute).toHaveBeenCalledOnce());
+      expect(runner.getActiveSeedyPresence()).toMatchObject({
+        phase: "acting",
+        expected_next: "progress",
+      });
 
       const redirected = await runner.interruptAndRedirect("continúa esto en segundo plano", "/repo");
 
@@ -4495,10 +4561,17 @@ describe("ChatRunner", () => {
       expect(redirected.success).toBe(true);
       expect(redirected.output).toContain("background is not available yet");
       expect(runner.hasActiveTurn()).toBe(true);
+      expect(runner.getActiveSeedyPresence()).toMatchObject({
+        phase: "acting",
+        expected_next: "progress",
+      });
+      expect(events.filter((event) => event.type === "assistant_final")).toHaveLength(0);
+      expect(events.filter((event) => event.type === "lifecycle_end")).toHaveLength(0);
 
       interruptible.resolveActive();
       await active;
       expect(runner.hasActiveTurn()).toBe(false);
+      expect(runner.getActiveSeedyPresence()).toBeNull();
     });
 
     it("uses structured interrupt intent classification for multilingual diff redirects", async () => {

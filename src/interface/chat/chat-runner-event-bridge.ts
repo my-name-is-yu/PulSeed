@@ -30,6 +30,11 @@ import {
   operationProgressFromAgentActivitySummary,
   type OperationProgressItem,
 } from "./operation-progress.js";
+import {
+  createUserVisibleSeedyTurnPresence,
+  type SeedyPresenceExpectedNext,
+  type SeedyTurnPresencePhase,
+} from "./seedy-turn-presence.js";
 import { createTextUserInput, type UserInput } from "./user-input.js";
 import { createTurnStartOperation, type TurnOperation } from "./turn-protocol.js";
 
@@ -57,6 +62,10 @@ export class ChatRunnerEventBridge {
     return this.activeTurn;
   }
 
+  getActiveSeedyPresence(): ActiveChatTurn["seedyPresence"] | null {
+    return this.activeTurn?.seedyPresence ?? null;
+  }
+
   setEventRecorder(recorder: ((event: ChatEvent) => Promise<void> | void) | null): void {
     this.eventRecorder = recorder;
   }
@@ -73,7 +82,12 @@ export class ChatRunnerEventBridge {
   }
 
   eventBase(context: ChatEventContext): ChatEventContext & { createdAt: string } {
-    return { ...context, createdAt: new Date().toISOString() };
+    return {
+      runId: context.runId,
+      turnId: context.turnId,
+      ...(context.languageHint ? { languageHint: context.languageHint } : {}),
+      createdAt: new Date().toISOString(),
+    };
   }
 
   beginActiveTurn(context: ChatEventContext, cwd: string): ActiveChatTurn {
@@ -143,22 +157,29 @@ export class ChatRunnerEventBridge {
       }),
       ...this.eventBase(context),
     });
-    this.emitEvent({
-      type: "assistant_final",
-      text: output,
-      persisted: false,
-      ...this.eventBase(context),
-    });
-    const elapsed_ms = Date.now() - start;
-    this.emitEvent({
-      type: "lifecycle_end",
-      status: success ? "completed" : "error",
-      elapsedMs: elapsed_ms,
-      persisted: false,
-      ...this.eventBase(context),
-    });
     const shouldFinishActiveTurn = options.finishActiveTurn ?? options.operation?.kind !== "TurnSteer";
+    const elapsed_ms = Date.now() - start;
     if (shouldFinishActiveTurn) {
+      this.emitEvent({
+        type: "assistant_final",
+        text: output,
+        persisted: false,
+        ...this.eventBase(context),
+      });
+      this.emitSeedyPresence(success ? "complete" : "blocked", context, {
+        subject: success ? "Response complete" : "Turn stopped",
+        reason: success
+          ? "The turn finished and the final response is ready."
+          : "The turn stopped before completing successfully.",
+        expectedNext: success ? "final" : "user_input",
+      });
+      this.emitEvent({
+        type: "lifecycle_end",
+        status: success ? "completed" : "error",
+        elapsedMs: elapsed_ms,
+        persisted: false,
+        ...this.eventBase(context),
+      });
       this.finishActiveTurn(context);
     }
     return { success, output, elapsed_ms };
@@ -256,6 +277,12 @@ export class ChatRunnerEventBridge {
         }
 
         if (event.type === "approval_request") {
+          this.emitSeedyPresence("waiting", eventContext, {
+            subject: "Waiting for approval",
+            reason: "A tool request needs approval before the turn can continue.",
+            lastActivityLabel: event.reason,
+            expectedNext: "approval",
+          });
           this.rememberActiveTurnFailureSignal(eventContext, {
             kind: "approval",
             status: "requested",
@@ -333,11 +360,75 @@ export class ChatRunnerEventBridge {
   }
 
   emitEvent(event: ChatEvent): void {
+    if (event.type === "assistant_final") {
+      this.emitSeedyPresence("finalizing", event);
+    }
     void this.deliverEvent(event);
   }
 
   async emitEventAndFlush(event: ChatEvent): Promise<void> {
+    if (event.type === "assistant_final") {
+      await this.emitSeedyPresenceAndFlush("finalizing", event);
+    }
     await this.deliverEvent(event);
+  }
+
+  emitSeedyPresence(
+    phase: SeedyTurnPresencePhase,
+    eventContext: ChatEventContext,
+    input: {
+      ingressId?: string;
+      subject?: string;
+      reason?: string;
+      lastActivityLabel?: string;
+      expectedNext?: SeedyPresenceExpectedNext;
+    } = {},
+  ): void {
+    void this.emitSeedyPresenceAndFlush(phase, eventContext, input);
+  }
+
+  async emitSeedyPresenceAndFlush(
+    phase: SeedyTurnPresencePhase,
+    eventContext: ChatEventContext,
+    input: {
+      ingressId?: string;
+      subject?: string;
+      reason?: string;
+      lastActivityLabel?: string;
+      expectedNext?: SeedyPresenceExpectedNext;
+    } = {},
+  ): Promise<void> {
+    const activeTurn = this.activeTurn?.context.turnId === eventContext.turnId
+      ? this.activeTurn
+      : null;
+    const previous = activeTurn?.seedyPresence;
+    const expectedNext = input.expectedNext ?? defaultExpectedNextForPresencePhase(phase);
+    if (previous?.phase === "complete" && phase !== "complete") return;
+    if (previous?.phase === phase && previous.expected_next === expectedNext) return;
+
+    const now = new Date().toISOString();
+    const startedAt = previous?.started_at
+      ?? (activeTurn ? new Date(activeTurn.startedAt).toISOString() : now);
+    const presence = createUserVisibleSeedyTurnPresence({
+      turn_id: eventContext.turnId,
+      ...(input.ingressId ? { ingress_id: input.ingressId } : {}),
+      phase,
+      subject: input.subject ?? defaultSubjectForPresencePhase(phase),
+      reason: input.reason ?? defaultReasonForPresencePhase(phase),
+      started_at: startedAt,
+      updated_at: now,
+      last_activity_at: now,
+      ...(input.lastActivityLabel ? { last_activity_label: input.lastActivityLabel } : {}),
+      expected_next: expectedNext,
+    });
+    if (activeTurn) {
+      activeTurn.seedyPresence = presence;
+    }
+    await this.deliverEvent({
+      type: "presence_update",
+      presence,
+      ...this.eventBase(eventContext),
+    });
   }
 
   private async deliverEvent(event: ChatEvent): Promise<void> {
@@ -530,6 +621,13 @@ export class ChatRunnerEventBridge {
     eventContext: ChatEventContext,
     persisted: boolean
   ): void {
+    this.emitSeedyPresence(status === "completed" ? "complete" : "blocked", eventContext, {
+      subject: status === "completed" ? "Response complete" : "Turn stopped",
+      reason: status === "completed"
+        ? "The turn finished and the final response is ready."
+        : "The turn stopped before completing successfully.",
+      expectedNext: status === "completed" ? "final" : "user_input",
+    });
     this.emitEvent({
       type: "lifecycle_end",
       status,
@@ -613,6 +711,8 @@ export class ChatRunnerEventBridge {
     let summary: string | null = null;
     if (event.type === "activity") {
       summary = previewActivityText(event.message, 140);
+    } else if (event.type === "presence_update") {
+      summary = `Presence: ${event.presence.phase}`;
     } else if (event.type === "tool_start") {
       summary = `Started ${event.toolName}`;
     } else if (event.type === "tool_update") {
@@ -639,4 +739,63 @@ export class ChatRunnerEventBridge {
 
 function redactChatEvent(event: ChatEvent): ChatEvent {
   return redactSetupSecretsDeep(event);
+}
+
+function defaultExpectedNextForPresencePhase(phase: SeedyTurnPresencePhase): SeedyPresenceExpectedNext {
+  switch (phase) {
+    case "received":
+    case "orienting":
+    case "thinking":
+    case "acting":
+      return "progress";
+    case "waiting":
+      return "approval";
+    case "blocked":
+      return "user_input";
+    case "finalizing":
+    case "complete":
+      return "final";
+  }
+}
+
+function defaultSubjectForPresencePhase(phase: SeedyTurnPresencePhase): string {
+  switch (phase) {
+    case "received":
+      return "Message received";
+    case "orienting":
+      return "Orienting";
+    case "thinking":
+      return "Working on the response";
+    case "acting":
+      return "Taking action";
+    case "waiting":
+      return "Waiting";
+    case "blocked":
+      return "Needs attention";
+    case "finalizing":
+      return "Finalizing response";
+    case "complete":
+      return "Response complete";
+  }
+}
+
+function defaultReasonForPresencePhase(phase: SeedyTurnPresencePhase): string {
+  switch (phase) {
+    case "received":
+      return "PulSeed accepted the turn and is preparing the next step.";
+    case "orienting":
+      return "PulSeed is selecting the right route before any heavier work starts.";
+    case "thinking":
+      return "PulSeed has enough context to continue the turn.";
+    case "acting":
+      return "PulSeed is executing the selected route.";
+    case "waiting":
+      return "PulSeed is waiting for external input before continuing.";
+    case "blocked":
+      return "PulSeed stopped before it could produce a successful result.";
+    case "finalizing":
+      return "PulSeed is preparing the final response.";
+    case "complete":
+      return "PulSeed finished the turn.";
+  }
 }

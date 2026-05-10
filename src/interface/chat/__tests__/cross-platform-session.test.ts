@@ -228,7 +228,6 @@ describe("CrossPlatformChatSessionManager", () => {
         llmClient: createMockLLMClient([
           runSpecFreeformDecision(),
           runSpecDraftDecision(),
-          JSON.stringify({ kind: "assist", confidence: 0.9, rationale: "Approval turn is handled by pending confirmation." }),
           runSpecConfirmationDecision("approve"),
         ]),
       }));
@@ -440,6 +439,64 @@ describe("CrossPlatformChatSessionManager", () => {
     expect(events.some((event) => event.type === "assistant_delta")).toBe(true);
     expect(events.some((event) => event.type === "assistant_final")).toBe(true);
     expect(events.at(-1)?.type).toBe("lifecycle_end");
+  });
+
+  it("emits Seedy presence before gateway route classification work", async () => {
+    const order: string[] = [];
+    let resolveOrientingDelivery: (() => void) | undefined;
+    const orientingDelivered = new Promise<void>((resolve) => {
+      resolveOrientingDelivery = resolve;
+    });
+    const llmClient = {
+      sendMessage: vi.fn().mockImplementation(async (_messages, options?: { system?: string }) => {
+        const isRouteClassification = options?.system?.includes("Route the operator's freeform chat message");
+        order.push(isRouteClassification ? "llm:route" : "llm:assist");
+        return {
+          content: isRouteClassification
+            ? JSON.stringify({ kind: "assist", confidence: 0.95, rationale: "read-only answer" })
+            : "Plain answer",
+          usage: { input_tokens: 1, output_tokens: 1 },
+          stop_reason: "end_turn",
+        };
+      }),
+      parseJSON: vi.fn((content: string, schema: { parse(value: unknown): unknown }) => schema.parse(JSON.parse(content))),
+    };
+    const manager = new CrossPlatformChatSessionManager(makeDeps({
+      stateManager: makeMockStateManager(),
+      llmClient: llmClient as never,
+    }));
+
+    const run = manager.processIncomingMessage({
+      text: "What is this project?",
+      platform: "slack",
+      identity_key: "presence-user",
+      conversation_id: "C123",
+      sender_id: "U123",
+      cwd: "/repo",
+      onEvent: (event) => {
+        if (event.type === "presence_update") {
+          order.push(`presence:${event.presence.phase}`);
+        }
+        if (event.type === "presence_update" && event.presence.phase === "orienting") {
+          return orientingDelivered.then(() => undefined);
+        }
+        return undefined;
+      },
+    });
+
+    await vi.waitFor(() => {
+      expect(order).toContain("presence:orienting");
+    });
+    expect(order).not.toContain("llm:route");
+    resolveOrientingDelivery?.();
+
+    const result = await run;
+    expect(result).toBe("Plain answer");
+    expect(order.indexOf("presence:received")).toBeLessThan(order.indexOf("llm:route"));
+    expect(order.indexOf("presence:orienting")).toBeLessThan(order.indexOf("llm:route"));
+    expect(order).toContain("presence:thinking");
+    expect(order).toContain("presence:finalizing");
+    expect(order).toContain("presence:complete");
   });
 
   it("drains async per-turn event delivery before returning to gateway callers", async () => {
@@ -787,6 +844,30 @@ describe("CrossPlatformChatSessionManager", () => {
       error: "discord delivery failed",
     }));
     warnSpy.mockRestore();
+  });
+
+  it("does not duplicate final or progress output when presence updates surround a direct gateway reply", async () => {
+    const manager = new CrossPlatformChatSessionManager(makeDeps({
+      stateManager: makeMockStateManager(),
+    }));
+    const events: ChatEvent[] = [];
+
+    const result = await manager.processIncomingMessage({
+      text: "quick direct task",
+      platform: "slack",
+      conversation_id: "C_DIRECT",
+      sender_id: "U123",
+      cwd: "/repo",
+      onEvent: (event) => {
+        events.push(event);
+      },
+    });
+
+    expect(result).toBe("Task completed successfully.");
+    expect(events.filter((event) => event.type === "assistant_final")).toHaveLength(1);
+    expect(events.filter((event) => event.type === "operation_progress")).toHaveLength(0);
+    expect(events.filter((event) => event.type === "presence_update").map((event) => event.presence.phase))
+      .toEqual(expect.arrayContaining(["received", "orienting", "thinking", "finalizing", "complete"]));
   });
 
   it("returns recovery guidance for gateway-visible failures", async () => {
