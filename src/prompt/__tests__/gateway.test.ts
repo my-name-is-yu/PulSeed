@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { z } from "zod";
 import { PromptGateway } from "../gateway.js";
 import { ContextAssembler } from "../context-assembler.js";
@@ -12,14 +12,20 @@ const makeAssembledContext = (overrides: Partial<AssembledContext> = {}): Assemb
   ...overrides,
 });
 
-const makeLLMResponse = (content: any) => ({
+const makeLLMResponse = (
+  content: any,
+  usage: { input_tokens: number; output_tokens: number } = { input_tokens: 100, output_tokens: 50 }
+) => ({
   content: JSON.stringify(content),
-  usage: { input_tokens: 100, output_tokens: 50 },
+  usage,
 });
 
-function makeMockLLMClient(responseContent: any): ILLMClient {
+function makeMockLLMClient(
+  responseContent: any,
+  usage?: { input_tokens: number; output_tokens: number }
+): ILLMClient {
   return {
-    sendMessage: vi.fn().mockResolvedValue(makeLLMResponse(responseContent)),
+    sendMessage: vi.fn().mockResolvedValue(makeLLMResponse(responseContent, usage)),
     parseJSON: vi.fn().mockImplementation((text: string, schema: z.ZodSchema) => {
       return schema.parse(JSON.parse(text));
     }),
@@ -239,6 +245,54 @@ describe("PromptGateway", () => {
         totalTokens: 150,
       });
       expect(result.contextTokens).toBe(77);
+    });
+
+    it("normalizes invalid LLM usage counters", async () => {
+      const assembler = makeMockAssembler({ totalTokensUsed: 77 });
+      const llmClient = makeMockLLMClient(
+        { score: 0.91 },
+        {
+          input_tokens: Number.MAX_SAFE_INTEGER + 1,
+          output_tokens: Number.NaN,
+        }
+      );
+      const gateway = new PromptGateway(llmClient, assembler);
+
+      const result = await gateway.executeWithUsage({
+        purpose: "observation",
+        goalId: "goal-usage",
+        responseSchema: schema,
+      });
+
+      expect(result.usage).toEqual({
+        inputTokens: 0,
+        outputTokens: 0,
+        totalTokens: 0,
+      });
+    });
+
+    it("saturates overflowing total token usage", async () => {
+      const assembler = makeMockAssembler({ totalTokensUsed: 77 });
+      const llmClient = makeMockLLMClient(
+        { score: 0.91 },
+        {
+          input_tokens: Number.MAX_SAFE_INTEGER,
+          output_tokens: 1,
+        }
+      );
+      const gateway = new PromptGateway(llmClient, assembler);
+
+      const result = await gateway.executeWithUsage({
+        purpose: "observation",
+        goalId: "goal-usage",
+        responseSchema: schema,
+      });
+
+      expect(result.usage).toEqual({
+        inputTokens: Number.MAX_SAFE_INTEGER,
+        outputTokens: 1,
+        totalTokens: Number.MAX_SAFE_INTEGER,
+      });
     });
   });
 
