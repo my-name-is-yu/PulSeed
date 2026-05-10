@@ -439,6 +439,46 @@ describe("isDaemonRunning", () => {
     expect(killSpy).not.toHaveBeenCalled();
   });
 
+  it("continues to daemon health probing when the daemon-state pid probe reports EPERM", async () => {
+    await saveDaemonStateFixture(tmpDir, { pid: 4242 });
+    const killSpy = vi.spyOn(process, "kill").mockImplementation(((pid: number | NodeJS.Signals, signal?: NodeJS.Signals | number) => {
+      if (pid === 4242 && signal === 0) {
+        const error = new Error("operation not permitted") as NodeJS.ErrnoException;
+        error.code = "EPERM";
+        throw error;
+      }
+      throw new Error(`unexpected process probe for ${String(pid)}`);
+    }) as typeof process.kill);
+    const healthSpy = vi.spyOn(DaemonClient.prototype, "getHealth").mockResolvedValue({ status: "ok" });
+
+    await expect(isDaemonRunning(tmpDir)).resolves.toEqual({
+      running: true,
+      port: DEFAULT_PORT,
+    });
+    expect(killSpy).toHaveBeenCalledWith(4242, 0);
+    expect(healthSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports stopped before daemon health probing when the daemon-state pid probe reports ESRCH", async () => {
+    await saveDaemonStateFixture(tmpDir, { pid: 4242 });
+    const killSpy = vi.spyOn(process, "kill").mockImplementation(((pid: number | NodeJS.Signals, signal?: NodeJS.Signals | number) => {
+      if (pid === 4242 && signal === 0) {
+        const error = new Error("no such process") as NodeJS.ErrnoException;
+        error.code = "ESRCH";
+        throw error;
+      }
+      throw new Error(`unexpected process probe for ${String(pid)}`);
+    }) as typeof process.kill);
+    const healthSpy = vi.spyOn(DaemonClient.prototype, "getHealth").mockResolvedValue({ status: "ok" });
+
+    await expect(isDaemonRunning(tmpDir)).resolves.toEqual({
+      running: false,
+      port: DEFAULT_PORT,
+    });
+    expect(killSpy).toHaveBeenCalledWith(4242, 0);
+    expect(healthSpy).not.toHaveBeenCalled();
+  });
+
   it("ignores unsafe daemon config ports before probing daemon health", async () => {
     await saveDaemonStateFixture(tmpDir);
     fs.writeFileSync(

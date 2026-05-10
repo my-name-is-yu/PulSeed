@@ -8,6 +8,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { z } from "zod";
+import { signalProcessPid } from "../../base/utils/process-pid.js";
 import { DEFAULT_PORT } from "../port-utils.js";
 import { parseOutboxSeq } from "../event/outbox-seq.js";
 import { DaemonStateStore } from "../store/index.js";
@@ -539,10 +540,8 @@ export async function isDaemonRunning(baseDir: string): Promise<{ running: boole
       return { running: false, port: DEFAULT_PORT };
     }
 
-    // Check if PID is actually alive
-    try {
-      process.kill(state.pid, 0);
-    } catch {
+    const pidProbe = signalProcessPid(state.pid, 0);
+    if (pidProbe.status !== "sent") {
       return { running: false, port: DEFAULT_PORT };
     }
 
