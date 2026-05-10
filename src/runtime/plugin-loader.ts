@@ -1,12 +1,12 @@
 import * as path from "node:path";
 import * as fs from "node:fs/promises";
-import yaml from "js-yaml";
 import { getPluginsDir } from "../base/utils/paths.js";
 import { getPulseedVersion as getPackageVersion } from "../base/utils/pulseed-meta.js";
 import { ValidationError } from "../base/utils/errors.js";
 import { exposeRegisteredGatewayChatSessionPort } from "./gateway/chat-session-port.js";
 import { readForeignPluginCompatibilityArtifact, hasForeignPluginCompatibilityArtifact } from "./foreign-plugins/compatibility.js";
 import { PluginChannelRuntimeStateStore } from "./store/plugin-channel-runtime-state-store.js";
+import { hasPluginManifestFile, readPluginManifest } from "./plugin-manifest-reader.js";
 import type { Logger } from "./logger.js";
 import {
   PluginManifestSchema,
@@ -246,47 +246,25 @@ export class PluginLoader {
    * Validates against PluginManifestSchema.
    */
   async loadManifest(pluginDir: string): Promise<PluginManifest> {
-    // Try YAML first, then JSON
-    const yamlPath = path.join(pluginDir, "plugin.yaml");
-    const jsonPath = path.join(pluginDir, "plugin.json");
+    const result = await readPluginManifest(pluginDir);
+    if (result.ok) return result.data;
 
-    let raw: unknown;
-
-    // Attempt YAML
-    const yamlContent = await readFileSafe(yamlPath);
-    if (yamlContent !== null) {
-      try {
-        raw = yaml.load(yamlContent);
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        throw new Error(`Failed to parse plugin.yaml: ${yamlPath} — ${msg}`);
-      }
-    } else {
-      // Attempt JSON
-      const jsonContent = await readFileSafe(jsonPath);
-      if (jsonContent !== null) {
-        try {
-          raw = JSON.parse(jsonContent);
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          throw new Error(`Failed to parse plugin.json: ${jsonPath} — ${msg}`);
-        }
-      } else {
-        throw new Error(
-          `Manifest file not found (plugin.yaml / plugin.json): ${pluginDir}`
-        );
-      }
+    if (result.failure === "missing") {
+      throw new Error(`Manifest file not found (plugin.yaml / plugin.json): ${pluginDir}`);
     }
 
-    const result = PluginManifestSchema.safeParse(raw);
-    if (!result.success) {
-      const issues = result.error.issues
+    if (result.failure === "schema") {
+      const issues = (result.schemaIssues ?? [])
         .map((i) => `  ${i.path.join(".")}: ${i.message}`)
         .join("\n");
-      throw new ValidationError(`Plugin manifest schema validation failed:\n${issues}`);
+      throw new ValidationError(
+        `Plugin manifest schema validation failed:\n${issues || result.errorMessage || "invalid manifest"}`
+      );
     }
 
-    return result.data;
+    throw new Error(
+      `Failed to ${result.failure} ${result.filename}: ${result.manifestPath} — ${result.errorMessage ?? "unknown error"}`
+    );
   }
 
   /**
@@ -463,15 +441,7 @@ export class PluginLoader {
   // ─── Private helpers ───
 
   private async hasManifestFile(dirPath: string): Promise<boolean> {
-    for (const filename of ["plugin.yaml", "plugin.json"]) {
-      try {
-        await fs.access(path.join(dirPath, filename));
-        return true;
-      } catch {
-        // continue
-      }
-    }
-    return false;
+    return hasPluginManifestFile(dirPath);
   }
 }
 
@@ -525,15 +495,6 @@ export function satisfiesRange(version: string, min?: string, max?: string): boo
   if (min !== undefined && compareSemver(v, parseSemver(min)) < 0) return false;
   if (max !== undefined && compareSemver(v, parseSemver(max)) > 0) return false;
   return true;
-}
-
-/** Read a file and return its content, or null if it doesn't exist. */
-async function readFileSafe(filePath: string): Promise<string | null> {
-  try {
-    return await fs.readFile(filePath, "utf-8");
-  } catch {
-    return null;
-  }
 }
 
 /**

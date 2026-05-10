@@ -2,16 +2,15 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import yaml from "js-yaml";
 import { getPulseedDirPath, getLogsDir, getPluginsDir } from "../../../base/utils/paths.js";
 import { execFileNoThrow } from "../../../base/utils/execFileNoThrow.js";
 import { getCliRunnerBuildPath } from "../../../base/utils/pulseed-meta.js";
 import { readJsonFileOrNull } from "../../../base/utils/json-io.js";
 import { isJwtExpired, loadProviderConfig, resolveOpenAIApiKey, validateProviderConfig } from "../../../base/llm/provider-config.js";
 import { DaemonConfigSchema } from "../../../base/types/daemon.js";
-import { PluginManifestSchema } from "../../../base/types/plugin.js";
 import { PIDManager } from "../../../runtime/pid-manager.js";
 import { probeDaemonHealth } from "../../../runtime/daemon/client.js";
+import { readPluginManifestSync } from "../../../runtime/plugin-manifest-reader.js";
 import {
   ApprovalStore,
   DaemonStateStore,
@@ -431,25 +430,9 @@ export function checkPluginPermissionWarnings(baseDir?: string): CheckResult {
     if (!entry.isDirectory()) continue;
 
     const pluginDir = path.join(pluginsDir, entry.name);
-    const yamlPath = path.join(pluginDir, "plugin.yaml");
-    const jsonPath = path.join(pluginDir, "plugin.json");
-
-    let raw: unknown;
-    try {
-      if (fs.existsSync(yamlPath)) {
-        raw = yaml.load(fs.readFileSync(yamlPath, "utf-8"));
-      } else if (fs.existsSync(jsonPath)) {
-        raw = JSON.parse(fs.readFileSync(jsonPath, "utf-8"));
-      } else {
-        continue;
-      }
-    } catch {
-      unreadableManifestCount += 1;
-      continue;
-    }
-
-    const parsed = PluginManifestSchema.safeParse(raw);
-    if (!parsed.success) {
+    const parsed = readPluginManifestSync(pluginDir);
+    if (!parsed.ok) {
+      if (parsed.failure === "missing") continue;
       unreadableManifestCount += 1;
       continue;
     }

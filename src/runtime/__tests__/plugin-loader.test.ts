@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import * as path from "node:path";
+import * as os from "node:os";
+import * as fsSync from "node:fs";
 import { PluginLoader, parseSemver, compareSemver, satisfiesRange } from "../plugin-loader.js";
 import { NotifierRegistry } from "../notifier-registry.js";
 import {
@@ -7,12 +9,14 @@ import {
   registerGlobalCrossPlatformChatSessionManager,
 } from "../../interface/chat/cross-platform-session-global.js";
 import { PluginManifestSchema, PluginStateSchema } from "../../base/types/plugin.js";
-import type { INotifier, NotificationEvent, NotificationEventType, PluginManifest } from "../../base/types/plugin.js";
-import type { AdapterRegistry, IAdapter, AgentTask, AgentResult } from "../../orchestrator/execution/adapter-layer.js";
+import type { INotifier, PluginManifest } from "../../base/types/plugin.js";
+import type { AdapterRegistry, IAdapter, AgentResult } from "../../orchestrator/execution/adapter-layer.js";
 import type { DataSourceRegistry, IDataSourceAdapter } from "../../platform/observation/data-source-adapter.js";
 import { PluginChannelRuntimeStateStore } from "../store/plugin-channel-runtime-state-store.js";
 
 // ─── Helpers ───
+
+const isolatedControlDirs: string[] = [];
 
 function makeAdapterRegistry(): AdapterRegistry {
   return {
@@ -33,10 +37,36 @@ function makeDataSourceRegistry(): DataSourceRegistry {
 
 afterEach(() => {
   clearRegisteredCrossPlatformChatSessionManager();
+  for (const dir of isolatedControlDirs.splice(0)) {
+    fsSync.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+  }
 });
 
 function makeNotifierRegistry(): NotifierRegistry {
   return new NotifierRegistry();
+}
+
+function makeIsolatedControlDir(): string {
+  const controlBaseDir = fsSync.mkdtempSync(path.join(os.tmpdir(), "pulseed-plugin-loader-control-"));
+  isolatedControlDirs.push(controlBaseDir);
+  return controlBaseDir;
+}
+
+function makeIsolatedPluginLoader(
+  pluginsDir?: string,
+  notifierRegistry = makeNotifierRegistry()
+): PluginLoader {
+  const controlBaseDir = makeIsolatedControlDir();
+  const resolvedPluginsDir = pluginsDir ?? path.join(controlBaseDir, "plugins");
+  return new PluginLoader(
+    makeAdapterRegistry(),
+    makeDataSourceRegistry(),
+    notifierRegistry,
+    resolvedPluginsDir,
+    undefined,
+    undefined,
+    { controlBaseDir }
+  );
 }
 
 function makeValidManifestData(overrides: Partial<Record<string, unknown>> = {}): Record<string, unknown> {
@@ -248,13 +278,19 @@ describe("satisfiesRange", () => {
 
 describe("PluginLoader version compatibility", () => {
   let loader: PluginLoader;
+  let pluginRoot: string;
 
   beforeEach(() => {
+    const controlBaseDir = makeIsolatedControlDir();
+    pluginRoot = path.join(controlBaseDir, "plugins");
     loader = new PluginLoader(
       makeAdapterRegistry(),
       makeDataSourceRegistry(),
       makeNotifierRegistry(),
-      "/tmp/plugins"
+      pluginRoot,
+      undefined,
+      undefined,
+      { controlBaseDir }
     );
   });
 
@@ -262,7 +298,7 @@ describe("PluginLoader version compatibility", () => {
     const manifest = makeValidManifest({ min_pulseed_version: "999.0.0" });
     vi.spyOn(loader, "loadManifest").mockResolvedValue(manifest);
 
-    const state = await loader.loadOne("/tmp/plugins/test-plugin");
+    const state = await loader.loadOne(path.join(pluginRoot, "test-plugin"));
     expect(state.status).toBe("incompatible");
     expect(state.error_message).toMatch(/999\.0\.0/);
   });
@@ -271,7 +307,7 @@ describe("PluginLoader version compatibility", () => {
     const manifest = makeValidManifest({ max_pulseed_version: "0.0.1" });
     vi.spyOn(loader, "loadManifest").mockResolvedValue(manifest);
 
-    const state = await loader.loadOne("/tmp/plugins/test-plugin");
+    const state = await loader.loadOne(path.join(pluginRoot, "test-plugin"));
     expect(state.status).toBe("incompatible");
     expect(state.error_message).toMatch(/0\.0\.1/);
   });
@@ -280,7 +316,7 @@ describe("PluginLoader version compatibility", () => {
     const manifest = makeValidManifest({ min_pulseed_version: "1.2.3abc" });
     vi.spyOn(loader, "loadManifest").mockResolvedValue(manifest);
 
-    const state = await loader.loadOne("/tmp/plugins/test-plugin");
+    const state = await loader.loadOne(path.join(pluginRoot, "test-plugin"));
     expect(state.status).toBe("incompatible");
     expect(state.error_message).toMatch(/1\.2\.3abc/);
   });
@@ -289,10 +325,9 @@ describe("PluginLoader version compatibility", () => {
     const manifest = makeValidManifest({ name: "compat-plugin" });
     vi.spyOn(loader, "loadManifest").mockResolvedValue(manifest);
 
-    const notifierImpl = makeNotifierImpl();
     vi.spyOn(loader, "loadOne").mockResolvedValueOnce(loader.buildSuccessState(manifest));
 
-    const state = await loader.loadOne("/tmp/plugins/compat-plugin");
+    const state = await loader.loadOne(path.join(pluginRoot, "compat-plugin"));
     expect(state.status).toBe("loaded");
   });
 });
@@ -507,17 +542,13 @@ describe("PluginLoader.loadAll", () => {
   });
 
   it("returns error states for dirs that fail to load, without throwing", async () => {
-    const loader = new PluginLoader(
-      makeAdapterRegistry(),
-      makeDataSourceRegistry(),
-      makeNotifierRegistry(),
-      "/tmp/pulseed-plugins-nonexistent-dir"
-    );
+    const pluginsDir = path.join(makeIsolatedControlDir(), "plugins");
+    const loader = makeIsolatedPluginLoader(pluginsDir);
 
     // Override discoverPluginDirs to return two fake dirs
     vi.spyOn(loader, "discoverPluginDirs").mockResolvedValue([
-      "/tmp/bad-plugin-a",
-      "/tmp/bad-plugin-b",
+      path.join(pluginsDir, "bad-plugin-a"),
+      path.join(pluginsDir, "bad-plugin-b"),
     ]);
 
     const states = await loader.loadAll();
@@ -527,19 +558,14 @@ describe("PluginLoader.loadAll", () => {
 
   it("mixes success and error states correctly", async () => {
     const notifierRegistry = makeNotifierRegistry();
-    const loader = new PluginLoader(
-      makeAdapterRegistry(),
-      makeDataSourceRegistry(),
-      notifierRegistry,
-      "/tmp/plugins"
-    );
+    const pluginsDir = path.join(makeIsolatedControlDir(), "plugins");
+    const loader = makeIsolatedPluginLoader(pluginsDir, notifierRegistry);
 
     const goodManifest = makeValidManifest({ name: "good-plugin" });
-    const goodImpl = makeNotifierImpl();
 
     vi.spyOn(loader, "discoverPluginDirs").mockResolvedValue([
-      "/tmp/plugins/good-plugin",
-      "/tmp/plugins/bad-plugin",
+      path.join(pluginsDir, "good-plugin"),
+      path.join(pluginsDir, "bad-plugin"),
     ]);
 
     // Override loadOne to simulate success for first, failure for second
@@ -573,8 +599,45 @@ describe("PluginLoader.discoverPluginDirs", () => {
 
 // ─── PluginLoader.getPluginState / updatePluginState ───
 
-import * as os from "node:os";
-import * as fsSync from "node:fs";
+describe("PluginLoader.loadManifest (real manifest reader)", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = fsSync.mkdtempSync(path.join(os.tmpdir(), "pulseed-plugin-loader-manifest-"));
+  });
+
+  afterEach(() => {
+    fsSync.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+  });
+
+  it("loads YAML date-like scalars as strings through the runtime loader", async () => {
+    const pluginDir = path.join(tmpDir, "date-like-description");
+    fsSync.mkdirSync(pluginDir, { recursive: true });
+    fsSync.writeFileSync(
+      path.join(pluginDir, "plugin.yaml"),
+      [
+        "name: date-like-description",
+        "version: 1.0.0",
+        "type: notifier",
+        "capabilities:",
+        "  - notify",
+        "description: 2026-05-10",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+    const loader = new PluginLoader(
+      makeAdapterRegistry(),
+      makeDataSourceRegistry(),
+      makeNotifierRegistry(),
+      tmpDir
+    );
+
+    await expect(loader.loadManifest(pluginDir)).resolves.toMatchObject({
+      description: "2026-05-10",
+    });
+  });
+});
 
 describe("PluginLoader foreign plugin quarantine", () => {
   let tmpDir: string;

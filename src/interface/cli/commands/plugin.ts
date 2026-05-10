@@ -1,15 +1,16 @@
 import * as fsp from "node:fs/promises";
-import * as fsSync from "node:fs";
 import * as path from "node:path";
 import * as cp from "node:child_process";
 import { promisify } from "node:util";
-import yaml from "js-yaml";
-import { PluginManifestSchema } from "../../../base/types/plugin.js";
 import { getPulseedVersion as getPackageVersion } from "../../../base/utils/pulseed-meta.js";
 import { formatOperationError } from "../utils.js";
 import { getCliLogger } from "../cli-logger.js";
 import { getPluginsDir } from "../../../base/utils/paths.js";
-import { parseSemver, compareSemver, satisfiesRange } from "../../../runtime/plugin-loader.js";
+import { satisfiesRange } from "../../../runtime/plugin-loader.js";
+import {
+  readPluginManifest,
+  type PluginManifestReadResult,
+} from "../../../runtime/plugin-manifest-reader.js";
 
 const execFile = promisify(cp.execFile);
 const NPM_SOURCE_METADATA = ".pulseed-plugin-source.json";
@@ -27,22 +28,24 @@ async function pathExists(p: string): Promise<boolean> {
   }
 }
 
-async function readManifest(pluginDir: string) {
-  const yamlPath = path.join(pluginDir, "plugin.yaml");
-  const jsonPath = path.join(pluginDir, "plugin.json");
+async function readManifest(pluginDir: string): Promise<PluginManifestReadResult> {
+  return readPluginManifest(pluginDir);
+}
 
-  let raw: unknown;
-  if (await pathExists(yamlPath)) {
-    const content = await fsp.readFile(yamlPath, "utf-8");
-    raw = yaml.load(content);
-  } else if (await pathExists(jsonPath)) {
-    const content = await fsp.readFile(jsonPath, "utf-8");
-    raw = JSON.parse(content);
-  } else {
-    return null;
+function isMissingManifest(result: PluginManifestReadResult): boolean {
+  return !result.ok && result.failure === "missing";
+}
+
+function formatManifestReadError(result: PluginManifestReadResult): string {
+  if (result.ok) return "";
+  if (result.failure === "missing") return "plugin manifest not found";
+  if (result.failure === "schema") {
+    const issues = result.schemaIssues
+      ?.map((issue) => `${issue.path.join(".") || "<root>"}: ${issue.message}`)
+      .join("; ");
+    return issues ?? result.errorMessage ?? "manifest schema validation failed";
   }
-
-  return PluginManifestSchema.safeParse(raw);
+  return `failed to ${result.failure} ${result.filename ?? "plugin manifest"}: ${result.errorMessage ?? "unknown error"}`;
 }
 
 export async function cmdPluginList(pluginsDir?: string): Promise<number> {
@@ -75,7 +78,7 @@ export async function cmdPluginList(pluginsDir?: string): Promise<number> {
     if (!stat.isDirectory()) continue;
 
     const result = await readManifest(pluginDir);
-    if (!result || !result.success) continue;
+    if (!result.ok) continue;
 
     const m = result.data;
     rows.push({
@@ -196,7 +199,7 @@ async function findPluginDirByName(pluginsDir: string, name: string): Promise<st
     } catch {
       continue;
     }
-    if (manifest?.success && manifest.data.name === name) {
+    if (manifest.ok && manifest.data.name === name) {
       return candidate;
     }
   }
@@ -285,12 +288,12 @@ export async function cmdPluginInstall(
     }
 
     const result = await readNpmManifest(pluginDir, packageName);
-    if (!result) {
+    if (isMissingManifest(result)) {
       logger.error(`Error: plugin manifest not found after npm install of "${packageName}".`);
       return 1;
     }
-    if (!result.success) {
-      logger.error(`Error: invalid plugin manifest — ${result.error.message}`);
+    if (!result.ok) {
+      logger.error(`Error: invalid plugin manifest — ${formatManifestReadError(result)}`);
       return 1;
     }
 
@@ -311,7 +314,7 @@ export async function cmdPluginInstall(
     }
 
     const verify = await readManifest(pluginDir);
-    if (!verify || !verify.success) {
+    if (!verify.ok) {
       logger.error(`Error: plugin install failed — manifest unreadable after preparing npm package.`);
       return 1;
     }
@@ -329,12 +332,12 @@ export async function cmdPluginInstall(
   }
 
   const result = await readManifest(sourcePath);
-  if (!result) {
+  if (isMissingManifest(result)) {
     logger.error(`Error: plugin manifest not found in "${sourcePath}". Expected plugin.yaml or plugin.json.`);
     return 1;
   }
-  if (!result.success) {
-    logger.error(`Error: invalid plugin manifest — ${result.error.message}`);
+  if (!result.ok) {
+    logger.error(`Error: invalid plugin manifest — ${formatManifestReadError(result)}`);
     return 1;
   }
 
@@ -356,7 +359,7 @@ export async function cmdPluginInstall(
 
   // Verify after copy
   const verify = await readManifest(destDir);
-  if (!verify || !verify.success) {
+  if (!verify.ok) {
     logger.error(`Error: plugin copy failed — manifest unreadable after install.`);
     return 1;
   }
@@ -394,7 +397,7 @@ export async function cmdPluginUpdate(
 
   const metadata = await readNpmSourceMetadata(pluginDir);
   const manifest = await readManifest(pluginDir);
-  const packageName = metadata?.packageName ?? (manifest?.success ? manifest.data.name : name);
+  const packageName = metadata?.packageName ?? (manifest.ok ? manifest.data.name : name);
   const execFn = _execFileFn ?? execFile;
   try {
     await execFn("npm", ["install", "--prefix", pluginDir, packageName]);
@@ -404,12 +407,12 @@ export async function cmdPluginUpdate(
   }
 
   const result = await readNpmManifest(pluginDir, packageName);
-  if (!result) {
+  if (isMissingManifest(result)) {
     logger.error(`Error: plugin manifest not found after npm install of "${packageName}".`);
     return 1;
   }
-  if (!result.success) {
-    logger.error(`Error: invalid plugin manifest — ${result.error.message}`);
+  if (!result.ok) {
+    logger.error(`Error: invalid plugin manifest — ${formatManifestReadError(result)}`);
     return 1;
   }
 
@@ -426,7 +429,7 @@ export async function cmdPluginUpdate(
   }
 
   const verify = await readManifest(pluginDir);
-  if (!verify || !verify.success) {
+  if (!verify.ok) {
     logger.error(`Error: plugin update failed — manifest unreadable after preparing npm package.`);
     return 1;
   }
