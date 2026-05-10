@@ -41,6 +41,23 @@ PR: https://github.com/my-name-is-yu/PulSeed/pull/1859
 - `npx vitest run --config vitest.unit.config.ts src/interface/chat/__tests__/cross-platform-session.test.ts src/interface/chat/__tests__/chat-runner.test.ts`
 - `npm run typecheck`
 - `git diff --check`
+- Independent review found that native-capable fallback final output could be rendered after `presenceProjector.stop()`, skipping final-imminent typing when no event-stream final had been delivered.
+- Moved Telegram/Discord fallback final rendering before presence stop and prepared the fallback `assistant_final` output moment first. Rechecked fallback-safe adapters and reran:
+  - `npx vitest run --config vitest.integration.config.ts src/runtime/gateway/__tests__/seedy-presence-projector.test.ts src/runtime/gateway/__tests__/telegram-gateway-adapter.test.ts src/runtime/gateway/__tests__/discord-gateway-adapter.test.ts src/runtime/gateway/__tests__/slack-channel-adapter.test.ts src/runtime/gateway/__tests__/signal-gateway-adapter.test.ts src/runtime/gateway/__tests__/whatsapp-gateway-adapter.test.ts`
+  - `npx vitest run --config vitest.unit.config.ts src/interface/chat/__tests__/cross-platform-session.test.ts src/interface/chat/__tests__/chat-runner.test.ts`
+- Independent re-review found fallback final delivery failures could still skip `presenceProjector.stop()` after native typing had started. Wrapped fallback final rendering in inner `try/finally` cleanup and added a Telegram regression where fallback `sendMessage` fails after `sendChatAction`.
+- Reran:
+  - `npx vitest run --config vitest.integration.config.ts src/runtime/gateway/__tests__/seedy-presence-projector.test.ts src/runtime/gateway/__tests__/telegram-gateway-adapter.test.ts src/runtime/gateway/__tests__/discord-gateway-adapter.test.ts src/runtime/gateway/__tests__/slack-channel-adapter.test.ts src/runtime/gateway/__tests__/signal-gateway-adapter.test.ts src/runtime/gateway/__tests__/whatsapp-gateway-adapter.test.ts`
+  - `npx vitest run --config vitest.unit.config.ts src/interface/chat/__tests__/cross-platform-session.test.ts src/interface/chat/__tests__/chat-runner.test.ts`
+  - `npm run typecheck`
+  - `git diff --check`
+- GitHub Codex review on PR #1876 found that `prepareForEvent` could start Telegram typing before events the Telegram adapter intentionally drops, such as `operation_progress` with `metadata.source === "agent_timeline_activity_summary"`.
+- Added a typed `TelegramChatEventAdapter.shouldRender` guard and use it before native typing preparation, then added a regression proving dropped summary progress does not send `sendChatAction`.
+- Reran:
+  - `npx vitest run --config vitest.integration.config.ts src/runtime/gateway/__tests__/seedy-presence-projector.test.ts src/runtime/gateway/__tests__/telegram-gateway-adapter.test.ts src/runtime/gateway/__tests__/discord-gateway-adapter.test.ts src/runtime/gateway/__tests__/slack-channel-adapter.test.ts src/runtime/gateway/__tests__/signal-gateway-adapter.test.ts src/runtime/gateway/__tests__/whatsapp-gateway-adapter.test.ts`
+  - `npx vitest run --config vitest.unit.config.ts src/interface/chat/__tests__/cross-platform-session.test.ts src/interface/chat/__tests__/chat-runner.test.ts`
+  - `npm run typecheck`
+  - `git diff --check`
 - `npm run lint:boundaries -- --quiet`
 - `npx vitest run --config vitest.unit.config.ts src/interface/chat/__tests__/chat-boundary-contract.test.ts`
 - `npx vitest run --config vitest.unit.config.ts src/orchestrator/execution/__tests__/task-lifecycle-execution.test.ts --testNamePattern "filters diff evidence when adapter reports failure"`
@@ -107,6 +124,54 @@ PR: https://github.com/my-name-is-yu/PulSeed/pull/1863
 - Diff whitespace check: passed.
 - GitHub CI for PR #1863: unit and integration passed.
 - GitHub Codex review for PR #1863: no major issues.
+
+### Deferred
+
+- Live Telegram dogfood has not been rerun for this slice yet.
+
+## Slice #1855
+
+Issue: https://github.com/my-name-is-yu/PulSeed/issues/1855
+
+Base HEAD: `74e25d85a2488f9f2fd536dbab6e29f085ab61b5`
+
+Branch: `yu/issue-1855-native-typing-timing`
+
+PR: pending
+
+### Design Decisions
+
+- Native typing is no longer tied to generic turn-running presence updates. `received`, `thinking`, and `acting` presence can keep the turn alive without holding a platform spinner.
+- Added an explicit `prepareForEvent` step on `SeedyPresenceProjector` so adapters can start native typing immediately before output-bearing events are rendered.
+- Native typing now maps to output moments: user-visible commentary/status/progress, assistant deltas/final output, and delayed editable waiting status sends/edits.
+- Waiting/status text remains the liveness mechanism for long work; native typing is started only around the actual status send/edit and then stopped.
+- Assistant streaming keeps native typing active while final-answer deltas are being emitted, then stops on `assistant_final`/turn completion.
+- Fallback channels with no native typing continue to use delayed fallback acknowledgements and final/progress delivery state.
+
+### Commands Run
+
+- `git fetch origin main --prune`
+- `git switch main`
+- `git merge --ff-only origin/main`
+- `git worktree add -b yu/issue-1855-native-typing-timing /Users/yuyoshimuta/Documents/dev/PulSeed-worktrees/issue-1855-native-typing-timing origin/main`
+- `npm ci`
+- Initial focused tests failed before `npm ci` because the fresh worktree had no local `node_modules`; reran after install.
+- `npx vitest run --config vitest.integration.config.ts src/runtime/gateway/__tests__/seedy-presence-projector.test.ts src/runtime/gateway/__tests__/telegram-gateway-adapter.test.ts src/runtime/gateway/__tests__/slack-channel-adapter.test.ts`
+- `npx vitest run --config vitest.unit.config.ts src/interface/chat/__tests__/cross-platform-session.test.ts src/interface/chat/__tests__/chat-runner.test.ts`
+- `npm run typecheck`
+- `git diff --check`
+
+### Verification
+
+- Long wait-only presence test shows native typing is not held continuously.
+- Commentary/status output test shows native typing starts near rendered status output and stops after delivery.
+- Waiting heartbeat/status test shows typing starts only when the delayed status is actually sent.
+- Final streaming test shows typing starts for assistant deltas and stops on final output.
+- Telegram adapter test now confirms `presence_update(received)` alone does not send `sendChatAction`, while a rendered commentary/final output event does.
+- Slack/fallback behavior remains covered by existing projector and adapter tests.
+- Independent review material issue on fallback final typing was fixed; gateway adapter regression tests passed after the fix.
+- Independent re-review material issue on fallback delivery failure cleanup was fixed; Telegram regression confirms typing does not refresh again after fallback send failure.
+- GitHub Codex P2 on typing for dropped Telegram summary events was fixed; the latest focused gateway/unit tests, typecheck, and diff whitespace check passed.
 
 ### Deferred
 

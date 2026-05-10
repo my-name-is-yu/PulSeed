@@ -81,6 +81,7 @@ export class SeedyPresenceProjector {
   private fallbackAckInFlight = false;
   private fallbackAckSent = false;
   private terminal = false;
+  private assistantOutputStarted = false;
   private lastStatusText = "";
   private pendingStatusText = "";
 
@@ -92,15 +93,19 @@ export class SeedyPresenceProjector {
     this.onError = options.onError;
   }
 
+  async prepareForEvent(event: ChatEvent): Promise<void> {
+    if (this.terminal) return;
+    if (!this.shouldUseNativeTypingForEvent(event)) return;
+    await this.ensureNativePresence();
+  }
+
   async handle(event: ChatEvent, projection: SeedyPresenceEventProjection = {}): Promise<void> {
     switch (event.type) {
       case "presence_update":
         await this.update(event.presence);
         return;
       case "assistant_delta":
-        if (this.shouldFinishForAssistantDelta(projection)) {
-          await this.finish("final");
-        }
+        await this.handleAssistantDelta(projection);
         return;
       case "assistant_final":
         await this.finish("final");
@@ -119,6 +124,9 @@ export class SeedyPresenceProjector {
       case "tool_end":
         if (this.shouldCancelFallbackForProgress(event, projection)) this.cancelFallbackTimer();
         if (this.shouldCancelPendingStatusForProgress(event, projection)) this.cancelStatusTimer();
+        if (isMeaningfulProgressEvent(event) && !this.assistantOutputStarted) {
+          await this.stopNativePresence();
+        }
         return;
       case "lifecycle_start":
       case "turn_steer":
@@ -136,8 +144,6 @@ export class SeedyPresenceProjector {
 
     if (this.terminal) return;
 
-    await this.ensureNativePresence();
-    if (this.terminal) return;
     this.ensureFallbackTimer(presence);
     await this.upsertEditableStatus(presence);
   }
@@ -226,7 +232,7 @@ export class SeedyPresenceProjector {
       if (this.statusRef === null || text === this.lastStatusText) return;
     }
 
-    await this.safe("status_edit", async () => {
+    await this.withNativeOutputPresence("status_edit", async () => {
       await this.transport!.editStatus(this.statusRef!, text);
       this.lastStatusText = text;
     });
@@ -262,14 +268,14 @@ export class SeedyPresenceProjector {
     if (this.statusSendPromise !== null) {
       await this.statusSendPromise;
       if (this.statusRef === null || text === this.lastStatusText) return;
-      await this.safe("status_edit", async () => {
+      await this.withNativeOutputPresence("status_edit", async () => {
         await this.transport!.editStatus(this.statusRef!, text);
         this.lastStatusText = text;
       });
       return;
     }
 
-    this.statusSendPromise = this.safe("status_send", async () => {
+    this.statusSendPromise = this.withNativeOutputPresence("status_send", async () => {
       this.statusRef = await this.transport!.sendStatus(text);
       this.lastStatusText = text;
     }).then(() => undefined).finally(() => {
@@ -286,6 +292,16 @@ export class SeedyPresenceProjector {
       || presence.phase === "blocked"
       || presence.importance === "action_required"
       || presence.importance === "blocked";
+  }
+
+  private async handleAssistantDelta(projection: SeedyPresenceEventProjection): Promise<void> {
+    if (this.shouldUseFallbackAck() && projection.assistantOutputRendered !== true) return;
+    this.cancelFallbackTimer();
+    this.cancelStatusTimer();
+    if (projection.assistantOutputRendered !== true) return;
+    this.assistantOutputStarted = true;
+    await this.ensureNativePresence();
+    await this.cleanupEditableStatus("final");
   }
 
   private async finish(reason: "final" | "complete" | "error" | "stopped"): Promise<void> {
@@ -368,6 +384,40 @@ export class SeedyPresenceProjector {
     }
   }
 
+  private async withNativeOutputPresence(
+    operation: SeedyPresenceProjectorOperation,
+    fn: () => Promise<void>,
+  ): Promise<boolean> {
+    await this.ensureNativePresence();
+    const ok = await this.safe(operation, fn);
+    if (!this.assistantOutputStarted) {
+      await this.stopNativePresence();
+    }
+    return ok;
+  }
+
+  private shouldUseNativeTypingForEvent(event: ChatEvent): boolean {
+    if (!this.capabilities.canShowNativeEphemeral) return false;
+    switch (event.type) {
+      case "assistant_delta":
+      case "assistant_final":
+      case "lifecycle_error":
+        return true;
+      case "operation_progress":
+      case "activity":
+      case "agent_timeline":
+      case "tool_start":
+      case "tool_update":
+      case "tool_end":
+        return isMeaningfulProgressEvent(event);
+      case "presence_update":
+      case "lifecycle_start":
+      case "turn_steer":
+      case "lifecycle_end":
+        return false;
+    }
+  }
+
   private shouldCancelFallbackForProgress(
     event: Extract<ChatEvent, {
       type:
@@ -402,10 +452,6 @@ export class SeedyPresenceProjector {
     return projection.meaningfulProgressRendered === true;
   }
 
-  private shouldFinishForAssistantDelta(projection: SeedyPresenceEventProjection): boolean {
-    if (!this.shouldUseFallbackAck()) return true;
-    return projection.assistantOutputRendered === true;
-  }
 }
 
 function cleanupStatusText(

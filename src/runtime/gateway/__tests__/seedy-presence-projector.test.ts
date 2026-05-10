@@ -127,7 +127,7 @@ describe("SeedyPresenceProjector", () => {
     vi.useRealTimers();
   });
 
-  it("starts, refreshes, and stops native presence for native-capable policy", async () => {
+  it("does not hold native typing during wait-only presence updates", async () => {
     const refresh = vi.fn().mockResolvedValue(undefined);
     const typingIndicator = createRefreshingTypingIndicator({
       intervalMs: 1_000,
@@ -149,6 +149,40 @@ describe("SeedyPresenceProjector", () => {
       type: "presence_update",
       presence: presence("received"),
     });
+    await projector.update(presence("acting", {
+      importance: "status",
+      last_activity_label: "Checking the workspace",
+      expected_next: "progress",
+    }));
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    expect(refresh).not.toHaveBeenCalled();
+    expect(transport.sendStatus).not.toHaveBeenCalled();
+  });
+
+  it("starts, refreshes, and stops native presence around final streaming", async () => {
+    const refresh = vi.fn().mockResolvedValue(undefined);
+    const typingIndicator = createRefreshingTypingIndicator({
+      intervalMs: 1_000,
+      refresh,
+    });
+    const transport = createTransport();
+    const projector = new SeedyPresenceProjector({
+      presence: resolveGatewayChannelPresenceContract(TELEGRAM_SEEDY_PRESENCE_CONTRACT),
+      transport,
+      typingIndicator,
+      typingContext: {
+        platform: "telegram",
+        conversation_id: "chat-1",
+      },
+    });
+
+    await projector.prepareForEvent({
+      ...base,
+      type: "assistant_delta",
+      delta: "Hello.",
+      text: "Hello.",
+    });
 
     expect(refresh).toHaveBeenCalledOnce();
     expect(transport.sendStatus).not.toHaveBeenCalled();
@@ -160,7 +194,7 @@ describe("SeedyPresenceProjector", () => {
     await projector.handle({
       ...base,
       type: "assistant_final",
-      text: "Done",
+      text: "Hello.",
       persisted: true,
     });
     await vi.advanceTimersByTimeAsync(1_000);
@@ -168,7 +202,69 @@ describe("SeedyPresenceProjector", () => {
     expect(refresh).toHaveBeenCalledTimes(2);
   });
 
-  it("does not start duplicate native typing sessions for overlapping presence updates", async () => {
+  it("uses native typing around a rendered commentary/status update without holding it", async () => {
+    const stop = vi.fn().mockResolvedValue(undefined);
+    const typingIndicator: TypingIndicatorCapability = {
+      status: "native",
+      start: vi.fn(async () => ({ status: "native" as const, stop })),
+    };
+    const projector = new SeedyPresenceProjector({
+      presence: resolveGatewayChannelPresenceContract(TELEGRAM_SEEDY_PRESENCE_CONTRACT),
+      typingIndicator,
+      typingContext: {
+        platform: "telegram",
+        conversation_id: "chat-1",
+      },
+    });
+    const event = {
+      ...base,
+      type: "activity" as const,
+      kind: "commentary" as const,
+      message: "I'll check the project context first.",
+      sourceId: "preamble:turn-1",
+      presentation: { gatewayProgress: "user" as const },
+    };
+
+    await projector.prepareForEvent(event);
+    await projector.handle(event, { meaningfulProgressRendered: true });
+
+    expect(typingIndicator.start).toHaveBeenCalledOnce();
+    expect(stop).toHaveBeenCalledOnce();
+  });
+
+  it("uses native typing only around delayed waiting status delivery", async () => {
+    const stop = vi.fn().mockResolvedValue(undefined);
+    const typingIndicator: TypingIndicatorCapability = {
+      status: "native",
+      start: vi.fn(async () => ({ status: "native" as const, stop })),
+    };
+    const transport = createTransport();
+    const projector = new SeedyPresenceProjector({
+      presence: resolveGatewayChannelPresenceContract(TELEGRAM_SEEDY_PRESENCE_CONTRACT),
+      transport,
+      typingIndicator,
+      typingContext: {
+        platform: "telegram",
+        conversation_id: "chat-1",
+      },
+    });
+
+    await projector.update(presence("waiting", {
+      importance: "status",
+      last_activity_label: "Checking the workspace",
+      expected_next: "progress",
+    }));
+
+    expect(typingIndicator.start).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(2_000);
+
+    expect(transport.sendStatus).toHaveBeenCalledOnce();
+    expect(typingIndicator.start).toHaveBeenCalledOnce();
+    expect(stop).toHaveBeenCalledOnce();
+  });
+
+  it("does not start duplicate native typing sessions for overlapping output events", async () => {
     let resolveStart: (() => void) | undefined;
     const stop = vi.fn().mockResolvedValue(undefined);
     const typingIndicator: TypingIndicatorCapability = {
@@ -189,8 +285,18 @@ describe("SeedyPresenceProjector", () => {
       },
     });
 
-    const first = projector.update(presence("received"));
-    const second = projector.update(presence("thinking"));
+    const first = projector.prepareForEvent({
+      ...base,
+      type: "assistant_delta",
+      delta: "Hello.",
+      text: "Hello.",
+    });
+    const second = projector.prepareForEvent({
+      ...base,
+      type: "assistant_delta",
+      delta: " Next.",
+      text: "Hello. Next.",
+    });
     await vi.advanceTimersByTimeAsync(0);
 
     expect(typingIndicator.start).toHaveBeenCalledOnce();
@@ -203,7 +309,7 @@ describe("SeedyPresenceProjector", () => {
     expect(stop).toHaveBeenCalledOnce();
   });
 
-  it("stops native typing when final arrives while typing start is in flight", async () => {
+  it("stops native typing when final arrives while output typing start is in flight", async () => {
     let resolveStart: (() => void) | undefined;
     const stop = vi.fn().mockResolvedValue(undefined);
     const typingIndicator: TypingIndicatorCapability = {
@@ -224,7 +330,12 @@ describe("SeedyPresenceProjector", () => {
       },
     });
 
-    const update = projector.update(presence("received"));
+    const update = projector.prepareForEvent({
+      ...base,
+      type: "assistant_final",
+      text: "Done",
+      persisted: true,
+    });
     const final = projector.handle({
       ...base,
       type: "assistant_final",

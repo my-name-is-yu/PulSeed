@@ -266,6 +266,7 @@ export class SlackChannelAdapter implements ChannelAdapter {
     });
 
     let reply: string | null = null;
+    let dispatchCompleted = false;
     try {
       await presenceProjector.update(createUserVisibleSeedyTurnPresence({
         turn_id: `slack:${input.channel}:${input.messageId ?? "message"}`,
@@ -282,6 +283,7 @@ export class SlackChannelAdapter implements ChannelAdapter {
         cwd: process.cwd(),
         onEvent: async (event) => {
           const chatEvent = event as unknown as ChatEvent;
+          await presenceProjector.prepareForEvent(chatEvent);
           try {
             await projector.handle(chatEvent);
           } catch (err) {
@@ -295,18 +297,24 @@ export class SlackChannelAdapter implements ChannelAdapter {
         metadata: input.metadata,
         externalSurface: input.externalSurface,
       });
+      dispatchCompleted = true;
     } finally {
-      await presenceProjector.stop();
-    }
-    if (reply && !projector.renderedAssistantOutput) {
-      await projector.handle({
-        type: "assistant_final",
-        runId: "fallback",
-        turnId: "fallback",
-        createdAt: new Date().toISOString(),
-        text: reply,
-        persisted: false,
-      });
+      try {
+        if (dispatchCompleted && reply && !projector.renderedAssistantOutput) {
+          const fallbackEvent = {
+            type: "assistant_final" as const,
+            runId: "fallback",
+            turnId: "fallback",
+            createdAt: new Date().toISOString(),
+            text: reply,
+            persisted: false,
+          };
+          await presenceProjector.prepareForEvent(fallbackEvent);
+          await projector.handle(fallbackEvent);
+        }
+      } finally {
+        await presenceProjector.stop();
+      }
     }
   }
 }

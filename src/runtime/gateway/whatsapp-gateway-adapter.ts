@@ -232,6 +232,7 @@ export class WhatsAppGatewayAdapter implements ChannelAdapter {
     });
 
     let reply: string | null = null;
+    let dispatchCompleted = false;
     try {
       await presenceProjector.update(createUserVisibleSeedyTurnPresence({
         turn_id: `whatsapp:${senderId}:${message.id ?? "message"}`,
@@ -248,6 +249,7 @@ export class WhatsAppGatewayAdapter implements ChannelAdapter {
         externalSurface,
         onEvent: async (event) => {
           const chatEvent = event as unknown as ChatEvent;
+          await presenceProjector.prepareForEvent(chatEvent);
           await projector.handle(chatEvent);
           await presenceProjector.handle(chatEvent, {
             assistantOutputRendered: projector.deliveredAssistantOutput,
@@ -261,19 +263,24 @@ export class WhatsAppGatewayAdapter implements ChannelAdapter {
           ...(route.goalId ? { goal_id: route.goalId } : {}),
         },
       });
+      dispatchCompleted = true;
     } finally {
-      await presenceProjector.stop();
-    }
-
-    if (!projector.renderedAssistantOutput) {
-      await projector.handle({
-        type: "assistant_final",
-        runId: "fallback",
-        turnId: "fallback",
-        createdAt: new Date().toISOString(),
-        text: reply ?? "Received.",
-        persisted: false,
-      });
+      try {
+        if (dispatchCompleted && !projector.renderedAssistantOutput) {
+          const fallbackEvent = {
+            type: "assistant_final" as const,
+            runId: "fallback",
+            turnId: "fallback",
+            createdAt: new Date().toISOString(),
+            text: reply ?? "Received.",
+            persisted: false,
+          };
+          await presenceProjector.prepareForEvent(fallbackEvent);
+          await projector.handle(fallbackEvent);
+        }
+      } finally {
+        await presenceProjector.stop();
+      }
     }
   }
 

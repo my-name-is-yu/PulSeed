@@ -168,6 +168,7 @@ export class SignalGatewayAdapter implements ChannelAdapter {
         onError: (error, operation) => console.warn("SignalGatewayAdapter: presence projector failed", { operation, error }),
       });
       let reply: string | null = null;
+      let dispatchCompleted = false;
       try {
         await presenceProjector.update(createUserVisibleSeedyTurnPresence({
           turn_id: `signal:${normalized.conversationId}:${normalized.messageId}`,
@@ -184,6 +185,7 @@ export class SignalGatewayAdapter implements ChannelAdapter {
           externalSurface,
           onEvent: async (event) => {
             const chatEvent = event as unknown as ChatEvent;
+            await presenceProjector.prepareForEvent(chatEvent);
             await projector.handle(chatEvent);
             await presenceProjector.handle(chatEvent, {
               assistantOutputRendered: projector.deliveredAssistantOutput,
@@ -196,11 +198,12 @@ export class SignalGatewayAdapter implements ChannelAdapter {
             ...(route.goalId ? { goal_id: route.goalId } : {}),
           },
         });
+        dispatchCompleted = true;
       } finally {
         await presenceProjector.stop();
       }
 
-      if (!projector.renderedAssistantOutput && (reply !== null || presenceProjector.hasSentFallbackAck)) {
+      if (dispatchCompleted && !projector.renderedAssistantOutput && (reply !== null || presenceProjector.hasSentFallbackAck)) {
         await projector.handle({
           type: "assistant_final",
           runId: "fallback",
