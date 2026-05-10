@@ -545,6 +545,39 @@ describe("buildRuntimeEvidenceAnswer", () => {
     expect(result.message).toContain("Historical Runtime Health snapshot: failed; process snapshot dead");
   });
 
+  it("reports an alive stopping daemon as live status instead of historical-only", () => {
+    const result = buildRuntimeEvidenceAnswer({
+      text: "Is PulSeed running now?",
+      topics: ["progress"],
+      snapshot: null,
+      health: healthSnapshot(),
+      daemonStatus: {
+        source: "live_daemon_state",
+        checked_at: "2026-05-02T00:30:00.000Z",
+        live: {
+          status: "stopping",
+          pid: 94683,
+          last_loop_at: "2026-05-02T00:29:00.000Z",
+          active_goal_count: 0,
+        },
+        health_snapshot: {
+          checked_at: "2026-05-02T00:24:00.000Z",
+          status: "failed",
+          process_status: "dead",
+          summary: "dead_needs_intervention",
+          historical: true,
+          reason: "live daemon state was checked after this persisted health snapshot",
+        },
+      },
+      run: null,
+      summary: null,
+      now: NOW,
+    });
+
+    expect(result.message).toContain("Live daemon status: stopping (PID 94683)");
+    expect(result.message).toContain("Historical Runtime Health snapshot: failed; process snapshot dead");
+  });
+
   it("answers missing evidence cases instead of falling back to model memory", () => {
     const result = buildRuntimeEvidenceAnswer({
       text: "Progress?",

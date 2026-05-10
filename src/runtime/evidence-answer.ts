@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { StateManager } from "../base/state/state-manager.js";
 import type { ILLMClient } from "../base/llm/llm-client.js";
 import { getInternalIdentityPrefix } from "../base/config/identity-loader.js";
-import { DaemonStateSchema } from "./types/daemon.js";
+import { DaemonStateSchema, type DaemonState } from "./types/daemon.js";
 import { PIDManager } from "./pid-manager.js";
 import { createRuntimeSessionRegistry } from "./session-registry/index.js";
 import type {
@@ -62,7 +62,7 @@ export interface RuntimeDaemonStatusEvidence {
   source: "live_daemon_state" | "historical_health_snapshot" | "unavailable";
   checked_at: string;
   live?: {
-    status: "idle" | "running";
+    status: DaemonState["status"];
     pid: number;
     last_loop_at?: string | null;
     active_goal_count: number;
@@ -303,7 +303,6 @@ export async function collectRuntimeDaemonStatusEvidence(input: {
     && pidStatus?.alivePids.includes(runtimePid) === true;
   const live =
     state
-    && (state.status === "idle" || state.status === "running")
     && runtimePid !== null
     && pidAlive
       ? {
