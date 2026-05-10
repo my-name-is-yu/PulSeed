@@ -16,20 +16,20 @@ import { ALIASES, MAX_OUTPUT_CHARS, PERMISSION_LEVEL, TAGS, TOOL_NAME } from "./
 import { DESCRIPTION } from "./prompt.js";
 
 export const SoilImportInputSchema = z.discriminatedUnion("action", [
-  z.object({ action: z.literal("scan"), rootDir: z.string().min(1).optional() }),
-  z.object({ action: z.literal("list"), rootDir: z.string().min(1).optional() }),
+  z.object({ action: z.literal("scan"), rootDir: z.string().min(1).optional() }).strict(),
+  z.object({ action: z.literal("list"), rootDir: z.string().min(1).optional() }).strict(),
   z.object({
     action: z.literal("approve"),
     overlayId: z.string().min(1),
     rootDir: z.string().min(1).optional(),
     decisionNote: z.string().optional(),
-  }),
+  }).strict(),
   z.object({
     action: z.literal("reject"),
     overlayId: z.string().min(1),
     rootDir: z.string().min(1).optional(),
     decisionNote: z.string().optional(),
-  }),
+  }).strict(),
 ]);
 export type SoilImportInput = z.infer<typeof SoilImportInputSchema>;
 

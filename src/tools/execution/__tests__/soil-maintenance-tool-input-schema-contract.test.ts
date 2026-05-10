@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { z } from "zod";
 import { toToolDefinition } from "../../tool-definition-adapter.js";
 import { SoilDoctorInputSchema, SoilDoctorTool } from "../SoilDoctorTool/SoilDoctorTool.js";
+import { SoilImportInputSchema, SoilImportTool } from "../SoilImportTool/SoilImportTool.js";
 import { SoilOpenInputSchema, SoilOpenTool } from "../SoilOpenTool/SoilOpenTool.js";
 import { SoilPublishInputSchema, SoilPublishTool } from "../SoilPublishTool/SoilPublishTool.js";
 import { SoilRebuildInputSchema, SoilRebuildTool } from "../SoilRebuildTool/SoilRebuildTool.js";
@@ -21,6 +22,12 @@ const SOIL_MAINTENANCE_TOOL_SCHEMA_CASES: SoilMaintenanceToolSchemaCase[] = [
     schema: SoilDoctorInputSchema,
     validInput: { rootDir: "/tmp/soil" },
     tool: new SoilDoctorTool(),
+  },
+  {
+    name: "soil-import",
+    schema: SoilImportInputSchema,
+    validInput: { action: "approve", overlayId: "overlay-1", rootDir: "/tmp/soil" },
+    tool: new SoilImportTool(),
   },
   {
     name: "soil-open",
