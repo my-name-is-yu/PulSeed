@@ -285,7 +285,9 @@ export async function executeAgentLoopRoute(
       cwd: turnContext.hostOnly.execution.executionCwd,
       goalId: turnContext.hostOnly.execution.goalId,
       history: turnContext.modelVisible.conversation.priorTurns,
-      eventSink: host.eventBridge.createAgentLoopEventSink(eventContext),
+      eventSink: host.eventBridge.createAgentLoopEventSink(eventContext, assistantBuffer, {
+        streamFinalCandidate: () => !shouldGateRuntimeEvidenceForTurn(turnContext),
+      }),
       approvalFn: agentLoopApprovalFn(host, runtimeContext),
       toolCallContext: {
         executionPolicy: turnContext.hostOnly.execution.executionPolicy,
@@ -361,7 +363,7 @@ export async function executeAgentLoopRoute(
       result.output = gate.output;
     }
     if (result.output) {
-      host.eventBridge.pushAssistantDelta(result.output, assistantBuffer, eventContext);
+      host.eventBridge.pushAssistantSnapshot(result.output, assistantBuffer, eventContext);
     }
     if (result.success) {
       const diffArtifact = await collectGitDiffArtifact(gitRoot);

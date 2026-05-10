@@ -798,8 +798,8 @@ describe("TelegramChatEventAdapter", () => {
     });
 
     expect(sendPlainMessage).toHaveBeenCalledOnce();
-    expect(editMessageText).toHaveBeenCalledTimes(1);
-    expect(editMessageText.mock.calls[0]![2]).toBe("Hello");
+    expect(sendPlainMessage).toHaveBeenCalledWith(777, "Hello");
+    expect(editMessageText).not.toHaveBeenCalled();
   });
 
   it("renders tool events as a separate Telegram message and updates it", async () => {
@@ -907,8 +907,9 @@ describe("TelegramChatEventAdapter", () => {
     });
 
     expect(sendPlainMessage).toHaveBeenCalledOnce();
-    expect(editMessageText.mock.calls.at(-1)?.[2]).toContain("Partial\n\n[interrupted: boom]");
-    expect(editMessageText.mock.calls.at(-1)?.[2]).toContain("Recovery");
+    expect(sendPlainMessage.mock.calls.at(-1)?.[1]).toContain("Partial\n\n[interrupted: boom]");
+    expect(sendPlainMessage.mock.calls.at(-1)?.[1]).toContain("Recovery");
+    expect(editMessageText).not.toHaveBeenCalled();
   });
 });
 

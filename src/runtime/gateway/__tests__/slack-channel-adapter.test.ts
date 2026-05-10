@@ -491,11 +491,7 @@ describe("SlackChannelAdapter — chat dispatch", () => {
       }),
       expect.objectContaining({
         url: "https://slack.com/api/chat.postMessage",
-        body: expect.objectContaining({ text: "Hel", thread_ts: "123.456" }),
-      }),
-      expect.objectContaining({
-        url: "https://slack.com/api/chat.update",
-        body: expect.objectContaining({ text: "Hello", ts: "1002" }),
+        body: expect.objectContaining({ text: "Hello", thread_ts: "123.456" }),
       }),
       expect.objectContaining({
         url: "https://slack.com/api/chat.delete",

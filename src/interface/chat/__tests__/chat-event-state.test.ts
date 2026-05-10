@@ -356,6 +356,41 @@ describe("applyChatEventToMessages", () => {
     ]);
   });
 
+  it("streams full agent-loop final candidate content instead of truncated previews", async () => {
+    const events: ChatEvent[] = [];
+    const bridge = new ChatRunnerEventBridge(() => (event) => {
+      events.push(event);
+    });
+    const assistantBuffer = { text: "" };
+    const sink = bridge.createAgentLoopEventSink(
+      { runId: "run-1", turnId: "turn-1" },
+      assistantBuffer,
+      { streamFinalCandidate: true },
+    );
+    const fullContent = `${"A".repeat(520)} complete.`;
+
+    await sink.emit({
+      type: "assistant_message",
+      eventId: "final-candidate-1",
+      sessionId: "session-1",
+      traceId: "trace-1",
+      turnId: "agent-turn-1",
+      goalId: "goal-1",
+      createdAt: "2026-04-08T00:00:00.000Z",
+      phase: "final_candidate",
+      content: fullContent,
+      contentPreview: `${"A".repeat(500)}...`,
+      toolCallCount: 0,
+    });
+
+    const delta = events.find((event): event is Extract<ChatEvent, { type: "assistant_delta" }> =>
+      event.type === "assistant_delta"
+    );
+    expect(delta?.text).toBe(fullContent);
+    expect(delta?.text).not.toContain("...");
+    expect(assistantBuffer.text).toBe(fullContent);
+  });
+
   it("renders shared timeline tool and approval rows chronologically without a latest-five cap", () => {
     const base = {
       runId: "run-1",

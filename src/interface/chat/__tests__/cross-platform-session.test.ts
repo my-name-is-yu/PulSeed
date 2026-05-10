@@ -463,17 +463,156 @@ describe("CrossPlatformChatSessionManager", () => {
     expect(events.at(-1)?.type).toBe("lifecycle_end");
   });
 
+  it("emits multiple assistant deltas before final for a production gateway assist turn", async () => {
+    const stateManager = makeMockStateManager();
+    const events: ChatEvent[] = [];
+    const llmClient = {
+      sendMessage: vi.fn().mockResolvedValue({
+        content: JSON.stringify({ kind: "assist", confidence: 0.95, rationale: "read-only answer" }),
+        usage: { input_tokens: 1, output_tokens: 1 },
+        stop_reason: "end_turn",
+      }),
+      sendMessageStream: vi.fn().mockImplementation(async (_messages, _options, handlers) => {
+        handlers.onTextDelta?.("First sentence.");
+        handlers.onTextDelta?.(" Second sentence.");
+        return {
+          content: "First sentence. Second sentence.",
+          usage: { input_tokens: 1, output_tokens: 2 },
+          stop_reason: "end_turn",
+        };
+      }),
+      parseJSON: vi.fn((content: string, schema: { parse(value: unknown): unknown }) => schema.parse(JSON.parse(content))),
+    };
+    const manager = new CrossPlatformChatSessionManager(makeDeps({
+      stateManager,
+      llmClient: llmClient as never,
+    }));
+
+    const result = await manager.execute("What is this project?", {
+      identity_key: "stream-gateway-user",
+      platform: "telegram",
+      conversation_id: "telegram-chat-1",
+      user_id: "user-1",
+      cwd: "/repo",
+      onEvent: (event) => { events.push(event); },
+    });
+
+    const finalIndex = events.findIndex((event) => event.type === "assistant_final");
+    const deltaEvents = events.filter((event): event is Extract<ChatEvent, { type: "assistant_delta" }> =>
+      event.type === "assistant_delta"
+    );
+
+    expect(result.success).toBe(true);
+    expect(deltaEvents).toHaveLength(2);
+    expect(deltaEvents.map((event) => event.delta)).toEqual(["First sentence.", " Second sentence."]);
+    expect(events.findIndex((event) => event === deltaEvents[0])).toBeLessThan(finalIndex);
+    expect(events.findIndex((event) => event === deltaEvents[1])).toBeLessThan(finalIndex);
+    expect((events[finalIndex] as Extract<ChatEvent, { type: "assistant_final" }>).text).toBe("First sentence. Second sentence.");
+  });
+
+  it("streams native agent-loop final text only after the runtime evidence gate allows it", async () => {
+    const stateManager = makeMockStateManager();
+    const events: ChatEvent[] = [];
+    const chatAgentLoopRunner = {
+      execute: vi.fn().mockImplementation(async (input: { eventSink?: { emit(event: unknown): Promise<void> } }) => {
+        await input.eventSink?.emit({
+          type: "tool_call_finished",
+          eventId: "event-tool-end",
+          sessionId: "session-1",
+          traceId: "trace-1",
+          turnId: "turn-1",
+          goalId: "goal-1",
+          createdAt: "2026-05-10T00:00:00.000Z",
+          callId: "call-1",
+          toolName: "read_file",
+          success: true,
+          outputPreview: "read project context",
+          durationMs: 5,
+        });
+        await input.eventSink?.emit({
+          type: "assistant_message",
+          eventId: "event-final-candidate-1",
+          sessionId: "session-1",
+          traceId: "trace-1",
+          turnId: "turn-1",
+          goalId: "goal-1",
+          createdAt: "2026-05-10T00:00:01.000Z",
+          phase: "final_candidate",
+          contentPreview: "First sentence.",
+          toolCallCount: 1,
+        });
+        await input.eventSink?.emit({
+          type: "assistant_message",
+          eventId: "event-final-candidate-2",
+          sessionId: "session-1",
+          traceId: "trace-1",
+          turnId: "turn-1",
+          goalId: "goal-1",
+          createdAt: "2026-05-10T00:00:02.000Z",
+          phase: "final_candidate",
+          contentPreview: "First sentence. Second sentence.",
+          toolCallCount: 1,
+        });
+        return {
+          success: true,
+          output: "First sentence. Second sentence.",
+          error: null,
+          exit_code: null,
+          elapsed_ms: 42,
+          stopped_reason: "completed",
+        };
+      }),
+    };
+    const manager = new CrossPlatformChatSessionManager(makeDeps({
+      stateManager,
+      chatAgentLoopRunner: chatAgentLoopRunner as never,
+    }));
+
+    const result = await manager.execute("Inspect the project and answer", {
+      identity_key: "agent-loop-stream-user",
+      platform: "telegram",
+      conversation_id: "telegram-chat-1",
+      user_id: "user-1",
+      cwd: "/repo",
+      onEvent: (event) => { events.push(event); },
+    });
+
+    const finalIndex = events.findIndex((event) => event.type === "assistant_final");
+    const deltaEvents = events.filter((event): event is Extract<ChatEvent, { type: "assistant_delta" }> =>
+      event.type === "assistant_delta"
+    );
+
+    expect(result.success).toBe(true);
+    expect(deltaEvents.map((event) => event.delta)).toEqual(["First sentence. Second sentence."]);
+    expect(events.findIndex((event) => event === deltaEvents[0])).toBeLessThan(finalIndex);
+    expect((events[finalIndex] as Extract<ChatEvent, { type: "assistant_final" }>).text).toBe("First sentence. Second sentence.");
+  });
+
   it("blocks runtime status claims from gateway agent-loop turns without tool evidence", async () => {
     const stateManager = makeMockStateManager();
     const events: ChatEvent[] = [];
     const chatAgentLoopRunner = {
-      execute: vi.fn().mockResolvedValue({
-        success: true,
-        output: "I ran `pulseed daemon status`; it succeeded, and the daemon is stopped.",
-        error: null,
-        exit_code: null,
-        elapsed_ms: 42,
-        stopped_reason: "completed",
+      execute: vi.fn().mockImplementation(async (input: { eventSink?: { emit(event: unknown): Promise<void> } }) => {
+        await input.eventSink?.emit({
+          type: "assistant_message",
+          eventId: "event-final-candidate",
+          sessionId: "session-1",
+          traceId: "trace-1",
+          turnId: "turn-1",
+          goalId: "goal-1",
+          createdAt: "2026-05-10T00:00:00.000Z",
+          phase: "final_candidate",
+          contentPreview: "I ran `pulseed daemon status`; it succeeded, and the daemon is stopped.",
+          toolCallCount: 0,
+        });
+        return {
+          success: true,
+          output: "I ran `pulseed daemon status`; it succeeded, and the daemon is stopped.",
+          error: null,
+          exit_code: null,
+          elapsed_ms: 42,
+          stopped_reason: "completed",
+        };
       }),
     };
     const runtimeEvidenceGateClient = createMockLLMClient([
@@ -501,6 +640,12 @@ describe("CrossPlatformChatSessionManager", () => {
     expect(result.output).toContain("I can't verify the current PulSeed runtime status");
     expect(result.output).not.toContain("daemon is stopped");
     expect(result.output).not.toContain("it succeeded");
+    const deltaText = events
+      .filter((event): event is Extract<ChatEvent, { type: "assistant_delta" }> => event.type === "assistant_delta")
+      .map((event) => event.text)
+      .join("\n");
+    expect(deltaText).not.toContain("daemon is stopped");
+    expect(deltaText).not.toContain("it succeeded");
     expect(events.filter((event) => event.type === "tool_start" || event.type === "tool_end")).toHaveLength(0);
     expect(events.some((event) =>
       event.type === "activity"
@@ -2636,10 +2781,13 @@ describe("CrossPlatformChatSessionManager", () => {
         cwd: "/repo",
         onEvent: () => undefined,
       });
-      const deadline = Date.now() + 1000;
-      while (Date.now() < deadline && (await store.loadPending("approval-grant-narrow")) === null) {
+      const deadline = Date.now() + 5000;
+      let pendingApproval = await store.loadPending("approval-grant-narrow");
+      while (Date.now() < deadline && pendingApproval === null) {
         await new Promise((resolve) => setTimeout(resolve, 10));
+        pendingApproval = await store.loadPending("approval-grant-narrow");
       }
+      expect(pendingApproval).not.toBeNull();
 
       await expect(manager.processIncomingMessage({
         text: "Tests are fine, but do not edit files yet.",
