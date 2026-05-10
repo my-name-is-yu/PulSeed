@@ -41,6 +41,79 @@ describe("ChatHistory", () => {
     expect(session.createdAt).toBeTruthy();
   });
 
+  it("rejects unsafe integer metadata in persisted chat session contracts", () => {
+    const createdAt = "2026-05-06T00:00:00.000Z";
+    const unsafeInteger = Number.MAX_SAFE_INTEGER + 1;
+    const message = { role: "user", content: "hello", timestamp: createdAt, turnIndex: 0 };
+    const validSession = {
+      id: SESSION_ID,
+      cwd: CWD,
+      createdAt,
+      messages: [message],
+    };
+    const validCompaction = {
+      schema_version: "chat-compaction-record-v1",
+      id: `${SESSION_ID}:compaction:0`,
+      sessionId: SESSION_ID,
+      sequence: 0,
+      createdAt,
+      reason: "manual_command",
+      inputMessageCount: 1,
+      outputMessageCount: 1,
+      removedMessageCount: 0,
+      retainedMessageCount: 1,
+      summary: "summary",
+      modelVisibleSummary: "summary",
+      archivedUserMessages: [],
+      archivedAssistantMessages: [],
+      retainedMessages: [message],
+      pendingPermissions: [],
+      decisions: [],
+      activeTargets: [],
+      replacementHistory: {
+        removedTurnIndexes: [],
+        retainedOriginalTurnIndexes: [0],
+        rewrittenTurnIndexes: [0],
+        rolloutJournalSequences: [],
+        turnContextCount: 0,
+      },
+    };
+
+    const unsafePayloads = [
+      {
+        ...validSession,
+        messages: [{ ...message, turnIndex: unsafeInteger }],
+      },
+      {
+        ...validSession,
+        retryCount: unsafeInteger,
+      },
+      {
+        ...validSession,
+        rolloutJournal: [{
+          schema_version: "chat-rollout-journal-record-v1",
+          id: `${SESSION_ID}:0`,
+          sessionId: SESSION_ID,
+          runId: null,
+          turnId: null,
+          sequence: unsafeInteger,
+          createdAt,
+          kind: "user_input",
+          visibility: "model_visible",
+          payload: {},
+        }],
+      },
+      {
+        ...validSession,
+        compactionRecords: [{ ...validCompaction, inputMessageCount: unsafeInteger }],
+      },
+    ];
+
+    for (const payload of unsafePayloads) {
+      expect(ChatSessionSchema.safeParse(payload).success).toBe(false);
+    }
+  });
+
   it("appendUserMessage adds a message with role 'user' and correct content", async () => {
     const history = new ChatHistory(stateManager, SESSION_ID, CWD);
     await history.appendUserMessage("Hello, world!");
