@@ -163,6 +163,34 @@ describe("buildWorkspaceContext", () => {
     expect(ctx.dependencies).toEqual([]);
   });
 
+  it("ignores parseable package.json fields that are not string records", async () => {
+    const results = makeWorkspaceResults({
+      pkgJson: JSON.stringify({
+        scripts: { test: "vitest run" },
+        dependencies: ["zod"],
+      }),
+    });
+    const executor = createMockExecutor(results);
+    const ctx = await buildWorkspaceContext(executor, MOCK_TOOL_CALL_CONTEXT);
+
+    expect(ctx.scripts).toEqual({ test: "vitest run" });
+    expect(ctx.dependencies).toEqual([]);
+  });
+
+  it("keeps valid dependency metadata when scripts has an invalid shape", async () => {
+    const results = makeWorkspaceResults({
+      pkgJson: JSON.stringify({
+        scripts: { test: 1 },
+        dependencies: { zod: "^4.0.0" },
+      }),
+    });
+    const executor = createMockExecutor(results);
+    const ctx = await buildWorkspaceContext(executor, MOCK_TOOL_CALL_CONTEXT);
+
+    expect(ctx.scripts).toEqual({});
+    expect(ctx.dependencies).toEqual(["zod"]);
+  });
+
   it("handles git log output with trailing newline", async () => {
     const results = makeWorkspaceResults({
       gitLog: "abc1234 fix: bug\ndef5678 feat: feature\n",
