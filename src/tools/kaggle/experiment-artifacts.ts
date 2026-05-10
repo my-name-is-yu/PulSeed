@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import type { ProcessSessionSnapshot } from "../system/ProcessSessionTool/ProcessSessionTool.js";
 import { signalProcessPid } from "../../base/utils/process-pid.js";
 import { getPulseedDirPath } from "../../base/utils/paths.js";
+import { isTextFileSizeLimitError, readTextFileWithinLimit } from "../../base/utils/json-io.js";
 import {
   PROCESS_SESSION_SNAPSHOT_REF_PREFIX,
   ProcessSessionStateStore,
@@ -11,6 +12,8 @@ import {
   type KaggleMetricParseResult,
 } from "./metrics.js";
 
+export const KAGGLE_EXPERIMENT_METRICS_MAX_BYTES = 1024 * 1024;
+
 export type KaggleMetricsFallback = Parameters<typeof parseKaggleMetricsCompatible>[1];
 
 export async function readKaggleMetrics(
@@ -19,10 +22,19 @@ export async function readKaggleMetrics(
 ): Promise<KaggleMetricParseResult> {
   let raw: string;
   try {
-    raw = await fs.readFile(metricsPath, "utf-8");
+    raw = await readTextFileWithinLimit(metricsPath, {
+      maxBytes: KAGGLE_EXPERIMENT_METRICS_MAX_BYTES,
+    });
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") {
       return { ok: false, reason: "missing", message: "metrics.json is missing" };
+    }
+    if (isTextFileSizeLimitError(err)) {
+      return {
+        ok: false,
+        reason: "malformed",
+        message: `metrics.json exceeds ${KAGGLE_EXPERIMENT_METRICS_MAX_BYTES} bytes`,
+      };
     }
     throw err;
   }

@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
 import type { ToolCallContext } from "../../types.js";
 import { ProcessSessionManager } from "../../system/ProcessSessionTool/ProcessSessionTool.js";
 import {
@@ -13,8 +15,11 @@ import {
   KaggleExperimentStopTool,
   KaggleMetricReportTool,
 } from "../KaggleExperimentTools.js";
+import { KAGGLE_EXPERIMENT_METRICS_MAX_BYTES } from "../experiment-artifacts.js";
 import { teeWrapperArgs } from "../tee-wrapper.js";
 import type { KaggleMetricDirection } from "../metrics.js";
+
+const execFileAsync = promisify(execFile);
 
 function makeContext(cwd = "/tmp"): ToolCallContext {
   return {
@@ -111,6 +116,42 @@ describe("Kaggle tee wrapper", () => {
     expect(wrapperArgs[8]).toBe("/workspace/kaggle/titanic/experiments/exp-a/next-action.json");
     expect(wrapperArgs[9]).toBe("exp-a");
     expect(wrapperArgs[10]).toBe("titanic");
+  });
+
+  it("reports oversized metrics artifacts without loading them into the completion path", async () => {
+    const workspaceRoot = await fs.mkdtemp(path.join(os.tmpdir(), "pulseed-kaggle-tee-"));
+    try {
+      const experimentDir = path.join(workspaceRoot, "kaggle", "titanic", "experiments", "exp-big");
+      const logPath = path.join(experimentDir, "train.log");
+      const metricsPath = path.join(experimentDir, "metrics.json");
+      const reportPath = path.join(experimentDir, "summary.md");
+      const nextActionPath = path.join(experimentDir, "next-action.json");
+      await fs.mkdir(experimentDir, { recursive: true });
+      await fs.writeFile(metricsPath, "x".repeat(KAGGLE_EXPERIMENT_METRICS_MAX_BYTES + 1));
+
+      await execFileAsync(process.execPath, teeWrapperArgs(
+        process.execPath,
+        ["-e", "process.exit(0)"],
+        logPath,
+        metricsPath,
+        reportPath,
+        nextActionPath,
+        "exp-big",
+        "titanic",
+      ), { cwd: workspaceRoot });
+
+      const expectedError = `metrics.json exceeds ${KAGGLE_EXPERIMENT_METRICS_MAX_BYTES} bytes`;
+      const report = await fs.readFile(reportPath, "utf-8");
+      expect(report).toContain(`Metric: unavailable (${expectedError})`);
+      const nextAction = JSON.parse(await fs.readFile(nextActionPath, "utf-8")) as {
+        observation: { metrics_error?: string };
+        action: { type: string };
+      };
+      expect(nextAction.observation.metrics_error).toBe(expectedError);
+      expect(nextAction.action.type).toBe("investigate_run");
+    } finally {
+      await fs.rm(workspaceRoot, { recursive: true, force: true });
+    }
   });
 });
 
@@ -507,6 +548,22 @@ setInterval(() => fs.writeFileSync("experiments/exp-stop/heartbeat.txt", String(
       status: "failure",
       reason: "malformed",
       artifact: { state_relative_path: "workspace:kaggle/titanic/experiments/malformed/metrics.json" },
+    });
+
+    const oversizedDir = path.join(workspaceBase, "kaggle", "titanic", "experiments", "oversized");
+    await fs.mkdir(oversizedDir, { recursive: true });
+    await fs.writeFile(path.join(oversizedDir, "metrics.json"), "x".repeat(KAGGLE_EXPERIMENT_METRICS_MAX_BYTES + 1));
+    const oversized = await tool.call({
+      workspace: "titanic",
+      competition: "titanic",
+      experiment_id: "oversized",
+    }, makeContext(pulseedHome));
+    expect(oversized.success).toBe(false);
+    expect(oversized.data).toMatchObject({
+      status: "failure",
+      reason: "malformed",
+      message: `metrics.json exceeds ${KAGGLE_EXPERIMENT_METRICS_MAX_BYTES} bytes`,
+      artifact: { state_relative_path: "workspace:kaggle/titanic/experiments/oversized/metrics.json" },
     });
   });
 
