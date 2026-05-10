@@ -419,9 +419,9 @@ function createTelegramSetupStatus(): TelegramSetupStatus {
 
 describe("formatDaemonConnectionState", () => {
   it("renders connected, connecting, and disconnected labels", () => {
-    expect(formatDaemonConnectionState("connected")).toBe("  [daemon connected]");
-    expect(formatDaemonConnectionState("connecting")).toBe("  [daemon connecting]");
-    expect(formatDaemonConnectionState("disconnected")).toBe("  [daemon disconnected]");
+    expect(formatDaemonConnectionState("connected")).toBe("  Background on");
+    expect(formatDaemonConnectionState("connecting")).toBe("  Reconnecting");
+    expect(formatDaemonConnectionState("disconnected")).toBe("  Background disconnected");
   });
 
   it("omits the badge when no daemon state is available", () => {
@@ -1452,8 +1452,18 @@ describe("daemon-mode chat routing", () => {
 
     expect(stateManager.loadGoal).toHaveBeenCalledWith("goal-anchor");
     const output = stdout.readOutput();
+    expect(output).toContain("Ready with background work");
+    expect(output).toContain("Working on goal");
+    expect(output).toContain("Background on");
     expect(output).toContain("Current: Improve daily UX");
-    expect(output).toContain("In progress; working");
+    expect(output).toContain("In progress;");
+    expect(output).toContain("working now");
+    expect(output).not.toContain("daemon:");
+    expect(output).not.toContain("Active:");
+    expect(output).not.toContain("Trust:");
+    expect(output).not.toContain("Status:");
+    expect(output).not.toContain("Iter:");
+    expect(output).not.toContain("~/workspace");
 
     screen.unmount();
   });

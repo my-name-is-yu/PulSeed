@@ -542,21 +542,27 @@ export function Dashboard({ state, runtimeSessions, runtimeHealth, evidenceSumma
 
       {/* Stats row: iter, elapsed, last result */}
       {(state.running || state.iteration > 0) && (
-        <Box>
-          <Text dimColor>{"Iter: "}</Text>
-          <Text>{state.iteration}</Text>
-          {state.startedAt && (
-            <>
-              <Text dimColor>{" │ Elapsed: "}</Text>
-              <Text>{formatElapsed(state.startedAt)}</Text>
-            </>
-          )}
-          {state.lastResult && (
-            <>
-              <Text dimColor>{" │ Last: "}</Text>
-              <Text>{statusLabel(state.lastResult.finalStatus)}</Text>
-            </>
-          )}
+        <Box flexDirection="column">
+          <Text dimColor>
+            Diagnostics: status {statusLabel(state.status)} | trust {state.trustScore >= 0 ? "+" : ""}
+            {state.trustScore} | iter {state.iteration}
+          </Text>
+          <Box>
+            <Text dimColor>{"Iter: "}</Text>
+            <Text>{state.iteration}</Text>
+            {state.startedAt && (
+              <>
+                <Text dimColor>{" │ Elapsed: "}</Text>
+                <Text>{formatElapsed(state.startedAt)}</Text>
+              </>
+            )}
+            {state.lastResult && (
+              <>
+                <Text dimColor>{" │ Last: "}</Text>
+                <Text>{statusLabel(state.lastResult.finalStatus)}</Text>
+              </>
+            )}
+          </Box>
         </Box>
       )}
 
