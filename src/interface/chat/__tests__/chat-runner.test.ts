@@ -513,6 +513,23 @@ function makeTask(id: string, goalId: string, overrides: Partial<Task> = {}): Ta
 
 describe("ChatRunner", () => {
   describe("normal execution", () => {
+    it("uses the current llm client for runtime evidence gating after provider reloads", () => {
+      const initialClient = createSingleMockLLMClient(JSON.stringify({ verdict: "allow", reason: "initial" }));
+      const reloadedClient = createSingleMockLLMClient(JSON.stringify({ verdict: "allow", reason: "reloaded" }));
+      const deps = makeDeps({
+        llmClient: initialClient,
+        runtimeEvidenceGateClient: undefined,
+      });
+      const runner = new ChatRunner(deps);
+      const routeHost = (runner as unknown as {
+        routeHost(): { getRuntimeEvidenceGateClient(): unknown };
+      }).routeHost();
+
+      expect(routeHost.getRuntimeEvidenceGateClient()).toBe(initialClient);
+      deps.llmClient = reloadedClient;
+      expect(routeHost.getRuntimeEvidenceGateClient()).toBe(reloadedClient);
+    });
+
     it("redacts setup secrets through the production ingress entrypoint before persistence, events, and adapter prompts", async () => {
       const telegramToken = "123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi";
       const stateManager = makeMockStateManagerWithBaseDir();
