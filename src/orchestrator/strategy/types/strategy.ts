@@ -2,6 +2,15 @@ import { z } from "zod";
 import { StrategyStateEnum, DurationSchema } from "../../../base/types/core.js";
 import type { RebalanceTrigger } from "./portfolio.js";
 
+export const StrategyUnitIntervalSchema = z.number().finite().min(0).max(1);
+export const StrategySafeNonnegativeIntSchema = z.number().finite().int().nonnegative().safe();
+const StrategyFiniteNumberSchema = z.number().finite();
+const StrategyNonnegativeFiniteNumberSchema = z.number().finite().nonnegative();
+const StrategySafeNonnegativeNumberSchema = z.number().finite().nonnegative().max(Number.MAX_SAFE_INTEGER);
+const StrategyDurationEstimateSchema = DurationSchema.extend({
+  value: StrategyNonnegativeFiniteNumberSchema,
+});
+
 // --- Expected Effect ---
 
 export const ExpectedEffectSchema = z.object({
@@ -14,9 +23,9 @@ export type ExpectedEffect = z.infer<typeof ExpectedEffectSchema>;
 // --- Resource Estimate ---
 
 export const ResourceEstimateSchema = z.object({
-  sessions: z.number(),
-  duration: DurationSchema,
-  llm_calls: z.number().nullable().default(null),
+  sessions: StrategySafeNonnegativeIntSchema,
+  duration: StrategyDurationEstimateSchema,
+  llm_calls: StrategySafeNonnegativeIntSchema.nullable().default(null),
 });
 export type ResourceEstimate = z.infer<typeof ResourceEstimateSchema>;
 
@@ -59,7 +68,7 @@ export type StrategySmokeMetadata = z.infer<typeof StrategySmokeMetadataSchema>;
 
 export const StrategyLineageAssessmentSchema = z.object({
   schema_version: z.literal("strategy-lineage-assessment-v1").default("strategy-lineage-assessment-v1"),
-  confidence: z.number().min(0).max(1),
+  confidence: StrategyUnitIntervalSchema,
   relationship_to_lineage: StrategyLineageRelationshipSchema,
   novelty_basis: z.enum([
     "typed_lineage_evidence",
@@ -73,7 +82,7 @@ export const StrategyLineageAssessmentSchema = z.object({
   matched_strategy_ids: z.array(z.string().min(1)).default([]),
   evidence_refs: z.array(z.string().min(1)).default([]),
   metric_trend: z.enum(["improving", "stalled", "noisy", "regressing", "breakthrough"]).optional(),
-  lexical_similarity_diagnostic: z.number().min(0).max(1).optional(),
+  lexical_similarity_diagnostic: StrategyUnitIntervalSchema.optional(),
   summary: z.string().min(1),
 }).strict();
 export type StrategyLineageAssessment = z.infer<typeof StrategyLineageAssessmentSchema>;
@@ -81,7 +90,7 @@ export type StrategyLineageAssessment = z.infer<typeof StrategyLineageAssessment
 export const StrategyPlannerHintTraceSchema = z.object({
   source: z.enum(["dream_template_typed_applicability", "dream_template_embedding"]),
   source_id: z.string().min(1),
-  confidence: z.number().min(0).max(1),
+  confidence: StrategyUnitIntervalSchema,
   lexical_overlap_used: z.boolean(),
   matched_dimensions: z.array(z.string()).default([]),
   evidence_refs: z.array(z.string().min(1)).default([]),
@@ -93,8 +102,8 @@ export const StrategyExplorationMetadataSchema = z.object({
   phase: z.enum(["normal", "divergent_stall_recovery"]).default("normal"),
   role: StrategyExplorationRoleSchema,
   strategy_family: z.string().min(1),
-  novelty_score: z.number().min(0).max(1),
-  similarity_to_recent_failures: z.number().min(0).max(1).default(0),
+  novelty_score: StrategyUnitIntervalSchema,
+  similarity_to_recent_failures: StrategyUnitIntervalSchema.default(0),
   expected_cost: StrategyExplorationExpectedCostSchema,
   relationship_to_lineage: StrategyLineageRelationshipSchema,
   prior_evidence: z.string().min(1).optional(),
@@ -119,16 +128,16 @@ export const StrategySchema = z.object({
   resource_estimate: ResourceEstimateSchema,
 
   state: StrategyStateEnum.default("candidate"),
-  allocation: z.number().min(0).max(1).default(0),
+  allocation: StrategyUnitIntervalSchema.default(0),
 
   created_at: z.string(),
   started_at: z.string().nullable().default(null),
   completed_at: z.string().nullable().default(null),
 
-  gap_snapshot_at_start: z.number().nullable().default(null),
+  gap_snapshot_at_start: StrategyNonnegativeFiniteNumberSchema.nullable().default(null),
   tasks_generated: z.array(z.string()).default([]),
-  effectiveness_score: z.number().nullable().default(null),
-  consecutive_stall_count: z.number().default(0),
+  effectiveness_score: StrategyFiniteNumberSchema.nullable().default(null),
+  consecutive_stall_count: StrategySafeNonnegativeIntSchema.default(0),
 
   // Stage 14: Cross-goal strategy fields
   source_template_id: z.string().nullable().default(null),
@@ -136,8 +145,8 @@ export const StrategySchema = z.object({
 
   // M14-S2: Structured PIVOT/REFINE/ESCALATE fields
   rollback_target_id: z.string().nullable().default(null),
-  max_pivot_count: z.number().int().min(0).default(2),
-  pivot_count: z.number().int().min(0).default(0),
+  max_pivot_count: StrategySafeNonnegativeIntSchema.default(2),
+  pivot_count: StrategySafeNonnegativeIntSchema.default(0),
 
   // Toolset immutability: snapshot tools at strategy activation
   toolset_locked: z.boolean().default(false),
@@ -177,7 +186,7 @@ export const FileExistsWaitConditionSchema = z.object({
 export const FileMtimeChangedWaitConditionSchema = z.object({
   type: z.literal("file_mtime_changed"),
   path: z.string(),
-  previous_mtime_ms: z.number(),
+  previous_mtime_ms: StrategySafeNonnegativeNumberSchema,
 });
 
 export const ProcessSessionExitedWaitConditionSchema = z.object({
@@ -196,7 +205,7 @@ export const MetricThresholdWaitConditionSchema = z.object({
   type: z.literal("metric_threshold"),
   metric: z.string(),
   operator: z.enum(["lt", "lte", "eq", "gte", "gt"]),
-  value: z.number(),
+  value: StrategyFiniteNumberSchema,
 });
 
 export const WaitConditionSchema = z.discriminatedUnion("type", [
@@ -213,7 +222,7 @@ export const WaitObservationResultSchema = z.object({
   status: z.enum(["pending", "satisfied", "stale", "failed", "expired"]),
   evidence: z.record(z.string(), z.unknown()).default({}),
   next_observe_at: z.string().nullable().default(null),
-  confidence: z.number().min(0).max(1).default(0),
+  confidence: StrategyUnitIntervalSchema.default(0),
   resume_hint: z.string().nullable().default(null),
 });
 export type WaitObservationResult = z.infer<typeof WaitObservationResultSchema>;

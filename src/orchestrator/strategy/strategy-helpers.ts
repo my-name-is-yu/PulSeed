@@ -1,11 +1,16 @@
 import { z } from "zod";
-import { StrategyExplorationMetadataSchema } from "../../base/types/strategy.js";
-import { parseStrategy } from "./types/strategy.js";
 import { KnowledgeGapSignalSchema } from "../../base/types/knowledge.js";
 import type { StrategyState } from "../../base/types/core.js";
-import type { Strategy } from "../../base/types/strategy.js";
 import type { KnowledgeGapSignal } from "../../base/types/knowledge.js";
 import { formatMetricTrendContext, type MetricTrendContext } from "../../platform/drive/metric-history.js";
+import {
+  ExpectedEffectSchema,
+  ResourceEstimateSchema,
+  StrategyExplorationMetadataSchema,
+  StrategyUnitIntervalSchema,
+  parseStrategy,
+} from "./types/strategy.js";
+import type { Strategy } from "./types/strategy.js";
 
 // ─── Valid state transitions ───
 
@@ -24,22 +29,9 @@ export const StrategyArraySchema = z.array(
   z.object({
     id: z.string().optional(),
     hypothesis: z.string(),
-    expected_effect: z.array(
-      z.object({
-        dimension: z.string(),
-        direction: z.enum(["increase", "decrease"]),
-        magnitude: z.enum(["small", "medium", "large"]),
-      })
-    ),
-    resource_estimate: z.object({
-      sessions: z.number(),
-      duration: z.object({
-        value: z.number(),
-        unit: z.enum(["minutes", "hours", "days", "weeks"]),
-      }),
-      llm_calls: z.number().nullable().default(null),
-    }),
-    allocation: z.number().min(0).max(1).default(0),
+    expected_effect: z.array(ExpectedEffectSchema),
+    resource_estimate: ResourceEstimateSchema,
+    allocation: StrategyUnitIntervalSchema.default(0),
     required_tools: z.array(z.string()).default([]),
     exploration: StrategyExplorationMetadataSchema.optional(),
   })
@@ -103,7 +95,7 @@ export function buildGenerationPrompt(
   // Fallback: if fewer than 3 dimension-relevant, pad with other same-goal strategies
   const MIN_RELEVANT = 3;
   const MAX_TOTAL = 10;
-  let selectedRelevant = dimensionRelevant.slice(0, MAX_TOTAL);
+  const selectedRelevant = dimensionRelevant.slice(0, MAX_TOTAL);
   let selectedOther: Strategy[] = [];
   if (selectedRelevant.length < MIN_RELEVANT) {
     const needed = Math.min(MIN_RELEVANT - selectedRelevant.length, otherStrategies.length);

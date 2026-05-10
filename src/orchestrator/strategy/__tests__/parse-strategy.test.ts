@@ -12,6 +12,7 @@ import {
 import { isWaitStrategy } from "../portfolio-allocation.js";
 import { StateManager } from "../../../base/state/state-manager.js";
 import { StrategyManager } from "../strategy-manager.js";
+import { StrategyArraySchema } from "../strategy-helpers.js";
 import { createMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
 import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 
@@ -111,6 +112,76 @@ describe("parseStrategies()", () => {
 
     expect(results).toHaveLength(2);
     expect((results[1] as Record<string, unknown>)["wait_reason"]).toBe("Waiting for external data to stabilize");
+  });
+});
+
+describe("strategy numeric boundaries", () => {
+  it("rejects non-finite and unsafe persisted strategy counters", () => {
+    expect(StrategySchema.safeParse(makeBaseStrategyData({
+      resource_estimate: {
+        sessions: Number.MAX_SAFE_INTEGER + 1,
+        duration: { value: 7, unit: "days" },
+        llm_calls: null,
+      },
+    })).success).toBe(false);
+
+    expect(StrategySchema.safeParse(makeBaseStrategyData({
+      consecutive_stall_count: Number.POSITIVE_INFINITY,
+    })).success).toBe(false);
+
+    expect(StrategySchema.safeParse(makeBaseStrategyData({
+      pivot_count: 1.5,
+    })).success).toBe(false);
+  });
+
+  it("rejects invalid numeric wait metadata boundaries", () => {
+    expect(WaitMetadataSchema.safeParse({
+      schema_version: 1,
+      wait_until: "2026-04-14T00:00:00.000Z",
+      conditions: [{
+        type: "file_mtime_changed",
+        path: "/tmp/output.json",
+        previous_mtime_ms: Number.POSITIVE_INFINITY,
+      }],
+      latest_observation: {
+        status: "pending",
+        confidence: Number.NaN,
+      },
+    }).success).toBe(false);
+
+    expect(WaitMetadataSchema.safeParse({
+      schema_version: 1,
+      wait_until: "2026-04-14T00:00:00.000Z",
+      conditions: [{
+        type: "metric_threshold",
+        metric: "score",
+        operator: "gte",
+        value: Number.NEGATIVE_INFINITY,
+      }],
+    }).success).toBe(false);
+  });
+
+  it("keeps generated strategy candidates aligned with persisted numeric boundaries", () => {
+    const validCandidate = {
+      hypothesis: "Increase output via focused sessions",
+      expected_effect: [{ dimension: "output", direction: "increase", magnitude: "medium" }],
+      resource_estimate: { sessions: 5, duration: { value: 7, unit: "days" }, llm_calls: 2 },
+      allocation: 0.25,
+    };
+
+    expect(StrategyArraySchema.safeParse([validCandidate]).success).toBe(true);
+    expect(StrategyArraySchema.safeParse([{
+      ...validCandidate,
+      resource_estimate: {
+        sessions: Number.MAX_SAFE_INTEGER + 1,
+        duration: { value: 7, unit: "days" },
+        llm_calls: null,
+      },
+    }]).success).toBe(false);
+    expect(StrategyArraySchema.safeParse([{
+      ...validCandidate,
+      allocation: Number.POSITIVE_INFINITY,
+    }]).success).toBe(false);
   });
 });
 
