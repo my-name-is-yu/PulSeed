@@ -1,10 +1,15 @@
-import * as fs from "node:fs";
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import yaml from "js-yaml";
+import {
+  isTextFileSizeLimitError,
+  readTextFileWithinLimit,
+  readTextFileWithinLimitSync,
+} from "../base/utils/json-io.js";
 import { PluginManifestSchema, type PluginManifest } from "./types/plugin.js";
 
 export const PLUGIN_MANIFEST_FILENAMES = ["plugin.yaml", "plugin.json"] as const;
+export const PLUGIN_MANIFEST_MAX_BYTES = 1024 * 1024;
 
 export type RawPluginManifestReadFailure = "missing" | "read" | "parse";
 
@@ -44,9 +49,18 @@ export async function readRawPluginManifest(pluginDir: string): Promise<RawPlugi
     const manifestPath = path.join(pluginDir, filename);
     let content: string;
     try {
-      content = await fsp.readFile(manifestPath, "utf-8");
+      content = await readTextFileWithinLimit(manifestPath, { maxBytes: PLUGIN_MANIFEST_MAX_BYTES });
     } catch (err) {
       if (isNotFoundError(err)) continue;
+      if (isTextFileSizeLimitError(err)) {
+        return {
+          ok: false,
+          failure: "parse",
+          filename,
+          manifestPath,
+          errorMessage: oversizedManifestErrorMessage(filename),
+        };
+      }
       return {
         ok: false,
         failure: "read",
@@ -82,9 +96,18 @@ export function readRawPluginManifestSync(pluginDir: string): RawPluginManifestR
     const manifestPath = path.join(pluginDir, filename);
     let content: string;
     try {
-      content = fs.readFileSync(manifestPath, "utf-8");
+      content = readTextFileWithinLimitSync(manifestPath, { maxBytes: PLUGIN_MANIFEST_MAX_BYTES });
     } catch (err) {
       if (isNotFoundError(err)) continue;
+      if (isTextFileSizeLimitError(err)) {
+        return {
+          ok: false,
+          failure: "parse",
+          filename,
+          manifestPath,
+          errorMessage: oversizedManifestErrorMessage(filename),
+        };
+      }
       return {
         ok: false,
         failure: "read",
@@ -180,4 +203,8 @@ function isNotFoundError(err: unknown): boolean {
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+function oversizedManifestErrorMessage(filename: typeof PLUGIN_MANIFEST_FILENAMES[number]): string {
+  return `${filename} exceeds the manifest parse limit; limit is ${PLUGIN_MANIFEST_MAX_BYTES} bytes`;
 }

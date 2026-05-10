@@ -3,6 +3,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  PLUGIN_MANIFEST_MAX_BYTES,
   readPluginManifest,
   readPluginManifestSync,
   readRawPluginManifest,
@@ -74,5 +75,51 @@ describe("plugin manifest reader", () => {
       failure: "parse",
       filename: "plugin.yaml",
     });
+  });
+
+  it("rejects oversized YAML manifests before parsing without falling through", async () => {
+    const pluginDir = path.join(tmpDir, "oversized-yaml-with-json-fallback");
+    await fs.mkdir(pluginDir, { recursive: true });
+    await fs.writeFile(
+      path.join(pluginDir, "plugin.yaml"),
+      [
+        "name: oversized-yaml",
+        "version: 1.0.0",
+        "type: notifier",
+        "capabilities:",
+        "  - notify",
+        "description: oversized",
+        `padding: ${"x".repeat(PLUGIN_MANIFEST_MAX_BYTES)}`,
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+    await fs.writeFile(
+      path.join(pluginDir, "plugin.json"),
+      JSON.stringify({
+        name: "valid-json",
+        version: "1.0.0",
+        type: "notifier",
+        capabilities: ["notify"],
+        description: "valid fallback",
+      }),
+      "utf-8"
+    );
+
+    const raw = await readRawPluginManifest(pluginDir);
+    expect(raw).toMatchObject({
+      ok: false,
+      failure: "parse",
+      filename: "plugin.yaml",
+    });
+    expect(raw.ok ? undefined : raw.errorMessage).toContain(`limit is ${PLUGIN_MANIFEST_MAX_BYTES} bytes`);
+
+    const sync = readPluginManifestSync(pluginDir);
+    expect(sync).toMatchObject({
+      ok: false,
+      failure: "parse",
+      filename: "plugin.yaml",
+    });
+    expect(sync.ok ? undefined : sync.errorMessage).toContain(`limit is ${PLUGIN_MANIFEST_MAX_BYTES} bytes`);
   });
 });
