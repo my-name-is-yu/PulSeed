@@ -7,7 +7,7 @@ import { getInternalIdentityPrefix } from "../base/config/identity-loader.js";
 import { WeeklyReviewReportSchema } from "./types.js";
 import {
   dispatchReflectionNotification,
-  persistReflectionReport,
+  saveReflectionReport,
 } from "./reflection-utils.js";
 import { buildReflectionRelationshipProfileSurfaceContext } from "./reflection-profile-surface.js";
 
@@ -148,7 +148,7 @@ Respond with JSON matching this schema:
     summary,
   });
 
-  await persistReflectionReport(baseDir, `weekly-${week}.json`, report);
+  await saveReflectionReport(baseDir, "weekly", week, report);
 
   // Notify
   if (notificationDispatcher && goalSummaries.length > 0) {

@@ -61,10 +61,23 @@ describe("database-first legacy store check", () => {
     expect(result.stderr).toContain("[unclassified-direct-runtime-json-state] direct filesystem runtime state must be typed SQLite/Soil or explicitly categorized");
   });
 
-  it("classifies reflection reports as direct typed-store debt", () => {
+  it("fails reflection report JSON owners outside the explicit repair boundary", () => {
     writeFile(tmpDir, "src/reflection/reflection-utils.ts", `
       const reflectionsDir = "reflections";
       export const morning = \`morning-\${date}.json\`;
+    `);
+
+    const result = runCheck(tmpDir);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("src/reflection/reflection-utils.ts");
+    expect(result.stderr).toContain("[reflection-report-json-state] Reflection report typed store or explicit report artifact boundary");
+  });
+
+  it("allows legacy reflection reports only through the explicit repair import boundary", () => {
+    writeFile(tmpDir, "src/reflection/reflection-report-state-migration.ts", `
+      export const LEGACY_REFLECTION_REPORT_DIR = "reflections";
+      export const legacyMorningPath = "reflections/morning-<date>.json";
     `);
 
     const result = runCheck(tmpDir, ["--json"]);
@@ -76,19 +89,14 @@ describe("database-first legacy store check", () => {
     };
     expect(parsed.allowlistReport).toEqual(expect.arrayContaining([
       expect.objectContaining({
-        id: "reflection-report-file-state",
-        category: "typed-store migrate now",
-        nextSlice: 7,
+        id: "reflection-report-legacy-import-input",
+        category: "migration-only input",
+        nextSlice: null,
         matchCount: 2,
       }),
     ]));
-    expect(parsed.debtReport).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        id: "reflection-report-file-state",
-        category: "typed-store migrate now",
-        nextSlice: 7,
-        matchCount: 2,
-      }),
+    expect(parsed.debtReport).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "reflection-report-legacy-import-input" }),
     ]));
   });
 
@@ -379,9 +387,9 @@ describe("database-first legacy store check", () => {
       }),
       expect.objectContaining({
         id: "reflection-reports",
-        category: "typed-store migrate now",
-        nextSlice: 7,
-        debt: true,
+        category: "migration-only input",
+        nextSlice: null,
+        debt: false,
       }),
     ]));
     expect(parsed.directFileDebtReport).not.toEqual(expect.arrayContaining([
@@ -389,6 +397,7 @@ describe("database-first legacy store check", () => {
       expect.objectContaining({ id: "strategy-template-registry" }),
       expect.objectContaining({ id: "vector-index" }),
       expect.objectContaining({ id: "knowledge-graph" }),
+      expect.objectContaining({ id: "reflection-reports" }),
     ]));
     expect(parsed.allowlistReport).toEqual(expect.arrayContaining([
       expect.objectContaining({

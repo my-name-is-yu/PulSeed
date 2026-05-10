@@ -1,23 +1,21 @@
-import * as path from "node:path";
 import type { StateManager } from "../base/state/state-manager.js";
 import type { ILLMClient } from "../base/llm/llm-client.js";
 import type { INotificationDispatcher } from "../runtime/notification-dispatcher.js";
 import { z } from "zod";
 import type { CatchupReport, PlanningReport } from "./types.js";
-import { CatchupReportSchema, PlanningReportSchema } from "./types.js";
+import { CatchupReportSchema } from "./types.js";
 import type { HookManager } from "../runtime/hook-manager.js";
 import { getInternalIdentityPrefix } from "../base/config/identity-loader.js";
 import {
   dispatchReflectionNotification,
   emitReflectionComplete,
+  formatReflectionReportForPrompt,
   loadActiveGoalSummaries,
-  persistReflectionReport,
+  loadReflectionReport,
+  saveReflectionReport,
   todayISO,
 } from "./reflection-utils.js";
 import { buildReflectionRelationshipProfileSurfaceContext } from "./reflection-profile-surface.js";
-import { readTextFileWithinLimit } from "../base/utils/json-io.js";
-
-const MORNING_REPORT_MAX_BYTES = 1024 * 1024;
 
 // ─── LLM response schema ───
 
@@ -49,14 +47,11 @@ export async function runEveningCatchup(deps: {
   let concerns: string[] = [];
 
   if (goalSummaries.length > 0) {
-    // Load morning report if available for comparison
-    const morningPath = path.join(baseDir, "reflections", `morning-${date}.json`);
     let morningData: PlanningReport | null = null;
+    let morningPlanPrompt: string | null = null;
     try {
-      const raw = await readTextFileWithinLimit(morningPath, {
-        maxBytes: MORNING_REPORT_MAX_BYTES,
-      });
-      morningData = PlanningReportSchema.parse(JSON.parse(raw) as unknown);
+      morningData = await loadReflectionReport(baseDir, "morning", date);
+      morningPlanPrompt = morningData ? formatReflectionReportForPrompt(morningData) : null;
     } catch {
       // No morning report available
     }
@@ -78,7 +73,7 @@ export async function runEveningCatchup(deps: {
 Current goal state:
 ${JSON.stringify(goalSummaries, null, 2)}
 
-${morningData ? `Morning plan:\n${JSON.stringify(morningData, null, 2)}\n` : ""}
+${morningPlanPrompt ? `Morning plan:\n${morningPlanPrompt}\n` : ""}
 
 Summarize the day's progress. List any completions, stalls, or concerns.
 
@@ -109,7 +104,7 @@ Respond with JSON:
     concerns,
   });
 
-  await persistReflectionReport(baseDir, `evening-${date}.json`, report);
+  await saveReflectionReport(baseDir, "evening", date, report);
 
   emitReflectionComplete(hookManager, "evening_catchup");
 

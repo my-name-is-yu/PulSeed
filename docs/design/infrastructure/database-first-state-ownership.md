@@ -130,14 +130,14 @@ Current direct filesystem owner inventory:
 | Successful strategy template reuse | `src/orchestrator/strategy/strategy-template-registry.ts`, dream activation/consolidation callers | `strategy_templates` in `state/pulseed-control.sqlite`; legacy `strategy-templates.json` is doctor/repair import input only | typed control DB state | closed in Slice 5 |
 | Runtime semantic vector index | `src/platform/knowledge/vector-index.ts`, `KnowledgeManager` and strategy/learning callers | `vector_index_entries` in `state/pulseed-control.sqlite`; legacy `memory/vector-index.json` is doctor/repair import input only | typed control DB state | closed in Slice 6 |
 | Cross-goal knowledge graph | `src/platform/knowledge/knowledge-graph.ts`, DurableLoop graph traversal caller | `knowledge_graph_nodes` and `knowledge_graph_edges` in `state/pulseed-control.sqlite`; legacy `knowledge/graph.json` is doctor/repair import input only | typed control DB state | closed in Slice 6 |
-| Runtime reports, manifests, postmortems, long-running results | runtime report stores and runtime tools | report/result/manifest files | reproducibility artifact | Slice 7 |
-| Morning/evening/weekly/dream reflection reports | `src/reflection/*` | `reflections/{morning,evening,dream}-<date>.json`, `reflections/weekly-<week>.json` | typed-store migrate now | Slice 7 |
-| Workspace and tool-produced deliverables | filesystem tools, Kaggle tools, workspace prep/edit/write paths, code-search reads | workspace files and external task artifacts | workspace content | Slice 7 |
+| Runtime reports, manifests, postmortems, long-running results | runtime report stores and runtime tools | report/result/manifest files | reproducibility artifact | confirmed in Slice 7 |
+| Morning/evening/weekly/dream reflection reports | `src/reflection/*` | `reflection_reports` in `state/pulseed-control.sqlite`; legacy `reflections/*.json` is doctor/repair import input only | typed control DB state | closed in Slice 7 |
+| Workspace and tool-produced deliverables | filesystem tools, Kaggle tools, workspace prep/edit/write paths, code-search reads | workspace files and external task artifacts | workspace content | confirmed in Slice 7 |
 | Operator configuration and credentials | setup/config/plugin/gateway/channel/hook/global config paths | provider, daemon, notification, datasource, gateway, plugin, MCP config files | config/secret | Slice 8 |
 | User-authored profile and character content | relationship profile and character configuration paths | `relationship-profile.json`, `character-config.json` | user-authored content | Slice 8 |
 | Doctor/repair compatibility inputs | migration helpers, legacy recovery, doctor repair paths | legacy JSON/JSONL/lock files | migration-only input | none |
 | Soil import, compile, projection, and publish artifacts | Soil import/publish/compiler/projection/doctor paths | Soil-owned files and publish state | Soil import/publish artifact | none |
-| Debug logs, process pid, and health diagnostics | logger, TUI debug log, pid manager, daemon health logs | log, pid, and health diagnostic files | debug/export artifact | Slice 7 |
+| Debug logs, process pid, and health diagnostics | logger, TUI debug log, pid manager, daemon health logs | log, pid, and health diagnostic files | debug/export artifact | confirmed in Slice 7 |
 
 ### Bounded Runtime Event Spool
 
@@ -263,11 +263,10 @@ debug/export artifact boundaries:
   `doctor --repair` import inputs only
 - dream filesystem counters in operational reports are diagnostic/export
   metrics over artifacts and legacy fixtures, not authoritative runtime state
-- morning/evening/weekly/dream reflection reports are currently classified as a direct
-  file owner debt item because reflection is part of the typed runtime ownership
-  map and evening catch-up reads morning reports as runtime input; Slice 7 must
-  migrate them to typed ownership or split authoritative state from report
-  artifacts
+- morning/evening/weekly/dream reflection reports use typed control DB state in
+  `reflection_reports`; legacy `reflections/*.json` files are explicit
+  `doctor --repair` import inputs only and are not read by normal runtime
+  callers
 - Soil import overlay queue and publish state, which are import/publish artifact
   surfaces rather than normal runtime owners
 - goal negotiation logs and dependency graph state use the typed control DB

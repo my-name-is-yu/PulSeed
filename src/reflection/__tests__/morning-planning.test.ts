@@ -4,6 +4,7 @@ import * as path from "node:path";
 import { makeTempDir, cleanupTempDir } from "../../../tests/helpers/temp-dir.js";
 import { createMockLLMClient } from "../../../tests/helpers/mock-llm.js";
 import { runMorningPlanning } from "../morning-planning.js";
+import { loadReflectionReport } from "../reflection-utils.js";
 import type { Goal } from "../../base/types/goal.js";
 import { upsertRelationshipProfileItem } from "../../platform/profile/relationship-profile.js";
 
@@ -120,7 +121,7 @@ describe("runMorningPlanning", () => {
     expect(llmClient.callCount).toBe(0); // No LLM call when no goals
   });
 
-  it("persists report to file", async () => {
+  it("persists report to typed store without writing legacy JSON", async () => {
     tmpDir = makeTempDir();
     const goals = [makeGoal("g1")];
     const stateManager = makeStateManager(goals);
@@ -132,10 +133,9 @@ describe("runMorningPlanning", () => {
       baseDir: tmpDir,
     });
 
-    const filePath = path.join(tmpDir, "reflections", `morning-${report.date}.json`);
-    expect(fs.existsSync(filePath)).toBe(true);
-    const content = JSON.parse(fs.readFileSync(filePath, "utf-8"));
-    expect(content.goals_reviewed).toBe(1);
+    const loaded = await loadReflectionReport(tmpDir, "morning", report.date);
+    expect(loaded?.goals_reviewed).toBe(1);
+    expect(fs.existsSync(path.join(tmpDir, "reflections", `morning-${report.date}.json`))).toBe(false);
   });
 
   it("routes local-planning relationship profile items through a planning Surface", async () => {

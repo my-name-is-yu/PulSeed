@@ -7,7 +7,7 @@ export interface ControlDbMigration {
   checksum: string;
 }
 
-export const CONTROL_DB_SCHEMA_VERSION = 26;
+export const CONTROL_DB_SCHEMA_VERSION = 27;
 
 export const CONTROL_DB_INITIAL_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS control_schema_migrations (
@@ -228,6 +228,23 @@ CREATE INDEX IF NOT EXISTS knowledge_graph_edges_to_idx
 
 CREATE INDEX IF NOT EXISTS knowledge_graph_edges_relation_idx
   ON knowledge_graph_edges(relation, created_at, from_id, to_id);
+`.trim();
+
+export const CONTROL_DB_REFLECTION_REPORT_SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS reflection_reports (
+  report_id TEXT PRIMARY KEY,
+  report_type TEXT NOT NULL CHECK (report_type IN ('morning', 'evening', 'weekly', 'dream')),
+  period_key TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  report_json TEXT NOT NULL CHECK (json_valid(report_json)),
+  UNIQUE (report_type, period_key)
+);
+
+CREATE INDEX IF NOT EXISTS reflection_reports_type_period_idx
+  ON reflection_reports(report_type, period_key);
+
+CREATE INDEX IF NOT EXISTS reflection_reports_created_idx
+  ON reflection_reports(created_at, report_id);
 `.trim();
 
 export const CONTROL_DB_RUNTIME_STATE_OWNERSHIP_SCHEMA_SQL = `
@@ -1822,5 +1839,10 @@ export const CONTROL_DB_MIGRATIONS: readonly ControlDbMigration[] = [
     26,
     "knowledge-vector-graph-runtime-state",
     CONTROL_DB_KNOWLEDGE_VECTOR_GRAPH_SCHEMA_SQL
+  ),
+  createControlDbMigration(
+    27,
+    "reflection-report-runtime-state",
+    CONTROL_DB_REFLECTION_REPORT_SCHEMA_SQL
   ),
 ];

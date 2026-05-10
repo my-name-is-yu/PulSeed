@@ -58,6 +58,7 @@ import { importLegacyDriveGoalScheduleState } from "../../../platform/drive/driv
 import { importLegacyKnowledgeGraphState } from "../../../platform/knowledge/knowledge-graph-state-migration.js";
 import { importLegacyVectorIndexState } from "../../../platform/knowledge/vector-index-state-migration.js";
 import { importLegacyStrategyTemplateState } from "../../../orchestrator/strategy/strategy-template-state-migration.js";
+import { importLegacyReflectionReportState } from "../../../reflection/reflection-report-state-migration.js";
 import {
   formatDurationMs,
   formatPercent,
@@ -772,6 +773,7 @@ export async function cmdDoctor(_args: string[]): Promise<number> {
     const strategyTemplateImportReport = await importLegacyStrategyTemplateState(baseDir);
     const vectorIndexImportReport = await importLegacyVectorIndexState(baseDir);
     const knowledgeGraphImportReport = await importLegacyKnowledgeGraphState(baseDir);
+    const reflectionReportImportReport = await importLegacyReflectionReportState(baseDir);
     const goalTaskImportReport = await importLegacyGoalTaskDurableLoopState(baseDir);
     const goalOrchestrationImportReport = await importLegacyGoalOrchestrationState(baseDir);
     const stallStateImportReport = await importLegacyStallState(baseDir);
@@ -833,6 +835,9 @@ export async function cmdDoctor(_args: string[]): Promise<number> {
     );
     console.log(
       `Repair knowledge graph import: files=${knowledgeGraphImportReport.knowledgeGraphFiles}, nodes=${knowledgeGraphImportReport.importedNodes}, edges=${knowledgeGraphImportReport.importedEdges}, skipped already imported=${knowledgeGraphImportReport.skippedAlreadyImported}, retired existing typed state=${knowledgeGraphImportReport.retiredExistingTypedState}, blocked=${knowledgeGraphImportReport.blockedSources.length}`
+    );
+    console.log(
+      `Repair reflection report import: files=${reflectionReportImportReport.reflectionReportFiles}, imported=${reflectionReportImportReport.importedReports}, skipped already imported=${reflectionReportImportReport.skippedAlreadyImported}, retired existing typed state=${reflectionReportImportReport.retiredExistingTypedState}, blocked=${reflectionReportImportReport.blockedSources.length}`
     );
     console.log(
       `Repair goal/task import: goals=${goalTaskImportReport.goals}, legacy WAL files=${goalTaskImportReport.legacyWalFiles}, legacy WAL intents=${goalTaskImportReport.legacyWalIntents}, tasks=${goalTaskImportReport.tasks}, histories=${goalTaskImportReport.taskHistoryRecords}, ledgers=${goalTaskImportReport.taskOutcomeLedgers}, verification=${goalTaskImportReport.verificationResults}, checkpoints=${goalTaskImportReport.checkpoints}, pipelines=${goalTaskImportReport.pipelines}, blocked=${goalTaskImportReport.blockedSources.length}`

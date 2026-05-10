@@ -63,7 +63,7 @@ const ALLOWLIST_RULES_BY_ID = new Map(Object.entries({
   "strategy-template-legacy-import-input": ["strategy-template-json-state"],
   "vector-index-legacy-import-input": ["vector-index-json-state"],
   "knowledge-graph-legacy-import-input": ["knowledge-graph-json-state"],
-  "reflection-report-file-state": ["reflection-report-json-state"],
+  "reflection-report-legacy-import-input": ["reflection-report-json-state"],
 }));
 
 const RULES = [
@@ -250,7 +250,7 @@ const RULES = [
   {
     id: "reflection-report-json-state",
     owner: "Reflection report typed store or explicit report artifact boundary",
-    pattern: /\breflectionsDir\b|path\.join\([^)]*"reflections"[^)]*\)|\bpersistReflectionReport\(baseDir\b|\b(?:morning|evening|dream)-\$\{date\}\.json\b|\bweekly-\$\{week\}\.json\b/,
+    pattern: /\breflectionsDir\b|path\.join\([^)]*"reflections"[^)]*\)|\bpersistReflectionReport\(baseDir\b|\b(?:morning|evening|dream)-\$\{date\}\.json\b|\bweekly-\$\{week\}\.json\b|\breflections\/(?:morning|evening|weekly|dream)-[^`'"]+\.json\b|\bLEGACY_REFLECTION_REPORT_DIR\b/,
   },
 ];
 
@@ -306,17 +306,17 @@ const DIRECT_FILE_OWNER_INVENTORY = [
     category: CATEGORY.REPRODUCIBILITY_ARTIFACT,
     owner: "runtime reports, manifests, postmortems, and long-running result artifacts",
     boundary: "report/result/manifest artifact files",
-    nextSlice: 7,
-    reason: "file-backed artifacts are allowed only as output boundaries, not authoritative runtime state",
+    nextSlice: null,
+    reason: "file-backed artifacts are confirmed output boundaries, not authoritative runtime state",
   }),
   inventory({
     id: "reflection-reports",
     surface: "src/reflection/*",
-    category: CATEGORY.TYPED_STORE_MIGRATE_NOW,
+    category: CATEGORY.MIGRATION_ONLY_INPUT,
     owner: "morning/evening/weekly/dream reflection reports",
-    boundary: "reflections/{morning,evening,dream}-<date>.json and reflections/weekly-<week>.json",
-    nextSlice: 7,
-    reason: "reflection reports are read back as runtime input and the ownership map lists reflection as typed runtime state",
+    boundary: "reflection_reports control DB table; legacy reflections/*.json is doctor/repair import input only",
+    nextSlice: null,
+    reason: "normal reflection report state moved to typed control DB state; legacy JSON files are not read by runtime callers",
   }),
   inventory({
     id: "tool-workspace-artifacts",
@@ -324,8 +324,8 @@ const DIRECT_FILE_OWNER_INVENTORY = [
     category: CATEGORY.WORKSPACE_CONTENT,
     owner: "user workspace and tool-produced deliverables",
     boundary: "workspace files and external task artifacts",
-    nextSlice: 7,
-    reason: "workspace content is intentionally file-backed and user-visible",
+    nextSlice: null,
+    reason: "workspace content is intentionally file-backed and user-visible, not internal runtime state",
   }),
   inventory({
     id: "config-setup-plugin-gateway-channel-files",
@@ -369,8 +369,8 @@ const DIRECT_FILE_OWNER_INVENTORY = [
     category: CATEGORY.DEBUG_EXPORT_ARTIFACT,
     owner: "debug logs, rotated logs, process pid/health files",
     boundary: "log, pid, and health diagnostic files",
-    nextSlice: 7,
-    reason: "diagnostic outputs may remain file-backed when not used as hidden durable runtime state",
+    nextSlice: null,
+    reason: "diagnostic outputs remain file-backed as debug/export artifacts, not hidden durable runtime state",
   }),
 ];
 
@@ -656,13 +656,11 @@ const PATH_ALLOWLIST = [
     owner: "Knowledge graph typed store legacy import boundary",
   }),
   allow({
-    id: "reflection-report-file-state",
-    pattern: /(^|\/)src\/reflection\/(?:reflection-utils|morning-planning|evening-catchup|weekly-review|dream-consolidation)\.ts$/,
-    category: CATEGORY.TYPED_STORE_MIGRATE_NOW,
-    reason: "reflection reports are normal runtime inputs pending Slice 7 typed-store migration or explicit artifact split",
-    owner: "Reflection report typed store or explicit report artifact boundary",
-    nextSlice: 7,
-    debtRank: 60,
+    id: "reflection-report-legacy-import-input",
+    pattern: /(^|\/)src\/reflection\/reflection-report-state-migration\.ts$/,
+    category: CATEGORY.MIGRATION_ONLY_INPUT,
+    reason: "doctor/repair imports legacy reflections/*.json into the typed reflection_reports control DB table",
+    owner: "Reflection report typed store legacy import boundary",
   }),
 ];
 

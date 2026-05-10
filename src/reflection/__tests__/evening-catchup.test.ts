@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { makeTempDir, cleanupTempDir } from "../../../tests/helpers/temp-dir.js";
 import { createMockLLMClient } from "../../../tests/helpers/mock-llm.js";
 import { runEveningCatchup } from "../evening-catchup.js";
-import { todayISO } from "../reflection-utils.js";
+import { loadReflectionReport, saveReflectionReport, todayISO } from "../reflection-utils.js";
 import type { Goal } from "../../base/types/goal.js";
 import { upsertRelationshipProfileItem } from "../../platform/profile/relationship-profile.js";
 
@@ -120,7 +120,7 @@ describe("runEveningCatchup", () => {
     expect(llmClient.callCount).toBe(0);
   });
 
-  it("persists report to file", async () => {
+  it("persists report to typed store without writing legacy JSON", async () => {
     tmpDir = makeTempDir();
     const goals = [makeGoal("g1")];
     const stateManager = makeStateManager(goals);
@@ -132,10 +132,71 @@ describe("runEveningCatchup", () => {
       baseDir: tmpDir,
     });
 
-    const filePath = path.join(tmpDir, "reflections", `evening-${report.date}.json`);
-    expect(fs.existsSync(filePath)).toBe(true);
-    const content = JSON.parse(fs.readFileSync(filePath, "utf-8"));
-    expect(content.goals_reviewed).toBe(1);
+    const loaded = await loadReflectionReport(tmpDir, "evening", report.date);
+    expect(loaded?.goals_reviewed).toBe(1);
+    expect(fs.existsSync(path.join(tmpDir, "reflections", `evening-${report.date}.json`))).toBe(false);
+  });
+
+  it("loads typed morning report before prompting", async () => {
+    tmpDir = makeTempDir();
+    await saveReflectionReport(tmpDir, "morning", todayISO(), {
+      date: todayISO(),
+      created_at: new Date().toISOString(),
+      goals_reviewed: 1,
+      priorities: [],
+      suggestions: ["typed morning plan should appear"],
+      concerns: [],
+    });
+    const goals = [makeGoal("g1")];
+    const stateManager = makeStateManager(goals);
+    const sendMessage = vi.fn().mockResolvedValue({ content: VALID_LLM_RESPONSE });
+    const llmClient = {
+      sendMessage,
+      parseJSON: vi.fn().mockImplementation((content: string, schema: { parse(value: unknown): unknown }) =>
+        schema.parse(JSON.parse(content))
+      ),
+    };
+
+    await runEveningCatchup({
+      stateManager: stateManager as never,
+      llmClient: llmClient as never,
+      baseDir: tmpDir,
+    });
+
+    const prompt = sendMessage.mock.calls[0]?.[0]?.[0]?.content ?? "";
+    expect(prompt).toContain("Morning plan:");
+    expect(prompt).toContain("typed morning plan should appear");
+  });
+
+  it("omits oversized typed morning reports before prompting", async () => {
+    tmpDir = makeTempDir();
+    await saveReflectionReport(tmpDir, "morning", todayISO(), {
+      date: todayISO(),
+      created_at: new Date().toISOString(),
+      goals_reviewed: 1,
+      priorities: [],
+      suggestions: ["oversized typed morning plan should not appear", "x".repeat(1024 * 1024)],
+      concerns: [],
+    });
+    const goals = [makeGoal("g1")];
+    const stateManager = makeStateManager(goals);
+    const sendMessage = vi.fn().mockResolvedValue({ content: VALID_LLM_RESPONSE });
+    const llmClient = {
+      sendMessage,
+      parseJSON: vi.fn().mockImplementation((content: string, schema: { parse(value: unknown): unknown }) =>
+        schema.parse(JSON.parse(content))
+      ),
+    };
+
+    await runEveningCatchup({
+      stateManager: stateManager as never,
+      llmClient: llmClient as never,
+      baseDir: tmpDir,
+    });
+
+    const prompt = sendMessage.mock.calls[0]?.[0]?.[0]?.content ?? "";
+    expect(prompt).not.toContain("Morning plan:");
+    expect(prompt).not.toContain("oversized typed morning plan should not appear");
   });
 
   it("routes local-planning relationship profile items through an evening Surface", async () => {

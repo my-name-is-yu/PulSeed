@@ -9,6 +9,7 @@ import { DaemonStateStore } from "../../src/runtime/store/daemon-state-store.js"
 import { StrategyDreamStateStore } from "../../src/runtime/store/strategy-dream-state-store.js";
 import { SqliteSoilRepository } from "../../src/platform/soil/sqlite-repository.js";
 import { KnowledgeMemoryStateStore } from "../../src/platform/knowledge/knowledge-memory-state-store.js";
+import { loadReflectionReport } from "../../src/reflection/reflection-utils.js";
 import { cleanupTempDir, makeTempDir } from "../helpers/temp-dir.js";
 
 interface ResidentDreamInvoker {
@@ -159,7 +160,8 @@ describe("Dream Soil sync E2E", () => {
 
     expect(result.status).toBe("ok");
     expect(result.output_summary).toContain("Dream consolidation completed");
-    expect(fs.existsSync(path.join(tempDir, "reflections"))).toBe(true);
+    const dreamReport = await loadReflectionReport(tempDir, "dream", new Date().toISOString().slice(0, 10));
+    expect(dreamReport?.goals_consolidated).toBe(1);
     expect(fs.existsSync(path.join(tempDir, "dream", "reports"))).toBe(true);
 
     await expectDreamSoilRecords(tempDir);
@@ -189,7 +191,8 @@ describe("Dream Soil sync E2E", () => {
       kind: "dream",
       summary: expect.stringContaining("Resident dream deep analysis ran"),
     }));
-    expect(fs.existsSync(path.join(tempDir, "reflections"))).toBe(true);
+    const dreamReport = await loadReflectionReport(tempDir, "dream", new Date().toISOString().slice(0, 10));
+    expect(dreamReport?.goals_consolidated).toBe(1);
     expect(fs.existsSync(path.join(tempDir, "dream", "reports"))).toBe(true);
 
     await expectDreamSoilRecords(tempDir);

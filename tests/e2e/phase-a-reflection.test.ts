@@ -22,6 +22,7 @@ import { runMorningPlanning } from "../../src/reflection/morning-planning.js";
 import { runEveningCatchup } from "../../src/reflection/evening-catchup.js";
 import { runDreamConsolidation } from "../../src/reflection/dream-consolidation.js";
 import { runWeeklyReview } from "../../src/reflection/weekly-review.js";
+import { loadReflectionReport } from "../../src/reflection/reflection-utils.js";
 import type { Goal } from "../../src/base/types/goal.js";
 import { makeTempDir, cleanupTempDir } from "../helpers/temp-dir.js";
 import { createMockLLMClient } from "../helpers/mock-llm.js";
@@ -190,9 +191,8 @@ describe("Morning planning with real StateManager", () => {
       baseDir: tmpDir,
     });
 
-    // Verify the morning report file was written to the reflections directory
-    const morningFilePath = path.join(tmpDir, "reflections", `morning-${morningReport.date}.json`);
-    expect(fs.existsSync(morningFilePath)).toBe(true);
+    const storedMorningReport = await loadReflectionReport(tmpDir, "morning", morningReport.date);
+    expect(storedMorningReport?.goals_reviewed).toBe(1);
 
     // The evening catchup reads the morning report — verify it doesn't crash and
     // produces a coherent report incorporating both morning data and current state
@@ -351,7 +351,7 @@ describe("Dream consolidation with real StateManager", () => {
     expect(knowledgeManager.generateRevalidationTasks).toHaveBeenCalledWith(staleEntries);
   });
 
-  it("persists consolidation report to disk with correct date", async () => {
+  it("persists consolidation report to typed store with correct date", async () => {
     const stateManager = new StateManager(tmpDir);
     await stateManager.saveGoal(makeActiveGoal("persist-goal"));
 
@@ -360,12 +360,9 @@ describe("Dream consolidation with real StateManager", () => {
       baseDir: tmpDir,
     });
 
-    const filePath = path.join(tmpDir, "reflections", `dream-${report.date}.json`);
-    expect(fs.existsSync(filePath)).toBe(true);
-
-    const saved = JSON.parse(fs.readFileSync(filePath, "utf-8"));
-    expect(saved.goals_consolidated).toBe(1);
-    expect(saved.date).toBe(report.date);
+    const saved = await loadReflectionReport(tmpDir, "dream", report.date);
+    expect(saved?.goals_consolidated).toBe(1);
+    expect(saved?.date).toBe(report.date);
   });
 });
 
@@ -560,17 +557,9 @@ describe("Full reflection cycle: morning → evening → dream", () => {
     expect(dreamReport.goals_consolidated).toBe(2);
     expect(dreamReport.entries_compressed).toBe(20); // 2 goals * 5 data types * 2 entries each
 
-    // Verify all three report files exist on disk
-    const reflectionsDir = path.join(tmpDir, "reflections");
-    const files = fs.readdirSync(reflectionsDir);
-
-    const morningFile = files.find((f) => f.startsWith("morning-"));
-    const eveningFile = files.find((f) => f.startsWith("evening-"));
-    const dreamFile = files.find((f) => f.startsWith("dream-"));
-
-    expect(morningFile).toBeDefined();
-    expect(eveningFile).toBeDefined();
-    expect(dreamFile).toBeDefined();
+    expect(await loadReflectionReport(tmpDir, "morning", morningReport.date)).not.toBeNull();
+    expect(await loadReflectionReport(tmpDir, "evening", eveningReport.date)).not.toBeNull();
+    expect(await loadReflectionReport(tmpDir, "dream", dreamReport.date)).not.toBeNull();
   });
 
   it("morning priorities influence subsequent goal ordering in the evening report", async () => {
@@ -724,9 +713,8 @@ describe("State persistence across reflection phases", () => {
     expect(report.stale_entries_found).toBe(0);
     expect(report.revalidation_tasks_created).toBe(0);
 
-    // File still written even with zero goals
-    const filePath = path.join(tmpDir, "reflections", `dream-${report.date}.json`);
-    expect(fs.existsSync(filePath)).toBe(true);
+    const stored = await loadReflectionReport(tmpDir, "dream", report.date);
+    expect(stored?.goals_consolidated).toBe(0);
   });
 
   it("weekly review respects goals added after morning planning", async () => {
