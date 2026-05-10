@@ -9,6 +9,7 @@ import type { PulSeedEvent, GoalSchedule } from "../types/drive.js";
 import { importLegacyDriveGoalScheduleState } from "../drive-schedule-state-migration.js";
 import { openControlDatabase } from "../../../runtime/store/control-db/index.js";
 import { collectGoalCycleScheduleSnapshot } from "../../../runtime/daemon/maintenance.js";
+import { EVENT_SPOOL_MAX_FILE_BYTES } from "../../../base/utils/event-spool.js";
 import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 import { makeGoal } from "../../../../tests/helpers/fixtures.js";
 import { randomUUID } from "node:crypto";
@@ -281,6 +282,17 @@ describe("DriveSystem", () => {
       expect(result).toHaveLength(1);
     });
 
+    it("skips oversized event files without loading them as activation state", async () => {
+      const eventsDir = path.join(tmpDir, "events");
+      fs.writeFileSync(path.join(eventsDir, "oversized.json"), "x".repeat(EVENT_SPOOL_MAX_FILE_BYTES + 1), "utf-8");
+      writeEventFile(eventsDir, "valid.json", makeEvent({ source: "valid" }));
+
+      const result = await driveSystem.readEventQueue();
+
+      expect(result).toHaveLength(1);
+      expect(result[0]?.source).toBe("valid");
+    });
+
     it("ignores archive subdirectory", async () => {
       const eventsDir = path.join(tmpDir, "events");
       const archiveDir = path.join(eventsDir, "archive");
@@ -340,6 +352,10 @@ describe("DriveSystem", () => {
       expect(fs.existsSync(archiveDir)).toBe(true);
       expect(fs.existsSync(path.join(archiveDir, "evt.json"))).toBe(true);
     });
+
+    it("rejects unsafe archive filenames at the spool boundary", async () => {
+      await expect(driveSystem.archiveEvent("../evt.json")).rejects.toThrow("Unsafe event spool filename");
+    });
   });
 
   // ─── processEvents ───
@@ -378,6 +394,19 @@ describe("DriveSystem", () => {
       const result = await driveSystem.processEvents();
       expect(result).toHaveLength(1);
       expect(result[0]?.source).toBe("valid");
+    });
+
+    it("does not overwrite archived event files with matching names", async () => {
+      const eventsDir = path.join(tmpDir, "events");
+      const archiveDir = path.join(eventsDir, "archive");
+      fs.writeFileSync(path.join(archiveDir, "evt.json"), JSON.stringify(makeEvent({ source: "old" })), "utf-8");
+      writeEventFile(eventsDir, "evt.json", makeEvent({ source: "new" }));
+
+      const result = await driveSystem.processEvents();
+
+      expect(result).toHaveLength(1);
+      expect(fs.readFileSync(path.join(archiveDir, "evt.json"), "utf-8")).toContain("old");
+      expect(fs.readdirSync(archiveDir).filter((fileName) => fileName.endsWith(".json"))).toHaveLength(2);
     });
   });
 

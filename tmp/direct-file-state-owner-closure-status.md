@@ -16,7 +16,8 @@ Base: origin/main @ 7d87d012 Prefer live daemon status in runtime evidence answe
 | --- | --- | --- | --- | --- | --- |
 | 1 | Direct File Owner Inventory And Guard Expansion | codex/direct-file-state-slice-1-inventory-guard-20260510213328 | /Users/yuyoshimuta/Documents/dev/PulSeed-worktrees/direct-file-state-slice-1-inventory-guard-20260510213328 | https://github.com/my-name-is-yu/PulSeed/pull/1837 | merged |
 | 2 | RunSpec Store | codex/direct-file-state-slice-2-run-spec-store-20260510220128 | /Users/yuyoshimuta/Documents/dev/PulSeed-worktrees/direct-file-state-slice-2-run-spec-store-20260510220128 | https://github.com/my-name-is-yu/PulSeed/pull/1843 | merged |
-| 3 | DriveSystem Schedule State | codex/direct-file-state-slice-3-drive-schedule-20260510225201 | /Users/yuyoshimuta/Documents/dev/PulSeed-worktrees/direct-file-state-slice-3-drive-schedule-20260510225201 | pending | in progress |
+| 3 | DriveSystem Schedule State | codex/direct-file-state-slice-3-drive-schedule-20260510225201 | /Users/yuyoshimuta/Documents/dev/PulSeed-worktrees/direct-file-state-slice-3-drive-schedule-20260510225201 | https://github.com/my-name-is-yu/PulSeed/pull/1853 | merged |
+| 4 | DriveSystem Event Queue / Runtime Event Spool | codex/direct-file-state-slice-4-event-spool-20260510232220 | /Users/yuyoshimuta/Documents/dev/PulSeed-worktrees/direct-file-state-slice-4-event-spool-20260510232220 | https://github.com/my-name-is-yu/PulSeed/pull/1858 | PR open |
 
 ## Slice 1 Direct File Owner Inventory
 
@@ -96,6 +97,59 @@ Base: origin/main @ 7d87d012 Prefer live daemon status in runtime evidence answe
 - Fallback review found that `src/platform/drive/drive-system.ts` was still allowlisted for legacy schedule JSON matches as migration-only input.
 - Fixed by removing the normal runtime `DriveSystem` schedule allowlist while keeping `src/platform/drive/drive-schedule-state-migration.ts` as the only explicit repair import boundary.
 - Added guard regression coverage that fails if `DriveSystem` reintroduces `schedule/*.json` ownership.
+
+## Slice 3 Merge Record
+
+- PR: https://github.com/my-name-is-yu/PulSeed/pull/1853
+- Branch: `codex/direct-file-state-slice-3-drive-schedule-20260510225201`
+- Head commit: `c971308afa0350faf00baa80f49ab44fae367ed6`
+- Merge commit: `28f8455663b8086e692e38637d6ace4299567b38`
+- CI: `unit (22)` success, `integration (24)` success
+- GitHub Codex review: `@codex review` needed; no usable current-head review after retry
+- Fallback sub-agent review: used after GitHub Codex review did not produce a current-head result; first review found the guard allowlist blocker above, second review reported no material blockers
+- Worktree cleanup: removed after merge
+- Remote branch cleanup: deleted after merge
+- Merged by this session: yes
+
+## Slice 4 Direct File Owner Plan
+
+| Owner | Current boundary | Classification | Planned guard state |
+| --- | --- | --- | --- |
+| DriveSystem runtime event ingestion spool | `events/*.json`, `events/{archive,processed,failed}/*.json` | bounded IPC/spool | close Slice 4 by enforcing shared filename, size, pending-count, atomic-write, move, and retention semantics; leave no Slice 4 debt |
+
+## Slice 4 Direct File Owner Update
+
+| Owner | Previous boundary | Current boundary | Classification | Guard state |
+| --- | --- | --- | --- | --- |
+| DriveSystem runtime event ingestion spool | `events/*.json`, `events/archive/*.json` pending Slice 4 classification | `events/*.json`, `events/{archive,processed,failed}/*.json` with shared filename validation, 1 MiB payload reads, pending-file limits, atomic writes, non-overwriting moves, and retained-directory pruning | bounded IPC/spool | event spool remains allowlisted only for DriveSystem/event-server/MCP/daemon boundary files; `drive-system-event-spool` is `nextSlice: null`, `debt: false` |
+
+## Slice 4 Validation
+
+- `npm ci`: passed after creating the fresh worktree.
+- `npx vitest run --config vitest.unit.config.ts src/base/utils/__tests__/event-spool.test.ts src/platform/drive/__tests__/drive-system.test.ts src/interface/cli/__tests__/database-first-legacy-store-check.test.ts --reporter dot`: passed, 85 tests.
+- `npx vitest run --config vitest.integration.config.ts src/runtime/__tests__/event-file-watcher.test.ts src/runtime/__tests__/trigger-api.test.ts src/runtime/__tests__/event-server.test.ts --reporter dot`: passed, 92 tests.
+- `node scripts/check-database-first-legacy-stores.mjs --json`: ok=true, findings=0; `drive-system-event-spool` is `nextSlice: null`, `debt: false`; remaining `directFileDebtReport` entries are Slice 5/6/7 owners.
+- `npm run typecheck`: passed.
+- `npm run lint:boundaries`: passed with existing warnings, 0 errors.
+- `git diff --check`: passed.
+- CI follow-up: PR #1858 `unit (22)` initially failed because `pulseed_trigger` preserves a contract that `event_id` maps to `events/<event_id>.json`; fixed by adding explicit filename support to the shared spool writer and using it in MCP trigger writes.
+- Post-fix `npx vitest run --config vitest.unit.config.ts src/base/utils/__tests__/event-spool.test.ts src/interface/mcp-server/__tests__/mcp-server.test.ts src/interface/cli/__tests__/database-first-legacy-store-check.test.ts --reporter dot`: passed, 28 tests.
+- Post-fix `npx vitest run --config vitest.unit.config.ts src/base/utils/__tests__/event-spool.test.ts src/platform/drive/__tests__/drive-system.test.ts src/interface/cli/__tests__/database-first-legacy-store-check.test.ts src/interface/mcp-server/__tests__/mcp-server.test.ts --reporter dot`: passed, 93 tests.
+- Post-fix `npx vitest run --config vitest.integration.config.ts src/runtime/__tests__/event-file-watcher.test.ts src/runtime/__tests__/trigger-api.test.ts src/runtime/__tests__/event-server.test.ts --reporter dot`: passed, 92 tests.
+- Post-fix `node scripts/check-database-first-legacy-stores.mjs --json`: ok=true, findings=0; event spool remains `nextSlice: null`, `debt: false`.
+- Post-fix `npm run typecheck`: passed.
+- Post-fix `npm run lint:boundaries`: passed with existing warnings, 0 errors.
+- Post-fix `git diff --check`: passed.
+
+## Slice 4 PR Record
+
+- PR: https://github.com/my-name-is-yu/PulSeed/pull/1858
+- Branch: `codex/direct-file-state-slice-4-event-spool-20260510232220`
+- Head commit at PR creation: `5c3f0ea4`
+- CI: `unit (22)` failed on first head because MCP trigger explicit filename compatibility was broken; fixed and rerun pending
+- GitHub Codex review: pending
+- `@codex review`: not yet needed
+- Fallback sub-agent review: not used
 
 ## Merge Policy
 
