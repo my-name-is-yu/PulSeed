@@ -204,6 +204,32 @@ describe("non-TUI display projector", () => {
     ]);
   });
 
+  it("distinguishes buffered assistant text from delivered output on send-once channels", async () => {
+    const transport = createTransport();
+    const projector = new NonTuiDisplayProjector({
+      display: {
+        capabilities: {
+          ...LIMITED_GATEWAY_DISPLAY_CAPABILITIES,
+          maxMessageLength: 4_096,
+        },
+        policy: createGatewayDisplayPolicy({
+          ...LIMITED_GATEWAY_DISPLAY_CAPABILITIES,
+          maxMessageLength: 4_096,
+        }),
+      },
+      transport,
+    });
+
+    await projector.handle({ ...base, type: "assistant_delta", delta: "Hel", text: "Hel" });
+
+    expect(projector.renderedAssistantOutput).toBe(true);
+    expect(projector.deliveredAssistantOutput).toBe(false);
+
+    await projector.handle({ ...base, type: "assistant_final", text: "Hello", persisted: true });
+
+    expect(projector.deliveredAssistantOutput).toBe(true);
+  });
+
   it("does not render debug-only timeline items", async () => {
     const transport = createTransport();
     const projector = new NonTuiDisplayProjector({

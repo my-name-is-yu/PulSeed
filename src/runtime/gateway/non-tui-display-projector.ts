@@ -144,6 +144,14 @@ export class NonTuiDisplayProjector {
     return this.sawFinalSignal || this.finalRef !== null || this.finalText.trim().length > 0;
   }
 
+  get deliveredAssistantOutput(): boolean {
+    return this.finalRef !== null;
+  }
+
+  get deliveredProgressOutput(): boolean {
+    return this.progressRef !== null;
+  }
+
   private async upsertProgress(id: string, text: string, options: ProgressOptions = {}): Promise<void> {
     if (this.policy.progressSurface === "off") return;
     const normalized = text.trim();
