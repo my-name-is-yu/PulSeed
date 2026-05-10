@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { TaskUpdateTool } from "../TaskUpdateTool.js";
+import { TaskUpdateInputSchema, TaskUpdateTool } from "../TaskUpdateTool.js";
+import { toToolDefinition } from "../../../tool-definition-adapter.js";
 import type { ToolCallContext } from "../../../types.js";
 import type { StateManager } from "../../../../base/state/state-manager.js";
 
@@ -240,5 +241,35 @@ describe("TaskUpdateTool", () => {
     const result = await tool.call({ goalId: "goal-1", taskId: "missing", status: "running" }, makeContext());
     expect(result.success).toBe(false);
     expect(result.error).toContain("missing");
+  });
+
+  it("exports and enforces safe integer bounds for consecutive failure updates", () => {
+    expect(TaskUpdateInputSchema.safeParse({
+      goalId: "goal-1",
+      taskId: "task-1",
+      consecutive_failure_count: Number.MAX_SAFE_INTEGER,
+    }).success).toBe(true);
+
+    for (const consecutive_failure_count of [
+      -1,
+      1.5,
+      Number.POSITIVE_INFINITY,
+      Number.MAX_SAFE_INTEGER + 1,
+    ]) {
+      expect(TaskUpdateInputSchema.safeParse({
+        goalId: "goal-1",
+        taskId: "task-1",
+        consecutive_failure_count,
+      }).success).toBe(false);
+    }
+
+    const parameters = toToolDefinition(tool).function.parameters as {
+      properties?: Record<string, Record<string, unknown>>;
+    };
+    expect(parameters.properties?.consecutive_failure_count).toMatchObject({
+      type: "integer",
+      minimum: 0,
+      maximum: Number.MAX_SAFE_INTEGER,
+    });
   });
 });

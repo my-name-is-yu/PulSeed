@@ -34,7 +34,7 @@ export const TaskUpdateInputSchema = z.object({
   completed_at: z.string().nullable().optional(),
   timeout_at: z.string().nullable().optional(),
   heartbeat_at: z.string().nullable().optional(),
-  consecutive_failure_count: z.number().int().min(0).optional(),
+  consecutive_failure_count: z.number().finite().int().safe().min(0).optional(),
   reversibility: ReversibilityEnum.optional(),
   intended_direction: z.enum(["increase", "decrease", "neutral"]).optional(),
   verification_verdict: VerdictEnum.optional(),
