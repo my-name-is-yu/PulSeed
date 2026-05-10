@@ -11,6 +11,8 @@ import {
   type PermissionRiskClass,
 } from "./permission-dialogue.js";
 
+const MAX_VALID_DATE_MS = 8_640_000_000_000_000;
+
 export interface ApprovalTaskRequest {
   id: string;
   description: string;
@@ -495,7 +497,7 @@ function renderConversationalApprovalPrompt(record: ApprovalRecord): string {
     );
     if (permission.target.tool_id) lines.push(`Tool: ${permission.target.tool_id}`);
     if (permission.target.tool_call_id) lines.push(`Tool call: ${permission.target.tool_call_id}`);
-    if (permission.expires_at !== undefined) lines.push(`Expires: ${new Date(permission.expires_at).toISOString()}`);
+    if (permission.expires_at !== undefined) lines.push(`Expires: ${formatEpochMs(permission.expires_at)}`);
   }
   const grantProposal = getPendingPermissionGrantProposal(record);
   if (grantProposal) {
@@ -507,6 +509,13 @@ function renderConversationalApprovalPrompt(record: ApprovalRecord): string {
   }
   lines.push("Reply in this conversation to approve, reject, or ask for clarification.");
   return lines.join("\n");
+}
+
+function formatEpochMs(value: number): string {
+  if (!Number.isFinite(value) || Math.abs(value) > MAX_VALID_DATE_MS) {
+    return "unavailable";
+  }
+  return new Date(value).toISOString();
 }
 
 function approvalTaskFromRecord(record: ApprovalRecord, fallback: ApprovalTaskRequest): ApprovalTaskRequest {
