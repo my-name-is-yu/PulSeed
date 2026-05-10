@@ -75,6 +75,29 @@ describe("foreign plugin compatibility", () => {
     expect(report.manifest?.entry_point).toBe("dist/index.js");
   });
 
+  it("parses YAML manifests with date-like descriptions as JSON-compatible strings", async () => {
+    const pluginDir = path.join(tmpDir, "yaml-date-like-description");
+    await fs.mkdir(pluginDir, { recursive: true });
+    await fs.writeFile(
+      path.join(pluginDir, "plugin.yaml"),
+      [
+        "name: yaml-date-like-description",
+        "version: 1.0.0",
+        "type: notifier",
+        "capabilities:",
+        "  - notify",
+        "description: 2026-05-10",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    const report = analyzeForeignPluginDirectory("hermes", pluginDir);
+
+    expect(report.status).toBe("convertible");
+    expect(report.manifest?.description).toBe("2026-05-10");
+  });
+
   it("classifies a manifest with elevated permissions as quarantined", () => {
     const report = analyzeForeignPluginManifest("hermes", {
       name: "riskier",

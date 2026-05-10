@@ -1,9 +1,8 @@
-import * as fs from "node:fs";
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { createHash } from "node:crypto";
-import yaml from "js-yaml";
 import { PluginChannelRuntimeStateStore } from "../store/plugin-channel-runtime-state-store.js";
+import { readRawPluginManifestSync } from "../plugin-manifest-reader.js";
 import type {
   CompatibilityReviewRecord,
   ForeignPluginAdapterRequirement,
@@ -20,7 +19,6 @@ import {
   ForeignPluginCompatibilityReportSchema,
 } from "./types.js";
 
-const MANIFEST_FILENAMES = ["plugin.yaml", "plugin.json"] as const;
 export const FOREIGN_PLUGIN_COMPATIBILITY_REPORT_FILENAME = "pulseed-foreign-plugin-compatibility.json";
 export const FOREIGN_PLUGIN_REVIEW_RECORD_FILENAME = "pulseed-foreign-plugin-review.json";
 const NAME_PATTERN = /^[a-z0-9-]+$/;
@@ -43,36 +41,6 @@ function stringArray(value: unknown): string[] | undefined {
     result.push(item.trim());
   }
   return result.length > 0 ? result : undefined;
-}
-
-type ManifestReadResult =
-  | { ok: true; value: unknown }
-  | { ok: false; failure: "read" | "parse" };
-
-function readManifest(filePath: string): ManifestReadResult {
-  let raw: string;
-  try {
-    raw = fs.readFileSync(filePath, "utf-8");
-  } catch {
-    return { ok: false, failure: "read" };
-  }
-
-  try {
-    if (filePath.endsWith(".yaml")) {
-      return { ok: true, value: yaml.load(raw) as unknown };
-    }
-    return { ok: true, value: JSON.parse(raw) as unknown };
-  } catch {
-    return { ok: false, failure: "parse" };
-  }
-}
-
-function findManifestPath(pluginDir: string): string | undefined {
-  for (const filename of MANIFEST_FILENAMES) {
-    const candidate = path.join(pluginDir, filename);
-    if (fs.existsSync(candidate)) return candidate;
-  }
-  return undefined;
 }
 
 function defaultPermissions(): ForeignPluginPermissions {
@@ -302,8 +270,8 @@ export function analyzeForeignPluginDirectory(
   source: ForeignPluginSource,
   pluginDir: string
 ): ForeignPluginCompatibilityReport {
-  const manifestPath = findManifestPath(pluginDir);
-  if (!manifestPath) {
+  const manifest = readRawPluginManifestSync(pluginDir);
+  if (!manifest.ok && manifest.failure === "missing") {
     return {
       ...compatibilityReport(
         source,
@@ -315,23 +283,31 @@ export function analyzeForeignPluginDirectory(
     };
   }
 
-  const manifest = readManifest(manifestPath);
   if (!manifest.ok) {
     return {
       ...compatibilityReport(
         source,
         "incompatible",
-        [`failed to ${manifest.failure} manifest: ${path.basename(manifestPath)}`],
+        [`failed to ${manifest.failure} manifest: ${manifest.filename ?? "unknown"}`],
         defaultPermissions(),
-        { manifestPath, sourceProvenance: { source_path: pluginDir, manifest_path: manifestPath } }
+        {
+          manifestPath: manifest.manifestPath,
+          sourceProvenance: {
+            source_path: pluginDir,
+            ...(manifest.manifestPath ? { manifest_path: manifest.manifestPath } : {}),
+          },
+        }
       ),
     };
   }
 
-  const report = analyzeForeignPluginManifest(source, manifest.value, { pluginDir, manifestPath });
+  const report = analyzeForeignPluginManifest(source, manifest.value, {
+    pluginDir,
+    manifestPath: manifest.manifestPath,
+  });
   return withForeignPluginProvenance(report, {
     source_path: pluginDir,
-    manifest_path: manifestPath,
+    manifest_path: manifest.manifestPath,
   });
 }
 

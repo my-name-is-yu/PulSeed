@@ -199,6 +199,30 @@ describe("cmdPluginInstall", () => {
     expect(fs.existsSync(path.join(pluginsDir, "my-plugin"))).toBe(true);
   });
 
+  it("installs YAML manifests with date-like descriptions as strings", async () => {
+    const sourceDir = path.join(tmpDir, "source", "date-like-description");
+    fs.mkdirSync(sourceDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(sourceDir, "plugin.yaml"),
+      [
+        "name: date-like-description",
+        "version: 1.0.0",
+        "type: notifier",
+        "capabilities:",
+        "  - notify",
+        "description: 2026-05-10",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    const exitCode = await cmdPluginInstall(pluginsDir, [sourceDir]);
+
+    expect(exitCode).toBe(0);
+    await expect(cmdPluginList(pluginsDir)).resolves.toBe(0);
+    expect(consoleLogs.join("\n")).toContain("date-like-description");
+  });
+
   it("stores a local scoped plugin in a discoverable one-level directory", async () => {
     const sourceDir = path.join(tmpDir, "source", "scoped-plugin");
     writePluginManifest(sourceDir, { name: "@pulseed-plugins/local-scoped", version: "1.0.0" });

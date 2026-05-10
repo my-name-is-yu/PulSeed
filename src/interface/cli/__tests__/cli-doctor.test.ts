@@ -438,7 +438,7 @@ describe("checkPluginPermissionWarnings", () => {
         "type: adapter",
         "capabilities:",
         "  - run_shell",
-        "description: Runs shell commands",
+        "description: 2026-05-10",
         "config_schema: {}",
         "dependencies: []",
         "permissions:",
