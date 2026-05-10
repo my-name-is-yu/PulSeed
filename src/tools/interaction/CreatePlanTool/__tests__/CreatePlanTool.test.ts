@@ -6,6 +6,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { toToolDefinition } from "../../../tool-definition-adapter.js";
+import { PLAN_CONTENT_MAX_CHARS, PLAN_TITLE_MAX_CHARS } from "../../plan-utils.js";
 
 function makeContext(): ToolCallContext {
   return {
@@ -131,6 +132,19 @@ describe("CreatePlanTool", () => {
     expect(parsed.success).toBe(true);
   });
 
+  it("Zod rejects oversized title and content", () => {
+    expect(CreatePlanInputSchema.safeParse({
+      plan_id: "my-plan-123",
+      title: "T".repeat(PLAN_TITLE_MAX_CHARS + 1),
+      content: "C",
+    }).success).toBe(false);
+    expect(CreatePlanInputSchema.safeParse({
+      plan_id: "my-plan-123",
+      title: "T",
+      content: "C".repeat(PLAN_CONTENT_MAX_CHARS + 1),
+    }).success).toBe(false);
+  });
+
   it("rejects unknown fields and exports a closed model-facing schema", () => {
     expect(CreatePlanInputSchema.safeParse({
       plan_id: "my-plan-123",
@@ -141,6 +155,9 @@ describe("CreatePlanTool", () => {
 
     const parameters = toToolDefinition(tool).function.parameters as Record<string, unknown>;
     expect(parameters.additionalProperties).toBe(false);
+    const properties = parameters.properties as Record<string, Record<string, unknown>>;
+    expect(properties["title"]?.["maxLength"]).toBe(PLAN_TITLE_MAX_CHARS);
+    expect(properties["content"]?.["maxLength"]).toBe(PLAN_CONTENT_MAX_CHARS);
   });
 });
 

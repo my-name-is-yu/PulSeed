@@ -2,14 +2,14 @@ import { z } from "zod";
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { ITool, ToolResult, ToolCallContext, PermissionCheckResult, ToolMetadata, ToolDescriptionContext } from "../../types.js";
-import { PLAN_ID_RE, decisionsDir } from "../plan-utils.js";
+import { PLAN_CONTENT_MAX_CHARS, PLAN_ID_RE, PLAN_TITLE_MAX_CHARS, decisionsDir } from "../plan-utils.js";
 import { DESCRIPTION } from "./prompt.js";
 import { TAGS, CATEGORY as _CATEGORY, READ_ONLY, PERMISSION_LEVEL } from "./constants.js";
 
 export const CreatePlanInputSchema = z.object({
   plan_id: z.string().min(1, "plan_id is required").regex(PLAN_ID_RE, "plan_id must be alphanumeric with hyphens only"),
-  title: z.string().min(1, "title is required"),
-  content: z.string().min(1, "content is required"),
+  title: z.string().min(1, "title is required").max(PLAN_TITLE_MAX_CHARS),
+  content: z.string().min(1, "content is required").max(PLAN_CONTENT_MAX_CHARS),
 }).strict();
 export type CreatePlanInput = z.infer<typeof CreatePlanInputSchema>;
 

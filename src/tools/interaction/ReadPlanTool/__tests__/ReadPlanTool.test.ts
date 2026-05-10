@@ -5,6 +5,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { toToolDefinition } from "../../../tool-definition-adapter.js";
+import { PLAN_FILE_MAX_BYTES } from "../../plan-utils.js";
 
 function makeContext(): ToolCallContext {
   return {
@@ -90,6 +91,17 @@ describe("ReadPlanTool", () => {
     const result = await tool.call({ plan_id: `${TEST_PLAN_PREFIX}missing-xyz` }, makeContext());
     expect(result.success).toBe(false);
     expect(result.error).toContain("not found");
+  });
+
+  it("returns failure before reading oversized plan files", async () => {
+    const oversizedPlanId = `${TEST_PLAN_PREFIX}oversized`;
+    const decDir = path.join(tmpPulseedHome, "decisions");
+    await fs.mkdir(decDir, { recursive: true });
+    await fs.writeFile(path.join(decDir, `${oversizedPlanId}.md`), "x".repeat(PLAN_FILE_MAX_BYTES + 1), "utf8");
+
+    const result = await tool.call({ plan_id: oversizedPlanId }, makeContext());
+    expect(result.success).toBe(false);
+    expect(result.error).toContain(`limit is ${PLAN_FILE_MAX_BYTES} bytes`);
   });
 
   it("Zod rejects invalid plan_id", () => {
