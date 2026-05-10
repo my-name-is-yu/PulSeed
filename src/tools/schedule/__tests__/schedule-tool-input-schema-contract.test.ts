@@ -172,6 +172,17 @@ describe("schedule tool input schema contract", () => {
     }).success).toBe(false);
   });
 
+  it("rejects non-finite or unsafe goal_probe preset threshold values", () => {
+    for (const threshold_value of [Number.POSITIVE_INFINITY, Number.NaN, Number.MAX_SAFE_INTEGER + 1]) {
+      expect(CreateScheduleInputSchema.safeParse({
+        preset: "goal_probe",
+        data_source_id: "source-1",
+        detector_mode: "threshold",
+        threshold_value,
+      }).success).toBe(false);
+    }
+  });
+
   it("exports closed model-facing schemas for schedule tool inputs", () => {
     const tools = [
       new GetScheduleTool(scheduleEngine),

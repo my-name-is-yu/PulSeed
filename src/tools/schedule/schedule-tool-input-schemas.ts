@@ -3,6 +3,7 @@ import { z } from "zod";
 const ScheduleToolPositiveSafeIntegerSchema = z.number().finite().int().min(1).max(Number.MAX_SAFE_INTEGER);
 const ScheduleToolNonNegativeSafeIntegerSchema = z.number().finite().int().min(0).max(Number.MAX_SAFE_INTEGER);
 const ScheduleToolNonNegativeSafeNumberSchema = z.number().finite().min(0).max(Number.MAX_SAFE_INTEGER);
+const ScheduleToolFiniteSafeNumberSchema = z.number().finite().safe();
 const ScheduleToolUnitIntervalSchema = z.number().finite().safe().min(0).max(1);
 const ScheduleToolTcpPortSchema = z.number().finite().int().min(1).max(65535);
 
@@ -157,7 +158,7 @@ export const ScheduleToolPresetInputSchema = z.discriminatedUnion("preset", [
     probe_dimension: z.string().optional(),
     query_params: z.record(z.string(), z.unknown()).default({}),
     detector_mode: z.enum(["threshold", "diff", "presence"]).default("diff"),
-    threshold_value: z.number().optional(),
+    threshold_value: ScheduleToolFiniteSafeNumberSchema.optional(),
     baseline_window: ScheduleToolPositiveSafeIntegerSchema.default(5),
     llm_on_change: z.boolean().default(true),
     llm_prompt_template: z.string().optional(),
