@@ -240,7 +240,15 @@ export function relativeToBase(baseDir: string, maybePath: string | null): strin
 }
 
 export function defaultIsPidAlive(pid: number): boolean | "unknown" {
-  const result = signalProcessPid(pid, 0);
+  let result: ReturnType<typeof signalProcessPid>;
+  try {
+    result = signalProcessPid(pid, 0);
+  } catch (error) {
+    if (isProcessKillValidationError(error)) {
+      return "unknown";
+    }
+    throw error;
+  }
   switch (result.status) {
     case "sent":
       return true;
@@ -249,6 +257,12 @@ export function defaultIsPidAlive(pid: number): boolean | "unknown" {
     case "unsafe_pid":
       return "unknown";
   }
+}
+
+function isProcessKillValidationError(error: unknown): boolean {
+  if (!(error instanceof TypeError) && !(error instanceof RangeError)) return false;
+  const code = (error as NodeJS.ErrnoException).code;
+  return code === "ERR_INVALID_ARG_TYPE" || code === "ERR_OUT_OF_RANGE";
 }
 
 export async function fileExists(filePath: string): Promise<boolean> {

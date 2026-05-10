@@ -229,6 +229,36 @@ describe("RuntimeSessionRegistry", () => {
     }));
   });
 
+  it("projects schema-valid OS-invalid process PIDs as unknown without crashing", async () => {
+    const largePid = 999_999_999_999;
+    await stateManager.writeRaw("runtime/process-sessions/proc-large-pid.json", makeProcessSnapshot({
+      session_id: "proc-large-pid",
+      pid: largePid,
+      running: true,
+    }));
+    const killSpy = vi.spyOn(process, "kill").mockImplementation(((pid: number | NodeJS.Signals, signal?: NodeJS.Signals | number) => {
+      if (pid === largePid && signal === 0) {
+        const error = new TypeError("The \"pid\" argument must be of type number.") as NodeJS.ErrnoException;
+        error.code = "ERR_INVALID_ARG_TYPE";
+        throw error;
+      }
+      throw new Error(`unexpected process probe for ${String(pid)}`);
+    }) as typeof process.kill);
+
+    const snapshot = await new RuntimeSessionRegistry({ stateManager }).snapshot();
+
+    expect(killSpy).toHaveBeenCalledWith(largePid, 0);
+    expect(snapshot.background_runs).toContainEqual(expect.objectContaining({
+      id: "run:process:proc-large-pid",
+      status: "unknown",
+      process_session_id: "proc-large-pid",
+    }));
+    expect(snapshot.warnings).not.toContainEqual(expect.objectContaining({
+      code: "dead_process_sidecar",
+    }));
+    expect(() => RuntimeSessionRegistrySnapshotSchema.parse(snapshot)).not.toThrow();
+  });
+
   it("does not probe or report a running process sidecar with an unsafe pid", async () => {
     await stateManager.writeRaw("runtime/process-sessions/proc-unsafe-pid.json", {
       ...makeProcessSnapshot({
