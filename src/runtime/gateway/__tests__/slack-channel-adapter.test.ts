@@ -127,6 +127,21 @@ describe("SlackChannelAdapter — signature verification", () => {
     expect(res.status).toBe(401);
   });
 
+  it("rejects unsigned malformed JSON before parsing", () => {
+    const adapter = makeAdapter();
+    const res = adapter.handleRequest("{", {});
+    expect(res.status).toBe(401);
+    expect(res.body).toContain("missing signature headers");
+  });
+
+  it("returns invalid json only after a valid signature", () => {
+    const adapter = makeAdapter();
+    const body = "{";
+    const res = adapter.handleRequest(body, buildHeaders(body));
+    expect(res.status).toBe(400);
+    expect(res.body).toBe("invalid json");
+  });
+
   it("rejects when x-slack-signature is missing", () => {
     const adapter = makeAdapter();
     const body = JSON.stringify({ type: "event_callback", event: { type: "message" } });
@@ -690,9 +705,10 @@ describe("SlackChannelAdapter — edge cases", () => {
     expect(res.status).toBe(200);
   });
 
-  it("returns 400 for invalid JSON body", () => {
+  it("returns 400 for signed invalid JSON body", () => {
     const adapter = makeAdapter();
-    const res = adapter.handleRequest("not-json", {});
+    const body = "not-json";
+    const res = adapter.handleRequest(body, buildHeaders(body));
     expect(res.status).toBe(400);
   });
 
