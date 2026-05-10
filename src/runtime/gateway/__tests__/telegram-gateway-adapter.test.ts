@@ -76,8 +76,7 @@ describe("TelegramGatewayAdapter", () => {
     vi.stubGlobal("fetch", fetchMock);
     const adapter = TelegramGatewayAdapter.fromConfigDir(configDir);
     adapters.push(adapter);
-    vi.mocked(dispatchGatewayChatInput).mockImplementationOnce(async (input) => {
-      await input.onEvent?.(presenceEvent("received"));
+    vi.mocked(dispatchGatewayChatInput).mockImplementationOnce(async () => {
       await adapter.stop();
       return "ok";
     });

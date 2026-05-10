@@ -13,6 +13,7 @@ import { SeedyPresenceProjector, createSeedyPresenceTransportFromNonTuiDisplay }
 import { isPayloadTooLargeError, readBody } from "../http-body.js";
 import type { INotifier, NotificationEvent, NotificationEventType } from "../../base/types/plugin.js";
 import type { ChatEvent } from "../../interface/chat/chat-events.js";
+import { createUserVisibleSeedyTurnPresence } from "../../interface/chat/seedy-turn-presence.js";
 
 let discordSyntheticMessageId = 0;
 const MIN_PORT = 1;
@@ -285,6 +286,10 @@ export class DiscordGatewayAdapter implements ChannelAdapter {
     });
     let reply: string | null = null;
     try {
+      await presenceProjector.update(createUserVisibleSeedyTurnPresence({
+        turn_id: `discord:${input.message_id ?? input.conversation_id}`,
+        phase: "received",
+      }));
       reply = await dispatchGatewayChatInput({
         ...input,
         onEvent: async (event) => {

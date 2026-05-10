@@ -12,6 +12,7 @@ import { SeedyPresenceProjector, createSeedyPresenceTransportFromNonTuiDisplay, 
 import { PluginChannelRuntimeStateStore } from "../store/plugin-channel-runtime-state-store.js";
 import type { INotifier, NotificationEvent, NotificationEventType } from "../../base/types/plugin.js";
 import type { ChatEvent } from "../../interface/chat/chat-events.js";
+import { createUserVisibleSeedyTurnPresence } from "../../interface/chat/seedy-turn-presence.js";
 
 const BACKOFF_STEPS_MS = [5_000, 10_000, 20_000, 40_000, 60_000];
 const TELEGRAM_INTEGER_ID_TOKEN = /^-?(?:0|[1-9]\d*)$/;
@@ -242,6 +243,10 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
 
     let reply: string | null = null;
     try {
+      await presenceProjector.update(createUserVisibleSeedyTurnPresence({
+        turn_id: `telegram:${chatId}:${messageId}`,
+        phase: "received",
+      }));
       reply = await dispatchGatewayChatInput({
         text,
         platform: "telegram",

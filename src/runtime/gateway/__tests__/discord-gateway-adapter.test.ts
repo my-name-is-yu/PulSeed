@@ -26,11 +26,6 @@ describe("DiscordGatewayAdapter", () => {
       calls.push({ url: String(url), init });
       return okResponse({});
     }));
-    vi.mocked(dispatchGatewayChatInput).mockImplementationOnce(async (input) => {
-      await input.onEvent?.(presenceEvent("received"));
-      await input.onEvent?.(assistantFinalEvent("Discord reply"));
-      return "Discord reply";
-    });
     const adapter = new DiscordGatewayAdapter(makeConfig());
 
     await (adapter as unknown as {
