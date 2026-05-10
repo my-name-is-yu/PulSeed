@@ -69,6 +69,21 @@ describe("code search platform", () => {
     expect(result.candidates.every((candidate) => !candidate.reasons.some((reason) => reason.includes("semantic")))).toBe(true);
   });
 
+  it("skips oversized package manifests when building the package graph", async () => {
+    await fsp.writeFile(
+      path.join(root, "package.json"),
+      JSON.stringify({
+        name: "oversized-fixture",
+        dependencies: { zod: "^3.0.0" },
+        padding: "x".repeat(1024 * 1024),
+      })
+    );
+
+    const indexes = await getCodeSearchIndexes(root, { ttlMs: 0 });
+
+    expect(indexes.packages.packages.some((pkg) => pkg.name === "oversized-fixture")).toBe(false);
+  });
+
   it("ignores semantic similarity during reranking when semantic retrieval is disabled", () => {
     const makeCandidate = (id: string, lexicalMatch: number, semanticSimilarity: number): FusedCandidate => ({
       id,
