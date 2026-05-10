@@ -324,7 +324,7 @@ describe("SeedyPresenceProjector", () => {
     expect(transport.editStatus).not.toHaveBeenCalled();
     expect(transport.deleteStatus).toHaveBeenCalledOnce();
     expect(transport.calls).toEqual([
-      "sendStatus:Thinking through the next step.",
+      "sendStatus:I'm thinking through the next step.",
       "deleteStatus",
     ]);
     expect(transport.sendFallbackAck).not.toHaveBeenCalled();
@@ -378,8 +378,8 @@ describe("SeedyPresenceProjector", () => {
     expect(transport.sendStatus).toHaveBeenCalledOnce();
     expect(transport.editStatus).toHaveBeenCalledOnce();
     expect(transport.calls).toEqual([
-      "sendStatus:Checking this.",
-      "editStatus:Thinking through the next step.",
+      "sendStatus:I'm checking this.",
+      "editStatus:I'm thinking through the next step.",
     ]);
   });
 
