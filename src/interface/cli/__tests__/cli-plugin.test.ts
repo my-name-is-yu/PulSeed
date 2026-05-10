@@ -549,6 +549,36 @@ describe("cmdPluginUpdate", () => {
     expect(allOutput).toMatch(/updated/i);
   });
 
+  it("ignores oversized npm source metadata when choosing the update package name", async () => {
+    const pluginDir = path.join(pluginsDir, "safe-plugin");
+    fs.mkdirSync(pluginDir, { recursive: true });
+    writePluginManifest(pluginDir, { name: "safe-plugin", version: "1.0.0" });
+    fs.writeFileSync(
+      path.join(pluginDir, ".pulseed-plugin-source.json"),
+      JSON.stringify({ type: "npm", packageName: "evil-package", padding: "x".repeat(64 * 1024) }),
+      "utf-8",
+    );
+
+    let capturedArgs: string[] = [];
+    const mockExecFile = vi.fn().mockImplementation(async (_cmd: string, args: string[]) => {
+      capturedArgs = args;
+      const prefixIndex = args.indexOf("--prefix");
+      if (prefixIndex !== -1) {
+        const prefixDir = args[prefixIndex + 1];
+        const pkgName = args[args.length - 1];
+        const nodeModulesDir = path.join(prefixDir, "node_modules", pkgName);
+        fs.mkdirSync(nodeModulesDir, { recursive: true });
+        writePluginManifest(nodeModulesDir, { name: "safe-plugin", version: "1.2.0" });
+      }
+      return { stdout: "", stderr: "" };
+    });
+
+    const exitCode = await cmdPluginUpdate(pluginsDir, ["safe-plugin"], mockExecFile as never);
+
+    expect(exitCode).toBe(0);
+    expect(capturedArgs.at(-1)).toBe("safe-plugin");
+  });
+
   it("removes stale runtime-root files when an npm plugin changes manifest format", async () => {
     const pluginDir = path.join(pluginsDir, "format-switch-plugin");
     writePluginManifest(pluginDir, { name: "format-switch-plugin", version: "1.0.0" });
