@@ -7,7 +7,7 @@ import {
   type ControlDatabase,
   type RuntimeControlDbStoreOptions,
 } from "../../runtime/store/control-db/index.js";
-import { ChatSessionSchema, type ChatSession } from "./chat-history.js";
+import { ChatSessionSchema, type ChatSession } from "./chat-session-contracts.js";
 import { ChatSessionDataStore, CrossPlatformChatSessionInfoStore } from "./chat-session-data-store.js";
 import {
   normalizeAgentLoopSessionState,

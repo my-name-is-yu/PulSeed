@@ -1,6 +1,6 @@
 import { StateError } from "../../base/utils/errors.js";
 import type { StateManager } from "../../base/state/state-manager.js";
-import { ChatSessionSchema, type ChatSession } from "./chat-history.js";
+import { ChatSessionSchema, type ChatSession } from "./chat-session-contracts.js";
 import type { AgentLoopSessionState } from "../../orchestrator/execution/agent-loop/agent-loop-session-state.js";
 import { AgentLoopSessionStateCatalog } from "../../orchestrator/execution/agent-loop/agent-loop-session-db-store.js";
 import { normalizeSessionUsage } from "./chat-usage.js";
