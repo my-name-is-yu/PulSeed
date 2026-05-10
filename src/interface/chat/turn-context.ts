@@ -291,6 +291,7 @@ export function renderModelVisibleTurnContext(context: ChatTurnModelVisibleConte
     `- compaction_records: ${context.conversation.compactionRecords.length}`,
     ...compactionRecordLines,
     `- runtime_evidence: ${context.runtimeEvidence.status}`,
+    "- runtime_evidence_rule: Do not claim that current daemon, gateway, command, process, watchdog, runtime, session, or local machine status was checked unless this turn produced trusted tool/runtime evidence. If evidence is absent, say that you cannot verify it from here.",
   ];
   return lines.join("\n");
 }

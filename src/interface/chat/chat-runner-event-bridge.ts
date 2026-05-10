@@ -70,6 +70,16 @@ export class ChatRunnerEventBridge {
     return this.activeTurn?.seedyPresence ?? null;
   }
 
+  hasRuntimeEvidenceForTurn(context: ChatEventContext): boolean {
+    return this.getRuntimeEvidenceRefsForTurn(context).length > 0;
+  }
+
+  getRuntimeEvidenceRefsForTurn(context: ChatEventContext): string[] {
+    const activeTurn = this.activeTurn;
+    if (!activeTurn || activeTurn.context.turnId !== context.turnId) return [];
+    return activeTurn.runtimeEvidenceRefs;
+  }
+
   setEventRecorder(recorder: ((event: ChatEvent) => Promise<void> | void) | null): void {
     this.eventRecorder = recorder;
   }
@@ -108,6 +118,7 @@ export class ChatRunnerEventBridge {
       finished,
       resolveFinished,
       recentEvents: [],
+      runtimeEvidenceRefs: [],
       recentFailureSignals: [],
       interruptRequested: false,
     };
@@ -726,6 +737,10 @@ export class ChatRunnerEventBridge {
   private rememberActiveTurnEvent(event: ChatEvent): void {
     const activeTurn = this.activeTurn;
     if (!activeTurn || activeTurn.context.turnId !== event.turnId) return;
+    const runtimeEvidenceRef = runtimeEvidenceRefForEvent(event);
+    if (runtimeEvidenceRef) {
+      activeTurn.runtimeEvidenceRefs = [...activeTurn.runtimeEvidenceRefs, runtimeEvidenceRef].slice(-20);
+    }
     let summary: string | null = null;
     if (event.type === "activity") {
       summary = previewActivityText(event.message, 140);
@@ -826,6 +841,21 @@ function redactChatEvent(event: ChatEvent): ChatEvent {
 
 function isTerminalEvent(event: ChatEvent): boolean {
   return event.type === "assistant_final" || event.type === "lifecycle_end" || event.type === "lifecycle_error";
+}
+
+function runtimeEvidenceRefForEvent(event: ChatEvent): string | null {
+  switch (event.type) {
+    case "tool_end":
+      return `tool_end:${event.toolName}:${event.toolCallId}:${event.success ? "success" : "failure"}`;
+    case "operation_progress":
+      return `operation_progress:${event.item.operation}:${event.item.kind}:${event.item.id}`;
+    case "agent_timeline":
+      return event.item.kind === "tool"
+        ? `agent_timeline:${event.item.kind}:${event.item.sourceEventId}`
+        : null;
+    default:
+      return null;
+  }
 }
 
 function shouldSuppressWaitingHeartbeat(presence: NonNullable<ActiveChatTurn["seedyPresence"]>): boolean {
