@@ -38,13 +38,21 @@ const DEFAULT_CONFIG: DimensionPreCheckerConfig = {
   strategies: ["age", "git_diff"],
 };
 
+function parseObservationTimestampMs(timestamp: string): number | null {
+  const parsed = Date.parse(timestamp);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 // Age strategy: skip if last observation is younger than min_observation_interval.
 function checkAge(
   lastObservation: ObservationLogEntry | null,
   minIntervalSec: number
 ): PreCheckResult | null {
   if (!lastObservation) return null; // no previous obs -> must run
-  const lastTs = new Date(lastObservation.timestamp).getTime();
+  const lastTs = parseObservationTimestampMs(lastObservation.timestamp);
+  if (lastTs === null) {
+    return { changed: true, hint: "Last observation timestamp is invalid; running observation" };
+  }
   const ageMs = Date.now() - lastTs;
   if (ageMs < minIntervalSec * 1000) {
     return { changed: false };
@@ -119,7 +127,10 @@ async function checkFileStat(
 
   try {
     const s = await stat(workspacePath);
-    const lastObsTime = new Date(lastObservation.timestamp).getTime();
+    const lastObsTime = parseObservationTimestampMs(lastObservation.timestamp);
+    if (lastObsTime === null) {
+      return { changed: true, hint: "Last observation timestamp is invalid; running observation" };
+    }
     const mtimeMs = s.mtimeMs;
 
     if (mtimeMs <= lastObsTime) {
