@@ -1,4 +1,5 @@
 import * as crypto from "node:crypto";
+import type { Dirent } from "node:fs";
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import type { IndexedFile } from "../contracts.js";
@@ -41,7 +42,7 @@ export function hashContent(content: string | Buffer): string {
 
 async function walk(root: string, dir: string, result: string[], maxFiles: number): Promise<void> {
   if (result.length >= maxFiles) return;
-  let entries: import("node:fs").Dirent<string>[];
+  let entries: Dirent[];
   try {
     entries = await fsp.readdir(dir, { withFileTypes: true });
   } catch {
@@ -74,6 +75,7 @@ export async function buildFileIndex(root: string, maxFiles = 1_500): Promise<In
   for (const absolutePath of files) {
     try {
       const stat = await fsp.stat(absolutePath);
+      const preciseStat = await fsp.stat(absolutePath, { bigint: true }).catch(() => null);
       if (!stat.isFile()) continue;
       const content = await fsp.readFile(absolutePath);
       const rel = toRepoRelative(absoluteRoot, absolutePath);
@@ -83,6 +85,9 @@ export async function buildFileIndex(root: string, maxFiles = 1_500): Promise<In
         absolutePath,
         hash: hashContent(content),
         mtimeMs: stat.mtimeMs,
+        ctimeMs: stat.ctimeMs,
+        mtimeNs: preciseStat?.mtimeNs.toString(),
+        ctimeNs: preciseStat?.ctimeNs.toString(),
         size: stat.size,
         language: languageFor(rel),
         generated: classification.generated,

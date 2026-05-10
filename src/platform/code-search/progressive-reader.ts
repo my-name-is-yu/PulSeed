@@ -1,5 +1,7 @@
-import * as fsp from "node:fs/promises";
+import { createReadStream } from "node:fs";
+import { stat } from "node:fs/promises";
 import * as path from "node:path";
+import * as readline from "node:readline";
 import type {
   CodeSearchIndexes,
   ContextBundle,
@@ -9,7 +11,6 @@ import type {
   ReadRequest,
   ReadSessionState,
 } from "./contracts.js";
-import { hashFileOrNull } from "./indexes/file-index.js";
 import { createRetrievalTrace, createQueryId } from "./trace.js";
 
 function estimateTokens(text: string): number {
@@ -84,20 +85,58 @@ function sliceIndexesForRanges(indexes: CodeSearchIndexes | undefined, ranges: R
   };
 }
 
+async function indexedFileChanged(candidate: RankedCandidate, file: CodeSearchIndexes["files"][number]): Promise<boolean> {
+  if (candidate.fileHashAtIndex !== file.hash) return true;
+  const indexedSize = candidate.fileSizeAtIndex ?? file.size;
+  const indexedMtimeMs = candidate.fileMtimeMsAtIndex ?? file.mtimeMs;
+  const indexedCtimeMs = candidate.fileCtimeMsAtIndex ?? file.ctimeMs;
+  const indexedMtimeNs = candidate.fileMtimeNsAtIndex ?? file.mtimeNs;
+  const indexedCtimeNs = candidate.fileCtimeNsAtIndex ?? file.ctimeNs;
+  try {
+    const current = await stat(file.absolutePath, { bigint: true });
+    if (Number(current.size) !== indexedSize) return true;
+    if (indexedMtimeNs && current.mtimeNs.toString() !== indexedMtimeNs) return true;
+    if (indexedCtimeNs && current.ctimeNs.toString() !== indexedCtimeNs) return true;
+    if (!indexedMtimeNs && Number(current.mtimeMs) !== indexedMtimeMs) return true;
+    if (!indexedCtimeNs && Number(current.ctimeMs) !== indexedCtimeMs) return true;
+    return false;
+  } catch {
+    return true;
+  }
+}
+
 async function readRange(root: string, candidate: RankedCandidate, key: ReadRangeKey): Promise<ReadRangeResult | null> {
+  const start = Math.max(1, key.startLine);
+  const requestedEnd = Math.max(start, key.endLine);
   try {
     const absolute = path.resolve(root, key.file);
-    const lines = (await fsp.readFile(absolute, "utf8")).split("\n");
-    const start = Math.max(1, key.startLine);
-    const end = Math.min(lines.length, key.endLine);
-    const content = lines
-      .slice(start - 1, end)
-      .map((line, index) => `${start + index}\t${line}`)
-      .join("\n");
+    const stream = createReadStream(absolute, { encoding: "utf8" });
+    const reader = readline.createInterface({ input: stream, crlfDelay: Infinity });
+    let lineNumber = 0;
+    const numberedLines: string[] = [];
+
+    try {
+      for await (const line of reader) {
+        lineNumber += 1;
+        if (lineNumber < start) continue;
+        if (lineNumber > requestedEnd) break;
+
+        numberedLines.push(`${lineNumber}\t${line}`);
+        if (lineNumber >= requestedEnd) break;
+      }
+    } finally {
+      reader.close();
+      stream.destroy();
+    }
+
+    const actualEnd = numberedLines.length > 0
+      ? start + numberedLines.length - 1
+      : Math.min(lineNumber, requestedEnd);
+    const content = numberedLines.join("\n");
     return {
       ...key,
       startLine: start,
-      endLine: end,
+      endLine: actualEnd,
       candidateId: candidate.id,
       reason: candidate.reasons[0] ?? candidate.readRecommendation,
       content,
@@ -149,8 +188,7 @@ export class ProgressiveReader {
       }
       const file = this.indexes?.files.find((entry) => entry.path === candidate.file);
       if (file) {
-        const currentHash = await hashFileOrNull(file.absolutePath);
-        if (currentHash && currentHash !== candidate.fileHashAtIndex) warnings.push(`Stale candidate hash for ${candidate.file}`);
+        if (await indexedFileChanged(candidate, file)) warnings.push(`Stale candidate file state for ${candidate.file}`);
       }
       const key = expandRange(candidate, nextState.phase);
       if (nextState.readRanges.some((read) => overlaps(read, key))) {

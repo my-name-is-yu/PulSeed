@@ -76,6 +76,11 @@ export function makeCandidate(input: {
     indexVersion: input.indexes.version,
     indexedAt: input.indexes.indexedAt,
     fileHashAtIndex: file.hash,
+    fileSizeAtIndex: file.size,
+    fileMtimeMsAtIndex: file.mtimeMs,
+    fileCtimeMsAtIndex: file.ctimeMs,
+    fileMtimeNsAtIndex: file.mtimeNs,
+    fileCtimeNsAtIndex: file.ctimeNs,
   };
 }
 

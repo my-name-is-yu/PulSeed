@@ -116,6 +116,11 @@ export interface CodeCandidate {
   indexVersion: string;
   indexedAt: number;
   fileHashAtIndex: string;
+  fileSizeAtIndex?: number;
+  fileMtimeMsAtIndex?: number;
+  fileCtimeMsAtIndex?: number;
+  fileMtimeNsAtIndex?: string;
+  fileCtimeNsAtIndex?: string;
   currentFileHash?: string;
 }
 
@@ -240,6 +245,9 @@ export interface IndexedFile {
   absolutePath: string;
   hash: string;
   mtimeMs: number;
+  ctimeMs: number;
+  mtimeNs?: string;
+  ctimeNs?: string;
   size: number;
   language: string;
   packageRoot?: string;
