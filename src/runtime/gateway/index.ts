@@ -43,6 +43,15 @@ export {
 } from "./channel-presence-policy.js";
 export { NonTuiDisplayProjector, createNonTuiDisplayProjector } from "./non-tui-display-projector.js";
 export {
+  SeedyPresenceProjector,
+  createSeedyPresenceTransportFromNonTuiDisplay,
+} from "./seedy-presence-projector.js";
+export {
+  isTerminalSeedyPresence,
+  renderSeedyPresenceFallbackAck,
+  renderSeedyPresenceStatusText,
+} from "./seedy-presence-rendering.js";
+export {
   renderGatewayActivityEvent,
   renderGatewayAgentTimelineItem,
   renderGatewayExpressionDecision,
@@ -61,6 +70,12 @@ export type {
   NonTuiDisplayProjectorOptions,
   NonTuiDisplayTransport,
 } from "./non-tui-display-projector.js";
+export type {
+  SeedyPresenceEventProjection,
+  SeedyPresenceProjectorOperation,
+  SeedyPresenceProjectorOptions,
+  SeedyPresenceTransport,
+} from "./seedy-presence-projector.js";
 export type {
   GatewayChannelDisplayContract,
   GatewayDisplayCapabilities,
