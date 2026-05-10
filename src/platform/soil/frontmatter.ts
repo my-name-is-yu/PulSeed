@@ -51,7 +51,7 @@ export function splitSoilFrontmatter(content: string): SoilMarkdownSplit {
 
   let frontmatter: Record<string, unknown> = {};
   try {
-    const parsed = yaml.load(yamlLines);
+    const parsed = yaml.load(yamlLines, { schema: yaml.JSON_SCHEMA });
     if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
       frontmatter = parsed as Record<string, unknown>;
     }
@@ -102,4 +102,3 @@ export function serializeSoilMarkdown(frontmatter: SoilPageFrontmatter, body = "
   });
   return `---\n${yamlText}---\n${body}`;
 }
-

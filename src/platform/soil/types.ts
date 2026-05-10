@@ -75,12 +75,65 @@ export const SoilSourceTypeSchema = z.enum([
 ]);
 export type SoilSourceType = z.infer<typeof SoilSourceTypeSchema>;
 
-const datetimeSchema = z.preprocess((value) => {
+const ISO_DATETIME_PATTERN =
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?(Z|[+-]\d{2}:\d{2})$/;
+
+export function isSoilDatetime(value: string): boolean {
+  const match = ISO_DATETIME_PATTERN.exec(value);
+  if (!match) return false;
+
+  const [, yearText, monthText, dayText, hourText, minuteText, secondText, millisecondText, timezoneText] = match;
+  const year = Number(yearText);
+  const month = Number(monthText);
+  const day = Number(dayText);
+  const hour = Number(hourText);
+  const minute = Number(minuteText);
+  const second = Number(secondText);
+  const millisecond = Number((millisecondText ?? "0").padEnd(3, "0"));
+
+  if (
+    month < 1 ||
+    month > 12 ||
+    hour > 23 ||
+    minute > 59 ||
+    second > 59 ||
+    !isValidTimezoneOffset(timezoneText)
+  ) {
+    return false;
+  }
+
+  const candidate = new Date(0);
+  candidate.setUTCFullYear(year, month - 1, day);
+  candidate.setUTCHours(hour, minute, second, millisecond);
+
+  return (
+    Number.isFinite(Date.parse(value)) &&
+    candidate.getUTCFullYear() === year &&
+    candidate.getUTCMonth() === month - 1 &&
+    candidate.getUTCDate() === day &&
+    candidate.getUTCHours() === hour &&
+    candidate.getUTCMinutes() === minute &&
+    candidate.getUTCSeconds() === second &&
+    candidate.getUTCMilliseconds() === millisecond
+  );
+}
+
+export const SoilDatetimeSchema = z.preprocess((value) => {
   if (value instanceof Date) {
+    if (!Number.isFinite(value.getTime())) {
+      return value;
+    }
     return value.toISOString();
   }
   return value;
-}, z.string().refine((value) => !Number.isNaN(Date.parse(value)), "Must be a valid ISO-8601 datetime string"));
+}, z.string().refine(isSoilDatetime, "Must be a valid ISO-8601 datetime string"));
+
+function isValidTimezoneOffset(value: string): boolean {
+  if (value === "Z") return true;
+  const hour = Number(value.slice(1, 3));
+  const minute = Number(value.slice(4, 6));
+  return hour <= 23 && minute <= 59;
+}
 
 export const SoilSourceRefSchema = z.object({
   source_type: SoilSourceTypeSchema,
@@ -89,8 +142,8 @@ export const SoilSourceRefSchema = z.object({
   source_hash: z.string().min(1).optional(),
   source_version: z.string().min(1).optional(),
   source_uri: z.string().min(1).optional(),
-  fetched_at: datetimeSchema.optional(),
-  committed_at: datetimeSchema.optional(),
+  fetched_at: SoilDatetimeSchema.optional(),
+  committed_at: SoilDatetimeSchema.optional(),
   reliability: z.enum(["high", "medium", "low"]).optional(),
 });
 export type SoilSourceRef = z.infer<typeof SoilSourceRefSchema>;
@@ -102,8 +155,8 @@ export const SoilGenerationWatermarkSchema = z.object({
   source_hash: z.string().min(1).optional(),
   source_hashes: z.array(z.string().min(1)).default([]),
   source_version: z.string().min(1).optional(),
-  source_updated_at: datetimeSchema.optional(),
-  generated_at: datetimeSchema,
+  source_updated_at: SoilDatetimeSchema.optional(),
+  generated_at: SoilDatetimeSchema,
   projection_version: z.string().min(1),
   input_commit_ids: z.array(z.string().min(1)).default([]),
   input_checksums: z.record(z.string()).default({}),
@@ -124,8 +177,8 @@ export const SoilManualOverlaySchema = z.object({
   overlay_id: z.string().min(1).optional(),
   author: z.string().min(1).optional(),
   target_ref: z.string().min(1).optional(),
-  created_at: datetimeSchema.optional(),
-  updated_at: datetimeSchema.optional(),
+  created_at: SoilDatetimeSchema.optional(),
+  updated_at: SoilDatetimeSchema.optional(),
   notes: z.string().optional(),
 });
 export type SoilManualOverlay = z.infer<typeof SoilManualOverlaySchema>;
@@ -139,9 +192,9 @@ export const SoilPageFrontmatterSchema = z
     route: SoilRouteSchema,
     source: SoilSourceSchema,
     version: z.string().min(1),
-    created_at: datetimeSchema,
-    updated_at: datetimeSchema,
-    generated_at: datetimeSchema,
+    created_at: SoilDatetimeSchema,
+    updated_at: SoilDatetimeSchema,
+    generated_at: SoilDatetimeSchema,
     source_refs: z.array(SoilSourceRefSchema).default([]),
     generation_watermark: SoilGenerationWatermarkSchema,
     stale: z.boolean().default(false),
@@ -160,7 +213,7 @@ export const SoilPageFrontmatterSchema = z
     rendered_from: z.string().min(1).optional(),
     import_status: SoilImportStatusSchema.default("none"),
     approval_status: SoilApprovalStatusSchema.default("none"),
-    approved_at: datetimeSchema.optional(),
+    approved_at: SoilDatetimeSchema.optional(),
     approved_by: z.string().min(1).optional(),
     supersedes: z.array(z.string().min(1)).default([]),
     superseded_by: z.string().min(1).optional(),
@@ -169,7 +222,3 @@ export const SoilPageFrontmatterSchema = z
   })
   .passthrough();
 export type SoilPageFrontmatter = z.infer<typeof SoilPageFrontmatterSchema>;
-
-export function isSoilDatetime(value: string): boolean {
-  return !Number.isNaN(Date.parse(value));
-}

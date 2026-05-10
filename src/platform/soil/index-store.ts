@@ -7,6 +7,7 @@ import { createSoilConfig, type SoilConfigInput } from "./config.js";
 import { loadSoilManifest, type SoilPageRecord, type SoilPageStore } from "./retriever.js";
 import {
   SoilGenerationWatermarkSchema,
+  SoilDatetimeSchema,
   SoilManualOverlaySchema,
   SoilPageFrontmatterSchema,
   SoilSourceRefSchema,
@@ -106,8 +107,6 @@ export interface SoilIndexFreshnessReport {
   currentPageCount?: number;
 }
 
-const ISO_SCHEMA = z.string().refine((value) => !Number.isNaN(Date.parse(value)), "Must be a valid ISO-8601 datetime string");
-
 const SoilIndexChunkSnapshotSchema = z.object({
   chunk_id: z.string().min(1),
   soil_id: z.string().min(1),
@@ -131,9 +130,9 @@ const SoilIndexPageSnapshotSchema = z.object({
   status: z.string().min(1),
   source: z.string().min(1),
   version: z.string().min(1),
-  created_at: ISO_SCHEMA,
-  updated_at: ISO_SCHEMA,
-  generated_at: ISO_SCHEMA,
+  created_at: SoilDatetimeSchema,
+  updated_at: SoilDatetimeSchema,
+  generated_at: SoilDatetimeSchema,
   summary: z.string().optional(),
   source_refs: z.array(SoilSourceRefSchema).default([]),
   generation_watermark: SoilGenerationWatermarkSchema,
@@ -148,7 +147,7 @@ const SoilIndexPageSnapshotSchema = z.object({
 const SoilIndexRetrievalRunSchema = z.object({
   query: z.string(),
   limit: z.number().int(),
-  generated_at: ISO_SCHEMA,
+  generated_at: SoilDatetimeSchema,
   hit_count: z.number().int().nonnegative(),
 });
 
@@ -156,7 +155,7 @@ const SoilIndexSnapshotSchema = z.object({
   storage: z.literal(SOIL_INDEX_STORAGE_FORMAT),
   root_dir: z.string().min(1),
   index_path: z.string().min(1),
-  generated_at: ISO_SCHEMA,
+  generated_at: SoilDatetimeSchema,
   source_manifest_checksum: z.string().min(1),
   page_count: z.number().int().nonnegative(),
   chunk_count: z.number().int().nonnegative(),
