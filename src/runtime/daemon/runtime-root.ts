@@ -1,8 +1,14 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { DaemonConfigSchema, type DaemonConfig } from "../../base/types/daemon.js";
+import {
+  isTextFileSizeLimitError,
+  readTextFileWithinLimitSync,
+} from "../../base/utils/json-io.js";
 import { signalProcessPid } from "../../base/utils/process-pid.js";
 import { loadDaemonStateSync } from "../store/daemon-state-store.js";
+
+const DAEMON_CONFIG_JSON_MAX_BYTES = 1024 * 1024;
 
 export function resolveDaemonRuntimeRoot(baseDir: string, configuredRoot?: string): string {
   if (!configuredRoot || configuredRoot.trim() === "") {
@@ -15,11 +21,14 @@ export function resolveDaemonRuntimeRoot(baseDir: string, configuredRoot?: strin
 
 function isRecoverablePersistedJsonReadError(error: unknown): boolean {
   const code = (error as NodeJS.ErrnoException).code;
-  return code === "ENOENT" || error instanceof SyntaxError;
+  return code === "ENOENT" || error instanceof SyntaxError || isTextFileSizeLimitError(error);
 }
 
 function readJsonFileSync(filePath: string): unknown {
-  return JSON.parse(fs.readFileSync(filePath, "utf-8")) as unknown;
+  const raw = readTextFileWithinLimitSync(filePath, {
+    maxBytes: DAEMON_CONFIG_JSON_MAX_BYTES,
+  });
+  return JSON.parse(raw) as unknown;
 }
 
 export function loadDaemonConfigSync(baseDir: string): DaemonConfig {

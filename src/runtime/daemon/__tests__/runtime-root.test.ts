@@ -99,6 +99,18 @@ describe("resolveConfiguredDaemonRuntimeRoot", () => {
     expect(() => resolveConfiguredDaemonRuntimeRoot(unreadableDir)).toThrow(/EISDIR|illegal operation on a directory/);
   });
 
+  it("falls back before parsing oversized daemon config files", () => {
+    const oversizedDir = makeBaseDir();
+    fs.writeFileSync(path.join(oversizedDir, "daemon.json"), `{ "padding": "${"x".repeat(1024 * 1024)}" }`, "utf-8");
+    fs.writeFileSync(
+      path.join(oversizedDir, "daemon-config.json"),
+      JSON.stringify({ runtime_root: "legacy-runtime" }),
+      "utf-8"
+    );
+
+    expect(resolveConfiguredDaemonRuntimeRoot(oversizedDir)).toBe(path.join(oversizedDir, "legacy-runtime"));
+  });
+
   it("uses running daemon state from the control DB before daemon config", async () => {
     const baseDir = makeBaseDir();
     fs.writeFileSync(
