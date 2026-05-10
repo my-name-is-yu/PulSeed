@@ -12,6 +12,8 @@ import {
   StalenessOutcomeSchema,
 } from "../types/companion-state.js";
 
+const RuntimeControlSafePositiveIntSchema = z.number().finite().int().positive().safe();
+
 export const RuntimeControlOperationKindSchema = z.enum([
   "restart_daemon",
   "restart_gateway",
@@ -153,7 +155,7 @@ export const RuntimeControlOperationSchema = z.object({
   started_at: z.string().optional(),
   completed_at: z.string().optional(),
   approval_id: z.string().optional(),
-  ack_outbox_seq: z.number().int().positive().optional(),
+  ack_outbox_seq: RuntimeControlSafePositiveIntSchema.optional(),
   restart_marker_path: z.string().optional(),
   expected_health: z.object({
     daemon_ping: z.boolean(),
