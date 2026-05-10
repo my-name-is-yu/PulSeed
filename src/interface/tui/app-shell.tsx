@@ -2,7 +2,6 @@ import React from "react";
 import { Box, Text } from "ink";
 import { getPulseedVersion } from "../../base/utils/pulseed-meta.js";
 import { theme } from "./theme.js";
-import { statusLabel } from "./dashboard.js";
 import { SEEDY_PIXEL } from "./seedy-art.js";
 
 const PULSEED_VERSION = getPulseedVersion(import.meta.url);
@@ -14,7 +13,35 @@ export type DaemonConnectionState = "connected" | "connecting" | "disconnected";
 
 export function formatDaemonConnectionState(state: DaemonConnectionState | undefined): string | undefined {
   if (!state) return undefined;
-  return `  [daemon ${state}]`;
+  switch (state) {
+    case "connected":
+      return "  Background on";
+    case "connecting":
+      return "  Reconnecting";
+    case "disconnected":
+      return "  Background disconnected";
+  }
+}
+
+function formatHeaderReadiness(isDaemonMode: boolean, state: DaemonConnectionState | undefined): string {
+  if (!isDaemonMode) return "Ready for local work";
+  switch (state) {
+    case "connected":
+      return "Ready with background work";
+    case "disconnected":
+      return "Background work disconnected";
+    case "connecting":
+    default:
+      return "Reconnecting background work";
+  }
+}
+
+function formatDefaultWorkStatus(goalCount: number, status: string): string {
+  if (status === "error" || status === "stalled") return "Needs attention";
+  if (goalCount > 1) return `${goalCount} active goals`;
+  if (goalCount === 1) return status === "running" ? "Working on goal" : "Current goal ready";
+  if (status === "running") return "Working";
+  return "Ready; no active work";
 }
 
 export const AppHeader: React.FC<{
@@ -26,7 +53,6 @@ export const AppHeader: React.FC<{
   isDaemonMode,
   daemonConnectionState,
   providerName,
-  cwd,
 }) => (
   <Box flexDirection="row" paddingY={0}>
     <Box marginRight={2}>
@@ -38,23 +64,19 @@ export const AppHeader: React.FC<{
         <Text dimColor> v{PULSEED_VERSION}</Text>
       </Box>
       <Text dimColor>
-        daemon: {isDaemonMode ? daemonConnectionState ?? "connecting" : "off"}{providerName ? ` · ${providerName}` : ""}
+        {formatHeaderReadiness(isDaemonMode, daemonConnectionState)}
+        {providerName ? ` · ${providerName}` : ""}
       </Text>
-      {cwd && (
-        <Text dimColor>{cwd}</Text>
-      )}
     </Box>
   </Box>
 );
 
 export const StatusBar: React.FC<{
   goalCount: number;
-  trustScore: number;
   status: string;
-  iteration: number;
   daemonConnectionState?: DaemonConnectionState;
   currentGoalSummary?: string | null;
-}> = ({ goalCount, trustScore, status, iteration, daemonConnectionState, currentGoalSummary }) => (
+}> = ({ goalCount, status, daemonConnectionState, currentGoalSummary }) => (
   <Box
     borderStyle="single"
     borderColor={theme.border}
@@ -63,8 +85,7 @@ export const StatusBar: React.FC<{
   >
     <Box flexDirection="column" flexGrow={1}>
       <Text dimColor>
-        Active: {goalCount}  Trust: {trustScore >= 0 ? "+" : ""}
-        {trustScore}  Status: {statusLabel(status)}  Iter: {iteration}
+        {formatDefaultWorkStatus(goalCount, status)}
         {formatDaemonConnectionState(daemonConnectionState)}
       </Text>
       {currentGoalSummary && <Text dimColor>{currentGoalSummary}</Text>}

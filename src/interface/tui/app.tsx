@@ -928,9 +928,7 @@ export function App({
 
       <StatusBar
         goalCount={statusGoalCount}
-        trustScore={loopState.trustScore}
         status={loopState.status}
-        iteration={loopState.iteration}
         daemonConnectionState={daemonConnectionState}
         currentGoalSummary={statusBarCurrentGoal}
       />
