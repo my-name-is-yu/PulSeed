@@ -1,6 +1,7 @@
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { createHash } from "node:crypto";
+import type { Dirent } from "node:fs";
 import {
   openControlDatabase,
   type ControlDatabase,
@@ -17,7 +18,7 @@ import {
   SqliteAgentLoopTraceStore,
 } from "../../orchestrator/execution/agent-loop/agent-loop-session-db-store.js";
 import type { AgentLoopEvent } from "../../orchestrator/execution/agent-loop/agent-loop-events.js";
-import type { CrossPlatformChatSessionInfo } from "./cross-platform-session.js";
+import type { CrossPlatformChatSessionInfo } from "./cross-platform-session-types.js";
 
 const MIGRATION_NAME = "chat-agentloop-session-data-plane";
 const MIGRATION_VERSION = 5;
@@ -221,7 +222,7 @@ async function readDirectoryEntries(
   dir: string,
   report: ChatAgentLoopLegacyImportReport,
   sourceKind: string,
-): Promise<Array<import("node:fs").Dirent>> {
+): Promise<Dirent[]> {
   try {
     return await fsp.readdir(dir, { withFileTypes: true });
   } catch (error) {
@@ -236,7 +237,7 @@ async function readDirectoryEntries(
 }
 
 async function listJsonlFiles(dir: string): Promise<string[]> {
-  let entries: Array<import("node:fs").Dirent>;
+  let entries: Dirent[];
   try {
     entries = await fsp.readdir(dir, { withFileTypes: true });
   } catch (error) {

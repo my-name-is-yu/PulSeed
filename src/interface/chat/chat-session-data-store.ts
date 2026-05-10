@@ -8,7 +8,7 @@ import {
   ChatSessionSchema,
   type ChatSession,
 } from "./chat-history.js";
-import type { CrossPlatformChatSessionInfo } from "./cross-platform-session.js";
+import type { CrossPlatformChatSessionInfo } from "./cross-platform-session-types.js";
 
 interface ChatSessionRow {
   session_json: string;
