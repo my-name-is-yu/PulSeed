@@ -12,6 +12,7 @@ import { OutboxStore } from "../../../runtime/store/outbox-store.js";
 import type { ITool, ToolCallContext } from "../../types.js";
 import { toToolDefinition } from "../../tool-definition-adapter.js";
 import { RuntimeDreamReviewInputSchema } from "../runtime-dream-review-tool.js";
+import * as runtimeSessionSchemaModule from "../runtime-session-tool-schemas.js";
 import {
   createRuntimeSessionTools,
   RuntimeRunsObserveInputSchema,
@@ -105,6 +106,20 @@ describe("runtime session tools", () => {
     expect(tool).toBeDefined();
     const parameters = toToolDefinition(tool!).function.parameters as Record<string, unknown>;
     expect(parameters.additionalProperties).toBe(false);
+  });
+
+  it("keeps the legacy module exports aligned with the dedicated schema module", () => {
+    expect(RuntimeSessionsListInputSchema).toBe(runtimeSessionSchemaModule.RuntimeSessionsListInputSchema);
+    expect(RuntimeRunsObserveInputSchema).toBe(runtimeSessionSchemaModule.RuntimeRunsObserveInputSchema);
+    expect(RuntimeSessionsHistoryInputSchema).toBe(runtimeSessionSchemaModule.RuntimeSessionsHistoryInputSchema);
+    expect(RuntimeSessionsReadInputSchema).toBe(runtimeSessionSchemaModule.RuntimeSessionsReadInputSchema);
+    expect(RuntimeSessionsChildrenInputSchema).toBe(runtimeSessionSchemaModule.RuntimeSessionsChildrenInputSchema);
+    expect(RuntimeSessionsSpawnInputSchema).toBe(runtimeSessionSchemaModule.RuntimeSessionsSpawnInputSchema);
+    expect(RuntimeSessionsSendInputSchema).toBe(runtimeSessionSchemaModule.RuntimeSessionsSendInputSchema);
+    expect(RuntimeSessionsUpdateInputSchema).toBe(runtimeSessionSchemaModule.RuntimeSessionsUpdateInputSchema);
+    expect(RuntimeSessionsClaimInputSchema).toBe(runtimeSessionSchemaModule.RuntimeSessionsClaimInputSchema);
+    expect(RuntimeSessionsCancelInputSchema).toBe(runtimeSessionSchemaModule.RuntimeSessionsCancelInputSchema);
+    expect(RuntimeSessionsRetryInputSchema).toBe(runtimeSessionSchemaModule.RuntimeSessionsRetryInputSchema);
   });
 
   it("spawns a child conversation session and scopes tree listing to spawned descendants", async () => {
