@@ -85,6 +85,11 @@ function toolParametersFromSchema(jsonSchema: unknown): Record<string, unknown> 
 
   const parameters = { ...normalizedSchema };
   parameters.type = parameters.type ?? "object";
+  const unionObjectProperties = collectUnionObjectProperties(parameters);
+  if (parameters.properties === undefined && unionObjectProperties !== null) {
+    parameters.properties = unionObjectProperties;
+    parameters.additionalProperties = parameters.additionalProperties ?? false;
+  }
 
   if (
     parameters.properties === undefined &&
@@ -97,6 +102,33 @@ function toolParametersFromSchema(jsonSchema: unknown): Record<string, unknown> 
   }
 
   return parameters;
+}
+
+function collectUnionObjectProperties(schema: JsonObject): JsonObject | null {
+  const branches = Array.isArray(schema.anyOf)
+    ? schema.anyOf
+    : Array.isArray(schema.oneOf)
+      ? schema.oneOf
+      : null;
+  if (!branches || branches.length === 0) return null;
+
+  const merged: JsonObject = {};
+  for (const branch of branches) {
+    if (!isJsonObject(branch) || branch.type !== "object" || !isJsonObject(branch.properties)) {
+      return null;
+    }
+
+    for (const [key, value] of Object.entries(branch.properties)) {
+      const existing = merged[key];
+      if (existing === undefined || JSON.stringify(existing) === JSON.stringify(value)) {
+        merged[key] = value;
+      } else {
+        merged[key] = {};
+      }
+    }
+  }
+
+  return merged;
 }
 
 /**
