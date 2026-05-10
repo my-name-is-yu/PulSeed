@@ -17,7 +17,7 @@ Base: origin/main @ 7d87d012 Prefer live daemon status in runtime evidence answe
 | 1 | Direct File Owner Inventory And Guard Expansion | codex/direct-file-state-slice-1-inventory-guard-20260510213328 | /Users/yuyoshimuta/Documents/dev/PulSeed-worktrees/direct-file-state-slice-1-inventory-guard-20260510213328 | https://github.com/my-name-is-yu/PulSeed/pull/1837 | merged |
 | 2 | RunSpec Store | codex/direct-file-state-slice-2-run-spec-store-20260510220128 | /Users/yuyoshimuta/Documents/dev/PulSeed-worktrees/direct-file-state-slice-2-run-spec-store-20260510220128 | https://github.com/my-name-is-yu/PulSeed/pull/1843 | merged |
 | 3 | DriveSystem Schedule State | codex/direct-file-state-slice-3-drive-schedule-20260510225201 | /Users/yuyoshimuta/Documents/dev/PulSeed-worktrees/direct-file-state-slice-3-drive-schedule-20260510225201 | https://github.com/my-name-is-yu/PulSeed/pull/1853 | merged |
-| 4 | DriveSystem Event Queue / Runtime Event Spool | codex/direct-file-state-slice-4-event-spool-20260510232220 | /Users/yuyoshimuta/Documents/dev/PulSeed-worktrees/direct-file-state-slice-4-event-spool-20260510232220 | pending | in progress |
+| 4 | DriveSystem Event Queue / Runtime Event Spool | codex/direct-file-state-slice-4-event-spool-20260510232220 | /Users/yuyoshimuta/Documents/dev/PulSeed-worktrees/direct-file-state-slice-4-event-spool-20260510232220 | https://github.com/my-name-is-yu/PulSeed/pull/1858 | PR open |
 
 ## Slice 1 Direct File Owner Inventory
 
@@ -132,6 +132,16 @@ Base: origin/main @ 7d87d012 Prefer live daemon status in runtime evidence answe
 - `npm run typecheck`: passed.
 - `npm run lint:boundaries`: passed with existing warnings, 0 errors.
 - `git diff --check`: passed.
+
+## Slice 4 PR Record
+
+- PR: https://github.com/my-name-is-yu/PulSeed/pull/1858
+- Branch: `codex/direct-file-state-slice-4-event-spool-20260510232220`
+- Head commit at PR creation: `5c3f0ea4`
+- CI: pending
+- GitHub Codex review: pending
+- `@codex review`: not yet needed
+- Fallback sub-agent review: not used
 
 ## Merge Policy
 
