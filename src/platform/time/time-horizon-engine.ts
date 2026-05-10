@@ -7,7 +7,10 @@ import type {
   TimeBudgetWithWait,
   TimeHorizonConfig,
 } from "../../base/types/time-horizon.js";
-import { TimeHorizonConfigSchema } from "../../base/types/time-horizon.js";
+import {
+  MAX_PACING_RATIO,
+  TimeHorizonConfigSchema,
+} from "../../base/types/time-horizon.js";
 
 const EPSILON = 1e-9;
 
@@ -148,9 +151,9 @@ export class TimeHorizonEngine implements ITimeHorizonEngine {
 
     const timeRemainingHours = hoursFromNow(deadline);
     const requiredVelocity =
-      timeRemainingHours > 0 ? currentGap / timeRemainingHours : Infinity;
+      timeRemainingHours > 0 ? currentGap / timeRemainingHours : Number.POSITIVE_INFINITY;
     const effectiveVelocity = Math.max(velocityPerHour, EPSILON);
-    const pacingRatio = requiredVelocity / effectiveVelocity;
+    const pacingRatio = clampPacingRatio(requiredVelocity / effectiveVelocity);
 
     const status = this.classifyStatus(pacingRatio);
     const recommendation = deriveRecommendation(status, confidence, false);
@@ -305,4 +308,9 @@ export class TimeHorizonEngine implements ITimeHorizonEngine {
     if (historicalEma <= 0) return true; // no positive historical velocity is itself a decline
     return recentEma < historicalEma * (1 - sustainable_pace_decline_threshold);
   }
+}
+
+function clampPacingRatio(value: number): number {
+  if (!Number.isFinite(value)) return MAX_PACING_RATIO;
+  return Math.min(Math.max(value, 0), MAX_PACING_RATIO);
 }

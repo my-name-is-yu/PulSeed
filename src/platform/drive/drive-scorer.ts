@@ -6,7 +6,7 @@ import type {
   DriveConfig,
   DriveContext,
 } from "../../base/types/drive.js";
-import { DriveConfigSchema } from "../../base/types/drive.js";
+import { DriveConfigSchema, MAX_DRIVE_PACING_RATIO } from "../../base/types/drive.js";
 import type { GapVector } from "../../base/types/gap.js";
 
 /**
@@ -138,8 +138,9 @@ function scoreDeadlineWithConfig(
     );
   }
 
-  const pacingBonus = pacingRatio != null
-    ? Math.max(0, pacingRatio - 1.0) * cfg.pacing_urgency_weight
+  const boundedPacingRatio = normalizePacingRatio(pacingRatio);
+  const pacingBonus = boundedPacingRatio != null
+    ? Math.max(0, boundedPacingRatio - 1.0) * cfg.pacing_urgency_weight
     : 0;
   const score = normalizedWeightedGap * (urgency + pacingBonus);
 
@@ -149,6 +150,16 @@ function scoreDeadlineWithConfig(
     urgency,
     score,
   };
+}
+
+function normalizePacingRatio(pacingRatio: number | null | undefined): number | null {
+  if (pacingRatio == null || Number.isNaN(pacingRatio)) {
+    return null;
+  }
+  if (!Number.isFinite(pacingRatio)) {
+    return pacingRatio > 0 ? MAX_DRIVE_PACING_RATIO : 0;
+  }
+  return Math.min(Math.max(pacingRatio, 0), MAX_DRIVE_PACING_RATIO);
 }
 
 // ─── Opportunity Drive ───
