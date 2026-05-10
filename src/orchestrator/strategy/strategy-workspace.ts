@@ -7,7 +7,7 @@
 
 import type { ToolExecutor } from "../../tools/executor.js";
 import type { ToolCallContext } from "../../tools/types.js";
-import { z } from "zod";
+import { createEmptyPackageMetadata, parsePackageMetadata } from "../../base/utils/package-metadata.js";
 
 // --- WorkspaceContext ---
 
@@ -24,42 +24,6 @@ export interface WorkspaceContext {
   dependencies: string[];
   /** Test file structure */
   testFiles: string[];
-}
-
-const PackageStringRecordSchema = z.record(z.string(), z.string());
-const PackageManifestShapeSchema = z.object({
-  scripts: z.unknown().optional(),
-  dependencies: z.unknown().optional(),
-}).passthrough();
-
-interface WorkspacePackageMetadata {
-  scripts: Record<string, string>;
-  dependencies: Record<string, string>;
-}
-
-function emptyPackageMetadata(): WorkspacePackageMetadata {
-  return { scripts: {}, dependencies: {} };
-}
-
-function parseWorkspacePackageMetadata(value: string): WorkspacePackageMetadata {
-  let decoded: unknown;
-  try {
-    decoded = JSON.parse(value) as unknown;
-  } catch {
-    return emptyPackageMetadata();
-  }
-
-  const manifest = PackageManifestShapeSchema.safeParse(decoded);
-  if (!manifest.success) {
-    return emptyPackageMetadata();
-  }
-
-  const scripts = PackageStringRecordSchema.safeParse(manifest.data.scripts);
-  const dependencies = PackageStringRecordSchema.safeParse(manifest.data.dependencies);
-  return {
-    scripts: scripts.success ? scripts.data : {},
-    dependencies: dependencies.success ? dependencies.data : {},
-  };
 }
 
 /**
@@ -84,8 +48,8 @@ export async function buildWorkspaceContext(
     );
 
   const packageMetadata = pkgRead.success && typeof pkgRead.data === "string"
-    ? parseWorkspacePackageMetadata(pkgRead.data)
-    : emptyPackageMetadata();
+    ? parsePackageMetadata(pkgRead.data) ?? createEmptyPackageMetadata()
+    : createEmptyPackageMetadata();
 
   const gitStdout =
     gitLog.success &&

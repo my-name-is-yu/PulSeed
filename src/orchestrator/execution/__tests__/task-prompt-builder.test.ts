@@ -335,6 +335,39 @@ describe("buildTaskGenerationPrompt — referenced issue section", () => {
     }
   });
 
+  it("does not inject non-string package metadata into repository context", async () => {
+    const goal = makeGoal({ id: "g-invalid-package", title: "Improve workspace" });
+    const sm = makeMockStateManager({ "g-invalid-package": goal });
+    const repoRoot = path.join("/tmp", "invalid-package-repo");
+    mockReadFile.mockImplementation(async (filePath: unknown) => {
+      if (filePath === path.join(repoRoot, "package.json")) {
+        return JSON.stringify({
+          name: ["not-a-name"],
+          description: { text: "not a description" },
+        });
+      }
+      throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+    });
+
+    const prompt = await buildTaskGenerationPrompt(
+      sm,
+      "g-invalid-package",
+      "coverage",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { repoRoot },
+    );
+
+    expect(prompt).not.toContain("Project name:");
+    expect(prompt).not.toContain("not-a-name");
+    expect(prompt).not.toContain("not a description");
+  });
+
   it("includes issue content in prompt when fetchIssueContext returns content", async () => {
     const issueContent = "## Referenced Issue #42\nTitle: Fix the regression\nSome body text here.";
     mockFetchIssueContext.mockResolvedValue(issueContent);

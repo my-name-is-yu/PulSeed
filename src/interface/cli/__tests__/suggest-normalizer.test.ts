@@ -40,6 +40,26 @@ describe("normalizeSuggestPayload fast-path", () => {
     }
   });
 
+  it("does not emit bogus script names from invalid package metadata", async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-suggest-invalid-package-"));
+    try {
+      fs.writeFileSync(
+        path.join(tmpDir, "package.json"),
+        JSON.stringify({
+          name: "valid-name",
+          scripts: ["test"],
+        }),
+      );
+
+      const context = await gatherProjectContext(tmpDir);
+
+      expect(context).toContain("Node.js project 'valid-name'");
+      expect(context).not.toContain("Scripts: 0");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it("detects repository suggestion surface from exact filesystem entries", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-suggest-surface-"));
     try {

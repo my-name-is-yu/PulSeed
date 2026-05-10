@@ -9,6 +9,7 @@ import {
   extractWorkspacePathConstraint,
   resolveWorkspacePath,
 } from "../../../base/utils/workspace-path.js";
+import { parsePackageMetadata } from "../../../base/utils/package-metadata.js";
 import type { Goal } from "../../goal/types/goal.js";
 
 interface RepositoryPromptContext {
@@ -61,14 +62,11 @@ async function getRepositoryPromptContext(repoRoot: string): Promise<RepositoryP
 
     try {
       const content = await readFile(pkgPath, "utf-8");
-      const pkg = JSON.parse(content) as {
-        name?: string;
-        description?: string;
-      };
+      const pkg = parsePackageMetadata(content);
 
       return {
-        projectName: pkg.name ?? "",
-        projectDescription: pkg.description ?? "",
+        projectName: pkg?.name ?? "",
+        projectDescription: pkg?.description ?? "",
       };
     } catch {
       // silently ignore — repo context is best-effort

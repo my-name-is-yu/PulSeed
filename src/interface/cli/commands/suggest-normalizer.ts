@@ -9,6 +9,10 @@ import type { GoalSuggestion } from "../../../orchestrator/goal/goal-negotiator.
 import type { GoalSuggestionSurface } from "../../../orchestrator/goal/goal-suggest.js";
 import type { CapabilityDetector } from "../../../platform/observation/capability-detector.js";
 import { readTextFileWithinLimitSync } from "../../../base/utils/json-io.js";
+import {
+  formatNodePackageMetadataContext,
+  parsePackageMetadata,
+} from "../../../base/utils/package-metadata.js";
 import { buildTodoLikeMarkerInventory, formatTodoLikeMarkerInventory } from "./goal-utils.js";
 
 const PROJECT_CONTEXT_PACKAGE_JSON_MAX_BYTES = 512 * 1024;
@@ -526,16 +530,10 @@ export async function gatherProjectContext(targetPath: string): Promise<string> 
     const pkgRaw = readTextFileWithinLimitSync(pkgPath, {
       maxBytes: PROJECT_CONTEXT_PACKAGE_JSON_MAX_BYTES,
     });
-    const pkg = JSON.parse(pkgRaw) as Record<string, unknown>;
-    const name = typeof pkg.name === "string" ? pkg.name : "";
-    const description = typeof pkg.description === "string" ? pkg.description : "";
-    const scripts = pkg.scripts && typeof pkg.scripts === "object"
-      ? Object.keys(pkg.scripts as Record<string, unknown>).join(", ")
-      : "";
-    const prefix = name ? `Node.js project '${name}'` : "Node.js project";
-    const descPart = description ? `. ${description}` : "";
-    const scriptsPart = scripts ? `. Scripts: ${scripts}` : "";
-    parts.push(`${prefix}${descPart}${scriptsPart}`);
+    const pkg = parsePackageMetadata(pkgRaw);
+    if (pkg) {
+      parts.push(formatNodePackageMetadataContext(pkg));
+    }
   } catch {
     // no package.json or parse error — skip
   }

@@ -1,6 +1,7 @@
 import { existsSync, realpathSync, readFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { parsePackageMetadata } from "../../../base/utils/package-metadata.js";
 
 export type PulSeedExecutionProfile = "consumer" | "dev";
 
@@ -52,8 +53,7 @@ function isPulSeedPackageRoot(root: string): boolean {
   const packageJsonPath = join(root, "package.json");
   if (!existsSync(packageJsonPath)) return false;
   try {
-    const parsed = JSON.parse(readFileSync(packageJsonPath, "utf-8")) as { name?: unknown };
-    return parsed.name === "pulseed";
+    return parsePackageMetadata(readFileSync(packageJsonPath, "utf-8"))?.name === "pulseed";
   } catch {
     return false;
   }
