@@ -55,6 +55,7 @@ import {
   formatPercent,
   formatRelativeTimestamp,
 } from "./display-format.js";
+import { importLegacyRunSpecState } from "../../../runtime/run-spec/index.js";
 
 // ─── Types ───
 
@@ -740,6 +741,7 @@ export async function cmdDoctor(_args: string[]): Promise<number> {
     });
     const chatAgentLoopImportReport = await importLegacyChatAgentLoopSessionState(baseDir);
     const executionSessionImportReport = await importLegacyExecutionSessionState(baseDir);
+    const runSpecImportReport = await importLegacyRunSpecState(baseDir);
     const goalTaskImportReport = await importLegacyGoalTaskDurableLoopState(baseDir);
     const goalOrchestrationImportReport = await importLegacyGoalOrchestrationState(baseDir);
     const stallStateImportReport = await importLegacyStallState(baseDir);
@@ -786,6 +788,9 @@ export async function cmdDoctor(_args: string[]): Promise<number> {
     );
     console.log(
       `Repair execution session import: legacy session files=${executionSessionImportReport.legacySessionFiles}, imported=${executionSessionImportReport.importedSessions}, legacy index files=${executionSessionImportReport.legacyIndexFiles}, stale index entries=${executionSessionImportReport.staleIndexEntries}, blocked=${executionSessionImportReport.blockedSources.length}`
+    );
+    console.log(
+      `Repair RunSpec import: files=${runSpecImportReport.runSpecFiles}, imported=${runSpecImportReport.importedRunSpecs}, skipped already imported=${runSpecImportReport.skippedAlreadyImported}, blocked=${runSpecImportReport.blockedSources.length}`
     );
     console.log(
       `Repair goal/task import: goals=${goalTaskImportReport.goals}, legacy WAL files=${goalTaskImportReport.legacyWalFiles}, legacy WAL intents=${goalTaskImportReport.legacyWalIntents}, tasks=${goalTaskImportReport.tasks}, histories=${goalTaskImportReport.taskHistoryRecords}, ledgers=${goalTaskImportReport.taskOutcomeLedgers}, verification=${goalTaskImportReport.verificationResults}, checkpoints=${goalTaskImportReport.checkpoints}, pipelines=${goalTaskImportReport.pipelines}, blocked=${goalTaskImportReport.blockedSources.length}`

@@ -50,6 +50,7 @@ const ALLOWLIST_RULES_BY_ID = new Map(Object.entries({
   "legacy-capability-registry-input": ["capability-registry-json-state"],
   "relationship-profile-user-content": ["profile-json-state"],
   "character-config-user-content": ["state-manager-raw-call", "profile-json-state"],
+  "run-spec-legacy-import-input": ["run-spec-json-state"],
   "drive-system-schedule-state": ["drive-schedule-json-state"],
   "drive-system-event-spool": ["drive-event-spool-json"],
   "daemon-drive-event-spool-callers": ["drive-event-spool-json"],
@@ -562,6 +563,13 @@ const PATH_ALLOWLIST = [
     category: CATEGORY.CONFIG_SECRET,
     reason: "character config is explicit user-editable configuration",
     owner: "character configuration",
+  }),
+  allow({
+    id: "run-spec-legacy-import-input",
+    pattern: /(^|\/)src\/runtime\/run-spec\/run-spec-state-migration\.ts$/,
+    category: CATEGORY.MIGRATION_ONLY_INPUT,
+    reason: "legacy run-specs JSON is read only through explicit doctor/repair import",
+    owner: "RunSpecStore typed control DB table",
   }),
   allow({
     id: "drive-system-schedule-state",

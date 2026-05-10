@@ -124,7 +124,7 @@ Current direct filesystem owner inventory:
 
 | Owner | Surface | Boundary | Category | Follow-up |
 | --- | --- | --- | --- | --- |
-| RunSpec durable draft/confirmation/start state | `src/runtime/run-spec/store.ts` | `run_spec_records` in `state/pulseed-control.sqlite`; legacy `run-specs/<id>.json` is not read by normal runtime | typed control DB state | closed in Slice 2 |
+| RunSpec durable draft/confirmation/start state | `src/runtime/run-spec/store.ts` | `run_spec_records` in `state/pulseed-control.sqlite`; legacy `run-specs/<id>.json` is doctor/repair import input only | typed control DB state | closed in Slice 2 |
 | DriveSystem goal activation schedule | `src/platform/drive/drive-system.ts` | `schedule/<goalId>.json` | typed-store migrate now | Slice 3 |
 | DriveSystem runtime event ingestion spool | `src/platform/drive/drive-system.ts`, `src/runtime/event/*`, daemon `writeEvent` callers | `events/*.json`, `events/archive/*.json` | bounded IPC/spool | Slice 4 |
 | Successful strategy template reuse | `src/orchestrator/strategy/strategy-template-registry.ts` | `strategy-templates.json` | typed-store migrate now | Slice 5 |

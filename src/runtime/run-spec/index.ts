@@ -1,5 +1,7 @@
 export { deriveRunSpecFromText, understandRunSpecDraft, type RunSpecIntent } from "./derive.js";
 export { createRunSpecStore, RunSpecStore } from "./store.js";
+export { importLegacyRunSpecState } from "./run-spec-state-migration.js";
+export type { RunSpecLegacyImportReport } from "./run-spec-state-migration.js";
 export {
   applyRunSpecRevision,
   formatRunSpecSetupProposal,

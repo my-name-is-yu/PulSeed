@@ -4,6 +4,7 @@ import * as path from "node:path";
 import { describe, expect, it } from "vitest";
 import { deriveRunSpecFromText, understandRunSpecDraft } from "../derive.js";
 import { createRunSpecStore } from "../store.js";
+import { importLegacyRunSpecState } from "../run-spec-state-migration.js";
 import { RunSpecHandoffService } from "../handoff.js";
 import {
   formatRunSpecSetupProposal,
@@ -375,6 +376,64 @@ describe("RunSpecStore", () => {
     await expect(store.load(malformedId)).resolves.toBeNull();
     await expect(store.load(staleId)).resolves.toBeNull();
     await expect(store.list()).resolves.toEqual([]);
+  });
+
+  it("imports valid legacy RunSpec JSON only through the explicit repair boundary", async () => {
+    const baseDir = await fsp.mkdtemp(path.join(os.tmpdir(), "pulseed-runspec-"));
+    const validSpec = await deriveRunSpecFromText("Run Kaggle until tomorrow morning and aim for top 15%.", {
+      cwd: "/repo/kaggle",
+      now: NOW,
+      conversationId: "telegram-chat-1",
+      sessionId: "local-session-1",
+      llmClient: llmDraft(),
+    });
+    expect(validSpec).not.toBeNull();
+    const dir = path.join(baseDir, "run-specs");
+    await fsp.mkdir(dir, { recursive: true });
+    await fsp.writeFile(path.join(dir, `${validSpec!.id}.json`), JSON.stringify(validSpec), "utf8");
+    await fsp.writeFile(path.join(dir, "broken.json"), "{bad", "utf8");
+
+    const store = createRunSpecStore({ getBaseDir: () => baseDir });
+    await expect(store.load(validSpec!.id)).resolves.toBeNull();
+
+    const report = await importLegacyRunSpecState(baseDir);
+
+    expect(report).toMatchObject({
+      runSpecFiles: 2,
+      importedRunSpecs: 1,
+      skippedAlreadyImported: 0,
+      blockedSources: [expect.objectContaining({ sourcePath: "run-specs/broken.json" })],
+    });
+    await expect(store.load(validSpec!.id)).resolves.toMatchObject({
+      id: validSpec!.id,
+      links: { conversation_id: "telegram-chat-1" },
+      origin: { session_id: "local-session-1" },
+    });
+    await expect(importLegacyRunSpecState(baseDir)).resolves.toMatchObject({
+      runSpecFiles: 2,
+      importedRunSpecs: 0,
+      skippedAlreadyImported: 1,
+      blockedSources: [expect.objectContaining({ sourcePath: "run-specs/broken.json" })],
+    });
+    const db = await openControlDatabase({ baseDir });
+    try {
+      expect(db.listLegacyImports()).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          source_kind: "run_spec",
+          source_id: validSpec!.id,
+          migration_name: "run-spec-runtime-state",
+          status: "imported",
+        }),
+        expect.objectContaining({
+          source_kind: "run_spec",
+          source_id: "broken.json",
+          migration_name: "run-spec-runtime-state",
+          status: "blocked",
+        }),
+      ]));
+    } finally {
+      db.close();
+    }
   });
 
   it("still surfaces unexpected RunSpec control DB failures", async () => {
