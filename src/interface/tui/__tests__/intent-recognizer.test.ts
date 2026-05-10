@@ -37,14 +37,32 @@ describe("IntentRecognizer — exact command grammar", () => {
     expect(result.intent).toBe("status");
   });
 
+  it("recognizes status diagnostics as an explicit details command", async () => {
+    const result = await recognizer.recognize("/status --details");
+    expect(result.intent).toBe("status");
+    expect(result.params).toEqual({ detail: "diagnostic" });
+  });
+
   it("recognizes report: '/report'", async () => {
     const result = await recognizer.recognize("/report");
     expect(result.intent).toBe("report");
   });
 
+  it("recognizes report diagnostics as an explicit details command", async () => {
+    const result = await recognizer.recognize("/report --details");
+    expect(result.intent).toBe("report");
+    expect(result.params).toEqual({ detail: "diagnostic" });
+  });
+
   it("recognizes goal_list: '/goals'", async () => {
     const result = await recognizer.recognize("/goals");
     expect(result.intent).toBe("goal_list");
+  });
+
+  it("recognizes goal diagnostics as an explicit details command", async () => {
+    const result = await recognizer.recognize("/goals --details");
+    expect(result.intent).toBe("goal_list");
+    expect(result.params).toEqual({ detail: "diagnostic" });
   });
 
   it("recognizes help: '/help'", async () => {

@@ -1,8 +1,7 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { ActionHandler } from "../actions.js";
 import type { ActionDeps } from "../actions.js";
 import type { RecognizedIntent } from "../intent-recognizer.js";
-import type { Goal } from "../../../base/types/goal.js";
 import { makeGoal } from "../../../../tests/helpers/fixtures.js";
 
 function makeReport() {
@@ -273,7 +272,7 @@ describe("ActionHandler — handle()", () => {
       expect(result.messages.join("\n")).toMatch(/ゴール|goal/i);
     });
 
-    it("shows goal title and dimension info", async () => {
+    it("shows natural current-goal summary without diagnostic internals by default", async () => {
       const goal = makeGoal({ dimensions: [{ name: "coverage", label: "Coverage", current_value: 0.5, threshold: { type: "min", value: 0.8 }, confidence: 0.9, observation_method: { type: "mechanical", source: "test", schedule: null, endpoint: null, confidence_tier: "mechanical" }, last_updated: new Date().toISOString(), history: [], weight: 1.0, uncertainty_weight: null, state_integrity: "ok", dimension_mapping: null }] });
       const deps = makeDeps();
       vi.mocked(deps.stateManager.listGoalIds).mockResolvedValue(["goal-1"]);
@@ -283,7 +282,26 @@ describe("ActionHandler — handle()", () => {
       const result = await handler.handle({ intent: "status", raw: "status" });
       const text = result.messages.join("\n");
       expect(text).toContain("Test Goal");
+      expect(text).toContain("Current goal");
+      expect(text).not.toContain("Status:");
+      expect(text).not.toContain("confidence");
+      expect(text).not.toContain("90%");
+      expect(text).not.toContain("Coverage");
+    });
+
+    it("keeps exact status diagnostics behind an explicit details command", async () => {
+      const goal = makeGoal({ dimensions: [{ name: "coverage", label: "Coverage", current_value: 0.5, threshold: { type: "min", value: 0.8 }, confidence: 0.9, observation_method: { type: "mechanical", source: "test", schedule: null, endpoint: null, confidence_tier: "mechanical" }, last_updated: new Date().toISOString(), history: [], weight: 1.0, uncertainty_weight: null, state_integrity: "ok", dimension_mapping: null }] });
+      const deps = makeDeps();
+      vi.mocked(deps.stateManager.listGoalIds).mockResolvedValue(["goal-1"]);
+      vi.mocked(deps.stateManager.loadGoal).mockResolvedValue(goal);
+
+      const handler = new ActionHandler(deps);
+      const result = await handler.handle({ intent: "status", params: { detail: "diagnostic" }, raw: "/status --details" });
+      const text = result.messages.join("\n");
+      expect(text).toContain("Goal ID: goal-1");
+      expect(text).toContain("Status:");
       expect(text).toContain("Coverage");
+      expect(text).toContain("confidence: 90%");
     });
   });
 
@@ -294,7 +312,7 @@ describe("ActionHandler — handle()", () => {
       expect(result.messages.join("\n")).toMatch(/ゴール|goal/i);
     });
 
-    it("lists all goals with status and title", async () => {
+    it("lists all goals as numbered choices without exact IDs by default", async () => {
       const goal = makeGoal();
       const deps = makeDeps();
       vi.mocked(deps.stateManager.listGoalIds).mockResolvedValue(["goal-1"]);
@@ -303,8 +321,26 @@ describe("ActionHandler — handle()", () => {
       const handler = new ActionHandler(deps);
       const result = await handler.handle({ intent: "goal_list", raw: "goals" });
       const text = result.messages.join("\n");
-      expect(text).toContain("active");
+      expect(text).toContain("1. Test Goal");
+      expect(text).toContain("In progress");
       expect(text).toContain("Test Goal");
+      expect(text).not.toContain("[active]");
+      expect(text).not.toContain("ID:");
+      expect(text).not.toContain("goal-1");
+    });
+
+    it("shows exact goal IDs only for explicit goal diagnostics", async () => {
+      const goal = makeGoal();
+      const deps = makeDeps();
+      vi.mocked(deps.stateManager.listGoalIds).mockResolvedValue(["goal-1"]);
+      vi.mocked(deps.stateManager.loadGoal).mockResolvedValue(goal);
+
+      const handler = new ActionHandler(deps);
+      const result = await handler.handle({ intent: "goal_list", params: { detail: "diagnostic" }, raw: "/goals --details" });
+      const text = result.messages.join("\n");
+      expect(text).toContain("Goal diagnostics:");
+      expect(text).toContain("ID: goal-1");
+      expect(text).toContain("Status: active");
     });
   });
 
@@ -338,6 +374,39 @@ describe("ActionHandler — handle()", () => {
       const result = await handler.handle({ intent: "report", raw: "report" });
       expect(result.showReport).toBeDefined();
       expect(result.showReport?.title).toContain("Daily Summary");
+      expect(result.showReportDetail).toBe("default");
+    });
+
+    it("keeps report identifiers behind explicit diagnostic detail", async () => {
+      const goal = makeGoal();
+      const deps = makeDeps();
+      vi.mocked(deps.stateManager.listGoalIds).mockResolvedValue(["goal-1"]);
+      vi.mocked(deps.stateManager.loadGoal).mockResolvedValue(goal);
+
+      const handler = new ActionHandler(deps);
+      const result = await handler.handle({
+        intent: "report",
+        raw: "/report --details",
+        params: { detail: "diagnostic" },
+      });
+
+      expect(result.showReport).toBeDefined();
+      expect(result.showReportDetail).toBe("diagnostic");
+    });
+
+    it("does not expose the raw goal id in default report failure copy", async () => {
+      const goal = makeGoal();
+      const deps = makeDeps();
+      vi.mocked(deps.stateManager.listGoalIds).mockResolvedValue(["goal-1"]);
+      vi.mocked(deps.stateManager.loadGoal).mockResolvedValue(goal);
+      vi.mocked(deps.reportingEngine.generateDailySummary).mockRejectedValue(new Error("disk full"));
+
+      const handler = new ActionHandler(deps);
+      const result = await handler.handle({ intent: "report", raw: "report" });
+      const text = result.messages.join("\n");
+      expect(text).toContain('Failed to generate the report for "Test Goal"');
+      expect(text).toContain("disk full");
+      expect(text).not.toContain("goal-1");
     });
   });
 
@@ -398,7 +467,7 @@ describe("ActionHandler — handle()", () => {
       expect(deps.goalNegotiator.negotiate).toHaveBeenCalledWith("テスト書いて");
     });
 
-    it("returns created goal info in messages", async () => {
+    it("returns natural created-goal confirmation without raw diagnostics", async () => {
       const goal = makeGoal();
       const deps = makeDeps();
       vi.mocked(deps.goalNegotiator.negotiate).mockResolvedValue({
@@ -419,8 +488,12 @@ describe("ActionHandler — handle()", () => {
         raw: "テストゴール",
       });
       const text = result.messages.join("\n");
-      expect(text).toContain("goal-1");
-      expect(text).toContain("accept");
+      expect(text).toContain("Goal created: Test Goal");
+      expect(text).toContain("Ready to plan the next safe step");
+      expect(text).not.toContain("goal-1");
+      expect(text).not.toContain("Dimensions:");
+      expect(text).not.toContain("Evaluation:");
+      expect(text).not.toContain("Evaluation: accept");
     });
 
     it("returns error message when negotiate throws", async () => {

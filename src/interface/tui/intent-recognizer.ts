@@ -36,11 +36,64 @@ const COMMAND_DEFINITIONS: readonly ExactSlashCommandDefinition<IntentType>[] = 
   { command: "help", aliases: ["/?", "/help"] },
   { command: "loop_stop", aliases: ["/stop", "/quit", "/exit"] },
   { command: "loop_start", aliases: ["/run", "/start"], allowArguments: true },
-  { command: "status", aliases: ["/status"] },
-  { command: "report", aliases: ["/report"] },
-  { command: "goal_list", aliases: ["/goals", "/goal", "/goals list", "/goal list"] },
+  {
+    command: "status",
+    aliases: [
+      "/status",
+      "/status details",
+      "/status --details",
+      "/status diagnostic",
+      "/status --diagnostic",
+    ],
+  },
+  {
+    command: "report",
+    aliases: [
+      "/report",
+      "/report details",
+      "/report --details",
+      "/report diagnostic",
+      "/report --diagnostic",
+    ],
+  },
+  {
+    command: "goal_list",
+    aliases: [
+      "/goals",
+      "/goal",
+      "/goals list",
+      "/goal list",
+      "/goals details",
+      "/goals --details",
+      "/goal details",
+      "/goal --details",
+      "/goals diagnostic",
+      "/goals --diagnostic",
+      "/goal diagnostic",
+      "/goal --diagnostic",
+    ],
+  },
   { command: "dashboard", aliases: ["/dashboard", "/d"] },
 ];
+
+const DIAGNOSTIC_DETAIL_ALIASES = new Set([
+  "/status details",
+  "/status --details",
+  "/status diagnostic",
+  "/status --diagnostic",
+  "/report details",
+  "/report --details",
+  "/report diagnostic",
+  "/report --diagnostic",
+  "/goals details",
+  "/goals --details",
+  "/goal details",
+  "/goal --details",
+  "/goals diagnostic",
+  "/goals --diagnostic",
+  "/goal diagnostic",
+  "/goal --diagnostic",
+]);
 
 // ─── LLM response schema ───
 
@@ -116,8 +169,13 @@ export class IntentRecognizer {
       };
     }
 
+    const params = DIAGNOSTIC_DETAIL_ALIASES.has(parsed.alias)
+      ? { detail: "diagnostic" }
+      : undefined;
+
     return {
       intent: parsed.command,
+      params,
       raw: input,
       source: "command",
       confidence: 1,

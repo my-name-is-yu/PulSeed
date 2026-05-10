@@ -7,6 +7,7 @@ import type { Goal } from "../../base/types/goal.js";
 import {
   formatCurrentGoalChoiceList,
   formatCurrentGoalSummary,
+  formatPlainGoalState,
   isCurrentGoalCandidate,
 } from "../current-goal-summary.js";
 
@@ -25,6 +26,7 @@ export interface ActionResult {
   stopLoop?: boolean; // signal to stop the loop
   showHelp?: boolean; // signal to open the help overlay
   showReport?: Report; // signal to open the report overlay
+  showReportDetail?: "default" | "diagnostic"; // controls whether report overlays may expose raw identifiers
   toggleDashboard?: "toggle"; // signal to toggle the dashboard overlay
 }
 
@@ -34,6 +36,10 @@ export interface RunnableGoalOption {
 }
 
 const START_INDEX_TOKEN = /^[1-9][0-9]*$/;
+
+function wantsDiagnosticDetail(intent: RecognizedIntent): boolean {
+  return intent.params?.["detail"] === "diagnostic";
+}
 
 function parseStartGoalIndex(value: string): number | null {
   const normalized = value.trim();
@@ -81,11 +87,11 @@ export class ActionHandler {
       case "loop_stop":
         return this.handleStop();
       case "status":
-        return this.handleStatus();
+        return this.handleStatus(intent);
       case "report":
-        return this.handleReport();
+        return this.handleReport(intent);
       case "goal_list":
-        return this.handleGoalList();
+        return this.handleGoalList(intent);
       case "goal_create":
         return this.handleGoalCreate(intent);
       case "help":
@@ -176,8 +182,9 @@ export class ActionHandler {
     };
   }
 
-  private async handleStatus(): Promise<ActionResult> {
+  private async handleStatus(intent: RecognizedIntent): Promise<ActionResult> {
     const ids = await this.deps.stateManager.listGoalIds();
+    const diagnostic = wantsDiagnosticDetail(intent);
 
     if (ids.length === 0) {
       return { messages: ["No active goals."] };
@@ -195,8 +202,16 @@ export class ActionHandler {
     }
 
     const messages: string[] = [
-      active.length === 1 ? formatCurrentGoalSummary(active[0]!) : formatCurrentGoalChoiceList(active),
+      active.length === 1
+        ? formatCurrentGoalSummary(active[0]!, {
+          detail: diagnostic ? "diagnostic" : "default",
+        })
+        : formatCurrentGoalChoiceList(active, {
+          detail: diagnostic ? "diagnostic" : "default",
+        }),
     ];
+
+    if (!diagnostic) return { messages };
 
     for (const goal of active) {
       messages.push(`\n--- Goal: ${goal.title} ---`);
@@ -227,8 +242,9 @@ export class ActionHandler {
     return { messages };
   }
 
-  private async handleReport(): Promise<ActionResult> {
+  private async handleReport(intent: RecognizedIntent): Promise<ActionResult> {
     const ids = await this.deps.stateManager.listGoalIds();
+    const diagnostic = wantsDiagnosticDetail(intent);
 
     if (ids.length === 0) {
       return { messages: ["No goals to generate a report for."] };
@@ -239,19 +255,26 @@ export class ActionHandler {
     try {
       const report = await this.deps.reportingEngine.generateDailySummary(id);
       await this.deps.reportingEngine.saveReport(report);
-      return { messages: [], showReport: report };
+      return {
+        messages: [],
+        showReport: report,
+        showReportDetail: diagnostic ? "diagnostic" : "default",
+      };
     } catch (err) {
+      const goal = await this.deps.stateManager.loadGoal(id).catch(() => null);
+      const label = goal?.title ? ` for "${goal.title}"` : "";
       return {
         messages: [
-          `Failed to generate report for goal ${id}: ${err instanceof Error ? err.message : String(err)}`,
+          `Failed to generate the report${label}: ${err instanceof Error ? err.message : String(err)}`,
         ],
         messageType: "error",
       };
     }
   }
 
-  private async handleGoalList(): Promise<ActionResult> {
+  private async handleGoalList(intent: RecognizedIntent): Promise<ActionResult> {
     const ids = await this.deps.stateManager.listGoalIds();
+    const diagnostic = wantsDiagnosticDetail(intent);
 
     if (ids.length === 0) {
       return {
@@ -262,14 +285,20 @@ export class ActionHandler {
       };
     }
 
-    const messages: string[] = ["Registered goals:"];
+    const messages: string[] = [diagnostic ? "Goal diagnostics:" : "Goals:"];
 
-    for (const id of ids) {
+    for (const [index, id] of ids.entries()) {
       const goal = await this.deps.stateManager.loadGoal(id);
       if (!goal) continue;
       const deadline = goal.deadline ? ` (deadline: ${goal.deadline})` : "";
-      messages.push(`  [${goal.status}] ${goal.title ?? id}${deadline}`);
-      messages.push(`    ID: ${id}`);
+      if (diagnostic) {
+        messages.push(`  ${index + 1}. ${goal.title ?? "Untitled goal"}${deadline}`);
+        messages.push(`    ID: ${id}`);
+        messages.push(`    Status: ${goal.status}`);
+        messages.push(`    Dimensions: ${goal.dimensions.length}`);
+      } else {
+        messages.push(`  ${index + 1}. ${goal.title ?? "Untitled goal"} - ${formatPlainGoalState(goal)}${deadline}`);
+      }
     }
 
     return { messages };
@@ -294,19 +323,17 @@ export class ActionHandler {
 
       const messages: string[] = [
         `Goal created: ${goal.title}`,
-        `ID: ${goal.id}`,
-        `Dimensions: ${goal.dimensions.length}`,
-        `Evaluation: ${response.type}`,
+        "Ready to plan the next safe step when you are.",
       ];
 
       if (response.type === "counter_propose" && response.counter_proposal) {
         messages.push(
-          `Counter-proposal: ${response.counter_proposal.reasoning}`
+          `Suggested adjustment: ${response.counter_proposal.reasoning}`
         );
       }
 
       if (response.message) {
-        messages.push(`Message: ${response.message}`);
+        messages.push(response.message);
       }
 
       return { messages };

@@ -18,6 +18,59 @@ describe("ReportView", () => {
     vi.restoreAllMocks();
   });
 
+  it("hides raw goal identifiers in the default report view", async () => {
+    const report = ReportSchema.parse({
+      id: "report-1",
+      report_type: "daily_summary",
+      goal_id: "goal-1",
+      title: "Daily Summary",
+      content: "Task completed.",
+      verbosity: "standard",
+      generated_at: new Date("2026-04-18T00:00:00.000Z").toISOString(),
+      delivered_at: null,
+      read: false,
+      metadata: {},
+    });
+
+    const output = renderToString(
+      React.createElement(ReportView, {
+        report,
+        onDismiss: () => {},
+      }),
+      { columns: 80 },
+    );
+
+    expect(output).toContain("Daily Summary");
+    expect(output).not.toContain("goal: goal-1");
+    expect(output).not.toContain("goal-1");
+  });
+
+  it("shows raw goal identifiers only in diagnostic report view", async () => {
+    const report = ReportSchema.parse({
+      id: "report-1",
+      report_type: "daily_summary",
+      goal_id: "goal-1",
+      title: "Daily Summary",
+      content: "Task completed.",
+      verbosity: "standard",
+      generated_at: new Date("2026-04-18T00:00:00.000Z").toISOString(),
+      delivered_at: null,
+      read: false,
+      metadata: {},
+    });
+
+    const output = renderToString(
+      React.createElement(ReportView, {
+        report,
+        detail: "diagnostic",
+        onDismiss: () => {},
+      }),
+      { columns: 80 },
+    );
+
+    expect(output).toContain("goal: goal-1");
+  });
+
   it("renders structured verification diffs from report metadata", async () => {
     const report = ReportSchema.parse({
       id: "report-1",

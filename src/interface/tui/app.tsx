@@ -356,6 +356,7 @@ export function App({
 
   const [goalNames, setGoalNames] = useState<string[]>([]);
   const [reportToShow, setReportToShow] = useState<Report | null>(null);
+  const [reportDetailToShow, setReportDetailToShow] = useState<"default" | "diagnostic">("default");
   const [pendingRunSpec, setPendingRunSpec] = useState<RunSpec | null>(null);
 
   // Ctrl-C double-press exit state
@@ -693,6 +694,7 @@ export function App({
 
           if (result.showReport) {
             setReportToShow(result.showReport);
+            setReportDetailToShow(result.showReportDetail ?? "default");
             return;
           }
 
@@ -894,7 +896,14 @@ export function App({
           {showSettings ? (
             <SettingsOverlay onClose={() => setShowSettings(false)} />
           ) : reportToShow !== null ? (
-            <ReportView report={reportToShow} onDismiss={() => setReportToShow(null)} />
+            <ReportView
+              report={reportToShow}
+              detail={reportDetailToShow}
+              onDismiss={() => {
+                setReportToShow(null);
+                setReportDetailToShow("default");
+              }}
+            />
           ) : showHelp ? (
             <HelpOverlay onDismiss={() => setShowHelp(false)} />
           ) : (
