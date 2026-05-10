@@ -15,11 +15,10 @@ import type { PipelineState } from "../types/pipeline.js";
 import { LoopCheckpointSchema } from "../types/checkpoint.js";
 import type { CheckpointTrustPort } from "./checkpoint-trust-port.js";
 import { initDirs, atomicWrite, atomicRead } from "./state-persistence.js";
-import { GoalWriteCoordinator } from "./state-manager-goal-write.js";
 import type { StateWriteFence } from "./state-write-fence.js";
 import {
   listRecoverableArchivedGoalIds as listRecoverableArchivedGoalIdsFromState,
-} from "./state-manager-goal-state.js";
+} from "./legacy-archived-goal-recovery.js";
 
 export { initDirs, atomicWrite, atomicRead };
 export type { StateWriteFence, StateWriteFenceContext } from "./state-write-fence.js";
@@ -66,39 +65,33 @@ function isKnowledgeMemoryDurableStatePath(relativePath: string): boolean {
 
 /**
  * StateManager handles persistence of goals, state vectors, observation logs,
- * and gap history under a base directory (default: ~/.pulseed/).
+ * and gap history under a typed database owned by the configured base directory
+ * (default: ~/.pulseed/).
  *
- * File layout:
- *   <base>/goals/<goal_id>/goal.json
- *   <base>/goals/<goal_id>/observations.json
- *   <base>/goals/<goal_id>/gap-history.json
- *   <base>/goal-trees/<root_id>.json
+ * Legacy JSON paths are still accepted by readRaw/writeRaw compatibility
+ * callers, but goal/task state is routed through GoalTaskStateStore instead of
+ * whole-file JSON mutation.
+ *
+ * Durable state layout:
+ *   <base>/runtime/control.db
  *   <base>/events/              (event queue directory)
  *   <base>/events/archive/      (processed events)
  *   <base>/reports/             (report output directory)
- *
- * All writes are atomic: write to .tmp file, then rename.
  */
 export class StateManager {
   private readonly baseDir: string;
   private readonly logger?: Logger;
-  private readonly walEnabled: boolean;
-  private readonly goalWriteCoordinator: GoalWriteCoordinator;
   private goalTaskStateStorePromise: Promise<GoalTaskStateStore> | null = null;
   private strategyDreamStateStorePromise: Promise<StrategyDreamStateStore> | null = null;
   private processSessionStateStorePromise: Promise<ProcessSessionStateStore> | null = null;
   private knowledgeMemoryStateStorePromise: Promise<KnowledgeMemoryStateStore> | null = null;
   private readonly goalStateWriteQueues = new Map<string, Promise<void>>();
+  private readonly writeFences = new Map<string, StateWriteFence>();
 
   constructor(baseDir?: string, logger?: Logger, options?: { walEnabled?: boolean }) {
     this.baseDir = baseDir ?? getPulseedDirPath();
     this.logger = logger;
-    this.walEnabled = options?.walEnabled ?? true;
-    this.goalWriteCoordinator = new GoalWriteCoordinator({
-      baseDir: this.baseDir,
-      walEnabled: this.walEnabled,
-      loadGoal: (goalId) => this.loadGoal(goalId),
-    });
+    void options;
   }
 
   /** Create required subdirectories. Must be called after construction before first use. */
@@ -116,15 +109,17 @@ export class StateManager {
   }
 
   setWriteFence(goalId: string, fence: StateWriteFence): void {
-    this.goalWriteCoordinator.setWriteFence(goalId, fence);
+    this.writeFences.set(goalId, fence);
   }
 
   clearWriteFence(goalId: string): void {
-    this.goalWriteCoordinator.clearWriteFence(goalId);
+    this.writeFences.delete(goalId);
   }
 
   private async assertWriteFence(goalId: string, op: string, data: unknown): Promise<void> {
-    await this.goalWriteCoordinator.assertWriteFence(goalId, op, data);
+    const fence = this.writeFences.get(goalId);
+    if (!fence) return;
+    await fence({ goalId, op, data });
   }
 
   private async runGoalStateMutation<T>(
@@ -135,8 +130,11 @@ export class StateManager {
   ): Promise<T> {
     const previous = this.goalStateWriteQueues.get(goalId) ?? Promise.resolve();
     const run = previous.catch(() => undefined).then(async () => {
-      await this.assertWriteFence(goalId, op, data);
-      return fn();
+      const store = await this.goalTaskStateStore();
+      return store.withGoalStateWriteLock(goalId, async () => {
+        await this.assertWriteFence(goalId, op, data);
+        return fn();
+      });
     });
     const marker = run.then(() => undefined, () => undefined);
     this.goalStateWriteQueues.set(goalId, marker);
@@ -149,10 +147,6 @@ export class StateManager {
     }
   }
 
-  private async goalDir(goalId: string): Promise<string> {
-    return this.goalWriteCoordinator.goalDir(goalId);
-  }
-
   // ─── Atomic Write / Read (delegated to state-persistence) ───
 
   private async atomicWrite(filePath: string, data: unknown): Promise<void> {
@@ -161,11 +155,6 @@ export class StateManager {
 
   private async atomicRead<T>(filePath: string): Promise<T | null> {
     return atomicRead<T>(filePath, this.logger);
-  }
-
-  /** Wrap a goal write with lock + WAL + snapshot cycle. */
-  private async protectedWrite(goalId: string, op: string, data: unknown, writeFn: () => Promise<void>): Promise<void> {
-    await this.goalWriteCoordinator.protectedWrite(goalId, op, data, writeFn);
   }
 
   private isEnoent(error: unknown): boolean {
@@ -229,32 +218,6 @@ export class StateManager {
     }
   }
 
-  private async writeObservationLog(
-    goalId: string,
-    op: string,
-    log: ObservationLog,
-    resolveDirBeforeWrite: boolean
-  ): Promise<void> {
-    const resolvedDir = resolveDirBeforeWrite ? await this.goalDir(goalId) : null;
-    await this.protectedWrite(goalId, op, log, async () => {
-      const dir = resolvedDir ?? await this.goalDir(goalId);
-      await this.atomicWrite(path.join(dir, "observations.json"), log);
-    });
-  }
-
-  private async writeGapHistory(
-    goalId: string,
-    op: string,
-    entries: GapHistoryEntry[],
-    resolveDirBeforeWrite: boolean
-  ): Promise<void> {
-    const resolvedDir = resolveDirBeforeWrite ? await this.goalDir(goalId) : null;
-    await this.protectedWrite(goalId, op, { goalId, entries }, async () => {
-      const dir = resolvedDir ?? await this.goalDir(goalId);
-      await this.atomicWrite(path.join(dir, "gap-history.json"), entries);
-    });
-  }
-
   private async goalTaskStateStore(): Promise<GoalTaskStateStore> {
     this.goalTaskStateStorePromise ??= import("../../runtime/store/goal-task-state-store.js")
       .then(({ GoalTaskStateStore }) => new GoalTaskStateStore(this.baseDir));
@@ -295,18 +258,20 @@ export class StateManager {
   async deleteGoal(goalId: string, _visited = new Set<string>()): Promise<boolean> {
     if (!this.markGoalVisited(goalId, _visited)) return false;
 
-    const goal = await this.loadGoal(goalId);
-    if (goal === null) {
-      return false;
-    }
+    return this.runGoalStateMutation(goalId, "delete_goal", { goalId }, async () => {
+      const goal = await this.loadGoal(goalId);
+      if (goal === null) {
+        return false;
+      }
 
-    // Recursively delete children first (depth-first)
-    for (const childId of goal.children_ids) {
-      await this.deleteGoal(childId, _visited);
-    }
-    await (await this.goalTaskStateStore()).deleteGoal(goalId);
-    await this.cleanupActiveGoalState(goalId);
-    return true;
+      // Recursively delete children first (depth-first)
+      for (const childId of goal.children_ids) {
+        await this.deleteGoal(childId, _visited);
+      }
+      await (await this.goalTaskStateStore()).deleteGoal(goalId);
+      await this.cleanupActiveGoalState(goalId);
+      return true;
+    });
   }
 
   /** Archive a DB-owned goal without falling back to legacy goal JSON. */

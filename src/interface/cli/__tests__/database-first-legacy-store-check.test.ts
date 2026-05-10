@@ -39,6 +39,9 @@ describe("database-first legacy store check", () => {
       export const legacyPluginState = "state.json";
       export const legacyChannelHealth = "health.json";
     `);
+    writeFile(tmpDir, "src/base/state/legacy-state-wal.ts", `
+      export const legacyWalPath = "wal.jsonl";
+    `);
     writeFile(tmpDir, "src/runtime/channel-config.ts", `
       export const configPath = "gateway/channels/telegram-bot/config.json";
       export const pluginManifest = "plugin.json";
@@ -51,9 +54,6 @@ describe("database-first legacy store check", () => {
   });
 
   it("reports classified follow-up debt instead of hiding allowlisted runtime owners", () => {
-    writeFile(tmpDir, "src/base/state/state-manager-wal.ts", `
-      export const goal = "goal.json";
-    `);
     writeFile(tmpDir, "src/orchestrator/execution/session-manager.ts", `
       export const sessionIndex = "sessions/index.json";
       export const sessionPath = (sessionId: string) => \`sessions/\${sessionId}.json\`;
@@ -63,22 +63,21 @@ describe("database-first legacy store check", () => {
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("classified legacy store debt report:");
-    expect(result.stdout).toContain("goal-wal-compatibility: migrate now; rank 1; Slice 2; owner: Goal WAL control DB ownership; matches: 1");
     expect(result.stdout).toContain("execution-session-manager: migrate now; rank 3; Slice 3; owner: ExecutionSessionStateStore; matches: 2");
     expect(result.stdout).toContain("run with --json for line-level classified matches and reasons");
   });
 
   it("fails unexpected legacy store classes inside classified follow-up files", () => {
-    writeFile(tmpDir, "src/base/state/state-manager-wal.ts", `
+    writeFile(tmpDir, "src/orchestrator/execution/session-manager.ts", `
       export const wal = "wal.jsonl";
     `);
 
     const result = runCheck(tmpDir);
 
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain("src/base/state/state-manager-wal.ts");
+    expect(result.stderr).toContain("src/orchestrator/execution/session-manager.ts");
     expect(result.stderr).toContain("[goal-wal-jsonl] Goal WAL control DB ownership");
-    expect(result.stderr).toContain('allowlist entry "goal-wal-compatibility" does not permit rule "goal-wal-jsonl"');
+    expect(result.stderr).toContain('allowlist entry "execution-session-manager" does not permit rule "goal-wal-jsonl"');
   });
 
   it("emits a machine-readable debt report", () => {

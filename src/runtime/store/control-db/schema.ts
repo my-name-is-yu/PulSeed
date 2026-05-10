@@ -7,7 +7,7 @@ export interface ControlDbMigration {
   checksum: string;
 }
 
-export const CONTROL_DB_SCHEMA_VERSION = 9;
+export const CONTROL_DB_SCHEMA_VERSION = 10;
 
 export const CONTROL_DB_INITIAL_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS control_schema_migrations (
@@ -962,6 +962,19 @@ CREATE INDEX IF NOT EXISTS runtime_asset_records_source_idx
   ON runtime_asset_records(source_agent, updated_at, asset_id);
 `.trim();
 
+export const CONTROL_DB_GOAL_STATE_WRITE_LOCK_SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS goal_state_write_locks (
+  goal_id TEXT PRIMARY KEY,
+  owner_token TEXT NOT NULL,
+  owner_pid INTEGER,
+  acquired_at INTEGER NOT NULL,
+  lease_until INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS goal_state_write_locks_lease_idx
+  ON goal_state_write_locks(lease_until, goal_id);
+`.trim();
+
 export function controlDbMigrationChecksum(sql: string): string {
   return createHash("sha256").update(sql.trim()).digest("hex");
 }
@@ -1024,5 +1037,10 @@ export const CONTROL_DB_MIGRATIONS: readonly ControlDbMigration[] = [
     9,
     "plugin-channel-runtime-state",
     CONTROL_DB_PLUGIN_CHANNEL_RUNTIME_SCHEMA_SQL
+  ),
+  createControlDbMigration(
+    10,
+    "goal-state-write-locks",
+    CONTROL_DB_GOAL_STATE_WRITE_LOCK_SCHEMA_SQL
   ),
 ];

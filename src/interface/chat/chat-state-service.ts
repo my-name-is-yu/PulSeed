@@ -29,12 +29,11 @@ export class ChatStateService {
   }
 
   async listAllGoalIds(): Promise<string[]> {
-    const [activeIds, archivedIds, recoverableArchivedIds] = await Promise.all([
+    const [activeIds, archivedIds] = await Promise.all([
       this.stateManager.listGoalIds(),
       this.stateManager.listArchivedGoals(),
-      this.stateManager.listRecoverableArchivedGoalIds(),
     ]);
-    return [...new Set([...activeIds, ...archivedIds, ...recoverableArchivedIds])];
+    return [...new Set([...activeIds, ...archivedIds])];
   }
 
   async readTasksForGoal(goalId: string): Promise<Task[]> {

@@ -208,42 +208,15 @@ The thin bootstrap that remains of `daemon-runner.ts` is responsible for: PID fi
 
 ## 6. Eternal State Layer
 
-"Eternal" is intentional. PulSeed's state must outlive any individual process crash, operating system restart, or Node.js upgrade. The files in `~/.pulseed/` are the ground truth.
+"Eternal" is intentional. PulSeed's state must outlive any individual process crash, operating system restart, or Node.js upgrade.
 
-The current `StateManager` in `src/base/state/state-manager.ts` already does atomic writes (write to `.tmp`, then rename). That is safe for a single writer. The Eternal State layer adds two things on top: advisory locking and a write-ahead log.
+Current durable internal runtime state is database-first. `StateManager` routes goal, observation, gap, task, checkpoint, verification, pipeline, and related DurableLoop state through typed SQLite stores under the control database. Legacy JSON, JSONL, snapshot, and lock-file surfaces are not normal runtime owners.
 
-**Advisory locking** prevents two GoalWorkers from writing to the same goal's directory simultaneously. When a worker begins a write, it acquires a lockfile (`~/.pulseed/goals/<id>/.lock`). If the lock is held, the worker waits with exponential backoff (max 500ms total). This is a per-goal lock, so goal A's write never blocks goal B's write. The lock is released when the write completes or the process exits (lockfile package handles stale locks via PID checking).
+Goal writes are serialized through typed SQLite ownership. `GoalTaskStateStore` owns `goal_state_write_locks` in the control database, so separate `StateManager` instances and processes coordinate without `goals/<id>/.lock`. Multi-step writes such as observation append plus goal update happen under that database-backed write lock.
 
-The **write-ahead log (WAL)** protects against partial writes. Before modifying any goal file, the worker appends an intent record to `~/.pulseed/goals/<id>/wal.jsonl`:
+Legacy `goals/<goal_id>/wal.jsonl` files are explicit migration/repair inputs. `doctor --repair` imports uncommitted legacy WAL intents into typed goal/task tables and records `control_legacy_imports`; normal startup does not replay WAL files, recreate `goal.json`, or silently fall back to snapshots as authoritative state.
 
-```
-{ "op": "save_goal", "data": { ... }, "ts": "2026-04-06T..." }
-```
-
-After the atomic write succeeds, a commit record is appended:
-
-```
-{ "op": "commit", "ref_ts": "2026-04-06T...", "ts": "2026-04-06T..." }
-```
-
-On startup, the StateManager scans each goal's WAL. An intent without a matching commit indicates a crash mid-write. The StateManager replays the intent (the atomic write is idempotent) and appends the missing commit. This brings the state back to a consistent point before the crash.
-
-WAL entries accumulate over time. Periodic compaction (every 100 writes, or on daemon startup) merges committed WAL entries into the main state files and truncates the WAL. Compaction is itself a WAL operation: it writes a `compaction_start` entry, performs the merge, then writes `compaction_complete`. A crash during compaction is detected on next startup and the merge is re-run.
-
-Goal directories continue to be per-goal, as they already are:
-
-```
-~/.pulseed/goals/<goal_id>/
-├── goal.json           — goal definition and status
-├── observations.json   — observation log
-├── gap-history.json    — gap calculation history
-├── wal.jsonl           — write-ahead log (advisory)
-├── .lock               — advisory lock file
-└── snapshots/
-    └── <timestamp>.json — periodic state snapshots
-```
-
-Snapshots are written every N writes (default: 50) as a recovery baseline. If the WAL replay fails for any reason, the system falls back to the most recent snapshot and logs a warning. The goal resumes from the snapshot's state rather than the most recent write. Human-readable JSON remains the source of truth throughout. Nothing here requires a database.
+User-visible workspace artifacts, debug exports, reports, and configuration remain file-backed where they are not internal durable runtime state. The current database-first boundary is maintained in `docs/design/infrastructure/database-first-state-ownership.md`.
 
 ---
 

@@ -8,7 +8,6 @@ import type { ChatSession } from "./chat-history.js";
 import {
   collectGoalUsage,
   collectScheduleUsage,
-  listRecoverableArchivedGoalIds,
 } from "./chat-runner-state.js";
 import { formatGoalListLine } from "../goal-status-display.js";
 export {
@@ -51,15 +50,13 @@ export async function loadGoals(stateManager: StateManager): Promise<Goal[]> {
 }
 
 export async function listAllGoalIds(stateManager: StateManager): Promise<string[]> {
-  const [activeGoalIds, archivedGoalIds, recoverableArchivedGoalIds] = await Promise.all([
+  const [activeGoalIds, archivedGoalIds] = await Promise.all([
     stateManager.listGoalIds(),
     stateManager.listArchivedGoals(),
-    listRecoverableArchivedGoalIds(stateManager.getBaseDir()),
   ]);
   return Array.from(new Set([
     ...activeGoalIds,
     ...archivedGoalIds,
-    ...recoverableArchivedGoalIds,
   ]));
 }
 

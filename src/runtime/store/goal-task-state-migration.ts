@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import {
   openControlDatabase,
   type ControlDatabase,
+  type ControlLegacyImportStatus,
   type RuntimeControlDbStoreOptions,
 } from "./control-db/index.js";
 import { GoalTaskStateStore } from "./goal-task-state-store.js";
@@ -13,6 +14,8 @@ import { GapHistoryEntrySchema } from "../../base/types/gap.js";
 import { TaskSchema } from "../../base/types/task.js";
 import { CheckpointSchema, LoopCheckpointSchema } from "../../base/types/checkpoint.js";
 import { PipelineStateSchema } from "../../base/types/pipeline.js";
+import { replayWAL } from "../../base/state/legacy-state-wal.js";
+import { replayStateManagerLegacyWALIntent } from "../../base/state/legacy-state-manager-wal-recovery.js";
 
 const MIGRATION_NAME = "goal-task-durable-loop-state";
 const MIGRATION_VERSION = 6;
@@ -22,6 +25,8 @@ export interface GoalTaskStateLegacyImportReport {
   goalTrees: number;
   observationLogs: number;
   gapHistories: number;
+  legacyWalFiles: number;
+  legacyWalIntents: number;
   loopCheckpoints: number;
   tasks: number;
   taskHistoryRecords: number;
@@ -48,6 +53,8 @@ export async function importLegacyGoalTaskDurableLoopState(
     goalTrees: 0,
     observationLogs: 0,
     gapHistories: 0,
+    legacyWalFiles: 0,
+    legacyWalIntents: 0,
     loopCheckpoints: 0,
     tasks: 0,
     taskHistoryRecords: 0,
@@ -62,6 +69,7 @@ export async function importLegacyGoalTaskDurableLoopState(
 
   try {
     await importGoals(baseDir, store, controlDb, report);
+    await importGoalWALs(baseDir, store, controlDb, report);
     await importArchivedGoals(baseDir, store, controlDb, report);
     await importGoalTrees(baseDir, store, controlDb, report);
     await importTasks(baseDir, store, controlDb, report);
@@ -73,6 +81,67 @@ export async function importLegacyGoalTaskDurableLoopState(
   } finally {
     if (!options.controlDb) {
       controlDb.close();
+    }
+  }
+}
+
+async function importGoalWALs(
+  baseDir: string,
+  store: GoalTaskStateStore,
+  controlDb: ControlDatabase,
+  report: GoalTaskStateLegacyImportReport,
+): Promise<void> {
+  const goalsDir = path.join(baseDir, "goals");
+  for (const entry of await readDir(goalsDir)) {
+    if (!entry.isDirectory()) continue;
+    const goalId = entry.name;
+    const walPath = path.join(goalsDir, goalId, "wal.jsonl");
+    let payload: { checksum: string; mtimeMs: number };
+    try {
+      payload = await readLegacyTextFile(walPath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+      blockImport({
+        baseDir,
+        filePath: walPath,
+        sourceKind: "goal_wal",
+        sourceId: goalId,
+        controlDb,
+        report,
+      }, error);
+      continue;
+    }
+
+    try {
+      const replayed = await replayWAL(goalId, baseDir, async (intent) => {
+        await replayStateManagerLegacyWALIntent(store, intent);
+      });
+      report.legacyWalFiles += 1;
+      report.legacyWalIntents += replayed;
+      const previousImport = controlDb.listLegacyImports().find((record) =>
+        record.source_kind === "goal_wal"
+        && record.source_id === goalId
+        && record.migration_name === MIGRATION_NAME
+        && record.status === "imported"
+      );
+      recordImport(controlDb, {
+        sourceKind: "goal_wal",
+        sourceId: goalId,
+        sourcePath: path.relative(baseDir, walPath),
+        sourceChecksum: payload.checksum,
+        sourceMtimeMs: payload.mtimeMs,
+        status: replayed > 0 || previousImport ? "imported" : "validated",
+        details: { replayed_intents: replayed },
+      });
+    } catch (error) {
+      blockImport({
+        baseDir,
+        filePath: walPath,
+        sourceKind: "goal_wal",
+        sourceId: goalId,
+        controlDb,
+        report,
+      }, error);
     }
   }
 }
@@ -558,6 +627,15 @@ async function readLegacyJsonFile(filePath: string): Promise<{ raw: unknown; che
   };
 }
 
+async function readLegacyTextFile(filePath: string): Promise<{ checksum: string; mtimeMs: number }> {
+  const stat = await fsp.stat(filePath);
+  const text = await fsp.readFile(filePath, "utf-8");
+  return {
+    checksum: createHash("sha256").update(text).digest("hex"),
+    mtimeMs: stat.mtimeMs,
+  };
+}
+
 function recordImport(
   db: ControlDatabase,
   input: {
@@ -566,7 +644,7 @@ function recordImport(
     sourcePath: string;
     sourceChecksum?: string;
     sourceMtimeMs?: number;
-    status: "imported" | "blocked";
+    status: ControlLegacyImportStatus;
     details?: Record<string, unknown>;
   },
 ): void {

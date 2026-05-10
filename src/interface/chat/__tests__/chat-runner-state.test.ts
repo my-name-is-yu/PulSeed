@@ -5,10 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   collectGoalUsage,
   collectScheduleUsage,
-  listRecoverableArchivedGoalIds,
   parseUsagePeriodMs,
-  readTasksForGoal,
-  resolveStatePath,
 } from "../chat-runner-state.js";
 import { ScheduleHistoryStore } from "../../../runtime/schedule/history.js";
 import { GoalTaskStateStore, openControlDatabase } from "../../../runtime/store/index.js";
@@ -19,12 +16,6 @@ function makeTempDir(prefix: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   tempDirs.push(dir);
   return dir;
-}
-
-function writeJson(baseDir: string, relativePath: string, value: unknown): void {
-  const target = path.join(baseDir, relativePath);
-  fs.mkdirSync(path.dirname(target), { recursive: true });
-  fs.writeFileSync(target, JSON.stringify(value, null, 2));
 }
 
 async function saveScheduleHistory(baseDir: string, records: Array<Record<string, unknown>>): Promise<void> {
@@ -111,60 +102,6 @@ afterEach(() => {
 });
 
 describe("chat-runner-state helpers", () => {
-  it("resolveStatePath blocks escaping the base dir", () => {
-    const baseDir = makeTempDir("pulseed-chat-state-");
-    expect(resolveStatePath(baseDir, "tasks", "goal-1")).toBe(path.join(baseDir, "tasks", "goal-1"));
-    expect(resolveStatePath(baseDir, "..", "outside")).toBeNull();
-  });
-
-  it("listRecoverableArchivedGoalIds only returns archived goals with goal.json", async () => {
-    const baseDir = makeTempDir("pulseed-chat-archive-");
-    writeJson(baseDir, "archive/goal-a/goal/goal.json", { id: "goal-a" });
-    fs.mkdirSync(path.join(baseDir, "archive", "goal-b", "goal"), { recursive: true });
-    fs.mkdirSync(path.join(baseDir, "archive", ".staging"), { recursive: true });
-
-    await expect(listRecoverableArchivedGoalIds(baseDir)).resolves.toEqual(["goal-a"]);
-  });
-
-  it("readTasksForGoal falls back to archived tasks and sorts newest first", async () => {
-    const baseDir = makeTempDir("pulseed-chat-tasks-");
-    writeJson(baseDir, "archive/goal-1/tasks/task-1.json", {
-      id: "task-1",
-      goal_id: "goal-1",
-      strategy_id: null,
-      target_dimensions: ["quality"],
-      primary_dimension: "quality",
-      status: "completed",
-      task_category: "normal",
-      created_at: "2026-04-01T00:00:00.000Z",
-      work_description: "older",
-      rationale: "test",
-      approach: "ship",
-      success_criteria: [{ description: "done", verification_method: "check", is_blocking: true }],
-      scope_boundary: { in_scope: ["task"], out_of_scope: [], blast_radius: "low" },
-      constraints: [],
-    });
-    writeJson(baseDir, "archive/goal-1/tasks/task-2.json", {
-      id: "task-2",
-      goal_id: "goal-1",
-      strategy_id: null,
-      target_dimensions: ["quality"],
-      primary_dimension: "quality",
-      status: "running",
-      task_category: "normal",
-      created_at: "2026-04-02T00:00:00.000Z",
-      work_description: "newer",
-      rationale: "test",
-      approach: "ship",
-      success_criteria: [{ description: "done", verification_method: "check", is_blocking: true }],
-      scope_boundary: { in_scope: ["task"], out_of_scope: [], blast_radius: "low" },
-      constraints: [],
-    });
-
-    const tasks = await readTasksForGoal(baseDir, "goal-1");
-    expect(tasks.map((task) => task.id)).toEqual(["task-2", "task-1"]);
-  });
-
   it("collectGoalUsage counts typed ledger rows and terminal tasks", async () => {
     const baseDir = makeTempDir("pulseed-chat-usage-goal-");
     await saveGoalLedger(baseDir, "task-1", { latest_event_type: "succeeded", tokens_used: 21 });

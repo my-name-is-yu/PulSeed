@@ -11,6 +11,7 @@ import { ChatSessionDataStore } from "../../chat/chat-session-data-store.js";
 import { AgentLoopSessionStateCatalog } from "../../../orchestrator/execution/agent-loop/agent-loop-session-db-store.js";
 import { makeGoal } from "../../../../tests/helpers/fixtures.js";
 import { StateManager } from "../../../base/state/state-manager.js";
+import { appendWALRecord } from "../../../base/state/legacy-state-wal.js";
 
 // ─── cmdDoctor tests ───
 //
@@ -1270,6 +1271,51 @@ describe("cmdDoctor summary counts", () => {
     expect(allOutput).toContain("Repair chat import: chat sessions=1");
     expect(allOutput).toContain("agentloop states=1");
     expect(checkControlDatabase(tmpDir).detail).toContain("legacy import record");
+  });
+
+  it("imports legacy goal WAL through doctor repair and records import bookkeeping", async () => {
+    const origHome = process.env["PULSEED_HOME"];
+    process.env["PULSEED_HOME"] = tmpDir;
+    const goalId = "goal-wal-doctor";
+    fs.mkdirSync(path.join(tmpDir, "goals", goalId), { recursive: true });
+    await appendWALRecord(goalId, tmpDir, {
+      op: "save_goal",
+      data: makeGoal({ id: goalId, description: "from legacy WAL" }),
+      ts: "2026-05-10T00:00:00.000Z",
+    });
+
+    try {
+      const exitCode = await cmdDoctor(["--repair"]);
+      expect([0, 1]).toContain(exitCode);
+    } finally {
+      if (origHome !== undefined) {
+        process.env["PULSEED_HOME"] = origHome;
+      } else {
+        delete process.env["PULSEED_HOME"];
+      }
+    }
+
+    await expect(new GoalTaskStateStore(tmpDir).loadGoal(goalId, { includeArchived: true })).resolves.toMatchObject({
+      id: goalId,
+      description: "from legacy WAL",
+    });
+    expect(fs.existsSync(path.join(tmpDir, "goals", goalId, "goal.json"))).toBe(false);
+    const allOutput = consoleSpy.mock.calls.map((c: unknown[]) => c[0] as string).join("\n");
+    expect(allOutput).toContain("legacy WAL files=1");
+    expect(allOutput).toContain("legacy WAL intents=1");
+
+    const database = await openControlDatabase({ baseDir: tmpDir });
+    try {
+      expect(database.listLegacyImports()).toContainEqual(expect.objectContaining({
+        source_kind: "goal_wal",
+        source_id: goalId,
+        migration_name: "goal-task-durable-loop-state",
+        status: "imported",
+        details: expect.objectContaining({ replayed_intents: 1 }),
+      }));
+    } finally {
+      database.close();
+    }
   });
 
   it("imports legacy knowledge and memory state through doctor repair", async () => {
