@@ -494,6 +494,22 @@ describe("isDaemonRunning", () => {
     });
   });
 
+  it("ignores oversized daemon config before probing daemon health", async () => {
+    await saveDaemonStateFixture(tmpDir);
+    fs.writeFileSync(path.join(tmpDir, "daemon.json"), `{ "padding": "${"x".repeat(1024 * 1024)}" }`, "utf-8");
+    const probedPorts: number[] = [];
+    vi.spyOn(DaemonClient.prototype, "getHealth").mockImplementation(async function (this: DaemonClient) {
+      probedPorts.push((this as unknown as { config: { port: number } }).config.port);
+      return { status: "ok" };
+    });
+
+    await expect(isDaemonRunning(tmpDir)).resolves.toEqual({
+      running: true,
+      port: DEFAULT_PORT,
+    });
+    expect(probedPorts).toEqual([DEFAULT_PORT]);
+  });
+
   it("uses the token file port for daemon configs with OS-assigned event server ports", async () => {
     await saveDaemonStateFixture(tmpDir);
     fs.writeFileSync(

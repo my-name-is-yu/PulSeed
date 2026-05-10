@@ -13,6 +13,7 @@ import { DEFAULT_PORT } from "../port-utils.js";
 import { parseOutboxSeq } from "../event/outbox-seq.js";
 import { DaemonStateStore } from "../store/index.js";
 import { DaemonConfigSchema, DaemonStateSchema } from "../types/daemon.js";
+import { readDaemonConfigJsonFile } from "./config-json.js";
 import type { DaemonRuntimeControlRequestBody } from "./control-contracts.js";
 
 export interface DaemonClientConfig {
@@ -524,8 +525,6 @@ export async function probeDaemonHealth(config: Pick<DaemonClientConfig, "host" 
 }
 
 export async function isDaemonRunning(baseDir: string): Promise<{ running: boolean; port: number; authToken?: string | null }> {
-  const fs = await import("node:fs/promises");
-  const path = await import("node:path");
   // DEFAULT_PORT imported from port-utils
 
   try {
@@ -549,8 +548,7 @@ export async function isDaemonRunning(baseDir: string): Promise<{ running: boole
     let port: number | null = DEFAULT_PORT;
     try {
       const configPath = path.join(baseDir, "daemon.json");
-      const configRaw = await fs.readFile(configPath, "utf-8");
-      const config = DaemonConfigSchema.safeParse(JSON.parse(configRaw) as unknown);
+      const config = DaemonConfigSchema.safeParse(await readDaemonConfigJsonFile(configPath));
       if (config.success) {
         if (config.data.event_server_port === 0) {
           const tokenFile = readDaemonAuthTokenFile(baseDir);
