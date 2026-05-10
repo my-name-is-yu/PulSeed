@@ -24,6 +24,8 @@ import { ShellTool } from "../../../tools/system/ShellTool/ShellTool.js";
 import type { ExecutionPolicy } from "../../../orchestrator/execution/agent-loop/execution-policy.js";
 import type { Goal } from "../../../base/types/goal.js";
 import * as execMod from "../../../base/utils/execFileNoThrow.js";
+import { ActionHandler } from "../actions.js";
+import { IntentRecognizer } from "../intent-recognizer.js";
 
 const testState = vi.hoisted(() => ({
   lastChatProps: null as null | { onSubmit: (value: string) => Promise<void> },
@@ -219,6 +221,19 @@ function createShellExecutionPolicy(workspaceRoot = "/tmp/pulseed-tui-shell-test
     trustProjectInstructions: true,
     ...overrides,
   };
+}
+
+function createStandaloneActionHandler(stateManager: ReturnType<typeof createStateManagerMock>): ActionHandler {
+  return new ActionHandler({
+    stateManager: stateManager as unknown as StateManager,
+    goalNegotiator: {
+      negotiate: vi.fn(),
+    } as never,
+    reportingEngine: {
+      generateDailySummary: vi.fn(),
+      saveReport: vi.fn(),
+    } as never,
+  });
 }
 
 const CANNED_AGENT_RESULT: AgentResult = {
@@ -686,6 +701,104 @@ describe("standalone slash command routing", () => {
     expect(chatRunner.execute).toHaveBeenCalledWith("/status", "~/workspace");
     expect(intentRecognizer.recognize).not.toHaveBeenCalled();
     expect(actionHandler.handle).not.toHaveBeenCalled();
+
+    screen.unmount();
+  });
+
+  it("keeps standalone /status and /goals on natural projections by default", async () => {
+    const stateManager = createStateManagerMock();
+    const goal = makeTuiGoal({
+      id: "goal-standalone",
+      title: "Improve standalone UX",
+      status: "active",
+      dimensions: [{
+        name: "coverage",
+        label: "Coverage",
+        current_value: 0.5,
+        threshold: { type: "min", value: 0.8 },
+        confidence: 0.9,
+        observation_method: { type: "mechanical", source: "test", schedule: null, endpoint: null, confidence_tier: "mechanical" },
+        last_updated: new Date().toISOString(),
+        history: [],
+        weight: 1,
+        uncertainty_weight: null,
+        state_integrity: "ok",
+        dimension_mapping: null,
+      }],
+    });
+    vi.mocked(stateManager.listGoalIds).mockResolvedValue(["goal-standalone"]);
+    vi.mocked(stateManager.loadGoal).mockResolvedValue(goal as never);
+
+    const screen = render(React.createElement(App, {
+      stateManager: stateManager as unknown as StateManager,
+      intentRecognizer: new IntentRecognizer(),
+      actionHandler: createStandaloneActionHandler(stateManager),
+      noFlicker: false,
+      controlStream: process.stdout,
+      cwd: "~/workspace",
+      gitBranch: "main",
+      providerName: "claude",
+    }), {
+      patchConsole: false,
+      stdout: process.stdout,
+      stderr: process.stderr,
+    });
+
+    await flush();
+    expect(testState.lastChatProps).not.toBeNull();
+
+    await testState.lastChatProps!.onSubmit("/status");
+    await flush();
+    await testState.lastChatProps!.onSubmit("/goals");
+    await flush();
+
+    const text = testState.lastChatMessages.map((message) => message.text).join("\n");
+    expect(text).toContain("Current goal");
+    expect(text).toContain("Improve standalone UX");
+    expect(text).toContain("1. Improve standalone UX");
+    expect(text).not.toContain("Status:");
+    expect(text).not.toContain("confidence");
+    expect(text).not.toContain("90%");
+    expect(text).not.toContain("ID:");
+    expect(text).not.toContain("goal-standalone");
+
+    screen.unmount();
+  });
+
+  it("keeps standalone diagnostic IDs behind explicit details commands", async () => {
+    const stateManager = createStateManagerMock();
+    vi.mocked(stateManager.listGoalIds).mockResolvedValue(["goal-standalone"]);
+    vi.mocked(stateManager.loadGoal).mockResolvedValue(makeTuiGoal({
+      id: "goal-standalone",
+      title: "Improve standalone UX",
+      status: "active",
+    }) as never);
+
+    const screen = render(React.createElement(App, {
+      stateManager: stateManager as unknown as StateManager,
+      intentRecognizer: new IntentRecognizer(),
+      actionHandler: createStandaloneActionHandler(stateManager),
+      noFlicker: false,
+      controlStream: process.stdout,
+      cwd: "~/workspace",
+      gitBranch: "main",
+      providerName: "claude",
+    }), {
+      patchConsole: false,
+      stdout: process.stdout,
+      stderr: process.stderr,
+    });
+
+    await flush();
+    expect(testState.lastChatProps).not.toBeNull();
+
+    await testState.lastChatProps!.onSubmit("/goals --details");
+    await flush();
+
+    const text = testState.lastChatMessages.map((message) => message.text).join("\n");
+    expect(text).toContain("Goal diagnostics:");
+    expect(text).toContain("ID: goal-standalone");
+    expect(text).toContain("Status: active");
 
     screen.unmount();
   });

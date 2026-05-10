@@ -43,14 +43,16 @@ function reportIcon(reportType: Report["report_type"]): string {
 export interface ReportViewProps {
   report: Report;
   onDismiss: () => void;
+  detail?: "default" | "diagnostic";
 }
 
 type ReportViewLine =
   | { kind: "markdown"; line: MarkdownLine }
   | { kind: "diff"; text: string };
 
-function buildReportViewLines(report: Report): ReportViewLine[] {
-  const lines: ReportViewLine[] = renderMarkdownLines(report.content).map((line) => ({
+function buildReportViewLines(report: Report, detail: ReportViewProps["detail"] = "default"): ReportViewLine[] {
+  const content = detail === "diagnostic" ? report.content : hideGeneratedGoalIdLine(report);
+  const lines: ReportViewLine[] = renderMarkdownLines(content).map((line) => ({
     kind: "markdown",
     line,
   }));
@@ -78,14 +80,24 @@ function buildReportViewLines(report: Report): ReportViewLine[] {
   return lines;
 }
 
-export function ReportView({ report, onDismiss }: ReportViewProps) {
+function hideGeneratedGoalIdLine(report: Report): string {
+  if (report.goal_id === null) return report.content;
+  const generatedGoalLine = `**Goal**: ${report.goal_id}`;
+  return report.content
+    .split("\n")
+    .filter((line) => line.trim() !== generatedGoalLine)
+    .join("\n");
+}
+
+export function ReportView({ report, onDismiss, detail = "default" }: ReportViewProps) {
   const { stdout } = useStdout();
   const termRows = stdout?.rows ?? 24;
   const [scrollOffset, setScrollOffset] = useState(0);
 
   const color = reportColor(report.report_type);
   const icon = reportIcon(report.report_type);
-  const reportLines = buildReportViewLines(report);
+  const reportLines = buildReportViewLines(report, detail);
+  const showGoalDiagnostic = detail === "diagnostic" && report.goal_id !== null;
 
   const generatedAt = report.generated_at
     ? new Date(report.generated_at).toLocaleString("en-US", {
@@ -97,8 +109,8 @@ export function ReportView({ report, onDismiss }: ReportViewProps) {
       })
     : "";
 
-  // Reserve rows: 1 header box border top + 1 header row + 1 goal row + 1 separator + 2 border bottom/footer + 1 footer hint
-  const reservedRows = 7;
+  // Reserve rows for header, separators, footer, and the optional diagnostic goal row.
+  const reservedRows = showGoalDiagnostic ? 7 : 6;
   const visibleLineCount = Math.max(1, termRows - reservedRows);
   const maxScroll = Math.max(0, reportLines.length - visibleLineCount);
   const clampedOffset = Math.min(scrollOffset, maxScroll);
@@ -133,7 +145,7 @@ export function ReportView({ report, onDismiss }: ReportViewProps) {
         )}
       </Box>
 
-      {report.goal_id !== null && (
+      {showGoalDiagnostic && (
         <Text dimColor>goal: {report.goal_id}</Text>
       )}
 

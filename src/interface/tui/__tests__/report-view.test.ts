@@ -3,9 +3,10 @@ import { renderToString } from "ink";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ReportView } from "../report-view.js";
 import { ReportSchema } from "../../../base/types/report.js";
+import { buildDailySummaryReport } from "../../../reporting/report-summary-builders.js";
 
 vi.mock("ink", async () => {
-  const actual = await vi.importActual<typeof import("ink")>("ink");
+  const actual = await vi.importActual<Record<string, unknown>>("ink");
   return {
     ...actual,
     useInput: vi.fn(),
@@ -16,6 +17,49 @@ vi.mock("ink", async () => {
 describe("ReportView", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it("hides raw goal identifiers in the default report view", async () => {
+    const report = buildDailySummaryReport({
+      id: "report-1",
+      goalId: "goal-1",
+      allReports: [],
+      now: new Date("2026-04-18T00:00:00.000Z"),
+    });
+
+    const output = renderToString(
+      React.createElement(ReportView, {
+        report,
+        onDismiss: () => {},
+      }),
+      { columns: 80 },
+    );
+
+    expect(output).toContain("Daily Summary");
+    expect(output).toContain("Loops run");
+    expect(output).not.toContain("goal: goal-1");
+    expect(output).not.toContain("Goal: goal-1");
+    expect(output).not.toContain("goal-1");
+  });
+
+  it("shows raw goal identifiers only in diagnostic report view", async () => {
+    const report = buildDailySummaryReport({
+      id: "report-1",
+      goalId: "goal-1",
+      allReports: [],
+      now: new Date("2026-04-18T00:00:00.000Z"),
+    });
+
+    const output = renderToString(
+      React.createElement(ReportView, {
+        report,
+        detail: "diagnostic",
+        onDismiss: () => {},
+      }),
+      { columns: 80 },
+    );
+
+    expect(output).toContain("goal: goal-1");
   });
 
   it("renders structured verification diffs from report metadata", async () => {
