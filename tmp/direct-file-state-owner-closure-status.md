@@ -18,7 +18,7 @@ Base: origin/main @ 7d87d012 Prefer live daemon status in runtime evidence answe
 | 2 | RunSpec Store | codex/direct-file-state-slice-2-run-spec-store-20260510220128 | /Users/yuyoshimuta/Documents/dev/PulSeed-worktrees/direct-file-state-slice-2-run-spec-store-20260510220128 | https://github.com/my-name-is-yu/PulSeed/pull/1843 | merged |
 | 3 | DriveSystem Schedule State | codex/direct-file-state-slice-3-drive-schedule-20260510225201 | /Users/yuyoshimuta/Documents/dev/PulSeed-worktrees/direct-file-state-slice-3-drive-schedule-20260510225201 | https://github.com/my-name-is-yu/PulSeed/pull/1853 | merged |
 | 4 | DriveSystem Event Queue / Runtime Event Spool | codex/direct-file-state-slice-4-event-spool-20260510232220 | /Users/yuyoshimuta/Documents/dev/PulSeed-worktrees/direct-file-state-slice-4-event-spool-20260510232220 | https://github.com/my-name-is-yu/PulSeed/pull/1858 | merged |
-| 5 | Strategy Template Registry | codex/direct-file-state-slice-5-strategy-template-20260510235349 | /Users/yuyoshimuta/Documents/dev/PulSeed-worktrees/direct-file-state-slice-5-strategy-template-20260510235349 | pending | in progress |
+| 5 | Strategy Template Registry | codex/direct-file-state-slice-5-strategy-template-20260510235349 | /Users/yuyoshimuta/Documents/dev/PulSeed-worktrees/direct-file-state-slice-5-strategy-template-20260510235349 | https://github.com/my-name-is-yu/PulSeed/pull/1862 | PR open |
 
 ## Slice 1 Direct File Owner Inventory
 
@@ -166,6 +166,8 @@ Base: origin/main @ 7d87d012 Prefer live daemon status in runtime evidence answe
 
 - Worktree: `/Users/yuyoshimuta/Documents/dev/PulSeed-worktrees/direct-file-state-slice-5-strategy-template-20260510235349`
 - Branch: `codex/direct-file-state-slice-5-strategy-template-20260510235349`
+- PR: https://github.com/my-name-is-yu/PulSeed/pull/1862
+- Head commit at PR creation: `72f63605`
 - Base: `origin/main @ 83a90a9c Bound daemon metadata reads (#1861)`
 - `nvm use 24.15.0 && npm ci`: passed
 - `npx vitest run --config vitest.unit.config.ts src/orchestrator/strategy/__tests__/strategy-template-registry.test.ts src/orchestrator/strategy/__tests__/strategy-template-state-store.test.ts src/orchestrator/strategy/__tests__/strategy-manager-core.test.ts`: passed, 70 tests
