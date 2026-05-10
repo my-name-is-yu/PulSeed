@@ -66,6 +66,22 @@ The database-first state slices added typed owners for these areas:
 JSON/JSONL runtime stores unless the file is a documented compatibility boundary,
 config surface, workspace/export/debug artifact, or existing follow-up surface.
 
+The guard prints a classified debt report for follow-up surfaces that are still
+temporarily allowlisted. Each entry must be categorized as one of:
+
+- migrate now
+- migration-only input
+- debug/export output
+- config/secret
+- workspace/user artifact
+- Soil import/publish artifact
+- product decision needed
+
+`node scripts/check-database-first-legacy-stores.mjs --json` emits the same
+inventory as machine-readable `debtReport` data. New durable JSON/JSONL/lock or
+path-shaped runtime owners must either move to a typed store or be added to that
+report with a precise owner, category, and follow-up slice.
+
 ## Final Audit
 
 Remaining known follow-up surfaces are intentionally allowlisted in the guard so

@@ -19,6 +19,8 @@ describe("database-first legacy store check", () => {
       import * as path from "node:path";
       export const queuePath = (root: string) => path.join(root, "queue.json");
       export const pluginStatePath = (pluginDir: string) => path.join(pluginDir, "state.json");
+      export const sessionIndex = "sessions/index.json";
+      export const wal = "wal.jsonl";
     `);
 
     const result = runCheck(tmpDir);
@@ -26,7 +28,10 @@ describe("database-first legacy store check", () => {
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("database-first legacy store check failed");
     expect(result.stderr).toContain("JournalBackedQueue SQLite queue table");
-    expect(result.stderr).toContain("PluginChannelRuntimeStateStore");
+    expect(result.stderr).toContain("PluginChannelRuntimeStateStore or another typed runtime state store");
+    expect(result.stderr).toContain("ExecutionSessionStateStore / control DB execution session tables");
+    expect(result.stderr).toContain("Goal WAL control DB ownership");
+    expect(result.stderr).toContain("Unclassified legacy store references must be moved to typed stores");
   });
 
   it("allows explicit migration boundaries and file-backed config surfaces", () => {
@@ -44,12 +49,67 @@ describe("database-first legacy store check", () => {
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("database-first legacy store check passed");
   });
+
+  it("reports classified follow-up debt instead of hiding allowlisted runtime owners", () => {
+    writeFile(tmpDir, "src/base/state/state-manager-wal.ts", `
+      export const goal = "goal.json";
+    `);
+    writeFile(tmpDir, "src/orchestrator/execution/session-manager.ts", `
+      export const sessionIndex = "sessions/index.json";
+      export const sessionPath = (sessionId: string) => \`sessions/\${sessionId}.json\`;
+    `);
+
+    const result = runCheck(tmpDir);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("classified legacy store debt report:");
+    expect(result.stdout).toContain("goal-wal-compatibility: migrate now; rank 1; Slice 2; owner: Goal WAL control DB ownership; matches: 1");
+    expect(result.stdout).toContain("execution-session-manager: migrate now; rank 3; Slice 3; owner: ExecutionSessionStateStore; matches: 2");
+    expect(result.stdout).toContain("run with --json for line-level classified matches and reasons");
+  });
+
+  it("fails unexpected legacy store classes inside classified follow-up files", () => {
+    writeFile(tmpDir, "src/base/state/state-manager-wal.ts", `
+      export const wal = "wal.jsonl";
+    `);
+
+    const result = runCheck(tmpDir);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("src/base/state/state-manager-wal.ts");
+    expect(result.stderr).toContain("[goal-wal-jsonl] Goal WAL control DB ownership");
+    expect(result.stderr).toContain('allowlist entry "goal-wal-compatibility" does not permit rule "goal-wal-jsonl"');
+  });
+
+  it("emits a machine-readable debt report", () => {
+    writeFile(tmpDir, "src/runtime/store/operator-handoff-store.ts", `
+      import { RuntimeJournal } from "./runtime-journal.js";
+      export const journal = RuntimeJournal;
+    `);
+
+    const result = runCheck(tmpDir, ["--json"]);
+
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout) as {
+      ok: boolean;
+      debtReport: Array<{ id: string; category: string; nextSlice: number | null; matchCount: number }>;
+    };
+    expect(parsed.ok).toBe(true);
+    expect(parsed.debtReport).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: "operator-handoff-runtime-journal",
+        category: "migrate now",
+        nextSlice: 6,
+        matchCount: 2,
+      }),
+    ]));
+  });
 });
 
-function runCheck(rootDir: string): { status: number; stdout: string; stderr: string } {
+function runCheck(rootDir: string, args: string[] = []): { status: number; stdout: string; stderr: string } {
   const scriptPath = path.resolve("scripts/check-database-first-legacy-stores.mjs");
   try {
-    const stdout = execFileSync(process.execPath, [scriptPath, rootDir], {
+    const stdout = execFileSync(process.execPath, [scriptPath, ...args, rootDir], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
     });
