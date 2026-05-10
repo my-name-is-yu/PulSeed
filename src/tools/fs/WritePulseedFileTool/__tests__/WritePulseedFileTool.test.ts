@@ -27,6 +27,7 @@ describe("WritePulseedFileTool", () => {
   const originalPulseedHome = process.env["PULSEED_HOME"];
 
   beforeAll(async () => {
+    delete process.env["PULSEED_HOME"];
     tmpHome = await fs.mkdtemp(path.join(os.tmpdir(), "write-pulseed-test-"));
     pulseedDir = path.join(tmpHome, ".pulseed");
     await fs.mkdir(pulseedDir, { recursive: true });
