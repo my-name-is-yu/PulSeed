@@ -10,6 +10,11 @@ import {
 export const PROCESS_SESSION_SNAPSHOT_REF_PREFIX = "control-db://process-sessions/";
 
 const ProcessSessionSignalSchema = z.custom<NodeJS.Signals>((value) => typeof value === "string");
+const ProcessSessionSafeNonnegativeIntSchema = z.number()
+  .finite()
+  .int()
+  .nonnegative()
+  .safe();
 
 const ProcessSessionSnapshotSchema = z.object({
   session_id: z.string().min(1),
@@ -26,7 +31,7 @@ const ProcessSessionSnapshotSchema = z.object({
   signal: ProcessSessionSignalSchema.nullable(),
   startedAt: z.string().min(1),
   exitedAt: z.string().optional(),
-  bufferedChars: z.number().int().nonnegative(),
+  bufferedChars: ProcessSessionSafeNonnegativeIntSchema,
   metadataRef: z.string().optional(),
   artifactRefs: z.array(z.string()).optional(),
 }).passthrough();
