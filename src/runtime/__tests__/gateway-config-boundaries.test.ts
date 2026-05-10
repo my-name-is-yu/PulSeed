@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { DiscordGatewayAdapter } from "../gateway/discord-gateway-adapter.js";
+import { GATEWAY_CONFIG_JSON_MAX_BYTES } from "../gateway/config-json.js";
 import { SignalGatewayAdapter } from "../gateway/signal-gateway-adapter.js";
 import { TelegramGatewayAdapter } from "../gateway/telegram-gateway-adapter.js";
 import { WhatsAppGatewayAdapter } from "../gateway/whatsapp-gateway-adapter.js";
@@ -9,6 +10,14 @@ import { cleanupTempDir, makeTempDir } from "../../../tests/helpers/temp-dir.js"
 
 function writeConfig(dir: string, config: Record<string, unknown>): void {
   fs.writeFileSync(path.join(dir, "config.json"), JSON.stringify(config, null, 2), "utf-8");
+}
+
+function writeOversizedConfig(dir: string, config: Record<string, unknown>): void {
+  fs.writeFileSync(
+    path.join(dir, "config.json"),
+    JSON.stringify({ ...config, padding: "x".repeat(GATEWAY_CONFIG_JSON_MAX_BYTES) }),
+    "utf-8",
+  );
 }
 
 describe("gateway channel config boundaries", () => {
@@ -89,5 +98,49 @@ describe("gateway channel config boundaries", () => {
     expect(() => SignalGatewayAdapter.fromConfigDir(tmpDir!)).toThrow(
       "signal-bridge: poll_interval_ms must be a safe integer between 1000 and 60000",
     );
+  });
+
+  it.each([
+    [
+      "telegram-bot",
+      () => TelegramGatewayAdapter.fromConfigDir(tmpDir!),
+      { bot_token: "telegram-token" },
+    ],
+    [
+      "discord-bot",
+      () => DiscordGatewayAdapter.fromConfigDir(tmpDir!),
+      {
+        application_id: "app-1",
+        bot_token: "discord-token",
+        channel_id: "channel-1",
+        identity_key: "main",
+      },
+    ],
+    [
+      "whatsapp-webhook",
+      () => WhatsAppGatewayAdapter.fromConfigDir(tmpDir!),
+      {
+        phone_number_id: "phone-1",
+        access_token: "whatsapp-token",
+        verify_token: "verify-token",
+        recipient_id: "recipient-1",
+        identity_key: "main",
+      },
+    ],
+    [
+      "signal-bridge",
+      () => SignalGatewayAdapter.fromConfigDir(tmpDir!),
+      {
+        bridge_url: "http://127.0.0.1:8080",
+        account: "+15555550100",
+        recipient_id: "+15555550101",
+        identity_key: "main",
+      },
+    ],
+  ])("rejects oversized %s config before adapter-specific validation", (channelName, loadConfig, config) => {
+    tmpDir = makeTempDir();
+    writeOversizedConfig(tmpDir, config);
+
+    expect(loadConfig).toThrow(`${channelName}: config.json exceeds ${GATEWAY_CONFIG_JSON_MAX_BYTES} bytes`);
   });
 });

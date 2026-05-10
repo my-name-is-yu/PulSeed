@@ -1,8 +1,7 @@
 import * as crypto from "node:crypto";
-import * as fs from "node:fs";
 import * as http from "node:http";
-import * as path from "node:path";
 import type { ChannelAdapter, EnvelopeHandler, TypingIndicatorCapability } from "./channel-adapter.js";
+import { loadGatewayConfigJson } from "./config-json.js";
 import { dispatchGatewayChatInput } from "./chat-session-dispatch.js";
 import { formatPlaintextNotification, supportsCoreGatewayNotification } from "./core-channel-notification.js";
 import { buildChannelPolicyMetadata, buildExternalSurfaceDecision, evaluateChannelAccess, resolveChannelRoute } from "./channel-policy.js";
@@ -365,7 +364,7 @@ class WhatsAppCloudClient {
 }
 
 function loadWhatsAppGatewayConfig(pluginDir: string): WhatsAppGatewayConfig {
-  const raw = JSON.parse(fs.readFileSync(path.join(pluginDir, "config.json"), "utf-8")) as Record<string, unknown>;
+  const raw = loadGatewayConfigJson(pluginDir, "whatsapp-webhook");
   const host = raw["host"] ?? "127.0.0.1";
   const port = raw["port"] ?? 8788;
   const pathValue = raw["path"] ?? "/webhook";
