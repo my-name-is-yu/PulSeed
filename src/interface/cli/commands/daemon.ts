@@ -64,6 +64,7 @@ import {
   type RuntimeTaskOutcomeDetails,
 } from "./daemon-shared.js";
 import {
+  LIVE_RUNTIME_OVERRIDES_STALE_HEALTH_REASON,
   STALE_RUNTIME_HEALTH_REASON,
   formatControlDbSchemaDriftMessage,
   formatHistoricalSnapshotContext,
@@ -574,6 +575,9 @@ export async function cmdDaemonStatus(_args: string[]): Promise<void> {
   const runtimeHealthReconciled =
     storedRuntimeHealth !== runtimeHealth
     && (storedRuntimeHealth?.kpi !== undefined || storedRuntimeHealth?.long_running !== undefined);
+  const runtimeHealthReconciliationReason = resolvedRuntimeAlive
+    ? LIVE_RUNTIME_OVERRIDES_STALE_HEALTH_REASON
+    : STALE_RUNTIME_HEALTH_REASON;
   const proactiveSummary = await new ProactiveInterventionStore(runtimeRoot, { controlBaseDir: baseDir }).summarize();
   const supervisorState = await readSupervisorState(runtimeRoot, baseDir);
   const shutdownMarker = await readShutdownMarkerFile(baseDir);
@@ -764,7 +768,7 @@ export async function cmdDaemonStatus(_args: string[]): Promise<void> {
     lines.push("");
     lines.push("Runtime health:");
     if (runtimeHealthReconciled) {
-      lines.push(`  Snapshot note:  ${STALE_RUNTIME_HEALTH_REASON}.`);
+      lines.push(`  Snapshot note:  ${runtimeHealthReconciliationReason}.`);
     }
     lines.push(`  ${formatCapabilityLabel("Process alive:", runtimeHealth.kpi, "process_alive")}`);
     lines.push(`  ${formatCapabilityLabel("Accept command:", runtimeHealth.kpi, "command_acceptance")}`);
@@ -790,7 +794,7 @@ export async function cmdDaemonStatus(_args: string[]): Promise<void> {
     lines.push("");
     lines.push("Long-run health:");
     if (runtimeHealthReconciled) {
-      lines.push(`  Snapshot note:  ${STALE_RUNTIME_HEALTH_REASON}.`);
+      lines.push(`  Snapshot note:  ${runtimeHealthReconciliationReason}.`);
     }
     lines.push(...formatLongRunHealthLines(runtimeHealth.long_running, {
       historical: liveRuntimeStopped,

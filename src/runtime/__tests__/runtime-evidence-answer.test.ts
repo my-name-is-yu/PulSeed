@@ -8,6 +8,7 @@ import {
   understandRuntimeEvidenceQuestion,
 } from "../evidence-answer.js";
 import type { BackgroundRun } from "../session-registry/types.js";
+import type { RuntimeHealthSnapshot } from "../store/runtime-schemas.js";
 import { BackgroundRunLedger } from "../store/background-run-store.js";
 import { RuntimeEvidenceLedger, type RuntimeEvidenceSummary } from "../store/evidence-ledger.js";
 import { createSingleMockLLMClient } from "../../../tests/helpers/mock-llm.js";
@@ -106,6 +107,60 @@ function summary(overrides: Partial<RuntimeEvidenceSummary> = {}): RuntimeEviden
     failed_lineages: [],
     recent_entries: [],
     warnings: [],
+    ...overrides,
+  };
+}
+
+function healthSnapshot(overrides: Partial<RuntimeHealthSnapshot> = {}): RuntimeHealthSnapshot {
+  const checkedAt = Date.parse("2026-05-02T00:24:00.000Z");
+  return {
+    status: "failed",
+    leader: true,
+    checked_at: checkedAt,
+    components: {
+      gateway: "ok",
+      queue: "ok",
+      leases: "ok",
+      approval: "ok",
+      outbox: "ok",
+      supervisor: "failed",
+    },
+    kpi: {
+      process_alive: {
+        status: "failed",
+        checked_at: checkedAt,
+        last_failed_at: checkedAt,
+        reason: "daemon stopped",
+      },
+      command_acceptance: {
+        status: "failed",
+        checked_at: checkedAt,
+      },
+      task_execution: {
+        status: "failed",
+        checked_at: checkedAt,
+      },
+      degraded_at: checkedAt,
+    },
+    long_running: {
+      summary: "dead_needs_intervention",
+      checked_at: checkedAt,
+      signals: {
+        process: {
+          status: "dead",
+          pid: 12345,
+          checked_at: checkedAt,
+          observed_at: checkedAt,
+        },
+        child_activity: { status: "unknown", checked_at: checkedAt },
+        log_freshness: { status: "stale", checked_at: checkedAt },
+        artifact_freshness: { status: "unknown", checked_at: checkedAt },
+        metric_freshness: { status: "unknown", checked_at: checkedAt },
+        metric_progress: { status: "unknown", checked_at: checkedAt },
+        blocker: { status: "unknown", checked_at: checkedAt },
+        resumable: false,
+      },
+    },
     ...overrides,
   };
 }
@@ -329,6 +384,198 @@ describe("buildRuntimeEvidenceAnswer", () => {
     expect(result.messageType).toBe("warning");
     expect(result.message).toContain("Evidence may be stale");
     expect(result.message).toContain("Latest evidence may be stale");
+  });
+
+  it("prefers live daemon status over a stale stopped health snapshot", () => {
+    const health = healthSnapshot();
+    const result = buildRuntimeEvidenceAnswer({
+      text: "Is PulSeed running now?",
+      topics: ["progress"],
+      snapshot: null,
+      health,
+      daemonStatus: {
+        source: "live_daemon_state",
+        checked_at: "2026-05-02T00:30:00.000Z",
+        live: {
+          status: "idle",
+          pid: 94683,
+          last_loop_at: "2026-05-02T00:29:00.000Z",
+          active_goal_count: 0,
+        },
+        health_snapshot: {
+          checked_at: "2026-05-02T00:24:00.000Z",
+          status: "failed",
+          process_status: "dead",
+          summary: "dead_needs_intervention",
+          historical: true,
+          reason: "live daemon state was checked after this persisted health snapshot",
+        },
+      },
+      run: run(),
+      summary: summary(),
+      now: NOW,
+    });
+
+    expect(result.message).toContain("Live daemon status: idle (PID 94683)");
+    expect(result.message).toContain("Historical Runtime Health snapshot: failed; process snapshot dead");
+    expect(result.message).not.toContain("Liveness: daemon aggregate dead");
+  });
+
+  it("does not treat aggregate failed health as stale when process health is live", () => {
+    const health = healthSnapshot({
+      kpi: {
+        ...healthSnapshot().kpi!,
+        process_alive: {
+          status: "ok",
+          checked_at: Date.parse("2026-05-02T00:24:00.000Z"),
+          last_ok_at: Date.parse("2026-05-02T00:24:00.000Z"),
+        },
+        command_acceptance: {
+          status: "failed",
+          checked_at: Date.parse("2026-05-02T00:24:00.000Z"),
+        },
+      },
+      long_running: {
+        ...healthSnapshot().long_running!,
+        summary: "alive_but_waiting",
+        signals: {
+          ...healthSnapshot().long_running!.signals,
+          process: {
+            status: "alive",
+            pid: 12345,
+            checked_at: Date.parse("2026-05-02T00:24:00.000Z"),
+            observed_at: Date.parse("2026-05-02T00:24:00.000Z"),
+          },
+          log_freshness: { status: "fresh", checked_at: Date.parse("2026-05-02T00:24:00.000Z") },
+        },
+      },
+    });
+    const result = buildRuntimeEvidenceAnswer({
+      text: "Is PulSeed running now?",
+      topics: ["progress"],
+      snapshot: null,
+      health,
+      daemonStatus: {
+        source: "live_daemon_state",
+        checked_at: "2026-05-02T00:30:00.000Z",
+        live: {
+          status: "running",
+          pid: 12345,
+          last_loop_at: "2026-05-02T00:29:00.000Z",
+          active_goal_count: 1,
+        },
+        health_snapshot: {
+          checked_at: "2026-05-02T00:24:00.000Z",
+          status: "failed",
+          process_status: "alive",
+          summary: "alive_but_waiting",
+          historical: false,
+        },
+      },
+      run: run(),
+      summary: summary(),
+      now: NOW,
+    });
+
+    expect(result.message).toContain("Live daemon status: running (PID 12345)");
+    expect(result.message).toContain("Liveness: daemon aggregate alive; logs fresh; alive_but_waiting.");
+    expect(result.message).not.toContain("Historical Runtime Health snapshot: failed");
+  });
+
+  it("labels health-only liveness as historical when live daemon status is unavailable", () => {
+    const result = buildRuntimeEvidenceAnswer({
+      text: "Is PulSeed running now?",
+      topics: ["progress"],
+      snapshot: null,
+      health: healthSnapshot(),
+      daemonStatus: {
+        source: "historical_health_snapshot",
+        checked_at: "2026-05-02T00:30:00.000Z",
+        health_snapshot: {
+          checked_at: "2026-05-02T00:24:00.000Z",
+          status: "failed",
+          process_status: "dead",
+          summary: "dead_needs_intervention",
+          historical: true,
+        },
+      },
+      run: run(),
+      summary: summary(),
+      now: NOW,
+    });
+
+    expect(result.message).toContain("Historical Runtime Health snapshot: daemon aggregate dead");
+    expect(result.message).toContain("checked 2026-05-02T00:24:00.000Z");
+    expect(result.message).not.toContain("Live daemon status:");
+    expect(result.message).not.toContain("Liveness: daemon aggregate dead");
+  });
+
+  it("still reports live daemon status when no runtime catalog run exists", () => {
+    const result = buildRuntimeEvidenceAnswer({
+      text: "Is PulSeed running now?",
+      topics: ["progress"],
+      snapshot: null,
+      health: healthSnapshot(),
+      daemonStatus: {
+        source: "live_daemon_state",
+        checked_at: "2026-05-02T00:30:00.000Z",
+        live: {
+          status: "idle",
+          pid: 94683,
+          last_loop_at: "2026-05-02T00:29:00.000Z",
+          active_goal_count: 0,
+        },
+        health_snapshot: {
+          checked_at: "2026-05-02T00:24:00.000Z",
+          status: "failed",
+          process_status: "dead",
+          summary: "dead_needs_intervention",
+          historical: true,
+          reason: "live daemon state was checked after this persisted health snapshot",
+        },
+      },
+      run: null,
+      summary: null,
+      now: NOW,
+    });
+
+    expect(result.messageType).toBe("warning");
+    expect(result.message).toContain("Evidence missing: no active or recent Runtime Session Catalog run was found.");
+    expect(result.message).toContain("Live daemon status: idle (PID 94683)");
+    expect(result.message).toContain("Historical Runtime Health snapshot: failed; process snapshot dead");
+  });
+
+  it("reports an alive stopping daemon as live status instead of historical-only", () => {
+    const result = buildRuntimeEvidenceAnswer({
+      text: "Is PulSeed running now?",
+      topics: ["progress"],
+      snapshot: null,
+      health: healthSnapshot(),
+      daemonStatus: {
+        source: "live_daemon_state",
+        checked_at: "2026-05-02T00:30:00.000Z",
+        live: {
+          status: "stopping",
+          pid: 94683,
+          last_loop_at: "2026-05-02T00:29:00.000Z",
+          active_goal_count: 0,
+        },
+        health_snapshot: {
+          checked_at: "2026-05-02T00:24:00.000Z",
+          status: "failed",
+          process_status: "dead",
+          summary: "dead_needs_intervention",
+          historical: true,
+          reason: "live daemon state was checked after this persisted health snapshot",
+        },
+      },
+      run: null,
+      summary: null,
+      now: NOW,
+    });
+
+    expect(result.message).toContain("Live daemon status: stopping (PID 94683)");
+    expect(result.message).toContain("Historical Runtime Health snapshot: failed; process snapshot dead");
   });
 
   it("answers missing evidence cases instead of falling back to model memory", () => {
