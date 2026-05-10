@@ -75,6 +75,7 @@ export class SeedyPresenceProjector {
   private typingStartPromise: Promise<void> | null = null;
   private statusRef: NonTuiDisplayMessageRef | null = null;
   private statusSendPromise: Promise<void> | null = null;
+  private fallbackAckPromise: Promise<void> | null = null;
   private statusTimer: ReturnType<typeof setTimeout> | null = null;
   private fallbackTimer: ReturnType<typeof setTimeout> | null = null;
   private fallbackAckInFlight = false;
@@ -197,14 +198,14 @@ export class SeedyPresenceProjector {
     if (!text) return;
 
     this.fallbackAckInFlight = true;
-    try {
-      await this.safe("fallback_ack", async () => {
-        await this.transport!.sendFallbackAck(text);
-        this.fallbackAckSent = true;
-      });
-    } finally {
+    this.fallbackAckPromise = this.safe("fallback_ack", async () => {
+      await this.transport!.sendFallbackAck(text);
+      this.fallbackAckSent = true;
+    }).then(() => undefined).finally(() => {
       this.fallbackAckInFlight = false;
-    }
+      this.fallbackAckPromise = null;
+    });
+    await this.fallbackAckPromise;
   }
 
   private async upsertEditableStatus(presence: SeedyTurnPresence): Promise<void> {
@@ -288,7 +289,12 @@ export class SeedyPresenceProjector {
   }
 
   private async finish(reason: "final" | "complete" | "error" | "stopped"): Promise<void> {
-    if (this.terminal && this.typingSession === null && this.statusRef === null) return;
+    if (
+      this.terminal
+      && this.typingSession === null
+      && this.statusRef === null
+      && this.fallbackAckPromise === null
+    ) return;
     this.terminal = true;
     this.cancelFallbackTimer();
     this.cancelStatusTimer();
@@ -300,6 +306,7 @@ export class SeedyPresenceProjector {
   private async waitForPendingTransportStarts(): Promise<void> {
     await this.typingStartPromise;
     await this.statusSendPromise;
+    await this.fallbackAckPromise;
   }
 
   private cancelFallbackTimer(): void {

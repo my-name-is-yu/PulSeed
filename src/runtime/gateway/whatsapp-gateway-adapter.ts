@@ -5,13 +5,15 @@ import { loadGatewayConfigJson } from "./config-json.js";
 import { dispatchGatewayChatInput } from "./chat-session-dispatch.js";
 import { formatPlaintextNotification, supportsCoreGatewayNotification } from "./core-channel-notification.js";
 import { buildChannelPolicyMetadata, buildExternalSurfaceDecision, evaluateChannelAccess, resolveChannelRoute } from "./channel-policy.js";
-import { createUnsupportedTypingIndicator, withTypingIndicator } from "./typing-indicator.js";
+import { createUnsupportedTypingIndicator } from "./typing-indicator.js";
 import { WHATSAPP_GATEWAY_DISPLAY_CONTRACT } from "./channel-display-policy.js";
-import { WHATSAPP_SEEDY_PRESENCE_CONTRACT } from "./channel-presence-policy.js";
+import { WHATSAPP_SEEDY_PRESENCE_CONTRACT, resolveGatewayChannelPresenceContract } from "./channel-presence-policy.js";
 import { NonTuiDisplayProjector, type NonTuiDisplayMessageRef, type NonTuiDisplayTransport } from "./non-tui-display-projector.js";
+import { SeedyPresenceProjector, createSeedyPresenceTransportFromNonTuiDisplay } from "./seedy-presence-projector.js";
 import { isPayloadTooLargeError, readBody } from "../http-body.js";
 import type { INotifier, NotificationEvent, NotificationEventType } from "../../base/types/plugin.js";
 import type { ChatEvent } from "../../interface/chat/chat-events.js";
+import { createUserVisibleSeedyTurnPresence } from "../../interface/chat/seedy-turn-presence.js";
 
 const MIN_PORT = 1;
 const MAX_PORT = 65_535;
@@ -207,6 +209,7 @@ export class WhatsAppGatewayAdapter implements ChannelAdapter {
       channelContext
     );
     const externalSurface = buildExternalSurfaceDecision(channelContext, access, route);
+    const transport = new WhatsAppDisplayTransport(this.client, senderId);
     const projector = new NonTuiDisplayProjector({
       display: {
         capabilities: WHATSAPP_GATEWAY_DISPLAY_CONTRACT.capabilities,
@@ -220,21 +223,21 @@ export class WhatsAppGatewayAdapter implements ChannelAdapter {
           progressMaxChars: 0,
         },
       },
-      transport: new WhatsAppDisplayTransport(this.client, senderId),
+      transport,
     });
-    const reply = await withTypingIndicator(
-      this.typingIndicator,
-      {
-        platform: "whatsapp",
-        conversation_id: senderId,
-        sender_id: senderId,
-        message_id: message.id,
-        metadata: {
-          message_type: message.type,
-          timestamp: message.timestamp,
-        },
-      },
-      () => dispatchGatewayChatInput({
+    const presenceProjector = new SeedyPresenceProjector({
+      presence: resolveGatewayChannelPresenceContract(this.presenceContract),
+      transport: createSeedyPresenceTransportFromNonTuiDisplay(transport),
+      onError: (error, operation) => console.warn("WhatsAppGatewayAdapter: presence projector failed", { operation, error }),
+    });
+
+    let reply: string | null = null;
+    try {
+      await presenceProjector.update(createUserVisibleSeedyTurnPresence({
+        turn_id: `whatsapp:${senderId}:${message.id ?? "message"}`,
+        phase: "received",
+      }));
+      reply = await dispatchGatewayChatInput({
         text,
         platform: "whatsapp",
         identity_key: route.identityKey ?? this.config.identity_key,
@@ -243,15 +246,24 @@ export class WhatsAppGatewayAdapter implements ChannelAdapter {
         message_id: message.id,
         goal_id: route.goalId,
         externalSurface,
-        onEvent: (event) => projector.handle(event as unknown as ChatEvent),
+        onEvent: async (event) => {
+          const chatEvent = event as unknown as ChatEvent;
+          await projector.handle(chatEvent);
+          await presenceProjector.handle(chatEvent, {
+            assistantOutputRendered: projector.deliveredAssistantOutput,
+            meaningfulProgressRendered: projector.deliveredProgressOutput,
+          });
+        },
         metadata: {
           ...buildChannelPolicyMetadata(channelContext, access, route, externalSurface),
           message_type: message.type,
           timestamp: message.timestamp,
           ...(route.goalId ? { goal_id: route.goalId } : {}),
         },
-      })
-    );
+      });
+    } finally {
+      await presenceProjector.stop();
+    }
 
     if (!projector.renderedAssistantOutput) {
       await projector.handle({
