@@ -9,7 +9,7 @@ import { TELEGRAM_GATEWAY_DISPLAY_CONTRACT, createGatewayDisplayPolicy } from ".
 import { TELEGRAM_SEEDY_PRESENCE_CONTRACT, resolveGatewayChannelPresenceContract } from "./channel-presence-policy.js";
 import { NonTuiDisplayProjector, type NonTuiDisplayMessageRef, type NonTuiDisplayTransport } from "./non-tui-display-projector.js";
 import { SeedyPresenceProjector, createSeedyPresenceTransportFromNonTuiDisplay, type SeedyPresenceTransport } from "./seedy-presence-projector.js";
-import { PluginChannelRuntimeStateStore } from "../store/plugin-channel-runtime-state-store.js";
+import { PluginChannelRuntimeStateStore, type GatewayChannelTimingSnapshot } from "../store/plugin-channel-runtime-state-store.js";
 import type { INotifier, NotificationEvent, NotificationEventType } from "../../base/types/plugin.js";
 import type { ChatEvent } from "../../interface/chat/chat-events.js";
 import { createUserVisibleSeedyTurnPresence } from "../../interface/chat/seedy-turn-presence.js";
@@ -87,6 +87,7 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
   private readonly config: TelegramGatewayConfig;
   private readonly channelName: string;
   private readonly runtimeStateStore: PluginChannelRuntimeStateStore;
+  private readonly timing: TelegramGatewayTimingRecorder;
   private readonly homeChatStore: TelegramHomeChatStore;
   private readonly notifier: TelegramGatewayNotifier;
   private running = false;
@@ -98,13 +99,18 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
     this.config = config;
     this.channelName = options.channelName ?? inferGatewayChannelName(pluginDir);
     this.runtimeStateStore = options.runtimeStateStore ?? new PluginChannelRuntimeStateStore(inferGatewayRuntimeBaseDir(pluginDir));
+    this.timing = new TelegramGatewayTimingRecorder(this.name);
     this.api = new TelegramAPI(config.bot_token);
     this.typingIndicator = createRefreshingTypingIndicator({
       intervalMs: 4_000,
       refresh: async (context) => {
         const chatId = parseTelegramIntegerId(context.conversation_id);
         if (chatId === null) return;
-        await this.api.sendChatAction(chatId, "typing");
+        try {
+          await this.timing.recordOutbound("typing", () => this.api.sendChatAction(chatId, "typing"));
+        } finally {
+          await this.recordTiming();
+        }
       },
       onError: (err) => console.warn("TelegramGatewayAdapter: typing indicator failed", err),
     });
@@ -146,7 +152,10 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
     let backoffIndex = 0;
     while (this.running) {
       try {
+        const poll = this.timing.beginPoll(this.offset, this.config.polling_timeout);
         const updates = await this.api.getUpdates(this.offset, this.config.polling_timeout);
+        this.timing.completePoll(poll, { updateCount: updates.length, ok: true });
+        await this.recordTiming();
         backoffIndex = 0;
         for (const update of updates) {
           this.offset = update.update_id + 1;
@@ -162,18 +171,22 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
           try {
             if (this.isFirstHomeBindingCommand(msg.text, fromId)) {
               await this.recordHealth({ last_inbound_at: new Date().toISOString(), last_error: null });
-              await this.processMessage(msg.text, fromId, chatId, msg.message_id);
+              await this.processMessage(msg.text, fromId, chatId, msg.message_id, update.update_id);
               continue;
             }
             if (!this.config.allow_all && !this.effectiveAllowedUserIds().includes(fromId)) continue;
             await this.recordHealth({ last_inbound_at: new Date().toISOString(), last_error: null });
-            await this.processMessage(msg.text, fromId, chatId, msg.message_id);
+            await this.processMessage(msg.text, fromId, chatId, msg.message_id, update.update_id);
           } finally {
             this.handlingUpdate = false;
           }
         }
       } catch (err) {
-        await this.recordHealth({ last_error: err instanceof Error ? err.message : String(err) });
+        this.timing.completeOpenPoll({ ok: false, error: err });
+        await this.recordHealth({
+          last_error: err instanceof Error ? err.message : String(err),
+          last_timing: this.timing.snapshot(),
+        });
         if (!this.running) break;
         const delay = BACKOFF_STEPS_MS[Math.min(backoffIndex, BACKOFF_STEPS_MS.length - 1)];
         backoffIndex++;
@@ -182,22 +195,26 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
     }
   }
 
-  private async processMessage(text: string, fromUserId: number, chatId: number, messageId: number): Promise<void> {
+  private async processMessage(text: string, fromUserId: number, chatId: number, messageId: number, updateId?: number): Promise<void> {
+    this.timing.beginTurn({ updateId, messageId });
+    await this.recordTiming();
     const normalized = text.trim().toLowerCase();
     if (normalized === "/sethome" || normalized.startsWith("/sethome@")) {
       const firstBinding = this.config.allowed_user_ids.length === 0 && this.homeChatStore.get() === undefined && !this.config.allow_all;
       await this.homeChatStore.set(chatId, firstBinding ? fromUserId : undefined);
-      await this.api.sendPlainMessage(
+      await this.timing.recordOutbound("sethome_send", () => this.api.sendPlainMessage(
         chatId,
         firstBinding
           ? "This chat is now the home channel for PulSeed notifications, and this Telegram user is allowed for normal chat. Runtime control still requires its own allow list."
           : "This chat is now the home channel for PulSeed notifications."
-      );
+      ));
+      this.timing.markLifecycleEnd();
+      await this.recordTiming();
       await this.recordHealth({ last_outbound_at: new Date().toISOString(), last_error: null });
       return;
     }
 
-    const eventAdapter = new TelegramChatEventAdapter(this.api, chatId);
+    const eventAdapter = new TelegramChatEventAdapter(this.api, chatId, this.timing, () => this.recordTiming());
     const context = {
       platform: "telegram",
       senderId: String(fromUserId),
@@ -294,6 +311,8 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
         await presenceProjector.stop();
       }
     }
+    this.timing.markLifecycleEnd();
+    await this.recordTiming();
     await this.recordHealth({ last_outbound_at: new Date().toISOString(), last_error: null });
   }
 
@@ -306,8 +325,16 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
       && !this.config.denied_user_ids.includes(fromUserId);
   }
 
-  private async recordHealth(update: Partial<{ last_inbound_at: string; last_outbound_at: string; last_error: string | null }>): Promise<void> {
+  private async recordHealth(update: Partial<{ last_inbound_at: string; last_outbound_at: string; last_error: string | null; last_timing: GatewayChannelTimingSnapshot }>): Promise<void> {
     await this.runtimeStateStore.saveChannelHealth(this.channelName, update);
+  }
+
+  private async recordTiming(): Promise<void> {
+    try {
+      await this.recordHealth({ last_timing: this.timing.snapshot() });
+    } catch (error) {
+      console.warn("TelegramGatewayAdapter: timing instrumentation failed", error);
+    }
   }
 
   private effectiveAllowedUserIds(): number[] {
@@ -474,9 +501,11 @@ class TelegramChatEventAdapter {
 
   constructor(
     private readonly api: TelegramAPI,
-    private readonly chatId: number
+    private readonly chatId: number,
+    private readonly timing: TelegramGatewayTimingRecorder,
+    private readonly onTimingUpdated: () => Promise<void>,
   ) {
-    const transport = new TelegramDisplayTransport(api, chatId);
+    const transport = new TelegramDisplayTransport(api, chatId, timing, onTimingUpdated);
     this.presenceTransport = createSeedyPresenceTransportFromNonTuiDisplay(transport);
     this.projector = new NonTuiDisplayProjector({
       display: {
@@ -532,29 +561,184 @@ class TelegramDisplayTransport implements NonTuiDisplayTransport {
   constructor(
     private readonly api: TelegramAPI,
     private readonly chatId: number,
+    private readonly timing: TelegramGatewayTimingRecorder,
+    private readonly onTimingUpdated: () => Promise<void>,
   ) {}
 
   async sendProgress(text: string): Promise<NonTuiDisplayMessageRef> {
-    const messageId = await this.api.sendPlainMessage(this.chatId, text);
+    const messageId = await this.record("progress_send", () => this.api.sendPlainMessage(this.chatId, text));
     return { id: String(messageId) };
   }
 
   async editProgress(ref: NonTuiDisplayMessageRef, text: string): Promise<void> {
-    await this.api.editMessageText(this.chatId, parseTelegramMessageRef(ref), text);
+    await this.record("progress_edit", () => this.api.editMessageText(this.chatId, parseTelegramMessageRef(ref), text));
   }
 
   async deleteProgress(ref: NonTuiDisplayMessageRef): Promise<void> {
-    await this.api.deleteMessage(this.chatId, parseTelegramMessageRef(ref));
+    await this.record("progress_delete", () => this.api.deleteMessage(this.chatId, parseTelegramMessageRef(ref)));
   }
 
   async sendFinal(text: string): Promise<NonTuiDisplayMessageRef> {
-    const messageId = await this.api.sendPlainMessage(this.chatId, text);
+    const messageId = await this.record("final_send", () => this.api.sendPlainMessage(this.chatId, text));
     return { id: String(messageId) };
   }
 
   async editFinal(ref: NonTuiDisplayMessageRef, text: string): Promise<void> {
-    await this.api.editMessageText(this.chatId, parseTelegramMessageRef(ref), text);
+    await this.record("final_edit", () => this.api.editMessageText(this.chatId, parseTelegramMessageRef(ref), text));
   }
+
+  private async record<T>(kind: TelegramGatewayOutboundKind, fn: () => Promise<T>): Promise<T> {
+    try {
+      return await this.timing.recordOutbound(kind, fn);
+    } finally {
+      await this.onTimingUpdated();
+    }
+  }
+}
+
+type TelegramGatewayOutboundKind =
+  | "typing"
+  | "progress_send"
+  | "progress_edit"
+  | "progress_delete"
+  | "final_send"
+  | "final_edit"
+  | "sethome_send";
+
+interface TelegramGatewayPollToken {
+  readonly startedAtMs: number;
+  readonly startedAt: string;
+  readonly offset: number;
+  readonly timeoutSeconds: number;
+}
+
+class TelegramGatewayTimingRecorder {
+  private openPoll: TelegramGatewayPollToken | null = null;
+  private lastPoll: GatewayChannelTimingSnapshot["poll"] | undefined;
+  private turn: GatewayChannelTimingSnapshot["turn"] | undefined;
+
+  constructor(private readonly channel: string) {}
+
+  beginPoll(offset: number, timeoutSeconds: number): TelegramGatewayPollToken {
+    const token = {
+      startedAtMs: Date.now(),
+      startedAt: new Date().toISOString(),
+      offset,
+      timeoutSeconds,
+    };
+    this.openPoll = token;
+    return token;
+  }
+
+  completePoll(
+    token: TelegramGatewayPollToken,
+    result: { updateCount: number; ok: boolean; error?: unknown },
+  ): void {
+    this.lastPoll = {
+      started_at: token.startedAt,
+      completed_at: new Date().toISOString(),
+      duration_ms: elapsedMs(token.startedAtMs),
+      offset: token.offset,
+      timeout_seconds: token.timeoutSeconds,
+      update_count: result.updateCount,
+      ok: result.ok,
+      ...(result.error ? { error_class: errorClass(result.error) } : {}),
+    };
+    if (this.openPoll === token) this.openPoll = null;
+  }
+
+  completeOpenPoll(result: { ok: boolean; error?: unknown }): void {
+    if (this.openPoll === null) return;
+    this.completePoll(this.openPoll, {
+      updateCount: 0,
+      ok: result.ok,
+      error: result.error,
+    });
+  }
+
+  beginTurn(input: { updateId?: number; messageId: number }): void {
+    this.turn = {
+      turn_ref: `telegram:message:${input.messageId}`,
+      ...(input.updateId !== undefined ? { update_id: input.updateId } : {}),
+      message_id: input.messageId,
+      inbound_admitted_at: new Date().toISOString(),
+      outbound_calls: [],
+    };
+  }
+
+  markLifecycleEnd(): void {
+    if (!this.turn) return;
+    this.turn = {
+      ...this.turn,
+      lifecycle_end_at: new Date().toISOString(),
+    };
+  }
+
+  async recordOutbound<T>(kind: TelegramGatewayOutboundKind, fn: () => Promise<T>): Promise<T> {
+    const startedAtMs = Date.now();
+    const startedAt = new Date().toISOString();
+    try {
+      const result = await fn();
+      this.appendOutbound({
+        kind,
+        started_at: startedAt,
+        completed_at: new Date().toISOString(),
+        duration_ms: elapsedMs(startedAtMs),
+        ok: true,
+      });
+      return result;
+    } catch (error) {
+      this.appendOutbound({
+        kind,
+        started_at: startedAt,
+        completed_at: new Date().toISOString(),
+        duration_ms: elapsedMs(startedAtMs),
+        ok: false,
+        error_class: errorClass(error),
+      });
+      throw error;
+    }
+  }
+
+  snapshot(): GatewayChannelTimingSnapshot {
+    return {
+      schema_version: "gateway-channel-timing-v1",
+      channel: this.channel,
+      ...(this.lastPoll ? { poll: this.lastPoll } : {}),
+      ...(this.turn ? { turn: this.turn } : {}),
+    };
+  }
+
+  private appendOutbound(call: NonNullable<GatewayChannelTimingSnapshot["turn"]>["outbound_calls"][number]): void {
+    if (!this.turn) return;
+    const firstAt = firstOutboundTimestamp(this.turn, call.kind);
+    this.turn = {
+      ...this.turn,
+      ...(call.ok && call.kind === "typing" && firstAt === undefined ? { first_typing_at: call.completed_at } : {}),
+      ...(call.ok && call.kind === "progress_send" && firstAt === undefined ? { first_progress_at: call.completed_at } : {}),
+      ...(call.ok && (call.kind === "final_send" || call.kind === "final_edit") && firstAt === undefined ? { first_final_at: call.completed_at } : {}),
+      outbound_calls: [...this.turn.outbound_calls, call].slice(-32),
+    };
+  }
+}
+
+function firstOutboundTimestamp(
+  turn: NonNullable<GatewayChannelTimingSnapshot["turn"]>,
+  kind: string,
+): string | undefined {
+  if (kind === "typing") return turn.first_typing_at;
+  if (kind === "progress_send") return turn.first_progress_at;
+  if (kind === "final_send" || kind === "final_edit") return turn.first_final_at;
+  return undefined;
+}
+
+function elapsedMs(startedAtMs: number): number {
+  return Math.max(0, Date.now() - startedAtMs);
+}
+
+function errorClass(error: unknown): string {
+  if (error instanceof Error && error.name) return error.name;
+  return typeof error;
 }
 
 function loadTelegramGatewayConfig(pluginDir: string): TelegramGatewayConfig {

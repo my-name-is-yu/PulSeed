@@ -521,6 +521,211 @@ describe("TelegramGatewayAdapter", () => {
     expect(sentMessages.filter((message) => message === "Final setup guidance.")).toHaveLength(1);
   });
 
+  it("records dogfood-safe Telegram timing for polling, typing, progress, and final outbound calls", async () => {
+    const configDir = await writeConfig({
+      bot_token: "test-token",
+      allowed_user_ids: [42],
+      denied_user_ids: [],
+      allowed_chat_ids: [],
+      denied_chat_ids: [],
+      runtime_control_allowed_user_ids: [42],
+      chat_goal_map: {},
+      user_goal_map: {},
+      allow_all: true,
+      polling_timeout: 30,
+      identity_key: "seedy",
+    });
+    const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const method = String(url).split("/").at(-1);
+      if (method === "getMe") return telegramResponse({ id: 1, username: "pulseed_test_bot" });
+      if (method === "getUpdates") {
+        return telegramResponse([{
+          update_id: 100,
+          message: { message_id: 2718, from: { id: 42 }, chat: { id: 314 }, text: "check README" },
+        }]);
+      }
+      if (method === "sendMessage") {
+        const body = JSON.parse(String(init?.body ?? "{}")) as { text?: string };
+        return telegramResponse({ message_id: body.text?.startsWith("Checking") ? 9001 : 9002 });
+      }
+      if (method === "editMessageText") return telegramResponse(true);
+      if (method === "sendChatAction") return telegramResponse(true);
+      throw new Error(`unexpected Telegram method: ${method}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const adapter = TelegramGatewayAdapter.fromConfigDir(configDir);
+    adapters.push(adapter);
+    vi.mocked(dispatchGatewayChatInput).mockImplementationOnce(async (input) => {
+      await input.onEvent?.({
+        type: "operation_progress",
+        runId: "run-1",
+        turnId: "turn-1",
+        createdAt: "2026-04-08T00:00:01.000Z",
+        item: {
+          id: "workspace:readme-check",
+          kind: "read_file",
+          operation: "workspace_inspection",
+          title: "Check README",
+          detail: "Checking whether the workspace has a README.",
+          createdAt: "2026-04-08T00:00:01.000Z",
+        },
+      });
+      await input.onEvent?.({
+        type: "assistant_final",
+        runId: "run-1",
+        turnId: "turn-1",
+        createdAt: "2026-04-08T00:00:02.000Z",
+        text: "README exists.",
+        persisted: true,
+      });
+      await adapter.stop();
+      return "README exists.";
+    });
+
+    await adapter.start();
+
+    const store = new PluginChannelRuntimeStateStore(configDir);
+    const channelName = path.basename(configDir);
+    await vi.waitFor(async () => {
+      const health = await store.loadChannelHealth(channelName);
+      expect(health?.last_timing).toMatchObject({
+        schema_version: "gateway-channel-timing-v1",
+        channel: "telegram",
+        poll: {
+          offset: 0,
+          timeout_seconds: 30,
+          update_count: 1,
+          ok: true,
+        },
+        turn: {
+          update_id: 100,
+          message_id: 2718,
+          turn_ref: "telegram:message:2718",
+          inbound_admitted_at: expect.any(String),
+          first_typing_at: expect.any(String),
+          first_progress_at: expect.any(String),
+          first_final_at: expect.any(String),
+          lifecycle_end_at: expect.any(String),
+          outbound_calls: expect.arrayContaining([
+            expect.objectContaining({ kind: "typing", ok: true, duration_ms: expect.any(Number) }),
+            expect.objectContaining({ kind: "progress_send", ok: true, duration_ms: expect.any(Number) }),
+            expect.objectContaining({ kind: "final_send", ok: true, duration_ms: expect.any(Number) }),
+          ]),
+        },
+      });
+    });
+    const health = await store.loadChannelHealth(channelName);
+    const serializedTiming = JSON.stringify(health?.last_timing);
+    expect(serializedTiming).not.toContain("test-token");
+    expect(serializedTiming).not.toContain("check README");
+    expect(serializedTiming).not.toContain("README exists.");
+  });
+
+  it("keeps Telegram delivery successful when timing persistence fails", async () => {
+    const configDir = await writeConfig({
+      bot_token: "test-token",
+      allowed_user_ids: [42],
+      denied_user_ids: [],
+      allowed_chat_ids: [],
+      denied_chat_ids: [],
+      runtime_control_allowed_user_ids: [42],
+      chat_goal_map: {},
+      user_goal_map: {},
+      allow_all: true,
+      polling_timeout: 30,
+      identity_key: "seedy",
+    });
+    const sentMessages: string[] = [];
+    const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const method = String(url).split("/").at(-1);
+      if (method === "sendMessage") {
+        const body = JSON.parse(String(init?.body ?? "{}")) as { text?: string };
+        sentMessages.push(body.text ?? "");
+        return telegramResponse({ message_id: 9000 + sentMessages.length });
+      }
+      if (method === "sendChatAction") return telegramResponse(true);
+      throw new Error(`unexpected Telegram method: ${method}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const failingTimingStore = new TimingFailingStore(configDir);
+    const adapter = new TelegramGatewayAdapter(configDir, {
+      bot_token: "test-token",
+      allowed_user_ids: [42],
+      denied_user_ids: [],
+      allowed_chat_ids: [],
+      denied_chat_ids: [],
+      runtime_control_allowed_user_ids: [42],
+      chat_goal_map: {},
+      user_goal_map: {},
+      allow_all: true,
+      polling_timeout: 30,
+      identity_key: "seedy",
+    }, { runtimeStateStore: failingTimingStore });
+    adapters.push(adapter);
+    vi.mocked(dispatchGatewayChatInput).mockImplementationOnce(async (input) => {
+      await input.onEvent?.(assistantFinalEvent("Delivered despite timing store failure."));
+      return "Delivered despite timing store failure.";
+    });
+
+    await expect((adapter as unknown as {
+      processMessage(text: string, fromUserId: number, chatId: number, messageId: number): Promise<void>;
+    }).processMessage("hello", 42, 314, 2718)).resolves.toBeUndefined();
+
+    expect(sentMessages).toContain("Delivered despite timing store failure.");
+    expect(warnSpy).toHaveBeenCalledWith(
+      "TelegramGatewayAdapter: timing instrumentation failed",
+      expect.any(Error),
+    );
+  });
+
+  it("does not count failed outbound attempts as first-visible timing", async () => {
+    const configDir = await writeConfig({
+      bot_token: "test-token",
+      allowed_user_ids: [42],
+      denied_user_ids: [],
+      allowed_chat_ids: [],
+      denied_chat_ids: [],
+      runtime_control_allowed_user_ids: [42],
+      chat_goal_map: {},
+      user_goal_map: {},
+      allow_all: true,
+      polling_timeout: 30,
+      identity_key: "seedy",
+    });
+    const fetchMock = vi.fn(async (url: string | URL | Request) => {
+      const method = String(url).split("/").at(-1);
+      if (method === "sendChatAction") return telegramErrorResponse(500, "typing unavailable");
+      if (method === "sendMessage") return telegramResponse({ message_id: 9001 });
+      throw new Error(`unexpected Telegram method: ${method}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const adapter = TelegramGatewayAdapter.fromConfigDir(configDir);
+    adapters.push(adapter);
+    vi.mocked(dispatchGatewayChatInput).mockImplementationOnce(async (input) => {
+      await input.onEvent?.(assistantFinalEvent("Final after failed typing."));
+      return "Final after failed typing.";
+    });
+
+    await (adapter as unknown as {
+      processMessage(text: string, fromUserId: number, chatId: number, messageId: number): Promise<void>;
+    }).processMessage("hello", 42, 314, 2718);
+
+    const store = new PluginChannelRuntimeStateStore(configDir);
+    const timing = (await store.loadChannelHealth(path.basename(configDir)))?.last_timing;
+    expect(timing?.turn?.first_typing_at).toBeUndefined();
+    expect(timing?.turn?.first_final_at).toEqual(expect.any(String));
+    expect(timing?.turn?.outbound_calls).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "typing", ok: false, error_class: "Error" }),
+      expect.objectContaining({ kind: "final_send", ok: true }),
+    ]));
+    expect(warnSpy).toHaveBeenCalledWith(
+      "TelegramGatewayAdapter: typing indicator failed",
+      expect.any(Error),
+    );
+  });
+
   it("renders shared agent timeline events in the Telegram channel without parsing TUI transcript text", async () => {
     const configDir = await writeConfig({
       bot_token: "test-token",
@@ -985,4 +1190,16 @@ function telegramErrorResponse(status: number, body: string): Response {
     status,
     text: async () => body,
   } as Response;
+}
+
+class TimingFailingStore extends PluginChannelRuntimeStateStore {
+  override async saveChannelHealth(
+    channelName: string,
+    update: Parameters<PluginChannelRuntimeStateStore["saveChannelHealth"]>[1],
+  ): ReturnType<PluginChannelRuntimeStateStore["saveChannelHealth"]> {
+    if (update.last_timing !== undefined) {
+      throw new Error("timing store unavailable");
+    }
+    return super.saveChannelHealth(channelName, update);
+  }
 }
