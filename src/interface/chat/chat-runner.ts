@@ -50,7 +50,6 @@ import type {
 import { intakeSetupSecrets } from "./setup-secret-intake.js";
 import {
   isSetupWriteConfirmCommand,
-  SETUP_WRITE_CONFIRM_COMMAND,
   type SetupDialogueRuntimeState,
 } from "./setup-dialogue.js";
 import {
@@ -103,6 +102,12 @@ import {
   validateRunSpecStartSafety,
   type RunSpec,
 } from "../../runtime/run-spec/index.js";
+import { parseResumeChoiceNumber } from "./resume-choice.js";
+import {
+  formatPendingSetupConfirmationSubject,
+  formatSetupConfirmationCancelled,
+  formatTelegramSetupRefreshResult,
+} from "./chat-runner-setup-format.js";
 
 export type {
   ChatRunResult,
@@ -129,37 +134,6 @@ function normalizePinnedReplyTarget(replyTarget: RuntimeControlReplyTarget | nul
 }
 
 const standaloneIngressRouter = createIngressRouter();
-
-function formatPendingSetupConfirmationSubject(publicState: SetupDialogueRuntimeState["publicState"]): string {
-  const lines = [
-    `Setup dialogue: ${publicState.selectedChannel}`,
-    `State: ${publicState.state}`,
-    `Action: ${publicState.action?.kind ?? "unknown"}`,
-    `Command fallback: ${publicState.action?.command ?? SETUP_WRITE_CONFIRM_COMMAND}`,
-    publicState.replacesExistingSecret
-      ? "Confirming will replace an existing configured Telegram bot token."
-      : "Confirming will write a Telegram gateway config from a redacted chat-supplied token.",
-    "Approval is still required before writing config.",
-  ];
-  return lines.join("\n");
-}
-
-function formatSetupConfirmationCancelled(): string {
-  return "Telegram setup config write was cancelled. No token was written.";
-}
-
-function formatTelegramSetupRefreshResult(
-  result: { success: boolean; message: string; operationId?: string; state?: string; unavailable?: boolean }
-): string {
-  if (result.success) {
-    const suffix = result.operationId ? ` (${result.operationId})` : "";
-    return `PulSeed requested a gateway reload for the updated Telegram config${suffix}: ${result.message}`;
-  }
-  if (result.unavailable) {
-    return `PulSeed could not request a gateway reload from this chat surface: ${result.message}`;
-  }
-  return `PulSeed requested a gateway reload, but it failed: ${result.message}`;
-}
 
 export class ChatRunner {
   private readonly groundingGateway: GroundingGateway;
@@ -1428,11 +1402,3 @@ export class ChatRunner {
 
 void COMMAND_HELP;
 void formatRoute;
-
-function parseResumeChoiceNumber(input: string): number | null {
-  const trimmed = input.trim();
-  if (!trimmed) return null;
-  const value = Number(trimmed);
-  if (!Number.isInteger(value) || value < 1) return null;
-  return String(value) === trimmed ? value : null;
-}
