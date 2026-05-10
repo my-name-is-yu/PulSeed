@@ -5,6 +5,68 @@ import { fileURLToPath } from "node:url";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
+const CATEGORY = Object.freeze({
+  MIGRATE_NOW: "migrate now",
+  MIGRATION_ONLY_INPUT: "migration-only input",
+  DEBUG_EXPORT_OUTPUT: "debug/export output",
+  CONFIG_SECRET: "config/secret",
+  WORKSPACE_USER_ARTIFACT: "workspace/user artifact",
+  SOIL_IMPORT_PUBLISH_ARTIFACT: "Soil import/publish artifact",
+  PRODUCT_DECISION_NEEDED: "product decision needed",
+});
+
+const CLASSIFICATIONS = new Set(Object.values(CATEGORY));
+
+const ALLOWLIST_RULES_BY_ID = new Map(Object.entries({
+  "state-manager-compatibility-facade": ["goal-task-json-state", "memory-dream-json-state"],
+  "goal-state-compatibility": ["goal-lock-file", "goal-task-json-state"],
+  "goal-wal-compatibility": ["goal-task-json-state"],
+  "goal-wal-file-owner": ["goal-wal-jsonl"],
+  "goal-lock-file-owner": ["goal-lock-file"],
+  "goal-state-whole-file-write": [],
+  "archived-goal-chat-compatibility": ["goal-task-json-state"],
+  "execution-session-manager": ["execution-session-json"],
+  "execution-session-history-provider": [],
+  "execution-session-history-tool": [],
+  "agentloop-path-shaped-factory": [],
+  "agentloop-json-session-store": ["agentloop-json-store-class"],
+  "agentloop-jsonl-trace-store": ["agentloop-json-store-class"],
+  "task-lifecycle-logical-path-compatibility": ["goal-task-json-state"],
+  "task-verifier-logical-path-compatibility": ["goal-task-json-state"],
+  "checkpoint-logical-path-compatibility": ["goal-task-json-state"],
+  "portfolio-logical-path-compatibility": ["capability-registry-json-state", "strategy-dream-json-state"],
+  "strategy-logical-path-compatibility": ["strategy-dream-json-state"],
+  "dream-filesystem-metrics": ["goal-task-json-state", "memory-dream-json-state", "strategy-dream-json-state"],
+  "dream-soil-sync-compatibility": ["memory-dream-json-state"],
+  "dream-activation-file-state": ["memory-dream-json-state"],
+  "dream-evidence-file-references": ["memory-dream-json-state"],
+  "knowledge-memory-state-compatibility-map": ["memory-dream-json-state"],
+  "memory-persistence-compatibility-map": ["goal-task-json-state", "memory-dream-json-state"],
+  "soil-import-overlay-queue": ["soil-import-publish-artifact"],
+  "daemon-runner-compatibility": ["daemon-json-state", "goal-task-json-state", "runtime-queue-json"],
+  "wait-deadline-logical-path-compatibility": ["strategy-dream-json-state"],
+  "goal-task-store-logical-path-parser": ["goal-task-json-state"],
+  "strategy-dream-store-logical-path-parser": ["strategy-dream-json-state"],
+  "soil-publish-artifact-state": ["plugin-channel-runtime-json", "soil-import-publish-artifact"],
+  "curiosity-file-state": ["plugin-channel-runtime-json"],
+  "capability-registry-file-state": ["capability-registry-json-state"],
+  "loop-supervisor-file-state": ["daemon-json-state"],
+  "trust-manager-file-state": ["memory-dream-json-state"],
+  "trust-grounding-file-state": ["memory-dream-json-state"],
+  "trust-state-tool-file-state": ["memory-dream-json-state"],
+  "runtime-journal-core": ["runtime-journal-owner"],
+  "runtime-journal-export": ["runtime-journal-owner"],
+  "operator-handoff-runtime-journal": ["runtime-journal-owner"],
+  "experiment-queue-runtime-journal": ["runtime-journal-owner"],
+  "capability-verification-runtime-journal": ["runtime-journal-owner"],
+  "budget-runtime-journal": ["runtime-journal-owner"],
+  "browser-session-runtime-journal": ["runtime-journal-owner"],
+  "runtime-auth-handoff-runtime-journal": ["runtime-journal-owner"],
+  "proactive-intervention-jsonl-ledger": ["runtime-jsonl-ledger"],
+  "runtime-store-path-json-registry": ["runtime-jsonl-ledger"],
+  "knowledge-transfer-state-manager-facade": ["plugin-channel-runtime-json"],
+}));
+
 const RULES = [
   {
     id: "daemon-json-state",
@@ -14,17 +76,32 @@ const RULES = [
   {
     id: "runtime-queue-json",
     owner: "JournalBackedQueue SQLite queue table",
-    pattern: /\b(?:runtime\/queue\.json|queue\.json)\b/,
+    pattern: /(?:^|[\\/'"`])(?:runtime\/queue\.json|queue\.json)\b/,
   },
   {
     id: "plugin-channel-runtime-json",
-    owner: "PluginChannelRuntimeStateStore",
+    owner: "PluginChannelRuntimeStateStore or another typed runtime state store",
     pattern: /(?:^|[\\/'"`])(?:state|health)\.json\b|\bruntime\/assets\/registry\.json\b|\bpulseed-foreign-plugin-(?:compatibility|review)\.json\b/,
   },
   {
     id: "chat-agentloop-json",
     owner: "ChatSessionDataStore / AgentLoop session DB store",
     pattern: /\b(?:chat\/sessions\/[^`'"]+\.json|chat\/agentloop\/[^`'"]+\.state\.json|traces\/agentloop\/[^`'"]+\.jsonl)\b/,
+  },
+  {
+    id: "execution-session-json",
+    owner: "ExecutionSessionStateStore / control DB execution session tables",
+    pattern: /\bsessions\/(?:index\.json|[^`'"]+\.json)\b/,
+  },
+  {
+    id: "goal-wal-jsonl",
+    owner: "Goal WAL control DB ownership",
+    pattern: /\bwal\.jsonl\b/,
+  },
+  {
+    id: "goal-lock-file",
+    owner: "Goal lock control DB ownership",
+    pattern: /\b(?:locks\/goals|goals\/[^`'"]+\/\.lock)\b|["'`]\.lock["'`]/,
   },
   {
     id: "goal-task-json-state",
@@ -41,79 +118,656 @@ const RULES = [
     owner: "future typed capability registry store",
     pattern: /\bcapability_registry\.json\b/,
   },
+  {
+    id: "agentloop-json-store-class",
+    owner: "AgentLoop database session and trace stores",
+    pattern: /\b(?:JsonAgentLoopSessionStateStore|JsonlAgentLoopTraceStore)\b/,
+  },
+  {
+    id: "runtime-journal-owner",
+    owner: "typed SQLite runtime store replacing RuntimeJournal",
+    pattern: /\bRuntimeJournal\b/,
+  },
+  {
+    id: "runtime-jsonl-ledger",
+    owner: "typed SQLite runtime event store",
+    pattern: /\b(?:events\.jsonl|proactiveInterventionLedgerPath|evidenceLedger(?:Goals|Runs)?Dir)\b/,
+  },
+  {
+    id: "memory-dream-json-state",
+    owner: "Soil/control DB memory and dream typed stores",
+    pattern: /\b(?:entries\.json|trust-store\.json|decision-history\.json|decision-heuristics\.json|session-logs\.jsonl|iteration-logs\.jsonl|experience-log\.json|strategies\.json|tasks\.json|knowledge\.json)\b/,
+  },
+  {
+    id: "soil-import-publish-artifact",
+    owner: "Soil import/publish artifact boundary",
+    pattern: /\b(?:overlay-queue\.json|publish\.json|\.publish\/state\.json)\b/,
+  },
 ];
 
 const PATH_ALLOWLIST = [
-  { pattern: /(^|\/)__tests__\//, reason: "tests may contain legacy fixtures and assertions" },
-  { pattern: /(^|\/)tests\//, reason: "tests may contain legacy fixtures and assertions" },
-  { pattern: /(^|\/)docs\//, reason: "docs are not runtime code" },
-  { pattern: /(^|\/)tmp\//, reason: "tmp status and audit artifacts are not runtime code" },
-  { pattern: /(^|\/)scripts\/goal-canary-supervisor\.mjs$/, reason: "dogfood debug export artifact collector" },
-  { pattern: /(^|\/)scripts\/check-database-first-legacy-stores\.mjs$/, reason: "this check contains legacy filename rules" },
-  { pattern: /(^|\/)src\/runtime\/store\/.*migration\.ts$/, reason: "explicit doctor/migrate import boundary" },
-  { pattern: /(^|\/)src\/interface\/chat\/chat-agentloop-state-migration\.ts$/, reason: "explicit chat migration boundary" },
-  { pattern: /(^|\/)src\/runtime\/schedule\/legacy-cron-migration\.ts$/, reason: "explicit schedule migration boundary" },
-  { pattern: /(^|\/)src\/interface\/cli\/commands\/doctor\.ts$/, reason: "doctor is the compatibility boundary" },
-  { pattern: /(^|\/)src\/base\/state\/state-manager\.ts$/, reason: "temporary compatibility facade over typed stores" },
-  { pattern: /(^|\/)src\/base\/state\/state-manager-goal-state\.ts$/, reason: "temporary StateManager compatibility facade over typed goal/task stores" },
-  { pattern: /(^|\/)src\/base\/state\/state-manager-wal\.ts$/, reason: "known follow-up goal WAL compatibility surface" },
-  { pattern: /(^|\/)src\/interface\/chat\/chat-runner-state\.ts$/, reason: "known follow-up archived goal compatibility surface" },
-  { pattern: /(^|\/)src\/platform\/knowledge\/knowledge-manager\.ts$/, reason: "documents compatibility facade only" },
-  { pattern: /(^|\/)src\/orchestrator\/execution\/agent-loop\/agent-loop-session-factory\.ts$/, reason: "known follow-up path-shaped AgentLoop resume surface" },
-  { pattern: /(^|\/)src\/orchestrator\/execution\/task\/task-lifecycle-runner\.ts$/, reason: "known follow-up StateManager logical-path compatibility caller" },
-  { pattern: /(^|\/)src\/orchestrator\/execution\/task\/task-verifier(?:-rules)?\.ts$/, reason: "known follow-up StateManager logical-path compatibility caller" },
-  { pattern: /(^|\/)src\/orchestrator\/loop\/checkpoint-manager-loop\.ts$/, reason: "known follow-up StateManager logical-path compatibility caller" },
-  { pattern: /(^|\/)src\/orchestrator\/strategy\/portfolio-manager\.ts$/, reason: "known follow-up strategy/capability state surface" },
-  { pattern: /(^|\/)src\/orchestrator\/strategy\/strategy-manager(?:-base)?\.ts$/, reason: "known follow-up strategy state surface" },
-  { pattern: /(^|\/)src\/platform\/dream\/dream-consolidator(?:\/fs-metrics)?\.ts$/, reason: "known follow-up dream file metrics surface" },
-  { pattern: /(^|\/)src\/platform\/knowledge\/memory\/memory-persistence\.ts$/, reason: "known follow-up memory compatibility map" },
-  { pattern: /(^|\/)src\/platform\/soil\/importer\.ts$/, reason: "Soil import overlay queue is outside normal runtime state ownership" },
-  { pattern: /(^|\/)src\/runtime\/foreign-plugins\/compatibility\.ts$/, reason: "legacy filename constants for migration/debug references" },
-  { pattern: /(^|\/)src\/runtime\/daemon\/runner-(?:bootstrap|recovery|startup)\.ts$/, reason: "known follow-up daemon compatibility surface" },
-  { pattern: /(^|\/)src\/runtime\/daemon\/wait-deadline-resolver\.ts$/, reason: "known follow-up strategy wait metadata compatibility caller" },
-  { pattern: /(^|\/)src\/runtime\/store\/goal-task-state-store\.ts$/, reason: "typed store logical-path compatibility parser" },
-  { pattern: /(^|\/)src\/runtime\/store\/strategy-dream-state-store\.ts$/, reason: "typed store logical-path compatibility parser" },
-  { pattern: /(^|\/)src\/platform\/soil\/publish\/config\.ts$/, reason: "Soil publish state is an explicit publish artifact" },
-  { pattern: /(^|\/)src\/platform\/traits\/curiosity-engine\.ts$/, reason: "known follow-up internal state surface" },
-  { pattern: /(^|\/)src\/platform\/observation\/capability-registry\.ts$/, reason: "known follow-up internal state surface" },
-  { pattern: /(^|\/)src\/runtime\/executor\/loop-supervisor\.ts$/, reason: "known follow-up legacy supervisor surface" },
-  { pattern: /(^|\/)src\/platform\/knowledge\/transfer\/knowledge-transfer-types\.ts$/, reason: "StateManager compatibility facade call site" },
+  allow({
+    id: "test-fixtures",
+    pattern: /(^|\/)__tests__\//,
+    category: CATEGORY.MIGRATION_ONLY_INPUT,
+    reason: "tests may contain legacy fixtures and assertions",
+  }),
+  allow({
+    id: "test-fixtures-directory",
+    pattern: /(^|\/)tests\//,
+    category: CATEGORY.MIGRATION_ONLY_INPUT,
+    reason: "tests may contain legacy fixtures and assertions",
+  }),
+  allow({
+    id: "documentation",
+    pattern: /(^|\/)docs\//,
+    category: CATEGORY.WORKSPACE_USER_ARTIFACT,
+    reason: "docs are repository artifacts, not runtime code",
+  }),
+  allow({
+    id: "tmp-status-artifacts",
+    pattern: /(^|\/)tmp\//,
+    category: CATEGORY.DEBUG_EXPORT_OUTPUT,
+    reason: "tmp status and audit artifacts are not runtime code",
+  }),
+  allow({
+    id: "goal-canary-debug-export",
+    pattern: /(^|\/)scripts\/goal-canary-supervisor\.mjs$/,
+    category: CATEGORY.DEBUG_EXPORT_OUTPUT,
+    reason: "dogfood debug export artifact collector",
+  }),
+  allow({
+    id: "database-first-guard-script",
+    pattern: /(^|\/)scripts\/check-database-first-legacy-stores\.mjs$/,
+    category: CATEGORY.DEBUG_EXPORT_OUTPUT,
+    reason: "this check contains legacy filename rules",
+  }),
+  allow({
+    id: "runtime-store-migrations",
+    pattern: /(^|\/)src\/runtime\/store\/.*migration\.ts$/,
+    category: CATEGORY.MIGRATION_ONLY_INPUT,
+    reason: "explicit doctor/migrate import boundary",
+  }),
+  allow({
+    id: "chat-agentloop-migration",
+    pattern: /(^|\/)src\/interface\/chat\/chat-agentloop-state-migration\.ts$/,
+    category: CATEGORY.MIGRATION_ONLY_INPUT,
+    reason: "explicit chat migration boundary",
+  }),
+  allow({
+    id: "schedule-legacy-migration",
+    pattern: /(^|\/)src\/runtime\/schedule\/legacy-cron-migration\.ts$/,
+    category: CATEGORY.MIGRATION_ONLY_INPUT,
+    reason: "explicit schedule migration boundary",
+  }),
+  allow({
+    id: "doctor-legacy-import-boundary",
+    pattern: /(^|\/)src\/interface\/cli\/commands\/doctor\.ts$/,
+    category: CATEGORY.MIGRATION_ONLY_INPUT,
+    reason: "doctor is the compatibility boundary",
+  }),
+  allow({
+    id: "state-manager-compatibility-facade",
+    pattern: /(^|\/)src\/base\/state\/state-manager\.ts$/,
+    category: CATEGORY.MIGRATE_NOW,
+    reason: "temporary compatibility facade over typed stores",
+    owner: "typed state store APIs instead of logical file paths",
+    nextSlice: 4,
+    debtRank: 4,
+  }),
+  allow({
+    id: "goal-state-compatibility",
+    pattern: /(^|\/)src\/base\/state\/state-manager-goal-state\.ts$/,
+    category: CATEGORY.MIGRATE_NOW,
+    reason: "temporary StateManager compatibility facade over typed goal/task stores",
+    owner: "GoalTaskStateStore / typed goal archive APIs",
+    nextSlice: 2,
+    debtRank: 2,
+  }),
+  allow({
+    id: "goal-wal-compatibility",
+    pattern: /(^|\/)src\/base\/state\/state-manager-wal\.ts$/,
+    category: CATEGORY.MIGRATE_NOW,
+    reason: "known follow-up goal WAL compatibility surface",
+    owner: "Goal WAL control DB ownership",
+    nextSlice: 2,
+    debtRank: 1,
+  }),
+  allow({
+    id: "goal-wal-file-owner",
+    pattern: /(^|\/)src\/base\/state\/state-wal\.ts$/,
+    category: CATEGORY.MIGRATE_NOW,
+    reason: "known follow-up WAL file owner",
+    owner: "Goal WAL control DB ownership",
+    nextSlice: 2,
+    debtRank: 1,
+  }),
+  allow({
+    id: "goal-lock-file-owner",
+    pattern: /(^|\/)src\/base\/state\/state-lock\.ts$/,
+    category: CATEGORY.MIGRATE_NOW,
+    reason: "known follow-up lock-file owner",
+    owner: "Goal lock control DB ownership",
+    nextSlice: 2,
+    debtRank: 2,
+  }),
+  allow({
+    id: "goal-state-whole-file-write",
+    pattern: /(^|\/)src\/base\/state\/state-manager-goal-write\.ts$/,
+    category: CATEGORY.MIGRATE_NOW,
+    reason: "known follow-up StateManager whole-file mutation surface",
+    owner: "typed goal/task write APIs",
+    nextSlice: 2,
+    debtRank: 2,
+  }),
+  allow({
+    id: "archived-goal-chat-compatibility",
+    pattern: /(^|\/)src\/interface\/chat\/chat-runner-state\.ts$/,
+    category: CATEGORY.MIGRATE_NOW,
+    reason: "known follow-up archived goal compatibility surface",
+    owner: "typed goal archive/query APIs",
+    nextSlice: 2,
+    debtRank: 2,
+  }),
+  allow({
+    id: "knowledge-documents-compatibility",
+    pattern: /(^|\/)src\/platform\/knowledge\/knowledge-manager\.ts$/,
+    category: CATEGORY.WORKSPACE_USER_ARTIFACT,
+    reason: "documents compatibility facade only",
+  }),
+  allow({
+    id: "execution-session-manager",
+    pattern: /(^|\/)src\/orchestrator\/execution\/session-manager\.ts$/,
+    category: CATEGORY.MIGRATE_NOW,
+    reason: "known follow-up path-shaped execution session state",
+    owner: "ExecutionSessionStateStore",
+    nextSlice: 3,
+    debtRank: 3,
+  }),
+  allow({
+    id: "execution-session-history-provider",
+    pattern: /(^|\/)src\/grounding\/providers\/session-history-provider\.ts$/,
+    category: CATEGORY.MIGRATE_NOW,
+    reason: "known follow-up path-shaped execution session reads",
+    owner: "ExecutionSessionStateStore",
+    nextSlice: 3,
+    debtRank: 3,
+  }),
+  allow({
+    id: "execution-session-history-tool",
+    pattern: /(^|\/)src\/tools\/query\/SessionHistoryTool\/SessionHistoryTool\.ts$/,
+    category: CATEGORY.MIGRATE_NOW,
+    reason: "known follow-up path-shaped execution session reads",
+    owner: "ExecutionSessionStateStore",
+    nextSlice: 3,
+    debtRank: 3,
+  }),
+  allow({
+    id: "agentloop-path-shaped-factory",
+    pattern: /(^|\/)src\/orchestrator\/execution\/agent-loop\/agent-loop-session-factory\.ts$/,
+    category: CATEGORY.MIGRATE_NOW,
+    reason: "known follow-up path-shaped AgentLoop resume surface",
+    owner: "AgentLoop database session and trace stores",
+    nextSlice: 5,
+    debtRank: 5,
+  }),
+  allow({
+    id: "agentloop-json-session-store",
+    pattern: /(^|\/)src\/orchestrator\/execution\/agent-loop\/agent-loop-session-state\.ts$/,
+    category: CATEGORY.MIGRATE_NOW,
+    reason: "known follow-up JSON AgentLoop session store",
+    owner: "AgentLoop database session store",
+    nextSlice: 5,
+    debtRank: 5,
+  }),
+  allow({
+    id: "agentloop-jsonl-trace-store",
+    pattern: /(^|\/)src\/orchestrator\/execution\/agent-loop\/agent-loop-trace-store\.ts$/,
+    category: CATEGORY.MIGRATE_NOW,
+    reason: "known follow-up JSONL AgentLoop trace store",
+    owner: "AgentLoop database trace store",
+    nextSlice: 5,
+    debtRank: 5,
+  }),
+  allow({
+    id: "task-lifecycle-logical-path-compatibility",
+    pattern: /(^|\/)src\/orchestrator\/execution\/task\/task-lifecycle-runner\.ts$/,
+    category: CATEGORY.MIGRATE_NOW,
+    reason: "known follow-up StateManager logical-path compatibility caller",
+    owner: "typed task and verification store APIs",
+    nextSlice: 4,
+    debtRank: 4,
+  }),
+  allow({
+    id: "task-verifier-logical-path-compatibility",
+    pattern: /(^|\/)src\/orchestrator\/execution\/task\/task-verifier(?:-rules)?\.ts$/,
+    category: CATEGORY.MIGRATE_NOW,
+    reason: "known follow-up StateManager logical-path compatibility caller",
+    owner: "typed task, goal, and verification store APIs",
+    nextSlice: 4,
+    debtRank: 4,
+  }),
+  allow({
+    id: "checkpoint-logical-path-compatibility",
+    pattern: /(^|\/)src\/orchestrator\/loop\/checkpoint-manager-loop\.ts$/,
+    category: CATEGORY.MIGRATE_NOW,
+    reason: "known follow-up StateManager logical-path compatibility caller",
+    owner: "typed checkpoint and goal store APIs",
+    nextSlice: 4,
+    debtRank: 4,
+  }),
+  allow({
+    id: "portfolio-logical-path-compatibility",
+    pattern: /(^|\/)src\/orchestrator\/strategy\/portfolio-manager\.ts$/,
+    category: CATEGORY.MIGRATE_NOW,
+    reason: "known follow-up strategy/capability state surface",
+    owner: "typed strategy and capability store APIs",
+    nextSlice: 4,
+    debtRank: 4,
+  }),
+  allow({
+    id: "strategy-logical-path-compatibility",
+    pattern: /(^|\/)src\/orchestrator\/strategy\/strategy-manager(?:-base)?\.ts$/,
+    category: CATEGORY.MIGRATE_NOW,
+    reason: "known follow-up strategy state surface",
+    owner: "typed strategy store APIs",
+    nextSlice: 4,
+    debtRank: 4,
+  }),
+  allow({
+    id: "dream-filesystem-metrics",
+    pattern: /(^|\/)src\/platform\/dream\/dream-consolidator(?:\/fs-metrics)?\.ts$/,
+    category: CATEGORY.PRODUCT_DECISION_NEEDED,
+    reason: "known follow-up dream file metrics surface",
+    owner: "typed dream/memory metric sources or explicit debug metric boundary",
+    nextSlice: 9,
+    debtRank: 9,
+  }),
+  allow({
+    id: "dream-soil-sync-compatibility",
+    pattern: /(^|\/)src\/platform\/dream\/dream-soil-sync\.ts$/,
+    category: CATEGORY.MIGRATE_NOW,
+    reason: "known follow-up legacy memory projection read",
+    owner: "Soil memory projections",
+    nextSlice: 9,
+    debtRank: 9,
+  }),
+  allow({
+    id: "dream-activation-file-state",
+    pattern: /(^|\/)src\/platform\/dream\/dream-activation\.ts$/,
+    category: CATEGORY.MIGRATE_NOW,
+    reason: "known follow-up dream activation file-state reads",
+    owner: "typed dream, learning, and strategy activation stores",
+    nextSlice: 9,
+    debtRank: 9,
+  }),
+  allow({
+    id: "dream-evidence-file-references",
+    pattern: /(^|\/)src\/platform\/dream\/dream-consolidator\/evidence-helpers\.ts$/,
+    category: CATEGORY.PRODUCT_DECISION_NEEDED,
+    reason: "known follow-up legacy evidence reference surface",
+    owner: "typed memory evidence references or explicit debug reference boundary",
+    nextSlice: 9,
+    debtRank: 9,
+  }),
+  allow({
+    id: "knowledge-memory-state-compatibility-map",
+    pattern: /(^|\/)src\/platform\/knowledge\/knowledge-memory-state-store\.ts$/,
+    category: CATEGORY.MIGRATE_NOW,
+    reason: "known follow-up memory compatibility path map over Soil state",
+    owner: "direct Soil memory store APIs",
+    nextSlice: 9,
+    debtRank: 9,
+  }),
+  allow({
+    id: "memory-persistence-compatibility-map",
+    pattern: /(^|\/)src\/platform\/knowledge\/memory\/memory-persistence\.ts$/,
+    category: CATEGORY.MIGRATE_NOW,
+    reason: "known follow-up memory compatibility map",
+    owner: "Soil memory state",
+    nextSlice: 9,
+    debtRank: 9,
+  }),
+  allow({
+    id: "soil-import-overlay-queue",
+    pattern: /(^|\/)src\/platform\/soil\/importer\.ts$/,
+    category: CATEGORY.SOIL_IMPORT_PUBLISH_ARTIFACT,
+    reason: "Soil import overlay queue is outside normal runtime state ownership",
+    owner: "explicit Soil import artifact",
+    nextSlice: 9,
+  }),
+  allow({
+    id: "foreign-plugin-legacy-constants",
+    pattern: /(^|\/)src\/runtime\/foreign-plugins\/compatibility\.ts$/,
+    category: CATEGORY.MIGRATION_ONLY_INPUT,
+    reason: "legacy filename constants for migration/debug references",
+  }),
+  allow({
+    id: "daemon-runner-compatibility",
+    pattern: /(^|\/)src\/runtime\/daemon\/runner-(?:bootstrap|recovery|startup)\.ts$/,
+    category: CATEGORY.MIGRATE_NOW,
+    reason: "known follow-up daemon compatibility surface",
+    owner: "typed runtime control stores",
+    nextSlice: 6,
+    debtRank: 6,
+  }),
+  allow({
+    id: "wait-deadline-logical-path-compatibility",
+    pattern: /(^|\/)src\/runtime\/daemon\/wait-deadline-resolver\.ts$/,
+    category: CATEGORY.MIGRATE_NOW,
+    reason: "known follow-up strategy wait metadata compatibility caller",
+    owner: "typed strategy wait metadata APIs",
+    nextSlice: 4,
+    debtRank: 4,
+  }),
+  allow({
+    id: "goal-task-store-logical-path-parser",
+    pattern: /(^|\/)src\/runtime\/store\/goal-task-state-store\.ts$/,
+    category: CATEGORY.MIGRATE_NOW,
+    reason: "typed store logical-path compatibility parser",
+    owner: "direct typed goal/task/checkpoint APIs",
+    nextSlice: 4,
+    debtRank: 4,
+  }),
+  allow({
+    id: "strategy-dream-store-logical-path-parser",
+    pattern: /(^|\/)src\/runtime\/store\/strategy-dream-state-store\.ts$/,
+    category: CATEGORY.MIGRATE_NOW,
+    reason: "typed store logical-path compatibility parser",
+    owner: "direct typed strategy/dream APIs",
+    nextSlice: 4,
+    debtRank: 4,
+  }),
+  allow({
+    id: "soil-publish-artifact-state",
+    pattern: /(^|\/)src\/platform\/soil\/publish\/config\.ts$/,
+    category: CATEGORY.SOIL_IMPORT_PUBLISH_ARTIFACT,
+    reason: "Soil publish state is an explicit publish artifact",
+    owner: "explicit Soil publish artifact",
+    nextSlice: 9,
+  }),
+  allow({
+    id: "curiosity-file-state",
+    pattern: /(^|\/)src\/platform\/traits\/curiosity-engine\.ts$/,
+    category: CATEGORY.MIGRATE_NOW,
+    reason: "known follow-up internal state surface",
+    owner: "typed curiosity runtime state store",
+    nextSlice: 7,
+    debtRank: 7,
+  }),
+  allow({
+    id: "capability-registry-file-state",
+    pattern: /(^|\/)src\/platform\/observation\/capability-registry\.ts$/,
+    category: CATEGORY.MIGRATE_NOW,
+    reason: "known follow-up internal state surface",
+    owner: "typed capability registry store",
+    nextSlice: 7,
+    debtRank: 7,
+  }),
+  allow({
+    id: "loop-supervisor-file-state",
+    pattern: /(^|\/)src\/runtime\/executor\/loop-supervisor\.ts$/,
+    category: CATEGORY.MIGRATE_NOW,
+    reason: "known follow-up legacy supervisor surface",
+    owner: "control DB supervisor state",
+    nextSlice: 7,
+    debtRank: 7,
+  }),
+  allow({
+    id: "trust-manager-file-state",
+    pattern: /(^|\/)src\/platform\/traits\/trust-manager\.ts$/,
+    category: CATEGORY.MIGRATE_NOW,
+    reason: "known follow-up trust runtime state surface",
+    owner: "typed trust runtime state store",
+    nextSlice: 8,
+    debtRank: 8,
+  }),
+  allow({
+    id: "trust-grounding-file-state",
+    pattern: /(^|\/)src\/grounding\/providers\/trust-state-provider\.ts$/,
+    category: CATEGORY.MIGRATE_NOW,
+    reason: "known follow-up trust state grounding surface",
+    owner: "typed trust runtime state store",
+    nextSlice: 8,
+    debtRank: 8,
+  }),
+  allow({
+    id: "trust-state-tool-file-state",
+    pattern: /(^|\/)src\/tools\/query\/TrustStateTool\/TrustStateTool\.ts$/,
+    category: CATEGORY.MIGRATE_NOW,
+    reason: "known follow-up trust state query surface",
+    owner: "typed trust runtime state store",
+    nextSlice: 8,
+    debtRank: 8,
+  }),
+  allow({
+    id: "runtime-journal-core",
+    pattern: /(^|\/)src\/runtime\/store\/runtime-journal\.ts$/,
+    category: CATEGORY.MIGRATE_NOW,
+    reason: "known follow-up RuntimeJournal file-state owner",
+    owner: "typed SQLite runtime store APIs",
+    nextSlice: 6,
+    debtRank: 6,
+  }),
+  allow({
+    id: "runtime-journal-export",
+    pattern: /(^|\/)src\/runtime\/store\/index\.ts$/,
+    category: CATEGORY.MIGRATE_NOW,
+    reason: "known follow-up RuntimeJournal export surface",
+    owner: "typed SQLite runtime store APIs",
+    nextSlice: 6,
+    debtRank: 6,
+  }),
+  allow({
+    id: "operator-handoff-runtime-journal",
+    pattern: /(^|\/)src\/runtime\/store\/operator-handoff-store\.ts$/,
+    category: CATEGORY.MIGRATE_NOW,
+    reason: "known follow-up RuntimeJournal-backed store",
+    owner: "typed operator handoff store",
+    nextSlice: 6,
+    debtRank: 6,
+  }),
+  allow({
+    id: "experiment-queue-runtime-journal",
+    pattern: /(^|\/)src\/runtime\/store\/experiment-queue-store\.ts$/,
+    category: CATEGORY.MIGRATE_NOW,
+    reason: "known follow-up RuntimeJournal-backed store",
+    owner: "typed experiment queue store",
+    nextSlice: 6,
+    debtRank: 6,
+  }),
+  allow({
+    id: "capability-verification-runtime-journal",
+    pattern: /(^|\/)src\/runtime\/store\/capability-verification-store\.ts$/,
+    category: CATEGORY.MIGRATE_NOW,
+    reason: "known follow-up RuntimeJournal-backed store",
+    owner: "typed capability verification store",
+    nextSlice: 6,
+    debtRank: 6,
+  }),
+  allow({
+    id: "budget-runtime-journal",
+    pattern: /(^|\/)src\/runtime\/store\/budget-store\.ts$/,
+    category: CATEGORY.MIGRATE_NOW,
+    reason: "known follow-up RuntimeJournal-backed store",
+    owner: "typed budget store",
+    nextSlice: 6,
+    debtRank: 6,
+  }),
+  allow({
+    id: "browser-session-runtime-journal",
+    pattern: /(^|\/)src\/runtime\/interactive-automation\/browser-session-store\.ts$/,
+    category: CATEGORY.MIGRATE_NOW,
+    reason: "known follow-up RuntimeJournal-backed store",
+    owner: "typed browser session store",
+    nextSlice: 6,
+    debtRank: 6,
+  }),
+  allow({
+    id: "runtime-auth-handoff-runtime-journal",
+    pattern: /(^|\/)src\/runtime\/interactive-automation\/runtime-auth-handoff-store\.ts$/,
+    category: CATEGORY.MIGRATE_NOW,
+    reason: "known follow-up RuntimeJournal-backed store",
+    owner: "typed runtime auth handoff store",
+    nextSlice: 6,
+    debtRank: 6,
+  }),
+  allow({
+    id: "proactive-intervention-jsonl-ledger",
+    pattern: /(^|\/)src\/runtime\/store\/proactive-intervention-store\.ts$/,
+    category: CATEGORY.MIGRATE_NOW,
+    reason: "known follow-up JSONL runtime event store",
+    owner: "typed proactive intervention event store",
+    nextSlice: 6,
+    debtRank: 6,
+  }),
+  allow({
+    id: "runtime-store-path-json-registry",
+    pattern: /(^|\/)src\/runtime\/store\/runtime-paths\.ts$/,
+    category: CATEGORY.MIGRATE_NOW,
+    reason: "known follow-up path-shaped runtime store registry",
+    owner: "typed SQLite runtime store APIs",
+    nextSlice: 6,
+    debtRank: 6,
+  }),
+  allow({
+    id: "knowledge-transfer-state-manager-facade",
+    pattern: /(^|\/)src\/platform\/knowledge\/transfer\/knowledge-transfer-types\.ts$/,
+    category: CATEGORY.MIGRATE_NOW,
+    reason: "StateManager compatibility facade call site",
+    owner: "typed knowledge transfer store APIs",
+    nextSlice: 9,
+    debtRank: 9,
+  }),
 ];
 
 const EXTENSIONS = new Set([".ts", ".tsx", ".js", ".mjs", ".cjs"]);
 const SKIP_DIRS = new Set([".git", "node_modules", "dist", "coverage", ".pulseed-sandbox"]);
 
 export function scanText(filePath, text) {
+  return scanTextDetailed(filePath, text).findings;
+}
+
+export function scanTextDetailed(filePath, text) {
   const normalizedPath = normalizePath(filePath);
   const allow = PATH_ALLOWLIST.find((entry) => entry.pattern.test(normalizedPath));
-  if (allow) return [];
   const findings = [];
+  const classifiedFindings = [];
   const lines = text.split(/\r?\n/);
   lines.forEach((line, index) => {
     for (const rule of RULES) {
       if (rule.pattern.test(line) && !isConfigAllowed(line)) {
-        findings.push({
+        const finding = {
           filePath: normalizedPath,
           line: index + 1,
           rule: rule.id,
           owner: rule.owner,
           text: line.trim(),
-        });
+        };
+        if (allow && isAllowlistedRule(allow, rule.id)) {
+          classifiedFindings.push({
+            ...finding,
+            allowlistId: allow.id,
+            category: allow.category,
+            reason: allow.reason,
+            expectedOwner: allow.owner ?? rule.owner,
+            nextSlice: allow.nextSlice ?? null,
+            debtRank: allow.debtRank ?? null,
+          });
+        } else {
+          findings.push({
+            ...finding,
+            allowlistId: allow?.id,
+            allowlistReason: allow && !isAllowlistedRule(allow, rule.id)
+              ? `allowlist entry "${allow.id}" does not permit rule "${rule.id}"`
+              : undefined,
+          });
+        }
       }
     }
   });
-  return findings;
+  return { findings, classifiedFindings };
 }
 
 export function scanFiles(roots) {
+  return scanFilesDetailed(roots).findings;
+}
+
+export function scanFilesDetailed(roots) {
   const findings = [];
+  const classifiedFindings = [];
   for (const root of roots) {
     const absoluteRoot = path.resolve(repoRoot, root);
     for (const filePath of walkFiles(absoluteRoot)) {
-      findings.push(...scanText(path.relative(repoRoot, filePath), fs.readFileSync(filePath, "utf8")));
+      const scanned = scanTextDetailed(path.relative(repoRoot, filePath), fs.readFileSync(filePath, "utf8"));
+      findings.push(...scanned.findings);
+      classifiedFindings.push(...scanned.classifiedFindings);
     }
   }
-  return findings;
+  return {
+    findings,
+    classifiedFindings,
+    debtReport: buildDebtReport(classifiedFindings),
+  };
+}
+
+function allow(entry) {
+  if (!entry.id) throw new Error("database-first legacy store allowlist entries require an id");
+  if (!CLASSIFICATIONS.has(entry.category)) {
+    throw new Error(`database-first legacy store allowlist entry "${entry.id}" has invalid category "${entry.category}"`);
+  }
+  const rules = entry.rules ?? ALLOWLIST_RULES_BY_ID.get(entry.id);
+  if ((entry.debtRank !== undefined || entry.nextSlice !== undefined) && rules === undefined) {
+    throw new Error(`database-first legacy store allowlist entry "${entry.id}" requires precise rule ids`);
+  }
+  return rules === undefined ? entry : { ...entry, rules };
+}
+
+function isAllowlistedRule(allowlistEntry, ruleId) {
+  return allowlistEntry.rules === undefined || allowlistEntry.rules.includes(ruleId);
+}
+
+function buildDebtReport(classifiedFindings) {
+  const findingsByAllowlistId = new Map();
+  for (const finding of classifiedFindings) {
+    const existing = findingsByAllowlistId.get(finding.allowlistId) ?? [];
+    existing.push(finding);
+    findingsByAllowlistId.set(finding.allowlistId, existing);
+  }
+
+  return PATH_ALLOWLIST
+    .filter((entry) => entry.debtRank !== undefined || entry.nextSlice !== undefined)
+    .map((entry) => {
+      const matches = findingsByAllowlistId.get(entry.id) ?? [];
+      return {
+        id: entry.id,
+        category: entry.category,
+        reason: entry.reason,
+        owner: entry.owner ?? null,
+        nextSlice: entry.nextSlice ?? null,
+        debtRank: entry.debtRank ?? null,
+        pathPattern: entry.pattern.source,
+        matchCount: matches.length,
+        matches,
+      };
+    })
+    .sort((left, right) => {
+      const leftRank = left.debtRank ?? Number.MAX_SAFE_INTEGER;
+      const rightRank = right.debtRank ?? Number.MAX_SAFE_INTEGER;
+      if (leftRank !== rightRank) return leftRank - rightRank;
+      return left.id.localeCompare(right.id);
+    });
+}
+
+function printDebtReport(debtReport) {
+  if (debtReport.length === 0) return;
+  console.log("classified legacy store debt report:");
+  for (const entry of debtReport) {
+    const rank = entry.debtRank === null ? "artifact" : `rank ${entry.debtRank}`;
+    const next = entry.nextSlice === null ? "no follow-up slice" : `Slice ${entry.nextSlice}`;
+    console.log(`- ${entry.id}: ${entry.category}; ${rank}; ${next}; owner: ${entry.owner}; matches: ${entry.matchCount}`);
+  }
+  console.log("run with --json for line-level classified matches and reasons");
 }
 
 function isConfigAllowed(line) {
@@ -145,17 +799,37 @@ function normalizePath(filePath) {
 }
 
 function main() {
-  const roots = process.argv.slice(2);
-  const findings = scanFiles(roots.length > 0 ? roots : ["src", "scripts"]);
+  const args = process.argv.slice(2);
+  const json = args.includes("--json");
+  const roots = args.filter((arg) => arg !== "--json");
+  const result = scanFilesDetailed(roots.length > 0 ? roots : ["src", "scripts"]);
+
+  if (json) {
+    console.log(JSON.stringify({
+      ok: result.findings.length === 0,
+      findings: result.findings,
+      classifiedFindings: result.classifiedFindings,
+      debtReport: result.debtReport,
+    }, null, 2));
+    if (result.findings.length > 0) process.exitCode = 1;
+    return;
+  }
+
+  const findings = result.findings;
   if (findings.length === 0) {
     console.log("database-first legacy store check passed");
+    printDebtReport(result.debtReport);
     return;
   }
   console.error("database-first legacy store check failed:");
   for (const finding of findings) {
     console.error(`${finding.filePath}:${finding.line} [${finding.rule}] ${finding.owner}`);
     console.error(`  ${finding.text}`);
+    if (finding.allowlistReason) {
+      console.error(`  ${finding.allowlistReason}`);
+    }
   }
+  console.error("Unclassified legacy store references must be moved to typed stores or categorized as migration, debug/export, config/secret, workspace/user artifact, Soil import/publish artifact, or product-decision debt.");
   process.exitCode = 1;
 }
 
