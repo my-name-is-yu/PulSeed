@@ -47,8 +47,14 @@ export const RuntimeBudgetScopeSchema = z.object({
 export type RuntimeBudgetScope = z.infer<typeof RuntimeBudgetScopeSchema>;
 
 const RuntimeBudgetNonNegativeSafeNumberSchema = z.number().finite().safe().nonnegative();
+const RuntimeBudgetLimitThresholdFields = [
+  "warn_at_remaining",
+  "approval_at_remaining",
+  "handoff_at_remaining",
+  "finalization_at_remaining",
+] as const;
 
-export const RuntimeBudgetLimitSchema = z.object({
+const RuntimeBudgetLimitBaseSchema = z.object({
   dimension: RuntimeBudgetDimensionSchema,
   limit: RuntimeBudgetNonNegativeSafeNumberSchema,
   warn_at_remaining: RuntimeBudgetNonNegativeSafeNumberSchema.optional(),
@@ -61,6 +67,36 @@ export const RuntimeBudgetLimitSchema = z.object({
   }).strict().optional(),
   exhaustion_policy: z.enum(["stop", "approval_required", "handoff_required", "finalize"]).default("approval_required"),
 }).strict();
+
+type RuntimeBudgetLimitReadCompatibility = z.infer<typeof RuntimeBudgetLimitBaseSchema>;
+
+export const RuntimeBudgetLimitSchema = RuntimeBudgetLimitBaseSchema.superRefine((limit, ctx) => {
+  for (const field of RuntimeBudgetLimitThresholdFields) {
+    const threshold = limit[field];
+    if (threshold !== undefined && threshold > limit.limit) {
+      ctx.addIssue({
+        code: "custom",
+        path: [field],
+        message: `${field} must be less than or equal to limit`,
+      });
+    }
+  }
+  const transitions = limit.mode_transition_at_remaining;
+  if (transitions?.consolidation !== undefined && transitions.consolidation > limit.limit) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["mode_transition_at_remaining", "consolidation"],
+      message: "mode_transition_at_remaining.consolidation must be less than or equal to limit",
+    });
+  }
+  if (transitions?.finalization !== undefined && transitions.finalization > limit.limit) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["mode_transition_at_remaining", "finalization"],
+      message: "mode_transition_at_remaining.finalization must be less than or equal to limit",
+    });
+  }
+});
 export type RuntimeBudgetLimit = z.infer<typeof RuntimeBudgetLimitSchema>;
 export type RuntimeBudgetLimitInput = z.input<typeof RuntimeBudgetLimitSchema>;
 
@@ -78,17 +114,13 @@ export const RuntimeBudgetUsageSchema = z.object({
 export type RuntimeBudgetUsage = z.infer<typeof RuntimeBudgetUsageSchema>;
 export type RuntimeBudgetUsageInput = z.input<typeof RuntimeBudgetUsageSchema>;
 
-export const RuntimeBudgetRecordSchema = z.object({
-  schema_version: z.literal("runtime-budget-v1"),
-  budget_id: z.string().min(1),
-  scope: RuntimeBudgetScopeSchema,
-  title: z.string().min(1).optional(),
-  created_at: z.string().datetime(),
-  updated_at: z.string().datetime(),
-  limits: z.array(RuntimeBudgetLimitSchema).min(1),
-  usage: z.array(RuntimeBudgetUsageSchema),
-  notes: z.string().min(1).optional(),
-}).strict().superRefine((budget, ctx) => {
+function validateRuntimeBudgetRecordDimensions(
+  budget: {
+    limits: Array<{ dimension: RuntimeBudgetDimension }>;
+    usage: Array<{ dimension: RuntimeBudgetDimension }>;
+  },
+  ctx: z.RefinementCtx,
+): void {
   const seenLimits = new Set<string>();
   for (const limit of budget.limits) {
     if (seenLimits.has(limit.dimension)) {
@@ -111,9 +143,33 @@ export const RuntimeBudgetRecordSchema = z.object({
     }
     seenUsage.add(usage.dimension);
   }
-});
+}
+
+export const RuntimeBudgetRecordSchema = z.object({
+  schema_version: z.literal("runtime-budget-v1"),
+  budget_id: z.string().min(1),
+  scope: RuntimeBudgetScopeSchema,
+  title: z.string().min(1).optional(),
+  created_at: z.string().datetime(),
+  updated_at: z.string().datetime(),
+  limits: z.array(RuntimeBudgetLimitSchema).min(1),
+  usage: z.array(RuntimeBudgetUsageSchema),
+  notes: z.string().min(1).optional(),
+}).strict().superRefine(validateRuntimeBudgetRecordDimensions);
 export type RuntimeBudgetRecord = z.infer<typeof RuntimeBudgetRecordSchema>;
 const RuntimeBudgetRecordRuntimeSchema = RuntimeBudgetRecordSchema as unknown as z.ZodType<RuntimeBudgetRecord>;
+const RuntimeBudgetRecordReadCompatibilitySchema = z.object({
+  schema_version: z.literal("runtime-budget-v1"),
+  budget_id: z.string().min(1),
+  scope: RuntimeBudgetScopeSchema,
+  title: z.string().min(1).optional(),
+  created_at: z.string().datetime(),
+  updated_at: z.string().datetime(),
+  limits: z.array(RuntimeBudgetLimitBaseSchema).min(1),
+  usage: z.array(RuntimeBudgetUsageSchema),
+  notes: z.string().min(1).optional(),
+}).strict().superRefine(validateRuntimeBudgetRecordDimensions);
+type RuntimeBudgetRecordReadCompatibility = z.infer<typeof RuntimeBudgetRecordReadCompatibilitySchema>;
 
 export interface RuntimeBudgetCreateInput {
   budget_id: string;
@@ -401,10 +457,42 @@ interface BudgetRow {
   record_json: string;
 }
 
+function normalizeLegacyBudgetLimitForRead(limit: RuntimeBudgetLimitReadCompatibility): RuntimeBudgetLimit {
+  const normalized: RuntimeBudgetLimitInput = { ...limit };
+  for (const field of RuntimeBudgetLimitThresholdFields) {
+    const threshold = limit[field];
+    if (threshold !== undefined && threshold > limit.limit) {
+      normalized[field] = limit.limit;
+    }
+  }
+  if (limit.mode_transition_at_remaining) {
+    const transitions = { ...limit.mode_transition_at_remaining };
+    if (transitions.consolidation !== undefined && transitions.consolidation > limit.limit) {
+      transitions.consolidation = limit.limit;
+    }
+    if (transitions.finalization !== undefined && transitions.finalization > limit.limit) {
+      transitions.finalization = limit.limit;
+    }
+    normalized.mode_transition_at_remaining = transitions;
+  }
+  return RuntimeBudgetLimitSchema.parse(normalized);
+}
+
+function normalizeLegacyBudgetRecordForRead(record: RuntimeBudgetRecordReadCompatibility): RuntimeBudgetRecord {
+  return RuntimeBudgetRecordRuntimeSchema.parse({
+    ...record,
+    limits: record.limits.map((limit) => normalizeLegacyBudgetLimitForRead(limit)),
+  });
+}
+
 function parseBudgetJson(recordJson: string): RuntimeBudgetRecord | null {
   try {
-    const parsed = RuntimeBudgetRecordRuntimeSchema.safeParse(JSON.parse(recordJson) as unknown);
-    return parsed.success ? parsed.data : null;
+    const raw = JSON.parse(recordJson) as unknown;
+    const parsed = RuntimeBudgetRecordRuntimeSchema.safeParse(raw);
+    if (parsed.success) return parsed.data;
+    const compatibilityParsed = RuntimeBudgetRecordReadCompatibilitySchema.safeParse(raw);
+    if (!compatibilityParsed.success) return null;
+    return normalizeLegacyBudgetRecordForRead(compatibilityParsed.data);
   } catch {
     return null;
   }
