@@ -58,6 +58,7 @@ describe("process PID helpers", () => {
   it("does not signal unsafe process group leader PID values", () => {
     const killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
 
+    expect(signalProcessGroup(1, "SIGTERM")).toEqual({ status: "unsafe_pid" });
     expect(signalProcessGroup(Number.MAX_SAFE_INTEGER + 1, "SIGTERM")).toEqual({ status: "unsafe_pid" });
     expect(signalProcessGroup(-123, "SIGTERM")).toEqual({ status: "unsafe_pid" });
     expect(signalProcessGroup("123", "SIGTERM")).toEqual({ status: "unsafe_pid" });

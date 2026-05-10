@@ -4,6 +4,10 @@ export function isProcessPidValue(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
 }
 
+function isProcessGroupLeaderPidValue(value: unknown): value is number {
+  return isProcessPidValue(value) && value > 1;
+}
+
 export function parseProcessPid(raw: string): number | null {
   const normalized = raw.trim();
   if (!PROCESS_PID_TOKEN.test(normalized)) return null;
@@ -28,7 +32,7 @@ export function signalProcessPid(pid: unknown, signal: ProcessSignal): ProcessSi
 }
 
 export function signalProcessGroup(pid: unknown, signal: NodeJS.Signals): ProcessSignalResult {
-  if (!isProcessPidValue(pid)) {
+  if (!isProcessGroupLeaderPidValue(pid)) {
     return { status: "unsafe_pid" };
   }
 
