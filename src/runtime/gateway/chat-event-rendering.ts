@@ -33,8 +33,11 @@ export function renderGatewayActivityEvent(item: ActivityEvent): string | null {
   if (narrated) return redactSetupSecrets(narrated);
   switch (item.kind) {
     case "lifecycle":
-    case "commentary":
       return null;
+    case "commentary":
+      return item.presentation?.gatewayProgress === "user"
+        ? redactSetupSecrets(item.message)
+        : null;
     case "checkpoint":
       return item.presentation?.gatewayProgress === "user"
         ? redactSetupSecrets(item.message)

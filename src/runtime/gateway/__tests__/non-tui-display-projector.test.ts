@@ -333,6 +333,26 @@ describe("non-TUI display projector", () => {
     expect(transport.calls.join("\n")).not.toContain("openai/gpt");
   });
 
+  it("renders explicitly user-facing commentary as progress, not final output", async () => {
+    const transport = createTransport();
+    const projector = new NonTuiDisplayProjector({
+      display: resolveGatewayChannelDisplayContract(TELEGRAM_GATEWAY_DISPLAY_CONTRACT),
+      transport,
+    });
+
+    await projector.handle({
+      ...base,
+      type: "activity",
+      kind: "commentary",
+      message: "I'll inspect the relevant project context before using tools.",
+      sourceId: "preamble:agent_loop:turn-1",
+      presentation: { gatewayProgress: "user" },
+    });
+
+    expect(transport.sendProgress).toHaveBeenCalledWith("I'll inspect the relevant project context before using tools.");
+    expect(transport.sendFinal).not.toHaveBeenCalled();
+  });
+
   it("does not expose assistant final candidates as transient progress", async () => {
     const transport = createTransport();
     const projector = new NonTuiDisplayProjector({
