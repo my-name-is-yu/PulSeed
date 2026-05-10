@@ -52,6 +52,21 @@ function makeCompletionResponse(
   };
 }
 
+function makeResponsesStream(chunks: string[], response: Record<string, unknown>) {
+  return makeResponsesEventStream([
+    ...chunks.map((delta) => ({ type: "response.output_text.delta", delta })),
+    { type: "response.completed", response },
+  ]);
+}
+
+function makeResponsesEventStream(events: Record<string, unknown>[]) {
+  return {
+    async *[Symbol.asyncIterator]() {
+      for (const event of events) yield event;
+    },
+  };
+}
+
 // ─── Tests ───
 
 describe("OpenAILLMClient", () => {
@@ -356,28 +371,152 @@ describe("OpenAILLMClient", () => {
   });
 
   describe("sendMessageStream", () => {
-    it("falls back to the Responses API for non-chat models", async () => {
+    it("streams through the Responses API fallback for non-chat models", async () => {
       const client = new OpenAILLMClient({ apiKey: "sk-test", model: "codex-mini-latest" });
+      const onTextDelta = vi.fn();
       mockStream.mockImplementationOnce(() => {
         throw new Error("This is not a chat model and not supported in the v1/chat/completions endpoint");
       });
-      mockResponsesCreate.mockResolvedValueOnce({
+      mockResponsesCreate.mockResolvedValueOnce(makeResponsesStream(["fallback ", "output"], {
         output_text: "fallback output",
         status: "completed",
         usage: {
           input_tokens: 12,
           output_tokens: 7,
         },
-      });
+      }));
 
       const result = await client.sendMessageStream(
         [{ role: "user", content: "hello" }],
         undefined,
-        { onTextDelta: vi.fn() }
+        { onTextDelta }
       );
 
       expect(result.content).toBe("fallback output");
+      expect(result.usage).toEqual({ input_tokens: 12, output_tokens: 7 });
+      expect(onTextDelta.mock.calls.map((call) => call[0])).toEqual(["fallback ", "output"]);
+      expect(mockResponsesCreate).toHaveBeenCalledWith(expect.objectContaining({
+        stream: true,
+      }), expect.any(Object));
       expect(mockResponsesCreate).toHaveBeenCalledOnce();
+    });
+
+    it("passes tools through the Responses API fallback and maps function calls", async () => {
+      const client = new OpenAILLMClient({ apiKey: "sk-test", model: "codex-mini-latest" });
+      mockStream.mockImplementationOnce(() => {
+        throw new Error("This is not a chat model and not supported in the v1/chat/completions endpoint");
+      });
+      mockResponsesCreate.mockResolvedValueOnce(makeResponsesEventStream([
+        {
+          type: "response.function_call_arguments.done",
+          item_id: "fc-1",
+          name: "read_file",
+          arguments: "{\"path\":\"README.md\"}",
+        },
+        {
+          type: "response.completed",
+          response: {
+            output_text: "",
+            status: "completed",
+            usage: { input_tokens: 12, output_tokens: 7 },
+            output: [{
+              type: "function_call",
+              call_id: "call-1",
+              name: "read_file",
+              arguments: "{\"path\":\"README.md\"}",
+            }],
+          },
+        },
+      ]));
+
+      const result = await client.sendMessageStream(
+        [{ role: "user", content: "inspect" }],
+        {
+          tools: [{
+            type: "function",
+            function: {
+              name: "read_file",
+              description: "Read a file",
+              parameters: { type: "object", properties: { path: { type: "string" } } },
+            },
+          }],
+        },
+        { onTextDelta: vi.fn() }
+      );
+
+      expect(mockResponsesCreate).toHaveBeenCalledWith(expect.objectContaining({
+        tools: [expect.objectContaining({
+          type: "function",
+          name: "read_file",
+          description: "Read a file",
+        })],
+        tool_choice: "auto",
+      }), expect.any(Object));
+      expect(result.tool_calls).toEqual([{
+        id: "call-1",
+        type: "function",
+        function: {
+          name: "read_file",
+          arguments: "{\"path\":\"README.md\"}",
+        },
+      }]);
+    });
+
+    it("does not return a successful partial response when the parent aborts mid-stream", async () => {
+      const client = new OpenAILLMClient({ apiKey: "sk-test", model: "codex-mini-latest" });
+      const controller = new AbortController();
+      const onTextDelta = vi.fn();
+      mockStream.mockImplementationOnce(() => {
+        throw new Error("This is not a chat model and not supported in the v1/chat/completions endpoint");
+      });
+      mockResponsesCreate.mockResolvedValueOnce({
+        async *[Symbol.asyncIterator]() {
+          yield { type: "response.output_text.delta", delta: "partial" };
+          controller.abort(new Error("operator stop requested"));
+          yield { type: "response.output_text.delta", delta: " should not render" };
+        },
+      });
+
+      await expect(client.sendMessageStream(
+        [{ role: "user", content: "hello" }],
+        { abortSignal: controller.signal },
+        { onTextDelta }
+      )).rejects.toThrow("aborted");
+      expect(onTextDelta.mock.calls.map((call) => call[0])).toEqual(["partial"]);
+    });
+
+    it("throws on Responses API stream error events", async () => {
+      const client = new OpenAILLMClient({ apiKey: "sk-test", model: "codex-mini-latest" });
+      mockStream.mockImplementationOnce(() => {
+        throw new Error("This is not a chat model and not supported in the v1/chat/completions endpoint");
+      });
+      mockResponsesCreate.mockResolvedValueOnce(makeResponsesEventStream([
+        { type: "error", message: "provider failed" },
+      ]));
+
+      await expect(client.sendMessageStream(
+        [{ role: "user", content: "hello" }],
+        undefined,
+        { onTextDelta: vi.fn() }
+      )).rejects.toThrow("provider failed");
+    });
+
+    it("throws when a Responses API stream ends without a terminal response", async () => {
+      const client = new OpenAILLMClient({ apiKey: "sk-test", model: "codex-mini-latest" });
+      const onTextDelta = vi.fn();
+      mockStream.mockImplementationOnce(() => {
+        throw new Error("This is not a chat model and not supported in the v1/chat/completions endpoint");
+      });
+      mockResponsesCreate.mockResolvedValueOnce(makeResponsesEventStream([
+        { type: "response.output_text.delta", delta: "partial" },
+      ]));
+
+      await expect(client.sendMessageStream(
+        [{ role: "user", content: "hello" }],
+        undefined,
+        { onTextDelta }
+      )).rejects.toThrow("ended without a terminal response");
+      expect(onTextDelta.mock.calls.map((call) => call[0])).toEqual(["partial"]);
     });
 
     it("passes reasoning effort to the Responses API fallback", async () => {
@@ -389,14 +528,14 @@ describe("OpenAILLMClient", () => {
       mockStream.mockImplementationOnce(() => {
         throw new Error("This is not a chat model and not supported in the v1/chat/completions endpoint");
       });
-      mockResponsesCreate.mockResolvedValueOnce({
+      mockResponsesCreate.mockResolvedValueOnce(makeResponsesStream(["fallback output"], {
         output_text: "fallback output",
         status: "completed",
         usage: {
           input_tokens: 12,
           output_tokens: 7,
         },
-      });
+      }));
 
       await client.sendMessageStream(
         [{ role: "user", content: "hello" }],
@@ -406,7 +545,7 @@ describe("OpenAILLMClient", () => {
 
       expect(mockResponsesCreate).toHaveBeenCalledWith(expect.objectContaining({
         reasoning: { effort: "high" },
-      }));
+      }), expect.any(Object));
     });
 
     it("clears the Responses API fallback timeout when an abort rejects the request", async () => {
