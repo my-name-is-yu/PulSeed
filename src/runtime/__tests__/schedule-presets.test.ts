@@ -116,4 +116,16 @@ describe("schedule-presets", () => {
       expect(parsed.success).toBe(false);
     }
   });
+
+  it("rejects non-finite or unsafe goal probe baseline windows", () => {
+    for (const baseline_window of [Number.POSITIVE_INFINITY, Number.NaN, Number.MAX_SAFE_INTEGER + 1]) {
+      const parsed = SchedulePresetInputSchema.safeParse({
+        preset: "goal_probe",
+        data_source_id: "source-1",
+        baseline_window,
+      });
+
+      expect(parsed.success).toBe(false);
+    }
+  });
 });

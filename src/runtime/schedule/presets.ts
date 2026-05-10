@@ -25,6 +25,7 @@ type CreateScheduleEntryInput = Omit<
 
 const RecordSchema = z.record(z.string(), z.unknown());
 const SchedulePresetFiniteSafeNumberSchema = z.number().finite().safe();
+const SchedulePresetPositiveSafeIntegerSchema = z.number().finite().int().min(1).max(Number.MAX_SAFE_INTEGER);
 
 const SchedulePresetBaseSchema = z.object({
   name: z.string().min(1).optional(),
@@ -58,7 +59,7 @@ export const GoalProbePresetInputSchema = SchedulePresetBaseSchema.extend({
   query_params: RecordSchema.default({}),
   detector_mode: z.enum(["threshold", "diff", "presence"]).default("diff"),
   threshold_value: SchedulePresetFiniteSafeNumberSchema.optional(),
-  baseline_window: z.number().int().min(1).default(5),
+  baseline_window: SchedulePresetPositiveSafeIntegerSchema.default(5),
   llm_on_change: z.boolean().default(true),
   llm_prompt_template: z.string().optional(),
 });
