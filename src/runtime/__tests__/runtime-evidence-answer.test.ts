@@ -577,8 +577,9 @@ describe("buildRuntimeEvidenceAnswer", () => {
     expect(result.kind).toBe("answered");
     expect(result.targetRunId).toBe("run-active");
     expect(result.messageType).toBe("warning");
-    expect(result.message).toContain("Requested target \"run-target\" did not match");
-    const metricLines = result.message.split("\n").filter((line) => line.startsWith("- score:"));
+    const message = result.message ?? "";
+    expect(message).toContain("Requested target \"run-target\" did not match");
+    const metricLines = message.split("\n").filter((line) => line.startsWith("- score:"));
     expect(metricLines).toContain(
       "- score: latest 0.12 at 2026-05-02T00:20:00.000Z; cumulative best 0.12 at 2026-05-02T00:20:00.000Z; trend noisy; confidence 0.15."
     );
