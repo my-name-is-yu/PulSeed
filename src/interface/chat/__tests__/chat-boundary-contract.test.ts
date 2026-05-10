@@ -227,7 +227,9 @@ describe("chat boundary contracts", () => {
         }),
       } as never,
       llmClient: createMockLLMClient([
+        JSON.stringify({ verdict: "allow", reason: "Ordinary greeting does not claim runtime status." }),
         JSON.stringify({ intent: "restart_daemon", reason: "PulSeed を再起動して" }),
+        JSON.stringify({ verdict: "allow", reason: "Runtime control response is grounded by runtime service acknowledgement." }),
       ]),
       runtimeControlService,
       approvalFn: vi.fn().mockResolvedValue(true),
