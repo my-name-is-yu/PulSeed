@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { ITool, ToolResult, ToolCallContext, PermissionCheckResult, ToolMetadata } from "../../types.js";
-import { execFileNoThrow } from "../../../base/utils/execFileNoThrow.js";
+import { execFileNoThrow, type ExecFileResult } from "../../../base/utils/execFileNoThrow.js";
 import { parseProcessPid, signalProcessPid } from "../../../base/utils/process-pid.js";
 import { DESCRIPTION } from "./prompt.js";
 import { TAGS, MAX_OUTPUT_CHARS, PERMISSION_LEVEL } from "./constants.js";
@@ -20,6 +20,35 @@ export interface ProcessStatusOutput {
   alive: boolean;
   details?: string;
   pid?: number;
+}
+
+function commandFailureMessage(
+  command: string,
+  result: ExecFileResult,
+  noMatchExitCode?: number
+): string | null {
+  if (result.exitCode === 0) return null;
+  if (
+    noMatchExitCode !== undefined &&
+    result.exitCode === noMatchExitCode &&
+    result.stdout.trim().length === 0 &&
+    result.stderr.trim().length === 0
+  ) {
+    return null;
+  }
+
+  const details = result.stderr.trim() || result.stdout.trim() || `exit ${result.exitCode ?? "unknown"}`;
+  return `${command} failed: ${details}`;
+}
+
+function commandFailureResult(message: string, startTime: number): ToolResult {
+  return {
+    success: false,
+    data: { alive: false },
+    summary: message,
+    error: message,
+    durationMs: Date.now() - startTime,
+  };
 }
 
 export class ProcessStatusTool implements ITool<ProcessStatusInput, ProcessStatusOutput> {
@@ -92,6 +121,8 @@ export class ProcessStatusTool implements ITool<ProcessStatusInput, ProcessStatu
 
     if (isWindows) {
       result = await execFileNoThrow("netstat", ["-ano"], { timeoutMs: 5000 });
+      const failure = commandFailureMessage("netstat", result);
+      if (failure) return commandFailureResult(failure, startTime);
       const lines = result.stdout.split("\n").filter((l) => l.includes(`:${port} `));
       const alive = lines.length > 0;
       const output: ProcessStatusOutput = { alive, details: lines.slice(0, 5).join("\n") || undefined };
@@ -105,6 +136,8 @@ export class ProcessStatusTool implements ITool<ProcessStatusInput, ProcessStatu
 
     // macOS / Linux: lsof -i :PORT
     result = await execFileNoThrow("lsof", ["-i", `:${port}`, "-n", "-P"], { timeoutMs: 5000 });
+    const failure = commandFailureMessage("lsof", result, 1);
+    if (failure) return commandFailureResult(failure, startTime);
     const alive = result.exitCode === 0 && result.stdout.trim().length > 0;
     const details = result.stdout.trim() || undefined;
 
@@ -132,6 +165,8 @@ export class ProcessStatusTool implements ITool<ProcessStatusInput, ProcessStatu
 
     if (isWindows) {
       result = await execFileNoThrow("tasklist", ["/FI", `IMAGENAME eq ${name}`], { timeoutMs: 5000 });
+      const failure = commandFailureMessage("tasklist", result);
+      if (failure) return commandFailureResult(failure, startTime);
       const alive = result.stdout.includes(name);
       const output: ProcessStatusOutput = { alive, details: result.stdout.trim() || undefined };
       return {
@@ -144,6 +179,8 @@ export class ProcessStatusTool implements ITool<ProcessStatusInput, ProcessStatu
 
     // macOS / Linux: pgrep -la <name>
     result = await execFileNoThrow("pgrep", ["-la", name], { timeoutMs: 5000 });
+    const failure = commandFailureMessage("pgrep", result, 1);
+    if (failure) return commandFailureResult(failure, startTime);
     const alive = result.exitCode === 0 && result.stdout.trim().length > 0;
     const details = result.stdout.trim() || undefined;
 
