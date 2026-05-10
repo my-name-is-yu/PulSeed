@@ -7,6 +7,7 @@
 
 import type { ToolExecutor } from "../../tools/executor.js";
 import type { ToolCallContext } from "../../tools/types.js";
+import { z } from "zod";
 
 // --- WorkspaceContext ---
 
@@ -23,6 +24,42 @@ export interface WorkspaceContext {
   dependencies: string[];
   /** Test file structure */
   testFiles: string[];
+}
+
+const PackageStringRecordSchema = z.record(z.string(), z.string());
+const PackageManifestShapeSchema = z.object({
+  scripts: z.unknown().optional(),
+  dependencies: z.unknown().optional(),
+}).passthrough();
+
+interface WorkspacePackageMetadata {
+  scripts: Record<string, string>;
+  dependencies: Record<string, string>;
+}
+
+function emptyPackageMetadata(): WorkspacePackageMetadata {
+  return { scripts: {}, dependencies: {} };
+}
+
+function parseWorkspacePackageMetadata(value: string): WorkspacePackageMetadata {
+  let decoded: unknown;
+  try {
+    decoded = JSON.parse(value) as unknown;
+  } catch {
+    return emptyPackageMetadata();
+  }
+
+  const manifest = PackageManifestShapeSchema.safeParse(decoded);
+  if (!manifest.success) {
+    return emptyPackageMetadata();
+  }
+
+  const scripts = PackageStringRecordSchema.safeParse(manifest.data.scripts);
+  const dependencies = PackageStringRecordSchema.safeParse(manifest.data.dependencies);
+  return {
+    scripts: scripts.success ? scripts.data : {},
+    dependencies: dependencies.success ? dependencies.data : {},
+  };
 }
 
 /**
@@ -46,14 +83,9 @@ export async function buildWorkspaceContext(
       context,
     );
 
-  let pkg: Record<string, unknown> = {};
-  if (pkgRead.success && typeof pkgRead.data === "string") {
-    try {
-      pkg = JSON.parse(pkgRead.data) as Record<string, unknown>;
-    } catch {
-      // Malformed package.json — ignore
-    }
-  }
+  const packageMetadata = pkgRead.success && typeof pkgRead.data === "string"
+    ? parseWorkspacePackageMetadata(pkgRead.data)
+    : emptyPackageMetadata();
 
   const gitStdout =
     gitLog.success &&
@@ -68,21 +100,10 @@ export async function buildWorkspaceContext(
     rootFiles: rootGlob.success && Array.isArray(rootGlob.data) ? (rootGlob.data as string[]) : [],
     sourceTree: srcGlob.success && Array.isArray(srcGlob.data) ? (srcGlob.data as string[]) : [],
     recentCommits: gitStdout ? gitStdout.split("\n").filter(Boolean) : [],
-    scripts: isStringRecord(pkg.scripts) ? (pkg.scripts as Record<string, string>) : {},
-    dependencies: typeof pkg.dependencies === "object" && pkg.dependencies !== null
-      ? Object.keys(pkg.dependencies as object)
-      : [],
+    scripts: packageMetadata.scripts,
+    dependencies: Object.keys(packageMetadata.dependencies),
     testFiles: testGlob.success && Array.isArray(testGlob.data) ? (testGlob.data as string[]) : [],
   };
-}
-
-function isStringRecord(val: unknown): val is Record<string, string> {
-  return (
-    typeof val === "object" &&
-    val !== null &&
-    !Array.isArray(val) &&
-    Object.values(val as Record<string, unknown>).every((v) => typeof v === "string")
-  );
 }
 
 // --- WorkspaceContextCache ---
