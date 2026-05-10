@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { TrustStateTool } from "../TrustStateTool.js";
 import type { ToolCallContext } from "../../../types.js";
 import type { StateManager } from "../../../../base/state/state-manager.js";
+import type { TrustStateStorePort } from "../../../../runtime/store/trust-state-store.js";
 
 function makeContext(): ToolCallContext {
   return {
@@ -25,13 +26,16 @@ const MOCK_STORE = {
 
 describe("TrustStateTool", () => {
   let stateManager: StateManager;
+  let trustStateStore: TrustStateStorePort;
   let tool: TrustStateTool;
 
   beforeEach(() => {
-    stateManager = {
-      readRaw: vi.fn(),
-    } as unknown as StateManager;
-    tool = new TrustStateTool(stateManager);
+    stateManager = {} as unknown as StateManager;
+    trustStateStore = {
+      loadStore: vi.fn(),
+      saveStore: vi.fn(),
+    };
+    tool = new TrustStateTool(stateManager, trustStateStore);
   });
 
   it("returns metadata with correct name and tags", () => {
@@ -54,7 +58,7 @@ describe("TrustStateTool", () => {
   });
 
   it("returns all adapter trust states when no adapterId given", async () => {
-    vi.mocked(stateManager.readRaw).mockResolvedValue(MOCK_STORE);
+    vi.mocked(trustStateStore.loadStore).mockResolvedValue(MOCK_STORE as never);
     const result = await tool.call({}, makeContext());
     expect(result.success).toBe(true);
     const data = result.data as { adapters: Array<{ adapterId: string; balance: number; highTrust: boolean }> };
@@ -67,7 +71,7 @@ describe("TrustStateTool", () => {
   });
 
   it("returns specific adapter trust state when adapterId given", async () => {
-    vi.mocked(stateManager.readRaw).mockResolvedValue(MOCK_STORE);
+    vi.mocked(trustStateStore.loadStore).mockResolvedValue(MOCK_STORE as never);
     const result = await tool.call({ adapterId: "claude-code-cli" }, makeContext());
     expect(result.success).toBe(true);
     const data = result.data as { adapterId: string; balance: number; highTrust: boolean; recentEvents: unknown[] };
@@ -78,7 +82,7 @@ describe("TrustStateTool", () => {
   });
 
   it("returns default balance for unknown adapterId", async () => {
-    vi.mocked(stateManager.readRaw).mockResolvedValue(MOCK_STORE);
+    vi.mocked(trustStateStore.loadStore).mockResolvedValue(MOCK_STORE as never);
     const result = await tool.call({ adapterId: "unknown-adapter" }, makeContext());
     expect(result.success).toBe(true);
     const data = result.data as { balance: number; highTrust: boolean };
@@ -87,15 +91,19 @@ describe("TrustStateTool", () => {
   });
 
   it("handles missing trust store gracefully (null)", async () => {
-    vi.mocked(stateManager.readRaw).mockResolvedValue(null);
+    vi.mocked(trustStateStore.loadStore).mockResolvedValue({
+      balances: {},
+      permanent_gates: {},
+      override_log: [],
+    });
     const result = await tool.call({}, makeContext());
     expect(result.success).toBe(true);
     const data = result.data as { adapters: unknown[] };
     expect(data.adapters).toHaveLength(0);
   });
 
-  it("handles stateManager error gracefully", async () => {
-    vi.mocked(stateManager.readRaw).mockRejectedValue(new Error("io error"));
+  it("handles trust state store error gracefully", async () => {
+    vi.mocked(trustStateStore.loadStore).mockRejectedValue(new Error("io error"));
     const result = await tool.call({}, makeContext());
     expect(result.success).toBe(false);
     expect(result.error).toContain("io error");

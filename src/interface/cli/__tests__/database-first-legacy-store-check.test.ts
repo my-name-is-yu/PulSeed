@@ -122,8 +122,8 @@ describe("database-first legacy store check", () => {
   });
 
   it("emits a machine-readable debt report", () => {
-    writeFile(tmpDir, "src/platform/traits/trust-manager.ts", `
-      export const trustStore = "trust-store.json";
+    writeFile(tmpDir, "src/platform/dream/dream-activation.ts", `
+      export const decisionHeuristics = "decision-heuristics.json";
     `);
 
     const result = runCheck(tmpDir, ["--json"]);
@@ -137,9 +137,9 @@ describe("database-first legacy store check", () => {
     expect(parsed.debtReport.some((entry) => entry.nextSlice === 3)).toBe(false);
     expect(parsed.debtReport).toEqual(expect.arrayContaining([
       expect.objectContaining({
-        id: "trust-manager-file-state",
+        id: "dream-activation-file-state",
         category: "migrate now",
-        nextSlice: 8,
+        nextSlice: 9,
         matchCount: 1,
       }),
     ]));

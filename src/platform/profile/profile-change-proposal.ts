@@ -1,8 +1,14 @@
-import * as fs from "node:fs";
-import * as path from "node:path";
+import { existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { readJsonFileOrNull, writeJsonFileAtomic } from "../../base/utils/json-io.js";
+import {
+  openControlDatabase,
+  openControlDatabaseSync,
+  resolveControlDbPath,
+  type ControlDatabase,
+  type RuntimeControlDbStoreOptions,
+  type SqliteDatabase,
+} from "../../runtime/store/control-db/index.js";
 import {
   loadRelationshipProfile,
   saveRelationshipProfile,
@@ -102,6 +108,7 @@ export type RelationshipProfileProposalSource = z.infer<typeof RelationshipProfi
 export type RelationshipProfileProposalState = z.infer<typeof RelationshipProfileProposalStateSchema>;
 export type RelationshipProfileChangeProposal = z.infer<typeof RelationshipProfileChangeProposalSchema>;
 export type RelationshipProfileProposalStore = z.infer<typeof RelationshipProfileProposalStoreSchema>;
+export interface RelationshipProfileProposalStoreOptions extends RuntimeControlDbStoreOptions {}
 
 export interface RelationshipProfileProposalInput {
   operation: RelationshipProfileProposalOperation;
@@ -119,10 +126,6 @@ export interface RelationshipProfileProposalInput {
   now?: string;
 }
 
-export function relationshipProfileProposalPath(baseDir: string): string {
-  return path.join(baseDir, "relationship-profile-proposals.json");
-}
-
 export function createEmptyRelationshipProfileProposalStore(now: string | null = null): RelationshipProfileProposalStore {
   return RelationshipProfileProposalStoreSchema.parse({
     schema_version: 1,
@@ -133,29 +136,197 @@ export function createEmptyRelationshipProfileProposalStore(now: string | null =
   });
 }
 
-export async function loadRelationshipProfileProposalStore(baseDir: string): Promise<RelationshipProfileProposalStore> {
-  const raw = await readJsonFileOrNull(relationshipProfileProposalPath(baseDir));
-  const parsed = RelationshipProfileProposalStoreSchema.safeParse(raw);
-  return parsed.success ? parsed.data : createEmptyRelationshipProfileProposalStore();
+export async function loadRelationshipProfileProposalStore(
+  baseDir: string,
+  options: RelationshipProfileProposalStoreOptions = {},
+): Promise<RelationshipProfileProposalStore> {
+  if (!controlDbExists(baseDir, options)) {
+    return createEmptyRelationshipProfileProposalStore();
+  }
+  const db = await openRelationshipProfileProposalControlDatabase(baseDir, options);
+  try {
+    return db.read((sqlite) => readRelationshipProfileProposalStore(sqlite));
+  } finally {
+    if (!options.controlDb) {
+      db.close();
+    }
+  }
 }
 
-export function loadRelationshipProfileProposalStoreSync(baseDir: string): RelationshipProfileProposalStore {
-  try {
-    const raw = JSON.parse(fs.readFileSync(relationshipProfileProposalPath(baseDir), "utf-8")) as unknown;
-    const parsed = RelationshipProfileProposalStoreSchema.safeParse(raw);
-    return parsed.success ? parsed.data : createEmptyRelationshipProfileProposalStore();
-  } catch {
+export function loadRelationshipProfileProposalStoreSync(
+  baseDir: string,
+  options: RelationshipProfileProposalStoreOptions = {},
+): RelationshipProfileProposalStore {
+  if (!controlDbExists(baseDir, options)) {
     return createEmptyRelationshipProfileProposalStore();
+  }
+  const db = openRelationshipProfileProposalControlDatabaseSync(baseDir, options);
+  try {
+    return db.read((sqlite) => readRelationshipProfileProposalStore(sqlite));
+  } finally {
+    if (!options.controlDb) {
+      db.close();
+    }
   }
 }
 
 export async function saveRelationshipProfileProposalStore(
   baseDir: string,
-  store: RelationshipProfileProposalStore
+  store: RelationshipProfileProposalStore,
+  options: RelationshipProfileProposalStoreOptions = {},
 ): Promise<void> {
-  await writeJsonFileAtomic(relationshipProfileProposalPath(baseDir), RelationshipProfileProposalStoreSchema.parse(store), {
-    mode: 0o600,
-    directoryMode: 0o700,
+  const parsed = RelationshipProfileProposalStoreSchema.parse(store);
+  const db = await openRelationshipProfileProposalControlDatabase(baseDir, options);
+  try {
+    db.transaction((sqlite) => replaceRelationshipProfileProposalStore(sqlite, parsed));
+  } finally {
+    if (!options.controlDb) {
+      db.close();
+    }
+  }
+}
+
+function controlDbExists(baseDir: string, options: RelationshipProfileProposalStoreOptions): boolean {
+  if (options.controlDb) return true;
+  return existsSync(resolveControlDbPath({
+    baseDir: options.controlBaseDir ?? baseDir,
+    dbPath: options.controlDbPath,
+  }));
+}
+
+function openRelationshipProfileProposalControlDatabase(
+  baseDir: string,
+  options: RelationshipProfileProposalStoreOptions,
+): Promise<ControlDatabase> {
+  if (options.controlDb) {
+    return Promise.resolve(options.controlDb);
+  }
+  return openControlDatabase({
+    baseDir: options.controlBaseDir ?? baseDir,
+    dbPath: options.controlDbPath,
+  });
+}
+
+function openRelationshipProfileProposalControlDatabaseSync(
+  baseDir: string,
+  options: RelationshipProfileProposalStoreOptions,
+): ControlDatabase {
+  if (options.controlDb) {
+    return options.controlDb;
+  }
+  return openControlDatabaseSync({
+    baseDir: options.controlBaseDir ?? baseDir,
+    dbPath: options.controlDbPath,
+  });
+}
+
+function parseJson<T>(value: string): T {
+  return JSON.parse(value) as T;
+}
+
+function stringifyJson(value: unknown): string {
+  return JSON.stringify(value);
+}
+
+function readRelationshipProfileProposalStore(sqlite: SqliteDatabase): RelationshipProfileProposalStore {
+  const metadata = sqlite.prepare(`
+    SELECT profile_id, updated_at
+    FROM relationship_profile_proposal_metadata
+    WHERE profile_id = 'default'
+  `).get() as { profile_id: string; updated_at: string | null } | undefined;
+
+  if (!metadata) {
+    return createEmptyRelationshipProfileProposalStore();
+  }
+
+  const proposalRows = sqlite.prepare(`
+    SELECT proposal_json
+    FROM relationship_profile_proposals
+    WHERE profile_id = ?
+    ORDER BY sort_order ASC, created_at ASC, proposal_id ASC
+  `).all(metadata.profile_id) as Array<{ proposal_json: string }>;
+  const eventRows = sqlite.prepare(`
+    SELECT event_json
+    FROM relationship_profile_proposal_audit_events
+    ORDER BY sort_order ASC, event_timestamp ASC, event_id ASC
+  `).all() as Array<{ event_json: string }>;
+
+  return RelationshipProfileProposalStoreSchema.parse({
+    schema_version: 1,
+    profile_id: metadata.profile_id,
+    proposals: proposalRows.map((row) =>
+      RelationshipProfileChangeProposalSchema.parse(parseJson<unknown>(row.proposal_json))
+    ),
+    audit_events: eventRows.map((row) =>
+      RelationshipProfileProposalAuditEventSchema.parse(parseJson<unknown>(row.event_json))
+    ),
+    updated_at: metadata.updated_at,
+  });
+}
+
+function replaceRelationshipProfileProposalStore(
+  sqlite: SqliteDatabase,
+  store: RelationshipProfileProposalStore,
+): void {
+  sqlite.prepare("DELETE FROM relationship_profile_proposal_audit_events").run();
+  sqlite.prepare("DELETE FROM relationship_profile_proposals").run();
+  sqlite.prepare("DELETE FROM relationship_profile_proposal_metadata").run();
+
+  sqlite.prepare(`
+    INSERT INTO relationship_profile_proposal_metadata (profile_id, updated_at, store_json)
+    VALUES (?, ?, json(?))
+  `).run(store.profile_id, store.updated_at, stringifyJson(store));
+
+  const insertProposal = sqlite.prepare(`
+    INSERT INTO relationship_profile_proposals (
+      proposal_id,
+      profile_id,
+      operation,
+      approval_state,
+      source,
+      stable_key,
+      created_at,
+      updated_at,
+      expires_at,
+      sort_order,
+      proposal_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, json(?))
+  `);
+  store.proposals.forEach((proposal, index) => {
+    insertProposal.run(
+      proposal.id,
+      store.profile_id,
+      proposal.operation,
+      proposal.approval_state,
+      proposal.source,
+      proposal.proposed_item.stable_key,
+      proposal.created_at,
+      proposal.updated_at,
+      proposal.expires_at,
+      index,
+      stringifyJson(proposal),
+    );
+  });
+
+  const insertEvent = sqlite.prepare(`
+    INSERT INTO relationship_profile_proposal_audit_events (
+      event_id,
+      proposal_id,
+      event_timestamp,
+      action,
+      sort_order,
+      event_json
+    ) VALUES (?, ?, ?, ?, ?, json(?))
+  `);
+  store.audit_events.forEach((event, index) => {
+    insertEvent.run(
+      event.id,
+      event.proposal_id,
+      event.at,
+      event.action,
+      index,
+      stringifyJson(event),
+    );
   });
 }
 

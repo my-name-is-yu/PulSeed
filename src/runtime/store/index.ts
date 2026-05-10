@@ -581,6 +581,38 @@ export {
 export type {
   CuriosityStateLegacyImportReport,
 } from "./curiosity-state-migration.js";
+export {
+  TrustStateStore,
+} from "./trust-state-store.js";
+export type {
+  TrustStateStoreOptions,
+  TrustStateStorePort,
+} from "./trust-state-store.js";
+export {
+  importLegacyTrustState,
+} from "./trust-state-migration.js";
+export type {
+  TrustStateLegacyImportReport,
+} from "./trust-state-migration.js";
+export {
+  EthicsLogStore,
+} from "./ethics-log-store.js";
+export type {
+  EthicsLogStoreOptions,
+  EthicsLogStorePort,
+} from "./ethics-log-store.js";
+export {
+  importLegacyEthicsLogState,
+} from "./ethics-log-migration.js";
+export type {
+  EthicsLogLegacyImportReport,
+} from "./ethics-log-migration.js";
+export {
+  importLegacyRelationshipProfileProposalState,
+} from "./relationship-profile-proposal-state-migration.js";
+export type {
+  RelationshipProfileProposalLegacyImportReport,
+} from "./relationship-profile-proposal-state-migration.js";
 export { PluginChannelRuntimeStateStore } from "./plugin-channel-runtime-state-store.js";
 export type {
   GatewayChannelBinding,

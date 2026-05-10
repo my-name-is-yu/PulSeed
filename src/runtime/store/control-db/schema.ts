@@ -7,7 +7,7 @@ export interface ControlDbMigration {
   checksum: string;
 }
 
-export const CONTROL_DB_SCHEMA_VERSION = 14;
+export const CONTROL_DB_SCHEMA_VERSION = 15;
 
 export const CONTROL_DB_INITIAL_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS control_schema_migrations (
@@ -1233,6 +1233,107 @@ CREATE INDEX IF NOT EXISTS curiosity_rejected_proposal_hashes_order_idx
   ON curiosity_rejected_proposal_hashes(sort_order, proposal_hash);
 `.trim();
 
+export const CONTROL_DB_TRUST_ETHICS_PROFILE_SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS trust_state_metadata (
+  state_id TEXT PRIMARY KEY CHECK (state_id = 'current'),
+  updated_at TEXT NOT NULL,
+  state_json TEXT NOT NULL CHECK (json_valid(state_json))
+);
+
+CREATE TABLE IF NOT EXISTS trust_balances (
+  domain TEXT PRIMARY KEY,
+  balance REAL NOT NULL CHECK (balance >= -100 AND balance <= 100),
+  success_delta REAL NOT NULL,
+  failure_delta REAL NOT NULL,
+  updated_at TEXT NOT NULL,
+  balance_json TEXT NOT NULL CHECK (json_valid(balance_json))
+);
+
+CREATE TABLE IF NOT EXISTS trust_permanent_gates (
+  domain TEXT NOT NULL,
+  category TEXT NOT NULL,
+  sort_order INTEGER NOT NULL CHECK (sort_order >= 0),
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (domain, category)
+);
+
+CREATE INDEX IF NOT EXISTS trust_permanent_gates_domain_idx
+  ON trust_permanent_gates(domain, sort_order, category);
+
+CREATE TABLE IF NOT EXISTS trust_override_log (
+  log_sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_timestamp TEXT NOT NULL,
+  override_type TEXT NOT NULL CHECK (override_type IN ('trust_grant', 'permanent_gate')),
+  domain TEXT NOT NULL,
+  target_category TEXT,
+  balance_before REAL,
+  balance_after REAL,
+  sort_order INTEGER NOT NULL CHECK (sort_order >= 0),
+  entry_json TEXT NOT NULL CHECK (json_valid(entry_json))
+);
+
+CREATE INDEX IF NOT EXISTS trust_override_log_domain_idx
+  ON trust_override_log(domain, event_timestamp, log_sequence);
+
+CREATE TABLE IF NOT EXISTS ethics_log_entries (
+  log_id TEXT PRIMARY KEY,
+  event_timestamp TEXT NOT NULL,
+  subject_type TEXT NOT NULL CHECK (subject_type IN ('goal', 'subgoal', 'task')),
+  subject_id TEXT NOT NULL,
+  verdict TEXT NOT NULL CHECK (verdict IN ('pass', 'flag', 'reject')),
+  category TEXT,
+  layer1_triggered INTEGER NOT NULL CHECK (layer1_triggered IN (0, 1)),
+  sort_order INTEGER NOT NULL CHECK (sort_order >= 0),
+  entry_json TEXT NOT NULL CHECK (json_valid(entry_json))
+);
+
+CREATE INDEX IF NOT EXISTS ethics_log_entries_subject_idx
+  ON ethics_log_entries(subject_id, event_timestamp, log_id);
+
+CREATE INDEX IF NOT EXISTS ethics_log_entries_verdict_idx
+  ON ethics_log_entries(verdict, event_timestamp, log_id);
+
+CREATE TABLE IF NOT EXISTS relationship_profile_proposal_metadata (
+  profile_id TEXT PRIMARY KEY,
+  updated_at TEXT,
+  store_json TEXT NOT NULL CHECK (json_valid(store_json))
+);
+
+CREATE TABLE IF NOT EXISTS relationship_profile_proposals (
+  proposal_id TEXT PRIMARY KEY,
+  profile_id TEXT NOT NULL,
+  operation TEXT NOT NULL CHECK (operation IN ('upsert_item', 'retract_item')),
+  approval_state TEXT NOT NULL CHECK (approval_state IN ('pending', 'approved', 'rejected', 'applied', 'superseded', 'expired')),
+  source TEXT NOT NULL CHECK (source IN ('cli_proposal', 'setup_import', 'proactive_feedback', 'system_migration')),
+  stable_key TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  expires_at TEXT,
+  sort_order INTEGER NOT NULL CHECK (sort_order >= 0),
+  proposal_json TEXT NOT NULL CHECK (json_valid(proposal_json)),
+  FOREIGN KEY (profile_id) REFERENCES relationship_profile_proposal_metadata(profile_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS relationship_profile_proposals_state_idx
+  ON relationship_profile_proposals(approval_state, updated_at, proposal_id);
+
+CREATE INDEX IF NOT EXISTS relationship_profile_proposals_stable_key_idx
+  ON relationship_profile_proposals(stable_key, approval_state, proposal_id);
+
+CREATE TABLE IF NOT EXISTS relationship_profile_proposal_audit_events (
+  event_id TEXT PRIMARY KEY,
+  proposal_id TEXT NOT NULL,
+  event_timestamp TEXT NOT NULL,
+  action TEXT NOT NULL CHECK (action IN ('created', 'approved', 'rejected', 'applied', 'superseded', 'expired')),
+  sort_order INTEGER NOT NULL CHECK (sort_order >= 0),
+  event_json TEXT NOT NULL CHECK (json_valid(event_json)),
+  FOREIGN KEY (proposal_id) REFERENCES relationship_profile_proposals(proposal_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS relationship_profile_proposal_events_proposal_idx
+  ON relationship_profile_proposal_audit_events(proposal_id, event_timestamp, event_id);
+`.trim();
+
 export function controlDbMigrationChecksum(sql: string): string {
   return createHash("sha256").update(sql.trim()).digest("hex");
 }
@@ -1320,5 +1421,10 @@ export const CONTROL_DB_MIGRATIONS: readonly ControlDbMigration[] = [
     14,
     "curiosity-runtime-state",
     CONTROL_DB_CURIOSITY_STATE_SCHEMA_SQL
+  ),
+  createControlDbMigration(
+    15,
+    "trust-ethics-profile-runtime-state",
+    CONTROL_DB_TRUST_ETHICS_PROFILE_SCHEMA_SQL
   ),
 ];

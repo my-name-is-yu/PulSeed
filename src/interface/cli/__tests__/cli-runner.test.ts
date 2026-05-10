@@ -178,7 +178,10 @@ import { CharacterConfigManager } from "../../../platform/traits/character-confi
 import { DaemonClient } from "../../../runtime/daemon/client.js";
 import { ScheduleEngine } from "../../../runtime/schedule-engine.js";
 import { ProactiveInterventionStore } from "../../../runtime/store/proactive-intervention-store.js";
-import { createRelationshipProfileChangeProposal } from "../../../platform/profile/profile-change-proposal.js";
+import {
+  createRelationshipProfileChangeProposal,
+  loadRelationshipProfileProposalStore,
+} from "../../../platform/profile/profile-change-proposal.js";
 import { resolveTaskWorkspacePath } from "../../../orchestrator/execution/task/task-workspace.js";
 import type { LoopResult } from "../../../orchestrator/loop/durable-loop.js";
 import type { Goal } from "../../../base/types/goal.js";
@@ -2255,7 +2258,7 @@ describe("profile command", () => {
     expect(profile.items[0]?.value).toBe("Prefer concise status reports.");
     expect(showOutput).not.toContain("Allow every proactive notification.");
 
-    const proposalStore = JSON.parse(fs.readFileSync(path.join(tmpDir, "relationship-profile-proposals.json"), "utf-8"));
+    const proposalStore = await loadRelationshipProfileProposalStore(tmpDir);
     expect(proposalStore.proposals.map((proposal: { approval_state: string }) => proposal.approval_state).sort()).toEqual([
       "applied",
       "rejected",
@@ -2302,7 +2305,7 @@ describe("runtime proactive feedback commands", () => {
     );
     expect(feedbackCode).toBe(0);
 
-    const proposalStore = JSON.parse(fs.readFileSync(path.join(tmpDir, "relationship-profile-proposals.json"), "utf-8"));
+    const proposalStore = await loadRelationshipProfileProposalStore(tmpDir);
     expect(proposalStore.proposals[0]).toMatchObject({
       source: "proactive_feedback",
       approval_state: "pending",

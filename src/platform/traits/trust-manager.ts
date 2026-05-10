@@ -1,4 +1,5 @@
 import type { StateManager } from "../../base/state/state-manager.js";
+import { TrustStateStore, type TrustStateStorePort } from "../../runtime/store/trust-state-store.js";
 import {
   TrustBalanceSchema,
   TrustStoreSchema,
@@ -13,18 +14,6 @@ import {
 import type { TrustBalance, TrustStore, ActionQuadrant } from "../../base/types/trust.js";
 import type { PluginMatchResult } from "../../base/types/plugin.js";
 import type { PluginLoader } from "../../runtime/plugin-loader.js";
-
-/** Path relative to StateManager base dir for the trust store */
-const TRUST_STORE_PATH = "trust/trust-store.json";
-
-/** Default empty TrustStore */
-function emptyStore(): TrustStore {
-  return TrustStoreSchema.parse({
-    balances: {},
-    permanent_gates: {},
-    override_log: [],
-  });
-}
 
 /** Default TrustBalance for a new domain */
 function defaultBalance(domain: string): TrustBalance {
@@ -50,18 +39,20 @@ const TRUST_RATE_LIMIT_WINDOW_MS = 3_600_000;
  * TrustManager handles per-domain trust balances, action quadrant determination,
  * irreversibility-based approval requirements, and user overrides.
  *
- * Persistence: `trust/trust-store.json` via StateManager readRaw/writeRaw.
+ * Persistence: typed trust runtime state store.
  * The store is loaded lazily on first access and cached in memory.
  * Every mutation persists immediately.
  */
 export class TrustManager {
   private readonly stateManager: StateManager;
+  private trustStateStore: TrustStateStorePort | null;
   private cache: TrustStore | null = null;
   /** In-memory sliding window of success call timestamps per domain */
   private successTimestamps: Map<string, number[]> = new Map();
 
-  constructor(stateManager: StateManager) {
+  constructor(stateManager: StateManager, trustStateStore?: TrustStateStorePort) {
     this.stateManager = stateManager;
+    this.trustStateStore = trustStateStore ?? null;
   }
 
   // ─── Private: Store I/O ───
@@ -70,19 +61,19 @@ export class TrustManager {
     if (this.cache !== null) {
       return this.cache;
     }
-    const raw = await this.stateManager.readRaw(TRUST_STORE_PATH);
-    if (raw === null) {
-      this.cache = emptyStore();
-    } else {
-      this.cache = TrustStoreSchema.parse(raw);
-    }
+    this.cache = TrustStoreSchema.parse(await this.getTrustStateStore().loadStore());
     return this.cache;
   }
 
   private async saveStore(store: TrustStore): Promise<void> {
     const parsed = TrustStoreSchema.parse(store);
     this.cache = parsed;
-    await this.stateManager.writeRaw(TRUST_STORE_PATH, parsed);
+    await this.getTrustStateStore().saveStore(parsed);
+  }
+
+  private getTrustStateStore(): TrustStateStorePort {
+    this.trustStateStore ??= new TrustStateStore(this.stateManager.getBaseDir());
+    return this.trustStateStore;
   }
 
   // ─── Public API ───

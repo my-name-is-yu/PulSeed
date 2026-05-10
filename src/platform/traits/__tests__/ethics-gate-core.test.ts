@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { StateManager } from "../../../base/state/state-manager.js";
 import { EthicsGate } from "../ethics-gate.js";
+import { EthicsLogStore } from "../../../runtime/store/ethics-log-store.js";
 import { createMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
 import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 import {
@@ -470,23 +471,22 @@ describe("EthicsGate", () => {
   // ─── Log persistence ───
 
   describe("log persistence", () => {
-    it("persists logs to ethics/ethics-log.json", async () => {
+    it("persists logs to the typed control DB store", async () => {
       const g = new EthicsGate(stateManager, createMockLLMClient([PASS_VERDICT_JSON]));
       await g.check("goal", "goal-1", "A goal");
 
-      const filePath = path.join(tmpDir, "ethics", "ethics-log.json");
-      expect(fs.existsSync(filePath)).toBe(true);
+      await expect(new EthicsLogStore(tmpDir).loadLogs()).resolves.toHaveLength(1);
+      expect(fs.existsSync(path.join(tmpDir, "ethics", "ethics-log.json"))).toBe(false);
     });
 
-    it("log file contains valid JSON array", async () => {
+    it("typed log store returns valid ethics log entries", async () => {
       const g = new EthicsGate(stateManager, createMockLLMClient([PASS_VERDICT_JSON]));
       await g.check("goal", "goal-1", "A goal");
 
-      const filePath = path.join(tmpDir, "ethics", "ethics-log.json");
-      const content = fs.readFileSync(filePath, "utf-8");
-      const parsed = JSON.parse(content);
-      expect(Array.isArray(parsed)).toBe(true);
-      expect(parsed).toHaveLength(1);
+      const logs = await new EthicsLogStore(tmpDir).loadLogs();
+      expect(logs).toHaveLength(1);
+      expect(logs[0]!.subject_id).toBe("goal-1");
+      expect(logs[0]!.verdict.verdict).toBe("pass");
     });
 
     it("a fresh EthicsGate instance reads back persisted logs", async () => {
