@@ -578,8 +578,11 @@ describe("buildRuntimeEvidenceAnswer", () => {
     expect(result.targetRunId).toBe("run-active");
     expect(result.messageType).toBe("warning");
     expect(result.message).toContain("Requested target \"run-target\" did not match");
-    expect(result.message).toContain("0.12");
-    expect(result.message).not.toContain("0.97");
+    const metricLines = result.message.split("\n").filter((line) => line.startsWith("- score:"));
+    expect(metricLines).toContain(
+      "- score: latest 0.12 at 2026-05-02T00:20:00.000Z; cumulative best 0.12 at 2026-05-02T00:20:00.000Z; trend noisy; confidence 0.15."
+    );
+    expect(metricLines.join("\n")).not.toContain("0.97");
   });
 
   it("does not fall back to another run when an explicit classifier target is missing", async () => {
