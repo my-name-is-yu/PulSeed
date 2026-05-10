@@ -349,9 +349,12 @@ describe("MODEL_REGISTRY", () => {
 // Mock node:fs/promises before any imports that use it
 const mockAccess = vi.fn();
 const mockReadFile = vi.fn();
+const mockReadTextFileWithinLimit = vi.fn();
+const PROVIDER_CONFIG_TEXT_MAX_BYTES = 1024 * 1024;
+const PROVIDER_ENV_TEXT_MAX_BYTES = 1024 * 1024;
 
 vi.mock("node:fs/promises", async (importOriginal) => {
-  const original = await importOriginal<typeof import("node:fs/promises")>();
+  const original = await importOriginal<Record<string, unknown>>();
   return {
     ...original,
     access: (...args: unknown[]) => mockAccess(...args),
@@ -359,8 +362,9 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   };
 });
 
-// Mock writeJsonFileAtomic to prevent actual file writes
+// Mock JSON IO helpers to keep the provider-config file tests on the same mocked fs path.
 vi.mock("../../utils/json-io.js", () => ({
+  readTextFileWithinLimit: (...args: unknown[]) => mockReadTextFileWithinLimit(...args),
   writeJsonFileAtomic: vi.fn().mockResolvedValue(undefined),
 }));
 
@@ -386,6 +390,8 @@ describe("loadProviderConfig", () => {
     }
     mockAccess.mockReset();
     mockReadFile.mockReset();
+    mockReadTextFileWithinLimit.mockReset();
+    mockReadTextFileWithinLimit.mockImplementation((filePath: string) => mockReadFile(filePath, "utf-8"));
     vi.mocked(writeJsonFileAtomic).mockClear();
     // Default: file does not exist
     mockAccess.mockRejectedValue(new Error("ENOENT"));
@@ -417,6 +423,59 @@ describe("loadProviderConfig", () => {
       enabled: true,
       cleanup_policy: "on_success",
     });
+    warnSpy.mockRestore();
+  });
+
+  it("bounds provider .env reads", async () => {
+    mockReadFile.mockResolvedValueOnce("OPENAI_API_KEY=sk-env-file\n");
+
+    const config = await loadProviderConfig({ baseDir: "/tmp/provider-env-bounded", saveMigration: false });
+
+    expect(config.api_key).toBe("sk-env-file");
+    expect(mockReadTextFileWithinLimit).toHaveBeenCalledWith(
+      "/tmp/provider-env-bounded/.env",
+      { maxBytes: PROVIDER_ENV_TEXT_MAX_BYTES },
+    );
+  });
+
+  it("bounds provider.json reads before parsing", async () => {
+    mockAccess.mockResolvedValue(undefined);
+    mockReadTextFileWithinLimit.mockImplementation(async (filePath: string) => {
+      if (filePath.endsWith(".env")) return "";
+      return JSON.stringify({
+        provider: "openai",
+        model: "gpt-4.1",
+        adapter: "openai_api",
+        api_key: "sk-test",
+      });
+    });
+
+    const config = await loadProviderConfig({ baseDir: "/tmp/provider-json-bounded", saveMigration: false });
+
+    expect(config.model).toBe("gpt-4.1");
+    expect(mockReadTextFileWithinLimit).toHaveBeenCalledWith(
+      "/tmp/provider-json-bounded/provider.json",
+      { maxBytes: PROVIDER_CONFIG_TEXT_MAX_BYTES },
+    );
+  });
+
+  it("falls back to defaults when provider.json exceeds the read limit", async () => {
+    mockAccess.mockResolvedValue(undefined);
+    mockReadTextFileWithinLimit.mockImplementation(async (filePath: string) => {
+      if (filePath.endsWith(".env")) return "";
+      throw new Error("too large");
+    });
+
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const config = await loadProviderConfig({ baseDir: "/tmp/provider-json-oversized", saveMigration: false });
+
+    expect(config.provider).toBe("openai");
+    expect(config.model).toBe("gpt-5.4-mini");
+    expect(config.adapter).toBe("openai_codex_cli");
+    expect(mockReadTextFileWithinLimit).toHaveBeenCalledWith(
+      "/tmp/provider-json-oversized/provider.json",
+      { maxBytes: PROVIDER_CONFIG_TEXT_MAX_BYTES },
+    );
     warnSpy.mockRestore();
   });
 
