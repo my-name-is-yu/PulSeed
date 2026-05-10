@@ -1,12 +1,12 @@
 import * as path from "node:path";
 import * as os from "node:os";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import {
-  getProviderRuntimeFingerprint,
-  isJwtExpired,
-  loadProviderConfig,
-  readCodexOAuthToken,
-} from "../provider-config.js";
+
+const { mockReadTextFileWithinLimit } = vi.hoisted(() => ({
+  mockReadTextFileWithinLimit: vi.fn(),
+}));
+
+const CODEX_AUTH_TEXT_MAX_BYTES = 1024 * 1024;
 
 // ─── isJwtExpired ───
 
@@ -40,16 +40,31 @@ describe("isJwtExpired", () => {
 // ─── readCodexOAuthToken ───
 
 vi.mock("node:fs/promises", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  const actual = await importOriginal<Record<string, unknown>>();
   return { ...actual, readFile: vi.fn() };
+});
+
+vi.mock("../../utils/json-io.js", async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>();
+  return {
+    ...actual,
+    readTextFileWithinLimit: mockReadTextFileWithinLimit,
+  };
 });
 
 const fsp = await import("node:fs/promises");
 const mockReadFile = vi.mocked(fsp.readFile);
+const {
+  getProviderRuntimeFingerprint,
+  isJwtExpired,
+  loadProviderConfig,
+  readCodexOAuthToken,
+} = await import("../provider-config.js");
 
 describe("readCodexOAuthToken", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockReadTextFileWithinLimit.mockImplementation((filePath: string) => mockReadFile(filePath, "utf-8"));
   });
 
   it("returns the access_token from a valid auth.json", async () => {
@@ -91,6 +106,18 @@ describe("readCodexOAuthToken", () => {
     const result = await readCodexOAuthToken();
     expect(result).toBeUndefined();
   });
+
+  it("returns undefined when auth.json exceeds the bounded read limit", async () => {
+    mockReadTextFileWithinLimit.mockRejectedValueOnce(new Error("too large"));
+
+    const result = await readCodexOAuthToken();
+
+    expect(result).toBeUndefined();
+    expect(mockReadTextFileWithinLimit).toHaveBeenCalledWith(
+      path.join(os.homedir(), ".codex", "auth.json"),
+      { maxBytes: CODEX_AUTH_TEXT_MAX_BYTES },
+    );
+  });
 });
 
 // ─── loadProviderConfig — OAuth fallback (integration-style) ───
@@ -102,6 +129,7 @@ describe("loadProviderConfig OAuth fallback", () => {
     origKey = process.env.OPENAI_API_KEY;
     delete process.env.OPENAI_API_KEY;
     vi.clearAllMocks();
+    mockReadTextFileWithinLimit.mockImplementation((filePath: string) => mockReadFile(filePath, "utf-8"));
   });
 
   afterEach(() => {

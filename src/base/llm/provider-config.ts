@@ -9,7 +9,7 @@ import * as path from "node:path";
 import * as os from "node:os";
 import { createHash } from "node:crypto";
 import { getPulseedDirPath } from "../utils/paths.js";
-import { writeJsonFileAtomic } from "../utils/json-io.js";
+import { readTextFileWithinLimit, writeJsonFileAtomic } from "../utils/json-io.js";
 import type { AgentLoopWorktreePolicy } from "../../orchestrator/execution/agent-loop/task-agent-loop-worktree.js";
 import {
   MODEL_REGISTRY,
@@ -47,6 +47,10 @@ export type {
 
 // ─── OAuth Token Helpers ───
 
+const PROVIDER_CONFIG_TEXT_MAX_BYTES = 1024 * 1024;
+const PROVIDER_ENV_TEXT_MAX_BYTES = 1024 * 1024;
+const CODEX_AUTH_TEXT_MAX_BYTES = 1024 * 1024;
+
 /** Check if a JWT access token is expired. Returns true if malformed or expired. */
 export function isJwtExpired(token: string): boolean {
   try {
@@ -64,9 +68,9 @@ export function isJwtExpired(token: string): boolean {
 export async function readCodexOAuthToken(): Promise<string | undefined> {
   const authPath = path.join(os.homedir(), ".codex", "auth.json");
   try {
-    const raw = await fsp.readFile(authPath, "utf-8");
-    const auth = JSON.parse(raw);
-    const token = auth?.tokens?.access_token;
+    const auth = await readBoundedJsonObjectFile(authPath, CODEX_AUTH_TEXT_MAX_BYTES);
+    const tokens = isJsonObject(auth.tokens) ? auth.tokens : undefined;
+    const token = tokens?.access_token;
     if (typeof token !== "string" || !token) return undefined;
     if (isJwtExpired(token)) {
       console.warn("[provider-config] ~/.codex/auth.json token expired. Run `codex` to refresh.");
@@ -108,6 +112,22 @@ const DEFAULT_PROVIDER_CONFIG: ProviderConfig = {
 
 // Track whether we've already warned about provider config issues in this process
 let _warnedOnce = false;
+
+function isJsonObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+async function readBoundedJsonObjectFile(
+  filePath: string,
+  maxBytes: number,
+): Promise<Record<string, unknown>> {
+  const raw = await readTextFileWithinLimit(filePath, { maxBytes });
+  const parsed = JSON.parse(raw) as unknown;
+  if (!isJsonObject(parsed)) {
+    throw new TypeError(`${filePath} must contain a JSON object`);
+  }
+  return parsed;
+}
 
 // ─── Migration ───
 
@@ -213,7 +233,10 @@ export function validateProviderConfig(config: ProviderConfig): ValidationResult
 
 async function readProviderEnvFile(baseDir?: string): Promise<Record<string, string>> {
   try {
-    return parseEnvFile(await fsp.readFile(providerEnvPath(baseDir), "utf-8"));
+    return parseEnvFile(await readTextFileWithinLimit(
+      providerEnvPath(baseDir),
+      { maxBytes: PROVIDER_ENV_TEXT_MAX_BYTES },
+    ));
   } catch {
     return {};
   }
@@ -223,8 +246,7 @@ async function readProviderConfigFile(baseDir?: string): Promise<Partial<Provide
   const configPath = providerConfigPath(baseDir);
   try {
     await fsp.access(configPath);
-    const raw = await fsp.readFile(configPath, "utf-8");
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const parsed = await readBoundedJsonObjectFile(configPath, PROVIDER_CONFIG_TEXT_MAX_BYTES);
     return isLegacyConfig(parsed)
       ? migrateProviderConfig(parsed as unknown as LegacyProviderConfig)
       : parsed as Partial<ProviderConfig>;
@@ -248,8 +270,7 @@ async function loadProviderFileConfig(configPath: string): Promise<LoadedProvide
   }
 
   try {
-    const raw = await fsp.readFile(configPath, "utf-8");
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const parsed = await readBoundedJsonObjectFile(configPath, PROVIDER_CONFIG_TEXT_MAX_BYTES);
     if (isLegacyConfig(parsed)) {
       return {
         fileConfig: migrateProviderConfig(parsed as unknown as LegacyProviderConfig),
