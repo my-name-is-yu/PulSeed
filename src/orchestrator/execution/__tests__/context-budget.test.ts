@@ -55,6 +55,18 @@ describe("allocateTierBudget", () => {
       expect(budget.core + budget.recall + budget.archival).toBe(n);
     }
   });
+
+  it("returns zero allocations for unsafe or non-finite token budgets", () => {
+    for (const invalid of [
+      -1,
+      1.5,
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      Number.MAX_SAFE_INTEGER + 1,
+    ]) {
+      expect(allocateTierBudget(invalid)).toEqual({ core: 0, recall: 0, archival: 0 });
+    }
+  });
 });
 
 // ─── allocateBudget ───
@@ -74,6 +86,24 @@ describe("allocateBudget", () => {
     const total = alloc.goalDefinition + alloc.observations + alloc.knowledge +
       alloc.transferKnowledge + alloc.meta;
     expect(total).toBeLessThanOrEqual(1001);
+  });
+
+  it("returns zero allocations for unsafe or non-finite total budgets", () => {
+    for (const invalid of [
+      -1,
+      1.5,
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      Number.MAX_SAFE_INTEGER + 1,
+    ]) {
+      expect(allocateBudget(invalid)).toEqual({
+        goalDefinition: 0,
+        observations: 0,
+        knowledge: 0,
+        transferKnowledge: 0,
+        meta: 0,
+      });
+    }
   });
 });
 
@@ -117,6 +147,19 @@ describe("selectWithinBudget", () => {
 
   it("returns empty array for empty candidates", () => {
     expect(selectWithinBudget([], 1000)).toHaveLength(0);
+  });
+
+  it("does not select candidates for unsafe or non-finite budgets", () => {
+    const candidates = makeCandidates(["aaaa"]);
+    for (const invalid of [
+      -1,
+      1.5,
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      Number.MAX_SAFE_INTEGER + 1,
+    ]) {
+      expect(selectWithinBudget(candidates, invalid)).toHaveLength(0);
+    }
   });
 });
 
@@ -175,6 +218,31 @@ describe("trimToBudget", () => {
     const result = trimToBudget(alloc, usage, 100);
     expect(result.meta).toBe(0);
     expect(result.transferKnowledge).toBe(10);
+  });
+
+  it("normalizes invalid allocation, usage, and total budget values before trimming", () => {
+    const alloc: BudgetAllocation = {
+      goalDefinition: Number.NaN,
+      observations: 30,
+      knowledge: Number.MAX_SAFE_INTEGER + 1,
+      transferKnowledge: 15,
+      meta: Number.POSITIVE_INFINITY,
+    };
+    const usage: Record<keyof BudgetAllocation, number> = {
+      goalDefinition: Number.NaN,
+      observations: Number.POSITIVE_INFINITY,
+      knowledge: Number.MAX_SAFE_INTEGER + 1,
+      transferKnowledge: 15,
+      meta: -1,
+    };
+
+    expect(trimToBudget(alloc, usage, Number.NaN)).toEqual({
+      goalDefinition: 0,
+      observations: 30,
+      knowledge: 0,
+      transferKnowledge: 0,
+      meta: 0,
+    });
   });
 });
 
