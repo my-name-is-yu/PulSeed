@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { IterationBudget } from "../iteration-budget.js";
+import { describe, it, expect, vi } from "vitest";
+import { IterationBudget, type IterationBudgetData } from "../iteration-budget.js";
 import { runTreeIteration } from "../tree-loop-runner.js";
 import { CoreLoop } from "../durable-loop.js";
 import type { CoreLoopDeps, LoopConfig } from "../durable-loop.js";
@@ -32,6 +32,28 @@ describe("IterationBudget", () => {
       const budget = new IterationBudget(10);
       expect(budget.exhausted).toBe(false);
     });
+
+    it.each([
+      ["zero", 0],
+      ["negative", -1],
+      ["fractional", 1.5],
+      ["infinite", Infinity],
+      ["NaN", NaN],
+      ["unsafe", Number.MAX_SAFE_INTEGER + 1],
+    ])("rejects invalid total values: %s", (_label, total) => {
+      expect(() => new IterationBudget(total)).toThrow();
+    });
+
+    it.each([
+      ["zero", 0],
+      ["negative", -1],
+      ["fractional", 1.5],
+      ["infinite", Infinity],
+      ["NaN", NaN],
+      ["unsafe", Number.MAX_SAFE_INTEGER + 1],
+    ])("rejects invalid per-node limits: %s", (_label, perNodeLimit) => {
+      expect(() => new IterationBudget(10, perNodeLimit)).toThrow();
+    });
   });
 
   describe("consume() basic counting", () => {
@@ -57,6 +79,30 @@ describe("IterationBudget", () => {
       const budget = new IterationBudget(10);
       budget.consume(4);
       expect(budget.remaining).toBe(6);
+    });
+
+    it("allows consuming the maximum safe integer when total permits it", () => {
+      const budget = new IterationBudget(Number.MAX_SAFE_INTEGER);
+      const { allowed } = budget.consume(Number.MAX_SAFE_INTEGER);
+
+      expect(allowed).toBe(true);
+      expect(budget.consumed).toBe(Number.MAX_SAFE_INTEGER);
+      expect(budget.exhausted).toBe(true);
+    });
+
+    it.each([
+      ["zero", 0],
+      ["negative", -1],
+      ["fractional", 1.5],
+      ["infinite", Infinity],
+      ["NaN", NaN],
+      ["unsafe", Number.MAX_SAFE_INTEGER + 1],
+    ])("rejects invalid consume counts without mutating consumed: %s", (_label, count) => {
+      const budget = new IterationBudget(10);
+      budget.consume(2);
+
+      expect(() => budget.consume(count)).toThrow();
+      expect(budget.consumed).toBe(2);
     });
   });
 
@@ -202,6 +248,26 @@ describe("IterationBudget", () => {
       const json = budget.toJSON();
       const restored = IterationBudget.fromJSON(json);
       expect(restored.perNodeLimit).toBeUndefined();
+    });
+
+    it("rejects serialized budgets whose consumed count exceeds total", () => {
+      const serialized = {
+        total: 5,
+        consumed: 6,
+        warning_thresholds: [0.7, 0.9],
+      } as unknown as IterationBudgetData;
+
+      expect(() => IterationBudget.fromJSON(serialized)).toThrow();
+    });
+
+    it("rejects non-finite serialized warning thresholds", () => {
+      const serialized = {
+        total: 5,
+        consumed: 1,
+        warning_thresholds: [0.7, Infinity],
+      } as unknown as IterationBudgetData;
+
+      expect(() => IterationBudget.fromJSON(serialized)).toThrow();
     });
   });
 

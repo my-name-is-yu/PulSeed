@@ -1,12 +1,29 @@
 import { z } from "zod";
 
+const PositiveSafeIntegerSchema = z.number().finite().int().safe().positive();
+const NonNegativeSafeIntegerSchema = z.number().finite().int().safe().min(0);
+const WarningThresholdSchema = z.number().finite().min(0).max(1);
+
 export const IterationBudgetSchema = z.object({
-  total: z.number().int().positive(),
-  consumed: z.number().int().min(0),
-  per_node_limit: z.number().int().positive().optional(),
-  warning_thresholds: z.array(z.number().min(0).max(1)).default([0.7, 0.9]),
+  total: PositiveSafeIntegerSchema,
+  consumed: NonNegativeSafeIntegerSchema,
+  per_node_limit: PositiveSafeIntegerSchema.optional(),
+  warning_thresholds: z.array(WarningThresholdSchema).default([0.7, 0.9]),
+}).superRefine((budget, ctx) => {
+  if (budget.consumed > budget.total) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["consumed"],
+      message: "consumed iteration budget cannot exceed total",
+    });
+  }
 });
 export type IterationBudgetData = z.infer<typeof IterationBudgetSchema>;
+
+const IterationBudgetConstructorSchema = z.object({
+  total: PositiveSafeIntegerSchema,
+  per_node_limit: PositiveSafeIntegerSchema.optional(),
+});
 
 export class IterationBudget {
   private _total: number;
@@ -16,9 +33,10 @@ export class IterationBudget {
   private _emittedWarnings: Set<number> = new Set();
 
   constructor(total: number, perNodeLimit?: number) {
-    this._total = total;
+    const parsed = IterationBudgetConstructorSchema.parse({ total, per_node_limit: perNodeLimit });
+    this._total = parsed.total;
     this._consumed = 0;
-    this._perNodeLimit = perNodeLimit;
+    this._perNodeLimit = parsed.per_node_limit;
     this._warningThresholds = [0.7, 0.9];
   }
 
@@ -30,11 +48,12 @@ export class IterationBudget {
   get utilizationRatio(): number { return this._consumed / this._total; }
 
   consume(count: number = 1): { allowed: boolean; warnings: string[] } {
+    const parsedCount = PositiveSafeIntegerSchema.parse(count);
     const warnings: string[] = [];
-    if (this._consumed + count > this._total) {
+    if (parsedCount > this.remaining) {
       return { allowed: false, warnings: [`Budget exhausted: ${this._consumed}/${this._total} iterations consumed`] };
     }
-    this._consumed += count;
+    this._consumed += parsedCount;
     if (this._emittedWarnings.size < this._warningThresholds.length) {
       for (const threshold of this._warningThresholds) {
         if (this.utilizationRatio >= threshold && !this._emittedWarnings.has(threshold)) {
@@ -56,9 +75,10 @@ export class IterationBudget {
   }
 
   static fromJSON(data: IterationBudgetData): IterationBudget {
-    const budget = new IterationBudget(data.total, data.per_node_limit);
-    budget._consumed = data.consumed;
-    budget._warningThresholds = data.warning_thresholds;
+    const parsed = IterationBudgetSchema.parse(data);
+    const budget = new IterationBudget(parsed.total, parsed.per_node_limit);
+    budget._consumed = parsed.consumed;
+    budget._warningThresholds = parsed.warning_thresholds;
     return budget;
   }
 }
