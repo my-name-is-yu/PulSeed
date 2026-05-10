@@ -1,5 +1,16 @@
 import type { TierBudget } from "../../../base/types/memory-lifecycle.js";
 
+const MAX_SAFE_BUDGET_COUNT = Number.MAX_SAFE_INTEGER;
+
+function normalizeBudgetCount(value: number): number {
+  return Number.isSafeInteger(value) && value >= 0 ? value : 0;
+}
+
+function addBudgetCounts(left: number, right: number): number {
+  const sum = left + right;
+  return Number.isSafeInteger(sum) ? sum : MAX_SAFE_BUDGET_COUNT;
+}
+
 // ─── Tier Budget Allocation ───
 
 /**
@@ -9,9 +20,10 @@ import type { TierBudget } from "../../../base/types/memory-lifecycle.js";
  * - archival: remaining (completed-goal knowledge)
  */
 export function allocateTierBudget(totalTokens: number): TierBudget {
-  const core = Math.floor(totalTokens * 0.50);
-  const recall = Math.floor(totalTokens * 0.35);
-  const archival = totalTokens - core - recall;
+  const normalizedTotal = normalizeBudgetCount(totalTokens);
+  const core = Math.floor(normalizedTotal * 0.50);
+  const recall = Math.floor(normalizedTotal * 0.35);
+  const archival = normalizedTotal - core - recall;
   return { core, recall, archival };
 }
 
@@ -26,12 +38,13 @@ export interface BudgetAllocation {
 }
 
 export function allocateBudget(totalBudget: number): BudgetAllocation {
+  const normalizedBudget = normalizeBudgetCount(totalBudget);
   return {
-    goalDefinition: Math.floor(totalBudget * 0.20),
-    observations: Math.floor(totalBudget * 0.30),
-    knowledge: Math.floor(totalBudget * 0.30),
-    transferKnowledge: Math.floor(totalBudget * 0.15),
-    meta: Math.floor(totalBudget * 0.05),
+    goalDefinition: Math.floor(normalizedBudget * 0.20),
+    observations: Math.floor(normalizedBudget * 0.30),
+    knowledge: Math.floor(normalizedBudget * 0.30),
+    transferKnowledge: Math.floor(normalizedBudget * 0.15),
+    meta: Math.floor(normalizedBudget * 0.05),
   };
 }
 
@@ -53,12 +66,13 @@ export function selectWithinBudget<T extends { text: string; similarity: number 
   budgetTokens: number
 ): T[] {
   const selected: T[] = [];
+  const normalizedBudget = normalizeBudgetCount(budgetTokens);
   let usedTokens = 0;
   for (const candidate of candidates) {
     const tokens = estimateTokens(candidate.text);
-    if (usedTokens + tokens > budgetTokens) break;
+    if (addBudgetCounts(usedTokens, tokens) > normalizedBudget) break;
     selected.push(candidate);
-    usedTokens += tokens;
+    usedTokens = addBudgetCounts(usedTokens, tokens);
   }
   return selected;
 }
@@ -84,15 +98,29 @@ export function trimToBudget(
     "knowledge",
     "observations",
   ];
-  const result = { ...allocation };
-  let totalUsed = Object.values(actualUsage).reduce((a, b) => a + b, 0);
+  const result = normalizeBudgetAllocation(allocation);
+  const normalizedActualUsage = normalizeBudgetAllocation(actualUsage);
+  const normalizedTotalBudget = normalizeBudgetCount(totalBudget);
+  let totalUsed = Object.values(normalizedActualUsage).reduce(addBudgetCounts, 0);
 
   for (const category of trimOrder) {
-    if (totalUsed <= totalBudget) break;
-    const excess = totalUsed - totalBudget;
+    if (totalUsed <= normalizedTotalBudget) break;
+    const excess = totalUsed - normalizedTotalBudget;
     const reduction = Math.min(result[category], excess);
     result[category] -= reduction;
     totalUsed -= reduction;
   }
   return result;
+}
+
+function normalizeBudgetAllocation(
+  allocation: Record<keyof BudgetAllocation, number>
+): BudgetAllocation {
+  return {
+    goalDefinition: normalizeBudgetCount(allocation.goalDefinition),
+    observations: normalizeBudgetCount(allocation.observations),
+    knowledge: normalizeBudgetCount(allocation.knowledge),
+    transferKnowledge: normalizeBudgetCount(allocation.transferKnowledge),
+    meta: normalizeBudgetCount(allocation.meta),
+  };
 }
