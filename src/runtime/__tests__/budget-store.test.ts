@@ -3,6 +3,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { RuntimeBudgetLimitSchema, RuntimeBudgetStore, RuntimeBudgetUsageSchema } from "../store/budget-store.js";
+import { openRuntimeControlDatabase, type SqliteDatabase } from "../store/control-db/index.js";
 
 describe("RuntimeBudgetStore", () => {
   let tmpDir: string;
@@ -129,6 +130,102 @@ describe("RuntimeBudgetStore", () => {
 
     const usage = (await store.load("budget-non-finite-usage"))?.usage ?? [];
     expect(usage.every((entry) => entry.used === 0 && entry.recent.length === 0)).toBe(true);
+  });
+
+  it("rejects budget thresholds above their enclosing limit before persistence", async () => {
+    expect(RuntimeBudgetLimitSchema.safeParse({
+      dimension: "tasks",
+      limit: 10,
+      warn_at_remaining: 10,
+      approval_at_remaining: 0,
+      handoff_at_remaining: 0,
+      finalization_at_remaining: 0,
+      mode_transition_at_remaining: { consolidation: 10, finalization: 0 },
+    }).success).toBe(true);
+
+    for (const field of [
+      "warn_at_remaining",
+      "approval_at_remaining",
+      "handoff_at_remaining",
+      "finalization_at_remaining",
+    ] as const) {
+      const parsed = RuntimeBudgetLimitSchema.safeParse({
+        dimension: "tasks",
+        limit: 10,
+        [field]: 11,
+      });
+      expect(parsed.success).toBe(false);
+    }
+
+    expect(RuntimeBudgetLimitSchema.safeParse({
+      dimension: "tasks",
+      limit: 10,
+      mode_transition_at_remaining: { consolidation: 11 },
+    }).success).toBe(false);
+    expect(RuntimeBudgetLimitSchema.safeParse({
+      dimension: "tasks",
+      limit: 10,
+      mode_transition_at_remaining: { finalization: 11 },
+    }).success).toBe(false);
+
+    await expect(store.create({
+      budget_id: "budget-invalid-threshold",
+      scope: { goal_id: "goal-a" },
+      created_at: "2026-05-01T00:00:00.000Z",
+      limits: [
+        {
+          dimension: "tasks",
+          limit: 10,
+          approval_at_remaining: 11,
+        },
+      ],
+    })).rejects.toThrow("approval_at_remaining must be less than or equal to limit");
+    await expect(store.load("budget-invalid-threshold")).resolves.toBeNull();
+  });
+
+  it("normalizes legacy persisted thresholds above their limit when reading existing budgets", async () => {
+    await store.create({
+      budget_id: "budget-legacy-threshold",
+      scope: { goal_id: "goal-a" },
+      created_at: "2026-05-01T00:00:00.000Z",
+      limits: [
+        {
+          dimension: "tasks",
+          limit: 10,
+          approval_at_remaining: 1,
+          mode_transition_at_remaining: { consolidation: 2, finalization: 1 },
+        },
+      ],
+    });
+
+    await mutatePersistedBudget("budget-legacy-threshold", (persisted: {
+      limits: Array<{
+        approval_at_remaining?: number;
+        mode_transition_at_remaining?: {
+          consolidation?: number;
+          finalization?: number;
+        };
+      }>;
+    }) => {
+      persisted.limits[0]!.approval_at_remaining = 11;
+      persisted.limits[0]!.mode_transition_at_remaining = {
+        consolidation: 12,
+        finalization: 13,
+      };
+    });
+
+    const budget = await store.load("budget-legacy-threshold");
+
+    expect(budget?.limits[0]).toMatchObject({
+      dimension: "tasks",
+      limit: 10,
+      approval_at_remaining: 10,
+      mode_transition_at_remaining: {
+        consolidation: 10,
+        finalization: 10,
+      },
+    });
+    await expect(store.list()).resolves.toContainEqual(expect.objectContaining({ budget_id: "budget-legacy-threshold" }));
   });
 
   it("rejects unsafe budget usage additions without corrupting persisted counters", async () => {
@@ -329,4 +426,30 @@ describe("RuntimeBudgetStore", () => {
       remaining: { wall_clock_ms: 100 },
     });
   });
+
+  async function mutatePersistedBudget<T extends Record<string, unknown>>(
+    budgetId: string,
+    mutate: (persisted: T) => void,
+  ): Promise<void> {
+    const db = await openRuntimeControlDatabase({ rootDir: path.join(tmpDir, "runtime") });
+    try {
+      const row = db.read((sqlite) => sqlite.prepare(`
+        SELECT record_json
+        FROM runtime_budgets
+        WHERE budget_id = ?
+      `).get(budgetId) as { record_json: string } | undefined);
+      if (!row) throw new Error(`Missing persisted budget: ${budgetId}`);
+      const persisted = JSON.parse(row.record_json) as T;
+      mutate(persisted);
+      db.transaction((sqlite: SqliteDatabase) => {
+        sqlite.prepare(`
+          UPDATE runtime_budgets
+          SET record_json = json(?)
+          WHERE budget_id = ?
+        `).run(JSON.stringify(persisted), budgetId);
+      });
+    } finally {
+      db.close();
+    }
+  }
 });
