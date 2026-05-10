@@ -6,6 +6,8 @@ import type {
   RuntimeBudgetStatus,
 } from "../runtime/store/budget-store.js";
 
+const UNKNOWN_BUDGET_QUANTITY = "unknown";
+
 export interface RuntimeBudgetProjection {
   budget: RuntimeBudgetRecord;
   status: RuntimeBudgetStatus;
@@ -81,7 +83,7 @@ function formatDiagnosticRuntimeBudgetSummary(projection: RuntimeBudgetProjectio
       const actions = dimension.threshold_actions.length > 0
         ? ` actions=${dimension.threshold_actions.join(",")}`
         : "";
-      return `${dimension.dimension}: used=${dimension.used} remaining=${dimension.remaining} limit=${dimension.limit}${actions}`;
+      return `${dimension.dimension}: used=${formatNumber(dimension.used)} remaining=${formatNumber(dimension.remaining)} limit=${formatNumber(dimension.limit)}${actions}`;
     })
     .join("; ");
   return `Budget: ${projection.budget.budget_id} (${projection.status.mode})${dimensions ? ` — ${dimensions}` : ""}`;
@@ -133,8 +135,10 @@ function dimensionLabel(dimension: RuntimeBudgetDimensionStatus["dimension"]): s
 }
 
 function formatDuration(ms: number): string {
-  if (ms < 1_000) return `${formatNumber(ms)}ms`;
-  const seconds = ms / 1_000;
+  const normalizedMs = normalizeBudgetDisplayNumber(ms);
+  if (normalizedMs === null) return UNKNOWN_BUDGET_QUANTITY;
+  if (normalizedMs < 1_000) return `${formatNumber(normalizedMs)}ms`;
+  const seconds = normalizedMs / 1_000;
   if (seconds < 60) return `${formatRounded(seconds)}s`;
   const minutes = seconds / 60;
   if (minutes < 60) return `${formatRounded(minutes)}m`;
@@ -143,8 +147,10 @@ function formatDuration(ms: number): string {
 }
 
 function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${formatNumber(bytes)}B`;
-  const kib = bytes / 1024;
+  const normalizedBytes = normalizeBudgetDisplayNumber(bytes);
+  if (normalizedBytes === null) return UNKNOWN_BUDGET_QUANTITY;
+  if (normalizedBytes < 1024) return `${formatNumber(normalizedBytes)}B`;
+  const kib = normalizedBytes / 1024;
   if (kib < 1024) return `${formatRounded(kib)}KiB`;
   const mib = kib / 1024;
   if (mib < 1024) return `${formatRounded(mib)}MiB`;
@@ -152,11 +158,20 @@ function formatBytes(bytes: number): string {
 }
 
 function formatNumber(value: number): string {
-  return Number.isInteger(value) ? String(value) : formatRounded(value);
+  const normalizedValue = normalizeBudgetDisplayNumber(value);
+  if (normalizedValue === null) return UNKNOWN_BUDGET_QUANTITY;
+  return Number.isInteger(normalizedValue) ? String(normalizedValue) : formatRounded(normalizedValue);
 }
 
 function formatRounded(value: number): string {
   return Number.isInteger(value) ? String(value) : value.toFixed(1);
+}
+
+function normalizeBudgetDisplayNumber(value: number): number | null {
+  if (!Number.isFinite(value)) return null;
+  if (value < 0) return null;
+  if (Math.abs(value) > Number.MAX_SAFE_INTEGER) return null;
+  return value;
 }
 
 function timestampValue(value: string | null | undefined): number {

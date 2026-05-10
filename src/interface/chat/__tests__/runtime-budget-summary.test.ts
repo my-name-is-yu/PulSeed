@@ -85,6 +85,54 @@ describe("runtime budget summary", () => {
     }))).toContain("budget spent");
   });
 
+  it("does not leak non-finite or unsafe status numbers into user-visible summaries", () => {
+    const rendered = formatRuntimeBudgetSummary(projection({
+      dimensions: [{
+        dimension: "wall_clock_ms",
+        limit: Number.POSITIVE_INFINITY,
+        used: Number.NaN,
+        remaining: Number.MAX_SAFE_INTEGER + 1,
+        exhausted: false,
+        exhaustion_policy: "approval_required",
+        threshold_actions: [],
+      }, {
+        dimension: "llm_tokens",
+        limit: 100,
+        used: Number.NEGATIVE_INFINITY,
+        remaining: Number.NaN,
+        exhausted: false,
+        exhaustion_policy: "approval_required",
+        threshold_actions: [],
+      }],
+    }));
+
+    expect(rendered).toContain("Budget:");
+    expect(rendered).toContain("unknown");
+    expect(rendered).not.toContain("NaN");
+    expect(rendered).not.toContain("Infinity");
+    expect(rendered).not.toContain("9007199254740992");
+  });
+
+  it("uses the same numeric guard for diagnostic summaries", () => {
+    const rendered = formatRuntimeBudgetSummary(projection({
+      dimensions: [{
+        dimension: "iterations",
+        limit: Number.NaN,
+        used: Number.POSITIVE_INFINITY,
+        remaining: -1,
+        exhausted: false,
+        exhaustion_policy: "approval_required",
+        threshold_actions: ["approval_required"],
+      }],
+    }), { diagnostic: true });
+
+    expect(rendered).toContain("used=unknown");
+    expect(rendered).toContain("remaining=unknown");
+    expect(rendered).toContain("limit=unknown");
+    expect(rendered).not.toContain("NaN");
+    expect(rendered).not.toContain("Infinity");
+  });
+
   it("links budgets only through typed goal and run IDs", () => {
     const byRun = projection({
       budget_id: "budget-run",
