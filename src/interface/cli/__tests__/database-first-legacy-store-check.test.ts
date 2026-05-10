@@ -295,6 +295,37 @@ describe("database-first legacy store check", () => {
     expect(result.stderr).toContain("Unclassified legacy store references must be moved to typed stores");
   });
 
+  it("fails normal runtime vector index and knowledge graph JSON owners outside doctor import boundaries", () => {
+    writeFile(tmpDir, "src/platform/knowledge/vector-index.ts", `
+      export const legacyVectorIndexPath = "vector-index.json";
+    `);
+    writeFile(tmpDir, "src/platform/knowledge/knowledge-graph.ts", `
+      export const legacyGraphPath = path.join("knowledge", "graph.json");
+    `);
+
+    const result = runCheck(tmpDir);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("src/platform/knowledge/vector-index.ts");
+    expect(result.stderr).toContain("[vector-index-json-state] Vector index typed store or rebuildable cache boundary");
+    expect(result.stderr).toContain("src/platform/knowledge/knowledge-graph.ts");
+    expect(result.stderr).toContain("[knowledge-graph-json-state] Knowledge graph typed store or rebuildable cache boundary");
+  });
+
+  it("allows legacy vector index and knowledge graph JSON only through explicit repair import boundaries", () => {
+    writeFile(tmpDir, "src/platform/knowledge/vector-index-state-migration.ts", `
+      export const legacyVectorIndexPath = "vector-index.json";
+    `);
+    writeFile(tmpDir, "src/platform/knowledge/knowledge-graph-state-migration.ts", `
+      export const legacyKnowledgeGraphPath = path.join("knowledge", "graph.json");
+    `);
+
+    const result = runCheck(tmpDir);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("database-first legacy store check passed");
+  });
+
   it("emits machine-readable final boundary report without treating artifacts as debt", () => {
     writeFile(tmpDir, "src/platform/dream/dream-consolidator/fs-metrics.ts", `
       export const diagnosticSessionLog = "session-logs.jsonl";
@@ -335,6 +366,18 @@ describe("database-first legacy store check", () => {
         debt: false,
       }),
       expect.objectContaining({
+        id: "vector-index",
+        category: "migration-only input",
+        nextSlice: null,
+        debt: false,
+      }),
+      expect.objectContaining({
+        id: "knowledge-graph",
+        category: "migration-only input",
+        nextSlice: null,
+        debt: false,
+      }),
+      expect.objectContaining({
         id: "reflection-reports",
         category: "typed-store migrate now",
         nextSlice: 7,
@@ -344,6 +387,8 @@ describe("database-first legacy store check", () => {
     expect(parsed.directFileDebtReport).not.toEqual(expect.arrayContaining([
       expect.objectContaining({ id: "run-spec-store" }),
       expect.objectContaining({ id: "strategy-template-registry" }),
+      expect.objectContaining({ id: "vector-index" }),
+      expect.objectContaining({ id: "knowledge-graph" }),
     ]));
     expect(parsed.allowlistReport).toEqual(expect.arrayContaining([
       expect.objectContaining({

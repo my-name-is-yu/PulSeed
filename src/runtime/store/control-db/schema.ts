@@ -7,7 +7,7 @@ export interface ControlDbMigration {
   checksum: string;
 }
 
-export const CONTROL_DB_SCHEMA_VERSION = 25;
+export const CONTROL_DB_SCHEMA_VERSION = 26;
 
 export const CONTROL_DB_INITIAL_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS control_schema_migrations (
@@ -184,6 +184,50 @@ CREATE INDEX IF NOT EXISTS strategy_templates_effectiveness_idx
 
 CREATE INDEX IF NOT EXISTS strategy_templates_embedding_idx
   ON strategy_templates(embedding_id, template_id);
+`.trim();
+
+export const CONTROL_DB_KNOWLEDGE_VECTOR_GRAPH_SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS vector_index_entries (
+  entry_id TEXT PRIMARY KEY,
+  model TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  metadata_json TEXT NOT NULL CHECK (json_valid(metadata_json)),
+  vector_json TEXT NOT NULL CHECK (json_valid(vector_json)),
+  entry_json TEXT NOT NULL CHECK (json_valid(entry_json))
+);
+
+CREATE INDEX IF NOT EXISTS vector_index_entries_created_idx
+  ON vector_index_entries(created_at, entry_id);
+
+CREATE TABLE IF NOT EXISTS knowledge_graph_nodes (
+  entry_id TEXT PRIMARY KEY,
+  goal_id TEXT NOT NULL,
+  tags_json TEXT NOT NULL CHECK (json_valid(tags_json)),
+  added_at TEXT NOT NULL,
+  node_json TEXT NOT NULL CHECK (json_valid(node_json))
+);
+
+CREATE INDEX IF NOT EXISTS knowledge_graph_nodes_goal_idx
+  ON knowledge_graph_nodes(goal_id, added_at, entry_id);
+
+CREATE TABLE IF NOT EXISTS knowledge_graph_edges (
+  from_id TEXT NOT NULL,
+  to_id TEXT NOT NULL,
+  relation TEXT NOT NULL,
+  confidence REAL NOT NULL CHECK (confidence >= 0 AND confidence <= 1),
+  created_at TEXT NOT NULL,
+  edge_json TEXT NOT NULL CHECK (json_valid(edge_json)),
+  PRIMARY KEY (from_id, to_id, relation)
+);
+
+CREATE INDEX IF NOT EXISTS knowledge_graph_edges_from_idx
+  ON knowledge_graph_edges(from_id, relation, to_id);
+
+CREATE INDEX IF NOT EXISTS knowledge_graph_edges_to_idx
+  ON knowledge_graph_edges(to_id, relation, from_id);
+
+CREATE INDEX IF NOT EXISTS knowledge_graph_edges_relation_idx
+  ON knowledge_graph_edges(relation, created_at, from_id, to_id);
 `.trim();
 
 export const CONTROL_DB_RUNTIME_STATE_OWNERSHIP_SCHEMA_SQL = `
@@ -1773,5 +1817,10 @@ export const CONTROL_DB_MIGRATIONS: readonly ControlDbMigration[] = [
     25,
     "strategy-template-runtime-state",
     CONTROL_DB_STRATEGY_TEMPLATE_SCHEMA_SQL
+  ),
+  createControlDbMigration(
+    26,
+    "knowledge-vector-graph-runtime-state",
+    CONTROL_DB_KNOWLEDGE_VECTOR_GRAPH_SCHEMA_SQL
   ),
 ];

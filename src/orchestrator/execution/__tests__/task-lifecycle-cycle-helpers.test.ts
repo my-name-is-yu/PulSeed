@@ -13,6 +13,9 @@ import type { Task } from "../../../base/types/task.js";
 import type { GapVector } from "../../../base/types/gap.js";
 import type { DriveContext } from "../../../base/types/drive.js";
 import { saveDreamConfig } from "../../../platform/dream/dream-config.js";
+import { KnowledgeGraph } from "../../../platform/knowledge/knowledge-graph.js";
+import type { ILLMClient, LLMMessage, LLMRequestOptions, LLMResponse } from "../../../base/llm/llm-client.js";
+import type { ZodSchema } from "zod";
 import { createMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
 import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 
@@ -44,6 +47,30 @@ const VALID_TASK_RESPONSE = `\`\`\`json
 \`\`\``;
 
 const LLM_REVIEW_PASS = '{"verdict": "pass", "reasoning": "All criteria satisfied", "criteria_met": 1, "criteria_total": 1}';
+
+function createCapturingLLMClient(responses: string[]): ILLMClient & { requests: LLMMessage[][] } {
+  const requests: LLMMessage[][] = [];
+  let index = 0;
+  return {
+    requests,
+    async sendMessage(messages: LLMMessage[], _options?: LLMRequestOptions): Promise<LLMResponse> {
+      requests.push(messages);
+      const content = responses[index++];
+      if (content === undefined) {
+        throw new Error(`capturing LLM has no response at index ${index - 1}`);
+      }
+      return {
+        content,
+        usage: { input_tokens: 1, output_tokens: content.length },
+        stop_reason: "end_turn",
+      };
+    },
+    parseJSON<T>(content: string, schema: ZodSchema<T>): T {
+      const jsonText = content.replace(/^```json\s*/, "").replace(/```\s*$/, "").trim();
+      return schema.parse(JSON.parse(jsonText) as unknown);
+    },
+  };
+}
 
 function makeGapVector(goalId: string, dimensions: Array<{ name: string; gap: number }>): GapVector {
   return {
@@ -137,7 +164,7 @@ describe("TaskLifecycle — runTaskCycle helper branches", () => {
   });
 
   function createLifecycle(
-    llmClient: ReturnType<typeof createMockLLMClient>,
+    llmClient: ILLMClient,
     options?: {
       approvalFn?: (task: Task) => Promise<boolean>;
       knowledgeTransfer?: import("../../knowledge/transfer/knowledge-transfer.js").KnowledgeTransfer;
@@ -249,6 +276,79 @@ describe("TaskLifecycle — runTaskCycle helper branches", () => {
 
     expect(knowledgeTransfer.detectCandidatesRealtime).toHaveBeenCalledWith("goal-kt-optout");
     expect(result.task).toBeDefined();
+  });
+
+  it("uses typed KnowledgeGraph state in the task-cycle graph traversal caller path", async () => {
+    await saveDreamConfig({
+      activation: {
+        verifiedPlannerHintsOnly: false,
+        semanticWorkingMemory: false,
+        crossGoalLessons: false,
+        semanticContext: false,
+        autoAcquireKnowledge: false,
+        learnedPatternHints: false,
+        playbookHints: false,
+        workflowHints: false,
+        strategyTemplates: false,
+        decisionHeuristics: false,
+        graphTraversal: true,
+      },
+    }, stateManager.getBaseDir());
+
+    const graph = await KnowledgeGraph.createForControlDb(stateManager.getBaseDir());
+    await graph.addNode("k1", "goal-graph", ["auth"]);
+    await graph.addNode("k2", "goal-graph", ["auth"]);
+    await graph.addEdge({ from_id: "k1", to_id: "k2", relation: "supports", confidence: 0.9 });
+    await graph.close();
+
+    const entries = [
+      {
+        entry_id: "k1",
+        question: "Primary auth approach?",
+        answer: "JWT",
+        sources: [],
+        confidence: 0.9,
+        acquired_at: new Date().toISOString(),
+        acquisition_task_id: "t1",
+        superseded_by: null,
+        tags: ["auth"],
+        embedding_id: null,
+      },
+      {
+        entry_id: "k2",
+        question: "Supporting detail?",
+        answer: "Refresh tokens",
+        sources: [],
+        confidence: 0.8,
+        acquired_at: new Date().toISOString(),
+        acquisition_task_id: "t2",
+        superseded_by: null,
+        tags: ["auth"],
+        embedding_id: null,
+      },
+    ];
+    const knowledgeManager = {
+      getRelevantKnowledge: vi.fn().mockResolvedValue([entries[0]]),
+      searchKnowledge: vi.fn().mockResolvedValue([]),
+      loadKnowledge: vi.fn().mockResolvedValue(entries),
+      addEntry: vi.fn().mockResolvedValue(undefined),
+    };
+    const llm = createCapturingLLMClient([VALID_TASK_RESPONSE, LLM_REVIEW_PASS]);
+    const lifecycle = createLifecycle(llm, {
+      approvalFn: async () => true,
+      knowledgeManager: knowledgeManager as unknown as import("../../knowledge/knowledge-manager.js").KnowledgeManager,
+    });
+
+    const result = await lifecycle.runTaskCycle(
+      "goal-graph",
+      makeGapVector("goal-graph", [{ name: "auth", gap: 0.5 }]),
+      makeDriveContext(["auth"]),
+      createMockAdapter()
+    );
+
+    expect(result.task).toBeDefined();
+    expect(knowledgeManager.loadKnowledge).toHaveBeenCalledWith("goal-graph", ["reflection"]);
+    expect(fs.existsSync(`${stateManager.getBaseDir()}/knowledge/graph.json`)).toBe(false);
   });
 
   it("proceeds without enrichment when realtime transfer throws", async () => {

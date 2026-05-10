@@ -32,15 +32,13 @@ describe("VectorIndex", () => {
     expect(entry.vector).toHaveLength(32);
   });
 
-  it("add() persists to file (verify JSON on disk)", async () => {
+  it("add() persists to the typed control DB without writing the legacy JSON file", async () => {
     const idx = new VectorIndex(indexPath, client);
     await idx.add("id1", "persist me", { tag: "test" });
 
-    const raw = fs.readFileSync(indexPath, "utf-8");
-    const parsed = JSON.parse(raw) as Array<{ id: string; text: string }>;
-    expect(parsed).toHaveLength(1);
-    expect(parsed[0].id).toBe("id1");
-    expect(parsed[0].text).toBe("persist me");
+    expect(fs.existsSync(indexPath)).toBe(false);
+    const loaded = await VectorIndex.create(indexPath, client);
+    expect(loaded.getEntry("id1")?.text).toBe("persist me");
   });
 
   it("search() returns results sorted by similarity descending", async () => {
@@ -114,16 +112,16 @@ describe("VectorIndex", () => {
     expect(await idx.remove("nonexistent")).toBe(false);
   });
 
-  it("remove() persists after removal", async () => {
+  it("remove() persists after removal in the typed control DB", async () => {
     const idx = new VectorIndex(indexPath, client);
     await idx.add("id1", "entry one");
     await idx.add("id2", "entry two");
     await idx.remove("id1");
 
-    const raw = fs.readFileSync(indexPath, "utf-8");
-    const parsed = JSON.parse(raw) as Array<{ id: string }>;
-    expect(parsed).toHaveLength(1);
-    expect(parsed[0].id).toBe("id2");
+    const loaded = await VectorIndex.create(indexPath, client);
+    expect(loaded.size).toBe(1);
+    expect(loaded.getEntry("id1")).toBeUndefined();
+    expect(loaded.getEntry("id2")).toBeDefined();
   });
 
   it("getEntry() returns entry by id", async () => {
@@ -152,17 +150,16 @@ describe("VectorIndex", () => {
     expect(idx.size).toBe(0);
   });
 
-  it("clear() persists empty state to file", async () => {
+  it("clear() persists empty state to the typed control DB", async () => {
     const idx = new VectorIndex(indexPath, client);
     await idx.add("id1", "one");
     await idx.clear();
 
-    const raw = fs.readFileSync(indexPath, "utf-8");
-    const parsed = JSON.parse(raw) as unknown[];
-    expect(parsed).toHaveLength(0);
+    const loaded = await VectorIndex.create(indexPath, client);
+    expect(loaded.size).toBe(0);
   });
 
-  it("persistence: new instance reads existing data from file", async () => {
+  it("persistence: new instance reads existing data from the typed control DB", async () => {
     const idx1 = new VectorIndex(indexPath, client);
     await idx1.add("p1", "persist across instances");
 
@@ -187,7 +184,7 @@ describe("VectorIndex", () => {
     expect(fs.existsSync(indexPath)).toBe(false);
   });
 
-  it("drops persisted entries with non-finite vector coordinates", async () => {
+  it("does not use corrupt legacy JSON as runtime fallback", async () => {
     fs.writeFileSync(
       indexPath,
       `[{"id":"bad","text":"bad","vector":[1e999],"model":"embedding","created_at":"2026-05-09T00:00:00.000Z"}]`,
@@ -200,7 +197,7 @@ describe("VectorIndex", () => {
     expect(idx.getEntry("bad")).toBeUndefined();
   });
 
-  it("keeps valid persisted entries when another entry has non-finite vector coordinates", async () => {
+  it("ignores valid legacy JSON during normal runtime load", async () => {
     fs.writeFileSync(
       indexPath,
       `[
@@ -212,16 +209,24 @@ describe("VectorIndex", () => {
 
     const idx = await VectorIndex.create(indexPath, client);
 
-    expect(idx.size).toBe(1);
+    expect(idx.size).toBe(0);
     expect(idx.getEntry("bad")).toBeUndefined();
-    expect(idx.getEntry("good")?.vector).toEqual([1, 0]);
+    expect(idx.getEntry("good")).toBeUndefined();
   });
 
-  it("creates parent directories if they don't exist", async () => {
+  it("does not create legacy parent directories for normal runtime writes", async () => {
     const nestedPath = path.join(tmpDir, "a", "b", "c", "index.json");
     const idx = new VectorIndex(nestedPath, client);
     await idx.add("id1", "nested dir test");
 
-    expect(fs.existsSync(nestedPath)).toBe(true);
+    expect(fs.existsSync(nestedPath)).toBe(false);
+  });
+
+  it("createForControlDb loads entries from the production base directory store", async () => {
+    const idx = await VectorIndex.createForControlDb(tmpDir, client);
+    await idx.add("id1", "control db entry");
+
+    const loaded = await VectorIndex.createForControlDb(tmpDir, client);
+    expect(loaded.getEntry("id1")?.text).toBe("control db entry");
   });
 });

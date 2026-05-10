@@ -55,6 +55,8 @@ import { ToolRegistry } from "../../../tools/registry.js";
 import { createBuiltinTools } from "../../../tools/builtin/index.js";
 import { importLegacyChatAgentLoopSessionState } from "../../chat/chat-agentloop-state-migration.js";
 import { importLegacyDriveGoalScheduleState } from "../../../platform/drive/drive-schedule-state-migration.js";
+import { importLegacyKnowledgeGraphState } from "../../../platform/knowledge/knowledge-graph-state-migration.js";
+import { importLegacyVectorIndexState } from "../../../platform/knowledge/vector-index-state-migration.js";
 import { importLegacyStrategyTemplateState } from "../../../orchestrator/strategy/strategy-template-state-migration.js";
 import {
   formatDurationMs,
@@ -768,6 +770,8 @@ export async function cmdDoctor(_args: string[]): Promise<number> {
     const runSpecImportReport = await importLegacyRunSpecState(baseDir);
     const driveScheduleImportReport = await importLegacyDriveGoalScheduleState(baseDir);
     const strategyTemplateImportReport = await importLegacyStrategyTemplateState(baseDir);
+    const vectorIndexImportReport = await importLegacyVectorIndexState(baseDir);
+    const knowledgeGraphImportReport = await importLegacyKnowledgeGraphState(baseDir);
     const goalTaskImportReport = await importLegacyGoalTaskDurableLoopState(baseDir);
     const goalOrchestrationImportReport = await importLegacyGoalOrchestrationState(baseDir);
     const stallStateImportReport = await importLegacyStallState(baseDir);
@@ -823,6 +827,12 @@ export async function cmdDoctor(_args: string[]): Promise<number> {
     );
     console.log(
       `Repair strategy template import: files=${strategyTemplateImportReport.strategyTemplateFiles}, imported=${strategyTemplateImportReport.importedTemplates}, skipped already imported=${strategyTemplateImportReport.skippedAlreadyImported}, retired existing typed state=${strategyTemplateImportReport.retiredExistingTypedState}, blocked=${strategyTemplateImportReport.blockedSources.length}`
+    );
+    console.log(
+      `Repair vector index import: files=${vectorIndexImportReport.vectorIndexFiles}, imported=${vectorIndexImportReport.importedEntries}, skipped already imported=${vectorIndexImportReport.skippedAlreadyImported}, retired existing typed state=${vectorIndexImportReport.retiredExistingTypedState}, blocked=${vectorIndexImportReport.blockedSources.length}`
+    );
+    console.log(
+      `Repair knowledge graph import: files=${knowledgeGraphImportReport.knowledgeGraphFiles}, nodes=${knowledgeGraphImportReport.importedNodes}, edges=${knowledgeGraphImportReport.importedEdges}, skipped already imported=${knowledgeGraphImportReport.skippedAlreadyImported}, retired existing typed state=${knowledgeGraphImportReport.retiredExistingTypedState}, blocked=${knowledgeGraphImportReport.blockedSources.length}`
     );
     console.log(
       `Repair goal/task import: goals=${goalTaskImportReport.goals}, legacy WAL files=${goalTaskImportReport.legacyWalFiles}, legacy WAL intents=${goalTaskImportReport.legacyWalIntents}, tasks=${goalTaskImportReport.tasks}, histories=${goalTaskImportReport.taskHistoryRecords}, ledgers=${goalTaskImportReport.taskOutcomeLedgers}, verification=${goalTaskImportReport.verificationResults}, checkpoints=${goalTaskImportReport.checkpoints}, pipelines=${goalTaskImportReport.pipelines}, blocked=${goalTaskImportReport.blockedSources.length}`

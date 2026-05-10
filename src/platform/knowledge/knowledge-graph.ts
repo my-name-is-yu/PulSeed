@@ -1,58 +1,57 @@
-import * as fsp from "node:fs/promises";
 import * as path from "node:path";
-import { z } from "zod";
 import { type KnowledgeEdge, KnowledgeEdgeSchema } from "../../base/types/knowledge.js";
-import { readTextFileWithinLimit } from "../../base/utils/json-io.js";
+import type { RuntimeControlDbStoreOptions } from "../../runtime/store/control-db/index.js";
+import {
+  KnowledgeGraphNodeSchema,
+  KnowledgeGraphStateStore,
+  type KnowledgeGraphNode,
+} from "./knowledge-graph-state-store.js";
 
-interface KnowledgeGraphNode {
-  entry_id: string;
-  goal_id: string;
-  tags: string[];
-  added_at: string;
-}
-
-interface GraphData {
+export { KnowledgeGraphNodeSchema, type KnowledgeGraphNode };
+export interface KnowledgeGraphOptions extends RuntimeControlDbStoreOptions {}
+export interface GraphData {
   nodes: KnowledgeGraphNode[];
   edges: KnowledgeEdge[];
 }
-
-const KNOWLEDGE_GRAPH_MAX_BYTES = 2 * 1024 * 1024;
-
-const KnowledgeGraphNodeSchema = z.object({
-  entry_id: z.string().min(1),
-  goal_id: z.string().min(1),
-  tags: z.array(z.string()),
-  added_at: z.string().min(1),
-});
-
-const KnowledgeGraphDataSchema = z.object({
-  nodes: z.array(KnowledgeGraphNodeSchema).default([]),
-  edges: z.array(KnowledgeEdgeSchema).default([]),
-}).default({
-  nodes: [],
-  edges: [],
-});
 
 /**
  * KnowledgeGraph stores cross-goal concept relationships as a directed graph.
  * Nodes represent KnowledgeEntry IDs; edges carry typed semantic relations.
  *
- * Persisted as JSON at graphPath: { nodes: [...], edges: [...] }
+ * Persisted as typed control DB rows. Legacy JSON graph files are explicit
+ * doctor/repair import inputs, not runtime fallback state.
  */
 export class KnowledgeGraph {
   private nodes: Map<string, KnowledgeGraphNode> = new Map();
   private edges: KnowledgeEdge[] = [];
+  private readonly stateStore: KnowledgeGraphStateStore;
 
-  constructor(private readonly graphPath: string) {
-    // Sync loading removed. Use KnowledgeGraph.create() for async load on construction,
-    // or call _load() manually after construction.
+  constructor(legacyGraphFilePath: string, options: KnowledgeGraphOptions = {}) {
+    const baseDir = options.controlBaseDir ?? path.dirname(legacyGraphFilePath);
+    this.stateStore = new KnowledgeGraphStateStore(baseDir, options);
   }
 
   /**
-   * Factory method: constructs a KnowledgeGraph and loads existing data from disk.
+   * Factory method: constructs a KnowledgeGraph and loads typed store data.
+   * The path argument is retained for compatibility; normal runtime does not read or write it.
    */
-  static async create(graphPath: string): Promise<KnowledgeGraph> {
-    const graph = new KnowledgeGraph(graphPath);
+  static async create(
+    legacyGraphFilePath: string,
+    options: KnowledgeGraphOptions = {},
+  ): Promise<KnowledgeGraph> {
+    const graph = new KnowledgeGraph(legacyGraphFilePath, options);
+    await graph._load();
+    return graph;
+  }
+
+  static async createForControlDb(
+    baseDir: string,
+    options: KnowledgeGraphOptions = {},
+  ): Promise<KnowledgeGraph> {
+    const graph = new KnowledgeGraph(path.join(baseDir, "control.sqlite"), {
+      ...options,
+      controlBaseDir: options.controlBaseDir ?? baseDir,
+    });
     await graph._load();
     return graph;
   }
@@ -70,8 +69,9 @@ export class KnowledgeGraph {
       tags: [...tags],
       added_at: new Date().toISOString(),
     };
-    this.nodes.set(entryId, node);
-    await this.save();
+    const parsed = KnowledgeGraphNodeSchema.parse(node);
+    this.nodes.set(entryId, parsed);
+    await this.stateStore.saveNode(parsed);
   }
 
   /**
@@ -83,7 +83,7 @@ export class KnowledgeGraph {
     this.edges = this.edges.filter(
       (e) => e.from_id !== entryId && e.to_id !== entryId
     );
-    await this.save();
+    await this.stateStore.removeNode(entryId);
   }
 
   getNode(entryId: string): KnowledgeGraphNode | undefined {
@@ -115,7 +115,7 @@ export class KnowledgeGraph {
       created_at: new Date().toISOString(),
     });
     this.edges.push(full);
-    await this.save();
+    await this.stateStore.saveEdge(full);
   }
 
   /**
@@ -127,7 +127,7 @@ export class KnowledgeGraph {
       (e) => !(e.from_id === fromId && e.to_id === toId)
     );
     if (this.edges.length !== before) {
-      await this.save();
+      await this.stateStore.removeEdgesBetween(fromId, toId);
     }
   }
 
@@ -226,44 +226,21 @@ export class KnowledgeGraph {
 
   // ─── Persistence ───
 
-  private async save(): Promise<void> {
-    const dir = path.dirname(this.graphPath);
-    await fsp.mkdir(dir, { recursive: true });
-
-    const data: GraphData = {
-      nodes: Array.from(this.nodes.values()),
-      edges: this.edges,
-    };
-
-    const json = JSON.stringify(data, null, 2);
-    const tmpPath = `${this.graphPath}.tmp`;
-    await fsp.writeFile(tmpPath, json, "utf-8");
-    await fsp.rename(tmpPath, this.graphPath);
-  }
-
   async _load(): Promise<void> {
+    this.nodes.clear();
+    this.edges = [];
     try {
-      await fsp.access(this.graphPath);
-    } catch {
-      return;
-    }
-    try {
-      const raw = await readTextFileWithinLimit(this.graphPath, {
-        maxBytes: KNOWLEDGE_GRAPH_MAX_BYTES,
-      });
-      const parsed = KnowledgeGraphDataSchema.parse(JSON.parse(raw) as unknown);
-
-      this.nodes.clear();
-      this.edges = [];
-
-      for (const node of parsed.nodes) {
+      for (const node of await this.stateStore.listNodes()) {
         this.nodes.set(node.entry_id, node);
       }
-
-      this.edges.push(...parsed.edges);
+      this.edges = await this.stateStore.listEdges();
     } catch {
-      // Corrupt or empty file — start fresh
+      // Corrupt typed rows or unavailable store: start with an empty in-memory graph.
     }
+  }
+
+  async close(): Promise<void> {
+    await this.stateStore.close();
   }
 
   /**
@@ -272,6 +249,6 @@ export class KnowledgeGraph {
   async clear(): Promise<void> {
     this.nodes.clear();
     this.edges = [];
-    await this.save();
+    await this.stateStore.clear();
   }
 }
