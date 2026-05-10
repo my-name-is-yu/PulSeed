@@ -1,8 +1,8 @@
 import type { RuntimeHealthSnapshot } from "../../../runtime/store/runtime-schemas.js";
 import { inspectControlDatabase } from "../../../runtime/store/index.js";
 import {
+  formatAbsoluteRelativeTimestamp,
   formatRelativeTime,
-  formatRelativeTimestamp,
 } from "./daemon-shared.js";
 
 export const STALE_RUNTIME_HEALTH_REASON = "live PID inspection reports runtime stopped; stored health snapshot is historical";
@@ -15,17 +15,21 @@ export interface HistoricalSnapshotContext {
   checkedAt: number;
 }
 
+function formatHistoricalTimestamp(timestamp: number | undefined): string | null {
+  const rendered = formatAbsoluteRelativeTimestamp(timestamp);
+  return rendered === "n/a" ? null : rendered;
+}
+
 export function formatHistoricalSnapshotContext(context: HistoricalSnapshotContext): string {
   const parts = ["historical snapshot"];
-  if (context.lastObservedAt !== undefined) {
-    parts.push(
-      `last observed ${new Date(context.lastObservedAt).toISOString()} (${formatRelativeTimestamp(context.lastObservedAt)})`
-    );
+  const lastObservedAt = formatHistoricalTimestamp(context.lastObservedAt);
+  if (lastObservedAt !== null) {
+    parts.push(`last observed ${lastObservedAt}`);
   }
   if (context.stoppedAt) {
     parts.push(`stopped ${context.stoppedAt} (${formatRelativeTime(context.stoppedAt)})`);
   }
-  parts.push(`checked ${new Date(context.checkedAt).toISOString()} (${formatRelativeTimestamp(context.checkedAt)})`);
+  parts.push(`checked ${formatHistoricalTimestamp(context.checkedAt) ?? "unknown"}`);
   return ` (${parts.join("; ")})`;
 }
 
@@ -33,8 +37,8 @@ export function parseHistoricalObservationTime(value: string | null | undefined)
   if (!value) {
     return undefined;
   }
-  const parsed = new Date(value).getTime();
-  return Number.isNaN(parsed) ? undefined : parsed;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
 }
 
 export function formatControlDbSchemaDriftMessage(baseDir: string): string | null {
