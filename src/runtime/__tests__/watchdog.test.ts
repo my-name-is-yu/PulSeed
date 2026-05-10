@@ -405,4 +405,57 @@ describe("RuntimeWatchdog", () => {
     );
     expect(fs.existsSync(pidManager.getPath())).toBe(false);
   });
+
+  it("opens the circuit before spawning a child when a deterministic preflight fails", async () => {
+    tmpDir = makeTempDir();
+    const runtimeRoot = path.join(tmpDir, "runtime");
+    const pidManager = new PIDManager(tmpDir);
+    const healthStore = new RuntimeHealthStore(runtimeRoot);
+    const leaderLockManager = new LeaderLockManager(runtimeRoot, 60);
+    await healthStore.ensureReady();
+
+    const onCircuitOpen = vi.fn();
+    const startChild = vi.fn(() => new FakeChildProcess(50_000));
+    const logger = {
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+    };
+    const watchdog = new RuntimeWatchdog({
+      pidManager,
+      healthStore,
+      leaderLockManager,
+      logger,
+      preStartCheck: vi.fn(async () => ({
+        ok: false,
+        detail: "Control DB schema drift detected. Database schema version 23 is newer than this PulSeed build supports (22).",
+      })),
+      startChild,
+      pollIntervalMs: 20,
+      heartbeatTimeoutMs: 50,
+      startupGraceMs: 0,
+      onCircuitOpen,
+    });
+
+    await watchdog.start();
+
+    expect(startChild).not.toHaveBeenCalled();
+    expect(onCircuitOpen).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reason: "preflight_failed",
+        detail: expect.stringContaining("Control DB schema drift detected"),
+      })
+    );
+    expect(await healthStore.loadDaemonHealth()).toEqual(
+      expect.objectContaining({
+        status: "failed",
+        leader: false,
+        details: expect.objectContaining({
+          circuit_reason: "watchdog_preflight_failed",
+          reason: "preflight_failed",
+        }),
+      })
+    );
+    expect(fs.existsSync(pidManager.getPath())).toBe(false);
+  });
 });

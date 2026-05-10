@@ -1,4 +1,5 @@
 import type { RuntimeHealthSnapshot } from "../../../runtime/store/runtime-schemas.js";
+import { inspectControlDatabase } from "../../../runtime/store/index.js";
 import {
   formatRelativeTime,
   formatRelativeTimestamp,
@@ -32,6 +33,18 @@ export function parseHistoricalObservationTime(value: string | null | undefined)
   }
   const parsed = new Date(value).getTime();
   return Number.isNaN(parsed) ? undefined : parsed;
+}
+
+export function formatControlDbSchemaDriftMessage(baseDir: string): string | null {
+  const inspection = inspectControlDatabase({ baseDir });
+  if (inspection.status !== "ahead_of_code") {
+    return null;
+  }
+  return [
+    "Control DB schema drift detected.",
+    `Database schema version ${inspection.schemaVersion ?? "unknown"} is newer than this PulSeed build supports (${inspection.expectedSchemaVersion}).`,
+    "Update/rebuild PulSeed before starting the daemon or gateway; runtime readiness is not healthy while this mismatch remains.",
+  ].join(" ");
 }
 
 export function reconcileRuntimeHealthForDisplay(

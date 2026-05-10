@@ -19,6 +19,7 @@ export interface RuntimeWatchdogOptions {
   leaderLockManager: LeaderLockManager;
   logger: Pick<Logger, "info" | "warn" | "error">;
   startChild: () => WatchdogChildProcess;
+  preStartCheck?: () => Promise<{ ok: boolean; detail?: string }>;
   healthProbe?: () => Promise<{ ok: boolean; detail?: string }>;
   healthProbeFailureThreshold?: number;
   pollIntervalMs?: number;
@@ -46,7 +47,8 @@ interface ChildExitResult {
   code: number | null;
   signal: NodeJS.Signals | null;
   healthy: boolean;
-  reason: "exit" | "heartbeat_timeout" | "health_probe_failed";
+  reason: "exit" | "heartbeat_timeout" | "health_probe_failed" | "preflight_failed";
+  detail?: string;
 }
 
 const DEFAULT_POLL_INTERVAL_MS = 1_000;
@@ -69,6 +71,7 @@ export class RuntimeWatchdog {
   private readonly leaderLockManager: LeaderLockManager;
   private readonly logger: Pick<Logger, "info" | "warn" | "error">;
   private readonly startChild: () => WatchdogChildProcess;
+  private readonly preStartCheck?: () => Promise<{ ok: boolean; detail?: string }>;
   private readonly healthProbe?: () => Promise<{ ok: boolean; detail?: string }>;
   private readonly healthProbeFailureThreshold: number;
   private readonly pollIntervalMs: number;
@@ -91,6 +94,7 @@ export class RuntimeWatchdog {
     this.leaderLockManager = options.leaderLockManager;
     this.logger = options.logger;
     this.startChild = options.startChild;
+    this.preStartCheck = options.preStartCheck;
     this.healthProbe = options.healthProbe;
     this.healthProbeFailureThreshold = Math.max(1, options.healthProbeFailureThreshold ?? 3);
     this.pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
@@ -137,6 +141,17 @@ export class RuntimeWatchdog {
 
     try {
       while (!this.stopping) {
+        const preflight = await this.preStartCheck?.();
+        if (preflight && !preflight.ok) {
+          await this.tripCircuitBreaker({
+            code: null,
+            signal: null,
+            healthy: false,
+            reason: "preflight_failed",
+            detail: preflight.detail,
+          }, null, unhealthyRestartTimestamps.length + 1);
+          break;
+        }
         const child = this.startChild();
         this.currentChild = child;
         await this.pidManager.writePID({
@@ -188,7 +203,7 @@ export class RuntimeWatchdog {
 
   private async tripCircuitBreaker(
     result: ChildExitResult,
-    child: WatchdogChildProcess,
+    child: WatchdogChildProcess | null,
     restartCount: number
   ): Promise<void> {
     this.stopping = true;
@@ -196,20 +211,28 @@ export class RuntimeWatchdog {
       reason: result.reason,
       restartCount,
       windowMs: this.restartStormWindowMs,
-      pid: child.pid,
       code: result.code,
       signal: result.signal,
+      ...(child?.pid !== undefined ? { pid: child.pid } : {}),
+      ...(result.detail ? { detail: result.detail } : {}),
     };
     this.logger.error("Watchdog circuit breaker opened after restart storm", details);
-    await this.healthStore.saveDaemonHealth({
-      status: "failed",
-      leader: false,
-      checked_at: Date.now(),
-      details: {
-        circuit_reason: "watchdog_circuit_open",
-        ...details,
-      },
-    });
+    try {
+      await this.healthStore.saveDaemonHealth({
+        status: "failed",
+        leader: false,
+        checked_at: Date.now(),
+        details: {
+          circuit_reason: result.reason === "preflight_failed" ? "watchdog_preflight_failed" : "watchdog_circuit_open",
+          ...details,
+        },
+      });
+    } catch (error) {
+      this.logger.warn("Watchdog could not persist circuit breaker health", {
+        error: error instanceof Error ? error.message : String(error),
+        reason: result.reason,
+      });
+    }
     await this.onCircuitOpen?.(details);
   }
 

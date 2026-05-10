@@ -4,8 +4,10 @@ import * as path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { StateManager } from "../../../../base/state/state-manager.js";
+import { getGatewayChannelDir } from "../../../../base/utils/paths.js";
 import { AssetRegistry } from "../../../../runtime/assets/registry.js";
 import { projectCapabilityOperatorStatus } from "../../../../runtime/control/capability-status-projection.js";
+import { CONTROL_DB_SCHEMA_VERSION, openControlDatabase } from "../../../../runtime/store/index.js";
 import { CapabilityVerificationStore } from "../../../../runtime/store/capability-verification-store.js";
 import { collectOperatorBindingStatus, printOperatorBindingStatus, type OperatorBindingStatus } from "../operator-binding-status.js";
 
@@ -116,6 +118,56 @@ describe("operator binding status capability runtime projection", () => {
         may_initiate_autonomously: false,
       },
     });
+  });
+
+  it("marks configured gateway channels degraded when control DB schema is newer than this build", async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-operator-schema-drift-"));
+    const stateManager = new StateManager(tmpDir);
+    const telegramConfigDir = getGatewayChannelDir("telegram-bot", tmpDir);
+    fs.mkdirSync(telegramConfigDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(telegramConfigDir, "config.json"),
+      JSON.stringify({
+        bot_token: "redacted-test-token",
+        chat_id: 42,
+        runtime_control_allowed_user_ids: [42],
+        allowed_user_ids: [42],
+        identity_key: "seedy",
+      }),
+      "utf-8"
+    );
+    const database = await openControlDatabase({ baseDir: tmpDir });
+    try {
+      database.transaction((db) => {
+        db.pragma(`user_version = ${CONTROL_DB_SCHEMA_VERSION + 1}`);
+      });
+    } finally {
+      database.close();
+    }
+
+    const status = await collectOperatorBindingStatus(stateManager);
+    const telegram = status.channels.find((channel) => channel.name === "telegram-bot");
+
+    expect(status.daemon.health).toBe("failed");
+    expect(status.warnings.join("\n")).toContain("Control DB schema drift detected");
+    expect(telegram).toMatchObject({
+      configured: true,
+      active: false,
+      degraded: true,
+      state: "degraded",
+      health: {
+        gateway: "failed",
+        checked_at: null,
+      },
+      recent_health: {
+        inbound_at: null,
+        outbound_at: null,
+        last_error: "unsupported_control_db_schema",
+      },
+    });
+    expect(telegram?.warnings.join("\n")).toContain(`Database schema version ${CONTROL_DB_SCHEMA_VERSION + 1} is newer`);
+
+    fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
   it("prints explicit readiness, admission, autonomy, and execution labels without implying autonomy from readiness alone", () => {

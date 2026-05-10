@@ -25,6 +25,7 @@ interface EventServerRouterDeps {
     goalId: string,
     action: string
   ) => Promise<void>;
+  readHealthStatus: () => Record<string, unknown>;
 }
 
 export class EventServerRouter {
@@ -39,7 +40,9 @@ export class EventServerRouter {
     const urlPath = requestUrl.pathname;
 
     if (req.method === "GET" && urlPath === "/health") {
-      writeJson(res, 200, { status: "ok", uptime: process.uptime() });
+      const health = this.deps.readHealthStatus();
+      const status = typeof health["status"] === "string" ? health["status"] : "ok";
+      writeJson(res, status === "ok" ? 200 : 503, { uptime: process.uptime(), ...health });
       return;
     }
 

@@ -22,7 +22,14 @@ import { cmdDaemonStatus } from "../commands/daemon.js";
 import { PIDManager } from "../../../runtime/pid-manager.js";
 import { RuntimeHealthStore } from "../../../runtime/store/health-store.js";
 import { ProactiveInterventionStore } from "../../../runtime/store/proactive-intervention-store.js";
-import { DaemonShutdownStore, DaemonStateStore, GoalTaskStateStore, openControlDatabase, SupervisorStateStore } from "../../../runtime/store/index.js";
+import {
+  CONTROL_DB_SCHEMA_VERSION,
+  DaemonShutdownStore,
+  DaemonStateStore,
+  GoalTaskStateStore,
+  openControlDatabase,
+  SupervisorStateStore,
+} from "../../../runtime/store/index.js";
 import type { RuntimeLongRunHealth } from "../../../runtime/store/runtime-schemas.js";
 
 function mockPidInspectRunning(runtimePid: number, ownerPid = runtimePid) {
@@ -169,6 +176,26 @@ describe("cmdDaemonStatus", () => {
     await cmdDaemonStatus([]);
 
     expect(consoleSpy).toHaveBeenCalledWith("No daemon state found");
+  });
+
+  it("reports unsupported newer control DB schema before daemon health", async () => {
+    const database = await openControlDatabase({ baseDir: tmpDir });
+    try {
+      database.transaction((db) => {
+        db.pragma(`user_version = ${CONTROL_DB_SCHEMA_VERSION + 1}`);
+      });
+    } finally {
+      database.close();
+    }
+
+    await cmdDaemonStatus([]);
+
+    const output = consoleSpy.mock.calls[0]?.[0] as string;
+    expect(output).toContain("Status:          schema drift");
+    expect(output).toContain(`Database schema version ${CONTROL_DB_SCHEMA_VERSION + 1} is newer`);
+    expect(output).toContain(`supports (${CONTROL_DB_SCHEMA_VERSION})`);
+    expect(output).toContain("runtime readiness is not healthy");
+    expect(output).not.toContain("No daemon state found");
   });
 
   it("shows stopped status when PID is not running", async () => {

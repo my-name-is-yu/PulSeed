@@ -24,6 +24,7 @@ import {
   projectCapabilityOperatorStatus,
   type CapabilityOperatorStatusProjection,
 } from "../../../runtime/control/capability-status-projection.js";
+import { formatControlDbSchemaDriftMessage } from "./daemon-status-health.js";
 
 export type OperatorChannelState = "missing" | "configured" | "active" | "degraded";
 export type RuntimeControlPermissionState = "allowed" | "missing_allowlist" | "unrestricted" | "unsupported";
@@ -370,6 +371,66 @@ export async function collectOperatorBindingStatus(stateManager: StateManager): 
   const baseDir = stateManager.getBaseDir();
   const runtimeRoot = resolveConfiguredDaemonRuntimeRoot(baseDir);
   const generatedAt = new Date().toISOString();
+  const schemaDriftMessage = formatControlDbSchemaDriftMessage(baseDir);
+  if (schemaDriftMessage) {
+    const daemon = await isDaemonRunning(baseDir);
+    const channels: OperatorChannelBindingStatus[] = [];
+    for (const name of BUILTIN_GATEWAY_CHANNEL_NAMES) {
+      const configPath = channelConfigPath(baseDir, name);
+      const raw = await loadRawConfig(configPath);
+      const summary = name === "telegram-bot" ? telegramSummary(raw, null) : senderSummary(raw, name);
+      channels.push({
+        name,
+        state: summary.configured ? "degraded" : "missing",
+        config_path: configPath,
+        configured: summary.configured,
+        active: false,
+        degraded: summary.configured,
+        home_target: summary.homeTarget,
+        identity_key: summary.identityKey,
+        default_goal_id: summary.defaultGoalId,
+        goal_bindings: summary.goalBindings,
+        runtime_control: {
+          state: summary.runtimeControlState,
+          allowed_count: summary.runtimeControlAllowedCount,
+        },
+        access: {
+          allow_all: summary.accessAllowAll,
+          allowed_count: summary.accessAllowedCount,
+        },
+        health: {
+          daemon_running: daemon.running,
+          gateway: "failed",
+          checked_at: null,
+        },
+        recent_health: {
+          inbound_at: null,
+          outbound_at: null,
+          last_error: "unsupported_control_db_schema",
+        },
+        warnings: [
+          ...summary.warnings,
+          schemaDriftMessage,
+        ],
+      });
+    }
+
+    return {
+      schema_version: "operator-binding-status-v1",
+      generated_at: generatedAt,
+      daemon: {
+        running: daemon.running,
+        port: daemon.port,
+        health: "failed",
+        runtime_root: runtimeRoot,
+      },
+      channels,
+      capability_runtime: [],
+      sessions: [],
+      background_runs: [],
+      warnings: [schemaDriftMessage],
+    };
+  }
   const [daemon, health, registrySnapshot, capabilityRuntime] = await Promise.all([
     isDaemonRunning(baseDir),
     new RuntimeHealthStore(runtimeRoot, { controlBaseDir: baseDir }).loadSnapshot(),
