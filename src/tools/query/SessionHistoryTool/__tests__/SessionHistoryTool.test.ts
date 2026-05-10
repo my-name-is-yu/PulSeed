@@ -6,20 +6,8 @@ import { toToolDefinition } from "../../../tool-definition-adapter.js";
 import { SESSION_HISTORY_MAX_LIMIT, SessionHistoryInputSchema, SessionHistoryTool } from "../SessionHistoryTool.js";
 import type { ToolCallContext } from "../../../types.js";
 import type { StateManager } from "../../../../base/state/state-manager.js";
-
-/** Minimal readRaw that mimics StateManager path-traversal protection */
-async function fakeReadRaw(baseDir: string, relativePath: string): Promise<unknown | null> {
-  const resolved = path.resolve(baseDir, relativePath);
-  if (!resolved.startsWith(path.resolve(baseDir) + path.sep)) {
-    throw new Error(`Path traversal detected: ${relativePath}`);
-  }
-  if (!fs.existsSync(resolved)) return null;
-  try {
-    return JSON.parse(fs.readFileSync(resolved, "utf-8")) as unknown;
-  } catch {
-    return null;
-  }
-}
+import type { Session } from "../../../../base/types/session.js";
+import { ExecutionSessionStateStore } from "../../../../runtime/store/execution-session-state-store.js";
 
 function makeContext(): ToolCallContext {
   return {
@@ -31,7 +19,7 @@ function makeContext(): ToolCallContext {
   };
 }
 
-function makeSessionJson(id: string, goalId: string, overrides: Record<string, unknown> = {}): Record<string, unknown> {
+function makeSession(id: string, goalId: string, overrides: Partial<Session> = {}): Session {
   return {
     id,
     goal_id: goalId,
@@ -49,15 +37,16 @@ function makeSessionJson(id: string, goalId: string, overrides: Record<string, u
 describe("SessionHistoryTool", () => {
   let stateManager: StateManager;
   let tool: SessionHistoryTool;
+  let store: ExecutionSessionStateStore;
   let tmpDir: string;
 
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "session-history-test-"));
     stateManager = {
       getBaseDir: vi.fn().mockReturnValue(tmpDir),
-      readRaw: vi.fn().mockImplementation((rel: string) => fakeReadRaw(tmpDir, rel)),
     } as unknown as StateManager;
-    tool = new SessionHistoryTool(stateManager);
+    store = new ExecutionSessionStateStore(tmpDir);
+    tool = new SessionHistoryTool(stateManager, store);
   });
 
   afterEach(() => {
@@ -83,7 +72,7 @@ describe("SessionHistoryTool", () => {
     expect(tool.isConcurrencySafe({ limit: 5, includeObservations: true })).toBe(true);
   });
 
-  it("returns empty array when sessions dir does not exist", async () => {
+  it("returns empty array when no typed execution sessions exist", async () => {
     const result = await tool.call({ limit: 5, includeObservations: true }, makeContext());
     expect(result.success).toBe(true);
     const data = result.data as { sessions: unknown[] };
@@ -91,11 +80,9 @@ describe("SessionHistoryTool", () => {
   });
 
   it("returns sessions sorted by recency (most recent first)", async () => {
-    const sessionsDir = path.join(tmpDir, "sessions");
-    fs.mkdirSync(sessionsDir, { recursive: true });
-    fs.writeFileSync(path.join(sessionsDir, "session-001.json"), JSON.stringify(makeSessionJson("s1", "g1", { started_at: "2024-01-01T00:00:00.000Z" })));
-    fs.writeFileSync(path.join(sessionsDir, "session-002.json"), JSON.stringify(makeSessionJson("s2", "g1", { started_at: "2024-01-02T00:00:00.000Z" })));
-    fs.writeFileSync(path.join(sessionsDir, "session-003.json"), JSON.stringify(makeSessionJson("s3", "g1", { started_at: "2024-01-03T00:00:00.000Z" })));
+    await store.save(makeSession("s1", "g1", { started_at: "2024-01-01T00:00:00.000Z" }));
+    await store.save(makeSession("s2", "g1", { started_at: "2024-01-02T00:00:00.000Z" }));
+    await store.save(makeSession("s3", "g1", { started_at: "2024-01-03T00:00:00.000Z" }));
 
     const result = await tool.call({ limit: 5, includeObservations: false }, makeContext());
     expect(result.success).toBe(true);
@@ -108,13 +95,8 @@ describe("SessionHistoryTool", () => {
   });
 
   it("respects limit parameter", async () => {
-    const sessionsDir = path.join(tmpDir, "sessions");
-    fs.mkdirSync(sessionsDir, { recursive: true });
     for (let i = 1; i <= 10; i++) {
-      fs.writeFileSync(
-        path.join(sessionsDir, `session-${String(i).padStart(3, "0")}.json`),
-        JSON.stringify(makeSessionJson(`s${i}`, "g1"))
-      );
+      await store.save(makeSession(`s${i}`, "g1", { started_at: `2024-01-${String(i).padStart(2, "0")}T00:00:00.000Z` }));
     }
 
     const result = await tool.call({ limit: 3, includeObservations: false }, makeContext());
@@ -152,11 +134,9 @@ describe("SessionHistoryTool", () => {
   });
 
   it("filters by goalId when provided", async () => {
-    const sessionsDir = path.join(tmpDir, "sessions");
-    fs.mkdirSync(sessionsDir, { recursive: true });
-    fs.writeFileSync(path.join(sessionsDir, "session-001.json"), JSON.stringify(makeSessionJson("s1", "goal-A")));
-    fs.writeFileSync(path.join(sessionsDir, "session-002.json"), JSON.stringify(makeSessionJson("s2", "goal-B")));
-    fs.writeFileSync(path.join(sessionsDir, "session-003.json"), JSON.stringify(makeSessionJson("s3", "goal-A")));
+    await store.save(makeSession("s1", "goal-A"));
+    await store.save(makeSession("s2", "goal-B"));
+    await store.save(makeSession("s3", "goal-A", { started_at: "2024-01-02T00:00:00.000Z" }));
 
     const result = await tool.call({ goalId: "goal-A", limit: 5, includeObservations: false }, makeContext());
     expect(result.success).toBe(true);
@@ -166,9 +146,7 @@ describe("SessionHistoryTool", () => {
   });
 
   it("includes observations when includeObservations is true", async () => {
-    const sessionsDir = path.join(tmpDir, "sessions");
-    fs.mkdirSync(sessionsDir, { recursive: true });
-    fs.writeFileSync(path.join(sessionsDir, "session-001.json"), JSON.stringify(makeSessionJson("s1", "g1")));
+    await store.save(makeSession("s1", "g1"));
 
     const result = await tool.call({ limit: 5, includeObservations: true }, makeContext());
     expect(result.success).toBe(true);
@@ -177,9 +155,7 @@ describe("SessionHistoryTool", () => {
   });
 
   it("excludes observations when includeObservations is false", async () => {
-    const sessionsDir = path.join(tmpDir, "sessions");
-    fs.mkdirSync(sessionsDir, { recursive: true });
-    fs.writeFileSync(path.join(sessionsDir, "session-001.json"), JSON.stringify(makeSessionJson("s1", "g1")));
+    await store.save(makeSession("s1", "g1"));
 
     const result = await tool.call({ limit: 5, includeObservations: false }, makeContext());
     expect(result.success).toBe(true);
@@ -187,11 +163,11 @@ describe("SessionHistoryTool", () => {
     expect(data.sessions[0].observations).toBeUndefined();
   });
 
-  it("skips malformed JSON files without throwing", async () => {
+  it("does not use malformed legacy JSON files as normal runtime fallback", async () => {
     const sessionsDir = path.join(tmpDir, "sessions");
     fs.mkdirSync(sessionsDir, { recursive: true });
     fs.writeFileSync(path.join(sessionsDir, "session-001.json"), "not-json");
-    fs.writeFileSync(path.join(sessionsDir, "session-002.json"), JSON.stringify(makeSessionJson("s2", "g1")));
+    await store.save(makeSession("s2", "g1"));
 
     const result = await tool.call({ limit: 5, includeObservations: false }, makeContext());
     expect(result.success).toBe(true);

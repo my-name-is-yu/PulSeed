@@ -16,6 +16,7 @@ import {
   ApprovalStore,
   DaemonStateStore,
   GoalTaskStateStore,
+  importLegacyExecutionSessionState,
   OutboxStore,
   RuntimeHealthStore,
   compactRuntimeHealthKpi,
@@ -754,6 +755,7 @@ export async function cmdDoctor(_args: string[]): Promise<number> {
       importedAt: new Date().toISOString(),
     });
     const chatAgentLoopImportReport = await importLegacyChatAgentLoopSessionState(baseDir);
+    const executionSessionImportReport = await importLegacyExecutionSessionState(baseDir);
     const goalTaskImportReport = await importLegacyGoalTaskDurableLoopState(baseDir);
     const evidenceStrategyDreamImportReport = await importLegacyRuntimeEvidenceStrategyDreamState(baseDir, { runtimeRoot });
     const knowledgeMemoryImportReport = await importLegacyKnowledgeMemoryState(baseDir);
@@ -779,6 +781,9 @@ export async function cmdDoctor(_args: string[]): Promise<number> {
     );
     console.log(
       `Repair chat import: chat sessions=${chatAgentLoopImportReport.importedChatSessions}, cross-platform sessions=${chatAgentLoopImportReport.importedCrossPlatformSessions}, agentloop states=${chatAgentLoopImportReport.importedAgentLoopStates}, agentloop trace events=${chatAgentLoopImportReport.importedTraceEvents}, blocked=${chatAgentLoopImportReport.blockedSources.length}`
+    );
+    console.log(
+      `Repair execution session import: legacy session files=${executionSessionImportReport.legacySessionFiles}, imported=${executionSessionImportReport.importedSessions}, legacy index files=${executionSessionImportReport.legacyIndexFiles}, stale index entries=${executionSessionImportReport.staleIndexEntries}, blocked=${executionSessionImportReport.blockedSources.length}`
     );
     console.log(
       `Repair goal/task import: goals=${goalTaskImportReport.goals}, legacy WAL files=${goalTaskImportReport.legacyWalFiles}, legacy WAL intents=${goalTaskImportReport.legacyWalIntents}, tasks=${goalTaskImportReport.tasks}, histories=${goalTaskImportReport.taskHistoryRecords}, ledgers=${goalTaskImportReport.taskOutcomeLedgers}, verification=${goalTaskImportReport.verificationResults}, checkpoints=${goalTaskImportReport.checkpoints}, pipelines=${goalTaskImportReport.pipelines}, blocked=${goalTaskImportReport.blockedSources.length}`

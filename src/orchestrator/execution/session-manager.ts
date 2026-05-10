@@ -16,6 +16,7 @@ import {
   injectLearningFeedback as _injectLearningFeedback,
   DEFAULT_CONTEXT_BUDGET,
 } from './context/context-builder.js';
+import { ExecutionSessionStateStore } from "../../runtime/store/execution-session-state-store.js";
 
 // ─── Types ───
 
@@ -39,16 +40,20 @@ export { DEFAULT_CONTEXT_BUDGET };
  * receive task execution details; task review sessions never receive
  * the executor's self-report).
  *
- * Persistence: sessions/<session_id>.json via StateManager readRaw/writeRaw.
+ * Persistence: typed execution session rows in the control DB.
  */
 export class SessionManager {
-  private readonly stateManager: StateManager;
   private readonly dependencyGraph?: GoalDependencyGraph;
+  private readonly executionSessionStore: ExecutionSessionStateStore;
   private checkpointManager?: CheckpointManager;
 
-  constructor(stateManager: StateManager, dependencyGraph?: GoalDependencyGraph) {
-    this.stateManager = stateManager;
+  constructor(
+    stateManager: StateManager,
+    dependencyGraph?: GoalDependencyGraph,
+    executionSessionStore?: ExecutionSessionStateStore,
+  ) {
     this.dependencyGraph = dependencyGraph;
+    this.executionSessionStore = executionSessionStore ?? new ExecutionSessionStateStore(stateManager.getBaseDir());
   }
 
   setCheckpointManager(cm: CheckpointManager): void {
@@ -127,9 +132,7 @@ export class SessionManager {
    * Returns a session by ID, or null if not found.
    */
   async getSession(sessionId: string): Promise<Session | null> {
-    const raw = await this.stateManager.readRaw(`sessions/${sessionId}.json`);
-    if (raw === null) return null;
-    return SessionSchema.parse(raw);
+    return this.executionSessionStore.load(sessionId);
   }
 
   /**
@@ -138,21 +141,7 @@ export class SessionManager {
    * This reads the session index; sessions without ended_at are active.
    */
   async getActiveSessions(goalId: string): Promise<Session[]> {
-    const index = await this.loadSessionIndex();
-    const sessions: Session[] = [];
-
-    for (const sessionId of index) {
-      const session = await this.getSession(sessionId);
-      if (
-        session !== null &&
-        session.goal_id === goalId &&
-        session.ended_at === null
-      ) {
-        sessions.push(session);
-      }
-    }
-
-    return sessions;
+    return this.executionSessionStore.list({ goalId, activeOnly: true });
   }
 
   // ─── Context Building ───
@@ -482,24 +471,6 @@ export class SessionManager {
   }
 
   private async persistSession(session: Session): Promise<void> {
-    await this.stateManager.writeRaw(`sessions/${session.id}.json`, session);
-    await this.updateSessionIndex(session.id);
-  }
-
-  /** Loads the session index (list of all session IDs). */
-  private async loadSessionIndex(): Promise<string[]> {
-    const raw = await this.stateManager.readRaw("sessions/index.json");
-    if (raw === null) return [];
-    if (!Array.isArray(raw)) return [];
-    return raw.filter((item): item is string => typeof item === "string");
-  }
-
-  /** Adds a session ID to the index if not already present. */
-  private async updateSessionIndex(sessionId: string): Promise<void> {
-    const index = await this.loadSessionIndex();
-    if (!index.includes(sessionId)) {
-      index.push(sessionId);
-      await this.stateManager.writeRaw("sessions/index.json", index);
-    }
+    await this.executionSessionStore.save(session);
   }
 }

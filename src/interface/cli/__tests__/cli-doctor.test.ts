@@ -47,6 +47,7 @@ import {
 import {
   CONTROL_DB_SCHEMA_VERSION,
   DaemonStateStore,
+  ExecutionSessionStateStore,
   GoalTaskStateStore,
   openControlDatabase,
   PluginChannelRuntimeStateStore,
@@ -1271,6 +1272,68 @@ describe("cmdDoctor summary counts", () => {
     expect(allOutput).toContain("Repair chat import: chat sessions=1");
     expect(allOutput).toContain("agentloop states=1");
     expect(checkControlDatabase(tmpDir).detail).toContain("legacy import record");
+  });
+
+  it("imports legacy execution sessions through doctor repair and records import bookkeeping", async () => {
+    const origHome = process.env["PULSEED_HOME"];
+    process.env["PULSEED_HOME"] = tmpDir;
+    const legacySessionsDir = path.join(tmpDir, "sessions");
+    fs.mkdirSync(legacySessionsDir, { recursive: true });
+    fs.writeFileSync(path.join(legacySessionsDir, "legacy-execution-session.json"), JSON.stringify({
+      id: "legacy-execution-session",
+      session_type: "task_execution",
+      goal_id: "goal-execution-session",
+      task_id: "task-execution-session",
+      context_slots: [{ priority: 1, label: "task", content: "content", token_estimate: 0 }],
+      context_budget: 50_000,
+      started_at: "2026-05-10T00:00:00.000Z",
+      ended_at: "2026-05-10T00:01:00.000Z",
+      result_summary: "legacy execution session imported",
+    }));
+    fs.writeFileSync(path.join(legacySessionsDir, "index.json"), JSON.stringify([
+      "legacy-execution-session",
+      "stale-execution-session",
+    ]));
+
+    try {
+      const exitCode = await cmdDoctor(["--repair"]);
+      expect([0, 1]).toContain(exitCode);
+    } finally {
+      if (origHome !== undefined) {
+        process.env["PULSEED_HOME"] = origHome;
+      } else {
+        delete process.env["PULSEED_HOME"];
+      }
+    }
+
+    await expect(new ExecutionSessionStateStore(tmpDir).load("legacy-execution-session")).resolves.toMatchObject({
+      id: "legacy-execution-session",
+      result_summary: "legacy execution session imported",
+    });
+    const allOutput = consoleSpy.mock.calls.map((c: unknown[]) => c[0] as string).join("\n");
+    expect(allOutput).toContain("Repair execution session import: legacy session files=1");
+    expect(allOutput).toContain("stale index entries=1");
+
+    const database = await openControlDatabase({ baseDir: tmpDir });
+    try {
+      expect(database.listLegacyImports()).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          source_kind: "execution_session",
+          source_id: "legacy-execution-session",
+          migration_name: "execution-session-state",
+          status: "imported",
+        }),
+        expect.objectContaining({
+          source_kind: "execution_session_index",
+          source_id: "index",
+          migration_name: "execution-session-state",
+          status: "validated",
+          details: expect.objectContaining({ stale_entries: 1 }),
+        }),
+      ]));
+    } finally {
+      database.close();
+    }
   });
 
   it("imports legacy goal WAL through doctor repair and records import bookkeeping", async () => {
