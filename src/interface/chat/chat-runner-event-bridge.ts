@@ -556,6 +556,42 @@ export class ChatRunnerEventBridge {
     });
   }
 
+  emitGatewayCommentary(
+    message: string,
+    eventContext: ChatEventContext,
+    sourceId?: string,
+  ): void {
+    const safeMessage = redactSetupSecrets(message);
+    if (!safeMessage.trim()) return;
+    this.emitEvent({
+      type: "activity",
+      kind: "commentary",
+      message: safeMessage,
+      ...(sourceId ? { sourceId } : {}),
+      transient: true,
+      presentation: { gatewayProgress: "user" },
+      ...this.eventBase(eventContext),
+    });
+  }
+
+  async emitGatewayCommentaryAndFlush(
+    message: string,
+    eventContext: ChatEventContext,
+    sourceId?: string,
+  ): Promise<void> {
+    const safeMessage = redactSetupSecrets(message);
+    if (!safeMessage.trim()) return;
+    await this.emitEventAndFlush({
+      type: "activity",
+      kind: "commentary",
+      message: safeMessage,
+      ...(sourceId ? { sourceId } : {}),
+      transient: true,
+      presentation: { gatewayProgress: "user" },
+      ...this.eventBase(eventContext),
+    });
+  }
+
   emitIntent(
     input: string,
     selectedRoute: { kind: string; reason?: string; intent?: { kind: string } } | null,

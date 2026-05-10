@@ -111,3 +111,87 @@ PR: https://github.com/my-name-is-yu/PulSeed/pull/1863
 ### Deferred
 
 - Live Telegram dogfood has not been rerun for this slice yet.
+
+## Slice #1851
+
+Issue: https://github.com/my-name-is-yu/PulSeed/issues/1851
+
+Initial base HEAD: `2f86bcbb87263ac6908e5f0d2a68831e203e1cc3`
+
+Rebased base HEAD before PR checks: `5712811908a5ed3ddad9e1085f1243bf3523ceb2`
+
+Slice HEAD after rebase: `869dafff96336fb06deb7a73ae6dbc2b105a4f4e`
+
+Branch: `yu/issue-1851-gateway-early-commentary`
+
+PR: https://github.com/my-name-is-yu/PulSeed/pull/1866
+
+### Design Decisions
+
+- Add a gateway commentary preamble generator for agent-loop and tool-loop gateway turns only. Fast direct adapter turns do not emit the extra preamble.
+- Keep commentary as a typed `activity` event with `kind: "commentary"` and explicit `presentation.gatewayProgress: "user"`, distinct from final answers and waiting heartbeats.
+- Generate the text through a separate light model call that is prompted to avoid runtime claims, raw logs, provider/model names, tool catalogs, trace ids, and secrets.
+- Bound the preamble generation call to 1.5s and skip it on timeout/error so actual agent/tool work is not blocked by a slow commentary call.
+- Return the generated preamble through a structured JSON contract with `display_text`, safety verdict, and explicit claim flags; unsafe or uncertain structured decisions are not rendered.
+- Keep deterministic display-shape checks limited to exact formatting characters after the structured safety contract has allowed the preamble.
+- Flush the accepted preamble event before entering the agent/tool execution path so the first meaningful text can render before tool work starts.
+- Keep ordinary internal commentary hidden from default gateway progress unless the event explicitly opts into user-facing gateway progress.
+
+### Commands Run
+
+- `git fetch origin main --prune`
+- `git worktree add -b yu/issue-1851-gateway-early-commentary /Users/yuyoshimuta/Documents/dev/PulSeed-worktrees/issue-1851-gateway-early-commentary origin/main`
+- `npm ci`
+- `npx vitest run --config vitest.unit.config.ts src/interface/chat/__tests__/cross-platform-session.test.ts src/interface/chat/__tests__/chat-runner.test.ts`
+- `npx vitest run --config vitest.integration.config.ts src/runtime/gateway/__tests__/non-tui-display-projector.test.ts src/runtime/gateway/__tests__/telegram-gateway-adapter.test.ts src/runtime/gateway/__tests__/seedy-presence-projector.test.ts`
+- `npm run typecheck`
+- `git diff --check`
+- GitHub Codex P1 review identified denylist/regex/includes semantic gating in the preamble safety path.
+- Replaced the semantic denylist gate with a structured preamble contract and reran:
+  - `npx vitest run --config vitest.unit.config.ts src/interface/chat/__tests__/cross-platform-session.test.ts src/interface/chat/__tests__/chat-runner.test.ts`
+  - `npx vitest run --config vitest.integration.config.ts src/runtime/gateway/__tests__/non-tui-display-projector.test.ts src/runtime/gateway/__tests__/telegram-gateway-adapter.test.ts src/runtime/gateway/__tests__/seedy-presence-projector.test.ts`
+  - `npm run typecheck`
+  - `git diff --check`
+- Independent re-review identified that preamble delivery could still block agent/tool execution if the gateway event handler stalled.
+- Added a bounded delivery wait for gateway preambles plus a production caller-path regression where commentary delivery waits on agent-loop start, then reran:
+  - `npx vitest run --config vitest.unit.config.ts src/interface/chat/__tests__/cross-platform-session.test.ts src/interface/chat/__tests__/chat-runner.test.ts`
+  - `npx vitest run --config vitest.integration.config.ts src/runtime/gateway/__tests__/non-tui-display-projector.test.ts src/runtime/gateway/__tests__/telegram-gateway-adapter.test.ts src/runtime/gateway/__tests__/seedy-presence-projector.test.ts`
+  - `npm run typecheck`
+  - `git diff --check`
+- GitHub Codex P2 review identified provider reload overwriting explicitly injected gateway commentary clients.
+- Preserved explicit `gatewayCommentaryClient` across provider reloads while still defaulting to the fresh provider client when no explicit commentary client was configured, then reran:
+  - `npx vitest run --config vitest.unit.config.ts src/interface/chat/__tests__/cross-platform-session.test.ts src/interface/chat/__tests__/chat-runner.test.ts`
+  - `npx vitest run --config vitest.integration.config.ts src/runtime/gateway/__tests__/non-tui-display-projector.test.ts src/runtime/gateway/__tests__/telegram-gateway-adapter.test.ts src/runtime/gateway/__tests__/seedy-presence-projector.test.ts`
+  - `npm run typecheck`
+  - `git diff --check`
+- GitHub Codex P1 review then identified that the global cross-platform manager was passing primary `llmClient` as an explicit commentary client, which would pin stale commentary after `/model` reloads.
+- Added a separate `defaultGatewayCommentaryClient` dependency so the global manager can provide a default commentary client without using the explicit `gatewayCommentaryClient` override slot; provider reloads update default clients but preserve explicitly injected clients.
+- GitHub Codex P2 review identified that aborted turns could still start preamble generation before execution exits.
+- Threaded the active abort signal into agent/tool preamble generation and delivery, with an aborted-turn regression ensuring no LLM call is made when the signal is already aborted.
+- GitHub Codex P2 review then identified that preamble delivery's 300ms wait should also stop when the turn is aborted; the delivery wait now races against the active abort signal.
+- Independent review agent pass, followed by fixes for bounded timeout and safety filtering, then re-review.
+- `git fetch origin main --prune`
+- `git rebase origin/main`
+- `npx vitest run --config vitest.unit.config.ts src/interface/chat/__tests__/cross-platform-session.test.ts src/interface/chat/__tests__/chat-runner.test.ts`
+- `npx vitest run --config vitest.integration.config.ts src/runtime/gateway/__tests__/non-tui-display-projector.test.ts src/runtime/gateway/__tests__/telegram-gateway-adapter.test.ts src/runtime/gateway/__tests__/seedy-presence-projector.test.ts`
+- `npm run typecheck`
+- `git diff --check`
+
+### Verification
+
+- `cross-platform-session.test.ts` + `chat-runner.test.ts`: passed.
+- Gateway display/presence integration tests: passed.
+- Typecheck: passed.
+- Diff whitespace check: passed.
+- Independent review: initial material issues fixed; re-review found no high-confidence material regressions.
+- Rebase conflict against latest `origin/main` was resolved in `chat-runner.ts`; focused tests/typecheck/diff-check passed again after the rebase.
+- GitHub Codex P1 on the original safety filter was fixed by moving safety to a structured model contract rather than keyword/regex/includes semantic matching; focused tests/typecheck/diff-check passed after the fix.
+- A local P1 review on stalled gateway delivery was fixed by bounding the preamble delivery wait before agent/tool execution; focused tests/typecheck/diff-check passed after the fix.
+- GitHub Codex P2 on provider reload clobbering explicit commentary clients was fixed and covered by a focused `chat-runner.test.ts` regression.
+- GitHub Codex P1 on default manager commentary-client pinning was fixed by separating default commentary clients from explicit commentary clients in the typed dependency contract.
+- GitHub Codex P2 on aborted-turn preamble generation was fixed by short-circuiting and racing preamble generation against the active abort signal.
+- GitHub Codex P2 on aborted-turn preamble delivery waiting was fixed by making the bounded delivery wait abort-aware.
+
+### Deferred
+
+- Live Telegram dogfood has not been rerun for this slice yet.

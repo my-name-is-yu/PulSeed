@@ -185,8 +185,12 @@ export class ChatRunner {
   private pendingResumeChoices: RecoveryResumeCandidate[] | null = null;
   private eventJournalHistory: ChatHistory | null = null;
   private eventJournalDirty = false;
+  private readonly hasExplicitGatewayCommentaryClient: boolean;
+  private gatewayCommentaryClient: Pick<NonNullable<ChatRunnerDeps["llmClient"]>, "sendMessage" | "parseJSON"> | undefined;
 
   constructor(private readonly deps: ChatRunnerDeps) {
+    this.hasExplicitGatewayCommentaryClient = deps.gatewayCommentaryClient !== undefined;
+    this.gatewayCommentaryClient = deps.gatewayCommentaryClient ?? deps.defaultGatewayCommentaryClient;
     this.groundingGateway = createChatGroundingGateway({
       stateManager: deps.stateManager,
       pluginLoader: deps.pluginLoader,
@@ -937,6 +941,7 @@ export class ChatRunner {
         history,
         gitRoot,
         runtimeControlContext,
+        activeAbortSignal: activeTurn.abortController.signal,
         start,
       }));
     }
@@ -1091,6 +1096,7 @@ export class ChatRunner {
       eventBridge: this.eventBridge,
       activatedTools: this.activatedTools,
       getRuntimeEvidenceGateClient: () => this.deps.runtimeEvidenceGateClient ?? this.deps.llmClient,
+      getGatewayCommentaryClient: () => this.gatewayCommentaryClient,
       getConversationSessionId: () => this.history?.getSessionId() ?? null,
       getSessionCwd: () => this.sessionCwd,
       getNativeAgentLoopStatePath: () => this.nativeAgentLoopStatePath,
@@ -1140,6 +1146,10 @@ export class ChatRunner {
     const llmClient = await buildLLMClient(providerConfig);
     const adapterRegistry = await buildAdapterRegistry(llmClient, providerConfig);
     this.deps.llmClient = llmClient;
+    if (!this.hasExplicitGatewayCommentaryClient) {
+      this.deps.defaultGatewayCommentaryClient = llmClient;
+      this.gatewayCommentaryClient = llmClient;
+    }
     this.deps.adapter = adapterRegistry.getAdapter(providerConfig.adapter);
     this.deps.chatAgentLoopRunner = this.deps.registry && this.deps.toolExecutor && shouldUseNativeTaskAgentLoop(providerConfig, llmClient)
       ? createNativeChatAgentLoopRunner({

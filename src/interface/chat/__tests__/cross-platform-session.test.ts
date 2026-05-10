@@ -26,6 +26,7 @@ import { ChatSessionCatalog } from "../chat-session-store.js";
 import { ChatSessionDataStore } from "../chat-session-data-store.js";
 import { createRunSpecStore } from "../../../runtime/run-spec/index.js";
 import type { RunSpec } from "../../../runtime/run-spec/index.js";
+import { generateGatewayCommentaryPreamble } from "../gateway-commentary-preamble.js";
 
 vi.mock("../../../platform/observation/context-provider.js", () => ({
   resolveGitRoot: (cwd: string) => cwd,
@@ -811,6 +812,266 @@ describe("CrossPlatformChatSessionManager", () => {
     expect(order).toContain("presence:complete");
   });
 
+  it("emits early gateway commentary before agent-loop execution without treating it as final output", async () => {
+    const events: ChatEvent[] = [];
+    const order: string[] = [];
+    const chatAgentLoopRunner = {
+      execute: vi.fn().mockImplementation(async () => {
+        order.push("agent-loop");
+        return {
+          success: true,
+          output: "Task completed successfully.",
+          error: null,
+          exit_code: null,
+          elapsed_ms: 42,
+          stopped_reason: "completed",
+        };
+      }),
+    };
+    const manager = new CrossPlatformChatSessionManager(makeDeps({
+      stateManager: makeMockStateManager(),
+      chatAgentLoopRunner: chatAgentLoopRunner as never,
+      gatewayCommentaryClient: createMockLLMClient([
+        JSON.stringify({
+          text_kind: "gateway_progress_preamble",
+          display_text: "I'll inspect the relevant project context before using tools.",
+          safety: {
+            verdict: "safe",
+            reason: "Announces upcoming inspection without claiming completed work.",
+          },
+          claims: {
+            completed_work: false,
+            current_runtime_status: false,
+            internal_model_or_provider_detail: false,
+            raw_tool_trace_command_output_or_secret: false,
+          },
+        }),
+      ]),
+    }));
+
+    const result = await manager.execute("Inspect the project and run the relevant checks", {
+      identity_key: "commentary-user",
+      platform: "telegram",
+      conversation_id: "telegram-chat-1",
+      user_id: "user-1",
+      cwd: "/repo",
+      onEvent: (event) => {
+        events.push(event);
+        if (
+          event.type === "activity"
+          && event.kind === "commentary"
+          && event.presentation?.gatewayProgress === "user"
+        ) {
+          order.push("commentary");
+        }
+      },
+    });
+
+    expect(result).toMatchObject({
+      success: true,
+      output: "Task completed successfully.",
+    });
+    expect(order).toEqual(["commentary", "agent-loop"]);
+    expect(events.some((event) =>
+      event.type === "activity"
+      && event.kind === "commentary"
+      && event.presentation?.gatewayProgress === "user"
+      && event.message === "I'll inspect the relevant project context before using tools."
+    )).toBe(true);
+    const final = events.find((event): event is Extract<ChatEvent, { type: "assistant_final" }> =>
+      event.type === "assistant_final"
+    );
+    expect(final?.text).toBe("Task completed successfully.");
+  });
+
+  it("does not delay agent-loop execution when gateway commentary generation stalls", async () => {
+    const order: string[] = [];
+    const chatAgentLoopRunner = {
+      execute: vi.fn().mockImplementation(async () => {
+        order.push("agent-loop");
+        return {
+          success: true,
+          output: "Task completed successfully.",
+          error: null,
+          exit_code: null,
+          elapsed_ms: 42,
+          stopped_reason: "completed",
+        };
+      }),
+    };
+    const manager = new CrossPlatformChatSessionManager(makeDeps({
+      stateManager: makeMockStateManager(),
+      chatAgentLoopRunner: chatAgentLoopRunner as never,
+      gatewayCommentaryClient: {
+        sendMessage: vi.fn(() => new Promise(() => undefined)) as never,
+        parseJSON: vi.fn() as never,
+      },
+    }));
+
+    const startedAt = Date.now();
+    const result = await manager.execute("Inspect the project and run the relevant checks", {
+      identity_key: "commentary-timeout-user",
+      platform: "telegram",
+      conversation_id: "telegram-chat-timeout",
+      user_id: "user-1",
+      cwd: "/repo",
+    });
+
+    expect(result.success).toBe(true);
+    expect(order).toEqual(["agent-loop"]);
+    expect(Date.now() - startedAt).toBeLessThan(2_500);
+  });
+
+  it("does not delay agent-loop execution when gateway commentary delivery stalls", async () => {
+    const order: string[] = [];
+    const agentLoopStarted = createDeferred();
+    const chatAgentLoopRunner = {
+      execute: vi.fn().mockImplementation(async () => {
+        order.push("agent-loop");
+        agentLoopStarted.resolve();
+        return {
+          success: true,
+          output: "Task completed successfully.",
+          error: null,
+          exit_code: null,
+          elapsed_ms: 42,
+          stopped_reason: "completed",
+        };
+      }),
+    };
+    const manager = new CrossPlatformChatSessionManager(makeDeps({
+      stateManager: makeMockStateManager(),
+      chatAgentLoopRunner: chatAgentLoopRunner as never,
+      gatewayCommentaryClient: createMockLLMClient([
+        JSON.stringify({
+          text_kind: "gateway_progress_preamble",
+          display_text: "I'll inspect the relevant project context before using tools.",
+          safety: {
+            verdict: "safe",
+            reason: "Announces upcoming inspection without claiming completed work.",
+          },
+          claims: {
+            completed_work: false,
+            current_runtime_status: false,
+            internal_model_or_provider_detail: false,
+            raw_tool_trace_command_output_or_secret: false,
+          },
+        }),
+      ]),
+    }));
+
+    const startedAt = Date.now();
+    const result = await manager.execute("Inspect the project and run the relevant checks", {
+      identity_key: "commentary-delivery-timeout-user",
+      platform: "telegram",
+      conversation_id: "telegram-chat-delivery-timeout",
+      user_id: "user-1",
+      cwd: "/repo",
+      onEvent: (event) => {
+        if (
+          event.type === "activity"
+          && event.kind === "commentary"
+          && event.presentation?.gatewayProgress === "user"
+        ) {
+          order.push("commentary-delivery-started");
+          return agentLoopStarted.promise;
+        }
+        return undefined;
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(order).toEqual(["commentary-delivery-started", "agent-loop"]);
+    expect(Date.now() - startedAt).toBeLessThan(2_500);
+  });
+
+  it("skips gateway commentary generation when the turn is already aborted", async () => {
+    const abortController = new AbortController();
+    abortController.abort();
+    const llmClient = createMockLLMClient([
+      JSON.stringify({
+        text_kind: "gateway_progress_preamble",
+        display_text: "I'll inspect the relevant project context before using tools.",
+        safety: {
+          verdict: "safe",
+          reason: "Announces upcoming inspection without claiming completed work.",
+        },
+        claims: {
+          completed_work: false,
+          current_runtime_status: false,
+          internal_model_or_provider_detail: false,
+          raw_tool_trace_command_output_or_secret: false,
+        },
+      }),
+    ]);
+
+    const preamble = await generateGatewayCommentaryPreamble({
+      turnContext: {
+        modelVisible: {
+          input: { text: "Inspect the project and run the relevant checks" },
+          runtime: { replyTarget: { surface: "gateway" } },
+          tools: { selectedRoute: "agent_loop" },
+          session: { cwd: "/repo" },
+        },
+      } as never,
+      routeKind: "agent_loop",
+      llmClient,
+      abortSignal: abortController.signal,
+    });
+
+    expect(preamble).toBeNull();
+    expect(llmClient.callCount).toBe(0);
+  });
+
+  it("drops unsafe gateway commentary preambles before they reach gateway progress", async () => {
+    const events: ChatEvent[] = [];
+    const chatAgentLoopRunner = {
+      execute: vi.fn().mockResolvedValue({
+        success: true,
+        output: "Task completed successfully.",
+        error: null,
+        exit_code: null,
+        elapsed_ms: 42,
+        stopped_reason: "completed",
+      }),
+    };
+    const manager = new CrossPlatformChatSessionManager(makeDeps({
+      stateManager: makeMockStateManager(),
+      chatAgentLoopRunner: chatAgentLoopRunner as never,
+      gatewayCommentaryClient: createMockLLMClient([
+        JSON.stringify({
+          text_kind: "gateway_progress_preamble",
+          display_text: "I already verified the checks are green.",
+          safety: {
+            verdict: "unsafe",
+            reason: "Claims completed verification before same-turn evidence exists.",
+          },
+          claims: {
+            completed_work: true,
+            current_runtime_status: false,
+            internal_model_or_provider_detail: false,
+            raw_tool_trace_command_output_or_secret: false,
+          },
+        }),
+      ]),
+    }));
+
+    await manager.execute("Inspect the project and run the relevant checks", {
+      identity_key: "commentary-unsafe-user",
+      platform: "telegram",
+      conversation_id: "telegram-chat-unsafe",
+      user_id: "user-1",
+      cwd: "/repo",
+      onEvent: (event) => { events.push(event); },
+    });
+
+    expect(events.some((event) =>
+      event.type === "activity"
+      && event.kind === "commentary"
+      && event.presentation?.gatewayProgress === "user"
+    )).toBe(false);
+  });
+
   it("drains async per-turn event delivery before returning to gateway callers", async () => {
     const stateManager = makeMockStateManager();
     const manager = new CrossPlatformChatSessionManager(makeDeps({ stateManager }));
@@ -1232,6 +1493,11 @@ describe("CrossPlatformChatSessionManager", () => {
     });
 
     expect(result).toBe("Task completed successfully.");
+    expect(events.some((event) =>
+      event.type === "activity"
+      && event.kind === "commentary"
+      && event.presentation?.gatewayProgress === "user"
+    )).toBe(false);
     expect(events.filter((event) => event.type === "assistant_final")).toHaveLength(1);
     expect(events.filter((event) => event.type === "operation_progress")).toHaveLength(0);
     expect(events.filter((event) => event.type === "presence_update").map((event) => event.presence.phase))

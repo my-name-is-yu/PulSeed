@@ -26,6 +26,7 @@ import {
 } from "./turn-context.js";
 import { buildChatModelRequest } from "./model-request-builder.js";
 import { gateRuntimeEvidenceBoundFinalAnswer } from "./runtime-evidence-gate.js";
+import { generateGatewayCommentaryPreamble } from "./gateway-commentary-preamble.js";
 import {
   createDiscordAdapterPlanDialogue,
   createTelegramConfirmWriteDialogue,
@@ -277,6 +278,7 @@ export async function executeAgentLoopRoute(
     host.eventBridge.emitCheckpoint(resumeOnly ? "Session resumed" : "Working turn started", resumeOnly
       ? "Saved chat state is ready to continue."
       : "PulSeed can now inspect, plan, edit, or verify with visible tool activity.", eventContext, "execution");
+    await emitGatewayCommentaryPreamble(host, turnContext, eventContext, "agent_loop", activeAbortSignal);
     host.eventBridge.emitActivity("lifecycle", "Calling model...", eventContext, "lifecycle:model");
     const result = await host.deps.chatAgentLoopRunner!.execute({
       message: turnContext.modelVisible.prompts.basePrompt,
@@ -427,11 +429,13 @@ export async function executeToolLoopRoute(
     };
     gitRoot: string;
     runtimeControlContext: RuntimeControlChatContext | null;
+    activeAbortSignal?: AbortSignal;
     start: number;
   }
 ): Promise<ChatRunResult> {
   try {
     host.eventBridge.emitCheckpoint("Tool loop started", "The model will choose tools from the active catalog.", params.eventContext, "execution");
+    await emitGatewayCommentaryPreamble(host, params.turnContext, params.eventContext, "tool_loop", params.activeAbortSignal);
     const toolResult = await executeWithTools(
       host,
       params.turnContext,
@@ -654,6 +658,61 @@ export async function executeAdapterRoute(
 
 function shouldGateRuntimeEvidenceForTurn(turnContext: ChatTurnContext): boolean {
   return turnContext.modelVisible.runtime.replyTarget?.surface === "gateway";
+}
+
+async function emitGatewayCommentaryPreamble(
+  host: ChatRunnerRouteHost,
+  turnContext: ChatTurnContext,
+  eventContext: ChatEventContext,
+  routeKind: "agent_loop" | "tool_loop",
+  abortSignal?: AbortSignal,
+): Promise<void> {
+  if (abortSignal?.aborted) return;
+  const preamble = await generateGatewayCommentaryPreamble({
+    turnContext,
+    routeKind,
+    llmClient: host.getGatewayCommentaryClient(),
+    abortSignal,
+  });
+  if (abortSignal?.aborted) return;
+  if (!preamble) return;
+  await withTimeout(
+    host.eventBridge.emitGatewayCommentaryAndFlush(
+      preamble,
+      eventContext,
+      `preamble:${routeKind}:${eventContext.turnId}`,
+    ),
+    300,
+    abortSignal,
+  );
+}
+
+async function withTimeout(promise: Promise<void>, timeoutMs: number, abortSignal?: AbortSignal): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let abortListener: (() => void) | null = null;
+  promise.catch(() => undefined);
+  try {
+    await Promise.race([
+      promise,
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, timeoutMs);
+        timer.unref?.();
+      }),
+      ...(abortSignal
+        ? [
+            new Promise<void>((resolve) => {
+              abortListener = () => resolve();
+              abortSignal.addEventListener("abort", abortListener, { once: true });
+            }),
+          ]
+        : []),
+    ]);
+  } finally {
+    if (timer !== null) clearTimeout(timer);
+    if (abortSignal && abortListener !== null) {
+      abortSignal.removeEventListener("abort", abortListener);
+    }
+  }
 }
 
 async function executeWithTools(

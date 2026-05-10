@@ -3569,6 +3569,50 @@ describe("ChatRunner", () => {
       }
     });
 
+    it("preserves an explicit gateway commentary client when provider runtime reloads", async () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-model-commentary-client-"));
+      try {
+        const stateManager = new StateManager(tmpDir);
+        await stateManager.init();
+        await stateManager.writeRaw("provider.json", {
+          provider: "openai",
+          model: "gpt-5.4-mini",
+          adapter: "openai_codex_cli",
+        });
+        const commentaryClient = createMockLLMClient([
+          JSON.stringify({
+            text_kind: "gateway_progress_preamble",
+            display_text: "I'll inspect the relevant project context before using tools.",
+            safety: {
+              verdict: "safe",
+              reason: "Announces upcoming inspection without claiming completed work.",
+            },
+            claims: {
+              completed_work: false,
+              current_runtime_status: false,
+              internal_model_or_provider_detail: false,
+              raw_tool_trace_command_output_or_secret: false,
+            },
+          }),
+        ]);
+        const runner = new ChatRunner(makeDeps({
+          stateManager,
+          adapter: makeMockAdapter(),
+          gatewayCommentaryClient: commentaryClient,
+        }));
+        const inspectable = runner as unknown as {
+          gatewayCommentaryClient?: unknown;
+          reloadProviderRuntime(): Promise<void>;
+        };
+
+        await inspectable.reloadProviderRuntime();
+
+        expect(inspectable.gatewayCommentaryClient).toBe(commentaryClient);
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+
     it("/model does not persist env-derived model or reasoning defaults", async () => {
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-model-env-runtime-"));
       const oldEnv = {

@@ -1568,6 +1568,7 @@ async function createGlobalCrossPlatformChatSessionManager(): Promise<CrossPlatf
     stateManager,
     adapter,
     llmClient,
+    defaultGatewayCommentaryClient: llmClient,
     registry: toolRegistry,
     toolExecutor,
     chatAgentLoopRunner,
