@@ -16,6 +16,7 @@ export interface EventSpoolListOptions {
 
 export interface EventSpoolWriteOptions {
   prefix?: string;
+  fileName?: string;
   maxPendingFiles?: number;
   maxBytes?: number;
 }
@@ -92,8 +93,7 @@ export async function writeEventSpoolJson(
     throw new Error(`Event spool payload exceeds ${maxBytes} bytes`);
   }
 
-  const prefix = normalizeEventSpoolPrefix(options.prefix ?? "event");
-  const fileName = `${prefix}_${Date.now()}_${randomUUID()}.json`;
+  const fileName = options.fileName ?? makeEventSpoolFileName(options.prefix ?? "event");
   assertEventSpoolJsonFileName(fileName);
   await writeJsonFileAtomic(path.join(spoolDir, fileName), payload);
   return fileName;
@@ -191,6 +191,10 @@ function normalizeEventSpoolPrefix(prefix: string): string {
     })
     .join("");
   return safe.length === 0 ? "event" : safe;
+}
+
+function makeEventSpoolFileName(prefix: string): string {
+  return `${normalizeEventSpoolPrefix(prefix)}_${Date.now()}_${randomUUID()}.json`;
 }
 
 function normalizePositiveSafeInteger(value: number, name: string): number {

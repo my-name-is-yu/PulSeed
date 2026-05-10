@@ -48,6 +48,21 @@ describe("event spool utilities", () => {
     }
   });
 
+  it("preserves explicit spool filenames for compatibility surfaces", async () => {
+    const dir = makeTempDir();
+    try {
+      const fileName = await writeEventSpoolJson(dir, { ok: true }, { fileName: "explicit.json" });
+
+      expect(fileName).toBe("explicit.json");
+      expect(fs.existsSync(path.join(dir, "explicit.json"))).toBe(true);
+      await expect(
+        writeEventSpoolJson(dir, { ok: true }, { fileName: "../explicit.json" })
+      ).rejects.toThrow("Unsafe event spool filename");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("moves event files without overwriting retained spool files", async () => {
     const dir = makeTempDir();
     try {

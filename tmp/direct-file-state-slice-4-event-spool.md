@@ -42,3 +42,7 @@ notify, or dispatch runtime work and may be archived, quarantined, or pruned.
 - `npm run typecheck`: passed.
 - `npm run lint:boundaries`: passed with existing warnings, 0 errors.
 - `git diff --check`: passed.
+- PR #1858 CI follow-up: fixed MCP trigger explicit filename compatibility after `unit (22)` exposed the regression.
+- Post-fix focused unit tests: passed, 93 tests.
+- Post-fix runtime event integration tests: passed, 92 tests.
+- Post-fix guard/typecheck/lint-boundaries/diff-check: passed.

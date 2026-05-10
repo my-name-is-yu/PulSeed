@@ -132,13 +132,21 @@ Base: origin/main @ 7d87d012 Prefer live daemon status in runtime evidence answe
 - `npm run typecheck`: passed.
 - `npm run lint:boundaries`: passed with existing warnings, 0 errors.
 - `git diff --check`: passed.
+- CI follow-up: PR #1858 `unit (22)` initially failed because `pulseed_trigger` preserves a contract that `event_id` maps to `events/<event_id>.json`; fixed by adding explicit filename support to the shared spool writer and using it in MCP trigger writes.
+- Post-fix `npx vitest run --config vitest.unit.config.ts src/base/utils/__tests__/event-spool.test.ts src/interface/mcp-server/__tests__/mcp-server.test.ts src/interface/cli/__tests__/database-first-legacy-store-check.test.ts --reporter dot`: passed, 28 tests.
+- Post-fix `npx vitest run --config vitest.unit.config.ts src/base/utils/__tests__/event-spool.test.ts src/platform/drive/__tests__/drive-system.test.ts src/interface/cli/__tests__/database-first-legacy-store-check.test.ts src/interface/mcp-server/__tests__/mcp-server.test.ts --reporter dot`: passed, 93 tests.
+- Post-fix `npx vitest run --config vitest.integration.config.ts src/runtime/__tests__/event-file-watcher.test.ts src/runtime/__tests__/trigger-api.test.ts src/runtime/__tests__/event-server.test.ts --reporter dot`: passed, 92 tests.
+- Post-fix `node scripts/check-database-first-legacy-stores.mjs --json`: ok=true, findings=0; event spool remains `nextSlice: null`, `debt: false`.
+- Post-fix `npm run typecheck`: passed.
+- Post-fix `npm run lint:boundaries`: passed with existing warnings, 0 errors.
+- Post-fix `git diff --check`: passed.
 
 ## Slice 4 PR Record
 
 - PR: https://github.com/my-name-is-yu/PulSeed/pull/1858
 - Branch: `codex/direct-file-state-slice-4-event-spool-20260510232220`
 - Head commit at PR creation: `5c3f0ea4`
-- CI: pending
+- CI: `unit (22)` failed on first head because MCP trigger explicit filename compatibility was broken; fixed and rerun pending
 - GitHub Codex review: pending
 - `@codex review`: not yet needed
 - Fallback sub-agent review: not used

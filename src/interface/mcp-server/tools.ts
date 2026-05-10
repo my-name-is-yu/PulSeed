@@ -153,7 +153,7 @@ export async function toolTrigger(
       data: args.data,
       created_at: new Date().toISOString(),
     };
-    await writeEventSpoolJson(eventsDir, event, { prefix: "mcp_trigger" });
+    await writeEventSpoolJson(eventsDir, event, { fileName: `${eventId}.json` });
     return ok({ event_id: eventId, status: "queued" });
   } catch (e) {
     return err(String(e));
