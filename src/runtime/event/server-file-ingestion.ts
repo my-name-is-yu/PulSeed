@@ -2,7 +2,11 @@ import * as fs from "node:fs";
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { PulSeedEventSchema } from "../../base/types/drive.js";
+import { readTextFileWithinLimit } from "../../base/utils/json-io.js";
+import { MAX_HTTP_BODY_SIZE } from "../http-body.js";
 import type { Logger } from "../logger.js";
+
+export const EVENT_FILE_MAX_BYTES = MAX_HTTP_BODY_SIZE;
 
 export class EventServerFileIngestion {
   private fileWatcher: fs.FSWatcher | null = null;
@@ -73,7 +77,7 @@ export class EventServerFileIngestion {
     }
     if (!stat.isFile()) return;
 
-    const content = await fsp.readFile(filePath, "utf-8");
+    const content = await readTextFileWithinLimit(filePath, { maxBytes: EVENT_FILE_MAX_BYTES });
     const raw = JSON.parse(content) as unknown;
     const event = PulSeedEventSchema.parse(raw);
 
