@@ -138,7 +138,7 @@ function makeSupervisor(
     pollIntervalMs: 20,
     maxCrashCount: 3,
     crashBackoffBaseMs: 50,
-    stateFilePath: stateFile,
+    runtimeRoot,
     claimLeaseMs: 200,
     leaseRenewIntervalMs: 50,
     ...config,
@@ -508,7 +508,6 @@ describe("LoopSupervisor", () => {
 
   it("does not restore suspended goals from a previous supervisor process", async () => {
     const { runtimeRoot, deps } = makeSupervisor();
-    const stateFile = path.join(runtimeRoot, "supervisor-state.json");
     await writeRawSupervisorState(
       runtimeRoot,
       {
@@ -524,7 +523,7 @@ describe("LoopSupervisor", () => {
       pollIntervalMs: 20,
       maxCrashCount: 3,
       crashBackoffBaseMs: 50,
-      stateFilePath: stateFile,
+      runtimeRoot,
       claimLeaseMs: 200,
       leaseRenewIntervalMs: 50,
     });
@@ -542,7 +541,6 @@ describe("LoopSupervisor", () => {
 
   it("restores only safe integer crash counts from persisted supervisor state", async () => {
     const { runtimeRoot, deps } = makeSupervisor();
-    const stateFile = path.join(runtimeRoot, "supervisor-state.json");
     await writeRawSupervisorState(
       runtimeRoot,
       {
@@ -566,7 +564,7 @@ describe("LoopSupervisor", () => {
       pollIntervalMs: 20,
       maxCrashCount: 3,
       crashBackoffBaseMs: 50,
-      stateFilePath: stateFile,
+      runtimeRoot,
       claimLeaseMs: 200,
       leaseRenewIntervalMs: 50,
     });
@@ -614,7 +612,7 @@ describe("LoopSupervisor", () => {
     });
     const sv = new LoopSupervisor(deps, {
       concurrency: 2, pollIntervalMs: 20, maxCrashCount: 3,
-      crashBackoffBaseMs: 50, stateFilePath: path.join(runtimeRoot, "sv-conc.json"),
+      crashBackoffBaseMs: 50, runtimeRoot,
       claimLeaseMs: 200,
       leaseRenewIntervalMs: 50,
     });
@@ -1019,7 +1017,7 @@ describe("LoopSupervisor", () => {
         pollIntervalMs: 10,
         maxCrashCount: 1,
         crashBackoffBaseMs: 9999,
-        stateFilePath: path.join(runtimeRoot, "supervisor-state.json"),
+        runtimeRoot,
         claimLeaseMs: 40,
         leaseRenewIntervalMs: 50,
       }
@@ -1087,7 +1085,7 @@ describe("LoopSupervisor", () => {
         pollIntervalMs: 10,
         maxCrashCount: 3,
         crashBackoffBaseMs: 9999,
-        stateFilePath: path.join(runtimeRoot, "supervisor-a.json"),
+        runtimeRoot,
         claimLeaseMs: 40,
         leaseRenewIntervalMs: 1000,
       }
@@ -1106,7 +1104,7 @@ describe("LoopSupervisor", () => {
         pollIntervalMs: 10,
         maxCrashCount: 3,
         crashBackoffBaseMs: 9999,
-        stateFilePath: path.join(runtimeRoot, "supervisor-b.json"),
+        runtimeRoot,
         claimLeaseMs: 200,
         leaseRenewIntervalMs: 50,
       }

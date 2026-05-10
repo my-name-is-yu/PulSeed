@@ -66,11 +66,15 @@ const DEFAULT_CONFIG = {
 
 function createMockDeps(overrides: Partial<CuriosityEngineDeps> = {}): CuriosityEngineDeps {
   const stateManager = {
-    readRaw: vi.fn().mockResolvedValue(null),
-    writeRaw: vi.fn().mockResolvedValue(undefined),
     loadGoal: vi.fn().mockResolvedValue(null),
     saveGoal: vi.fn().mockResolvedValue(undefined),
+    getBaseDir: vi.fn().mockReturnValue("/tmp/pulseed-test"),
   } as any;
+
+  const curiosityStateStore = {
+    load: vi.fn().mockResolvedValue(null),
+    saveSync: vi.fn((state: any) => state),
+  };
 
   const llmClient = {
     sendMessage: vi.fn().mockResolvedValue({ content: "[]" }),
@@ -101,6 +105,7 @@ function createMockDeps(overrides: Partial<CuriosityEngineDeps> = {}): Curiosity
 
   return {
     stateManager,
+    curiosityStateStore,
     llmClient,
     ethicsGate,
     stallDetector,
@@ -120,7 +125,7 @@ describe("CuriosityEngine — auto-expiration", () => {
       status: "pending",
       expires_at: pastDate,
     });
-    (deps.stateManager.readRaw as ReturnType<typeof vi.fn>).mockResolvedValue({
+    (deps.curiosityStateStore!.load as ReturnType<typeof vi.fn>).mockResolvedValue({
       proposals: [expiredProposal],
       learning_records: [],
       last_exploration_at: null,
@@ -144,7 +149,7 @@ describe("CuriosityEngine — auto-expiration", () => {
       expires_at: futureDate,
       loop_count: 3, // equals limit
     });
-    (deps.stateManager.readRaw as ReturnType<typeof vi.fn>).mockResolvedValue({
+    (deps.curiosityStateStore!.load as ReturnType<typeof vi.fn>).mockResolvedValue({
       proposals: [approvedProposal],
       learning_records: [],
       last_exploration_at: null,
@@ -165,7 +170,7 @@ describe("CuriosityEngine — auto-expiration", () => {
       status: "pending",
       expires_at: futureDate,
     });
-    (deps.stateManager.readRaw as ReturnType<typeof vi.fn>).mockResolvedValue({
+    (deps.curiosityStateStore!.load as ReturnType<typeof vi.fn>).mockResolvedValue({
       proposals: [freshProposal],
       learning_records: [],
       last_exploration_at: null,
@@ -187,7 +192,7 @@ describe("CuriosityEngine — auto-expiration", () => {
       expires_at: futureDate,
       loop_count: 2, // below limit of 5
     });
-    (deps.stateManager.readRaw as ReturnType<typeof vi.fn>).mockResolvedValue({
+    (deps.curiosityStateStore!.load as ReturnType<typeof vi.fn>).mockResolvedValue({
       proposals: [productiveProposal],
       learning_records: [],
       last_exploration_at: null,
@@ -203,7 +208,7 @@ describe("CuriosityEngine — auto-expiration", () => {
     const deps = createMockDeps();
     const pastDate = new Date(Date.now() - 1000).toISOString();
     const expiredProposal = createProposal({ status: "pending", expires_at: pastDate });
-    (deps.stateManager.readRaw as ReturnType<typeof vi.fn>).mockResolvedValue({
+    (deps.curiosityStateStore!.load as ReturnType<typeof vi.fn>).mockResolvedValue({
       proposals: [expiredProposal],
       learning_records: [],
       last_exploration_at: null,
@@ -212,9 +217,9 @@ describe("CuriosityEngine — auto-expiration", () => {
 
     const engine = new CuriosityEngine(deps);
     await engine.evaluateTriggers([]);
-    const writeCountBefore = (deps.stateManager.writeRaw as ReturnType<typeof vi.fn>).mock.calls.length;
+    const writeCountBefore = (deps.curiosityStateStore!.saveSync as ReturnType<typeof vi.fn>).mock.calls.length;
     engine.checkAutoExpiration();
-    const writeCountAfter = (deps.stateManager.writeRaw as ReturnType<typeof vi.fn>).mock.calls.length;
+    const writeCountAfter = (deps.curiosityStateStore!.saveSync as ReturnType<typeof vi.fn>).mock.calls.length;
     expect(writeCountAfter).toBeGreaterThan(writeCountBefore);
   });
 
@@ -222,9 +227,9 @@ describe("CuriosityEngine — auto-expiration", () => {
     const deps = createMockDeps();
     // No proposals at all
     const engine = new CuriosityEngine(deps);
-    const writeCountBefore = (deps.stateManager.writeRaw as ReturnType<typeof vi.fn>).mock.calls.length;
+    const writeCountBefore = (deps.curiosityStateStore!.saveSync as ReturnType<typeof vi.fn>).mock.calls.length;
     engine.checkAutoExpiration();
-    const writeCountAfter = (deps.stateManager.writeRaw as ReturnType<typeof vi.fn>).mock.calls.length;
+    const writeCountAfter = (deps.curiosityStateStore!.saveSync as ReturnType<typeof vi.fn>).mock.calls.length;
     expect(writeCountAfter).toBe(writeCountBefore);
   });
 
@@ -232,7 +237,7 @@ describe("CuriosityEngine — auto-expiration", () => {
     const deps = createMockDeps({ config: { unproductive_loop_limit: 2 } });
     const pastDate = new Date(Date.now() - 1000).toISOString();
     const futureDate = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
-    (deps.stateManager.readRaw as ReturnType<typeof vi.fn>).mockResolvedValue({
+    (deps.curiosityStateStore!.load as ReturnType<typeof vi.fn>).mockResolvedValue({
       proposals: [
         createProposal({ id: "p1", status: "pending", expires_at: pastDate }),
         createProposal({ id: "p2", status: "approved", expires_at: futureDate, loop_count: 2 }),
@@ -266,7 +271,7 @@ describe("CuriosityEngine — incrementLoopCount", () => {
       loop_count: 0,
       goal_id: "g-curiosity-1",
     });
-    (deps.stateManager.readRaw as ReturnType<typeof vi.fn>).mockResolvedValue({
+    (deps.curiosityStateStore!.load as ReturnType<typeof vi.fn>).mockResolvedValue({
       proposals: [approvedProposal],
       learning_records: [],
       last_exploration_at: null,
@@ -292,7 +297,7 @@ describe("CuriosityEngine — incrementLoopCount", () => {
       loop_count: 0,
       goal_id: "g-curiosity-1",
     });
-    (deps.stateManager.readRaw as ReturnType<typeof vi.fn>).mockResolvedValue({
+    (deps.curiosityStateStore!.load as ReturnType<typeof vi.fn>).mockResolvedValue({
       proposals: [approvedProposal],
       learning_records: [],
       last_exploration_at: null,
@@ -311,16 +316,16 @@ describe("CuriosityEngine — incrementLoopCount", () => {
   it("does not save state when no proposal was changed", async () => {
     const deps = createMockDeps();
     const engine = new CuriosityEngine(deps); // no proposals loaded
-    const writeCountBefore = (deps.stateManager.writeRaw as ReturnType<typeof vi.fn>).mock.calls.length;
+    const writeCountBefore = (deps.curiosityStateStore!.saveSync as ReturnType<typeof vi.fn>).mock.calls.length;
     engine.incrementLoopCount("nonexistent-goal");
-    const writeCountAfter = (deps.stateManager.writeRaw as ReturnType<typeof vi.fn>).mock.calls.length;
+    const writeCountAfter = (deps.curiosityStateStore!.saveSync as ReturnType<typeof vi.fn>).mock.calls.length;
     expect(writeCountAfter).toBe(writeCountBefore);
   });
 
   it("saves state after incrementing", async () => {
     const deps = createMockDeps();
     const futureDate = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
-    (deps.stateManager.readRaw as ReturnType<typeof vi.fn>).mockResolvedValue({
+    (deps.curiosityStateStore!.load as ReturnType<typeof vi.fn>).mockResolvedValue({
       proposals: [
         createProposal({
           id: "p1",
@@ -337,16 +342,16 @@ describe("CuriosityEngine — incrementLoopCount", () => {
 
     const engine = new CuriosityEngine(deps);
     await engine.evaluateTriggers([]);
-    const writeCountBefore = (deps.stateManager.writeRaw as ReturnType<typeof vi.fn>).mock.calls.length;
+    const writeCountBefore = (deps.curiosityStateStore!.saveSync as ReturnType<typeof vi.fn>).mock.calls.length;
     engine.incrementLoopCount("g-target");
-    const writeCountAfter = (deps.stateManager.writeRaw as ReturnType<typeof vi.fn>).mock.calls.length;
+    const writeCountAfter = (deps.curiosityStateStore!.saveSync as ReturnType<typeof vi.fn>).mock.calls.length;
     expect(writeCountAfter).toBeGreaterThan(writeCountBefore);
   });
 
   it("only increments proposals with status approved (not pending)", async () => {
     const deps = createMockDeps();
     const futureDate = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
-    (deps.stateManager.readRaw as ReturnType<typeof vi.fn>).mockResolvedValue({
+    (deps.curiosityStateStore!.load as ReturnType<typeof vi.fn>).mockResolvedValue({
       proposals: [
         createProposal({
           id: "p1",
@@ -390,8 +395,8 @@ describe("CuriosityEngine — recordLearning", () => {
     const after = Date.now();
 
     // We can't directly read state, but we can verify saveState was called
-    expect(deps.stateManager.writeRaw).toHaveBeenCalled();
-    const writtenState = (deps.stateManager.writeRaw as ReturnType<typeof vi.fn>).mock.calls.at(-1)![1] as any;
+    expect(deps.curiosityStateStore!.saveSync).toHaveBeenCalled();
+    const writtenState = (deps.curiosityStateStore!.saveSync as ReturnType<typeof vi.fn>).mock.calls.at(-1)![0] as any;
     expect(writtenState.learning_records).toHaveLength(1);
     const record = writtenState.learning_records[0];
     expect(record.goal_id).toBe("g1");
@@ -407,7 +412,7 @@ describe("CuriosityEngine — recordLearning", () => {
   it("saves state after recording", async () => {
     const deps = createMockDeps();
     const engine = new CuriosityEngine(deps);
-    const writeCountBefore = (deps.stateManager.writeRaw as ReturnType<typeof vi.fn>).mock.calls.length;
+    const writeCountBefore = (deps.curiosityStateStore!.saveSync as ReturnType<typeof vi.fn>).mock.calls.length;
     engine.recordLearning({
       goal_id: "g1",
       dimension_name: "dim",
@@ -415,7 +420,7 @@ describe("CuriosityEngine — recordLearning", () => {
       outcome: "failure",
       improvement_ratio: -0.2,
     });
-    const writeCountAfter = (deps.stateManager.writeRaw as ReturnType<typeof vi.fn>).mock.calls.length;
+    const writeCountAfter = (deps.curiosityStateStore!.saveSync as ReturnType<typeof vi.fn>).mock.calls.length;
     expect(writeCountAfter).toBeGreaterThan(writeCountBefore);
   });
 
@@ -426,7 +431,7 @@ describe("CuriosityEngine — recordLearning", () => {
     engine.recordLearning({ goal_id: "g1", dimension_name: "d1", approach: "a1", outcome: "success", improvement_ratio: 0.5 });
     engine.recordLearning({ goal_id: "g2", dimension_name: "d2", approach: "a2", outcome: "failure", improvement_ratio: -0.1 });
 
-    const writtenState = (deps.stateManager.writeRaw as ReturnType<typeof vi.fn>).mock.calls.at(-1)![1] as any;
+    const writtenState = (deps.curiosityStateStore!.saveSync as ReturnType<typeof vi.fn>).mock.calls.at(-1)![0] as any;
     expect(writtenState.learning_records).toHaveLength(2);
   });
 
@@ -446,7 +451,7 @@ describe("CuriosityEngine — recordLearning", () => {
     engine.recordLearning({ goal_id: "g", dimension_name: "d", approach: "a", outcome: "success", improvement_ratio: 1.0 });
     const after = Date.now();
 
-    const writtenState = (deps.stateManager.writeRaw as ReturnType<typeof vi.fn>).mock.calls.at(-1)![1] as any;
+    const writtenState = (deps.curiosityStateStore!.saveSync as ReturnType<typeof vi.fn>).mock.calls.at(-1)![0] as any;
     const record = writtenState.learning_records[0];
     const recordedTime = new Date(record.recorded_at).getTime();
     expect(recordedTime).toBeGreaterThanOrEqual(before);

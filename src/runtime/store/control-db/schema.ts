@@ -7,7 +7,7 @@ export interface ControlDbMigration {
   checksum: string;
 }
 
-export const CONTROL_DB_SCHEMA_VERSION = 13;
+export const CONTROL_DB_SCHEMA_VERSION = 14;
 
 export const CONTROL_DB_INITIAL_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS control_schema_migrations (
@@ -1174,6 +1174,65 @@ CREATE INDEX IF NOT EXISTS proactive_intervention_events_recorded_idx
   ON proactive_intervention_events(recorded_at, sequence);
 `.trim();
 
+export const CONTROL_DB_CURIOSITY_STATE_SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS curiosity_state_metadata (
+  state_id TEXT PRIMARY KEY CHECK (state_id = 'current'),
+  last_exploration_at TEXT,
+  updated_at TEXT NOT NULL,
+  state_json TEXT NOT NULL CHECK (json_valid(state_json))
+);
+
+CREATE TABLE IF NOT EXISTS curiosity_proposals (
+  proposal_id TEXT PRIMARY KEY,
+  status TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'rejected', 'expired', 'auto_closed')),
+  goal_id TEXT,
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  reviewed_at TEXT,
+  rejection_cooldown_until TEXT,
+  loop_count INTEGER NOT NULL CHECK (loop_count >= 0),
+  trigger_type TEXT NOT NULL,
+  trigger_source_goal_id TEXT,
+  sort_order INTEGER NOT NULL CHECK (sort_order >= 0),
+  updated_at TEXT NOT NULL,
+  proposal_json TEXT NOT NULL CHECK (json_valid(proposal_json))
+);
+
+CREATE INDEX IF NOT EXISTS curiosity_proposals_status_idx
+  ON curiosity_proposals(status, created_at, proposal_id);
+
+CREATE INDEX IF NOT EXISTS curiosity_proposals_goal_idx
+  ON curiosity_proposals(goal_id, status, created_at, proposal_id);
+
+CREATE INDEX IF NOT EXISTS curiosity_proposals_trigger_idx
+  ON curiosity_proposals(trigger_type, trigger_source_goal_id, created_at, proposal_id);
+
+CREATE TABLE IF NOT EXISTS curiosity_learning_records (
+  record_sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+  goal_id TEXT NOT NULL,
+  dimension_name TEXT NOT NULL,
+  outcome TEXT NOT NULL CHECK (outcome IN ('success', 'failure', 'partial')),
+  recorded_at TEXT NOT NULL,
+  sort_order INTEGER NOT NULL CHECK (sort_order >= 0),
+  record_json TEXT NOT NULL CHECK (json_valid(record_json))
+);
+
+CREATE INDEX IF NOT EXISTS curiosity_learning_records_goal_idx
+  ON curiosity_learning_records(goal_id, recorded_at, record_sequence);
+
+CREATE INDEX IF NOT EXISTS curiosity_learning_records_dimension_idx
+  ON curiosity_learning_records(dimension_name, recorded_at, record_sequence);
+
+CREATE TABLE IF NOT EXISTS curiosity_rejected_proposal_hashes (
+  proposal_hash TEXT PRIMARY KEY,
+  sort_order INTEGER NOT NULL CHECK (sort_order >= 0),
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS curiosity_rejected_proposal_hashes_order_idx
+  ON curiosity_rejected_proposal_hashes(sort_order, proposal_hash);
+`.trim();
+
 export function controlDbMigrationChecksum(sql: string): string {
   return createHash("sha256").update(sql.trim()).digest("hex");
 }
@@ -1256,5 +1315,10 @@ export const CONTROL_DB_MIGRATIONS: readonly ControlDbMigration[] = [
     13,
     "runtime-journal-replacement-stores",
     CONTROL_DB_RUNTIME_JOURNAL_REPLACEMENT_SCHEMA_SQL
+  ),
+  createControlDbMigration(
+    14,
+    "curiosity-runtime-state",
+    CONTROL_DB_CURIOSITY_STATE_SCHEMA_SQL
   ),
 ];

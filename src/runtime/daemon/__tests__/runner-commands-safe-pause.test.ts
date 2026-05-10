@@ -197,7 +197,6 @@ describe("daemon safe pause commands", () => {
   it("resumes through the real command dispatcher and supervisor queue without duplicate task dispatch", async () => {
     const realQueue = new JournalBackedQueue({ journalPath: path.join(tmpDir, "real-queue.json") });
     const completedGoalIds: string[] = [];
-    const supervisorStatePath = path.join(tmpDir, "real-supervisor-state.json");
     const realSupervisor = new LoopSupervisor({
       coreLoopFactory: () => ({
         run: vi.fn(async (goalId: string) => ({
@@ -219,7 +218,7 @@ describe("daemon safe pause commands", () => {
     }, {
       concurrency: 1,
       iterationsPerCycle: 1,
-      stateFilePath: supervisorStatePath,
+      runtimeRoot: tmpDir,
       pollIntervalMs: 20,
       claimLeaseMs: 1_000,
       leaseRenewIntervalMs: 100,
@@ -259,7 +258,7 @@ describe("daemon safe pause commands", () => {
           candidate_evidence_refs: ["evidence-ref"],
           artifact_refs: ["artifact-ref"],
           next_action: "continue from checkpoint",
-          supervisor_state_ref: supervisorStatePath,
+          supervisor_state_ref: "sqlite://pulseed-control/supervisor-state/current",
           background_run_ids: [],
         },
       });

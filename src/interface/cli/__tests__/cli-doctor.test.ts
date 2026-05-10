@@ -53,6 +53,7 @@ import {
   PluginChannelRuntimeStateStore,
   RuntimeHealthStore,
   SupervisorStateStore,
+  CuriosityStateStore,
 } from "../../../runtime/store/index.js";
 
 async function saveDaemonStateFixture(tmpDir: string, state: Record<string, unknown>): Promise<void> {
@@ -1499,6 +1500,61 @@ describe("cmdDoctor summary counts", () => {
     });
     const allOutput = consoleSpy.mock.calls.map((c: unknown[]) => c[0] as string).join("\n");
     expect(allOutput).toContain("Repair plugin/channel import: plugin states=1, channel health=1");
+  });
+
+  it("imports legacy curiosity state through doctor repair", async () => {
+    const origHome = process.env["PULSEED_HOME"];
+    process.env["PULSEED_HOME"] = tmpDir;
+    fs.mkdirSync(path.join(tmpDir, "curiosity"), { recursive: true });
+    fs.writeFileSync(path.join(tmpDir, "curiosity", "state.json"), JSON.stringify({
+      proposals: [
+        {
+          id: "doctor-curiosity-proposal",
+          trigger: {
+            type: "periodic_exploration",
+            detected_at: "2026-05-10T00:00:00.000Z",
+            source_goal_id: null,
+            details: "Legacy curiosity repair",
+            severity: 0.5,
+          },
+          proposed_goal: {
+            description: "Repair curiosity runtime state",
+            rationale: "doctor --repair should import the legacy file once.",
+            suggested_dimensions: [],
+            scope_domain: "runtime",
+            detection_method: "periodic_review",
+          },
+          status: "pending",
+          created_at: "2026-05-10T00:00:00.000Z",
+          expires_at: "2026-05-10T12:00:00.000Z",
+          reviewed_at: null,
+          rejection_cooldown_until: null,
+          loop_count: 0,
+          goal_id: null,
+        },
+      ],
+      learning_records: [],
+      last_exploration_at: "2026-05-10T00:00:00.000Z",
+      rejected_proposal_hashes: ["doctor-hash"],
+    }));
+
+    try {
+      const exitCode = await cmdDoctor(["--repair"]);
+      expect([0, 1]).toContain(exitCode);
+    } finally {
+      if (origHome !== undefined) {
+        process.env["PULSEED_HOME"] = origHome;
+      } else {
+        delete process.env["PULSEED_HOME"];
+      }
+    }
+
+    await expect(new CuriosityStateStore(tmpDir).load()).resolves.toMatchObject({
+      proposals: [expect.objectContaining({ id: "doctor-curiosity-proposal" })],
+      rejected_proposal_hashes: ["doctor-hash"],
+    });
+    const allOutput = consoleSpy.mock.calls.map((c: unknown[]) => c[0] as string).join("\n");
+    expect(allOutput).toContain("Repair curiosity import: state files=1, proposals=1");
   });
 
   it("imports queue and supervisor legacy state from a configured custom runtime root through doctor repair", async () => {
