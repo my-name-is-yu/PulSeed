@@ -39,6 +39,7 @@ const ALLOWLIST_RULES_BY_ID = new Map(Object.entries({
   "soil-import-overlay-queue": ["soil-import-publish-artifact"],
   "goal-task-store-logical-path-parser": ["goal-task-json-state"],
   "strategy-dream-store-logical-path-parser": ["strategy-dream-json-state"],
+  "knowledge-transfer-store-logical-path-parser": ["knowledge-transfer-json-state"],
   "soil-publish-artifact-state": ["plugin-channel-runtime-json", "soil-import-publish-artifact"],
   "legacy-capability-registry-input": ["capability-registry-json-state"],
   "relationship-profile-user-content": ["profile-json-state"],
@@ -390,6 +391,13 @@ const PATH_ALLOWLIST = [
     category: CATEGORY.MIGRATION_ONLY_INPUT,
     reason: "legacy logical-path adapter retained for explicit migration/compatibility coverage; normal callers use typed APIs",
     owner: "StrategyDreamStateStore typed APIs",
+  }),
+  allow({
+    id: "knowledge-transfer-store-logical-path-parser",
+    pattern: /(^|\/)src\/runtime\/store\/knowledge-transfer-state-store\.ts$/,
+    category: CATEGORY.MIGRATION_ONLY_INPUT,
+    reason: "legacy logical-path adapter retained for explicit migration/compatibility coverage; normal callers use typed APIs",
+    owner: "KnowledgeTransferStateStore typed APIs",
   }),
   allow({
     id: "soil-publish-artifact-state",

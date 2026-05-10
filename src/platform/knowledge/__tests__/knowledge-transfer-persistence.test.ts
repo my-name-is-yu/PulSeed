@@ -81,6 +81,48 @@ const ADAPTATION_RESPONSE = JSON.stringify({
 });
 
 describe("KnowledgeTransfer snapshot persistence", () => {
+  it("ignores stale legacy snapshot files on the normal runtime caller path", async () => {
+    const tmpDir = makeTmpDir();
+    fs.mkdirSync(path.join(tmpDir, "knowledge-transfer"), { recursive: true });
+    fs.writeFileSync(path.join(tmpDir, "knowledge-transfer", "snapshot.json"), JSON.stringify({
+      transfers: [{
+        candidate_id: "tc_stale_file",
+        source_goal_id: "source_goal",
+        target_goal_id: "target_goal",
+        type: "pattern",
+        source_item_id: "pat_stale",
+        similarity_score: 0.9,
+        estimated_benefit: "Should not be read from a legacy file",
+        state: "pending",
+        domain_tag_match: true,
+        adapted_content: null,
+        effectiveness_score: null,
+        proposed_at: "2026-05-10T00:00:00.000Z",
+        applied_at: null,
+        invalidated_at: null,
+      }],
+      results: [],
+      effectiveness_records: [],
+      apply_contexts: {},
+      pattern_trackers: {},
+      cross_goal_patterns: [],
+    }));
+
+    const stateManager = new StateManager(tmpDir);
+    const kt = new KnowledgeTransfer({
+      llmClient: createMockLLMClient([]),
+      knowledgeManager: makeMockKnowledgeManager(),
+      vectorIndex: null,
+      learningPipeline: makeMockLearningPipeline({}),
+      ethicsGate: makeMockEthicsGate(),
+      stateManager,
+    });
+
+    await expect(stateManager.readRaw("knowledge-transfer/snapshot.json")).resolves.toBeNull();
+    const snapshot = await kt.listTransferSnapshot();
+    expect(snapshot.transfers).toHaveLength(0);
+  });
+
   it("restores transfer history from disk in a fresh instance", async () => {
     const tmpDir = makeTmpDir();
     const stateManager1 = new StateManager(tmpDir);

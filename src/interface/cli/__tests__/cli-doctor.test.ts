@@ -61,6 +61,7 @@ import {
   CuriosityStateStore,
   EthicsLogStore,
   TrustStateStore,
+  KnowledgeTransferStateStore,
 } from "../../../runtime/store/index.js";
 import { loadRelationshipProfileProposalStore } from "../../../platform/profile/profile-change-proposal.js";
 
@@ -1581,6 +1582,57 @@ describe("cmdDoctor summary counts", () => {
           source_kind: "learning_experience_logs",
           source_id: `logs:${goalId}`,
           migration_name: "learning-runtime-state",
+          status: "imported",
+        }),
+      ]));
+    } finally {
+      database.close();
+    }
+  });
+
+  it("imports legacy knowledge transfer state through doctor repair", async () => {
+    const origHome = process.env["PULSEED_HOME"];
+    process.env["PULSEED_HOME"] = tmpDir;
+    const snapshot = {
+      transfers: [],
+      results: [],
+      effectiveness_records: [],
+      apply_contexts: {},
+      pattern_trackers: {},
+      cross_goal_patterns: [],
+    };
+    fs.mkdirSync(path.join(tmpDir, "knowledge-transfer"), { recursive: true });
+    fs.mkdirSync(path.join(tmpDir, "meta-patterns"), { recursive: true });
+    fs.writeFileSync(path.join(tmpDir, "knowledge-transfer", "snapshot.json"), JSON.stringify(snapshot));
+    fs.writeFileSync(path.join(tmpDir, "meta-patterns", "last_aggregated_at.json"), JSON.stringify({
+      ts: "2026-05-10T01:00:00.000Z",
+    }));
+
+    try {
+      const exitCode = await cmdDoctor(["--repair"]);
+      expect([0, 1]).toContain(exitCode);
+    } finally {
+      if (origHome !== undefined) {
+        process.env["PULSEED_HOME"] = origHome;
+      } else {
+        delete process.env["PULSEED_HOME"];
+      }
+    }
+
+    const knowledgeTransferStore = new KnowledgeTransferStateStore(tmpDir);
+    await expect(knowledgeTransferStore.loadSnapshot()).resolves.toEqual(snapshot);
+    await expect(knowledgeTransferStore.loadLastAggregatedAt()).resolves.toBe("2026-05-10T01:00:00.000Z");
+
+    const allOutput = consoleSpy.mock.calls.map((c: unknown[]) => c[0] as string).join("\n");
+    expect(allOutput).toContain("Repair knowledge transfer import: snapshots=1, meta-pattern watermarks=1, skipped already imported=0, retired existing typed state=0");
+
+    const database = await openControlDatabase({ baseDir: tmpDir });
+    try {
+      expect(database.listLegacyImports()).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          source_kind: "knowledge_transfer_snapshot",
+          source_id: "current",
+          migration_name: "knowledge-transfer-runtime-state",
           status: "imported",
         }),
       ]));

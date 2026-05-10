@@ -30,6 +30,7 @@ import {
   inspectControlDatabase,
   importLegacyGoalTaskDurableLoopState,
   importLegacyKnowledgeMemoryState,
+  importLegacyKnowledgeTransferState,
   importLegacyLearningRuntimeState,
   importLegacyMemoryLifecycleState,
   importLegacyPluginChannelRuntimeState,
@@ -752,6 +753,7 @@ export async function cmdDoctor(_args: string[]): Promise<number> {
     const ethicsImportReport = await importLegacyEthicsLogState(baseDir);
     const relationshipProfileProposalImportReport = await importLegacyRelationshipProfileProposalState(baseDir);
     const knowledgeMemoryImportReport = await importLegacyKnowledgeMemoryState(baseDir);
+    const knowledgeTransferImportReport = await importLegacyKnowledgeTransferState(baseDir);
     const learningRuntimeImportReport = await importLegacyLearningRuntimeState(baseDir);
     const memoryLifecycleImportReport = await importLegacyMemoryLifecycleState(baseDir);
     const dreamDecisionHeuristicImportReport = await importLegacyDreamDecisionHeuristics(baseDir);
@@ -807,6 +809,9 @@ export async function cmdDoctor(_args: string[]): Promise<number> {
     );
     console.log(
       `Repair knowledge/memory import: domain=${knowledgeMemoryImportReport.domainKnowledge}, shared=${knowledgeMemoryImportReport.sharedKnowledgeEntries}, agent memory=${knowledgeMemoryImportReport.agentMemoryEntries}, corrections=${knowledgeMemoryImportReport.agentMemoryCorrections}, blocked=${knowledgeMemoryImportReport.blockedSources.length}`
+    );
+    console.log(
+      `Repair knowledge transfer import: snapshots=${knowledgeTransferImportReport.snapshots}, meta-pattern watermarks=${knowledgeTransferImportReport.metaPatternWatermarks}, skipped already imported=${knowledgeTransferImportReport.skippedAlreadyImported}, retired existing typed state=${knowledgeTransferImportReport.retiredExistingTypedState}, blocked=${knowledgeTransferImportReport.blockedSources.length}`
     );
     console.log(
       `Repair learning runtime import: logs=${learningRuntimeImportReport.experienceLogs}, patterns=${learningRuntimeImportReport.patterns}, feedback entries=${learningRuntimeImportReport.feedbackEntries}, structural feedback=${learningRuntimeImportReport.structuralFeedback}, skipped already imported=${learningRuntimeImportReport.skippedAlreadyImported}, retired existing typed state=${learningRuntimeImportReport.retiredExistingTypedState}, blocked=${learningRuntimeImportReport.blockedSources.length}`
