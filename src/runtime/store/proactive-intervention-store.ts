@@ -58,23 +58,27 @@ export const ProactiveInterventionEventSchema = z.discriminatedUnion("event_type
   ProactiveInterventionFeedbackEventSchema,
 ]);
 
+const ProactiveInterventionSummaryCountSchema = z.number().finite().int().nonnegative().safe();
+const ProactiveInterventionSummaryRateSchema = z.number().finite().min(0).max(1);
+const ProactiveInterventionSummaryDurationSchema = z.number().finite().nonnegative().max(Number.MAX_SAFE_INTEGER);
+
 export const ProactiveInterventionSummarySchema = z.object({
-  total_interventions: z.number().int().nonnegative(),
-  pending_count: z.number().int().nonnegative(),
-  response_count: z.number().int().nonnegative(),
-  accepted_count: z.number().int().nonnegative(),
-  ignored_count: z.number().int().nonnegative(),
-  dismissed_count: z.number().int().nonnegative(),
-  corrected_count: z.number().int().nonnegative(),
-  overreach_count: z.number().int().nonnegative(),
-  response_rate: z.number().min(0).max(1).nullable(),
-  accepted_rate: z.number().min(0).max(1).nullable(),
-  ignored_rate: z.number().min(0).max(1).nullable(),
-  correction_rate: z.number().min(0).max(1).nullable(),
-  overreach_rate: z.number().min(0).max(1).nullable(),
-  average_time_to_response_ms: z.number().nonnegative().nullable(),
-  by_kind: z.record(z.number().int().nonnegative()),
-  by_channel: z.record(z.number().int().nonnegative()),
+  total_interventions: ProactiveInterventionSummaryCountSchema,
+  pending_count: ProactiveInterventionSummaryCountSchema,
+  response_count: ProactiveInterventionSummaryCountSchema,
+  accepted_count: ProactiveInterventionSummaryCountSchema,
+  ignored_count: ProactiveInterventionSummaryCountSchema,
+  dismissed_count: ProactiveInterventionSummaryCountSchema,
+  corrected_count: ProactiveInterventionSummaryCountSchema,
+  overreach_count: ProactiveInterventionSummaryCountSchema,
+  response_rate: ProactiveInterventionSummaryRateSchema.nullable(),
+  accepted_rate: ProactiveInterventionSummaryRateSchema.nullable(),
+  ignored_rate: ProactiveInterventionSummaryRateSchema.nullable(),
+  correction_rate: ProactiveInterventionSummaryRateSchema.nullable(),
+  overreach_rate: ProactiveInterventionSummaryRateSchema.nullable(),
+  average_time_to_response_ms: ProactiveInterventionSummaryDurationSchema.nullable(),
+  by_kind: z.record(ProactiveInterventionSummaryCountSchema),
+  by_channel: z.record(ProactiveInterventionSummaryCountSchema),
   latest_feedback_at: z.string().datetime().nullable(),
   policy_adjustment_recommendation: z.object({
     relationship_profile_key: z.string().min(1),
