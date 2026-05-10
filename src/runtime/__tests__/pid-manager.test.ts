@@ -396,6 +396,46 @@ describe("PIDManager", () => {
       expect(stopResult.alivePids).toEqual([]);
     });
 
+    it("keeps a verified PID alive when signal 0 reports EPERM", async () => {
+      const protectedPid = 6101;
+      const pidfileStartedAt = "2026-04-10T00:00:00.000Z";
+      const matchingStartedAt = new Date(pidfileStartedAt).toString();
+      const testPidManager = new PIDManager(tmpDir, "protected.pid", {
+        processStartedAtResolver: async (pid: number) => {
+          if (pid === protectedPid) {
+            return matchingStartedAt;
+          }
+          return null;
+        },
+      });
+      const killSpy = vi.spyOn(process, "kill").mockImplementation(((pid: number, signal?: NodeJS.Signals | number) => {
+        if (signal === 0 && pid === protectedPid) {
+          const err = new Error("operation not permitted") as NodeJS.ErrnoException;
+          err.code = "EPERM";
+          throw err;
+        }
+        return true;
+      }) as typeof process.kill);
+
+      fs.writeFileSync(
+        testPidManager.getPath(),
+        JSON.stringify({
+          pid: protectedPid,
+          started_at: pidfileStartedAt,
+        }),
+        "utf-8"
+      );
+
+      const status = await testPidManager.inspect();
+
+      expect(status.running).toBe(true);
+      expect(status.alivePids).toEqual([protectedPid]);
+      expect(status.verifiedPids).toEqual([protectedPid]);
+      expect(status.stalePids).toEqual([]);
+      expect(fs.existsSync(testPidManager.getPath())).toBe(true);
+      expect(killSpy).toHaveBeenCalledWith(protectedPid, 0);
+    });
+
     it("signals only verified alive PIDs during stopRuntime", async () => {
       const killSpy = vi.spyOn(process, "kill").mockImplementation(((pid: number, signal?: NodeJS.Signals | number) => {
         if (signal === 0) return true;
