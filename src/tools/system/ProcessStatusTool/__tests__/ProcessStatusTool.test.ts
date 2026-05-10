@@ -178,6 +178,20 @@ describe("ProcessStatusTool", () => {
       const data = result.data as { alive: boolean };
       expect(data.alive).toBe(false);
     });
+
+    it("returns failure when the lsof probe fails", async () => {
+      vi.spyOn(execMod, "execFileNoThrow").mockResolvedValueOnce({
+        stdout: "",
+        stderr: "lsof unavailable",
+        exitCode: 2,
+      });
+      const result = await tool.call({ port: 9999 }, makeContext());
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("lsof failed");
+      expect(result.error).toContain("lsof unavailable");
+      const data = result.data as { alive: boolean };
+      expect(data.alive).toBe(false);
+    });
   });
 
   describe("call – processName check", () => {
@@ -214,6 +228,19 @@ describe("ProcessStatusTool", () => {
       });
       const result = await tool.call({ processName: "nonexistent_proc" }, makeContext());
       expect(result.success).toBe(true);
+      const data = result.data as { alive: boolean };
+      expect(data.alive).toBe(false);
+    });
+
+    it("returns failure when the pgrep probe fails", async () => {
+      vi.spyOn(execMod, "execFileNoThrow").mockResolvedValueOnce({
+        stdout: "",
+        stderr: "",
+        exitCode: null,
+      });
+      const result = await tool.call({ processName: "node" }, makeContext());
+      expect(result.success).toBe(false);
+      expect(result.error).toBe("pgrep failed: exit unknown");
       const data = result.data as { alive: boolean };
       expect(data.alive).toBe(false);
     });
