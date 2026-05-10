@@ -6,6 +6,7 @@ import { MockLLMClient } from "../../../base/llm/llm-client.js";
 import { GoalDependencyGraph } from "../goal-dependency-graph.js";
 import type { DependencyEdge } from "../../../base/types/dependency.js";
 import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
+import { GoalOrchestrationStateStore } from "../../../runtime/store/goal-orchestration-state-store.js";
 
 // ─── Helpers ───
 
@@ -92,37 +93,63 @@ describe("GoalDependencyGraph", () => {
       ).rejects.toThrow(/cycle/i);
     });
 
-    it("persists edge to disk", async () => {
+    it("persists edge to the typed control DB store without writing the legacy file", async () => {
       await graph.addEdge(makeEdge("goal-A", "goal-B"));
       const filePath = path.join(tmpDir, "dependency-graph.json");
-      expect(fs.existsSync(filePath)).toBe(true);
+      expect(fs.existsSync(filePath)).toBe(false);
+
+      const persisted = await new GoalOrchestrationStateStore(tmpDir).loadDependencyGraph();
+      expect(persisted?.nodes).toContain("goal-A");
+      expect(persisted?.nodes).toContain("goal-B");
+
+      const reloaded = new GoalDependencyGraph(new StateManager(tmpDir));
+      await reloaded.init();
+      expect(reloaded.getGraph().nodes).toContain("goal-A");
+      expect(reloaded.getGraph().edges).toHaveLength(1);
+    });
+
+    it("ignores stale legacy dependency graph files when typed state exists", async () => {
+      const filePath = path.join(tmpDir, "dependency-graph.json");
+      fs.writeFileSync(filePath, JSON.stringify({
+        nodes: ["legacy-goal"],
+        edges: [],
+        updated_at: "2020-01-01T00:00:00.000Z",
+      }));
+
+      await graph.addEdge(makeEdge("goal-db", "goal-live"));
+
+      const reloaded = new GoalDependencyGraph(new StateManager(tmpDir));
+      await reloaded.init();
+      expect(reloaded.getGraph().nodes).toContain("goal-db");
+      expect(reloaded.getGraph().nodes).toContain("goal-live");
+      expect(reloaded.getGraph().nodes).not.toContain("legacy-goal");
     });
   });
 
   // ─── removeEdge ───
 
   describe("removeEdge", () => {
-    it("removes a matching edge", () => {
-      graph.addEdge(makeEdge("goal-A", "goal-B", "prerequisite"));
-      graph.removeEdge("goal-A", "goal-B", "prerequisite");
+    it("removes a matching edge", async () => {
+      await graph.addEdge(makeEdge("goal-A", "goal-B", "prerequisite"));
+      await graph.removeEdge("goal-A", "goal-B", "prerequisite");
       expect(graph.getGraph().edges).toHaveLength(0);
     });
 
-    it("does not remove edges with different type", () => {
-      graph.addEdge(makeEdge("goal-A", "goal-B", "synergy"));
-      graph.removeEdge("goal-A", "goal-B", "prerequisite");
+    it("does not remove edges with different type", async () => {
+      await graph.addEdge(makeEdge("goal-A", "goal-B", "synergy"));
+      await graph.removeEdge("goal-A", "goal-B", "prerequisite");
       expect(graph.getGraph().edges).toHaveLength(1);
     });
 
-    it("does nothing if edge does not exist", () => {
-      graph.removeEdge("goal-X", "goal-Y", "prerequisite");
+    it("does nothing if edge does not exist", async () => {
+      await graph.removeEdge("goal-X", "goal-Y", "prerequisite");
       expect(graph.getGraph().edges).toHaveLength(0);
     });
 
-    it("only removes the matching edge when multiple edges exist", () => {
-      graph.addEdge(makeEdge("goal-A", "goal-B", "synergy"));
-      graph.addEdge(makeEdge("goal-A", "goal-C", "synergy"));
-      graph.removeEdge("goal-A", "goal-B", "synergy");
+    it("only removes the matching edge when multiple edges exist", async () => {
+      await graph.addEdge(makeEdge("goal-A", "goal-B", "synergy"));
+      await graph.addEdge(makeEdge("goal-A", "goal-C", "synergy"));
+      await graph.removeEdge("goal-A", "goal-B", "synergy");
       expect(graph.getGraph().edges).toHaveLength(1);
       expect(graph.getGraph().edges[0]?.to_goal_id).toBe("goal-C");
     });
@@ -131,15 +158,15 @@ describe("GoalDependencyGraph", () => {
   // ─── getEdges ───
 
   describe("getEdges", () => {
-    it("returns all edges involving a goal (from or to)", () => {
-      graph.addEdge(makeEdge("goal-A", "goal-B"));
-      graph.addEdge(makeEdge("goal-C", "goal-A"));
-      graph.addEdge(makeEdge("goal-D", "goal-E")); // unrelated
+    it("returns all edges involving a goal (from or to)", async () => {
+      await graph.addEdge(makeEdge("goal-A", "goal-B"));
+      await graph.addEdge(makeEdge("goal-C", "goal-A"));
+      await graph.addEdge(makeEdge("goal-D", "goal-E")); // unrelated
       const edges = graph.getEdges("goal-A");
       expect(edges).toHaveLength(2);
     });
 
-    it("returns empty array when goal has no edges", () => {
+    it("returns empty array when goal has no edges", async () => {
       expect(graph.getEdges("goal-unknown")).toHaveLength(0);
     });
   });
@@ -147,20 +174,20 @@ describe("GoalDependencyGraph", () => {
   // ─── getEdge ───
 
   describe("getEdge", () => {
-    it("returns edge for matching from/to", () => {
-      graph.addEdge(makeEdge("goal-A", "goal-B", "synergy"));
+    it("returns edge for matching from/to", async () => {
+      await graph.addEdge(makeEdge("goal-A", "goal-B", "synergy"));
       const edge = graph.getEdge("goal-A", "goal-B");
       expect(edge).not.toBeNull();
       expect(edge?.type).toBe("synergy");
     });
 
-    it("returns null for non-existent edge", () => {
+    it("returns null for non-existent edge", async () => {
       const edge = graph.getEdge("goal-A", "goal-Z");
       expect(edge).toBeNull();
     });
 
-    it("filters by type when provided", () => {
-      graph.addEdge(makeEdge("goal-A", "goal-B", "synergy"));
+    it("filters by type when provided", async () => {
+      await graph.addEdge(makeEdge("goal-A", "goal-B", "synergy"));
       expect(graph.getEdge("goal-A", "goal-B", "prerequisite")).toBeNull();
       expect(graph.getEdge("goal-A", "goal-B", "synergy")).not.toBeNull();
     });
@@ -169,55 +196,52 @@ describe("GoalDependencyGraph", () => {
   // ─── updateEdgeStatus ───
 
   describe("updateEdgeStatus", () => {
-    it("updates edge status to satisfied", () => {
-      graph.addEdge(makeEdge("goal-A", "goal-B"));
-      graph.updateEdgeStatus("goal-A", "goal-B", "satisfied");
+    it("updates edge status to satisfied", async () => {
+      await graph.addEdge(makeEdge("goal-A", "goal-B"));
+      await graph.updateEdgeStatus("goal-A", "goal-B", "satisfied");
       const edge = graph.getEdge("goal-A", "goal-B");
       expect(edge?.status).toBe("satisfied");
     });
 
-    it("does nothing if edge does not exist", () => {
-      // Should not throw
-      expect(() =>
-        graph.updateEdgeStatus("goal-X", "goal-Y", "satisfied")
-      ).not.toThrow();
+    it("does nothing if edge does not exist", async () => {
+      await expect(graph.updateEdgeStatus("goal-X", "goal-Y", "satisfied")).resolves.toBeUndefined();
     });
   });
 
   // ─── detectCycle ───
 
   describe("detectCycle", () => {
-    it("detects a direct cycle", () => {
-      graph.addEdge(makeEdge("goal-B", "goal-A", "prerequisite"));
+    it("detects a direct cycle", async () => {
+      await graph.addEdge(makeEdge("goal-B", "goal-A", "prerequisite"));
       expect(graph.detectCycle("goal-A", "goal-B")).toBe(true);
     });
 
-    it("detects a transitive cycle", () => {
-      graph.addEdge(makeEdge("goal-A", "goal-B", "prerequisite"));
-      graph.addEdge(makeEdge("goal-B", "goal-C", "prerequisite"));
+    it("detects a transitive cycle", async () => {
+      await graph.addEdge(makeEdge("goal-A", "goal-B", "prerequisite"));
+      await graph.addEdge(makeEdge("goal-B", "goal-C", "prerequisite"));
       // Adding goal-C → goal-A would cycle: C→A→B→C
       expect(graph.detectCycle("goal-C", "goal-A")).toBe(true);
     });
 
-    it("returns false when no cycle exists", () => {
-      graph.addEdge(makeEdge("goal-A", "goal-B", "prerequisite"));
+    it("returns false when no cycle exists", async () => {
+      await graph.addEdge(makeEdge("goal-A", "goal-B", "prerequisite"));
       expect(graph.detectCycle("goal-B", "goal-C")).toBe(false);
     });
 
-    it("returns false for self-edge that does not form a cycle through existing edges", () => {
+    it("returns false for self-edge that does not form a cycle through existing edges", async () => {
       // No edges: adding A→Z is not a cycle
       expect(graph.detectCycle("goal-A", "goal-Z")).toBe(false);
     });
 
-    it("ignores non-prerequisite edges during cycle detection", () => {
+    it("ignores non-prerequisite edges during cycle detection", async () => {
       // synergy edges should not be considered for cycle detection
-      graph.addEdge(makeEdge("goal-B", "goal-A", "synergy"));
+      await graph.addEdge(makeEdge("goal-B", "goal-A", "synergy"));
       // Since only synergy edges, no cycle in prerequisite path
       expect(graph.detectCycle("goal-A", "goal-B")).toBe(false);
     });
 
-    it("ignores satisfied prerequisite edges during cycle detection", () => {
-      graph.addEdge(makeEdge("goal-B", "goal-A", "prerequisite", { status: "satisfied" }));
+    it("ignores satisfied prerequisite edges during cycle detection", async () => {
+      await graph.addEdge(makeEdge("goal-B", "goal-A", "prerequisite", { status: "satisfied" }));
       // Satisfied edge should not count as forming a cycle
       expect(graph.detectCycle("goal-A", "goal-B")).toBe(false);
     });
@@ -226,38 +250,38 @@ describe("GoalDependencyGraph", () => {
   // ─── isBlocked / getBlockingGoals ───
 
   describe("isBlocked", () => {
-    it("returns true when goal has active prerequisites", () => {
-      graph.addEdge(makeEdge("goal-A", "goal-B", "prerequisite")); // A must complete before B
+    it("returns true when goal has active prerequisites", async () => {
+      await graph.addEdge(makeEdge("goal-A", "goal-B", "prerequisite")); // A must complete before B
       expect(graph.isBlocked("goal-B")).toBe(true);
     });
 
-    it("returns false when goal has no prerequisites", () => {
-      graph.addEdge(makeEdge("goal-A", "goal-B", "prerequisite"));
+    it("returns false when goal has no prerequisites", async () => {
+      await graph.addEdge(makeEdge("goal-A", "goal-B", "prerequisite"));
       expect(graph.isBlocked("goal-A")).toBe(false);
     });
 
-    it("returns false when all prerequisites are satisfied", () => {
-      graph.addEdge(makeEdge("goal-A", "goal-B", "prerequisite"));
-      graph.updateEdgeStatus("goal-A", "goal-B", "satisfied");
+    it("returns false when all prerequisites are satisfied", async () => {
+      await graph.addEdge(makeEdge("goal-A", "goal-B", "prerequisite"));
+      await graph.updateEdgeStatus("goal-A", "goal-B", "satisfied");
       expect(graph.isBlocked("goal-B")).toBe(false);
     });
 
-    it("returns false for a goal with no edges", () => {
+    it("returns false for a goal with no edges", async () => {
       expect(graph.isBlocked("goal-X")).toBe(false);
     });
   });
 
   describe("getBlockingGoals", () => {
-    it("returns IDs of blocking goals", () => {
-      graph.addEdge(makeEdge("goal-A", "goal-C", "prerequisite"));
-      graph.addEdge(makeEdge("goal-B", "goal-C", "prerequisite"));
+    it("returns IDs of blocking goals", async () => {
+      await graph.addEdge(makeEdge("goal-A", "goal-C", "prerequisite"));
+      await graph.addEdge(makeEdge("goal-B", "goal-C", "prerequisite"));
       const blocking = graph.getBlockingGoals("goal-C");
       expect(blocking).toContain("goal-A");
       expect(blocking).toContain("goal-B");
       expect(blocking).toHaveLength(2);
     });
 
-    it("returns empty array when goal is not blocked", () => {
+    it("returns empty array when goal is not blocked", async () => {
       expect(graph.getBlockingGoals("goal-X")).toHaveLength(0);
     });
   });
@@ -265,42 +289,42 @@ describe("GoalDependencyGraph", () => {
   // ─── getResourceConflicts / getSynergyPartners ───
 
   describe("getResourceConflicts", () => {
-    it("returns resource_conflict edges involving a goal", () => {
-      graph.addEdge(makeEdge("goal-A", "goal-B", "resource_conflict"));
+    it("returns resource_conflict edges involving a goal", async () => {
+      await graph.addEdge(makeEdge("goal-A", "goal-B", "resource_conflict"));
       const conflicts = graph.getResourceConflicts("goal-A");
       expect(conflicts).toHaveLength(1);
       expect(conflicts[0]?.type).toBe("resource_conflict");
     });
 
-    it("returns empty array when no resource conflicts exist", () => {
-      graph.addEdge(makeEdge("goal-A", "goal-B", "synergy"));
+    it("returns empty array when no resource conflicts exist", async () => {
+      await graph.addEdge(makeEdge("goal-A", "goal-B", "synergy"));
       expect(graph.getResourceConflicts("goal-A")).toHaveLength(0);
     });
 
-    it("detects conflicts where goal is the target", () => {
-      graph.addEdge(makeEdge("goal-X", "goal-Y", "resource_conflict"));
+    it("detects conflicts where goal is the target", async () => {
+      await graph.addEdge(makeEdge("goal-X", "goal-Y", "resource_conflict"));
       expect(graph.getResourceConflicts("goal-Y")).toHaveLength(1);
     });
   });
 
   describe("getSynergyPartners", () => {
-    it("returns partner goal IDs for synergy edges", () => {
-      graph.addEdge(makeEdge("goal-A", "goal-B", "synergy"));
+    it("returns partner goal IDs for synergy edges", async () => {
+      await graph.addEdge(makeEdge("goal-A", "goal-B", "synergy"));
       const partners = graph.getSynergyPartners("goal-A");
       expect(partners).toContain("goal-B");
     });
 
-    it("returns partner from both sides of the edge", () => {
-      graph.addEdge(makeEdge("goal-A", "goal-B", "synergy"));
+    it("returns partner from both sides of the edge", async () => {
+      await graph.addEdge(makeEdge("goal-A", "goal-B", "synergy"));
       expect(graph.getSynergyPartners("goal-B")).toContain("goal-A");
     });
 
-    it("returns empty array when no synergy edges exist", () => {
+    it("returns empty array when no synergy edges exist", async () => {
       expect(graph.getSynergyPartners("goal-X")).toHaveLength(0);
     });
 
-    it("ignores non-synergy edges", () => {
-      graph.addEdge(makeEdge("goal-A", "goal-B", "prerequisite"));
+    it("ignores non-synergy edges", async () => {
+      await graph.addEdge(makeEdge("goal-A", "goal-B", "prerequisite"));
       expect(graph.getSynergyPartners("goal-A")).toHaveLength(0);
     });
   });
@@ -383,7 +407,7 @@ describe("GoalDependencyGraph", () => {
       expect(graph.getStrategyDependencies("strategy-B")).toEqual([]);
     });
 
-    it("reloads raw legacy dependency graph files through the schema", async () => {
+    it("does not reload raw legacy dependency graph files as authoritative state", async () => {
       await stateManager.writeRaw("dependency-graph.json", {
         nodes: ["strategy-A", "strategy-B"],
         updated_at: "2026-05-08T00:00:00.000Z",
@@ -406,14 +430,8 @@ describe("GoalDependencyGraph", () => {
       const freshGraph = new GoalDependencyGraph(stateManager);
       await freshGraph.init();
 
-      expect(freshGraph.getStrategyDependencies("strategy-B")).toEqual([
-        {
-          source_strategy_id: "strategy-A",
-          target_strategy_id: "strategy-B",
-          dependency_type: "prerequisite",
-          goal_id: "goal-legacy",
-        },
-      ]);
+      expect(freshGraph.getStrategyDependencies("strategy-B")).toEqual([]);
+      expect(freshGraph.getGraph().nodes).toEqual([]);
     });
 
     it("checks blocking from typed prerequisite metadata", async () => {
@@ -427,7 +445,7 @@ describe("GoalDependencyGraph", () => {
   // ─── Persistence ───
 
   describe("persistence (save / load)", () => {
-    it("loads an empty graph when no file exists", () => {
+    it("loads an empty graph when no file exists", async () => {
       const freshGraph = new GoalDependencyGraph(stateManager);
       expect(freshGraph.getGraph().edges).toHaveLength(0);
       expect(freshGraph.getGraph().nodes).toHaveLength(0);

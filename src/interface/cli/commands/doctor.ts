@@ -19,6 +19,7 @@ import {
   importLegacyCapabilityRegistryState,
   importLegacyCuriosityState,
   importLegacyEthicsLogState,
+  importLegacyGoalOrchestrationState,
   importLegacyRelationshipProfileProposalState,
   importLegacyTrustState,
   OutboxStore,
@@ -735,6 +736,7 @@ export async function cmdDoctor(_args: string[]): Promise<number> {
     const chatAgentLoopImportReport = await importLegacyChatAgentLoopSessionState(baseDir);
     const executionSessionImportReport = await importLegacyExecutionSessionState(baseDir);
     const goalTaskImportReport = await importLegacyGoalTaskDurableLoopState(baseDir);
+    const goalOrchestrationImportReport = await importLegacyGoalOrchestrationState(baseDir);
     const capabilityRegistryImportReport = await importLegacyCapabilityRegistryState(baseDir);
     const evidenceStrategyDreamImportReport = await importLegacyRuntimeEvidenceStrategyDreamState(baseDir, { runtimeRoot });
     const runtimeFileStateImportReport = await importLegacyRuntimeFileState({
@@ -777,6 +779,9 @@ export async function cmdDoctor(_args: string[]): Promise<number> {
     );
     console.log(
       `Repair goal/task import: goals=${goalTaskImportReport.goals}, legacy WAL files=${goalTaskImportReport.legacyWalFiles}, legacy WAL intents=${goalTaskImportReport.legacyWalIntents}, tasks=${goalTaskImportReport.tasks}, histories=${goalTaskImportReport.taskHistoryRecords}, ledgers=${goalTaskImportReport.taskOutcomeLedgers}, verification=${goalTaskImportReport.verificationResults}, checkpoints=${goalTaskImportReport.checkpoints}, pipelines=${goalTaskImportReport.pipelines}, blocked=${goalTaskImportReport.blockedSources.length}`
+    );
+    console.log(
+      `Repair goal orchestration import: negotiation logs=${goalOrchestrationImportReport.negotiationLogs}, dependency graphs=${goalOrchestrationImportReport.dependencyGraphs}, skipped already imported=${goalOrchestrationImportReport.skippedAlreadyImported}, retired existing typed state=${goalOrchestrationImportReport.retiredExistingTypedState}, blocked=${goalOrchestrationImportReport.blockedSources.length}`
     );
     console.log(
       `Repair capability registry import: registry files=${capabilityRegistryImportReport.registryFiles}, capabilities=${capabilityRegistryImportReport.importedCapabilities}, blocked=${capabilityRegistryImportReport.blockedSources.length}`

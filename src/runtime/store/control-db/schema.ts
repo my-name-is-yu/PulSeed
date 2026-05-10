@@ -7,7 +7,7 @@ export interface ControlDbMigration {
   checksum: string;
 }
 
-export const CONTROL_DB_SCHEMA_VERSION = 16;
+export const CONTROL_DB_SCHEMA_VERSION = 17;
 
 export const CONTROL_DB_INITIAL_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS control_schema_migrations (
@@ -865,6 +865,27 @@ CREATE INDEX IF NOT EXISTS dream_workflows_type_idx
   ON dream_workflows(workflow_type, updated_at, workflow_id);
 `.trim();
 
+export const CONTROL_DB_GOAL_ORCHESTRATION_SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS goal_negotiation_logs (
+  goal_id TEXT PRIMARY KEY,
+  log_timestamp TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  log_json TEXT NOT NULL CHECK (json_valid(log_json))
+);
+
+CREATE INDEX IF NOT EXISTS goal_negotiation_logs_timestamp_idx
+  ON goal_negotiation_logs(log_timestamp, goal_id);
+
+CREATE TABLE IF NOT EXISTS goal_dependency_graph_state (
+  graph_id TEXT PRIMARY KEY CHECK (graph_id = 'current'),
+  updated_at TEXT NOT NULL,
+  graph_json TEXT NOT NULL CHECK (json_valid(graph_json))
+);
+
+CREATE INDEX IF NOT EXISTS goal_dependency_graph_state_updated_idx
+  ON goal_dependency_graph_state(updated_at, graph_id);
+`.trim();
+
 export const CONTROL_DB_KNOWLEDGE_MEMORY_SOIL_SCHEMA_SQL = `
 PRAGMA foreign_keys = ON;
 `.trim();
@@ -1511,5 +1532,10 @@ export const CONTROL_DB_MIGRATIONS: readonly ControlDbMigration[] = [
     16,
     "memory-dream-boundary-runtime-state",
     CONTROL_DB_MEMORY_LIFECYCLE_SCHEMA_SQL
+  ),
+  createControlDbMigration(
+    17,
+    "goal-orchestration-runtime-state",
+    CONTROL_DB_GOAL_ORCHESTRATION_SCHEMA_SQL
   ),
 ];

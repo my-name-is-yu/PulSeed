@@ -65,9 +65,9 @@ The database-first state slices added typed owners for these areas:
   guardrail, outbox, lease, queue, daemon, supervisor, and schedule stores
 - chat session and AgentLoop data-plane stores
 - goal, task, checkpoint, verification, pipeline, ledger, DurableLoop evidence,
-  runtime evidence, strategy, dream, reflection, knowledge, memory, learning,
-  profile, plugin runtime, channel health, channel binding, foreign plugin
-  compatibility, and runtime asset stores
+  negotiation log, dependency graph, runtime evidence, strategy, dream,
+  reflection, knowledge, memory, learning, profile, plugin runtime, channel
+  health, channel binding, foreign plugin compatibility, and runtime asset stores
 - execution sessions used by `SessionManager`, session history grounding, and
   `SessionHistoryTool`
 
@@ -170,13 +170,17 @@ import/publish artifacts:
   metrics over artifacts and legacy fixtures, not authoritative runtime state
 - Soil import overlay queue and publish state, which are import/publish artifact
   surfaces rather than normal runtime owners
-- current raw fallback migration follow-up surfaces: goal negotiation logs and
-  dependency graph state, stall detector state, learning runtime state,
-  knowledge transfer snapshot/meta-pattern state, transfer trust state,
-  capability dependency state, and task grounding raw task reads. Each is tracked
-  by `scripts/check-database-first-legacy-stores.mjs --json` as `migrate now`
-  debt until its typed store/API slice lands. Character config, MCP server
-  config, and generated reports are explicitly classified non-debt boundaries.
+- goal negotiation logs and dependency graph state use the typed control DB
+  `GoalOrchestrationStateStore`; legacy `goals/<id>/negotiation-log.json` and
+  `dependency-graph.json` files are no longer authoritative normal runtime
+  state and are explicit `doctor --repair` import inputs only
+- current raw fallback migration follow-up surfaces: stall detector state,
+  learning runtime state, knowledge transfer snapshot/meta-pattern state,
+  transfer trust state, capability dependency state, and task grounding raw task
+  reads. Each is tracked by
+  `scripts/check-database-first-legacy-stores.mjs --json` as `migrate now` debt
+  until its typed store/API slice lands. Character config, MCP server config,
+  and generated reports are explicitly classified non-debt boundaries.
 
 Future durable internal state must add a typed store API and schema migration.
 Adding a new JSON/JSONL sidecar requires documenting why it is config,

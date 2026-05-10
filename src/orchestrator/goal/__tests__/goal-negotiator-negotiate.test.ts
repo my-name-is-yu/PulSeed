@@ -5,6 +5,7 @@ import { StateManager } from "../../../base/state/state-manager.js";
 import { EthicsGate } from "../../../platform/traits/ethics-gate.js";
 import { ObservationEngine } from "../../../platform/observation/observation-engine.js";
 import { GoalNegotiator } from "../goal-negotiator.js";
+import { GoalOrchestrationStateStore } from "../../../runtime/store/goal-orchestration-state-store.js";
 import { createMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
 import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 import {
@@ -645,7 +646,7 @@ describe("GoalNegotiator", () => {
       expect(log!.is_renegotiation).toBe(false);
     });
 
-    it("log is persisted to correct file path", async () => {
+    it("log is persisted to typed control DB state without writing the legacy file", async () => {
       const mockLLM = createMockLLMClient([
         PASS_VERDICT,
         SINGLE_DIMENSION_RESPONSE,
@@ -658,7 +659,29 @@ describe("GoalNegotiator", () => {
 
       const result = await negotiator.negotiate("Test goal");
       const logPath = path.join(tmpDir, "goals", result.goal.id, "negotiation-log.json");
-      expect(fs.existsSync(logPath)).toBe(true);
+      expect(fs.existsSync(logPath)).toBe(false);
+
+      const persisted = await new GoalOrchestrationStateStore(tmpDir).loadNegotiationLog(result.goal.id);
+      expect(persisted?.goal_id).toBe(result.goal.id);
+      expect(persisted?.step5_response?.type).toBe("accept");
+    });
+
+    it("does not treat stale legacy negotiation-log files as authoritative", async () => {
+      const legacyGoalId = "legacy-goal";
+      const logDir = path.join(tmpDir, "goals", legacyGoalId);
+      fs.mkdirSync(logDir, { recursive: true });
+      fs.writeFileSync(path.join(logDir, "negotiation-log.json"), JSON.stringify({
+        goal_id: legacyGoalId,
+        timestamp: "2020-01-01T00:00:00.000Z",
+        is_renegotiation: false,
+        renegotiation_trigger: null,
+      }));
+
+      const mockLLM = createMockLLMClient([]);
+      const ethicsGate = new EthicsGate(stateManager, mockLLM);
+      const negotiator = new GoalNegotiator(stateManager, mockLLM, ethicsGate, observationEngine);
+
+      await expect(negotiator.getNegotiationLog(legacyGoalId)).resolves.toBeNull();
     });
   });
 });

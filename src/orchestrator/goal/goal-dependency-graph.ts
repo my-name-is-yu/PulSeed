@@ -10,6 +10,10 @@ import type {
 import { DependencyGraphSchema } from "../../base/types/dependency.js";
 import type { DependencyType } from "../../base/types/core.js";
 import type { IPromptGateway } from "../../prompt/gateway.js";
+import {
+  GoalOrchestrationStateStore,
+  type GoalOrchestrationStateStorePort,
+} from "../../runtime/store/goal-orchestration-state-store.js";
 
 interface DependencyLogger {
   warn?: (message: string, context?: Record<string, unknown>) => void;
@@ -36,20 +40,28 @@ const AutoDetectResponseSchema = z.array(AutoDetectItemSchema);
  *   - synergy: progress on goal A helps goal B
  *   - conflict: goals A and B have incompatible objectives
  *
- * Persistence: ~/.pulseed/dependency-graph.json (via StateManager.readRaw/writeRaw)
+ * Persistence: control DB goal_dependency_graph_state via GoalOrchestrationStateStore.
  */
 export class GoalDependencyGraph {
   private stateManager: StateManager;
   private llmClient?: ILLMClient;
   private promptGateway?: IPromptGateway;
   private logger?: DependencyLogger;
+  private stateStore: GoalOrchestrationStateStorePort;
   private graph: DependencyGraph;
 
-  constructor(stateManager: StateManager, llmClient?: ILLMClient, promptGateway?: IPromptGateway, logger?: DependencyLogger) {
+  constructor(
+    stateManager: StateManager,
+    llmClient?: ILLMClient,
+    promptGateway?: IPromptGateway,
+    logger?: DependencyLogger,
+    stateStore?: GoalOrchestrationStateStorePort
+  ) {
     this.stateManager = stateManager;
     this.llmClient = llmClient;
     this.promptGateway = promptGateway;
     this.logger = logger;
+    this.stateStore = stateStore ?? new GoalOrchestrationStateStore(this.stateManager.getBaseDir());
     this.graph = { nodes: [], edges: [], updated_at: new Date().toISOString() };
   }
 
@@ -405,15 +417,13 @@ Return empty array [] if no dependencies found.`;
   // ─── Persistence ───
 
   /**
-   * Loads the dependency graph from disk.
-   * Returns an empty graph if no file exists or parsing fails.
+   * Loads the dependency graph from the typed control DB store.
+   * Returns an empty graph if no graph exists or parsing fails.
    */
   async load(): Promise<DependencyGraph> {
     try {
-      const raw = await this.stateManager.readRaw("dependency-graph.json");
-      if (raw !== null) {
-        return DependencyGraphSchema.parse(raw);
-      }
+      return await this.stateStore.loadDependencyGraph()
+        ?? { nodes: [], edges: [], updated_at: new Date().toISOString() };
     } catch {
       // ignore parse errors — start fresh
     }
@@ -421,10 +431,10 @@ Return empty array [] if no dependencies found.`;
   }
 
   /**
-   * Persists the dependency graph to disk.
+   * Persists the dependency graph to the typed control DB store.
    */
   async save(graph: DependencyGraph): Promise<void> {
-    await this.stateManager.writeRaw("dependency-graph.json", graph);
+    await this.stateStore.saveDependencyGraph(DependencyGraphSchema.parse(graph));
   }
 
   /**

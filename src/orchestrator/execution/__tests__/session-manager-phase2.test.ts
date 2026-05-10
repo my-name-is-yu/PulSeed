@@ -200,8 +200,8 @@ describe("SessionManager Phase 2", () => {
       expect(result).toEqual([]);
     });
 
-    it("detects resource conflicts involving the goal as from_goal_id", () => {
-      depGraph.addEdge({
+    it("detects resource conflicts involving the goal as from_goal_id", async () => {
+      await depGraph.addEdge({
         from_goal_id: "goal-A",
         to_goal_id: "goal-B",
         type: "resource_conflict",
@@ -219,8 +219,8 @@ describe("SessionManager Phase 2", () => {
       expect(result[0].sharedResources).toEqual(["filesystem", "database"]);
     });
 
-    it("detects resource conflicts involving the goal as to_goal_id", () => {
-      depGraph.addEdge({
+    it("detects resource conflicts involving the goal as to_goal_id", async () => {
+      await depGraph.addEdge({
         from_goal_id: "goal-C",
         to_goal_id: "goal-A",
         type: "resource_conflict",
@@ -238,8 +238,8 @@ describe("SessionManager Phase 2", () => {
       expect(result[0].sharedResources).toEqual(["api_quota"]);
     });
 
-    it("does not return non-resource_conflict edges", () => {
-      depGraph.addEdge({
+    it("does not return non-resource_conflict edges", async () => {
+      await depGraph.addEdge({
         from_goal_id: "goal-A",
         to_goal_id: "goal-B",
         type: "synergy",
@@ -255,8 +255,8 @@ describe("SessionManager Phase 2", () => {
       expect(result).toHaveLength(0);
     });
 
-    it("returns multiple conflicts when multiple resource_conflict edges exist", () => {
-      depGraph.addEdge({
+    it("returns multiple conflicts when multiple resource_conflict edges exist", async () => {
+      await depGraph.addEdge({
         from_goal_id: "goal-A",
         to_goal_id: "goal-B",
         type: "resource_conflict",
@@ -267,7 +267,7 @@ describe("SessionManager Phase 2", () => {
         detection_confidence: 1.0,
         reasoning: null,
       });
-      depGraph.addEdge({
+      await depGraph.addEdge({
         from_goal_id: "goal-A",
         to_goal_id: "goal-C",
         type: "resource_conflict",
@@ -304,8 +304,8 @@ describe("SessionManager Phase 2", () => {
       expect(labels).not.toContain("resource_conflict_awareness");
     });
 
-    it("adds conflict-awareness slot when resource_conflict edges exist", () => {
-      depGraph.addEdge({
+    it("adds conflict-awareness slot when resource_conflict edges exist", async () => {
+      await depGraph.addEdge({
         from_goal_id: "goal-A",
         to_goal_id: "goal-B",
         type: "resource_conflict",
@@ -322,8 +322,8 @@ describe("SessionManager Phase 2", () => {
       expect(conflictSlot).toBeDefined();
     });
 
-    it("conflict-awareness slot content mentions conflicting goal ID", () => {
-      depGraph.addEdge({
+    it("conflict-awareness slot content mentions conflicting goal ID", async () => {
+      await depGraph.addEdge({
         from_goal_id: "goal-A",
         to_goal_id: "goal-B",
         type: "resource_conflict",
@@ -341,8 +341,8 @@ describe("SessionManager Phase 2", () => {
       expect(conflictSlot.content).toContain("shared-db");
     });
 
-    it("conflict-awareness slot has priority 4.5 (between p4 constraints and p5)", () => {
-      depGraph.addEdge({
+    it("conflict-awareness slot has priority 4.5 (between p4 constraints and p5)", async () => {
+      await depGraph.addEdge({
         from_goal_id: "goal-A",
         to_goal_id: "goal-B",
         type: "resource_conflict",
@@ -359,8 +359,8 @@ describe("SessionManager Phase 2", () => {
       expect(conflictSlot.priority).toBe(4.5);
     });
 
-    it("respects tokenBudget option and excludes low-priority slots when budget exhausted", () => {
-      depGraph.addEdge({
+    it("respects tokenBudget option and excludes low-priority slots when budget exhausted", async () => {
+      await depGraph.addEdge({
         from_goal_id: "goal-A",
         to_goal_id: "goal-B",
         type: "resource_conflict",
@@ -396,8 +396,8 @@ describe("SessionManager Phase 2", () => {
       expect(labels).toContain("task_definition_and_success_criteria");
     });
 
-    it("conflict-awareness slot content instructs avoiding concurrent operations", () => {
-      depGraph.addEdge({
+    it("conflict-awareness slot content instructs avoiding concurrent operations", async () => {
+      await depGraph.addEdge({
         from_goal_id: "goal-A",
         to_goal_id: "goal-B",
         type: "resource_conflict",

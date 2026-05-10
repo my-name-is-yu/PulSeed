@@ -229,7 +229,7 @@ describe("CrossGoalPortfolio", async () => {
       await stateManager.saveGoal(g3);
 
       // g1 is a prerequisite for both g2 and g3
-      depGraph.addEdge({
+      await depGraph.addEdge({
         from_goal_id: "g1",
         to_goal_id: "g2",
         type: "prerequisite",
@@ -240,7 +240,7 @@ describe("CrossGoalPortfolio", async () => {
         detection_confidence: 1,
         reasoning: null,
       });
-      depGraph.addEdge({
+      await depGraph.addEdge({
         from_goal_id: "g1",
         to_goal_id: "g3",
         type: "prerequisite",
@@ -341,7 +341,7 @@ describe("CrossGoalPortfolio", async () => {
       const beforeG1 = before.find((r) => r.goal_id === "g1")!.computed_priority;
 
       // Add synergy edge
-      depGraph.addEdge({
+      await depGraph.addEdge({
         from_goal_id: "g1",
         to_goal_id: "g2",
         type: "synergy",
@@ -370,7 +370,7 @@ describe("CrossGoalPortfolio", async () => {
       const beforeG2 = before.find((r) => r.goal_id === "g2")!.computed_priority;
 
       // Add conflict edge
-      depGraph.addEdge({
+      await depGraph.addEdge({
         from_goal_id: "g1",
         to_goal_id: "g2",
         type: "conflict",
