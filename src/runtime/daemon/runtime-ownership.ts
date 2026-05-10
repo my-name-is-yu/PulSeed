@@ -10,6 +10,7 @@ import {
   buildLongRunHealth,
   evolveRuntimeHealthKpi,
   type ApprovalRecord,
+  type RuntimeArtifactExpectation,
   type RuntimeDaemonHealth,
   type RuntimeHealthCapabilityStatuses,
   type RuntimeLongRunBlockerStatus,
@@ -348,6 +349,25 @@ export class RuntimeOwnershipCoordinator {
     return [...new Set(values)];
   }
 
+  private resolveArtifactExpectation(
+    activeGoalIds: string[],
+    supervisorActivity: SupervisorActivity,
+  ): RuntimeArtifactExpectation {
+    if (activeGoalIds.length > 0) {
+      return { state: "expected", reason: "active_goal" };
+    }
+    if ((supervisorActivity.activeCount ?? 0) > 0) {
+      return { state: "expected", reason: "active_worker" };
+    }
+    if (supervisorActivity.status === "idle") {
+      return { state: "none", reason: "idle_no_worker" };
+    }
+    if (supervisorActivity.status === "unknown") {
+      return { state: "unknown", reason: "supervisor_activity_unknown" };
+    }
+    return { state: "none", reason: "no_active_goal" };
+  }
+
   private summarizeApprovalScope(
     pendingApprovals: ApprovalRecord[],
     activeGoalIds: string[]
@@ -469,6 +489,7 @@ export class RuntimeOwnershipCoordinator {
       this.deps.approvalStore?.listPending().catch(() => []),
     ]);
     const activeGoalIds = this.uniqueStrings([...supervisorActivity.activeGoalIds, ...daemonActiveGoalIds]);
+    const artifactExpectation = this.resolveArtifactExpectation(activeGoalIds, supervisorActivity);
     const approvalScope = this.summarizeApprovalScope(pendingApprovals ?? [], activeGoalIds);
     const taskBlocker = await this.readActiveGoalTaskBlocker(activeGoalIds);
     const previousMetric = previous?.long_running?.signals.metric_progress.current_value;
@@ -556,6 +577,7 @@ export class RuntimeOwnershipCoordinator {
       },
       expected_next_checkpoint_at:
         supervisorActivity.status === "active" ? checkedAt + 5 * 60_000 : undefined,
+      artifact_expectation: artifactExpectation,
       resumable: true,
     });
   }

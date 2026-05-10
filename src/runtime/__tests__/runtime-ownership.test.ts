@@ -146,6 +146,40 @@ describe("RuntimeOwnershipCoordinator", () => {
     expect(snapshot?.long_running?.signals.artifact_freshness.path).toBeDefined();
   });
 
+  it("records that idle daemon health has no expected artifact stream", async () => {
+    await writeSupervisorState([]);
+    const coordinator = new RuntimeOwnershipCoordinator({
+      baseDir: tmpDir,
+      runtimeRoot: tmpDir,
+      logger: {
+        info: vi.fn(),
+        warn: vi.fn(),
+        error: vi.fn(),
+      } as never,
+      approvalStore: null,
+      outboxStore: null,
+      runtimeHealthStore: store,
+      leaderLockManager: null,
+      onLeadershipLost: vi.fn(),
+    });
+
+    await coordinator.saveRuntimeHealthSnapshot("daemon_health_snapshot", {
+      gateway: "ok",
+      queue: "ok",
+      leases: "ok",
+      approval: "ok",
+      outbox: "ok",
+      supervisor: "ok",
+    });
+
+    const snapshot = await store.loadSnapshot();
+    expect(snapshot?.long_running?.summary).toBe("alive_idle_no_artifact_stream");
+    expect(snapshot?.long_running?.signals.artifact_expectation).toEqual({
+      state: "none",
+      reason: "idle_no_worker",
+    });
+  });
+
   it("treats lower values as improvement for minimize metrics", async () => {
     await fsp.mkdir(path.join(tmpDir, "artifacts", "run-a"), { recursive: true });
     const coordinator = new RuntimeOwnershipCoordinator({

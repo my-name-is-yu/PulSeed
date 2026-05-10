@@ -5,6 +5,7 @@ import type { DaemonConfig } from "../../../base/types/daemon.js";
 import type { PIDManager } from "../../../runtime/pid-manager.js";
 import {
   compactRuntimeHealthKpi,
+  type RuntimeArtifactExpectation,
   type RuntimeHealthKpi,
   type RuntimeLongRunHealth,
   type RuntimeLongRunHealthSummary,
@@ -89,6 +90,7 @@ export function formatKpiCompactLine(kpi: RuntimeHealthKpi): string {
 
 const LONG_RUN_SUMMARY_LABELS: Record<RuntimeLongRunHealthSummary, string> = {
   alive_and_progressing: "alive and progressing",
+  alive_idle_no_artifact_stream: "idle; no active artifact stream expected",
   alive_but_metric_stalled: "alive but metric-stalled",
   alive_but_artifact_stalled: "alive but artifact-stalled",
   alive_but_waiting: "alive but waiting",
@@ -102,14 +104,51 @@ function formatEvidenceTimestamp(timestamp: number | undefined): string {
   return formatAbsoluteRelativeTimestamp(timestamp);
 }
 
+function formatArtifactExpectation(expectation: RuntimeArtifactExpectation): string {
+  switch (expectation.state) {
+    case "none":
+      return `none (${expectation.reason})`;
+    case "expected":
+      return `expected (${expectation.reason})`;
+    case "recently_expected":
+      return `recently expected (${expectation.reason}, stale after ${expectation.stale_after_ms}ms)`;
+    case "unknown":
+      return `unknown (${expectation.reason})`;
+  }
+}
+
+function isArtifactFreshnessProblem(health: RuntimeLongRunHealth): boolean {
+  return (
+    health.signals.artifact_freshness.status === "stale" ||
+    health.signals.artifact_freshness.status === "missing"
+  );
+}
+
+function formatLongRunSummaryLabel(
+  health: RuntimeLongRunHealth,
+  expectation: RuntimeArtifactExpectation | undefined
+): string {
+  if (health.signals.process.status === "dead") {
+    return LONG_RUN_SUMMARY_LABELS[health.summary];
+  }
+  if (expectation?.state === "none" && isArtifactFreshnessProblem(health)) {
+    return LONG_RUN_SUMMARY_LABELS.alive_idle_no_artifact_stream;
+  }
+  if (expectation?.state === "unknown" && isArtifactFreshnessProblem(health)) {
+    return LONG_RUN_SUMMARY_LABELS.unknown;
+  }
+  return LONG_RUN_SUMMARY_LABELS[health.summary];
+}
+
 export function formatLongRunHealthLines(
   health: RuntimeLongRunHealth,
-  opts: { historical?: boolean } = {},
+  opts: { historical?: boolean; artifactExpectation?: RuntimeArtifactExpectation } = {},
 ): string[] {
   const signals = health.signals;
+  const artifactExpectation = opts.artifactExpectation ?? signals.artifact_expectation;
   const childActivityLabel = opts.historical ? "Historical child activity:" : "Child activity:";
   const lines = [
-    `  Summary:        ${LONG_RUN_SUMMARY_LABELS[health.summary]} (${formatRelativeTimestamp(health.checked_at)})`,
+    `  Summary:        ${formatLongRunSummaryLabel(health, artifactExpectation)} (${formatRelativeTimestamp(health.checked_at)})`,
     `  Process:        ${signals.process.status}${signals.process.pid ? ` pid=${signals.process.pid}` : ""}; evidence=${formatEvidenceTimestamp(signals.process.observed_at ?? signals.process.checked_at)}`,
     `  ${childActivityLabel.padEnd(15)} ${signals.child_activity.status}${signals.child_activity.active_count !== undefined ? ` count=${signals.child_activity.active_count}` : ""}; evidence=${formatEvidenceTimestamp(signals.child_activity.observed_at ?? signals.child_activity.checked_at)}${opts.historical ? " (stale snapshot)" : ""}`,
     `  Log freshness:  ${signals.log_freshness.status}; evidence=${formatEvidenceTimestamp(signals.log_freshness.observed_at)}`,
@@ -118,6 +157,9 @@ export function formatLongRunHealthLines(
     `  Metric trend:   ${signals.metric_progress.status}; evidence=${formatEvidenceTimestamp(signals.metric_progress.observed_at)}`,
     `  Blocker:        ${signals.blocker.status}; evidence=${formatEvidenceTimestamp(signals.blocker.observed_at ?? signals.blocker.checked_at)}`,
   ];
+  if (artifactExpectation) {
+    lines.push(`  Artifact stream:${" ".repeat(1)}${formatArtifactExpectation(artifactExpectation)}`);
+  }
   if (signals.expected_next_checkpoint_at !== undefined) {
     lines.push(`  Next checkpoint:${" ".repeat(1)}${formatEvidenceTimestamp(signals.expected_next_checkpoint_at)}`);
   }

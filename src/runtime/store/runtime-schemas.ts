@@ -178,8 +178,30 @@ export const RuntimeLongRunBlockerStatusSchema = z.enum([
 ]);
 export type RuntimeLongRunBlockerStatus = z.infer<typeof RuntimeLongRunBlockerStatusSchema>;
 
+export const RuntimeArtifactExpectationSchema = z.discriminatedUnion("state", [
+  z.object({
+    state: z.literal("none"),
+    reason: z.enum(["no_active_goal", "idle_no_worker"]),
+  }),
+  z.object({
+    state: z.literal("expected"),
+    reason: z.enum(["active_goal", "active_worker", "recent_artifact_contract"]),
+  }),
+  z.object({
+    state: z.literal("recently_expected"),
+    reason: z.literal("recent_goal_or_worker"),
+    stale_after_ms: RuntimeSafeNonnegativeIntSchema,
+  }),
+  z.object({
+    state: z.literal("unknown"),
+    reason: z.string(),
+  }),
+]);
+export type RuntimeArtifactExpectation = z.infer<typeof RuntimeArtifactExpectationSchema>;
+
 export const RuntimeLongRunHealthSummarySchema = z.enum([
   "alive_and_progressing",
+  "alive_idle_no_artifact_stream",
   "alive_but_metric_stalled",
   "alive_but_artifact_stalled",
   "alive_but_waiting",
@@ -232,6 +254,7 @@ export const RuntimeLongRunHealthSignalsSchema = z.object({
     unrelated_pending_approval_count: RuntimeSafeNonnegativeIntSchema.optional(),
   }),
   expected_next_checkpoint_at: RuntimeSafeNonnegativeIntSchema.optional(),
+  artifact_expectation: RuntimeArtifactExpectationSchema.optional(),
   resumable: z.boolean().optional(),
 });
 export type RuntimeLongRunHealthSignals = z.infer<typeof RuntimeLongRunHealthSignalsSchema>;
@@ -490,9 +513,19 @@ export function classifyLongRunHealth(
     return "alive_but_metric_stalled";
   }
 
-  if (
+  const artifactNotFresh =
     signals.artifact_freshness.status === "stale" ||
-    signals.artifact_freshness.status === "missing"
+    signals.artifact_freshness.status === "missing";
+  if (artifactNotFresh && signals.artifact_expectation?.state === "none") {
+    return "alive_idle_no_artifact_stream";
+  }
+
+  if (artifactNotFresh && signals.artifact_expectation?.state === "unknown") {
+    return "unknown";
+  }
+
+  if (
+    artifactNotFresh
   ) {
     return "alive_but_artifact_stalled";
   }

@@ -24,6 +24,7 @@ import { ScheduleEngine } from "../../../runtime/schedule/engine.js";
 import { RuntimeWatchdog } from "../../../runtime/watchdog.js";
 import { LeaderLockManager } from "../../../runtime/leader-lock-manager.js";
 import { DaemonStateStore, ProactiveInterventionStore, RuntimeHealthStore } from "../../../runtime/store/index.js";
+import type { RuntimeArtifactExpectation } from "../../../runtime/store/index.js";
 import { isDaemonRunning, probeDaemonHealth } from "../../../runtime/daemon/client.js";
 import { PluginLoader } from "../../../runtime/plugin-loader.js";
 import { NotifierRegistry } from "../../../runtime/notifier-registry.js";
@@ -75,6 +76,31 @@ type StopDaemonOutcome =
   | { status: "not_running"; messages: string[] }
   | { status: "stopped"; messages: string[] }
   | { status: "failed"; messages: string[] };
+
+function resolveStatusArtifactExpectation(params: {
+  activeGoalIds: string[];
+  activeWorkerCount: number;
+  daemonStatus: DaemonState["status"];
+  liveRuntimeStopped: boolean;
+  workerSnapshotAvailable: boolean;
+}): RuntimeArtifactExpectation {
+  if (params.liveRuntimeStopped) {
+    return { state: "unknown", reason: "historical_runtime_snapshot" };
+  }
+  if (params.activeGoalIds.length > 0) {
+    return { state: "expected", reason: "active_goal" };
+  }
+  if (params.activeWorkerCount > 0) {
+    return { state: "expected", reason: "active_worker" };
+  }
+  if (params.daemonStatus === "idle") {
+    return { state: "none", reason: "idle_no_worker" };
+  }
+  if (params.workerSnapshotAvailable) {
+    return { state: "none", reason: "idle_no_worker" };
+  }
+  return { state: "unknown", reason: "worker_snapshot_unavailable" };
+}
 
 export function parseDaemonPositiveInteger(raw: unknown, label: string): number {
   const normalized = typeof raw === "string" ? raw.trim() : "";
@@ -577,6 +603,13 @@ export async function cmdDaemonStatus(_args: string[]): Promise<void> {
 
   const snapshotWorkers = (supervisorState?.workers ?? []).filter((worker) => worker.goalId !== null);
   const activeWorkers = resolvedRuntimeAlive ? snapshotWorkers : [];
+  const artifactExpectation = resolveStatusArtifactExpectation({
+    activeGoalIds: data.active_goals,
+    activeWorkerCount: activeWorkers.length,
+    daemonStatus: data.status,
+    liveRuntimeStopped,
+    workerSnapshotAvailable: supervisorState !== null,
+  });
   if (activeWorkers.length > 0) {
     lines.push(`In flight:       ${activeWorkers.length} worker${activeWorkers.length === 1 ? "" : "s"} active`);
     for (const worker of activeWorkers) {
@@ -725,7 +758,10 @@ export async function cmdDaemonStatus(_args: string[]): Promise<void> {
     if (runtimeHealthReconciled) {
       lines.push(`  Snapshot note:  ${STALE_RUNTIME_HEALTH_REASON}.`);
     }
-    lines.push(...formatLongRunHealthLines(runtimeHealth.long_running, { historical: liveRuntimeStopped }));
+    lines.push(...formatLongRunHealthLines(runtimeHealth.long_running, {
+      historical: liveRuntimeStopped,
+      artifactExpectation,
+    }));
   }
 
   if (taskKpis.total_tasks > 0) {
