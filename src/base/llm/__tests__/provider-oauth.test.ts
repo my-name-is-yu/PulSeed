@@ -43,22 +43,31 @@ describe("provider OAuth config fallback", () => {
   let tmpHome: string;
   let tmpPulseedHome: string;
   let originalHome: string | undefined;
+  let originalUserProfile: string | undefined;
+  let originalHomeDrive: string | undefined;
+  let originalHomePath: string | undefined;
   let originalPulseedHome: string | undefined;
   let originalOpenAiKey: string | undefined;
 
   beforeEach(async () => {
     originalHome = process.env["HOME"];
+    originalUserProfile = process.env["USERPROFILE"];
+    originalHomeDrive = process.env["HOMEDRIVE"];
+    originalHomePath = process.env["HOMEPATH"];
     originalPulseedHome = process.env["PULSEED_HOME"];
     originalOpenAiKey = process.env["OPENAI_API_KEY"];
     tmpHome = await fs.mkdtemp(path.join(os.tmpdir(), "pulseed-provider-oauth-"));
     tmpPulseedHome = path.join(tmpHome, ".pulseed");
-    process.env["HOME"] = tmpHome;
+    setHomeEnv(tmpHome);
     process.env["PULSEED_HOME"] = tmpPulseedHome;
     delete process.env["OPENAI_API_KEY"];
   });
 
   afterEach(async () => {
     restoreEnv("HOME", originalHome);
+    restoreEnv("USERPROFILE", originalUserProfile);
+    restoreEnv("HOMEDRIVE", originalHomeDrive);
+    restoreEnv("HOMEPATH", originalHomePath);
     restoreEnv("PULSEED_HOME", originalPulseedHome);
     restoreEnv("OPENAI_API_KEY", originalOpenAiKey);
     await fs.rm(tmpHome, { recursive: true, force: true });
@@ -98,10 +107,15 @@ describe("provider OAuth config fallback", () => {
   });
 
   it("returns undefined when auth.json exceeds the bounded read limit", async () => {
+    const future = Math.floor(Date.now() / 1000) + 3600;
+    const token = makeJwt({ exp: future, sub: "oversized" });
     await fs.mkdir(path.dirname(codexAuthPath()), { recursive: true });
     await fs.writeFile(
       codexAuthPath(),
-      JSON.stringify({ tokens: { access_token: "x".repeat(CODEX_AUTH_TEXT_MAX_BYTES) } }),
+      JSON.stringify({
+        tokens: { access_token: token },
+        padding: "x".repeat(CODEX_AUTH_TEXT_MAX_BYTES),
+      }),
       "utf-8",
     );
 
@@ -185,4 +199,15 @@ function restoreEnv(key: string, value: string | undefined): void {
   } else {
     process.env[key] = value;
   }
+}
+
+function setHomeEnv(home: string): void {
+  const parsedHome = path.parse(home);
+  const drive = parsedHome.root.endsWith(path.sep) ? parsedHome.root.slice(0, -1) : parsedHome.root;
+  const relativeHome = path.relative(parsedHome.root, home);
+
+  process.env["HOME"] = home;
+  process.env["USERPROFILE"] = home;
+  process.env["HOMEDRIVE"] = drive;
+  process.env["HOMEPATH"] = relativeHome.length === 0 ? path.sep : `${path.sep}${relativeHome}`;
 }
