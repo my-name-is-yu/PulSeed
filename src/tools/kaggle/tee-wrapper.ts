@@ -1,4 +1,5 @@
 import path from "node:path";
+import { KAGGLE_EXPERIMENT_METRICS_MAX_BYTES } from "./experiment-artifacts.js";
 
 export function teeWrapperArgs(
   command: string,
@@ -23,6 +24,7 @@ const reportPath = process.argv[6];
 const nextActionPath = process.argv[7];
 const experimentId = process.argv[8];
 const competition = process.argv[9];
+const METRICS_JSON_MAX_BYTES = ${KAGGLE_EXPERIMENT_METRICS_MAX_BYTES};
 const workspaceRoot = path.dirname(path.dirname(path.dirname(logPath)));
 fs.mkdirSync(path.dirname(logPath), { recursive: true });
 const log = fs.createWriteStream(logPath, { flags: "a" });
@@ -93,10 +95,32 @@ function writeCompletionArtifacts(code, signal) {
 
 function readMetricsArtifact() {
   try {
-    const raw = fs.readFileSync(metricsPath, "utf-8");
+    const raw = readTextFileWithinLimitSync(metricsPath, METRICS_JSON_MAX_BYTES);
     return { available: true, value: JSON.parse(raw), error: null };
   } catch (err) {
     return { available: false, value: null, error: err.message };
+  }
+}
+
+function readTextFileWithinLimitSync(filePath, maxBytes) {
+  const fd = fs.openSync(filePath, "r");
+  const chunks = [];
+  let totalBytes = 0;
+  try {
+    while (totalBytes <= maxBytes) {
+      const remaining = maxBytes + 1 - totalBytes;
+      const buffer = Buffer.alloc(Math.min(64 * 1024, remaining));
+      const bytesRead = fs.readSync(fd, buffer, 0, buffer.length, null);
+      if (bytesRead === 0) break;
+      totalBytes += bytesRead;
+      if (totalBytes > maxBytes) {
+        throw new Error("metrics.json exceeds " + maxBytes + " bytes");
+      }
+      chunks.push(buffer.subarray(0, bytesRead));
+    }
+    return Buffer.concat(chunks, totalBytes).toString("utf-8");
+  } finally {
+    fs.closeSync(fd);
   }
 }
 
