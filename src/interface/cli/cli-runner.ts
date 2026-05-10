@@ -32,7 +32,7 @@
 import { getCliLogger } from "./cli-logger.js";
 import { StateManager } from "../../base/state/state-manager.js";
 import { CharacterConfigManager } from "../../platform/traits/character-config.js";
-import type { CoreLoop } from "../../orchestrator/loop/durable-loop.js";
+import type { DurableLoop } from "../../orchestrator/loop/durable-loop.js";
 import { dispatchCommand } from "./cli-command-registry.js";
 import { formatOperationError, printUsage } from "./utils.js";
 import { getPulseedVersion } from "../../base/utils/pulseed-meta.js";
@@ -97,7 +97,7 @@ function isDefaultTuiLaunchRequest(argv: readonly string[]): boolean {
 export class CLIRunner {
   private readonly stateManager: StateManager;
   private readonly characterConfigManager: CharacterConfigManager;
-  private activeCoreLoop: CoreLoop | null = null;
+  private activeDurableLoop: DurableLoop | null = null;
 
   /**
    * @description Creates a CLI runner with state and character configuration managers rooted at the optional base directory.
@@ -118,12 +118,12 @@ export class CLIRunner {
   }
 
   /**
-   * @description Stops the active core loop if one is currently running. Safe to call before `run()` or when no loop is active.
+   * @description Stops the active DurableLoop if one is currently running. Safe to call before `run()` or when no loop is active.
    * @returns {void} Does not return a value.
    */
   stop(): void {
-    if (this.activeCoreLoop) {
-      this.activeCoreLoop.stop();
+    if (this.activeDurableLoop) {
+      this.activeDurableLoop.stop();
     }
   }
 
@@ -190,15 +190,15 @@ export class CLIRunner {
       }
     }
 
-    const activeCoreLoopRef = { value: this.activeCoreLoop };
+    const activeDurableLoopRef = { value: this.activeDurableLoop };
     const result = await dispatchCommand(
       filteredArgv,
       globalYes,
       this.stateManager,
       this.characterConfigManager,
-      activeCoreLoopRef,
+      activeDurableLoopRef,
     );
-    this.activeCoreLoop = activeCoreLoopRef.value;
+    this.activeDurableLoop = activeDurableLoopRef.value;
     return result;
   }
 }

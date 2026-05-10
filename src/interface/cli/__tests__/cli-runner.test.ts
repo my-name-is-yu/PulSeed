@@ -31,6 +31,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { RuntimeBudgetStore } from "../../../runtime/store/budget-store.js";
 import { SupervisorStateStore } from "../../../runtime/store/supervisor-state-store.js";
+import { Logger } from "../../../runtime/logger.js";
 
 // ─── Module mocks ───────────────────────────────────────────────────────────
 //
@@ -794,7 +795,7 @@ describe("run subcommand", async () => {
     expect(code).toBe(1);
   });
 
-  it("exits with code 1 when CoreLoop.run() throws an error", async () => {
+  it("exits with code 1 and reports DurableLoop context when the loop throws an error", async () => {
     await stateManager.saveGoal(makeGoal({ id: "g-throw" }));
 
     vi.mocked(CoreLoop).mockImplementation(function() { return {
@@ -803,8 +804,17 @@ describe("run subcommand", async () => {
       setTimeHorizonEngine: vi.fn(),
     } as unknown as CoreLoop; });
 
-    const code = await runCLI("run", "--goal", "g-throw");
-    expect(code).toBe(1);
+    const loggerErrorSpy = vi.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
+    try {
+      const code = await runCLI("run", "--goal", "g-throw");
+      const output = loggerErrorSpy.mock.calls.map((call) => call.join(" ")).join("\n");
+
+      expect(code).toBe(1);
+      expect(output).toContain('run DurableLoop for goal "g-throw"');
+      expect(output).not.toContain("run core loop");
+    } finally {
+      loggerErrorSpy.mockRestore();
+    }
   });
 
   it("exits with code 1 when ANTHROPIC_API_KEY is not set", async () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { CoreLoop, LoopResult } from "../../../orchestrator/loop/durable-loop.js";
+import type { DurableLoop, LoopResult } from "../../../orchestrator/loop/durable-loop.js";
 import { formatProgressGap, runLoopWithSignals } from "../utils/loop-runner.js";
 
 describe("loop-runner progress formatting", () => {
@@ -12,7 +12,7 @@ describe("loop-runner progress formatting", () => {
 
 describe("runLoopWithSignals", () => {
   it.each(["SIGINT", "SIGTERM"] as const)(
-    "aborts active CoreLoop work on %s",
+    "aborts active DurableLoop work on %s",
     async (signalName) => {
       const beforeSigintListeners = process.listenerCount("SIGINT");
       const beforeSigtermListeners = process.listenerCount("SIGTERM");
@@ -29,10 +29,10 @@ describe("runLoopWithSignals", () => {
         });
       });
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
-      const coreLoop = { run, stop } as unknown as CoreLoop;
+      const durableLoop = { run, stop } as unknown as DurableLoop;
 
       try {
-        const resultPromise = runLoopWithSignals(coreLoop, "goal-active-native-work");
+        const resultPromise = runLoopWithSignals(durableLoop, "goal-active-native-work");
         await vi.waitFor(() => expect(capturedSignal).toBeDefined());
 
         process.emit(signalName);

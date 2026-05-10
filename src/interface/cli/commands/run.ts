@@ -5,7 +5,7 @@ import * as readline from "node:readline";
 import type { StateManager } from "../../../base/state/state-manager.js";
 import type { CharacterConfigManager } from "../../../platform/traits/character-config.js";
 import { ensureProviderConfig } from "../ensure-api-key.js";
-import type { CoreLoop, LoopConfig } from "../../../orchestrator/loop/durable-loop.js";
+import type { DurableLoop, LoopConfig } from "../../../orchestrator/loop/durable-loop.js";
 import { resolveLoopRunPolicy } from "../../../orchestrator/loop/run-policy.js";
 import type { Task } from "../../../base/types/task.js";
 import { reconcileInterruptedExecutions } from "../../../runtime/daemon/runner-recovery.js";
@@ -44,7 +44,7 @@ export async function cmdRun(
   loopConfig?: LoopConfig,
   autoApprove?: boolean,
   verbose?: boolean,
-  activeCoreLoopRef?: { value: CoreLoop | null },
+  activeDurableLoopRef?: { value: DurableLoop | null },
   workspacePath?: string,
 ): Promise<number> {
   try {
@@ -77,7 +77,7 @@ export async function cmdRun(
     return 1;
   }
 
-  const { coreLoop } = deps;
+  const { coreLoop: durableLoop } = deps;
 
   const goal = await stateManager.loadGoal(goalId);
   if (!goal) {
@@ -93,8 +93,8 @@ export async function cmdRun(
   }
   console.log("Press Ctrl+C to stop.\n");
 
-  if (activeCoreLoopRef) {
-    activeCoreLoopRef.value = coreLoop;
+  if (activeDurableLoopRef) {
+    activeDurableLoopRef.value = durableLoop;
   }
 
   const runPolicy = resolveLoopRunPolicy(loopConfig);
@@ -114,25 +114,25 @@ export async function cmdRun(
       }
     } catch (err) {
       logger.error(formatOperationError("reconcile interrupted resident tasks", err));
-      if (activeCoreLoopRef) activeCoreLoopRef.value = null;
+      if (activeDurableLoopRef) activeDurableLoopRef.value = null;
       rl?.close();
       return 1;
     }
   }
 
-  let result: Awaited<ReturnType<typeof coreLoop.run>>;
+  let result: Awaited<ReturnType<typeof durableLoop.run>>;
   try {
-    result = await runLoopWithSignals(coreLoop, goalId);
+    result = await runLoopWithSignals(durableLoop, goalId);
   } catch (err) {
     if (runPolicy.mode === "resident") {
       await reconcileResidentShutdownTasks(stateManager, logger, "resident_cli_error");
     }
-    logger.error(formatOperationError(`run core loop for goal "${goalId}"`, err));
+    logger.error(formatOperationError(`run DurableLoop for goal "${goalId}"`, err));
     logger.error(`Hint: Check ~/.pulseed/logs/ for details or re-run with DEBUG=1 for stack traces.`);
     if (verbose || process.env.DEBUG) {
       logger.error(err instanceof Error ? err.stack ?? String(err) : String(err));
     }
-    if (activeCoreLoopRef) activeCoreLoopRef.value = null;
+    if (activeDurableLoopRef) activeDurableLoopRef.value = null;
     rl?.close();
     return 1;
   }
@@ -141,7 +141,7 @@ export async function cmdRun(
     await reconcileResidentShutdownTasks(stateManager, logger, "resident_cli_shutdown");
   }
 
-  if (activeCoreLoopRef) activeCoreLoopRef.value = null;
+  if (activeDurableLoopRef) activeDurableLoopRef.value = null;
   rl?.close();
 
   console.log(`\n--- Loop Result ---`);

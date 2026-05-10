@@ -8,8 +8,7 @@ import { parseArgs } from "node:util";
 import { getCliLogger } from "./cli-logger.js";
 import type { StateManager } from "../../base/state/state-manager.js";
 import type { CharacterConfigManager } from "../../platform/traits/character-config.js";
-import type { CoreLoop } from "../../orchestrator/loop/durable-loop.js";
-import type { LoopConfig } from "../../orchestrator/loop/durable-loop.js";
+import type { DurableLoop, LoopConfig } from "../../orchestrator/loop/durable-loop.js";
 
 // Commands
 import { cmdRun } from "./commands/run.js";
@@ -81,7 +80,7 @@ function parsePositiveIntegerOption(raw: unknown): number | null {
  * @param {boolean} globalYes Whether --yes/-y was present globally.
  * @param {StateManager} stateManager Initialised state manager instance.
  * @param {CharacterConfigManager} characterConfigManager Character config manager instance.
- * @param {{ value: CoreLoop | null }} activeCoreLoopRef Mutable ref updated by cmdRun.
+ * @param {{ value: DurableLoop | null }} activeDurableLoopRef Mutable ref updated by cmdRun.
  * @returns {Promise<number>} Exit code: 0 for success, 1 for errors, 2 for stall escalation.
  */
 export async function dispatchCommand(
@@ -89,7 +88,7 @@ export async function dispatchCommand(
   globalYes: boolean,
   stateManager: StateManager,
   characterConfigManager: CharacterConfigManager,
-  activeCoreLoopRef: { value: CoreLoop | null },
+  activeDurableLoopRef: { value: DurableLoop | null },
   commandCwd = process.cwd(),
 ): Promise<number> {
   if (argv.length === 0) {
@@ -196,7 +195,7 @@ export async function dispatchCommand(
       loopConfig,
       globalYes || values.yes,
       values.verbose,
-      activeCoreLoopRef,
+      activeDurableLoopRef,
       resolvedWorkspace,
     );
     return result;
