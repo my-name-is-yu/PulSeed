@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  DAEMON_AUTH_TOKEN_FILE_MAX_BYTES,
   DaemonClient,
   isDaemonRunning,
   probeDaemonHealth,
@@ -577,6 +578,17 @@ describe("isDaemonRunning", () => {
 
     fs.rmSync(path.join(tmpDir, "daemon-token.json"), { force: true });
     fs.mkdirSync(path.join(tmpDir, "daemon-token.json"));
+
+    expect(readDaemonAuthToken(tmpDir)).toBeNull();
+  });
+
+  it("does not load oversized daemon token files or fall back to stale env tokens", () => {
+    process.env["PULSEED_DAEMON_TOKEN"] = "stale-token";
+    fs.writeFileSync(
+      path.join(tmpDir, "daemon-token.json"),
+      JSON.stringify({ token: "fresh-token", padding: "x".repeat(DAEMON_AUTH_TOKEN_FILE_MAX_BYTES) }),
+      "utf-8"
+    );
 
     expect(readDaemonAuthToken(tmpDir)).toBeNull();
   });
