@@ -102,9 +102,8 @@ export async function countJsonlLines(baseDir: string, relativePath: string): Pr
 
 export async function countAgentMemoryEntries(baseDir: string): Promise<number> {
   const filePath = path.join(baseDir, "memory", "agent-memory", "entries.json");
-  const raw = await fsp.readFile(filePath, "utf8").catch(() => "");
-  if (!raw) return 0;
-  const parsed = JSON.parse(raw) as { entries?: unknown[] };
+  const parsed = await readJsonFileOrNull<{ entries?: unknown[] }>(filePath);
+  if (!parsed) return 0;
   return Array.isArray(parsed.entries) ? parsed.entries.length : 0;
 }
 
@@ -115,9 +114,8 @@ export async function countEventLines(baseDir: string, eventType: string): Promi
 
 export async function countTrustDomains(baseDir: string): Promise<number> {
   const filePath = path.join(baseDir, "trust", "trust-store.json");
-  const raw = await fsp.readFile(filePath, "utf8").catch(() => "");
-  if (!raw) return 0;
-  const parsed = JSON.parse(raw) as { balances?: Record<string, unknown> };
+  const parsed = await readJsonFileOrNull<{ balances?: Record<string, unknown> }>(filePath);
+  if (!parsed) return 0;
   return parsed.balances ? Object.keys(parsed.balances).length : 0;
 }
 
