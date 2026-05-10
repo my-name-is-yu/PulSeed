@@ -23,7 +23,7 @@ describe("seedy presence rendering", () => {
 
     const status = renderSeedyPresenceStatusText(presence);
 
-    expect(status).toBe("Working on it.");
+    expect(status).toBe("I'm working on it.");
     expect(status).not.toMatch(/openai|gpt|model|tool catalog|command output|trace|compaction/i);
   });
 
@@ -82,5 +82,63 @@ describe("seedy presence rendering", () => {
     });
 
     expect(renderSeedyPresenceStatusText(presence)).toBe("I need your input to continue.");
+  });
+
+  it("renders waiting status from typed activity metadata", () => {
+    const presence = createUserVisibleSeedyTurnPresence({
+      turn_id: "turn-waiting",
+      phase: "waiting",
+      importance: "status",
+      subject: "Checking the project state",
+      last_activity_at: "2026-05-10T00:00:00.000Z",
+      last_activity_label: "Checking the project state",
+      expected_next: "progress",
+    });
+
+    expect(renderSeedyPresenceStatusText(presence, {
+      now: "2026-05-10T00:00:35.000Z",
+    })).toBe("I'm still working on it. Last visible activity: checking the project state about 35 seconds ago.");
+  });
+
+  it("uses a concise honest fallback when waiting activity is unavailable", () => {
+    const presence = createSeedyTurnPresence({
+      turn_id: "turn-unsafe-waiting",
+      phase: "waiting",
+      audience: "user",
+      importance: "status",
+      subject: "Calling model openai/gpt-5.5 with tool catalog",
+      reason: "Raw command output is still running.",
+      last_activity_label: "model_request: openai/gpt-5.5",
+      started_at: "2026-05-10T00:00:00.000Z",
+      updated_at: "2026-05-10T00:00:00.000Z",
+      last_activity_at: "2026-05-10T00:00:00.000Z",
+      expected_next: "progress",
+    });
+
+    const status = renderSeedyPresenceStatusText(presence, {
+      now: "2026-05-10T00:00:35.000Z",
+    });
+
+    expect(status).toBe("I'm still working on it. I don't have a new visible update yet.");
+    expect(status).not.toMatch(/openai|gpt|model|tool catalog|command output/i);
+  });
+
+  it("does not render command-shaped activity labels", () => {
+    const presence = createUserVisibleSeedyTurnPresence({
+      turn_id: "turn-command-label",
+      phase: "waiting",
+      importance: "status",
+      subject: "Running command npm test -- --grep auth",
+      last_activity_at: "2026-05-10T00:00:00.000Z",
+      last_activity_label: "aws ssm get-parameter --with-decryption /prod/secret",
+      expected_next: "progress",
+    });
+
+    const status = renderSeedyPresenceStatusText(presence, {
+      now: "2026-05-10T00:00:35.000Z",
+    });
+
+    expect(status).toBe("I'm still working on it. I don't have a new visible update yet.");
+    expect(status).not.toMatch(/npm test|aws ssm|with-decryption|prod\/secret/i);
   });
 });
