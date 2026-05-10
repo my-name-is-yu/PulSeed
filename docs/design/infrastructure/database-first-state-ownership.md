@@ -12,7 +12,7 @@ explicit migration or debug/export outputs, not normal runtime owners.
 
 - daemon, shutdown, supervisor, queue, schedule, and schedule history state
 - approvals, permission grants, wait plans, guardrails, outbox, safe pauses,
-  leader locks, and goal leases
+  leader locks, goal leases, and goal state write locks
 - runtime operations, background runs, health snapshots, sessions, chat
   sessions, AgentLoop session state, traces, usage, compaction records, and route
   metadata
@@ -88,10 +88,12 @@ Remaining known follow-up surfaces are intentionally allowlisted in the guard so
 the repository can prevent new ad hoc stores while preserving an explicit audit
 list:
 
-- `src/base/state/state-manager-goal-state.ts` and
-  `src/base/state/state-manager-wal.ts`: remaining StateManager compatibility
-  and WAL wrappers
-- `src/interface/chat/chat-runner-state.ts`: archived-goal compatibility reads
+- `src/base/state/legacy-state-wal.ts` and
+  `src/base/state/legacy-state-manager-wal-recovery.ts`: explicit legacy goal
+  WAL import/repair inputs reached through `doctor --repair`; normal
+  StateManager writes do not append `wal.jsonl`
+- `src/base/state/legacy-archived-goal-recovery.ts`: explicit legacy archived
+  goal recovery inspection; normal archive ownership is DB-backed
 - `src/orchestrator/execution/agent-loop/agent-loop-session-factory.ts`:
   path-shaped AgentLoop resume option compatibility
 - task verifier, task lifecycle, checkpoint, strategy, and wait-deadline callers:

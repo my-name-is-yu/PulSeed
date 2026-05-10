@@ -8,7 +8,7 @@ import {
   compactWAL,
   truncateWAL,
   type WALIntent,
-} from "../state-wal.js";
+} from "../legacy-state-wal.js";
 import { makeTempDir, cleanupTempDir } from "../../../../tests/helpers/temp-dir.js";
 
 const GOAL_ID = "test-goal-1";
@@ -17,7 +17,7 @@ function makeIntent(op = "save_goal", ts?: string): WALIntent {
   return { op, data: { value: 42 }, ts: ts ?? new Date().toISOString() };
 }
 
-describe("state-wal", () => {
+describe("legacy-state-wal", () => {
   let tmpDir: string;
 
   beforeEach(() => {

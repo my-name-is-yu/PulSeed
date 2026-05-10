@@ -1,6 +1,3 @@
-import * as fsp from "node:fs/promises";
-import * as path from "node:path";
-import { TaskSchema, type Task } from "../../base/types/task.js";
 import { ScheduleHistoryStore } from "../../runtime/schedule/history.js";
 import { GoalTaskStateStore } from "../../runtime/store/goal-task-state-store.js";
 import { parseUsagePeriodMs } from "../usage-period.js";
@@ -18,13 +15,6 @@ export interface ScheduleUsageSummary {
   totalTokens: number;
 }
 
-export function resolveStatePath(baseDir: string, ...segments: string[]): string | null {
-  const base = path.resolve(baseDir);
-  const resolved = path.resolve(base, ...segments);
-  if (!resolved.startsWith(base + path.sep)) return null;
-  return resolved;
-}
-
 function isNonnegativeSafeInteger(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 }
@@ -33,61 +23,6 @@ function addSafeTokenCount(total: number, value: unknown): number {
   if (!isNonnegativeSafeInteger(value)) return total;
   if (value > Number.MAX_SAFE_INTEGER - total) return total;
   return total + value;
-}
-
-export async function listRecoverableArchivedGoalIds(baseDir: string): Promise<string[]> {
-  const archiveDir = resolveStatePath(baseDir, "archive");
-  if (archiveDir === null) return [];
-  let entries: Array<{ name: string; isDirectory(): boolean }> = [];
-  try {
-    entries = await fsp.readdir(archiveDir, { withFileTypes: true });
-  } catch {
-    return [];
-  }
-
-  const goalIds: string[] = [];
-  for (const entry of entries) {
-    if (!entry.isDirectory() || entry.name === ".staging") continue;
-    try {
-      await fsp.access(path.join(archiveDir, entry.name, "goal", "goal.json"));
-      goalIds.push(entry.name);
-    } catch {
-      continue;
-    }
-  }
-  return goalIds;
-}
-
-export async function readTasksFromDir(tasksDir: string): Promise<Task[]> {
-  let entries: string[] = [];
-  try {
-    entries = await fsp.readdir(tasksDir);
-  } catch {
-    return [];
-  }
-
-  const tasks: Task[] = [];
-  for (const entry of entries) {
-    if (!entry.endsWith(".json") || entry === "task-history.json" || entry === "last-failure-context.json") continue;
-    let raw: unknown;
-    try {
-      raw = JSON.parse(await fsp.readFile(path.join(tasksDir, entry), "utf-8"));
-    } catch {
-      continue;
-    }
-    const parsed = TaskSchema.safeParse(raw);
-    if (parsed.success) tasks.push(parsed.data);
-  }
-  return tasks.sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
-}
-
-export async function readTasksForGoal(baseDir: string, goalId: string): Promise<Task[]> {
-  const activeTasksDir = resolveStatePath(baseDir, "tasks", goalId);
-  const archiveTasksDir = resolveStatePath(baseDir, "archive", goalId, "tasks");
-  if (activeTasksDir === null || archiveTasksDir === null) return [];
-  const activeTasks = await readTasksFromDir(activeTasksDir);
-  if (activeTasks.length > 0) return activeTasks;
-  return readTasksFromDir(archiveTasksDir);
 }
 
 export { parseUsagePeriodMs };

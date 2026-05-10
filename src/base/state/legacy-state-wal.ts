@@ -2,6 +2,12 @@ import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { z } from "zod";
 
+/**
+ * Legacy goal WAL parser used only by explicit migration/repair flows.
+ *
+ * Normal StateManager writes are database-first and must not append to
+ * goals/<goal_id>/wal.jsonl as authoritative runtime state.
+ */
 export interface WALIntent {
   op: string;
   data: unknown;

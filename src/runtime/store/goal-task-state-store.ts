@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
   openControlDatabase,
   type ControlDatabase,
@@ -57,6 +58,10 @@ interface RawPathMatch {
 function nowIso(): string {
   return new Date().toISOString();
 }
+
+const GOAL_STATE_WRITE_LOCK_TIMEOUT_MS = 5_000;
+const GOAL_STATE_WRITE_LOCK_LEASE_MS = 30_000;
+const GOAL_STATE_WRITE_LOCK_RETRY_MS = 25;
 
 function parseJson<T = unknown>(value: string): T {
   return JSON.parse(value) as T;
@@ -192,6 +197,15 @@ export class GoalTaskStateStore {
 
   async ensureReady(): Promise<void> {
     await this.database();
+  }
+
+  async withGoalStateWriteLock<T>(goalId: string, work: () => Promise<T>): Promise<T> {
+    const release = await this.acquireGoalStateWriteLock(goalId);
+    try {
+      return await work();
+    } finally {
+      release();
+    }
   }
 
   async saveGoal(goal: Goal): Promise<Goal> {
@@ -976,6 +990,47 @@ export class GoalTaskStateStore {
       dbPath: this.options.controlDbPath,
     });
     return this.dbPromise;
+  }
+
+  private async acquireGoalStateWriteLock(goalId: string): Promise<() => void> {
+    const db = await this.database();
+    const ownerToken = randomUUID();
+    const startedAt = Date.now();
+
+    while (true) {
+      const acquired = db.transaction((sqlite) => {
+        const now = Date.now();
+        sqlite.prepare(`
+          DELETE FROM goal_state_write_locks
+          WHERE goal_id = ? AND lease_until <= ?
+        `).run(goalId, now);
+        const result = sqlite.prepare(`
+          INSERT OR IGNORE INTO goal_state_write_locks (
+            goal_id,
+            owner_token,
+            owner_pid,
+            acquired_at,
+            lease_until
+          )
+          VALUES (?, ?, ?, ?, ?)
+        `).run(goalId, ownerToken, process.pid, now, now + GOAL_STATE_WRITE_LOCK_LEASE_MS);
+        return result.changes === 1;
+      });
+      if (acquired) {
+        return () => {
+          db.transaction((sqlite) => {
+            sqlite.prepare(`
+              DELETE FROM goal_state_write_locks
+              WHERE goal_id = ? AND owner_token = ?
+            `).run(goalId, ownerToken);
+          });
+        };
+      }
+      if (Date.now() - startedAt >= GOAL_STATE_WRITE_LOCK_TIMEOUT_MS) {
+        throw new Error(`Timed out waiting for goal state write lock in control DB for "${goalId}"`);
+      }
+      await new Promise((resolve) => setTimeout(resolve, GOAL_STATE_WRITE_LOCK_RETRY_MS));
+    }
   }
 }
 
