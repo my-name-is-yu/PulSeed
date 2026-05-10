@@ -11,6 +11,7 @@ import {
 } from "./llm-client.js";
 import { sleep } from "../utils/sleep.js";
 import { LLMError } from "../utils/errors.js";
+import { signalProcessGroup } from "../utils/process-pid.js";
 
 // ─── Constants ───
 
@@ -247,8 +248,10 @@ export class CodexLLMClient extends BaseLLMClient implements ILLMClient {
       const killChild = (signal: NodeJS.Signals): void => {
         if (process.platform !== "win32" && typeof child.pid === "number") {
           try {
-            process.kill(-child.pid, signal);
-            return;
+            const groupSignal = signalProcessGroup(child.pid, signal);
+            if (groupSignal.status === "sent") {
+              return;
+            }
           } catch {
             // Fall back to the immediate child below.
           }

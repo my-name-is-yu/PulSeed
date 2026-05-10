@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { parseProcessPid, signalProcessPid } from "../process-pid.js";
+import { parseProcessPid, signalProcessGroup, signalProcessPid } from "../process-pid.js";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -46,6 +46,32 @@ describe("process PID helpers", () => {
     });
 
     expect(signalProcessPid(123, "SIGTERM")).toEqual({ status: "missing_process", pid: 123 });
+  });
+
+  it("signals safe process group leaders through negative PID targets", () => {
+    const killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
+
+    expect(signalProcessGroup(123, "SIGTERM")).toEqual({ status: "sent", pid: 123 });
+    expect(killSpy).toHaveBeenCalledWith(-123, "SIGTERM");
+  });
+
+  it("does not signal unsafe process group leader PID values", () => {
+    const killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
+
+    expect(signalProcessGroup(Number.MAX_SAFE_INTEGER + 1, "SIGTERM")).toEqual({ status: "unsafe_pid" });
+    expect(signalProcessGroup(-123, "SIGTERM")).toEqual({ status: "unsafe_pid" });
+    expect(signalProcessGroup("123", "SIGTERM")).toEqual({ status: "unsafe_pid" });
+    expect(killSpy).not.toHaveBeenCalled();
+  });
+
+  it("reports missing process groups without throwing", () => {
+    const err = new Error("no such process group") as NodeJS.ErrnoException;
+    err.code = "ESRCH";
+    vi.spyOn(process, "kill").mockImplementation(() => {
+      throw err;
+    });
+
+    expect(signalProcessGroup(123, "SIGTERM")).toEqual({ status: "missing_process", pid: 123 });
   });
 
   it("treats signal 0 permission errors as existing processes", () => {

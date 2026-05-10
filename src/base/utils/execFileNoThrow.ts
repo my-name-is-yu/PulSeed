@@ -5,6 +5,7 @@
 // and { stdout: "", stderr: <message>, exitCode: null } on spawn errors.
 
 import { execFile, spawn } from "node:child_process";
+import { signalProcessGroup } from "./process-pid.js";
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 const MAX_TIMEOUT_MS = 2_147_483_647;
@@ -146,8 +147,10 @@ function spawnNoThrow(
     const killChild = (killSignal: NodeJS.Signals): void => {
       if (detached && child.pid) {
         try {
-          process.kill(-child.pid, killSignal);
-          return;
+          const groupSignal = signalProcessGroup(child.pid, killSignal);
+          if (groupSignal.status === "sent") {
+            return;
+          }
         } catch {
           // Fall back to the immediate child below.
         }

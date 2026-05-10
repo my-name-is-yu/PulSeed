@@ -24,8 +24,24 @@ export function signalProcessPid(pid: unknown, signal: ProcessSignal): ProcessSi
     return { status: "unsafe_pid" };
   }
 
+  return signalCheckedPid(pid, signal, pid);
+}
+
+export function signalProcessGroup(pid: unknown, signal: NodeJS.Signals): ProcessSignalResult {
+  if (!isProcessPidValue(pid)) {
+    return { status: "unsafe_pid" };
+  }
+
+  return signalCheckedPid(-pid, signal, pid);
+}
+
+function signalCheckedPid(
+  signalTarget: number,
+  signal: ProcessSignal,
+  pid: number,
+): ProcessSignalResult {
   try {
-    process.kill(pid, signal);
+    process.kill(signalTarget, signal);
     return { status: "sent", pid };
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
