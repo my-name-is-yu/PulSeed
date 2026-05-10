@@ -89,6 +89,23 @@ describe("KnowledgeManager.acquireWithTools", () => {
     expect(entries[0].confidence).toBe(0.92);
   });
 
+  it("normalizes recoverable synthesis values before validating the knowledge entry", async () => {
+    const llm = createMockLLMClient([
+      JSON.stringify([{ toolName: "read", input: { file_path: "/test.ts" } }]),
+      JSON.stringify({ answer: "Answer", confidence: 1.2, tags: null }),
+    ]);
+    const executor = createMockToolExecutor([
+      { success: true, summary: "file content", data: "content here" },
+    ]);
+    const km = new KnowledgeManager(stateManager, llm as any);
+
+    const entries = await km.acquireWithTools("Q?", "goal-1", executor as any, makeContext());
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0].confidence).toBe(0.92);
+    expect(entries[0].tags).toEqual([]);
+  });
+
   it("returns empty when LLM plan is unparseable", async () => {
     const llm = createMockLLMClient(["not json at all"]);
     const executor = createMockToolExecutor([]);
@@ -128,6 +145,21 @@ describe("KnowledgeManager.acquireWithTools", () => {
     const llm = createMockLLMClient([
       JSON.stringify([{ toolName: "glob", input: { pattern: "*.ts" } }]),
       "not valid json for synthesis",
+    ]);
+    const executor = createMockToolExecutor([
+      { success: true, summary: "found files", data: "a.ts\nb.ts" },
+    ]);
+    const km = new KnowledgeManager(stateManager, llm as any);
+
+    const entries = await km.acquireWithTools("Q?", "goal-1", executor as any, makeContext());
+
+    expect(entries).toEqual([]);
+  });
+
+  it("returns empty when synthesis response violates the knowledge entry contract", async () => {
+    const llm = createMockLLMClient([
+      JSON.stringify([{ toolName: "glob", input: { pattern: "*.ts" } }]),
+      JSON.stringify({ answer: "Found files", confidence: "high", tags: ["files"] }),
     ]);
     const executor = createMockToolExecutor([
       { success: true, summary: "found files", data: "a.ts\nb.ts" },
