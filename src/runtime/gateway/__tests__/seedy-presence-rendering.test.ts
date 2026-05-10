@@ -146,6 +146,25 @@ describe("seedy presence rendering", () => {
     expect(status).not.toMatch(/npm test|aws ssm|with-decryption|prod\/secret/i);
   });
 
+  it("filters uppercase command-shaped labels with locale-stable matching", () => {
+    const presence = createUserVisibleSeedyTurnPresence({
+      turn_id: "turn-uppercase-command",
+      phase: "waiting",
+      importance: "status",
+      subject: "PIP install private-package",
+      last_activity_at: "2026-05-10T00:00:00.000Z",
+      last_activity_label: "PIP install private-package",
+      expected_next: "progress",
+    });
+
+    const status = renderSeedyPresenceStatusText(presence, {
+      now: "2026-05-10T00:00:35.000Z",
+    });
+
+    expect(status).toBe("I'm still working on it. I don't have a new visible update yet.");
+    expect(status).not.toMatch(/PIP install|private-package/i);
+  });
+
   it("falls back to safe subject when the activity label is unsafe", () => {
     const presence = createUserVisibleSeedyTurnPresence({
       turn_id: "turn-safe-subject",

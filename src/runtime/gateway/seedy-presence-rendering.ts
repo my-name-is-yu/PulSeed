@@ -154,7 +154,7 @@ function isSafePresenceFragment(value: string): boolean {
 }
 
 function looksLikeCommandOrPath(value: string): boolean {
-  const lower = value.toLocaleLowerCase();
+  const lower = value.toLowerCase();
   if (/(^|\s)(command|shell|bash|zsh|terminal|exec|spawn|subprocess)(\s|:|$)/i.test(value)) return true;
   if (/(^|\s)(npm|pnpm|yarn|node|npx|git|gh|aws|gcloud|az|kubectl|docker|ssh|scp|curl|python|python3|pip|uv|make|cargo|go|ruby|bundle|psql|sqlite3)\s+\S/.test(lower)) {
     return true;
