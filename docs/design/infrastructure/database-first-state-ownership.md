@@ -133,8 +133,8 @@ Current direct filesystem owner inventory:
 | Runtime reports, manifests, postmortems, long-running results | runtime report stores and runtime tools | report/result/manifest files | reproducibility artifact | confirmed in Slice 7 |
 | Morning/evening/weekly/dream reflection reports | `src/reflection/*` | `reflection_reports` in `state/pulseed-control.sqlite`; legacy `reflections/*.json` is doctor/repair import input only | typed control DB state | closed in Slice 7 |
 | Workspace and tool-produced deliverables | filesystem tools, Kaggle tools, workspace prep/edit/write paths, code-search reads | workspace files and external task artifacts | workspace content | confirmed in Slice 7 |
-| Operator configuration and credentials | setup/config/plugin/gateway/channel/hook/global config paths | provider, daemon, notification, datasource, gateway, plugin, MCP config files | config/secret | Slice 8 |
-| User-authored profile and character content | relationship profile and character configuration paths | `relationship-profile.json`, `character-config.json` | user-authored content | Slice 8 |
+| Operator configuration and credentials | setup/config/plugin/gateway/channel/hook/global config paths | provider, daemon, notification, datasource, gateway, plugin, MCP config files | config/secret | confirmed in Slice 8 |
+| User-authored profile and character content | relationship profile and character configuration paths | `relationship-profile.json`, `character-config.json` | user-authored content | confirmed in Slice 8 |
 | Doctor/repair compatibility inputs | migration helpers, legacy recovery, doctor repair paths | legacy JSON/JSONL/lock files | migration-only input | none |
 | Soil import, compile, projection, and publish artifacts | Soil import/publish/compiler/projection/doctor paths | Soil-owned files and publish state | Soil import/publish artifact | none |
 | Debug logs, process pid, and health diagnostics | logger, TUI debug log, pid manager, daemon health logs | log, pid, and health diagnostic files | debug/export artifact | confirmed in Slice 7 |
@@ -299,6 +299,11 @@ debug/export artifact boundaries:
 - character config, MCP server config, and generated reports are explicitly
   classified non-debt raw fallback boundaries; other fallback paths fail in
   normal runtime code and in the legacy-store guard
+- provider, daemon, notification, datasource, gateway/channel, plugin, MCP, and
+  global config files remain file-backed as operator/admin-managed config or
+  credentials, with schema validation at their loaders and setup entrypoints;
+  guard classification does not allow those config names to hide unrelated
+  runtime `state.json`, queue, cache, or state-directory ownership
 
 Future durable internal state must add a typed store API and schema migration.
 Adding a new JSON/JSONL sidecar requires documenting why it is config,

@@ -181,6 +181,48 @@ Base: origin/main @ 7d87d012 Prefer live daemon status in runtime evidence answe
 - `npm run build`: passed
 - `git diff --check`: passed
 
+## Slice 7 Merge Record
+
+- PR: https://github.com/my-name-is-yu/PulSeed/pull/1869
+- Branch: `codex/direct-file-state-slice-7-artifact-reports-20260511011743`
+- Worktree: `/Users/yuyoshimuta/Documents/dev/PulSeed-worktrees/direct-file-state-slice-7-artifact-reports-20260511011743`
+- Head commit: `79b7387b5f99c945edbe3c559bf028db1a5edf56`
+- Merge commit: `c5c6690b24ddf53b38db823eb1e3c35fd1a3fbf9`
+- CI: `unit (22)` success, `integration (24)` success
+- GitHub Codex review: initial current-head review on `13f248ec` found a P2 bounded prompt-load issue; fixed in `fc2b6005`
+- `@codex review`: needed after the fix and again after `79b7387b`; no usable current-head GitHub Codex review appeared after retry
+- Fallback sub-agent review: used after `@codex review`; LGTM, no material blockers at `79b7387b`
+- Worktree cleanup: removed after merge
+- Remote branch cleanup: deleted after merge
+- Merged by this session: yes
+
+## Slice 8 Direct File Owner Plan
+
+| Owner | Current boundary | Classification | Planned guard state |
+| --- | --- | --- | --- |
+| Operator configuration and credentials | provider, daemon, notification, datasource, gateway/channel, plugin, MCP, hook, and global config files | config/secret | confirm schema-validated config boundary, close `nextSlice`, and ensure config filenames cannot hide unrelated runtime state |
+| User-authored profile and character content | `relationship-profile.json`, `character-config.json` | user-authored content | confirm user/admin-authored content boundary and close `nextSlice` |
+
+## Slice 8 Direct File Owner Update
+
+| Owner | Previous boundary | Current boundary | Classification | Guard state |
+| --- | --- | --- | --- | --- |
+| Operator configuration and credentials | provider, daemon, notification, datasource, gateway/channel, plugin, MCP, hook, and global config files with `nextSlice: 8` | unchanged file-backed operator/admin config boundary | config/secret | confirmed with `nextSlice: null`; guard no longer lets config filenames suppress unrelated runtime state rules |
+| User-authored profile and character content | `relationship-profile.json`, `character-config.json` with `nextSlice: 8` | unchanged schema-validated user/admin-authored content boundary | user-authored content | confirmed with `nextSlice: null` |
+
+## Slice 8 Validation
+
+- Worktree: `/Users/yuyoshimuta/Documents/dev/PulSeed-worktrees/direct-file-state-slice-8-config-setup-files-20260511015622`
+- Branch: `codex/direct-file-state-slice-8-config-setup-files-20260511015622`
+- Base: `origin/main @ c5c6690b Move reflection reports to control DB (#1869)`
+- `nvm use 24.15.0 && npm ci`: passed
+- `npx vitest run --config vitest.unit.config.ts src/interface/cli/__tests__/database-first-legacy-store-check.test.ts`: passed, 20 tests
+- `node scripts/check-database-first-legacy-stores.mjs --json`: ok=true, findings=0, `debtReport=[]`, `directFileDebtReport=[]`
+- `npm run typecheck`: passed
+- `npm run lint:boundaries`: passed with existing warnings, 0 errors
+- `npm run build`: passed
+- `git diff --check`: passed
+
 ## Slice 6 Review Follow-up
 
 - GitHub Codex review on PR #1868 / `59558da7a6ebe95a294500f1c57859d59cf54ad1` found that DurableLoop graph traversal opened a fresh SQLite-backed `KnowledgeGraph` per task cycle without closing the underlying DB handle.
