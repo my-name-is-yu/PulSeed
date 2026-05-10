@@ -179,7 +179,18 @@ export function checkPeriodicExploration(
     });
   }
 
-  const elapsed = Date.now() - new Date(lastExploration).getTime();
+  const lastExplorationMs = parseLastExplorationTimestampMs(lastExploration);
+  if (lastExplorationMs === null) {
+    return CuriosityTriggerSchema.parse({
+      type: "periodic_exploration",
+      detected_at: new Date().toISOString(),
+      source_goal_id: null,
+      details: "Last periodic exploration timestamp is invalid. Running periodic curiosity check.",
+      severity: 0.3,
+    });
+  }
+
+  const elapsed = Date.now() - lastExplorationMs;
   if (elapsed >= periodicExplorationIntervalMs(config)) {
     const hoursElapsed = (elapsed / (1000 * 60 * 60)).toFixed(1);
     return CuriosityTriggerSchema.parse({
@@ -204,7 +215,9 @@ function isPeriodicExplorationDue(
   config: CuriosityConfig
 ): boolean {
   if (lastExploration === null) return true;
-  return Date.now() - new Date(lastExploration).getTime() >= periodicExplorationIntervalMs(config);
+  const lastExplorationMs = parseLastExplorationTimestampMs(lastExploration);
+  if (lastExplorationMs === null) return true;
+  return Date.now() - lastExplorationMs >= periodicExplorationIntervalMs(config);
 }
 
 function activeUserGoals(goals: Goal[]): Goal[] {
@@ -221,4 +234,9 @@ function isCompletedOrWaiting(goal: Goal): boolean {
 
 function periodicExplorationIntervalMs(config: CuriosityConfig): number {
   return config.periodic_exploration_hours * 60 * 60 * 1000;
+}
+
+function parseLastExplorationTimestampMs(lastExploration: string): number | null {
+  const parsed = Date.parse(lastExploration);
+  return Number.isFinite(parsed) ? parsed : null;
 }

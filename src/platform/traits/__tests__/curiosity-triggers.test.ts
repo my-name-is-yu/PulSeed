@@ -5,6 +5,7 @@ import { makeDimension, makeGoal } from "../../../../tests/helpers/fixtures.js";
 import {
   checkRepeatedFailures,
   checkTaskQueueEmpty,
+  checkPeriodicExploration,
   checkUnexpectedObservation,
   evaluateCuriosityTriggers,
   shouldExploreForCuriosity,
@@ -84,6 +85,32 @@ describe("curiosity trigger helpers", () => {
     });
 
     expect(triggers.map((trigger) => trigger.type)).toContain("periodic_exploration");
+    expect(shouldExplore).toBe(true);
+  });
+
+  it("treats malformed last exploration timestamps as periodic exploration due", async () => {
+    const stallDetector = {
+      getStallState: vi.fn(async (goalId: string) => makeStallState(goalId, {})),
+    };
+    const state = { last_exploration_at: "not-a-date" };
+    const oneHourConfig = CuriosityConfigSchema.parse({ periodic_exploration_hours: 1 });
+    const goals = [makeGoal({ id: "active-user-goal", status: "active", origin: null })];
+
+    const trigger = checkPeriodicExploration(state.last_exploration_at, oneHourConfig);
+    const triggers = await evaluateCuriosityTriggers(goals, {
+      config: oneHourConfig,
+      stallDetector,
+      state,
+    });
+    const shouldExplore = await shouldExploreForCuriosity(goals, {
+      config: oneHourConfig,
+      stallDetector,
+      state,
+    });
+
+    expect(trigger?.type).toBe("periodic_exploration");
+    expect(trigger?.details).toContain("timestamp is invalid");
+    expect(triggers.map((entry) => entry.type)).toContain("periodic_exploration");
     expect(shouldExplore).toBe(true);
   });
 });
