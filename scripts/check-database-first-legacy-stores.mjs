@@ -333,8 +333,8 @@ const DIRECT_FILE_OWNER_INVENTORY = [
     category: CATEGORY.CONFIG_SECRET,
     owner: "operator configuration, credentials, plugin manifests, gateway/channel config",
     boundary: "provider/daemon/notification/datasource/gateway/plugin/MCP config files",
-    nextSlice: 8,
-    reason: "admin-managed configuration remains file-backed with schema validation",
+    nextSlice: null,
+    reason: "admin-managed configuration remains file-backed with schema validation and is not authoritative runtime state",
   }),
   inventory({
     id: "user-authored-profile-content",
@@ -342,8 +342,8 @@ const DIRECT_FILE_OWNER_INVENTORY = [
     category: CATEGORY.USER_AUTHORED_CONTENT,
     owner: "user-authored relationship profile and character content",
     boundary: "relationship-profile.json and character-config.json",
-    nextSlice: 8,
-    reason: "explicitly authored content is not internal runtime state",
+    nextSlice: null,
+    reason: "explicitly authored content is schema-validated user/admin content, not internal runtime state",
   }),
   inventory({
     id: "migration-inputs",
@@ -846,7 +846,8 @@ function printDirectFileDebtReport(directFileDebtReport) {
 
 function isLineAllowedForRule(rule, line) {
   if (rule.id === "state-manager-raw-call") return false;
-  return isConfigAllowed(line);
+  if (rule.id === "mcp-server-config-json") return isConfigAllowed(line);
+  return false;
 }
 
 function isConfigAllowed(line) {

@@ -124,6 +124,21 @@ describe("database-first legacy store check", () => {
     expect(result.stdout).toContain("database-first legacy store check passed");
   });
 
+  it("does not let config-looking files hide unrelated runtime state owners", () => {
+    writeFile(tmpDir, "src/runtime/config-adjacent-runtime-state.ts", `
+      export const gatewayConfig = "gateway/channels/telegram-bot/config.json";
+      export const hiddenRuntimeState = "state.json";
+      export const hiddenRuntimeQueue = "queue.jsonl";
+    `);
+
+    const result = runCheck(tmpDir);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("src/runtime/config-adjacent-runtime-state.ts");
+    expect(result.stderr).toContain("[plugin-channel-runtime-json] PluginChannelRuntimeStateStore or another typed runtime state store");
+    expect(result.stderr).toContain("[unclassified-direct-runtime-json-state] direct filesystem runtime state must be typed SQLite/Soil or explicitly categorized");
+  });
+
   it("fails path-shaped execution session owners outside the migration boundary", () => {
     writeFile(tmpDir, "src/orchestrator/execution/session-manager.ts", `
       export const sessionIndex = "sessions/index.json";
@@ -364,7 +379,13 @@ describe("database-first legacy store check", () => {
       expect.objectContaining({
         id: "config-setup-plugin-gateway-channel-files",
         category: "config/secret",
-        nextSlice: 8,
+        nextSlice: null,
+        debt: false,
+      }),
+      expect.objectContaining({
+        id: "user-authored-profile-content",
+        category: "user-authored content",
+        nextSlice: null,
         debt: false,
       }),
       expect.objectContaining({
