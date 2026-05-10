@@ -3,6 +3,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as os from "node:os";
 import { JsonQueryTool } from "../JsonQueryTool.js";
+import { JSON_QUERY_MAX_FILE_BYTES } from "../constants.js";
 import type { ToolCallContext } from "../../../types.js";
 
 const makeContext = (cwd: string): ToolCallContext => ({
@@ -151,6 +152,18 @@ describe("JsonQueryTool", () => {
       const result = await tool.call({ file_path: invalidJsonPath, query: "name" }, makeContext(tmpDir));
       expect(result.success).toBe(false);
       expect(result.error).toBeDefined();
+    });
+
+    it("rejects oversized JSON files before parsing", async () => {
+      const oversizedJsonPath = path.join(tmpDir, "oversized.json");
+      await fs.writeFile(oversizedJsonPath, "");
+      await fs.truncate(oversizedJsonPath, JSON_QUERY_MAX_FILE_BYTES + 1);
+
+      const result = await tool.call({ file_path: oversizedJsonPath, query: "name" }, makeContext(tmpDir));
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("refused to parse");
+      expect(result.error).toContain(`limit is ${JSON_QUERY_MAX_FILE_BYTES} bytes`);
     });
   });
 
