@@ -1,4 +1,4 @@
-// ─── pulseed daemon commands (start, stop, cron, status) ───
+// ─── pulseed daemon commands (start, stop, restart, cron, status) ───
 
 import { parseArgs } from "node:util";
 import { spawn } from "node:child_process";
@@ -67,6 +67,15 @@ import {
 
 const WATCHDOG_CHILD_ENV = "PULSEED_WATCHDOG_CHILD";
 
+interface CmdStartOptions {
+  childCommandArgs?: string[];
+}
+
+type StopDaemonOutcome =
+  | { status: "not_running"; messages: string[] }
+  | { status: "stopped"; messages: string[] }
+  | { status: "failed"; messages: string[] };
+
 export function parseDaemonPositiveInteger(raw: unknown, label: string): number {
   const normalized = typeof raw === "string" ? raw.trim() : "";
   if (!/^[0-9]+$/.test(normalized)) {
@@ -91,7 +100,8 @@ function readDaemonPositiveInteger(raw: unknown, label: string): number {
 export async function cmdStart(
   stateManager: StateManager,
   characterConfigManager: CharacterConfigManager,
-  args: string[]
+  args: string[],
+  options: CmdStartOptions = {},
 ): Promise<void> {
   let values: { "api-key"?: string; config?: string; goal?: string[]; detach?: boolean; "check-interval-ms"?: string; "iterations-per-cycle"?: string; resident?: boolean; "max-concurrent-goals"?: string; workspace?: string };
   try {
@@ -182,8 +192,7 @@ export async function cmdStart(
   // The detached process becomes the watchdog parent.
   if (values.detach) {
     const scriptPath = process.argv[1]!;
-    const childArgs = process.argv
-      .slice(2)
+    const childArgs = (options.childCommandArgs ?? process.argv.slice(2))
       .filter((arg) => arg !== "--detach" && arg !== "-d");
 
     const child = spawn(process.execPath, [scriptPath, ...childArgs], {
@@ -214,7 +223,7 @@ export async function cmdStart(
     const healthStore = new RuntimeHealthStore(runtimeRoot, { controlBaseDir: baseDir });
     const leaderLockManager = new LeaderLockManager(runtimeRoot, undefined, { controlBaseDir: baseDir });
     const scriptPath = process.argv[1]!;
-    const childArgs = process.argv.slice(2);
+    const childArgs = options.childCommandArgs ?? process.argv.slice(2);
     const healthProbe =
       resolvedDaemonConfig.event_server_port > 0
         ? async () => {
@@ -785,24 +794,53 @@ export async function cmdDaemonStatus(_args: string[]): Promise<void> {
   console.log(lines.join("\n"));
 }
 
-export async function cmdStop(_args: string[]): Promise<void> {
+async function stopDaemonRuntimeForCli(): Promise<StopDaemonOutcome> {
   const pidManager = new PIDManager(getPulseedDirPath());
   const stopResult = await pidManager.stopRuntime();
   if (!stopResult.info || stopResult.sentSignalsTo.length === 0) {
-    console.log("No running daemon found");
-    return;
+    return { status: "not_running", messages: ["No running daemon found"] };
   }
   const displayPid = stopResult.runtimePid ?? stopResult.ownerPid ?? stopResult.info.pid;
-  console.log(`Stopping daemon (PID: ${displayPid})...`);
+  const messages = [`Stopping daemon (PID: ${displayPid})...`];
   if (!stopResult.stopped) {
-    console.log(`Daemon still running (PIDs: ${stopResult.alivePids.join(", ")})`);
-    return;
+    messages.push(`Daemon still running (PIDs: ${stopResult.alivePids.join(", ")})`);
+    return { status: "failed", messages };
   }
   if (stopResult.forced) {
-    console.log("Daemon stopped after forcing remaining runtime processes");
-    return;
+    messages.push("Daemon stopped after forcing remaining runtime processes");
+    return { status: "stopped", messages };
   }
-  console.log("Daemon stopped");
+  messages.push("Daemon stopped");
+  return { status: "stopped", messages };
+}
+
+export async function cmdStop(_args: string[]): Promise<void> {
+  const outcome = await stopDaemonRuntimeForCli();
+  for (const message of outcome.messages) {
+    console.log(message);
+  }
+}
+
+export async function cmdRestart(
+  stateManager: StateManager,
+  characterConfigManager: CharacterConfigManager,
+  args: string[],
+): Promise<number> {
+  const stopOutcome = await stopDaemonRuntimeForCli();
+  for (const message of stopOutcome.messages) {
+    console.log(message);
+  }
+
+  if (stopOutcome.status === "failed") {
+    console.log("Daemon restart aborted; run `pulseed daemon status` to inspect the current state.");
+    return 1;
+  }
+
+  console.log("Starting daemon...");
+  await cmdStart(stateManager, characterConfigManager, args, {
+    childCommandArgs: ["daemon", "start", ...args],
+  });
+  return 0;
 }
 
 export async function cmdDaemonPing(_args: string[]): Promise<number> {
