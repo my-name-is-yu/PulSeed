@@ -398,4 +398,36 @@ describe("_load via KnowledgeGraph.create", () => {
     expect(g.nodeCount).toBe(0);
     expect(g.edgeCount).toBe(0);
   });
+
+  it("starts fresh when persisted nodes fail the graph schema", async () => {
+    const filePath = path.join(tempDir, "invalid-node.json");
+    const { writeFileSync } = await import("node:fs");
+    writeFileSync(filePath, JSON.stringify({
+      nodes: [{ entry_id: "", goal_id: "goal-A", tags: [], added_at: "2026-05-10T00:00:00.000Z" }],
+      edges: [],
+    }), "utf-8");
+
+    const g = await KnowledgeGraph.create(filePath);
+    expect(g.nodeCount).toBe(0);
+    expect(g.edgeCount).toBe(0);
+  });
+
+  it("starts fresh when persisted graph JSON exceeds the load bound", async () => {
+    const filePath = path.join(tempDir, "oversized.json");
+    const { writeFileSync } = await import("node:fs");
+    writeFileSync(filePath, JSON.stringify({
+      nodes: [{
+        entry_id: "entry-1",
+        goal_id: "goal-A",
+        tags: [],
+        added_at: "2026-05-10T00:00:00.000Z",
+      }],
+      edges: [],
+      padding: "x".repeat(2 * 1024 * 1024),
+    }), "utf-8");
+
+    const g = await KnowledgeGraph.create(filePath);
+    expect(g.nodeCount).toBe(0);
+    expect(g.edgeCount).toBe(0);
+  });
 });
