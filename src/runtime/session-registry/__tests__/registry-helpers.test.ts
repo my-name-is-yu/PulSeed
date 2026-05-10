@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classifyArtifact } from "../registry-helpers.js";
+import { classifyArtifact, numberToIso } from "../registry-helpers.js";
 
 describe("classifyArtifact", () => {
   it("does not classify arbitrary log substrings as logs", () => {
@@ -17,5 +17,17 @@ describe("classifyArtifact", () => {
     expect(classifyArtifact("/tmp/metrics.json")).toBe("metrics");
     expect(classifyArtifact("/tmp/public-score.json")).toBe("metrics");
     expect(classifyArtifact("/tmp/evidence-results.json")).toBe("metrics");
+  });
+});
+
+describe("numberToIso", () => {
+  it("returns ISO strings for valid epoch millisecond values", () => {
+    expect(numberToIso(Date.parse("2026-04-25T00:00:00.000Z"))).toBe("2026-04-25T00:00:00.000Z");
+  });
+
+  it("returns null for finite numbers outside the JavaScript Date range", () => {
+    expect(numberToIso(Number.MAX_SAFE_INTEGER)).toBeNull();
+    expect(numberToIso(-Number.MAX_SAFE_INTEGER)).toBeNull();
+    expect(numberToIso(1e100)).toBeNull();
   });
 });
