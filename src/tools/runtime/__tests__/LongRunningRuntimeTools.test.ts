@@ -13,6 +13,7 @@ import {
 } from "../../system/ProcessSessionTool/ProcessSessionTool.js";
 import type { ToolCallContext } from "../../types.js";
 import {
+  LONG_RUNNING_RESULT_JSON_MAX_BYTES,
   LongRunningEvidenceSchema,
   RuntimeReportWriteTool,
   RuntimeResultNormalizeTool,
@@ -302,5 +303,39 @@ describe("LongRunningRuntimeTools", () => {
     expect(normalized.success).toBe(false);
     expect(normalized.error).toContain("Failed to normalize long-running result");
     await expect(fs.access(path.join(tmpHome, "runtime", "artifacts", "non-finite-metric", "result.json"))).rejects.toThrow();
+  });
+
+  it("rejects oversized source JSON before normalizing runtime results", async () => {
+    const tool = new RuntimeResultNormalizeTool();
+    const oversizedPath = path.join(tmpHome, "oversized-source.json");
+    await fs.writeFile(oversizedPath, " ".repeat(LONG_RUNNING_RESULT_JSON_MAX_BYTES + 1), "utf8");
+
+    const normalized = await tool.call({
+      objective: "Reject oversized source JSON",
+      source_json_path: oversizedPath,
+      profile: "generic",
+      run_id: "oversized-source-json",
+    }, makeContext(tmpHome));
+
+    expect(normalized.success).toBe(false);
+    expect(normalized.error).toContain("Failed to normalize long-running result");
+    expect(normalized.error).toContain("exceeds");
+    await expect(fs.access(path.join(tmpHome, "runtime", "artifacts", "oversized-source-json", "result.json"))).rejects.toThrow();
+  });
+
+  it("rejects oversized canonical result JSON before writing runtime reports", async () => {
+    const tool = new RuntimeReportWriteTool();
+    const oversizedPath = path.join(tmpHome, "oversized-result.json");
+    await fs.writeFile(oversizedPath, " ".repeat(LONG_RUNNING_RESULT_JSON_MAX_BYTES + 1), "utf8");
+
+    const report = await tool.call({
+      result_json_path: oversizedPath,
+      run_id: "oversized-report-json",
+    }, makeContext(tmpHome));
+
+    expect(report.success).toBe(false);
+    expect(report.error).toContain("Failed to write long-running run report");
+    expect(report.error).toContain("exceeds");
+    await expect(fs.access(path.join(tmpHome, "runtime", "artifacts", "oversized-report-json", "result.json"))).rejects.toThrow();
   });
 });
