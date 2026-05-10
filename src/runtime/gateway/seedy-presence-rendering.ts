@@ -119,7 +119,7 @@ function normalizeControlledActivityLabel(value: string): string {
 function lowerInitial(value: string): string {
   const first = value[0];
   if (!first) return value;
-  return `${first.toLocaleLowerCase()}${value.slice(1)}`;
+  return `${first.toLowerCase()}${value.slice(1)}`;
 }
 
 function isSafePresenceFragment(value: string): boolean {
@@ -144,7 +144,7 @@ function isSafePresenceFragment(value: string): boolean {
     "tool output",
     "trace",
   ];
-  const lower = value.toLocaleLowerCase();
+  const lower = value.toLowerCase();
   return !internalTerms.some((term) => lower.includes(term));
 }
 

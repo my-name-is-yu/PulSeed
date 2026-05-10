@@ -141,4 +141,23 @@ describe("seedy presence rendering", () => {
     expect(status).toBe("I'm still working on it. I don't have a new visible update yet.");
     expect(status).not.toMatch(/npm test|aws ssm|with-decryption|prod\/secret/i);
   });
+
+  it("filters uppercase internal provider labels with locale-stable matching", () => {
+    const presence = createUserVisibleSeedyTurnPresence({
+      turn_id: "turn-uppercase-provider",
+      phase: "waiting",
+      importance: "status",
+      subject: "OPENAI provider request",
+      last_activity_at: "2026-05-10T00:00:00.000Z",
+      last_activity_label: "API KEY check for OPENAI",
+      expected_next: "progress",
+    });
+
+    const status = renderSeedyPresenceStatusText(presence, {
+      now: "2026-05-10T00:00:35.000Z",
+    });
+
+    expect(status).toBe("I'm still working on it. I don't have a new visible update yet.");
+    expect(status).not.toMatch(/OPENAI|API KEY/i);
+  });
 });
