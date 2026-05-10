@@ -2,6 +2,7 @@ import { lookup } from "node:dns/promises";
 import * as http from "node:http";
 import * as https from "node:https";
 import { isIP } from "node:net";
+import { StringDecoder } from "node:string_decoder";
 import { z } from "zod";
 import type { ITool, ToolResult, ToolCallContext, PermissionCheckResult, ToolMetadata } from "../../types.js";
 import { DESCRIPTION } from "./prompt.js";
@@ -200,22 +201,28 @@ export function defaultHttpFetchTransport(request: HttpFetchTransportRequest): P
         },
       },
       (res) => {
-        res.setEncoding("utf-8");
         const headers = normalizeHeaders(res.headers);
+        const decoder = new StringDecoder("utf8");
         let body = "";
+        let bodyBytes = 0;
         let truncated = false;
-        res.on("data", (chunk: string) => {
+        res.on("data", (chunk: Buffer) => {
           if (request.method === "HEAD" || truncated) return;
-          const remaining = request.maxResponseBytes - body.length;
+          const remaining = request.maxResponseBytes - bodyBytes;
           if (remaining <= 0) {
             truncated = true;
             return;
           }
-          body += chunk.slice(0, remaining);
+          const retained = chunk.length > remaining ? chunk.subarray(0, remaining) : chunk;
+          body += decoder.write(retained);
+          bodyBytes += retained.length;
           if (chunk.length > remaining) truncated = true;
         });
         res.on("end", () => {
           clearTimeout(timeout);
+          if (!truncated) {
+            body += decoder.end();
+          }
           const outputBody = truncated ? `${body}\n[truncated]` : body;
           const statusCode = res.statusCode ?? 0;
           resolve({
@@ -278,9 +285,10 @@ export class HttpFetchTool implements ITool<HttpFetchInput, HttpFetchOutput> {
       if (!response) {
         throw new Error(`HTTP fetch failed: ${input.url}`);
       }
+      const responseByteLength = Buffer.byteLength(response.body, "utf8");
       return {
         success: response.ok, data: response,
-        summary: `${input.method} ${input.url} -> ${response.statusCode} (${response.body.length} bytes)`,
+        summary: `${input.method} ${input.url} -> ${response.statusCode} (${responseByteLength} bytes)`,
         error: response.ok ? undefined : `HTTP ${response.statusCode}: ${response.body.slice(0, 200)}`,
         durationMs: Date.now() - startTime,
       };

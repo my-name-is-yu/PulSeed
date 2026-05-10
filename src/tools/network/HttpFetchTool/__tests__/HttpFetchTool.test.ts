@@ -341,6 +341,36 @@ describe("HttpFetchTool", () => {
         });
       }
     });
+
+    it("enforces maxResponseBytes by UTF-8 bytes in the default transport", async () => {
+      const server = http.createServer((_req, res) => {
+        res.writeHead(200, { "content-type": "text/plain; charset=utf-8" });
+        res.end("ééé");
+      });
+      await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+      try {
+        const address = server.address();
+        if (!address || typeof address === "string") {
+          throw new Error("test server did not bind to a TCP port");
+        }
+
+        const result = await defaultHttpFetchTransport({
+          url: new URL(`http://example.test:${address.port}/utf8`),
+          method: "GET",
+          timeoutMs: 5_000,
+          maxResponseBytes: 3,
+          destination: { address: "127.0.0.1", family: 4 },
+        });
+
+        expect(result.statusCode).toBe(200);
+        expect(result.body).toBe("é\n[truncated]");
+        expect(result.body).not.toContain("�");
+      } finally {
+        await new Promise<void>((resolve, reject) => {
+          server.close((err) => err ? reject(err) : resolve());
+        });
+      }
+    });
   });
 
   describe("description", () => {
