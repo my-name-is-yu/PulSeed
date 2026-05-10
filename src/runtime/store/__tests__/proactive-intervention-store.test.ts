@@ -2,7 +2,10 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { makeTempDir, cleanupTempDir } from "../../../../tests/helpers/temp-dir.js";
-import { ProactiveInterventionStore } from "../proactive-intervention-store.js";
+import {
+  ProactiveInterventionStore,
+  ProactiveInterventionSummarySchema,
+} from "../proactive-intervention-store.js";
 
 describe("ProactiveInterventionStore", () => {
   let runtimeRoot: string;
@@ -92,5 +95,50 @@ describe("ProactiveInterventionStore", () => {
       relationship_profile_key: "user.intervention.proactivity",
       suggested_action: "reduce_frequency",
     });
+  });
+
+  it("rejects unsafe and non-finite summary numbers", () => {
+    const validSummary = {
+      total_interventions: 1,
+      pending_count: 0,
+      response_count: 1,
+      accepted_count: 1,
+      ignored_count: 0,
+      dismissed_count: 0,
+      corrected_count: 0,
+      overreach_count: 0,
+      response_rate: 1,
+      accepted_rate: 1,
+      ignored_rate: 0,
+      correction_rate: 0,
+      overreach_rate: 0,
+      average_time_to_response_ms: 250,
+      by_kind: { suggestion: 1 },
+      by_channel: { daemon: 1 },
+      latest_feedback_at: "2026-05-02T00:05:00.000Z",
+      policy_adjustment_recommendation: null,
+    };
+
+    expect(ProactiveInterventionSummarySchema.safeParse(validSummary).success).toBe(true);
+    expect(ProactiveInterventionSummarySchema.safeParse({
+      ...validSummary,
+      total_interventions: Number.MAX_SAFE_INTEGER + 1,
+    }).success).toBe(false);
+    expect(ProactiveInterventionSummarySchema.safeParse({
+      ...validSummary,
+      response_rate: Number.POSITIVE_INFINITY,
+    }).success).toBe(false);
+    expect(ProactiveInterventionSummarySchema.safeParse({
+      ...validSummary,
+      average_time_to_response_ms: Number.NaN,
+    }).success).toBe(false);
+    expect(ProactiveInterventionSummarySchema.safeParse({
+      ...validSummary,
+      average_time_to_response_ms: Number.MAX_SAFE_INTEGER + 1,
+    }).success).toBe(false);
+    expect(ProactiveInterventionSummarySchema.safeParse({
+      ...validSummary,
+      by_kind: { suggestion: Number.MAX_SAFE_INTEGER + 1 },
+    }).success).toBe(false);
   });
 });
