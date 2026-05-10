@@ -8,6 +8,7 @@ import {
 } from "../dream-sidecar-review.js";
 import { BackgroundRunLedger } from "../store/background-run-store.js";
 import { RuntimeEvidenceLedger } from "../store/evidence-ledger.js";
+import { SupervisorStateStore } from "../store/supervisor-state-store.js";
 import { makeTempDir } from "../../../tests/helpers/temp-dir.js";
 
 describe("Runtime Dream sidecar review", () => {
@@ -822,7 +823,8 @@ describe("Runtime Dream sidecar review", () => {
   });
 
   async function seedActiveRun(runId: string): Promise<void> {
-    await stateManager.writeRaw("supervisor-state.json", {
+    const runtimeRoot = path.join(tmpDir, "runtime");
+    await new SupervisorStateStore(runtimeRoot, { controlBaseDir: tmpDir }).save({
       workers: [{
         workerId: "sidecar-worker",
         goalId: "goal-sidecar",
@@ -833,7 +835,7 @@ describe("Runtime Dream sidecar review", () => {
       suspendedGoals: [],
       updatedAt: Date.parse("2026-04-30T00:30:00.000Z"),
     });
-    const ledger = new BackgroundRunLedger(path.join(tmpDir, "runtime"));
+    const ledger = new BackgroundRunLedger(runtimeRoot);
     await ledger.create({
       id: runId,
       kind: "coreloop_run",

@@ -17,6 +17,7 @@ import type {
   LLMResponse,
 } from "../../../base/llm/llm-client.js";
 import { createMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
+import { makeDimension, makeGoal } from "../../../../tests/helpers/fixtures.js";
 import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 
 // ─── Spy LLM Client ───
@@ -602,21 +603,19 @@ describe("TaskLifecycle", async () => {
         dimension_updates: [],
       });
 
-      await stateManager.writeRaw("goals/goal-1.json", {
+      await stateManager.saveGoal(makeGoal({
         id: "goal-1",
         title: "Test Goal",
         status: "active",
         dimensions: [
-          { name: "coverage", label: "Coverage", current_value: 0.5, last_updated: null },
+          makeDimension({ name: "coverage", label: "Coverage", current_value: 0.5, last_updated: null }),
         ],
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      });
+      }));
       await stateManager.writeRaw(`tasks/${task.goal_id}/${task.id}.json`, task);
 
       await lifecycle.handleVerdict(task, vr);
 
-      const goal = await stateManager.readRaw("goals/goal-1.json") as Record<string, unknown>;
+      const goal = await stateManager.loadGoal("goal-1") as Record<string, unknown>;
       const dims = goal.dimensions as Array<Record<string, unknown>>;
       const coverageDim = dims.find((d) => d.name === "coverage");
 

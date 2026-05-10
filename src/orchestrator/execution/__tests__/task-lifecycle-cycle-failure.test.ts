@@ -16,6 +16,7 @@ import type {
   LLMResponse,
 } from "../../../base/llm/llm-client.js";
 import { createMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
+import { makeDimension, makeGoal } from "../../../../tests/helpers/fixtures.js";
 import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 import { z } from "zod";
 
@@ -250,10 +251,10 @@ describe("TaskLifecycle — failure handling", () => {
     };
 
     await stateManager.writeRaw(`tasks/${task.goal_id}/${task.id}.json`, task);
-    await stateManager.writeRaw("goals/goal-1.json", {
+    await stateManager.saveGoal(makeGoal({
       id: "goal-1",
-      dimensions: [{ name: "dim", current_value: 0.5 }],
-    });
+      dimensions: [makeDimension({ name: "dim", current_value: 0.5 })],
+    }));
 
     const result = await lifecycle.handleVerdict(task, vr);
     expect(result.action).toBe("keep");

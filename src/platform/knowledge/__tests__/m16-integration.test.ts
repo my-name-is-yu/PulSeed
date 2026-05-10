@@ -16,6 +16,7 @@ import {
   type BudgetAllocation,
 } from "../../../orchestrator/execution/context/context-budget.js";
 import { createMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
+import { seedGoalState } from "./goal-state-fixture.js";
 import type { LearnedPattern } from "../../../base/types/learning.js";
 import type { Checkpoint } from "../../../base/types/checkpoint.js";
 
@@ -141,8 +142,8 @@ describe("Flow 1: KnowledgeTransfer end-to-end pipeline", () => {
     const goalB = "goal_b";
 
     // Seed goals in stateManager so listGoalIds works
-    await stateManager.writeRaw(`goals/${goalA}/state.json`, { gap: 0.8 });
-    await stateManager.writeRaw(`goals/${goalB}/state.json`, { gap: 0.4 });
+    await seedGoalState(stateManager, goalA, 0.8);
+    await seedGoalState(stateManager, goalB, 0.4);
 
     const pattern = makePattern({
       pattern_id: "pat_transfer",
@@ -188,8 +189,8 @@ describe("Flow 1: KnowledgeTransfer end-to-end pipeline", () => {
   });
 
   it("returns empty candidates when source goal has no patterns", async () => {
-    await stateManager.writeRaw(`goals/goal_a/state.json`, { gap: 0.5 });
-    await stateManager.writeRaw(`goals/goal_b/state.json`, { gap: 0.5 });
+    await seedGoalState(stateManager, "goal_a", 0.5);
+    await seedGoalState(stateManager, "goal_b", 0.5);
 
     const kt = new KnowledgeTransfer({
       llmClient: createMockLLMClient([]),
@@ -332,7 +333,7 @@ describe("Flow 4: updateMetaPatternsIncremental", () => {
     const newPattern = makePattern({ pattern_id: "new_pat", confidence: 0.9, created_at: newAt, source_goal_ids: ["goal_a"] });
 
     // Seed goal state
-    await stateManager.writeRaw(`goals/goal_a/state.json`, { gap: 0.5 });
+    await seedGoalState(stateManager, "goal_a", 0.5);
     // Set last_aggregated_at to just before newPattern
     const lastAggAt = new Date(Date.now() - 30_000).toISOString(); // 30s ago
     await stateManager.writeRaw("meta-patterns/last_aggregated_at.json", { ts: lastAggAt });
@@ -370,7 +371,7 @@ describe("Flow 4: updateMetaPatternsIncremental", () => {
 
   it("processes all patterns when no prior aggregation timestamp exists", async () => {
     const pattern = makePattern({ pattern_id: "p1", confidence: 0.75, source_goal_ids: ["goal_x"] });
-    await stateManager.writeRaw(`goals/goal_x/state.json`, { gap: 0.3 });
+    await seedGoalState(stateManager, "goal_x", 0.3);
 
     const vectorIndex = new VectorIndex(
       path.join(tmpDir, "vec2.json"),

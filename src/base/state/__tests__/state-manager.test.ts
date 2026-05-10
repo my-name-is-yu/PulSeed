@@ -163,7 +163,12 @@ describe("StateManager", async () => {
         created_at: "2026-01-02T00:00:00.000Z",
       }));
       await manager.writeRaw("tasks/goal-1/task-1.json", makeTaskRecord("task-1", "goal-1"));
-      await manager.writeRaw("archive/goal-1/tasks/task-archived.json", makeTaskRecord("task-archived", "goal-1"));
+      fs.mkdirSync(path.join(tmpDir, "archive", "goal-1", "tasks"), { recursive: true });
+      fs.writeFileSync(
+        path.join(tmpDir, "archive", "goal-1", "tasks", "task-archived.json"),
+        JSON.stringify(makeTaskRecord("task-archived", "goal-1")),
+        "utf8",
+      );
 
       const tasks = await manager.listTasks("goal-1");
 
@@ -183,8 +188,18 @@ describe("StateManager", async () => {
     });
 
     it("lists recoverable archived goals from archive directories with goal.json", async () => {
-      await manager.writeRaw("archive/recoverable/goal/goal.json", makeGoal({ id: "recoverable", status: "archived" }));
-      await manager.writeRaw("archive/.staging/ignored/goal/goal.json", makeGoal({ id: "ignored", status: "archived" }));
+      fs.mkdirSync(path.join(tmpDir, "archive", "recoverable", "goal"), { recursive: true });
+      fs.writeFileSync(
+        path.join(tmpDir, "archive", "recoverable", "goal", "goal.json"),
+        JSON.stringify(makeGoal({ id: "recoverable", status: "archived" })),
+        "utf8",
+      );
+      fs.mkdirSync(path.join(tmpDir, "archive", ".staging", "ignored", "goal"), { recursive: true });
+      fs.writeFileSync(
+        path.join(tmpDir, "archive", ".staging", "ignored", "goal", "goal.json"),
+        JSON.stringify(makeGoal({ id: "ignored", status: "archived" })),
+        "utf8",
+      );
 
       expect(await manager.listRecoverableArchivedGoalIds()).toEqual(["recoverable"]);
     });
@@ -709,7 +724,12 @@ describe("StateManager", async () => {
         },
       ]);
 
-      await manager.writeRaw("gaps/gap-current/current.json", { quality: 0.99 });
+      fs.mkdirSync(path.join(tmpDir, "gaps", "gap-current"), { recursive: true });
+      fs.writeFileSync(
+        path.join(tmpDir, "gaps", "gap-current", "current.json"),
+        JSON.stringify({ quality: 0.99 }),
+        "utf8",
+      );
 
       expect(await manager.loadCurrentGapForDimension("gap-current", "quality")).toBe(0.35);
       expect(await manager.loadCurrentGapForDimension("gap-current", "missing")).toBeNull();
@@ -1062,9 +1082,9 @@ describe("StateManager", async () => {
   });
 
   describe("raw read/write", async () => {
-    it("writes and reads arbitrary JSON", async () => {
-      await manager.writeRaw("custom/data.json", { hello: "world" });
-      const loaded = await manager.readRaw("custom/data.json");
+    it("allows explicit report artifact fallback paths", async () => {
+      await manager.writeRaw("reports/goal-1/report.json", { hello: "world" });
+      const loaded = await manager.readRaw("reports/goal-1/report.json");
       expect(loaded).toEqual({ hello: "world" });
     });
 
@@ -1080,8 +1100,17 @@ describe("StateManager", async () => {
       await expect(manager.readRaw("capability_dependencies.json")).resolves.toBeNull();
     });
 
-    it("returns null for non-existent raw path", async () => {
-      expect(await manager.readRaw("does/not/exist.json")).toBeNull();
+    it("returns null for a missing explicit fallback boundary path", async () => {
+      expect(await manager.readRaw("mcp-servers.json")).toBeNull();
+    });
+
+    it("rejects unclassified raw fallback paths", async () => {
+      await expect(manager.readRaw("custom/data.json")).rejects.toThrow(
+        "Unclassified StateManager raw fallback path is not allowed"
+      );
+      await expect(manager.writeRaw("custom/data.json", { hello: "world" })).rejects.toThrow(
+        "Unclassified StateManager raw fallback path is not allowed"
+      );
     });
 
     it("throws on path traversal in readRaw", async () => {
@@ -1094,6 +1123,21 @@ describe("StateManager", async () => {
       await expect(
         manager.writeRaw("../../outside.json", { evil: true })
       ).rejects.toThrow("Path traversal detected");
+    });
+
+    it("rejects dot-segment paths before raw fallback boundary classification", async () => {
+      await expect(manager.readRaw("reports/../custom.json")).rejects.toThrow(
+        "Unsafe StateManager raw fallback path is not allowed"
+      );
+      await expect(
+        manager.writeRaw("reports/../custom.json", { hello: "world" })
+      ).rejects.toThrow("Unsafe StateManager raw fallback path is not allowed");
+      await expect(
+        manager.writeRaw("gateway/channels/../config.json", { hello: "world" })
+      ).rejects.toThrow("Unsafe StateManager raw fallback path is not allowed");
+
+      expect(fs.existsSync(path.join(tmpDir, "custom.json"))).toBe(false);
+      expect(fs.existsSync(path.join(tmpDir, "gateway", "config.json"))).toBe(false);
     });
 
     it("rejects goal-scoped writes when the write fence fails", async () => {
@@ -1121,18 +1165,20 @@ describe("StateManager", async () => {
       expect(await manager.loadGoal("fenced-goal")).not.toBeNull();
     });
 
-    it("runs goal-scoped raw writes through the write fence", async () => {
+    it("rejects unclassified goal-scoped raw sidecars after the write fence", async () => {
       const fence = vi.fn();
       manager.setWriteFence("raw-goal", fence);
 
-      await manager.writeRaw("goals/raw-goal/custom.json", { ok: true });
+      await expect(manager.writeRaw("goals/raw-goal/custom.json", { ok: true })).rejects.toThrow(
+        "Unclassified StateManager raw fallback path is not allowed"
+      );
 
       expect(fence).toHaveBeenCalledWith({
         goalId: "raw-goal",
         op: "write_raw",
         data: { path: "goals/raw-goal/custom.json", payload: { ok: true } },
       });
-      expect(await manager.readRaw("goals/raw-goal/custom.json")).toEqual({ ok: true });
+      expect(fs.existsSync(path.join(tmpDir, "goals", "raw-goal", "custom.json"))).toBe(false);
     });
   });
 

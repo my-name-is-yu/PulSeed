@@ -408,7 +408,7 @@ describe("GoalDependencyGraph", () => {
     });
 
     it("does not reload raw legacy dependency graph files as authoritative state", async () => {
-      await stateManager.writeRaw("dependency-graph.json", {
+      fs.writeFileSync(path.join(tmpDir, "dependency-graph.json"), JSON.stringify({
         nodes: ["strategy-A", "strategy-B"],
         updated_at: "2026-05-08T00:00:00.000Z",
         edges: [
@@ -425,7 +425,7 @@ describe("GoalDependencyGraph", () => {
             created_at: "2026-05-08T00:00:00.000Z",
           },
         ],
-      });
+      }), "utf8");
 
       const freshGraph = new GoalDependencyGraph(stateManager);
       await freshGraph.init();

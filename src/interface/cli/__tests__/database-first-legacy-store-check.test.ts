@@ -140,7 +140,7 @@ describe("database-first legacy store check", () => {
     expect(result.stderr).toContain("Unclassified legacy store references must be moved to typed stores");
   });
 
-  it("reports classified raw fallback migration debt for known follow-up slices", () => {
+  it("fails completed raw fallback closure slices if raw callers are reintroduced", () => {
     writeFile(tmpDir, "src/orchestrator/goal/goal-negotiator.ts", `
       export async function load(stateManager: { readRaw(path: string): Promise<unknown> }, goalId: string) {
         return stateManager.readRaw(\`goals/\${goalId}/negotiation-log.json\`);
@@ -156,34 +156,14 @@ describe("database-first legacy store check", () => {
       }
     `);
 
-    const result = runCheck(tmpDir, ["--json"]);
+    const result = runCheck(tmpDir);
 
-    expect(result.status).toBe(0);
-    const parsed = JSON.parse(result.stdout) as {
-      ok: boolean;
-      allowlistReport: Array<{ id: string; category: string; nextSlice: number | null; matchCount: number }>;
-      debtReport: Array<{ id: string; category: string; nextSlice: number | null; matchCount: number }>;
-    };
-    expect(parsed.ok).toBe(true);
-    expect(parsed.debtReport).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        id: "goal-negotiation-log-raw-caller",
-        category: "migrate now",
-        nextSlice: 2,
-        matchCount: 4,
-      }),
-    ]));
-    expect(parsed.debtReport).not.toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: "character-config-user-content" }),
-    ]));
-    expect(parsed.allowlistReport).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        id: "character-config-user-content",
-        category: "config/secret",
-        nextSlice: null,
-        matchCount: 1,
-      }),
-    ]));
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("src/orchestrator/goal/goal-negotiator.ts");
+    expect(result.stderr).toContain("[state-manager-raw-call] StateManager raw fallback boundary / typed store APIs");
+    expect(result.stderr).toContain("[goal-negotiation-log-json-state] Goal negotiation typed store / control DB negotiation log table");
+    expect(result.stderr).toContain("Unclassified legacy store references must be moved to typed stores");
+    expect(result.stderr).not.toContain("src/platform/traits/character-config.ts");
   });
 
   it("fails unexpected legacy store classes inside classified follow-up files", () => {

@@ -40,8 +40,14 @@ describe("RuntimeSessionRegistry", () => {
     await importLegacyChatAgentLoopSessionState(tmpDir);
   }
 
+  async function writeJsonFixture(relativePath: string, value: unknown): Promise<void> {
+    const filePath = path.join(tmpDir, relativePath);
+    await fsp.mkdir(path.dirname(filePath), { recursive: true });
+    await fsp.writeFile(filePath, JSON.stringify(value), "utf8");
+  }
+
   it("joins agent sessions to their owning conversation through agentLoopStatePath", async () => {
-    await stateManager.writeRaw("chat/sessions/chat-a.json", {
+    await writeJsonFixture("chat/sessions/chat-a.json", {
       id: "chat-a",
       cwd: "/repo",
       createdAt: "2026-04-25T00:00:00.000Z",
@@ -53,7 +59,7 @@ describe("RuntimeSessionRegistry", () => {
       agentLoopResumable: true,
       agentLoopUpdatedAt: "2026-04-25T00:11:00.000Z",
     });
-    await stateManager.writeRaw("chat/agentloop/agent-state.state.json", makeAgentState({
+    await writeJsonFixture("chat/agentloop/agent-state.state.json", makeAgentState({
       sessionId: "native-session-b",
       updatedAt: "2026-04-25T00:12:00.000Z",
       status: "running",
@@ -88,7 +94,7 @@ describe("RuntimeSessionRegistry", () => {
   });
 
   it("projects spawned child conversations with their parent conversation runtime id", async () => {
-    await stateManager.writeRaw("chat/sessions/chat-parent.json", {
+    await writeJsonFixture("chat/sessions/chat-parent.json", {
       id: "chat-parent",
       cwd: "/repo",
       createdAt: "2026-04-25T00:00:00.000Z",
@@ -96,7 +102,7 @@ describe("RuntimeSessionRegistry", () => {
       title: "Parent chat",
       messages: [],
     });
-    await stateManager.writeRaw("chat/sessions/chat-child.json", {
+    await writeJsonFixture("chat/sessions/chat-child.json", {
       id: "chat-child",
       cwd: "/repo",
       createdAt: "2026-04-25T00:15:00.000Z",
@@ -120,7 +126,7 @@ describe("RuntimeSessionRegistry", () => {
   });
 
   it("projects conversation lifecycle status and durable reply target from chat session metadata", async () => {
-    await stateManager.writeRaw("chat/sessions/chat-notify.json", {
+    await writeJsonFixture("chat/sessions/chat-notify.json", {
       id: "chat-notify",
       cwd: "/repo",
       createdAt: "2026-04-25T00:00:00.000Z",
@@ -283,7 +289,7 @@ describe("RuntimeSessionRegistry", () => {
   });
 
   it("keeps orphan agent-loop state with a missing parent join warning", async () => {
-    await stateManager.writeRaw("chat/agentloop/orphan.state.json", makeAgentState({
+    await writeJsonFixture("chat/agentloop/orphan.state.json", makeAgentState({
       sessionId: "orphan-agent",
       updatedAt: "2026-04-25T00:12:00.000Z",
       status: "running",
@@ -576,7 +582,7 @@ describe("RuntimeSessionRegistry", () => {
   });
 
   it("projects a completed DurableLoop handoff graph from durable ledger records", async () => {
-    await stateManager.writeRaw("chat/sessions/chat-coreloop.json", {
+    await writeJsonFixture("chat/sessions/chat-coreloop.json", {
       id: "chat-coreloop",
       cwd: "/repo",
       createdAt: "2026-04-25T00:00:00.000Z",
@@ -680,7 +686,7 @@ describe("RuntimeSessionRegistry", () => {
   });
 
   it("returns a schema-valid registry snapshot", async () => {
-    await stateManager.writeRaw("chat/sessions/chat-a.json", {
+    await writeJsonFixture("chat/sessions/chat-a.json", {
       id: "chat-a",
       cwd: "/repo",
       createdAt: "2026-04-25T00:00:00.000Z",

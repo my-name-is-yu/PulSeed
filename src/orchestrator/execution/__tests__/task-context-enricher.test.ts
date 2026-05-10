@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { StateManager } from "../../../base/state/state-manager.js";
 import { makeTempDir, cleanupTempDir } from "../../../../tests/helpers/temp-dir.js";
 import { buildEnrichedKnowledgeContext } from "../task/task-context-enricher.js";
+import { saveDreamConfig } from "../../../platform/dream/dream-config.js";
 
 vi.mock("../reflection-generator.js", () => ({
   getFailureReflectionsForGoal: vi.fn(),
@@ -79,7 +80,7 @@ describe("buildEnrichedKnowledgeContext", () => {
     vi.mocked(getReflectionsForGoal).mockResolvedValue([{ id: "r-full" }] as never);
     vi.mocked(formatReflectionsForPrompt).mockReturnValue("full reflection context");
 
-    await stateManager.writeRaw("dream/config.json", {
+    await saveDreamConfig({
       activation: {
         verifiedPlannerHintsOnly: false,
         semanticWorkingMemory: false,
@@ -93,7 +94,7 @@ describe("buildEnrichedKnowledgeContext", () => {
         decisionHeuristics: false,
         graphTraversal: false,
       },
-    });
+    }, tmpDir);
 
     try {
       const result = await buildEnrichedKnowledgeContext({

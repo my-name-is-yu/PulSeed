@@ -64,6 +64,12 @@ function makeAgentLoopState(overrides: Partial<AgentLoopSessionState> & {
   };
 }
 
+async function writeJsonFixture(baseDir: string, relativePath: string, value: unknown): Promise<void> {
+  const filePath = path.join(baseDir, relativePath);
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, JSON.stringify(value), "utf8");
+}
+
 describe("ChatSessionCatalog", () => {
   let tmpDir: string;
   let stateManager: StateManager;
@@ -85,7 +91,7 @@ describe("ChatSessionCatalog", () => {
   }
 
   it("loads legacy session files and backfills updatedAt", async () => {
-    await stateManager.writeRaw(
+    await writeJsonFixture(tmpDir,
       "chat/sessions/legacy-session.json",
       makeSession({
         id: "legacy-session",
@@ -122,7 +128,7 @@ describe("ChatSessionCatalog", () => {
   });
 
   it("sorts by updatedAt desc and discovers resumable agentloop state", async () => {
-    await stateManager.writeRaw(
+    await writeJsonFixture(tmpDir,
       "chat/sessions/older.json",
       makeSession({
         id: "older",
@@ -136,7 +142,7 @@ describe("ChatSessionCatalog", () => {
       })
     );
 
-    await stateManager.writeRaw(
+    await writeJsonFixture(tmpDir,
       "chat/sessions/newer.json",
       makeSession({
         id: "newer",
@@ -150,7 +156,7 @@ describe("ChatSessionCatalog", () => {
       })
     );
 
-    await stateManager.writeRaw(
+    await writeJsonFixture(tmpDir,
       "chat/agentloop/newer.state.json",
       makeAgentLoopState({
         sessionId: "newer",
@@ -175,7 +181,7 @@ describe("ChatSessionCatalog", () => {
   });
 
   it("resolves selectors by exact id and id prefix with clear errors", async () => {
-    await stateManager.writeRaw(
+    await writeJsonFixture(tmpDir,
       "chat/sessions/alpha-001.json",
       makeSession({
         id: "alpha-001",
@@ -185,7 +191,7 @@ describe("ChatSessionCatalog", () => {
         messages: [],
       })
     );
-    await stateManager.writeRaw(
+    await writeJsonFixture(tmpDir,
       "chat/sessions/alpha-002.json",
       makeSession({
         id: "alpha-002",
@@ -195,7 +201,7 @@ describe("ChatSessionCatalog", () => {
         messages: [],
       })
     );
-    await stateManager.writeRaw(
+    await writeJsonFixture(tmpDir,
       "chat/sessions/beta-003.json",
       makeSession({
         id: "beta-003",
@@ -205,7 +211,7 @@ describe("ChatSessionCatalog", () => {
         messages: [],
       })
     );
-    await stateManager.writeRaw(
+    await writeJsonFixture(tmpDir,
       "chat/sessions/beta-004.json",
       makeSession({
         id: "beta-004",
@@ -237,7 +243,7 @@ describe("ChatSessionCatalog", () => {
   });
 
   it("renames a session and bumps updatedAt", async () => {
-    await stateManager.writeRaw(
+    await writeJsonFixture(tmpDir,
       "chat/sessions/rename-me.json",
       {
         ...makeSession({
@@ -274,7 +280,7 @@ describe("ChatSessionCatalog", () => {
   });
 
   it("lists by cwd and returns the latest matching session", async () => {
-    await stateManager.writeRaw(
+    await writeJsonFixture(tmpDir,
       "chat/sessions/repo-a-old.json",
       makeSession({
         id: "repo-a-old",
@@ -284,7 +290,7 @@ describe("ChatSessionCatalog", () => {
         messages: [],
       })
     );
-    await stateManager.writeRaw(
+    await writeJsonFixture(tmpDir,
       "chat/sessions/repo-a-new.json",
       makeSession({
         id: "repo-a-new",
@@ -294,7 +300,7 @@ describe("ChatSessionCatalog", () => {
         messages: [],
       })
     );
-    await stateManager.writeRaw(
+    await writeJsonFixture(tmpDir,
       "chat/sessions/repo-b-new.json",
       makeSession({
         id: "repo-b-new",
@@ -312,7 +318,7 @@ describe("ChatSessionCatalog", () => {
   });
 
   it("clears a session title when renamed to null", async () => {
-    await stateManager.writeRaw(
+    await writeJsonFixture(tmpDir,
       "chat/sessions/clear-title.json",
       makeSession({
         id: "clear-title",
@@ -348,7 +354,7 @@ describe("ChatSessionCatalog", () => {
         turnIndex: 0,
       },
     };
-    await stateManager.writeRaw(
+    await writeJsonFixture(tmpDir,
       "chat/sessions/journal-session.json",
       {
         ...makeSession({
@@ -374,7 +380,7 @@ describe("ChatSessionCatalog", () => {
   });
 
   it("uses agentloop updatedAt when deciding cleanup freshness", async () => {
-    await stateManager.writeRaw(
+    await writeJsonFixture(tmpDir,
       "chat/sessions/old-chat-fresh-agentloop.json",
       makeSession({
         id: "old-chat-fresh-agentloop",
@@ -384,7 +390,7 @@ describe("ChatSessionCatalog", () => {
         messages: [],
       })
     );
-    await stateManager.writeRaw(
+    await writeJsonFixture(tmpDir,
       "chat/agentloop/old-chat-fresh-agentloop.state.json",
       makeAgentLoopState({
         sessionId: "old-chat-fresh-agentloop",
@@ -410,7 +416,7 @@ describe("ChatSessionCatalog", () => {
   });
 
   it("prefers the top-level agentloop path and does not fall back to stale nested metadata", async () => {
-    await stateManager.writeRaw(
+    await writeJsonFixture(tmpDir,
       "chat/sessions/forked-session.json",
       {
         ...makeSession({
@@ -429,7 +435,7 @@ describe("ChatSessionCatalog", () => {
         },
       }
     );
-    await stateManager.writeRaw(
+    await writeJsonFixture(tmpDir,
       "chat/agentloop/source-session.state.json",
       makeAgentLoopState({
         sessionId: "source-session",
@@ -475,10 +481,10 @@ describe("ChatSessionCatalog", () => {
       messages: [],
     });
 
-    await stateManager.writeRaw("chat/sessions/old-session.json", oldSession);
-    await stateManager.writeRaw("chat/sessions/active-session.json", activeSession);
-    await stateManager.writeRaw("chat/sessions/fresh-session.json", freshSession);
-    await stateManager.writeRaw(
+    await writeJsonFixture(tmpDir, "chat/sessions/old-session.json", oldSession);
+    await writeJsonFixture(tmpDir, "chat/sessions/active-session.json", activeSession);
+    await writeJsonFixture(tmpDir, "chat/sessions/fresh-session.json", freshSession);
+    await writeJsonFixture(tmpDir,
       "chat/agentloop/old-session.state.json",
       makeAgentLoopState({
         sessionId: "old-session",

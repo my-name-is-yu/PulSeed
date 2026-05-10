@@ -94,24 +94,26 @@ workspace, user-content, and Soil import/publish boundaries are not debt.
 
 `node scripts/check-database-first-legacy-stores.mjs --json` emits both
 `allowlistReport` and `debtReport`. New durable JSON/JSONL/lock or path-shaped
-runtime owners must either move to a typed store or be added to `debtReport`
-with a precise owner, category, and follow-up slice.
+runtime owners must move to a typed store, or be recorded as product-decision
+debt with a precise owner, category, and follow-up slice.
 
 The guard also treats normal-code `StateManager.readRaw` / `StateManager.writeRaw`
 calls as raw fallback boundary usage. Existing callers must be classified as one
-of the categories above. `migrate now` raw callers appear in `debtReport` only
-while matching code remains, and allowed config/report/export callers remain
-visible in `allowlistReport` without being counted as debt.
+of the categories above. Final closure leaves no `migrate now` raw callers;
+allowed config/report/export callers remain visible in `allowlistReport`
+without being counted as debt.
 
 ## Final Audit
 
 Remaining known non-database file surfaces are intentionally allowlisted in the
 guard so the repository can prevent new ad hoc stores while preserving an
 explicit final audit list. A completed closure pass should leave `debtReport`
-empty; while a refactor is active, `migrate now` entries identify the next typed
-store slices. The remaining non-debt `allowlistReport` entries are migration
-inputs, config/user content, debug/export outputs, workspace artifacts, or Soil
-import/publish artifacts:
+empty. The remaining non-debt `allowlistReport` entries are migration inputs,
+config/user content, debug/export outputs, workspace artifacts, or Soil
+import/publish artifacts. `StateManager.readRaw` and `StateManager.writeRaw`
+route legacy logical paths through typed stores first, then reject any
+unclassified fallback path outside explicit config/user-authored content and
+debug/export artifact boundaries:
 
 - `src/base/state/legacy-state-wal.ts` and
   `src/base/state/legacy-state-manager-wal-recovery.ts`: explicit legacy goal
@@ -195,11 +197,12 @@ import/publish artifacts:
   `CapabilityRegistryStateStore`; legacy `capability_dependencies.json` is an
   explicit `doctor --repair` import input only, and normal capability detection
   caller paths no longer read stale legacy files as authoritative state
-- current raw fallback migration follow-up surface: task grounding raw task
-  reads. It is tracked by `scripts/check-database-first-legacy-stores.mjs
-  --json` as `migrate now` debt until its typed API slice lands. Character
-  config, MCP server config, and generated reports are explicitly classified
-  non-debt boundaries.
+- task grounding uses typed `StateManager.listTasks()` over the control DB task
+  store; legacy `tasks/<goalId>/<taskId>.json` files are no longer read as
+  authoritative grounding state
+- character config, MCP server config, and generated reports are explicitly
+  classified non-debt raw fallback boundaries; other fallback paths fail in
+  normal runtime code and in the legacy-store guard
 
 Future durable internal state must add a typed store API and schema migration.
 Adding a new JSON/JSONL sidecar requires documenting why it is config,

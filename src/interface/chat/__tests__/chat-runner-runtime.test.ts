@@ -14,6 +14,12 @@ import {
 import { buildStandaloneIngressMessage } from "../ingress-router.js";
 import { importLegacyChatAgentLoopSessionState } from "../chat-agentloop-state-migration.js";
 
+async function writeJsonFixture(baseDir: string, relativePath: string, value: unknown): Promise<void> {
+  const filePath = path.join(baseDir, relativePath);
+  await fsp.mkdir(path.dirname(filePath), { recursive: true });
+  await fsp.writeFile(filePath, JSON.stringify(value), "utf8");
+}
+
 const tempDirs: string[] = [];
 
 function trackedTempDir(): string {
@@ -176,7 +182,7 @@ describe("chat-runner runtime helpers", () => {
     const stateManager = new StateManager(baseDir, undefined, { walEnabled: false });
     await stateManager.init();
 
-    await stateManager.writeRaw("chat/sessions/chat-active.json", {
+    await writeJsonFixture(baseDir, "chat/sessions/chat-active.json", {
       id: "chat-active",
       cwd: "/repo",
       createdAt: "2026-04-25T00:00:00.000Z",
@@ -188,7 +194,7 @@ describe("chat-runner runtime helpers", () => {
       agentLoopResumable: true,
       agentLoopUpdatedAt: "2026-04-25T00:11:00.000Z",
     });
-    await stateManager.writeRaw("chat/agentloop/active.state.json", {
+    await writeJsonFixture(baseDir, "chat/agentloop/active.state.json", {
       sessionId: "agent-active",
       traceId: "trace-active",
       turnId: "turn-active",
@@ -208,7 +214,7 @@ describe("chat-runner runtime helpers", () => {
       updatedAt: "2026-04-25T00:12:00.000Z",
     });
 
-    await stateManager.writeRaw("chat/sessions/chat-stale.json", {
+    await writeJsonFixture(baseDir, "chat/sessions/chat-stale.json", {
       id: "chat-stale",
       cwd: "/repo",
       createdAt: "2026-04-25T00:20:00.000Z",
@@ -220,7 +226,7 @@ describe("chat-runner runtime helpers", () => {
       agentLoopResumable: false,
       agentLoopUpdatedAt: "2026-04-25T00:31:00.000Z",
     });
-    await stateManager.writeRaw("chat/agentloop/stale.state.json", {
+    await writeJsonFixture(baseDir, "chat/agentloop/stale.state.json", {
       sessionId: "agent-stale",
       traceId: "trace-stale",
       turnId: "turn-stale",
