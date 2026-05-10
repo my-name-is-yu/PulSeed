@@ -3,9 +3,10 @@ import { renderToString } from "ink";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ReportView } from "../report-view.js";
 import { ReportSchema } from "../../../base/types/report.js";
+import { buildDailySummaryReport } from "../../../reporting/report-summary-builders.js";
 
 vi.mock("ink", async () => {
-  const actual = await vi.importActual<typeof import("ink")>("ink");
+  const actual = await vi.importActual<Record<string, unknown>>("ink");
   return {
     ...actual,
     useInput: vi.fn(),
@@ -19,17 +20,11 @@ describe("ReportView", () => {
   });
 
   it("hides raw goal identifiers in the default report view", async () => {
-    const report = ReportSchema.parse({
+    const report = buildDailySummaryReport({
       id: "report-1",
-      report_type: "daily_summary",
-      goal_id: "goal-1",
-      title: "Daily Summary",
-      content: "Task completed.",
-      verbosity: "standard",
-      generated_at: new Date("2026-04-18T00:00:00.000Z").toISOString(),
-      delivered_at: null,
-      read: false,
-      metadata: {},
+      goalId: "goal-1",
+      allReports: [],
+      now: new Date("2026-04-18T00:00:00.000Z"),
     });
 
     const output = renderToString(
@@ -41,22 +36,18 @@ describe("ReportView", () => {
     );
 
     expect(output).toContain("Daily Summary");
+    expect(output).toContain("Loops run");
     expect(output).not.toContain("goal: goal-1");
+    expect(output).not.toContain("Goal: goal-1");
     expect(output).not.toContain("goal-1");
   });
 
   it("shows raw goal identifiers only in diagnostic report view", async () => {
-    const report = ReportSchema.parse({
+    const report = buildDailySummaryReport({
       id: "report-1",
-      report_type: "daily_summary",
-      goal_id: "goal-1",
-      title: "Daily Summary",
-      content: "Task completed.",
-      verbosity: "standard",
-      generated_at: new Date("2026-04-18T00:00:00.000Z").toISOString(),
-      delivered_at: null,
-      read: false,
-      metadata: {},
+      goalId: "goal-1",
+      allReports: [],
+      now: new Date("2026-04-18T00:00:00.000Z"),
     });
 
     const output = renderToString(

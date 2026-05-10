@@ -50,8 +50,9 @@ type ReportViewLine =
   | { kind: "markdown"; line: MarkdownLine }
   | { kind: "diff"; text: string };
 
-function buildReportViewLines(report: Report): ReportViewLine[] {
-  const lines: ReportViewLine[] = renderMarkdownLines(report.content).map((line) => ({
+function buildReportViewLines(report: Report, detail: ReportViewProps["detail"] = "default"): ReportViewLine[] {
+  const content = detail === "diagnostic" ? report.content : hideGeneratedGoalIdLine(report);
+  const lines: ReportViewLine[] = renderMarkdownLines(content).map((line) => ({
     kind: "markdown",
     line,
   }));
@@ -79,6 +80,15 @@ function buildReportViewLines(report: Report): ReportViewLine[] {
   return lines;
 }
 
+function hideGeneratedGoalIdLine(report: Report): string {
+  if (report.goal_id === null) return report.content;
+  const generatedGoalLine = `**Goal**: ${report.goal_id}`;
+  return report.content
+    .split("\n")
+    .filter((line) => line.trim() !== generatedGoalLine)
+    .join("\n");
+}
+
 export function ReportView({ report, onDismiss, detail = "default" }: ReportViewProps) {
   const { stdout } = useStdout();
   const termRows = stdout?.rows ?? 24;
@@ -86,7 +96,7 @@ export function ReportView({ report, onDismiss, detail = "default" }: ReportView
 
   const color = reportColor(report.report_type);
   const icon = reportIcon(report.report_type);
-  const reportLines = buildReportViewLines(report);
+  const reportLines = buildReportViewLines(report, detail);
   const showGoalDiagnostic = detail === "diagnostic" && report.goal_id !== null;
 
   const generatedAt = report.generated_at
