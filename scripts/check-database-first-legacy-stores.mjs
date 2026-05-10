@@ -7,17 +7,24 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."
 
 const CATEGORY = Object.freeze({
   MIGRATE_NOW: "migrate now",
+  TYPED_STORE_MIGRATE_NOW: "typed-store migrate now",
   MIGRATION_ONLY_INPUT: "migration-only input",
   DEBUG_EXPORT_OUTPUT: "debug/export output",
+  DEBUG_EXPORT_ARTIFACT: "debug/export artifact",
   CONFIG_SECRET: "config/secret",
+  USER_AUTHORED_CONTENT: "user-authored content",
+  WORKSPACE_CONTENT: "workspace content",
   WORKSPACE_USER_ARTIFACT: "workspace/user artifact",
   SOIL_IMPORT_PUBLISH_ARTIFACT: "Soil import/publish artifact",
+  REPRODUCIBILITY_ARTIFACT: "reproducibility artifact",
+  BOUNDED_IPC_SPOOL: "bounded IPC/spool",
   PRODUCT_DECISION_NEEDED: "product decision needed",
 });
 
 const CLASSIFICATIONS = new Set(Object.values(CATEGORY));
 const DEBT_CATEGORIES = new Set([
   CATEGORY.MIGRATE_NOW,
+  CATEGORY.TYPED_STORE_MIGRATE_NOW,
   CATEGORY.PRODUCT_DECISION_NEEDED,
 ]);
 
@@ -43,6 +50,21 @@ const ALLOWLIST_RULES_BY_ID = new Map(Object.entries({
   "legacy-capability-registry-input": ["capability-registry-json-state"],
   "relationship-profile-user-content": ["profile-json-state"],
   "character-config-user-content": ["state-manager-raw-call", "profile-json-state"],
+  "run-spec-direct-file-state": ["run-spec-json-state"],
+  "drive-system-schedule-state": ["drive-schedule-json-state"],
+  "drive-system-event-spool": ["drive-event-spool-json"],
+  "daemon-drive-event-spool-callers": ["drive-event-spool-json"],
+  "daemon-event-directory-config": ["drive-event-spool-json"],
+  "mcp-event-spool-tool": ["drive-event-spool-json"],
+  "runtime-event-server-spool": ["drive-event-spool-json"],
+  "runtime-event-server-spool-support": ["drive-event-spool-json"],
+  "runtime-event-file-ingestion-spool": ["drive-event-spool-json"],
+  "strategy-template-registry-file-state": ["strategy-template-json-state"],
+  "strategy-template-runtime-callers": ["strategy-template-json-state"],
+  "vector-index-file-cache": ["vector-index-json-state"],
+  "knowledge-graph-file-state": ["knowledge-graph-json-state"],
+  "run-spec-runtime-callers": ["run-spec-json-state"],
+  "reflection-report-file-state": ["reflection-report-json-state"],
 }));
 
 const RULES = [
@@ -191,6 +213,175 @@ const RULES = [
     owner: "Soil import/publish artifact boundary",
     pattern: /\b(?:overlay-queue\.json|publish\.json|\.publish\/state\.json)\b/,
   },
+  {
+    id: "run-spec-json-state",
+    owner: "RunSpecStore typed control DB table",
+    pattern: /\brun-specs\b|\brunSpecsDir\b/,
+  },
+  {
+    id: "drive-schedule-json-state",
+    owner: "DriveSystem schedule typed control DB table",
+    pattern: /\bschedule\/<goalId>\.json\b|\bschedule\/\$\{goalId\}\.json\b|\bscheduleDir\b/,
+  },
+  {
+    id: "drive-event-spool-json",
+    owner: "DriveSystem bounded runtime event IPC spool",
+    pattern: /\bevents\/\*\.json\b|\beventsDir\b|\breadEventQueue\b|\barchiveEvent\b|\bprocessEvents\b|\bwriteEvent\b|\bstartWatcher\b|\bhandleWatchEvent\b/,
+  },
+  {
+    id: "strategy-template-json-state",
+    owner: "Strategy template typed store or explicit import/export artifact",
+    pattern: /\bstrategy-templates\.json\b|\bpersistPath\b/,
+  },
+  {
+    id: "vector-index-json-state",
+    owner: "Vector index typed store or rebuildable cache boundary",
+    pattern: /\bprivate readonly indexPath\b|\bthis\.indexPath\b|\bnew VectorIndex\(indexPath\b|\bVectorIndex\.create\([^)]*indexPath\b/,
+  },
+  {
+    id: "knowledge-graph-json-state",
+    owner: "Knowledge graph typed store or rebuildable cache boundary",
+    pattern: /\bgraphPath\b|\bthis\.graphPath\b/,
+  },
+  {
+    id: "unclassified-direct-runtime-json-state",
+    owner: "direct filesystem runtime state must be typed SQLite/Soil or explicitly categorized",
+    pattern: /\b(?:runtime\/state\.json|state\/[^`'"]+\.json|cache\.json|queue\.jsonl|stateDir|cacheDir|queueDir)\b/,
+  },
+  {
+    id: "reflection-report-json-state",
+    owner: "Reflection report typed store or explicit report artifact boundary",
+    pattern: /\breflectionsDir\b|path\.join\([^)]*"reflections"[^)]*\)|\bpersistReflectionReport\(baseDir\b|\b(?:morning|evening|dream)-\$\{date\}\.json\b|\bweekly-\$\{week\}\.json\b/,
+  },
+];
+
+const DIRECT_FILE_OWNER_INVENTORY = [
+  inventory({
+    id: "run-spec-store",
+    surface: "src/runtime/run-spec/store.ts",
+    category: CATEGORY.TYPED_STORE_MIGRATE_NOW,
+    owner: "RunSpec durable draft/confirmation/start state",
+    boundary: "run-specs/<id>.json",
+    nextSlice: 2,
+    reason: "normal chat/TUI/runtime handoff state is durable internal runtime state",
+  }),
+  inventory({
+    id: "drive-system-schedule",
+    surface: "src/platform/drive/drive-system.ts",
+    category: CATEGORY.TYPED_STORE_MIGRATE_NOW,
+    owner: "DriveSystem goal activation schedule",
+    boundary: "schedule/<goalId>.json",
+    nextSlice: 3,
+    reason: "activation, cooldown, and next-check data are durable runtime state",
+  }),
+  inventory({
+    id: "drive-system-event-spool",
+    surface: "src/platform/drive/drive-system.ts; src/runtime/event/*; daemon writeEvent callers",
+    category: CATEGORY.BOUNDED_IPC_SPOOL,
+    owner: "DriveSystem runtime event ingestion spool",
+    boundary: "events/*.json and events/archive/*.json",
+    nextSlice: 4,
+    reason: "event files may remain only if bounded IPC semantics are documented and enforced",
+  }),
+  inventory({
+    id: "strategy-template-registry",
+    surface: "src/orchestrator/strategy/strategy-template-registry.ts",
+    category: CATEGORY.TYPED_STORE_MIGRATE_NOW,
+    owner: "successful strategy template reuse",
+    boundary: "strategy-templates.json",
+    nextSlice: 5,
+    reason: "normal strategy reuse is runtime learning/cache state unless reclassified as import/export",
+  }),
+  inventory({
+    id: "vector-index",
+    surface: "src/platform/knowledge/vector-index.ts",
+    category: CATEGORY.TYPED_STORE_MIGRATE_NOW,
+    owner: "runtime semantic vector index",
+    boundary: "caller-provided indexPath JSON",
+    nextSlice: 6,
+    reason: "authoritative searchable knowledge/index state should be typed store or rebuildable cache",
+  }),
+  inventory({
+    id: "knowledge-graph",
+    surface: "src/platform/knowledge/knowledge-graph.ts",
+    category: CATEGORY.TYPED_STORE_MIGRATE_NOW,
+    owner: "cross-goal knowledge graph",
+    boundary: "caller-provided graphPath JSON",
+    nextSlice: 6,
+    reason: "authoritative graph relationships should be typed store or explicit rebuildable cache",
+  }),
+  inventory({
+    id: "runtime-report-artifacts",
+    surface: "src/runtime/store/reproducibility-manifest.ts; src/runtime/store/postmortem-report.ts; src/tools/runtime/*; reporting outputs",
+    category: CATEGORY.REPRODUCIBILITY_ARTIFACT,
+    owner: "runtime reports, manifests, postmortems, and long-running result artifacts",
+    boundary: "report/result/manifest artifact files",
+    nextSlice: 7,
+    reason: "file-backed artifacts are allowed only as output boundaries, not authoritative runtime state",
+  }),
+  inventory({
+    id: "reflection-reports",
+    surface: "src/reflection/*",
+    category: CATEGORY.TYPED_STORE_MIGRATE_NOW,
+    owner: "morning/evening/weekly/dream reflection reports",
+    boundary: "reflections/{morning,evening,dream}-<date>.json and reflections/weekly-<week>.json",
+    nextSlice: 7,
+    reason: "reflection reports are read back as runtime input and the ownership map lists reflection as typed runtime state",
+  }),
+  inventory({
+    id: "tool-workspace-artifacts",
+    surface: "src/tools/fs/*; src/tools/kaggle/*; workspace preparation/edit/write paths; code-search read indexes",
+    category: CATEGORY.WORKSPACE_CONTENT,
+    owner: "user workspace and tool-produced deliverables",
+    boundary: "workspace files and external task artifacts",
+    nextSlice: 7,
+    reason: "workspace content is intentionally file-backed and user-visible",
+  }),
+  inventory({
+    id: "config-setup-plugin-gateway-channel-files",
+    surface: "src/interface/cli/commands/config.ts; setup-wizard.ts; plugin.ts; gateway/channel setup; hook/global config",
+    category: CATEGORY.CONFIG_SECRET,
+    owner: "operator configuration, credentials, plugin manifests, gateway/channel config",
+    boundary: "provider/daemon/notification/datasource/gateway/plugin/MCP config files",
+    nextSlice: 8,
+    reason: "admin-managed configuration remains file-backed with schema validation",
+  }),
+  inventory({
+    id: "user-authored-profile-content",
+    surface: "src/platform/profile/relationship-profile.ts; character configuration paths",
+    category: CATEGORY.USER_AUTHORED_CONTENT,
+    owner: "user-authored relationship profile and character content",
+    boundary: "relationship-profile.json and character-config.json",
+    nextSlice: 8,
+    reason: "explicitly authored content is not internal runtime state",
+  }),
+  inventory({
+    id: "migration-inputs",
+    surface: "src/runtime/store/*migration.ts; legacy recovery helpers; doctor repair paths",
+    category: CATEGORY.MIGRATION_ONLY_INPUT,
+    owner: "doctor/repair compatibility inputs",
+    boundary: "legacy JSON/JSONL/lock files",
+    nextSlice: null,
+    reason: "normal runtime code must not silently fall back to these files",
+  }),
+  inventory({
+    id: "soil-import-publish-surfaces",
+    surface: "src/platform/soil/importer/publish/compiler/projections/doctor paths",
+    category: CATEGORY.SOIL_IMPORT_PUBLISH_ARTIFACT,
+    owner: "Soil import, compile, projection, and publish artifacts",
+    boundary: "Soil-owned files and publish state",
+    nextSlice: null,
+    reason: "Soil import/publish artifacts are outside normal runtime durable state ownership",
+  }),
+  inventory({
+    id: "debug-logs-and-daemon-pid",
+    surface: "src/runtime/logger.ts; src/interface/tui/debug-log.ts; src/runtime/pid-manager.ts; daemon health logs",
+    category: CATEGORY.DEBUG_EXPORT_ARTIFACT,
+    owner: "debug logs, rotated logs, process pid/health files",
+    boundary: "log, pid, and health diagnostic files",
+    nextSlice: 7,
+    reason: "diagnostic outputs may remain file-backed when not used as hidden durable runtime state",
+  }),
 ];
 
 const PATH_ALLOWLIST = [
@@ -383,6 +574,134 @@ const PATH_ALLOWLIST = [
     reason: "character config is explicit user-editable configuration",
     owner: "character configuration",
   }),
+  allow({
+    id: "run-spec-direct-file-state",
+    pattern: /(^|\/)src\/runtime\/run-spec\/store\.ts$/,
+    category: CATEGORY.TYPED_STORE_MIGRATE_NOW,
+    reason: "RunSpec normal durable state is a direct JSON file owner pending Slice 2 typed control DB migration",
+    owner: "RunSpecStore typed control DB table",
+    nextSlice: 2,
+    debtRank: 10,
+  }),
+  allow({
+    id: "drive-system-schedule-state",
+    pattern: /(^|\/)src\/platform\/drive\/drive-system\.ts$/,
+    category: CATEGORY.TYPED_STORE_MIGRATE_NOW,
+    reason: "DriveSystem schedule JSON is normal activation runtime state pending Slice 3 typed control DB migration",
+    owner: "DriveSystem schedule typed control DB table",
+    nextSlice: 3,
+    debtRank: 20,
+  }),
+  allow({
+    id: "drive-system-event-spool",
+    pattern: /(^|\/)src\/platform\/drive\/drive-system\.ts$/,
+    category: CATEGORY.BOUNDED_IPC_SPOOL,
+    reason: "DriveSystem event files are pending Slice 4 classification as DB state or bounded IPC spool",
+    owner: "DriveSystem bounded runtime event IPC spool",
+    nextSlice: 4,
+  }),
+  allow({
+    id: "daemon-drive-event-spool-callers",
+    pattern: /(^|\/)src\/runtime\/daemon\/(?:runner-startup|runner-resident-proactive|runner-resident-shared|maintenance|runner-commands)\.ts$/,
+    category: CATEGORY.BOUNDED_IPC_SPOOL,
+    reason: "daemon callers enqueue DriveSystem events through the pending bounded event-spool boundary",
+    owner: "DriveSystem bounded runtime event IPC spool",
+    nextSlice: 4,
+  }),
+  allow({
+    id: "daemon-event-directory-config",
+    pattern: /(^|\/)src\/interface\/cli\/commands\/daemon\.ts$/,
+    category: CATEGORY.BOUNDED_IPC_SPOOL,
+    reason: "daemon command wires the runtime event spool directory into the event server",
+    owner: "DriveSystem bounded runtime event IPC spool",
+    nextSlice: 4,
+  }),
+  allow({
+    id: "mcp-event-spool-tool",
+    pattern: /(^|\/)src\/interface\/mcp-server\/tools\.ts$/,
+    category: CATEGORY.BOUNDED_IPC_SPOOL,
+    reason: "MCP tool writes explicit event files into the pending bounded runtime event spool",
+    owner: "DriveSystem bounded runtime event IPC spool",
+    nextSlice: 4,
+  }),
+  allow({
+    id: "runtime-event-server-spool",
+    pattern: /(^|\/)src\/runtime\/event\/server(?:-trigger-handler)?\.ts$/,
+    category: CATEGORY.BOUNDED_IPC_SPOOL,
+    reason: "event server writes trigger events through the pending bounded event-spool boundary",
+    owner: "DriveSystem bounded runtime event IPC spool",
+    nextSlice: 4,
+  }),
+  allow({
+    id: "runtime-event-server-spool-support",
+    pattern: /(^|\/)src\/runtime\/event\/(?:server-auth|server-snapshot-reader|server-types)\.ts$/,
+    category: CATEGORY.BOUNDED_IPC_SPOOL,
+    reason: "event server support types and auth resolve paths relative to the runtime event spool",
+    owner: "DriveSystem bounded runtime event IPC spool",
+    nextSlice: 4,
+  }),
+  allow({
+    id: "runtime-event-file-ingestion-spool",
+    pattern: /(^|\/)src\/runtime\/event\/server-file-ingestion\.ts$/,
+    category: CATEGORY.BOUNDED_IPC_SPOOL,
+    reason: "file ingestion moves event files through processed/failed spool directories with bounded semantics to verify in Slice 4",
+    owner: "runtime event file ingestion spool",
+    nextSlice: 4,
+  }),
+  allow({
+    id: "strategy-template-registry-file-state",
+    pattern: /(^|\/)src\/orchestrator\/strategy\/strategy-template-registry\.ts$/,
+    category: CATEGORY.TYPED_STORE_MIGRATE_NOW,
+    reason: "strategy templates are normal runtime learning/reuse state pending Slice 5 typed-store migration or artifact reclassification",
+    owner: "Strategy template typed store or explicit import/export artifact",
+    nextSlice: 5,
+    debtRank: 30,
+  }),
+  allow({
+    id: "strategy-template-runtime-callers",
+    pattern: /(^|\/)src\/platform\/dream\/(?:dream-activation|dream-consolidator)\.ts$/,
+    category: CATEGORY.TYPED_STORE_MIGRATE_NOW,
+    reason: "dream runtime reads strategy-template JSON through the same pending Slice 5 direct-file owner",
+    owner: "Strategy template typed store or explicit import/export artifact",
+    nextSlice: 5,
+    debtRank: 31,
+  }),
+  allow({
+    id: "vector-index-file-cache",
+    pattern: /(^|\/)src\/platform\/knowledge\/vector-index\.ts$/,
+    category: CATEGORY.TYPED_STORE_MIGRATE_NOW,
+    reason: "vector index JSON is authoritative searchable state unless Slice 6 proves it is a rebuildable cache",
+    owner: "Vector index typed store or rebuildable cache boundary",
+    nextSlice: 6,
+    debtRank: 40,
+  }),
+  allow({
+    id: "knowledge-graph-file-state",
+    pattern: /(^|\/)src\/platform\/knowledge\/knowledge-graph\.ts$/,
+    category: CATEGORY.TYPED_STORE_MIGRATE_NOW,
+    reason: "knowledge graph JSON is authoritative graph state pending Slice 6 typed-store migration or cache reclassification",
+    owner: "Knowledge graph typed store or rebuildable cache boundary",
+    nextSlice: 6,
+    debtRank: 50,
+  }),
+  allow({
+    id: "run-spec-runtime-callers",
+    pattern: /(^|\/)src\/runtime\/run-spec\/handoff\.ts$/,
+    category: CATEGORY.TYPED_STORE_MIGRATE_NOW,
+    reason: "RunSpec handoff still references the file path surfaced by the pending Slice 2 RunSpec store",
+    owner: "RunSpecStore typed control DB table",
+    nextSlice: 2,
+    debtRank: 11,
+  }),
+  allow({
+    id: "reflection-report-file-state",
+    pattern: /(^|\/)src\/reflection\/(?:reflection-utils|morning-planning|evening-catchup|weekly-review|dream-consolidation)\.ts$/,
+    category: CATEGORY.TYPED_STORE_MIGRATE_NOW,
+    reason: "reflection reports are normal runtime inputs pending Slice 7 typed-store migration or explicit artifact split",
+    owner: "Reflection report typed store or explicit report artifact boundary",
+    nextSlice: 7,
+    debtRank: 60,
+  }),
 ];
 
 const EXTENSIONS = new Set([".ts", ".tsx", ".js", ".mjs", ".cjs"]);
@@ -394,7 +713,7 @@ export function scanText(filePath, text) {
 
 export function scanTextDetailed(filePath, text) {
   const normalizedPath = normalizePath(filePath);
-  const allow = PATH_ALLOWLIST.find((entry) => entry.pattern.test(normalizedPath));
+  const pathAllowlist = PATH_ALLOWLIST.filter((entry) => entry.pattern.test(normalizedPath));
   const findings = [];
   const classifiedFindings = [];
   const lines = text.split(/\r?\n/);
@@ -408,7 +727,8 @@ export function scanTextDetailed(filePath, text) {
           owner: rule.owner,
           text: line.trim(),
         };
-        if (allow && isAllowlistedRule(allow, rule.id)) {
+        const allow = pathAllowlist.find((entry) => isAllowlistedRule(entry, rule.id));
+        if (allow) {
           classifiedFindings.push({
             ...finding,
             allowlistId: allow.id,
@@ -419,11 +739,12 @@ export function scanTextDetailed(filePath, text) {
             debtRank: allow.debtRank ?? null,
           });
         } else {
+          const pathOnlyAllow = pathAllowlist[0];
           findings.push({
             ...finding,
-            allowlistId: allow?.id,
-            allowlistReason: allow && !isAllowlistedRule(allow, rule.id)
-              ? `allowlist entry "${allow.id}" does not permit rule "${rule.id}"`
+            allowlistId: pathOnlyAllow?.id,
+            allowlistReason: pathOnlyAllow
+              ? `allowlist entry "${pathOnlyAllow.id}" does not permit rule "${rule.id}"`
               : undefined,
           });
         }
@@ -453,6 +774,8 @@ export function scanFilesDetailed(roots) {
     classifiedFindings,
     allowlistReport: buildAllowlistReport(classifiedFindings),
     debtReport: buildDebtReport(classifiedFindings),
+    directFileOwnerReport: buildDirectFileOwnerReport(),
+    directFileDebtReport: buildDirectFileDebtReport(),
   };
 }
 
@@ -470,7 +793,6 @@ function allow(entry) {
 
 function isDebtAllowlistEntry(entry) {
   return (entry.debtRank !== undefined && entry.debtRank !== null)
-    || (entry.nextSlice !== undefined && entry.nextSlice !== null)
     || DEBT_CATEGORIES.has(entry.category);
 }
 
@@ -516,6 +838,32 @@ function buildAllowlistReport(classifiedFindings) {
     .sort((left, right) => left.id.localeCompare(right.id));
 }
 
+function inventory(entry) {
+  if (!entry.id) throw new Error("direct file owner inventory entries require an id");
+  if (!CLASSIFICATIONS.has(entry.category)) {
+    throw new Error(`direct file owner inventory entry "${entry.id}" has invalid category "${entry.category}"`);
+  }
+  return {
+    nextSlice: null,
+    ...entry,
+  };
+}
+
+function buildDirectFileOwnerReport() {
+  return DIRECT_FILE_OWNER_INVENTORY
+    .map((entry) => ({ ...entry, debt: DEBT_CATEGORIES.has(entry.category) }))
+    .sort((left, right) => {
+      const leftSlice = left.nextSlice ?? Number.MAX_SAFE_INTEGER;
+      const rightSlice = right.nextSlice ?? Number.MAX_SAFE_INTEGER;
+      if (leftSlice !== rightSlice) return leftSlice - rightSlice;
+      return left.id.localeCompare(right.id);
+    });
+}
+
+function buildDirectFileDebtReport() {
+  return buildDirectFileOwnerReport().filter((entry) => entry.debt);
+}
+
 function printDebtReport(debtReport) {
   if (debtReport.length === 0) return;
   console.log("classified legacy store debt report:");
@@ -525,6 +873,15 @@ function printDebtReport(debtReport) {
     console.log(`- ${entry.id}: ${entry.category}; ${rank}; ${next}; owner: ${entry.owner}; matches: ${entry.matchCount}`);
   }
   console.log("run with --json for line-level classified matches and reasons");
+}
+
+function printDirectFileDebtReport(directFileDebtReport) {
+  if (directFileDebtReport.length === 0) return;
+  console.log("classified direct filesystem owner debt report:");
+  for (const entry of directFileDebtReport) {
+    const next = entry.nextSlice === null ? "no follow-up slice" : `Slice ${entry.nextSlice}`;
+    console.log(`- ${entry.id}: ${entry.category}; ${next}; owner: ${entry.owner}; boundary: ${entry.boundary}`);
+  }
 }
 
 function isLineAllowedForRule(rule, line) {
@@ -575,6 +932,8 @@ function main() {
       classifiedFindings: result.classifiedFindings,
       allowlistReport: result.allowlistReport,
       debtReport: result.debtReport,
+      directFileOwnerReport: result.directFileOwnerReport,
+      directFileDebtReport: result.directFileDebtReport,
     }, null, 2));
     if (result.findings.length > 0) process.exitCode = 1;
     return;
@@ -584,6 +943,7 @@ function main() {
   if (findings.length === 0) {
     console.log("database-first legacy store check passed");
     printDebtReport(result.debtReport);
+    printDirectFileDebtReport(result.directFileDebtReport);
     return;
   }
   console.error("database-first legacy store check failed:");

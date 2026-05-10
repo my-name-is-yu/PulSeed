@@ -80,11 +80,17 @@ The guard keeps every allowlisted boundary machine-readable in `allowlistReport`
 Entries must be categorized as one of:
 
 - migrate now
+- typed-store migrate now
 - migration-only input
 - debug/export output
+- debug/export artifact
 - config/secret
+- user-authored content
+- workspace content
 - workspace/user artifact
 - Soil import/publish artifact
+- reproducibility artifact
+- bounded IPC/spool
 - product decision needed
 
 `debtReport` is reserved for unresolved follow-up debt, currently categories
@@ -102,6 +108,36 @@ calls as raw fallback boundary usage. Existing callers must be classified as one
 of the categories above. Final closure leaves no `migrate now` raw callers;
 allowed config/report/export callers remain visible in `allowlistReport`
 without being counted as debt.
+
+The direct filesystem owner closure extends the same guard with
+`directFileOwnerReport` and `directFileDebtReport`. This report is the
+machine-readable inventory for non-test file-backed runtime surfaces that do not
+go through `StateManager`. Entries marked `typed-store migrate now` are normal
+durable runtime/cache state and must move to typed SQLite/Soil ownership in the
+listed slice. Entries marked `bounded IPC/spool`, `reproducibility artifact`,
+`debug/export artifact`, `workspace content`, `user-authored content`,
+`config/secret`, `migration-only input`, or `Soil import/publish artifact` may
+remain file-backed only when their boundary is explicit and they are not used as
+hidden authoritative runtime state.
+
+Current direct filesystem owner inventory:
+
+| Owner | Surface | Boundary | Category | Follow-up |
+| --- | --- | --- | --- | --- |
+| RunSpec durable draft/confirmation/start state | `src/runtime/run-spec/store.ts` | `run-specs/<id>.json` | typed-store migrate now | Slice 2 |
+| DriveSystem goal activation schedule | `src/platform/drive/drive-system.ts` | `schedule/<goalId>.json` | typed-store migrate now | Slice 3 |
+| DriveSystem runtime event ingestion spool | `src/platform/drive/drive-system.ts`, `src/runtime/event/*`, daemon `writeEvent` callers | `events/*.json`, `events/archive/*.json` | bounded IPC/spool | Slice 4 |
+| Successful strategy template reuse | `src/orchestrator/strategy/strategy-template-registry.ts` | `strategy-templates.json` | typed-store migrate now | Slice 5 |
+| Runtime semantic vector index | `src/platform/knowledge/vector-index.ts` | caller-provided `indexPath` JSON | typed-store migrate now | Slice 6 |
+| Cross-goal knowledge graph | `src/platform/knowledge/knowledge-graph.ts` | caller-provided `graphPath` JSON | typed-store migrate now | Slice 6 |
+| Runtime reports, manifests, postmortems, long-running results | runtime report stores and runtime tools | report/result/manifest files | reproducibility artifact | Slice 7 |
+| Morning/evening/weekly/dream reflection reports | `src/reflection/*` | `reflections/{morning,evening,dream}-<date>.json`, `reflections/weekly-<week>.json` | typed-store migrate now | Slice 7 |
+| Workspace and tool-produced deliverables | filesystem tools, Kaggle tools, workspace prep/edit/write paths, code-search reads | workspace files and external task artifacts | workspace content | Slice 7 |
+| Operator configuration and credentials | setup/config/plugin/gateway/channel/hook/global config paths | provider, daemon, notification, datasource, gateway, plugin, MCP config files | config/secret | Slice 8 |
+| User-authored profile and character content | relationship profile and character configuration paths | `relationship-profile.json`, `character-config.json` | user-authored content | Slice 8 |
+| Doctor/repair compatibility inputs | migration helpers, legacy recovery, doctor repair paths | legacy JSON/JSONL/lock files | migration-only input | none |
+| Soil import, compile, projection, and publish artifacts | Soil import/publish/compiler/projection/doctor paths | Soil-owned files and publish state | Soil import/publish artifact | none |
+| Debug logs, process pid, and health diagnostics | logger, TUI debug log, pid manager, daemon health logs | log, pid, and health diagnostic files | debug/export artifact | Slice 7 |
 
 ## Final Audit
 
@@ -171,6 +207,11 @@ debug/export artifact boundaries:
   input only
 - dream filesystem counters in operational reports are diagnostic/export
   metrics over artifacts and legacy fixtures, not authoritative runtime state
+- morning/evening/weekly/dream reflection reports are currently classified as a direct
+  file owner debt item because reflection is part of the typed runtime ownership
+  map and evening catch-up reads morning reports as runtime input; Slice 7 must
+  migrate them to typed ownership or split authoritative state from report
+  artifacts
 - Soil import overlay queue and publish state, which are import/publish artifact
   surfaces rather than normal runtime owners
 - goal negotiation logs and dependency graph state use the typed control DB
