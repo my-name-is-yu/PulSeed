@@ -28,6 +28,7 @@ describe("ReadPulseedFileTool", () => {
   const originalPulseedHome = process.env["PULSEED_HOME"];
 
   beforeAll(async () => {
+    delete process.env["PULSEED_HOME"];
     tmpHome = await fs.mkdtemp(path.join(os.tmpdir(), "read-pulseed-test-"));
     pulseedDir = path.join(tmpHome, ".pulseed");
     await fs.mkdir(pulseedDir, { recursive: true });
