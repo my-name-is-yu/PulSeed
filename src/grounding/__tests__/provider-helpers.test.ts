@@ -2,7 +2,7 @@ import * as fsp from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { readJsonFile } from "../providers/helpers.js";
+import { GROUNDING_PROVIDER_JSON_MAX_BYTES, readJsonFile } from "../providers/helpers.js";
 
 let tmpRoots: string[] = [];
 
@@ -40,6 +40,15 @@ describe("grounding provider JSON helpers", () => {
     ["string", JSON.stringify("openai")],
   ])("rejects parsed %s JSON values that are not records", async (_label, content) => {
     const filePath = await makeTempFile("provider.json", content);
+
+    await expect(readJsonFile(filePath)).resolves.toBeNull();
+  });
+
+  it("rejects oversized JSON files before parsing provider state", async () => {
+    const tmpRoot = await fsp.mkdtemp(path.join(os.tmpdir(), "pulseed-grounding-provider-helpers-"));
+    tmpRoots.push(tmpRoot);
+    const filePath = path.join(tmpRoot, "provider.json");
+    await fsp.writeFile(filePath, JSON.stringify({ llm: "x".repeat(GROUNDING_PROVIDER_JSON_MAX_BYTES) }));
 
     await expect(readJsonFile(filePath)).resolves.toBeNull();
   });
