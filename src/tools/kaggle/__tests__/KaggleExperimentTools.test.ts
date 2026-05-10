@@ -15,7 +15,11 @@ import {
   KaggleExperimentStopTool,
   KaggleMetricReportTool,
 } from "../KaggleExperimentTools.js";
-import { KAGGLE_EXPERIMENT_METRICS_MAX_BYTES } from "../experiment-artifacts.js";
+import {
+  KAGGLE_EXPERIMENT_METADATA_MAX_BYTES,
+  KAGGLE_EXPERIMENT_METRICS_MAX_BYTES,
+  signalKaggleChildProcess,
+} from "../experiment-artifacts.js";
 import { teeWrapperArgs } from "../tee-wrapper.js";
 import type { KaggleMetricDirection } from "../metrics.js";
 
@@ -501,6 +505,21 @@ setInterval(() => fs.writeFileSync("experiments/exp-stop/heartbeat.txt", String(
 
     expect(result.success).toBe(false);
     expect(result.error).toContain("Process session not found");
+    expect(killSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not signal pids from oversized child-process artifacts", async () => {
+    const experimentDir = path.join(workspaceBase, "kaggle", "titanic", "experiments", "exp-oversized-child");
+    await fs.mkdir(experimentDir, { recursive: true });
+    await fs.writeFile(
+      path.join(experimentDir, "child-process.json"),
+      `${JSON.stringify({ pid: process.pid, padding: "x".repeat(KAGGLE_EXPERIMENT_METADATA_MAX_BYTES) })}\n`,
+      "utf-8",
+    );
+    const killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
+
+    await signalKaggleChildProcess(path.join(experimentDir, "child-process.json"), "SIGTERM");
+
     expect(killSpy).not.toHaveBeenCalled();
   });
 

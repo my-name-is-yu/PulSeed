@@ -13,6 +13,7 @@ import {
 } from "./metrics.js";
 
 export const KAGGLE_EXPERIMENT_METRICS_MAX_BYTES = 1024 * 1024;
+export const KAGGLE_EXPERIMENT_METADATA_MAX_BYTES = 1024 * 1024;
 
 export type KaggleMetricsFallback = Parameters<typeof parseKaggleMetricsCompatible>[1];
 
@@ -70,7 +71,9 @@ export async function readKaggleTail(
 
 export async function readJsonObject(filePath: string): Promise<Record<string, unknown> | null> {
   try {
-    const raw = await fs.readFile(filePath, "utf-8");
+    const raw = await readTextFileWithinLimit(filePath, {
+      maxBytes: KAGGLE_EXPERIMENT_METADATA_MAX_BYTES,
+    });
     const parsed = JSON.parse(raw);
     return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null;
   } catch {
