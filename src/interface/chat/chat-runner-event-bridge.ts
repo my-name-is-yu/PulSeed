@@ -640,7 +640,24 @@ export class ChatRunnerEventBridge {
       `Next I will ${nextStep}`,
       `This is needed because ${reason}`,
     ].join("\n");
-    this.emitActivity("commentary", message, eventContext, "intent:first-step", false);
+    this.emitEvent({
+      type: "activity",
+      kind: "commentary",
+      message: redactSetupSecrets(message),
+      sourceId: "intent:first-step",
+      transient: false,
+      presentation: {
+        gatewayNarration: {
+          audience: "user",
+          phase: selectedRoute?.kind === "runtime_control_blocked" ? "blocked" : "planning",
+          importance: selectedRoute?.kind === "runtime_control_blocked" ? "blocked" : "heartbeat",
+          verbosity: "summary",
+          subject: "the request",
+          reason,
+        },
+      },
+      ...this.eventBase(eventContext),
+    });
   }
 
   emitCheckpoint(

@@ -23,7 +23,7 @@ export class TelegramChatEventAdapter {
           ...createGatewayDisplayPolicy(TELEGRAM_GATEWAY_DISPLAY_CONTRACT.capabilities),
           progressSurface: "editable",
           finalSurface: "edit_stream",
-          cleanupPolicy: "delete",
+          cleanupPolicy: "collapse",
         },
       },
       transport: new TelegramPluginDisplayTransport(api, chatId),

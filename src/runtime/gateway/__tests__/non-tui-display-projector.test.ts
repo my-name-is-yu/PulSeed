@@ -179,6 +179,39 @@ describe("non-TUI display projector", () => {
     expect(transport.deleteProgress).toHaveBeenCalledOnce();
   });
 
+  it("keeps immediate user-visible commentary perceptible when progress cleanup collapses", async () => {
+    const transport = createTransport();
+    const projector = new NonTuiDisplayProjector({
+      display: {
+        capabilities: TELEGRAM_GATEWAY_DISPLAY_CONTRACT.capabilities,
+        policy: {
+          ...createGatewayDisplayPolicy(TELEGRAM_GATEWAY_DISPLAY_CONTRACT.capabilities),
+          progressSurface: "editable",
+          finalSurface: "edit_stream",
+          cleanupPolicy: "collapse",
+        },
+      },
+      transport,
+    });
+
+    await projector.handle({
+      ...base,
+      type: "activity",
+      kind: "commentary",
+      message: "I will check the request before answering.",
+      sourceId: "intent:first-step",
+      presentation: { gatewayProgress: "user" },
+    });
+    await projector.handle({ ...base, type: "assistant_final", text: "Blocked final.", persisted: true });
+    await projector.handle({ ...base, type: "lifecycle_end", status: "completed", elapsedMs: 12, persisted: true });
+
+    expect(transport.sendProgress).toHaveBeenCalledOnce();
+    expect(transport.sendFinal).toHaveBeenCalledWith("Blocked final.");
+    expect(transport.deleteProgress).not.toHaveBeenCalled();
+    expect(transport.editProgress).toHaveBeenCalledWith({ id: "progress-1" }, "Completed.");
+    expect(projector.deliveredProgressOutput).toBe(true);
+  });
+
   it("suppresses unchanged progress and final edits", async () => {
     const transport = createTransport();
     const projector = new NonTuiDisplayProjector({
