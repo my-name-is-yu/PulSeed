@@ -368,6 +368,113 @@ describe("PIDManager", () => {
       expect(fs.existsSync(testPidManager.getPath())).toBe(false);
     });
 
+    it.each([
+      ["negative", -1],
+      ["fractional", 1.5],
+      ["infinite", Infinity],
+      ["NaN", NaN],
+      ["unsafe", Number.MAX_SAFE_INTEGER + 1],
+      ["timer overflow", 2_147_483_648],
+    ])("rejects invalid stopRuntime timeout before process inspection: %s", async (_label, timeoutMs) => {
+      const processStartedAtResolver = vi.fn(async () => {
+        throw new Error("process metadata resolver should not run");
+      });
+      const testPidManager = new PIDManager(tmpDir, "invalid-timeout.pid", {
+        processStartedAtResolver,
+      });
+      const killSpy = vi.spyOn(process, "kill").mockImplementation((() => {
+        throw new Error("process signal should not run");
+      }) as typeof process.kill);
+
+      fs.writeFileSync(
+        testPidManager.getPath(),
+        JSON.stringify({ pid: process.pid, started_at: new Date().toISOString() }),
+        "utf-8"
+      );
+
+      await expect(testPidManager.stopRuntime({ timeoutMs, pollIntervalMs: 1 })).rejects.toThrow(
+        "Invalid stop runtime option timeoutMs"
+      );
+      expect(processStartedAtResolver).not.toHaveBeenCalled();
+      expect(killSpy).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["zero", 0],
+      ["negative", -1],
+      ["fractional", 1.5],
+      ["infinite", Infinity],
+      ["NaN", NaN],
+      ["unsafe", Number.MAX_SAFE_INTEGER + 1],
+      ["timer overflow", 2_147_483_648],
+    ])("rejects invalid stopRuntime poll interval before process inspection: %s", async (_label, pollIntervalMs) => {
+      const processStartedAtResolver = vi.fn(async () => {
+        throw new Error("process metadata resolver should not run");
+      });
+      const testPidManager = new PIDManager(tmpDir, "invalid-poll.pid", {
+        processStartedAtResolver,
+      });
+      const killSpy = vi.spyOn(process, "kill").mockImplementation((() => {
+        throw new Error("process signal should not run");
+      }) as typeof process.kill);
+
+      fs.writeFileSync(
+        testPidManager.getPath(),
+        JSON.stringify({ pid: process.pid, started_at: new Date().toISOString() }),
+        "utf-8"
+      );
+
+      await expect(testPidManager.stopRuntime({ timeoutMs: 1, pollIntervalMs })).rejects.toThrow(
+        "Invalid stop runtime option pollIntervalMs"
+      );
+      expect(processStartedAtResolver).not.toHaveBeenCalled();
+      expect(killSpy).not.toHaveBeenCalled();
+    });
+
+    it("allows zero stopRuntime timeout to force unresolved processes immediately", async () => {
+      const forcePid = 4301;
+      const alive = new Set([forcePid]);
+      const pidfileStartedAt = "2026-04-10T00:00:00.000Z";
+      const matchingStartedAt = new Date(pidfileStartedAt).toString();
+      const testPidManager = new PIDManager(tmpDir, "zero-timeout.pid", {
+        processStartedAtResolver: async (pid: number) => {
+          if (pid === forcePid) {
+            return matchingStartedAt;
+          }
+          return null;
+        },
+      });
+      const killSpy = vi.spyOn(process, "kill").mockImplementation(((pid: number, signal?: NodeJS.Signals | number) => {
+        if (signal === 0) {
+          if (!alive.has(pid)) {
+            const err = new Error("ESRCH") as NodeJS.ErrnoException;
+            err.code = "ESRCH";
+            throw err;
+          }
+          return true;
+        }
+        if (signal === "SIGKILL") {
+          alive.delete(pid);
+          return true;
+        }
+        return true;
+      }) as typeof process.kill);
+
+      fs.writeFileSync(
+        testPidManager.getPath(),
+        JSON.stringify({ pid: forcePid, started_at: pidfileStartedAt }),
+        "utf-8"
+      );
+
+      const result = await testPidManager.stopRuntime({ timeoutMs: 0, pollIntervalMs: 1 });
+
+      expect(killSpy).toHaveBeenCalledWith(forcePid, "SIGTERM");
+      expect(killSpy).toHaveBeenCalledWith(forcePid, "SIGKILL");
+      expect(result.forced).toBe(true);
+      expect(result.stopped).toBe(true);
+      expect(result.alivePids).toEqual([]);
+    });
+
     it("treats a live recycled PID as stale when started_at does not match", async () => {
       const recycledPid = 5101;
       const pidfileStartedAt = "2026-04-10T00:00:00.000Z";

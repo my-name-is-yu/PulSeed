@@ -8,6 +8,7 @@ import { PIDInfoSchema, type PIDInfo } from "./types/daemon.js";
 const PID_EPOCH_ISO = "1970-01-01T00:00:00.000Z";
 const DEFAULT_STOP_TIMEOUT_MS = 35_000;
 const DEFAULT_STOP_POLL_INTERVAL_MS = 100;
+const MAX_STOP_RUNTIME_TIMER_MS = 2_147_483_647;
 const PID_START_MATCH_TOLERANCE_MS = 30_000;
 export const PID_FILE_MAX_BYTES = 64 * 1024;
 
@@ -66,6 +67,23 @@ function parseWriteProcessPid(field: keyof PIDWriteOptions, value: number | unde
   if (value === undefined) return undefined;
   if (!isSafeProcessPid(value)) {
     throw new Error(`Invalid PID write option ${field}: expected a positive safe integer`);
+  }
+  return value;
+}
+
+function parseStopRuntimeTimerMs(
+  field: keyof StopRuntimeOptions,
+  value: number | undefined,
+  defaultValue: number,
+  options: { allowZero: boolean },
+): number {
+  if (value === undefined) return defaultValue;
+  const minimum = options.allowZero ? 0 : 1;
+  if (!Number.isSafeInteger(value) || value < minimum || value > MAX_STOP_RUNTIME_TIMER_MS) {
+    const expectation = options.allowZero ? "a nonnegative" : "a positive";
+    throw new Error(
+      `Invalid stop runtime option ${field}: expected ${expectation} safe integer <= ${MAX_STOP_RUNTIME_TIMER_MS}`
+    );
   }
   return value;
 }
@@ -297,8 +315,18 @@ export class PIDManager {
    * Sends SIGTERM to the owner/watchdog and runtime child, waits, then SIGKILLs survivors if needed.
    */
   async stopRuntime(options: StopRuntimeOptions = {}): Promise<StopRuntimeResult> {
-    const timeoutMs = options.timeoutMs ?? DEFAULT_STOP_TIMEOUT_MS;
-    const pollIntervalMs = options.pollIntervalMs ?? DEFAULT_STOP_POLL_INTERVAL_MS;
+    const timeoutMs = parseStopRuntimeTimerMs(
+      "timeoutMs",
+      options.timeoutMs,
+      DEFAULT_STOP_TIMEOUT_MS,
+      { allowZero: true }
+    );
+    const pollIntervalMs = parseStopRuntimeTimerMs(
+      "pollIntervalMs",
+      options.pollIntervalMs,
+      DEFAULT_STOP_POLL_INTERVAL_MS,
+      { allowZero: false }
+    );
     const initialStatus = await this.inspect();
 
     if (!initialStatus.info || initialStatus.alivePids.length === 0) {
