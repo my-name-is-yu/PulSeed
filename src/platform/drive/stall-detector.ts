@@ -169,9 +169,12 @@ export class StallDetector {
       return null;
     }
 
-    const startedAt = new Date(task.started_at);
-    const now = new Date();
-    const elapsedMs = now.getTime() - startedAt.getTime();
+    const startedAtMs = Date.parse(task.started_at);
+    if (!Number.isFinite(startedAtMs)) {
+      return null;
+    }
+
+    const elapsedMs = Date.now() - startedAtMs;
     const elapsedHours = elapsedMs / (1000 * 60 * 60);
 
     const thresholdHours = this.computeTimeThreshold(task.estimated_duration, task.task_category);
