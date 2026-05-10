@@ -1,5 +1,6 @@
 import {
   normalizeWaitMetadata,
+  type Portfolio,
   type WaitMetadata,
   type WaitStrategy,
   parseStrategy,
@@ -23,7 +24,8 @@ export interface WaitDeadlineResolution {
 }
 
 export interface WaitDeadlineResolverState {
-  readRaw(path: string): Promise<unknown | null>;
+  loadStrategyPortfolio(goalId: string): Promise<Portfolio | null>;
+  loadWaitMetadata(goalId: string, strategyId: string): Promise<unknown | null>;
   getBaseDir?(): string;
 }
 
@@ -84,7 +86,7 @@ export class WaitDeadlineResolver {
     const metadata = waitStrategy
       ? normalizeWaitMetadataFailSoft(
           waitStrategy,
-          await this.stateManager.readRaw(`strategies/${goalId}/wait-meta/${strategyId}.json`)
+          await this.stateManager.loadWaitMetadata(goalId, strategyId)
         )
       : null;
 
@@ -101,10 +103,9 @@ export class WaitDeadlineResolver {
   }
 
   private async loadWaitStrategy(goalId: string, strategyId: string): Promise<WaitStrategy | null> {
-    const rawPortfolio = await this.stateManager.readRaw(`strategies/${goalId}/portfolio.json`);
-    if (!rawPortfolio || typeof rawPortfolio !== "object") return null;
-    const strategies = (rawPortfolio as Record<string, unknown>)["strategies"];
-    if (!Array.isArray(strategies)) return null;
+    const portfolio = await this.stateManager.loadStrategyPortfolio(goalId);
+    if (!portfolio) return null;
+    const strategies = portfolio.strategies;
     const match = strategies
       .map((candidate) => parseStrategy(candidate))
       .find((candidate) => candidate.id === strategyId);

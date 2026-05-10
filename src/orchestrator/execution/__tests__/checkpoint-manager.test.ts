@@ -1,16 +1,72 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { CheckpointManager } from "../checkpoint-manager.js";
 import type { StateManager } from "../../../base/state/state-manager.js";
-import type { CheckpointIndex } from "../../../base/types/checkpoint.js";
+import type { Checkpoint, CheckpointIndex } from "../../../base/types/checkpoint.js";
 
 // ─── Helpers ───
 
 function makeStoreBacked() {
   const stored: Record<string, unknown> = {};
+  const checkpointEntries = (goalId: string) =>
+    ((stored[indexPath(goalId)] as CheckpointIndex | undefined)?.checkpoints ?? []);
+  const saveCheckpointIndex = (
+    goalId: string,
+    checkpoints: CheckpointIndex["checkpoints"],
+  ) => {
+    stored[indexPath(goalId)] = { goal_id: goalId, checkpoints };
+  };
   const stateManager = {
     readRaw: vi.fn(async (path: string) => stored[path] ?? null),
     writeRaw: vi.fn(async (path: string, data: unknown) => {
       stored[path] = data;
+    }),
+    saveCheckpoint: vi.fn(async (checkpoint: Checkpoint) => {
+      stored[checkpointPath(checkpoint.goal_id, checkpoint.checkpoint_id)] = checkpoint;
+      const checkpoints = checkpointEntries(checkpoint.goal_id).filter(
+        (entry) => entry.checkpoint_id !== checkpoint.checkpoint_id,
+      );
+      checkpoints.push({
+        checkpoint_id: checkpoint.checkpoint_id,
+        task_id: checkpoint.task_id,
+        agent_id: checkpoint.agent_id,
+        created_at: checkpoint.created_at,
+      });
+      saveCheckpointIndex(checkpoint.goal_id, checkpoints);
+      return checkpoint;
+    }),
+    loadLatestCheckpoint: vi.fn(async (goalId: string, taskId?: string) => {
+      const entries = checkpointEntries(goalId)
+        .filter((entry) => !taskId || entry.task_id === taskId)
+        .sort((a, b) => b.created_at.localeCompare(a.created_at) || b.checkpoint_id.localeCompare(a.checkpoint_id));
+      const latest = entries[0];
+      return latest ? (stored[checkpointPath(goalId, latest.checkpoint_id)] as Checkpoint | undefined) ?? null : null;
+    }),
+    listCheckpointEntries: vi.fn(async (goalId: string) => checkpointEntries(goalId)),
+    deleteCheckpoint: vi.fn(async (goalId: string, checkpointId: string) => {
+      const checkpointKey = checkpointPath(goalId, checkpointId);
+      const existed = checkpointKey in stored;
+      delete stored[checkpointKey];
+      saveCheckpointIndex(
+        goalId,
+        checkpointEntries(goalId).filter((entry) => entry.checkpoint_id !== checkpointId),
+      );
+      return existed;
+    }),
+    garbageCollectCheckpoints: vi.fn(async (goalId: string, cutoffMs: number) => {
+      const entries = checkpointEntries(goalId);
+      const keep: CheckpointIndex["checkpoints"] = [];
+      let deleted = 0;
+      for (const entry of entries) {
+        const createdMs = Date.parse(entry.created_at);
+        if (Number.isFinite(createdMs) && createdMs < cutoffMs) {
+          delete stored[checkpointPath(goalId, entry.checkpoint_id)];
+          deleted += 1;
+        } else {
+          keep.push(entry);
+        }
+      }
+      saveCheckpointIndex(goalId, keep);
+      return deleted;
     }),
     getBaseDir: vi.fn(() => "/tmp/test-pulseed"),
   } as unknown as StateManager;
@@ -85,8 +141,7 @@ describe("CheckpointManager", () => {
       expect(checkpoint.checkpoint_id).toBeTruthy();
       expect(checkpoint.created_at).toBeTruthy();
 
-      // writeRaw called twice: checkpoint file + index
-      expect(stateManager.writeRaw).toHaveBeenCalledTimes(2);
+      expect(stateManager.saveCheckpoint).toHaveBeenCalledWith(checkpoint);
 
       // Index should contain the new entry
       const savedIndex = stored[indexPath(GOAL_ID)] as CheckpointIndex;

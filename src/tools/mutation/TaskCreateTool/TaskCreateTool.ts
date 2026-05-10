@@ -90,7 +90,7 @@ export class TaskCreateTool implements ITool<TaskCreateInput, unknown> {
         created_at: now,
       });
 
-      await this.stateManager.writeRaw(`tasks/${normalized.goalId}/${taskId}.json`, task);
+      await this.stateManager.saveTask(task);
 
       return {
         success: true,

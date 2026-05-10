@@ -821,11 +821,8 @@ export class StrategyManagerBase {
    * Returns the full portfolio for a goal, or null if none has been persisted.
    */
   async getPortfolio(goalId: string): Promise<Portfolio | null> {
-    const raw = await this.stateManager.readRaw(
-      `strategies/${goalId}/portfolio.json`
-    );
-    if (raw === null) return null;
-    const portfolio = PortfolioSchema.parse(raw);
+    const portfolio = await this.stateManager.loadStrategyPortfolio(goalId);
+    if (portfolio === null) return null;
     // Rebuild index from loaded portfolio
     for (const s of portfolio.strategies) {
       this.strategyIndex.set(s.id, goalId);
@@ -837,12 +834,7 @@ export class StrategyManagerBase {
    * Returns all strategies in history (terminated/completed) for a goal.
    */
   async getStrategyHistory(goalId: string): Promise<Strategy[]> {
-    const raw = await this.stateManager.readRaw(
-      `strategies/${goalId}/strategy-history.json`
-    );
-    if (raw === null) return [];
-    const parsed = raw as unknown[];
-    return parsed.map((s) => parseStrategy(s));
+    return this.stateManager.loadStrategyHistory(goalId);
   }
 
   // ─── Knowledge Gap Detection ───
@@ -869,10 +861,7 @@ export class StrategyManagerBase {
 
   async savePortfolio(goalId: string, portfolio: Portfolio): Promise<void> {
     const parsed = PortfolioSchema.parse(portfolio);
-    await this.stateManager.writeRaw(
-      `strategies/${goalId}/portfolio.json`,
-      parsed
-    );
+    await this.stateManager.saveStrategyPortfolio(goalId, parsed);
     // Rebuild index for all strategies in the portfolio
     for (const s of parsed.strategies) {
       this.strategyIndex.set(s.id, goalId);
@@ -887,10 +876,7 @@ export class StrategyManagerBase {
     } else {
       history.push(strategy);
     }
-    await this.stateManager.writeRaw(
-      `strategies/${goalId}/strategy-history.json`,
-      history
-    );
+    await this.stateManager.saveStrategyHistory(goalId, history);
   }
 
   /**

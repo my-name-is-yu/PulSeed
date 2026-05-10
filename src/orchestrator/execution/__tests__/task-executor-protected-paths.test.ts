@@ -89,8 +89,16 @@ describe("executeTask protected paths", () => {
   beforeEach(() => {
     workspace = makeTempDir();
     fs.mkdirSync(path.join(workspace, ".git"), { recursive: true });
+    const taskOutcomeLedgers = new Map<string, unknown>();
     stateManager = {
       loadGoal: vi.fn().mockResolvedValue({ constraints: [`workspace_path:${workspace}`] }),
+      saveTask: vi.fn().mockResolvedValue(undefined),
+      loadTaskOutcomeLedger: vi.fn(async (goalId: string, taskId: string) => {
+        return taskOutcomeLedgers.get(`${goalId}:${taskId}`) ?? null;
+      }),
+      saveTaskOutcomeLedger: vi.fn(async (record: { goal_id: string; task_id: string }) => {
+        taskOutcomeLedgers.set(`${record.goal_id}:${record.task_id}`, record);
+      }),
       readRaw: vi.fn().mockResolvedValue(null),
       writeRaw: vi.fn().mockResolvedValue(undefined),
     } as unknown as TaskExecutorDeps["stateManager"];

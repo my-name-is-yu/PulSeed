@@ -34,8 +34,8 @@ function makeDimension(overrides: Partial<Dimension> = {}): Dimension {
 }
 
 /**
- * Write task history entries for a goal into the StateManager backing directory.
- * Each entry mimics the format written by await TaskLifecycle.appendTaskHistory().
+ * Write task history entries for a goal into the StateManager typed task store.
+ * Each entry mimics the format written by TaskLifecycle.appendTaskHistory().
  */
 async function writeTaskHistory(
   stateManager: StateManager,
@@ -56,7 +56,7 @@ async function writeTaskHistory(
     actual_elapsed_ms: e.actual_elapsed_ms,
     estimated_duration_ms: e.estimated_duration_ms,
   }));
-  await stateManager.writeRaw(`tasks/${goalId}/task-history.json`, history);
+  await stateManager.saveTaskHistory(goalId, history);
 }
 
 // ─── Setup ───
@@ -233,11 +233,11 @@ describe("Condition 3: resource undershoot", () => {
       { primary_dimension: "dim_b", actual_elapsed_ms: 14 * 60_000, estimated_duration_ms: 60 * 60_000 },
     ]);
 
-    const readRawSpy = vi.spyOn(stateManager, "readRaw");
+    const loadTaskHistorySpy = vi.spyOn(stateManager, "loadTaskHistory");
     const proposals = await judge.detectThresholdAdjustmentNeeded(goal, new Map());
 
-    expect(readRawSpy).toHaveBeenCalledTimes(1);
-    expect(readRawSpy).toHaveBeenCalledWith(`tasks/${goal.id}/task-history.json`);
+    expect(loadTaskHistorySpy).toHaveBeenCalledTimes(1);
+    expect(loadTaskHistorySpy).toHaveBeenCalledWith(goal.id);
     expect(proposals.filter((p) => p.reason === "resource_undershoot")).toHaveLength(2);
     expect(proposals.map((p) => p.dimension_name)).toEqual(expect.arrayContaining(["dim_a", "dim_b"]));
   });

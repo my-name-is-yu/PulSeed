@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { StateManager } from "../../../base/state/state-manager.js";
 import type { Task } from "../../../base/types/task.js";
+import type { PipelineState } from "../../../base/types/pipeline.js";
 import { makeTempDir, cleanupTempDir } from "../../../../tests/helpers/temp-dir.js";
 import {
   findRunningTasks,
@@ -61,8 +62,8 @@ describe("runner-recovery", () => {
     tmpDir = makeTempDir();
     const stateManager = new StateManager(tmpDir);
     await stateManager.init();
-    await stateManager.writeRaw("tasks/goal-1/running.json", makeTask({ id: "running", status: "running" }));
-    await stateManager.writeRaw("tasks/goal-1/done.json", makeTask({ id: "done", status: "completed" }));
+    await stateManager.saveTask(makeTask({ id: "running", status: "running" }));
+    await stateManager.saveTask(makeTask({ id: "done", status: "completed" }));
     await stateManager.writeRaw("tasks/goal-1/task-history.json", [{ task_id: "old" }]);
     fs.mkdirSync(`${tmpDir}/tasks/goal-1`, { recursive: true });
     fs.writeFileSync(`${tmpDir}/tasks/goal-1/malformed.json`, "{not-json");
@@ -83,8 +84,8 @@ describe("runner-recovery", () => {
       started_at: new Date(Date.now() - 5_000).toISOString(),
       consecutive_failure_count: 1,
     });
-    await stateManager.writeRaw(`tasks/${runningTask.goal_id}/${runningTask.id}.json`, runningTask);
-    await stateManager.writeRaw("pipelines/task-pipeline.json", {
+    await stateManager.saveTask(runningTask);
+    const runningPipeline: PipelineState = {
       pipeline_id: "pipe-1",
       task_id: "task-pipeline",
       current_stage_index: 1,
@@ -92,7 +93,8 @@ describe("runner-recovery", () => {
       status: "running",
       started_at: new Date(Date.now() - 10_000).toISOString(),
       updated_at: new Date(Date.now() - 5_000).toISOString(),
-    });
+    };
+    await stateManager.savePipeline("task-pipeline", runningPipeline);
 
     const recoveredGoalIds = await reconcileInterruptedExecutions({
       baseDir: tmpDir,
@@ -101,11 +103,11 @@ describe("runner-recovery", () => {
     });
 
     expect(recoveredGoalIds).toEqual(["goal-recover"]);
-    const task = await stateManager.readRaw(`tasks/${runningTask.goal_id}/${runningTask.id}.json`) as Record<string, unknown>;
+    const task = await stateManager.loadTask(runningTask.goal_id, runningTask.id) as Record<string, unknown>;
     expect(task.status).toBe("cancelled");
     expect(String(task.execution_output)).toContain("[RECOVERED]");
 
-    const history = await stateManager.readRaw(`tasks/${runningTask.goal_id}/task-history.json`) as Array<Record<string, unknown>>;
+    const history = await stateManager.loadTaskHistory(runningTask.goal_id) as Array<Record<string, unknown>>;
     expect(history.at(-1)).toMatchObject({
       task_id: "task-recover",
       status: "cancelled",
@@ -116,14 +118,14 @@ describe("runner-recovery", () => {
       retry_intent: "task was marked terminal during daemon recovery",
     });
 
-    const ledger = await stateManager.readRaw(`tasks/${runningTask.goal_id}/ledger/${runningTask.id}.json`) as { events: Array<{ type: string; reason?: string; stopped_reason?: string }> };
+    const ledger = await stateManager.loadTaskOutcomeLedger(runningTask.goal_id, runningTask.id) as { events: Array<{ type: string; reason?: string; stopped_reason?: string }> };
     expect(ledger.events.map((event) => event.type)).toEqual(["failed"]);
     expect(ledger.events[0]).toMatchObject({
       reason: "task execution interrupted by daemon recovery; no live worker remains attached",
       stopped_reason: "cancelled",
     });
 
-    const pipeline = await stateManager.readRaw("pipelines/task-pipeline.json") as Record<string, unknown>;
+    const pipeline = await stateManager.loadPipeline("task-pipeline") as Record<string, unknown>;
     expect(pipeline.status).toBe("interrupted");
   });
 
@@ -138,7 +140,7 @@ describe("runner-recovery", () => {
       started_at: new Date(Date.now() - 10_000).toISOString(),
       timeout_at: new Date(Date.now() - 1_000).toISOString(),
     });
-    await stateManager.writeRaw(`tasks/${runningTask.goal_id}/${runningTask.id}.json`, runningTask);
+    await stateManager.saveTask(runningTask);
 
     await reconcileInterruptedExecutions({
       baseDir: tmpDir,
@@ -146,9 +148,9 @@ describe("runner-recovery", () => {
       logger: { warn: vi.fn() },
     });
 
-    const task = await stateManager.readRaw(`tasks/${runningTask.goal_id}/${runningTask.id}.json`) as Record<string, unknown>;
+    const task = await stateManager.loadTask(runningTask.goal_id, runningTask.id) as Record<string, unknown>;
     expect(task.status).toBe("timed_out");
-    const ledger = await stateManager.readRaw(`tasks/${runningTask.goal_id}/ledger/${runningTask.id}.json`) as {
+    const ledger = await stateManager.loadTaskOutcomeLedger(runningTask.goal_id, runningTask.id) as unknown as {
       events: Array<{ type: string; stopped_reason?: string }>;
     };
     expect(ledger.events[0]).toMatchObject({
@@ -188,7 +190,7 @@ describe("runner-recovery", () => {
         }],
       },
     });
-    await stateManager.writeRaw(`tasks/${runningTask.goal_id}/${runningTask.id}.json`, runningTask);
+    await stateManager.saveTask(runningTask);
 
     const recoveredGoalIds = await reconcileInterruptedExecutions({
       baseDir: tmpDir,
@@ -200,12 +202,12 @@ describe("runner-recovery", () => {
     });
 
     expect(recoveredGoalIds).toEqual(["goal-artifact-recover"]);
-    const task = await stateManager.readRaw(`tasks/${runningTask.goal_id}/${runningTask.id}.json`) as Record<string, unknown>;
+    const task = await stateManager.loadTask(runningTask.goal_id, runningTask.id) as Record<string, unknown>;
     expect(task.status).toBe("completed");
     expect(task.verification_verdict).toBe("pass");
     expect(String(task.execution_output)).toContain("artifact_contract verification passed");
 
-    const verification = await stateManager.readRaw(`verification/${runningTask.id}/verification-result.json`) as Record<string, unknown>;
+    const verification = await stateManager.loadTaskVerificationResult(runningTask.id) as Record<string, unknown>;
     expect(verification).toMatchObject({
       verdict: "pass",
       artifact_contract_status: {
@@ -214,7 +216,7 @@ describe("runner-recovery", () => {
       },
     });
 
-    const history = await stateManager.readRaw(`tasks/${runningTask.goal_id}/task-history.json`) as Array<Record<string, unknown>>;
+    const history = await stateManager.loadTaskHistory(runningTask.goal_id) as Array<Record<string, unknown>>;
     expect(history.at(-1)).toMatchObject({
       task_id: "task-artifact-recover",
       status: "completed",
@@ -222,7 +224,7 @@ describe("runner-recovery", () => {
       retry_intent: "task completed from durable artifact evidence during daemon recovery",
     });
 
-    const ledger = await stateManager.readRaw(`tasks/${runningTask.goal_id}/ledger/${runningTask.id}.json`) as {
+    const ledger = await stateManager.loadTaskOutcomeLedger(runningTask.goal_id, runningTask.id) as unknown as {
       events: Array<{ type: string; verification_verdict?: string }>;
       summary: { latest_event_type: string; task_status: string; verification_verdict?: string };
     };
@@ -253,8 +255,8 @@ describe("runner-recovery", () => {
       status: "running",
       started_at: new Date(Date.now() - 10_000).toISOString(),
     });
-    await stateManager.writeRaw(`tasks/${liveOwnedTask.goal_id}/${liveOwnedTask.id}.json`, liveOwnedTask);
-    await stateManager.writeRaw(`tasks/${staleTask.goal_id}/${staleTask.id}.json`, staleTask);
+    await stateManager.saveTask(liveOwnedTask);
+    await stateManager.saveTask(staleTask);
 
     const recoveredGoalIds = await reconcileInterruptedExecutions({
       baseDir: tmpDir,
@@ -267,13 +269,13 @@ describe("runner-recovery", () => {
     });
 
     expect(recoveredGoalIds).toEqual(["goal-stale"]);
-    const liveTask = await stateManager.readRaw(`tasks/${liveOwnedTask.goal_id}/${liveOwnedTask.id}.json`) as Record<string, unknown>;
+    const liveTask = await stateManager.loadTask(liveOwnedTask.goal_id, liveOwnedTask.id) as Record<string, unknown>;
     expect(liveTask.status).toBe("running");
-    const recoveredTask = await stateManager.readRaw(`tasks/${staleTask.goal_id}/${staleTask.id}.json`) as Record<string, unknown>;
+    const recoveredTask = await stateManager.loadTask(staleTask.goal_id, staleTask.id) as Record<string, unknown>;
     expect(recoveredTask.status).toBe("cancelled");
-    const liveLedger = await stateManager.readRaw(`tasks/${liveOwnedTask.goal_id}/ledger/${liveOwnedTask.id}.json`);
+    const liveLedger = await stateManager.loadTaskOutcomeLedger(liveOwnedTask.goal_id, liveOwnedTask.id);
     expect(liveLedger).toBeNull();
-    const staleLedger = await stateManager.readRaw(`tasks/${staleTask.goal_id}/ledger/${staleTask.id}.json`) as {
+    const staleLedger = await stateManager.loadTaskOutcomeLedger(staleTask.goal_id, staleTask.id) as {
       events: Array<{ type: string; stopped_reason?: string }>;
     };
     expect(staleLedger.events.map((event) => event.type)).toEqual(["failed"]);

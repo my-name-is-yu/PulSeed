@@ -148,11 +148,8 @@ async function resolveTaskHistoryDescription(
   if (!taskId) return "";
 
   try {
-    const raw = await stateManager.readRaw(`tasks/${goalId}/${taskId}.json`);
-    if (raw && typeof raw === "object") {
-      const description = (raw as { work_description?: unknown }).work_description;
-      return typeof description === "string" ? description : "";
-    }
+    const task = await stateManager.loadTask(goalId, taskId);
+    return task?.work_description ?? "";
   } catch {
     // Non-fatal: old task history entries may point at pruned task files.
   }
@@ -166,10 +163,7 @@ async function buildRecentFailureHistorySection(
 ): Promise<string> {
   let history: PromptTaskHistoryEntry[] = [];
   try {
-    const raw = await stateManager.readRaw(`tasks/${goalId}/task-history.json`);
-    if (Array.isArray(raw)) {
-      history = raw as PromptTaskHistoryEntry[];
-    }
+    history = await stateManager.loadTaskHistory(goalId) as PromptTaskHistoryEntry[];
   } catch {
     return "";
   }
@@ -341,7 +335,7 @@ Constraints:
   // §4.7 Inject last failure context if available
   let failureContextSection = "";
   try {
-    const failureCtx = await stateManager.readRaw(`tasks/${goalId}/last-failure-context.json`) as {
+    const failureCtx = await stateManager.loadTaskFailureContext(goalId) as {
       prev_task_description?: string;
       verdict?: string;
       reasoning?: string;

@@ -420,8 +420,7 @@ export class SatisficingJudge {
     const satisfiedSet = new Set(
       satisfactions.filter((s) => s.is_satisfied).map((s) => s.dimension_name)
     );
-    const rawHistory = await this.stateManager.readRaw(`tasks/${goal.id}/task-history.json`);
-    const taskHistory = Array.isArray(rawHistory) ? rawHistory : [];
+    const taskHistory = await this.stateManager.loadTaskHistory(goal.id);
     const historyByDimension = new Map<
       string,
       Array<{ actual_elapsed_ms: number; estimated_duration_ms: number }>

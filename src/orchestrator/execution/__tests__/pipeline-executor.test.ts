@@ -3,7 +3,7 @@ import { PipelineExecutor } from "../pipeline-executor.js";
 import type { PipelineExecutorDeps } from "../pipeline-executor.js";
 import { AdapterRegistry } from "../adapter-layer.js";
 import type { IAdapter, AgentTask, AgentResult } from "../adapter-layer.js";
-import type { TaskPipeline } from "../../../base/types/pipeline.js";
+import type { PipelineState, TaskPipeline } from "../../../base/types/pipeline.js";
 
 // ─── Helpers ───
 
@@ -35,9 +35,16 @@ function makeAdapter(
 }
 
 function makeStateManager() {
+  const pipelines = new Map<string, PipelineState>();
+  const loadPipeline = vi.fn(async (taskId: string): Promise<PipelineState | null> => pipelines.get(taskId) ?? null);
+  const savePipeline = vi.fn(async (taskId: string, state: PipelineState): Promise<void> => {
+    pipelines.set(taskId, state);
+  });
   const readRaw = vi.fn(async (_path: string): Promise<unknown | null> => null);
   const writeRaw = vi.fn(async (_path: string, _data: unknown) => undefined);
   return {
+    loadPipeline,
+    savePipeline,
     readRaw,
     writeRaw,
   };
@@ -100,7 +107,7 @@ describe("PipelineExecutor", () => {
   // ─── 2. Idempotency skip ───
 
   it("skips stage 0 when its idempotency_key is already in completed_stages", async () => {
-    const preCompleted = {
+    const preCompleted: PipelineState = {
       pipeline_id: "existing-pipeline",
       task_id: "task-2",
       current_stage_index: 1,
@@ -119,7 +126,7 @@ describe("PipelineExecutor", () => {
       updated_at: new Date().toISOString(),
     };
 
-    stateManager.readRaw.mockResolvedValueOnce(preCompleted);
+    stateManager.loadPipeline.mockResolvedValueOnce(preCompleted);
 
     const pipeline: TaskPipeline = {
       stages: [{ role: "implementor" }, { role: "verifier" }],
@@ -237,25 +244,25 @@ describe("PipelineExecutor", () => {
 
   // ─── 4. State persistence ───
 
-  it("calls writeRaw after each stage completion", async () => {
+  it("saves typed pipeline state after each stage completion", async () => {
     const executor = new PipelineExecutor(deps);
     await executor.run("task-4", makeAgentTask(), makePipeline());
 
-    // writeRaw called at: init + after stage 0 + after stage 1 + after stage 2 + final = 5
-    expect(stateManager.writeRaw).toHaveBeenCalledWith(
-      "pipelines/task-4.json",
+    // savePipeline called at: init + after stage 0 + after stage 1 + after stage 2 + final = 5
+    expect(stateManager.savePipeline).toHaveBeenCalledWith(
+      "task-4",
       expect.objectContaining({ task_id: "task-4" })
     );
     // At minimum 4 calls: init + 3 stages
-    expect(stateManager.writeRaw.mock.calls.length).toBeGreaterThanOrEqual(4);
+    expect(stateManager.savePipeline.mock.calls.length).toBeGreaterThanOrEqual(4);
   });
 
   it("persists pipeline_id consistently across writes", async () => {
     const executor = new PipelineExecutor(deps);
     await executor.run("task-4b", makeAgentTask(), makePipeline());
 
-    const calls = stateManager.writeRaw.mock.calls;
-    const pipelineIds = calls.map((c) => (c[1] as { pipeline_id: string }).pipeline_id);
+    const calls = stateManager.savePipeline.mock.calls;
+    const pipelineIds = calls.map((c) => c[1].pipeline_id);
     const unique = new Set(pipelineIds);
     expect(unique.size).toBe(1); // same pipeline_id throughout
   });
@@ -263,7 +270,7 @@ describe("PipelineExecutor", () => {
   // ─── 5. State restoration ───
 
   it("resumes from interrupted state at correct stage", async () => {
-    const interruptedState = {
+    const interruptedState: PipelineState = {
       pipeline_id: "resume-pipeline",
       task_id: "task-5",
       current_stage_index: 2,
@@ -290,7 +297,7 @@ describe("PipelineExecutor", () => {
       updated_at: new Date().toISOString(),
     };
 
-    stateManager.readRaw.mockResolvedValueOnce(interruptedState);
+    stateManager.loadPipeline.mockResolvedValueOnce(interruptedState);
 
     const pipeline: TaskPipeline = {
       stages: [

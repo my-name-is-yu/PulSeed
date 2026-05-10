@@ -408,6 +408,28 @@ describe("buildTaskGenerationPrompt — recent failed task history", () => {
     const goal = makeGoal({ id: "g-repeat", title: "Improve daemon recovery" });
     const sm = {
       loadGoal: vi.fn(async (id: string) => (id === "g-repeat" ? goal : null)),
+      loadTaskHistory: vi.fn(async (goalId: string) => {
+        if (goalId !== "g-repeat") return [];
+        return [
+          {
+            task_id: "task-old",
+            status: "running",
+            verification_verdict: "fail",
+            consecutive_failure_count: 1,
+            verification_evidence: ["execution failed before applying a durable recovery change"],
+            recovery_reason: "task execution interrupted before resident CLI startup",
+            retry_intent: "resident CLI startup preserved task for retry",
+          },
+        ];
+      }),
+      loadTask: vi.fn(async (goalId: string, taskId: string) => {
+        if (goalId === "g-repeat" && taskId === "task-old") {
+          return {
+            work_description: "Add focused daemon recovery regression test",
+          };
+        }
+        return null;
+      }),
       readRaw: vi.fn(async (key: string) => {
         if (key === "tasks/g-repeat/task-history.json") {
           return [

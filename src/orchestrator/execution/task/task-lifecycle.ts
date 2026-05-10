@@ -446,7 +446,7 @@ export class TaskLifecycle {
         },
         evidence_refs: [{
           kind: "task",
-          ref: `tasks/${task.goal_id}/${task.id}.json`,
+          ref: `control-db://tasks/${task.goal_id}/${task.id}`,
           observed_at: task.created_at,
         }],
         created_at: task.created_at,
@@ -480,10 +480,7 @@ export class TaskLifecycle {
     const backoffCounts = new Map<string, number>();
 
     try {
-      const rawHistory = await this.stateManager.readRaw(`tasks/${goalId}/task-history.json`);
-      if (!Array.isArray(rawHistory)) {
-        return {};
-      }
+      const rawHistory = await this.stateManager.loadTaskHistory(goalId);
 
       for (const entry of rawHistory.slice(-20) as Array<Record<string, unknown>>) {
         const dimension = typeof entry.primary_dimension === "string" ? entry.primary_dimension : null;
@@ -532,7 +529,7 @@ export class TaskLifecycle {
     });
   }
 
-  /** Execute a task through the native task-level agentloop. */
+    /** Execute a task through the native task-level agentloop. */
   async executeTaskWithAgentLoop(
     task: Task,
     workspaceContext?: string,
@@ -544,7 +541,7 @@ export class TaskLifecycle {
     }
 
     const runningTask = { ...task, status: "running" as const, started_at: new Date().toISOString() };
-    await this.stateManager.writeRaw(`tasks/${task.goal_id}/${task.id}.json`, runningTask);
+    await this.stateManager.saveTask(runningTask);
     await appendTaskOutcomeEvent(this.stateManager, {
       task: runningTask,
       type: "started",
@@ -640,7 +637,7 @@ export class TaskLifecycle {
       result.stopped_reason === "cancelled" ? "cancelled" as const :
       result.stopped_reason === "blocked" || result.stopped_reason === "policy_blocked" ? "blocked" as const :
       "error" as const;
-    await this.stateManager.writeRaw(`tasks/${task.goal_id}/${task.id}.json`, {
+    await this.stateManager.saveTask({
       ...runningTask,
       status: nextStatus,
       execution_output: result.output,

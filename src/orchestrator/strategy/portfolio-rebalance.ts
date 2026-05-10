@@ -25,6 +25,7 @@ import {
 } from "../../base/types/strategy.js";
 import {
   approvalOutcomeFromWaitMetadata,
+  type CapabilityAvailabilityProvider,
   evaluateWaitConditions,
   missingRequiredCapabilities,
   nextReobserveAt,
@@ -35,30 +36,14 @@ export { buildWaitApprovalId } from "./portfolio-wait-observation.js";
 
 /**
  * Get the current gap value for a specific dimension of a goal.
- * Reads from gap data provided by the caller (StateManager.readRaw).
+ * Reads from the caller-provided typed current-gap boundary.
  */
 export async function getCurrentGapForDimension(
   goalId: string,
   dimension: string,
-  readRaw: (path: string) => unknown | Promise<unknown>
+  getCurrentGap: (goalId: string, dimension: string) => number | null | Promise<number | null>
 ): Promise<number | null> {
-  const raw = await readRaw(`gaps/${goalId}/current.json`);
-  if (!raw || typeof raw !== "object") return null;
-
-  const gaps = raw as Record<string, unknown>;
-  const dimensionGap = gaps[dimension];
-  if (typeof dimensionGap === "number") return dimensionGap;
-
-  const dimensions = gaps["dimensions"];
-  if (dimensions && typeof dimensions === "object") {
-    const dimData = (dimensions as Record<string, unknown>)[dimension];
-    if (dimData && typeof dimData === "object") {
-      const nwg = (dimData as Record<string, unknown>)["normalized_weighted_gap"];
-      if (typeof nwg === "number") return nwg;
-    }
-  }
-
-  return null;
+  return getCurrentGap(goalId, dimension);
 }
 
 /**
@@ -68,12 +53,12 @@ export async function getCurrentGapForDimension(
 export async function calculateGapDeltaForStrategy(
   strategy: Strategy,
   goalId: string,
-  readRaw: (path: string) => unknown | Promise<unknown>
+  getCurrentGap: (goalId: string, dimension: string) => number | null | Promise<number | null>
 ): Promise<number> {
   let totalDelta = 0;
 
   for (const dimension of strategy.target_dimensions) {
-    const currentGap = await getCurrentGapForDimension(goalId, dimension, readRaw);
+    const currentGap = await getCurrentGapForDimension(goalId, dimension, getCurrentGap);
     if (currentGap === null) continue;
 
     const baseline = strategy.gap_snapshot_at_start ?? 1.0;
@@ -309,7 +294,7 @@ export async function handleWaitStrategyExpiry(
   activateStrategy: ((goalId: string, strategyId: string) => void | Promise<void>) | undefined,
   getPortfolioStrategies: (goalId: string) => Strategy[] | Promise<Strategy[]>,
   getWaitMetadata?: (goalId: string, strategyId: string) => unknown | null | Promise<unknown | null>,
-  getCapabilityRegistry?: () => unknown | null | Promise<unknown | null>,
+  isCapabilityAvailable?: CapabilityAvailabilityProvider,
   getWaitApprovalRecord?: (approvalId: string) => unknown | null | Promise<unknown | null>,
   writeWaitMetadata?: (goalId: string, strategyId: string, metadata: WaitMetadata) => void | Promise<void>,
   getStateBaseDir?: () => string | null | undefined
@@ -341,10 +326,10 @@ export async function handleWaitStrategyExpiry(
     };
   }
 
-  const approvalOutcome = await approvalOutcomeFromWaitMetadata(goalId, strategyId, metadata, getCapabilityRegistry, getWaitApprovalRecord);
+  const approvalOutcome = await approvalOutcomeFromWaitMetadata(goalId, strategyId, metadata, isCapabilityAvailable, getWaitApprovalRecord);
   if (approvalOutcome) return approvalOutcome;
 
-  const missingCapabilities = await missingRequiredCapabilities(metadata, getCapabilityRegistry);
+  const missingCapabilities = await missingRequiredCapabilities(metadata, isCapabilityAvailable);
   if (missingCapabilities.length > 0) {
     const details = `WaitStrategy observation capability missing: ${missingCapabilities.join(", ")}`;
     await persistWaitObservation(goalId, strategyId, metadata, {

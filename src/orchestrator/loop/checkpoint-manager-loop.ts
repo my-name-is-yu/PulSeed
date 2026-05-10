@@ -28,17 +28,12 @@ export async function saveLoopCheckpoint(
   logger: Logger | undefined
 ): Promise<void> {
   try {
-    const currentGoalForCp = await stateManager.readRaw(`goals/${goalId}/goal.json`);
+    const currentGoalForCp = await stateManager.loadGoal(goalId);
     const dimensionSnapshot: Record<string, number> = {};
-    if (currentGoalForCp && typeof currentGoalForCp === "object") {
-      const dims = (currentGoalForCp as Record<string, unknown>).dimensions as
-        | Array<Record<string, unknown>>
-        | undefined;
-      if (dims) {
-        for (const dim of dims) {
-          if (typeof dim.name === "string" && typeof dim.current_value === "number") {
-            dimensionSnapshot[dim.name] = dim.current_value;
-          }
+    if (currentGoalForCp) {
+      for (const dim of currentGoalForCp.dimensions) {
+        if (typeof dim.current_value === "number") {
+          dimensionSnapshot[dim.name] = dim.current_value;
         }
       }
     }
@@ -51,7 +46,7 @@ export async function saveLoopCheckpoint(
         // Non-fatal
       }
     }
-    await stateManager.writeRaw(`goals/${goalId}/checkpoint.json`, {
+    await stateManager.saveLoopCheckpoint(goalId, {
       cycle_number: loopIndex + 1,
       last_verified_task_id: iterationResult.taskResult?.task.id,
       dimension_snapshot: dimensionSnapshot,

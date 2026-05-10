@@ -28,8 +28,7 @@ export async function findActiveWaitObservationInput(
     ?? activeWaitStrategies[0];
   if (!strategy || typeof strategy.wait_until !== "string") return null;
 
-  const metadataPath = `strategies/${goalId}/wait-meta/${strategy.id}.json`;
-  const rawMetadata = await Promise.resolve(deps.stateManager.readRaw(metadataPath)).catch(() => null);
+  const rawMetadata = await Promise.resolve(deps.stateManager.loadWaitMetadata(goalId, strategy.id)).catch(() => null);
   const metadata = rawMetadata && typeof rawMetadata === "object" ? rawMetadata as Record<string, unknown> : {};
   const nextObserveAt = typeof metadata["next_observe_at"] === "string" ? metadata["next_observe_at"] : strategy.wait_until;
   const nextObserveAtMs = Date.parse(nextObserveAt);

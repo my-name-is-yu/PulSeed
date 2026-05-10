@@ -10,9 +10,14 @@ import type { Goal, GoalTree } from "../types/goal.js";
 import type { ObservationLog, ObservationLogEntry } from "../types/state.js";
 import type { GapHistoryEntry } from "../types/gap.js";
 import type { PaceSnapshot } from "../types/goal.js";
+import { TaskSchema } from "../types/task.js";
 import type { Task } from "../types/task.js";
-import type { PipelineState } from "../types/pipeline.js";
-import { LoopCheckpointSchema } from "../types/checkpoint.js";
+import { PipelineStateSchema, type PipelineState } from "../types/pipeline.js";
+import { CheckpointSchema, LoopCheckpointSchema } from "../types/checkpoint.js";
+import type { Checkpoint, LoopCheckpoint } from "../types/checkpoint.js";
+import { PortfolioSchema, parseStrategy, type Portfolio, type Strategy } from "../types/strategy.js";
+import type { RebalanceResult } from "../types/portfolio.js";
+import { CapabilityRegistrySchema, type CapabilityRegistry } from "../types/capability.js";
 import type { CheckpointTrustPort } from "./checkpoint-trust-port.js";
 import { initDirs, atomicWrite, atomicRead } from "./state-persistence.js";
 import type { StateWriteFence } from "./state-write-fence.js";
@@ -25,9 +30,12 @@ export type { StateWriteFence, StateWriteFenceContext } from "./state-write-fenc
 
 const MAX_HISTORY_ENTRIES = 500;
 type GoalTaskStateStore = import("../../runtime/store/goal-task-state-store.js").GoalTaskStateStore;
+type CheckpointIndexEntry = import("../../runtime/store/goal-task-state-store.js").CheckpointIndexEntry;
+type TaskOutcomeLedgerRecordLike = import("../../runtime/store/goal-task-state-store.js").TaskOutcomeLedgerRecordLike;
 type StrategyDreamStateStore = import("../../runtime/store/strategy-dream-state-store.js").StrategyDreamStateStore;
 type ProcessSessionStateStore = import("../../runtime/store/process-session-state-store.js").ProcessSessionStateStore;
 type KnowledgeMemoryStateStore = import("../../platform/knowledge/knowledge-memory-state-store.js").KnowledgeMemoryStateStore;
+type CapabilityRegistryStateStore = import("../../runtime/store/capability-registry-state-store.js").CapabilityRegistryStateStore;
 
 function normalizeRawStatePath(relativePath: string): string[] {
   return relativePath.replace(/\\/g, "/").replace(/^\/+/, "").split("/").filter(Boolean);
@@ -85,6 +93,7 @@ export class StateManager {
   private strategyDreamStateStorePromise: Promise<StrategyDreamStateStore> | null = null;
   private processSessionStateStorePromise: Promise<ProcessSessionStateStore> | null = null;
   private knowledgeMemoryStateStorePromise: Promise<KnowledgeMemoryStateStore> | null = null;
+  private capabilityRegistryStateStorePromise: Promise<CapabilityRegistryStateStore> | null = null;
   private readonly goalStateWriteQueues = new Map<string, Promise<void>>();
   private readonly writeFences = new Map<string, StateWriteFence>();
 
@@ -99,6 +108,7 @@ export class StateManager {
     await initDirs(this.baseDir);
     await (await this.goalTaskStateStore()).ensureReady();
     await (await this.strategyDreamStateStore()).ensureReady();
+    await (await this.capabilityRegistryStateStore()).ensureReady();
     await (await this.processSessionStateStore()).ensureReady();
     await (await this.knowledgeMemoryStateStore()).ensureReady();
   }
@@ -242,6 +252,12 @@ export class StateManager {
     return this.knowledgeMemoryStateStorePromise;
   }
 
+  private async capabilityRegistryStateStore(): Promise<CapabilityRegistryStateStore> {
+    this.capabilityRegistryStateStorePromise ??= import("../../runtime/store/capability-registry-state-store.js")
+      .then(({ CapabilityRegistryStateStore }) => new CapabilityRegistryStateStore(this.baseDir));
+    return this.capabilityRegistryStateStorePromise;
+  }
+
   // ─── Goal CRUD ───
 
   async saveGoal(goal: Goal): Promise<void> {
@@ -325,8 +341,53 @@ export class StateManager {
     return (await this.goalTaskStateStore()).loadTask(goalId, taskId);
   }
 
+  async saveTask(task: Task): Promise<void> {
+    const parsed = TaskSchema.parse(task);
+    await (await this.goalTaskStateStore()).saveTask(parsed);
+  }
+
+  async loadTaskHistory(goalId: string): Promise<unknown[]> {
+    return (await this.goalTaskStateStore()).loadTaskHistory(goalId);
+  }
+
+  async saveTaskHistory(goalId: string, history: unknown[]): Promise<void> {
+    await (await this.goalTaskStateStore()).saveTaskHistory(goalId, history);
+  }
+
+  async loadTaskFailureContext(goalId: string): Promise<unknown | null> {
+    return (await this.goalTaskStateStore()).loadTaskFailureContext(goalId);
+  }
+
+  async saveTaskFailureContext(goalId: string, context: unknown): Promise<void> {
+    await (await this.goalTaskStateStore()).saveTaskFailureContext(goalId, context);
+  }
+
+  async loadTaskVerificationResult(taskId: string): Promise<unknown | null> {
+    return (await this.goalTaskStateStore()).loadTaskVerificationResult(taskId);
+  }
+
+  async saveTaskVerificationResult(taskId: string, result: unknown): Promise<void> {
+    await (await this.goalTaskStateStore()).saveTaskVerificationResult(taskId, result);
+  }
+
+  async loadTaskOutcomeLedger(goalId: string, taskId: string): Promise<TaskOutcomeLedgerRecordLike | null> {
+    return (await this.goalTaskStateStore()).loadTaskOutcomeLedger(goalId, taskId);
+  }
+
+  async saveTaskOutcomeLedger(record: TaskOutcomeLedgerRecordLike): Promise<void> {
+    await (await this.goalTaskStateStore()).saveTaskOutcomeLedger(record);
+  }
+
   async listPipelinesByStatus(status: PipelineState["status"]): Promise<PipelineState[]> {
     return (await this.goalTaskStateStore()).listPipelinesByStatus(status);
+  }
+
+  async savePipeline(taskId: string, state: PipelineState): Promise<void> {
+    await (await this.goalTaskStateStore()).savePipeline(taskId, PipelineStateSchema.parse(state));
+  }
+
+  async loadPipeline(taskId: string): Promise<PipelineState | null> {
+    return (await this.goalTaskStateStore()).loadPipeline(taskId);
   }
 
   // ─── Goal Tree ───
@@ -383,6 +444,94 @@ export class StateManager {
     await this.runGoalStateMutation(goalId, "append_gap_entry", parsed, async () => {
       await (await this.goalTaskStateStore()).appendGapHistoryEntry(goalId, parsed, MAX_HISTORY_ENTRIES);
     });
+  }
+
+  async loadCurrentGapForDimension(goalId: string, dimensionName: string): Promise<number | null> {
+    const history = await this.loadGapHistory(goalId);
+    for (let index = history.length - 1; index >= 0; index--) {
+      const match = history[index]?.gap_vector.find((gap) => gap.dimension_name === dimensionName);
+      if (match && typeof match.normalized_weighted_gap === "number") {
+        return match.normalized_weighted_gap;
+      }
+    }
+    return null;
+  }
+
+  async saveLoopCheckpoint(goalId: string, checkpoint: LoopCheckpoint, adapterType?: string | null): Promise<void> {
+    const parsed = LoopCheckpointSchema.parse(checkpoint);
+    await (await this.goalTaskStateStore()).saveLoopCheckpoint(goalId, parsed, adapterType);
+  }
+
+  async loadLoopCheckpoint(goalId: string): Promise<LoopCheckpoint | null> {
+    return (await this.goalTaskStateStore()).loadLoopCheckpoint(goalId);
+  }
+
+  async saveCheckpoint(checkpoint: Checkpoint): Promise<Checkpoint> {
+    return (await this.goalTaskStateStore()).saveCheckpoint(CheckpointSchema.parse(checkpoint));
+  }
+
+  async loadCheckpoint(checkpointId: string): Promise<Checkpoint | null> {
+    return (await this.goalTaskStateStore()).loadCheckpoint(checkpointId);
+  }
+
+  async loadLatestCheckpoint(goalId: string, taskId?: string): Promise<Checkpoint | null> {
+    return (await this.goalTaskStateStore()).loadLatestCheckpoint(goalId, taskId);
+  }
+
+  async listCheckpointEntries(goalId: string): Promise<CheckpointIndexEntry[]> {
+    return (await this.goalTaskStateStore()).listCheckpointEntries(goalId);
+  }
+
+  async deleteCheckpoint(goalId: string, checkpointId: string): Promise<boolean> {
+    return (await this.goalTaskStateStore()).deleteCheckpoint(goalId, checkpointId);
+  }
+
+  async garbageCollectCheckpoints(goalId: string, cutoffMs: number): Promise<number> {
+    return (await this.goalTaskStateStore()).garbageCollectCheckpoints(goalId, cutoffMs);
+  }
+
+  async loadStrategyPortfolio(goalId: string): Promise<Portfolio | null> {
+    return (await this.strategyDreamStateStore()).loadPortfolio(goalId);
+  }
+
+  async saveStrategyPortfolio(goalId: string, portfolio: Portfolio): Promise<void> {
+    await (await this.strategyDreamStateStore()).savePortfolio(goalId, PortfolioSchema.parse(portfolio));
+  }
+
+  async loadStrategyHistory(goalId: string): Promise<Strategy[]> {
+    return (await this.strategyDreamStateStore()).loadStrategyHistory(goalId);
+  }
+
+  async saveStrategyHistory(goalId: string, history: Strategy[]): Promise<void> {
+    await (await this.strategyDreamStateStore()).saveStrategyHistory(goalId, history.map((strategy) => parseStrategy(strategy)));
+  }
+
+  async loadWaitMetadata(goalId: string, strategyId: string): Promise<unknown | null> {
+    return (await this.strategyDreamStateStore()).loadWaitMetadata(goalId, strategyId);
+  }
+
+  async saveWaitMetadata(goalId: string, strategyId: string, metadata: unknown): Promise<void> {
+    await (await this.strategyDreamStateStore()).saveWaitMetadata(goalId, strategyId, metadata);
+  }
+
+  async loadRebalanceHistory(goalId: string): Promise<unknown[]> {
+    return (await this.strategyDreamStateStore()).loadRebalanceHistory(goalId);
+  }
+
+  async saveRebalanceHistory(goalId: string, history: RebalanceResult[] | unknown[]): Promise<void> {
+    await (await this.strategyDreamStateStore()).saveRebalanceHistory(goalId, history);
+  }
+
+  async loadCapabilityRegistry(): Promise<CapabilityRegistry> {
+    return (await this.capabilityRegistryStateStore()).loadRegistry();
+  }
+
+  async saveCapabilityRegistry(registry: CapabilityRegistry): Promise<void> {
+    await (await this.capabilityRegistryStateStore()).saveRegistry(CapabilityRegistrySchema.parse(registry));
+  }
+
+  async isCapabilityAvailable(capabilityName: string): Promise<boolean> {
+    return (await this.capabilityRegistryStateStore()).isCapabilityAvailable(capabilityName);
   }
 
   async appendObservationAndSaveGoal(

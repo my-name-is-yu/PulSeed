@@ -21,6 +21,7 @@ describe("database-first legacy store check", () => {
       export const pluginStatePath = (pluginDir: string) => path.join(pluginDir, "state.json");
       export const sessionIndex = "sessions/index.json";
       export const wal = "wal.jsonl";
+      export const currentGap = "gaps/goal-1/current.json";
     `);
 
     const result = runCheck(tmpDir);
@@ -31,6 +32,7 @@ describe("database-first legacy store check", () => {
     expect(result.stderr).toContain("PluginChannelRuntimeStateStore or another typed runtime state store");
     expect(result.stderr).toContain("ExecutionSessionStateStore / control DB execution session tables");
     expect(result.stderr).toContain("Goal WAL control DB ownership");
+    expect(result.stderr).toContain("StateManager typed gap history/current gap APIs");
     expect(result.stderr).toContain("Unclassified legacy store references must be moved to typed stores");
   });
 
@@ -68,6 +70,25 @@ describe("database-first legacy store check", () => {
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("src/orchestrator/execution/session-manager.ts");
     expect(result.stderr).toContain("[execution-session-json] ExecutionSessionStateStore / control DB execution session tables");
+    expect(result.stderr).toContain("Unclassified legacy store references must be moved to typed stores");
+  });
+
+  it("fails path-shaped goal task, checkpoint, pipeline, and wait metadata stores", () => {
+    writeFile(tmpDir, "src/orchestrator/execution/legacy-normal-paths.ts", `
+      export const taskPath = (goalId: string, taskId: string) => \`tasks/\${goalId}/\${taskId}.json\`;
+      export const taskHistoryPath = (goalId: string) => \`tasks/\${goalId}/task-history.json\`;
+      export const ledgerPath = (goalId: string, taskId: string) => \`tasks/\${goalId}/ledger/\${taskId}.json\`;
+      export const pipelinePath = (taskId: string) => \`pipelines/\${taskId}.json\`;
+      export const checkpointIndexPath = (goalId: string) => \`checkpoints/\${goalId}/index.json\`;
+      export const checkpointPath = (goalId: string, checkpointId: string) => \`checkpoints/\${goalId}/\${checkpointId}.json\`;
+      export const waitMetaPath = (goalId: string, strategyId: string) => \`strategies/\${goalId}/wait-meta/\${strategyId}.json\`;
+    `);
+
+    const result = runCheck(tmpDir);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("[goal-task-json-state] GoalTaskStateStore");
+    expect(result.stderr).toContain("[strategy-dream-json-state] StrategyDreamStateStore / runtime evidence DB stores");
     expect(result.stderr).toContain("Unclassified legacy store references must be moved to typed stores");
   });
 

@@ -73,6 +73,9 @@ describe("TaskGetTool", () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "task-get-tool-"));
     stateManager = {
       readRaw: vi.fn().mockImplementation((rel: string) => fakeReadRaw(tmpDir, rel)),
+      loadTask: vi.fn().mockImplementation((goalId: string, taskId: string) =>
+        fakeReadRaw(tmpDir, `tasks/${goalId}/${taskId}.json`)
+      ),
     } as unknown as StateManager;
     tool = new TaskGetTool(stateManager);
   });

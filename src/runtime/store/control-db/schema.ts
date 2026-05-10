@@ -7,7 +7,7 @@ export interface ControlDbMigration {
   checksum: string;
 }
 
-export const CONTROL_DB_SCHEMA_VERSION = 11;
+export const CONTROL_DB_SCHEMA_VERSION = 12;
 
 export const CONTROL_DB_INITIAL_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS control_schema_migrations (
@@ -998,6 +998,32 @@ CREATE INDEX IF NOT EXISTS execution_sessions_goal_idx
   ON execution_sessions(goal_id, started_at DESC, session_id);
 `.trim();
 
+export const CONTROL_DB_CAPABILITY_REGISTRY_SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS capability_registry_metadata (
+  registry_id TEXT PRIMARY KEY CHECK (registry_id = 'current'),
+  last_checked TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS capability_registry_entries (
+  capability_id TEXT PRIMARY KEY,
+  capability_name TEXT NOT NULL,
+  capability_type TEXT NOT NULL,
+  capability_status TEXT NOT NULL,
+  provider TEXT,
+  acquired_at TEXT,
+  sort_order INTEGER NOT NULL CHECK (sort_order >= 0),
+  updated_at TEXT NOT NULL,
+  capability_json TEXT NOT NULL CHECK (json_valid(capability_json))
+);
+
+CREATE INDEX IF NOT EXISTS capability_registry_entries_name_idx
+  ON capability_registry_entries(capability_name, capability_status, sort_order, capability_id);
+
+CREATE INDEX IF NOT EXISTS capability_registry_entries_status_idx
+  ON capability_registry_entries(capability_status, updated_at, capability_id);
+`.trim();
+
 export function controlDbMigrationChecksum(sql: string): string {
   return createHash("sha256").update(sql.trim()).digest("hex");
 }
@@ -1070,5 +1096,10 @@ export const CONTROL_DB_MIGRATIONS: readonly ControlDbMigration[] = [
     11,
     "execution-session-state",
     CONTROL_DB_EXECUTION_SESSION_SCHEMA_SQL
+  ),
+  createControlDbMigration(
+    12,
+    "capability-registry-state",
+    CONTROL_DB_CAPABILITY_REGISTRY_SCHEMA_SQL
   ),
 ];

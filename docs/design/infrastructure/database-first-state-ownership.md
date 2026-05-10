@@ -100,10 +100,15 @@ list:
   `sessions/*.json` and `sessions/index.json` import/validation boundary reached
   through `doctor --repair`; normal execution session create/get/end/list and
   history reads use the control DB execution session store
+- task verifier, task lifecycle, checkpoint, strategy, current gap, wait
+  metadata, and wait-deadline callers use typed `StateManager` APIs over
+  control DB stores; legacy logical filename adapters remain only as
+  migration/compatibility test boundaries inside the owning stores
+- capability registry availability checks used by wait strategy decisions use
+  the typed control DB capability registry store; legacy
+  `capability_registry.json` is a repair import input only
 - `src/orchestrator/execution/agent-loop/agent-loop-session-factory.ts`:
   path-shaped AgentLoop resume option compatibility
-- task verifier, task lifecycle, checkpoint, strategy, and wait-deadline callers:
-  logical-path compatibility surfaces over typed stores
 - dream filesystem metrics and memory-persistence compatibility maps
 - capability registry, curiosity, and supervisor state surfaces already called
   out as future typed-store work

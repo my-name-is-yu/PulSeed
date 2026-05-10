@@ -19,6 +19,15 @@ async function fakeReadRaw(baseDir: string, relativePath: string): Promise<unkno
   }
 }
 
+async function fakeWriteRaw(baseDir: string, relativePath: string, payload: unknown): Promise<void> {
+  const resolved = path.resolve(baseDir, relativePath);
+  if (!resolved.startsWith(path.resolve(baseDir) + path.sep)) {
+    throw new Error(`Path traversal detected: ${relativePath}`);
+  }
+  fs.mkdirSync(path.dirname(resolved), { recursive: true });
+  fs.writeFileSync(resolved, JSON.stringify(payload, null, 2), "utf-8");
+}
+
 function makeContext(): ToolCallContext {
   return {
     cwd: "/tmp",
@@ -71,11 +80,26 @@ describe("TaskStopTool", () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "task-stop-tool-"));
     stateManager = {
       readRaw: vi.fn().mockImplementation((rel: string) => fakeReadRaw(tmpDir, rel)),
-      writeRaw: vi.fn().mockImplementation(async (rel: string, data: unknown) => {
-        const resolved = path.resolve(tmpDir, rel);
-        fs.mkdirSync(path.dirname(resolved), { recursive: true });
-        fs.writeFileSync(resolved, JSON.stringify(data), "utf-8");
+      writeRaw: vi.fn().mockImplementation((rel: string, data: unknown) => fakeWriteRaw(tmpDir, rel, data)),
+      loadTask: vi.fn().mockImplementation((goalId: string, taskId: string) =>
+        fakeReadRaw(tmpDir, `tasks/${goalId}/${taskId}.json`)
+      ),
+      saveTask: vi.fn().mockImplementation((task: { goal_id: string; id: string }) =>
+        fakeWriteRaw(tmpDir, `tasks/${task.goal_id}/${task.id}.json`, task)
+      ),
+      loadTaskHistory: vi.fn().mockImplementation(async (goalId: string) => {
+        const history = await fakeReadRaw(tmpDir, `tasks/${goalId}/task-history.json`);
+        return Array.isArray(history) ? history : [];
       }),
+      saveTaskHistory: vi.fn().mockImplementation((goalId: string, history: unknown) =>
+        fakeWriteRaw(tmpDir, `tasks/${goalId}/task-history.json`, history)
+      ),
+      loadTaskOutcomeLedger: vi.fn().mockImplementation((goalId: string, taskId: string) =>
+        fakeReadRaw(tmpDir, `tasks/${goalId}/ledger/${taskId}.json`)
+      ),
+      saveTaskOutcomeLedger: vi.fn().mockImplementation((record: { goal_id: string; task_id: string }) =>
+        fakeWriteRaw(tmpDir, `tasks/${record.goal_id}/ledger/${record.task_id}.json`, record)
+      ),
     } as unknown as StateManager;
     tool = new TaskStopTool(stateManager);
   });

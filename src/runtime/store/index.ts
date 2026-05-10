@@ -17,6 +17,7 @@ export {
 } from "./runtime-journal.js";
 
 export {
+  CONTROL_DB_CAPABILITY_REGISTRY_SCHEMA_SQL,
   CONTROL_DB_CHAT_AGENTLOOP_SESSION_SCHEMA_SQL,
   CONTROL_DB_GOAL_TASK_DURABLE_LOOP_SCHEMA_SQL,
   CONTROL_DB_INITIAL_SCHEMA_SQL,
@@ -257,6 +258,15 @@ export type {
 export {
   CapabilityVerificationStore,
 } from "./capability-verification-store.js";
+export {
+  CapabilityRegistryStateStore,
+} from "./capability-registry-state-store.js";
+export {
+  importLegacyCapabilityRegistryState,
+} from "./capability-registry-state-migration.js";
+export type {
+  CapabilityRegistryLegacyImportReport,
+} from "./capability-registry-state-migration.js";
 export {
   RuntimeOperatorHandoffRecordSchema,
   RuntimeOperatorHandoffStatusSchema,

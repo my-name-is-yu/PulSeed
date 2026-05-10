@@ -1984,7 +1984,12 @@ describe("CoreLoop", async () => {
         rebalance_interval: { value: 7, unit: "days" },
         last_rebalanced_at: new Date().toISOString(),
       });
-      await mocks.stateManager.writeRaw("gaps/goal-1/current.json", { dim1: 0.4 });
+      await mocks.stateManager.appendGapHistoryEntry("goal-1", {
+        iteration: 0,
+        timestamp: new Date().toISOString(),
+        gap_vector: [{ dimension_name: "dim1", normalized_weighted_gap: 0.4 }],
+        confidence_vector: [{ dimension_name: "dim1", confidence: 0.9 }],
+      });
       await mocks.stateManager.writeRaw(`strategies/goal-1/wait-meta/${waitStrategy.id}.json`, {
         schema_version: 1,
         wait_until: waitStrategy.wait_until,
@@ -2059,7 +2064,12 @@ describe("CoreLoop", async () => {
         last_rebalanced_at: new Date().toISOString(),
       });
       mocks.stallDetector.isSuppressed.mockReturnValue(true);
-      await mocks.stateManager.writeRaw("gaps/goal-1/current.json", { dim1: 0.4 });
+      await mocks.stateManager.appendGapHistoryEntry("goal-1", {
+        iteration: 0,
+        timestamp: new Date().toISOString(),
+        gap_vector: [{ dimension_name: "dim1", normalized_weighted_gap: 0.4 }],
+        confidence_vector: [{ dimension_name: "dim1", confidence: 0.9 }],
+      });
       await mocks.stateManager.writeRaw(`strategies/goal-1/wait-meta/${waitStrategy.id}.json`, {
         schema_version: 1,
         wait_until: waitStrategy.wait_until,

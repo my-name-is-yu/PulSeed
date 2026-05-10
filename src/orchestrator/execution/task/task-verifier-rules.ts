@@ -691,27 +691,20 @@ export async function setDimensionIntegrity(
   dimensionName: string,
   integrity: "ok" | "uncertain"
 ): Promise<void> {
-  const goalData = await deps.stateManager.readRaw(`goals/${goalId}/goal.json`);
-  if (goalData && typeof goalData === "object") {
-    const goal = goalData as Record<string, unknown>;
-    const dimensions = goal.dimensions as Array<Record<string, unknown>> | undefined;
-    if (dimensions) {
-      for (const dim of dimensions) {
-        if (dim.name === dimensionName) {
-          dim.state_integrity = integrity;
-        }
-      }
-      await deps.stateManager.writeRaw(`goals/${goalId}/goal.json`, goal);
-    }
+  const goal = await deps.stateManager.loadGoal(goalId);
+  if (!goal) return;
+  const dimensions = goal.dimensions.map((dim) => dim.name === dimensionName
+    ? { ...dim, state_integrity: integrity }
+    : dim);
+  if (dimensions.some((dim, index) => dim !== goal.dimensions[index])) {
+    await deps.stateManager.saveGoal({ ...goal, dimensions });
   }
 }
 
 // ─── appendTaskHistory ───
 
 export async function appendTaskHistory(deps: VerifierDeps, goalId: string, task: Task): Promise<void> {
-  const historyPath = `tasks/${goalId}/task-history.json`;
-  const existing = await deps.stateManager.readRaw(historyPath);
-  const history = Array.isArray(existing) ? existing : [];
+  const history = await deps.stateManager.loadTaskHistory(goalId);
 
   const actual_elapsed_ms =
     task.started_at && task.completed_at
@@ -735,6 +728,6 @@ export async function appendTaskHistory(deps: VerifierDeps, goalId: string, task
     actual_elapsed_ms,
     estimated_duration_ms,
   });
-  await deps.stateManager.writeRaw(historyPath, history);
+  await deps.stateManager.saveTaskHistory(goalId, history);
   await syncTaskOutcomeSummary(deps.stateManager, task);
 }

@@ -187,8 +187,7 @@ async function postponeWaitObservationForApproval(
   expiresAt: string
 ): Promise<void> {
   try {
-    const metadataPath = `strategies/${goalId}/wait-meta/${strategy.id}.json`;
-    const raw = await ctx.deps.stateManager.readRaw(metadataPath);
+    const raw = await ctx.deps.stateManager.loadWaitMetadata(goalId, strategy.id);
     const metadata = raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
     const waitUntil = typeof metadata["wait_until"] === "string"
       ? metadata["wait_until"]
@@ -199,7 +198,7 @@ async function postponeWaitObservationForApproval(
       ? metadata["conditions"]
       : [{ type: "time_until", until: waitUntil }];
 
-    await ctx.deps.stateManager.writeRaw(metadataPath, {
+    await ctx.deps.stateManager.saveWaitMetadata(goalId, strategy.id, {
       ...metadata,
       schema_version: 1,
       wait_until: waitUntil,

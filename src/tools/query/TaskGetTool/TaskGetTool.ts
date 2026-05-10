@@ -80,20 +80,7 @@ export class TaskGetTool implements ITool<TaskGetInput, unknown> {
   }
 
   private async loadTask(goalId: string, taskId: string) {
-    const manager = this.stateManager as StateManager & {
-      loadTask?: (goalId: string, taskId: string) => Promise<unknown>;
-      readRaw?: (relativePath: string) => Promise<unknown>;
-    };
-
-    if (typeof manager.loadTask === "function") {
-      return manager.loadTask(goalId, taskId);
-    }
-
-    if (typeof manager.readRaw !== "function") {
-      throw new Error("StateManager does not expose loadTask or readRaw");
-    }
-
-    const raw = await manager.readRaw(`tasks/${goalId}/${taskId}.json`);
+    const raw = await this.stateManager.loadTask(goalId, taskId);
     if (raw == null) {
       return null;
     }

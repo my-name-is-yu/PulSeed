@@ -5,7 +5,6 @@ import * as os from "node:os";
 import { StateManager } from "../../../base/state/state-manager.js";
 import { ReportingEngine } from "../../../reporting/reporting-engine.js";
 import { CapabilityDetector } from "../../observation/capability-detector.js";
-import { CapabilityRegistrySchema } from "../../../base/types/capability.js";
 import type {
   Capability,
   CapabilityRegistry,
@@ -251,7 +250,7 @@ describe("loadRegistry", () => {
 // ─── saveRegistry ───
 
 describe("saveRegistry", () => {
-  it("persists registry to disk", async () => {
+  it("persists registry to the typed store", async () => {
     const llm = createMockLLMClient([]);
     const detector = new CapabilityDetector(stateManager, llm, reportingEngine);
 
@@ -261,10 +260,10 @@ describe("saveRegistry", () => {
     };
     await detector.saveRegistry(registry);
 
-    const raw = await stateManager.readRaw("capability_registry.json");
-    expect(raw).not.toBeNull();
-    const parsed = CapabilityRegistrySchema.parse(raw);
-    expect(parsed.capabilities).toHaveLength(1);
+    await expect(stateManager.loadCapabilityRegistry()).resolves.toMatchObject({
+      capabilities: [{ name: "Stripe API" }],
+    });
+    expect(fs.existsSync(path.join(tempDir, "capability_registry.json"))).toBe(false);
   });
 
   it("overwrites existing registry on subsequent saves", async () => {

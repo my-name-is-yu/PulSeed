@@ -48,6 +48,8 @@ function makeDeps(tmpDir: string, overrides: Partial<DaemonDeps> = {}): DaemonDe
 
   const mockStateManager = {
     getBaseDir: vi.fn().mockReturnValue(tmpDir),
+    listTasksByStatus: vi.fn().mockResolvedValue([]),
+    listPipelinesByStatus: vi.fn().mockResolvedValue([]),
   };
 
   const pidManager = new PIDManager(tmpDir);

@@ -364,14 +364,13 @@ export class PipelineExecutor {
   }
 
   private async persistState(taskId: string, state: PipelineState): Promise<void> {
-    await this.stateManager.writeRaw(`pipelines/${taskId}.json`, state);
+    await this.stateManager.savePipeline(taskId, state);
   }
 
   private async restoreState(taskId: string): Promise<PipelineState | null> {
     try {
-      const raw = await this.stateManager.readRaw(`pipelines/${taskId}.json`);
-      if (!raw) return null;
-      return PipelineStateSchema.parse(raw);
+      const state = await this.stateManager.loadPipeline(taskId);
+      return state ? PipelineStateSchema.parse(state) : null;
     } catch {
       return null;
     }

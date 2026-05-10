@@ -4,9 +4,7 @@ import { durationToMs } from "../../orchestrator/execution/task/task-executor.js
 import { recordTaskOutcomeMutation } from "../../orchestrator/execution/task/task-outcome-ledger.js";
 
 export async function upsertTaskHistory(stateManager: StateManager, task: Task): Promise<void> {
-  const historyPath = `tasks/${task.goal_id}/task-history.json`;
-  const existing = await stateManager.readRaw(historyPath);
-  const history = Array.isArray(existing) ? [...existing] : [];
+  const history = [...await stateManager.loadTaskHistory(task.goal_id)];
 
   const actual_elapsed_ms =
     task.started_at && task.completed_at
@@ -37,6 +35,6 @@ export async function upsertTaskHistory(stateManager: StateManager, task: Task):
     history.push(entry);
   }
 
-  await stateManager.writeRaw(historyPath, history);
+  await stateManager.saveTaskHistory(task.goal_id, history);
   await recordTaskOutcomeMutation(stateManager, task);
 }
