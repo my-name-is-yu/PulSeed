@@ -200,6 +200,19 @@ describe("runtime session tools", () => {
     });
   });
 
+  it("returns a consistent failed ToolResult when a session lookup fails", async () => {
+    const read = tools.get("sessions_read")!;
+    const result = await read.call({ session_id: "missing-session" }, makeContext());
+
+    expect(result).toMatchObject({
+      success: false,
+      data: null,
+      summary: expect.stringContaining("sessions_read failed:"),
+      error: expect.stringContaining("No chat session matched selector"),
+    });
+    expect(result.durationMs).toEqual(expect.any(Number));
+  });
+
   it("marks a child session completed, appends a parent summary, and writes durable outbox notifications", async () => {
     await saveChatSession({
       id: "parent",

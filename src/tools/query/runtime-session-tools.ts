@@ -117,6 +117,35 @@ function toChatSessionRecord(session: LoadedChatSession): ChatSession {
   };
 }
 
+async function runRuntimeSessionToolCall<T>(input: {
+  toolName: string;
+  run: () => Promise<T>;
+  summary: (data: T) => string;
+  contextModifier?: (data: T) => string | undefined;
+}): Promise<ToolResult> {
+  const started = Date.now();
+  try {
+    const data = await input.run();
+    const contextModifier = input.contextModifier?.(data);
+    return {
+      success: true,
+      data,
+      summary: input.summary(data),
+      ...(contextModifier ? { contextModifier } : {}),
+      durationMs: Date.now() - started,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      success: false,
+      data: null,
+      summary: `${input.toolName} failed: ${message}`,
+      error: message,
+      durationMs: Date.now() - started,
+    };
+  }
+}
+
 class RuntimeSessionToolService {
   constructor(private readonly stateManager: StateManager) {}
 
@@ -664,24 +693,11 @@ export class RuntimeSessionsListTool implements ITool<RuntimeSessionsListInput, 
   }
 
   async call(input: RuntimeSessionsListInput, context: ToolCallContext): Promise<ToolResult> {
-    const started = Date.now();
-    try {
-      const data = await this.service.listSessions(input, context);
-      return {
-        success: true,
-        data,
-        summary: `Found ${data.sessions.length} session(s)`,
-        durationMs: Date.now() - started,
-      };
-    } catch (error) {
-      return {
-        success: false,
-        data: null,
-        summary: `sessions_list failed: ${error instanceof Error ? error.message : String(error)}`,
-        error: error instanceof Error ? error.message : String(error),
-        durationMs: Date.now() - started,
-      };
-    }
+    return runRuntimeSessionToolCall({
+      toolName: this.metadata.name,
+      run: () => this.service.listSessions(input, context),
+      summary: (data) => `Found ${data.sessions.length} session(s)`,
+    });
   }
 
   async checkPermissions(): Promise<PermissionCheckResult> {
@@ -726,24 +742,11 @@ export class RuntimeRunsObserveTool implements ITool<RuntimeRunsObserveInput, un
   }
 
   async call(input: RuntimeRunsObserveInput, context: ToolCallContext): Promise<ToolResult> {
-    const started = Date.now();
-    try {
-      const data = await this.service.observeRuns(input, context);
-      return {
-        success: true,
-        data,
-        summary: `Observed ${data.runs.length} runtime run(s)`,
-        durationMs: Date.now() - started,
-      };
-    } catch (error) {
-      return {
-        success: false,
-        data: null,
-        summary: `runs_observe failed: ${error instanceof Error ? error.message : String(error)}`,
-        error: error instanceof Error ? error.message : String(error),
-        durationMs: Date.now() - started,
-      };
-    }
+    return runRuntimeSessionToolCall({
+      toolName: this.metadata.name,
+      run: () => this.service.observeRuns(input, context),
+      summary: (data) => `Observed ${data.runs.length} runtime run(s)`,
+    });
   }
 
   async checkPermissions(): Promise<PermissionCheckResult> {
@@ -783,24 +786,11 @@ export class RuntimeSessionsHistoryTool implements ITool<RuntimeSessionsHistoryI
   }
 
   async call(input: RuntimeSessionsHistoryInput, _context: ToolCallContext): Promise<ToolResult> {
-    const started = Date.now();
-    try {
-      const data = await this.service.loadHistory(input.session_id, input.limit);
-      return {
-        success: true,
-        data,
-        summary: `Loaded ${data.messages.length} message(s) from session ${data.sessionId}`,
-        durationMs: Date.now() - started,
-      };
-    } catch (error) {
-      return {
-        success: false,
-        data: null,
-        summary: `sessions_history failed: ${error instanceof Error ? error.message : String(error)}`,
-        error: error instanceof Error ? error.message : String(error),
-        durationMs: Date.now() - started,
-      };
-    }
+    return runRuntimeSessionToolCall({
+      toolName: this.metadata.name,
+      run: () => this.service.loadHistory(input.session_id, input.limit),
+      summary: (data) => `Loaded ${data.messages.length} message(s) from session ${data.sessionId}`,
+    });
   }
 
   async checkPermissions(): Promise<PermissionCheckResult> {
@@ -839,24 +829,11 @@ export class RuntimeSessionsReadTool implements ITool<RuntimeSessionsReadInput, 
   }
 
   async call(input: RuntimeSessionsReadInput, _context: ToolCallContext): Promise<ToolResult> {
-    const started = Date.now();
-    try {
-      const data = await this.service.readSession(input.session_id);
-      return {
-        success: true,
-        data,
-        summary: `Loaded session ${data.sessionId}`,
-        durationMs: Date.now() - started,
-      };
-    } catch (error) {
-      return {
-        success: false,
-        data: null,
-        summary: `sessions_read failed: ${error instanceof Error ? error.message : String(error)}`,
-        error: error instanceof Error ? error.message : String(error),
-        durationMs: Date.now() - started,
-      };
-    }
+    return runRuntimeSessionToolCall({
+      toolName: this.metadata.name,
+      run: () => this.service.readSession(input.session_id),
+      summary: (data) => `Loaded session ${data.sessionId}`,
+    });
   }
 
   async checkPermissions(): Promise<PermissionCheckResult> {
@@ -895,24 +872,11 @@ export class RuntimeSessionsChildrenTool implements ITool<RuntimeSessionsChildre
   }
 
   async call(input: RuntimeSessionsChildrenInput, _context: ToolCallContext): Promise<ToolResult> {
-    const started = Date.now();
-    try {
-      const data = await this.service.listChildren(input.session_id);
-      return {
-        success: true,
-        data,
-        summary: `Loaded ${data.children.length} child session(s) for ${data.sessionId}`,
-        durationMs: Date.now() - started,
-      };
-    } catch (error) {
-      return {
-        success: false,
-        data: null,
-        summary: `sessions_children failed: ${error instanceof Error ? error.message : String(error)}`,
-        error: error instanceof Error ? error.message : String(error),
-        durationMs: Date.now() - started,
-      };
-    }
+    return runRuntimeSessionToolCall({
+      toolName: this.metadata.name,
+      run: () => this.service.listChildren(input.session_id),
+      summary: (data) => `Loaded ${data.children.length} child session(s) for ${data.sessionId}`,
+    });
   }
 
   async checkPermissions(): Promise<PermissionCheckResult> {
@@ -959,25 +923,12 @@ export class RuntimeSessionsSpawnTool implements ITool<RuntimeSessionsSpawnInput
   }
 
   async call(input: RuntimeSessionsSpawnInput, context: ToolCallContext): Promise<ToolResult> {
-    const started = Date.now();
-    try {
-      const data = await this.service.spawnSession(input, context);
-      return {
-        success: true,
-        data,
-        summary: `Spawned session ${data.sessionId}`,
-        contextModifier: `Use ${data.resumeCommand} to continue the delegated work in that separate session.`,
-        durationMs: Date.now() - started,
-      };
-    } catch (error) {
-      return {
-        success: false,
-        data: null,
-        summary: `sessions_spawn failed: ${error instanceof Error ? error.message : String(error)}`,
-        error: error instanceof Error ? error.message : String(error),
-        durationMs: Date.now() - started,
-      };
-    }
+    return runRuntimeSessionToolCall({
+      toolName: this.metadata.name,
+      run: () => this.service.spawnSession(input, context),
+      summary: (data) => `Spawned session ${data.sessionId}`,
+      contextModifier: (data) => `Use ${data.resumeCommand} to continue the delegated work in that separate session.`,
+    });
   }
 
   async checkPermissions(): Promise<PermissionCheckResult> {
@@ -1017,25 +968,12 @@ export class RuntimeSessionsSendTool implements ITool<RuntimeSessionsSendInput, 
   }
 
   async call(input: RuntimeSessionsSendInput, _context: ToolCallContext): Promise<ToolResult> {
-    const started = Date.now();
-    try {
-      const data = await this.service.sendToSession(input.session_id, input.message);
-      return {
-        success: true,
-        data,
-        summary: `Queued a message for session ${data.sessionId}`,
-        contextModifier: `Resume ${data.runtimeSessionId} later to act on the queued message in that separate session.`,
-        durationMs: Date.now() - started,
-      };
-    } catch (error) {
-      return {
-        success: false,
-        data: null,
-        summary: `sessions_send failed: ${error instanceof Error ? error.message : String(error)}`,
-        error: error instanceof Error ? error.message : String(error),
-        durationMs: Date.now() - started,
-      };
-    }
+    return runRuntimeSessionToolCall({
+      toolName: this.metadata.name,
+      run: () => this.service.sendToSession(input.session_id, input.message),
+      summary: (data) => `Queued a message for session ${data.sessionId}`,
+      contextModifier: (data) => `Resume ${data.runtimeSessionId} later to act on the queued message in that separate session.`,
+    });
   }
 
   async checkPermissions(): Promise<PermissionCheckResult> {
@@ -1099,24 +1037,11 @@ export class RuntimeSessionsUpdateTool implements ITool<RuntimeSessionsUpdateInp
   }
 
   async call(input: RuntimeSessionsUpdateInput, _context: ToolCallContext): Promise<ToolResult> {
-    const started = Date.now();
-    try {
-      const data = await this.service.updateSession(input.session_id, input);
-      return {
-        success: true,
-        data,
-        summary: `Updated session ${data.sessionId} to ${data.status}`,
-        durationMs: Date.now() - started,
-      };
-    } catch (error) {
-      return {
-        success: false,
-        data: null,
-        summary: `sessions_update failed: ${error instanceof Error ? error.message : String(error)}`,
-        error: error instanceof Error ? error.message : String(error),
-        durationMs: Date.now() - started,
-      };
-    }
+    return runRuntimeSessionToolCall({
+      toolName: this.metadata.name,
+      run: () => this.service.updateSession(input.session_id, input),
+      summary: (data) => `Updated session ${data.sessionId} to ${data.status}`,
+    });
   }
 
   async checkPermissions(): Promise<PermissionCheckResult> {
@@ -1156,24 +1081,11 @@ export class RuntimeSessionsClaimTool implements ITool<RuntimeSessionsClaimInput
   }
 
   async call(input: RuntimeSessionsClaimInput, _context: ToolCallContext): Promise<ToolResult> {
-    const started = Date.now();
-    try {
-      const data = await this.service.claimSession(input.session_id, input.owner_id);
-      return {
-        success: true,
-        data,
-        summary: `Claimed session ${data.sessionId} for ${data.ownerId}`,
-        durationMs: Date.now() - started,
-      };
-    } catch (error) {
-      return {
-        success: false,
-        data: null,
-        summary: `sessions_claim failed: ${error instanceof Error ? error.message : String(error)}`,
-        error: error instanceof Error ? error.message : String(error),
-        durationMs: Date.now() - started,
-      };
-    }
+    return runRuntimeSessionToolCall({
+      toolName: this.metadata.name,
+      run: () => this.service.claimSession(input.session_id, input.owner_id),
+      summary: (data) => `Claimed session ${data.sessionId} for ${data.ownerId}`,
+    });
   }
 
   async checkPermissions(): Promise<PermissionCheckResult> {
@@ -1213,24 +1125,11 @@ export class RuntimeSessionsCancelTool implements ITool<RuntimeSessionsCancelInp
   }
 
   async call(input: RuntimeSessionsCancelInput, _context: ToolCallContext): Promise<ToolResult> {
-    const started = Date.now();
-    try {
-      const data = await this.service.cancelSession(input.session_id, input.reason);
-      return {
-        success: true,
-        data,
-        summary: `Canceled session ${data.sessionId}`,
-        durationMs: Date.now() - started,
-      };
-    } catch (error) {
-      return {
-        success: false,
-        data: null,
-        summary: `sessions_cancel failed: ${error instanceof Error ? error.message : String(error)}`,
-        error: error instanceof Error ? error.message : String(error),
-        durationMs: Date.now() - started,
-      };
-    }
+    return runRuntimeSessionToolCall({
+      toolName: this.metadata.name,
+      run: () => this.service.cancelSession(input.session_id, input.reason),
+      summary: (data) => `Canceled session ${data.sessionId}`,
+    });
   }
 
   async checkPermissions(): Promise<PermissionCheckResult> {
@@ -1270,24 +1169,11 @@ export class RuntimeSessionsRetryTool implements ITool<RuntimeSessionsRetryInput
   }
 
   async call(input: RuntimeSessionsRetryInput, _context: ToolCallContext): Promise<ToolResult> {
-    const started = Date.now();
-    try {
-      const data = await this.service.retrySession(input.session_id, input.message);
-      return {
-        success: true,
-        data,
-        summary: `Retried session ${data.sessionId}`,
-        durationMs: Date.now() - started,
-      };
-    } catch (error) {
-      return {
-        success: false,
-        data: null,
-        summary: `sessions_retry failed: ${error instanceof Error ? error.message : String(error)}`,
-        error: error instanceof Error ? error.message : String(error),
-        durationMs: Date.now() - started,
-      };
-    }
+    return runRuntimeSessionToolCall({
+      toolName: this.metadata.name,
+      run: () => this.service.retrySession(input.session_id, input.message),
+      summary: (data) => `Retried session ${data.sessionId}`,
+    });
   }
 
   async checkPermissions(): Promise<PermissionCheckResult> {
