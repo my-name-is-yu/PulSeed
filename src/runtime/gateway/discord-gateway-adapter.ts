@@ -8,6 +8,7 @@ import { formatPlaintextNotification, supportsCoreGatewayNotification } from "./
 import { buildChannelPolicyMetadata, buildExternalSurfaceDecision, evaluateChannelAccess, resolveChannelRoute } from "./channel-policy.js";
 import { createRefreshingTypingIndicator, withTypingIndicator } from "./typing-indicator.js";
 import { DISCORD_GATEWAY_DISPLAY_CONTRACT, createGatewayDisplayPolicy } from "./channel-display-policy.js";
+import { DISCORD_SEEDY_PRESENCE_CONTRACT } from "./channel-presence-policy.js";
 import { NonTuiDisplayProjector, type NonTuiDisplayMessageRef, type NonTuiDisplayTransport } from "./non-tui-display-projector.js";
 import { isPayloadTooLargeError, readBody } from "../http-body.js";
 import type { INotifier, NotificationEvent, NotificationEventType } from "../../base/types/plugin.js";
@@ -83,6 +84,7 @@ export class DiscordGatewayAdapter implements ChannelAdapter {
   readonly name = "discord";
   readonly typingIndicator: TypingIndicatorCapability;
   readonly displayContract = DISCORD_GATEWAY_DISPLAY_CONTRACT;
+  readonly presenceContract = DISCORD_SEEDY_PRESENCE_CONTRACT;
 
   private handler: EnvelopeHandler | null = null;
   private server: http.Server | null = null;

@@ -8,6 +8,7 @@ import { formatPlaintextNotification, supportsCoreGatewayNotification } from "./
 import { buildChannelPolicyMetadata, buildExternalSurfaceDecision, evaluateChannelAccess, resolveChannelRoute } from "./channel-policy.js";
 import { createUnsupportedTypingIndicator, withTypingIndicator } from "./typing-indicator.js";
 import { WHATSAPP_GATEWAY_DISPLAY_CONTRACT } from "./channel-display-policy.js";
+import { WHATSAPP_SEEDY_PRESENCE_CONTRACT } from "./channel-presence-policy.js";
 import { NonTuiDisplayProjector, type NonTuiDisplayMessageRef, type NonTuiDisplayTransport } from "./non-tui-display-projector.js";
 import { isPayloadTooLargeError, readBody } from "../http-body.js";
 import type { INotifier, NotificationEvent, NotificationEventType } from "../../base/types/plugin.js";
@@ -72,6 +73,7 @@ export class WhatsAppGatewayNotifier implements INotifier {
 export class WhatsAppGatewayAdapter implements ChannelAdapter {
   readonly name = "whatsapp";
   readonly displayContract = WHATSAPP_GATEWAY_DISPLAY_CONTRACT;
+  readonly presenceContract = WHATSAPP_SEEDY_PRESENCE_CONTRACT;
   readonly typingIndicator: TypingIndicatorCapability = createUnsupportedTypingIndicator(
     "whatsapp cloud adapter has no native typing endpoint in the current contract"
   );

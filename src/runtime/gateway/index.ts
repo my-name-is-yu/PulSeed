@@ -28,6 +28,19 @@ export {
   WEBHOOK_GATEWAY_DISPLAY_CONTRACT,
   WHATSAPP_GATEWAY_DISPLAY_CONTRACT,
 } from "./channel-display-policy.js";
+export {
+  createSeedyPresenceCapabilities,
+  resolveGatewayChannelPresenceContract,
+  DIAGNOSTIC_ONLY_SEEDY_PRESENCE_CONTRACT,
+  DISCORD_SEEDY_PRESENCE_CONTRACT,
+  FINAL_ONLY_SEEDY_PRESENCE_CONTRACT,
+  GUI_BODY_SEEDY_PRESENCE_CONTRACT,
+  SIGNAL_SEEDY_PRESENCE_CONTRACT,
+  SLACK_SEEDY_PRESENCE_CONTRACT,
+  TELEGRAM_SEEDY_PRESENCE_CONTRACT,
+  WEBHOOK_SEEDY_PRESENCE_CONTRACT,
+  WHATSAPP_SEEDY_PRESENCE_CONTRACT,
+} from "./channel-presence-policy.js";
 export { NonTuiDisplayProjector, createNonTuiDisplayProjector } from "./non-tui-display-projector.js";
 export {
   renderGatewayActivityEvent,
@@ -59,6 +72,13 @@ export type {
   GatewayToolProgressMode,
   ResolvedGatewayChannelDisplayContract,
 } from "./channel-display-policy.js";
+export type {
+  GatewayChannelPresenceContract,
+  ResolvedGatewayChannelPresenceContract,
+  SeedyPresenceCapabilityInput,
+  SeedyPresenceCapabilities,
+  SeedyPresenceSurfaceKind,
+} from "./channel-presence-policy.js";
 export {
   createRefreshingTypingIndicator,
   createUnsupportedTypingIndicator,

@@ -2,6 +2,7 @@ import type { ChannelAdapter, EnvelopeHandler } from "./channel-adapter.js";
 import type { EventServer } from "../event/server.js";
 import { createEnvelope } from "../types/envelope.js";
 import type { Envelope } from "../types/envelope.js";
+import { WEBHOOK_SEEDY_PRESENCE_CONTRACT } from "./channel-presence-policy.js";
 
 /**
  * HttpChannelAdapter wraps the existing EventServer and converts
@@ -13,6 +14,7 @@ import type { Envelope } from "../types/envelope.js";
  */
 export class HttpChannelAdapter implements ChannelAdapter {
   readonly name = "http";
+  readonly presenceContract = WEBHOOK_SEEDY_PRESENCE_CONTRACT;
   private handler: EnvelopeHandler | null = null;
   private eventServer: EventServer;
 

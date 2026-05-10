@@ -13,6 +13,7 @@ import {
 import { dispatchGatewayChatInput } from "./chat-session-dispatch.js";
 import { createUnsupportedTypingIndicator } from "./typing-indicator.js";
 import { SLACK_GATEWAY_DISPLAY_CONTRACT, createGatewayDisplayPolicy } from "./channel-display-policy.js";
+import { SLACK_SEEDY_PRESENCE_CONTRACT } from "./channel-presence-policy.js";
 import { NonTuiDisplayProjector, type NonTuiDisplayMessageRef, type NonTuiDisplayTransport } from "./non-tui-display-projector.js";
 import type { ChatEvent } from "../../interface/chat/chat-events.js";
 
@@ -46,6 +47,7 @@ const SLACK_TIMESTAMP_TOKEN = /^[1-9][0-9]*$/;
 export class SlackChannelAdapter implements ChannelAdapter {
   readonly name = "slack";
   readonly displayContract = SLACK_GATEWAY_DISPLAY_CONTRACT;
+  readonly presenceContract = SLACK_SEEDY_PRESENCE_CONTRACT;
   readonly typingIndicator: TypingIndicatorCapability = createUnsupportedTypingIndicator(
     "slack events adapter has no native bot typing indicator in the current API path"
   );

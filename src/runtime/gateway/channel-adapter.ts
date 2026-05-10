@@ -1,5 +1,6 @@
 import type { Envelope } from "../types/envelope.js";
 import type { GatewayChannelDisplayContract } from "./channel-display-policy.js";
+import type { GatewayChannelPresenceContract } from "./channel-presence-policy.js";
 
 export interface ReplyChannel {
   send(data: unknown): void;
@@ -51,4 +52,7 @@ export interface ChannelAdapter {
 
   /** Optional non-TUI chat display capabilities and policy defaults */
   readonly displayContract?: GatewayChannelDisplayContract;
+
+  /** Optional Seedy turn-presence surface capabilities and timing defaults */
+  readonly presenceContract?: GatewayChannelPresenceContract;
 }

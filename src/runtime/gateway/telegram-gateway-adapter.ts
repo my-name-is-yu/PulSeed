@@ -6,6 +6,7 @@ import { formatTelegramNotification, supportsCoreGatewayNotification } from "./c
 import { buildChannelPolicyMetadata, buildExternalSurfaceDecision, evaluateChannelAccess, resolveChannelRoute } from "./channel-policy.js";
 import { createRefreshingTypingIndicator, withTypingIndicator } from "./typing-indicator.js";
 import { TELEGRAM_GATEWAY_DISPLAY_CONTRACT, createGatewayDisplayPolicy } from "./channel-display-policy.js";
+import { TELEGRAM_SEEDY_PRESENCE_CONTRACT } from "./channel-presence-policy.js";
 import { NonTuiDisplayProjector, type NonTuiDisplayMessageRef, type NonTuiDisplayTransport } from "./non-tui-display-projector.js";
 import { PluginChannelRuntimeStateStore } from "../store/plugin-channel-runtime-state-store.js";
 import type { INotifier, NotificationEvent, NotificationEventType } from "../../base/types/plugin.js";
@@ -77,6 +78,7 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
   readonly name = "telegram";
   readonly typingIndicator: TypingIndicatorCapability;
   readonly displayContract = TELEGRAM_GATEWAY_DISPLAY_CONTRACT;
+  readonly presenceContract = TELEGRAM_SEEDY_PRESENCE_CONTRACT;
 
   private handler: EnvelopeHandler | null = null;
   private readonly api: TelegramAPI;
