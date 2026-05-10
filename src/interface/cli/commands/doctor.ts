@@ -18,6 +18,9 @@ import {
   importLegacyExecutionSessionState,
   importLegacyCapabilityRegistryState,
   importLegacyCuriosityState,
+  importLegacyEthicsLogState,
+  importLegacyRelationshipProfileProposalState,
+  importLegacyTrustState,
   OutboxStore,
   RuntimeHealthStore,
   compactRuntimeHealthKpi,
@@ -738,6 +741,9 @@ export async function cmdDoctor(_args: string[]): Promise<number> {
       importedAt: new Date().toISOString(),
     });
     const curiosityImportReport = await importLegacyCuriosityState(baseDir);
+    const trustImportReport = await importLegacyTrustState(baseDir);
+    const ethicsImportReport = await importLegacyEthicsLogState(baseDir);
+    const relationshipProfileProposalImportReport = await importLegacyRelationshipProfileProposalState(baseDir);
     const knowledgeMemoryImportReport = await importLegacyKnowledgeMemoryState(baseDir);
     const pluginChannelImportReport = await importLegacyPluginChannelRuntimeState(baseDir);
     const migratedLegacyCronTasks = await migrateLegacyCronTasksIfNeeded({
@@ -779,6 +785,9 @@ export async function cmdDoctor(_args: string[]): Promise<number> {
     );
     console.log(
       `Repair curiosity import: state files=${curiosityImportReport.stateFiles}, proposals=${curiosityImportReport.importedProposals}, learning records=${curiosityImportReport.importedLearningRecords}, rejected hashes=${curiosityImportReport.importedRejectedHashes}, blocked=${curiosityImportReport.blockedSources.length}`
+    );
+    console.log(
+      `Repair trust/ethics/profile import: trust files=${trustImportReport.trustStoreFiles}, balances=${trustImportReport.importedBalances}, permanent gates=${trustImportReport.importedPermanentGates}, overrides=${trustImportReport.importedOverrideEvents}, ethics files=${ethicsImportReport.ethicsLogFiles}, ethics logs=${ethicsImportReport.importedLogs}, profile proposal files=${relationshipProfileProposalImportReport.proposalStoreFiles}, profile proposals=${relationshipProfileProposalImportReport.importedProposals}, blocked=${trustImportReport.blockedSources.length + ethicsImportReport.blockedSources.length + relationshipProfileProposalImportReport.blockedSources.length}`
     );
     console.log(
       `Repair knowledge/memory import: domain=${knowledgeMemoryImportReport.domainKnowledge}, shared=${knowledgeMemoryImportReport.sharedKnowledgeEntries}, agent memory=${knowledgeMemoryImportReport.agentMemoryEntries}, corrections=${knowledgeMemoryImportReport.agentMemoryCorrections}, blocked=${knowledgeMemoryImportReport.blockedSources.length}`

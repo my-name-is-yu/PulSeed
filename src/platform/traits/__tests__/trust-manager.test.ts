@@ -4,6 +4,7 @@ import * as path from "node:path";
 import * as os from "node:os";
 import { StateManager } from "../../../base/state/state-manager.js";
 import { TrustManager } from "../trust-manager.js";
+import { TrustStateStore } from "../../../runtime/store/trust-state-store.js";
 import {
   HIGH_TRUST_THRESHOLD,
   HIGH_CONFIDENCE_THRESHOLD,
@@ -269,14 +270,7 @@ describe("TrustManager", () => {
       await manager.recordSuccess("domain"); // balance = 3
       await manager.setOverride("domain", 50, "reason");
 
-      const raw = await stateManager.readRaw("trust/trust-store.json") as {
-        override_log: Array<{
-          override_type: string;
-          domain: string;
-          balance_before: number;
-          balance_after: number;
-        }>;
-      };
+      const raw = await new TrustStateStore(tmpDir).loadStore();
       const logs = raw.override_log;
       expect(logs).toHaveLength(1);
       expect(logs[0].override_type).toBe("trust_grant");
@@ -331,21 +325,13 @@ describe("TrustManager", () => {
     it("is idempotent — adding the same gate twice does not duplicate", async () => {
       await manager.addPermanentGate("domain", "file_delete");
       await manager.addPermanentGate("domain", "file_delete");
-      const raw = await stateManager.readRaw("trust/trust-store.json") as {
-        permanent_gates: Record<string, string[]>;
-      };
+      const raw = await new TrustStateStore(tmpDir).loadStore();
       expect(raw.permanent_gates["domain"]).toHaveLength(1);
     });
 
     it("logs the permanent gate addition in override_log", async () => {
       await manager.addPermanentGate("domain", "file_delete");
-      const raw = await stateManager.readRaw("trust/trust-store.json") as {
-        override_log: Array<{
-          override_type: string;
-          domain: string;
-          target_category: string | null;
-        }>;
-      };
+      const raw = await new TrustStateStore(tmpDir).loadStore();
       const logs = raw.override_log;
       expect(logs).toHaveLength(1);
       expect(logs[0].override_type).toBe("permanent_gate");
@@ -399,22 +385,18 @@ describe("TrustManager", () => {
       expect((await manager2.getBalance("domain-3")).balance).toBe(0); // default
     });
 
-    it("persists trust store to trust/trust-store.json", async () => {
+    it("persists trust store to the typed control DB store", async () => {
       await manager.recordSuccess("check-path");
-      const filePath = path.join(tmpDir, "trust", "trust-store.json");
-      expect(fs.existsSync(filePath)).toBe(true);
-
-      const content = fs.readFileSync(filePath, "utf-8");
-      const parsed = JSON.parse(content);
-      expect(parsed.balances["check-path"]).toBeDefined();
-      expect(parsed.balances["check-path"].balance).toBe(TRUST_SUCCESS_DELTA);
+      const persisted = await new TrustStateStore(tmpDir).loadStore();
+      expect(persisted.balances["check-path"]).toBeDefined();
+      expect(persisted.balances["check-path"]!.balance).toBe(TRUST_SUCCESS_DELTA);
+      expect(fs.existsSync(path.join(tmpDir, "trust", "trust-store.json"))).toBe(false);
     });
 
-    it("does not leave .tmp files after write", async () => {
+    it("does not create the legacy trust directory after write", async () => {
       await manager.recordSuccess("atomic-test");
       const trustDir = path.join(tmpDir, "trust");
-      const files = fs.readdirSync(trustDir);
-      expect(files.filter((f) => f.endsWith(".tmp"))).toHaveLength(0);
+      expect(fs.existsSync(trustDir)).toBe(false);
     });
   });
 });

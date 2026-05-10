@@ -54,7 +54,10 @@ import {
   RuntimeHealthStore,
   SupervisorStateStore,
   CuriosityStateStore,
+  EthicsLogStore,
+  TrustStateStore,
 } from "../../../runtime/store/index.js";
+import { loadRelationshipProfileProposalStore } from "../../../platform/profile/profile-change-proposal.js";
 
 async function saveDaemonStateFixture(tmpDir: string, state: Record<string, unknown>): Promise<void> {
   await new DaemonStateStore(tmpDir).save(state as never);
@@ -1555,6 +1558,105 @@ describe("cmdDoctor summary counts", () => {
     });
     const allOutput = consoleSpy.mock.calls.map((c: unknown[]) => c[0] as string).join("\n");
     expect(allOutput).toContain("Repair curiosity import: state files=1, proposals=1");
+  });
+
+  it("imports legacy trust, ethics, and profile proposal state through doctor repair", async () => {
+    const origHome = process.env["PULSEED_HOME"];
+    process.env["PULSEED_HOME"] = tmpDir;
+    fs.mkdirSync(path.join(tmpDir, "trust"), { recursive: true });
+    fs.mkdirSync(path.join(tmpDir, "ethics"), { recursive: true });
+    fs.writeFileSync(path.join(tmpDir, "trust", "trust-store.json"), JSON.stringify({
+      balances: {
+        shell: {
+          domain: "shell",
+          balance: 25,
+          success_delta: 3,
+          failure_delta: -10,
+        },
+      },
+      permanent_gates: { shell: ["file_delete"] },
+      override_log: [],
+    }));
+    fs.writeFileSync(path.join(tmpDir, "ethics", "ethics-log.json"), JSON.stringify([
+      {
+        log_id: "doctor-ethics-log",
+        timestamp: "2026-05-10T00:00:00.000Z",
+        subject_type: "task",
+        subject_id: "task-1",
+        subject_description: "Safe task",
+        verdict: {
+          verdict: "pass",
+          category: "safe",
+          reasoning: "No issue.",
+          risks: [],
+          confidence: 0.95,
+        },
+        layer1_triggered: false,
+      },
+    ]));
+    fs.writeFileSync(path.join(tmpDir, "relationship-profile-proposals.json"), JSON.stringify({
+      schema_version: 1,
+      profile_id: "default",
+      proposals: [
+        {
+          id: "doctor-profile-proposal",
+          operation: "upsert_item",
+          proposed_item: {
+            stable_key: "user.preference.status",
+            kind: "preference",
+            value: "Prefer concise status reports.",
+            sensitivity: "private",
+            allowed_scopes: ["local_planning", "user_facing_review"],
+          },
+          source: "cli_proposal",
+          confidence: 0.7,
+          sensitivity: "private",
+          consent_scopes: ["user_facing_review"],
+          evidence_refs: [],
+          rationale: "Doctor should import this proposal.",
+          approval_state: "pending",
+          applied_at: null,
+          expires_at: null,
+          created_at: "2026-05-10T00:00:00.000Z",
+          updated_at: "2026-05-10T00:00:00.000Z",
+        },
+      ],
+      audit_events: [
+        {
+          id: "doctor-profile-event",
+          proposal_id: "doctor-profile-proposal",
+          at: "2026-05-10T00:00:00.000Z",
+          action: "created",
+        },
+      ],
+      updated_at: "2026-05-10T00:00:00.000Z",
+    }));
+
+    try {
+      const exitCode = await cmdDoctor(["--repair"]);
+      expect([0, 1]).toContain(exitCode);
+    } finally {
+      if (origHome !== undefined) {
+        process.env["PULSEED_HOME"] = origHome;
+      } else {
+        delete process.env["PULSEED_HOME"];
+      }
+    }
+
+    await expect(new TrustStateStore(tmpDir).loadStore()).resolves.toMatchObject({
+      balances: { shell: { balance: 25 } },
+      permanent_gates: { shell: ["file_delete"] },
+    });
+    await expect(new EthicsLogStore(tmpDir).loadLogs()).resolves.toEqual([
+      expect.objectContaining({ log_id: "doctor-ethics-log" }),
+    ]);
+    await expect(loadRelationshipProfileProposalStore(tmpDir)).resolves.toMatchObject({
+      proposals: [expect.objectContaining({ id: "doctor-profile-proposal" })],
+    });
+    const allOutput = consoleSpy.mock.calls.map((c: unknown[]) => c[0] as string).join("\n");
+    expect(allOutput).toContain("Repair trust/ethics/profile import: trust files=1, balances=1");
+    expect(allOutput).toContain("ethics logs=1");
+    expect(allOutput).toContain("profile proposals=1");
   });
 
   it("imports queue and supervisor legacy state from a configured custom runtime root through doctor repair", async () => {

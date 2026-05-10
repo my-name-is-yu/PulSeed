@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { ITool, ToolResult, ToolCallContext, PermissionCheckResult, ToolMetadata, ToolDescriptionContext } from "../../types.js";
 import type { StateManager } from "../../../base/state/state-manager.js";
+import { TrustStateStore, type TrustStateStorePort } from "../../../runtime/store/trust-state-store.js";
 import { HIGH_TRUST_THRESHOLD } from "../../../platform/traits/types/trust.js";
 import { DESCRIPTION } from "./prompt.js";
 import { TAGS, PERMISSION_LEVEL, MAX_OUTPUT_CHARS } from "./constants.js";
@@ -9,13 +10,6 @@ export const TrustStateInputSchema = z.object({
   adapterId: z.string().optional(),
 }).strict();
 export type TrustStateInput = z.infer<typeof TrustStateInputSchema>;
-
-const TRUST_STORE_PATH = "trust/trust-store.json";
-
-interface TrustStore {
-  balances: Record<string, { domain: string; balance: number; success_delta: number; failure_delta: number }>;
-  override_log?: Array<{ timestamp: string; override_type: string; domain: string; balance_before: number | null; balance_after: number | null }>;
-}
 
 export class TrustStateTool implements ITool<TrustStateInput, unknown> {
   readonly metadata: ToolMetadata = {
@@ -32,7 +26,11 @@ export class TrustStateTool implements ITool<TrustStateInput, unknown> {
   };
   readonly inputSchema = TrustStateInputSchema;
 
-  constructor(private readonly stateManager: StateManager) {}
+  private trustStateStore: TrustStateStorePort | null;
+
+  constructor(private readonly stateManager: StateManager, trustStateStore?: TrustStateStorePort) {
+    this.trustStateStore = trustStateStore ?? null;
+  }
 
   description(_context?: ToolDescriptionContext): string {
     return DESCRIPTION;
@@ -41,8 +39,7 @@ export class TrustStateTool implements ITool<TrustStateInput, unknown> {
   async call(input: TrustStateInput, _context: ToolCallContext): Promise<ToolResult> {
     const startTime = Date.now();
     try {
-      const raw = await this.stateManager.readRaw(TRUST_STORE_PATH) as TrustStore | null;
-      const store: TrustStore = raw ?? { balances: {}, override_log: [] };
+      const store = await this.getTrustStateStore().loadStore();
 
       if (input.adapterId) {
         return this._singleAdapter(input.adapterId, store, startTime);
@@ -59,7 +56,7 @@ export class TrustStateTool implements ITool<TrustStateInput, unknown> {
     }
   }
 
-  private _singleAdapter(adapterId: string, store: TrustStore, startTime: number): ToolResult {
+  private _singleAdapter(adapterId: string, store: Awaited<ReturnType<TrustStateStorePort["loadStore"]>>, startTime: number): ToolResult {
     const balance = store.balances[adapterId] ?? { domain: adapterId, balance: 0, success_delta: 3, failure_delta: -10 };
     const recentEvents = (store.override_log ?? [])
       .filter((e) => e.domain === adapterId)
@@ -83,7 +80,7 @@ export class TrustStateTool implements ITool<TrustStateInput, unknown> {
     };
   }
 
-  private _allAdapters(store: TrustStore, startTime: number): ToolResult {
+  private _allAdapters(store: Awaited<ReturnType<TrustStateStorePort["loadStore"]>>, startTime: number): ToolResult {
     const adapters = Object.values(store.balances).map((b) => ({
       adapterId: b.domain,
       balance: b.balance,
@@ -104,5 +101,10 @@ export class TrustStateTool implements ITool<TrustStateInput, unknown> {
 
   isConcurrencySafe(_input?: TrustStateInput): boolean {
     return true;
+  }
+
+  private getTrustStateStore(): TrustStateStorePort {
+    this.trustStateStore ??= new TrustStateStore(this.stateManager.getBaseDir());
+    return this.trustStateStore;
   }
 }

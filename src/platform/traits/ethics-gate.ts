@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { StateManager } from "../../base/state/state-manager.js";
 import type { ILLMClient } from "../../base/llm/llm-client.js";
 import type { IPromptGateway } from "../../prompt/gateway.js";
+import { EthicsLogStore, type EthicsLogStorePort } from "../../runtime/store/ethics-log-store.js";
 import {
   EthicsVerdictSchema,
   EthicsLogSchema,
@@ -18,9 +19,6 @@ import { classifyExplicitEthicsMarker, ETHICS_SYSTEM_PROMPT } from "./ethics-rul
 
 const CONFIDENCE_FLAG_THRESHOLD = 0.6;
 
-/** Path relative to StateManager base dir for the ethics log */
-const ETHICS_LOG_PATH = "ethics/ethics-log.json";
-
 export function requiresManualEthicsReview(verdict: EthicsVerdict): boolean {
   return verdict.verdict === "flag" && (
     verdict.category === "classifier_unavailable" ||
@@ -35,8 +33,7 @@ export function requiresManualEthicsReview(verdict: EthicsVerdict): boolean {
  * EthicsGate performs LLM-based ethical evaluation of goals, subgoals, and tasks.
  * All verdicts (pass, flag, reject) are persisted to an ethics log.
  *
- * Persistence: `ethics/ethics-log.json` via StateManager readRaw/writeRaw.
- * Read all → append → write all pattern (full JSON array, not JSONL).
+ * Persistence: typed ethics log runtime state store.
  *
  * Deterministic pre-check: exact protocol policy markers only.
  * Structured classifier: schema-constrained evaluation for freeform input.
@@ -47,36 +44,35 @@ export class EthicsGate {
   private readonly llmClient: ILLMClient;
   private readonly customConstraints?: CustomConstraintsConfig;
   private readonly gateway?: IPromptGateway;
+  private ethicsLogStore: EthicsLogStorePort | null;
 
   constructor(
     stateManager: StateManager,
     llmClient: ILLMClient,
     customConstraints?: CustomConstraintsConfig,
-    gateway?: IPromptGateway
+    gateway?: IPromptGateway,
+    ethicsLogStore?: EthicsLogStorePort,
   ) {
     this.stateManager = stateManager;
     this.llmClient = llmClient;
     this.customConstraints = customConstraints;
     this.gateway = gateway;
+    this.ethicsLogStore = ethicsLogStore ?? null;
   }
 
   // ─── Private: Log I/O ───
 
   private async loadLogs(): Promise<EthicsLog[]> {
-    const raw = await this.stateManager.readRaw(ETHICS_LOG_PATH);
-    if (raw === null) return [];
-    if (!Array.isArray(raw)) return [];
-    return (raw as unknown[]).map((entry) => EthicsLogSchema.parse(entry));
-  }
-
-  private async saveLogs(logs: EthicsLog[]): Promise<void> {
-    await this.stateManager.writeRaw(ETHICS_LOG_PATH, logs);
+    return this.getEthicsLogStore().loadLogs();
   }
 
   private async appendLog(entry: EthicsLog): Promise<void> {
-    const logs = await this.loadLogs();
-    logs.push(EthicsLogSchema.parse(entry));
-    await this.saveLogs(logs);
+    await this.getEthicsLogStore().appendLog(EthicsLogSchema.parse(entry));
+  }
+
+  private getEthicsLogStore(): EthicsLogStorePort {
+    this.ethicsLogStore ??= new EthicsLogStore(this.stateManager.getBaseDir());
+    return this.ethicsLogStore;
   }
 
   // ─── Private: Deterministic policy-marker evaluation ───
