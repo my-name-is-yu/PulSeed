@@ -7,6 +7,7 @@ import { formatPlaintextNotification, supportsCoreGatewayNotification } from "./
 import { buildChannelPolicyMetadata, buildExternalSurfaceDecision, evaluateChannelAccess, resolveChannelRoute } from "./channel-policy.js";
 import { createUnsupportedTypingIndicator, withTypingIndicator } from "./typing-indicator.js";
 import { SIGNAL_GATEWAY_DISPLAY_CONTRACT } from "./channel-display-policy.js";
+import { SIGNAL_SEEDY_PRESENCE_CONTRACT } from "./channel-presence-policy.js";
 import { NonTuiDisplayProjector, type NonTuiDisplayMessageRef, type NonTuiDisplayTransport } from "./non-tui-display-projector.js";
 import type { INotifier, NotificationEvent, NotificationEventType } from "../../base/types/plugin.js";
 import type { ChatEvent } from "../../interface/chat/chat-events.js";
@@ -67,6 +68,7 @@ export class SignalGatewayNotifier implements INotifier {
 export class SignalGatewayAdapter implements ChannelAdapter {
   readonly name = "signal";
   readonly displayContract = SIGNAL_GATEWAY_DISPLAY_CONTRACT;
+  readonly presenceContract = SIGNAL_SEEDY_PRESENCE_CONTRACT;
   readonly typingIndicator: TypingIndicatorCapability = createUnsupportedTypingIndicator(
     "signal-bridge adapter has no configured typing endpoint"
   );
