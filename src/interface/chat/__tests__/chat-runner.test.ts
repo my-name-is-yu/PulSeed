@@ -4479,15 +4479,23 @@ describe("ChatRunner", () => {
 
     it("does not abort the active turn for unsupported background redirect requests", async () => {
       const interruptible = makeInterruptibleAgentLoopRunner();
+      const events: ChatEvent[] = [];
       const runner = new ChatRunner(makeDeps({
         stateManager: makeMockStateManager(),
         chatAgentLoopRunner: interruptible.runner,
         llmClient: createMockLLMClient([interruptDecision("background")]),
+        onEvent: (event) => {
+          events.push(event);
+        },
       }));
       runner.startSession("/repo");
 
       const active = runner.execute("Implement a feature", "/repo");
       await vi.waitFor(() => expect(interruptible.runner.execute).toHaveBeenCalledOnce());
+      expect(runner.getActiveSeedyPresence()).toMatchObject({
+        phase: "acting",
+        expected_next: "progress",
+      });
 
       const redirected = await runner.interruptAndRedirect("continúa esto en segundo plano", "/repo");
 
@@ -4495,10 +4503,17 @@ describe("ChatRunner", () => {
       expect(redirected.success).toBe(true);
       expect(redirected.output).toContain("background is not available yet");
       expect(runner.hasActiveTurn()).toBe(true);
+      expect(runner.getActiveSeedyPresence()).toMatchObject({
+        phase: "acting",
+        expected_next: "progress",
+      });
+      expect(events.filter((event) => event.type === "assistant_final")).toHaveLength(0);
+      expect(events.filter((event) => event.type === "lifecycle_end")).toHaveLength(0);
 
       interruptible.resolveActive();
       await active;
       expect(runner.hasActiveTurn()).toBe(false);
+      expect(runner.getActiveSeedyPresence()).toBeNull();
     });
 
     it("uses structured interrupt intent classification for multilingual diff redirects", async () => {

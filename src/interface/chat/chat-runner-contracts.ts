@@ -7,7 +7,7 @@ import type { ToolRegistry } from "../../tools/registry.js";
 import type { ToolExecutor } from "../../tools/executor.js";
 import type { DaemonClient } from "../../runtime/daemon/client.js";
 import type { GoalNegotiator } from "../../orchestrator/goal/goal-negotiator.js";
-import type { ChatEvent, ChatEventHandler } from "./chat-events.js";
+import type { ChatEvent, ChatEventContext, ChatEventHandler } from "./chat-events.js";
 import type { ChatAgentLoopRunner } from "../../orchestrator/execution/agent-loop/chat-agent-loop-runner.js";
 import type { ReviewAgentLoopRunner } from "../../orchestrator/execution/agent-loop/review-agent-loop-runner.js";
 import type { RuntimeControlService } from "../../runtime/control/index.js";
@@ -117,8 +117,19 @@ export interface RuntimeControlChatContext {
   approvalMode?: "interactive" | "preapproved" | "disallowed";
 }
 
+export interface ChatRunnerRouteSelectionInput {
+  safeInput: string;
+  setupSecretIntake: SetupSecretIntakeResult;
+  runtimeControlContext: RuntimeControlChatContext | null;
+  eventContext: ChatEventContext;
+  cwd: string;
+  sessionId: string | null;
+}
+
 export interface ChatRunnerExecutionOptions {
   selectedRoute?: SelectedChatRoute;
+  routeSelector?: (input: ChatRunnerRouteSelectionInput) => Promise<SelectedChatRoute>;
+  presenceIngressId?: string;
   runtimeControlContext?: RuntimeControlChatContext | null;
   goalId?: string;
   userInput?: UserInput;
