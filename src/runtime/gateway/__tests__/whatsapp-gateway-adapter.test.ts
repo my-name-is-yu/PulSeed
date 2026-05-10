@@ -72,6 +72,72 @@ describe("WhatsAppGatewayAdapter", () => {
     expect(sentBodies).toEqual(["a".repeat(4_096), "b"]);
   });
 
+  it("does not send fallback presence for fast final answers", async () => {
+    const sentBodies: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as { text?: { body?: string } };
+      sentBodies.push(body.text?.body ?? "");
+      return okResponse({});
+    }));
+    vi.mocked(dispatchGatewayChatInput).mockImplementationOnce(async (input) => {
+      await input.onEvent?.({ ...eventBase, type: "assistant_final", text: "Fast WhatsApp final", persisted: true });
+      return "Fast WhatsApp final";
+    });
+    const adapter = new WhatsAppGatewayAdapter(makeConfig());
+
+    await (adapter as unknown as {
+      processMessage(message: { id: string; from: string; text: { body: string }; type: string }): Promise<void>;
+    }).processMessage({
+      id: "wamid-fast",
+      from: "15557654321",
+      type: "text",
+      text: { body: "hello" },
+    });
+
+    expect(sentBodies).toEqual(["Fast WhatsApp final"]);
+  });
+
+  it("sends one delayed fallback presence before a slow final answer", async () => {
+    vi.useFakeTimers();
+    try {
+      const sentBodies: string[] = [];
+      vi.stubGlobal("fetch", vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body ?? "{}")) as { text?: { body?: string } };
+        sentBodies.push(body.text?.body ?? "");
+        return okResponse({});
+      }));
+      const dispatchStarted = createDeferred();
+      const dispatchCanFinish = createDeferred();
+      vi.mocked(dispatchGatewayChatInput).mockImplementationOnce(async () => {
+        dispatchStarted.resolve();
+        await dispatchCanFinish.promise;
+        return "Slow WhatsApp final";
+      });
+      const adapter = new WhatsAppGatewayAdapter(makeConfig());
+
+      const processing = (adapter as unknown as {
+        processMessage(message: { id: string; from: string; text: { body: string }; type: string }): Promise<void>;
+      }).processMessage({
+        id: "wamid-slow",
+        from: "15557654321",
+        type: "text",
+        text: { body: "slow please" },
+      });
+
+      await dispatchStarted.promise;
+      await vi.advanceTimersByTimeAsync(4_000);
+
+      expect(sentBodies).toEqual(["I'm checking this."]);
+
+      dispatchCanFinish.resolve();
+      await processing;
+
+      expect(sentBodies).toEqual(["I'm checking this.", "Slow WhatsApp final"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("returns 413 for oversized webhook bodies", async () => {
     const adapter = new WhatsAppGatewayAdapter({ ...makeConfig(), port: 0 });
     await adapter.start();
@@ -155,6 +221,14 @@ function okResponse(payload: unknown): Response {
     json: async () => payload,
     text: async () => JSON.stringify(payload),
   } as Response;
+}
+
+function createDeferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((innerResolve) => {
+    resolve = innerResolve;
+  });
+  return { promise, resolve };
 }
 
 function getListeningPort(adapter: WhatsAppGatewayAdapter): number {

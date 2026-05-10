@@ -4,12 +4,14 @@ import { loadGatewayConfigJson } from "./config-json.js";
 import { dispatchGatewayChatInput } from "./chat-session-dispatch.js";
 import { formatPlaintextNotification, supportsCoreGatewayNotification } from "./core-channel-notification.js";
 import { buildChannelPolicyMetadata, buildExternalSurfaceDecision, evaluateChannelAccess, resolveChannelRoute } from "./channel-policy.js";
-import { createUnsupportedTypingIndicator, withTypingIndicator } from "./typing-indicator.js";
+import { createUnsupportedTypingIndicator } from "./typing-indicator.js";
 import { SIGNAL_GATEWAY_DISPLAY_CONTRACT } from "./channel-display-policy.js";
-import { SIGNAL_SEEDY_PRESENCE_CONTRACT } from "./channel-presence-policy.js";
+import { SIGNAL_SEEDY_PRESENCE_CONTRACT, resolveGatewayChannelPresenceContract } from "./channel-presence-policy.js";
 import { NonTuiDisplayProjector, type NonTuiDisplayMessageRef, type NonTuiDisplayTransport } from "./non-tui-display-projector.js";
+import { SeedyPresenceProjector, createSeedyPresenceTransportFromNonTuiDisplay } from "./seedy-presence-projector.js";
 import type { INotifier, NotificationEvent, NotificationEventType } from "../../base/types/plugin.js";
 import type { ChatEvent } from "../../interface/chat/chat-events.js";
+import { createUserVisibleSeedyTurnPresence } from "../../interface/chat/seedy-turn-presence.js";
 
 const MIN_POLL_INTERVAL_MS = 1_000;
 const MIN_RECEIVE_TIMEOUT_MS = 250;
@@ -144,6 +146,7 @@ export class SignalGatewayAdapter implements ChannelAdapter {
         channelContext
       );
       const externalSurface = buildExternalSurfaceDecision(channelContext, access, route);
+      const transport = new SignalDisplayTransport(this.client, normalized.senderId);
       const projector = new NonTuiDisplayProjector({
         display: {
           capabilities: SIGNAL_GATEWAY_DISPLAY_CONTRACT.capabilities,
@@ -157,18 +160,20 @@ export class SignalGatewayAdapter implements ChannelAdapter {
             progressMaxChars: 0,
           },
         },
-        transport: new SignalDisplayTransport(this.client, normalized.senderId),
+        transport,
       });
-      const reply = await withTypingIndicator(
-        this.typingIndicator,
-        {
-          platform: "signal",
-          conversation_id: normalized.conversationId,
-          sender_id: normalized.senderId,
-          message_id: normalized.messageId,
-          metadata: normalized.metadata,
-        },
-        () => dispatchGatewayChatInput({
+      const presenceProjector = new SeedyPresenceProjector({
+        presence: resolveGatewayChannelPresenceContract(this.presenceContract),
+        transport: createSeedyPresenceTransportFromNonTuiDisplay(transport),
+        onError: (error, operation) => console.warn("SignalGatewayAdapter: presence projector failed", { operation, error }),
+      });
+      let reply: string | null = null;
+      try {
+        await presenceProjector.update(createUserVisibleSeedyTurnPresence({
+          turn_id: `signal:${normalized.conversationId}:${normalized.messageId}`,
+          phase: "received",
+        }));
+        reply = await dispatchGatewayChatInput({
           text: normalized.text,
           platform: "signal",
           identity_key: route.identityKey ?? this.config.identity_key,
@@ -177,14 +182,23 @@ export class SignalGatewayAdapter implements ChannelAdapter {
           message_id: normalized.messageId,
           goal_id: route.goalId,
           externalSurface,
-          onEvent: (event) => projector.handle(event as unknown as ChatEvent),
+          onEvent: async (event) => {
+            const chatEvent = event as unknown as ChatEvent;
+            await projector.handle(chatEvent);
+            await presenceProjector.handle(chatEvent, {
+              assistantOutputRendered: projector.deliveredAssistantOutput,
+              meaningfulProgressRendered: projector.deliveredProgressOutput,
+            });
+          },
           metadata: {
             ...buildChannelPolicyMetadata(channelContext, access, route, externalSurface),
             ...normalized.metadata,
             ...(route.goalId ? { goal_id: route.goalId } : {}),
           },
-        })
-      );
+        });
+      } finally {
+        await presenceProjector.stop();
+      }
 
       if (reply !== null && !projector.renderedAssistantOutput) {
         await projector.handle({
