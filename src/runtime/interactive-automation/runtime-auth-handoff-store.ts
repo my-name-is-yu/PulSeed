@@ -2,9 +2,11 @@ import { randomUUID } from "node:crypto";
 import type {
   RuntimeAuthHandoffRecord,
   RuntimeAuthHandoffState,
+} from "../store/runtime-schemas.js";
+import type {
   RuntimeControlActor,
   RuntimeControlReplyTarget,
-} from "../store/index.js";
+} from "../store/runtime-operation-schemas.js";
 import {
   RuntimeAuthHandoffRecordSchema,
 } from "../store/runtime-schemas.js";
