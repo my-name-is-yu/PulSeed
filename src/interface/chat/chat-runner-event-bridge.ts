@@ -32,6 +32,7 @@ import {
 } from "./operation-progress.js";
 import {
   createUserVisibleSeedyTurnPresence,
+  type SeedyPresenceImportance,
   type SeedyPresenceExpectedNext,
   type SeedyTurnPresencePhase,
 } from "./seedy-turn-presence.js";
@@ -44,11 +45,14 @@ export interface AssistantBuffer {
   text: string;
 }
 
+const WAITING_HEARTBEAT_STALE_MS = 30_000;
+
 export class ChatRunnerEventBridge {
   private activeTurn: ActiveChatTurn | null = null;
   private readonly timelineActivityItemsByRun = new Map<string, AgentTimelineItem[]>();
   private eventRecorder: ((event: ChatEvent) => Promise<void> | void) | null = null;
   private eventRecorderQueue: Promise<void> = Promise.resolve();
+  private waitingHeartbeatTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     private readonly onEventGetter: () => ChatEventHandler | undefined,
@@ -91,6 +95,7 @@ export class ChatRunnerEventBridge {
   }
 
   beginActiveTurn(context: ChatEventContext, cwd: string): ActiveChatTurn {
+    this.clearWaitingHeartbeatTimer();
     let resolveFinished: () => void = () => {};
     const finished = new Promise<void>((resolve) => {
       resolveFinished = resolve;
@@ -113,6 +118,7 @@ export class ChatRunnerEventBridge {
   finishActiveTurn(context: ChatEventContext): void {
     const activeTurn = this.activeTurn;
     if (!activeTurn || activeTurn.context.runId !== context.runId) return;
+    this.clearWaitingHeartbeatTimer();
     activeTurn.resolveFinished();
     this.activeTurn = null;
     this.timelineActivityItemsByRun.delete(context.runId);
@@ -278,6 +284,7 @@ export class ChatRunnerEventBridge {
 
         if (event.type === "approval_request") {
           this.emitSeedyPresence("waiting", eventContext, {
+            importance: "action_required",
             subject: "Waiting for approval",
             reason: "A tool request needs approval before the turn can continue.",
             lastActivityLabel: event.reason,
@@ -378,8 +385,10 @@ export class ChatRunnerEventBridge {
     eventContext: ChatEventContext,
     input: {
       ingressId?: string;
+      importance?: SeedyPresenceImportance;
       subject?: string;
       reason?: string;
+      lastActivityAt?: string;
       lastActivityLabel?: string;
       expectedNext?: SeedyPresenceExpectedNext;
     } = {},
@@ -392,8 +401,10 @@ export class ChatRunnerEventBridge {
     eventContext: ChatEventContext,
     input: {
       ingressId?: string;
+      importance?: SeedyPresenceImportance;
       subject?: string;
       reason?: string;
+      lastActivityAt?: string;
       lastActivityLabel?: string;
       expectedNext?: SeedyPresenceExpectedNext;
     } = {},
@@ -404,7 +415,11 @@ export class ChatRunnerEventBridge {
     const previous = activeTurn?.seedyPresence;
     const expectedNext = input.expectedNext ?? defaultExpectedNextForPresencePhase(phase);
     if (previous?.phase === "complete" && phase !== "complete") return;
-    if (previous?.phase === phase && previous.expected_next === expectedNext) return;
+    if (
+      previous?.phase === phase
+      && previous.expected_next === expectedNext
+      && (input.importance === undefined || previous.importance === input.importance)
+    ) return;
 
     const now = new Date().toISOString();
     const startedAt = previous?.started_at
@@ -413,16 +428,18 @@ export class ChatRunnerEventBridge {
       turn_id: eventContext.turnId,
       ...(input.ingressId ? { ingress_id: input.ingressId } : {}),
       phase,
+      ...(input.importance ? { importance: input.importance } : {}),
       subject: input.subject ?? defaultSubjectForPresencePhase(phase),
       reason: input.reason ?? defaultReasonForPresencePhase(phase),
       started_at: startedAt,
       updated_at: now,
-      last_activity_at: now,
+      last_activity_at: input.lastActivityAt ?? now,
       ...(input.lastActivityLabel ? { last_activity_label: input.lastActivityLabel } : {}),
       expected_next: expectedNext,
     });
     if (activeTurn) {
       activeTurn.seedyPresence = presence;
+      this.scheduleWaitingHeartbeat(activeTurn);
     }
     await this.deliverEvent({
       type: "presence_update",
@@ -434,6 +451,7 @@ export class ChatRunnerEventBridge {
   private async deliverEvent(event: ChatEvent): Promise<void> {
     const safeEvent = redactChatEvent(event);
     this.rememberActiveTurnEvent(safeEvent);
+    await this.touchActiveSeedyPresenceForEvent(safeEvent);
     this.enqueueRecordedEvent(safeEvent);
     try {
       await this.onEventGetter()?.(safeEvent);
@@ -724,6 +742,71 @@ export class ChatRunnerEventBridge {
     activeTurn.recentEvents = [...activeTurn.recentEvents, summary].slice(-12);
   }
 
+  private async touchActiveSeedyPresenceForEvent(event: ChatEvent): Promise<void> {
+    const activeTurn = this.activeTurn;
+    if (!activeTurn || activeTurn.context.turnId !== event.turnId || event.type === "presence_update") return;
+    if (!activeTurn.seedyPresence || isTerminalEvent(event)) return;
+    const lastActivityLabel = lastActivityLabelForEvent(event);
+    if (lastActivityLabel === null) return;
+    const now = new Date().toISOString();
+    const resumedPresence = resumedPresenceForEvent(event, lastActivityLabel);
+    if (activeTurn.seedyPresence.phase === "waiting" && resumedPresence) {
+      await this.emitSeedyPresenceAndFlush(resumedPresence.phase, activeTurn.context, {
+        ...resumedPresence,
+        lastActivityAt: now,
+        lastActivityLabel,
+      });
+      return;
+    }
+    activeTurn.seedyPresence = {
+      ...activeTurn.seedyPresence,
+      updated_at: now,
+      last_activity_at: now,
+      ...(lastActivityLabel ? { last_activity_label: lastActivityLabel } : {}),
+    };
+    this.scheduleWaitingHeartbeat(activeTurn);
+  }
+
+  private scheduleWaitingHeartbeat(activeTurn: ActiveChatTurn): void {
+    this.clearWaitingHeartbeatTimer();
+    const presence = activeTurn.seedyPresence;
+    if (!presence || shouldSuppressWaitingHeartbeat(presence)) return;
+    const lastActivityAt = Date.parse(presence.last_activity_at ?? presence.updated_at);
+    if (!Number.isFinite(lastActivityAt)) return;
+    const delayMs = Math.max(0, WAITING_HEARTBEAT_STALE_MS - (Date.now() - lastActivityAt));
+    this.waitingHeartbeatTimer = setTimeout(() => {
+      this.waitingHeartbeatTimer = null;
+      this.emitWaitingHeartbeatIfStale(activeTurn);
+    }, delayMs);
+    this.waitingHeartbeatTimer.unref?.();
+  }
+
+  private emitWaitingHeartbeatIfStale(activeTurn: ActiveChatTurn): void {
+    if (this.activeTurn !== activeTurn) return;
+    const presence = activeTurn.seedyPresence;
+    if (!presence || shouldSuppressWaitingHeartbeat(presence)) return;
+    const lastActivityAt = presence.last_activity_at ?? presence.updated_at;
+    const lastActivityMs = Date.parse(lastActivityAt);
+    if (!Number.isFinite(lastActivityMs)) return;
+    if (Date.now() - lastActivityMs < WAITING_HEARTBEAT_STALE_MS) {
+      return;
+    }
+    void this.emitSeedyPresenceAndFlush("waiting", activeTurn.context, {
+      importance: "status",
+      subject: presence.subject ?? "Still working",
+      reason: "No new visible activity has arrived recently, but the turn is still active.",
+      lastActivityAt,
+      lastActivityLabel: presence.last_activity_label ?? presence.subject,
+      expectedNext: presence.expected_next ?? "progress",
+    });
+  }
+
+  private clearWaitingHeartbeatTimer(): void {
+    if (this.waitingHeartbeatTimer === null) return;
+    clearTimeout(this.waitingHeartbeatTimer);
+    this.waitingHeartbeatTimer = null;
+  }
+
   private parseAgentLoopPreview(preview: string): Record<string, unknown> {
     try {
       const parsed = JSON.parse(preview) as unknown;
@@ -739,6 +822,141 @@ export class ChatRunnerEventBridge {
 
 function redactChatEvent(event: ChatEvent): ChatEvent {
   return redactSetupSecretsDeep(event);
+}
+
+function isTerminalEvent(event: ChatEvent): boolean {
+  return event.type === "assistant_final" || event.type === "lifecycle_end" || event.type === "lifecycle_error";
+}
+
+function shouldSuppressWaitingHeartbeat(presence: NonNullable<ActiveChatTurn["seedyPresence"]>): boolean {
+  return presence.phase === "waiting"
+    || presence.phase === "blocked"
+    || presence.phase === "complete"
+    || presence.importance === "blocked"
+    || presence.importance === "action_required"
+    || presence.expected_next === "approval";
+}
+
+function lastActivityLabelForEvent(event: ChatEvent): string | null {
+  switch (event.type) {
+    case "operation_progress": {
+      const publicProgress = event.item.publicProgress;
+      if (!publicProgress || publicProgress.audience !== "user" || publicProgress.verbosity === "silent") return null;
+      return publicProgress.lastActivityLabel ?? publicProgress.subject;
+    }
+    case "activity":
+      if (event.presentation?.gatewayNarration?.audience === "user") {
+        return event.presentation.gatewayNarration.lastActivityLabel
+          ?? event.presentation.gatewayNarration.subject;
+      }
+      if (event.presentation?.gatewayProgress === "user") return `${event.kind} update`;
+      return null;
+    case "tool_start":
+      return event.activityCategory ? `${event.activityCategory} started` : "tool activity started";
+    case "tool_update":
+      return event.status === "awaiting_approval"
+        ? "approval requested"
+        : event.activityCategory
+          ? `${event.activityCategory} activity`
+          : "tool activity";
+    case "tool_end":
+      return event.activityCategory ? `${event.activityCategory} finished` : "tool activity finished";
+    case "agent_timeline":
+      if (event.item.kind === "tool") return "tool activity";
+      if (event.item.kind === "approval") return "approval activity";
+      return null;
+    case "assistant_delta":
+      return "drafting the response";
+    case "lifecycle_start":
+    case "turn_steer":
+    case "assistant_final":
+    case "presence_update":
+    case "lifecycle_end":
+    case "lifecycle_error":
+      return null;
+  }
+}
+
+function resumedPresenceForEvent(
+  event: ChatEvent,
+  lastActivityLabel: string,
+): {
+  phase: SeedyTurnPresencePhase;
+  importance?: SeedyPresenceImportance;
+  subject?: string;
+  reason?: string;
+  expectedNext?: SeedyPresenceExpectedNext;
+} | null {
+  switch (event.type) {
+    case "assistant_delta":
+      return {
+        phase: "finalizing",
+        subject: "Drafting response",
+        reason: "Visible response text resumed after a quiet period.",
+        expectedNext: "final",
+      };
+    case "tool_update":
+      if (event.status === "awaiting_approval") {
+        return {
+          phase: "waiting",
+          importance: "action_required",
+          subject: "Waiting for approval",
+          reason: "A tool request needs approval before the turn can continue.",
+          expectedNext: "approval",
+        };
+      }
+      return resumedActingPresence(lastActivityLabel);
+    case "operation_progress": {
+      const publicProgress = event.item.publicProgress;
+      if (publicProgress?.audience === "user" && publicProgress.verbosity !== "silent") {
+        if (publicProgress.importance === "blocked" || publicProgress.phase === "blocked") {
+          return {
+            phase: "blocked",
+            importance: "blocked",
+            subject: publicProgress.subject,
+            reason: publicProgress.reason ?? "The active turn is blocked.",
+            expectedNext: "user_input",
+          };
+        }
+        if (publicProgress.importance === "action_required") {
+          return {
+            phase: "waiting",
+            importance: "action_required",
+            subject: publicProgress.subject,
+            reason: publicProgress.reason ?? "The active turn needs input before it can continue.",
+            expectedNext: "approval",
+          };
+        }
+      }
+      return resumedActingPresence(lastActivityLabel);
+    }
+    case "activity":
+    case "tool_start":
+    case "tool_end":
+    case "agent_timeline":
+      return resumedActingPresence(lastActivityLabel);
+    case "lifecycle_start":
+    case "turn_steer":
+    case "assistant_final":
+    case "presence_update":
+    case "lifecycle_end":
+    case "lifecycle_error":
+      return null;
+  }
+}
+
+function resumedActingPresence(lastActivityLabel: string): {
+  phase: "acting";
+  subject: string;
+  reason: string;
+  expectedNext: "progress";
+} {
+  return {
+    phase: "acting",
+    subject: lastActivityLabel,
+    reason: "Visible activity resumed after a quiet period.",
+    expectedNext: "progress",
+  };
 }
 
 function defaultExpectedNextForPresencePhase(phase: SeedyTurnPresencePhase): SeedyPresenceExpectedNext {

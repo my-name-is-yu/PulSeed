@@ -83,6 +83,11 @@ import {
 import { classifyFreeformRouteIntent } from "./freeform-route-classifier.js";
 import { deriveRunSpecFromText } from "../../runtime/run-spec/index.js";
 import { createTextUserInput, normalizeUserInput, replaceUserInputText, type UserInput } from "./user-input.js";
+import {
+  createSeedyActiveTurnStatus,
+  formatSeedyActiveTurnStatus,
+  type SeedyActiveTurnStatus,
+} from "./seedy-turn-presence.js";
 import { createTurnStartOperation, createTurnSteerOperation } from "./turn-protocol.js";
 import {
   buildChatTurnContext,
@@ -368,6 +373,14 @@ export class ChatRunner {
 
   getActiveSeedyPresence() {
     return this.eventBridge.getActiveSeedyPresence();
+  }
+
+  getActiveSeedyTurnStatus(options: { now?: Date | string | number } = {}): SeedyActiveTurnStatus {
+    return createSeedyActiveTurnStatus(this.getActiveSeedyPresence(), options);
+  }
+
+  formatActiveSeedyTurnStatus(options: { now?: Date | string | number } = {}): string {
+    return formatSeedyActiveTurnStatus(this.getActiveSeedyTurnStatus(options));
   }
 
   async interruptAndRedirect(

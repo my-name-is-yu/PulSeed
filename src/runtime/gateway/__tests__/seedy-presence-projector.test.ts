@@ -279,6 +279,34 @@ describe("SeedyPresenceProjector", () => {
     expect(projector.hasSentFallbackAck).toBe(true);
   });
 
+  it("does not spam fallback acknowledgements for repeated waiting heartbeats on send-only channels", async () => {
+    const transport = createTransport();
+    const projector = new SeedyPresenceProjector({
+      presence: resolveGatewayChannelPresenceContract(SIGNAL_SEEDY_PRESENCE_CONTRACT),
+      transport,
+    });
+
+    await projector.update(presence("received"));
+    await vi.advanceTimersByTimeAsync(4_000);
+    await projector.update(presence("waiting", {
+      importance: "status",
+      last_activity_at: "2026-05-10T00:00:00.000Z",
+      last_activity_label: "Taking action",
+      expected_next: "progress",
+    }));
+    await vi.advanceTimersByTimeAsync(60_000);
+    await projector.update(presence("waiting", {
+      importance: "status",
+      last_activity_at: "2026-05-10T00:00:00.000Z",
+      last_activity_label: "Taking action",
+      expected_next: "progress",
+    }));
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(transport.sendFallbackAck).toHaveBeenCalledOnce();
+    expect(transport.calls).toEqual(["sendFallbackAck:I'm checking this."]);
+  });
+
   it("projects editable status through one message and deletes it on completion", async () => {
     const transport = createTransport();
     const projector = new SeedyPresenceProjector({
