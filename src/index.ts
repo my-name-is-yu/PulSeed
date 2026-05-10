@@ -122,7 +122,7 @@ export type {
   CrossPlatformChatSessionOptions,
   CrossPlatformChatSessionInfo,
   CrossPlatformIncomingChatMessage,
-} from "./interface/chat/cross-platform-session.js";
+} from "./interface/chat/cross-platform-session-types.js";
 export {
   buildStandaloneIngressMessage,
   createIngressRouter,
