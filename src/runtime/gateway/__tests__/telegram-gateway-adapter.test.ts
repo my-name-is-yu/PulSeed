@@ -259,7 +259,7 @@ describe("TelegramGatewayAdapter", () => {
     await adapter.start();
 
     await vi.waitFor(() => {
-      expect(sentMessages.some((message) => message.includes("Read Telegram config: Config file does not exist yet."))).toBe(true);
+      expect(sentMessages.some((message) => message.includes("Checking telegram setup so I can verify the current configuration."))).toBe(true);
       expect(sentMessages).toContain("Final setup guidance.");
     });
     expect(sentMessages.filter((message) => message === "Final setup guidance.")).toHaveLength(1);
@@ -444,13 +444,17 @@ describe("TelegramGatewayAdapter", () => {
 
     await vi.waitFor(() => {
       const renderedProgress = sentMessages.join("\n");
-      expect(renderedProgress).toContain(`Started shell_command: ${JSON.stringify({ command: "rg Timeline src/interface/chat" })}`);
-      expect(renderedProgress).toContain("Finished shell_command: src/interface/chat/chat-events.ts");
-      expect(renderedProgress).toContain("Approval requested for shell_command: run a write command");
-      expect(renderedProgress).toContain("Observed shell_command (denied): TOOL NOT EXECUTED (approval_denied): Operator denied release execution.");
-      expect(renderedProgress).toContain("ran 1 command, requested 1 approval");
+      expect(renderedProgress).toContain("Running the tool-backed step so I can gather the result needed for the next step.");
+      expect(renderedProgress).toContain("Finalizing the tool-backed step so I can gather the result needed for the next step.");
+      expect(renderedProgress).toContain("Approval is needed for a tool action: run a write command.");
+      expect(renderedProgress).toContain("Blocked on the requested tool action: Operator denied release execution.");
+      expect(renderedProgress).toContain("Finalizing completed tool activity so I can keep the final response grounded in verified work.");
     });
+    expect(sentMessages.join("\n")).not.toContain("Approval is needed for the requested tool action");
     expect(sentMessages.some((message) => message.includes("[tool]"))).toBe(false);
+    expect(sentMessages.join("\n")).not.toContain("rg Timeline src/interface/chat");
+    expect(sentMessages.join("\n")).not.toContain("src/interface/chat/chat-events.ts");
+    expect(sentMessages.join("\n")).not.toContain("TOOL NOT EXECUTED");
     expect(sentMessages.join("\n")).not.toContain("I understand the request");
     expect(sentMessages.join("\n")).not.toContain("Calling model");
     expect(sentMessages.join("\n")).not.toContain("Working turn started");

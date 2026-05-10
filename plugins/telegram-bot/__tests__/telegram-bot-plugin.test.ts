@@ -835,7 +835,8 @@ describe("TelegramChatEventAdapter", () => {
 
     expect(sendPlainMessage).toHaveBeenCalledTimes(1);
     expect(editMessageText).toHaveBeenCalledTimes(1);
-    expect(editMessageText.mock.calls[0]![2]).toContain("done");
+    expect(editMessageText.mock.calls[0]![2]).toContain("Finalizing the tool-backed step so I can gather the result needed for the next step.");
+    expect(editMessageText.mock.calls[0]![2]).not.toContain("done");
   });
 
   it("renders plugin activity without leaking lifecycle progress", async () => {
@@ -864,10 +865,11 @@ describe("TelegramChatEventAdapter", () => {
       kind: "plugin",
       message: "Plugin completed",
       sourceId: "plugin-1",
+      presentation: { gatewayProgress: "user" },
     });
 
     expect(sendPlainMessage).toHaveBeenCalledOnce();
-    expect(sendPlainMessage).toHaveBeenCalledWith(777, "- Plugin completed");
+    expect(sendPlainMessage).toHaveBeenCalledWith(777, "Plugin completed");
     expect(editMessageText).not.toHaveBeenCalled();
   });
 

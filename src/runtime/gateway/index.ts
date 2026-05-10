@@ -29,7 +29,20 @@ export {
   WHATSAPP_GATEWAY_DISPLAY_CONTRACT,
 } from "./channel-display-policy.js";
 export { NonTuiDisplayProjector, createNonTuiDisplayProjector } from "./non-tui-display-projector.js";
-export { renderGatewayExpressionDecision } from "./chat-event-rendering.js";
+export {
+  renderGatewayActivityEvent,
+  renderGatewayAgentTimelineItem,
+  renderGatewayExpressionDecision,
+  renderGatewayOperationProgress,
+  renderGatewayToolProgressEvent,
+} from "./chat-event-rendering.js";
+export {
+  publicProgressFromActivityEvent,
+  publicProgressFromAgentTimelineItem,
+  publicProgressFromOperationProgress,
+  publicProgressFromToolEvent,
+  renderGatewayPublicProgress,
+} from "./gateway-progress-narration.js";
 export type {
   NonTuiDisplayMessageRef,
   NonTuiDisplayProjectorOptions,

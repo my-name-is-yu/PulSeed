@@ -135,13 +135,44 @@ describe("dispatchGatewayChatInput display contract", () => {
 
   it("renders denied typed tool observations as gateway display text", () => {
     const result = renderGatewayAgentTimelineItem({
+      id: "agent-timeline:observation-1",
+      sourceEventId: "observation-1",
+      sourceType: "tool_observation",
+      sessionId: "session-1",
+      traceId: "trace-1",
+      turnId: "turn-1",
+      goalId: "goal-1",
+      createdAt: "2026-05-10T00:00:00.000Z",
+      visibility: "user",
       kind: "tool_observation",
+      callId: "call-1",
       toolName: "apply_patch",
       state: "denied",
+      success: false,
       outputPreview: "TOOL NOT EXECUTED (approval_denied): write access was denied.",
+      durationMs: 1,
+      observation: {
+        type: "tool_observation",
+        callId: "call-1",
+        toolName: "apply_patch",
+        arguments: {},
+        state: "denied",
+        success: false,
+        execution: {
+          status: "not_executed",
+          reason: "approval_denied",
+          message: "write access was denied.",
+        },
+        durationMs: 1,
+        output: {
+          content: "TOOL NOT EXECUTED (approval_denied): write access was denied.",
+        },
+      },
     });
 
-    expect(result).toBe("Observed apply_patch (denied): TOOL NOT EXECUTED (approval_denied): write access was denied.");
+    expect(result).toBe("Blocked on the requested tool action: write access was denied.");
+    expect(result).not.toContain("Approval is needed");
     expect(result).not.toContain("\"observation\"");
+    expect(result).not.toContain("TOOL NOT EXECUTED");
   });
 });

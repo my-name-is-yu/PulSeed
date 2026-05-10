@@ -434,7 +434,14 @@ describe("SlackChannelAdapter — chat dispatch", () => {
     }));
     vi.stubGlobal("fetch", fetchMock);
     vi.mocked(dispatchGatewayChatInput).mockImplementationOnce(async (input) => {
-      await input.onEvent?.({ ...eventBase, type: "activity", kind: "tool", message: "Running lookup" });
+      await input.onEvent?.({
+        ...eventBase,
+        type: "tool_start",
+        toolCallId: "tool-1",
+        toolName: "search",
+        args: {},
+        activityCategory: "search",
+      });
       await input.onEvent?.({ ...eventBase, type: "assistant_delta", delta: "Hel", text: "Hel" });
       await input.onEvent?.({ ...eventBase, type: "assistant_final", text: "Hello", persisted: true });
       await input.onEvent?.({ ...eventBase, type: "lifecycle_end", status: "completed", elapsedMs: 10, persisted: true });
@@ -461,7 +468,7 @@ describe("SlackChannelAdapter — chat dispatch", () => {
     expect(calls).toEqual(expect.arrayContaining([
       expect.objectContaining({
         url: "https://slack.com/api/chat.postMessage",
-        body: expect.objectContaining({ text: "- Running lookup", thread_ts: "123.456" }),
+        body: expect.objectContaining({ text: "Checking the workspace search so I can find the relevant evidence before answering.", thread_ts: "123.456" }),
       }),
       expect.objectContaining({
         url: "https://slack.com/api/chat.postMessage",
@@ -476,6 +483,43 @@ describe("SlackChannelAdapter — chat dispatch", () => {
         body: expect.objectContaining({ ts: "1001" }),
       }),
     ]));
+  });
+
+  it("renders denied tool observations as blocked Slack progress", async () => {
+    let nextTs = 1000;
+    const fetchMock = vi.fn().mockImplementation(async () => ({
+      ok: true,
+      json: async () => ({ ok: true, ts: String(++nextTs) }),
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    vi.mocked(dispatchGatewayChatInput).mockImplementationOnce(async (input) => {
+      await input.onEvent?.(deniedToolObservationEvent());
+      await input.onEvent?.({ ...eventBase, type: "assistant_final", text: "Done", persisted: true });
+      return "Done";
+    });
+    const adapter = makeAdapter({ botToken: "xoxb-test-token" });
+    const body = JSON.stringify({
+      type: "event_callback",
+      team_id: "T1",
+      event_id: "E1",
+      event: { type: "message", text: "run release", channel: "C_HELP", user: "U_HELP", ts: "123.456" },
+    });
+
+    adapter.handleRequest(body, buildHeaders(body));
+
+    await vi.waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "https://slack.com/api/chat.postMessage",
+        expect.objectContaining({
+          body: expect.stringContaining("Blocked on the requested tool action: Operator denied release execution."),
+        })
+      );
+    });
+    const renderedText = fetchMock.mock.calls
+      .map(([, init]) => JSON.parse(String((init as RequestInit).body ?? "{}")) as { text?: string })
+      .map((body) => body.text ?? "")
+      .join("\n");
+    expect(renderedText).not.toContain("Approval is needed for the requested tool action");
   });
 
   it("keeps signing-secret-only Slack text events on the envelope path", () => {
@@ -524,6 +568,48 @@ describe("SlackChannelAdapter — chat dispatch", () => {
     expect(handler).toHaveBeenCalledOnce();
   });
 });
+
+function deniedToolObservationEvent() {
+  return {
+    ...eventBase,
+    type: "agent_timeline" as const,
+    item: {
+      id: "agent-timeline:observation-denied-1",
+      sourceEventId: "observation-denied-1",
+      sourceType: "tool_observation" as const,
+      sessionId: "session-1",
+      traceId: "trace-1",
+      turnId: "agent-turn-1",
+      goalId: "goal-1",
+      createdAt: eventBase.createdAt,
+      visibility: "user" as const,
+      kind: "tool_observation" as const,
+      callId: "call-2",
+      toolName: "shell_command",
+      state: "denied" as const,
+      success: false,
+      outputPreview: "TOOL NOT EXECUTED (approval_denied): Operator denied release execution.",
+      durationMs: 3,
+      observation: {
+        type: "tool_observation" as const,
+        callId: "call-2",
+        toolName: "shell_command",
+        arguments: { command: "npm run release" },
+        state: "denied" as const,
+        success: false,
+        execution: {
+          status: "not_executed" as const,
+          reason: "approval_denied" as const,
+          message: "Operator denied release execution.",
+        },
+        durationMs: 3,
+        output: {
+          content: "TOOL NOT EXECUTED (approval_denied): Operator denied release execution.",
+        },
+      },
+    },
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Channel-to-goal mapping

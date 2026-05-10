@@ -1,4 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("pulseed", async () => {
+  const gateway = await import("../../../src/runtime/gateway/index.js");
+  return {
+    DISCORD_GATEWAY_DISPLAY_CONTRACT: gateway.DISCORD_GATEWAY_DISPLAY_CONTRACT,
+    NonTuiDisplayProjector: gateway.NonTuiDisplayProjector,
+    createGatewayDisplayPolicy: gateway.createGatewayDisplayPolicy,
+  };
+});
+
 import { DiscordWebhookServer } from "../src/webhook-server.js";
 import type { DiscordBotConfig } from "../src/config.js";
 import type { DiscordAPI } from "../src/discord-api.js";
@@ -83,11 +93,32 @@ describe("DiscordWebhookServer", () => {
     });
   });
 
-  it("sends only tool activity as Discord follow-up progress", async () => {
+  it("sends typed public progress as Discord follow-up progress without raw activity text", async () => {
     const fetchChatReply = vi.fn().mockImplementation(async (input) => {
       await input.onEvent?.({ type: "activity", kind: "lifecycle", message: "Received. Starting work..." });
       await input.onEvent?.({ type: "activity", kind: "commentary", message: "Thinking about it" });
-      await input.onEvent?.({ type: "activity", kind: "tool", message: "Running tool: grep - ChatEvent" });
+      await input.onEvent?.({
+        type: "tool_start",
+        runId: "run-1",
+        turnId: "turn-1",
+        createdAt: "2026-05-10T00:00:00.000Z",
+        toolCallId: "tool-1",
+        toolName: "shell",
+        args: { command: "grep - ChatEvent" },
+        activityCategory: "search",
+      });
+      await input.onEvent?.({
+        type: "tool_end",
+        runId: "run-1",
+        turnId: "turn-1",
+        createdAt: "2026-05-10T00:00:01.000Z",
+        toolCallId: "tool-1",
+        toolName: "shell",
+        success: true,
+        summary: "raw command output",
+        durationMs: 10,
+        activityCategory: "search",
+      });
       return "final reply";
     });
     const server = new DiscordWebhookServer(config, api as DiscordAPI, fetchChatReply);
@@ -114,8 +145,77 @@ describe("DiscordWebhookServer", () => {
       1,
       "app-1",
       "token-3",
-      "Running tool: grep - ChatEvent"
+      "Checking the workspace search so I can find the relevant evidence before answering."
+    );
+    expect(api.sendInteractionFollowUp).not.toHaveBeenCalledWith(
+      "app-1",
+      "token-3",
+      expect.stringContaining("grep - ChatEvent")
+    );
+    expect(api.sendInteractionFollowUp).not.toHaveBeenCalledWith(
+      "app-1",
+      "token-3",
+      expect.stringContaining("raw command output")
     );
     expect(api.sendInteractionFollowUp).toHaveBeenNthCalledWith(2, "app-1", "token-3", "final reply");
+  });
+
+  it("still sends approval-required progress after the first single-status heartbeat", async () => {
+    const fetchChatReply = vi.fn().mockImplementation(async (input) => {
+      await input.onEvent?.({
+        type: "tool_start",
+        runId: "run-1",
+        turnId: "turn-1",
+        createdAt: "2026-05-10T00:00:00.000Z",
+        toolCallId: "tool-1",
+        toolName: "shell",
+        args: { command: "grep - ChatEvent" },
+        activityCategory: "search",
+      });
+      await input.onEvent?.({
+        type: "tool_update",
+        runId: "run-1",
+        turnId: "turn-1",
+        createdAt: "2026-05-10T00:00:01.000Z",
+        toolCallId: "tool-2",
+        toolName: "shell",
+        status: "awaiting_approval",
+        message: "run a write command",
+      });
+      return "final reply";
+    });
+    const server = new DiscordWebhookServer(config, api as DiscordAPI, fetchChatReply);
+    const { res, done } = createMockServerResponse();
+
+    await server.handleRequest(
+      createJsonPostRequest({
+        id: "interaction-4",
+        type: 2,
+        token: "token-4",
+        application_id: "app-1",
+        channel_id: "channel-1",
+        member: { user: { id: "user-2" } },
+        data: { name: "pulseed", options: [{ name: "message", value: "check events" }] },
+      }),
+      res
+    );
+    await done;
+
+    await vi.waitFor(() => {
+      expect(api.sendInteractionFollowUp).toHaveBeenCalledTimes(3);
+    });
+    expect(api.sendInteractionFollowUp).toHaveBeenNthCalledWith(
+      1,
+      "app-1",
+      "token-4",
+      "Checking the workspace search so I can find the relevant evidence before answering."
+    );
+    expect(api.sendInteractionFollowUp).toHaveBeenNthCalledWith(
+      2,
+      "app-1",
+      "token-4",
+      "Approval is needed for a tool action: run a write command."
+    );
+    expect(api.sendInteractionFollowUp).toHaveBeenNthCalledWith(3, "app-1", "token-4", "final reply");
   });
 });

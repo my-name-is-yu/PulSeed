@@ -1,5 +1,6 @@
 import type { AgentTimelineActivitySummaryItem } from "../../orchestrator/execution/agent-loop/agent-timeline.js";
 import { redactSetupSecretsDeep } from "./setup-secret-intake.js";
+import type { GatewayPublicProgress } from "./gateway-progress.js";
 import type { TurnLanguageHint } from "./turn-language.js";
 
 export type OperationProgressKind =
@@ -22,6 +23,7 @@ export interface OperationProgressItem {
   createdAt: string;
   languageHint?: TurnLanguageHint;
   metadata?: Record<string, unknown>;
+  publicProgress?: GatewayPublicProgress;
 }
 
 export function createOperationProgressItem(input: OperationProgressItem): OperationProgressItem {
@@ -30,6 +32,7 @@ export function createOperationProgressItem(input: OperationProgressItem): Opera
     title: redactSetupSecretsDeep(input.title) as string,
     ...(input.detail ? { detail: redactSetupSecretsDeep(input.detail) as string } : {}),
     ...(input.metadata ? { metadata: redactSetupSecretsDeep(input.metadata) as Record<string, unknown> } : {}),
+    ...(input.publicProgress ? { publicProgress: redactSetupSecretsDeep(input.publicProgress) as GatewayPublicProgress } : {}),
   };
 }
 
