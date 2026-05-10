@@ -9,6 +9,7 @@ import { buildChannelPolicyMetadata, buildExternalSurfaceDecision, evaluateChann
 import { createUnsupportedTypingIndicator, withTypingIndicator } from "./typing-indicator.js";
 import { WHATSAPP_GATEWAY_DISPLAY_CONTRACT } from "./channel-display-policy.js";
 import { NonTuiDisplayProjector, type NonTuiDisplayMessageRef, type NonTuiDisplayTransport } from "./non-tui-display-projector.js";
+import { isPayloadTooLargeError, readBody } from "../http-body.js";
 import type { INotifier, NotificationEvent, NotificationEventType } from "../../base/types/plugin.js";
 import type { ChatEvent } from "../../interface/chat/chat-events.js";
 
@@ -126,8 +127,14 @@ export class WhatsAppGatewayAdapter implements ChannelAdapter {
       return;
     }
 
-    const body = await this.readBody(req);
-    if (body === null) {
+    let body: string;
+    try {
+      body = await readBody(req);
+    } catch (error) {
+      if (isPayloadTooLargeError(error)) {
+        this.respondJson(res, 413, { error: "payload_too_large" });
+        return;
+      }
       this.respondJson(res, 400, { error: "invalid_body" });
       return;
     }
@@ -293,14 +300,6 @@ export class WhatsAppGatewayAdapter implements ChannelAdapter {
     const actual = header.slice("sha256=".length);
     if (expected.length !== actual.length) return false;
     return crypto.timingSafeEqual(Buffer.from(expected, "hex"), Buffer.from(actual, "hex"));
-  }
-
-  private async readBody(req: http.IncomingMessage): Promise<string | null> {
-    const chunks: Buffer[] = [];
-    for await (const chunk of req) {
-      chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
-    }
-    return Buffer.concat(chunks).toString("utf-8");
   }
 
   private respondJson(res: http.ServerResponse, statusCode: number, payload: unknown): void {
