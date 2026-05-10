@@ -151,8 +151,8 @@ export class ChatAgentLoopRunner {
                   buildAgentLoopBaseInstructions({
                     mode: "chat",
                     extraRules: [
-                      "Use tools to answer the user and operate CoreLoop only through tools.",
-                      "Do not call CoreLoop internals directly.",
+                      "Use tools to answer the user and operate DurableLoop only through tools.",
+                      "Do not call DurableLoop internals directly.",
                       ...(outputMode.kind === "structured" ? [buildChatStructuredOutputInstructions()] : []),
                     ],
                     role: input.role,
