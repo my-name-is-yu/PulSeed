@@ -12,6 +12,7 @@ const WAIT_RESUME_PAYLOAD_CLASS = "schedule_wait_resume_attention_projection";
 export interface ScheduleOperationPlanAssemblyInput {
   entry: ScheduleEntry;
   firedAt: string;
+  scheduledFor?: string | null;
   projection?: ScheduleInternalAttentionProjection;
 }
 
@@ -51,7 +52,7 @@ export function assembleScheduleOperationPlans(
   if (!input.projection) {
     return failClosed(input, source, "Wait-resume schedule entry did not produce a structured attention projection.");
   }
-  const expectedSignalContextId = `signal:schedule-wake:${input.entry.id}:${input.firedAt}`;
+  const expectedSignalContextId = `signal:schedule-wake:${input.entry.id}:${input.scheduledFor ?? input.firedAt}`;
   if (input.projection.signal_context_id !== expectedSignalContextId) {
     return failClosed(input, source, "Wait-resume attention projection does not match the schedule tick context.");
   }
