@@ -438,13 +438,13 @@ describe("KnowledgeTransfer — storePattern / retrievePatterns", () => {
     fs.rmSync(tmpDir, { recursive: true, force: true , maxRetries: 3, retryDelay: 100 });
   });
 
-  it("should roundtrip: stored pattern is returned by retrievePatterns", () => {
+  it("should roundtrip: stored pattern is returned by retrievePatterns", async () => {
     const pattern = makeCrossGoalPattern({
       feedbackType: "scope_sizing",
       patternType: "success",
     });
 
-    knowledgeTransfer.storePattern(pattern);
+    await knowledgeTransfer.storePattern(pattern);
     const retrieved = knowledgeTransfer.retrievePatterns();
 
     expect(retrieved).toHaveLength(1);
@@ -452,27 +452,27 @@ describe("KnowledgeTransfer — storePattern / retrievePatterns", () => {
     expect(retrieved[0]!.feedbackType).toBe("scope_sizing");
   });
 
-  it("should store multiple patterns and retrieve all", () => {
+  it("should store multiple patterns and retrieve all", async () => {
     const p1 = makeCrossGoalPattern({ feedbackType: "scope_sizing" });
     const p2 = makeCrossGoalPattern({ feedbackType: "task_generation" });
     const p3 = makeCrossGoalPattern({ feedbackType: "strategy_selection" });
 
-    knowledgeTransfer.storePattern(p1);
-    knowledgeTransfer.storePattern(p2);
-    knowledgeTransfer.storePattern(p3);
+    await knowledgeTransfer.storePattern(p1);
+    await knowledgeTransfer.storePattern(p2);
+    await knowledgeTransfer.storePattern(p3);
 
     const all = knowledgeTransfer.retrievePatterns();
     expect(all).toHaveLength(3);
   });
 
-  it("should filter by feedbackType", () => {
+  it("should filter by feedbackType", async () => {
     const p1 = makeCrossGoalPattern({ feedbackType: "scope_sizing" });
     const p2 = makeCrossGoalPattern({ feedbackType: "task_generation" });
     const p3 = makeCrossGoalPattern({ feedbackType: "scope_sizing" });
 
-    knowledgeTransfer.storePattern(p1);
-    knowledgeTransfer.storePattern(p2);
-    knowledgeTransfer.storePattern(p3);
+    await knowledgeTransfer.storePattern(p1);
+    await knowledgeTransfer.storePattern(p2);
+    await knowledgeTransfer.storePattern(p3);
 
     const filtered = knowledgeTransfer.retrievePatterns({
       feedbackType: "scope_sizing",
@@ -483,14 +483,14 @@ describe("KnowledgeTransfer — storePattern / retrievePatterns", () => {
     }
   });
 
-  it("should filter by patternType", () => {
+  it("should filter by patternType", async () => {
     const p1 = makeCrossGoalPattern({ patternType: "success" });
     const p2 = makeCrossGoalPattern({ patternType: "failure" });
     const p3 = makeCrossGoalPattern({ patternType: "success" });
 
-    knowledgeTransfer.storePattern(p1);
-    knowledgeTransfer.storePattern(p2);
-    knowledgeTransfer.storePattern(p3);
+    await knowledgeTransfer.storePattern(p1);
+    await knowledgeTransfer.storePattern(p2);
+    await knowledgeTransfer.storePattern(p3);
 
     const successes = knowledgeTransfer.retrievePatterns({
       patternType: "success",
@@ -501,7 +501,7 @@ describe("KnowledgeTransfer — storePattern / retrievePatterns", () => {
     }
   });
 
-  it("should filter by both feedbackType and patternType", () => {
+  it("should filter by both feedbackType and patternType", async () => {
     const p1 = makeCrossGoalPattern({
       feedbackType: "scope_sizing",
       patternType: "success",
@@ -515,9 +515,9 @@ describe("KnowledgeTransfer — storePattern / retrievePatterns", () => {
       patternType: "success",
     });
 
-    knowledgeTransfer.storePattern(p1);
-    knowledgeTransfer.storePattern(p2);
-    knowledgeTransfer.storePattern(p3);
+    await knowledgeTransfer.storePattern(p1);
+    await knowledgeTransfer.storePattern(p2);
+    await knowledgeTransfer.storePattern(p3);
 
     const result = knowledgeTransfer.retrievePatterns({
       feedbackType: "scope_sizing",
@@ -532,9 +532,9 @@ describe("KnowledgeTransfer — storePattern / retrievePatterns", () => {
     expect(result).toHaveLength(0);
   });
 
-  it("should return empty array when filter matches nothing", () => {
+  it("should return empty array when filter matches nothing", async () => {
     const p = makeCrossGoalPattern({ feedbackType: "scope_sizing" });
-    knowledgeTransfer.storePattern(p);
+    await knowledgeTransfer.storePattern(p);
 
     const result = knowledgeTransfer.retrievePatterns({
       feedbackType: "observation_accuracy",
@@ -542,7 +542,7 @@ describe("KnowledgeTransfer — storePattern / retrievePatterns", () => {
     expect(result).toHaveLength(0);
   });
 
-  it("should overwrite a pattern when the same id is stored again", () => {
+  it("should overwrite a pattern when the same id is stored again", async () => {
     const original = makeCrossGoalPattern({
       feedbackType: "scope_sizing",
       confidence: 0.5,
@@ -552,8 +552,8 @@ describe("KnowledgeTransfer — storePattern / retrievePatterns", () => {
       confidence: 0.9,
     });
 
-    knowledgeTransfer.storePattern(original);
-    knowledgeTransfer.storePattern(updated);
+    await knowledgeTransfer.storePattern(original);
+    await knowledgeTransfer.storePattern(updated);
 
     const result = knowledgeTransfer.retrievePatterns();
     expect(result).toHaveLength(1);
