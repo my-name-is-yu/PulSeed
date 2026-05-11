@@ -124,6 +124,8 @@ function buildGatewayModelLoopSystemPrompt(basePrompt: string, languageHint: Tur
     basePrompt,
     "You are Seedy on a gateway chat surface. Match Codex's chat shape: answer ordinary casual messages directly, and choose tools only when current state, setup, run-spec, implementation handoff, or inspection work is actually needed.",
     "Do not invent current workspace, runtime, command, process, repository, file, or local-machine facts. If you need those facts, call an available tool first.",
+    "Default gateway tool contract: when the user explicitly asks to inspect current repository files, workspace state, PulSeed runtime/gateway/daemon/session state, setup state, or implementation status, use the relevant available tool before answering.",
+    "Do not answer tool-available inspection requests by telling the user to run local commands or manual checks themselves. If the relevant tool is unavailable, denied, or insufficient, say that plainly and keep the answer bounded to what was actually checked.",
     "When using tools, write brief model-authored commentary only when it helps the user understand the real next step. Do not describe route selection, lifecycle phases, or internal PulSeed planning labels.",
     "Keep PulSeed runtime-control actions behind the provided authorization and approval tools. Do not suggest shell commands as a workaround for unauthorized runtime control.",
     sameLanguageResponseInstruction(languageHint),
@@ -171,12 +173,8 @@ export class ChatRunner {
   private pendingResumeChoices: RecoveryResumeCandidate[] | null = null;
   private eventJournalHistory: ChatHistory | null = null;
   private eventJournalDirty = false;
-  private readonly hasExplicitGatewayCommentaryClient: boolean;
-  private gatewayCommentaryClient: Pick<NonNullable<ChatRunnerDeps["llmClient"]>, "sendMessage" | "parseJSON"> | undefined;
 
   constructor(private readonly deps: ChatRunnerDeps) {
-    this.hasExplicitGatewayCommentaryClient = deps.gatewayCommentaryClient !== undefined;
-    this.gatewayCommentaryClient = deps.gatewayCommentaryClient ?? deps.defaultGatewayCommentaryClient;
     this.groundingGateway = createChatGroundingGateway({
       stateManager: deps.stateManager,
       pluginLoader: deps.pluginLoader,
@@ -707,7 +705,12 @@ export class ChatRunner {
 
     const selectedRoute = resumeOnly
       ? null
-      : (resolvedRoute ?? await this.resolveRouteFromInput(safeInput, runtimeControlContext, resolvedCwd));
+      : (resolvedRoute ?? await this.resolveRouteFromInput(
+          safeInput,
+          runtimeControlContext,
+          resolvedCwd,
+          options.runtimeControlContext?.explicit === true,
+        ));
     this.lastSelectedRoute = selectedRoute;
     const usesGatewayModelLoop = selectedRoute?.kind === "gateway_model_loop";
     if (usesGatewayModelLoop) {
@@ -720,13 +723,10 @@ export class ChatRunner {
     } else if (selectedRoute) {
       this.eventBridge.emitSeedyPresence("thinking", eventContext, {
         ...(options.presenceIngressId ? { ingressId: options.presenceIngressId } : {}),
-        subject: "Route selected",
-        reason: "PulSeed selected the execution path for this turn.",
+        subject: "Working on the response",
+        reason: "Seedy is preparing the next step.",
         expectedNext: "progress",
       });
-    }
-    if (selectedRoute?.kind !== "configure" && !usesGatewayModelLoop) {
-      this.eventBridge.emitIntent(safeInput, selectedRoute, eventContext);
     }
     if (selectedRoute && !usesGatewayModelLoop) {
       this.eventBridge.emitSeedyPresence("acting", eventContext, {
@@ -742,7 +742,6 @@ export class ChatRunner {
       if (runtimeControlResult.success) {
         await history.appendAssistantMessage(runtimeControlResult.output, { eventContext });
         this.eventBridge.emitCheckpoint("Runtime control completed", "The runtime-control operation produced a result.", eventContext, "complete");
-        this.eventBridge.emitActivity("lifecycle", "Finalizing response...", eventContext, "lifecycle:finalizing");
         this.eventBridge.emitEvent({
           type: "assistant_final",
           text: runtimeControlResult.output,
@@ -1016,10 +1015,8 @@ export class ChatRunner {
       surfaceRuntimePolicy
         ? surfaceRuntimePolicy.approval_mode === "disallowed"
         : ingress.metadata["runtime_control_denied"] === true;
-    const runtimeControlPolicyPresent =
-      runtimeControlApproved || runtimeControlDenied || ingress.metadata["runtime_control_explicit"] === true;
+    const metadataRuntimeControlExplicit = ingress.metadata["runtime_control_explicit"] === true;
     const canUseDefaultGatewayModelLoop = capabilities.hasToolLoop
-      && capabilities.hasToolRegistry
       && (ingress.channel === "plugin_gateway" || ingress.replyTarget.surface === "gateway");
     const shouldPreferFreeformBeforeDeniedRuntimeControl =
       !hasSetupSecret
@@ -1028,19 +1025,16 @@ export class ChatRunner {
       && runtimeControlDenied
       && !runtimeControlApproved
       && ingress.metadata["runtime_control_explicit"] !== true;
-    const shouldClassifyRuntimeControlForSafety =
-      !hasSetupSecret
-      && capabilities.hasAgentLoop
-      && runtimeControlPolicyPresent
-      && (!canUseDefaultGatewayModelLoop || ingress.metadata["runtime_control_explicit"] === true);
     const shouldClassifyRuntimeControl =
-      shouldClassifyRuntimeControlForSafety
-      || (!hasSetupSecret && !capabilities.hasAgentLoop && !canUseDefaultGatewayModelLoop && (
-        (capabilities.hasRuntimeControlService && ingress.runtimeControl.approvalMode !== "disallowed")
-        || runtimeControlApproved
-        || runtimeControlDenied
-        || ingress.metadata["runtime_control_explicit"] === true
-      ));
+      !hasSetupSecret
+      && (
+        metadataRuntimeControlExplicit
+        || (!canUseDefaultGatewayModelLoop && !capabilities.hasAgentLoop && (
+          (capabilities.hasRuntimeControlService && ingress.runtimeControl.approvalMode !== "disallowed")
+          || runtimeControlApproved
+          || runtimeControlDenied
+        ))
+      );
     let freeformRouteIntent = shouldPreferFreeformBeforeDeniedRuntimeControl
       ? await classifyFreeformRouteIntent(ingress.text, this.deps.llmClient)
       : null;
@@ -1085,9 +1079,9 @@ export class ChatRunner {
     return standaloneIngressRouter.selectRoute(ingress, {
       ...capabilities,
       runtimeControlIntent,
-      runtimeControlUnclassified: shouldClassifyRuntimeControlForSafety
+      runtimeControlUnclassified: metadataRuntimeControlExplicit
         && runtimeControlClassification?.status === "unclassified"
-        && ingress.metadata["runtime_control_explicit"] === true,
+        && !hasSetupSecret,
       freeformRouteIntent,
       setupSecretIntake: this.setupSecretIntake,
       runSpecDraft,
@@ -1097,9 +1091,12 @@ export class ChatRunner {
   private async resolveRouteFromInput(
     input: string,
     runtimeControlContext: RuntimeControlChatContext | null,
-    cwd?: string
+    cwd?: string,
+    runtimeControlExplicit = false
   ): Promise<SelectedChatRoute> {
-    const ingress = buildStandaloneIngressMessageFromContext(input, runtimeControlContext, this.deps);
+    const ingress = buildStandaloneIngressMessageFromContext(input, runtimeControlContext, this.deps, {
+      runtimeControlExplicit,
+    });
     return this.resolveRouteFromIngress(cwd ? { ...ingress, cwd } : ingress);
   }
 
@@ -1112,8 +1109,6 @@ export class ChatRunner {
       deps: this.deps,
       eventBridge: this.eventBridge,
       activatedTools: this.activatedTools,
-      getRuntimeEvidenceGateClient: () => this.deps.runtimeEvidenceGateClient ?? this.deps.llmClient,
-      getGatewayCommentaryClient: () => this.gatewayCommentaryClient,
       getConversationSessionId: () => this.history?.getSessionId() ?? null,
       getSessionCwd: () => this.sessionCwd,
       getNativeAgentLoopStatePath: () => this.nativeAgentLoopStatePath,
@@ -1163,10 +1158,6 @@ export class ChatRunner {
     const llmClient = await buildLLMClient(providerConfig);
     const adapterRegistry = await buildAdapterRegistry(llmClient, providerConfig);
     this.deps.llmClient = llmClient;
-    if (!this.hasExplicitGatewayCommentaryClient) {
-      this.deps.defaultGatewayCommentaryClient = llmClient;
-      this.gatewayCommentaryClient = llmClient;
-    }
     this.deps.adapter = adapterRegistry.getAdapter(providerConfig.adapter);
     this.deps.chatAgentLoopRunner = this.deps.registry && this.deps.toolExecutor && shouldUseNativeTaskAgentLoop(providerConfig, llmClient)
       ? createNativeChatAgentLoopRunner({

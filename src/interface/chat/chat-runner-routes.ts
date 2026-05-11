@@ -25,8 +25,6 @@ import {
   type ChatTurnContext,
 } from "./turn-context.js";
 import { buildChatModelRequest } from "./model-request-builder.js";
-import { gateRuntimeEvidenceBoundFinalAnswer } from "./runtime-evidence-gate.js";
-import { generateGatewayCommentaryPreamble } from "./gateway-commentary-preamble.js";
 import {
   createDiscordAdapterPlanDialogue,
   createTelegramConfirmWriteDialogue,
@@ -300,10 +298,6 @@ export async function executeAgentLoopRoute(
         elapsed_ms,
       };
     }
-    host.eventBridge.emitCheckpoint(resumeOnly ? "Session resumed" : "Working turn started", resumeOnly
-      ? "Saved chat state is ready to continue."
-      : "PulSeed can now inspect, plan, edit, or verify with visible tool activity.", eventContext, "execution");
-    await emitGatewayCommentaryPreamble(host, turnContext, eventContext, "agent_loop", activeAbortSignal);
     host.eventBridge.emitActivity("lifecycle", "Calling model...", eventContext, "lifecycle:model");
     const result = await host.deps.chatAgentLoopRunner!.execute({
       message: turnContext.modelVisible.prompts.basePrompt,
@@ -311,7 +305,7 @@ export async function executeAgentLoopRoute(
       goalId: turnContext.hostOnly.execution.goalId,
       history: turnContext.modelVisible.conversation.priorTurns,
       eventSink: host.eventBridge.createAgentLoopEventSink(eventContext, assistantBuffer, {
-        streamFinalCandidate: () => !shouldGateRuntimeEvidenceForTurn(turnContext),
+        streamFinalCandidate: () => true,
       }),
       approvalFn: agentLoopApprovalFn(host, runtimeContext),
       toolCallContext: {
@@ -369,24 +363,6 @@ export async function executeAgentLoopRoute(
     if (hasUsage(agentLoopUsage)) {
       history.recordUsage("agentloop", agentLoopUsage);
     }
-    if (result.output && shouldGateRuntimeEvidenceForTurn(turnContext)) {
-      const gate = await gateRuntimeEvidenceBoundFinalAnswer({
-        turnContext,
-        assistantOutput: result.output,
-        hasRuntimeEvidence: host.eventBridge.hasRuntimeEvidenceForTurn(eventContext),
-        runtimeEvidenceRefs: host.eventBridge.getRuntimeEvidenceRefsForTurn(eventContext),
-        llmClient: host.getRuntimeEvidenceGateClient(),
-      });
-      if (gate.blocked) {
-        host.eventBridge.emitCheckpoint(
-          "Runtime evidence required",
-          gate.reason ?? "The final answer made an unverified runtime status claim.",
-          eventContext,
-          "runtime-evidence",
-        );
-      }
-      result.output = gate.output;
-    }
     if (result.output) {
       host.eventBridge.pushAssistantSnapshot(result.output, assistantBuffer, eventContext);
     }
@@ -396,8 +372,6 @@ export async function executeAgentLoopRoute(
         host.eventBridge.emitDiffArtifact(diffArtifact, eventContext);
       }
       await history.appendAssistantMessage(result.output);
-      host.eventBridge.emitCheckpoint("Response ready", "The agent-loop response has been persisted for this turn.", eventContext, "complete");
-      host.eventBridge.emitActivity("lifecycle", "Finalizing response...", eventContext, "lifecycle:finalizing");
       host.eventBridge.emitEvent({
         type: "assistant_final",
         text: result.output,
@@ -461,8 +435,6 @@ export async function executeToolLoopRoute(
   }
 ): Promise<ChatRunResult> {
   try {
-    host.eventBridge.emitCheckpoint("Tool loop started", "The model will choose tools from the active catalog.", params.eventContext, "execution");
-    await emitGatewayCommentaryPreamble(host, params.turnContext, params.eventContext, "tool_loop", params.activeAbortSignal);
     const toolResult = await executeWithTools(
       host,
       params.turnContext,
@@ -474,7 +446,7 @@ export async function executeToolLoopRoute(
       params.start,
       {
         tools: host.deps.registry?.listAll() ?? [],
-        streamFinalText: !shouldGateRuntimeEvidenceForTurn(params.turnContext),
+        streamFinalText: true,
       },
     );
     const elapsed_ms = Date.now() - params.start;
@@ -485,31 +457,11 @@ export async function executeToolLoopRoute(
     if (diffArtifact) {
       host.eventBridge.emitDiffArtifact(diffArtifact, params.eventContext);
     }
-    let output = toolResult.output;
-    if (shouldGateRuntimeEvidenceForTurn(params.turnContext)) {
-      const gate = await gateRuntimeEvidenceBoundFinalAnswer({
-        turnContext: params.turnContext,
-        assistantOutput: toolResult.output,
-        hasRuntimeEvidence: host.eventBridge.hasRuntimeEvidenceForTurn(params.eventContext),
-        runtimeEvidenceRefs: host.eventBridge.getRuntimeEvidenceRefsForTurn(params.eventContext),
-        llmClient: host.getRuntimeEvidenceGateClient(),
-      });
-      if (gate.blocked) {
-        host.eventBridge.emitCheckpoint(
-          "Runtime evidence required",
-          gate.reason ?? "The final answer made an unverified runtime status claim.",
-          params.eventContext,
-          "runtime-evidence",
-        );
-      }
-      output = gate.output;
-    }
+    const output = toolResult.output;
     if (!params.assistantBuffer.text) {
       host.eventBridge.pushAssistantDelta(output, params.assistantBuffer, params.eventContext);
     }
     await params.history.appendAssistantMessage(output);
-    host.eventBridge.emitCheckpoint("Response ready", "The tool-loop response has been persisted for this turn.", params.eventContext, "complete");
-    host.eventBridge.emitActivity("lifecycle", "Finalizing response...", params.eventContext, "lifecycle:finalizing");
     host.eventBridge.emitEvent({
       type: "assistant_final",
       text: output,
@@ -712,8 +664,6 @@ export async function executeAdapterRoute(
 
   if (result.success) {
     await params.history.appendAssistantMessage(result.output);
-    host.eventBridge.emitCheckpoint("Response ready", "The assistant response has been persisted for this turn.", params.eventContext, "complete");
-    host.eventBridge.emitActivity("lifecycle", "Finalizing response...", params.eventContext, "lifecycle:finalizing");
     host.eventBridge.emitEvent({
       type: "assistant_final",
       text: result.output,
@@ -747,10 +697,6 @@ export async function executeAdapterRoute(
   };
 }
 
-function shouldGateRuntimeEvidenceForTurn(turnContext: ChatTurnContext): boolean {
-  return turnContext.modelVisible.runtime.replyTarget?.surface === "gateway";
-}
-
 const GATEWAY_MODEL_LOOP_TOOL_NAMES = new Set([
   "tool_search",
   "list_dir",
@@ -780,61 +726,6 @@ function selectGatewayModelLoopTools(tools: ITool[]): ITool[] {
     if (tool.metadata.alwaysLoad && tool.metadata.isReadOnly) return true;
     return false;
   });
-}
-
-async function emitGatewayCommentaryPreamble(
-  host: ChatRunnerRouteHost,
-  turnContext: ChatTurnContext,
-  eventContext: ChatEventContext,
-  routeKind: "agent_loop" | "tool_loop",
-  abortSignal?: AbortSignal,
-): Promise<void> {
-  if (abortSignal?.aborted) return;
-  const preamble = await generateGatewayCommentaryPreamble({
-    turnContext,
-    routeKind,
-    llmClient: host.getGatewayCommentaryClient(),
-    abortSignal,
-  });
-  if (abortSignal?.aborted) return;
-  if (!preamble) return;
-  await withTimeout(
-    host.eventBridge.emitGatewayCommentaryAndFlush(
-      preamble,
-      eventContext,
-      `preamble:${routeKind}:${eventContext.turnId}`,
-    ),
-    300,
-    abortSignal,
-  );
-}
-
-async function withTimeout(promise: Promise<void>, timeoutMs: number, abortSignal?: AbortSignal): Promise<void> {
-  let timer: ReturnType<typeof setTimeout> | null = null;
-  let abortListener: (() => void) | null = null;
-  promise.catch(() => undefined);
-  try {
-    await Promise.race([
-      promise,
-      new Promise<void>((resolve) => {
-        timer = setTimeout(resolve, timeoutMs);
-        timer.unref?.();
-      }),
-      ...(abortSignal
-        ? [
-            new Promise<void>((resolve) => {
-              abortListener = () => resolve();
-              abortSignal.addEventListener("abort", abortListener, { once: true });
-            }),
-          ]
-        : []),
-    ]);
-  } finally {
-    if (timer !== null) clearTimeout(timer);
-    if (abortSignal && abortListener !== null) {
-      abortSignal.removeEventListener("abort", abortListener);
-    }
-  }
 }
 
 async function executeWithTools(
@@ -963,7 +854,6 @@ async function persistDirectRouteResult(
     host.eventBridge.pushAssistantDelta(output, assistantBuffer, eventContext);
   }
   await history.appendAssistantMessage(output);
-  host.eventBridge.emitActivity("lifecycle", "Finalizing response...", eventContext, "lifecycle:finalizing");
   host.eventBridge.emitEvent({
     type: "assistant_final",
     text: output,

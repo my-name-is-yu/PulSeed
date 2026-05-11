@@ -29,7 +29,7 @@ export function renderGatewayOperationProgress(item: OperationProgressItem): str
 }
 
 export function renderGatewayActivityEvent(item: ActivityEvent): string | null {
-  if (item.sourceId === "intent:first-step" || item.sourceId?.startsWith("lifecycle:")) return null;
+  if (item.sourceId?.startsWith("lifecycle:")) return null;
   const narrated = renderGatewayPublicProgress(publicProgressFromActivityEvent(item));
   if (narrated) return redactSetupSecrets(narrated);
   switch (item.kind) {

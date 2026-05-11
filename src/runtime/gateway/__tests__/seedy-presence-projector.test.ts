@@ -370,7 +370,10 @@ describe("SeedyPresenceProjector", () => {
       transport,
     });
 
-    await projector.update(presence("received"));
+    await projector.update(presence("waiting", {
+      importance: "status",
+      expected_next: "progress",
+    }));
     await vi.advanceTimersByTimeAsync(3_999);
     await projector.handle({
       ...base,
@@ -383,16 +386,22 @@ describe("SeedyPresenceProjector", () => {
     expect(transport.sendFallbackAck).not.toHaveBeenCalled();
   });
 
-  it("sends fallback ack at most once after the delay threshold", async () => {
+  it("sends fallback ack at most once for actionable waiting presence after the delay threshold", async () => {
     const transport = createTransport();
     const projector = new SeedyPresenceProjector({
       presence: resolveGatewayChannelPresenceContract(SIGNAL_SEEDY_PRESENCE_CONTRACT),
       transport,
     });
 
-    await projector.update(presence("received"));
+    await projector.update(presence("waiting", {
+      importance: "status",
+      expected_next: "progress",
+    }));
     await vi.advanceTimersByTimeAsync(4_000);
-    await projector.update(presence("thinking"));
+    await projector.update(presence("waiting", {
+      importance: "status",
+      expected_next: "progress",
+    }));
     await vi.advanceTimersByTimeAsync(60_000);
 
     expect(transport.sendFallbackAck).toHaveBeenCalledOnce();
@@ -407,8 +416,6 @@ describe("SeedyPresenceProjector", () => {
       transport,
     });
 
-    await projector.update(presence("received"));
-    await vi.advanceTimersByTimeAsync(4_000);
     await projector.update(presence("waiting", {
       importance: "status",
       last_activity_at: "2026-05-10T00:00:00.000Z",
@@ -428,16 +435,49 @@ describe("SeedyPresenceProjector", () => {
     expect(transport.calls).toEqual(["sendFallbackAck:I'm checking this."]);
   });
 
-  it("projects editable status through one message and deletes it on completion", async () => {
+  it("does not project ordinary pre-answer presence as editable status or fallback ack", async () => {
+    const slackTransport = createTransport();
+    const slackProjector = new SeedyPresenceProjector({
+      presence: resolveGatewayChannelPresenceContract(SLACK_SEEDY_PRESENCE_CONTRACT),
+      transport: slackTransport,
+    });
+    const signalTransport = createTransport();
+    const signalProjector = new SeedyPresenceProjector({
+      presence: resolveGatewayChannelPresenceContract(SIGNAL_SEEDY_PRESENCE_CONTRACT),
+      transport: signalTransport,
+    });
+
+    for (const phase of ["received", "orienting", "thinking"] as const) {
+      await slackProjector.update(presence(phase, {
+        expected_next: phase === "thinking" ? "final" : "progress",
+      }));
+      await signalProjector.update(presence(phase, {
+        expected_next: phase === "thinking" ? "final" : "progress",
+      }));
+    }
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    expect(slackTransport.sendStatus).not.toHaveBeenCalled();
+    expect(slackTransport.sendFallbackAck).not.toHaveBeenCalled();
+    expect(signalTransport.sendFallbackAck).not.toHaveBeenCalled();
+    expect(signalProjector.hasSentFallbackAck).toBe(false);
+  });
+
+  it("projects actionable editable status through one message and deletes it on completion", async () => {
     const transport = createTransport();
     const projector = new SeedyPresenceProjector({
       presence: resolveGatewayChannelPresenceContract(SLACK_SEEDY_PRESENCE_CONTRACT),
       transport,
     });
 
-    await projector.update(presence("received"));
-    await projector.update(presence("thinking"));
-    await projector.update(presence("thinking"));
+    await projector.update(presence("waiting", {
+      importance: "action_required",
+      expected_next: "approval",
+    }));
+    await projector.update(presence("waiting", {
+      importance: "action_required",
+      expected_next: "approval",
+    }));
     await vi.advanceTimersByTimeAsync(2_000);
     await projector.update(presence("complete"));
 
@@ -445,7 +485,7 @@ describe("SeedyPresenceProjector", () => {
     expect(transport.editStatus).not.toHaveBeenCalled();
     expect(transport.deleteStatus).toHaveBeenCalledOnce();
     expect(transport.calls).toEqual([
-      "sendStatus:I'm thinking through the next step.",
+      "sendStatus:I need your input to continue.",
       "deleteStatus",
     ]);
     expect(transport.sendFallbackAck).not.toHaveBeenCalled();
@@ -458,7 +498,10 @@ describe("SeedyPresenceProjector", () => {
       transport,
     });
 
-    await projector.update(presence("received"));
+    await projector.update(presence("waiting", {
+      importance: "status",
+      expected_next: "progress",
+    }));
     await vi.advanceTimersByTimeAsync(1_999);
     await projector.handle({
       ...base,
@@ -487,9 +530,15 @@ describe("SeedyPresenceProjector", () => {
       transport,
     });
 
-    await projector.update(presence("received"));
+    await projector.update(presence("waiting", {
+      importance: "action_required",
+      expected_next: "approval",
+    }));
     await vi.advanceTimersByTimeAsync(2_000);
-    const second = projector.update(presence("thinking"));
+    const second = projector.update(presence("blocked", {
+      importance: "blocked",
+      expected_next: "user_input",
+    }));
 
     expect(transport.sendStatus).toHaveBeenCalledOnce();
 
@@ -499,8 +548,8 @@ describe("SeedyPresenceProjector", () => {
     expect(transport.sendStatus).toHaveBeenCalledOnce();
     expect(transport.editStatus).toHaveBeenCalledOnce();
     expect(transport.calls).toEqual([
-      "sendStatus:I'm checking this.",
-      "editStatus:I'm thinking through the next step.",
+      "sendStatus:I need your input to continue.",
+      "editStatus:I'm blocked and need attention.",
     ]);
   });
 
@@ -519,7 +568,10 @@ describe("SeedyPresenceProjector", () => {
       transport,
     });
 
-    const update = projector.update(presence("received"));
+    const update = projector.update(presence("waiting", {
+      importance: "action_required",
+      expected_next: "approval",
+    }));
     await vi.advanceTimersByTimeAsync(2_000);
 
     expect(transport.sendStatus).toHaveBeenCalledOnce();
@@ -548,7 +600,10 @@ describe("SeedyPresenceProjector", () => {
       transport,
     });
 
-    await projector.update(presence("received"));
+    await projector.update(presence("waiting", {
+      importance: "status",
+      expected_next: "progress",
+    }));
     await projector.handle({
       ...base,
       type: "assistant_delta",
@@ -575,7 +630,10 @@ describe("SeedyPresenceProjector", () => {
       text: "H",
     };
 
-    await projector.update(presence("received"));
+    await projector.update(presence("waiting", {
+      importance: "status",
+      expected_next: "progress",
+    }));
     await displayProjector.handle(event);
     await projector.handle(event, {
       assistantOutputRendered: displayProjector.deliveredAssistantOutput,
@@ -594,7 +652,10 @@ describe("SeedyPresenceProjector", () => {
       transport,
     });
 
-    await projector.update(presence("received"));
+    await projector.update(presence("waiting", {
+      importance: "status",
+      expected_next: "progress",
+    }));
     await projector.handle({
       ...base,
       type: "assistant_delta",
@@ -613,7 +674,10 @@ describe("SeedyPresenceProjector", () => {
       transport,
     });
 
-    await projector.update(presence("received"));
+    await projector.update(presence("waiting", {
+      importance: "status",
+      expected_next: "progress",
+    }));
     await projector.handle({
       ...base,
       type: "operation_progress",
@@ -644,7 +708,10 @@ describe("SeedyPresenceProjector", () => {
       transport,
     });
 
-    await projector.update(presence("received"));
+    await projector.update(presence("waiting", {
+      importance: "status",
+      expected_next: "progress",
+    }));
     await projector.handle({
       ...base,
       type: "operation_progress",
@@ -668,7 +735,10 @@ describe("SeedyPresenceProjector", () => {
       transport,
     });
 
-    await projector.update(presence("received"));
+    await projector.update(presence("waiting", {
+      importance: "status",
+      expected_next: "progress",
+    }));
     await projector.handle({
       ...base,
       type: "operation_progress",
@@ -692,7 +762,10 @@ describe("SeedyPresenceProjector", () => {
       transport,
     });
 
-    await projector.update(presence("received"));
+    await projector.update(presence("waiting", {
+      importance: "status",
+      expected_next: "progress",
+    }));
     await projector.handle({
       ...base,
       type: "agent_timeline",
@@ -764,7 +837,10 @@ describe("SeedyPresenceProjector", () => {
       onError,
     });
 
-    await expect(projector.update(presence("received"))).resolves.toBeUndefined();
+    await expect(projector.update(presence("waiting", {
+      importance: "action_required",
+      expected_next: "approval",
+    }))).resolves.toBeUndefined();
     await vi.advanceTimersByTimeAsync(2_000);
 
     expect(onError).toHaveBeenCalledWith(expect.any(Error), "typing_start");
@@ -781,13 +857,19 @@ describe("SeedyPresenceProjector", () => {
       onError,
     });
 
-    await projector.update(presence("received"));
+    await projector.update(presence("waiting", {
+      importance: "status",
+      expected_next: "progress",
+    }));
     await vi.advanceTimersByTimeAsync(4_000);
 
     expect(onError).toHaveBeenCalledWith(expect.any(Error), "fallback_ack");
     expect(projector.hasSentFallbackAck).toBe(false);
 
-    await projector.update(presence("thinking"));
+    await projector.update(presence("waiting", {
+      importance: "status",
+      expected_next: "progress",
+    }));
     await vi.advanceTimersByTimeAsync(4_000);
 
     expect(transport.sendFallbackAck).toHaveBeenCalledTimes(2);
@@ -808,9 +890,15 @@ describe("SeedyPresenceProjector", () => {
       transport,
     });
 
-    await projector.update(presence("received"));
+    await projector.update(presence("waiting", {
+      importance: "status",
+      expected_next: "progress",
+    }));
     await vi.advanceTimersByTimeAsync(4_000);
-    await projector.update(presence("thinking"));
+    await projector.update(presence("blocked", {
+      importance: "blocked",
+      expected_next: "user_input",
+    }));
     await vi.advanceTimersByTimeAsync(4_000);
 
     expect(transport.sendFallbackAck).toHaveBeenCalledOnce();
@@ -821,7 +909,10 @@ describe("SeedyPresenceProjector", () => {
 
     expect(projector.hasSentFallbackAck).toBe(true);
 
-    await projector.update(presence("acting"));
+    await projector.update(presence("waiting", {
+      importance: "status",
+      expected_next: "progress",
+    }));
     await vi.advanceTimersByTimeAsync(4_000);
 
     expect(transport.sendFallbackAck).toHaveBeenCalledOnce();
@@ -842,7 +933,10 @@ describe("SeedyPresenceProjector", () => {
       transport,
     });
 
-    await projector.update(presence("received"));
+    await projector.update(presence("waiting", {
+      importance: "status",
+      expected_next: "progress",
+    }));
     await vi.advanceTimersByTimeAsync(4_000);
 
     let stopped = false;
@@ -872,7 +966,10 @@ describe("SeedyPresenceProjector", () => {
       onError,
     });
 
-    await projector.update(presence("received"));
+    await projector.update(presence("waiting", {
+      importance: "action_required",
+      expected_next: "approval",
+    }));
     await vi.advanceTimersByTimeAsync(2_000);
     await projector.update(presence("complete"));
 

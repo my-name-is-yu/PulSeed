@@ -796,7 +796,7 @@ describe("TelegramGatewayAdapter", () => {
         turnId: "chat-turn-1",
         createdAt: "2026-04-08T00:00:00.000Z",
         kind: "checkpoint",
-        message: "Working turn started: PulSeed can inspect files with visible tool activity.",
+        message: "Tool activity started: PulSeed can inspect files with visible tool activity.",
         transient: false,
       });
       const bridge = new ChatRunnerEventBridge(() => input.onEvent);
@@ -923,7 +923,7 @@ describe("TelegramGatewayAdapter", () => {
     expect(sentMessages.join("\n")).not.toContain("TOOL NOT EXECUTED");
     expect(sentMessages.join("\n")).not.toContain("I understand the request");
     expect(sentMessages.join("\n")).not.toContain("Calling model");
-    expect(sentMessages.join("\n")).not.toContain("Working turn started");
+    expect(sentMessages.join("\n")).not.toContain("Tool activity started");
     expect(sentMessages.join("\n")).not.toContain("Started work");
     expect(sentMessages.join("\n")).not.toContain("Prepared turn context");
     expect(sentMessages.join("\n")).not.toContain("openai/gpt");

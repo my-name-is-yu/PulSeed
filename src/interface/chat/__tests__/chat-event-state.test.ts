@@ -893,18 +893,18 @@ describe("applyChatEventToMessages", () => {
   });
 
   it("keeps non-transient sourced activity separate from transient status updates", () => {
-    const withIntent = applyChatEventToMessages([], {
+    const withPersistentCommentary = applyChatEventToMessages([], {
       type: "activity",
       runId: "run-1",
       turnId: "turn-1",
       createdAt: "2026-04-08T00:00:00.000Z",
       kind: "commentary",
-      message: "I understand the request as inspect the repo.",
-      sourceId: "intent:first-step",
+      message: "I will use the file inspection tool.",
+      sourceId: "commentary:tool-plan",
       transient: false,
     }, 20);
 
-    const withStatus = applyChatEventToMessages(withIntent, {
+    const withStatus = applyChatEventToMessages(withPersistentCommentary, {
       type: "activity",
       runId: "run-1",
       turnId: "turn-1",
@@ -927,8 +927,8 @@ describe("applyChatEventToMessages", () => {
 
     expect(afterEnd).toHaveLength(1);
     expect(afterEnd[0]!).toMatchObject({
-      id: "activity:turn-1:intent:first-step",
-      text: "I understand the request as inspect the repo.",
+      id: "activity:turn-1:commentary:tool-plan",
+      text: "I will use the file inspection tool.",
       transient: false,
     });
     expect(afterEnd[0]!.text).not.toContain("Intent");
@@ -994,7 +994,7 @@ describe("applyChatEventToMessages", () => {
       turnId: "turn-1",
       createdAt: "2026-04-08T00:00:01.000Z",
       kind: "lifecycle",
-      message: "Finalizing response...",
+      message: "Completing turn...",
       sourceId: "lifecycle:finalizing",
       transient: true,
     }, 20);

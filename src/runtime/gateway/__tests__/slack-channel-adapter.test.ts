@@ -491,7 +491,11 @@ describe("SlackChannelAdapter — chat dispatch", () => {
       }),
       expect.objectContaining({
         url: "https://slack.com/api/chat.postMessage",
-        body: expect.objectContaining({ text: "Hello", thread_ts: "123.456" }),
+        body: expect.objectContaining({ text: "Hel", thread_ts: "123.456" }),
+      }),
+      expect.objectContaining({
+        url: "https://slack.com/api/chat.update",
+        body: expect.objectContaining({ text: "Hello", ts: "1002" }),
       }),
       expect.objectContaining({
         url: "https://slack.com/api/chat.delete",
@@ -563,24 +567,12 @@ describe("SlackChannelAdapter — chat dispatch", () => {
       await dispatchStarted.promise;
       await vi.advanceTimersByTimeAsync(2_000);
 
-      expect(slackCalls(fetchMock)).toEqual(expect.arrayContaining([
-        expect.objectContaining({
-          url: "https://slack.com/api/chat.postMessage",
-          body: expect.objectContaining({
-            text: "I'm checking this.",
-            thread_ts: "123.456",
-          }),
-        }),
-      ]));
+      expect(slackCalls(fetchMock)).toEqual([]);
 
       dispatchCanFinish.resolve();
       await vi.waitFor(() => {
         const calls = slackCalls(fetchMock);
         expect(calls).toEqual(expect.arrayContaining([
-          expect.objectContaining({
-            url: "https://slack.com/api/chat.delete",
-            body: expect.objectContaining({ ts: "1001" }),
-          }),
           expect.objectContaining({
             url: "https://slack.com/api/chat.postMessage",
             body: expect.objectContaining({
@@ -592,7 +584,7 @@ describe("SlackChannelAdapter — chat dispatch", () => {
       });
       const statusPosts = slackCalls(fetchMock)
         .filter((call) => call.url === "https://slack.com/api/chat.postMessage" && call.body.text === "I'm checking this.");
-      expect(statusPosts).toHaveLength(1);
+      expect(statusPosts).toHaveLength(0);
     } finally {
       vi.useRealTimers();
     }

@@ -443,7 +443,10 @@ export class CrossPlatformChatSessionManager {
       timeoutMs: options.timeoutMs,
       metadata: {
         ...(options.metadata ?? {}),
-        ...(options.runtimeControl ? { runtime_control_explicit: true } : {}),
+        ...(options.runtimeControl?.explicit === true
+          || (options.runtimeControl && (options.channel ?? (options.platform ? "plugin_gateway" : "cli")) === "plugin_gateway")
+          ? { runtime_control_explicit: true }
+          : {}),
       },
       onEvent: options.onEvent,
       userInput: options.userInput,
@@ -806,6 +809,9 @@ export class CrossPlatformChatSessionManager {
       ...(goalId ? { goal_id: goalId } : {}),
       ...("sender_id" in input && input.sender_id ? { sender_id: input.sender_id } : {}),
       ...(input.message_id ? { message_id: input.message_id } : {}),
+      ...(input.runtimeControl?.explicit === true || (input.runtimeControl && channel === "plugin_gateway")
+        ? { runtime_control_explicit: true }
+        : {}),
     };
     if (!externalSurface) {
       delete metadata[EXTERNAL_SURFACE_METADATA_KEY];
@@ -1204,7 +1210,6 @@ export class CrossPlatformChatSessionManager {
     const capabilities = {
       hasAgentLoop: this.deps.chatAgentLoopRunner !== undefined,
       hasToolLoop: this.deps.llmClient !== undefined,
-      hasToolRegistry: this.deps.registry !== undefined,
       hasRuntimeControlService: this.deps.runtimeControlService !== undefined,
     };
     const setupSecretIntake = input.setupSecretIntake;
@@ -1219,10 +1224,8 @@ export class CrossPlatformChatSessionManager {
       surfaceRuntimePolicy
         ? surfaceRuntimePolicy.approval_mode === "disallowed"
         : ingress.metadata["runtime_control_denied"] === true;
-    const runtimeControlPolicyPresent =
-      runtimeControlApproved || runtimeControlDenied || ingress.metadata["runtime_control_explicit"] === true;
+    const metadataRuntimeControlExplicit = ingress.metadata["runtime_control_explicit"] === true;
     const canUseDefaultGatewayModelLoop = capabilities.hasToolLoop
-      && capabilities.hasToolRegistry
       && (ingress.channel === "plugin_gateway" || ingress.replyTarget.surface === "gateway");
     const shouldPreferFreeformBeforeDeniedRuntimeControl =
       !hasSetupSecret
@@ -1231,19 +1234,16 @@ export class CrossPlatformChatSessionManager {
       && runtimeControlDenied
       && !runtimeControlApproved
       && ingress.metadata["runtime_control_explicit"] !== true;
-    const shouldClassifyRuntimeControlForSafety =
-      !hasSetupSecret
-      && capabilities.hasAgentLoop
-      && runtimeControlPolicyPresent
-      && (!canUseDefaultGatewayModelLoop || ingress.metadata["runtime_control_explicit"] === true);
     const shouldClassifyRuntimeControl =
-      shouldClassifyRuntimeControlForSafety
-      || (!hasSetupSecret && !capabilities.hasAgentLoop && !canUseDefaultGatewayModelLoop && (
-        (capabilities.hasRuntimeControlService && ingress.runtimeControl.approvalMode !== "disallowed")
-        || runtimeControlApproved
-        || runtimeControlDenied
-        || ingress.metadata["runtime_control_explicit"] === true
-      ));
+      !hasSetupSecret
+      && (
+        metadataRuntimeControlExplicit
+        || (!canUseDefaultGatewayModelLoop && !capabilities.hasAgentLoop && (
+          (capabilities.hasRuntimeControlService && ingress.runtimeControl.approvalMode !== "disallowed")
+          || runtimeControlApproved
+          || runtimeControlDenied
+        ))
+      );
     let freeformRouteIntent = shouldPreferFreeformBeforeDeniedRuntimeControl
       ? await classifyFreeformRouteIntent(safeIngressText, this.deps.llmClient)
       : null;
@@ -1288,9 +1288,9 @@ export class CrossPlatformChatSessionManager {
     return this.ingressRouter.selectRoute(ingress, {
       ...capabilities,
       runtimeControlIntent,
-      runtimeControlUnclassified: shouldClassifyRuntimeControlForSafety
+      runtimeControlUnclassified: metadataRuntimeControlExplicit
         && runtimeControlClassification?.status === "unclassified"
-        && ingress.metadata["runtime_control_explicit"] === true,
+        && !hasSetupSecret,
       freeformRouteIntent,
       setupSecretIntake,
       runSpecDraft,
@@ -1575,7 +1575,6 @@ async function createGlobalCrossPlatformChatSessionManager(): Promise<CrossPlatf
     stateManager,
     adapter,
     llmClient,
-    defaultGatewayCommentaryClient: llmClient,
     registry: toolRegistry,
     toolExecutor,
     chatAgentLoopRunner,

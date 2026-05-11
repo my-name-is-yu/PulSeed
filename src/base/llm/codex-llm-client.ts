@@ -2,12 +2,15 @@ import * as fsp from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { BaseLLMClient } from "./base-llm-client.js";
 import {
   type ILLMClient,
   type LLMMessage,
   type LLMRequestOptions,
   type LLMResponse,
+  type LLMStreamHandlers,
+  type ToolCallResult,
 } from "./llm-client.js";
 import { sleep } from "../utils/sleep.js";
 import { LLMError } from "../utils/errors.js";
@@ -21,6 +24,7 @@ const DEFAULT_RETRY_ATTEMPTS = 3;
 const MAX_RETRY_ATTEMPTS = 5;
 const RETRY_DELAYS_MS = [1000, 2000, 4000, 8000];
 const SIGKILL_DELAY_MS = 5000;
+const DEFAULT_CODEX_RESPONSES_BASE_URL = "https://chatgpt.com/backend-api/codex";
 export const CODEX_RESPONSE_TEXT_MAX_BYTES = 8 * 1024 * 1024;
 type CodexAgentLoopFailureReason = "model_request_timeout" | "model_request_aborted";
 
@@ -67,6 +71,10 @@ function buildPrompt(messages: LLMMessage[], system?: string): string {
 // ─── CodexLLMClient ───
 
 export interface CodexLLMClientConfig {
+  /** ChatGPT OAuth access token. When present, PulSeed uses Codex Responses streaming for chat. */
+  apiKey?: string;
+  /** Codex Responses base URL. Defaults to ChatGPT backend Codex Responses. */
+  baseURL?: string;
   /** Path to the codex CLI executable. Default: "codex" */
   cliPath?: string;
   /** Model to pass via --model flag. Default: uses codex's default (OPENAI_MODEL env or codex config) */
@@ -89,6 +97,14 @@ export interface CodexLLMClientConfig {
   skipGitRepoCheck?: boolean;
 }
 
+export function isCodexOAuthAccessToken(token: string | undefined): token is string {
+  const trimmed = token?.trim();
+  if (!trimmed || trimmed.startsWith("sk-")) return false;
+  const payload = decodeJwtPayload(trimmed);
+  const exp = payload?.exp;
+  return typeof exp === "number" && exp > Math.floor(Date.now() / 1000);
+}
+
 /**
  * ILLMClient implementation that uses the `codex exec` CLI for LLM calls.
  * Routes all PulSeed internal LLM calls through the Codex CLI, which uses
@@ -101,6 +117,8 @@ export interface CodexLLMClientConfig {
  * Set PULSEED_LLM_PROVIDER=codex to activate via CLIRunner / provider-factory.
  */
 export class CodexLLMClient extends BaseLLMClient implements ILLMClient {
+  private readonly apiKey: string | undefined;
+  private readonly baseURL: string;
   private readonly cliPath: string;
   private readonly model: string | undefined;
   private readonly repoPath: string;
@@ -113,6 +131,8 @@ export class CodexLLMClient extends BaseLLMClient implements ILLMClient {
 
   constructor(config: CodexLLMClientConfig = {}) {
     super();
+    this.apiKey = isCodexOAuthAccessToken(config.apiKey) ? config.apiKey.trim() : undefined;
+    this.baseURL = canonicalizeCodexResponsesBaseUrl(config.baseURL);
     this.cliPath = config.cliPath ?? "codex";
     this.model = config.model;
     this.lightModel = config.lightModel;
@@ -138,6 +158,10 @@ export class CodexLLMClient extends BaseLLMClient implements ILLMClient {
     messages: LLMMessage[],
     options?: LLMRequestOptions
   ): Promise<LLMResponse> {
+    if (this.apiKey) {
+      return this.sendViaCodexResponsesStream(messages, options, {});
+    }
+
     const model = this.resolveEffectiveModel(options?.model ?? this.model ?? "", options?.model_tier) || undefined;
     const system = options?.system;
 
@@ -178,9 +202,22 @@ export class CodexLLMClient extends BaseLLMClient implements ILLMClient {
     throw lastError;
   }
 
-  /** CodexLLMClient does not support native provider function/tool calling. */
-  supportsToolCalling(): boolean { return false; }
-  usesExternalAgentRuntime(): boolean { return true; }
+  /** OAuth-backed Codex Responses supports native provider function/tool calling. */
+  supportsToolCalling(): boolean { return Boolean(this.apiKey); }
+  usesExternalAgentRuntime(): boolean { return !this.apiKey; }
+
+  async sendMessageStream(
+    messages: LLMMessage[],
+    options: LLMRequestOptions | undefined,
+    handlers: LLMStreamHandlers,
+  ): Promise<LLMResponse> {
+    if (!this.apiKey) {
+      const response = await this.sendMessage(messages, options);
+      if (response.content) handlers.onTextDelta?.(response.content);
+      return response;
+    }
+    return this.sendViaCodexResponsesStream(messages, options, handlers);
+  }
 
   /**
    * Spawn `codex exec -s <sandbox> [-o <tmpfile>] [--model <model>] "PROMPT"`
@@ -388,6 +425,347 @@ export class CodexLLMClient extends BaseLLMClient implements ILLMClient {
       });
     });
   }
+
+  private async sendViaCodexResponsesStream(
+    messages: LLMMessage[],
+    options: LLMRequestOptions | undefined,
+    handlers: LLMStreamHandlers,
+  ): Promise<LLMResponse> {
+    const apiKey = this.apiKey;
+    if (!apiKey) {
+      throw new LLMError("CodexLLMClient: Codex Responses streaming requires a ChatGPT OAuth token");
+    }
+    const model = this.resolveEffectiveModel(options?.model ?? this.model ?? "", options?.model_tier) || "gpt-5.4-mini";
+    const abortController = new AbortController();
+    const abortFromParent = (): void => abortController.abort(options?.abortSignal?.reason);
+    if (options?.abortSignal?.aborted) {
+      abortFromParent();
+    } else {
+      options?.abortSignal?.addEventListener("abort", abortFromParent, { once: true });
+    }
+
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let timeoutError: CodexLLMError | undefined;
+    try {
+      const timeoutMs = options?.timeoutMs ?? this.totalTimeoutMs;
+      if (timeoutMs > 0) {
+        timer = setTimeout(() => {
+          timeoutError = codexLLMError(
+            `CodexLLMClient: Codex Responses stream timed out after ${timeoutMs}ms`,
+            "ETIMEDOUT",
+            "model_request_timeout",
+          );
+          abortController.abort(timeoutError);
+        }, timeoutMs);
+      }
+      const response = await fetch(`${this.baseURL}/responses`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${apiKey}`,
+          ...codexAccountHeader(apiKey),
+          originator: "pi",
+          "openai-beta": "responses=experimental",
+          accept: "text/event-stream",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify(buildCodexResponsesPayload({
+          model,
+          messages,
+          options,
+          system: options?.system,
+          reasoningEffort: this.reasoningEffort,
+        })),
+        signal: abortController.signal,
+      });
+      if (!response.ok || !response.body) {
+        const detail = await safeResponseText(response);
+        throw new LLMError(
+          `CodexLLMClient: Codex Responses request failed with HTTP ${response.status}${detail ? ` - ${detail}` : ""}`,
+        );
+      }
+      return await readCodexResponsesStream(response.body, handlers, abortController.signal);
+    } catch (err) {
+      if (abortController.signal.aborted || options?.abortSignal?.aborted) {
+        if (timeoutError && abortController.signal.reason === timeoutError) {
+          throw timeoutError;
+        }
+        throw codexLLMError("CodexLLMClient: Codex Responses stream aborted", "ABORT_ERR", "model_request_aborted");
+      }
+      throw err;
+    } finally {
+      if (timer) clearTimeout(timer);
+      abortController.abort();
+      options?.abortSignal?.removeEventListener("abort", abortFromParent);
+    }
+  }
+}
+
+function canonicalizeCodexResponsesBaseUrl(baseURL: string | undefined): string {
+  const trimmed = baseURL?.trim();
+  if (!trimmed) return DEFAULT_CODEX_RESPONSES_BASE_URL;
+  const normalized = trimmed.replace(/\/+$/, "");
+  if (/^https?:\/\/chatgpt\.com\/backend-api(?:\/codex)?(?:\/v1)?$/i.test(normalized)) {
+    return DEFAULT_CODEX_RESPONSES_BASE_URL;
+  }
+  return DEFAULT_CODEX_RESPONSES_BASE_URL;
+}
+
+function decodeJwtPayload(token: string): Record<string, unknown> | undefined {
+  const parts = token.split(".");
+  if (parts.length < 2 || !parts[1]) return undefined;
+  try {
+    return JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8")) as Record<string, unknown>;
+  } catch {
+    return undefined;
+  }
+}
+
+function codexAccountHeader(token: string): Record<string, string> {
+  const payload = decodeJwtPayload(token);
+  const auth = payload?.["https://api.openai.com/auth"];
+  const accountId = auth && typeof auth === "object"
+    ? (auth as Record<string, unknown>)["chatgpt_account_id"]
+    : undefined;
+  return typeof accountId === "string" && accountId.trim()
+    ? { "chatgpt-account-id": accountId.trim() }
+    : {};
+}
+
+function buildCodexResponsesPayload(params: {
+  model: string;
+  messages: LLMMessage[];
+  options: LLMRequestOptions | undefined;
+  system?: string;
+  reasoningEffort?: string;
+}): Record<string, unknown> {
+  const input = codexResponsesInput(params.messages);
+  const tools = params.options?.tools?.map((tool) => ({
+    type: "function",
+    name: tool.function.name,
+    description: tool.function.description,
+    parameters: tool.function.parameters,
+    strict: null,
+  }));
+  return {
+    model: params.model,
+    store: false,
+    stream: true,
+    instructions: params.system?.trim() || "You are PulSeed's configured chat model. Follow the user request and answer concisely.",
+    input: input.length > 0 ? input : [{ role: "user", content: [{ type: "input_text", text: " " }] }],
+    text: { verbosity: "low" },
+    reasoning: { effort: params.reasoningEffort ?? "low", summary: "auto" },
+    include: ["reasoning.encrypted_content"],
+    prompt_cache_key: "pulseed-codex-responses",
+    ...(tools?.length ? { tools, tool_choice: "auto", parallel_tool_calls: true } : {}),
+  };
+}
+
+function codexResponsesInput(messages: LLMMessage[]): Record<string, unknown>[] {
+  return messages.flatMap((message, index): Record<string, unknown>[] => {
+    const text = message.content || " ";
+    if (message.role === "user") {
+      return [{ role: "user", content: [{ type: "input_text", text }] }];
+    }
+    return [{
+      type: "message",
+      id: `msg_${index}`,
+      role: "assistant",
+      content: [{ type: "output_text", text, annotations: [] }],
+      status: "completed",
+    }];
+  });
+}
+
+async function safeResponseText(response: Response): Promise<string> {
+  try {
+    return (await response.text()).trim().slice(0, 500);
+  } catch {
+    return "";
+  }
+}
+
+async function readCodexResponsesStream(
+  body: ReadableStream<Uint8Array>,
+  handlers: LLMStreamHandlers,
+  abortSignal: AbortSignal,
+): Promise<LLMResponse> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let content = "";
+  let finalResponse: Record<string, unknown> | undefined;
+  const toolCalls = new Map<string, ToolCallResult>();
+  const toolArgumentBuffers = new Map<string, string>();
+  const toolCallIdsByItemId = new Map<string, string>();
+  const handleEvent = (event: Record<string, unknown>): void => {
+    if (event.type === "response.output_text.delta" || event.type === "response.refusal.delta") {
+      const delta = typeof event.delta === "string" ? event.delta : "";
+      if (delta) {
+        content += delta;
+        handlers.onTextDelta?.(delta);
+      }
+    } else if (event.type === "response.output_item.added" && isRecord(event.item) && event.item["type"] === "function_call") {
+      rememberResponseToolCall(toolCallIdsByItemId, event.item);
+      upsertToolCall(toolCalls, event.item, toolArgumentBuffers.get(responseToolCallItemId(event.item)));
+    } else if (event.type === "response.function_call_arguments.delta") {
+      const itemId = responseToolCallItemId(event);
+      const delta = typeof event.delta === "string" ? event.delta : "";
+      toolArgumentBuffers.set(itemId, `${toolArgumentBuffers.get(itemId) ?? ""}${delta}`);
+    } else if (event.type === "response.function_call_arguments.done") {
+      const itemId = responseToolCallItemId(event);
+      if (typeof event.arguments === "string") {
+        toolArgumentBuffers.set(itemId, event.arguments);
+      }
+      if (typeof event.call_id === "string" || typeof event.id === "string" || typeof event.name === "string") {
+        rememberResponseToolCall(toolCallIdsByItemId, event);
+      }
+      const callId = toolCallIdsByItemId.get(itemId);
+      const existing = callId ? toolCalls.get(callId) : undefined;
+      if (callId && existing) {
+        toolCalls.set(callId, {
+          ...existing,
+          function: {
+            ...existing.function,
+            arguments: toolArgumentBuffers.get(itemId) ?? existing.function.arguments,
+          },
+        });
+      } else if (callId) {
+        upsertToolCall(toolCalls, event, toolArgumentBuffers.get(itemId));
+      }
+    } else if (event.type === "response.output_item.done" && isRecord(event.item) && event.item["type"] === "function_call") {
+      rememberResponseToolCall(toolCallIdsByItemId, event.item);
+      upsertToolCall(toolCalls, event.item, toolArgumentBuffers.get(responseToolCallItemId(event.item)));
+    } else if (event.type === "response.completed" || event.type === "response.done") {
+      finalResponse = isRecord(event.response) ? event.response : {};
+    } else if (event.type === "response.incomplete") {
+      const response = isRecord(event.response) ? event.response : undefined;
+      const details = isRecord(response?.["incomplete_details"]) ? response["incomplete_details"] : undefined;
+      throw new LLMError(`CodexLLMClient: Codex Responses stream incomplete: ${String(details?.["reason"] ?? response?.["status"] ?? "unknown reason")}`);
+    } else if (event.type === "response.failed") {
+      const response = isRecord(event.response) ? event.response : undefined;
+      const error = isRecord(response?.["error"]) ? response["error"] : undefined;
+      throw new LLMError(`CodexLLMClient: Codex Responses stream failed: ${String(error?.["message"] ?? response?.["status"] ?? "unknown failure")}`);
+    } else if (event.type === "error") {
+      throw new LLMError(`CodexLLMClient: Codex Responses stream error: ${String(event.message ?? "unknown error")}`);
+    }
+  };
+
+  while (true) {
+    if (abortSignal.aborted) {
+      throw codexLLMError("CodexLLMClient: Codex Responses stream aborted", "ABORT_ERR", "model_request_aborted");
+    }
+    const chunk = await reader.read();
+    if (chunk.done) break;
+    buffer += decoder.decode(chunk.value, { stream: true });
+    let frameBoundary = findSseFrameBoundary(buffer);
+    while (frameBoundary !== null) {
+      const frame = buffer.slice(0, frameBoundary.index);
+      buffer = buffer.slice(frameBoundary.index + frameBoundary.length);
+      for (const event of parseSseFrame(frame)) {
+        handleEvent(event);
+      }
+      frameBoundary = findSseFrameBoundary(buffer);
+    }
+  }
+  buffer += decoder.decode();
+  if (buffer.trim()) {
+    for (const event of parseSseFrame(buffer)) {
+      handleEvent(event);
+    }
+  }
+  if (!finalResponse) {
+    throw new LLMError("CodexLLMClient: Codex Responses stream ended without a terminal response");
+  }
+  return responseFromCodexResponses(finalResponse, content, [...toolCalls.values()]);
+}
+
+function findSseFrameBoundary(buffer: string): { index: number; length: number } | null {
+  const match = /(?:\r\n|\r|\n)(?:\r\n|\r|\n)/.exec(buffer);
+  return match ? { index: match.index, length: match[0].length } : null;
+}
+
+function parseSseFrame(frame: string): Record<string, unknown>[] {
+  const data = frame
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .split("\n")
+    .filter((line) => line.startsWith("data:"))
+    .map((line) => line.slice(5).replace(/^ /, ""))
+    .join("\n")
+    .trim();
+  if (!data || data === "[DONE]") return [];
+
+  try {
+    const parsed = JSON.parse(data) as unknown;
+    return isRecord(parsed) ? [parsed] : [];
+  } catch {
+    return [];
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function upsertToolCall(
+  toolCalls: Map<string, ToolCallResult>,
+  item: Record<string, unknown>,
+  argumentBuffer?: string,
+): void {
+  const id = responseToolCallId(item);
+  toolCalls.set(id, {
+    id,
+    type: "function",
+    function: {
+      name: typeof item["name"] === "string" ? item["name"] : toolCalls.get(id)?.function.name ?? "",
+      arguments: typeof item["arguments"] === "string"
+        ? item["arguments"]
+        : argumentBuffer ?? toolCalls.get(id)?.function.arguments ?? "{}",
+    },
+  });
+}
+
+function rememberResponseToolCall(toolCallIdsByItemId: Map<string, string>, item: Record<string, unknown>): void {
+  toolCallIdsByItemId.set(responseToolCallItemId(item), responseToolCallId(item));
+}
+
+function responseToolCallId(item: Record<string, unknown>): string {
+  return typeof item["call_id"] === "string"
+    ? item["call_id"]
+    : typeof item["id"] === "string"
+      ? item["id"]
+      : typeof item["item_id"] === "string"
+        ? item["item_id"]
+        : randomUUID();
+}
+
+function responseToolCallItemId(item: Record<string, unknown>): string {
+  return typeof item["item_id"] === "string"
+    ? item["item_id"]
+    : typeof item["id"] === "string"
+      ? item["id"]
+      : typeof item["call_id"] === "string"
+        ? item["call_id"]
+        : randomUUID();
+}
+
+function responseFromCodexResponses(
+  finalResponse: Record<string, unknown> | undefined,
+  content: string,
+  toolCalls: ToolCallResult[],
+): LLMResponse {
+  const usage = isRecord(finalResponse?.["usage"]) ? finalResponse["usage"] : {};
+  return {
+    content: typeof finalResponse?.["output_text"] === "string" && finalResponse["output_text"]
+      ? finalResponse["output_text"]
+      : content,
+    usage: {
+      input_tokens: typeof usage["input_tokens"] === "number" ? usage["input_tokens"] : 0,
+      output_tokens: typeof usage["output_tokens"] === "number" ? usage["output_tokens"] : 0,
+    },
+    stop_reason: typeof finalResponse?.["status"] === "string" ? finalResponse["status"] : "completed",
+    ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
+  };
 }
 
 function isRetryableCodexError(err: unknown): boolean {

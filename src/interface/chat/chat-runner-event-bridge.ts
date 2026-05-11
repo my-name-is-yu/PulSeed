@@ -11,7 +11,6 @@ import {
 } from "../../orchestrator/execution/agent-loop/agent-timeline.js";
 import {
   DIFF_ARTIFACT_MAX_LINES,
-  formatIntentInput,
   formatToolActivity,
   previewActivityText,
   type GitDiffArtifact,
@@ -569,97 +568,6 @@ export class ChatRunnerEventBridge {
     });
   }
 
-  emitGatewayCommentary(
-    message: string,
-    eventContext: ChatEventContext,
-    sourceId?: string,
-  ): void {
-    const safeMessage = redactSetupSecrets(message);
-    if (!safeMessage.trim()) return;
-    this.emitEvent({
-      type: "activity",
-      kind: "commentary",
-      message: safeMessage,
-      ...(sourceId ? { sourceId } : {}),
-      transient: true,
-      presentation: { gatewayProgress: "user" },
-      ...this.eventBase(eventContext),
-    });
-  }
-
-  async emitGatewayCommentaryAndFlush(
-    message: string,
-    eventContext: ChatEventContext,
-    sourceId?: string,
-  ): Promise<void> {
-    const safeMessage = redactSetupSecrets(message);
-    if (!safeMessage.trim()) return;
-    await this.emitEventAndFlush({
-      type: "activity",
-      kind: "commentary",
-      message: safeMessage,
-      ...(sourceId ? { sourceId } : {}),
-      transient: true,
-      presentation: { gatewayProgress: "user" },
-      ...this.eventBase(eventContext),
-    });
-  }
-
-  emitIntent(
-    input: string,
-    selectedRoute: { kind: string; reason?: string; intent?: { kind: string } } | null,
-    eventContext: ChatEventContext
-  ): void {
-    const subject = formatIntentInput(input);
-    let nextStep = "continue from the saved chat state before taking further action.";
-    let reason = "continuation needs the prior chat context before any further action.";
-    if ((selectedRoute?.kind === "runtime_control" || selectedRoute?.kind === "runtime_control_blocked") && selectedRoute.intent) {
-      nextStep = `prepare the ${selectedRoute.intent.kind} runtime-control request.`;
-      reason = "runtime changes need an explicit operation plan and approval path.";
-    } else if (selectedRoute?.kind === "configure") {
-      nextStep = "prepare configuration guidance for the requested setup flow.";
-      reason = "setup requests should return actionable configuration steps before any tool-backed execution.";
-    } else if (selectedRoute?.kind === "assist") {
-      nextStep = "answer directly from the current conversation context.";
-      reason = "this request can be handled as assistance without continuing saved tool-backed work.";
-    } else if (selectedRoute?.kind === "clarify") {
-      nextStep = "ask for the missing detail needed to choose the right next action.";
-      reason = "the current request is ambiguous and needs clarification before execution.";
-    } else if (selectedRoute?.kind === "agent_loop") {
-      nextStep = "gather workspace context, then inspect or change files with visible tool activity.";
-      reason = "this request may require multiple tool-backed steps.";
-    } else if (selectedRoute?.kind === "tool_loop") {
-      nextStep = "call the model with the tool catalog, then execute selected tools with visible activity.";
-      reason = "the available tools are needed to answer from current project state.";
-    } else if (selectedRoute?.kind === "adapter") {
-      nextStep = "prepare project context before handing the turn to the configured adapter.";
-      reason = "the adapter needs the current workspace context to act correctly.";
-    }
-    const message = [
-      `I understand the request as ${subject || "the current request"}.`,
-      `Next I will ${nextStep}`,
-      `This is needed because ${reason}`,
-    ].join("\n");
-    this.emitEvent({
-      type: "activity",
-      kind: "commentary",
-      message: redactSetupSecrets(message),
-      sourceId: "intent:first-step",
-      transient: false,
-      presentation: {
-        gatewayNarration: {
-          audience: "user",
-          phase: selectedRoute?.kind === "runtime_control_blocked" ? "blocked" : "planning",
-          importance: selectedRoute?.kind === "runtime_control_blocked" ? "blocked" : "heartbeat",
-          verbosity: "summary",
-          subject: "the request",
-          reason,
-        },
-      },
-      ...this.eventBase(eventContext),
-    });
-  }
-
   emitCheckpoint(
     title: string,
     detail: string,
@@ -1103,7 +1011,7 @@ function defaultSubjectForPresencePhase(phase: SeedyTurnPresencePhase): string {
     case "blocked":
       return "Needs attention";
     case "finalizing":
-      return "Finalizing response";
+      return "Completing response";
     case "complete":
       return "Response complete";
   }

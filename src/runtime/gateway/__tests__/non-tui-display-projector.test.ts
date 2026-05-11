@@ -103,7 +103,7 @@ describe("non-TUI display projector", () => {
     expect(transport.calls.join("\n")).not.toContain("found files");
   });
 
-  it("buffers partial assistant deltas until stable text or final output is available", async () => {
+  it("streams partial assistant deltas immediately on the final-answer surface", async () => {
     const transport = createTransport();
     const projector = new NonTuiDisplayProjector({
       display: resolveGatewayChannelDisplayContract(TELEGRAM_GATEWAY_DISPLAY_CONTRACT),
@@ -115,13 +115,13 @@ describe("non-TUI display projector", () => {
     await projector.handle({ ...base, type: "assistant_delta", delta: "lo", text: "Hello" });
     await projector.handle({ ...base, type: "assistant_final", text: "Hello", persisted: true });
 
-    expect(transport.sendProgress).not.toHaveBeenCalled();
     expect(transport.sendFinal).toHaveBeenCalledOnce();
-    expect(transport.sendFinal).toHaveBeenCalledWith("Hello");
-    expect(transport.editFinal).not.toHaveBeenCalled();
+    expect(transport.sendFinal).toHaveBeenCalledWith("Hel");
+    expect(transport.editFinal).toHaveBeenCalledWith({ id: "final-1" }, "Hello");
+    expect(transport.sendProgress).not.toHaveBeenCalled();
   });
 
-  it("streams stable assistant chunks through one final-answer surface", async () => {
+  it("streams assistant chunks through one final-answer surface immediately", async () => {
     const transport = createTransport();
     const projector = new NonTuiDisplayProjector({
       display: resolveGatewayChannelDisplayContract(TELEGRAM_GATEWAY_DISPLAY_CONTRACT),
@@ -134,36 +134,19 @@ describe("non-TUI display projector", () => {
     await projector.handle({ ...base, type: "assistant_final", text: "Hello. Working now.", persisted: true });
 
     expect(transport.sendFinal).toHaveBeenCalledOnce();
-    expect(transport.sendFinal).toHaveBeenCalledWith("Hello.");
+    expect(transport.sendFinal).toHaveBeenCalledWith("Hello");
     expect(transport.editFinal).toHaveBeenCalledOnce();
     expect(transport.editFinal).toHaveBeenCalledWith({ id: "final-1" }, "Hello. Working now.");
     expect(transport.calls.filter((call) => call.startsWith("sendFinal:"))).toHaveLength(1);
   });
 
-  it("does not render fixed route or lifecycle progress for ordinary gateway chat", async () => {
+  it("does not render fixed lifecycle progress for ordinary gateway chat", async () => {
     const transport = createTransport();
     const projector = new NonTuiDisplayProjector({
       display: resolveGatewayChannelDisplayContract(TELEGRAM_GATEWAY_DISPLAY_CONTRACT),
       transport,
     });
 
-    await projector.handle({
-      ...base,
-      type: "activity",
-      kind: "commentary",
-      message: "I understand the request as やあ！\nNext I will gather workspace context.",
-      sourceId: "intent:first-step",
-      presentation: {
-        gatewayNarration: {
-          audience: "user",
-          phase: "planning",
-          importance: "heartbeat",
-          verbosity: "summary",
-          subject: "the request",
-          reason: "route selection completed",
-        },
-      },
-    });
     await projector.handle({
       ...base,
       type: "activity",
@@ -391,16 +374,15 @@ describe("non-TUI display projector", () => {
     expect(transport.calls.join("\n")).not.toContain("debug-only output");
   });
 
-  it("does not render internal runner lifecycle, model context, or commentary to gateway progress", async () => {
+  it("does not render internal runner lifecycle or model context to gateway progress", async () => {
     const transport = createTransport();
     const projector = new NonTuiDisplayProjector({
       display: resolveGatewayChannelDisplayContract(TELEGRAM_GATEWAY_DISPLAY_CONTRACT),
       transport,
     });
 
-    await projector.handle({ ...base, type: "activity", kind: "commentary", message: "I understand the request.", sourceId: "intent:first-step" });
     await projector.handle({ ...base, type: "activity", kind: "lifecycle", message: "Calling model...", sourceId: "lifecycle:model" });
-    await projector.handle({ ...base, type: "activity", kind: "checkpoint", message: "Working turn started", sourceId: "checkpoint:execution" });
+    await projector.handle({ ...base, type: "activity", kind: "checkpoint", message: "Tool activity started", sourceId: "checkpoint:execution" });
     await projector.handle({
       ...base,
       type: "agent_timeline",

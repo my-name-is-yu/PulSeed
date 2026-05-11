@@ -16,6 +16,7 @@ vi.mock("../openai-client.js", () => ({
 
 vi.mock("../codex-llm-client.js", () => ({
   CodexLLMClient: vi.fn().mockImplementation(function() { return { _tag: "CodexLLMClient" }; }),
+  isCodexOAuthAccessToken: vi.fn((token: string | undefined) => Boolean(token?.startsWith("oauth."))),
 }));
 
 vi.mock("../../execution/adapter-layer.js", () => ({
@@ -235,6 +236,46 @@ describe("buildLLMClient — early API key validation", () => {
       });
 
       await expect(buildLLMClient()).resolves.not.toThrow();
+    });
+
+    it("passes OAuth tokens to CodexLLMClient for direct Responses streaming without reusing OPENAI_BASE_URL", async () => {
+      const MockedCodexLLMClient = vi.mocked(CodexLLMClient);
+      MockedCodexLLMClient.mockClear();
+
+      mockLoadProviderConfig.mockResolvedValue({
+        provider: "openai",
+        model: "gpt-5.4-mini",
+        adapter: "openai_codex_cli",
+        api_key: "oauth.valid-token",
+        base_url: "https://proxy.example.test/v1",
+      });
+
+      await buildLLMClient();
+
+      expect(MockedCodexLLMClient).toHaveBeenCalledWith(expect.objectContaining({
+        apiKey: "oauth.valid-token",
+      }));
+      expect(MockedCodexLLMClient).not.toHaveBeenCalledWith(expect.objectContaining({
+        baseURL: "https://proxy.example.test/v1",
+      }));
+    });
+
+    it("keeps sk API keys on the codex CLI fallback path", async () => {
+      const MockedCodexLLMClient = vi.mocked(CodexLLMClient);
+      MockedCodexLLMClient.mockClear();
+
+      mockLoadProviderConfig.mockResolvedValue({
+        provider: "openai",
+        model: "gpt-5.4-mini",
+        adapter: "openai_codex_cli",
+        api_key: "sk-test",
+      });
+
+      await buildLLMClient();
+
+      expect(MockedCodexLLMClient).toHaveBeenCalledWith(expect.objectContaining({
+        apiKey: undefined,
+      }));
     });
   });
 
