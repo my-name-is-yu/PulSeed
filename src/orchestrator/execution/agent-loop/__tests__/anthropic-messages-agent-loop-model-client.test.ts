@@ -7,14 +7,14 @@ import {
 
 const anthropicCreate = vi.fn();
 
-vi.mock("@anthropic-ai/sdk", () => {
+vi.mock("../../../../base/llm/anthropic-runtime.js", () => {
   class AnthropicMock {
     messages = {
       create: anthropicCreate,
     };
   }
 
-  return { default: AnthropicMock };
+  return { AnthropicRuntime: AnthropicMock };
 });
 
 describe("AnthropicMessagesAgentLoopModelClient", () => {

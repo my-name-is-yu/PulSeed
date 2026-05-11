@@ -1,9 +1,7 @@
-import type { IAdapter, AgentTask } from "../../orchestrator/execution/adapter-layer.js";
 import type { ILLMClient, LLMMessage, LLMRequestOptions, LLMResponse, ToolCallResult } from "../../base/llm/llm-client.js";
 import { loadProviderConfig } from "../../base/llm/provider-config.js";
-import type { ApprovalRequest, ITool, ToolCallContext } from "../../tools/types.js";
+import type { ApprovalRequest, ITool, ToolCallContext, ToolResult } from "../../tools/types.js";
 import { extractPromptedToolCalls } from "../../orchestrator/execution/agent-loop/prompted-tool-protocol.js";
-import { verifyChatAction } from "./chat-verifier.js";
 import {
   collectGitDiffArtifact,
   formatToolActivity,
@@ -30,14 +28,9 @@ import {
   createTelegramConfirmWriteDialogue,
   type SetupDialogueRuntimeState,
 } from "./setup-dialogue.js";
-import {
-  sameLanguageResponseInstruction,
-  type TurnLanguageHint,
-} from "./turn-language.js";
+import type { TurnLanguageHint } from "./turn-language.js";
 import { createOperationProgressItem } from "./operation-progress.js";
-import { createRunSpecStore, formatRunSpecSetupProposal } from "../../runtime/run-spec/index.js";
 import type { RunSpecConfirmationState } from "./chat-history.js";
-import { buildStaticSystemPrompt } from "./grounding.js";
 import {
   addUsageCounter,
   hasUsage,
@@ -55,9 +48,43 @@ export {
   type TelegramSetupGuidanceData,
 } from "./telegram-setup-guidance.js";
 
-const DEFAULT_TIMEOUT_MS = 120_000;
-const MAX_VERIFY_RETRIES = 2;
 const MAX_TOOL_LOOPS = 24;
+const TOOL_LOOP_STUCK_REPEAT_LIMIT = 1;
+
+export type GatewayToolScope =
+  | "read_workspace"
+  | "read_runtime_status"
+  | "request_approval"
+  | "approved_write"
+  | "approved_execute"
+  | "approved_durable_run"
+  | "authorized_runtime_control";
+
+export interface GatewayToolScopeContext {
+  runtimeControlAllowed?: boolean;
+  runtimeControlApprovalMode?: "interactive" | "preapproved" | "disallowed";
+  approvedWrite?: boolean;
+  approvedExecute?: boolean;
+  approvedDurableRun?: boolean;
+}
+
+class ToolLoopTerminalError extends Error {
+  constructor(
+    readonly code:
+      | "tool_loop_exhausted"
+      | "stalled_tool_loop"
+      | "model_request_timeout"
+      | "model_request_aborted"
+      | "tool_call_timeout"
+      | "tool_call_aborted"
+      | "approval_denied"
+      | "policy_blocked",
+    message: string,
+  ) {
+    super(message);
+    this.name = "ToolLoopTerminalError";
+  }
+}
 
 export async function executeRuntimeControlRoute(
   host: ChatRunnerRouteHost,
@@ -97,34 +124,6 @@ export async function executeRuntimeControlRoute(
     output: result.message,
     elapsed_ms: Date.now() - start,
   };
-}
-
-export async function executeRunSpecDraftRoute(
-  host: ChatRunnerRouteHost,
-  route: Extract<SelectedChatRoute, { kind: "run_spec_draft" }>,
-  eventContext: ChatEventContext,
-  assistantBuffer: AssistantBuffer,
-  history: { appendAssistantMessage(message: string): Promise<void> },
-  start: number,
-): Promise<ChatRunResult> {
-  const store = createRunSpecStore(host.deps.stateManager);
-  await store.save(route.draft);
-  const proposal = formatRunSpecSetupProposal(route.draft);
-  const output = [
-    proposal,
-    "",
-    "PulSeed prepared this as typed long-running work. It has not started background work.",
-    "Reply with approval to confirm, cancel to discard it, or provide updated workspace/deadline/metric details.",
-  ].join("\n");
-  await host.setPendingRunSpecConfirmation({
-    state: "pending",
-    spec: route.draft,
-    prompt: output,
-    createdAt: route.draft.created_at,
-    updatedAt: route.draft.updated_at,
-  });
-  host.eventBridge.emitCheckpoint("Long-running work confirmation pending", "A typed background-work draft is awaiting confirmation.", eventContext, "route");
-  return persistDirectRouteResult(host, output, eventContext, assistantBuffer, history, start);
 }
 
 export function formatBlockedRuntimeControlRoute(
@@ -182,71 +181,8 @@ export async function executeConfigureRoute(
   if (route.kind !== "configure") {
     throw new Error(`executeConfigureRoute received route kind ${route.kind}`);
   }
-  const output = await formatConfigureGuidance(host, route.intent.configure_target ?? "unknown", host.getSetupSecretIntake(), host.getTurnLanguageHint(), eventContext);
+  const output = await formatConfigureGuidance(host, route.configureTarget, host.getSetupSecretIntake(), host.getTurnLanguageHint(), eventContext);
   return persistDirectRouteResult(host, output, eventContext, assistantBuffer, history, start);
-}
-
-export async function executeClarifyRoute(
-  host: ChatRunnerRouteHost,
-  _route: SelectedChatRoute,
-  eventContext: ChatEventContext,
-  assistantBuffer: AssistantBuffer,
-  history: { appendAssistantMessage(message: string): Promise<void> },
-  start: number,
-): Promise<ChatRunResult> {
-  const output = [
-    "I need one more detail before taking action.",
-    "",
-    "Tell me whether you want setup guidance, a configuration flow, or a code/test change.",
-  ].join("\n");
-  return persistDirectRouteResult(host, output, eventContext, assistantBuffer, history, start);
-}
-
-export async function executeAssistRoute(
-  host: ChatRunnerRouteHost,
-  params: {
-    turnContext: ChatTurnContext;
-    eventContext: ChatEventContext;
-    assistantBuffer: AssistantBuffer;
-    history: { appendAssistantMessage(message: string): Promise<void>; recordUsage(phase: string, usage: ChatUsageCounter): void };
-    start: number;
-  },
-): Promise<ChatRunResult> {
-  if (!host.deps.llmClient) {
-    return persistDirectRouteResult(
-      host,
-      "I can answer this as guidance, but no language model is configured for read-only chat.",
-      params.eventContext,
-      params.assistantBuffer,
-      params.history,
-      params.start,
-    );
-  }
-  host.eventBridge.emitCheckpoint("Read-only assist selected", "The message will be answered without coding-agent execution.", params.eventContext, "route");
-  const modelRequest = buildChatModelRequest({
-    purpose: "ordinary_chat",
-    turnContext: params.turnContext,
-    systemPrompt: [
-      params.turnContext.modelVisible.instructions.systemPrompt || buildStaticSystemPrompt(host.getProviderConfigBaseDir()),
-      "Answer read-only. Provide concise operational guidance. Do not ask to edit files or run commands unless the user explicitly asks for execution.",
-      sameLanguageResponseInstruction(host.getTurnLanguageHint()),
-    ].join(" "),
-    maxTokens: 1000,
-    temperature: 0,
-  });
-  const response = await sendLLMMessage(host, host.deps.llmClient, modelRequest.messages, {
-    ...modelRequest.options,
-  }, params.assistantBuffer, params.eventContext);
-  const usage = usageFromLLMResponse(response);
-  if (hasUsage(usage)) params.history.recordUsage("assist", usage);
-  return persistDirectRouteResult(
-    host,
-    params.assistantBuffer.text || response.content || "(no response)",
-    params.eventContext,
-    params.assistantBuffer,
-    params.history,
-    params.start,
-  );
 }
 
 export async function executeAgentLoopRoute(
@@ -416,83 +352,30 @@ export async function executeAgentLoopRoute(
   }
 }
 
-export async function executeToolLoopRoute(
-  host: ChatRunnerRouteHost,
-  params: {
-    turnContext: ChatTurnContext;
-    eventContext: ChatEventContext;
-    assistantBuffer: AssistantBuffer;
-    systemPrompt?: string;
-    executionGoalId?: string;
-    history: {
-      appendAssistantMessage(message: string): Promise<void>;
-      recordUsage(phase: string, usage: ChatUsageCounter): void;
-    };
-    gitRoot: string;
-    runtimeControlContext: RuntimeControlChatContext | null;
-    activeAbortSignal?: AbortSignal;
-    start: number;
-  }
-): Promise<ChatRunResult> {
-  try {
-    const toolResult = await executeWithTools(
-      host,
-      params.turnContext,
-      params.eventContext,
-      params.assistantBuffer,
-      params.systemPrompt,
-      params.executionGoalId,
-      params.runtimeControlContext,
-      params.start,
-      {
-        tools: host.deps.registry?.listAll() ?? [],
-        streamFinalText: true,
-      },
-    );
-    const elapsed_ms = Date.now() - params.start;
-    if (hasUsage(toolResult.usage)) {
-      params.history.recordUsage("execution", toolResult.usage);
-    }
-    const diffArtifact = await collectGitDiffArtifact(params.gitRoot);
-    if (diffArtifact) {
-      host.eventBridge.emitDiffArtifact(diffArtifact, params.eventContext);
-    }
-    const output = toolResult.output;
-    if (!params.assistantBuffer.text) {
-      host.eventBridge.pushAssistantDelta(output, params.assistantBuffer, params.eventContext);
-    }
-    await params.history.appendAssistantMessage(output);
-    host.eventBridge.emitEvent({
-      type: "assistant_final",
-      text: output,
-      persisted: true,
-      ...host.eventBridge.eventBase(params.eventContext),
-    });
-    host.eventBridge.emitLifecycleEndEvent("completed", elapsed_ms, params.eventContext, true);
-    return { success: true, output, elapsed_ms };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    const output = await host.eventBridge.emitLifecycleErrorEventWithFallback(
-      message,
-      params.assistantBuffer.text,
-      params.eventContext,
-      {},
-      host.deps.llmClient
-    );
-    host.eventBridge.emitLifecycleEndEvent("error", Date.now() - params.start, params.eventContext, false);
-    return {
-      success: false,
-      output,
-      elapsed_ms: Date.now() - params.start,
-    };
-  }
+interface GatewayModelLoopRouteParams {
+  turnContext: ChatTurnContext;
+  eventContext: ChatEventContext;
+  assistantBuffer: AssistantBuffer;
+  systemPrompt?: string;
+  executionGoalId?: string;
+  history: {
+    appendAssistantMessage(message: string): Promise<void>;
+    recordUsage(phase: string, usage: ChatUsageCounter): void;
+  };
+  gitRoot: string;
+  runtimeControlContext: RuntimeControlChatContext | null;
+  activeAbortSignal?: AbortSignal;
+  timeoutMs?: number;
+  start: number;
 }
 
 export async function executeGatewayModelLoopRoute(
   host: ChatRunnerRouteHost,
-  params: Parameters<typeof executeToolLoopRoute>[1],
+  params: GatewayModelLoopRouteParams,
 ): Promise<ChatRunResult> {
   try {
+    const approvalCapable = isGatewayApprovalCapable(host, params.runtimeControlContext, params.turnContext);
+    const registryTools = host.deps.registry?.listAll() ?? [];
     const toolResult = await executeWithTools(
       host,
       params.turnContext,
@@ -503,8 +386,10 @@ export async function executeGatewayModelLoopRoute(
       params.runtimeControlContext,
       params.start,
       {
-        tools: selectGatewayModelLoopTools(host.deps.registry?.listAll() ?? []),
+        tools: selectDirectModelLoopTools(registryTools, params.turnContext, params.runtimeControlContext, approvalCapable),
         streamFinalText: true,
+        abortSignal: params.activeAbortSignal,
+        timeoutMs: params.timeoutMs,
       },
     );
     const elapsed_ms = Date.now() - params.start;
@@ -532,11 +417,14 @@ export async function executeGatewayModelLoopRoute(
     return { success: true, output, elapsed_ms };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
+    const evidence = err instanceof ToolLoopTerminalError
+      ? toolLoopTerminalEvidence(err)
+      : {};
     const output = await host.eventBridge.emitLifecycleErrorEventWithFallback(
       message,
       params.assistantBuffer.text,
       params.eventContext,
-      {},
+      evidence,
       host.deps.llmClient
     );
     host.eventBridge.emitLifecycleEndEvent("error", Date.now() - params.start, params.eventContext, false);
@@ -548,184 +436,151 @@ export async function executeGatewayModelLoopRoute(
   }
 }
 
-export async function executeAdapterRoute(
-  host: ChatRunnerRouteHost,
-  params: {
-    turnContext: ChatTurnContext;
-    timeoutMs: number;
-    systemPrompt?: string;
-    eventContext: ChatEventContext;
-    assistantBuffer: AssistantBuffer;
-    gitRoot: string;
-    start: number;
-    history: {
-      appendAssistantMessage(message: string): Promise<void>;
-    };
-  }
-): Promise<ChatRunResult> {
-  const task: AgentTask = {
-    prompt: params.turnContext.modelVisible.prompts.prompt,
-    timeout_ms: params.timeoutMs,
-    adapter_type: host.deps.adapter.adapterType,
-    cwd: params.turnContext.hostOnly.execution.cwd,
-    ...(params.systemPrompt ? {
-      system_prompt: renderSystemPromptWithTurnContext(
-        params.turnContext.modelVisible.instructions.systemPrompt,
-        params.turnContext.modelVisible,
-      ),
-    } : {}),
-  };
-  const resolvedTimeoutMs = task.timeout_ms ?? DEFAULT_TIMEOUT_MS;
-  host.eventBridge.emitCheckpoint("Adapter started", "The configured adapter has the current prompt and project context.", params.eventContext, "execution");
-  host.eventBridge.emitActivity("lifecycle", "Calling adapter...", params.eventContext, "lifecycle:adapter");
-  const adapterPromise = host.deps.adapter.execute(task);
-  const timeoutPromise = new Promise<never>((_, reject) =>
-    setTimeout(() => reject(new Error(`Chat adapter timed out after ${resolvedTimeoutMs}ms`)), resolvedTimeoutMs)
-  );
-  let result: Awaited<ReturnType<IAdapter["execute"]>>;
-  try {
-    result = await Promise.race([adapterPromise, timeoutPromise]);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    const output = await host.eventBridge.emitLifecycleErrorEventWithFallback(
-      message,
-      params.assistantBuffer.text,
-      params.eventContext,
-      {},
-      host.deps.llmClient
-    );
-    const timeoutElapsedMs = Date.now() - params.start;
-    host.eventBridge.emitLifecycleEndEvent("error", timeoutElapsedMs, params.eventContext, false);
-    return {
-      success: false,
-      output,
-      elapsed_ms: timeoutElapsedMs,
-    };
-  }
-  if (!result.output && result.error) {
-    result = { ...result, output: `Error: ${result.error}` };
-  }
-  const elapsed_ms = Date.now() - params.start;
-  if (result.output) {
-    host.eventBridge.pushAssistantDelta(result.output, params.assistantBuffer, params.eventContext);
-  }
-
-  const diffArtifact = await collectGitDiffArtifact(params.gitRoot);
-  if (diffArtifact) {
-    let retries = 0;
-    const VERIFY_TIMEOUT_MS = 30_000;
-    host.eventBridge.emitCheckpoint("Changes detected", "Verification is starting because the turn changed the working tree.", params.eventContext, "changes");
-    host.eventBridge.emitActivity("lifecycle", "Checking result...", params.eventContext, "lifecycle:checking");
-    let verification = await Promise.race([
-      verifyChatAction(params.gitRoot, host.deps.toolExecutor, { force: true }),
-      new Promise<{ passed: true }>((resolve) =>
-        setTimeout(() => resolve({ passed: true }), VERIFY_TIMEOUT_MS)
-      ),
-    ]);
-
-    while (!verification.passed && retries < MAX_VERIFY_RETRIES) {
-      retries++;
-      host.eventBridge.emitCheckpoint("Verification retry", `Attempt ${retries} of ${MAX_VERIFY_RETRIES} is repairing failed checks.`, params.eventContext, `verification-retry-${retries}`);
-      const retryPrompt = `The previous changes caused test failures. Please fix them.\n\nTest output:\n${verification.testOutput ?? verification.errors.join("\n")}`;
-      const retryTask: AgentTask = { ...task, prompt: retryPrompt };
-      result = await host.deps.adapter.execute(retryTask);
-      verification = await verifyChatAction(params.gitRoot, host.deps.toolExecutor, { force: true });
-    }
-
-    if (!verification.passed) {
-      const finalDiffArtifact = await collectGitDiffArtifact(params.gitRoot);
-      if (finalDiffArtifact) {
-        host.eventBridge.emitDiffArtifact(finalDiffArtifact, params.eventContext);
-      }
-      host.eventBridge.emitCheckpoint("Verification failed", `Checks are still failing after ${MAX_VERIFY_RETRIES} retries.`, params.eventContext, "verification");
-      const failureOutput = await host.eventBridge.emitLifecycleErrorEventWithFallback(
-        `Changes applied but tests are still failing after ${MAX_VERIFY_RETRIES} retries.`,
-        params.assistantBuffer.text,
-        params.eventContext,
-        {
-          code: "verification_failed",
-          signals: [{ kind: "verification", status: "failed" }],
-        },
-        host.deps.llmClient
-      );
-      host.eventBridge.emitLifecycleEndEvent("error", Date.now() - params.start, params.eventContext, false);
-      return {
-        success: false,
-        output: `${failureOutput}\n\nTest output:\n${verification.testOutput ?? verification.errors.join("\n")}`.trim(),
-        elapsed_ms: Date.now() - params.start,
-      };
-    }
-    const finalDiffArtifact = await collectGitDiffArtifact(params.gitRoot);
-    if (finalDiffArtifact) {
-      host.eventBridge.emitDiffArtifact(finalDiffArtifact, params.eventContext);
-    }
-    host.eventBridge.emitCheckpoint("Verification passed", "Changed files passed the configured chat verification.", params.eventContext, "verification");
-  }
-
-  if (result.success) {
-    await params.history.appendAssistantMessage(result.output);
-    host.eventBridge.emitEvent({
-      type: "assistant_final",
-      text: result.output,
-      persisted: true,
-      ...host.eventBridge.eventBase(params.eventContext),
-    });
-    host.eventBridge.emitLifecycleEndEvent("completed", elapsed_ms, params.eventContext, true);
-  } else {
-    const partialText = params.assistantBuffer.text !== result.output ? params.assistantBuffer.text : "";
-    result.output = await host.eventBridge.emitLifecycleErrorEventWithFallback(
-      result.output || result.error || "Unknown error",
-      partialText,
-      params.eventContext,
-      {
-        stoppedReason: result.stopped_reason,
-        signals: [{
-          kind: "adapter",
-          adapterType: host.deps.adapter.adapterType,
-          stoppedReason: result.stopped_reason,
-        }],
-      },
-      host.deps.llmClient
-    );
-    host.eventBridge.emitLifecycleEndEvent("error", elapsed_ms, params.eventContext, false);
-  }
-
-  return {
-    success: result.success,
-    output: result.output,
-    elapsed_ms,
-  };
-}
-
-const GATEWAY_MODEL_LOOP_TOOL_NAMES = new Set([
+const GATEWAY_READ_WORKSPACE_TOOL_NAMES = new Set([
   "tool_search",
   "list_dir",
   "read",
   "grep",
   "glob",
+  "code_search",
+  "code_read_context",
+  "json_query",
+]);
+
+const GATEWAY_RUNTIME_STATUS_TOOL_NAMES = new Set([
   "get_gateway_setup_status",
   "prepare_gateway_setup_guidance",
+  "get_runtime_status",
+  "list_schedules",
+  "get_schedule",
+  "runs_list",
+  "runs_observe",
+  "sessions_list",
+  "sessions_observe",
+]);
+
+const GATEWAY_REQUEST_APPROVAL_TOOL_NAMES = new Set([
+  "ask-human",
+]);
+
+const GATEWAY_APPROVED_WRITE_TOOL_NAMES = new Set([
   "prepare_gateway_config_write",
   "confirm_gateway_config_write",
   "cancel_gateway_config_write",
-  "get_runtime_status",
-  "request_runtime_control",
   "draft_run_spec",
   "update_run_spec_draft",
   "cancel_run_spec_draft",
   "runspec_propose",
+  "create_schedule",
+  "update_schedule",
+  "remove_schedule",
+  "pause_schedule",
+  "resume_schedule",
+]);
+
+const GATEWAY_APPROVED_DURABLE_RUN_TOOL_NAMES = new Set([
   "runspec_confirm",
   "start_durable_run",
   "run_start",
+  "run_schedule",
 ]);
 
-function selectGatewayModelLoopTools(tools: ITool[]): ITool[] {
-  if (tools.length <= 12) return tools;
-  return tools.filter((tool) => {
-    if (GATEWAY_MODEL_LOOP_TOOL_NAMES.has(tool.metadata.name)) return true;
-    if (tool.metadata.alwaysLoad && tool.metadata.isReadOnly) return true;
-    return false;
+const GATEWAY_AUTHORIZED_RUNTIME_CONTROL_TOOL_NAMES = new Set([
+  "request_runtime_control",
+  "run_pause",
+  "run_resume",
+  "run_cancel",
+]);
+
+const GATEWAY_APPROVED_EXECUTE_TOOL_NAMES = new Set([
+  "shell",
+  "shell_command",
+  "process_session_start",
+  "process_session_write",
+  "process_session_stop",
+]);
+
+export function resolveGatewayToolScopes(context: GatewayToolScopeContext = {}): Set<GatewayToolScope> {
+  const scopes = new Set<GatewayToolScope>([
+    "read_workspace",
+    "read_runtime_status",
+    "request_approval",
+  ]);
+  if (context.approvedWrite) scopes.add("approved_write");
+  if (context.approvedExecute) scopes.add("approved_execute");
+  if (context.approvedDurableRun) scopes.add("approved_durable_run");
+  if (context.runtimeControlAllowed === true && context.runtimeControlApprovalMode !== "disallowed") {
+    scopes.add("authorized_runtime_control");
+  }
+  return scopes;
+}
+
+export function selectGatewayModelLoopTools(
+  tools: ITool[],
+  context: GatewayToolScopeContext = {},
+): ITool[] {
+  const scopes = resolveGatewayToolScopes(context);
+  return tools.filter((tool) => isGatewayToolInScope(tool, scopes));
+}
+
+function isGatewayToolInScope(tool: ITool, scopes: ReadonlySet<GatewayToolScope>): boolean {
+  const name = tool.metadata.name;
+  if (scopes.has("read_workspace") && GATEWAY_READ_WORKSPACE_TOOL_NAMES.has(name)) return true;
+  if (scopes.has("read_runtime_status") && GATEWAY_RUNTIME_STATUS_TOOL_NAMES.has(name)) return true;
+  if (scopes.has("request_approval") && GATEWAY_REQUEST_APPROVAL_TOOL_NAMES.has(name)) return true;
+  if (scopes.has("approved_write") && GATEWAY_APPROVED_WRITE_TOOL_NAMES.has(name)) return true;
+  if (scopes.has("approved_execute") && GATEWAY_APPROVED_EXECUTE_TOOL_NAMES.has(name)) return true;
+  if (scopes.has("approved_durable_run") && GATEWAY_APPROVED_DURABLE_RUN_TOOL_NAMES.has(name)) return true;
+  if (scopes.has("authorized_runtime_control") && GATEWAY_AUTHORIZED_RUNTIME_CONTROL_TOOL_NAMES.has(name)) return true;
+  return false;
+}
+
+function selectDirectModelLoopTools(
+  tools: ITool[],
+  turnContext: ChatTurnContext,
+  runtimeControlContext: RuntimeControlChatContext | null,
+  approvalCapable: boolean,
+): ITool[] {
+  if (!isGatewaySurfaceTurn(turnContext, runtimeControlContext)) {
+    return tools;
+  }
+  return selectGatewayModelLoopTools(tools, {
+    runtimeControlAllowed: runtimeControlContext?.allowed,
+    runtimeControlApprovalMode: runtimeControlContext?.approvalMode,
+    approvedWrite: approvalCapable,
+    approvedExecute: approvalCapable,
+    approvedDurableRun: approvalCapable,
   });
+}
+
+function isGatewaySurfaceTurn(
+  turnContext: ChatTurnContext,
+  runtimeControlContext: RuntimeControlChatContext | null,
+): boolean {
+  return (runtimeControlContext?.replyTarget?.surface ?? turnContext.modelVisible.runtime.replyTarget?.surface) === "gateway";
+}
+
+function isGatewayApprovalCapable(
+  host: ChatRunnerRouteHost,
+  runtimeControlContext: RuntimeControlChatContext | null,
+  turnContext: ChatTurnContext,
+): boolean {
+  const turnRuntimeContext = turnContext.hostOnly.runtime.runtimeControlContext;
+  const runtimeApprovalMode =
+    runtimeControlContext?.approvalMode
+    ?? turnRuntimeContext?.approvalMode
+    ?? turnContext.modelVisible.runtime.approvalMode;
+  const runtimeAllowed =
+    runtimeControlContext?.allowed
+    ?? turnRuntimeContext?.allowed
+    ?? turnContext.modelVisible.runtime.runtimeControlAllowed;
+  return Boolean(
+    host.deps.approvalRequestFn
+    || host.deps.approvalFn
+    || runtimeControlContext?.approvalFn
+    || turnRuntimeContext?.approvalFn
+    || (runtimeAllowed !== false && runtimeApprovalMode === "preapproved"),
+  );
 }
 
 async function executeWithTools(
@@ -740,12 +595,17 @@ async function executeWithTools(
   options: {
     tools: ITool[];
     streamFinalText: boolean;
+    abortSignal?: AbortSignal;
+    timeoutMs?: number;
   } = {
     tools: host.deps.registry?.listAll() ?? [],
     streamFinalText: true,
   },
 ): Promise<{ output: string; usage: ChatUsageCounter }> {
-  const llmClient = host.deps.llmClient!;
+  const llmClient = host.deps.llmClient;
+  if (!llmClient) {
+    throw new ToolLoopTerminalError("model_request_aborted", "Gateway model/tool loop cannot run because no language model client is configured.");
+  }
   const supportsNativeToolCalling = llmClient.supportsToolCalling?.() !== false;
   const initialModelRequest = buildChatModelRequest({
     purpose: "tool_call",
@@ -756,10 +616,19 @@ async function executeWithTools(
     supportsNativeToolCalling,
   });
   const messages: LLMMessage[] = [...initialModelRequest.messages];
-  const toolCallContext = await buildToolCallContext(host, goalId, runtimeControlContext, start, turnContext);
+  const startedAt = start ?? Date.now();
+  const deadlineAt = options.timeoutMs ? startedAt + options.timeoutMs : null;
+  const allowedToolNames = new Set(options.tools.map((tool) => tool.metadata.name));
+  const toolCallContext = await buildToolCallContext(host, goalId, runtimeControlContext, start, turnContext, {
+    abortSignal: options.abortSignal,
+    timeoutMs: remainingTimeoutMs(deadlineAt),
+  });
   const usage = zeroUsageCounter();
+  let previousToolCycleFingerprint: string | null = null;
+  let repeatedToolCycleCount = 0;
 
   for (let loop = 0; loop < MAX_TOOL_LOOPS; loop++) {
+    throwIfAbortedOrTimedOut(options.abortSignal, deadlineAt, "model_request");
     const modelRequest = buildChatModelRequest({
       purpose: "tool_call",
       turnContext,
@@ -772,10 +641,22 @@ async function executeWithTools(
     let response: LLMResponse;
     try {
       host.eventBridge.emitActivity("lifecycle", "Calling model...", eventContext, "lifecycle:model");
-      response = await sendLLMMessage(host, llmClient, modelRequest.messages, modelRequest.options, assistantBuffer, eventContext, {
-        emitAssistantDeltas: options.streamFinalText,
-      });
+      response = await withAbortAndTimeout(
+        (execution) => sendLLMMessage(host, llmClient, modelRequest.messages, {
+          ...modelRequest.options,
+          abortSignal: execution.abortSignal,
+          ...(execution.timeoutMs !== undefined ? { timeoutMs: execution.timeoutMs } : {}),
+        }, assistantBuffer, eventContext, {
+          emitAssistantDeltas: options.streamFinalText,
+        }),
+        options.abortSignal,
+        remainingTimeoutMs(deadlineAt),
+        "model_request",
+      );
     } catch (err) {
+      if (err instanceof ToolLoopTerminalError) throw err;
+      const interruption = terminalModelInterruptionFromError(err);
+      if (interruption) throw interruption;
       console.error("[chat-runner] executeWithTools error:", err);
       const hint = err instanceof Error ? `: ${err.message}` : "";
       throw new Error(`Sorry, I encountered an error processing your request${hint}.`);
@@ -812,6 +693,7 @@ async function executeWithTools(
 
     messages.push({ role: "assistant", content: response.content || "" });
 
+    const toolCycleResults: Array<{ name: string; args: Record<string, unknown>; result: string }> = [];
     for (const tc of toolCalls) {
       let args: Record<string, unknown> = {};
       try {
@@ -819,25 +701,240 @@ async function executeWithTools(
       } catch {
         // ignore parse errors, use empty args
       }
-      const toolResult = await dispatchToolCall(
-        host,
-        tc.id,
-        tc.function.name,
-        args,
-        toolCallContext,
-        eventContext
+      if (!allowedToolNames.has(tc.function.name)) {
+        host.eventBridge.emitActivity("tool", formatToolActivity("Failed", tc.function.name, "Tool is not available in this gateway scope"), eventContext, tc.id);
+        host.eventBridge.emitEvent({
+          type: "tool_end",
+          toolCallId: tc.id,
+          toolName: tc.function.name,
+          success: false,
+          summary: "Tool is not available in this gateway scope.",
+          durationMs: 0,
+          ...host.eventBridge.eventBase(eventContext),
+        });
+        throw new ToolLoopTerminalError("policy_blocked", `Tool ${tc.function.name} is not available in this gateway scope.`);
+      }
+      throwIfAbortedOrTimedOut(options.abortSignal, deadlineAt, "tool_call");
+      const toolResult = await withAbortAndTimeout(
+        (execution) => dispatchToolCall(
+          host,
+          tc.id,
+          tc.function.name,
+          args,
+          {
+            ...toolCallContext,
+            abortSignal: execution.abortSignal,
+            ...(execution.timeoutMs !== undefined ? { timeoutMs: execution.timeoutMs } : {}),
+            callId: tc.id,
+          },
+          eventContext,
+        ),
+        options.abortSignal,
+        remainingTimeoutMs(deadlineAt),
+        "tool_call",
       );
       if (tc.function.name === "tool_search") {
         activateToolSearchResults(host.activatedTools, toolResult);
       }
+      toolCycleResults.push({ name: tc.function.name, args, result: toolResult });
       messages.push({ role: "user", content: `Tool result for ${tc.function.name}:\n${toolResult}` });
+    }
+
+    const toolCycleFingerprint = stableToolCycleFingerprint(toolCycleResults);
+    if (toolCycleFingerprint === previousToolCycleFingerprint) {
+      repeatedToolCycleCount++;
+      if (repeatedToolCycleCount >= TOOL_LOOP_STUCK_REPEAT_LIMIT) {
+        throw new ToolLoopTerminalError(
+          "stalled_tool_loop",
+          "The gateway model/tool loop repeated the same tool call and received the same result without making progress.",
+        );
+      }
+    } else {
+      previousToolCycleFingerprint = toolCycleFingerprint;
+      repeatedToolCycleCount = 0;
     }
   }
 
-  const lastAssistant = [...messages].reverse().find(m => m.role === "assistant");
+  throw new ToolLoopTerminalError(
+    "tool_loop_exhausted",
+    `The gateway model/tool loop reached the maximum of ${MAX_TOOL_LOOPS} tool iterations without a final assistant answer.`,
+  );
+}
+
+function terminalModelInterruptionFromError(err: unknown): ToolLoopTerminalError | null {
+  const message = err instanceof Error ? err.message : String(err);
+  const normalized = message.toLowerCase();
+  if (normalized.includes("abort") || normalized.includes("cancel")) {
+    return new ToolLoopTerminalError("model_request_aborted", message);
+  }
+  if (normalized.includes("timeout") || normalized.includes("timed out")) {
+    return new ToolLoopTerminalError("model_request_timeout", message);
+  }
+  return null;
+}
+
+function remainingTimeoutMs(deadlineAt: number | null): number | undefined {
+  if (deadlineAt === null) return undefined;
+  return Math.max(0, deadlineAt - Date.now());
+}
+
+function throwIfAbortedOrTimedOut(
+  abortSignal: AbortSignal | undefined,
+  deadlineAt: number | null,
+  phase: "model_request" | "tool_call",
+): void {
+  if (abortSignal?.aborted) {
+    throw new ToolLoopTerminalError(
+      phase === "model_request" ? "model_request_aborted" : "tool_call_aborted",
+      phase === "model_request"
+        ? "The gateway model request was aborted before it completed."
+        : "The gateway tool call was aborted before it completed.",
+    );
+  }
+  const remaining = remainingTimeoutMs(deadlineAt);
+  if (remaining !== undefined && remaining <= 0) {
+    throw new ToolLoopTerminalError(
+      phase === "model_request" ? "model_request_timeout" : "tool_call_timeout",
+      phase === "model_request"
+        ? "The gateway model request timed out before it completed."
+        : "The gateway tool call timed out before it completed.",
+    );
+  }
+}
+
+async function withAbortAndTimeout<T>(
+  operation: (execution: { abortSignal: AbortSignal; timeoutMs?: number }) => Promise<T>,
+  abortSignal: AbortSignal | undefined,
+  timeoutMs: number | undefined,
+  phase: "model_request" | "tool_call",
+): Promise<T> {
+  throwIfAbortedOrTimedOut(abortSignal, timeoutMs === undefined ? null : Date.now() + timeoutMs, phase);
+  const controller = new AbortController();
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  let abortHandler: (() => void) | undefined;
+  const racers: Promise<T>[] = [];
+  if (timeoutMs !== undefined) {
+    racers.push(new Promise<T>((_, reject) => {
+      timeout = setTimeout(() => {
+        const err = new ToolLoopTerminalError(
+          phase === "model_request" ? "model_request_timeout" : "tool_call_timeout",
+          phase === "model_request"
+            ? "The gateway model request timed out before it completed."
+            : "The gateway tool call timed out before it completed.",
+        );
+        reject(err);
+        abortController(controller, err);
+      }, timeoutMs);
+    }));
+  }
+  if (abortSignal) {
+    racers.push(new Promise<T>((_, reject) => {
+      if (abortSignal.aborted) {
+        const err = new ToolLoopTerminalError(
+          phase === "model_request" ? "model_request_aborted" : "tool_call_aborted",
+          phase === "model_request"
+            ? "The gateway model request was aborted before it completed."
+            : "The gateway tool call was aborted before it completed.",
+        );
+        reject(err);
+        abortController(controller, err);
+        return;
+      }
+      abortHandler = () => {
+        const err = new ToolLoopTerminalError(
+          phase === "model_request" ? "model_request_aborted" : "tool_call_aborted",
+          phase === "model_request"
+            ? "The gateway model request was aborted before it completed."
+            : "The gateway tool call was aborted before it completed.",
+        );
+        reject(err);
+        abortController(controller, err);
+      };
+      abortSignal.addEventListener("abort", abortHandler, { once: true });
+    }));
+  }
+  const operationPromise = operation({
+    abortSignal: controller.signal,
+    ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+  });
+  racers.unshift(operationPromise);
+  try {
+    return await Promise.race(racers);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+    if (abortSignal && abortHandler) {
+      abortSignal.removeEventListener("abort", abortHandler);
+    }
+  }
+}
+
+function abortController(controller: AbortController, reason: unknown): void {
+  if (controller.signal.aborted) return;
+  controller.abort(reason);
+}
+
+function stableToolCycleFingerprint(
+  results: Array<{ name: string; args: Record<string, unknown>; result: string }>,
+): string {
+  return JSON.stringify(results.map((item) => ({
+    name: item.name,
+    args: stableJsonValue(item.args),
+    result: item.result,
+  })));
+}
+
+function stableJsonValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stableJsonValue);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, entry]) => [key, stableJsonValue(entry)]),
+  );
+}
+
+function toolLoopTerminalEvidence(error: ToolLoopTerminalError) {
+  if (error.code === "approval_denied" || error.code === "policy_blocked") {
+    return {
+      code: error.code,
+      stoppedReason: error.code,
+      signals: [{
+        kind: "approval" as const,
+        status: error.code === "approval_denied" ? "denied" as const : "blocked" as const,
+        code: error.code,
+      }],
+    };
+  }
+  const isInterruption =
+    error.code === "model_request_timeout"
+    || error.code === "model_request_aborted"
+    || error.code === "tool_call_timeout"
+    || error.code === "tool_call_aborted";
+  const stoppedReason = error.code === "model_request_aborted" || error.code === "tool_call_aborted"
+    ? "aborted"
+    : isInterruption
+      ? "timeout"
+      : "stalled_tool_loop";
+  if (isInterruption) {
+    return {
+      code: error.code,
+      stoppedReason: error.code,
+      signals: [{
+        kind: "runtime" as const,
+        stoppedReason,
+        code: error.code,
+      }],
+    };
+  }
   return {
-    output: lastAssistant?.content || "I was unable to complete the request within the allowed tool call limit.",
-    usage,
+    code: error.code,
+    stoppedReason: error.code,
+    signals: [{
+      kind: "runtime" as const,
+      operationState: "daemon_loop" as const,
+      stoppedReason,
+      code: error.code,
+    }],
   };
 }
 
@@ -1019,7 +1116,7 @@ async function dispatchToolCall(
     });
     host.eventBridge.emitActivity("tool", formatToolActivity("Running", name, JSON.stringify(args)), eventContext, toolCallId);
 
-    let result: { success: boolean; summary: string; data?: unknown; error?: string };
+    let result: ToolResult;
     if (host.deps.toolExecutor) {
       host.eventBridge.emitEvent({
         type: "tool_update",
@@ -1077,7 +1174,7 @@ async function dispatchToolCall(
             ...(activityCategory ? { activityCategory } : {}),
             ...host.eventBridge.eventBase(eventContext),
           });
-          return `Tool ${name} not approved: ${permResult.reason}`;
+          throw new ToolLoopTerminalError("approval_denied", `Tool ${name} not approved: ${permResult.reason}`);
         }
       }
       host.eventBridge.emitEvent({
@@ -1120,9 +1217,20 @@ async function dispatchToolCall(
       ...(activityCategory ? { activityCategory } : {}),
       ...host.eventBridge.eventBase(eventContext),
     });
+    const terminalToolFailure = terminalToolFailureFromResult(name, tool, result);
+    if (terminalToolFailure) {
+      throw terminalToolFailure;
+    }
     return result.data != null ? JSON.stringify(result.data) : (result.summary ?? "(no result)");
   } catch (err) {
+    if (err instanceof ToolLoopTerminalError) {
+      throw err;
+    }
     const message = err instanceof Error ? err.message : String(err);
+    const terminalInterruption = terminalToolInterruptionFromMessage(message);
+    if (terminalInterruption) {
+      throw terminalInterruption;
+    }
     const durationMs = Date.now() - startTime;
     host.deps.onToolEnd?.(name, { success: false, summary: message, durationMs });
     host.eventBridge.emitActivity("tool", formatToolActivity("Failed", name, message), eventContext, toolCallId);
@@ -1138,6 +1246,42 @@ async function dispatchToolCall(
     });
     return JSON.stringify({ error: `Tool ${name} failed: ${message}` });
   }
+}
+
+function terminalToolInterruptionFromMessage(message: string): ToolLoopTerminalError | null {
+  const normalized = message.toLowerCase();
+  if (normalized.includes("abort") || normalized.includes("cancel")) {
+    return new ToolLoopTerminalError("tool_call_aborted", message);
+  }
+  if (normalized.includes("timeout") || normalized.includes("timed out")) {
+    return new ToolLoopTerminalError("tool_call_timeout", message);
+  }
+  return null;
+}
+
+function terminalToolFailureFromResult(
+  name: string,
+  tool: ITool,
+  result: ToolResult,
+): ToolLoopTerminalError | null {
+  if (result.success) return null;
+  const reason = result.execution?.reason;
+  if (reason === "approval_denied") {
+    return new ToolLoopTerminalError(
+      "approval_denied",
+      result.execution?.message ?? result.error ?? result.summary ?? `Tool ${name} was denied by approval policy.`,
+    );
+  }
+  if (
+    reason === "policy_blocked"
+    && (tool.metadata.permissionLevel !== "read_only" || tool.metadata.isDestructive)
+  ) {
+    return new ToolLoopTerminalError(
+      "policy_blocked",
+      result.execution?.message ?? result.error ?? result.summary ?? `Tool ${name} was blocked by policy.`,
+    );
+  }
+  return null;
 }
 
 async function sendLLMMessage(
@@ -1179,6 +1323,10 @@ async function buildToolCallContext(
   runtimeControlContext?: RuntimeControlChatContext | null,
   start?: number,
   turnContext?: ChatTurnContext,
+  execution?: {
+    abortSignal?: AbortSignal;
+    timeoutMs?: number;
+  },
 ): Promise<ToolCallContext> {
   const executionPolicy = turnContext?.hostOnly.execution.executionPolicy ?? await host.getSessionExecutionPolicy();
   const runtimeContext = turnContext?.hostOnly.runtime.runtimeControlContext ?? runtimeControlContext;
@@ -1201,6 +1349,8 @@ async function buildToolCallContext(
     ...(host.deps.permissionWaitPlanStore ? { permissionWaitPlanStore: host.deps.permissionWaitPlanStore } : {}),
     ...(host.deps.capabilityVerificationStore ? { capabilityVerificationStore: host.deps.capabilityVerificationStore } : {}),
     ...(host.deps.capabilityExecutionResolver ? { capabilityExecutionResolver: host.deps.capabilityExecutionResolver } : {}),
+    ...(execution?.abortSignal ? { abortSignal: execution.abortSignal } : {}),
+    ...(execution?.timeoutMs !== undefined ? { timeoutMs: execution.timeoutMs } : {}),
     ...(host.getConversationSessionId() ? { conversationSessionId: host.getConversationSessionId()! } : {}),
     providerConfigBaseDir: host.getProviderConfigBaseDir(),
     setupSecretIntake: host.getSetupSecretIntake(),

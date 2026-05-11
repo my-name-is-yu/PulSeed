@@ -22,8 +22,8 @@ function makeTurnContext(): ChatTurnContext {
     executionCwd: "/repo",
     nativeAgentLoopStatePath: "chat/agentloop/session-model.state.json",
     selectedRoute: {
-      kind: "tool_loop",
-      reason: "tool_loop_available",
+      kind: "gateway_model_loop",
+      reason: "direct_model_tool_loop",
       replyTargetPolicy: "turn_reply_target",
       eventProjectionPolicy: "turn_only",
       concurrencyPolicy: "session_serial",

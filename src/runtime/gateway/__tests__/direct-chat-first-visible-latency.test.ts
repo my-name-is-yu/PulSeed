@@ -437,7 +437,7 @@ describe("gateway direct chat first visible projection", () => {
     const events: ChatEvent[] = [];
     const approvalTool: ITool = {
       metadata: {
-        name: "dangerous_delete",
+        name: "confirm_gateway_config_write",
         aliases: [],
         permissionLevel: "write_local",
         isReadOnly: false,
@@ -448,11 +448,11 @@ describe("gateway direct chat first visible projection", () => {
         maxOutputChars: 1000,
         tags: ["automation"],
       },
-      inputSchema: z.object({ target: z.string() }),
-      description: () => "Delete a target after explicit permission.",
+      inputSchema: z.object({ channel: z.literal("telegram").default("telegram") }).strict(),
+      description: () => "Write Telegram gateway config after explicit permission.",
       checkPermissions: vi.fn().mockResolvedValue({
         status: "needs_approval",
-        reason: "I need explicit permission before deleting tmp/demo.txt.",
+        reason: "I need explicit permission before writing Telegram gateway config.",
       }),
       call: vi.fn().mockResolvedValue({ success: true, summary: "deleted", data: null }),
       isConcurrencySafe: () => true,
@@ -473,8 +473,8 @@ describe("gateway direct chat first visible projection", () => {
               id: "call-1",
               type: "function",
               function: {
-                name: "dangerous_delete",
-                arguments: JSON.stringify({ target: "tmp/demo.txt" }),
+                name: "confirm_gateway_config_write",
+                arguments: JSON.stringify({ channel: "telegram" }),
               },
             }],
           };
@@ -507,10 +507,10 @@ describe("gateway direct chat first visible projection", () => {
 
     expect(approvalTool.call).not.toHaveBeenCalled();
     expect(approvalFn).toHaveBeenCalledOnce();
-    expect(approvalFn.mock.calls[0]?.[0]).toBe("I need explicit permission before deleting tmp/demo.txt.");
+    expect(approvalFn.mock.calls[0]?.[0]).toBe("I need explicit permission before writing Telegram gateway config.");
     expect(events.some((event) =>
       event.type === "tool_update"
-      && event.toolName === "dangerous_delete"
+      && event.toolName === "confirm_gateway_config_write"
       && event.status === "awaiting_approval"
       && event.message.includes("explicit permission")
     )).toBe(true);

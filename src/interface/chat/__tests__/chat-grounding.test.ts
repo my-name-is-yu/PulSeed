@@ -466,116 +466,68 @@ describe("OpenAICodexCLIAdapter — system_prompt prepend", () => {
   });
 });
 
-// ─── ChatRunner integration tests (grounding) ───
+// ─── ChatRunner integration tests (direct model loop grounding) ───
 
-describe("ChatRunner — grounding integration", () => {
-  it("sets system_prompt on AgentTask when buildSystemPrompt succeeds", async () => {
+function makeRecordingLLMClient(output = "Done."): ILLMClient {
+  return {
+    supportsToolCalling: () => true,
+    sendMessage: vi.fn().mockResolvedValue({
+      content: output,
+      usage: { input_tokens: 1, output_tokens: 1 },
+      stop_reason: "end_turn",
+      tool_calls: [],
+    }),
+  } as unknown as ILLMClient;
+}
+
+describe("ChatRunner — direct model loop grounding", () => {
+  it("sets the system prompt on the direct model request without using the legacy adapter", async () => {
     const adapter = makeMockAdapter();
-    const stateManager = makeMockStateManager();
-    const runner = new ChatRunner(makeDeps({ adapter, stateManager }));
+    const llmClient = makeRecordingLLMClient();
+    const runner = new ChatRunner(makeDeps({ adapter, llmClient }));
 
     await runner.execute("Hello", "/repo");
 
-    expect(adapter.execute).toHaveBeenCalledOnce();
-    const task = (adapter.execute as ReturnType<typeof vi.fn>).mock.calls[0][0];
-    // system_prompt is set when buildSystemPrompt returns a non-empty string
-    expect(task.system_prompt).toBeDefined();
-    expect(typeof task.system_prompt).toBe("string");
-    expect(task.system_prompt.length).toBeGreaterThan(0);
+    expect(adapter.execute).not.toHaveBeenCalled();
+    expect(llmClient.sendMessage).toHaveBeenCalledOnce();
+    const [, options] = (llmClient.sendMessage as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(String(options?.system ?? "")).toContain("## Identity");
+    expect(String(options?.system ?? "")).toContain("gateway chat surface");
   });
 
-  it("rebuilds dynamic context across turns while reusing static prompt", async () => {
+  it("includes conversation history in the direct model prompt for subsequent turns", async () => {
     const adapter = makeMockAdapter();
-    let currentIds = ["goal-1"];
-    const goals: Record<string, { title: string; status: string; loop_status: string }> = {
-      "goal-1": { title: "First goal", status: "active", loop_status: "running" },
-      "goal-2": { title: "Second goal", status: "pending", loop_status: "idle" },
-    };
-    const stateManager = {
-      listGoalIds: vi.fn().mockImplementation(async () => currentIds),
-      loadGoal: vi.fn().mockImplementation(async (id: string) => goals[id] ?? null),
-      writeRaw: vi.fn().mockResolvedValue(undefined),
-      readRaw: vi.fn().mockResolvedValue(null),
-    } as unknown as StateManager;
-    const runner = new ChatRunner(makeDeps({ adapter, stateManager }));
-
-    runner.startSession("/repo");
-    await runner.execute("Turn 1", "/repo");
-    currentIds = ["goal-2"];
-    await runner.execute("Turn 2", "/repo");
-
-    const firstTask = (adapter.execute as ReturnType<typeof vi.fn>).mock.calls[0][0];
-    const secondTask = (adapter.execute as ReturnType<typeof vi.fn>).mock.calls[1][0];
-    const listGoalIdsMock = stateManager.listGoalIds as ReturnType<typeof vi.fn>;
-    expect(listGoalIdsMock).toHaveBeenCalledTimes(2);
-    expect(firstTask.system_prompt).toContain("## Identity");
-    expect(secondTask.system_prompt).toContain("## Identity");
-    expect(firstTask.system_prompt).toContain("First goal");
-    expect(secondTask.system_prompt).toContain("Second goal");
-    expect(secondTask.system_prompt).not.toContain("First goal");
-  });
-
-  it("includes conversation history in prompt for subsequent turns", async () => {
-    const adapter = makeMockAdapter();
-    const stateManager = makeMockStateManager();
-    const runner = new ChatRunner(makeDeps({ adapter, stateManager }));
+    const llmClient = makeRecordingLLMClient();
+    const runner = new ChatRunner(makeDeps({ adapter, llmClient }));
 
     runner.startSession("/repo");
     await runner.execute("First message", "/repo");
     await runner.execute("Second message", "/repo");
 
-    // Second call's prompt should include the first turn history
-    const secondCallTask = (adapter.execute as ReturnType<typeof vi.fn>).mock.calls[1][0];
-    expect(secondCallTask.prompt).toContain("Previous conversation");
-    expect(secondCallTask.prompt).toContain("First message");
+    expect(adapter.execute).not.toHaveBeenCalled();
+    const secondMessages = (llmClient.sendMessage as ReturnType<typeof vi.fn>).mock.calls[1][0];
+    const secondPrompt = secondMessages[0].content;
+    expect(secondPrompt).toContain("Previous conversation");
+    expect(secondPrompt).toContain("First message");
   });
 
-  it("limits history to last 10 turns", async () => {
+  it("limits direct model prompt history to the last 10 model-visible messages", async () => {
     const adapter = makeMockAdapter();
-    const stateManager = makeMockStateManager();
-    const runner = new ChatRunner(makeDeps({ adapter, stateManager }));
+    const llmClient = makeRecordingLLMClient();
+    const runner = new ChatRunner(makeDeps({ adapter, llmClient }));
 
     runner.startSession("/repo");
-
-    // Execute 12 turns to build up history
     for (let i = 1; i <= 12; i++) {
       await runner.execute(`Message ${i}`, "/repo");
     }
 
-    // 13th call: priorMessages = allMessages.slice(0, -1).slice(-10)
-    // After 12 turns: allMessages has 24 msgs; slice(0,-1) = 23; slice(-10) = last 10
-    // Those last 10 are from turns 8-12 area (assistant+user pairs)
     await runner.execute("Message 13", "/repo");
-    const lastCallTask = (adapter.execute as ReturnType<typeof vi.fn>).mock.calls[12][0];
+    const lastMessages = (llmClient.sendMessage as ReturnType<typeof vi.fn>).mock.calls[12][0];
+    const lastPrompt = lastMessages[0].content;
 
-    // "Message 1" was in position 0 of all messages — should be dropped
-    // "Message 12" (user, near end) should be in the window
-    expect(lastCallTask.prompt).toContain("Message 12");
-    // Message 1 is user message at index 0 — well outside the last 10 window
-    // Verify it's not included by checking exact content
-    const promptLines = lastCallTask.prompt.split("\n");
-    const userLines = promptLines.filter((l: string) => l.startsWith("User: Message 1"));
-    // "User: Message 1" might match "User: Message 10", "11", "12" so we check for "User: Message 1\n" pattern
-    const exactMsg1 = promptLines.find((l: string) => l === "User: Message 1");
+    expect(lastPrompt).toContain("Message 12");
+    const promptLines = lastPrompt.split("\n");
+    const exactMsg1 = promptLines.find((line: string) => line === "User: Message 1");
     expect(exactMsg1).toBeUndefined();
-  });
-
-  it("falls back to static system_prompt when dynamic context build fails", async () => {
-    const sm = {
-      listGoalIds: vi.fn().mockRejectedValue(new Error("fail")),
-      loadGoal: vi.fn(),
-      writeRaw: vi.fn().mockResolvedValue(undefined),
-      readRaw: vi.fn().mockResolvedValue(null),
-    } as unknown as StateManager;
-
-    const adapter = makeMockAdapter();
-    const runner = new ChatRunner(makeDeps({ adapter, stateManager: sm }));
-
-    await runner.execute("Hello", "/repo");
-
-    const task = (adapter.execute as ReturnType<typeof vi.fn>).mock.calls[0][0];
-    expect(task.system_prompt).toBeDefined();
-    expect(task.system_prompt).toContain("## Identity");
-    expect(task.system_prompt).not.toContain("## Dynamic Context");
   });
 });

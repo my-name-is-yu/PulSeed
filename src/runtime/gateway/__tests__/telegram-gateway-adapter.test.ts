@@ -2,7 +2,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { dispatchGatewayChatInput } from "../chat-session-dispatch.js";
+import { dispatchGatewayChatInputResult } from "../chat-session-dispatch.js";
 import { TelegramGatewayAdapter } from "../telegram-gateway-adapter.js";
 import { ChatRunnerEventBridge } from "../../../interface/chat/chat-runner-event-bridge.js";
 import { PluginChannelRuntimeStateStore } from "../../store/plugin-channel-runtime-state-store.js";
@@ -10,15 +10,17 @@ import { createUserVisibleSeedyTurnPresence, type SeedyTurnPresencePhase } from 
 import type { AgentLoopEvent } from "../../../orchestrator/execution/agent-loop/agent-loop-events.js";
 
 vi.mock("../chat-session-dispatch.js", () => ({
-  dispatchGatewayChatInput: vi.fn().mockResolvedValue("ok"),
+  dispatchGatewayChatInputResult: vi.fn().mockResolvedValue({ status: "ok", text: "ok" }),
+  GATEWAY_CHAT_DISPATCH_FAILURE_MESSAGE: "PulSeed could not complete this gateway turn. The message was received, but the chat dispatcher did not return a terminal assistant response.",
+  formatGatewayChatDispatchFailure: (error: string) => `PulSeed could not complete this gateway turn. The message was received, but the chat dispatcher did not return a terminal assistant response.\n\nError: ${error}`,
 }));
 
 const tempDirs: string[] = [];
 const adapters: TelegramGatewayAdapter[] = [];
 
 beforeEach(() => {
-  vi.mocked(dispatchGatewayChatInput).mockReset();
-  vi.mocked(dispatchGatewayChatInput).mockResolvedValue("ok");
+  vi.mocked(dispatchGatewayChatInputResult).mockReset();
+  vi.mocked(dispatchGatewayChatInputResult).mockResolvedValue({ status: "ok", text: "ok" });
 });
 
 afterEach(async () => {
@@ -76,15 +78,15 @@ describe("TelegramGatewayAdapter", () => {
     vi.stubGlobal("fetch", fetchMock);
     const adapter = TelegramGatewayAdapter.fromConfigDir(configDir);
     adapters.push(adapter);
-    vi.mocked(dispatchGatewayChatInput).mockImplementationOnce(async () => {
+    vi.mocked(dispatchGatewayChatInputResult).mockImplementationOnce(async () => {
       await adapter.stop();
-      return "ok";
+      return { status: "ok", text: "ok" };
     });
 
     await adapter.start();
 
     await vi.waitFor(() => {
-      expect(dispatchGatewayChatInput).toHaveBeenCalledWith(expect.objectContaining({
+      expect(dispatchGatewayChatInputResult).toHaveBeenCalledWith(expect.objectContaining({
         text: "hello",
         platform: "telegram",
         identity_key: "seedy",
@@ -151,7 +153,7 @@ describe("TelegramGatewayAdapter", () => {
       const presenceCanContinue = createDeferred();
       const commentaryHandled = createDeferred();
       const dispatchCanFinish = createDeferred();
-      vi.mocked(dispatchGatewayChatInput).mockImplementationOnce(async (input) => {
+      vi.mocked(dispatchGatewayChatInputResult).mockImplementationOnce(async (input) => {
         await input.onEvent?.(presenceEvent("received"));
         presenceHandled.resolve();
         await presenceCanContinue.promise;
@@ -168,7 +170,7 @@ describe("TelegramGatewayAdapter", () => {
         commentaryHandled.resolve();
         await dispatchCanFinish.promise;
         await input.onEvent?.(assistantFinalEvent("Done from Telegram."));
-        return "Done from Telegram.";
+        return { status: "ok", text: "Done from Telegram." };
       });
 
       const processing = (adapter as unknown as {
@@ -234,7 +236,7 @@ describe("TelegramGatewayAdapter", () => {
       vi.stubGlobal("fetch", fetchMock);
       const adapter = TelegramGatewayAdapter.fromConfigDir(configDir);
       adapters.push(adapter);
-      vi.mocked(dispatchGatewayChatInput).mockResolvedValueOnce("fallback final");
+      vi.mocked(dispatchGatewayChatInputResult).mockResolvedValueOnce({ status: "ok", text: "fallback final" });
 
       await expect((adapter as unknown as {
         processMessage(text: string, fromUserId: number, chatId: number, messageId: number): Promise<void>;
@@ -248,6 +250,49 @@ describe("TelegramGatewayAdapter", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("renders explicit dispatcher failures instead of a successful fallback acknowledgement", async () => {
+    const configDir = await writeConfig({
+      bot_token: "test-token",
+      allowed_user_ids: [42],
+      denied_user_ids: [],
+      allowed_chat_ids: [],
+      denied_chat_ids: [],
+      runtime_control_allowed_user_ids: [42],
+      chat_goal_map: {},
+      user_goal_map: {},
+      allow_all: true,
+      polling_timeout: 30,
+      identity_key: "seedy",
+    });
+    const sentMessages: string[] = [];
+    const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const method = String(url).split("/").at(-1);
+      if (method === "sendChatAction") return telegramResponse(true);
+      if (method === "sendMessage") {
+        const body = JSON.parse(String(init?.body ?? "{}")) as { text?: string };
+        sentMessages.push(body.text ?? "");
+        return telegramResponse({ message_id: 9001 });
+      }
+      throw new Error(`unexpected Telegram method: ${method}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const adapter = TelegramGatewayAdapter.fromConfigDir(configDir);
+    adapters.push(adapter);
+    vi.mocked(dispatchGatewayChatInputResult).mockResolvedValueOnce({
+      status: "error",
+      error: "dispatcher crashed",
+    });
+
+    await (adapter as unknown as {
+      processMessage(text: string, fromUserId: number, chatId: number, messageId: number): Promise<void>;
+    }).processMessage("hello", 42, 314, 2718);
+
+    expect(sentMessages).toHaveLength(1);
+    expect(sentMessages[0]).toContain("could not complete this gateway turn");
+    expect(sentMessages[0]).toContain("dispatcher crashed");
+    expect(sentMessages[0]).not.toBe("Received.");
   });
 
   it("does not start Telegram typing for operation progress the Telegram adapter drops", async () => {
@@ -281,7 +326,7 @@ describe("TelegramGatewayAdapter", () => {
       adapters.push(adapter);
       const summaryHandled = createDeferred();
       const dispatchCanFinish = createDeferred();
-      vi.mocked(dispatchGatewayChatInput).mockImplementationOnce(async (input) => {
+      vi.mocked(dispatchGatewayChatInputResult).mockImplementationOnce(async (input) => {
         await input.onEvent?.({
           type: "operation_progress",
           runId: "run-1",
@@ -299,7 +344,7 @@ describe("TelegramGatewayAdapter", () => {
         summaryHandled.resolve();
         await dispatchCanFinish.promise;
         await input.onEvent?.(assistantFinalEvent("Done from Telegram."));
-        return "Done from Telegram.";
+        return { status: "ok", text: "Done from Telegram." };
       });
 
       const processing = (adapter as unknown as {
@@ -348,7 +393,7 @@ describe("TelegramGatewayAdapter", () => {
       vi.stubGlobal("fetch", fetchMock);
       const adapter = TelegramGatewayAdapter.fromConfigDir(configDir);
       adapters.push(adapter);
-      vi.mocked(dispatchGatewayChatInput).mockImplementationOnce(async (input) => {
+      vi.mocked(dispatchGatewayChatInputResult).mockImplementationOnce(async (input) => {
         await input.onEvent?.(presenceEvent("received"));
         await input.onEvent?.({
           type: "activity",
@@ -361,7 +406,7 @@ describe("TelegramGatewayAdapter", () => {
           presentation: { gatewayProgress: "user" },
         });
         await input.onEvent?.(assistantFinalEvent("Typing failed, but the turn completed."));
-        return "Typing failed, but the turn completed.";
+        return { status: "ok", text: "Typing failed, but the turn completed." };
       });
 
       await (adapter as unknown as {
@@ -483,7 +528,7 @@ describe("TelegramGatewayAdapter", () => {
     vi.stubGlobal("fetch", fetchMock);
     const adapter = TelegramGatewayAdapter.fromConfigDir(configDir);
     adapters.push(adapter);
-    vi.mocked(dispatchGatewayChatInput).mockImplementationOnce(async (input) => {
+    vi.mocked(dispatchGatewayChatInputResult).mockImplementationOnce(async (input) => {
       await input.onEvent?.({
         type: "lifecycle_start",
         runId: "run-1",
@@ -514,7 +559,7 @@ describe("TelegramGatewayAdapter", () => {
         persisted: true,
       });
       await adapter.stop();
-      return "Final setup guidance.";
+      return { status: "ok", text: "Final setup guidance." };
     });
 
     await adapter.start();
@@ -560,7 +605,7 @@ describe("TelegramGatewayAdapter", () => {
     vi.stubGlobal("fetch", fetchMock);
     const adapter = TelegramGatewayAdapter.fromConfigDir(configDir);
     adapters.push(adapter);
-    vi.mocked(dispatchGatewayChatInput).mockImplementationOnce(async (input) => {
+    vi.mocked(dispatchGatewayChatInputResult).mockImplementationOnce(async (input) => {
       await input.onEvent?.({
         type: "operation_progress",
         runId: "run-1",
@@ -584,7 +629,7 @@ describe("TelegramGatewayAdapter", () => {
         persisted: true,
       });
       await adapter.stop();
-      return "README exists.";
+      return { status: "ok", text: "README exists." };
     });
 
     await adapter.start();
@@ -668,9 +713,9 @@ describe("TelegramGatewayAdapter", () => {
       identity_key: "seedy",
     }, { runtimeStateStore: failingTimingStore });
     adapters.push(adapter);
-    vi.mocked(dispatchGatewayChatInput).mockImplementationOnce(async (input) => {
+    vi.mocked(dispatchGatewayChatInputResult).mockImplementationOnce(async (input) => {
       await input.onEvent?.(assistantFinalEvent("Delivered despite timing store failure."));
-      return "Delivered despite timing store failure.";
+      return { status: "ok", text: "Delivered despite timing store failure." };
     });
 
     await expect((adapter as unknown as {
@@ -708,9 +753,9 @@ describe("TelegramGatewayAdapter", () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const adapter = TelegramGatewayAdapter.fromConfigDir(configDir);
     adapters.push(adapter);
-    vi.mocked(dispatchGatewayChatInput).mockImplementationOnce(async (input) => {
+    vi.mocked(dispatchGatewayChatInputResult).mockImplementationOnce(async (input) => {
       await input.onEvent?.(assistantFinalEvent("Final after failed typing."));
-      return "Final after failed typing.";
+      return { status: "ok", text: "Final after failed typing." };
     });
 
     await (adapter as unknown as {
@@ -771,7 +816,7 @@ describe("TelegramGatewayAdapter", () => {
     vi.stubGlobal("fetch", fetchMock);
     const adapter = TelegramGatewayAdapter.fromConfigDir(configDir);
     adapters.push(adapter);
-    vi.mocked(dispatchGatewayChatInput).mockImplementationOnce(async (input) => {
+    vi.mocked(dispatchGatewayChatInputResult).mockImplementationOnce(async (input) => {
       await input.onEvent?.({
         type: "activity",
         runId: "run-1",
@@ -903,7 +948,7 @@ describe("TelegramGatewayAdapter", () => {
         createdAt: "2026-04-08T00:00:01.000Z",
       });
       await adapter.stop();
-      return "Done from fallback.";
+      return { status: "ok", text: "Done from fallback." };
     });
 
     await adapter.start();
@@ -970,7 +1015,7 @@ describe("TelegramGatewayAdapter", () => {
     vi.stubGlobal("fetch", fetchMock);
     const adapter = TelegramGatewayAdapter.fromConfigDir(configDir);
     adapters.push(adapter);
-    vi.mocked(dispatchGatewayChatInput).mockImplementationOnce(async (input) => {
+    vi.mocked(dispatchGatewayChatInputResult).mockImplementationOnce(async (input) => {
       void input.onEvent?.({
         type: "agent_timeline",
         runId: "run-1",
@@ -992,7 +1037,7 @@ describe("TelegramGatewayAdapter", () => {
         },
       });
       await adapter.stop();
-      return "Fallback should not send.";
+      return { status: "ok", text: "Fallback should not send." };
     });
 
     await adapter.start();
@@ -1056,7 +1101,7 @@ describe("TelegramGatewayAdapter", () => {
     vi.stubGlobal("fetch", fetchMock);
     const adapter = TelegramGatewayAdapter.fromConfigDir(configDir);
     adapters.push(adapter);
-    vi.mocked(dispatchGatewayChatInput).mockImplementationOnce(async (input) => {
+    vi.mocked(dispatchGatewayChatInputResult).mockImplementationOnce(async (input) => {
       await input.onEvent?.({
         type: "assistant_final",
         runId: "run-1",
@@ -1066,7 +1111,7 @@ describe("TelegramGatewayAdapter", () => {
         persisted: true,
       });
       await adapter.stop();
-      return "Final setup guidance.";
+      return { status: "ok", text: "Final setup guidance." };
     });
 
     await adapter.start();
@@ -1136,7 +1181,7 @@ describe("TelegramGatewayAdapter", () => {
       });
       await expect(fs.access(path.join(configDir, "health.json"))).rejects.toThrow();
     });
-    expect(dispatchGatewayChatInput).not.toHaveBeenCalled();
+    expect(dispatchGatewayChatInputResult).not.toHaveBeenCalled();
     expect(sentMessages[0]).toContain("Runtime control still requires its own allow list.");
   });
 });

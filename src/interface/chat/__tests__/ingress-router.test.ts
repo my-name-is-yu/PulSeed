@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { IngressRouter, buildStandaloneIngressMessage } from "../ingress-router.js";
 import { createTextUserInput } from "../user-input.js";
-import type { RunSpec } from "../../../runtime/run-spec/index.js";
 import {
   buildExternalSurfaceDecision,
   evaluateChannelAccess,
@@ -23,7 +22,7 @@ describe("IngressRouter", () => {
     expect(message.userInput).not.toHaveProperty("route");
   });
 
-  it("routes ordinary gateway natural-language input to the default model/tool-choice loop when available", () => {
+  it("routes ordinary gateway natural-language input to the direct model/tool-choice loop before legacy routes", () => {
     const route = router.selectRoute(
       buildStandaloneIngressMessage({
         text: "What route should answer this?",
@@ -36,27 +35,26 @@ describe("IngressRouter", () => {
       }),
 	      {
 	        hasAgentLoop: true,
-	        hasToolLoop: true,
 	      }
 	    );
 
     expect(route.kind).toBe("gateway_model_loop");
-    expect(route.reason).toBe("gateway_default_model_tool_choice");
+    expect(route.reason).toBe("direct_model_tool_loop");
     expect(route.replyTargetPolicy).toBe("turn_reply_target");
   });
 
-  it("falls back to tool_loop when the native agent loop is unavailable", () => {
+  it("uses the direct model/tool loop when the native agent loop is unavailable", () => {
     const route = router.selectRoute(
       buildStandaloneIngressMessage({
         text: "What files changed?",
       }),
       {
         hasAgentLoop: false,
-        hasToolLoop: true,
       }
     );
 
-    expect(route.kind).toBe("tool_loop");
+    expect(route.kind).toBe("gateway_model_loop");
+    expect(route.reason).toBe("direct_model_tool_loop");
   });
 
   it("keeps allowed runtime-control intent on agent_loop when available", () => {
@@ -72,7 +70,6 @@ describe("IngressRouter", () => {
       }),
 	    {
 	      hasAgentLoop: true,
-	      hasToolLoop: true,
 	      hasRuntimeControlService: true,
 	      runtimeControlIntent: {
 	        kind: "restart_daemon",
@@ -98,7 +95,6 @@ describe("IngressRouter", () => {
 	      }),
 	      {
 	        hasAgentLoop: true,
-	        hasToolLoop: true,
 	        hasRuntimeControlService: false,
 	        runtimeControlIntent: {
 	          kind: "restart_daemon",
@@ -124,7 +120,6 @@ describe("IngressRouter", () => {
       }),
       {
         hasAgentLoop: true,
-        hasToolLoop: true,
         hasRuntimeControlService: true,
         runtimeControlIntent: {
           kind: "restart_daemon",
@@ -154,7 +149,6 @@ describe("IngressRouter", () => {
       }),
       {
         hasAgentLoop: true,
-        hasToolLoop: true,
         hasRuntimeControlService: true,
         runtimeControlIntent: null,
         runtimeControlUnclassified: true,
@@ -182,7 +176,6 @@ describe("IngressRouter", () => {
 
     const route = router.selectRoute(message, {
       hasAgentLoop: true,
-      hasToolLoop: true,
       hasRuntimeControlService: true,
       runtimeControlIntent: {
         kind: "restart_daemon",
@@ -219,7 +212,6 @@ describe("IngressRouter", () => {
 
     const route = router.selectRoute(message, {
       hasAgentLoop: true,
-      hasToolLoop: true,
       hasRuntimeControlService: true,
       runtimeControlIntent: {
         kind: "restart_daemon",
@@ -248,7 +240,6 @@ describe("IngressRouter", () => {
       }),
       {
         hasAgentLoop: true,
-        hasToolLoop: true,
       }
     );
 
@@ -269,7 +260,6 @@ describe("IngressRouter", () => {
       }),
       {
         hasAgentLoop: true,
-        hasToolLoop: true,
       }
     );
 
@@ -290,131 +280,10 @@ describe("IngressRouter", () => {
       }),
       {
         hasAgentLoop: true,
-        hasToolLoop: true,
       }
     );
 
     expect(route.kind).toBe("agent_loop");
-  });
-
-  it("keeps precomputed typed RunSpec drafts behind the default gateway tool-choice loop", () => {
-    const draft = {
-      schema_version: "run-spec-v1",
-      id: "runspec-00000000-0000-4000-8000-000000000001",
-      status: "draft",
-      profile: "kaggle",
-      source_text: "Kaggle score 0.98を超えるまで長期で回して",
-      objective: "Improve Kaggle score until it exceeds 0.98",
-      workspace: { path: "/repo/kaggle", source: "context", confidence: "medium" },
-      execution_target: { kind: "daemon", remote_host: null, confidence: "medium" },
-      metric: {
-        name: "kaggle_score",
-        direction: "maximize",
-        target: 0.98,
-        target_rank_percent: null,
-        datasource: "kaggle_leaderboard",
-        confidence: "high",
-      },
-      progress_contract: {
-        kind: "metric_target",
-        dimension: "kaggle_score",
-        threshold: 0.98,
-        semantics: "Kaggle score exceeds 0.98.",
-        confidence: "high",
-      },
-      deadline: null,
-      budget: { max_trials: null, max_wall_clock_minutes: null, resident_policy: "best_effort" },
-      approval_policy: {
-        submit: "approval_required",
-        publish: "unspecified",
-        secret: "approval_required",
-        external_action: "approval_required",
-        irreversible_action: "approval_required",
-      },
-      artifact_contract: { expected_artifacts: [], discovery_globs: [], primary_outputs: [] },
-      risk_flags: ["external_submit_requires_approval"],
-      missing_fields: [],
-      confidence: "high",
-      links: { goal_id: null, runtime_session_id: null, conversation_id: "chat-1" },
-      origin: { channel: "plugin_gateway", session_id: "chat-1", reply_target: null, metadata: {} },
-      created_at: "2026-05-03T00:00:00.000Z",
-      updated_at: "2026-05-03T00:00:00.000Z",
-    } satisfies RunSpec;
-    const route = router.selectRoute(
-      buildStandaloneIngressMessage({
-        text: draft.source_text,
-        channel: "plugin_gateway",
-        platform: "telegram",
-      }),
-      {
-        hasAgentLoop: true,
-        hasToolLoop: true,
-        runSpecDraft: draft,
-      }
-    );
-
-    expect(route.kind).toBe("gateway_model_loop");
-    expect(route.reason).toBe("gateway_default_model_tool_choice");
-  });
-
-  it("keeps precomputed typed RunSpec drafts behind the gateway tool-choice loop when agent_loop is unavailable", () => {
-    const draft = {
-      schema_version: "run-spec-v1",
-      id: "runspec-00000000-0000-4000-8000-000000000001",
-      status: "draft",
-      profile: "kaggle",
-      source_text: "Kaggle score 0.98を超えるまで長期で回して",
-      objective: "Improve Kaggle score until it exceeds 0.98",
-      workspace: { path: "/repo/kaggle", source: "context", confidence: "medium" },
-      execution_target: { kind: "daemon", remote_host: null, confidence: "medium" },
-      metric: {
-        name: "kaggle_score",
-        direction: "maximize",
-        target: 0.98,
-        target_rank_percent: null,
-        datasource: "kaggle_leaderboard",
-        confidence: "high",
-      },
-      progress_contract: {
-        kind: "metric_target",
-        dimension: "kaggle_score",
-        threshold: 0.98,
-        semantics: "Kaggle score exceeds 0.98.",
-        confidence: "high",
-      },
-      deadline: null,
-      budget: { max_trials: null, max_wall_clock_minutes: null, resident_policy: "best_effort" },
-      approval_policy: {
-        submit: "approval_required",
-        publish: "unspecified",
-        secret: "approval_required",
-        external_action: "approval_required",
-        irreversible_action: "approval_required",
-      },
-      artifact_contract: { expected_artifacts: [], discovery_globs: [], primary_outputs: [] },
-      risk_flags: ["external_submit_requires_approval"],
-      missing_fields: [],
-      confidence: "high",
-      links: { goal_id: null, runtime_session_id: null, conversation_id: "chat-1" },
-      origin: { channel: "plugin_gateway", session_id: "chat-1", reply_target: null, metadata: {} },
-      created_at: "2026-05-03T00:00:00.000Z",
-      updated_at: "2026-05-03T00:00:00.000Z",
-    } satisfies RunSpec;
-    const route = router.selectRoute(
-      buildStandaloneIngressMessage({
-        text: draft.source_text,
-        channel: "plugin_gateway",
-        platform: "telegram",
-      }),
-      {
-        hasAgentLoop: false,
-        hasToolLoop: true,
-        runSpecDraft: draft,
-      }
-    );
-
-    expect(route.kind).toBe("gateway_model_loop");
-    expect(route.reason).toBe("gateway_default_model_tool_choice");
   });
 
   it("keeps gateway long-running work on the default tool-choice loop when runtime control is disallowed", () => {
@@ -430,7 +299,6 @@ describe("IngressRouter", () => {
       }),
       {
         hasAgentLoop: true,
-        hasToolLoop: true,
       }
     );
 
@@ -444,7 +312,6 @@ describe("IngressRouter", () => {
       }),
       {
         hasAgentLoop: true,
-        hasToolLoop: true,
       }
     );
 

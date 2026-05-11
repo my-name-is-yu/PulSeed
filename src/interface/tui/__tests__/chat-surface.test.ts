@@ -115,7 +115,16 @@ describe("SharedManagerTuiChatSurface", () => {
 	    }));
 	    surface.startSession("/repo");
 
-	    const result = await surface.execute("PulSeed を再起動して", "/repo");
+	    const result = await surface.executeIngressMessage({
+	      text: "PulSeed を再起動して",
+	      userInput: createTextUserInput("PulSeed を再起動して"),
+	      channel: "tui",
+	      platform: "local_tui",
+	      actor: { surface: "tui", platform: "local_tui" },
+	      replyTarget: { surface: "tui", platform: "local_tui", metadata: {} },
+	      runtimeControl: { allowed: true, approvalMode: "interactive", explicit: true },
+	      metadata: { runtime_control_explicit: true },
+	    }, "/repo");
 
 	    expect(result.success).toBe(true);
 	    expect(result.output).toBe("restart queued");
@@ -176,7 +185,16 @@ describe("SharedManagerTuiChatSurface", () => {
     };
     surface.startSession("/repo");
 
-    const resultPromise = surface.execute("PulSeed を再起動して", "/repo");
+    const resultPromise = surface.executeIngressMessage({
+      text: "PulSeed を再起動して",
+      userInput: createTextUserInput("PulSeed を再起動して"),
+      channel: "tui",
+      platform: "local_tui",
+      actor: { surface: "tui", platform: "local_tui" },
+      replyTarget: { surface: "tui", platform: "local_tui", metadata: {} },
+      runtimeControl: { allowed: true, approvalMode: "interactive", explicit: true },
+      metadata: { runtime_control_explicit: true },
+    }, "/repo");
     const deadline = Date.now() + 1000;
     while (Date.now() < deadline && !events.some((message) => message.includes("Approval ID: approval-tui-local"))) {
       await new Promise((resolve) => setTimeout(resolve, 10));

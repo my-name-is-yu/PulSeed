@@ -5,7 +5,7 @@ type CreateArgs = Record<string, unknown>;
 const createMock = vi.fn<(args: CreateArgs) => Promise<any>>();
 const anthropicCtor = vi.fn();
 
-vi.mock("@anthropic-ai/sdk", () => {
+vi.mock("../anthropic-runtime.js", () => {
   class AnthropicMock {
     messages = {
       create: createMock,
@@ -17,7 +17,7 @@ vi.mock("@anthropic-ai/sdk", () => {
   }
 
   return {
-    default: AnthropicMock,
+    AnthropicRuntime: AnthropicMock,
   };
 });
 

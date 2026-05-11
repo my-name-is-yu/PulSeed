@@ -6,9 +6,25 @@ import {
   type SlackChannelAdapterConfig,
 } from "../slack-channel-adapter.js";
 
-vi.mock("../chat-session-dispatch.js", () => ({
-  dispatchGatewayChatInput: vi.fn().mockResolvedValue("ok"),
-}));
+vi.mock("../chat-session-dispatch.js", () => {
+  const dispatchGatewayChatInput = vi.fn().mockResolvedValue("ok");
+  const dispatchGatewayChatInputResult = vi.fn(async (input) => {
+    try {
+      const text = await dispatchGatewayChatInput(input);
+      return text === null
+        ? { status: "empty", error: "Gateway chat dispatcher did not return displayable assistant text." }
+        : { status: "ok", text };
+    } catch (error) {
+      return { status: "error", error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+  return {
+    dispatchGatewayChatInput,
+    dispatchGatewayChatInputResult,
+    GATEWAY_CHAT_DISPATCH_FAILURE_MESSAGE: "PulSeed could not complete this gateway turn. The message was received, but the chat dispatcher did not return a terminal assistant response.",
+    formatGatewayChatDispatchFailure: (error: string) => `PulSeed could not complete this gateway turn. The message was received, but the chat dispatcher did not return a terminal assistant response.\n\nError: ${error}`,
+  };
+});
 
 const SIGNING_SECRET = "test-signing-secret-abc123";
 const eventBase = {

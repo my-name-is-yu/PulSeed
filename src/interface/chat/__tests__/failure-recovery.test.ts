@@ -48,7 +48,7 @@ describe("failure recovery guidance", () => {
     }).kind).toBe("permission");
   });
 
-  it("classifies runtime interruption and adapter failures from typed stop metadata", () => {
+  it("classifies runtime interruption and model provider failures from typed stop metadata", () => {
     expect(classifyFailureRecovery({
       error: "ストリームが終了しました",
       stoppedReason: "timeout",
@@ -61,8 +61,8 @@ describe("failure recovery guidance", () => {
 
     expect(classifyFailureRecovery({
       error: "modelo no disponible temporalmente",
-      signals: [{ kind: "adapter", adapterType: "codex", stoppedReason: "error" }],
-    }).kind).toBe("adapter");
+      signals: [{ kind: "model_provider", providerType: "codex", stoppedReason: "error" }],
+    }).kind).toBe("model_provider");
 
     expect(classifyFailureRecovery({
       error: "tool was cancelled",
@@ -72,7 +72,7 @@ describe("failure recovery guidance", () => {
     expect(classifyFailureRecovery({
       error: "timeout-looking provider text",
       code: "provider_failure",
-    }).kind).toBe("adapter");
+    }).kind).toBe("model_provider");
   });
 
   it("does not classify localized/provider-specific text without structured evidence", () => {
@@ -84,7 +84,7 @@ describe("failure recovery guidance", () => {
   it("uses confidence-aware model fallback only when structured evidence is absent", async () => {
     const llmClient = {
       sendMessage: async () => ({
-        content: JSON.stringify({ kind: "adapter", confidence: 0.91, rationale: "provider outage" }),
+        content: JSON.stringify({ kind: "model_provider", confidence: 0.91, rationale: "provider outage" }),
         usage: { input_tokens: 1, output_tokens: 1 },
         stop_reason: "end_turn",
       }),
@@ -92,7 +92,7 @@ describe("failure recovery guidance", () => {
     } as unknown as Pick<ILLMClient, "sendMessage" | "parseJSON">;
 
     await expect(classifyFailureRecoveryWithFallback("provider returned overloaded", llmClient)).resolves.toMatchObject({
-      kind: "adapter",
+      kind: "model_provider",
     });
     await expect(classifyFailureRecoveryWithFallback({
       error: "model guessed adapter, but typed verification wins",

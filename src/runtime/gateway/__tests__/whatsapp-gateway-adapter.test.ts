@@ -5,9 +5,25 @@ import { dispatchGatewayChatInput } from "../chat-session-dispatch.js";
 import { WhatsAppGatewayAdapter, type WhatsAppGatewayConfig } from "../whatsapp-gateway-adapter.js";
 import { MAX_HTTP_BODY_SIZE } from "../../http-body.js";
 
-vi.mock("../chat-session-dispatch.js", () => ({
-  dispatchGatewayChatInput: vi.fn().mockResolvedValue("WhatsApp reply"),
-}));
+vi.mock("../chat-session-dispatch.js", () => {
+  const dispatchGatewayChatInput = vi.fn().mockResolvedValue("WhatsApp reply");
+  const dispatchGatewayChatInputResult = vi.fn(async (input) => {
+    try {
+      const text = await dispatchGatewayChatInput(input);
+      return text === null
+        ? { status: "empty", error: "Gateway chat dispatcher did not return displayable assistant text." }
+        : { status: "ok", text };
+    } catch (error) {
+      return { status: "error", error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+  return {
+    dispatchGatewayChatInput,
+    dispatchGatewayChatInputResult,
+    GATEWAY_CHAT_DISPATCH_FAILURE_MESSAGE: "PulSeed could not complete this gateway turn. The message was received, but the chat dispatcher did not return a terminal assistant response.",
+    formatGatewayChatDispatchFailure: (error: string) => `PulSeed could not complete this gateway turn. The message was received, but the chat dispatcher did not return a terminal assistant response.\n\nError: ${error}`,
+  };
+});
 
 beforeEach(() => {
   vi.mocked(dispatchGatewayChatInput).mockReset();

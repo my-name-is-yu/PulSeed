@@ -1,7 +1,6 @@
 // ─── ChatRunner ───
 //
-// Central coordinator for 1-shot chat execution (Tier 1).
-// Bypasses TaskLifecycle — calls adapter.execute() directly.
+// Central coordinator for chat execution.
 
 import type { StateManager } from "../../base/state/state-manager.js";
 import { getPulseedDirPath } from "../../base/utils/paths.js";
@@ -68,20 +67,13 @@ import {
   resolveChatResumeSelector,
 } from "./chat-runner-runtime.js";
 import {
-  executeAdapterRoute,
-  executeAssistRoute,
-  executeClarifyRoute,
   executeConfigureRoute,
-  executeRunSpecDraftRoute,
   executeAgentLoopRoute,
   executeGatewayModelLoopRoute,
   formatBlockedRuntimeControlRoute,
   executeRuntimeControlRoute,
-  executeToolLoopRoute,
   resolveSessionExecutionPolicy,
 } from "./chat-runner-routes.js";
-import { classifyFreeformRouteIntent } from "./freeform-route-classifier.js";
-import { deriveRunSpecFromText } from "../../runtime/run-spec/index.js";
 import { createTextUserInput, normalizeUserInput, replaceUserInputText, type UserInput } from "./user-input.js";
 import {
   createSeedyActiveTurnStatus,
@@ -91,7 +83,6 @@ import {
 import { createTurnStartOperation, createTurnSteerOperation } from "./turn-protocol.js";
 import {
   buildChatTurnContext,
-  renderSystemPromptWithTurnContext,
   toTurnContextSnapshot,
 } from "./turn-context.js";
 import {
@@ -787,18 +778,8 @@ export class ChatRunner {
       });
     }
 
-    if (selectedRoute?.kind === "run_spec_draft") {
-      const result = await executeRunSpecDraftRoute(this.routeHost(), selectedRoute, eventContext, assistantBuffer, history, start);
-      return this.flushAndReturn(result);
-    }
-
     if (selectedRoute?.kind === "configure") {
       const result = await executeConfigureRoute(this.routeHost(), selectedRoute, eventContext, assistantBuffer, history, start);
-      return this.flushAndReturn(result);
-    }
-
-    if (selectedRoute?.kind === "clarify") {
-      const result = await executeClarifyRoute(this.routeHost(), selectedRoute, eventContext, assistantBuffer, history, start);
       return this.flushAndReturn(result);
     }
 
@@ -902,17 +883,6 @@ export class ChatRunner {
       return this.flushAndReturn({ success: false, output, elapsed_ms });
     }
 
-    if (selectedRoute?.kind === "assist") {
-      const result = await executeAssistRoute(this.routeHost(), {
-        turnContext,
-        eventContext,
-        assistantBuffer,
-        history,
-        start,
-      });
-      return this.flushAndReturn(result);
-    }
-
     if (resumeOnly || selectedRoute?.kind === "agent_loop") {
       return this.flushAndReturn(executeAgentLoopRoute(this.routeHost(), {
         turnContext,
@@ -921,21 +891,6 @@ export class ChatRunner {
         eventContext,
         history,
         gitRoot,
-        activeAbortSignal: activeTurn.abortController.signal,
-        start,
-      }));
-    }
-
-    if (selectedRoute?.kind === "tool_loop") {
-      return this.flushAndReturn(executeToolLoopRoute(this.routeHost(), {
-        turnContext,
-        eventContext,
-        assistantBuffer,
-        systemPrompt: systemPrompt || undefined,
-        executionGoalId,
-        history,
-        gitRoot,
-        runtimeControlContext,
         activeAbortSignal: activeTurn.abortController.signal,
         start,
       }));
@@ -952,33 +907,22 @@ export class ChatRunner {
         gitRoot,
         runtimeControlContext,
         activeAbortSignal: activeTurn.abortController.signal,
+        timeoutMs,
         start,
       }));
     }
 
-    if (!resumeOnly && selectedRoute && selectedRoute.kind !== "adapter") {
-      const elapsed_ms = Date.now() - start;
-      const output = await this.eventBridge.emitLifecycleErrorEventWithFallback(
-        `Unsupported chat route: ${selectedRoute.kind}`,
-        assistantBuffer.text,
-        eventContext,
-        {},
-        this.deps.llmClient
-      );
-      this.eventBridge.emitLifecycleEndEvent("error", elapsed_ms, eventContext, false);
-      return this.flushAndReturn({ success: false, output, elapsed_ms });
-    }
-
-    return this.flushAndReturn(executeAdapterRoute(this.routeHost(), {
-      turnContext,
-      timeoutMs,
-      systemPrompt: renderSystemPromptWithTurnContext(systemPrompt || undefined, turnContext.modelVisible),
+    const elapsed_ms = Date.now() - start;
+    const routeKind = selectedRoute?.kind ?? "none";
+    const output = await this.eventBridge.emitLifecycleErrorEventWithFallback(
+      `Unsupported chat route: ${routeKind}`,
+      assistantBuffer.text,
       eventContext,
-      assistantBuffer,
-      gitRoot,
-      start,
-      history,
-    }));
+      {},
+      this.deps.llmClient
+    );
+    this.eventBridge.emitLifecycleEndEvent("error", elapsed_ms, eventContext, false);
+    return this.flushAndReturn({ success: false, output, elapsed_ms });
   }
 
   getSessionCwd(): string | null {
@@ -1006,75 +950,15 @@ export class ChatRunner {
   private async resolveRouteFromIngress(ingress: ChatIngressMessage): Promise<SelectedChatRoute> {
     const capabilities = getRouteCapabilities(this.deps);
     const hasSetupSecret = (this.setupSecretIntake?.suppliedSecrets.length ?? 0) > 0;
-    const surfaceRuntimePolicy = ingress.externalSurface?.runtime_control_policy;
-    const runtimeControlApproved =
-      surfaceRuntimePolicy
-        ? surfaceRuntimePolicy.allowed === true && surfaceRuntimePolicy.approval_mode === "preapproved"
-        : ingress.metadata["runtime_control_approved"] === true;
-    const runtimeControlDenied =
-      surfaceRuntimePolicy
-        ? surfaceRuntimePolicy.approval_mode === "disallowed"
-        : ingress.metadata["runtime_control_denied"] === true;
     const metadataRuntimeControlExplicit = ingress.metadata["runtime_control_explicit"] === true;
-    const canUseDefaultGatewayModelLoop = capabilities.hasToolLoop
-      && (ingress.channel === "plugin_gateway" || ingress.replyTarget.surface === "gateway");
-    const shouldPreferFreeformBeforeDeniedRuntimeControl =
-      !hasSetupSecret
-      && !canUseDefaultGatewayModelLoop
-      && !capabilities.hasAgentLoop
-      && runtimeControlDenied
-      && !runtimeControlApproved
-      && ingress.metadata["runtime_control_explicit"] !== true;
     const shouldClassifyRuntimeControl =
       !hasSetupSecret
-      && (
-        metadataRuntimeControlExplicit
-        || (!canUseDefaultGatewayModelLoop && !capabilities.hasAgentLoop && (
-          (capabilities.hasRuntimeControlService && ingress.runtimeControl.approvalMode !== "disallowed")
-          || runtimeControlApproved
-          || runtimeControlDenied
-        ))
-      );
-    let freeformRouteIntent = shouldPreferFreeformBeforeDeniedRuntimeControl
-      ? await classifyFreeformRouteIntent(ingress.text, this.deps.llmClient)
-      : null;
-    const runtimeControlClassification = freeformRouteIntent == null && shouldClassifyRuntimeControl
+      && metadataRuntimeControlExplicit;
+    const runtimeControlClassification = shouldClassifyRuntimeControl
       ? await classifyRuntimeControlIntent(ingress.text, this.deps.llmClient)
       : null;
     const runtimeControlIntent = runtimeControlClassification?.status === "intent"
       ? runtimeControlClassification.intent
-      : null;
-    if (!hasSetupSecret && !capabilities.hasAgentLoop && !canUseDefaultGatewayModelLoop && freeformRouteIntent == null && runtimeControlIntent === null) {
-      freeformRouteIntent = await classifyFreeformRouteIntent(ingress.text, this.deps.llmClient);
-    }
-    const shouldDeriveRunSpecDraft =
-      !capabilities.hasAgentLoop
-      && !canUseDefaultGatewayModelLoop
-      && !hasSetupSecret
-      && runtimeControlIntent === null
-      && freeformRouteIntent != null
-      && (
-        freeformRouteIntent.kind === "run_spec"
-        || freeformRouteIntent.kind === "configure"
-        || freeformRouteIntent.kind === "clarify"
-      )
-      && freeformRouteIntent.confidence >= 0.7;
-    const runSpecDraft = shouldDeriveRunSpecDraft
-      ? await deriveRunSpecFromText(ingress.text, {
-        cwd: ingress.cwd ?? this.sessionCwd ?? undefined,
-        conversationId: ingress.conversation_id ?? null,
-        channel: ingress.channel,
-        sessionId: this.history?.getSessionId() ?? ingress.conversation_id ?? null,
-        replyTarget: ingress.replyTarget as unknown as Record<string, unknown>,
-        originMetadata: {
-          ingress_id: ingress.ingress_id ?? null,
-          platform: ingress.platform ?? null,
-          message_id: ingress.message_id ?? null,
-          deliveryMode: ingress.deliveryMode ?? null,
-          metadata: ingress.metadata,
-        },
-        llmClient: this.deps.llmClient,
-      })
       : null;
     return standaloneIngressRouter.selectRoute(ingress, {
       ...capabilities,
@@ -1082,9 +966,7 @@ export class ChatRunner {
       runtimeControlUnclassified: metadataRuntimeControlExplicit
         && runtimeControlClassification?.status === "unclassified"
         && !hasSetupSecret,
-      freeformRouteIntent,
       setupSecretIntake: this.setupSecretIntake,
-      runSpecDraft,
     });
   }
 

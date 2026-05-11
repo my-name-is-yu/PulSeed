@@ -1,7 +1,11 @@
 import { randomUUID } from "node:crypto";
 import type { ChannelAdapter, EnvelopeHandler, TypingIndicatorCapability } from "./channel-adapter.js";
 import { loadGatewayConfigJson } from "./config-json.js";
-import { dispatchGatewayChatInput } from "./chat-session-dispatch.js";
+import {
+  GATEWAY_CHAT_DISPATCH_FAILURE_MESSAGE,
+  dispatchGatewayChatInputResult,
+  formatGatewayChatDispatchFailure,
+} from "./chat-session-dispatch.js";
 import { formatPlaintextNotification, supportsCoreGatewayNotification } from "./core-channel-notification.js";
 import { buildChannelPolicyMetadata, buildExternalSurfaceDecision, evaluateChannelAccess, resolveChannelRoute } from "./channel-policy.js";
 import { createUnsupportedTypingIndicator } from "./typing-indicator.js";
@@ -174,7 +178,7 @@ export class SignalGatewayAdapter implements ChannelAdapter {
           turn_id: `signal:${normalized.conversationId}:${normalized.messageId}`,
           phase: "received",
         }));
-        reply = await dispatchGatewayChatInput({
+        const dispatchResult = await dispatchGatewayChatInputResult({
           text: normalized.text,
           platform: "signal",
           identity_key: route.identityKey ?? this.config.identity_key,
@@ -198,6 +202,9 @@ export class SignalGatewayAdapter implements ChannelAdapter {
             ...(route.goalId ? { goal_id: route.goalId } : {}),
           },
         });
+        reply = dispatchResult.status === "ok"
+          ? dispatchResult.text
+          : formatGatewayChatDispatchFailure(dispatchResult.error);
         dispatchCompleted = true;
       } finally {
         await presenceProjector.stop();
@@ -209,7 +216,7 @@ export class SignalGatewayAdapter implements ChannelAdapter {
           runId: "fallback",
           turnId: "fallback",
           createdAt: new Date().toISOString(),
-          text: reply ?? "Received.",
+          text: reply ?? GATEWAY_CHAT_DISPATCH_FAILURE_MESSAGE,
           persisted: false,
         });
       }
