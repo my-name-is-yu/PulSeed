@@ -375,6 +375,7 @@ export async function executeGatewayModelLoopRoute(
 ): Promise<ChatRunResult> {
   try {
     const approvalCapable = Boolean(host.deps.approvalRequestFn || host.deps.approvalFn);
+    const registryTools = host.deps.registry?.listAll() ?? [];
     const toolResult = await executeWithTools(
       host,
       params.turnContext,
@@ -385,13 +386,7 @@ export async function executeGatewayModelLoopRoute(
       params.runtimeControlContext,
       params.start,
       {
-        tools: selectGatewayModelLoopTools(host.deps.registry?.listAll() ?? [], {
-          runtimeControlAllowed: params.runtimeControlContext?.allowed,
-          runtimeControlApprovalMode: params.runtimeControlContext?.approvalMode,
-          approvedWrite: approvalCapable,
-          approvedExecute: approvalCapable,
-          approvedDurableRun: approvalCapable,
-        }),
+        tools: selectDirectModelLoopTools(registryTools, params.turnContext, params.runtimeControlContext, approvalCapable),
         streamFinalText: true,
         abortSignal: params.activeAbortSignal,
         timeoutMs: params.timeoutMs,
@@ -538,6 +533,31 @@ function isGatewayToolInScope(tool: ITool, scopes: ReadonlySet<GatewayToolScope>
   if (scopes.has("approved_durable_run") && GATEWAY_APPROVED_DURABLE_RUN_TOOL_NAMES.has(name)) return true;
   if (scopes.has("authorized_runtime_control") && GATEWAY_AUTHORIZED_RUNTIME_CONTROL_TOOL_NAMES.has(name)) return true;
   return false;
+}
+
+function selectDirectModelLoopTools(
+  tools: ITool[],
+  turnContext: ChatTurnContext,
+  runtimeControlContext: RuntimeControlChatContext | null,
+  approvalCapable: boolean,
+): ITool[] {
+  if (!isGatewaySurfaceTurn(turnContext, runtimeControlContext)) {
+    return tools;
+  }
+  return selectGatewayModelLoopTools(tools, {
+    runtimeControlAllowed: runtimeControlContext?.allowed,
+    runtimeControlApprovalMode: runtimeControlContext?.approvalMode,
+    approvedWrite: approvalCapable,
+    approvedExecute: approvalCapable,
+    approvedDurableRun: approvalCapable,
+  });
+}
+
+function isGatewaySurfaceTurn(
+  turnContext: ChatTurnContext,
+  runtimeControlContext: RuntimeControlChatContext | null,
+): boolean {
+  return (runtimeControlContext?.replyTarget?.surface ?? turnContext.modelVisible.runtime.replyTarget?.surface) === "gateway";
 }
 
 async function executeWithTools(
@@ -855,6 +875,17 @@ function toolLoopTerminalEvidence(error: ToolLoopTerminalError) {
     : isInterruption
       ? "timeout"
       : "stalled_tool_loop";
+  if (isInterruption) {
+    return {
+      code: error.code,
+      stoppedReason: error.code,
+      signals: [{
+        kind: "runtime" as const,
+        stoppedReason,
+        code: error.code,
+      }],
+    };
+  }
   return {
     code: error.code,
     stoppedReason: error.code,

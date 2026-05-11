@@ -153,8 +153,8 @@ describe("ChatRunner schedule integration", () => {
 
     expect(parsed.seenTools).toContain("list_schedules");
     expect(parsed.seenTools).toContain("get_schedule");
-    expect(parsed.seenTools).not.toContain("create_schedule");
-    expect(parsed.seenTools).not.toContain("run_schedule");
+    expect(parsed.seenTools).toContain("create_schedule");
+    expect(parsed.seenTools).toContain("run_schedule");
     expect(registry.get("create_schedule")).toBeDefined();
     expect(registry.get("list_schedules")).toBeDefined();
     expect(registry.get("run_schedule")).toBeDefined();

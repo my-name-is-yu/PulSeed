@@ -3603,11 +3603,11 @@ describe("ChatRunner", () => {
       }));
 
       const result = await runner.execute("Break the stream", "/repo");
+      saveSpy.mockRestore();
 
       expect(result.success).toBe(false);
       expect(result.output).toContain("Recovery");
-      expect(result.output).toContain("Type: Daemon loop failure");
-      saveSpy.mockRestore();
+      expect(result.output).toContain("Type: Runtime interruption");
       expect(writes.length).toBeGreaterThanOrEqual(2);
       const lastWrite = writes.at(-1)!;
       expect(lastWrite.messages).toHaveLength(1);

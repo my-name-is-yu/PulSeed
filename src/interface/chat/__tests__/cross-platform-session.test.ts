@@ -1075,6 +1075,7 @@ describe("CrossPlatformChatSessionManager", () => {
 
   it("propagates gateway timeout budget into model requests and returns a terminal timeout", async () => {
     let capturedOptions: { abortSignal?: AbortSignal; timeoutMs?: number } | undefined;
+    const events: ChatEvent[] = [];
     const sendMessageStream = vi.fn(async (_messages, options?: { abortSignal?: AbortSignal; timeoutMs?: number }) => {
       capturedOptions = options;
       throw new Error("model request timed out");
@@ -1097,6 +1098,7 @@ describe("CrossPlatformChatSessionManager", () => {
       user_id: "user-1",
       cwd: "/repo",
       timeoutMs: 10_000,
+      onEvent: (event) => { events.push(event); },
     });
 
     expect(result.success).toBe(false);
@@ -1105,6 +1107,10 @@ describe("CrossPlatformChatSessionManager", () => {
     expect(capturedOptions?.abortSignal).toBeInstanceOf(AbortSignal);
     expect(capturedOptions?.timeoutMs).toBeGreaterThan(0);
     expect(capturedOptions?.timeoutMs).toBeLessThanOrEqual(10_000);
+    const lifecycleError = events.find((event): event is Extract<ChatEvent, { type: "lifecycle_error" }> =>
+      event.type === "lifecycle_error"
+    );
+    expect(lifecycleError?.recovery.kind).toBe("runtime_interruption");
   });
 
   it("keeps natural-language setup/run-spec requests inside the default gateway model tool-choice loop", async () => {
