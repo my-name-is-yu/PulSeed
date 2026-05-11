@@ -20,12 +20,14 @@ import { detectChange } from "../change-detector.js";
 import { executeReflectionCronJob, executeSoilPublishCronJob } from "./engine-cron-reflection.js";
 import type { GoalRunActivationContext } from "../../base/types/goal-activation.js";
 import {
-  buildSchedulerWakeSignalContext,
+  buildSchedulerWakeAttentionInputs,
+  buildSignalContextFromAttentionInputs,
   ref,
   type AttentionReevaluationPort,
   type AttentionReevaluationResult,
 } from "../attention/index.js";
 import { assembleScheduleOperationPlans } from "../capability-operation-planner.js";
+import type { ScheduleExecutionContext } from "./engine-execution.js";
 
 interface LayerDeps {
   baseDir?: string;
@@ -59,6 +61,38 @@ async function getAdapter(
   } catch {
     return undefined;
   }
+}
+
+function buildWaitResumeSignalContextThroughAttentionInput(input: {
+  entry: ScheduleEntry;
+  goalId: string;
+  firedAt: string;
+  scheduledFor: string;
+}) {
+  const waitRef = ref(
+    "wait",
+    input.entry.metadata?.wait_strategy_id ?? input.entry.metadata?.strategy_id ?? input.entry.id
+  );
+  const runtimeStateRef = ref("runtime_event", `runtime-event:schedule-wake:${input.entry.id}`);
+  const attentionInputs = buildSchedulerWakeAttentionInputs({
+    entry_id: input.entry.id,
+    fired_at: input.firedAt,
+    scheduled_for: input.scheduledFor,
+    goal_ref: ref("goal", input.goalId),
+    wait_ref: waitRef,
+    runtime_state_ref: runtimeStateRef,
+  });
+
+  return buildSignalContextFromAttentionInputs({
+    signal_context_id: `signal:schedule-wake:${input.entry.id}:${input.scheduledFor}`,
+    assembled_at: input.firedAt,
+    inputs: attentionInputs,
+    timing_context: {
+      observed_at: input.firedAt,
+      quiet_hours_active: false,
+      due_refs: [ref("schedule_tick", input.entry.id), waitRef],
+    },
+  });
 }
 
 function buildWaitResumeAttentionProjection(
@@ -283,8 +317,13 @@ export async function executeCron(entry: ScheduleEntry, deps: LayerDeps): Promis
   }
 }
 
-export async function executeGoalTrigger(entry: ScheduleEntry, deps: LayerDeps): Promise<ScheduleResult> {
+export async function executeGoalTrigger(
+  entry: ScheduleEntry,
+  deps: LayerDeps,
+  context: ScheduleExecutionContext = {}
+): Promise<ScheduleResult> {
   const firedAt = new Date().toISOString();
+  const scheduledFor = context.scheduledFor ?? entry.next_fire_at ?? firedAt;
   const start = Date.now();
   const cfg = entry.goal_trigger;
 
@@ -343,14 +382,11 @@ export async function executeGoalTrigger(entry: ScheduleEntry, deps: LayerDeps):
         });
       }
 
-      const signalContext = buildSchedulerWakeSignalContext({
-        signal_context_id: `signal:schedule-wake:${entry.id}:${firedAt}`,
-        assembled_at: firedAt,
-        schedule_tick_ref: ref("schedule_tick", entry.id),
-        wait_ref: ref("wait", entry.metadata.wait_strategy_id ?? entry.metadata.strategy_id ?? entry.id),
-        active_surface_ref: null,
-        current_goal_refs: [ref("goal", cfg.goal_id)],
-        runtime_state_refs: [ref("runtime_event", `runtime-event:schedule-wake:${entry.id}`)],
+      const signalContext = buildWaitResumeSignalContextThroughAttentionInput({
+        entry,
+        goalId: cfg.goal_id,
+        firedAt,
+        scheduledFor,
       });
 
       const reevaluation = await deps.attentionReevaluation.reevaluate(signalContext, {
@@ -363,6 +399,7 @@ export async function executeGoalTrigger(entry: ScheduleEntry, deps: LayerDeps):
       const capabilityOperationPlanAssembly = assembleScheduleOperationPlans({
         entry,
         firedAt,
+        scheduledFor,
         ...(projection ? { projection } : {}),
       });
 

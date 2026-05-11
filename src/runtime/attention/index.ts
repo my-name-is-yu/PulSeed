@@ -1,4 +1,29 @@
 export {
+  AttentionInputEffectPolicySchema,
+  AttentionInputSchema,
+  AttentionInputSourceKindSchema,
+  AttentionInputSourceSchema,
+  attentionInputEvidenceRefs,
+  buildSchedulerWakeAttentionInputs,
+  buildSignalContextFromAttentionInputs,
+  createAttentionInput,
+  createAttentionInputIntakePort,
+  dedupeAttentionInputs,
+} from "./attention-input.js";
+export type {
+  AttentionInput,
+  AttentionInputEffectPolicy,
+  AttentionInputFactoryInput,
+  AttentionInputIntakeDisposition,
+  AttentionInputIntakePort,
+  AttentionInputIntakeRecord,
+  AttentionInputIntakeResult,
+  AttentionInputSignalContextInput,
+  AttentionInputSource,
+  AttentionInputSourceKind,
+  SchedulerWakeAttentionInputsInput,
+} from "./attention-input.js";
+export {
   AttentionFeedbackKindValues,
   admitInitiativeGateDecision,
   advanceAttentionMaturation,

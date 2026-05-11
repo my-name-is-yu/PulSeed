@@ -29,6 +29,11 @@ interface DueEntryDescriptor {
   scheduledFor: string | null;
 }
 
+export interface ScheduleExecutionContext {
+  reason?: ScheduleRunReason;
+  scheduledFor?: string | null;
+}
+
 export interface RunScheduleNowOptions {
   preserveEnabled?: boolean;
   allowEscalation?: boolean;
@@ -53,10 +58,10 @@ export interface ScheduleExecutionHost {
   captureExecutionSideEffects(entryId: string): Pick<ScheduleEntry, "baseline_results"> | null;
   applyExecutionSideEffects(entryId: string, sideEffects: Pick<ScheduleEntry, "baseline_results"> | null): void;
   recordHistory(record: ScheduleRunHistoryInput): Promise<void>;
-  executeEntry(entry: ScheduleEntry): Promise<ScheduleResult>;
+  executeEntry(entry: ScheduleEntry, context?: ScheduleExecutionContext): Promise<ScheduleResult>;
   executeProbe(entry: ScheduleEntry): Promise<ScheduleResult>;
   executeCron(entry: ScheduleEntry): Promise<ScheduleResult>;
-  executeGoalTrigger(entry: ScheduleEntry): Promise<ScheduleResult>;
+  executeGoalTrigger(entry: ScheduleEntry, context?: ScheduleExecutionContext): Promise<ScheduleResult>;
   checkEscalation(entry: ScheduleEntry, result: ScheduleResult): Promise<ScheduleResult | null>;
   executeEscalationTargetGoal(goalId: string): Promise<ScheduleResult>;
   executeEscalationTargetEntry(entryId: string): Promise<ScheduleResult | null>;
@@ -80,7 +85,10 @@ export async function runEntryNowForEngine(
 
   const scheduledFor = new Date().toISOString();
   const immediateEntry = { ...entry, enabled: true, next_fire_at: scheduledFor };
-  const executedResult = await host.executeEntry(immediateEntry);
+  const executedResult = await host.executeEntry(immediateEntry, {
+    reason: "manual_run",
+    scheduledFor,
+  });
   const sideEffects = entry.layer === "probe" ? host.captureExecutionSideEffects(entry.id) : null;
   const applied = await host.withScheduleFileLock(async () => {
     await host.refreshEntriesForMutation();
@@ -148,7 +156,10 @@ export async function tickEngine(host: ScheduleExecutionHost): Promise<ScheduleR
 
   const results: ScheduleResult[] = [];
   for (const descriptor of due) {
-    const executedResult = await host.executeEntry(descriptor.entry);
+    const executedResult = await host.executeEntry(descriptor.entry, {
+      reason: descriptor.reason,
+      scheduledFor: descriptor.scheduledFor,
+    });
     const sideEffects = descriptor.entry.layer === "probe"
       ? host.captureExecutionSideEffects(descriptor.entry.id)
       : null;
@@ -195,11 +206,15 @@ export async function tickEngine(host: ScheduleExecutionHost): Promise<ScheduleR
   return results;
 }
 
-export async function executeEntryForEngine(host: ScheduleExecutionHost, entry: ScheduleEntry): Promise<ScheduleResult> {
+export async function executeEntryForEngine(
+  host: ScheduleExecutionHost,
+  entry: ScheduleEntry,
+  context: ScheduleExecutionContext = {}
+): Promise<ScheduleResult> {
   if (entry.layer === "heartbeat") return executeHeartbeatEntry(entry, host.logger);
   if (entry.layer === "probe") return host.executeProbe(entry);
   if (entry.layer === "cron") return host.executeCron(entry);
-  if (entry.layer === "goal_trigger") return host.executeGoalTrigger(entry);
+  if (entry.layer === "goal_trigger") return host.executeGoalTrigger(entry, context);
 
   host.logger.info(`Skipping unknown layer entry: ${entry.name} (layer=${entry.layer})`);
   return ScheduleResultSchema.parse({
@@ -224,7 +239,10 @@ export async function executeEscalationTargetEntryForEngine(
   }
 
   const immediateEntry = { ...targetEntry, enabled: true, next_fire_at: new Date().toISOString() };
-  const result = await host.executeEntry(immediateEntry);
+  const result = await host.executeEntry(immediateEntry, {
+    reason: "manual_run",
+    scheduledFor: immediateEntry.next_fire_at,
+  });
   const sideEffects = targetEntry.layer === "probe" ? host.captureExecutionSideEffects(targetEntry.id) : null;
   const applied = await host.withScheduleFileLock(async () => {
     await host.refreshEntriesForMutation();

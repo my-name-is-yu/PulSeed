@@ -2644,13 +2644,87 @@ describe("GoalTrigger execution (Phase 3)", () => {
     expect(result.output_summary).toBe("wait wake re-evaluated through attention");
     expect(attentionReevaluation.reevaluate).toHaveBeenCalledOnce();
     expect(signalContext.signal_sources).toEqual(["schedule_tick", "wait_expiry"]);
+    const signalRefs = signalContext.signal_refs as Array<{ ref: unknown }>;
+    expect(signalRefs.map((source) => source.ref)).toEqual([
+      { kind: "schedule_tick", id: entry.id },
+      { kind: "wait", id: "strategy:wait" },
+    ]);
     expect(signalContext.current_goal_refs).toEqual([{ kind: "goal", id: "test-goal-id" }]);
+    expect(signalContext.runtime_state_refs).toEqual([
+      { kind: "runtime_event", id: `runtime-event:schedule-wake:${entry.id}` },
+    ]);
+    expect(signalContext.timing_context?.due_refs).toEqual([
+      { kind: "schedule_tick", id: entry.id },
+      { kind: "wait", id: "strategy:wait" },
+    ]);
     expect(context).toMatchObject({
       entry_id: entry.id,
       entry_name: entry.name,
       activation_kind: "wait_resume",
     });
     expect(notificationDispatcher.dispatch).not.toHaveBeenCalled();
+  });
+
+  it("keeps wait-resume replay identity stable for the same scheduled due instance", async () => {
+    vi.useFakeTimers();
+    const dueAt = "2026-05-12T00:00:00.000Z";
+    const firstRunAt = "2026-05-12T00:00:05.000Z";
+    const secondRunAt = "2026-05-12T00:00:15.000Z";
+    vi.setSystemTime(new Date(firstRunAt));
+
+    const attentionReevaluation = {
+      reevaluate: vi.fn().mockResolvedValue(undefined),
+    };
+    const eng = new ScheduleEngine({
+      baseDir: tempDir,
+      attentionReevaluation,
+    });
+    const entry = await eng.addEntry(makeGoalTriggerEntry({
+      metadata: {
+        internal: true,
+        activation_kind: "wait_resume",
+        goal_id: "test-goal-id",
+        strategy_id: "strategy:wait-replay",
+        wait_strategy_id: "strategy:wait-replay",
+      },
+      goal_trigger: {
+        goal_id: "test-goal-id",
+        max_iterations: 5,
+        skip_if_active: false,
+      },
+    }));
+
+    eng.getEntries()[0]!.next_fire_at = dueAt;
+    await eng.saveEntries();
+    await eng.loadEntries();
+
+    await eng.tick();
+    const firstSignalContext = attentionReevaluation.reevaluate.mock.calls[0]![0] as {
+      signal_context_id: string;
+      assembled_at: string;
+    };
+
+    const replayedEntry = eng.getEntries().find((candidate) => candidate.id === entry.id)!;
+    replayedEntry.next_fire_at = dueAt;
+    replayedEntry.retry_state = null;
+    await eng.saveEntries();
+    await eng.loadEntries();
+
+    vi.setSystemTime(new Date(secondRunAt));
+    await eng.tick();
+    const secondSignalContext = attentionReevaluation.reevaluate.mock.calls[1]![0] as {
+      signal_context_id: string;
+      assembled_at: string;
+    };
+
+    expect(firstSignalContext).toMatchObject({
+      signal_context_id: `signal:schedule-wake:${entry.id}:${dueAt}`,
+      assembled_at: firstRunAt,
+    });
+    expect(secondSignalContext).toMatchObject({
+      signal_context_id: firstSignalContext.signal_context_id,
+      assembled_at: secondRunAt,
+    });
   });
 
   it("fails closed for stale wait-resume attention projections from the production tick path", async () => {

@@ -44,6 +44,7 @@ import {
   getDueEntriesFromEngine,
   runEntryNowForEngine,
   tickEngine,
+  type ScheduleExecutionContext,
   type RunScheduleNowOptions,
   type RunScheduleNowResult,
 } from "./engine-execution.js";
@@ -339,8 +340,8 @@ export class ScheduleEngine {
 
   // ─── GoalTrigger execution (Phase 3) ───
 
-  async executeGoalTrigger(entry: ScheduleEntry): Promise<ScheduleResult> {
-    return executeGoalTrigger(entry, this.layerDeps());
+  async executeGoalTrigger(entry: ScheduleEntry, context: ScheduleExecutionContext = {}): Promise<ScheduleResult> {
+    return executeGoalTrigger(entry, this.layerDeps(), context);
   }
 
   private layerDeps() {
@@ -360,8 +361,8 @@ export class ScheduleEngine {
     };
   }
 
-  private async executeEntry(entry: ScheduleEntry): Promise<ScheduleResult> {
-    return executeEntryForEngine(this.executionHost(), entry);
+  private async executeEntry(entry: ScheduleEntry, context: ScheduleExecutionContext = {}): Promise<ScheduleResult> {
+    return executeEntryForEngine(this.executionHost(), entry, context);
   }
 
   private async recordHistory(input: {
@@ -479,10 +480,11 @@ export class ScheduleEngine {
         retry_at: record.retry_at ?? null,
         failure_kind: record.failure_kind ?? null,
       }),
-      executeEntry: (entry: ScheduleEntry) => this.executeEntry(entry),
+      executeEntry: (entry: ScheduleEntry, context?: ScheduleExecutionContext) => this.executeEntry(entry, context),
       executeProbe: (entry: ScheduleEntry) => this.executeProbe(entry),
       executeCron: (entry: ScheduleEntry) => this.executeCron(entry),
-      executeGoalTrigger: (entry: ScheduleEntry) => this.executeGoalTrigger(entry),
+      executeGoalTrigger: (entry: ScheduleEntry, context?: ScheduleExecutionContext) =>
+        this.executeGoalTrigger(entry, context),
       checkEscalation: (entry: ScheduleEntry, result: ScheduleResult) => this.checkEscalation(entry, result),
       executeEscalationTargetGoal: (goalId: string) => this.executeEscalationTargetGoal(goalId),
       executeEscalationTargetEntry: (entryId: string) => this.executeEscalationTargetEntry(entryId),
