@@ -456,6 +456,8 @@ const GATEWAY_RUNTIME_STATUS_TOOL_NAMES = new Set([
   "get_gateway_setup_status",
   "prepare_gateway_setup_guidance",
   "get_runtime_status",
+  "list_schedules",
+  "get_schedule",
   "runs_list",
   "runs_observe",
   "sessions_list",
@@ -474,12 +476,18 @@ const GATEWAY_APPROVED_WRITE_TOOL_NAMES = new Set([
   "update_run_spec_draft",
   "cancel_run_spec_draft",
   "runspec_propose",
+  "create_schedule",
+  "update_schedule",
+  "remove_schedule",
+  "pause_schedule",
+  "resume_schedule",
 ]);
 
 const GATEWAY_APPROVED_DURABLE_RUN_TOOL_NAMES = new Set([
   "runspec_confirm",
   "start_durable_run",
   "run_start",
+  "run_schedule",
 ]);
 
 const GATEWAY_AUTHORIZED_RUNTIME_CONTROL_TOOL_NAMES = new Set([

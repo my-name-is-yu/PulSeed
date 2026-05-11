@@ -1211,7 +1211,8 @@ export class CrossPlatformChatSessionManager {
     const setupSecretIntake = input.setupSecretIntake;
     const safeIngressText = input.safeInput;
     const hasSetupSecret = setupSecretIntake.suppliedSecrets.length > 0;
-    const metadataRuntimeControlExplicit = ingress.metadata["runtime_control_explicit"] === true;
+    const metadataRuntimeControlExplicit =
+      ingress.metadata["runtime_control_explicit"] === true || ingress.runtimeControl.explicit === true;
     const shouldClassifyRuntimeControl =
       !hasSetupSecret
       && metadataRuntimeControlExplicit;
