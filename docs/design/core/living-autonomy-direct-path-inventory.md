@@ -1,5 +1,7 @@
 # Living Autonomy Direct-Path Inventory
 
+> Status: Slice 0 implementation inventory for the non-GUI Living-Feeling Autonomy foundation. Verify behavior against source code before treating this as final runtime policy.
+
 Status: Slice 0 inventory for the non-GUI Living-Feeling Autonomy foundation.
 
 This inventory classifies the current paths that can start work, speak, notify,
