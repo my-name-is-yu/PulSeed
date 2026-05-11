@@ -101,6 +101,32 @@ function makeDeps(overrides: Partial<ChatRunnerDeps> = {}): ChatRunnerDeps {
   };
 }
 
+function makeStreamingLLMClient(responses: Array<{
+  content: string;
+  stop_reason?: "end_turn" | "tool_calls";
+  tool_calls?: Array<{
+    id: string;
+    type: "function";
+    function: { name: string; arguments: string };
+  }>;
+}>) {
+  const sendMessageStream = vi.fn();
+  for (const response of responses) {
+    sendMessageStream.mockResolvedValueOnce({
+      content: response.content,
+      usage: { input_tokens: 1, output_tokens: 1 },
+      stop_reason: response.stop_reason ?? "end_turn",
+      tool_calls: response.tool_calls ?? [],
+    });
+  }
+  return {
+    sendMessage: vi.fn().mockRejectedValue(new Error("unexpected non-stream model request")),
+    sendMessageStream,
+    supportsToolCalling: vi.fn(() => true),
+    parseJSON: vi.fn((content: string, schema: { parse(value: unknown): unknown }) => schema.parse(JSON.parse(content))),
+  };
+}
+
 function createDeferred(): { promise: Promise<void>; resolve: () => void } {
   let resolve!: () => void;
   const promise = new Promise<void>((innerResolve) => {
@@ -526,6 +552,34 @@ describe("CrossPlatformChatSessionManager", () => {
     expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
     const [, options] = llmClient.sendMessageStream.mock.calls[0]!;
     expect(String(options?.system ?? "")).toContain("gateway chat surface");
+  });
+
+  it.each([
+    ["Japanese", "やあ！", "やあ。"],
+    ["English", "hello", "Hi."],
+  ])("keeps %s ordinary approved gateway greetings on the first default model request", async (_label, input, output) => {
+    const llmClient = makeStreamingLLMClient([{ content: output }]);
+    const chatAgentLoopRunner = { execute: vi.fn().mockResolvedValue(CANNED_RESULT) };
+    const manager = new CrossPlatformChatSessionManager(makeDeps({
+      llmClient: llmClient as never,
+      registry: makeRegistryWithTools([]),
+      chatAgentLoopRunner: chatAgentLoopRunner as never,
+    }));
+
+    const result = await manager.execute(input, {
+      identity_key: `approved-greeting-${input}`,
+      platform: "telegram",
+      conversation_id: `approved-greeting-${input}`,
+      user_id: "user-1",
+      cwd: "/repo",
+      metadata: { runtime_control_approved: true },
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.output).toBe(output);
+    expect(llmClient.sendMessage).not.toHaveBeenCalled();
+    expect(llmClient.sendMessageStream).toHaveBeenCalledTimes(1);
+    expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
   });
 
   it("lets gateway default model-loop choose tools and uses tool evidence for the final", async () => {
@@ -1523,13 +1577,33 @@ describe("CrossPlatformChatSessionManager", () => {
         state: "acknowledged",
       }),
     };
+    const llmClient = makeStreamingLLMClient([
+      {
+        content: "",
+        stop_reason: "tool_calls",
+        tool_calls: [{
+          id: "call-restart-daemon",
+          type: "function",
+          function: {
+            name: "request_runtime_control",
+            arguments: JSON.stringify({
+              operation: "restart_daemon",
+              reason: "PulSeed を再起動して",
+            }),
+          },
+        }],
+      },
+      { content: "restart queued" },
+    ]);
+    const tools = createSetupRuntimeControlTools({
+      stateManager,
+      runtimeControlService: runtimeControlService as never,
+    });
     const manager = new CrossPlatformChatSessionManager(makeDeps({
       stateManager,
       adapter,
-      llmClient: createSingleMockLLMClient(JSON.stringify({
-        intent: "restart_daemon",
-        reason: "PulSeed を再起動して",
-      })),
+      llmClient: llmClient as never,
+      registry: makeRegistryWithTools(tools),
       runtimeControlService,
       approvalFn: vi.fn().mockResolvedValue(true),
     }));
@@ -1546,6 +1620,8 @@ describe("CrossPlatformChatSessionManager", () => {
     expect(result.success).toBe(true);
     expect(result.output).toBe("restart queued");
     expect(adapter.execute).not.toHaveBeenCalled();
+    expect(llmClient.sendMessage).not.toHaveBeenCalled();
+    expect(llmClient.sendMessageStream).toHaveBeenCalledTimes(2);
     expect(runtimeControlService.request).toHaveBeenCalledWith(
       expect.objectContaining({
         intent: expect.objectContaining({ kind: "restart_daemon" }),
@@ -1656,7 +1732,8 @@ describe("CrossPlatformChatSessionManager", () => {
     expect(runtimeControlService.request.mock.calls[0]?.[0].replyTarget.metadata.notification_route_id).not.toBe("old-route");
   });
 
-  it("does not let stale approved metadata override the current denied external surface", async () => {
+  it("keeps the current denied external surface enforced at the runtime-control tool boundary", async () => {
+    const stateManager = makeMockStateManager();
     const adapter = makeMockAdapter();
     const chatAgentLoopRunner = {
       execute: vi.fn().mockResolvedValue(CANNED_RESULT),
@@ -1667,13 +1744,36 @@ describe("CrossPlatformChatSessionManager", () => {
         message: "restart queued",
       }),
     };
+    const llmClient = makeStreamingLLMClient([
+      {
+        content: "",
+        stop_reason: "tool_calls",
+        tool_calls: [{
+          id: "call-denied-restart",
+          type: "function",
+          function: {
+            name: "request_runtime_control",
+            arguments: JSON.stringify({
+              operation: "restart_daemon",
+              reason: "PulSeed を再起動して",
+            }),
+          },
+        }],
+      },
+      {
+        content: "This chat is not authorized to inspect or control PulSeed's running state. Nothing was executed, and I will not use shell commands as a workaround.",
+      },
+    ]);
+    const tools = createSetupRuntimeControlTools({
+      stateManager,
+      runtimeControlService: runtimeControlService as never,
+    });
     const manager = new CrossPlatformChatSessionManager(makeDeps({
+      stateManager,
       adapter,
       chatAgentLoopRunner: chatAgentLoopRunner as never,
-      llmClient: createSingleMockLLMClient(JSON.stringify({
-        intent: "restart_daemon",
-        reason: "PulSeed を再起動して",
-      })),
+      llmClient: llmClient as never,
+      registry: makeRegistryWithTools(tools),
       runtimeControlService,
     }));
     const currentContext = { platform: "telegram", senderId: "user-1", conversationId: "current-chat" };
@@ -1694,8 +1794,10 @@ describe("CrossPlatformChatSessionManager", () => {
       metadata: { runtime_control_approved: true },
     });
 
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
     expect(result.output).toContain("not authorized to inspect or control PulSeed's running state");
+    expect(llmClient.sendMessage).not.toHaveBeenCalled();
+    expect(llmClient.sendMessageStream).toHaveBeenCalledTimes(2);
     expect(runtimeControlService.request).not.toHaveBeenCalled();
     expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
   });
@@ -1810,10 +1912,9 @@ describe("CrossPlatformChatSessionManager", () => {
       stateManager,
       adapter,
       chatAgentLoopRunner: chatAgentLoopRunner as never,
-      llmClient: createMockLLMClient([
-        JSON.stringify({ intent: "none", reason: "setup help is ordinary chat" }),
-        "Setup help should stay in the default gateway model loop.",
-      ]),
+      llmClient: makeStreamingLLMClient([
+        { content: "Setup help should stay in the default gateway model loop." },
+      ]) as never,
       runtimeControlService,
     }));
 
@@ -1833,7 +1934,8 @@ describe("CrossPlatformChatSessionManager", () => {
     expect(adapter.execute).not.toHaveBeenCalled();
   });
 
-  it("fails closed for unauthorized gateway daemon restart instead of using agent-loop shell fallback", async () => {
+  it("denies unauthorized gateway daemon restart through the model-selected runtime-control tool", async () => {
+    const events: ChatEvent[] = [];
     const stateManager = makeMockStateManager();
     const adapter = makeMockAdapter();
     const chatAgentLoopRunner = {
@@ -1852,16 +1954,35 @@ describe("CrossPlatformChatSessionManager", () => {
         message: "runtime control should not run",
       }),
     };
+    const llmClient = makeStreamingLLMClient([
+      {
+        content: "",
+        stop_reason: "tool_calls",
+        tool_calls: [{
+          id: "call-denied-daemon-restart",
+          type: "function",
+          function: {
+            name: "request_runtime_control",
+            arguments: JSON.stringify({
+              operation: "restart_daemon",
+              reason: "PulSeed を再起動して",
+            }),
+          },
+        }],
+      },
+      {
+        content: "This chat is not authorized to inspect or control PulSeed's running state. Nothing was executed, and I will not use shell commands as a workaround.",
+      },
+    ]);
     const manager = new CrossPlatformChatSessionManager(makeDeps({
       stateManager,
       adapter,
       chatAgentLoopRunner: chatAgentLoopRunner as never,
-      llmClient: createMockLLMClient([
-        JSON.stringify({
-          intent: "restart_daemon",
-          reason: "PulSeed を再起動して",
-        }),
-      ]),
+      llmClient: llmClient as never,
+      registry: makeRegistryWithTools(createSetupRuntimeControlTools({
+        stateManager,
+        runtimeControlService: runtimeControlService as never,
+      })),
       runtimeControlService,
     }));
 
@@ -1872,20 +1993,30 @@ describe("CrossPlatformChatSessionManager", () => {
       user_id: "user-1",
       cwd: "/repo",
       metadata: { runtime_control_denied: true },
+      onEvent: (event) => { events.push(event); },
     });
 
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
     expect(result.output).toContain("not authorized to inspect or control PulSeed's running state");
     expect(result.output).toContain("Nothing was executed");
     expect(result.output).toContain("will not use shell commands as a workaround");
     expect(result.output).not.toContain("restart_daemon");
     expect(result.output).not.toContain("runtime-control");
+    expect(llmClient.sendMessage).not.toHaveBeenCalled();
+    expect(llmClient.sendMessageStream).toHaveBeenCalledTimes(2);
+    expect(events.some((event) =>
+      event.type === "tool_end"
+      && event.toolName === "request_runtime_control"
+      && event.success === false
+      && event.summary.includes("not authorized")
+    )).toBe(true);
     expect(runtimeControlService.request).not.toHaveBeenCalled();
     expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
     expect(adapter.execute).not.toHaveBeenCalled();
   });
 
-  it("uses natural Telegram wording for unauthorized runtime-control inspection requests", async () => {
+  it("denies unauthorized runtime status inspection through the model-selected status tool", async () => {
+    const events: ChatEvent[] = [];
     const stateManager = makeMockStateManager();
     const adapter = makeMockAdapter();
     const chatAgentLoopRunner = {
@@ -1904,16 +2035,32 @@ describe("CrossPlatformChatSessionManager", () => {
         message: "runtime control should not run",
       }),
     };
+    const llmClient = makeStreamingLLMClient([
+      {
+        content: "",
+        stop_reason: "tool_calls",
+        tool_calls: [{
+          id: "call-denied-runtime-status",
+          type: "function",
+          function: {
+            name: "get_runtime_status",
+            arguments: "{}",
+          },
+        }],
+      },
+      {
+        content: "This chat is not authorized to inspect or control PulSeed's running state. Nothing was executed, and I will not use shell commands as a workaround.",
+      },
+    ]);
     const manager = new CrossPlatformChatSessionManager(makeDeps({
       stateManager,
       adapter,
       chatAgentLoopRunner: chatAgentLoopRunner as never,
-      llmClient: createMockLLMClient([
-        JSON.stringify({
-          intent: "inspect_companion_state",
-          reason: "今のPulSeedの状態を軽く確認して",
-        }),
-      ]),
+      llmClient: llmClient as never,
+      registry: makeRegistryWithTools(createSetupRuntimeControlTools({
+        stateManager,
+        runtimeControlService: runtimeControlService as never,
+      })),
       runtimeControlService,
     }));
 
@@ -1924,9 +2071,10 @@ describe("CrossPlatformChatSessionManager", () => {
       user_id: "user-1",
       cwd: "/repo",
       metadata: { runtime_control_denied: true },
+      onEvent: (event) => { events.push(event); },
     });
 
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
     expect(result.output).toContain("not authorized to inspect or control PulSeed's running state");
     expect(result.output).toContain("Nothing was executed");
     expect(result.output).toContain("will not use shell commands as a workaround");
@@ -1934,12 +2082,20 @@ describe("CrossPlatformChatSessionManager", () => {
     expect(result.output).not.toContain("Runtime control");
     expect(result.output).not.toContain("runtime-control");
     expect(result.output).not.toContain("lifecycle actions");
+    expect(llmClient.sendMessage).not.toHaveBeenCalled();
+    expect(llmClient.sendMessageStream).toHaveBeenCalledTimes(2);
+    expect(events.some((event) =>
+      event.type === "tool_end"
+      && event.toolName === "get_runtime_status"
+      && event.success === false
+      && event.summary.includes("not authorized")
+    )).toBe(true);
     expect(runtimeControlService.request).not.toHaveBeenCalled();
     expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
     expect(adapter.execute).not.toHaveBeenCalled();
   });
 
-  it("fails closed for denied reload_config and self_update runtime-control requests", async () => {
+  it("denies reload_config and self_update through the model-selected runtime-control tool", async () => {
     for (const operation of ["reload_config", "self_update"] as const) {
       const stateManager = makeMockStateManager();
       const adapter = makeMockAdapter();
@@ -1959,13 +2115,35 @@ describe("CrossPlatformChatSessionManager", () => {
           message: "runtime control should not run",
         }),
       };
+      const llmClient = makeStreamingLLMClient([
+        {
+          content: "",
+          stop_reason: "tool_calls",
+          tool_calls: [{
+            id: `call-denied-${operation}`,
+            type: "function",
+            function: {
+              name: "request_runtime_control",
+              arguments: JSON.stringify({
+                operation,
+                reason: `request ${operation}`,
+              }),
+            },
+          }],
+        },
+        {
+          content: "This chat is not authorized to inspect or control PulSeed's running state. Nothing was executed, and I will not use shell commands as a workaround.",
+        },
+      ]);
       const manager = new CrossPlatformChatSessionManager(makeDeps({
         stateManager,
         adapter,
         chatAgentLoopRunner: chatAgentLoopRunner as never,
-        llmClient: createMockLLMClient([
-          JSON.stringify({ intent: operation, reason: `request ${operation}` }),
-        ]),
+        llmClient: llmClient as never,
+        registry: makeRegistryWithTools(createSetupRuntimeControlTools({
+          stateManager,
+          runtimeControlService: runtimeControlService as never,
+        })),
         runtimeControlService,
       }));
 
@@ -1978,11 +2156,13 @@ describe("CrossPlatformChatSessionManager", () => {
         metadata: { runtime_control_denied: true },
       });
 
-      expect(result.success).toBe(false);
+      expect(result.success).toBe(true);
       expect(result.output).toContain("Nothing was executed");
       expect(result.output).toContain("will not use shell commands as a workaround");
       expect(result.output).not.toContain(operation);
       expect(result.output).not.toContain("runtime-control");
+      expect(llmClient.sendMessage).not.toHaveBeenCalled();
+      expect(llmClient.sendMessageStream).toHaveBeenCalledTimes(2);
       expect(runtimeControlService.request).not.toHaveBeenCalled();
       expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
       expect(adapter.execute).not.toHaveBeenCalled();

@@ -335,7 +335,7 @@ class GetRuntimeStatusTool implements ITool<RuntimeStatusInput> {
   constructor(private readonly deps: SetupRuntimeControlToolDeps) {}
 
   description(): string {
-    return "Read active runtime sessions and background run status. This never mutates runtime lifecycle.";
+    return "Read active runtime sessions and background run status for an authorized runtime-control surface. This never mutates runtime lifecycle.";
   }
 
   async call(_input: RuntimeStatusInput, _context: ToolCallContext): Promise<ToolResult> {
@@ -344,7 +344,14 @@ class GetRuntimeStatusTool implements ITool<RuntimeStatusInput> {
     return toolResult(true, snapshot, formatRuntimeStatus(snapshot), started);
   }
 
-  checkPermissions(): Promise<PermissionCheckResult> {
+  checkPermissions(_input: RuntimeStatusInput, context: ToolCallContext): Promise<PermissionCheckResult> {
+    if (!runtimeControlAllowed(context)) {
+      return Promise.resolve({
+        status: "denied",
+        reason: "Runtime status is not authorized for this chat surface. The operation was not executed.",
+        executionReason: "policy_blocked",
+      });
+    }
     return Promise.resolve({ status: "allowed" });
   }
 

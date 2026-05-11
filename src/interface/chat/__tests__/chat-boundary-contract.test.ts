@@ -23,7 +23,7 @@ import { cleanupTempDir, makeTempDir } from "../../../../tests/helpers/temp-dir.
 import { ChatRunner } from "../chat-runner.js";
 import { SharedManagerTuiChatSurface } from "../../tui/chat-surface.js";
 import { CrossPlatformChatSessionManager } from "../cross-platform-session.js";
-import { createMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
+import { createSetupRuntimeControlTools } from "../../../tools/runtime/SetupRuntimeControlTools.js";
 
 vi.mock("../../../platform/observation/context-provider.js", () => ({
   resolveGitRoot: (cwd: string) => cwd,
@@ -213,6 +213,47 @@ describe("chat boundary contracts", () => {
         state: "acknowledged",
       }),
     };
+    const llmClient = {
+      sendMessage: vi.fn(),
+      sendMessageStream: vi.fn()
+        .mockResolvedValueOnce({
+          content: "ordinary chat",
+          usage: { input_tokens: 1, output_tokens: 1 },
+          stop_reason: "end_turn",
+          tool_calls: [],
+        })
+        .mockResolvedValueOnce({
+          content: "",
+          usage: { input_tokens: 1, output_tokens: 1 },
+          stop_reason: "tool_calls",
+          tool_calls: [{
+            id: "call-restart-daemon",
+            type: "function",
+            function: {
+              name: "request_runtime_control",
+              arguments: JSON.stringify({
+                operation: "restart_daemon",
+                reason: "PulSeed を再起動して",
+              }),
+            },
+          }],
+        })
+        .mockResolvedValueOnce({
+          content: "restart queued",
+          usage: { input_tokens: 1, output_tokens: 1 },
+          stop_reason: "end_turn",
+          tool_calls: [],
+        }),
+      supportsToolCalling: vi.fn(() => true),
+      parseJSON: vi.fn((content: string, schema: { parse(value: unknown): unknown }) => schema.parse(JSON.parse(content))),
+    };
+    const registry = new ToolRegistry();
+    for (const tool of createSetupRuntimeControlTools({
+      stateManager,
+      runtimeControlService: runtimeControlService as never,
+    })) {
+      registry.register(tool);
+    }
     const manager = new CrossPlatformChatSessionManager({
       stateManager,
       adapter: makeMockAdapter(),
@@ -226,10 +267,8 @@ describe("chat boundary contracts", () => {
           stopped_reason: "completed",
         }),
       } as never,
-      llmClient: createMockLLMClient([
-        "ordinary chat",
-        JSON.stringify({ intent: "restart_daemon", reason: "PulSeed を再起動して" }),
-      ]),
+      llmClient: llmClient as never,
+      registry,
       runtimeControlService,
       approvalFn: vi.fn().mockResolvedValue(true),
     });
@@ -251,6 +290,8 @@ describe("chat boundary contracts", () => {
     });
 
     expect(runtimeControlService.request).toHaveBeenCalledOnce();
+    expect(llmClient.sendMessage).not.toHaveBeenCalled();
+    expect(llmClient.sendMessageStream).toHaveBeenCalledTimes(3);
     expect(runtimeControlService.request).toHaveBeenCalledWith(
       expect.objectContaining({
         replyTarget: expect.objectContaining({

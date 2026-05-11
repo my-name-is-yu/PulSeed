@@ -1221,11 +1221,7 @@ export class CrossPlatformChatSessionManager {
       surfaceRuntimePolicy
         ? surfaceRuntimePolicy.approval_mode === "disallowed"
         : ingress.metadata["runtime_control_denied"] === true;
-    const metadataRuntimeControlApproved = ingress.metadata["runtime_control_approved"] === true;
-    const metadataRuntimeControlDenied = ingress.metadata["runtime_control_denied"] === true;
     const metadataRuntimeControlExplicit = ingress.metadata["runtime_control_explicit"] === true;
-    const runtimeControlPolicyPresent =
-      runtimeControlApproved || runtimeControlDenied || metadataRuntimeControlExplicit;
     const canUseDefaultGatewayModelLoop = capabilities.hasToolLoop
       && (ingress.channel === "plugin_gateway" || ingress.replyTarget.surface === "gateway");
     const shouldPreferFreeformBeforeDeniedRuntimeControl =
@@ -1235,23 +1231,16 @@ export class CrossPlatformChatSessionManager {
       && runtimeControlDenied
       && !runtimeControlApproved
       && ingress.metadata["runtime_control_explicit"] !== true;
-    const shouldClassifyRuntimeControlForSafety =
-      !hasSetupSecret
-      && runtimeControlPolicyPresent
-      && (
-        metadataRuntimeControlApproved
-        || metadataRuntimeControlDenied
-        || metadataRuntimeControlExplicit
-        || !canUseDefaultGatewayModelLoop
-      );
     const shouldClassifyRuntimeControl =
-      shouldClassifyRuntimeControlForSafety
-      || (!hasSetupSecret && !capabilities.hasAgentLoop && !canUseDefaultGatewayModelLoop && (
-        (capabilities.hasRuntimeControlService && ingress.runtimeControl.approvalMode !== "disallowed")
-        || runtimeControlApproved
-        || runtimeControlDenied
-        || ingress.metadata["runtime_control_explicit"] === true
-      ));
+      !hasSetupSecret
+      && (
+        metadataRuntimeControlExplicit
+        || (!canUseDefaultGatewayModelLoop && !capabilities.hasAgentLoop && (
+          (capabilities.hasRuntimeControlService && ingress.runtimeControl.approvalMode !== "disallowed")
+          || runtimeControlApproved
+          || runtimeControlDenied
+        ))
+      );
     let freeformRouteIntent = shouldPreferFreeformBeforeDeniedRuntimeControl
       ? await classifyFreeformRouteIntent(safeIngressText, this.deps.llmClient)
       : null;
@@ -1296,9 +1285,9 @@ export class CrossPlatformChatSessionManager {
     return this.ingressRouter.selectRoute(ingress, {
       ...capabilities,
       runtimeControlIntent,
-      runtimeControlUnclassified: shouldClassifyRuntimeControlForSafety
+      runtimeControlUnclassified: metadataRuntimeControlExplicit
         && runtimeControlClassification?.status === "unclassified"
-        && metadataRuntimeControlExplicit,
+        && !hasSetupSecret,
       freeformRouteIntent,
       setupSecretIntake,
       runSpecDraft,
