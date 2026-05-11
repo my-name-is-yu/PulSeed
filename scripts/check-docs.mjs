@@ -26,19 +26,18 @@ const publicCurrentFiles = new Set([
   'CONTRIBUTING.md',
   'docs/index.md',
   'docs/getting-started.md',
+  'docs/guide.md',
+  'docs/concepts.md',
   'docs/runtime.md',
   'docs/mechanism.md',
   'docs/configuration.md',
   'docs/status.md',
+  'docs/architecture.md',
   'docs/architecture-map.md',
   'docs/module-map.md',
 ]);
 const publicCurrentDirs = [
-  'docs/start/',
-  'docs/guide/',
-  'docs/concepts/',
   'docs/reference/',
-  'docs/architecture/',
 ];
 const docsWithRequiredStatus = [
   {

@@ -98,11 +98,11 @@ For the complete command surface, use `pulseed help` or see the docs:
 
 Start with the current operating docs when you want to use PulSeed today:
 
-- [Start](docs/start/index.md)
-- [Guide](docs/guide/index.md)
-- [Concepts](docs/concepts/index.md)
+- [Getting Started](docs/getting-started.md)
+- [Guide](docs/guide.md)
+- [Concepts](docs/concepts.md)
 - [Reference](docs/reference/index.md)
-- [Architecture](docs/architecture/index.md)
+- [Architecture](docs/architecture.md)
 
 Product direction, north-star examples, and non-current plans live under
 [Roadmap And Future Direction](docs/roadmap/index.md). Design documents,

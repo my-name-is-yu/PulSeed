@@ -4,7 +4,7 @@ This is the entry point for PulSeed documentation.
 
 PulSeed docs are organized by reader need:
 
-- **Start**: install PulSeed and run the first interactive session.
+- **Getting Started**: install PulSeed and run the first interactive session.
 - **Guide**: operate goals, runtime surfaces, daemon mode, schedules, and
   gateway/chat workflows.
 - **Concepts**: understand the current execution model.
@@ -20,7 +20,7 @@ PulSeed docs are organized by reader need:
 
 1. [README](../README.md)
 2. [Getting Started](getting-started.md)
-3. [Guide](guide/index.md)
+3. [Guide](guide.md)
 4. [Runtime](runtime.md)
 5. [Configuration](configuration.md)
 6. [Status](status.md)
@@ -32,19 +32,18 @@ details.
 
 ## Documentation Sections
 
-### Start
+### Getting Started
 
-- [Start Index](start/index.md)
 - [Getting Started](getting-started.md)
 
 ### Guide
 
-- [Guide Index](guide/index.md)
+- [Guide](guide.md)
 - [Runtime](runtime.md)
 
 ### Concepts
 
-- [Concepts Index](concepts/index.md)
+- [Concepts](concepts.md)
 - [Mechanism](mechanism.md)
 
 ### Reference
@@ -55,7 +54,7 @@ details.
 
 ### Architecture
 
-- [Architecture Index](architecture/index.md)
+- [Architecture](architecture.md)
 - [Architecture Map](architecture-map.md)
 - [Module Map](module-map.md)
 

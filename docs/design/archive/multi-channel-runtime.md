@@ -2,7 +2,7 @@
 
 > Status: Archived design document. This is retained for context and is not current operating guidance.
 
-> Historical architecture draft. For the current production recovery design, see [Runtime Auto-Recovery](../../infrastructure/runtime-auto-recovery.md).
+> Historical architecture draft. For the current production recovery design, see [Runtime Auto-Recovery](../infrastructure/runtime-auto-recovery.md).
 
 > Evolves docs/runtime.md § "Process Model" from daemon-only to a 4-layer architecture:
 > Gateway → Queue → Executor → Eternal State.

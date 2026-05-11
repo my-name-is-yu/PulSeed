@@ -143,8 +143,8 @@ Common state paths:
 
 ## Next
 
-- [Guide](guide/index.md)
+- [Guide](guide.md)
 - [Runtime](runtime.md)
 - [Configuration](configuration.md)
-- [Concepts](concepts/index.md)
+- [Concepts](concepts.md)
 - [Reference](reference/index.md)
