@@ -156,17 +156,9 @@ async function runFakeTelegramLikeTurn(inputText: string): Promise<{
     transport: createSeedyPresenceTransportFromNonTuiDisplay(transport),
   });
   const llmClient = makeTextStreamLLM("やあ！");
-  const runtimeEvidenceGateClient = {
-    ...llmClient,
-    sendMessage: vi.fn(async () => {
-      throw new Error("ordinary gateway default chat must not call the final evidence gate.");
-    }),
-    sendMessageStream: undefined,
-  } as unknown as ILLMClient;
   const registry = new ToolRegistry();
   const manager = new CrossPlatformChatSessionManager(makeDeps({
     llmClient,
-    runtimeEvidenceGateClient,
     registry,
   }));
   registerGatewayChatSessionPort(async () => manager);

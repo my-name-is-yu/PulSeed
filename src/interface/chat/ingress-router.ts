@@ -83,7 +83,6 @@ export type SelectedChatRoute =
 export interface IngressRouterCapabilities {
   hasAgentLoop: boolean;
   hasToolLoop: boolean;
-  hasToolRegistry?: boolean;
   hasRuntimeControlService?: boolean;
   runtimeControlIntent?: RuntimeControlIntent | null;
   runtimeControlUnclassified?: boolean;
@@ -171,7 +170,7 @@ function selectRouteForText(
     };
   }
 
-  if (isGatewayIngress(message) && deps.hasToolLoop && deps.hasToolRegistry !== false) {
+  if (isGatewayIngress(message) && deps.hasToolLoop) {
     return {
       kind: "gateway_model_loop",
       reason: "gateway_default_model_tool_choice",

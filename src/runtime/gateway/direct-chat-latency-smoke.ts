@@ -242,13 +242,6 @@ async function main(): Promise<number> {
     adapter: new NullAdapter(),
     llmClient,
     registry: new ToolRegistry(),
-    runtimeEvidenceGateClient: {
-      ...llmClient,
-      sendMessage: async () => {
-        throw new Error("Runtime evidence gate must not run for ordinary gateway direct chat.");
-      },
-      sendMessageStream: undefined,
-    } as unknown as ILLMClient,
   });
   registerGatewayChatSessionPort(async () => manager);
   try {

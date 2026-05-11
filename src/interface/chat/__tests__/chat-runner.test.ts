@@ -111,13 +111,6 @@ function makeMockStateManagerWithBaseDir(): StateManager {
   } as unknown as StateManager;
 }
 
-function makeAllowRuntimeEvidenceGateClient() {
-  return createMockLLMClient(Array.from({ length: 100 }, () => JSON.stringify({
-    verdict: "allow",
-    reason: "Test fixture allows non-runtime-status assertions.",
-  })));
-}
-
 async function writeJsonFixture(baseDir: string, relativePath: string, value: unknown): Promise<void> {
   const filePath = path.join(baseDir, relativePath);
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -270,7 +263,6 @@ function makeDeps(overrides: Partial<ChatRunnerDeps> = {}): ChatRunnerDeps {
   return {
     stateManager: makeMockStateManager(),
     adapter: makeMockAdapter(),
-    runtimeEvidenceGateClient: makeAllowRuntimeEvidenceGateClient(),
     ...overrides,
   };
 }
@@ -513,21 +505,32 @@ function makeTask(id: string, goalId: string, overrides: Partial<Task> = {}): Ta
 
 describe("ChatRunner", () => {
   describe("normal execution", () => {
-    it("uses the current llm client for runtime evidence gating after provider reloads", () => {
-      const initialClient = createSingleMockLLMClient(JSON.stringify({ verdict: "allow", reason: "initial" }));
-      const reloadedClient = createSingleMockLLMClient(JSON.stringify({ verdict: "allow", reason: "reloaded" }));
-      const deps = makeDeps({
-        llmClient: initialClient,
-        runtimeEvidenceGateClient: undefined,
-      });
-      const runner = new ChatRunner(deps);
+    it("keeps route-host dependencies limited to the default model/tool loop contracts", () => {
+      const runner = new ChatRunner(makeDeps({
+        llmClient: createSingleMockLLMClient("ok"),
+      }));
       const routeHost = (runner as unknown as {
-        routeHost(): { getRuntimeEvidenceGateClient(): unknown };
+        routeHost(): Record<string, unknown>;
       }).routeHost();
 
-      expect(routeHost.getRuntimeEvidenceGateClient()).toBe(initialClient);
-      deps.llmClient = reloadedClient;
-      expect(routeHost.getRuntimeEvidenceGateClient()).toBe(reloadedClient);
+      expect(Object.keys(routeHost).sort()).toEqual([
+        "activatedTools",
+        "deps",
+        "eventBridge",
+        "getConversationSessionId",
+        "getNativeAgentLoopSessionId",
+        "getNativeAgentLoopStatePath",
+        "getPendingRunSpecConfirmation",
+        "getPendingSetupDialogue",
+        "getProviderConfigBaseDir",
+        "getSessionCwd",
+        "getSessionExecutionPolicy",
+        "getSetupSecretIntake",
+        "getTurnLanguageHint",
+        "setPendingRunSpecConfirmation",
+        "setPendingSetupDialogue",
+        "setSessionExecutionPolicy",
+      ]);
     });
 
     it("redacts setup secrets through the production ingress entrypoint before persistence, events, and adapter prompts", async () => {
@@ -3568,50 +3571,6 @@ describe("ChatRunner", () => {
       }
     });
 
-    it("preserves an explicit gateway commentary client when provider runtime reloads", async () => {
-      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-model-commentary-client-"));
-      try {
-        const stateManager = new StateManager(tmpDir);
-        await stateManager.init();
-        await stateManager.writeRaw("provider.json", {
-          provider: "openai",
-          model: "gpt-5.4-mini",
-          adapter: "openai_codex_cli",
-        });
-        const commentaryClient = createMockLLMClient([
-          JSON.stringify({
-            text_kind: "gateway_progress_preamble",
-            display_text: "I'll inspect the relevant project context before using tools.",
-            safety: {
-              verdict: "safe",
-              reason: "Announces upcoming inspection without claiming completed work.",
-            },
-            claims: {
-              completed_work: false,
-              current_runtime_status: false,
-              internal_model_or_provider_detail: false,
-              raw_tool_trace_command_output_or_secret: false,
-            },
-          }),
-        ]);
-        const runner = new ChatRunner(makeDeps({
-          stateManager,
-          adapter: makeMockAdapter(),
-          gatewayCommentaryClient: commentaryClient,
-        }));
-        const inspectable = runner as unknown as {
-          gatewayCommentaryClient?: unknown;
-          reloadProviderRuntime(): Promise<void>;
-        };
-
-        await inspectable.reloadProviderRuntime();
-
-        expect(inspectable.gatewayCommentaryClient).toBe(commentaryClient);
-      } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
-      }
-    });
-
     it("/model does not persist env-derived model or reasoning defaults", async () => {
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-model-env-runtime-"));
       const oldEnv = {
@@ -6311,15 +6270,10 @@ describe("ChatRunner", () => {
       expect(adapter.execute).not.toHaveBeenCalled();
     });
 
-    it("preserves gateway reply target metadata on a RunSpec draft route", async () => {
+    it("keeps gateway RunSpec text on the default model loop instead of precomputing a draft route", async () => {
       const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-gateway-runspec-"));
       const stateManager = new StateManager(baseDir, undefined, { walEnabled: false });
-      const llmClient = createMockLLMClient([
-        freeformRouteDecision("run_spec"),
-        runSpecDraftDecision({
-          objective: "Continue Kaggle optimization until score exceeds 0.98",
-        }),
-      ]);
+      const llmClient = createSingleMockLLMClient("Default loop will use tools when a RunSpec handoff is needed.");
       const runner = new ChatRunner(makeDeps({
         stateManager,
         llmClient,
@@ -6339,20 +6293,12 @@ describe("ChatRunner", () => {
       const selectedRoute = await (runner as unknown as {
         resolveRouteFromIngress(message: ChatIngressMessage): Promise<SelectedChatRoute>;
       }).resolveRouteFromIngress(ingress);
-      expect(selectedRoute.kind).toBe("run_spec_draft");
+      expect(selectedRoute.kind).toBe("gateway_model_loop");
       const result = await runner.executeIngressMessage(ingress, "/repo/kaggle", 120_000, selectedRoute);
 
       expect(result.success).toBe(true);
-      const stored = await onlyStoredRunSpec(baseDir);
-      expect(stored.origin.channel).toBe("plugin_gateway");
-      expect(stored.origin.reply_target).toMatchObject({
-        conversation_id: "chat-1",
-        response_channel: "telegram-chat-1",
-      });
-      expect(stored.origin.metadata).toMatchObject({
-        platform: "telegram",
-        message_id: "message-1",
-      });
+      expect(result.output).toBe("Default loop will use tools when a RunSpec handoff is needed.");
+      await expect(storedRunSpecs(baseDir)).resolves.toHaveLength(0);
     });
 
     it("preserves gateway reply target metadata when AgentLoop drafts RunSpec through a model-visible tool", async () => {

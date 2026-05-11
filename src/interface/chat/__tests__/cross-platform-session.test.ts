@@ -1,6 +1,4 @@
 import { describe, it, expect, vi } from "vitest";
-import * as fs from "node:fs";
-import * as path from "node:path";
 import { z } from "zod";
 import { CrossPlatformChatSessionManager } from "../cross-platform-session.js";
 import type { CrossPlatformChatSessionOptions } from "../cross-platform-session.js";
@@ -8,7 +6,6 @@ import type { ChatRunnerDeps } from "../chat-runner-contracts.js";
 import { ApprovalBroker } from "../../../runtime/approval-broker.js";
 import { RuntimeControlService } from "../../../runtime/control/index.js";
 import { ApprovalStore } from "../../../runtime/store/approval-store.js";
-import { BackgroundRunLedger } from "../../../runtime/store/background-run-store.js";
 import { PermissionGrantStore } from "../../../runtime/store/permission-grant-store.js";
 import type { StateManager } from "../../../base/state/state-manager.js";
 import type { IAdapter, AgentResult } from "../../../orchestrator/execution/adapter-layer.js";
@@ -46,12 +43,6 @@ const CANNED_RESULT: AgentResult = {
 async function storedRunSpecs(baseDir: string): Promise<RunSpec[]> {
   const store = createRunSpecStore({ getBaseDir: () => baseDir });
   return store.list();
-}
-
-async function onlyStoredRunSpec(baseDir: string): Promise<RunSpec> {
-  const specs = await storedRunSpecs(baseDir);
-  expect(specs).toHaveLength(1);
-  return specs[0]!;
 }
 
 function makeMockAdapter(result: AgentResult = CANNED_RESULT): IAdapter {
@@ -102,18 +93,10 @@ function makeRegistryWithTools(tools: ITool[]): ToolRegistry {
   return registry;
 }
 
-function makeAllowRuntimeEvidenceGateClient() {
-  return createMockLLMClient(Array.from({ length: 100 }, () => JSON.stringify({
-    verdict: "allow",
-    reason: "Test fixture allows non-runtime-status assertions.",
-  })));
-}
-
 function makeDeps(overrides: Partial<ChatRunnerDeps> = {}): ChatRunnerDeps {
   return {
     stateManager: makeMockStateManager(),
     adapter: makeMockAdapter(),
-    runtimeEvidenceGateClient: makeAllowRuntimeEvidenceGateClient(),
     ...overrides,
   };
 }
@@ -130,85 +113,19 @@ function interruptDecision(kind: "diff" | "review" | "summary" | "background" | 
   return JSON.stringify({ kind, confidence, rationale: `test ${kind}` });
 }
 
-function runSpecFreeformDecision(): string {
-  return JSON.stringify({
-    kind: "run_spec",
-    confidence: 0.93,
-    rationale: "Long-running background work request",
-  });
-}
-
-function configureFreeformDecision(): string {
-  return JSON.stringify({
-    kind: "configure",
-    confidence: 0.91,
-    configure_target: "unknown",
-    rationale: "Misclassified long-running work as configuration",
-  });
-}
-
-function runSpecDraftDecision(): string {
-  return JSON.stringify({
-    decision: "run_spec_request",
-    confidence: 0.92,
-    profile: "kaggle",
-    objective: "Continue Kaggle optimization until score exceeds 0.98",
-    execution_target: { kind: "daemon", remote_host: null, confidence: "medium" },
-    metric: {
-      name: "kaggle_score",
-      direction: "maximize",
-      target: 0.98,
-      target_rank_percent: null,
-      datasource: "kaggle_leaderboard",
-      confidence: "high",
-    },
-    progress_contract: {
-      kind: "metric_target",
-      dimension: "kaggle_score",
-      threshold: 0.98,
-      semantics: "Kaggle score exceeds 0.98.",
-      confidence: "high",
-    },
-    deadline: {
-      raw: "tomorrow morning",
-      iso_at: "2026-05-04T00:00:00.000Z",
-      timezone: "Asia/Tokyo",
-      finalization_buffer_minutes: 30,
-      confidence: "high",
-    },
-    budget: { max_trials: null, max_wall_clock_minutes: null, resident_policy: "best_effort" },
-    approval_policy: {
-      submit: "approval_required",
-      publish: "unspecified",
-      secret: "approval_required",
-      external_action: "approval_required",
-      irreversible_action: "approval_required",
-    },
-    missing_fields: [],
-  });
-}
-
-function runSpecConfirmationDecision(decision: "approve" | "cancel" | "unknown" | "revise"): string {
-  return JSON.stringify({
-    decision,
-    confidence: 0.94,
-    rationale: "Typed RunSpec confirmation",
-  });
-}
-
 describe("CrossPlatformChatSessionManager", () => {
-  it("routes gateway natural-language long-running requests into a typed RunSpec draft", async () => {
+  it("keeps gateway long-running requests in the default model loop even without a tool registry", async () => {
     const baseDir = makeTempDir();
     try {
       const stateManager = new RealStateManager(baseDir, undefined, { walEnabled: false });
       const adapter = makeMockAdapter();
+      const chatAgentLoopRunner = { execute: vi.fn().mockResolvedValue(CANNED_RESULT) };
+      const llmClient = createMockLLMClient(["Default gateway loop handled the long-running request."]);
       const manager = new CrossPlatformChatSessionManager(makeDeps({
         stateManager,
         adapter,
-        llmClient: createMockLLMClient([
-          runSpecFreeformDecision(),
-          runSpecDraftDecision(),
-        ]),
+        llmClient,
+        chatAgentLoopRunner: chatAgentLoopRunner as never,
       }));
 
       const result = await manager.execute("Please keep improving this Kaggle run until score exceeds 0.98.", {
@@ -222,34 +139,32 @@ describe("CrossPlatformChatSessionManager", () => {
       });
 
       expect(result.success).toBe(true);
-      expect(result.output).toContain("Proposed long-running work");
-      expect(result.output).toContain("It has not started background work.");
+      expect(result.output).toBe("Default gateway loop handled the long-running request.");
       expect(adapter.execute).not.toHaveBeenCalled();
-      const stored = await onlyStoredRunSpec(baseDir);
-      expect(stored.status).toBe("draft");
-      expect(stored.origin.channel).toBe("plugin_gateway");
-      expect(stored.origin.reply_target).toMatchObject({
-        conversation_id: "telegram-chat-1",
-        message_id: "message-1",
-        identity_key: "telegram:user-1",
-      });
+      expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
+      await expect(storedRunSpecs(baseDir)).resolves.toHaveLength(0);
     } finally {
       cleanupTempDir(baseDir);
     }
   });
 
-  it("keeps gateway long-running requests on RunSpec when freeform routing over-classifies configuration", async () => {
+  it("does not run freeform RunSpec/configuration classifiers before the gateway model loop", async () => {
     const baseDir = makeTempDir();
     try {
       const stateManager = new RealStateManager(baseDir, undefined, { walEnabled: false });
       const adapter = makeMockAdapter();
+      const llmClient = {
+        sendMessage: vi.fn().mockResolvedValue({
+          content: "The default model loop handled this request.",
+          usage: { input_tokens: 1, output_tokens: 1 },
+          stop_reason: "end_turn",
+        }),
+        parseJSON: vi.fn((content: string, schema: { parse(value: unknown): unknown }) => schema.parse(JSON.parse(content))),
+      };
       const manager = new CrossPlatformChatSessionManager(makeDeps({
         stateManager,
         adapter,
-        llmClient: createMockLLMClient([
-          configureFreeformDecision(),
-          runSpecDraftDecision(),
-        ]),
+        llmClient: llmClient as never,
       }));
 
       const result = await manager.execute("DurableloopのほうでKaggleのタスクに取り組んで", {
@@ -261,108 +176,13 @@ describe("CrossPlatformChatSessionManager", () => {
       });
 
       expect(result.success).toBe(true);
-      expect(result.output).toContain("Proposed long-running work");
-      expect(result.output).toContain("It has not started background work.");
-      expect(result.output).not.toContain("setup/configuration");
+      expect(result.output).toBe("The default model loop handled this request.");
       expect(adapter.execute).not.toHaveBeenCalled();
-      await expect(storedRunSpecs(baseDir)).resolves.toHaveLength(1);
-      expect(fs.existsSync(`${baseDir}/run-specs`)).toBe(false);
-    } finally {
-      cleanupTempDir(baseDir);
-    }
-  });
-
-  it("starts a gateway natural-language RunSpec after approval and retains reply target metadata", async () => {
-    const baseDir = makeTempDir();
-    try {
-      const stateManager = new RealStateManager(baseDir, undefined, { walEnabled: false });
-      const adapter = makeMockAdapter();
-      const daemonClient = { startGoal: vi.fn().mockResolvedValue({ ok: true }) };
-      const manager = new CrossPlatformChatSessionManager(makeDeps({
-        stateManager,
-        adapter,
-        daemonClient: daemonClient as never,
-        llmClient: createMockLLMClient([
-          runSpecFreeformDecision(),
-          runSpecDraftDecision(),
-          runSpecConfirmationDecision("approve"),
-        ]),
-      }));
-
-      const draft = await manager.execute("Kaggle score 0.98を超えるまで長期で回して", {
-        identity_key: "telegram:user-longrun",
-        platform: "telegram",
-        conversation_id: "telegram-chat-longrun",
-        user_id: "user-longrun",
-        message_id: "message-draft",
-        cwd: "/repo/kaggle",
-        metadata: { gateway_message: true, request_id: "gateway-req-1" },
-      });
-      const approved = await manager.execute("承認します", {
-        identity_key: "telegram:user-longrun",
-        platform: "telegram",
-        conversation_id: "telegram-chat-longrun",
-        user_id: "user-longrun",
-        message_id: "message-approve",
-        cwd: "/repo/kaggle",
-        metadata: { gateway_message: true, request_id: "gateway-req-2" },
-      });
-
-      expect(draft.success).toBe(true);
-      expect(draft.output).toContain("It has not started background work.");
-      expect(approved.success).toBe(true);
-      expect(approved.output).toContain("Started background work for:");
-      expect(approved.output).not.toContain("goal-runspec-");
-      expect(approved.output).not.toContain("run:coreloop:");
-      expect(daemonClient.startGoal).toHaveBeenCalledOnce();
-      expect(adapter.execute).not.toHaveBeenCalled();
-
-      const runId = (daemonClient.startGoal as ReturnType<typeof vi.fn>).mock.calls[0][1].backgroundRun.backgroundRunId;
-      const run = await new BackgroundRunLedger(path.join(baseDir, "runtime"), { controlBaseDir: baseDir }).load(runId);
-      if (run === null) {
-        throw new Error(`Expected background run ${runId} to be stored`);
-      }
-      expect(run).toMatchObject({
-        id: runId,
-        status: "queued",
-        workspace: "/repo/kaggle",
-        parent_session_id: expect.stringMatching(/^session:conversation:/),
-        reply_target_source: "pinned_run",
-        pinned_reply_target: {
-          channel: "gateway",
-          target_id: "telegram-chat-longrun",
-          thread_id: "message-draft",
-          metadata: {
-            conversation_id: "telegram-chat-longrun",
-            message_id: "message-draft",
-            identity_key: "telegram:user-longrun",
-            request_id: "gateway-req-1",
-          },
-        },
-        origin_metadata: {
-          run_spec_origin: {
-            channel: "plugin_gateway",
-            reply_target: {
-              conversation_id: "telegram-chat-longrun",
-              message_id: "message-draft",
-              identity_key: "telegram:user-longrun",
-            },
-          },
-        },
-      });
-      expect(daemonClient.startGoal).toHaveBeenCalledWith(
-        expect.stringMatching(/^goal-runspec-/),
-        expect.objectContaining({
-          backgroundRun: expect.objectContaining({
-            backgroundRunId: run.id,
-            parentSessionId: run.parent_session_id,
-            replyTargetSource: "pinned_run",
-            pinnedReplyTarget: expect.objectContaining({
-              target_id: "telegram-chat-longrun",
-            }),
-          }),
-        }),
-      );
+      expect(llmClient.sendMessage).toHaveBeenCalledTimes(1);
+      const [, options] = llmClient.sendMessage.mock.calls[0]!;
+      expect(String(options?.system ?? "")).toContain("gateway chat surface");
+      expect(String(options?.system ?? "")).not.toContain("Classify the user's chat request");
+      await expect(storedRunSpecs(baseDir)).resolves.toHaveLength(0);
     } finally {
       cleanupTempDir(baseDir);
     }
@@ -630,7 +450,6 @@ describe("CrossPlatformChatSessionManager", () => {
       llmClient: llmClient as never,
       registry: makeRegistryWithTools([]),
       chatAgentLoopRunner: chatAgentLoopRunner as never,
-      runtimeEvidenceGateClient: llmClient as never,
     }));
 
     const result = await manager.execute("やあ！", {
@@ -692,7 +511,6 @@ describe("CrossPlatformChatSessionManager", () => {
       llmClient: llmClient as never,
       registry: makeRegistryWithTools([]),
       chatAgentLoopRunner: chatAgentLoopRunner as never,
-      runtimeEvidenceGateClient: llmClient as never,
     }));
 
     const result = await manager.execute("hey!", {
@@ -744,7 +562,6 @@ describe("CrossPlatformChatSessionManager", () => {
       llmClient: llmClient as never,
       registry: makeRegistryWithTools([tool]),
       chatAgentLoopRunner: chatAgentLoopRunner as never,
-      runtimeEvidenceGateClient: llmClient as never,
     }));
 
     const result = await manager.execute("このリポジトリにREADMEがあるかだけ軽く見て", {
@@ -800,7 +617,6 @@ describe("CrossPlatformChatSessionManager", () => {
       llmClient: llmClient as never,
       registry: makeRegistryWithTools([tool]),
       chatAgentLoopRunner: { execute: vi.fn().mockResolvedValue(CANNED_RESULT) } as never,
-      runtimeEvidenceGateClient: llmClient as never,
     }));
 
     await manager.execute("Telegram bot のセットアップを進めたい", {
@@ -842,7 +658,6 @@ describe("CrossPlatformChatSessionManager", () => {
     const manager = new CrossPlatformChatSessionManager(makeDeps({
       llmClient: llmClient as never,
       registry: makeRegistryWithTools([]),
-      runtimeEvidenceGateClient: llmClient as never,
     }));
 
     const result = await manager.execute("やあ！", {
@@ -873,7 +688,6 @@ describe("CrossPlatformChatSessionManager", () => {
     const manager = new CrossPlatformChatSessionManager(makeDeps({
       llmClient: llmClient as never,
       registry: makeRegistryWithTools([]),
-      runtimeEvidenceGateClient: llmClient as never,
     }));
 
     const result = await manager.execute("今のPulSeedの状態を軽く確認して", {
@@ -927,7 +741,6 @@ describe("CrossPlatformChatSessionManager", () => {
     const manager = new CrossPlatformChatSessionManager(makeDeps({
       llmClient: llmClient as never,
       registry: makeRegistryWithTools([]),
-      runtimeEvidenceGateClient: llmClient as never,
     }));
 
     await manager.execute("やあ！", {
@@ -1025,7 +838,7 @@ describe("CrossPlatformChatSessionManager", () => {
     expect((events[finalIndex] as Extract<ChatEvent, { type: "assistant_final" }>).text).toBe("First sentence. Second sentence.");
   });
 
-  it("keeps native agent-loop output direct and does not invoke the deleted runtime evidence gate", async () => {
+  it("keeps native agent-loop output direct without post-final runtime evidence checkpoints", async () => {
     const stateManager = makeMockStateManager();
     const events: ChatEvent[] = [];
     const now = "2026-05-10T00:00:00.000Z";
@@ -1067,16 +880,9 @@ describe("CrossPlatformChatSessionManager", () => {
         };
       }),
     };
-    const runtimeEvidenceGateClient = {
-      sendMessage: vi.fn(async () => {
-        throw new Error("runtime evidence gate must not be called");
-      }),
-      parseJSON: vi.fn(),
-    };
     const manager = new CrossPlatformChatSessionManager(makeDeps({
       stateManager,
       chatAgentLoopRunner: chatAgentLoopRunner as never,
-      runtimeEvidenceGateClient: runtimeEvidenceGateClient as never,
     }));
 
     const result = await manager.execute("PulSeed runtime status を確認して", {
@@ -1092,14 +898,13 @@ describe("CrossPlatformChatSessionManager", () => {
     expect(result.output).toBe("The runtime status tool reported daemon: idle.");
     expect(events.some((event) => event.type === "tool_start")).toBe(true);
     expect(events.some((event) => event.type === "tool_end")).toBe(true);
-    expect(runtimeEvidenceGateClient.sendMessage).not.toHaveBeenCalled();
     expect(events.some((event) =>
       event.type === "activity"
       && event.sourceId === "checkpoint:runtime-evidence"
     )).toBe(false);
   });
 
-  it("emits Seedy presence before gateway route classification work", async () => {
+  it("emits Seedy presence before the first gateway model request", async () => {
     const order: string[] = [];
     let resolveOrientingDelivery: (() => void) | undefined;
     const orientingDelivered = new Promise<void>((resolve) => {
@@ -1108,7 +913,7 @@ describe("CrossPlatformChatSessionManager", () => {
     const llmClient = {
       sendMessage: vi.fn().mockImplementation(async (_messages, options?: { system?: string }) => {
         const isRouteClassification = options?.system?.includes("Route the operator's freeform chat message");
-        order.push(isRouteClassification ? "llm:route" : "llm:assist");
+        order.push(isRouteClassification ? "llm:route" : "llm:model");
         return {
           content: isRouteClassification
             ? JSON.stringify({ kind: "assist", confidence: 0.95, rationale: "read-only answer" })
@@ -1145,13 +950,14 @@ describe("CrossPlatformChatSessionManager", () => {
     await vi.waitFor(() => {
       expect(order).toContain("presence:orienting");
     });
-    expect(order).not.toContain("llm:route");
+    expect(order).not.toContain("llm:model");
     resolveOrientingDelivery?.();
 
     const result = await run;
     expect(result).toBe("Plain answer");
-    expect(order.indexOf("presence:received")).toBeLessThan(order.indexOf("llm:route"));
-    expect(order.indexOf("presence:orienting")).toBeLessThan(order.indexOf("llm:route"));
+    expect(order).not.toContain("llm:route");
+    expect(order.indexOf("presence:received")).toBeLessThan(order.indexOf("llm:model"));
+    expect(order.indexOf("presence:orienting")).toBeLessThan(order.indexOf("llm:model"));
     expect(order).toContain("presence:thinking");
     expect(order).toContain("presence:finalizing");
     expect(order).toContain("presence:complete");
@@ -1160,12 +966,6 @@ describe("CrossPlatformChatSessionManager", () => {
   it("does not generate gateway commentary preambles before agent-loop execution", async () => {
     const events: ChatEvent[] = [];
     const order: string[] = [];
-    const gatewayCommentaryClient = {
-      sendMessage: vi.fn(async () => {
-        throw new Error("gateway commentary preamble must not be generated");
-      }),
-      parseJSON: vi.fn(),
-    };
     const chatAgentLoopRunner = {
       execute: vi.fn().mockImplementation(async () => {
         order.push("agent-loop");
@@ -1182,7 +982,6 @@ describe("CrossPlatformChatSessionManager", () => {
     const manager = new CrossPlatformChatSessionManager(makeDeps({
       stateManager: makeMockStateManager(),
       chatAgentLoopRunner: chatAgentLoopRunner as never,
-      gatewayCommentaryClient: gatewayCommentaryClient as never,
     }));
 
     const result = await manager.execute("Inspect the project and run the relevant checks", {
@@ -1208,7 +1007,6 @@ describe("CrossPlatformChatSessionManager", () => {
       output: "Task completed successfully.",
     });
     expect(order).toEqual(["agent-loop"]);
-    expect(gatewayCommentaryClient.sendMessage).not.toHaveBeenCalled();
     expect(events.some((event) =>
       event.type === "activity"
       && event.kind === "commentary"
@@ -1220,12 +1018,8 @@ describe("CrossPlatformChatSessionManager", () => {
     expect(final?.text).toBe("Task completed successfully.");
   });
 
-  it("does not consult stalled gateway commentary generation before agent-loop execution", async () => {
+  it("enters agent-loop execution without waiting on deleted gateway preamble generation", async () => {
     const order: string[] = [];
-    const gatewayCommentaryClient = {
-      sendMessage: vi.fn(() => new Promise(() => undefined)) as never,
-      parseJSON: vi.fn() as never,
-    };
     const chatAgentLoopRunner = {
       execute: vi.fn().mockImplementation(async () => {
         order.push("agent-loop");
@@ -1242,7 +1036,6 @@ describe("CrossPlatformChatSessionManager", () => {
     const manager = new CrossPlatformChatSessionManager(makeDeps({
       stateManager: makeMockStateManager(),
       chatAgentLoopRunner: chatAgentLoopRunner as never,
-      gatewayCommentaryClient: gatewayCommentaryClient as never,
     }));
 
     const startedAt = Date.now();
@@ -1256,7 +1049,6 @@ describe("CrossPlatformChatSessionManager", () => {
 
     expect(result.success).toBe(true);
     expect(order).toEqual(["agent-loop"]);
-    expect(gatewayCommentaryClient.sendMessage).not.toHaveBeenCalled();
     expect(Date.now() - startedAt).toBeLessThan(2_500);
   });
 
@@ -1569,6 +1361,7 @@ describe("CrossPlatformChatSessionManager", () => {
 
       const active = manager.execute("Implement a feature", {
         identity_key: "shared-user",
+        channel: "cli",
         platform: "slack",
         conversation_id: "stale-thread",
         user_id: "U123",
@@ -1582,6 +1375,7 @@ describe("CrossPlatformChatSessionManager", () => {
 
       const redirected = await manager.execute("continúa esto en segundo plano", {
         identity_key: "shared-user",
+        channel: "cli",
         platform: "slack",
         conversation_id: "current-thread",
         user_id: "U123",
@@ -1820,6 +1614,10 @@ describe("CrossPlatformChatSessionManager", () => {
       user_id: "user-1",
       message_id: "current-message",
       cwd: "/repo",
+      runtimeControl: {
+        allowed: true,
+        approvalMode: "preapproved",
+      },
       externalSurface: currentSurface,
       replyTarget: {
         metadata: {
@@ -1937,6 +1735,7 @@ describe("CrossPlatformChatSessionManager", () => {
         allowed: true,
         approvalMode: "interactive",
       },
+      metadata: { runtime_control_explicit: true },
     });
 
     expect(result.success).toBe(false);
@@ -1979,6 +1778,7 @@ describe("CrossPlatformChatSessionManager", () => {
         allowed: true,
         approvalMode: "interactive",
       },
+      metadata: { runtime_control_explicit: true },
     });
 
     expect(result.success).toBe(false);
@@ -2011,7 +1811,8 @@ describe("CrossPlatformChatSessionManager", () => {
       adapter,
       chatAgentLoopRunner: chatAgentLoopRunner as never,
       llmClient: createMockLLMClient([
-        JSON.stringify({ kind: "configure", confidence: 0.9, configure_target: "telegram_gateway", rationale: "setup request" }),
+        JSON.stringify({ intent: "none", reason: "setup help is ordinary chat" }),
+        "Setup help should stay in the default gateway model loop.",
       ]),
       runtimeControlService,
     }));
@@ -2026,9 +1827,9 @@ describe("CrossPlatformChatSessionManager", () => {
     });
 
     expect(result.success).toBe(true);
-    expect(result.output).toBe("agent loop should not run");
+    expect(result.output).toBe("Setup help should stay in the default gateway model loop.");
     expect(runtimeControlService.request).not.toHaveBeenCalled();
-    expect(chatAgentLoopRunner.execute).toHaveBeenCalledOnce();
+    expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
     expect(adapter.execute).not.toHaveBeenCalled();
   });
 
@@ -2677,6 +2478,7 @@ describe("CrossPlatformChatSessionManager", () => {
 
       const resultPromise = manager.processIncomingMessage({
         text: "Write the notes file and run tests",
+        channel: "cli",
         platform: "slack",
         identity_key: "workspace:U123",
         conversation_id: "C123:1700.1",
@@ -2875,6 +2677,7 @@ describe("CrossPlatformChatSessionManager", () => {
 
       const resultPromise = manager.processIncomingMessage({
         text: "Write the notes file and run tests",
+        channel: "cli",
         platform: "slack",
         identity_key: "workspace:U123",
         conversation_id: "C123:1700.1",
@@ -2985,6 +2788,7 @@ describe("CrossPlatformChatSessionManager", () => {
 
       const resultPromise = manager.processIncomingMessage({
         text: "Write the notes file",
+        channel: "cli",
         platform: "slack",
         identity_key: "workspace:U123",
         conversation_id: "C123:1700.1",
@@ -3265,11 +3069,6 @@ describe("CrossPlatformChatSessionManager", () => {
             confidence: 0.93,
             clarification: "Route the side question through normal chat.",
           }),
-          JSON.stringify({
-            kind: "assist",
-            confidence: 0.9,
-            rationale: "side question",
-          }),
           "The daemon restart target is the resident daemon.",
         ]),
         runtimeControlService,
@@ -3399,11 +3198,6 @@ describe("CrossPlatformChatSessionManager", () => {
             confidence: 0.93,
             clarification: "Route the side question through normal chat.",
           }),
-          JSON.stringify({
-            kind: "assist",
-            confidence: 0.9,
-            rationale: "side question",
-          }),
           "The daemon restart target is the resident daemon.",
         ]),
         approvalBroker: approvalBroker2,
@@ -3494,11 +3288,6 @@ describe("CrossPlatformChatSessionManager", () => {
             confidence: 0.93,
             clarification: "Route the side question through normal chat.",
           }),
-          JSON.stringify({
-            kind: "assist",
-            confidence: 0.9,
-            rationale: "side question",
-          }),
           "The daemon restart target is the resident daemon.",
         ]),
         runtimeControlService,
@@ -3588,11 +3377,6 @@ describe("CrossPlatformChatSessionManager", () => {
             decision: "side_question",
             confidence: 0.93,
             clarification: "Route the side question through normal chat.",
-          }),
-          JSON.stringify({
-            kind: "assist",
-            confidence: 0.9,
-            rationale: "side question",
           }),
           "The daemon restart target is the resident daemon.",
         ]),
@@ -3828,7 +3612,7 @@ describe("CrossPlatformChatSessionManager", () => {
     const chatAgentLoopRunner = {
       execute: vi.fn().mockResolvedValue({
         success: true,
-        output: "Agent loop handles ordinary finish request",
+        output: "agent loop should not run",
         error: null,
         exit_code: null,
         elapsed_ms: 42,
@@ -3846,15 +3630,7 @@ describe("CrossPlatformChatSessionManager", () => {
       adapter,
       chatAgentLoopRunner: chatAgentLoopRunner as never,
       llmClient: createMockLLMClient([
-        JSON.stringify({
-          intent: "none",
-          reason: "ordinary implementation finish request",
-        }),
-        JSON.stringify({
-          kind: "execute",
-          confidence: 0.94,
-          rationale: "ordinary implementation finish request",
-        }),
+        "Default model loop handles ordinary finish request.",
       ]),
       runtimeControlService,
       runtimeControlApprovalFn: vi.fn().mockResolvedValue(true),
@@ -3866,65 +3642,82 @@ describe("CrossPlatformChatSessionManager", () => {
       conversation_id: "telegram-chat-1",
       user_id: "user-1",
       cwd: "/repo",
-      runtimeControl: {
-        allowed: true,
-        approvalMode: "interactive",
-      },
     });
 
     expect(result.success).toBe(true);
-    expect(result.output).toBe("Agent loop handles ordinary finish request");
-    expect(chatAgentLoopRunner.execute).toHaveBeenCalledOnce();
+    expect(result.output).toBe("Default model loop handles ordinary finish request.");
+    expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
     expect(adapter.execute).not.toHaveBeenCalled();
     expect(runtimeControlService.request).not.toHaveBeenCalled();
   });
 
-  it("routes gateway Telegram setup requests to configure guidance before agent-loop execution", async () => {
+  it("lets gateway Telegram setup requests call setup guidance from the default model loop", async () => {
     const stateManager = makeMockStateManager();
     const adapter = makeMockAdapter();
-    const chatAgentLoopRunner = {
-      execute: vi.fn().mockImplementation(async (input: { toolCallContext?: ToolCallContext }) => {
-        const guidanceTool = createSetupRuntimeControlTools({
-          stateManager,
-          gatewaySetupStatusProvider: {
-            getTelegramStatus: vi.fn().mockResolvedValue({
-              channel: "telegram",
-              state: "unconfigured",
-              configPath: "/tmp/pulseed/gateway/channels/telegram-bot/config.json",
-              daemon: { running: true, port: 41700 },
-              gateway: { loadState: "unknown" },
-              config: {
-                exists: false,
-                hasBotToken: false,
-                hasHomeChat: false,
-                allowAll: false,
-                allowedUserCount: 0,
-                runtimeControlAllowedUserCount: 0,
-                identityKeyConfigured: false,
-              },
-            }),
-          },
-        }).find((tool) => tool.metadata.name === "prepare_gateway_setup_guidance")!;
-        const result = await guidanceTool.call({
+    const guidanceTool = createSetupRuntimeControlTools({
+      stateManager,
+      gatewaySetupStatusProvider: {
+        getTelegramStatus: vi.fn().mockResolvedValue({
           channel: "telegram",
-          request: "telegramからseedyと会話できるようにしたい",
-          language: "ja",
-        }, input.toolCallContext!);
-        return {
-          success: result.success,
-          output: result.summary,
-          error: null,
-          exit_code: null,
-          elapsed_ms: 42,
-          stopped_reason: "completed",
-        };
+          state: "unconfigured",
+          configPath: "/tmp/pulseed/gateway/channels/telegram-bot/config.json",
+          daemon: { running: true, port: 41700 },
+          gateway: { loadState: "unknown" },
+          config: {
+            exists: false,
+            hasBotToken: false,
+            hasHomeChat: false,
+            allowAll: false,
+            allowedUserCount: 0,
+            runtimeControlAllowedUserCount: 0,
+            identityKeyConfigured: false,
+          },
+        }),
+      },
+    }).find((tool) => tool.metadata.name === "prepare_gateway_setup_guidance")!;
+    const guidanceCall = vi.spyOn(guidanceTool, "call");
+    const chatAgentLoopRunner = {
+      execute: vi.fn().mockResolvedValue(CANNED_RESULT),
+    };
+    const llmClient = {
+      sendMessage: vi.fn().mockResolvedValue({
+        content: JSON.stringify({ verdict: "allow", reason: "setup guidance used tool evidence" }),
+        usage: { input_tokens: 1, output_tokens: 1 },
+        stop_reason: "end_turn",
       }),
+      sendMessageStream: vi.fn()
+        .mockResolvedValueOnce({
+          content: "設定状況を確認します。",
+          usage: { input_tokens: 1, output_tokens: 1 },
+          stop_reason: "tool_calls",
+          tool_calls: [{
+            id: "call-setup-guidance",
+            type: "function",
+            function: {
+              name: "prepare_gateway_setup_guidance",
+              arguments: JSON.stringify({
+                channel: "telegram",
+                request: "telegramからseedyと会話できるようにしたい",
+                language: "ja",
+              }),
+            },
+          }],
+        })
+        .mockResolvedValueOnce({
+          content: "Telegram gateway status\nchat-assisted setup\npulseed daemon status",
+          usage: { input_tokens: 1, output_tokens: 1 },
+          stop_reason: "end_turn",
+          tool_calls: [],
+        }),
+      supportsToolCalling: vi.fn(() => true),
+      parseJSON: vi.fn((content: string, schema: { parse(value: unknown): unknown }) => schema.parse(JSON.parse(content))),
     };
     const manager = new CrossPlatformChatSessionManager(makeDeps({
       stateManager,
       adapter,
       chatAgentLoopRunner: chatAgentLoopRunner as never,
-      llmClient: createMockLLMClient([]),
+      llmClient: llmClient as never,
+      registry: makeRegistryWithTools([guidanceTool]),
     }));
 
     const result = await manager.execute("telegramからseedyと会話できるようにしたい", {
@@ -3939,7 +3732,9 @@ describe("CrossPlatformChatSessionManager", () => {
     expect(result.output).toContain("Telegram gateway status");
     expect(result.output).toContain("chat-assisted setup");
     expect(result.output).toContain("pulseed daemon status");
-    expect(chatAgentLoopRunner.execute).toHaveBeenCalledOnce();
+    expect(guidanceCall).toHaveBeenCalledOnce();
+    expect(llmClient.sendMessageStream).toHaveBeenCalledTimes(2);
+    expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
     expect(adapter.execute).not.toHaveBeenCalled();
   });
 

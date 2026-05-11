@@ -87,13 +87,11 @@ export function loadedSessionToChatSession(session: LoadedChatSession): ChatSess
 export function getRouteCapabilities(deps: ChatRunnerRuntimeDeps): {
   hasAgentLoop: boolean;
   hasToolLoop: boolean;
-  hasToolRegistry: boolean;
   hasRuntimeControlService: boolean;
 } {
   return {
     hasAgentLoop: deps.chatAgentLoopRunner !== undefined,
     hasToolLoop: deps.llmClient !== undefined,
-    hasToolRegistry: deps.registry !== undefined,
     hasRuntimeControlService: deps.runtimeControlService !== undefined,
   };
 }

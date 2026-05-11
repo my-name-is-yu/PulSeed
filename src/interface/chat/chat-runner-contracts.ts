@@ -63,9 +63,6 @@ export interface ChatRunnerDeps {
   stateManager: StateManager;
   adapter: IAdapter;
   llmClient?: ILLMClient;
-  runtimeEvidenceGateClient?: Pick<ILLMClient, "sendMessage" | "parseJSON">;
-  gatewayCommentaryClient?: Pick<ILLMClient, "sendMessage" | "parseJSON">;
-  defaultGatewayCommentaryClient?: Pick<ILLMClient, "sendMessage" | "parseJSON">;
   escalationHandler?: EscalationHandler;
   trustManager?: { getBalance(domain: string): Promise<{ balance: number }>; setOverride?(domain: string, balance: number, reason: string): Promise<void> };
   pluginLoader?: { loadAll(): Promise<Array<{ name: string; type?: string; enabled?: boolean }>> };
@@ -173,12 +170,10 @@ export interface ChatRunnerRouteHost {
   deps: ChatRunnerDeps;
   eventBridge: ChatRunnerEventBridge;
   activatedTools: Set<string>;
-  getRuntimeEvidenceGateClient(): Pick<ILLMClient, "sendMessage" | "parseJSON"> | undefined;
-  getGatewayCommentaryClient(): Pick<ILLMClient, "sendMessage" | "parseJSON"> | undefined;
-	  getConversationSessionId(): string | null;
-	  getSessionCwd(): string | null;
-	  getNativeAgentLoopStatePath(): string | null;
-	  getNativeAgentLoopSessionId(): string | null;
+  getConversationSessionId(): string | null;
+  getSessionCwd(): string | null;
+  getNativeAgentLoopStatePath(): string | null;
+  getNativeAgentLoopSessionId(): string | null;
   getProviderConfigBaseDir(): string;
   getSetupSecretIntake(): SetupSecretIntakeResult | null;
   getTurnLanguageHint(): TurnLanguageHint;

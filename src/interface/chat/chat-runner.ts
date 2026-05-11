@@ -171,12 +171,8 @@ export class ChatRunner {
   private pendingResumeChoices: RecoveryResumeCandidate[] | null = null;
   private eventJournalHistory: ChatHistory | null = null;
   private eventJournalDirty = false;
-  private readonly hasExplicitGatewayCommentaryClient: boolean;
-  private gatewayCommentaryClient: Pick<NonNullable<ChatRunnerDeps["llmClient"]>, "sendMessage" | "parseJSON"> | undefined;
 
   constructor(private readonly deps: ChatRunnerDeps) {
-    this.hasExplicitGatewayCommentaryClient = deps.gatewayCommentaryClient !== undefined;
-    this.gatewayCommentaryClient = deps.gatewayCommentaryClient ?? deps.defaultGatewayCommentaryClient;
     this.groundingGateway = createChatGroundingGateway({
       stateManager: deps.stateManager,
       pluginLoader: deps.pluginLoader,
@@ -1012,10 +1008,12 @@ export class ChatRunner {
       surfaceRuntimePolicy
         ? surfaceRuntimePolicy.approval_mode === "disallowed"
         : ingress.metadata["runtime_control_denied"] === true;
+    const metadataRuntimeControlApproved = ingress.metadata["runtime_control_approved"] === true;
+    const metadataRuntimeControlDenied = ingress.metadata["runtime_control_denied"] === true;
+    const metadataRuntimeControlExplicit = ingress.metadata["runtime_control_explicit"] === true;
     const runtimeControlPolicyPresent =
-      runtimeControlApproved || runtimeControlDenied || ingress.metadata["runtime_control_explicit"] === true;
+      runtimeControlApproved || runtimeControlDenied || metadataRuntimeControlExplicit;
     const canUseDefaultGatewayModelLoop = capabilities.hasToolLoop
-      && capabilities.hasToolRegistry
       && (ingress.channel === "plugin_gateway" || ingress.replyTarget.surface === "gateway");
     const shouldPreferFreeformBeforeDeniedRuntimeControl =
       !hasSetupSecret
@@ -1026,9 +1024,13 @@ export class ChatRunner {
       && ingress.metadata["runtime_control_explicit"] !== true;
     const shouldClassifyRuntimeControlForSafety =
       !hasSetupSecret
-      && capabilities.hasAgentLoop
       && runtimeControlPolicyPresent
-      && (!canUseDefaultGatewayModelLoop || ingress.metadata["runtime_control_explicit"] === true);
+      && (
+        metadataRuntimeControlApproved
+        || metadataRuntimeControlDenied
+        || metadataRuntimeControlExplicit
+        || !canUseDefaultGatewayModelLoop
+      );
     const shouldClassifyRuntimeControl =
       shouldClassifyRuntimeControlForSafety
       || (!hasSetupSecret && !capabilities.hasAgentLoop && !canUseDefaultGatewayModelLoop && (
@@ -1083,7 +1085,7 @@ export class ChatRunner {
       runtimeControlIntent,
       runtimeControlUnclassified: shouldClassifyRuntimeControlForSafety
         && runtimeControlClassification?.status === "unclassified"
-        && ingress.metadata["runtime_control_explicit"] === true,
+        && metadataRuntimeControlExplicit,
       freeformRouteIntent,
       setupSecretIntake: this.setupSecretIntake,
       runSpecDraft,
@@ -1108,8 +1110,6 @@ export class ChatRunner {
       deps: this.deps,
       eventBridge: this.eventBridge,
       activatedTools: this.activatedTools,
-      getRuntimeEvidenceGateClient: () => this.deps.runtimeEvidenceGateClient ?? this.deps.llmClient,
-      getGatewayCommentaryClient: () => this.gatewayCommentaryClient,
       getConversationSessionId: () => this.history?.getSessionId() ?? null,
       getSessionCwd: () => this.sessionCwd,
       getNativeAgentLoopStatePath: () => this.nativeAgentLoopStatePath,
@@ -1159,10 +1159,6 @@ export class ChatRunner {
     const llmClient = await buildLLMClient(providerConfig);
     const adapterRegistry = await buildAdapterRegistry(llmClient, providerConfig);
     this.deps.llmClient = llmClient;
-    if (!this.hasExplicitGatewayCommentaryClient) {
-      this.deps.defaultGatewayCommentaryClient = llmClient;
-      this.gatewayCommentaryClient = llmClient;
-    }
     this.deps.adapter = adapterRegistry.getAdapter(providerConfig.adapter);
     this.deps.chatAgentLoopRunner = this.deps.registry && this.deps.toolExecutor && shouldUseNativeTaskAgentLoop(providerConfig, llmClient)
       ? createNativeChatAgentLoopRunner({
