@@ -2,14 +2,14 @@
 
 ## Status
 
-Implementation complete locally; PR/CI/merge pending.
+Merged. Live Telegram dogfood preparation remains.
 
 ## Heads
 
 - Base HEAD: `d8d368ceb7799a776eb7811932b8a76a5ee77543`
-- Final HEAD: pending commit
-- PR: pending
-- Merged commit: pending
+- Final HEAD: `2680718f9cd6b9beb5ad9df800ed2f8a5389dd1d`
+- PR: `#1918`
+- Merged commit: `cc9c6d23df9935bbbf89993aff2d47dc506c5369`
 
 ## Architecture Changes
 
@@ -49,6 +49,10 @@ Implementation complete locally; PR/CI/merge pending.
 - Both issues were fixed.
 - Fresh re-review found no material findings.
 - GitHub CI initially failed because the Telegram plugin test still expected fixed `intent:first-step` progress to render; the fixture was updated to model-authored commentary.
+- GitHub Codex review on latest commit `2680718f9c` returned no material comments.
+- GitHub CI after the fix:
+  - `unit (22)`: passed
+  - `integration (24)`: passed
 
 ## Live Telegram Dogfood
 
