@@ -8,17 +8,22 @@
 
 ## 1. In a Nutshell
 
-PulSeed is a lifelong personal agent that remembers your goals, watches the world with you, and keeps helping move your life forward.
+PulSeed is companion software that remembers your goals, watches the world with
+you, and brings the right help into the moment.
 
-Tell PulSeed your goal, and it will stay with it for days, months, or years. PulSeed is not an "assistant waiting for instructions." It remembers what matters, observes what changes, and keeps moving toward the life or outcome you want.
+Tell PulSeed your goal, and it will stay with it for days, months, or years.
+PulSeed is not an "assistant waiting for instructions." It remembers what
+matters, observes what changes, and keeps moving toward the life or outcome you
+want.
 
 PulSeed's current strongest technical wedge is long-running goal orchestration:
 holding goals, delegating bounded work to agents, verifying progress, and
 keeping a local runtime alive across time. That is one capability inside the
-larger product direction, not the final category. The north star is a lifelong
-companion agent with durable personal context, presence, proactive dialogue,
-safe intervention, and life-scale goal pursuit. See [Positioning](positioning.md)
-for the short canonical framing.
+larger product direction, not the final category. The north star is companion
+software with durable personal context, presence, proactive dialogue, safe
+intervention, and a growing pocket of capabilities it can bring to the user at
+the right time. See [Positioning](positioning.md) for the short canonical
+framing.
 
 ---
 
@@ -30,7 +35,9 @@ AI assistants answer questions. Agents execute tasks. Automation tools run workf
 
 Monitoring the health of a chronically ill dog. Doubling revenue. Getting a new business off the ground. These goals don't end with a single instruction. Situations change, new problems emerge, and strategies need to be revised. Right now, humans have to make those judgments and issue new instructions every time.
 
-What's missing isn't AI intelligence. It's **a lifelong personal agent that carries your goals over time and keeps helping you move forward**.
+What's missing is not a smarter chatbot. It is **companion software that carries
+your goals over time, understands the surrounding situation, and reaches for the
+right capability when help is needed**.
 
 ---
 
@@ -66,7 +73,9 @@ If existing tools are insufficient, PulSeed instructs agents to build them. Heal
 
 ### The Human Role Changes
 
-From "implement this" and "look into that" to "I want things to be in this state." From task instructor to goal setter. From one-time requester to one half of a lifelong partnership.
+From "implement this" and "look into that" to "I want things to be in this
+state." From task instructor to goal setter. From one-time requester to someone
+with software that can stay beside the goal.
 
 ---
 
@@ -79,7 +88,7 @@ From "implement this" and "look into that" to "I want things to be in this state
 | Autonomous agents (AutoGPT, BabyAGI) | Decompose goals into tasks and execute them | Can't determine completion and diverges. Doesn't know what "good enough" is |
 | Business automation (Zapier, n8n) | Auto-execute predefined workflows | Doesn't work backward from goals. Can't adjust strategy based on situation |
 | Project management AI (Linear, Asana) | Assist with task management | Doesn't execute tasks. Optimizes management, not goal pursuit |
-| **PulSeed** | **Takes on goals and pursues them autonomously and persistently** | **Completion via satisficing, honest goal negotiation, multi-year sustained operation** |
+| **PulSeed** | **Stays with goals, brings in tools and agents, and pursues progress persistently** | **Completion via satisficing, honest goal negotiation, multi-year sustained operation** |
 
 PulSeed differs in two fundamental ways. First, **persistent goal pursuit**: it operates in units of goals, not sessions or tasks. Second, **satisficing**: rather than diverging in pursuit of perfection, it judges "good enough" and moves forward realistically. This combination exists in no other approach.
 

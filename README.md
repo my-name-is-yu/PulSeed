@@ -4,7 +4,7 @@
 
 # PulSeed
 
-PulSeed is a local-first personal agent runtime for goals that take time.
+PulSeed is local-first companion software for goals that take time.
 
 [![Website](https://img.shields.io/badge/Website-pulseed.dev-blue?style=for-the-badge)](https://pulseed.dev)
 [![npm](https://img.shields.io/npm/v/pulseed.svg?style=for-the-badge)](https://www.npmjs.com/package/pulseed)
@@ -15,14 +15,16 @@ PulSeed is a local-first personal agent runtime for goals that take time.
 
 </div>
 
-PulSeed keeps goal work alive across sessions. It stores local state, runs a
-DurableLoop over goals, delegates bounded work through AgentLoop or configured
-adapters, verifies progress from evidence, and exposes the runtime through the
-CLI, TUI, daemon, schedules, chat, and gateway surfaces.
+PulSeed is being built toward software that can stay near a person over time:
+remember what matters, notice when the situation changes, and bring the right
+tool, agent, or workflow into the moment when help is needed.
 
-The current implementation is a long-running goal orchestration runtime. The
-larger product direction is a lifelong personal companion agent, but future
-direction is documented separately from current behavior.
+The current implementation focuses on long-running goal orchestration. It stores
+local state, runs a DurableLoop over goals, delegates bounded work through
+AgentLoop or configured adapters, verifies progress from evidence, and exposes
+the runtime through the CLI, TUI, daemon, schedules, chat, and gateway surfaces.
+Product direction beyond that current runtime is documented separately from
+current behavior.
 
 ## Quick Start
 
@@ -92,7 +94,7 @@ For the complete command surface, use `pulseed help` or see the docs:
 - [Architecture Map](docs/architecture-map.md)
 - [Module Map](docs/module-map.md)
 
-## Public Vs Future Docs
+## How The Docs Are Organized
 
 Start with the current operating docs when you want to use PulSeed today:
 
