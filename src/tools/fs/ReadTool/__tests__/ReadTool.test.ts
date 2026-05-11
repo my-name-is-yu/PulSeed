@@ -153,6 +153,25 @@ describe("ReadTool", () => {
     expect(result.status).toBe("needs_approval");
   });
 
+  it("checkPermissions allows active workspace reads even when self-protection protects the workspace root", async () => {
+    const result = await tool.checkPermissions(
+      { file_path: "test.txt", limit: 2000 },
+      {
+        ...makeContext(tmpDir),
+        executionPolicy: {
+          executionProfile: "consumer",
+          sandboxMode: "workspace_write",
+          approvalPolicy: "on_request",
+          networkAccess: false,
+          workspaceRoot: tmpDir,
+          protectedPaths: [tmpDir],
+          trustProjectInstructions: true,
+        },
+      }
+    );
+    expect(result.status).toBe("allowed");
+  });
+
   it("isConcurrencySafe returns true", () => {
     expect(tool.isConcurrencySafe({ file_path: testFile, limit: 2000 })).toBe(true);
   });

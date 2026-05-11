@@ -333,6 +333,27 @@ describe("code search tools", () => {
     expect(result.error).toContain("refused broad explicit path");
   });
 
+  it("allows searching the active workspace when self-protection protects the workspace root", async () => {
+    const tool = new CodeSearchTool();
+    const permission = await tool.checkPermissions(
+      { task: "find alphaValue", intent: "explain", path: root },
+      {
+        ...context,
+        executionPolicy: {
+          executionProfile: "consumer",
+          sandboxMode: "workspace_write",
+          approvalPolicy: "on_request",
+          networkAccess: false,
+          workspaceRoot: root,
+          protectedPaths: [root],
+          trustProjectInstructions: true,
+        },
+      },
+    );
+
+    expect(permission.status).toBe("allowed");
+  });
+
   it("defaults nested package searches to the project root", async () => {
     const nested = path.join(root, "src");
     const result = await new CodeSearchTool().call(

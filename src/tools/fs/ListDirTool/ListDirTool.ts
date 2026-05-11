@@ -47,7 +47,7 @@ export class ListDirTool implements ITool<ListDirInput, DirEntry[]> {
 
   async call(input: ListDirInput, context: ToolCallContext): Promise<ToolResult> {
     const startTime = Date.now();
-    const dirPath = validateFilePath(input.path, context.cwd, context.executionPolicy?.protectedPaths).resolved;
+    const dirPath = validateFilePath(input.path, context.cwd).resolved;
     try {
       const entries = await listDir(dirPath, input.recursive, input.maxDepth, input.includeHidden, 0);
       return {
@@ -70,7 +70,7 @@ export class ListDirTool implements ITool<ListDirInput, DirEntry[]> {
 
   async checkPermissions(input: ListDirInput, context?: ToolCallContext): Promise<PermissionCheckResult> {
     if (context) {
-      const validation = validateFilePath(input.path, context.cwd, context.executionPolicy?.protectedPaths);
+      const validation = validateFilePath(input.path, context.cwd);
       if (!validation.valid) {
         return { status: "needs_approval", reason: `Listing outside the working directory: ${validation.resolved}` };
       }
