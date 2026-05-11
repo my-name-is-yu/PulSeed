@@ -1,37 +1,40 @@
 # Configuration
 
-This document reflects the current public configuration surface.
+This page reflects the current public configuration surface.
 
-## 1. First-run recommendation
+## First-Run Path
 
-Use the main entry point:
+For most users:
 
 ```bash
 pulseed
 ```
 
-PulSeed guides configuration from the interactive flow when needed.
-The configuration flow chooses:
+or:
 
-- provider
-- model
-- default adapter
-- native `agent_loop` options such as worktree behavior
+```bash
+pulseed setup
+```
 
-PulSeed stores the persistent result in `~/.pulseed/provider.json`.
+The setup wizard writes provider configuration to `~/.pulseed/provider.json`
+unless `PULSEED_HOME` points to another state directory.
 
-## 2. Recommended default
+## Code Defaults Vs Setup Recommendations
 
-For most users, the recommended default is:
+The provider-config code default is:
 
-- provider: OpenAI or Anthropic
-- adapter: `agent_loop`
+- provider: `openai`
+- model: `gpt-5.4-mini`
+- adapter: `openai_codex_cli`
 
-That enables PulSeed's native bounded AgentLoop runtime for task execution and chat when the chosen model supports tool calling.
+The interactive setup flow may recommend `agent_loop` for providers and models
+that support native bounded tool use. Treat `agent_loop` as the preferred native
+runtime path for many PulSeed workflows, not as the hard-coded default in
+`provider.json`.
 
-## 3. `~/.pulseed/provider.json`
+## Provider Config File
 
-Typical shape:
+Typical `~/.pulseed/provider.json` shape:
 
 ```json
 {
@@ -41,6 +44,12 @@ Typical shape:
   "adapter": "agent_loop",
   "api_key": "sk-...",
   "agent_loop": {
+    "security": {
+      "sandbox_mode": "workspace_write",
+      "approval_policy": "on_request",
+      "network_access": false,
+      "trust_project_instructions": true
+    },
     "worktree": {
       "enabled": true,
       "base_dir": "~/.pulseed/worktrees",
@@ -51,21 +60,65 @@ Typical shape:
 }
 ```
 
-Important top-level fields:
+Important fields:
 
 - `provider`: `openai`, `anthropic`, or `ollama`
 - `model`: provider-specific model name
-- `reasoning_effort`: optional OpenAI reasoning effort: `none`, `minimal`, `low`, `medium`, `high`, or `xhigh`
-- `adapter`: `agent_loop`, `openai_codex_cli`, `claude_code_cli`, `openai_api`, `claude_api`, or other registered adapters
-- `api_key`: when required by the provider
-- `base_url`: optional provider override
-- `terminal_backend`: optional backend for supported CLI execution adapters
+- `light_model`: optional lighter model for routine work
+- `reasoning_effort`: OpenAI effort `none`, `minimal`, `low`, `medium`,
+  `high`, or `xhigh`
+- `adapter`: `agent_loop`, `openai_codex_cli`, `openai_api`,
+  `claude_code_cli`, or `claude_api`
+- `api_key`: provider key when required
+- `base_url`: optional OpenAI-compatible or Ollama endpoint override
+- `codex_cli_path`: optional Codex CLI path for `openai_codex_cli`
+- `terminal_backend`: optional local/Docker backend for supported CLI adapters
+- `agent_loop`: native AgentLoop security and worktree policy
 
-Important `agent_loop` field:
+## Environment Overrides
 
-- `agent_loop.worktree`: worktree policy for native task execution
+Environment variables and the provider `.env` file can override file config.
 
-Optional `terminal_backend` shape for CLI adapters:
+| Variable | Meaning |
+| --- | --- |
+| `PULSEED_HOME` | Override the local state directory, default `~/.pulseed` |
+| `PULSEED_WORKSPACE_ROOT` | Override the PulSeed-managed workspace root |
+| `PULSEED_PROVIDER` | Provider override: `openai`, `anthropic`, `ollama`, or compatibility alias `codex` |
+| `PULSEED_LLM_PROVIDER` | Provider override alias |
+| `PULSEED_ADAPTER` | Adapter override |
+| `PULSEED_DEFAULT_ADAPTER` | Adapter override alias |
+| `PULSEED_MODEL` | Model override |
+| `OPENAI_MODEL` | OpenAI model fallback when file model is absent |
+| `ANTHROPIC_MODEL` | Anthropic model fallback when file model is absent |
+| `OLLAMA_MODEL` | Ollama model fallback when file model is absent |
+| `OPENAI_API_KEY` | OpenAI key |
+| `ANTHROPIC_API_KEY` | Anthropic key |
+| `OPENAI_BASE_URL` | Optional OpenAI-compatible endpoint |
+| `OLLAMA_BASE_URL` | Optional Ollama endpoint |
+| `PULSEED_LIGHT_MODEL` | Optional lighter model override |
+| `PULSEED_REASONING_EFFORT` | OpenAI reasoning effort override |
+| `OPENAI_REASONING_EFFORT` | OpenAI reasoning effort alias |
+
+Provider-specific model environment variables are fallbacks only when
+`provider.json` does not already specify `model`.
+
+## Supported Models And Adapters
+
+Known model compatibility is maintained in the model registry. Current public
+providers:
+
+- OpenAI models can use `openai_codex_cli`, `openai_api`, or `agent_loop`.
+- Anthropic models can use `claude_code_cli`, `claude_api`, or `agent_loop`.
+- Ollama uses dynamic local models and can use `agent_loop` or OpenAI-compatible
+  API paths where configured.
+
+Unknown/custom models are allowed, but validation may warn when a model and
+adapter combination is incompatible.
+
+## Terminal Backend
+
+Supported CLI execution adapters can run through a local process backend or a
+Docker backend.
 
 ```json
 {
@@ -81,197 +134,72 @@ Optional `terminal_backend` shape for CLI adapters:
 }
 ```
 
-When omitted, supported CLI execution adapters use the local process backend.
-The Docker backend wraps those CLI adapters in `docker run`, mounts the task cwd
-at the configured workdir, and defaults network access to `none`. This backend
-applies to CLI adapters such as `openai_codex_cli` and `claude_code_cli`; native
-`agent_loop` isolation is configured separately through `agent_loop.worktree`.
+This backend applies to CLI adapters. Native `agent_loop` isolation is configured
+separately through `agent_loop.security` and `agent_loop.worktree`.
 
-## 4. Environment variables
+## Worktree Policy
 
-Environment variables override file config.
-
-### Provider selection
-
-| Variable | Meaning |
-|---|---|
-| `PULSEED_LLM_PROVIDER` | Provider override: `openai`, `anthropic`, `ollama` |
-| `OPENAI_API_KEY` | OpenAI key |
-| `ANTHROPIC_API_KEY` | Anthropic key |
-| `OPENAI_BASE_URL` | Optional OpenAI-compatible endpoint override |
-| `OLLAMA_BASE_URL` | Optional Ollama endpoint override |
-| `PULSEED_REASONING_EFFORT` | OpenAI reasoning effort override |
-| `OPENAI_REASONING_EFFORT` | OpenAI-specific reasoning effort override |
-
-### Notes
-
-- Native `agent_loop` is supported by both OpenAI-backed and Anthropic-backed tool-calling models in the current implementation
-- Some models are usable through API adapters but not a CLI adapter, or vice versa
-- interactive configuration through `pulseed` is safer than editing config by hand because it validates provider and adapter combinations
-
-## 5. Adapter choices
-
-Current public adapter choices:
-
-| Adapter | Meaning |
-|---|---|
-| `agent_loop` | PulSeed's native bounded tool-using agent runtime |
-| `openai_codex_cli` | External Codex CLI adapter |
-| `claude_code_cli` | External Claude Code CLI adapter |
-| `openai_api` | API-based execution path |
-| `claude_api` | API-based execution path |
-| `github_issue` | Issue-handoff style execution |
-
-When to prefer `agent_loop`:
-
-- you want one runtime model for chat and task execution
-- you want bounded tool use, compaction, and traces inside PulSeed
-- you want worktree support through native task execution
-
-## 6. Worktree configuration
-
-Native `agent_loop` task execution can prepare a dedicated worktree.
+Native `agent_loop` task execution can prepare a dedicated git worktree.
 
 Public knobs:
 
 - `enabled`
 - `base_dir`
 - `keep_for_debug`
-- `cleanup_policy`
+- `cleanup_policy`: `on_success`, `always`, or `never`
 
-Operational meaning:
+Worktree isolation prevents accidental writes to the primary checkout. It is not
+an OS sandbox. For untrusted goals, use Docker, a containerized PulSeed process,
+or a VM boundary.
 
-- when enabled, task execution can run in a separate worktree instead of mutating the primary workspace directly
-- when `keep_for_debug` is true, PulSeed leaves the worktree behind for inspection
-- worktree isolation separates filesystem changes from the primary checkout, but it is not an OS-level sandbox
-- for untrusted goals that need process or network isolation, use a Docker terminal backend for supported CLI adapters or run PulSeed inside a container or VM
+## Local State Layout
 
-## 7. Local state layout
+PulSeed stores runtime state under `~/.pulseed/` by default.
 
-PulSeed stores runtime state under `~/.pulseed/`.
+Common entries:
 
-Common directories:
-
+- `provider.json`
+- `.env`
 - `goals/`
 - `tasks/`
 - `reports/`
 - `runtime/`
-- `schedules.json`
-- `memory/`
+- `state/pulseed-control.sqlite`
+- `schedule/`
 - `chat/`
 - `plugins/`
 - `plugins-imported-disabled/`
+- `skills/`
+- `memory/`
+- `logs/`
+- `datasources/`
 
-Depending on the features in use, you may also see:
+Depending on enabled features, you may also see checkpoints, runtime evidence,
+Dream playbooks, Soil projections, gateway channel config, and compatibility
+reports.
 
-- checkpoints
-- dream playbooks
-- runtime health snapshots
-- Soil projections and indexes
-- schedule suggestions and approval state
+## Gateway Routing Config
 
-`plugins/` contains installed PulSeed-native plugins. Foreign plugins imported
-from Hermes Agent are copied to `plugins-imported-disabled/` with a
-compatibility report and are not loaded until reviewed. Builtin integrations
-such as `soil-display`, `mcp-bridge`, and `foreign-plugin-bridge` ship with the
-runtime and are reported separately from installed plugins.
-
-Capability runtime state is projected from readiness snapshots and matching
-admission/autonomy decisions. A configured plugin, imported foreign plugin, or
-legacy capability record is evidence for discovery and compatibility only; it is
-not an executable or autonomous label by itself.
-
-## 8. Skills
-
-PulSeed discovers local skills from:
-
-- `~/.pulseed/skills/**/SKILL.md`
-- `<workspace>/skills/**/SKILL.md`
-
-Scriptable commands:
-
-| Command | Purpose |
-|---|---|
-| `pulseed skills list` | List discovered skills |
-| `pulseed skills search <query>` | Search skill name, id, description, or path |
-| `pulseed skills show <id>` | Print one skill file |
-| `pulseed skills install <path>` | Copy a local `SKILL.md` into `~/.pulseed/skills/imported/` |
-
-The runtime also exposes `skill_search` as a read-only built-in tool.
-
-Verified playbooks are stored separately from skills under `~/.pulseed/dream/playbooks/`.
-They are inspectable runtime memory artifacts, not auto-generated `SKILL.md` files.
-
-## 9. Channel security and routing
-
-Bundled chat plugins accept allow/deny and route settings while preserving their existing config fields.
+Bundled chat/gateway plugins accept allow/deny and route settings while
+preserving existing config fields.
 
 Common fields:
 
 - `allowed_sender_ids` / `denied_sender_ids`
-- `allowed_conversation_ids` / `denied_conversation_ids` for group or channel transports
+- `allowed_conversation_ids` / `denied_conversation_ids`
 - `runtime_control_allowed_sender_ids`
 - `conversation_goal_map`, `sender_goal_map`, and `default_goal_id`
 
-Telegram keeps its numeric legacy fields and adds numeric equivalents:
+Telegram also supports numeric legacy field names:
 
 - `allowed_user_ids`, `denied_user_ids`
 - `allowed_chat_ids`, `denied_chat_ids`
 - `runtime_control_allowed_user_ids`
 - `chat_goal_map`, `user_goal_map`, and `default_goal_id`
 
-## 10. Main command
+## Related
 
-```bash
-pulseed
-```
-
-The default workflow is natural language. Ask PulSeed to configure providers, show current settings, create goals, check progress, or keep work running.
-
-## 11. Scriptable CLI surface
-
-Lower-level commands exist for automation, diagnostics, and compatibility. They are not the primary user path.
-
-Common scriptable commands:
-
-| Command | Purpose |
-|---|---|
-| `pulseed setup` | Configure provider, model, and adapter |
-| `pulseed goal add "<text>"` | Create a goal |
-| `pulseed run --goal <id>` | Execute DurableLoop for one goal with bounded policy (default max 100 iterations) |
-| `pulseed run --goal <id> --resident` | Execute DurableLoop with resident policy; iteration count is telemetry, not a lifecycle cap |
-| `pulseed daemon start --iterations-per-cycle <n>` | Start daemon workers in bounded canary mode with `<n>` as the DurableLoop cap |
-| `pulseed daemon start --resident --iterations-per-cycle <n>` | Start daemon workers in resident mode with `<n>` as a telemetry window |
-| `pulseed status` / `pulseed status --goal <id>` | Inspect the current or selected goal with human-readable defaults; add `--details` for exact IDs and diagnostic fields |
-| `pulseed report --goal <id>` | Read the latest report |
-| `pulseed task list --goal <id>` | Inspect tasks |
-| `pulseed tui` | Start the terminal UI |
-| `pulseed start --goal <id>` | Start the daemon |
-| `pulseed stop` | Stop the daemon |
-| `pulseed cron --goal <id>` | Print a cron entry |
-| `pulseed schedule list` | List schedule entries |
-| `pulseed schedule show <id>` | Inspect one schedule entry |
-| `pulseed schedule edit <id>` | Edit a schedule entry's name, trigger, enabled state, or layer config |
-| `pulseed schedule pause <id>` | Pause a schedule without deleting it |
-| `pulseed schedule resume <id>` | Resume a paused schedule |
-| `pulseed schedule run <id>` | Run a schedule entry immediately, using the resident daemon when it is running |
-| `pulseed schedule history <id>` | Show recent schedule execution history |
-| `pulseed skills list` | List discovered skills |
-| `pulseed skills install <path>` | Install a local skill file |
-| `pulseed plugin list` | List installed plugins |
-| `pulseed plugin install <path|package>` | Install a plugin from a local path or npm package |
-| `pulseed plugin update <name>` | Update an installed npm-backed plugin |
-| `pulseed plugin search <keyword>` | Search `@pulseed-plugins` packages |
-| `pulseed plugin remove <name>` | Remove an installed plugin |
-| `pulseed playbook list` | List stored verified playbooks |
-| `pulseed playbook show <id>` | Show one playbook as JSON |
-| `pulseed playbook promote <id>` | Mark a playbook as promoted |
-| `pulseed playbook demote <id>` | Demote a playbook back to candidate |
-| `pulseed playbook disable <id>` | Disable a playbook from retrieval |
-| `pulseed playbook delete <id>` | Delete a stored playbook |
-
-## 12. Practical guidance
-
-- Start with `agent_loop` unless you specifically want an external agent CLI
-- Start from `pulseed` after pulling new versions, because provider defaults may evolve
-- Treat `src/` and `provider.json` as the implementation truth when deeper docs disagree
+- [Getting Started](getting-started.md)
+- [Runtime](runtime.md)
+- [CLI Reference](reference/cli.md)
+- [Status](status.md)

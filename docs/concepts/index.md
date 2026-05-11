@@ -6,6 +6,8 @@ Current concept pages:
 
 - [Mechanism](../mechanism.md)
 - [Architecture Map](../architecture-map.md)
+- [Status](../status.md)
 
-Concept pages explain the model behind current behavior. They should avoid
-becoming command reference or future-product narrative.
+Concept pages explain current behavior. Product-direction narrative belongs in
+[Roadmap And Future Direction](../roadmap/index.md), and implementation
+contracts belong in [Internal Documentation](../internal/index.md).
