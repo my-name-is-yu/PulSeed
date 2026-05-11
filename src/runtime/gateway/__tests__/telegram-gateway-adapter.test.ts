@@ -118,7 +118,7 @@ describe("TelegramGatewayAdapter", () => {
     );
   });
 
-  it("starts Telegram typing around rendered output events, not received presence", async () => {
+  it("starts Telegram typing immediately after inbound admission before rendered output", async () => {
     vi.useFakeTimers();
     try {
       const configDir = await writeConfig({
@@ -181,7 +181,7 @@ describe("TelegramGatewayAdapter", () => {
       }).processMessage("hello", 42, 314, 2718);
 
       await presenceHandled.promise;
-      expect(sentChatActions).toEqual([]);
+      expect(sentChatActions).toEqual([{ chat_id: 314, action: "typing" }]);
       presenceCanContinue.resolve();
 
       await commentaryHandled.promise;
@@ -312,12 +312,15 @@ describe("TelegramGatewayAdapter", () => {
       }).processMessage("hello", 42, 314, 2718);
 
       await summaryHandled.promise;
-      expect(sentChatActions).toEqual([]);
+      expect(sentChatActions).toEqual([{ chat_id: 314, action: "typing" }]);
 
       dispatchCanFinish.resolve();
       await processing;
 
-      expect(sentChatActions).toEqual([{ chat_id: 314, action: "typing" }]);
+      expect(sentChatActions).toEqual([
+        { chat_id: 314, action: "typing" },
+        { chat_id: 314, action: "typing" },
+      ]);
     } finally {
       vi.useRealTimers();
     }

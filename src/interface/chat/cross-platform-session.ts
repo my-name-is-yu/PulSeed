@@ -1204,6 +1204,7 @@ export class CrossPlatformChatSessionManager {
     const capabilities = {
       hasAgentLoop: this.deps.chatAgentLoopRunner !== undefined,
       hasToolLoop: this.deps.llmClient !== undefined,
+      hasToolRegistry: this.deps.registry !== undefined,
       hasRuntimeControlService: this.deps.runtimeControlService !== undefined,
     };
     const setupSecretIntake = input.setupSecretIntake;
@@ -1220,8 +1221,12 @@ export class CrossPlatformChatSessionManager {
         : ingress.metadata["runtime_control_denied"] === true;
     const runtimeControlPolicyPresent =
       runtimeControlApproved || runtimeControlDenied || ingress.metadata["runtime_control_explicit"] === true;
+    const canUseDefaultGatewayModelLoop = capabilities.hasToolLoop
+      && capabilities.hasToolRegistry
+      && (ingress.channel === "plugin_gateway" || ingress.replyTarget.surface === "gateway");
     const shouldPreferFreeformBeforeDeniedRuntimeControl =
       !hasSetupSecret
+      && !canUseDefaultGatewayModelLoop
       && !capabilities.hasAgentLoop
       && runtimeControlDenied
       && !runtimeControlApproved
@@ -1229,10 +1234,11 @@ export class CrossPlatformChatSessionManager {
     const shouldClassifyRuntimeControlForSafety =
       !hasSetupSecret
       && capabilities.hasAgentLoop
-      && runtimeControlPolicyPresent;
+      && runtimeControlPolicyPresent
+      && (!canUseDefaultGatewayModelLoop || ingress.metadata["runtime_control_explicit"] === true);
     const shouldClassifyRuntimeControl =
       shouldClassifyRuntimeControlForSafety
-      || (!hasSetupSecret && !capabilities.hasAgentLoop && (
+      || (!hasSetupSecret && !capabilities.hasAgentLoop && !canUseDefaultGatewayModelLoop && (
         (capabilities.hasRuntimeControlService && ingress.runtimeControl.approvalMode !== "disallowed")
         || runtimeControlApproved
         || runtimeControlDenied
@@ -1247,11 +1253,12 @@ export class CrossPlatformChatSessionManager {
     const runtimeControlIntent = runtimeControlClassification?.status === "intent"
       ? runtimeControlClassification.intent
       : null;
-    if (!hasSetupSecret && !capabilities.hasAgentLoop && freeformRouteIntent == null && runtimeControlIntent === null) {
+    if (!hasSetupSecret && !capabilities.hasAgentLoop && !canUseDefaultGatewayModelLoop && freeformRouteIntent == null && runtimeControlIntent === null) {
       freeformRouteIntent = await classifyFreeformRouteIntent(safeIngressText, this.deps.llmClient);
     }
     const shouldDeriveRunSpecDraft =
       !capabilities.hasAgentLoop
+      && !canUseDefaultGatewayModelLoop
       && !hasSetupSecret
       && runtimeControlIntent === null
       && freeformRouteIntent != null

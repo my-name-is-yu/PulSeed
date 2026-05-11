@@ -49,8 +49,8 @@ export type SelectedChatRoute =
       concurrencyPolicy: ConcurrencyPolicy;
     }
   | {
-      kind: "agent_loop" | "tool_loop" | "adapter";
-      reason: "agent_loop_available" | "tool_loop_available" | "adapter_fallback";
+      kind: "agent_loop" | "tool_loop" | "adapter" | "gateway_model_loop";
+      reason: "agent_loop_available" | "tool_loop_available" | "adapter_fallback" | "gateway_default_model_tool_choice";
       replyTargetPolicy: ReplyTargetPolicy;
       eventProjectionPolicy: EventProjectionPolicy;
       concurrencyPolicy: ConcurrencyPolicy;
@@ -83,6 +83,7 @@ export type SelectedChatRoute =
 export interface IngressRouterCapabilities {
   hasAgentLoop: boolean;
   hasToolLoop: boolean;
+  hasToolRegistry?: boolean;
   hasRuntimeControlService?: boolean;
   runtimeControlIntent?: RuntimeControlIntent | null;
   runtimeControlUnclassified?: boolean;
@@ -92,7 +93,7 @@ export interface IngressRouterCapabilities {
 }
 
 function selectRouteForText(
-  _text: string,
+  message: ChatIngressMessage,
   runtimeControl: ChatIngressRuntimeControl,
   deps: IngressRouterCapabilities
 ): SelectedChatRoute {
@@ -109,88 +110,37 @@ function selectRouteForText(
   const canUseRuntimeControlRoute =
     runtimeControl.allowed && runtimeControl.approvalMode !== "disallowed";
 
-  if (deps.hasAgentLoop) {
-    const intent = deps.runtimeControlIntent ?? null;
-    if (intent === null && deps.runtimeControlUnclassified === true) {
-      return {
-        kind: "runtime_control_blocked",
-        reason: "runtime_control_unclassified",
-        ...runtimeControlPolicy,
-      };
-    }
-    if (intent !== null && !canUseRuntimeControlRoute) {
-      return {
-        kind: "runtime_control_blocked",
-        reason: "runtime_control_disallowed",
-        intent,
-        ...runtimeControlPolicy,
-      };
-    }
-    if (intent !== null && deps.hasRuntimeControlService !== true) {
-      return {
-        kind: "runtime_control_blocked",
-        reason: "runtime_control_unavailable",
-        intent,
-        ...runtimeControlPolicy,
-      };
-    }
-    if (intent !== null) {
-      return {
-        kind: "runtime_control",
-        reason: "runtime_control_intent",
-        intent,
-        ...runtimeControlPolicy,
-      };
-    }
+  const intent = deps.runtimeControlIntent ?? null;
+  if (intent === null && deps.runtimeControlUnclassified === true) {
     return {
-      kind: "agent_loop",
-      reason: "agent_loop_available",
-      ...baseTurnPolicy,
+      kind: "runtime_control_blocked",
+      reason: "runtime_control_unclassified",
+      ...runtimeControlPolicy,
     };
   }
-
-  if (canUseRuntimeControlRoute) {
-    const intent = deps.runtimeControlIntent ?? null;
-    if (intent === null && deps.runtimeControlUnclassified === true) {
-      return {
-        kind: "runtime_control_blocked",
-        reason: "runtime_control_unclassified",
-        ...runtimeControlPolicy,
-      };
-    }
-    if (intent !== null && deps.hasRuntimeControlService === true) {
-      return {
-        kind: "runtime_control",
-        reason: "runtime_control_intent",
-        intent,
-        ...runtimeControlPolicy,
-      };
-    }
-    if (intent !== null) {
-      return {
-        kind: "runtime_control_blocked",
-        reason: "runtime_control_unavailable",
-        intent,
-        ...runtimeControlPolicy,
-      };
-    }
-  } else {
-    const intent = deps.runtimeControlIntent ?? null;
-    if (intent === null && deps.runtimeControlUnclassified === true) {
-      return {
-        kind: "runtime_control_blocked",
-        reason: "runtime_control_unclassified",
-        ...runtimeControlPolicy,
-      };
-    }
-    if (intent !== null) {
-      return {
-        kind: "runtime_control_blocked",
-        reason: "runtime_control_disallowed",
-        intent,
-        ...runtimeControlPolicy,
-      };
-    }
+  if (intent !== null && !canUseRuntimeControlRoute) {
+    return {
+      kind: "runtime_control_blocked",
+      reason: "runtime_control_disallowed",
+      intent,
+      ...runtimeControlPolicy,
+    };
+  }
+  if (intent !== null && deps.hasRuntimeControlService !== true) {
+    return {
+      kind: "runtime_control_blocked",
+      reason: "runtime_control_unavailable",
+      intent,
+      ...runtimeControlPolicy,
+    };
+  }
+  if (intent !== null) {
+    return {
+      kind: "runtime_control",
+      reason: "runtime_control_intent",
+      intent,
+      ...runtimeControlPolicy,
+    };
   }
 
   const setupSecretKinds = new Set((deps.setupSecretIntake?.suppliedSecrets ?? []).map((secret) => secret.kind));
@@ -217,6 +167,22 @@ function selectRouteForText(
         configure_target: "gateway",
         rationale: "typed setup secret intake detected a Discord bot token",
       },
+      ...baseTurnPolicy,
+    };
+  }
+
+  if (isGatewayIngress(message) && deps.hasToolLoop && deps.hasToolRegistry !== false) {
+    return {
+      kind: "gateway_model_loop",
+      reason: "gateway_default_model_tool_choice",
+      ...baseTurnPolicy,
+    };
+  }
+
+  if (deps.hasAgentLoop) {
+    return {
+      kind: "agent_loop",
+      reason: "agent_loop_available",
       ...baseTurnPolicy,
     };
   }
@@ -268,7 +234,7 @@ function selectRouteForText(
 
 export class IngressRouter {
   selectRoute(message: ChatIngressMessage, capabilities: IngressRouterCapabilities): SelectedChatRoute {
-    return selectRouteForText(message.text, message.runtimeControl, capabilities);
+    return selectRouteForText(message, message.runtimeControl, capabilities);
   }
 }
 
@@ -276,7 +242,11 @@ export function selectLegacyChatRoute(
   input: string,
   deps: IngressRouterCapabilities
 ): SelectedChatRoute {
-  return selectRouteForText(input, { allowed: true, approvalMode: "interactive" }, deps);
+  return selectRouteForText(buildStandaloneIngressMessage({ text: input }), { allowed: true, approvalMode: "interactive" }, deps);
+}
+
+function isGatewayIngress(message: ChatIngressMessage): boolean {
+  return message.channel === "plugin_gateway" || message.replyTarget.surface === "gateway";
 }
 
 function normalizePlatform(value: string | undefined): string | undefined {

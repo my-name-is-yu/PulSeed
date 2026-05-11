@@ -127,7 +127,7 @@ describe("SeedyPresenceProjector", () => {
     vi.useRealTimers();
   });
 
-  it("does not hold native typing during wait-only presence updates", async () => {
+  it("starts native typing immediately for inbound received presence", async () => {
     const refresh = vi.fn().mockResolvedValue(undefined);
     const typingIndicator = createRefreshingTypingIndicator({
       intervalMs: 1_000,
@@ -149,14 +149,9 @@ describe("SeedyPresenceProjector", () => {
       type: "presence_update",
       presence: presence("received"),
     });
-    await projector.update(presence("acting", {
-      importance: "status",
-      last_activity_label: "Checking the workspace",
-      expected_next: "progress",
-    }));
-    await vi.advanceTimersByTimeAsync(5_000);
-
-    expect(refresh).not.toHaveBeenCalled();
+    expect(refresh).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(refresh).toHaveBeenCalledTimes(3);
     expect(transport.sendStatus).not.toHaveBeenCalled();
   });
 

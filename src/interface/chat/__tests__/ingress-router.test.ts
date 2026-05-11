@@ -23,7 +23,7 @@ describe("IngressRouter", () => {
     expect(message.userInput).not.toHaveProperty("route");
   });
 
-  it("routes ordinary natural-language input to agent_loop when available", () => {
+  it("routes ordinary gateway natural-language input to the default model/tool-choice loop when available", () => {
     const route = router.selectRoute(
       buildStandaloneIngressMessage({
         text: "What route should answer this?",
@@ -40,7 +40,8 @@ describe("IngressRouter", () => {
 	      }
 	    );
 
-    expect(route.kind).toBe("agent_loop");
+    expect(route.kind).toBe("gateway_model_loop");
+    expect(route.reason).toBe("gateway_default_model_tool_choice");
     expect(route.replyTargetPolicy).toBe("turn_reply_target");
   });
 
@@ -296,7 +297,7 @@ describe("IngressRouter", () => {
     expect(route.kind).toBe("agent_loop");
   });
 
-  it("keeps precomputed typed RunSpec drafts on agent_loop when tools can decide handoff", () => {
+  it("keeps precomputed typed RunSpec drafts behind the default gateway tool-choice loop", () => {
     const draft = {
       schema_version: "run-spec-v1",
       id: "runspec-00000000-0000-4000-8000-000000000001",
@@ -352,11 +353,11 @@ describe("IngressRouter", () => {
       }
     );
 
-    expect(route.kind).toBe("agent_loop");
-    expect(route.reason).toBe("agent_loop_available");
+    expect(route.kind).toBe("gateway_model_loop");
+    expect(route.reason).toBe("gateway_default_model_tool_choice");
   });
 
-  it("falls back to precomputed typed RunSpec drafts when agent_loop is unavailable", () => {
+  it("keeps precomputed typed RunSpec drafts behind the gateway tool-choice loop when agent_loop is unavailable", () => {
     const draft = {
       schema_version: "run-spec-v1",
       id: "runspec-00000000-0000-4000-8000-000000000001",
@@ -412,11 +413,11 @@ describe("IngressRouter", () => {
       }
     );
 
-    expect(route.kind).toBe("run_spec_draft");
-    expect(route.reason).toBe("run_spec_draft_intent");
+    expect(route.kind).toBe("gateway_model_loop");
+    expect(route.reason).toBe("gateway_default_model_tool_choice");
   });
 
-  it("keeps long-running work on agent_loop when runtime control is disallowed", () => {
+  it("keeps gateway long-running work on the default tool-choice loop when runtime control is disallowed", () => {
     const route = router.selectRoute(
       buildStandaloneIngressMessage({
         text: "coreloopの方でscore0.98行くまで取り組んで",
@@ -433,7 +434,7 @@ describe("IngressRouter", () => {
       }
     );
 
-    expect(route.kind).toBe("agent_loop");
+    expect(route.kind).toBe("gateway_model_loop");
   });
 
   it("keeps explanatory long-running-task questions on agent_loop", () => {
