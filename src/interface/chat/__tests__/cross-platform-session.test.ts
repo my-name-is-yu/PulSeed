@@ -2058,7 +2058,7 @@ describe("CrossPlatformChatSessionManager", () => {
     });
 
     expect(result.success).toBe(false);
-    expect(result.output).toContain("not authorized for runtime-control lifecycle actions");
+    expect(result.output).toContain("not authorized to inspect or control PulSeed's running state");
     expect(runtimeControlService.request).not.toHaveBeenCalled();
     expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
   });
@@ -2101,9 +2101,9 @@ describe("CrossPlatformChatSessionManager", () => {
     });
 
     expect(result.success).toBe(false);
-    expect(result.output).toContain("runtime-control service is not available");
-    expect(result.output).toContain("operation was not executed");
-    expect(result.output).toContain("will not fall back to shell tools");
+    expect(result.output).toContain("cannot reach PulSeed's authorized management service");
+    expect(result.output).toContain("Nothing was executed");
+    expect(result.output).toContain("will not use shell commands as a workaround");
     expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
     expect(adapter.execute).not.toHaveBeenCalled();
   });
@@ -2143,7 +2143,7 @@ describe("CrossPlatformChatSessionManager", () => {
     });
 
     expect(result.success).toBe(false);
-    expect(result.output).toContain("runtime-control service is not available");
+    expect(result.output).toContain("cannot reach PulSeed's authorized management service");
     expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
     expect(adapter.execute).not.toHaveBeenCalled();
   });
@@ -2235,9 +2235,65 @@ describe("CrossPlatformChatSessionManager", () => {
     });
 
     expect(result.success).toBe(false);
-    expect(result.output).toContain("not authorized for runtime-control lifecycle actions");
-    expect(result.output).toContain("operation was not executed");
-    expect(result.output).toContain("will not fall back to shell tools");
+    expect(result.output).toContain("not authorized to inspect or control PulSeed's running state");
+    expect(result.output).toContain("Nothing was executed");
+    expect(result.output).toContain("will not use shell commands as a workaround");
+    expect(result.output).not.toContain("restart_daemon");
+    expect(result.output).not.toContain("runtime-control");
+    expect(runtimeControlService.request).not.toHaveBeenCalled();
+    expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
+    expect(adapter.execute).not.toHaveBeenCalled();
+  });
+
+  it("uses natural Telegram wording for unauthorized runtime-control inspection requests", async () => {
+    const stateManager = makeMockStateManager();
+    const adapter = makeMockAdapter();
+    const chatAgentLoopRunner = {
+      execute: vi.fn().mockResolvedValue({
+        success: true,
+        output: "agent loop should not inspect state",
+        error: null,
+        exit_code: null,
+        elapsed_ms: 42,
+        stopped_reason: "completed",
+      }),
+    };
+    const runtimeControlService = {
+      request: vi.fn().mockResolvedValue({
+        success: true,
+        message: "runtime control should not run",
+      }),
+    };
+    const manager = new CrossPlatformChatSessionManager(makeDeps({
+      stateManager,
+      adapter,
+      chatAgentLoopRunner: chatAgentLoopRunner as never,
+      llmClient: createMockLLMClient([
+        JSON.stringify({
+          intent: "inspect_companion_state",
+          reason: "今のPulSeedの状態を軽く確認して",
+        }),
+      ]),
+      runtimeControlService,
+    }));
+
+    const result = await manager.execute("今のPulSeedの状態を軽く確認して", {
+      identity_key: "owner",
+      platform: "telegram",
+      conversation_id: "telegram-chat-1",
+      user_id: "user-1",
+      cwd: "/repo",
+      metadata: { runtime_control_denied: true },
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.output).toContain("not authorized to inspect or control PulSeed's running state");
+    expect(result.output).toContain("Nothing was executed");
+    expect(result.output).toContain("will not use shell commands as a workaround");
+    expect(result.output).not.toContain("inspect_companion_state");
+    expect(result.output).not.toContain("Runtime control");
+    expect(result.output).not.toContain("runtime-control");
+    expect(result.output).not.toContain("lifecycle actions");
     expect(runtimeControlService.request).not.toHaveBeenCalled();
     expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
     expect(adapter.execute).not.toHaveBeenCalled();
@@ -2283,8 +2339,10 @@ describe("CrossPlatformChatSessionManager", () => {
       });
 
       expect(result.success).toBe(false);
-      expect(result.output).toContain("operation was not executed");
-      expect(result.output).toContain("will not fall back to shell tools");
+      expect(result.output).toContain("Nothing was executed");
+      expect(result.output).toContain("will not use shell commands as a workaround");
+      expect(result.output).not.toContain(operation);
+      expect(result.output).not.toContain("runtime-control");
       expect(runtimeControlService.request).not.toHaveBeenCalled();
       expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
       expect(adapter.execute).not.toHaveBeenCalled();
@@ -2333,8 +2391,9 @@ describe("CrossPlatformChatSessionManager", () => {
     });
 
     expect(result.success).toBe(false);
-    expect(result.output).toContain("could not derive a typed runtime-control operation");
-    expect(result.output).toContain("will not fall back to shell tools");
+    expect(result.output).toContain("could not identify a supported safe action");
+    expect(result.output).toContain("will not use shell commands as a workaround");
+    expect(result.output).not.toContain("runtime-control");
     expect(runtimeControlService.request).not.toHaveBeenCalled();
     expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
     expect(adapter.execute).not.toHaveBeenCalled();
