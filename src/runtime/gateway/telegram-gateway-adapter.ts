@@ -276,10 +276,11 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
         cwd: process.cwd(),
         onEvent: async (event) => {
           const chatEvent = event as unknown as ChatEvent;
-          if (eventAdapter.shouldRender(chatEvent)) {
+          const shouldRender = eventAdapter.shouldRender(chatEvent);
+          if (shouldRender) {
             await presenceProjector.prepareForEvent(chatEvent);
+            await eventAdapter.handle(chatEvent);
           }
-          await eventAdapter.handle(chatEvent);
           await presenceProjector.handle(chatEvent, {
             assistantOutputRendered: eventAdapter.deliveredAssistantOutput,
             meaningfulProgressRendered: eventAdapter.deliveredProgressOutput,

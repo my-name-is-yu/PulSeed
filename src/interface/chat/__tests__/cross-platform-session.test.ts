@@ -648,7 +648,7 @@ describe("CrossPlatformChatSessionManager", () => {
     expect(result.output).toBe("やあ。");
     expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
     expect(llmClient.sendMessageStream).toHaveBeenCalledTimes(1);
-    expect(llmClient.sendMessage).toHaveBeenCalledTimes(2);
+    expect(llmClient.sendMessage).not.toHaveBeenCalled();
     const [messages, options] = llmClient.sendMessageStream.mock.calls[0]!;
     expect(JSON.stringify(messages)).not.toContain("Working directory:");
     expect(String(options?.system ?? "")).toContain("gateway chat surface");
@@ -819,7 +819,7 @@ describe("CrossPlatformChatSessionManager", () => {
     )).toBe(false);
   });
 
-  it("repairs unsupported workspace claims on ordinary gateway replies", async () => {
+  it("does not run post-final evidence repair on ordinary gateway replies", async () => {
     const llmClient = {
       sendMessage: vi.fn().mockResolvedValue({
         content: JSON.stringify({
@@ -855,11 +855,11 @@ describe("CrossPlatformChatSessionManager", () => {
     });
 
     expect(result.success).toBe(true);
-    expect(result.output).toBe("やあ。何を進めますか？");
-    expect(result.output).not.toContain("作業ディレクトリ");
+    expect(result.output).toBe("やあ。PulSeed dogfood 用の作業ディレクトリにいます。何を進めますか？");
+    expect(llmClient.sendMessage).not.toHaveBeenCalled();
   });
 
-  it("fails closed for unsupported high-risk gateway claims when evidence classification is unavailable", async () => {
+  it("does not run post-final evidence fail-closed classification on ordinary gateway replies", async () => {
     const llmClient = {
       sendMessage: vi.fn().mockRejectedValue(new Error("classifier unavailable")),
       sendMessageStream: vi.fn().mockResolvedValue({
@@ -886,11 +886,11 @@ describe("CrossPlatformChatSessionManager", () => {
     });
 
     expect(result.success).toBe(true);
-    expect(result.output).toContain("I can't verify the current local state");
-    expect(result.output).not.toContain("正常に動いています");
+    expect(result.output).toBe("PulSeed の daemon は正常に動いています。");
+    expect(llmClient.sendMessage).not.toHaveBeenCalled();
   });
 
-  it("streams safe gateway spans early while withholding unsupported local-state spans", async () => {
+  it("streams ordinary gateway model deltas directly without buffered evidence repair", async () => {
     const events: ChatEvent[] = [];
     const llmClient = {
       sendMessage: vi.fn().mockImplementation(async (messages: Array<{ content: string }>) => {
@@ -944,7 +944,8 @@ describe("CrossPlatformChatSessionManager", () => {
       event.type === "assistant_delta"
     );
     expect(deltas.map((event) => event.delta)).toContain("やあ。");
-    expect(deltas.map((event) => event.delta).join("")).not.toContain("作業ディレクトリ");
+    expect(deltas.map((event) => event.delta).join("")).toContain("作業ディレクトリ");
+    expect(llmClient.sendMessage).not.toHaveBeenCalled();
   });
 
   it("streams native agent-loop final text only after the runtime evidence gate allows it", async () => {

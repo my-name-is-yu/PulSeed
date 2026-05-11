@@ -20,7 +20,7 @@ afterEach(() => {
 });
 
 describe("DiscordGatewayAdapter", () => {
-  it("triggers native Discord typing while processing a chat turn", async () => {
+  it("does not trigger native Discord typing for ordinary direct final output", async () => {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
     vi.stubGlobal("fetch", vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
       calls.push({ url: String(url), init });
@@ -42,12 +42,8 @@ describe("DiscordGatewayAdapter", () => {
       }
     );
 
-    expect(calls).toContainEqual(expect.objectContaining({
+    expect(calls).not.toContainEqual(expect.objectContaining({
       url: "https://discord.com/api/v10/channels/channel-1/typing",
-      init: expect.objectContaining({
-        method: "POST",
-        headers: expect.objectContaining({ Authorization: "Bot discord-token" }),
-      }),
     }));
     expect(calls.some((call) => call.url.startsWith("https://discord.com/api/v10/webhooks/app-1/token-1"))).toBe(true);
     const renderedText = calls
@@ -57,7 +53,7 @@ describe("DiscordGatewayAdapter", () => {
     expect(renderedText).not.toContain("Received.");
   });
 
-  it("acknowledges Discord interactions while shared presence drives typing and final follow-up output", async () => {
+  it("acknowledges Discord interactions while shared presence drives final follow-up output", async () => {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
     vi.stubGlobal("fetch", vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
       calls.push({ url: String(url), init });
@@ -102,9 +98,8 @@ describe("DiscordGatewayAdapter", () => {
         expect(renderedText).toContain("Done from interaction.");
         expect(renderedText).not.toContain("Received.");
       });
-      expect(calls).toContainEqual(expect.objectContaining({
+      expect(calls).not.toContainEqual(expect.objectContaining({
         url: "https://discord.com/api/v10/channels/channel-1/typing",
-        init: expect.objectContaining({ method: "POST" }),
       }));
     } finally {
       await adapter.stop();
@@ -124,6 +119,14 @@ describe("DiscordGatewayAdapter", () => {
       }));
       vi.mocked(dispatchGatewayChatInput).mockImplementationOnce(async (input) => {
         await input.onEvent?.(presenceEvent("received"));
+        await input.onEvent?.({
+          ...eventBase,
+          type: "activity",
+          kind: "commentary",
+          message: "I need to check one thing first.",
+          sourceId: "preamble:turn-1",
+          presentation: { gatewayProgress: "user" },
+        });
         await input.onEvent?.(assistantFinalEvent("Typing failed, but the turn completed."));
         return "Typing failed, but the turn completed.";
       });
