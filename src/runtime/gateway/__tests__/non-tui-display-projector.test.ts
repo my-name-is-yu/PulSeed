@@ -248,7 +248,61 @@ describe("non-TUI display projector", () => {
     expect(transport.sendFinal).toHaveBeenCalledWith("Blocked final.");
     expect(transport.deleteProgress).not.toHaveBeenCalled();
     expect(transport.editProgress).toHaveBeenCalledWith({ id: "progress-1" }, "Completed.");
+    expect(transport.calls).toEqual([
+      "sendProgress:I will check the request before answering.",
+      "editProgress:Completed.",
+      "sendFinal:Blocked final.",
+    ]);
     expect(projector.deliveredProgressOutput).toBe(true);
+  });
+
+  it("does not render progress after the final-answer surface is visible", async () => {
+    const transport = createTransport();
+    const projector = new NonTuiDisplayProjector({
+      display: {
+        capabilities: TELEGRAM_GATEWAY_DISPLAY_CONTRACT.capabilities,
+        policy: {
+          ...createGatewayDisplayPolicy(TELEGRAM_GATEWAY_DISPLAY_CONTRACT.capabilities),
+          progressSurface: "editable",
+          finalSurface: "edit_stream",
+          cleanupPolicy: "collapse",
+        },
+      },
+      transport,
+    });
+
+    await projector.handle({
+      ...base,
+      type: "operation_progress",
+      item: {
+        id: "operation-1",
+        kind: "checked_status",
+        operation: "gateway",
+        title: "Checked gateway status",
+        createdAt: base.createdAt,
+      },
+    });
+    await projector.handle({ ...base, type: "assistant_delta", delta: "Done.", text: "Done." });
+    await projector.handle({
+      ...base,
+      type: "operation_progress",
+      item: {
+        id: "operation-late",
+        kind: "checked_status",
+        operation: "gateway",
+        title: "Late status after final",
+        createdAt: base.createdAt,
+      },
+    });
+    await projector.handle({ ...base, type: "assistant_final", text: "Done.", persisted: true });
+    await projector.handle({ ...base, type: "lifecycle_end", status: "completed", elapsedMs: 1, persisted: true });
+
+    expect(transport.calls).toEqual([
+      "sendProgress:Checking gateway so I can confirm the current state before changing anything.",
+      "editProgress:Completed.",
+      "sendFinal:Done.",
+    ]);
+    expect(transport.calls.join("\n")).not.toContain("Late status after final");
   });
 
   it("suppresses unchanged progress and final edits", async () => {

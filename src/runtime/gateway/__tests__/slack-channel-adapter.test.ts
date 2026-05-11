@@ -461,7 +461,7 @@ describe("SlackChannelAdapter — chat dispatch", () => {
     });
   });
 
-  it("projects Slack progress and final output through editable thread messages", async () => {
+  it("cleans Slack progress before projecting final output through editable thread messages", async () => {
     let nextTs = 1000;
     const fetchMock = vi.fn().mockImplementation(async () => ({
       ok: true,
@@ -499,25 +499,24 @@ describe("SlackChannelAdapter — chat dispatch", () => {
       url: String(url),
       body: JSON.parse(String((init as RequestInit).body ?? "{}")) as Record<string, unknown>,
     }));
-    expect(calls.filter((call) => call.url === "https://slack.com/api/chat.postMessage")).toHaveLength(2);
-    expect(calls).toEqual(expect.arrayContaining([
-      expect.objectContaining({
+    expect(calls).toEqual([
+      {
         url: "https://slack.com/api/chat.postMessage",
         body: expect.objectContaining({ text: "Checking the workspace search so I can find the relevant evidence before answering.", thread_ts: "123.456" }),
-      }),
-      expect.objectContaining({
-        url: "https://slack.com/api/chat.postMessage",
-        body: expect.objectContaining({ text: "Hel", thread_ts: "123.456" }),
-      }),
-      expect.objectContaining({
-        url: "https://slack.com/api/chat.update",
-        body: expect.objectContaining({ text: "Hello", ts: "1002" }),
-      }),
-      expect.objectContaining({
+      },
+      {
         url: "https://slack.com/api/chat.delete",
         body: expect.objectContaining({ ts: "1001" }),
-      }),
-    ]));
+      },
+      {
+        url: "https://slack.com/api/chat.postMessage",
+        body: expect.objectContaining({ text: "Hel", thread_ts: "123.456" }),
+      },
+      {
+        url: "https://slack.com/api/chat.update",
+        body: expect.objectContaining({ text: "Hello", ts: "1003" }),
+      },
+    ]);
   });
 
   it("does not post a separate Slack status for fast final answers", async () => {

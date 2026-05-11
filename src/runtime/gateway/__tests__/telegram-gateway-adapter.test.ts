@@ -776,6 +776,72 @@ describe("TelegramGatewayAdapter", () => {
     );
   });
 
+  it("does not render Telegram typing or progress after assistant output is visible", async () => {
+    const configDir = await writeConfig({
+      bot_token: "test-token",
+      allowed_user_ids: [42],
+      denied_user_ids: [],
+      allowed_chat_ids: [],
+      denied_chat_ids: [],
+      runtime_control_allowed_user_ids: [42],
+      chat_goal_map: {},
+      user_goal_map: {},
+      allow_all: true,
+      polling_timeout: 30,
+      identity_key: "seedy",
+    });
+    const calls: Array<{ method: string; text?: string; action?: string }> = [];
+    const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const method = String(url).split("/").at(-1) ?? "";
+      const body = JSON.parse(String(init?.body ?? "{}")) as { text?: string; action?: string };
+      calls.push({ method, text: body.text, action: body.action });
+      if (method === "sendMessage") return telegramResponse({ message_id: 9000 + calls.length });
+      if (method === "editMessageText") return telegramResponse(true);
+      if (method === "sendChatAction") return telegramResponse(true);
+      throw new Error(`unexpected Telegram method: ${method}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const adapter = TelegramGatewayAdapter.fromConfigDir(configDir);
+    adapters.push(adapter);
+    vi.mocked(dispatchGatewayChatInputResult).mockImplementationOnce(async (input) => {
+      await input.onEvent?.(assistantDeltaEvent("Done."));
+      await input.onEvent?.({
+        type: "operation_progress",
+        runId: "run-1",
+        turnId: "turn-1",
+        createdAt: "2026-05-10T00:00:02.000Z",
+        item: {
+          id: "operation-late",
+          kind: "checked_status",
+          operation: "gateway",
+          title: "Late status after final",
+          createdAt: "2026-05-10T00:00:02.000Z",
+        },
+      });
+      await input.onEvent?.(assistantFinalEvent("Done."));
+      await input.onEvent?.({
+        type: "lifecycle_end",
+        runId: "run-1",
+        turnId: "turn-1",
+        createdAt: "2026-05-10T00:00:03.000Z",
+        status: "completed",
+        elapsedMs: 1,
+        persisted: true,
+      });
+      return { status: "ok", text: "Done." };
+    });
+
+    await (adapter as unknown as {
+      processMessage(text: string, fromUserId: number, chatId: number, messageId: number): Promise<void>;
+    }).processMessage("hello", 42, 314, 2718);
+
+    const finalIndex = calls.findIndex((call) => call.method === "sendMessage" && call.text === "Done.");
+    expect(finalIndex).toBeGreaterThanOrEqual(0);
+    expect(calls.slice(finalIndex + 1)).toEqual([]);
+    expect(calls.some((call) => call.method === "sendChatAction")).toBe(false);
+    expect(calls.map((call) => call.text).join("\n")).not.toContain("Late status after final");
+  });
+
   it("renders shared agent timeline events in the Telegram channel without parsing TUI transcript text", async () => {
     const configDir = await writeConfig({
       bot_token: "test-token",
@@ -1217,6 +1283,17 @@ function assistantFinalEvent(text: string) {
     createdAt: "2026-05-10T00:00:01.000Z",
     text,
     persisted: true,
+  };
+}
+
+function assistantDeltaEvent(text: string) {
+  return {
+    type: "assistant_delta" as const,
+    runId: "run-1",
+    turnId: "turn-1",
+    createdAt: "2026-05-10T00:00:01.000Z",
+    delta: text,
+    text,
   };
 }
 
