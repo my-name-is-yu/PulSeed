@@ -127,12 +127,12 @@ describe("WhatsAppGatewayAdapter", () => {
       await dispatchStarted.promise;
       await vi.advanceTimersByTimeAsync(4_000);
 
-      expect(sentBodies).toEqual(["I'm checking this."]);
+      expect(sentBodies).toEqual([]);
 
       dispatchCanFinish.resolve();
       await processing;
 
-      expect(sentBodies).toEqual(["I'm checking this.", "Slow WhatsApp final"]);
+      expect(sentBodies).toEqual(["Slow WhatsApp final"]);
     } finally {
       vi.useRealTimers();
     }

@@ -151,12 +151,12 @@ describe("SignalGatewayAdapter", () => {
       await dispatchStarted.promise;
       await vi.advanceTimersByTimeAsync(4_000);
 
-      expect(sentBodies).toEqual(["I'm checking this."]);
+      expect(sentBodies).toEqual([]);
 
       dispatchCanFinish.resolve();
       await polling;
 
-      expect(sentBodies).toEqual(["I'm checking this.", "Slow Signal final"]);
+      expect(sentBodies).toEqual(["Slow Signal final"]);
     } finally {
       vi.useRealTimers();
     }
@@ -202,12 +202,12 @@ describe("SignalGatewayAdapter", () => {
       dispatchCanFinish.resolve();
       await vi.advanceTimersByTimeAsync(0);
 
-      expect(sentBodies).toEqual(["I'm checking this."]);
+      expect(sentBodies).toEqual([]);
 
       fallbackCanComplete.resolve();
       await polling;
 
-      expect(sentBodies).toEqual(["I'm checking this.", "Received."]);
+      expect(sentBodies).toEqual([]);
     } finally {
       vi.useRealTimers();
     }

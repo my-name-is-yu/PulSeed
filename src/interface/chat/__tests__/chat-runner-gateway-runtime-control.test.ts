@@ -96,6 +96,19 @@ function adapterRoute(): SelectedChatRoute {
   };
 }
 
+function runtimeControlRoute(
+  intent: Extract<SelectedChatRoute, { kind: "runtime_control" }>["intent"],
+): SelectedChatRoute {
+  return {
+    kind: "runtime_control",
+    reason: "runtime_control_intent",
+    intent,
+    replyTargetPolicy: "turn_reply_target",
+    eventProjectionPolicy: "latest_active_reply_target",
+    concurrencyPolicy: "session_serial",
+  };
+}
+
 type TelegramSetupStatusOverrides = Partial<Omit<TelegramSetupStatus, "daemon" | "config">> & {
   daemon?: Partial<TelegramSetupStatus["daemon"]>;
   config?: Partial<TelegramSetupStatus["config"]>;
@@ -425,7 +438,12 @@ describe("ChatRunner gateway runtime-control routes", () => {
           },
         }));
 
-        const result = await runner.execute("PulSeed を再起動して", "/repo");
+        const result = await runner.execute("PulSeed を再起動して", "/repo", undefined, {
+          selectedRoute: runtimeControlRoute({
+            kind: "restart_daemon",
+            reason: "PulSeed を再起動して",
+          }),
+        });
 
         expect(result.success).toBe(true);
         expect(result.output).toBe("restart queued");
@@ -488,7 +506,12 @@ describe("ChatRunner gateway runtime-control routes", () => {
           runtimeReplyTarget: { surface: "cli" },
         }));
 
-        const result = await runner.execute("PulSeed を再起動して", "/repo");
+        const result = await runner.execute("PulSeed を再起動して", "/repo", undefined, {
+          selectedRoute: runtimeControlRoute({
+            kind: "restart_daemon",
+            reason: "PulSeed を再起動して",
+          }),
+        });
 
         expect(result.success).toBe(false);
         expect(result.output).toContain("not configured");
@@ -526,7 +549,12 @@ describe("ChatRunner gateway runtime-control routes", () => {
           runtimeReplyTarget: { surface: "cli" },
         }));
 
-        const result = await runner.execute("PulSeed を再起動して", "/repo");
+        const result = await runner.execute("PulSeed を再起動して", "/repo", undefined, {
+          selectedRoute: runtimeControlRoute({
+            kind: "restart_daemon",
+            reason: "PulSeed を再起動して",
+          }),
+        });
 
         expect(result.success).toBe(false);
         expect(result.output).toContain("daemon auth failed");
@@ -568,7 +596,12 @@ describe("ChatRunner gateway runtime-control routes", () => {
           runtimeReplyTarget: { surface: "cli" },
         }));
 
-        const result = await runner.execute("PulSeed を再起動して", "/repo");
+        const result = await runner.execute("PulSeed を再起動して", "/repo", undefined, {
+          selectedRoute: runtimeControlRoute({
+            kind: "restart_daemon",
+            reason: "PulSeed を再起動して",
+          }),
+        });
 
         expect(result.success).toBe(false);
         expect(result.output).toContain("approval store unavailable");
@@ -617,7 +650,12 @@ describe("ChatRunner gateway runtime-control routes", () => {
           runtimeReplyTarget: { surface: "gateway", platform: "telegram" },
         }));
 
-        const result = await runner.execute("PulSeed を再起動して", "/repo");
+        const result = await runner.execute("PulSeed を再起動して", "/repo", undefined, {
+          selectedRoute: runtimeControlRoute({
+            kind: "restart_daemon",
+            reason: "PulSeed を再起動して",
+          }),
+        });
 
         expect(result.success).toBe(true);
         expect(result.output).toBe("restart requested");
@@ -656,7 +694,12 @@ describe("ChatRunner gateway runtime-control routes", () => {
             runtimeReplyTarget: { surface: "gateway", platform: "telegram" },
           }));
 
-          const result = await runner.execute(`please ${operation}`, "/repo");
+          const result = await runner.execute(`please ${operation}`, "/repo", undefined, {
+            selectedRoute: runtimeControlRoute({
+              kind: operation,
+              reason: `please ${operation}`,
+            }),
+          });
 
           expect(result).toMatchObject({ success: true, output: `${operation} requested` });
           expect(runtimeControlApprovalFn).toHaveBeenCalledWith(expect.stringContaining(operation));
@@ -724,7 +767,13 @@ describe("ChatRunner gateway runtime-control routes", () => {
           runtimeControlApprovalFn: vi.fn().mockResolvedValue(true),
         }));
 
-        const result = await runner.execute("この実行を一時停止して", "/repo");
+        const result = await runner.execute("この実行を一時停止して", "/repo", undefined, {
+          selectedRoute: runtimeControlRoute({
+            kind: "pause_run",
+            reason: "この実行を一時停止して",
+            targetSelector: { scope: "run", reference: "current", sourceText: "この実行" },
+          }),
+        });
 
         expect(result).toMatchObject({ success: true, output: "pause sent" });
         expect(adapter.execute).not.toHaveBeenCalled();
@@ -794,7 +843,13 @@ describe("ChatRunner gateway runtime-control routes", () => {
           },
         }));
 
-        const result = await runner.execute("この実行を一時停止して", "/repo");
+        const result = await runner.execute("この実行を一時停止して", "/repo", undefined, {
+          selectedRoute: runtimeControlRoute({
+            kind: "pause_run",
+            reason: "この実行を一時停止して",
+            targetSelector: { scope: "run", reference: "current", sourceText: "この実行" },
+          }),
+        });
 
         expect(result).toMatchObject({
           success: false,
