@@ -1316,7 +1316,7 @@ describe("CrossPlatformChatSessionManager", () => {
       conversation_id: "gateway-model-timeout-abort",
       user_id: "user-1",
       cwd: "/repo",
-      timeoutMs: 10,
+      timeoutMs: 1_000,
     });
 
     expect(result.success).toBe(false);
@@ -1363,7 +1363,7 @@ describe("CrossPlatformChatSessionManager", () => {
       conversation_id: "gateway-tool-timeout-abort",
       user_id: "user-1",
       cwd: "/repo",
-      timeoutMs: 10,
+      timeoutMs: 1_000,
     });
 
     expect(result.success).toBe(false);
