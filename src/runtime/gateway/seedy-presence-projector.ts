@@ -179,6 +179,7 @@ export class SeedyPresenceProjector {
 
   private ensureFallbackTimer(presence: SeedyTurnPresence): void {
     if (!this.shouldUseFallbackAck()) return;
+    if (!this.shouldProjectUserVisiblePresence(presence)) return;
     if (this.fallbackAckSent || this.fallbackAckInFlight || this.fallbackTimer !== null || this.terminal) return;
     const delayMs = this.capabilities.fallbackAckDelayMs;
     if (delayMs <= 0) return;
@@ -286,12 +287,16 @@ export class SeedyPresenceProjector {
 
   private shouldProjectEditableStatus(presence: SeedyTurnPresence): boolean {
     if (!this.capabilities.canEditStatus) return false;
-    if (this.capabilities.surfaceKind === "editable_status") return true;
-    if (!this.capabilities.canShowNativeEphemeral) return true;
+    return this.shouldProjectUserVisiblePresence(presence);
+  }
+
+  private shouldProjectUserVisiblePresence(presence: SeedyTurnPresence): boolean {
     return presence.phase === "waiting"
       || presence.phase === "blocked"
       || presence.importance === "action_required"
-      || presence.importance === "blocked";
+      || presence.importance === "blocked"
+      || presence.expected_next === "approval"
+      || presence.expected_next === "user_input";
   }
 
   private async handleAssistantDelta(projection: SeedyPresenceEventProjection): Promise<void> {

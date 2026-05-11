@@ -14,10 +14,12 @@ import {
   registerGatewayChatSessionPort,
 } from "../chat-session-port.js";
 import {
+  SLACK_GATEWAY_DISPLAY_CONTRACT,
   TELEGRAM_GATEWAY_DISPLAY_CONTRACT,
   createGatewayDisplayPolicy,
 } from "../channel-display-policy.js";
 import {
+  SLACK_SEEDY_PRESENCE_CONTRACT,
   TELEGRAM_SEEDY_PRESENCE_CONTRACT,
   resolveGatewayChannelPresenceContract,
 } from "../channel-presence-policy.js";
@@ -354,6 +356,81 @@ describe("gateway direct chat first visible projection", () => {
 
     expect(transport.sendFallbackAck).not.toHaveBeenCalled();
     expect(projector.hasSentFallbackAck).toBe(false);
+  });
+
+  it("does not project Slack editable progress before delayed ordinary model-authored final text", async () => {
+    const events: ChatEvent[] = [];
+    const transport = createRecordingTransport();
+    const displayProjector = new NonTuiDisplayProjector({
+      display: {
+        capabilities: SLACK_GATEWAY_DISPLAY_CONTRACT.capabilities,
+        policy: createGatewayDisplayPolicy(SLACK_GATEWAY_DISPLAY_CONTRACT.capabilities),
+      },
+      transport,
+    });
+    const presenceProjector = new SeedyPresenceProjector({
+      presence: resolveGatewayChannelPresenceContract(SLACK_SEEDY_PRESENCE_CONTRACT),
+      transport: createSeedyPresenceTransportFromNonTuiDisplay(transport),
+    });
+    const firstDeltaGate = createDeferred<void>();
+    let modelRequestStarted = false;
+    const llmClient: ILLMClient = {
+      supportsToolCalling: () => true,
+      sendMessage: vi.fn(async () => {
+        throw new Error("sendMessage should not be used.");
+      }),
+      sendMessageStream: vi.fn(async (_messages, _options, handlers) => {
+        modelRequestStarted = true;
+        await firstDeltaGate.promise;
+        handlers.onTextDelta?.("Hello.");
+        return {
+          content: "Hello.",
+          usage: { input_tokens: 1, output_tokens: 1 },
+          stop_reason: "end_turn",
+          tool_calls: [],
+        };
+      }),
+      parseJSON: vi.fn((content: string, schema: z.ZodType) => schema.parse(JSON.parse(content))),
+    };
+    const manager = new CrossPlatformChatSessionManager(makeDeps({
+      llmClient,
+      registry: new ToolRegistry(),
+    }));
+    registerGatewayChatSessionPort(async () => manager);
+
+    const pending = dispatchGatewayChatInput({
+      text: "hello",
+      platform: "slack",
+      identity_key: "fake-slack-user",
+      conversation_id: "fake-slack-channel",
+      sender_id: "fake-slack-user",
+      message_id: "fake-slack-message",
+      cwd: "/repo",
+      onEvent: async (event) => {
+        const chatEvent = event as unknown as ChatEvent;
+        events.push(chatEvent);
+        await displayProjector.handle(chatEvent);
+        await presenceProjector.prepareForEvent(chatEvent);
+        await presenceProjector.handle(chatEvent, {
+          assistantOutputRendered: displayProjector.deliveredAssistantOutput,
+          meaningfulProgressRendered: displayProjector.deliveredProgressOutput,
+        });
+      },
+    });
+
+    await waitUntil(() => modelRequestStarted);
+    await new Promise((resolve) => setTimeout(resolve, 2_100));
+
+    expect(transport.calls.some((call) => call.kind.startsWith("progress"))).toBe(false);
+    expect(events.filter((event) => event.type === "presence_update").map((event) => event.presence.phase))
+      .toEqual(expect.arrayContaining(["received", "orienting", "thinking"]));
+
+    firstDeltaGate.resolve();
+    await expect(pending).resolves.toBe("Hello.");
+    expect(transport.calls[0]).toMatchObject({
+      kind: "final_send",
+      text: "Hello.",
+    });
   });
 
   it("keeps approval-required gateway tool calls visible as natural-language permission requests before execution", async () => {

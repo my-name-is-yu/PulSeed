@@ -597,6 +597,58 @@ async function readCodexResponsesStream(
   const toolCalls = new Map<string, ToolCallResult>();
   const toolArgumentBuffers = new Map<string, string>();
   const toolCallIdsByItemId = new Map<string, string>();
+  const handleEvent = (event: Record<string, unknown>): void => {
+    if (event.type === "response.output_text.delta" || event.type === "response.refusal.delta") {
+      const delta = typeof event.delta === "string" ? event.delta : "";
+      if (delta) {
+        content += delta;
+        handlers.onTextDelta?.(delta);
+      }
+    } else if (event.type === "response.output_item.added" && isRecord(event.item) && event.item["type"] === "function_call") {
+      rememberResponseToolCall(toolCallIdsByItemId, event.item);
+      upsertToolCall(toolCalls, event.item, toolArgumentBuffers.get(responseToolCallItemId(event.item)));
+    } else if (event.type === "response.function_call_arguments.delta") {
+      const itemId = responseToolCallItemId(event);
+      const delta = typeof event.delta === "string" ? event.delta : "";
+      toolArgumentBuffers.set(itemId, `${toolArgumentBuffers.get(itemId) ?? ""}${delta}`);
+    } else if (event.type === "response.function_call_arguments.done") {
+      const itemId = responseToolCallItemId(event);
+      if (typeof event.arguments === "string") {
+        toolArgumentBuffers.set(itemId, event.arguments);
+      }
+      if (typeof event.call_id === "string" || typeof event.id === "string" || typeof event.name === "string") {
+        rememberResponseToolCall(toolCallIdsByItemId, event);
+      }
+      const callId = toolCallIdsByItemId.get(itemId);
+      const existing = callId ? toolCalls.get(callId) : undefined;
+      if (callId && existing) {
+        toolCalls.set(callId, {
+          ...existing,
+          function: {
+            ...existing.function,
+            arguments: toolArgumentBuffers.get(itemId) ?? existing.function.arguments,
+          },
+        });
+      } else if (callId) {
+        upsertToolCall(toolCalls, event, toolArgumentBuffers.get(itemId));
+      }
+    } else if (event.type === "response.output_item.done" && isRecord(event.item) && event.item["type"] === "function_call") {
+      rememberResponseToolCall(toolCallIdsByItemId, event.item);
+      upsertToolCall(toolCalls, event.item, toolArgumentBuffers.get(responseToolCallItemId(event.item)));
+    } else if (event.type === "response.completed" || event.type === "response.done") {
+      finalResponse = isRecord(event.response) ? event.response : {};
+    } else if (event.type === "response.incomplete") {
+      const response = isRecord(event.response) ? event.response : undefined;
+      const details = isRecord(response?.["incomplete_details"]) ? response["incomplete_details"] : undefined;
+      throw new LLMError(`CodexLLMClient: Codex Responses stream incomplete: ${String(details?.["reason"] ?? response?.["status"] ?? "unknown reason")}`);
+    } else if (event.type === "response.failed") {
+      const response = isRecord(event.response) ? event.response : undefined;
+      const error = isRecord(response?.["error"]) ? response["error"] : undefined;
+      throw new LLMError(`CodexLLMClient: Codex Responses stream failed: ${String(error?.["message"] ?? response?.["status"] ?? "unknown failure")}`);
+    } else if (event.type === "error") {
+      throw new LLMError(`CodexLLMClient: Codex Responses stream error: ${String(event.message ?? "unknown error")}`);
+    }
+  };
 
   while (true) {
     if (abortSignal.aborted) {
@@ -605,58 +657,20 @@ async function readCodexResponsesStream(
     const chunk = await reader.read();
     if (chunk.done) break;
     buffer += decoder.decode(chunk.value, { stream: true });
-    let frameEnd = buffer.indexOf("\n\n");
-    while (frameEnd >= 0) {
-      const frame = buffer.slice(0, frameEnd);
-      buffer = buffer.slice(frameEnd + 2);
+    let frameBoundary = findSseFrameBoundary(buffer);
+    while (frameBoundary !== null) {
+      const frame = buffer.slice(0, frameBoundary.index);
+      buffer = buffer.slice(frameBoundary.index + frameBoundary.length);
       for (const event of parseSseFrame(frame)) {
-        if (event.type === "response.output_text.delta" || event.type === "response.refusal.delta") {
-          const delta = typeof event.delta === "string" ? event.delta : "";
-          if (delta) {
-            content += delta;
-            handlers.onTextDelta?.(delta);
-          }
-        } else if (event.type === "response.output_item.added" && isRecord(event.item) && event.item["type"] === "function_call") {
-          rememberResponseToolCall(toolCallIdsByItemId, event.item);
-          upsertToolCall(toolCalls, event.item, toolArgumentBuffers.get(responseToolCallItemId(event.item)));
-        } else if (event.type === "response.function_call_arguments.delta") {
-          const itemId = responseToolCallItemId(event);
-          const delta = typeof event.delta === "string" ? event.delta : "";
-          toolArgumentBuffers.set(itemId, `${toolArgumentBuffers.get(itemId) ?? ""}${delta}`);
-        } else if (event.type === "response.function_call_arguments.done") {
-          const itemId = responseToolCallItemId(event);
-          if (typeof event.arguments === "string") {
-            toolArgumentBuffers.set(itemId, event.arguments);
-          }
-          const callId = toolCallIdsByItemId.get(itemId);
-          const existing = callId ? toolCalls.get(callId) : undefined;
-          if (callId && existing) {
-            toolCalls.set(callId, {
-              ...existing,
-              function: {
-                ...existing.function,
-                arguments: toolArgumentBuffers.get(itemId) ?? existing.function.arguments,
-              },
-            });
-          }
-        } else if (event.type === "response.output_item.done" && isRecord(event.item) && event.item["type"] === "function_call") {
-          rememberResponseToolCall(toolCallIdsByItemId, event.item);
-          upsertToolCall(toolCalls, event.item, toolArgumentBuffers.get(responseToolCallItemId(event.item)));
-        } else if (event.type === "response.completed" || event.type === "response.done") {
-          finalResponse = isRecord(event.response) ? event.response : {};
-        } else if (event.type === "response.incomplete") {
-          const response = isRecord(event.response) ? event.response : undefined;
-          const details = isRecord(response?.["incomplete_details"]) ? response["incomplete_details"] : undefined;
-          throw new LLMError(`CodexLLMClient: Codex Responses stream incomplete: ${String(details?.["reason"] ?? response?.["status"] ?? "unknown reason")}`);
-        } else if (event.type === "response.failed") {
-          const response = isRecord(event.response) ? event.response : undefined;
-          const error = isRecord(response?.["error"]) ? response["error"] : undefined;
-          throw new LLMError(`CodexLLMClient: Codex Responses stream failed: ${String(error?.["message"] ?? response?.["status"] ?? "unknown failure")}`);
-        } else if (event.type === "error") {
-          throw new LLMError(`CodexLLMClient: Codex Responses stream error: ${String(event.message ?? "unknown error")}`);
-        }
+        handleEvent(event);
       }
-      frameEnd = buffer.indexOf("\n\n");
+      frameBoundary = findSseFrameBoundary(buffer);
+    }
+  }
+  buffer += decoder.decode();
+  if (buffer.trim()) {
+    for (const event of parseSseFrame(buffer)) {
+      handleEvent(event);
     }
   }
   if (!finalResponse) {
@@ -665,20 +679,28 @@ async function readCodexResponsesStream(
   return responseFromCodexResponses(finalResponse, content, [...toolCalls.values()]);
 }
 
+function findSseFrameBoundary(buffer: string): { index: number; length: number } | null {
+  const match = /(?:\r\n|\r|\n)(?:\r\n|\r|\n)/.exec(buffer);
+  return match ? { index: match.index, length: match[0].length } : null;
+}
+
 function parseSseFrame(frame: string): Record<string, unknown>[] {
-  return frame
-    .split(/\n/)
+  const data = frame
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .split("\n")
     .filter((line) => line.startsWith("data:"))
-    .map((line) => line.slice(5).trim())
-    .filter((line) => line && line !== "[DONE]")
-    .flatMap((line) => {
-      try {
-        const parsed = JSON.parse(line) as unknown;
-        return isRecord(parsed) ? [parsed] : [];
-      } catch {
-        return [];
-      }
-    });
+    .map((line) => line.slice(5).replace(/^ /, ""))
+    .join("\n")
+    .trim();
+  if (!data || data === "[DONE]") return [];
+
+  try {
+    const parsed = JSON.parse(data) as unknown;
+    return isRecord(parsed) ? [parsed] : [];
+  } catch {
+    return [];
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

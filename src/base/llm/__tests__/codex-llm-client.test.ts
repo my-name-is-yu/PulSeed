@@ -88,8 +88,8 @@ function makeJwt(expOffsetSeconds = 3600, extraPayload: Record<string, unknown> 
   ].join(".");
 }
 
-function sseFrame(event: Record<string, unknown>): Uint8Array {
-  return new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`);
+function sseFrame(event: Record<string, unknown>, terminator = "\n\n"): Uint8Array {
+  return new TextEncoder().encode(`data: ${JSON.stringify(event)}${terminator}`);
 }
 
 // ─── Tests ───
@@ -259,6 +259,78 @@ describe("CodexLLMClient", () => {
         type: "function",
         function: { name: "check_readme", arguments: "{\"path\":\"README.md\"}" },
       }]);
+    });
+
+    it("preserves tool calls when arguments.done is the first tool-call event", async () => {
+      vi.stubGlobal("fetch", vi.fn(async () => new Response(new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(sseFrame({
+            type: "response.function_call_arguments.done",
+            call_id: "call_1",
+            name: "check_readme",
+            arguments: "{\"path\":\"README.md\"}",
+          }));
+          controller.enqueue(sseFrame({
+            type: "response.completed",
+            response: { status: "completed", usage: { input_tokens: 1, output_tokens: 1 } },
+          }));
+          controller.close();
+        },
+      }), { status: 200 })));
+      const client = new CodexLLMClient({ apiKey: makeJwt() });
+
+      const response = await client.sendMessageStream(
+        [{ role: "user", content: "READMEある？" }],
+        {
+          tools: [{
+            type: "function",
+            function: {
+              name: "check_readme",
+              description: "Check README",
+              parameters: { type: "object", properties: {} },
+            },
+          }],
+        },
+        {},
+      );
+
+      expect(response.tool_calls).toEqual([{
+        id: "call_1",
+        type: "function",
+        function: { name: "check_readme", arguments: "{\"path\":\"README.md\"}" },
+      }]);
+    });
+
+    it("parses CRLF-delimited and EOF-terminated OAuth-backed Responses SSE frames", async () => {
+      vi.stubGlobal("fetch", vi.fn(async () => new Response(new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(sseFrame({ type: "response.output_text.delta", delta: "Hello" }, "\r\n\r\n"));
+          controller.enqueue(sseFrame({
+            type: "response.completed",
+            response: {
+              status: "completed",
+              output_text: "Hello",
+              usage: { input_tokens: 1, output_tokens: 1 },
+            },
+          }, ""));
+          controller.close();
+        },
+      }), { status: 200 })));
+      const deltas: string[] = [];
+      const client = new CodexLLMClient({ apiKey: makeJwt() });
+
+      const response = await client.sendMessageStream(
+        [{ role: "user", content: "hello" }],
+        { tools: [] },
+        { onTextDelta: (delta) => { deltas.push(delta); } },
+      );
+
+      expect(deltas).toEqual(["Hello"]);
+      expect(response).toMatchObject({
+        content: "Hello",
+        usage: { input_tokens: 1, output_tokens: 1 },
+        stop_reason: "completed",
+      });
     });
 
     it("does not send OAuth tokens to non-ChatGPT base URLs", async () => {
