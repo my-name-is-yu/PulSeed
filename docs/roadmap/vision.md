@@ -43,6 +43,12 @@ right capability when help is needed**.
 
 ## 3. The World PulSeed Enables
 
+The examples in this section describe product direction, not complete workflows
+available in the current package. They are not medical, veterinary, financial,
+legal, or business advice. Current behavior is documented in
+[Runtime](../runtime.md), [Configuration](../configuration.md), and
+[Status](../status.md).
+
 ### Tell It Your Goal, Then Let Go
 
 "I want to live happily with my dog." "I want to double revenue." — Just tell it your goal. PulSeed takes it on, figures out what needs to be done, delegates to agents, observes the results, and decides the next action. When a session ends, when a day passes, when a month passes — it keeps moving until the goal is achieved.

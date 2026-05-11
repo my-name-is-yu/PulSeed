@@ -6,21 +6,34 @@ This page summarizes current behavior. For exact commands, use
 [CLI Reference](reference/cli.md). For current package version and release
 history, see [CHANGELOG](../CHANGELOG.md).
 
-## In Active Use
+## Recommended Today
+
+Use these first when you want the current, best-supported path:
 
 - npm package `pulseed` with Node.js 22/24 support
 - bare `pulseed` interactive TUI entry point
-- long-running `DurableLoop` control
-- bounded `AgentLoop` execution
-- provider setup for OpenAI, Anthropic, and Ollama paths
-- CLI, TUI, chat, daemon, schedule, gateway, plugin, skill, memory, and runtime
-  diagnostic surfaces
-- local state under `~/.pulseed/`
+- `pulseed setup` provider configuration for OpenAI, Anthropic, and Ollama paths
+- long-running goal operation through `DurableLoop`
+- bounded tool-using work through `AgentLoop` when the selected provider/model
+  and adapter support it
+- local state under `~/.pulseed/`, or an isolated directory via `PULSEED_HOME`
+- CLI inspection through `pulseed status`, `pulseed report`, `pulseed runtime`,
+  `pulseed logs`, and `pulseed doctor`
+- docs link checking through `npm run check:docs`
+
+## Advanced Or Operator-Facing
+
+These surfaces exist, but they are better treated as operator or integration
+interfaces than as the first thing a new user should try:
+
+- daemon and resident background operation
 - schedule layers for heartbeat, probe, cron, and goal-trigger entries
 - gateway channel configuration for Telegram, WhatsApp webhook, Signal bridge,
   and Discord bot paths
+- notification routing
+- plugin, skill, playbook, datasource, knowledge, memory, profile, usage, and
+  runtime diagnostic commands
 - non-destructive memory correction/governance commands
-- docs link checking through `npm run check:docs`
 
 ## Supported Direction
 
@@ -63,7 +76,7 @@ Normal user-facing surfaces should show the next safe action. Operator and debug
 surfaces may show raw readiness, admission, autonomy, warning, and evidence
 details.
 
-## Not Public-Current
+## Not Current Operating Behavior
 
 The following belong in roadmap or design documents until code-backed behavior is
 present and documented:

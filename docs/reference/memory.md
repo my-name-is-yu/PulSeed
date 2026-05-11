@@ -5,9 +5,9 @@ PulSeed exposes auditable memory operations through `pulseed memory`.
 ## Operations
 
 ```bash
-pulseed memory correct <kind:id> --value "..."
-pulseed memory forget <kind:id> --reason "..."
-pulseed memory retract <kind:id> --reason "..."
+pulseed memory correct <kind:id> --value "Prefer concise reports"
+pulseed memory forget <kind:id> --reason "No longer true"
+pulseed memory retract <kind:id> --reason "Added by mistake"
 pulseed memory history <kind:id>
 pulseed memory export [--consent-scope id] [--include-secret]
 ```

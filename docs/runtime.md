@@ -122,7 +122,8 @@ pulseed runtime experiment-queues [--json]
 pulseed runtime experiment-queue <id> [--json]
 pulseed runtime bindings [--json]
 pulseed runtime proactive-quality [--json]
-pulseed runtime proactive-feedback ...
+pulseed runtime proactive-feedback --intervention <id> --outcome accepted
+pulseed runtime proactive-feedback --intervention <id> --outcome overreach --overreach-indicator too_frequent --reason "Too frequent"
 ```
 
 These are operator and debugging surfaces. They may expose raw IDs and
@@ -186,9 +187,9 @@ pulseed plugin install <path|package>
 pulseed plugin search <keyword>
 pulseed skills list
 pulseed playbook list
-pulseed memory correct <kind:id> --value "..."
-pulseed memory forget <kind:id> --reason "..."
-pulseed memory retract <kind:id> --reason "..."
+pulseed memory correct <kind:id> --value "Prefer concise reports"
+pulseed memory forget <kind:id> --reason "No longer true"
+pulseed memory retract <kind:id> --reason "Added by mistake"
 pulseed memory history <kind:id>
 pulseed memory export
 ```

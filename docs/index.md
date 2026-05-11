@@ -70,6 +70,22 @@ details.
 
 - [Design Index](design/index.md)
 
+## Retired Thin Paths
+
+The docs tree intentionally avoids folders that only exist to hold a single
+`index.md`. These paths were flattened in favor of direct pages:
+
+- `docs/start/index.md` -> [Getting Started](getting-started.md)
+- `docs/guide/index.md` -> [Guide](guide.md)
+- `docs/concepts/index.md` -> [Concepts](concepts.md)
+- `docs/architecture/index.md` -> [Architecture](architecture.md)
+- `docs/design/audits/docs-audit/` -> `docs/design/audits/`
+- `docs/design/archive/design/` -> `docs/design/archive/`
+
+Do not recreate those directories as compatibility-only stubs unless the docs
+hosting layer gains real redirects. A placeholder folder makes the source tree
+look deeper than the reader path actually is.
+
 ## Source Of Truth
 
 When docs overlap, prefer the most specific page for the topic:

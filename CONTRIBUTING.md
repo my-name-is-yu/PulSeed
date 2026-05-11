@@ -82,7 +82,7 @@ Use the script that matches the part of the system you are editing:
 - `npm run typecheck`
   Verifies TypeScript correctness without writing build output, using an incremental cache separate from the production build cache.
 - `npm run tui`
-  Launches the terminal UI from `dist/tui/entry.js`. Build first so the output is current.
+  Launches the terminal UI from `dist/interface/tui/entry.js`. Build first so the output is current.
 
 Example iteration loop for a change in the core loop or adapters:
 
@@ -112,8 +112,12 @@ Example workflow for a CLI change:
 
 ```bash
 npm run build
-node dist/cli-runner.js status
-node dist/cli-runner.js report
+export PULSEED_HOME="$(mktemp -d)"
+node dist/interface/cli/cli-runner.js goal add "Verify CLI behavior" --no-refine
+node dist/interface/cli/cli-runner.js goal list
+node dist/interface/cli/cli-runner.js status --goal <goal-id>
+node dist/interface/cli/cli-runner.js report --goal <goal-id>
+rm -rf "$PULSEED_HOME"
 ```
 
 ### Provider Configuration
@@ -174,12 +178,19 @@ Before reporting test or manual-run results, be explicit about whether you used:
 Example manual verification session:
 
 ```bash
-rm -rf ~/.pulseed
+export PULSEED_HOME="$(mktemp -d)"
 npm run build
-node dist/cli-runner.js goal add "Create a comprehensive README for this project"
-node dist/cli-runner.js run
-node dist/cli-runner.js report
+node dist/interface/cli/cli-runner.js goal add "Create a comprehensive README for this project" --no-refine
+node dist/interface/cli/cli-runner.js goal list
+node dist/interface/cli/cli-runner.js status --goal <goal-id>
+node dist/interface/cli/cli-runner.js report --goal <goal-id>
+rm -rf "$PULSEED_HOME"
 ```
+
+Replace `<goal-id>` with the goal ID printed by `goal add` or `goal list`. Use
+`PULSEED_HOME="$(mktemp -d)"` for manual checks so contributor verification does
+not delete or mutate real `~/.pulseed/` state. Only remove `~/.pulseed/` when
+you intentionally want to delete your real local PulSeed data.
 
 Best practices:
 
@@ -270,7 +281,7 @@ Use a structure close to the following:
 - npm run build
 - npm test
 - npm run typecheck
-- Manual: `node dist/cli-runner.js report` with a clean `~/.pulseed/`
+- Manual: `PULSEED_HOME="$(mktemp -d)" node dist/interface/cli/cli-runner.js report --goal <goal-id>`
 
 ## Notes
 - Manual verification used a cleaned local state directory
@@ -389,7 +400,7 @@ Changes in these areas should:
 - make failure modes explicit
 - avoid silent format changes to persisted state
 - be described clearly in the pull request with reproduction steps
-- keep command examples in documentation aligned with the actual built entry point `node dist/cli-runner.js` or the packaged `pulseed` binary
+- keep command examples in documentation aligned with the actual built entry point `node dist/interface/cli/cli-runner.js` or the packaged `pulseed` binary
 
 If you change user-visible output, include an example in tests or in the pull request description.
 

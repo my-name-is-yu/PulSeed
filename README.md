@@ -26,6 +26,25 @@ the runtime through the CLI, TUI, daemon, schedules, chat, and gateway surfaces.
 Product direction beyond that current runtime is documented separately from
 current behavior.
 
+## Is PulSeed For Me?
+
+Try PulSeed today if you want to:
+
+- keep a long-running goal and its evidence outside a single chat session
+- run goal work from a local CLI/TUI with inspectable state under `~/.pulseed/`
+- experiment with daemon, schedule, gateway, plugin, memory, and diagnostic
+  surfaces while keeping current behavior separate from future roadmap ideas
+
+PulSeed is not yet:
+
+- a turnkey personal-life automation product
+- a medical, financial, legal, or business-decision advisor
+- a complete sandbox for untrusted commands, plugins, provider tools, or local
+  backends
+
+Recommended first step: install PulSeed, run `pulseed`, complete provider setup,
+and try one low-risk goal in a disposable workspace.
+
 ## Quick Start
 
 PulSeed supports Node.js 22 or 24.
