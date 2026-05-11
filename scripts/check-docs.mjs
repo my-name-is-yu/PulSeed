@@ -21,6 +21,41 @@ const ignoredDirNames = new Set([
 ]);
 const ignoredRelativeDirs = new Set(['docs/archive']);
 const ignoredFileNames = new Set(['package-lock.json', 'pnpm-lock.yaml', 'yarn.lock', 'npm-shrinkwrap.json']);
+const publicCurrentFiles = new Set([
+  'README.md',
+  'CONTRIBUTING.md',
+  'docs/index.md',
+  'docs/getting-started.md',
+  'docs/runtime.md',
+  'docs/mechanism.md',
+  'docs/configuration.md',
+  'docs/status.md',
+  'docs/architecture-map.md',
+  'docs/module-map.md',
+]);
+const publicCurrentDirs = [
+  'docs/start/',
+  'docs/guide/',
+  'docs/concepts/',
+  'docs/reference/',
+  'docs/architecture/',
+];
+const docsWithRequiredStatus = [
+  {
+    label: 'roadmap or future-direction document',
+    matches: (relativePath) => relativePath.startsWith('docs/roadmap/') && relativePath !== 'docs/roadmap/index.md',
+  },
+  {
+    label: 'internal design note',
+    matches: (relativePath) => relativePath.startsWith('docs/internal/design/') && relativePath !== 'docs/internal/design/index.md',
+  },
+  {
+    label: 'archived design note',
+    matches: (relativePath) =>
+      relativePath.startsWith('docs/internal/archive/design/') &&
+      relativePath !== 'docs/internal/archive/design/index.md',
+  },
+];
 
 const markdownFiles = collectMarkdownFiles(repoRoot);
 const issues = [];
@@ -29,6 +64,13 @@ for (const filePath of markdownFiles) {
   const relativePath = path.relative(repoRoot, filePath) || path.basename(filePath);
   const content = fs.readFileSync(filePath, 'utf8');
   const lines = content.split(/\r?\n/);
+
+  for (const rule of docsWithRequiredStatus) {
+    if (rule.matches(relativePath) && !hasStatusBanner(lines)) {
+      issues.push(formatIssue(relativePath, 1, `${rule.label} is missing a '> Status:' banner near the top`));
+    }
+  }
+
   const fenceState = {
     inFence: false,
     fenceChar: null,
@@ -83,6 +125,13 @@ for (const filePath of markdownFiles) {
       const resolvedPath = path.resolve(path.dirname(filePath), normalizedTarget);
       if (!fileExists(resolvedPath)) {
         issues.push(formatIssue(relativePath, lineNumber, `missing Markdown link target: ${normalizedTarget}`));
+        continue;
+      }
+
+      const targetRelativePath = path.relative(repoRoot, resolvedPath);
+      const boundaryIssue = getPublicBoundaryIssue(relativePath, targetRelativePath);
+      if (boundaryIssue) {
+        issues.push(formatIssue(relativePath, lineNumber, boundaryIssue));
       }
     }
   }
@@ -183,6 +232,37 @@ function normalizeMarkdownTarget(rawTarget) {
   }
 
   return pathPart;
+}
+
+function hasStatusBanner(lines) {
+  return lines.slice(0, 8).some((line) => line.startsWith('> Status:'));
+}
+
+function isPublicCurrentDoc(relativePath) {
+  if (publicCurrentFiles.has(relativePath)) {
+    return true;
+  }
+
+  return publicCurrentDirs.some((dir) => relativePath.startsWith(dir));
+}
+
+function getPublicBoundaryIssue(sourceRelativePath, targetRelativePath) {
+  if (!isPublicCurrentDoc(sourceRelativePath)) {
+    return null;
+  }
+
+  if (targetRelativePath.startsWith('docs/internal/archive/')) {
+    return `public-current doc links directly to archived internal material: ${targetRelativePath}`;
+  }
+
+  if (
+    targetRelativePath.startsWith('docs/internal/design/') &&
+    targetRelativePath !== 'docs/internal/design/index.md'
+  ) {
+    return `public-current doc links directly to an internal design note: ${targetRelativePath}`;
+  }
+
+  return null;
 }
 
 function fileExists(filePath) {
