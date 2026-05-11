@@ -270,7 +270,7 @@ Example response:
   - Competitor landscape is not yet understood
   - Terms of service for required APIs need to be confirmed
 
- The first 4 weeks are set as an 'exploration phase' to prioritize
+ The first 4 weeks are set aside for exploration to prioritize
  confirming feasibility. The assessment will be updated after 4 weeks."
 ```
 

@@ -155,7 +155,7 @@ A rule-based filter that classifies the 6 "Clear No" categories from §3 at the 
 
 Even if the word "hacking" appears, CTF participation or security testing passes through. Even the phrase "obtain personal information," when it refers to a legitimate user registration flow, passes through. What is classified is **the intent and context of the action**, not the occurrence of specific words.
 
-(Layer 1 is not implemented in MVP. It will be added in Phase 2 — see §9.)
+(Layer 1 is not implemented in default behavior. It will be added in extended behavior — see §9.)
 
 **Layer 2: Context-aware judgment by LLM**
 
@@ -406,9 +406,9 @@ This prevents situations like "a lenient personality leads to lenience on ethica
 
 ---
 
-## §9. MVP and Phase 2 Scope
+## §9. Default behavior and extensions
 
-### MVP: Layer 2 (LLM Judgment) Only
+### Default behavior: Layer 2 (LLM Judgment) Only
 
 **What is implemented**:
 - Context-aware judgment by LLM (Layer 2)
@@ -418,14 +418,14 @@ This prevents situations like "a lenient personality leads to lenience on ethica
 - Integrated as Step 0 in GoalNegotiator
 - Sub-goal re-check after decompose() implemented
 
-**Not implemented (deferred to Phase 2)**:
+**Not implemented (deferred to extended behavior)**:
 - Layer 1 (category-based blocklist)
 - Means check after TaskLifecycle.generateTask()
 - User-customizable additional constraints
 
-**MVP's conservative design**: Without Layer 1, LLM judgment is the only line of defense. For this reason, during MVP the LLM prompt's conservative bias is set strong, and uncertain goals are aggressively treated as "flag."
+**default behavior's conservative design**: Without Layer 1, LLM judgment is the only line of defense. For this reason, during default behavior the LLM prompt's conservative bias is set strong, and uncertain goals are aggressively treated as "flag."
 
-### Phase 2: Completing the Two-Layer Structure
+### Extended behavior: Completing the Two-Layer Structure
 
 **Additions**:
 - **Layer 1 implementation**: Category-based blocklist. Intent-level classification rules are defined in code
@@ -433,7 +433,7 @@ This prevents situations like "a lenient personality leads to lenience on ethica
 - **User customization**: Feature to configure organization-specific policies as additional constraints
 
 ```
-// Example user configuration in Phase 2
+// Example user configuration in extended behavior
 ethics_constraints:
   - description: "Do not collect any data related to competitors"
     applies_to: "goal"
@@ -449,5 +449,5 @@ ethics_constraints:
 
 - `goal-negotiation.md` — The 5-step negotiation flow in which the ethics gate is integrated (Step 0 is added here)
 - `trust-and-safety.md` — Trust and safety design (safety floor priority order extended in §6)
-- `task-lifecycle.md` — Task generation and execution flow (task means check integrated in Phase 2)
+- `task-lifecycle.md` — Task generation and execution flow (task means check integrated in extended behavior)
 - `execution-boundary.md` — PulSeed's execution boundary (consistent with the delegation model)

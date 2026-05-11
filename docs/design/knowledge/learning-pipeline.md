@@ -242,11 +242,11 @@ Controlled by the `cross_goal_sharing_enabled` flag (default: `true`). Users who
 
 ---
 
-## 7. MVP vs Phase 2
+## 7. Default behavior and extensions
 
-### MVP (Phase 1 / Stage 14E)
+### Default behavior (learning-pipeline scope)
 
-| Item | MVP Specification |
+| Item | Default behavior |
 |------|------------------|
 | Analysis scope | Within the same goal only |
 | Cross-goal sharing | Only on goal_completed trigger (with manual confirmation) |
@@ -254,9 +254,9 @@ Controlled by the `cross_goal_sharing_enabled` flag (default: `true`). Users who
 | Pattern count limit | 50 per goal |
 | Periodic review interval | Fixed per goal type (table in §2.3) |
 
-### Phase 2
+### Extended behavior
 
-| Item | Phase 2 Specification |
+| Item | Extended behavior |
 |------|----------------------|
 | Real-time application | Dynamically inject patterns just before task generation |
 | Automatic confidence adjustment | Immediate feedback from application results |

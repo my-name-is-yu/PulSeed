@@ -4,7 +4,7 @@ Status: working implementation slice map for #1191.
 
 Source contract:
 
-- `docs/design/infrastructure/companion-capability-runtime.md`
+- `docs/design/infrastructure/runtime/companion-capability-runtime.md`
 - `docs/design/index.md`
 - PR #1566
 
@@ -152,7 +152,7 @@ Suggested Codex goal prompt:
 ```text
 Goal: Implement Slice 1, Asset Registry And Provenance, for #1191.
 
-Read docs/design/infrastructure/companion-capability-runtime.md and
+Read docs/design/infrastructure/runtime/companion-capability-runtime.md and
 tmp/companion-capability-runtime-slice-map.md. Implement only the asset
 registry/provenance boundary. Do not implement readiness, admission, autonomy,
 or execution.
@@ -664,8 +664,8 @@ notification route, runtime-control admission, and autonomous authority.
 Owner files:
 
 - README/docs/status/TUI diagnostic helpers as needed
-- `docs/mechanism.md`
-- `docs/configuration.md`
+- `docs/concepts/mechanism.md`
+- `docs/operate/configuration.md`
 - `docs/index.md`
 - TUI/status/debug/operator projection modules
 
@@ -750,7 +750,7 @@ tests. Do not add new runtime behavior except test harness support.
 Owner files:
 
 - all touched slices
-- `docs/design/infrastructure/companion-capability-runtime.md`
+- `docs/design/infrastructure/runtime/companion-capability-runtime.md`
 - issue/PR audit artifacts
 
 Depends on:
@@ -780,7 +780,7 @@ Suggested Codex goal prompt:
 ```text
 Goal: Final gap audit for #1191 Companion Capability Runtime.
 
-Read docs/design/infrastructure/companion-capability-runtime.md and every PR
+Read docs/design/infrastructure/runtime/companion-capability-runtime.md and every PR
 merged for Slices 1-13. Produce a requirement-to-evidence map, identify gaps,
 fix only concrete blocker-grade gaps, and create focused follow-up issues for
 anything that should not be fixed in this audit PR.

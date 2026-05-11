@@ -15,16 +15,17 @@ PulSeed is local-first companion software for goals that take time.
 
 </div>
 
-PulSeed is being built toward software that can stay near a person over time:
-remember what matters, notice when the situation changes, and bring the right
-tool, agent, or workflow into the moment when help is needed.
+PulSeed pairs a local long-running goal runtime with a companion-software
+design: remember what matters, notice when the situation changes, and bring the
+right tool, agent, or workflow into the moment when help is needed.
 
 The current implementation focuses on long-running goal orchestration. It stores
 local state, runs a DurableLoop over goals, delegates bounded work through
 AgentLoop or configured adapters, verifies progress from evidence, and exposes
 the runtime through the CLI, TUI, daemon, schedules, chat, and gateway surfaces.
-Product direction beyond that current runtime is documented separately from
-current behavior.
+The docs separate runnable operating instructions from product and subsystem
+design, so readers can distinguish what the package does today from the broader
+companion-software contract PulSeed is designed around.
 
 In plain terms, PulSeed helps you keep goal work, state, progress checks, and
 agent/tool runs organized across time from your local machine.
@@ -35,8 +36,8 @@ Try PulSeed today if you want to:
 
 - keep a long-running goal and its evidence outside a single chat session
 - run goal work from a local CLI/TUI with inspectable state under `~/.pulseed/`
-- experiment with daemon, schedule, gateway, plugin, memory, and diagnostic
-  surfaces while keeping current behavior separate from future roadmap ideas
+- use daemon, schedule, gateway, plugin, memory, and diagnostic surfaces while
+  keeping current behavior separate from product design
 
 PulSeed is not yet:
 
@@ -72,7 +73,7 @@ pulseed
 
 The bare `pulseed` command opens the interactive TUI after provider setup. For
 pinned versions, npm fallback installs, and first-run details, see
-[Getting Started](docs/getting-started.md).
+[Getting Started](./docs/start/index.md).
 
 ## What Exists Now
 
@@ -109,25 +110,25 @@ pulseed memory history <kind:id>
 For the complete command surface, use `pulseed help` or see the docs:
 
 - [Docs Map](docs/index.md)
-- [Getting Started](docs/getting-started.md)
-- [Runtime](docs/runtime.md)
-- [Configuration](docs/configuration.md)
-- [Status](docs/status.md)
-- [Architecture Map](docs/architecture-map.md)
-- [Module Map](docs/module-map.md)
+- [Getting Started](./docs/start/index.md)
+- [Runtime](./docs/operate/runtime.md)
+- [Configuration](./docs/operate/configuration.md)
+- [Status](./docs/operate/status.md)
+- [Architecture Map](./docs/architecture/architecture-map.md)
+- [Module Map](./docs/architecture/module-map.md)
 
 ## How The Docs Are Organized
 
 Start with the current operating docs when you want to use PulSeed today:
 
-- [Getting Started](docs/getting-started.md)
-- [Guide](docs/guide.md)
-- [Concepts](docs/concepts.md)
+- [Getting Started](./docs/start/index.md)
+- [Guide](./docs/start/guide.md)
+- [Concepts](./docs/concepts/index.md)
 - [Reference](docs/reference/index.md)
-- [Architecture](docs/architecture.md)
+- [Architecture](./docs/architecture/index.md)
 
-Product direction, north-star examples, and non-current plans live under
-[Roadmap And Future Direction](docs/roadmap/index.md). Design documents,
+Product direction, companion scenarios, and design boundaries live under
+[Product Design](./docs/product/index.md). Design documents,
 audits, and design history live under [Design Documentation](docs/design/index.md).
 
 ## Evidence
@@ -138,10 +139,10 @@ traction claim. PulSeed has been dogfooded on long-running work, including a
 available at
 [pulseed-kaggle-s6e4-evidence-log](https://github.com/my-name-is-yu/pulseed-kaggle-s6e4-evidence-log).
 
-The repository also includes repeatable verification paths for the product
-wedge: `npm run check:docs`, `npm run test:dogfood`,
+The repository also includes repeatable verification paths for the implemented
+foundation: `npm run check:docs`, `npm run test:dogfood`,
 `npm run dogfood:agentloop:real`, packaged-artifact checks, and CI lanes for
-unit and integration coverage. These show that the current thesis is being
+unit and integration coverage. These show that the product contract is being
 tested through code-backed goal/runtime behavior. They do not claim customer
 adoption, revenue, or broad market pull yet.
 

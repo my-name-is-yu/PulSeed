@@ -186,7 +186,7 @@ Once a capability gap is confirmed, PulSeed acquires the capability through the 
 
 2. Select an acquisition method
    ↓ Choose an acquisition method based on the type (see §5.3)
-   ↓ In MVP, prioritize escalation to humans
+   ↓ In the default behavior, prioritize escalation to humans
 
 3. Generate an acquisition task
    ↓ Generate using the same structure as a normal task (see task-lifecycle.md §2)
@@ -279,13 +279,13 @@ Before registering a capability in the Capability Registry, verify that the acqu
 
 ---
 
-## 5.5 MVP and Phase 2 Scope
+## 5.5 Default behavior and extensions
 
-### MVP (Human Escalation Focused)
+### Default behavior (Human Escalation Focused)
 
-In MVP, no autonomous capability acquisition is performed. When a capability gap is detected, it is always handled by escalating to a human.
+In the default behavior, no autonomous capability acquisition is performed. When a capability gap is detected, it is always handled by escalating to a human.
 
-**MVP behavior**:
+**default behavior**:
 1. Detect the capability gap
 2. Notify the user, explicitly stating the missing capability, alternatives, and impact
 3. When the user provides the capability (API key, permission, tool), register it in the registry
@@ -293,13 +293,13 @@ In MVP, no autonomous capability acquisition is performed. When a capability gap
 
 No acquisition tasks are delegated to agents. No automatic code generation is performed. Humans remain the providers of capabilities.
 
-### Phase 2 (Autonomous Acquisition)
+### Extended behavior (Autonomous Acquisition)
 
-In Phase 2, autonomous acquisition is introduced based on capability type.
+In the extended behavior, autonomous acquisition is introduced based on capability type.
 
 **Phased autonomy**:
 
-| Capability type | Phase 2 behavior |
+| Capability type | extended behavior |
 |----------------|-----------------|
 | Tool/code | Delegate creation to an agent; auto-register after verification |
 | Permission/API key | Continue escalating to the user (no change) |

@@ -278,14 +278,14 @@ During task generation:
     → Include as priority 6 (relevant excerpts from experience log) in context
 ```
 
-### 5.4 MVP vs Phase 2
+### 5.4 Default behavior and extensions
 
 | Stage | Storage Method | Search Method |
 |-------|----------------|---------------|
-| **MVP** | Per-goal JSON files. Keyword matching via `tags` field | Exact tag match filtering |
-| **Phase 2** | Cross-goal knowledge base. Vector search via semantic embeddings | Similarity-based search. Knowledge sharing across different goals |
+| **Default behavior** | Per-goal JSON files. Keyword matching via `tags` field | Exact tag match filtering |
+| **Extended behavior** | Cross-goal knowledge base. Vector search via semantic embeddings | Similarity-based search. Knowledge sharing across different goals |
 
-In the MVP, knowledge is stored and referenced independently per goal. Applying knowledge gained from Goal A to Goal B requires an explicit transfer proposal through the curiosity mechanism (`curiosity.md` §4.3 Cross-Goal Transfer). With semantic search in Phase 2, implicit knowledge sharing becomes possible.
+In the default behavior, knowledge is stored and referenced independently per goal. Applying knowledge gained from Goal A to Goal B requires an explicit transfer proposal through the curiosity mechanism (`curiosity.md` §4.3 Cross-Goal Transfer). With semantic search in extended behavior, implicit knowledge sharing becomes possible.
 
 ---
 
@@ -423,11 +423,11 @@ Second time setting a different dog health goal:
 
 ---
 
-## 8. MVP vs Phase 2
+## 8. Default behavior and extensions
 
-### MVP
+### Default behavior
 
-| Element | MVP Implementation |
+| Element | default behavior Implementation |
 |---------|-------------------|
 | Knowledge gap detection | Add `knowledge_gap` flag to LLM judgment results. Prioritize §2.1 (interpretation difficulty) and §2.2 (strategy blockage) |
 | Investigation task generation | Generated as a normal task with `task_category: "knowledge_acquisition"`. Structure follows §3.1 |
@@ -437,9 +437,9 @@ Second time setting a different dog health goal:
 | Knowledge application | Include relevant knowledge entries in context during task generation |
 | Staleness handling | Not implemented. Relies on manual re-investigation |
 
-### Phase 2
+### Extended behavior
 
-| Element | Phase 2 Enhancement |
+| Element | extended behavior Enhancement |
 |---------|---------------------|
 | Knowledge storage | Cross-goal knowledge base. Vector search via semantic embeddings |
 | Knowledge sharing | Automatic knowledge sharing across goals. Knowledge from Goal A automatically included in Goal B's context |

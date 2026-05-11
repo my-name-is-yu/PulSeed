@@ -25,6 +25,25 @@ const publicCurrentFiles = new Set([
   'README.md',
   'CONTRIBUTING.md',
   'docs/index.md',
+  'docs/start/index.md',
+  'docs/start/guide.md',
+  'docs/concepts/index.md',
+  'docs/concepts/mechanism.md',
+  'docs/operate/runtime.md',
+  'docs/operate/configuration.md',
+  'docs/operate/status.md',
+  'docs/architecture/index.md',
+  'docs/architecture/architecture-map.md',
+  'docs/architecture/module-map.md',
+]);
+const publicCurrentDirs = [
+  'docs/start/',
+  'docs/operate/',
+  'docs/concepts/',
+  'docs/architecture/',
+  'docs/reference/',
+];
+const retiredThinDocPaths = new Set([
   'docs/getting-started.md',
   'docs/guide.md',
   'docs/concepts.md',
@@ -35,30 +54,23 @@ const publicCurrentFiles = new Set([
   'docs/architecture.md',
   'docs/architecture-map.md',
   'docs/module-map.md',
-]);
-const publicCurrentDirs = [
-  'docs/reference/',
-];
-const retiredThinDocPaths = new Set([
-  'docs/start/index.md',
+  'docs/positioning.md',
+  'docs/roadmap.md',
+  'docs/usecase.md',
+  'docs/vision.md',
   'docs/guide/index.md',
-  'docs/concepts/index.md',
-  'docs/architecture/index.md',
   'docs/internal/index.md',
 ]);
 const retiredThinDocDirs = new Set([
-  'docs/start',
   'docs/guide',
-  'docs/concepts',
-  'docs/architecture',
   'docs/internal',
   'docs/design/audits/docs-audit',
   'docs/design/archive/design',
 ]);
 const docsWithRequiredStatus = [
   {
-    label: 'roadmap or future-direction document',
-    matches: (relativePath) => relativePath.startsWith('docs/roadmap/') && relativePath !== 'docs/roadmap/index.md',
+    label: 'product-design document',
+    matches: (relativePath) => relativePath.startsWith('docs/product/') && relativePath !== 'docs/product/index.md',
   },
   {
     label: 'design document',
@@ -78,6 +90,24 @@ const docsWithRequiredStatus = [
       relativePath.startsWith('docs/design/archive/') &&
       relativePath !== 'docs/design/archive/index.md',
   },
+];
+const stagingTermPatterns = [
+  /\bMVP\b/,
+  /\bminimum viable product\b/i,
+  /\bphase(?:\s+|-)(?:[0-9]+|[A-Z])\b/i,
+  /\b[0-9]+\s+phases\b/i,
+  /\bphases\s+[A-Z](?:[-–][A-Z])?\b/i,
+  /\bimplementation\s+road\s*map\b/i,
+  /\broad\s*map\b/i,
+  /\bimplementation phases\b/i,
+  /\bfirst[-\s]+delivery\b/i,
+  /\blater lanes\b/i,
+  /\bimplementation lanes\b/i,
+  /\bfuture lanes\b/i,
+  /\bmerge order recommendation\b/i,
+  /\bfuture phase\b/i,
+  /\bwave\s*[0-9]+\b/i,
+  /\bstage\s*14[A-Z-]*\b/i,
 ];
 
 const markdownFiles = collectMarkdownFiles(repoRoot);
@@ -148,6 +178,20 @@ for (const filePath of markdownFiles) {
     }
 
     const markdownLine = stripInlineCode(line);
+
+    if (relativePath.startsWith('docs/')) {
+      for (const retiredPath of retiredThinDocPaths) {
+        if (line.includes(retiredPath)) {
+          issues.push(formatIssue(relativePath, lineNumber, `retired docs path reference '${retiredPath}' should point to the current section path`));
+        }
+      }
+
+      for (const pattern of stagingTermPatterns) {
+        if (pattern.test(markdownLine)) {
+          issues.push(formatIssue(relativePath, lineNumber, 'docs should describe design/spec behavior, not MVP or phased implementation staging'));
+        }
+      }
+    }
 
     for (const target of findMarkdownLinkTargets(markdownLine)) {
       const normalizedTarget = normalizeMarkdownTarget(target);

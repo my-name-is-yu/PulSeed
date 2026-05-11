@@ -200,9 +200,9 @@ Score recovers gradually
 Gradually return to the previous level of behavior
 ```
 
-**Recovery phases**:
+**Recovery states**:
 
-| Phase | Trust range | Permitted actions |
+| Mode | Trust range | Permitted actions |
 |-------|------------|------------------|
 | Early recovery | Low value immediately after failure | Observation, analysis, and plan proposals only |
 | Mid recovery | Moderate | Low-risk task execution (with confirmation) |

@@ -71,7 +71,7 @@ pending → decomposing → active → completed
 
 ---
 
-## 3. Decomposition Logic (Phase 1 / Stage 14B)
+## 3. Decomposition Logic (default behavior / goal-tree decomposition)
 
 ### 3.1 Decomposition Flow
 
@@ -220,7 +220,7 @@ Completion determination propagates in a chain from leaf to root (leaf → depth
 
 ---
 
-## 7. Parallel Loop Execution (Phase 1 / Stage 14C)
+## 7. Parallel Loop Execution (default behavior / goal-tree scheduling)
 
 ### 7.1 Launching Loops for Leaf Nodes
 
@@ -254,9 +254,9 @@ The number of loops running simultaneously is controlled by `parallel_loop_limit
 4. The rest wait in waiting state
 ```
 
-### 7.3 MVP: Round-Robin Pseudo-Parallelism
+### 7.3 default behavior: Round-Robin Pseudo-Parallelism
 
-In MVP, rather than true parallel execution, a round-robin approach is used, processing one node per iteration.
+In the default behavior, rather than true parallel execution, a round-robin approach is used, processing one node per iteration.
 
 ```
 loop iteration:
@@ -295,11 +295,11 @@ The results of goal decomposition (which sub-goals were generated, which decompo
 
 ---
 
-## 9. MVP vs Phase 2
+## 9. Default behavior and extensions
 
-### MVP (Phase 1 / Stage 14B-C)
+### Default behavior (goal-tree baseline)
 
-| Item | MVP specification |
+| Item | default behavior specification |
 |------|-----------------|
 | Decomposition automation | Automatic LLM decomposition (with user confirmation) |
 | Parallel execution | Round-robin (no true parallelism) |
@@ -307,9 +307,9 @@ The results of goal decomposition (which sub-goals were generated, which decompo
 | Pruning | Only `no_progress` and `user_requested` are automatic. Others are manual. |
 | Parallel loop limit | 3 |
 
-### Phase 2
+### Extended behavior
 
-| Item | Phase 2 specification |
+| Item | extended behavior specification |
 |------|----------------------|
 | Parallel execution | True parallel execution (async loops) |
 | State aggregation | Aggregation method configurable per node |
@@ -326,4 +326,4 @@ The results of goal decomposition (which sub-goals were generated, which decompo
 | Aggregate conservatively | Confidence uses minimum value; default aggregation is bottleneck (min). |
 | Completion propagates in a chain | Completion propagates from leaf to root in order. |
 | Parallelism is bounded | Resource consumption controlled by parallel_loop_limit. |
-| MVP uses pseudo-parallelism | Round-robin advances multiple nodes while avoiding complexity. |
+| The default behavior uses pseudo-parallelism | Round-robin advances multiple nodes while avoiding complexity. |

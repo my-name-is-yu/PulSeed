@@ -2,9 +2,9 @@
 
 > Status: Archived design document. This is retained for context and is not current operating guidance.
 
-> Historical architecture draft. For the current production recovery design, see [Runtime Auto-Recovery](../infrastructure/runtime-auto-recovery.md).
+> Historical architecture draft. For the current production recovery design, see [Runtime Auto-Recovery](../infrastructure/runtime/runtime-auto-recovery.md).
 
-> Evolves docs/runtime.md § "Process Model" from daemon-only to a 4-layer architecture:
+> Evolves docs/operate/runtime.md § "Process Model" from daemon-only to a 4-layer architecture:
 > Gateway → Queue → Executor → Eternal State.
 
 ---
@@ -218,21 +218,21 @@ Goal writes are serialized through typed SQLite ownership. `GoalTaskStateStore` 
 
 Legacy `goals/<goal_id>/wal.jsonl` files are explicit migration/repair inputs. `doctor --repair` imports uncommitted legacy WAL intents into typed goal/task tables and records `control_legacy_imports`; normal startup does not replay WAL files, recreate `goal.json`, or silently fall back to snapshots as authoritative state.
 
-User-visible workspace artifacts, debug exports, reports, and configuration remain file-backed where they are not internal durable runtime state. The current database-first boundary is maintained in `docs/design/infrastructure/database-first-state-ownership.md`.
+User-visible workspace artifacts, debug exports, reports, and configuration remain file-backed where they are not internal durable runtime state. The current database-first boundary is maintained in `docs/design/infrastructure/platform/database-first-state-ownership.md`.
 
 ---
 
 ## 7. Migration Path
 
-The existing system is working and tested. The migration is incremental: each phase delivers a standalone improvement, and the system remains functional throughout.
+The existing system is working and tested. The migration is incremental: each change delivers a standalone improvement, and the system remains functional throughout.
 
-**Phase A: Extract IngressGateway interface**
+**area A: Extract IngressGateway interface**
 
 Introduce the `ChannelAdapter` interface and `IngressGateway` class. Wrap `EventServer` behind a `HttpChannelAdapter` that implements the interface. The Gateway forwards Envelopes to the existing `DriveSystem.writeEvent()` call — no Queue yet. Nothing changes from the outside; the internal structure is cleaner.
 
 Files changed: `src/runtime/event-server.ts` (thin wrapper), new `src/runtime/gateway/ingress-gateway.ts`, new `src/runtime/gateway/channel-adapter.ts`, new `src/runtime/gateway/http-channel-adapter.ts`.
 
-**Phase B: Add in-process EventBus**
+**area B: Add in-process EventBus**
 
 Introduce `CommandBus` and `EventBus` with priority queuing. Route `ScheduleEngine.tick()` output through the EventBus instead of direct invocation from `daemon-runner.ts`. Route incoming Envelopes from the Gateway through the appropriate bus. The daemon loop now pulls from the bus instead of calling `processScheduleEntries()` inline.
 
@@ -240,19 +240,19 @@ Both `processScheduleEntries()` (which calls `ScheduleEngine.tick()`) and `proce
 
 Files changed: `src/runtime/daemon-runner.ts` (pull from bus), new `src/runtime/queue/command-bus.ts`, new `src/runtime/queue/event-bus.ts`, new `src/runtime/queue/priority-queue.ts`.
 
-**Phase C: Refactor daemon-runner into LoopSupervisor + GoalWorker**
+**area C: Refactor daemon-runner into LoopSupervisor + GoalWorker**
 
 Extract the goal-iteration logic from `daemon-runner.ts`'s `runLoop()` into a `GoalWorker` class. Create `LoopSupervisor` to manage the worker pool. `DaemonRunner` becomes thin bootstrap only. This is the largest change; it should be done on a feature branch with the full test suite running.
 
 Files changed: `src/runtime/daemon-runner.ts` (gutted to bootstrap), new `src/runtime/executor/loop-supervisor.ts`, new `src/runtime/executor/goal-worker.ts`.
 
-**Phase D: Add advisory locking to StateManager**
+**area D: Add advisory locking to StateManager**
 
 Add lockfile acquisition and WAL append to `src/base/state/state-manager.ts` and `src/base/state/state-persistence.ts`. The locking is a no-op when there is only one writer (the normal case today), so existing behavior is unchanged. Tests can be written against the WAL recovery logic independently.
 
 Files changed: `src/base/state/state-manager.ts`, `src/base/state/state-persistence.ts`, new `src/base/state/wal.ts`, new `src/base/state/state-lock.ts`.
 
-**Phase E: Add remaining ChannelAdapters**
+**area E: Add remaining ChannelAdapters**
 
 With the Gateway in place, adding channels is mechanical: implement `ChannelAdapter`, register with `IngressGateway`. WebSocket adapter (for real-time remote clients), Slack Events API adapter (Slack signature verification + event routing), and additional webhook receivers all follow the same pattern.
 
@@ -326,7 +326,7 @@ These events are LOW priority on the EventBus; they do not compete with goal wor
 
 ## 11. Deferred Design Decisions
 
-These are implementation-time decisions that are intentionally left open in this design document. Each item should be resolved when the relevant phase is implemented.
+These are implementation-time decisions that are intentionally left open in this design document. Each item should be resolved when the relevant design area is implemented.
 
 **1. Queue-level coalescing, deduplication, and TTL.** Policy for same-goal `goal_activated` dedup, external webhook retry handling, and stale scheduled tick expiry. The `dedupe_key` and `ttl_ms` fields on Envelope provide the mechanism; the specific policy (e.g., which event types are coalesced, how long stale ticks are valid) should be specified when implementing the Queue layer.
 
@@ -334,6 +334,6 @@ These are implementation-time decisions that are intentionally left open in this
 
 **3. CommandBus / EventBus physical separation.** Whether these are two physical priority queues or logical partitions on a single shared PriorityQueue. Current design: conceptual split only. Decide at implementation time based on performance profiling and whether priority inversion between buses is observed in practice.
 
-**4. Snapshot / WAL replay alignment conditions.** Snapshot header format (version, last_wal_offset, checksum), replay-from-offset semantics, and compaction boundary rules are not specified here. Define these when implementing the Eternal State layer (Phase D) to ensure consistent recovery behavior.
+**4. Snapshot / WAL replay alignment conditions.** Snapshot header format (version, last_wal_offset, checksum), replay-from-offset semantics, and compaction boundary rules are not specified here. Define these when implementing the Eternal State layer (area D) to ensure consistent recovery behavior.
 
-**5. event-subscriber.ts role clarification.** `src/interface/chat/event-subscriber.ts` exists and is referenced in section 3 as the chat/TUI subscriber. Verify its exact migration path when implementing Gateway ChannelAdapters in Phase A/E: confirm whether it becomes a read-only ChannelAdapter or is replaced by the Gateway's outbound broadcast path.
+**5. event-subscriber.ts role clarification.** `src/interface/chat/event-subscriber.ts` exists and is referenced in section 3 as the chat/TUI subscriber. Verify its exact migration path when implementing Gateway ChannelAdapters in area A/E: confirm whether it becomes a read-only ChannelAdapter or is replaced by the Gateway's outbound broadcast path.
