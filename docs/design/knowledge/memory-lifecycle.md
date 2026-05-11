@@ -263,7 +263,7 @@ There is a risk of losing important information during compression. The followin
 
 **No complete deletion**: If migration to Long-term fails (LLM call error, etc.), do not delete Short-term data. Extend retention until migration succeeds.
 
-For MVP, instead of full cross-checking, use a ratio check between failure entries and lesson entries (pass if lesson count ≥ failure entry count × 0.5). Full cross-checking is implemented in Phase 2.
+For default behavior, instead of full cross-checking, use a ratio check between failure entries and lesson entries (pass if lesson count ≥ failure entry count × 0.5). Full cross-checking is implemented in extended behavior.
 
 ---
 
@@ -305,7 +305,7 @@ In addition to the priority-based inclusion rules in `session-and-context.md` §
 | Deadline score | Deadline approaching for this dimension | Raises priority of related memories |
 | Opportunity score | An opportunity exists in this situation | Raises priority of past patterns in similar situations |
 
-> **Phase 2**: The following DriveScorer integration is implemented in Phase 2. In MVP, Working Memory is selected using chronological ordering by `last_accessed`.
+> **extended behavior**: The following DriveScorer integration is implemented in extended behavior. In the default behavior, Working Memory is selected using chronological ordering by `last_accessed`.
 
 ```
 relevance_score(memory_entry, current_context):
@@ -358,7 +358,7 @@ Uses the same mechanism as contradiction detection in `knowledge-acquisition.md`
 
 ### 6.2 Archiving unreferenced information
 
-> **Phase 2**: Reference-frequency-based archiving is implemented in Phase 2. MVP uses retention-period-based archiving only.
+> **extended behavior**: Reference-frequency-based archiving is implemented in extended behavior. The default behavior uses retention-period-based archiving only.
 
 Information that has not been selected for Working Memory N consecutive times is removed from the active index and archived.
 
@@ -368,7 +368,7 @@ Default N:
   Long-term lessons: 50 loops (archive if not referenced for 50 loops)
 ```
 
-Archived lessons are not deleted — they are simply removed from the active index. If circumstances change and relevance returns, they can be rediscovered via semantic search (Phase 2).
+Archived lessons are not deleted — they are simply removed from the active index. If circumstances change and relevance returns, they can be rediscovered via semantic search (extended behavior).
 
 ### 6.3 Retaining lessons from successful strategies
 
@@ -427,7 +427,7 @@ on_goal_close(goal, reason):
 
 ## 7. Drive-based Memory Management
 
-> **Phase 2**: All content in this section is implemented in Phase 2. MVP manages memory using retention periods and size limits only.
+> **extended behavior**: All content in this section is implemented in extended behavior. The default behavior manages memory using retention periods and size limits only.
 
 PulSeed already has a mechanism for judging "what matters" — DriveScorer (dissatisfaction, deadline, opportunity) and SatisficingJudge (whether something is good enough). Rather than a generic LRU, this existing drive system is applied to memory management.
 
@@ -610,9 +610,9 @@ When the size limit is reached, compression is brought forward even within the r
 
 ---
 
-## 10. MVP vs Phase 2
+## 10. Default behavior and extensions
 
-| Item | MVP (Phase 1) | Phase 2 |
+| Item | default behavior | extended behavior |
 |------|---------------|---------|
 | Memory layers | Basic 3-layer implementation | No change |
 | Short→Long compression | Configurable retention period + LLM-based compression | Improved compression quality (recursive refinement of summaries) |
@@ -621,9 +621,9 @@ When the size limit is reached, compression is brought forward even within the r
 | Drive-based management | Not implemented. Retention period and size limits only | Dynamic compression priority via DriveScorer/SatisficingJudge integration |
 | Index | Simple per-goal/per-dimension index | Semantic embedding vector index (requires Stage 12 embedding infrastructure) |
 | Statistical summary | Basic statistics (success rate, average duration) | Advanced statistics (trend analysis, anomaly detection patterns) |
-| Storage | File-based JSON | No change (same as MVP) |
+| Storage | File-based JSON | No change (same as default behavior) |
 
-### What is implemented in MVP
+### What is implemented in default behavior
 
 1. Create `~/.pulseed/memory/` directory structure
 2. Short-term Memory retention period management (configurable loop count / time-based)
@@ -632,7 +632,7 @@ When the size limit is reached, compression is brought forward even within the r
 5. Basic forgetting policy (retention period expiry, invalidation of contradictory knowledge)
 6. Lesson extraction and archiving on goal completion/cancellation
 
-### What is implemented in Phase 2
+### What is implemented in extended behavior
 
 1. Drive-based Memory Management (all features in §7)
 2. Working Memory selection via semantic search (requires Stage 12 embedding infrastructure)
@@ -650,4 +650,4 @@ When the size limit is reached, compression is brought forward even within the r
 | PulSeedtion controls memory | Dynamic compression priority is set by DriveScorer/SatisficingJudge, not generic LRU |
 | Prioritize retaining failures | Failure patterns take retention priority over success patterns — to avoid repeating the same mistakes |
 | Do not break existing design | Follow existing rules from session-and-context.md, reporting.md, etc., and design as extensions |
-| Do not pursue perfection | MVP uses simple retention period + LLM summary. Drive-based management is introduced incrementally in Phase 2 |
+| Do not pursue perfection | The default behavior uses simple retention period + LLM summary. Drive-based management is introduced incrementally in extended behavior |

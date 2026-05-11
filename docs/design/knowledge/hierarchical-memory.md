@@ -16,7 +16,7 @@ The current ContextProvider operates with a fixed top-4 selection. Memory entrie
 - Knowledge from completed goals constantly occupies context budget
 - The context budget is used inefficiently
 
-The MemGPT/Letta approach is a three-tier model where "the LLM autonomously decides what to page in and out of the context window." Within PulSeed's scope, the MVP implements this with rule-based classification; LLM-autonomous decision-making is deferred to Phase 2.
+The MemGPT/Letta approach is a three-tier model where "the LLM autonomously decides what to page in and out of the context window." Within PulSeed's scope, the default behavior implements this with rule-based classification; LLM-autonomous decision-making is deferred to extended behavior.
 
 ---
 
@@ -41,7 +41,7 @@ This design does **not replace** the three tiers (Working/Short-term/Long-term) 
 
 ---
 
-## 3. Classification Rules (MVP: Rule-Based)
+## 3. Classification Rules (default behavior: Rule-Based)
 
 ### Entries Classified as core
 
@@ -75,8 +75,8 @@ This functions as an upper layer on top of the priority 1–6 rules in `session-
 Context Budget (50% of model window)
   └─ core tier:     50%  — Always included. Eviction prohibited
   └─ recall tier:   35%  — Filled in descending relevance score order
-  └─ archival tier: 15%  — Semantic search results added if budget remains (Phase 2)
-                           In MVP, added alongside recall if budget allows
+  └─ archival tier: 15%  — Semantic search results added if budget remains (extended behavior)
+                           In the default behavior, added alongside recall if budget allows
 ```
 
 The core tier is **never evicted**. If the budget is insufficient, recall and archival entries are reduced.
@@ -92,15 +92,15 @@ Add a `memory_tier` field to `src/types/memory-lifecycle.ts` (default: `"recall"
 - `ShortTermEntrySchema`: `memory_tier: MemoryTierSchema.default("recall")`
 - `MemoryIndexEntrySchema`: `memory_tier: MemoryTierSchema.default("recall")`
 
-### 5.2 MemorySelection Changes (Phase 1)
+### 5.2 MemorySelection Changes (default behavior)
 
 In `selectForWorkingMemory()` in `src/knowledge/memory-selection.ts`, split entries by tier and select them in order: core → recall → archival, filling up to each tier's budget allocation.
 
-### 5.3 ContextBudget (Phase 1)
+### 5.3 ContextBudget (default behavior)
 
 Add a `TierBudget` type (`{ core, recall, archival }`) so that ContextProvider can reference the budget allocation.
 
-### 5.4 ContextProvider (Phase 1)
+### 5.4 ContextProvider (default behavior)
 
 Assign a tier to each collected workspace context entry.
 
@@ -110,9 +110,9 @@ Assign a tier to each collected workspace context entry.
 
 ---
 
-## 6. MVP vs Phase 2
+## 6. Default behavior and extensions
 
-| Feature | MVP (Phase 1) | Phase 2 |
+| Feature | default behavior | extended behavior |
 |---------|---------------|---------|
 | Tier classification | Rule-based (loop_number, goal status) | LLM-autonomous (page in/out) |
 | Archival search | Fills remaining budget alongside recall | Semantic search via VectorIndex |
@@ -146,4 +146,4 @@ Backward compatibility: `.default("recall")` ensures existing entries receive `"
 | Never evict core | Reduce recall/archival when budget is exceeded |
 | Do not break existing design | Keep the three tiers from memory-lifecycle.md; add tier as a classification layer |
 | Backward compatibility | `memory_tier` uses `.default("recall")` so existing data is not broken |
-| MVP first | LLM-autonomous decision-making deferred to Phase 2; MVP uses simple rule-based classification |
+| Default behavior first | LLM-autonomous decision-making deferred to extended behavior; The default behavior uses simple rule-based classification |

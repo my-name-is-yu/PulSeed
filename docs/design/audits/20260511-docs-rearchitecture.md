@@ -16,22 +16,22 @@ source of truth:
 
 When docs conflict with code, the docs change. When a claim is plausible but not
 clearly implemented, it moves out of current operating docs and into future,
-roadmap, design, or archive material.
+product design, design, or archive material.
 
 ## Current Documentation Problems
 
 - README and `docs/index.md` mix first-run guidance, product positioning,
   current operations, future direction, status snapshots, and design documents.
-- `docs/vision.md` and `docs/usecase.md` describe north-star scenarios close to
+- `docs/product/vision.md` and `docs/product/use-cases.md` describe north-star scenarios close to
   current operating docs and can be read as present-tense capability.
-- `docs/status.md` is dated `2026-04-12`, while the current release history is
+- `docs/operate/status.md` is dated `2026-04-12`, while the current release history is
   at `0.6.5` from `2026-05-07`.
 - `docs/design/**` mixes active contracts, proposals, historical notes, future
   plans, and gap audits behind one global warning.
 - Reference coverage is missing implemented surfaces such as `memory`,
   `usage`, `playbook`, `skills`, `runtime postmortem`, `runtime proactive-*`,
   `gateway setup`, `telegram setup`, and `daemon ping`.
-- `docs/configuration.md` calls `agent_loop` the recommended default without
+- `docs/operate/configuration.md` calls `agent_loop` the recommended default without
   separating recommendation from the code default config of OpenAI,
   `gpt-5.4-mini`, and `openai_codex_cli`.
 
@@ -75,7 +75,7 @@ roadmap, design, or archive material.
   scripts, and status.
 - Architecture overview: current source layout and stable module map.
 - Design documents: active contracts and implementation notes.
-- Roadmap / future: product direction and north-star scenarios.
+- Product design: product design direction and north-star scenarios.
 - Archive: stale, historical, issue-order, and proposal material.
 - Contributor docs: contribution workflow and docs update requirements.
 

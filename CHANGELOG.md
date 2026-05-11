@@ -484,7 +484,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Fixed a Node 22-only `DriveSystem` test cleanup race by waiting for async directory initialization before teardown, eliminating intermittent `ENOTEMPTY` failures in the publish CI matrix
 
 ### Docs
-- Added the public runtime auto-recovery design document under `docs/design/infrastructure/runtime-auto-recovery.md` and linked it from the design index
+- Added the public runtime auto-recovery design document under `docs/design/infrastructure/runtime/runtime-auto-recovery.md` and linked it from the design index
 - Marked the older multi-channel runtime design as historical context now that the durable runtime cutover is complete
 
 ## [0.3.0] - 2026-04-07

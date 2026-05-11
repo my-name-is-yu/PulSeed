@@ -6,17 +6,17 @@ details.
 Current reference pages:
 
 - [CLI Reference](cli.md)
-- [Configuration](../configuration.md)
-- [Runtime](../runtime.md)
+- [Configuration](../operate/configuration.md)
+- [Runtime](../operate/runtime.md)
 - [Runtime State](runtime-state.md)
 - [Schedules](schedules.md)
 - [Plugins](plugins.md)
 - [Memory](memory.md)
 - [Package Scripts](package-scripts.md)
-- [Status](../status.md)
-- [Module Map](../module-map.md)
+- [Status](../operate/status.md)
+- [Module Map](../architecture/module-map.md)
 - [Contributor Workflow](../../CONTRIBUTING.md)
 
 Reference pages should describe current-version behavior. Future plans belong in
-[Roadmap And Future Direction](../roadmap/index.md), and implementation
+[Product Design](../product/index.md), and implementation
 proposals belong in [Design Documentation](../design/index.md).

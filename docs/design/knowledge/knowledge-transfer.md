@@ -132,7 +132,7 @@ Safety check (§5.2)
     │
     ├── Incompatible → Update TransferCandidate to rejected
     │
-    └── Compatible → Proposal to user (Phase 1)
+    └── Compatible → Proposal to user (default behavior)
                     │
                     ├── Approved → Update to applied → Inject into SessionManager
                     └── Rejected → Update to rejected
@@ -144,7 +144,7 @@ Safety check (§5.2)
 
 **Ethics gate**: Pass through the `checkGoal()` function in `ethics-gate.md`. Since applying a transfer equates to injecting a new action policy, the ethics check is mandatory.
 
-**No automatic application (Phase 1)**: In Phase 1, all transfers are always presented as proposals to the user. Automatic application is not performed.
+**No automatic application (default behavior)**: In the default behavior, all transfers are always presented as proposals to the user. Automatic application is not performed.
 
 ---
 
@@ -215,17 +215,17 @@ When a new goal is added, search the CrossGoalKnowledgeBase for similar meta-pat
 | Similarity threshold | Only goal pairs with similarity >= 0.7 are detected as transfer candidates |
 | LLM compatibility check | Detects domain constraint conflicts |
 | Ethics gate required | All transfer candidates must pass the check in ethics-gate.md |
-| User approval (Phase 1) | No automatic application; always follows propose → approve flow |
+| User approval (default behavior) | No automatic application; always follows propose → approve flow |
 | Automatic invalidation | Auto-invalidated after 3 consecutive ineffective/degrading results |
 | Confidence discount | Transfers start at confidence × 0.7 (`learning-pipeline.md` §6.2) |
 
 ---
 
-## 9. MVP vs Phase 2
+## 9. Default behavior and extensions
 
-### MVP (Phase 1 / Stage 14F)
+### Default behavior (knowledge-transfer scope)
 
-| Item | MVP Specification |
+| Item | Default behavior |
 |------|------------------|
 | Detection timing | Once every 5 iterations |
 | Similarity calculation | Cosine similarity via VectorIndex |
@@ -233,9 +233,9 @@ When a new goal is added, search the CrossGoalKnowledgeBase for similar meta-pat
 | Meta-pattern extraction | Only on goal_completed trigger |
 | Knowledge base updates | Batch (manual trigger) |
 
-### Phase 2
+### Extended behavior
 
-| Item | Phase 2 Specification |
+| Item | Extended behavior |
 |------|----------------------|
 | Automatic application | High-confidence (confidence >= 0.85) patterns applied automatically |
 | Real-time detection | Transfer candidates scanned dynamically just before task generation |
@@ -248,7 +248,7 @@ When a new goal is added, search the CrossGoalKnowledgeBase for similar meta-pat
 
 | Principle | Specific Design Decision |
 |-----------|--------------------------|
-| Transfer is proposed; humans decide | No automatic application in Phase 1. The user always makes the final call |
+| Transfer is proposed; humans decide | No automatic application in default behavior. The user always makes the final call |
 | Show the basis for similarity | Visualize similarity_score and domain_tag_match |
 | Safety checks are mandatory | Compatibility check + ethics gate applied to all transfer candidates |
 | Track and improve effectiveness | Continuously update confidence based on transfer outcome feedback |
@@ -258,19 +258,19 @@ When a new goal is added, search the CrossGoalKnowledgeBase for similar meta-pat
 
 ## External Reference: claude-mem
 
-> Source: [claude-mem](https://github.com/thedotmack/claude-mem) — A library for injecting memory across sessions. The following insights are reflected in the PulSeed M16 design.
+> Source: [claude-mem](https://github.com/thedotmack/claude-mem) — A library for injecting memory across sessions. The following insights are reflected in the PulSeed dynamic context budgeting design.
 
 ### A. Structured Field Design for session_summaries (Data Structure Pattern)
 
 claude-mem stores session summaries in structured fields: `investigated / learned / completed / next_steps`. Compared to unstructured text, this enables field-level search and matching, greatly improving transfer accuracy.
 
-**Application to M16**: Add the following fields to transfer source data (e.g., DecisionRecord) in KnowledgeTransfer Phase 2 to structure the transfer source data.
+**Application to dynamic context budgeting**: Add the following fields to transfer source data (e.g., DecisionRecord) in KnowledgeTransfer extended behavior to structure the transfer source data.
 
 ```
 DecisionRecord (extended proposal) {
   // Existing fields...
 
-  // Phase 2 additional fields (claude-mem pattern)
+  // extended behavior additional fields (claude-mem pattern)
   what_worked: string[]    // Approaches/strategies that were effective
   what_failed: string[]    // Approaches that failed and their reasons
   suggested_next: string[] // Suggestions/recommended actions for the next goal
@@ -279,17 +279,17 @@ DecisionRecord (extended proposal) {
 
 Structuring the data changes transfer matching from "full-text similarity" to "field-level comparison," enabling separate handling of "avoiding failure patterns" and "reusing success patterns."
 
-### B. Progressive Disclosure (Three-Phase Fetch Strategy)
+### B. Progressive Disclosure (Three-Step Fetch Strategy)
 
-claude-mem achieves approximately a 10x token reduction with a three-phase fetch: `search → timeline → get_observations`.
+claude-mem achieves approximately a 10x token reduction with a three-step fetch: `search → timeline → get_observations`.
 
-| Phase | Content | Token Volume |
+| Mode | Content | Token Volume |
 |-------|---------|--------------|
 | search | Returns index only | ~50–100 tokens/item |
 | timeline | Chronological context around an anchor ID | Medium |
 | get_observations | Full text retrieval by ID list | ~500–1000 tokens/item |
 
-**Application to M16**: In Phase 2's dynamic context budget approach, change the current fixed top-4 retrieval to progressive retrieval.
+**Application to dynamic context budgeting**: In extended behavior's dynamic context budget approach, change the current fixed top-4 retrieval to progressive retrieval.
 
 ```
 Current (fixed top-4):
@@ -305,7 +305,7 @@ This progressive approach allows PulSeed to consider a wide set of candidates an
 
 ### C. Small but Useful Design Patterns
 
-| Pattern | claude-mem Implementation | Applicability to M16 |
+| Pattern | claude-mem Implementation | Applicability to dynamic context budgeting |
 |---------|--------------------------|----------------------|
 | `discovery_tokens` field | Records the token cost of knowledge retrieval | Record token costs in TransferCandidate to use as a basis for budget allocation |
 | `concepts` JSON array | Schema-independent concept tags | Extend LearnedPattern's `domain_tags` to improve cross-goal matching accuracy |

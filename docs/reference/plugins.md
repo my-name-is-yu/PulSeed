@@ -41,4 +41,4 @@ pulseed plugin search <keyword>
 pulseed plugin remove <name>
 ```
 
-Related gateway channel setup lives under [Runtime](../runtime.md).
+Related gateway channel setup lives under [Runtime](../operate/runtime.md).

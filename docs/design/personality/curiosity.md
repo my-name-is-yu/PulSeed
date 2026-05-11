@@ -149,14 +149,14 @@ Record: "Strategy P" reduced the gap on Dimension X of Goal A by 30%
 
 Precondition for transfer proposals: the similarity score of challenge structures (matching dimension type, gap size, and failure patterns) must exceed a threshold. Unsupported transfers to dissimilar challenges are not proposed.
 
-**MVP implementation vs. Phase 2**
+**Default behavior and extensions**
 
-| Phase | Similarity detection method |
+| Mode | Similarity detection method |
 |-------|-----------------------------|
-| **MVP** | Exact match on `dimension_name` (transfer candidates detected between goals sharing the same named dimension). No embedding computation needed. |
-| **Phase 2** | Fuzzy similarity score using semantic embeddings (detects structurally similar dimensions even with different names). |
+| **Default behavior** | Exact match on `dimension_name` (transfer candidates detected between goals sharing the same named dimension). No embedding computation needed. |
+| **Extended behavior** | Fuzzy similarity score using semantic embeddings (detects structurally similar dimensions even with different names). |
 
-In the MVP, goals sharing a dimension with exactly the same `dimension_name` are treated as "transfer candidates." Fuzzy matching (e.g., treating "monthly_revenue" and "revenue_monthly" as identical) is deferred to Phase 2 and beyond.
+In the default behavior, goals sharing a dimension with exactly the same `dimension_name` are treated as "transfer candidates." Fuzzy matching (e.g., treating "monthly_revenue" and "revenue_monthly" as identical) is deferred to extended behavior and beyond.
 
 ### 4.4 Detecting Blind Spots
 
@@ -170,14 +170,14 @@ Record: The user's goals cover Domains A and B,
 
 Basis for blind spot detection: the difference between the full dimension list across the goal set and the baseline of dimensions typically tracked in similar domains. This is not conjecture from scratch — it is based on inference from the existing goal structure.
 
-**MVP implementation vs. Phase 2**
+**Default behavior and extensions**
 
-| Phase | Detection method | Confidence |
+| Mode | Detection method | Confidence |
 |-------|-----------------|------------|
-| **MVP** | LLM prompting: pass the dimension list [A, B, C] for Goal X and ask "What dimensions are commonly tracked in this goal domain but absent from this list?" | `detection_method: "llm_heuristic"` / Confidence: low–medium |
-| **Phase 2** | Baseline comparison against "similar-domain goal sets" using embedding similarity. | `detection_method: "embedding_similarity"` / Confidence: high |
+| **Default behavior** | LLM prompting: pass the dimension list [A, B, C] for Goal X and ask "What dimensions are commonly tracked in this goal domain but absent from this list?" | `detection_method: "llm_heuristic"` / Confidence: low–medium |
+| **Extended behavior** | Baseline comparison against "similar-domain goal sets" using embedding similarity. | `detection_method: "embedding_similarity"` / Confidence: high |
 
-The MVP operates without an embedding infrastructure. However, LLM heuristics are qualitative judgments and carry the risk of false positives and misses. Mark with `detection_method: "llm_heuristic"` and note the low confidence when presenting to the user.
+The default behavior operates without an embedding infrastructure. However, LLM heuristics are qualitative judgments and carry the risk of false positives and misses. Mark with `detection_method: "llm_heuristic"` and note the low confidence when presenting to the user.
 
 ---
 

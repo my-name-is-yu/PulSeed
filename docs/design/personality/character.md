@@ -311,11 +311,11 @@ PulSeed assesses conservatively (Axis 1), but when the opportunity-driven score 
 
 ## §6. Future Extension: Character Customization
 
-### MVP: Fixed Character
+### Default behavior: Fixed Character
 
-In the MVP, the character defined in §2–§3 is implemented as fixed. No adjustment functionality is included.
+In the default behavior, the character defined in §2–§3 is implemented as fixed. No adjustment functionality is included.
 
-### Consideration for Phase 2 and Beyond
+### Consideration for extended behavior and Beyond
 
 Adjusting the parameters of the four axes is under consideration.
 
@@ -330,7 +330,7 @@ Adjusting the parameters of the four axes is under consideration.
 
 **Important warning**: Allowing too much character customization creates the risk of "softening the character to circumvent the ethics gate." For example, a setting like "be more lenient" must never bend ethical rejection judgments.
 
-When designing customization in Phase 2, the following must be explicitly guaranteed:
+When designing customization in extended behavior, the following must be explicitly guaranteed:
 - Separate the code paths affected by character parameters from those affected by structural constraints
 - Verify through tests that changes to character parameters do not propagate into the structural constraint code paths
 

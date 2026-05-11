@@ -481,9 +481,9 @@ Workspace context: {workspaceContext}
 
 ---
 
-## 7. Implementation Roadmap
+## 7. Design Scope
 
-### Phase A: Foundation (PromptGateway + ContextAssembler Implementation)
+### Area A: Foundation (PromptGateway + ContextAssembler Implementation)
 
 **Goal**: Implement components and write unit tests
 
@@ -501,7 +501,7 @@ A-7 validates that context flows from ContextAssembler → prompt construction �
 
 **Estimated size**: 8 files + 3 test files, each under 200–300 lines
 
-### Phase B: Connection (Integration with Existing LLM Calls)
+### Area B: Connection (Integration with Existing LLM Calls)
 
 **Goal**: Connect PromptGateway (`src/prompt/gateway.ts`) to 5 major LLM call sites
 
@@ -511,11 +511,11 @@ A-7 validates that context flows from ContextAssembler → prompt construction �
 | B-2: Inject dimension history into observation | `observation-engine.ts` | `src/prompt/purposes/observation.ts` | P1 |
 | B-3: Inject knowledge + state into verification | `task-lifecycle.ts` | `src/prompt/purposes/verification.ts` | P2 |
 | B-4: Inject templates + lessons into strategy generation | `strategy-manager.ts` | `src/prompt/purposes/strategy.ts` | P2 |
-| B-5: Live connection of context-budget.ts | `src/prompt/context-assembler.ts` | Phase A-4 | P2 |
+| B-5: Live connection of context-budget.ts | `src/prompt/context-assembler.ts` | area A-4 | P2 |
 
 **Estimated size**: Modifications to 5–6 files, 20–50 lines of changes per file
 
-### Phase C: Optimization
+### Area C: Optimization
 
 **Goal**: Improve accuracy and efficiency
 
@@ -528,9 +528,9 @@ A-7 validates that context flows from ContextAssembler → prompt construction �
 
 **Estimated size**: Modifications to 3–4 files
 
-### Phase D: Migration of Remaining Call Sites (Low Priority)
+### Area D: Migration of Remaining Call Sites (Low Priority)
 
-**Goal**: Migrate the remaining ~26 call sites (out of 31 total) not covered in Phases A–C to the `src/prompt/gateway.ts` pattern
+**Goal**: Migrate the remaining ~26 call sites (out of 31 total) not covered in areas A-C to the `src/prompt/gateway.ts` pattern
 
 | Task | Target | Priority |
 |------|--------|----------|
@@ -538,7 +538,7 @@ A-7 validates that context flows from ContextAssembler → prompt construction �
 | D-2: Migrate knowledge-manager LLM calls | `knowledge-manager.ts` and others | P3 |
 | D-3: Migrate remaining LLM calls | Remaining sites | P4 |
 
-Phase D is a mechanical migration of functionally working code and should begin after Phases A–C are complete. The migration unifies logging, token tracking, and structuring across all LLM calls. Each caller simply imports the appropriate `purposes/*.ts` module from `src/prompt/` to complete the migration.
+area D is a mechanical migration of functionally working code and should begin after areas A-C are complete. The migration unifies logging, token tracking, and structuring across all LLM calls. Each caller simply imports the appropriate `purposes/*.ts` module from `src/prompt/` to complete the migration.
 
 ---
 
@@ -552,14 +552,14 @@ Phase D is a mechanical migration of functionally working code and should begin 
 | PromptGateway manages the full lifecycle | Single control point for logging, token tracking, and A/B testing | Purpose-specific templates are separated into dedicated files to prevent the component from becoming a God Object |
 | Absorb workspace-context.ts into ContextAssembler | Unify the external interface. Eliminate parallel systems | Existing direct call sites require modification |
 | Budget configurable via config.json | Optimal values vary by user environment and model | Default of 4000 is sufficient in most cases |
-| Reuse existing allocateBudget ratios | Minimizes implementation cost | Purpose-specific optimal ratios may differ (to be tuned in Phase C) |
+| Reuse existing allocateBudget ratios | Minimizes implementation cost | Purpose-specific optimal ratios may differ (to be tuned in area C) |
 | Set archival tier cosine similarity threshold at 0.6 | Balance between noise elimination and relevant information retrieval | If threshold is too high, useful information may be missed |
 
 ### Decisions Deferred
 
 | Deferred Item | Reason |
 |---------------|--------|
-| DSPy-style automatic prompt optimization | Ineffective until sufficient execution data is accumulated. To be reconsidered in Phase C and beyond |
+| DSPy-style automatic prompt optimization | Ineffective until sufficient execution data is accumulated. To be reconsidered in area C and beyond |
 | YAML externalization of prompt templates | Code-internal templates are sufficient at this stage |
 | LLM-autonomous memory management (MemGPT-style) | PulSeed is an orchestrator; having the system control memory management is more predictable |
 | Model-specific prompt format switching (XML/Markdown) | Unnecessary. XML works across all supported models |
@@ -571,4 +571,4 @@ Phase D is a mechanical migration of functionally working code and should begin 
 | Increased token cost from context injection | Budget control sets an upper limit. Configurable via config.json |
 | Outdated lessons causing misleading context (Context Rot) | Composite score of importance + recency eliminates old, low-importance entries |
 | PromptGateway with too many dependencies (God Object) | Purpose-specific templates and schemas are separated into dedicated files. All ContextAssembler dependencies are optional |
-| Impact on existing tests | In Phase B, existing prompt construction functions are extended (not replaced). Existing tests will not break |
+| Impact on existing tests | In area B, existing prompt construction functions are extended (not replaced). Existing tests will not break |

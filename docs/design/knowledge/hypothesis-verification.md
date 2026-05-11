@@ -13,14 +13,14 @@
 
 ### What is AutoResearchClaw?
 
-[AutoResearchClaw](https://github.com/aiming-lab/AutoResearchClaw) is an autonomous research pipeline with a 23-stage, 8-phase structure. Its key characteristics are:
+[AutoResearchClaw](https://github.com/aiming-lab/AutoResearchClaw) is an autonomous research pipeline with a multi-step structure. Its key characteristics are:
 
 - A repeating loop of: hypothesis generation → experiment design → execution → evaluation
 - **PIVOT/REFINE decision loop**: automatically decides whether to "tune parameters (REFINE)" or "change direction (PIVOT)" when an experiment fails
 - **Self-learning**: accumulates past decision outcomes as meta-knowledge and uses them in future decisions
 - **Convergence detection**: distinguishes convergence from stagnation based on transition patterns rather than simple threshold checks
 
-### PulSeedtion for Applying This to PulSeed
+### Rationale For Applying This To PulSeed
 
 PulSeed's orchestration runtime is structurally sound, but the following questions remain important:
 1. **No defined action after stall detection** — Even when StallDetector determines "it has stalled," DurableLoop has only limited branching
@@ -110,7 +110,7 @@ If the maximum pivot count is exceeded, escalate to ESCALATE.
 ## Improvement 2: Decision History Learning Loop
 
 **Affected modules**: `knowledge-manager.ts`, `strategy-manager.ts`, `types/`
-**Effort**: Medium–Large (3–5 days); recommended to implement alongside M13
+**Effort**: Medium–Large (3–5 days); recommended to implement alongside semantic knowledge sharing
 
 ### Current Problem
 
@@ -154,9 +154,9 @@ Reference past decision history when selecting a strategy:
 2. Prioritize strategies with a high success rate on similar goals
 3. Fall back to the existing logic when history is insufficient (fewer than 3 records)
 
-### Integration with M13
+### Integration with semantic knowledge sharing
 
-This naturally integrates with the cross-goal semantic knowledge sharing planned for M13 (KnowledgeManager Phase 2). Including DecisionRecords as targets for semantic search improves the accuracy of "similar goal" matching.
+This naturally integrates with the cross-goal semantic knowledge sharing planned for semantic knowledge sharing (KnowledgeManager extended behavior). Including DecisionRecords as targets for semantic search improves the accuracy of "similar goal" matching.
 
 ---
 
@@ -214,7 +214,7 @@ type SatisficingResult =
 |-------|-------------|-----------|
 | 1 | **Improvement 3** Convergence detection | Highly independent and immediately actionable. Limited impact on existing tests |
 | 2 | **Improvement 1** PIVOT/REFINE decision | Greatly increases StallDetector's value. Leverages the `stalled` judgment from Improvement 3 |
-| 3 | **Improvement 2** Learning loop | Only meaningful after Decisions from Improvement 1 have accumulated. Efficient to implement alongside M13 |
+| 3 | **Improvement 2** Learning loop | Only meaningful after Decisions from Improvement 1 have accumulated. Efficient to implement alongside semantic knowledge sharing |
 
 ---
 
@@ -232,7 +232,7 @@ type SatisficingResult =
 ## References
 
 - [AutoResearchClaw](https://github.com/aiming-lab/AutoResearchClaw)
-- [docs/module-map.md](../../module-map.md) — Related module boundary map
-- [docs/design/core/stall-detection.md](../core/stall-detection.md) — StallDetector design
-- [docs/design/core/satisficing.md](../core/satisficing.md) — SatisficingJudge design
+- [docs/architecture/module-map.md](../../architecture/module-map.md) — Related module boundary map
+- [docs/design/core/loop/stall-detection.md](../core/loop/stall-detection.md) — StallDetector design
+- [docs/design/core/loop/satisficing.md](../core/loop/satisficing.md) — SatisficingJudge design
 - [docs/design/knowledge/knowledge-acquisition.md](knowledge-acquisition.md) — KnowledgeManager design
