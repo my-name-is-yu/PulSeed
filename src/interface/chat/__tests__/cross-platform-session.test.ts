@@ -87,6 +87,34 @@ function makeGatewayReadTool(): ITool {
   };
 }
 
+function makeGatewayRuntimeStatusTool(): ITool {
+  return {
+    metadata: {
+      name: "get_runtime_status",
+      aliases: [],
+      permissionLevel: "read_only",
+      isReadOnly: true,
+      isDestructive: false,
+      shouldDefer: false,
+      alwaysLoad: true,
+      maxConcurrency: 0,
+      maxOutputChars: 8000,
+      tags: ["runtime", "status"],
+      activityCategory: "read",
+    },
+    inputSchema: z.object({}),
+    description: () => "Read PulSeed runtime status.",
+    call: vi.fn().mockResolvedValue({
+      success: true,
+      data: { daemon: "idle" },
+      summary: "PulSeed daemon is idle.",
+      durationMs: 1,
+    }),
+    checkPermissions: vi.fn().mockResolvedValue({ status: "allowed" }),
+    isConcurrencySafe: () => true,
+  };
+}
+
 function makeRegistryWithTools(tools: ITool[]): ToolRegistry {
   const registry = new ToolRegistry();
   for (const tool of tools) registry.register(tool);
@@ -635,8 +663,59 @@ describe("CrossPlatformChatSessionManager", () => {
     const firstOptions = llmClient.sendMessageStream.mock.calls[0]?.[1];
     expect((firstOptions?.tools ?? []).map((item: { function: { name: string } }) => item.function.name))
       .toContain("check_readme");
+    expect(firstOptions?.system).toContain("Default gateway tool contract");
+    expect(firstOptions?.system).toContain("use the relevant available tool before answering");
+    expect(firstOptions?.system).toContain("Do not answer tool-available inspection requests by telling the user to run local commands");
     expect(events.some((event) => event.type === "tool_start" && event.toolName === "check_readme")).toBe(true);
     expect(events.some((event) => event.type === "tool_end" && event.toolName === "check_readme" && event.success)).toBe(true);
+  });
+
+  it("keeps runtime status checks in the same default gateway tool-choice loop", async () => {
+    const events: ChatEvent[] = [];
+    const tool = makeGatewayRuntimeStatusTool();
+    const llmClient = makeStreamingLLMClient([
+      {
+        content: "",
+        stop_reason: "tool_calls",
+        tool_calls: [{
+          id: "call-runtime-status",
+          type: "function",
+          function: { name: "get_runtime_status", arguments: "{}" },
+        }],
+      },
+      {
+        content: "PulSeed daemon is idle.",
+      },
+    ]);
+    const chatAgentLoopRunner = { execute: vi.fn().mockResolvedValue(CANNED_RESULT) };
+    const manager = new CrossPlatformChatSessionManager(makeDeps({
+      llmClient: llmClient as never,
+      registry: makeRegistryWithTools([tool]),
+      chatAgentLoopRunner: chatAgentLoopRunner as never,
+    }));
+
+    const result = await manager.execute("今のPulSeed gateway/daemon statusを見て", {
+      identity_key: "gateway-runtime-status-user",
+      platform: "telegram",
+      conversation_id: "telegram-runtime-status",
+      user_id: "user-1",
+      cwd: "/repo",
+      onEvent: (event) => { events.push(event); },
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.output).toBe("PulSeed daemon is idle.");
+    expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
+    expect(tool.call).toHaveBeenCalledOnce();
+    expect(llmClient.sendMessage).not.toHaveBeenCalled();
+    expect(llmClient.sendMessageStream).toHaveBeenCalledTimes(2);
+    const firstOptions = llmClient.sendMessageStream.mock.calls[0]?.[1];
+    expect((firstOptions?.tools ?? []).map((item: { function: { name: string } }) => item.function.name))
+      .toContain("get_runtime_status");
+    expect(firstOptions?.system).toContain("Default gateway tool contract");
+    expect(firstOptions?.system).toContain("PulSeed runtime/gateway/daemon/session state");
+    expect(events.some((event) => event.type === "tool_start" && event.toolName === "get_runtime_status")).toBe(true);
+    expect(events.some((event) => event.type === "tool_end" && event.toolName === "get_runtime_status" && event.success)).toBe(true);
   });
 
   it("keeps natural-language setup/run-spec requests inside the default gateway model tool-choice loop", async () => {
