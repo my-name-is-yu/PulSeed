@@ -705,7 +705,12 @@ export class ChatRunner {
 
     const selectedRoute = resumeOnly
       ? null
-      : (resolvedRoute ?? await this.resolveRouteFromInput(safeInput, runtimeControlContext, resolvedCwd));
+      : (resolvedRoute ?? await this.resolveRouteFromInput(
+          safeInput,
+          runtimeControlContext,
+          resolvedCwd,
+          options.runtimeControlContext?.explicit === true,
+        ));
     this.lastSelectedRoute = selectedRoute;
     const usesGatewayModelLoop = selectedRoute?.kind === "gateway_model_loop";
     if (usesGatewayModelLoop) {
@@ -1086,9 +1091,12 @@ export class ChatRunner {
   private async resolveRouteFromInput(
     input: string,
     runtimeControlContext: RuntimeControlChatContext | null,
-    cwd?: string
+    cwd?: string,
+    runtimeControlExplicit = false
   ): Promise<SelectedChatRoute> {
-    const ingress = buildStandaloneIngressMessageFromContext(input, runtimeControlContext, this.deps);
+    const ingress = buildStandaloneIngressMessageFromContext(input, runtimeControlContext, this.deps, {
+      runtimeControlExplicit,
+    });
     return this.resolveRouteFromIngress(cwd ? { ...ingress, cwd } : ingress);
   }
 

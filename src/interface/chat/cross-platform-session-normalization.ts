@@ -131,6 +131,7 @@ export function resolveRuntimeControl(
   return {
     allowed: runtimeControl?.allowed ?? approvalMode !== "disallowed",
     approvalMode,
+    ...(runtimeControl?.explicit === true ? { explicit: true } : {}),
   };
 }
 

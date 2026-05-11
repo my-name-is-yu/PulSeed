@@ -99,7 +99,8 @@ export function getRouteCapabilities(deps: ChatRunnerRuntimeDeps): {
 export function buildStandaloneIngressMessageFromContext(
   input: string,
   runtimeControlContext: RuntimeControlChatContext | null,
-  deps: ChatRunnerRuntimeDeps
+  deps: ChatRunnerRuntimeDeps,
+  options: { runtimeControlExplicit?: boolean } = {}
 ): ChatIngressMessage {
   const channel = runtimeControlContext?.replyTarget?.surface === "tui"
     ? "tui"
@@ -135,9 +136,11 @@ export function buildStandaloneIngressMessageFromContext(
     user_id: runtimeControlContext?.replyTarget?.user_id ?? deps.runtimeReplyTarget?.user_id,
     actor: runtimeControlContext?.actor ?? deps.runtimeControlActor,
     replyTarget: replyTargetInput,
+    metadata: options.runtimeControlExplicit ? { runtime_control_explicit: true } : undefined,
     runtimeControl: {
       allowed: true,
       approvalMode: "interactive",
+      ...(options.runtimeControlExplicit ? { explicit: true } : {}),
     },
   });
 }
@@ -157,6 +160,7 @@ export function buildRuntimeControlContextFromIngress(
     replyTarget: ingress.replyTarget,
     allowed: ingress.runtimeControl.allowed,
     approvalMode: ingress.runtimeControl.approvalMode,
+    explicit: ingress.metadata["runtime_control_explicit"] === true || ingress.runtimeControl.explicit === true,
     approvalFn: ingress.runtimeControl.approvalMode === "preapproved"
       ? async () => true
       : ingress.runtimeControl.approvalMode === "interactive"

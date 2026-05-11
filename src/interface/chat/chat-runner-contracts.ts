@@ -115,6 +115,7 @@ export interface RuntimeControlChatContext {
   approvalFn?: (description: string) => Promise<boolean>;
   allowed?: boolean;
   approvalMode?: "interactive" | "preapproved" | "disallowed";
+  explicit?: boolean;
 }
 
 export interface ChatRunnerRouteSelectionInput {

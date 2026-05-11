@@ -4434,6 +4434,69 @@ describe("ChatRunner", () => {
       expect(adapter.execute).not.toHaveBeenCalled();
     });
 
+    it("keeps explicit non-gateway runtime-control context ahead of the agent loop", async () => {
+      const adapter = makeMockAdapter();
+      const approvalFn = vi.fn().mockResolvedValue(true);
+      const chatAgentLoopRunner = {
+        execute: vi.fn().mockResolvedValue({
+          success: true,
+          output: "Agent loop should not receive explicit runtime control",
+          error: null,
+          exit_code: null,
+          elapsed_ms: 42,
+          stopped_reason: "completed",
+        }),
+      } as unknown as ChatAgentLoopRunner;
+      const runtimeControlService = {
+        request: vi.fn().mockResolvedValue({
+          success: true,
+          message: "pause queued",
+          operationId: "op-cli-pause",
+          state: "running",
+        }),
+      };
+      const runner = new ChatRunner(makeDeps({
+        adapter,
+        chatAgentLoopRunner,
+        llmClient: createSingleMockLLMClient(JSON.stringify({
+          intent: "pause_run",
+          reason: "Pause the current CLI runtime turn.",
+        })),
+        runtimeControlService,
+      }));
+
+      const result = await runner.execute("Pause the current run.", "/repo", 120_000, {
+        runtimeControlContext: {
+          actor: {
+            surface: "cli",
+            identity_key: "cli-owner",
+            user_id: "user-1",
+          },
+          replyTarget: {
+            surface: "cli",
+            channel: "cli",
+            identity_key: "cli-owner",
+            user_id: "user-1",
+          },
+          approvalFn,
+          allowed: true,
+          approvalMode: "interactive",
+          explicit: true,
+        },
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.output).toBe("pause queued");
+      expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
+      expect(adapter.execute).not.toHaveBeenCalled();
+      expect(runtimeControlService.request).toHaveBeenCalledWith(expect.objectContaining({
+        intent: expect.objectContaining({ kind: "pause_run" }),
+        requestedBy: expect.objectContaining({ surface: "cli", identity_key: "cli-owner" }),
+        replyTarget: expect.objectContaining({ surface: "cli", channel: "cli" }),
+        approvalFn,
+      }));
+    });
+
     it("leaves long-running natural-language handoff to chatAgentLoopRunner tools", async () => {
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-coreloop-tool-route-"));
       try {

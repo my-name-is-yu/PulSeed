@@ -18,6 +18,7 @@ export interface ChatIngressRuntimeControl {
   allowed: boolean;
   approvalMode: IngressApprovalMode;
   approval_mode?: IngressApprovalMode;
+  explicit?: boolean;
 }
 
 export interface IngressReplyTarget extends RuntimeControlReplyTarget {

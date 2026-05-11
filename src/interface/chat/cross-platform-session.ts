@@ -443,7 +443,8 @@ export class CrossPlatformChatSessionManager {
       timeoutMs: options.timeoutMs,
       metadata: {
         ...(options.metadata ?? {}),
-        ...(options.runtimeControl && (options.channel ?? (options.platform ? "plugin_gateway" : "cli")) === "plugin_gateway"
+        ...(options.runtimeControl?.explicit === true
+          || (options.runtimeControl && (options.channel ?? (options.platform ? "plugin_gateway" : "cli")) === "plugin_gateway")
           ? { runtime_control_explicit: true }
           : {}),
       },
@@ -808,7 +809,9 @@ export class CrossPlatformChatSessionManager {
       ...(goalId ? { goal_id: goalId } : {}),
       ...("sender_id" in input && input.sender_id ? { sender_id: input.sender_id } : {}),
       ...(input.message_id ? { message_id: input.message_id } : {}),
-      ...(input.runtimeControl && channel === "plugin_gateway" ? { runtime_control_explicit: true } : {}),
+      ...(input.runtimeControl?.explicit === true || (input.runtimeControl && channel === "plugin_gateway")
+        ? { runtime_control_explicit: true }
+        : {}),
     };
     if (!externalSurface) {
       delete metadata[EXTERNAL_SURFACE_METADATA_KEY];

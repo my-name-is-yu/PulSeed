@@ -380,6 +380,7 @@ export function normalizeLegacyIngressInput(input: NormalizeLegacyIngressInput):
       allowed,
       approvalMode,
       approval_mode: approvalMode,
+      ...(input.runtimeControl?.explicit === true ? { explicit: true } : {}),
     },
     companion: input.companion ?? {
       schema_version: "companion-runtime-contract-v1",

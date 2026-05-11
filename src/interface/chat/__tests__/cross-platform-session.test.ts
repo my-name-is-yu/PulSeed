@@ -2412,6 +2412,64 @@ describe("CrossPlatformChatSessionManager", () => {
     );
   });
 
+  it.each(["cli", "tui"] as const)(
+    "preserves explicit runtime-control metadata for %s execute turns before agent-loop fallback",
+    async (channel) => {
+      const adapter = makeMockAdapter();
+      const chatAgentLoopRunner = {
+        execute: vi.fn().mockResolvedValue({
+          success: true,
+          output: "agent loop should not receive explicit runtime control",
+          error: null,
+          exit_code: null,
+          elapsed_ms: 42,
+          stopped_reason: "completed",
+        }),
+      };
+      const runtimeControlService = {
+        request: vi.fn().mockResolvedValue({
+          success: true,
+          message: "pause queued",
+          operationId: `op-${channel}-pause`,
+          state: "running",
+        }),
+      };
+      const manager = new CrossPlatformChatSessionManager(makeDeps({
+        adapter,
+        chatAgentLoopRunner: chatAgentLoopRunner as never,
+        llmClient: createSingleMockLLMClient(JSON.stringify({
+          intent: "pause_run",
+          reason: "Pause the current non-gateway runtime turn.",
+        })),
+        runtimeControlService,
+        runtimeControlApprovalFn: vi.fn().mockResolvedValue(true),
+      }));
+
+      const result = await manager.execute("Pause the current run.", {
+        identity_key: `${channel}-runtime-user`,
+        channel,
+        cwd: "/repo",
+        runtimeControl: {
+          allowed: true,
+          approvalMode: "interactive",
+          explicit: true,
+        },
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.output).toBe("pause queued");
+      expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
+      expect(adapter.execute).not.toHaveBeenCalled();
+      expect(runtimeControlService.request).toHaveBeenCalledWith(
+        expect.objectContaining({
+          intent: expect.objectContaining({ kind: "pause_run" }),
+          requestedBy: expect.objectContaining({ surface: channel }),
+          replyTarget: expect.objectContaining({ surface: channel }),
+        })
+      );
+    }
+  );
+
   it("routes runtime-control approval through the originating conversation metadata", async () => {
     const tmpDir = makeTempDir();
     const events: string[] = [];
