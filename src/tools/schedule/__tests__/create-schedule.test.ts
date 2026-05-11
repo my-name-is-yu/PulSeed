@@ -235,10 +235,11 @@ describe("CreateScheduleTool", () => {
   it("exports union branch contracts to the model-facing tool definition", () => {
     const tool = new CreateScheduleTool({ addEntry: vi.fn() } as unknown as ScheduleEngine);
     const parameters = toToolDefinition(tool).function.parameters;
-    const branchSchema = parameters.anyOf ?? parameters.oneOf ?? parameters.allOf;
 
     expect(parameters.type).toBe("object");
-    expect(Array.isArray(branchSchema)).toBe(true);
+    expect(parameters.anyOf).toBeUndefined();
+    expect(parameters.oneOf).toBeUndefined();
+    expect(parameters.allOf).toBeUndefined();
     expect(JSON.stringify(parameters)).toContain("\"preset\"");
     expect(JSON.stringify(parameters)).toContain("\"layer\"");
     expect(JSON.stringify(parameters)).toContain("\"daily_brief\"");
