@@ -374,6 +374,7 @@ export async function executeGatewayModelLoopRoute(
   params: GatewayModelLoopRouteParams,
 ): Promise<ChatRunResult> {
   try {
+    const approvalCapable = Boolean(host.deps.approvalRequestFn || host.deps.approvalFn);
     const toolResult = await executeWithTools(
       host,
       params.turnContext,
@@ -387,7 +388,9 @@ export async function executeGatewayModelLoopRoute(
         tools: selectGatewayModelLoopTools(host.deps.registry?.listAll() ?? [], {
           runtimeControlAllowed: params.runtimeControlContext?.allowed,
           runtimeControlApprovalMode: params.runtimeControlContext?.approvalMode,
-          approvedWrite: Boolean(host.deps.approvalRequestFn || host.deps.approvalFn),
+          approvedWrite: approvalCapable,
+          approvedExecute: approvalCapable,
+          approvedDurableRun: approvalCapable,
         }),
         streamFinalText: true,
         abortSignal: params.activeAbortSignal,
@@ -839,13 +842,18 @@ function toolLoopTerminalEvidence(error: ToolLoopTerminalError) {
     || error.code === "model_request_aborted"
     || error.code === "tool_call_timeout"
     || error.code === "tool_call_aborted";
+  const stoppedReason = error.code === "model_request_aborted" || error.code === "tool_call_aborted"
+    ? "aborted"
+    : isInterruption
+      ? "timeout"
+      : "stalled_tool_loop";
   return {
     code: error.code,
     stoppedReason: error.code,
     signals: [{
       kind: "runtime" as const,
       operationState: "daemon_loop" as const,
-      stoppedReason: isInterruption ? "timeout" : "stalled_tool_loop",
+      stoppedReason,
       code: error.code,
     }],
   };

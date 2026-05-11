@@ -727,6 +727,32 @@ describe("CrossPlatformChatSessionManager", () => {
       .toEqual(["read", "grep", "get_runtime_status", "ask-human", "request_runtime_control"]);
   });
 
+  it("exposes execute and durable-run tools only when the gateway loop has an approval boundary", async () => {
+    const llmClient = makeStreamingLLMClient([{ content: "approval-scoped tools are available." }]);
+    const manager = new CrossPlatformChatSessionManager(makeDeps({
+      llmClient: llmClient as never,
+      registry: makeRegistryWithTools([
+        makeScopedTool("read"),
+        makeScopedTool("start_durable_run", { permissionLevel: "write_local", isReadOnly: false }),
+        makeScopedTool("shell", { permissionLevel: "execute", isReadOnly: false }),
+      ]),
+      approvalFn: vi.fn().mockResolvedValue(true),
+    }));
+
+    const result = await manager.execute("Run the approved maintenance command.", {
+      identity_key: "approved-execute-user",
+      platform: "telegram",
+      conversation_id: "approved-execute-chat",
+      user_id: "user-1",
+      cwd: "/repo",
+    });
+
+    expect(result.success).toBe(true);
+    const toolNames = (llmClient.sendMessageStream.mock.calls[0]?.[1]?.tools ?? [])
+      .map((tool: { function: { name: string } }) => tool.function.name);
+    expect(toolNames).toEqual(expect.arrayContaining(["read", "start_durable_run", "shell"]));
+  });
+
   it("lets gateway default model-loop choose tools and uses tool evidence for the final", async () => {
     const events: ChatEvent[] = [];
     const tool = makeGatewayReadTool();
