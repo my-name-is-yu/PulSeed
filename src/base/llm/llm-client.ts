@@ -41,6 +41,8 @@ export interface LLMRequestOptions {
   temperature?: number;
   /** Route to light model when configured. Defaults to 'main' for backward compat. */
   model_tier?: ModelTier;
+  /** Optional per-request reasoning effort override for providers that support it. */
+  reasoning_effort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
   /** Tool definitions for function calling (tool use). */
   tools?: ToolDefinition[];
   /** Optional per-request sandbox override for CLI-backed clients. */
@@ -56,6 +58,8 @@ export interface LLMRequestOptions {
 }
 
 export interface LLMStreamHandlers {
+  /** Provider text delta was received. This is for timing/telemetry and must not imply user-visible text. */
+  onModelTextDeltaReceived?: (delta: string) => void;
   onTextDelta?: (delta: string) => void;
 }
 

@@ -16,6 +16,7 @@ vi.mock("../openai-client.js", () => ({
 
 vi.mock("../codex-llm-client.js", () => ({
   CodexLLMClient: vi.fn().mockImplementation(function() { return { _tag: "CodexLLMClient" }; }),
+  isCodexOAuthAccessToken: vi.fn((token: string | undefined) => token === "oauth-token"),
 }));
 
 vi.mock("../../execution/adapter-layer.js", () => ({
@@ -226,7 +227,10 @@ describe("buildLLMClient — early API key validation", () => {
       }));
     });
 
-    it("succeeds when api_key is present", async () => {
+    it("does not pass OpenAI API keys as Codex OAuth tokens", async () => {
+      const MockedCodexLLMClient = vi.mocked(CodexLLMClient);
+      MockedCodexLLMClient.mockClear();
+
       mockLoadProviderConfig.mockResolvedValue({
         provider: "openai",
         model: "gpt-5.4-mini",
@@ -235,6 +239,26 @@ describe("buildLLMClient — early API key validation", () => {
       });
 
       await expect(buildLLMClient()).resolves.not.toThrow();
+      expect(MockedCodexLLMClient).toHaveBeenCalledWith(expect.objectContaining({
+        apiKey: undefined,
+      }));
+    });
+
+    it("passes resolved Codex OAuth tokens to CodexLLMClient", async () => {
+      const MockedCodexLLMClient = vi.mocked(CodexLLMClient);
+      MockedCodexLLMClient.mockClear();
+
+      mockLoadProviderConfig.mockResolvedValue({
+        provider: "openai",
+        model: "gpt-5.4-mini",
+        adapter: "openai_codex_cli",
+        api_key: "oauth-token",
+      });
+
+      await expect(buildLLMClient()).resolves.not.toThrow();
+      expect(MockedCodexLLMClient).toHaveBeenCalledWith(expect.objectContaining({
+        apiKey: "oauth-token",
+      }));
     });
   });
 

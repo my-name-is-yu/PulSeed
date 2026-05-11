@@ -76,6 +76,34 @@ function makeFakeChild(): FakeChildProcess {
   return child;
 }
 
+function sseResponse(events: Record<string, unknown>[]): Response {
+  const encoder = new TextEncoder();
+  return new Response(new ReadableStream({
+    start(controller) {
+      for (const event of events) {
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+      }
+      controller.close();
+    },
+  }), {
+    status: 200,
+    headers: { "content-type": "text/event-stream" },
+  });
+}
+
+function fakeCodexOAuthToken(): string {
+  return [
+    Buffer.from(JSON.stringify({ alg: "none" })).toString("base64url"),
+    Buffer.from(JSON.stringify({
+      exp: Math.floor(Date.now() / 1000) + 3600,
+      "https://api.openai.com/auth": {
+        chatgpt_account_id: "account-1",
+      },
+    })).toString("base64url"),
+    "signature",
+  ].join(".");
+}
+
 /** Flush microtask queue so that async operations (e.g. fsp.mkdtemp) resolve before we emit child events */
 const flushMicrotasks = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
 
@@ -623,6 +651,167 @@ describe("CodexLLMClient", () => {
       expect(err).toBeInstanceOf(Error);
       expect((err as Error).message).toContain("idle timed out");
       expect((err as { agentLoopFailureReason?: string }).agentLoopFailureReason).toBe("model_request_timeout");
+    });
+  });
+
+  describe("Codex Responses streaming", () => {
+    it("uses Codex Responses instead of codex exec when an OAuth token is configured", async () => {
+      const fetchMock = vi.fn().mockResolvedValue(sseResponse([
+        { type: "response.output_text.delta", delta: "hi" },
+        {
+          type: "response.completed",
+          response: {
+            status: "completed",
+            usage: { input_tokens: 2, output_tokens: 1 },
+          },
+        },
+      ]));
+      vi.stubGlobal("fetch", fetchMock);
+
+      const client = new CodexLLMClient({ apiKey: fakeCodexOAuthToken(), model: "gpt-5.4-mini" });
+      const rawDeltas: string[] = [];
+      const deltas: string[] = [];
+      const response = await client.sendMessageStream?.(
+        [{ role: "user", content: "hi" }],
+        { model_tier: "light" },
+        {
+          onModelTextDeltaReceived: (delta) => rawDeltas.push(delta),
+          onTextDelta: (delta) => deltas.push(delta),
+        },
+      );
+
+      expect(response?.content).toBe("hi");
+      expect(response?.usage).toEqual({ input_tokens: 2, output_tokens: 1 });
+      expect(rawDeltas).toEqual(["hi"]);
+      expect(deltas).toEqual(["hi"]);
+      expect(mockSpawn).not.toHaveBeenCalled();
+      expect(fetchMock).toHaveBeenCalledOnce();
+      const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+      expect(JSON.parse(String(init.body))).toMatchObject({
+        instructions: expect.any(String),
+        stream: true,
+      });
+    });
+
+    it("deduplicates function call argument events by Codex call id", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(sseResponse([
+        {
+          type: "response.output_item.added",
+          item: {
+            id: "fc_1",
+            call_id: "call_1",
+            type: "function_call",
+            name: "check_readme",
+            arguments: "",
+          },
+        },
+        {
+          type: "response.function_call_arguments.delta",
+          item_id: "fc_1",
+          delta: "{}",
+        },
+        {
+          type: "response.function_call_arguments.done",
+          item_id: "fc_1",
+          arguments: "{}",
+        },
+        {
+          type: "response.output_item.done",
+          item: {
+            id: "fc_1",
+            call_id: "call_1",
+            type: "function_call",
+            name: "check_readme",
+            arguments: "{}",
+          },
+        },
+        { type: "response.completed", response: { status: "completed", usage: { input_tokens: 1, output_tokens: 1 } } },
+      ])));
+
+      const client = new CodexLLMClient({ apiKey: fakeCodexOAuthToken(), model: "gpt-5.4-mini" });
+      const response = await client.sendMessage(
+        [{ role: "user", content: "check README" }],
+        {
+          tools: [{
+            type: "function",
+            function: {
+              name: "check_readme",
+              description: "Check README.",
+              parameters: { type: "object", properties: {} },
+            },
+          }],
+        },
+      );
+
+      expect(response.tool_calls).toEqual([{
+        id: "call_1",
+        type: "function",
+        function: {
+          name: "check_readme",
+          arguments: "{}",
+        },
+      }]);
+      expect(mockSpawn).not.toHaveBeenCalled();
+    });
+
+    it("does not send OpenAI API keys to the ChatGPT Codex Responses backend", async () => {
+      const fetchMock = vi.fn();
+      vi.stubGlobal("fetch", fetchMock);
+      const client = new CodexLLMClient({ apiKey: "sk-test", model: "gpt-5.4-mini" });
+      const child = makeFakeChild();
+      mockTmpContents.value = "cli response";
+
+      const promise = client.sendMessage([{ role: "user", content: "hi" }]);
+      await flushMicrotasks();
+      child.emit("close", 0);
+
+      await expect(promise).resolves.toMatchObject({ content: "cli response" });
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(mockSpawn).toHaveBeenCalledOnce();
+      expect(client.supportsToolCalling()).toBe(false);
+      expect(client.usesExternalAgentRuntime()).toBe(true);
+    });
+
+    it("rejects a Codex Responses stream that ends without a terminal response", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(sseResponse([
+        { type: "response.output_text.delta", delta: "partial" },
+      ])));
+
+      const client = new CodexLLMClient({ apiKey: fakeCodexOAuthToken(), model: "gpt-5.4-mini" });
+
+      await expect(client.sendMessageStream?.(
+        [{ role: "user", content: "hi" }],
+        { model_tier: "light" },
+        {},
+      )).rejects.toThrow("ended without a terminal response");
+    });
+
+    it("rejects an incomplete Codex Responses terminal event", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(sseResponse([
+        { type: "response.output_text.delta", delta: "partial" },
+        {
+          type: "response.incomplete",
+          response: {
+            status: "incomplete",
+            incomplete_details: { reason: "max_output_tokens" },
+          },
+        },
+      ])));
+
+      const client = new CodexLLMClient({ apiKey: fakeCodexOAuthToken(), model: "gpt-5.4-mini" });
+      const rawDeltas: string[] = [];
+      const visibleDeltas: string[] = [];
+
+      await expect(client.sendMessageStream?.(
+        [{ role: "user", content: "hi" }],
+        { model_tier: "light" },
+        {
+          onModelTextDeltaReceived: (delta) => rawDeltas.push(delta),
+          onTextDelta: (delta) => visibleDeltas.push(delta),
+        },
+      )).rejects.toThrow("max_output_tokens");
+      expect(rawDeltas).toEqual(["partial"]);
+      expect(visibleDeltas).toEqual([]);
     });
   });
 

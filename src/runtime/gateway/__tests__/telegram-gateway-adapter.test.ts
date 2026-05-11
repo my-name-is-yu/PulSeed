@@ -562,6 +562,47 @@ describe("TelegramGatewayAdapter", () => {
     adapters.push(adapter);
     vi.mocked(dispatchGatewayChatInput).mockImplementationOnce(async (input) => {
       await input.onEvent?.({
+        type: "lifecycle_start",
+        runId: "run-1",
+        turnId: "turn-1",
+        createdAt: "2026-04-08T00:00:00.100Z",
+        input: "check README",
+        userInput: { kind: "text", text: "check README" },
+        operation: {
+          kind: "TurnStart",
+          runId: "run-1",
+          turnId: "turn-1",
+          inputId: "input-1",
+          cwd: "/repo",
+          userInput: { kind: "text", text: "check README" },
+        },
+      });
+      await input.onEvent?.({
+        type: "presence_update",
+        runId: "run-1",
+        turnId: "turn-1",
+        createdAt: "2026-04-08T00:00:00.200Z",
+        presence: {
+          schema_version: "seedy-turn-presence-v1",
+          turn_id: "turn-1",
+          phase: "thinking",
+          audience: "user",
+          importance: "ephemeral",
+          expected_next: "final",
+          started_at: "2026-04-08T00:00:00.200Z",
+          updated_at: "2026-04-08T00:00:00.200Z",
+        },
+      });
+      await input.onEvent?.({
+        type: "activity",
+        kind: "lifecycle",
+        runId: "run-1",
+        turnId: "turn-1",
+        createdAt: "2026-04-08T00:00:00.300Z",
+        message: "Calling model...",
+        sourceId: "lifecycle:model",
+      });
+      await input.onEvent?.({
         type: "operation_progress",
         runId: "run-1",
         turnId: "turn-1",
@@ -574,6 +615,14 @@ describe("TelegramGatewayAdapter", () => {
           detail: "Checking whether the workspace has a README.",
           createdAt: "2026-04-08T00:00:01.000Z",
         },
+      });
+      await input.onEvent?.({
+        type: "assistant_delta",
+        runId: "run-1",
+        turnId: "turn-1",
+        createdAt: "2026-04-08T00:00:01.500Z",
+        delta: "README exists.",
+        text: "README exists.",
       });
       await input.onEvent?.({
         type: "assistant_final",
@@ -607,6 +656,21 @@ describe("TelegramGatewayAdapter", () => {
           message_id: 2718,
           turn_ref: "telegram:message:2718",
           inbound_admitted_at: expect.any(String),
+          dispatch_start_at: expect.any(String),
+          chat_runner_execute_start_at: expect.any(String),
+          route_selected_at: expect.any(String),
+          first_model_request_started_at: expect.any(String),
+          first_model_request_at: expect.any(String),
+          first_model_delta_received_at: expect.any(String),
+          first_model_delta_at: expect.any(String),
+          first_assistant_event_at: expect.any(String),
+          first_telegram_send_or_edit_attempted_at: expect.any(String),
+          first_telegram_visible_text_confirmed_or_api_returned_at: expect.any(String),
+          first_projected_assistant_text_at: expect.any(String),
+          final_send_started_at: expect.any(String),
+          final_send_completed_at: expect.any(String),
+          typing_started_at: expect.any(String),
+          typing_completed_at: expect.any(String),
           first_typing_at: expect.any(String),
           first_progress_at: expect.any(String),
           first_final_at: expect.any(String),

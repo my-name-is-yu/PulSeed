@@ -40,16 +40,17 @@ import {
 } from "./seedy-presence-projector.js";
 
 const RUNS = 3;
-const THRESHOLD_MS = 3_000;
+const THRESHOLD_MS = 2_000;
 
 interface SmokeRecord {
   run: number;
   input: string;
-  start_at: string;
-  first_model_request_at: string | null;
-  first_assistant_event_at: string | null;
-  first_projected_assistant_text_at: string | null;
-  first_projected_assistant_text_ms: number | null;
+  inbound_admitted_at: string;
+  first_model_request_started_at: string | null;
+  first_model_delta_received_at: string | null;
+  first_telegram_send_or_edit_attempted_at: string | null;
+  first_telegram_visible_text_confirmed_or_api_returned_at: string | null;
+  first_telegram_visible_text_confirmed_or_api_returned_ms: number | null;
   first_visible_transport_text: {
     kind: string;
     content_summary: string;
@@ -119,15 +120,17 @@ class NullAdapter implements IAdapter {
 interface TransportCall {
   kind: "progress_send" | "progress_edit" | "progress_delete" | "final_send" | "final_edit";
   text: string;
-  at: Date;
+  attemptedAt: Date;
+  apiReturnedAt: Date;
 }
 
 function createRecordingTransport(): NonTuiDisplayTransport & { calls: TransportCall[] } {
   let nextId = 0;
   const calls: TransportCall[] = [];
   const push = (kind: TransportCall["kind"], text: string): NonTuiDisplayMessageRef => {
-    calls.push({ kind, text, at: new Date() });
+    const attemptedAt = new Date();
     nextId += 1;
+    calls.push({ kind, text, attemptedAt, apiReturnedAt: new Date() });
     return { id: `${kind}-${nextId}` };
   };
   return {
@@ -179,7 +182,13 @@ async function runOne(input: {
     cwd: input.cwd,
     onEvent: async (event) => {
       const chatEvent = event as unknown as ChatEvent;
-      if (chatEvent.type === "assistant_delta" && firstAssistantEventAtMs === null) {
+      if (
+        firstAssistantEventAtMs === null
+        && (
+          (chatEvent.type === "activity" && chatEvent.sourceId === "lifecycle:model-delta")
+          || (chatEvent.type === "assistant_delta" && chatEvent.text.trim().length > 0)
+        )
+      ) {
         firstAssistantEventAtMs = Date.now();
       }
       await displayProjector.handle(chatEvent);
@@ -201,15 +210,16 @@ async function runOne(input: {
   return {
     run: input.index,
     input: text,
-    start_at: startAt.toISOString(),
-    first_model_request_at: input.llmClient.firstModelRequestAtMs !== null
+    inbound_admitted_at: startAt.toISOString(),
+    first_model_request_started_at: input.llmClient.firstModelRequestAtMs !== null
       ? new Date(input.llmClient.firstModelRequestAtMs).toISOString()
       : null,
-    first_assistant_event_at: firstAssistantEventAtMs !== null
+    first_model_delta_received_at: firstAssistantEventAtMs !== null
       ? new Date(firstAssistantEventAtMs).toISOString()
       : null,
-    first_projected_assistant_text_at: firstVisible?.at.toISOString() ?? null,
-    first_projected_assistant_text_ms: firstVisible ? firstVisible.at.getTime() - startAt.getTime() : null,
+    first_telegram_send_or_edit_attempted_at: firstVisible?.attemptedAt.toISOString() ?? null,
+    first_telegram_visible_text_confirmed_or_api_returned_at: firstVisible?.apiReturnedAt.toISOString() ?? null,
+    first_telegram_visible_text_confirmed_or_api_returned_ms: firstVisible ? firstVisible.apiReturnedAt.getTime() - startAt.getTime() : null,
     first_visible_transport_text: firstVisible
       ? {
           kind: firstVisible.kind,
@@ -253,8 +263,11 @@ async function main(): Promise<number> {
       records.push(await runOne({ manager, llmClient, index, cwd: process.cwd() }));
     }
     const failed = records.filter((record) =>
-      record.first_projected_assistant_text_ms === null
-      || record.first_projected_assistant_text_ms > THRESHOLD_MS
+      record.first_telegram_visible_text_confirmed_or_api_returned_ms === null
+      || record.first_telegram_visible_text_confirmed_or_api_returned_ms > THRESHOLD_MS
+      || record.first_model_delta_received_at === null
+      || (record.result_summary?.startsWith("Error:") ?? false)
+      || (record.first_visible_transport_text?.content_summary.startsWith("Error:") ?? false)
     );
     console.log(JSON.stringify({
       status: failed.length === 0 ? "passed" : "failed",

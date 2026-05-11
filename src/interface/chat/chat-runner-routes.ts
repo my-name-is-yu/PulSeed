@@ -28,6 +28,10 @@ import { buildChatModelRequest } from "./model-request-builder.js";
 import { gateRuntimeEvidenceBoundFinalAnswer } from "./runtime-evidence-gate.js";
 import { generateGatewayCommentaryPreamble } from "./gateway-commentary-preamble.js";
 import {
+  buildGatewayToolUseRetryMessage,
+  evaluateGatewayToolUseContract,
+} from "./gateway-tool-use-contract.js";
+import {
   createDiscordAdapterPlanDialogue,
   createTelegramConfirmWriteDialogue,
   type SetupDialogueRuntimeState,
@@ -475,6 +479,7 @@ export async function executeToolLoopRoute(
       {
         tools: host.deps.registry?.listAll() ?? [],
         streamFinalText: !shouldGateRuntimeEvidenceForTurn(params.turnContext),
+        failClosedOnToolContractUnavailable: false,
       },
     );
     const elapsed_ms = Date.now() - params.start;
@@ -553,6 +558,7 @@ export async function executeGatewayModelLoopRoute(
       {
         tools: selectGatewayModelLoopTools(host.deps.registry?.listAll() ?? []),
         streamFinalText: true,
+        failClosedOnToolContractUnavailable: true,
       },
     );
     const elapsed_ms = Date.now() - params.start;
@@ -849,13 +855,42 @@ async function executeWithTools(
   options: {
     tools: ITool[];
     streamFinalText: boolean;
+    failClosedOnToolContractUnavailable?: boolean;
   } = {
     tools: host.deps.registry?.listAll() ?? [],
     streamFinalText: true,
+    failClosedOnToolContractUnavailable: false,
   },
 ): Promise<{ output: string; usage: ChatUsageCounter }> {
   const llmClient = host.deps.llmClient!;
   const supportsNativeToolCalling = llmClient.supportsToolCalling?.() !== false;
+  if (options.tools.length === 0) {
+    const ordinaryChatRequest = buildChatModelRequest({
+      purpose: "ordinary_chat",
+      turnContext,
+      systemPrompt: [
+        systemPrompt,
+        "You are Seedy on a gateway chat surface.",
+        "Answer ordinary casual messages directly and briefly in the user's language.",
+        "Do not claim current workspace, runtime, command, process, repository, file, or local-machine facts without tool evidence.",
+        sameLanguageResponseInstruction(host.getTurnLanguageHint()),
+      ].filter((section): section is string => Boolean(section?.trim())).join("\n\n"),
+      maxTokens: 1000,
+      temperature: 0,
+    });
+    host.eventBridge.emitActivity("lifecycle", "Calling model...", eventContext, "lifecycle:model");
+    const response = await sendLLMMessage(host, llmClient, ordinaryChatRequest.messages, {
+      ...ordinaryChatRequest.options,
+      model_tier: "light",
+    }, assistantBuffer, eventContext, {
+      emitAssistantDeltas: options.streamFinalText,
+    });
+    return {
+      output: response.content || assistantBuffer.text || "(no response)",
+      usage: usageFromLLMResponse(response),
+    };
+  }
+
   const initialModelRequest = buildChatModelRequest({
     purpose: "tool_call",
     turnContext,
@@ -867,6 +902,9 @@ async function executeWithTools(
   const messages: LLMMessage[] = [...initialModelRequest.messages];
   const toolCallContext = await buildToolCallContext(host, goalId, runtimeControlContext, start, turnContext);
   const usage = zeroUsageCounter();
+  let noToolContractRetries = 0;
+  let executedToolThisTurn = false;
+  let lastNoToolContractReason: string | undefined;
 
   for (let loop = 0; loop < MAX_TOOL_LOOPS; loop++) {
     const modelRequest = buildChatModelRequest({
@@ -881,8 +919,9 @@ async function executeWithTools(
     let response: LLMResponse;
     try {
       host.eventBridge.emitActivity("lifecycle", "Calling model...", eventContext, "lifecycle:model");
+      const shouldStreamThisModelResponse = options.streamFinalText && executedToolThisTurn;
       response = await sendLLMMessage(host, llmClient, modelRequest.messages, modelRequest.options, assistantBuffer, eventContext, {
-        emitAssistantDeltas: options.streamFinalText,
+        emitAssistantDeltas: shouldStreamThisModelResponse,
       });
     } catch (err) {
       console.error("[chat-runner] executeWithTools error:", err);
@@ -913,8 +952,43 @@ async function executeWithTools(
     }
 
     if (toolCalls.length === 0) {
+      const output = response.content || assistantBuffer.text || "(no response)";
+      if (!executedToolThisTurn && noToolContractRetries < 1 && loop < MAX_TOOL_LOOPS - 1) {
+        const decision = await evaluateGatewayToolUseContract({
+          turnContext,
+          assistantOutput: output,
+          availableTools: options.tools,
+          llmClient,
+        });
+        if (decision.verdict === "retry_with_tools") {
+          noToolContractRetries += 1;
+          lastNoToolContractReason = decision.reason;
+          host.eventBridge.emitCheckpoint(
+            "Tool evidence required",
+            decision.reason,
+            eventContext,
+            "runtime-evidence",
+          );
+          messages.push({ role: "assistant", content: output });
+          messages.push({ role: "user", content: buildGatewayToolUseRetryMessage(decision) });
+          continue;
+        }
+        if (decision.verdict === "tool_unavailable" && options.failClosedOnToolContractUnavailable) {
+          lastNoToolContractReason = decision.reason;
+          return {
+            output: noToolEvidenceFailureOutput(lastNoToolContractReason),
+            usage,
+          };
+        }
+      }
+      if (!executedToolThisTurn && noToolContractRetries > 0) {
+        return {
+          output: noToolEvidenceFailureOutput(lastNoToolContractReason),
+          usage,
+        };
+      }
       return {
-        output: response.content || assistantBuffer.text || "(no response)",
+        output,
         usage,
       };
     }
@@ -936,6 +1010,7 @@ async function executeWithTools(
         toolCallContext,
         eventContext
       );
+      executedToolThisTurn = true;
       if (tc.function.name === "tool_search") {
         activateToolSearchResults(host.activatedTools, toolResult);
       }
@@ -948,6 +1023,14 @@ async function executeWithTools(
     output: lastAssistant?.content || "I was unable to complete the request within the allowed tool call limit.",
     usage,
   };
+}
+
+function noToolEvidenceFailureOutput(reason?: string): string {
+  return [
+    "I could not complete that current-state check because the gateway model did not call an available same-turn evidence tool after being required to do so.",
+    "No local workspace or PulSeed runtime claim was made from this turn.",
+    ...(reason ? [`Reason: ${reason}`] : []),
+  ].join("\n");
 }
 
 async function persistDirectRouteResult(
@@ -1261,8 +1344,15 @@ async function sendLLMMessage(
 ): Promise<LLMResponse> {
   const emitAssistantDeltas = behavior.emitAssistantDeltas ?? true;
   let streamed = false;
+  let modelDeltaActivityEmitted = false;
   if (llmClient.sendMessageStream) {
     const response = await llmClient.sendMessageStream(messages, options, {
+      onModelTextDeltaReceived: (delta) => {
+        if (!modelDeltaActivityEmitted && delta.trim().length > 0) {
+          modelDeltaActivityEmitted = true;
+          host.eventBridge.emitActivity("lifecycle", "Receiving model output...", eventContext, "lifecycle:model-delta");
+        }
+      },
       onTextDelta: (delta) => {
         streamed = true;
         if (emitAssistantDeltas) {

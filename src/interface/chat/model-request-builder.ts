@@ -47,6 +47,8 @@ export interface BuildToolCallModelRequestInput {
   activatedTools?: Set<string>;
   supportsNativeToolCalling: boolean;
   messages?: LLMMessage[];
+  maxTokens?: number;
+  temperature?: number;
 }
 
 export type BuildChatModelRequestInput =
@@ -100,6 +102,9 @@ function buildToolCallRequest(input: BuildToolCallModelRequestInput): ChatModelR
       options: {
         ...(toolDefinitions.length > 0 ? { tools: toolDefinitions } : {}),
         ...(baseSystemPrompt ? { system: baseSystemPrompt } : {}),
+        model_tier: "light",
+        max_tokens: input.maxTokens ?? 1000,
+        temperature: input.temperature ?? 0,
       },
       toolDefinitions,
       toolMode: "native",
@@ -119,6 +124,9 @@ function buildToolCallRequest(input: BuildToolCallModelRequestInput): ChatModelR
         systemPrompt: baseSystemPrompt,
         tools: toolDefinitions,
       }),
+      model_tier: "light",
+      max_tokens: input.maxTokens ?? 1000,
+      temperature: input.temperature ?? 0,
     },
     toolDefinitions,
     toolMode: "prompted",

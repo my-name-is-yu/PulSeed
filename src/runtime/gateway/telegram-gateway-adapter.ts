@@ -265,6 +265,7 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
         turn_id: `telegram:${chatId}:${messageId}`,
         phase: "received",
       }));
+      await this.markTiming("dispatch_start_at");
       reply = await dispatchGatewayChatInput({
         text,
         platform: "telegram",
@@ -276,6 +277,7 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
         cwd: process.cwd(),
         onEvent: async (event) => {
           const chatEvent = event as unknown as ChatEvent;
+          this.markTimingFromEvent(chatEvent);
           const shouldRender = eventAdapter.shouldRender(chatEvent);
           if (shouldRender) {
             await presenceProjector.prepareForEvent(chatEvent);
@@ -315,6 +317,41 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
     this.timing.markLifecycleEnd();
     await this.recordTiming();
     await this.recordHealth({ last_outbound_at: new Date().toISOString(), last_error: null });
+  }
+
+  private markTimingFromEvent(event: ChatEvent): void {
+    if (event.type === "lifecycle_start") {
+      this.timing.markOnce("chat_runner_execute_start_at");
+      return;
+    }
+    if (event.type === "presence_update" && event.presence.phase === "thinking") {
+      this.timing.markOnce("route_selected_at");
+      return;
+    }
+    if (event.type === "activity" && event.sourceId === "lifecycle:model") {
+      this.timing.markOnce("first_model_request_started_at");
+      this.timing.markOnce("first_model_request_at");
+      return;
+    }
+    if (event.type === "activity" && event.sourceId === "lifecycle:model-delta") {
+      this.timing.markOnce("first_model_delta_received_at");
+      this.timing.markOnce("first_model_delta_at");
+      return;
+    }
+    if (event.type === "assistant_delta" && event.text.trim().length > 0) {
+      this.timing.markOnce("first_model_delta_received_at");
+      this.timing.markOnce("first_model_delta_at");
+      this.timing.markOnce("first_assistant_event_at");
+      return;
+    }
+    if (event.type === "assistant_final" && event.text.trim().length > 0) {
+      this.timing.markOnce("first_assistant_event_at");
+    }
+  }
+
+  private async markTiming(field: TelegramGatewayTurnTimingMark): Promise<void> {
+    this.timing.markOnce(field);
+    await this.recordTiming();
   }
 
   private isFirstHomeBindingCommand(text: string, fromUserId: number): boolean {
@@ -606,6 +643,19 @@ type TelegramGatewayOutboundKind =
   | "final_edit"
   | "sethome_send";
 
+type TelegramGatewayTurnTimingMark =
+  | "dispatch_start_at"
+  | "chat_runner_execute_start_at"
+  | "route_selected_at"
+  | "first_model_request_started_at"
+  | "first_model_request_at"
+  | "first_model_delta_received_at"
+  | "first_model_delta_at"
+  | "first_assistant_event_at"
+  | "first_telegram_send_or_edit_attempted_at"
+  | "first_telegram_visible_text_confirmed_or_api_returned_at"
+  | "first_projected_assistant_text_at";
+
 interface TelegramGatewayPollToken {
   readonly startedAtMs: number;
   readonly startedAt: string;
@@ -675,6 +725,14 @@ class TelegramGatewayTimingRecorder {
     };
   }
 
+  markOnce(field: TelegramGatewayTurnTimingMark): void {
+    if (!this.turn || this.turn[field] !== undefined) return;
+    this.turn = {
+      ...this.turn,
+      [field]: new Date().toISOString(),
+    };
+  }
+
   async recordOutbound<T>(kind: TelegramGatewayOutboundKind, fn: () => Promise<T>): Promise<T> {
     const startedAtMs = Date.now();
     const startedAt = new Date().toISOString();
@@ -713,14 +771,39 @@ class TelegramGatewayTimingRecorder {
   private appendOutbound(call: NonNullable<GatewayChannelTimingSnapshot["turn"]>["outbound_calls"][number]): void {
     if (!this.turn) return;
     const firstAt = firstOutboundTimestamp(this.turn, call.kind);
+    const deliveryMarks = outboundDeliveryMarks(this.turn, call);
     this.turn = {
       ...this.turn,
       ...(call.ok && call.kind === "typing" && firstAt === undefined ? { first_typing_at: call.completed_at } : {}),
       ...(call.ok && call.kind === "progress_send" && firstAt === undefined ? { first_progress_at: call.completed_at } : {}),
       ...(call.ok && (call.kind === "final_send" || call.kind === "final_edit") && firstAt === undefined ? { first_final_at: call.completed_at } : {}),
+      ...deliveryMarks,
       outbound_calls: [...this.turn.outbound_calls, call].slice(-32),
     };
   }
+}
+
+function outboundDeliveryMarks(
+  turn: NonNullable<GatewayChannelTimingSnapshot["turn"]>,
+  call: NonNullable<GatewayChannelTimingSnapshot["turn"]>["outbound_calls"][number],
+): Partial<NonNullable<GatewayChannelTimingSnapshot["turn"]>> {
+  if (!call.ok) return {};
+  if (call.kind === "typing") {
+    return {
+      ...(turn.typing_started_at === undefined ? { typing_started_at: call.started_at } : {}),
+      ...(turn.typing_completed_at === undefined ? { typing_completed_at: call.completed_at } : {}),
+    };
+  }
+  if (call.kind === "final_send" || call.kind === "final_edit") {
+    return {
+      ...(turn.first_telegram_send_or_edit_attempted_at === undefined ? { first_telegram_send_or_edit_attempted_at: call.started_at } : {}),
+      ...(turn.first_telegram_visible_text_confirmed_or_api_returned_at === undefined ? { first_telegram_visible_text_confirmed_or_api_returned_at: call.completed_at } : {}),
+      ...(turn.first_projected_assistant_text_at === undefined ? { first_projected_assistant_text_at: call.started_at } : {}),
+      ...(turn.final_send_started_at === undefined ? { final_send_started_at: call.started_at } : {}),
+      ...(turn.final_send_completed_at === undefined ? { final_send_completed_at: call.completed_at } : {}),
+    };
+  }
+  return {};
 }
 
 function firstOutboundTimestamp(

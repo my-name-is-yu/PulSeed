@@ -97,6 +97,34 @@ function makeGatewayReadTool(): ITool {
   };
 }
 
+function makeGatewayRuntimeStatusTool(): ITool {
+  return {
+    metadata: {
+      name: "get_runtime_status",
+      aliases: [],
+      permissionLevel: "read_only",
+      isReadOnly: true,
+      isDestructive: false,
+      shouldDefer: false,
+      alwaysLoad: true,
+      maxConcurrency: 0,
+      maxOutputChars: 8000,
+      tags: ["runtime"],
+      activityCategory: "command",
+    },
+    inputSchema: z.object({}),
+    description: () => "Read the current PulSeed runtime and daemon status.",
+    call: vi.fn().mockResolvedValue({
+      success: true,
+      data: { daemon: "idle", gateway: "telegram_ready" },
+      summary: "PulSeed daemon is idle and Telegram gateway is ready.",
+      durationMs: 1,
+    }),
+    checkPermissions: vi.fn().mockResolvedValue({ status: "allowed" }),
+    isConcurrencySafe: () => true,
+  };
+}
+
 function makeRegistryWithTools(tools: ITool[]): ToolRegistry {
   const registry = new ToolRegistry();
   for (const tool of tools) registry.register(tool);
@@ -767,6 +795,238 @@ describe("CrossPlatformChatSessionManager", () => {
       .toContain("check_readme");
     expect(events.some((event) => event.type === "tool_start" && event.toolName === "check_readme")).toBe(true);
     expect(events.some((event) => event.type === "tool_end" && event.toolName === "check_readme" && event.success)).toBe(true);
+  });
+
+  it("retries the gateway default model-loop when a repository check no-tool final deflects to user-run commands", async () => {
+    const events: ChatEvent[] = [];
+    const tool = makeGatewayReadTool();
+    const llmClient = {
+      sendMessage: vi.fn().mockResolvedValueOnce({
+        content: JSON.stringify({
+          verdict: "retry_with_tools",
+          reason: "The user asked for current repository evidence and a read-only README tool is available.",
+          retry_instruction: "Call the README check tool before finalizing.",
+        }),
+        usage: { input_tokens: 1, output_tokens: 1 },
+        stop_reason: "end_turn",
+      }).mockResolvedValue({
+        content: JSON.stringify({ verdict: "allow", reason: "The read tool evidence supports the answer." }),
+        usage: { input_tokens: 1, output_tokens: 1 },
+        stop_reason: "end_turn",
+      }),
+      sendMessageStream: vi.fn()
+        .mockResolvedValueOnce({
+          content: "この回答だけでは確認できません。`ls README*` などで確認してください。",
+          usage: { input_tokens: 1, output_tokens: 1 },
+          stop_reason: "end_turn",
+          tool_calls: [],
+        })
+        .mockResolvedValueOnce({
+          content: "README を確認します。",
+          usage: { input_tokens: 1, output_tokens: 1 },
+          stop_reason: "tool_calls",
+          tool_calls: [{
+            id: "call-readme",
+            type: "function",
+            function: { name: "check_readme", arguments: "{}" },
+          }],
+        })
+        .mockResolvedValueOnce({
+          content: "README.md はあります。",
+          usage: { input_tokens: 1, output_tokens: 1 },
+          stop_reason: "end_turn",
+          tool_calls: [],
+        }),
+      supportsToolCalling: vi.fn(() => true),
+      parseJSON: vi.fn((content: string, schema: { parse(value: unknown): unknown }) => schema.parse(JSON.parse(content))),
+    };
+    const manager = new CrossPlatformChatSessionManager(makeDeps({
+      llmClient: llmClient as never,
+      registry: makeRegistryWithTools([tool]),
+      chatAgentLoopRunner: { execute: vi.fn().mockResolvedValue(CANNED_RESULT) } as never,
+      runtimeEvidenceGateClient: llmClient as never,
+    }));
+
+    const result = await manager.execute("このリポジトリにREADMEがあるかだけ軽く見て", {
+      identity_key: "gateway-tool-choice-retry-user",
+      platform: "telegram",
+      conversation_id: "telegram-tool-choice-retry",
+      user_id: "user-1",
+      cwd: "/repo",
+      onEvent: (event) => { events.push(event); },
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.output).toBe("README.md はあります。");
+    expect(tool.call).toHaveBeenCalledOnce();
+    expect(llmClient.sendMessageStream).toHaveBeenCalledTimes(3);
+    expect(llmClient.sendMessage.mock.calls[0]?.[1]?.system).toContain("strict contract checker");
+    expect(llmClient.sendMessageStream.mock.calls[1]?.[0]).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        role: "user",
+        content: expect.stringContaining("gateway tool-use contract"),
+      }),
+    ]));
+    const visibleDeltaText = events
+      .filter((event): event is Extract<ChatEvent, { type: "assistant_delta" }> => event.type === "assistant_delta")
+      .map((event) => event.text)
+      .join("\n");
+    expect(visibleDeltaText).not.toContain("ls README");
+    expect(visibleDeltaText).not.toContain("確認してください");
+  });
+
+  it("retries the gateway default model-loop when a PulSeed status no-tool final tells the user to run commands", async () => {
+    const events: ChatEvent[] = [];
+    const tool = makeGatewayRuntimeStatusTool();
+    const llmClient = {
+      sendMessage: vi.fn().mockResolvedValueOnce({
+        content: JSON.stringify({
+          verdict: "retry_with_tools",
+          reason: "The user asked for current PulSeed runtime status and a read-only runtime status tool is available.",
+          retry_instruction: "Call the runtime status tool before finalizing.",
+        }),
+        usage: { input_tokens: 1, output_tokens: 1 },
+        stop_reason: "end_turn",
+      }).mockResolvedValue({
+        content: JSON.stringify({ verdict: "allow", reason: "The runtime tool evidence supports the answer." }),
+        usage: { input_tokens: 1, output_tokens: 1 },
+        stop_reason: "end_turn",
+      }),
+      sendMessageStream: vi.fn()
+        .mockResolvedValueOnce({
+          content: "直接確認できていません。`pwd`、`git status`、`pulseed status` を順に実行してください。",
+          usage: { input_tokens: 1, output_tokens: 1 },
+          stop_reason: "end_turn",
+          tool_calls: [],
+        })
+        .mockResolvedValueOnce({
+          content: "現在の状態を確認します。",
+          usage: { input_tokens: 1, output_tokens: 1 },
+          stop_reason: "tool_calls",
+          tool_calls: [{
+            id: "call-runtime",
+            type: "function",
+            function: { name: "get_runtime_status", arguments: "{}" },
+          }],
+        })
+        .mockResolvedValueOnce({
+          content: "PulSeed daemon は idle、Telegram gateway は ready です。",
+          usage: { input_tokens: 1, output_tokens: 1 },
+          stop_reason: "end_turn",
+          tool_calls: [],
+        }),
+      supportsToolCalling: vi.fn(() => true),
+      parseJSON: vi.fn((content: string, schema: { parse(value: unknown): unknown }) => schema.parse(JSON.parse(content))),
+    };
+    const manager = new CrossPlatformChatSessionManager(makeDeps({
+      llmClient: llmClient as never,
+      registry: makeRegistryWithTools([tool]),
+      chatAgentLoopRunner: { execute: vi.fn().mockResolvedValue(CANNED_RESULT) } as never,
+      runtimeEvidenceGateClient: llmClient as never,
+    }));
+
+    const result = await manager.execute("今のPulSeedの状態を軽く確認して", {
+      identity_key: "gateway-runtime-tool-choice-retry-user",
+      platform: "telegram",
+      conversation_id: "telegram-runtime-tool-choice-retry",
+      user_id: "user-1",
+      cwd: "/repo",
+      onEvent: (event) => { events.push(event); },
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.output).toBe("PulSeed daemon は idle、Telegram gateway は ready です。");
+    expect(tool.call).toHaveBeenCalledOnce();
+    expect(llmClient.sendMessageStream).toHaveBeenCalledTimes(3);
+    expect(result.output).not.toContain("`pwd`");
+    expect(result.output).not.toContain("pulseed status を順に実行");
+    const visibleDeltaText = events
+      .filter((event): event is Extract<ChatEvent, { type: "assistant_delta" }> => event.type === "assistant_delta")
+      .map((event) => event.text)
+      .join("\n");
+    expect(visibleDeltaText).not.toContain("`pwd`");
+    expect(visibleDeltaText).not.toContain("pulseed status");
+  });
+
+  it.each([
+    {
+      name: "checker request failure",
+      makeContractClient: () => ({
+        sendMessage: vi.fn().mockRejectedValue(new Error("contract checker unavailable")),
+        parseJSON: vi.fn(),
+      }),
+      expectedReason: "contract checker was unavailable",
+    },
+    {
+      name: "invalid checker JSON",
+      makeContractClient: () => ({
+        sendMessage: vi.fn().mockResolvedValue({
+          content: "not-json",
+          usage: { input_tokens: 1, output_tokens: 1 },
+          stop_reason: "end_turn",
+        }),
+        parseJSON: vi.fn((content: string, schema: { parse(value: unknown): unknown }) => schema.parse(JSON.parse(content))),
+      }),
+      expectedReason: "invalid decision",
+    },
+    {
+      name: "checker tool_unavailable verdict",
+      makeContractClient: () => ({
+        sendMessage: vi.fn().mockResolvedValue({
+          content: JSON.stringify({
+            verdict: "tool_unavailable",
+            reason: "The checker could not make a confident current-state decision.",
+          }),
+          usage: { input_tokens: 1, output_tokens: 1 },
+          stop_reason: "end_turn",
+        }),
+        parseJSON: vi.fn((content: string, schema: { parse(value: unknown): unknown }) => schema.parse(JSON.parse(content))),
+      }),
+      expectedReason: "confident current-state decision",
+    },
+  ])("fails closed without leaking a provisional no-tool answer when the gateway contract checker returns $name", async ({ makeContractClient, expectedReason }) => {
+    const events: ChatEvent[] = [];
+    const tool = makeGatewayReadTool();
+    const contractClient = makeContractClient();
+    const llmClient = {
+      ...contractClient,
+      sendMessageStream: vi.fn().mockResolvedValueOnce({
+        content: "この回答だけでは確認できません。`ls README*` などで確認してください。",
+        usage: { input_tokens: 1, output_tokens: 1 },
+        stop_reason: "end_turn",
+        tool_calls: [],
+      }),
+      supportsToolCalling: vi.fn(() => true),
+    };
+    const manager = new CrossPlatformChatSessionManager(makeDeps({
+      llmClient: llmClient as never,
+      registry: makeRegistryWithTools([tool]),
+      chatAgentLoopRunner: { execute: vi.fn().mockResolvedValue(CANNED_RESULT) } as never,
+      runtimeEvidenceGateClient: llmClient as never,
+    }));
+
+    const result = await manager.execute("このリポジトリにREADMEがあるかだけ軽く見て", {
+      identity_key: `gateway-tool-choice-fail-closed-${expectedReason}`,
+      platform: "telegram",
+      conversation_id: `telegram-tool-choice-fail-closed-${expectedReason}`,
+      user_id: "user-1",
+      cwd: "/repo",
+      onEvent: (event) => { events.push(event); },
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.output).toContain("I could not complete that current-state check");
+    expect(result.output).toContain("No local workspace or PulSeed runtime claim was made");
+    expect(result.output).toContain(expectedReason);
+    expect(result.output).not.toContain("ls README");
+    expect(tool.call).not.toHaveBeenCalled();
+    expect(llmClient.sendMessageStream).toHaveBeenCalledOnce();
+    const visibleDeltaText = events
+      .filter((event): event is Extract<ChatEvent, { type: "assistant_delta" }> => event.type === "assistant_delta")
+      .map((event) => event.text)
+      .join("\n");
+    expect(visibleDeltaText).not.toContain("ls README");
+    expect(visibleDeltaText).not.toContain("確認してください");
   });
 
   it("keeps natural-language setup/run-spec requests inside the default gateway model tool-choice loop", async () => {
