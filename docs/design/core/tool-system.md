@@ -18,7 +18,13 @@ PulSeed originally had a structural bottleneck: every interaction with the real 
 
 This design proposes a fundamental shift: **tools are the universal capability layer that sits beneath every operation in the core loop.** Not "execution capability bolted onto Phase C," but tools as infrastructure that makes observation faster, gap calculation more accurate, knowledge acquisition cheaper, and verification more reliable.
 
-The insight comes from Claude Code's architecture, where tools are not a feature of the agent --- they are the substrate on which everything runs. Glob, Grep, Read, Shell --- these are not "execution tools." They are perception tools, verification tools, knowledge tools. The distinction between "observation" and "execution" dissolves when you realize that running `npm test` is simultaneously an observation (what is the current test state?) and a verification (did the task succeed?).
+The insight comes from Claude Code's architecture, where tools are not a
+feature of the agent --- they are the substrate on which everything runs. Glob,
+Grep, and Read are perception tools. Shell is a command-execution tool that can
+produce observation and verification evidence when policy permits the command.
+The distinction between "observation" and "execution" becomes operational
+rather than rhetorical: running `npm test` observes the current test state, but
+it still runs a process and must be governed as command execution.
 
 ### 1.2 Why This Is Different from "Add Execution Later"
 
@@ -26,7 +32,11 @@ The previous framing (execution-boundary.md) drew a hard line: "PulSeed thinks. 
 
 The current framing: **PulSeed perceives the world directly through tools. Complex reasoning and bounded multi-step execution run through AgentLoop. Larger mutations and external execution can still be delegated through adapters.**
 
-This is not a relaxation of the execution boundary. It is a *refinement*. The boundary moves from "PulSeed never touches the world" to "PulSeed uses read-only tools for perception; agents handle creative, multi-step work and all mutations."
+This is not a relaxation of the execution boundary. It is a *refinement*. The
+boundary moves from "PulSeed never touches the world" to "PulSeed uses direct
+read tools for perception, explicit command tools for permitted mechanical
+verification, and agents or adapters for creative, multi-step work and broader
+mutations."
 
 The difference matters because:
 
@@ -43,19 +53,24 @@ The following design principles are unchanged:
 - **Trust asymmetry**: Trust balance [-100, +100], Ds=+3, Df=-10. Tools have their own trust tracking.
 - **EthicsGate**: All tool invocations pass through the ethics gate. Any tool with side effects follows the same approval flow as agent delegations.
 - **Orchestration primacy**: PulSeed's value is in the observe-gap-score-task-execute-verify loop. Tools make the loop faster and more accurate, but they do not replace the loop.
-- **Agent delegation for task execution**: Writing features, refactoring modules, creative problem-solving --- these still go to agents. Tools handle perception; agents handle action.
+- **Agent delegation for task execution**: Writing features, refactoring
+  modules, creative problem-solving, and broad external effects still go to
+  agents or adapters. Tools handle direct perception and explicitly permitted
+  command execution.
 
 ### 1.4 The Execution Boundary, Revised
 
 Old boundary: "PulSeed does LLM calls and state I/O. Everything else is delegated."
 
-New boundary: "PulSeed does LLM calls, state I/O, and read-only tool invocations for perception. All mutations and multi-step work are delegated to agents."
+New boundary: "PulSeed does LLM calls, state I/O, read-only tool invocations for
+perception, and policy-approved command execution for mechanical evidence. Broad
+mutations and multi-step work are delegated to agents or adapters."
 
 | Category | Old Model | New Model |
 |----------|-----------|-----------|
 | Read a file | Delegate to agent | `Read` tool |
 | Check file existence | Delegate to agent | `Glob` tool |
-| Run test suite (read result) | Delegate to agent | `Shell` tool (read-only command) |
+| Run test suite (read result) | Delegate to agent | `Shell` tool (command execution with policy checks) |
 | Search codebase | Delegate to agent | `Grep` tool |
 | Check API health | Delegate to agent | `HttpFetch` tool (GET only) |
 | Fetch metrics | Delegate to agent | `Shell` tool + `JsonQuery` tool |
@@ -69,15 +84,18 @@ New boundary: "PulSeed does LLM calls, state I/O, and read-only tool invocations
 
 **In scope (this document)**:
 - Tool system core (registry, executor, permission, concurrency)
-- Read-only built-in tools (Glob, Grep, Read, Shell for metrics, HttpFetch GET, JsonQuery)
+- Read-oriented built-in tools (Glob, Grep, Read, HttpFetch GET, JsonQuery)
+- Command execution through Shell for permitted mechanical observation and
+  verification
+- Current mutation-capable tool surfaces such as file write/edit/patch tools,
+  goal/task/config mutation tools, and native AgentLoop tool routing
 - Integration with ObservationEngine, GapCalculator, KnowledgeManager, StrategyManager, DurableLoop verification
 - Permission model for read-only and read-with-side-effects (Shell) tools
 
-**Future work (not this document)**:
-- Mutation tools (Write, Edit, Shell with side effects)
-- Direct task execution routing (when PulSeed executes tasks itself)
-- Hybrid execution (tools for prep, agent for core work)
-- MCP server integration
+**Future expansion (not current absence)**:
+- Broader MCP server integration
+- More formal rollback/recovery contracts for multi-tool mutation sequences
+- Richer hybrid routing policy across direct tools, adapters, and agents
 
 ---
 
@@ -107,21 +125,25 @@ New boundary: "PulSeed does LLM calls, state I/O, and read-only tool invocations
              |  | (3-tier)     | | (5-gate)     | | (3-layer)        |  |    |
              |  +--------------+ +--------------+ +------------------+  |    |
              |                                                          |    |
-             |  Read-Only Built-in Tools:                               |    |
-             |  +------+ +------+ +------+ +-------+ +-----------+     |    |
-             |  | Glob | | Grep | | Read | | Shell | | HttpFetch |     |    |
-             |  +------+ +------+ +------+ +-------+ +-----------+     |    |
-             |  +-----------+                                           |    |
-             |  | JsonQuery |  + MCP tools (future)                     |    |
-             |  +-----------+                                           |    |
+             |  Representative Tool Surfaces:                          |    |
+             |  +--------------------+ +----------------------------+  |    |
+             |  | Read/Search Tools  | | Command/Network Tools      |  |    |
+             |  | Glob Grep Read     | | Shell HttpFetch GitHubCli  |  |    |
+             |  | JsonQuery ListDir  | | WebSearch McpStdio        |  |    |
+             |  +--------------------+ +----------------------------+  |    |
+             |  +----------------------------------------------------+  |    |
+             |  | Mutation/State Tools: FileWrite FileEdit ApplyPatch |  |    |
+             |  | Goal/Task/Config/Notification/Trust tools          |  |    |
+             |  +----------------------------------------------------+  |    |
              +----------------------------------------------------------+    |
                                                                              |
-             +---------------------------------------------------------------+
-             |                  TaskLifecycle (unchanged)                |
-             |  +---------------------------------------------------+   |
-             |  | Agent-based execution (existing, all mutations)    |   |
-             |  +---------------------------------------------------+   |
-             +----------------------------------------------------------+
+            +---------------------------------------------------------------+
+            |              Runtime Execution And Agent Routing              |
+            |  +---------------------------------------------------------+  |
+            |  | Native AgentLoop routing + adapters + policy-bound tools |  |
+            |  | Mutations may be direct tools or delegated work          |  |
+            |  +---------------------------------------------------------+  |
+            +---------------------------------------------------------------+
 ```
 
 ### 2.2 Before/After Comparison
@@ -140,7 +162,8 @@ Cost: ~30s, ~10,000 tokens, agent session overhead
 
 **After: Observation cycle (tool-enhanced)**
 ```
-DurableLoop -> ObservationEngine -> Tool calls (Glob, Read, Shell, HttpFetch)
+DurableLoop -> ObservationEngine -> Tool calls (Glob, Read, HttpFetch,
+JsonQuery; Shell only when command policy permits)
          -> Direct results (file contents, command output, API responses)
          -> LLM call (interpret results)
          -> State update
@@ -168,39 +191,26 @@ DurableLoop -> Shell tool (run tests) + Glob tool (check outputs) + Read tool (c
 Cost: ~5s, ~500 tokens (mechanical checks need no LLM)
 ```
 
-### 2.3 New File Layout
+### 2.3 Current File Layout Pointers
 
-```
-src/
-  tools/
-    types.ts                    # ITool, ToolResult, ToolPermission interfaces
-    registry.ts                 # ToolRegistry (3-tier registration)
-    executor.ts                 # ToolExecutor (5-gate pipeline)
-    permission.ts               # ToolPermissionManager (3-layer)
-    concurrency.ts              # ConcurrencyController
-    context-modifier.ts         # ContextModifier handling
-    builtin/
-      glob.ts                   # GlobTool
-      grep.ts                   # GrepTool
-      read.ts                   # ReadTool
-      shell.ts                  # ShellTool (read-only commands only)
-      http-fetch.ts             # HttpFetchTool (GET/HEAD only)
-      json-query.ts             # JsonQueryTool
-      index.ts                  # Built-in tool catalog
-    __tests__/
-      registry.test.ts
-      executor.test.ts
-      permission.test.ts
-      concurrency.test.ts
-      builtin/
-        glob.test.ts
-        grep.test.ts
-        read.test.ts
-        shell.test.ts
-        http-fetch.test.ts
-        json-query.test.ts
-    index.ts                    # Public exports
-```
+The current repository layout is organized by tool category rather than the old
+single `builtin/` directory sketched in the original plan:
+
+- `src/tools/types.ts`, `src/tools/registry.ts`, `src/tools/executor.ts`,
+  `src/tools/permission.ts`, and `src/tools/concurrency.ts` hold the shared
+  contracts and execution pipeline.
+- `src/tools/fs/` holds read/search tools such as `GlobTool`, `GrepTool`,
+  `ReadTool`, `ListDirTool`, and `JsonQueryTool`, plus mutation-capable file
+  tools such as `FileWriteTool`, `FileEditTool`, and `ApplyPatchTool`.
+- `src/tools/system/ShellTool/` holds Shell command execution and command-policy
+  checks.
+- `src/tools/network/` holds network and external lookup tools such as
+  `HttpFetchTool`, `GitHubCliTool`, `WebSearchTool`, and `McpStdioTool`.
+- `src/tools/mutation/`, `src/tools/schedule/`, `src/tools/automation/`,
+  `src/tools/execution/`, and `src/tools/query/` hold current runtime,
+  goal/task, schedule, automation, knowledge, and query surfaces.
+- `src/orchestrator/execution/agent-loop/agent-loop-tool-router.ts` connects the
+  tool registry to native AgentLoop routing.
 
 ---
 
@@ -1555,7 +1565,7 @@ async acquireWithTools(
     {
       role: "system",
       content: `You are a research planner. Given a question, plan tool calls to gather information.
-Available read-only tools: glob (find files), grep (search content), read (read file), http_fetch (GET URL), json_query (query JSON file), shell (read-only commands like wc, git log, npm ls).
+Available read/search tools: glob (find files), grep (search content), read (read file), http_fetch (GET URL), json_query (query JSON file). Shell is a command-execution tool; use it only for policy-permitted commands such as wc, git log, or npm ls.
 Return a JSON array of { toolName, input } objects. Return [] if the question cannot be answered with these tools.`,
     },
     {
@@ -1963,23 +1973,27 @@ Complexity factors:
 
 Tasks scoring below a threshold could be executed via a sequence of tool calls planned by the LLM.
 
-### 9.3 Concept: Mutation Tool Interfaces
+### 9.3 Mutation Tool Interfaces
 
-Future mutation tools would follow the same ITool interface but with:
-- `permissionLevel: "write_local"` or `"execute"`
-- `isDestructive: true`
-- `isConcurrencySafe(): false` (writes are never safe to parallelize)
-- Mandatory approval via `approvalFn` for all invocations
+Current mutation-capable tools follow the same `ITool` interface but require a
+stronger permission posture than read/search tools. Existing examples include
+file write/edit/patch tools, goal/task mutation tools, config updates,
+notification routing changes, trust resets, and runtime write/report tools.
 
-The permission model (Section 3.5) already accounts for these levels; the thresholds are defined but the tools are not yet implemented.
+Mutation-capable tools must declare the relevant metadata and permission level,
+mark destructive behavior when applicable, avoid unsafe concurrency, and pass
+the same permission and execution-policy pipeline as command tools and agent
+delegations.
 
-### 9.4 Prerequisites for Task Execution
+### 9.4 Expansion Prerequisites For Broader Task Execution Routing
 
-Before implementing direct task execution:
-1. Read-only tool integration must be stable and proven (Phases 1-2)
-2. Tool trust tracking must demonstrate reliable permission management
-3. Rollback mechanisms for failed tool sequences must be designed
-4. The complexity scoring algorithm must be validated against real tasks
+Native AgentLoop can already route through the tool registry. Broader automatic
+task-execution routing still needs:
+
+1. stable permission behavior across read, command, network, and mutation tools
+2. reliable trust and audit tracking for tool sequences
+3. rollback or recovery contracts for failed multi-tool mutation sequences
+4. validated complexity scoring against real tasks
 
 ---
 
@@ -1988,7 +2002,7 @@ Before implementing direct task execution:
 ### 10.1 GlobTool
 
 ```typescript
-// src/tools/builtin/glob.ts
+// src/tools/fs/GlobTool/GlobTool.ts
 
 import { z } from "zod";
 import type {
@@ -2076,7 +2090,7 @@ export class GlobTool implements ITool<GlobInput, string[]> {
 ### 10.2 GrepTool
 
 ```typescript
-// src/tools/builtin/grep.ts
+// src/tools/fs/GrepTool/GrepTool.ts
 
 import { z } from "zod";
 import type {
@@ -2190,7 +2204,7 @@ export class GrepTool implements ITool<GrepInput, string> {
 ### 10.3 ReadTool
 
 ```typescript
-// src/tools/builtin/read.ts
+// src/tools/fs/ReadTool/ReadTool.ts
 
 import { z } from "zod";
 import type {
@@ -2292,7 +2306,7 @@ export class ReadTool implements ITool<ReadInput, string> {
 ### 10.4 ShellTool (Read-Only Mode)
 
 ```typescript
-// src/tools/builtin/shell.ts
+// src/tools/system/ShellTool/ShellTool.ts
 
 import { z } from "zod";
 import type {
@@ -2323,14 +2337,16 @@ export interface ShellOutput {
 }
 
 /**
- * Shell tool for running read-only commands (metrics, tests, git queries).
+ * Shell tool for running permitted commands (metrics, tests, git queries,
+ * and approved local operations).
  *
  * This tool is classified as "read_metrics" permission level because it
  * spawns processes (which have inherent side effects like CPU/memory usage),
- * but is restricted to commands that do not modify state.
+ * and command policy decides whether a command is allowed, needs approval, or
+ * is denied.
  *
- * Commands with side effects (rm, git push, npm publish) are blocked by the
- * permission system. Future mutation-capable Shell is out of scope.
+ * Destructive commands are denied by the permission system. Local writes and
+ * network commands require the active execution policy to permit them.
  */
 export class ShellTool implements ITool<ShellInput, ShellOutput> {
   readonly metadata: ToolMetadata = {
@@ -2475,7 +2491,7 @@ export class ShellTool implements ITool<ShellInput, ShellOutput> {
 ### 10.5 HttpFetchTool (GET/HEAD Only)
 
 ```typescript
-// src/tools/builtin/http-fetch.ts
+// src/tools/network/HttpFetchTool/HttpFetchTool.ts
 
 import { z } from "zod";
 import type {
@@ -2619,7 +2635,7 @@ export class HttpFetchTool implements ITool<HttpFetchInput, HttpFetchOutput> {
 ### 10.6 JsonQueryTool
 
 ```typescript
-// src/tools/builtin/json-query.ts
+// src/tools/fs/JsonQueryTool/JsonQueryTool.ts
 
 import { z } from "zod";
 import type {
@@ -2736,7 +2752,9 @@ export class JsonQueryTool implements ITool<JsonQueryInput, unknown> {
 | `http_fetch` | read_only | yes | no | 5 | no (deferred) | network, observation, knowledge |
 | `json_query` | read_only | yes | no | unlimited | no (deferred) | filesystem, observation, knowledge |
 
-*Shell is not strictly read-only (it spawns processes) but is restricted to read-only commands by the permission system.
+*Shell is not read-only. Command policy classifies each command as read-only,
+local-write, network, destructive, or protected-target before allowing,
+requesting approval, or denying execution.
 
 ---
 
@@ -2904,15 +2922,16 @@ This means the tool system is a **purely additive** change. No existing behavior
 
 ### 13.1 execution-boundary.md
 
-**Section 1 (Core Principle)**: Revise from "PulSeed does not execute on its own" to "PulSeed perceives the world directly through read-only tools; all mutations and multi-step work are delegated to agents."
+**Section 1 (Core Principle)**: Revise from "PulSeed does not execute on its own" to "PulSeed orchestrates direct tools, command execution, adapters, and agents through explicit policy and permission boundaries."
 
 **Section 2 (What PulSeed Does Directly)**: Add row:
 
 | What PulSeed does directly | Purpose |
 |---------------------------|---------|
-| Read-only tool invocations | Perceive the world: check files (Glob, Read), search code (Grep), run metrics commands (Shell), check API health (HttpFetch), query configs (JsonQuery) |
+| Read-only tool invocations | Perceive the world: check files (Glob, Read), search code (Grep), check API health (HttpFetch), query configs (JsonQuery) |
+| Command tool invocations | Run permitted commands through Shell when workspace policy and permission checks allow it |
 
-**Section 3 (What PulSeed Delegates)**: Keep all existing delegation categories. Clarify that data collection for simple, mechanical cases is now handled by tools rather than agents.
+**Section 3 (What PulSeed Delegates)**: Keep the delegation categories, but clarify that simple mechanical reads can use direct tools, while Shell-backed command execution is an explicit execution surface rather than a read-only observation path.
 
 **Section 6 (Shorthand mapping)**: Add entries:
 - "PulSeed checked the tests" = "PulSeed ran `npx vitest run` via Shell tool and parsed the output"
@@ -2945,19 +2964,31 @@ This means the tool system is a **purely additive** change. No existing behavior
 
 ### 13.6 docs/roadmap/vision.md
 
-**Section 5.8 (Delegation Layer)**: Add note that PulSeed now has a perception tool layer beneath the delegation layer, enabling direct observation without agent sessions.
+**Section 5.8 (Delegation Layer)**: Add note that PulSeed now has a direct tool
+layer beneath the delegation layer, enabling low-risk reads without agent
+sessions and command execution only through command policy.
 
 ### 13.7 docs/runtime.md
 
-**Section 1 (Separation premise)**: Refine. The separation is now "PulSeed (with read-only tools) vs. agents (for mutations and complex work)" rather than "PulSeed vs. all external interaction."
+**Section 1 (Separation premise)**: Refine. The separation is now "PulSeed
+with typed read, command, and mutation tools plus agents/adapters behind policy"
+rather than "PulSeed vs. all external interaction."
 
 ---
 
-## 14. Implementation Roadmap
+## 14. Implementation Status And Remaining Expansion
 
-### Phase 1: Tool System Core + Read-Only Tools
+This section began as an implementation roadmap. The current repository has
+already moved beyond the original read-first plan: built-in tool surfaces
+now include read/search tools, command/network tools, mutation/state tools, and
+native AgentLoop routing through `ToolRegistryAgentLoopToolRouter`. Treat the
+phase descriptions below as historical sequencing plus remaining expansion,
+not as a claim that mutation tools or native execution are absent.
 
-**Goal**: Establish the tool infrastructure and implement all read-only built-in tools.
+### Historical Phase 1: Tool System Core + Read/Search Tools
+
+**Goal**: establish the tool infrastructure and implement the first
+read/search-oriented built-in tools.
 
 **Deliverables**:
 - `src/tools/types.ts` --- Core interfaces (ITool, ToolResult, ToolMetadata)
@@ -2965,25 +2996,28 @@ This means the tool system is a **purely additive** change. No existing behavior
 - `src/tools/executor.ts` --- ToolExecutor with 5-gate pipeline
 - `src/tools/permission.ts` --- ToolPermissionManager (3-layer)
 - `src/tools/concurrency.ts` --- ConcurrencyController
-- `src/tools/builtin/glob.ts` --- GlobTool
-- `src/tools/builtin/read.ts` --- ReadTool
-- `src/tools/builtin/grep.ts` --- GrepTool
-- `src/tools/builtin/json-query.ts` --- JsonQueryTool
+- `src/tools/fs/GlobTool/GlobTool.ts` --- GlobTool
+- `src/tools/fs/ReadTool/ReadTool.ts` --- ReadTool
+- `src/tools/fs/GrepTool/GrepTool.ts` --- GrepTool
+- `src/tools/fs/JsonQueryTool/JsonQueryTool.ts` --- JsonQueryTool
 - Full test coverage for all above
 
 **Estimated size**: ~1200 lines of production code, ~800 lines of tests
 
-**Value**: Tool system is functional. Read-only tools can be used programmatically but are not yet integrated into the core loop.
+**Value**: established the baseline tool system and direct read/search surfaces.
+Current integration status should be checked against `src/tools/`,
+`src/orchestrator/execution/agent-loop/`, and the runtime docs.
 
 **Dependencies**: None (standalone new module).
 
-### Phase 2: Observation + Knowledge Integration + Shell/HttpFetch
+### Historical Phase 2: Observation + Knowledge Integration + Shell/HttpFetch
 
-**Goal**: Connect tools to the observation and knowledge systems. Add Shell and HttpFetch tools.
+**Goal**: connect tools to the observation and knowledge systems and add
+command/network surfaces.
 
 **Deliverables**:
-- `src/tools/builtin/shell.ts` --- ShellTool (read-only mode)
-- `src/tools/builtin/http-fetch.ts` --- HttpFetchTool (GET/HEAD only)
+- `src/tools/system/ShellTool/ShellTool.ts` --- ShellTool with command-policy enforcement
+- `src/tools/network/HttpFetchTool/HttpFetchTool.ts` --- HttpFetchTool
 - ObservationEngine: `observeWithTools()` method + tool-first fallback chain
 - KnowledgeManager: tool-based research path (`acquireWithTools()`)
 - Observation allow-list auto-registration from dimension configs
@@ -2996,9 +3030,10 @@ This means the tool system is a **purely additive** change. No existing behavior
 
 **Dependencies**: Phase 1.
 
-### Phase 3: Gap Calculation + Verification + Strategy Grounding
+### Historical Phase 3: Gap Calculation + Verification + Strategy Grounding
 
-**Goal**: Complete read-only tool integration across all remaining core loop operations.
+**Goal**: complete direct-tool integration across remaining core loop
+observation and verification operations.
 
 **Deliverables**:
 - GapCalculator: `measureDirectly()` for stale-data refresh
@@ -3013,17 +3048,19 @@ This means the tool system is a **purely additive** change. No existing behavior
 
 **Dependencies**: Phase 2.
 
-### Future Phase: Mutation Tools + Task Execution Routing
+### Expansion Phase: Broader Mutation Recovery + Hybrid Routing
 
-**Goal**: Add mutation tools and enable direct task execution for simple tasks.
+**Goal**: harden mutation recovery and routing policy for direct tools, command
+execution, adapters, and agents.
 
 **Scope** (high-level, to be detailed in a separate design doc):
-- WriteTool, EditTool, Shell with side effects
-- Complexity scoring and execution routing
+- rollback/recovery mechanisms for failed multi-tool mutation sequences
+- complexity scoring and execution routing
 - Hybrid execution (tools for prep, agent for core work)
-- Rollback mechanisms for failed tool sequences
+- broader MCP/tool acquisition integration
 
-**Dependencies**: Phases 1-3 must be stable. Requires a separate design document.
+**Dependencies**: current tool, permission, and AgentLoop routing contracts must
+remain stable. Broader routing policy requires a separate design document.
 
 ### Phase Summary
 
@@ -3032,8 +3069,8 @@ This means the tool system is a **purely additive** change. No existing behavior
 | Phase 1 | ~2000 | 1-2 sessions | Tool infrastructure exists |
 | Phase 2 | ~1400 | 1-2 sessions | Observation + knowledge 10-100x faster |
 | Phase 3 | ~1100 | 1 session | Verification + gap + strategy grounded |
-| **Total (current scope)** | **~4500** | **3-5 sessions** | **Full read-only tool integration** |
-| Future | TBD | TBD | Mutation tools + direct execution |
+| **Total (original scope)** | **~4500** | **3-5 sessions** | **Read/tool integration baseline** |
+| Expansion | TBD | TBD | Mutation recovery + hybrid routing hardening |
 
 ---
 
@@ -3093,11 +3130,17 @@ Future unification path: re-implement self-knowledge tools as ITool instances re
 
 ### 15.6 Token Budget Allocation
 
-**Decision** (resolved): 6 built-in read-only tools ≈ 450 tokens for descriptions — always loaded (no deferral needed). Follow CC reference: core tools (7) use ~8.1k tokens pre-loaded; secondary tools deferred. PulSeed's 6 tools are well under budget. When plugin tools are added in future, apply 10% context budget threshold for deferral.
+**Decision** (resolved): the small core tool set is cheap enough to keep loaded
+for core paths, with read/search tools and Shell described separately. Follow CC
+reference: core tools (7) use ~8.1k tokens pre-loaded; secondary tools deferred.
+PulSeed's compact tool descriptions are well under budget. When plugin tools are
+added in future, apply 10% context budget threshold for deferral.
 
 **CC Reference**: CC pre-loads 7 core tools at ~8.1k tokens and defers secondary tools. The 10% context budget threshold for deferral is derived from CC's MCP tool loading behavior.
 
-**Rationale**: At ~450 tokens, PulSeed's 6 built-in tools consume less than 1.5% of a 32K context budget — well below the deferral threshold. Pre-loading all built-ins eliminates the complexity of conditional loading for minimal budget savings.
+**Rationale**: the compact core tool descriptions consume a small fraction of a
+32K context budget, well below the deferral threshold. Pre-loading the core tool
+set eliminates the complexity of conditional loading for minimal budget savings.
 
 ### 15.7 Shell Command Discovery
 
@@ -3124,11 +3167,11 @@ Future unification path: re-implement self-knowledge tools as ITool instances re
 
 | Term | Definition |
 |------|-----------|
-| **Tool** | A single-purpose capability that PulSeed can invoke directly (no agent session). All current tools are read-only. |
+| **Tool** | A single-purpose capability that PulSeed can invoke directly (no agent session). Tools may be read-only, command-executing, or future mutation surfaces depending on metadata and policy. |
 | **ToolSystem** | The combination of ToolRegistry, ToolExecutor, and ToolPermissionManager. |
 | **Direct observation** | Observation performed via tools rather than agent delegation. |
-| **Read-only tool** | A tool that gathers information without modifying state: Glob, Grep, Read, HttpFetch(GET), JsonQuery, Shell(safe commands). |
-| **Read-metrics tool** | Shell tool in read-only mode: spawns processes (technically a side effect) but restricted to commands that do not modify state. |
+| **Read-only tool** | A tool that gathers information without modifying state: Glob, Grep, Read, HttpFetch(GET), JsonQuery. |
+| **Read-metrics tool** | Shell-backed mechanical observation. It spawns processes and is not read-only; command policy decides whether a command is allowed, needs approval, or is denied. |
 | **Context modifier** | A string appended to LLM context after a tool call, summarizing the tool's output. |
 | **Deferred tool** | A tool hidden from the LLM's tool list until explicitly searched for, saving context budget. |
 | **5-gate pipeline** | The sequence of checks before a tool call executes: Zod validation, semantic check, permission check, input sanitization, concurrency control. |

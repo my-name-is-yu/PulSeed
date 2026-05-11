@@ -132,9 +132,18 @@ audits, and design history live under [Design Documentation](docs/design/index.m
 
 ## Evidence
 
-PulSeed has been dogfooded on long-running work, including a 30-hour autonomous
-Kaggle Playground Series S6E4 run. A redacted evidence log is available at
+The current public evidence is implementation evidence, not an external
+traction claim. PulSeed has been dogfooded on long-running work, including a
+30-hour autonomous Kaggle Playground Series S6E4 run. A redacted evidence log is
+available at
 [pulseed-kaggle-s6e4-evidence-log](https://github.com/my-name-is-yu/pulseed-kaggle-s6e4-evidence-log).
+
+The repository also includes repeatable verification paths for the product
+wedge: `npm run check:docs`, `npm run test:dogfood`,
+`npm run dogfood:agentloop:real`, packaged-artifact checks, and CI lanes for
+unit and integration coverage. These show that the current thesis is being
+tested through code-backed goal/runtime behavior. They do not claim customer
+adoption, revenue, or broad market pull yet.
 
 ## Contributing
 
