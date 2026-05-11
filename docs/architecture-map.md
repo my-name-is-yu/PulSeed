@@ -224,4 +224,6 @@ For the public picture:
 - [Module Map](module-map.md) is the code navigation companion
 - `src/` is the implementation truth
 
-Historical deep design docs remain in `docs/design/`, but some describe earlier stages or alternatives rather than the exact current runtime path.
+Historical and internal deep design docs now live under `docs/internal/`.
+Some describe earlier stages or alternatives rather than the exact current
+runtime path.

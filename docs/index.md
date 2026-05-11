@@ -62,15 +62,15 @@ details.
 ### Roadmap And Future Direction
 
 - [Roadmap Index](roadmap/index.md)
-- [Positioning](positioning.md)
-- [Vision](vision.md)
-- [Use Cases](usecase.md)
-- [Roadmap](roadmap.md)
+- [Positioning](roadmap/positioning.md)
+- [Vision](roadmap/vision.md)
+- [Use Cases](roadmap/use-cases.md)
+- [Future Work](roadmap/future-work.md)
 
 ### Internal Design Notes
 
 - [Internal Index](internal/index.md)
-- [Design Index](design/index.md)
+- [Internal Design Notes](internal/design/index.md)
 
 ## Source Of Truth
 
@@ -83,8 +83,8 @@ When public docs overlap, prefer the most specific page for the topic:
 - `docs/configuration.md` for configuration keys and setup details
 - `docs/status.md` for current public status
 - `docs/architecture-map.md` and `docs/module-map.md` for code navigation
-- `docs/internal/` and `docs/design/` for maintainer-facing background, not
-  public-current behavior
+- `docs/internal/` for maintainer-facing background, not public-current
+  behavior
 
 If code and docs disagree, treat the current code, CLI registry, package
 scripts, runtime schemas, and tests as the implementation truth. Fix the docs or
