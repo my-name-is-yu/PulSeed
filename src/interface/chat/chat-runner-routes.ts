@@ -374,7 +374,7 @@ export async function executeGatewayModelLoopRoute(
   params: GatewayModelLoopRouteParams,
 ): Promise<ChatRunResult> {
   try {
-    const approvalCapable = Boolean(host.deps.approvalRequestFn || host.deps.approvalFn);
+    const approvalCapable = isGatewayApprovalCapable(host, params.runtimeControlContext, params.turnContext);
     const registryTools = host.deps.registry?.listAll() ?? [];
     const toolResult = await executeWithTools(
       host,
@@ -558,6 +558,29 @@ function isGatewaySurfaceTurn(
   runtimeControlContext: RuntimeControlChatContext | null,
 ): boolean {
   return (runtimeControlContext?.replyTarget?.surface ?? turnContext.modelVisible.runtime.replyTarget?.surface) === "gateway";
+}
+
+function isGatewayApprovalCapable(
+  host: ChatRunnerRouteHost,
+  runtimeControlContext: RuntimeControlChatContext | null,
+  turnContext: ChatTurnContext,
+): boolean {
+  const turnRuntimeContext = turnContext.hostOnly.runtime.runtimeControlContext;
+  const runtimeApprovalMode =
+    runtimeControlContext?.approvalMode
+    ?? turnRuntimeContext?.approvalMode
+    ?? turnContext.modelVisible.runtime.approvalMode;
+  const runtimeAllowed =
+    runtimeControlContext?.allowed
+    ?? turnRuntimeContext?.allowed
+    ?? turnContext.modelVisible.runtime.runtimeControlAllowed;
+  return Boolean(
+    host.deps.approvalRequestFn
+    || host.deps.approvalFn
+    || runtimeControlContext?.approvalFn
+    || turnRuntimeContext?.approvalFn
+    || (runtimeAllowed !== false && runtimeApprovalMode === "preapproved"),
+  );
 }
 
 async function executeWithTools(
