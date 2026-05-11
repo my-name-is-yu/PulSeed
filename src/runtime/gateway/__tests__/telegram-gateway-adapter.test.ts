@@ -97,14 +97,9 @@ describe("TelegramGatewayAdapter", () => {
         }),
       }));
     });
-    expect(fetchMock).toHaveBeenCalledWith(
+    expect(fetchMock).not.toHaveBeenCalledWith(
       "https://api.telegram.org/bottest-token/sendChatAction",
-      expect.objectContaining({
-        body: JSON.stringify({
-          chat_id: 314,
-          action: "typing",
-        }),
-      })
+      expect.anything()
     );
     expect(fetchMock).toHaveBeenCalledWith(
       "https://api.telegram.org/bottest-token/getUpdates",
@@ -118,7 +113,7 @@ describe("TelegramGatewayAdapter", () => {
     );
   });
 
-  it("starts Telegram typing immediately after inbound admission before rendered output", async () => {
+  it("does not start Telegram typing on inbound admission before rendered output", async () => {
     vi.useFakeTimers();
     try {
       const configDir = await writeConfig({
@@ -181,7 +176,7 @@ describe("TelegramGatewayAdapter", () => {
       }).processMessage("hello", 42, 314, 2718);
 
       await presenceHandled.promise;
-      expect(sentChatActions).toEqual([{ chat_id: 314, action: "typing" }]);
+      expect(sentChatActions).toEqual([]);
       presenceCanContinue.resolve();
 
       await commentaryHandled.promise;
@@ -194,7 +189,7 @@ describe("TelegramGatewayAdapter", () => {
       await processing;
       await vi.advanceTimersByTimeAsync(4_000);
 
-      expect(sentChatActions).toHaveLength(2);
+      expect(sentChatActions).toHaveLength(1);
       expect(sentMessages).toContain("Done from Telegram.");
       expect(sentMessages).not.toContain("Received.");
     } finally {
@@ -202,7 +197,7 @@ describe("TelegramGatewayAdapter", () => {
     }
   });
 
-  it("stops Telegram typing even when fallback final delivery fails", async () => {
+  it("does not start Telegram typing for fallback final delivery", async () => {
     vi.useFakeTimers();
     try {
       const configDir = await writeConfig({
@@ -245,11 +240,11 @@ describe("TelegramGatewayAdapter", () => {
         processMessage(text: string, fromUserId: number, chatId: number, messageId: number): Promise<void>;
       }).processMessage("hello", 42, 314, 2718)).rejects.toThrow("telegram-api: sendMessage returned 500");
 
-      expect(sentChatActions).toEqual([{ chat_id: 314, action: "typing" }]);
+      expect(sentChatActions).toEqual([]);
 
       await vi.advanceTimersByTimeAsync(4_000);
 
-      expect(sentChatActions).toHaveLength(1);
+      expect(sentChatActions).toHaveLength(0);
     } finally {
       vi.useRealTimers();
     }
@@ -312,15 +307,12 @@ describe("TelegramGatewayAdapter", () => {
       }).processMessage("hello", 42, 314, 2718);
 
       await summaryHandled.promise;
-      expect(sentChatActions).toEqual([{ chat_id: 314, action: "typing" }]);
+      expect(sentChatActions).toEqual([]);
 
       dispatchCanFinish.resolve();
       await processing;
 
-      expect(sentChatActions).toEqual([
-        { chat_id: 314, action: "typing" },
-        { chat_id: 314, action: "typing" },
-      ]);
+      expect(sentChatActions).toEqual([]);
     } finally {
       vi.useRealTimers();
     }
@@ -358,6 +350,16 @@ describe("TelegramGatewayAdapter", () => {
       adapters.push(adapter);
       vi.mocked(dispatchGatewayChatInput).mockImplementationOnce(async (input) => {
         await input.onEvent?.(presenceEvent("received"));
+        await input.onEvent?.({
+          type: "activity",
+          runId: "run-1",
+          turnId: "turn-1",
+          createdAt: "2026-05-10T00:00:00.500Z",
+          kind: "commentary",
+          message: "I need to check one thing first.",
+          sourceId: "preamble:turn-1",
+          presentation: { gatewayProgress: "user" },
+        });
         await input.onEvent?.(assistantFinalEvent("Typing failed, but the turn completed."));
         return "Typing failed, but the turn completed.";
       });
@@ -682,7 +684,7 @@ describe("TelegramGatewayAdapter", () => {
     );
   });
 
-  it("does not count failed outbound attempts as first-visible timing", async () => {
+  it("records final timing without starting native typing after the final is visible", async () => {
     const configDir = await writeConfig({
       bot_token: "test-token",
       allowed_user_ids: [42],
@@ -698,7 +700,7 @@ describe("TelegramGatewayAdapter", () => {
     });
     const fetchMock = vi.fn(async (url: string | URL | Request) => {
       const method = String(url).split("/").at(-1);
-      if (method === "sendChatAction") return telegramErrorResponse(500, "typing unavailable");
+      if (method === "sendChatAction") throw new Error("final delivery should not start Telegram typing");
       if (method === "sendMessage") return telegramResponse({ message_id: 9001 });
       throw new Error(`unexpected Telegram method: ${method}`);
     });
@@ -720,10 +722,10 @@ describe("TelegramGatewayAdapter", () => {
     expect(timing?.turn?.first_typing_at).toBeUndefined();
     expect(timing?.turn?.first_final_at).toEqual(expect.any(String));
     expect(timing?.turn?.outbound_calls).toEqual(expect.arrayContaining([
-      expect.objectContaining({ kind: "typing", ok: false, error_class: "Error" }),
       expect.objectContaining({ kind: "final_send", ok: true }),
     ]));
-    expect(warnSpy).toHaveBeenCalledWith(
+    expect(JSON.stringify(timing?.turn?.outbound_calls ?? [])).not.toContain("\"kind\":\"typing\"");
+    expect(warnSpy).not.toHaveBeenCalledWith(
       "TelegramGatewayAdapter: typing indicator failed",
       expect.any(Error),
     );

@@ -66,6 +66,7 @@
     "test:dogfood": "vitest run src/orchestrator/execution/agent-loop/__tests__/agent-loop-dogfood-benchmark.test.ts",
     "test:kaggle-training": "vitest run src/orchestrator/execution/agent-loop/__tests__/kaggle-training-benchmark.test.ts",
     "dogfood:agentloop:real": "npm run build && node dist/orchestrator/execution/agent-loop/agent-loop-real-dogfood.js",
+    "smoke:gateway-direct-chat-latency": "npm run build && node dist/runtime/gateway/direct-chat-latency-smoke.js",
     "test:runtime-long-run": "vitest run --config vitest.runtime-long-run.config.ts",
     "test:memory-correction-eval": "vitest run --config vitest.runtime-long-run.config.ts tests/slow/memory-correction-retrieval-eval.test.ts",
     "test:lifelong-agent-eval": "vitest run --config vitest.runtime-long-run.config.ts tests/slow/lifelong-agent-memory-profile-eval.test.ts",

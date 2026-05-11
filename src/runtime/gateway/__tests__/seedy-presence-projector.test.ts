@@ -127,7 +127,7 @@ describe("SeedyPresenceProjector", () => {
     vi.useRealTimers();
   });
 
-  it("starts native typing immediately for inbound received presence", async () => {
+  it("does not start native typing for inbound received presence", async () => {
     const refresh = vi.fn().mockResolvedValue(undefined);
     const typingIndicator = createRefreshingTypingIndicator({
       intervalMs: 1_000,
@@ -149,13 +149,13 @@ describe("SeedyPresenceProjector", () => {
       type: "presence_update",
       presence: presence("received"),
     });
-    expect(refresh).toHaveBeenCalledOnce();
+    expect(refresh).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(2_000);
-    expect(refresh).toHaveBeenCalledTimes(3);
+    expect(refresh).not.toHaveBeenCalled();
     expect(transport.sendStatus).not.toHaveBeenCalled();
   });
 
-  it("starts, refreshes, and stops native presence around final streaming", async () => {
+  it("does not start native presence for assistant text that is already ready to render", async () => {
     const refresh = vi.fn().mockResolvedValue(undefined);
     const typingIndicator = createRefreshingTypingIndicator({
       intervalMs: 1_000,
@@ -179,12 +179,12 @@ describe("SeedyPresenceProjector", () => {
       text: "Hello.",
     });
 
-    expect(refresh).toHaveBeenCalledOnce();
+    expect(refresh).not.toHaveBeenCalled();
     expect(transport.sendStatus).not.toHaveBeenCalled();
 
     await vi.advanceTimersByTimeAsync(1_000);
 
-    expect(refresh).toHaveBeenCalledTimes(2);
+    expect(refresh).not.toHaveBeenCalled();
 
     await projector.handle({
       ...base,
@@ -194,7 +194,7 @@ describe("SeedyPresenceProjector", () => {
     });
     await vi.advanceTimersByTimeAsync(1_000);
 
-    expect(refresh).toHaveBeenCalledTimes(2);
+    expect(refresh).not.toHaveBeenCalled();
   });
 
   it("uses native typing around a rendered commentary/status update without holding it", async () => {
@@ -282,15 +282,25 @@ describe("SeedyPresenceProjector", () => {
 
     const first = projector.prepareForEvent({
       ...base,
-      type: "assistant_delta",
-      delta: "Hello.",
-      text: "Hello.",
+      type: "operation_progress",
+      item: {
+        id: "progress-1",
+        kind: "checked_status",
+        operation: "workspace_inspection",
+        title: "Inspect workspace",
+        createdAt: base.createdAt,
+      },
     });
     const second = projector.prepareForEvent({
       ...base,
-      type: "assistant_delta",
-      delta: " Next.",
-      text: "Hello. Next.",
+      type: "operation_progress",
+      item: {
+        id: "progress-2",
+        kind: "checked_status",
+        operation: "workspace_inspection",
+        title: "Inspect workspace again",
+        createdAt: base.createdAt,
+      },
     });
     await vi.advanceTimersByTimeAsync(0);
 
@@ -327,9 +337,14 @@ describe("SeedyPresenceProjector", () => {
 
     const update = projector.prepareForEvent({
       ...base,
-      type: "assistant_final",
-      text: "Done",
-      persisted: true,
+      type: "operation_progress",
+      item: {
+        id: "progress-1",
+        kind: "checked_status",
+        operation: "workspace_inspection",
+        title: "Inspect workspace",
+        createdAt: base.createdAt,
+      },
     });
     const final = projector.handle({
       ...base,
