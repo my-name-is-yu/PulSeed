@@ -2,7 +2,7 @@
 
 ## Status
 
-Merged. Live Telegram dogfood preparation remains.
+Merged. Live Telegram dogfood environment prepared on the Mac mini; live messages remain user-driven.
 
 ## Heads
 
@@ -10,6 +10,7 @@ Merged. Live Telegram dogfood preparation remains.
 - Final HEAD: `2680718f9cd6b9beb5ad9df800ed2f8a5389dd1d`
 - PR: `#1918`
 - Merged commit: `cc9c6d23df9935bbbf89993aff2d47dc506c5369`
+- Main artifact HEAD: `9c960cf6aa2a7992821ff24da76f57c5023d6a96`
 
 ## Architecture Changes
 
@@ -56,7 +57,17 @@ Merged. Live Telegram dogfood preparation remains.
 
 ## Live Telegram Dogfood
 
-Pending after merge/main sync. Prepare an isolated Mac mini worktree/home and ask the user to send:
+Prepared on the Mac mini without sending Telegram messages.
+
+- Worktree: `/Users/yuyoshimuta/PulSeed-live-telegram-dogfood-20260511`
+- Home: `/Users/yuyoshimuta/.pulseed-telegram-dogfood-20260511`
+- Worktree HEAD: `9c960cf6aa2a7992821ff24da76f57c5023d6a96`
+- Build: `npm run build` passed on the Mac mini.
+- Daemon: restarted in the isolated home with Node v24.15.0 and `--detach`.
+- Daemon status: idle, runtime health ok, Telegram and HTTP gateway adapters started.
+- Baseline observation: `outbox_records` latest seq `505`; no runtime operation or queue records before the live-message pass.
+
+Ask the user to send:
 
 1. `やあ！`
 2. `このリポジトリにREADMEがあるかだけ軽く見て`
@@ -67,5 +78,5 @@ Codex should inspect logs/control DB/timing before and after each user message. 
 
 ## Remaining Risks
 
-- Live Telegram dogfood is still required because local tests cannot prove real bot/channel timing and edit behavior.
+- Live Telegram dogfood message responses are still required because local tests and daemon preparation cannot prove real bot/channel timing and edit behavior.
 - `npm run lint:boundaries` still reports existing repository warnings, but exits successfully with no errors.
