@@ -26,20 +26,35 @@ const publicCurrentFiles = new Set([
   'CONTRIBUTING.md',
   'docs/index.md',
   'docs/getting-started.md',
+  'docs/guide.md',
+  'docs/concepts.md',
   'docs/runtime.md',
   'docs/mechanism.md',
   'docs/configuration.md',
   'docs/status.md',
+  'docs/architecture.md',
   'docs/architecture-map.md',
   'docs/module-map.md',
 ]);
 const publicCurrentDirs = [
-  'docs/start/',
-  'docs/guide/',
-  'docs/concepts/',
   'docs/reference/',
-  'docs/architecture/',
 ];
+const retiredThinDocPaths = new Set([
+  'docs/start/index.md',
+  'docs/guide/index.md',
+  'docs/concepts/index.md',
+  'docs/architecture/index.md',
+  'docs/internal/index.md',
+]);
+const retiredThinDocDirs = new Set([
+  'docs/start',
+  'docs/guide',
+  'docs/concepts',
+  'docs/architecture',
+  'docs/internal',
+  'docs/design/audits/docs-audit',
+  'docs/design/archive/design',
+]);
 const docsWithRequiredStatus = [
   {
     label: 'roadmap or future-direction document',
@@ -68,10 +83,20 @@ const docsWithRequiredStatus = [
 const markdownFiles = collectMarkdownFiles(repoRoot);
 const issues = [];
 
+for (const retiredDir of retiredThinDocDirs) {
+  if (directoryExists(path.join(repoRoot, retiredDir))) {
+    issues.push(formatIssue(retiredDir, 1, 'retired thin docs directory was recreated; link to the flattened page instead'));
+  }
+}
+
 for (const filePath of markdownFiles) {
   const relativePath = toPosixPath(path.relative(repoRoot, filePath) || path.basename(filePath));
   const content = fs.readFileSync(filePath, 'utf8');
   const lines = content.split(/\r?\n/);
+
+  if (retiredThinDocPaths.has(relativePath)) {
+    issues.push(formatIssue(relativePath, 1, 'retired thin docs path was recreated; link to the flattened page instead'));
+  }
 
   for (const rule of docsWithRequiredStatus) {
     if (rule.matches(relativePath) && !hasStatusBanner(lines)) {
@@ -280,6 +305,14 @@ function getPublicBoundaryIssue(sourceRelativePath, targetRelativePath) {
 function fileExists(filePath) {
   try {
     return fs.statSync(filePath).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function directoryExists(dirPath) {
+  try {
+    return fs.statSync(dirPath).isDirectory();
   } catch {
     return false;
   }

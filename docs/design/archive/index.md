@@ -7,6 +7,6 @@ Archived material should include a status note explaining why it is not current.
 
 Archived design notes:
 
-- [Companion Capability Runtime Gap Audit](design/companion-capability-runtime-gap-audit.md)
-- [Prompt Context Architecture](design/prompt-context-architecture.md)
-- [Multi-Channel Runtime](design/multi-channel-runtime.md)
+- [Companion Capability Runtime Gap Audit](companion-capability-runtime-gap-audit.md)
+- [Prompt Context Architecture](prompt-context-architecture.md)
+- [Multi-Channel Runtime](multi-channel-runtime.md)

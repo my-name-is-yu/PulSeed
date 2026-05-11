@@ -4,7 +4,7 @@
 
 # PulSeed
 
-PulSeed is a local-first personal agent runtime for goals that take time.
+PulSeed is local-first companion software for goals that take time.
 
 [![Website](https://img.shields.io/badge/Website-pulseed.dev-blue?style=for-the-badge)](https://pulseed.dev)
 [![npm](https://img.shields.io/npm/v/pulseed.svg?style=for-the-badge)](https://www.npmjs.com/package/pulseed)
@@ -15,14 +15,38 @@ PulSeed is a local-first personal agent runtime for goals that take time.
 
 </div>
 
-PulSeed keeps goal work alive across sessions. It stores local state, runs a
-DurableLoop over goals, delegates bounded work through AgentLoop or configured
-adapters, verifies progress from evidence, and exposes the runtime through the
-CLI, TUI, daemon, schedules, chat, and gateway surfaces.
+PulSeed is being built toward software that can stay near a person over time:
+remember what matters, notice when the situation changes, and bring the right
+tool, agent, or workflow into the moment when help is needed.
 
-The current implementation is a long-running goal orchestration runtime. The
-larger product direction is a lifelong personal companion agent, but future
-direction is documented separately from current behavior.
+The current implementation focuses on long-running goal orchestration. It stores
+local state, runs a DurableLoop over goals, delegates bounded work through
+AgentLoop or configured adapters, verifies progress from evidence, and exposes
+the runtime through the CLI, TUI, daemon, schedules, chat, and gateway surfaces.
+Product direction beyond that current runtime is documented separately from
+current behavior.
+
+In plain terms, PulSeed helps you keep goal work, state, progress checks, and
+agent/tool runs organized across time from your local machine.
+
+## Is PulSeed For Me?
+
+Try PulSeed today if you want to:
+
+- keep a long-running goal and its evidence outside a single chat session
+- run goal work from a local CLI/TUI with inspectable state under `~/.pulseed/`
+- experiment with daemon, schedule, gateway, plugin, memory, and diagnostic
+  surfaces while keeping current behavior separate from future roadmap ideas
+
+PulSeed is not yet:
+
+- a turnkey personal-life automation product
+- a medical, financial, legal, or business-decision advisor
+- a complete sandbox for untrusted commands, plugins, provider tools, or local
+  backends
+
+Recommended first step: install PulSeed, run `pulseed`, complete provider setup,
+and try one low-risk goal in a disposable workspace.
 
 ## Quick Start
 
@@ -92,15 +116,15 @@ For the complete command surface, use `pulseed help` or see the docs:
 - [Architecture Map](docs/architecture-map.md)
 - [Module Map](docs/module-map.md)
 
-## Public Vs Future Docs
+## How The Docs Are Organized
 
 Start with the current operating docs when you want to use PulSeed today:
 
-- [Start](docs/start/index.md)
-- [Guide](docs/guide/index.md)
-- [Concepts](docs/concepts/index.md)
+- [Getting Started](docs/getting-started.md)
+- [Guide](docs/guide.md)
+- [Concepts](docs/concepts.md)
 - [Reference](docs/reference/index.md)
-- [Architecture](docs/architecture/index.md)
+- [Architecture](docs/architecture.md)
 
 Product direction, north-star examples, and non-current plans live under
 [Roadmap And Future Direction](docs/roadmap/index.md). Design documents,
@@ -108,9 +132,18 @@ audits, and design history live under [Design Documentation](docs/design/index.m
 
 ## Evidence
 
-PulSeed has been dogfooded on long-running work, including a 30-hour autonomous
-Kaggle Playground Series S6E4 run. A redacted evidence log is available at
+The current public evidence is implementation evidence, not an external
+traction claim. PulSeed has been dogfooded on long-running work, including a
+30-hour autonomous Kaggle Playground Series S6E4 run. A redacted evidence log is
+available at
 [pulseed-kaggle-s6e4-evidence-log](https://github.com/my-name-is-yu/pulseed-kaggle-s6e4-evidence-log).
+
+The repository also includes repeatable verification paths for the product
+wedge: `npm run check:docs`, `npm run test:dogfood`,
+`npm run dogfood:agentloop:real`, packaged-artifact checks, and CI lanes for
+unit and integration coverage. These show that the current thesis is being
+tested through code-backed goal/runtime behavior. They do not claim customer
+adoption, revenue, or broad market pull yet.
 
 ## Contributing
 

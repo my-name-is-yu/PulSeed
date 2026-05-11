@@ -6,17 +6,25 @@
 
 ## 1. Core Principle
 
-**PulSeed perceives the world directly through read-only tools; all mutations and multi-step work are delegated to agents.**
+**PulSeed orchestrates work through typed tools, adapters, and agents; execution
+authority must stay explicit, inspectable, and policy-bound.**
 
-"PulSeed wrote the code," "PulSeed collected the data," "PulSeed built the system" — none of these are accurate. The precise statements are: "PulSeed instructed an agent to implement the code," "PulSeed asked an agent to collect the data," "PulSeed delegated system construction to an agent."
+"PulSeed wrote the code," "PulSeed collected the data," "PulSeed built the
+system" are too imprecise for a safety or architecture boundary. More precise
+statements are: "PulSeed instructed an agent to implement the code," "PulSeed
+used a read tool to inspect the config," "PulSeed ran a permitted command
+through the Shell tool," or "PulSeed delegated system construction to an agent."
 
-PulSeed perceives directly but does not mutate. It observes, decides, and delegates execution.
+PulSeed can observe directly and can invoke typed execution surfaces, but
+mutation and side effects must remain behind explicit contracts, workspace
+policy, permission checks, approval gates, and audit-visible runtime state.
 
 ---
 
 ## 2. What PulSeed Is Responsible For
 
-The only thing PulSeed does directly is **LLM calls for its own thinking process**.
+PulSeed does several things directly, but each direct action must have a clear
+boundary.
 
 | What PulSeed does directly | Purpose |
 |---------------------------|---------|
@@ -26,15 +34,20 @@ The only thing PulSeed does directly is **LLM calls for its own thinking process
 | LLM calls for task concretization | Convert a strategy into a single executable task and define success criteria |
 | LLM calls for completion judgment | Evaluate whether a goal is "good enough" against satisficing criteria |
 | State read/write | Save and load goal trees, observation logs, and learning data to files |
-| Read-only tool invocations | Perceive the world: check files (Glob, Read), search code (Grep), run metrics commands (Shell), check API health (HttpFetch), query configs (JsonQuery) |
+| Read-only tool invocations | Perceive the world: check files (Glob, Read), search code (Grep), check API health (HttpFetch), query configs (JsonQuery) |
+| Command tool invocations | Run permitted commands through Shell when workspace policy and permission checks allow it |
 
-Everything else is delegated to agents.
+Complex mutations, implementation work, multi-step analysis, and external
+effects should normally be delegated to agents or specialized adapters rather
+than hidden inside PulSeed's own reasoning loop.
 
 ---
 
 ## 3. What PulSeed Delegates
 
-Anything related to execution is outside PulSeed's scope.
+Execution is inside PulSeed's orchestration scope, but it must be routed through
+the right boundary. Direct tools are acceptable for bounded observation or
+policy-approved commands; broader execution remains delegated.
 
 | Delegation category | Examples | Delegate targets |
 |--------------------|---------|-----------------|
@@ -47,7 +60,12 @@ Anything related to execution is outside PulSeed's scope.
 | Communication and notifications | Sending reports, firing alerts, approval requests | Messaging systems |
 | Human confirmation | Approval requests for irreversible actions | Humans (directly) |
 
-Think of it this way: "PulSeed has no body." PulSeed perceives the world directly through read-only tools, then thinks and instructs. For simple mechanical data collection (e.g., reading a config file, listing files, checking an API endpoint), PulSeed uses tools directly rather than delegating to an agent. All mutations, writes, and multi-step work remain delegated.
+Think of it this way: PulSeed should not hide side effects inside vague
+"thinking." For simple mechanical data collection, such as reading a config file,
+listing files, or checking an API endpoint, PulSeed can use direct tools rather
+than delegating to an agent. For command execution, writes, external actions, and
+multi-step work, PulSeed must use an explicit execution surface with policy,
+permission, and audit boundaries.
 
 ---
 
@@ -331,8 +349,17 @@ The approval flow is itself a form of delegation. The question "is it okay to pe
 
 PulSeed's execution boundary in one sentence:
 
-> **PulSeed perceives the world directly through read-only tools; all mutations and multi-step work are delegated to agents.**
+> **PulSeed orchestrates read tools, command tools, mutation tools, adapters,
+> and agents through explicit policy, permission, approval, and audit
+> boundaries.**
 
-PulSeed's value lies in continuously discovering "what should be done next" from the gap between goals and reality. It perceives directly (via read-only tools) to minimize latency on mechanical observations, then delegates all execution to the agent best suited at that moment.
+PulSeed's value lies in continuously discovering "what should be done next" from
+the gap between goals and reality. It can perceive directly through read tools,
+run permitted commands for mechanical evidence, use mutation-capable tools when
+policy allows, and delegate broader work to the agent or adapter best suited at
+that moment.
 
-This separation makes PulSeed scalable. No matter how complex the goal, PulSeed keeps deciding "what should be done." "How to execute it" is handled by whichever agent is best suited at that moment.
+This separation makes PulSeed scalable. No matter how complex the goal, PulSeed
+keeps deciding "what should be done." "How to execute it" is handled by an
+explicit execution surface rather than an implicit side effect hidden inside the
+reasoning loop.

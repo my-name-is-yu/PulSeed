@@ -9,8 +9,8 @@ the CLI command registry and help text.
 pulseed
 pulseed --version
 pulseed help
-pulseed --yes ...
-pulseed --dev ...
+pulseed --yes run --goal <goal-id>
+pulseed --dev status --goal <goal-id>
 ```
 
 Bare `pulseed` launches the TUI. `--yes` / `-y` auto-approves supported prompts
@@ -87,25 +87,45 @@ pulseed runtime budget <id> [--json]
 pulseed runtime experiment-queues [--json]
 pulseed runtime experiment-queue <id> [--json]
 pulseed runtime proactive-quality [--json]
-pulseed runtime proactive-feedback ...
+pulseed runtime proactive-feedback --intervention <id> --outcome <accepted|ignored|dismissed|corrected|overreach>
+pulseed runtime proactive-feedback --intervention <id> --outcome overreach --overreach-indicator too_frequent --reason "Too frequent"
 ```
+
+`proactive-feedback` also accepts `--follow-through-success` and `--json`.
+Valid overreach indicators are `too_frequent`, `wrong_context`, `sensitive`, and
+`unwanted_timing`.
 
 ## Schedules
 
 ```bash
 pulseed schedule list [--all]
 pulseed schedule show <id>
-pulseed schedule add ...
+pulseed schedule add --preset daily_brief
+pulseed schedule add --preset weekly_review --cron "0 9 * * 1"
+pulseed schedule add --preset goal_probe --data-source-id <id> --probe-dimension <name>
+pulseed schedule add --name api-health --type http --url https://example.com/health --interval 300
+pulseed schedule add --name ssh-health --type tcp --host 127.0.0.1 --port 22 --threshold 3
+pulseed schedule add --name free-space --type disk --path / --interval 3600
+pulseed schedule add --name custom-check --type custom --command "npm run check:docs"
 pulseed schedule edit <id>
+pulseed schedule edit <id> --name "Daily brief" --cron "0 9 * * *"
 pulseed schedule pause <id>
 pulseed schedule resume <id>
-pulseed schedule run <id>
+pulseed schedule run <id> [--with-escalation]
 pulseed schedule history <id> [--limit <n>]
 pulseed schedule cost [--period <24h|7d|2w>]
 pulseed schedule remove <id>
 pulseed schedule presets
-pulseed schedule suggestions <list|apply|reject|dismiss>
+pulseed schedule suggestions list
+pulseed schedule suggestions apply <suggestion-id>
+pulseed schedule suggestions reject <suggestion-id> [reason]
+pulseed schedule suggestions dismiss <suggestion-id> [reason]
 ```
+
+`schedule add --preset goal_probe` requires `--data-source-id`. Optional
+goal-probe flags include `--detector-mode <threshold|diff|presence>`,
+`--threshold-value <number>`, `--baseline-window <n>`, `--llm-on-change`, and
+`--llm-prompt-template <template>`.
 
 ## Gateway And Notifications
 
@@ -114,10 +134,12 @@ pulseed gateway setup
 pulseed telegram setup
 pulseed notify add slack --webhook-url <url>
 pulseed notify add webhook --url <url>
+pulseed notify add webhook --url <url> --header "Authorization: Bearer token"
+pulseed notify add email --address <email> --smtp-host <host> [--smtp-port <port>]
 pulseed notify list
 pulseed notify remove <index>
-pulseed notify test ...
-pulseed notify route ...
+pulseed notify test [index]
+pulseed notify route "Send daily reports to Slack and urgent alerts to email"
 ```
 
 ## Plugins, Skills, Playbooks, And Memory
@@ -138,9 +160,9 @@ pulseed playbook promote <id>
 pulseed playbook demote <id>
 pulseed playbook disable <id>
 pulseed playbook delete <id>
-pulseed memory correct <kind:id> --value "..."
-pulseed memory forget <kind:id> --reason "..."
-pulseed memory retract <kind:id> --reason "..."
+pulseed memory correct <kind:id> --value "Prefer concise reports"
+pulseed memory forget <kind:id> --reason "No longer true"
+pulseed memory retract <kind:id> --reason "Added by mistake"
 pulseed memory history <kind:id>
 pulseed memory export [--consent-scope id] [--include-secret]
 ```
@@ -148,7 +170,13 @@ pulseed memory export [--consent-scope id] [--include-secret]
 ## Data, Knowledge, Profiles, And Diagnostics
 
 ```bash
-pulseed datasource add <file|http_api|database> ...
+pulseed datasource add file --path ./metrics.json
+pulseed datasource add file_existence --path ./README.md
+pulseed datasource add http_api --url https://example.com/metrics.json
+pulseed datasource add database --connection-string postgresql://localhost:5432/analytics --query "SELECT count(*) FROM issues"
+pulseed datasource add database --connection-string postgresql://localhost:5432/analytics --dimension open_issue_count --query "SELECT count(*) FROM issues WHERE state = 'open'"
+pulseed datasource add postgres --connection-string postgresql://localhost:5432/app --query "SELECT 1"
+pulseed datasource add github_issue --name repo-issues
 pulseed datasource list
 pulseed datasource remove <id>
 pulseed datasource dedup
@@ -157,8 +185,19 @@ pulseed capability remove <name>
 pulseed knowledge list
 pulseed knowledge search <query>
 pulseed knowledge stats
-pulseed profile ...
-pulseed usage <scope>
+pulseed profile show [--scope <scope>] [--all] [--json]
+pulseed profile update --kind preference --key report_style --value concise --scope user_facing_review
+pulseed profile history <stable_key> [--json]
+pulseed profile retract --key <stable_key> --reason "No longer true" [--json]
+pulseed profile proposal list [--state <state>] [--json]
+pulseed profile proposal inspect <proposal-id> [--json]
+pulseed profile proposal approve <proposal-id> [--reason "Looks correct"] [--json]
+pulseed profile proposal reject <proposal-id> --reason "Wrong context" [--json]
+pulseed profile proposal apply <proposal-id> [--json]
+pulseed usage session <session-id>
+pulseed usage goal <goal-id>
+pulseed usage daemon <goal-id>
+pulseed usage schedule [--period <7d|24h|2w>]
 pulseed doctor
 pulseed logs
 pulseed logs --follow
@@ -166,6 +205,12 @@ pulseed install --goal <goal-id>
 pulseed uninstall
 pulseed mcp-server
 ```
+
+Profile scopes are `local_planning`, `resident_behavior`, `memory_retrieval`,
+and `user_facing_review`. Profile kinds include `identity_fact`, `preference`,
+`dislike`, `value`, `boundary`, `communication_style`,
+`notification_preference`, `long_term_goal`, `life_context`, and
+`intervention_policy`.
 
 ## Project Improvement Helpers
 

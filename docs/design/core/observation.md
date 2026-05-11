@@ -51,7 +51,16 @@ Mechanical observations run automatically. No human intervention or judgment is 
 
 **Layer 1 constraint**: Dimensions for which mechanical observation cannot be configured fall back to Layer 2 or Layer 3. It is not always possible to configure mechanical observation for every dimension (e.g., qualitative quality assessments, human emotions).
 
-**Direct tool invocation**: Layer 1 is enhanced by PulSeed's built-in read-only tools (Glob, Grep, Read, Shell, HttpFetch, JsonQuery). Tool-based observation belongs to the same confidence tier as mechanical observation (0.85–1.0) but operates with dramatically lower latency and cost — no agent session startup, no delegation round-trip. When tools are available, the ObservationEngine attempts tool-based observation first. If the tool result is sufficient (confidence >= threshold), agent delegation is skipped entirely.
+**Direct tool invocation**: Layer 1 is enhanced by PulSeed's built-in direct
+tools. Glob, Grep, Read, HttpFetch, and JsonQuery are observation-oriented read
+tools. Shell is a command-execution tool, not read-only; it can support
+mechanical observation only when the command passes workspace policy and
+permission checks. Tool-based observation belongs to the same confidence tier as
+mechanical observation (0.85-1.0) but operates with lower latency and cost: no
+agent session startup and no delegation round-trip. When tools are available and
+policy permits them, the ObservationEngine can attempt tool-based observation
+first. If the tool result is sufficient (confidence >= threshold), agent
+delegation is skipped entirely.
 
 ### Layer 2: Independent Review Session
 

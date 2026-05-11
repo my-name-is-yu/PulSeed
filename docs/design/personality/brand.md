@@ -4,7 +4,11 @@
 
 ## Overview
 
-PulSeed is a lifelong personal agent that remembers your goals, watches the world with you, and keeps helping move your life forward. The brand sits at the intersection of a professional developer tool and a warm, approachable character-driven product — think GitHub's Mona Lisa, or Rust's Ferris. Playful mascot, serious infrastructure.
+PulSeed is companion software that remembers your goals, watches the world with
+you, and brings the right help into the moment. The brand sits at the
+intersection of serious local-first infrastructure and a warm, approachable
+character-driven product: a dependable companion with a pocket of practical
+capabilities.
 
 ---
 
@@ -154,7 +158,9 @@ The palette is designed to work in both modes without redesign:
 
 ### Principles
 
-- **Friendly but competent.** Seedy helps your agents grow — this is serious tooling wrapped in an approachable package.
+- **Friendly but competent.** Seedy represents a companion that can bring the
+  right tool, agent, or workflow into the moment — serious tooling wrapped in an
+  approachable package.
 - **Technical when needed, approachable always.** Use precise terminology without being cold.
 - **Never condescending.** Don't over-explain to experienced developers.
 - **Never overly casual.** Emoji in documentation should be rare and purposeful.
@@ -165,16 +171,17 @@ The palette is designed to work in both modes without redesign:
 |---------|------|-------|
 | CLI success | `Goal reached. Seedy is proud.` | `LGTM bro!!!` |
 | CLI error | `Task failed after 3 retries. Check the adapter logs.` | `Uh oh, something broke :( :( :(` |
-| Docs intro | `PulSeed is a lifelong personal agent for goals that take time.` | `PulSeed is AMAZING and will change everything!` |
+| Docs intro | `PulSeed is companion software for goals that take time.` | `PulSeed is AMAZING and will change everything!` |
 | Stall warning | `Agent appears stalled. Escalating to next strategy.` | `Hmm, not sure what's happening here` |
 
 ### Key Brand Line
 
-> **"PulSeed is a lifelong personal agent that remembers your goals, watches the world with you, and keeps helping move your life forward."**
+> **"PulSeed is companion software that remembers your goals, watches the world
+> with you, and brings the right help into the moment."**
 
 Secondary lines:
-- "A personal agent for goals that take time."
-- "Remember the goal. Watch the world. Keep moving forward."
+- "Companion software for goals that take time."
+- "Remember the goal. Watch the world. Bring the right help."
 
 ---
 

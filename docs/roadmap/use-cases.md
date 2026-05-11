@@ -5,9 +5,18 @@
 
 These are real-world use cases we want to make possible with PulSeed.
 
+These examples are future product-direction narratives, not turnkey workflows
+available today. They are not medical, veterinary, financial, legal, or business
+advice. In safety-sensitive domains, humans and qualified professionals remain
+responsible for decisions and irreversible actions.
+
 ---
 
 ## Use Case 1: Owner of an Elderly Dog with a Chronic Illness
+
+> Future scenario. PulSeed does not currently provide a packaged veterinary
+> monitoring workflow, emergency-response workflow, or medical recommendation
+> system. This scenario illustrates the product direction only.
 
 There was a dog owner whose elderly dog suffered from a chronic respiratory condition. The owner had neither the technical skills to monitor the dog's condition nor the knowledge to provide appropriate care.
 
@@ -38,6 +47,10 @@ As a result, for three years until the elderly dog's life came to an end, PulSee
 ---
 
 ## Use Case 2: A Struggling SaaS Company
+
+> Future scenario. PulSeed does not currently provide a turnkey revenue-growth
+> operating system or business-advice workflow. This scenario illustrates the
+> product direction only.
 
 There was a SaaS company whose revenue had stalled. The CEO granted PulSeed access to all data and systems, and said:
 

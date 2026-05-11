@@ -1,7 +1,13 @@
-# Vision Moved
+# Vision
 
-The vision document now lives under
-[Roadmap And Future Direction](roadmap/vision.md).
+PulSeed's vision is roadmap material. It is useful for understanding where the
+project is going, but it is not a current capability reference.
 
-Use [Getting Started](getting-started.md), [Runtime](runtime.md), and
-[Status](status.md) for current behavior.
+Read:
+
+- [Roadmap Vision](roadmap/vision.md) for the future product narrative
+- [Roadmap Positioning](roadmap/positioning.md) for the short canonical frame
+- [Status](status.md) for what exists today
+
+Use [Getting Started](getting-started.md), [Guide](guide.md), and
+[Runtime](runtime.md) when you need current operating instructions.

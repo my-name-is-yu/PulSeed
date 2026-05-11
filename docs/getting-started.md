@@ -14,6 +14,37 @@ PulSeed stores local runtime state under `~/.pulseed/` by default. Set
 `PULSEED_HOME` when you need an isolated state directory for testing or
 automation.
 
+## Before You Run It
+
+PulSeed is local-first, but it can still call model providers, execute local
+commands through configured adapters, and load user-installed plugins. Make these
+decisions before your first real goal:
+
+- **Provider and API key**: `pulseed` or `pulseed setup` asks for provider
+  configuration when none exists. OpenAI, Anthropic, and Ollama paths are
+  supported, but live cloud providers require credentials.
+- **Cost**: cloud model calls may incur provider charges. Use a low-risk test
+  goal first and inspect usage with `pulseed usage goal <goal-id>` or
+  `pulseed usage schedule --period 7d` where available.
+- **Data flow**: prompts, goal text, file excerpts, and tool observations may be
+  sent to the configured provider or adapter. Do not point PulSeed at private or
+  regulated data until you understand the selected provider and adapter path.
+- **Local state**: PulSeed writes goals, tasks, reports, runtime records,
+  schedules, chat sessions, plugins, skills, memory, and related state under
+  `~/.pulseed/` by default.
+- **Local permissions**: approval and verification gates reduce risk, but they
+  are not an OS sandbox. Shell commands, local backends, provider tools, and
+  plugins may still act with your user's privileges.
+- **Isolation for testing**: use a temporary home for experiments:
+
+```bash
+export PULSEED_HOME="$(mktemp -d)"
+pulseed
+```
+
+Remove that temporary directory when you are finished. Do not delete
+`~/.pulseed/` unless you intentionally want to remove your real PulSeed state.
+
 ## Install
 
 macOS / Linux:
@@ -143,8 +174,8 @@ Common state paths:
 
 ## Next
 
-- [Guide](guide/index.md)
+- [Guide](guide.md)
 - [Runtime](runtime.md)
 - [Configuration](configuration.md)
-- [Concepts](concepts/index.md)
+- [Concepts](concepts.md)
 - [Reference](reference/index.md)

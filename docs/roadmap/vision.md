@@ -8,17 +8,22 @@
 
 ## 1. In a Nutshell
 
-PulSeed is a lifelong personal agent that remembers your goals, watches the world with you, and keeps helping move your life forward.
+PulSeed is intended to become companion software that remembers your goals,
+watches the world with you, and brings the right help into the moment.
 
-Tell PulSeed your goal, and it will stay with it for days, months, or years. PulSeed is not an "assistant waiting for instructions." It remembers what matters, observes what changes, and keeps moving toward the life or outcome you want.
+The goal is that you can tell PulSeed what you want to achieve, and it can stay
+with that goal for days, months, or years. PulSeed is not meant to be an
+"assistant waiting for instructions." It should remember what matters, observe
+what changes, and keep moving toward the life or outcome you want.
 
 PulSeed's current strongest technical wedge is long-running goal orchestration:
 holding goals, delegating bounded work to agents, verifying progress, and
 keeping a local runtime alive across time. That is one capability inside the
-larger product direction, not the final category. The north star is a lifelong
-companion agent with durable personal context, presence, proactive dialogue,
-safe intervention, and life-scale goal pursuit. See [Positioning](positioning.md)
-for the short canonical framing.
+larger product direction, not the final category. The north star is companion
+software with durable personal context, presence, proactive dialogue, safe
+intervention, and a growing pocket of capabilities it can bring to the user at
+the right time. See [Positioning](positioning.md) for the short canonical
+framing.
 
 ---
 
@@ -30,11 +35,19 @@ AI assistants answer questions. Agents execute tasks. Automation tools run workf
 
 Monitoring the health of a chronically ill dog. Doubling revenue. Getting a new business off the ground. These goals don't end with a single instruction. Situations change, new problems emerge, and strategies need to be revised. Right now, humans have to make those judgments and issue new instructions every time.
 
-What's missing isn't AI intelligence. It's **a lifelong personal agent that carries your goals over time and keeps helping you move forward**.
+What's missing is not a smarter chatbot. It is **companion software that carries
+your goals over time, understands the surrounding situation, and reaches for the
+right capability when help is needed**.
 
 ---
 
 ## 3. The World PulSeed Enables
+
+The examples in this section describe product direction, not complete workflows
+available in the current package. They are not medical, veterinary, financial,
+legal, or business advice. Current behavior is documented in
+[Runtime](../runtime.md), [Configuration](../configuration.md), and
+[Status](../status.md).
 
 ### Tell It Your Goal, Then Let Go
 
@@ -66,22 +79,32 @@ If existing tools are insufficient, PulSeed instructs agents to build them. Heal
 
 ### The Human Role Changes
 
-From "implement this" and "look into that" to "I want things to be in this state." From task instructor to goal setter. From one-time requester to one half of a lifelong partnership.
+From "implement this" and "look into that" to "I want things to be in this
+state." From task instructor to goal setter. From one-time requester to someone
+with software that can stay beside the goal.
 
 ---
 
 ## 4. How PulSeed Differs from Existing Approaches
 
-| Approach | What It Can Do | What It Lacks |
-|----------|---------------|---------------|
-| AI assistants (ChatGPT, Claude) | Answer questions, process tasks | Forgets when the session ends. Doesn't autonomously pursue goals |
-| AI agents (Claude Code, Devin, various autonomous agents) | Execute complex tasks autonomously | Task-scoped only. No long-term goal pursuit, strategy planning, or revision |
-| Autonomous agents (AutoGPT, BabyAGI) | Decompose goals into tasks and execute them | Can't determine completion and diverges. Doesn't know what "good enough" is |
-| Business automation (Zapier, n8n) | Auto-execute predefined workflows | Doesn't work backward from goals. Can't adjust strategy based on situation |
-| Project management AI (Linear, Asana) | Assist with task management | Doesn't execute tasks. Optimizes management, not goal pursuit |
-| **PulSeed** | **Takes on goals and pursues them autonomously and persistently** | **Completion via satisficing, honest goal negotiation, multi-year sustained operation** |
+This table is a positioning map, not a market-exclusivity claim. The current
+code-backed wedge is local long-running goal orchestration; the product thesis is
+that this wedge can expand into durable companion software.
 
-PulSeed differs in two fundamental ways. First, **persistent goal pursuit**: it operates in units of goals, not sessions or tasks. Second, **satisficing**: rather than diverging in pursuit of perfection, it judges "good enough" and moves forward realistically. This combination exists in no other approach.
+| Approach | Current strength | Gap for long-running goals | PulSeed thesis |
+|----------|------------------|----------------------------|----------------|
+| AI assistants (ChatGPT, Claude) | Answer questions and process session-scoped tasks | Context, initiative, and ownership usually reset when the session ends | Preserve goal state and evidence outside a single chat turn |
+| AI agents (Claude Code, Devin, task agents) | Execute bounded tasks with tools | Work is usually scoped to a task, repository, or session rather than a life-scale goal | Use agents as capabilities inside a longer-running goal loop |
+| Autonomous-agent experiments | Decompose and pursue broad objectives | Completion quality, safety, and divergence are hard to govern | Combine autonomy with explicit approval, verification, and satisficing boundaries |
+| Business automation (Zapier, n8n) | Run predefined workflows and integrations | Does not normally discover strategy from an ambiguous goal | Work backward from the desired outcome, then choose tools or agents |
+| Project-management AI | Organize tasks and status | Optimizes coordination more than execution and verification | Treat tasks as artifacts inside a live goal runtime |
+| **PulSeed today** | **Runs a local DurableLoop, delegates bounded work, verifies evidence, and keeps goal state under `~/.pulseed/`** | **Not yet a complete everyday companion product** | **Start with code-backed persistent goal orchestration, then expand toward durable context, presence, and safe intervention** |
+
+The investable differentiation is not that every individual component is unique.
+It is the combination PulSeed is trying to make reliable: persistent goal
+pursuit, evidence-backed verification, satisficing instead of endless looping,
+and a local-first runtime that can bring tools and agents into the goal over
+time.
 
 ---
 
@@ -134,13 +157,28 @@ State observation is not limited to codebases.
 
 Wearable sensors, databases, analytics, APIs, IoT devices, business metrics. The indicators PulSeed tracks are "is the dog's breathing stable?" "has churn rate decreased?" "have conversions increased?" It observes changes in the real world and judges progress toward the goal.
 
-### 5.8 Delegation Layer
+### 5.8 Delegation And Execution Boundary
 
-To pursue goals, PulSeed uses every available agent. Instructions to AI agents, delegation of API calls, requests for code execution, configuration of external service integrations. PulSeed never does these itself. It instructs agents to implement, asks other agents to review, and delegates deployment to appropriate systems — these are all orchestrated by PulSeed, not executed by PulSeed itself.
+To pursue goals, PulSeed can use agents, configured adapters, native tools, and
+runtime services. The design question is not "does PulSeed ever execute
+anything?" The current code has typed tool execution paths, including a Shell
+tool that is not read-only. The question is which operations are allowed,
+observable, reversible, and worth delegating.
 
-PulSeed is always the orchestrator. As a partner that keeps pursuing goals, it continually decides "what to delegate, to whom, and when." The execution itself is always carried out by the delegatee.
+PulSeed should stay the orchestrator: it decides what to ask for, which
+capability to use, what evidence to require, and when to stop or ask the user.
+Implementation, command execution, API calls, notifications, and external
+effects must remain behind explicit tool contracts, workspace policy,
+permission checks, approval gates, and inspection surfaces.
 
-**Perception Tool Layer**: PulSeed now includes a perception tool layer beneath the delegation layer. Read-only tools (Glob, Grep, Read, Shell, HttpFetch, JsonQuery) enable direct observation of the workspace, codebase, and external APIs without spawning agent sessions. This dramatically reduces latency and cost for mechanical observation, simple knowledge acquisition, and verification tasks. The delegation layer remains for mutations, complex reasoning, and multi-step execution.
+**Perception And Tool Layer**: PulSeed includes direct observation tools for
+common low-risk reads, such as Glob, Grep, Read, HttpFetch, and JsonQuery. Shell
+is a command-execution tool, not a read-only observation tool; it can support
+mechanical observation when policy permits a safe command, but it must be
+treated as an execution surface. Direct tools reduce latency and cost for
+mechanical observation and verification. Agent delegation remains the right path
+for mutations, complex reasoning, multi-step execution, and work that needs an
+independent executor.
 
 ### 5.9 The Big Picture
 
