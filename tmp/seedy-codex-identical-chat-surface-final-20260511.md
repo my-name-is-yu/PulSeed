@@ -10,7 +10,6 @@ Merged. Live Telegram dogfood environment prepared on the Mac mini; live message
 - Final HEAD: `2680718f9cd6b9beb5ad9df800ed2f8a5389dd1d`
 - PR: `#1918`
 - Merged commit: `cc9c6d23df9935bbbf89993aff2d47dc506c5369`
-- Main artifact HEAD: `9c960cf6aa2a7992821ff24da76f57c5023d6a96`
 
 ## Architecture Changes
 
