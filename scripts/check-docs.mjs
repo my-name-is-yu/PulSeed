@@ -69,7 +69,7 @@ const markdownFiles = collectMarkdownFiles(repoRoot);
 const issues = [];
 
 for (const filePath of markdownFiles) {
-  const relativePath = path.relative(repoRoot, filePath) || path.basename(filePath);
+  const relativePath = toPosixPath(path.relative(repoRoot, filePath) || path.basename(filePath));
   const content = fs.readFileSync(filePath, 'utf8');
   const lines = content.split(/\r?\n/);
 
@@ -136,7 +136,7 @@ for (const filePath of markdownFiles) {
         continue;
       }
 
-      const targetRelativePath = path.relative(repoRoot, resolvedPath);
+      const targetRelativePath = toPosixPath(path.relative(repoRoot, resolvedPath));
       const boundaryIssue = getPublicBoundaryIssue(relativePath, targetRelativePath);
       if (boundaryIssue) {
         issues.push(formatIssue(relativePath, lineNumber, boundaryIssue));
@@ -166,7 +166,7 @@ function collectMarkdownFiles(rootDir) {
 }
 
 function walk(currentDir, results) {
-  const relativeDir = path.relative(repoRoot, currentDir);
+  const relativeDir = toPosixPath(path.relative(repoRoot, currentDir));
   if (ignoredRelativeDirs.has(relativeDir)) {
     return;
   }
@@ -244,6 +244,10 @@ function normalizeMarkdownTarget(rawTarget) {
 
 function hasStatusBanner(lines) {
   return lines.slice(0, 8).some((line) => line.startsWith('> Status:'));
+}
+
+function toPosixPath(relativePath) {
+  return relativePath.split(path.sep).join('/');
 }
 
 function isPublicCurrentDoc(relativePath) {
