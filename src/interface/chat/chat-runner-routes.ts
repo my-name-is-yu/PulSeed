@@ -374,7 +374,6 @@ export async function executeGatewayModelLoopRoute(
   params: GatewayModelLoopRouteParams,
 ): Promise<ChatRunResult> {
   try {
-    const approvalCapable = isGatewayApprovalCapable(host, params.runtimeControlContext, params.turnContext);
     const registryTools = host.deps.registry?.listAll() ?? [];
     const toolResult = await executeWithTools(
       host,
@@ -386,7 +385,7 @@ export async function executeGatewayModelLoopRoute(
       params.runtimeControlContext,
       params.start,
       {
-        tools: selectDirectModelLoopTools(registryTools, params.turnContext, params.runtimeControlContext, approvalCapable),
+        tools: registryTools,
         streamFinalText: true,
         abortSignal: params.activeAbortSignal,
         timeoutMs: params.timeoutMs,
@@ -539,18 +538,12 @@ function selectDirectModelLoopTools(
   tools: ITool[],
   turnContext: ChatTurnContext,
   runtimeControlContext: RuntimeControlChatContext | null,
-  approvalCapable: boolean,
+  scopeContext: GatewayToolScopeContext,
 ): ITool[] {
   if (!isGatewaySurfaceTurn(turnContext, runtimeControlContext)) {
     return tools;
   }
-  return selectGatewayModelLoopTools(tools, {
-    runtimeControlAllowed: runtimeControlContext?.allowed,
-    runtimeControlApprovalMode: runtimeControlContext?.approvalMode,
-    approvedWrite: approvalCapable,
-    approvedExecute: approvalCapable,
-    approvedDurableRun: approvalCapable,
-  });
+  return selectGatewayModelLoopTools(tools, scopeContext);
 }
 
 function isGatewaySurfaceTurn(
@@ -560,27 +553,23 @@ function isGatewaySurfaceTurn(
   return (runtimeControlContext?.replyTarget?.surface ?? turnContext.modelVisible.runtime.replyTarget?.surface) === "gateway";
 }
 
-function isGatewayApprovalCapable(
-  host: ChatRunnerRouteHost,
+function initialGatewayToolScopeContext(
   runtimeControlContext: RuntimeControlChatContext | null,
   turnContext: ChatTurnContext,
-): boolean {
+): GatewayToolScopeContext {
   const turnRuntimeContext = turnContext.hostOnly.runtime.runtimeControlContext;
-  const runtimeApprovalMode =
+  const runtimeControlApprovalMode =
     runtimeControlContext?.approvalMode
     ?? turnRuntimeContext?.approvalMode
     ?? turnContext.modelVisible.runtime.approvalMode;
-  const runtimeAllowed =
+  const runtimeControlAllowed =
     runtimeControlContext?.allowed
     ?? turnRuntimeContext?.allowed
     ?? turnContext.modelVisible.runtime.runtimeControlAllowed;
-  return Boolean(
-    host.deps.approvalRequestFn
-    || host.deps.approvalFn
-    || runtimeControlContext?.approvalFn
-    || turnRuntimeContext?.approvalFn
-    || (runtimeAllowed !== false && runtimeApprovalMode === "preapproved"),
-  );
+  return {
+    runtimeControlAllowed,
+    runtimeControlApprovalMode,
+  };
 }
 
 async function executeWithTools(
@@ -607,18 +596,24 @@ async function executeWithTools(
     throw new ToolLoopTerminalError("model_request_aborted", "Gateway model/tool loop cannot run because no language model client is configured.");
   }
   const supportsNativeToolCalling = llmClient.supportsToolCalling?.() !== false;
+  const gatewayScopeContext = initialGatewayToolScopeContext(runtimeControlContext ?? null, turnContext);
+  const currentVisibleTools = () => selectDirectModelLoopTools(
+    options.tools,
+    turnContext,
+    runtimeControlContext ?? null,
+    gatewayScopeContext,
+  );
   const initialModelRequest = buildChatModelRequest({
     purpose: "tool_call",
     turnContext,
     systemPrompt,
-    availableTools: options.tools,
+    availableTools: currentVisibleTools(),
     activatedTools: host.activatedTools,
     supportsNativeToolCalling,
   });
   const messages: LLMMessage[] = [...initialModelRequest.messages];
   const startedAt = start ?? Date.now();
   const deadlineAt = options.timeoutMs ? startedAt + options.timeoutMs : null;
-  const allowedToolNames = new Set(options.tools.map((tool) => tool.metadata.name));
   const toolCallContext = await buildToolCallContext(host, goalId, runtimeControlContext, start, turnContext, {
     abortSignal: options.abortSignal,
     timeoutMs: remainingTimeoutMs(deadlineAt),
@@ -629,11 +624,12 @@ async function executeWithTools(
 
   for (let loop = 0; loop < MAX_TOOL_LOOPS; loop++) {
     throwIfAbortedOrTimedOut(options.abortSignal, deadlineAt, "model_request");
+    const visibleTools = currentVisibleTools();
     const modelRequest = buildChatModelRequest({
       purpose: "tool_call",
       turnContext,
       systemPrompt,
-      availableTools: options.tools,
+      availableTools: visibleTools,
       activatedTools: host.activatedTools,
       supportsNativeToolCalling,
       messages,
@@ -701,6 +697,7 @@ async function executeWithTools(
       } catch {
         // ignore parse errors, use empty args
       }
+      const allowedToolNames = new Set(currentVisibleTools().map((tool) => tool.metadata.name));
       if (!allowedToolNames.has(tc.function.name)) {
         host.eventBridge.emitActivity("tool", formatToolActivity("Failed", tc.function.name, "Tool is not available in this gateway scope"), eventContext, tc.id);
         host.eventBridge.emitEvent({
@@ -736,6 +733,7 @@ async function executeWithTools(
       if (tc.function.name === "tool_search") {
         activateToolSearchResults(host.activatedTools, toolResult);
       }
+      applyGatewayApprovalScopeFromToolResult(tc.function.name, toolResult, gatewayScopeContext);
       toolCycleResults.push({ name: tc.function.name, args, result: toolResult });
       messages.push({ role: "user", content: `Tool result for ${tc.function.name}:\n${toolResult}` });
     }
@@ -759,6 +757,36 @@ async function executeWithTools(
     "tool_loop_exhausted",
     `The gateway model/tool loop reached the maximum of ${MAX_TOOL_LOOPS} tool iterations without a final assistant answer.`,
   );
+}
+
+function applyGatewayApprovalScopeFromToolResult(
+  toolName: string,
+  toolResult: string,
+  scopeContext: GatewayToolScopeContext,
+): void {
+  if (toolName !== "ask-human") return;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(toolResult);
+  } catch {
+    return;
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return;
+  const record = parsed as Record<string, unknown>;
+  if (record.answer !== "approved") return;
+  switch (record.approval_scope) {
+    case "write":
+      scopeContext.approvedWrite = true;
+      return;
+    case "execute":
+      scopeContext.approvedExecute = true;
+      return;
+    case "durable_run":
+      scopeContext.approvedDurableRun = true;
+      return;
+    default:
+      return;
+  }
 }
 
 function terminalModelInterruptionFromError(err: unknown): ToolLoopTerminalError | null {

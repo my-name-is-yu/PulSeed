@@ -57,6 +57,20 @@ describe("AskHumanTool", () => {
     expect(data.question).toBe("Delete everything?");
   });
 
+  it("returns a terminal denial result for scoped permission requests", async () => {
+    const ctx = makeContext(false);
+    const result = await tool.call({ question: "Write config?", approval_scope: "write" }, ctx);
+    expect(result.success).toBe(false);
+    expect(result.execution).toMatchObject({
+      status: "not_executed",
+      reason: "approval_denied",
+    });
+    expect(ctx.approvalFn).toHaveBeenCalledWith(expect.objectContaining({
+      permissionLevel: "write_local",
+      isDestructive: true,
+    }));
+  });
+
   it("passes options to approvalFn", async () => {
     const ctx = makeContext(true);
     await tool.call({ question: "Which one?", options: ["A", "B"] }, ctx);
@@ -80,8 +94,12 @@ describe("AskHumanTool", () => {
     expect(parsed.success).toBe(false);
   });
 
-  it("Zod accepts question with optional options", () => {
-    const parsed = AskHumanInputSchema.safeParse({ question: "ok?", options: ["yes", "no"] });
+  it("Zod accepts question with optional options and approval scope", () => {
+    const parsed = AskHumanInputSchema.safeParse({
+      question: "ok?",
+      options: ["yes", "no"],
+      approval_scope: "execute",
+    });
     expect(parsed.success).toBe(true);
   });
 

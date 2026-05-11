@@ -8,6 +8,7 @@ import type { ILLMClient, LLMMessage, LLMRequestOptions, LLMResponse } from "../
 import type { StateManager } from "../../../base/state/state-manager.js";
 import type { ITool } from "../../../tools/types.js";
 import { ToolRegistry } from "../../../tools/registry.js";
+import { AskHumanTool } from "../../../tools/interaction/AskHumanTool/AskHumanTool.js";
 import { dispatchGatewayChatInput } from "../chat-session-dispatch.js";
 import {
   clearRegisteredGatewayChatSessionPort,
@@ -458,6 +459,7 @@ describe("gateway direct chat first visible projection", () => {
       isConcurrencySafe: () => true,
     };
     const registry = new ToolRegistry();
+    registry.register(new AskHumanTool());
     registry.register(approvalTool);
     let modelCalls = 0;
     const llmClient: ILLMClient = {
@@ -473,8 +475,12 @@ describe("gateway direct chat first visible projection", () => {
               id: "call-1",
               type: "function",
               function: {
-                name: "confirm_gateway_config_write",
-                arguments: JSON.stringify({ channel: "telegram" }),
+                name: "ask-human",
+                arguments: JSON.stringify({
+                  question: "I need explicit permission before writing Telegram gateway config.",
+                  options: ["Approve", "Deny"],
+                  approval_scope: "write",
+                }),
               },
             }],
           };
@@ -508,11 +514,15 @@ describe("gateway direct chat first visible projection", () => {
     expect(approvalTool.call).not.toHaveBeenCalled();
     expect(approvalFn).toHaveBeenCalledOnce();
     expect(approvalFn.mock.calls[0]?.[0]).toBe("I need explicit permission before writing Telegram gateway config.");
+    const firstToolNames = ((llmClient.sendMessage as ReturnType<typeof vi.fn>).mock.calls[0]?.[1]?.tools ?? [])
+      .map((tool: { function: { name: string } }) => tool.function.name);
+    expect(firstToolNames).toContain("ask-human");
+    expect(firstToolNames).not.toContain("confirm_gateway_config_write");
     expect(events.some((event) =>
       event.type === "tool_update"
-      && event.toolName === "confirm_gateway_config_write"
-      && event.status === "awaiting_approval"
-      && event.message.includes("explicit permission")
+      && event.toolName === "ask-human"
+      && event.status === "result"
+      && event.message.includes("denied")
     )).toBe(true);
   });
 });

@@ -6,6 +6,7 @@ import { TAGS, CATEGORY as _CATEGORY, READ_ONLY, PERMISSION_LEVEL } from "./cons
 export const AskHumanInputSchema = z.object({
   question: z.string().min(1, "question is required"),
   options: z.array(z.string()).optional(),
+  approval_scope: z.enum(["write", "execute", "durable_run"]).optional(),
 }).strict();
 export type AskHumanInput = z.infer<typeof AskHumanInputSchema>;
 
@@ -31,18 +32,33 @@ export class AskHumanTool implements ITool<AskHumanInput, unknown> {
   async call(input: AskHumanInput, context: ToolCallContext): Promise<ToolResult> {
     const startTime = Date.now();
     try {
+      const permissionLevel = permissionLevelForApprovalScope(input.approval_scope);
       const approved = await context.approvalFn({
         toolName: "ask-human",
-        input: { question: input.question, options: input.options },
+        input: { question: input.question, options: input.options, approval_scope: input.approval_scope },
         reason: input.question,
-        permissionLevel: "read_only",
-        isDestructive: false,
-        reversibility: "reversible",
+        permissionLevel,
+        isDestructive: input.approval_scope !== undefined,
+        reversibility: input.approval_scope === "execute" ? "unknown" : "reversible",
       });
       const answer = approved ? "approved" : "denied";
+      if (!approved && input.approval_scope) {
+        return {
+          success: false,
+          data: { answer, question: input.question, approval_scope: input.approval_scope },
+          summary: `Human denied ${input.approval_scope} permission: ${input.question}`,
+          error: `Human denied ${input.approval_scope} permission`,
+          execution: {
+            status: "not_executed",
+            reason: "approval_denied",
+            message: `Human denied ${input.approval_scope} permission: ${input.question}`,
+          },
+          durationMs: Date.now() - startTime,
+        };
+      }
       return {
         success: true,
-        data: { answer, question: input.question },
+        data: { answer, question: input.question, approval_scope: input.approval_scope },
         summary: `Human answered: ${answer}`,
         durationMs: Date.now() - startTime,
       };
@@ -66,5 +82,17 @@ export class AskHumanTool implements ITool<AskHumanInput, unknown> {
 
   isConcurrencySafe(_input: AskHumanInput): boolean {
     return false;
+  }
+}
+
+function permissionLevelForApprovalScope(scope: AskHumanInput["approval_scope"]): "read_only" | "write_local" | "execute" {
+  switch (scope) {
+    case "write":
+    case "durable_run":
+      return "write_local";
+    case "execute":
+      return "execute";
+    default:
+      return "read_only";
   }
 }
