@@ -6,7 +6,7 @@ import type { StateManager } from "../../../base/state/state-manager.js";
 import type { IAdapter } from "../../../orchestrator/execution/adapter-layer.js";
 import type { ILLMClient, LLMResponse } from "../../../base/llm/llm-client.js";
 import type { ToolRegistry } from "../../../tools/registry.js";
-import type { ITool, ToolResult, ToolCallContext } from "../../../tools/types.js";
+import type { ITool, ToolResult } from "../../../tools/types.js";
 import { z } from "zod";
 
 // Mock context-provider so tests don't walk the real filesystem
@@ -158,33 +158,33 @@ describe("ChatRunner tool filtering integration", () => {
 
   it("does not send deferred tools to LLM on initial call", async () => {
     const tools = [
-      makeMockTool("visible_tool"),
-      makeMockTool("hidden_tool", { shouldDefer: true }),
+      makeMockTool("read"),
+      makeMockTool("grep", { shouldDefer: true }),
     ];
     const deps = makeDepsWithTools(tools);
     const runner = new ChatRunner(deps);
     const result = await runner.execute("hello", "/tmp");
 
     const parsed = JSON.parse(result.output) as { seenTools: string[] };
-    expect(parsed.seenTools).toContain("visible_tool");
-    expect(parsed.seenTools).not.toContain("hidden_tool");
+    expect(parsed.seenTools).toContain("read");
+    expect(parsed.seenTools).not.toContain("grep");
   });
 
   it("sends alwaysLoad deferred tools to LLM even on initial call", async () => {
     const tools = [
-      makeMockTool("always_available", { shouldDefer: true, alwaysLoad: true }),
+      makeMockTool("read", { shouldDefer: true, alwaysLoad: true }),
     ];
     const deps = makeDepsWithTools(tools);
     const runner = new ChatRunner(deps);
     const result = await runner.execute("hello", "/tmp");
 
     const parsed = JSON.parse(result.output) as { seenTools: string[] };
-    expect(parsed.seenTools).toContain("always_available");
+    expect(parsed.seenTools).toContain("read");
   });
 
   it("activates deferred tool after tool_search returns it", async () => {
-    const deferredTool = makeMockTool("rare_tool", { shouldDefer: true });
-    const searchResults = [{ name: "rare_tool", description: "a rare tool", category: "test", tags: [] }];
+    const deferredTool = makeMockTool("grep", { shouldDefer: true });
+    const searchResults = [{ name: "grep", description: "search files", category: "test", tags: [] }];
 
     let callCount = 0;
     const llmClient: ILLMClient = {
@@ -194,19 +194,7 @@ describe("ChatRunner tool filtering integration", () => {
         const toolNames = (opts?.tools ?? []).map((t: { function: { name: string } }) => t.function.name);
 
         if (callCount === 1) {
-          return {
-            content: JSON.stringify({
-              kind: "execute",
-              confidence: 0.93,
-              rationale: "tool-backed request",
-            }),
-            usage: { input_tokens: 1, output_tokens: 1 },
-            stop_reason: "end_turn",
-            tool_calls: [],
-          } satisfies LLMResponse;
-        }
-        if (callCount === 2) {
-          // Tool-loop call: request tool_search
+          // First direct model-loop call: request tool_search.
           return {
             content: "",
             usage: { input_tokens: 1, output_tokens: 1 },
@@ -218,7 +206,7 @@ describe("ChatRunner tool filtering integration", () => {
             }],
           } satisfies LLMResponse;
         }
-        // Second call: report which tools are now available
+        // Second call: report which tools are now available.
         return {
           content: JSON.stringify({ seenTools: toolNames }),
           usage: { input_tokens: 1, output_tokens: 1 },
@@ -239,7 +227,7 @@ describe("ChatRunner tool filtering integration", () => {
             durationMs: 1,
           }));
         }
-        if (name === "rare_tool") return deferredTool;
+        if (name === "grep") return deferredTool;
         return undefined;
       },
       searchTools: () => searchResults,
@@ -255,8 +243,8 @@ describe("ChatRunner tool filtering integration", () => {
     const runner = new ChatRunner(deps);
     const result = await runner.execute("find me the rare tool", "/tmp");
 
-    // After ToolSearch, rare_tool should be activated and visible in 2nd LLM call
+    // After tool_search, grep should be activated and visible in the next LLM call.
     const parsed = JSON.parse(result.output) as { seenTools: string[] };
-    expect(parsed.seenTools).toContain("rare_tool");
+    expect(parsed.seenTools).toContain("grep");
   });
 });

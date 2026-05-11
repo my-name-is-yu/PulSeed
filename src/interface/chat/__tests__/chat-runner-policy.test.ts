@@ -10,6 +10,7 @@ import type { IAdapter } from "../../../orchestrator/execution/adapter-layer.js"
 import type { ChatAgentLoopRunner } from "../../../orchestrator/execution/agent-loop/chat-agent-loop-runner.js";
 import type { ReviewAgentLoopRunner } from "../../../orchestrator/execution/agent-loop/review-agent-loop-runner.js";
 import type { ProviderConfig } from "../../../base/llm/provider-config.js";
+import type { ILLMClient } from "../../../base/llm/llm-client.js";
 import { ChatSessionCatalog } from "../chat-session-store.js";
 import { ChatSessionDataStore } from "../chat-session-data-store.js";
 import { importLegacyChatAgentLoopSessionState } from "../chat-agentloop-state-migration.js";
@@ -78,6 +79,18 @@ function makeMockAdapter(): IAdapter {
       stopped_reason: "completed",
     }),
   } as unknown as IAdapter;
+}
+
+function makeMockLLMClient(output = "model output"): ILLMClient {
+  return {
+    supportsToolCalling: () => true,
+    sendMessage: vi.fn().mockResolvedValue({
+      content: output,
+      usage: { input_tokens: 1, output_tokens: 1 },
+      stop_reason: "end_turn",
+      tool_calls: [],
+    }),
+  } as unknown as ILLMClient;
 }
 
 function makeDeps(overrides: Partial<ChatRunnerDeps> = {}): ChatRunnerDeps {
@@ -324,7 +337,11 @@ describe("ChatRunner policy commands", () => {
       const loaded = await catalog.loadSession("forked-session");
       expect(loaded).not.toBeNull();
 
-      const runner = new ChatRunner(makeDeps({ stateManager, adapter: makeMockAdapter() }));
+      const runner = new ChatRunner(makeDeps({
+        stateManager,
+        adapter: makeMockAdapter(),
+        llmClient: makeMockLLMClient("continued"),
+      }));
       runner.startSessionFromLoadedSession(loaded!);
       const result = await runner.execute("/title Renamed Session", "/repo");
 
@@ -387,7 +404,11 @@ describe("ChatRunner policy commands", () => {
       const loaded = await catalog.loadSession("forked-session");
       expect(loaded).not.toBeNull();
 
-      const runner = new ChatRunner(makeDeps({ stateManager, adapter: makeMockAdapter() }));
+      const runner = new ChatRunner(makeDeps({
+        stateManager,
+        adapter: makeMockAdapter(),
+        llmClient: makeMockLLMClient("continued"),
+      }));
       runner.startSessionFromLoadedSession(loaded!);
       const result = await runner.execute("Continue from here", "/repo");
 
@@ -405,7 +426,7 @@ describe("ChatRunner policy commands", () => {
     }
   });
   it("/undo removes the latest turn from chat history", async () => {
-    const runner = new ChatRunner(makeDeps());
+    const runner = new ChatRunner(makeDeps({ llmClient: makeMockLLMClient("done") }));
     runner.startSession("/repo");
 
     await runner.execute("Do something", "/repo");
