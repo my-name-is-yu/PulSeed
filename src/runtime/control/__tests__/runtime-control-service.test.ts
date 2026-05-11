@@ -14,6 +14,14 @@ import type { RuntimeItem } from "../../types/companion-state.js";
 import { EventServer } from "../../event/server.js";
 import { NotificationDispatcher } from "../../notification-dispatcher.js";
 import { OutboxStore } from "../../store/outbox-store.js";
+import { AttentionStateStore } from "../../store/attention-state-store.js";
+import {
+  buildSignalContextFromAttentionInputs,
+  createAttentionInput,
+  createUrgeCandidate,
+  mergeUrgesIntoAgenda,
+  ref,
+} from "../../attention/index.js";
 
 function snapshotWithRuns(runs: RuntimeSessionRegistrySnapshot["background_runs"]): RuntimeSessionRegistrySnapshot {
   return {
@@ -110,6 +118,45 @@ function makeGrant(input: Partial<PermissionGrantCreateInput> = {}): PermissionG
     excluded_capabilities: ["write_remote", "network_send"],
     ...input,
   };
+}
+
+const ATTENTION_RUNTIME_CONTROL_NOW = "2026-05-08T00:00:00.000Z";
+
+function makeRuntimeControlAttentionCycle() {
+  const attentionInput = createAttentionInput({
+    source_kind: "resident_curiosity",
+    source_id: "resident:attention-runtime-control",
+    source_epoch: "resident:epoch:1",
+    high_watermark: "resident:watermark:1",
+    emitted_at: ATTENTION_RUNTIME_CONTROL_NOW,
+    payload_class: "resident.curiosity.runtime_control_test",
+    summary: "Resident curiosity created a durable agenda item for runtime-control inspection.",
+    current_goal_refs: [ref("goal", "goal:runtime-control-attention")],
+  });
+  const signalContext = buildSignalContextFromAttentionInputs({
+    signal_context_id: "signal:runtime-control-attention",
+    assembled_at: ATTENTION_RUNTIME_CONTROL_NOW,
+    inputs: [attentionInput],
+    current_goal_refs: [ref("goal", "goal:runtime-control-attention")],
+  });
+  const urge = createUrgeCandidate({
+    urge_id: "urge:runtime-control-attention",
+    signal_context: signalContext,
+    origin: "curiosity",
+    target: ref("goal", "goal:runtime-control-attention"),
+    feeling: "curiosity",
+    subject: "Keep a quiet resident follow-up visible only to runtime-control inspection.",
+    strength: 0.8,
+    confidence: 0.86,
+    expected_user_benefit: "The operator can inspect or suppress the agenda without it speaking.",
+    maturation_state: "mature",
+  });
+  const [agendaItem] = mergeUrgesIntoAgenda({
+    now: ATTENTION_RUNTIME_CONTROL_NOW,
+    urges: [urge],
+  });
+  if (!agendaItem) throw new Error("expected runtime-control attention agenda item");
+  return { attentionInput, signalContext, urge, agendaItem };
 }
 
 describe("RuntimeControlService", () => {
@@ -960,6 +1007,162 @@ describe("RuntimeControlService", () => {
       expect(recomputed.input.global_controls[0]?.affected_runtime_refs).not.toEqual(expect.arrayContaining([
         expect.stringMatching(/^runtime-control:/),
       ]));
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
+  });
+
+  it("inspects durable attention agenda through the runtime-control boundary", async () => {
+    const tmpDir = makeTempDir("pulseed-runtime-control-attention-inspect-");
+    try {
+      const runtimeRoot = path.join(tmpDir, "runtime");
+      const operationStore = new RuntimeOperationStore(runtimeRoot);
+      const attentionStore = new AttentionStateStore(runtimeRoot);
+      const cycle = makeRuntimeControlAttentionCycle();
+      await attentionStore.saveCycle({
+        attentionInputs: [cycle.attentionInput],
+        signalContext: cycle.signalContext,
+        urgeCandidates: [cycle.urge],
+        agendaItems: [cycle.agendaItem],
+        recordedAt: ATTENTION_RUNTIME_CONTROL_NOW,
+      });
+      const service = new RuntimeControlService({
+        runtimeRoot,
+        operationStore,
+        attentionStore,
+        now: () => new Date(ATTENTION_RUNTIME_CONTROL_NOW),
+      });
+
+      const inspected = await service.inspectCompanionState({
+        reason: "inspect durable attention agenda",
+        cwd: "/repo",
+        requestedBy: { surface: "chat", user_id: "operator-1" },
+      });
+      const attentionItem = inspected.companionStateInspection?.runtime_items.find((item) =>
+        item.ref === cycle.agendaItem.agenda_item_id
+      );
+
+      expect(inspected).toMatchObject({ success: true, state: "verified" });
+      expect(inspected.message).toContain("hidden_items=");
+      expect(attentionItem).toMatchObject({
+        type: "agent_agenda_item",
+        status: "mature",
+        posture: "proposed",
+        visibility_display: "hidden",
+        authority_scope: "inspect_only",
+        authority: expect.objectContaining({
+          actionable: false,
+          speakable: false,
+          can_create_urge: false,
+          can_update_surface: false,
+          can_write_memory: false,
+          can_delegate_work: false,
+          requires_confirmation: true,
+        }),
+        allowed_controls: ["inspect_item"],
+        repair_options: [],
+      });
+      const [runtimeProjection] = await attentionStore.listRuntimeItems(ATTENTION_RUNTIME_CONTROL_NOW);
+      expect(runtimeProjection?.control_policy.allowed_controls.some((control) =>
+        runtimeProjection.control_policy.forbidden_controls.includes(control)
+      )).toBe(false);
+      expect(runtimeProjection?.control_policy.repair_options.some((control) =>
+        runtimeProjection.control_policy.forbidden_controls.includes(control)
+      )).toBe(false);
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
+  });
+
+  it("suppresses durable resident agenda without flushing it after companion resume", async () => {
+    const tmpDir = makeTempDir("pulseed-runtime-control-attention-suppress-");
+    try {
+      const runtimeRoot = path.join(tmpDir, "runtime");
+      const operationStore = new RuntimeOperationStore(runtimeRoot);
+      const attentionStore = new AttentionStateStore(runtimeRoot);
+      const cycle = makeRuntimeControlAttentionCycle();
+      await attentionStore.saveCycle({
+        attentionInputs: [cycle.attentionInput],
+        signalContext: cycle.signalContext,
+        urgeCandidates: [cycle.urge],
+        agendaItems: [cycle.agendaItem],
+        recordedAt: ATTENTION_RUNTIME_CONTROL_NOW,
+      });
+      let tick = 0;
+      const service = new RuntimeControlService({
+        runtimeRoot,
+        operationStore,
+        attentionStore,
+        now: () => new Date(Date.UTC(2026, 4, 8, 0, 0, tick++)),
+      });
+
+      const suppressed = await service.setCompanionControl({
+        control: "suppress_nonessential_agenda",
+        reason: "operator wants quiet resident agenda",
+        cwd: "/repo",
+        requestedBy: { surface: "chat", user_id: "operator-1" },
+      });
+      await service.setCompanionControl({
+        control: "resume_companion",
+        reason: "resume should not flush held agenda",
+        cwd: "/repo",
+        requestedBy: { surface: "chat", user_id: "operator-1" },
+      });
+      const recomputed = await service.recomputeCompanionState({
+        activeSurfaceRef: "surface:current",
+        currentTime: "2026-05-08T00:05:00.000Z",
+      });
+      const durableAgenda = await attentionStore.listAgendaItems({ includeSuppressed: true });
+      const runtimeItem = recomputed.input.runtime_items.find((item) => item.item_id === cycle.agendaItem.agenda_item_id);
+
+      expect(suppressed).toMatchObject({
+        success: true,
+        state: "verified",
+        message: expect.stringContaining("Durable attention agenda suppressed 1 item(s); held items will not flush automatically."),
+      });
+      expect(durableAgenda).toHaveLength(1);
+      expect(durableAgenda[0]).toMatchObject({
+        current_posture: "suppressed",
+        control_state: "suppressed",
+        maturation: expect.objectContaining({ state: "suppressed" }),
+        revisit_condition: expect.objectContaining({ kind: "manual_review" }),
+      });
+      await expect(attentionStore.listAgendaItems()).resolves.toEqual([]);
+      expect(runtimeItem).toMatchObject({
+        type: "agent_agenda_item",
+        status: "blocked",
+        posture: "suppressed",
+        authority: expect.objectContaining({
+          actionable: false,
+          speakable: false,
+        }),
+      });
+      expect(recomputed.input.global_controls).toContainEqual(expect.objectContaining({
+        control: "suppress_nonessential_agenda",
+        state: "active",
+        affected_runtime_refs: [cycle.agendaItem.agenda_item_id],
+      }));
+      expect(recomputed.input.global_controls).toContainEqual(expect.objectContaining({
+        control: "resume_companion",
+        state: "inactive",
+      }));
+      expect(recomputed.snapshot.active_refs).not.toContain(cycle.agendaItem.agenda_item_id);
+      expect(recomputed.snapshot.held_runtime_refs).toContain(cycle.agendaItem.agenda_item_id);
+
+      const reopenedAttentionStore = new AttentionStateStore(runtimeRoot);
+      const afterRestartService = new RuntimeControlService({
+        runtimeRoot,
+        operationStore,
+        attentionStore: reopenedAttentionStore,
+        now: () => new Date("2026-05-08T00:06:00.000Z"),
+      });
+      const afterRestart = await afterRestartService.recomputeCompanionState({
+        activeSurfaceRef: "surface:current",
+        currentTime: "2026-05-08T00:06:00.000Z",
+        globalControls: [],
+      });
+      expect(afterRestart.snapshot.active_refs).not.toContain(cycle.agendaItem.agenda_item_id);
+      expect(afterRestart.snapshot.held_runtime_refs).toContain(cycle.agendaItem.agenda_item_id);
     } finally {
       cleanupTempDir(tmpDir);
     }

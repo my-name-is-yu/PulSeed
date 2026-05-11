@@ -7,6 +7,7 @@ import {
 } from "../session-registry/index.js";
 import { RuntimeEvidenceLedger, type RuntimeEvidenceLedgerPort } from "../store/evidence-ledger.js";
 import { RuntimeOperationStore } from "../store/runtime-operation-store.js";
+import { AttentionStateStore } from "../store/attention-state-store.js";
 import { RuntimeOperatorHandoffStore } from "../store/operator-handoff-store.js";
 import { BrowserSessionStore, RuntimeAuthHandoffStore } from "../interactive-automation/index.js";
 import { breakerKey, GuardrailStore } from "../guardrails/index.js";
@@ -144,6 +145,7 @@ export interface RuntimeControlServiceOptions {
   authHandoffStore?: RuntimeAuthHandoffStore;
   browserSessionStore?: BrowserSessionStore;
   guardrailStore?: GuardrailStore;
+  attentionStore?: Pick<AttentionStateStore, "listRuntimeItems" | "suppressAgendaForControl">;
   executor?: RuntimeControlExecutor;
   now?: () => Date;
 }
@@ -190,6 +192,7 @@ export class RuntimeControlService {
   private readonly authHandoffStore: RuntimeAuthHandoffStore;
   private readonly browserSessionStore: BrowserSessionStore;
   private readonly guardrailStore: GuardrailStore;
+  private readonly attentionStore?: Pick<AttentionStateStore, "listRuntimeItems" | "suppressAgendaForControl">;
   private readonly executor?: RuntimeControlExecutor;
   private readonly now: () => Date;
 
@@ -211,6 +214,7 @@ export class RuntimeControlService {
     this.authHandoffStore = options.authHandoffStore ?? new RuntimeAuthHandoffStore(runtimeRoot, controlDbOptions);
     this.browserSessionStore = options.browserSessionStore ?? new BrowserSessionStore(runtimeRoot, controlDbOptions);
     this.guardrailStore = options.guardrailStore ?? new GuardrailStore(runtimeRoot, controlDbOptions);
+    this.attentionStore = options.attentionStore ?? (runtimeRoot ? new AttentionStateStore(runtimeRoot, controlDbOptions) : undefined);
     this.executor = options.executor;
     this.now = options.now ?? (() => new Date());
   }
@@ -387,12 +391,24 @@ export class RuntimeControlService {
     const quietWorkStop = control === "stop_all_quiet_work"
       ? await this.stopActiveQuietWork(initial, runtimeItemsBeforeControl, request)
       : null;
+    const agendaSuppression = isDurableAgendaSuppressionControl(control) && this.attentionStore
+      ? await this.attentionStore.suppressAgendaForControl({
+          control,
+          reason: request.intent.reason,
+          now: this.nowIso(),
+          auditRef: { kind: "audit_trace", id: `runtime-control-operation:${initial.operation_id}` },
+        })
+      : null;
     const verified = await this.update(initial, "verified", {
       ok: quietWorkStop?.ok ?? true,
       message: [
         formatCompanionControlApplied(control, affectedRefs),
         quietWorkStop?.message,
+        agendaSuppression && agendaSuppression.suppressed_count > 0
+          ? `Durable attention agenda suppressed ${agendaSuppression.suppressed_count} item(s); held items will not flush automatically.`
+          : null,
       ].filter((part): part is string => Boolean(part)).join(" "),
+      affectedRuntimeRefs: affectedRefs,
     });
     return this.toResult(verified);
   }
@@ -644,6 +660,9 @@ export class RuntimeControlService {
     const items: RuntimeItem[] = [
       ...await this.operationStore.listRuntimeItems(),
     ];
+    if (this.attentionStore) {
+      items.push(...await this.attentionStore.listRuntimeItems(currentTime));
+    }
 
     if (this.sessionRegistry) {
       const snapshot = await this.sessionRegistry.snapshot();
@@ -678,7 +697,8 @@ export class RuntimeControlService {
     const byControl = new Map<CompanionWideControl, CompanionGlobalControlEntry>();
     for (const operation of operations) {
       const control = operation.kind as CompanionWideControl;
-      const affectedRefs = affectedRuntimeRefsForControl(control, runtimeItems);
+      const affectedRefs = operation.result?.affected_runtime_refs
+        ?? affectedRuntimeRefsForControl(control, runtimeItems);
       const deactivated = DEACTIVATES_COMPANION_CONTROL[control];
       if (deactivated) {
         const previous = byControl.get(deactivated);
@@ -1267,17 +1287,25 @@ export class RuntimeControlService {
   private async update(
     operation: RuntimeControlOperation,
     state: RuntimeControlOperationState,
-    result: { ok: boolean; message: string; resumeOutcome?: CompanionResumeOutcome; companionStateInspection?: RuntimeControlCompanionStateInspection }
+    result: {
+      ok: boolean;
+      message: string;
+      resumeOutcome?: CompanionResumeOutcome;
+      companionStateInspection?: RuntimeControlCompanionStateInspection;
+      affectedRuntimeRefs?: string[];
+    }
   ): Promise<RuntimeControlOperation> {
     const updated: RuntimeControlOperation = {
       ...operation,
       state,
       updated_at: this.nowIso(),
       result: {
+        ...operation.result,
         ok: result.ok,
         message: result.message,
         ...(result.resumeOutcome ? { resume_outcome: result.resumeOutcome } : {}),
         ...(result.companionStateInspection ? { companion_state_inspection: result.companionStateInspection } : {}),
+        ...(result.affectedRuntimeRefs ? { affected_runtime_refs: result.affectedRuntimeRefs } : {}),
       },
     };
     return this.operationStore.save(updated);
@@ -1568,6 +1596,14 @@ function controlRequiresReadmissionAfterLift(control: CompanionWideControl): boo
     || control === "stop_all_watches"
     || control === "suppress_nonessential_agenda"
     || control === "require_confirmation_for_proactivity";
+}
+
+function isDurableAgendaSuppressionControl(
+  control: CompanionWideControl
+): control is Extract<CompanionWideControl, "stop_all_quiet_work" | "stop_all_watches" | "suppress_nonessential_agenda"> {
+  return control === "stop_all_quiet_work"
+    || control === "stop_all_watches"
+    || control === "suppress_nonessential_agenda";
 }
 
 function affectedRuntimeRefsForControl(control: CompanionWideControl, runtimeItems: RuntimeItem[]): string[] {

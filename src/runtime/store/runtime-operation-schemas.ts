@@ -168,6 +168,7 @@ export const RuntimeControlOperationSchema = z.object({
     health_error: z.string().optional(),
     resume_outcome: CompanionResumeOutcomeSchema.optional(),
     companion_state_inspection: RuntimeControlCompanionStateInspectionSchema.optional(),
+    affected_runtime_refs: z.array(z.string().min(1)).optional(),
   }).optional(),
 });
 export type RuntimeControlOperation = z.infer<typeof RuntimeControlOperationSchema>;
