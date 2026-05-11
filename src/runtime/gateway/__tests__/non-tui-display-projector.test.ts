@@ -140,6 +140,62 @@ describe("non-TUI display projector", () => {
     expect(transport.calls.filter((call) => call.startsWith("sendFinal:"))).toHaveLength(1);
   });
 
+  it("does not render fixed route or lifecycle progress for ordinary gateway chat", async () => {
+    const transport = createTransport();
+    const projector = new NonTuiDisplayProjector({
+      display: resolveGatewayChannelDisplayContract(TELEGRAM_GATEWAY_DISPLAY_CONTRACT),
+      transport,
+    });
+
+    await projector.handle({
+      ...base,
+      type: "activity",
+      kind: "commentary",
+      message: "I understand the request as やあ！\nNext I will gather workspace context.",
+      sourceId: "intent:first-step",
+      presentation: {
+        gatewayNarration: {
+          audience: "user",
+          phase: "planning",
+          importance: "heartbeat",
+          verbosity: "summary",
+          subject: "the request",
+          reason: "route selection completed",
+        },
+      },
+    });
+    await projector.handle({
+      ...base,
+      type: "activity",
+      kind: "lifecycle",
+      message: "Calling model...",
+      sourceId: "lifecycle:model",
+    });
+
+    expect(transport.sendProgress).not.toHaveBeenCalled();
+    expect(projector.deliveredProgressOutput).toBe(false);
+  });
+
+  it("still renders real tool progress for gateway chat", async () => {
+    const transport = createTransport();
+    const projector = new NonTuiDisplayProjector({
+      display: resolveGatewayChannelDisplayContract(TELEGRAM_GATEWAY_DISPLAY_CONTRACT),
+      transport,
+    });
+
+    await projector.handle({
+      ...base,
+      type: "tool_start",
+      toolCallId: "call-1",
+      toolName: "read",
+      args: { file_path: "README.md" },
+      activityCategory: "read",
+    });
+
+    expect(transport.sendProgress).toHaveBeenCalledOnce();
+    expect(projector.deliveredProgressOutput).toBe(true);
+  });
+
   it("does not cut complete fenced code blocks into unclosed partial final text", async () => {
     const transport = createTransport();
     const projector = new NonTuiDisplayProjector({
@@ -199,7 +255,7 @@ describe("non-TUI display projector", () => {
       type: "activity",
       kind: "commentary",
       message: "I will check the request before answering.",
-      sourceId: "intent:first-step",
+      sourceId: "model-commentary:turn-1",
       presentation: { gatewayProgress: "user" },
     });
     await projector.handle({ ...base, type: "assistant_final", text: "Blocked final.", persisted: true });

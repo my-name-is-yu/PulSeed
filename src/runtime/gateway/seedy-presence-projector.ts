@@ -144,6 +144,9 @@ export class SeedyPresenceProjector {
 
     if (this.terminal) return;
 
+    if (presence.phase === "received" || presence.phase === "orienting") {
+      await this.ensureNativePresence();
+    }
     this.ensureFallbackTimer(presence);
     await this.upsertEditableStatus(presence);
   }
@@ -411,6 +414,8 @@ export class SeedyPresenceProjector {
       case "tool_end":
         return isMeaningfulProgressEvent(event);
       case "presence_update":
+        return event.presence.audience === "user"
+          && (event.presence.phase === "received" || event.presence.phase === "orienting");
       case "lifecycle_start":
       case "turn_steer":
       case "lifecycle_end":

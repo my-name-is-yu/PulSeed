@@ -74,6 +74,7 @@ import {
   executeConfigureRoute,
   executeRunSpecDraftRoute,
   executeAgentLoopRoute,
+  executeGatewayModelLoopRoute,
   formatBlockedRuntimeControlRoute,
   executeRuntimeControlRoute,
   executeToolLoopRoute,
@@ -117,6 +118,17 @@ export type {
 } from "./chat-runner-contracts.js";
 
 const DEFAULT_TIMEOUT_MS = 120_000;
+
+function buildGatewayModelLoopSystemPrompt(basePrompt: string, languageHint: TurnLanguageHint): string {
+  return [
+    basePrompt,
+    "You are Seedy on a gateway chat surface. Match Codex's chat shape: answer ordinary casual messages directly, and choose tools only when current state, setup, run-spec, implementation handoff, or inspection work is actually needed.",
+    "Do not invent current workspace, runtime, command, process, repository, file, or local-machine facts. If you need those facts, call an available tool first.",
+    "When using tools, write brief model-authored commentary only when it helps the user understand the real next step. Do not describe route selection, lifecycle phases, or internal PulSeed planning labels.",
+    "Keep PulSeed runtime-control actions behind the provided authorization and approval tools. Do not suggest shell commands as a workaround for unauthorized runtime control.",
+    sameLanguageResponseInstruction(languageHint),
+  ].filter((section) => section.trim().length > 0).join("\n\n");
+}
 
 function normalizePinnedReplyTarget(replyTarget: RuntimeControlReplyTarget | null): RuntimeReplyTarget | null {
   if (!replyTarget) return null;
@@ -697,7 +709,15 @@ export class ChatRunner {
       ? null
       : (resolvedRoute ?? await this.resolveRouteFromInput(safeInput, runtimeControlContext, resolvedCwd));
     this.lastSelectedRoute = selectedRoute;
-    if (selectedRoute) {
+    const usesGatewayModelLoop = selectedRoute?.kind === "gateway_model_loop";
+    if (usesGatewayModelLoop) {
+      this.eventBridge.emitSeedyPresence("thinking", eventContext, {
+        ...(options.presenceIngressId ? { ingressId: options.presenceIngressId } : {}),
+        subject: "Reading message",
+        reason: "Seedy is preparing the reply.",
+        expectedNext: "final",
+      });
+    } else if (selectedRoute) {
       this.eventBridge.emitSeedyPresence("thinking", eventContext, {
         ...(options.presenceIngressId ? { ingressId: options.presenceIngressId } : {}),
         subject: "Route selected",
@@ -705,10 +725,10 @@ export class ChatRunner {
         expectedNext: "progress",
       });
     }
-    if (selectedRoute?.kind !== "configure") {
+    if (selectedRoute?.kind !== "configure" && !usesGatewayModelLoop) {
       this.eventBridge.emitIntent(safeInput, selectedRoute, eventContext);
     }
-    if (selectedRoute) {
+    if (selectedRoute && !usesGatewayModelLoop) {
       this.eventBridge.emitSeedyPresence("acting", eventContext, {
         ...(options.presenceIngressId ? { ingressId: options.presenceIngressId } : {}),
         reason: "PulSeed is executing the selected path.",
@@ -790,7 +810,9 @@ export class ChatRunner {
       : undefined;
 
     let systemPrompt = this.cachedStaticSystemPrompt ?? "";
-    if (!resumeOnly) {
+    if (!resumeOnly && usesGatewayModelLoop) {
+      systemPrompt = buildGatewayModelLoopSystemPrompt(this.cachedStaticSystemPrompt ?? "", this.turnLanguageHint);
+    } else if (!resumeOnly) {
       try {
         this.eventBridge.emitActivity("lifecycle", "Preparing context...", eventContext, "lifecycle:context");
         if (usesNativeAgentLoop) {
@@ -831,7 +853,7 @@ export class ChatRunner {
       .join("\n\n")
       .trim();
 
-    const context = resumeOnly || usesNativeAgentLoop ? "" : await buildChatContext(safeInput, gitRoot);
+    const context = resumeOnly || usesNativeAgentLoop || usesGatewayModelLoop ? "" : await buildChatContext(safeInput, gitRoot);
     const basePrompt = resumeOnly ? "" : (context ? `${context}\n\n${safeInput}` : safeInput);
     const prompt = historyBlock ? `${historyBlock}${basePrompt}` : basePrompt;
     const turnContext = buildChatTurnContext({
@@ -920,6 +942,21 @@ export class ChatRunner {
       }));
     }
 
+    if (selectedRoute?.kind === "gateway_model_loop") {
+      return this.flushAndReturn(executeGatewayModelLoopRoute(this.routeHost(), {
+        turnContext,
+        eventContext,
+        assistantBuffer,
+        systemPrompt: systemPrompt || undefined,
+        executionGoalId,
+        history,
+        gitRoot,
+        runtimeControlContext,
+        activeAbortSignal: activeTurn.abortController.signal,
+        start,
+      }));
+    }
+
     if (!resumeOnly && selectedRoute && selectedRoute.kind !== "adapter") {
       const elapsed_ms = Date.now() - start;
       const output = await this.eventBridge.emitLifecycleErrorEventWithFallback(
@@ -981,8 +1018,12 @@ export class ChatRunner {
         : ingress.metadata["runtime_control_denied"] === true;
     const runtimeControlPolicyPresent =
       runtimeControlApproved || runtimeControlDenied || ingress.metadata["runtime_control_explicit"] === true;
+    const canUseDefaultGatewayModelLoop = capabilities.hasToolLoop
+      && capabilities.hasToolRegistry
+      && (ingress.channel === "plugin_gateway" || ingress.replyTarget.surface === "gateway");
     const shouldPreferFreeformBeforeDeniedRuntimeControl =
       !hasSetupSecret
+      && !canUseDefaultGatewayModelLoop
       && !capabilities.hasAgentLoop
       && runtimeControlDenied
       && !runtimeControlApproved
@@ -990,10 +1031,11 @@ export class ChatRunner {
     const shouldClassifyRuntimeControlForSafety =
       !hasSetupSecret
       && capabilities.hasAgentLoop
-      && runtimeControlPolicyPresent;
+      && runtimeControlPolicyPresent
+      && (!canUseDefaultGatewayModelLoop || ingress.metadata["runtime_control_explicit"] === true);
     const shouldClassifyRuntimeControl =
       shouldClassifyRuntimeControlForSafety
-      || (!hasSetupSecret && !capabilities.hasAgentLoop && (
+      || (!hasSetupSecret && !capabilities.hasAgentLoop && !canUseDefaultGatewayModelLoop && (
         (capabilities.hasRuntimeControlService && ingress.runtimeControl.approvalMode !== "disallowed")
         || runtimeControlApproved
         || runtimeControlDenied
@@ -1008,11 +1050,12 @@ export class ChatRunner {
     const runtimeControlIntent = runtimeControlClassification?.status === "intent"
       ? runtimeControlClassification.intent
       : null;
-    if (!hasSetupSecret && !capabilities.hasAgentLoop && freeformRouteIntent == null && runtimeControlIntent === null) {
+    if (!hasSetupSecret && !capabilities.hasAgentLoop && !canUseDefaultGatewayModelLoop && freeformRouteIntent == null && runtimeControlIntent === null) {
       freeformRouteIntent = await classifyFreeformRouteIntent(ingress.text, this.deps.llmClient);
     }
     const shouldDeriveRunSpecDraft =
       !capabilities.hasAgentLoop
+      && !canUseDefaultGatewayModelLoop
       && !hasSetupSecret
       && runtimeControlIntent === null
       && freeformRouteIntent != null

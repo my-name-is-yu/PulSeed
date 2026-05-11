@@ -1,7 +1,7 @@
 import type { IAdapter, AgentTask } from "../../orchestrator/execution/adapter-layer.js";
 import type { ILLMClient, LLMMessage, LLMRequestOptions, LLMResponse, ToolCallResult } from "../../base/llm/llm-client.js";
 import { loadProviderConfig } from "../../base/llm/provider-config.js";
-import type { ApprovalRequest, ToolCallContext } from "../../tools/types.js";
+import type { ApprovalRequest, ITool, ToolCallContext } from "../../tools/types.js";
 import { extractPromptedToolCalls } from "../../orchestrator/execution/agent-loop/prompted-tool-protocol.js";
 import { verifyChatAction } from "./chat-verifier.js";
 import {
@@ -472,6 +472,10 @@ export async function executeToolLoopRoute(
       params.executionGoalId,
       params.runtimeControlContext,
       params.start,
+      {
+        tools: host.deps.registry?.listAll() ?? [],
+        streamFinalText: !shouldGateRuntimeEvidenceForTurn(params.turnContext),
+      },
     );
     const elapsed_ms = Date.now() - params.start;
     if (hasUsage(toolResult.usage)) {
@@ -506,6 +510,82 @@ export async function executeToolLoopRoute(
     await params.history.appendAssistantMessage(output);
     host.eventBridge.emitCheckpoint("Response ready", "The tool-loop response has been persisted for this turn.", params.eventContext, "complete");
     host.eventBridge.emitActivity("lifecycle", "Finalizing response...", params.eventContext, "lifecycle:finalizing");
+    host.eventBridge.emitEvent({
+      type: "assistant_final",
+      text: output,
+      persisted: true,
+      ...host.eventBridge.eventBase(params.eventContext),
+    });
+    host.eventBridge.emitLifecycleEndEvent("completed", elapsed_ms, params.eventContext, true);
+    return { success: true, output, elapsed_ms };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const output = await host.eventBridge.emitLifecycleErrorEventWithFallback(
+      message,
+      params.assistantBuffer.text,
+      params.eventContext,
+      {},
+      host.deps.llmClient
+    );
+    host.eventBridge.emitLifecycleEndEvent("error", Date.now() - params.start, params.eventContext, false);
+    return {
+      success: false,
+      output,
+      elapsed_ms: Date.now() - params.start,
+    };
+  }
+}
+
+export async function executeGatewayModelLoopRoute(
+  host: ChatRunnerRouteHost,
+  params: Parameters<typeof executeToolLoopRoute>[1],
+): Promise<ChatRunResult> {
+  try {
+    const toolResult = await executeWithTools(
+      host,
+      params.turnContext,
+      params.eventContext,
+      params.assistantBuffer,
+      params.systemPrompt,
+      params.executionGoalId,
+      params.runtimeControlContext,
+      params.start,
+      {
+        tools: selectGatewayModelLoopTools(host.deps.registry?.listAll() ?? []),
+        streamFinalText: true,
+        safeStreamGatewayText: true,
+      },
+    );
+    const elapsed_ms = Date.now() - params.start;
+    if (hasUsage(toolResult.usage)) {
+      params.history.recordUsage("execution", toolResult.usage);
+    }
+    const diffArtifact = await collectGitDiffArtifact(params.gitRoot);
+    if (diffArtifact) {
+      host.eventBridge.emitDiffArtifact(diffArtifact, params.eventContext);
+    }
+    const gate = await gateRuntimeEvidenceBoundFinalAnswer({
+      turnContext: params.turnContext,
+      assistantOutput: toolResult.output,
+      hasRuntimeEvidence: host.eventBridge.hasRuntimeEvidenceForTurn(params.eventContext),
+      runtimeEvidenceRefs: host.eventBridge.getRuntimeEvidenceRefsForTurn(params.eventContext),
+      llmClient: host.getRuntimeEvidenceGateClient(),
+    });
+    if (gate.blocked) {
+      host.eventBridge.emitCheckpoint(
+        gate.output === toolResult.output ? "Runtime evidence checked" : "Runtime evidence repaired",
+        gate.reason ?? "The final answer was checked against same-turn evidence.",
+        params.eventContext,
+        "runtime-evidence",
+      );
+    }
+    const output = gate.output;
+    if (!params.assistantBuffer.text) {
+      host.eventBridge.pushAssistantDelta(output, params.assistantBuffer, params.eventContext);
+    } else {
+      host.eventBridge.pushAssistantSnapshot(output, params.assistantBuffer, params.eventContext);
+    }
+    await params.history.appendAssistantMessage(output);
     host.eventBridge.emitEvent({
       type: "assistant_final",
       text: output,
@@ -687,6 +767,115 @@ function shouldGateRuntimeEvidenceForTurn(turnContext: ChatTurnContext): boolean
   return turnContext.modelVisible.runtime.replyTarget?.surface === "gateway";
 }
 
+const GATEWAY_MODEL_LOOP_TOOL_NAMES = new Set([
+  "tool_search",
+  "list_dir",
+  "read",
+  "grep",
+  "glob",
+  "get_gateway_setup_status",
+  "prepare_gateway_setup_guidance",
+  "prepare_gateway_config_write",
+  "confirm_gateway_config_write",
+  "cancel_gateway_config_write",
+  "get_runtime_status",
+  "request_runtime_control",
+  "draft_run_spec",
+  "update_run_spec_draft",
+  "cancel_run_spec_draft",
+  "runspec_propose",
+  "runspec_confirm",
+  "start_durable_run",
+  "run_start",
+]);
+
+function selectGatewayModelLoopTools(tools: ITool[]): ITool[] {
+  if (tools.length <= 12) return tools;
+  return tools.filter((tool) => {
+    if (GATEWAY_MODEL_LOOP_TOOL_NAMES.has(tool.metadata.name)) return true;
+    if (tool.metadata.alwaysLoad && tool.metadata.isReadOnly) return true;
+    return false;
+  });
+}
+
+function takeSafeTextSpan(buffer: string): { safeText: string; remainder: string } {
+  let lastBoundary = -1;
+  for (let i = 0; i < buffer.length; i++) {
+    const char = buffer[i];
+    if (char === "\n" || char === "。" || char === "．" || char === "." || char === "!" || char === "?" || char === "！" || char === "？") {
+      lastBoundary = i + 1;
+    }
+  }
+  if (lastBoundary < 0) return { safeText: "", remainder: buffer };
+  return {
+    safeText: buffer.slice(0, lastBoundary),
+    remainder: buffer.slice(lastBoundary),
+  };
+}
+
+class GatewaySafeAssistantStreamer {
+  private pending = "";
+  private readonly emitted = new Set<string>();
+  private readonly safeSpans: string[] = [];
+
+  constructor(
+    private readonly host: ChatRunnerRouteHost,
+    private readonly turnContext: ChatTurnContext,
+    private readonly assistantBuffer: AssistantBuffer,
+    private readonly eventContext: ChatEventContext,
+  ) {}
+
+  async push(delta: string): Promise<void> {
+    if (!delta) return;
+    this.pending += delta;
+    const span = takeSafeTextSpan(this.pending);
+    if (!span.safeText) return;
+    this.pending = span.remainder;
+    await this.emitIfSafe(span.safeText);
+  }
+
+  async flush(): Promise<void> {
+    if (!this.pending.trim()) {
+      this.pending = "";
+      return;
+    }
+    const tail = this.pending;
+    this.pending = "";
+    await this.emitIfSafe(tail);
+  }
+
+  private async emitIfSafe(text: string): Promise<void> {
+    const normalized = text.trim();
+    if (!normalized || this.emitted.has(normalized)) return;
+    const gate = await gateRuntimeEvidenceBoundFinalAnswer({
+      turnContext: this.turnContext,
+      assistantOutput: text,
+      hasRuntimeEvidence: this.host.eventBridge.hasRuntimeEvidenceForTurn(this.eventContext),
+      runtimeEvidenceRefs: this.host.eventBridge.getRuntimeEvidenceRefsForTurn(this.eventContext),
+      llmClient: this.host.getRuntimeEvidenceGateClient(),
+    });
+    if (gate.blocked && gate.output !== text) return;
+    this.emitted.add(normalized);
+    this.safeSpans.push(text);
+  }
+
+  async releaseAsFinal(): Promise<void> {
+    for (const span of this.safeSpans.splice(0)) {
+      this.host.eventBridge.pushAssistantDelta(span, this.assistantBuffer, this.eventContext);
+    }
+  }
+
+  async releaseAsCommentary(): Promise<void> {
+    const commentary = this.safeSpans.splice(0).join("").trim();
+    if (!commentary) return;
+    await this.host.eventBridge.emitGatewayCommentaryAndFlush(
+      commentary,
+      this.eventContext,
+      `model-commentary:${this.eventContext.turnId}:${this.emitted.size}`,
+    );
+  }
+}
+
 async function emitGatewayCommentaryPreamble(
   host: ChatRunnerRouteHost,
   turnContext: ChatTurnContext,
@@ -751,6 +940,14 @@ async function executeWithTools(
   goalId?: string,
   runtimeControlContext?: RuntimeControlChatContext | null,
   start?: number,
+  options: {
+    tools: ITool[];
+    streamFinalText: boolean;
+    safeStreamGatewayText?: boolean;
+  } = {
+    tools: host.deps.registry?.listAll() ?? [],
+    streamFinalText: true,
+  },
 ): Promise<{ output: string; usage: ChatUsageCounter }> {
   const llmClient = host.deps.llmClient!;
   const supportsNativeToolCalling = llmClient.supportsToolCalling?.() !== false;
@@ -758,20 +955,23 @@ async function executeWithTools(
     purpose: "tool_call",
     turnContext,
     systemPrompt,
-    availableTools: host.deps.registry?.listAll() ?? [],
+    availableTools: options.tools,
     activatedTools: host.activatedTools,
     supportsNativeToolCalling,
   });
   const messages: LLMMessage[] = [...initialModelRequest.messages];
   const toolCallContext = await buildToolCallContext(host, goalId, runtimeControlContext, start, turnContext);
   const usage = zeroUsageCounter();
+  const safeStreamer = options.safeStreamGatewayText
+    ? new GatewaySafeAssistantStreamer(host, turnContext, assistantBuffer, eventContext)
+    : null;
 
   for (let loop = 0; loop < MAX_TOOL_LOOPS; loop++) {
     const modelRequest = buildChatModelRequest({
       purpose: "tool_call",
       turnContext,
       systemPrompt,
-      availableTools: host.deps.registry?.listAll() ?? [],
+      availableTools: options.tools,
       activatedTools: host.activatedTools,
       supportsNativeToolCalling,
       messages,
@@ -780,8 +980,10 @@ async function executeWithTools(
     try {
       host.eventBridge.emitActivity("lifecycle", "Calling model...", eventContext, "lifecycle:model");
       response = await sendLLMMessage(host, llmClient, modelRequest.messages, modelRequest.options, assistantBuffer, eventContext, {
-        emitAssistantDeltas: !shouldGateRuntimeEvidenceForTurn(turnContext),
+        emitAssistantDeltas: options.streamFinalText && safeStreamer === null,
+        safeStreamer,
       });
+      await safeStreamer?.flush();
     } catch (err) {
       console.error("[chat-runner] executeWithTools error:", err);
       const hint = err instanceof Error ? `: ${err.message}` : "";
@@ -811,13 +1013,18 @@ async function executeWithTools(
     }
 
     if (toolCalls.length === 0) {
+      await safeStreamer?.releaseAsFinal();
       return {
-        output: assistantBuffer.text || response.content || "(no response)",
+        output: response.content || assistantBuffer.text || "(no response)",
         usage,
       };
     }
 
+    await safeStreamer?.releaseAsCommentary();
     messages.push({ role: "assistant", content: response.content || "" });
+    if (safeStreamer !== null) {
+      assistantBuffer.text = "";
+    }
 
     for (const tc of toolCalls) {
       let args: Record<string, unknown> = {};
@@ -1155,27 +1362,37 @@ async function sendLLMMessage(
   options: LLMRequestOptions | undefined,
   assistantBuffer: AssistantBuffer,
   eventContext: ChatEventContext,
-  behavior: { emitAssistantDeltas?: boolean } = {},
+  behavior: { emitAssistantDeltas?: boolean; safeStreamer?: GatewaySafeAssistantStreamer | null } = {},
 ): Promise<LLMResponse> {
   const emitAssistantDeltas = behavior.emitAssistantDeltas ?? true;
+  const safeStreamer = behavior.safeStreamer ?? null;
+  let safeStreamQueue = Promise.resolve();
   let streamed = false;
   if (llmClient.sendMessageStream) {
     const response = await llmClient.sendMessageStream(messages, options, {
       onTextDelta: (delta) => {
         streamed = true;
-        if (emitAssistantDeltas) {
+        if (safeStreamer) {
+          safeStreamQueue = safeStreamQueue.then(() => safeStreamer.push(delta));
+        } else if (emitAssistantDeltas) {
           host.eventBridge.pushAssistantDelta(delta, assistantBuffer, eventContext);
         }
       },
     });
+    await safeStreamQueue;
     if (emitAssistantDeltas && !streamed && response.content) {
       host.eventBridge.pushAssistantDelta(response.content, assistantBuffer, eventContext);
+    }
+    if (safeStreamer && !streamed && response.content) {
+      await safeStreamer.push(response.content);
     }
     return response;
   }
 
   const response = await llmClient.sendMessage(messages, options);
-  if (emitAssistantDeltas && response.content) {
+  if (safeStreamer && response.content) {
+    await safeStreamer.push(response.content);
+  } else if (emitAssistantDeltas && response.content) {
     host.eventBridge.pushAssistantDelta(response.content, assistantBuffer, eventContext);
   }
   return response;

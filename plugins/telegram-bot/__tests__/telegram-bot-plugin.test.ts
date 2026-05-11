@@ -894,7 +894,7 @@ describe("TelegramChatEventAdapter", () => {
       createdAt: "2026-04-08T00:00:00.000Z",
       kind: "commentary",
       message: "I will check this before answering.",
-      sourceId: "intent:first-step",
+      sourceId: "model-commentary:turn-1",
       presentation: { gatewayProgress: "user" },
     });
     await adapter.handle({
