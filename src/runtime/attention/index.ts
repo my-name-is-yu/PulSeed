@@ -18,6 +18,14 @@ export {
   selectInitiativeGateDecision,
   sourceRef,
 } from "./attention-metabolism.js";
+export {
+  LivingAutonomyDirectPathIds,
+  LivingAutonomyDirectPathInventory,
+  currentPreGateOutwardEffects,
+  directPathInventoryById,
+  forbiddenPreGateOutwardEffects,
+  requiresAdmissionBeforeOutwardEffect,
+} from "./direct-path-inventory.js";
 export type {
   AdvanceMaturationInput,
   AdvanceMaturationResult,
@@ -47,3 +55,10 @@ export type {
   SignalContextAssemblyInput,
   UrgeCandidateAssemblyInput,
 } from "./attention-metabolism.js";
+export type {
+  LivingAutonomyDirectPathId,
+  LivingAutonomyDirectPathInventoryEntry,
+  LivingAutonomyEffect,
+  LivingAutonomyPathClassification,
+  LivingAutonomySourceAuthority,
+} from "./direct-path-inventory.js";
