@@ -57,7 +57,7 @@ export {
 
 const DEFAULT_TIMEOUT_MS = 120_000;
 const MAX_VERIFY_RETRIES = 2;
-const MAX_TOOL_LOOPS = 5;
+const MAX_TOOL_LOOPS = 24;
 
 export async function executeRuntimeControlRoute(
   host: ChatRunnerRouteHost,

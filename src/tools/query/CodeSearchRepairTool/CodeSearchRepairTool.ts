@@ -109,7 +109,7 @@ export class CodeSearchRepairTool implements ITool<CodeSearchRepairInput, unknow
       return { status: "denied", reason: (err as Error).message };
     }
     if (!input.path) return { status: "allowed" };
-    const validation = validateFilePath(input.path, context.cwd, context.executionPolicy?.protectedPaths);
+    const validation = validateFilePath(input.path, context.cwd);
     if (!validation.valid) {
       return { status: "needs_approval", reason: `Searching outside the working directory: ${validation.resolved}` };
     }

@@ -155,7 +155,7 @@ export class GrepTool implements ITool<GrepInput, string> {
 
   async checkPermissions(input: GrepInput, context?: ToolCallContext): Promise<PermissionCheckResult> {
     if (context) {
-      const validation = validateFilePath(input.path ?? ".", context.cwd, context.executionPolicy?.protectedPaths);
+      const validation = validateFilePath(input.path ?? ".", context.cwd);
       if (!validation.valid) {
         return { status: "needs_approval", reason: `Searching outside the working directory: ${validation.resolved}` };
       }

@@ -116,7 +116,7 @@ export class CodeSearchTool implements ITool<CodeSearchInput, unknown> {
     if (!input.path) {
       return { status: "allowed" };
     }
-    const validation = validateFilePath(input.path, context.cwd, context.executionPolicy?.protectedPaths);
+    const validation = validateFilePath(input.path, context.cwd);
     if (!validation.valid) {
       return { status: "needs_approval", reason: `Searching outside the working directory: ${validation.resolved}` };
     }

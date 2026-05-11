@@ -1,4 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
 import { z } from "zod";
 import { CrossPlatformChatSessionManager } from "../cross-platform-session.js";
 import type { CrossPlatformChatSessionOptions } from "../cross-platform-session.js";
@@ -15,6 +17,7 @@ import { StateManager as RealStateManager } from "../../../base/state/state-mana
 import { createSetupRuntimeControlTools } from "../../../tools/runtime/SetupRuntimeControlTools.js";
 import type { ApprovalRequest, ITool, ToolCallContext } from "../../../tools/types.js";
 import { ToolRegistry } from "../../../tools/registry.js";
+import { ReadTool } from "../../../tools/fs/ReadTool/ReadTool.js";
 import type { ChatEvent } from "../chat-events.js";
 import {
   buildExternalSurfaceDecision,
@@ -668,6 +671,65 @@ describe("CrossPlatformChatSessionManager", () => {
     expect(firstOptions?.system).toContain("Do not answer tool-available inspection requests by telling the user to run local commands");
     expect(events.some((event) => event.type === "tool_start" && event.toolName === "check_readme")).toBe(true);
     expect(events.some((event) => event.type === "tool_end" && event.toolName === "check_readme" && event.success)).toBe(true);
+  });
+
+  it("lets the production gateway model loop read the active PulSeed workspace when self-protection is enabled", async () => {
+    const baseDir = makeTempDir();
+    const workspace = makeTempDir();
+    try {
+      await fs.writeFile(
+        path.join(workspace, "package.json"),
+        JSON.stringify({
+          name: "pulseed",
+          scripts: {
+            "smoke:gateway-direct-chat-latency": "npm run build && node dist/runtime/gateway/direct-chat-latency-smoke.js",
+          },
+        }),
+      );
+      const stateManager = new RealStateManager(baseDir, undefined, { walEnabled: false });
+      const events: ChatEvent[] = [];
+      const llmClient = makeStreamingLLMClient([
+        {
+          content: "",
+          stop_reason: "tool_calls",
+          tool_calls: [{
+            id: "call-read-package",
+            type: "function",
+            function: { name: "read", arguments: JSON.stringify({ file_path: "package.json", limit: 20 }) },
+          }],
+        },
+        {
+          content: "npm run build && node dist/runtime/gateway/direct-chat-latency-smoke.js",
+        },
+      ]);
+      const manager = new CrossPlatformChatSessionManager(makeDeps({
+        stateManager,
+        llmClient: llmClient as never,
+        registry: makeRegistryWithTools([new ReadTool()]),
+        chatAgentLoopRunner: { execute: vi.fn().mockResolvedValue(CANNED_RESULT) } as never,
+      }));
+
+      const result = await manager.execute(
+        "package.json を実際に読んで、scripts の smoke:gateway-direct-chat-latency の値を文字列だけで返して",
+        {
+          identity_key: "gateway-real-read-user",
+          platform: "telegram",
+          conversation_id: "telegram-real-read",
+          user_id: "user-1",
+          cwd: workspace,
+          onEvent: (event) => { events.push(event); },
+        },
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.output).toBe("npm run build && node dist/runtime/gateway/direct-chat-latency-smoke.js");
+      expect(events.some((event) => event.type === "tool_end" && event.toolName === "read" && event.success)).toBe(true);
+      expect(events.some((event) => event.type === "tool_update" && event.status === "awaiting_approval")).toBe(false);
+      expect(llmClient.sendMessageStream).toHaveBeenCalledTimes(2);
+    } finally {
+      cleanupTempDir(workspace);
+      cleanupTempDir(baseDir);
+    }
   });
 
   it("keeps runtime status checks in the same default gateway tool-choice loop", async () => {

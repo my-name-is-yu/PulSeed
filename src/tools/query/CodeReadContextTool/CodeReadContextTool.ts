@@ -160,14 +160,14 @@ export class CodeReadContextTool implements ITool<CodeReadContextInput, unknown>
     if (resolvedRoot.error) {
       return { status: "denied", reason: resolvedRoot.error };
     }
-    const rootValidation = validateFilePath(resolvedRoot.cwd, context.cwd, context.executionPolicy?.protectedPaths);
+    const rootValidation = validateFilePath(resolvedRoot.cwd, context.cwd);
     if (!rootValidation.valid) {
       return { status: "needs_approval", reason: `Reading outside the working directory: ${rootValidation.resolved}` };
     }
     const storedCandidates = input.queryId ? resolveCodeSearchCandidates(input.queryId, input.candidateIds) : [];
     const candidates = input.queryId ? storedCandidates : input.candidates;
     for (const candidate of candidates) {
-      const validation = validateFilePath(candidate.file, rootValidation.resolved, context.executionPolicy?.protectedPaths);
+      const validation = validateFilePath(candidate.file, rootValidation.resolved);
       if (!validation.valid) {
         return { status: "needs_approval", reason: `Reading outside the working directory: ${validation.resolved}` };
       }
