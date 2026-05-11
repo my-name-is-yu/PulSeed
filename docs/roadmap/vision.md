@@ -8,13 +8,13 @@
 
 ## 1. In a Nutshell
 
-PulSeed is companion software that remembers your goals, watches the world with
-you, and brings the right help into the moment.
+PulSeed is intended to become companion software that remembers your goals,
+watches the world with you, and brings the right help into the moment.
 
-Tell PulSeed your goal, and it will stay with it for days, months, or years.
-PulSeed is not an "assistant waiting for instructions." It remembers what
-matters, observes what changes, and keeps moving toward the life or outcome you
-want.
+The goal is that you can tell PulSeed what you want to achieve, and it can stay
+with that goal for days, months, or years. PulSeed is not meant to be an
+"assistant waiting for instructions." It should remember what matters, observe
+what changes, and keep moving toward the life or outcome you want.
 
 PulSeed's current strongest technical wedge is long-running goal orchestration:
 holding goals, delegating bounded work to agents, verifying progress, and

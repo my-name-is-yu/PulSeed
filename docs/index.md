@@ -81,6 +81,8 @@ The docs tree intentionally avoids folders that only exist to hold a single
 - `docs/architecture/index.md` -> [Architecture](architecture.md)
 - `docs/design/audits/docs-audit/` -> `docs/design/audits/`
 - `docs/design/archive/design/` -> `docs/design/archive/`
+- `docs/internal/` -> [Design Documentation](design/index.md), which links to
+  design archive material when needed
 
 Do not recreate those directories as compatibility-only stubs unless the docs
 hosting layer gains real redirects. A placeholder folder makes the source tree

@@ -44,12 +44,14 @@ const retiredThinDocPaths = new Set([
   'docs/guide/index.md',
   'docs/concepts/index.md',
   'docs/architecture/index.md',
+  'docs/internal/index.md',
 ]);
 const retiredThinDocDirs = new Set([
   'docs/start',
   'docs/guide',
   'docs/concepts',
   'docs/architecture',
+  'docs/internal',
   'docs/design/audits/docs-audit',
   'docs/design/archive/design',
 ]);

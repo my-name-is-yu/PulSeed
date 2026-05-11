@@ -26,6 +26,9 @@ the runtime through the CLI, TUI, daemon, schedules, chat, and gateway surfaces.
 Product direction beyond that current runtime is documented separately from
 current behavior.
 
+In plain terms, PulSeed helps you keep goal work, state, progress checks, and
+agent/tool runs organized across time from your local machine.
+
 ## Is PulSeed For Me?
 
 Try PulSeed today if you want to:
