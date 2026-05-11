@@ -1,14 +1,14 @@
 # Start
 
-Use this section when you are installing PulSeed or trying the first run.
+Use this section to install PulSeed and reach the first interactive session.
 
-Current public path:
+Recommended order:
 
 1. [README](../../README.md)
 2. [Getting Started](../getting-started.md)
 3. [Runtime](../runtime.md)
 4. [Configuration](../configuration.md)
 
-The start section is for runnable setup instructions. Product direction,
-multi-year scenarios, and implementation design notes belong in roadmap or
-internal docs.
+Start pages contain runnable setup instructions only. Product direction,
+multi-year scenarios, proposals, and historical notes live outside the
+public-current start path.

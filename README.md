@@ -4,7 +4,7 @@
 
 # PulSeed
 
-PulSeed is a lifelong personal agent that remembers your goals, watches the world with you, and keeps helping move your life forward.
+PulSeed is a local-first personal agent runtime for goals that take time.
 
 [![Website](https://img.shields.io/badge/Website-pulseed.dev-blue?style=for-the-badge)](https://pulseed.dev)
 [![npm](https://img.shields.io/npm/v/pulseed.svg?style=for-the-badge)](https://www.npmjs.com/package/pulseed)
@@ -15,133 +15,115 @@ PulSeed is a lifelong personal agent that remembers your goals, watches the worl
 
 </div>
 
-PulSeed is a lifelong personal agent for goals that take time.
-Tell it what matters, and it remembers the goal, watches what changes,
-delegates work to agents, verifies progress, and keeps moving your life forward.
+PulSeed keeps goal work alive across sessions. It stores local state, runs a
+DurableLoop over goals, delegates bounded work through AgentLoop or configured
+adapters, verifies progress from evidence, and exposes the runtime through the
+CLI, TUI, daemon, schedules, chat, and gateway surfaces.
 
-Its current technical wedge is long-running goal orchestration, but that is not
-the final category. PulSeed is being built toward a lifelong companion agent
-with durable personal context, presence, proactive dialogue, and safe
-delegation. See [Positioning](docs/positioning.md).
+The current implementation is a long-running goal orchestration runtime. The
+larger product direction is a lifelong personal companion agent, but future
+direction is documented separately from current behavior.
 
-The primary entry point is `pulseed`. The normal flow is natural language, not a
-menu of subcommands.
-
-## Get Started
+## Quick Start
 
 PulSeed supports Node.js 22 or 24.
 
-Quick install (macOS / Linux):
+macOS / Linux:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/my-name-is-yu/PulSeed/main/scripts/install.sh | bash
 ```
 
-Quick install (Windows / PowerShell):
+Windows / PowerShell:
 
 ```powershell
 irm https://raw.githubusercontent.com/my-name-is-yu/PulSeed/main/scripts/install.ps1 | iex
 ```
 
-Then start PulSeed:
+Then launch PulSeed:
 
 ```bash
 pulseed
 ```
 
-For pinned-tag installs, fallback npm installs, and installer flags, see [Getting Started](docs/getting-started.md).
+The bare `pulseed` command opens the interactive TUI after provider setup. For
+pinned versions, npm fallback installs, and first-run details, see
+[Getting Started](docs/getting-started.md).
 
-Then describe the goal in natural language:
+## What Exists Now
 
-- `Increase test coverage to 90%.`
-- `Show me the current progress.`
-- `Keep this goal moving in the background.`
+- `DurableLoop` controls long-running goal progress, continuation,
+  verification, stall handling, and completion decisions.
+- `AgentLoop` handles bounded tool-using work for tasks, chat turns, and selected
+  runtime phases.
+- Local state lives under `~/.pulseed/` by default and can be overridden with
+  `PULSEED_HOME`.
+- Runtime surfaces include CLI, TUI, daemon, schedules, chat, gateway channels,
+  plugins, memory correction commands, and operational diagnostics.
+- Provider configuration supports OpenAI, Anthropic, and Ollama paths with
+  adapter-specific compatibility.
+- Approval, worktree, verification, and policy gates reduce risk around
+  delegated work, but local backends and plugins still run with the user's
+  privileges.
 
-PulSeed will guide provider and adapter setup when needed.
+## Common Commands
 
-## Links
+```bash
+pulseed
+pulseed --version
+pulseed setup
+pulseed goal add "Increase test coverage to 90%"
+pulseed run --goal <goal-id>
+pulseed status --goal <goal-id>
+pulseed report --goal <goal-id>
+pulseed daemon start --goal <goal-id>
+pulseed schedule list
+pulseed gateway setup
+pulseed memory history <kind:id>
+```
 
-- [Get Started](docs/getting-started.md)
-- [Positioning](docs/positioning.md)
-- [Docs Index](docs/index.md)
+For the complete command surface, use `pulseed help` or see the docs:
+
+- [Docs Map](docs/index.md)
+- [Getting Started](docs/getting-started.md)
 - [Runtime](docs/runtime.md)
 - [Configuration](docs/configuration.md)
 - [Status](docs/status.md)
-- [Contributing](CONTRIBUTING.md)
-- [Security](SECURITY.md)
-
-## Why PulSeed?
-
-- Lifelong personal-agent orchestration for goals that take time
-- Honest goal negotiation when a target is not realistic as stated
-- Bounded agent execution with verification around delegated work
-- Verified playbook memory that turns successful runs into reusable planning hints
-- Local persistent state under `~/.pulseed/`
-- Multiple runtime surfaces: CLI, chat, TUI, daemon, and cron
-- Support for OpenAI, Anthropic, Ollama, and adapter-based execution paths
-
-## What It Does
-
-- `DurableLoop` keeps a goal moving and decides whether to continue, refine,
-  verify, or stop
-- `AgentLoop` handles bounded tool-using work for task execution, chat, and
-  selected runtime phases
-- Centralized AgentLoop profiles keep task execution isolated by default,
-  narrow chat permissions, and run `/review` through a dedicated read-only
-  review posture
-- Dream-backed playbooks can feed verified workflow hints into later task
-  generation without auto-writing executable skills
-- Companion capability status is projected from readiness evidence plus explicit
-  admission and autonomy decisions; normal companion surfaces show the next safe
-  action rather than a capability catalog
-- State, reports, schedules, and local memory live under `~/.pulseed/`
-- Software-level approval and verification gates protect delegated work
-
-## Common Surfaces
-
-- `pulseed` for the primary interactive workflow
-- `pulseed tui` for the terminal UI
-- `pulseed start` and `pulseed stop` for daemon control
-- `pulseed schedule ...` for schedule management
-- Lower-level commands for scripting, diagnostics, and compatibility
-
-## Achievements
-
-PulSeed completed a 30-hour autonomous dogfood run on
-[Kaggle Playground Series S6E4](https://www.kaggle.com/competitions/playground-series-s6e4).
-
-| Area | Result |
-| --- | --- |
-| Long-running workflow | Ran continuously for about 30 hours, with operator intervention only for deadline-bound submissions. |
-| Final Kaggle result | Finished with `0.97057` balanced accuracy, ranked `1,303 / 4,325` teams, approximately the top `30%`. |
-| Local validation | Improved OOF balanced accuracy from early 0.45-level baselines to a 0.970+ candidate set. |
-| Autonomous exploration | Generated, tested, and compared hypotheses across CatBoost variants, probability adjustment, class weighting, and post-OOF calibration. |
-| Evidence preserved | Kept logs, metrics, OOF predictions, submission candidates, and follow-up engineering issues from the run; a redacted public evidence log is available at [pulseed-kaggle-s6e4-evidence-log](https://github.com/my-name-is-yu/pulseed-kaggle-s6e4-evidence-log). |
-
-## Docs and Community
-
-Start with the public doc map:
-
-- [Getting Started](docs/getting-started.md)
-- [Runtime](docs/runtime.md)
-- [Mechanism](docs/mechanism.md)
-- [Configuration](docs/configuration.md)
 - [Architecture Map](docs/architecture-map.md)
+- [Module Map](docs/module-map.md)
 
-For project participation:
+## Public Vs Future Docs
 
-- read [Contributing](CONTRIBUTING.md) before opening a pull request
-- use [Issues](https://github.com/my-name-is-yu/PulSeed/issues) for bugs and
-  feature proposals
-- follow the [Code of Conduct](CODE_OF_CONDUCT.md)
+Start with the public-current docs when you want to use PulSeed today:
+
+- [Start](docs/start/index.md)
+- [Guide](docs/guide/index.md)
+- [Concepts](docs/concepts/index.md)
+- [Reference](docs/reference/index.md)
+- [Architecture](docs/architecture/index.md)
+
+Product direction, north-star examples, and non-current plans live under
+[Roadmap And Future Direction](docs/roadmap/index.md). Maintainer-facing design
+notes and audits live under [Internal Documentation](docs/internal/index.md).
+
+## Evidence
+
+PulSeed has been dogfooded on long-running work, including a 30-hour autonomous
+Kaggle Playground Series S6E4 run. A redacted evidence log is available at
+[pulseed-kaggle-s6e4-evidence-log](https://github.com/my-name-is-yu/pulseed-kaggle-s6e4-evidence-log).
+
+## Contributing
+
+Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request. For
+security issues, see [SECURITY.md](SECURITY.md).
 
 ## Safety Boundary
 
-PulSeed uses approval gates and verification around delegated work. Native
-`agent_loop` task execution can use isolated git worktrees, and supported CLI
-adapters can be wrapped with a Docker terminal backend. These reduce blast
-radius, but local backends and plugins still run with the user's privileges. See
-[Security](SECURITY.md).
+PulSeed has software-level approval and verification gates. Native `agent_loop`
+task execution can use git worktree isolation, and supported CLI adapters can be
+wrapped with a Docker terminal backend. These are not a complete OS sandbox:
+local backends, shell commands, provider tools, and plugins may still act with
+the user's privileges.
 
 ## License
 
