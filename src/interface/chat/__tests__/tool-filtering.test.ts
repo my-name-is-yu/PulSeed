@@ -182,6 +182,51 @@ describe("ChatRunner tool filtering integration", () => {
     expect(parsed.seenTools).toContain("always_available");
   });
 
+  it("does not apply gateway no-tool contract retries to ordinary tool-loop sessions", async () => {
+    const visibleTool = makeMockTool("visible_tool");
+    const llmClient: ILLMClient = {
+      supportsToolCalling: () => true,
+      sendMessage: vi.fn().mockImplementation(async (_msgs, opts) => {
+        if (typeof opts?.system === "string" && opts.system.includes("strict contract checker")) {
+          return {
+            content: JSON.stringify({
+              verdict: "retry_with_tools",
+              reason: "Contract checker retry must be gateway-only.",
+              retry_instruction: "Call a tool.",
+            }),
+            usage: { input_tokens: 1, output_tokens: 1 },
+            stop_reason: "completed",
+            tool_calls: [],
+          } satisfies LLMResponse;
+        }
+        const toolNames = (opts?.tools ?? []).map((t: { function: { name: string } }) => t.function.name);
+        return {
+          content: JSON.stringify({ seenTools: toolNames }),
+          usage: { input_tokens: 1, output_tokens: 1 },
+          stop_reason: "completed",
+          tool_calls: [],
+        } satisfies LLMResponse;
+      }),
+      parseJSON: vi.fn((content: string, schema: { parse(value: unknown): unknown }) => schema.parse(JSON.parse(content))),
+    } as unknown as ILLMClient;
+    const runner = new ChatRunner({
+      stateManager: makeMockStateManager(),
+      adapter: makeMockAdapter(),
+      llmClient,
+      registry: makeRegistry([visibleTool]),
+    });
+
+    const result = await runner.execute("hello", "/tmp");
+
+    const parsed = JSON.parse(result.output) as { seenTools: string[] };
+    expect(parsed.seenTools).toContain("visible_tool");
+    expect(result.output).not.toContain("I could not complete that current-state check");
+    expect(llmClient.sendMessage).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ system: expect.stringContaining("strict contract checker") }),
+    );
+  });
+
   it("activates deferred tool after tool_search returns it", async () => {
     const deferredTool = makeMockTool("rare_tool", { shouldDefer: true });
     const searchResults = [{ name: "rare_tool", description: "a rare tool", category: "test", tags: [] }];

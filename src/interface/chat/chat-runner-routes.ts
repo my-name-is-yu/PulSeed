@@ -479,7 +479,6 @@ export async function executeToolLoopRoute(
       {
         tools: host.deps.registry?.listAll() ?? [],
         streamFinalText: !shouldGateRuntimeEvidenceForTurn(params.turnContext),
-        failClosedOnToolContractUnavailable: false,
       },
     );
     const elapsed_ms = Date.now() - params.start;
@@ -558,7 +557,7 @@ export async function executeGatewayModelLoopRoute(
       {
         tools: selectGatewayModelLoopTools(host.deps.registry?.listAll() ?? []),
         streamFinalText: true,
-        failClosedOnToolContractUnavailable: true,
+        enforceGatewayNoToolContract: true,
       },
     );
     const elapsed_ms = Date.now() - params.start;
@@ -855,11 +854,11 @@ async function executeWithTools(
   options: {
     tools: ITool[];
     streamFinalText: boolean;
-    failClosedOnToolContractUnavailable?: boolean;
+    enforceGatewayNoToolContract?: boolean;
   } = {
     tools: host.deps.registry?.listAll() ?? [],
     streamFinalText: true,
-    failClosedOnToolContractUnavailable: false,
+    enforceGatewayNoToolContract: false,
   },
 ): Promise<{ output: string; usage: ChatUsageCounter }> {
   const llmClient = host.deps.llmClient!;
@@ -953,7 +952,7 @@ async function executeWithTools(
 
     if (toolCalls.length === 0) {
       const output = response.content || assistantBuffer.text || "(no response)";
-      if (!executedToolThisTurn && noToolContractRetries < 1 && loop < MAX_TOOL_LOOPS - 1) {
+      if (options.enforceGatewayNoToolContract && !executedToolThisTurn && noToolContractRetries < 1 && loop < MAX_TOOL_LOOPS - 1) {
         const decision = await evaluateGatewayToolUseContract({
           turnContext,
           assistantOutput: output,
@@ -973,7 +972,7 @@ async function executeWithTools(
           messages.push({ role: "user", content: buildGatewayToolUseRetryMessage(decision) });
           continue;
         }
-        if (decision.verdict === "tool_unavailable" && options.failClosedOnToolContractUnavailable) {
+        if (decision.verdict === "tool_unavailable") {
           lastNoToolContractReason = decision.reason;
           return {
             output: noToolEvidenceFailureOutput(lastNoToolContractReason),
@@ -981,7 +980,7 @@ async function executeWithTools(
           };
         }
       }
-      if (!executedToolThisTurn && noToolContractRetries > 0) {
+      if (options.enforceGatewayNoToolContract && !executedToolThisTurn && noToolContractRetries > 0) {
         return {
           output: noToolEvidenceFailureOutput(lastNoToolContractReason),
           usage,

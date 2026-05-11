@@ -47,7 +47,6 @@ export async function buildLLMClient(providerConfig?: ProviderConfig): Promise<I
         });
         return new CodexLLMClient({
           apiKey: isCodexOAuthAccessToken(config.api_key) ? config.api_key : undefined,
-          baseURL: config.base_url,
           cliPath: config.codex_cli_path,
           model: config.model,
           lightModel: config.light_model,

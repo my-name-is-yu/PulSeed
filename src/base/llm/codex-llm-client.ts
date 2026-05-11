@@ -446,10 +446,18 @@ export class CodexLLMClient extends BaseLLMClient implements ILLMClient {
     }
 
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let timeoutError: CodexLLMError | undefined;
     try {
       const timeoutMs = options?.timeoutMs ?? this.totalTimeoutMs;
       if (timeoutMs > 0) {
-        timer = setTimeout(() => abortController.abort(), timeoutMs);
+        timer = setTimeout(() => {
+          timeoutError = codexLLMError(
+            `CodexLLMClient: Codex Responses stream timed out after ${timeoutMs}ms`,
+            "ETIMEDOUT",
+            "model_request_timeout",
+          );
+          abortController.abort(timeoutError);
+        }, timeoutMs);
       }
       const response = await fetch(`${this.baseURL}/responses`, {
         method: "POST",
@@ -479,6 +487,9 @@ export class CodexLLMClient extends BaseLLMClient implements ILLMClient {
       return await readCodexResponsesStream(response.body, handlers, abortController.signal);
     } catch (err) {
       if (abortController.signal.aborted || options?.abortSignal?.aborted) {
+        if (timeoutError && abortController.signal.reason === timeoutError) {
+          throw timeoutError;
+        }
         throw codexLLMError("CodexLLMClient: Codex Responses stream aborted", "ABORT_ERR", "model_request_aborted");
       }
       throw err;

@@ -813,6 +813,51 @@ describe("CodexLLMClient", () => {
       expect(rawDeltas).toEqual(["partial"]);
       expect(visibleDeltas).toEqual([]);
     });
+
+    it("classifies Codex Responses total timeout as model_request_timeout", async () => {
+      vi.useFakeTimers();
+      vi.stubGlobal("fetch", vi.fn((_url: string, init: RequestInit) => new Promise((_resolve, reject) => {
+        init.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
+      })));
+
+      const client = new CodexLLMClient({ apiKey: fakeCodexOAuthToken(), model: "gpt-5.4-mini", timeoutMs: 50 });
+      const promise = client.sendMessageStream?.(
+        [{ role: "user", content: "hi" }],
+        { model_tier: "light" },
+        {},
+      ).catch((err) => err);
+
+      await vi.advanceTimersByTimeAsync(51);
+      const err = await promise;
+      vi.useRealTimers();
+
+      expect(err).toBeInstanceOf(Error);
+      expect((err as Error).message).toContain("timed out");
+      expect((err as { code?: string }).code).toBe("ETIMEDOUT");
+      expect((err as { agentLoopFailureReason?: string }).agentLoopFailureReason).toBe("model_request_timeout");
+    });
+
+    it("classifies parent aborts as model_request_aborted for Codex Responses", async () => {
+      const controller = new AbortController();
+      vi.stubGlobal("fetch", vi.fn((_url: string, init: RequestInit) => new Promise((_resolve, reject) => {
+        init.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
+      })));
+
+      const client = new CodexLLMClient({ apiKey: fakeCodexOAuthToken(), model: "gpt-5.4-mini", timeoutMs: 1000 });
+      const promise = client.sendMessageStream?.(
+        [{ role: "user", content: "hi" }],
+        { model_tier: "light", abortSignal: controller.signal },
+        {},
+      ).catch((err) => err);
+
+      controller.abort();
+      const err = await promise;
+
+      expect(err).toBeInstanceOf(Error);
+      expect((err as Error).message).toContain("aborted");
+      expect((err as { code?: string }).code).toBe("ABORT_ERR");
+      expect((err as { agentLoopFailureReason?: string }).agentLoopFailureReason).toBe("model_request_aborted");
+    });
   });
 
   // ─── parseJSON ───

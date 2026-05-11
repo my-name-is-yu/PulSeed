@@ -260,6 +260,23 @@ describe("buildLLMClient — early API key validation", () => {
         apiKey: "oauth-token",
       }));
     });
+
+    it("does not pass generic OpenAI base_url overrides to CodexLLMClient", async () => {
+      const MockedCodexLLMClient = vi.mocked(CodexLLMClient);
+      MockedCodexLLMClient.mockClear();
+
+      mockLoadProviderConfig.mockResolvedValue({
+        provider: "openai",
+        model: "gpt-5.4-mini",
+        adapter: "openai_codex_cli",
+        api_key: "oauth-token",
+        base_url: "https://proxy.example.test/v1",
+      });
+
+      await expect(buildLLMClient()).resolves.not.toThrow();
+      const config = MockedCodexLLMClient.mock.calls[0]?.[0] as { baseURL?: string } | undefined;
+      expect(config?.baseURL).toBeUndefined();
+    });
   });
 
   describe("adapter registry", () => {
