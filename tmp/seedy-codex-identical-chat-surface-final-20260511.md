@@ -64,7 +64,7 @@ Prepared on the Mac mini without sending Telegram messages.
 - Build: `npm run build` passed on the Mac mini.
 - Daemon: restarted in the isolated home with Node v24.15.0 and `--detach`.
 - Daemon status: idle, runtime health ok, Telegram and HTTP gateway adapters started.
-- Baseline observation: `outbox_records` latest seq `505`; no runtime operation or queue records before the live-message pass.
+- Baseline observation: `outbox_records` latest seq `507`; no runtime operation or queue records before the live-message pass.
 
 Ask the user to send:
 
