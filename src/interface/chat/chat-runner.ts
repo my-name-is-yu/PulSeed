@@ -720,13 +720,10 @@ export class ChatRunner {
     } else if (selectedRoute) {
       this.eventBridge.emitSeedyPresence("thinking", eventContext, {
         ...(options.presenceIngressId ? { ingressId: options.presenceIngressId } : {}),
-        subject: "Route selected",
-        reason: "PulSeed selected the execution path for this turn.",
+        subject: "Working on the response",
+        reason: "Seedy is preparing the next step.",
         expectedNext: "progress",
       });
-    }
-    if (selectedRoute?.kind !== "configure" && !usesGatewayModelLoop) {
-      this.eventBridge.emitIntent(safeInput, selectedRoute, eventContext);
     }
     if (selectedRoute && !usesGatewayModelLoop) {
       this.eventBridge.emitSeedyPresence("acting", eventContext, {
@@ -742,7 +739,6 @@ export class ChatRunner {
       if (runtimeControlResult.success) {
         await history.appendAssistantMessage(runtimeControlResult.output, { eventContext });
         this.eventBridge.emitCheckpoint("Runtime control completed", "The runtime-control operation produced a result.", eventContext, "complete");
-        this.eventBridge.emitActivity("lifecycle", "Finalizing response...", eventContext, "lifecycle:finalizing");
         this.eventBridge.emitEvent({
           type: "assistant_final",
           text: runtimeControlResult.output,

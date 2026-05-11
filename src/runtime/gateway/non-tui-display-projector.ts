@@ -194,7 +194,7 @@ export class NonTuiDisplayProjector {
     const nextText = text || this.finalText;
     if (!nextText) return;
     this.finalText = nextText;
-    const nextDisplayText = complete ? nextText : stableAssistantDisplayText(nextText);
+    const nextDisplayText = nextText;
     if (!nextDisplayText || nextDisplayText === this.lastFinalText) return;
 
     if (this.policy.finalSurface === "edit_stream") {
@@ -295,47 +295,4 @@ function isActionRequiredTimelineItem(
   if (item.kind === "approval") return true;
   if (item.kind === "tool_observation") return item.state === "denied" || item.state === "blocked";
   return item.kind === "stopped" && item.reason !== "completed";
-}
-
-function stableAssistantDisplayText(text: string): string {
-  const normalized = text.trimEnd();
-  if (!normalized) return "";
-
-  const fenceSafeText = trimUnclosedCodeFence(normalized);
-  if (!fenceSafeText) return "";
-  if (hasCompleteTrailingCodeFence(fenceSafeText)) return fenceSafeText;
-
-  const newlineIndex = Math.max(fenceSafeText.lastIndexOf("\n\n"), fenceSafeText.lastIndexOf("\n"));
-  if (newlineIndex >= 0) {
-    return fenceSafeText.slice(0, newlineIndex + 1).trimEnd();
-  }
-
-  const sentenceBoundary = findLastSentenceBoundary(fenceSafeText);
-  if (sentenceBoundary >= 0) {
-    return fenceSafeText.slice(0, sentenceBoundary + 1).trimEnd();
-  }
-
-  return "";
-}
-
-function trimUnclosedCodeFence(text: string): string {
-  const fenceMatches = Array.from(text.matchAll(/```/g));
-  if (fenceMatches.length % 2 === 0) return text;
-  const openFence = fenceMatches.at(-1)?.index;
-  return openFence === undefined ? text : text.slice(0, openFence).trimEnd();
-}
-
-function hasCompleteTrailingCodeFence(text: string): boolean {
-  const fenceMatches = Array.from(text.matchAll(/```/g));
-  return fenceMatches.length > 0 && fenceMatches.length % 2 === 0 && text.endsWith("```");
-}
-
-function findLastSentenceBoundary(text: string): number {
-  for (let index = text.length - 1; index >= 0; index--) {
-    const char = text[index];
-    if (char !== "." && char !== "!" && char !== "?" && char !== "。" && char !== "！" && char !== "？") continue;
-    const next = text[index + 1];
-    if (next === undefined || /\s/.test(next)) return index;
-  }
-  return -1;
 }

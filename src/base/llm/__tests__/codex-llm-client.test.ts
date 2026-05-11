@@ -55,7 +55,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   };
 });
 
-import { CODEX_RESPONSE_TEXT_MAX_BYTES, CodexLLMClient } from "../codex-llm-client.js";
+import { CODEX_RESPONSE_TEXT_MAX_BYTES, CodexLLMClient, isCodexOAuthAccessToken } from "../codex-llm-client.js";
 
 // ─── Helpers ───
 
@@ -79,6 +79,19 @@ function makeFakeChild(): FakeChildProcess {
 /** Flush microtask queue so that async operations (e.g. fsp.mkdtemp) resolve before we emit child events */
 const flushMicrotasks = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
 
+function makeJwt(expOffsetSeconds = 3600, extraPayload: Record<string, unknown> = {}): string {
+  const encode = (value: Record<string, unknown>) => Buffer.from(JSON.stringify(value)).toString("base64url");
+  return [
+    encode({ alg: "none", typ: "JWT" }),
+    encode({ exp: Math.floor(Date.now() / 1000) + expOffsetSeconds, ...extraPayload }),
+    "signature",
+  ].join(".");
+}
+
+function sseFrame(event: Record<string, unknown>): Uint8Array {
+  return new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`);
+}
+
 // ─── Tests ───
 
 describe("CodexLLMClient", () => {
@@ -92,6 +105,7 @@ describe("CodexLLMClient", () => {
     vi.clearAllTimers();
     vi.useRealTimers();
     vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
   });
 
   // ─── Constructor ───
@@ -122,6 +136,153 @@ describe("CodexLLMClient", () => {
 
       const [cliPath] = mockSpawn.mock.calls[0] as [string, string[]];
       expect(cliPath).toBe("/usr/local/bin/codex");
+    });
+  });
+
+  describe("Codex Responses streaming", () => {
+    it("recognizes only unexpired non-sk OAuth JWTs", () => {
+      expect(isCodexOAuthAccessToken(makeJwt())).toBe(true);
+      expect(isCodexOAuthAccessToken(makeJwt(-10))).toBe(false);
+      expect(isCodexOAuthAccessToken("sk-test")).toBe(false);
+      expect(isCodexOAuthAccessToken("not-a-jwt")).toBe(false);
+    });
+
+    it("streams OAuth-backed Responses text deltas before the terminal event", async () => {
+      let controller: ReadableStreamDefaultController<Uint8Array> | undefined;
+      const stream = new ReadableStream<Uint8Array>({
+        start(ctrl) {
+          controller = ctrl;
+        },
+      });
+      const fetchMock = vi.fn(async () => new Response(stream, {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      }));
+      vi.stubGlobal("fetch", fetchMock);
+      const deltas: string[] = [];
+      const client = new CodexLLMClient({
+        apiKey: makeJwt(3600, {
+          "https://api.openai.com/auth": { chatgpt_account_id: "acct_123" },
+        }),
+        model: "gpt-5.4-mini",
+      });
+
+      const promise = client.sendMessageStream(
+        [{ role: "user", content: "やあ！" }],
+        { tools: [] },
+        { onTextDelta: (delta) => { deltas.push(delta); } },
+      );
+      await flushMicrotasks();
+
+      controller!.enqueue(sseFrame({ type: "response.output_text.delta", delta: "やあ" }));
+      await flushMicrotasks();
+      expect(deltas).toEqual(["やあ"]);
+
+      controller!.enqueue(sseFrame({ type: "response.output_text.delta", delta: "！" }));
+      await flushMicrotasks();
+      expect(deltas).toEqual(["やあ", "！"]);
+
+      controller!.enqueue(sseFrame({
+        type: "response.completed",
+        response: {
+          status: "completed",
+          output_text: "やあ！",
+          usage: { input_tokens: 3, output_tokens: 2 },
+        },
+      }));
+      controller!.close();
+
+      await expect(promise).resolves.toMatchObject({
+        content: "やあ！",
+        usage: { input_tokens: 3, output_tokens: 2 },
+        stop_reason: "completed",
+      });
+      expect(mockSpawn).not.toHaveBeenCalled();
+      expect(fetchMock).toHaveBeenCalledWith(
+        "https://chatgpt.com/backend-api/codex/responses",
+        expect.objectContaining({
+          method: "POST",
+          headers: expect.objectContaining({
+            authorization: expect.stringContaining("Bearer "),
+            "chatgpt-account-id": "acct_123",
+            accept: "text/event-stream",
+          }),
+        }),
+      );
+    });
+
+    it("exposes native tool calls from OAuth-backed Responses streams", async () => {
+      vi.stubGlobal("fetch", vi.fn(async () => new Response(new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(sseFrame({
+            type: "response.output_item.added",
+            item: { type: "function_call", id: "item_1", call_id: "call_1", name: "check_readme" },
+          }));
+          controller.enqueue(sseFrame({
+            type: "response.function_call_arguments.delta",
+            item_id: "item_1",
+            delta: "{\"path\"",
+          }));
+          controller.enqueue(sseFrame({
+            type: "response.function_call_arguments.done",
+            item_id: "item_1",
+            arguments: "{\"path\":\"README.md\"}",
+          }));
+          controller.enqueue(sseFrame({
+            type: "response.completed",
+            response: { status: "completed", usage: { input_tokens: 1, output_tokens: 1 } },
+          }));
+          controller.close();
+        },
+      }), { status: 200 })));
+      const client = new CodexLLMClient({ apiKey: makeJwt() });
+
+      const response = await client.sendMessageStream(
+        [{ role: "user", content: "READMEある？" }],
+        {
+          tools: [{
+            type: "function",
+            function: {
+              name: "check_readme",
+              description: "Check README",
+              parameters: { type: "object", properties: {} },
+            },
+          }],
+        },
+        {},
+      );
+
+      expect(client.supportsToolCalling()).toBe(true);
+      expect(client.usesExternalAgentRuntime()).toBe(false);
+      expect(response.tool_calls).toEqual([{
+        id: "call_1",
+        type: "function",
+        function: { name: "check_readme", arguments: "{\"path\":\"README.md\"}" },
+      }]);
+    });
+
+    it("does not send OAuth tokens to non-ChatGPT base URLs", async () => {
+      const fetchMock = vi.fn(async () => new Response(new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(sseFrame({
+            type: "response.completed",
+            response: { status: "completed", output_text: "ok", usage: {} },
+          }));
+          controller.close();
+        },
+      }), { status: 200 }));
+      vi.stubGlobal("fetch", fetchMock);
+      const client = new CodexLLMClient({
+        apiKey: makeJwt(),
+        baseURL: "https://proxy.example.test/v1",
+      });
+
+      await client.sendMessageStream([{ role: "user", content: "hi" }], undefined, {});
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        "https://chatgpt.com/backend-api/codex/responses",
+        expect.any(Object),
+      );
     });
   });
 

@@ -1156,7 +1156,7 @@ describe("ChatRunner", () => {
       expect(result.elapsed_ms).toBeGreaterThanOrEqual(0);
     });
 
-    it("emits lifecycle activity before adapter execution", async () => {
+    it("emits internal lifecycle activity before adapter execution without an intent preamble", async () => {
       const adapter = makeMockAdapter();
       const events: string[] = [];
       const runner = new ChatRunner(makeDeps({
@@ -1168,8 +1168,7 @@ describe("ChatRunner", () => {
 
       await runner.execute("Do something", "/repo");
 
-      expect(events[0]).toContain("commentary:I understand the request as Do something.");
-      expect(events.indexOf("lifecycle:Preparing context...")).toBeGreaterThan(0);
+      expect(events[0]).toBe("lifecycle:Preparing context...");
       const contextCheckpointIndex = events.findIndex((event) =>
         event.includes("checkpoint:Context gathered:")
       );
@@ -1182,6 +1181,7 @@ describe("ChatRunner", () => {
       expect(adapterActivityIndex).toBeGreaterThan(adapterCheckpointIndex);
       expect(events).toContain("lifecycle:Calling adapter...");
       const transcript = events.join("\n");
+      expect(transcript).not.toContain("I understand the request as");
       expect(transcript).not.toContain("Intent");
       expect(transcript).not.toContain("Checkpoint");
       expect(transcript).not.toContain("Updated plan:");
@@ -1238,7 +1238,6 @@ describe("ChatRunner", () => {
           expect.stringContaining("Adapter started"),
           expect.stringContaining("Changes detected"),
           expect.stringContaining("Verification passed"),
-          expect.stringContaining("Response ready"),
         ]));
         expect(checkpointMessages.findIndex((message) => message.includes("Changes detected")))
           .toBeLessThan(checkpointMessages.findIndex((message) => message.includes("Verification passed")));
@@ -4205,29 +4204,19 @@ describe("ChatRunner", () => {
       expect(result.output).toBe("Native agentloop response");
       expect(approvalFn).toHaveBeenCalledWith("needs confirmation");
       const eventTypes = seenEvents.map((event) => event.type);
-      const intentIndex = seenEvents.findIndex((event) =>
-        event.type === "activity" && event.sourceId === "intent:first-step"
-      );
       const firstToolIndex = eventTypes.indexOf("tool_start");
-      expect(intentIndex).toBeGreaterThanOrEqual(0);
       expect(firstToolIndex).toBeGreaterThanOrEqual(0);
-      expect(intentIndex).toBeLessThan(firstToolIndex);
-      expect(seenEvents[intentIndex]).toMatchObject({
-        type: "activity",
-        kind: "commentary",
-        transient: false,
-        message: expect.stringContaining("I understand the request as Do something."),
-      });
+      expect(seenEvents.some((event) =>
+        event.type === "activity" && event.presentation?.gatewayNarration?.audience === "user"
+      )).toBe(false);
       const checkpointMessages = seenEvents
         .filter((event): event is Extract<ChatEvent, { type: "activity" }> =>
           event.type === "activity" && event.kind === "checkpoint"
         )
         .map((event) => event.message);
       expect(checkpointMessages).toEqual(expect.arrayContaining([
-        expect.stringContaining("Working turn started"),
         expect.stringContaining("Plan updated"),
         expect.stringContaining("Approval requested"),
-        expect.stringContaining("Response ready"),
       ]));
       expect(eventTypes).toContain("tool_start");
       expect(eventTypes).toContain("tool_end");
@@ -5161,21 +5150,13 @@ describe("ChatRunner", () => {
         expect(result.success).toBe(true);
         expect(result.output).toBe("Plain answer");
         expect(llmClient.sendMessage).toHaveBeenCalledTimes(2);
-        const intentIndex = events.findIndex((event) =>
-          event.type === "activity" && event.sourceId === "intent:first-step"
-        );
         const modelIndex = events.findIndex((event) =>
           event.type === "activity" && event.sourceId === "lifecycle:model"
         );
-        expect(intentIndex).toBeGreaterThanOrEqual(0);
+        expect(events.some((event) =>
+          event.type === "activity" && event.presentation?.gatewayNarration?.audience === "user"
+        )).toBe(false);
         expect(modelIndex).toBeGreaterThanOrEqual(0);
-        expect(intentIndex).toBeLessThan(modelIndex);
-        expect(events[intentIndex]).toMatchObject({
-          type: "activity",
-          kind: "commentary",
-          transient: false,
-          message: expect.stringContaining("call the model with the tool catalog"),
-        });
         const options = llmClient.sendMessage.mock.calls[1]?.[1] as { system?: string } | undefined;
         expect(options?.system).toContain("StaticPromptSeed");
         expect(options?.system).toContain("configured agent identity running PulSeed");
@@ -5407,16 +5388,9 @@ describe("ChatRunner", () => {
       expect(result.output).toContain("pulseed daemon status");
       expect(result.output).toContain("If you prefer chat-assisted setup");
       expect(chatAgentLoopRunner.execute).toHaveBeenCalledOnce();
-      const intent = events.find((event): event is Extract<ChatEvent, { type: "activity" }> =>
-        event.type === "activity" && event.sourceId === "intent:first-step"
-      );
-      expect(intent?.message).toContain("visible tool activity");
-      expect(intent?.message).toContain("I understand the request");
-      expect(intent?.presentation?.gatewayNarration).toMatchObject({
-        audience: "user",
-        phase: "planning",
-        subject: "the request",
-      });
+      expect(events.some((event) =>
+        event.type === "activity" && event.presentation?.gatewayNarration?.audience === "user"
+      )).toBe(false);
       expect(events.map((event) => event.type === "activity" ? event.message : "").join("\n"))
         .not.toContain("このリクエスト");
       expect(JSON.stringify(events)).not.toContain("123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi");
@@ -5483,11 +5457,11 @@ describe("ChatRunner", () => {
       expect(result.success).toBe(true);
       expect(result.output).toContain("one more detail");
       expect(chatAgentLoopRunner.execute).toHaveBeenCalledOnce();
-      const intent = events.find((event): event is Extract<ChatEvent, { type: "activity" }> =>
-        event.type === "activity" && event.sourceId === "intent:first-step"
-      );
-      expect(intent?.message).toContain("visible tool activity");
-      expect(intent?.message).not.toContain("resume the saved agent loop state");
+      expect(events.some((event) =>
+        event.type === "activity" && event.presentation?.gatewayNarration?.audience === "user"
+      )).toBe(false);
+      expect(events.map((event) => event.type === "activity" ? event.message : "").join("\n"))
+        .not.toContain("resume the saved agent loop state");
     });
 
     it("continues explicit implementation requests into the coding agent-loop", async () => {
@@ -5520,10 +5494,9 @@ describe("ChatRunner", () => {
       expect(result.success).toBe(true);
       expect(result.output).toBe("Implementation done");
       expect(chatAgentLoopRunner.execute).toHaveBeenCalledOnce();
-      const intent = events.find((event): event is Extract<ChatEvent, { type: "activity" }> =>
-        event.type === "activity" && event.sourceId === "intent:first-step"
-      );
-      expect(intent?.message).toContain("inspect or change files with visible tool activity");
+      expect(events.some((event) =>
+        event.type === "activity" && event.presentation?.gatewayNarration?.audience === "user"
+      )).toBe(false);
     });
 
     it("routes direct assist without agent-loop resume intent copy", async () => {
@@ -5551,11 +5524,11 @@ describe("ChatRunner", () => {
       expect(result.success).toBe(true);
       expect(result.output).toBe("Here is the explanation.");
       expect(chatAgentLoopRunner.execute).toHaveBeenCalledOnce();
-      const intent = events.find((event): event is Extract<ChatEvent, { type: "activity" }> =>
-        event.type === "activity" && event.sourceId === "intent:first-step"
-      );
-      expect(intent?.message).toContain("visible tool activity");
-      expect(intent?.message).not.toContain("resume the saved agent loop state");
+      expect(events.some((event) =>
+        event.type === "activity" && event.presentation?.gatewayNarration?.audience === "user"
+      )).toBe(false);
+      expect(events.map((event) => event.type === "activity" ? event.message : "").join("\n"))
+        .not.toContain("resume the saved agent loop state");
     });
 
     it("keeps non-native-tool clients on the local LLM/tool loop instead of the adapter fallback", async () => {

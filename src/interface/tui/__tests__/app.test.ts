@@ -1336,7 +1336,7 @@ describe("standalone slash command routing", () => {
     const submit = testState.lastChatProps!.onSubmit("telegramからseedyと会話できるようにしたい");
     await vi.waitFor(() => {
       const visibleText = testState.lastChatMessages.map((message) => message.text).join("\n");
-      expect(visibleText).toContain("Working turn started");
+      expect(visibleText).toContain("Calling model...");
       expect(visibleText).not.toContain("pulseed telegram setup");
     });
     statusLookupCanFinish.resolve();
@@ -1352,9 +1352,9 @@ describe("standalone slash command routing", () => {
     await vi.waitFor(() => {
       const visibleText = testState.lastChatMessages.map((message) => message.text).join("\n");
       expect(visibleText).toContain("pulseed telegram setup");
-      expect(visibleText).toContain("I understand the request");
-      expect(visibleText).toContain("Next I will");
-      expect(visibleText).toContain("This is needed");
+      expect(visibleText).not.toContain("I understand the request");
+      expect(visibleText).not.toContain("Next I will");
+      expect(visibleText).not.toContain("This is needed");
       expect(visibleText).not.toContain("このリクエスト");
       expect(visibleText).not.toContain("resume the saved agent loop state");
     });

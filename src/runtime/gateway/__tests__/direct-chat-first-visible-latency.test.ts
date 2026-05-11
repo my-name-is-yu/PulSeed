@@ -80,6 +80,30 @@ function makeTextStreamLLM(text: string): ILLMClient & { firstModelRequestAt: nu
   return client;
 }
 
+function createDeferred<T = void>(): {
+  promise: Promise<T>;
+  resolve: (value: T | PromiseLike<T>) => void;
+  reject: (reason?: unknown) => void;
+} {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+async function waitUntil(predicate: () => boolean, timeoutMs = 1000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() > deadline) {
+      throw new Error("Timed out waiting for condition");
+    }
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
 interface TransportCall {
   kind: "progress_send" | "progress_edit" | "progress_delete" | "final_send" | "final_edit";
   text: string;
@@ -198,7 +222,7 @@ describe("gateway direct chat first visible projection", () => {
       text: "やあ！",
     });
     expect(result.firstProjectedAssistantTextMs).not.toBeNull();
-    expect(result.firstProjectedAssistantTextMs!).toBeLessThanOrEqual(3_000);
+    expect(result.firstProjectedAssistantTextMs!).toBeLessThanOrEqual(2_000);
     expect(result.llmClient.firstModelRequestAt).not.toBeNull();
     expect(result.llmClient.firstModelRequestAt!).toBeGreaterThanOrEqual(result.startAt);
     expect(result.llmClient.calls).toHaveLength(1);
@@ -208,21 +232,85 @@ describe("gateway direct chat first visible projection", () => {
       text: "やあ！",
     });
     expect(result.events.some((event) =>
-      event.type === "activity" && (
-        event.sourceId === "intent:first-step"
-        || event.message === "I'm still working..."
-      )
+      event.type === "activity"
+      && (event.presentation?.gatewayNarration?.audience === "user" || event.message === "I'm still working...")
     )).toBe(false);
     expect(result.transport.calls.some((call) =>
       call.kind.startsWith("progress") && (
         call.text.includes("Calling model")
         || call.text.includes("I'm still working")
-        || call.text.includes("intent:first-step")
       )
     )).toBe(false);
     expect(result.events.some((event) =>
       event.type === "activity" && event.sourceId === "checkpoint:runtime-evidence"
     )).toBe(false);
+  });
+
+  it("projects assistant_delta to the Telegram-shaped final surface before model terminal completion", async () => {
+    const transport = createRecordingTransport();
+    const displayProjector = new NonTuiDisplayProjector({
+      display: {
+        capabilities: TELEGRAM_GATEWAY_DISPLAY_CONTRACT.capabilities,
+        policy: {
+          ...createGatewayDisplayPolicy(TELEGRAM_GATEWAY_DISPLAY_CONTRACT.capabilities),
+          progressSurface: "editable",
+          finalSurface: "edit_stream",
+          cleanupPolicy: "collapse",
+        },
+      },
+      transport,
+    });
+    const terminal = createDeferred<LLMResponse>();
+    let sawDelta = false;
+    let dispatchSettled = false;
+    const llmClient: ILLMClient = {
+      supportsToolCalling: () => true,
+      sendMessage: vi.fn(async () => {
+        throw new Error("sendMessage should not be used.");
+      }),
+      sendMessageStream: vi.fn(async (_messages, _options, handlers) => {
+        handlers.onTextDelta?.("やあ！");
+        sawDelta = true;
+        return terminal.promise;
+      }),
+      parseJSON: vi.fn((content: string, schema: z.ZodType) => schema.parse(JSON.parse(content))),
+    };
+    const manager = new CrossPlatformChatSessionManager(makeDeps({
+      llmClient,
+      registry: new ToolRegistry(),
+    }));
+    registerGatewayChatSessionPort(async () => manager);
+
+    const pending = dispatchGatewayChatInput({
+      text: "やあ！",
+      platform: "telegram",
+      identity_key: "fake-telegram-stream-user",
+      conversation_id: "fake-telegram-stream-chat",
+      sender_id: "fake-telegram-user",
+      message_id: "fake-message-stream",
+      cwd: "/repo",
+      onEvent: async (event) => {
+        await displayProjector.handle(event as unknown as ChatEvent);
+      },
+    }).finally(() => {
+      dispatchSettled = true;
+    });
+    await waitUntil(() => sawDelta && transport.calls.length > 0);
+
+    expect(sawDelta).toBe(true);
+    expect(dispatchSettled).toBe(false);
+    expect(transport.calls[0]).toMatchObject({
+      kind: "final_send",
+      text: "やあ！",
+    });
+
+    terminal.resolve({
+      content: "やあ！",
+      usage: { input_tokens: 1, output_tokens: 1 },
+      stop_reason: "end_turn",
+      tool_calls: [],
+    });
+    await expect(pending).resolves.toBe("やあ！");
   });
 
   it("does not emit generic fallback acknowledgements for ordinary fake Telegram admission/orienting presence", async () => {

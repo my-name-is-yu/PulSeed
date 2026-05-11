@@ -7,7 +7,7 @@ import { LLMClient, type ILLMClient } from "./llm-client.js";
 import { LLMError } from "../utils/errors.js";
 import { OllamaLLMClient } from "./ollama-client.js";
 import { OpenAILLMClient } from "./openai-client.js";
-import { CodexLLMClient } from "./codex-llm-client.js";
+import { CodexLLMClient, isCodexOAuthAccessToken } from "./codex-llm-client.js";
 import { loadProviderConfig } from "./provider-config.js";
 import { AdapterRegistry } from "../../orchestrator/execution/adapter-layer.js";
 import { ClaudeCodeCLIAdapter } from "../../adapters/agents/claude-code-cli.js";
@@ -46,6 +46,7 @@ export async function buildLLMClient(providerConfig?: ProviderConfig): Promise<I
           security: config.agent_loop?.security,
         });
         return new CodexLLMClient({
+          apiKey: isCodexOAuthAccessToken(config.api_key) ? config.api_key : undefined,
           cliPath: config.codex_cli_path,
           model: config.model,
           lightModel: config.light_model,
