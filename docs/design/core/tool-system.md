@@ -1,5 +1,7 @@
 # PulSeed Tool System Design --- Tools as the Universal Capability Layer
 
+> Status: Design document. Verify behavior against source code and current operating docs before treating this as implementation guidance.
+
 > Date: 2026-04-04
 > Status: Draft
 > Related: `execution-boundary.md`, `mechanism.md`, `observation.md`, `task-lifecycle.md`, `knowledge-acquisition.md`, `cc-inspired-improvements.md`
@@ -2941,7 +2943,7 @@ This means the tool system is a **purely additive** change. No existing behavior
 
 **Section 3.3, 3.6**: Replace hardcoded strings with tool-based discovery (Glob, Read) of actual capabilities.
 
-### 13.6 docs/vision.md
+### 13.6 docs/roadmap/vision.md
 
 **Section 5.8 (Delegation Layer)**: Add note that PulSeed now has a perception tool layer beneath the delegation layer, enabling direct observation without agent sessions.
 
@@ -3047,9 +3049,9 @@ This means the tool system is a **purely additive** change. No existing behavior
 
 ### 15.2 Tool Output Size Limits
 
-**Decision** (resolved): Each tool defines `maxOutputChars` limit. When exceeded: full output persisted to disk (`~/.pulseed/tool-output/<invocation-id>.json`), LLM receives truncated version with `[truncated: N more lines — full output at <path>]`. Default limit: 8000 chars (~2000 tokens). This improves on CC's approach (CC has no intelligent truncation — known bug #12054 where 580k tokens crashed a session).
+**Decision** (resolved): Each tool defines `maxOutputChars` limit. When exceeded: full output persisted to disk (`~/.pulseed/tool-output/<invocation-id>.json`), LLM receives truncated version with `[truncated: N more lines — full output at <path>]`. Default limit: 8000 chars (~2000 tokens). This improves on CC's approach (CC has no intelligent truncation — known known bug where 580k tokens crashed a session).
 
-**CC Reference**: CC lacks intelligent truncation — bug #12054 documents a session crash caused by 580k tokens from untruncated tool output.
+**CC Reference**: CC lacks intelligent truncation — known bug documents a session crash caused by 580k tokens from untruncated tool output.
 
 **Rationale**: Persisting full output to disk preserves data while protecting context budget. The truncation suffix gives the LLM a retrieval path if it needs the full output. 8000 chars is conservative enough to prevent runaway context growth.
 
@@ -3099,9 +3101,9 @@ Future unification path: re-implement self-knowledge tools as ITool instances re
 
 ### 15.7 Shell Command Discovery
 
-**Decision** (resolved): Start with static safe-command and deny-command regex lists. Log all Shell invocations with command, outcome, and approval status. Follow CC's pattern: speculative classification runs before permission check (Bash-only optimization). Compound commands decomposed and each segment checked independently (CC's fix for `&&` chaining bypass, issue #28784). Learning mechanism deferred — consider after accumulating usage data.
+**Decision** (resolved): Start with static safe-command and deny-command regex lists. Log all Shell invocations with command, outcome, and approval status. Follow CC's pattern: speculative classification runs before permission check (Bash-only optimization). Compound commands are decomposed and each segment checked independently to avoid `&&` chaining bypasses. Learning mechanism deferred — consider after accumulating usage data.
 
-**CC Reference**: CC performs speculative shell classification before the permission check as a Bash-only optimization. CC issue #28784 fixed a security bypass where `&&`-chained commands could smuggle denied commands past a safe prefix.
+**CC Reference**: CC performs speculative shell classification before the permission check as a Bash-only optimization. Its chained-command handling fixed a security bypass where `&&`-chained commands could smuggle denied commands past a safe prefix.
 
 **Rationale**: Static lists are auditable and predictable. Compound command decomposition is a security requirement, not an optimization — `safe_cmd && denied_cmd` must be blocked. Learning mechanism deferred until we have real usage data to learn from.
 

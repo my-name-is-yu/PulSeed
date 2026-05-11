@@ -1,5 +1,7 @@
 # Runtime Auto-Recovery
 
+> Status: Design document. Verify behavior against source code and current operating docs before treating this as implementation guidance.
+
 This document describes how PulSeed stabilizes and recovers its long-lived resident daemon. The design target is months-long operation on a single machine without an external broker. It replaces the earlier in-memory queue design with a durable single-node runtime that can recover from daemon, dispatcher, worker, and mid-task failures without silently losing goal state, task context, memory, or schedule state.
 
 ## Summary

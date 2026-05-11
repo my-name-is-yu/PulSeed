@@ -1,7 +1,8 @@
 # Companion Autonomy Spine
 
-Status: spine design for #1187, #1188, #1190, and the safety substrate from
-#1189.
+> Status: Design document. Verify behavior against source code and current operating docs before treating this as implementation guidance.
+
+Status: companion autonomy spine design.
 
 This document defines the shared design spine for PulSeed's living-feeling
 autonomy. It is intentionally not a delivery plan, first-release cut, or task
@@ -44,19 +45,19 @@ act, speak, resume, notify, or update long-term state. PulSeed becomes more
 alive by developing internal continuity and restraint, not by increasing visible
 activity.
 
-## Source Issues
+## Source Design Lanes
 
-The issues are not four independent products. They define adjacent layers of
+The design lanes are not four independent products. They define adjacent layers of
 one pipeline.
 
-| Issue | Spine role | Layer design |
-| --- | --- | --- |
-| #1187 | Relationship memory, living context, governed Surface selection | [Relationship Memory And Surface](relationship-memory-surface.md) |
-| #1188 | Attention metabolism, urge maturation, initiative gating, expression choice | [Attention Metabolism And Initiative](attention-metabolism-initiative.md) |
-| #1190 | Runtime control plane, posture, authority, staleness, inspectability, audit | [Runtime Control Plane](../infrastructure/runtime-control-plane.md) |
-| #1189 | Runtime safety substrate for auth, browser sessions, guardrails, backpressure | [Runtime Auth, Browser Session, And Guardrail Control Model](../infrastructure/runtime-auth-browser-guardrails.md) |
+| Spine role | Layer design |
+| --- | --- |
+| Relationship memory, living context, governed Surface selection | [Relationship Memory And Surface](relationship-memory-surface.md) |
+| Attention metabolism, urge maturation, initiative gating, expression choice | [Attention Metabolism And Initiative](attention-metabolism-initiative.md) |
+| Runtime control plane, posture, authority, staleness, inspectability, audit | [Runtime Control Plane](../infrastructure/runtime-control-plane.md) |
+| Runtime safety substrate for auth, browser sessions, guardrails, backpressure | [Runtime Auth, Browser Session, And Guardrail Control Model](../infrastructure/runtime-auth-browser-guardrails.md) |
 
-#1192 is intentionally downstream. It can render or embody the output of this
+The future GUI layer is intentionally downstream. It can render or embody the output of this
 spine, but it must not redefine the semantics of memory use, attention,
 authority, staleness, control, or audit.
 
@@ -229,7 +230,7 @@ anti-memory rule, or seed
 candidate. The same source event can yield multiple records with different
 roles and record kinds.
 
-Spine-level `record_kind` vocabulary mirrors the #1187 layer contract:
+Spine-level `record_kind` vocabulary mirrors the relationship-memory layer contract:
 
 ```text
 stable_profile_fact
@@ -250,7 +251,7 @@ anti_memory_rule
 seed_candidate
 ```
 
-This split matters because #1187's concrete requirements are not satisfied by
+This split matters because relationship-memory requirements are not satisfied by
 memory roles alone. Stable facts, preferences, routines, boundaries,
 intervention policy, and episodic events each need their own contract fields,
 staleness behavior, correction behavior, and Surface invalidation behavior.
@@ -1198,9 +1199,9 @@ Feedback can produce governed memory updates, permission changes, Surface
 changes, control policy changes, or audit annotations. It must not silently
 produce broader psychological claims about the user.
 
-## Safety Substrate From #1189
+## Safety Substrate
 
-#1189 is a concrete runtime safety domain inside the broader spine.
+Runtime safety is a concrete domain inside the broader spine.
 
 Auth handoffs, browser sessions, guardrails, and backpressure are runtime items
 with explicit authority, staleness, visibility, and control policies.

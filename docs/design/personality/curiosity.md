@@ -1,5 +1,7 @@
 # Curiosity (Meta-Iteration) Design
 
+> Status: Design document. Verify behavior against source code and current operating docs before treating this as implementation guidance.
+
 > Related: `drive-system.md`, `drive-scoring.md`, `stall-detection.md`, `observation.md`, `satisficing.md`
 
 ---

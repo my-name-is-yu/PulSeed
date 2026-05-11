@@ -1,5 +1,7 @@
 # Task Lifecycle Design
 
+> Status: Design document. Verify behavior against source code and current operating docs before treating this as implementation guidance.
+
 > Defines the full process from when a task is generated to when it is completed or fails.
 > This document concretely describes "what a task is," "how it is created, executed, and concluded."
 

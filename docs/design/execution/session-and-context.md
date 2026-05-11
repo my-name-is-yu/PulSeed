@@ -1,5 +1,7 @@
 # Session and Context Management
 
+> Status: Design document. Verify behavior against source code and current operating docs before treating this as implementation guidance.
+
 > How PulSeed manages finite context windows while pursuing long-term goals.
 
 ---

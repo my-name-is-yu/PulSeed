@@ -1,6 +1,8 @@
 # Companion Capability Runtime
 
-Status: design proposal for #1191 under
+> Status: Design document. Verify behavior against source code and current operating docs before treating this as implementation guidance.
+
+Status: companion capability runtime design proposal under
 [Companion Autonomy Spine](../core/companion-autonomy-spine.md).
 
 This document defines the capability substrate and autonomy governor needed for
@@ -125,7 +127,7 @@ The design must attach to existing caller paths before new stores are added.
 | Permission decisions | `src/runtime/permission-grant-decision.ts`, `src/tools/permission-grant-evaluator.ts`, approval-related chat/tool paths | Permission grants are scoped evidence, not evergreen capability trust or autonomous authority. |
 | Runtime control | `docs/design/infrastructure/runtime-control-plane.md`, `src/runtime/control/runtime-control-service.ts`, `src/runtime/store/`, `src/runtime/session-registry/` | Runtime control owns admission, staleness, authority, visibility, control, and audit for action-bearing operations. |
 | Grounding and Surface | `src/grounding/gateway.ts`, `src/grounding/contracts.ts`, grounding providers | Memory and profile context may inform decisions only through governed Surface, not by direct prompt or raw file shortcuts. |
-| Public docs, demos, status, and operator surfaces | `README.md`, `docs/mechanism.md`, `docs/configuration.md`, `docs/index.md`, TUI/status/debug/operator views | Public docs, demos, status, and operator/debug surfaces must not overstate executable capability. Normal companion UX should prefer the next best safe action over capability-state exposition. |
+| Docs, demos, status, and operator surfaces | `README.md`, `docs/mechanism.md`, `docs/configuration.md`, `docs/index.md`, TUI/status/debug/operator views | Docs, demos, status, and operator/debug surfaces must not overstate executable capability. Normal companion UX should prefer the next best safe action over capability-state exposition. |
 
 ## Core Objects
 
@@ -652,7 +654,7 @@ Rules:
    operate desktop/browser sessions, call side-effecting MCP tools, or invoke
    foreign plugins without a separate admission and autonomy decision.
 4. It must not directly create, append, update, overwrite, delete, or publish
-   into protected targets: public docs, user-authored memory, hand-maintained
+   into protected targets: docs, user-authored memory, hand-maintained
    files, published artifacts, or user-authored skills. Those changes go through
    quarantine, proposal, review, or approval-required flows.
 5. Privacy, quieting, tombstone, deletion, workspace boundary, and relationship
@@ -1076,7 +1078,7 @@ Normal companion UX should prefer the next best safe action over exposing raw
 capability state. For example, say "I can prepare the draft and ask before
 sending" instead of foregrounding `approval_required`.
 
-Public docs, demos, status, and operator/debug surfaces must not overstate
+Docs, demos, status, and operator/debug surfaces must not overstate
 capability.
 
 Allowed labels should be derived from readiness:
@@ -1210,7 +1212,7 @@ Required cases:
   hinting, audit append, and readiness observation can receive default
   `autonomous_low_risk` decisions when they are local, reversible or append-only,
   non-interruptive, and have no external side effects.
-- Soil local materialization or Knowledge learning that targets public docs,
+- Soil local materialization or Knowledge learning that targets docs,
   user-authored memory, hand-maintained files, published artifacts, or
   user-authored skills must return quarantine, proposal, review, or
   approval-required, not

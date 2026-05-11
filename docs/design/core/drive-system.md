@@ -1,5 +1,7 @@
 # Drive System
 
+> Status: Design document. Verify behavior against source code and current operating docs before treating this as implementation guidance.
+
 > The decision structure for when and why PulSeed acts. Design of scheduling and triggers.
 
 ---

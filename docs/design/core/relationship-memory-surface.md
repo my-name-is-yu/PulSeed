@@ -1,6 +1,8 @@
 # Relationship Memory And Surface
 
-Status: layer design for #1187 under
+> Status: Design document. Verify behavior against source code and current operating docs before treating this as implementation guidance.
+
+Status: relationship memory and Surface layer design under
 [Companion Autonomy Spine](companion-autonomy-spine.md).
 
 This document defines the governed memory and Surface layer for PulSeed's
@@ -208,7 +210,7 @@ Minimum record-kind contract requirements:
 | `open_tension` | tension statement, uncertainty status, allowed reasoning uses, forbidden inference uses |
 | `seed_candidate` | proposed target role/kind, source evidence, confidence, allowed maturation path, rejection rule |
 
-Issue #1187's typed contracts for stable facts, preferences, routines,
+This layer's typed contracts for stable facts, preferences, routines,
 boundaries, intervention policy, and episodic events are satisfied by
 `record_kind`, not by overloading `role`. `role` remains the companion-behavior
 lane; `record_kind` remains the storage and validation contract.
@@ -579,7 +581,7 @@ Example:
 
 ```text
 Included:
-  WorkMemory: current design task is #1187 relationship memory design.
+  WorkMemory: current design task is relationship memory design.
   Boundary: do not turn relationship memory into engagement optimization.
   Tension: PulSeed should feel alive while preserving user agency.
 

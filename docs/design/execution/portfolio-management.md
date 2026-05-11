@@ -1,5 +1,7 @@
 # Portfolio Management Design — Strategy Discovery, Parallel Execution, and Rebalancing
 
+> Status: Design document. Verify behavior against source code and current operating docs before treating this as implementation guidance.
+
 > This document defines the mechanism for managing "strategies" — the means of closing a Goal's Gap — as explicit entities,
 > and for running multiple strategies in parallel as a portfolio, measuring their effectiveness, and rebalancing resources.
 

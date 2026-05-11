@@ -1,5 +1,7 @@
 # Token Optimization Design
 
+> Status: Design document. Verify behavior against source code and current operating docs before treating this as implementation guidance.
+
 > Token cost is the primary barrier to PulSeed adoption. A single loop iteration makes 3-7 LLM calls, meaning a goal with 3 dimensions and 10 iterations costs 50-70 API calls before any real work is done. This document defines three independent optimization pillars that together reduce LLM token consumption by an estimated 60-80% without degrading observation quality or loop correctness.
 
 > Current implementation note: this document predates the current dual-loop architecture and the reorganized source tree. Optimizations here now apply across DurableLoop, bounded AgentLoop phases, chat compaction, and native task execution rather than only a single flat loop body.

@@ -1,6 +1,8 @@
 # Exact Protocol Grammar Boundaries
 
-Status: Wave 1 contract for #1119 under the Codex-like interaction epic.
+> Status: Design document. Verify behavior against source code and current operating docs before treating this as implementation guidance.
+
+Status: Wave 1 contract under the Codex-like interaction epic.
 
 This note defines where deterministic parsing is allowed. It is intentionally
 separate from freeform semantic routing: exact protocol parsers recognize

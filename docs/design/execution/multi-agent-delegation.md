@@ -1,6 +1,8 @@
 # Multi-Agent Delegation Design
 
-> Issue #33. Defines how PulSeed delegates a single task across multiple agents with divided responsibilities.
+> Status: Design document. Verify behavior against source code and current operating docs before treating this as implementation guidance.
+
+> Design note. Defines how PulSeed delegates a single task across multiple agents with divided responsibilities.
 > Core principle: **Define appropriate roles and delegate to appropriate capabilities. Roles are domain-agnostic and extensible.**
 
 > Current implementation note: the codebase layout referenced below has since moved under `src/orchestrator/` and `src/interface/`. Also, native `agent_loop` now covers a substantial part of bounded execution. Read this document as a design for larger multi-agent/task-group orchestration on top of the current DurableLoop + AgentLoop baseline.

@@ -1,6 +1,8 @@
 # Codex-Like User Interaction Contract
 
-Status: target contract for #1104 child issues
+> Status: Design document. Verify behavior against source code and current operating docs before treating this as implementation guidance.
+
+Status: target contract for Codex-like interaction behavior.
 
 This document defines the target interaction contract for PulSeed's
 Codex-like natural-language chat surfaces. It is an implementation-facing
@@ -34,7 +36,7 @@ same contract in a machine-checkable form for later production tests.
 ### UserInput
 
 Every surface creates a `UserInput` item list before route or model execution.
-The initial #1106 shape should support at least these item kinds:
+The initial interaction shape should support at least these item kinds:
 
 | Kind | Contents | Notes |
 | --- | --- | --- |
@@ -315,12 +317,12 @@ paths or stale route caches.
 
 ## Implementation Order
 
-1. #1106: introduce canonical `UserInput` and make TUI/non-TUI ingress produce
+1. Introduce canonical `UserInput` and make TUI/non-TUI ingress produce
    equivalent typed input without freeform pre-classification.
-2. #1107: introduce or unify `TurnStart` and `TurnSteer` so active work is
+2. Introduce or unify `TurnStart` and `TurnSteer` so active work is
    steered and idle input starts a new turn.
-3. #1108: assemble first-class `TurnContext` and separate model-visible from
+3. Assemble first-class `TurnContext` and separate model-visible from
    host-only state.
-4. #1109: route ordinary chat model calls through a central request builder
+4. Route ordinary chat model calls through a central request builder
    that combines history, base instructions, `TurnContext`, and typed tool
    schemas.

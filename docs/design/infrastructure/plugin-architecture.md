@@ -1,5 +1,7 @@
 # Plugin Architecture Design
 
+> Status: Design document. Verify behavior against source code and current operating docs before treating this as implementation guidance.
+
 > PulSeed plugins are not "tools users call" — they are "tools PulSeed autonomously selects and uses."
 > This document defines the mechanism for extending external service integrations, notifications, and data observation as plugins,
 > and how PulSeed autonomously selects them and evaluates their trustworthiness.

@@ -1,5 +1,7 @@
 # Gap Calculation Design
 
+> Status: Design document. Verify behavior against source code and current operating docs before treating this as implementation guidance.
+
 This document describes how the gap between a goal's current state and its target state is quantified, along with the structure and design decisions behind gap calculation.
 
 ---

@@ -1,5 +1,7 @@
 # State Vector Design
 
+> Status: Design document. Verify behavior against source code and current operating docs before treating this as implementation guidance.
+
 > `mechanism.md` defines "what is observed and how gaps are recognized." This document defines the concrete design of the **state vector** — the data structure that stores observation results and goal state.
 
 ---

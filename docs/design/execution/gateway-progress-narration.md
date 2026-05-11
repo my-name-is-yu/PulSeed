@@ -1,5 +1,7 @@
 # Gateway Progress Narration
 
+> Status: Design document. Verify behavior against source code and current operating docs before treating this as implementation guidance.
+
 PulSeed non-TUI gateway progress uses a typed public narration contract. Default chat surfaces should show short liveness updates derived from event kind, phase, audience, importance, verbosity, and activity category. They must not render diagnostic model/provider/tool-catalog/turn-context details unless a debug surface explicitly asks for them.
 
 ## Surface Matrix

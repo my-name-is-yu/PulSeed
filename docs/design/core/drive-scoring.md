@@ -1,5 +1,7 @@
 # Drive Scoring Design
 
+> Status: Design document. Verify behavior against source code and current operating docs before treating this as implementation guidance.
+
 How to quantify the priority judgment for "what to tackle next." PulSeed defines three drive types, each of which reads the gap vector from a different angle. This document describes the calculation structure and design decisions behind that.
 
 As a prerequisite, see `gap-calculation.md` for the gap calculation structure.

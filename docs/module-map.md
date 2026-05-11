@@ -1,6 +1,6 @@
 # Module Map
 
-This is the current public module map for the reorganized codebase.
+This is the current module map for the reorganized codebase.
 It is intentionally oriented around stable directories and major entry points rather than an exhaustive per-file inventory.
 
 ## 1. Public entry points

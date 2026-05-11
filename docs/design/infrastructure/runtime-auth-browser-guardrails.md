@@ -1,11 +1,13 @@
 # Runtime Auth, Browser Session, And Guardrail Control Model
 
-Status: design proposal for #1189.
+> Status: Design document. Verify behavior against source code and current operating docs before treating this as implementation guidance.
+
+Status: runtime auth, browser session, and guardrail design proposal.
 
 This document defines the runtime model for auth handoffs, browser authenticated
 sessions, guardrail and backpressure state, observability, and operator
-controls. It replaces the older implementation-shaped issue chain #784 through
-#789 with a smaller set of contract-first implementation slices.
+controls. It replaces older implementation-shaped work with a smaller set of
+contract-first implementation slices.
 
 ## Goals
 
@@ -441,9 +443,9 @@ Tests must use production entrypoint shapes, not only lower-level fake objects.
 - Daemon scheduling tests for backpressure/degraded-mode behavior when that
   slice lands.
 
-## Implementation Issue Split
+## Implementation Slice Split
 
-The design should be implemented as separate child issues:
+The design should be implemented as separate slices:
 
 1. Add first-class runtime auth handoff records and lifecycle transitions.
 2. Share browser session resolution across read and workflow tools.
@@ -452,5 +454,5 @@ The design should be implemented as separate child issues:
    guardrails.
 5. Lift browser backpressure into daemon scheduling and degraded-mode behavior.
 
-Do not implement GUI-specific behavior in this issue chain. GUI #1192 should
+Do not implement GUI-specific behavior in this slice chain. GUI work should
 consume the typed snapshot and runtime-control contracts after they exist.

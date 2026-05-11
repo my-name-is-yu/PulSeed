@@ -1,5 +1,7 @@
 # Goal Refinement Pipeline
 
+> Status: Design document. Verify behavior against source code and current operating docs before treating this as implementation guidance.
+
 > Related: `goal-tree.md`, `gap-calculation.md`, `satisficing.md`
 
 > Current implementation note: parts of this design have been implemented, but this document still mixes proposal text with older file paths. The current code lives under `src/orchestrator/goal/` and `src/orchestrator/loop/`. Read this as the design rationale for unifying goal negotiation, decomposition, and runtime re-refinement.

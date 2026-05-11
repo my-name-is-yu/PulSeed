@@ -1,5 +1,7 @@
 # PulSeed Brand Design Guide
 
+> Status: Design document. Verify behavior against source code and current operating docs before treating this as implementation guidance.
+
 ## Overview
 
 PulSeed is a lifelong personal agent that remembers your goals, watches the world with you, and keeps helping move your life forward. The brand sits at the intersection of a professional developer tool and a warm, approachable character-driven product — think GitHub's Mona Lisa, or Rust's Ferris. Playful mascot, serious infrastructure.

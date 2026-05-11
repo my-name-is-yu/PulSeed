@@ -1,5 +1,7 @@
 # Database-First State Ownership
 
+> Status: Design document. Verify behavior against source code and current operating docs before treating this as implementation guidance.
+
 Status: implementation ownership map for the database-first durable state refactor.
 
 PulSeed's durable internal state is owned by typed SQLite stores. Legacy JSON,

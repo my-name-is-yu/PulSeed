@@ -1,6 +1,8 @@
 # Runtime Control Plane
 
-Status: layer design for #1190 under
+> Status: Design document. Verify behavior against source code and current operating docs before treating this as implementation guidance.
+
+Status: runtime control plane layer design under
 [Companion Autonomy Spine](../core/companion-autonomy-spine.md).
 
 This document defines the internal runtime control plane for PulSeed's quiet
@@ -133,7 +135,7 @@ be reimplemented independently by chat, TUI, daemon, or gateway adapters.
 | TUI surface | `src/interface/tui/entry.ts`, `src/interface/tui/chat-surface.ts`, `src/interface/tui/use-loop.ts` | TUI should consume the same runtime events and controls as chat. |
 | Daemon and schedule runtime | `src/runtime/daemon/`, `src/runtime/schedule/engine.ts`, `src/runtime/schedule/` | Daemon/schedule emit runtime state and events; they must not bypass attention or Surface. |
 | Grounding and Surface | `src/grounding/gateway.ts`, `src/grounding/contracts.ts`, grounding providers | Runtime actions depending on memory must reference the Surface assembled through this boundary. |
-| Auth/browser/guardrails/backpressure | `src/runtime/control/`, `src/runtime/daemon/`, #1189 safety stores | These remain hard safety inputs for authority, staleness, and companion state. |
+| Auth/browser/guardrails/backpressure | `src/runtime/control/`, `src/runtime/daemon/`, runtime safety stores | These remain hard safety inputs for authority, staleness, and companion state. |
 
 Future `OutcomeDecision`, `ExpressionDecision`, `SurfaceInvalidationEvent`, and
 `CompanionStateSnapshot` stores should be placed at the runtime/grounding
@@ -801,7 +803,7 @@ preserving inspectability through redacted audit.
 
 ## Safety Substrate
 
-The #1189 safety substrate is a concrete domain inside this control plane.
+The runtime safety substrate is a concrete domain inside this control plane.
 
 Auth handoffs, browser sessions, guardrails, and backpressure should behave as
 runtime items with authority, staleness, control policy, visibility policy, and

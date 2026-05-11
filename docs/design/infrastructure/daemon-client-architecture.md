@@ -1,5 +1,7 @@
 # Daemon-Client Architecture
 
+> Status: Design document. Verify behavior against source code and current operating docs before treating this as implementation guidance.
+
 **Status:** Design
 **Author:** Auto-generated
 **Date:** 2026-04-05

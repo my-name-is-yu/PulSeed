@@ -1,5 +1,7 @@
 # Satisficing Design — Judging "Good Enough"
 
+> Status: Design document. Verify behavior against source code and current operating docs before treating this as implementation guidance.
+
 > PulSeed does not chase perfection. It judges "good enough" and stops.
 > This document defines the logic for determining "when and what constitutes good enough."
 

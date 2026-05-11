@@ -1,5 +1,7 @@
 # Memory Lifecycle Design
 
+> Status: Design document. Verify behavior against source code and current operating docs before treating this as implementation guidance.
+
 > PulSeed runs for years. Data accumulates without bound, but LLM context windows are finite.
 > This document defines how to manage accumulating data hierarchically, and how to surface the right memories at the right time.
 

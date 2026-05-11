@@ -1,5 +1,7 @@
 # Goal Negotiation Mechanism Design
 
+> Status: Design document. Verify behavior against source code and current operating docs before treating this as implementation guidance.
+
 > `mechanism.md` "3. Handling Goals" defines the concept of goal negotiation. This document defines the concrete design of that negotiation mechanism — specifically how to achieve the honest assessment that "10× is difficult, but 2× is achievable."
 
 ---

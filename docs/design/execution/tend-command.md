@@ -1,5 +1,7 @@
 # `/tend` — Chat-to-DurableLoop Handoff Command
 
+> Status: Design document. Verify behavior against source code and current operating docs before treating this as implementation guidance.
+
 > Current implementation note: chat/TUI are now built on a stronger native AgentLoop path, and daemon/runtime ownership has evolved since this document was written. Treat `/tend` here as a handoff pattern from bounded chat execution into long-lived goal control, not as a precise wire-level description of the current UI/runtime code.
 
 ## 1. Overview

@@ -1,5 +1,7 @@
 # Observation System Design
 
+> Status: Design document. Verify behavior against source code and current operating docs before treating this as implementation guidance.
+
 > `runtime.md` defines that "result verification is performed across 3 layers." This document provides a concrete design for that 3-layer observation system. The observation system is PulSeed's only window into the current state of the world.
 
 ---

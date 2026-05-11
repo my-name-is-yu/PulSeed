@@ -1,5 +1,7 @@
 # Knowledge Acquisition Design
 
+> Status: Design document. Verify behavior against source code and current operating docs before treating this as implementation guidance.
+
 > PulSeed does not start with all the knowledge needed to achieve a goal. But it can investigate, learn, and understand on its own.
 > This document defines the mechanism by which PulSeed actively investigates, acquires, stores, and applies knowledge in unfamiliar domains.
 

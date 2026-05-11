@@ -1,5 +1,7 @@
 # LLM Fault Tolerance Design
 
+> Status: Design document. Verify behavior against source code and current operating docs before treating this as implementation guidance.
+
 > Current implementation note: the risk model remains relevant, but many file paths below predate the current `src/orchestrator/`, `src/platform/`, and `src/base/` layout. Treat implementation-location bullets as approximate unless they already match the current tree.
 
 ---

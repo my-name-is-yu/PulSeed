@@ -1,5 +1,7 @@
 # WaitStrategy Design Document
 
+> Status: Design document. Verify behavior against source code and current operating docs before treating this as implementation guidance.
+
 > Cross-cutting concern: WaitStrategy is not a standalone module. It is a schema
 > (`strategy/types/strategy.ts`) with behavior split across PortfolioManager,
 > StallDetector, TimeHorizonEngine, and StrategyManager. This document describes

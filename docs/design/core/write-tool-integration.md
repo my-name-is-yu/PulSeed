@@ -1,5 +1,7 @@
 # Tool Integration Design
 
+> Status: Design document. Verify behavior against source code and current operating docs before treating this as implementation guidance.
+
 > Current implementation note: much of this integration has already happened. ChatRunner no longer represents the only tool-using path; the native AgentLoop runtime, DurableLoop phases, and task execution all share the built-in tool substrate. Read this document as a migration/design rationale, not as an untouched future plan.
 
 ## 1. Overview

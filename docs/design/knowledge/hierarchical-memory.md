@@ -1,5 +1,7 @@
 # Hierarchical Context Memory Design
 
+> Status: Design document. Verify behavior against source code and current operating docs before treating this as implementation guidance.
+
 > Applies the hierarchical memory model (core/recall/archival) pioneered by MemGPT/Letta to PulSeed's ContextProvider and MemoryLifecycle, improving the quality of context selection.
 
 > Related: `memory-lifecycle.md`, `session-and-context.md`, `knowledge-acquisition.md`

@@ -1,5 +1,7 @@
 # Reporting Design
 
+> Status: Design document. Verify behavior against source code and current operating docs before treating this as implementation guidance.
+
 > PulSeed reports to the user proactively — without being asked. It delivers the status of goal pursuit at the right time and at the right level of detail.
 > This document defines the types of reports, triggers, content, delivery channels, and verbosity control.
 

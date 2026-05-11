@@ -1,5 +1,7 @@
 # Dream Mode Design
 
+> Status: Design document. Verify behavior against source code and current operating docs before treating this as implementation guidance.
+
 > Dream Mode is PulSeed's offline memory and knowledge compiler. It collects execution traces, triages them into candidates, consolidates repeated signals into typed records, and emits bounded activation artifacts for runtime consumers. Dream is not the online search path and it is not Soil retrieval.
 
 ---
@@ -214,7 +216,7 @@ Activation points include:
 
 Every activation is gated by its own feature flag. The runtime should only read bounded evidence packs or small activation artifacts. There must be no hidden hard dependency on Dream for core execution.
 
-In the current public runtime, Dream activation features default to on because PulSeed is still in an experimentation-heavy phase and early users are expected to actively exercise memory-driven behaviors. Operators who want a more conservative posture can still disable individual activation flags in `~/.pulseed/dream/config.json`.
+In the current runtime, Dream activation features default to on because PulSeed is still in an experimentation-heavy phase and early users are expected to actively exercise memory-driven behaviors. Operators who want a more conservative posture can still disable individual activation flags in `~/.pulseed/dream/config.json`.
 
 Verified playbooks follow the same rule. Runtime may inject a compact playbook hint into task generation, but Dream must not silently create or overwrite executable skills as part of activation.
 
@@ -382,7 +384,7 @@ The design target is a single Dream system with:
 - one consolidation path
 - one activation policy surface
 
-Compatibility layers are acceptable during migration, but the public design should point new work toward the platform Dream path.
+Compatibility layers are acceptable during migration, but design docs should point new work toward the platform Dream path.
 
 ---
 

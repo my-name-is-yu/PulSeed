@@ -1,5 +1,7 @@
 # Learning Pipeline Design
 
+> Status: Design document. Verify behavior against source code and current operating docs before treating this as implementation guidance.
+
 > Related: `curiosity.md`, `session-and-context.md`, `stall-detection.md`, `observation.md`, `portfolio-management.md`
 
 ---

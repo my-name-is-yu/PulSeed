@@ -1,108 +1,99 @@
-# Public Documentation Map
+# PulSeed Documentation
 
-This page is the public entry point for PulSeed documentation.
-It defines the reading order, the source-of-truth policy, and the boundaries between start, concept, operation, reference, direction, design, and archived material.
+This is the entry point for PulSeed documentation.
 
-## Reading order
+PulSeed docs are organized by reader need:
+
+- **Start**: install PulSeed and run the first interactive session.
+- **Guide**: operate goals, runtime surfaces, daemon mode, schedules, and
+  gateway/chat workflows.
+- **Concepts**: understand the current execution model.
+- **Reference**: look up commands, configuration, runtime state, and package
+  checks.
+- **Architecture**: navigate the current source tree and stable subsystem map.
+- **Roadmap**: read product direction and future scenarios without treating them
+  as current behavior.
+- **Design**: read design documents, implementation contracts, audits,
+  and design history without treating them as operating instructions.
+
+## First-Reader Path
 
 1. [README](../README.md)
-2. [Positioning](positioning.md)
-3. [Getting Started](getting-started.md)
+2. [Getting Started](getting-started.md)
+3. [Guide](guide/index.md)
 4. [Runtime](runtime.md)
-5. [Mechanism](mechanism.md)
-6. [Configuration](configuration.md)
-7. [Architecture Map](architecture-map.md)
-8. [Module Map](module-map.md)
-9. [Vision](vision.md)
-10. [Use Cases](usecase.md)
-11. [Roadmap](roadmap.md)
-12. [Status](status.md)
-13. [Design Index](design/index.md)
+5. [Configuration](configuration.md)
+6. [Status](status.md)
 
-## Source of truth
+The current operating path should only describe behavior that exists in the current
+repository or package. If a page describes product direction, a proposal, or a
+historical implementation note, it must say so before the reader reaches the
+details.
 
-When public docs overlap, prefer the most specific page for the topic:
-
-- `README.md` for project entry, short overview, and first link out
-- `positioning.md` for the canonical short explanation of product category,
-  current wedge, and north star
-- `getting-started.md` for installation and first run
-- `runtime.md` for runtime surfaces and operational commands
-- `mechanism.md` for the conceptual execution model
-- `configuration.md` for config keys and setup details
-- `architecture-map.md` and `module-map.md` for navigation and reference
-- `status.md` for current public status and capability projection boundaries
-- `docs/design/` for design notes, proposals, and implementation-facing background
-
-If a public doc and a design note disagree, the public doc wins for user-facing behavior and navigation.
-If code and docs disagree, treat code and tests as the higher-priority source.
-
-## Categories
+## Documentation Sections
 
 ### Start
 
-Start here:
+- [Start Index](start/index.md)
+- [Getting Started](getting-started.md)
 
-- `README.md`
-- `positioning.md`
-- `getting-started.md`
+### Guide
+
+- [Guide Index](guide/index.md)
+- [Runtime](runtime.md)
 
 ### Concepts
 
-Conceptual explanation:
-
-- `mechanism.md`
-
-### Operations
-
-Runtime and current state:
-
-- `runtime.md`
-- `status.md`
+- [Concepts Index](concepts/index.md)
+- [Mechanism](mechanism.md)
 
 ### Reference
 
-Lookup material:
+- [Reference Index](reference/index.md)
+- [Configuration](configuration.md)
+- [Status](status.md)
 
-- `configuration.md`
-- `architecture-map.md`
-- `module-map.md`
+### Architecture
 
-### Direction
+- [Architecture Index](architecture/index.md)
+- [Architecture Map](architecture-map.md)
+- [Module Map](module-map.md)
 
-Product direction and narrative examples:
+### Roadmap And Future Direction
 
-- `positioning.md`
-- `vision.md`
-- `usecase.md`
-- `roadmap.md`
+- [Roadmap Index](roadmap/index.md)
+- [Positioning](roadmap/positioning.md)
+- [Vision](roadmap/vision.md)
+- [Use Cases](roadmap/use-cases.md)
+- [Future Work](roadmap/future-work.md)
 
-### Contributor / Testing
+### Design Documents
 
-Contributor and testing notes should live here only when they are maintained as public docs.
-Historical testing notes belong in the ignored local archive.
+- [Design Index](design/index.md)
 
-### Design Notes
+## Source Of Truth
 
-`docs/design/` is for design notes and implementation-facing discussion.
-It may mix current, proposal, and historical material.
-Use the public docs first, then the design notes when you need subsystem detail or background.
+When docs overlap, prefer the most specific page for the topic:
 
-### Archive
+- `README.md` for project entry, short overview, and first link out
+- `docs/getting-started.md` for installation and first run
+- `docs/runtime.md` for runtime surfaces and operational commands
+- `docs/mechanism.md` for the conceptual execution model
+- `docs/configuration.md` for configuration keys and setup details
+- `docs/status.md` for current status
+- `docs/architecture-map.md` and `docs/module-map.md` for code navigation
+- `docs/design/` for design documents and design history, not
+  current operating behavior
 
-`docs/archive/` is an ignored local holding area for legacy notes.
-It is not part of normal navigation and should not be treated as current guidance.
+If code and docs disagree, treat the current code, CLI registry, package
+scripts, runtime schemas, and tests as the implementation truth. Fix the docs or
+move the uncertain claim to roadmap or design-history material.
 
-If archived material needs to become public again, move it out of `docs/archive/` and link it from this map.
+## Naming Rules
 
-## Naming rules
+Use these names consistently:
 
-Use these names consistently in public docs:
-
-- `PulSeed` for the product
+- `PulSeed` for the product and repository
 - `pulseed` for the CLI and npm package
 - `pulseed.dev` for the website
-- `PulSeed` for the GitHub repository name when referencing the repo itself
-- `SeedPulse` only for legacy references or the local directory name
-
-Do not mix `SeedPulse` into current product prose unless the text is explicitly about history or the filesystem location.
+- `SeedPulse` only for legacy references or explicitly historical context

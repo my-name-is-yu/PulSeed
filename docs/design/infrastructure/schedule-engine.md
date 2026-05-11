@@ -1,5 +1,7 @@
 # Schedule Engine Design
 
+> Status: Design document. Verify behavior against source code and current operating docs before treating this as implementation guidance.
+
 > PulSeed does not wait to be asked — it acts on time. The ScheduleEngine adds proactive, time-based triggers to the daemon,
 > enabling PulSeed to monitor, report, and pursue goals on a schedule rather than only reacting to user commands.
 

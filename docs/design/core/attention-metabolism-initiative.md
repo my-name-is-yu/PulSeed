@@ -1,6 +1,8 @@
 # Attention Metabolism And Initiative
 
-Status: layer design for #1188 under
+> Status: Design document. Verify behavior against source code and current operating docs before treating this as implementation guidance.
+
+Status: attention metabolism and initiative layer design under
 [Companion Autonomy Spine](companion-autonomy-spine.md).
 
 This document defines how PulSeed notices, forms urges, maintains an
@@ -112,7 +114,7 @@ creating adapter-local policy.
 | `recent_user_activity` | `src/interface/chat/ingress-router.ts`, `src/interface/chat/chat-runner.ts`, TUI entry/chat surfaces, gateway adapters | Interruption budget, cooldown, and timing fit. |
 | `attention_history` | future attention store over runtime events and outcome decisions | Must be shared across chat, TUI, daemon, and gateway surfaces. |
 | `recent_feedback` | profile proposal/correction stores, runtime operation outcomes, chat correction paths | Conservative policy update and cooldown. |
-| `safety_context` | `src/runtime/control/`, guardrails, auth/browser/backpressure stores from #1189 | Hard blockers before urge pressure. |
+| `safety_context` | `src/runtime/control/`, guardrails, auth/browser/backpressure stores | Hard blockers before urge pressure. |
 | `ExpressionDecision` | shared runtime/grounding boundary after `OutcomeDecision` admission | Surfaces render it; they must not recreate expression, permission, staleness, or visibility logic locally. |
 
 The future `AttentionInput` factory should sit above current grounding and
@@ -544,7 +546,7 @@ Outcome rules:
 - `silence` can be an intentional outcome with audit.
 - `keep_watching` observes without speaking.
 - `hold_in_agenda` preserves care without acting.
-- `prepare_silently` creates internal material or next-step candidates.
+- `prepare_silently` creates design-history material or next-step candidates.
 - `run_authorized_work` continues work already permitted by Surface and runtime
   authority.
 - `delegate_bounded_work` creates bounded internal work under the same

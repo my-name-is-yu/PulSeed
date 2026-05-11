@@ -1,10 +1,20 @@
 # Getting Started
 
-This is the shortest path from install to a first goal run.
+This page is the shortest current path from install to a first PulSeed session.
 
-## 1. Install
+For the complete docs map, see [PulSeed Documentation](index.md).
 
-PulSeed supports Node.js 22 or 24.
+## Requirements
+
+- Node.js 22 or 24
+- npm from the selected Node.js installation
+- A local shell that can run the `pulseed` binary
+
+PulSeed stores local runtime state under `~/.pulseed/` by default. Set
+`PULSEED_HOME` when you need an isolated state directory for testing or
+automation.
+
+## Install
 
 macOS / Linux:
 
@@ -12,15 +22,17 @@ macOS / Linux:
 curl -fsSL https://raw.githubusercontent.com/my-name-is-yu/PulSeed/main/scripts/install.sh | bash
 ```
 
-Windows (PowerShell):
+Windows / PowerShell:
 
 ```powershell
 irm https://raw.githubusercontent.com/my-name-is-yu/PulSeed/main/scripts/install.ps1 | iex
 ```
 
-On Windows, the installer attempts Node.js bootstrap via `winget` when Node.js/npm are missing.
+The macOS/Linux installer can bootstrap Node.js 24 through nvm when Node.js/npm
+are missing or unsupported. The Windows installer can attempt a Node.js LTS
+bootstrap through `winget`.
 
-Reproducible alternative (pin to a release tag):
+To pin a release tag:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/my-name-is-yu/PulSeed/refs/tags/<tag>/scripts/install.sh | bash
@@ -30,13 +42,14 @@ curl -fsSL https://raw.githubusercontent.com/my-name-is-yu/PulSeed/refs/tags/<ta
 irm https://raw.githubusercontent.com/my-name-is-yu/PulSeed/refs/tags/<tag>/scripts/install.ps1 | iex
 ```
 
-Fallback:
+Fallback npm install:
 
 ```bash
 npm install -g pulseed
 ```
 
-If global npm install fails with `EACCES`/`EPERM`, use a user-local npm path:
+If global npm install fails with a permission error, use a user-local npm
+prefix:
 
 ```bash
 mkdir -p ~/.npm-global
@@ -53,7 +66,7 @@ $env:Path = "$prefix;$env:Path"
 npm install -g pulseed
 ```
 
-Optional installer flags (for example, fixed version or dry run):
+Installer options:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/my-name-is-yu/PulSeed/main/scripts/install.sh | bash -s -- --version x.y.z --dry-run
@@ -64,7 +77,7 @@ $installer = irm https://raw.githubusercontent.com/my-name-is-yu/PulSeed/main/sc
 & ([ScriptBlock]::Create($installer)) -Version x.y.z -DryRun
 ```
 
-## 2. Start PulSeed
+## Launch PulSeed
 
 Run:
 
@@ -72,29 +85,66 @@ Run:
 pulseed
 ```
 
-PulSeed will guide setup when needed. It writes local state under `~/.pulseed/`, including provider selection, goals, tasks, reports, runtime data, schedules, memory, and Soil projections.
+The bare command launches the interactive TUI. If provider setup is missing,
+PulSeed guides setup first.
 
-## 3. Work in natural language
+Check the installed version:
 
-Describe what you want PulSeed to do:
+```bash
+pulseed --version
+```
 
-- "Increase test coverage to 90%."
-- "Show me the current progress."
-- "Run the next useful step."
-- "Keep this goal moving in the background."
+Run the setup wizard directly when you want a scriptable first step:
 
-The default public path is `pulseed` plus natural language. Lower-level subcommands exist for automation, debugging, and compatibility, but they are not the main getting-started flow.
+```bash
+pulseed setup
+```
 
-## 4. What runs where
+## Create Or Run Goal Work
 
-- `DurableLoop` handles goal-level control, including continuation, refinement, verification, and completion checks
-- `AgentLoop` handles bounded tool use for tasks, chat, and runtime phases that need a short-lived executor
-- Local state lives under `~/.pulseed/`
+The primary first-run path is interactive: launch `pulseed`, then describe what
+you want to work on.
 
-## Next Docs
+Scriptable examples:
 
-- [Docs Index](index.md)
-- [Mechanism](mechanism.md)
+```bash
+pulseed goal add "Increase test coverage to 90%"
+pulseed goal list
+pulseed run --goal <goal-id>
+pulseed status --goal <goal-id>
+pulseed report --goal <goal-id>
+```
+
+Use daemon mode when you want resident background operation:
+
+```bash
+pulseed daemon start --goal <goal-id>
+pulseed daemon status
+pulseed daemon stop
+```
+
+## Where State Lives
+
+PulSeed writes local state under `~/.pulseed/`, including provider config,
+goals, tasks, runtime state, reports, schedules, chat sessions, skills, plugins,
+memory, and Soil projections.
+
+Common state paths:
+
+- `~/.pulseed/provider.json`
+- `~/.pulseed/goals/`
+- `~/.pulseed/tasks/`
+- `~/.pulseed/reports/`
+- `~/.pulseed/runtime/`
+- `~/.pulseed/schedule/`
+- `~/.pulseed/chat/`
+- `~/.pulseed/plugins/`
+- `~/.pulseed/skills/`
+
+## Next
+
+- [Guide](guide/index.md)
 - [Runtime](runtime.md)
 - [Configuration](configuration.md)
-- [Architecture Map](architecture-map.md)
+- [Concepts](concepts/index.md)
+- [Reference](reference/index.md)

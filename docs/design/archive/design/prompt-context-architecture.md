@@ -1,5 +1,7 @@
 # Prompt Context Architecture — LLM Prompt Utilization Design for Hierarchical Memory
 
+> Status: Archived design document. This is retained for context and is not current operating guidance.
+
 Created: 2026-03-21
 Status: Design proposal (not yet implemented)
 

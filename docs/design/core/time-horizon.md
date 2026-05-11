@@ -1,5 +1,7 @@
 # Time Horizon Engine Design
 
+> Status: Design document. Verify behavior against source code and current operating docs before treating this as implementation guidance.
+
 How PulSeed develops temporal awareness: evaluating whether goal progress is on pace relative to deadlines, projecting completion dates, and emitting signals that influence drive scoring and strategy selection. TimeHorizonEngine is the bridge between "how far are we from the goal?" (gap) and "do we have enough time?" (temporal budget).
 
 > Current implementation note: TimeHorizonEngine now influences a DurableLoop that may also run bounded agentic phases and native AgentLoop task execution. The temporal model still applies, but the surrounding orchestration is no longer a single flat loop body.

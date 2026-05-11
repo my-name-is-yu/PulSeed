@@ -1,5 +1,7 @@
 # Soil System Design
 
+> Status: Design document. Verify behavior against source code and current operating docs before treating this as implementation guidance.
+
 > Soil is PulSeed's human-readable knowledge surface and retrieval interface.
 > Runtime stores remain authoritative for writes; Soil keeps a typed retrieval
 > store plus Markdown projections for inspection, audit, and agent context.

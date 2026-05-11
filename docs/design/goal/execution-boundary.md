@@ -1,5 +1,7 @@
 # PulSeed --- Defining the Execution Boundary
 
+> Status: Design document. Verify behavior against source code and current operating docs before treating this as implementation guidance.
+
 ---
 
 ## 1. Core Principle

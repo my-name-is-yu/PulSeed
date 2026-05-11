@@ -1,5 +1,7 @@
 # Conversational Approval Contract
 
+> Status: Design document. Verify behavior against source code and current operating docs before treating this as implementation guidance.
+
 PulSeed's only long-term user-facing approval surface is the conversation where
 the approval request originated. High-risk actions still stop at the shared
 approval gate, but the user resolves that gate by replying in the originating

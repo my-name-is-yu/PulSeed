@@ -1,8 +1,10 @@
 # Companion Capability Runtime Gap Audit
 
-Status: final design gap audit for #1191 after implementation slices 1-13.
+> Status: Archived design document. This is retained for context and is not current operating guidance.
 
-This audit maps the #1191 Companion Capability Runtime contract to code, tests,
+Status: final design gap audit for Companion Capability Runtime after implementation slices 1-13.
+
+This audit maps the Companion Capability Runtime contract to code, tests,
 and documentation evidence after the slice-map implementation run. It is not a
 new contract; the source contract remains
 [`companion-capability-runtime.md`](companion-capability-runtime.md).
@@ -11,11 +13,9 @@ new contract; the source contract remains
 
 Audited source references:
 
-- #1191
-- #1566, which introduced the design contract
-- #1568, which introduced the slice map
-- #1573, #1576, #1578, #1582, #1586, #1588, #1592, #1599, #1604, #1606, #1611,
-  #1615, and #1621, which implemented slices 1-13
+- the Companion Capability Runtime design contract
+- the slice map that introduced the implementation order
+- the implementation slices that landed the contract in code and tests
 
 Slice 14 did not add feature runtime behavior. The only remaining gaps found are
 follow-up integration work that should stay focused and independently reviewed.
@@ -35,7 +35,7 @@ follow-up integration work that should stay focused and independently reviewed.
 | Build a capability graph from assets and runtime stores. | `src/platform/observation/capability-graph.ts`, `src/platform/observation/types/capability.ts`, and `src/platform/observation/__tests__/capability-graph.test.ts`. | Covered for the implemented provider families and explicit operation contracts. |
 | Evaluate technical readiness per operation. | `src/platform/observation/capability-readiness.ts`, `CapabilityReadinessSnapshotSchema`, and `src/platform/observation/__tests__/capability-readiness.test.ts`. | Covered. Snapshots include operation, provider, asset, payload, risk, side-effect, evidence, stale refs, and safe labels. |
 | Exclude permission, admission, autonomy, quieting, privacy, and notification policy from readiness. | `capability-readiness.ts` consumes verification evidence only; admission/autonomy tests assert the downstream gates separately. | Covered. |
-| Store verification and audit records as operation-specific evidence. | `src/runtime/store/capability-verification-schemas.ts`, `src/runtime/store/capability-verification-store.ts`, and `src/runtime/__tests__/capability-verification-store.test.ts`. | Covered as durable store and evidence semantics. Follow-up #1623 covers writing these records from production execution outcomes. |
+| Store verification and audit records as operation-specific evidence. | `src/runtime/store/capability-verification-schemas.ts`, `src/runtime/store/capability-verification-store.ts`, and `src/runtime/__tests__/capability-verification-store.test.ts`. | Covered as durable store and evidence semantics. Follow-up work covers writing these records from production execution outcomes. |
 | Keep permission probes from replacing concrete admission. | `readinessEvidenceEffect()` and `capability-verification-store.test.ts`. | Covered. `permission_probe` has readiness effect `none`. |
 | Evaluate concrete operation admission separately from readiness and autonomy. | `src/runtime/control/admission-policy.ts` and `src/runtime/control/__tests__/admission-policy.test.ts`. | Covered. Actor, surface, target, permission grant, auth, runtime-control, notification, quieting, privacy, and relationship inputs are scoped and expiring. |
 | Preserve permission-grant scope, revocation, staleness, and one-time approval boundaries. | `src/runtime/store/permission-grant-store.ts`, `src/tools/permission-grant-evaluator.ts`, `src/runtime/control/runtime-control-service.ts`, `src/interface/chat/__tests__/cross-platform-session.test.ts`, and `src/tools/__tests__/executor.test.ts`. | Covered by production caller-path tests, including consumed one-time grant rejection. |
@@ -43,19 +43,19 @@ follow-up integration work that should stay focused and independently reviewed.
 | Keep default-autonomous internal metabolism narrow and local. | `src/runtime/control/internal-autonomy-default.ts` and autonomy governor tests. | Covered. Soil, Knowledge, Dream, audit, and readiness classes are eligible only for local, inspectable, reversible or append-only internal targets. |
 | Block protected targets and external effects from internal autonomy. | `internal-autonomy-default.ts`, `src/runtime/skills/skill-bundle.ts`, and tests for protected skill mutation classification and autonomy decisions. | Covered. |
 | Project normal companion UX as next-best safe action, not a capability catalog. | `src/runtime/control/companion-action-projection.ts`, `src/runtime/control/capability-status-projection.ts`, and tests in `companion-action-projection.test.ts` and `capability-status-projection.test.ts`. | Covered. Normal companion projections suppress capability catalog and raw policy state. |
-| Keep operator/status/debug surfaces truthful about readiness plus admission/autonomy. | `src/runtime/control/capability-status-projection.ts`, `src/interface/cli/commands/operator-binding-status.ts`, `docs/status.md`, `docs/runtime.md`, and `README.md`. | Covered for projection shape and printing. Follow-up #1622 covers collecting live runtime projections into operator status. |
+| Keep operator/status/debug surfaces truthful about readiness plus admission/autonomy. | `src/runtime/control/capability-status-projection.ts`, `src/interface/cli/commands/operator-binding-status.ts`, `docs/status.md`, `docs/runtime.md`, and `README.md`. | Covered for projection shape and printing. Follow-up work covers collecting live runtime projections into operator status. |
 | Keep inbound access, outbound notification permission, reply targets, notification routes, runtime-control admission, and autonomous authority separate. | `src/runtime/gateway/channel-policy.ts`, `src/interface/chat/ingress-router.ts`, `src/interface/chat/cross-platform-session.ts`, `src/runtime/control/runtime-control-service.ts`, and gateway/chat tests. | Covered by Slice 11 and Slice 13 caller-path tests. |
 | Keep runtime event creation separate from user notification. | `src/runtime/control/__tests__/runtime-control-service.test.ts` and notification dispatcher/outbox tests from Slice 13. | Covered. Runtime control events do not dispatch notification without the notification dispatcher path. |
 | Fail closed on stale or mismatched browser/auth/session boundaries. | `src/tools/automation/InteractiveAutomationTools.ts` and `src/tools/automation/__tests__/InteractiveAutomationTools.test.ts`. | Covered. |
-| Use structured semantic classification or typed state for freeform routing; do not add keyword/regex/includes matching as primary intent logic. | `src/interface/chat/freeform-route-classifier.ts`, `src/interface/chat/chat-runner.ts`, `src/interface/chat/__tests__/chat-runner.test.ts`, and `src/interface/chat/__tests__/cross-platform-session.test.ts`. | Covered for the chat and gateway RunSpec caller paths. Follow-up #1624 covers non-chat operation-plan assembly. |
+| Use structured semantic classification or typed state for freeform routing; do not add keyword/regex/includes matching as primary intent logic. | `src/interface/chat/freeform-route-classifier.ts`, `src/interface/chat/chat-runner.ts`, `src/interface/chat/__tests__/chat-runner.test.ts`, and `src/interface/chat/__tests__/cross-platform-session.test.ts`. | Covered for the chat and gateway RunSpec caller paths. Follow-up work covers non-chat operation-plan assembly. |
 | Exercise production caller-path shapes where boundaries cross chat, gateway, runtime, permission, or external surfaces. | Slice 13 tests in `chat-runner.test.ts`, `cross-platform-session.test.ts`, `runtime-control-service.test.ts`, `InteractiveAutomationTools.test.ts`, and `executor.test.ts`. | Covered for the current slice-map boundary set. |
 
-## Remaining Follow-Up Issues
+## Remaining Follow-Up Work
 
-- #1622: collect live capability runtime projections in operator status.
-- #1623: persist capability verification and audit records from production
+- Collect live capability runtime projections in operator status.
+- Persist capability verification and audit records from production
   execution.
-- #1624: assemble unified capability OperationPlans for non-chat proposals.
+- Assemble unified capability OperationPlans for non-chat proposals.
 
 These are real integration gaps, but they are not blocker-grade gaps for the
 slice-map spine because the underlying contracts, evidence stores, projections,
@@ -63,7 +63,7 @@ and caller-path regression tests already exist.
 
 ## Closing Assessment
 
-The #1191 slice-map implementation now has concrete owner boundaries for asset
+The slice-map implementation now has concrete owner boundaries for asset
 provenance, skill bundles, foreign plugin and MCP compatibility, capability
 graph projection, readiness, verification/audit storage, admission, autonomy,
 internal metabolism, companion action projection, external-surface contracts,
