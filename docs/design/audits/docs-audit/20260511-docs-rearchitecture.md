@@ -1,4 +1,4 @@
-# Public Docs Rearchitecture Audit - 2026-05-11
+# Documentation Rearchitecture Audit - 2026-05-11
 
 This note records the audit basis for the docs rearchitecture PR. It is a
 design-background artifact, not the reader path.
@@ -18,17 +18,17 @@ When docs conflict with code, the docs change. When a claim is plausible but not
 clearly implemented, it moves out of current operating docs and into future,
 roadmap, design, or archive material.
 
-## Current Public-Docs Problems
+## Current Documentation Problems
 
 - README and `docs/index.md` mix first-run guidance, product positioning,
-  current operations, future direction, status snapshots, and internal design.
+  current operations, future direction, status snapshots, and design documents.
 - `docs/vision.md` and `docs/usecase.md` describe north-star scenarios close to
   current operating docs and can be read as present-tense capability.
 - `docs/status.md` is dated `2026-04-12`, while the current release history is
   at `0.6.5` from `2026-05-07`.
 - `docs/design/**` mixes active contracts, proposals, historical notes, future
   plans, and gap audits behind one global warning.
-- Public reference coverage is missing implemented surfaces such as `memory`,
+- Reference coverage is missing implemented surfaces such as `memory`,
   `usage`, `playbook`, `skills`, `runtime postmortem`, `runtime proactive-*`,
   `gateway setup`, `telegram setup`, and `daemon ping`.
 - `docs/configuration.md` calls `agent_loop` the recommended default without
@@ -65,7 +65,7 @@ roadmap, design, or archive material.
 
 ## Target Information Architecture
 
-- Public first-read: README, docs map, install, first run, and next steps.
+- First-read path: README, docs map, install, first run, and next steps.
 - Getting started and installation: command-focused setup.
 - User guide / operating guide: run goals, inspect status, use daemon/schedule,
   and use chat/TUI/gateway without memorizing all lower-level commands.
