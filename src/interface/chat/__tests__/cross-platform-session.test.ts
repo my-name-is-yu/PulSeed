@@ -15,7 +15,7 @@ import { createMockLLMClient, createSingleMockLLMClient } from "../../../../test
 import { makeTempDir, cleanupTempDir } from "../../../../tests/helpers/temp-dir.js";
 import { StateManager as RealStateManager } from "../../../base/state/state-manager.js";
 import { createSetupRuntimeControlTools } from "../../../tools/runtime/SetupRuntimeControlTools.js";
-import type { ApprovalRequest, ITool, ToolCallContext } from "../../../tools/types.js";
+import type { ApprovalRequest, ITool, ToolCallContext, ToolResult } from "../../../tools/types.js";
 import { ToolRegistry } from "../../../tools/registry.js";
 import { ReadTool } from "../../../tools/fs/ReadTool/ReadTool.js";
 import type { ChatEvent } from "../chat-events.js";
@@ -1111,6 +1111,98 @@ describe("CrossPlatformChatSessionManager", () => {
       event.type === "lifecycle_error"
     );
     expect(lifecycleError?.recovery.kind).toBe("runtime_interruption");
+  });
+
+  it("aborts the in-flight gateway model request when the timeout budget expires", async () => {
+    let capturedSignal: AbortSignal | undefined;
+    let abortObserved = false;
+    const sendMessageStream = vi.fn((_messages, options?: { abortSignal?: AbortSignal; timeoutMs?: number }) => {
+      capturedSignal = options?.abortSignal;
+      return new Promise((resolve) => {
+        options?.abortSignal?.addEventListener("abort", () => {
+          abortObserved = true;
+          resolve({
+            content: "late success",
+            usage: { input_tokens: 1, output_tokens: 1 },
+            stop_reason: "end_turn",
+            tool_calls: [],
+          });
+        }, { once: true });
+      });
+    });
+    const llmClient = {
+      sendMessage: vi.fn().mockRejectedValue(new Error("sendMessage should not run")),
+      sendMessageStream,
+      supportsToolCalling: vi.fn(() => true),
+      parseJSON: vi.fn((content: string, schema: { parse(value: unknown): unknown }) => schema.parse(JSON.parse(content))),
+    };
+    const manager = new CrossPlatformChatSessionManager(makeDeps({
+      llmClient: llmClient as never,
+      registry: makeRegistryWithTools([]),
+    }));
+
+    const result = await manager.execute("hello", {
+      identity_key: "gateway-model-timeout-abort-user",
+      platform: "telegram",
+      conversation_id: "gateway-model-timeout-abort",
+      user_id: "user-1",
+      cwd: "/repo",
+      timeoutMs: 10,
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.output).toContain("timed out");
+    expect(capturedSignal?.aborted).toBe(true);
+    expect(abortObserved).toBe(true);
+  });
+
+  it("aborts the in-flight gateway tool call when the timeout budget expires", async () => {
+    let capturedSignal: AbortSignal | undefined;
+    let abortObserved = false;
+    const readTool = makeScopedTool("read");
+    readTool.call = vi.fn((_input, context?: ToolCallContext) => {
+      capturedSignal = context?.abortSignal;
+      return new Promise<ToolResult>((resolve) => {
+        context?.abortSignal?.addEventListener("abort", () => {
+          abortObserved = true;
+          resolve({
+            success: true,
+            data: { late: true },
+            summary: "late success",
+            durationMs: 1,
+          });
+        }, { once: true });
+      });
+    });
+    const llmClient = makeStreamingLLMClient([{
+      content: "I'll read that.",
+      stop_reason: "tool_calls",
+      tool_calls: [{
+        id: "call-read-timeout",
+        type: "function",
+        function: { name: "read", arguments: "{}" },
+      }],
+    }]);
+    const manager = new CrossPlatformChatSessionManager(makeDeps({
+      llmClient: llmClient as never,
+      registry: makeRegistryWithTools([readTool]),
+    }));
+
+    const result = await manager.execute("README を読んで", {
+      identity_key: "gateway-tool-timeout-abort-user",
+      platform: "telegram",
+      conversation_id: "gateway-tool-timeout-abort",
+      user_id: "user-1",
+      cwd: "/repo",
+      timeoutMs: 10,
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.output).toContain("timed out");
+    expect(capturedSignal?.aborted).toBe(true);
+    expect(abortObserved).toBe(true);
+    expect(readTool.call).toHaveBeenCalledTimes(1);
+    expect(llmClient.sendMessageStream).toHaveBeenCalledTimes(1);
   });
 
   it("keeps natural-language setup/run-spec requests inside the default gateway model tool-choice loop", async () => {

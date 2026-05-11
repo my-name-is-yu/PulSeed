@@ -619,10 +619,10 @@ async function executeWithTools(
     try {
       host.eventBridge.emitActivity("lifecycle", "Calling model...", eventContext, "lifecycle:model");
       response = await withAbortAndTimeout(
-        sendLLMMessage(host, llmClient, modelRequest.messages, {
+        (execution) => sendLLMMessage(host, llmClient, modelRequest.messages, {
           ...modelRequest.options,
-          ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
-          ...(remainingTimeoutMs(deadlineAt) ? { timeoutMs: remainingTimeoutMs(deadlineAt)! } : {}),
+          abortSignal: execution.abortSignal,
+          ...(execution.timeoutMs !== undefined ? { timeoutMs: execution.timeoutMs } : {}),
         }, assistantBuffer, eventContext, {
           emitAssistantDeltas: options.streamFinalText,
         }),
@@ -693,15 +693,15 @@ async function executeWithTools(
       }
       throwIfAbortedOrTimedOut(options.abortSignal, deadlineAt, "tool_call");
       const toolResult = await withAbortAndTimeout(
-        dispatchToolCall(
+        (execution) => dispatchToolCall(
           host,
           tc.id,
           tc.function.name,
           args,
           {
             ...toolCallContext,
-            ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
-            ...(remainingTimeoutMs(deadlineAt) ? { timeoutMs: remainingTimeoutMs(deadlineAt)! } : {}),
+            abortSignal: execution.abortSignal,
+            ...(execution.timeoutMs !== undefined ? { timeoutMs: execution.timeoutMs } : {}),
             callId: tc.id,
           },
           eventContext,
@@ -780,24 +780,31 @@ function throwIfAbortedOrTimedOut(
 }
 
 async function withAbortAndTimeout<T>(
-  promise: Promise<T>,
+  operation: (execution: { abortSignal: AbortSignal; timeoutMs?: number }) => Promise<T>,
   abortSignal: AbortSignal | undefined,
   timeoutMs: number | undefined,
   phase: "model_request" | "tool_call",
 ): Promise<T> {
   throwIfAbortedOrTimedOut(abortSignal, timeoutMs === undefined ? null : Date.now() + timeoutMs, phase);
+  const controller = new AbortController();
   let timeout: ReturnType<typeof setTimeout> | undefined;
   let abortHandler: (() => void) | undefined;
-  const racers: Promise<T>[] = [promise];
+  const operationPromise = operation({
+    abortSignal: controller.signal,
+    ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+  });
+  const racers: Promise<T>[] = [operationPromise];
   if (timeoutMs !== undefined) {
     racers.push(new Promise<T>((_, reject) => {
       timeout = setTimeout(() => {
-        reject(new ToolLoopTerminalError(
+        const err = new ToolLoopTerminalError(
           phase === "model_request" ? "model_request_timeout" : "tool_call_timeout",
           phase === "model_request"
             ? "The gateway model request timed out before it completed."
             : "The gateway tool call timed out before it completed.",
-        ));
+        );
+        reject(err);
+        abortController(controller, err);
       }, timeoutMs);
     }));
   }
@@ -813,12 +820,14 @@ async function withAbortAndTimeout<T>(
         return;
       }
       abortHandler = () => {
-        reject(new ToolLoopTerminalError(
+        const err = new ToolLoopTerminalError(
           phase === "model_request" ? "model_request_aborted" : "tool_call_aborted",
           phase === "model_request"
             ? "The gateway model request was aborted before it completed."
             : "The gateway tool call was aborted before it completed.",
-        ));
+        );
+        reject(err);
+        abortController(controller, err);
       };
       abortSignal.addEventListener("abort", abortHandler, { once: true });
     }));
@@ -831,6 +840,11 @@ async function withAbortAndTimeout<T>(
       abortSignal.removeEventListener("abort", abortHandler);
     }
   }
+}
+
+function abortController(controller: AbortController, reason: unknown): void {
+  if (controller.signal.aborted) return;
+  controller.abort(reason);
 }
 
 function stableToolCycleFingerprint(
