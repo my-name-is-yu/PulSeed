@@ -1083,6 +1083,68 @@ describe("CrossPlatformChatSessionManager", () => {
     expect(secondToolNames).toEqual(["ask-human", "confirm_gateway_config_write"]);
   });
 
+  it("applies scoped gateway approval before checking the next tool call in the same response", async () => {
+    const approvalFn = vi.fn(async () => true);
+    const askHuman = new AskHumanTool();
+    const writeTool = makeScopedTool("confirm_gateway_config_write", {
+      permissionLevel: "write_local",
+      isReadOnly: false,
+      isDestructive: true,
+    });
+    const llmClient = makeStreamingLLMClient([
+      {
+        content: "設定を書き込む前に許可を確認します。",
+        stop_reason: "tool_calls",
+        tool_calls: [
+          {
+            id: "call-ask-write-approval",
+            type: "function",
+            function: {
+              name: "ask-human",
+              arguments: JSON.stringify({
+                question: "Write Telegram gateway config?",
+                options: ["Approve", "Deny"],
+                approval_scope: "write",
+              }),
+            },
+          },
+          {
+            id: "call-confirm-config",
+            type: "function",
+            function: { name: "confirm_gateway_config_write", arguments: JSON.stringify({ channel: "telegram" }) },
+          },
+        ],
+      },
+      {
+        content: "設定を書き込みました。",
+      },
+    ]);
+    const manager = new CrossPlatformChatSessionManager(makeDeps({
+      llmClient: llmClient as never,
+      registry: makeRegistryWithTools([askHuman, writeTool]),
+      approvalFn,
+    }));
+
+    const result = await manager.execute("その Telegram 設定を書き込んで", {
+      identity_key: "gateway-same-response-approval-user",
+      platform: "telegram",
+      conversation_id: "gateway-same-response-approval",
+      user_id: "user-1",
+      cwd: "/repo",
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.output).toBe("設定を書き込みました。");
+    expect(approvalFn).toHaveBeenCalledOnce();
+    expect(writeTool.call).toHaveBeenCalledOnce();
+    const firstToolNames = (llmClient.sendMessageStream.mock.calls[0]?.[1]?.tools ?? [])
+      .map((tool: { function: { name: string } }) => tool.function.name);
+    const secondToolNames = (llmClient.sendMessageStream.mock.calls[1]?.[1]?.tools ?? [])
+      .map((tool: { function: { name: string } }) => tool.function.name);
+    expect(firstToolNames).toEqual(["ask-human"]);
+    expect(secondToolNames).toEqual(["ask-human", "confirm_gateway_config_write"]);
+  });
+
   it("blocks unauthorized runtime-control mutations in the gateway catalog without falling back to shell", async () => {
     const requestRuntimeControl = makeScopedTool("request_runtime_control", {
       permissionLevel: "write_local",

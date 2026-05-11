@@ -625,7 +625,6 @@ async function executeWithTools(
   for (let loop = 0; loop < MAX_TOOL_LOOPS; loop++) {
     throwIfAbortedOrTimedOut(options.abortSignal, deadlineAt, "model_request");
     const visibleTools = currentVisibleTools();
-    const allowedToolNames = new Set(visibleTools.map((tool) => tool.metadata.name));
     const modelRequest = buildChatModelRequest({
       purpose: "tool_call",
       turnContext,
@@ -698,6 +697,7 @@ async function executeWithTools(
       } catch {
         // ignore parse errors, use empty args
       }
+      const allowedToolNames = new Set(currentVisibleTools().map((tool) => tool.metadata.name));
       if (!allowedToolNames.has(tc.function.name)) {
         host.eventBridge.emitActivity("tool", formatToolActivity("Failed", tc.function.name, "Tool is not available in this gateway scope"), eventContext, tc.id);
         host.eventBridge.emitEvent({
