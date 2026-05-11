@@ -202,11 +202,25 @@ describe("schedule tool input schema contract", () => {
   it("exports closed model-facing branches for create_schedule inputs", () => {
     const parameters = toToolDefinition(new CreateScheduleTool(scheduleEngine)).function
       .parameters as JsonObject;
+    expect(parameters.type).toBe("object");
+    expect(parameters.anyOf).toBeUndefined();
+    expect(parameters.oneOf).toBeUndefined();
+    expect(parameters.allOf).toBeUndefined();
+    expect(parameters.not).toBeUndefined();
+    expect(parameters.enum).toBeUndefined();
+    expect(parameters.additionalProperties).toBe(false);
+    expect(propertyNames(parameters)).toEqual(expect.arrayContaining([
+      "name",
+      "trigger",
+      "layer",
+      "heartbeat",
+      "probe",
+      "cron",
+      "goal_trigger",
+      "preset",
+    ]));
+
     const objectSchemas = collectSchemaObjects(parameters);
-    const branchSchemas = objectSchemas.filter((schema) => {
-      const names = propertyNames(schema);
-      return names.includes("layer") || names.includes("preset");
-    });
     const nestedPayloadSchemas = objectSchemas.filter((schema) => {
       const names = propertyNames(schema);
       return (
@@ -220,10 +234,9 @@ describe("schedule tool input schema contract", () => {
       );
     });
 
-    expect(branchSchemas.length).toBeGreaterThan(0);
     expect(nestedPayloadSchemas.length).toBeGreaterThan(0);
 
-    for (const schema of [...branchSchemas, ...nestedPayloadSchemas]) {
+    for (const schema of nestedPayloadSchemas) {
       expect(schema.additionalProperties).toBe(false);
     }
   });

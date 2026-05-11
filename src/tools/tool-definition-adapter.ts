@@ -85,10 +85,16 @@ function toolParametersFromSchema(jsonSchema: unknown): Record<string, unknown> 
 
   const parameters = { ...normalizedSchema };
   parameters.type = parameters.type ?? "object";
-  const unionObjectProperties = collectUnionObjectProperties(parameters);
-  if (parameters.properties === undefined && unionObjectProperties !== null) {
-    parameters.properties = unionObjectProperties;
-    parameters.additionalProperties = parameters.additionalProperties ?? false;
+  const unionObjectBranches = collectUnionObjectBranches(parameters);
+  if (unionObjectBranches !== null) {
+    parameters.properties = collectObjectBranchProperties(unionObjectBranches);
+    parameters.required = collectCommonRequiredProperties(unionObjectBranches);
+    parameters.additionalProperties = unionObjectBranches.every((branch) => branch.additionalProperties === false)
+      ? false
+      : parameters.additionalProperties ?? false;
+    delete parameters.anyOf;
+    delete parameters.oneOf;
+    delete parameters.allOf;
   }
 
   if (
@@ -104,31 +110,80 @@ function toolParametersFromSchema(jsonSchema: unknown): Record<string, unknown> 
   return parameters;
 }
 
-function collectUnionObjectProperties(schema: JsonObject): JsonObject | null {
+function collectUnionObjectBranches(schema: JsonObject): JsonObject[] | null {
   const branches = Array.isArray(schema.anyOf)
     ? schema.anyOf
     : Array.isArray(schema.oneOf)
       ? schema.oneOf
-      : null;
+      : Array.isArray(schema.allOf)
+        ? schema.allOf
+        : null;
   if (!branches || branches.length === 0) return null;
 
-  const merged: JsonObject = {};
+  const objectBranches: JsonObject[] = [];
   for (const branch of branches) {
-    if (!isJsonObject(branch) || branch.type !== "object" || !isJsonObject(branch.properties)) {
-      return null;
+    if (!isJsonObject(branch)) return null;
+    if (branch.type === "object" && isJsonObject(branch.properties)) {
+      objectBranches.push(branch);
+      continue;
     }
-
-    for (const [key, value] of Object.entries(branch.properties)) {
-      const existing = merged[key];
-      if (existing === undefined || JSON.stringify(existing) === JSON.stringify(value)) {
-        merged[key] = value;
-      } else {
-        merged[key] = {};
-      }
-    }
+    const nested = collectUnionObjectBranches(branch);
+    if (!nested) return null;
+    objectBranches.push(...nested);
   }
 
+  return objectBranches.length > 0 ? objectBranches : null;
+}
+
+function collectObjectBranchProperties(branches: JsonObject[]): JsonObject {
+  const merged: JsonObject = {};
+  for (const branch of branches) {
+    if (!isJsonObject(branch.properties)) continue;
+    for (const [key, value] of Object.entries(branch.properties)) {
+      const existing = merged[key];
+      merged[key] = existing === undefined ? value : mergePropertySchema(existing, value);
+    }
+  }
   return merged;
+}
+
+function collectCommonRequiredProperties(branches: JsonObject[]): string[] {
+  const requiredSets = branches.map((branch) => (
+    Array.isArray(branch.required)
+      ? new Set(branch.required.filter((item): item is string => typeof item === "string"))
+      : new Set<string>()
+  ));
+  if (requiredSets.length === 0) return [];
+  const [first, ...rest] = requiredSets;
+  return [...first].filter((item) => rest.every((set) => set.has(item)));
+}
+
+function mergePropertySchema(left: unknown, right: unknown): unknown {
+  if (JSON.stringify(left) === JSON.stringify(right)) return left;
+  if (!isJsonObject(left) || !isJsonObject(right)) return {};
+  if (isRefOnlySchema(left)) return right;
+  if (isRefOnlySchema(right)) return left;
+
+  const leftEnum = enumValues(left);
+  const rightEnum = enumValues(right);
+  if (left.type === right.type && leftEnum && rightEnum) {
+    return {
+      type: left.type,
+      enum: [...new Set([...leftEnum, ...rightEnum])],
+    };
+  }
+
+  return {};
+}
+
+function isRefOnlySchema(value: JsonObject): boolean {
+  return typeof value.$ref === "string" && Object.keys(value).length === 1;
+}
+
+function enumValues(value: JsonObject): string[] | null {
+  if (!Array.isArray(value.enum)) return null;
+  const values = value.enum.filter((item): item is string => typeof item === "string");
+  return values.length === value.enum.length ? values : null;
 }
 
 /**
@@ -136,7 +191,7 @@ function collectUnionObjectProperties(schema: JsonObject): JsonObject | null {
  * that the LLM client understands for function calling.
  */
 export function toToolDefinition(tool: ITool): ToolDefinition {
-  const jsonSchema = zodToJsonSchema(tool.inputSchema, { target: "jsonSchema7" });
+  const jsonSchema = zodToJsonSchema(tool.inputSchema, { target: "jsonSchema7", $refStrategy: "none" });
   const parameters = toolParametersFromSchema(jsonSchema);
 
   return {

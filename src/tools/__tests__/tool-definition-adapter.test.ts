@@ -73,18 +73,18 @@ describe("toToolDefinition", () => {
 
     const parameters = toToolDefinition(makeTool(inputSchema)).function.parameters as {
       anyOf?: Array<{ properties?: Record<string, unknown> }>;
+      oneOf?: unknown;
+      allOf?: unknown;
       additionalProperties?: unknown;
       properties?: Record<string, unknown>;
     };
 
-    const kinds = parameters.anyOf?.map((branch) => branch.properties?.kind);
-    expect(kinds).toEqual([
-      { type: "string", enum: ["process"] },
-      { type: "string", enum: ["http"] },
-    ]);
+    expect(parameters.anyOf).toBeUndefined();
+    expect(parameters.oneOf).toBeUndefined();
+    expect(parameters.allOf).toBeUndefined();
     expect(parameters.additionalProperties).toBe(false);
     expect(Object.keys(parameters.properties ?? {}).sort()).toEqual(["kind", "pid", "url"]);
-    expect(parameters.properties?.kind).toEqual({});
+    expect(parameters.properties?.kind).toEqual({ type: "string", enum: ["process", "http"] });
   });
 
   it("preserves user input fields named like schema metadata", () => {
