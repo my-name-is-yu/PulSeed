@@ -19,4 +19,4 @@ Current reference pages:
 
 Reference pages should describe current-version behavior. Future plans belong in
 [Roadmap And Future Direction](../roadmap/index.md), and implementation
-proposals belong in [Internal Documentation](../internal/index.md).
+proposals belong in [Design Documentation](../design/index.md).

@@ -11,4 +11,4 @@ Recommended order:
 
 Start pages contain runnable setup instructions only. Product direction,
 multi-year scenarios, proposals, and historical notes live outside the
-public-current start path.
+current operating start path.

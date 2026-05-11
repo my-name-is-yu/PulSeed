@@ -1,7 +1,7 @@
 # PulSeed — Vision Document
 
 > Status: Product vision and future direction. This page is not a
-> public-current capability reference. Use [Runtime](../runtime.md) and
+> current operating capability reference. Use [Runtime](../runtime.md) and
 > [Status](../status.md) for behavior that exists in the current code.
 
 ---

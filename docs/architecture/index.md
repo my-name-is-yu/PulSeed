@@ -8,5 +8,5 @@ Current architecture pages:
 - [Architecture Map](../architecture-map.md)
 - [Module Map](../module-map.md)
 
-Architecture pages are public, but implementation proposals and historical
-design notes live under [Internal](../internal/index.md).
+Architecture pages describe the current structure. Implementation proposals and
+historical design documents live under [Design Documentation](../design/index.md).

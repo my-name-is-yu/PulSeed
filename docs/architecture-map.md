@@ -1,6 +1,6 @@
 # Architecture Map
 
-This is the public architecture map for the current codebase.
+This is the architecture map for the current codebase.
 ## 1. Top-level picture
 
 ```text
@@ -96,7 +96,7 @@ Resident runtime support:
 
 DurableLoop is the main long-lived controller.
 
-Important public subparts:
+Important subparts:
 
 - `src/orchestrator/loop/durable-loop.ts`
 - `src/orchestrator/loop/durable-loop/iteration-kernel.ts`
@@ -115,7 +115,7 @@ What DurableLoop owns:
 
 AgentLoop is the bounded execution engine.
 
-Important public subparts:
+Important subparts:
 
 - `src/orchestrator/execution/agent-loop/bounded-agent-loop-runner.ts`
 - `src/orchestrator/execution/agent-loop/task-agent-loop-runner.ts`
@@ -155,7 +155,7 @@ These phases use strict tool policy and bounded budgets.
 
 The tool layer is a shared substrate.
 
-Important public capabilities:
+Important capabilities:
 
 - file inspection and editing
 - shell command execution
@@ -218,12 +218,12 @@ Publicly relevant buckets:
 
 ## 9. Source of truth
 
-For the public picture:
+For the documentation picture:
 
 - this file is the architectural overview
 - [Module Map](module-map.md) is the code navigation companion
 - `src/` is the implementation truth
 
-Historical and internal deep design docs now live under `docs/internal/`.
+Historical and deep design documents now live under `docs/design/`.
 Some describe earlier stages or alternatives rather than the exact current
 runtime path.

@@ -1,14 +1,13 @@
-# Internal Documentation
+# Design Documentation Moved
 
-This section is for maintainer-facing docs: audits, design notes,
-implementation contracts, migration plans, and archived material.
+PulSeed design documents now live under the main design section.
 
-Start here:
+Use these current locations:
 
-- [Public Docs Rearchitecture Audit](docs-audit/20260511-public-docs-rearchitecture.md)
-- [Internal Design Notes](design/index.md)
-- [Archive](archive/index.md)
+- [Design Documentation](../design/index.md)
+- [Design Archive](../design/archive/index.md)
+- [Documentation Architecture Audit](../design/audits/docs-audit/20260511-public-docs-rearchitecture.md)
 
-Internal docs are not the public source of truth for current user behavior. If
-an internal note conflicts with public docs or code, verify against the current
-implementation before updating public guidance.
+Design documents are context, but they are not operating instructions. If a
+design document conflicts with current operating docs or code, verify against the
+current implementation before updating user guidance.

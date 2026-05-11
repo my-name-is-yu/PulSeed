@@ -22,5 +22,5 @@ Common paths:
 - `logs/`: daemon/runtime logs
 - `datasources/`: configured data source records
 
-Do not treat every file under the state root as a public contract. Public docs
+Do not treat every file under the state root as a documented contract. Docs
 only promise the documented command surfaces and high-level storage boundaries.

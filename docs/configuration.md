@@ -1,6 +1,6 @@
 # Configuration
 
-This page reflects the current public configuration surface.
+This page reflects the current configuration surface.
 
 ## First-Run Path
 
@@ -115,7 +115,7 @@ reasoning-effort resolution.
 
 ## Supported Models And Adapters
 
-Known model compatibility is maintained in the model registry. Current public
+Known model compatibility is maintained in the model registry. Current
 providers:
 
 - OpenAI models can use `openai_codex_cli`, `openai_api`, or `agent_loop`.

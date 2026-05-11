@@ -10,4 +10,4 @@ Current concept pages:
 
 Concept pages explain current behavior. Product-direction narrative belongs in
 [Roadmap And Future Direction](../roadmap/index.md), and implementation
-contracts belong in [Internal Documentation](../internal/index.md).
+contracts belong in [Design Documentation](../design/index.md).

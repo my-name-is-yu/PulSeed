@@ -94,7 +94,7 @@ For the complete command surface, use `pulseed help` or see the docs:
 
 ## Public Vs Future Docs
 
-Start with the public-current docs when you want to use PulSeed today:
+Start with the current operating docs when you want to use PulSeed today:
 
 - [Start](docs/start/index.md)
 - [Guide](docs/guide/index.md)
@@ -103,8 +103,8 @@ Start with the public-current docs when you want to use PulSeed today:
 - [Architecture](docs/architecture/index.md)
 
 Product direction, north-star examples, and non-current plans live under
-[Roadmap And Future Direction](docs/roadmap/index.md). Maintainer-facing design
-notes and audits live under [Internal Documentation](docs/internal/index.md).
+[Roadmap And Future Direction](docs/roadmap/index.md). Design documents,
+audits, and design history live under [Design Documentation](docs/design/index.md).
 
 ## Evidence
 

@@ -1,8 +1,8 @@
 # Status
 
-Current public status snapshot: 2026-05-11.
+Current status snapshot: 2026-05-11.
 
-This page summarizes current public behavior. For exact commands, use
+This page summarizes current behavior. For exact commands, use
 [CLI Reference](reference/cli.md). For current package version and release
 history, see [CHANGELOG](../CHANGELOG.md).
 
@@ -38,7 +38,7 @@ history, see [CHANGELOG](../CHANGELOG.md).
 - gateway channel breadth and setup ergonomics
 - schedule suggestions and proactive behavior
 - companion capability projection and autonomy policy
-- design notes under `docs/internal/`
+- design documents under `docs/design/`
 - future product direction under `docs/roadmap/`
 
 ## Safety Boundary
@@ -65,7 +65,7 @@ details.
 
 ## Not Public-Current
 
-The following belong in roadmap or internal docs until code-backed behavior is
+The following belong in roadmap or design documents until code-backed behavior is
 present and documented:
 
 - multi-year autonomous companion scenarios as user-ready workflows

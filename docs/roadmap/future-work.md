@@ -1,7 +1,7 @@
 # Future Work
 
 > Status: Future work. Items here are not promised current behavior unless they
-> also appear in public-current docs backed by current code.
+> also appear in current operating docs backed by current code.
 
 PulSeed has completed its core implementation through 18 milestones. This document outlines future directions.
 

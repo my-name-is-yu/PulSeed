@@ -1,7 +1,7 @@
 # Future Use Cases
 
 > Status: Product-direction scenarios. These are examples PulSeed is intended to
-> make possible over time, not a public-current capability reference.
+> make possible over time, not a current operating capability reference.
 
 These are real-world use cases we want to make possible with PulSeed.
 

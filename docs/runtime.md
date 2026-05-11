@@ -1,6 +1,6 @@
 # Runtime
 
-This page describes the current public runtime surfaces. For exact command
+This page describes the current runtime surfaces. For exact command
 syntax, see [CLI Reference](reference/cli.md).
 
 ## Entry Points
@@ -201,5 +201,5 @@ directly runtime-loadable just because a manifest was imported.
 This page describes the current local runtime. It does not claim that every
 future companion-agent scenario, marketplace flow, external sensor workflow, or
 multi-year autonomous intervention path is implemented. Those belong in
-[Roadmap And Future Direction](roadmap/index.md) or internal design notes until
-the current code supports them.
+[Roadmap And Future Direction](roadmap/index.md) or design-history documents
+until the current code supports them.

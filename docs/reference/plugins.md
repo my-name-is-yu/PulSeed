@@ -7,7 +7,7 @@ path.
 
 Native plugins can use `plugin.yaml` or `plugin.json`.
 
-Current public plugin types:
+Current plugin types:
 
 - `adapter`
 - `data_source`

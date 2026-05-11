@@ -2,7 +2,7 @@
 
 Use this section for product direction, future scenarios, and non-current plans.
 
-These pages are not the public-current operating guide. Use
+These pages are not the current operating guide. Use
 [Getting Started](../getting-started.md), [Runtime](../runtime.md), and
 [Status](../status.md) when you need behavior that exists in the current code.
 

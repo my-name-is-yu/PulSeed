@@ -46,14 +46,22 @@ const docsWithRequiredStatus = [
     matches: (relativePath) => relativePath.startsWith('docs/roadmap/') && relativePath !== 'docs/roadmap/index.md',
   },
   {
-    label: 'internal design note',
-    matches: (relativePath) => relativePath.startsWith('docs/internal/design/') && relativePath !== 'docs/internal/design/index.md',
+    label: 'design document',
+    matches: (relativePath) =>
+      [
+        'docs/design/core/',
+        'docs/design/execution/',
+        'docs/design/goal/',
+        'docs/design/infrastructure/',
+        'docs/design/knowledge/',
+        'docs/design/personality/',
+      ].some((dir) => relativePath.startsWith(dir)) && relativePath.endsWith('.md'),
   },
   {
     label: 'archived design note',
     matches: (relativePath) =>
-      relativePath.startsWith('docs/internal/archive/design/') &&
-      relativePath !== 'docs/internal/archive/design/index.md',
+      relativePath.startsWith('docs/design/archive/') &&
+      relativePath !== 'docs/design/archive/index.md',
   },
 ];
 
@@ -251,15 +259,15 @@ function getPublicBoundaryIssue(sourceRelativePath, targetRelativePath) {
     return null;
   }
 
-  if (targetRelativePath.startsWith('docs/internal/archive/')) {
-    return `public-current doc links directly to archived internal material: ${targetRelativePath}`;
+  if (targetRelativePath.startsWith('docs/design/archive/')) {
+    return `current operating doc links directly to archived design material: ${targetRelativePath}`;
   }
 
   if (
-    targetRelativePath.startsWith('docs/internal/design/') &&
-    targetRelativePath !== 'docs/internal/design/index.md'
+    targetRelativePath.startsWith('docs/design/') &&
+    targetRelativePath !== 'docs/design/index.md'
   ) {
-    return `public-current doc links directly to an internal design note: ${targetRelativePath}`;
+    return `current operating doc links directly to a design document instead of the design index: ${targetRelativePath}`;
   }
 
   return null;

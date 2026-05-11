@@ -1,6 +1,6 @@
 # PulSeed Documentation
 
-This is the public entry point for PulSeed documentation.
+This is the entry point for PulSeed documentation.
 
 PulSeed docs are organized by reader need:
 
@@ -13,8 +13,8 @@ PulSeed docs are organized by reader need:
 - **Architecture**: navigate the current source tree and stable subsystem map.
 - **Roadmap**: read product direction and future scenarios without treating them
   as current behavior.
-- **Internal**: design notes, implementation contracts, audits, and archived
-  material for maintainers.
+- **Design**: read design documents, implementation contracts, audits,
+  and design history without treating them as operating instructions.
 
 ## First-Reader Path
 
@@ -25,7 +25,7 @@ PulSeed docs are organized by reader need:
 5. [Configuration](configuration.md)
 6. [Status](status.md)
 
-The public-current path should only describe behavior that exists in the current
+The current operating path should only describe behavior that exists in the current
 repository or package. If a page describes product direction, a proposal, or a
 historical implementation note, it must say so before the reader reaches the
 details.
@@ -67,28 +67,27 @@ details.
 - [Use Cases](roadmap/use-cases.md)
 - [Future Work](roadmap/future-work.md)
 
-### Internal Design Notes
+### Design Documents
 
-- [Internal Index](internal/index.md)
-- [Internal Design Notes](internal/design/index.md)
+- [Design Index](design/index.md)
 
 ## Source Of Truth
 
-When public docs overlap, prefer the most specific page for the topic:
+When docs overlap, prefer the most specific page for the topic:
 
 - `README.md` for project entry, short overview, and first link out
 - `docs/getting-started.md` for installation and first run
 - `docs/runtime.md` for runtime surfaces and operational commands
 - `docs/mechanism.md` for the conceptual execution model
 - `docs/configuration.md` for configuration keys and setup details
-- `docs/status.md` for current public status
+- `docs/status.md` for current status
 - `docs/architecture-map.md` and `docs/module-map.md` for code navigation
-- `docs/internal/` for maintainer-facing background, not public-current
-  behavior
+- `docs/design/` for design documents and design history, not
+  current operating behavior
 
 If code and docs disagree, treat the current code, CLI registry, package
 scripts, runtime schemas, and tests as the implementation truth. Fix the docs or
-move the uncertain claim to roadmap/internal material.
+move the uncertain claim to roadmap or design-history material.
 
 ## Naming Rules
 

@@ -75,7 +75,7 @@ Current verification sources include:
 - runtime evidence ledgers
 - optional model-based verification passes
 
-The public claim is evidence-grounded verification, not that every delegated
+The documented claim is evidence-grounded verification, not that every delegated
 result is automatically correct.
 
 ## Schedules And Waiting
@@ -109,4 +109,4 @@ The split lets PulSeed keep long-running goals alive across sessions without
 turning every action into an unbounded autonomous run.
 
 Future companion-agent scenarios build on this mechanism, but they are not
-public-current behavior unless the runtime and docs say exactly how to run them.
+current operating behavior unless the runtime and docs say exactly how to run them.

@@ -1,6 +1,6 @@
 # CLI Reference
 
-This page lists the current public `pulseed` command surface. It is derived from
+This page lists the current `pulseed` command surface. It is derived from
 the CLI command registry and help text.
 
 ## Global
