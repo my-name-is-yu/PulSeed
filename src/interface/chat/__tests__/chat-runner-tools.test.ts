@@ -73,19 +73,6 @@ function makeLLMClientWithToolCall(toolName: string, toolArgs: Record<string, un
       callCount++;
       if (callCount === 1) {
         return {
-          content: JSON.stringify({
-            kind: "execute",
-            confidence: 0.93,
-            rationale: "tool-backed request",
-          }),
-          usage: { input_tokens: 1, output_tokens: 1 },
-          stop_reason: "end_turn",
-          tool_calls: [],
-        } satisfies LLMResponse;
-      }
-      if (callCount === 2) {
-        // Tool-loop call: return a tool_call response
-        return {
           content: "",
           usage: { input_tokens: 1, output_tokens: 1 },
           stop_reason: "tool_calls",
@@ -148,7 +135,7 @@ afterEach(() => {
 // ─── Tests ───
 
 describe("ChatRunner — tool status callbacks", () => {
-  const toolName = "mock-tool";
+  const toolName = "read";
   const toolArgs = {};
 
   describe("onToolStart callback", () => {
@@ -227,13 +214,13 @@ describe("ChatRunner — tool status callbacks", () => {
         assetRef: "asset:runtime/workspace-status",
         capabilityId: "capability:workspace_status",
         operationKind: "read",
-        toolName: "workspace_status",
+        toolName: "read",
         payloadClass: "workspace_status_payload",
         riskClass: "low",
         sideEffectProfile: "read",
         readinessSnapshotRefs: ["readiness:capability:workspace_status:runtime:workspace:workspace_status"],
       });
-      const tool = makeMockTool("workspace_status", async () => ({
+      const tool = makeMockTool("read", async () => ({
         success: true,
         data: { clean: true },
         summary: "workspace clean",
@@ -264,7 +251,7 @@ describe("ChatRunner — tool status callbacks", () => {
         }),
       } as unknown as ToolExecutor;
       const deps = makeDeps({
-        llmClient: makeLLMClientWithToolCall("workspace_status", {}),
+        llmClient: makeLLMClientWithToolCall("read", {}),
         registry,
         toolExecutor: dispatchingExecutor,
         capabilityVerificationStore,
@@ -280,9 +267,9 @@ describe("ChatRunner — tool status callbacks", () => {
       expect(executorResults[0]?.execution?.status).not.toBe("not_executed");
       expect(warnings).toEqual([]);
       expect(capabilityExecutionResolver).toHaveBeenCalledWith(expect.objectContaining({
-        toolName: "workspace_status",
+        toolName: "read",
         operationKind: "read",
-        payloadClass: "tool-input:workspace_status",
+        payloadClass: "tool-input:read",
         riskClass: "low",
         sideEffectProfile: "read",
       }));
@@ -294,7 +281,7 @@ describe("ChatRunner — tool status callbacks", () => {
           provider_ref: "runtime:workspace",
           asset_ref: "asset:runtime/workspace-status",
           operation_kind: "read",
-          tool_name: "workspace_status",
+          tool_name: "read",
           payload_class: "workspace_status_payload",
           risk_class: "low",
           side_effect_profile: "read",
@@ -405,14 +392,14 @@ describe("ChatRunner — tool status callbacks", () => {
 
   it("emits typed activity categories through the production tool-loop event path", async () => {
     const events: ChatEvent[] = [];
-    const tool = makeMockTool("ambiguous-tool", async () => ({
+    const tool = makeMockTool("grep", async () => ({
       success: true,
       data: null,
       summary: "done",
       durationMs: 5,
     }), "search");
     const deps = makeDeps({
-      llmClient: makeLLMClientWithToolCall("ambiguous-tool", {}),
+      llmClient: makeLLMClientWithToolCall("grep", {}),
       registry: makeMockRegistry(tool),
       onEvent: (event) => { events.push(event); },
     });
@@ -424,9 +411,9 @@ describe("ChatRunner — tool status callbacks", () => {
       event.type === "tool_start" || event.type === "tool_update" || event.type === "tool_end"
     );
     expect(toolEvents).toEqual(expect.arrayContaining([
-      expect.objectContaining({ type: "tool_start", toolName: "ambiguous-tool", activityCategory: "search" }),
-      expect.objectContaining({ type: "tool_update", toolName: "ambiguous-tool", activityCategory: "search" }),
-      expect.objectContaining({ type: "tool_end", toolName: "ambiguous-tool", activityCategory: "search" }),
+      expect.objectContaining({ type: "tool_start", toolName: "grep", activityCategory: "search" }),
+      expect.objectContaining({ type: "tool_update", toolName: "grep", activityCategory: "search" }),
+      expect.objectContaining({ type: "tool_end", toolName: "grep", activityCategory: "search" }),
     ]));
   });
 
@@ -550,7 +537,7 @@ describe("ChatRunner — Codex-like model request builder path", () => {
     const capturedToolRequests: Array<{ messages: LLMMessage[]; options?: LLMRequestOptions }> = [];
     const tool = {
       metadata: {
-        name: "workspace_status",
+        name: "grep",
         aliases: [],
         permissionLevel: "read_only",
         isReadOnly: true,
@@ -562,9 +549,9 @@ describe("ChatRunner — Codex-like model request builder path", () => {
         tags: [],
       },
       inputSchema: z.object({
-        scope: z.enum(["workspace"]),
+        pattern: z.string(),
       }),
-      description: () => "Read workspace status through the typed tool boundary.",
+      description: () => "Search workspace content through the typed tool boundary.",
       call: vi.fn().mockResolvedValue({
         success: true,
         data: { clean: true },
@@ -579,20 +566,8 @@ describe("ChatRunner — Codex-like model request builder path", () => {
       supportsToolCalling: () => true,
       sendMessage: vi.fn().mockImplementation(async (messages: LLMMessage[], options?: LLMRequestOptions) => {
         callIndex += 1;
-        const stage = ((callIndex - 1) % 3) + 1;
+        const stage = ((callIndex - 1) % 2) + 1;
         if (stage === 1) {
-          return {
-            content: JSON.stringify({
-              kind: "execute",
-              confidence: 0.94,
-              rationale: "tool-backed workspace status request",
-            }),
-            usage: { input_tokens: 1, output_tokens: 1 },
-            stop_reason: "end_turn",
-            tool_calls: [],
-          } satisfies LLMResponse;
-        }
-        if (stage === 2) {
           capturedToolRequests.push({ messages, options });
           return {
             content: "",
@@ -602,8 +577,8 @@ describe("ChatRunner — Codex-like model request builder path", () => {
               id: `tc-${callIndex}`,
               type: "function",
               function: {
-                name: "workspace_status",
-                arguments: JSON.stringify({ scope: "workspace" }),
+                name: "grep",
+                arguments: JSON.stringify({ pattern: "workspace" }),
               },
             }],
           } satisfies LLMResponse;
@@ -629,13 +604,13 @@ describe("ChatRunner — Codex-like model request builder path", () => {
     expect(tool.call).toHaveBeenCalledTimes(2);
     expect(capturedToolRequests).toHaveLength(2);
     for (const request of capturedToolRequests) {
-      expect(request.options?.tools?.map((definition) => definition.function.name)).toEqual(["workspace_status"]);
+      expect(request.options?.tools?.map((definition) => definition.function.name)).toEqual(["grep"]);
       expect(request.options?.tools?.[0]?.function.parameters).toMatchObject({
         type: "object",
         properties: {
-          scope: expect.objectContaining({ enum: ["workspace"] }),
+          pattern: expect.objectContaining({ type: "string" }),
         },
-        required: ["scope"],
+        required: ["pattern"],
       });
       expect(request.options?.system).toContain("## Turn Context");
       expect(request.options?.system).not.toContain("return exactly one JSON object");

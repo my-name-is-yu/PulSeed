@@ -265,7 +265,11 @@ class ConfirmGatewayConfigWriteTool implements ITool<PrepareConfigWriteInput> {
     });
     if (!write.success) {
       await context.setupDialogue?.set(null);
-      return toolResult(false, { status: "approval_denied" }, write.message, started);
+      return toolResult(false, { status: "approval_denied" }, write.message, started, {
+        status: "not_executed",
+        reason: "approval_denied",
+        message: write.message,
+      });
     }
     const completed: SetupDialogueRuntimeState = {
       publicState: {
@@ -344,14 +348,7 @@ class GetRuntimeStatusTool implements ITool<RuntimeStatusInput> {
     return toolResult(true, snapshot, formatRuntimeStatus(snapshot), started);
   }
 
-  checkPermissions(_input: RuntimeStatusInput, context: ToolCallContext): Promise<PermissionCheckResult> {
-    if (!runtimeControlAllowed(context)) {
-      return Promise.resolve({
-        status: "denied",
-        reason: "Runtime status is not authorized for this chat surface. The operation was not executed.",
-        executionReason: "policy_blocked",
-      });
-    }
+  checkPermissions(_input: RuntimeStatusInput, _context: ToolCallContext): Promise<PermissionCheckResult> {
     return Promise.resolve({ status: "allowed" });
   }
 

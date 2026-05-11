@@ -2,7 +2,12 @@ import * as http from "node:http";
 import { webcrypto } from "node:crypto";
 import type { ChannelAdapter, EnvelopeHandler, TypingIndicatorCapability } from "./channel-adapter.js";
 import { loadGatewayConfigJson } from "./config-json.js";
-import { dispatchGatewayChatInput } from "./chat-session-dispatch.js";
+import {
+  GATEWAY_CHAT_DISPATCH_FAILURE_MESSAGE,
+  dispatchGatewayChatInputResult,
+  formatGatewayChatDispatchFailure,
+  type GatewayChatDispatchInput,
+} from "./chat-session-dispatch.js";
 import { formatPlaintextNotification, supportsCoreGatewayNotification } from "./core-channel-notification.js";
 import { buildChannelPolicyMetadata, buildExternalSurfaceDecision, evaluateChannelAccess, resolveChannelRoute } from "./channel-policy.js";
 import { createRefreshingTypingIndicator } from "./typing-indicator.js";
@@ -252,7 +257,7 @@ export class DiscordGatewayAdapter implements ChannelAdapter {
 
   private async processIncomingMessage(
     payload: DiscordInteractionPayload,
-    input: Parameters<typeof dispatchGatewayChatInput>[0]
+    input: GatewayChatDispatchInput
   ): Promise<void> {
     const displayTransport = payload.application_id !== undefined && payload.token !== undefined
       ? new DiscordInteractionDisplayTransport(this.api, payload.application_id, payload.token, this.config.ephemeral)
@@ -291,7 +296,7 @@ export class DiscordGatewayAdapter implements ChannelAdapter {
         turn_id: `discord:${input.message_id ?? input.conversation_id}`,
         phase: "received",
       }));
-      reply = await dispatchGatewayChatInput({
+      const dispatchResult = await dispatchGatewayChatInputResult({
         ...input,
         onEvent: async (event) => {
           const chatEvent = event as unknown as ChatEvent;
@@ -303,10 +308,13 @@ export class DiscordGatewayAdapter implements ChannelAdapter {
           });
         },
       });
+      reply = dispatchResult.status === "ok"
+        ? dispatchResult.text
+        : formatGatewayChatDispatchFailure(dispatchResult.error);
       dispatchCompleted = true;
     } finally {
       try {
-        const content = reply ?? "Received.";
+        const content = reply ?? GATEWAY_CHAT_DISPATCH_FAILURE_MESSAGE;
         if (dispatchCompleted && projector !== null && !projector.renderedAssistantOutput) {
           const fallbackEvent = {
             type: "assistant_final" as const,

@@ -10,7 +10,7 @@ import {
   type ExternalSurfaceDecision,
   type ChannelRoutingPolicy,
 } from "./channel-policy.js";
-import { dispatchGatewayChatInput } from "./chat-session-dispatch.js";
+import { dispatchGatewayChatInputResult, formatGatewayChatDispatchFailure } from "./chat-session-dispatch.js";
 import { createUnsupportedTypingIndicator } from "./typing-indicator.js";
 import { SLACK_GATEWAY_DISPLAY_CONTRACT, createGatewayDisplayPolicy } from "./channel-display-policy.js";
 import { SLACK_SEEDY_PRESENCE_CONTRACT, resolveGatewayChannelPresenceContract } from "./channel-presence-policy.js";
@@ -272,7 +272,7 @@ export class SlackChannelAdapter implements ChannelAdapter {
         turn_id: `slack:${input.channel}:${input.messageId ?? "message"}`,
         phase: "received",
       }));
-      reply = await dispatchGatewayChatInput({
+      const dispatchResult = await dispatchGatewayChatInputResult({
         text: input.text,
         platform: "slack",
         identity_key: input.identityKey,
@@ -297,6 +297,9 @@ export class SlackChannelAdapter implements ChannelAdapter {
         metadata: input.metadata,
         externalSurface: input.externalSurface,
       });
+      reply = dispatchResult.status === "ok"
+        ? dispatchResult.text
+        : formatGatewayChatDispatchFailure(dispatchResult.error);
       dispatchCompleted = true;
     } finally {
       try {

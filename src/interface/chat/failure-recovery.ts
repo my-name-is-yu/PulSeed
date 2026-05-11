@@ -8,7 +8,7 @@ export type FailureRecoveryKind =
   | "runtime_interruption"
   | "daemon_loop"
   | "resume"
-  | "adapter"
+  | "model_provider"
   | "unknown";
 
 export interface FailureRecoveryGuidance {
@@ -48,9 +48,9 @@ export interface FailureRecoveryVerificationSignal {
   code?: string;
 }
 
-export interface FailureRecoveryAdapterSignal {
-  kind: "adapter";
-  adapterType?: string;
+export interface FailureRecoveryModelProviderSignal {
+  kind: "model_provider";
+  providerType?: string;
   stoppedReason?: string;
   code?: string;
 }
@@ -60,7 +60,7 @@ export type FailureRecoverySignal =
   | FailureRecoveryApprovalSignal
   | FailureRecoveryRuntimeSignal
   | FailureRecoveryVerificationSignal
-  | FailureRecoveryAdapterSignal;
+  | FailureRecoveryModelProviderSignal;
 
 export interface FailureRecoveryEvidence {
   error?: string;
@@ -80,7 +80,7 @@ const FailureRecoveryFallbackDecisionSchema = z.object({
     "runtime_interruption",
     "daemon_loop",
     "resume",
-    "adapter",
+    "model_provider",
     "unknown",
   ]),
   confidence: z.number().min(0).max(1),
@@ -149,13 +149,13 @@ const GUIDANCE_BY_KIND: Record<FailureRecoveryKind, FailureRecoveryGuidance> = {
       "Use /review if the failure happened after a file change.",
     ],
   },
-  adapter: {
-    kind: "adapter",
-    label: "Adapter failure",
-    summary: "The configured model or adapter path failed before the turn completed.",
+  model_provider: {
+    kind: "model_provider",
+    label: "Model/provider failure",
+    summary: "The configured model provider failed before the turn completed.",
     nextActions: [
       "Retry the turn after checking provider availability.",
-      "Use /model to confirm the active provider and adapter.",
+      "Use /model to confirm the active provider configuration.",
       "Narrow the request if the failure happened during a long turn.",
     ],
   },
@@ -208,7 +208,7 @@ const RESUME_CODES = new Set([
   "agent_loop_state_missing",
 ]);
 
-const ADAPTER_CODES = new Set([
+const MODEL_PROVIDER_CODES = new Set([
   "adapter_error",
   "model_error",
   "provider_failure",
@@ -317,9 +317,9 @@ function classifyFromStructuredEvidence(evidence: FailureRecoveryEvidence): Fail
   ) {
     return "tool_input";
   }
-  if (signals.some((signal) => signal.kind === "adapter" && signal.stoppedReason && signal.stoppedReason !== "completed")
-    || hasAny(codes, ADAPTER_CODES)) {
-    return "adapter";
+  if (signals.some((signal) => signal.kind === "model_provider" && signal.stoppedReason && signal.stoppedReason !== "completed")
+    || hasAny(codes, MODEL_PROVIDER_CODES)) {
+    return "model_provider";
   }
   return "unknown";
 }
@@ -350,7 +350,7 @@ async function classifyFailureRecoveryFallback(
 function getFailureRecoveryFallbackPrompt(): string {
   return `You classify a PulSeed chat lifecycle failure only when structured runtime evidence is unavailable.
 
-Return JSON: { "kind": "permission" | "tool_input" | "verification" | "runtime_interruption" | "daemon_loop" | "resume" | "adapter" | "unknown", "confidence": 0.0-1.0, "rationale": "short" }.
+Return JSON: { "kind": "permission" | "tool_input" | "verification" | "runtime_interruption" | "daemon_loop" | "resume" | "model_provider" | "unknown", "confidence": 0.0-1.0, "rationale": "short" }.
 
 Use unknown for ambiguous, provider-specific, localized, or low-evidence messages. Do not infer approval, verification, session, runtime, or provider state unless the failure text clearly states that category.`;
 }
@@ -374,7 +374,7 @@ function hasReason(evidence: FailureRecoveryEvidence, candidates: Set<string>): 
     normalizeToken(evidence.stoppedReason),
     normalizeToken(evidence.agentLoopStopReason),
     ...(evidence.signals ?? [])
-      .map((signal) => signal.kind === "runtime" || signal.kind === "adapter" ? normalizeToken(signal.stoppedReason) : null),
+      .map((signal) => signal.kind === "runtime" || signal.kind === "model_provider" ? normalizeToken(signal.stoppedReason) : null),
   ].filter((token): token is string => Boolean(token));
   return reasons.some((reason) => candidates.has(reason));
 }

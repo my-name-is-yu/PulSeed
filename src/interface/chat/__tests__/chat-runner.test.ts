@@ -19,7 +19,6 @@ import type { ILLMClient } from "../../../base/llm/llm-client.js";
 import type { ChatAgentLoopRunner } from "../../../orchestrator/execution/agent-loop/chat-agent-loop-runner.js";
 import { SqliteAgentLoopSessionStateStore } from "../../../orchestrator/execution/agent-loop/agent-loop-session-db-store.js";
 import type { GoalNegotiator } from "../../../orchestrator/goal/goal-negotiator.js";
-import { createRuntimeSessionRegistry } from "../../../runtime/session-registry/index.js";
 import { BackgroundRunLedger } from "../../../runtime/store/background-run-store.js";
 import { createRunSpecStore } from "../../../runtime/run-spec/index.js";
 import type { RunSpec } from "../../../runtime/run-spec/index.js";
@@ -99,6 +98,20 @@ function makeMockStateManager(): StateManager {
     readRaw: vi.fn().mockResolvedValue(null),
     listTasks: vi.fn().mockResolvedValue([]),
   } as unknown as StateManager;
+}
+
+function makeRepeatingMockLLMClient(response = "Task completed successfully."): ILLMClient {
+  return {
+    sendMessage: vi.fn().mockResolvedValue({
+      content: response,
+      usage: {
+        input_tokens: 10,
+        output_tokens: response.length,
+      },
+      stop_reason: "end_turn",
+    }),
+    parseJSON: vi.fn((content: string, schema: z.ZodSchema<unknown>) => schema.parse(JSON.parse(content))),
+  } as unknown as ILLMClient;
 }
 
 function makeMockStateManagerWithBaseDir(): StateManager {
@@ -193,8 +206,8 @@ function makeIngress(text: string): ChatIngressMessage {
 
 function adapterRoute(): SelectedChatRoute {
   return {
-    kind: "adapter",
-    reason: "adapter_fallback",
+    kind: "gateway_model_loop",
+    reason: "direct_model_tool_loop",
     replyTargetPolicy: "turn_reply_target",
     eventProjectionPolicy: "turn_only",
     concurrencyPolicy: "session_serial",
@@ -246,13 +259,8 @@ function makeTelegramStatusProvider(status: TelegramSetupStatus): NonNullable<Ch
 function telegramConfigureRoute(): SelectedChatRoute {
   return {
     kind: "configure",
-    reason: "freeform_semantic_route",
-    intent: {
-      kind: "configure",
-      confidence: 0.95,
-      configure_target: "telegram_gateway",
-      rationale: "test configure route",
-    },
+    reason: "setup_secret_intake",
+    configureTarget: "telegram_gateway",
     replyTargetPolicy: "turn_reply_target",
     eventProjectionPolicy: "turn_only",
     concurrencyPolicy: "session_serial",
@@ -263,6 +271,7 @@ function makeDeps(overrides: Partial<ChatRunnerDeps> = {}): ChatRunnerDeps {
   return {
     stateManager: makeMockStateManager(),
     adapter: makeMockAdapter(),
+    llmClient: makeRepeatingMockLLMClient(),
     ...overrides,
   };
 }
@@ -313,29 +322,8 @@ function runSpecDraftDecision(overrides: Record<string, unknown> = {}): string {
   });
 }
 
-function runSpecConfirmationDecision(decision: "approve" | "cancel" | "unknown" | "revise", overrides: Record<string, unknown> = {}): string {
-  return JSON.stringify({
-    decision,
-    confidence: 0.93,
-    ...overrides,
-  });
-}
-
-function runSpecPendingDialogueDecision(outcome: "confirmation_reply" | "new_intent" | "ambiguous", overrides: Record<string, unknown> = {}): string {
-  return JSON.stringify({
-    outcome,
-    confirmation_kind: outcome === "new_intent" ? "unknown" : "clarify",
-    confidence: 0.93,
-    ...overrides,
-  });
-}
-
-function freeformRouteDecision(kind: "assist" | "configure" | "execute" | "run_spec" | "clarify", confidence = 0.93): string {
-  return JSON.stringify({ kind, confidence, rationale: `test ${kind}` });
-}
-
-function freeformExecuteDecision(): string {
-  return freeformRouteDecision("execute");
+function unusedModelDecision(): string {
+  return JSON.stringify({ unused: true });
 }
 
 function makeInterruptibleAgentLoopRunner() {
@@ -592,86 +580,6 @@ describe("ChatRunner", () => {
       expect(result.output).toContain("I received a Telegram bot token");
       expect(result.output).not.toContain(telegramToken);
       expect(adapter.execute).not.toHaveBeenCalled();
-    });
-
-    it("reports daemon-running unconfigured Telegram state through the production configure route", async () => {
-      const llmClient = createMockLLMClient([
-        JSON.stringify({
-          kind: "configure",
-          confidence: 0.94,
-          configure_target: "telegram_gateway",
-          rationale: "operator wants Telegram setup",
-        }),
-      ]);
-      const runner = new ChatRunner(makeDeps({
-        llmClient,
-        gatewaySetupStatusProvider: makeTelegramStatusProvider(makeTelegramSetupStatus({
-          state: "unconfigured",
-          daemon: { running: true, port: 41700 },
-          config: { exists: false, hasBotToken: false, hasHomeChat: false },
-        })),
-      }));
-
-      const result = await runner.execute("telegram繋げたい", "/repo");
-
-      expect(result.output).toContain("Daemon: running on port 41700");
-      expect(result.output).toContain("Telegram: not configured");
-      expect(result.output).toContain("pulseed telegram setup");
-      expect(result.output).toContain("pulseed gateway setup");
-      expect(result.output).toContain("If you prefer chat-assisted setup");
-    });
-
-    it("reports configured Telegram state and only points to verification when home chat exists", async () => {
-      const llmClient = createMockLLMClient([
-        JSON.stringify({
-          kind: "configure",
-          confidence: 0.94,
-          configure_target: "telegram_gateway",
-          rationale: "operator wants Telegram setup",
-        }),
-      ]);
-      const runner = new ChatRunner(makeDeps({
-        llmClient,
-        gatewaySetupStatusProvider: makeTelegramStatusProvider(makeTelegramSetupStatus({
-          state: "configured",
-          daemon: { running: true, port: 41700 },
-          config: { exists: true, hasBotToken: true, hasHomeChat: true },
-        })),
-      }));
-
-      const result = await runner.execute("telegram繋げたい", "/repo");
-
-      expect(result.output).toContain("Telegram config: configured");
-      expect(result.output).toContain("Home chat: configured");
-      expect(result.output).toContain("Gateway loaded in daemon: unknown.");
-      expect(result.output).toContain("Verification:");
-      expect(result.output).not.toContain("send `/sethome`");
-    });
-
-    it("reports partially configured Telegram state and directs /sethome through the production configure route", async () => {
-      const llmClient = createMockLLMClient([
-        JSON.stringify({
-          kind: "configure",
-          confidence: 0.94,
-          configure_target: "telegram_gateway",
-          rationale: "operator wants Telegram setup",
-        }),
-      ]);
-      const runner = new ChatRunner(makeDeps({
-        llmClient,
-        gatewaySetupStatusProvider: makeTelegramStatusProvider(makeTelegramSetupStatus({
-          state: "partially_configured",
-          daemon: { running: false, port: 41700 },
-          config: { exists: true, hasBotToken: true, hasHomeChat: false },
-        })),
-      }));
-
-      const result = await runner.execute("telegram繋げたい", "/repo");
-
-      expect(result.output).toContain("Daemon: not responding on port 41700");
-      expect(result.output).toContain("bot token is configured, but no home chat is set");
-      expect(result.output).toContain("Send `/sethome`");
-      expect(result.output).toContain("config will not take effect until the daemon is started or restarted");
     });
 
     it("keeps supplied setup secret facts available to the configure route without persisting raw assistant echoes", async () => {
@@ -1132,38 +1040,27 @@ describe("ChatRunner", () => {
       fs.rmSync(baseDir, { recursive: true, force: true });
     });
 
-    it("calls adapter.execute with correct AgentTask shape", async () => {
+    it("returns ChatRunResult from the direct model/tool loop", async () => {
+      const llmClient = createSingleMockLLMClient("Task completed successfully.");
       const adapter = makeMockAdapter();
-      const runner = new ChatRunner(makeDeps({ adapter }));
-
-      await runner.execute("Fix the tests", "/repo", 30_000);
-
-      expect(adapter.execute).toHaveBeenCalledOnce();
-      const task = (adapter.execute as ReturnType<typeof vi.fn>).mock.calls[0][0];
-      expect(task).toMatchObject({
-        adapter_type: "mock",
-        cwd: "/repo",
-        timeout_ms: 30_000,
-      });
-      expect(typeof task.prompt).toBe("string");
-      expect(task.prompt.length).toBeGreaterThan(0);
-    });
-
-    it("returns ChatRunResult with success, output, and elapsed_ms", async () => {
-      const runner = new ChatRunner(makeDeps());
+      const runner = new ChatRunner(makeDeps({ adapter, llmClient }));
       const result = await runner.execute("Do something", "/repo");
 
       expect(result.success).toBe(true);
       expect(result.output).toBe("Task completed successfully.");
       expect(typeof result.elapsed_ms).toBe("number");
       expect(result.elapsed_ms).toBeGreaterThanOrEqual(0);
+      expect(llmClient.callCount).toBe(1);
+      expect(adapter.execute).not.toHaveBeenCalled();
     });
 
-    it("emits internal lifecycle activity before adapter execution without an intent preamble", async () => {
+    it("emits direct model-loop lifecycle activity without an intent preamble", async () => {
       const adapter = makeMockAdapter();
+      const llmClient = createSingleMockLLMClient("Direct answer.");
       const events: string[] = [];
       const runner = new ChatRunner(makeDeps({
         adapter,
+        llmClient,
         onEvent: (event) => {
           if (event.type === "activity") events.push(`${event.kind}:${event.message}`);
         },
@@ -1171,211 +1068,21 @@ describe("ChatRunner", () => {
 
       await runner.execute("Do something", "/repo");
 
-      expect(events[0]).toBe("lifecycle:Preparing context...");
-      const contextCheckpointIndex = events.findIndex((event) =>
-        event.includes("checkpoint:Context gathered:")
-      );
-      const adapterCheckpointIndex = events.findIndex((event) =>
-        event.includes("checkpoint:Adapter started:")
-      );
-      const adapterActivityIndex = events.indexOf("lifecycle:Calling adapter...");
-      expect(contextCheckpointIndex).toBeGreaterThan(events.indexOf("lifecycle:Preparing context..."));
-      expect(adapterCheckpointIndex).toBeGreaterThan(contextCheckpointIndex);
-      expect(adapterActivityIndex).toBeGreaterThan(adapterCheckpointIndex);
-      expect(events).toContain("lifecycle:Calling adapter...");
+      expect(events).toContain("lifecycle:Calling model...");
+      expect(events).not.toContain("lifecycle:Calling adapter...");
       const transcript = events.join("\n");
       expect(transcript).not.toContain("I understand the request as");
       expect(transcript).not.toContain("Intent");
-      expect(transcript).not.toContain("Checkpoint");
       expect(transcript).not.toContain("Updated plan:");
     });
 
-    it("emits verification checkpoints when adapter execution changes the working tree", async () => {
-      const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-checkpoints-"));
-      const events: ChatEvent[] = [];
-      try {
-        execFileSync("git", ["init"], { cwd: workspaceDir, stdio: "ignore" });
-        execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: workspaceDir, stdio: "ignore" });
-        execFileSync("git", ["config", "user.name", "Test User"], { cwd: workspaceDir, stdio: "ignore" });
-        fs.writeFileSync(path.join(workspaceDir, "README.md"), "before\n", "utf-8");
-        execFileSync("git", ["add", "README.md"], { cwd: workspaceDir, stdio: "ignore" });
-        execFileSync("git", ["commit", "-m", "init"], { cwd: workspaceDir, stdio: "ignore" });
-
-        const adapter = {
-          adapterType: "mock",
-          execute: vi.fn().mockImplementation(async () => {
-            fs.writeFileSync(path.join(workspaceDir, "README.md"), "after\n", "utf-8");
-            return CANNED_RESULT;
-          }),
-        } as unknown as IAdapter;
-        const runner = new ChatRunner(makeDeps({
-          adapter,
-          onEvent: (event) => { events.push(event); },
-        }));
-
-        const result = await runner.execute("Change the README", workspaceDir);
-
-        expect(result.success).toBe(true);
-        const checkpointMessages = events
-          .filter((event): event is Extract<ChatEvent, { type: "activity" }> =>
-            event.type === "activity" && event.kind === "checkpoint"
-          )
-          .map((event) => event.message);
-        const diffEvent = events.find((event): event is Extract<ChatEvent, { type: "activity" }> =>
-          event.type === "activity" && event.kind === "diff"
-        );
-        expect(diffEvent).toMatchObject({
-          type: "activity",
-          kind: "diff",
-          sourceId: "diff:working-tree",
-          transient: false,
-        });
-        expect(diffEvent?.message).toContain("Changed files");
-        expect(diffEvent?.message).toContain("Modified files");
-        expect(diffEvent?.message).toContain("M\tREADME.md");
-        expect(diffEvent?.message).toContain("Inline patch");
-        expect(diffEvent?.message).toContain("-before");
-        expect(diffEvent?.message).toContain("+after");
-        expect(checkpointMessages).toEqual(expect.arrayContaining([
-          expect.stringContaining("Context gathered"),
-          expect.stringContaining("Adapter started"),
-          expect.stringContaining("Changes detected"),
-          expect.stringContaining("Verification passed"),
-        ]));
-        expect(checkpointMessages.findIndex((message) => message.includes("Changes detected")))
-          .toBeLessThan(checkpointMessages.findIndex((message) => message.includes("Verification passed")));
-      } finally {
-        fs.rmSync(workspaceDir, { recursive: true, force: true });
-      }
-    });
-
-    it("emits a diff artifact when a turn only creates an untracked file", async () => {
-      const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-untracked-diff-"));
-      const events: ChatEvent[] = [];
-      try {
-        execFileSync("git", ["init"], { cwd: workspaceDir, stdio: "ignore" });
-        execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: workspaceDir, stdio: "ignore" });
-        execFileSync("git", ["config", "user.name", "Test User"], { cwd: workspaceDir, stdio: "ignore" });
-        fs.writeFileSync(path.join(workspaceDir, "README.md"), "base\n", "utf-8");
-        execFileSync("git", ["add", "README.md"], { cwd: workspaceDir, stdio: "ignore" });
-        execFileSync("git", ["commit", "-m", "init"], { cwd: workspaceDir, stdio: "ignore" });
-
-        const adapter = {
-          adapterType: "mock",
-          execute: vi.fn().mockImplementation(async () => {
-            fs.writeFileSync(path.join(workspaceDir, "new-file.txt"), "new content\n", "utf-8");
-            return CANNED_RESULT;
-          }),
-        } as unknown as IAdapter;
-        const toolExecutor = {
-          execute: vi.fn().mockImplementation(async (toolName: string) => {
-            if (toolName === "git_diff") {
-              return { success: true, data: "", summary: "", durationMs: 0 };
-            }
-            return {
-              success: true,
-              data: { passed: 1, failed: 0, skipped: 0, total: 1, success: true, rawOutput: "PASS" },
-              summary: "",
-              durationMs: 0,
-            };
-          }),
-        } as unknown as NonNullable<ChatRunnerDeps["toolExecutor"]>;
-        const runner = new ChatRunner(makeDeps({
-          adapter,
-          toolExecutor,
-          onEvent: (event) => { events.push(event); },
-        }));
-
-        const result = await runner.execute("Create a new file", workspaceDir);
-
-        expect(result.success).toBe(true);
-        const diffEvent = events.find((event): event is Extract<ChatEvent, { type: "activity" }> =>
-          event.type === "activity" && event.kind === "diff"
-        );
-        expect(diffEvent?.message).toContain("A\tnew-file.txt");
-        expect(diffEvent?.message).toContain("+++ b/new-file.txt");
-        expect(diffEvent?.message).toContain("+new content");
-        expect(toolExecutor.execute).toHaveBeenCalledWith(
-          "test-runner",
-          { command: "npx vitest run", timeout: 30_000 },
-          expect.objectContaining({ cwd: workspaceDir })
-        );
-      } finally {
-        fs.rmSync(workspaceDir, { recursive: true, force: true });
-      }
-    });
-
-    it("emits the final diff after verification retry repairs files", async () => {
-      const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-retry-diff-"));
-      const events: ChatEvent[] = [];
-      try {
-        execFileSync("git", ["init"], { cwd: workspaceDir, stdio: "ignore" });
-        execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: workspaceDir, stdio: "ignore" });
-        execFileSync("git", ["config", "user.name", "Test User"], { cwd: workspaceDir, stdio: "ignore" });
-        fs.writeFileSync(path.join(workspaceDir, "README.md"), "before\n", "utf-8");
-        execFileSync("git", ["add", "README.md"], { cwd: workspaceDir, stdio: "ignore" });
-        execFileSync("git", ["commit", "-m", "init"], { cwd: workspaceDir, stdio: "ignore" });
-
-        let adapterCalls = 0;
-        const adapter = {
-          adapterType: "mock",
-          execute: vi.fn().mockImplementation(async () => {
-            adapterCalls += 1;
-            fs.writeFileSync(path.join(workspaceDir, "README.md"), adapterCalls === 1 ? "bad\n" : "good\n", "utf-8");
-            return CANNED_RESULT;
-          }),
-        } as unknown as IAdapter;
-        let testRuns = 0;
-        const toolExecutor = {
-          execute: vi.fn().mockImplementation(async (toolName: string) => {
-            if (toolName === "git_diff") {
-              return { success: true, data: "diff --git a/README.md b/README.md", summary: "", durationMs: 0 };
-            }
-            testRuns += 1;
-            return {
-              success: true,
-              data: {
-                passed: testRuns === 1 ? 0 : 1,
-                failed: testRuns === 1 ? 1 : 0,
-                skipped: 0,
-                total: 1,
-                success: testRuns !== 1,
-                rawOutput: testRuns === 1 ? "FAIL README" : "PASS README",
-              },
-              summary: "",
-              durationMs: 0,
-            };
-          }),
-        } as unknown as NonNullable<ChatRunnerDeps["toolExecutor"]>;
-        const runner = new ChatRunner(makeDeps({
-          adapter,
-          toolExecutor,
-          onEvent: (event) => { events.push(event); },
-        }));
-
-        const result = await runner.execute("Fix README", workspaceDir);
-
-        expect(result.success).toBe(true);
-        expect(adapter.execute).toHaveBeenCalledTimes(2);
-        const diffEvents = events.filter((event): event is Extract<ChatEvent, { type: "activity" }> =>
-          event.type === "activity" && event.kind === "diff"
-        );
-        expect(diffEvents).toHaveLength(1);
-        expect(diffEvents[0]?.message).toContain("+good");
-        expect(diffEvents[0]?.message).not.toContain("+bad");
-      } finally {
-        fs.rmSync(workspaceDir, { recursive: true, force: true });
-      }
-    });
-
-    it("propagates adapter failure to ChatRunResult", async () => {
-      const failResult: AgentResult = { ...CANNED_RESULT, success: false, output: "Agent failed", error: "boom", exit_code: 1 };
-      const runner = new ChatRunner(makeDeps({ adapter: makeMockAdapter(failResult) }));
+    it("propagates direct model-loop failure to ChatRunResult", async () => {
+      const runner = new ChatRunner(makeDeps({ llmClient: undefined }));
 
       const result = await runner.execute("Do something risky", "/repo");
 
       expect(result.success).toBe(false);
-      expect(result.output).toContain("Agent failed");
+      expect(result.output).toContain("no language model client is configured");
       expect(result.output).toContain("Recovery");
       expect(result.output).toContain("Next actions");
     });
@@ -1468,9 +1175,9 @@ describe("ChatRunner", () => {
       expect(result.output).toContain("Active constraints");
       expect(result.output).toContain("Included context");
       expect(result.output).toContain("Not included");
-      expect(result.output).toContain("last_selected_route: kind=adapter");
+      expect(result.output).toContain("last_selected_route: kind=gateway_model_loop");
       expect(result.output).toContain("hidden reasoning");
-      expect(adapter.execute).toHaveBeenCalledOnce();
+      expect(adapter.execute).not.toHaveBeenCalled();
     });
 
     it("/working-memory aliases the context view", async () => {
@@ -1493,7 +1200,7 @@ describe("ChatRunner", () => {
       const result = await runner.interruptAndRedirect("next request", "/repo");
 
       expect(result.success).toBe(true);
-      expect(adapter.execute).toHaveBeenCalledOnce();
+      expect(adapter.execute).not.toHaveBeenCalled();
     });
 
     it("emits a typed TurnStart operation for idle user input", async () => {
@@ -1726,7 +1433,7 @@ describe("ChatRunner", () => {
       expect(result.output).toContain("goal-abc-123");
       expect(result.output).toContain("My tracked goal");
       expect(result.output).toContain("pulseed run --goal");
-      expect(adapter.execute).toHaveBeenCalledOnce(); // only the non-command turn
+      expect(adapter.execute).not.toHaveBeenCalled();
     });
 
     it("/tend confirmation forwards daemon transcript events without breaking notifications", async () => {
@@ -1982,7 +1689,7 @@ describe("ChatRunner", () => {
 
       expect(result.success).toBe(true);
       expect(result.output).toBe("Task completed successfully.");
-      expect(adapter.execute).toHaveBeenCalledOnce();
+      expect(adapter.execute).not.toHaveBeenCalled();
     });
 
     it("slash command comparison is case-insensitive", async () => {
@@ -2521,11 +2228,14 @@ describe("ChatRunner", () => {
         }));
         await importLegacyChatAgentLoopSessionState(tmpDir);
         const adapter = makeMockAdapter({ ...CANNED_RESULT, output: "Handled as fresh adapter work." });
-        const llmClient = createSingleMockLLMClient(JSON.stringify({
-          decision: "cancel",
-          confidence: 0.95,
-          rationale: "The user cancelled the pending setup write.",
-        }));
+        const llmClient = createMockLLMClient([
+          JSON.stringify({
+            decision: "cancel",
+            confidence: 0.95,
+            rationale: "The user cancelled the pending setup write.",
+          }),
+          "Handled as fresh model-loop work.",
+        ]);
         const runner = new ChatRunner(makeDeps({
           stateManager,
           adapter,
@@ -2554,8 +2264,8 @@ describe("ChatRunner", () => {
         expect(cancelledSetup.success).toBe(false);
         expect(cancelledSetup.output).toContain("cancelled");
         expect(staleNumber.success).toBe(true);
-        expect(staleNumber.output).toBe("Handled as fresh adapter work.");
-        expect(adapter.execute).toHaveBeenCalledOnce();
+        expect(staleNumber.output).toBe("Handled as fresh model-loop work.");
+        expect(adapter.execute).not.toHaveBeenCalled();
       } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
       }
@@ -2588,11 +2298,7 @@ describe("ChatRunner", () => {
           execute: vi.fn().mockResolvedValue(CANNED_RESULT),
         } as unknown as ChatAgentLoopRunner;
         const sendMessage = vi.fn().mockResolvedValue({
-          content: JSON.stringify({
-            kind: "show_sessions",
-            confidence: 0.95,
-            rationale: "Would trigger recovery if routeSelector did not win first.",
-          }),
+          content: "Handled as fresh model-loop work.",
         });
         const llmClient = {
           sendMessage,
@@ -2610,10 +2316,10 @@ describe("ChatRunner", () => {
         });
 
         expect(result.success).toBe(true);
-        expect(result.output).toBe("Handled as fresh adapter work.");
-        expect(adapter.execute).toHaveBeenCalledOnce();
+        expect(result.output).toBe("Handled as fresh model-loop work.");
+        expect(adapter.execute).not.toHaveBeenCalled();
         expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
-        expect(sendMessage).not.toHaveBeenCalled();
+        expect(sendMessage).toHaveBeenCalledOnce();
       } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
       }
@@ -3697,7 +3403,7 @@ describe("ChatRunner", () => {
       expect(result.output).toContain("Plugin information is not available");
     });
 
-    it("/compact falls back to deterministic summary and keeps latest turns", async () => {
+    it("/compact stores the model summary and keeps latest turns", async () => {
       const stateManager = makeMockStateManager();
       const runner = new ChatRunner(makeDeps({ stateManager }));
       runner.startSession("/repo");
@@ -3709,7 +3415,7 @@ describe("ChatRunner", () => {
       const result = await runner.execute("/compact", "/repo");
 
       expect(result.success).toBe(true);
-      expect(result.output).toContain("deterministic summary");
+      expect(result.output).toContain("LLM summary");
       expect(result.output).toContain("latest user/assistant turns were kept");
       const persisted = await loadPersistedChatSession(stateManager, runner.getSessionId()!);
       expect(persisted?.messages).toHaveLength(4);
@@ -3719,7 +3425,7 @@ describe("ChatRunner", () => {
         "Turn 3",
         "Task completed successfully.",
       ]);
-      expect(persisted?.compactionSummary).toContain("Turn 1");
+      expect(persisted?.compactionSummary).toContain("Task completed successfully.");
       expect(persisted?.compactionRecords?.[0]).toMatchObject({
         schema_version: "chat-compaction-record-v1",
         replacementHistory: {
@@ -3728,10 +3434,11 @@ describe("ChatRunner", () => {
       });
     });
 
-    it("/compact summary is included in the next adapter prompt", async () => {
+    it("/compact summary is included in the next model request", async () => {
       const stateManager = makeMockStateManager();
       const adapter = makeMockAdapter();
-      const runner = new ChatRunner(makeDeps({ stateManager, adapter }));
+      const llmClient = makeRepeatingMockLLMClient();
+      const runner = new ChatRunner(makeDeps({ stateManager, adapter, llmClient }));
       runner.startSession("/repo");
 
       await runner.execute("Turn 1", "/repo");
@@ -3740,18 +3447,18 @@ describe("ChatRunner", () => {
       await runner.execute("/compact", "/repo");
       await runner.execute("Continue", "/repo");
 
-      const finalTask = (adapter.execute as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0] as { prompt: string };
-      expect(finalTask.prompt).toContain("Compacted previous conversation summary");
-      expect(finalTask.prompt).toContain("user: Turn 1");
-      expect(finalTask.prompt).not.toContain("User: Turn 1");
-      expect(finalTask.prompt).toContain("Current message:");
-      expect(finalTask.prompt).toContain("Continue");
+      const finalRequest = JSON.stringify((llmClient.sendMessage as ReturnType<typeof vi.fn>).mock.calls.at(-1));
+      expect(finalRequest).toContain("Compacted");
+      expect(finalRequest).toContain("Task completed successfully.");
+      expect(finalRequest).toContain("Continue");
+      expect(adapter.execute).not.toHaveBeenCalled();
     });
 
     it("/clear removes any compacted summary from later prompts", async () => {
       const stateManager = makeMockStateManager();
       const adapter = makeMockAdapter();
-      const runner = new ChatRunner(makeDeps({ stateManager, adapter }));
+      const llmClient = makeRepeatingMockLLMClient();
+      const runner = new ChatRunner(makeDeps({ stateManager, adapter, llmClient }));
       runner.startSession("/repo");
 
       await runner.execute("Turn 1", "/repo");
@@ -3761,16 +3468,18 @@ describe("ChatRunner", () => {
       await runner.execute("/clear", "/repo");
       await runner.execute("Fresh start", "/repo");
 
-      const finalTask = (adapter.execute as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0] as { prompt: string };
-      expect(finalTask.prompt).not.toContain("Compacted previous conversation summary");
-      expect(finalTask.prompt).not.toContain("Turn 1");
-      expect(finalTask.prompt).toContain("Fresh start");
+      const finalRequest = JSON.stringify((llmClient.sendMessage as ReturnType<typeof vi.fn>).mock.calls.at(-1));
+      expect(finalRequest).not.toContain("Compacted");
+      expect(finalRequest).not.toContain("Turn 1");
+      expect(finalRequest).toContain("Fresh start");
+      expect(adapter.execute).not.toHaveBeenCalled();
     });
 
     it("/undo removes the last turn from journal-backed prompts", async () => {
       const stateManager = makeMockStateManager();
       const adapter = makeMockAdapter();
-      const runner = new ChatRunner(makeDeps({ stateManager, adapter }));
+      const llmClient = makeRepeatingMockLLMClient();
+      const runner = new ChatRunner(makeDeps({ stateManager, adapter, llmClient }));
       runner.startSession("/repo");
 
       await runner.execute("Turn 1", "/repo");
@@ -3778,10 +3487,11 @@ describe("ChatRunner", () => {
       await runner.execute("/undo", "/repo");
       await runner.execute("Fresh start", "/repo");
 
-      const finalTask = (adapter.execute as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0] as { prompt: string };
-      expect(finalTask.prompt).toContain("User: Turn 1");
-      expect(finalTask.prompt).not.toContain("Turn 2");
-      expect(finalTask.prompt).toContain("Fresh start");
+      const finalRequest = JSON.stringify((llmClient.sendMessage as ReturnType<typeof vi.fn>).mock.calls.at(-1));
+      expect(finalRequest).toContain("Turn 1");
+      expect(finalRequest).not.toContain("Turn 2");
+      expect(finalRequest).toContain("Fresh start");
+      expect(adapter.execute).not.toHaveBeenCalled();
     });
   });
 
@@ -3896,7 +3606,7 @@ describe("ChatRunner", () => {
 
       expect(result.success).toBe(false);
       expect(result.output).toContain("Recovery");
-      expect(result.output).toContain("Type: Unclassified failure");
+      expect(result.output).toContain("Type: Daemon loop failure");
       saveSpy.mockRestore();
       expect(writes.length).toBeGreaterThanOrEqual(2);
       const lastWrite = writes.at(-1)!;
@@ -3915,7 +3625,7 @@ describe("ChatRunner", () => {
           throw new Error("provider returned overloaded");
         }),
         sendMessage: vi.fn().mockResolvedValue({
-          content: JSON.stringify({ kind: "adapter", confidence: 0.92, rationale: "provider unavailable" }),
+          content: JSON.stringify({ kind: "model_provider", confidence: 0.92, rationale: "provider unavailable" }),
           usage: { input_tokens: 1, output_tokens: 1 },
           stop_reason: "end_turn",
         }),
@@ -3937,9 +3647,9 @@ describe("ChatRunner", () => {
       const result = await runner.execute("Break the provider", "/repo");
 
       expect(result.success).toBe(false);
-      expect(result.output).toContain("Type: Adapter failure");
-      expect(capturedEvents).toContainEqual({ type: "lifecycle_error", recoveryKind: "adapter" });
-      expect(llmClient.sendMessage).toHaveBeenCalledTimes(2);
+      expect(result.output).toContain("Type: Model/provider failure");
+      expect(capturedEvents).toContainEqual({ type: "lifecycle_error", recoveryKind: "model_provider" });
+      expect(llmClient.sendMessage).toHaveBeenCalledOnce();
     });
   });
 
@@ -3979,15 +3689,16 @@ describe("ChatRunner", () => {
       expect(sessionData?.messages.length).toBeGreaterThanOrEqual(4);
     });
 
-    it("startSession calls from execute() for 1-shot mode are adapter-call-safe", async () => {
+    it("execute() one-shot mode keeps ordinary turns on the direct model loop", async () => {
       const adapter = makeMockAdapter();
-      const runner = new ChatRunner(makeDeps({ adapter }));
+      const llmClient = makeRepeatingMockLLMClient();
+      const runner = new ChatRunner(makeDeps({ adapter, llmClient }));
 
-      // Without startSession, two calls should both reach the adapter
       await runner.execute("Task A", "/repo");
       await runner.execute("Task B", "/repo");
 
-      expect(adapter.execute).toHaveBeenCalledTimes(2);
+      expect(llmClient.sendMessage).toHaveBeenCalledTimes(2);
+      expect(adapter.execute).not.toHaveBeenCalled();
     });
 
     it("startSession followed by /clear still keeps the same session path", async () => {
@@ -4005,7 +3716,7 @@ describe("ChatRunner", () => {
   });
 
   describe("persist-before-execute ordering", () => {
-    it("stateManager.writeRaw is called before adapter.execute", async () => {
+    it("chat session state is saved before the model request", async () => {
       const callOrder: string[] = [];
 
       const stateManager = makeMockStateManager();
@@ -4016,20 +3727,24 @@ describe("ChatRunner", () => {
           return originalSave.call(this, session);
         });
 
-      const adapter = {
-        adapterType: "mock",
-        execute: vi.fn().mockImplementation(async () => {
-          callOrder.push("adapter.execute");
-          return CANNED_RESULT;
+      const llmClient = {
+        sendMessage: vi.fn().mockImplementation(async () => {
+          callOrder.push("llm.sendMessage");
+          return {
+            content: "Task completed successfully.",
+            usage: { input_tokens: 1, output_tokens: 1 },
+            stop_reason: "end_turn",
+          };
         }),
-      } as unknown as IAdapter;
+        parseJSON: vi.fn(),
+      } as unknown as ILLMClient;
 
-      const runner = new ChatRunner({ stateManager, adapter });
+      const runner = new ChatRunner(makeDeps({ stateManager, llmClient }));
       await runner.execute("persist ordering check", "/repo");
       saveSpy.mockRestore();
 
       const writeIndex = callOrder.indexOf("chatSession.save");
-      const executeIndex = callOrder.indexOf("adapter.execute");
+      const executeIndex = callOrder.indexOf("llm.sendMessage");
       expect(writeIndex).toBeGreaterThanOrEqual(0);
       expect(executeIndex).toBeGreaterThanOrEqual(0);
       expect(writeIndex).toBeLessThan(executeIndex);
@@ -4140,11 +3855,11 @@ describe("ChatRunner", () => {
       const llmClient = {
         supportsToolCalling: () => true,
         sendMessage: vi.fn().mockResolvedValue({
-          content: freeformExecuteDecision(),
+          content: unusedModelDecision(),
           usage: { input_tokens: 1, output_tokens: 1 },
           stop_reason: "end_turn",
         }),
-        parseJSON: createSingleMockLLMClient(freeformExecuteDecision()).parseJSON,
+        parseJSON: createSingleMockLLMClient(unusedModelDecision()).parseJSON,
       };
 
       const runner = new ChatRunner(makeDeps({
@@ -4287,11 +4002,11 @@ describe("ChatRunner", () => {
       const llmClient = {
         supportsToolCalling: () => true,
         sendMessage: vi.fn().mockResolvedValue({
-          content: freeformExecuteDecision(),
+          content: unusedModelDecision(),
           usage: { input_tokens: 1, output_tokens: 1 },
           stop_reason: "end_turn",
         }),
-        parseJSON: createSingleMockLLMClient(freeformExecuteDecision()).parseJSON,
+        parseJSON: createSingleMockLLMClient(unusedModelDecision()).parseJSON,
       };
 
       const runner = new ChatRunner(makeDeps({
@@ -4417,9 +4132,9 @@ describe("ChatRunner", () => {
         chatAgentLoopRunner,
         llmClient: createMockLLMClient([
           JSON.stringify({ intent: "none", reason: "ordinary continuation" }),
-          freeformExecuteDecision(),
+          unusedModelDecision(),
           JSON.stringify({ intent: "none", reason: "ordinary implementation finish request" }),
-          freeformExecuteDecision(),
+          unusedModelDecision(),
         ]),
         runtimeControlService,
       }));
@@ -4514,11 +4229,11 @@ describe("ChatRunner", () => {
         const llmClient = {
           supportsToolCalling: () => true,
           sendMessage: vi.fn().mockResolvedValue({
-            content: freeformExecuteDecision(),
+            content: unusedModelDecision(),
             usage: { input_tokens: 10, output_tokens: 12 },
             stop_reason: "stop",
           }),
-          parseJSON: createSingleMockLLMClient(freeformExecuteDecision()).parseJSON,
+          parseJSON: createSingleMockLLMClient(unusedModelDecision()).parseJSON,
         };
         const goal = makeGoal("goal-long", {
           title: "Reach the long-running score target",
@@ -4916,7 +4631,7 @@ describe("ChatRunner", () => {
             };
           }
           return {
-            content: freeformExecuteDecision(),
+            content: unusedModelDecision(),
             usage: { input_tokens: 1, output_tokens: 1 },
             stop_reason: "end_turn" as const,
           };
@@ -5042,7 +4757,7 @@ describe("ChatRunner", () => {
       };
       expect(finalInput.message).toContain("Continue");
       expect(finalInput.systemPrompt).toContain("Compacted Chat Summary");
-      expect(finalInput.systemPrompt).toContain("Turn 1");
+      expect(finalInput.systemPrompt).toContain("Task completed successfully.");
       expect(adapter.execute).not.toHaveBeenCalled();
     });
 
@@ -5072,7 +4787,6 @@ describe("ChatRunner", () => {
       fs.writeFileSync(path.join(pulseedHome, "SEED.md"), "# Sprout\n\nCustom identity.\n", "utf-8");
       const adapter = makeMockAdapter();
       const llmClient = createMockLLMClient([
-        freeformRouteDecision("assist"),
         "Sprout is the configured PulSeed identity.",
       ]);
 
@@ -5084,8 +4798,8 @@ describe("ChatRunner", () => {
         expect(result.success).toBe(true);
         expect(result.output).toContain("Sprout");
         expect(result.output).toContain("PulSeed");
-        expect(sendSpy).toHaveBeenCalledTimes(2);
-        const assistOptions = sendSpy.mock.calls[1]?.[1] as { system?: string } | undefined;
+        expect(sendSpy).toHaveBeenCalledOnce();
+        const assistOptions = sendSpy.mock.calls[0]?.[1] as { system?: string } | undefined;
         expect(assistOptions?.system).toContain("Sprout");
         expect(assistOptions?.system).toContain("configured agent identity running PulSeed");
         expect(adapter.execute).not.toHaveBeenCalled();
@@ -5112,7 +4826,6 @@ describe("ChatRunner", () => {
       } as unknown as StateManager;
       const adapter = makeMockAdapter();
       const llmClient = createMockLLMClient([
-        freeformRouteDecision("assist"),
         "BaseDirSeed is the configured PulSeed identity.",
       ]);
 
@@ -5124,8 +4837,8 @@ describe("ChatRunner", () => {
         expect(result.success).toBe(true);
         expect(result.output).toContain("BaseDirSeed");
         expect(result.output).toContain("PulSeed");
-        expect(sendSpy).toHaveBeenCalledTimes(2);
-        const assistOptions = sendSpy.mock.calls[1]?.[1] as { system?: string } | undefined;
+        expect(sendSpy).toHaveBeenCalledOnce();
+        const assistOptions = sendSpy.mock.calls[0]?.[1] as { system?: string } | undefined;
         expect(assistOptions?.system).toContain("BaseDirSeed");
         expect(adapter.execute).not.toHaveBeenCalled();
       } finally {
@@ -5171,7 +4884,7 @@ describe("ChatRunner", () => {
 
         expect(result.success).toBe(true);
         expect(result.output).toBe("Plain answer");
-        expect(llmClient.sendMessage).toHaveBeenCalledTimes(2);
+        expect(llmClient.sendMessage).toHaveBeenCalledOnce();
         const modelIndex = events.findIndex((event) =>
           event.type === "activity" && event.sourceId === "lifecycle:model"
         );
@@ -5179,7 +4892,7 @@ describe("ChatRunner", () => {
           event.type === "activity" && event.presentation?.gatewayNarration?.audience === "user"
         )).toBe(false);
         expect(modelIndex).toBeGreaterThanOrEqual(0);
-        const options = llmClient.sendMessage.mock.calls[1]?.[1] as { system?: string } | undefined;
+        const options = llmClient.sendMessage.mock.calls[0]?.[1] as { system?: string } | undefined;
         expect(options?.system).toContain("StaticPromptSeed");
         expect(options?.system).toContain("configured agent identity running PulSeed");
         expect(adapter.execute).not.toHaveBeenCalled();
@@ -5555,9 +5268,9 @@ describe("ChatRunner", () => {
 
     it("keeps non-native-tool clients on the local LLM/tool loop instead of the adapter fallback", async () => {
       const adapter = makeMockAdapter();
-      const echoTool = {
+      const readTool = {
         metadata: {
-          name: "echo",
+          name: "read",
           aliases: [],
           permissionLevel: "read_only" as const,
           isReadOnly: true,
@@ -5568,26 +5281,21 @@ describe("ChatRunner", () => {
           maxOutputChars: 1000,
           tags: ["test"],
         },
-        inputSchema: z.object({ value: z.string() }),
-        description: () => "Echo a value.",
+        inputSchema: z.object({}),
+        description: () => "Read a file.",
         checkPermissions: vi.fn().mockResolvedValue({ status: "allowed" }),
-        call: vi.fn().mockResolvedValue({ success: true, summary: "echoed hello", data: { echoed: "hello" } }),
+        call: vi.fn().mockResolvedValue({ success: true, summary: "read README", data: { content: "hello" } }),
         isConcurrencySafe: () => true,
       };
       const registry = {
-        listAll: () => [echoTool],
-        get: (name: string) => name === "echo" ? echoTool : undefined,
+        listAll: () => [readTool],
+        get: (name: string) => name === "read" ? readTool : undefined,
       };
       const llmClient = {
         supportsToolCalling: () => false,
         sendMessage: vi.fn()
           .mockResolvedValueOnce({
-            content: freeformExecuteDecision(),
-            usage: { input_tokens: 5, output_tokens: 5 },
-            stop_reason: "end_turn",
-          })
-          .mockResolvedValueOnce({
-            content: '{ "tool_calls": [{ "name": "echo", "input": { "value": "hello", }, }] }',
+            content: '{ "tool_calls": [{ "name": "read", "input": {} }] }',
             usage: { input_tokens: 5, output_tokens: 5 },
             stop_reason: "end_turn",
           })
@@ -5602,8 +5310,8 @@ describe("ChatRunner", () => {
       const runner = new ChatRunner(makeDeps({ adapter, llmClient: llmClient as never, registry: registry as never }));
       const result = await runner.execute("Do something", "/repo");
 
-      expect(llmClient.sendMessage).toHaveBeenCalledTimes(3);
-      expect(echoTool.call).toHaveBeenCalledOnce();
+      expect(llmClient.sendMessage).toHaveBeenCalledTimes(2);
+      expect(readTool.call).toHaveBeenCalledOnce();
       expect(adapter.execute).not.toHaveBeenCalled();
       expect(result.success).toBe(true);
       expect(result.output).toBe("Prompted loop response");
@@ -5631,708 +5339,7 @@ describe("ChatRunner", () => {
     });
   });
 
-  describe("natural-language RunSpec draft routing", () => {
-    it("derives and persists a typed RunSpec draft through the production chat route", async () => {
-      const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-runspec-"));
-      const stateManager = new StateManager(baseDir, undefined, { walEnabled: false });
-      const adapter = makeMockAdapter();
-      const llmClient = createMockLLMClient([
-        freeformRouteDecision("run_spec"),
-        runSpecDraftDecision(),
-      ]);
-      const runner = new ChatRunner(makeDeps({
-        stateManager,
-        adapter,
-        llmClient,
-      }));
-
-      const result = await runner.execute(
-        "Kaggle score 0.98を超えるまで長期で回して",
-        "/repo/kaggle",
-      );
-
-      expect(result.success).toBe(true);
-      expect(result.output).toContain("Proposed long-running work");
-      expect(result.output).toContain("Kaggle score 0.98");
-      expect(result.output).toContain("It has not started background work.");
-      expect(result.output).not.toContain("run-spec:");
-      expect(result.output).toContain("Reply with approval");
-      expect(adapter.execute).not.toHaveBeenCalled();
-      const stored = await onlyStoredRunSpec(baseDir);
-      expect(fs.existsSync(path.join(baseDir, "run-specs"))).toBe(false);
-      expect(stored.status).toBe("draft");
-      expect(stored.source_text).toBe("Kaggle score 0.98を超えるまで長期で回して");
-      expect(stored.workspace).toMatchObject({ path: "/repo/kaggle", source: "context" });
-      expect(stored.origin).toMatchObject({
-        channel: "cli",
-        session_id: expect.any(String),
-      });
-    });
-
-    it("routes paraphrased English and Japanese long-running requests through semantic RunSpec decisions", async () => {
-      const cases = [
-        {
-          text: "Let the optimizer keep improving validation score in the background until it clears 0.98.",
-          cwd: "/repo/bench",
-        },
-        {
-          text: "明日の朝まで評価を回し続けて、しきい値を超えたら止めて",
-          cwd: "/repo/eval",
-        },
-      ];
-
-      for (const item of cases) {
-        const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-runspec-paraphrase-"));
-        const stateManager = new StateManager(baseDir, undefined, { walEnabled: false });
-        const adapter = makeMockAdapter();
-        const llmClient = createMockLLMClient([
-          freeformRouteDecision("run_spec"),
-          runSpecDraftDecision({
-            objective: `Run long-lived work for: ${item.text}`,
-          }),
-        ]);
-        const runner = new ChatRunner(makeDeps({
-          stateManager,
-          adapter,
-          llmClient,
-        }));
-
-        const result = await runner.execute(item.text, item.cwd);
-
-        expect(result.success).toBe(true);
-        expect(result.output).toContain("Proposed long-running work");
-        expect(adapter.execute).not.toHaveBeenCalled();
-        expect(llmClient.callCount).toBe(2);
-        const stored = await onlyStoredRunSpec(baseDir);
-        expect(stored.source_text).toBe(item.text);
-        expect(stored.workspace).toMatchObject({ path: item.cwd, source: "context" });
-      }
-    });
-
-    it("lets model-selected assist override keyword-shaped background wording", async () => {
-      const adapter = makeMockAdapter();
-      const llmClient = createMockLLMClient([
-        freeformRouteDecision("assist"),
-        "Background and until wording can still be a read-only explanation request.",
-      ]);
-      const runner = new ChatRunner(makeDeps({
-        adapter,
-        llmClient,
-      }));
-
-      const result = await runner.execute("Why do background runs keep working until done?", "/repo");
-
-      expect(result.success).toBe(true);
-      expect(result.output).toContain("read-only explanation request");
-      expect(adapter.execute).not.toHaveBeenCalled();
-      expect(llmClient.callCount).toBe(2);
-    });
-
-    it("uses the clarify route for ambiguous freeform planning text without entering execution", async () => {
-      const adapter = makeMockAdapter();
-      const llmClient = createMockLLMClient([
-        freeformRouteDecision("clarify", 0.52),
-      ]);
-      const runner = new ChatRunner(makeDeps({
-        adapter,
-        llmClient,
-      }));
-
-      const result = await runner.execute("いい感じに進めておいて", "/repo");
-
-      expect(result.success).toBe(true);
-      expect(result.output).toContain("I need one more detail");
-      expect(adapter.execute).not.toHaveBeenCalled();
-      expect(llmClient.callCount).toBe(1);
-    });
-
-    it("rejects a previous pending RunSpec target when a new freeform operation plan is selected", async () => {
-      const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-runspec-previous-target-"));
-      const stateManager = new StateManager(baseDir, undefined, { walEnabled: false });
-      const adapter = makeMockAdapter();
-      const llmClient = createMockLLMClient([
-        freeformRouteDecision("run_spec"),
-        runSpecDraftDecision({
-          objective: "Keep optimizing the old Kaggle run.",
-        }),
-        runSpecConfirmationDecision("unknown", {
-          clarification: "This is not an approval for the pending RunSpec.",
-        }),
-        runSpecPendingDialogueDecision("new_intent"),
-        freeformRouteDecision("run_spec"),
-        runSpecDraftDecision({
-          profile: "generic",
-          objective: "Run a separate memory benchmark until usage stays below 512 MB.",
-          metric: {
-            name: "memory_usage",
-            direction: "minimize",
-            target: 512,
-            target_rank_percent: null,
-            datasource: "benchmark",
-            confidence: "high",
-          },
-          progress_contract: {
-            kind: "metric_target",
-            dimension: "memory_usage",
-            threshold: 512,
-            semantics: "Memory usage remains below target.",
-            confidence: "high",
-          },
-        }),
-      ]);
-      const runner = new ChatRunner(makeDeps({
-        stateManager,
-        adapter,
-        llmClient,
-      }));
-
-      await runner.execute("Kaggle score 0.98を超えるまで長期で回して", "/repo/kaggle");
-      const result = await runner.execute(
-        "Run a separate memory benchmark in the background until usage is below 512 MB.",
-        "/repo/bench",
-      );
-
-      expect(result.success).toBe(true);
-      expect(result.output).toContain("Proposed long-running work");
-      expect(adapter.execute).not.toHaveBeenCalled();
-      expect(llmClient.callCount).toBe(6);
-      const storedSpecs = await storedRunSpecs(baseDir);
-      expect(storedSpecs).toEqual(expect.arrayContaining([
-        expect.objectContaining({
-          source_text: "Kaggle score 0.98を超えるまで長期で回して",
-          workspace: expect.objectContaining({ path: "/repo/kaggle" }),
-        }),
-        expect.objectContaining({
-          source_text: "Run a separate memory benchmark in the background until usage is below 512 MB.",
-          workspace: expect.objectContaining({ path: "/repo/bench" }),
-        }),
-      ]));
-      const session = await new ChatSessionCatalog(stateManager).loadSession(runner.getSessionId()!);
-      expect(session?.runSpecConfirmation).toMatchObject({
-        state: "pending",
-        spec: expect.objectContaining({
-          source_text: "Run a separate memory benchmark in the background until usage is below 512 MB.",
-          workspace: expect.objectContaining({ path: "/repo/bench" }),
-        }),
-      });
-    });
-
-    it("lets typed RunSpec derivation override an over-broad configure route", async () => {
-      const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-runspec-configure-override-"));
-      const stateManager = new StateManager(baseDir, undefined, { walEnabled: false });
-      const adapter = makeMockAdapter();
-      const llmClient = createMockLLMClient([
-        JSON.stringify({
-          kind: "configure",
-          confidence: 0.91,
-          configure_target: "unknown",
-          rationale: "misread DurableLoop request as configuration",
-        }),
-        runSpecDraftDecision(),
-      ]);
-      const runner = new ChatRunner(makeDeps({
-        stateManager,
-        adapter,
-        llmClient,
-      }));
-
-      const result = await runner.execute(
-        "DurableloopのほうでKaggleのタスクに取り組んで",
-        "/repo/kaggle",
-      );
-
-      expect(result.success).toBe(true);
-      expect(result.output).toContain("Proposed long-running work");
-      expect(result.output).toContain("It has not started background work.");
-      expect(result.output).not.toContain("setup/configuration");
-      expect(adapter.execute).not.toHaveBeenCalled();
-      const stored = await onlyStoredRunSpec(baseDir);
-      expect(stored.status).toBe("draft");
-      expect(stored.profile).toBe("kaggle");
-    });
-
-    it("starts a confirmed RunSpec only after next-turn approval", async () => {
-      const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-runspec-confirm-"));
-      const stateManager = new StateManager(baseDir, undefined, { walEnabled: false });
-      const adapter = makeMockAdapter();
-      const daemonClient = { startGoal: vi.fn().mockResolvedValue({ ok: true }) };
-      const runner = new ChatRunner(makeDeps({
-        stateManager,
-        adapter,
-        daemonClient: daemonClient as never,
-        llmClient: createMockLLMClient([
-          freeformRouteDecision("run_spec"),
-          runSpecDraftDecision(),
-          runSpecConfirmationDecision("approve"),
-        ]),
-      }));
-
-      const draftResult = await runner.execute("Kaggle score 0.98を超えるまで長期で回して", "/repo/kaggle");
-      expect(draftResult.success).toBe(true);
-      expect(daemonClient.startGoal).not.toHaveBeenCalled();
-      const approveResult = await runner.execute("承認します", "/repo/kaggle");
-
-      expect(approveResult.success).toBe(true);
-      expect(approveResult.output).toContain("Long-running work approved.");
-      expect(approveResult.output).toContain("Started background work for:");
-      expect(approveResult.output).not.toContain("Background run: run:coreloop:");
-      expect(approveResult.output).not.toContain("goal-runspec-");
-      expect(adapter.execute).not.toHaveBeenCalled();
-      expect(daemonClient.startGoal).toHaveBeenCalledOnce();
-      expect(daemonClient.startGoal).toHaveBeenCalledWith(
-        expect.stringMatching(/^goal-runspec-/),
-        expect.objectContaining({
-          backgroundRun: expect.objectContaining({
-            backgroundRunId: expect.stringMatching(/^run:coreloop:/),
-            notifyPolicy: "done_only",
-            parentSessionId: expect.stringMatching(/^session:conversation:/),
-            replyTargetSource: "pinned_run",
-          }),
-        }),
-      );
-      const stored = await onlyStoredRunSpec(baseDir);
-      expect(stored.status).toBe("confirmed");
-      const runId = (daemonClient.startGoal as ReturnType<typeof vi.fn>).mock.calls[0][1].backgroundRun.backgroundRunId;
-      const run = await new BackgroundRunLedger(path.join(baseDir, "runtime"), { controlBaseDir: baseDir }).load(runId);
-      expect(run).toMatchObject({
-        id: runId,
-        status: "queued",
-        workspace: "/repo/kaggle",
-        origin_metadata: {
-          run_spec_id: stored.id,
-        },
-      });
-      expect(run?.source_refs).toEqual(expect.arrayContaining([
-        expect.objectContaining({
-          kind: "run_spec",
-          id: stored.id,
-          relative_path: "state/pulseed-control.sqlite",
-        }),
-      ]));
-      const registry = createRuntimeSessionRegistry({ stateManager });
-      const snapshot = await registry.snapshot();
-      expect(snapshot.background_runs).toContainEqual(expect.objectContaining({
-        id: runId,
-        goal_id: expect.stringMatching(/^goal-runspec-/),
-        workspace: "/repo/kaggle",
-      }));
-    });
-
-    it("does not report started when daemon start fails after RunSpec approval", async () => {
-      const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-runspec-daemon-fail-"));
-      const stateManager = new StateManager(baseDir, undefined, { walEnabled: false });
-      const daemonClient = { startGoal: vi.fn().mockRejectedValue(new Error("Connection refused")) };
-      const runner = new ChatRunner(makeDeps({
-        stateManager,
-        daemonClient: daemonClient as never,
-        llmClient: createMockLLMClient([
-          freeformRouteDecision("run_spec"),
-          runSpecDraftDecision(),
-          runSpecConfirmationDecision("approve"),
-        ]),
-      }));
-
-      await runner.execute("Kaggle score 0.98を超えるまで長期で回して", "/repo/kaggle");
-      const result = await runner.execute("approve", "/repo/kaggle");
-
-      expect(result.success).toBe(false);
-      expect(result.output).toContain("Daemon start failed");
-      expect(result.output).toContain("no background work was started");
-      expect(result.output).toContain("Connection refused");
-      expect(daemonClient.startGoal).toHaveBeenCalledOnce();
-      const registry = createRuntimeSessionRegistry({ stateManager });
-      const snapshot = await registry.snapshot();
-      expect(snapshot.background_runs).toContainEqual(expect.objectContaining({
-        status: "failed",
-        error: "Connection refused",
-      }));
-    });
-
-    it("blocks approved RunSpecs with unresolved required fields before daemon start", async () => {
-      const stateManager = new StateManager(fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-runspec-required-")), undefined, { walEnabled: false });
-      const daemonClient = { startGoal: vi.fn().mockResolvedValue({ ok: true }) };
-      const runner = new ChatRunner(makeDeps({
-        stateManager,
-        daemonClient: daemonClient as never,
-        llmClient: createMockLLMClient([
-          freeformRouteDecision("run_spec"),
-          runSpecDraftDecision({
-            metric: {
-              name: "kaggle_score",
-              direction: "unknown",
-              target: 0.98,
-              target_rank_percent: null,
-              datasource: "kaggle_leaderboard",
-              confidence: "medium",
-            },
-          }),
-          runSpecConfirmationDecision("approve"),
-        ]),
-      }));
-
-      await runner.execute("Kaggle score 0.98を超えるまで長期で回して", "/repo/kaggle");
-      const result = await runner.execute("approve", "/repo/kaggle");
-
-      expect(result.success).toBe(false);
-      expect(result.output).toContain("Run cannot start until required fields are resolved");
-      expect(daemonClient.startGoal).not.toHaveBeenCalled();
-    });
-
-    it("blocks disallowed external or irreversible actions before daemon start", async () => {
-      const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-runspec-disallowed-"));
-      const stateManager = new StateManager(baseDir, undefined, { walEnabled: false });
-      const daemonClient = { startGoal: vi.fn().mockResolvedValue({ ok: true }) };
-      const runner = new ChatRunner(makeDeps({
-        stateManager,
-        daemonClient: daemonClient as never,
-        llmClient: createMockLLMClient([
-          freeformRouteDecision("run_spec"),
-          runSpecDraftDecision({
-            approval_policy: {
-              submit: "disallowed",
-              publish: "unspecified",
-              secret: "approval_required",
-              external_action: "disallowed",
-              irreversible_action: "disallowed",
-            },
-          }),
-          runSpecConfirmationDecision("approve"),
-          runSpecConfirmationDecision("cancel"),
-        ]),
-      }));
-
-      await runner.execute("本番に不可逆な変更を入れる長期実行を開始して", "/repo/app");
-      const result = await runner.execute("approve", "/repo/app");
-
-      expect(result.success).toBe(false);
-      expect(result.output).toContain("Blocked safety policy");
-      expect(result.output).toContain("external action");
-      expect(result.output).not.toContain("disallowed");
-      expect(result.output).not.toContain("approval-required");
-      expect(daemonClient.startGoal).not.toHaveBeenCalled();
-      const stored = await onlyStoredRunSpec(baseDir);
-      expect(stored.status).toBe("draft");
-
-      const cancelResult = await runner.execute("cancel", "/repo/app");
-      expect(cancelResult.output).toContain("Long-running work cancelled.");
-      expect(daemonClient.startGoal).not.toHaveBeenCalled();
-    });
-
-    it("blocks low-confidence workspace before daemon start", async () => {
-      const stateManager = new StateManager(fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-runspec-workspace-")), undefined, { walEnabled: false });
-      const daemonClient = { startGoal: vi.fn().mockResolvedValue({ ok: true }) };
-      const runner = new ChatRunner(makeDeps({
-        stateManager,
-        daemonClient: daemonClient as never,
-        llmClient: createMockLLMClient([
-          freeformRouteDecision("run_spec"),
-          runSpecDraftDecision({
-            workspace: {
-              path: "/repo/maybe",
-              source: "context",
-              confidence: "low",
-            },
-          }),
-          runSpecConfirmationDecision("approve"),
-        ]),
-      }));
-
-      await runner.execute("このワークスペースで長期実行して", "/repo/maybe");
-      const result = await runner.execute("approve", "/repo/maybe");
-
-      expect(result.success).toBe(false);
-      expect(result.output).toContain("Workspace is missing or ambiguous");
-      expect(daemonClient.startGoal).not.toHaveBeenCalled();
-    });
-
-    it("blocks Kaggle RunSpecs whose workspace is protected by the AgentLoop write policy before daemon start", async () => {
-      const originalPulseedHome = process.env["PULSEED_HOME"];
-      const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-runspec-kaggle-policy-"));
-      process.env["PULSEED_HOME"] = baseDir;
-      try {
-        const protectedWorkspace = path.join(baseDir, "kaggle-runs", "titanic");
-        const stateManager = new StateManager(baseDir, undefined, { walEnabled: false });
-        const daemonClient = { startGoal: vi.fn().mockResolvedValue({ ok: true }) };
-        const runner = new ChatRunner(makeDeps({
-          stateManager,
-          daemonClient: daemonClient as never,
-          llmClient: createMockLLMClient([
-            freeformRouteDecision("run_spec"),
-            runSpecDraftDecision({
-              workspace: {
-                path: protectedWorkspace,
-                source: "user",
-                confidence: "high",
-              },
-            }),
-            runSpecConfirmationDecision("approve"),
-          ]),
-        }));
-
-        await runner.execute("Kaggle score 0.98を超えるまで長期で回して", protectedWorkspace);
-        const result = await runner.execute("approve", protectedWorkspace);
-
-        expect(result.success).toBe(false);
-        expect(result.output).toContain("Kaggle workspace is blocked by the AgentLoop write policy");
-        expect(result.output).toContain("Protected runtime state root");
-        expect(result.output).toContain("PulSeedWorkspaces/kaggle");
-        expect(daemonClient.startGoal).not.toHaveBeenCalled();
-      } finally {
-        if (originalPulseedHome === undefined) {
-          delete process.env["PULSEED_HOME"];
-        } else {
-          process.env["PULSEED_HOME"] = originalPulseedHome;
-        }
-        fs.rmSync(baseDir, { recursive: true, force: true });
-      }
-    });
-
-    it("cancels a pending RunSpec without starting a background run", async () => {
-      const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-runspec-cancel-"));
-      const stateManager = new StateManager(baseDir, undefined, { walEnabled: false });
-      const daemonClient = { startGoal: vi.fn() };
-      const runner = new ChatRunner(makeDeps({
-        stateManager,
-        daemonClient: daemonClient as never,
-        llmClient: createMockLLMClient([
-          freeformRouteDecision("run_spec"),
-          runSpecDraftDecision(),
-          runSpecConfirmationDecision("cancel"),
-        ]),
-      }));
-
-      await runner.execute("Kaggle score 0.98を超えるまで長期で回して", "/repo/kaggle");
-      const cancelResult = await runner.execute("cancel it", "/repo/kaggle");
-
-      expect(cancelResult.success).toBe(false);
-      expect(cancelResult.output).toContain("Long-running work cancelled.");
-      expect(cancelResult.output).toContain("No background work was started.");
-      expect(daemonClient.startGoal).not.toHaveBeenCalled();
-      const stored = await onlyStoredRunSpec(baseDir);
-      expect(stored.status).toBe("cancelled");
-    });
-
-    it("does not reuse a stale cancelled RunSpec confirmation on a later approval", async () => {
-      const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-runspec-stale-"));
-      const stateManager = new StateManager(baseDir, undefined, { walEnabled: false });
-      const adapter = makeMockAdapter();
-      const runner = new ChatRunner(makeDeps({
-        stateManager,
-        adapter,
-        llmClient: createMockLLMClient([
-          freeformRouteDecision("run_spec"),
-          runSpecDraftDecision(),
-          runSpecConfirmationDecision("cancel"),
-          freeformRouteDecision("assist"),
-          "There is no pending RunSpec to approve.",
-        ]),
-      }));
-
-      await runner.execute("Kaggle score 0.98を超えるまで長期で回して", "/repo/kaggle");
-      await runner.execute("cancel it", "/repo/kaggle");
-      const staleApproval = await runner.execute("approve it now", "/repo/kaggle");
-
-      expect(staleApproval.success).toBe(true);
-      expect(staleApproval.output).toBe("There is no pending RunSpec to approve.");
-      const stored = await onlyStoredRunSpec(baseDir);
-      expect(stored.status).toBe("cancelled");
-    });
-
-    it("does not reuse a previous goal or background run for a new natural-language request", async () => {
-      const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-runspec-fresh-run-"));
-      const stateManager = new StateManager(baseDir, undefined, { walEnabled: false });
-      const daemonClient = { startGoal: vi.fn().mockResolvedValue({ ok: true }) };
-      const runner = new ChatRunner(makeDeps({
-        stateManager,
-        daemonClient: daemonClient as never,
-        llmClient: createMockLLMClient([
-          freeformRouteDecision("run_spec"),
-          runSpecDraftDecision({
-            objective: "Continue Kaggle optimization until score exceeds 0.98",
-          }),
-          runSpecConfirmationDecision("approve"),
-          freeformRouteDecision("run_spec"),
-          runSpecDraftDecision({
-            objective: "Run a separate long-running benchmark until memory usage stays below target",
-            profile: "generic",
-            metric: {
-              name: "memory_usage",
-              direction: "minimize",
-              target: 512,
-              target_rank_percent: null,
-              datasource: "benchmark",
-              confidence: "high",
-            },
-            progress_contract: {
-              kind: "metric_target",
-              dimension: "memory_usage",
-              threshold: 512,
-              semantics: "Memory usage remains below target.",
-              confidence: "high",
-            },
-          }),
-          runSpecConfirmationDecision("approve"),
-        ]),
-      }));
-
-      await runner.execute("Kaggle score 0.98を超えるまで長期で回して", "/repo/kaggle");
-      await runner.execute("approve", "/repo/kaggle");
-      await runner.execute("Keep running the benchmark in the background until memory is below 512 MB", "/repo/bench");
-      await runner.execute("approve", "/repo/bench");
-
-      expect(daemonClient.startGoal).toHaveBeenCalledTimes(2);
-      const firstGoalId = daemonClient.startGoal.mock.calls[0][0];
-      const secondGoalId = daemonClient.startGoal.mock.calls[1][0];
-      const firstRunId = daemonClient.startGoal.mock.calls[0][1].backgroundRun.backgroundRunId;
-      const secondRunId = daemonClient.startGoal.mock.calls[1][1].backgroundRun.backgroundRunId;
-      expect(secondGoalId).not.toBe(firstGoalId);
-      expect(secondRunId).not.toBe(firstRunId);
-
-      const registry = createRuntimeSessionRegistry({ stateManager });
-      const snapshot = await registry.snapshot();
-      expect(snapshot.background_runs).toEqual(expect.arrayContaining([
-        expect.objectContaining({ id: firstRunId, goal_id: firstGoalId, workspace: "/repo/kaggle" }),
-        expect.objectContaining({ id: secondRunId, goal_id: secondGoalId, workspace: "/repo/bench" }),
-      ]));
-    });
-
-    it("preserves pending RunSpec confirmation across session reload before approval", async () => {
-      const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-runspec-reload-"));
-      const stateManager = new StateManager(baseDir, undefined, { walEnabled: false });
-      const firstRunner = new ChatRunner(makeDeps({
-        stateManager,
-        llmClient: createMockLLMClient([
-          freeformRouteDecision("run_spec"),
-          runSpecDraftDecision(),
-        ]),
-      }));
-
-      await firstRunner.execute("Kaggle score 0.98を超えるまで長期で回して", "/repo/kaggle");
-      const sessionId = firstRunner.getSessionId();
-      expect(sessionId).toBeTruthy();
-
-      const catalog = new ChatSessionCatalog(stateManager);
-      const loaded = await catalog.loadSession(sessionId!);
-      expect(loaded?.runSpecConfirmation).toMatchObject({ state: "pending" });
-
-      const reloadedRunner = new ChatRunner(makeDeps({
-        stateManager,
-        daemonClient: { startGoal: vi.fn().mockResolvedValue({ ok: true }) } as never,
-        llmClient: createSingleMockLLMClient(runSpecConfirmationDecision("approve")),
-      }));
-      reloadedRunner.startSessionFromLoadedSession(loaded!);
-
-      const approved = await reloadedRunner.execute("approve", "/repo/kaggle");
-
-      expect(approved.success).toBe(true);
-      expect(approved.output).toContain("Long-running work approved.");
-      const stored = await onlyStoredRunSpec(baseDir);
-      expect(stored.status).toBe("confirmed");
-    });
-
-    it("keeps pending confirmation on ambiguous approval text", async () => {
-      const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-runspec-ambiguous-"));
-      const stateManager = new StateManager(baseDir, undefined, { walEnabled: false });
-      const runner = new ChatRunner(makeDeps({
-        stateManager,
-        daemonClient: { startGoal: vi.fn().mockResolvedValue({ ok: true }) } as never,
-        llmClient: createMockLLMClient([
-          freeformRouteDecision("run_spec"),
-          runSpecDraftDecision(),
-          runSpecConfirmationDecision("unknown", {
-            confidence: 0.41,
-            clarification: "Please explicitly approve or cancel.",
-          }),
-          runSpecPendingDialogueDecision("ambiguous", {
-            confidence: 0.72,
-            confirmation_kind: "unknown",
-          }),
-          runSpecConfirmationDecision("approve"),
-        ]),
-      }));
-
-      await runner.execute("Kaggle score 0.98を超えるまで長期で回して", "/repo/kaggle");
-      const ambiguousResult = await runner.execute("looks good maybe", "/repo/kaggle");
-      const approvedResult = await runner.execute("approve", "/repo/kaggle");
-
-      expect(ambiguousResult.success).toBe(false);
-      expect(ambiguousResult.output).toContain("awaiting confirmation");
-      expect(approvedResult.success).toBe(true);
-      expect(approvedResult.output).toContain("Long-running work approved.");
-    });
-
-    it("routes unrelated ordinary chat to AgentLoop while preserving a pending RunSpec", async () => {
-      const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-runspec-side-chat-"));
-      const stateManager = new StateManager(baseDir, undefined, { walEnabled: false });
-      const draftRunner = new ChatRunner(makeDeps({
-        stateManager,
-        llmClient: createMockLLMClient([
-          freeformRouteDecision("run_spec"),
-          runSpecDraftDecision(),
-        ]),
-      }));
-      await draftRunner.execute("Kaggle score 0.98を超えるまで長期で回して", "/repo/kaggle");
-      const catalog = new ChatSessionCatalog(stateManager);
-      const loaded = await catalog.loadSession(draftRunner.getSessionId()!);
-      expect(loaded?.runSpecConfirmation).toMatchObject({ state: "pending" });
-
-      const chatAgentLoopRunner = {
-        execute: vi.fn().mockResolvedValue({
-          success: true,
-          output: "AgentLoop answered the side question",
-          error: null,
-          exit_code: null,
-          elapsed_ms: 1,
-          stopped_reason: "completed",
-        }),
-      } as unknown as ChatAgentLoopRunner;
-      const runner = new ChatRunner(makeDeps({
-        stateManager,
-        chatAgentLoopRunner,
-        llmClient: createMockLLMClient([
-          runSpecConfirmationDecision("unknown", {
-            confidence: 0.9,
-            clarification: "This is not a RunSpec confirmation.",
-          }),
-          runSpecPendingDialogueDecision("new_intent"),
-        ]),
-      }));
-      runner.startSessionFromLoadedSession(loaded!);
-
-      const sideQuestion = await runner.execute("What background sessions are currently open?", "/repo/kaggle");
-
-      expect(sideQuestion.success).toBe(true);
-      expect(sideQuestion.output).toBe("AgentLoop answered the side question");
-      expect(chatAgentLoopRunner.execute).toHaveBeenCalledOnce();
-      const session = await catalog.loadSession(runner.getSessionId()!);
-      expect(session?.runSpecConfirmation).toMatchObject({
-        state: "pending",
-      });
-    });
-
-    it("keeps explanatory long-running questions on the ordinary chat path", async () => {
-      const adapter = makeMockAdapter();
-      const llmClient = createMockLLMClient([
-        JSON.stringify({
-          kind: "assist",
-          confidence: 0.91,
-          rationale: "Explanation question",
-          requires_action: false,
-        }),
-        "Long-running tasks usually fail because constraints, state, or dependencies change.",
-      ]);
-      const runner = new ChatRunner(makeDeps({
-        adapter,
-        llmClient,
-      }));
-
-      const result = await runner.execute("Why do long-running tasks fail?", "/repo");
-
-      expect(result.success).toBe(true);
-      expect(result.output).toContain("Long-running tasks usually fail");
-      expect(adapter.execute).not.toHaveBeenCalled();
-    });
-
+  describe("RunSpec gateway direct-loop boundaries", () => {
     it("keeps gateway RunSpec text on the default model loop instead of precomputing a draft route", async () => {
       const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-gateway-runspec-"));
       const stateManager = new StateManager(baseDir, undefined, { walEnabled: false });
@@ -6433,91 +5440,6 @@ describe("ChatRunner", () => {
       });
     });
 
-    it("preserves pending RunSpec confirmation and reply target through the tool-loop fallback", async () => {
-      const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-gateway-runspec-tool-loop-"));
-      const stateManager = new StateManager(baseDir, undefined, { walEnabled: false });
-      const daemonClient = { startGoal: vi.fn() };
-      const llmClient = {
-        supportsToolCalling: () => true,
-        sendMessage: vi.fn()
-          .mockResolvedValueOnce({
-            content: "",
-            usage: { input_tokens: 1, output_tokens: 1 },
-            stop_reason: "tool_calls",
-            tool_calls: [{
-              id: "call-draft-runspec",
-              type: "function",
-              function: {
-                name: "draft_run_spec",
-                arguments: JSON.stringify({
-                  request: "DurableloopのほうでKaggleのタスクに取り組んで",
-                }),
-              },
-            }],
-          })
-          .mockResolvedValueOnce({
-            content: runSpecDraftDecision({
-              objective: "Continue Kaggle optimization until score exceeds 0.98",
-            }),
-            usage: { input_tokens: 1, output_tokens: 1 },
-            stop_reason: "end_turn",
-          })
-          .mockResolvedValueOnce({
-            content: "RunSpec draft is ready.",
-            usage: { input_tokens: 1, output_tokens: 1 },
-            stop_reason: "end_turn",
-            tool_calls: [],
-          }),
-        parseJSON: vi.fn((content: string, schema) => schema.parse(JSON.parse(content))),
-      } as unknown as ILLMClient;
-      const tools = createRunSpecHandoffTools({
-        stateManager,
-        llmClient,
-        daemonClient: daemonClient as never,
-      });
-      const registry = {
-        listAll: () => tools,
-        get: (name: string) => tools.find((tool) => tool.metadata.name === name),
-      };
-      const runner = new ChatRunner(makeDeps({
-        stateManager,
-        llmClient,
-        registry: registry as never,
-      }));
-      const ingress = {
-        ...makeIngress("DurableloopのほうでKaggleのタスクに取り組んで"),
-        cwd: "/repo/kaggle",
-        runtimeControl: { allowed: true, approvalMode: "interactive" as const },
-        replyTarget: {
-          ...makeIngress("").replyTarget,
-          response_channel: "telegram-chat-1",
-          metadata: { gateway_message: true },
-        },
-      };
-      const selectedRoute: SelectedChatRoute = {
-        kind: "tool_loop",
-        reason: "tool_loop_available",
-        replyTargetPolicy: "turn_reply_target",
-        eventProjectionPolicy: "turn_only",
-        concurrencyPolicy: "session_serial",
-      };
-
-      const result = await runner.executeIngressMessage(ingress, "/repo/kaggle", 120_000, selectedRoute);
-
-      expect(result.success).toBe(true);
-      expect(daemonClient.startGoal).not.toHaveBeenCalled();
-      const stored = await onlyStoredRunSpec(baseDir);
-      expect(stored.origin.channel).toBe("agent_loop");
-      expect(stored.origin.reply_target).toMatchObject({
-        conversation_id: "chat-1",
-        response_channel: "telegram-chat-1",
-      });
-      const session = await new ChatSessionCatalog(stateManager).loadSession(runner.getSessionId()!);
-      expect(session?.runSpecConfirmation).toMatchObject({
-        state: "pending",
-        spec: { id: stored.id },
-      });
-    });
   });
 
   describe("setup and runtime-control AgentLoop tools", () => {

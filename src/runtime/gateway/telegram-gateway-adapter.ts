@@ -1,7 +1,11 @@
 import * as path from "node:path";
 import type { ChannelAdapter, EnvelopeHandler, TypingIndicatorCapability } from "./channel-adapter.js";
 import { loadGatewayConfigJson } from "./config-json.js";
-import { dispatchGatewayChatInput } from "./chat-session-dispatch.js";
+import {
+  GATEWAY_CHAT_DISPATCH_FAILURE_MESSAGE,
+  dispatchGatewayChatInputResult,
+  formatGatewayChatDispatchFailure,
+} from "./chat-session-dispatch.js";
 import { formatTelegramNotification, supportsCoreGatewayNotification } from "./core-channel-notification.js";
 import { buildChannelPolicyMetadata, buildExternalSurfaceDecision, evaluateChannelAccess, resolveChannelRoute } from "./channel-policy.js";
 import { createRefreshingTypingIndicator } from "./typing-indicator.js";
@@ -260,12 +264,13 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
 
     let reply: string | null = null;
     let dispatchCompleted = false;
+    let dispatchError: unknown = null;
     try {
       await presenceProjector.update(createUserVisibleSeedyTurnPresence({
         turn_id: `telegram:${chatId}:${messageId}`,
         phase: "received",
       }));
-      reply = await dispatchGatewayChatInput({
+      const dispatchResult = await dispatchGatewayChatInputResult({
         text,
         platform: "telegram",
         identity_key: route.identityKey ?? this.config.identity_key,
@@ -293,11 +298,21 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
           ...(route.goalId ? { goal_id: route.goalId } : {}),
         },
       });
+      if (dispatchResult.status === "ok") {
+        reply = dispatchResult.text;
+      } else {
+        reply = formatGatewayChatDispatchFailure(dispatchResult.error);
+        dispatchError = dispatchResult.error;
+      }
+      dispatchCompleted = true;
+    } catch (error) {
+      dispatchError = error;
+      reply = formatGatewayChatDispatchFailure(error instanceof Error ? error.message : String(error));
       dispatchCompleted = true;
     } finally {
       try {
         if (dispatchCompleted && !eventAdapter.renderedAssistantOutput) {
-          const fallbackText = reply ?? "Received.";
+          const fallbackText = reply ?? GATEWAY_CHAT_DISPATCH_FAILURE_MESSAGE;
           await presenceProjector.prepareForEvent({
             type: "assistant_final",
             runId: "fallback",
@@ -314,7 +329,16 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
     }
     this.timing.markLifecycleEnd();
     await this.recordTiming();
-    await this.recordHealth({ last_outbound_at: new Date().toISOString(), last_error: null });
+    await this.recordHealth({
+      last_outbound_at: new Date().toISOString(),
+      last_error: reply === null
+        ? GATEWAY_CHAT_DISPATCH_FAILURE_MESSAGE
+        : dispatchError instanceof Error
+          ? dispatchError.message
+          : dispatchError === null
+            ? null
+            : String(dispatchError),
+    });
   }
 
   private isFirstHomeBindingCommand(text: string, fromUserId: number): boolean {

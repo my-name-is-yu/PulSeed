@@ -1,10 +1,11 @@
-import Anthropic from "@anthropic-ai/sdk";
+import type Anthropic from "@anthropic-ai/sdk";
 import type {
   Message,
   MessageParam,
   Tool,
   ContentBlockParam,
 } from "@anthropic-ai/sdk/resources/messages/messages";
+import { AnthropicRuntime } from "../../../base/llm/anthropic-runtime.js";
 import type { ToolDefinition } from "../../../base/llm/llm-client.js";
 import type {
   AgentLoopAssistantOutput,
@@ -38,7 +39,7 @@ export class AnthropicMessagesAgentLoopModelClient implements AgentLoopModelClie
     options: AnthropicMessagesAgentLoopModelClientOptions,
     private readonly registry: AgentLoopModelRegistry,
   ) {
-    this.client = new Anthropic({
+    this.client = new AnthropicRuntime({
       apiKey: options.apiKey,
       ...(options.baseURL ? { baseURL: options.baseURL } : {}),
     });

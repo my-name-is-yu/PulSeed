@@ -7,12 +7,30 @@ import { EXTERNAL_SURFACE_METADATA_KEY } from "./channel-policy.js";
 
 export type { GatewayChatDispatchInput } from "./chat-session-port.js";
 
-export async function dispatchGatewayChatInput(
+export type GatewayChatDispatchResult =
+  | { status: "ok"; text: string }
+  | { status: "empty"; error: string }
+  | { status: "error"; error: string };
+
+export const GATEWAY_CHAT_DISPATCH_FAILURE_MESSAGE = "PulSeed could not complete this gateway turn. The message was received, but the chat dispatcher did not return a terminal assistant response.";
+
+export function formatGatewayChatDispatchFailure(error: string): string {
+  const detail = error.trim();
+  if (!detail) return GATEWAY_CHAT_DISPATCH_FAILURE_MESSAGE;
+  return `${GATEWAY_CHAT_DISPATCH_FAILURE_MESSAGE}\n\nError: ${detail}`;
+}
+
+export async function dispatchGatewayChatInputResult(
   input: GatewayChatDispatchInput
-): Promise<string | null> {
+): Promise<GatewayChatDispatchResult> {
   try {
     const portGetter = getRegisteredGatewayChatSessionPort();
-    if (!portGetter) return null;
+    if (!portGetter) {
+      return {
+        status: "error",
+        error: "Gateway chat dispatcher is unavailable.",
+      };
+    }
     const port = await portGetter();
     const metadata = input.metadata ? { ...input.metadata } : undefined;
     if (metadata && !input.externalSurface) {
@@ -35,10 +53,30 @@ export async function dispatchGatewayChatInput(
       ...(input.externalSurface ? { externalSurface: input.externalSurface } : {}),
       onEvent: input.onEvent,
     });
-    return normalizeManagerResult(result);
-  } catch {
+    const text = normalizeManagerResult(result);
+    if (text === null) {
+      return {
+        status: "empty",
+        error: "Gateway chat dispatcher did not return displayable assistant text.",
+      };
+    }
+    return { status: "ok", text };
+  } catch (error) {
+    return {
+      status: "error",
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+export async function dispatchGatewayChatInput(
+  input: GatewayChatDispatchInput
+): Promise<string | null> {
+  const result = await dispatchGatewayChatInputResult(input);
+  if (result.status !== "ok") {
     return null;
   }
+  return result.text;
 }
 
 function normalizeManagerResult(result: unknown): string | null {

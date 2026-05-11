@@ -1,9 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { ChatEventHandler } from "./chat-events.js";
 import type { RuntimeControlIntent } from "../../runtime/control/index.js";
-import type { FreeformRouteIntent } from "./freeform-route-classifier.js";
 import type { SetupSecretIntakeResult } from "./setup-secret-intake.js";
-import type { RunSpec } from "../../runtime/run-spec/index.js";
 import { normalizeUserInput, type UserInput } from "./user-input.js";
 import type {
   RuntimeControlActor,
@@ -41,24 +39,16 @@ export type {
 
 export type SelectedChatRoute =
   | {
-      kind: "assist" | "configure" | "clarify";
-      reason: "freeform_semantic_route";
-      intent: FreeformRouteIntent;
+      kind: "configure";
+      reason: "setup_secret_intake";
+      configureTarget: "telegram_gateway" | "gateway";
       replyTargetPolicy: ReplyTargetPolicy;
       eventProjectionPolicy: EventProjectionPolicy;
       concurrencyPolicy: ConcurrencyPolicy;
     }
   | {
-      kind: "agent_loop" | "tool_loop" | "adapter" | "gateway_model_loop";
-      reason: "agent_loop_available" | "tool_loop_available" | "adapter_fallback" | "gateway_default_model_tool_choice";
-      replyTargetPolicy: ReplyTargetPolicy;
-      eventProjectionPolicy: EventProjectionPolicy;
-      concurrencyPolicy: ConcurrencyPolicy;
-    }
-  | {
-      kind: "run_spec_draft";
-      reason: "run_spec_draft_intent";
-      draft: RunSpec;
+      kind: "agent_loop" | "gateway_model_loop";
+      reason: "agent_loop_available" | "direct_model_tool_loop";
       replyTargetPolicy: ReplyTargetPolicy;
       eventProjectionPolicy: EventProjectionPolicy;
       concurrencyPolicy: ConcurrencyPolicy;
@@ -82,30 +72,29 @@ export type SelectedChatRoute =
 
 export interface IngressRouterCapabilities {
   hasAgentLoop: boolean;
-  hasToolLoop: boolean;
   hasRuntimeControlService?: boolean;
   runtimeControlIntent?: RuntimeControlIntent | null;
   runtimeControlUnclassified?: boolean;
-  freeformRouteIntent?: FreeformRouteIntent | null;
   setupSecretIntake?: SetupSecretIntakeResult | null;
-  runSpecDraft?: RunSpec | null;
 }
 
-function selectRouteForText(
+const baseTurnPolicy = {
+  replyTargetPolicy: "turn_reply_target" as const,
+  eventProjectionPolicy: "turn_only" as const,
+  concurrencyPolicy: "session_serial" as const,
+};
+
+const runtimeControlPolicy = {
+  replyTargetPolicy: "turn_reply_target" as const,
+  eventProjectionPolicy: "latest_active_reply_target" as const,
+  concurrencyPolicy: "session_serial" as const,
+};
+
+function selectProtocolRouteForText(
   message: ChatIngressMessage,
   runtimeControl: ChatIngressRuntimeControl,
   deps: IngressRouterCapabilities
-): SelectedChatRoute {
-  const baseTurnPolicy = {
-    replyTargetPolicy: "turn_reply_target" as const,
-    eventProjectionPolicy: "turn_only" as const,
-    concurrencyPolicy: "session_serial" as const,
-  };
-  const runtimeControlPolicy = {
-    replyTargetPolicy: "turn_reply_target" as const,
-    eventProjectionPolicy: "latest_active_reply_target" as const,
-    concurrencyPolicy: "session_serial" as const,
-  };
+): SelectedChatRoute | null {
   const canUseRuntimeControlRoute =
     runtimeControl.allowed && runtimeControl.approvalMode !== "disallowed";
 
@@ -146,38 +135,26 @@ function selectRouteForText(
   if (setupSecretKinds.has("telegram_bot_token")) {
     return {
       kind: "configure",
-      reason: "freeform_semantic_route",
-      intent: {
-        kind: "configure",
-        confidence: 1,
-        configure_target: "telegram_gateway",
-        rationale: "typed setup secret intake detected a Telegram bot token",
-      },
+      reason: "setup_secret_intake",
+      configureTarget: "telegram_gateway",
       ...baseTurnPolicy,
     };
   }
   if (setupSecretKinds.has("discord_bot_token")) {
     return {
       kind: "configure",
-      reason: "freeform_semantic_route",
-      intent: {
-        kind: "configure",
-        confidence: 1,
-        configure_target: "gateway",
-        rationale: "typed setup secret intake detected a Discord bot token",
-      },
+      reason: "setup_secret_intake",
+      configureTarget: "gateway",
       ...baseTurnPolicy,
     };
   }
 
-  if (isGatewayIngress(message) && deps.hasToolLoop) {
-    return {
-      kind: "gateway_model_loop",
-      reason: "gateway_default_model_tool_choice",
-      ...baseTurnPolicy,
-    };
-  }
+  return null;
+}
 
+function selectNonGatewayRouteForText(
+  deps: IngressRouterCapabilities
+): SelectedChatRoute {
   if (deps.hasAgentLoop) {
     return {
       kind: "agent_loop",
@@ -186,49 +163,28 @@ function selectRouteForText(
     };
   }
 
-  const runSpecDraft = deps.runSpecDraft ?? null;
-  if (runSpecDraft) {
-    return {
-      kind: "run_spec_draft",
-      reason: "run_spec_draft_intent",
-      draft: runSpecDraft,
-      ...baseTurnPolicy,
-    };
-  }
-
-  const freeformIntent = deps.freeformRouteIntent ?? null;
-  if (freeformIntent && freeformIntent.confidence >= 0.7) {
-    if (freeformIntent.kind === "assist" || freeformIntent.kind === "configure" || freeformIntent.kind === "clarify") {
-      return {
-        kind: freeformIntent.kind,
-        reason: "freeform_semantic_route",
-        intent: freeformIntent,
-        ...baseTurnPolicy,
-      };
-    }
-  }
-  if (freeformIntent && freeformIntent.kind !== "execute") {
-    return {
-      kind: "clarify",
-      reason: "freeform_semantic_route",
-      intent: { ...freeformIntent, kind: "clarify" },
-      ...baseTurnPolicy,
-    };
-  }
-
-  if (deps.hasToolLoop) {
-    return {
-      kind: "tool_loop",
-      reason: "tool_loop_available",
-      ...baseTurnPolicy,
-    };
-  }
-
   return {
-    kind: "adapter",
-    reason: "adapter_fallback",
+    kind: "gateway_model_loop",
+    reason: "direct_model_tool_loop",
     ...baseTurnPolicy,
   };
+}
+
+function selectRouteForText(
+  message: ChatIngressMessage,
+  runtimeControl: ChatIngressRuntimeControl,
+  deps: IngressRouterCapabilities
+): SelectedChatRoute {
+  const protocolRoute = selectProtocolRouteForText(message, runtimeControl, deps);
+  if (protocolRoute) return protocolRoute;
+  if (isGatewayIngress(message)) {
+    return {
+      kind: "gateway_model_loop",
+      reason: "direct_model_tool_loop",
+      ...baseTurnPolicy,
+    };
+  }
+  return selectNonGatewayRouteForText(deps);
 }
 
 export class IngressRouter {
@@ -237,14 +193,7 @@ export class IngressRouter {
   }
 }
 
-export function selectLegacyChatRoute(
-  input: string,
-  deps: IngressRouterCapabilities
-): SelectedChatRoute {
-  return selectRouteForText(buildStandaloneIngressMessage({ text: input }), { allowed: true, approvalMode: "interactive" }, deps);
-}
-
-function isGatewayIngress(message: ChatIngressMessage): boolean {
+export function isGatewayIngress(message: ChatIngressMessage): boolean {
   return message.channel === "plugin_gateway" || message.replyTarget.surface === "gateway";
 }
 

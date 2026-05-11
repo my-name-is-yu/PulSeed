@@ -128,7 +128,6 @@ export {
   createIngressRouter,
   describeSelectedRoute,
   normalizeLegacyIngressInput,
-  selectLegacyChatRoute,
 } from "./interface/chat/ingress-router.js";
 export {
   buildCompanionCurrentTargetContext,

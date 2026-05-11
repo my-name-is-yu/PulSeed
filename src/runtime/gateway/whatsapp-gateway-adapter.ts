@@ -2,7 +2,11 @@ import * as crypto from "node:crypto";
 import * as http from "node:http";
 import type { ChannelAdapter, EnvelopeHandler, TypingIndicatorCapability } from "./channel-adapter.js";
 import { loadGatewayConfigJson } from "./config-json.js";
-import { dispatchGatewayChatInput } from "./chat-session-dispatch.js";
+import {
+  GATEWAY_CHAT_DISPATCH_FAILURE_MESSAGE,
+  dispatchGatewayChatInputResult,
+  formatGatewayChatDispatchFailure,
+} from "./chat-session-dispatch.js";
 import { formatPlaintextNotification, supportsCoreGatewayNotification } from "./core-channel-notification.js";
 import { buildChannelPolicyMetadata, buildExternalSurfaceDecision, evaluateChannelAccess, resolveChannelRoute } from "./channel-policy.js";
 import { createUnsupportedTypingIndicator } from "./typing-indicator.js";
@@ -238,7 +242,7 @@ export class WhatsAppGatewayAdapter implements ChannelAdapter {
         turn_id: `whatsapp:${senderId}:${message.id ?? "message"}`,
         phase: "received",
       }));
-      reply = await dispatchGatewayChatInput({
+      const dispatchResult = await dispatchGatewayChatInputResult({
         text,
         platform: "whatsapp",
         identity_key: route.identityKey ?? this.config.identity_key,
@@ -263,6 +267,9 @@ export class WhatsAppGatewayAdapter implements ChannelAdapter {
           ...(route.goalId ? { goal_id: route.goalId } : {}),
         },
       });
+      reply = dispatchResult.status === "ok"
+        ? dispatchResult.text
+        : formatGatewayChatDispatchFailure(dispatchResult.error);
       dispatchCompleted = true;
     } finally {
       try {
@@ -272,7 +279,7 @@ export class WhatsAppGatewayAdapter implements ChannelAdapter {
             runId: "fallback",
             turnId: "fallback",
             createdAt: new Date().toISOString(),
-            text: reply ?? "Received.",
+            text: reply ?? GATEWAY_CHAT_DISPATCH_FAILURE_MESSAGE,
             persisted: false,
           };
           await presenceProjector.prepareForEvent(fallbackEvent);

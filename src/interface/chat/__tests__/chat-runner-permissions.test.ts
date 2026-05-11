@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { ChatRunner } from "../chat-runner.js";
 import type { ChatRunnerDeps } from "../chat-runner-contracts.js";
 import type { StateManager } from "../../../base/state/state-manager.js";
@@ -93,16 +93,6 @@ function makeLLMClientWithToolCall(toolName: string) {
     supportsToolCalling: () => true,
     sendMessage: vi.fn()
       .mockResolvedValueOnce({
-        content: JSON.stringify({
-          kind: "execute",
-          confidence: 0.93,
-          rationale: "tool-backed request",
-        }),
-        tool_calls: [],
-        usage: { input_tokens: 10, output_tokens: 10 },
-        stop_reason: "end_turn",
-      })
-      .mockResolvedValueOnce({
         content: "",
         tool_calls: [
           {
@@ -136,9 +126,9 @@ function makeDeps(overrides: Partial<ChatRunnerDeps> = {}): ChatRunnerDeps {
 describe("ChatRunner — permission gate (Fix #505)", () => {
   describe("denied permission", () => {
     it("returns denial message and does NOT call tool.call", async () => {
-      const tool = makeMockTool("test-tool", { status: "denied", reason: "no access" });
+      const tool = makeMockTool("read", { status: "denied", reason: "no access" });
       const registry = makeMockRegistry(tool);
-      const llmClient = makeLLMClientWithToolCall("test-tool");
+      const llmClient = makeLLMClientWithToolCall("read");
 
       const runner = new ChatRunner(makeDeps({ registry, llmClient: llmClient as never }));
       const result = await runner.execute("do something", "/repo");
@@ -149,7 +139,7 @@ describe("ChatRunner — permission gate (Fix #505)", () => {
       expect(result.output).toBe("Final answer");
 
       // Verify the tool result message sent to LLM contains denial text
-      const secondCall = llmClient.sendMessage.mock.calls[2];
+      const secondCall = llmClient.sendMessage.mock.calls[1];
       const messages = secondCall[0] as Array<{ role: string; content: string }>;
       const toolResultMsg = messages.find((m) => m.role === "user" && m.content.includes("denied"));
       expect(toolResultMsg).toBeDefined();
@@ -159,10 +149,10 @@ describe("ChatRunner — permission gate (Fix #505)", () => {
 
   describe("needs_approval — approved", () => {
     it("calls approvalFn and then tool.call when approved", async () => {
-      const tool = makeMockTool("test-tool", { status: "needs_approval", reason: "requires confirmation" });
+      const tool = makeMockTool("confirm_gateway_config_write", { status: "needs_approval", reason: "requires confirmation" });
       const registry = makeMockRegistry(tool);
       const approvalFn = vi.fn().mockResolvedValue(true);
-      const llmClient = makeLLMClientWithToolCall("test-tool");
+      const llmClient = makeLLMClientWithToolCall("confirm_gateway_config_write");
 
       const runner = new ChatRunner(makeDeps({ registry, llmClient: llmClient as never, approvalFn }));
       await runner.execute("do something", "/repo");
@@ -175,32 +165,29 @@ describe("ChatRunner — permission gate (Fix #505)", () => {
 
   describe("needs_approval — rejected", () => {
     it("does NOT call tool.call when approvalFn returns false", async () => {
-      const tool = makeMockTool("test-tool", { status: "needs_approval", reason: "risky action" });
+      const tool = makeMockTool("confirm_gateway_config_write", { status: "needs_approval", reason: "risky action" });
       const registry = makeMockRegistry(tool);
       const approvalFn = vi.fn().mockResolvedValue(false);
-      const llmClient = makeLLMClientWithToolCall("test-tool");
+      const llmClient = makeLLMClientWithToolCall("confirm_gateway_config_write");
 
       const runner = new ChatRunner(makeDeps({ registry, llmClient: llmClient as never, approvalFn }));
       const result = await runner.execute("do something", "/repo");
 
       expect(approvalFn).toHaveBeenCalledOnce();
       expect(tool.call).not.toHaveBeenCalled();
-
-      // The tool result message sent to LLM should indicate "not approved"
-      const secondCall = llmClient.sendMessage.mock.calls[2];
-      const messages = secondCall[0] as Array<{ role: string; content: string }>;
-      const toolResultMsg = messages.find((m) => m.role === "user" && m.content.includes("not approved"));
-      expect(toolResultMsg).toBeDefined();
-      expect(result.output).toBe("Final answer");
+      expect(llmClient.sendMessage).toHaveBeenCalledTimes(1);
+      expect(result.success).toBe(false);
+      expect(result.output).toContain("not approved");
+      expect(result.output).toContain("Type: Permission failure");
     });
   });
 
   describe("allowed permission", () => {
     it("calls tool.call directly without invoking approvalFn", async () => {
-      const tool = makeMockTool("test-tool", { status: "allowed" });
+      const tool = makeMockTool("read", { status: "allowed" });
       const registry = makeMockRegistry(tool);
       const approvalFn = vi.fn().mockResolvedValue(false);
-      const llmClient = makeLLMClientWithToolCall("test-tool");
+      const llmClient = makeLLMClientWithToolCall("read");
 
       const runner = new ChatRunner(makeDeps({ registry, llmClient: llmClient as never, approvalFn }));
       await runner.execute("do something", "/repo");
@@ -212,9 +199,9 @@ describe("ChatRunner — permission gate (Fix #505)", () => {
 
   describe("needs_approval without approvalFn dep", () => {
     it("denies when no approvalFn provided in deps (defaults to false)", async () => {
-      const tool = makeMockTool("test-tool", { status: "needs_approval", reason: "needs ok" });
+      const tool = makeMockTool("confirm_gateway_config_write", { status: "needs_approval", reason: "needs ok" });
       const registry = makeMockRegistry(tool);
-      const llmClient = makeLLMClientWithToolCall("test-tool");
+      const llmClient = makeLLMClientWithToolCall("confirm_gateway_config_write");
 
       // No approvalFn in deps — context.approvalFn returns false by default
       const runner = new ChatRunner(makeDeps({ registry, llmClient: llmClient as never }));
@@ -228,9 +215,9 @@ describe("ChatRunner — permission gate (Fix #505)", () => {
 describe("ChatRunner — goalId plumbing (Fix #506)", () => {
   describe("goalId passed through to tool context", () => {
     it("tool.call receives context.goalId matching deps.goalId", async () => {
-      const tool = makeMockTool("test-tool", { status: "allowed" });
+      const tool = makeMockTool("read", { status: "allowed" });
       const registry = makeMockRegistry(tool);
-      const llmClient = makeLLMClientWithToolCall("test-tool");
+      const llmClient = makeLLMClientWithToolCall("read");
 
       const runner = new ChatRunner(
         makeDeps({ registry, llmClient: llmClient as never, goalId: "test-goal-123" }),
@@ -245,9 +232,9 @@ describe("ChatRunner — goalId plumbing (Fix #506)", () => {
 
   describe("goalId defaults to empty string when not provided", () => {
     it("context.goalId is empty string when deps.goalId is omitted", async () => {
-      const tool = makeMockTool("test-tool", { status: "allowed" });
+      const tool = makeMockTool("read", { status: "allowed" });
       const registry = makeMockRegistry(tool);
-      const llmClient = makeLLMClientWithToolCall("test-tool");
+      const llmClient = makeLLMClientWithToolCall("read");
 
       // No goalId in deps
       const runner = new ChatRunner(makeDeps({ registry, llmClient: llmClient as never }));
@@ -261,9 +248,9 @@ describe("ChatRunner — goalId plumbing (Fix #506)", () => {
 
   describe("goalId with undefined explicit value", () => {
     it("context.goalId is empty string when deps.goalId is undefined", async () => {
-      const tool = makeMockTool("test-tool", { status: "allowed" });
+      const tool = makeMockTool("read", { status: "allowed" });
       const registry = makeMockRegistry(tool);
-      const llmClient = makeLLMClientWithToolCall("test-tool");
+      const llmClient = makeLLMClientWithToolCall("read");
 
       const runner = new ChatRunner(
         makeDeps({ registry, llmClient: llmClient as never, goalId: undefined }),

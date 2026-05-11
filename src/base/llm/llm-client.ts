@@ -1,11 +1,12 @@
-import Anthropic from "@anthropic-ai/sdk";
+import type Anthropic from "@anthropic-ai/sdk";
 import type { Message } from "@anthropic-ai/sdk/resources/messages";
 import type { ZodSchema } from "zod";
 import { sleep } from "../utils/sleep.js";
 import { BaseLLMClient, DEFAULT_MAX_TOKENS, DEFAULT_LLM_TIMEOUT_MS, MAX_RETRY_ATTEMPTS, RETRY_DELAYS_MS, RATE_LIMIT_RETRY_DELAYS_MS, isRateLimitError, getRateLimitRetryDelay, extractJSON } from "./base-llm-client.js";
 import type { ModelTier, ParseJSONMessage, ParseJSONOptions } from "./base-llm-client.js";
 import { LLMError } from "../utils/errors.js";
-import { GuardrailRunner } from "../../platform/traits/guardrail-runner.js";
+import type { GuardrailRunner } from "../../platform/traits/guardrail-runner.js";
+import { AnthropicRuntime } from "./anthropic-runtime.js";
 
 // ─── Inline Types ───
 
@@ -129,7 +130,7 @@ export class LLMClient extends BaseLLMClient implements ILLMClient {
         "LLMClient: no API key provided. Pass apiKey to constructor."
       );
     }
-    this.client = new Anthropic({ apiKey: resolvedApiKey });
+    this.client = new AnthropicRuntime({ apiKey: resolvedApiKey });
     this.guardrailRunner = guardrailRunner;
     this.lightModel = lightModel;
     this.defaultModel = model ?? DEFAULT_MODEL;

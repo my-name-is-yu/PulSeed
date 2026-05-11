@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { dispatchGatewayChatInput } from "../chat-session-dispatch.js";
+import { dispatchGatewayChatInput, dispatchGatewayChatInputResult } from "../chat-session-dispatch.js";
 import { renderGatewayAgentTimelineItem } from "../chat-event-rendering.js";
 import {
   clearRegisteredGatewayChatSessionPort,
@@ -74,6 +74,24 @@ describe("dispatchGatewayChatInput display contract", () => {
       processIncomingMessage: async () => ({ internal_payload: { raw: true } }),
     }));
 
+    await expect(dispatchGatewayChatInput(baseInput)).resolves.toBeNull();
+    await expect(dispatchGatewayChatInputResult(baseInput)).resolves.toEqual({
+      status: "empty",
+      error: "Gateway chat dispatcher did not return displayable assistant text.",
+    });
+  });
+
+  it("returns an explicit error result when the dispatcher fails", async () => {
+    registerGatewayChatSessionPort(async () => ({
+      processIncomingMessage: async () => {
+        throw new Error("session port unavailable");
+      },
+    }));
+
+    await expect(dispatchGatewayChatInputResult(baseInput)).resolves.toEqual({
+      status: "error",
+      error: "session port unavailable",
+    });
     await expect(dispatchGatewayChatInput(baseInput)).resolves.toBeNull();
   });
 
