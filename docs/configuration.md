@@ -77,17 +77,27 @@ Important fields:
 
 ## Environment Overrides
 
-Environment variables and the provider `.env` file can override file config.
+Environment variable behavior is intentionally split by field:
+
+- `PULSEED_PROVIDER`, `PULSEED_LLM_PROVIDER`, `PULSEED_ADAPTER`, and
+  `PULSEED_DEFAULT_ADAPTER` are process-environment overrides for the provider
+  and adapter selected in `provider.json`.
+- `provider.json` wins for `model` when it has an explicit model. `PULSEED_MODEL`
+  and provider-specific model variables are fallbacks only when `provider.json`
+  does not specify `model`.
+- The provider `.env` file is not a general provider/model/adapter override
+  file. It is used by selected downstream fields such as API keys, base URLs,
+  light model, and reasoning effort.
 
 | Variable | Meaning |
 | --- | --- |
 | `PULSEED_HOME` | Override the local state directory, default `~/.pulseed` |
 | `PULSEED_WORKSPACE_ROOT` | Override the PulSeed-managed workspace root |
-| `PULSEED_PROVIDER` | Provider override: `openai`, `anthropic`, `ollama`, or compatibility alias `codex` |
-| `PULSEED_LLM_PROVIDER` | Provider override alias |
-| `PULSEED_ADAPTER` | Adapter override |
-| `PULSEED_DEFAULT_ADAPTER` | Adapter override alias |
-| `PULSEED_MODEL` | Model override |
+| `PULSEED_PROVIDER` | Process environment provider override: `openai`, `anthropic`, `ollama`, or compatibility alias `codex` |
+| `PULSEED_LLM_PROVIDER` | Process environment provider override alias |
+| `PULSEED_ADAPTER` | Process environment adapter override |
+| `PULSEED_DEFAULT_ADAPTER` | Process environment adapter override alias |
+| `PULSEED_MODEL` | Model fallback when file model is absent |
 | `OPENAI_MODEL` | OpenAI model fallback when file model is absent |
 | `ANTHROPIC_MODEL` | Anthropic model fallback when file model is absent |
 | `OLLAMA_MODEL` | Ollama model fallback when file model is absent |
@@ -99,8 +109,9 @@ Environment variables and the provider `.env` file can override file config.
 | `PULSEED_REASONING_EFFORT` | OpenAI reasoning effort override |
 | `OPENAI_REASONING_EFFORT` | OpenAI reasoning effort alias |
 
-Provider-specific model environment variables are fallbacks only when
-`provider.json` does not already specify `model`.
+Provider, adapter, and model resolution reads process environment variables.
+The provider `.env` file participates in API key, base URL, light model, and
+reasoning-effort resolution.
 
 ## Supported Models And Adapters
 
