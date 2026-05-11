@@ -3,6 +3,12 @@ import type { ITool } from "./types.js";
 import type { ToolDefinition } from "../base/llm/llm-client.js";
 
 type JsonObject = Record<string, unknown>;
+type BranchRequiredMode = "common" | "all";
+
+interface ObjectBranchCollection {
+  branches: JsonObject[];
+  requiredMode: BranchRequiredMode;
+}
 
 function isJsonObject(value: unknown): value is JsonObject {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -85,11 +91,11 @@ function toolParametersFromSchema(jsonSchema: unknown): Record<string, unknown> 
 
   const parameters = { ...normalizedSchema };
   parameters.type = parameters.type ?? "object";
-  const unionObjectBranches = collectUnionObjectBranches(parameters);
-  if (unionObjectBranches !== null) {
-    parameters.properties = collectObjectBranchProperties(unionObjectBranches);
-    parameters.required = collectCommonRequiredProperties(unionObjectBranches);
-    parameters.additionalProperties = unionObjectBranches.every((branch) => branch.additionalProperties === false)
+  const objectBranches = collectObjectBranches(parameters);
+  if (objectBranches !== null) {
+    parameters.properties = collectObjectBranchProperties(objectBranches.branches);
+    parameters.required = collectRequiredProperties(objectBranches.branches, objectBranches.requiredMode);
+    parameters.additionalProperties = objectBranches.branches.every((branch) => branch.additionalProperties === false)
       ? false
       : parameters.additionalProperties ?? false;
     delete parameters.anyOf;
@@ -110,29 +116,42 @@ function toolParametersFromSchema(jsonSchema: unknown): Record<string, unknown> 
   return parameters;
 }
 
-function collectUnionObjectBranches(schema: JsonObject): JsonObject[] | null {
+function collectObjectBranches(schema: JsonObject): ObjectBranchCollection | null {
   const branches = Array.isArray(schema.anyOf)
-    ? schema.anyOf
+    ? { values: schema.anyOf, requiredMode: "common" as const }
     : Array.isArray(schema.oneOf)
-      ? schema.oneOf
+      ? { values: schema.oneOf, requiredMode: "common" as const }
       : Array.isArray(schema.allOf)
-        ? schema.allOf
+        ? { values: schema.allOf, requiredMode: "all" as const }
         : null;
-  if (!branches || branches.length === 0) return null;
+  if (!branches || branches.values.length === 0) return null;
 
   const objectBranches: JsonObject[] = [];
-  for (const branch of branches) {
-    if (!isJsonObject(branch)) return null;
-    if (branch.type === "object" && isJsonObject(branch.properties)) {
-      objectBranches.push(branch);
-      continue;
-    }
-    const nested = collectUnionObjectBranches(branch);
-    if (!nested) return null;
-    objectBranches.push(...nested);
+  for (const branch of branches.values) {
+    const objectBranch = collectObjectBranch(branch);
+    if (!objectBranch) return null;
+    objectBranches.push(objectBranch);
   }
 
-  return objectBranches.length > 0 ? objectBranches : null;
+  return objectBranches.length > 0
+    ? { branches: objectBranches, requiredMode: branches.requiredMode }
+    : null;
+}
+
+function collectObjectBranch(value: unknown): JsonObject | null {
+  if (!isJsonObject(value)) return null;
+  if (value.type === "object" && isJsonObject(value.properties)) return value;
+
+  const nested = collectObjectBranches(value);
+  if (!nested) return null;
+  return {
+    type: "object",
+    properties: collectObjectBranchProperties(nested.branches),
+    required: collectRequiredProperties(nested.branches, nested.requiredMode),
+    additionalProperties: nested.branches.every((branch) => branch.additionalProperties === false)
+      ? false
+      : value.additionalProperties ?? false,
+  };
 }
 
 function collectObjectBranchProperties(branches: JsonObject[]): JsonObject {
@@ -156,6 +175,23 @@ function collectCommonRequiredProperties(branches: JsonObject[]): string[] {
   if (requiredSets.length === 0) return [];
   const [first, ...rest] = requiredSets;
   return [...first].filter((item) => rest.every((set) => set.has(item)));
+}
+
+function collectAllRequiredProperties(branches: JsonObject[]): string[] {
+  const required = new Set<string>();
+  for (const branch of branches) {
+    if (!Array.isArray(branch.required)) continue;
+    for (const item of branch.required) {
+      if (typeof item === "string") required.add(item);
+    }
+  }
+  return [...required];
+}
+
+function collectRequiredProperties(branches: JsonObject[], mode: BranchRequiredMode): string[] {
+  return mode === "all"
+    ? collectAllRequiredProperties(branches)
+    : collectCommonRequiredProperties(branches);
 }
 
 function mergePropertySchema(left: unknown, right: unknown): unknown {

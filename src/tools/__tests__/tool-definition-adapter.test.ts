@@ -110,4 +110,21 @@ describe("toToolDefinition", () => {
       enum: ["metadata_probe"],
     });
   });
+
+  it("preserves required fields when flattening top-level intersections", () => {
+    const inputSchema = z.intersection(
+      z.object({ name: z.string().min(1) }).strict(),
+      z.object({ target: z.string().min(1) }).strict()
+    );
+
+    const parameters = toToolDefinition(makeTool(inputSchema)).function.parameters as {
+      allOf?: unknown;
+      properties?: Record<string, unknown>;
+      required?: string[];
+    };
+
+    expect(parameters.allOf).toBeUndefined();
+    expect(Object.keys(parameters.properties ?? {}).sort()).toEqual(["name", "target"]);
+    expect(parameters.required?.sort()).toEqual(["name", "target"]);
+  });
 });
