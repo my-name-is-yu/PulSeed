@@ -566,6 +566,7 @@ class TelegramChatEventAdapter {
   shouldRender(event: ChatEvent): boolean {
     if (event.type === "operation_progress" && event.item.metadata?.["source"] === "agent_timeline_activity_summary") return false;
     if (event.type === "agent_timeline" && event.item.visibility !== "user") return false;
+    if (this.projector.deliveredAssistantOutput && isNonTerminalProgressEvent(event)) return false;
     return true;
   }
 
@@ -618,6 +619,26 @@ class TelegramDisplayTransport implements NonTuiDisplayTransport {
     } finally {
       await this.onTimingUpdated();
     }
+  }
+}
+
+function isNonTerminalProgressEvent(event: ChatEvent): boolean {
+  switch (event.type) {
+    case "operation_progress":
+    case "activity":
+    case "agent_timeline":
+    case "tool_start":
+    case "tool_update":
+    case "tool_end":
+      return true;
+    case "assistant_delta":
+    case "assistant_final":
+    case "lifecycle_error":
+    case "lifecycle_end":
+    case "lifecycle_start":
+    case "presence_update":
+    case "turn_steer":
+      return false;
   }
 }
 

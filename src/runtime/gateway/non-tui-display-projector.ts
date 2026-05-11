@@ -158,6 +158,7 @@ export class NonTuiDisplayProjector {
 
   private async upsertProgress(id: string, text: string, options: ProgressOptions = {}): Promise<void> {
     if (this.policy.progressSurface === "off") return;
+    if (this.finalRef !== null) return;
     const normalized = text.trim();
     if (!normalized) return;
 
@@ -200,6 +201,7 @@ export class NonTuiDisplayProjector {
     if (this.policy.finalSurface === "edit_stream") {
       if (!complete && !this.shouldCommitPartialFinal(nextDisplayText)) return;
       if (this.finalRef === null) {
+        await this.cleanupProgressBeforeFirstFinal();
         this.finalRef = await this.transport.sendFinal(nextDisplayText);
       } else {
         await this.transport.editFinal(this.finalRef, nextDisplayText);
@@ -213,6 +215,7 @@ export class NonTuiDisplayProjector {
 
     if (this.policy.finalSurface === "send_once") {
       if (this.finalRef === null) {
+        await this.cleanupProgressBeforeFirstFinal();
         this.finalRef = await this.transport.sendFinal(nextDisplayText);
         this.lastFinalText = nextDisplayText;
       }
@@ -220,11 +223,20 @@ export class NonTuiDisplayProjector {
     }
 
     if (this.finalRef === null) {
+      await this.cleanupProgressBeforeFirstFinal();
       const chunks = this.chunkFinal(nextDisplayText);
       for (const chunk of chunks) {
         this.finalRef = await this.transport.sendFinal(chunk);
       }
       this.lastFinalText = nextDisplayText;
+    }
+  }
+
+  private async cleanupProgressBeforeFirstFinal(): Promise<void> {
+    try {
+      await this.cleanupProgress();
+    } catch {
+      // Final delivery must not depend on best-effort status cleanup.
     }
   }
 
@@ -246,6 +258,7 @@ export class NonTuiDisplayProjector {
 
   private async cleanupProgress(): Promise<void> {
     if (this.progressRef === null) return;
+    if (this.finalRef !== null) return;
     if (this.policy.cleanupPolicy === "delete") {
       await this.transport.deleteProgress(this.progressRef);
       this.progressRef = null;

@@ -305,7 +305,7 @@ export class SeedyPresenceProjector {
     this.cancelStatusTimer();
     if (projection.assistantOutputRendered !== true) return;
     this.assistantOutputStarted = true;
-    await this.ensureNativePresence();
+    await this.stopNativePresence();
     await this.cleanupEditableStatus("final");
   }
 
@@ -408,7 +408,7 @@ export class SeedyPresenceProjector {
       case "assistant_final":
         return false;
       case "lifecycle_error":
-        return true;
+        return false;
       case "operation_progress":
       case "activity":
       case "agent_timeline":
