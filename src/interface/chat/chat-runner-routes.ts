@@ -789,11 +789,7 @@ async function withAbortAndTimeout<T>(
   const controller = new AbortController();
   let timeout: ReturnType<typeof setTimeout> | undefined;
   let abortHandler: (() => void) | undefined;
-  const operationPromise = operation({
-    abortSignal: controller.signal,
-    ...(timeoutMs !== undefined ? { timeoutMs } : {}),
-  });
-  const racers: Promise<T>[] = [operationPromise];
+  const racers: Promise<T>[] = [];
   if (timeoutMs !== undefined) {
     racers.push(new Promise<T>((_, reject) => {
       timeout = setTimeout(() => {
@@ -811,12 +807,14 @@ async function withAbortAndTimeout<T>(
   if (abortSignal) {
     racers.push(new Promise<T>((_, reject) => {
       if (abortSignal.aborted) {
-        reject(new ToolLoopTerminalError(
+        const err = new ToolLoopTerminalError(
           phase === "model_request" ? "model_request_aborted" : "tool_call_aborted",
           phase === "model_request"
             ? "The gateway model request was aborted before it completed."
             : "The gateway tool call was aborted before it completed.",
-        ));
+        );
+        reject(err);
+        abortController(controller, err);
         return;
       }
       abortHandler = () => {
@@ -832,6 +830,11 @@ async function withAbortAndTimeout<T>(
       abortSignal.addEventListener("abort", abortHandler, { once: true });
     }));
   }
+  const operationPromise = operation({
+    abortSignal: controller.signal,
+    ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+  });
+  racers.unshift(operationPromise);
   try {
     return await Promise.race(racers);
   } finally {
