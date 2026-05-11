@@ -1,0 +1,405 @@
+{
+  "schema": "pulseed.codex_like_interaction_contract.v1",
+  "status": "target_contract",
+  "principles": [
+    "display_text_is_user_visible_projection",
+    "structured_state_is_host_owned_data",
+    "ordinary_freeform_text_is_not_preclassified",
+    "exact_protocol_surfaces_may_use_deterministic_parsers",
+    "model_visible_context_is_separate_from_host_only_state"
+  ],
+  "userInputKinds": [
+    "text",
+    "image",
+    "local_image",
+    "mention",
+    "skill",
+    "tool",
+    "attachment"
+  ],
+  "turnOperations": [
+    {
+      "kind": "TurnStart",
+      "when": "conversation_idle",
+      "requiredState": [
+        "new_turn_id",
+        "current_reply_target",
+        "current_cwd",
+        "current_session_state",
+        "current_tool_selection"
+      ]
+    },
+    {
+      "kind": "TurnSteer",
+      "when": "conversation_active",
+      "requiredState": [
+        "existing_turn_id",
+        "steer_input_id",
+        "active_run_id",
+        "active_target_snapshot"
+      ]
+    }
+  ],
+  "transcriptEvents": [
+    {
+      "type": "turn_start",
+      "displayText": "user input plus optional start or progress line",
+      "structuredState": [
+        "turn_id",
+        "input_id",
+        "reply_target",
+        "operation"
+      ]
+    },
+    {
+      "type": "turn_steer",
+      "displayText": "mid-turn user message",
+      "structuredState": [
+        "turn_id",
+        "steer_input_id",
+        "active_run_snapshot"
+      ]
+    },
+    {
+      "type": "assistant_delta",
+      "displayText": "incremental assistant text",
+      "structuredState": [
+        "turn_id",
+        "stream_offset"
+      ]
+    },
+    {
+      "type": "activity",
+      "displayText": "short commentary or checkpoint",
+      "structuredState": [
+        "activity_kind",
+        "source_id",
+        "transient"
+      ]
+    },
+    {
+      "type": "tool_call",
+      "displayText": "short tool start text when useful",
+      "structuredState": [
+        "tool_call_id",
+        "tool_name",
+        "redacted_args",
+        "approval_level"
+      ]
+    },
+    {
+      "type": "tool_observation",
+      "displayText": "concise result or observation summary",
+      "structuredState": [
+        "tool_result_id",
+        "success",
+        "duration_ms",
+        "artifact_refs"
+      ]
+    },
+    {
+      "type": "permission_prompt",
+      "displayText": "human-readable prompt rendered from a pending record",
+      "structuredState": [
+        "approval_id",
+        "action",
+        "target",
+        "risk",
+        "origin",
+        "expiry"
+      ]
+    },
+    {
+      "type": "clarification",
+      "displayText": "one clear question",
+      "structuredState": [
+        "clarification_id",
+        "missing_fields",
+        "answer_protocol"
+      ]
+    },
+    {
+      "type": "error_recovery",
+      "displayText": "error explanation and next safe step",
+      "structuredState": [
+        "error_code",
+        "stopped_reason",
+        "retryability",
+        "partial_output_refs"
+      ]
+    },
+    {
+      "type": "turn_complete",
+      "displayText": "final answer as display text",
+      "structuredState": [
+        "final_status",
+        "elapsed_ms",
+        "persisted_refs",
+        "usage_summary"
+      ]
+    }
+  ],
+  "permissionDecisionDomain": [
+    "approve",
+    "reject",
+    "clarify",
+    "unknown"
+  ],
+  "permissionMatching": [
+    "same_channel",
+    "same_conversation_or_thread",
+    "authorized_sender",
+    "current_session_or_turn",
+    "pending_unexpired_approval_id",
+    "sufficient_decision_confidence"
+  ],
+  "contextBoundary": {
+    "modelVisible": [
+      "cwd",
+      "current_date",
+      "timezone",
+      "session_title",
+      "selected_model",
+      "selected_model_visible_tools",
+      "active_turn_or_run_summary",
+      "safe_runtime_evidence",
+      "outstanding_user_facing_confirmation"
+    ],
+    "hostOnly": [
+      "raw_policy_internals",
+      "secret_values",
+      "local_credential_paths",
+      "unredacted_attachments",
+      "stale_route_caches",
+      "rejected_previous_turn_targets",
+      "internal_audit_records"
+    ]
+  },
+  "workflows": [
+    {
+      "id": "ordinary-chat-en",
+      "language": "en",
+      "surface": "chat",
+      "input": {
+        "operation": "TurnStart",
+        "items": [
+          {
+            "kind": "text",
+            "text": "What can you see from the current repo?"
+          }
+        ]
+      },
+      "displayTranscript": [
+        {
+          "role": "user",
+          "text": "What can you see from the current repo?"
+        },
+        {
+          "role": "assistant",
+          "text": "This repo is PulSeed. I can inspect local files and tests when you ask me to work on it."
+        }
+      ],
+      "structuredState": {
+        "final_output_mode": "display_text",
+        "structured_output": null
+      }
+    },
+    {
+      "id": "tool-progress-en",
+      "language": "en",
+      "surface": "chat",
+      "input": {
+        "operation": "TurnStart",
+        "items": [
+          {
+            "kind": "text",
+            "text": "Check the failing test and fix it."
+          }
+        ]
+      },
+      "displayTranscript": [
+        {
+          "role": "user",
+          "text": "Check the failing test and fix it."
+        },
+        {
+          "role": "assistant",
+          "text": "I am checking the focused test and the code path it exercises."
+        },
+        {
+          "role": "tool",
+          "text": "npm test -- src/interface/chat/__tests__/chat-runner.test.ts"
+        },
+        {
+          "role": "observation",
+          "text": "The focused test fails because the pending confirmation is reused after a new intent."
+        },
+        {
+          "role": "assistant",
+          "text": "I fixed the confirmation reset and added a two-turn regression test."
+        }
+      ],
+      "structuredState": {
+        "tool_call_id": "tool-call-1",
+        "tool_result_id": "tool-result-1",
+        "duration_ms": 1200,
+        "artifact_refs": [
+          "test-log:focused"
+        ]
+      }
+    },
+    {
+      "id": "permission-prompt-en",
+      "language": "en",
+      "surface": "tui",
+      "input": {
+        "operation": "TurnStart",
+        "items": [
+          {
+            "kind": "text",
+            "text": "Prepare the npm publish dry run."
+          }
+        ]
+      },
+      "displayTranscript": [
+        {
+          "role": "permission_prompt",
+          "text": "PulSeed wants to run `npm publish --dry-run` in this workspace. This can read package metadata and contact the registry. Approve, reject, or ask for details."
+        }
+      ],
+      "structuredState": {
+        "approval_id": "approval-123",
+        "turn_id": "turn-7",
+        "operation": "shell_command",
+        "target": "npm publish --dry-run",
+        "risk": "external_network",
+        "origin": {
+          "channel": "tui",
+          "conversation_id": "local",
+          "user_id": "owner"
+        },
+        "expires_at": "2026-05-06T07:30:00.000Z",
+        "reply_matching": {
+          "same_channel": true,
+          "same_conversation_or_thread": true,
+          "authorized_sender": "owner",
+          "current_session_or_turn": "turn-7",
+          "pending_unexpired_approval_id": "approval-123",
+          "minimum_decision_confidence": 0.7
+        },
+        "decision_domain": [
+          "approve",
+          "reject",
+          "clarify",
+          "unknown"
+        ]
+      }
+    },
+    {
+      "id": "mid-turn-steer-ja",
+      "language": "ja",
+      "surface": "tui",
+      "input": {
+        "operation": "TurnSteer",
+        "turn_id": "turn-active",
+        "items": [
+          {
+            "kind": "text",
+            "text": "そのテストだけじゃなくて TUI 側も見て"
+          }
+        ]
+      },
+      "displayTranscript": [
+        {
+          "role": "user",
+          "text": "そのテストだけじゃなくて TUI 側も見て"
+        }
+      ],
+      "structuredState": {
+        "target_resolution": "current_typed_state_plus_new_input",
+        "stale_target_reuse": "rejected"
+      }
+    },
+    {
+      "id": "clarification-ja",
+      "language": "ja",
+      "surface": "gateway",
+      "input": {
+        "operation": "TurnStart",
+        "items": [
+          {
+            "kind": "text",
+            "text": "PR の確認をして"
+          }
+        ]
+      },
+      "displayTranscript": [
+        {
+          "role": "assistant",
+          "text": "どの PR を対象にしますか。番号か URL で指定してください。"
+        }
+      ],
+      "structuredState": {
+        "clarification_id": "clarify-1",
+        "missing_fields": [
+          "pull_request_ref"
+        ],
+        "answer_protocol": "github_pr_ref"
+      }
+    },
+    {
+      "id": "stale-target-rejection-ja",
+      "language": "ja",
+      "surface": "gateway",
+      "input": {
+        "operation": "TurnStart",
+        "previous_completed_target": "run-A",
+        "items": [
+          {
+            "kind": "text",
+            "text": "最新の方を止めて"
+          }
+        ]
+      },
+      "displayTranscript": [
+        {
+          "role": "assistant",
+          "text": "現在の対象を特定できません。停止する run を指定してください。"
+        }
+      ],
+      "structuredState": {
+        "latest_resolution_source": "typed_current_runtime_state",
+        "previous_completed_target_reused": false,
+        "outcome": "clarification_required"
+      }
+    },
+    {
+      "id": "resume-en",
+      "language": "en",
+      "surface": "cli",
+      "input": {
+        "operation": "TurnStart",
+        "items": [
+          {
+            "kind": "text",
+            "text": "Resume the previous coding session."
+          }
+        ]
+      },
+      "displayTranscript": [
+        {
+          "role": "assistant",
+          "text": "I found a resumable session and restored its safe summary into the current turn context."
+        }
+      ],
+      "structuredState": {
+        "resume": {
+          "session_id": "session-42",
+          "source": "persisted_session_store",
+          "state_path": "host-only"
+        },
+        "stale_route_cache_reused": false
+      }
+    }
+  ]
+}
