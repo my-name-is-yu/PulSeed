@@ -72,6 +72,10 @@ function isInfraPath(filePath) {
     filePath === "package.json" ||
     filePath === "vitest.config.ts" ||
     filePath === "vitest.unit.config.ts" ||
+    filePath === "vitest.contracts.config.ts" ||
+    filePath === "vitest.golden-traces.config.ts" ||
+    filePath === "vitest.replay.config.ts" ||
+    filePath === "vitest.slow.config.ts" ||
     filePath === "vitest.integration.config.ts" ||
     filePath === "vitest.smoke.config.ts" ||
     filePath === "vitest.patterns.js" ||

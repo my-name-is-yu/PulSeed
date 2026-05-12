@@ -19,12 +19,21 @@ jobs:
             node-version: 22
             run-docs: true
             run-build: true
+            run-typecheck: true
+            run-lint: true
             test-command: npm run test:unit
           - name: integration
             node-version: 24
             run-docs: false
             run-build: true
-            test-command: npm run test:integration
+            run-typecheck: false
+            run-lint: false
+            test-command: |
+              npm run test:contracts
+              npm run test:golden-traces
+              npm run test:replay
+              npm run test:smoke
+              npm run test:integration
     steps:
       - uses: actions/checkout@v5
       - name: Use Node.js ${{ matrix.node-version }}
@@ -37,4 +46,8 @@ jobs:
         run: npm run check:docs
       - if: ${{ matrix.run-build }}
         run: npm run build
+      - if: ${{ matrix.run-typecheck }}
+        run: npm run typecheck
+      - if: ${{ matrix.run-lint }}
+        run: npm run lint:boundaries
       - run: ${{ matrix.test-command }}

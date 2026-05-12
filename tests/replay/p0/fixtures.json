@@ -1,0 +1,576 @@
+[
+  {
+    "schema_version": "pulseed.replay.v1",
+    "contract_name": "state_attention_schema_ahead_fail_closed",
+    "domain": "state",
+    "p0_failure_mode": "state migration破壊",
+    "production_boundary": "runtime startup/replay -> attention state store -> control DB",
+    "input": {
+      "entrypoint": "runtime startup/replay -> attention state store -> control DB",
+      "fake_now": "2026-05-13T00:00:00.000Z",
+      "seed": "state_attention_schema_ahead_fail_closed"
+    },
+    "initial_state": {
+      "state/state/state_attention_schema_ahead_fail_closed.json": {
+        "contract_name": "state_attention_schema_ahead_fail_closed",
+        "legacy": true
+      }
+    },
+    "expected": {
+      "audit": [
+        {
+          "disposition": "pending_real_runner",
+          "pending_reason": "No startup/replay/migration runner is wired to runtime startup/replay -> attention state store -> control DB; this fixture is not deletion-gate evidence.",
+          "production_boundary": "runtime startup/replay -> attention state store -> control DB",
+          "reason": "not_connected_to_startup_replay_boundary",
+          "runner_status": "pending_real_runner"
+        }
+      ],
+      "artifact_tree": [
+        {
+          "path": "state/state/state_attention_schema_ahead_fail_closed.json",
+          "sha256": "3d3c809515a8dadc87d74263a8facd77f5d1e4fe4bef34ec11913e2b563a7394",
+          "size": 741,
+          "type": "file"
+        }
+      ],
+      "fresh_state": {
+        "contract_name": "state_attention_schema_ahead_fail_closed",
+        "initial_state_paths": [
+          "state/state/state_attention_schema_ahead_fail_closed.json"
+        ],
+        "reason": "No startup/replay/migration runner is wired to runtime startup/replay -> attention state store -> control DB; this fixture is not deletion-gate evidence.",
+        "runner": {
+          "exported_state_artifact": "state/state/state_attention_schema_ahead_fail_closed.json",
+          "pending_reason": "No startup/replay/migration runner is wired to runtime startup/replay -> attention state store -> control DB; this fixture is not deletion-gate evidence.",
+          "production_entrypoint": "runtime startup/replay -> attention state store -> control DB",
+          "same_checkout_pass_command": "npm run test:replay",
+          "status": "pending_real_runner"
+        },
+        "status": "pending_real_runner"
+      },
+      "restarted_state": {
+        "contract_name": "state_attention_schema_ahead_fail_closed",
+        "initial_state_paths": [
+          "state/state/state_attention_schema_ahead_fail_closed.json"
+        ],
+        "reason": "No startup/replay/migration runner is wired to runtime startup/replay -> attention state store -> control DB; this fixture is not deletion-gate evidence.",
+        "runner": {
+          "exported_state_artifact": "state/state/state_attention_schema_ahead_fail_closed.json",
+          "pending_reason": "No startup/replay/migration runner is wired to runtime startup/replay -> attention state store -> control DB; this fixture is not deletion-gate evidence.",
+          "production_entrypoint": "runtime startup/replay -> attention state store -> control DB",
+          "same_checkout_pass_command": "npm run test:replay",
+          "status": "pending_real_runner"
+        },
+        "status": "pending_real_runner"
+      }
+    }
+  },
+  {
+    "schema_version": "pulseed.replay.v1",
+    "contract_name": "approval_pending_restored_after_daemon_restart",
+    "domain": "approval",
+    "p0_failure_mode": "state migration破壊",
+    "production_boundary": "daemon restart -> ApprovalBroker -> approval store",
+    "input": {
+      "entrypoint": "daemon restart -> ApprovalBroker -> approval store",
+      "fake_now": "2026-05-13T00:00:00.000Z",
+      "seed": "approval_pending_restored_after_daemon_restart"
+    },
+    "initial_state": {
+      "state/approval/approval_pending_restored_after_daemon_restart.json": {
+        "contract_name": "approval_pending_restored_after_daemon_restart",
+        "legacy": true
+      }
+    },
+    "expected": {
+      "audit": [
+        {
+          "disposition": "pending_real_runner",
+          "pending_reason": "No startup/replay/migration runner is wired to daemon restart -> ApprovalBroker -> approval store; this fixture is not deletion-gate evidence.",
+          "production_boundary": "daemon restart -> ApprovalBroker -> approval store",
+          "reason": "not_connected_to_startup_replay_boundary",
+          "runner_status": "pending_real_runner"
+        }
+      ],
+      "artifact_tree": [
+        {
+          "path": "state/approval/approval_pending_restored_after_daemon_restart.json",
+          "sha256": "8b5fd6cc769b5099e33160500be2632c9c2f34aaa8040abfad6b6f0565630282",
+          "size": 746,
+          "type": "file"
+        }
+      ],
+      "fresh_state": {
+        "contract_name": "approval_pending_restored_after_daemon_restart",
+        "initial_state_paths": [
+          "state/approval/approval_pending_restored_after_daemon_restart.json"
+        ],
+        "reason": "No startup/replay/migration runner is wired to daemon restart -> ApprovalBroker -> approval store; this fixture is not deletion-gate evidence.",
+        "runner": {
+          "exported_state_artifact": "state/approval/approval_pending_restored_after_daemon_restart.json",
+          "pending_reason": "No startup/replay/migration runner is wired to daemon restart -> ApprovalBroker -> approval store; this fixture is not deletion-gate evidence.",
+          "production_entrypoint": "daemon restart -> ApprovalBroker -> approval store",
+          "same_checkout_pass_command": "npm run test:replay",
+          "status": "pending_real_runner"
+        },
+        "status": "pending_real_runner"
+      },
+      "restarted_state": {
+        "contract_name": "approval_pending_restored_after_daemon_restart",
+        "initial_state_paths": [
+          "state/approval/approval_pending_restored_after_daemon_restart.json"
+        ],
+        "reason": "No startup/replay/migration runner is wired to daemon restart -> ApprovalBroker -> approval store; this fixture is not deletion-gate evidence.",
+        "runner": {
+          "exported_state_artifact": "state/approval/approval_pending_restored_after_daemon_restart.json",
+          "pending_reason": "No startup/replay/migration runner is wired to daemon restart -> ApprovalBroker -> approval store; this fixture is not deletion-gate evidence.",
+          "production_entrypoint": "daemon restart -> ApprovalBroker -> approval store",
+          "same_checkout_pass_command": "npm run test:replay",
+          "status": "pending_real_runner"
+        },
+        "status": "pending_real_runner"
+      }
+    }
+  },
+  {
+    "schema_version": "pulseed.replay.v1",
+    "contract_name": "schedule_side_effect_crash_replay_no_duplicate_execution",
+    "domain": "schedule",
+    "p0_failure_mode": "replay duplicate",
+    "production_boundary": "ScheduleEngine.tick() crash replay -> side effect ledger",
+    "input": {
+      "entrypoint": "ScheduleEngine.tick() crash replay -> side effect ledger",
+      "fake_now": "2026-05-13T00:00:00.000Z",
+      "seed": "schedule_side_effect_crash_replay_no_duplicate_execution"
+    },
+    "initial_state": {
+      "state/schedule/schedule_side_effect_crash_replay_no_duplicate_execution.json": {
+        "contract_name": "schedule_side_effect_crash_replay_no_duplicate_execution",
+        "legacy": true
+      }
+    },
+    "expected": {
+      "audit": [
+        {
+          "disposition": "pending_real_runner",
+          "pending_reason": "No startup/replay/migration runner is wired to ScheduleEngine.tick() crash replay -> side effect ledger; this fixture is not deletion-gate evidence.",
+          "production_boundary": "ScheduleEngine.tick() crash replay -> side effect ledger",
+          "reason": "not_connected_to_startup_replay_boundary",
+          "runner_status": "pending_real_runner"
+        }
+      ],
+      "artifact_tree": [
+        {
+          "path": "state/schedule/schedule_side_effect_crash_replay_no_duplicate_execution.json",
+          "sha256": "aa9f0c3349d61c6072d7592109806b839f65ffe421f7047baf5e601254e36e53",
+          "size": 783,
+          "type": "file"
+        }
+      ],
+      "fresh_state": {
+        "contract_name": "schedule_side_effect_crash_replay_no_duplicate_execution",
+        "initial_state_paths": [
+          "state/schedule/schedule_side_effect_crash_replay_no_duplicate_execution.json"
+        ],
+        "reason": "No startup/replay/migration runner is wired to ScheduleEngine.tick() crash replay -> side effect ledger; this fixture is not deletion-gate evidence.",
+        "runner": {
+          "exported_state_artifact": "state/schedule/schedule_side_effect_crash_replay_no_duplicate_execution.json",
+          "pending_reason": "No startup/replay/migration runner is wired to ScheduleEngine.tick() crash replay -> side effect ledger; this fixture is not deletion-gate evidence.",
+          "production_entrypoint": "ScheduleEngine.tick() crash replay -> side effect ledger",
+          "same_checkout_pass_command": "npm run test:replay",
+          "status": "pending_real_runner"
+        },
+        "status": "pending_real_runner"
+      },
+      "restarted_state": {
+        "contract_name": "schedule_side_effect_crash_replay_no_duplicate_execution",
+        "initial_state_paths": [
+          "state/schedule/schedule_side_effect_crash_replay_no_duplicate_execution.json"
+        ],
+        "reason": "No startup/replay/migration runner is wired to ScheduleEngine.tick() crash replay -> side effect ledger; this fixture is not deletion-gate evidence.",
+        "runner": {
+          "exported_state_artifact": "state/schedule/schedule_side_effect_crash_replay_no_duplicate_execution.json",
+          "pending_reason": "No startup/replay/migration runner is wired to ScheduleEngine.tick() crash replay -> side effect ledger; this fixture is not deletion-gate evidence.",
+          "production_entrypoint": "ScheduleEngine.tick() crash replay -> side effect ledger",
+          "same_checkout_pass_command": "npm run test:replay",
+          "status": "pending_real_runner"
+        },
+        "status": "pending_real_runner"
+      }
+    }
+  },
+  {
+    "schema_version": "pulseed.replay.v1",
+    "contract_name": "queue_expired_claim_rejects_late_ack_and_reclaims",
+    "domain": "queue",
+    "p0_failure_mode": "stale claim ownership",
+    "production_boundary": "JournalBackedQueue claim -> sweeper -> late ack reject",
+    "input": {
+      "entrypoint": "JournalBackedQueue claim -> sweeper -> late ack reject",
+      "fake_now": "2026-05-13T00:00:00.000Z",
+      "seed": "queue_expired_claim_rejects_late_ack_and_reclaims"
+    },
+    "initial_state": {
+      "state/queue/queue_expired_claim_rejects_late_ack_and_reclaims.json": {
+        "contract_name": "queue_expired_claim_rejects_late_ack_and_reclaims",
+        "legacy": true
+      }
+    },
+    "expected": {
+      "audit": [
+        {
+          "assertions": {
+            "fresh_restarted_equal": true,
+            "startup_replay_path": "JournalBackedQueue constructor reload from persisted control DB"
+          },
+          "disposition": "reclaimed",
+          "production_boundary": "JournalBackedQueue claim -> sweeper -> late ack reject",
+          "reason": "queue_claim",
+          "runner_status": "real_production_path"
+        }
+      ],
+      "artifact_tree": [
+        {
+          "path": "state/queue/queue_expired_claim_rejects_late_ack_and_reclaims.json",
+          "sha256": "3e5ca0f4782f9e5f526c629866239191b4ff3bdc726e6c68c563c59b1a686b29",
+          "size": 4235,
+          "type": "file"
+        }
+      ],
+      "fresh_state": {
+        "assertions": {
+          "fresh": {
+            "accepted": {
+              "accepted": true,
+              "duplicate": false,
+              "messageId": "queue_expired_claim_rejects_late_ack_and_reclaims:expired-claim"
+            },
+            "late_ack_accepted": false,
+            "post_replay_snapshot": {
+              "completed": [],
+              "deadletter": [],
+              "inflight": [],
+              "pending": {
+                "critical": [],
+                "high": [],
+                "low": [],
+                "normal": [
+                  "queue_expired_claim_rejects_late_ack_and_reclaims:expired-claim"
+                ]
+              }
+            },
+            "sweep_result": {
+              "deadlettered": 0,
+              "expired_claim_token_count": 1,
+              "reclaimed": 1
+            }
+          },
+          "restarted": {
+            "accepted": {
+              "accepted": true,
+              "duplicate": false,
+              "messageId": "queue_expired_claim_rejects_late_ack_and_reclaims:expired-claim"
+            },
+            "late_ack_accepted": false,
+            "post_replay_snapshot": {
+              "completed": [],
+              "deadletter": [],
+              "inflight": [],
+              "pending": {
+                "critical": [],
+                "high": [],
+                "low": [],
+                "normal": [
+                  "queue_expired_claim_rejects_late_ack_and_reclaims:expired-claim"
+                ]
+              }
+            },
+            "sweep_result": {
+              "deadlettered": 0,
+              "expired_claim_token_count": 1,
+              "reclaimed": 1
+            }
+          },
+          "restarted_path_exercised": true
+        },
+        "contract_name": "queue_expired_claim_rejects_late_ack_and_reclaims",
+        "reason": "queue_claim",
+        "runner": {
+          "exported_state_artifact": "state/queue/queue_expired_claim_rejects_late_ack_and_reclaims.json",
+          "production_entrypoint": "JournalBackedQueue claim -> sweeper -> late ack reject",
+          "same_checkout_pass_command": "npm run test:replay",
+          "status": "real_production_path"
+        },
+        "status": "reclaimed"
+      },
+      "restarted_state": {
+        "assertions": {
+          "fresh": {
+            "accepted": {
+              "accepted": true,
+              "duplicate": false,
+              "messageId": "queue_expired_claim_rejects_late_ack_and_reclaims:expired-claim"
+            },
+            "late_ack_accepted": false,
+            "post_replay_snapshot": {
+              "completed": [],
+              "deadletter": [],
+              "inflight": [],
+              "pending": {
+                "critical": [],
+                "high": [],
+                "low": [],
+                "normal": [
+                  "queue_expired_claim_rejects_late_ack_and_reclaims:expired-claim"
+                ]
+              }
+            },
+            "sweep_result": {
+              "deadlettered": 0,
+              "expired_claim_token_count": 1,
+              "reclaimed": 1
+            }
+          },
+          "restarted": {
+            "accepted": {
+              "accepted": true,
+              "duplicate": false,
+              "messageId": "queue_expired_claim_rejects_late_ack_and_reclaims:expired-claim"
+            },
+            "late_ack_accepted": false,
+            "post_replay_snapshot": {
+              "completed": [],
+              "deadletter": [],
+              "inflight": [],
+              "pending": {
+                "critical": [],
+                "high": [],
+                "low": [],
+                "normal": [
+                  "queue_expired_claim_rejects_late_ack_and_reclaims:expired-claim"
+                ]
+              }
+            },
+            "sweep_result": {
+              "deadlettered": 0,
+              "expired_claim_token_count": 1,
+              "reclaimed": 1
+            }
+          },
+          "restarted_path_exercised": true
+        },
+        "contract_name": "queue_expired_claim_rejects_late_ack_and_reclaims",
+        "reason": "queue_claim",
+        "runner": {
+          "exported_state_artifact": "state/queue/queue_expired_claim_rejects_late_ack_and_reclaims.json",
+          "production_entrypoint": "JournalBackedQueue claim -> sweeper -> late ack reject",
+          "same_checkout_pass_command": "npm run test:replay",
+          "status": "real_production_path"
+        },
+        "status": "reclaimed"
+      }
+    }
+  },
+  {
+    "schema_version": "pulseed.replay.v1",
+    "contract_name": "attention_observation_requires_visible_indicator_before_event",
+    "domain": "attention",
+    "p0_failure_mode": "unauthorized continuous sensing",
+    "production_boundary": "observation event -> visible indicator gate -> attention state",
+    "input": {
+      "entrypoint": "observation event -> visible indicator gate -> attention state",
+      "fake_now": "2026-05-13T00:00:00.000Z",
+      "seed": "attention_observation_requires_visible_indicator_before_event"
+    },
+    "initial_state": {
+      "state/attention/attention_observation_requires_visible_indicator_before_event.json": {
+        "contract_name": "attention_observation_requires_visible_indicator_before_event",
+        "legacy": true
+      }
+    },
+    "expected": {
+      "audit": [
+        {
+          "disposition": "pending_real_runner",
+          "pending_reason": "No startup/replay/migration runner is wired to observation event -> visible indicator gate -> attention state; this fixture is not deletion-gate evidence.",
+          "production_boundary": "observation event -> visible indicator gate -> attention state",
+          "reason": "not_connected_to_startup_replay_boundary",
+          "runner_status": "pending_real_runner"
+        }
+      ],
+      "artifact_tree": [
+        {
+          "path": "state/attention/attention_observation_requires_visible_indicator_before_event.json",
+          "sha256": "281cab1c4118ed940691588d2455006df1a67adc09737bac34684d35c2ee660e",
+          "size": 828,
+          "type": "file"
+        }
+      ],
+      "fresh_state": {
+        "contract_name": "attention_observation_requires_visible_indicator_before_event",
+        "initial_state_paths": [
+          "state/attention/attention_observation_requires_visible_indicator_before_event.json"
+        ],
+        "reason": "No startup/replay/migration runner is wired to observation event -> visible indicator gate -> attention state; this fixture is not deletion-gate evidence.",
+        "runner": {
+          "exported_state_artifact": "state/attention/attention_observation_requires_visible_indicator_before_event.json",
+          "pending_reason": "No startup/replay/migration runner is wired to observation event -> visible indicator gate -> attention state; this fixture is not deletion-gate evidence.",
+          "production_entrypoint": "observation event -> visible indicator gate -> attention state",
+          "same_checkout_pass_command": "npm run test:replay",
+          "status": "pending_real_runner"
+        },
+        "status": "pending_real_runner"
+      },
+      "restarted_state": {
+        "contract_name": "attention_observation_requires_visible_indicator_before_event",
+        "initial_state_paths": [
+          "state/attention/attention_observation_requires_visible_indicator_before_event.json"
+        ],
+        "reason": "No startup/replay/migration runner is wired to observation event -> visible indicator gate -> attention state; this fixture is not deletion-gate evidence.",
+        "runner": {
+          "exported_state_artifact": "state/attention/attention_observation_requires_visible_indicator_before_event.json",
+          "pending_reason": "No startup/replay/migration runner is wired to observation event -> visible indicator gate -> attention state; this fixture is not deletion-gate evidence.",
+          "production_entrypoint": "observation event -> visible indicator gate -> attention state",
+          "same_checkout_pass_command": "npm run test:replay",
+          "status": "pending_real_runner"
+        },
+        "status": "pending_real_runner"
+      }
+    }
+  },
+  {
+    "schema_version": "pulseed.replay.v1",
+    "contract_name": "session_registry_dead_process_not_running",
+    "domain": "daemon",
+    "p0_failure_mode": "daemon/progress/final message ordering",
+    "production_boundary": "session registry snapshot -> process liveness verifier",
+    "input": {
+      "entrypoint": "session registry snapshot -> process liveness verifier",
+      "fake_now": "2026-05-13T00:00:00.000Z",
+      "seed": "session_registry_dead_process_not_running"
+    },
+    "initial_state": {
+      "state/daemon/session_registry_dead_process_not_running.json": {
+        "contract_name": "session_registry_dead_process_not_running",
+        "legacy": true
+      }
+    },
+    "expected": {
+      "audit": [
+        {
+          "disposition": "pending_real_runner",
+          "pending_reason": "No startup/replay/migration runner is wired to session registry snapshot -> process liveness verifier; this fixture is not deletion-gate evidence.",
+          "production_boundary": "session registry snapshot -> process liveness verifier",
+          "reason": "not_connected_to_startup_replay_boundary",
+          "runner_status": "pending_real_runner"
+        }
+      ],
+      "artifact_tree": [
+        {
+          "path": "state/daemon/session_registry_dead_process_not_running.json",
+          "sha256": "3ed10fb10df45ec2fc6fbee00e17b78fb23022577fc3eceae0971f6bfc07f941",
+          "size": 750,
+          "type": "file"
+        }
+      ],
+      "fresh_state": {
+        "contract_name": "session_registry_dead_process_not_running",
+        "initial_state_paths": [
+          "state/daemon/session_registry_dead_process_not_running.json"
+        ],
+        "reason": "No startup/replay/migration runner is wired to session registry snapshot -> process liveness verifier; this fixture is not deletion-gate evidence.",
+        "runner": {
+          "exported_state_artifact": "state/daemon/session_registry_dead_process_not_running.json",
+          "pending_reason": "No startup/replay/migration runner is wired to session registry snapshot -> process liveness verifier; this fixture is not deletion-gate evidence.",
+          "production_entrypoint": "session registry snapshot -> process liveness verifier",
+          "same_checkout_pass_command": "npm run test:replay",
+          "status": "pending_real_runner"
+        },
+        "status": "pending_real_runner"
+      },
+      "restarted_state": {
+        "contract_name": "session_registry_dead_process_not_running",
+        "initial_state_paths": [
+          "state/daemon/session_registry_dead_process_not_running.json"
+        ],
+        "reason": "No startup/replay/migration runner is wired to session registry snapshot -> process liveness verifier; this fixture is not deletion-gate evidence.",
+        "runner": {
+          "exported_state_artifact": "state/daemon/session_registry_dead_process_not_running.json",
+          "pending_reason": "No startup/replay/migration runner is wired to session registry snapshot -> process liveness verifier; this fixture is not deletion-gate evidence.",
+          "production_entrypoint": "session registry snapshot -> process liveness verifier",
+          "same_checkout_pass_command": "npm run test:replay",
+          "status": "pending_real_runner"
+        },
+        "status": "pending_real_runner"
+      }
+    }
+  },
+  {
+    "schema_version": "pulseed.replay.v1",
+    "contract_name": "gateway_routed_ingress_preserves_reply_target_after_restart",
+    "domain": "chat-session",
+    "p0_failure_mode": "stale target reuse",
+    "production_boundary": "Gateway adapter -> CrossPlatformChatSessionManager.processIncomingMessage",
+    "input": {
+      "entrypoint": "Gateway adapter -> CrossPlatformChatSessionManager.processIncomingMessage",
+      "fake_now": "2026-05-13T00:00:00.000Z",
+      "seed": "gateway_routed_ingress_preserves_reply_target_after_restart"
+    },
+    "initial_state": {
+      "state/chat-session/gateway_routed_ingress_preserves_reply_target_after_restart.json": {
+        "contract_name": "gateway_routed_ingress_preserves_reply_target_after_restart",
+        "legacy": true
+      }
+    },
+    "expected": {
+      "audit": [
+        {
+          "disposition": "pending_real_runner",
+          "pending_reason": "No startup/replay/migration runner is wired to Gateway adapter -> CrossPlatformChatSessionManager.processIncomingMessage; this fixture is not deletion-gate evidence.",
+          "production_boundary": "Gateway adapter -> CrossPlatformChatSessionManager.processIncomingMessage",
+          "reason": "not_connected_to_startup_replay_boundary",
+          "runner_status": "pending_real_runner"
+        }
+      ],
+      "artifact_tree": [
+        {
+          "path": "state/chat-session/gateway_routed_ingress_preserves_reply_target_after_restart.json",
+          "sha256": "da9cb63ab3ec290619eac832a783b3a84bdb6d5d2c40bc31534c4aadb4d73995",
+          "size": 840,
+          "type": "file"
+        }
+      ],
+      "fresh_state": {
+        "contract_name": "gateway_routed_ingress_preserves_reply_target_after_restart",
+        "initial_state_paths": [
+          "state/chat-session/gateway_routed_ingress_preserves_reply_target_after_restart.json"
+        ],
+        "reason": "No startup/replay/migration runner is wired to Gateway adapter -> CrossPlatformChatSessionManager.processIncomingMessage; this fixture is not deletion-gate evidence.",
+        "runner": {
+          "exported_state_artifact": "state/chat-session/gateway_routed_ingress_preserves_reply_target_after_restart.json",
+          "pending_reason": "No startup/replay/migration runner is wired to Gateway adapter -> CrossPlatformChatSessionManager.processIncomingMessage; this fixture is not deletion-gate evidence.",
+          "production_entrypoint": "Gateway adapter -> CrossPlatformChatSessionManager.processIncomingMessage",
+          "same_checkout_pass_command": "npm run test:replay",
+          "status": "pending_real_runner"
+        },
+        "status": "pending_real_runner"
+      },
+      "restarted_state": {
+        "contract_name": "gateway_routed_ingress_preserves_reply_target_after_restart",
+        "initial_state_paths": [
+          "state/chat-session/gateway_routed_ingress_preserves_reply_target_after_restart.json"
+        ],
+        "reason": "No startup/replay/migration runner is wired to Gateway adapter -> CrossPlatformChatSessionManager.processIncomingMessage; this fixture is not deletion-gate evidence.",
+        "runner": {
+          "exported_state_artifact": "state/chat-session/gateway_routed_ingress_preserves_reply_target_after_restart.json",
+          "pending_reason": "No startup/replay/migration runner is wired to Gateway adapter -> CrossPlatformChatSessionManager.processIncomingMessage; this fixture is not deletion-gate evidence.",
+          "production_entrypoint": "Gateway adapter -> CrossPlatformChatSessionManager.processIncomingMessage",
+          "same_checkout_pass_command": "npm run test:replay",
+          "status": "pending_real_runner"
+        },
+        "status": "pending_real_runner"
+      }
+    }
+  }
+]

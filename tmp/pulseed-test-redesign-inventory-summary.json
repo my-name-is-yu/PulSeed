@@ -1,0 +1,41 @@
+{
+  "generated_at": "2026-05-12T21:41:26.885Z",
+  "test_like_files": 784,
+  "current_lane_counts": {
+    "unit": 681,
+    "integration": 90,
+    "integration+smoke": 3,
+    "unit+smoke": 1,
+    "contracts": 1,
+    "golden-traces": 1,
+    "replay": 1,
+    "runtime-long-run": 3,
+    "unit+slow": 3
+  },
+  "target_lane_counts": {
+    "unit": 686,
+    "integration": 75,
+    "golden-traces+replay": 13,
+    "contracts": 1,
+    "slow": 7,
+    "golden-traces": 1,
+    "replay": 1
+  },
+  "classification_counts": {
+    "keep": 712,
+    "move_to_unit": 33,
+    "replace": 13,
+    "move_to_integration": 19,
+    "move_to_slow": 7
+  },
+  "current_coverage_gap_count": 0,
+  "current_coverage_gaps": [],
+  "p0_trace_count": 40,
+  "p0_mapped_trace_count": 40,
+  "p0_unmapped_traces": [],
+  "phase0_completion": {
+    "inventory_covers_all_test_like_files": true,
+    "current_lane_target_lane_diff_explainable": true,
+    "at_least_one_p0_trace_mapped_to_old_test": true
+  }
+}
