@@ -12,6 +12,10 @@ import type { CuriosityEngine } from "../../platform/traits/curiosity-engine.js"
 import type { ILLMClient } from "../../base/llm/llm-client.js";
 import type { MemoryLifecycleManager } from "../../platform/knowledge/memory/memory-lifecycle.js";
 import type { KnowledgeManager } from "../../platform/knowledge/knowledge-manager.js";
+import type {
+  ResidentOperationBoundaryInput,
+  ResidentOperationBoundaryResult,
+} from "../capability-operation-planner.js";
 import type { Logger } from "../logger.js";
 import type { LoopSupervisor } from "../executor/index.js";
 import type { ScheduleEngine } from "../schedule/engine.js";
@@ -101,6 +105,10 @@ export function gatherResidentWorkspaceContext(workspaceDir: string, seedDescrip
   return parts.join(". ");
 }
 
+export type ResidentOperationBoundaryEvaluator = (
+  input: ResidentOperationBoundaryInput
+) => ResidentOperationBoundaryResult;
+
 export interface DaemonRunnerResidentContext {
   baseDir: string;
   config: DaemonConfig;
@@ -118,6 +126,7 @@ export interface DaemonRunnerResidentContext {
   supervisor?: LoopSupervisor;
   attentionStateStore?: Pick<AttentionStateStore, "saveCycle">;
   runtimeOperationStore?: Pick<RuntimeOperationStore, "listCompleted" | "listPending">;
+  residentOperationBoundaryEvaluator?: ResidentOperationBoundaryEvaluator;
   saveDaemonState(): Promise<void>;
   refreshOperationalState(): void;
   abortSleep(): void;
@@ -135,12 +144,39 @@ export type ResidentSurfaceActivityMetadata = Partial<Pick<
 export type ResidentAttentionActivityMetadata = Partial<Pick<
   ResidentActivity,
   | "attention_input_id"
+  | "attention_replay_disposition"
   | "agenda_item_id"
   | "outcome_decision_id"
 >>;
 
+export type ResidentOperationPlanActivityMetadata = Partial<Pick<
+  ResidentActivity,
+  | "operation_plan_assembly_id"
+  | "operation_plan_status"
+  | "operation_plan_reason"
+  | "operation_plan_id"
+  | "operation_admission_evaluation_id"
+  | "autonomy_decision_id"
+  | "autonomy_decision_level"
+  | "operation_preparation_allowed"
+  | "operation_execution_allowed"
+>>;
+
 export type ResidentActivityMetadata =
-  ResidentSurfaceActivityMetadata & ResidentAttentionActivityMetadata;
+  ResidentSurfaceActivityMetadata &
+  ResidentAttentionActivityMetadata &
+  ResidentOperationPlanActivityMetadata;
+
+export function residentOperationBoundaryAllowsPreparation(
+  metadata: ResidentOperationPlanActivityMetadata,
+): boolean {
+  return metadata.operation_plan_status === "planned"
+    && Boolean(metadata.operation_plan_id)
+    && Boolean(metadata.operation_admission_evaluation_id)
+    && Boolean(metadata.autonomy_decision_id)
+    && metadata.operation_preparation_allowed === true
+    && metadata.operation_execution_allowed === false;
+}
 
 export function mergeResidentSurfaceActivityMetadata(
   ...metadatas: Array<ResidentSurfaceActivityMetadata | undefined>

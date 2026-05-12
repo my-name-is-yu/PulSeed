@@ -1,4 +1,8 @@
 import type { Goal } from "../../base/types/goal.js";
+import {
+  evaluateResidentOperationBoundary,
+  residentOperationBoundaryActivityMetadata,
+} from "../capability-operation-planner.js";
 import { runProactiveMaintenance, type ProactiveMaintenanceResult } from "./maintenance.js";
 import {
   evaluateResidentAttentionAdmission,
@@ -9,7 +13,10 @@ import type {
   DaemonRunnerResidentContext,
   ResidentSurfaceActivityMetadata,
 } from "./runner-resident-shared.js";
-import { persistResidentActivity } from "./runner-resident-shared.js";
+import {
+  persistResidentActivity,
+  residentOperationBoundaryAllowsPreparation,
+} from "./runner-resident-shared.js";
 import {
   runResidentCuriosityCycle,
   runScheduledGoalReview,
@@ -73,6 +80,16 @@ export async function triggerResidentPreemptiveCheck(
       });
       return;
     }
+    if (!residentOperationBoundaryAllowsPreparation(surfaceActivityMetadata)) {
+      await persistResidentActivity(context, {
+        kind: "skipped",
+        trigger: "proactive_tick",
+        summary: `Resident preemptive check skipped because goal "${goalId}" was not allowed to prepare by the operation boundary.`,
+        goal_id: goalId,
+        ...surfaceActivityMetadata,
+      });
+      return;
+    }
 
     await persistResidentActivity(context, {
       kind: "observation",
@@ -97,7 +114,7 @@ export async function triggerResidentPreemptiveCheck(
 export async function proactiveTick(
   context: Pick<
     DaemonRunnerResidentContext,
-    "config" | "llmClient" | "state" | "logger" | "saveDaemonState" | "curiosityEngine" | "stateManager" | "goalNegotiator" | "currentGoalIds" | "supervisor" | "refreshOperationalState" | "abortSleep" | "baseDir" | "scheduleEngine" | "knowledgeManager" | "memoryLifecycle" | "driveSystem" | "attentionStateStore"
+    "config" | "llmClient" | "state" | "logger" | "saveDaemonState" | "curiosityEngine" | "stateManager" | "goalNegotiator" | "currentGoalIds" | "supervisor" | "refreshOperationalState" | "abortSleep" | "baseDir" | "scheduleEngine" | "knowledgeManager" | "memoryLifecycle" | "driveSystem" | "attentionStateStore" | "residentOperationBoundaryEvaluator"
   >,
   lastProactiveTickAt: number,
   setLastProactiveTickAt: (value: number) => void,
@@ -158,6 +175,16 @@ export async function proactiveTick(
     surfaceActivityMetadata,
   });
   const attentionActivityMetadata = residentAttentionActivityMetadata(attentionAdmission);
+  const operationBoundary = (context.residentOperationBoundaryEvaluator ?? evaluateResidentOperationBoundary)({
+    admission: attentionAdmission,
+    assembledAt: new Date().toISOString(),
+    details: result.decision.details,
+    goalId: typeof result.decision.details?.["goal_id"] === "string"
+      ? result.decision.details["goal_id"].trim()
+      : undefined,
+    surfaceRef: surfaceActivityMetadata.surface_id,
+  });
+  const operationActivityMetadata = residentOperationBoundaryActivityMetadata(operationBoundary);
 
   if (!attentionAdmission.branch_admitted) {
     await persistResidentActivity(context, {
@@ -166,6 +193,7 @@ export async function proactiveTick(
       summary: attentionAdmission.summary,
       ...surfaceActivityMetadata,
       ...attentionActivityMetadata,
+      ...operationActivityMetadata,
     });
     return;
   }
@@ -177,6 +205,19 @@ export async function proactiveTick(
       summary: "Resident proactive tick stayed idle.",
       ...surfaceActivityMetadata,
       ...attentionActivityMetadata,
+      ...operationActivityMetadata,
+    });
+    return;
+  }
+
+  if (!residentOperationBoundaryAllowsPreparation(operationActivityMetadata)) {
+    await persistResidentActivity(context, {
+      kind: "skipped",
+      trigger: "proactive_tick",
+      summary: `Resident ${result.decision.action} held by operation boundary: ${operationActivityMetadata.operation_plan_reason}`,
+      ...surfaceActivityMetadata,
+      ...attentionActivityMetadata,
+      ...operationActivityMetadata,
     });
     return;
   }
@@ -185,6 +226,7 @@ export async function proactiveTick(
     await triggerResidentGoalDiscovery(context, result.decision.details, {
       ...surfaceActivityMetadata,
       ...attentionActivityMetadata,
+      ...operationActivityMetadata,
     });
     return;
   }
@@ -196,10 +238,12 @@ export async function proactiveTick(
       summary: "Resident proactive maintenance selected investigation.",
       ...surfaceActivityMetadata,
       ...attentionActivityMetadata,
+      ...operationActivityMetadata,
     });
     await triggerResidentInvestigation(context, result.decision.details, {
       ...surfaceActivityMetadata,
       ...attentionActivityMetadata,
+      ...operationActivityMetadata,
     });
     return;
   }
@@ -208,6 +252,7 @@ export async function proactiveTick(
     await triggerResidentPreemptiveCheck(context, result.decision.details, {
       ...surfaceActivityMetadata,
       ...attentionActivityMetadata,
+      ...operationActivityMetadata,
     });
     return;
   }
@@ -218,6 +263,7 @@ export async function proactiveTick(
     summary: `Resident proactive tick requested ${result.decision.action}, but no resident executor is wired for it yet.`,
     ...surfaceActivityMetadata,
     ...attentionActivityMetadata,
+    ...operationActivityMetadata,
   });
 }
 

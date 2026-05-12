@@ -1,13 +1,119 @@
 import type { ScheduleEntry, ScheduleInternalAttentionProjection } from "./types/schedule.js";
+import type { CapabilityReadinessSnapshot } from "../platform/observation/types/capability.js";
+import {
+  evaluateAdmissionPolicy,
+  type AdmissionAuthState,
+  type AdmissionPermissionGrantEvidenceInput,
+  type AdmissionPolicyEvaluation,
+  type AdmissionPolicySignal,
+  type AdmissionSurfaceScopeInput,
+} from "./control/admission-policy.js";
+import {
+  evaluateAutonomyDecision,
+  type AutonomyCacheInvalidationEvidence,
+  type AutonomyCompanionState,
+  type AutonomyContextAuthorityEvidence,
+  type AutonomyDecision,
+  type AutonomyFeedbackSignal,
+  type AutonomyPolicySignal,
+  type AutonomyRuntimeControlState,
+  type AutonomyTrustProfile,
+  type AutonomyVerificationProfile,
+} from "./control/autonomy-governor.js";
 import {
   CapabilityOperationPlanAssemblySchema,
   type CapabilityOperationPlanAssembly,
   type CapabilityOperationPlanCandidateInput,
   type CapabilityOperationPlanSource,
 } from "./types/capability-operation-plan.js";
+import type { RuntimeControlActor } from "./store/runtime-operation-schemas.js";
 
 const WAIT_RESUME_CAPABILITY_ID = "capability:schedule_wait_resume_attention";
 const WAIT_RESUME_PAYLOAD_CLASS = "schedule_wait_resume_attention_projection";
+const RESIDENT_DAEMON_SURFACE_REF = "surface:resident-daemon";
+
+export type ResidentOperationPlanAction =
+  | "sleep"
+  | "suggest_goal"
+  | "investigate"
+  | "preemptive_check"
+  | "curiosity"
+  | "curiosity_noop";
+
+export interface ResidentAttentionOperationProjection {
+  action: ResidentOperationPlanAction;
+  source_kind: "resident_proactive_maintenance" | "resident_curiosity";
+  attention_input_id: string;
+  signal_context_id: string;
+  urge_id: string;
+  agenda_item_id: string;
+  inhibition_decision_id: string;
+  initiative_gate_decision_id: string;
+  outcome_decision_id?: string;
+  requested_outcome: string;
+  admission_status: string;
+  final_outcome?: string;
+  branch_admitted: boolean;
+}
+
+export interface ResidentOperationPlanAssemblyInput {
+  admission: ResidentAttentionOperationProjection;
+  assembledAt: string;
+  goalId?: string | null;
+  details?: Record<string, unknown>;
+  surfaceRef?: string | null;
+}
+
+export interface ResidentOperationBoundaryInput extends ResidentOperationPlanAssemblyInput {
+  actor?: RuntimeControlActor;
+  surface?: AdmissionSurfaceScopeInput;
+  readinessSnapshots?: CapabilityReadinessSnapshot[];
+  permissionGrants?: AdmissionPermissionGrantEvidenceInput[];
+  relationshipPolicy?: AdmissionPolicySignal[];
+  quietingPolicy?: AdmissionPolicySignal[];
+  privacyPolicy?: AdmissionPolicySignal[];
+  runtimeControlPolicy?: AdmissionPolicySignal[];
+  notificationPolicy?: AdmissionPolicySignal[];
+  authState?: AdmissionAuthState;
+  runtimeControlState?: AutonomyRuntimeControlState;
+  companionState?: AutonomyCompanionState;
+  trustProfile?: AutonomyTrustProfile;
+  verificationProfile?: AutonomyVerificationProfile;
+  recentFeedback?: AutonomyFeedbackSignal[];
+  contextAuthorityEvidence?: AutonomyContextAuthorityEvidence[];
+  invalidationEvidence?: AutonomyCacheInvalidationEvidence[];
+  autonomyRelationshipPolicy?: AutonomyPolicySignal[];
+  autonomyQuietingPolicy?: AutonomyPolicySignal[];
+  autonomyPrivacyContext?: AutonomyPolicySignal[];
+  autonomyGuardrailState?: AutonomyPolicySignal[];
+  autonomyBackpressureState?: AutonomyPolicySignal[];
+}
+
+export interface ResidentOperationBoundaryResult {
+  assembly: CapabilityOperationPlanAssembly;
+  admission_evaluation?: AdmissionPolicyEvaluation;
+  autonomy_decision?: AutonomyDecision;
+  preparation_allowed: boolean;
+  execution_allowed: boolean;
+}
+
+type ResidentPlanConfig = {
+  capabilityId: string;
+  operationIdPrefix: string;
+  operationKind: "hint" | "prepare" | "read";
+  providerRef: string;
+  payloadClass: string;
+  sideEffectProfile: "none" | "read" | "write";
+  riskClass: "low" | "medium";
+  privacyProfile: "workspace_private" | "local_private";
+  reversibility: "reversible" | "append_only" | "draft_only";
+  advisoryOnly: boolean;
+  preparableWhenBlocked: boolean;
+  requiresRuntimeControl: boolean;
+  requiredPermissionCapabilities: Array<"read_workspace" | "prepare_draft">;
+  requiredApprovals: string[];
+  userVisibleSummary: string;
+};
 
 export interface ScheduleOperationPlanAssemblyInput {
   entry: ScheduleEntry;
@@ -138,6 +244,231 @@ export function assembleScheduleOperationPlans(
   });
 }
 
+export function assembleResidentOperationPlans(
+  input: ResidentOperationPlanAssemblyInput,
+): CapabilityOperationPlanAssembly {
+  const sourceRef = input.admission.outcome_decision_id
+    ?? input.admission.agenda_item_id
+    ?? input.admission.attention_input_id;
+  const source = residentOperationPlanSource(input, sourceRef);
+  const config = residentPlanConfig(input.admission.action, input.goalId ?? "");
+
+  if (!config) {
+    return CapabilityOperationPlanAssemblySchema.parse({
+      schema_version: "capability-operation-plan-assembly/v1",
+      assembly_id: residentOperationPlanAssemblyId(input, sourceRef),
+      assembled_at: input.assembledAt,
+      source,
+      status: "no_supported_plan",
+      reason: "Resident attention outcome does not require a capability operation plan.",
+      candidate_plans: [],
+    });
+  }
+
+  const failedReason = residentOperationPlanFailClosedReason(input, config);
+  if (failedReason) {
+    return CapabilityOperationPlanAssemblySchema.parse({
+      schema_version: "capability-operation-plan-assembly/v1",
+      assembly_id: residentOperationPlanAssemblyId(input, sourceRef),
+      assembled_at: input.assembledAt,
+      source,
+      status: "fail_closed",
+      reason: failedReason,
+      candidate_plans: [],
+    });
+  }
+
+  const operationId = `${config.operationIdPrefix}.${residentOperationPlanToken(sourceRef)}`;
+  const targetRefs = residentOperationPlanTargetRefs(input);
+  const providerRef = config.providerRef;
+  const candidate: CapabilityOperationPlanCandidateInput = {
+    plan_id: `operation-plan:${operationId}`,
+    source_ref: sourceRef,
+    operation_plan: {
+      operation_id: operationId,
+      capability_id: config.capabilityId,
+      operation_kind: config.operationKind,
+      provider_ref: providerRef,
+      payload_class: config.payloadClass,
+      side_effect_profile: config.sideEffectProfile,
+      risk_class: config.riskClass,
+      privacy_profile: config.privacyProfile,
+      reversibility: config.reversibility,
+      external_action_authority: false,
+      target_refs: targetRefs,
+      advisory_only: config.advisoryOnly,
+      preparable_when_blocked: config.preparableWhenBlocked,
+      local_only: true,
+      inspectable: true,
+      expected_user_visible_effect: false,
+    },
+    admission_scope: {
+      operation_id: operationId,
+      capability_id: config.capabilityId,
+      operation_kind: config.operationKind,
+      provider_ref: providerRef,
+      asset_ref: providerRef,
+      payload_class: config.payloadClass,
+      payload_epoch: input.admission.outcome_decision_id ?? input.admission.agenda_item_id,
+      side_effect_profile: config.sideEffectProfile,
+      external_action_authority: false,
+      requires_runtime_control: config.requiresRuntimeControl,
+      required_permission_capabilities: config.requiredPermissionCapabilities,
+      target_refs: targetRefs,
+      target_epoch_refs: {
+        [input.admission.attention_input_id]: input.admission.attention_input_id,
+        [input.admission.agenda_item_id]: input.admission.agenda_item_id,
+        ...(input.admission.outcome_decision_id
+          ? { [input.admission.outcome_decision_id]: input.admission.outcome_decision_id }
+          : {}),
+      },
+      provider_epoch: input.admission.source_kind,
+    },
+    readiness_snapshot_refs: [],
+    required_approvals: config.requiredApprovals,
+    reversible_preparation_steps: residentPreparationSteps(input.admission.action),
+    not_allowed_steps: [
+      "Do not start, resume, or finalize runtime work from this resident operation plan.",
+      "Do not notify or speak from this resident operation plan.",
+      "Do not infer initiation authority from Dream hints, notification routes, authenticated sessions, MCP enablement, or past success.",
+      "Require a matching admission evaluation and autonomy decision before any executor or user-visible delivery path.",
+    ],
+    user_visible_summary: config.userVisibleSummary,
+    audit_seed: {
+      action: input.admission.action,
+      attention_input_id: input.admission.attention_input_id,
+      signal_context_id: input.admission.signal_context_id,
+      agenda_item_id: input.admission.agenda_item_id,
+      outcome_decision_id: input.admission.outcome_decision_id ?? null,
+      goal_id: input.goalId ?? null,
+      source_kind: input.admission.source_kind,
+    },
+  };
+
+  return CapabilityOperationPlanAssemblySchema.parse({
+    schema_version: "capability-operation-plan-assembly/v1",
+    assembly_id: residentOperationPlanAssemblyId(input, sourceRef),
+    assembled_at: input.assembledAt,
+    source,
+    status: "planned",
+    reason: "Resident attention proposal assembled into a bounded candidate operation plan.",
+    candidate_plans: [candidate],
+  });
+}
+
+export function evaluateResidentOperationBoundary(
+  input: ResidentOperationBoundaryInput,
+): ResidentOperationBoundaryResult {
+  const assembly = assembleResidentOperationPlans(input);
+  const candidate = assembly.candidate_plans[0];
+  if (!candidate) {
+    return {
+      assembly,
+      preparation_allowed: false,
+      execution_allowed: false,
+    };
+  }
+
+  const actor = input.actor ?? {
+    surface: "cli" as const,
+    identity_key: "resident-daemon",
+  };
+  const surface = input.surface ?? {
+    surface_ref: input.surfaceRef ?? RESIDENT_DAEMON_SURFACE_REF,
+    channel: "daemon",
+    platform: "resident",
+    epoch: input.admission.outcome_decision_id ?? input.admission.agenda_item_id,
+  };
+  const evaluatedAt = input.assembledAt;
+  const readinessSnapshots = input.readinessSnapshots ?? [];
+  const admission = evaluateAdmissionPolicy({
+    operation: candidate.admission_scope,
+    actor,
+    surface,
+    authState: input.authState,
+    readiness: readinessSnapshots.find((snapshot) =>
+      snapshot.operation_id === candidate.operation_plan.operation_id
+        && snapshot.capability_id === candidate.operation_plan.capability_id
+        && snapshot.provider_ref === candidate.operation_plan.provider_ref
+        && snapshot.payload_class === candidate.operation_plan.payload_class
+    ),
+    permissionGrants: input.permissionGrants ?? [],
+    relationshipPolicy: input.relationshipPolicy ?? [],
+    quietingPolicy: input.quietingPolicy ?? [],
+    privacyPolicy: input.privacyPolicy ?? [],
+    runtimeControlPolicy: input.runtimeControlPolicy ?? [],
+    notificationPolicy: input.notificationPolicy ?? [],
+    evaluatedAt,
+    evaluationId: `admission:${candidate.operation_plan.operation_id}:${residentOperationPlanToken(surface.surface_ref)}`,
+  });
+  const autonomyDecision = evaluateAutonomyDecision({
+    operation_plan: candidate.operation_plan,
+    readiness_snapshots: readinessSnapshots,
+    admission_evaluation: admission,
+    user_directed: false,
+    active_surface_ref: surface.surface_ref,
+    auth_state: input.authState,
+    relationship_permissions: input.autonomyRelationshipPolicy ?? [],
+    quieting_policy: input.autonomyQuietingPolicy ?? [],
+    privacy_context: input.autonomyPrivacyContext ?? [],
+    runtime_control_state: input.runtimeControlState,
+    companion_state: input.companionState,
+    guardrail_state: input.autonomyGuardrailState ?? [],
+    backpressure_state: input.autonomyBackpressureState ?? [],
+    trust_profile: input.trustProfile,
+    verification_profile: input.verificationProfile,
+    recent_feedback: input.recentFeedback ?? [],
+    context_authority_evidence: input.contextAuthorityEvidence ?? [],
+    invalidation_evidence: input.invalidationEvidence ?? [],
+    blast_radius: candidate.operation_plan.side_effect_profile === "read" ? "workspace" : "local",
+    privacy_sensitivity: candidate.operation_plan.privacy_profile === "local_private" ? "low" : "medium",
+    evaluated_at: evaluatedAt,
+    decision_id: `autonomy:${candidate.operation_plan.operation_id}:${residentOperationPlanToken(admission.evaluation_id)}`,
+  });
+
+  return {
+    assembly,
+    admission_evaluation: admission,
+    autonomy_decision: autonomyDecision,
+    preparation_allowed: autonomyDecision.allowed_steps.includes("prepare")
+      || autonomyDecision.allowed_steps.includes("advise"),
+    execution_allowed: autonomyDecision.allowed_steps.some((step) => step.includes("execute")),
+  };
+}
+
+export function residentOperationBoundaryActivityMetadata(
+  boundary: ResidentOperationBoundaryResult,
+): {
+  operation_plan_assembly_id: string;
+  operation_plan_status: CapabilityOperationPlanAssembly["status"];
+  operation_plan_reason: string;
+  operation_plan_id?: string;
+  operation_admission_evaluation_id?: string;
+  autonomy_decision_id?: string;
+  autonomy_decision_level?: AutonomyDecision["level"];
+  operation_preparation_allowed: boolean;
+  operation_execution_allowed: boolean;
+} {
+  const candidate = boundary.assembly.candidate_plans[0];
+  return {
+    operation_plan_assembly_id: boundary.assembly.assembly_id,
+    operation_plan_status: boundary.assembly.status,
+    operation_plan_reason: boundary.assembly.reason,
+    ...(candidate ? { operation_plan_id: candidate.plan_id } : {}),
+    ...(boundary.admission_evaluation
+      ? { operation_admission_evaluation_id: boundary.admission_evaluation.evaluation_id }
+      : {}),
+    ...(boundary.autonomy_decision
+      ? {
+          autonomy_decision_id: boundary.autonomy_decision.decision_id,
+          autonomy_decision_level: boundary.autonomy_decision.level,
+        }
+      : {}),
+    operation_preparation_allowed: boundary.preparation_allowed,
+    operation_execution_allowed: boundary.execution_allowed,
+  };
+}
+
 function failClosed(
   input: ScheduleOperationPlanAssemblyInput,
   source: CapabilityOperationPlanSource,
@@ -152,4 +483,173 @@ function failClosed(
     reason,
     candidate_plans: [],
   });
+}
+
+function residentOperationPlanSource(
+  input: ResidentOperationPlanAssemblyInput,
+  sourceRef: string,
+): CapabilityOperationPlanSource {
+  return {
+    kind: "attention_projection",
+    source_ref: sourceRef,
+    source_epoch: input.admission.outcome_decision_id ?? input.admission.agenda_item_id,
+    emitted_at: input.assembledAt,
+    metadata: {
+      action: input.admission.action,
+      source_kind: input.admission.source_kind,
+      attention_input_id: input.admission.attention_input_id,
+      signal_context_id: input.admission.signal_context_id,
+      agenda_item_id: input.admission.agenda_item_id,
+      outcome_decision_id: input.admission.outcome_decision_id ?? null,
+      goal_id: input.goalId ?? null,
+    },
+  };
+}
+
+function residentPlanConfig(
+  action: ResidentOperationPlanAction,
+  goalId: string,
+): ResidentPlanConfig | null {
+  switch (action) {
+    case "suggest_goal":
+      return {
+        capabilityId: "capability:resident_goal_suggestion_preparation",
+        operationIdPrefix: "resident.goal_suggestion.prepare",
+        operationKind: "prepare",
+        providerRef: "resident:goal-negotiator",
+        payloadClass: "resident.goal_suggestion",
+        sideEffectProfile: "write",
+        riskClass: "low",
+        privacyProfile: "workspace_private",
+        reversibility: "draft_only",
+        advisoryOnly: false,
+        preparableWhenBlocked: true,
+        requiresRuntimeControl: false,
+        requiredPermissionCapabilities: [],
+        requiredApprovals: [],
+        userVisibleSummary: "Resident goal suggestion may prepare a local draft only; downstream gates decide whether to ask or act.",
+      };
+    case "investigate":
+    case "curiosity":
+      return {
+        capabilityId: "capability:resident_curiosity_preparation",
+        operationIdPrefix: "resident.curiosity.prepare",
+        operationKind: "prepare",
+        providerRef: "resident:curiosity-engine",
+        payloadClass: "resident.curiosity_proposal",
+        sideEffectProfile: "write",
+        riskClass: "low",
+        privacyProfile: "workspace_private",
+        reversibility: "draft_only",
+        advisoryOnly: false,
+        preparableWhenBlocked: true,
+        requiresRuntimeControl: false,
+        requiredPermissionCapabilities: [],
+        requiredApprovals: [],
+        userVisibleSummary: "Resident curiosity may prepare an inspectable proposal only; it cannot start work or notify.",
+      };
+    case "preemptive_check":
+      return {
+        capabilityId: "capability:resident_preemptive_check_preparation",
+        operationIdPrefix: "resident.preemptive_check.prepare",
+        operationKind: "read",
+        providerRef: "resident:preemptive-check",
+        payloadClass: "resident.preemptive_check",
+        sideEffectProfile: "read",
+        riskClass: "medium",
+        privacyProfile: "workspace_private",
+        reversibility: "reversible",
+        advisoryOnly: false,
+        preparableWhenBlocked: true,
+        requiresRuntimeControl: true,
+        requiredPermissionCapabilities: ["read_workspace"],
+        requiredApprovals: [`runtime-control:resident-preemptive-check:${goalId || "unknown"}`],
+        userVisibleSummary: "Resident preemptive check is only a prepared read candidate until runtime-control admission is granted.",
+      };
+    case "sleep":
+    case "curiosity_noop":
+      return null;
+  }
+}
+
+function residentOperationPlanFailClosedReason(
+  input: ResidentOperationPlanAssemblyInput,
+  config: ResidentPlanConfig,
+): string | null {
+  if (!input.admission.attention_input_id || !input.admission.agenda_item_id) {
+    return "Resident operation plan context is missing attention or agenda refs.";
+  }
+  if (!input.admission.outcome_decision_id) {
+    return "Resident operation plan context is missing an outcome decision ref.";
+  }
+  if (input.admission.action === "preemptive_check" && !(input.goalId ?? "").trim()) {
+    return "Resident preemptive operation plan requires a current goal target.";
+  }
+  const requested = input.admission.requested_outcome;
+  const finalOutcome = input.admission.final_outcome ?? requested;
+  if (input.admission.action === "preemptive_check") {
+    if (requested !== "prepare_action_candidate") {
+      return "Resident preemptive operation plan requires a prepare_action_candidate attention outcome.";
+    }
+    return null;
+  }
+  if (!input.admission.branch_admitted) {
+    return "Resident operation plan requires an admitted attention outcome before preparing a proposal.";
+  }
+  if (finalOutcome !== "prepare_silently") {
+    return `Resident operation plan cannot prepare from attention outcome ${finalOutcome}.`;
+  }
+  if (config.requiresRuntimeControl && input.admission.admission_status === "admitted") {
+    return "Resident runtime-control operation cannot bypass downstream runtime-control admission.";
+  }
+  return null;
+}
+
+function residentOperationPlanAssemblyId(
+  input: ResidentOperationPlanAssemblyInput,
+  sourceRef: string,
+): string {
+  return `operation-plan-assembly:resident:${input.admission.action}:${residentOperationPlanToken(sourceRef)}`;
+}
+
+function residentOperationPlanToken(value: string): string {
+  return encodeURIComponent(value).replace(/%/g, "_");
+}
+
+function residentOperationPlanTargetRefs(input: ResidentOperationPlanAssemblyInput): string[] {
+  return [
+    input.admission.attention_input_id,
+    input.admission.signal_context_id,
+    input.admission.urge_id,
+    input.admission.agenda_item_id,
+    input.admission.inhibition_decision_id,
+    input.admission.initiative_gate_decision_id,
+    ...(input.admission.outcome_decision_id ? [input.admission.outcome_decision_id] : []),
+    ...(input.goalId ? [`goal:${input.goalId}`] : []),
+    ...(input.surfaceRef ? [input.surfaceRef] : []),
+  ];
+}
+
+function residentPreparationSteps(action: ResidentOperationPlanAction): string[] {
+  switch (action) {
+    case "suggest_goal":
+      return [
+        "Prepare an inspectable local goal suggestion draft.",
+        "Leave runtime start, negotiation, notification, and user-visible delivery to later admitted surfaces.",
+      ];
+    case "investigate":
+    case "curiosity":
+      return [
+        "Prepare an inspectable curiosity proposal.",
+        "Keep the proposal local until shared delivery or runtime-control admission chooses a route.",
+      ];
+    case "preemptive_check":
+      return [
+        "Record the preemptive check as a read candidate.",
+        "Wait for runtime-control admission before any runtime executor or user-visible route.",
+      ];
+    case "sleep":
+    case "curiosity_noop":
+      return [];
+  }
 }

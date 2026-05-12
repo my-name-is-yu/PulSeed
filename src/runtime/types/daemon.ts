@@ -99,8 +99,25 @@ export const ResidentActivitySchema = z.object({
   surface_inspection: SurfaceInspectionAdapterPayloadSchema.optional(),
   surface_inspections: z.array(SurfaceInspectionAdapterPayloadSchema).optional(),
   attention_input_id: z.string().optional(),
+  attention_replay_disposition: z.enum(["accepted", "duplicate"]).optional(),
   agenda_item_id: z.string().optional(),
   outcome_decision_id: z.string().optional(),
+  operation_plan_assembly_id: z.string().optional(),
+  operation_plan_status: z.enum(["planned", "no_supported_plan", "clarification_required", "fail_closed"]).optional(),
+  operation_plan_reason: z.string().optional(),
+  operation_plan_id: z.string().optional(),
+  operation_admission_evaluation_id: z.string().optional(),
+  autonomy_decision_id: z.string().optional(),
+  autonomy_decision_level: z.enum([
+    "advisory",
+    "prepare_only",
+    "user_directed_execute",
+    "autonomous_low_risk",
+    "approval_required",
+    "prohibited",
+  ]).optional(),
+  operation_preparation_allowed: z.boolean().optional(),
+  operation_execution_allowed: z.boolean().optional(),
 });
 export type ResidentActivity = z.infer<typeof ResidentActivitySchema>;
 
