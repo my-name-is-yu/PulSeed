@@ -38,13 +38,21 @@ export function decomposeAgendaItem(input: {
 }): AgendaDecomposition {
   const maxChildren = input.maxChildren ?? 3;
   const clusterRef = input.agendaItem.clusterRef ?? ref("attention_cluster", `legacy:${input.agendaItem.agenda_item_id}`);
-  const existingChildren = input.existing?.children ?? [];
   const childSeed = childSeedForCarePosture(input.agendaItem);
+  const currentChildKeys = new Set(childSeed.map((childType) => childIdempotencyKey(input.agendaItem, childType)));
+  const existingChildren = (input.existing?.children ?? []).map((child) =>
+    revalidateExistingChild({
+      agendaItem: input.agendaItem,
+      child,
+      currentChildKeys,
+      now: input.now,
+    })
+  );
   const children = [...existingChildren];
 
   for (const childType of childSeed) {
     if (activeChildCount(children) >= maxChildren) break;
-    const idempotencyKey = `${input.agendaItem.policyEpoch}:${input.agendaItem.agenda_item_id}:${childType}`;
+    const idempotencyKey = childIdempotencyKey(input.agendaItem, childType);
     if (children.some((child) => child.idempotencyKey === idempotencyKey)) continue;
     children.push(createDecompositionChild({
       agendaItem: input.agendaItem,
@@ -81,6 +89,49 @@ function activeChildCount(children: readonly AgendaDecompositionChild[]): number
   ).length;
 }
 
+function revalidateExistingChild(input: {
+  agendaItem: AgentAgendaItem;
+  child: AgendaDecompositionChild;
+  currentChildKeys: ReadonlySet<string>;
+  now: string;
+}): AgendaDecompositionChild {
+  if (!isActiveChild(input.child)) return input.child;
+
+  const stalenessSnapshot = stalenessSnapshotForAgenda(input.agendaItem, input.now);
+  const expectedIdempotencyKey = childIdempotencyKey(input.agendaItem, input.child.childType);
+  if (
+    input.child.idempotencyKey !== expectedIdempotencyKey
+    || !input.currentChildKeys.has(input.child.idempotencyKey)
+  ) {
+    return {
+      ...input.child,
+      admissionState: "expired",
+      permissionScope: input.agendaItem.scope.permissionScope,
+      stalenessSnapshot,
+      updatedAt: input.now,
+    };
+  }
+
+  if (
+    input.child.permissionScope === input.agendaItem.scope.permissionScope
+    && input.child.stalenessSnapshot.state === stalenessSnapshot.state
+    && input.child.stalenessSnapshot.sourceHighWatermark === stalenessSnapshot.sourceHighWatermark
+  ) {
+    return input.child;
+  }
+
+  return {
+    ...input.child,
+    permissionScope: input.agendaItem.scope.permissionScope,
+    stalenessSnapshot,
+    updatedAt: input.now,
+  };
+}
+
+function isActiveChild(child: AgendaDecompositionChild): boolean {
+  return child.admissionState === "not_admitted" || child.admissionState === "needs_approval";
+}
+
 function createDecompositionChild(input: {
   agendaItem: AgentAgendaItem;
   clusterId: string;
@@ -96,19 +147,30 @@ function createDecompositionChild(input: {
     idempotencyKey: input.idempotencyKey,
     requiredAuthority: requiredAuthorityForChild(input.childType),
     permissionScope: input.agendaItem.scope.permissionScope,
-    stalenessSnapshot: {
-      state: input.agendaItem.needsRegrounding ? "needs_regrounding" : "fresh",
-      observedAt: input.now,
-      sourceHighWatermark: input.agendaItem.policyEpoch,
-      reason: input.agendaItem.needsRegrounding
-        ? "agenda requires regrounding before child admission"
-        : "agenda projection is fresh for this cycle",
-    },
+    stalenessSnapshot: stalenessSnapshotForAgenda(input.agendaItem, input.now),
     candidatePayloadRef: null,
     admissionState: "not_admitted",
     outcomeRef: null,
     createdAt: input.now,
     updatedAt: input.now,
+  };
+}
+
+function childIdempotencyKey(
+  agendaItem: AgentAgendaItem,
+  childType: AgendaDecompositionChild["childType"],
+): string {
+  return `${agendaItem.policyEpoch}:${agendaItem.agenda_item_id}:${childType}`;
+}
+
+function stalenessSnapshotForAgenda(agendaItem: AgentAgendaItem, now: string): AgendaDecompositionChild["stalenessSnapshot"] {
+  return {
+    state: agendaItem.needsRegrounding || agendaItem.staleness_state !== "current" ? "needs_regrounding" : "fresh",
+    observedAt: now,
+    sourceHighWatermark: agendaItem.policyEpoch,
+    reason: agendaItem.needsRegrounding || agendaItem.staleness_state !== "current"
+      ? "agenda requires regrounding before child admission"
+      : "agenda projection is fresh for this cycle",
   };
 }
 

@@ -250,6 +250,51 @@ describe("attention concern metabolism contracts", () => {
     });
   });
 
+  it("revalidates active decomposition children against the current agenda scope", () => {
+    const writeUrge = urge({
+      id: "scope-tighten",
+      scope: scope({ permissionScope: "write_allowed" }),
+      strength: 0.95,
+      confidence: 0.94,
+    });
+    const clusters = promoteAttentionClusters({
+      clusters: mergeUrgesIntoClusters({ urges: [writeUrge], now: NOW }).clusters,
+      now: NOW,
+    });
+    const [writeAgenda] = projectClustersToAgenda({ clusters, now: NOW });
+    const [initial] = decomposeAgenda({ agendaItems: writeAgenda ? [writeAgenda] : [], now: NOW });
+    const actionChild = initial?.children.find((child) => child.childType === "action_candidate");
+    expect(writeAgenda).toBeDefined();
+    expect(initial).toBeDefined();
+    expect(actionChild).toMatchObject({
+      permissionScope: "write_allowed",
+      stalenessSnapshot: expect.objectContaining({ state: "fresh" }),
+    });
+
+    const tightenedAgenda = {
+      ...writeAgenda!,
+      scope: scope({ permissionScope: "read_only" }),
+      updated_at: "2026-05-12T00:03:00.000Z",
+    };
+    const [redecomposed] = decomposeAgenda({
+      agendaItems: [tightenedAgenda],
+      existingDecompositions: [initial!],
+      now: "2026-05-12T00:03:00.000Z",
+    });
+    const revalidatedAction = redecomposed?.children.find((child) => child.id === actionChild?.id);
+    const candidates = buildAttentionAdmissionCandidates({
+      decompositions: redecomposed ? [redecomposed] : [],
+      now: "2026-05-12T00:03:00.000Z",
+    });
+
+    expect(revalidatedAction).toMatchObject({
+      admissionState: "not_admitted",
+      permissionScope: "read_only",
+      stalenessSnapshot: expect.objectContaining({ state: "fresh" }),
+    });
+    expect(candidates.map((candidate) => candidate.child.childType)).not.toContain("action_candidate");
+  });
+
   it("includes full scope identity in scope keys and seeded cluster IDs", () => {
     const left = createAttentionClusterFromUrge(urge({
       id: "scope-left",

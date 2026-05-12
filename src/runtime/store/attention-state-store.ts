@@ -694,10 +694,13 @@ export class AttentionStateStore {
         reason: input.reason,
         auditRef: input.auditRef,
       }));
-      for (const item of suppressed) upsertAgendaItem(sqlite, item, {
-        suppressedAt: now,
-        suppressionReason: input.reason,
-      });
+      for (const item of suppressed) {
+        upsertAgendaItem(sqlite, item, {
+          suppressedAt: now,
+          suppressionReason: input.reason,
+        });
+        updateCurrentAgendaItemIfPresent(sqlite, item);
+      }
       return {
         suppressed_count: suppressed.length,
         agenda_item_ids: suppressed.map((item) => item.agenda_item_id),
@@ -717,7 +720,10 @@ export class AttentionStateStore {
         reason: input.reason,
         auditRef: input.auditRef,
       }));
-      for (const item of invalidated) upsertAgendaItem(sqlite, item);
+      for (const item of invalidated) {
+        upsertAgendaItem(sqlite, item);
+        updateCurrentAgendaItemIfPresent(sqlite, item);
+      }
       return {
         invalidated_count: invalidated.length,
         agenda_item_ids: invalidated.map((item) => item.agenda_item_id),
@@ -867,6 +873,31 @@ function upsertCurrentAgenda(
     projectionRevision,
     item.updated_at,
     JSON.stringify(item)
+  );
+}
+
+function updateCurrentAgendaItemIfPresent(
+  sqlite: SqliteDatabase,
+  raw: AgentAgendaItem,
+): void {
+  const item = AgentAgendaItemSchema.parse(raw);
+  sqlite.prepare(`
+    UPDATE attention_current_agenda
+    SET cluster_id = ?,
+      status = ?,
+      scope_key = ?,
+      policy_epoch = ?,
+      updated_at = ?,
+      agenda_json = json(?)
+    WHERE agenda_item_id = ?
+  `).run(
+    item.clusterRef?.id ?? null,
+    item.current_posture,
+    scopeKey(item.scope),
+    item.policyEpoch,
+    item.updated_at,
+    JSON.stringify(item),
+    item.agenda_item_id
   );
 }
 
@@ -1543,14 +1574,33 @@ function mergeCurrentAndLegacyAgendaItems(
 ): AgentAgendaItem[] {
   if (currentAgenda.length === 0) return [...legacyAgenda];
 
-  const current = currentAgenda.filter((item) => includeAgendaItem(item, options));
+  const legacyById = new Map(legacyAgenda.map((item) => [item.agenda_item_id, item]));
+  const current = currentAgenda
+    .map((item) => {
+      const legacyMutation = legacyById.get(item.agenda_item_id);
+      return shouldPreferLegacyAgendaMutation(item, legacyMutation) ? legacyMutation! : item;
+    })
+    .filter((item) => includeAgendaItem(item, options));
   if (options.scopeKey) return current;
 
   const currentScopeKeys = new Set(currentAgenda.map((item) => scopeKey(item.scope)));
+  const currentItemIds = new Set(currentAgenda.map((item) => item.agenda_item_id));
   return [
     ...current,
-    ...legacyAgenda.filter((item) => !currentScopeKeys.has(scopeKey(item.scope))),
+    ...legacyAgenda.filter((item) =>
+      !currentItemIds.has(item.agenda_item_id) && !currentScopeKeys.has(scopeKey(item.scope))
+    ),
   ].sort(compareAgendaItems);
+}
+
+function shouldPreferLegacyAgendaMutation(
+  current: AgentAgendaItem,
+  legacy: AgentAgendaItem | undefined,
+): boolean {
+  if (!legacy) return false;
+  if (legacy.updated_at.localeCompare(current.updated_at) <= 0) return false;
+  const legacyLifecycle = lifecycleForAgenda(legacy);
+  return legacyLifecycle === "suppressed" || legacyLifecycle === "stale" || legacyLifecycle === "terminal";
 }
 
 function compareAgendaItems(left: AgentAgendaItem, right: AgentAgendaItem): number {

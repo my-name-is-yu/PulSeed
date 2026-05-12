@@ -805,6 +805,91 @@ describe("AttentionStateStore", () => {
     }
   });
 
+  it("applies control and invalidation mutations to current agenda projections", async () => {
+    const tmpDir = makeTempDir("pulseed-attention-store-current-mutations-");
+    try {
+      const store = new AttentionStateStore(path.join(tmpDir, "runtime"), { controlBaseDir: tmpDir });
+      const suppressedCycle = durableAttentionCycle({
+        agendaIdSuffix: "current-suppress",
+        origin: "curiosity",
+        sourceKind: "resident_curiosity",
+        targetRef: ref("goal", "goal:attention-store:current-suppress"),
+      });
+      const invalidatedCycle = durableAttentionCycle({
+        agendaIdSuffix: "current-invalidate",
+        targetRef: ref("goal", "goal:attention-store:current-invalidate"),
+      });
+      await store.saveMetabolismCycle({
+        cycle_id: "attention-cycle:current-mutations",
+        idempotency_key: "cycle:current-mutations",
+        trigger_kind: "maintenance",
+        scope: suppressedCycle.agendaItem.scope,
+        expected_projection_revision: 0,
+        source_high_watermarks: ["runtime_event:current-mutations:1"],
+        clusters: [],
+        agendaItems: [suppressedCycle.agendaItem],
+        decompositions: [],
+        admissionProposals: [],
+        events: [],
+        result: { projected: true },
+        created_at: NOW,
+      });
+
+      await expect(store.suppressAgendaForControl({
+        control: "suppress_nonessential_agenda",
+        reason: "operator asked for quiet current attention",
+        now: LATER,
+      })).resolves.toMatchObject({
+        suppressed_count: 1,
+      });
+      await expect(store.listAgendaItems()).resolves.toEqual([]);
+      await expect(store.listAgendaItems({ includeSuppressed: true })).resolves.toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          agenda_item_id: suppressedCycle.agendaItem.agenda_item_id,
+          current_posture: "suppressed",
+          control_state: "suppressed",
+        }),
+      ]));
+
+      const invalidationStore = new AttentionStateStore(path.join(tmpDir, "runtime-invalidation"), { controlBaseDir: `${tmpDir}-invalidation` });
+      await invalidationStore.saveMetabolismCycle({
+        cycle_id: "attention-cycle:current-invalidation",
+        idempotency_key: "cycle:current-invalidation",
+        trigger_kind: "maintenance",
+        scope: invalidatedCycle.agendaItem.scope,
+        expected_projection_revision: 0,
+        source_high_watermarks: ["runtime_event:current-invalidation:1"],
+        clusters: [],
+        agendaItems: [invalidatedCycle.agendaItem],
+        decompositions: [],
+        admissionProposals: [],
+        events: [],
+        result: { projected: true },
+        created_at: NOW,
+      });
+      await expect(invalidationStore.invalidateRefs({
+        refs: [ref("goal", "goal:attention-store:current-invalidate")],
+        reason: "current projection target became stale",
+        now: LATER,
+      })).resolves.toEqual({
+        invalidated_count: 1,
+        agenda_item_ids: [invalidatedCycle.agendaItem.agenda_item_id],
+      });
+      await expect(invalidationStore.listAgendaItems()).resolves.toEqual([]);
+      await expect(invalidationStore.listAgendaItems({ includeTerminal: true })).resolves.toEqual([
+        expect.objectContaining({
+          agenda_item_id: invalidatedCycle.agendaItem.agenda_item_id,
+          current_posture: "rejected_stale",
+          control_state: "expired",
+          staleness_state: "rejected",
+        }),
+      ]);
+    } finally {
+      cleanupTempDir(tmpDir);
+      cleanupTempDir(`${tmpDir}-invalidation`);
+    }
+  });
+
   it("does not retroactively suppress admitted agenda history", async () => {
     const tmpDir = makeTempDir("pulseed-attention-store-admitted-suppress-");
     try {
