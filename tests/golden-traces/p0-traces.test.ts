@@ -72,6 +72,13 @@ describe.each(fixtures)("P0 golden trace: $contract_name", (fixture) => {
   it("matches the normalized event, surface, and state artifacts", async () => {
     const result = await runGoldenTrace(fixture);
     assertGoldenTraceResult(fixture, result);
-    expect(result.events.map((event) => event.type)).toContain("assistant_final");
+    const runner = result.control_db_export.runner as { status?: string } | undefined;
+    expect(["real_production_path", "pending_real_runner"]).toContain(runner?.status);
+    expect(result.events).not.toEqual(fixture.input.steps);
+    if (runner?.status === "pending_real_runner") {
+      expect(result.events.map((event) => event.type)).toContain("pending_real_runner");
+    } else {
+      expect(result.events.map((event) => event.type)).toContain("assistant_final");
+    }
   });
 });

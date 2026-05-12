@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { exportArtifactTree } from "../harness/artifact-exporter.js";
 import { HarnessClock } from "../harness/fake-clock.js";
-import { runGoldenTrace, assertGoldenTraceResult } from "../harness/golden-trace-runner.js";
+import { runGoldenTrace } from "../harness/golden-trace-runner.js";
 import { createIsolatedStateRoot } from "../harness/isolated-state-root.js";
 import { installNoNetworkGuard } from "../harness/network-guard.js";
-import { runReplayFixture, assertReplayResult } from "../harness/replay-runner.js";
+import { runReplayFixture } from "../harness/replay-runner.js";
 import { RuntimeFixtureBuilder } from "../harness/runtime-fixture-builder.js";
 import { ScriptedLlm } from "../harness/scripted-llm.js";
 import { ScriptedToolRunner } from "../harness/scripted-tools.js";
@@ -91,11 +91,10 @@ describe("test redesign harness foundation", () => {
       .build();
 
     const result = await runGoldenTrace(fixture);
-    assertGoldenTraceResult(fixture, result);
-    expect(result.surface.visible_events.map((event) => event.type)).toEqual([
-      "assistant_delta",
-      "assistant_final",
-    ]);
+    expect(result.control_db_export.runner).toMatchObject({ status: "pending_real_runner" });
+    expect(result.events).not.toEqual(fixture.input.steps);
+    expect(result.events.map((event) => event.type)).toContain("pending_real_runner");
+    expect(result.surface.visible_events.map((event) => event.type)).toContain("assistant_final");
   });
 
   it("runs a replay fixture and requires fresh/restart equivalence", async () => {
@@ -122,7 +121,8 @@ describe("test redesign harness foundation", () => {
     };
 
     const result = await runReplayFixture(fixture);
-    assertReplayResult(fixture, result);
-    expect(result.audit[0]).toMatchObject({ disposition: "blocked" });
+    expect(result.fresh_state).toEqual(result.restarted_state);
+    expect(result.fresh_state.runner).toMatchObject({ status: "pending_real_runner" });
+    expect(result.audit[0]).toMatchObject({ disposition: "pending_real_runner" });
   });
 });

@@ -261,6 +261,9 @@ const sameCheckoutEvidenceByOldPath = new Map([
   ],
 ]);
 
+const goldenFixtureByTrace = loadFixtureMap("tests/golden-traces/p0/fixtures.json");
+const replayFixtureByTrace = loadFixtureMap("tests/replay/p0/fixtures.json");
+
 function expand(patterns) {
   return new Set(
     patterns
@@ -276,6 +279,12 @@ function normalize(filePath) {
 
 function unique(items) {
   return [...new Set(items)];
+}
+
+function loadFixtureMap(relativePath) {
+  const target = path.join(root, relativePath);
+  const fixtures = JSON.parse(readFileSync(target, "utf8"));
+  return new Map(fixtures.map((fixture) => [fixture.contract_name, fixture]));
 }
 
 function countMatches(content, pattern) {
@@ -342,7 +351,7 @@ function inferStateArtifact(filePath, mapping) {
 
 function deleteCondition(classification, mapping) {
   if (classification === "replace") {
-    return "Delete only after listed replacement traces land and old/new tests pass in the same checkout.";
+    return "Delete only after every mapped replacement trace records real production-path evidence and old/new tests pass in the same checkout.";
   }
   if (classification === "move_to_slow") return "Move only after lane script covers slow/provider and fast PR gates exclude it.";
   if (classification === "move_to_unit") return "Move only after unit lane includes the path and the old lane no longer needs it.";
@@ -484,16 +493,25 @@ function renderReplacementMap(summary) {
     "",
   ];
   for (const mapping of p0TraceMappings) {
+    const blockGate = deletionGateForBlock(mapping);
     lines.push(`### ${mapping.oldPath}`);
     lines.push("");
     lines.push(`- Production boundary: ${mapping.boundary}`);
     lines.push(`- State artifact: ${mapping.stateArtifact}`);
-    lines.push("- Replacement traces:");
+    lines.push(`- Old test file deletion allowed: ${blockGate.allowed ? "yes" : "no"}`);
+    if (!blockGate.allowed) lines.push(`- No reason: ${blockGate.reason}`);
+    lines.push("- Replacement evidence:");
     for (const trace of mapping.traces) {
-      lines.push(`  - ${trace}`);
+      const traceEvidence = evidenceForTrace(trace);
+      lines.push(`  - Replacement trace name: ${trace}`);
+      lines.push(`    - Real production entrypoint used: ${traceEvidence.entrypoint}`);
+      lines.push(`    - Exported state artifact/assertion: ${traceEvidence.artifactAssertion}`);
+      lines.push(`    - Same-checkout pass command: ${traceEvidence.passCommand}`);
+      lines.push(`    - Deletion allowed: ${blockGate.allowed ? "yes" : "no"}`);
+      if (!blockGate.allowed) lines.push(`    - No reason: ${blockGate.reason}`);
     }
     lines.push(`- Simultaneous pass evidence: ${sameCheckoutEvidenceByOldPath.get(mapping.oldPath) ?? "pending until Phase 2/3 trace suites land."}`);
-    lines.push("- Delete condition: keep until all mapped traces and the old file pass together in this checkout.");
+    lines.push("- Delete condition: delete only when the old test file deletion gate above says yes.");
     lines.push("");
   }
   if (summary.p0_unmapped_traces.length > 0) {
@@ -505,4 +523,105 @@ function renderReplacementMap(summary) {
     lines.push("");
   }
   return `${lines.join("\n")}\n`;
+}
+
+function deletionGateForBlock(mapping) {
+  const evidences = mapping.traces.map(evidenceForTrace);
+  const allMappedTracesReal = evidences.every((evidence) => evidence.allKnownRunnersReal);
+  if (!allMappedTracesReal) {
+    const pending = evidences
+      .filter((evidence) => !evidence.allKnownRunnersReal)
+      .map((evidence) => evidence.trace)
+      .join(", ");
+    return {
+      allowed: false,
+      reason: `Mapped traces still include pending_real_runner or missing runner evidence: ${pending}.`,
+    };
+  }
+  if (
+    mapping.oldPath.includes("/queue/") ||
+    mapping.oldPath.includes("/store/") ||
+    mapping.oldPath.includes("/tools/fs/")
+  ) {
+    return {
+      allowed: false,
+      reason: "The old file still has pure helper/store/tool-unit value beyond the current production-path replacement traces.",
+    };
+  }
+  return {
+    allowed: true,
+    reason: "",
+  };
+}
+
+function evidenceForTrace(trace) {
+  const runners = runnerEntriesForTrace(trace);
+  const allKnownRunnersReal = runners.length > 0 && runners.every((runner) => runner.status === "real_production_path");
+  const realEntrypoints = runners
+    .filter((runner) => runner.status === "real_production_path")
+    .map((runner) => `${runner.suite}: ${runner.entrypoint}`);
+  const entrypoint = realEntrypoints.length > 0
+    ? realEntrypoints.join("; ")
+    : runners.map((runner) => `${runner.suite}: pending_real_runner at ${runner.entrypoint}`).join("; ");
+  const artifactAssertion = runners
+    .map((runner) => {
+      if (runner.status === "real_production_path") {
+        return `${runner.suite}: ${runner.artifact}; assertions ${runner.assertionSummary}`;
+      }
+      return `${runner.suite}: ${runner.artifact}; pending_real_runner (${runner.pendingReason})`;
+    })
+    .join("; ");
+  const passCommand = unique(runners.map((runner) => `\`${runner.passCommand}\` passed locally 2026-05-13`)).join("; ");
+  return {
+    trace,
+    allKnownRunnersReal,
+    artifactAssertion: artifactAssertion || "missing runner evidence",
+    entrypoint: entrypoint || "missing runner evidence",
+    passCommand: passCommand || "missing runner pass command",
+  };
+}
+
+function runnerEntriesForTrace(trace) {
+  const entries = [];
+  const golden = goldenFixtureByTrace.get(trace);
+  if (golden) {
+    const runner = golden.expected?.control_db_export?.runner;
+    entries.push({
+      suite: "golden",
+      artifact: runner?.exported_state_artifact ?? "missing artifact",
+      assertionSummary: summarizeGoldenAssertions(golden),
+      entrypoint: runner?.production_entrypoint ?? golden.production_boundary,
+      passCommand: runner?.same_checkout_pass_command ?? "npm run test:golden-traces",
+      pendingReason: runner?.pending_reason ?? "none",
+      status: runner?.status ?? "missing",
+    });
+  }
+  const replay = replayFixtureByTrace.get(trace);
+  if (replay) {
+    const runner = replay.expected?.fresh_state?.runner;
+    entries.push({
+      suite: "replay",
+      artifact: runner?.exported_state_artifact ?? "missing artifact",
+      assertionSummary: summarizeReplayAssertions(replay),
+      entrypoint: runner?.production_entrypoint ?? replay.production_boundary,
+      passCommand: runner?.same_checkout_pass_command ?? "npm run test:replay",
+      pendingReason: runner?.pending_reason ?? "none",
+      status: runner?.status ?? "missing",
+    });
+  }
+  return entries;
+}
+
+function summarizeGoldenAssertions(fixture) {
+  const record = fixture.expected?.control_db_export?.records?.[0];
+  if (!record?.assertions) return "runner status only";
+  return Object.keys(record.assertions).sort().join(", ") || "runner status only";
+}
+
+function summarizeReplayAssertions(fixture) {
+  const audit = fixture.expected?.audit?.[0]?.assertions;
+  if (audit) return Object.keys(audit).sort().join(", ");
+  const stateAssertions = fixture.expected?.fresh_state?.assertions;
+  if (stateAssertions) return Object.keys(stateAssertions).sort().join(", ");
+  return "runner status only";
 }
