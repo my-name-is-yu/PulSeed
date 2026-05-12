@@ -674,6 +674,56 @@ describe("AttentionStateStore", () => {
     }
   });
 
+  it("fails strict decision snapshots on malformed current agenda rows", async () => {
+    const tmpDir = makeTempDir("pulseed-attention-store-current-strict-");
+    try {
+      const db = await openControlDatabase({ baseDir: tmpDir });
+      try {
+        const store = new AttentionStateStore(path.join(tmpDir, "runtime"), { controlDb: db });
+        const currentScope = scope("current-strict");
+        const cycle = durableAttentionCycle({
+          agendaIdSuffix: "current-strict",
+          targetRef: ref("goal", "goal:attention-store:current-strict"),
+        });
+        const agendaItem = {
+          ...cycle.agendaItem,
+          scope: currentScope,
+          policyEpoch: currentScope.policyEpoch,
+        };
+        await store.saveMetabolismCycle({
+          cycle_id: "attention-cycle:current-strict",
+          idempotency_key: "cycle:current-strict",
+          trigger_kind: "maintenance",
+          scope: currentScope,
+          expected_projection_revision: 0,
+          source_high_watermarks: ["runtime_event:current-strict:1"],
+          clusters: [],
+          agendaItems: [agendaItem],
+          decompositions: [],
+          admissionProposals: [],
+          events: [],
+          result: { projected: true },
+          created_at: NOW,
+        });
+        db.transaction((sqlite) => {
+          sqlite.prepare(`
+            UPDATE attention_current_agenda
+            SET agenda_json = json(?)
+            WHERE agenda_item_id = ?
+          `).run(JSON.stringify({ wrong_shape: true }), agendaItem.agenda_item_id);
+        });
+
+        await expect(store.loadDecisionChainSnapshotStrict()).rejects.toThrow(
+          "attention_current_agenda.agenda_json[0]"
+        );
+      } finally {
+        db.close();
+      }
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
+  });
+
   it("invalidates stale refs and excludes them from default agenda rehydrate", async () => {
     const tmpDir = makeTempDir("pulseed-attention-store-stale-");
     try {

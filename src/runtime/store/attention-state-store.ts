@@ -1496,7 +1496,7 @@ function listAgendaItems(sqlite: SqliteDatabase, options: AttentionAgendaListOpt
 function listAgendaItemsStrict(sqlite: SqliteDatabase, options: AttentionAgendaListOptions): AgentAgendaItem[] {
   if (options.forceLegacy) return listLegacyAgendaItemsStrict(sqlite, options);
 
-  const currentAgenda = listCurrentAgendaItems(sqlite, { scopeKey: options.scopeKey ?? null });
+  const currentAgenda = listCurrentAgendaItemsStrict(sqlite, { scopeKey: options.scopeKey ?? null });
   const legacyAgenda = listLegacyAgendaItemsStrict(sqlite, options);
   return mergeCurrentAndLegacyAgendaItems(currentAgenda, legacyAgenda, options);
 }
@@ -1566,6 +1566,23 @@ function listCurrentAgendaItems(
     ORDER BY updated_at ASC, agenda_item_id ASC
   `).all(...(options.scopeKey ? [options.scopeKey] : [])) as Array<{ agenda_json: string }>;
   return rows.flatMap((row) => parseStored<AgentAgendaItem>(row.agenda_json, AgentAgendaItemSchema));
+}
+
+function listCurrentAgendaItemsStrict(
+  sqlite: SqliteDatabase,
+  options: { scopeKey?: string | null } = {},
+): AgentAgendaItem[] {
+  const rows = sqlite.prepare(`
+    SELECT agenda_json
+    FROM attention_current_agenda
+    ${options.scopeKey ? "WHERE scope_key = ?" : ""}
+    ORDER BY updated_at ASC, agenda_item_id ASC
+  `).all(...(options.scopeKey ? [options.scopeKey] : [])) as Array<{ agenda_json: string }>;
+  return rows.map((row, index) => parseStoredStrict<AgentAgendaItem>(
+    row.agenda_json,
+    AgentAgendaItemSchema,
+    `attention_current_agenda.agenda_json[${index}]`
+  ));
 }
 
 function listConcernClusters(sqlite: SqliteDatabase, key: string | null): AttentionCluster[] {
