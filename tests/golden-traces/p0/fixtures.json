@@ -1506,9 +1506,12 @@
         "records": [
           {
             "assertions": {
+              "agent_loop_executed": true,
               "background_run_started": false,
+              "draft_tool_succeeded": true,
               "pending_confirmation_written": true,
-              "same_turn_start_blocked": true
+              "same_turn_start_blocked": true,
+              "stored_draft_count": 1
             },
             "disposition": "ok",
             "kind": "gateway_runspec_pending_gate",
@@ -1525,8 +1528,8 @@
       "artifact_tree": [
         {
           "path": "state/gateway/gateway_runspec_draft_pending_no_same_turn_start.json",
-          "sha256": "6b999b9933f8efdc92a078744979f3c72958277f2dfda4769a3ca10a7aebc207",
-          "size": 761,
+          "sha256": "34b3a1b225a04f11705e95beccd51131e9dfc5ac12b57317d51a85cdc3ec5bd3",
+          "size": 1867,
           "type": "file"
         }
       ],

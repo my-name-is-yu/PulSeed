@@ -581,7 +581,9 @@
         "assertions": {
           "ingress_conversation_id": "conversation:gateway-restart",
           "reply_target_preserved": true,
-          "session_reloaded": true
+          "restored_reply_target_loaded": true,
+          "session_reloaded": true,
+          "stale_fallback_rejected": true
         },
         "contract_name": "gateway_routed_ingress_preserves_reply_target_after_restart",
         "initial_state_paths": [
@@ -600,7 +602,9 @@
         "assertions": {
           "ingress_conversation_id": "conversation:gateway-restart",
           "reply_target_preserved": true,
-          "session_reloaded": true
+          "restored_reply_target_loaded": true,
+          "session_reloaded": true,
+          "stale_fallback_rejected": true
         },
         "contract_name": "gateway_routed_ingress_preserves_reply_target_after_restart",
         "initial_state_paths": [
@@ -630,8 +634,8 @@
       "artifact_tree": [
         {
           "path": "state/chat-session/gateway_routed_ingress_preserves_reply_target_after_restart.json",
-          "sha256": "44ff6e60e945002cf23eac182b2407f5b16fed20d7792d186bb9bb9ad72207ad",
-          "size": 1916,
+          "sha256": "ac1d209145a87921c9410521864f5ec4c52fe3614a5206b11b361f6a8de68060",
+          "size": 2082,
           "type": "file"
         }
       ]

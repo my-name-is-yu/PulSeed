@@ -12,6 +12,7 @@ import { JournalBackedQueue, type JournalBackedQueueSnapshot } from "../../src/r
 import { ScheduleEngine } from "../../src/runtime/schedule/engine.js";
 import { RuntimeSessionRegistry } from "../../src/runtime/session-registry/index.js";
 import { ApprovalStore, AttentionStateStore, BackgroundRunLedger } from "../../src/runtime/store/index.js";
+import type { RuntimeControlReplyTarget } from "../../src/runtime/store/runtime-operation-schemas.js";
 import type { Envelope } from "../../src/runtime/types/envelope.js";
 import { createIsolatedStateRoot, type IsolatedStateRoot } from "./isolated-state-root.js";
 import { normalizeJson } from "./normalizers.js";
@@ -369,7 +370,7 @@ async function runScheduleCrashSequence(
     assertions: {
       first_result_count: firstResults.length,
       history_count: history.length,
-      no_duplicate_execution: secondResults.length === 0 || history.length === 1,
+      no_duplicate_execution: firstResults.length === 1 && secondResults.length === 0 && history.length === 1,
       second_result_count: secondResults.length,
     },
   };
@@ -452,7 +453,7 @@ async function runGatewayReplyTargetSequence(
   workspaceRoot: string,
 ): Promise<{ assertions: JsonObject; status: string }> {
   const stateManager = new StateManager(baseDir, undefined, { walEnabled: false });
-  const replyTarget = {
+  const persistedReplyTarget: RuntimeControlReplyTarget = {
     surface: "gateway" as const,
     channel: "plugin_gateway" as const,
     platform: "telegram",
@@ -460,6 +461,11 @@ async function runGatewayReplyTargetSequence(
     message_id: "msg-gateway-restart",
     identity_key: "operator",
     user_id: "operator",
+  };
+  const staleFallbackReplyTarget: RuntimeControlReplyTarget = {
+    ...persistedReplyTarget,
+    conversation_id: "conversation:stale-fallback",
+    message_id: "msg-stale-fallback",
   };
   await new ChatSessionDataStore(baseDir).save({
     id: "gateway-restart",
@@ -472,12 +478,13 @@ async function runGatewayReplyTargetSequence(
       channel: "plugin_gateway",
       target_id: "conversation:gateway-restart",
       thread_id: "msg-gateway-restart",
-      metadata: replyTarget,
+      metadata: persistedReplyTarget,
     },
   });
   const restored = await new ChatSessionCatalog(stateManager).loadSession("gateway-restart");
+  const restoredReplyTarget = runtimeReplyTargetFromMetadata(restored?.notificationReplyTarget?.metadata);
   const ingress = buildStandaloneIngressMessageFromContext("continue", {
-    replyTarget,
+    ...(restoredReplyTarget ? { replyTarget: restoredReplyTarget } : {}),
     actor: {
       surface: "gateway",
       platform: "telegram",
@@ -489,16 +496,26 @@ async function runGatewayReplyTargetSequence(
     explicit: false,
   }, {
     stateManager,
-    runtimeReplyTarget: replyTarget,
+    runtimeReplyTarget: staleFallbackReplyTarget,
   });
   return {
     status: ingress.replyTarget.conversation_id === "conversation:gateway-restart" ? "restored" : "missing",
     assertions: {
       ingress_conversation_id: ingress.replyTarget.conversation_id,
       reply_target_preserved: ingress.replyTarget.conversation_id === "conversation:gateway-restart",
+      restored_reply_target_loaded: restoredReplyTarget?.conversation_id === "conversation:gateway-restart",
       session_reloaded: restored?.id === "gateway-restart",
+      stale_fallback_rejected: ingress.replyTarget.conversation_id !== "conversation:stale-fallback",
     },
   };
+}
+
+function runtimeReplyTargetFromMetadata(value: unknown): RuntimeControlReplyTarget | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  if (record["surface"] !== "gateway") return null;
+  if (typeof record["conversation_id"] !== "string") return null;
+  return record as RuntimeControlReplyTarget;
 }
 
 async function buildRealReplayResult(

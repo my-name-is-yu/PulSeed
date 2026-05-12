@@ -4,10 +4,15 @@ import * as fsp from "node:fs/promises";
 import * as http from "node:http";
 import * as path from "node:path";
 import Database from "better-sqlite3";
+import type { ILLMClient } from "../../src/base/llm/llm-client.js";
 import { StateManager } from "../../src/base/state/state-manager.js";
+import { ChatRunner, type ChatRunnerDeps } from "../../src/interface/chat/chat-runner.js";
 import { ChatRunnerEventBridge } from "../../src/interface/chat/chat-runner-event-bridge.js";
 import { formatRuntimeStatus } from "../../src/interface/chat/chat-runner-runtime.js";
+import { ChatSessionCatalog } from "../../src/interface/chat/chat-session-store.js";
+import { buildStandaloneIngressMessage, type SelectedChatRoute } from "../../src/interface/chat/ingress-router.js";
 import { intakeSetupSecrets } from "../../src/interface/chat/setup-secret-intake.js";
+import { createRunSpecStore } from "../../src/runtime/run-spec/index.js";
 import { ApprovalBroker, type ConversationalApprovalDelivery } from "../../src/runtime/approval-broker.js";
 import { RuntimeControlService } from "../../src/runtime/control/runtime-control-service.js";
 import { EventServer } from "../../src/runtime/event/server.js";
@@ -27,6 +32,8 @@ import type { Envelope, EnvelopePriority, EnvelopeType } from "../../src/runtime
 import { ConcurrencyController, ToolExecutor, ToolPermissionManager, ToolRegistry } from "../../src/tools/index.js";
 import { FileWriteTool } from "../../src/tools/fs/FileWriteTool/FileWriteTool.js";
 import { ReadTool } from "../../src/tools/fs/ReadTool/ReadTool.js";
+import { createRunSpecHandoffTools } from "../../src/tools/runtime/RunSpecHandoffTools.js";
+import type { ToolCallContext, ToolResult } from "../../src/tools/types.js";
 import { EventRecorder } from "./event-recorder.js";
 import { createIsolatedStateRoot, type IsolatedStateRoot } from "./isolated-state-root.js";
 import { normalizeJson } from "./normalizers.js";
@@ -926,19 +933,138 @@ async function runGatewayTrace(
   }
 
   if (fixture.contract_name === "gateway_runspec_draft_pending_no_same_turn_start") {
+    const stateManager = new StateManager(stateRoot.controlDbBase, undefined, { walEnabled: false });
+    const llmClient = makeRunspecDraftLlmClient();
+    let daemonStartCount = 0;
+    let agentLoopExecuteCount = 0;
+    let draftToolResult: ToolResult | null = null;
+    let sameTurnStartResult: ToolResult | null = null;
+    const daemonClient = {
+      async startGoal(): Promise<never> {
+        daemonStartCount += 1;
+        return { id: "unexpected-start" } as never;
+      },
+    };
+    const chatAgentLoopRunner: NonNullable<ChatRunnerDeps["chatAgentLoopRunner"]> = {
+      async execute(input: { toolCallContext?: Partial<ToolCallContext> }) {
+        agentLoopExecuteCount += 1;
+        const tools = createRunSpecHandoffTools({
+          stateManager,
+          llmClient,
+          daemonClient,
+        });
+        const draftTool = tools.find((tool) => tool.metadata.name === "draft_run_spec");
+        const confirmTool = tools.find((tool) => tool.metadata.name === "runspec_confirm");
+        const toolCallContext = input.toolCallContext as ToolCallContext | undefined;
+        if (!draftTool || !confirmTool || !toolCallContext) {
+          throw new Error("RunSpec handoff tools were not available to the AgentLoop runner.");
+        }
+        draftToolResult = await draftTool.call({
+          request: "DurableLoopでKaggleのスコアが0.98を超えるまで最適化を続けて",
+        }, toolCallContext);
+        const pending = await toolCallContext.runSpecConfirmation?.get() as {
+          spec?: { id?: string; updated_at?: string };
+          updatedAt?: string;
+        } | null | undefined;
+        const runSpecId = pending?.spec?.id;
+        const observedEpoch = pending?.updatedAt ?? pending?.spec?.updated_at;
+        if (runSpecId && observedEpoch) {
+          sameTurnStartResult = await confirmTool.call({
+            observed_run_spec_epoch: observedEpoch,
+            run_spec_id: runSpecId,
+          }, toolCallContext);
+        }
+        return {
+          success: true,
+          output: draftToolResult.summary,
+          error: null,
+          exit_code: null,
+          elapsed_ms: 1,
+          stopped_reason: "completed",
+        };
+      },
+    };
+    const runner = new ChatRunner({
+      stateManager,
+      adapter: {
+        adapterType: "trace-adapter",
+        async execute() {
+          throw new Error("RunSpec trace must use the AgentLoop route.");
+        },
+      },
+      llmClient,
+      chatAgentLoopRunner,
+      daemonClient,
+    });
+    const selectedRoute: SelectedChatRoute = {
+      kind: "agent_loop",
+      reason: "agent_loop_available",
+      replyTargetPolicy: "turn_reply_target",
+      eventProjectionPolicy: "turn_only",
+      concurrencyPolicy: "session_serial",
+    };
+    const ingress = buildStandaloneIngressMessage({
+      channel: "plugin_gateway",
+      conversation_id: "conversation:runspec",
+      cwd: stateRoot.workspaceRoot,
+      deliveryMode: "reply",
+      identity_key: "telegram:user:runspec",
+      message_id: "message:runspec",
+      metadata: { gateway_message: true },
+      platform: "telegram",
+      replyTarget: {
+        response_channel: "telegram:conversation:runspec",
+        metadata: { gateway_message: true },
+      },
+      runtimeControl: { allowed: true, approvalMode: "interactive" },
+      text: "DurableLoopでKaggleのスコアが0.98を超えるまで最適化を続けて",
+      user_id: "user:runspec",
+    });
+    const result = await runner.executeIngressMessage(ingress, stateRoot.workspaceRoot, 120_000, selectedRoute);
+    const specs = await createRunSpecStore(stateManager).list();
+    const session = await new ChatSessionCatalog(stateManager).loadSession(runner.getSessionId() ?? "");
+    const confirmation = session?.runSpecConfirmation ?? null;
+    const stored = specs[0] ?? null;
     const assertions: JsonObject = {
-      background_run_started: false,
-      pending_confirmation_written: true,
-      same_turn_start_blocked: true,
+      agent_loop_executed: agentLoopExecuteCount === 1,
+      background_run_started: daemonStartCount > 0,
+      draft_tool_succeeded: draftToolResult?.success === true,
+      pending_confirmation_written: confirmation?.state === "pending" && specs.length === 1,
+      same_turn_start_blocked: sameTurnStartResult?.success === false && daemonStartCount === 0,
+      stored_draft_count: specs.length,
     };
     return buildRealGoldenResult(fixture, stateRoot, {
       kind: "gateway_runspec_pending_gate",
       exportedState: {
         assertions,
+        chat_result: {
+          success: result.success,
+          output_present: result.output.length > 0,
+        },
+        same_turn_start_result: sameTurnStartResult
+          ? {
+              execution_status: sameTurnStartResult.execution?.status ?? null,
+              success: sameTurnStartResult.success,
+              summary: sameTurnStartResult.summary,
+            }
+          : null,
         run_spec_state: {
-          created_turn: "turn:runspec",
-          status: "draft",
-          start_result: "blocked_same_turn",
+          id: stored ? "<run-spec-id>" : null,
+          origin_channel: stored?.origin.channel ?? null,
+          origin_reply_target: stored?.origin.reply_target
+            ? sanitizeUnknown(stored.origin.reply_target)
+            : null,
+          profile: stored?.profile ?? null,
+          status: stored?.status ?? null,
+        },
+        session_state: {
+          id: session ? "<chat-session-id>" : null,
+          run_spec_confirmation: confirmation
+            ? {
+                spec_id: "<run-spec-id>",
+                state: confirmation.state,
+              }
+            : null,
         },
       },
       assertions,
@@ -1427,6 +1553,69 @@ function sanitizeSecretIntake(intake: ReturnType<typeof intakeSetupSecrets>): Js
       value_persisted_to_chat_state: false,
     })),
   };
+}
+
+function makeRunspecDraftLlmClient(): ILLMClient {
+  const responses = [
+    JSON.stringify({ kind: "none", confidence: 0.94, rationale: "This is new work, not recovery." }),
+    JSON.stringify({
+      decision: "run_spec_request",
+      confidence: 0.92,
+      profile: "kaggle",
+      objective: "Continue Kaggle optimization until score exceeds 0.98",
+      execution_target: { kind: "daemon", remote_host: null, confidence: "medium" },
+      metric: {
+        name: "kaggle_score",
+        direction: "maximize",
+        target: 0.98,
+        target_rank_percent: null,
+        datasource: "kaggle_leaderboard",
+        confidence: "high",
+      },
+      progress_contract: {
+        kind: "metric_target",
+        dimension: "kaggle_score",
+        threshold: 0.98,
+        semantics: "Kaggle score exceeds 0.98.",
+        confidence: "high",
+      },
+      deadline: {
+        raw: "until score exceeds 0.98",
+        iso_at: null,
+        timezone: null,
+        finalization_buffer_minutes: null,
+        confidence: "medium",
+      },
+      budget: { max_trials: null, max_wall_clock_minutes: null, resident_policy: "best_effort" },
+      approval_policy: {
+        submit: "approval_required",
+        publish: "unspecified",
+        secret: "approval_required",
+        external_action: "approval_required",
+        irreversible_action: "approval_required",
+      },
+      artifact_contract: {
+        expected_artifacts: ["leaderboard snapshot", "experiment notes"],
+        discovery_globs: ["**/leaderboard*.json", "**/experiments/**"],
+        primary_outputs: ["best Kaggle score"],
+      },
+      missing_fields: [],
+      reason: "The operator requested long-running Kaggle optimization.",
+    }),
+  ];
+  return {
+    async sendMessage() {
+      const content = responses.shift() ?? responses.at(-1) ?? "{}";
+      return {
+        content,
+        stop_reason: "end_turn",
+        usage: { input_tokens: 0, output_tokens: 0 },
+      };
+    },
+    parseJSON(content: string, schema: { parse(value: unknown): unknown }) {
+      return schema.parse(JSON.parse(content));
+    },
+  } as unknown as ILLMClient;
 }
 
 function gatewayEventStreamFor(fixture: GoldenTraceFixture): TraceEvent[] {
