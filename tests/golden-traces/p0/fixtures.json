@@ -7156,11 +7156,11 @@
         "records": [
           {
             "assertions": {
-              "approval_before_mutation": false,
-              "approved_write_success": false,
-              "denied_execution_status": null,
+              "approval_before_mutation": true,
+              "approved_write_success": true,
+              "denied_execution_status": "not_executed",
               "denied_mutation_exists": false,
-              "mutation_artifact_count": 0,
+              "mutation_artifact_count": 1,
               "wait_plan_count": 0
             },
             "disposition": "ok",
@@ -7178,8 +7178,8 @@
       "artifact_tree": [
         {
           "path": "state/tool/tool_write_local_records_approval_artifact_before_mutation.json",
-          "sha256": "80899579bb748cda6efbf8319de872de259dea068796e7fc1ed21485c993e5df",
-          "size": 1214,
+          "sha256": "e9389d0702887e606450d4b5ff00ce402c65458a80fc99a5a7c69e33159986b6",
+          "size": 1571,
           "type": "file"
         }
       ],

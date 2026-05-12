@@ -368,25 +368,26 @@ async function runToolTrace(
       concurrency: new ConcurrencyController(),
     });
     const approvalEvents: JsonObject[] = [];
-    const target = path.join(stateRoot.workspaceRoot, "approved", "file.txt");
-    const result = await executor.execute("file_write", { path: target, content: "approved\n" }, {
+    const targetRelative = path.join("approved", "file.txt");
+    const target = path.join(stateRoot.workspaceRoot, targetRelative);
+    const result = await executor.execute("file_write", { path: targetRelative, content: "approved\n" }, {
       cwd: stateRoot.workspaceRoot,
       goalId: "goal-tool-write",
-      trustBalance: 0,
+      trustBalance: -50,
       preApproved: false,
       permissionWaitPlanStore: waitPlanStore,
       approvalFn: async (request) => {
         approvalEvents.push({
-          approval_id: request.approvalId ?? null,
-          permission_wait_plan_id: request.permissionWaitPlanId ?? null,
+          approval_id: request.approvalId ? "<approval-id>" : null,
+          permission_wait_plan_id: request.permissionWaitPlanId ? "<permission-wait-plan-id>" : null,
           tool_name: request.toolName,
         });
         return true;
       },
       onApprovalRequested: (request) => {
         approvalEvents.push({
-          approval_id: request.approvalId ?? null,
-          permission_wait_plan_id: request.permissionWaitPlanId ?? null,
+          approval_id: request.approvalId ? "<approval-id>" : null,
+          permission_wait_plan_id: request.permissionWaitPlanId ? "<permission-wait-plan-id>" : null,
           stage: "requested",
           tool_name: request.toolName,
         });
@@ -395,11 +396,12 @@ async function runToolTrace(
       sessionId: "session:tool-write",
       turnId: "turn:tool-write",
     });
-    const deniedTarget = path.join(stateRoot.workspaceRoot, "denied.txt");
-    const denied = await executor.execute("file_write", { path: deniedTarget, content: "denied\n" }, {
+    const deniedRelative = "denied.txt";
+    const deniedTarget = path.join(stateRoot.workspaceRoot, deniedRelative);
+    const denied = await executor.execute("file_write", { path: deniedRelative, content: "denied\n" }, {
       cwd: stateRoot.workspaceRoot,
       goalId: "goal-tool-write",
-      trustBalance: 0,
+      trustBalance: -50,
       preApproved: false,
       permissionWaitPlanStore: waitPlanStore,
       approvalFn: async () => false,
