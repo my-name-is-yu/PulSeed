@@ -792,7 +792,12 @@ function invalidationRefCountForAgenda(item: AgentAgendaItem): number {
 }
 
 function agendaMatchesControl(item: AgentAgendaItem, control: AttentionAgendaSuppressionInput["control"]): boolean {
-  if (item.current_posture === "suppressed" || item.current_posture === "expired" || item.current_posture === "rejected_stale") {
+  if (
+    item.current_posture === "suppressed"
+    || item.current_posture === "expired"
+    || item.current_posture === "rejected_stale"
+    || item.current_posture === "admitted"
+  ) {
     return false;
   }
   if (control === "suppress_nonessential_agenda") {

@@ -540,4 +540,53 @@ describe("AttentionStateStore", () => {
       cleanupTempDir(tmpDir);
     }
   });
+
+  it("does not retroactively suppress admitted agenda history", async () => {
+    const tmpDir = makeTempDir("pulseed-attention-store-admitted-suppress-");
+    try {
+      const db = await openControlDatabase({ baseDir: tmpDir });
+      try {
+        const store = new AttentionStateStore(path.join(tmpDir, "runtime"), { controlDb: db });
+        const cycle = durableAttentionCycle({
+          agendaIdSuffix: "admitted-history",
+          origin: "curiosity",
+          sourceKind: "resident_curiosity",
+        });
+        const admittedAgenda = {
+          ...cycle.agendaItem,
+          current_posture: "admitted" as const,
+          maturation: {
+            ...cycle.agendaItem.maturation,
+            state: "expressed" as const,
+          },
+          updated_at: LATER,
+        };
+        await saveCycle(store, {
+          ...cycle,
+          agendaItem: admittedAgenda,
+        });
+
+        const suppressed = await store.suppressAgendaForControl({
+          control: "suppress_nonessential_agenda",
+          reason: "do not mutate admitted history",
+          now: "2026-05-12T00:10:00.000Z",
+        });
+
+        expect(suppressed).toEqual({
+          suppressed_count: 0,
+          agenda_item_ids: [],
+        });
+        const [rehydrated] = await store.listAgendaItems({ includeSuppressed: true });
+        expect(rehydrated).toMatchObject({
+          agenda_item_id: admittedAgenda.agenda_item_id,
+          current_posture: "admitted",
+          maturation: expect.objectContaining({ state: "expressed" }),
+        });
+      } finally {
+        db.close();
+      }
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
+  });
 });
