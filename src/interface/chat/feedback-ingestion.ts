@@ -28,10 +28,42 @@ export function feedbackIngestionSourceForReplyTarget(
     ?? (typeof replyTarget?.metadata?.["platform"] === "string" ? replyTarget.metadata["platform"] : "")
   ).toLowerCase();
   if (channel === "telegram" || platform === "telegram") return "telegram";
+  if (channel === "plugin_gateway" && replyTargetLooksTelegram(replyTarget)) return "telegram";
   if (channel === "cli") return "cli";
   if (channel === "tui" || channel === "terminal") return "tui";
   if (channel === "chat" || channel === "") return "chat";
   return "gateway";
+}
+
+function replyTargetLooksTelegram(
+  replyTarget: RuntimeControlReplyTarget | null | undefined
+): boolean {
+  const metadata = replyTarget?.metadata;
+  const metadataMarkers = metadata
+    ? [
+        metadata["platform"],
+        metadata["channel"],
+        metadata["gateway_channel"],
+        metadata["adapter"],
+      ]
+    : [];
+  return [
+    replyTarget?.identity_key,
+    replyTarget?.conversation_id,
+    replyTarget?.response_channel,
+    replyTarget?.outbox_topic,
+    ...metadataMarkers,
+  ].some((value) => typeof value === "string" && isTelegramProtocolMarker(value));
+}
+
+function isTelegramProtocolMarker(value: string): boolean {
+  const normalized = value.trim().toLowerCase();
+  return normalized === "telegram"
+    || normalized === "telegram-bot"
+    || normalized.startsWith("telegram:")
+    || normalized.startsWith("telegram-")
+    || normalized.startsWith("telegram-bot:")
+    || normalized.startsWith("telegram-bot-");
 }
 
 export function feedbackSurfaceRefForReplyTarget(

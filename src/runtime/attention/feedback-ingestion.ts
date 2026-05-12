@@ -339,7 +339,7 @@ export function createFeedbackIngestion(
     }));
   }
 
-  if (record.feedback_kind === "runtime_outcome" || parsed.runtime_ref) {
+  if (record.feedback_kind === "runtime_outcome") {
     effects.push(effect(record, "runtime_outcome", parsed.runtime_ref ?? targetRef, {
       runtime_ref: parsed.runtime_ref ?? parsed.target.id,
       status: record.outcome === "runtime_success" ? "success" : "failure",

@@ -220,6 +220,30 @@ describe("FeedbackIngestion", () => {
     ]);
   });
 
+  it("does not emit runtime failure effects for non-runtime feedback with runtime refs", () => {
+    const result = createFeedbackIngestion({
+      source: "telegram",
+      feedback_kind: "surface_correction",
+      outcome: "corrected",
+      target: {
+        kind: "surface",
+        id: "telegram-thread",
+      },
+      runtime_ref: "runtime-item:corrected-answer",
+      recorded_at: NOW,
+      reason: "The runtime answer was corrected by the user.",
+      route: "express_to_user",
+    });
+
+    expect(result.effects.map((effect) => effect.effect_kind)).not.toContain("runtime_outcome");
+    expect(feedbackEffectsToAutonomyFeedbackSignals(result.effects)).toEqual([
+      expect.objectContaining({
+        outcome: "corrected",
+        policy_adjustment: "require_confirmation",
+      }),
+    ]);
+  });
+
   it("turns permission revocation into revocation evidence and future approval-required autonomy", () => {
     const result = createFeedbackIngestion({
       source: "telegram",

@@ -147,6 +147,21 @@ describe("chat feedback ingestion", () => {
     });
   });
 
+  it("derives Telegram source from plugin gateway targets with Telegram protocol markers", () => {
+    const replyTarget = {
+      surface: "gateway" as const,
+      channel: "plugin_gateway" as const,
+      identity_key: "telegram:user-1",
+      response_channel: "telegram-chat-1",
+    };
+    const source = feedbackIngestionSourceForReplyTarget(replyTarget);
+    expect(source).toBe("telegram");
+    expect(feedbackSurfaceRefForReplyTarget(source, replyTarget)).toEqual({
+      kind: "surface",
+      id: "telegram:telegram-chat-1",
+    });
+  });
+
   it("derives CLI source and surface refs from CLI reply targets", () => {
     const replyTarget = {
       surface: "cli" as const,
