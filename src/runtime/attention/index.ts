@@ -61,6 +61,15 @@ export {
   FeedbackTargetSchema,
 } from "./feedback-ingestion.js";
 export {
+  AttentionContinuityAgendaEntrySchema,
+  AttentionContinuityFeedbackEntrySchema,
+  AttentionContinuityInspectionSchema,
+  AttentionContinuityOutcomeEntrySchema,
+  AttentionContinuityWarningSchema,
+  createAttentionContinuityInspection,
+  inspectAttentionContinuity,
+} from "./attention-continuity.js";
+export {
   projectSurfaceDelivery,
   renderSurfaceDeliveryProjection,
   SurfaceDeliveryKindSchema,
@@ -104,6 +113,14 @@ export type {
   SignalContextAssemblyInput,
   UrgeCandidateAssemblyInput,
 } from "./attention-metabolism.js";
+export type {
+  AttentionContinuityAgendaEntry,
+  AttentionContinuityFeedbackEntry,
+  AttentionContinuityInspection,
+  AttentionContinuityOutcomeEntry,
+  AttentionContinuityWarning,
+  InspectAttentionContinuityInput,
+} from "./attention-continuity.js";
 export type {
   FeedbackIngestionEffect,
   FeedbackIngestionInput,

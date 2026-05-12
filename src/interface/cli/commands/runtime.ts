@@ -26,6 +26,10 @@ import {
   type ProactiveInterventionSummary,
 } from "../../../runtime/store/proactive-intervention-store.js";
 import { FeedbackIngestionStore } from "../../../runtime/store/feedback-ingestion-store.js";
+import {
+  inspectAttentionContinuity,
+  type AttentionContinuityInspection,
+} from "../../../runtime/attention/attention-continuity.js";
 import { createRelationshipProfileProposalsFromProactiveFeedback } from "../../../platform/profile/proactive-feedback-proposals.js";
 import {
   createRuntimeDreamSidecarReview,
@@ -313,6 +317,28 @@ function printProactiveSummary(summary: ProactiveInterventionSummary): void {
   }
 }
 
+function printAttentionContinuitySummary(inspection: AttentionContinuityInspection): void {
+  console.log("Attention continuity:");
+  console.log(`  Status:          ${inspection.status}`);
+  console.log(`  Generated:       ${inspection.generated_at}`);
+  console.log(`  Attention inputs:${inspection.summary.attention_input_count}`);
+  console.log(`  Agenda:          ${inspection.summary.agenda_item_count} total, ${inspection.summary.pending_agenda_count} pending, ${inspection.summary.held_agenda_count} held, ${inspection.summary.suppressed_agenda_count} suppressed, ${inspection.summary.stale_agenda_count} stale`);
+  console.log(`  Outcomes:        ${inspection.summary.held_outcome_count} held, ${inspection.summary.quiet_outcome_count} quiet, ${inspection.summary.suppressed_outcome_count} suppressed, ${inspection.summary.stale_decision_count} stale decisions`);
+  console.log(`  Quiet prep:      ${inspection.summary.quiet_preparation_count}`);
+  console.log(`  Runtime:         ${inspection.summary.pending_runtime_operation_count} pending operation(s), ${inspection.summary.runtime_event_count} event(s), ${inspection.summary.runtime_item_count} item(s)`);
+  console.log(`  Presence:        ${inspection.presence_status.active_refs.length} active, ${inspection.presence_status.hidden_inspectable_refs.length} hidden inspectable, ${inspection.presence_status.stale_refs.length} stale`);
+  console.log(`  Feedback effects:${inspection.summary.feedback_effect_count}`);
+  if (inspection.warnings.length > 0) {
+    console.log("  Warnings:");
+    for (const warning of inspection.warnings.slice(0, 8)) {
+      console.log(`    - ${warning.severity} ${warning.code}${warning.ref ? ` ${warning.ref}` : ""}: ${warning.detail}`);
+    }
+    if (inspection.warnings.length > 8) {
+      console.log(`    - ... ${inspection.warnings.length - 8} more`);
+    }
+  }
+}
+
 function printJson(value: unknown): void {
   console.log(JSON.stringify(value, null, 2));
 }
@@ -427,7 +453,7 @@ export async function cmdRuntime(stateManager: StateManager, args: string[]): Pr
   const runtimeSubcommand = args[0];
 
   if (!runtimeSubcommand) {
-    logger.error("Error: runtime subcommand required. Available: runtime bindings, runtime sessions, runtime runs, runtime session <id>, runtime run <id>, runtime experiment-queues, runtime experiment-queue <id>, runtime budgets, runtime budget <id>, runtime evidence <goal-id|run-id>, runtime postmortem <goal-id|run-id>, runtime dream-review <run-id>, runtime proactive-quality, runtime proactive-feedback");
+    logger.error("Error: runtime subcommand required. Available: runtime bindings, runtime sessions, runtime runs, runtime session <id>, runtime run <id>, runtime experiment-queues, runtime experiment-queue <id>, runtime budgets, runtime budget <id>, runtime evidence <goal-id|run-id>, runtime postmortem <goal-id|run-id>, runtime dream-review <run-id>, runtime proactive-quality, runtime proactive-feedback, runtime attention-continuity");
     return 1;
   }
 
@@ -632,6 +658,22 @@ export async function cmdRuntime(stateManager: StateManager, args: string[]): Pr
     return 0;
   }
 
+  if (runtimeSubcommand === "attention-continuity") {
+    const values = parseListArgs(args.slice(1), "attention-continuity");
+    const baseDir = stateManager.getBaseDir();
+    try {
+      const inspection = await inspectAttentionContinuity({
+        runtimeRoot: resolveConfiguredDaemonRuntimeRoot(baseDir),
+        controlBaseDir: baseDir,
+      });
+      values.json ? printJson(inspection) : printAttentionContinuitySummary(inspection);
+      return 0;
+    } catch (err) {
+      console.error(formatOperationError("runtime attention-continuity", err));
+      return 1;
+    }
+  }
+
   if (runtimeSubcommand === "proactive-feedback") {
     const values = parseProactiveFeedbackArgs(args.slice(1));
     if (!values.interventionId || !values.outcome) {
@@ -695,7 +737,7 @@ export async function cmdRuntime(stateManager: StateManager, args: string[]): Pr
   }
 
   logger.error(`Unknown runtime subcommand: "${runtimeSubcommand}"`);
-  logger.error("Available: runtime sessions, runtime runs, runtime session <id>, runtime run <id>, runtime experiment-queues, runtime experiment-queue <id>, runtime budgets, runtime budget <id>, runtime evidence <goal-id|run-id>, runtime postmortem <goal-id|run-id>, runtime dream-review <run-id>, runtime proactive-quality, runtime proactive-feedback");
+  logger.error("Available: runtime sessions, runtime runs, runtime session <id>, runtime run <id>, runtime experiment-queues, runtime experiment-queue <id>, runtime budgets, runtime budget <id>, runtime evidence <goal-id|run-id>, runtime postmortem <goal-id|run-id>, runtime dream-review <run-id>, runtime proactive-quality, runtime proactive-feedback, runtime attention-continuity");
   return 1;
 }
 
