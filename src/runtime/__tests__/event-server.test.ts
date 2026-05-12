@@ -1121,6 +1121,31 @@ describe("snapshot and outbox replay", () => {
   it("reports the runtime store control base for custom runtime roots", async () => {
     const runtimeRoot = path.join(tmpDir, "custom-runtime-root");
     const now = new Date().toISOString();
+    await new DaemonStateStore(tmpDir).save({
+      pid: process.pid,
+      started_at: now,
+      last_loop_at: now,
+      loop_count: 1,
+      active_goals: [],
+      status: "crashed",
+      crash_count: 1,
+      last_error: "wrong control base",
+      last_resident_at: null,
+      resident_activity: null,
+    });
+    await new DaemonStateStore(runtimeRoot).save({
+      pid: process.pid,
+      started_at: now,
+      last_loop_at: now,
+      loop_count: 1,
+      active_goals: [],
+      status: "running",
+      runtime_root: runtimeRoot,
+      crash_count: 0,
+      last_error: null,
+      last_resident_at: null,
+      resident_activity: null,
+    });
     await new RuntimeOperationStore(runtimeRoot).save(
       makeRuntimeControlOperation({
         requested_at: now,
@@ -1143,10 +1168,11 @@ describe("snapshot and outbox replay", () => {
     const snapshot = JSON.parse(result.body) as {
       resident_runtime_interface?: {
         identity: { control_base_dir: string };
-        connection: { last_command_at: string | null };
+        connection: { status: string; last_command_at: string | null };
       };
     };
     expect(snapshot.resident_runtime_interface?.identity.control_base_dir).toBe(path.resolve(runtimeRoot));
+    expect(snapshot.resident_runtime_interface?.connection.status).toBe("online");
     expect(snapshot.resident_runtime_interface?.connection.last_command_at).toBe(now);
   });
 

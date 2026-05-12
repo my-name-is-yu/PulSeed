@@ -70,7 +70,6 @@ export class EventServerSnapshotReader {
     ]);
 
     const residentRuntimeInterface = await this.readResidentRuntimeInterface({
-      daemon,
       runtimeSessions,
       approvals: approvalEvents,
       activeWorkers,
@@ -232,7 +231,6 @@ export class EventServerSnapshotReader {
   }
 
   private async readResidentRuntimeInterface(input: {
-    daemon: Record<string, unknown> | null;
     runtimeSessions: RuntimeSessionRegistrySnapshot | null;
     approvals: ApprovalRequiredEvent[];
     activeWorkers: Array<Record<string, unknown>>;
@@ -240,16 +238,17 @@ export class EventServerSnapshotReader {
     operatorHandoffs: RuntimeOperatorHandoffRecord[];
   }): Promise<ResidentRuntimeInterfaceSnapshot> {
     const operationStore = new RuntimeOperationStore(this.runtimeRoot(), this.controlDbOptions());
-    const [pendingOperations, recentOperations, runtimeEvents] = await Promise.all([
+    const [pendingOperations, recentOperations, runtimeEvents, daemonState] = await Promise.all([
       operationStore.listPending(),
       operationStore.listRecentOperations(50),
       operationStore.listRecentRuntimeEvents(50),
+      this.readRuntimeControlDaemonState(),
     ]);
 
     return buildResidentRuntimeInterfaceSnapshot({
       runtimeRoot: this.runtimeRoot(),
       controlBaseDir: this.runtimeControlBaseDir(),
-      daemonState: input.daemon,
+      daemonState,
       runtimeSessions: input.runtimeSessions,
       runtimeEvents,
       pendingOperations,
@@ -259,6 +258,11 @@ export class EventServerSnapshotReader {
       activeWorkers: input.activeWorkers,
       operatorHandoffRefs: input.operatorHandoffs.map((handoff) => handoff.handoff_id),
     });
+  }
+
+  private async readRuntimeControlDaemonState(): Promise<Record<string, unknown> | null> {
+    const state = await new DaemonStateStore(this.runtimeControlBaseDir()).load();
+    return state ? parseJsonObject(JSON.stringify(state)) : null;
   }
 
   async readDaemonStateRaw(): Promise<string | null> {
