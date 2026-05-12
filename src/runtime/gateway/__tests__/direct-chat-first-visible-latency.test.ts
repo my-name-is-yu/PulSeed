@@ -448,6 +448,7 @@ describe("gateway direct chat first visible projection", () => {
         maxConcurrency: 0,
         maxOutputChars: 1000,
         tags: ["automation"],
+        gatewayExposure: "approval_required",
       },
       inputSchema: z.object({ channel: z.literal("telegram").default("telegram") }).strict(),
       description: () => "Write Telegram gateway config after explicit permission.",

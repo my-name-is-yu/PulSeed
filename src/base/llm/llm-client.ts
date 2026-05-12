@@ -1,5 +1,5 @@
 import type Anthropic from "@anthropic-ai/sdk";
-import type { Message } from "@anthropic-ai/sdk/resources/messages";
+import type { ContentBlockParam, Message, MessageParam } from "@anthropic-ai/sdk/resources/messages";
 import type { ZodSchema } from "zod";
 import { sleep } from "../utils/sleep.js";
 import { BaseLLMClient, DEFAULT_MAX_TOKENS, DEFAULT_LLM_TIMEOUT_MS, MAX_RETRY_ATTEMPTS, RETRY_DELAYS_MS, RATE_LIMIT_RETRY_DELAYS_MS, isRateLimitError, getRateLimitRetryDelay, extractJSON } from "./base-llm-client.js";
@@ -10,10 +10,22 @@ import { AnthropicRuntime } from "./anthropic-runtime.js";
 
 // ─── Inline Types ───
 
-export interface LLMMessage {
-  role: "user" | "assistant";
-  content: string;
-}
+export type LLMMessage =
+  | {
+      role: "user";
+      content: string;
+    }
+  | {
+      role: "assistant";
+      content: string;
+      tool_calls?: ToolCallResult[];
+    }
+  | {
+      role: "tool";
+      content: string;
+      tool_call_id: string;
+      name?: string;
+    };
 
 export type { ModelTier };
 
@@ -200,10 +212,7 @@ export class LLMClient extends BaseLLMClient implements ILLMClient {
             temperature,
             ...(system ? { system } : {}),
             ...(anthropicTools?.length ? { tools: anthropicTools } : {}),
-            messages: messages.map((m) => ({
-              role: m.role,
-              content: m.content,
-            })),
+            messages: messages.map(toAnthropicMessage),
           },
           { timeout: DEFAULT_LLM_TIMEOUT_MS, ...(options?.abortSignal ? { signal: options.abortSignal } : {}) }
         );
@@ -319,10 +328,7 @@ export class LLMClient extends BaseLLMClient implements ILLMClient {
         temperature,
         ...(system ? { system } : {}),
         ...(anthropicTools?.length ? { tools: anthropicTools } : {}),
-        messages: messages.map((m) => ({
-          role: m.role,
-          content: m.content,
-        })),
+        messages: messages.map(toAnthropicMessage),
       },
       { timeout: DEFAULT_LLM_TIMEOUT_MS, ...(options?.abortSignal ? { signal: options.abortSignal } : {}) }
     );
@@ -446,4 +452,44 @@ function extractAnthropicToolCalls(message: Message): ToolCallResult[] {
         arguments: JSON.stringify(block.input),
       },
     }));
+}
+
+function toAnthropicMessage(message: LLMMessage): MessageParam {
+  if (message.role === "tool") {
+    return {
+      role: "user",
+      content: [{
+        type: "tool_result",
+        tool_use_id: message.tool_call_id,
+        content: message.content,
+      }] satisfies ContentBlockParam[],
+    };
+  }
+  if (message.role === "assistant" && message.tool_calls?.length) {
+    const content: ContentBlockParam[] = [];
+    if (message.content.trim()) {
+      content.push({ type: "text", text: message.content });
+    }
+    for (const call of message.tool_calls) {
+      content.push({
+        type: "tool_use",
+        id: call.id,
+        name: call.function.name,
+        input: parseToolArguments(call.function.arguments) as Record<string, unknown>,
+      });
+    }
+    return { role: "assistant", content };
+  }
+  return {
+    role: message.role,
+    content: message.content,
+  };
+}
+
+function parseToolArguments(raw: string): unknown {
+  try {
+    return JSON.parse(raw || "{}") as unknown;
+  } catch {
+    return raw;
+  }
 }

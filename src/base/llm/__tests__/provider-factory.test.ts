@@ -51,7 +51,7 @@ vi.mock("../provider-config.js", () => ({
   loadProviderConfig: () => mockLoadProviderConfig(),
 }));
 
-import { buildAdapterRegistry, buildLLMClient } from "../provider-factory.js";
+import { buildAdapterRegistry, buildGatewayLLMClient, buildLLMClient } from "../provider-factory.js";
 import { LLMClient } from "../llm-client.js";
 import { OpenAILLMClient } from "../openai-client.js";
 import { CodexLLMClient } from "../codex-llm-client.js";
@@ -275,6 +275,59 @@ describe("buildLLMClient — early API key validation", () => {
 
       expect(MockedCodexLLMClient).toHaveBeenCalledWith(expect.objectContaining({
         apiKey: undefined,
+      }));
+    });
+
+    it("uses the configured OpenAI model over direct API transport for gateway chat when a sk key is configured", async () => {
+      const MockedOpenAILLMClient = vi.mocked(OpenAILLMClient);
+      const MockedCodexLLMClient = vi.mocked(CodexLLMClient);
+      MockedOpenAILLMClient.mockClear();
+      MockedCodexLLMClient.mockClear();
+
+      mockLoadProviderConfig.mockResolvedValue({
+        provider: "openai",
+        model: "gpt-5.5",
+        light_model: "gpt-5.4-mini",
+        reasoning_effort: "medium",
+        adapter: "openai_codex_cli",
+        api_key: "sk-test",
+        base_url: "https://proxy.example.test/v1",
+      });
+
+      await buildGatewayLLMClient();
+
+      expect(MockedOpenAILLMClient).toHaveBeenCalledOnce();
+      expect(MockedOpenAILLMClient).toHaveBeenCalledWith(expect.objectContaining({
+        apiKey: "sk-test",
+        model: "gpt-5.5",
+        baseURL: "https://proxy.example.test/v1",
+        reasoningEffort: "medium",
+      }));
+      expect(MockedOpenAILLMClient).not.toHaveBeenCalledWith(expect.objectContaining({
+        lightModel: "gpt-5.4-mini",
+      }));
+      expect(MockedCodexLLMClient).not.toHaveBeenCalled();
+    });
+
+    it("keeps OAuth-backed Codex Responses transport for gateway chat", async () => {
+      const MockedOpenAILLMClient = vi.mocked(OpenAILLMClient);
+      const MockedCodexLLMClient = vi.mocked(CodexLLMClient);
+      MockedOpenAILLMClient.mockClear();
+      MockedCodexLLMClient.mockClear();
+
+      mockLoadProviderConfig.mockResolvedValue({
+        provider: "openai",
+        model: "gpt-5.5",
+        adapter: "openai_codex_cli",
+        api_key: "oauth.valid-token",
+      });
+
+      await buildGatewayLLMClient();
+
+      expect(MockedOpenAILLMClient).not.toHaveBeenCalled();
+      expect(MockedCodexLLMClient).toHaveBeenCalledWith(expect.objectContaining({
+        apiKey: "oauth.valid-token",
+        model: "gpt-5.5",
       }));
     });
   });

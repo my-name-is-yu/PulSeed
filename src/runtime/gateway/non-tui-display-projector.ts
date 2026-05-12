@@ -265,8 +265,15 @@ export class NonTuiDisplayProjector {
     const limit = this.maxMessageLength;
     if (!limit || text.length <= limit) return [text];
     const chunks: string[] = [];
-    for (let index = 0; index < text.length; index += limit) {
-      chunks.push(text.slice(index, index + limit));
+    let remaining = text;
+    while (remaining.length > limit) {
+      const chunk = splitMarkdownChunk(remaining, limit);
+      chunks.push(chunk.text);
+      remaining = chunk.remaining;
+      if (!remaining) break;
+    }
+    if (remaining) {
+      chunks.push(remaining);
     }
     return chunks;
   }
@@ -280,14 +287,78 @@ export class NonTuiDisplayProjector {
       this.lastProgressText = "";
       return;
     }
-    if (this.policy.cleanupPolicy === "collapse") {
-      const collapsed = "Completed.";
-      if (collapsed !== this.lastProgressText) {
-        await this.transport.editProgress(this.progressRef, collapsed);
-        this.lastProgressText = collapsed;
-      }
+    if (this.policy.cleanupPolicy === "collapse") return;
+  }
+}
+
+function splitMarkdownChunk(text: string, limit: number): { text: string; remaining: string } {
+  const breakIndex = findMarkdownBreakIndex(text, limit);
+  const rawHead = text.slice(0, breakIndex);
+  const head = rawHead.trimEnd() || text.slice(0, Math.max(1, limit));
+  const tailStart = head === rawHead.trimEnd() ? breakIndex : head.length;
+  const tail = text.slice(tailStart).replace(/^\s+/, "");
+  const openFence = detectOpenFence(head);
+  if (!openFence) {
+    return { text: head, remaining: tail };
+  }
+  const closeLine = openFence.marker;
+  const reopenLine = openFence.info ? `${openFence.marker}${openFence.info}` : openFence.marker;
+  const reserved = closeLine.length + reopenLine.length + 2;
+  const forcedIndex = Math.max(1, Math.min(breakIndex, limit - reserved));
+  const forcedHead = text.slice(0, forcedIndex).trimEnd();
+  return {
+    text: `${forcedHead}\n${closeLine}`,
+    remaining: `${reopenLine}\n${text.slice(forcedIndex).replace(/^\n+/, "")}`,
+  };
+}
+
+function findMarkdownBreakIndex(text: string, limit: number): number {
+  const bounded = text.slice(0, limit);
+  const candidates = [
+    ...findCandidateBreaks(bounded, "\n\n", 2),
+    ...findCandidateBreaks(bounded, "\n", 1),
+    ...findSentenceBreaks(bounded),
+    ...findCandidateBreaks(bounded, " ", 1),
+  ].filter((index) => index > 0 && index <= limit);
+  for (const index of candidates.sort((left, right) => right - left)) {
+    if (!detectOpenFence(text.slice(0, index))) return index;
+  }
+  return Math.max(1, limit);
+}
+
+function findCandidateBreaks(text: string, needle: string, skip: number): number[] {
+  const breaks: number[] = [];
+  let index = text.indexOf(needle);
+  while (index !== -1) {
+    breaks.push(index + skip);
+    index = text.indexOf(needle, index + skip);
+  }
+  return breaks;
+}
+
+function findSentenceBreaks(text: string): number[] {
+  const breaks: number[] = [];
+  for (const match of text.matchAll(/[.!?。！？](?=\s|$)/g)) {
+    breaks.push((match.index ?? 0) + 1);
+  }
+  return breaks;
+}
+
+function detectOpenFence(text: string): { marker: string; info: string } | null {
+  let open: { marker: string; info: string } | null = null;
+  for (const line of text.split("\n")) {
+    const match = line.match(/^(```+|~~~+)(.*)$/);
+    if (!match) continue;
+    const marker = match[1]!;
+    if (!open) {
+      open = { marker: marker.startsWith("~") ? "~~~" : "```", info: (match[2] ?? "").trim() };
+      continue;
+    }
+    if (marker.startsWith(open.marker[0]!)) {
+      open = null;
     }
   }
+  return open;
 }
 
 export function createNonTuiDisplayProjector(

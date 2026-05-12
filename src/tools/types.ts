@@ -113,6 +113,15 @@ export const ToolActivityCategorySchema = z.enum([
 
 export type ToolActivityCategory = z.infer<typeof ToolActivityCategorySchema>;
 
+export const GatewayToolExposureSchema = z.enum([
+  "default_safe",
+  "approval_required",
+  "runtime_control",
+  "never",
+]);
+
+export type GatewayToolExposure = z.infer<typeof GatewayToolExposureSchema>;
+
 // --- Tool Metadata ---
 
 export const ToolMetadataSchema = z.object({
@@ -152,6 +161,11 @@ export const ToolMetadataSchema = z.object({
    * semantics from tool names.
    */
   activityCategory: ToolActivityCategorySchema.optional(),
+  /**
+   * Explicit gateway exposure policy. Read-only is necessary but not sufficient
+   * for external chat surfaces; tools must opt into the gateway catalog.
+   */
+  gatewayExposure: GatewayToolExposureSchema.optional(),
 });
 
 export type ToolMetadata = z.infer<typeof ToolMetadataSchema>;

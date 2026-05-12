@@ -55,7 +55,12 @@ export class OllamaLLMClient extends BaseLLMClient implements ILLMClient {
       openAiMessages.push({ role: "system", content: system });
     }
     for (const msg of messages) {
-      openAiMessages.push({ role: msg.role, content: msg.content });
+      openAiMessages.push({
+        role: msg.role === "tool" ? "user" : msg.role,
+        content: msg.role === "tool"
+          ? `Tool result${msg.name ? ` for ${msg.name}` : ""}:\n${msg.content}`
+          : msg.content,
+      });
     }
 
     const body = JSON.stringify({

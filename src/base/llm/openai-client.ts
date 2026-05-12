@@ -101,7 +101,7 @@ export class OpenAILLMClient extends BaseLLMClient implements ILLMClient {
       openAiMessages.push({ role: "developer" as const, content: system });
     }
     for (const msg of messages) {
-      openAiMessages.push({ role: msg.role, content: msg.content });
+      openAiMessages.push(toOpenAIChatMessage(msg));
     }
 
     // Reasoning models do not accept the temperature parameter
@@ -205,7 +205,7 @@ export class OpenAILLMClient extends BaseLLMClient implements ILLMClient {
       openAiMessages.push({ role: "developer" as const, content: system });
     }
     for (const msg of messages) {
-      openAiMessages.push({ role: msg.role, content: msg.content });
+      openAiMessages.push(toOpenAIChatMessage(msg));
     }
 
     const createParams: OpenAI.Chat.ChatCompletionCreateParamsStreaming = {
@@ -272,7 +272,7 @@ export class OpenAILLMClient extends BaseLLMClient implements ILLMClient {
     messages: LLMMessage[],
     options: { max_tokens: number; temperature: number; system?: string; reasoningEffort?: OpenAIReasoningEffort; abortSignal?: AbortSignal; tools?: LLMRequestOptions["tools"] }
   ): Promise<LLMResponse> {
-    const input = formatResponsesInput(messages, options.system);
+    const input = formatResponsesInput(messages);
 
     // Use Responses API (SDK supports this as of openai v4+).
     // The TypeScript types for the Responses API are not yet in the openai
@@ -288,6 +288,7 @@ export class OpenAILLMClient extends BaseLLMClient implements ILLMClient {
     const responseParams = {
       model,
       input,
+      ...(options.system ? { instructions: options.system } : {}),
       max_output_tokens: options.max_tokens,
       ...(isReasoningModel(model) ? {} : { temperature: options.temperature }),
       ...(shouldSendReasoningEffort(model, options.reasoningEffort) ? { reasoning: { effort: options.reasoningEffort } } : {}),
@@ -312,7 +313,7 @@ export class OpenAILLMClient extends BaseLLMClient implements ILLMClient {
     options: { max_tokens: number; temperature: number; system?: string; reasoningEffort?: OpenAIReasoningEffort; abortSignal?: AbortSignal; tools?: LLMRequestOptions["tools"] },
     handlers: LLMStreamHandlers,
   ): Promise<LLMResponse> {
-    const input = formatResponsesInput(messages, options.system);
+    const input = formatResponsesInput(messages);
     const responsesApi = (this.client as unknown as {
       responses: {
         create: (params: Record<string, unknown>, requestOptions?: Record<string, unknown>) => Promise<unknown>;
@@ -328,6 +329,7 @@ export class OpenAILLMClient extends BaseLLMClient implements ILLMClient {
     const responseParams = {
       model,
       input,
+      ...(options.system ? { instructions: options.system } : {}),
       max_output_tokens: options.max_tokens,
       stream: true,
       ...(isReasoningModel(model) ? {} : { temperature: options.temperature }),
@@ -420,13 +422,78 @@ export class OpenAILLMClient extends BaseLLMClient implements ILLMClient {
   }
 }
 
-function formatResponsesInput(messages: LLMMessage[], system: string | undefined): string {
-  return [
-    system ? `SYSTEM:\n${system}` : null,
-    ...messages.map((m) => `${m.role.toUpperCase()}:\n${m.content}`),
-  ]
-    .filter(Boolean)
-    .join("\n\n");
+function toOpenAIChatMessage(message: LLMMessage): OpenAI.Chat.ChatCompletionMessageParam {
+  if (message.role === "tool") {
+    return {
+      role: "tool",
+      tool_call_id: message.tool_call_id,
+      content: message.content,
+    };
+  }
+  if (message.role === "assistant" && message.tool_calls?.length) {
+    return {
+      role: "assistant",
+      content: message.content || null,
+      tool_calls: message.tool_calls.map((call) => ({
+        id: call.id,
+        type: "function" as const,
+        function: {
+          name: call.function.name,
+          arguments: call.function.arguments,
+        },
+      })),
+    };
+  }
+  return { role: message.role, content: message.content };
+}
+
+function formatResponsesInput(messages: LLMMessage[]): Record<string, unknown>[] {
+  return messages.flatMap((message, index): Record<string, unknown>[] => {
+    if (message.role === "tool") {
+      return [{
+        type: "function_call_output",
+        call_id: message.tool_call_id,
+        output: message.content,
+      }];
+    }
+    if (message.role === "assistant" && message.tool_calls?.length) {
+      const items: Record<string, unknown>[] = [];
+      if (message.content.trim()) {
+        items.push({
+          type: "message",
+          id: `msg_${index}`,
+          role: "assistant",
+          content: [{ type: "output_text", text: message.content, annotations: [] }],
+          status: "completed",
+        });
+      }
+      for (const call of message.tool_calls) {
+        items.push({
+          type: "function_call",
+          id: call.id,
+          call_id: call.id,
+          name: call.function.name,
+          arguments: call.function.arguments,
+          status: "completed",
+        });
+      }
+      return items;
+    }
+    if (message.role === "assistant") {
+      return [{
+        type: "message",
+        id: `msg_${index}`,
+        role: "assistant",
+        content: [{ type: "output_text", text: message.content || " ", annotations: [] }],
+        status: "completed",
+      }];
+    }
+    return [{
+      type: "message",
+      role: message.role,
+      content: [{ type: "input_text", text: message.content || " " }],
+    }];
+  });
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

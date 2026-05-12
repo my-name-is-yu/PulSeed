@@ -105,6 +105,35 @@ export async function buildLLMClient(providerConfig?: ProviderConfig): Promise<I
 }
 
 /**
+ * Build the LLM client used by direct gateway/chat surfaces.
+ *
+ * The provider config's adapter still controls task execution, but short
+ * gateway replies should not pay the `codex exec` process startup cost when the
+ * same configured OpenAI model can be reached through the configured API key.
+ * This preserves the selected provider/model; it only changes the transport
+ * used for gateway chat.
+ */
+export async function buildGatewayLLMClient(providerConfig?: ProviderConfig): Promise<ILLMClient> {
+  const config = providerConfig ?? await loadProviderConfig();
+
+  if (
+    config.provider === "openai"
+    && config.adapter === "openai_codex_cli"
+    && config.api_key
+    && !isCodexOAuthAccessToken(config.api_key)
+  ) {
+    return new OpenAILLMClient({
+      apiKey: config.api_key,
+      model: config.model,
+      baseURL: config.base_url,
+      reasoningEffort: config.reasoning_effort,
+    });
+  }
+
+  return buildLLMClient(config);
+}
+
+/**
  * Build an AdapterRegistry pre-populated with the standard adapters.
  * Registers core execution adapters and any A2A agents configured in provider
  * config or environment variables.

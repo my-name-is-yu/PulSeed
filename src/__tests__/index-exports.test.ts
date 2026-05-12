@@ -42,5 +42,6 @@ describe("src/index.ts exports", () => {
     expect(exports.get("calculateDimensionGap")).toBe("./platform/drive/gap-calculator.js");
     expect(exports.get("scoreAllDimensions")).toBe("./platform/drive/drive-scorer.js");
     expect(exports.get("buildLLMClient")).toBe("./base/llm/provider-factory.js");
+    expect(exports.get("buildGatewayLLMClient")).toBe("./base/llm/provider-factory.js");
   });
 });

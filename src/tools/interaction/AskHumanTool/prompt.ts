@@ -1,1 +1,1 @@
-export const DESCRIPTION = `Ask the human operator a yes/no question and get their response. Returns 'approved' or 'denied'. When requesting permission for local writes, execution, or durable runs, set approval_scope so denial is treated as a terminal permission denial.`;
+export const DESCRIPTION = `Ask the human operator a yes/no question and get their response. Returns 'approved' or 'denied'. When requesting permission for a local write, execution, or durable run, set approval_scope and approval_target_tool so approval unlocks only that exact tool.`;

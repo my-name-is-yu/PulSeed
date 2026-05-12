@@ -92,7 +92,7 @@ export function createSetupRuntimeControlTools(deps: SetupRuntimeControlToolDeps
 }
 
 class GetGatewaySetupStatusTool implements ITool<GatewaySetupStatusInput> {
-  readonly metadata = makeMetadata("get_gateway_setup_status", "read_only", true);
+  readonly metadata = makeMetadata("get_gateway_setup_status", "read_only", true, false, "default_safe");
   readonly inputSchema = GatewaySetupStatusInputSchema;
   constructor(private readonly deps: SetupRuntimeControlToolDeps) {}
 
@@ -135,7 +135,7 @@ class GetGatewaySetupStatusTool implements ITool<GatewaySetupStatusInput> {
 }
 
 class PrepareGatewaySetupGuidanceTool implements ITool<SetupGuidanceInput> {
-  readonly metadata = makeMetadata("prepare_gateway_setup_guidance", "read_only", true);
+  readonly metadata = makeMetadata("prepare_gateway_setup_guidance", "read_only", true, false, "default_safe");
   readonly inputSchema = SetupGuidanceInputSchema;
   constructor(private readonly deps: SetupRuntimeControlToolDeps) {}
 
@@ -195,7 +195,7 @@ class PrepareGatewaySetupGuidanceTool implements ITool<SetupGuidanceInput> {
 }
 
 class PrepareGatewayConfigWriteTool implements ITool<PrepareConfigWriteInput> {
-  readonly metadata = makeMetadata("prepare_gateway_config_write", "write_local", false);
+  readonly metadata = makeMetadata("prepare_gateway_config_write", "write_local", false, false, "approval_required");
   readonly inputSchema = PrepareConfigWriteInputSchema;
   constructor(private readonly deps: SetupRuntimeControlToolDeps) {}
 
@@ -231,7 +231,7 @@ class PrepareGatewayConfigWriteTool implements ITool<PrepareConfigWriteInput> {
 }
 
 class ConfirmGatewayConfigWriteTool implements ITool<PrepareConfigWriteInput> {
-  readonly metadata = makeMetadata("confirm_gateway_config_write", "write_local", false);
+  readonly metadata = makeMetadata("confirm_gateway_config_write", "write_local", false, false, "approval_required");
   readonly inputSchema = PrepareConfigWriteInputSchema;
   constructor(private readonly deps: SetupRuntimeControlToolDeps) {}
 
@@ -310,7 +310,7 @@ class ConfirmGatewayConfigWriteTool implements ITool<PrepareConfigWriteInput> {
 }
 
 class CancelGatewayConfigWriteTool implements ITool<PrepareConfigWriteInput> {
-  readonly metadata = makeMetadata("cancel_gateway_config_write", "write_local", false);
+  readonly metadata = makeMetadata("cancel_gateway_config_write", "write_local", false, false, "approval_required");
   readonly inputSchema = PrepareConfigWriteInputSchema;
   constructor(_deps: SetupRuntimeControlToolDeps) {}
 
@@ -334,7 +334,7 @@ class CancelGatewayConfigWriteTool implements ITool<PrepareConfigWriteInput> {
 }
 
 class GetRuntimeStatusTool implements ITool<RuntimeStatusInput> {
-  readonly metadata = makeMetadata("get_runtime_status", "read_only", true);
+  readonly metadata = makeMetadata("get_runtime_status", "read_only", true, false, "runtime_control");
   readonly inputSchema = RuntimeStatusInputSchema;
   constructor(private readonly deps: SetupRuntimeControlToolDeps) {}
 
@@ -348,7 +348,14 @@ class GetRuntimeStatusTool implements ITool<RuntimeStatusInput> {
     return toolResult(true, snapshot, formatRuntimeStatus(snapshot), started);
   }
 
-  checkPermissions(_input: RuntimeStatusInput, _context: ToolCallContext): Promise<PermissionCheckResult> {
+  checkPermissions(_input: RuntimeStatusInput, context: ToolCallContext): Promise<PermissionCheckResult> {
+    if (!runtimeControlAllowed(context)) {
+      return Promise.resolve({
+        status: "denied",
+        reason: "get_runtime_status requires runtime-control authorization",
+        executionReason: "policy_blocked",
+      });
+    }
     return Promise.resolve({ status: "allowed" });
   }
 
@@ -358,7 +365,7 @@ class GetRuntimeStatusTool implements ITool<RuntimeStatusInput> {
 }
 
 class RequestRuntimeControlTool implements ITool<RuntimeControlInput> {
-  readonly metadata = makeMetadata("request_runtime_control", "write_local", false);
+  readonly metadata = makeMetadata("request_runtime_control", "write_local", false, false, "runtime_control");
   readonly inputSchema = RuntimeControlInputSchema;
   constructor(private readonly deps: SetupRuntimeControlToolDeps) {}
 
@@ -413,7 +420,7 @@ class RequestRuntimeControlTool implements ITool<RuntimeControlInput> {
 }
 
 class RunPauseTool implements ITool<RuntimeRunControlToolInput> {
-  readonly metadata = makeMetadata("run_pause", "write_local", false);
+  readonly metadata = makeMetadata("run_pause", "write_local", false, false, "runtime_control");
   readonly inputSchema = RuntimeRunControlToolInputSchema;
   constructor(private readonly deps: SetupRuntimeControlToolDeps) {}
 
@@ -435,7 +442,7 @@ class RunPauseTool implements ITool<RuntimeRunControlToolInput> {
 }
 
 class RunResumeTool implements ITool<RuntimeRunControlToolInput> {
-  readonly metadata = makeMetadata("run_resume", "write_local", false);
+  readonly metadata = makeMetadata("run_resume", "write_local", false, false, "runtime_control");
   readonly inputSchema = RuntimeRunControlToolInputSchema;
   constructor(private readonly deps: SetupRuntimeControlToolDeps) {}
 
@@ -457,7 +464,7 @@ class RunResumeTool implements ITool<RuntimeRunControlToolInput> {
 }
 
 class RunCancelTool implements ITool<RuntimeRunControlToolInput> {
-  readonly metadata = makeMetadata("run_cancel", "write_local", false, true);
+  readonly metadata = makeMetadata("run_cancel", "write_local", false, true, "runtime_control");
   readonly inputSchema = RuntimeRunControlToolInputSchema;
   constructor(private readonly deps: SetupRuntimeControlToolDeps) {}
 
@@ -689,6 +696,7 @@ function makeMetadata(
   permissionLevel: ToolMetadata["permissionLevel"],
   isReadOnly: boolean,
   isDestructive = false,
+  gatewayExposure?: ToolMetadata["gatewayExposure"],
 ): ToolMetadata {
   return {
     name,
@@ -701,6 +709,7 @@ function makeMetadata(
     maxConcurrency: 1,
     maxOutputChars: 12000,
     tags: ["agentloop", "setup", "runtime-control"],
+    ...(gatewayExposure ? { gatewayExposure } : {}),
   };
 }
 

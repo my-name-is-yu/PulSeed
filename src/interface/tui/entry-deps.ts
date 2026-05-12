@@ -361,6 +361,7 @@ export async function buildStandaloneTuiDeps() {
       stateManager,
       adapter,
       llmClient,
+      defaultExecutionSecurity: providerConfig.agent_loop?.security,
       trustManager,
       registry: toolRegistry,
       toolExecutor,
@@ -447,7 +448,7 @@ export async function buildDaemonModeChatSurface(
   const providerConfig = await loadProviderConfig();
   try {
     const { SharedManagerTuiChatSurface } = await import("./chat-surface.js");
-    const { buildLLMClient, buildAdapterRegistry } = await import("../../base/llm/provider-factory.js");
+    const { buildGatewayLLMClient, buildAdapterRegistry } = await import("../../base/llm/provider-factory.js");
     const {
       createNativeChatAgentLoopRunner,
       createNativeReviewAgentLoopRunner,
@@ -457,7 +458,7 @@ export async function buildDaemonModeChatSurface(
     const { EthicsGate } = await import("../../platform/traits/ethics-gate.js");
     const { ObservationEngine } = await import("../../platform/observation/observation-engine.js");
     const { RuntimeControlService, createDaemonRuntimeControlExecutor } = await import("../../runtime/control/index.js");
-    llmClient = await buildLLMClient();
+    llmClient = await buildGatewayLLMClient(providerConfig);
     for (const tool of createBuiltinTools({
       stateManager,
       trustManager,
@@ -527,6 +528,7 @@ export async function buildDaemonModeChatSurface(
       stateManager,
       adapter,
       llmClient,
+      defaultExecutionSecurity: providerConfig.agent_loop?.security,
       trustManager,
       registry: toolRegistry,
       toolExecutor,

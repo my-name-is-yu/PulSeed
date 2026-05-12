@@ -142,6 +142,55 @@ describe("OpenAILLMClient", () => {
       ]);
     });
 
+    it("preserves assistant tool calls and tool result messages for Chat Completions", async () => {
+      const client = new OpenAILLMClient({ apiKey: "sk-test" });
+      mockCreate.mockResolvedValueOnce(makeCompletionResponse("response"));
+
+      await client.sendMessage([
+        { role: "user", content: "inspect" },
+        {
+          role: "assistant",
+          content: "Reading the file.",
+          tool_calls: [{
+            id: "call-read",
+            type: "function",
+            function: {
+              name: "read",
+              arguments: "{\"file_path\":\"README.md\"}",
+            },
+          }],
+        },
+        {
+          role: "tool",
+          tool_call_id: "call-read",
+          name: "read",
+          content: "{\"exists\":true}",
+        },
+      ]);
+
+      const callArgs = mockCreate.mock.calls[0][0];
+      expect(callArgs.messages).toEqual([
+        { role: "user", content: "inspect" },
+        {
+          role: "assistant",
+          content: "Reading the file.",
+          tool_calls: [{
+            id: "call-read",
+            type: "function",
+            function: {
+              name: "read",
+              arguments: "{\"file_path\":\"README.md\"}",
+            },
+          }],
+        },
+        {
+          role: "tool",
+          tool_call_id: "call-read",
+          content: "{\"exists\":true}",
+        },
+      ]);
+    });
+
     it("prepends system as developer role message when options.system is provided", async () => {
       const client = new OpenAILLMClient({ apiKey: "sk-test" });
       mockCreate.mockResolvedValueOnce(makeCompletionResponse("ok"));
@@ -328,6 +377,72 @@ describe("OpenAILLMClient", () => {
         id: "call-1",
         function: { name: "read_file", arguments: "{\"path\":\"README.md\"}" },
       });
+    });
+
+    it("preserves structured tool transcript in the Responses API fallback", async () => {
+      const client = new OpenAILLMClient({ apiKey: "sk-test", model: "codex-mini-latest" });
+      mockCreate.mockRejectedValueOnce(
+        new Error("This is not a chat model and not supported in the v1/chat/completions endpoint")
+      );
+      mockResponsesCreate.mockResolvedValueOnce({
+        output_text: "done",
+        status: "completed",
+        usage: { input_tokens: 10, output_tokens: 4 },
+      });
+
+      await client.sendMessage([
+        { role: "user", content: "inspect" },
+        {
+          role: "assistant",
+          content: "Reading.",
+          tool_calls: [{
+            id: "call-read",
+            type: "function",
+            function: {
+              name: "read",
+              arguments: "{\"file_path\":\"README.md\"}",
+            },
+          }],
+        },
+        {
+          role: "tool",
+          tool_call_id: "call-read",
+          name: "read",
+          content: "{\"exists\":true}",
+        },
+      ], {
+        system: "system prompt",
+      });
+
+      const params = mockResponsesCreate.mock.calls[0][0] as Record<string, unknown>;
+      expect(params.instructions).toBe("system prompt");
+      expect(params.input).toEqual([
+        {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: "inspect" }],
+        },
+        {
+          type: "message",
+          id: "msg_1",
+          role: "assistant",
+          content: [{ type: "output_text", text: "Reading.", annotations: [] }],
+          status: "completed",
+        },
+        {
+          type: "function_call",
+          id: "call-read",
+          call_id: "call-read",
+          name: "read",
+          arguments: "{\"file_path\":\"README.md\"}",
+          status: "completed",
+        },
+        {
+          type: "function_call_output",
+          call_id: "call-read",
+          output: "{\"exists\":true}",
+        },
+      ]);
     });
   });
 

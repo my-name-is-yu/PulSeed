@@ -44,6 +44,7 @@ function makeMockTool(
   permResult: PermissionCheckResult,
   callResult: Partial<ToolResult> = {},
 ): ITool {
+  const readOnly = name === "read";
   const callFn = vi.fn().mockResolvedValue({
     success: true,
     data: { done: true },
@@ -56,14 +57,15 @@ function makeMockTool(
     metadata: {
       name,
       aliases: [],
-      permissionLevel: "write_local",
-      isReadOnly: false,
+      permissionLevel: readOnly ? "read_only" : "write_local",
+      isReadOnly: readOnly,
       isDestructive: false,
       shouldDefer: false,
       alwaysLoad: false,
       maxConcurrency: 0,
       maxOutputChars: 8000,
       tags: [],
+      gatewayExposure: readOnly ? "default_safe" : "approval_required",
     },
     inputSchema: z.object({ query: z.string().optional() }),
     description: () => `Mock tool: ${name}`,
@@ -141,7 +143,7 @@ describe("ChatRunner — permission gate (Fix #505)", () => {
       // Verify the tool result message sent to LLM contains denial text
       const secondCall = llmClient.sendMessage.mock.calls[1];
       const messages = secondCall[0] as Array<{ role: string; content: string }>;
-      const toolResultMsg = messages.find((m) => m.role === "user" && m.content.includes("denied"));
+      const toolResultMsg = messages.find((m) => m.role === "tool" && m.content.includes("denied"));
       expect(toolResultMsg).toBeDefined();
       expect(toolResultMsg!.content).toContain("no access");
     });

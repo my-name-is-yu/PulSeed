@@ -873,7 +873,7 @@ describe("TelegramChatEventAdapter", () => {
     expect(editMessageText).not.toHaveBeenCalled();
   });
 
-  it("collapses visible progress instead of deleting it when an immediate final arrives", async () => {
+  it("leaves visible progress unchanged when an immediate final arrives", async () => {
     const sendPlainMessage = vi.fn()
       .mockResolvedValueOnce(14)
       .mockResolvedValueOnce(15);
@@ -918,7 +918,7 @@ describe("TelegramChatEventAdapter", () => {
     expect(sendPlainMessage).toHaveBeenNthCalledWith(1, 777, "I will check this before answering.");
     expect(sendPlainMessage).toHaveBeenNthCalledWith(2, 777, "Blocked final.");
     expect(deleteMessage).not.toHaveBeenCalled();
-    expect(editMessageText).toHaveBeenCalledWith(777, 14, "Completed.");
+    expect(editMessageText).not.toHaveBeenCalled();
   });
 
   it("edits the assistant message to show lifecycle_error partial text", async () => {

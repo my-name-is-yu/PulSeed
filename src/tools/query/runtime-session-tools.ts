@@ -727,6 +727,7 @@ export class RuntimeSessionsListTool implements ITool<RuntimeSessionsListInput, 
     maxConcurrency: 0,
     maxOutputChars: 12000,
     tags: [...TAGS],
+    gatewayExposure: "default_safe",
   };
   readonly inputSchema = RuntimeSessionsListInputSchema;
 
@@ -765,6 +766,7 @@ export class RuntimeRunsObserveTool implements ITool<RuntimeRunsObserveInput, un
     maxConcurrency: 0,
     maxOutputChars: 12000,
     tags: [...TAGS, "runtime-control"],
+    gatewayExposure: "default_safe",
   };
   readonly inputSchema = RuntimeRunsObserveInputSchema;
 

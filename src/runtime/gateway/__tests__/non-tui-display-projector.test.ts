@@ -338,12 +338,7 @@ describe("non-TUI display projector", () => {
     expect(transport.sendProgress).toHaveBeenCalledOnce();
     expect(transport.sendFinal).toHaveBeenCalledWith("Blocked final.");
     expect(transport.deleteProgress).not.toHaveBeenCalled();
-    expect(transport.editProgress).toHaveBeenCalledWith({ id: "progress-1" }, "Completed.");
-    expect(transport.calls).toEqual([
-      "sendProgress:I will check the request before answering.",
-      "editProgress:Completed.",
-      "sendFinal:Blocked final.",
-    ]);
+    expect(transport.editProgress).not.toHaveBeenCalledWith({ id: "progress-1" }, "Completed.");
     expect(projector.deliveredProgressOutput).toBe(true);
   });
 
@@ -390,7 +385,6 @@ describe("non-TUI display projector", () => {
 
     expect(transport.calls).toEqual([
       "sendProgress:Checking gateway so I can confirm the current state before changing anything.",
-      "editProgress:Completed.",
       "sendFinal:Done.",
     ]);
     expect(transport.calls.join("\n")).not.toContain("Late status after final");
@@ -447,11 +441,10 @@ describe("non-TUI display projector", () => {
 
     expect(transport.sendProgress).not.toHaveBeenCalled();
     expect(transport.editProgress).not.toHaveBeenCalled();
-    expect(transport.sendFinal).toHaveBeenCalledTimes(3);
+    expect(transport.sendFinal).toHaveBeenCalledTimes(2);
     expect(transport.calls).toEqual([
       "sendFinal:Hello",
-      "sendFinal: worl",
-      "sendFinal:d",
+      "sendFinal:world",
     ]);
   });
 

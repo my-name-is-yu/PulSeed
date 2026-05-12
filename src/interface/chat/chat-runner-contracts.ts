@@ -27,7 +27,10 @@ import type { SetupSecretIntakeResult } from "./setup-secret-intake.js";
 import type { SetupDialogueRuntimeState } from "./setup-dialogue.js";
 import type { TurnLanguageHint } from "./turn-language.js";
 import type { RunSpecConfirmationState } from "./chat-history.js";
-import type { ExecutionPolicy } from "../../orchestrator/execution/agent-loop/execution-policy.js";
+import type {
+  AgentLoopSecurityConfig,
+  ExecutionPolicy,
+} from "../../orchestrator/execution/agent-loop/execution-policy.js";
 import type { ChatHistory } from "./chat-history.js";
 import type { EventSubscriber } from "./event-subscriber.js";
 import type { UserInput } from "./user-input.js";
@@ -64,6 +67,8 @@ export interface ChatRunnerDeps {
   stateManager: StateManager;
   adapter: IAdapter;
   llmClient?: ILLMClient;
+  runtimeEvidenceGateClient?: Pick<ILLMClient, "sendMessage" | "parseJSON">;
+  defaultExecutionSecurity?: AgentLoopSecurityConfig;
   escalationHandler?: EscalationHandler;
   trustManager?: { getBalance(domain: string): Promise<{ balance: number }>; setOverride?(domain: string, balance: number, reason: string): Promise<void> };
   pluginLoader?: { loadAll(): Promise<Array<{ name: string; type?: string; enabled?: boolean }>> };

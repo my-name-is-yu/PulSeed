@@ -118,7 +118,7 @@ export function createGatewayDisplayPolicy(
     progressSurface,
     finalSurface,
     cleanupPolicy: supportsEditableProgress
-      ? capabilities.canDeleteMessages ? "delete" : "collapse"
+      ? capabilities.canDeleteMessages ? "delete" : "none"
       : "none",
     toolProgress: supportsEditableProgress ? "all" : "off",
     showReasoning: false,

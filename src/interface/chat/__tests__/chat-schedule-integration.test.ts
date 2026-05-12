@@ -194,9 +194,17 @@ describe("ChatRunner schedule integration", () => {
     await runner.execute("list schedules", "/tmp");
 
     expect(vi.mocked(scheduleEngine.getEntries)).toHaveBeenCalledTimes(1);
-    const secondCallMessages = llmClient.sendMessage.mock.calls[1]?.[0] as Array<{ role: string; content: string }>;
+    const secondCallMessages = llmClient.sendMessage.mock.calls[1]?.[0] as Array<{
+      role: string;
+      content: string;
+      tool_call_id?: string;
+      name?: string;
+    }>;
     const toolResultMessage = secondCallMessages.find(
-      (message) => message.role === "user" && message.content.startsWith("Tool result for list_schedules:\n"),
+      (message) =>
+        message.role === "tool"
+        && message.tool_call_id === "tool-call-1"
+        && message.name === "list_schedules",
     );
 
     expect(toolResultMessage).toBeDefined();

@@ -1,7 +1,6 @@
 import type { ILLMClient, LLMMessage, LLMRequestOptions, LLMResponse, ToolCallResult } from "../../base/llm/llm-client.js";
 import { loadProviderConfig } from "../../base/llm/provider-config.js";
 import type { ApprovalRequest, ITool, ToolCallContext, ToolResult } from "../../tools/types.js";
-import { extractPromptedToolCalls } from "../../orchestrator/execution/agent-loop/prompted-tool-protocol.js";
 import {
   collectGitDiffArtifact,
   formatToolActivity,
@@ -14,7 +13,11 @@ import {
   type AgentLoopSessionState,
 } from "../../orchestrator/execution/agent-loop/agent-loop-session-state.js";
 import { AgentLoopSessionStateCatalog } from "../../orchestrator/execution/agent-loop/agent-loop-session-db-store.js";
-import { resolveExecutionPolicy, type ExecutionPolicy } from "../../orchestrator/execution/agent-loop/execution-policy.js";
+import {
+  resolveExecutionPolicy,
+  type AgentLoopSecurityConfig,
+  type ExecutionPolicy,
+} from "../../orchestrator/execution/agent-loop/execution-policy.js";
 import type { AssistantBuffer } from "./chat-runner-event-bridge.js";
 import type { SetupSecretIntakeResult } from "./setup-secret-intake.js";
 import { createGatewaySetupStatusProvider } from "./gateway-setup-status.js";
@@ -23,6 +26,10 @@ import {
   type ChatTurnContext,
 } from "./turn-context.js";
 import { buildChatModelRequest } from "./model-request-builder.js";
+import {
+  gateRuntimeEvidenceBoundFinalAnswer,
+  mayRequireRuntimeEvidenceGate,
+} from "./runtime-evidence-gate.js";
 import {
   createDiscordAdapterPlanDialogue,
   createTelegramConfirmWriteDialogue,
@@ -39,6 +46,9 @@ import {
   zeroUsageCounter,
 } from "./chat-usage.js";
 import {
+  extractPromptedToolCalls,
+} from "../../orchestrator/execution/agent-loop/prompted-tool-protocol.js";
+import {
   formatTelegramConfigProgressDetail,
   formatTelegramConfigureGuidance,
 } from "./telegram-setup-guidance.js";
@@ -49,7 +59,11 @@ export {
 } from "./telegram-setup-guidance.js";
 
 const MAX_TOOL_LOOPS = 24;
-const TOOL_LOOP_STUCK_REPEAT_LIMIT = 1;
+const GATEWAY_LOOP_WARNING_REPEAT_LIMIT = 2;
+const GATEWAY_LOOP_BLOCK_REPEAT_LIMIT = 4;
+const GATEWAY_POLL_WARNING_REPEAT_LIMIT = 3;
+const GATEWAY_POLL_BLOCK_REPEAT_LIMIT = 6;
+const GATEWAY_UNAVAILABLE_TOOL_GUIDANCE_LIMIT = 3;
 
 export type GatewayToolScope =
   | "read_workspace"
@@ -63,8 +77,13 @@ export type GatewayToolScope =
 export interface GatewayToolScopeContext {
   runtimeControlAllowed?: boolean;
   runtimeControlApprovalMode?: "interactive" | "preapproved" | "disallowed";
+  approvalAvailable?: boolean;
+  approvedToolNames?: ReadonlySet<string> | readonly string[];
+  /** @deprecated use approvalAvailable; retained for older focused tests. */
   approvedWrite?: boolean;
+  /** @deprecated use approvalAvailable; retained for older focused tests. */
   approvedExecute?: boolean;
+  /** @deprecated use approvalAvailable; retained for older focused tests. */
   approvedDurableRun?: boolean;
 }
 
@@ -299,6 +318,24 @@ export async function executeAgentLoopRoute(
     if (hasUsage(agentLoopUsage)) {
       history.recordUsage("agentloop", agentLoopUsage);
     }
+    if (result.output && shouldGateRuntimeEvidenceForTurn(turnContext)) {
+      const gate = await gateRuntimeEvidenceBoundFinalAnswer({
+        turnContext,
+        assistantOutput: result.output,
+        hasRuntimeEvidence: host.eventBridge.hasRuntimeEvidenceForTurn(eventContext),
+        runtimeEvidenceRefs: host.eventBridge.getRuntimeEvidenceRefsForTurn(eventContext),
+        llmClient: host.deps.runtimeEvidenceGateClient ?? host.deps.llmClient,
+      });
+      if (gate.blocked) {
+        host.eventBridge.emitCheckpoint(
+          "Runtime evidence required",
+          gate.reason ?? "The final answer made an unverified runtime or workspace claim.",
+          eventContext,
+          "runtime-evidence",
+        );
+      }
+      result.output = gate.output;
+    }
     if (result.output) {
       host.eventBridge.pushAssistantSnapshot(result.output, assistantBuffer, eventContext);
     }
@@ -374,7 +411,7 @@ export async function executeGatewayModelLoopRoute(
   params: GatewayModelLoopRouteParams,
 ): Promise<ChatRunResult> {
   try {
-    const registryTools = host.deps.registry?.listAll() ?? [];
+    const shouldGateEvidence = shouldGateRuntimeEvidenceForTurn(params.turnContext);
     const toolResult = await executeWithTools(
       host,
       params.turnContext,
@@ -385,8 +422,11 @@ export async function executeGatewayModelLoopRoute(
       params.runtimeControlContext,
       params.start,
       {
-        tools: registryTools,
+        tools: host.deps.registry?.listAll() ?? [],
         streamFinalText: true,
+        holdAssistantDelta: shouldGateEvidence
+          ? (candidate) => mayRequireRuntimeEvidenceGate(candidate)
+          : undefined,
         abortSignal: params.activeAbortSignal,
         timeoutMs: params.timeoutMs,
       },
@@ -399,7 +439,25 @@ export async function executeGatewayModelLoopRoute(
     if (diffArtifact) {
       host.eventBridge.emitDiffArtifact(diffArtifact, params.eventContext);
     }
-    const output = toolResult.output;
+    let output = toolResult.output;
+    if (shouldGateEvidence) {
+      const gate = await gateRuntimeEvidenceBoundFinalAnswer({
+        turnContext: params.turnContext,
+        assistantOutput: output,
+        hasRuntimeEvidence: host.eventBridge.hasRuntimeEvidenceForTurn(params.eventContext),
+        runtimeEvidenceRefs: host.eventBridge.getRuntimeEvidenceRefsForTurn(params.eventContext),
+        llmClient: host.deps.runtimeEvidenceGateClient ?? host.deps.llmClient,
+      });
+      if (gate.blocked) {
+        host.eventBridge.emitCheckpoint(
+          "Runtime evidence required",
+          gate.reason ?? "The final answer made an unverified runtime or workspace claim.",
+          params.eventContext,
+          "runtime-evidence",
+        );
+      }
+      output = gate.output;
+    }
     if (!params.assistantBuffer.text) {
       host.eventBridge.pushAssistantDelta(output, params.assistantBuffer, params.eventContext);
     } else {
@@ -435,79 +493,11 @@ export async function executeGatewayModelLoopRoute(
   }
 }
 
-const GATEWAY_READ_WORKSPACE_TOOL_NAMES = new Set([
-  "tool_search",
-  "list_dir",
-  "read",
-  "grep",
-  "glob",
-  "code_search",
-  "code_read_context",
-  "json_query",
-]);
-
-const GATEWAY_RUNTIME_STATUS_TOOL_NAMES = new Set([
-  "get_gateway_setup_status",
-  "prepare_gateway_setup_guidance",
-  "get_runtime_status",
-  "list_schedules",
-  "get_schedule",
-  "runs_list",
-  "runs_observe",
-  "sessions_list",
-  "sessions_observe",
-]);
-
-const GATEWAY_REQUEST_APPROVAL_TOOL_NAMES = new Set([
-  "ask-human",
-]);
-
-const GATEWAY_APPROVED_WRITE_TOOL_NAMES = new Set([
-  "prepare_gateway_config_write",
-  "confirm_gateway_config_write",
-  "cancel_gateway_config_write",
-  "draft_run_spec",
-  "update_run_spec_draft",
-  "cancel_run_spec_draft",
-  "runspec_propose",
-  "create_schedule",
-  "update_schedule",
-  "remove_schedule",
-  "pause_schedule",
-  "resume_schedule",
-]);
-
-const GATEWAY_APPROVED_DURABLE_RUN_TOOL_NAMES = new Set([
-  "runspec_confirm",
-  "start_durable_run",
-  "run_start",
-  "run_schedule",
-]);
-
-const GATEWAY_AUTHORIZED_RUNTIME_CONTROL_TOOL_NAMES = new Set([
-  "request_runtime_control",
-  "run_pause",
-  "run_resume",
-  "run_cancel",
-]);
-
-const GATEWAY_APPROVED_EXECUTE_TOOL_NAMES = new Set([
-  "shell",
-  "shell_command",
-  "process_session_start",
-  "process_session_write",
-  "process_session_stop",
-]);
-
 export function resolveGatewayToolScopes(context: GatewayToolScopeContext = {}): Set<GatewayToolScope> {
   const scopes = new Set<GatewayToolScope>([
     "read_workspace",
-    "read_runtime_status",
     "request_approval",
   ]);
-  if (context.approvedWrite) scopes.add("approved_write");
-  if (context.approvedExecute) scopes.add("approved_execute");
-  if (context.approvedDurableRun) scopes.add("approved_durable_run");
   if (context.runtimeControlAllowed === true && context.runtimeControlApprovalMode !== "disallowed") {
     scopes.add("authorized_runtime_control");
   }
@@ -519,18 +509,58 @@ export function selectGatewayModelLoopTools(
   context: GatewayToolScopeContext = {},
 ): ITool[] {
   const scopes = resolveGatewayToolScopes(context);
-  return tools.filter((tool) => isGatewayToolInScope(tool, scopes));
+  return tools.filter((tool) => isGatewayToolInScope(tool, scopes, context));
 }
 
-function isGatewayToolInScope(tool: ITool, scopes: ReadonlySet<GatewayToolScope>): boolean {
-  const name = tool.metadata.name;
-  if (scopes.has("read_workspace") && GATEWAY_READ_WORKSPACE_TOOL_NAMES.has(name)) return true;
-  if (scopes.has("read_runtime_status") && GATEWAY_RUNTIME_STATUS_TOOL_NAMES.has(name)) return true;
-  if (scopes.has("request_approval") && GATEWAY_REQUEST_APPROVAL_TOOL_NAMES.has(name)) return true;
-  if (scopes.has("approved_write") && GATEWAY_APPROVED_WRITE_TOOL_NAMES.has(name)) return true;
-  if (scopes.has("approved_execute") && GATEWAY_APPROVED_EXECUTE_TOOL_NAMES.has(name)) return true;
-  if (scopes.has("approved_durable_run") && GATEWAY_APPROVED_DURABLE_RUN_TOOL_NAMES.has(name)) return true;
-  if (scopes.has("authorized_runtime_control") && GATEWAY_AUTHORIZED_RUNTIME_CONTROL_TOOL_NAMES.has(name)) return true;
+function isGatewayToolInScope(
+  tool: ITool,
+  scopes: ReadonlySet<GatewayToolScope>,
+  context: GatewayToolScopeContext,
+): boolean {
+  if (tool.metadata.tags.includes("gateway:never")) return false;
+  switch (tool.metadata.gatewayExposure ?? "never") {
+    case "default_safe":
+      return scopes.has("read_workspace")
+        && tool.metadata.isReadOnly
+        && tool.metadata.permissionLevel === "read_only"
+        && !tool.metadata.isDestructive;
+    case "approval_required":
+      return isApprovedGatewayTool(tool.metadata.name, context) && !tool.metadata.isReadOnly;
+    case "runtime_control":
+      return scopes.has("authorized_runtime_control");
+    case "never":
+      return false;
+  }
+}
+
+function initialGatewayToolScopeContext(
+  runtimeControlContext: RuntimeControlChatContext | null,
+  turnContext: ChatTurnContext,
+): GatewayToolScopeContext {
+  const turnRuntimeContext = turnContext.hostOnly.runtime.runtimeControlContext;
+  const runtimeControlApprovalMode =
+    runtimeControlContext?.approvalMode
+    ?? turnRuntimeContext?.approvalMode
+    ?? turnContext.modelVisible.runtime.approvalMode;
+  const runtimeControlAllowed =
+    runtimeControlContext?.allowed
+    ?? turnRuntimeContext?.allowed
+    ?? turnContext.modelVisible.runtime.runtimeControlAllowed;
+  return {
+    runtimeControlAllowed,
+    runtimeControlApprovalMode,
+  };
+}
+
+function isApprovedGatewayTool(toolName: string, context: GatewayToolScopeContext): boolean {
+  const approvedNames = context.approvedToolNames;
+  if (!approvedNames) return false;
+  const normalizedToolName = normalizeGatewayToolName(toolName);
+  for (const name of approvedNames) {
+    if (name === toolName || normalizeGatewayToolName(name) === normalizedToolName) {
+      return true;
+    }
+  }
   return false;
 }
 
@@ -553,25 +583,6 @@ function isGatewaySurfaceTurn(
   return (runtimeControlContext?.replyTarget?.surface ?? turnContext.modelVisible.runtime.replyTarget?.surface) === "gateway";
 }
 
-function initialGatewayToolScopeContext(
-  runtimeControlContext: RuntimeControlChatContext | null,
-  turnContext: ChatTurnContext,
-): GatewayToolScopeContext {
-  const turnRuntimeContext = turnContext.hostOnly.runtime.runtimeControlContext;
-  const runtimeControlApprovalMode =
-    runtimeControlContext?.approvalMode
-    ?? turnRuntimeContext?.approvalMode
-    ?? turnContext.modelVisible.runtime.approvalMode;
-  const runtimeControlAllowed =
-    runtimeControlContext?.allowed
-    ?? turnRuntimeContext?.allowed
-    ?? turnContext.modelVisible.runtime.runtimeControlAllowed;
-  return {
-    runtimeControlAllowed,
-    runtimeControlApprovalMode,
-  };
-}
-
 async function executeWithTools(
   host: ChatRunnerRouteHost,
   turnContext: ChatTurnContext,
@@ -584,6 +595,7 @@ async function executeWithTools(
   options: {
     tools: ITool[];
     streamFinalText: boolean;
+    holdAssistantDelta?: (candidateText: string) => boolean;
     abortSignal?: AbortSignal;
     timeoutMs?: number;
   } = {
@@ -597,23 +609,31 @@ async function executeWithTools(
   }
   const supportsNativeToolCalling = llmClient.supportsToolCalling?.() !== false;
   const gatewayScopeContext = initialGatewayToolScopeContext(runtimeControlContext ?? null, turnContext);
+  const isGatewaySurface = isGatewaySurfaceTurn(turnContext, runtimeControlContext ?? null);
   const currentVisibleTools = () => selectDirectModelLoopTools(
     options.tools,
     turnContext,
     runtimeControlContext ?? null,
     gatewayScopeContext,
   );
+  const initialVisibleTools = currentVisibleTools();
   const initialModelRequest = buildChatModelRequest({
     purpose: "tool_call",
     turnContext,
     systemPrompt,
-    availableTools: currentVisibleTools(),
+    availableTools: initialVisibleTools,
     activatedTools: host.activatedTools,
     supportsNativeToolCalling,
   });
   const messages: LLMMessage[] = [...initialModelRequest.messages];
   const startedAt = start ?? Date.now();
   const deadlineAt = options.timeoutMs ? startedAt + options.timeoutMs : null;
+  if (isGatewaySurface && !supportsNativeToolCalling && initialVisibleTools.length > 0) {
+    throw new ToolLoopTerminalError(
+      "policy_blocked",
+      "Gateway tools require a model provider with native tool-calling support. The current provider cannot preserve structured tool transcripts on this gateway surface.",
+    );
+  }
   const toolCallContext = await buildToolCallContext(host, goalId, runtimeControlContext, start, turnContext, {
     abortSignal: options.abortSignal,
     timeoutMs: remainingTimeoutMs(deadlineAt),
@@ -621,6 +641,7 @@ async function executeWithTools(
   const usage = zeroUsageCounter();
   let previousToolCycleFingerprint: string | null = null;
   let repeatedToolCycleCount = 0;
+  const unavailableToolAttempts = new Map<string, number>();
 
   for (let loop = 0; loop < MAX_TOOL_LOOPS; loop++) {
     throwIfAbortedOrTimedOut(options.abortSignal, deadlineAt, "model_request");
@@ -643,7 +664,8 @@ async function executeWithTools(
           abortSignal: execution.abortSignal,
           ...(execution.timeoutMs !== undefined ? { timeoutMs: execution.timeoutMs } : {}),
         }, assistantBuffer, eventContext, {
-          emitAssistantDeltas: options.streamFinalText,
+          emitAssistantDeltas: options.streamFinalText && supportsNativeToolCalling,
+          holdAssistantDelta: options.holdAssistantDelta,
         }),
         options.abortSignal,
         remainingTimeoutMs(deadlineAt),
@@ -659,26 +681,14 @@ async function executeWithTools(
     }
     addUsageCounter(usage, usageFromLLMResponse(response));
 
-    const toolCalls = response.tool_calls?.length
-      ? response.tool_calls
-      : supportsNativeToolCalling
-        ? []
-        : extractPromptedToolCalls({
-            content: response.content,
-            tools: modelRequest.toolDefinitions,
-            createId: () => `prompted-${loop}-${crypto.randomUUID()}`,
-          }).map((call): ToolCallResult => ({
-            id: call.id,
-            type: "function",
-            function: {
-              name: call.name,
-              arguments: JSON.stringify(call.input ?? {}),
-            },
-          }));
-
-    if (!supportsNativeToolCalling && toolCalls.length > 0) {
-      assistantBuffer.text = "";
-    }
+    const nativeToolCalls = response.tool_calls?.length ? response.tool_calls : [];
+    const promptedToolCalls = !supportsNativeToolCalling && visibleTools.length > 0
+      ? extractPromptedToolCalls({
+          content: response.content,
+          tools: modelRequest.toolDefinitions,
+        }).map(promptedToolCallToLLMToolCall)
+      : [];
+    const toolCalls = nativeToolCalls.length > 0 ? nativeToolCalls : promptedToolCalls;
 
     if (toolCalls.length === 0) {
       return {
@@ -687,9 +697,11 @@ async function executeWithTools(
       };
     }
 
-    messages.push({ role: "assistant", content: response.content || "" });
+    messages.push(supportsNativeToolCalling
+      ? { role: "assistant", content: response.content || "", tool_calls: toolCalls }
+      : { role: "assistant", content: `Calling ${toolCalls.map((call) => call.function.name).join(", ")}` });
 
-    const toolCycleResults: Array<{ name: string; args: Record<string, unknown>; result: string }> = [];
+    const toolCycleResults: ToolCycleResult[] = [];
     for (const tc of toolCalls) {
       let args: Record<string, unknown> = {};
       try {
@@ -697,26 +709,61 @@ async function executeWithTools(
       } catch {
         // ignore parse errors, use empty args
       }
-      const allowedToolNames = new Set(currentVisibleTools().map((tool) => tool.metadata.name));
-      if (!allowedToolNames.has(tc.function.name)) {
-        host.eventBridge.emitActivity("tool", formatToolActivity("Failed", tc.function.name, "Tool is not available in this gateway scope"), eventContext, tc.id);
+      const visibleToolsForCall = currentVisibleTools();
+      const resolvedTool = resolveGatewayToolCallName(tc.function.name, visibleToolsForCall);
+      if (!resolvedTool.allowed) {
+        const allowedToolNames = new Set(visibleToolsForCall.map((tool) => tool.metadata.name));
+        const unavailable = classifyUnavailableGatewayTool(tc.function.name, host.deps.registry?.listAll() ?? [], allowedToolNames);
+        const summary = formatUnavailableGatewayToolSummary(unavailable);
+        host.eventBridge.emitActivity("tool", formatToolActivity("Failed", tc.function.name, summary), eventContext, tc.id);
         host.eventBridge.emitEvent({
           type: "tool_end",
           toolCallId: tc.id,
           toolName: tc.function.name,
           success: false,
-          summary: "Tool is not available in this gateway scope.",
+          summary,
           durationMs: 0,
           ...host.eventBridge.eventBase(eventContext),
         });
-        throw new ToolLoopTerminalError("policy_blocked", `Tool ${tc.function.name} is not available in this gateway scope.`);
+        if (!unavailable.recoverable) {
+          throw new ToolLoopTerminalError(unavailable.code, summary);
+        }
+        const toolResult = JSON.stringify({
+          error: "unavailable_tool",
+          denial_class: unavailable.denialClass,
+          requested_tool: tc.function.name,
+          message: summary,
+        });
+        messages.push({
+          role: "tool",
+          tool_call_id: tc.id,
+          name: tc.function.name,
+          content: toolResult,
+        });
+        const attemptKey = unavailable.normalizedName;
+        const attemptCount = (unavailableToolAttempts.get(attemptKey) ?? 0) + 1;
+        unavailableToolAttempts.set(attemptKey, attemptCount);
+        if (attemptCount >= GATEWAY_UNAVAILABLE_TOOL_GUIDANCE_LIMIT) {
+          messages.push({
+            role: "user",
+            content: `The tool "${tc.function.name}" is unavailable in this gateway scope after ${attemptCount} attempts. Stop retrying that missing tool and answer without it.`,
+          });
+        }
+        toolCycleResults.push({
+          name: tc.function.name,
+          args,
+          result: toolResult,
+          unavailableClass: unavailable.denialClass,
+          polling: false,
+        });
+        continue;
       }
       throwIfAbortedOrTimedOut(options.abortSignal, deadlineAt, "tool_call");
       const toolResult = await withAbortAndTimeout(
         (execution) => dispatchToolCall(
           host,
           tc.id,
-          tc.function.name,
+          resolvedTool.name,
           args,
           {
             ...toolCallContext,
@@ -730,18 +777,40 @@ async function executeWithTools(
         remainingTimeoutMs(deadlineAt),
         "tool_call",
       );
-      if (tc.function.name === "tool_search") {
+      if (resolvedTool.name === "tool_search") {
         activateToolSearchResults(host.activatedTools, toolResult);
       }
-      applyGatewayApprovalScopeFromToolResult(tc.function.name, toolResult, gatewayScopeContext);
-      toolCycleResults.push({ name: tc.function.name, args, result: toolResult });
-      messages.push({ role: "user", content: `Tool result for ${tc.function.name}:\n${toolResult}` });
+      applyGatewayApprovalScopeFromToolResult(resolvedTool.name, toolResult, gatewayScopeContext);
+      toolCycleResults.push({
+        name: resolvedTool.name,
+        args,
+        result: toolResult,
+        polling: isPollingGatewayTool(resolvedTool.name),
+      });
+      messages.push({
+        role: "tool",
+        tool_call_id: tc.id,
+        name: resolvedTool.name,
+        content: toolResult,
+      });
     }
 
     const toolCycleFingerprint = stableToolCycleFingerprint(toolCycleResults);
     if (toolCycleFingerprint === previousToolCycleFingerprint) {
       repeatedToolCycleCount++;
-      if (repeatedToolCycleCount >= TOOL_LOOP_STUCK_REPEAT_LIMIT) {
+      const limit = toolCycleResults.some((item) => item.polling)
+        ? GATEWAY_POLL_BLOCK_REPEAT_LIMIT
+        : GATEWAY_LOOP_BLOCK_REPEAT_LIMIT;
+      const warningLimit = toolCycleResults.some((item) => item.polling)
+        ? GATEWAY_POLL_WARNING_REPEAT_LIMIT
+        : GATEWAY_LOOP_WARNING_REPEAT_LIMIT;
+      if (repeatedToolCycleCount === warningLimit - 1) {
+        messages.push({
+          role: "user",
+          content: "The last gateway tool cycle repeated with identical arguments and identical output. If this is not making progress, stop retrying and answer from the available evidence.",
+        });
+      }
+      if (repeatedToolCycleCount >= limit - 1) {
         throw new ToolLoopTerminalError(
           "stalled_tool_loop",
           "The gateway model/tool loop repeated the same tool call and received the same result without making progress.",
@@ -773,20 +842,22 @@ function applyGatewayApprovalScopeFromToolResult(
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return;
   const record = parsed as Record<string, unknown>;
-  if (record.answer !== "approved") return;
-  switch (record.approval_scope) {
-    case "write":
-      scopeContext.approvedWrite = true;
-      return;
-    case "execute":
-      scopeContext.approvedExecute = true;
-      return;
-    case "durable_run":
-      scopeContext.approvedDurableRun = true;
-      return;
-    default:
-      return;
+  if (record["answer"] !== "approved") return;
+  if (
+    record["approval_scope"] !== "write"
+    && record["approval_scope"] !== "execute"
+    && record["approval_scope"] !== "durable_run"
+  ) {
+    return;
   }
+  const approvalTargetTool = typeof record["approval_target_tool"] === "string"
+    ? record["approval_target_tool"].trim()
+    : "";
+  if (!approvalTargetTool) return;
+  const approvedToolNames = new Set(scopeContext.approvedToolNames ?? []);
+  approvedToolNames.add(approvalTargetTool);
+  approvedToolNames.add(normalizeGatewayToolName(approvalTargetTool));
+  scopeContext.approvedToolNames = approvedToolNames;
 }
 
 function terminalModelInterruptionFromError(err: unknown): ToolLoopTerminalError | null {
@@ -799,6 +870,149 @@ function terminalModelInterruptionFromError(err: unknown): ToolLoopTerminalError
     return new ToolLoopTerminalError("model_request_timeout", message);
   }
   return null;
+}
+
+type GatewayUnavailableToolDenialClass =
+  | "unknown_tool"
+  | "known_not_exposed"
+  | "approval_required"
+  | "runtime_control_unauthorized"
+  | "host_policy_denied";
+
+interface ToolCycleResult {
+  name: string;
+  args: Record<string, unknown>;
+  result: string;
+  polling: boolean;
+  unavailableClass?: GatewayUnavailableToolDenialClass;
+}
+
+function resolveGatewayToolCallName(
+  requestedName: string,
+  tools: ITool[],
+): { allowed: true; name: string } | { allowed: false } {
+  const trimmed = requestedName.trim();
+  if (!trimmed) return { allowed: false };
+  if (tools.some((tool) => tool.metadata.name === trimmed)) {
+    return { allowed: true, name: trimmed };
+  }
+  const normalized = normalizeGatewayToolName(trimmed);
+  const matches = tools
+    .map((tool) => tool.metadata.name)
+    .filter((name) => normalizeGatewayToolName(name) === normalized);
+  return matches.length === 1 ? { allowed: true, name: matches[0]! } : { allowed: false };
+}
+
+function classifyUnavailableGatewayTool(
+  requestedName: string,
+  registeredTools: ITool[],
+  allowedToolNames: ReadonlySet<string>,
+): {
+  denialClass: GatewayUnavailableToolDenialClass;
+  normalizedName: string;
+  code: ToolLoopTerminalError["code"];
+  recoverable: boolean;
+  requestedName: string;
+} {
+  const normalizedName = normalizeGatewayToolName(requestedName);
+  const knownTool = registeredTools.find((tool) =>
+    normalizeGatewayToolName(tool.metadata.name) === normalizedName
+    || tool.metadata.aliases.some((alias) => normalizeGatewayToolName(alias) === normalizedName)
+  );
+  if (!knownTool) {
+    return {
+      denialClass: "unknown_tool",
+      normalizedName,
+      code: "policy_blocked",
+      recoverable: true,
+      requestedName,
+    };
+  }
+  if (allowedToolNames.has(knownTool.metadata.name)) {
+    return {
+      denialClass: "unknown_tool",
+      normalizedName,
+      code: "policy_blocked",
+      recoverable: true,
+      requestedName,
+    };
+  }
+  if (knownTool.metadata.gatewayExposure === "runtime_control") {
+    return {
+      denialClass: "runtime_control_unauthorized",
+      normalizedName,
+      code: "policy_blocked",
+      recoverable: false,
+      requestedName,
+    };
+  }
+  if (
+    knownTool.metadata.permissionLevel === "write_local"
+    || knownTool.metadata.permissionLevel === "write_remote"
+    || knownTool.metadata.permissionLevel === "execute"
+    || knownTool.metadata.isDestructive
+  ) {
+    return {
+      denialClass: "approval_required",
+      normalizedName,
+      code: "policy_blocked",
+      recoverable: false,
+      requestedName,
+    };
+  }
+  const recoverable = knownTool.metadata.isReadOnly && knownTool.metadata.permissionLevel === "read_only";
+  return {
+    denialClass: recoverable ? "known_not_exposed" : "host_policy_denied",
+    normalizedName,
+    code: "policy_blocked",
+    recoverable,
+    requestedName,
+  };
+}
+
+function formatUnavailableGatewayToolSummary(input: {
+  denialClass: GatewayUnavailableToolDenialClass;
+  requestedName: string;
+}): string {
+  switch (input.denialClass) {
+    case "unknown_tool":
+      return `Tool ${input.requestedName} is not available in this gateway scope. Use another available tool or answer without it.`;
+    case "known_not_exposed":
+      return `Tool ${input.requestedName} exists but is not exposed on this gateway surface. Use another available tool or answer without it.`;
+    case "approval_required":
+      return `Tool ${input.requestedName} requires explicit approval or a narrower setup state before it can be exposed on this gateway surface.`;
+    case "runtime_control_unauthorized":
+      return `Tool ${input.requestedName} requires runtime-control authorization and is not available for this gateway turn.`;
+    case "host_policy_denied":
+      return `Tool ${input.requestedName} is blocked by host gateway policy.`;
+  }
+}
+
+function promptedToolCallToLLMToolCall(call: {
+  id: string;
+  name: string;
+  input: unknown;
+}): ToolCallResult {
+  return {
+    id: call.id,
+    type: "function",
+    function: {
+      name: call.name,
+      arguments: JSON.stringify(call.input ?? {}),
+    },
+  };
+}
+
+function normalizeGatewayToolName(name: string): string {
+  return name.trim().toLowerCase().replace(/[.\-\s]+/g, "_");
+}
+
+function isPollingGatewayTool(name: string): boolean {
+  return name.includes("observe")
+    || name.includes("status")
+    || name.includes("poll")
+    || name === "process_session_read"
+    || name === "process_status";
 }
 
 function remainingTimeoutMs(deadlineAt: number | null): number | undefined {
@@ -902,12 +1116,13 @@ function abortController(controller: AbortController, reason: unknown): void {
 }
 
 function stableToolCycleFingerprint(
-  results: Array<{ name: string; args: Record<string, unknown>; result: string }>,
+  results: ToolCycleResult[],
 ): string {
   return JSON.stringify(results.map((item) => ({
     name: item.name,
     args: stableJsonValue(item.args),
     result: item.result,
+    unavailableClass: item.unavailableClass ?? null,
   })));
 }
 
@@ -964,6 +1179,11 @@ function toolLoopTerminalEvidence(error: ToolLoopTerminalError) {
       code: error.code,
     }],
   };
+}
+
+function shouldGateRuntimeEvidenceForTurn(turnContext: ChatTurnContext): boolean {
+  return turnContext.modelVisible.tools.selectedRoute === "gateway_model_loop"
+    && turnContext.modelVisible.runtime.replyTarget?.surface === "gateway";
 }
 
 async function persistDirectRouteResult(
@@ -1319,20 +1539,38 @@ async function sendLLMMessage(
   options: LLMRequestOptions | undefined,
   assistantBuffer: AssistantBuffer,
   eventContext: ChatEventContext,
-  behavior: { emitAssistantDeltas?: boolean } = {},
+  behavior: {
+    emitAssistantDeltas?: boolean;
+    holdAssistantDelta?: (candidateText: string) => boolean;
+  } = {},
 ): Promise<LLMResponse> {
   const emitAssistantDeltas = behavior.emitAssistantDeltas ?? true;
   let streamed = false;
+  let emitted = false;
+  let heldDelta = "";
+  const pushDeltaIfAllowed = (delta: string): void => {
+    if (!emitAssistantDeltas) return;
+    const nextDelta = `${heldDelta}${delta}`;
+    const candidate = `${assistantBuffer.text}${nextDelta}`;
+    if (behavior.holdAssistantDelta?.(candidate)) {
+      heldDelta = nextDelta;
+      return;
+    }
+    heldDelta = "";
+    emitted = true;
+    host.eventBridge.pushAssistantDelta(nextDelta, assistantBuffer, eventContext);
+  };
   if (llmClient.sendMessageStream) {
     const response = await llmClient.sendMessageStream(messages, options, {
       onTextDelta: (delta) => {
         streamed = true;
-        if (emitAssistantDeltas) {
-          host.eventBridge.pushAssistantDelta(delta, assistantBuffer, eventContext);
-        }
+        pushDeltaIfAllowed(delta);
       },
     });
     if (emitAssistantDeltas && !streamed && response.content) {
+      pushDeltaIfAllowed(response.content);
+    }
+    if (emitAssistantDeltas && !emitted && response.content && !behavior.holdAssistantDelta?.(response.content)) {
       host.eventBridge.pushAssistantDelta(response.content, assistantBuffer, eventContext);
     }
     return response;
@@ -1340,7 +1578,7 @@ async function sendLLMMessage(
 
   const response = await llmClient.sendMessage(messages, options);
   if (emitAssistantDeltas && response.content) {
-    host.eventBridge.pushAssistantDelta(response.content, assistantBuffer, eventContext);
+    pushDeltaIfAllowed(response.content);
   }
   return response;
 }
@@ -1479,9 +1717,16 @@ function activateToolSearchResults(activatedTools: Set<string>, toolResult: stri
 
 export async function resolveSessionExecutionPolicy(
   currentPolicy: ExecutionPolicy | null,
-  sessionCwd: string | null
+  sessionCwd: string | null,
+  defaultExecutionSecurity?: AgentLoopSecurityConfig,
 ): Promise<ExecutionPolicy> {
   if (currentPolicy) return currentPolicy;
+  if (defaultExecutionSecurity) {
+    return resolveExecutionPolicy({
+      workspaceRoot: sessionCwd ?? process.cwd(),
+      security: defaultExecutionSecurity,
+    });
+  }
   const config = await loadProviderConfig({ saveMigration: false });
   return resolveExecutionPolicy({
     workspaceRoot: sessionCwd ?? process.cwd(),
