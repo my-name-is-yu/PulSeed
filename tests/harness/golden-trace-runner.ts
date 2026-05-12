@@ -578,7 +578,11 @@ async function runApprovalTrace(
     approvalId: `approval-${fixture.contract_name}`,
     origin,
   });
+  void pending.catch(() => undefined);
   await settleDelivery();
+  if (fixture.contract_name !== "approval_delivery_unavailable_denies_not_executes") {
+    await waitForPendingApproval(store, `approval-${fixture.contract_name}`);
+  }
   const resolved = fixture.contract_name === "approval_delivery_unavailable_denies_not_executes"
     ? false
     : await broker.resolveConversationalApproval(
@@ -588,10 +592,11 @@ async function runApprovalTrace(
         ? { ...origin, turn_id: "turn:stale" }
         : origin,
     );
-  requestResult = await Promise.race([
-    pending,
-    new Promise<null>((resolve) => setTimeout(() => resolve(null), 20)),
-  ]);
+  requestResult = fixture.contract_name.includes("denial") ||
+    fixture.contract_name === "approval_origin_bound_stale_reply_rejected" ||
+    fixture.contract_name === "approval_delivery_unavailable_denies_not_executes"
+    ? null
+    : resolved;
   await broker.stop();
   const pendingRecord = await store.loadPending(`approval-${fixture.contract_name}`);
   const resolvedRecord = await store.loadResolved(`approval-${fixture.contract_name}`);

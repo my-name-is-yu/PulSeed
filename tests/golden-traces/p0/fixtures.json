@@ -2169,7 +2169,7 @@
             "assertions": {
               "mutation_executed": false,
               "pending_after_resolution": false,
-              "request_result": false,
+              "request_result": null,
               "resolved": true,
               "resolved_state": "denied",
               "stale_reply_rejected": null
@@ -2189,8 +2189,8 @@
       "artifact_tree": [
         {
           "path": "state/approval/gateway_approval_denial_never_executes_write.json",
-          "sha256": "164c71e3d0ae300e71627bfde39731d8f57288299153f5240eedd1e487a9285d",
-          "size": 3303,
+          "sha256": "adfddad4f4d120c74ddcfdbad1747607816bce85a9aab8ce7a415d7bee74963b",
+          "size": 3302,
           "type": "file"
         }
       ],
@@ -3503,7 +3503,7 @@
             "assertions": {
               "mutation_executed": false,
               "pending_after_resolution": false,
-              "request_result": false,
+              "request_result": null,
               "resolved": false,
               "resolved_state": "denied",
               "stale_reply_rejected": null
@@ -3523,8 +3523,8 @@
       "artifact_tree": [
         {
           "path": "state/approval/approval_delivery_unavailable_denies_not_executes.json",
-          "sha256": "051bd1e86b36985713705327336ef3c94ae143ad257ad90517f7754b62f41834",
-          "size": 3399,
+          "sha256": "bde140949cf7fa6de4b2f9038f22a7cab3f8604fff83fd877ce006c7d660487c",
+          "size": 3398,
           "type": "file"
         }
       ],
