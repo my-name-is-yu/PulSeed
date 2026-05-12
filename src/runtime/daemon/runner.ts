@@ -24,6 +24,8 @@ import type { IngressGateway } from "../gateway/index.js";
 import type { Envelope } from "../types/envelope.js";
 import type { LoopSupervisor } from "../executor/index.js";
 import { type ApprovalStore, type OutboxStore, type RuntimeHealthStore } from "../store/index.js";
+import { AttentionStateStore } from "../store/attention-state-store.js";
+import { RuntimeOperationStore } from "../store/runtime-operation-store.js";
 import type { RuntimeControlOperationKind } from "../store/index.js";
 import type { LeaderLockManager } from "../leader-lock-manager.js";
 import type { GoalLeaseManager } from "../goal-lease-manager.js";
@@ -98,11 +100,7 @@ import {
   runPlatformDreamConsolidation as runPlatformDreamConsolidationFn,
   runResidentCuriosityCycle as runResidentCuriosityCycleFn,
   runScheduledGoalReview as runScheduledGoalReviewFn,
-  triggerIdleResidentMaintenance as triggerIdleResidentMaintenanceFn,
   triggerResidentDreamMaintenance as triggerResidentDreamMaintenanceFn,
-  triggerResidentGoalDiscovery as triggerResidentGoalDiscoveryFn,
-  triggerResidentInvestigation as triggerResidentInvestigationFn,
-  triggerResidentPreemptiveCheck as triggerResidentPreemptiveCheckFn,
   tryApplyPendingDreamSuggestion as tryApplyPendingDreamSuggestionFn,
 } from "./runner-resident.js";
 import {
@@ -179,6 +177,10 @@ export interface DaemonDeps {
   coreLoopFactory?: () => DurableLoop;
   /** Optional signal target for tests that must not emit process-wide signals. */
   shutdownSignalTarget?: ProcessSignalTarget;
+  /** Optional durable attention store for resident autonomy tests. */
+  attentionStateStore?: AttentionStateStore;
+  /** Optional runtime operation store for resident admission control tests. */
+  runtimeOperationStore?: Pick<RuntimeOperationStore, "listCompleted" | "listPending">;
 }
 
 export class DaemonRunner {
@@ -237,6 +239,8 @@ export class DaemonRunner {
   private approvalBroker: ApprovalBroker | null = null;
   private commandDispatcher: CommandDispatcher | null = null;
   private eventDispatcher: EventDispatcher | null = null;
+  private attentionStateStore: AttentionStateStore;
+  private runtimeOperationStore: Pick<RuntimeOperationStore, "listCompleted" | "listPending">;
   private runtimeOwnership: RuntimeOwnershipCoordinator;
   private readonly getProviderRuntimeFingerprintFn: () => Promise<string>;
   private readonly refreshResidentDeps: DaemonDeps["refreshResidentDeps"];
@@ -272,6 +276,14 @@ export class DaemonRunner {
     this.logPath = path.join(this.logDir, "pulseed.log");
 
     this.runtimeRoot = this.resolveRuntimeRoot();
+    this.attentionStateStore = deps.attentionStateStore ?? new AttentionStateStore(
+      this.runtimeRoot,
+      { controlBaseDir: this.baseDir },
+    );
+    this.runtimeOperationStore = deps.runtimeOperationStore ?? new RuntimeOperationStore(
+      this.runtimeRoot,
+      { controlBaseDir: this.baseDir },
+    );
     const runtimeWiring = createRuntimeWiring(
       this.baseDir,
       this.runtimeRoot,
@@ -685,10 +697,6 @@ export class DaemonRunner {
     await persistResidentActivityFn(this as never, activity);
   }
 
-  private async triggerResidentGoalDiscovery(details?: Record<string, unknown>): Promise<void> {
-    await triggerResidentGoalDiscoveryFn(this as never, details);
-  }
-
   private async runResidentCuriosityCycle(options?: {
     activityTrigger?: ResidentActivity["trigger"];
     focus?: string;
@@ -696,10 +704,6 @@ export class DaemonRunner {
     skipWhenNoTriggers?: boolean;
   }): Promise<boolean> {
     return runResidentCuriosityCycleFn(this as never, options);
-  }
-
-  private async triggerResidentInvestigation(details?: Record<string, unknown>): Promise<void> {
-    await triggerResidentInvestigationFn(this as never, details);
   }
 
   private async runScheduledGoalReview(): Promise<boolean> {
@@ -734,14 +738,6 @@ export class DaemonRunner {
 
   private async triggerResidentDreamMaintenance(details?: Record<string, unknown>, tier: DreamTier = "deep"): Promise<void> {
     await triggerResidentDreamMaintenanceFn(this as never, details, tier);
-  }
-
-  private async triggerResidentPreemptiveCheck(details?: Record<string, unknown>): Promise<void> {
-    await triggerResidentPreemptiveCheckFn(this as never, details);
-  }
-
-  private async triggerIdleResidentMaintenance(): Promise<void> {
-    await triggerIdleResidentMaintenanceFn(this as never);
   }
 
   private async runSupervisorMaintenanceCycle(): Promise<void> {

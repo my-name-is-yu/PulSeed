@@ -10,11 +10,16 @@ import {
 } from "../../grounding/surface-contracts.js";
 import type { DaemonRunnerResidentContext } from "./runner-resident-shared.js";
 import {
+  evaluateResidentAttentionAdmission,
+  residentAttentionActivityMetadata,
+} from "./resident-attention-orchestrator.js";
+import {
   gatherResidentWorkspaceContext,
   loadExistingGoalTitles,
   loadKnownGoals,
   mergeResidentSurfaceActivityMetadata,
   persistResidentActivity,
+  type ResidentActivityMetadata,
   type ResidentSurfaceActivityMetadata,
   resolveResidentSuggestionSurface,
   resolveResidentWorkspaceDir,
@@ -27,7 +32,7 @@ export async function triggerResidentGoalDiscovery(
   > &
     Pick<DaemonRunnerResidentContext, "saveDaemonState" | "state" | "stateManager">,
   details?: Record<string, unknown>,
-  activityMetadata: ResidentSurfaceActivityMetadata = {},
+  activityMetadata: ResidentActivityMetadata = {},
 ): Promise<void> {
   if (!context.goalNegotiator) {
     await persistResidentActivity(context, {
@@ -102,14 +107,14 @@ export async function triggerResidentGoalDiscovery(
 export async function runResidentCuriosityCycle(
   context: Pick<
     DaemonRunnerResidentContext,
-    "curiosityEngine" | "stateManager" | "saveDaemonState" | "state" | "logger"
+    "curiosityEngine" | "stateManager" | "saveDaemonState" | "state" | "logger" | "baseDir" | "config" | "attentionStateStore"
   >,
   options?: {
     activityTrigger?: ResidentActivity["trigger"];
     focus?: string;
     reviewLabel?: string;
     skipWhenNoTriggers?: boolean;
-    surfaceActivityMetadata?: ResidentSurfaceActivityMetadata;
+    surfaceActivityMetadata?: ResidentActivityMetadata;
   },
 ): Promise<boolean> {
   const inheritedSurfaceActivityMetadata = options?.surfaceActivityMetadata ?? {};
@@ -131,10 +136,30 @@ export async function runResidentCuriosityCycle(
     const goals = await loadKnownGoals(context);
     const triggers = await context.curiosityEngine.evaluateTriggers(goals);
     const focus = options?.focus?.trim() ?? "";
+    const attentionSummary = options?.reviewLabel
+      ? `Resident ${options.reviewLabel} evaluated curiosity triggers.`
+      : `Resident curiosity evaluated${focus ? ` ${focus}` : " trigger state"}.`;
 
     if (triggers.length === 0) {
       if (options?.skipWhenNoTriggers) {
         return false;
+      }
+      const attentionAdmission = await evaluateResidentAttentionAdmission(context, {
+        action: "curiosity_noop",
+        trigger: options?.activityTrigger ?? "proactive_tick",
+        summary: attentionSummary,
+        surfaceActivityMetadata: inheritedSurfaceActivityMetadata,
+      });
+      const attentionActivityMetadata = residentAttentionActivityMetadata(attentionAdmission);
+      if (!attentionAdmission.branch_admitted) {
+        await persistResidentActivity(context, {
+          kind: "skipped",
+          trigger: options?.activityTrigger ?? "proactive_tick",
+          summary: attentionAdmission.summary,
+          ...inheritedSurfaceActivityMetadata,
+          ...attentionActivityMetadata,
+        });
+        return true;
       }
       await persistResidentActivity(context, {
         kind: "curiosity",
@@ -143,6 +168,25 @@ export async function runResidentCuriosityCycle(
           ? `Resident ${options.reviewLabel} ran and found no curiosity triggers.`
           : `Resident investigation ran${focus ? ` for ${focus}` : ""} and found nothing actionable.`,
         ...inheritedSurfaceActivityMetadata,
+        ...attentionActivityMetadata,
+      });
+      return true;
+    }
+
+    const attentionAdmission = await evaluateResidentAttentionAdmission(context, {
+      action: "curiosity",
+      trigger: options?.activityTrigger ?? "proactive_tick",
+      summary: attentionSummary,
+      surfaceActivityMetadata: inheritedSurfaceActivityMetadata,
+    });
+    const attentionActivityMetadata = residentAttentionActivityMetadata(attentionAdmission);
+    if (!attentionAdmission.branch_admitted) {
+      await persistResidentActivity(context, {
+        kind: "skipped",
+        trigger: options?.activityTrigger ?? "proactive_tick",
+        summary: attentionAdmission.summary,
+        ...inheritedSurfaceActivityMetadata,
+        ...attentionActivityMetadata,
       });
       return true;
     }
@@ -168,6 +212,10 @@ export async function runResidentCuriosityCycle(
       inheritedSurfaceActivityMetadata,
       residentSurfaceActivityMetadata(relationshipProfileSurface),
     );
+    const combinedActivityMetadata = {
+      ...surfaceActivityMetadata,
+      ...attentionActivityMetadata,
+    };
     const proposals = await context.curiosityEngine.generateProposals(triggers, goals, {
       relationshipProfileContext: relationshipProfileSurfaceContext,
     });
@@ -178,7 +226,7 @@ export async function runResidentCuriosityCycle(
         summary: options?.reviewLabel
           ? `Resident ${options.reviewLabel} ran but produced no curiosity proposals.`
           : `Resident investigation ran${focus ? ` for ${focus}` : ""} but produced no curiosity proposals.`,
-        ...surfaceActivityMetadata,
+        ...combinedActivityMetadata,
       });
       return true;
     }
@@ -191,7 +239,7 @@ export async function runResidentCuriosityCycle(
         ? `Resident ${options.reviewLabel} created ${proposals.length} curiosity proposal(s); next focus: ${proposal.proposed_goal.description}`
         : `Resident investigation created ${proposals.length} curiosity proposal(s); next focus: ${proposal.proposed_goal.description}`,
       suggestion_title: proposal.proposed_goal.description,
-      ...surfaceActivityMetadata,
+      ...combinedActivityMetadata,
     });
     return true;
   } catch (err) {
@@ -222,9 +270,12 @@ function residentSurfaceActivityMetadata(
 }
 
 export async function triggerResidentInvestigation(
-  context: Pick<DaemonRunnerResidentContext, "curiosityEngine" | "stateManager" | "saveDaemonState" | "state" | "logger">,
+  context: Pick<
+    DaemonRunnerResidentContext,
+    "curiosityEngine" | "stateManager" | "saveDaemonState" | "state" | "logger" | "baseDir" | "config" | "attentionStateStore"
+  >,
   details?: Record<string, unknown>,
-  surfaceActivityMetadata: ResidentSurfaceActivityMetadata = {},
+  surfaceActivityMetadata: ResidentActivityMetadata = {},
 ): Promise<void> {
   const focus = typeof details?.["what"] === "string" ? details["what"].trim() : "";
   await runResidentCuriosityCycle(context, {
@@ -236,7 +287,10 @@ export async function triggerResidentInvestigation(
 }
 
 export async function runScheduledGoalReview(
-  context: Pick<DaemonRunnerResidentContext, "curiosityEngine" | "stateManager" | "saveDaemonState" | "state" | "logger" | "config">,
+  context: Pick<
+    DaemonRunnerResidentContext,
+    "curiosityEngine" | "stateManager" | "saveDaemonState" | "state" | "logger" | "config" | "baseDir" | "attentionStateStore"
+  >,
   lastGoalReviewAt: number,
   setLastGoalReviewAt: (value: number) => void,
 ): Promise<boolean> {

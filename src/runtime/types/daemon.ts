@@ -98,6 +98,9 @@ export const ResidentActivitySchema = z.object({
   surface_excluded_count: DaemonNonnegativeSafeIntSchema.optional(),
   surface_inspection: SurfaceInspectionAdapterPayloadSchema.optional(),
   surface_inspections: z.array(SurfaceInspectionAdapterPayloadSchema).optional(),
+  attention_input_id: z.string().optional(),
+  agenda_item_id: z.string().optional(),
+  outcome_decision_id: z.string().optional(),
 });
 export type ResidentActivity = z.infer<typeof ResidentActivitySchema>;
 

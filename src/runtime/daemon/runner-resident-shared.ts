@@ -15,6 +15,8 @@ import type { KnowledgeManager } from "../../platform/knowledge/knowledge-manage
 import type { Logger } from "../logger.js";
 import type { LoopSupervisor } from "../executor/index.js";
 import type { ScheduleEngine } from "../schedule/engine.js";
+import type { AttentionStateStore } from "../store/attention-state-store.js";
+import type { RuntimeOperationStore } from "../store/runtime-operation-store.js";
 import { ProactiveInterventionStore } from "../store/proactive-intervention-store.js";
 import { resolveDaemonRuntimeRoot } from "./runtime-root.js";
 import {
@@ -114,6 +116,8 @@ export interface DaemonRunnerResidentContext {
   knowledgeManager?: KnowledgeManager;
   scheduleEngine?: ScheduleEngine;
   supervisor?: LoopSupervisor;
+  attentionStateStore?: Pick<AttentionStateStore, "saveCycle">;
+  runtimeOperationStore?: Pick<RuntimeOperationStore, "listCompleted" | "listPending">;
   saveDaemonState(): Promise<void>;
   refreshOperationalState(): void;
   abortSleep(): void;
@@ -127,6 +131,16 @@ export type ResidentSurfaceActivityMetadata = Partial<Pick<
   | "surface_inspection"
   | "surface_inspections"
 >>;
+
+export type ResidentAttentionActivityMetadata = Partial<Pick<
+  ResidentActivity,
+  | "attention_input_id"
+  | "agenda_item_id"
+  | "outcome_decision_id"
+>>;
+
+export type ResidentActivityMetadata =
+  ResidentSurfaceActivityMetadata & ResidentAttentionActivityMetadata;
 
 export function mergeResidentSurfaceActivityMetadata(
   ...metadatas: Array<ResidentSurfaceActivityMetadata | undefined>
@@ -187,7 +201,7 @@ export async function persistResidentActivity(
   });
   context.state.last_resident_at = residentActivity.recorded_at;
   context.state.resident_activity = residentActivity;
-  if (context.baseDir && context.config) {
+  if (context.baseDir && context.config && shouldAppendProactiveIntervention(residentActivity)) {
     const runtimeRoot = resolveDaemonRuntimeRoot(context.baseDir, context.config.runtime_root);
     await new ProactiveInterventionStore(runtimeRoot, { controlBaseDir: context.baseDir })
       .appendIntervention({ activity: residentActivity, channel: "daemon" })
@@ -199,4 +213,8 @@ export async function persistResidentActivity(
       });
   }
   await context.saveDaemonState();
+}
+
+function shouldAppendProactiveIntervention(activity: ResidentActivity): boolean {
+  return activity.kind !== "skipped" && activity.kind !== "sleep";
 }
